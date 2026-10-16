@@ -797,7 +797,7 @@ fn rust(i: &Inputs) -> Result<Output, HarnessError> {
     let mut o = vec![0.0];
     let res: solidcore::Result<()> = match (&i.op, &i.this) {
         (OpIn::Analytics {}, Some(t)) => this_of(t)?
-            .copy_and_add_analytics()
+            .copy_and_add_analytics(&k)
             .map(|s| o.push(s.type_code() as f64)),
         (
             OpIn::Iso {
@@ -822,7 +822,7 @@ fn rust(i: &Inputs) -> Result<Output, HarnessError> {
         (OpIn::DegenPt { tol, dom }, Some(t)) => {
             let d = dom.as_ref().map(dom_of);
             this_of(t)?
-                .is_degenerate_point(*tol, d.as_ref())
+                .is_degenerate_point(&k, *tol, d.as_ref())
                 .map(|b| o.push(flag(b)))
         }
         (OpIn::Bilinear {}, Some(t)) => {
@@ -859,7 +859,7 @@ fn rust(i: &Inputs) -> Result<Output, HarnessError> {
                     o.extend_from_slice(&v);
                 })
         }
-        (OpIn::MaxDomain {}, Some(t)) => this_of(t)?.max_analytic_domain().map(|d| {
+        (OpIn::MaxDomain {}, Some(t)) => this_of(t)?.max_analytic_domain(&k).map(|d| {
             o.extend([d.min().x, d.min().y, d.max().x, d.max().y]);
         }),
         (
@@ -935,7 +935,7 @@ fn rust(i: &Inputs) -> Result<Output, HarnessError> {
             }),
         (OpIn::Sphere { arcs, tol }, None) => {
             let cs = arcs.iter().map(bsc_of).collect::<Result<Vec<_>, _>>()?;
-            BSplineSurface::create_sphere_from_arcs(&cs, *tol).map(|r| {
+            BSplineSurface::create_sphere_from_arcs(&k, &cs, *tol).map(|r| {
                 o.push(r.ccw_arcs.len() as f64);
                 o.extend(r.ccw_arcs.iter().map(|&j| j as f64));
                 o.extend(r.orients.iter().map(|&x| orient_code(x)));

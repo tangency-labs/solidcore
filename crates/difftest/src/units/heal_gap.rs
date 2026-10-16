@@ -815,7 +815,7 @@ fn idx(i: Option<u32>) -> f64 {
 }
 
 /// The Rust topology op; `Err(SolidError)` for the gap's own failures.
-fn topo_rust(b: &Brep, args: &[f64]) -> Result<Vec<f64>, SolidError> {
+fn topo_rust(k: &Kernel, b: &Brep, args: &[f64]) -> Result<Vec<f64>, SolidError> {
     let a = |i: usize| args.get(i).copied().unwrap_or(0.0);
     let kind = a(0) as u8;
     let s0 = a(1);
@@ -826,12 +826,12 @@ fn topo_rust(b: &Brep, args: &[f64]) -> Result<Vec<f64>, SolidError> {
     let eu0 = (s0 >= 0.0 && kind >= 3).then(|| EdgeuseId::from_index(s0 as u32));
     let eu1 = (s1 >= 0.0).then(|| EdgeuseId::from_index(s1 as u32));
     let gap: Gap = match kind {
-        0 => VertexEdgeGap::with(b, vu, t0)?.into(),
-        1 => VertexFaceTrimCurveGap::with(b, vu, t0)?.into(),
-        2 => VertexFaceGap::with(b, vu, uv)?.into(),
-        3 => EdgeEdgeGap::with(b, eu0, eu1, t0, t1)?.into(),
-        4 => EdgeFaceTrimCurveGap::with(b, eu0, t0, t1)?.into(),
-        _ => EdgeFaceGap::with(b, eu0, t0, uv)?.into(),
+        0 => VertexEdgeGap::with(k, b, vu, t0)?.into(),
+        1 => VertexFaceTrimCurveGap::with(k, b, vu, t0)?.into(),
+        2 => VertexFaceGap::with(k, b, vu, uv)?.into(),
+        3 => EdgeEdgeGap::with(k, b, eu0, eu1, t0, t1)?.into(),
+        4 => EdgeFaceTrimCurveGap::with(k, b, eu0, t0, t1)?.into(),
+        _ => EdgeFaceGap::with(k, b, eu0, t0, uv)?.into(),
     };
     let mut o = vec![
         0.0,
@@ -841,7 +841,7 @@ fn topo_rust(b: &Brep, args: &[f64]) -> Result<Vec<f64>, SolidError> {
         gap.edge_t(1),
         gap.uv_trim_curve_t(),
     ];
-    let fuv = gap.face_uv(b)?;
+    let fuv = gap.face_uv(k, b)?;
     o.extend([fuv.x, fuv.y]);
     o.push(idx(gap.vertex(b)?.map(VertexId::index)));
     o.push(idx(gap.vertexuse().map(VertexuseId::index)));
@@ -851,13 +851,13 @@ fn topo_rust(b: &Brep, args: &[f64]) -> Result<Vec<f64>, SolidError> {
     o.push(idx(gap.edgeuse(b, 1)?.map(EdgeuseId::index)));
     o.push(idx(gap.face(b)?.map(FaceId::index)));
     o.push(gap.type_code() as f64);
-    let e = gap.end_points(b)?;
+    let e = gap.end_points(k, b)?;
     o.push(if e.count == 2 { 0.0 } else { 1001.0 });
     push3(&mut o, e.point1);
     push3(&mut o, e.point2);
     // CacheGap on a copy (its length is overwritten)
     let mut c = gap;
-    c.cache_gap(b)?;
+    c.cache_gap(k, b)?;
     o.push(c.length());
     Ok(o)
 }
@@ -1071,7 +1071,7 @@ fn run_rust(i: &Inputs) -> Result<Output, HarnessError> {
             };
             let (b, _) = import(&ex)?;
             let args = topo_args(&b, c, *kind, *sel0, *sel1, *f0, *f1, *uv)?;
-            match topo_rust(&b, &args) {
+            match topo_rust(&k, &b, &args) {
                 Ok(v) => o = v,
                 Err(SolidError::InvalidInput { .. }) => o.push(NULL_DEREF),
                 Err(e) => return rust_fail(&e),

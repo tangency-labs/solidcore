@@ -1791,7 +1791,7 @@ fn run_rust_op(b: &mut Brep, op: &OpIn) -> Result<Output, Fail> {
                 ix(x, VertexuseId::index)
             })?;
         }
-        OpIn::EndTangent { e, at_start } => match ed::end_tangent(b, eid(*e), *at_start) {
+        OpIn::EndTangent { e, at_start } => match ed::end_tangent(&k, b, eid(*e), *at_start) {
             Ok(t) => out.extend([0.0, t.x, t.y, t.z]),
             Err(SolidError::InvalidInput { .. }) => out.push(NULL_DEREF),
             Err(err) if err.is_unported() => return Err(err.into()),
@@ -1901,7 +1901,7 @@ fn run_rust_op(b: &mut Brep, op: &OpIn) -> Result<Output, Fail> {
             let r = match which {
                 0 => ed::max_gap_3d(&k, b, eid(*e), *want, t),
                 1 => ed::max_up_dim_gap_3d(&k, b, eid(*e), *want, t),
-                _ => ed::max_down_dim_gap_3d(b, eid(*e), *want, t),
+                _ => ed::max_down_dim_gap_3d(&k, b, eid(*e), *want, t),
             };
             match r {
                 Ok(g) => {
@@ -2040,8 +2040,8 @@ fn run_rust_op(b: &mut Brep, op: &OpIn) -> Result<Output, Fail> {
         }
         OpIn::Seam { e, f } => {
             let r = match opt_id(*f, FaceId::from_index) {
-                Some(f) => ed::is_seam_of_surface(b, eid(*e), f),
-                None => ed::is_seam(b, eid(*e)),
+                Some(f) => ed::is_seam_of_surface(&k, b, eid(*e), f),
+                None => ed::is_seam(&k, b, eid(*e)),
             };
             out.push(slot(r, flag)?);
         }
@@ -2074,7 +2074,7 @@ fn run_rust_op(b: &mut Brep, op: &OpIn) -> Result<Output, Fail> {
             };
             let mut dydx = vec![1.0; *n as usize];
             let ode = ed::OdeEdgeLength::new(c, Vec3::new(origin[0], origin[1], origin[2]), *radius);
-            match ode.evaluate(*t, &mut dydx) {
+            match ode.evaluate(&k, *t, &mut dydx) {
                 Ok(()) => out.push(0.0),
                 Err(SolidError::InvalidInput { .. }) => {
                     return Ok(Output::new().values("state", vec![NULL_DEREF]))

@@ -5093,6 +5093,105 @@ mutated scales and accepted/reduced step counts are compared.
   deleted definitions in the two `Resolve`s), WR-95 (`CombineProtoEdge` moves every other
   definition; confirmed by `edge_pe_combine_every_other_*`).
 
+
+## Kernel-aware common Surface integration (issue #76, PR #133)
+
+`SurfaceKind::Cone` retains the native cone/cylinder distinction and the existing
+`surface.cone_p1` implementation. Common reads, copies, NURB/STEP evaluation,
+normal/derivative helpers, UV conversion, STEP inversion (including the caller's
+subdomain), adjustment and transform dispatch through the concrete object.
+The common evaluation traits and callbacks borrow the caller's `Kernel`; implicit
+iso curves also carry it through `CurveEvaluate` and the curve solver callers.
+Production dispatch does not create a default kernel. The offset API returns
+`Result<Option<Surface>>`, preserving the representability of successful null
+analytic offsets; no cone offset implementation is imported or certified here.
+
+Remaining integration boundaries are explicit:
+
+- `surface.cone_p2` owns offsets and rebuilding analytic parameters after reverse /
+  UV swap. PR #71 remains independent. Its head `c9aa85de` has 26 reported failures;
+  older passing results do not certify that head.
+- PR #131 has merged. Its concrete intersection numerics are retained, with
+  caller Kernel propagation at the newly merged call sites. Common plane/cone,
+  boundary and global cone intersection adapters remain `surface.surface_p2`
+  dispatch gaps; numerical bodies and dependency integration stay with #131's owner.
+- Cone trimming and fast point dropping still need inherited revolution bodies
+  with the cone's virtual callbacks. These are dispatch gaps, not replacements by
+  a plain revolution or a B-spline. Their errors name the owning common unit.
+- Part 9 iso/tessellation helpers still store B-spline objects and cannot retain
+  Cone/Cylinder iso/evaluation overrides. These now report an explicit
+  `surface.surface_p9` dispatch gap before constructing stand-ins. The existing
+  part 9 revolution fixtures do not certify real Cone/Cylinder dispatch; a core
+  contract assertion covers refusal for both concrete types.
+- Sphere (PR #100), torus and extrusion adapters are not imported.
+  PR #120 has merged; its numerical implementation and subdivision bound are
+  retained, with caller Kernel propagation through its new shared solver paths. Existing concrete readers may still defer when no SurfaceKind
+  adapter exists. Curve-on-surface and cache storage that specifically owns a
+  B-spline remains a separate adapter boundary.
+
+Resource handling: common polymorphic surface reads balance the reader's bounded
+nesting counter on ordinary errors. Fallible evaluation and copy entrypoints
+preflight owned geometry against the existing 64-level limit; derivative orders
+are checked by the concrete evaluator before rectangular output allocation.
+Inherited `SplitAt` returns newly constructed B-spline results, as explicitly
+specified and implemented by `SmBSplineSurface::SplitAt` (`SmBSplineSurface.cpp`,
+5016–5076); the input's Cone/Cylinder kind is retained.
+Constructor failures remain native statuses. Safe native database coverage writes
+records from guarded real Cone/Cylinder constructors before reading them through
+`SmSurface::ReadFromDB`; it does not parse arbitrary caller-controlled records in
+C++. Existing crash/undefined-input guards are retained, and guarded `SC_ERR_ARG`
+recipes are excluded from the newly added common numerical coverage.
+
+Native common tests reuse the cone part 1 constructor/operation corpus and add
+ASCII/binary version-30 round trips, lazy `SmSurfaceEval` derivatives, inversion
+subdomains, degeneracy, normals and bounding boxes. Common fallible inversion
+compares UV/location only on success; direct cone part 1 retains its native
+failure-output comparisons. No comparison tolerance or absolute floor is changed.
+The seven `topology.brep_data` fixtures previously deferred on cone/cylinder
+records now compare: the five Defeature LShape I/II, Platte, defillet and
+flathead-screw-top files, plus OffsetBoxCylOnCorner edited/healed. That unit
+retains 48 independent offset/extrusion deferrals.
+An additional 32 manual lazy-evaluator apex probes pass bit-identically: canonical
+cone bot=2/top=0/height=3, identity placement, both swap/inside flags, angular
+parameters 0, 0.25, 0.5, 1 and axial parameters 1 and its preceding float
+0.9999999999999999 (exchange coordinates when swapped). These probes use the
+common lazy adapter and are separate from the committed default case totals.
+
+
+Validation configuration for #133: Apple Clang uses the shared Release/O2 kernel
+and O2 shims. The full regression gate uses the standard Ubuntu CI workflow on
+Karl's fork, with Release/O2 kernel, O2 shims, the difftest profile and unchanged
+`-ffp-contract=off -fno-fast-math`. A local 4 GB Linux VM could not complete the
+full runner build under memory pressure (including an unoptimized driver/shim
+attempt); no full-suite pass is claimed for that abandoned local attempt. Its
+validation container was removed without changing other containers or the VM's
+configuration. Canonical CI requires maintainer approval, which this account
+cannot grant; the fork workflow adds report upload, full sensitivity and the native contract
+tests. Default and sensitivity checks run in independent processes after one
+standard optimized build, with unchanged per-process input/operation order and
+comparison policy. Its crate/harness sources match PR #133's source commit
+`ce56aae6`.
+After merging #120, the local C++ Clippy rerun could not write its query cache
+because the shared disk filled; only this worktree's disposable caches were
+removed. The hosted rerun passes C++ Clippy on the merged source. The merged
+local core tests (1,193) and wasm check pass.
+
+Final recertification: [GNU CI](https://github.com/Karl-VonRichter/solidcore/actions/runs/38870779906) validates code
+`ce56aae6`, including merged #120 and the explicit part 9 Cone/Cylinder refusal.
+The validation tree changes only the workflow. `--green` compares 452,754 of
+465,289 cases across 182 units (99 green, 83 partial), with 12,535 deferred and
+zero failed. Sensitivity detects all 452,672 perturbations; 82 empty outputs
+remain unperturbed (`geom.assert_array` 1, `nlib.srf_basic` 1,
+`geom.local_solve1d` 7, `nlib.basis_adv` 73), and deferrals are not perturbed.
+The two primary reports have max relative error zero and no absolute floors;
+all units retain their previous tolerance/floor policy. Workspace tests total
+1,215 passes (1,193 core); the two native contract tests pass with 27 filtered.
+Formatting, plain/C++ Clippy, wasm, deny and locked publish dry-run all pass.
+
+The topology solver's 12 previous `curve.iso_curve` deferrals now reach the
+explicit `SmSurface::GetNaturalUVDomain` gap in `surface.surface_p2`; 2,396 cases
+still compare and 33 defer. No additional unit is promoted by this integration.
+
 ## surface.cone_p3: analytic intersections and dispatch handoff (PR #131)
 
 The cone part-3 port keeps complete analytic and NURBS intersection curve records,
@@ -5381,3 +5480,62 @@ independent Apple libc++ database abort was not rerun.
 
 Strict C++-feature workspace Clippy also passes in the same disposable checkout
 with the runner-only profile override. No platform prerequisites enter this PR.
+
+
+## Kernel-aware Surface integration: PR #133 review follow-up (2026-10-16)
+
+The review reproduced five missing-Kernel compile errors in a temporary merge
+with main after #131 landed (bbox/degeneracy/curve point calls). This branch now
+merges main and threads the existing caller Kernel through those sites without
+changing intersection formulas, branches, result lifecycle or tolerances. The
+review also found the inherited Apple portability prerequisites conflicted with
+[the maintainer's policy](https://github.com/bherbruck/solidcore/pull/131#pullrequestreview-5543522828):
+`build.rs` and both unrelated shared shim files are restored to main. Workflow
+changes remain confined to the fork's disposable validation branch. Historical
+Apple results above required those prerequisites and do not certify a clean
+Apple build after their removal. The final GNU rerun is recorded below when
+complete. No #71/#100 numerical implementation is imported. Common intersection
+adapter errors now identify the remaining Surface integration rather than the
+already-partial cone numerical unit.
+
+The review also found `Surface::evaluate_simple` recursively delegates through
+curve-bounded bases without the preflight used by the other common evaluators.
+It now checks the same 64-level owned-geometry limit before dispatch; a 70-level
+curve-bounded regression verifies normal `InvalidInput` rather than recursion.
+
+The new native common-API corpus uses the shim's default `SmContext`. A Rust
+regression uses zone tolerance 0.002 and checks that lazy/solver callbacks borrow
+the caller Kernel and generic iso/STEP evaluation retains it; custom native
+context settings are not differentially covered by this PR.
+
+Concrete cone part 3 tests use its typed intersection targets. Wrapped-other
+cone dispatch through `IntersectTarget::Surface` is not certified here; that
+helper currently reaches the supplied general callback rather than recognizing
+the new Cone variant as an analytic target. This remains part of the common
+intersection adapter handoff, along with the explicit Surface method stubs.
+
+### Moving-base integration during review validation
+
+While the f804bc5f run was executing, main advanced through 8f6a9378 with
+#128 (including heal.face_props) and #142's edge-use review fixes. The branch
+merges that base and adapts six healing call sites to the borrowed Kernel. The
+edge-use runner conflict is resolved by retaining both Kernel forwarding and
+the incoming numerical gap arrays, exact-plane import and inexact-geometry
+deferrals. Their numerical implementations are not duplicated or rewritten.
+
+The completed [f804bc5f GNU run](https://github.com/Karl-VonRichter/solidcore/actions/runs/38884360383)
+passes 183 units: 99 green / 84 partial, 466597 total cases, 453941 compared,
+12656 deferred, zero failed. Sensitivity detects 453859/453859 perturbations,
+with 82 empty outputs unperturbed. Workspace tests pass 1218 (1196 core), plus
+eight focused FFI tests. These results certify f804bc5f only. The new 185-unit
+run on 8cb9ff44 was cancelled at the user's pause request and does not certify the final merged revision.
+
+
+### User pause (2026-10-16)
+
+Work is paused with implementation 8cb9ff44 saved in draft PR #133. The
+185-unit GNU validation run 38889088718 was cancelled at the user's request.
+All required Rust checks, C++-feature Clippy and 1230 workspace tests (1208
+core) pass on this revision. Its full native gate, sensitivity and focused FFI
+tests remain incomplete; f804bc5f's completed 183-unit run is historical
+evidence only. See STATUS for the exact handoff, artifact paths and resume steps.

@@ -411,7 +411,7 @@ struct Stats {
     errors: usize,
 }
 
-fn run_rust(i: &Inputs, st: &mut Stats) -> solidcore::Result<Vec<f64>> {
+fn run_rust(k: &Kernel, i: &Inputs, st: &mut Stats) -> solidcore::Result<Vec<f64>> {
     let surfaces: Vec<Surface> = i
         .surfaces
         .iter()
@@ -471,7 +471,7 @@ fn run_rust(i: &Inputs, st: &mut Stats) -> solidcore::Result<Vec<f64>> {
                     polar_box.add_vector(v3(*v), None);
                 }
                 let leaf = surface_leaf(
-                    *surface,
+                    k, *surface,
                     surf,
                     &ext2(*uv),
                     &ext3(*bbox),
@@ -504,7 +504,7 @@ fn run_rust(i: &Inputs, st: &mut Stats) -> solidcore::Result<Vec<f64>> {
                 tracer.hit_any_thing = *hit_any;
                 tracer.skip_element = skip.map(ElementId);
                 st.fires += 1;
-                match tracer.fire_ray(v3(*p), v3(*v), *max_t) {
+                match tracer.fire_ray(k, v3(*p), v3(*v), *max_t) {
                     Ok(hit) => {
                         rec.push(0.0);
                         rec.push(f64::from(u8::from(hit.hits_something)));
@@ -561,7 +561,7 @@ fn run_rust(i: &Inputs, st: &mut Stats) -> solidcore::Result<Vec<f64>> {
                 solver.have_t_min_t_max = *have_t;
                 solver.t_min_of_bbox = *t_min;
                 solver.t_max_of_bbox = *t_max;
-                let r = solver.local_solve(surf, leaf);
+                let r = solver.local_solve(k, surf, leaf);
                 match &r.status {
                     Ok(()) => rec.push(0.0),
                     Err(e @ SolidError::Unported { .. }) => return Err(e.clone()),
@@ -600,7 +600,7 @@ fn run_rust(i: &Inputs, st: &mut Stats) -> solidcore::Result<Vec<f64>> {
                 object,
             } => {
                 let r = renderer.as_mut().ok_or_else(|| bad_index("renderer"))?;
-                let res = r.do_render(*shadows, v3(*background), v3(*object));
+                let res = r.do_render(k, *shadows, v3(*background), v3(*object));
                 match res {
                     Ok(_) => rec.push(0.0),
                     Err(e @ SolidError::Unported { .. }) => return Err(e),
@@ -610,12 +610,12 @@ fn run_rust(i: &Inputs, st: &mut Stats) -> solidcore::Result<Vec<f64>> {
             }
             OpIn::RenderPixel { x, y } => {
                 let r = renderer.as_mut().ok_or_else(|| bad_index("renderer"))?;
-                let res = r.render_pixel(*x as u64, *y as u64);
+                let res = r.render_pixel(k, *x as u64, *y as u64);
                 put_color(&mut rec, res, r.pixels_shaded())?;
             }
             OpIn::RenderRay { p, v } => {
                 let r = renderer.as_mut().ok_or_else(|| bad_index("renderer"))?;
-                let res = r.render_ray(v3(*p), v3(*v));
+                let res = r.render_ray(k, v3(*p), v3(*v));
                 put_color(&mut rec, res, r.pixels_shaded())?;
             }
         }
@@ -778,7 +778,7 @@ fn box_union(b: E6, p: P3) -> E6 {
 /// Leaf ops for a surface split into `nu` x `nv` cells: sampled boxes, polar vectors from
 /// the normals at the corners and middle, element boxes a little larger than the pseudo
 /// boxes (so rays can cross an element box and miss its pseudo box).
-fn gen_leaves(
+fn gen_leaves(k: &Kernel, 
     rng: &mut Rng,
     index: usize,
     s: &SurfIn,
@@ -810,7 +810,7 @@ fn gen_leaves(
                         u0 + (u1 - u0) * f64::from(a) / 4.0,
                         v0 + (v1 - v0) * f64::from(b) / 4.0,
                     );
-                    if let Ok(p) = surf.evaluate_point(uv) {
+                    if let Ok(p) = surf.evaluate_point(k, uv) {
                         let p = [p.x, p.y, p.z];
                         bbox = Some(match bbox {
                             None => [p[0], p[1], p[2], p[0], p[1], p[2]],
@@ -823,7 +823,7 @@ fn gen_leaves(
             let mut polar = Vec::new();
             for (a, b) in [(0.5, 0.5), (0.0, 0.0), (1.0, 0.0), (0.0, 1.0), (1.0, 1.0)] {
                 let uv = Vec2::new(u0 + (u1 - u0) * a, v0 + (v1 - v0) * b);
-                if let Ok(n) = surf.evaluate_normal(uv, Side::Left, Side::Left) {
+                if let Ok(n) = surf.evaluate_normal(k, uv, Side::Left, Side::Left) {
                     let n = [n.x, n.y, n.z];
                     if len3(n) > 1e-6 {
                         polar.push(n);
@@ -886,7 +886,7 @@ fn gen_case(rng: &mut Rng, safe: bool) -> Inputs {
 
     let mut leaf_ops = Vec::new();
     for (k, (s, r)) in surfaces.iter().zip(&rust).enumerate() {
-        leaf_ops.extend(gen_leaves(rng, k, s, r, scale, ray_tol));
+        leaf_ops.extend(gen_leaves(&Kernel::default(), rng, k, s, r, scale, ray_tol));
     }
     leaf_ops.truncate(40);
     // the grid box: around every leaf box
@@ -1091,14 +1091,14 @@ fn gen_case(rng: &mut Rng, safe: bool) -> Inputs {
 
 /// Mostly cases the Rust side can finish (rays rejected before `LocalLineIntersect`),
 /// and some that defer.
-fn gen_checked(rng: &mut Rng) -> Inputs {
+fn gen_checked(k: &Kernel, rng: &mut Rng) -> Inputs {
     let want_safe = rng.chance(0.75);
     let mut last = gen_case(rng, want_safe);
     for _ in 0..12 {
         if !want_safe {
             return last;
         }
-        match run_rust(&last, &mut Stats::default()) {
+        match run_rust(k, &last, &mut Stats::default()) {
             Err(SolidError::Unported { .. }) => last = gen_case(rng, want_safe),
             _ => return last,
         }
@@ -1118,8 +1118,9 @@ impl UnitDiff for Runner {
     }
 
     fn run_rust(&self, case: &Case) -> Result<Output, HarnessError> {
+let k = &Kernel::default();
         let i: Inputs = case.parse()?;
-        match run_rust(&i, &mut Stats::default()) {
+        match run_rust(k, &i, &mut Stats::default()) {
             Ok(rec) => Ok(Output::new().values("rec", rec)),
             Err(e) => Ok(Output::unported(&e)
                 .unwrap_or_else(|| Output::err(format!("rust_error: {e}")))),
@@ -1127,7 +1128,8 @@ impl UnitDiff for Runner {
     }
 
     fn generate(&self, rng: &mut Rng) -> Option<Value> {
-        serde_json::to_value(gen_checked(rng)).ok()
+let k = &Kernel::default();
+        serde_json::to_value(gen_checked(k, rng)).ok()
     }
 
     fn cases(&self, ctx: &CaseContext) -> Result<Vec<Case>, HarnessError> {
@@ -1150,8 +1152,8 @@ mod tests {
         let mut ok = 0;
         for k in 0..MIN_GENERATED as u64 {
             let mut rng = Rng::new(k);
-            let i = gen_checked(&mut rng);
-            match run_rust(&i, &mut st) {
+            let i = gen_checked(&Kernel::default(), &mut rng);
+            match run_rust(&Kernel::default(), &i, &mut st) {
                 Ok(_) => ok += 1,
                 Err(e) => {
                     assert!(e.is_unported(), "{e}");

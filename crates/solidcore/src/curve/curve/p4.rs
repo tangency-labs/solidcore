@@ -104,20 +104,25 @@ const OP_DIST_AT: &str = "curve::curve::p4::CpDistAtEnfo::evaluate";
 
 /// `EvaluatePoint` whose status upstream ignores: [`Vec3::UNDEF`] (a never-written
 /// `SmPoint3d`) on failure; [`SolidError::Unported`] is propagated.
-pub(crate) fn point_or_undef<C: CurveEvaluate + ?Sized>(curve: &C, t: f64) -> Result<Point3> {
-    Ok(ignored(curve.evaluate_point(t))?.unwrap_or(Vec3::UNDEF))
+pub(crate) fn point_or_undef<C: CurveEvaluate + ?Sized>(
+    k: &Kernel,
+    curve: &C,
+    t: f64,
+) -> Result<Point3> {
+    Ok(ignored(curve.evaluate_point(k, t))?.unwrap_or(Vec3::UNDEF))
 }
 
 /// `Evaluate` whose status upstream ignores into `pv` (entries not written keep
 /// their values); [`SolidError::Unported`] is propagated.
 fn eval_into<C: CurveEvaluate + ?Sized>(
+    k: &Kernel,
     curve: &C,
     t: f64,
     num_derivs: usize,
     non_zero_tangents: bool,
     pv: &mut [Vec3],
 ) -> Result<()> {
-    if let Some(v) = ignored(curve.evaluate(t, num_derivs, true, non_zero_tangents))? {
+    if let Some(v) = ignored(curve.evaluate(k, t, num_derivs, true, non_zero_tangents))? {
         for (d, s) in pv.iter_mut().zip(v) {
             *d = s;
         }
@@ -153,12 +158,12 @@ enum Link {
 }
 
 /// Start, end and mid point of `curve` over its natural interval (statuses ignored).
-fn ends_and_mid(curve: &Curve) -> Result<(Point3, Point3, Point3)> {
+fn ends_and_mid(k: &Kernel, curve: &Curve) -> Result<(Point3, Point3, Point3)> {
     let domain = curve.natural_interval();
     Ok((
-        point_or_undef(curve, domain.min())?,
-        point_or_undef(curve, domain.max())?,
-        point_or_undef(curve, domain.evaluate(0.5))?,
+        point_or_undef(k, curve, domain.min())?,
+        point_or_undef(k, curve, domain.max())?,
+        point_or_undef(k, curve, domain.evaluate(0.5))?,
     ))
 }
 
@@ -201,7 +206,7 @@ pub fn fix_chain_curves_list(
         chain_starts.push(loop_start);
 
         // last link Min(start), Max(end), and Mid(mid_start, mid_end) points
-        let (mut start_point, mut end_point, mut mid_start_point) = ends_and_mid(&c0)?;
+        let (mut start_point, mut end_point, mut mid_start_point) = ends_and_mid(k, &c0)?;
         let mut mid_end_point = mid_start_point;
 
         // move the curve into the growing chained array
@@ -226,7 +231,7 @@ pub fn fix_chain_curves_list(
                 };
 
                 // next link Min(start1), Max(end1) and Mid(mid) points
-                let (start_point1, end_point1, mid_point) = ends_and_mid(c1)?;
+                let (start_point1, end_point1, mid_point) = ends_and_mid(k, c1)?;
 
                 let d_s1e = (start_point1 - end_point).length_squared();
                 let d_e1e = (end_point1 - end_point).length_squared();
@@ -397,6 +402,7 @@ fn reverse_ignored(k: &Kernel, curve: &mut Curve, domain: &Extent1d) -> Result<(
 ///
 /// Those of the curve evaluations.
 pub fn filter_solution<C1, C2, O>(
+    k: &Kernel,
     curve1: &C1,
     ivl1: &Extent1d,
     curve2: &C2,
@@ -429,8 +435,8 @@ where
     }
 
     // Get Solution CurvePoints and CurveTangents (nonZeroTangent values)
-    let pv1: [Vec3; 2] = eval_n(curve1, s0, 1, true, true)?;
-    let pv2: [Vec3; 2] = eval_n(curve2, s1, 1, true, true)?;
+    let pv1: [Vec3; 2] = eval_n(k, curve1, s0, 1, true, true)?;
+    let pv2: [Vec3; 2] = eval_n(k, curve2, s1, 1, true, true)?;
     let [p1, t1] = pv1;
     let [p2, t2] = pv2;
 
@@ -549,6 +555,7 @@ where
 /// Those of [`CurveEvaluate::evaluate_point`] (upstream returns the failing status
 /// converted to a double).
 pub fn proj_dist<C: CurveEvaluate + ?Sized>(
+    k: &Kernel,
     curve: &C,
     param: f64,
     test_point: Point3,
@@ -558,7 +565,7 @@ pub fn proj_dist<C: CurveEvaluate + ?Sized>(
     op: SolverOperation,
 ) -> Result<f64> {
     // evaluate curve at given parameter
-    let pnt = curve.evaluate_point(param)?;
+    let pnt = curve.evaluate_point(k, param)?;
 
     // get vector from testPoint to curvePoint projected to given plane
     let vec = test_point - pnt;
@@ -744,6 +751,7 @@ pub fn analytic_curve_intersect<O: Copy>(
 ///
 /// [`SolidError::Unported`] from the evaluator.
 pub fn approximate_polar_box<C: CurveEvaluate + ?Sized>(
+    k: &Kernel,
     curve: &C,
     interval: &Extent1d,
     point_count: u64,
@@ -766,7 +774,7 @@ pub fn approximate_polar_box<C: CurveEvaluate + ?Sized>(
     let mut pv = [Vec3::UNDEF; 2];
     let mut polar_box = PolarBox::new();
     polar_box.reset();
-    eval_into(curve, ivl.evaluate(0.5), 1, true, &mut pv)?;
+    eval_into(k, curve, ivl.evaluate(0.5), 1, true, &mut pv)?;
     polar_box.add_vector(at(&pv, 1), None);
 
     // iteration locals
@@ -776,7 +784,7 @@ pub fn approximate_polar_box<C: CurveEvaluate + ?Sized>(
     // for every sample point
     for _ in 0..point_count {
         // evaluate this param point
-        eval_into(curve, param, 1, true, &mut pv)?;
+        eval_into(k, curve, param, 1, true, &mut pv)?;
 
         // add the tangent to the PolarBox
         polar_box.add_vector(at(&pv, 1), None);
@@ -795,14 +803,15 @@ pub fn approximate_polar_box<C: CurveEvaluate + ?Sized>(
 ///
 /// [`SolidError::Unported`] from the evaluator.
 pub fn is_closed_base<C: CurveEvaluate + ?Sized>(
+    k: &Kernel,
     curve: &C,
     interval: &Extent1d,
     tol: f64,
 ) -> Result<bool> {
     // get curve start, end, and mid 3d Points
-    let p1 = point_or_undef(curve, interval.min())?;
-    let p2 = point_or_undef(curve, interval.max())?;
-    let p_mid = point_or_undef(curve, interval.evaluate(0.5))?;
+    let p1 = point_or_undef(k, curve, interval.min())?;
+    let p2 = point_or_undef(k, curve, interval.max())?;
+    let p_mid = point_or_undef(k, curve, interval.evaluate(0.5))?;
 
     // let dTol = dTolerance (when given) or dScaledZero
     let tol = if tol == 0.0 {
@@ -826,6 +835,7 @@ pub fn is_closed_base<C: CurveEvaluate + ?Sized>(
 ///
 /// [`SolidError::Unported`] from the evaluator.
 pub fn is_degenerate_base<C: CurveEvaluate + ?Sized>(
+    k: &Kernel,
     curve: &C,
     tol3d: f64,
     interval: Option<&Extent1d>,
@@ -839,8 +849,8 @@ pub fn is_degenerate_base<C: CurveEvaluate + ?Sized>(
     if ivl.min() == ivl.max() {
         return Ok(true);
     }
-    let p1 = point_or_undef(curve, ivl.min())?;
-    let p2 = point_or_undef(curve, ivl.max())?;
+    let p1 = point_or_undef(k, curve, ivl.min())?;
+    let p2 = point_or_undef(k, curve, ivl.max())?;
 
     // select a tolerance - scale it to p1 location
     let scaled_zero = EFF_ZERO * (1.0 + p1.max_dimension());
@@ -852,18 +862,18 @@ pub fn is_degenerate_base<C: CurveEvaluate + ?Sized>(
         let lsq = ivl.length() * ivl.length();
 
         // if start, mid, or end tangents are nonZero - the curve is not degenerate
-        eval_into(curve, ivl.min(), 1, false, &mut pv)?; // exact tangent lengths
+        eval_into(k, curve, ivl.min(), 1, false, &mut pv)?; // exact tangent lengths
         if at(&pv, 1).length_squared() * lsq > tol2 {
             return Ok(false);
         }
 
-        eval_into(curve, ivl.max(), 1, false, &mut pv)?;
+        eval_into(k, curve, ivl.max(), 1, false, &mut pv)?;
         if at(&pv, 1).length_squared() * lsq > tol2 {
             return Ok(false);
         }
 
         // not the exact midpoint (a projected circle seen edge-on) [091023]
-        eval_into(curve, ivl.evaluate(0.4567), 1, false, &mut pv)?;
+        eval_into(k, curve, ivl.evaluate(0.4567), 1, false, &mut pv)?;
         if at(&pv, 1).length_squared() * lsq > tol2 {
             return Ok(false);
         }
@@ -1010,11 +1020,11 @@ impl Curve {
     /// # Errors
     ///
     /// [`SolidError::Unported`] from the evaluator.
-    pub fn is_closed(&self, interval: &Extent1d, tol: f64) -> Result<bool> {
+    pub fn is_closed(&self, k: &Kernel, interval: &Extent1d, tol: f64) -> Result<bool> {
         match self.kind() {
             CurveKind::Line(l) => Ok(l.is_closed(interval, tol)),
             CurveKind::Composite(c) => Ok(c.is_closed()),
-            _ => is_closed_base(self, interval, tol),
+            _ => is_closed_base(k, self, interval, tol),
         }
     }
 
@@ -1024,14 +1034,19 @@ impl Curve {
     ///
     /// Those of [`crate::nurbs::b_spline_curve::BSplineCurve::is_degenerate`];
     /// [`SolidError::Unported`] from the evaluator.
-    pub fn is_degenerate(&self, tol3d: f64, interval: Option<&Extent1d>) -> Result<bool> {
+    pub fn is_degenerate(
+        &self,
+        k: &Kernel,
+        tol3d: f64,
+        interval: Option<&Extent1d>,
+    ) -> Result<bool> {
         match self.kind() {
-            CurveKind::BSpline(c) => c.is_degenerate(tol3d, interval),
-            CurveKind::Hyperbola(c) => c.base().is_degenerate(tol3d, interval),
+            CurveKind::BSpline(c) => c.is_degenerate(k, tol3d, interval),
+            CurveKind::Hyperbola(c) => c.base().is_degenerate(k, tol3d, interval),
             CurveKind::Ellipse(e) => Ok(e.is_degenerate(tol3d)),
-            CurveKind::Parabola(c) => c.base().is_degenerate(tol3d, interval),
+            CurveKind::Parabola(c) => c.base().is_degenerate(k, tol3d, interval),
             CurveKind::Line(l) => Ok(l.is_degenerate(tol3d, interval)),
-            _ => is_degenerate_base(self, tol3d, interval),
+            _ => is_degenerate_base(k, self, tol3d, interval),
         }
     }
 
@@ -1040,8 +1055,13 @@ impl Curve {
     /// # Errors
     ///
     /// [`SolidError::Unported`] from the evaluator.
-    pub fn approximate_polar_box(&self, interval: &Extent1d, point_count: u64) -> Result<PolarBox> {
-        approximate_polar_box(self, interval, point_count)
+    pub fn approximate_polar_box(
+        &self,
+        k: &Kernel,
+        interval: &Extent1d,
+        point_count: u64,
+    ) -> Result<PolarBox> {
+        approximate_polar_box(k, self, interval, point_count)
     }
 
     /// `SnapToKnots`: `param` moved to the nearest knot closer than `snap_tol`, or
@@ -1134,6 +1154,9 @@ impl Curve {
 /// tolerance some properties use.
 #[derive(Debug, Clone, Copy)]
 pub struct CurvePropertyEfo<'a, C: ?Sized> {
+    /// Caller context for virtual evaluations.
+    pub kernel: &'a Kernel,
+
     /// `m_crCurve`.
     pub curve: &'a C,
     /// `m_eCurveProperty`.
@@ -1151,6 +1174,7 @@ impl<'a, C: CurveEvaluate + ?Sized> CurvePropertyEfo<'a, C> {
     /// dSquaredTolerance)`.
     #[must_use]
     pub const fn new(
+        k: &'a Kernel,
         curve: &'a C,
         property: CurvePropertyType,
         property_value: Option<f64>,
@@ -1158,6 +1182,7 @@ impl<'a, C: CurveEvaluate + ?Sized> CurvePropertyEfo<'a, C> {
         squared_tolerance: f64,
     ) -> Self {
         Self {
+            kernel: k,
             curve,
             property,
             property_value,
@@ -1199,8 +1224,8 @@ impl<'a, C: CurveEvaluate + ?Sized> CurvePropertyEfo<'a, C> {
     }
 
     /// `m_crCurve.Evaluate(dT, n, TRUE, sC, non_zero)` into four entries.
-    fn eval(&self, t: f64, n: usize, non_zero: bool) -> Result<[Vec3; 4]> {
-        eval_n(self.curve, t, n, true, non_zero)
+    fn eval(&self, k: &Kernel, t: f64, n: usize, non_zero: bool) -> Result<[Vec3; 4]> {
+        eval_n(k, self.curve, t, n, true, non_zero)
     }
 }
 
@@ -1219,7 +1244,7 @@ impl<C: CurveEvaluate + ?Sized> EvalFunction for CurvePropertyEfo<'_, C> {
             CurvePropertyType::PointInversion => {
                 // F = (C - P) . (C - P), F' = C' . (C-P)
                 let p = self.checked_vec(0)?;
-                let c = self.eval(t, 1, true)?;
+                let c = self.eval(self.kernel, t, 1, true)?;
                 if c[1].length_squared() < EFF_ZERO {
                     return Err(err());
                 }
@@ -1230,7 +1255,7 @@ impl<C: CurveEvaluate + ?Sized> EvalFunction for CurvePropertyEfo<'_, C> {
             CurvePropertyType::DistanceToPoint => {
                 // F = (C - P) . (C - P) - dist*dist, F' = 2 * C' . (C-P)
                 let p = self.checked_vec(0)?;
-                let c = self.eval(t, 1, true)?;
+                let c = self.eval(self.kernel, t, 1, true)?;
                 if c[1].length_squared() < EFF_ZERO {
                     return Err(err());
                 }
@@ -1242,7 +1267,7 @@ impl<C: CurveEvaluate + ?Sized> EvalFunction for CurvePropertyEfo<'_, C> {
             CurvePropertyType::PerpendicularToVector => {
                 // F = C' . V, F' = C'' . V
                 let v = self.checked_vec(0)?;
-                let c = self.eval(t, 2, true)?;
+                let c = self.eval(self.kernel, t, 2, true)?;
                 if c[1].length_squared() < EFF_ZERO {
                     return Err(err());
                 }
@@ -1251,7 +1276,7 @@ impl<C: CurveEvaluate + ?Sized> EvalFunction for CurvePropertyEfo<'_, C> {
             }
             CurvePropertyType::InflectionPoints => {
                 // F = (C'' x C')**2, F' = 2(C'' x C')'.(C'' x C')
-                let c = self.eval(t, 3, true)?;
+                let c = self.eval(self.kernel, t, 3, true)?;
                 let a = c[2].cross(c[1]);
                 let a_prime = c[2].derivative_of_cross_product(c[1], c[3], c[2]);
                 out.f = a.dot(a);
@@ -1263,7 +1288,7 @@ impl<C: CurveEvaluate + ?Sized> EvalFunction for CurvePropertyEfo<'_, C> {
             CurvePropertyType::RadiusOfCurvature => {
                 let k = self.checked_value()?;
                 // F = |C'|^3 / |C' x C''| - K
-                let c = self.eval(t, 3, false)?;
+                let c = self.eval(self.kernel, t, 3, false)?;
                 let b = c[1].length();
                 if is_zero(b) {
                     return Err(err()); // Zero first derivative error
@@ -1289,7 +1314,7 @@ impl<C: CurveEvaluate + ?Sized> EvalFunction for CurvePropertyEfo<'_, C> {
             }
             CurvePropertyType::FirstDerivativeLength => {
                 let k = self.checked_value()?;
-                let c = self.eval(t, 2, false)?;
+                let c = self.eval(self.kernel, t, 2, false)?;
                 // F = |C'| - K, F' = (C'.C'') / |C'|
                 let len = sqrt(c[1].dot(c[1]));
                 out.f = len - k;
@@ -1308,7 +1333,7 @@ impl<C: CurveEvaluate + ?Sized> EvalFunction for CurvePropertyEfo<'_, C> {
             }
             CurvePropertyType::ParallelToVector => {
                 let v = self.checked_vec(0)?;
-                let c = self.eval(t, 3, false)?;
+                let c = self.eval(self.kernel, t, 3, false)?;
                 // F = (C'/|C'| x V)^2, F' = (same) . (same)'
                 let length = c[1].length();
                 if is_zero(length) {
@@ -1326,7 +1351,7 @@ impl<C: CurveEvaluate + ?Sized> EvalFunction for CurvePropertyEfo<'_, C> {
             CurvePropertyType::SilhouetteVector => {
                 let v = self.checked_vec(0)?;
                 // F = C' x C'' x C' . V (unitized)
-                let c = self.eval(t, 3, true)?;
+                let c = self.eval(self.kernel, t, 3, true)?;
                 let mut cpu = c[1];
                 if c[1].length_squared() < EFF_ZERO {
                     return Err(err());
@@ -1356,7 +1381,7 @@ impl<C: CurveEvaluate + ?Sized> EvalFunction for CurvePropertyEfo<'_, C> {
             }
             CurvePropertyType::SilhouettePoint => {
                 let p = self.checked_vec(0)?;
-                let c = self.eval(t, 3, true)?;
+                let c = self.eval(self.kernel, t, 3, true)?;
                 let c_minus_p = c[0] - p;
                 // F = C' x C'' x C' . (C-P) (unitized)
                 let mut cpu = c[1];
@@ -1387,7 +1412,7 @@ impl<C: CurveEvaluate + ?Sized> EvalFunction for CurvePropertyEfo<'_, C> {
                 out.f_prime = tmp.dot(c_minus_p) + osc_plane_vec.dot(c[1]);
             }
             CurvePropertyType::XNormal => {
-                let c = self.eval(t, 2, true)?;
+                let c = self.eval(self.kernel, t, 2, true)?;
                 // F = C'.x, F' = C''.x
                 out.f = c[1].x;
                 out.f_prime = c[2].x;
@@ -1396,7 +1421,7 @@ impl<C: CurveEvaluate + ?Sized> EvalFunction for CurvePropertyEfo<'_, C> {
                 }
             }
             CurvePropertyType::YNormal => {
-                let c = self.eval(t, 2, true)?;
+                let c = self.eval(self.kernel, t, 2, true)?;
                 out.f = c[1].y;
                 out.f_prime = c[2].y;
                 if is_zero(out.f) && is_zero(out.f_prime) {
@@ -1404,7 +1429,7 @@ impl<C: CurveEvaluate + ?Sized> EvalFunction for CurvePropertyEfo<'_, C> {
                 }
             }
             CurvePropertyType::ZNormal => {
-                let c = self.eval(t, 2, true)?;
+                let c = self.eval(self.kernel, t, 2, true)?;
                 out.f = c[1].z;
                 out.f_prime = c[2].z;
                 if is_zero(out.f) && is_zero(out.f_prime) {
@@ -1412,7 +1437,7 @@ impl<C: CurveEvaluate + ?Sized> EvalFunction for CurvePropertyEfo<'_, C> {
                 }
             }
             CurvePropertyType::XyzNormal => {
-                let c = self.eval(t, 2, true)?;
+                let c = self.eval(self.kernel, t, 2, true)?;
                 // F = C'.x * C'.y * C'.z
                 out.f = c[1].x * c[1].y * c[1].z;
                 out.f_prime =
@@ -1440,13 +1465,13 @@ impl<C: CurveEvaluate + ?Sized> EvalFunction for CurvePropertyEfo<'_, C> {
                 }
             }
             CurvePropertyType::MinimizeFirstDerivative => {
-                let c = self.eval(t, 2, false)?;
+                let c = self.eval(self.kernel, t, 2, false)?;
                 // F = C'.C', F' = 2 C' . C''
                 out.f = c[1].dot(c[1]);
                 out.f_prime = 2.0 * c[1].dot(c[2]);
             }
             CurvePropertyType::MaximizeFirstDerivative => {
-                let c = self.eval(t, 2, false)?;
+                let c = self.eval(self.kernel, t, 2, false)?;
                 // F = 1 / ( C'.C' ), F' = - 2 C'.C'' / (C'.C')^2
                 out.f = 1.0 / c[1].dot(c[1]);
                 let denom = c[1].dot(c[1]) * c[1].dot(c[1]);
@@ -1456,7 +1481,7 @@ impl<C: CurveEvaluate + ?Sized> EvalFunction for CurvePropertyEfo<'_, C> {
                 out.f_prime = (-2.0 * c[1].dot(c[2])) / denom;
             }
             CurvePropertyType::MinimizeRadiusOfCurvature => {
-                let c = self.eval(t, 3, false)?;
+                let c = self.eval(self.kernel, t, 3, false)?;
                 // F = b^3 / |A|, A = C' x C'', b = |C'|
                 let b = c[1].length();
                 if is_zero(b) {
@@ -1478,7 +1503,7 @@ impl<C: CurveEvaluate + ?Sized> EvalFunction for CurvePropertyEfo<'_, C> {
                 out.f_prime = (numer_prime - out.f * denom_prime) / denom;
             }
             CurvePropertyType::MaximizeRadiusOfCurvature => {
-                let c = self.eval(t, 3, false)?;
+                let c = self.eval(self.kernel, t, 3, false)?;
                 // F = |A| / b^3
                 let a = c[1].cross(c[2]);
                 let numer = a.length();
@@ -1506,14 +1531,14 @@ impl<C: CurveEvaluate + ?Sized> EvalFunction for CurvePropertyEfo<'_, C> {
             CurvePropertyType::PlaneIntersection => {
                 let abc = self.checked_vec(0)?;
                 let d = self.checked_value()?;
-                let c = self.eval(t, 1, true)?;
+                let c = self.eval(self.kernel, t, 1, true)?;
 
                 // Switch over to normalization if get really close
                 out.f = c[0].dot(abc) + d;
                 if out.f.abs() < EFF_ZERO_SQRT && c[1].dot(abc).abs() < EFF_ZERO_SQRT {
                     // F = C'.sABC, F' = C''.sABC
                     out.f = c[1].dot(abc);
-                    let c2 = self.eval(t, 2, true)?;
+                    let c2 = self.eval(self.kernel, t, 2, true)?;
                     out.f_prime = c2[2].dot(abc);
                 } else {
                     // F = C.sABC + D, F' = C'.sABC
@@ -1530,7 +1555,7 @@ impl<C: CurveEvaluate + ?Sized> EvalFunction for CurvePropertyEfo<'_, C> {
                 let cyl_radius = self.value()?;
                 let center = self.vec(0)?;
                 let n = self.vec(1)?;
-                let c = self.eval(t, 1, true)?;
+                let c = self.eval(self.kernel, t, 1, true)?;
                 let fp = n.cross(c[1]).cross(n);
                 let cf = n.cross(c[0] - center).cross(n);
                 out.f = cf.dot(cf) - cyl_radius * cyl_radius;
@@ -1542,7 +1567,7 @@ impl<C: CurveEvaluate + ?Sized> EvalFunction for CurvePropertyEfo<'_, C> {
                 if self.opt_vectors.is_none() {
                     return Err(err());
                 }
-                let c = self.eval(t, 2, true)?;
+                let c = self.eval(self.kernel, t, 2, true)?;
                 // F = (C' x N) . (C - Origin)
                 let origin = self.vec(0)?;
                 let n = self.vec(1)?;
@@ -1555,7 +1580,7 @@ impl<C: CurveEvaluate + ?Sized> EvalFunction for CurvePropertyEfo<'_, C> {
             CurvePropertyType::ProjectedPointMinimize
             | CurvePropertyType::ProjectedPointMaximize => {
                 // evaluate current guess
-                let c = self.eval(t, 2, true)?;
+                let c = self.eval(self.kernel, t, 2, true)?;
                 let p = self.vec(0)?;
                 let n = self.vec(1)?;
 
@@ -1598,7 +1623,7 @@ impl<C: CurveEvaluate + ?Sized> EvalFunction for CurvePropertyEfo<'_, C> {
                     return Err(err());
                 }
 
-                let c = self.eval(t, 2, true)?;
+                let c = self.eval(self.kernel, t, 2, true)?;
                 let p = self.vec(0)?;
                 let tan0 = self.vec(1)?;
                 let diff = c[0] - p;
@@ -1634,7 +1659,7 @@ impl<C: CurveEvaluate + ?Sized> EvalFunction for CurvePropertyEfo<'_, C> {
                 }
                 let p = self.vec(0)?;
                 let v = self.vec(1)?;
-                let c = self.eval(t, 2, true)?;
+                let c = self.eval(self.kernel, t, 2, true)?;
                 if c[1].length_squared() < EFF_ZERO {
                     return Err(err());
                 }
@@ -1651,7 +1676,7 @@ impl<C: CurveEvaluate + ?Sized> EvalFunction for CurvePropertyEfo<'_, C> {
                     return Err(err());
                 }
                 let v = self.vec(1)?;
-                let c = self.eval(t, 2, true)?;
+                let c = self.eval(self.kernel, t, 2, true)?;
                 if c[1].length_squared() < EFF_ZERO {
                     return Err(err());
                 }
@@ -1664,7 +1689,7 @@ impl<C: CurveEvaluate + ?Sized> EvalFunction for CurvePropertyEfo<'_, C> {
                 if self.opt_vectors.is_none() {
                     return Err(err());
                 }
-                let c = self.eval(t, 2, true)?;
+                let c = self.eval(self.kernel, t, 2, true)?;
                 if c[1].length_squared() < EFF_ZERO {
                     return Err(err());
                 }
@@ -1688,6 +1713,9 @@ impl<C: CurveEvaluate + ?Sized> EvalFunction for CurvePropertyEfo<'_, C> {
 /// [`CcTangentIntEnfo::static_evaluate`]) is unit `curve.curve_p5`.
 #[derive(Debug, Clone, Copy)]
 pub struct CcTangentIntEnfo<'a, C1: ?Sized, C2: ?Sized> {
+    /// Caller context for virtual evaluations.
+    pub kernel: &'a Kernel,
+
     /// `m_crCurve1`.
     pub curve1: &'a C1,
     /// `m_crCurve2`.
@@ -1699,8 +1727,14 @@ pub struct CcTangentIntEnfo<'a, C1: ?Sized, C2: ?Sized> {
 impl<'a, C1: CurveEvaluate + ?Sized, C2: CurveEvaluate + ?Sized> CcTangentIntEnfo<'a, C1, C2> {
     /// `SmCCTangentIntENFO(crCurve1, crCurve2, dSquaredTolerance)`.
     #[must_use]
-    pub const fn new(curve1: &'a C1, curve2: &'a C2, squared_tolerance: f64) -> Self {
+    pub const fn new(
+        k: &'a Kernel,
+        curve1: &'a C1,
+        curve2: &'a C2,
+        squared_tolerance: f64,
+    ) -> Self {
         Self {
+            kernel: k,
             curve1,
             curve2,
             squared_tolerance,
@@ -1718,6 +1752,7 @@ impl<'a, C1: CurveEvaluate + ?Sized, C2: CurveEvaluate + ?Sized> CcTangentIntEnf
     /// than 2 (upstream asserts their size); those of the evaluations and of the
     /// Jacobian writes (a matrix smaller than 2x2).
     pub fn static_evaluate(
+        k: &Kernel,
         curve1: &C1,
         curve2: &C2,
         x: &[f64],
@@ -1741,8 +1776,8 @@ impl<'a, C1: CurveEvaluate + ?Sized, C2: CurveEvaluate + ?Sized> CcTangentIntEnf
         let found = false;
 
         // Curve1Point, Curve2Point positions and tangents (nonZeroTangent values)
-        let pvv1: [Vec3; 3] = eval_n(curve1, x0, 2, true, true)?;
-        let pvv2: [Vec3; 3] = eval_n(curve2, x1, 2, true, true)?;
+        let pvv1: [Vec3; 3] = eval_n(k, curve1, x0, 2, true, true)?;
+        let pvv2: [Vec3; 3] = eval_n(k, curve2, x1, 2, true, true)?;
         let tan_len_sq1 = pvv1[1].length_squared();
         let tan_len_sq2 = pvv2[1].length_squared();
 
@@ -1782,6 +1817,9 @@ impl<'a, C1: CurveEvaluate + ?Sized, C2: CurveEvaluate + ?Sized> CcTangentIntEnf
 /// unit `curve.curve_p5`.
 #[derive(Debug, Clone)]
 pub struct CcIntersectEnfo<'a, C1: ?Sized, C2: ?Sized> {
+    /// Caller context for virtual evaluations.
+    pub kernel: &'a Kernel,
+
     /// `m_crCurve1`.
     pub curve1: &'a C1,
     /// `m_crCurve2`.
@@ -1802,8 +1840,14 @@ impl<'a, C1: ?Sized, C2: ?Sized> CcIntersectEnfo<'a, C1, C2> {
     /// `SmCCIntersectENFO(crCurve1, crCurve2, dSquaredTolerance)`: no intervals or
     /// periodicities; the base class's solution size `0` and scaled zero `1`.
     #[must_use]
-    pub const fn new(curve1: &'a C1, curve2: &'a C2, squared_tolerance: f64) -> Self {
+    pub const fn new(
+        k: &'a Kernel,
+        curve1: &'a C1,
+        curve2: &'a C2,
+        squared_tolerance: f64,
+    ) -> Self {
         Self {
+            kernel: k,
             curve1,
             curve2,
             intervals: None,
@@ -1831,6 +1875,9 @@ impl<'a, C1: ?Sized, C2: ?Sized> CcIntersectEnfo<'a, C1, C2> {
 /// `Evaluate` is unit `curve.curve_p5`.
 #[derive(Debug, Clone, Copy)]
 pub struct FindCcNormalEnfo<'a, C1: ?Sized, C2: ?Sized> {
+    /// Caller context for virtual evaluations.
+    pub kernel: &'a Kernel,
+
     /// `m_crCurve1`: this curve.
     pub curve1: &'a C1,
     /// `m_crCurve2`: the other curve.
@@ -1854,6 +1901,7 @@ impl<'a, C1: ?Sized, C2: ?Sized> FindCcNormalEnfo<'a, C1, C2> {
     /// eSolverOperation, cpOptVectors)`: count `0`, no step back.
     #[must_use]
     pub const fn new(
+        k: &'a Kernel,
         curve1: &'a C1,
         curve2: &'a C2,
         squared_tolerance: f64,
@@ -1862,6 +1910,7 @@ impl<'a, C1: ?Sized, C2: ?Sized> FindCcNormalEnfo<'a, C1, C2> {
         opt_vectors: Option<&'a [Vec3]>,
     ) -> Self {
         Self {
+            kernel: k,
             curve1,
             curve2,
             squared_tolerance,
@@ -1878,6 +1927,9 @@ impl<'a, C1: ?Sized, C2: ?Sized> FindCcNormalEnfo<'a, C1, C2> {
 /// Its `Evaluate` is unit `curve.curve_p3`.
 #[derive(Debug, Clone, Copy)]
 pub struct FindPcExtremaEfo<'a, C: ?Sized> {
+    /// Caller context for virtual evaluations.
+    pub kernel: &'a Kernel,
+
     /// `m_crCurve`.
     pub curve: &'a C,
     /// `m_crTestPoint`.
@@ -1899,6 +1951,7 @@ impl<'a, C: ?Sized> FindPcExtremaEfo<'a, C> {
     /// eSolverOperation)`: no scale picked yet.
     #[must_use]
     pub const fn new(
+        k: &'a Kernel,
         curve: &'a C,
         test_point: Point3,
         domain: Extent1d,
@@ -1906,6 +1959,7 @@ impl<'a, C: ?Sized> FindPcExtremaEfo<'a, C> {
         solver_operation: SolverOperation,
     ) -> Self {
         Self {
+            kernel: k,
             curve,
             test_point,
             domain,
@@ -1921,6 +1975,9 @@ impl<'a, C: ?Sized> FindPcExtremaEfo<'a, C> {
 /// `(C(s) - P)_i^2 - c_i` for each axis and `cx + cy + cz - d^2`.
 #[derive(Debug, Clone, Copy)]
 pub struct CpDistAtEnfo<'a, C: ?Sized> {
+    /// Caller context for virtual evaluations.
+    pub kernel: &'a Kernel,
+
     /// `m_crCurve`.
     pub curve: &'a C,
     /// `m_crPoint`: the test point.
@@ -1935,12 +1992,14 @@ impl<'a, C: CurveEvaluate + ?Sized> CpDistAtEnfo<'a, C> {
     /// `SmCPDistAtENFO(crCurve, crPoint, dTargetDistanceSq, dSquaredTolerance)`.
     #[must_use]
     pub const fn new(
+        k: &'a Kernel,
         curve: &'a C,
         point: Point3,
         target_distance_sq: f64,
         squared_tolerance: f64,
     ) -> Self {
         Self {
+            kernel: k,
             curve,
             point,
             target_distance_sq,
@@ -1960,6 +2019,7 @@ impl<C: CurveEvaluate + ?Sized> EvalNFunctions for CpDistAtEnfo<'_, C> {
         f: &mut [f64],
         jacobian: Option<&mut Matrix>,
     ) -> Result<bool> {
+        let k = self.kernel;
         let [x0, x1, x2, x3] = match x {
             [a, b, c, d, ..] => [*a, *b, *c, *d],
             _ => {
@@ -1980,7 +2040,7 @@ impl<C: CurveEvaluate + ?Sized> EvalNFunctions for CpDistAtEnfo<'_, C> {
         let found = false;
 
         // CurvePoint position and tangent (nonZeroTangent values)
-        let pv: [Vec3; 2] = eval_n(self.curve, x0, 1, true, true)?;
+        let pv: [Vec3; 2] = eval_n(k, self.curve, x0, 1, true, true)?;
         let tan_len_sq1 = pv[1].length_squared();
 
         // if we have a zero length tangent then we must fail
@@ -2067,30 +2127,39 @@ mod tests {
 
     #[test]
     fn closed_and_degenerate() {
+        let k = &Kernel::default();
         let open = seg([0.0, 0.0, 0.0], [1.0, 0.0, 0.0]);
         let ivl = open.natural_interval();
-        assert!(!open.is_closed(&ivl, 0.0).unwrap());
-        assert!(!open.is_degenerate(EFF_ZERO, None).unwrap());
+        assert!(!open.is_closed(k, &ivl, 0.0).unwrap());
+        assert!(!open.is_degenerate(k, EFF_ZERO, None).unwrap());
         let loop_ = hermite([0.0; 3], [1.0, 1.0, 0.0], [0.0; 3], [1.0, -1.0, 0.0]);
-        assert!(loop_.is_closed(&ivl, 0.0).unwrap());
+        assert!(loop_.is_closed(k, &ivl, 0.0).unwrap());
         let point = hermite([1.0; 3], [0.0; 3], [1.0; 3], [0.0; 3]);
-        assert!(point.is_degenerate(EFF_ZERO, None).unwrap());
-        assert!(is_degenerate_base(&open, 0.0, Some(&Extent1d::from_value(0.5))).unwrap());
+        assert!(point.is_degenerate(k, EFF_ZERO, None).unwrap());
+        assert!(is_degenerate_base(k, &open, 0.0, Some(&Extent1d::from_value(0.5))).unwrap());
     }
 
     #[test]
     fn snap_and_property() {
+        let k = &Kernel::default();
         let c = seg([0.0, 0.0, 0.0], [2.0, 0.0, 0.0]);
         assert_eq!(c.snap_to_knots(0.999, 0.01).unwrap(), 1.0);
         assert_eq!(c.snap_to_knots(0.5, 0.01).unwrap(), 0.5);
         let p = [Vec3::new(1.0, 1.0, 0.0)];
-        let mut efo =
-            CurvePropertyEfo::new(&c, CurvePropertyType::PointInversion, None, Some(&p), 0.0);
+        let mut efo = CurvePropertyEfo::new(
+            k,
+            &c,
+            CurvePropertyType::PointInversion,
+            None,
+            Some(&p),
+            0.0,
+        );
         let mut out = FunctionValue::default();
         efo.evaluate(0.5, &mut out, true).unwrap();
         assert!((out.f - 1.0).abs() < 1e-12);
         assert!(out.f_prime.abs() < 1e-12);
-        let mut none = CurvePropertyEfo::new(&c, CurvePropertyType::PlaneClassify, None, None, 0.0);
+        let mut none =
+            CurvePropertyEfo::new(k, &c, CurvePropertyType::PlaneClassify, None, None, 0.0);
         assert!(none.evaluate(0.5, &mut out, true).is_err());
     }
 
@@ -2120,8 +2189,9 @@ mod tests {
 
     #[test]
     fn dist_at_and_tangent_equations() {
+        let k = &Kernel::default();
         let c = seg([0.0, 0.0, 0.0], [2.0, 0.0, 0.0]);
-        let mut e = CpDistAtEnfo::new(&c, Vec3::new(1.0, 1.0, 0.0), 1.0, 0.0);
+        let mut e = CpDistAtEnfo::new(k, &c, Vec3::new(1.0, 1.0, 0.0), 1.0, 0.0);
         let mut f = [0.0; 4];
         let mut j = Matrix::new(4, 4);
         e.evaluate(&[0.5, 0.0, 1.0, 0.0], &mut f, Some(&mut j))
@@ -2129,7 +2199,7 @@ mod tests {
         assert!(f.iter().all(|v| v.abs() < 1e-12));
         let d = seg([1.0, -1.0, 0.0], [1.0, 1.0, 0.0]);
         let mut f2 = [0.0; 2];
-        CcTangentIntEnfo::static_evaluate(&c, &d, &[0.5, 0.5], &mut f2, None).unwrap();
+        CcTangentIntEnfo::static_evaluate(k, &c, &d, &[0.5, 0.5], &mut f2, None).unwrap();
         // perpendicular unit tangents: 0 - (-1)
         assert!((f2[0] - 1.0).abs() < 1e-12);
         assert!(f2[1].abs() < 1e-12);

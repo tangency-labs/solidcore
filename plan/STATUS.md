@@ -17,7 +17,7 @@ for the remaining topology, bounding-box and offset dependencies. Detailed cover
 and the scalar wrapper's failure-masking behavior are in `plan/findings.md`.
 
 
-Latest unit: `surface.cone_p3` ([PR #131](https://github.com/bherbruck/solidcore/pull/131)) adds analytic cone/cylinder plane sections and cone/cone intersections: 1308 differential cases, 1187 bit-identical passes, 121 dependency deferrals, zero failures. Ellipse trimming awaits `surface.cone_p2`; coincident boundaries now await the Cone/Cylinder `SurfaceKind` adapter in #76/#133, because #120 merged but its boundary API requires typed `Surface` operands. Shared cone/sphere enum dispatch remains coordinated in issue #76. Review follow-up narrows the native guard to exact cone dispatch, adds tolerance/constructor/flag regressions with native FFI safety tests validated locally.
+Latest unit: `surface.cone_p3` ([PR #131](https://github.com/bherbruck/solidcore/pull/131)) adds analytic cone/cylinder plane sections and cone/cone intersections: 1308 differential cases, 1187 bit-identical passes, 121 dependency deferrals, zero failures. Ellipse trimming awaits `surface.cone_p2`; coincident boundaries await common Cone/Cylinder boundary adapters in #76/#133. The enum now retains both types, while analytic iso/boundary integration remains deferred. Shared cone/sphere enum dispatch remains coordinated in issue #76. Review follow-up narrows the native guard to exact cone dispatch, adds tolerance/constructor/flag regressions with native FFI safety tests validated locally.
 
 ## Handoff (2026-10-13): from one local swarm to pull requests
 
@@ -954,3 +954,85 @@ suite passes 173 units
 (97 green, 76 partial), with zero failures; the final API rerun and touched-unit
 perturbation also pass (6,463/6,463 detected). Committed reports total 435,272 cases:
 422,654 compared, 12,618 deferred, zero failed.
+
+
+## Kernel-aware Surface dispatch (2026-10-16, issue #76, draft PR #133)
+
+Common Surface evaluation and callbacks now retain the caller's Kernel. The context
+also follows implicit iso curves through generic Curve evaluation and its solvers;
+concrete B-spline/plane arithmetic is unchanged. SurfaceKind retains real Cone and
+Cylinder objects using the existing cone part 1 code. Common database reads,
+NURB/STEP evaluations, UV conversion, inversion subdomains, copies, adjustment and
+transform no longer discard their analytic class. Fallible copying/evaluation
+preflights 64-level geometry nesting; polymorphic reads balance the bounded reader
+counter even on errors. Successful null offsets remain representable by the
+`Result<Option<Surface>>` API.
+
+The Apple Clang native comparison passes cone part 1's 20,694 cases and the common
+unit's 16,615 compared cases, with zero failures and maximum relative error
+2.0125611729577195e-15. The common unit has 11 explicit deferrals: cone part 2 (10)
+and surface part 8 (1). Its 15,757 new Cone/Cylinder cases include 10,771 with numerical
+output beyond statuses and 4,986 status-only cases; guarded native recipes are
+excluded from that added coverage. Both units have no absolute floors. Primary
+sensitivity detects all 37,309 perturbations. Another 32 manual lazy-evaluator
+apex/adjacent-float probes compare bit-identically (separate from default totals).
+The 16 database recipes compare both readers on identical native-written records;
+a native ASCII stream may round the original geometry, so serialization is not
+claimed to be lossless.
+
+[Final GNU/Linux validation](https://github.com/Karl-VonRichter/solidcore/actions/runs/38870779906) on code `ce56aae6`
+passes all 182 selected units: 99 green, 83 partial, 465,289 total cases,
+452,754 compared, 12,535 deferred and zero failed. Both primary units are
+bit-identical on GNU C++. Full sensitivity detects 452,672/452,672 perturbations;
+82 empty outputs are unperturbed and 12,535 cases are deferred. All affected
+units are included. No tolerance or absolute floor changed.
+
+Formatting, strict plain/C++ Clippy, 1,215 workspace tests (including 1,193 core),
+two native FFI contract tests (27 filtered), WASM, license/source checks and the
+locked publish dry-run pass. The committed default reports come from this run.
+Seven `topology.brep_data` cone/cylinder read deferrals now compare (2,331 passed,
+48 deferred of 2,379). The topology solver keeps its 2,396 passed / 33 deferred;
+12 old iso-curve deferrals now name `surface.surface_p2`'s `GetNaturalUVDomain` gap.
+
+GNU validation uses Release/O2 kernel and shims, the normal difftest profile and
+unchanged floating-point flags. Default and sensitivity run as independent
+processes after one build. The fork's validation tree differs from `ce56aae6`
+only in its workflow; final PR changes after that code commit are reports/docs.
+Canonical CI awaits maintainer approval. Mac comparisons also use O2 for
+kernel/shims. The local 4 GB Linux VM could not complete the full runner build
+under memory pressure; its temporary validation container was removed.
+
+This integration leaves offsets/rebuilds with #71, sphere with #100 and cone
+intersections/dependency integrations with #131's owner.
+The merged #120 implementation is retained, with caller Kernel propagation through
+its new shared solver paths. #71's head c9aa85de has 26 reported failures; no
+older pass certifies that head. Cone
+trim/fast-drop virtual callbacks, part 9 iso/tessellation, torus/extrusion,
+curve-on-surface and B-spline cache-storage adapters remain explicit gaps. No cone
+null-offset numerical result is certified by this PR.
+
+
+## Paused at user request (2026-10-16)
+
+Draft PR: https://github.com/bherbruck/solidcore/pull/133. Branch
+`t3/kernel-surface-dispatch`, latest implementation `8cb9ff44`, merged main
+through `8f6a9378` (#120/#131/#128/#142). No additional implementation should
+continue until requested. The active 185-unit GNU run 38889088718 was cancelled
+to pause work; it does not certify the final merged source.
+
+Completed on 8cb9ff44: fmt, strict plain/C++ Clippy, 1,230 workspace tests
+(1,208 core), WASM, license/source checks and publish dry-run. Native full gate,
+sensitivity and focused FFI tests still need to finish on this revision.
+
+Last completed full GNU validation is f804bc5f, run 38884360383: 183 units,
+99 green / 84 partial, 466,597 total cases, 453,941 compared, 12,656 deferred,
+zero failed; sensitivity 453,859 detected / 453,859 perturbed, 82 empty outputs
+unperturbed; 1,218 workspace tests and eight focused FFI tests pass. Reports
+for that run are retained in `/tmp/sc133-premerge-ci-reports`, with its log in
+`/tmp/sc133-premerge-ci.log`; they have not replaced newer main's reports.
+
+Resume by checking live claims and main, finishing the current revision's native
+gate/sensitivity/FFI checks, verifying all fixed tolerances and floor policies,
+then refreshing reports, modules, findings, STATUS and the draft description.
+Never hand-edit PROGRESS. Remaining cone_p2/sphere/analytic callback and storage
+adapter gaps are recorded above; do not duplicate their numerical owners.

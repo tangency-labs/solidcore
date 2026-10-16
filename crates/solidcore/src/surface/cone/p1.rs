@@ -239,7 +239,7 @@ pub struct Cone {
 
 /// The cone's `CreateIsoParametricCurve` on its base parts (the virtual the
 /// inherited NURB rebuild calls).
-fn cone_iso_curve(
+pub(crate) fn cone_iso_curve(
     rev: &SurfOfRevolution,
     inside_out: bool,
     k: &Kernel,
@@ -260,7 +260,7 @@ fn cone_iso_curve(
     )?;
 
     // low work - when curve is degenerate don't bother making a circle or line
-    if iso.curve.is_degenerate(EFF_ZERO, None)? {
+    if iso.curve.is_degenerate(k, EFF_ZERO, None)? {
         return Ok(RevolutionIsoCurve {
             curve: Curve::from(iso.curve),
             max_gap_3d: iso.max_gap_3d,
@@ -1132,7 +1132,7 @@ impl Cone {
     pub fn max_analytic_domain(&self, k: &Kernel) -> Result<Extent2d> {
         if self.cylinder {
             // The v-domain is the domain of the generator curve, which is a line.
-            let v_dom = gen_max_analytic_domain(self.gen()?)?;
+            let v_dom = gen_max_analytic_domain(k, self.gen()?)?;
             return Ok(Extent2d::from_bounds(0.0, v_dom.min(), 360.0, v_dom.max()));
         }
 
@@ -1142,7 +1142,7 @@ impl Cone {
         // Get the apex parameter (status ignored).
         let apex = self.apex(k)?;
 
-        let v_dom_big = gen_max_analytic_domain(self.gen()?)?;
+        let v_dom_big = gen_max_analytic_domain(k, self.gen()?)?;
         if apex.is_cylinder {
             v_dom = v_dom_big;
         } else if apex.param <= v_dom.min() + EFF_ZERO {
@@ -1239,7 +1239,7 @@ impl Cone {
             Ok(nurb_uv) if self.rev.swap_uv => (SurfParamType::U, nurb_uv.x),
             Ok(nurb_uv) => (SurfParamType::V, nurb_uv.y),
             Err(e) if e.is_unported() || !self.rev.swap_uv => return Err(e),
-            Err(e) => match self.sweep_nurbs_param_written(inv.uv.x)? {
+            Err(e) => match self.sweep_nurbs_param_written(k, inv.uv.x)? {
                 Some(x) => (SurfParamType::U, x),
                 None => return Err(e),
             },
@@ -1263,7 +1263,7 @@ impl Cone {
     ///
     /// `InvalidInput` without polar curve (upstream dereferences `NULL`); those of the
     /// polar conversion.
-    pub fn convert_uv_from_step_to_nurbs(&self, _k: &Kernel, step_uv: Point2) -> Result<Point2> {
+    pub fn convert_uv_from_step_to_nurbs(&self, k: &Kernel, step_uv: Point2) -> Result<Point2> {
         // convert sweep coordinate
         let circle = self
             .rev
@@ -1276,7 +1276,7 @@ impl Cone {
         let (x, _exact) = self
             .rev
             .polar
-            .convert_to_nurbs_parameter(circle, step_uv.x, 0.0)?;
+            .convert_to_nurbs_parameter(k, circle, step_uv.x, 0.0)?;
         let mut nurbs_uv = Point2::new(x, 0.0);
 
         // get current STEP and NURB intervals switching on m_bSwapUV as needed
@@ -1318,7 +1318,7 @@ impl Cone {
     /// # Errors
     ///
     /// `InvalidInput` without polar curve; [`SolidError::Unported`].
-    fn sweep_nurbs_param_written(&self, step_u: f64) -> Result<Option<f64>> {
+    fn sweep_nurbs_param_written(&self, k: &Kernel, step_u: f64) -> Result<Option<f64>> {
         let circle = self
             .rev
             .polar_curve
@@ -1329,7 +1329,7 @@ impl Cone {
             ))?;
         self.rev
             .polar
-            .convert_to_nurbs_parameter_or_written(circle, step_u, 0.0)
+            .convert_to_nurbs_parameter_or_written(k, circle, step_u, 0.0)
     }
 
     /// The STEP parameters of the NURB parameters `nurbs_uv`
@@ -1598,11 +1598,22 @@ impl Cone {
         tol_3d: f64,
         uv_guess: Option<Point2>,
     ) -> Result<ConeStepInversion> {
+        self.step_inversion_on_domain(k, &self.rev.anal_uv_domain, point_on_surf, tol_3d, uv_guess)
+    }
+
+    pub(crate) fn step_inversion_on_domain(
+        &self,
+        k: &Kernel,
+        anal_domain: &Extent2d,
+        point_on_surf: Point3,
+        tol_3d: f64,
+        uv_guess: Option<Point2>,
+    ) -> Result<ConeStepInversion> {
         // mirror points on the negative side of the apex to the positive side
         let pos = self.positive_point(k, point_on_surf)?;
 
         // do the conversion
-        let mut inv = self.rev_step_inversion(k, pos.point, tol_3d, uv_guess)?;
+        let mut inv = self.rev_step_inversion(k, anal_domain, pos.point, tol_3d, uv_guess)?;
 
         // when point is on far side of apex - flip the Z coordinate about the apex point
         if pos.negated {
@@ -1617,18 +1628,13 @@ impl Cone {
     fn rev_step_inversion(
         &self,
         k: &Kernel,
+        anal_domain: &Extent2d,
         point_on_surf: Point3,
         tol_3d: f64,
         uv_guess: Option<Point2>,
     ) -> Result<ConeStepInversion> {
         let rev = &self.rev;
-        let r = rev.step_inversion_with_outputs(
-            k,
-            &rev.anal_uv_domain,
-            point_on_surf,
-            tol_3d,
-            uv_guess,
-        )?;
+        let r = rev.step_inversion_with_outputs(k, anal_domain, point_on_surf, tol_3d, uv_guess)?;
         Ok(ConeStepInversion {
             uv: r.uv,
             location: r.location,
@@ -1811,7 +1817,7 @@ pub fn total_coincidence_checker(
     };
 
     // First try equality operator.
-    if this.approx_eq(other)? {
+    if this.approx_eq(k, other)? {
         return Ok(Coincidence {
             coincident: true,
             reversed: Some(false),
@@ -1823,10 +1829,10 @@ pub fn total_coincidence_checker(
     }
 
     // Using end points, set bRev flag, and quit if not coincident (statuses ignored).
-    let pt00 = this.evaluate_point(this_domain.min())?;
-    let mut pt01 = this.evaluate_point(this_domain.max())?;
-    let pt10 = other.evaluate_point(other_domain.min())?;
-    let mut pt11 = other.evaluate_point(other_domain.max())?;
+    let pt00 = this.evaluate_point(k, this_domain.min())?;
+    let mut pt01 = this.evaluate_point(k, this_domain.max())?;
+    let pt10 = other.evaluate_point(k, other_domain.min())?;
+    let mut pt11 = other.evaluate_point(k, other_domain.max())?;
 
     let dist_s_s = pt00.distance(pt10);
     let dist_s_e = pt00.distance(pt11);
@@ -1862,8 +1868,8 @@ pub fn total_coincidence_checker(
         }
 
         // Both curves closed, same endpoints.  Check 1st derivs for orientation.
-        let pv1 = this.evaluate(this_domain.min(), 1, true, true)?;
-        let pv2 = other.evaluate(other_domain.min(), 1, true, true)?;
+        let pv1 = this.evaluate(k, this_domain.min(), 1, true, true)?;
+        let pv2 = other.evaluate(k, other_domain.min(), 1, true, true)?;
         let d1 = pv1.get(1).copied().unwrap_or(Vec3::ZERO);
         let d2 = pv2.get(1).copied().unwrap_or(Vec3::ZERO);
         let dot = d1.dot(d2);
@@ -1888,7 +1894,7 @@ pub fn total_coincidence_checker(
     };
 
     // Check interior.  For circles, one interior point is sufficient.
-    pt01 = this.evaluate_point(this_domain.evaluate(0.5))?;
+    pt01 = this.evaluate_point(k, this_domain.evaluate(0.5))?;
 
     // If reversed, parameterization could vary.
     let t2 = other_domain.evaluate(0.5);
@@ -1907,7 +1913,7 @@ pub fn total_coincidence_checker(
             _ => BIG_DOUBLE,
         }
     } else {
-        pt11 = other.evaluate_point(t2)?;
+        pt11 = other.evaluate_point(k, t2)?;
         pt01.distance(pt11)
     };
 

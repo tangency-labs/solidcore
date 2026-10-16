@@ -1360,14 +1360,14 @@ impl Plane {
 
         // locals
         let is_line =
-            matches!(curve.kind(), CurveKind::Line(_)) || curve.is_line(5, EFF_ZERO)?.is_some();
+            matches!(curve.kind(), CurveKind::Line(_)) || curve.is_line(k, 5, EFF_ZERO)?.is_some();
         let mut ivl = *interval;
 
         // Check the fairly trivial case of projecting a line to a plane.
         if is_line {
             // get 3d line endPts
-            let mut st_pnt_3d = curve.evaluate_point(ivl.min())?;
-            let mut end_pnt_3d = curve.evaluate_point(ivl.max())?;
+            let mut st_pnt_3d = curve.evaluate_point(k, ivl.min())?;
+            let mut end_pnt_3d = curve.evaluate_point(k, ivl.max())?;
 
             // Get Line 2d endPt projections to infinite plane
             let mut st_pnt_2d = self.project_point_to_uv_domain(st_pnt_3d);
@@ -1408,8 +1408,8 @@ impl Plane {
                     let _ = final_ivl.set_min_max(lo, hi);
 
                     // reevaluate crv[endpts]
-                    st_pnt_3d = curve.evaluate_point(final_ivl.min())?;
-                    end_pnt_3d = curve.evaluate_point(final_ivl.max())?;
+                    st_pnt_3d = curve.evaluate_point(k, final_ivl.min())?;
+                    end_pnt_3d = curve.evaluate_point(k, final_ivl.max())?;
                 }
             }
 
@@ -1574,7 +1574,7 @@ impl Plane {
         }
 
         // Quick check: other surface would have to be planar.
-        if !surface_is_planar(other, tol_3d)? {
+        if !surface_is_planar(k, other, tol_3d)? {
             return Ok(res);
         }
 
@@ -1627,7 +1627,7 @@ impl Plane {
                 for jj in 0..2 {
                     let (fi, fj) = (f64::from(ii), f64::from(jj));
                     corners0.push(self.evaluate_point(domain0.evaluate(fi, fj)));
-                    corners1.push(other.evaluate_point(domain1.evaluate(fi, fj))?);
+                    corners1.push(other.evaluate_point(k, domain1.evaluate(fi, fj))?);
                 }
             }
 
@@ -1665,7 +1665,7 @@ impl Plane {
                 Point2::new(0.72, 0.23),
             ];
             for uv1 in uvs {
-                let pt1 = other.evaluate_point(uv1)?;
+                let pt1 = other.evaluate_point(k, uv1)?;
                 let dist = plane_point_distance(plane_pnt0, plane_norm0, pt1)?;
 
                 if dist > max_dist {
@@ -1678,7 +1678,7 @@ impl Plane {
                 }
 
                 // Also check normals.
-                let norm1 = surface_evaluate_normal(other, uv1)?;
+                let norm1 = surface_evaluate_normal(k, other, uv1)?;
                 if !norm1.is_parallel_to(plane_norm0, ang_tol_deg) {
                     return Ok(res);
                 }
@@ -1832,7 +1832,7 @@ impl Plane {
         let mut crv1_degen = Vec::with_capacity(bdrys_3d1.len());
         for c in &bdrys_3d1 {
             crv1_degen.push(match c {
-                Some(c) => c.is_degenerate(EFF_ZERO, None)?,
+                Some(c) => c.is_degenerate(k, EFF_ZERO, None)?,
                 None => false,
             });
         }
@@ -1845,7 +1845,7 @@ impl Plane {
 
         for (ii, crv0) in bdrys_3d0.iter().enumerate() {
             let Some(crv0) = crv0 else { continue };
-            if crv0.is_degenerate(EFF_ZERO, None)? {
+            if crv0.is_degenerate(k, EFF_ZERO, None)? {
                 continue;
             }
 
@@ -1892,14 +1892,14 @@ impl Plane {
                     // Get the surface uv's from the edge curve params.
                     let (_uv0, uv_binorm0) = boundary_uv(domain0, ii, t0);
                     let (uv1, uv_binorm1) = boundary_uv(domain1, jj, t1);
-                    let norm1 = surface_evaluate_normal(other, uv1)?;
+                    let norm1 = surface_evaluate_normal(k, other, uv1)?;
 
                     if !norm1.is_parallel_to(norm0, ang_tol_deg) {
                         continue;
                     }
 
                     // Have to check 2nd order terms: cyl with seam in plane.
-                    let d2 = evaluate_2nd_derivatives(other, uv1)?;
+                    let d2 = evaluate_2nd_derivatives(k, other, uv1)?;
                     if out_of_plane(d2.du)
                         || out_of_plane(d2.dv)
                         || out_of_plane(d2.duu)
@@ -1919,7 +1919,7 @@ impl Plane {
                     } else {
                         // Range solution: edge-to-edge. Need to check binormals.
                         let binorm_3d0 = uv_binorm0.x * su0 + uv_binorm0.y * sv0;
-                        let (_, su1, sv1) = evaluate_1st_derivatives(other, uv1)?;
+                        let (_, su1, sv1) = evaluate_1st_derivatives(k, other, uv1)?;
                         let binorm_3d1 = uv_binorm1.x * su1 + uv_binorm1.y * sv1;
                         if binorm_3d0.dot(binorm_3d1) > 0.0 {
                             return Ok(res);
@@ -1932,7 +1932,7 @@ impl Plane {
         // If there is coincidence, then one surface completely contains the other.
         // Drop to this first because planes are easy.
         let uv1 = domain1.mid();
-        let pt1 = other.evaluate_point(uv1)?;
+        let pt1 = other.evaluate_point(k, uv1)?;
         let (success, _uv0, dist) =
             surface_drop_point(k, &Surface::from(self.clone()), pt1, domain0)?;
 
@@ -1943,7 +1943,7 @@ impl Plane {
 
         if success && dist <= tol_3d {
             // Point coincidence, check 2nd order terms, not just normals.
-            let d2 = evaluate_2nd_derivatives(other, uv1)?;
+            let d2 = evaluate_2nd_derivatives(k, other, uv1)?;
             if in_plane(norm0, &d2, ang_tol_deg) {
                 return Ok(res);
             }
@@ -1960,7 +1960,7 @@ impl Plane {
         }
 
         if success && dist <= tol_3d {
-            let d2 = evaluate_2nd_derivatives(other, uv1)?;
+            let d2 = evaluate_2nd_derivatives(k, other, uv1)?;
             if in_plane(norm0, &d2, ang_tol_deg) {
                 return Ok(res);
             }
@@ -1980,6 +1980,7 @@ impl Plane {
 ///
 /// Those of the curve evaluation (upstream ignores its status).
 pub fn is_grazing_intersection(
+    k: &Kernel,
     curve: &Curve,
     curve_param: f64,
     line: &Line,
@@ -1987,7 +1988,7 @@ pub fn is_grazing_intersection(
 ) -> Result<bool> {
     // Method: check tangents.  If parallel, then as long as the curve
     // has any curvature, it's a graze.
-    let curve_eval = curve.evaluate(curve_param, 2, false, true)?;
+    let curve_eval = curve.evaluate(k, curve_param, 2, false, true)?;
     let line_eval = line.evaluate(line_param, 1);
     let c1 = curve_eval.get(1).copied().unwrap_or(Vec3::ZERO);
     let c2 = curve_eval.get(2).copied().unwrap_or(Vec3::ZERO);
@@ -2038,13 +2039,13 @@ fn in_plane(norm0: Vec3, d2: &SecondDerivatives, ang_tol: f64) -> bool {
 }
 
 /// `SmSurface::Evaluate1stDerivatives(uv, TRUE, TRUE, ..)`.
-fn evaluate_1st_derivatives(s: &Surface, uv: Point2) -> Result<(Point3, Vec3, Vec3)> {
-    surface_p1::evaluate_1st_derivatives(s, uv, Side::Left, Side::Left)
+fn evaluate_1st_derivatives(k: &Kernel, s: &Surface, uv: Point2) -> Result<(Point3, Vec3, Vec3)> {
+    surface_p1::evaluate_1st_derivatives(k, s, uv, Side::Left, Side::Left)
 }
 
 /// `SmSurface::Evaluate2ndDerivatives(uv, TRUE, TRUE, ..)`.
-fn evaluate_2nd_derivatives(s: &Surface, uv: Point2) -> Result<SecondDerivatives> {
-    surface_p1::evaluate_2nd_derivatives(s, uv, Side::Left, Side::Left)
+fn evaluate_2nd_derivatives(k: &Kernel, s: &Surface, uv: Point2) -> Result<SecondDerivatives> {
+    surface_p1::evaluate_2nd_derivatives(k, s, uv, Side::Left, Side::Left)
 }
 
 /// The `SmBSplineCurve` part of a curve of a B-spline kind (upstream's slicing copy
@@ -2089,14 +2090,14 @@ fn transpose<T: Copy>(a: &mut [T], num_rows: usize) {
 // ---- unported callees ---------------------------------------------------------------------
 
 /// `crOther.IsPlanar(tol)`: a plane is planar; other kinds run `SmSurface::IsPlanar`.
-fn surface_is_planar(s: &Surface, tol: f64) -> Result<bool> {
-    Ok(s.is_planar(tol)?.is_planar)
+fn surface_is_planar(k: &Kernel, s: &Surface, tol: f64) -> Result<bool> {
+    Ok(s.is_planar(k, tol)?.is_planar)
 }
 
 /// `crOther.EvaluateNormal(uv, TRUE, TRUE, ..)`: the plane override; other kinds run
 /// `SmSurface::EvaluateNormal`.
-fn surface_evaluate_normal(s: &Surface, uv: Point2) -> Result<Vec3> {
-    s.evaluate_normal(uv, Side::Left, Side::Left)
+fn surface_evaluate_normal(k: &Kernel, s: &Surface, uv: Point2) -> Result<Vec3> {
+    s.evaluate_normal(k, uv, Side::Left, Side::Left)
 }
 
 /// `SmSurface::CreateNaturalUVTrimCurves(ctx, domain, SM_SP_V, FALSE, ..)`: the 3D

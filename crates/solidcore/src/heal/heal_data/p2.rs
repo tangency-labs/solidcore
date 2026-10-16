@@ -451,7 +451,7 @@ impl EdgeProps {
 
         // for every Edge->Edgeuse - Save MaxGap3d seen
         for eu in edgeuses {
-            let edge_ccw_edge_gap = eu1::edge_ccw_edge_gap(b, eu, false)?;
+            let edge_ccw_edge_gap = eu1::edge_ccw_edge_gap(k, b, eu, false)?;
             let edge_face_gap = eu1::max_edge_face_gap(k, b, eu, false)?;
 
             // save Max EdgeEndPt/CCWEdgeStartPt Gap
@@ -546,12 +546,14 @@ impl EdgeProps {
         let curve = edge::curve(b, edge_id)?
             .ok_or_else(|| SolidError::invalid_input(OP_EDGE, "edge without curve"))?;
         self.has_curve = true;
-        self.approx_edge_length_3d = curve.approximate_length(&self.edge_interval, 5, false)?.0;
+        self.approx_edge_length_3d = curve
+            .approximate_length(k, &self.edge_interval, 5, false)?
+            .0;
         self.natural_interval = curve.natural_interval();
 
         // Bad Degen Edge
         self.bad_degen_edge =
-            Tri::from(curve.is_degenerate(approx_tol_3d, Some(&self.edge_interval))?);
+            Tri::from(curve.is_degenerate(k, approx_tol_3d, Some(&self.edge_interval))?);
 
         // Bad UnContained Edge
         self.bad_uncontained_edge = Tri::from(
@@ -697,7 +699,7 @@ impl VertexProps {
         // for every Vertex->Vertexuse - Save MaxGap3d seen
         for vu in vertexuses {
             // Vertex/Edge Gap - Loop and Shell Vertices don't have Vertex/Edge gaps
-            if let Some(g) = vertexuse::vertex_edge_gap(b, vu, false)? {
+            if let Some(g) = vertexuse::vertex_edge_gap(k, b, vu, false)? {
                 let len = g.gap_3d;
                 let replace = match self.max_gap_3d_vtx_edge {
                     None => true,

@@ -478,8 +478,9 @@ fn nl_dir(param: SurfParamType) -> Direction {
 // ---- unported SmSurface methods ------------------------------------------------------
 
 /// `SmSurface::EvaluateNormal(uv, TRUE, TRUE, normal)`.
-fn evaluate_normal(srf: &BSplineSurface, uv: Point2) -> Result<Vec3> {
+fn evaluate_normal(k: &Kernel, srf: &BSplineSurface, uv: Point2) -> Result<Vec3> {
     crate::surface::surface::p7::base_evaluate_normal(
+        k,
         srf,
         uv,
         crate::nurbs::knots::Side::Left,
@@ -515,13 +516,14 @@ fn surface_create_offset_surface(
 /// `SmSurface::IsDegenerateCurve` (the base body, on a copy of the B-spline as an
 /// [`SmSurface`](crate::surface::surface::Surface)).
 fn surface_is_degenerate_curve(
+    k: &Kernel,
     srf: &BSplineSurface,
     angle_tol_deg: f64,
     uv_domain: Option<&Extent2d>,
     tol_3d: f64,
 ) -> Result<bool> {
     let s = crate::surface::surface::Surface::from(srf.clone());
-    crate::surface::surface::p1::base_is_degenerate_curve(&s, angle_tol_deg, uv_domain, tol_3d)
+    crate::surface::surface::p1::base_is_degenerate_curve(k, &s, angle_tol_deg, uv_domain, tol_3d)
 }
 
 /// `SmSurface::LocalPointSolve(domain, SM_SO_INTERSECT, point, guess, ..)`: whether it
@@ -590,6 +592,7 @@ fn is_singularity(
 /// `SmSurface::IsClosed(domain, dir)` (unit `surface.surface_p7`), virtual:
 /// `SmPlane::IsClosed` is an inline override returning FALSE (`SmPlane.h:432`).
 fn is_closed(
+    k: &Kernel,
     surface: &crate::surface::surface::Surface,
     srf: &BSplineSurface,
     domain: &Extent2d,
@@ -598,7 +601,7 @@ fn is_closed(
     if let crate::surface::surface::SurfaceKind::Plane(p) = surface.kind() {
         return Ok(p.is_closed().0);
     }
-    Ok(crate::surface::surface::p7::base_is_closed(srf, domain, dir, None, false)?.0)
+    Ok(crate::surface::surface::p7::base_is_closed(k, srf, domain, dir, None, false)?.0)
 }
 
 impl BSplineSurface {
@@ -1074,12 +1077,13 @@ impl BSplineSurface {
     /// Those of `SmSurface::IsDegenerateCurve`.
     pub fn is_degenerate_curve(
         &self,
+        k: &Kernel,
         angle_tol_deg: f64,
         uv_domain: Option<&Extent2d>,
         tol_3d: f64,
     ) -> Result<bool> {
         // gwc: for now - pass the call along
-        surface_is_degenerate_curve(self, angle_tol_deg, uv_domain, tol_3d)
+        surface_is_degenerate_curve(k, self, angle_tol_deg, uv_domain, tol_3d)
     }
 
     /// Whether the surface is parallel to `vector`: all control points of every u row
@@ -1178,6 +1182,7 @@ impl BSplineSurface {
     /// `SmSurface::GetFace`. `SM_ERR` without NURB (upstream crashes).
     pub fn calculate_bounding_box(
         &self,
+        k: &Kernel,
         uv_domain: &Extent2d,
         req: &BoundingBoxRequest<'_>,
     ) -> Result<BoundingBoxes> {
@@ -1272,7 +1277,7 @@ impl BSplineSurface {
             let mut norm = [Vec3::UNDEF; V_CNT];
 
             // get center normal
-            norm[9] = evaluate_normal(self, uv_domain.evaluate(0.5, 0.5))?;
+            norm[9] = evaluate_normal(k, self, uv_domain.evaluate(0.5, 0.5))?;
 
             if planar {
                 pol.add_vector(norm[9], None);
@@ -1281,10 +1286,10 @@ impl BSplineSurface {
                 }
             } else {
                 // get corner normals
-                norm[5] = evaluate_normal(self, uv_domain.evaluate(0.0, 0.0))?;
-                norm[6] = evaluate_normal(self, uv_domain.evaluate(1.0, 0.0))?;
-                norm[7] = evaluate_normal(self, uv_domain.evaluate(1.0, 1.0))?;
-                norm[8] = evaluate_normal(self, uv_domain.evaluate(0.0, 1.0))?;
+                norm[5] = evaluate_normal(k, self, uv_domain.evaluate(0.0, 0.0))?;
+                norm[6] = evaluate_normal(k, self, uv_domain.evaluate(1.0, 0.0))?;
+                norm[7] = evaluate_normal(k, self, uv_domain.evaluate(1.0, 1.0))?;
+                norm[8] = evaluate_normal(k, self, uv_domain.evaluate(0.0, 1.0))?;
 
                 // Build a central vector that can be used as a good PolarBox base vector
                 norm[0] = if n <= 2 && m <= 2 {
@@ -1296,10 +1301,10 @@ impl BSplineSurface {
                 // when we have a midPoint vector for the polar box
                 if norm[0].length_squared() > EFF_ZERO_SQ {
                     // get mid side normals
-                    norm[1] = evaluate_normal(self, uv_domain.evaluate(0.0, 0.5))?;
-                    norm[2] = evaluate_normal(self, uv_domain.evaluate(1.0, 0.5))?;
-                    norm[3] = evaluate_normal(self, uv_domain.evaluate(0.5, 0.0))?;
-                    norm[4] = evaluate_normal(self, uv_domain.evaluate(0.5, 1.0))?;
+                    norm[1] = evaluate_normal(k, self, uv_domain.evaluate(0.0, 0.5))?;
+                    norm[2] = evaluate_normal(k, self, uv_domain.evaluate(1.0, 0.5))?;
+                    norm[3] = evaluate_normal(k, self, uv_domain.evaluate(0.5, 0.0))?;
+                    norm[4] = evaluate_normal(k, self, uv_domain.evaluate(0.5, 1.0))?;
 
                     // build the polar box by adding all the vectors
                     pol.reset();
@@ -1321,11 +1326,11 @@ impl BSplineSurface {
         // Do a little work to try to get the polar box to be centered - use the
         // derivatives of the midpoints to establish the base line vector.
         if let (Some(pol), false) = (polar_box.as_mut(), analytic) {
-            let n0 = evaluate_normal(self, uv_domain.evaluate(0.5, 0.5))?;
+            let n0 = evaluate_normal(k, self, uv_domain.evaluate(0.5, 0.5))?;
             pol.add_vector(n0, None);
-            let n1 = evaluate_normal(self, uv_domain.evaluate(1.0, 0.5))?;
+            let n1 = evaluate_normal(k, self, uv_domain.evaluate(1.0, 0.5))?;
             pol.add_vector(n1, None);
-            let n2 = evaluate_normal(self, uv_domain.evaluate(0.5, 1.0))?;
+            let n2 = evaluate_normal(k, self, uv_domain.evaluate(0.5, 1.0))?;
             pol.add_vector(n2, None);
 
             if let Some(g) = polar_guess {
@@ -1863,7 +1868,7 @@ impl BSplineSurface {
         }
 
         // when surface is closed in U direction and solution on Seam
-        if is_closed(surface, self, anal_domain, SurfParamType::U)? {
+        if is_closed(k, surface, self, anal_domain, SurfParamType::U)? {
             let ivl = Extent1d::from_min_max(anal_domain.min().x, anal_domain.max().x);
             if ivl.is_value_on_boundary(uv.x, EFF_ZERO).0 {
                 location = LocationType::USeam;
@@ -1871,7 +1876,7 @@ impl BSplineSurface {
         }
 
         // when surface is closed in V direction and solution on Seam
-        if is_closed(surface, self, anal_domain, SurfParamType::V)? {
+        if is_closed(k, surface, self, anal_domain, SurfParamType::V)? {
             let ivl = Extent1d::from_min_max(anal_domain.min().y, anal_domain.max().y);
             if ivl.is_value_on_boundary(uv.y, EFF_ZERO).0 {
                 location = if location == LocationType::Interior {
@@ -2259,6 +2264,7 @@ mod tests {
 
     #[test]
     fn back_edges_are_unported() {
+        let k = &Kernel::default();
         let s = bilinear();
         assert!(s.is_kind_of(BSplineSurface::TYPE).unwrap());
         assert!(!s.is_kind_of(PLANE_TYPE).unwrap());
@@ -2267,7 +2273,7 @@ mod tests {
             ..BoundingBoxRequest::default()
         };
         assert!(s
-            .calculate_bounding_box(&s.natural_uv_domain(), &req)
+            .calculate_bounding_box(k, &s.natural_uv_domain(), &req)
             .is_ok());
         // the polar box uses SmSurface::EvaluateNormal (surface::surface::p7)
         let req = BoundingBoxRequest {
@@ -2275,7 +2281,7 @@ mod tests {
             ..BoundingBoxRequest::default()
         };
         assert!(s
-            .calculate_bounding_box(&s.natural_uv_domain(), &req)
+            .calculate_bounding_box(k, &s.natural_uv_domain(), &req)
             .is_ok());
         assert!(s.is_parallel_to_vector(Vec3::new(0.0, 0.0, 0.0)).unwrap());
     }
