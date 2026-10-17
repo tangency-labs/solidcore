@@ -1144,7 +1144,7 @@ impl IntersectorBrep<H> for Two {
         uv: Point2,
         pc: &mut PointClassification<H>,
     ) -> solidcore::Result<()> {
-        let b = self.brep_r(face)?;
+        let b = self.brep_m(face)?;
         let mut pe: PointClassification<EntityRef> = PointClassification::new(pc.tolerance());
         let r = point_classify(
             k,
