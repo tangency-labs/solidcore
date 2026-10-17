@@ -25,11 +25,12 @@
 //! [`ProtoBrep`](solidcore::topology::proto_topology::ProtoBrep) queries with them.
 //!
 //! Deferred: everything past `SmBrep::MakeEdgeInFace` (unit `topology.brep_p5`), the
-//! merges of `SmPointClassification::MergeIntoObject` (units `topology.brep_p9`,
-//! `topology.vertex`), `UpdateFaces` (`SmFace::CalculateUVDomainFromUVTrimCurves`, unit
+//! merges of `SmPointClassification::MergeIntoObject` (unresolved region/face
+//! owners and vertex methods), `UpdateFaces` (`SmFace::CalculateUVDomainFromUVTrimCurves`, unit
 //! `topology.face_p1`), the B-rep walks of `sm_AreConnected` and point classifications on
 //! bare topology (units `topology.edge`, `topology.vertex`, `topology.face_p2`), and
-//! `SmProtoVertex::ContainsPoint` (unit `query.face_p2`).
+//! `SmProtoVertex::ContainsPoint` (unit `query.face_p2`). Bare-edge merges without
+//! an arena match the native guard refusal; they do not certify topology mutation.
 
 use serde_json::{json, Value};
 

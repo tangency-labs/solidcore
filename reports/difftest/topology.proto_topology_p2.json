@@ -102,16 +102,12 @@
       "values_compared": 50
     },
     {
-      "deferred": {
-        "symbol": "SmBrep::MakeVertexSplitEdge",
-        "unit": "topology.brep_p9"
-      },
       "max_rel_err": 0.0,
       "name": "gen0009",
-      "outcome": "deferred",
-      "pass": false,
+      "outcome": "pass",
+      "pass": true,
       "source": "generated:seed=11501319568046903688",
-      "values_compared": 0
+      "values_compared": 55
     },
     {
       "max_rel_err": 0.0,
@@ -183,8 +179,8 @@
     },
     {
       "deferred": {
-        "symbol": "SmBrep::MakeShellVertex",
-        "unit": "topology.brep_p9"
+        "symbol": "SmRegion::GetBrep",
+        "unit": "topology.shell"
       },
       "max_rel_err": 0.0,
       "name": "gen0018",
@@ -743,8 +739,8 @@
     },
     {
       "deferred": {
-        "symbol": "SmBrep::MakeShellVertex",
-        "unit": "topology.brep_p9"
+        "symbol": "SmRegion::GetBrep",
+        "unit": "topology.shell"
       },
       "max_rel_err": 0.0,
       "name": "gen0082",
@@ -755,8 +751,8 @@
     },
     {
       "deferred": {
-        "symbol": "SmBrep::MakeShellVertex",
-        "unit": "topology.brep_p9"
+        "symbol": "SmRegion::GetBrep",
+        "unit": "topology.shell"
       },
       "max_rel_err": 0.0,
       "name": "gen0083",
@@ -1259,8 +1255,8 @@
     },
     {
       "deferred": {
-        "symbol": "SmBrep::MakeShellVertex",
-        "unit": "topology.brep_p9"
+        "symbol": "SmRegion::GetBrep",
+        "unit": "topology.shell"
       },
       "max_rel_err": 0.0,
       "name": "gen0140",
@@ -2127,8 +2123,8 @@
     },
     {
       "deferred": {
-        "symbol": "SmBrep::MakeShellVertex",
-        "unit": "topology.brep_p9"
+        "symbol": "SmRegion::GetBrep",
+        "unit": "topology.shell"
       },
       "max_rel_err": 0.0,
       "name": "gen0238",
@@ -4763,8 +4759,8 @@
     },
     {
       "deferred": {
-        "symbol": "SmBrep::MakeShellVertex",
-        "unit": "topology.brep_p9"
+        "symbol": "SmRegion::GetBrep",
+        "unit": "topology.shell"
       },
       "max_rel_err": 0.0,
       "name": "gen0542",
@@ -5111,8 +5107,8 @@
     },
     {
       "deferred": {
-        "symbol": "SmBrep::MakeShellVertex",
-        "unit": "topology.brep_p9"
+        "symbol": "SmRegion::GetBrep",
+        "unit": "topology.shell"
       },
       "max_rel_err": 0.0,
       "name": "gen0581",
@@ -5667,8 +5663,8 @@
     },
     {
       "deferred": {
-        "symbol": "SmBrep::MakeShellVertex",
-        "unit": "topology.brep_p9"
+        "symbol": "SmRegion::GetBrep",
+        "unit": "topology.shell"
       },
       "max_rel_err": 0.0,
       "name": "gen0644",
@@ -7642,16 +7638,12 @@
       "values_compared": 352
     },
     {
-      "deferred": {
-        "symbol": "SmBrep::MakeVertexSplitEdge",
-        "unit": "topology.brep_p9"
-      },
       "max_rel_err": 0.0,
       "name": "gen0868",
-      "outcome": "deferred",
-      "pass": false,
+      "outcome": "pass",
+      "pass": true,
       "source": "generated:seed=11501319568046904547",
-      "values_compared": 0
+      "values_compared": 64
     },
     {
       "max_rel_err": 0.0,
@@ -9243,8 +9235,8 @@
     },
     {
       "deferred": {
-        "symbol": "SmBrep::MakeShellVertex",
-        "unit": "topology.brep_p9"
+        "symbol": "SmRegion::GetBrep",
+        "unit": "topology.shell"
       },
       "max_rel_err": 0.0,
       "name": "gen1052",
@@ -9599,8 +9591,8 @@
     },
     {
       "deferred": {
-        "symbol": "SmBrep::MakeShellVertex",
-        "unit": "topology.brep_p9"
+        "symbol": "SmRegion::GetBrep",
+        "unit": "topology.shell"
       },
       "max_rel_err": 0.0,
       "name": "gen1092",
@@ -10335,8 +10327,8 @@
     },
     {
       "deferred": {
-        "symbol": "SmBrep::MakeShellVertex",
-        "unit": "topology.brep_p9"
+        "symbol": "SmRegion::GetBrep",
+        "unit": "topology.shell"
       },
       "max_rel_err": 0.0,
       "name": "gen1177",
@@ -10707,8 +10699,8 @@
     },
     {
       "deferred": {
-        "symbol": "SmBrep::MakeShellVertex",
-        "unit": "topology.brep_p9"
+        "symbol": "SmRegion::GetBrep",
+        "unit": "topology.shell"
       },
       "max_rel_err": 0.0,
       "name": "gen1221",
@@ -10802,16 +10794,12 @@
       "values_compared": 110
     },
     {
-      "deferred": {
-        "symbol": "SmBrep::MakeVertexSplitEdge",
-        "unit": "topology.brep_p9"
-      },
       "max_rel_err": 0.0,
       "name": "gen1232",
-      "outcome": "deferred",
-      "pass": false,
+      "outcome": "pass",
+      "pass": true,
       "source": "generated:seed=11501319568046904911",
-      "values_compared": 0
+      "values_compared": 100
     },
     {
       "max_rel_err": 0.0,
@@ -11706,16 +11694,12 @@
       "values_compared": 0
     },
     {
-      "deferred": {
-        "symbol": "SmBrep::MakeVertexSplitEdge",
-        "unit": "topology.brep_p9"
-      },
       "max_rel_err": 0.0,
       "name": "gen1335",
-      "outcome": "deferred",
-      "pass": false,
+      "outcome": "pass",
+      "pass": true,
       "source": "generated:seed=11501319568046905014",
-      "values_compared": 0
+      "values_compared": 100
     },
     {
       "max_rel_err": 0.0,
@@ -11791,8 +11775,8 @@
     },
     {
       "deferred": {
-        "symbol": "SmBrep::MakeShellVertex",
-        "unit": "topology.brep_p9"
+        "symbol": "SmRegion::GetBrep",
+        "unit": "topology.shell"
       },
       "max_rel_err": 0.0,
       "name": "gen1344",
@@ -12199,8 +12183,8 @@
     },
     {
       "deferred": {
-        "symbol": "SmBrep::MakeShellVertex",
-        "unit": "topology.brep_p9"
+        "symbol": "SmRegion::GetBrep",
+        "unit": "topology.shell"
       },
       "max_rel_err": 0.0,
       "name": "gen1389",
@@ -12591,8 +12575,8 @@
     },
     {
       "deferred": {
-        "symbol": "SmBrep::MakeShellVertex",
-        "unit": "topology.brep_p9"
+        "symbol": "SmRegion::GetBrep",
+        "unit": "topology.shell"
       },
       "max_rel_err": 0.0,
       "name": "gen1435",
@@ -12971,8 +12955,8 @@
     },
     {
       "deferred": {
-        "symbol": "SmBrep::MakeShellVertex",
-        "unit": "topology.brep_p9"
+        "symbol": "SmRegion::GetBrep",
+        "unit": "topology.shell"
       },
       "max_rel_err": 0.0,
       "name": "gen1478",
@@ -13411,15 +13395,15 @@
     }
   ],
   "cases_both_errored": 0,
-  "cases_deferred": 286,
+  "cases_deferred": 282,
   "cases_failed": 0,
-  "cases_passed": 1247,
+  "cases_passed": 1251,
   "cases_total": 1533,
   "deferred_by_unit": {
-    "topology.brep_p9": 20,
     "topology.edge": 105,
     "topology.face_p1": 41,
     "topology.face_p2": 60,
+    "topology.shell": 16,
     "topology.vertex": 60
   },
   "max_rel_err": 0.0,

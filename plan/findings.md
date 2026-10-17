@@ -5927,3 +5927,71 @@ independent p6 integration.
   `MergeEdge` / `MergeVertex`'s `Relate` updates. When those adapters are wired,
   relation state must become mutable and preserve updates for later iterations;
   this integration requirement is also recorded in the module's Deviations.
+
+## topology.brep_p9: dependency-limited independent port (PR #183)
+
+- **Compared subset.** Numerical source `47758e96`: 604 default cases (92 fixed,
+  512 generated), 497 bit-identical comparisons, 107 dependency deferrals, no
+  failures and no absolute floors. All 497 perturbations are detected. With 4096
+  generated seeds: 4188 cases, 3471 comparisons, 717 deferrals, no failures and
+  `max_rel_err=0`. The default deterministic report is committed; the extended run
+  uses `--no-report`.
+- **Actual behavior covered.** `MakeVertexSplitEdge`'s editing-disabled,
+  out-of-domain and nearby-endpoint refusals preserve the returned vertex together
+  with `SM_ERR`. Tests cover the strict/scaled parameter boundary, start-before-end
+  precedence, real `SmLine`, B-spline and rational/constant curves, opposite primary
+  edge uses, non-normalized domains/subdomains and scales from `1e-6` to `1e6`.
+  A nonlinear curve with tolerances `[1.15,2]` distinguishes the 2-sample start
+  length from its 10-sample recheck and selects the end vertex. Refusal snapshots
+  include status/identity and unchanged semantic topology/geometry; these are
+  branch/status comparisons, not successful topology-mutation certification.
+- **Point classification.** `merge_into_brep` takes an explicit mutable arena,
+  resolved target, handle mapping and notification storage. A refused edge split
+  updates the class/object fields directly, retains an unset parameter flag and
+  returns before SSS relocation/tolerance adjustment. Native fixtures compare this
+  early return and vertex-merge positions/tolerances. The legacy opaque-handle API
+  cannot resolve an edge's arena and now reports missing caller data; region/face
+  owner lookups retain the actual owning units' deferrals. The merge helper with
+  existing arena ids calls the real p9 entrypoint.
+- **Unimplemented/uncertified continuation.** The missing owning-list operations
+  (`GetRegions`, `GetFaces` and default `GetInfiniteRegion`) and UV-trim splitter
+  are part 1. `MakeShellVertexTopology` is part 2. Face PRE_EDIT notifications are
+  `topology.face_p3`. Generic `DropCurve` is `intersect.surface_drop_lib_p3`, and
+  `DropAndTrimCurve` is part 1 of that family. Plane projection calls its existing
+  concrete override. These calls stop the owned functions before their remaining
+  construction/orientation/ray-selection bodies; those bodies remain integration
+  work, rather than being simulated. Interior splitting/insertion defer before
+  orphan allocations and native pre-barrier notifications. Owned Rust geometry
+  inputs are dropped on errors/deferrals. Supplied UV trims/drop-failure records,
+  seam copies, drop retries, optional-shell/bounding-box ray selection, attributed
+  and callback-driven construction, late-failure mutation state and successful
+  p9 topology mutations are not certified. This unit is partial, not green.
+- **Downstream evidence.** All eight affected runners pass with zero failures:
+  p9, point classification, curve-class p3, proto-topology p1/p2/p3 and merge p1/p5.
+  Proto-topology p2's four newly compared cases are the existing native refusal of
+  bare edges without B-rep owners; no native mutation executes there. Its 16 old
+  region p9 deferrals now stop at `topology.shell::SmRegion::GetBrep`. Merge p1's
+  three old p9 deferrals now stop at the default region (part 1, one case) or
+  shell-vertex topology (part 2, two cases). No other unit is promoted.
+- **Environment and review.** Clean pinned upstream `c9c5979`, Ubuntu 26.04.1
+  x86_64 / GCC 15.2.0 / Rust 1.98.0 on runner-codex-02. The standard optimized
+  `difftest` profile and C++ `-O2 -ffp-contract=off -fno-fast-math` are used without
+  platform/build/workflow patches or bundled open dependency PRs. Native-enabled
+  strict workspace Clippy passes with `--profile difftest`; two concurrent compiler
+  jobs exceeded this VM's 8 GiB, so final native checks use one job under nice.
+  Plain workspace Clippy, formatting, all 1269 kernel tests and WASM checking pass
+  on macOS aarch64 / Rust 1.98.0. Port-pr-review checked the full independent diff,
+  owned source prefixes, defaults, status/output lifecycle, guard coverage,
+  ownership tags, resource bounds and explicit remaining coverage. Source review
+  fixed the endpoint parameter-flag lifecycle and insertion output contract.
+  It also removed the FFI wrapper's unjustified sign restriction: finite negative
+  raw tolerances are defined because `SmZoneTol3d` applies `fabs`. Two native
+  regressions compare that conversion for a B-spline and real line.
+  Later source edits only clarify comments; reports/notes record the tested
+  numerical checkpoint.
+- **Final integration gate (PR #183).** The complete native `--green` run passes:
+  `difftest: 198 unit(s), 108 passed, 90 partial, 0 failed`. The final
+  `--status-of topology.brep_p9` reports `partial`. All eight affected reports
+  regenerate byte-identical to the committed focused reports. This gate uses the
+  independent branch through official main `b4765734` and the functional source
+  checkpoint above; the final commit adds validation documentation only.
