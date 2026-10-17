@@ -6170,6 +6170,69 @@ independent p6 integration.
   relation state must become mutable and preserve updates for later iterations;
   this integration requirement is also recorded in the module's Deviations.
 
+
+## offset.offset_executive_p1 (partial, PR #175, 2026-10-17)
+
+The implementation, native adapter, FFI wrapper, fixtures and differential runner
+are included directly in the PR rather than depending on a personal WIP branch.
+Settings, correspondence, synchronization and extended-surface caching are
+implemented; higher construction paths stop at their actual unavailable callees,
+with owner-tagged `Unported` errors and documented continuations.
+
+- **Extension input contract corrected after review.** The first investigation
+  incorrectly treated signed geometry-creator distances as reachable executive
+  inputs. `OffsetBrep` (`SmOffsetExecutive.cpp:114-120`) and `ShellBrep`
+  (`:206-223`) use `fabs(dOffsetDistance)` for the creator and carry the sign
+  through `SetInset`; the local-operation caller (`SmBrep.cpp:12004-12008`)
+  uses half a bounding-sphere radius. The executive's internal extension
+  magnitude is therefore nonnegative. The FFI and native adapter reject
+  negative extension magnitudes before entering C++, with dedicated guard tests.
+  Signed zero and positive tiny/large magnitudes remain covered. Signed
+  constructor/getter probes and inset flags remain valid separate coverage;
+  negative public offset distances are not rejected. HANG-16 records the
+  underlying surface routine's direct negative-distance hazard, not a blocker
+  reachable through the real executive entry points.
+- **Equal-minimum relation order follows the established convention (ND-2).**
+  `SmRelation::GetSeconds` iterates pointer-hashed unordered membership, and
+  `sm_SortEdgeuses` swaps only for strictly greater minima. Following this
+  file's existing `geom.tol` convention, both comparison snapshots sort only
+  contiguous groups with exactly equal measured minimum parameters by traversal
+  id. The original two tie regressions remain. Distinct-minimum ordering,
+  membership, multiplicity, null padding, geometry, statuses and traversal
+  records are unchanged; no tolerance is relaxed. Regression tests verify that
+  normalization does not hide those differences. The deterministic kernel's
+  actual sorting algorithm is unchanged.
+- **Normal aggregate validation.** The corrected runner completes without the
+  isolated-case selector: 691 cases (91 fixtures and 600 fixed-seed generated),
+  633 passed, 0 failed, 17 deferred and 41 native fixture-construction rejections.
+  Maximum relative error is `2.5139756042650037e-14`, within `1e-9` with no
+  absolute floors. Sensitivity detects all 633 perturbations. The standard report
+  is `reports/difftest/offset.offset_executive_p1.json`; the obsolete Markdown
+  investigation is removed. Rejected inputs and deferred paths are not passes.
+  Validation uses pinned upstream `c9c5979`, GNU g++ 16.2.1 and Rust 1.98.0 on
+  Linux x86_64.
+- **Remaining dependencies and coverage.** Twelve cases need
+  `topology.brep_p9::SmBrep::MakeVertexSplitEdge`; one each needs
+  `heal.stitch_p2::SmStitch::StitchIntoSolid`,
+  `offset.offset_geometry_creation::SmOffsetGeometryCreation::VertexOffset`,
+  `topology.brep_p4::SmBrep::ShrinkGeometry`,
+  `topology.brep_p5::SmBrep::RemoveFaces`, and
+  `topology.edgeuse_p3::SmEdgeuse::NormalizedEvaluate`. Construction continuations
+  behind these actual calls remain documented rather than reported as completed.
+  Other unavailable construction branches have owner-tagged adapters but are not
+  certified by empty/no-op cases. Review corrections also cover custom tangency
+  snapshots, orientation-sensitive endpoint notifications, cache identity, strict
+  length filtering, gap order, actual topology-solver dispatch and both retained
+  equal-minimum regressions.
+- **Broader checks and limitation.** Formatting and C++-enabled workspace Clippy
+  (all targets, warnings denied) pass. All 1299 kernel tests, 20 runner tests and
+  14 FFI tests pass, including execution of the direct native negative-distance
+  guard test; the wasm check passes. A full `--green --no-report` run selected
+  198 units but hit its 1200-second limit after 107 PASS and 67 PARTIAL summaries,
+  with no reported failures. It last completed `query.edge` and did not reach
+  this unit at position 196. The standalone offset run above passed the partial
+  gate; no completed full-suite baseline pass is claimed.
+
 ## topology.face_p1 (`SmFace.cpp` part 1: `MoveSeam`, `SplitAtSeam`, `CreateOrientedTrimBoundary`, `CalculateUVDomainFromUVTrimCurves`, ...; PR #148, 2026-10-16; partial, no disagreements)
 
 - **Mostly deferred by design.** Every mutating member starts with `SmFace::Notify`
