@@ -3939,11 +3939,12 @@ fn run_transform(obj: &TObjIn, op: &TOpIn) -> Result<Vec<f64>, Fail> {
         },
     };
     let mut poly_target = poly.as_mut().map(|b| PolyBrepTarget { brep: b, env: &mut env });
+    let mut brep = solidcore::topology::Brep::new();
     let target = match obj {
         TObjIn::Composite { .. } | TObjIn::CrvOnSurf { .. } => special.as_mut().map(TransformObject::Curve),
         TObjIn::Curve { .. } => curve.as_mut().map(TransformObject::Curve),
         TObjIn::Plane { .. } | TObjIn::Bsurf { .. } => surface.as_mut().map(TransformObject::Surface),
-        TObjIn::Brep => Some(TransformObject::Brep),
+        TObjIn::Brep => Some(TransformObject::Brep(&mut brep)),
         TObjIn::Poly | TObjIn::PolyPts { .. } => poly_target
             .as_mut()
             .map(|t| TransformObject::PolyBrep(t as &mut dyn PolyBrepTransform)),

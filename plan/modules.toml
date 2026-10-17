@@ -2895,10 +2895,10 @@ soft_depends_on = ["curve.curve_p5", "curve.curve_p6", "geom.axis2_placement", "
 est_lines = 2193
 layer = 47
 tests = ["prog_test:my_test_tsurf_cyl_creation_2d", "prog_test:my_test_tsurf_cyl_creation_3d", "prog_test:my_test_tsurf_cyl_creation_fast", "prog_test:my_test_tsurf_creation", "SM_API_test:TestSmCreatePlanarCircle", "SM_API_test:TestIntersectionOutputStatus"]
-status = "todo"
+status = "partial"
 claimed_by = ""
 claimed_at = ""
-notes = "14 fns; largest: SmBrep::RemoveTopologicalEdgesAndVertices, SmBrep::CombineCoincidentVertices, SmBrep::DeleteTopologicalVertex, SmBrep::GlueVertices; cycle back-edges (call into later units; stub or co-port): topology.brep_p3(8), topology.brep_p2(5), heal.stitch_p1(3), topology.brep_p9(3), heal.stitch_p2(2); unit-SCC #22 (220 units); hazards: ptr-iter; 200 upstream test entry points reach this unit"
+notes = "PARTIAL (PR #194): independent dependency-limited port; 724 native differential cases (212 unique fixtures + 512 deterministic generated), 678 passed, 0 failed, 46 deferred (topology.brep_p1 10, topology.brep_p2 32, topology.brep_p4 2, topology.brep_p9 2), max_rel_err=0, no absolute floors. 409 numerical-stage comparisons certify only the coincident-vertex target point/tolerance; 269 whole-operation comparisons cover refusals/output lifecycle, empty selections and identity transforms, including RemoveFaces context mark counter/lock lifetime. Sensitivity detects 678/678 perturbations; --seeds 4096 gives 4308 cases, 4136 pass, 172 deferred, 0 failed, max_rel_err=0. Successful topology edits, nonidentity transforms, post-barrier continuations and pending-reader attribute cleanup remain unimplemented/uncertified; see plan/findings.md. Real native operations, guarded FFI and applicable back-edges included; no dependency PR bundled or other unit promoted. 14 fns; largest: SmBrep::RemoveTopologicalEdgesAndVertices, SmBrep::CombineCoincidentVertices, SmBrep::DeleteTopologicalVertex, SmBrep::GlueVertices; cycle back-edges (call into later units; stub or co-port): topology.brep_p3(8), topology.brep_p2(5), heal.stitch_p1(3), topology.brep_p9(3), heal.stitch_p2(2); unit-SCC #22 (220 units); hazards: ptr-iter; 200 upstream test entry points reach this unit"
 
 [[unit]]
 id = "blend.fillet_geom_p1"

@@ -28,7 +28,7 @@ const OP_ROTATE: &str = "topology::proto_topology::p1::api_rotate";
 /// `sm_TransformIndependentObject`, by kind).
 pub enum TransformObject<'a> {
     /// An `SmBrep`.
-    Brep,
+    Brep(&'a mut crate::topology::Brep),
     /// An `SmPolyBrep` (with what its notifications need; see [`PolyBrepTarget`]).
     PolyBrep(&'a mut dyn PolyBrepTransform),
     /// An `SmCurve`.
@@ -42,7 +42,7 @@ pub enum TransformObject<'a> {
 impl core::fmt::Debug for TransformObject<'_> {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         match self {
-            Self::Brep => f.write_str("Brep"),
+            Self::Brep(_) => f.write_str("Brep"),
             Self::PolyBrep(_) => f.write_str("PolyBrep"),
             Self::Curve(c) => f.debug_tuple("Curve").field(c).finish(),
             Self::Surface(s) => f.debug_tuple("Surface").field(s).finish(),
@@ -111,7 +111,7 @@ fn is_uniform_positive_scale(scale: Vec3) -> bool {
 /// a scale a specialised kind does not take, or any other object; those of
 /// [`Curve::transform`], [`Surface::transform`] and [`PolyBrep::transform`];
 /// [`SolidError::Unported`] for B-reps (`SmBrep::Transform`, unit
-/// `topology.brep_p5`).
+/// `topology.brep_p2` through part 5).
 pub fn transform_independent_object(
     k: &Kernel,
     obj: Option<TransformObject<'_>>,
@@ -129,12 +129,8 @@ pub fn transform_independent_object(
     }
 
     match obj {
-        TransformObject::Brep => {
-            // UNPORTED(topology.brep_p5): SmBrep::Transform
-            Err(SolidError::unported(
-                "SmBrep::Transform",
-                "topology.brep_p5",
-            ))
+        TransformObject::Brep(brep) => {
+            crate::topology::brep::p5::transform(k, brep, transform, scale, true)
         }
         TransformObject::PolyBrep(poly) => {
             // The stable API publishes only positive, non-degenerate PolyBrep scales.

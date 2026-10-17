@@ -394,7 +394,7 @@ impl<O: LoopObject> HealData<O> {
                 .props(deleted)?
                 .vertex
                 .ok_or_else(|| invalid("deleted props without vertex"))?;
-            let changes = combine_vertices(b, a, d)?;
+            let changes = combine_vertices(k, b, a, d)?;
             self.update_target_lists(
                 k,
                 b,
@@ -452,13 +452,17 @@ impl<O: LoopObject> HealData<O> {
     }
 }
 
-fn combine_vertices(_b: &mut Brep, _a: VertexId, _d: VertexId) -> Result<Changes> {
-    // UNPORTED(topology.brep_p5): SmBrep::CombineCoincidentVertices
-    Err(SolidError::unported(
-        "SmBrep::CombineCoincidentVertices",
-        "topology.brep_p5",
-    ))
+fn combine_vertices(k: &Kernel, b: &mut Brep, a: VertexId, d: VertexId) -> Result<Changes> {
+    let mut deleted_edge = None;
+    crate::topology::brep::p5::combine_coincident_vertices(k, b, a, d, &mut deleted_edge)?;
+    let mut removed = vec![EntityRef::Vertex(d)];
+    removed.extend(deleted_edge.map(EntityRef::Edge));
+    Ok(Changes {
+        removed,
+        added: vec![Some(EntityRef::Vertex(a))],
+    })
 }
+
 fn squeeze_edge(_b: &mut Brep, _e: EdgeId, _survivor: VertexId) -> Result<Changes> {
     // UNPORTED(topology.brep_p3): SmBrep::SqueezeEdge
     Err(SolidError::unported(
@@ -963,20 +967,39 @@ fn create_face_from_surface(_b: &mut Brep, _r: RegionId, _s: Surface) -> Result<
         "topology.brep_p8",
     ))
 }
-fn glue_vertices(_b: &mut Brep, _a: VertexId, _d: VertexId) -> Result<Changes> {
-    // UNPORTED(topology.brep_p5): SmBrep::GlueVertices
-    Err(SolidError::unported(
-        "SmBrep::GlueVertices",
-        "topology.brep_p5",
+fn glue_vertices(b: &mut Brep, a: VertexId, d: VertexId) -> Result<Changes> {
+    crate::topology::brep::p5::glue_vertices(b, a, d, None)?;
+    Ok(Changes {
+        removed: vec![EntityRef::Vertex(d)],
+        added: vec![Some(EntityRef::Vertex(a))],
+    })
+}
+fn squeeze_face(b: &mut Brep, f: FaceId) -> Result<(Vec<EdgeId>, Vec<EdgeId>, Changes)> {
+    let mut output = crate::topology::brep::p5::SqueezedFace::default();
+    // The enclosing healer edit session enables editing upstream.
+    crate::topology::brep::p5::squeeze_face(b, true, f, None, &mut output)?;
+    let mut removed = vec![EntityRef::Face(f)];
+    removed.extend(
+        output
+            .deleted_vertices
+            .iter()
+            .copied()
+            .map(EntityRef::Vertex),
+    );
+    removed.extend(output.deleted_edges.iter().copied().map(EntityRef::Edge));
+    let added = output
+        .new_edges
+        .iter()
+        .copied()
+        .map(|e| Some(EntityRef::Edge(e)))
+        .collect();
+    Ok((
+        output.new_edges,
+        output.deleted_edges,
+        Changes { removed, added },
     ))
 }
-fn squeeze_face(_b: &mut Brep, _f: FaceId) -> Result<(Vec<EdgeId>, Vec<EdgeId>, Changes)> {
-    // UNPORTED(topology.brep_p5): SmBrep::SqueezeFace
-    Err(SolidError::unported(
-        "SmBrep::SqueezeFace",
-        "topology.brep_p5",
-    ))
-}
+
 fn delete_vertex(_b: &mut Brep, _v: VertexId) -> Result<Changes> {
     // UNPORTED(topology.brep_p4): SmBrep::DeleteVertex
     Err(SolidError::unported(
