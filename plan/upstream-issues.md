@@ -974,6 +974,23 @@ meantime, whoever merges renumbers the new entry and every reference to it (here
 - **Severity:** crash/UB (null dereference).
 - **Rust port:** Represents optional tolerances with `Option`; coincident-boundary calls currently defer to the missing Cone/Cylinder adapter in `surface.surface_p2` (#76/#133); the boundary algorithm itself merged in #120. The FFI adapter rejects exactly the native undefined path before its boundary calls.
 
+#### UB-198. `SmApiCreateTorus` (surface overload) crashes on a non-finite origin, an infinite radius or overflowing radii
+- **Location:** `source/SM_API/src/SmApiPrimitives.cpp:618` `SmApiCreateTorus` (`SmSurface*&`) -> `source/SMLib/src/SmTorus.cpp:172` `SmTorus::CreateCanonical` (only rejects radii not above `SM_EFF_ZERO`, so NaN and negative radii fail cleanly).
+- **What happens:** Segfault while the torus and its NURB are built.
+- **Trigger:** (only with both radii above `SM_EFF_ZERO`; otherwise `CreateCanonical` returns `SM_ERR` before it reads the origin, which the #160 review confirmed for NaN/inf origins and `+inf` radii paired with a zero, negative or NaN radius) origin `(NaN, 0, 0)` or `(0, inf, 0)` with radii `3, 1`; major or minor radius `+inf`; radii whose sum overflows (`1e308, 1e308`; `DBL_MAX, 1e293`); minor radius `DBL_MAX` with major `5` (major `DBL_MAX` with minor `1` and `DBL_MAX/2, DBL_MAX/2` are fine).
+- **How found:** crash in the C++ reference run (primitive.api_primitives fixtures).
+- **Confirmed:** yes.
+- **Severity:** crash/UB.
+- **Rust port:** `Torus::create_canonical` returns without panicking; the difftest guard (`solidcore_ffi::units::primitive_api_primitives::guard`) keeps these inputs from the C++ side, and only when both radii are above `SM_EFF_ZERO` (the C++ gate), so the cleanly rejected inputs are compared.
+
+#### UB-199. `SmApiCreatePlane` (plane overload) with a NaN length or width indexes outside the NURB knot arrays
+- **Location:** `source/SM_API/src/SmApiPrimitives.cpp:181` `SmApiCreatePlane` (`SmPlane*&`): `SmExtent2d::SetMinMax(0, 0, dLength, dWidth)` keeps NaN (its `min > max` test is false), then `SmPlane::AdjustSTEPUVDomain` -> `SmPlane::MakeNurb` (`SmPlane.cpp:2993`) -> `SmBSplineSurface::CreateCanonical` -> `N_Iges128Srf` clamps to NaN bounds.
+- **What happens:** The clamp's span search finds no span for NaN and reads past the knot arrays: a NaN length segfaults; a NaN width returns `SM_SUCCESS` with a plane built from out-of-bounds data.
+- **Trigger:** `SmApiCreatePlane((0,0,0), NaN, 3, SmPlane*&)` (segfault); `SmApiCreatePlane((0,0,0), 3, NaN, SmPlane*&)` (success).
+- **How found:** crash in the C++ reference run (primitive.api_primitives fixtures `plane_surface_len_nan`, `plane_surface_wid_nan`, removed since).
+- **Confirmed:** yes.
+- **Severity:** crash/UB.
+- **Rust port:** the bounded clamp returns `InvalidInput` (`nurbs::iges::clamp`), so `create_plane_surface` fails with `SM_ERR`; the difftest guard keeps NaN sizes from the C++ side.
 #### UB-153. `SmCone::CreateOffsetSurface` dereferences an unchecked `CreateCanonical` result
 - **Location:** `source/SMLib/src/SmCone.cpp:624`-`641`, the apex-truncation branch of `SmCone::CreateOffsetSurface` (def. `:533`).
 - **What happens:** When one new radius falls below the tolerance, the truncated cone is made by `SmCone::CreateCanonical`, whose status is ignored; `pOffCone->GetSTEPUVDomain()` and the following calls then dereference it. The new height is `dNewRadius * dHeight / dOldRadius`: an old radius of `0` gives an infinite or NaN height, for which the bounded constructor's NURB construction recurses without bound; a failed `MakeNurb` leaves `pOffCone` `NULL`.
@@ -992,6 +1009,41 @@ meantime, whoever merges renumbers the new entry and every reference to it (here
 - **Severity:** UB (uninitialised read).
 - **Rust port:** The errors are returned.
 
+#### UB-202. `SmCircularCrossSectionFSG::CreateSurfaceFromCurves` indexes past its cross sections in the second pass of a ruled or revolved surface
+- **Location:** `source/SMLib/src/SmFilletStandardSolver.cpp:3233` (`SmCircularCrossSectionFSG::CreateSurfaceFromCurves`): the first pass skips to the last knot for sweeps and revolves (`:3435`), so it stores three cross sections; the second pass (`m_bApproximateArcs` with differing unique knot counts) indexes `sCrossSections[lKnotIndex]` with `lKnotIndex` the knot index (`:3504`, `:3613`, `:3636`, `:3756`), which is at least 3 for the last knot.
+- **What happens:** `SmTArray::operator[]` reads (and on the replacement / mirror paths writes) past the array's size: an uninitialised or stale pointer is used as a cross section and deleted.
+- **Trigger:** A degree-1 straight centre line with a curved rail (the ruled-surface test only rejects rails that are lines in another direction), approximated arcs (the default) whose sections at the first, second and last knots get different unique knot counts (different arc angles, or a point section where the rails meet).
+- **How found:** read during porting.
+- **Confirmed:** no. The `blend.fillet_standard_solver_p1` shim detects these inputs with a dry run of the first pass and does not run them.
+- **Severity:** crash/UB (out-of-bounds read and write).
+- **Rust port:** `SolidError::InvalidInput` at the out-of-range index.
+
+#### UB-203. `SmBlendCurveCrossSectionFSG::CreateSurfaceFromCurves` skins incompatible data as synchronised
+- **Location:** `source/SMLib/src/SmFilletStandardSolver.cpp:4458` (`SmBlendCurveCrossSectionFSG::CreateSurfaceFromCurves`: `CreateSkinnedSurface(..., bSyncronized = TRUE, ...)`), through `SmBSplineSurfaceNLib.cpp` `SmBSplineSurface::CreateSkinnedSurface` into `NL_SrfAdv.cpp:13262` `N_CreateSkinSrfBoundaryContinuity` with `cmp = NL_YES`, which reads the cross sections' and the derivative curves' control points with the first cross section's count.
+- **What happens:** Two inputs are not compatible although the call says so: (a) a point cross section (`CreatePointCurve` where the rails meet within the tolerance, `:4132`) among the blend curves; (b) with `bNeedG1Continuity`, the cross-boundary derivative surfaces: the strips are ruled surfaces linear in u, `N_AdjustDerivSrf` (`NL_SrfAdv.cpp:13316`) swaps and extends them successfully (the blend curves are Bezier), and the first skinning attempt takes the 2-point derivative curve along the ruling as the cross-boundary data of a degree 3, 5 or 7 section. The skinning then reads past the derivative / point curve's control points.
+- **Trigger:** (b) every `G1` blend-curve fillet that is skinned (not ruled or revolved), for example the `blend.fillet_standard_solver_p1` difftest case `gen2400` of a 6000-seed run (seed `7089734759426696442`: continuity 3, blend scale 2.5, `tol = 0.05`, straight non-parallel rails): the C++ surface holds denormals (`1.344e-321`, `3.686e-310`) and `6.8e61`.
+- **How found:** generated difftest case.
+- **Confirmed:** yes for (b) (the case above); no for (a).
+- **Severity:** crash/UB (out-of-bounds read).
+- **Rust port:** The bounds-checked skinning fails the first attempt (`InvalidInput`) and `CreateSkinnedSurface` retries as upstream does after a failure. The shim rejects both inputs (a dry run of the knot insertion and the ruled / revolved tests).
+
+#### UB-186. `SmCircularCrossSectionFSG::CreateSurfaceFromCurves` `G1` skin retry interpolates cross sections of different control point counts
+- **Location:** `source/SMLib/src/NL_SrfAdv.cpp:15096` (`N_CreateSkinSrfBoundaryContinuity`: `N_CrvGetCPts( cur[i], &nc, &Cw ); N_CopyCPt( Cw[j], &Qw[i] )` for `j` up to the first section's `nc`), reached from `SmFilletStandardSolver.cpp:3917` (`CreateSkinnedSurface` with the `G1` derivative surfaces) through `SmBSplineSurface::CreateSkinnedSurface`'s retry without the knot vector.
+- **What happens:** The second pass of approximated arcs inserts `lMaxNumUniqueKnots - 2` evenly spaced knots into an unequal-radius section whose arc already has that many unique knots (`:3654`): each inserted knot is within one ulp of an existing one (`5/11` against `5 * (1/11)`). `N_CrvsMakeCompatibleKnotTol(cur, k, 0)` makes the sections and derivative curves compatible, but `N_CrvElevateDegree` then gives the section with the near-duplicate knots fewer control points than the others (39 against 41), and the interpolation loop reads one control point past that section's array.
+- **Trigger:** `G1`, approximated arcs, a second pass, a section with `|r1 - r2| >= tol` whose first-pass arc has the maximum unique knot count, and a first skinning attempt that fails (the usual `N_AdjustDerivSrf` extension failure). Example: the circular case `rev_twist_n6p3_t0.05_m0_c1_dr1e-06_g1_s10000.0` of the `blend.fillet_standard_solver_p1` review (free-form centre, rails twisting from 0.4 to 2.6 rad, radius 1e4 with a 1e-6 relative mismatch, `tol = 0.01`, complement).
+- **How found:** adversarial difftest case during review of PR #168; the counts were confirmed by calling `N_CrvsMakeCompatibleKnotTol` and `N_CrvElevateDegree` on the exact curves in a C++ build.
+- **Confirmed:** yes (the C++ build reads `Pw[39]` of a 39-point section).
+- **Severity:** crash/UB (out-of-bounds read).
+- **Rust port:** The bounds-checked interpolation fails the attempt (`InvalidInput`) and `CreateSkinnedSurface` retries without derivative surfaces. The `blend.fillet_standard_solver_p1` shim does not detect these inputs yet; its generated cases do not reach them.
+
+#### UB-187. `SmOffsetSurface` extension of a plane with a reversed domain reads a half-built NLib surface
+- **Location:** `source/SMLib/src/SmPlane.cpp:3013-3016` (`SmPlane::MakeNurb`: the knots are the domain's corners as stored), `source/SMLib/src/SmOffsetSurface.cpp:527-533` (`sm_ExtendSurface`: a failed `N_SrfEvalPtDerivsUnbounded` is retried with the same `esur`), `source/SMLib/src/NL_SrfAdv.cpp:5470` (`N_SrfGetParameterBounds` on the partly extended `esur`).
+- **What happens:** `SmPlane(o, x, y, scale, SmExtent2d(u0, v0, u1, v1))` keeps a reversed domain, so `MakeNurb` gives NLib a decreasing knot vector. Evaluating an offset of it outside that domain extends it: the first `N_SrfEvalPtDerivsUnbounded` call fails part-way through the extension, and the retry reads the `esur` it left behind.
+- **Trigger:** `SmConstantRadiusFS::LoadJacobian` (via `SmSurface::Evaluate1stDerivatives` on its `SmOffsetSurface`) on a plane whose domain is `[0, 1] x [0, -1e10]`. Reversed by `1e9` or less, the calls return.
+- **How found:** `difftest --fuzz 3000` of `blend.fillet_standard_solver_p1` (PR #168 review fixes), case built on a two-plane `cr_jac` fixture.
+- **Confirmed:** yes (SIGSEGV in `N_SrfGetParameterBounds` under gdb).
+- **Severity:** crash/UB (read of a freed or uninitialised surface).
+- **Rust port:** no crash. The `blend.fillet_standard_solver_p1` FFI validator rejects a reversed plane domain for the solvers' base surfaces, so the case is not compared.
 #### UB-179. `SmCone::ConvertUVFromSTEPToNURBS` dereferences a missing polar curve
 - **Location:** `source/SMLib/src/SmCone.cpp:1808`, called by `IntersectWithCone` at `:2966-2967`; `source/SMLib/src/SmEllipse.cpp:491` (`SmPolarConversion::ConvertToNURBSParameter`). Construction ignores `RebuildPolarConverter`'s status at `SmSurfOfRevolution.cpp:1033`.
 - **What happens:** A degenerate sweep can leave the polar converter without a circle even though `MakeNurb` returns success. STEP-to-NURBS conversion unconditionally reads `m_cpCurve->GetSTEPInterval()` and segfaults. `HavePolarConversion()` alone does not identify this: a converter with a circle but no exact table can still perform a defined numerical conversion.
@@ -1466,6 +1518,23 @@ meantime, whoever merges renumbers the new entry and every reference to it (here
 - **Severity:** crash / out-of-range read.
 - **Rust port:** Kernel topology mutation remains deferred. Both the safe FFI validator and the C++ shim require equally sized partners for op 3 with fillets. Six `rejected_fillets_*` fixtures check rejection; 660 isolated probes independently exercise both guards at first and last indices of 1/2/3/32 intervals. Valid equal-sized pairs and non-fillet calls remain accepted.
 
+#### UB-200. `SmApiCreateSphere` crashes for radii from about `7e9` and for a non-finite center
+- **Location:** `source/SM_API/src/SmApiPrimitives.cpp:335` `SmApiCreateSphere` -> `source/SMLib/src/SmPrimitiveCreation.cpp:894` `SmPrimitiveCreation::CreateSphere`. The API accepts any finite radius up to `SM_BIG_DOUBLE / 100` (`1e18`).
+- **What happens:** Segfault inside `CreateSphere`. A NaN or infinite center coordinate (not validated) also segfaults; `SmApiCreateTorus` (B-rep overload, no validation) segfaults on the same centers.
+- **Trigger:** radius `7e9`, `1e10`, `1e15`, `1e18` or `-6.5e9` (`6e9`, `6.5e9` and `-6e9` are fine); center `(NaN, 0, 0)` or `(0, inf, 0)` with radius `1`.
+- **How found:** crash in the C++ reference run (primitive.api_primitives fixtures and probes).
+- **Confirmed:** yes.
+- **Severity:** crash/UB.
+- **Rust port:** not reached yet (`SmPrimitiveCreation` is unported, the call is deferred); the difftest guard keeps these inputs from the C++ side.
+
+#### UB-201. `SmApiCreateSphereNoPole` crashes or hangs for small and large radii
+- **Location:** `source/SM_API/src/SmApiPrimitives.cpp:870` `SmApiCreateSphereNoPole` -> `source/SMLib/src/SmPrimitiveCreation.cpp:6911` `SmPrimitiveCreation::CreateSphereNoPole` (tolerance `SM_ZONE_TOL_3D`). The API only rejects radius magnitudes not above `SM_EFF_ZERO`.
+- **What happens:** Erratic below about `1e-4`: radius `1.0000001e-12`, `1e-9`, `1e-6`, `2e-6`, `5e-6`, `2e-5` segfault, `5e-5` and `1e-4` do not return, `1e-5` and `3e-4` and up succeed. From about `4e8` (`4e8`, `5e8`, `1e9`, `1e12`, `1e18`, either sign) it segfaults; `3e8` succeeds.
+- **Trigger:** `SmApiCreateSphereNoPole((0,0,0), 2e-5, ..)`; `SmApiCreateSphereNoPole((0,0,0), 4e8, ..)`.
+- **How found:** crash in the C++ reference run (primitive.api_primitives fixtures and probes).
+- **Confirmed:** yes.
+- **Severity:** crash/UB, hang.
+- **Rust port:** not reached yet (deferred); the difftest guard passes only radii in `[3e-4, 3e8]` on to the C++.
 #### UB-191. `CombineCoincidentVertices` deletes its isolated surviving vertex when inputs alias
 - **Location:** `source/SMLib/src/SmBrep.cpp:1354-1366`, `SmBrep::CombineCoincidentVertices`.
 - **What happens:** The zero-incident-edge branch notifies, sets the surviving vertex's point/tolerance, then calls `DeleteVertex(pVertexToDelete)` and returns `SM_SUCCESS`. If both input pointers are the same, the supposedly surviving vertex is deleted too. Nothing inside the function touches it afterwards, so the call itself is defined; a caller that keeps using the survivor pointer reads freed memory.
@@ -1712,6 +1781,15 @@ meantime, whoever merges renumbers the new entry and every reference to it (here
 - **Severity:** hang.
 - **Rust port:** Ordinary squeeze statuses are ignored through `ignore_status`, preserving `Unported` propagation; a documented no-progress check returns an error if the interval count did not decrease.
 
+#### HANG-31. `SmApiCreateCylindricalBox` hangs on nearly degenerate arcs and full turns
+- **Location:** `source/SM_API/src/SmApiPrimitives.cpp:766` `SmApiCreateCylindricalBox` -> `source/SMLib/src/SmPrimitiveCreation.cpp:424` `SmPrimitiveCreation::CreateCylindricalBox`, which builds the four boundary arcs with the three-point `SmCircle(start, mid, end)` constructor.
+- **What happens:** Inputs the API's validation accepts never return (over 60 s) when an arc nearly degenerates: a sweep of exactly 360 degrees or within about `1e-12` of it (start and end points coincide), a short or flat inside arc, or an origin far from the arcs. An origin of `1e300` segfaults.
+- **Trigger:** angles `0 .. 360`, `-90 .. 270`, `360 .. 720`, `0 .. 360 - 1e-12` (`0 .. 360 - 1e-8` returns); inside radius `1`, angles `0 .. 0.01` (`0 .. 0.012` returns); inside radius `1e-3`, angles `10 .. 10.2`; inside radius `1e-2`, angles `0 .. 0.13`; origin `(1e17, 0, 0)` or non-finite, radii `1, 2`, angles `0 .. 90`.
+- **How found:** hang in the C++ reference run (primitive.api_primitives fixtures and probes).
+- **Confirmed:** yes.
+- **Severity:** hang (crash for the `1e300` origin).
+- **Rust port:** not reached yet (deferred); the difftest guard passes on only inputs with an inside-arc chord of at least `1e-4`, a sagitta of at least `1e-8`, a sweep at least `1e-8` degrees short of a full turn and a finite origin within `1e6`.
+
 #### HANG-16. Direct negative-distance surface extension moves away from its loop's exit
 - **Location:** `source/SMLib/src/SmBSplineSurfaceNLib.cpp:4583-4591`, with equivalent loops at `:4645`, `:4712`, `:4773`, in `SmBSplineSurface::CreateExtendedSurface`.
 - **What happens:** After a successful extension, `while (dExtDist < dDist/2.0)` doubles `dExtDist`. For a negative request, the doubled negative value moves away from the exit condition. The lower-level G1 path can accept a negative request, so success does not necessarily prevent entry into this loop.
@@ -1768,6 +1846,14 @@ meantime, whoever merges renumbers the new entry and every reference to it (here
 - **Severity:** hang.
 - **Harness:** `surface.offset_surface` refuses every `CreateExtendedSurface` step in process (see HANG-6), so this input stops at its extension step; an FFI test replays the exact input and checks the refusal. These are unsafe-reference exclusions, not passing difftest cases.
 
+#### HANG-34. `SmBlendCurveCrossSectionFSG::CreateSurfaceFromCurves` loops forever when a knot insertion adds no knot
+- **Location:** `source/SMLib/src/SmFilletStandardSolver.cpp:4090` (`while (sKnots.GetSize() < 4)`: the mid-span knot is inserted into both rails and the knots are re-read). `SmCircularCrossSectionFSG::CreateSurfaceFromCurves` has the same loop with a bail-out (`:3336`).
+- **What happens:** When `InsertOneKnot` fails or the mid-span value equals an existing knot (spans below the knot resolution), the knot count never reaches 4.
+- **Trigger:** Rails whose largest knot span is too small to split.
+- **How found:** read during porting.
+- **Confirmed:** no. The `blend.fillet_standard_solver_p1` shim's dry run rejects such inputs.
+- **Severity:** hang.
+- **Rust port:** `SolidError::InvalidInput` when an insertion adds no knot.
 #### HANG-25. `IntersectInsertRelate` does not return for a zero approximation tolerance
 - **Location:** `source/SMLib/src/SmTopologyIntersector.cpp:1092-1270`, `SmTopologyIntersector::IntersectInsertRelate` (the full topology intersection at `m_dThisApproxTol3d`).
 - **What happens:** With `m_dThisApproxTol3d` equal to `+0.0` or `-0.0`, the topology intersection did not finish within 180 s. Negative tolerances and tiny positive ones (down to the smallest subnormal) return within a second.
