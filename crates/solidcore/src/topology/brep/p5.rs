@@ -31,7 +31,8 @@
 //! default `SmTopology` record, an empty attribute store, arena identities) and the
 //! kernel's context, except `Transform`'s `ReplaceSurface` (`replace_surface`), which
 //! holds the kernel shared and so passes no context: an arena-only `Transform`'s face
-//! notifications reach no context callback. Curves have no identity in the port: `SetCurve`'s new/old curve
+//! notifications reach no context callback; the same holds for `CombineCoincidentVertices`'
+//! `UpdateVertexEdgeIntervals` (part 1 holds the kernel shared). Curves have no identity in the port: `SetCurve`'s new/old curve
 //! data are null and a curve's own `SM_NO_CHANGE_OWNER` is not delivered.
 //! `SmBrep::Notify` is owned by `topology.brep_p2`, not this unit. Owning-list
 //! traversal and editing state belong to `topology.brep_p1`: arena allocation order
@@ -372,7 +373,7 @@ pub fn combine_with_notifications(
             notifications.as_deref_mut(),
         ))?;
     }
-    set_vertex_point(k, b, survivor, target.point, notifications)?;
+    set_vertex_point(k, b, survivor, target.point, notifications.as_deref_mut())?;
     crate::error::ignore_status(vertex::set_tolerance(
         b,
         survivor,
@@ -380,7 +381,7 @@ pub fn combine_with_notifications(
         true,
         true,
     ))?;
-    update_vertex_edge_intervals(b, survivor)
+    update_vertex_edge_intervals(k, b, survivor, notifications)
 }
 
 /// `Notify(SM_NO_MERGE_IN_BREP, pSurvivingVertex, pVertexToDelete, this)`
@@ -468,9 +469,18 @@ fn set_vertex_point(
     )
 }
 
-fn update_vertex_edge_intervals(_b: &mut Brep, _vertex: VertexId) -> Result<()> {
-    // UNPORTED(topology.brep_p1): SmBrep::UpdateVertexEdgeIntervals
-    missing("SmBrep::UpdateVertexEdgeIntervals", "topology.brep_p1")
+/// `UpdateVertexEdgeIntervals(pVertex)` ([`crate::topology::brep::p1::update_vertex_edge_intervals`]).
+/// It holds the kernel shared, so a plain entry point's arena notifications reach no
+/// context callback (as `Transform`'s `ReplaceSurface`).
+fn update_vertex_edge_intervals(
+    k: &Kernel,
+    b: &mut Brep,
+    vertex: VertexId,
+    notifications: Option<&mut EditNotifyEnv<'_>>,
+) -> Result<()> {
+    with_notifications(b, notifications, None, |b, env, _| {
+        crate::topology::brep::p1::update_vertex_edge_intervals(k, b, env, vertex)
+    })
 }
 
 /// Makes a wire edge over the caller's curve interval. Evaluates start before end,
@@ -486,7 +496,7 @@ pub fn create_wire_edge_from_curve(
     let region = b
         .infinite_region()
         .ok_or_else(|| SolidError::null_pointer(OP))?;
-    let (_, first) = make_shell_vertex(b, region, start)?;
+    let (_, first) = make_shell_vertex(k, b, region, start)?;
     let (edge, last) =
         make_wire_edge_vertex(b, region, first, curve, interval, OrientType::Same, end)?;
     if start.distance(end) < b.tolerance() {
@@ -495,9 +505,17 @@ pub fn create_wire_edge_from_curve(
     Ok(edge)
 }
 
-fn make_shell_vertex(_b: &mut Brep, _r: RegionId, _point: Point3) -> Result<(ShellId, VertexId)> {
-    // UNPORTED(topology.brep_p9): SmBrep::MakeShellVertex
-    missing("SmBrep::MakeShellVertex", "topology.brep_p9")
+/// `MakeShellVertex(pRegion, crPoint)` ([`crate::topology::brep::p9::make_shell_vertex`]),
+/// notifying through a plain entry point's arena state and the kernel's context.
+fn make_shell_vertex(
+    k: &mut Kernel,
+    b: &mut Brep,
+    r: RegionId,
+    point: Point3,
+) -> Result<(ShellId, VertexId)> {
+    with_notifications(b, None, Some(&mut k.context), |b, env, _| {
+        crate::topology::brep::p9::make_shell_vertex(b, Some(r), point, env)
+    })
 }
 
 fn make_wire_edge_vertex(
@@ -907,6 +925,10 @@ fn shell_is_faceuse_shell(b: &Brep, shell: ShellId) -> Result<bool> {
 }
 
 fn reset_infinite_region(_b: &mut Brep, _region: RegionId, _mode: i32) -> Result<()> {
+    // Not wired yet: part 1's ResetInfiniteRegion needs the caller's `&mut Kernel`,
+    // which find_and_set_infinite_region does not take. Thread it in together with
+    // FindInfiniteRegion (part 9 needs the kernel and a ShellRayWorld), which comes
+    // first and is still a deferral, so this call is not reachable yet.
     // UNPORTED(topology.brep_p1): SmBrep::ResetInfiniteRegion
     missing("SmBrep::ResetInfiniteRegion", "topology.brep_p1")
 }
@@ -2092,7 +2114,7 @@ pub fn transform_with_notifications(
     }
     if scale.is_some() && scale_tolerances {
         let size = bbox.size().length();
-        let zone = set_brep_model_size(b, size)?;
+        let zone = set_brep_model_size(k, b, size);
         crate::geom::tol::set_context_model_size_estimate(&mut k.context, size);
         for vertex in vertices {
             crate::error::ignore_status(vertex::set_tolerance(b, vertex, zone, false, false))?;
@@ -2113,13 +2135,13 @@ fn turn_to_nurbs(_b: &mut Brep) -> Result<()> {
     // UNPORTED(topology.brep_p3): SmBrep::TurnToNURBS
     missing("SmBrep::TurnToNURBS", "topology.brep_p3")
 }
-fn brep_curve_owners(_b: &Brep) -> Result<Vec<EdgeId>> {
-    // UNPORTED(topology.brep_p1): SmBrep::GetCurves
-    missing("SmBrep::GetCurves", "topology.brep_p1")
+/// `GetCurves` followed by each curve's `GetEdge`: the edges owning their curves.
+fn brep_curve_owners(b: &Brep) -> Result<Vec<EdgeId>> {
+    crate::topology::brep::p1::curve_edges(b, None)
 }
-fn brep_surface_owners(_b: &Brep) -> Result<Vec<FaceId>> {
-    // UNPORTED(topology.brep_p1): SmBrep::GetSurfaces
-    missing("SmBrep::GetSurfaces", "topology.brep_p1")
+/// `GetSurfaces` followed by each surface's `GetFace`: the faces owning their surfaces.
+fn brep_surface_owners(b: &Brep) -> Result<Vec<FaceId>> {
+    crate::topology::brep::p1::surface_faces(b, None)
 }
 fn notify_edge_pre_edit(
     k: &mut Kernel,
@@ -2218,11 +2240,9 @@ fn reverse_reflection_edgeuses(b: &mut Brep, edge: EdgeId) -> Result<()> {
 fn swap_reflection_shells(b: &mut Brep, face: FaceId) -> Result<()> {
     crate::topology::brep::p1::swap_reflection_shells(b, face)
 }
-fn set_brep_model_size(_b: &mut Brep, _size: f64) -> Result<f64> {
-    // SmTol::SetModelSizeEstimate's arithmetic belongs to geom.tol; the
-    // missing owning B-rep fields, not that already ported routine, block it.
-    // UNPORTED(topology.brep_p1): SmBrep::SetThisModelSizeEstimate
-    missing("SmBrep::SetThisModelSizeEstimate", "topology.brep_p1")
+/// `SmTol::SetModelSizeEstimate(SmBrep&, size)`: `SmBrep::SetThisModelSizeEstimate`.
+fn set_brep_model_size(k: &mut Kernel, b: &mut Brep, size: f64) -> f64 {
+    b.set_this_model_size_estimate(k, size)
 }
 fn set_face_tolerance(
     b: &mut Brep,

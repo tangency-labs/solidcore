@@ -1866,7 +1866,7 @@ fn rust_probe(branch: Probe, tolerance: f64) -> RResult<Output> {
         }
         Probe::RemoveNoMerge | Probe::RemoveEmpty => {
             executive.set_merge_results(matches!(branch, Probe::RemoveEmpty));
-            executive.remove_excess_faces(&kernel, &original, &mut Brep::new())
+            executive.remove_excess_faces(&mut kernel, &original, &mut Brep::new())
         }
         Probe::SideWallNull => executive.build_side_wall_of_edgeuse(&kernel, &mut original, None),
         Probe::SideWallUnmapped => {

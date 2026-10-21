@@ -21,7 +21,7 @@
 //! | [`is_live_topology_member`]                       | `SmBrep::IsLiveTopologyMember`                |
 //! | [`regions`], [`faces`], [`edges`], [`vertices`]   | `SmBrep::GetRegions`, `GetFaces`, `GetEdges`, `GetVertices` |
 //! | [`shells`]                                        | `SmBrep::GetShells`                           |
-//! | [`surfaces`], [`curves`]                          | `SmBrep::GetSurfaces`, `GetCurves`            |
+//! | [`surfaces`], [`curves`], [`surface_faces`], [`curve_edges`] | `SmBrep::GetSurfaces`, `GetCurves` (the latter two return the owners) |
 //! | [`wire_edges`], [`topological_edges`], [`topological_vertices`] | `SmBrep::GetWireEdges`, `GetTopologicalEdges`, `GetTopologicalVertices` |
 //! | [`is_degenerate`]                                 | `SmBrep::IsDegenerate`                        |
 //! | [`reset_infinite_region`], [`SetRegionVoidType`]  | `SmBrep::ResetInfiniteRegion`, `SmSetRegionVoidType` |
@@ -575,6 +575,27 @@ pub fn surfaces<'b>(
     b: &'b Brep,
     attribute: Option<&GeometryAttributeFilter<'_>>,
 ) -> Result<Vec<&'b Surface>> {
+    surface_faces(b, attribute)?
+        .into_iter()
+        .map(|f| {
+            b.face(f)?
+                .surface
+                .as_ref()
+                .ok_or_else(|| null("GetSurfaces: face without surface"))
+        })
+        .collect()
+}
+
+/// [`surfaces`] as the faces owning them (`GetSurfaces`, then each surface's
+/// `GetFace`), in face order.
+///
+/// # Errors
+///
+/// As [`surfaces`].
+pub fn surface_faces(
+    b: &Brep,
+    attribute: Option<&GeometryAttributeFilter<'_>>,
+) -> Result<Vec<FaceId>> {
     let mut out = Vec::new();
     // for every face
     for f in faces(b, None)? {
@@ -592,7 +613,7 @@ pub fn surfaces<'b>(
                     .is_some()
             })
         {
-            out.push(surface);
+            out.push(f);
         }
     }
     Ok(out)
@@ -609,6 +630,27 @@ pub fn curves<'b>(
     b: &'b Brep,
     attribute: Option<&GeometryAttributeFilter<'_>>,
 ) -> Result<Vec<&'b Curve>> {
+    curve_edges(b, attribute)?
+        .into_iter()
+        .map(|e| {
+            b.edge(e)?
+                .curve
+                .as_ref()
+                .ok_or_else(|| null("GetCurves: edge without curve"))
+        })
+        .collect()
+}
+
+/// [`curves`] as the edges owning them (`GetCurves`, then each curve's `GetEdge`), in
+/// edge order.
+///
+/// # Errors
+///
+/// As [`curves`].
+pub fn curve_edges(
+    b: &Brep,
+    attribute: Option<&GeometryAttributeFilter<'_>>,
+) -> Result<Vec<EdgeId>> {
     let mut out = Vec::new();
     for e in edges(b, None)? {
         let curve = b
@@ -624,7 +666,7 @@ pub fn curves<'b>(
                     .is_some()
             })
         {
-            out.push(curve);
+            out.push(e);
         }
     }
     Ok(out)

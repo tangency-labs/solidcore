@@ -447,8 +447,10 @@ impl OffsetExecutive {
     /// Removes result faces too close to the original (`RemoveExcessFaces`).
     ///
     /// The source is borrowed immutably while solving, corresponding to the upstream
-    /// editing-disabled query. `Brep` has no editing flag, so upstream's success-only
-    /// reset to `TRUE` (or leaving it `FALSE` on a solver error) cannot be represented.
+    /// editing-disabled query, so upstream's toggling of the original's editing flag
+    /// (`FALSE` while solving, the success-only reset to `TRUE`) is not represented.
+    /// The candidate faces go to [`crate::topology::brep::p5::remove_faces`] with the
+    /// result B-rep's own editing flag; its status is ignored as upstream.
     /// Geometry owners must use [`arena_identity`] directly; custom keys or indirect
     /// owner chains return [`SolidError::Unsupported`] rather than omitting geometry.
     /// Cache and solver errors propagate before any result-face removal. Ordinary
@@ -456,7 +458,7 @@ impl OffsetExecutive {
     /// Result edges are visited in upstream edge list order (`SmBrep::GetEdges`).
     pub fn remove_excess_faces(
         &self,
-        kernel: &Kernel,
+        kernel: &mut Kernel,
         original: &Brep,
         result: &mut Brep,
     ) -> Result<()> {
@@ -489,15 +491,15 @@ impl OffsetExecutive {
         }
         // All candidate faces have been gathered in first-seen order, without duplicates.
         // Even an empty deletion list reaches RemoveFaces upstream (mark increment).
-        // Part 5's remove_faces is available, but needs the actual editing flag
-        // and mutable caller Kernel for native traversal-mark updates. When the
-        // owning metadata lands, forward those and delete_faces to that body;
-        // do not assume editing is enabled or clone a substitute context.
-        // UNPORTED(topology.brep_p1): SmBrep::m_bEditingEnabled
-        Err(SolidError::unported(
-            "SmBrep::m_bEditingEnabled",
-            "topology.brep_p1",
-        ))
+        // pResult->RemoveFaces(sDeleteFaces): its status is ignored upstream.
+        let editing_enabled = result.editing_enabled();
+        ignore_status(crate::topology::brep::p5::remove_faces(
+            kernel,
+            result,
+            editing_enabled,
+            &delete_faces,
+        ))?;
+        Ok(())
     }
 
     /// Builds a closing ruled side wall, or succeeds without work for null/ambiguous mappings.
@@ -2234,30 +2236,29 @@ mod tests {
 
     #[test]
     fn excess_face_early_returns_and_actual_dependencies() {
-        let kernel = Kernel::default();
+        let mut kernel = Kernel::default();
         let mut executive = executive();
         let original = Brep::new();
         let mut result = Brep::new();
         executive
-            .remove_excess_faces(&kernel, &original, &mut result)
+            .remove_excess_faces(&mut kernel, &original, &mut result)
             .unwrap();
         executive.set_merge_results(true);
         executive.set_shell_faces(&[FaceId::from_index(1)]);
         executive
-            .remove_excess_faces(&kernel, &original, &mut result)
+            .remove_excess_faces(&mut kernel, &original, &mut result)
             .unwrap();
         executive.set_shell_faces(&[]);
-        assert_dependency(
-            executive.remove_excess_faces(&kernel, &original, &mut result),
-            "SmBrep::m_bEditingEnabled",
-            "topology.brep_p1",
-        );
+        // no result edges: RemoveFaces of an empty list
+        executive
+            .remove_excess_faces(&mut kernel, &original, &mut result)
+            .unwrap();
         add_use(&mut result, 0.0, 1.0, 1.0);
         add_use(&mut result, 0.0, 1.0, 2.0);
         // Multiple arena entries do not establish linked-list order parity: this
         // prefix must still defer before collecting or removing any result faces.
         assert_dependency(
-            executive.remove_excess_faces(&kernel, &original, &mut result),
+            executive.remove_excess_faces(&mut kernel, &original, &mut result),
             "SmEdgeuse::NormalizedEvaluate",
             "topology.edgeuse_p3",
         );

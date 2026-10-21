@@ -268,6 +268,25 @@ impl ExecutiveAccess<Handle> for Access {
             .map(solidcore::topology::Brep::editing_enabled)
             .ok_or_else(missing_error)
     }
+    fn set_brep_tolerance(
+        &mut self,
+        k: &mut Kernel,
+        brep: Handle,
+        tolerance: f64,
+        update_only_if_larger: bool,
+        cascade_to_boundaries: bool,
+    ) -> SolidResult<()> {
+        match self.breps.get_mut(brep.0).and_then(Option::as_mut) {
+            Some(b) => solidcore::topology::brep::p2::set_tolerance(
+                k,
+                b,
+                tolerance,
+                update_only_if_larger,
+                cascade_to_boundaries,
+            ),
+            None => missing(),
+        }
+    }
     fn set_editing_enabled(&mut self, brep: Handle, value: bool) -> SolidResult<()> {
         match self.breps.get_mut(brep.0).and_then(Option::as_mut) {
             Some(b) => {

@@ -1858,16 +1858,12 @@
       "values_compared": 1
     },
     {
-      "deferred": {
-        "symbol": "SmBrep::GetCurves",
-        "unit": "topology.brep_p1"
-      },
       "max_rel_err": 0.0,
       "name": "api_translate_box_brep",
-      "outcome": "deferred",
-      "pass": false,
+      "outcome": "pass",
+      "pass": true,
       "source": "fixture:fixtures/topology.proto_topology_p1/upstream_api_transforms.json#12 (upstream tests/SM_API_test/src/TestSmGeneral.cpp:571)",
-      "values_compared": 0
+      "values_compared": 1
     },
     {
       "max_rel_err": 0.0,
@@ -4470,16 +4466,12 @@
       "values_compared": 10
     },
     {
-      "deferred": {
-        "symbol": "SmBrep::GetCurves",
-        "unit": "topology.brep_p1"
-      },
       "max_rel_err": 0.0,
       "name": "gen0313",
-      "outcome": "deferred",
-      "pass": false,
+      "outcome": "pass",
+      "pass": true,
       "source": "generated:seed=11501320667558532203",
-      "values_compared": 0
+      "values_compared": 1
     },
     {
       "max_rel_err": 0.0,
@@ -4506,16 +4498,12 @@
       "values_compared": 9
     },
     {
-      "deferred": {
-        "symbol": "SmBrep::GetCurves",
-        "unit": "topology.brep_p1"
-      },
       "max_rel_err": 0.0,
       "name": "gen0317",
-      "outcome": "deferred",
-      "pass": false,
+      "outcome": "pass",
+      "pass": true,
       "source": "generated:seed=11501320667558532207",
-      "values_compared": 0
+      "values_compared": 1
     },
     {
       "max_rel_err": 0.0,
@@ -4826,16 +4814,12 @@
       "values_compared": 0
     },
     {
-      "deferred": {
-        "symbol": "SmBrep::GetCurves",
-        "unit": "topology.brep_p1"
-      },
       "max_rel_err": 0.0,
       "name": "gen0355",
-      "outcome": "deferred",
-      "pass": false,
+      "outcome": "pass",
+      "pass": true,
       "source": "generated:seed=11501320667558532245",
-      "values_compared": 0
+      "values_compared": 1
     },
     {
       "max_rel_err": 0.0,
@@ -6778,16 +6762,12 @@
       "values_compared": 121
     },
     {
-      "deferred": {
-        "symbol": "SmBrep::GetCurves",
-        "unit": "topology.brep_p1"
-      },
       "max_rel_err": 0.0,
       "name": "gen0594",
-      "outcome": "deferred",
-      "pass": false,
+      "outcome": "pass",
+      "pass": true,
       "source": "generated:seed=11501320667558532484",
-      "values_compared": 0
+      "values_compared": 1
     },
     {
       "max_rel_err": 0.0,
@@ -7398,16 +7378,12 @@
       "values_compared": 113
     },
     {
-      "deferred": {
-        "symbol": "SmBrep::GetCurves",
-        "unit": "topology.brep_p1"
-      },
       "max_rel_err": 0.0,
       "name": "gen0670",
-      "outcome": "deferred",
-      "pass": false,
+      "outcome": "pass",
+      "pass": true,
       "source": "generated:seed=11501320667558532560",
-      "values_compared": 0
+      "values_compared": 1
     },
     {
       "max_rel_err": 0.0,
@@ -9062,16 +9038,12 @@
       "values_compared": 309
     },
     {
-      "deferred": {
-        "symbol": "SmBrep::GetCurves",
-        "unit": "topology.brep_p1"
-      },
       "max_rel_err": 0.0,
       "name": "gen0872",
-      "outcome": "deferred",
-      "pass": false,
+      "outcome": "pass",
+      "pass": true,
       "source": "generated:seed=11501320667558532762",
-      "values_compared": 0
+      "values_compared": 1
     },
     {
       "max_rel_err": 0.0,
@@ -12774,16 +12746,12 @@
       "values_compared": 654
     },
     {
-      "deferred": {
-        "symbol": "SmBrep::GetCurves",
-        "unit": "topology.brep_p1"
-      },
       "max_rel_err": 0.0,
       "name": "gen1322",
-      "outcome": "deferred",
-      "pass": false,
+      "outcome": "pass",
+      "pass": true,
       "source": "generated:seed=11501320667558533212",
-      "values_compared": 0
+      "values_compared": 1
     },
     {
       "max_rel_err": 0.0,
@@ -15267,12 +15235,11 @@
     }
   ],
   "cases_both_errored": 0,
-  "cases_deferred": 92,
+  "cases_deferred": 84,
   "cases_failed": 0,
-  "cases_passed": 1770,
+  "cases_passed": 1778,
   "cases_total": 1862,
   "deferred_by_unit": {
-    "topology.brep_p1": 8,
     "topology.brep_p3": 2,
     "topology.edge": 28,
     "topology.face_p2": 29,

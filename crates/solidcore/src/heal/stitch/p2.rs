@@ -1490,12 +1490,16 @@ pub(crate) fn find_and_set_infinite_region(
     void_setting: SetRegionVoidType,
     brep_bbox: Option<&Extent3d>,
 ) -> Result<()> {
-    let _ = (k, b, shell_to_test, void_setting, brep_bbox);
-    // UNPORTED(topology.brep_p5): SmBrep::FindAndSetInfiniteRegion
-    Err(SolidError::unported(
-        "SmBrep::FindAndSetInfiniteRegion",
-        "topology.brep_p5",
-    ))
+    let code = match void_setting {
+        SetRegionVoidType::NestedSolid => 0,
+        SetRegionVoidType::InfiniteRegionOnly => 1,
+        SetRegionVoidType::InfiniteRegionSwap => 2,
+    };
+    // the kernel is the B-rep's context upstream; part 5 does not take it yet
+    let _ = k;
+    // the box pointer is only read; part 5 takes it mutably
+    let mut bbox = brep_bbox.copied();
+    crate::topology::brep::p5::find_and_set_infinite_region(b, shell_to_test, code, bbox.as_mut())
 }
 
 /// `SmFace::IsLamina` (unit `topology.face_p3`).

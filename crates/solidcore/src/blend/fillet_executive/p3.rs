@@ -520,21 +520,16 @@ pub trait ExecutiveAccess<O: ClassObject + SolutionObject + Ord> {
         ))
     }
 
-    /// `SmBrep::SetTolerance`; waiting for `topology.brep_p2`.
+    /// `SmBrep::SetTolerance` on the B-rep `brep` resolves to: the adapter delegates to
+    /// [`crate::topology::brep::p2::set_tolerance`].
     fn set_brep_tolerance(
         &mut self,
-        _k: &mut Kernel,
-        _brep: O,
-        _tolerance: f64,
-        _update_only_if_larger: bool,
-        _cascade_to_boundaries: bool,
-    ) -> Result<()> {
-        // UNPORTED(topology.brep_p2): SmBrep::SetTolerance
-        Err(SolidError::unported(
-            "SmBrep::SetTolerance",
-            "topology.brep_p2",
-        ))
-    }
+        k: &mut Kernel,
+        brep: O,
+        tolerance: f64,
+        update_only_if_larger: bool,
+        cascade_to_boundaries: bool,
+    ) -> Result<()>;
 
     /// `SmFilletGeom::MakeFaceBrep(m_pFilletBrep)`: delegate to the already ported
     /// `blend::fillet_geom::p4::FilletBrep::make_face_brep` (fillet geom p4) on the
