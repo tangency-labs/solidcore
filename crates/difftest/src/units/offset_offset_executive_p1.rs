@@ -2675,8 +2675,9 @@ mod tests {
 
     #[test]
     fn face_tail_fixture_reaches_the_kernel_face_constructor() {
-        // Until topology.brep_p2 lands, the shared MakeFaceWithCurves fixture defers
-        // at its vertex-shell construction rather than failing as a harness error.
+        // The shared MakeFaceWithCurves fixture defers inside the kernel constructor
+        // (since #149 at its wire-edge construction, `SmBrep::MakeWireEdgeVertex`,
+        // topology.brep_p3) rather than failing as a harness error.
         let input: Inputs = serde_json::from_value(serde_json::json!({
             "op": "face_tail",
             "offset_distance": 0.25,
@@ -2689,7 +2690,7 @@ mod tests {
         }))
         .unwrap();
         let output = Runner.run_rust(&case(&input)).unwrap();
-        assert_eq!(output.deferred.unwrap().unit, "topology.brep_p2");
+        assert_eq!(output.deferred.unwrap().unit, "topology.brep_p3");
     }
 
     #[test]
