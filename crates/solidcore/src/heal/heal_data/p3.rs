@@ -576,9 +576,9 @@ impl<O: LoopObject> HealData<O> {
                 let zone = face::tolerance(b, f)?;
                 let tol = xsect_tol_3d_from_zones(k, zone, zone);
                 let (closed_u, _) =
-                    surface.is_closed(&domain, SurfParamType::U, Some(tol), false)?;
+                    surface.is_closed(k, &domain, SurfParamType::U, Some(tol), false)?;
                 let (closed_v, _) =
-                    surface.is_closed(&domain, SurfParamType::V, Some(tol), false)?;
+                    surface.is_closed(k, &domain, SurfParamType::V, Some(tol), false)?;
                 let poles = u64::from(surface.get_singularities(k, false, false)?.singular);
                 if (closed_u && closed_v)
                     || (closed_v && poles & SS_UMIN != 0 && poles & SS_UMAX != 0)
@@ -983,16 +983,11 @@ fn refresh_stage2<O: LoopObject>(
         done,
     ))
 }
-fn face_edges(_b: &Brep, _f: FaceId) -> Result<Vec<EdgeId>> {
-    // UNPORTED(topology.face_p4): SmFace::GetEdges
-    Err(SolidError::unported("SmFace::GetEdges", "topology.face_p4"))
+fn face_edges(b: &Brep, f: FaceId) -> Result<Vec<EdgeId>> {
+    crate::topology::face::p4::edges(b, f, None, false, None)
 }
-fn face_vertices(_b: &Brep, _f: FaceId) -> Result<Vec<VertexId>> {
-    // UNPORTED(topology.face_p4): SmFace::GetVertices
-    Err(SolidError::unported(
-        "SmFace::GetVertices",
-        "topology.face_p4",
-    ))
+fn face_vertices(b: &Brep, f: FaceId) -> Result<Vec<VertexId>> {
+    crate::topology::face::p4::vertices(b, f, None, false, None)
 }
 fn face_region(b: &Brep, f: FaceId) -> Result<RegionId> {
     let fu = face::upward_faceuse(b, f)?.ok_or_else(|| invalid("face without upward use"))?;

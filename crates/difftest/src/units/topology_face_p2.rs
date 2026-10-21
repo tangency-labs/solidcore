@@ -1972,7 +1972,7 @@ fn run_rust_geom(op: &OpIn) -> Result<Vec<f64>, Fail> {
                 layout: &l,
             };
             let mut d = dydx.clone();
-            match e.evaluate(*t, &mut d) {
+            match e.evaluate(&k, *t, &mut d) {
                 Ok(()) => o.push(0.0),
                 Err(e) if e.is_unported() => return Err(e.into()),
                 Err(_) => o.push(1.0),

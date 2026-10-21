@@ -1,10 +1,12 @@
 //! Wire/shell-vertex boolean stage on identical raw input topology. Construction
 //! uses the shared real-B-rep fixture builder; no C++ merge results enter Rust.
+use super::boolean_merge_p1::Canon;
 use super::topology_vertexuse::{self as shared, BrepIn};
 use crate::{Case, HarnessError, Output, Rng, UnitDiff};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use solidcore::boolean::merge::p1::VertexCopy;
+use solidcore::boolean::merge::p2::TopologyCopy;
 use solidcore::boolean::merge::p5::process_wires_and_shell_vertices;
 use solidcore::boolean::topology_intersector::p1::Relations;
 use solidcore::geom::a_object::BooleanOperation;
@@ -12,8 +14,9 @@ use solidcore::geom::attribute::{AttributeStore, ObjectKey};
 use solidcore::geom::context::MarkLock;
 use solidcore::geom::object::ObjectRef;
 use solidcore::kernel::Kernel;
+use solidcore::topology::topology::Topology;
 use solidcore::topology::topology_traverser::{Entity, Marks};
-use solidcore::topology::{edge, vertex, vertexuse, ArenaId, Brep, EdgeId, VertexId, VertexuseId};
+use solidcore::topology::{edge, vertex, vertexuse, Brep, EdgeId, VertexId, VertexuseId};
 use solidcore_ffi::units::boolean_merge_p5::{self as ffi, Operand, Request};
 use std::collections::BTreeMap;
 
@@ -22,7 +25,7 @@ pub struct Runner;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
-enum Spec {
+pub(crate) enum Spec {
     Empty,
     Vertex { point: [f64; 3] },
     Graph { brep: BrepIn },
@@ -61,7 +64,7 @@ fn err(e: &(impl ToString + ?Sized)) -> HarnessError {
     HarnessError::new(e.to_string())
 }
 
-fn program(s: &Spec) -> Result<(String, Vec<f64>), HarnessError> {
+pub(crate) fn program(s: &Spec) -> Result<(String, Vec<f64>), HarnessError> {
     let mut block = Vec::new();
     let path = match s {
         Spec::Empty => {
@@ -94,7 +97,7 @@ fn program(s: &Spec) -> Result<(String, Vec<f64>), HarnessError> {
     };
     Ok((path, block))
 }
-fn operand(p: &(String, Vec<f64>)) -> Operand<'_> {
+pub(crate) fn operand(p: &(String, Vec<f64>)) -> Operand<'_> {
     Operand {
         path: &p.0,
         block: &p.1,
@@ -112,7 +115,7 @@ fn mapping(i: &Inputs, a: [usize; 10], b: [usize; 10]) -> Vec<i64> {
             .collect()
     })
 }
-fn import(
+pub(crate) fn import(
     f: &solidcore_ffi::units::topology_topology_traverser::Fixture,
 ) -> Result<Brep, HarnessError> {
     let (mut b, _) = shared::import(&f.graph)?;
@@ -141,10 +144,11 @@ fn seed(
         }
     }
 }
-fn id<I: ArenaId>(value: Option<I>) -> i64 {
-    value.map_or(-1, |i| i64::from(i.index()))
-}
-fn snapshot(
+/// The B-rep's topology in the shim's numbering ([`Canon::of_native`]: the edge and
+/// vertex lists, then the walk from the regions), so records an operation creates
+/// compare by their place in the topology rather than by arena allocation order.
+#[allow(clippy::too_many_lines)]
+pub(crate) fn snapshot(
     k: &Kernel,
     b: &Brep,
     marks: &Marks,
@@ -152,6 +156,8 @@ fn snapshot(
     ids: &mut Vec<i64>,
     values: &mut Vec<f64>,
 ) -> Result<(), HarnessError> {
+    use solidcore::topology::{EdgeuseOwner, LoopuseStart, VertexuseOwner};
+    let c = Canon::of_native(b);
     ids.extend(
         [
             b.regions().len(),
@@ -167,35 +173,39 @@ fn snapshot(
         ]
         .map(|n| n as i64),
     );
-    for (e, r) in b.edges().iter() {
+    for &e in &c.edges.items {
+        let r = b.edge(e).map_err(|e| err(&e))?;
         let v = edge::vertex(b, e).map_err(|e| err(&e))?;
         ids.extend([
-            id(v),
-            id(edge::other_vertex(b, e, v).map_err(|e| err(&e))?),
+            c.vertices.of(v),
+            c.vertices
+                .of(edge::other_vertex(b, e, v).map_err(|e| err(&e))?),
             i64::from(vertexuse::edge_is_wire(b, e).map_err(|e| err(&e))?),
             i64::from(marks.is_marked(k, Entity::Edge(e), mt)),
             r.edgeuses.len() as i64,
         ]);
-        ids.extend(r.edgeuses.iter().map(|e| i64::from(e.index())));
+        ids.extend(r.edgeuses.iter().map(|&x| c.edgeuses.of(Some(x))));
         values.extend([r.interval.min(), r.interval.max(), r.tolerance]);
     }
-    for (v, r) in b.vertices().iter() {
+    for &v in &c.vertices.items {
+        let r = b.vertex(v).map_err(|e| err(&e))?;
         ids.extend([
             i64::from(vertex::is_shell_vertex(b, v).map_err(|e| err(&e))?),
             i64::from(marks.is_marked(k, Entity::Vertex(v), mt)),
             r.vertexuses.len() as i64,
         ]);
-        ids.extend(r.vertexuses.iter().map(|v| i64::from(v.index())));
+        ids.extend(r.vertexuses.iter().map(|&x| c.vertexuses.of(Some(x))));
         values.extend([r.point.x, r.point.y, r.point.z, r.tolerance]);
     }
-    for (_, r) in b.regions().iter() {
-        ids.push(i64::from(r.in_brep));
+    for &x in &c.regions.items {
+        ids.push(i64::from(b.region(x).map_err(|e| err(&e))?.in_brep));
     }
-    for (_, sh) in b.shells().iter() {
-        ids.push(id(sh.region));
+    for &x in &c.shells.items {
+        ids.push(c.regions.of(b.shell(x).map_err(|e| err(&e))?.region));
     }
-    for (_, f) in b.faces().iter() {
-        ids.push(id(f.faceuse));
+    for &x in &c.faces.items {
+        let f = b.face(x).map_err(|e| err(&e))?;
+        ids.push(c.faceuses.of(f.faceuse));
         values.extend([
             f.tolerance,
             f.uv_domain.min().x,
@@ -204,48 +214,57 @@ fn snapshot(
             f.uv_domain.max().y,
         ]);
     }
-    for (_, fu) in b.faceuses().iter() {
+    for &x in &c.faceuses.items {
+        let fu = b.faceuse(x).map_err(|e| err(&e))?;
         ids.extend([
-            id(fu.shell),
-            id(fu.face),
-            id(fu.mate),
+            c.shells.of(fu.shell),
+            c.faces.of(fu.face),
+            c.faceuses.of(fu.mate),
             i64::from(fu.orientation as i32),
             fu.loopuses.len() as i64,
         ]);
-        ids.extend(fu.loopuses.iter().map(|l| i64::from(l.index())));
+        ids.extend(fu.loopuses.iter().map(|&l| c.loopuses.of(Some(l))));
     }
-    for (_, l) in b.loops().iter() {
-        ids.push(id(l.loopuse));
+    for &x in &c.loops.items {
+        ids.push(c.loopuses.of(b.loop_(x).map_err(|e| err(&e))?.loopuse));
     }
-    for (_, lu) in b.loopuses().iter() {
+    for &x in &c.loopuses.items {
+        let lu = b.loopuse(x).map_err(|e| err(&e))?;
         ids.extend([
-            id(lu.faceuse),
-            id(lu.loop_),
-            id(lu.mate),
+            c.faceuses.of(lu.faceuse),
+            c.loops.of(lu.loop_),
+            c.loopuses.of(lu.mate),
             i64::from(lu.orientation as i32),
         ]);
         ids.extend(match lu.start {
-            solidcore::topology::LoopuseStart::Unknown => [0, -1],
-            solidcore::topology::LoopuseStart::Edgeuse(e) => [1, id(e)],
-            solidcore::topology::LoopuseStart::Vertexuse(v) => [2, id(v)],
+            LoopuseStart::Unknown => [0, -1],
+            LoopuseStart::Edgeuse(e) => [1, c.edgeuses.of(e)],
+            LoopuseStart::Vertexuse(v) => [2, c.vertexuses.of(v)],
         });
     }
-    for (_, eu) in b.edgeuses().iter() {
-        ids.extend([id(eu.edge), id(eu.vertexuse), id(eu.cw), id(eu.ccw)]);
+    for &x in &c.edgeuses.items {
+        let eu = b.edgeuse(x).map_err(|e| err(&e))?;
+        ids.extend([
+            c.edges.of(eu.edge),
+            c.vertexuses.of(eu.vertexuse),
+            c.edgeuses.of(eu.cw),
+            c.edgeuses.of(eu.ccw),
+        ]);
         ids.extend(match eu.owner {
-            solidcore::topology::EdgeuseOwner::Unknown => [0, -1],
-            solidcore::topology::EdgeuseOwner::Loopuse(l) => [1, id(l)],
-            solidcore::topology::EdgeuseOwner::Shell(sh) => [2, id(sh)],
+            EdgeuseOwner::Unknown => [0, -1],
+            EdgeuseOwner::Loopuse(l) => [1, c.loopuses.of(l)],
+            EdgeuseOwner::Shell(sh) => [2, c.shells.of(sh)],
         });
         ids.push(i64::from(eu.orientation as i32));
     }
-    for (_, vu) in b.vertexuses().iter() {
-        ids.push(id(vu.vertex));
+    for &x in &c.vertexuses.items {
+        let vu = b.vertexuse(x).map_err(|e| err(&e))?;
+        ids.push(c.vertices.of(vu.vertex));
         ids.extend(match vu.owner {
-            solidcore::topology::VertexuseOwner::Unknown => [0, -1],
-            solidcore::topology::VertexuseOwner::Edgeuse(e) => [1, id(e)],
-            solidcore::topology::VertexuseOwner::Loopuse(l) => [2, id(l)],
-            solidcore::topology::VertexuseOwner::Shell(sh) => [3, id(sh)],
+            VertexuseOwner::Unknown => [0, -1],
+            VertexuseOwner::Edgeuse(e) => [1, c.edgeuses.of(e)],
+            VertexuseOwner::Loopuse(l) => [2, c.loopuses.of(l)],
+            VertexuseOwner::Shell(sh) => [3, c.shells.of(sh)],
         });
     }
     Ok(())
@@ -359,28 +378,59 @@ impl UnitDiff for Runner {
             }
             relations.edges.record(e, oe).map_err(|e| err(&e))?;
         }
+        // A fresh SmTopology record per vertex and edge of both operands, under the
+        // identities the copies are notified with (a copy propagates its flags).
         let mut records = BTreeMap::new();
+        for (base, brep) in [(0, &a), (1_000_000, &b)] {
+            for v in brep.vertices().ids() {
+                records.insert(ObjectKey(base + u64::from(v.index())), Topology::new());
+            }
+            for e in brep.edges().ids() {
+                records.insert(
+                    ObjectKey(2_000_000 + base + u64::from(e.index())),
+                    Topology::new(),
+                );
+            }
+        }
         let mut attributes = AttributeStore::new();
-        let mut copy = VertexCopy {
-            records: &mut records,
-            attributes: &mut attributes,
-            source_key: &|v| ObjectRef {
-                key: ObjectKey(1_000_000 + u64::from(v.index())),
-                type_code: 16021,
-            },
-            destination_key: &|e| match e {
-                solidcore::EntityRef::Vertex(v) => ObjectRef {
-                    key: ObjectKey(u64::from(v.index())),
+        let mut copy = TopologyCopy {
+            vertices: VertexCopy {
+                records: &mut records,
+                attributes: &mut attributes,
+                source_key: &|v| ObjectRef {
+                    key: ObjectKey(1_000_000 + u64::from(v.index())),
                     type_code: 16021,
                 },
-                solidcore::EntityRef::Vertexuse(v) => ObjectRef {
-                    key: ObjectKey(2_000_000 + u64::from(v.index())),
-                    type_code: 16006,
+                destination_key: &|e| match e {
+                    solidcore::EntityRef::Vertex(v) => ObjectRef {
+                        key: ObjectKey(u64::from(v.index())),
+                        type_code: 16021,
+                    },
+                    solidcore::EntityRef::Vertexuse(v) => ObjectRef {
+                        key: ObjectKey(8_000_000 + u64::from(v.index())),
+                        type_code: 16006,
+                    },
+                    _ => ObjectRef {
+                        key: ObjectKey(9_000_000),
+                        type_code: 16001,
+                    },
                 },
-                _ => ObjectRef {
-                    key: ObjectKey(3_000_000),
-                    type_code: 16001,
-                },
+            },
+            edge_source_key: &|e| ObjectRef {
+                key: ObjectKey(3_000_000 + u64::from(e.index())),
+                type_code: 16016,
+            },
+            edge_destination_key: &|e| ObjectRef {
+                key: ObjectKey(2_000_000 + u64::from(e.index())),
+                type_code: 16016,
+            },
+            face_source_key: &|f| ObjectRef {
+                key: ObjectKey(5_000_000 + u64::from(f.index())),
+                type_code: 16002,
+            },
+            face_destination_key: &|f| ObjectRef {
+                key: ObjectKey(4_000_000 + u64::from(f.index())),
+                type_code: 16002,
             },
         };
         let operation =
@@ -465,7 +515,7 @@ impl UnitDiff for Runner {
     }
 }
 
-fn generated_operand(rng: &mut Rng, scale: f64) -> (Value, bool) {
+pub(crate) fn generated_operand(rng: &mut Rng, scale: f64) -> (Value, bool) {
     match rng.below(5) {
         0 => (json!({"kind":"empty"}), false),
         1 => (

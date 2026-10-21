@@ -26,8 +26,8 @@
 //!   `NER` returns are the callee's error or [`SolidError::Upstream`] `SM_ERR`.
 //! - **`SmFace::GetEdges`** with default arguments is the co-ported
 //!   `topology_traverser::face_edges`; `GetEdges(.., TRUE)` (outer loop only),
-//!   `GetUpwardLoopuses`, `GetUpwardEdgeuses`, `GetUpwardVertexuses` and `GetBrep` are
-//!   [`SolidError::Unported`] (`topology.face_p4`).
+//!   `GetUpwardLoopuses`, `GetUpwardEdgeuses`, `GetUpwardVertexuses` (default arguments)
+//!   and `GetBrep` call `topology::face::p4`.
 //! - **Statuses.** `ComputeProjectedLoopOrientation`'s status is checked as upstream (a
 //!   failure falls through to the 3D walk); `sm_AreConnected` and `IsDegenerate` of a
 //!   curve return values; ignored as upstream: the `Trim`, `EvaluatePoint` and
@@ -65,7 +65,7 @@
 //!   [`edge::NotifyEnv`]. `SE_MSG` for `SM_NO_UNKNOWN` is compiled out.
 //! - **Unported callees** return [`SolidError::Unported`]: the curve constructor of
 //!   `SmCurveClassification` (`intersect.curve_class_p4`), `SmFace::Point3DClassify`
-//!   (`query.face_p1`) and the `topology.face_p4` accessors above. `SmEdgeuse::NormalizedEvaluate`
+//!   (`query.face_p1`). `SmEdgeuse::NormalizedEvaluate`
 //!   and `GetOrCreateUVTrimCurve` are wired (`topology.edgeuse_p3`; their own unported
 //!   callees still return it).
 //! - **Bounds.** No recursion; every loop is over B-rep arrays or a fixed sample count.
@@ -150,42 +150,28 @@ fn get_or_create_uv_trim_curve(
 }
 
 /// `GetUpwardLoopuses(sLoopuses)` (default arguments).
-fn upward_loopuses(_b: &Brep, _f: FaceId) -> Result<Vec<LoopuseId>> {
-    // UNPORTED(topology.face_p4): SmFace::GetUpwardLoopuses
-    Err(SolidError::unported(
-        "SmFace::GetUpwardLoopuses",
-        "topology.face_p4",
-    ))
+fn upward_loopuses(b: &Brep, f: FaceId) -> Result<Vec<LoopuseId>> {
+    crate::topology::face::p4::upward_loopuses(b, f, false, None)
 }
 
 /// `GetUpwardEdgeuses(sEdgeuses)` (default arguments).
-fn upward_edgeuses(_b: &Brep, _f: FaceId) -> Result<Vec<EdgeuseId>> {
-    // UNPORTED(topology.face_p4): SmFace::GetUpwardEdgeuses
-    Err(SolidError::unported(
-        "SmFace::GetUpwardEdgeuses",
-        "topology.face_p4",
-    ))
+fn upward_edgeuses(b: &Brep, f: FaceId) -> Result<Vec<EdgeuseId>> {
+    crate::topology::face::p4::upward_edgeuses(b, f, false, None)
 }
 
 /// `GetUpwardVertexuses(sVertexuses)` (default arguments).
-fn upward_vertexuses(_b: &Brep, _f: FaceId) -> Result<Vec<VertexuseId>> {
-    // UNPORTED(topology.face_p4): SmFace::GetUpwardVertexuses
-    Err(SolidError::unported(
-        "SmFace::GetUpwardVertexuses",
-        "topology.face_p4",
-    ))
+fn upward_vertexuses(b: &Brep, f: FaceId) -> Result<Vec<VertexuseId>> {
+    crate::topology::face::p4::upward_vertexuses(b, f, false, None)
 }
 
 /// `GetEdges(sEdges, NULL, TRUE)`: the edges of the outer loop only.
-fn outer_loop_edges(_b: &Brep, _f: FaceId) -> Result<Vec<EdgeId>> {
-    // UNPORTED(topology.face_p4): SmFace::GetEdges (bTgtLoopsOnly = TRUE)
-    Err(SolidError::unported("SmFace::GetEdges", "topology.face_p4"))
+fn outer_loop_edges(b: &Brep, f: FaceId) -> Result<Vec<EdgeId>> {
+    crate::topology::face::p4::edges(b, f, None, true, None)
 }
 
 /// `this->GetBrep() ? this->GetBrep()->GetTolerance() : 0.0`.
-fn brep_tolerance(_b: &Brep, _f: FaceId) -> Result<f64> {
-    // UNPORTED(topology.face_p4): SmFace::GetBrep
-    Err(SolidError::unported("SmFace::GetBrep", "topology.face_p4"))
+fn brep_tolerance(b: &Brep, f: FaceId) -> Result<f64> {
+    Ok(crate::topology::face::p4::brep(b, f)?.map_or(0.0, Brep::tolerance))
 }
 
 /// `new SmCurveClassification(pCurve, sInterval, pUVCurve, sSrcZoneTol3d)`.
@@ -608,7 +594,7 @@ pub fn compute_loop_orientation(
         // walk all UVTrimCurves to determine if this is a CCW or CW loop
         let normal = Vec3::new(0.0, 0.0, 1.0);
         match CompositeCurve::compute_projected_loop_orientation(
-            &uv_curves, &senses, normal, uv_bounds,
+            k, &uv_curves, &senses, normal, uv_bounds,
         ) {
             Ok(o) if o != OrientType::Unknown => return Ok(o),
             Err(e) if e.is_unported() => return Err(e),
@@ -664,10 +650,10 @@ pub fn compute_loop_orientation(
     let mut param_shift = Vec2::new(0.0, 0.0);
 
     let closed_u = surf_copy
-        .is_closed(&surf_domain, SurfParamType::U, None, false)?
+        .is_closed(k, &surf_domain, SurfParamType::U, None, false)?
         .0;
     let closed_v = surf_copy
-        .is_closed(&surf_domain, SurfParamType::V, None, false)?
+        .is_closed(k, &surf_domain, SurfParamType::V, None, false)?
         .0;
 
     for &eu in &edgeuses {
@@ -1087,7 +1073,7 @@ pub fn is_degenerate(
         let zone_tol = opt_zone_tol_3d.unwrap_or(edge_tol);
 
         // when edge is degenerate - its classification is NULL
-        if edge_curve(b, e)?.is_degenerate(zone_tol, Some(&interval))? {
+        if edge_curve(b, e)?.is_degenerate(k, zone_tol, Some(&interval))? {
             classify.push(None);
         } else {
             classify.push(Some(curve_classification(
@@ -1127,7 +1113,7 @@ pub fn is_degenerate(
 
             // We have to get the magnitude of this vector in 3d.
             let uv_2d = Point2::new(uv_pt.x, uv_pt.y);
-            let eval = ignored(surface_of(b, f)?.evaluate_1st_derivatives(uv_2d, false, false))?;
+            let eval = ignored(surface_of(b, f)?.evaluate_1st_derivatives(k, uv_2d, false, false))?;
             if let Some((_srf_pt, su, sv)) = eval {
                 // get 3d vector from edge pointing into face - sized to Edge 1st Deriv
                 let vec_3d = su * uv_deriv.x + sv * uv_deriv.y;
@@ -1527,7 +1513,7 @@ pub fn face_intersect(
         'faces: for face in [f, other] {
             for e in face_edges(b, face)? {
                 let edge_crv = edge_curve(b, e)?;
-                if edge_crv.is_degenerate(EFF_ZERO, None)? {
+                if edge_crv.is_degenerate(k, EFF_ZERO, None)? {
                     continue;
                 }
                 let mut new_crv = match edge_crv.copy(k) {
@@ -1575,7 +1561,7 @@ pub fn face_intersect(
                 continue;
             };
             // status ignored upstream
-            let point = ignored(curve.evaluate_point(0.5))?.unwrap_or(Vec3::UNDEF);
+            let point = ignored(curve.evaluate_point(k, 0.5))?.unwrap_or(Vec3::UNDEF);
             let mut pc1 = PointClassification::<IntersectObject>::new(this_zone_tol);
             let mut pc2 = PointClassification::<IntersectObject>::new(other_zone_tol);
             // statuses ignored upstream

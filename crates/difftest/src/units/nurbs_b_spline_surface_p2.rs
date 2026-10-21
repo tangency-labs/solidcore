@@ -28,10 +28,10 @@
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
+use solidcore::curve::curve::Curve as SmCurve;
 use solidcore::geom::extent2d::Extent2d;
 use solidcore::geom::vector3d::{Point3, Vec3};
 use solidcore::kernel::Kernel;
-use solidcore::curve::curve::Curve as SmCurve;
 use solidcore::nurbs::b_spline_curve::{BSplineCurve, ControlPointForm, KnotType};
 use solidcore::nurbs::b_spline_surface::{
     BSplineSurface, BSplineSurfaceForm, CanonicalSurfaceData, ControlPointBlock,
@@ -823,7 +823,7 @@ fn rust(i: &Inputs) -> Result<Output, HarnessError> {
         (OpIn::DegenPt { tol, dom }, Some(t)) => {
             let d = dom.as_ref().map(dom_of);
             this_of(t)?
-                .is_degenerate_point(*tol, d.as_ref())
+                .is_degenerate_point(&k, *tol, d.as_ref())
                 .map(|b| o.push(flag(b)))
         }
         (OpIn::Bilinear {}, Some(t)) => {
@@ -860,7 +860,7 @@ fn rust(i: &Inputs) -> Result<Output, HarnessError> {
                     o.extend_from_slice(&v);
                 })
         }
-        (OpIn::MaxDomain {}, Some(t)) => this_of(t)?.max_analytic_domain().map(|d| {
+        (OpIn::MaxDomain {}, Some(t)) => this_of(t)?.max_analytic_domain(&k).map(|d| {
             o.extend([d.min().x, d.min().y, d.max().x, d.max().y]);
         }),
         (
@@ -939,7 +939,7 @@ fn rust(i: &Inputs) -> Result<Output, HarnessError> {
                 .iter()
                 .map(|a| bsc_of(a).map(SmCurve::from))
                 .collect::<Result<Vec<_>, _>>()?;
-            BSplineSurface::create_sphere_from_arcs(&cs, *tol).map(|r| {
+            BSplineSurface::create_sphere_from_arcs(&k, &cs, *tol).map(|r| {
                 o.push(r.ccw_arcs.len() as f64);
                 o.extend(r.ccw_arcs.iter().map(|&j| j as f64));
                 o.extend(r.orients.iter().map(|&x| orient_code(x)));

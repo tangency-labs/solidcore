@@ -1681,7 +1681,7 @@ fn run_rust_op(b: &mut Brep, op: &OpIn) -> Result<Output, Fail> {
             let mut q = Vec::new();
             put_flag(
                 &mut q,
-                vx::are_edges_tangent(b, vid(*v), e(*e1), e(*e2), *tol_deg),
+                vx::are_edges_tangent(&k, b, vid(*v), e(*e1), e(*e2), *tol_deg),
             )?;
             return Ok(Output::new().ints("q", q));
         }

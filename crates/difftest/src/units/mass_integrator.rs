@@ -359,7 +359,7 @@ fn geometry_rust(g: &Geometry) -> Output {
                     )?;
                     return Err(SolidError::sm_err("unexpected brep dependency"));
                 }
-                let p = props::curve_properties(&c, &ivl, accuracy, Vec3::new(ox, oy, oz), radius)?;
+                let p = props::curve_properties(&kernel, &c, &ivl, accuracy, Vec3::new(ox, oy, oz), radius)?;
                 let mut out = vec![0.0, p.length, p.properties.area, p.properties.volume];
                 for m in p.properties.moments {
                     out.extend([m.x, m.y, m.z]);
@@ -459,9 +459,26 @@ fn geometry_rust(g: &Geometry) -> Output {
                         })
                         .collect();
                     let knots: Vec<_> = it.by_ref().take(m + 1).collect();
-                    curves.push(Curve::from(BSplineCurve::from_data(
-                        2, n, m, degree, &cp, &knots,
-                    )?));
+                    let base = BSplineCurve::from_data(2, n, m, degree, &cp, &knots)?;
+                    // C++ evaluates an SmLine trim analytically, not through its NURB.
+                    let line = it.next().ok_or_else(|| SolidError::sm_err("trim type"))?;
+                    if line == 0.0 {
+                        curves.push(Curve::from(base));
+                        continue;
+                    }
+                    let mut v = [0.0; 10];
+                    for x in &mut v {
+                        *x = it.next().ok_or_else(|| SolidError::sm_err("trim line"))?;
+                    }
+                    let [px, py, pz, vx, vy, vz, a, b, scale, inside_out] = v;
+                    curves.push(Curve::from(solidcore::curve::line::Line::from_parts(
+                        base,
+                        Vec3::new(px, py, pz),
+                        Vec3::new(vx, vy, vz),
+                        Extent1d::from_raw(a, b),
+                        scale,
+                        inside_out != 0.0,
+                    )));
                 }
                 let domain = if *query == 7 {
                     // Surface::Area integrates the requested rectangle, independent
@@ -528,7 +545,7 @@ fn geometry_rust(g: &Geometry) -> Output {
                         domain.max().x,
                         IntegrationAlgorithm::Romberg,
                         p[12],
-                        |t| eval.evaluate(t),
+                        |t| eval.evaluate(&kernel, t),
                     )?;
                     return Ok(if area == 0.0 {
                         vec![1001.0]

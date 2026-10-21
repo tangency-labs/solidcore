@@ -217,8 +217,8 @@ fn as_kind<O: ClassObject>(o: Option<O>, kind: ClassObjectKind) -> Option<O> {
 }
 
 /// `EvaluatePoint` with its status ignored: the point, `SM_UNDEF` on failure.
-fn eval_point(curve: &Curve, t: f64) -> Result<Point3> {
-    Ok(ignore_soft(curve.evaluate_point(t))?.unwrap_or(Vec3::UNDEF))
+fn eval_point(k: &Kernel, curve: &Curve, t: f64) -> Result<Point3> {
+    Ok(ignore_soft(curve.evaluate_point(k, t))?.unwrap_or(Vec3::UNDEF))
 }
 
 /// `SmTol::GetZoneTol3d(const SmObject*)`: a vertex's, edge's or face's own tolerance,
@@ -374,15 +374,24 @@ fn classify_param_on_faces<O: Copy>(
     ))
 }
 
-/// `SmSurface::DropPoint` (normalising) over the surface's natural domain: the drop
-/// point when it succeeded.
-fn surface_drop_point<O: Copy>(surface: Option<O>, point: Point3) -> Result<Option<Point2>> {
-    let _ = (surface, point);
-    // UNPORTED(surface.surface_p5): SmSurface::DropPoint
-    Err(SolidError::unported(
-        "SmSurface::DropPoint",
-        "surface.surface_p5",
-    ))
+/// `SmSurface::DropPoint(pt, GetNaturalUVDomain(), NULL, .., SM_SO_NORMALIZE)`: the
+/// drop point when it succeeded.
+fn surface_drop_point<O: Copy>(
+    k: &Kernel,
+    brep: &impl ProtoBrep<O>,
+    surface: Option<O>,
+    point: Point3,
+) -> Result<Option<Point2>> {
+    let srf = surface
+        .and_then(|o| brep.surface(o))
+        .ok_or(dangling("surface handle is null or unknown"))?;
+    let domain = srf.natural_uv_domain();
+    let opts = crate::surface::surface::p5::DropPointOptions {
+        operation: SolverOperation::Normalize, // Don't want off-boundary drops.
+        ..crate::surface::surface::p5::DropPointOptions::default()
+    };
+    let r = srf.drop_point::<crate::surface::surface::p4::NoObject>(k, point, &domain, &opts)?;
+    Ok(r.success.then_some(r.result_uv))
 }
 
 /// `SmEdgeuse::EvaluateBinormal(dParam, FALSE, rPt, rBinormal)`: the binormal.
@@ -535,16 +544,16 @@ impl<O: ClassObject> ProtoTopologyManager<O> {
 
         let null = || SolidError::null_pointer(OP_IMPRINT_ED);
         let start_vtx1 = self
-            .proto_vertex_final_vertex(brep, start_pv, 1, ed, true)?
+            .proto_vertex_final_vertex(k, brep, start_pv, 1, ed, true)?
             .ok_or_else(null)?;
         let end_vtx1 = self
-            .proto_vertex_final_vertex(brep, end_pv, 1, ed, false)?
+            .proto_vertex_final_vertex(k, brep, end_pv, 1, ed, false)?
             .ok_or_else(null)?;
         let start_vtx2 = self
-            .proto_vertex_final_vertex(brep, start_pv, 2, ed, true)?
+            .proto_vertex_final_vertex(k, brep, start_pv, 2, ed, true)?
             .ok_or_else(null)?;
         let end_vtx2 = self
-            .proto_vertex_final_vertex(brep, end_pv, 2, ed, false)?
+            .proto_vertex_final_vertex(k, brep, end_pv, 2, ed, false)?
             .ok_or_else(null)?;
         let _ = (start_vtx1, end_vtx1, start_vtx2, end_vtx2);
 
@@ -859,10 +868,10 @@ impl<O: ClassObject> ProtoTopologyManager<O> {
         } else {
             let pe_ivl = e.xsect_interval();
             let uninit = || dangling("mid tangent is uninitialised (evaluation failed)");
-            let pe_tan = ignore_soft(self.proto_edge_evaluate_mid(brep, pe, false, true))?
+            let pe_tan = ignore_soft(self.proto_edge_evaluate_mid(k, brep, pe, false, true))?
                 .and_then(|(_, t)| t)
                 .ok_or_else(uninit)?;
-            let ed_tan = ignore_soft(self.ed_ref(ed)?.evaluate_mid(brep, false, true))?
+            let ed_tan = ignore_soft(self.ed_ref(ed)?.evaluate_mid(k, brep, false, true))?
                 .and_then(|(_, t)| t)
                 .ok_or_else(uninit)?;
 
@@ -1078,7 +1087,7 @@ impl<O: ClassObject> ProtoTopologyManager<O> {
         if start == end {
             let first = *eds.first().ok_or(dangling("no edge definition"))?;
             let int_curve = curve_of(brep, self.ed_ref(first)?.xsect_curve_3d())?;
-            let (len, _) = int_curve.approximate_length(&pe_ivl, 5, false)?;
+            let (len, _) = int_curve.approximate_length(k, &pe_ivl, 5, false)?;
 
             if len < 2.0 * pe_tol {
                 // remove all of our EdgeDefinitions
@@ -1090,7 +1099,7 @@ impl<O: ClassObject> ProtoTopologyManager<O> {
                     .clear_edge_definitions();
             } else {
                 // Our IntCurve is longer than tolerance. Check start & end points.
-                let ends = int_curve.ends()?;
+                let ends = int_curve.ends(k)?;
                 let (pt0, pt1) = (ends.start, ends.end);
                 let dist = pt0.distance(pt1);
                 if dist > 2.0 * pe_tol {
@@ -1557,7 +1566,7 @@ impl<O: ClassObject> ProtoTopologyManager<O> {
             old_ivl.min()
         };
         let old_curve = edge_curve_of(brep, old_edge)?;
-        let split_pt = eval_point(curve_of(brep, Some(old_curve))?, end_param)?;
+        let split_pt = eval_point(k, curve_of(brep, Some(old_curve))?, end_param)?;
 
         let calling_vd = calling_vd.ok_or(dangling("calling vertex definition is null"))?;
         let calling_pv = self.vd_ref(calling_vd)?.proto_vertex();
@@ -1628,7 +1637,7 @@ impl<O: ClassObject> ProtoTopologyManager<O> {
 
             // Found a ProtoEdge on the edge that was split: drop the midpoint of the
             // definition to both edges' curves.
-            let mid_pt = match d.evaluate_mid(brep, true, false) {
+            let mid_pt = match d.evaluate_mid(k, brep, true, false) {
                 Ok((Some(p), _)) => p,
                 Err(e) if e.is_unported() || matches!(e, SolidError::InvalidInput { .. }) => {
                     return Err(e)
@@ -1769,19 +1778,21 @@ impl<O: ClassObject> ProtoTopologyManager<O> {
             let uv_curve = d.xsect_uv_curve(which);
             let mid_param = d.xsect_interval().mid();
             if uv_curve.is_some() {
-                if let Some(p) = ignore_soft(curve_of(brep, uv_curve)?.evaluate_point(mid_param))? {
+                if let Some(p) =
+                    ignore_soft(curve_of(brep, uv_curve)?.evaluate_point(k, mid_param))?
+                {
                     face_uv = Some(Point2::new(p.x, p.y));
                 }
             }
             if face_uv.is_none() {
                 // drop a 3d MidPoint to the surface.
                 let surface = brep.face_surface(old_face).ok_or_else(unknown)?;
-                let mid_pt = match d.evaluate_mid(brep, true, false) {
+                let mid_pt = match d.evaluate_mid(k, brep, true, false) {
                     Ok((Some(p), _)) => p,
                     Err(e) if e.is_unported() => return Err(e),
                     _ => Vec3::UNDEF,
                 };
-                face_uv = ignore_soft(surface_drop_point(surface, mid_pt))?.flatten();
+                face_uv = ignore_soft(surface_drop_point(k, brep, surface, mid_pt))?.flatten();
             }
             let Some(face_uv) = face_uv else { continue };
 
@@ -1874,13 +1885,15 @@ impl<O: ClassObject> ProtoTopologyManager<O> {
 
             if !did_reclassify {
                 for &coinc_pe in coinc_pes.iter().flatten() {
-                    let mid_pt = match self.proto_edge_evaluate_mid(brep, coinc_pe, true, false) {
+                    let mid_pt = match self.proto_edge_evaluate_mid(k, brep, coinc_pe, true, false)
+                    {
                         Ok((Some(p), _)) => p,
                         Err(e) if e.is_unported() => return Err(e),
                         _ => Vec3::UNDEF,
                     };
                     let surface = brep.face_surface(old_face).ok_or_else(unknown)?;
-                    let Some(face_uv) = ignore_soft(surface_drop_point(surface, mid_pt))?.flatten()
+                    let Some(face_uv) =
+                        ignore_soft(surface_drop_point(k, brep, surface, mid_pt))?.flatten()
                     else {
                         continue;
                     };

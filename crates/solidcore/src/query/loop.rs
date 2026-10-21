@@ -155,6 +155,7 @@ fn drop_on_edge(
 /// converged and the solution. A failing solve has not converged (its status is
 /// ignored upstream and the flag is reset first).
 fn local_minimize(
+    k: &Kernel,
     trim: &Curve,
     interval: &Extent1d,
     point: Point3,
@@ -165,7 +166,8 @@ fn local_minimize(
         distance_tolerance: Some(tol_uv),
         ..PointSolveOptions::default()
     };
-    match trim.local_point_solve::<()>(interval, SolverOperation::Minimize, point, &opts, guess) {
+    match trim.local_point_solve::<()>(k, interval, SolverOperation::Minimize, point, &opts, guess)
+    {
         Ok((true, sol)) => Ok(Some(sol)),
         Err(e @ SolidError::Unported { .. }) => Err(e),
         Ok((false, _)) | Err(_) => Ok(None),
@@ -174,8 +176,13 @@ fn local_minimize(
 
 /// The point and unit tangent (in the edge use's direction) of a trim curve at `t`,
 /// with the tangent's length (`1` when below `SM_EFF_ZERO`).
-fn eval_with_tangent(trim: &Curve, t: f64, orient: OrientType) -> Result<(Point3, Vec3, f64)> {
-    let der = trim.evaluate(t, 1, false, true)?;
+fn eval_with_tangent(
+    k: &Kernel,
+    trim: &Curve,
+    t: f64,
+    orient: OrientType,
+) -> Result<(Point3, Vec3, f64)> {
+    let der = trim.evaluate(k, t, 1, false, true)?;
     let pt = der.first().copied().unwrap_or(Vec3::UNDEF);
     let mut tan = der.get(1).copied().unwrap_or(Vec3::UNDEF);
     if orient == OrientType::Opposite {
@@ -268,12 +275,12 @@ pub fn contains_uv_point(
     let zone_tol = face_rec.tolerance;
 
     let srf_uv_domain = surface.natural_uv_domain();
-    let point_3d = surface.evaluate_point(uv)?;
+    let point_3d = surface.evaluate_point(k, uv)?;
     let uv_pt = Point3::new(uv.x, uv.y, 0.0);
 
     // Get a tolerance in uv space.
     // Scale the input tolerance by the UV deriv size.
-    let mut tol_uv = map_to_2d(zone_tol, uv, surface)?;
+    let mut tol_uv = map_to_2d(k, zone_tol, uv, surface)?;
 
     // minimize pole checking - if UVPnt on boundary -then-> if Loop on boundary -then->
     // if GetSingularities -then-> expensive check
@@ -353,7 +360,7 @@ pub fn contains_uv_point(
         let last_trim = eu1::uv_trim_curve(b, last_eu)?
             .0
             .ok_or_else(|| null("ContainsUVPoint: edge use without UV trim curve"))?;
-        last_trim.evaluate_point(last_end_param)?
+        last_trim.evaluate_point(k, last_end_param)?
     };
     let mut last_end_quad_num = calc_quad_num(uv_pt, last_end_uv);
 
@@ -398,18 +405,18 @@ pub fn contains_uv_point(
         let _default_param_step = domain.length() / trim.number_control_points()? as f64;
         let min_param_step = domain.length() / 1000.0;
         let max_param_step = domain.length() / 20.0;
-        let curve_is_linear = trim.is_linear(tol_uv, false)?.linear;
+        let curve_is_linear = trim.is_linear(k, tol_uv, false)?.linear;
 
         // Eval info for start point of this EU.
         let (mut prev_uv, mut prev_uv_tan, mut prev_uv_tan_len) =
-            eval_with_tangent(trim, prev_param, orient)?;
+            eval_with_tangent(k, trim, prev_param, orient)?;
         let (prev_vec, mut prev_dist) = unit_from(uv_pt, prev_uv);
         let mut prev_cos = prev_vec.dot(prev_uv_tan);
 
         // Note: if dPrevDist < tol, then this uv pt is on the edge.
         if prev_dist < tol_uv {
             // We should refine the point.
-            if let Some(sol) = local_minimize(trim, &domain, uv_pt, tol_uv, prev_param)? {
+            if let Some(sol) = local_minimize(k, trim, &domain, uv_pt, tol_uv, prev_param)? {
                 // since the guess was good enough - we expect the refined solution to
                 // be as good or better
                 if sol.start.solution_value <= tol_uv {
@@ -517,7 +524,7 @@ pub fn contains_uv_point(
                 }
 
                 let (uv_at, this_uv_tan, this_uv_tan_len) =
-                    eval_with_tangent(trim, this_param, orient)?;
+                    eval_with_tangent(k, trim, this_param, orient)?;
                 this_uv = uv_at;
                 let (this_vec, this_dist) = unit_from(uv_pt, this_uv);
                 let this_cos = this_vec.dot(this_uv_tan);
@@ -599,7 +606,7 @@ pub fn contains_uv_point(
                     crv_ivl.add_value(this_param);
                     crv_ivl.expand_absolute(EFF_ZERO);
 
-                    if let Some(sol) = local_minimize(trim, &crv_ivl, uv_pt, tol_uv, guess_t)? {
+                    if let Some(sol) = local_minimize(k, trim, &crv_ivl, uv_pt, tol_uv, guess_t)? {
                         if sol.start.solution_value <= tol_uv {
                             return Ok(UvContainment::on(this_edge, sol.start.param(0)?));
                         }

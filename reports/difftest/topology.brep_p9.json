@@ -298,16 +298,12 @@
       "values_compared": 51
     },
     {
-      "deferred": {
-        "symbol": "SmFace::GetBrep",
-        "unit": "topology.face_p4"
-      },
       "max_rel_err": 0.0,
       "name": "plane_orient_sheet",
-      "outcome": "deferred",
-      "pass": false,
+      "outcome": "pass",
+      "pass": true,
       "source": "fixture:fixtures/topology.brep_p9/boundaries.json#37 (upstream source/SMLib/src/SmBrep.cpp:11620)",
-      "values_compared": 0
+      "values_compared": 50
     },
     {
       "max_rel_err": 0.0,
@@ -326,40 +322,28 @@
       "values_compared": 58
     },
     {
-      "deferred": {
-        "symbol": "SmFace::Notify",
-        "unit": "topology.face_p3"
-      },
       "max_rel_err": 0.0,
       "name": "plane_vertex_loop_False",
-      "outcome": "deferred",
-      "pass": false,
+      "outcome": "pass",
+      "pass": true,
       "source": "fixture:fixtures/topology.brep_p9/boundaries.json#40 (upstream source/SMLib/src/SmBrep.cpp:19101)",
-      "values_compared": 0
+      "values_compared": 60
     },
     {
-      "deferred": {
-        "symbol": "SmFace::Notify",
-        "unit": "topology.face_p3"
-      },
       "max_rel_err": 0.0,
       "name": "plane_vertex_loop_True",
-      "outcome": "deferred",
-      "pass": false,
+      "outcome": "pass",
+      "pass": true,
       "source": "fixture:fixtures/topology.brep_p9/boundaries.json#41 (upstream source/SMLib/src/SmBrep.cpp:19101)",
-      "values_compared": 0
+      "values_compared": 60
     },
     {
-      "deferred": {
-        "symbol": "SmFace::Notify",
-        "unit": "topology.face_p3"
-      },
       "max_rel_err": 0.0,
       "name": "plane_insert_0",
-      "outcome": "deferred",
-      "pass": false,
+      "outcome": "pass",
+      "pass": true,
       "source": "fixture:fixtures/topology.brep_p9/boundaries.json#42 (upstream source/SMLib/src/SmBrep.cpp:12242)",
-      "values_compared": 0
+      "values_compared": 72
     },
     {
       "max_rel_err": 0.0,
@@ -402,16 +386,12 @@
       "values_compared": 53
     },
     {
-      "deferred": {
-        "symbol": "SmFace::Notify",
-        "unit": "topology.face_p3"
-      },
       "max_rel_err": 0.0,
       "name": "plane_split_face_edge_interior",
-      "outcome": "deferred",
-      "pass": false,
+      "outcome": "pass",
+      "pass": true,
       "source": "fixture:fixtures/topology.brep_p9/boundaries.json#48 (upstream source/SMLib/src/SmBrep.cpp:21206)",
-      "values_compared": 0
+      "values_compared": 64
     },
     {
       "max_rel_err": 0.0,
@@ -422,16 +402,12 @@
       "values_compared": 51
     },
     {
-      "deferred": {
-        "symbol": "SmFace::GetBrep",
-        "unit": "topology.face_p4"
-      },
       "max_rel_err": 0.0,
       "name": "bspline_face_orient_sheet",
-      "outcome": "deferred",
-      "pass": false,
+      "outcome": "pass",
+      "pass": true,
       "source": "fixture:fixtures/topology.brep_p9/boundaries.json#50 (upstream source/SMLib/src/SmBrep.cpp:11620)",
-      "values_compared": 0
+      "values_compared": 50
     },
     {
       "max_rel_err": 0.0,
@@ -450,28 +426,20 @@
       "values_compared": 58
     },
     {
-      "deferred": {
-        "symbol": "SmFace::Notify",
-        "unit": "topology.face_p3"
-      },
       "max_rel_err": 0.0,
       "name": "bspline_face_vertex_loop_False",
-      "outcome": "deferred",
-      "pass": false,
+      "outcome": "pass",
+      "pass": true,
       "source": "fixture:fixtures/topology.brep_p9/boundaries.json#53 (upstream source/SMLib/src/SmBrep.cpp:19101)",
-      "values_compared": 0
+      "values_compared": 60
     },
     {
-      "deferred": {
-        "symbol": "SmFace::Notify",
-        "unit": "topology.face_p3"
-      },
       "max_rel_err": 0.0,
       "name": "bspline_face_vertex_loop_True",
-      "outcome": "deferred",
-      "pass": false,
+      "outcome": "pass",
+      "pass": true,
       "source": "fixture:fixtures/topology.brep_p9/boundaries.json#54 (upstream source/SMLib/src/SmBrep.cpp:19101)",
-      "values_compared": 0
+      "values_compared": 60
     },
     {
       "deferred": {
@@ -526,16 +494,12 @@
       "values_compared": 53
     },
     {
-      "deferred": {
-        "symbol": "SmFace::Notify",
-        "unit": "topology.face_p3"
-      },
       "max_rel_err": 0.0,
       "name": "bspline_face_split_face_edge_interior",
-      "outcome": "deferred",
-      "pass": false,
+      "outcome": "pass",
+      "pass": true,
       "source": "fixture:fixtures/topology.brep_p9/boundaries.json#61 (upstream source/SMLib/src/SmBrep.cpp:21206)",
-      "values_compared": 0
+      "values_compared": 64
     },
     {
       "max_rel_err": 0.0,
@@ -786,16 +750,12 @@
       "values_compared": 35
     },
     {
-      "deferred": {
-        "symbol": "SmFace::Notify",
-        "unit": "topology.face_p3"
-      },
       "max_rel_err": 0.0,
       "name": "real_cone_split_e0_t0.5",
-      "outcome": "deferred",
-      "pass": false,
+      "outcome": "pass",
+      "pass": true,
       "source": "fixture:fixtures/topology.brep_p9/real_files.json#1 (upstream source/SMLib/src/SmBrep.cpp:21206-21612)",
-      "values_compared": 0
+      "values_compared": 50
     },
     {
       "max_rel_err": 0.0,
@@ -806,28 +766,20 @@
       "values_compared": 35
     },
     {
-      "deferred": {
-        "symbol": "SmFace::Notify",
-        "unit": "topology.face_p3"
-      },
       "max_rel_err": 0.0,
       "name": "real_cone_split_e0_t1",
-      "outcome": "deferred",
-      "pass": false,
+      "outcome": "pass",
+      "pass": true,
       "source": "fixture:fixtures/topology.brep_p9/real_files.json#3 (upstream source/SMLib/src/SmBrep.cpp:21206-21612)",
-      "values_compared": 0
+      "values_compared": 50
     },
     {
-      "deferred": {
-        "symbol": "SmFace::Notify",
-        "unit": "topology.face_p3"
-      },
       "max_rel_err": 0.0,
       "name": "real_cone_split_e0_t3.14159",
-      "outcome": "deferred",
-      "pass": false,
+      "outcome": "pass",
+      "pass": true,
       "source": "fixture:fixtures/topology.brep_p9/real_files.json#4 (upstream source/SMLib/src/SmBrep.cpp:21206-21612)",
-      "values_compared": 0
+      "values_compared": 50
     },
     {
       "max_rel_err": 0.0,
@@ -838,40 +790,28 @@
       "values_compared": 35
     },
     {
-      "deferred": {
-        "symbol": "SmFace::Notify",
-        "unit": "topology.face_p3"
-      },
       "max_rel_err": 0.0,
       "name": "real_cone_split_e1_t0.5",
-      "outcome": "deferred",
-      "pass": false,
+      "outcome": "pass",
+      "pass": true,
       "source": "fixture:fixtures/topology.brep_p9/real_files.json#6 (upstream source/SMLib/src/SmBrep.cpp:21206-21612)",
-      "values_compared": 0
+      "values_compared": 46
     },
     {
-      "deferred": {
-        "symbol": "SmFace::Notify",
-        "unit": "topology.face_p3"
-      },
       "max_rel_err": 0.0,
       "name": "real_cone_split_e1_t1",
-      "outcome": "deferred",
-      "pass": false,
+      "outcome": "pass",
+      "pass": true,
       "source": "fixture:fixtures/topology.brep_p9/real_files.json#7 (upstream source/SMLib/src/SmBrep.cpp:21206-21612)",
-      "values_compared": 0
+      "values_compared": 46
     },
     {
-      "deferred": {
-        "symbol": "SmFace::Notify",
-        "unit": "topology.face_p3"
-      },
       "max_rel_err": 0.0,
       "name": "real_cone_split_e1_t3.14159",
-      "outcome": "deferred",
-      "pass": false,
+      "outcome": "pass",
+      "pass": true,
       "source": "fixture:fixtures/topology.brep_p9/real_files.json#8 (upstream source/SMLib/src/SmBrep.cpp:21206-21612)",
-      "values_compared": 0
+      "values_compared": 46
     },
     {
       "max_rel_err": 0.0,
@@ -882,40 +822,28 @@
       "values_compared": 35
     },
     {
-      "deferred": {
-        "symbol": "SmFace::Notify",
-        "unit": "topology.face_p3"
-      },
       "max_rel_err": 0.0,
       "name": "real_cone_split_e2_t0.5",
-      "outcome": "deferred",
-      "pass": false,
+      "outcome": "pass",
+      "pass": true,
       "source": "fixture:fixtures/topology.brep_p9/real_files.json#10 (upstream source/SMLib/src/SmBrep.cpp:21206-21612)",
-      "values_compared": 0
+      "values_compared": 50
     },
     {
-      "deferred": {
-        "symbol": "SmFace::Notify",
-        "unit": "topology.face_p3"
-      },
       "max_rel_err": 0.0,
       "name": "real_cone_split_e2_t1",
-      "outcome": "deferred",
-      "pass": false,
+      "outcome": "pass",
+      "pass": true,
       "source": "fixture:fixtures/topology.brep_p9/real_files.json#11 (upstream source/SMLib/src/SmBrep.cpp:21206-21612)",
-      "values_compared": 0
+      "values_compared": 50
     },
     {
-      "deferred": {
-        "symbol": "SmFace::Notify",
-        "unit": "topology.face_p3"
-      },
       "max_rel_err": 0.0,
       "name": "real_cone_split_e2_t3.14159",
-      "outcome": "deferred",
-      "pass": false,
+      "outcome": "pass",
+      "pass": true,
       "source": "fixture:fixtures/topology.brep_p9/real_files.json#12 (upstream source/SMLib/src/SmBrep.cpp:21206-21612)",
-      "values_compared": 0
+      "values_compared": 50
     },
     {
       "max_rel_err": 0.0,
@@ -926,40 +854,28 @@
       "values_compared": 35
     },
     {
-      "deferred": {
-        "symbol": "SmFace::Notify",
-        "unit": "topology.face_p3"
-      },
       "max_rel_err": 0.0,
       "name": "real_cone_split_e3_t0.5",
-      "outcome": "deferred",
-      "pass": false,
+      "outcome": "pass",
+      "pass": true,
       "source": "fixture:fixtures/topology.brep_p9/real_files.json#14 (upstream source/SMLib/src/SmBrep.cpp:21206-21612)",
-      "values_compared": 0
+      "values_compared": 46
     },
     {
-      "deferred": {
-        "symbol": "SmFace::Notify",
-        "unit": "topology.face_p3"
-      },
       "max_rel_err": 0.0,
       "name": "real_cone_split_e3_t1",
-      "outcome": "deferred",
-      "pass": false,
+      "outcome": "pass",
+      "pass": true,
       "source": "fixture:fixtures/topology.brep_p9/real_files.json#15 (upstream source/SMLib/src/SmBrep.cpp:21206-21612)",
-      "values_compared": 0
+      "values_compared": 46
     },
     {
-      "deferred": {
-        "symbol": "SmFace::Notify",
-        "unit": "topology.face_p3"
-      },
       "max_rel_err": 0.0,
       "name": "real_cone_split_e3_t3.14159",
-      "outcome": "deferred",
-      "pass": false,
+      "outcome": "pass",
+      "pass": true,
       "source": "fixture:fixtures/topology.brep_p9/real_files.json#16 (upstream source/SMLib/src/SmBrep.cpp:21206-21612)",
-      "values_compared": 0
+      "values_compared": 46
     },
     {
       "max_rel_err": 0.0,
@@ -970,40 +886,28 @@
       "values_compared": 35
     },
     {
-      "deferred": {
-        "symbol": "SmFace::Notify",
-        "unit": "topology.face_p3"
-      },
       "max_rel_err": 0.0,
       "name": "real_cone_split_e4_t0.5",
-      "outcome": "deferred",
-      "pass": false,
+      "outcome": "pass",
+      "pass": true,
       "source": "fixture:fixtures/topology.brep_p9/real_files.json#18 (upstream source/SMLib/src/SmBrep.cpp:21206-21612)",
-      "values_compared": 0
+      "values_compared": 50
     },
     {
-      "deferred": {
-        "symbol": "SmFace::Notify",
-        "unit": "topology.face_p3"
-      },
       "max_rel_err": 0.0,
       "name": "real_cone_split_e4_t1",
-      "outcome": "deferred",
-      "pass": false,
+      "outcome": "pass",
+      "pass": true,
       "source": "fixture:fixtures/topology.brep_p9/real_files.json#19 (upstream source/SMLib/src/SmBrep.cpp:21206-21612)",
-      "values_compared": 0
+      "values_compared": 50
     },
     {
-      "deferred": {
-        "symbol": "SmFace::Notify",
-        "unit": "topology.face_p3"
-      },
       "max_rel_err": 0.0,
       "name": "real_cone_split_e4_t3.14159",
-      "outcome": "deferred",
-      "pass": false,
+      "outcome": "pass",
+      "pass": true,
       "source": "fixture:fixtures/topology.brep_p9/real_files.json#20 (upstream source/SMLib/src/SmBrep.cpp:21206-21612)",
-      "values_compared": 0
+      "values_compared": 50
     },
     {
       "max_rel_err": 0.0,
@@ -1014,40 +918,28 @@
       "values_compared": 35
     },
     {
-      "deferred": {
-        "symbol": "SmFace::Notify",
-        "unit": "topology.face_p3"
-      },
       "max_rel_err": 0.0,
       "name": "real_cone_split_e5_t0.5",
-      "outcome": "deferred",
-      "pass": false,
+      "outcome": "pass",
+      "pass": true,
       "source": "fixture:fixtures/topology.brep_p9/real_files.json#22 (upstream source/SMLib/src/SmBrep.cpp:21206-21612)",
-      "values_compared": 0
+      "values_compared": 46
     },
     {
-      "deferred": {
-        "symbol": "SmFace::Notify",
-        "unit": "topology.face_p3"
-      },
       "max_rel_err": 0.0,
       "name": "real_cone_split_e5_t1",
-      "outcome": "deferred",
-      "pass": false,
+      "outcome": "pass",
+      "pass": true,
       "source": "fixture:fixtures/topology.brep_p9/real_files.json#23 (upstream source/SMLib/src/SmBrep.cpp:21206-21612)",
-      "values_compared": 0
+      "values_compared": 46
     },
     {
-      "deferred": {
-        "symbol": "SmFace::Notify",
-        "unit": "topology.face_p3"
-      },
       "max_rel_err": 0.0,
       "name": "real_cone_split_e5_t3.14159",
-      "outcome": "deferred",
-      "pass": false,
+      "outcome": "pass",
+      "pass": true,
       "source": "fixture:fixtures/topology.brep_p9/real_files.json#24 (upstream source/SMLib/src/SmBrep.cpp:21206-21612)",
-      "values_compared": 0
+      "values_compared": 46
     },
     {
       "max_rel_err": 0.0,
@@ -1074,28 +966,20 @@
       "values_compared": 106
     },
     {
-      "deferred": {
-        "symbol": "SmFace::Notify",
-        "unit": "topology.face_p3"
-      },
       "max_rel_err": 0.0,
       "name": "real_mouse_split_e0_t1",
-      "outcome": "deferred",
-      "pass": false,
+      "outcome": "pass",
+      "pass": true,
       "source": "fixture:fixtures/topology.brep_p9/real_files.json#28 (upstream source/SMLib/src/SmBrep.cpp:21206-21612)",
-      "values_compared": 0
+      "values_compared": 121
     },
     {
-      "deferred": {
-        "symbol": "SmFace::Notify",
-        "unit": "topology.face_p3"
-      },
       "max_rel_err": 0.0,
       "name": "real_mouse_split_e0_t3.14159",
-      "outcome": "deferred",
-      "pass": false,
+      "outcome": "pass",
+      "pass": true,
       "source": "fixture:fixtures/topology.brep_p9/real_files.json#29 (upstream source/SMLib/src/SmBrep.cpp:21206-21612)",
-      "values_compared": 0
+      "values_compared": 121
     },
     {
       "max_rel_err": 0.0,
@@ -1114,28 +998,20 @@
       "values_compared": 106
     },
     {
-      "deferred": {
-        "symbol": "SmFace::Notify",
-        "unit": "topology.face_p3"
-      },
       "max_rel_err": 0.0,
       "name": "real_mouse_split_e1_t1",
-      "outcome": "deferred",
-      "pass": false,
+      "outcome": "pass",
+      "pass": true,
       "source": "fixture:fixtures/topology.brep_p9/real_files.json#32 (upstream source/SMLib/src/SmBrep.cpp:21206-21612)",
-      "values_compared": 0
+      "values_compared": 121
     },
     {
-      "deferred": {
-        "symbol": "SmFace::Notify",
-        "unit": "topology.face_p3"
-      },
       "max_rel_err": 0.0,
       "name": "real_mouse_split_e1_t3.14159",
-      "outcome": "deferred",
-      "pass": false,
+      "outcome": "pass",
+      "pass": true,
       "source": "fixture:fixtures/topology.brep_p9/real_files.json#33 (upstream source/SMLib/src/SmBrep.cpp:21206-21612)",
-      "values_compared": 0
+      "values_compared": 121
     },
     {
       "max_rel_err": 0.0,
@@ -1146,40 +1022,28 @@
       "values_compared": 106
     },
     {
-      "deferred": {
-        "symbol": "SmFace::Notify",
-        "unit": "topology.face_p3"
-      },
       "max_rel_err": 0.0,
       "name": "real_mouse_split_e2_t0.5",
-      "outcome": "deferred",
-      "pass": false,
+      "outcome": "pass",
+      "pass": true,
       "source": "fixture:fixtures/topology.brep_p9/real_files.json#35 (upstream source/SMLib/src/SmBrep.cpp:21206-21612)",
-      "values_compared": 0
+      "values_compared": 121
     },
     {
-      "deferred": {
-        "symbol": "SmFace::Notify",
-        "unit": "topology.face_p3"
-      },
       "max_rel_err": 0.0,
       "name": "real_mouse_split_e2_t1",
-      "outcome": "deferred",
-      "pass": false,
+      "outcome": "pass",
+      "pass": true,
       "source": "fixture:fixtures/topology.brep_p9/real_files.json#36 (upstream source/SMLib/src/SmBrep.cpp:21206-21612)",
-      "values_compared": 0
+      "values_compared": 121
     },
     {
-      "deferred": {
-        "symbol": "SmFace::Notify",
-        "unit": "topology.face_p3"
-      },
       "max_rel_err": 0.0,
       "name": "real_mouse_split_e2_t3.14159",
-      "outcome": "deferred",
-      "pass": false,
+      "outcome": "pass",
+      "pass": true,
       "source": "fixture:fixtures/topology.brep_p9/real_files.json#37 (upstream source/SMLib/src/SmBrep.cpp:21206-21612)",
-      "values_compared": 0
+      "values_compared": 121
     },
     {
       "max_rel_err": 0.0,
@@ -1190,16 +1054,12 @@
       "values_compared": 106
     },
     {
-      "deferred": {
-        "symbol": "SmFace::Notify",
-        "unit": "topology.face_p3"
-      },
       "max_rel_err": 0.0,
       "name": "real_mouse_split_e3_t0.5",
-      "outcome": "deferred",
-      "pass": false,
+      "outcome": "pass",
+      "pass": true,
       "source": "fixture:fixtures/topology.brep_p9/real_files.json#39 (upstream source/SMLib/src/SmBrep.cpp:21206-21612)",
-      "values_compared": 0
+      "values_compared": 121
     },
     {
       "max_rel_err": 0.0,
@@ -1234,28 +1094,20 @@
       "values_compared": 106
     },
     {
-      "deferred": {
-        "symbol": "SmFace::Notify",
-        "unit": "topology.face_p3"
-      },
       "max_rel_err": 0.0,
       "name": "real_mouse_split_e4_t1",
-      "outcome": "deferred",
-      "pass": false,
+      "outcome": "pass",
+      "pass": true,
       "source": "fixture:fixtures/topology.brep_p9/real_files.json#44 (upstream source/SMLib/src/SmBrep.cpp:21206-21612)",
-      "values_compared": 0
+      "values_compared": 121
     },
     {
-      "deferred": {
-        "symbol": "SmFace::Notify",
-        "unit": "topology.face_p3"
-      },
       "max_rel_err": 0.0,
       "name": "real_mouse_split_e4_t3.14159",
-      "outcome": "deferred",
-      "pass": false,
+      "outcome": "pass",
+      "pass": true,
       "source": "fixture:fixtures/topology.brep_p9/real_files.json#45 (upstream source/SMLib/src/SmBrep.cpp:21206-21612)",
-      "values_compared": 0
+      "values_compared": 121
     },
     {
       "max_rel_err": 0.0,
@@ -1266,16 +1118,12 @@
       "values_compared": 106
     },
     {
-      "deferred": {
-        "symbol": "SmFace::Notify",
-        "unit": "topology.face_p3"
-      },
       "max_rel_err": 0.0,
       "name": "real_mouse_split_e5_t0.5",
-      "outcome": "deferred",
-      "pass": false,
+      "outcome": "pass",
+      "pass": true,
       "source": "fixture:fixtures/topology.brep_p9/real_files.json#47 (upstream source/SMLib/src/SmBrep.cpp:21206-21612)",
-      "values_compared": 0
+      "values_compared": 121
     },
     {
       "max_rel_err": 0.0,
@@ -1346,16 +1194,12 @@
       "values_compared": 50
     },
     {
-      "deferred": {
-        "symbol": "SmFace::GetBrep",
-        "unit": "topology.face_p4"
-      },
       "max_rel_err": 0.0,
       "name": "real_plane_square_orient_sheet_opposite",
-      "outcome": "deferred",
-      "pass": false,
+      "outcome": "pass",
+      "pass": true,
       "source": "fixture:fixtures/topology.brep_p9/real_files.json#56 (upstream source/SMLib/src/SmBrep.cpp:11620-11704)",
-      "values_compared": 0
+      "values_compared": 50
     },
     {
       "max_rel_err": 0.0,
@@ -1366,16 +1210,12 @@
       "values_compared": 17
     },
     {
-      "deferred": {
-        "symbol": "SmFace::GetBrep",
-        "unit": "topology.face_p4"
-      },
       "max_rel_err": 0.0,
       "name": "real_plane_circ_orient_sheet_opposite",
-      "outcome": "deferred",
-      "pass": false,
+      "outcome": "pass",
+      "pass": true,
       "source": "fixture:fixtures/topology.brep_p9/real_files.json#58 (upstream source/SMLib/src/SmBrep.cpp:11620-11704)",
-      "values_compared": 0
+      "values_compared": 17
     },
     {
       "max_rel_err": 0.0,
@@ -1470,16 +1310,12 @@
       "values_compared": 60
     },
     {
-      "deferred": {
-        "symbol": "SmFace::Notify",
-        "unit": "topology.face_p3"
-      },
       "max_rel_err": 0.0,
       "name": "review_op3_point_NaN",
-      "outcome": "deferred",
-      "pass": false,
+      "outcome": "pass",
+      "pass": true,
       "source": "fixture:fixtures/topology.brep_p9/review.json#11 (upstream source/SMLib/src/SmBrep.cpp:19101-19199)",
-      "values_compared": 0
+      "values_compared": 60
     },
     {
       "max_rel_err": 0.0,
@@ -1506,16 +1342,12 @@
       "values_compared": 60
     },
     {
-      "deferred": {
-        "symbol": "SmFace::Notify",
-        "unit": "topology.face_p3"
-      },
       "max_rel_err": 0.0,
       "name": "review_op3_point_inf",
-      "outcome": "deferred",
-      "pass": false,
+      "outcome": "pass",
+      "pass": true,
       "source": "fixture:fixtures/topology.brep_p9/review.json#15 (upstream source/SMLib/src/SmBrep.cpp:19101-19199)",
-      "values_compared": 0
+      "values_compared": 60
     },
     {
       "max_rel_err": 0.0,
@@ -1542,16 +1374,12 @@
       "values_compared": 60
     },
     {
-      "deferred": {
-        "symbol": "SmFace::Notify",
-        "unit": "topology.face_p3"
-      },
       "max_rel_err": 0.0,
       "name": "review_op3_point_-inf",
-      "outcome": "deferred",
-      "pass": false,
+      "outcome": "pass",
+      "pass": true,
       "source": "fixture:fixtures/topology.brep_p9/review.json#19 (upstream source/SMLib/src/SmBrep.cpp:19101-19199)",
-      "values_compared": 0
+      "values_compared": 60
     },
     {
       "max_rel_err": 0.0,
@@ -5659,16 +5487,14 @@
     }
   ],
   "cases_both_errored": 0,
-  "cases_deferred": 46,
+  "cases_deferred": 3,
   "cases_failed": 0,
-  "cases_passed": 638,
+  "cases_passed": 681,
   "cases_total": 684,
   "deferred_by_unit": {
     "intersect.surface_drop_curve": 1,
     "intersect.surface_drop_lib_p3": 1,
-    "query.brep": 1,
-    "topology.face_p3": 39,
-    "topology.face_p4": 4
+    "query.brep": 1
   },
   "max_rel_err": 0.0,
   "pass": true,

@@ -347,6 +347,3966 @@
     },
     {
       "deferred": {
+        "symbol": "SmBrep::MakeWireEdgeVertex",
+        "unit": "topology.brep_p3"
+      },
+      "max_rel_err": 0.0,
+      "name": "face_tail_d0.25_equal_solid_noext_nomerge_up_none",
+      "outcome": "deferred",
+      "pass": false,
+      "source": "fixture:fixtures/offset.offset_executive_p1/face_tail.json#0",
+      "values_compared": 0
+    },
+    {
+      "deferred": {
+        "symbol": "SmBrep::MakeWireEdgeVertex",
+        "unit": "topology.brep_p3"
+      },
+      "max_rel_err": 0.0,
+      "name": "face_tail_d0.25_equal_solid_noext_nomerge_up_inner",
+      "outcome": "deferred",
+      "pass": false,
+      "source": "fixture:fixtures/offset.offset_executive_p1/face_tail.json#1",
+      "values_compared": 0
+    },
+    {
+      "deferred": {
+        "symbol": "SmBrep::MakeWireEdgeVertex",
+        "unit": "topology.brep_p3"
+      },
+      "max_rel_err": 0.0,
+      "name": "face_tail_d0.25_equal_solid_noext_nomerge_up_crossing",
+      "outcome": "deferred",
+      "pass": false,
+      "source": "fixture:fixtures/offset.offset_executive_p1/face_tail.json#2",
+      "values_compared": 0
+    },
+    {
+      "deferred": {
+        "symbol": "SmBrep::MakeWireEdgeVertex",
+        "unit": "topology.brep_p3"
+      },
+      "max_rel_err": 0.0,
+      "name": "face_tail_d0.25_equal_solid_noext_nomerge_down_none",
+      "outcome": "deferred",
+      "pass": false,
+      "source": "fixture:fixtures/offset.offset_executive_p1/face_tail.json#3",
+      "values_compared": 0
+    },
+    {
+      "deferred": {
+        "symbol": "SmBrep::MakeWireEdgeVertex",
+        "unit": "topology.brep_p3"
+      },
+      "max_rel_err": 0.0,
+      "name": "face_tail_d0.25_equal_solid_noext_nomerge_down_inner",
+      "outcome": "deferred",
+      "pass": false,
+      "source": "fixture:fixtures/offset.offset_executive_p1/face_tail.json#4",
+      "values_compared": 0
+    },
+    {
+      "deferred": {
+        "symbol": "SmBrep::MakeWireEdgeVertex",
+        "unit": "topology.brep_p3"
+      },
+      "max_rel_err": 0.0,
+      "name": "face_tail_d0.25_equal_solid_noext_nomerge_down_crossing",
+      "outcome": "deferred",
+      "pass": false,
+      "source": "fixture:fixtures/offset.offset_executive_p1/face_tail.json#5",
+      "values_compared": 0
+    },
+    {
+      "deferred": {
+        "symbol": "SmBrep::MakeWireEdgeVertex",
+        "unit": "topology.brep_p3"
+      },
+      "max_rel_err": 0.0,
+      "name": "face_tail_d0.25_equal_solid_noext_merge_up_none",
+      "outcome": "deferred",
+      "pass": false,
+      "source": "fixture:fixtures/offset.offset_executive_p1/face_tail.json#6",
+      "values_compared": 0
+    },
+    {
+      "deferred": {
+        "symbol": "SmBrep::MakeWireEdgeVertex",
+        "unit": "topology.brep_p3"
+      },
+      "max_rel_err": 0.0,
+      "name": "face_tail_d0.25_equal_solid_noext_merge_up_inner",
+      "outcome": "deferred",
+      "pass": false,
+      "source": "fixture:fixtures/offset.offset_executive_p1/face_tail.json#7",
+      "values_compared": 0
+    },
+    {
+      "deferred": {
+        "symbol": "SmBrep::MakeWireEdgeVertex",
+        "unit": "topology.brep_p3"
+      },
+      "max_rel_err": 0.0,
+      "name": "face_tail_d0.25_equal_solid_noext_merge_up_crossing",
+      "outcome": "deferred",
+      "pass": false,
+      "source": "fixture:fixtures/offset.offset_executive_p1/face_tail.json#8",
+      "values_compared": 0
+    },
+    {
+      "deferred": {
+        "symbol": "SmBrep::MakeWireEdgeVertex",
+        "unit": "topology.brep_p3"
+      },
+      "max_rel_err": 0.0,
+      "name": "face_tail_d0.25_equal_solid_noext_merge_down_none",
+      "outcome": "deferred",
+      "pass": false,
+      "source": "fixture:fixtures/offset.offset_executive_p1/face_tail.json#9",
+      "values_compared": 0
+    },
+    {
+      "deferred": {
+        "symbol": "SmBrep::MakeWireEdgeVertex",
+        "unit": "topology.brep_p3"
+      },
+      "max_rel_err": 0.0,
+      "name": "face_tail_d0.25_equal_solid_noext_merge_down_inner",
+      "outcome": "deferred",
+      "pass": false,
+      "source": "fixture:fixtures/offset.offset_executive_p1/face_tail.json#10",
+      "values_compared": 0
+    },
+    {
+      "deferred": {
+        "symbol": "SmBrep::MakeWireEdgeVertex",
+        "unit": "topology.brep_p3"
+      },
+      "max_rel_err": 0.0,
+      "name": "face_tail_d0.25_equal_solid_noext_merge_down_crossing",
+      "outcome": "deferred",
+      "pass": false,
+      "source": "fixture:fixtures/offset.offset_executive_p1/face_tail.json#11",
+      "values_compared": 0
+    },
+    {
+      "deferred": {
+        "symbol": "SmBrep::MakeWireEdgeVertex",
+        "unit": "topology.brep_p3"
+      },
+      "max_rel_err": 0.0,
+      "name": "face_tail_d0.25_equal_solid_ext_nomerge_up_none",
+      "outcome": "deferred",
+      "pass": false,
+      "source": "fixture:fixtures/offset.offset_executive_p1/face_tail.json#12",
+      "values_compared": 0
+    },
+    {
+      "deferred": {
+        "symbol": "SmBrep::MakeWireEdgeVertex",
+        "unit": "topology.brep_p3"
+      },
+      "max_rel_err": 0.0,
+      "name": "face_tail_d0.25_equal_solid_ext_nomerge_up_inner",
+      "outcome": "deferred",
+      "pass": false,
+      "source": "fixture:fixtures/offset.offset_executive_p1/face_tail.json#13",
+      "values_compared": 0
+    },
+    {
+      "deferred": {
+        "symbol": "SmBrep::MakeWireEdgeVertex",
+        "unit": "topology.brep_p3"
+      },
+      "max_rel_err": 0.0,
+      "name": "face_tail_d0.25_equal_solid_ext_nomerge_up_crossing",
+      "outcome": "deferred",
+      "pass": false,
+      "source": "fixture:fixtures/offset.offset_executive_p1/face_tail.json#14",
+      "values_compared": 0
+    },
+    {
+      "deferred": {
+        "symbol": "SmBrep::MakeWireEdgeVertex",
+        "unit": "topology.brep_p3"
+      },
+      "max_rel_err": 0.0,
+      "name": "face_tail_d0.25_equal_solid_ext_nomerge_down_none",
+      "outcome": "deferred",
+      "pass": false,
+      "source": "fixture:fixtures/offset.offset_executive_p1/face_tail.json#15",
+      "values_compared": 0
+    },
+    {
+      "deferred": {
+        "symbol": "SmBrep::MakeWireEdgeVertex",
+        "unit": "topology.brep_p3"
+      },
+      "max_rel_err": 0.0,
+      "name": "face_tail_d0.25_equal_solid_ext_nomerge_down_inner",
+      "outcome": "deferred",
+      "pass": false,
+      "source": "fixture:fixtures/offset.offset_executive_p1/face_tail.json#16",
+      "values_compared": 0
+    },
+    {
+      "deferred": {
+        "symbol": "SmBrep::MakeWireEdgeVertex",
+        "unit": "topology.brep_p3"
+      },
+      "max_rel_err": 0.0,
+      "name": "face_tail_d0.25_equal_solid_ext_nomerge_down_crossing",
+      "outcome": "deferred",
+      "pass": false,
+      "source": "fixture:fixtures/offset.offset_executive_p1/face_tail.json#17",
+      "values_compared": 0
+    },
+    {
+      "deferred": {
+        "symbol": "SmBrep::MakeWireEdgeVertex",
+        "unit": "topology.brep_p3"
+      },
+      "max_rel_err": 0.0,
+      "name": "face_tail_d0.25_equal_solid_ext_merge_up_none",
+      "outcome": "deferred",
+      "pass": false,
+      "source": "fixture:fixtures/offset.offset_executive_p1/face_tail.json#18",
+      "values_compared": 0
+    },
+    {
+      "deferred": {
+        "symbol": "SmBrep::MakeWireEdgeVertex",
+        "unit": "topology.brep_p3"
+      },
+      "max_rel_err": 0.0,
+      "name": "face_tail_d0.25_equal_solid_ext_merge_up_inner",
+      "outcome": "deferred",
+      "pass": false,
+      "source": "fixture:fixtures/offset.offset_executive_p1/face_tail.json#19",
+      "values_compared": 0
+    },
+    {
+      "deferred": {
+        "symbol": "SmBrep::MakeWireEdgeVertex",
+        "unit": "topology.brep_p3"
+      },
+      "max_rel_err": 0.0,
+      "name": "face_tail_d0.25_equal_solid_ext_merge_up_crossing",
+      "outcome": "deferred",
+      "pass": false,
+      "source": "fixture:fixtures/offset.offset_executive_p1/face_tail.json#20",
+      "values_compared": 0
+    },
+    {
+      "deferred": {
+        "symbol": "SmBrep::MakeWireEdgeVertex",
+        "unit": "topology.brep_p3"
+      },
+      "max_rel_err": 0.0,
+      "name": "face_tail_d0.25_equal_solid_ext_merge_down_none",
+      "outcome": "deferred",
+      "pass": false,
+      "source": "fixture:fixtures/offset.offset_executive_p1/face_tail.json#21",
+      "values_compared": 0
+    },
+    {
+      "deferred": {
+        "symbol": "SmBrep::MakeWireEdgeVertex",
+        "unit": "topology.brep_p3"
+      },
+      "max_rel_err": 0.0,
+      "name": "face_tail_d0.25_equal_solid_ext_merge_down_inner",
+      "outcome": "deferred",
+      "pass": false,
+      "source": "fixture:fixtures/offset.offset_executive_p1/face_tail.json#22",
+      "values_compared": 0
+    },
+    {
+      "deferred": {
+        "symbol": "SmBrep::MakeWireEdgeVertex",
+        "unit": "topology.brep_p3"
+      },
+      "max_rel_err": 0.0,
+      "name": "face_tail_d0.25_equal_solid_ext_merge_down_crossing",
+      "outcome": "deferred",
+      "pass": false,
+      "source": "fixture:fixtures/offset.offset_executive_p1/face_tail.json#23",
+      "values_compared": 0
+    },
+    {
+      "deferred": {
+        "symbol": "SmBrep::MakeWireEdgeVertex",
+        "unit": "topology.brep_p3"
+      },
+      "max_rel_err": 0.0,
+      "name": "face_tail_d0.25_equal_local_noext_nomerge_up_none",
+      "outcome": "deferred",
+      "pass": false,
+      "source": "fixture:fixtures/offset.offset_executive_p1/face_tail.json#24",
+      "values_compared": 0
+    },
+    {
+      "deferred": {
+        "symbol": "SmBrep::MakeWireEdgeVertex",
+        "unit": "topology.brep_p3"
+      },
+      "max_rel_err": 0.0,
+      "name": "face_tail_d0.25_equal_local_noext_nomerge_up_inner",
+      "outcome": "deferred",
+      "pass": false,
+      "source": "fixture:fixtures/offset.offset_executive_p1/face_tail.json#25",
+      "values_compared": 0
+    },
+    {
+      "deferred": {
+        "symbol": "SmBrep::MakeWireEdgeVertex",
+        "unit": "topology.brep_p3"
+      },
+      "max_rel_err": 0.0,
+      "name": "face_tail_d0.25_equal_local_noext_nomerge_up_crossing",
+      "outcome": "deferred",
+      "pass": false,
+      "source": "fixture:fixtures/offset.offset_executive_p1/face_tail.json#26",
+      "values_compared": 0
+    },
+    {
+      "deferred": {
+        "symbol": "SmBrep::MakeWireEdgeVertex",
+        "unit": "topology.brep_p3"
+      },
+      "max_rel_err": 0.0,
+      "name": "face_tail_d0.25_equal_local_noext_nomerge_down_none",
+      "outcome": "deferred",
+      "pass": false,
+      "source": "fixture:fixtures/offset.offset_executive_p1/face_tail.json#27",
+      "values_compared": 0
+    },
+    {
+      "deferred": {
+        "symbol": "SmBrep::MakeWireEdgeVertex",
+        "unit": "topology.brep_p3"
+      },
+      "max_rel_err": 0.0,
+      "name": "face_tail_d0.25_equal_local_noext_nomerge_down_inner",
+      "outcome": "deferred",
+      "pass": false,
+      "source": "fixture:fixtures/offset.offset_executive_p1/face_tail.json#28",
+      "values_compared": 0
+    },
+    {
+      "deferred": {
+        "symbol": "SmBrep::MakeWireEdgeVertex",
+        "unit": "topology.brep_p3"
+      },
+      "max_rel_err": 0.0,
+      "name": "face_tail_d0.25_equal_local_noext_nomerge_down_crossing",
+      "outcome": "deferred",
+      "pass": false,
+      "source": "fixture:fixtures/offset.offset_executive_p1/face_tail.json#29",
+      "values_compared": 0
+    },
+    {
+      "deferred": {
+        "symbol": "SmBrep::MakeWireEdgeVertex",
+        "unit": "topology.brep_p3"
+      },
+      "max_rel_err": 0.0,
+      "name": "face_tail_d0.25_equal_local_noext_merge_up_none",
+      "outcome": "deferred",
+      "pass": false,
+      "source": "fixture:fixtures/offset.offset_executive_p1/face_tail.json#30",
+      "values_compared": 0
+    },
+    {
+      "deferred": {
+        "symbol": "SmBrep::MakeWireEdgeVertex",
+        "unit": "topology.brep_p3"
+      },
+      "max_rel_err": 0.0,
+      "name": "face_tail_d0.25_equal_local_noext_merge_up_inner",
+      "outcome": "deferred",
+      "pass": false,
+      "source": "fixture:fixtures/offset.offset_executive_p1/face_tail.json#31",
+      "values_compared": 0
+    },
+    {
+      "deferred": {
+        "symbol": "SmBrep::MakeWireEdgeVertex",
+        "unit": "topology.brep_p3"
+      },
+      "max_rel_err": 0.0,
+      "name": "face_tail_d0.25_equal_local_noext_merge_up_crossing",
+      "outcome": "deferred",
+      "pass": false,
+      "source": "fixture:fixtures/offset.offset_executive_p1/face_tail.json#32",
+      "values_compared": 0
+    },
+    {
+      "deferred": {
+        "symbol": "SmBrep::MakeWireEdgeVertex",
+        "unit": "topology.brep_p3"
+      },
+      "max_rel_err": 0.0,
+      "name": "face_tail_d0.25_equal_local_noext_merge_down_none",
+      "outcome": "deferred",
+      "pass": false,
+      "source": "fixture:fixtures/offset.offset_executive_p1/face_tail.json#33",
+      "values_compared": 0
+    },
+    {
+      "deferred": {
+        "symbol": "SmBrep::MakeWireEdgeVertex",
+        "unit": "topology.brep_p3"
+      },
+      "max_rel_err": 0.0,
+      "name": "face_tail_d0.25_equal_local_noext_merge_down_inner",
+      "outcome": "deferred",
+      "pass": false,
+      "source": "fixture:fixtures/offset.offset_executive_p1/face_tail.json#34",
+      "values_compared": 0
+    },
+    {
+      "deferred": {
+        "symbol": "SmBrep::MakeWireEdgeVertex",
+        "unit": "topology.brep_p3"
+      },
+      "max_rel_err": 0.0,
+      "name": "face_tail_d0.25_equal_local_noext_merge_down_crossing",
+      "outcome": "deferred",
+      "pass": false,
+      "source": "fixture:fixtures/offset.offset_executive_p1/face_tail.json#35",
+      "values_compared": 0
+    },
+    {
+      "deferred": {
+        "symbol": "SmBrep::MakeWireEdgeVertex",
+        "unit": "topology.brep_p3"
+      },
+      "max_rel_err": 0.0,
+      "name": "face_tail_d0.25_equal_local_ext_nomerge_up_none",
+      "outcome": "deferred",
+      "pass": false,
+      "source": "fixture:fixtures/offset.offset_executive_p1/face_tail.json#36",
+      "values_compared": 0
+    },
+    {
+      "deferred": {
+        "symbol": "SmBrep::MakeWireEdgeVertex",
+        "unit": "topology.brep_p3"
+      },
+      "max_rel_err": 0.0,
+      "name": "face_tail_d0.25_equal_local_ext_nomerge_up_inner",
+      "outcome": "deferred",
+      "pass": false,
+      "source": "fixture:fixtures/offset.offset_executive_p1/face_tail.json#37",
+      "values_compared": 0
+    },
+    {
+      "deferred": {
+        "symbol": "SmBrep::MakeWireEdgeVertex",
+        "unit": "topology.brep_p3"
+      },
+      "max_rel_err": 0.0,
+      "name": "face_tail_d0.25_equal_local_ext_nomerge_up_crossing",
+      "outcome": "deferred",
+      "pass": false,
+      "source": "fixture:fixtures/offset.offset_executive_p1/face_tail.json#38",
+      "values_compared": 0
+    },
+    {
+      "deferred": {
+        "symbol": "SmBrep::MakeWireEdgeVertex",
+        "unit": "topology.brep_p3"
+      },
+      "max_rel_err": 0.0,
+      "name": "face_tail_d0.25_equal_local_ext_nomerge_down_none",
+      "outcome": "deferred",
+      "pass": false,
+      "source": "fixture:fixtures/offset.offset_executive_p1/face_tail.json#39",
+      "values_compared": 0
+    },
+    {
+      "deferred": {
+        "symbol": "SmBrep::MakeWireEdgeVertex",
+        "unit": "topology.brep_p3"
+      },
+      "max_rel_err": 0.0,
+      "name": "face_tail_d0.25_equal_local_ext_nomerge_down_inner",
+      "outcome": "deferred",
+      "pass": false,
+      "source": "fixture:fixtures/offset.offset_executive_p1/face_tail.json#40",
+      "values_compared": 0
+    },
+    {
+      "deferred": {
+        "symbol": "SmBrep::MakeWireEdgeVertex",
+        "unit": "topology.brep_p3"
+      },
+      "max_rel_err": 0.0,
+      "name": "face_tail_d0.25_equal_local_ext_nomerge_down_crossing",
+      "outcome": "deferred",
+      "pass": false,
+      "source": "fixture:fixtures/offset.offset_executive_p1/face_tail.json#41",
+      "values_compared": 0
+    },
+    {
+      "deferred": {
+        "symbol": "SmBrep::MakeWireEdgeVertex",
+        "unit": "topology.brep_p3"
+      },
+      "max_rel_err": 0.0,
+      "name": "face_tail_d0.25_equal_local_ext_merge_up_none",
+      "outcome": "deferred",
+      "pass": false,
+      "source": "fixture:fixtures/offset.offset_executive_p1/face_tail.json#42",
+      "values_compared": 0
+    },
+    {
+      "deferred": {
+        "symbol": "SmBrep::MakeWireEdgeVertex",
+        "unit": "topology.brep_p3"
+      },
+      "max_rel_err": 0.0,
+      "name": "face_tail_d0.25_equal_local_ext_merge_up_inner",
+      "outcome": "deferred",
+      "pass": false,
+      "source": "fixture:fixtures/offset.offset_executive_p1/face_tail.json#43",
+      "values_compared": 0
+    },
+    {
+      "deferred": {
+        "symbol": "SmBrep::MakeWireEdgeVertex",
+        "unit": "topology.brep_p3"
+      },
+      "max_rel_err": 0.0,
+      "name": "face_tail_d0.25_equal_local_ext_merge_up_crossing",
+      "outcome": "deferred",
+      "pass": false,
+      "source": "fixture:fixtures/offset.offset_executive_p1/face_tail.json#44",
+      "values_compared": 0
+    },
+    {
+      "deferred": {
+        "symbol": "SmBrep::MakeWireEdgeVertex",
+        "unit": "topology.brep_p3"
+      },
+      "max_rel_err": 0.0,
+      "name": "face_tail_d0.25_equal_local_ext_merge_down_none",
+      "outcome": "deferred",
+      "pass": false,
+      "source": "fixture:fixtures/offset.offset_executive_p1/face_tail.json#45",
+      "values_compared": 0
+    },
+    {
+      "deferred": {
+        "symbol": "SmBrep::MakeWireEdgeVertex",
+        "unit": "topology.brep_p3"
+      },
+      "max_rel_err": 0.0,
+      "name": "face_tail_d0.25_equal_local_ext_merge_down_inner",
+      "outcome": "deferred",
+      "pass": false,
+      "source": "fixture:fixtures/offset.offset_executive_p1/face_tail.json#46",
+      "values_compared": 0
+    },
+    {
+      "deferred": {
+        "symbol": "SmBrep::MakeWireEdgeVertex",
+        "unit": "topology.brep_p3"
+      },
+      "max_rel_err": 0.0,
+      "name": "face_tail_d0.25_equal_local_ext_merge_down_crossing",
+      "outcome": "deferred",
+      "pass": false,
+      "source": "fixture:fixtures/offset.offset_executive_p1/face_tail.json#47",
+      "values_compared": 0
+    },
+    {
+      "deferred": {
+        "symbol": "SmBrep::MakeWireEdgeVertex",
+        "unit": "topology.brep_p3"
+      },
+      "max_rel_err": 0.0,
+      "name": "face_tail_d0.25_larger_solid_noext_nomerge_up_none",
+      "outcome": "deferred",
+      "pass": false,
+      "source": "fixture:fixtures/offset.offset_executive_p1/face_tail.json#48",
+      "values_compared": 0
+    },
+    {
+      "deferred": {
+        "symbol": "SmBrep::MakeWireEdgeVertex",
+        "unit": "topology.brep_p3"
+      },
+      "max_rel_err": 0.0,
+      "name": "face_tail_d0.25_larger_solid_noext_nomerge_up_inner",
+      "outcome": "deferred",
+      "pass": false,
+      "source": "fixture:fixtures/offset.offset_executive_p1/face_tail.json#49",
+      "values_compared": 0
+    },
+    {
+      "deferred": {
+        "symbol": "SmBrep::MakeWireEdgeVertex",
+        "unit": "topology.brep_p3"
+      },
+      "max_rel_err": 0.0,
+      "name": "face_tail_d0.25_larger_solid_noext_nomerge_up_crossing",
+      "outcome": "deferred",
+      "pass": false,
+      "source": "fixture:fixtures/offset.offset_executive_p1/face_tail.json#50",
+      "values_compared": 0
+    },
+    {
+      "deferred": {
+        "symbol": "SmBrep::MakeWireEdgeVertex",
+        "unit": "topology.brep_p3"
+      },
+      "max_rel_err": 0.0,
+      "name": "face_tail_d0.25_larger_solid_noext_nomerge_down_none",
+      "outcome": "deferred",
+      "pass": false,
+      "source": "fixture:fixtures/offset.offset_executive_p1/face_tail.json#51",
+      "values_compared": 0
+    },
+    {
+      "deferred": {
+        "symbol": "SmBrep::MakeWireEdgeVertex",
+        "unit": "topology.brep_p3"
+      },
+      "max_rel_err": 0.0,
+      "name": "face_tail_d0.25_larger_solid_noext_nomerge_down_inner",
+      "outcome": "deferred",
+      "pass": false,
+      "source": "fixture:fixtures/offset.offset_executive_p1/face_tail.json#52",
+      "values_compared": 0
+    },
+    {
+      "deferred": {
+        "symbol": "SmBrep::MakeWireEdgeVertex",
+        "unit": "topology.brep_p3"
+      },
+      "max_rel_err": 0.0,
+      "name": "face_tail_d0.25_larger_solid_noext_nomerge_down_crossing",
+      "outcome": "deferred",
+      "pass": false,
+      "source": "fixture:fixtures/offset.offset_executive_p1/face_tail.json#53",
+      "values_compared": 0
+    },
+    {
+      "deferred": {
+        "symbol": "SmBrep::MakeWireEdgeVertex",
+        "unit": "topology.brep_p3"
+      },
+      "max_rel_err": 0.0,
+      "name": "face_tail_d0.25_larger_solid_noext_merge_up_none",
+      "outcome": "deferred",
+      "pass": false,
+      "source": "fixture:fixtures/offset.offset_executive_p1/face_tail.json#54",
+      "values_compared": 0
+    },
+    {
+      "deferred": {
+        "symbol": "SmBrep::MakeWireEdgeVertex",
+        "unit": "topology.brep_p3"
+      },
+      "max_rel_err": 0.0,
+      "name": "face_tail_d0.25_larger_solid_noext_merge_up_inner",
+      "outcome": "deferred",
+      "pass": false,
+      "source": "fixture:fixtures/offset.offset_executive_p1/face_tail.json#55",
+      "values_compared": 0
+    },
+    {
+      "deferred": {
+        "symbol": "SmBrep::MakeWireEdgeVertex",
+        "unit": "topology.brep_p3"
+      },
+      "max_rel_err": 0.0,
+      "name": "face_tail_d0.25_larger_solid_noext_merge_up_crossing",
+      "outcome": "deferred",
+      "pass": false,
+      "source": "fixture:fixtures/offset.offset_executive_p1/face_tail.json#56",
+      "values_compared": 0
+    },
+    {
+      "deferred": {
+        "symbol": "SmBrep::MakeWireEdgeVertex",
+        "unit": "topology.brep_p3"
+      },
+      "max_rel_err": 0.0,
+      "name": "face_tail_d0.25_larger_solid_noext_merge_down_none",
+      "outcome": "deferred",
+      "pass": false,
+      "source": "fixture:fixtures/offset.offset_executive_p1/face_tail.json#57",
+      "values_compared": 0
+    },
+    {
+      "deferred": {
+        "symbol": "SmBrep::MakeWireEdgeVertex",
+        "unit": "topology.brep_p3"
+      },
+      "max_rel_err": 0.0,
+      "name": "face_tail_d0.25_larger_solid_noext_merge_down_inner",
+      "outcome": "deferred",
+      "pass": false,
+      "source": "fixture:fixtures/offset.offset_executive_p1/face_tail.json#58",
+      "values_compared": 0
+    },
+    {
+      "deferred": {
+        "symbol": "SmBrep::MakeWireEdgeVertex",
+        "unit": "topology.brep_p3"
+      },
+      "max_rel_err": 0.0,
+      "name": "face_tail_d0.25_larger_solid_noext_merge_down_crossing",
+      "outcome": "deferred",
+      "pass": false,
+      "source": "fixture:fixtures/offset.offset_executive_p1/face_tail.json#59",
+      "values_compared": 0
+    },
+    {
+      "deferred": {
+        "symbol": "SmBrep::MakeWireEdgeVertex",
+        "unit": "topology.brep_p3"
+      },
+      "max_rel_err": 0.0,
+      "name": "face_tail_d0.25_larger_solid_ext_nomerge_up_none",
+      "outcome": "deferred",
+      "pass": false,
+      "source": "fixture:fixtures/offset.offset_executive_p1/face_tail.json#60",
+      "values_compared": 0
+    },
+    {
+      "deferred": {
+        "symbol": "SmBrep::MakeWireEdgeVertex",
+        "unit": "topology.brep_p3"
+      },
+      "max_rel_err": 0.0,
+      "name": "face_tail_d0.25_larger_solid_ext_nomerge_up_inner",
+      "outcome": "deferred",
+      "pass": false,
+      "source": "fixture:fixtures/offset.offset_executive_p1/face_tail.json#61",
+      "values_compared": 0
+    },
+    {
+      "deferred": {
+        "symbol": "SmBrep::MakeWireEdgeVertex",
+        "unit": "topology.brep_p3"
+      },
+      "max_rel_err": 0.0,
+      "name": "face_tail_d0.25_larger_solid_ext_nomerge_up_crossing",
+      "outcome": "deferred",
+      "pass": false,
+      "source": "fixture:fixtures/offset.offset_executive_p1/face_tail.json#62",
+      "values_compared": 0
+    },
+    {
+      "deferred": {
+        "symbol": "SmBrep::MakeWireEdgeVertex",
+        "unit": "topology.brep_p3"
+      },
+      "max_rel_err": 0.0,
+      "name": "face_tail_d0.25_larger_solid_ext_nomerge_down_none",
+      "outcome": "deferred",
+      "pass": false,
+      "source": "fixture:fixtures/offset.offset_executive_p1/face_tail.json#63",
+      "values_compared": 0
+    },
+    {
+      "deferred": {
+        "symbol": "SmBrep::MakeWireEdgeVertex",
+        "unit": "topology.brep_p3"
+      },
+      "max_rel_err": 0.0,
+      "name": "face_tail_d0.25_larger_solid_ext_nomerge_down_inner",
+      "outcome": "deferred",
+      "pass": false,
+      "source": "fixture:fixtures/offset.offset_executive_p1/face_tail.json#64",
+      "values_compared": 0
+    },
+    {
+      "deferred": {
+        "symbol": "SmBrep::MakeWireEdgeVertex",
+        "unit": "topology.brep_p3"
+      },
+      "max_rel_err": 0.0,
+      "name": "face_tail_d0.25_larger_solid_ext_nomerge_down_crossing",
+      "outcome": "deferred",
+      "pass": false,
+      "source": "fixture:fixtures/offset.offset_executive_p1/face_tail.json#65",
+      "values_compared": 0
+    },
+    {
+      "deferred": {
+        "symbol": "SmBrep::MakeWireEdgeVertex",
+        "unit": "topology.brep_p3"
+      },
+      "max_rel_err": 0.0,
+      "name": "face_tail_d0.25_larger_solid_ext_merge_up_none",
+      "outcome": "deferred",
+      "pass": false,
+      "source": "fixture:fixtures/offset.offset_executive_p1/face_tail.json#66",
+      "values_compared": 0
+    },
+    {
+      "deferred": {
+        "symbol": "SmBrep::MakeWireEdgeVertex",
+        "unit": "topology.brep_p3"
+      },
+      "max_rel_err": 0.0,
+      "name": "face_tail_d0.25_larger_solid_ext_merge_up_inner",
+      "outcome": "deferred",
+      "pass": false,
+      "source": "fixture:fixtures/offset.offset_executive_p1/face_tail.json#67",
+      "values_compared": 0
+    },
+    {
+      "deferred": {
+        "symbol": "SmBrep::MakeWireEdgeVertex",
+        "unit": "topology.brep_p3"
+      },
+      "max_rel_err": 0.0,
+      "name": "face_tail_d0.25_larger_solid_ext_merge_up_crossing",
+      "outcome": "deferred",
+      "pass": false,
+      "source": "fixture:fixtures/offset.offset_executive_p1/face_tail.json#68",
+      "values_compared": 0
+    },
+    {
+      "deferred": {
+        "symbol": "SmBrep::MakeWireEdgeVertex",
+        "unit": "topology.brep_p3"
+      },
+      "max_rel_err": 0.0,
+      "name": "face_tail_d0.25_larger_solid_ext_merge_down_none",
+      "outcome": "deferred",
+      "pass": false,
+      "source": "fixture:fixtures/offset.offset_executive_p1/face_tail.json#69",
+      "values_compared": 0
+    },
+    {
+      "deferred": {
+        "symbol": "SmBrep::MakeWireEdgeVertex",
+        "unit": "topology.brep_p3"
+      },
+      "max_rel_err": 0.0,
+      "name": "face_tail_d0.25_larger_solid_ext_merge_down_inner",
+      "outcome": "deferred",
+      "pass": false,
+      "source": "fixture:fixtures/offset.offset_executive_p1/face_tail.json#70",
+      "values_compared": 0
+    },
+    {
+      "deferred": {
+        "symbol": "SmBrep::MakeWireEdgeVertex",
+        "unit": "topology.brep_p3"
+      },
+      "max_rel_err": 0.0,
+      "name": "face_tail_d0.25_larger_solid_ext_merge_down_crossing",
+      "outcome": "deferred",
+      "pass": false,
+      "source": "fixture:fixtures/offset.offset_executive_p1/face_tail.json#71",
+      "values_compared": 0
+    },
+    {
+      "deferred": {
+        "symbol": "SmBrep::MakeWireEdgeVertex",
+        "unit": "topology.brep_p3"
+      },
+      "max_rel_err": 0.0,
+      "name": "face_tail_d0.25_larger_local_noext_nomerge_up_none",
+      "outcome": "deferred",
+      "pass": false,
+      "source": "fixture:fixtures/offset.offset_executive_p1/face_tail.json#72",
+      "values_compared": 0
+    },
+    {
+      "deferred": {
+        "symbol": "SmBrep::MakeWireEdgeVertex",
+        "unit": "topology.brep_p3"
+      },
+      "max_rel_err": 0.0,
+      "name": "face_tail_d0.25_larger_local_noext_nomerge_up_inner",
+      "outcome": "deferred",
+      "pass": false,
+      "source": "fixture:fixtures/offset.offset_executive_p1/face_tail.json#73",
+      "values_compared": 0
+    },
+    {
+      "deferred": {
+        "symbol": "SmBrep::MakeWireEdgeVertex",
+        "unit": "topology.brep_p3"
+      },
+      "max_rel_err": 0.0,
+      "name": "face_tail_d0.25_larger_local_noext_nomerge_up_crossing",
+      "outcome": "deferred",
+      "pass": false,
+      "source": "fixture:fixtures/offset.offset_executive_p1/face_tail.json#74",
+      "values_compared": 0
+    },
+    {
+      "deferred": {
+        "symbol": "SmBrep::MakeWireEdgeVertex",
+        "unit": "topology.brep_p3"
+      },
+      "max_rel_err": 0.0,
+      "name": "face_tail_d0.25_larger_local_noext_nomerge_down_none",
+      "outcome": "deferred",
+      "pass": false,
+      "source": "fixture:fixtures/offset.offset_executive_p1/face_tail.json#75",
+      "values_compared": 0
+    },
+    {
+      "deferred": {
+        "symbol": "SmBrep::MakeWireEdgeVertex",
+        "unit": "topology.brep_p3"
+      },
+      "max_rel_err": 0.0,
+      "name": "face_tail_d0.25_larger_local_noext_nomerge_down_inner",
+      "outcome": "deferred",
+      "pass": false,
+      "source": "fixture:fixtures/offset.offset_executive_p1/face_tail.json#76",
+      "values_compared": 0
+    },
+    {
+      "deferred": {
+        "symbol": "SmBrep::MakeWireEdgeVertex",
+        "unit": "topology.brep_p3"
+      },
+      "max_rel_err": 0.0,
+      "name": "face_tail_d0.25_larger_local_noext_nomerge_down_crossing",
+      "outcome": "deferred",
+      "pass": false,
+      "source": "fixture:fixtures/offset.offset_executive_p1/face_tail.json#77",
+      "values_compared": 0
+    },
+    {
+      "deferred": {
+        "symbol": "SmBrep::MakeWireEdgeVertex",
+        "unit": "topology.brep_p3"
+      },
+      "max_rel_err": 0.0,
+      "name": "face_tail_d0.25_larger_local_noext_merge_up_none",
+      "outcome": "deferred",
+      "pass": false,
+      "source": "fixture:fixtures/offset.offset_executive_p1/face_tail.json#78",
+      "values_compared": 0
+    },
+    {
+      "deferred": {
+        "symbol": "SmBrep::MakeWireEdgeVertex",
+        "unit": "topology.brep_p3"
+      },
+      "max_rel_err": 0.0,
+      "name": "face_tail_d0.25_larger_local_noext_merge_up_inner",
+      "outcome": "deferred",
+      "pass": false,
+      "source": "fixture:fixtures/offset.offset_executive_p1/face_tail.json#79",
+      "values_compared": 0
+    },
+    {
+      "deferred": {
+        "symbol": "SmBrep::MakeWireEdgeVertex",
+        "unit": "topology.brep_p3"
+      },
+      "max_rel_err": 0.0,
+      "name": "face_tail_d0.25_larger_local_noext_merge_up_crossing",
+      "outcome": "deferred",
+      "pass": false,
+      "source": "fixture:fixtures/offset.offset_executive_p1/face_tail.json#80",
+      "values_compared": 0
+    },
+    {
+      "deferred": {
+        "symbol": "SmBrep::MakeWireEdgeVertex",
+        "unit": "topology.brep_p3"
+      },
+      "max_rel_err": 0.0,
+      "name": "face_tail_d0.25_larger_local_noext_merge_down_none",
+      "outcome": "deferred",
+      "pass": false,
+      "source": "fixture:fixtures/offset.offset_executive_p1/face_tail.json#81",
+      "values_compared": 0
+    },
+    {
+      "deferred": {
+        "symbol": "SmBrep::MakeWireEdgeVertex",
+        "unit": "topology.brep_p3"
+      },
+      "max_rel_err": 0.0,
+      "name": "face_tail_d0.25_larger_local_noext_merge_down_inner",
+      "outcome": "deferred",
+      "pass": false,
+      "source": "fixture:fixtures/offset.offset_executive_p1/face_tail.json#82",
+      "values_compared": 0
+    },
+    {
+      "deferred": {
+        "symbol": "SmBrep::MakeWireEdgeVertex",
+        "unit": "topology.brep_p3"
+      },
+      "max_rel_err": 0.0,
+      "name": "face_tail_d0.25_larger_local_noext_merge_down_crossing",
+      "outcome": "deferred",
+      "pass": false,
+      "source": "fixture:fixtures/offset.offset_executive_p1/face_tail.json#83",
+      "values_compared": 0
+    },
+    {
+      "deferred": {
+        "symbol": "SmBrep::MakeWireEdgeVertex",
+        "unit": "topology.brep_p3"
+      },
+      "max_rel_err": 0.0,
+      "name": "face_tail_d0.25_larger_local_ext_nomerge_up_none",
+      "outcome": "deferred",
+      "pass": false,
+      "source": "fixture:fixtures/offset.offset_executive_p1/face_tail.json#84",
+      "values_compared": 0
+    },
+    {
+      "deferred": {
+        "symbol": "SmBrep::MakeWireEdgeVertex",
+        "unit": "topology.brep_p3"
+      },
+      "max_rel_err": 0.0,
+      "name": "face_tail_d0.25_larger_local_ext_nomerge_up_inner",
+      "outcome": "deferred",
+      "pass": false,
+      "source": "fixture:fixtures/offset.offset_executive_p1/face_tail.json#85",
+      "values_compared": 0
+    },
+    {
+      "deferred": {
+        "symbol": "SmBrep::MakeWireEdgeVertex",
+        "unit": "topology.brep_p3"
+      },
+      "max_rel_err": 0.0,
+      "name": "face_tail_d0.25_larger_local_ext_nomerge_up_crossing",
+      "outcome": "deferred",
+      "pass": false,
+      "source": "fixture:fixtures/offset.offset_executive_p1/face_tail.json#86",
+      "values_compared": 0
+    },
+    {
+      "deferred": {
+        "symbol": "SmBrep::MakeWireEdgeVertex",
+        "unit": "topology.brep_p3"
+      },
+      "max_rel_err": 0.0,
+      "name": "face_tail_d0.25_larger_local_ext_nomerge_down_none",
+      "outcome": "deferred",
+      "pass": false,
+      "source": "fixture:fixtures/offset.offset_executive_p1/face_tail.json#87",
+      "values_compared": 0
+    },
+    {
+      "deferred": {
+        "symbol": "SmBrep::MakeWireEdgeVertex",
+        "unit": "topology.brep_p3"
+      },
+      "max_rel_err": 0.0,
+      "name": "face_tail_d0.25_larger_local_ext_nomerge_down_inner",
+      "outcome": "deferred",
+      "pass": false,
+      "source": "fixture:fixtures/offset.offset_executive_p1/face_tail.json#88",
+      "values_compared": 0
+    },
+    {
+      "deferred": {
+        "symbol": "SmBrep::MakeWireEdgeVertex",
+        "unit": "topology.brep_p3"
+      },
+      "max_rel_err": 0.0,
+      "name": "face_tail_d0.25_larger_local_ext_nomerge_down_crossing",
+      "outcome": "deferred",
+      "pass": false,
+      "source": "fixture:fixtures/offset.offset_executive_p1/face_tail.json#89",
+      "values_compared": 0
+    },
+    {
+      "deferred": {
+        "symbol": "SmBrep::MakeWireEdgeVertex",
+        "unit": "topology.brep_p3"
+      },
+      "max_rel_err": 0.0,
+      "name": "face_tail_d0.25_larger_local_ext_merge_up_none",
+      "outcome": "deferred",
+      "pass": false,
+      "source": "fixture:fixtures/offset.offset_executive_p1/face_tail.json#90",
+      "values_compared": 0
+    },
+    {
+      "deferred": {
+        "symbol": "SmBrep::MakeWireEdgeVertex",
+        "unit": "topology.brep_p3"
+      },
+      "max_rel_err": 0.0,
+      "name": "face_tail_d0.25_larger_local_ext_merge_up_inner",
+      "outcome": "deferred",
+      "pass": false,
+      "source": "fixture:fixtures/offset.offset_executive_p1/face_tail.json#91",
+      "values_compared": 0
+    },
+    {
+      "deferred": {
+        "symbol": "SmBrep::MakeWireEdgeVertex",
+        "unit": "topology.brep_p3"
+      },
+      "max_rel_err": 0.0,
+      "name": "face_tail_d0.25_larger_local_ext_merge_up_crossing",
+      "outcome": "deferred",
+      "pass": false,
+      "source": "fixture:fixtures/offset.offset_executive_p1/face_tail.json#92",
+      "values_compared": 0
+    },
+    {
+      "deferred": {
+        "symbol": "SmBrep::MakeWireEdgeVertex",
+        "unit": "topology.brep_p3"
+      },
+      "max_rel_err": 0.0,
+      "name": "face_tail_d0.25_larger_local_ext_merge_down_none",
+      "outcome": "deferred",
+      "pass": false,
+      "source": "fixture:fixtures/offset.offset_executive_p1/face_tail.json#93",
+      "values_compared": 0
+    },
+    {
+      "deferred": {
+        "symbol": "SmBrep::MakeWireEdgeVertex",
+        "unit": "topology.brep_p3"
+      },
+      "max_rel_err": 0.0,
+      "name": "face_tail_d0.25_larger_local_ext_merge_down_inner",
+      "outcome": "deferred",
+      "pass": false,
+      "source": "fixture:fixtures/offset.offset_executive_p1/face_tail.json#94",
+      "values_compared": 0
+    },
+    {
+      "deferred": {
+        "symbol": "SmBrep::MakeWireEdgeVertex",
+        "unit": "topology.brep_p3"
+      },
+      "max_rel_err": 0.0,
+      "name": "face_tail_d0.25_larger_local_ext_merge_down_crossing",
+      "outcome": "deferred",
+      "pass": false,
+      "source": "fixture:fixtures/offset.offset_executive_p1/face_tail.json#95",
+      "values_compared": 0
+    },
+    {
+      "deferred": {
+        "symbol": "SmBrep::MakeWireEdgeVertex",
+        "unit": "topology.brep_p3"
+      },
+      "max_rel_err": 0.0,
+      "name": "face_tail_d0.25_smaller_solid_noext_nomerge_up_none",
+      "outcome": "deferred",
+      "pass": false,
+      "source": "fixture:fixtures/offset.offset_executive_p1/face_tail.json#96",
+      "values_compared": 0
+    },
+    {
+      "deferred": {
+        "symbol": "SmBrep::MakeWireEdgeVertex",
+        "unit": "topology.brep_p3"
+      },
+      "max_rel_err": 0.0,
+      "name": "face_tail_d0.25_smaller_solid_noext_nomerge_up_inner",
+      "outcome": "deferred",
+      "pass": false,
+      "source": "fixture:fixtures/offset.offset_executive_p1/face_tail.json#97",
+      "values_compared": 0
+    },
+    {
+      "deferred": {
+        "symbol": "SmBrep::MakeWireEdgeVertex",
+        "unit": "topology.brep_p3"
+      },
+      "max_rel_err": 0.0,
+      "name": "face_tail_d0.25_smaller_solid_noext_nomerge_up_crossing",
+      "outcome": "deferred",
+      "pass": false,
+      "source": "fixture:fixtures/offset.offset_executive_p1/face_tail.json#98",
+      "values_compared": 0
+    },
+    {
+      "deferred": {
+        "symbol": "SmBrep::MakeWireEdgeVertex",
+        "unit": "topology.brep_p3"
+      },
+      "max_rel_err": 0.0,
+      "name": "face_tail_d0.25_smaller_solid_noext_nomerge_down_none",
+      "outcome": "deferred",
+      "pass": false,
+      "source": "fixture:fixtures/offset.offset_executive_p1/face_tail.json#99",
+      "values_compared": 0
+    },
+    {
+      "deferred": {
+        "symbol": "SmBrep::MakeWireEdgeVertex",
+        "unit": "topology.brep_p3"
+      },
+      "max_rel_err": 0.0,
+      "name": "face_tail_d0.25_smaller_solid_noext_nomerge_down_inner",
+      "outcome": "deferred",
+      "pass": false,
+      "source": "fixture:fixtures/offset.offset_executive_p1/face_tail.json#100",
+      "values_compared": 0
+    },
+    {
+      "deferred": {
+        "symbol": "SmBrep::MakeWireEdgeVertex",
+        "unit": "topology.brep_p3"
+      },
+      "max_rel_err": 0.0,
+      "name": "face_tail_d0.25_smaller_solid_noext_nomerge_down_crossing",
+      "outcome": "deferred",
+      "pass": false,
+      "source": "fixture:fixtures/offset.offset_executive_p1/face_tail.json#101",
+      "values_compared": 0
+    },
+    {
+      "deferred": {
+        "symbol": "SmBrep::MakeWireEdgeVertex",
+        "unit": "topology.brep_p3"
+      },
+      "max_rel_err": 0.0,
+      "name": "face_tail_d0.25_smaller_solid_noext_merge_up_none",
+      "outcome": "deferred",
+      "pass": false,
+      "source": "fixture:fixtures/offset.offset_executive_p1/face_tail.json#102",
+      "values_compared": 0
+    },
+    {
+      "deferred": {
+        "symbol": "SmBrep::MakeWireEdgeVertex",
+        "unit": "topology.brep_p3"
+      },
+      "max_rel_err": 0.0,
+      "name": "face_tail_d0.25_smaller_solid_noext_merge_up_inner",
+      "outcome": "deferred",
+      "pass": false,
+      "source": "fixture:fixtures/offset.offset_executive_p1/face_tail.json#103",
+      "values_compared": 0
+    },
+    {
+      "deferred": {
+        "symbol": "SmBrep::MakeWireEdgeVertex",
+        "unit": "topology.brep_p3"
+      },
+      "max_rel_err": 0.0,
+      "name": "face_tail_d0.25_smaller_solid_noext_merge_up_crossing",
+      "outcome": "deferred",
+      "pass": false,
+      "source": "fixture:fixtures/offset.offset_executive_p1/face_tail.json#104",
+      "values_compared": 0
+    },
+    {
+      "deferred": {
+        "symbol": "SmBrep::MakeWireEdgeVertex",
+        "unit": "topology.brep_p3"
+      },
+      "max_rel_err": 0.0,
+      "name": "face_tail_d0.25_smaller_solid_noext_merge_down_none",
+      "outcome": "deferred",
+      "pass": false,
+      "source": "fixture:fixtures/offset.offset_executive_p1/face_tail.json#105",
+      "values_compared": 0
+    },
+    {
+      "deferred": {
+        "symbol": "SmBrep::MakeWireEdgeVertex",
+        "unit": "topology.brep_p3"
+      },
+      "max_rel_err": 0.0,
+      "name": "face_tail_d0.25_smaller_solid_noext_merge_down_inner",
+      "outcome": "deferred",
+      "pass": false,
+      "source": "fixture:fixtures/offset.offset_executive_p1/face_tail.json#106",
+      "values_compared": 0
+    },
+    {
+      "deferred": {
+        "symbol": "SmBrep::MakeWireEdgeVertex",
+        "unit": "topology.brep_p3"
+      },
+      "max_rel_err": 0.0,
+      "name": "face_tail_d0.25_smaller_solid_noext_merge_down_crossing",
+      "outcome": "deferred",
+      "pass": false,
+      "source": "fixture:fixtures/offset.offset_executive_p1/face_tail.json#107",
+      "values_compared": 0
+    },
+    {
+      "deferred": {
+        "symbol": "SmBrep::MakeWireEdgeVertex",
+        "unit": "topology.brep_p3"
+      },
+      "max_rel_err": 0.0,
+      "name": "face_tail_d0.25_smaller_solid_ext_nomerge_up_none",
+      "outcome": "deferred",
+      "pass": false,
+      "source": "fixture:fixtures/offset.offset_executive_p1/face_tail.json#108",
+      "values_compared": 0
+    },
+    {
+      "deferred": {
+        "symbol": "SmBrep::MakeWireEdgeVertex",
+        "unit": "topology.brep_p3"
+      },
+      "max_rel_err": 0.0,
+      "name": "face_tail_d0.25_smaller_solid_ext_nomerge_up_inner",
+      "outcome": "deferred",
+      "pass": false,
+      "source": "fixture:fixtures/offset.offset_executive_p1/face_tail.json#109",
+      "values_compared": 0
+    },
+    {
+      "deferred": {
+        "symbol": "SmBrep::MakeWireEdgeVertex",
+        "unit": "topology.brep_p3"
+      },
+      "max_rel_err": 0.0,
+      "name": "face_tail_d0.25_smaller_solid_ext_nomerge_up_crossing",
+      "outcome": "deferred",
+      "pass": false,
+      "source": "fixture:fixtures/offset.offset_executive_p1/face_tail.json#110",
+      "values_compared": 0
+    },
+    {
+      "deferred": {
+        "symbol": "SmBrep::MakeWireEdgeVertex",
+        "unit": "topology.brep_p3"
+      },
+      "max_rel_err": 0.0,
+      "name": "face_tail_d0.25_smaller_solid_ext_nomerge_down_none",
+      "outcome": "deferred",
+      "pass": false,
+      "source": "fixture:fixtures/offset.offset_executive_p1/face_tail.json#111",
+      "values_compared": 0
+    },
+    {
+      "deferred": {
+        "symbol": "SmBrep::MakeWireEdgeVertex",
+        "unit": "topology.brep_p3"
+      },
+      "max_rel_err": 0.0,
+      "name": "face_tail_d0.25_smaller_solid_ext_nomerge_down_inner",
+      "outcome": "deferred",
+      "pass": false,
+      "source": "fixture:fixtures/offset.offset_executive_p1/face_tail.json#112",
+      "values_compared": 0
+    },
+    {
+      "deferred": {
+        "symbol": "SmBrep::MakeWireEdgeVertex",
+        "unit": "topology.brep_p3"
+      },
+      "max_rel_err": 0.0,
+      "name": "face_tail_d0.25_smaller_solid_ext_nomerge_down_crossing",
+      "outcome": "deferred",
+      "pass": false,
+      "source": "fixture:fixtures/offset.offset_executive_p1/face_tail.json#113",
+      "values_compared": 0
+    },
+    {
+      "deferred": {
+        "symbol": "SmBrep::MakeWireEdgeVertex",
+        "unit": "topology.brep_p3"
+      },
+      "max_rel_err": 0.0,
+      "name": "face_tail_d0.25_smaller_solid_ext_merge_up_none",
+      "outcome": "deferred",
+      "pass": false,
+      "source": "fixture:fixtures/offset.offset_executive_p1/face_tail.json#114",
+      "values_compared": 0
+    },
+    {
+      "deferred": {
+        "symbol": "SmBrep::MakeWireEdgeVertex",
+        "unit": "topology.brep_p3"
+      },
+      "max_rel_err": 0.0,
+      "name": "face_tail_d0.25_smaller_solid_ext_merge_up_inner",
+      "outcome": "deferred",
+      "pass": false,
+      "source": "fixture:fixtures/offset.offset_executive_p1/face_tail.json#115",
+      "values_compared": 0
+    },
+    {
+      "deferred": {
+        "symbol": "SmBrep::MakeWireEdgeVertex",
+        "unit": "topology.brep_p3"
+      },
+      "max_rel_err": 0.0,
+      "name": "face_tail_d0.25_smaller_solid_ext_merge_up_crossing",
+      "outcome": "deferred",
+      "pass": false,
+      "source": "fixture:fixtures/offset.offset_executive_p1/face_tail.json#116",
+      "values_compared": 0
+    },
+    {
+      "deferred": {
+        "symbol": "SmBrep::MakeWireEdgeVertex",
+        "unit": "topology.brep_p3"
+      },
+      "max_rel_err": 0.0,
+      "name": "face_tail_d0.25_smaller_solid_ext_merge_down_none",
+      "outcome": "deferred",
+      "pass": false,
+      "source": "fixture:fixtures/offset.offset_executive_p1/face_tail.json#117",
+      "values_compared": 0
+    },
+    {
+      "deferred": {
+        "symbol": "SmBrep::MakeWireEdgeVertex",
+        "unit": "topology.brep_p3"
+      },
+      "max_rel_err": 0.0,
+      "name": "face_tail_d0.25_smaller_solid_ext_merge_down_inner",
+      "outcome": "deferred",
+      "pass": false,
+      "source": "fixture:fixtures/offset.offset_executive_p1/face_tail.json#118",
+      "values_compared": 0
+    },
+    {
+      "deferred": {
+        "symbol": "SmBrep::MakeWireEdgeVertex",
+        "unit": "topology.brep_p3"
+      },
+      "max_rel_err": 0.0,
+      "name": "face_tail_d0.25_smaller_solid_ext_merge_down_crossing",
+      "outcome": "deferred",
+      "pass": false,
+      "source": "fixture:fixtures/offset.offset_executive_p1/face_tail.json#119",
+      "values_compared": 0
+    },
+    {
+      "deferred": {
+        "symbol": "SmBrep::MakeWireEdgeVertex",
+        "unit": "topology.brep_p3"
+      },
+      "max_rel_err": 0.0,
+      "name": "face_tail_d0.25_smaller_local_noext_nomerge_up_none",
+      "outcome": "deferred",
+      "pass": false,
+      "source": "fixture:fixtures/offset.offset_executive_p1/face_tail.json#120",
+      "values_compared": 0
+    },
+    {
+      "deferred": {
+        "symbol": "SmBrep::MakeWireEdgeVertex",
+        "unit": "topology.brep_p3"
+      },
+      "max_rel_err": 0.0,
+      "name": "face_tail_d0.25_smaller_local_noext_nomerge_up_inner",
+      "outcome": "deferred",
+      "pass": false,
+      "source": "fixture:fixtures/offset.offset_executive_p1/face_tail.json#121",
+      "values_compared": 0
+    },
+    {
+      "deferred": {
+        "symbol": "SmBrep::MakeWireEdgeVertex",
+        "unit": "topology.brep_p3"
+      },
+      "max_rel_err": 0.0,
+      "name": "face_tail_d0.25_smaller_local_noext_nomerge_up_crossing",
+      "outcome": "deferred",
+      "pass": false,
+      "source": "fixture:fixtures/offset.offset_executive_p1/face_tail.json#122",
+      "values_compared": 0
+    },
+    {
+      "deferred": {
+        "symbol": "SmBrep::MakeWireEdgeVertex",
+        "unit": "topology.brep_p3"
+      },
+      "max_rel_err": 0.0,
+      "name": "face_tail_d0.25_smaller_local_noext_nomerge_down_none",
+      "outcome": "deferred",
+      "pass": false,
+      "source": "fixture:fixtures/offset.offset_executive_p1/face_tail.json#123",
+      "values_compared": 0
+    },
+    {
+      "deferred": {
+        "symbol": "SmBrep::MakeWireEdgeVertex",
+        "unit": "topology.brep_p3"
+      },
+      "max_rel_err": 0.0,
+      "name": "face_tail_d0.25_smaller_local_noext_nomerge_down_inner",
+      "outcome": "deferred",
+      "pass": false,
+      "source": "fixture:fixtures/offset.offset_executive_p1/face_tail.json#124",
+      "values_compared": 0
+    },
+    {
+      "deferred": {
+        "symbol": "SmBrep::MakeWireEdgeVertex",
+        "unit": "topology.brep_p3"
+      },
+      "max_rel_err": 0.0,
+      "name": "face_tail_d0.25_smaller_local_noext_nomerge_down_crossing",
+      "outcome": "deferred",
+      "pass": false,
+      "source": "fixture:fixtures/offset.offset_executive_p1/face_tail.json#125",
+      "values_compared": 0
+    },
+    {
+      "deferred": {
+        "symbol": "SmBrep::MakeWireEdgeVertex",
+        "unit": "topology.brep_p3"
+      },
+      "max_rel_err": 0.0,
+      "name": "face_tail_d0.25_smaller_local_noext_merge_up_none",
+      "outcome": "deferred",
+      "pass": false,
+      "source": "fixture:fixtures/offset.offset_executive_p1/face_tail.json#126",
+      "values_compared": 0
+    },
+    {
+      "deferred": {
+        "symbol": "SmBrep::MakeWireEdgeVertex",
+        "unit": "topology.brep_p3"
+      },
+      "max_rel_err": 0.0,
+      "name": "face_tail_d0.25_smaller_local_noext_merge_up_inner",
+      "outcome": "deferred",
+      "pass": false,
+      "source": "fixture:fixtures/offset.offset_executive_p1/face_tail.json#127",
+      "values_compared": 0
+    },
+    {
+      "deferred": {
+        "symbol": "SmBrep::MakeWireEdgeVertex",
+        "unit": "topology.brep_p3"
+      },
+      "max_rel_err": 0.0,
+      "name": "face_tail_d0.25_smaller_local_noext_merge_up_crossing",
+      "outcome": "deferred",
+      "pass": false,
+      "source": "fixture:fixtures/offset.offset_executive_p1/face_tail.json#128",
+      "values_compared": 0
+    },
+    {
+      "deferred": {
+        "symbol": "SmBrep::MakeWireEdgeVertex",
+        "unit": "topology.brep_p3"
+      },
+      "max_rel_err": 0.0,
+      "name": "face_tail_d0.25_smaller_local_noext_merge_down_none",
+      "outcome": "deferred",
+      "pass": false,
+      "source": "fixture:fixtures/offset.offset_executive_p1/face_tail.json#129",
+      "values_compared": 0
+    },
+    {
+      "deferred": {
+        "symbol": "SmBrep::MakeWireEdgeVertex",
+        "unit": "topology.brep_p3"
+      },
+      "max_rel_err": 0.0,
+      "name": "face_tail_d0.25_smaller_local_noext_merge_down_inner",
+      "outcome": "deferred",
+      "pass": false,
+      "source": "fixture:fixtures/offset.offset_executive_p1/face_tail.json#130",
+      "values_compared": 0
+    },
+    {
+      "deferred": {
+        "symbol": "SmBrep::MakeWireEdgeVertex",
+        "unit": "topology.brep_p3"
+      },
+      "max_rel_err": 0.0,
+      "name": "face_tail_d0.25_smaller_local_noext_merge_down_crossing",
+      "outcome": "deferred",
+      "pass": false,
+      "source": "fixture:fixtures/offset.offset_executive_p1/face_tail.json#131",
+      "values_compared": 0
+    },
+    {
+      "deferred": {
+        "symbol": "SmBrep::MakeWireEdgeVertex",
+        "unit": "topology.brep_p3"
+      },
+      "max_rel_err": 0.0,
+      "name": "face_tail_d0.25_smaller_local_ext_nomerge_up_none",
+      "outcome": "deferred",
+      "pass": false,
+      "source": "fixture:fixtures/offset.offset_executive_p1/face_tail.json#132",
+      "values_compared": 0
+    },
+    {
+      "deferred": {
+        "symbol": "SmBrep::MakeWireEdgeVertex",
+        "unit": "topology.brep_p3"
+      },
+      "max_rel_err": 0.0,
+      "name": "face_tail_d0.25_smaller_local_ext_nomerge_up_inner",
+      "outcome": "deferred",
+      "pass": false,
+      "source": "fixture:fixtures/offset.offset_executive_p1/face_tail.json#133",
+      "values_compared": 0
+    },
+    {
+      "deferred": {
+        "symbol": "SmBrep::MakeWireEdgeVertex",
+        "unit": "topology.brep_p3"
+      },
+      "max_rel_err": 0.0,
+      "name": "face_tail_d0.25_smaller_local_ext_nomerge_up_crossing",
+      "outcome": "deferred",
+      "pass": false,
+      "source": "fixture:fixtures/offset.offset_executive_p1/face_tail.json#134",
+      "values_compared": 0
+    },
+    {
+      "deferred": {
+        "symbol": "SmBrep::MakeWireEdgeVertex",
+        "unit": "topology.brep_p3"
+      },
+      "max_rel_err": 0.0,
+      "name": "face_tail_d0.25_smaller_local_ext_nomerge_down_none",
+      "outcome": "deferred",
+      "pass": false,
+      "source": "fixture:fixtures/offset.offset_executive_p1/face_tail.json#135",
+      "values_compared": 0
+    },
+    {
+      "deferred": {
+        "symbol": "SmBrep::MakeWireEdgeVertex",
+        "unit": "topology.brep_p3"
+      },
+      "max_rel_err": 0.0,
+      "name": "face_tail_d0.25_smaller_local_ext_nomerge_down_inner",
+      "outcome": "deferred",
+      "pass": false,
+      "source": "fixture:fixtures/offset.offset_executive_p1/face_tail.json#136",
+      "values_compared": 0
+    },
+    {
+      "deferred": {
+        "symbol": "SmBrep::MakeWireEdgeVertex",
+        "unit": "topology.brep_p3"
+      },
+      "max_rel_err": 0.0,
+      "name": "face_tail_d0.25_smaller_local_ext_nomerge_down_crossing",
+      "outcome": "deferred",
+      "pass": false,
+      "source": "fixture:fixtures/offset.offset_executive_p1/face_tail.json#137",
+      "values_compared": 0
+    },
+    {
+      "deferred": {
+        "symbol": "SmBrep::MakeWireEdgeVertex",
+        "unit": "topology.brep_p3"
+      },
+      "max_rel_err": 0.0,
+      "name": "face_tail_d0.25_smaller_local_ext_merge_up_none",
+      "outcome": "deferred",
+      "pass": false,
+      "source": "fixture:fixtures/offset.offset_executive_p1/face_tail.json#138",
+      "values_compared": 0
+    },
+    {
+      "deferred": {
+        "symbol": "SmBrep::MakeWireEdgeVertex",
+        "unit": "topology.brep_p3"
+      },
+      "max_rel_err": 0.0,
+      "name": "face_tail_d0.25_smaller_local_ext_merge_up_inner",
+      "outcome": "deferred",
+      "pass": false,
+      "source": "fixture:fixtures/offset.offset_executive_p1/face_tail.json#139",
+      "values_compared": 0
+    },
+    {
+      "deferred": {
+        "symbol": "SmBrep::MakeWireEdgeVertex",
+        "unit": "topology.brep_p3"
+      },
+      "max_rel_err": 0.0,
+      "name": "face_tail_d0.25_smaller_local_ext_merge_up_crossing",
+      "outcome": "deferred",
+      "pass": false,
+      "source": "fixture:fixtures/offset.offset_executive_p1/face_tail.json#140",
+      "values_compared": 0
+    },
+    {
+      "deferred": {
+        "symbol": "SmBrep::MakeWireEdgeVertex",
+        "unit": "topology.brep_p3"
+      },
+      "max_rel_err": 0.0,
+      "name": "face_tail_d0.25_smaller_local_ext_merge_down_none",
+      "outcome": "deferred",
+      "pass": false,
+      "source": "fixture:fixtures/offset.offset_executive_p1/face_tail.json#141",
+      "values_compared": 0
+    },
+    {
+      "deferred": {
+        "symbol": "SmBrep::MakeWireEdgeVertex",
+        "unit": "topology.brep_p3"
+      },
+      "max_rel_err": 0.0,
+      "name": "face_tail_d0.25_smaller_local_ext_merge_down_inner",
+      "outcome": "deferred",
+      "pass": false,
+      "source": "fixture:fixtures/offset.offset_executive_p1/face_tail.json#142",
+      "values_compared": 0
+    },
+    {
+      "deferred": {
+        "symbol": "SmBrep::MakeWireEdgeVertex",
+        "unit": "topology.brep_p3"
+      },
+      "max_rel_err": 0.0,
+      "name": "face_tail_d0.25_smaller_local_ext_merge_down_crossing",
+      "outcome": "deferred",
+      "pass": false,
+      "source": "fixture:fixtures/offset.offset_executive_p1/face_tail.json#143",
+      "values_compared": 0
+    },
+    {
+      "deferred": {
+        "symbol": "SmBrep::MakeWireEdgeVertex",
+        "unit": "topology.brep_p3"
+      },
+      "max_rel_err": 0.0,
+      "name": "face_tail_d3.0_equal_solid_noext_nomerge_up_none",
+      "outcome": "deferred",
+      "pass": false,
+      "source": "fixture:fixtures/offset.offset_executive_p1/face_tail.json#144",
+      "values_compared": 0
+    },
+    {
+      "deferred": {
+        "symbol": "SmBrep::MakeWireEdgeVertex",
+        "unit": "topology.brep_p3"
+      },
+      "max_rel_err": 0.0,
+      "name": "face_tail_d3.0_equal_solid_noext_nomerge_up_inner",
+      "outcome": "deferred",
+      "pass": false,
+      "source": "fixture:fixtures/offset.offset_executive_p1/face_tail.json#145",
+      "values_compared": 0
+    },
+    {
+      "deferred": {
+        "symbol": "SmBrep::MakeWireEdgeVertex",
+        "unit": "topology.brep_p3"
+      },
+      "max_rel_err": 0.0,
+      "name": "face_tail_d3.0_equal_solid_noext_nomerge_up_crossing",
+      "outcome": "deferred",
+      "pass": false,
+      "source": "fixture:fixtures/offset.offset_executive_p1/face_tail.json#146",
+      "values_compared": 0
+    },
+    {
+      "deferred": {
+        "symbol": "SmBrep::MakeWireEdgeVertex",
+        "unit": "topology.brep_p3"
+      },
+      "max_rel_err": 0.0,
+      "name": "face_tail_d3.0_equal_solid_noext_nomerge_down_none",
+      "outcome": "deferred",
+      "pass": false,
+      "source": "fixture:fixtures/offset.offset_executive_p1/face_tail.json#147",
+      "values_compared": 0
+    },
+    {
+      "deferred": {
+        "symbol": "SmBrep::MakeWireEdgeVertex",
+        "unit": "topology.brep_p3"
+      },
+      "max_rel_err": 0.0,
+      "name": "face_tail_d3.0_equal_solid_noext_nomerge_down_inner",
+      "outcome": "deferred",
+      "pass": false,
+      "source": "fixture:fixtures/offset.offset_executive_p1/face_tail.json#148",
+      "values_compared": 0
+    },
+    {
+      "deferred": {
+        "symbol": "SmBrep::MakeWireEdgeVertex",
+        "unit": "topology.brep_p3"
+      },
+      "max_rel_err": 0.0,
+      "name": "face_tail_d3.0_equal_solid_noext_nomerge_down_crossing",
+      "outcome": "deferred",
+      "pass": false,
+      "source": "fixture:fixtures/offset.offset_executive_p1/face_tail.json#149",
+      "values_compared": 0
+    },
+    {
+      "deferred": {
+        "symbol": "SmBrep::MakeWireEdgeVertex",
+        "unit": "topology.brep_p3"
+      },
+      "max_rel_err": 0.0,
+      "name": "face_tail_d3.0_equal_solid_noext_merge_up_none",
+      "outcome": "deferred",
+      "pass": false,
+      "source": "fixture:fixtures/offset.offset_executive_p1/face_tail.json#150",
+      "values_compared": 0
+    },
+    {
+      "deferred": {
+        "symbol": "SmBrep::MakeWireEdgeVertex",
+        "unit": "topology.brep_p3"
+      },
+      "max_rel_err": 0.0,
+      "name": "face_tail_d3.0_equal_solid_noext_merge_up_inner",
+      "outcome": "deferred",
+      "pass": false,
+      "source": "fixture:fixtures/offset.offset_executive_p1/face_tail.json#151",
+      "values_compared": 0
+    },
+    {
+      "deferred": {
+        "symbol": "SmBrep::MakeWireEdgeVertex",
+        "unit": "topology.brep_p3"
+      },
+      "max_rel_err": 0.0,
+      "name": "face_tail_d3.0_equal_solid_noext_merge_up_crossing",
+      "outcome": "deferred",
+      "pass": false,
+      "source": "fixture:fixtures/offset.offset_executive_p1/face_tail.json#152",
+      "values_compared": 0
+    },
+    {
+      "deferred": {
+        "symbol": "SmBrep::MakeWireEdgeVertex",
+        "unit": "topology.brep_p3"
+      },
+      "max_rel_err": 0.0,
+      "name": "face_tail_d3.0_equal_solid_noext_merge_down_none",
+      "outcome": "deferred",
+      "pass": false,
+      "source": "fixture:fixtures/offset.offset_executive_p1/face_tail.json#153",
+      "values_compared": 0
+    },
+    {
+      "deferred": {
+        "symbol": "SmBrep::MakeWireEdgeVertex",
+        "unit": "topology.brep_p3"
+      },
+      "max_rel_err": 0.0,
+      "name": "face_tail_d3.0_equal_solid_noext_merge_down_inner",
+      "outcome": "deferred",
+      "pass": false,
+      "source": "fixture:fixtures/offset.offset_executive_p1/face_tail.json#154",
+      "values_compared": 0
+    },
+    {
+      "deferred": {
+        "symbol": "SmBrep::MakeWireEdgeVertex",
+        "unit": "topology.brep_p3"
+      },
+      "max_rel_err": 0.0,
+      "name": "face_tail_d3.0_equal_solid_noext_merge_down_crossing",
+      "outcome": "deferred",
+      "pass": false,
+      "source": "fixture:fixtures/offset.offset_executive_p1/face_tail.json#155",
+      "values_compared": 0
+    },
+    {
+      "deferred": {
+        "symbol": "SmBrep::MakeWireEdgeVertex",
+        "unit": "topology.brep_p3"
+      },
+      "max_rel_err": 0.0,
+      "name": "face_tail_d3.0_equal_solid_ext_nomerge_up_none",
+      "outcome": "deferred",
+      "pass": false,
+      "source": "fixture:fixtures/offset.offset_executive_p1/face_tail.json#156",
+      "values_compared": 0
+    },
+    {
+      "deferred": {
+        "symbol": "SmBrep::MakeWireEdgeVertex",
+        "unit": "topology.brep_p3"
+      },
+      "max_rel_err": 0.0,
+      "name": "face_tail_d3.0_equal_solid_ext_nomerge_up_inner",
+      "outcome": "deferred",
+      "pass": false,
+      "source": "fixture:fixtures/offset.offset_executive_p1/face_tail.json#157",
+      "values_compared": 0
+    },
+    {
+      "deferred": {
+        "symbol": "SmBrep::MakeWireEdgeVertex",
+        "unit": "topology.brep_p3"
+      },
+      "max_rel_err": 0.0,
+      "name": "face_tail_d3.0_equal_solid_ext_nomerge_up_crossing",
+      "outcome": "deferred",
+      "pass": false,
+      "source": "fixture:fixtures/offset.offset_executive_p1/face_tail.json#158",
+      "values_compared": 0
+    },
+    {
+      "deferred": {
+        "symbol": "SmBrep::MakeWireEdgeVertex",
+        "unit": "topology.brep_p3"
+      },
+      "max_rel_err": 0.0,
+      "name": "face_tail_d3.0_equal_solid_ext_nomerge_down_none",
+      "outcome": "deferred",
+      "pass": false,
+      "source": "fixture:fixtures/offset.offset_executive_p1/face_tail.json#159",
+      "values_compared": 0
+    },
+    {
+      "deferred": {
+        "symbol": "SmBrep::MakeWireEdgeVertex",
+        "unit": "topology.brep_p3"
+      },
+      "max_rel_err": 0.0,
+      "name": "face_tail_d3.0_equal_solid_ext_nomerge_down_inner",
+      "outcome": "deferred",
+      "pass": false,
+      "source": "fixture:fixtures/offset.offset_executive_p1/face_tail.json#160",
+      "values_compared": 0
+    },
+    {
+      "deferred": {
+        "symbol": "SmBrep::MakeWireEdgeVertex",
+        "unit": "topology.brep_p3"
+      },
+      "max_rel_err": 0.0,
+      "name": "face_tail_d3.0_equal_solid_ext_nomerge_down_crossing",
+      "outcome": "deferred",
+      "pass": false,
+      "source": "fixture:fixtures/offset.offset_executive_p1/face_tail.json#161",
+      "values_compared": 0
+    },
+    {
+      "deferred": {
+        "symbol": "SmBrep::MakeWireEdgeVertex",
+        "unit": "topology.brep_p3"
+      },
+      "max_rel_err": 0.0,
+      "name": "face_tail_d3.0_equal_solid_ext_merge_up_none",
+      "outcome": "deferred",
+      "pass": false,
+      "source": "fixture:fixtures/offset.offset_executive_p1/face_tail.json#162",
+      "values_compared": 0
+    },
+    {
+      "deferred": {
+        "symbol": "SmBrep::MakeWireEdgeVertex",
+        "unit": "topology.brep_p3"
+      },
+      "max_rel_err": 0.0,
+      "name": "face_tail_d3.0_equal_solid_ext_merge_up_inner",
+      "outcome": "deferred",
+      "pass": false,
+      "source": "fixture:fixtures/offset.offset_executive_p1/face_tail.json#163",
+      "values_compared": 0
+    },
+    {
+      "deferred": {
+        "symbol": "SmBrep::MakeWireEdgeVertex",
+        "unit": "topology.brep_p3"
+      },
+      "max_rel_err": 0.0,
+      "name": "face_tail_d3.0_equal_solid_ext_merge_up_crossing",
+      "outcome": "deferred",
+      "pass": false,
+      "source": "fixture:fixtures/offset.offset_executive_p1/face_tail.json#164",
+      "values_compared": 0
+    },
+    {
+      "deferred": {
+        "symbol": "SmBrep::MakeWireEdgeVertex",
+        "unit": "topology.brep_p3"
+      },
+      "max_rel_err": 0.0,
+      "name": "face_tail_d3.0_equal_solid_ext_merge_down_none",
+      "outcome": "deferred",
+      "pass": false,
+      "source": "fixture:fixtures/offset.offset_executive_p1/face_tail.json#165",
+      "values_compared": 0
+    },
+    {
+      "deferred": {
+        "symbol": "SmBrep::MakeWireEdgeVertex",
+        "unit": "topology.brep_p3"
+      },
+      "max_rel_err": 0.0,
+      "name": "face_tail_d3.0_equal_solid_ext_merge_down_inner",
+      "outcome": "deferred",
+      "pass": false,
+      "source": "fixture:fixtures/offset.offset_executive_p1/face_tail.json#166",
+      "values_compared": 0
+    },
+    {
+      "deferred": {
+        "symbol": "SmBrep::MakeWireEdgeVertex",
+        "unit": "topology.brep_p3"
+      },
+      "max_rel_err": 0.0,
+      "name": "face_tail_d3.0_equal_solid_ext_merge_down_crossing",
+      "outcome": "deferred",
+      "pass": false,
+      "source": "fixture:fixtures/offset.offset_executive_p1/face_tail.json#167",
+      "values_compared": 0
+    },
+    {
+      "deferred": {
+        "symbol": "SmBrep::MakeWireEdgeVertex",
+        "unit": "topology.brep_p3"
+      },
+      "max_rel_err": 0.0,
+      "name": "face_tail_d3.0_equal_local_noext_nomerge_up_none",
+      "outcome": "deferred",
+      "pass": false,
+      "source": "fixture:fixtures/offset.offset_executive_p1/face_tail.json#168",
+      "values_compared": 0
+    },
+    {
+      "deferred": {
+        "symbol": "SmBrep::MakeWireEdgeVertex",
+        "unit": "topology.brep_p3"
+      },
+      "max_rel_err": 0.0,
+      "name": "face_tail_d3.0_equal_local_noext_nomerge_up_inner",
+      "outcome": "deferred",
+      "pass": false,
+      "source": "fixture:fixtures/offset.offset_executive_p1/face_tail.json#169",
+      "values_compared": 0
+    },
+    {
+      "deferred": {
+        "symbol": "SmBrep::MakeWireEdgeVertex",
+        "unit": "topology.brep_p3"
+      },
+      "max_rel_err": 0.0,
+      "name": "face_tail_d3.0_equal_local_noext_nomerge_up_crossing",
+      "outcome": "deferred",
+      "pass": false,
+      "source": "fixture:fixtures/offset.offset_executive_p1/face_tail.json#170",
+      "values_compared": 0
+    },
+    {
+      "deferred": {
+        "symbol": "SmBrep::MakeWireEdgeVertex",
+        "unit": "topology.brep_p3"
+      },
+      "max_rel_err": 0.0,
+      "name": "face_tail_d3.0_equal_local_noext_nomerge_down_none",
+      "outcome": "deferred",
+      "pass": false,
+      "source": "fixture:fixtures/offset.offset_executive_p1/face_tail.json#171",
+      "values_compared": 0
+    },
+    {
+      "deferred": {
+        "symbol": "SmBrep::MakeWireEdgeVertex",
+        "unit": "topology.brep_p3"
+      },
+      "max_rel_err": 0.0,
+      "name": "face_tail_d3.0_equal_local_noext_nomerge_down_inner",
+      "outcome": "deferred",
+      "pass": false,
+      "source": "fixture:fixtures/offset.offset_executive_p1/face_tail.json#172",
+      "values_compared": 0
+    },
+    {
+      "deferred": {
+        "symbol": "SmBrep::MakeWireEdgeVertex",
+        "unit": "topology.brep_p3"
+      },
+      "max_rel_err": 0.0,
+      "name": "face_tail_d3.0_equal_local_noext_nomerge_down_crossing",
+      "outcome": "deferred",
+      "pass": false,
+      "source": "fixture:fixtures/offset.offset_executive_p1/face_tail.json#173",
+      "values_compared": 0
+    },
+    {
+      "deferred": {
+        "symbol": "SmBrep::MakeWireEdgeVertex",
+        "unit": "topology.brep_p3"
+      },
+      "max_rel_err": 0.0,
+      "name": "face_tail_d3.0_equal_local_noext_merge_up_none",
+      "outcome": "deferred",
+      "pass": false,
+      "source": "fixture:fixtures/offset.offset_executive_p1/face_tail.json#174",
+      "values_compared": 0
+    },
+    {
+      "deferred": {
+        "symbol": "SmBrep::MakeWireEdgeVertex",
+        "unit": "topology.brep_p3"
+      },
+      "max_rel_err": 0.0,
+      "name": "face_tail_d3.0_equal_local_noext_merge_up_inner",
+      "outcome": "deferred",
+      "pass": false,
+      "source": "fixture:fixtures/offset.offset_executive_p1/face_tail.json#175",
+      "values_compared": 0
+    },
+    {
+      "deferred": {
+        "symbol": "SmBrep::MakeWireEdgeVertex",
+        "unit": "topology.brep_p3"
+      },
+      "max_rel_err": 0.0,
+      "name": "face_tail_d3.0_equal_local_noext_merge_up_crossing",
+      "outcome": "deferred",
+      "pass": false,
+      "source": "fixture:fixtures/offset.offset_executive_p1/face_tail.json#176",
+      "values_compared": 0
+    },
+    {
+      "deferred": {
+        "symbol": "SmBrep::MakeWireEdgeVertex",
+        "unit": "topology.brep_p3"
+      },
+      "max_rel_err": 0.0,
+      "name": "face_tail_d3.0_equal_local_noext_merge_down_none",
+      "outcome": "deferred",
+      "pass": false,
+      "source": "fixture:fixtures/offset.offset_executive_p1/face_tail.json#177",
+      "values_compared": 0
+    },
+    {
+      "deferred": {
+        "symbol": "SmBrep::MakeWireEdgeVertex",
+        "unit": "topology.brep_p3"
+      },
+      "max_rel_err": 0.0,
+      "name": "face_tail_d3.0_equal_local_noext_merge_down_inner",
+      "outcome": "deferred",
+      "pass": false,
+      "source": "fixture:fixtures/offset.offset_executive_p1/face_tail.json#178",
+      "values_compared": 0
+    },
+    {
+      "deferred": {
+        "symbol": "SmBrep::MakeWireEdgeVertex",
+        "unit": "topology.brep_p3"
+      },
+      "max_rel_err": 0.0,
+      "name": "face_tail_d3.0_equal_local_noext_merge_down_crossing",
+      "outcome": "deferred",
+      "pass": false,
+      "source": "fixture:fixtures/offset.offset_executive_p1/face_tail.json#179",
+      "values_compared": 0
+    },
+    {
+      "deferred": {
+        "symbol": "SmBrep::MakeWireEdgeVertex",
+        "unit": "topology.brep_p3"
+      },
+      "max_rel_err": 0.0,
+      "name": "face_tail_d3.0_equal_local_ext_nomerge_up_none",
+      "outcome": "deferred",
+      "pass": false,
+      "source": "fixture:fixtures/offset.offset_executive_p1/face_tail.json#180",
+      "values_compared": 0
+    },
+    {
+      "deferred": {
+        "symbol": "SmBrep::MakeWireEdgeVertex",
+        "unit": "topology.brep_p3"
+      },
+      "max_rel_err": 0.0,
+      "name": "face_tail_d3.0_equal_local_ext_nomerge_up_inner",
+      "outcome": "deferred",
+      "pass": false,
+      "source": "fixture:fixtures/offset.offset_executive_p1/face_tail.json#181",
+      "values_compared": 0
+    },
+    {
+      "deferred": {
+        "symbol": "SmBrep::MakeWireEdgeVertex",
+        "unit": "topology.brep_p3"
+      },
+      "max_rel_err": 0.0,
+      "name": "face_tail_d3.0_equal_local_ext_nomerge_up_crossing",
+      "outcome": "deferred",
+      "pass": false,
+      "source": "fixture:fixtures/offset.offset_executive_p1/face_tail.json#182",
+      "values_compared": 0
+    },
+    {
+      "deferred": {
+        "symbol": "SmBrep::MakeWireEdgeVertex",
+        "unit": "topology.brep_p3"
+      },
+      "max_rel_err": 0.0,
+      "name": "face_tail_d3.0_equal_local_ext_nomerge_down_none",
+      "outcome": "deferred",
+      "pass": false,
+      "source": "fixture:fixtures/offset.offset_executive_p1/face_tail.json#183",
+      "values_compared": 0
+    },
+    {
+      "deferred": {
+        "symbol": "SmBrep::MakeWireEdgeVertex",
+        "unit": "topology.brep_p3"
+      },
+      "max_rel_err": 0.0,
+      "name": "face_tail_d3.0_equal_local_ext_nomerge_down_inner",
+      "outcome": "deferred",
+      "pass": false,
+      "source": "fixture:fixtures/offset.offset_executive_p1/face_tail.json#184",
+      "values_compared": 0
+    },
+    {
+      "deferred": {
+        "symbol": "SmBrep::MakeWireEdgeVertex",
+        "unit": "topology.brep_p3"
+      },
+      "max_rel_err": 0.0,
+      "name": "face_tail_d3.0_equal_local_ext_nomerge_down_crossing",
+      "outcome": "deferred",
+      "pass": false,
+      "source": "fixture:fixtures/offset.offset_executive_p1/face_tail.json#185",
+      "values_compared": 0
+    },
+    {
+      "deferred": {
+        "symbol": "SmBrep::MakeWireEdgeVertex",
+        "unit": "topology.brep_p3"
+      },
+      "max_rel_err": 0.0,
+      "name": "face_tail_d3.0_equal_local_ext_merge_up_none",
+      "outcome": "deferred",
+      "pass": false,
+      "source": "fixture:fixtures/offset.offset_executive_p1/face_tail.json#186",
+      "values_compared": 0
+    },
+    {
+      "deferred": {
+        "symbol": "SmBrep::MakeWireEdgeVertex",
+        "unit": "topology.brep_p3"
+      },
+      "max_rel_err": 0.0,
+      "name": "face_tail_d3.0_equal_local_ext_merge_up_inner",
+      "outcome": "deferred",
+      "pass": false,
+      "source": "fixture:fixtures/offset.offset_executive_p1/face_tail.json#187",
+      "values_compared": 0
+    },
+    {
+      "deferred": {
+        "symbol": "SmBrep::MakeWireEdgeVertex",
+        "unit": "topology.brep_p3"
+      },
+      "max_rel_err": 0.0,
+      "name": "face_tail_d3.0_equal_local_ext_merge_up_crossing",
+      "outcome": "deferred",
+      "pass": false,
+      "source": "fixture:fixtures/offset.offset_executive_p1/face_tail.json#188",
+      "values_compared": 0
+    },
+    {
+      "deferred": {
+        "symbol": "SmBrep::MakeWireEdgeVertex",
+        "unit": "topology.brep_p3"
+      },
+      "max_rel_err": 0.0,
+      "name": "face_tail_d3.0_equal_local_ext_merge_down_none",
+      "outcome": "deferred",
+      "pass": false,
+      "source": "fixture:fixtures/offset.offset_executive_p1/face_tail.json#189",
+      "values_compared": 0
+    },
+    {
+      "deferred": {
+        "symbol": "SmBrep::MakeWireEdgeVertex",
+        "unit": "topology.brep_p3"
+      },
+      "max_rel_err": 0.0,
+      "name": "face_tail_d3.0_equal_local_ext_merge_down_inner",
+      "outcome": "deferred",
+      "pass": false,
+      "source": "fixture:fixtures/offset.offset_executive_p1/face_tail.json#190",
+      "values_compared": 0
+    },
+    {
+      "deferred": {
+        "symbol": "SmBrep::MakeWireEdgeVertex",
+        "unit": "topology.brep_p3"
+      },
+      "max_rel_err": 0.0,
+      "name": "face_tail_d3.0_equal_local_ext_merge_down_crossing",
+      "outcome": "deferred",
+      "pass": false,
+      "source": "fixture:fixtures/offset.offset_executive_p1/face_tail.json#191",
+      "values_compared": 0
+    },
+    {
+      "deferred": {
+        "symbol": "SmBrep::MakeWireEdgeVertex",
+        "unit": "topology.brep_p3"
+      },
+      "max_rel_err": 0.0,
+      "name": "face_tail_d3.0_larger_solid_noext_nomerge_up_none",
+      "outcome": "deferred",
+      "pass": false,
+      "source": "fixture:fixtures/offset.offset_executive_p1/face_tail.json#192",
+      "values_compared": 0
+    },
+    {
+      "deferred": {
+        "symbol": "SmBrep::MakeWireEdgeVertex",
+        "unit": "topology.brep_p3"
+      },
+      "max_rel_err": 0.0,
+      "name": "face_tail_d3.0_larger_solid_noext_nomerge_up_inner",
+      "outcome": "deferred",
+      "pass": false,
+      "source": "fixture:fixtures/offset.offset_executive_p1/face_tail.json#193",
+      "values_compared": 0
+    },
+    {
+      "deferred": {
+        "symbol": "SmBrep::MakeWireEdgeVertex",
+        "unit": "topology.brep_p3"
+      },
+      "max_rel_err": 0.0,
+      "name": "face_tail_d3.0_larger_solid_noext_nomerge_up_crossing",
+      "outcome": "deferred",
+      "pass": false,
+      "source": "fixture:fixtures/offset.offset_executive_p1/face_tail.json#194",
+      "values_compared": 0
+    },
+    {
+      "deferred": {
+        "symbol": "SmBrep::MakeWireEdgeVertex",
+        "unit": "topology.brep_p3"
+      },
+      "max_rel_err": 0.0,
+      "name": "face_tail_d3.0_larger_solid_noext_nomerge_down_none",
+      "outcome": "deferred",
+      "pass": false,
+      "source": "fixture:fixtures/offset.offset_executive_p1/face_tail.json#195",
+      "values_compared": 0
+    },
+    {
+      "deferred": {
+        "symbol": "SmBrep::MakeWireEdgeVertex",
+        "unit": "topology.brep_p3"
+      },
+      "max_rel_err": 0.0,
+      "name": "face_tail_d3.0_larger_solid_noext_nomerge_down_inner",
+      "outcome": "deferred",
+      "pass": false,
+      "source": "fixture:fixtures/offset.offset_executive_p1/face_tail.json#196",
+      "values_compared": 0
+    },
+    {
+      "deferred": {
+        "symbol": "SmBrep::MakeWireEdgeVertex",
+        "unit": "topology.brep_p3"
+      },
+      "max_rel_err": 0.0,
+      "name": "face_tail_d3.0_larger_solid_noext_nomerge_down_crossing",
+      "outcome": "deferred",
+      "pass": false,
+      "source": "fixture:fixtures/offset.offset_executive_p1/face_tail.json#197",
+      "values_compared": 0
+    },
+    {
+      "deferred": {
+        "symbol": "SmBrep::MakeWireEdgeVertex",
+        "unit": "topology.brep_p3"
+      },
+      "max_rel_err": 0.0,
+      "name": "face_tail_d3.0_larger_solid_noext_merge_up_none",
+      "outcome": "deferred",
+      "pass": false,
+      "source": "fixture:fixtures/offset.offset_executive_p1/face_tail.json#198",
+      "values_compared": 0
+    },
+    {
+      "deferred": {
+        "symbol": "SmBrep::MakeWireEdgeVertex",
+        "unit": "topology.brep_p3"
+      },
+      "max_rel_err": 0.0,
+      "name": "face_tail_d3.0_larger_solid_noext_merge_up_inner",
+      "outcome": "deferred",
+      "pass": false,
+      "source": "fixture:fixtures/offset.offset_executive_p1/face_tail.json#199",
+      "values_compared": 0
+    },
+    {
+      "deferred": {
+        "symbol": "SmBrep::MakeWireEdgeVertex",
+        "unit": "topology.brep_p3"
+      },
+      "max_rel_err": 0.0,
+      "name": "face_tail_d3.0_larger_solid_noext_merge_up_crossing",
+      "outcome": "deferred",
+      "pass": false,
+      "source": "fixture:fixtures/offset.offset_executive_p1/face_tail.json#200",
+      "values_compared": 0
+    },
+    {
+      "deferred": {
+        "symbol": "SmBrep::MakeWireEdgeVertex",
+        "unit": "topology.brep_p3"
+      },
+      "max_rel_err": 0.0,
+      "name": "face_tail_d3.0_larger_solid_noext_merge_down_none",
+      "outcome": "deferred",
+      "pass": false,
+      "source": "fixture:fixtures/offset.offset_executive_p1/face_tail.json#201",
+      "values_compared": 0
+    },
+    {
+      "deferred": {
+        "symbol": "SmBrep::MakeWireEdgeVertex",
+        "unit": "topology.brep_p3"
+      },
+      "max_rel_err": 0.0,
+      "name": "face_tail_d3.0_larger_solid_noext_merge_down_inner",
+      "outcome": "deferred",
+      "pass": false,
+      "source": "fixture:fixtures/offset.offset_executive_p1/face_tail.json#202",
+      "values_compared": 0
+    },
+    {
+      "deferred": {
+        "symbol": "SmBrep::MakeWireEdgeVertex",
+        "unit": "topology.brep_p3"
+      },
+      "max_rel_err": 0.0,
+      "name": "face_tail_d3.0_larger_solid_noext_merge_down_crossing",
+      "outcome": "deferred",
+      "pass": false,
+      "source": "fixture:fixtures/offset.offset_executive_p1/face_tail.json#203",
+      "values_compared": 0
+    },
+    {
+      "deferred": {
+        "symbol": "SmBrep::MakeWireEdgeVertex",
+        "unit": "topology.brep_p3"
+      },
+      "max_rel_err": 0.0,
+      "name": "face_tail_d3.0_larger_solid_ext_nomerge_up_none",
+      "outcome": "deferred",
+      "pass": false,
+      "source": "fixture:fixtures/offset.offset_executive_p1/face_tail.json#204",
+      "values_compared": 0
+    },
+    {
+      "deferred": {
+        "symbol": "SmBrep::MakeWireEdgeVertex",
+        "unit": "topology.brep_p3"
+      },
+      "max_rel_err": 0.0,
+      "name": "face_tail_d3.0_larger_solid_ext_nomerge_up_inner",
+      "outcome": "deferred",
+      "pass": false,
+      "source": "fixture:fixtures/offset.offset_executive_p1/face_tail.json#205",
+      "values_compared": 0
+    },
+    {
+      "deferred": {
+        "symbol": "SmBrep::MakeWireEdgeVertex",
+        "unit": "topology.brep_p3"
+      },
+      "max_rel_err": 0.0,
+      "name": "face_tail_d3.0_larger_solid_ext_nomerge_up_crossing",
+      "outcome": "deferred",
+      "pass": false,
+      "source": "fixture:fixtures/offset.offset_executive_p1/face_tail.json#206",
+      "values_compared": 0
+    },
+    {
+      "deferred": {
+        "symbol": "SmBrep::MakeWireEdgeVertex",
+        "unit": "topology.brep_p3"
+      },
+      "max_rel_err": 0.0,
+      "name": "face_tail_d3.0_larger_solid_ext_nomerge_down_none",
+      "outcome": "deferred",
+      "pass": false,
+      "source": "fixture:fixtures/offset.offset_executive_p1/face_tail.json#207",
+      "values_compared": 0
+    },
+    {
+      "deferred": {
+        "symbol": "SmBrep::MakeWireEdgeVertex",
+        "unit": "topology.brep_p3"
+      },
+      "max_rel_err": 0.0,
+      "name": "face_tail_d3.0_larger_solid_ext_nomerge_down_inner",
+      "outcome": "deferred",
+      "pass": false,
+      "source": "fixture:fixtures/offset.offset_executive_p1/face_tail.json#208",
+      "values_compared": 0
+    },
+    {
+      "deferred": {
+        "symbol": "SmBrep::MakeWireEdgeVertex",
+        "unit": "topology.brep_p3"
+      },
+      "max_rel_err": 0.0,
+      "name": "face_tail_d3.0_larger_solid_ext_nomerge_down_crossing",
+      "outcome": "deferred",
+      "pass": false,
+      "source": "fixture:fixtures/offset.offset_executive_p1/face_tail.json#209",
+      "values_compared": 0
+    },
+    {
+      "deferred": {
+        "symbol": "SmBrep::MakeWireEdgeVertex",
+        "unit": "topology.brep_p3"
+      },
+      "max_rel_err": 0.0,
+      "name": "face_tail_d3.0_larger_solid_ext_merge_up_none",
+      "outcome": "deferred",
+      "pass": false,
+      "source": "fixture:fixtures/offset.offset_executive_p1/face_tail.json#210",
+      "values_compared": 0
+    },
+    {
+      "deferred": {
+        "symbol": "SmBrep::MakeWireEdgeVertex",
+        "unit": "topology.brep_p3"
+      },
+      "max_rel_err": 0.0,
+      "name": "face_tail_d3.0_larger_solid_ext_merge_up_inner",
+      "outcome": "deferred",
+      "pass": false,
+      "source": "fixture:fixtures/offset.offset_executive_p1/face_tail.json#211",
+      "values_compared": 0
+    },
+    {
+      "deferred": {
+        "symbol": "SmBrep::MakeWireEdgeVertex",
+        "unit": "topology.brep_p3"
+      },
+      "max_rel_err": 0.0,
+      "name": "face_tail_d3.0_larger_solid_ext_merge_up_crossing",
+      "outcome": "deferred",
+      "pass": false,
+      "source": "fixture:fixtures/offset.offset_executive_p1/face_tail.json#212",
+      "values_compared": 0
+    },
+    {
+      "deferred": {
+        "symbol": "SmBrep::MakeWireEdgeVertex",
+        "unit": "topology.brep_p3"
+      },
+      "max_rel_err": 0.0,
+      "name": "face_tail_d3.0_larger_solid_ext_merge_down_none",
+      "outcome": "deferred",
+      "pass": false,
+      "source": "fixture:fixtures/offset.offset_executive_p1/face_tail.json#213",
+      "values_compared": 0
+    },
+    {
+      "deferred": {
+        "symbol": "SmBrep::MakeWireEdgeVertex",
+        "unit": "topology.brep_p3"
+      },
+      "max_rel_err": 0.0,
+      "name": "face_tail_d3.0_larger_solid_ext_merge_down_inner",
+      "outcome": "deferred",
+      "pass": false,
+      "source": "fixture:fixtures/offset.offset_executive_p1/face_tail.json#214",
+      "values_compared": 0
+    },
+    {
+      "deferred": {
+        "symbol": "SmBrep::MakeWireEdgeVertex",
+        "unit": "topology.brep_p3"
+      },
+      "max_rel_err": 0.0,
+      "name": "face_tail_d3.0_larger_solid_ext_merge_down_crossing",
+      "outcome": "deferred",
+      "pass": false,
+      "source": "fixture:fixtures/offset.offset_executive_p1/face_tail.json#215",
+      "values_compared": 0
+    },
+    {
+      "deferred": {
+        "symbol": "SmBrep::MakeWireEdgeVertex",
+        "unit": "topology.brep_p3"
+      },
+      "max_rel_err": 0.0,
+      "name": "face_tail_d3.0_larger_local_noext_nomerge_up_none",
+      "outcome": "deferred",
+      "pass": false,
+      "source": "fixture:fixtures/offset.offset_executive_p1/face_tail.json#216",
+      "values_compared": 0
+    },
+    {
+      "deferred": {
+        "symbol": "SmBrep::MakeWireEdgeVertex",
+        "unit": "topology.brep_p3"
+      },
+      "max_rel_err": 0.0,
+      "name": "face_tail_d3.0_larger_local_noext_nomerge_up_inner",
+      "outcome": "deferred",
+      "pass": false,
+      "source": "fixture:fixtures/offset.offset_executive_p1/face_tail.json#217",
+      "values_compared": 0
+    },
+    {
+      "deferred": {
+        "symbol": "SmBrep::MakeWireEdgeVertex",
+        "unit": "topology.brep_p3"
+      },
+      "max_rel_err": 0.0,
+      "name": "face_tail_d3.0_larger_local_noext_nomerge_up_crossing",
+      "outcome": "deferred",
+      "pass": false,
+      "source": "fixture:fixtures/offset.offset_executive_p1/face_tail.json#218",
+      "values_compared": 0
+    },
+    {
+      "deferred": {
+        "symbol": "SmBrep::MakeWireEdgeVertex",
+        "unit": "topology.brep_p3"
+      },
+      "max_rel_err": 0.0,
+      "name": "face_tail_d3.0_larger_local_noext_nomerge_down_none",
+      "outcome": "deferred",
+      "pass": false,
+      "source": "fixture:fixtures/offset.offset_executive_p1/face_tail.json#219",
+      "values_compared": 0
+    },
+    {
+      "deferred": {
+        "symbol": "SmBrep::MakeWireEdgeVertex",
+        "unit": "topology.brep_p3"
+      },
+      "max_rel_err": 0.0,
+      "name": "face_tail_d3.0_larger_local_noext_nomerge_down_inner",
+      "outcome": "deferred",
+      "pass": false,
+      "source": "fixture:fixtures/offset.offset_executive_p1/face_tail.json#220",
+      "values_compared": 0
+    },
+    {
+      "deferred": {
+        "symbol": "SmBrep::MakeWireEdgeVertex",
+        "unit": "topology.brep_p3"
+      },
+      "max_rel_err": 0.0,
+      "name": "face_tail_d3.0_larger_local_noext_nomerge_down_crossing",
+      "outcome": "deferred",
+      "pass": false,
+      "source": "fixture:fixtures/offset.offset_executive_p1/face_tail.json#221",
+      "values_compared": 0
+    },
+    {
+      "deferred": {
+        "symbol": "SmBrep::MakeWireEdgeVertex",
+        "unit": "topology.brep_p3"
+      },
+      "max_rel_err": 0.0,
+      "name": "face_tail_d3.0_larger_local_noext_merge_up_none",
+      "outcome": "deferred",
+      "pass": false,
+      "source": "fixture:fixtures/offset.offset_executive_p1/face_tail.json#222",
+      "values_compared": 0
+    },
+    {
+      "deferred": {
+        "symbol": "SmBrep::MakeWireEdgeVertex",
+        "unit": "topology.brep_p3"
+      },
+      "max_rel_err": 0.0,
+      "name": "face_tail_d3.0_larger_local_noext_merge_up_inner",
+      "outcome": "deferred",
+      "pass": false,
+      "source": "fixture:fixtures/offset.offset_executive_p1/face_tail.json#223",
+      "values_compared": 0
+    },
+    {
+      "deferred": {
+        "symbol": "SmBrep::MakeWireEdgeVertex",
+        "unit": "topology.brep_p3"
+      },
+      "max_rel_err": 0.0,
+      "name": "face_tail_d3.0_larger_local_noext_merge_up_crossing",
+      "outcome": "deferred",
+      "pass": false,
+      "source": "fixture:fixtures/offset.offset_executive_p1/face_tail.json#224",
+      "values_compared": 0
+    },
+    {
+      "deferred": {
+        "symbol": "SmBrep::MakeWireEdgeVertex",
+        "unit": "topology.brep_p3"
+      },
+      "max_rel_err": 0.0,
+      "name": "face_tail_d3.0_larger_local_noext_merge_down_none",
+      "outcome": "deferred",
+      "pass": false,
+      "source": "fixture:fixtures/offset.offset_executive_p1/face_tail.json#225",
+      "values_compared": 0
+    },
+    {
+      "deferred": {
+        "symbol": "SmBrep::MakeWireEdgeVertex",
+        "unit": "topology.brep_p3"
+      },
+      "max_rel_err": 0.0,
+      "name": "face_tail_d3.0_larger_local_noext_merge_down_inner",
+      "outcome": "deferred",
+      "pass": false,
+      "source": "fixture:fixtures/offset.offset_executive_p1/face_tail.json#226",
+      "values_compared": 0
+    },
+    {
+      "deferred": {
+        "symbol": "SmBrep::MakeWireEdgeVertex",
+        "unit": "topology.brep_p3"
+      },
+      "max_rel_err": 0.0,
+      "name": "face_tail_d3.0_larger_local_noext_merge_down_crossing",
+      "outcome": "deferred",
+      "pass": false,
+      "source": "fixture:fixtures/offset.offset_executive_p1/face_tail.json#227",
+      "values_compared": 0
+    },
+    {
+      "deferred": {
+        "symbol": "SmBrep::MakeWireEdgeVertex",
+        "unit": "topology.brep_p3"
+      },
+      "max_rel_err": 0.0,
+      "name": "face_tail_d3.0_larger_local_ext_nomerge_up_none",
+      "outcome": "deferred",
+      "pass": false,
+      "source": "fixture:fixtures/offset.offset_executive_p1/face_tail.json#228",
+      "values_compared": 0
+    },
+    {
+      "deferred": {
+        "symbol": "SmBrep::MakeWireEdgeVertex",
+        "unit": "topology.brep_p3"
+      },
+      "max_rel_err": 0.0,
+      "name": "face_tail_d3.0_larger_local_ext_nomerge_up_inner",
+      "outcome": "deferred",
+      "pass": false,
+      "source": "fixture:fixtures/offset.offset_executive_p1/face_tail.json#229",
+      "values_compared": 0
+    },
+    {
+      "deferred": {
+        "symbol": "SmBrep::MakeWireEdgeVertex",
+        "unit": "topology.brep_p3"
+      },
+      "max_rel_err": 0.0,
+      "name": "face_tail_d3.0_larger_local_ext_nomerge_up_crossing",
+      "outcome": "deferred",
+      "pass": false,
+      "source": "fixture:fixtures/offset.offset_executive_p1/face_tail.json#230",
+      "values_compared": 0
+    },
+    {
+      "deferred": {
+        "symbol": "SmBrep::MakeWireEdgeVertex",
+        "unit": "topology.brep_p3"
+      },
+      "max_rel_err": 0.0,
+      "name": "face_tail_d3.0_larger_local_ext_nomerge_down_none",
+      "outcome": "deferred",
+      "pass": false,
+      "source": "fixture:fixtures/offset.offset_executive_p1/face_tail.json#231",
+      "values_compared": 0
+    },
+    {
+      "deferred": {
+        "symbol": "SmBrep::MakeWireEdgeVertex",
+        "unit": "topology.brep_p3"
+      },
+      "max_rel_err": 0.0,
+      "name": "face_tail_d3.0_larger_local_ext_nomerge_down_inner",
+      "outcome": "deferred",
+      "pass": false,
+      "source": "fixture:fixtures/offset.offset_executive_p1/face_tail.json#232",
+      "values_compared": 0
+    },
+    {
+      "deferred": {
+        "symbol": "SmBrep::MakeWireEdgeVertex",
+        "unit": "topology.brep_p3"
+      },
+      "max_rel_err": 0.0,
+      "name": "face_tail_d3.0_larger_local_ext_nomerge_down_crossing",
+      "outcome": "deferred",
+      "pass": false,
+      "source": "fixture:fixtures/offset.offset_executive_p1/face_tail.json#233",
+      "values_compared": 0
+    },
+    {
+      "deferred": {
+        "symbol": "SmBrep::MakeWireEdgeVertex",
+        "unit": "topology.brep_p3"
+      },
+      "max_rel_err": 0.0,
+      "name": "face_tail_d3.0_larger_local_ext_merge_up_none",
+      "outcome": "deferred",
+      "pass": false,
+      "source": "fixture:fixtures/offset.offset_executive_p1/face_tail.json#234",
+      "values_compared": 0
+    },
+    {
+      "deferred": {
+        "symbol": "SmBrep::MakeWireEdgeVertex",
+        "unit": "topology.brep_p3"
+      },
+      "max_rel_err": 0.0,
+      "name": "face_tail_d3.0_larger_local_ext_merge_up_inner",
+      "outcome": "deferred",
+      "pass": false,
+      "source": "fixture:fixtures/offset.offset_executive_p1/face_tail.json#235",
+      "values_compared": 0
+    },
+    {
+      "deferred": {
+        "symbol": "SmBrep::MakeWireEdgeVertex",
+        "unit": "topology.brep_p3"
+      },
+      "max_rel_err": 0.0,
+      "name": "face_tail_d3.0_larger_local_ext_merge_up_crossing",
+      "outcome": "deferred",
+      "pass": false,
+      "source": "fixture:fixtures/offset.offset_executive_p1/face_tail.json#236",
+      "values_compared": 0
+    },
+    {
+      "deferred": {
+        "symbol": "SmBrep::MakeWireEdgeVertex",
+        "unit": "topology.brep_p3"
+      },
+      "max_rel_err": 0.0,
+      "name": "face_tail_d3.0_larger_local_ext_merge_down_none",
+      "outcome": "deferred",
+      "pass": false,
+      "source": "fixture:fixtures/offset.offset_executive_p1/face_tail.json#237",
+      "values_compared": 0
+    },
+    {
+      "deferred": {
+        "symbol": "SmBrep::MakeWireEdgeVertex",
+        "unit": "topology.brep_p3"
+      },
+      "max_rel_err": 0.0,
+      "name": "face_tail_d3.0_larger_local_ext_merge_down_inner",
+      "outcome": "deferred",
+      "pass": false,
+      "source": "fixture:fixtures/offset.offset_executive_p1/face_tail.json#238",
+      "values_compared": 0
+    },
+    {
+      "deferred": {
+        "symbol": "SmBrep::MakeWireEdgeVertex",
+        "unit": "topology.brep_p3"
+      },
+      "max_rel_err": 0.0,
+      "name": "face_tail_d3.0_larger_local_ext_merge_down_crossing",
+      "outcome": "deferred",
+      "pass": false,
+      "source": "fixture:fixtures/offset.offset_executive_p1/face_tail.json#239",
+      "values_compared": 0
+    },
+    {
+      "deferred": {
+        "symbol": "SmBrep::MakeWireEdgeVertex",
+        "unit": "topology.brep_p3"
+      },
+      "max_rel_err": 0.0,
+      "name": "face_tail_d3.0_smaller_solid_noext_nomerge_up_none",
+      "outcome": "deferred",
+      "pass": false,
+      "source": "fixture:fixtures/offset.offset_executive_p1/face_tail.json#240",
+      "values_compared": 0
+    },
+    {
+      "deferred": {
+        "symbol": "SmBrep::MakeWireEdgeVertex",
+        "unit": "topology.brep_p3"
+      },
+      "max_rel_err": 0.0,
+      "name": "face_tail_d3.0_smaller_solid_noext_nomerge_up_inner",
+      "outcome": "deferred",
+      "pass": false,
+      "source": "fixture:fixtures/offset.offset_executive_p1/face_tail.json#241",
+      "values_compared": 0
+    },
+    {
+      "deferred": {
+        "symbol": "SmBrep::MakeWireEdgeVertex",
+        "unit": "topology.brep_p3"
+      },
+      "max_rel_err": 0.0,
+      "name": "face_tail_d3.0_smaller_solid_noext_nomerge_up_crossing",
+      "outcome": "deferred",
+      "pass": false,
+      "source": "fixture:fixtures/offset.offset_executive_p1/face_tail.json#242",
+      "values_compared": 0
+    },
+    {
+      "deferred": {
+        "symbol": "SmBrep::MakeWireEdgeVertex",
+        "unit": "topology.brep_p3"
+      },
+      "max_rel_err": 0.0,
+      "name": "face_tail_d3.0_smaller_solid_noext_nomerge_down_none",
+      "outcome": "deferred",
+      "pass": false,
+      "source": "fixture:fixtures/offset.offset_executive_p1/face_tail.json#243",
+      "values_compared": 0
+    },
+    {
+      "deferred": {
+        "symbol": "SmBrep::MakeWireEdgeVertex",
+        "unit": "topology.brep_p3"
+      },
+      "max_rel_err": 0.0,
+      "name": "face_tail_d3.0_smaller_solid_noext_nomerge_down_inner",
+      "outcome": "deferred",
+      "pass": false,
+      "source": "fixture:fixtures/offset.offset_executive_p1/face_tail.json#244",
+      "values_compared": 0
+    },
+    {
+      "deferred": {
+        "symbol": "SmBrep::MakeWireEdgeVertex",
+        "unit": "topology.brep_p3"
+      },
+      "max_rel_err": 0.0,
+      "name": "face_tail_d3.0_smaller_solid_noext_nomerge_down_crossing",
+      "outcome": "deferred",
+      "pass": false,
+      "source": "fixture:fixtures/offset.offset_executive_p1/face_tail.json#245",
+      "values_compared": 0
+    },
+    {
+      "deferred": {
+        "symbol": "SmBrep::MakeWireEdgeVertex",
+        "unit": "topology.brep_p3"
+      },
+      "max_rel_err": 0.0,
+      "name": "face_tail_d3.0_smaller_solid_noext_merge_up_none",
+      "outcome": "deferred",
+      "pass": false,
+      "source": "fixture:fixtures/offset.offset_executive_p1/face_tail.json#246",
+      "values_compared": 0
+    },
+    {
+      "deferred": {
+        "symbol": "SmBrep::MakeWireEdgeVertex",
+        "unit": "topology.brep_p3"
+      },
+      "max_rel_err": 0.0,
+      "name": "face_tail_d3.0_smaller_solid_noext_merge_up_inner",
+      "outcome": "deferred",
+      "pass": false,
+      "source": "fixture:fixtures/offset.offset_executive_p1/face_tail.json#247",
+      "values_compared": 0
+    },
+    {
+      "deferred": {
+        "symbol": "SmBrep::MakeWireEdgeVertex",
+        "unit": "topology.brep_p3"
+      },
+      "max_rel_err": 0.0,
+      "name": "face_tail_d3.0_smaller_solid_noext_merge_up_crossing",
+      "outcome": "deferred",
+      "pass": false,
+      "source": "fixture:fixtures/offset.offset_executive_p1/face_tail.json#248",
+      "values_compared": 0
+    },
+    {
+      "deferred": {
+        "symbol": "SmBrep::MakeWireEdgeVertex",
+        "unit": "topology.brep_p3"
+      },
+      "max_rel_err": 0.0,
+      "name": "face_tail_d3.0_smaller_solid_noext_merge_down_none",
+      "outcome": "deferred",
+      "pass": false,
+      "source": "fixture:fixtures/offset.offset_executive_p1/face_tail.json#249",
+      "values_compared": 0
+    },
+    {
+      "deferred": {
+        "symbol": "SmBrep::MakeWireEdgeVertex",
+        "unit": "topology.brep_p3"
+      },
+      "max_rel_err": 0.0,
+      "name": "face_tail_d3.0_smaller_solid_noext_merge_down_inner",
+      "outcome": "deferred",
+      "pass": false,
+      "source": "fixture:fixtures/offset.offset_executive_p1/face_tail.json#250",
+      "values_compared": 0
+    },
+    {
+      "deferred": {
+        "symbol": "SmBrep::MakeWireEdgeVertex",
+        "unit": "topology.brep_p3"
+      },
+      "max_rel_err": 0.0,
+      "name": "face_tail_d3.0_smaller_solid_noext_merge_down_crossing",
+      "outcome": "deferred",
+      "pass": false,
+      "source": "fixture:fixtures/offset.offset_executive_p1/face_tail.json#251",
+      "values_compared": 0
+    },
+    {
+      "deferred": {
+        "symbol": "SmBrep::MakeWireEdgeVertex",
+        "unit": "topology.brep_p3"
+      },
+      "max_rel_err": 0.0,
+      "name": "face_tail_d3.0_smaller_solid_ext_nomerge_up_none",
+      "outcome": "deferred",
+      "pass": false,
+      "source": "fixture:fixtures/offset.offset_executive_p1/face_tail.json#252",
+      "values_compared": 0
+    },
+    {
+      "deferred": {
+        "symbol": "SmBrep::MakeWireEdgeVertex",
+        "unit": "topology.brep_p3"
+      },
+      "max_rel_err": 0.0,
+      "name": "face_tail_d3.0_smaller_solid_ext_nomerge_up_inner",
+      "outcome": "deferred",
+      "pass": false,
+      "source": "fixture:fixtures/offset.offset_executive_p1/face_tail.json#253",
+      "values_compared": 0
+    },
+    {
+      "deferred": {
+        "symbol": "SmBrep::MakeWireEdgeVertex",
+        "unit": "topology.brep_p3"
+      },
+      "max_rel_err": 0.0,
+      "name": "face_tail_d3.0_smaller_solid_ext_nomerge_up_crossing",
+      "outcome": "deferred",
+      "pass": false,
+      "source": "fixture:fixtures/offset.offset_executive_p1/face_tail.json#254",
+      "values_compared": 0
+    },
+    {
+      "deferred": {
+        "symbol": "SmBrep::MakeWireEdgeVertex",
+        "unit": "topology.brep_p3"
+      },
+      "max_rel_err": 0.0,
+      "name": "face_tail_d3.0_smaller_solid_ext_nomerge_down_none",
+      "outcome": "deferred",
+      "pass": false,
+      "source": "fixture:fixtures/offset.offset_executive_p1/face_tail.json#255",
+      "values_compared": 0
+    },
+    {
+      "deferred": {
+        "symbol": "SmBrep::MakeWireEdgeVertex",
+        "unit": "topology.brep_p3"
+      },
+      "max_rel_err": 0.0,
+      "name": "face_tail_d3.0_smaller_solid_ext_nomerge_down_inner",
+      "outcome": "deferred",
+      "pass": false,
+      "source": "fixture:fixtures/offset.offset_executive_p1/face_tail.json#256",
+      "values_compared": 0
+    },
+    {
+      "deferred": {
+        "symbol": "SmBrep::MakeWireEdgeVertex",
+        "unit": "topology.brep_p3"
+      },
+      "max_rel_err": 0.0,
+      "name": "face_tail_d3.0_smaller_solid_ext_nomerge_down_crossing",
+      "outcome": "deferred",
+      "pass": false,
+      "source": "fixture:fixtures/offset.offset_executive_p1/face_tail.json#257",
+      "values_compared": 0
+    },
+    {
+      "deferred": {
+        "symbol": "SmBrep::MakeWireEdgeVertex",
+        "unit": "topology.brep_p3"
+      },
+      "max_rel_err": 0.0,
+      "name": "face_tail_d3.0_smaller_solid_ext_merge_up_none",
+      "outcome": "deferred",
+      "pass": false,
+      "source": "fixture:fixtures/offset.offset_executive_p1/face_tail.json#258",
+      "values_compared": 0
+    },
+    {
+      "deferred": {
+        "symbol": "SmBrep::MakeWireEdgeVertex",
+        "unit": "topology.brep_p3"
+      },
+      "max_rel_err": 0.0,
+      "name": "face_tail_d3.0_smaller_solid_ext_merge_up_inner",
+      "outcome": "deferred",
+      "pass": false,
+      "source": "fixture:fixtures/offset.offset_executive_p1/face_tail.json#259",
+      "values_compared": 0
+    },
+    {
+      "deferred": {
+        "symbol": "SmBrep::MakeWireEdgeVertex",
+        "unit": "topology.brep_p3"
+      },
+      "max_rel_err": 0.0,
+      "name": "face_tail_d3.0_smaller_solid_ext_merge_up_crossing",
+      "outcome": "deferred",
+      "pass": false,
+      "source": "fixture:fixtures/offset.offset_executive_p1/face_tail.json#260",
+      "values_compared": 0
+    },
+    {
+      "deferred": {
+        "symbol": "SmBrep::MakeWireEdgeVertex",
+        "unit": "topology.brep_p3"
+      },
+      "max_rel_err": 0.0,
+      "name": "face_tail_d3.0_smaller_solid_ext_merge_down_none",
+      "outcome": "deferred",
+      "pass": false,
+      "source": "fixture:fixtures/offset.offset_executive_p1/face_tail.json#261",
+      "values_compared": 0
+    },
+    {
+      "deferred": {
+        "symbol": "SmBrep::MakeWireEdgeVertex",
+        "unit": "topology.brep_p3"
+      },
+      "max_rel_err": 0.0,
+      "name": "face_tail_d3.0_smaller_solid_ext_merge_down_inner",
+      "outcome": "deferred",
+      "pass": false,
+      "source": "fixture:fixtures/offset.offset_executive_p1/face_tail.json#262",
+      "values_compared": 0
+    },
+    {
+      "deferred": {
+        "symbol": "SmBrep::MakeWireEdgeVertex",
+        "unit": "topology.brep_p3"
+      },
+      "max_rel_err": 0.0,
+      "name": "face_tail_d3.0_smaller_solid_ext_merge_down_crossing",
+      "outcome": "deferred",
+      "pass": false,
+      "source": "fixture:fixtures/offset.offset_executive_p1/face_tail.json#263",
+      "values_compared": 0
+    },
+    {
+      "deferred": {
+        "symbol": "SmBrep::MakeWireEdgeVertex",
+        "unit": "topology.brep_p3"
+      },
+      "max_rel_err": 0.0,
+      "name": "face_tail_d3.0_smaller_local_noext_nomerge_up_none",
+      "outcome": "deferred",
+      "pass": false,
+      "source": "fixture:fixtures/offset.offset_executive_p1/face_tail.json#264",
+      "values_compared": 0
+    },
+    {
+      "deferred": {
+        "symbol": "SmBrep::MakeWireEdgeVertex",
+        "unit": "topology.brep_p3"
+      },
+      "max_rel_err": 0.0,
+      "name": "face_tail_d3.0_smaller_local_noext_nomerge_up_inner",
+      "outcome": "deferred",
+      "pass": false,
+      "source": "fixture:fixtures/offset.offset_executive_p1/face_tail.json#265",
+      "values_compared": 0
+    },
+    {
+      "deferred": {
+        "symbol": "SmBrep::MakeWireEdgeVertex",
+        "unit": "topology.brep_p3"
+      },
+      "max_rel_err": 0.0,
+      "name": "face_tail_d3.0_smaller_local_noext_nomerge_up_crossing",
+      "outcome": "deferred",
+      "pass": false,
+      "source": "fixture:fixtures/offset.offset_executive_p1/face_tail.json#266",
+      "values_compared": 0
+    },
+    {
+      "deferred": {
+        "symbol": "SmBrep::MakeWireEdgeVertex",
+        "unit": "topology.brep_p3"
+      },
+      "max_rel_err": 0.0,
+      "name": "face_tail_d3.0_smaller_local_noext_nomerge_down_none",
+      "outcome": "deferred",
+      "pass": false,
+      "source": "fixture:fixtures/offset.offset_executive_p1/face_tail.json#267",
+      "values_compared": 0
+    },
+    {
+      "deferred": {
+        "symbol": "SmBrep::MakeWireEdgeVertex",
+        "unit": "topology.brep_p3"
+      },
+      "max_rel_err": 0.0,
+      "name": "face_tail_d3.0_smaller_local_noext_nomerge_down_inner",
+      "outcome": "deferred",
+      "pass": false,
+      "source": "fixture:fixtures/offset.offset_executive_p1/face_tail.json#268",
+      "values_compared": 0
+    },
+    {
+      "deferred": {
+        "symbol": "SmBrep::MakeWireEdgeVertex",
+        "unit": "topology.brep_p3"
+      },
+      "max_rel_err": 0.0,
+      "name": "face_tail_d3.0_smaller_local_noext_nomerge_down_crossing",
+      "outcome": "deferred",
+      "pass": false,
+      "source": "fixture:fixtures/offset.offset_executive_p1/face_tail.json#269",
+      "values_compared": 0
+    },
+    {
+      "deferred": {
+        "symbol": "SmBrep::MakeWireEdgeVertex",
+        "unit": "topology.brep_p3"
+      },
+      "max_rel_err": 0.0,
+      "name": "face_tail_d3.0_smaller_local_noext_merge_up_none",
+      "outcome": "deferred",
+      "pass": false,
+      "source": "fixture:fixtures/offset.offset_executive_p1/face_tail.json#270",
+      "values_compared": 0
+    },
+    {
+      "deferred": {
+        "symbol": "SmBrep::MakeWireEdgeVertex",
+        "unit": "topology.brep_p3"
+      },
+      "max_rel_err": 0.0,
+      "name": "face_tail_d3.0_smaller_local_noext_merge_up_inner",
+      "outcome": "deferred",
+      "pass": false,
+      "source": "fixture:fixtures/offset.offset_executive_p1/face_tail.json#271",
+      "values_compared": 0
+    },
+    {
+      "deferred": {
+        "symbol": "SmBrep::MakeWireEdgeVertex",
+        "unit": "topology.brep_p3"
+      },
+      "max_rel_err": 0.0,
+      "name": "face_tail_d3.0_smaller_local_noext_merge_up_crossing",
+      "outcome": "deferred",
+      "pass": false,
+      "source": "fixture:fixtures/offset.offset_executive_p1/face_tail.json#272",
+      "values_compared": 0
+    },
+    {
+      "deferred": {
+        "symbol": "SmBrep::MakeWireEdgeVertex",
+        "unit": "topology.brep_p3"
+      },
+      "max_rel_err": 0.0,
+      "name": "face_tail_d3.0_smaller_local_noext_merge_down_none",
+      "outcome": "deferred",
+      "pass": false,
+      "source": "fixture:fixtures/offset.offset_executive_p1/face_tail.json#273",
+      "values_compared": 0
+    },
+    {
+      "deferred": {
+        "symbol": "SmBrep::MakeWireEdgeVertex",
+        "unit": "topology.brep_p3"
+      },
+      "max_rel_err": 0.0,
+      "name": "face_tail_d3.0_smaller_local_noext_merge_down_inner",
+      "outcome": "deferred",
+      "pass": false,
+      "source": "fixture:fixtures/offset.offset_executive_p1/face_tail.json#274",
+      "values_compared": 0
+    },
+    {
+      "deferred": {
+        "symbol": "SmBrep::MakeWireEdgeVertex",
+        "unit": "topology.brep_p3"
+      },
+      "max_rel_err": 0.0,
+      "name": "face_tail_d3.0_smaller_local_noext_merge_down_crossing",
+      "outcome": "deferred",
+      "pass": false,
+      "source": "fixture:fixtures/offset.offset_executive_p1/face_tail.json#275",
+      "values_compared": 0
+    },
+    {
+      "deferred": {
+        "symbol": "SmBrep::MakeWireEdgeVertex",
+        "unit": "topology.brep_p3"
+      },
+      "max_rel_err": 0.0,
+      "name": "face_tail_d3.0_smaller_local_ext_nomerge_up_none",
+      "outcome": "deferred",
+      "pass": false,
+      "source": "fixture:fixtures/offset.offset_executive_p1/face_tail.json#276",
+      "values_compared": 0
+    },
+    {
+      "deferred": {
+        "symbol": "SmBrep::MakeWireEdgeVertex",
+        "unit": "topology.brep_p3"
+      },
+      "max_rel_err": 0.0,
+      "name": "face_tail_d3.0_smaller_local_ext_nomerge_up_inner",
+      "outcome": "deferred",
+      "pass": false,
+      "source": "fixture:fixtures/offset.offset_executive_p1/face_tail.json#277",
+      "values_compared": 0
+    },
+    {
+      "deferred": {
+        "symbol": "SmBrep::MakeWireEdgeVertex",
+        "unit": "topology.brep_p3"
+      },
+      "max_rel_err": 0.0,
+      "name": "face_tail_d3.0_smaller_local_ext_nomerge_up_crossing",
+      "outcome": "deferred",
+      "pass": false,
+      "source": "fixture:fixtures/offset.offset_executive_p1/face_tail.json#278",
+      "values_compared": 0
+    },
+    {
+      "deferred": {
+        "symbol": "SmBrep::MakeWireEdgeVertex",
+        "unit": "topology.brep_p3"
+      },
+      "max_rel_err": 0.0,
+      "name": "face_tail_d3.0_smaller_local_ext_nomerge_down_none",
+      "outcome": "deferred",
+      "pass": false,
+      "source": "fixture:fixtures/offset.offset_executive_p1/face_tail.json#279",
+      "values_compared": 0
+    },
+    {
+      "deferred": {
+        "symbol": "SmBrep::MakeWireEdgeVertex",
+        "unit": "topology.brep_p3"
+      },
+      "max_rel_err": 0.0,
+      "name": "face_tail_d3.0_smaller_local_ext_nomerge_down_inner",
+      "outcome": "deferred",
+      "pass": false,
+      "source": "fixture:fixtures/offset.offset_executive_p1/face_tail.json#280",
+      "values_compared": 0
+    },
+    {
+      "deferred": {
+        "symbol": "SmBrep::MakeWireEdgeVertex",
+        "unit": "topology.brep_p3"
+      },
+      "max_rel_err": 0.0,
+      "name": "face_tail_d3.0_smaller_local_ext_nomerge_down_crossing",
+      "outcome": "deferred",
+      "pass": false,
+      "source": "fixture:fixtures/offset.offset_executive_p1/face_tail.json#281",
+      "values_compared": 0
+    },
+    {
+      "deferred": {
+        "symbol": "SmBrep::MakeWireEdgeVertex",
+        "unit": "topology.brep_p3"
+      },
+      "max_rel_err": 0.0,
+      "name": "face_tail_d3.0_smaller_local_ext_merge_up_none",
+      "outcome": "deferred",
+      "pass": false,
+      "source": "fixture:fixtures/offset.offset_executive_p1/face_tail.json#282",
+      "values_compared": 0
+    },
+    {
+      "deferred": {
+        "symbol": "SmBrep::MakeWireEdgeVertex",
+        "unit": "topology.brep_p3"
+      },
+      "max_rel_err": 0.0,
+      "name": "face_tail_d3.0_smaller_local_ext_merge_up_inner",
+      "outcome": "deferred",
+      "pass": false,
+      "source": "fixture:fixtures/offset.offset_executive_p1/face_tail.json#283",
+      "values_compared": 0
+    },
+    {
+      "deferred": {
+        "symbol": "SmBrep::MakeWireEdgeVertex",
+        "unit": "topology.brep_p3"
+      },
+      "max_rel_err": 0.0,
+      "name": "face_tail_d3.0_smaller_local_ext_merge_up_crossing",
+      "outcome": "deferred",
+      "pass": false,
+      "source": "fixture:fixtures/offset.offset_executive_p1/face_tail.json#284",
+      "values_compared": 0
+    },
+    {
+      "deferred": {
+        "symbol": "SmBrep::MakeWireEdgeVertex",
+        "unit": "topology.brep_p3"
+      },
+      "max_rel_err": 0.0,
+      "name": "face_tail_d3.0_smaller_local_ext_merge_down_none",
+      "outcome": "deferred",
+      "pass": false,
+      "source": "fixture:fixtures/offset.offset_executive_p1/face_tail.json#285",
+      "values_compared": 0
+    },
+    {
+      "deferred": {
+        "symbol": "SmBrep::MakeWireEdgeVertex",
+        "unit": "topology.brep_p3"
+      },
+      "max_rel_err": 0.0,
+      "name": "face_tail_d3.0_smaller_local_ext_merge_down_inner",
+      "outcome": "deferred",
+      "pass": false,
+      "source": "fixture:fixtures/offset.offset_executive_p1/face_tail.json#286",
+      "values_compared": 0
+    },
+    {
+      "deferred": {
+        "symbol": "SmBrep::MakeWireEdgeVertex",
+        "unit": "topology.brep_p3"
+      },
+      "max_rel_err": 0.0,
+      "name": "face_tail_d3.0_smaller_local_ext_merge_down_crossing",
+      "outcome": "deferred",
+      "pass": false,
+      "source": "fixture:fixtures/offset.offset_executive_p1/face_tail.json#287",
+      "values_compared": 0
+    },
+    {
+      "deferred": {
+        "symbol": "SmBrep::MakeWireEdgeVertex",
+        "unit": "topology.brep_p3"
+      },
+      "max_rel_err": 0.0,
+      "name": "face_tail_tiny_noext",
+      "outcome": "deferred",
+      "pass": false,
+      "source": "fixture:fixtures/offset.offset_executive_p1/face_tail.json#288",
+      "values_compared": 0
+    },
+    {
+      "deferred": {
+        "symbol": "SmBrep::MakeWireEdgeVertex",
+        "unit": "topology.brep_p3"
+      },
+      "max_rel_err": 0.0,
+      "name": "face_tail_tiny_ext",
+      "outcome": "deferred",
+      "pass": false,
+      "source": "fixture:fixtures/offset.offset_executive_p1/face_tail.json#289",
+      "values_compared": 0
+    },
+    {
+      "deferred": {
+        "symbol": "SmBrep::MakeWireEdgeVertex",
+        "unit": "topology.brep_p3"
+      },
+      "max_rel_err": 0.0,
+      "name": "face_tail_huge_noext",
+      "outcome": "deferred",
+      "pass": false,
+      "source": "fixture:fixtures/offset.offset_executive_p1/face_tail.json#290",
+      "values_compared": 0
+    },
+    {
+      "deferred": {
+        "symbol": "SmBrep::MakeWireEdgeVertex",
+        "unit": "topology.brep_p3"
+      },
+      "max_rel_err": 0.0,
+      "name": "face_tail_huge_ext",
+      "outcome": "deferred",
+      "pass": false,
+      "source": "fixture:fixtures/offset.offset_executive_p1/face_tail.json#291",
+      "values_compared": 0
+    },
+    {
+      "deferred": {
+        "symbol": "SmBrep::MakeWireEdgeVertex",
+        "unit": "topology.brep_p3"
+      },
+      "max_rel_err": 0.0,
+      "name": "face_tail_zero_noext",
+      "outcome": "deferred",
+      "pass": false,
+      "source": "fixture:fixtures/offset.offset_executive_p1/face_tail.json#292",
+      "values_compared": 0
+    },
+    {
+      "deferred": {
+        "symbol": "SmBrep::MakeWireEdgeVertex",
+        "unit": "topology.brep_p3"
+      },
+      "max_rel_err": 0.0,
+      "name": "face_tail_zero_ext",
+      "outcome": "deferred",
+      "pass": false,
+      "source": "fixture:fixtures/offset.offset_executive_p1/face_tail.json#293",
+      "values_compared": 0
+    },
+    {
+      "deferred": {
+        "symbol": "SmBrep::MakeWireEdgeVertex",
+        "unit": "topology.brep_p3"
+      },
+      "max_rel_err": 0.0,
+      "name": "face_tail_tol_exceeds_half_noext",
+      "outcome": "deferred",
+      "pass": false,
+      "source": "fixture:fixtures/offset.offset_executive_p1/face_tail.json#294",
+      "values_compared": 0
+    },
+    {
+      "deferred": {
+        "symbol": "SmBrep::MakeWireEdgeVertex",
+        "unit": "topology.brep_p3"
+      },
+      "max_rel_err": 0.0,
+      "name": "face_tail_tol_exceeds_half_ext",
+      "outcome": "deferred",
+      "pass": false,
+      "source": "fixture:fixtures/offset.offset_executive_p1/face_tail.json#295",
+      "values_compared": 0
+    },
+    {
+      "deferred": {
+        "symbol": "SmBrep::MakeWireEdgeVertex",
+        "unit": "topology.brep_p3"
+      },
+      "max_rel_err": 0.0,
+      "name": "face_tail_zero_tol_noext",
+      "outcome": "deferred",
+      "pass": false,
+      "source": "fixture:fixtures/offset.offset_executive_p1/face_tail.json#296",
+      "values_compared": 0
+    },
+    {
+      "deferred": {
+        "symbol": "SmBrep::MakeWireEdgeVertex",
+        "unit": "topology.brep_p3"
+      },
+      "max_rel_err": 0.0,
+      "name": "face_tail_zero_tol_ext",
+      "outcome": "deferred",
+      "pass": false,
+      "source": "fixture:fixtures/offset.offset_executive_p1/face_tail.json#297",
+      "values_compared": 0
+    },
+    {
+      "deferred": {
+        "symbol": "SmBrep::MakeWireEdgeVertex",
+        "unit": "topology.brep_p3"
+      },
+      "max_rel_err": 0.0,
+      "name": "merge2_inner_parallel_up",
+      "outcome": "deferred",
+      "pass": false,
+      "source": "fixture:fixtures/offset.offset_executive_p1/face_tail.json#298",
+      "values_compared": 0
+    },
+    {
+      "deferred": {
+        "symbol": "SmBrep::MakeWireEdgeVertex",
+        "unit": "topology.brep_p3"
+      },
+      "max_rel_err": 0.0,
+      "name": "merge2_crossing_parallel_up",
+      "outcome": "deferred",
+      "pass": false,
+      "source": "fixture:fixtures/offset.offset_executive_p1/face_tail.json#299",
+      "values_compared": 0
+    },
+    {
+      "deferred": {
+        "symbol": "SmBrep::MakeWireEdgeVertex",
+        "unit": "topology.brep_p3"
+      },
+      "max_rel_err": 0.0,
+      "name": "merge2_crossing_perpendicular_up",
+      "outcome": "deferred",
+      "pass": false,
+      "source": "fixture:fixtures/offset.offset_executive_p1/face_tail.json#300",
+      "values_compared": 0
+    },
+    {
+      "deferred": {
+        "symbol": "SmBrep::MakeWireEdgeVertex",
+        "unit": "topology.brep_p3"
+      },
+      "max_rel_err": 0.0,
+      "name": "merge2_inner_perpendicular_up",
+      "outcome": "deferred",
+      "pass": false,
+      "source": "fixture:fixtures/offset.offset_executive_p1/face_tail.json#301",
+      "values_compared": 0
+    },
+    {
+      "deferred": {
+        "symbol": "SmBrep::MakeWireEdgeVertex",
+        "unit": "topology.brep_p3"
+      },
+      "max_rel_err": 0.0,
+      "name": "merge2_crossing_subsegment_up",
+      "outcome": "deferred",
+      "pass": false,
+      "source": "fixture:fixtures/offset.offset_executive_p1/face_tail.json#302",
+      "values_compared": 0
+    },
+    {
+      "deferred": {
+        "symbol": "SmBrep::MakeWireEdgeVertex",
+        "unit": "topology.brep_p3"
+      },
+      "max_rel_err": 0.0,
+      "name": "merge2_crossing_reversed_up",
+      "outcome": "deferred",
+      "pass": false,
+      "source": "fixture:fixtures/offset.offset_executive_p1/face_tail.json#303",
+      "values_compared": 0
+    },
+    {
+      "deferred": {
+        "symbol": "SmBrep::MakeWireEdgeVertex",
+        "unit": "topology.brep_p3"
+      },
+      "max_rel_err": 0.0,
+      "name": "merge2_crossing_near_identical_up",
+      "outcome": "deferred",
+      "pass": false,
+      "source": "fixture:fixtures/offset.offset_executive_p1/face_tail.json#304",
+      "values_compared": 0
+    },
+    {
+      "deferred": {
+        "symbol": "SmBrep::MakeWireEdgeVertex",
+        "unit": "topology.brep_p3"
+      },
+      "max_rel_err": 0.0,
+      "name": "merge2_inner_near_identical_up",
+      "outcome": "deferred",
+      "pass": false,
+      "source": "fixture:fixtures/offset.offset_executive_p1/face_tail.json#305",
+      "values_compared": 0
+    },
+    {
+      "deferred": {
+        "symbol": "SmBrep::MakeWireEdgeVertex",
+        "unit": "topology.brep_p3"
+      },
+      "max_rel_err": 0.0,
+      "name": "merge2_inner_touching_ends_up",
+      "outcome": "deferred",
+      "pass": false,
+      "source": "fixture:fixtures/offset.offset_executive_p1/face_tail.json#306",
+      "values_compared": 0
+    },
+    {
+      "deferred": {
+        "symbol": "SmBrep::MakeWireEdgeVertex",
+        "unit": "topology.brep_p3"
+      },
+      "max_rel_err": 0.0,
+      "name": "merge2_crossing_diagonal_up",
+      "outcome": "deferred",
+      "pass": false,
+      "source": "fixture:fixtures/offset.offset_executive_p1/face_tail.json#307",
+      "values_compared": 0
+    },
+    {
+      "deferred": {
+        "symbol": "SmBrep::MakeWireEdgeVertex",
+        "unit": "topology.brep_p3"
+      },
+      "max_rel_err": 0.0,
+      "name": "negative_tol_lamina_delete_solid_up",
+      "outcome": "deferred",
+      "pass": false,
+      "source": "fixture:fixtures/offset.offset_executive_p1/face_tail.json#308",
+      "values_compared": 0
+    },
+    {
+      "deferred": {
+        "symbol": "SmBrep::MakeWireEdgeVertex",
+        "unit": "topology.brep_p3"
+      },
+      "max_rel_err": 0.0,
+      "name": "negative_tol_lamina_delete_solid_down",
+      "outcome": "deferred",
+      "pass": false,
+      "source": "fixture:fixtures/offset.offset_executive_p1/face_tail.json#309",
+      "values_compared": 0
+    },
+    {
+      "deferred": {
+        "symbol": "SmBrep::MakeWireEdgeVertex",
+        "unit": "topology.brep_p3"
+      },
+      "max_rel_err": 0.0,
+      "name": "negative_tol_lamina_delete_local_up",
+      "outcome": "deferred",
+      "pass": false,
+      "source": "fixture:fixtures/offset.offset_executive_p1/face_tail.json#310",
+      "values_compared": 0
+    },
+    {
+      "deferred": {
+        "symbol": "SmBrep::MakeWireEdgeVertex",
+        "unit": "topology.brep_p3"
+      },
+      "max_rel_err": 0.0,
+      "name": "negative_tol_lamina_delete_local_down",
+      "outcome": "deferred",
+      "pass": false,
+      "source": "fixture:fixtures/offset.offset_executive_p1/face_tail.json#311",
+      "values_compared": 0
+    },
+    {
+      "max_rel_err": 0.0,
+      "name": "equal_up_same",
+      "outcome": "pass",
+      "pass": true,
+      "source": "fixture:fixtures/offset.offset_executive_p1/map_twin.json#0",
+      "values_compared": 36
+    },
+    {
+      "max_rel_err": 0.0,
+      "name": "equal_up_down",
+      "outcome": "pass",
+      "pass": true,
+      "source": "fixture:fixtures/offset.offset_executive_p1/map_twin.json#1",
+      "values_compared": 36
+    },
+    {
+      "max_rel_err": 0.0,
+      "name": "equal_flip_same",
+      "outcome": "pass",
+      "pass": true,
+      "source": "fixture:fixtures/offset.offset_executive_p1/map_twin.json#2",
+      "values_compared": 36
+    },
+    {
+      "max_rel_err": 0.0,
+      "name": "equal_flip_down",
+      "outcome": "pass",
+      "pass": true,
+      "source": "fixture:fixtures/offset.offset_executive_p1/map_twin.json#3",
+      "values_compared": 36
+    },
+    {
+      "max_rel_err": 0.0,
+      "name": "equal_d3",
+      "outcome": "pass",
+      "pass": true,
+      "source": "fixture:fixtures/offset.offset_executive_p1/map_twin.json#4",
+      "values_compared": 36
+    },
+    {
+      "max_rel_err": 0.0,
+      "name": "equal_negative_distance",
+      "outcome": "pass",
+      "pass": true,
+      "source": "fixture:fixtures/offset.offset_executive_p1/map_twin.json#5",
+      "values_compared": 36
+    },
+    {
+      "max_rel_err": 0.0,
+      "name": "equal_zero_distance",
+      "outcome": "pass",
+      "pass": true,
+      "source": "fixture:fixtures/offset.offset_executive_p1/map_twin.json#6",
+      "values_compared": 36
+    },
+    {
+      "max_rel_err": 0.0,
+      "name": "smaller_offset",
+      "outcome": "pass",
+      "pass": true,
+      "source": "fixture:fixtures/offset.offset_executive_p1/map_twin.json#7",
+      "values_compared": 12
+    },
+    {
+      "max_rel_err": 0.0,
+      "name": "smaller_offset_flip_down",
+      "outcome": "pass",
+      "pass": true,
+      "source": "fixture:fixtures/offset.offset_executive_p1/map_twin.json#8",
+      "values_compared": 12
+    },
+    {
+      "max_rel_err": 0.0,
+      "name": "truncated_offset",
+      "outcome": "pass",
+      "pass": true,
+      "source": "fixture:fixtures/offset.offset_executive_p1/map_twin.json#9",
+      "values_compared": 30
+    },
+    {
+      "max_rel_err": 0.0,
+      "name": "truncated_offset_down",
+      "outcome": "pass",
+      "pass": true,
+      "source": "fixture:fixtures/offset.offset_executive_p1/map_twin.json#10",
+      "values_compared": 30
+    },
+    {
+      "max_rel_err": 0.0,
+      "name": "larger_original",
+      "outcome": "pass",
+      "pass": true,
+      "source": "fixture:fixtures/offset.offset_executive_p1/map_twin.json#11",
+      "values_compared": 24
+    },
+    {
+      "max_rel_err": 0.0,
+      "name": "larger_original_flip",
+      "outcome": "pass",
+      "pass": true,
+      "source": "fixture:fixtures/offset.offset_executive_p1/map_twin.json#12",
+      "values_compared": 24
+    },
+    {
+      "max_rel_err": 0.0,
+      "name": "disjoint",
+      "outcome": "pass",
+      "pass": true,
+      "source": "fixture:fixtures/offset.offset_executive_p1/map_twin.json#13",
+      "values_compared": 12
+    },
+    {
+      "max_rel_err": 0.0,
+      "name": "small_rectangles",
+      "outcome": "pass",
+      "pass": true,
+      "source": "fixture:fixtures/offset.offset_executive_p1/map_twin.json#14",
+      "values_compared": 36
+    },
+    {
+      "max_rel_err": 0.0,
+      "name": "huge_rectangles",
+      "outcome": "pass",
+      "pass": true,
+      "source": "fixture:fixtures/offset.offset_executive_p1/map_twin.json#15",
+      "values_compared": 36
+    },
+    {
+      "max_rel_err": 0.0,
+      "name": "shifted_2e-23",
+      "outcome": "pass",
+      "pass": true,
+      "source": "fixture:fixtures/offset.offset_executive_p1/map_twin.json#16",
+      "values_compared": 36
+    },
+    {
+      "max_rel_err": 0.0,
+      "name": "shifted_2e-18",
+      "outcome": "pass",
+      "pass": true,
+      "source": "fixture:fixtures/offset.offset_executive_p1/map_twin.json#17",
+      "values_compared": 36
+    },
+    {
+      "max_rel_err": 0.0,
+      "name": "shifted_2e-15",
+      "outcome": "pass",
+      "pass": true,
+      "source": "fixture:fixtures/offset.offset_executive_p1/map_twin.json#18",
+      "values_compared": 36
+    },
+    {
+      "max_rel_err": 0.0,
+      "name": "shifted_2e-12",
+      "outcome": "pass",
+      "pass": true,
+      "source": "fixture:fixtures/offset.offset_executive_p1/map_twin.json#19",
+      "values_compared": 36
+    },
+    {
+      "max_rel_err": 0.0,
+      "name": "shifted_2e-8",
+      "outcome": "pass",
+      "pass": true,
+      "source": "fixture:fixtures/offset.offset_executive_p1/map_twin.json#20",
+      "values_compared": 24
+    },
+    {
+      "max_rel_err": 0.0,
+      "name": "shifted_2e-5",
+      "outcome": "pass",
+      "pass": true,
+      "source": "fixture:fixtures/offset.offset_executive_p1/map_twin.json#21",
+      "values_compared": 24
+    },
+    {
+      "max_rel_err": 0.0,
+      "name": "split_bottom_half",
+      "outcome": "pass",
+      "pass": true,
+      "source": "fixture:fixtures/offset.offset_executive_p1/map_twin.json#22",
+      "values_compared": 36
+    },
+    {
+      "max_rel_err": 0.0,
+      "name": "split_bottom_offcenter_down",
+      "outcome": "pass",
+      "pass": true,
+      "source": "fixture:fixtures/offset.offset_executive_p1/map_twin.json#23",
+      "values_compared": 36
+    },
+    {
+      "max_rel_err": 0.0,
+      "name": "split_bottom_shifted_flip",
+      "outcome": "pass",
+      "pass": true,
+      "source": "fixture:fixtures/offset.offset_executive_p1/map_twin.json#24",
+      "values_compared": 36
+    },
+    {
+      "max_rel_err": 1.850371707708594e-16,
+      "name": "overhanging_offset",
+      "outcome": "pass",
+      "pass": true,
+      "source": "fixture:fixtures/offset.offset_executive_p1/map_twin.json#25",
+      "values_compared": 24
+    },
+    {
+      "max_rel_err": 1.850371707708594e-16,
+      "name": "overhanging_offset_flip_down",
+      "outcome": "pass",
+      "pass": true,
+      "source": "fixture:fixtures/offset.offset_executive_p1/map_twin.json#26",
+      "values_compared": 24
+    },
+    {
+      "deferred": {
         "symbol": "SmBrep::ShrinkGeometry",
         "unit": "topology.brep_p4"
       },
@@ -451,8 +4411,8 @@
     },
     {
       "deferred": {
-        "symbol": "SmEdgeuse::NormalizedEvaluate",
-        "unit": "topology.edgeuse_p3"
+        "symbol": "SmSurface::DropCurve",
+        "unit": "intersect.surface_drop_lib_p3"
       },
       "max_rel_err": 0.0,
       "name": "probe_map_plane",
@@ -808,7 +4768,7 @@
       "values_compared": 6
     },
     {
-      "max_rel_err": 1.6231610969065313e-16,
+      "max_rel_err": 0.0,
       "name": "gen0003",
       "outcome": "pass",
       "pass": true,
@@ -840,7 +4800,7 @@
       "values_compared": 108
     },
     {
-      "max_rel_err": 1.1044851447990215e-15,
+      "max_rel_err": 0.0,
       "name": "gen0007",
       "outcome": "pass",
       "pass": true,
@@ -896,7 +4856,7 @@
       "values_compared": 260
     },
     {
-      "max_rel_err": 1.094419169900233e-15,
+      "max_rel_err": 0.0,
       "name": "gen0014",
       "outcome": "pass",
       "pass": true,
@@ -944,7 +4904,7 @@
       "values_compared": 108
     },
     {
-      "max_rel_err": 4.84563228264332e-16,
+      "max_rel_err": 0.0,
       "name": "gen0020",
       "outcome": "pass",
       "pass": true,
@@ -1112,7 +5072,7 @@
       "values_compared": 108
     },
     {
-      "max_rel_err": 5.678215456057589e-16,
+      "max_rel_err": 0.0,
       "name": "gen0041",
       "outcome": "pass",
       "pass": true,
@@ -1120,7 +5080,7 @@
       "values_compared": 216
     },
     {
-      "max_rel_err": 4.836100820372726e-16,
+      "max_rel_err": 0.0,
       "name": "gen0042",
       "outcome": "pass",
       "pass": true,
@@ -1128,7 +5088,7 @@
       "values_compared": 54
     },
     {
-      "max_rel_err": 8.907921913433045e-16,
+      "max_rel_err": 0.0,
       "name": "gen0043",
       "outcome": "pass",
       "pass": true,
@@ -1168,7 +5128,7 @@
       "values_compared": 260
     },
     {
-      "max_rel_err": 4.4065409907248226e-15,
+      "max_rel_err": 0.0,
       "name": "gen0048",
       "outcome": "pass",
       "pass": true,
@@ -1184,7 +5144,7 @@
       "values_compared": 260
     },
     {
-      "max_rel_err": 4.369552238966309e-15,
+      "max_rel_err": 0.0,
       "name": "gen0050",
       "outcome": "pass",
       "pass": true,
@@ -1216,7 +5176,7 @@
       "values_compared": 260
     },
     {
-      "max_rel_err": 1.798320462857195e-15,
+      "max_rel_err": 0.0,
       "name": "gen0054",
       "outcome": "pass",
       "pass": true,
@@ -1280,7 +5240,7 @@
       "values_compared": 72
     },
     {
-      "max_rel_err": 2.1386343431250408e-16,
+      "max_rel_err": 0.0,
       "name": "gen0062",
       "outcome": "pass",
       "pass": true,
@@ -1296,7 +5256,7 @@
       "values_compared": 72
     },
     {
-      "max_rel_err": 3.705384843088138e-16,
+      "max_rel_err": 0.0,
       "name": "gen0064",
       "outcome": "pass",
       "pass": true,
@@ -1376,7 +5336,7 @@
       "values_compared": 260
     },
     {
-      "max_rel_err": 1.6080825231408113e-15,
+      "max_rel_err": 0.0,
       "name": "gen0074",
       "outcome": "pass",
       "pass": true,
@@ -1552,7 +5512,7 @@
       "values_compared": 260
     },
     {
-      "max_rel_err": 3.4316846110317193e-16,
+      "max_rel_err": 0.0,
       "name": "gen0096",
       "outcome": "pass",
       "pass": true,
@@ -1624,7 +5584,7 @@
       "values_compared": 260
     },
     {
-      "max_rel_err": 2.2046177331636236e-16,
+      "max_rel_err": 0.0,
       "name": "gen0105",
       "outcome": "pass",
       "pass": true,
@@ -1752,7 +5712,7 @@
       "values_compared": 260
     },
     {
-      "max_rel_err": 9.278979618908892e-15,
+      "max_rel_err": 0.0,
       "name": "gen0121",
       "outcome": "pass",
       "pass": true,
@@ -1816,7 +5776,7 @@
       "values_compared": 260
     },
     {
-      "max_rel_err": 5.4625402159784255e-15,
+      "max_rel_err": 0.0,
       "name": "gen0129",
       "outcome": "pass",
       "pass": true,
@@ -1912,7 +5872,7 @@
       "values_compared": 18
     },
     {
-      "max_rel_err": 2.3970517779650445e-16,
+      "max_rel_err": 0.0,
       "name": "gen0141",
       "outcome": "pass",
       "pass": true,
@@ -1920,7 +5880,7 @@
       "values_compared": 144
     },
     {
-      "max_rel_err": 1.6120430322080875e-15,
+      "max_rel_err": 0.0,
       "name": "gen0142",
       "outcome": "pass",
       "pass": true,
@@ -1928,7 +5888,7 @@
       "values_compared": 198
     },
     {
-      "max_rel_err": 1.8927384853525304e-16,
+      "max_rel_err": 0.0,
       "name": "gen0143",
       "outcome": "pass",
       "pass": true,
@@ -1984,7 +5944,7 @@
       "values_compared": 260
     },
     {
-      "max_rel_err": 2.3409828572624755e-15,
+      "max_rel_err": 0.0,
       "name": "gen0150",
       "outcome": "pass",
       "pass": true,
@@ -2032,7 +5992,7 @@
       "values_compared": 6
     },
     {
-      "max_rel_err": 9.333783714320088e-16,
+      "max_rel_err": 0.0,
       "name": "gen0156",
       "outcome": "pass",
       "pass": true,
@@ -2064,7 +6024,7 @@
       "values_compared": 180
     },
     {
-      "max_rel_err": 1.961602061973798e-16,
+      "max_rel_err": 0.0,
       "name": "gen0160",
       "outcome": "pass",
       "pass": true,
@@ -2072,7 +6032,7 @@
       "values_compared": 72
     },
     {
-      "max_rel_err": 3.686281018438524e-16,
+      "max_rel_err": 0.0,
       "name": "gen0161",
       "outcome": "pass",
       "pass": true,
@@ -2200,7 +6160,7 @@
       "values_compared": 260
     },
     {
-      "max_rel_err": 3.3857802681921913e-16,
+      "max_rel_err": 0.0,
       "name": "gen0177",
       "outcome": "pass",
       "pass": true,
@@ -2312,7 +6272,7 @@
       "values_compared": 260
     },
     {
-      "max_rel_err": 5.047302627606746e-16,
+      "max_rel_err": 0.0,
       "name": "gen0191",
       "outcome": "pass",
       "pass": true,
@@ -2384,7 +6344,7 @@
       "values_compared": 260
     },
     {
-      "max_rel_err": 6.428739232709403e-16,
+      "max_rel_err": 0.0,
       "name": "gen0200",
       "outcome": "pass",
       "pass": true,
@@ -2512,7 +6472,7 @@
       "values_compared": 260
     },
     {
-      "max_rel_err": 2.1163742477652095e-16,
+      "max_rel_err": 0.0,
       "name": "gen0216",
       "outcome": "pass",
       "pass": true,
@@ -2552,7 +6512,7 @@
       "values_compared": 108
     },
     {
-      "max_rel_err": 2.0806395104997784e-15,
+      "max_rel_err": 0.0,
       "name": "gen0221",
       "outcome": "pass",
       "pass": true,
@@ -2576,7 +6536,7 @@
       "values_compared": 36
     },
     {
-      "max_rel_err": 2.1229604768554552e-16,
+      "max_rel_err": 0.0,
       "name": "gen0224",
       "outcome": "pass",
       "pass": true,
@@ -2592,7 +6552,7 @@
       "values_compared": 260
     },
     {
-      "max_rel_err": 2.5139756042650037e-14,
+      "max_rel_err": 0.0,
       "name": "gen0226",
       "outcome": "pass",
       "pass": true,
@@ -2640,7 +6600,7 @@
       "values_compared": 260
     },
     {
-      "max_rel_err": 7.800306077446646e-16,
+      "max_rel_err": 0.0,
       "name": "gen0232",
       "outcome": "pass",
       "pass": true,
@@ -2648,7 +6608,7 @@
       "values_compared": 108
     },
     {
-      "max_rel_err": 1.1080858458982682e-15,
+      "max_rel_err": 0.0,
       "name": "gen0233",
       "outcome": "pass",
       "pass": true,
@@ -2736,7 +6696,7 @@
       "values_compared": 36
     },
     {
-      "max_rel_err": 2.4925455571977407e-16,
+      "max_rel_err": 0.0,
       "name": "gen0244",
       "outcome": "pass",
       "pass": true,
@@ -2768,7 +6728,7 @@
       "values_compared": 260
     },
     {
-      "max_rel_err": 4.325305995613779e-16,
+      "max_rel_err": 0.0,
       "name": "gen0248",
       "outcome": "pass",
       "pass": true,
@@ -2800,7 +6760,7 @@
       "values_compared": 36
     },
     {
-      "max_rel_err": 5.034403622495475e-16,
+      "max_rel_err": 0.0,
       "name": "gen0252",
       "outcome": "pass",
       "pass": true,
@@ -2864,7 +6824,7 @@
       "values_compared": 108
     },
     {
-      "max_rel_err": 1.1162013212143252e-15,
+      "max_rel_err": 0.0,
       "name": "gen0260",
       "outcome": "pass",
       "pass": true,
@@ -2896,7 +6856,7 @@
       "values_compared": 54
     },
     {
-      "max_rel_err": 8.87694260387108e-16,
+      "max_rel_err": 0.0,
       "name": "gen0264",
       "outcome": "pass",
       "pass": true,
@@ -2904,7 +6864,7 @@
       "values_compared": 108
     },
     {
-      "max_rel_err": 3.3514535044907636e-16,
+      "max_rel_err": 0.0,
       "name": "gen0265",
       "outcome": "pass",
       "pass": true,
@@ -2912,7 +6872,7 @@
       "values_compared": 126
     },
     {
-      "max_rel_err": 1.8945412912117165e-16,
+      "max_rel_err": 0.0,
       "name": "gen0266",
       "outcome": "pass",
       "pass": true,
@@ -2920,7 +6880,7 @@
       "values_compared": 72
     },
     {
-      "max_rel_err": 1.2749701481436382e-16,
+      "max_rel_err": 0.0,
       "name": "gen0267",
       "outcome": "pass",
       "pass": true,
@@ -2928,7 +6888,7 @@
       "values_compared": 72
     },
     {
-      "max_rel_err": 1.4022368021514521e-15,
+      "max_rel_err": 0.0,
       "name": "gen0268",
       "outcome": "pass",
       "pass": true,
@@ -2936,7 +6896,7 @@
       "values_compared": 126
     },
     {
-      "max_rel_err": 5.308840291352534e-16,
+      "max_rel_err": 0.0,
       "name": "gen0269",
       "outcome": "pass",
       "pass": true,
@@ -3008,7 +6968,7 @@
       "values_compared": 72
     },
     {
-      "max_rel_err": 3.1626272580506162e-15,
+      "max_rel_err": 0.0,
       "name": "gen0278",
       "outcome": "pass",
       "pass": true,
@@ -3104,7 +7064,7 @@
       "values_compared": 260
     },
     {
-      "max_rel_err": 4.807691388730853e-16,
+      "max_rel_err": 0.0,
       "name": "gen0290",
       "outcome": "pass",
       "pass": true,
@@ -3232,7 +7192,7 @@
       "values_compared": 260
     },
     {
-      "max_rel_err": 3.78547697070506e-16,
+      "max_rel_err": 0.0,
       "name": "gen0306",
       "outcome": "pass",
       "pass": true,
@@ -3264,7 +7224,7 @@
       "values_compared": 36
     },
     {
-      "max_rel_err": 4.639353342338488e-16,
+      "max_rel_err": 0.0,
       "name": "gen0310",
       "outcome": "pass",
       "pass": true,
@@ -3312,7 +7272,7 @@
       "values_compared": 54
     },
     {
-      "max_rel_err": 3.8681485249273216e-16,
+      "max_rel_err": 0.0,
       "name": "gen0316",
       "outcome": "pass",
       "pass": true,
@@ -3344,7 +7304,7 @@
       "values_compared": 72
     },
     {
-      "max_rel_err": 3.4145724354851105e-15,
+      "max_rel_err": 0.0,
       "name": "gen0320",
       "outcome": "pass",
       "pass": true,
@@ -3360,7 +7320,7 @@
       "values_compared": 260
     },
     {
-      "max_rel_err": 3.519597692004286e-16,
+      "max_rel_err": 0.0,
       "name": "gen0322",
       "outcome": "pass",
       "pass": true,
@@ -3368,7 +7328,7 @@
       "values_compared": 54
     },
     {
-      "max_rel_err": 8.001700142682745e-16,
+      "max_rel_err": 0.0,
       "name": "gen0323",
       "outcome": "pass",
       "pass": true,
@@ -3400,7 +7360,7 @@
       "values_compared": 260
     },
     {
-      "max_rel_err": 2.050412081015348e-16,
+      "max_rel_err": 0.0,
       "name": "gen0327",
       "outcome": "pass",
       "pass": true,
@@ -3424,7 +7384,7 @@
       "values_compared": 260
     },
     {
-      "max_rel_err": 3.785476970705061e-16,
+      "max_rel_err": 0.0,
       "name": "gen0330",
       "outcome": "pass",
       "pass": true,
@@ -3464,7 +7424,7 @@
       "values_compared": 6
     },
     {
-      "max_rel_err": 3.384638678986814e-15,
+      "max_rel_err": 0.0,
       "name": "gen0335",
       "outcome": "pass",
       "pass": true,
@@ -3496,7 +7456,7 @@
       "values_compared": 260
     },
     {
-      "max_rel_err": 7.713697871742541e-16,
+      "max_rel_err": 0.0,
       "name": "gen0339",
       "outcome": "pass",
       "pass": true,
@@ -3512,7 +7472,7 @@
       "values_compared": 72
     },
     {
-      "max_rel_err": 1.1542274438018172e-15,
+      "max_rel_err": 0.0,
       "name": "gen0341",
       "outcome": "pass",
       "pass": true,
@@ -3576,7 +7536,7 @@
       "values_compared": 18
     },
     {
-      "max_rel_err": 3.78547697070506e-16,
+      "max_rel_err": 0.0,
       "name": "gen0349",
       "outcome": "pass",
       "pass": true,
@@ -3584,7 +7544,7 @@
       "values_compared": 144
     },
     {
-      "max_rel_err": 2.854623591013544e-15,
+      "max_rel_err": 0.0,
       "name": "gen0350",
       "outcome": "pass",
       "pass": true,
@@ -3600,7 +7560,7 @@
       "values_compared": 260
     },
     {
-      "max_rel_err": 9.498256160423652e-16,
+      "max_rel_err": 0.0,
       "name": "gen0352",
       "outcome": "pass",
       "pass": true,
@@ -3640,7 +7600,7 @@
       "values_compared": 36
     },
     {
-      "max_rel_err": 2.4848528961873404e-16,
+      "max_rel_err": 0.0,
       "name": "gen0357",
       "outcome": "pass",
       "pass": true,
@@ -3696,7 +7656,7 @@
       "values_compared": 90
     },
     {
-      "max_rel_err": 8.931157383506392e-15,
+      "max_rel_err": 0.0,
       "name": "gen0364",
       "outcome": "pass",
       "pass": true,
@@ -3720,7 +7680,7 @@
       "values_compared": 260
     },
     {
-      "max_rel_err": 1.9727968068897096e-16,
+      "max_rel_err": 0.0,
       "name": "gen0367",
       "outcome": "pass",
       "pass": true,
@@ -3728,7 +7688,7 @@
       "values_compared": 108
     },
     {
-      "max_rel_err": 4.063113681965755e-16,
+      "max_rel_err": 0.0,
       "name": "gen0368",
       "outcome": "pass",
       "pass": true,
@@ -3784,7 +7744,7 @@
       "values_compared": 260
     },
     {
-      "max_rel_err": 2.9158035700250084e-14,
+      "max_rel_err": 0.0,
       "name": "gen0375",
       "outcome": "pass",
       "pass": true,
@@ -3840,7 +7800,7 @@
       "values_compared": 6
     },
     {
-      "max_rel_err": 1.8461698663648037e-16,
+      "max_rel_err": 0.0,
       "name": "gen0382",
       "outcome": "pass",
       "pass": true,
@@ -3880,7 +7840,7 @@
       "values_compared": 90
     },
     {
-      "max_rel_err": 4.7335819721336975e-16,
+      "max_rel_err": 0.0,
       "name": "gen0387",
       "outcome": "pass",
       "pass": true,
@@ -3888,7 +7848,7 @@
       "values_compared": 180
     },
     {
-      "max_rel_err": 3.8904011132537047e-16,
+      "max_rel_err": 0.0,
       "name": "gen0388",
       "outcome": "pass",
       "pass": true,
@@ -4008,7 +7968,7 @@
       "values_compared": 180
     },
     {
-      "max_rel_err": 4.1674147323433935e-16,
+      "max_rel_err": 0.0,
       "name": "gen0403",
       "outcome": "pass",
       "pass": true,
@@ -4072,7 +8032,7 @@
       "values_compared": 6
     },
     {
-      "max_rel_err": 5.164073190247253e-16,
+      "max_rel_err": 0.0,
       "name": "gen0411",
       "outcome": "pass",
       "pass": true,
@@ -4104,7 +8064,7 @@
       "values_compared": 6
     },
     {
-      "max_rel_err": 2.0111984967039038e-16,
+      "max_rel_err": 0.0,
       "name": "gen0415",
       "outcome": "pass",
       "pass": true,
@@ -4128,7 +8088,7 @@
       "values_compared": 144
     },
     {
-      "max_rel_err": 3.624378941006834e-15,
+      "max_rel_err": 0.0,
       "name": "gen0418",
       "outcome": "pass",
       "pass": true,
@@ -4192,7 +8152,7 @@
       "values_compared": 216
     },
     {
-      "max_rel_err": 2.3100566614779328e-14,
+      "max_rel_err": 0.0,
       "name": "gen0426",
       "outcome": "pass",
       "pass": true,
@@ -4208,7 +8168,7 @@
       "values_compared": 6
     },
     {
-      "max_rel_err": 1.4784422841265099e-16,
+      "max_rel_err": 0.0,
       "name": "gen0428",
       "outcome": "pass",
       "pass": true,
@@ -4248,7 +8208,7 @@
       "values_compared": 36
     },
     {
-      "max_rel_err": 7.15669096066402e-16,
+      "max_rel_err": 0.0,
       "name": "gen0433",
       "outcome": "pass",
       "pass": true,
@@ -4256,7 +8216,7 @@
       "values_compared": 216
     },
     {
-      "max_rel_err": 2.0275957157721682e-15,
+      "max_rel_err": 0.0,
       "name": "gen0434",
       "outcome": "pass",
       "pass": true,
@@ -4280,7 +8240,7 @@
       "values_compared": 72
     },
     {
-      "max_rel_err": 2.003257007629736e-16,
+      "max_rel_err": 0.0,
       "name": "gen0437",
       "outcome": "pass",
       "pass": true,
@@ -4296,7 +8256,7 @@
       "values_compared": 260
     },
     {
-      "max_rel_err": 4.623704299312173e-16,
+      "max_rel_err": 0.0,
       "name": "gen0439",
       "outcome": "pass",
       "pass": true,
@@ -4312,7 +8272,7 @@
       "values_compared": 260
     },
     {
-      "max_rel_err": 2.1145137204145548e-16,
+      "max_rel_err": 0.0,
       "name": "gen0441",
       "outcome": "pass",
       "pass": true,
@@ -4320,7 +8280,7 @@
       "values_compared": 108
     },
     {
-      "max_rel_err": 9.689521859160208e-16,
+      "max_rel_err": 0.0,
       "name": "gen0442",
       "outcome": "pass",
       "pass": true,
@@ -4328,7 +8288,7 @@
       "values_compared": 108
     },
     {
-      "max_rel_err": 9.673940282299858e-15,
+      "max_rel_err": 0.0,
       "name": "gen0443",
       "outcome": "pass",
       "pass": true,
@@ -4376,7 +8336,7 @@
       "values_compared": 260
     },
     {
-      "max_rel_err": 1.6896044162488884e-15,
+      "max_rel_err": 0.0,
       "name": "gen0449",
       "outcome": "pass",
       "pass": true,
@@ -4432,7 +8392,7 @@
       "values_compared": 54
     },
     {
-      "max_rel_err": 8.554464991852835e-16,
+      "max_rel_err": 0.0,
       "name": "gen0456",
       "outcome": "pass",
       "pass": true,
@@ -4464,7 +8424,7 @@
       "values_compared": 260
     },
     {
-      "max_rel_err": 4.242951897358329e-15,
+      "max_rel_err": 0.0,
       "name": "gen0460",
       "outcome": "pass",
       "pass": true,
@@ -4504,7 +8464,7 @@
       "values_compared": 6
     },
     {
-      "max_rel_err": 1.8586591417918263e-16,
+      "max_rel_err": 0.0,
       "name": "gen0465",
       "outcome": "pass",
       "pass": true,
@@ -4520,7 +8480,7 @@
       "values_compared": 260
     },
     {
-      "max_rel_err": 1.8927384853525304e-16,
+      "max_rel_err": 0.0,
       "name": "gen0467",
       "outcome": "pass",
       "pass": true,
@@ -4592,7 +8552,7 @@
       "values_compared": 260
     },
     {
-      "max_rel_err": 2.1655782789276906e-15,
+      "max_rel_err": 0.0,
       "name": "gen0476",
       "outcome": "pass",
       "pass": true,
@@ -4648,7 +8608,7 @@
       "values_compared": 6
     },
     {
-      "max_rel_err": 3.47685332897294e-15,
+      "max_rel_err": 0.0,
       "name": "gen0483",
       "outcome": "pass",
       "pass": true,
@@ -4656,7 +8616,7 @@
       "values_compared": 180
     },
     {
-      "max_rel_err": 1.2447382795994008e-15,
+      "max_rel_err": 0.0,
       "name": "gen0484",
       "outcome": "pass",
       "pass": true,
@@ -4728,7 +8688,7 @@
       "values_compared": 36
     },
     {
-      "max_rel_err": 9.325968639047305e-16,
+      "max_rel_err": 0.0,
       "name": "gen0493",
       "outcome": "pass",
       "pass": true,
@@ -4736,7 +8696,7 @@
       "values_compared": 108
     },
     {
-      "max_rel_err": 1.3577637935041546e-15,
+      "max_rel_err": 0.0,
       "name": "gen0494",
       "outcome": "pass",
       "pass": true,
@@ -4744,7 +8704,7 @@
       "values_compared": 216
     },
     {
-      "max_rel_err": 1.858271345151864e-15,
+      "max_rel_err": 0.0,
       "name": "gen0495",
       "outcome": "pass",
       "pass": true,
@@ -4792,7 +8752,7 @@
       "values_compared": 260
     },
     {
-      "max_rel_err": 4.713644727174504e-15,
+      "max_rel_err": 0.0,
       "name": "gen0501",
       "outcome": "pass",
       "pass": true,
@@ -4808,7 +8768,7 @@
       "values_compared": 6
     },
     {
-      "max_rel_err": 3.44996427481403e-15,
+      "max_rel_err": 0.0,
       "name": "gen0503",
       "outcome": "pass",
       "pass": true,
@@ -4840,7 +8800,7 @@
       "values_compared": 6
     },
     {
-      "max_rel_err": 7.134141332592876e-16,
+      "max_rel_err": 0.0,
       "name": "gen0507",
       "outcome": "pass",
       "pass": true,
@@ -4864,7 +8824,7 @@
       "values_compared": 260
     },
     {
-      "max_rel_err": 1.8347744128916987e-15,
+      "max_rel_err": 0.0,
       "name": "gen0510",
       "outcome": "pass",
       "pass": true,
@@ -4896,7 +8856,7 @@
       "values_compared": 90
     },
     {
-      "max_rel_err": 1.3846679911700683e-15,
+      "max_rel_err": 0.0,
       "name": "gen0514",
       "outcome": "pass",
       "pass": true,
@@ -5000,7 +8960,7 @@
       "values_compared": 260
     },
     {
-      "max_rel_err": 5.36950700185529e-16,
+      "max_rel_err": 0.0,
       "name": "gen0527",
       "outcome": "pass",
       "pass": true,
@@ -5032,7 +8992,7 @@
       "values_compared": 108
     },
     {
-      "max_rel_err": 3.3571765673622244e-16,
+      "max_rel_err": 0.0,
       "name": "gen0531",
       "outcome": "pass",
       "pass": true,
@@ -5144,7 +9104,7 @@
       "values_compared": 36
     },
     {
-      "max_rel_err": 8.03617581742594e-16,
+      "max_rel_err": 0.0,
       "name": "gen0545",
       "outcome": "pass",
       "pass": true,
@@ -5168,7 +9128,7 @@
       "values_compared": 260
     },
     {
-      "max_rel_err": 3.839767271599482e-15,
+      "max_rel_err": 0.0,
       "name": "gen0548",
       "outcome": "pass",
       "pass": true,
@@ -5240,7 +9200,7 @@
       "values_compared": 6
     },
     {
-      "max_rel_err": 2.8225775226172425e-16,
+      "max_rel_err": 0.0,
       "name": "gen0557",
       "outcome": "pass",
       "pass": true,
@@ -5256,7 +9216,7 @@
       "values_compared": 260
     },
     {
-      "max_rel_err": 1.8927384853525302e-16,
+      "max_rel_err": 0.0,
       "name": "gen0559",
       "outcome": "pass",
       "pass": true,
@@ -5304,7 +9264,7 @@
       "values_compared": 108
     },
     {
-      "max_rel_err": 2.161676969303453e-16,
+      "max_rel_err": 0.0,
       "name": "gen0565",
       "outcome": "pass",
       "pass": true,
@@ -5336,7 +9296,7 @@
       "values_compared": 260
     },
     {
-      "max_rel_err": 7.071857777673971e-16,
+      "max_rel_err": 0.0,
       "name": "gen0569",
       "outcome": "pass",
       "pass": true,
@@ -5344,7 +9304,7 @@
       "values_compared": 126
     },
     {
-      "max_rel_err": 1.7234721964822201e-15,
+      "max_rel_err": 0.0,
       "name": "gen0570",
       "outcome": "pass",
       "pass": true,
@@ -5352,7 +9312,7 @@
       "values_compared": 90
     },
     {
-      "max_rel_err": 2.1112663740286463e-16,
+      "max_rel_err": 0.0,
       "name": "gen0571",
       "outcome": "pass",
       "pass": true,
@@ -5384,7 +9344,7 @@
       "values_compared": 90
     },
     {
-      "max_rel_err": 2.213290057263088e-16,
+      "max_rel_err": 0.0,
       "name": "gen0575",
       "outcome": "pass",
       "pass": true,
@@ -5400,7 +9360,7 @@
       "values_compared": 6
     },
     {
-      "max_rel_err": 6.891074272578474e-16,
+      "max_rel_err": 0.0,
       "name": "gen0577",
       "outcome": "pass",
       "pass": true,
@@ -5488,7 +9448,7 @@
       "values_compared": 260
     },
     {
-      "max_rel_err": 3.2219240305448986e-16,
+      "max_rel_err": 0.0,
       "name": "gen0588",
       "outcome": "pass",
       "pass": true,
@@ -5585,19 +9545,20 @@
     }
   ],
   "cases_both_errored": 0,
-  "cases_deferred": 5,
+  "cases_deferred": 317,
   "cases_failed": 0,
-  "cases_passed": 687,
+  "cases_passed": 714,
   "cases_rejected": 1,
-  "cases_total": 693,
+  "cases_total": 1032,
   "deferred_by_unit": {
+    "intersect.surface_drop_lib_p3": 1,
     "offset.offset_geometry_creation": 1,
     "query.brep": 1,
     "topology.brep_p1": 1,
-    "topology.brep_p4": 1,
-    "topology.edgeuse_p3": 1
+    "topology.brep_p3": 312,
+    "topology.brep_p4": 1
   },
-  "max_rel_err": 2.9158035700250084e-14,
+  "max_rel_err": 1.850371707708594e-16,
   "pass": true,
   "rel_tol": 1e-9,
   "seeds": 16,

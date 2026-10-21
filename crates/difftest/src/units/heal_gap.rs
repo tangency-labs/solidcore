@@ -841,7 +841,7 @@ fn topo_rust(k: &Kernel, b: &mut Brep, args: &[f64]) -> Result<Vec<f64>, SolidEr
         gap.edge_t(1),
         gap.uv_trim_curve_t(),
     ];
-    let fuv = gap.face_uv(b)?;
+    let fuv = gap.face_uv(k, b)?;
     o.extend([fuv.x, fuv.y]);
     o.push(idx(gap.vertex(b)?.map(VertexId::index)));
     o.push(idx(gap.vertexuse().map(VertexuseId::index)));

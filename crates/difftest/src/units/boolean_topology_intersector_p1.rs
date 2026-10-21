@@ -89,6 +89,7 @@ use solidcore::topology::brep::p7;
 use solidcore::topology::brep_cache::{arena_identity, BrepCache, CacheObject, CacheSource};
 use solidcore::topology::edge as ed;
 use solidcore::topology::edgeuse::p1 as eu1;
+use solidcore::topology::edgeuse::p3 as eu3;
 use solidcore::topology::face::p2 as fp2;
 use solidcore::topology::face::p3 as fp3;
 use solidcore::topology::face::p3::{FaceIntersectOptions, IntersectObject};
@@ -373,7 +374,7 @@ pub(super) enum OpIn {
         capture: f64,
         override_tol: f64,
     },
-    // ---- part 2 (unit boolean.topology_intersector_p2; shim ops 41 to 51) ----
+    // ---- part 2 (unit boolean.topology_intersector_p2; shim ops 41 to 52) ----
     RemoveRel {
         a: Hin,
         b: Hin,
@@ -413,6 +414,9 @@ pub(super) enum OpIn {
         excluded: Vec<Hin>,
         ignore: bool,
         nesting: bool,
+    },
+    CloseLoop {
+        v: Hin,
     },
 }
 
@@ -604,10 +608,10 @@ const K_TRIM_CURVE: u8 = 13;
 /// curve handle also carries its curve's natural interval (what `SmSolutionArray`
 /// reads through `SmCurve::GetNaturalInterval`); it takes no part in identity.
 #[derive(Debug, Clone, Copy)]
-struct H {
-    b: i8,
-    kind: u8,
-    i: u32,
+pub(crate) struct H {
+    pub(crate) b: i8,
+    pub(crate) kind: u8,
+    pub(crate) i: u32,
     ivl: [f64; 2],
 }
 
@@ -631,7 +635,7 @@ impl Ord for H {
     }
 }
 
-const fn hd(b: i8, kind: u8, i: u32) -> H {
+pub(crate) const fn hd(b: i8, kind: u8, i: u32) -> H {
     H {
         b,
         kind,
@@ -690,7 +694,7 @@ impl SolutionObject for H {
 
 const TI_HANDLE: H = hd(-1, K_TI, 0);
 
-const fn brep_h(b: i8) -> H {
+pub(crate) const fn brep_h(b: i8) -> H {
     hd(b, K_BREP, b as u32)
 }
 
@@ -759,7 +763,7 @@ fn vertexuse_ref(vu: VertexuseId) -> ObjectRef {
 
 /// The two B-reps, the registered curves (kind 5) and the port's curve copies (kind
 /// 7).
-struct Two {
+pub(crate) struct Two {
     breps: [Option<Brep>; 2],
     curves: Vec<SmCurve>,
     extra: Vec<SmCurve>,
@@ -784,7 +788,7 @@ const fn fid(h: H) -> FaceId {
 }
 
 impl Two {
-    fn new(a: Brep, b: Option<Brep>) -> Self {
+    pub(crate) fn new(a: Brep, b: Option<Brep>) -> Self {
         let env = [NotifyEnv::new(Some(&a)), NotifyEnv::new(b.as_ref())];
         Self {
             breps: [Some(a), b],
@@ -795,6 +799,17 @@ impl Two {
         }
     }
 
+    /// Deletes the cache of the B-rep behind `brep` (`SmBrep::Notify`'s `PRE_EDIT` /
+    /// `DESTRUCTION`); the next use rebuilds it.
+    pub(crate) fn delete_cache(&mut self, brep: H) -> solidcore::Result<()> {
+        let slot = usize::try_from(brep.b).map_err(|_| invalid("bad B-rep"))?;
+        self.caches
+            .get_mut(slot)
+            .ok_or_else(|| invalid("bad B-rep"))?
+            .take();
+        Ok(())
+    }
+
     fn brep(&self, h: H) -> Option<&Brep> {
         self.breps.get(usize::try_from(h.b).ok()?)?.as_ref()
     }
@@ -803,12 +818,12 @@ impl Two {
         self.breps.get_mut(usize::try_from(h.b).ok()?)?.as_mut()
     }
 
-    fn brep_r(&self, h: H) -> solidcore::Result<&Brep> {
+    pub(crate) fn brep_r(&self, h: H) -> solidcore::Result<&Brep> {
         self.brep(h)
             .ok_or_else(|| invalid("handle names an absent B-rep"))
     }
 
-    fn brep_m(&mut self, h: H) -> solidcore::Result<&mut Brep> {
+    pub(crate) fn brep_m(&mut self, h: H) -> solidcore::Result<&mut Brep> {
         self.brep_mut(h)
             .ok_or_else(|| invalid("handle names an absent B-rep"))
     }
@@ -1041,8 +1056,12 @@ impl ProtoBrep<H> for Two {
     }
     fn vertex_common_edges(&self, v1: H, v2: H) -> solidcore::Result<Vec<H>> {
         let b = self.brep_r(v1)?;
-        let other = (v2.b == v1.b && v2.kind == K_VERTEX).then(|| vid(v2));
-        Ok(vx::common_edges(b, vid(v1), other, None)?
+        // (a vertex of the other B-rep, or no vertex, ends no edge of this one: upstream
+        // finds no common edge)
+        if v2.b != v1.b || v2.kind != K_VERTEX {
+            return Ok(Vec::new());
+        }
+        Ok(vx::common_edges(b, vid(v1), Some(vid(v2)), None)?
             .into_iter()
             .map(|e| hd(v1.b, K_EDGE, e.index()))
             .collect())
@@ -1296,6 +1315,15 @@ impl IntersectorBrep<H> for Two {
             return Err(invalid("not a B-rep handle"));
         }
         self.brep_r(brep)
+    }
+    fn face_calculate_bounding_box(
+        &self,
+        k: &Kernel,
+        face: H,
+        tight: bool,
+    ) -> solidcore::Result<Extent3d> {
+        let b = self.brep_r(face)?;
+        solidcore::query::face::p1::calculate_bounding_box(k, b, fid(face), tight)
     }
     fn vertex_brep(&self, vertex: H) -> solidcore::Result<Option<H>> {
         let b = self.brep_r(vertex)?;
@@ -1900,6 +1928,7 @@ struct Start {
 }
 
 fn resolve_prefix(
+    k: &Kernel,
     ops: &[OpIn],
     c: &Counts,
     two: &Two,
@@ -1908,7 +1937,7 @@ fn resolve_prefix(
     let mut n = ops.len();
     let mut cut: Option<(usize, String)> = None;
     loop {
-        match resolve(ops.get(..n).unwrap_or(&[]), c, two, start) {
+        match resolve(k, ops.get(..n).unwrap_or(&[]), c, two, start) {
             Ok(r) => return (r, cut),
             Err(name) => {
                 if n == 0 {
@@ -1924,7 +1953,7 @@ fn resolve_prefix(
 /// Resolves every op of `ops` against the imported B-reps; `Err(name)` names the
 /// first op that cannot be run.
 #[allow(clippy::too_many_lines)]
-fn resolve(ops: &[OpIn], c: &Counts, two: &Two, start: Start) -> Result<Vec<ROp>, String> {
+fn resolve(k: &Kernel, ops: &[OpIn], c: &Counts, two: &Two, start: Start) -> Result<Vec<ROp>, String> {
     let i_ctor = start.ctor;
     let mut approx = start.approx;
     let mut out = Vec::new();
@@ -1983,12 +2012,19 @@ fn resolve(ops: &[OpIn], c: &Counts, two: &Two, start: Start) -> Result<Vec<ROp>
         if matches!(op, OpIn::SetRels) && !has_mgr {
             return Err(fail("set_relationships"));
         }
+        if matches!(op, OpIn::CloseLoop { .. }) && (!have_breps[0] || !have_breps[1]) {
+            return Err(fail("close_intersection_loop"));
+        }
         if matches!(op, OpIn::Iir) && (i_ctor != 0 || !have_breps[0] || !have_breps[1]) {
             return Err(fail("intersect_insert_relate"));
         }
         // the FFI's hang guard of IntersectInsertRelate (HANG-25, HANG-16's class)
         if matches!(op, OpIn::Iir) && (approx == 0.0 || start.block_max_abs >= ffi2::HANG_COORD) {
             return Err(fail("intersect_insert_relate_hang"));
+        }
+        // and its time-budget guard (a large tolerance finishes, but slowly)
+        if matches!(op, OpIn::Iir) && (approx.is_nan() || approx.abs() > ffi2::IIR_MAX_APPROX) {
+            return Err(fail("intersect_insert_relate_time_budget"));
         }
         if let OpIn::SetTols { approx: a, .. } = op {
             approx = *a;
@@ -2169,7 +2205,7 @@ fn resolve(ops: &[OpIn], c: &Counts, two: &Two, start: Start) -> Result<Vec<ROp>
                         .ok_or_else(|| fail("surface"))?;
                     let s = ClassGeometry::surface(two, sh).ok_or_else(|| fail("surface"))?;
                     let uv = dom.evaluate(p[0], p[1]);
-                    let pt = s.evaluate_point(uv).map_err(|_| fail("evaluate"))?;
+                    let pt = s.evaluate_point(k, uv).map_err(|_| fail("evaluate"))?;
                     let n = s.evaluate_normal_or_zero(uv);
                     let q = pt + n * p[2];
                     [q.x, q.y, q.z]
@@ -2303,6 +2339,9 @@ fn resolve(ops: &[OpIn], c: &Counts, two: &Two, start: Start) -> Result<Vec<ROp>
                 ignore: *ignore,
                 nesting: *nesting,
             },
+            OpIn::CloseLoop { v } => OpIn::CloseLoop {
+                v: hk(*v, &[K_VERTEX], true)?,
+            },
         };
         if matches!(
             r,
@@ -2319,6 +2358,7 @@ fn resolve(ops: &[OpIn], c: &Counts, two: &Two, start: Start) -> Result<Vec<ROp>
                 | OpIn::Iir
                 | OpIn::EdgeEdge { .. }
                 | OpIn::EdgeFaceCoin { .. }
+                | OpIn::CloseLoop { .. }
         ) {
             mutated = true;
         }
@@ -2392,12 +2432,13 @@ trait NormalOrZero {
 
 impl NormalOrZero for Surface {
     fn evaluate_normal_or_zero(&self, uv: Point2) -> Vec3 {
+        let k = &Kernel::default();
         // a small finite-difference normal: enough to offset a test point off the surface
         let h = 1e-3;
         let (Ok(p), Ok(pu), Ok(pv)) = (
-            self.evaluate_point(uv),
-            self.evaluate_point(Point2::new(uv.x + h, uv.y)),
-            self.evaluate_point(Point2::new(uv.x, uv.y + h)),
+            self.evaluate_point(k, uv),
+            self.evaluate_point(k, Point2::new(uv.x + h, uv.y)),
+            self.evaluate_point(k, Point2::new(uv.x, uv.y + h)),
         ) else {
             return Vec3::new(0.0, 0.0, 0.0);
         };
@@ -2664,6 +2705,10 @@ fn encode(i: &Inputs, ops: &[ROp]) -> Result<Vec<f64>, HarnessError> {
                 push_list(&mut v, excluded);
                 v.extend([flag(*ignore), flag(*nesting)]);
             }
+            OpIn::CloseLoop { v: bv } => {
+                v.push(52.0);
+                push_h(&mut v, *bv);
+            }
         }
     }
     Ok(v)
@@ -2702,7 +2747,7 @@ fn put_cut(o: &mut Vec<f64>, cut: Option<&(usize, String)>) {
 /// Exports and imports the B-reps and resolves the script; `Err(Ok(output))` is the
 /// output both sides report when the B-reps cannot be built or an op cannot be
 /// resolved.
-fn prepare(i: &Inputs) -> Result<Prepared, Box<Result<Output, HarnessError>>> {
+fn prepare(k: &Kernel, i: &Inputs) -> Result<Prepared, Box<Result<Output, HarnessError>>> {
     let ex = export(i).map_err(|e| Box::new(Err(e)))?;
     let Some((a, b)) = ffi::split_exports(&ex) else {
         return Err(Box::new(Ok(build_failure(&ex))));
@@ -2729,7 +2774,7 @@ fn prepare(i: &Inputs) -> Result<Prepared, Box<Result<Output, HarnessError>>> {
         approx: i.approx,
         block_max_abs,
     };
-    let (ops, cut) = resolve_prefix(&i.ops, &counts, &two, start);
+    let (ops, cut) = resolve_prefix(k, &i.ops, &counts, &two, start);
     // a script cut at its first op compares nothing: both sides report the error (it is
     // counted as both-errored, not as a pass)
     if ops.is_empty() {
@@ -2740,16 +2785,16 @@ fn prepare(i: &Inputs) -> Result<Prepared, Box<Result<Output, HarnessError>>> {
     Ok(Prepared { two, ops, cut })
 }
 
-fn run_cpp(i: &Inputs) -> Result<Output, HarnessError> {
-    run_cpp_with(i, ffi::eval)
+fn run_cpp(k: &Kernel, i: &Inputs) -> Result<Output, HarnessError> {
+    run_cpp_with(k, i, ffi::eval)
 }
 
 /// The shim entry a case runs through (part 1's, or part 2's with its ops).
 pub(super) type Eval = fn(Op, [&str; 2], &[f64]) -> Result<Vec<f64>, solidcore_ffi::FfiError>;
 
 /// [`run_cpp`] through `eval`.
-pub(super) fn run_cpp_with(i: &Inputs, eval: Eval) -> Result<Output, HarnessError> {
-    let p = match prepare(i) {
+pub(super) fn run_cpp_with(k: &Kernel, i: &Inputs, eval: Eval) -> Result<Output, HarnessError> {
+    let p = match prepare(k, i) {
         Ok(p) => p,
         Err(r) => return *r,
     };
@@ -3121,7 +3166,7 @@ fn run_rust_script(i: &Inputs, p: Prepared) -> Result<(Vec<f64>, Vec<usize>), Fa
                     continue;
                 }
                 let eh = eh.ok_or_else(|| harness("edge"))?;
-                match status(ti::check_interior_edge(&two, eh, *t, *tol), &mut o)? {
+                match status(ti::check_interior_edge(&k, &two, eh, *t, *tol), &mut o)? {
                     Some(interior) => o.push(flag(interior)),
                     None => o.push(0.0), // bInterior == FALSE on trouble
                 }
@@ -3612,6 +3657,43 @@ fn run_part2_op(
             o.push(r.max_edge_gap);
             o.push(r.this_min_unstitched);
         }
+        OpIn::CloseLoop { v } => {
+            o.push(52.0);
+            let bv = triple_to_h(*v);
+            // (the shim's close_loop_edges_ok: the edges of both vertices have a curve and
+            // vertices, the B-rep vertex's a primary edge use)
+            if let Some(bv) = bv {
+                let mut ok = vertex_edges_ok(two, bv)?;
+                for e in two.vertex_edges(bv)? {
+                    if two.edge_primary_edgeuse_orientation(e)?.is_none() {
+                        ok = false;
+                    }
+                }
+                if let Some(ov) = ti
+                    .other_mate(Some(bv))
+                    .filter(|m| m.class_kind() == ClassObjectKind::Vertex)
+                {
+                    if !vertex_edges_ok(two, ov)? {
+                        ok = false;
+                    }
+                }
+                if !ok {
+                    o.push(NULL_DEREF);
+                    return Ok(());
+                }
+            }
+            let Some(made) = status(ti.close_intersection_loop(k, two, bv), o)? else {
+                return Ok(());
+            };
+            o.push(flag(made));
+            // (the shim's read-back: the other mate of each edge of the vertex)
+            let bv = bv.ok_or_else(|| Fail::Harness(harness("success without a vertex")))?;
+            let edges = two.vertex_edges(bv)?;
+            o.push(edges.len() as f64);
+            for e in edges {
+                put_h(o, ti.other_mate(Some(e)));
+            }
+        }
         _ => return Err(Fail::Harness(harness("part 1 op in part 2's dispatch"))),
     }
     Ok(())
@@ -3674,6 +3756,18 @@ impl IntersectorBrepP2<H> for Two {
         )?;
         Ok(deleted_edge.map(|e| hd(brep.b, K_EDGE, e.index())))
     }
+    fn edge_normalized_evaluate(
+        &mut self,
+        k: &Kernel,
+        edge: H,
+        t: f64,
+    ) -> solidcore::Result<Point3> {
+        let b = self.brep_m(edge)?;
+        let eu = eu1::primary_edgeuse(b, eid(edge))?
+            .ok_or_else(|| invalid("edge without primary edge use"))?;
+        // (pOptFirstDeriv NULL, bOKToMakeUVTrimCurve TRUE by default)
+        Ok(eu3::normalized_evaluate(k, b, eu, t, false, false, true)?.point)
+    }
     fn vertex_edges(&self, vertex: H) -> solidcore::Result<Vec<H>> {
         let b = self.brep_r(vertex)?;
         Ok(vx::edges(b, vid(vertex), None)?
@@ -3690,8 +3784,8 @@ impl IntersectorBrepP2<H> for Two {
     }
 }
 
-pub(super) fn run_rust(i: &Inputs) -> Result<Output, HarnessError> {
-    let p = match prepare(i) {
+pub(super) fn run_rust(k: &Kernel, i: &Inputs) -> Result<Output, HarnessError> {
+    let p = match prepare(k, i) {
         Ok(p) => p,
         Err(r) => return *r,
     };
@@ -3710,7 +3804,8 @@ pub(super) fn run_rust(i: &Inputs) -> Result<Output, HarnessError> {
 /// case. For coverage censuses.
 #[cfg(test)]
 pub(super) fn rust_op_statuses(i: &Inputs) -> Option<Vec<(f64, f64, f64)>> {
-    let p = prepare(i).ok()?;
+    let k = &Kernel::default();
+    let p = prepare(k, i).ok()?;
     let (o, marks) = run_rust_script(i, p).ok()?;
     Some(
         marks
@@ -4203,13 +4298,15 @@ impl UnitDiff for Runner {
     }
 
     fn run_cpp(&self, case: &Case) -> Result<Output, HarnessError> {
+        let k = &Kernel::default();
         let i: Inputs = case.parse()?;
-        run_cpp(&i)
+        run_cpp(k, &i)
     }
 
     fn run_rust(&self, case: &Case) -> Result<Output, HarnessError> {
+        let k = &Kernel::default();
         let i: Inputs = case.parse()?;
-        run_rust(&i)
+        run_rust(k, &i)
     }
 
     fn generate(&self, rng: &mut Rng) -> Option<Value> {

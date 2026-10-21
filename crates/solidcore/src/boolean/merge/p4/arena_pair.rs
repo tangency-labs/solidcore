@@ -42,6 +42,7 @@ use crate::topology::brep::p7;
 use crate::topology::brep_cache::{arena_identity, BrepCache, CacheObject, CacheSource};
 use crate::topology::edge as ed;
 use crate::topology::edgeuse::p1 as eu1;
+use crate::topology::edgeuse::p3 as eu3;
 use crate::topology::face::p2 as fp2;
 use crate::topology::face::p3 as fp3;
 use crate::topology::face::p3::{FaceIntersectOptions, IntersectObject};
@@ -617,6 +618,15 @@ impl IntersectorBrep<H> for ArenaPair<'_> {
             .map(|v| hd(brep.b, K_VERTEX, v.index()))
             .collect())
     }
+    fn face_calculate_bounding_box(
+        &self,
+        k: &Kernel,
+        face: H,
+        tight: bool,
+    ) -> crate::Result<Extent3d> {
+        let b = self.brep_r(face)?;
+        crate::query::face::p1::calculate_bounding_box(k, b, fid(face), tight)
+    }
     fn vertex_brep(&self, vertex: H) -> crate::Result<Option<H>> {
         let b = self.brep_r(vertex)?;
         Ok(vx::brep(b, vid(vertex))?.map(|_| brep_h(vertex.b)))
@@ -1115,6 +1125,16 @@ impl IntersectorBrepP2<H> for ArenaPair<'_> {
             Some(&mut notify),
         )?;
         Ok(deleted_edge.map(|e| hd(brep.b, K_EDGE, e.index())))
+    }
+    fn edge_normalized_evaluate(&mut self, k: &Kernel, edge: H, t: f64) -> crate::Result<Point3> {
+        if edge.kind != K_EDGE {
+            return Err(invalid("not an edge handle"));
+        }
+        let b = self.brep_m(edge)?;
+        let eu = eu1::primary_edgeuse(b, eid(edge))?
+            .ok_or_else(|| invalid("edge without primary edge use"))?;
+        // (pOptFirstDeriv NULL, bOKToMakeUVTrimCurve TRUE by default)
+        Ok(eu3::normalized_evaluate(k, b, eu, t, false, false, true)?.point)
     }
     fn vertex_edges(&self, vertex: H) -> crate::Result<Vec<H>> {
         let b = self.brep_r(vertex)?;

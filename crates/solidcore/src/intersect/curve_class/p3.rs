@@ -21,11 +21,11 @@
 //! Deviations:
 //! - **Object handles.** As in part 1, every `SmObject` pointer is a caller-chosen handle
 //!   `O` ([`ClassObject`]) and the geometry behind it comes from a [`ClassGeometry`]; the
-//!   kernel is passed explicitly. A handle of a vertex or edge carries no B-rep that the
-//!   port can reach, so every topology member the code calls (`SmEdge::GetVertex`,
-//!   `GetInterval`, `GetCurve`, `SmVertex::GetPoint`, the zone tolerances of both) is
-//!   [`SolidError::Unported`] here, exactly as in `intersect::point_class`; the
-//!   reason is the missing handle-to-B-rep resolution, not a missing unit.
+//!   kernel is passed explicitly. `SmEdge::GetCurve` reaches the edge's B-rep through
+//!   [`ClassGeometry::topology_entity`] (a handle the adapter cannot resolve stays
+//!   [`SolidError::Unported`]); the other topology members the code calls
+//!   (`SmEdge::GetVertex`, `GetInterval`, `SmVertex::GetPoint`, the zone tolerances of
+//!   both) are still [`SolidError::Unported`] here.
 //! - **Out-params.** `FindInterval` returns a [`FoundInterval`]; `InsertPointClass` returns
 //!   `rbInsertionMade`; `sm_ChangeEdgePointClassToNearVertex` returns
 //!   `rbChangedToVertexFlag`; `MergePointClass`'s optional output arrays are
@@ -59,7 +59,7 @@
 //!   case this file needs (an explicit tolerance).
 
 use crate::curve::curve::p2::Curve;
-use crate::error::{ignore_status, Result, SolidError};
+use crate::error::{ignore_status, EntityRef, Result, SolidError};
 use crate::geom::extent1d::Extent1d;
 use crate::geom::geom_utility::p1::line_closest_point;
 use crate::geom::global_solver::SolverOperation;
@@ -79,6 +79,7 @@ use crate::intersect::point_class::{
 use crate::kernel::Kernel;
 use crate::math::{Point3, Vec3, BIG_DOUBLE};
 use crate::surface::surface::Surface;
+use crate::topology::edge as topo_edge;
 
 const OP_FIND: &str = "intersect::curve_class::p3::CurveClassification::find_interval";
 const OP_FIND_PC: &str = "intersect::curve_class::p3::CurveClassification::find_point_class";
@@ -89,6 +90,7 @@ const OP_MERGE: &str = "intersect::curve_class::p3::CurveClassification::merge_p
 const OP_CLEANUP: &str = "intersect::curve_class::p3::CurveClassification::cleanup_and_validate";
 const OP_NEAR_VERTEX: &str = "intersect::curve_class::p3::change_edge_point_class_to_near_vertex";
 const OP_SQUEEZE: &str = "intersect::curve_class::p3::fix_problems_by_squeezing";
+const OP_EDGE: &str = "intersect::curve_class::p3::edge_curve";
 
 /// `SM_ERR_OUTSIDE_OF_DOMAIN` (`SmMessages.h`).
 const SM_ERR_OUTSIDE_OF_DOMAIN: i32 = 1020;
@@ -146,14 +148,20 @@ fn edge_interval<O: ClassObject>(edge: O) -> Result<Extent1d> {
     Err(SolidError::unported("SmEdge::GetInterval", "topology.edge"))
 }
 
-/// `SmEdge::GetCurve`.
+/// `SmEdge::GetCurve`, on the edge [`ClassGeometry::topology_entity`] resolves `edge` to;
+/// a handle resolved to another entity is [`SolidError::InvalidInput`], one the adapter
+/// cannot resolve (no B-rep) stays [`SolidError::Unported`].
 fn edge_curve<O: ClassObject, G: ClassGeometry<O>>(
     geometry: &G,
     edge: O,
 ) -> Result<Option<&Curve>> {
-    let _ = (geometry, edge);
-    // UNPORTED(topology.edge): SmEdge::GetCurve
-    Err(SolidError::unported("SmEdge::GetCurve", "topology.edge"))
+    match geometry.topology_entity(edge) {
+        Some((b, EntityRef::Edge(e))) => topo_edge::curve(b, e),
+        Some(_) => Err(SolidError::invalid_input(OP_EDGE, "handle is not an edge")),
+        // an opaque handle (the adapter has no B-rep): still a deferral
+        // UNPORTED(topology.edge): SmEdge::GetCurve (unresolved handle)
+        None => Err(SolidError::unported("SmEdge::GetCurve", "topology.edge")),
+    }
 }
 
 /// `SmVertex::GetPoint`.
@@ -201,11 +209,12 @@ fn point_class_mate_loc_by_index<O: ClassObject>(
 
 /// `SmCurveClassification::GetClassifyCrvLoc(ULONG)`: the location of boundary `index`.
 pub(super) fn classify_crv_loc_by_index<O: ClassObject>(
+    k: &Kernel,
     geometry: &impl ClassGeometry<O>,
     cc: &CurveClassification<O>,
     index: usize,
 ) -> Result<Point3> {
-    Ok(cc.classify_crv_loc_by_index(geometry, index)?.0)
+    Ok(cc.classify_crv_loc_by_index(k, geometry, index)?.0)
 }
 
 /// `SmCurveClassification::AreCoincidentMaybe(other, index, endOfCoincidentMaybe)`
@@ -277,13 +286,14 @@ pub(super) fn connect_intervals<O: ClassObject>(
 ///
 /// Those of [`Curve::is_degenerate`].
 pub fn curve_is_degenerate(
+    k: &Kernel,
     curve: Option<&Curve>,
     interval: &Extent1d,
     xsect_tol_3d: f64,
 ) -> Result<bool> {
     match curve {
         None => Ok(true),
-        Some(c) => c.is_degenerate(xsect_tol_3d, Some(interval)),
+        Some(c) => c.is_degenerate(k, xsect_tol_3d, Some(interval)),
     }
 }
 
@@ -344,12 +354,13 @@ fn pair_tol<O: ClassObject>(
 /// `SmCurveClassification::Evaluate`-style: the position and unit tangent of `curve` at
 /// `param` (`Evaluate(param, 1, from_left, pts)` then `Unitize` on the tangent).
 fn point_and_unit_tangent(
+    k: &Kernel,
     curve: &Curve,
     param: f64,
     from_left: bool,
     op: &'static str,
 ) -> Result<(Point3, Vec3)> {
-    let d = curve.evaluate(param, 1, from_left, true)?;
+    let d = curve.evaluate(k, param, 1, from_left, true)?;
     let p = *d
         .first()
         .ok_or(SolidError::invalid_input(op, "no position"))?;
@@ -463,11 +474,11 @@ impl<O: ClassObject> CurveClassification<O> {
                 // not interior: use the curve tangent.
                 // GetClassifyCrvLoc(0): SSSPointFlag ? SSSPoint : Curve(Param)
                 let start_pt =
-                    self.classify_crv_loc(geometry, &first.start, first.interval.min())?;
+                    self.classify_crv_loc(k, geometry, &first.start, first.interval.min())?;
 
                 // cp_Curve position, UnintTan for dParameter (SER)
                 let curve = cc_curve(self, geometry, OP_FIND)?;
-                let (pt, tan) = point_and_unit_tangent(curve, param, true, OP_FIND)?;
+                let (pt, tan) = point_and_unit_tangent(k, curve, param, true, OP_FIND)?;
 
                 // Leave rdEndDist3d as actual 3d distance.
                 out.end_dist_3d = start_pt.distance(pt);
@@ -510,11 +521,11 @@ impl<O: ClassObject> CurveClassification<O> {
                 )?;
 
                 // GetClassifyCrvLoc(GetSize()): the last boundary
-                let end_pt = self.classify_crv_loc(geometry, &last.end, last.interval.max())?;
+                let end_pt = self.classify_crv_loc(k, geometry, &last.end, last.interval.max())?;
 
                 // cp_Curve position, UnintTan for dParameter (SER)
                 let curve = cc_curve(self, geometry, OP_FIND)?;
-                let (pt, tan) = point_and_unit_tangent(curve, param, false, OP_FIND)?;
+                let (pt, tan) = point_and_unit_tangent(k, curve, param, false, OP_FIND)?;
 
                 out.end_dist_3d = end_pt.distance(pt);
 
@@ -566,9 +577,9 @@ impl<O: ClassObject> CurveClassification<O> {
 
             // Test 3D space tolerances to see if point lies near existing end-points.
             let curve = cc_curve(self, geometry, OP_FIND)?;
-            let start_pt = curve.evaluate_point(ivl.min())?;
-            let end_pt = curve.evaluate_point(ivl.max())?;
-            let classify_pt = curve.evaluate_point(param)?;
+            let start_pt = curve.evaluate_point(k, ivl.min())?;
+            let end_pt = curve.evaluate_point(k, ivl.max())?;
+            let classify_pt = curve.evaluate_point(k, param)?;
 
             // Start/End tolerances - 2d or 3d as needed
             let start_tol = pair_tol(
@@ -600,10 +611,10 @@ impl<O: ClassObject> CurveClassification<O> {
             // watch for misClassify due to Closed curve - check arc length not Dist3D
             if start_3d_dist < start_tol || end_3d_dist < end_tol {
                 let seg = Extent1d::from_min_max(ivl.min(), param);
-                start_3d_dist = curve.approximate_length(&seg, 5, false)?.0;
+                start_3d_dist = curve.approximate_length(k, &seg, 5, false)?.0;
 
                 let seg = Extent1d::from_min_max(param, ivl.max());
-                end_3d_dist = curve.approximate_length(&seg, 5, false)?.0;
+                end_3d_dist = curve.approximate_length(k, &seg, 5, false)?.0;
             }
 
             // Use ParamSpace Dist:[Param,EndPt] to help classify
@@ -1290,7 +1301,7 @@ impl<O: ClassObject> CurveClassification<O> {
 
         // evaluate the interval's min-point's position in 3 space using the curve
         // definition (gets SSSPoint when available else the curve point)
-        let vert_pnt = classify_crv_loc_by_index(geometry, self, index)?;
+        let vert_pnt = classify_crv_loc_by_index(k, geometry, self, index)?;
 
         // when the point classifies to an edge - remember that edge
         let (point_class_type, point_class_object) = {
@@ -1370,7 +1381,7 @@ impl<O: ClassObject> CurveClassification<O> {
                 if self.at(i)?.mid.object() == old_edge {
                     // evaluate interval midPoint position
                     let curve = cc_curve(self, geometry, OP_MERGE)?;
-                    let mid_pnt = curve.evaluate_point(self.at(i)?.interval.evaluate(0.5))?;
+                    let mid_pnt = curve.evaluate_point(k, self.at(i)?.interval.evaluate(0.5))?;
 
                     // XSectTol3d(SrcCurve, pNewEdge)
                     let mut this_xsect_tol_3d = xsect_tol_3d_from_zones(
@@ -1488,7 +1499,7 @@ impl<O: ClassObject> CurveClassification<O> {
                 if coin == Coincident::No && self.size() > 1 {
                     let curve = cc_curve(self, geometry, OP_CLEANUP)?;
                     let ivl = self.at(ii)?.interval;
-                    if curve_is_degenerate(Some(curve), &ivl, xsect_tol_3d)? {
+                    if curve_is_degenerate(k, Some(curve), &ivl, xsect_tol_3d)? {
                         coin = Coincident::Yes;
                         // Have to set eEndOfCM: doesn't matter except at ends of CC.
                         end_of_cm = if ii == 0 {
@@ -1656,6 +1667,7 @@ pub fn change_edge_point_class_to_near_vertex<O: ClassObject>(
         let edge_xsect_tol_3d = xsect_tol_3d_from_zones(k, edge_zone_tol_3d, edge_zone_tol_3d);
         if vertex == vertex_next
             && curve_is_degenerate(
+                k,
                 edge_curve(geometry, edge)?,
                 &cc.at(index)?.interval,
                 edge_xsect_tol_3d,
@@ -1685,6 +1697,7 @@ pub fn change_edge_point_class_to_near_vertex<O: ClassObject>(
         if let Some(prev) = index.checked_sub(1) {
             if vertex == vertex_last
                 && curve_is_degenerate(
+                    k,
                     edge_curve(geometry, edge)?,
                     &cc.at(prev)?.interval,
                     edge_xsect_tol_3d,

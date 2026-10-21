@@ -29,10 +29,18 @@
 //! on.
 //! Skip relations reuse `geom::tol::Relation` and its documented sorted-handle
 //! query order, rather than upstream's address-dependent hash order.
+//! `DependencyMerge` runs `ManifoldBoolean` through the `boolean.merge_p4` port
+//! on the engine members `SmMerge::SmMerge` (`boolean.merge_p2`) builds
+//! ([`MergeEngine::from_merge`]); called before `construct` it refuses rather than
+//! default the engine's state.
 
-use super::p1::MergeOptions;
+use super::p1::{MergeOptions, MergeState};
+use super::p2::MergeOperand;
+use super::p4::{BooleanKernels, KernelManifoldIntersector, ManifoldState};
+use crate::boolean::topology_intersector::p1::TopologyIntersector;
 use crate::error::{ignored, EntityRef, Result, SolidError};
 use crate::geom::a_object::BooleanOperation;
+use crate::geom::attribute::AttributeStore;
 use crate::geom::context::{with_mark_lock, MarkLock, ALL_MARKS};
 use crate::geom::extent2d::Extent2d;
 use crate::geom::tol::Relation;
@@ -80,9 +88,86 @@ pub trait BooleanDriver {
     ) -> Result<Option<Self::Operand>>;
 }
 
-/// Dependency adapter used by API wrappers until the claimed constructor and
-/// manifold-boolean implementations are integrated. No operand result is faked.
-pub struct DependencyMerge;
+/// The `SmMerge` the API wrappers drive: `construct` (`boolean.merge_p2`) builds the
+/// engine and `ManifoldBoolean` runs the `boolean.merge_p4` port on it. A default
+/// adapter has none until it is constructed. No engine state or operand result is faked.
+#[derive(Debug, Default)]
+pub struct DependencyMerge {
+    engine: Option<MergeEngine>,
+}
+
+/// The `SmMerge` members that `ManifoldBoolean` reads and writes. Their owner
+/// reads results (such as `ExtractSeparate`'s component arrays) through
+/// [`DependencyMerge::engine`] or takes them back with [`DependencyMerge::into_engine`].
+#[derive(Debug)]
+pub struct MergeEngine {
+    /// `m_vTI` and the merge options, tolerances and mates (canonical adapter).
+    pub intersector: KernelManifoldIntersector,
+    /// Retained intersection lists, extracted components and traversal marks.
+    pub state: ManifoldState,
+    /// The attribute store the merge's notifications and region data use.
+    pub attributes: AttributeStore,
+}
+
+impl MergeEngine {
+    /// The engine members of a merge built by `SmMerge(context, pBrep, pOtherBrep,
+    /// dApproxTol3d, dAngleTolRadians, pOptMergeOptions)` ([`MergeState::with_breps`]):
+    /// its options, tag and `m_bManifoldBoolean`, its intersector's (possibly computed)
+    /// tolerances and `m_bIntersectionLoopClosed`. The engine owns a fresh attribute
+    /// store, so its notification keys use namespace 0. The adapter always names both
+    /// operand slots; a null other B-rep is refused by `ManifoldBoolean` itself.
+    ///
+    /// # Errors
+    /// None in practice (namespace 0 is valid); those of [`KernelManifoldIntersector::new`].
+    pub fn from_merge(merge: &MergeState<TopologyIntersector<MergeOperand>>) -> Result<Self> {
+        let mut intersector = KernelManifoldIntersector::new(0)?;
+        intersector.merge.options = merge.options;
+        intersector.merge.tag_id = merge.tag_id;
+        intersector.merge.manifold_boolean = merge.manifold_boolean;
+        intersector.merge.intersection_loop_closed = merge.intersection_loop_closed;
+        intersector.set_intersection_tolerances(
+            merge.intersector.this_approx_tol_3d(),
+            merge.intersector.this_ang_tol_rad(),
+        );
+        let mut state = ManifoldState::default();
+        if let Some(closed) = merge.intersection_loop_closed {
+            state.intersection_loop_closed = closed;
+        }
+        Ok(Self {
+            intersector,
+            state,
+            attributes: AttributeStore::default(),
+        })
+    }
+}
+
+impl DependencyMerge {
+    /// Adopt the members of a constructed `SmMerge`. For the constructor's owner.
+    #[must_use]
+    pub fn with_engine(engine: MergeEngine) -> Self {
+        Self {
+            engine: Some(engine),
+        }
+    }
+
+    /// The adopted engine, if any.
+    #[must_use]
+    pub fn engine(&self) -> Option<&MergeEngine> {
+        self.engine.as_ref()
+    }
+
+    /// The adopted engine, mutably, if any.
+    pub fn engine_mut(&mut self) -> Option<&mut MergeEngine> {
+        self.engine.as_mut()
+    }
+
+    /// Give the adopted engine back to its owner, with every result written to it,
+    /// including after a failed call.
+    #[must_use]
+    pub fn into_engine(self) -> Option<MergeEngine> {
+        self.engine
+    }
+}
 
 impl BooleanDriver for DependencyMerge {
     type Operand = Brep;
@@ -93,32 +178,66 @@ impl BooleanDriver for DependencyMerge {
 
     fn construct(
         &mut self,
-        _k: &mut Kernel,
-        _primary: &mut Option<Brep>,
-        _other: &mut Option<Brep>,
-        _approx_tol: f64,
-        _angle_tol: f64,
-        _options: Option<&MergeOptions>,
+        k: &mut Kernel,
+        primary: &mut Option<Brep>,
+        other: &mut Option<Brep>,
+        approx_tol: f64,
+        angle_tol: f64,
+        options: Option<&MergeOptions>,
     ) -> Result<()> {
-        // UNPORTED(boolean.merge_p2): SmMerge::SmMerge
-        Err(SolidError::unported("SmMerge::SmMerge", "boolean.merge_p2"))
+        // SM_ASSERT(pBrep != NULL); the other B-rep may be null (the stitch methods).
+        let primary = primary.as_ref().ok_or(SolidError::invalid_input(
+            OP,
+            "SmMerge without primary B-rep",
+        ))?;
+        let merge = MergeState::with_breps(
+            k,
+            (primary, MergeOperand::Primary),
+            other.as_ref().map(|o| (o, MergeOperand::Other)),
+            approx_tol,
+            angle_tol,
+            options,
+        )?;
+        self.engine = Some(MergeEngine::from_merge(&merge)?);
+        Ok(())
     }
 
+    /// The operands share `k` (one context). An assigned `rpResult` is the
+    /// primary B-rep, moved out of its slot; `ExtractSeparate` leaves it
+    /// unassigned and its components in the engine's manifold state.
     fn manifold_boolean(
         &mut self,
-        _k: &mut Kernel,
-        _primary: &mut Option<Brep>,
-        _other: &mut Option<Brep>,
-        _manifold: &mut bool,
-        _lamina_edges: &mut u64,
-        _operation: BooleanOperation,
-        _caller_lock: Option<&mut MarkLock>,
+        k: &mut Kernel,
+        primary: &mut Option<Brep>,
+        other: &mut Option<Brep>,
+        manifold: &mut bool,
+        lamina_edges: &mut u64,
+        operation: BooleanOperation,
+        caller_lock: Option<&mut MarkLock>,
     ) -> Result<Option<Brep>> {
-        // UNPORTED(boolean.merge_p4): SmMerge::ManifoldBoolean
-        Err(SolidError::unported(
-            "SmMerge::ManifoldBoolean",
-            "boolean.merge_p4",
-        ))
+        // A member function of a constructed SmMerge: `construct` comes first.
+        let Some(engine) = self.engine.as_mut() else {
+            return Err(SolidError::invalid_input(
+                OP,
+                "ManifoldBoolean before SmMerge::SmMerge",
+            ));
+        };
+        engine.intersector.set_intersect_lamina_edges(*lamina_edges);
+        let mut kernels = BooleanKernels {
+            primary: k,
+            other: None,
+        };
+        let assigned = engine.intersector.manifold_boolean(
+            &mut kernels,
+            primary,
+            other,
+            &mut engine.state,
+            &mut engine.attributes,
+            *manifold,
+            operation,
+            caller_lock,
+        )?;
+        Ok(if assigned { primary.take() } else { None })
     }
 }
 
@@ -629,7 +748,7 @@ pub fn boolean_lists_with_notifications(
     } else {
         let mut primary = Some(primary);
         let mut other = Some(other);
-        let mut driver = DependencyMerge;
+        let mut driver = DependencyMerge::default();
         driver.construct(k, &mut primary, &mut other, 0.0, 0.0, options)?;
         non_manifold_boolean(
             k,
@@ -862,10 +981,109 @@ mod tests {
             }
         ));
         assert_eq!(input, [None, None, Some(3)]);
-        let mut driver = DependencyMerge;
+        let mut driver = DependencyMerge::default();
         let mut input = vec![Some(Brep::new()), Some(Brep::new())];
         let error = boolean_trees(&mut k, &mut input, &[0, 1, -1], None, &mut driver).unwrap_err();
         assert!(error.is_unported());
+    }
+    #[test]
+    fn dependency_merge_runs_manifold_boolean_on_a_constructed_engine() {
+        let mut k = Kernel::default();
+        let call = |driver: &mut DependencyMerge, k: &mut Kernel, other: Option<Brep>| {
+            let mut primary = Some(Brep::new());
+            let mut other = other;
+            let result = non_manifold_boolean(
+                k,
+                driver,
+                &mut primary,
+                &mut other,
+                &mut true,
+                &mut 0,
+                BooleanOperation::Union,
+            );
+            (result, primary.is_some(), other.is_some())
+        };
+        let (result, ..) = call(&mut DependencyMerge::default(), &mut k, Some(Brep::new()));
+        assert!(matches!(result, Err(SolidError::InvalidInput { .. })));
+        assert!(DependencyMerge::default().into_engine().is_none());
+        // Retained state the owner moved in, and its options, survive the calls.
+        let mut intersector = KernelManifoldIntersector::new(0).unwrap();
+        let options = MergeOptions::new(true, false, false, true, true);
+        intersector.merge.set_merge_options(Some(&options));
+        let mut state = ManifoldState::default();
+        state.other_components.push(Brep::new());
+        state.intersection_loop_closed = false;
+        let mut driver = DependencyMerge::with_engine(MergeEngine {
+            intersector,
+            state,
+            attributes: AttributeStore::default(),
+        });
+        // merge_p4 checks both operands (NER), then waits on query.brep for
+        // the temporary origin shift before touching either operand.
+        let (result, ..) = call(&mut driver, &mut k, None);
+        assert!(matches!(
+            result,
+            Err(SolidError::Upstream {
+                code: crate::error::SM_ERR_NULL_POINTER,
+                ..
+            })
+        ));
+        let (result, primary, other) = call(&mut driver, &mut k, Some(Brep::new()));
+        assert!(matches!(
+            result,
+            Err(SolidError::Unported {
+                upstream: "SmBrep::CalculateBoundingBox",
+                unit: "query.brep",
+            })
+        ));
+        assert!(primary && other);
+        assert_eq!(driver.engine().unwrap().state.other_components.len(), 1);
+        let engine = driver.into_engine().unwrap();
+        assert_eq!(engine.intersector.intersect_lamina_edges(), 1);
+        assert_eq!(engine.intersector.merge.options, options);
+        assert_eq!(engine.state.other_components.len(), 1);
+        assert!(!engine.state.intersection_loop_closed);
+    }
+    #[test]
+    fn construct_builds_the_engine_manifold_boolean_runs_on() {
+        let mut k = Kernel::default();
+        let options = MergeOptions::new(true, false, false, true, true);
+        let mut driver = DependencyMerge::default();
+        let mut primary = Some(Brep::new());
+        let mut other = Some(Brep::new());
+        driver
+            .construct(&mut k, &mut primary, &mut other, 1e-3, 0.0, Some(&options))
+            .unwrap();
+        let engine = driver.engine().unwrap();
+        assert_eq!(engine.intersector.merge.options, options);
+        assert_eq!(engine.intersector.merge.manifold_boolean, Some(true));
+        assert_eq!(
+            engine.intersector.merge.intersection_loop_closed,
+            Some(true)
+        );
+        assert!(engine.state.intersection_loop_closed);
+        // The constructed engine reaches merge_p4, which waits on query.brep.
+        let result = non_manifold_boolean(
+            &mut k,
+            &mut driver,
+            &mut primary,
+            &mut other,
+            &mut true,
+            &mut 0,
+            BooleanOperation::Union,
+        );
+        assert!(matches!(
+            result,
+            Err(SolidError::Unported {
+                upstream: "SmBrep::CalculateBoundingBox",
+                unit: "query.brep",
+            })
+        ));
+        let mut none = None;
+        let error = DependencyMerge::default()
+            .construct(&mut k, &mut none, &mut other, 1e-3, 0.0, None)
+            .unwrap_err();
+        assert!(matches!(error, SolidError::InvalidInput { .. }));
     }
     #[test]
     fn nonmanifold_restores_flag_on_failure_but_retains_lamina_mode() {

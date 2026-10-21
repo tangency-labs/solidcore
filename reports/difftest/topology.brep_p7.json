@@ -159,8 +159,8 @@
     },
     {
       "deferred": {
-        "symbol": "SmSphere::IsNurbSurfaceSphere",
-        "unit": "surface.sphere"
+        "symbol": "SmSurfOfExtrusion as SmSurface",
+        "unit": "surface.surface_p2"
       },
       "max_rel_err": 0.0,
       "name": "read_Mouse.smb_0",
@@ -171,8 +171,8 @@
     },
     {
       "deferred": {
-        "symbol": "SmSphere::IsNurbSurfaceSphere",
-        "unit": "surface.sphere"
+        "symbol": "SmSurfOfExtrusion as SmSurface",
+        "unit": "surface.surface_p2"
       },
       "max_rel_err": 0.0,
       "name": "read_Mouse.smb_1",
@@ -295,8 +295,8 @@
     },
     {
       "deferred": {
-        "symbol": "SmSphere::IsNurbSurfaceSphere",
-        "unit": "surface.sphere"
+        "symbol": "SmFace::GetTolerance",
+        "unit": "topology.face_p2"
       },
       "max_rel_err": 0.0,
       "name": "read_Endcap.smb_0",
@@ -307,8 +307,8 @@
     },
     {
       "deferred": {
-        "symbol": "SmSphere::IsNurbSurfaceSphere",
-        "unit": "surface.sphere"
+        "symbol": "SmFace::GetTolerance",
+        "unit": "topology.face_p2"
       },
       "max_rel_err": 0.0,
       "name": "read_Endcap.smb_1",
@@ -431,8 +431,8 @@
     },
     {
       "deferred": {
-        "symbol": "SmCone as SmSurface",
-        "unit": "surface.surface_p2"
+        "symbol": "SmFace::GetTolerance",
+        "unit": "topology.face_p2"
       },
       "max_rel_err": 0.0,
       "name": "read_box_with_large_fillet.smb_0",
@@ -443,8 +443,8 @@
     },
     {
       "deferred": {
-        "symbol": "SmCone as SmSurface",
-        "unit": "surface.surface_p2"
+        "symbol": "SmFace::GetTolerance",
+        "unit": "topology.face_p2"
       },
       "max_rel_err": 0.0,
       "name": "read_box_with_large_fillet.smb_1",
@@ -567,8 +567,8 @@
     },
     {
       "deferred": {
-        "symbol": "SmCone as SmSurface",
-        "unit": "surface.surface_p2"
+        "symbol": "SmFace::GetTolerance",
+        "unit": "topology.face_p2"
       },
       "max_rel_err": 0.0,
       "name": "read_cone.smb_0",
@@ -579,8 +579,8 @@
     },
     {
       "deferred": {
-        "symbol": "SmCone as SmSurface",
-        "unit": "surface.surface_p2"
+        "symbol": "SmFace::GetTolerance",
+        "unit": "topology.face_p2"
       },
       "max_rel_err": 0.0,
       "name": "read_cone.smb_1",
@@ -843,8 +843,8 @@
     },
     {
       "deferred": {
-        "symbol": "SmSphere::IsNurbSurfaceSphere",
-        "unit": "surface.sphere"
+        "symbol": "SmFace::GetTolerance",
+        "unit": "topology.face_p2"
       },
       "max_rel_err": 0.0,
       "name": "read_ellips_ts2.smb_0",
@@ -855,8 +855,8 @@
     },
     {
       "deferred": {
-        "symbol": "SmSphere::IsNurbSurfaceSphere",
-        "unit": "surface.sphere"
+        "symbol": "SmFace::GetTolerance",
+        "unit": "topology.face_p2"
       },
       "max_rel_err": 0.0,
       "name": "read_ellips_ts2.smb_1",
@@ -1251,8 +1251,8 @@
     },
     {
       "deferred": {
-        "symbol": "SmSphere::IsNurbSurfaceSphere",
-        "unit": "surface.sphere"
+        "symbol": "SmSphere as SmSurface",
+        "unit": "surface.surface_p2"
       },
       "max_rel_err": 0.0,
       "name": "read_sphere.smb_0",
@@ -1263,8 +1263,8 @@
     },
     {
       "deferred": {
-        "symbol": "SmSphere::IsNurbSurfaceSphere",
-        "unit": "surface.sphere"
+        "symbol": "SmSphere as SmSurface",
+        "unit": "surface.surface_p2"
       },
       "max_rel_err": 0.0,
       "name": "read_sphere.smb_1",
@@ -1387,8 +1387,8 @@
     },
     {
       "deferred": {
-        "symbol": "SmSphere::IsNurbSurfaceSphere",
-        "unit": "surface.sphere"
+        "symbol": "SmSurfOfExtrusion as SmSurface",
+        "unit": "surface.surface_p2"
       },
       "max_rel_err": 0.0,
       "name": "read_surf_extrude.smb_0",
@@ -1399,8 +1399,8 @@
     },
     {
       "deferred": {
-        "symbol": "SmSphere::IsNurbSurfaceSphere",
-        "unit": "surface.sphere"
+        "symbol": "SmSurfOfExtrusion as SmSurface",
+        "unit": "surface.surface_p2"
       },
       "max_rel_err": 0.0,
       "name": "read_surf_extrude.smb_1",
@@ -1523,8 +1523,8 @@
     },
     {
       "deferred": {
-        "symbol": "SmSphere::IsNurbSurfaceSphere",
-        "unit": "surface.sphere"
+        "symbol": "SmFace::GetTolerance",
+        "unit": "topology.face_p2"
       },
       "max_rel_err": 0.0,
       "name": "read_surf_rev.smb_0",
@@ -1535,8 +1535,8 @@
     },
     {
       "deferred": {
-        "symbol": "SmSphere::IsNurbSurfaceSphere",
-        "unit": "surface.sphere"
+        "symbol": "SmFace::GetTolerance",
+        "unit": "topology.face_p2"
       },
       "max_rel_err": 0.0,
       "name": "read_surf_rev.smb_1",
@@ -1659,8 +1659,8 @@
     },
     {
       "deferred": {
-        "symbol": "SmSphere::IsNurbSurfaceSphere",
-        "unit": "surface.sphere"
+        "symbol": "SmSphere as SmSurface",
+        "unit": "surface.surface_p2"
       },
       "max_rel_err": 0.0,
       "name": "read_surf_sphere150.smb_0",
@@ -1671,8 +1671,8 @@
     },
     {
       "deferred": {
-        "symbol": "SmSphere::IsNurbSurfaceSphere",
-        "unit": "surface.sphere"
+        "symbol": "SmSphere as SmSurface",
+        "unit": "surface.surface_p2"
       },
       "max_rel_err": 0.0,
       "name": "read_surf_sphere150.smb_1",
@@ -1799,8 +1799,8 @@
     },
     {
       "deferred": {
-        "symbol": "SmSphere::IsNurbSurfaceSphere",
-        "unit": "surface.sphere"
+        "symbol": "SmFace::GetTolerance",
+        "unit": "topology.face_p2"
       },
       "max_rel_err": 0.0,
       "name": "read_torus.smb_0",
@@ -1811,8 +1811,8 @@
     },
     {
       "deferred": {
-        "symbol": "SmSphere::IsNurbSurfaceSphere",
-        "unit": "surface.sphere"
+        "symbol": "SmFace::GetTolerance",
+        "unit": "topology.face_p2"
       },
       "max_rel_err": 0.0,
       "name": "read_torus.smb_1",
@@ -1939,8 +1939,8 @@
     },
     {
       "deferred": {
-        "symbol": "SmSphere::IsNurbSurfaceSphere",
-        "unit": "surface.sphere"
+        "symbol": "SmFace::GetTolerance",
+        "unit": "topology.face_p2"
       },
       "max_rel_err": 0.0,
       "name": "read_toruswvy.smb_0",
@@ -1951,8 +1951,8 @@
     },
     {
       "deferred": {
-        "symbol": "SmSphere::IsNurbSurfaceSphere",
-        "unit": "surface.sphere"
+        "symbol": "SmFace::GetTolerance",
+        "unit": "topology.face_p2"
       },
       "max_rel_err": 0.0,
       "name": "read_toruswvy.smb_1",
@@ -2079,8 +2079,8 @@
     },
     {
       "deferred": {
-        "symbol": "SmSphere::IsNurbSurfaceSphere",
-        "unit": "surface.sphere"
+        "symbol": "SmFace::GetTolerance",
+        "unit": "topology.face_p2"
       },
       "max_rel_err": 0.0,
       "name": "read_vase_rev.smb_0",
@@ -2091,8 +2091,8 @@
     },
     {
       "deferred": {
-        "symbol": "SmSphere::IsNurbSurfaceSphere",
-        "unit": "surface.sphere"
+        "symbol": "SmFace::GetTolerance",
+        "unit": "topology.face_p2"
       },
       "max_rel_err": 0.0,
       "name": "read_vase_rev.smb_1",
@@ -2215,8 +2215,8 @@
     },
     {
       "deferred": {
-        "symbol": "SmFace::GetBrep",
-        "unit": "topology.face_p4"
+        "symbol": "SmBrep::MakeWireEdgeVertex",
+        "unit": "topology.brep_p3"
       },
       "max_rel_err": 0.0,
       "name": "copy_plane_square.smb_0",
@@ -2227,8 +2227,8 @@
     },
     {
       "deferred": {
-        "symbol": "SmMerge::SmMerge",
-        "unit": "boolean.merge_p2"
+        "symbol": "SmBrep::MakeWireEdge",
+        "unit": "topology.brep_p3"
       },
       "max_rel_err": 0.0,
       "name": "copy_plane_square.smb_1",
@@ -2239,8 +2239,8 @@
     },
     {
       "deferred": {
-        "symbol": "SmFace::GetBrep",
-        "unit": "topology.face_p4"
+        "symbol": "SmBrep::MakeWireEdgeVertex",
+        "unit": "topology.brep_p3"
       },
       "max_rel_err": 0.0,
       "name": "copy_disk.smb_0",
@@ -2251,8 +2251,8 @@
     },
     {
       "deferred": {
-        "symbol": "SmMerge::SmMerge",
-        "unit": "boolean.merge_p2"
+        "symbol": "SmBrep::MakeWireEdge",
+        "unit": "topology.brep_p3"
       },
       "max_rel_err": 0.0,
       "name": "copy_disk.smb_1",
@@ -2263,8 +2263,8 @@
     },
     {
       "deferred": {
-        "symbol": "SmFace::GetBrep",
-        "unit": "topology.face_p4"
+        "symbol": "SmBrep::MakeWireEdge",
+        "unit": "topology.brep_p3"
       },
       "max_rel_err": 0.0,
       "name": "copy_plane_circ.smb_0",
@@ -2275,8 +2275,8 @@
     },
     {
       "deferred": {
-        "symbol": "SmMerge::SmMerge",
-        "unit": "boolean.merge_p2"
+        "symbol": "SmBrep::MakeWireEdge",
+        "unit": "topology.brep_p3"
       },
       "max_rel_err": 0.0,
       "name": "copy_plane_circ.smb_1",
@@ -2852,19 +2852,16 @@
   "cases_passed": 237,
   "cases_total": 316,
   "deferred_by_unit": {
-    "boolean.merge_p2": 3,
     "cpp-guard:ub-165": 3,
     "curve.crv_on_surf": 2,
     "curve.curve_p6": 2,
     "query.brep": 2,
-    "surface.sphere": 20,
-    "surface.surface_p2": 4,
-    "topology.brep_p3": 30,
+    "surface.surface_p2": 8,
+    "topology.brep_p3": 36,
     "topology.brep_p4": 1,
     "topology.brep_p9": 2,
-    "topology.face_p2": 6,
-    "topology.face_p3": 1,
-    "topology.face_p4": 3
+    "topology.face_p2": 22,
+    "topology.face_p3": 1
   },
   "max_rel_err": 0.0,
   "pass": true,

@@ -57,8 +57,8 @@
 //!   [`SolidError::Unported`], which always propagates (also where
 //!   `FindInteriorCurves` skips a node pair whose `ComputePointValues` fails).
 //! - **Unported callees.** `SmSurface::LocalSurfaceIntersect`
-//!   (`surface.surface_p11`), `SmSurfaceIntersector::ComputePointValues` and
-//!   `FlushCurve` (`intersect.surface_intersector_p2`) and `TraceCurve`
+//!   (`surface.surface_p11`), `SmSurfaceIntersector::ComputePointValues`
+//!   (`intersect.surface_intersector_p2`) and `TraceCurve`
 //!   (`intersect.surface_intersector_p4`) return [`SolidError::Unported`].
 //! - **Recursion.** `SolveBranch` nests at most once per tree node; deeper nesting
 //!   (cyclic tree links, which recurse forever upstream) is
@@ -166,6 +166,9 @@ pub struct InteriorCurves {
 /// The advanced surface/surface intersector (`SmAdvSurfaceIntersector`).
 #[derive(Debug, Clone)]
 pub struct AdvSurfaceIntersector<'s, 't, O> {
+    /// Caller context for virtual evaluations.
+    pub kernel: &'s Kernel,
+
     /// The `SmSurfaceIntersector` base.
     pub base: SurfaceIntersector<'s>,
     /// The `SmGlobalSolver` base.
@@ -260,6 +263,7 @@ impl<'s, 't, O: SolutionObject + 't> AdvSurfaceIntersector<'s, 't, O> {
     ///
     /// Those of [`SurfaceIntersector::new`].
     pub fn new(
+        k: &'s Kernel,
         surface1: &'s Surface,
         uv_domain1: &Extent2d,
         surface2: &'s Surface,
@@ -267,6 +271,7 @@ impl<'s, 't, O: SolutionObject + 't> AdvSurfaceIntersector<'s, 't, O> {
         from_fillet_intersector: bool,
     ) -> Result<Self> {
         let base = SurfaceIntersector::new(
+            k,
             surface1,
             uv_domain1,
             surface2,
@@ -287,6 +292,7 @@ impl<'s, 't, O: SolutionObject + 't> AdvSurfaceIntersector<'s, 't, O> {
         solver.at_distance_sq = 0.0;
 
         Ok(Self {
+            kernel: k,
             base,
             solver,
             caches: [None, None],
@@ -1057,8 +1063,8 @@ impl<'s, 't, O: SolutionObject + 't> AdvSurfaceIntersector<'s, 't, O> {
 
             // Skip cases where surface normals are very close
             {
-                let norm1 = surface_evaluate_normal(bss1, uv_guess1)?;
-                let norm2 = surface_evaluate_normal(bss2, uv_guess2)?;
+                let norm1 = surface_evaluate_normal(k, bss1, uv_guess1)?;
+                let norm2 = surface_evaluate_normal(k, bss2, uv_guess2)?;
                 let mut angle_rad = norm1.angle_between(norm2)?;
                 if angle_rad > PI / 2.0 {
                     angle_rad = PI - angle_rad;
@@ -1070,6 +1076,7 @@ impl<'s, 't, O: SolutionObject + 't> AdvSurfaceIntersector<'s, 't, O> {
 
             // Get an intersection curve start point
             let (found_answer, start) = surface_local_surface_intersect(
+                k,
                 bss1,
                 &self.base.uv_domains[0],
                 bss2,
@@ -1090,12 +1097,12 @@ impl<'s, 't, O: SolutionObject + 't> AdvSurfaceIntersector<'s, 't, O> {
             // Get solution 3d and UV points point
             let uv = Point2::new(start[0], start[1]);
             let uv2 = Point2::new(start[2], start[3]);
-            let surf_pnt = bss1.evaluate_point(uv)?;
+            let surf_pnt = bss1.evaluate_point(k, uv)?;
 
             // Skip cases where surface normals are very close
             {
-                let norm1 = surface_evaluate_normal(bss1, uv)?;
-                let norm2 = surface_evaluate_normal(bss2, uv2)?;
+                let norm1 = surface_evaluate_normal(k, bss1, uv)?;
+                let norm2 = surface_evaluate_normal(k, bss2, uv2)?;
                 let mut angle_rad = norm1.angle_between(norm2)?;
                 if angle_rad > PI / 2.0 {
                     angle_rad = PI - angle_rad;
@@ -1144,7 +1151,7 @@ impl<'s, 't, O: SolutionObject + 't> AdvSurfaceIntersector<'s, 't, O> {
             }
 
             // turn m_vCurvePoints into an intersection curve
-            flush_curve(&mut self.base, out)?;
+            flush_curve(k, &mut self.base, out)?;
             self.base.start_point = None;
         }
 
@@ -1161,15 +1168,15 @@ impl<'s, 't, O: SolutionObject + 't> AdvSurfaceIntersector<'s, 't, O> {
     ///
     /// `SM_ERR_NULL_POINTER` without node data (no caches); those of the lazy polar
     /// box build.
-    pub fn branch_is_gauss_separate(&self, branch: &Branch) -> Result<bool> {
+    pub fn branch_is_gauss_separate(&self, k: &Kernel, branch: &Branch) -> Result<bool> {
         let node1 = self.node(0, branch[0])?;
         let node2 = self.node(1, branch[1])?;
         let is_surface = |n: &TreeNode<O>| {
             n.aux_type == AuxDataType::BezierSurface || n.aux_type == AuxDataType::BezierSurfaceHead
         };
         if is_surface(node1) && is_surface(node2) {
-            let box1 = self.polar_box(0, branch[0])?;
-            let box2 = self.polar_box(1, branch[1])?;
+            let box1 = self.polar_box(k, 0, branch[0])?;
+            let box2 = self.polar_box(k, 1, branch[1])?;
             if box1.are_disjoint(&box2) {
                 return Ok(true);
             }
@@ -1178,7 +1185,7 @@ impl<'s, 't, O: SolutionObject + 't> AdvSurfaceIntersector<'s, 't, O> {
     }
 
     /// `((SmBezierAux2d*)m_pData)->GetPolarBox()` of node `id` of tree `index`.
-    fn polar_box(&self, index: usize, id: Option<NodeId>) -> Result<PolarBox> {
+    fn polar_box(&self, k: &Kernel, index: usize, id: Option<NodeId>) -> Result<PolarBox> {
         let cache = self
             .caches
             .get(index)
@@ -1192,11 +1199,11 @@ impl<'s, 't, O: SolutionObject + 't> AdvSurfaceIntersector<'s, 't, O> {
         }
         // built lazily upstream; built on a copy here (the caches are shared)
         let mut copy = cache.clone();
-        copy.polar_box(id)
+        copy.polar_box(k, id)
     }
 
     /// The body of [`GlobalSolve::solve_branch`] (`SolveBranch`).
-    fn solve_branch_at_depth(&mut self, branch: &Branch) -> Result<()> {
+    fn solve_branch_at_depth(&mut self, k: &Kernel, branch: &Branch) -> Result<()> {
         self.separate_gauss_maps = true;
 
         if !self.branch_may_contain_answers(branch)? {
@@ -1212,7 +1219,7 @@ impl<'s, 't, O: SolutionObject + 't> AdvSurfaceIntersector<'s, 't, O> {
 
         let mut achieved_seperability = false;
         if !self.separate_gauss_maps {
-            achieved_seperability = self.branch_is_gauss_separate(branch)?;
+            achieved_seperability = self.branch_is_gauss_separate(k, branch)?;
         }
 
         if achieved_seperability {
@@ -1297,7 +1304,7 @@ impl<'t, O: SolutionObject + 't> GlobalSolve<'t, O> for AdvSurfaceIntersector<'_
             return Err(SolidError::invalid_input(OP_SOLVE, "tree links are cyclic"));
         }
         self.solve_depth += 1;
-        let result = self.solve_branch_at_depth(branch);
+        let result = self.solve_branch_at_depth(self.kernel, branch);
         self.solve_depth -= 1;
         result
     }
@@ -1311,6 +1318,7 @@ impl<'t, O: SolutionObject + 't> GlobalSolve<'t, O> for AdvSurfaceIntersector<'_
     /// `m_vEnd` both UV domains). Never needs more subdivision.
     #[allow(clippy::too_many_lines)] // one upstream function
     fn local_solve(&mut self, branch: &Branch) -> Result<bool> {
+        let k = self.kernel;
         let surface_node1 = self.node(0, branch[0])?;
         let surface_node2 = self.node(1, branch[1])?;
         let bez_patch1 = self.patch(0, branch[0])?;
@@ -1342,25 +1350,25 @@ impl<'t, O: SolutionObject + 't> GlobalSolve<'t, O> for AdvSurfaceIntersector<'_
                 let size2 = surface_node2.bbox.size();
                 let mut uv1 = uv_domain1.evaluate(0.5, 0.5);
                 let mut uv2 = uv_domain2.evaluate(0.5, 0.5);
-                let p1 = bsp1.evaluate_point(uv1)?;
-                let p2 = bsp2.evaluate_point(uv2)?;
+                let p1 = bsp1.evaluate_point(k, uv1)?;
+                let p2 = bsp2.evaluate_point(k, uv2)?;
                 let mut dist = p1.distance(p2);
 
                 // If the sizes are very different - try taking one Newton step to
                 // get a closer guess point on the big surface.
                 if size1.length() > 4.0 * size2.length() {
-                    let uv_points = drop_points_to_tangent_plane(bsp1, uv1, &[p2])?;
+                    let uv_points = drop_points_to_tangent_plane(k, bsp1, uv1, &[p2])?;
                     let uv1_new = uv_domain1.clamp_point(uv_points.first().copied().unwrap_or(uv1));
-                    let p1_new = bsp1.evaluate_point(uv1_new)?;
+                    let p1_new = bsp1.evaluate_point(k, uv1_new)?;
                     let new_dist = p1_new.distance(p2);
                     if new_dist < dist {
                         uv1 = uv1_new;
                         dist = new_dist;
                     }
                 } else if size2.length() > 4.0 * size1.length() {
-                    let uv_points = drop_points_to_tangent_plane(bsp2, uv2, &[p1])?;
+                    let uv_points = drop_points_to_tangent_plane(k, bsp2, uv2, &[p1])?;
                     let uv2_new = uv_domain2.clamp_point(uv_points.first().copied().unwrap_or(uv2));
-                    let p2_new = bsp2.evaluate_point(uv2_new)?;
+                    let p2_new = bsp2.evaluate_point(k, uv2_new)?;
                     let new_dist = p2_new.distance(p1);
                     if new_dist < dist {
                         uv2 = uv2_new;
@@ -1453,11 +1461,13 @@ impl<'t, O: SolutionObject + 't> GlobalSolve<'t, O> for AdvSurfaceIntersector<'_
 
 /// `pSrf->DropPointsToTangentPlane(uv, TRUE, TRUE, n, points, uvs)`.
 fn drop_points_to_tangent_plane(
+    k: &Kernel,
     surface: &Surface,
     uv: Point2,
     points: &[Point3],
 ) -> Result<Vec<Point2>> {
     crate::surface::surface::p7::drop_points_to_tangent_plane(
+        k,
         surface,
         uv,
         Side::Left,
@@ -1499,13 +1509,38 @@ fn trace_curve(
 }
 
 /// `FlushCurve(r3DCurves, rSurface1UVCurves, rSurface2UVCurves, rCurveTypes,
-/// rDeviations)`.
-fn flush_curve(_si: &mut SurfaceIntersector<'_>, _out: &mut InteriorCurves) -> Result<()> {
-    // UNPORTED(intersect.surface_intersector_p2): SmSurfaceIntersector::FlushCurve
-    Err(SolidError::unported(
-        "SmSurfaceIntersector::FlushCurve",
-        "intersect.surface_intersector_p2",
-    ))
+/// rDeviations)`: the base `SmSurfaceIntersector::FlushCurve` (not overridden). The
+/// output arrays are moved in and back, not cleared: its uniqueness test reads the 3D
+/// curves already flushed.
+fn flush_curve(
+    k: &Kernel,
+    si: &mut SurfaceIntersector<'_>,
+    out: &mut InteriorCurves,
+) -> Result<()> {
+    let mut curves = crate::intersect::surface_intersector::p2::TsectCurves {
+        curves_3d: core::mem::take(&mut out.curves_3d),
+        uv_curves: [
+            core::mem::take(&mut out.surface1_uv_curves),
+            core::mem::take(&mut out.surface2_uv_curves),
+        ],
+        curve_types: core::mem::take(&mut out.curve_types),
+        deviations: core::mem::take(&mut out.deviations),
+    };
+    let r = si.flush_curve(k, &mut curves);
+    let crate::intersect::surface_intersector::p2::TsectCurves {
+        curves_3d,
+        uv_curves: [surface1_uv_curves, surface2_uv_curves],
+        curve_types,
+        deviations,
+    } = curves;
+    *out = InteriorCurves {
+        curves_3d,
+        surface1_uv_curves,
+        surface2_uv_curves,
+        curve_types,
+        deviations,
+    };
+    r
 }
 
 #[cfg(test)]
@@ -1540,10 +1575,11 @@ mod tests {
 
     #[test]
     fn construct_defaults() {
+        let k = &Kernel::default();
         let s = plane();
         let d = Extent2d::from_bounds(0.0, 0.0, 1.0, 1.0);
         let si: AdvSurfaceIntersector<'_, '_, H> =
-            AdvSurfaceIntersector::new(&s, &d, &s, &d, false).unwrap();
+            AdvSurfaceIntersector::new(k, &s, &d, &s, &d, false).unwrap();
         assert_eq!(si.closest_value(), BIG_DOUBLE);
         assert!(si.separate_gauss_maps());
         assert_eq!(si.solver.num_trees, 2);
@@ -1554,10 +1590,11 @@ mod tests {
 
     #[test]
     fn dupin_kinds() {
+        let k = &Kernel::default();
         let s = plane();
         let d = Extent2d::from_bounds(0.0, 0.0, 1.0, 1.0);
         let si: AdvSurfaceIntersector<'_, '_, H> =
-            AdvSurfaceIntersector::new(&s, &d, &s, &d, false).unwrap();
+            AdvSurfaceIntersector::new(k, &s, &d, &s, &d, false).unwrap();
         let x = Vec3::new(1.0, 0.0, 0.0);
         let y = Vec3::new(0.0, 1.0, 0.0);
         let z = Vec3::new(0.0, 0.0, 1.0);
@@ -1583,10 +1620,11 @@ mod tests {
 
     #[test]
     fn plane_against_saddle_is_singular() {
+        let k = &Kernel::default();
         let s = plane();
         let d = Extent2d::from_bounds(-1.0, -1.0, 1.0, 1.0);
         let mut si: AdvSurfaceIntersector<'_, '_, H> =
-            AdvSurfaceIntersector::new(&s, &d, &s, &d, false).unwrap();
+            AdvSurfaceIntersector::new(k, &s, &d, &s, &d, false).unwrap();
         let x = Vec3::new(1.0, 0.0, 0.0);
         let y = Vec3::new(0.0, 1.0, 0.0);
         let z = Vec3::new(0.0, 0.0, 1.0);
