@@ -2,6 +2,8 @@
 
 Last updated: 2026-10-16, PR #127 (`sweep.trans_sweep_geometry` partial: 719 bit-identical passes, 50 deferred on `surface.cone_p2`, 19 rejected native fixtures). Per-unit state and evidence are in `plan/modules.toml` and `reports/difftest/`.
 
+Latest harness: PR #295 (B-rep records for the classification shims' bare topology stand-ins, on top of main's real one-face B-rep adapter #347): curve_class_p1 2054->2070, p2 1495->1627, p7 1327->1474, point_class 2411->2466 passes, 0 failed.
+
 Latest harness: exact `SmSurfOfRevolution` face export in the shared graph exports (2026-10-20, branch `difftest/exact-surf-of-revolution-export`, refreshed on main ca3bbd2b): 238 units, 116 green, 122 partial, 0 failed; +714 compared passes (topology.brep_p1 +61, topology.edgeuse_p1 +200, topology.edgeuse_p3 +332, topology.loopuse +87, query.face_p1 +28, blend.fillet_standard_solver_p1 +6), -104 (topology.vertexuse 101 now on topology.face_p2, blend.hcr 3 on topology.edge); extrusion/cone/cylinder/sphere/torus faces and analytic edge curves still arrive as B-splines (no `SurfaceKind`, #76).
 
 Latest unit: `topology.face_p4` partial (port: topology.face_p4, taking over the #134 claim): 5506 cases, 3957 bit-identical passes, 0 failed, 1549 deferred (mostly the tolerance of face-owned surfaces: `SmTol::GetZoneTol3d` in the surface cache, tagged `geom.tol`, and `SmFace::GetTolerance`, `topology.face_p2`); 26 of its 44 back-edge stubs wired, including those of `heal.stitch_p1`, `topology.brep_p5`/`p7`/`p9`/`p10` and `topology.face_p3` (169 more `face_p3` passes); the rest take generic handles without a B-rep, or (one in `brep_p5`) no kernel; its own calls into `query.face_p3` (`sm_FaceClassifyUVLine`, `SectorClassifyCurveOn`) are wired since #132; `HasSeamProblem` returns `SM_SUCCESS` as TRUE upstream (`plan/upstream-issues.md` WR-176); 238 units (main after #229), 116 green and 122 partial.
@@ -18,6 +20,24 @@ Latest unit: `boolean.merge_p2` ([PR #229](https://github.com/tangency-labs/soli
 
 Latest unit: `surface.surf_of_revolution_p3` partial -> green (difftest runner builds the `SmCone` operand and runs `IntersectWithCone`: 26705 cases, 26705 bit-identical, 0 deferred; 233 ported units, 115 green and 118 partial). Before: `intersect.curve_class_p9` ([PR #151](https://github.com/bherbruck/solidcore/pull/151)) is partial on a standalone official-main base: review validation has 424 differential cases, 225 bit-identical passes, 197 dependency deferrals, 2 native setup rejections and zero failures. It ports edge and trim-boundary intersections with concrete query handle mappings. Pole lookup now matches the native FALSE default; collapsed caches, wider input ranges and positive endpoint classification are covered. Interior partition insertion awaits part 2. No open dependency PR is bundled. The manifest has 195 ported units (108 green, 87 partial); final integration results are recorded in the PR checks.
 
+
+## Handoff: `query.brep` (2026-10-21, PR #329)
+
+`query.brep` is partial (B-rep boxes, `LockBoundingBox`, `Point3DClassify`, the
+decimation attributes and `SmApiEvaluateSurface*`); `geom.a_object` and
+`topology.brep_cache` were promoted to green. Coverage and the remaining deferrals are in
+`plan/modules.toml` and `plan/findings.md` (section `query.brep`). For callers:
+
+- **Classify through a `BrepQuery`.** It holds the B-rep's identities and builds the
+  `SM_OC_BREP` cache on the first solve that needs it. Keep one per B-rep state (a loop
+  that does not edit the B-rep shares one) and make a fresh one after an edit. Callers that
+  hold the B-rep shared use `BrepClassifier`, which copies it on the first ray fire only.
+  The merge passes go through `boolean::merge::p1::classify_point_editing_disabled`.
+- **Lone B-reps** use `BrepIdentity::default()`; B-reps in a store pass their own
+  `BrepIdentity`.
+- **Open follow-ups** (no PR yet): `topology::brep::p10::merge_curves_world` is a
+  `DISPATCH GAP` until the merge-curves world can own the B-rep (`topology.brep_p2`), and
+  `geom.object`'s `Shape` cannot reach the B-rep box without a store.
 
 ## Port review note (2026-10-18, issue #210)
 
@@ -1047,3 +1067,5 @@ adapters.
 Review verification: the extended 256-seed run has 380 cases, 291 bit-identical
 passes, zero failures and 89 query deferrals. Perturbation detects every compared
 case (108/108 default, 291/291 extended).
+
+`blend.fillet_solver_p1` partial -> green (PR #303, glue with `blend.fillet_geom_p1`): 346/346 pass, 0 deferred.

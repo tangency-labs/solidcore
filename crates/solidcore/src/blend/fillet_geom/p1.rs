@@ -105,7 +105,8 @@
 //!   `sm_TwoPntsIntersection` takes the start and end *points* of its `SmVertex`
 //!   arguments. The `SmFilletSolver` of `sm_FindStepoffUV` is the co-ported
 //!   [`ConstantRadiusAssistedFs`] (its edge uses and `GetThisApproxTol3d`);
-//!   [`FilletGeom::offset_surface`] takes the solver it falls back to explicitly.
+//!   [`FilletGeom::new`] and [`FilletGeom::offset_surface`] take the solver base
+//!   ([`FilletSolver`]) they copy from or fall back to explicitly.
 //!   `SmSurfParamType` closures are [`SurfParamType`]. `sm_IsOrderCorrect` indexes a
 //!   slice of [`TsectPnt`] values (upstream: an array of pointers) and fails on an index
 //!   out of range. `sm_FindMarkForContext2` searches a slice of [`MarkLock`] for a
@@ -115,9 +116,9 @@
 //!   values; a geometry whose adjusting path needs a solver it does not have is a
 //!   null-pointer error (upstream dereferences it). Upstream's `pAdjustFS` is any
 //!   `SmFilletSolver` and only base members are read (`GetSurface(k)`, `m_pSurfaces`);
-//!   the signature commits to the one solver kind on main until `blend.
-//!   fillet_standard_solver_p1` (PR #168) lands its `FilletSolverData` base-member
-//!   struct, which this argument should then take.
+//!   the signature commits to the one solver kind; it could take the
+//!   [`crate::blend::fillet_solver::p1::FilletSolver`] base that every solver of
+//!   `blend.fillet_standard_solver_p1` and `blend.fillet_custom_solver` now holds.
 //! - **Surface cache flags.** `sm_SurfaceDropPoint` and `sm_FindStepoffUV` temporarily
 //!   turn off the surface cache's point test (`m_bPointTestEnabled`) and turn on its
 //!   boundary-curve processing around `GlobalPointSolve`, so every solution is kept
@@ -187,6 +188,7 @@
 use std::collections::BTreeMap;
 
 use crate::blend::fillet_custom_solver::{ConstantRadiusAssistedFs, OffsetSurface};
+use crate::blend::fillet_solver::p1::FilletSolver;
 use crate::curve::curve::p1::GlobalPointSolveOptions;
 use crate::curve::curve::Curve;
 use crate::curve::hermite_curve::HermiteCurve;
@@ -1071,16 +1073,16 @@ impl FilletGeom {
     /// (`SmOffsetSurface::Copy`); any other failed copy leaves that slot `None`.
     pub fn new(
         k: &Kernel,
-        solver: Option<(FilletSolverId, &ConstantRadiusAssistedFs)>,
+        solver: Option<(FilletSolverId, &FilletSolver)>,
         geom_type: FilletGeomType,
     ) -> Result<Self> {
         let mut off_surfs = [None, None];
         for (slot, i) in off_surfs.iter_mut().zip(0..2usize) {
             if let Some((_, fs)) = solver {
-                *slot = match fs.solver.surface(i)?.map(|slot| &slot.surface) {
+                *slot = match fs.surface(i)? {
                     // SmOffsetSurface::Copy() returns an SmSurface*, not SmOffsetSurface*;
                     // its status is ignored, so a failed copy leaves NULL
-                    Some(off_srf) => match offset_surface_copy(k, off_srf) {
+                    Some(off_srf) => match offset_surface_copy(k, &off_srf.surface) {
                         Ok(new_surf) => Some(new_surf),
                         Err(e) if e.is_unported() => return Err(e),
                         Err(_) => None,
@@ -1174,7 +1176,7 @@ impl FilletGeom {
 
     /// `GetOffsetSurface(lRailIndex)`: this geometry's offset surface for the rail,
     /// else the solver's (`SmFilletSolver::GetSurface`, read from the co-ported
-    /// [`ConstantRadiusAssistedFs::surfaces`] of `solver`).
+    /// `solver`, the geometry's [`FilletSolver`]).
     ///
     /// # Errors
     ///
@@ -1184,7 +1186,7 @@ impl FilletGeom {
     pub fn offset_surface<'a>(
         &'a self,
         rail_index: usize,
-        solver: Option<&'a ConstantRadiusAssistedFs>,
+        solver: Option<&'a FilletSolver>,
     ) -> Result<Option<&'a OffsetSurface>> {
         let own = self
             .off_surfs
@@ -1194,7 +1196,7 @@ impl FilletGeom {
             return Ok(Some(s));
         }
         let fs = solver.ok_or_else(|| SolidError::null_pointer(OP_OFFSET))?;
-        Ok(fs.solver.surface(rail_index)?.map(|slot| &slot.surface))
+        Ok(fs.surface(rail_index)?.map(|slot| &slot.surface))
     }
 
     /// `SetOffsetSurface(lWhichSrf, pNewOffSrf)`: replaces (deleting) the rail's offset
@@ -1616,7 +1618,7 @@ impl FilletBrep {
 
     /// `SmVertex::SetPoint`: `Notify(SM_NO_CHANGE_GEOMETRY)` resets the cached gaps of
     /// every vertex use of the vertex, then the point is stored.
-    fn set_vertex_point(&mut self, v: VertexId, point: Point3) -> Result<()> {
+    pub(crate) fn set_vertex_point(&mut self, v: VertexId, point: Point3) -> Result<()> {
         for vu in self.brep.vertex(v)?.vertexuses.clone() {
             let vu = self.brep.vertexuse_mut(vu)?;
             vu.vertex_edge_gap.reset();
@@ -3366,7 +3368,7 @@ fn b_spline_net_mut(surface: &mut Surface) -> Option<&mut BSplineSurface> {
 /// notification clears each edge use's UV trim curve and drop-curve record and resets
 /// its cached edge/face gap (its mate's too) and the cached gaps of the edge's vertex
 /// uses; then the curve replaces the old one.
-fn set_rail_curve(brep: &mut Brep, rail: EdgeId, curve: Curve) -> Result<()> {
+pub(crate) fn set_rail_curve(brep: &mut Brep, rail: EdgeId, curve: Curve) -> Result<()> {
     for eu in edge_unit::edgeuses(brep, rail, None, None)? {
         let mate_eu = mate(brep, eu)?;
         let rec = brep.edgeuse_mut(eu)?;
