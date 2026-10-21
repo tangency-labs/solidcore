@@ -450,20 +450,26 @@
       "values_compared": 202
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic geometry import for face evaluation",
+        "unit": "topology.face_p2"
+      },
       "max_rel_err": 0.0,
       "name": "points_file_Mouse.smb_0",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "fixture:fixtures/topology.face_p2/upstream.json#56 (upstream tests/prog_test/src/smMergeTest.cpp:553)",
       "values_compared": 0
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic geometry import for face evaluation",
+        "unit": "topology.face_p2"
+      },
       "max_rel_err": 0.0,
       "name": "points_file_Mouse.smb_1",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "fixture:fixtures/topology.face_p2/upstream.json#57 (upstream tests/prog_test/src/smMergeTest.cpp:553)",
       "values_compared": 0
     },
@@ -552,29 +558,38 @@
       "values_compared": 0
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic geometry import for face evaluation",
+        "unit": "topology.face_p2"
+      },
       "max_rel_err": 0.0,
       "name": "points_file_cone.smb_0",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "fixture:fixtures/topology.face_p2/upstream.json#65 (upstream tests/prog_test/src/smMergeTest.cpp:553)",
       "values_compared": 0
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic geometry import for face evaluation",
+        "unit": "topology.face_p2"
+      },
       "max_rel_err": 0.0,
       "name": "points_file_cone.smb_1",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "fixture:fixtures/topology.face_p2/upstream.json#66 (upstream tests/prog_test/src/smMergeTest.cpp:553)",
       "values_compared": 0
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic geometry import for face evaluation",
+        "unit": "topology.face_p2"
+      },
       "max_rel_err": 0.0,
       "name": "points_file_cone.smb_2",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "fixture:fixtures/topology.face_p2/upstream.json#67 (upstream tests/prog_test/src/smMergeTest.cpp:553)",
       "values_compared": 0
     },
@@ -711,191 +726,254 @@
       "values_compared": 10
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic geometry import for face evaluation",
+        "unit": "topology.face_p2"
+      },
       "max_rel_err": 0.0,
       "name": "points_file_sphere.smb_0",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "fixture:fixtures/topology.face_p2/upstream.json#80 (upstream tests/prog_test/src/smMergeTest.cpp:553)",
       "values_compared": 0
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic geometry import for face evaluation",
+        "unit": "topology.face_p2"
+      },
       "max_rel_err": 0.0,
       "name": "points_file_sphere.smb_1",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "fixture:fixtures/topology.face_p2/upstream.json#81 (upstream tests/prog_test/src/smMergeTest.cpp:553)",
       "values_compared": 0
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic geometry import for face evaluation",
+        "unit": "topology.face_p2"
+      },
       "max_rel_err": 0.0,
       "name": "points_file_sphere.smb_2",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "fixture:fixtures/topology.face_p2/upstream.json#82 (upstream tests/prog_test/src/smMergeTest.cpp:553)",
       "values_compared": 0
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic geometry import for face evaluation",
+        "unit": "topology.face_p2"
+      },
       "max_rel_err": 0.0,
       "name": "points_file_surf_extrude.smb_0",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "fixture:fixtures/topology.face_p2/upstream.json#83 (upstream tests/prog_test/src/smMergeTest.cpp:553)",
       "values_compared": 0
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic geometry import for face evaluation",
+        "unit": "topology.face_p2"
+      },
       "max_rel_err": 0.0,
       "name": "points_file_surf_extrude.smb_1",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "fixture:fixtures/topology.face_p2/upstream.json#84 (upstream tests/prog_test/src/smMergeTest.cpp:553)",
       "values_compared": 0
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic geometry import for face evaluation",
+        "unit": "topology.face_p2"
+      },
       "max_rel_err": 0.0,
       "name": "points_file_surf_extrude.smb_2",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "fixture:fixtures/topology.face_p2/upstream.json#85 (upstream tests/prog_test/src/smMergeTest.cpp:553)",
       "values_compared": 0
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic geometry import for face evaluation",
+        "unit": "topology.face_p2"
+      },
       "max_rel_err": 0.0,
       "name": "points_file_surf_rev.smb_0",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "fixture:fixtures/topology.face_p2/upstream.json#86 (upstream tests/prog_test/src/smMergeTest.cpp:553)",
       "values_compared": 0
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic geometry import for face evaluation",
+        "unit": "topology.face_p2"
+      },
       "max_rel_err": 0.0,
       "name": "points_file_surf_rev.smb_1",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "fixture:fixtures/topology.face_p2/upstream.json#87 (upstream tests/prog_test/src/smMergeTest.cpp:553)",
       "values_compared": 0
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic geometry import for face evaluation",
+        "unit": "topology.face_p2"
+      },
       "max_rel_err": 0.0,
       "name": "points_file_surf_rev.smb_2",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "fixture:fixtures/topology.face_p2/upstream.json#88 (upstream tests/prog_test/src/smMergeTest.cpp:553)",
       "values_compared": 0
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic geometry import for face evaluation",
+        "unit": "topology.face_p2"
+      },
       "max_rel_err": 0.0,
       "name": "points_file_surf_sphere150.smb_0",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "fixture:fixtures/topology.face_p2/upstream.json#89 (upstream tests/prog_test/src/smMergeTest.cpp:553)",
       "values_compared": 0
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic geometry import for face evaluation",
+        "unit": "topology.face_p2"
+      },
       "max_rel_err": 0.0,
       "name": "points_file_surf_sphere150.smb_1",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "fixture:fixtures/topology.face_p2/upstream.json#90 (upstream tests/prog_test/src/smMergeTest.cpp:553)",
       "values_compared": 0
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic geometry import for face evaluation",
+        "unit": "topology.face_p2"
+      },
       "max_rel_err": 0.0,
       "name": "points_file_surf_sphere150.smb_2",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "fixture:fixtures/topology.face_p2/upstream.json#91 (upstream tests/prog_test/src/smMergeTest.cpp:553)",
       "values_compared": 0
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic geometry import for face evaluation",
+        "unit": "topology.face_p2"
+      },
       "max_rel_err": 0.0,
       "name": "points_file_torus.smb_0",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "fixture:fixtures/topology.face_p2/upstream.json#92 (upstream tests/prog_test/src/smMergeTest.cpp:553)",
       "values_compared": 0
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic geometry import for face evaluation",
+        "unit": "topology.face_p2"
+      },
       "max_rel_err": 0.0,
       "name": "points_file_torus.smb_1",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "fixture:fixtures/topology.face_p2/upstream.json#93 (upstream tests/prog_test/src/smMergeTest.cpp:553)",
       "values_compared": 0
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic geometry import for face evaluation",
+        "unit": "topology.face_p2"
+      },
       "max_rel_err": 0.0,
       "name": "points_file_torus.smb_2",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "fixture:fixtures/topology.face_p2/upstream.json#94 (upstream tests/prog_test/src/smMergeTest.cpp:553)",
       "values_compared": 0
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic geometry import for face evaluation",
+        "unit": "topology.face_p2"
+      },
       "max_rel_err": 0.0,
       "name": "points_file_toruswvy.smb_0",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "fixture:fixtures/topology.face_p2/upstream.json#95 (upstream tests/prog_test/src/smMergeTest.cpp:553)",
       "values_compared": 0
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic geometry import for face evaluation",
+        "unit": "topology.face_p2"
+      },
       "max_rel_err": 0.0,
       "name": "points_file_toruswvy.smb_1",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "fixture:fixtures/topology.face_p2/upstream.json#96 (upstream tests/prog_test/src/smMergeTest.cpp:553)",
       "values_compared": 0
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic geometry import for face evaluation",
+        "unit": "topology.face_p2"
+      },
       "max_rel_err": 0.0,
       "name": "points_file_toruswvy.smb_2",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "fixture:fixtures/topology.face_p2/upstream.json#97 (upstream tests/prog_test/src/smMergeTest.cpp:553)",
       "values_compared": 0
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic geometry import for face evaluation",
+        "unit": "topology.face_p2"
+      },
       "max_rel_err": 0.0,
       "name": "points_file_vase_rev.smb_0",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "fixture:fixtures/topology.face_p2/upstream.json#98 (upstream tests/prog_test/src/smMergeTest.cpp:553)",
       "values_compared": 0
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic geometry import for face evaluation",
+        "unit": "topology.face_p2"
+      },
       "max_rel_err": 0.0,
       "name": "points_file_vase_rev.smb_1",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "fixture:fixtures/topology.face_p2/upstream.json#99 (upstream tests/prog_test/src/smMergeTest.cpp:553)",
       "values_compared": 0
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic geometry import for face evaluation",
+        "unit": "topology.face_p2"
+      },
       "max_rel_err": 0.0,
       "name": "points_file_vase_rev.smb_2",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "fixture:fixtures/topology.face_p2/upstream.json#100 (upstream tests/prog_test/src/smMergeTest.cpp:553)",
       "values_compared": 0
     },
@@ -7692,56 +7770,74 @@
       "values_compared": 4
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic geometry import for face evaluation",
+        "unit": "topology.face_p2"
+      },
       "max_rel_err": 0.0,
       "name": "fix_file_Mouse.smb_0",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "fixture:fixtures/topology.face_p2/upstream.json#930 (upstream sm_FixUVTrimCurves on upstream B-reps)",
       "values_compared": 0
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic geometry import for face evaluation",
+        "unit": "topology.face_p2"
+      },
       "max_rel_err": 0.0,
       "name": "fix_file_Mouse.smb_1",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "fixture:fixtures/topology.face_p2/upstream.json#931 (upstream sm_FixUVTrimCurves on upstream B-reps)",
       "values_compared": 0
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic geometry import for face evaluation",
+        "unit": "topology.face_p2"
+      },
       "max_rel_err": 0.0,
       "name": "fix_file_Mouse.smb_2",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "fixture:fixtures/topology.face_p2/upstream.json#932 (upstream sm_FixUVTrimCurves on upstream B-reps)",
       "values_compared": 0
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic geometry import for face evaluation",
+        "unit": "topology.face_p2"
+      },
       "max_rel_err": 0.0,
       "name": "fix_file_Mouse.smb_3",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "fixture:fixtures/topology.face_p2/upstream.json#933 (upstream sm_FixUVTrimCurves on upstream B-reps)",
       "values_compared": 0
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic geometry import for face evaluation",
+        "unit": "topology.face_p2"
+      },
       "max_rel_err": 0.0,
       "name": "fix_file_Mouse.smb_4",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "fixture:fixtures/topology.face_p2/upstream.json#934 (upstream sm_FixUVTrimCurves on upstream B-reps)",
       "values_compared": 0
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic geometry import for face evaluation",
+        "unit": "topology.face_p2"
+      },
       "max_rel_err": 0.0,
       "name": "fix_file_Mouse.smb_5",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "fixture:fixtures/topology.face_p2/upstream.json#935 (upstream sm_FixUVTrimCurves on upstream B-reps)",
       "values_compared": 0
     },
@@ -7866,56 +7962,74 @@
       "values_compared": 0
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic geometry import for face evaluation",
+        "unit": "topology.face_p2"
+      },
       "max_rel_err": 0.0,
       "name": "fix_file_cone.smb_0",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "fixture:fixtures/topology.face_p2/upstream.json#948 (upstream sm_FixUVTrimCurves on upstream B-reps)",
       "values_compared": 0
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic geometry import for face evaluation",
+        "unit": "topology.face_p2"
+      },
       "max_rel_err": 0.0,
       "name": "fix_file_cone.smb_1",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "fixture:fixtures/topology.face_p2/upstream.json#949 (upstream sm_FixUVTrimCurves on upstream B-reps)",
       "values_compared": 0
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic geometry import for face evaluation",
+        "unit": "topology.face_p2"
+      },
       "max_rel_err": 0.0,
       "name": "fix_file_cone.smb_2",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "fixture:fixtures/topology.face_p2/upstream.json#950 (upstream sm_FixUVTrimCurves on upstream B-reps)",
       "values_compared": 0
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic geometry import for face evaluation",
+        "unit": "topology.face_p2"
+      },
       "max_rel_err": 0.0,
       "name": "fix_file_cone.smb_3",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "fixture:fixtures/topology.face_p2/upstream.json#951 (upstream sm_FixUVTrimCurves on upstream B-reps)",
       "values_compared": 0
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic geometry import for face evaluation",
+        "unit": "topology.face_p2"
+      },
       "max_rel_err": 0.0,
       "name": "fix_file_cone.smb_4",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "fixture:fixtures/topology.face_p2/upstream.json#952 (upstream sm_FixUVTrimCurves on upstream B-reps)",
       "values_compared": 0
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic geometry import for face evaluation",
+        "unit": "topology.face_p2"
+      },
       "max_rel_err": 0.0,
       "name": "fix_file_cone.smb_5",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "fixture:fixtures/topology.face_p2/upstream.json#953 (upstream sm_FixUVTrimCurves on upstream B-reps)",
       "values_compared": 0
     },
@@ -9300,38 +9414,50 @@
       "values_compared": 5
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic geometry import for face evaluation",
+        "unit": "topology.face_p2"
+      },
       "max_rel_err": 0.0,
       "name": "best_file_Mouse.smb_0",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "fixture:fixtures/topology.face_p2/upstream.json#1106 (upstream sm_FindBestUVCurve on upstream B-reps)",
       "values_compared": 0
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic geometry import for face evaluation",
+        "unit": "topology.face_p2"
+      },
       "max_rel_err": 0.0,
       "name": "best_file_Mouse.smb_1",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "fixture:fixtures/topology.face_p2/upstream.json#1107 (upstream sm_FindBestUVCurve on upstream B-reps)",
       "values_compared": 0
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic geometry import for face evaluation",
+        "unit": "topology.face_p2"
+      },
       "max_rel_err": 0.0,
       "name": "best_file_Mouse.smb_2",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "fixture:fixtures/topology.face_p2/upstream.json#1108 (upstream sm_FindBestUVCurve on upstream B-reps)",
       "values_compared": 0
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic geometry import for face evaluation",
+        "unit": "topology.face_p2"
+      },
       "max_rel_err": 0.0,
       "name": "best_file_Mouse.smb_3",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "fixture:fixtures/topology.face_p2/upstream.json#1109 (upstream sm_FindBestUVCurve on upstream B-reps)",
       "values_compared": 0
     },
@@ -9416,38 +9542,50 @@
       "values_compared": 0
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic geometry import for face evaluation",
+        "unit": "topology.face_p2"
+      },
       "max_rel_err": 0.0,
       "name": "best_file_cone.smb_0",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "fixture:fixtures/topology.face_p2/upstream.json#1118 (upstream sm_FindBestUVCurve on upstream B-reps)",
       "values_compared": 0
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic geometry import for face evaluation",
+        "unit": "topology.face_p2"
+      },
       "max_rel_err": 0.0,
       "name": "best_file_cone.smb_1",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "fixture:fixtures/topology.face_p2/upstream.json#1119 (upstream sm_FindBestUVCurve on upstream B-reps)",
       "values_compared": 0
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic geometry import for face evaluation",
+        "unit": "topology.face_p2"
+      },
       "max_rel_err": 0.0,
       "name": "best_file_cone.smb_2",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "fixture:fixtures/topology.face_p2/upstream.json#1120 (upstream sm_FindBestUVCurve on upstream B-reps)",
       "values_compared": 0
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic geometry import for face evaluation",
+        "unit": "topology.face_p2"
+      },
       "max_rel_err": 0.0,
       "name": "best_file_cone.smb_3",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "fixture:fixtures/topology.face_p2/upstream.json#1121 (upstream sm_FindBestUVCurve on upstream B-reps)",
       "values_compared": 0
     },
@@ -10112,11 +10250,14 @@
       "values_compared": 0
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic geometry import for face evaluation",
+        "unit": "topology.face_p2"
+      },
       "max_rel_err": 0.0,
       "name": "gen0010",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "generated:seed=9751866595074104344",
       "values_compared": 0
     },
@@ -10149,20 +10290,26 @@
       "values_compared": 4
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic geometry import for face evaluation",
+        "unit": "topology.face_p2"
+      },
       "max_rel_err": 0.0,
       "name": "gen0014",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "generated:seed=9751866595074104348",
       "values_compared": 0
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic geometry import for face evaluation",
+        "unit": "topology.face_p2"
+      },
       "max_rel_err": 0.0,
       "name": "gen0015",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "generated:seed=9751866595074104349",
       "values_compared": 0
     },
@@ -10203,11 +10350,14 @@
       "values_compared": 0
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic geometry import for face evaluation",
+        "unit": "topology.face_p2"
+      },
       "max_rel_err": 0.0,
       "name": "extra00004",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "generated:seed=4207804418",
       "values_compared": 0
     },
@@ -10228,11 +10378,14 @@
       "values_compared": 2
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic geometry import for face evaluation",
+        "unit": "topology.face_p2"
+      },
       "max_rel_err": 0.0,
       "name": "extra00007",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "generated:seed=4207804418",
       "values_compared": 0
     },
@@ -10257,20 +10410,26 @@
       "values_compared": 0
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic geometry import for face evaluation",
+        "unit": "topology.face_p2"
+      },
       "max_rel_err": 0.0,
       "name": "extra00010",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "generated:seed=4207804418",
       "values_compared": 0
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic geometry import for face evaluation",
+        "unit": "topology.face_p2"
+      },
       "max_rel_err": 0.0,
       "name": "extra00011",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "generated:seed=4207804418",
       "values_compared": 0
     },
@@ -10304,11 +10463,14 @@
       "values_compared": 44
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic geometry import for face evaluation",
+        "unit": "topology.face_p2"
+      },
       "max_rel_err": 0.0,
       "name": "extra00015",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "generated:seed=4207804418",
       "values_compared": 0
     },
@@ -10381,20 +10543,26 @@
       "values_compared": 5
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic geometry import for face evaluation",
+        "unit": "topology.face_p2"
+      },
       "max_rel_err": 0.0,
       "name": "extra00024",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "generated:seed=4207804418",
       "values_compared": 0
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic geometry import for face evaluation",
+        "unit": "topology.face_p2"
+      },
       "max_rel_err": 0.0,
       "name": "extra00025",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "generated:seed=4207804418",
       "values_compared": 0
     },
@@ -10419,11 +10587,14 @@
       "values_compared": 45
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic geometry import for face evaluation",
+        "unit": "topology.face_p2"
+      },
       "max_rel_err": 0.0,
       "name": "extra00028",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "generated:seed=4207804418",
       "values_compared": 0
     },
@@ -10446,11 +10617,14 @@
       "values_compared": 0
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic geometry import for face evaluation",
+        "unit": "topology.face_p2"
+      },
       "max_rel_err": 0.0,
       "name": "extra00031",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "generated:seed=4207804418",
       "values_compared": 0
     },
@@ -10519,20 +10693,26 @@
       "values_compared": 3
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic geometry import for face evaluation",
+        "unit": "topology.face_p2"
+      },
       "max_rel_err": 0.0,
       "name": "extra00039",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "generated:seed=4207804418",
       "values_compared": 0
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic geometry import for face evaluation",
+        "unit": "topology.face_p2"
+      },
       "max_rel_err": 0.0,
       "name": "extra00040",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "generated:seed=4207804418",
       "values_compared": 0
     },
@@ -10577,29 +10757,38 @@
       "values_compared": 7
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic geometry import for face evaluation",
+        "unit": "topology.face_p2"
+      },
       "max_rel_err": 0.0,
       "name": "extra00046",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "generated:seed=4207804418",
       "values_compared": 0
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic geometry import for face evaluation",
+        "unit": "topology.face_p2"
+      },
       "max_rel_err": 0.0,
       "name": "extra00047",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "generated:seed=4207804418",
       "values_compared": 0
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic geometry import for face evaluation",
+        "unit": "topology.face_p2"
+      },
       "max_rel_err": 0.0,
       "name": "extra00048",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "generated:seed=4207804418",
       "values_compared": 0
     },
@@ -10699,11 +10888,14 @@
       "values_compared": 0
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic geometry import for face evaluation",
+        "unit": "topology.face_p2"
+      },
       "max_rel_err": 0.0,
       "name": "extra00059",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "generated:seed=4207804418",
       "values_compared": 0
     },
@@ -10744,20 +10936,26 @@
       "values_compared": 64
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic geometry import for face evaluation",
+        "unit": "topology.face_p2"
+      },
       "max_rel_err": 0.0,
       "name": "extra00064",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "generated:seed=4207804418",
       "values_compared": 0
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic geometry import for face evaluation",
+        "unit": "topology.face_p2"
+      },
       "max_rel_err": 0.0,
       "name": "extra00065",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "generated:seed=4207804418",
       "values_compared": 0
     },
@@ -10810,29 +11008,38 @@
       "values_compared": 10
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic geometry import for face evaluation",
+        "unit": "topology.face_p2"
+      },
       "max_rel_err": 0.0,
       "name": "extra00072",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "generated:seed=4207804418",
       "values_compared": 0
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic geometry import for face evaluation",
+        "unit": "topology.face_p2"
+      },
       "max_rel_err": 0.0,
       "name": "extra00073",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "generated:seed=4207804418",
       "values_compared": 0
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic geometry import for face evaluation",
+        "unit": "topology.face_p2"
+      },
       "max_rel_err": 0.0,
       "name": "extra00074",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "generated:seed=4207804418",
       "values_compared": 0
     },
@@ -10910,20 +11117,26 @@
       "values_compared": 0
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic geometry import for face evaluation",
+        "unit": "topology.face_p2"
+      },
       "max_rel_err": 0.0,
       "name": "extra00083",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "generated:seed=4207804418",
       "values_compared": 0
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic geometry import for face evaluation",
+        "unit": "topology.face_p2"
+      },
       "max_rel_err": 0.0,
       "name": "extra00084",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "generated:seed=4207804418",
       "values_compared": 0
     },
@@ -11067,11 +11280,14 @@
       "values_compared": 0
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic geometry import for face evaluation",
+        "unit": "topology.face_p2"
+      },
       "max_rel_err": 0.0,
       "name": "extra00100",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "generated:seed=4207804418",
       "values_compared": 0
     },
@@ -11112,11 +11328,14 @@
       "values_compared": 5
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic geometry import for face evaluation",
+        "unit": "topology.face_p2"
+      },
       "max_rel_err": 0.0,
       "name": "extra00105",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "generated:seed=4207804418",
       "values_compared": 0
     },
@@ -11157,11 +11376,14 @@
       "values_compared": 4
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic geometry import for face evaluation",
+        "unit": "topology.face_p2"
+      },
       "max_rel_err": 0.0,
       "name": "extra00110",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "generated:seed=4207804418",
       "values_compared": 0
     },
@@ -11207,11 +11429,14 @@
       "values_compared": 1
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic geometry import for face evaluation",
+        "unit": "topology.face_p2"
+      },
       "max_rel_err": 0.0,
       "name": "extra00116",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "generated:seed=4207804418",
       "values_compared": 0
     },
@@ -11256,11 +11481,14 @@
       "values_compared": 6
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic geometry import for face evaluation",
+        "unit": "topology.face_p2"
+      },
       "max_rel_err": 0.0,
       "name": "extra00121",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "generated:seed=4207804418",
       "values_compared": 0
     },
@@ -11274,11 +11502,14 @@
       "values_compared": 0
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic geometry import for face evaluation",
+        "unit": "topology.face_p2"
+      },
       "max_rel_err": 0.0,
       "name": "extra00123",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "generated:seed=4207804418",
       "values_compared": 0
     },
@@ -11308,11 +11539,14 @@
       "values_compared": 0
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic geometry import for face evaluation",
+        "unit": "topology.face_p2"
+      },
       "max_rel_err": 0.0,
       "name": "extra00127",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "generated:seed=4207804418",
       "values_compared": 0
     },
@@ -11333,11 +11567,14 @@
       "values_compared": 6
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic geometry import for face evaluation",
+        "unit": "topology.face_p2"
+      },
       "max_rel_err": 0.0,
       "name": "extra00130",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "generated:seed=4207804418",
       "values_compared": 0
     },
@@ -11404,20 +11641,26 @@
       "values_compared": 0
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic geometry import for face evaluation",
+        "unit": "topology.face_p2"
+      },
       "max_rel_err": 0.0,
       "name": "extra00137",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "generated:seed=4207804418",
       "values_compared": 0
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic geometry import for face evaluation",
+        "unit": "topology.face_p2"
+      },
       "max_rel_err": 0.0,
       "name": "extra00138",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "generated:seed=4207804418",
       "values_compared": 0
     },
@@ -11483,11 +11726,14 @@
       "values_compared": 0
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic geometry import for face evaluation",
+        "unit": "topology.face_p2"
+      },
       "max_rel_err": 0.0,
       "name": "extra00146",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "generated:seed=4207804418",
       "values_compared": 0
     },
@@ -11500,20 +11746,26 @@
       "values_compared": 905
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic geometry import for face evaluation",
+        "unit": "topology.face_p2"
+      },
       "max_rel_err": 0.0,
       "name": "extra00148",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "generated:seed=4207804418",
       "values_compared": 0
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic geometry import for face evaluation",
+        "unit": "topology.face_p2"
+      },
       "max_rel_err": 0.0,
       "name": "extra00149",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "generated:seed=4207804418",
       "values_compared": 0
     },
@@ -11554,11 +11806,14 @@
       "values_compared": 0
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic geometry import for face evaluation",
+        "unit": "topology.face_p2"
+      },
       "max_rel_err": 0.0,
       "name": "extra00154",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "generated:seed=4207804418",
       "values_compared": 0
     },
@@ -11598,11 +11853,14 @@
       "values_compared": 0
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic geometry import for face evaluation",
+        "unit": "topology.face_p2"
+      },
       "max_rel_err": 0.0,
       "name": "extra00159",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "generated:seed=4207804418",
       "values_compared": 0
     },
@@ -11643,11 +11901,14 @@
       "values_compared": 1584
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic geometry import for face evaluation",
+        "unit": "topology.face_p2"
+      },
       "max_rel_err": 0.0,
       "name": "extra00164",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "generated:seed=4207804418",
       "values_compared": 0
     },
@@ -11661,11 +11922,14 @@
       "values_compared": 0
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic geometry import for face evaluation",
+        "unit": "topology.face_p2"
+      },
       "max_rel_err": 0.0,
       "name": "extra00166",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "generated:seed=4207804418",
       "values_compared": 0
     },
@@ -11686,11 +11950,14 @@
       "values_compared": 3
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic geometry import for face evaluation",
+        "unit": "topology.face_p2"
+      },
       "max_rel_err": 0.0,
       "name": "extra00169",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "generated:seed=4207804418",
       "values_compared": 0
     },
@@ -11735,11 +12002,14 @@
       "values_compared": 0
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic geometry import for face evaluation",
+        "unit": "topology.face_p2"
+      },
       "max_rel_err": 0.0,
       "name": "extra00174",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "generated:seed=4207804418",
       "values_compared": 0
     },
@@ -11777,11 +12047,14 @@
       "values_compared": 44
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic geometry import for face evaluation",
+        "unit": "topology.face_p2"
+      },
       "max_rel_err": 0.0,
       "name": "extra00179",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "generated:seed=4207804418",
       "values_compared": 0
     },
@@ -11798,11 +12071,14 @@
       "values_compared": 0
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic geometry import for face evaluation",
+        "unit": "topology.face_p2"
+      },
       "max_rel_err": 0.0,
       "name": "extra00181",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "generated:seed=4207804418",
       "values_compared": 0
     },
@@ -11848,11 +12124,14 @@
       "values_compared": 14
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic geometry import for face evaluation",
+        "unit": "topology.face_p2"
+      },
       "max_rel_err": 0.0,
       "name": "extra00187",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "generated:seed=4207804418",
       "values_compared": 0
     },
@@ -11923,20 +12202,26 @@
       "values_compared": 0
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic geometry import for face evaluation",
+        "unit": "topology.face_p2"
+      },
       "max_rel_err": 0.0,
       "name": "extra00194",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "generated:seed=4207804418",
       "values_compared": 0
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic geometry import for face evaluation",
+        "unit": "topology.face_p2"
+      },
       "max_rel_err": 0.0,
       "name": "extra00195",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "generated:seed=4207804418",
       "values_compared": 0
     },
@@ -11949,11 +12234,14 @@
       "values_compared": 9
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic geometry import for face evaluation",
+        "unit": "topology.face_p2"
+      },
       "max_rel_err": 0.0,
       "name": "extra00197",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "generated:seed=4207804418",
       "values_compared": 0
     },
@@ -12010,11 +12298,14 @@
       "values_compared": 0
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic geometry import for face evaluation",
+        "unit": "topology.face_p2"
+      },
       "max_rel_err": 0.0,
       "name": "extra00203",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "generated:seed=4207804418",
       "values_compared": 0
     },
@@ -12035,11 +12326,14 @@
       "values_compared": 44
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic geometry import for face evaluation",
+        "unit": "topology.face_p2"
+      },
       "max_rel_err": 0.0,
       "name": "extra00206",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "generated:seed=4207804418",
       "values_compared": 0
     },
@@ -12085,11 +12379,14 @@
       "values_compared": 1
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic geometry import for face evaluation",
+        "unit": "topology.face_p2"
+      },
       "max_rel_err": 0.0,
       "name": "extra00212",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "generated:seed=4207804418",
       "values_compared": 0
     },
@@ -12110,20 +12407,26 @@
       "values_compared": 9
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic geometry import for face evaluation",
+        "unit": "topology.face_p2"
+      },
       "max_rel_err": 0.0,
       "name": "extra00215",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "generated:seed=4207804418",
       "values_compared": 0
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic geometry import for face evaluation",
+        "unit": "topology.face_p2"
+      },
       "max_rel_err": 0.0,
       "name": "extra00216",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "generated:seed=4207804418",
       "values_compared": 0
     },
@@ -12152,11 +12455,14 @@
       "values_compared": 30
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic geometry import for face evaluation",
+        "unit": "topology.face_p2"
+      },
       "max_rel_err": 0.0,
       "name": "extra00220",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "generated:seed=4207804418",
       "values_compared": 0
     },
@@ -12181,11 +12487,14 @@
       "values_compared": 64
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic geometry import for face evaluation",
+        "unit": "topology.face_p2"
+      },
       "max_rel_err": 0.0,
       "name": "extra00223",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "generated:seed=4207804418",
       "values_compared": 0
     },
@@ -12234,11 +12543,14 @@
       "values_compared": 1
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic geometry import for face evaluation",
+        "unit": "topology.face_p2"
+      },
       "max_rel_err": 0.0,
       "name": "extra00229",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "generated:seed=4207804418",
       "values_compared": 0
     },
@@ -12296,11 +12608,14 @@
       "values_compared": 0
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic geometry import for face evaluation",
+        "unit": "topology.face_p2"
+      },
       "max_rel_err": 0.0,
       "name": "extra00236",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "generated:seed=4207804418",
       "values_compared": 0
     },
@@ -12329,11 +12644,14 @@
       "values_compared": 44
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic geometry import for face evaluation",
+        "unit": "topology.face_p2"
+      },
       "max_rel_err": 0.0,
       "name": "extra00240",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "generated:seed=4207804418",
       "values_compared": 0
     },
@@ -12366,11 +12684,14 @@
       "values_compared": 0
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic geometry import for face evaluation",
+        "unit": "topology.face_p2"
+      },
       "max_rel_err": 0.0,
       "name": "extra00244",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "generated:seed=4207804418",
       "values_compared": 0
     },
@@ -12437,11 +12758,14 @@
       "values_compared": 1
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic geometry import for face evaluation",
+        "unit": "topology.face_p2"
+      },
       "max_rel_err": 0.0,
       "name": "extra00252",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "generated:seed=4207804418",
       "values_compared": 0
     },
@@ -12545,20 +12869,26 @@
       "values_compared": 0
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic geometry import for face evaluation",
+        "unit": "topology.face_p2"
+      },
       "max_rel_err": 0.0,
       "name": "extra00264",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "generated:seed=4207804418",
       "values_compared": 0
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic geometry import for face evaluation",
+        "unit": "topology.face_p2"
+      },
       "max_rel_err": 0.0,
       "name": "extra00265",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "generated:seed=4207804418",
       "values_compared": 0
     },
@@ -12679,11 +13009,14 @@
       "values_compared": 4
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic geometry import for face evaluation",
+        "unit": "topology.face_p2"
+      },
       "max_rel_err": 0.0,
       "name": "extra00278",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "generated:seed=4207804418",
       "values_compared": 0
     },
@@ -12704,20 +13037,26 @@
       "values_compared": 4
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic geometry import for face evaluation",
+        "unit": "topology.face_p2"
+      },
       "max_rel_err": 0.0,
       "name": "extra00281",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "generated:seed=4207804418",
       "values_compared": 0
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic geometry import for face evaluation",
+        "unit": "topology.face_p2"
+      },
       "max_rel_err": 0.0,
       "name": "extra00282",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "generated:seed=4207804418",
       "values_compared": 0
     },
@@ -12854,11 +13193,14 @@
       "values_compared": 11
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic geometry import for face evaluation",
+        "unit": "topology.face_p2"
+      },
       "max_rel_err": 0.0,
       "name": "extra00297",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "generated:seed=4207804418",
       "values_compared": 0
     },
@@ -12932,20 +13274,26 @@
       "values_compared": 8
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic geometry import for face evaluation",
+        "unit": "topology.face_p2"
+      },
       "max_rel_err": 0.0,
       "name": "extra00306",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "generated:seed=4207804418",
       "values_compared": 0
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic geometry import for face evaluation",
+        "unit": "topology.face_p2"
+      },
       "max_rel_err": 0.0,
       "name": "extra00307",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "generated:seed=4207804418",
       "values_compared": 0
     },
@@ -12974,20 +13322,26 @@
       "values_compared": 64
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic geometry import for face evaluation",
+        "unit": "topology.face_p2"
+      },
       "max_rel_err": 0.0,
       "name": "extra00311",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "generated:seed=4207804418",
       "values_compared": 0
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic geometry import for face evaluation",
+        "unit": "topology.face_p2"
+      },
       "max_rel_err": 0.0,
       "name": "extra00312",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "generated:seed=4207804418",
       "values_compared": 0
     },
@@ -13058,11 +13412,14 @@
       "values_compared": 0
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic geometry import for face evaluation",
+        "unit": "topology.face_p2"
+      },
       "max_rel_err": 0.0,
       "name": "extra00320",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "generated:seed=4207804418",
       "values_compared": 0
     },
@@ -13147,11 +13504,14 @@
       "values_compared": 15
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic geometry import for face evaluation",
+        "unit": "topology.face_p2"
+      },
       "max_rel_err": 0.0,
       "name": "extra00329",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "generated:seed=4207804418",
       "values_compared": 0
     },
@@ -13176,11 +13536,14 @@
       "values_compared": 0
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic geometry import for face evaluation",
+        "unit": "topology.face_p2"
+      },
       "max_rel_err": 0.0,
       "name": "extra00332",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "generated:seed=4207804418",
       "values_compared": 0
     },
@@ -13202,11 +13565,14 @@
       "values_compared": 0
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic geometry import for face evaluation",
+        "unit": "topology.face_p2"
+      },
       "max_rel_err": 0.0,
       "name": "extra00335",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "generated:seed=4207804418",
       "values_compared": 0
     },
@@ -13231,11 +13597,14 @@
       "values_compared": 0
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic geometry import for face evaluation",
+        "unit": "topology.face_p2"
+      },
       "max_rel_err": 0.0,
       "name": "extra00338",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "generated:seed=4207804418",
       "values_compared": 0
     },
@@ -13283,11 +13652,14 @@
       "values_compared": 9
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic geometry import for face evaluation",
+        "unit": "topology.face_p2"
+      },
       "max_rel_err": 0.0,
       "name": "extra00344",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "generated:seed=4207804418",
       "values_compared": 0
     },
@@ -13395,11 +13767,14 @@
       "values_compared": 6
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic geometry import for face evaluation",
+        "unit": "topology.face_p2"
+      },
       "max_rel_err": 0.0,
       "name": "extra00357",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "generated:seed=4207804418",
       "values_compared": 0
     },
@@ -13420,11 +13795,14 @@
       "values_compared": 3
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic geometry import for face evaluation",
+        "unit": "topology.face_p2"
+      },
       "max_rel_err": 0.0,
       "name": "extra00360",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "generated:seed=4207804418",
       "values_compared": 0
     },
@@ -13485,11 +13863,14 @@
       "values_compared": 3
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic geometry import for face evaluation",
+        "unit": "topology.face_p2"
+      },
       "max_rel_err": 0.0,
       "name": "extra00368",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "generated:seed=4207804418",
       "values_compared": 0
     },
@@ -13539,11 +13920,14 @@
       "values_compared": 1
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic geometry import for face evaluation",
+        "unit": "topology.face_p2"
+      },
       "max_rel_err": 0.0,
       "name": "extra00374",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "generated:seed=4207804418",
       "values_compared": 0
     },
@@ -13625,20 +14009,26 @@
       "values_compared": 0
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic geometry import for face evaluation",
+        "unit": "topology.face_p2"
+      },
       "max_rel_err": 0.0,
       "name": "extra00384",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "generated:seed=4207804418",
       "values_compared": 0
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic geometry import for face evaluation",
+        "unit": "topology.face_p2"
+      },
       "max_rel_err": 0.0,
       "name": "extra00385",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "generated:seed=4207804418",
       "values_compared": 0
     },
@@ -13716,20 +14106,26 @@
       "values_compared": 64
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic geometry import for face evaluation",
+        "unit": "topology.face_p2"
+      },
       "max_rel_err": 0.0,
       "name": "extra00395",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "generated:seed=4207804418",
       "values_compared": 0
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic geometry import for face evaluation",
+        "unit": "topology.face_p2"
+      },
       "max_rel_err": 0.0,
       "name": "extra00396",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "generated:seed=4207804418",
       "values_compared": 0
     },
@@ -13759,11 +14155,14 @@
       "values_compared": 58
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic geometry import for face evaluation",
+        "unit": "topology.face_p2"
+      },
       "max_rel_err": 0.0,
       "name": "extra00400",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "generated:seed=4207804418",
       "values_compared": 0
     },
@@ -13777,29 +14176,38 @@
       "values_compared": 0
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic geometry import for face evaluation",
+        "unit": "topology.face_p2"
+      },
       "max_rel_err": 0.0,
       "name": "extra00402",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "generated:seed=4207804418",
       "values_compared": 0
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic geometry import for face evaluation",
+        "unit": "topology.face_p2"
+      },
       "max_rel_err": 0.0,
       "name": "extra00403",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "generated:seed=4207804418",
       "values_compared": 0
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic geometry import for face evaluation",
+        "unit": "topology.face_p2"
+      },
       "max_rel_err": 0.0,
       "name": "extra00404",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "generated:seed=4207804418",
       "values_compared": 0
     },
@@ -13918,20 +14326,26 @@
       "values_compared": 3
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic geometry import for face evaluation",
+        "unit": "topology.face_p2"
+      },
       "max_rel_err": 0.0,
       "name": "extra00419",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "generated:seed=4207804418",
       "values_compared": 0
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic geometry import for face evaluation",
+        "unit": "topology.face_p2"
+      },
       "max_rel_err": 0.0,
       "name": "extra00420",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "generated:seed=4207804418",
       "values_compared": 0
     },
@@ -14098,11 +14512,14 @@
       "values_compared": 0
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic geometry import for face evaluation",
+        "unit": "topology.face_p2"
+      },
       "max_rel_err": 0.0,
       "name": "extra00439",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "generated:seed=4207804418",
       "values_compared": 0
     },
@@ -14119,11 +14536,14 @@
       "values_compared": 0
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic geometry import for face evaluation",
+        "unit": "topology.face_p2"
+      },
       "max_rel_err": 0.0,
       "name": "extra00441",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "generated:seed=4207804418",
       "values_compared": 0
     },
@@ -14164,11 +14584,14 @@
       "values_compared": 7
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic geometry import for face evaluation",
+        "unit": "topology.face_p2"
+      },
       "max_rel_err": 0.0,
       "name": "extra00446",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "generated:seed=4207804418",
       "values_compared": 0
     },
@@ -14226,11 +14649,14 @@
       "values_compared": 6
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic geometry import for face evaluation",
+        "unit": "topology.face_p2"
+      },
       "max_rel_err": 0.0,
       "name": "extra00453",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "generated:seed=4207804418",
       "values_compared": 0
     },
@@ -14243,11 +14669,14 @@
       "values_compared": 1
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic geometry import for face evaluation",
+        "unit": "topology.face_p2"
+      },
       "max_rel_err": 0.0,
       "name": "extra00455",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "generated:seed=4207804418",
       "values_compared": 0
     },
@@ -14276,11 +14705,14 @@
       "values_compared": 0
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic geometry import for face evaluation",
+        "unit": "topology.face_p2"
+      },
       "max_rel_err": 0.0,
       "name": "extra00458",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "generated:seed=4207804418",
       "values_compared": 0
     },
@@ -14321,11 +14753,14 @@
       "values_compared": 1
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic geometry import for face evaluation",
+        "unit": "topology.face_p2"
+      },
       "max_rel_err": 0.0,
       "name": "extra00463",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "generated:seed=4207804418",
       "values_compared": 0
     },
@@ -14383,11 +14818,14 @@
       "values_compared": 0
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic geometry import for face evaluation",
+        "unit": "topology.face_p2"
+      },
       "max_rel_err": 0.0,
       "name": "extra00470",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "generated:seed=4207804418",
       "values_compared": 0
     },
@@ -14408,11 +14846,14 @@
       "values_compared": 4
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic geometry import for face evaluation",
+        "unit": "topology.face_p2"
+      },
       "max_rel_err": 0.0,
       "name": "extra00473",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "generated:seed=4207804418",
       "values_compared": 0
     },
@@ -14433,11 +14874,14 @@
       "values_compared": 8
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic geometry import for face evaluation",
+        "unit": "topology.face_p2"
+      },
       "max_rel_err": 0.0,
       "name": "extra00476",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "generated:seed=4207804418",
       "values_compared": 0
     },
@@ -14470,11 +14914,14 @@
       "values_compared": 0
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic geometry import for face evaluation",
+        "unit": "topology.face_p2"
+      },
       "max_rel_err": 0.0,
       "name": "extra00480",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "generated:seed=4207804418",
       "values_compared": 0
     },
@@ -14505,20 +14952,26 @@
       "values_compared": 3
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic geometry import for face evaluation",
+        "unit": "topology.face_p2"
+      },
       "max_rel_err": 0.0,
       "name": "extra00484",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "generated:seed=4207804418",
       "values_compared": 0
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic geometry import for face evaluation",
+        "unit": "topology.face_p2"
+      },
       "max_rel_err": 0.0,
       "name": "extra00485",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "generated:seed=4207804418",
       "values_compared": 0
     },
@@ -14645,11 +15098,14 @@
       "values_compared": 6
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic geometry import for face evaluation",
+        "unit": "topology.face_p2"
+      },
       "max_rel_err": 0.0,
       "name": "extra00500",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "generated:seed=4207804418",
       "values_compared": 0
     },
@@ -14698,29 +15154,38 @@
       "values_compared": 0
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic geometry import for face evaluation",
+        "unit": "topology.face_p2"
+      },
       "max_rel_err": 0.0,
       "name": "extra00506",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "generated:seed=4207804418",
       "values_compared": 0
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic geometry import for face evaluation",
+        "unit": "topology.face_p2"
+      },
       "max_rel_err": 0.0,
       "name": "extra00507",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "generated:seed=4207804418",
       "values_compared": 0
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic geometry import for face evaluation",
+        "unit": "topology.face_p2"
+      },
       "max_rel_err": 0.0,
       "name": "extra00508",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "generated:seed=4207804418",
       "values_compared": 0
     },
@@ -14745,20 +15210,26 @@
       "values_compared": 1
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic geometry import for face evaluation",
+        "unit": "topology.face_p2"
+      },
       "max_rel_err": 0.0,
       "name": "extra00511",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "generated:seed=4207804418",
       "values_compared": 0
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic geometry import for face evaluation",
+        "unit": "topology.face_p2"
+      },
       "max_rel_err": 0.0,
       "name": "extra00512",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "generated:seed=4207804418",
       "values_compared": 0
     },
@@ -14811,20 +15282,26 @@
       "values_compared": 44
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic geometry import for face evaluation",
+        "unit": "topology.face_p2"
+      },
       "max_rel_err": 0.0,
       "name": "extra00518",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "generated:seed=4207804418",
       "values_compared": 0
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic geometry import for face evaluation",
+        "unit": "topology.face_p2"
+      },
       "max_rel_err": 0.0,
       "name": "extra00519",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "generated:seed=4207804418",
       "values_compared": 0
     },
@@ -14902,20 +15379,26 @@
       "values_compared": 6
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic geometry import for face evaluation",
+        "unit": "topology.face_p2"
+      },
       "max_rel_err": 0.0,
       "name": "extra00529",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "generated:seed=4207804418",
       "values_compared": 0
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic geometry import for face evaluation",
+        "unit": "topology.face_p2"
+      },
       "max_rel_err": 0.0,
       "name": "extra00530",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "generated:seed=4207804418",
       "values_compared": 0
     },
@@ -14977,11 +15460,14 @@
       "values_compared": 0
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic geometry import for face evaluation",
+        "unit": "topology.face_p2"
+      },
       "max_rel_err": 0.0,
       "name": "extra00538",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "generated:seed=4207804418",
       "values_compared": 0
     },
@@ -15003,11 +15489,14 @@
       "values_compared": 0
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic geometry import for face evaluation",
+        "unit": "topology.face_p2"
+      },
       "max_rel_err": 0.0,
       "name": "extra00541",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "generated:seed=4207804418",
       "values_compared": 0
     },
@@ -15049,11 +15538,14 @@
       "values_compared": 2
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic geometry import for face evaluation",
+        "unit": "topology.face_p2"
+      },
       "max_rel_err": 0.0,
       "name": "extra00546",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "generated:seed=4207804418",
       "values_compared": 0
     },
@@ -15066,11 +15558,14 @@
       "values_compared": 18
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic geometry import for face evaluation",
+        "unit": "topology.face_p2"
+      },
       "max_rel_err": 0.0,
       "name": "extra00548",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "generated:seed=4207804418",
       "values_compared": 0
     },
@@ -15107,11 +15602,14 @@
       "values_compared": 3
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic geometry import for face evaluation",
+        "unit": "topology.face_p2"
+      },
       "max_rel_err": 0.0,
       "name": "extra00553",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "generated:seed=4207804418",
       "values_compared": 0
     },
@@ -15161,11 +15659,14 @@
       "values_compared": 11
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic geometry import for face evaluation",
+        "unit": "topology.face_p2"
+      },
       "max_rel_err": 0.0,
       "name": "extra00559",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "generated:seed=4207804418",
       "values_compared": 0
     },
@@ -15178,20 +15679,26 @@
       "values_compared": 4
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic geometry import for face evaluation",
+        "unit": "topology.face_p2"
+      },
       "max_rel_err": 0.0,
       "name": "extra00561",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "generated:seed=4207804418",
       "values_compared": 0
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic geometry import for face evaluation",
+        "unit": "topology.face_p2"
+      },
       "max_rel_err": 0.0,
       "name": "extra00562",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "generated:seed=4207804418",
       "values_compared": 0
     },
@@ -15217,29 +15724,38 @@
       "values_compared": 0
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic geometry import for face evaluation",
+        "unit": "topology.face_p2"
+      },
       "max_rel_err": 0.0,
       "name": "extra00565",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "generated:seed=4207804418",
       "values_compared": 0
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic geometry import for face evaluation",
+        "unit": "topology.face_p2"
+      },
       "max_rel_err": 0.0,
       "name": "extra00566",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "generated:seed=4207804418",
       "values_compared": 0
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic geometry import for face evaluation",
+        "unit": "topology.face_p2"
+      },
       "max_rel_err": 0.0,
       "name": "extra00567",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "generated:seed=4207804418",
       "values_compared": 0
     },
@@ -15417,11 +15933,14 @@
       "values_compared": 5
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic geometry import for face evaluation",
+        "unit": "topology.face_p2"
+      },
       "max_rel_err": 0.0,
       "name": "extra00587",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "generated:seed=4207804418",
       "values_compared": 0
     },
@@ -15480,29 +15999,38 @@
       "values_compared": 77
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic geometry import for face evaluation",
+        "unit": "topology.face_p2"
+      },
       "max_rel_err": 0.0,
       "name": "extra00594",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "generated:seed=4207804418",
       "values_compared": 0
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic geometry import for face evaluation",
+        "unit": "topology.face_p2"
+      },
       "max_rel_err": 0.0,
       "name": "extra00595",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "generated:seed=4207804418",
       "values_compared": 0
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic geometry import for face evaluation",
+        "unit": "topology.face_p2"
+      },
       "max_rel_err": 0.0,
       "name": "extra00596",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "generated:seed=4207804418",
       "values_compared": 0
     },
@@ -15571,11 +16099,14 @@
       "values_compared": 1
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic geometry import for face evaluation",
+        "unit": "topology.face_p2"
+      },
       "max_rel_err": 0.0,
       "name": "extra00605",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "generated:seed=4207804418",
       "values_compared": 0
     },
@@ -15681,38 +16212,50 @@
       "values_compared": 0
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic geometry import for face evaluation",
+        "unit": "topology.face_p2"
+      },
       "max_rel_err": 0.0,
       "name": "extra00617",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "generated:seed=4207804418",
       "values_compared": 0
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic geometry import for face evaluation",
+        "unit": "topology.face_p2"
+      },
       "max_rel_err": 0.0,
       "name": "extra00618",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "generated:seed=4207804418",
       "values_compared": 0
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic geometry import for face evaluation",
+        "unit": "topology.face_p2"
+      },
       "max_rel_err": 0.0,
       "name": "extra00619",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "generated:seed=4207804418",
       "values_compared": 0
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic geometry import for face evaluation",
+        "unit": "topology.face_p2"
+      },
       "max_rel_err": 0.0,
       "name": "extra00620",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "generated:seed=4207804418",
       "values_compared": 0
     },
@@ -15766,11 +16309,14 @@
       "values_compared": 2
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic geometry import for face evaluation",
+        "unit": "topology.face_p2"
+      },
       "max_rel_err": 0.0,
       "name": "extra00627",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "generated:seed=4207804418",
       "values_compared": 0
     },
@@ -15792,11 +16338,14 @@
       "values_compared": 0
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic geometry import for face evaluation",
+        "unit": "topology.face_p2"
+      },
       "max_rel_err": 0.0,
       "name": "extra00630",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "generated:seed=4207804418",
       "values_compared": 0
     },
@@ -15885,11 +16434,14 @@
       "values_compared": 0
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic geometry import for face evaluation",
+        "unit": "topology.face_p2"
+      },
       "max_rel_err": 0.0,
       "name": "extra00640",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "generated:seed=4207804418",
       "values_compared": 0
     },
@@ -15914,11 +16466,14 @@
       "values_compared": 64
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic geometry import for face evaluation",
+        "unit": "topology.face_p2"
+      },
       "max_rel_err": 0.0,
       "name": "extra00643",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "generated:seed=4207804418",
       "values_compared": 0
     },
@@ -15939,11 +16494,14 @@
       "values_compared": 44
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic geometry import for face evaluation",
+        "unit": "topology.face_p2"
+      },
       "max_rel_err": 0.0,
       "name": "extra00646",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "generated:seed=4207804418",
       "values_compared": 0
     },
@@ -15968,11 +16526,14 @@
       "values_compared": 0
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic geometry import for face evaluation",
+        "unit": "topology.face_p2"
+      },
       "max_rel_err": 0.0,
       "name": "extra00649",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "generated:seed=4207804418",
       "values_compared": 0
     },
@@ -16090,11 +16651,14 @@
       "values_compared": 0
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic geometry import for face evaluation",
+        "unit": "topology.face_p2"
+      },
       "max_rel_err": 0.0,
       "name": "extra00662",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "generated:seed=4207804418",
       "values_compared": 0
     },
@@ -16116,20 +16680,26 @@
       "values_compared": 1
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic geometry import for face evaluation",
+        "unit": "topology.face_p2"
+      },
       "max_rel_err": 0.0,
       "name": "extra00665",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "generated:seed=4207804418",
       "values_compared": 0
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic geometry import for face evaluation",
+        "unit": "topology.face_p2"
+      },
       "max_rel_err": 0.0,
       "name": "extra00666",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "generated:seed=4207804418",
       "values_compared": 0
     },
@@ -16211,11 +16781,14 @@
       "values_compared": 0
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic geometry import for face evaluation",
+        "unit": "topology.face_p2"
+      },
       "max_rel_err": 0.0,
       "name": "extra00676",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "generated:seed=4207804418",
       "values_compared": 0
     },
@@ -16326,20 +16899,26 @@
       "values_compared": 0
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic geometry import for face evaluation",
+        "unit": "topology.face_p2"
+      },
       "max_rel_err": 0.0,
       "name": "extra00688",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "generated:seed=4207804418",
       "values_compared": 0
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic geometry import for face evaluation",
+        "unit": "topology.face_p2"
+      },
       "max_rel_err": 0.0,
       "name": "extra00689",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "generated:seed=4207804418",
       "values_compared": 0
     },
@@ -16432,11 +17011,14 @@
       "values_compared": 1
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic geometry import for face evaluation",
+        "unit": "topology.face_p2"
+      },
       "max_rel_err": 0.0,
       "name": "extra00699",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "generated:seed=4207804418",
       "values_compared": 0
     },
@@ -16449,20 +17031,26 @@
       "values_compared": 44
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic geometry import for face evaluation",
+        "unit": "topology.face_p2"
+      },
       "max_rel_err": 0.0,
       "name": "extra00701",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "generated:seed=4207804418",
       "values_compared": 0
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic geometry import for face evaluation",
+        "unit": "topology.face_p2"
+      },
       "max_rel_err": 0.0,
       "name": "extra00702",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "generated:seed=4207804418",
       "values_compared": 0
     },
@@ -16503,11 +17091,14 @@
       "values_compared": 9
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic geometry import for face evaluation",
+        "unit": "topology.face_p2"
+      },
       "max_rel_err": 0.0,
       "name": "extra00707",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "generated:seed=4207804418",
       "values_compared": 0
     },
@@ -16524,11 +17115,14 @@
       "values_compared": 0
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic geometry import for face evaluation",
+        "unit": "topology.face_p2"
+      },
       "max_rel_err": 0.0,
       "name": "extra00709",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "generated:seed=4207804418",
       "values_compared": 0
     },
@@ -16541,11 +17135,14 @@
       "values_compared": 29
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic geometry import for face evaluation",
+        "unit": "topology.face_p2"
+      },
       "max_rel_err": 0.0,
       "name": "extra00711",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "generated:seed=4207804418",
       "values_compared": 0
     },
@@ -16604,11 +17201,14 @@
       "values_compared": 0
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic geometry import for face evaluation",
+        "unit": "topology.face_p2"
+      },
       "max_rel_err": 0.0,
       "name": "extra00718",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "generated:seed=4207804418",
       "values_compared": 0
     },
@@ -16638,38 +17238,50 @@
       "values_compared": 0
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic geometry import for face evaluation",
+        "unit": "topology.face_p2"
+      },
       "max_rel_err": 0.0,
       "name": "extra00722",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "generated:seed=4207804418",
       "values_compared": 0
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic geometry import for face evaluation",
+        "unit": "topology.face_p2"
+      },
       "max_rel_err": 0.0,
       "name": "extra00723",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "generated:seed=4207804418",
       "values_compared": 0
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic geometry import for face evaluation",
+        "unit": "topology.face_p2"
+      },
       "max_rel_err": 0.0,
       "name": "extra00724",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "generated:seed=4207804418",
       "values_compared": 0
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic geometry import for face evaluation",
+        "unit": "topology.face_p2"
+      },
       "max_rel_err": 0.0,
       "name": "extra00725",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "generated:seed=4207804418",
       "values_compared": 0
     },
@@ -16714,11 +17326,14 @@
       "values_compared": 11
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic geometry import for face evaluation",
+        "unit": "topology.face_p2"
+      },
       "max_rel_err": 0.0,
       "name": "extra00731",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "generated:seed=4207804418",
       "values_compared": 0
     },
@@ -16840,11 +17455,14 @@
       "values_compared": 0
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic geometry import for face evaluation",
+        "unit": "topology.face_p2"
+      },
       "max_rel_err": 0.0,
       "name": "extra00746",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "generated:seed=4207804418",
       "values_compared": 0
     },
@@ -16873,11 +17491,14 @@
       "values_compared": 44
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic geometry import for face evaluation",
+        "unit": "topology.face_p2"
+      },
       "max_rel_err": 0.0,
       "name": "extra00750",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "generated:seed=4207804418",
       "values_compared": 0
     },
@@ -16947,11 +17568,14 @@
       "values_compared": 1
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic geometry import for face evaluation",
+        "unit": "topology.face_p2"
+      },
       "max_rel_err": 0.0,
       "name": "extra00758",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "generated:seed=4207804418",
       "values_compared": 0
     },
@@ -16985,11 +17609,14 @@
       "values_compared": 0
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic geometry import for face evaluation",
+        "unit": "topology.face_p2"
+      },
       "max_rel_err": 0.0,
       "name": "extra00762",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "generated:seed=4207804418",
       "values_compared": 0
     },
@@ -17043,11 +17670,14 @@
       "values_compared": 0
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic geometry import for face evaluation",
+        "unit": "topology.face_p2"
+      },
       "max_rel_err": 0.0,
       "name": "extra00768",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "generated:seed=4207804418",
       "values_compared": 0
     },
@@ -17060,11 +17690,14 @@
       "values_compared": 6
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic geometry import for face evaluation",
+        "unit": "topology.face_p2"
+      },
       "max_rel_err": 0.0,
       "name": "extra00770",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "generated:seed=4207804418",
       "values_compared": 0
     },
@@ -17085,11 +17718,14 @@
       "values_compared": 1
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic geometry import for face evaluation",
+        "unit": "topology.face_p2"
+      },
       "max_rel_err": 0.0,
       "name": "extra00773",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "generated:seed=4207804418",
       "values_compared": 0
     },
@@ -17131,11 +17767,14 @@
       "values_compared": 0
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic geometry import for face evaluation",
+        "unit": "topology.face_p2"
+      },
       "max_rel_err": 0.0,
       "name": "extra00778",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "generated:seed=4207804418",
       "values_compared": 0
     },
@@ -17169,11 +17808,14 @@
       "values_compared": 4
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic geometry import for face evaluation",
+        "unit": "topology.face_p2"
+      },
       "max_rel_err": 0.0,
       "name": "extra00782",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "generated:seed=4207804418",
       "values_compared": 0
     },
@@ -17210,11 +17852,14 @@
       "values_compared": 0
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic geometry import for face evaluation",
+        "unit": "topology.face_p2"
+      },
       "max_rel_err": 0.0,
       "name": "extra00786",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "generated:seed=4207804418",
       "values_compared": 0
     },
@@ -17281,11 +17926,14 @@
       "values_compared": 9
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic geometry import for face evaluation",
+        "unit": "topology.face_p2"
+      },
       "max_rel_err": 0.0,
       "name": "extra00794",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "generated:seed=4207804418",
       "values_compared": 0
     },
@@ -17306,11 +17954,14 @@
       "values_compared": 62
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic geometry import for face evaluation",
+        "unit": "topology.face_p2"
+      },
       "max_rel_err": 0.0,
       "name": "extra00797",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "generated:seed=4207804418",
       "values_compared": 0
     },
@@ -17388,11 +18039,14 @@
       "values_compared": 44
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic geometry import for face evaluation",
+        "unit": "topology.face_p2"
+      },
       "max_rel_err": 0.0,
       "name": "extra00807",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "generated:seed=4207804418",
       "values_compared": 0
     },
@@ -17413,11 +18067,14 @@
       "values_compared": 9
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic geometry import for face evaluation",
+        "unit": "topology.face_p2"
+      },
       "max_rel_err": 0.0,
       "name": "extra00810",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "generated:seed=4207804418",
       "values_compared": 0
     },
@@ -17442,11 +18099,14 @@
       "values_compared": 5
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic geometry import for face evaluation",
+        "unit": "topology.face_p2"
+      },
       "max_rel_err": 0.0,
       "name": "extra00813",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "generated:seed=4207804418",
       "values_compared": 0
     },
@@ -17459,11 +18119,14 @@
       "values_compared": 44
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic geometry import for face evaluation",
+        "unit": "topology.face_p2"
+      },
       "max_rel_err": 0.0,
       "name": "extra00815",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "generated:seed=4207804418",
       "values_compared": 0
     },
@@ -17549,11 +18212,14 @@
       "values_compared": 11
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic geometry import for face evaluation",
+        "unit": "topology.face_p2"
+      },
       "max_rel_err": 0.0,
       "name": "extra00826",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "generated:seed=4207804418",
       "values_compared": 0
     },
@@ -17566,11 +18232,14 @@
       "values_compared": 7
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic geometry import for face evaluation",
+        "unit": "topology.face_p2"
+      },
       "max_rel_err": 0.0,
       "name": "extra00828",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "generated:seed=4207804418",
       "values_compared": 0
     },
@@ -17611,11 +18280,14 @@
       "values_compared": 58
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic geometry import for face evaluation",
+        "unit": "topology.face_p2"
+      },
       "max_rel_err": 0.0,
       "name": "extra00833",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "generated:seed=4207804418",
       "values_compared": 0
     },
@@ -17652,11 +18324,14 @@
       "values_compared": 1
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic geometry import for face evaluation",
+        "unit": "topology.face_p2"
+      },
       "max_rel_err": 0.0,
       "name": "extra00838",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "generated:seed=4207804418",
       "values_compared": 0
     },
@@ -17779,11 +18454,14 @@
       "values_compared": 0
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic geometry import for face evaluation",
+        "unit": "topology.face_p2"
+      },
       "max_rel_err": 0.0,
       "name": "extra00853",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "generated:seed=4207804418",
       "values_compared": 0
     },
@@ -17873,11 +18551,14 @@
       "values_compared": 0
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic geometry import for face evaluation",
+        "unit": "topology.face_p2"
+      },
       "max_rel_err": 0.0,
       "name": "extra00864",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "generated:seed=4207804418",
       "values_compared": 0
     },
@@ -17902,11 +18583,14 @@
       "values_compared": 3
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic geometry import for face evaluation",
+        "unit": "topology.face_p2"
+      },
       "max_rel_err": 0.0,
       "name": "extra00867",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "generated:seed=4207804418",
       "values_compared": 0
     },
@@ -17959,11 +18643,14 @@
       "values_compared": 1
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic geometry import for face evaluation",
+        "unit": "topology.face_p2"
+      },
       "max_rel_err": 0.0,
       "name": "extra00874",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "generated:seed=4207804418",
       "values_compared": 0
     },
@@ -18021,11 +18708,14 @@
       "values_compared": 0
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic geometry import for face evaluation",
+        "unit": "topology.face_p2"
+      },
       "max_rel_err": 0.0,
       "name": "extra00880",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "generated:seed=4207804418",
       "values_compared": 0
     },
@@ -18071,11 +18761,14 @@
       "values_compared": 21
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic geometry import for face evaluation",
+        "unit": "topology.face_p2"
+      },
       "max_rel_err": 0.0,
       "name": "extra00886",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "generated:seed=4207804418",
       "values_compared": 0
     },
@@ -18105,11 +18798,14 @@
       "values_compared": 0
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic geometry import for face evaluation",
+        "unit": "topology.face_p2"
+      },
       "max_rel_err": 0.0,
       "name": "extra00890",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "generated:seed=4207804418",
       "values_compared": 0
     },
@@ -18159,11 +18855,14 @@
       "values_compared": 31
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic geometry import for face evaluation",
+        "unit": "topology.face_p2"
+      },
       "max_rel_err": 0.0,
       "name": "extra00896",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "generated:seed=4207804418",
       "values_compared": 0
     },
@@ -18232,20 +18931,26 @@
       "values_compared": 3
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic geometry import for face evaluation",
+        "unit": "topology.face_p2"
+      },
       "max_rel_err": 0.0,
       "name": "extra00904",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "generated:seed=4207804418",
       "values_compared": 0
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic geometry import for face evaluation",
+        "unit": "topology.face_p2"
+      },
       "max_rel_err": 0.0,
       "name": "extra00905",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "generated:seed=4207804418",
       "values_compared": 0
     },
@@ -18283,20 +18988,26 @@
       "values_compared": 45
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic geometry import for face evaluation",
+        "unit": "topology.face_p2"
+      },
       "max_rel_err": 0.0,
       "name": "extra00910",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "generated:seed=4207804418",
       "values_compared": 0
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic geometry import for face evaluation",
+        "unit": "topology.face_p2"
+      },
       "max_rel_err": 0.0,
       "name": "extra00911",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "generated:seed=4207804418",
       "values_compared": 0
     },
@@ -18355,20 +19066,26 @@
       "values_compared": 0
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic geometry import for face evaluation",
+        "unit": "topology.face_p2"
+      },
       "max_rel_err": 0.0,
       "name": "extra00918",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "generated:seed=4207804418",
       "values_compared": 0
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic geometry import for face evaluation",
+        "unit": "topology.face_p2"
+      },
       "max_rel_err": 0.0,
       "name": "extra00919",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "generated:seed=4207804418",
       "values_compared": 0
     },
@@ -18442,29 +19159,38 @@
       "values_compared": 3
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic geometry import for face evaluation",
+        "unit": "topology.face_p2"
+      },
       "max_rel_err": 0.0,
       "name": "extra00928",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "generated:seed=4207804418",
       "values_compared": 0
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic geometry import for face evaluation",
+        "unit": "topology.face_p2"
+      },
       "max_rel_err": 0.0,
       "name": "extra00929",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "generated:seed=4207804418",
       "values_compared": 0
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic geometry import for face evaluation",
+        "unit": "topology.face_p2"
+      },
       "max_rel_err": 0.0,
       "name": "extra00930",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "generated:seed=4207804418",
       "values_compared": 0
     },
@@ -18477,11 +19203,14 @@
       "values_compared": 44
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic geometry import for face evaluation",
+        "unit": "topology.face_p2"
+      },
       "max_rel_err": 0.0,
       "name": "extra00932",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "generated:seed=4207804418",
       "values_compared": 0
     },
@@ -18494,20 +19223,26 @@
       "values_compared": 16
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic geometry import for face evaluation",
+        "unit": "topology.face_p2"
+      },
       "max_rel_err": 0.0,
       "name": "extra00934",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "generated:seed=4207804418",
       "values_compared": 0
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic geometry import for face evaluation",
+        "unit": "topology.face_p2"
+      },
       "max_rel_err": 0.0,
       "name": "extra00935",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "generated:seed=4207804418",
       "values_compared": 0
     },
@@ -18594,11 +19329,14 @@
       "values_compared": 12
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic geometry import for face evaluation",
+        "unit": "topology.face_p2"
+      },
       "max_rel_err": 0.0,
       "name": "extra00946",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "generated:seed=4207804418",
       "values_compared": 0
     },
@@ -18627,11 +19365,14 @@
       "values_compared": 6
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic geometry import for face evaluation",
+        "unit": "topology.face_p2"
+      },
       "max_rel_err": 0.0,
       "name": "extra00950",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "generated:seed=4207804418",
       "values_compared": 0
     },
@@ -18720,20 +19461,26 @@
       "values_compared": 1
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic geometry import for face evaluation",
+        "unit": "topology.face_p2"
+      },
       "max_rel_err": 0.0,
       "name": "extra00961",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "generated:seed=4207804418",
       "values_compared": 0
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic geometry import for face evaluation",
+        "unit": "topology.face_p2"
+      },
       "max_rel_err": 0.0,
       "name": "extra00962",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "generated:seed=4207804418",
       "values_compared": 0
     },
@@ -18762,11 +19509,14 @@
       "values_compared": 5
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic geometry import for face evaluation",
+        "unit": "topology.face_p2"
+      },
       "max_rel_err": 0.0,
       "name": "extra00966",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "generated:seed=4207804418",
       "values_compared": 0
     },
@@ -18795,11 +19545,14 @@
       "values_compared": 3
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic geometry import for face evaluation",
+        "unit": "topology.face_p2"
+      },
       "max_rel_err": 0.0,
       "name": "extra00970",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "generated:seed=4207804418",
       "values_compared": 0
     },
@@ -18812,11 +19565,14 @@
       "values_compared": 29
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic geometry import for face evaluation",
+        "unit": "topology.face_p2"
+      },
       "max_rel_err": 0.0,
       "name": "extra00972",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "generated:seed=4207804418",
       "values_compared": 0
     },
@@ -18838,11 +19594,14 @@
       "values_compared": 202
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic geometry import for face evaluation",
+        "unit": "topology.face_p2"
+      },
       "max_rel_err": 0.0,
       "name": "extra00975",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "generated:seed=4207804418",
       "values_compared": 0
     },
@@ -18872,11 +19631,14 @@
       "values_compared": 11
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic geometry import for face evaluation",
+        "unit": "topology.face_p2"
+      },
       "max_rel_err": 0.0,
       "name": "extra00979",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "generated:seed=4207804418",
       "values_compared": 0
     },
@@ -18945,11 +19707,14 @@
       "values_compared": 1
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic geometry import for face evaluation",
+        "unit": "topology.face_p2"
+      },
       "max_rel_err": 0.0,
       "name": "extra00987",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "generated:seed=4207804418",
       "values_compared": 0
     },
@@ -18962,11 +19727,14 @@
       "values_compared": 1
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic geometry import for face evaluation",
+        "unit": "topology.face_p2"
+      },
       "max_rel_err": 0.0,
       "name": "extra00989",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "generated:seed=4207804418",
       "values_compared": 0
     },
@@ -19109,11 +19877,14 @@
       "values_compared": 11
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic geometry import for face evaluation",
+        "unit": "topology.face_p2"
+      },
       "max_rel_err": 0.0,
       "name": "extra01007",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "generated:seed=4207804418",
       "values_compared": 0
     },
@@ -19166,20 +19937,26 @@
       "values_compared": 44
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic geometry import for face evaluation",
+        "unit": "topology.face_p2"
+      },
       "max_rel_err": 0.0,
       "name": "extra01014",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "generated:seed=4207804418",
       "values_compared": 0
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic geometry import for face evaluation",
+        "unit": "topology.face_p2"
+      },
       "max_rel_err": 0.0,
       "name": "extra01015",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "generated:seed=4207804418",
       "values_compared": 0
     },
@@ -19201,11 +19978,14 @@
       "values_compared": 4
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic geometry import for face evaluation",
+        "unit": "topology.face_p2"
+      },
       "max_rel_err": 0.0,
       "name": "extra01018",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "generated:seed=4207804418",
       "values_compared": 0
     },
@@ -19279,11 +20059,14 @@
       "values_compared": 235
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic geometry import for face evaluation",
+        "unit": "topology.face_p2"
+      },
       "max_rel_err": 0.0,
       "name": "extra01027",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "generated:seed=4207804418",
       "values_compared": 0
     },
@@ -19353,20 +20136,26 @@
       "values_compared": 0
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic geometry import for face evaluation",
+        "unit": "topology.face_p2"
+      },
       "max_rel_err": 0.0,
       "name": "extra01035",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "generated:seed=4207804418",
       "values_compared": 0
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic geometry import for face evaluation",
+        "unit": "topology.face_p2"
+      },
       "max_rel_err": 0.0,
       "name": "extra01036",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "generated:seed=4207804418",
       "values_compared": 0
     },
@@ -19379,20 +20168,26 @@
       "values_compared": 6
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic geometry import for face evaluation",
+        "unit": "topology.face_p2"
+      },
       "max_rel_err": 0.0,
       "name": "extra01038",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "generated:seed=4207804418",
       "values_compared": 0
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic geometry import for face evaluation",
+        "unit": "topology.face_p2"
+      },
       "max_rel_err": 0.0,
       "name": "extra01039",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "generated:seed=4207804418",
       "values_compared": 0
     },
@@ -19461,11 +20256,14 @@
       "values_compared": 0
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic geometry import for face evaluation",
+        "unit": "topology.face_p2"
+      },
       "max_rel_err": 0.0,
       "name": "extra01047",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "generated:seed=4207804418",
       "values_compared": 0
     },
@@ -19526,38 +20324,50 @@
       "values_compared": 44
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic geometry import for face evaluation",
+        "unit": "topology.face_p2"
+      },
       "max_rel_err": 0.0,
       "name": "extra01054",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "generated:seed=4207804418",
       "values_compared": 0
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic geometry import for face evaluation",
+        "unit": "topology.face_p2"
+      },
       "max_rel_err": 0.0,
       "name": "extra01055",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "generated:seed=4207804418",
       "values_compared": 0
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic geometry import for face evaluation",
+        "unit": "topology.face_p2"
+      },
       "max_rel_err": 0.0,
       "name": "extra01056",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "generated:seed=4207804418",
       "values_compared": 0
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic geometry import for face evaluation",
+        "unit": "topology.face_p2"
+      },
       "max_rel_err": 0.0,
       "name": "extra01057",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "generated:seed=4207804418",
       "values_compared": 0
     },
@@ -19646,20 +20456,26 @@
       "values_compared": 7
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic geometry import for face evaluation",
+        "unit": "topology.face_p2"
+      },
       "max_rel_err": 0.0,
       "name": "extra01068",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "generated:seed=4207804418",
       "values_compared": 0
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic geometry import for face evaluation",
+        "unit": "topology.face_p2"
+      },
       "max_rel_err": 0.0,
       "name": "extra01069",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "generated:seed=4207804418",
       "values_compared": 0
     },
@@ -19773,11 +20589,14 @@
       "values_compared": 3
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic geometry import for face evaluation",
+        "unit": "topology.face_p2"
+      },
       "max_rel_err": 0.0,
       "name": "extra01082",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "generated:seed=4207804418",
       "values_compared": 0
     },
@@ -19799,11 +20618,14 @@
       "values_compared": 0
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic geometry import for face evaluation",
+        "unit": "topology.face_p2"
+      },
       "max_rel_err": 0.0,
       "name": "extra01085",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "generated:seed=4207804418",
       "values_compared": 0
     },
@@ -19862,11 +20684,14 @@
       "values_compared": 4
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic geometry import for face evaluation",
+        "unit": "topology.face_p2"
+      },
       "max_rel_err": 0.0,
       "name": "extra01092",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "generated:seed=4207804418",
       "values_compared": 0
     },
@@ -19887,20 +20712,26 @@
       "values_compared": 2
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic geometry import for face evaluation",
+        "unit": "topology.face_p2"
+      },
       "max_rel_err": 0.0,
       "name": "extra01095",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "generated:seed=4207804418",
       "values_compared": 0
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic geometry import for face evaluation",
+        "unit": "topology.face_p2"
+      },
       "max_rel_err": 0.0,
       "name": "extra01096",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "generated:seed=4207804418",
       "values_compared": 0
     },
@@ -19921,20 +20752,26 @@
       "values_compared": 8
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic geometry import for face evaluation",
+        "unit": "topology.face_p2"
+      },
       "max_rel_err": 0.0,
       "name": "extra01099",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "generated:seed=4207804418",
       "values_compared": 0
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic geometry import for face evaluation",
+        "unit": "topology.face_p2"
+      },
       "max_rel_err": 0.0,
       "name": "extra01100",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "generated:seed=4207804418",
       "values_compared": 0
     },
@@ -19955,11 +20792,14 @@
       "values_compared": 1
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic geometry import for face evaluation",
+        "unit": "topology.face_p2"
+      },
       "max_rel_err": 0.0,
       "name": "extra01103",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "generated:seed=4207804418",
       "values_compared": 0
     },
@@ -19989,11 +20829,14 @@
       "values_compared": 10
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic geometry import for face evaluation",
+        "unit": "topology.face_p2"
+      },
       "max_rel_err": 0.0,
       "name": "extra01107",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "generated:seed=4207804418",
       "values_compared": 0
     },
@@ -20039,11 +20882,14 @@
       "values_compared": 5
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic geometry import for face evaluation",
+        "unit": "topology.face_p2"
+      },
       "max_rel_err": 0.0,
       "name": "extra01113",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "generated:seed=4207804418",
       "values_compared": 0
     },
@@ -20064,20 +20910,26 @@
       "values_compared": 8
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic geometry import for face evaluation",
+        "unit": "topology.face_p2"
+      },
       "max_rel_err": 0.0,
       "name": "extra01116",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "generated:seed=4207804418",
       "values_compared": 0
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic geometry import for face evaluation",
+        "unit": "topology.face_p2"
+      },
       "max_rel_err": 0.0,
       "name": "extra01117",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "generated:seed=4207804418",
       "values_compared": 0
     },
@@ -20090,11 +20942,14 @@
       "values_compared": 11
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic geometry import for face evaluation",
+        "unit": "topology.face_p2"
+      },
       "max_rel_err": 0.0,
       "name": "extra01119",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "generated:seed=4207804418",
       "values_compared": 0
     },
@@ -20115,11 +20970,14 @@
       "values_compared": 6
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic geometry import for face evaluation",
+        "unit": "topology.face_p2"
+      },
       "max_rel_err": 0.0,
       "name": "extra01122",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "generated:seed=4207804418",
       "values_compared": 0
     },
@@ -20203,11 +21061,14 @@
       "values_compared": 0
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic geometry import for face evaluation",
+        "unit": "topology.face_p2"
+      },
       "max_rel_err": 0.0,
       "name": "extra01132",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "generated:seed=4207804418",
       "values_compared": 0
     },
@@ -20244,11 +21105,14 @@
       "values_compared": 10
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic geometry import for face evaluation",
+        "unit": "topology.face_p2"
+      },
       "max_rel_err": 0.0,
       "name": "extra01137",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "generated:seed=4207804418",
       "values_compared": 0
     },
@@ -20386,11 +21250,14 @@
       "values_compared": 3
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic geometry import for face evaluation",
+        "unit": "topology.face_p2"
+      },
       "max_rel_err": 0.0,
       "name": "extra01153",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "generated:seed=4207804418",
       "values_compared": 0
     },
@@ -20493,11 +21360,14 @@
       "values_compared": 1
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic geometry import for face evaluation",
+        "unit": "topology.face_p2"
+      },
       "max_rel_err": 0.0,
       "name": "extra01165",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "generated:seed=4207804418",
       "values_compared": 0
     },
@@ -20518,11 +21388,14 @@
       "values_compared": 11
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic geometry import for face evaluation",
+        "unit": "topology.face_p2"
+      },
       "max_rel_err": 0.0,
       "name": "extra01168",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "generated:seed=4207804418",
       "values_compared": 0
     },
@@ -20536,11 +21409,14 @@
       "values_compared": 0
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic geometry import for face evaluation",
+        "unit": "topology.face_p2"
+      },
       "max_rel_err": 0.0,
       "name": "extra01170",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "generated:seed=4207804418",
       "values_compared": 0
     },
@@ -20606,11 +21482,14 @@
       "values_compared": 10
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic geometry import for face evaluation",
+        "unit": "topology.face_p2"
+      },
       "max_rel_err": 0.0,
       "name": "extra01178",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "generated:seed=4207804418",
       "values_compared": 0
     },
@@ -20633,11 +21512,14 @@
       "values_compared": 0
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic geometry import for face evaluation",
+        "unit": "topology.face_p2"
+      },
       "max_rel_err": 0.0,
       "name": "extra01181",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "generated:seed=4207804418",
       "values_compared": 0
     },
@@ -20654,11 +21536,14 @@
       "values_compared": 0
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic geometry import for face evaluation",
+        "unit": "topology.face_p2"
+      },
       "max_rel_err": 0.0,
       "name": "extra01183",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "generated:seed=4207804418",
       "values_compared": 0
     },
@@ -20707,11 +21592,14 @@
       "values_compared": 1
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic geometry import for face evaluation",
+        "unit": "topology.face_p2"
+      },
       "max_rel_err": 0.0,
       "name": "extra01189",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "generated:seed=4207804418",
       "values_compared": 0
     },
@@ -20814,11 +21702,14 @@
       "values_compared": 10
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic geometry import for face evaluation",
+        "unit": "topology.face_p2"
+      },
       "max_rel_err": 0.0,
       "name": "extra01201",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "generated:seed=4207804418",
       "values_compared": 0
     },
@@ -21057,11 +21948,14 @@
       "values_compared": 44
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic geometry import for face evaluation",
+        "unit": "topology.face_p2"
+      },
       "max_rel_err": 0.0,
       "name": "extra01229",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "generated:seed=4207804418",
       "values_compared": 0
     },
@@ -21307,11 +22201,14 @@
       "values_compared": 0
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic geometry import for face evaluation",
+        "unit": "topology.face_p2"
+      },
       "max_rel_err": 0.0,
       "name": "extra01258",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "generated:seed=4207804418",
       "values_compared": 0
     },
@@ -21425,11 +22322,14 @@
       "values_compared": 0
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic geometry import for face evaluation",
+        "unit": "topology.face_p2"
+      },
       "max_rel_err": 0.0,
       "name": "extra01271",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "generated:seed=4207804418",
       "values_compared": 0
     },
@@ -21483,11 +22383,14 @@
       "values_compared": 1
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic geometry import for face evaluation",
+        "unit": "topology.face_p2"
+      },
       "max_rel_err": 0.0,
       "name": "extra01278",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "generated:seed=4207804418",
       "values_compared": 0
     },
@@ -21537,20 +22440,26 @@
       "values_compared": 4
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic geometry import for face evaluation",
+        "unit": "topology.face_p2"
+      },
       "max_rel_err": 0.0,
       "name": "extra01284",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "generated:seed=4207804418",
       "values_compared": 0
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic geometry import for face evaluation",
+        "unit": "topology.face_p2"
+      },
       "max_rel_err": 0.0,
       "name": "extra01285",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "generated:seed=4207804418",
       "values_compared": 0
     },
@@ -21844,11 +22753,14 @@
       "values_compared": 6
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic geometry import for face evaluation",
+        "unit": "topology.face_p2"
+      },
       "max_rel_err": 0.0,
       "name": "extra01319",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "generated:seed=4207804418",
       "values_compared": 0
     },
@@ -21979,11 +22891,14 @@
       "values_compared": 44
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic geometry import for face evaluation",
+        "unit": "topology.face_p2"
+      },
       "max_rel_err": 0.0,
       "name": "extra01335",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "generated:seed=4207804418",
       "values_compared": 0
     },
@@ -22020,11 +22935,14 @@
       "values_compared": 6
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic geometry import for face evaluation",
+        "unit": "topology.face_p2"
+      },
       "max_rel_err": 0.0,
       "name": "extra01340",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "generated:seed=4207804418",
       "values_compared": 0
     },
@@ -22037,11 +22955,14 @@
       "values_compared": 1
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic geometry import for face evaluation",
+        "unit": "topology.face_p2"
+      },
       "max_rel_err": 0.0,
       "name": "extra01342",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "generated:seed=4207804418",
       "values_compared": 0
     },
@@ -22090,11 +23011,14 @@
       "values_compared": 0
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic geometry import for face evaluation",
+        "unit": "topology.face_p2"
+      },
       "max_rel_err": 0.0,
       "name": "extra01348",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "generated:seed=4207804418",
       "values_compared": 0
     },
@@ -22143,38 +23067,50 @@
       "values_compared": 4
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic geometry import for face evaluation",
+        "unit": "topology.face_p2"
+      },
       "max_rel_err": 0.0,
       "name": "extra01354",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "generated:seed=4207804418",
       "values_compared": 0
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic geometry import for face evaluation",
+        "unit": "topology.face_p2"
+      },
       "max_rel_err": 0.0,
       "name": "extra01355",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "generated:seed=4207804418",
       "values_compared": 0
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic geometry import for face evaluation",
+        "unit": "topology.face_p2"
+      },
       "max_rel_err": 0.0,
       "name": "extra01356",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "generated:seed=4207804418",
       "values_compared": 0
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic geometry import for face evaluation",
+        "unit": "topology.face_p2"
+      },
       "max_rel_err": 0.0,
       "name": "extra01357",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "generated:seed=4207804418",
       "values_compared": 0
     },
@@ -22212,20 +23148,26 @@
       "values_compared": 0
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic geometry import for face evaluation",
+        "unit": "topology.face_p2"
+      },
       "max_rel_err": 0.0,
       "name": "extra01362",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "generated:seed=4207804418",
       "values_compared": 0
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic geometry import for face evaluation",
+        "unit": "topology.face_p2"
+      },
       "max_rel_err": 0.0,
       "name": "extra01363",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "generated:seed=4207804418",
       "values_compared": 0
     },
@@ -22295,11 +23237,14 @@
       "values_compared": 10
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic geometry import for face evaluation",
+        "unit": "topology.face_p2"
+      },
       "max_rel_err": 0.0,
       "name": "extra01372",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "generated:seed=4207804418",
       "values_compared": 0
     },
@@ -22312,11 +23257,14 @@
       "values_compared": 5
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic geometry import for face evaluation",
+        "unit": "topology.face_p2"
+      },
       "max_rel_err": 0.0,
       "name": "extra01374",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "generated:seed=4207804418",
       "values_compared": 0
     },
@@ -22341,11 +23289,14 @@
       "values_compared": 11
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic geometry import for face evaluation",
+        "unit": "topology.face_p2"
+      },
       "max_rel_err": 0.0,
       "name": "extra01377",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "generated:seed=4207804418",
       "values_compared": 0
     },
@@ -22430,11 +23381,14 @@
       "values_compared": 5
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic geometry import for face evaluation",
+        "unit": "topology.face_p2"
+      },
       "max_rel_err": 0.0,
       "name": "extra01387",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "generated:seed=4207804418",
       "values_compared": 0
     },
@@ -22583,11 +23537,14 @@
       "values_compared": 0
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic geometry import for face evaluation",
+        "unit": "topology.face_p2"
+      },
       "max_rel_err": 0.0,
       "name": "extra01404",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "generated:seed=4207804418",
       "values_compared": 0
     },
@@ -22617,11 +23574,14 @@
       "values_compared": 0
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic geometry import for face evaluation",
+        "unit": "topology.face_p2"
+      },
       "max_rel_err": 0.0,
       "name": "extra01408",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "generated:seed=4207804418",
       "values_compared": 0
     },
@@ -22635,11 +23595,14 @@
       "values_compared": 0
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic geometry import for face evaluation",
+        "unit": "topology.face_p2"
+      },
       "max_rel_err": 0.0,
       "name": "extra01410",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "generated:seed=4207804418",
       "values_compared": 0
     },
@@ -22726,11 +23689,14 @@
       "values_compared": 0
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic geometry import for face evaluation",
+        "unit": "topology.face_p2"
+      },
       "max_rel_err": 0.0,
       "name": "extra01421",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "generated:seed=4207804418",
       "values_compared": 0
     },
@@ -22743,11 +23709,14 @@
       "values_compared": 5
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic geometry import for face evaluation",
+        "unit": "topology.face_p2"
+      },
       "max_rel_err": 0.0,
       "name": "extra01423",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "generated:seed=4207804418",
       "values_compared": 0
     },
@@ -22809,11 +23778,14 @@
       "values_compared": 5
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic geometry import for face evaluation",
+        "unit": "topology.face_p2"
+      },
       "max_rel_err": 0.0,
       "name": "extra01431",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "generated:seed=4207804418",
       "values_compared": 0
     },
@@ -22834,20 +23806,26 @@
       "values_compared": 18
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic geometry import for face evaluation",
+        "unit": "topology.face_p2"
+      },
       "max_rel_err": 0.0,
       "name": "extra01434",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "generated:seed=4207804418",
       "values_compared": 0
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic geometry import for face evaluation",
+        "unit": "topology.face_p2"
+      },
       "max_rel_err": 0.0,
       "name": "extra01435",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "generated:seed=4207804418",
       "values_compared": 0
     },
@@ -22888,11 +23866,14 @@
       "values_compared": 58
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic geometry import for face evaluation",
+        "unit": "topology.face_p2"
+      },
       "max_rel_err": 0.0,
       "name": "extra01440",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "generated:seed=4207804418",
       "values_compared": 0
     },
@@ -22969,11 +23950,14 @@
       "values_compared": 6
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic geometry import for face evaluation",
+        "unit": "topology.face_p2"
+      },
       "max_rel_err": 0.0,
       "name": "extra01449",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "generated:seed=4207804418",
       "values_compared": 0
     },
@@ -23164,11 +24148,14 @@
       "values_compared": 9
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic geometry import for face evaluation",
+        "unit": "topology.face_p2"
+      },
       "max_rel_err": 0.0,
       "name": "extra01471",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "generated:seed=4207804418",
       "values_compared": 0
     },
@@ -23181,11 +24168,14 @@
       "values_compared": 4
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic geometry import for face evaluation",
+        "unit": "topology.face_p2"
+      },
       "max_rel_err": 0.0,
       "name": "extra01473",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "generated:seed=4207804418",
       "values_compared": 0
     },
@@ -23218,11 +24208,14 @@
       "values_compared": 0
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic geometry import for face evaluation",
+        "unit": "topology.face_p2"
+      },
       "max_rel_err": 0.0,
       "name": "extra01477",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "generated:seed=4207804418",
       "values_compared": 0
     },
@@ -23252,11 +24245,14 @@
       "values_compared": 1
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic geometry import for face evaluation",
+        "unit": "topology.face_p2"
+      },
       "max_rel_err": 0.0,
       "name": "extra01481",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "generated:seed=4207804418",
       "values_compared": 0
     },
@@ -23286,11 +24282,14 @@
       "values_compared": 120
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic geometry import for face evaluation",
+        "unit": "topology.face_p2"
+      },
       "max_rel_err": 0.0,
       "name": "extra01485",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "generated:seed=4207804418",
       "values_compared": 0
     },
@@ -23304,11 +24303,14 @@
       "values_compared": 0
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic geometry import for face evaluation",
+        "unit": "topology.face_p2"
+      },
       "max_rel_err": 0.0,
       "name": "extra01487",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "generated:seed=4207804418",
       "values_compared": 0
     },
@@ -23333,11 +24335,14 @@
       "values_compared": 0
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic geometry import for face evaluation",
+        "unit": "topology.face_p2"
+      },
       "max_rel_err": 0.0,
       "name": "extra01490",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "generated:seed=4207804418",
       "values_compared": 0
     },
@@ -23375,11 +24380,14 @@
       "values_compared": 1
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic geometry import for face evaluation",
+        "unit": "topology.face_p2"
+      },
       "max_rel_err": 0.0,
       "name": "extra01495",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "generated:seed=4207804418",
       "values_compared": 0
     },
@@ -23416,17 +24424,17 @@
       "values_compared": 3
     }
   ],
-  "cases_both_errored": 494,
-  "cases_deferred": 346,
+  "cases_both_errored": 158,
+  "cases_deferred": 682,
   "cases_failed": 0,
-  "cases_passed": 2346,
+  "cases_passed": 2010,
   "cases_total": 2692,
   "deferred_by_unit": {
     "curve.crv_on_surf": 80,
     "intersect.curve_class_p2": 87,
     "intersect.surface_drop_lib_p3": 75,
     "query.face_p2": 1,
-    "topology.face_p2": 103
+    "topology.face_p2": 439
   },
   "max_rel_err": 0.0,
   "pass": true,

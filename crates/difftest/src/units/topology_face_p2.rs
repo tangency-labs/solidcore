@@ -19,7 +19,8 @@
 //! revolution, extrusion, cone, sphere and torus surfaces of several upstream files) or
 //! `SmBSplineCurve` subclass (an edge's ellipse) arrives as its B-spline part only. Ops
 //! that evaluate such a face surface (`Points`, `FixUv`, `BestUv`, `Connected`) or, for
-//! `BestUv`, such an edge curve are not compared: both sides report `inexact_geometry`.
+//! `BestUv`, such an edge curve are not compared: the Rust runner reports a
+//! harness-side deferral on exact geometry import, rather than a parity pass.
 //!
 //! **`GetPointsInFace` with more than one point** draws its V dither from
 //! `srand(time(NULL))` / `rand()` upstream and from `kernel.rng` in the port
@@ -1336,8 +1337,8 @@ fn project_points(body: &[f64], count: u64, face: &Face, dom: Option<[f64; 4]>) 
 
 /// Whether the op evaluates geometry that was not imported exactly ([`Exact`]): a
 /// face's surface (`Points`, and the edge use ops through the edge use's face) or,
-/// for `BestUv`, the edge's curve. Such cases are not compared (both sides report
-/// `inexact_geometry`).
+/// for `BestUv`, the edge's curve. The C++ side reports `inexact_geometry`;
+/// the Rust side defers on this runner's exact-geometry import gap.
 fn inexact(op: &OpIn, b: &Brep, exact: &Exact) -> bool {
     use solidcore::topology::edgeuse::p1 as eu1;
     let face_inexact = |f: Option<FaceId>| {
@@ -1569,7 +1570,10 @@ fn run_rust(i: &Inputs) -> Result<Output, HarnessError> {
         Err(name) => return Ok(Output::err(name)),
     };
     if inexact(&op, &b, &exact) {
-        return Ok(Output::err("inexact_geometry"));
+        return Ok(Output::deferred(
+            "topology.face_p2",
+            "difftest: exact analytic geometry import for face evaluation",
+        ));
     }
     match run_rust_op(&mut b, &op) {
         Ok(body) => {
@@ -2247,4 +2251,40 @@ impl UnitDiff for Runner {
     }
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
 
+    #[test]
+    fn inexact_import_defers_but_exact_faces_still_compare() {
+        let ctx = CaseContext {
+            root: crate::case::repo_root(),
+            seeds: 0,
+        };
+        let cases = ctx.fixture_cases(Runner.id()).unwrap();
+        for (name, deferred) in [
+            ("points_file_cone.smb_0", true),
+            ("points_plane_1", false),
+            ("points_bss_1", false),
+        ] {
+            let case = cases.iter().find(|case| case.name == name).unwrap();
+            let cpp = Runner.run_cpp(case).unwrap();
+            let rust = Runner.run_rust(case).unwrap();
+            if deferred {
+                assert_eq!(cpp.error.as_deref(), Some("inexact_geometry"));
+                let why = rust.deferred.unwrap();
+                assert_eq!(why.unit, "topology.face_p2");
+                assert!(why
+                    .symbol
+                    .contains("difftest: exact analytic geometry import"));
+                assert!(rust.error.is_none());
+            } else {
+                assert!(rust.deferred.is_none());
+                assert!(cpp.error.is_none() && rust.error.is_none());
+                let diff = crate::compare(&cpp, &rust, &[]);
+                assert!(diff.pass(), "{name}: {diff:?}");
+                assert!(diff.values_compared > 0);
+            }
+        }
+    }
+}

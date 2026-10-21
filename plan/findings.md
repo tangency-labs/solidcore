@@ -4694,6 +4694,7 @@ and the region-context coordination in #86 are not claimed complete.
 
 ## topology.face_p2 (`SmFace` part 2, 2026-10-15; partial, no disagreements)
 
+- **Audit #294 (2026-10-20).** Inexact analytic geometry imports defer under this runner's exact-import harness gap instead of passing on matching inexact_geometry errors. The original audit moved 336 zero-comparison cases to deferred while preserving all 1,852 substantive comparisons. Exact Plane/B-spline evaluations still compare; analytic import remains unimplemented.
 - **Harness.** As `topology.vertexuse`, the Rust side imports the C++ B-rep export. The
   export now carries each face's raw `m_pFU`, `m_vUVDomain`, `m_bRectangularTrim`,
   `m_sZoneTol3d` and whether its surface is owned by it, real `SmPlane`s (origin, axes,
