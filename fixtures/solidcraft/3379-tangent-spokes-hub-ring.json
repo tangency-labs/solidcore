@@ -1,0 +1,553 @@
+{
+ "issue": "https://github.com/tangency-labs/solidcraft/issues/3379",
+ "pr": "https://github.com/tangency-labs/solidcraft/pull/3612",
+ "test": "crates/engine/src/cmd/patterns_tests.rs: circular_pattern_of_spokes_tangent_to_a_hub_joins (PR #3612, paused)",
+ "summary": "Five box spokes 72 degrees apart joined one after another to a hub (r 12) inside a ring (r 63..66), thickness 2 in a 3 mm body. With the spoke's inner face exactly on the hub cylinder (x = 12, line contact) SolidCraft's earlier kernel returned a volume about 355 mm3 too large at the 4th union. Volumes are closed form: ring + hub = 1593*pi = 5004.5571; a spoke adds 2*(2*F(63,1.25) - x0*2*1.25) with F(r,z) = (z*sqrt(r^2-z^2) + r^2*asin(z/r))/2, minus its sliver inside the hub when x0 < 12. Tolerances: 1 mm3 at the exact tangency (the bug was 355 mm3), 0.01 mm3 on the two controls, which differ from each other by 0.048 mm3 and are told apart by their lump count. At the exact tangency only the volume is checked: the contact is a line, so lump and face counts are not ground truth.",
+ "cases": [
+  {
+   "name": "tangent_x12",
+   "note": "the bug: exact line contact with the hub; volume only (tolerance 1 mm3: far below the 355 mm3 error, and the 0.025 mm3 spread between the three cases is not resolved by volume alone)",
+   "steps": [
+    {
+     "op": "cylinder",
+     "id": "rim_outer",
+     "origin": [
+      0,
+      0,
+      0
+     ],
+     "axis": [
+      0,
+      1,
+      0
+     ],
+     "radius": 66,
+     "height": 3
+    },
+    {
+     "op": "cylinder",
+     "id": "rim_bore",
+     "origin": [
+      0,
+      0,
+      0
+     ],
+     "axis": [
+      0,
+      1,
+      0
+     ],
+     "radius": 63,
+     "height": 3
+    },
+    {
+     "op": "difference",
+     "id": "rim",
+     "a": "rim_outer",
+     "b": "rim_bore"
+    },
+    {
+     "op": "cylinder",
+     "id": "hub",
+     "origin": [
+      0,
+      0,
+      0
+     ],
+     "axis": [
+      0,
+      1,
+      0
+     ],
+     "radius": 12,
+     "height": 3
+    },
+    {
+     "op": "union",
+     "id": "w0",
+     "a": "rim",
+     "b": "hub"
+    },
+    {
+     "op": "box",
+     "id": "spoke0",
+     "origin": [
+      12.0,
+      0.5,
+      -1.25
+     ],
+     "size": [
+      52.0,
+      2,
+      2.5
+     ]
+    },
+    {
+     "op": "union",
+     "id": "w1",
+     "a": "w0",
+     "b": "spoke0"
+    },
+    {
+     "op": "rotate",
+     "id": "spoke1",
+     "body": "spoke0",
+     "point": [
+      0,
+      0,
+      0
+     ],
+     "axis": [
+      0,
+      1,
+      0
+     ],
+     "degrees": 72.0
+    },
+    {
+     "op": "union",
+     "id": "w2",
+     "a": "w1",
+     "b": "spoke1"
+    },
+    {
+     "op": "rotate",
+     "id": "spoke2",
+     "body": "spoke0",
+     "point": [
+      0,
+      0,
+      0
+     ],
+     "axis": [
+      0,
+      1,
+      0
+     ],
+     "degrees": 144.0
+    },
+    {
+     "op": "union",
+     "id": "w3",
+     "a": "w2",
+     "b": "spoke2"
+    },
+    {
+     "op": "rotate",
+     "id": "spoke3",
+     "body": "spoke0",
+     "point": [
+      0,
+      0,
+      0
+     ],
+     "axis": [
+      0,
+      1,
+      0
+     ],
+     "degrees": 216.0
+    },
+    {
+     "op": "union",
+     "id": "w4",
+     "a": "w3",
+     "b": "spoke3"
+    },
+    {
+     "op": "rotate",
+     "id": "spoke4",
+     "body": "spoke0",
+     "point": [
+      0,
+      0,
+      0
+     ],
+     "axis": [
+      0,
+      1,
+      0
+     ],
+     "degrees": 288.0
+    },
+    {
+     "op": "union",
+     "id": "result",
+     "a": "w4",
+     "b": "spoke4"
+    }
+   ],
+   "expect": {
+    "volume": {
+     "value": 6279.453751,
+     "tol": 1.0,
+     "formula": "1593*pi + 5*(spoke outside r<63 minus hub overlap), spoke inner face at x=12.0"
+    }
+   }
+  },
+  {
+   "name": "gap_x12_001",
+   "note": "control: 0.001 mm gap, the hub stays a separate lump",
+   "steps": [
+    {
+     "op": "cylinder",
+     "id": "rim_outer",
+     "origin": [
+      0,
+      0,
+      0
+     ],
+     "axis": [
+      0,
+      1,
+      0
+     ],
+     "radius": 66,
+     "height": 3
+    },
+    {
+     "op": "cylinder",
+     "id": "rim_bore",
+     "origin": [
+      0,
+      0,
+      0
+     ],
+     "axis": [
+      0,
+      1,
+      0
+     ],
+     "radius": 63,
+     "height": 3
+    },
+    {
+     "op": "difference",
+     "id": "rim",
+     "a": "rim_outer",
+     "b": "rim_bore"
+    },
+    {
+     "op": "cylinder",
+     "id": "hub",
+     "origin": [
+      0,
+      0,
+      0
+     ],
+     "axis": [
+      0,
+      1,
+      0
+     ],
+     "radius": 12,
+     "height": 3
+    },
+    {
+     "op": "union",
+     "id": "w0",
+     "a": "rim",
+     "b": "hub"
+    },
+    {
+     "op": "box",
+     "id": "spoke0",
+     "origin": [
+      12.001,
+      0.5,
+      -1.25
+     ],
+     "size": [
+      51.999,
+      2,
+      2.5
+     ]
+    },
+    {
+     "op": "union",
+     "id": "w1",
+     "a": "w0",
+     "b": "spoke0"
+    },
+    {
+     "op": "rotate",
+     "id": "spoke1",
+     "body": "spoke0",
+     "point": [
+      0,
+      0,
+      0
+     ],
+     "axis": [
+      0,
+      1,
+      0
+     ],
+     "degrees": 72.0
+    },
+    {
+     "op": "union",
+     "id": "w2",
+     "a": "w1",
+     "b": "spoke1"
+    },
+    {
+     "op": "rotate",
+     "id": "spoke2",
+     "body": "spoke0",
+     "point": [
+      0,
+      0,
+      0
+     ],
+     "axis": [
+      0,
+      1,
+      0
+     ],
+     "degrees": 144.0
+    },
+    {
+     "op": "union",
+     "id": "w3",
+     "a": "w2",
+     "b": "spoke2"
+    },
+    {
+     "op": "rotate",
+     "id": "spoke3",
+     "body": "spoke0",
+     "point": [
+      0,
+      0,
+      0
+     ],
+     "axis": [
+      0,
+      1,
+      0
+     ],
+     "degrees": 216.0
+    },
+    {
+     "op": "union",
+     "id": "w4",
+     "a": "w3",
+     "b": "spoke3"
+    },
+    {
+     "op": "rotate",
+     "id": "spoke4",
+     "body": "spoke0",
+     "point": [
+      0,
+      0,
+      0
+     ],
+     "axis": [
+      0,
+      1,
+      0
+     ],
+     "degrees": 288.0
+    },
+    {
+     "op": "union",
+     "id": "result",
+     "a": "w4",
+     "b": "spoke4"
+    }
+   ],
+   "expect": {
+    "volume": {
+     "value": 6279.428751,
+     "tol": 0.01,
+     "formula": "1593*pi + 5*(spoke outside r<63 minus hub overlap), spoke inner face at x=12.001"
+    },
+    "lumps": 2
+   }
+  },
+  {
+   "name": "overlap_x11_999",
+   "note": "control: 0.001 mm overlap with the hub, one lump",
+   "steps": [
+    {
+     "op": "cylinder",
+     "id": "rim_outer",
+     "origin": [
+      0,
+      0,
+      0
+     ],
+     "axis": [
+      0,
+      1,
+      0
+     ],
+     "radius": 66,
+     "height": 3
+    },
+    {
+     "op": "cylinder",
+     "id": "rim_bore",
+     "origin": [
+      0,
+      0,
+      0
+     ],
+     "axis": [
+      0,
+      1,
+      0
+     ],
+     "radius": 63,
+     "height": 3
+    },
+    {
+     "op": "difference",
+     "id": "rim",
+     "a": "rim_outer",
+     "b": "rim_bore"
+    },
+    {
+     "op": "cylinder",
+     "id": "hub",
+     "origin": [
+      0,
+      0,
+      0
+     ],
+     "axis": [
+      0,
+      1,
+      0
+     ],
+     "radius": 12,
+     "height": 3
+    },
+    {
+     "op": "union",
+     "id": "w0",
+     "a": "rim",
+     "b": "hub"
+    },
+    {
+     "op": "box",
+     "id": "spoke0",
+     "origin": [
+      11.999,
+      0.5,
+      -1.25
+     ],
+     "size": [
+      52.001,
+      2,
+      2.5
+     ]
+    },
+    {
+     "op": "union",
+     "id": "w1",
+     "a": "w0",
+     "b": "spoke0"
+    },
+    {
+     "op": "rotate",
+     "id": "spoke1",
+     "body": "spoke0",
+     "point": [
+      0,
+      0,
+      0
+     ],
+     "axis": [
+      0,
+      1,
+      0
+     ],
+     "degrees": 72.0
+    },
+    {
+     "op": "union",
+     "id": "w2",
+     "a": "w1",
+     "b": "spoke1"
+    },
+    {
+     "op": "rotate",
+     "id": "spoke2",
+     "body": "spoke0",
+     "point": [
+      0,
+      0,
+      0
+     ],
+     "axis": [
+      0,
+      1,
+      0
+     ],
+     "degrees": 144.0
+    },
+    {
+     "op": "union",
+     "id": "w3",
+     "a": "w2",
+     "b": "spoke2"
+    },
+    {
+     "op": "rotate",
+     "id": "spoke3",
+     "body": "spoke0",
+     "point": [
+      0,
+      0,
+      0
+     ],
+     "axis": [
+      0,
+      1,
+      0
+     ],
+     "degrees": 216.0
+    },
+    {
+     "op": "union",
+     "id": "w4",
+     "a": "w3",
+     "b": "spoke3"
+    },
+    {
+     "op": "rotate",
+     "id": "spoke4",
+     "body": "spoke0",
+     "point": [
+      0,
+      0,
+      0
+     ],
+     "axis": [
+      0,
+      1,
+      0
+     ],
+     "degrees": 288.0
+    },
+    {
+     "op": "union",
+     "id": "result",
+     "a": "w4",
+     "b": "spoke4"
+    }
+   ],
+   "expect": {
+    "volume": {
+     "value": 6279.476686,
+     "tol": 0.01,
+     "formula": "1593*pi + 5*(spoke outside r<63 minus hub overlap), spoke inner face at x=11.999"
+    },
+    "lumps": 1
+   }
+  }
+ ]
+}

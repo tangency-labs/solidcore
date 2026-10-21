@@ -119,6 +119,20 @@ pub enum Step {
         /// Length along the axis.
         height: f64,
     },
+    /// A copy of `body` turned about the line through `point` along `axis`, with
+    /// `SmApiRotate`.
+    Rotate {
+        /// Body written.
+        id: String,
+        /// Body turned (left as it is).
+        body: String,
+        /// A point on the axis.
+        point: P3,
+        /// Axis direction.
+        axis: P3,
+        /// Angle in degrees.
+        degrees: f64,
+    },
     /// `SmApiBooleanUnion(a, b)`.
     Union {
         /// Body written.
@@ -288,6 +302,7 @@ impl Step {
             Self::Box { id, .. }
             | Self::Sphere { id, .. }
             | Self::Cylinder { id, .. }
+            | Self::Rotate { id, .. }
             | Self::Union { id, .. }
             | Self::Difference { id, .. }
             | Self::Intersection { id, .. }
@@ -303,7 +318,9 @@ impl Step {
             Self::Union { a, b, .. }
             | Self::Difference { a, b, .. }
             | Self::Intersection { a, b, .. } => vec![a, b],
-            Self::Fillet { body, .. } | Self::OffsetFaces { body, .. } => vec![body],
+            Self::Fillet { body, .. }
+            | Self::OffsetFaces { body, .. }
+            | Self::Rotate { body, .. } => vec![body],
         }
     }
 }
@@ -338,6 +355,12 @@ pub fn validate(case: &Case) -> Result<(), String> {
                     && radius.is_finite()
                     && height.is_finite()
             }
+            Step::Rotate {
+                point,
+                axis,
+                degrees,
+                ..
+            } => point.iter().chain(axis).all(|x| x.is_finite()) && degrees.is_finite(),
             Step::Difference {
                 pattern: Some(p), ..
             } => p.pitch.iter().flatten().all(|x| x.is_finite()),
@@ -458,6 +481,24 @@ fn step_rust(k: &mut Kernel, bodies: &mut BTreeMap<String, Brep>, step: &Step) -
             height,
             ..
         } => cylinder(k, *origin, *axis, *radius, *height)?,
+        Step::Rotate {
+            body,
+            point,
+            axis,
+            degrees,
+            ..
+        } => {
+            let mut turned = take(bodies, body)?;
+            api_rotate(
+                k,
+                Some(TransformObject::Brep(&mut turned)),
+                p3(*point),
+                Vec3::new(axis[0], axis[1], axis[2]),
+                *degrees,
+            )
+            .map_err(|e| solid(&e))?;
+            turned
+        }
         Step::Union { a, b, .. } => {
             boolean::boolean_union(k, take(bodies, a)?, take(bodies, b)?).map_err(|e| solid(&e))?
         }
@@ -765,7 +806,7 @@ mod tests {
         let cases = all();
         assert_eq!(
             cases.len(),
-            11,
+            14,
             "{:?}",
             cases.iter().map(|c| &c.id).collect::<Vec<_>>()
         );

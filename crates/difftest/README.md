@@ -501,7 +501,8 @@ nice -n 10 cargo run -p difftest -- --solidcraft-cases                 # all cas
 nice -n 10 cargo run -p difftest -- --solidcraft-cases '3526-*'        # ids (<file stem>/<name>) matching a glob
 ```
 
-* **Steps** (`"op"`): `box`, `sphere`, `cylinder` (`axis`, default +Z), `union`,
+* **Steps** (`"op"`): `box`, `sphere`, `cylinder` (`axis`, default +Z), `rotate` (a copy of a
+  body turned about `point` + `axis` by `degrees`, `SmApiRotate`), `union`,
   `difference` (optional `pattern`: the tool cut once per grid position, one cut after
   the other), `intersection`, `fillet` (edges by a point on each), `offset_faces` (faces
   by a point on each). Each writes the body `id`; the last writes `result`.
