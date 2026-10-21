@@ -68,18 +68,23 @@
 //!   it is silently `true`. `SM_ASSERT`s, `Dump` and the `SM_DEBUG_CODE`
 //!   drawing blocks are not ported.
 //! - `SM_SO_SURFACE_PROJECTED_INTERSECT` samples an `SmCrvOnSurf` owner of the
-//!   second tree, which is not ported yet: once the box tests cannot decide,
-//!   a tree without an owner object answers `false` (as upstream) and any
-//!   owner object returns [`SolidError::Unported`] (see the `UNPORTED` marker).
+//!   second tree ([`GlobalSolver::surface_projected_may_contain_answers_on`]).
+//!   The tree's owner object is an opaque handle here, so the curve/curve solver
+//!   (the only one that runs this operation) passes its second curve; the base
+//!   test answers `false` for a tree without an owner object (as upstream) and
+//!   returns [`SolidError::Unported`] for an owner handle it cannot resolve. A
+//!   failed first sample (upstream reads an uninitialised point) is
+//!   [`SolidError::InvalidInput`].
 
-use crate::error::{Result, SolidError};
+use crate::curve::curve::p2::{Curve, CurveEvaluate};
+use crate::error::{ignored, Result, SolidError};
 use crate::geom::extent3d::Extent3d;
 use crate::geom::geom_utility::p1::{line_closest_point, point_project_to_plane};
 use crate::geom::solution_array::{
     EndClass, Solution, SolutionArray, SolutionObject, SolutionType, SortKey,
 };
 use crate::geom::tol::is_zero;
-use crate::geom::tree::{AuxDataType, NodeId, Tree, TreeNode};
+use crate::geom::tree::{AuxDataType, NodeData, NodeId, Tree, TreeNode};
 use crate::geom::vector3d::sqrt;
 use crate::math::{max2, max3, Point3, Vec3, BIG_DOUBLE, EFF_ZERO, EFF_ZERO_SQRT, UNDEF_DOUBLE};
 
@@ -1009,8 +1014,47 @@ impl<'t, O: SolutionObject> GlobalSolver<'t, O> {
     }
 
     /// The box and offset-box tests of `BranchMayContainAnswers` for
-    /// [`SolverOperation::SurfaceProjectedIntersect`].
+    /// [`SolverOperation::SurfaceProjectedIntersect`], with the owner object of the
+    /// second tree looked up from its handle.
     fn surface_projected_may_contain_answers(&self, branch: &Branch) -> Result<bool> {
+        let node2 = branch.get(1).copied().flatten().ok_or(null_node(
+            "geom::global_solver::GlobalSolver::branch_may_contain_answers",
+        ))?;
+        match self.tree(1)?.node_owner_object(node2)? {
+            None => self.surface_projected_may_contain_answers_on(branch, None),
+            Some(_) => {
+                // DISPATCH GAP: an opaque owner handle cannot reach its curve here;
+                // the curve/curve solver, which runs this operation, passes its second
+                // curve to `surface_projected_may_contain_answers_on` instead (so no
+                // UNPORTED marker: SmCrvOnSurf is ported).
+                Err(SolidError::Unported {
+                    upstream: "SmCrvOnSurf::EvaluatePoint (opaque owner handle)",
+                    unit: "curve.crv_on_surf",
+                })
+            }
+        }
+    }
+
+    /// `SmGlobalSolver::BranchMayContainAnswers` for
+    /// [`SolverOperation::SurfaceProjectedIntersect`] given the owner object of the
+    /// second tree (`apBranch[1]->GetOwnerObject()`, `None` for a null owner): true
+    /// when the node boxes overlap; otherwise false unless the owner is an
+    /// `SmCrvOnSurf` whose surface points over the node's span, offset along the
+    /// surface normal (turned towards the first box) by the minimum and maximum box
+    /// distances and sampled 11 times, give a box that meets the first one.
+    ///
+    /// # Errors
+    ///
+    /// [`SolidError::InvalidInput`] for a null tree or node of `branch`, or when the
+    /// first sample of the curve on surface cannot be evaluated (upstream then reads
+    /// an uninitialised point: undefined).
+    pub fn surface_projected_may_contain_answers_on(
+        &self,
+        branch: &Branch,
+        owner2: Option<&Curve>,
+    ) -> Result<bool> {
+        const OP: &str =
+            "geom::global_solver::GlobalSolver::surface_projected_may_contain_answers_on";
         let tol = self.tolerance_3d;
 
         // If the boxes actually intersect, then we can return True.
@@ -1025,23 +1069,67 @@ impl<'t, O: SolutionObject> GlobalSolver<'t, O> {
             return Ok(true);
         }
 
+        // Now we have to see about offsetting sBBox2 along the surface normal.
+        // We can find a reasonable offset distance by comparing BBoxes.
+        let max_dist = bbox1.max_distance(&bbox2);
+
         // If we create a new box by offsetting the surface-curve points
         // along the normal by both the min and max distances,
         // then we will catch any case that could 'intersect'.
         // But we have to sample the surface curve.
-        let node2 = branch.get(1).copied().flatten().ok_or(null_node(
-            "geom::global_solver::GlobalSolver::branch_may_contain_answers",
-        ))?;
-        match self.tree(1)?.node_owner_object(node2)? {
-            None => Ok(false),
-            Some(_) => {
-                // UNPORTED(curve.crv_on_surf): SmCrvOnSurf::EvaluatePoint
-                Err(SolidError::Unported {
-                    upstream: "SmCrvOnSurf::EvaluatePoint",
-                    unit: "curve.crv_on_surf",
-                })
-            }
+        let Some(cos) = owner2.and_then(CurveEvaluate::as_crv_on_surf) else {
+            return Ok(false);
+        };
+
+        // Get the vector from the surface box to the 3d curve box.
+        // We'll use that to decide which surface normal (+/-) to use.
+        let diff_vec = bbox1.mid() - bbox2.mid();
+
+        let node2 = self.branch_node(branch, 1)?;
+        let tree2 = self.tree(1)?;
+        if matches!(node2.data, NodeData::None) {
+            return Ok(false);
         }
+        let ivl2 = tree2.curve_aux(node2)?.interval;
+
+        let mut off_box = Extent3d::new();
+        let mut srf_pt: Option<Point3> = None;
+        let mut norm: Option<Vec3> = None;
+
+        let num_samples: u32 = 10;
+        let d_num_samples = f64::from(num_samples);
+        for ii in 0..=num_samples {
+            let frac = f64::from(ii) / d_num_samples;
+            let t = ivl2.evaluate(frac);
+            // (statuses ignored: a failed evaluation leaves the previous values)
+            if let Some(p) = ignored(cos.evaluate_point(t))? {
+                srf_pt = Some(p);
+            }
+            if let Some(sn) = ignored(cos.evaluate_surface_normal(t, false))? {
+                norm = Some(sn.normal);
+            }
+            let (Some(p), Some(mut n)) = (srf_pt, norm) else {
+                return Err(SolidError::invalid_input(
+                    OP,
+                    "uninitialised surface point or normal (undefined upstream)",
+                ));
+            };
+            if n.dot(diff_vec) < 0.0 {
+                n *= -1.0;
+            }
+
+            off_box.add_point(p + min_dist * n);
+            off_box.add_point(p + max_dist * n);
+        }
+
+        // Expand offset box to account for sampling.
+        off_box.expand_absolute(2.0 * tol);
+
+        if off_box.are_disjoint(&bbox1, 0.0) {
+            return Ok(false);
+        }
+
+        Ok(true) // possible answers in this branch
     }
 
     /// `SmGlobalSolver::AreReadyForLocalSolve`: true when every node of
@@ -2054,6 +2142,93 @@ mod tests {
         s.end.solution_value = v1;
         s.end.parameters[0] = p1;
         s
+    }
+
+    #[test]
+    fn surface_projected_samples_the_crv_on_surf_owner() {
+        use crate::curve::crv_on_surf::CrvOnSurf;
+        use crate::curve::curve_cache::BezierAux1d;
+        use crate::geom::extent1d::Extent1d;
+        use crate::geom::tree::CurveSpanRef;
+        use crate::geom::vector2d::Point2;
+        use crate::kernel::Kernel;
+        use crate::nurbs::b_spline_surface::BSplineSurface;
+
+        // a flat patch z = 0 over [0, 1]^2 and the curve u = t, v = 0.5 on it
+        let k = Kernel::default();
+        let surface = BSplineSurface::create_bilinear_surface(
+            Point3::new(0.0, 0.0, 0.0),
+            Point3::new(1.0, 0.0, 0.0),
+            Point3::new(0.0, 1.0, 0.0),
+            Point3::new(1.0, 1.0, 0.0),
+        )
+        .unwrap();
+        let cos = Curve::from(
+            CrvOnSurf::from_uv_line(
+                &k,
+                Point2::new(0.0, 0.5),
+                Point2::new(1.0, 0.5),
+                surface,
+                None,
+                0,
+            )
+            .unwrap(),
+        );
+        let line = Curve::from(crate::curve::line::Line::from_points(
+            Point3::new(0.0, 0.0, 0.0),
+            Point3::new(1.0, 0.0, 0.0),
+            3,
+        ));
+
+        // tree 2: one node over the curve's box, with its span interval
+        let mut t2: Tree<Obj> = Tree::new(None);
+        let mut n2 = leaf([0.0, 0.5, 0.0], [1.0, 0.5, 0.0]);
+        n2.data = NodeData::Curve(CurveSpanRef::Parent(0));
+        let top2 = t2.add_node(n2);
+        t2.set_top_node(Some(top2));
+        t2.set_curve_data(
+            Vec::new(),
+            vec![BezierAux1d {
+                interval: Extent1d::from_min_max(0.0, 1.0),
+                ..BezierAux1d::default()
+            }],
+            None,
+        );
+        // the same node without span data
+        let mut t2_bare: Tree<Obj> = Tree::new(None);
+        let top2_bare = t2_bare.add_node(leaf([0.0, 0.5, 0.0], [1.0, 0.5, 0.0]));
+        t2_bare.set_top_node(Some(top2_bare));
+
+        let solve = |t1: &Tree<Obj>, t2: &Tree<Obj>, owner: Option<&Curve>| {
+            let mut gs = GlobalSolver::with_trees(t1, t2, 1);
+            gs.set_solver_operation(SolverOperation::SurfaceProjectedIntersect);
+            gs.tolerance_3d = 1e-6;
+            let branch = [t1.top_node(), t2.top_node(), None];
+            gs.surface_projected_may_contain_answers_on(&branch, owner)
+                .unwrap()
+        };
+
+        // a box straight above the curve: its offsets along the normal reach it
+        let mut above: Tree<Obj> = Tree::new(None);
+        let top = above.add_node(leaf([0.2, 0.4, 5.0], [0.8, 0.6, 6.0]));
+        above.set_top_node(Some(top));
+        assert!(solve(&above, &t2, Some(&cos)));
+        // no owner, an owner that is not a curve on a surface, no span data: false
+        assert!(!solve(&above, &t2, None));
+        assert!(!solve(&above, &t2, Some(&line)));
+        assert!(!solve(&above, &t2_bare, Some(&cos)));
+
+        // a box off to the side: the offset box misses it
+        let mut aside: Tree<Obj> = Tree::new(None);
+        let top = aside.add_node(leaf([40.0, 0.4, 5.0], [41.0, 0.6, 6.0]));
+        aside.set_top_node(Some(top));
+        assert!(!solve(&aside, &t2, Some(&cos)));
+
+        // overlapping boxes: true whatever the owner
+        let mut touching: Tree<Obj> = Tree::new(None);
+        let top = touching.add_node(leaf([0.2, 0.4, -1.0], [0.8, 0.6, 1.0]));
+        touching.set_top_node(Some(top));
+        assert!(solve(&touching, &t2, None));
     }
 
     #[test]

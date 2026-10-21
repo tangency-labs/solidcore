@@ -2932,7 +2932,10 @@ impl<'t, O: SolutionObject + 't> CcGlobalSolver<'t, O> {
 
     /// `SmCCGlobalSolver::BranchMayContainAnswers`: the base test, except for
     /// `SM_SO_NORMALIZE` and `SM_SO_PROJECTED_TANGENCY`, which cull span pairs whose
-    /// chords and turning angles rule out common normals or tangents.
+    /// chords and turning angles rule out common normals or tangents. For
+    /// `SM_SO_SURFACE_PROJECTED_INTERSECT` the base test gets the second curve as the
+    /// owner object of the second tree (upstream reads it back from the tree's curve
+    /// cache).
     ///
     /// # Errors
     ///
@@ -2940,6 +2943,15 @@ impl<'t, O: SolutionObject + 't> CcGlobalSolver<'t, O> {
     /// [`SolidError::Unported`] once the curve span data is needed.
     pub fn may_contain_answers(&self, branch: &Branch) -> Result<bool> {
         let op = self.base.operation;
+        if op == SolverOperation::SurfaceProjectedIntersect {
+            if let Some([_, curve2]) = self.curves {
+                // the base test, with the second tree's owner object: the curve
+                // its curve cache was built for
+                return self
+                    .base
+                    .surface_projected_may_contain_answers_on(branch, Some(curve2));
+            }
+        }
         if op != SolverOperation::Normalize && op != SolverOperation::ProjectedTangency {
             return self.base.branch_may_contain_answers(branch);
         }
