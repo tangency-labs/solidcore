@@ -361,7 +361,7 @@ fn output_of(op: &OpIn, body: &[f64]) -> Output {
 // ---- Rust side --------------------------------------------------------------------------
 
 /// The state of an edge use as the shim's `put_eu_state`.
-pub(super) fn put_eu_state(o: &mut Vec<f64>, b: &Brep, eu: Option<EdgeuseId>) -> Result<(), SolidError> {
+pub(super) fn put_eu_state(k: &Kernel, o: &mut Vec<f64>, b: &Brep, eu: Option<EdgeuseId>) -> Result<(), SolidError> {
     let Some(eu) = eu else {
         o.push(-1.0);
         return Ok(());
@@ -376,7 +376,7 @@ pub(super) fn put_eu_state(o: &mut Vec<f64>, b: &Brep, eu: Option<EdgeuseId>) ->
             o.extend([ivl.min(), ivl.max()]);
             for t in [ivl.min(), ivl.mid(), ivl.max()] {
                 let p = c
-                    .evaluate_point(t)
+                    .evaluate_point(k, t)
                     .unwrap_or(solidcore::math::Vec3::UNDEF);
                 o.extend([p.x, p.y, p.z]);
             }
@@ -494,7 +494,7 @@ fn run_rust_op(
             };
             status.and_then(|s| {
                 let mut v = vec![s];
-                put_eu_state(&mut v, b, Some(eu))?;
+                put_eu_state(&k, &mut v, b, Some(eu))?;
                 Ok(v)
             })
         }
@@ -523,8 +523,8 @@ fn run_rust_op(
                     };
                     let state = (|| -> Result<Vec<f64>, SolidError> {
                         let mut v = vec![failed, dmax, replaced];
-                        put_eu_state(&mut v, b, Some(eu))?;
-                        put_eu_state(&mut v, b, mate)?;
+                        put_eu_state(&k, &mut v, b, Some(eu))?;
+                        put_eu_state(&k, &mut v, b, mate)?;
                         let tol = match eu1::edge(b, eu)? {
                             Some(e) => b.edge(e)?.tolerance,
                             None => -1.0,
@@ -558,8 +558,8 @@ fn run_rust_op(
             )
             .and_then(|()| {
                 let mut v = vec![0.0];
-                put_eu_state(&mut v, b, Some(eu))?;
-                put_eu_state(&mut v, b, mate)?;
+                put_eu_state(&k, &mut v, b, Some(eu))?;
+                put_eu_state(&k, &mut v, b, mate)?;
                 v.push(gap_flag(b, Some(eu))?);
                 v.push(gap_flag(b, mate)?);
                 Ok(v)

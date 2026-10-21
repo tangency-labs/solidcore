@@ -723,13 +723,13 @@ fn vertexuse_face(b: &Brep, vu: Option<VertexuseId>) -> Result<Option<FaceId>> {
 
 /// `pEdgeuse->GetUVTrimCurve()->EvaluatePoint(t)` as a UV point, `[SM_UNDEF_DOUBLE,
 /// SM_UNDEF_DOUBLE]` without edge use or curve.
-fn trim_curve_uv(b: &Brep, eu: Option<EdgeuseId>, t: f64) -> Result<Point2> {
+fn trim_curve_uv(k: &Kernel, b: &Brep, eu: Option<EdgeuseId>, t: f64) -> Result<Point2> {
     let Some(eu) = eu else {
         return Ok(Point2::UNDEF);
     };
     match eu1::uv_trim_curve(b, eu)?.0 {
         Some(c) => {
-            let p = point_or_undef(c.evaluate_point(t))?;
+            let p = point_or_undef(c.evaluate_point(k, t))?;
             Ok(Point2::new(p.x, p.y))
         }
         None => Ok(Point2::UNDEF),
@@ -1022,7 +1022,7 @@ impl Gap {
     ///
     /// [`SolidError::NotFound`] for a dangling id; [`SolidError::Unported`] from the
     /// trim curve evaluation.
-    pub fn face_uv(&self, b: &Brep) -> Result<Point2> {
+    pub fn face_uv(&self, k: &Kernel, b: &Brep) -> Result<Point2> {
         match self {
             Self::VertexFace(g) => Ok(g.face_uv),
             Self::EdgeFace(g) => Ok(g.face_uv),
@@ -1031,9 +1031,9 @@ impl Gap {
                     Some(vu) => vu1::edgeuse(b, vu)?,
                     None => None,
                 };
-                trim_curve_uv(b, eu, g.uv_trim_curve_t)
+                trim_curve_uv(k, b, eu, g.uv_trim_curve_t)
             }
-            Self::EdgeFaceTrimCurve(g) => trim_curve_uv(b, g.edgeuse, g.uv_trim_curve_t),
+            Self::EdgeFaceTrimCurve(g) => trim_curve_uv(k, b, g.edgeuse, g.uv_trim_curve_t),
             Self::VertexEdge(_) | Self::EdgeEdge(_) => Ok(Point2::UNDEF),
         }
     }
@@ -1055,7 +1055,7 @@ impl Gap {
         let edge_t0 = self.edge_t(0);
         let edge_t1 = self.edge_t(1);
         let uv_trim_curve_t = self.uv_trim_curve_t();
-        let face_uv = self.face_uv(b)?;
+        let face_uv = self.face_uv(k, b)?;
 
         // locals
         let mut out = GapEndPoints {
@@ -1089,7 +1089,7 @@ impl Gap {
                 .curve
                 .as_ref()
                 .ok_or_else(|| null("GetGapEndPoints: edge without curve"))?;
-            if let Some(p) = ignored(c.evaluate_point(edge_t0))? {
+            if let Some(p) = ignored(c.evaluate_point(k, edge_t0))? {
                 put(&mut out, second, p);
             }
             second = true;
@@ -1105,7 +1105,7 @@ impl Gap {
                 .curve
                 .as_ref()
                 .ok_or_else(|| null("GetGapEndPoints: edge without curve"))?;
-            if let Some(p) = ignored(c.evaluate_point(edge_t1))? {
+            if let Some(p) = ignored(c.evaluate_point(k, edge_t1))? {
                 put(&mut out, second, p);
             }
             second = true;
@@ -1123,11 +1123,11 @@ impl Gap {
             };
             // (a missing curve leaves `sPtUV` at its constructed `SM_UNDEF_DOUBLE`s)
             let pt_uv = match uv_curve.as_ref() {
-                Some(c) => point_or_undef(c.evaluate_point(uv_trim_curve_t))?,
+                Some(c) => point_or_undef(c.evaluate_point(k, uv_trim_curve_t))?,
                 None => Vec3::UNDEF,
             };
             if let Some(s) = surface {
-                if let Some(p) = ignored(s.evaluate_point(Point2::new(pt_uv.x, pt_uv.y)))? {
+                if let Some(p) = ignored(s.evaluate_point(k, Point2::new(pt_uv.x, pt_uv.y)))? {
                     put(&mut out, second, p);
                 }
                 // (upstream then moves pTarget to the second point; nothing follows)
@@ -1144,7 +1144,7 @@ impl Gap {
                 .surface
                 .as_ref()
                 .ok_or_else(|| null("GetGapEndPoints: face without surface"))?;
-            if let Some(p) = ignored(s.evaluate_point(face_uv))? {
+            if let Some(p) = ignored(s.evaluate_point(k, face_uv))? {
                 put(&mut out, second, p);
             }
             out.count += 1;
@@ -1767,8 +1767,8 @@ fn surface_drop(
 
 /// `Evaluate(dOtherU, 1, TRUE, sOtherPD, TRUE)` of a curve, status ignored: the point
 /// and tangent, `SM_UNDEF_DOUBLE` on failure.
-fn curve_point_tangent(curve: &Curve, t: f64) -> Result<[Vec3; 2]> {
-    let d = ignored(curve.evaluate(t, 1, true, true))?.unwrap_or_default();
+fn curve_point_tangent(k: &Kernel, curve: &Curve, t: f64) -> Result<[Vec3; 2]> {
+    let d = ignored(curve.evaluate(k, t, 1, true, true))?.unwrap_or_default();
     Ok([
         d.first().copied().unwrap_or(Vec3::UNDEF),
         d.get(1).copied().unwrap_or(Vec3::UNDEF),
@@ -1777,14 +1777,14 @@ fn curve_point_tangent(curve: &Curve, t: f64) -> Result<[Vec3; 2]> {
 
 /// `Evaluate(uv, 1, 1, TRUE, TRUE, TRUE, sOtherPD[0], TRUE)` of a surface, status
 /// ignored: the point and the two first partials, `SM_UNDEF_DOUBLE` on failure.
-fn surface_point_partials(surface: &Surface, uv: Point2) -> Result<[Vec3; 3]> {
+fn surface_point_partials(k: &Kernel, surface: &Surface, uv: Point2) -> Result<[Vec3; 3]> {
     let flags = EvaluateFlags {
         u_side: Side::Left,
         v_side: Side::Left,
         only_upper_half: true,
         non_zero_tangents: true,
     };
-    let d = ignored(surface.evaluate(uv, 1, 1, flags))?.unwrap_or_default();
+    let d = ignored(surface.evaluate(k, uv, 1, 1, flags))?.unwrap_or_default();
     let get = |i: usize, j: usize| {
         d.get(i)
             .and_then(|r| r.get(j))
@@ -2453,7 +2453,7 @@ impl<'a> GapFunction<'a> {
         let tol = self.xsect_tol_3d;
         match self.geometry {
             GapGeometry::CrvPt { curve, point } => {
-                let this_pos = point_or_undef(curve.evaluate_point(this_u))?;
+                let this_pos = point_or_undef(curve.evaluate_point(k, this_u))?;
                 sample.set_canonical(
                     this_pos,
                     this_u,
@@ -2466,7 +2466,8 @@ impl<'a> GapFunction<'a> {
                 );
             }
             GapGeometry::SrfPt { surface, point } => {
-                let this_pos = point_or_undef(surface.evaluate_point(Point2::new(this_u, this_v)))?;
+                let this_pos =
+                    point_or_undef(surface.evaluate_point(k, Point2::new(this_u, this_v)))?;
                 sample.set_canonical(
                     this_pos,
                     this_u,
@@ -2479,21 +2480,23 @@ impl<'a> GapFunction<'a> {
                 );
             }
             GapGeometry::CrvCrv { curve, other } => {
-                let this_pos = point_or_undef(curve.evaluate_point(this_u))?;
+                let this_pos = point_or_undef(curve.evaluate_point(k, this_u))?;
                 self.evaluate_to_curve(k, this_pos, this_u, 0.0, other, sample, guess_u)?;
             }
             GapGeometry::SrfCrv { surface, other } => {
-                let this_pos = point_or_undef(surface.evaluate_point(Point2::new(this_u, this_v)))?;
+                let this_pos =
+                    point_or_undef(surface.evaluate_point(k, Point2::new(this_u, this_v)))?;
                 self.evaluate_to_curve(k, this_pos, this_u, this_v, other, sample, guess_u)?;
             }
             GapGeometry::CrvSrf { curve, other } => {
-                let this_pos = point_or_undef(curve.evaluate_point(this_u))?;
+                let this_pos = point_or_undef(curve.evaluate_point(k, this_u))?;
                 self.evaluate_to_surface(
                     k, this_pos, this_u, 0.0, other, sample, guess_u, guess_v,
                 )?;
             }
             GapGeometry::SrfSrf { surface, other } => {
-                let this_pos = point_or_undef(surface.evaluate_point(Point2::new(this_u, this_v)))?;
+                let this_pos =
+                    point_or_undef(surface.evaluate_point(k, Point2::new(this_u, this_v)))?;
                 self.evaluate_to_surface(
                     k, this_pos, this_u, this_v, other, sample, guess_u, guess_v,
                 )?;
@@ -2533,7 +2536,7 @@ impl<'a> GapFunction<'a> {
         // set output
         if d.success {
             // Other Curve dropped point Eval
-            let pd = curve_point_tangent(other, d.parameter)?;
+            let pd = curve_point_tangent(k, other, d.parameter)?;
             let [p0, p1] = pd;
             let gap = p0 - this_pos;
             let drop_type = if !domain.is_value_on_boundary(d.parameter, EFF_ZERO).0
@@ -2606,7 +2609,7 @@ impl<'a> GapFunction<'a> {
         // set output
         if success {
             // Other Surface dropped point Eval
-            let [p, du, dv] = surface_point_partials(other, uv)?;
+            let [p, du, dv] = surface_point_partials(k, other, uv)?;
             let gap = p - this_pos;
             let drop_type = if !domain.is_point_on_boundary(uv, EFF_ZERO).0
                 || gap.length_squared() < EFF_ZERO_SQ

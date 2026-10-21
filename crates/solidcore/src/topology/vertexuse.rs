@@ -817,7 +817,9 @@ fn is_singularity(
 ) -> Result<(bool, SurfParamType)> {
     match surface.kind() {
         SurfaceKind::Plane(p) => Ok(p.is_singularity()),
-        SurfaceKind::BSpline(_)
+
+        SurfaceKind::Cone(_)
+        | SurfaceKind::BSpline(_)
         | SurfaceKind::CurveBounded(_)
         | SurfaceKind::SurfOfRevolution(_)
         | SurfaceKind::Step(_)
@@ -834,7 +836,9 @@ fn is_singularity(
 fn is_on_seam(k: &Kernel, surface: &Surface, uv: Point2) -> Result<(bool, SurfParamType)> {
     match surface.kind() {
         SurfaceKind::Plane(p) => Ok(p.is_on_seam()),
-        SurfaceKind::BSpline(_)
+
+        SurfaceKind::Cone(_)
+        | SurfaceKind::BSpline(_)
         | SurfaceKind::CurveBounded(_)
         | SurfaceKind::SurfOfRevolution(_)
         | SurfaceKind::Step(_)
@@ -925,10 +929,10 @@ pub fn compute_uv_point(
         let domain_length_v = surf_uv_domain.y_length();
         if dist_u > domain_length_u / 4.0 || dist_v > domain_length_v / 4.0 {
             let closed_u = surface
-                .is_closed(&surf_uv_domain, SurfParamType::U, None, false)?
+                .is_closed(k, &surf_uv_domain, SurfParamType::U, None, false)?
                 .0;
             let closed_v = surface
-                .is_closed(&surf_uv_domain, SurfParamType::V, None, false)?
+                .is_closed(k, &surf_uv_domain, SurfParamType::V, None, false)?
                 .0;
             let tol_1000 = EFF_ZERO_PARAM * 1000.0;
 
@@ -1320,7 +1324,7 @@ pub fn compute_uv_sector(
                     .curve
                     .as_ref()
                     .ok_or_else(|| null("ComputeUVSector: edge without curve"))?;
-                let pv = c.evaluate(t, 1, true, true)?;
+                let pv = c.evaluate(k, t, 1, true, true)?;
                 pv.get(1)
                     .copied()
                     .ok_or_else(|| null("ComputeUVSector: short evaluation"))
@@ -1343,6 +1347,7 @@ pub fn compute_uv_sector(
             if on_pole {
                 // Find DegenParam for BegEdge and EndEdge (statuses ignored)
                 if let Some(d) = ignored(surface.find_degen_param_for_direction(
+                    k,
                     io.beg_edge_uv_point,
                     beg_tan,
                     true,
@@ -1352,6 +1357,7 @@ pub fn compute_uv_sector(
                     io.beg_edge_uv_point = d.uv;
                 }
                 if let Some(d) = ignored(surface.find_degen_param_for_direction(
+                    k,
                     io.end_edge_uv_point,
                     end_tan,
                     true,
@@ -1369,7 +1375,7 @@ pub fn compute_uv_sector(
                 // on a FlatCorner - look for special case of Edges running along
                 // SurfaceBoundaries
                 let (_, mut du, mut dv) =
-                    surface.evaluate_1st_derivatives(io.beg_edge_uv_point, true, true)?;
+                    surface.evaluate_1st_derivatives(k, io.beg_edge_uv_point, true, true)?;
 
                 // as needed negate sDU and sDV to point into the surface
                 let mid_uv = uv_domain.mid();
@@ -1411,9 +1417,14 @@ pub fn compute_uv_sector(
                     (io.beg_edge_uv_point, beg_tan, &mut io.beg_edge_uv_tan),
                     (io.end_edge_uv_point, end_tan, &mut io.end_edge_uv_tan),
                 ] {
-                    if let Some(d) =
-                        ignored(drop_vectors_at(surface, uv, Side::Left, Side::Left, &[tan]))?
-                    {
+                    if let Some(d) = ignored(drop_vectors_at(
+                        k,
+                        surface,
+                        uv,
+                        Side::Left,
+                        Side::Left,
+                        &[tan],
+                    ))? {
                         if let Some(&t) = d.first() {
                             *out = t;
                         }
@@ -1457,9 +1468,9 @@ pub fn compute_uv_sector(
             // When Vertex is on a SurfaceSeam - check for Missing SeamEdge
             if on_seam {
                 let (_, beg_du, beg_dv) =
-                    surface.evaluate_1st_derivatives(io.beg_edge_uv_point, true, true)?;
+                    surface.evaluate_1st_derivatives(k, io.beg_edge_uv_point, true, true)?;
                 let (_, end_du, end_dv) =
-                    surface.evaluate_1st_derivatives(io.end_edge_uv_point, true, true)?;
+                    surface.evaluate_1st_derivatives(k, io.end_edge_uv_point, true, true)?;
                 let rad_limit = 0.5 / 180.0 * PI;
                 let in_range = |a: f64| a > rad_limit && a < PI - rad_limit;
                 let angle = |a: Vec3, d: Vec3| -> Result<f64> {

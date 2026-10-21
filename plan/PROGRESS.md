@@ -37,7 +37,7 @@ Anything `todo` can be claimed. These need stubs for, or co-porting of, the list
 - [ ] 🔨 `blend.fillet_geom_p6` (1813 lines) — in progress: #247 @brett19 (ready for review)
 - [ ] 🔨 `blend.fillet_standard_solver_p2` (1989 lines) — in progress: #265 @froglemonade2 (draft)
 - [ ] 🔨 `offset.offset_executive_p2` (1846 lines) — in progress: #201 @altvnk (ready for review)
-- [ ] 🔨 `blend.fillet_geom_p5` (1952 lines) — in progress: #264 @froglemonade2 (draft)
+- [ ] 🔨 `blend.fillet_geom_p5` (1952 lines) — in progress: #264 @froglemonade2 (ready for review)
 - [ ] 🔨 `blend.fillet_corner_p2` (1892 lines) — in progress: #268 @bluecmd (ready for review)
 - [ ] 🔨 `audit.recursion` (0 lines) — in progress: #273 @Karl-VonRichter (draft)
 
@@ -342,7 +342,7 @@ Anything `todo` can be claimed. These need stubs for, or co-porting of, the list
 - [ ] 🟡 `blend.fillet_corner_p3` (1697 lines) — partial, 1005 cases
 - [ ] 🟡 `blend.fillet_executive_p2` (1152 lines) — partial, 274 cases
 - [ ] 🟡 `blend.fillet_geom_p2` (2077 lines) — partial, 350 cases
-- [ ] 🔨 `blend.fillet_geom_p5` (1952 lines) — in progress: #264 @froglemonade2 (draft)
+- [ ] 🔨 `blend.fillet_geom_p5` (1952 lines) — in progress: #264 @froglemonade2 (ready for review)
 - [ ] 🔨 `blend.fillet_corner_p2` (1892 lines) — in progress: #268 @bluecmd (ready for review)
 
 ### (crate-wide) (0/1)
