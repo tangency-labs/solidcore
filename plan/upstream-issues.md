@@ -322,6 +322,15 @@ meantime, whoever merges renumbers the new entry and every reference to it (here
 - **Severity:** crash/UB.
 - **Rust port:** Uses a `Vec`. The harness limits sizes.
 
+#### UB-204. `SmMatrix(rows, cols)` leaves its inline storage uninitialised, and `SmLocalSolveNd` solves with it when an evaluator fails
+- **Location:** `SmMatrix.h:39` (constructor, "leaves mat values uninitialized"; inline storage `m_adMat[36]` at `:30`), `SmLocalSolveNd.cpp:115` (`SmMatrix sJacobian(lNumFun, lNumFun)`, used by `SolveIt` whatever the evaluator did), `SmCurve.cpp:16680` (and `:18834`): `SmCCIntersectENFO::Evaluate` (def. `:16589`) calls `SmCCTangentIntENFO::StaticEvaluate` and ignores its status.
+- **What happens:** When the curves are within 0.1 of each other and an evaluator fails before it writes `F` and the Jacobian (here: a tangent of length below `SM_EFF_ZERO`), `SolveIt` still solves `J * step = -F` with the matrix it never filled. In a 6x6-or-smaller system that is the stale stack slot of an earlier solve, so the step, and the solution it leads to, depends on what ran before.
+- **Trigger:** `SM_SO_3D_SIGNED_DIRECTED_MINIMIZE` (9), tolerance 0.5, two near-identical cubic Hermite curves whose end tangent `d2` is zero, the first interval `[0.9424, 1.0934]` (a Newton step clamped to `t = 1`).
+- **How found:** generated difftest case `gen21507` (`curve.curve_p9`, `--seeds 30000`), traced with gdb: zeroing the four Jacobian doubles at the second solve makes C++ and Rust agree bit for bit.
+- **Confirmed:** yes (that case).
+- **Severity:** crash/UB (an uninitialised read; the result is nondeterministic across call histories).
+- **Rust port:** `Matrix::new` zeroes its storage, so the system is singular, the solve reports `BadJacobian` and the previous solution is kept: deterministic, and the safe reading. The curve_p9 generator does not hand this shape to the C++ reference (`reads_uninitialised_jacobian`). See `plan/findings.md`, "curve.curve_p9: zero-end-tangent Hermite pair, loose tolerance".
+
 #### UB-240. `N_InitRealMatrix` leaves the matrix type indeterminate
 - **Location:** `source/SMLib/src/NL_Math.cpp:3617` `N_InitRealMatrix` (sets `n`, `m`, `RM` and `bw`, not `mtp`); read by `N_RealMatrixIsNULL` (`:4707`, through `N_GetRealMatrixData`), which every `N_CheckMemRealMatrix` starts with.
 - **What happens:** A matrix initialised to NULL has an indeterminate `NL_MATRIXTYPE`, and the null test loads it. The value does not decide the result (only `n`, `m`, `RM` and `bw` do), but loading an indeterminate enum is undefined behaviour.
@@ -646,6 +655,15 @@ meantime, whoever merges renumbers the new entry and every reference to it (here
 - **Confirmed:** no. The existing FFI limits (`geom.matrix` `MAX_DIM` 64, `geom.solution_array` `MAX_SIZE` 4096, `geom.local_solve1d` queue size 1..=1024) kept these sizes from the C++ side.
 - **Severity:** crash/UB (NULL write, size wrap) and hang (`SetSize` above `2^63`). Not file-reachable.
 - **Rust port:** `Matrix::try_new` / `Matrix::set_size`, `SolutionArray::try_set_size` / `try_insert_at` / `try_with_capacity`, `IterQueue1d::try_new` return `InvalidInput` with the object unchanged.
+
+#### UB-238. Vertex/vertex and edge/edge topology solvers dereference a `NULL` object in a release `SM_ASSERT`
+- **Location:** `SmTopologySolver.cpp:369`-`371` `SmTLSVertexVertex::SolveIt` (def. `:365`), `:1343`-`1345` `SmTLSEdgeEdge::SolveIt` (def. `:1339`); the release `SM_ASSERT(a)` is `if(a) {}` (`source/SMLib/inc/SmMessages.h:714`), so its expression is still evaluated.
+- **What happens:** `SM_ASSERT(pObj1->IsKindOf(..))` and `SM_ASSERT(pObj2->IsKindOf(..))` run before any `NULL` check. With either object `NULL` the call dereferences it (SIGSEGV), although the solvers they forward to (`SmTLSPointVertex::SolveIt`, `SmTLSCurveEdge::SolveIt`) check the second object with `NER`.
+- **Trigger:** `SolveIt(pV, NULL)` or `SolveIt(NULL, pV)` on an `SmTLSVertexVertex`, or the same with edge curves on an `SmTLSEdgeEdge`, in either swap order.
+- **How found:** generated difftest case (`intersect.topology_solver_p1 --fuzz 30000`: `/calls/K/1 = -1` and `/calls/K/0 = -1` mutations, kinds vertex/vertex and edge/edge).
+- **Confirmed:** yes. SIGSEGV in `SmTLSVertexVertex::SolveIt` in the reference build (19 fuzz cases); the FFI guard now refuses a `NULL` object for both solvers.
+- **Severity:** crash/UB (bad argument from calling code).
+- **Rust port:** Returns an error instead of dereferencing (`null_deref` for a `NULL` first object, the forwarded solvers' `NULL` check for the second). The difftest guard keeps these calls away from the C++ side.
 
 ### Curves
 
@@ -1631,6 +1649,16 @@ meantime, whoever merges renumbers the new entry and every reference to it (here
 - **Severity:** crash/UB.
 - **Rust port:** proto edges are arena ids that are never freed, so the repeat reads a deleted-edge slot and finds no group; nothing is read after free.
 
+#### UB-239. `SmProtoTopologyManager::SplitIntersectingProtoEdges` deletes a combined-away proto edge that proto faces and other proto edges still list
+- **Location:** `source/SMLib/src/SmProtoTopology.cpp:6833` (`SplitIntersectingProtoEdges`, def. `:6656`: `CombineProtoEdge`, then `RemoveProtoEdge` and `delete pPE2ToCombine`); `:4346` `SmProtoTopologyManager::RemoveProtoEdge` unlists the edge from `m_sPEs` and its end proto vertices only; the stale entry is read in `GlueCoincidentBrepVertices` (`:5854`, the `GetCoincProtoEdges` walk at `:6245`).
+- **What happens:** The proto edge combined away stays in the coincident-proto-edge lists of the proto faces it bounded, and in the overlapping lists of other proto edges. `GlueCoincidentBrepVertices` then walks those proto-face lists and reads the freed proto edge (a comment there already notes that the proto faces would need updating).
+- **Trigger:** the inward shell of a 20 mm cube with a 10 mm wall (ASan heap-use-after-free; tangency-labs/solidcore#369).
+- **How found:** ASan run of the SolidCraft C API (tangency-labs/smlib `capi/`).
+- **Confirmed:** yes (ASan, in the fork's C API tests); not reproduced in the solidcore difftest.
+- **Severity:** crash/UB (use-after-free).
+- **Fix:** tangency-labs/smlib 93efd6d. `RemoveProtoEdge` drops every reference the listed proto faces and proto edges hold to the edge. `SplitIntersectingProtoEdges` first adds the surviving proto edge to the proto faces the removed one bounded. With the fix the shell above fails with `SM_ERR_NULL_POINTER` instead.
+- **Rust port:** carries the fix at the library deletes rather than inside `RemoveProtoEdge` (`ProtoTopologyManager::forget_proto_edge` before the delete in `SplitIntersectingProtoEdges`, `ResolveOverlappingProtoEdges` and `RemoveEdgeDefinition`; `hand_over_coincident_proto_edge`; test `a_forgotten_proto_edge_leaves_every_face_and_overlap_list`). The difftest's script ops unlist or delete a proto edge on their own and dump the lists; there the port keeps upstream's lists, so they compare with the pinned C++. Without the fix nothing is freed (arena ids): the stale id names a deleted slot and the later passes fail with `InvalidInput`.
+
 #### UB-169. `SmHCR(.., crViewVector, ..)` builds the view transform from uninitialised vectors for a zero view vector
 - **Location:** `source/SMLib/src/SmHCR.cpp:144` `SmHCR::SmHCR` (view-vector constructor).
 - **What happens:** The status of `MakeUnitOrthoVectors` is ignored. When the view vector cannot be unitized (squared length below `SM_EFF_ZERO_SQ`), or when its squared length overflows to infinity (`Unitize` then yields `(0, 0, 0)`, both arbitrary-axis crosses are zero and `SER(SM_ERR)` returns, `SmVector3d.cpp:199-205`), `sPerp1` and `sPerp2` (`SmVector3d() = default`) stay uninitialised and `SetSTEPCanonical` reads them.
@@ -2052,7 +2080,7 @@ meantime, whoever merges renumbers the new entry and every reference to it (here
 - **How found:** out-of-contract native extension probes during `offset.offset_executive_p1`, followed by maintainer review of the real callers.
 - **Confirmed:** yes for eight-second timeouts in the initial out-of-contract native probes (four fixed inputs and 104 generated inputs, Linux x86_64 / GNU g++ 16.2.1). Infinite execution and the exact stuck instruction were not experimentally established; the divergent loop condition was confirmed by source inspection.
 - **Severity:** hang on a direct negative extension request; not an offset-unit parity blocker.
-- **Rust port:** The offset executive's safe FFI and native adapter reject negative internal extension magnitudes before constructing native geometry. Zero, signed zero and positive magnitudes remain covered. This guard does not reject signed public inset operations or readonly constructor/getter probes. See `plan/findings.md`.
+- **Rust port:** The offset executive's safe FFI and native adapter reject negative internal extension magnitudes before constructing native geometry. Zero, signed zero and positive magnitudes remain covered. This guard does not reject signed public inset operations or readonly constructor/getter probes. See `plan/findings.md`. The Rust library itself (`BSplineSurface::create_extended_surface_dir`, also reached by `OffsetExecutive::get_create_extended_surface` with a negative distance) now bounds the doubling loop by `MAX_EXTEND_DOUBLINGS` (1101; a positive distance needs at most one more doubling than it had halvings) and returns `NotConverged`; before that the port looped as upstream does (Rust reached `dExtDist = -inf`, where every G1R extension of a plane still succeeds; fuzz `offset.offset_executive_p1` `/offset_distance = -1.0` / `-1e300`, 2026-10-21).
 
 #### HANG-17. `ST_surxsdr` (surface extension by distance) explores an exponential split for surfaces with short iso-curves
 - **Location:** `source/SMLib/src/NL_SrfAdv.cpp:696`-`960`, `ST_surxsdr` (the recursive body of `N_SrfExtendByDist`), reached through `SmBSplineSurface::CreateExtendedSurface(SM_SP_BOTH, 5 * offset, SM_CT_G1R)` from `SmOffsetExecutive::GetCreateExtendedSurface` (`SmOffsetExecutive.cpp`).

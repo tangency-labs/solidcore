@@ -28314,10 +28314,14 @@
       "values_compared": 0
     },
     {
+      "deferred": {
+        "symbol": "SmBrep::MakeTopologyFromData",
+        "unit": "topology.brep_p10"
+      },
       "max_rel_err": 0.0,
       "name": "rv_surf_rev_1_seam",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "fixture:fixtures/topology.loopuse/review_adversarial.json#3052 (upstream review adversarial sweep (PR #102): every op on loop index 0..23 of each B-rep)",
       "values_compared": 0
     },
@@ -28490,10 +28494,14 @@
       "values_compared": 0
     },
     {
+      "deferred": {
+        "symbol": "SmBrep::MakeTopologyFromData",
+        "unit": "topology.brep_p10"
+      },
       "max_rel_err": 0.0,
       "name": "rv_surf_rev_4_seam",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "fixture:fixtures/topology.loopuse/review_adversarial.json#3074 (upstream review adversarial sweep (PR #102): every op on loop index 0..23 of each B-rep)",
       "values_compared": 0
     },
@@ -28658,10 +28666,14 @@
       "values_compared": 0
     },
     {
+      "deferred": {
+        "symbol": "SmBrep::MakeTopologyFromData",
+        "unit": "topology.brep_p10"
+      },
       "max_rel_err": 0.0,
       "name": "rv_surf_rev_7_seam",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "fixture:fixtures/topology.loopuse/review_adversarial.json#3095 (upstream review adversarial sweep (PR #102): every op on loop index 0..23 of each B-rep)",
       "values_compared": 0
     },
@@ -28754,10 +28766,14 @@
       "values_compared": 0
     },
     {
+      "deferred": {
+        "symbol": "SmBrep::MakeTopologyFromData",
+        "unit": "topology.brep_p10"
+      },
       "max_rel_err": 0.0,
       "name": "rv_surf_rev_10_seam",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "fixture:fixtures/topology.loopuse/review_adversarial.json#3107 (upstream review adversarial sweep (PR #102): every op on loop index 0..23 of each B-rep)",
       "values_compared": 0
     },
@@ -28922,10 +28938,14 @@
       "values_compared": 0
     },
     {
+      "deferred": {
+        "symbol": "SmBrep::MakeTopologyFromData",
+        "unit": "topology.brep_p10"
+      },
       "max_rel_err": 0.0,
       "name": "rv_surf_rev_13_seam",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "fixture:fixtures/topology.loopuse/review_adversarial.json#3128 (upstream review adversarial sweep (PR #102): every op on loop index 0..23 of each B-rep)",
       "values_compared": 0
     },
@@ -29018,10 +29038,14 @@
       "values_compared": 0
     },
     {
+      "deferred": {
+        "symbol": "SmBrep::MakeTopologyFromData",
+        "unit": "topology.brep_p10"
+      },
       "max_rel_err": 0.0,
       "name": "rv_surf_rev_16_seam",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "fixture:fixtures/topology.loopuse/review_adversarial.json#3140 (upstream review adversarial sweep (PR #102): every op on loop index 0..23 of each B-rep)",
       "values_compared": 0
     },
@@ -29186,10 +29210,14 @@
       "values_compared": 0
     },
     {
+      "deferred": {
+        "symbol": "SmBrep::MakeTopologyFromData",
+        "unit": "topology.brep_p10"
+      },
       "max_rel_err": 0.0,
       "name": "rv_surf_rev_19_seam",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "fixture:fixtures/topology.loopuse/review_adversarial.json#3161 (upstream review adversarial sweep (PR #102): every op on loop index 0..23 of each B-rep)",
       "values_compared": 0
     },
@@ -29282,10 +29310,14 @@
       "values_compared": 0
     },
     {
+      "deferred": {
+        "symbol": "SmBrep::MakeTopologyFromData",
+        "unit": "topology.brep_p10"
+      },
       "max_rel_err": 0.0,
       "name": "rv_surf_rev_22_seam",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "fixture:fixtures/topology.loopuse/review_adversarial.json#3173 (upstream review adversarial sweep (PR #102): every op on loop index 0..23 of each B-rep)",
       "values_compared": 0
     },
@@ -29490,10 +29522,14 @@
       "values_compared": 0
     },
     {
+      "deferred": {
+        "symbol": "SmBrep::MakeTopologyFromData",
+        "unit": "topology.brep_p10"
+      },
       "max_rel_err": 0.0,
       "name": "rv_surf_rev_rb_0_seam",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "fixture:fixtures/topology.loopuse/review_adversarial.json#3199 (upstream review adversarial sweep (PR #102): every op on loop index 0..23 of each B-rep)",
       "values_compared": 0
     },
@@ -29706,10 +29742,14 @@
       "values_compared": 0
     },
     {
+      "deferred": {
+        "symbol": "SmBrep::MakeTopologyFromData",
+        "unit": "topology.brep_p10"
+      },
       "max_rel_err": 0.0,
       "name": "rv_surf_rev_rb_3_seam",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "fixture:fixtures/topology.loopuse/review_adversarial.json#3226 (upstream review adversarial sweep (PR #102): every op on loop index 0..23 of each B-rep)",
       "values_compared": 0
     },
@@ -29874,10 +29914,14 @@
       "values_compared": 0
     },
     {
+      "deferred": {
+        "symbol": "SmBrep::MakeTopologyFromData",
+        "unit": "topology.brep_p10"
+      },
       "max_rel_err": 0.0,
       "name": "rv_surf_rev_rb_6_seam",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "fixture:fixtures/topology.loopuse/review_adversarial.json#3247 (upstream review adversarial sweep (PR #102): every op on loop index 0..23 of each B-rep)",
       "values_compared": 0
     },
@@ -29970,10 +30014,14 @@
       "values_compared": 0
     },
     {
+      "deferred": {
+        "symbol": "SmBrep::MakeTopologyFromData",
+        "unit": "topology.brep_p10"
+      },
       "max_rel_err": 0.0,
       "name": "rv_surf_rev_rb_9_seam",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "fixture:fixtures/topology.loopuse/review_adversarial.json#3259 (upstream review adversarial sweep (PR #102): every op on loop index 0..23 of each B-rep)",
       "values_compared": 0
     },
@@ -30138,10 +30186,14 @@
       "values_compared": 0
     },
     {
+      "deferred": {
+        "symbol": "SmBrep::MakeTopologyFromData",
+        "unit": "topology.brep_p10"
+      },
       "max_rel_err": 0.0,
       "name": "rv_surf_rev_rb_12_seam",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "fixture:fixtures/topology.loopuse/review_adversarial.json#3280 (upstream review adversarial sweep (PR #102): every op on loop index 0..23 of each B-rep)",
       "values_compared": 0
     },
@@ -30234,10 +30286,14 @@
       "values_compared": 0
     },
     {
+      "deferred": {
+        "symbol": "SmBrep::MakeTopologyFromData",
+        "unit": "topology.brep_p10"
+      },
       "max_rel_err": 0.0,
       "name": "rv_surf_rev_rb_15_seam",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "fixture:fixtures/topology.loopuse/review_adversarial.json#3292 (upstream review adversarial sweep (PR #102): every op on loop index 0..23 of each B-rep)",
       "values_compared": 0
     },
@@ -30402,10 +30458,14 @@
       "values_compared": 0
     },
     {
+      "deferred": {
+        "symbol": "SmBrep::MakeTopologyFromData",
+        "unit": "topology.brep_p10"
+      },
       "max_rel_err": 0.0,
       "name": "rv_surf_rev_rb_18_seam",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "fixture:fixtures/topology.loopuse/review_adversarial.json#3313 (upstream review adversarial sweep (PR #102): every op on loop index 0..23 of each B-rep)",
       "values_compared": 0
     },
@@ -30498,10 +30558,14 @@
       "values_compared": 0
     },
     {
+      "deferred": {
+        "symbol": "SmBrep::MakeTopologyFromData",
+        "unit": "topology.brep_p10"
+      },
       "max_rel_err": 0.0,
       "name": "rv_surf_rev_rb_21_seam",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "fixture:fixtures/topology.loopuse/review_adversarial.json#3325 (upstream review adversarial sweep (PR #102): every op on loop index 0..23 of each B-rep)",
       "values_compared": 0
     },
@@ -33202,10 +33266,14 @@
       "values_compared": 0
     },
     {
+      "deferred": {
+        "symbol": "SmBrep::MakeTopologyFromData",
+        "unit": "topology.brep_p10"
+      },
       "max_rel_err": 0.0,
       "name": "rv_torus_0_seam",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "fixture:fixtures/topology.loopuse/review_adversarial.json#3655 (upstream review adversarial sweep (PR #102): every op on loop index 0..23 of each B-rep)",
       "values_compared": 0
     },
@@ -33490,10 +33558,14 @@
       "values_compared": 0
     },
     {
+      "deferred": {
+        "symbol": "SmBrep::MakeTopologyFromData",
+        "unit": "topology.brep_p10"
+      },
       "max_rel_err": 0.0,
       "name": "rv_torus_3_seam",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "fixture:fixtures/topology.loopuse/review_adversarial.json#3691 (upstream review adversarial sweep (PR #102): every op on loop index 0..23 of each B-rep)",
       "values_compared": 0
     },
@@ -33586,10 +33658,14 @@
       "values_compared": 0
     },
     {
+      "deferred": {
+        "symbol": "SmBrep::MakeTopologyFromData",
+        "unit": "topology.brep_p10"
+      },
       "max_rel_err": 0.0,
       "name": "rv_torus_6_seam",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "fixture:fixtures/topology.loopuse/review_adversarial.json#3703 (upstream review adversarial sweep (PR #102): every op on loop index 0..23 of each B-rep)",
       "values_compared": 0
     },
@@ -33754,10 +33830,14 @@
       "values_compared": 0
     },
     {
+      "deferred": {
+        "symbol": "SmBrep::MakeTopologyFromData",
+        "unit": "topology.brep_p10"
+      },
       "max_rel_err": 0.0,
       "name": "rv_torus_9_seam",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "fixture:fixtures/topology.loopuse/review_adversarial.json#3724 (upstream review adversarial sweep (PR #102): every op on loop index 0..23 of each B-rep)",
       "values_compared": 0
     },
@@ -33850,10 +33930,14 @@
       "values_compared": 0
     },
     {
+      "deferred": {
+        "symbol": "SmBrep::MakeTopologyFromData",
+        "unit": "topology.brep_p10"
+      },
       "max_rel_err": 0.0,
       "name": "rv_torus_12_seam",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "fixture:fixtures/topology.loopuse/review_adversarial.json#3736 (upstream review adversarial sweep (PR #102): every op on loop index 0..23 of each B-rep)",
       "values_compared": 0
     },
@@ -34018,10 +34102,14 @@
       "values_compared": 0
     },
     {
+      "deferred": {
+        "symbol": "SmBrep::MakeTopologyFromData",
+        "unit": "topology.brep_p10"
+      },
       "max_rel_err": 0.0,
       "name": "rv_torus_15_seam",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "fixture:fixtures/topology.loopuse/review_adversarial.json#3757 (upstream review adversarial sweep (PR #102): every op on loop index 0..23 of each B-rep)",
       "values_compared": 0
     },
@@ -34114,10 +34202,14 @@
       "values_compared": 0
     },
     {
+      "deferred": {
+        "symbol": "SmBrep::MakeTopologyFromData",
+        "unit": "topology.brep_p10"
+      },
       "max_rel_err": 0.0,
       "name": "rv_torus_18_seam",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "fixture:fixtures/topology.loopuse/review_adversarial.json#3769 (upstream review adversarial sweep (PR #102): every op on loop index 0..23 of each B-rep)",
       "values_compared": 0
     },
@@ -34282,10 +34374,14 @@
       "values_compared": 0
     },
     {
+      "deferred": {
+        "symbol": "SmBrep::MakeTopologyFromData",
+        "unit": "topology.brep_p10"
+      },
       "max_rel_err": 0.0,
       "name": "rv_torus_21_seam",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "fixture:fixtures/topology.loopuse/review_adversarial.json#3790 (upstream review adversarial sweep (PR #102): every op on loop index 0..23 of each B-rep)",
       "values_compared": 0
     },
@@ -34498,10 +34594,14 @@
       "values_compared": 0
     },
     {
+      "deferred": {
+        "symbol": "SmBrep::MakeTopologyFromData",
+        "unit": "topology.brep_p10"
+      },
       "max_rel_err": 0.0,
       "name": "rv_torus_rb_2_seam",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "fixture:fixtures/topology.loopuse/review_adversarial.json#3817 (upstream review adversarial sweep (PR #102): every op on loop index 0..23 of each B-rep)",
       "values_compared": 0
     },
@@ -34634,10 +34734,14 @@
       "values_compared": 0
     },
     {
+      "deferred": {
+        "symbol": "SmBrep::MakeTopologyFromData",
+        "unit": "topology.brep_p10"
+      },
       "max_rel_err": 0.0,
       "name": "rv_torus_rb_5_seam",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "fixture:fixtures/topology.loopuse/review_adversarial.json#3834 (upstream review adversarial sweep (PR #102): every op on loop index 0..23 of each B-rep)",
       "values_compared": 0
     },
@@ -34802,10 +34906,14 @@
       "values_compared": 0
     },
     {
+      "deferred": {
+        "symbol": "SmBrep::MakeTopologyFromData",
+        "unit": "topology.brep_p10"
+      },
       "max_rel_err": 0.0,
       "name": "rv_torus_rb_8_seam",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "fixture:fixtures/topology.loopuse/review_adversarial.json#3855 (upstream review adversarial sweep (PR #102): every op on loop index 0..23 of each B-rep)",
       "values_compared": 0
     },
@@ -34898,10 +35006,14 @@
       "values_compared": 0
     },
     {
+      "deferred": {
+        "symbol": "SmBrep::MakeTopologyFromData",
+        "unit": "topology.brep_p10"
+      },
       "max_rel_err": 0.0,
       "name": "rv_torus_rb_11_seam",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "fixture:fixtures/topology.loopuse/review_adversarial.json#3867 (upstream review adversarial sweep (PR #102): every op on loop index 0..23 of each B-rep)",
       "values_compared": 0
     },
@@ -35066,10 +35178,14 @@
       "values_compared": 0
     },
     {
+      "deferred": {
+        "symbol": "SmBrep::MakeTopologyFromData",
+        "unit": "topology.brep_p10"
+      },
       "max_rel_err": 0.0,
       "name": "rv_torus_rb_14_seam",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "fixture:fixtures/topology.loopuse/review_adversarial.json#3888 (upstream review adversarial sweep (PR #102): every op on loop index 0..23 of each B-rep)",
       "values_compared": 0
     },
@@ -35162,10 +35278,14 @@
       "values_compared": 0
     },
     {
+      "deferred": {
+        "symbol": "SmBrep::MakeTopologyFromData",
+        "unit": "topology.brep_p10"
+      },
       "max_rel_err": 0.0,
       "name": "rv_torus_rb_17_seam",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "fixture:fixtures/topology.loopuse/review_adversarial.json#3900 (upstream review adversarial sweep (PR #102): every op on loop index 0..23 of each B-rep)",
       "values_compared": 0
     },
@@ -35330,10 +35450,14 @@
       "values_compared": 0
     },
     {
+      "deferred": {
+        "symbol": "SmBrep::MakeTopologyFromData",
+        "unit": "topology.brep_p10"
+      },
       "max_rel_err": 0.0,
       "name": "rv_torus_rb_20_seam",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "fixture:fixtures/topology.loopuse/review_adversarial.json#3921 (upstream review adversarial sweep (PR #102): every op on loop index 0..23 of each B-rep)",
       "values_compared": 0
     },
@@ -35426,10 +35550,14 @@
       "values_compared": 0
     },
     {
+      "deferred": {
+        "symbol": "SmBrep::MakeTopologyFromData",
+        "unit": "topology.brep_p10"
+      },
       "max_rel_err": 0.0,
       "name": "rv_torus_rb_23_seam",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "fixture:fixtures/topology.loopuse/review_adversarial.json#3933 (upstream review adversarial sweep (PR #102): every op on loop index 0..23 of each B-rep)",
       "values_compared": 0
     },
@@ -35674,10 +35802,14 @@
       "values_compared": 0
     },
     {
+      "deferred": {
+        "symbol": "SmBrep::MakeTopologyFromData",
+        "unit": "topology.brep_p10"
+      },
       "max_rel_err": 0.0,
       "name": "rv_toruswvy_1_seam",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "fixture:fixtures/topology.loopuse/review_adversarial.json#3964 (upstream review adversarial sweep (PR #102): every op on loop index 0..23 of each B-rep)",
       "values_compared": 0
     },
@@ -35850,10 +35982,14 @@
       "values_compared": 0
     },
     {
+      "deferred": {
+        "symbol": "SmBrep::MakeTopologyFromData",
+        "unit": "topology.brep_p10"
+      },
       "max_rel_err": 0.0,
       "name": "rv_toruswvy_4_seam",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "fixture:fixtures/topology.loopuse/review_adversarial.json#3986 (upstream review adversarial sweep (PR #102): every op on loop index 0..23 of each B-rep)",
       "values_compared": 0
     },
@@ -36018,10 +36154,14 @@
       "values_compared": 0
     },
     {
+      "deferred": {
+        "symbol": "SmBrep::MakeTopologyFromData",
+        "unit": "topology.brep_p10"
+      },
       "max_rel_err": 0.0,
       "name": "rv_toruswvy_7_seam",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "fixture:fixtures/topology.loopuse/review_adversarial.json#4007 (upstream review adversarial sweep (PR #102): every op on loop index 0..23 of each B-rep)",
       "values_compared": 0
     },
@@ -36114,10 +36254,14 @@
       "values_compared": 0
     },
     {
+      "deferred": {
+        "symbol": "SmBrep::MakeTopologyFromData",
+        "unit": "topology.brep_p10"
+      },
       "max_rel_err": 0.0,
       "name": "rv_toruswvy_10_seam",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "fixture:fixtures/topology.loopuse/review_adversarial.json#4019 (upstream review adversarial sweep (PR #102): every op on loop index 0..23 of each B-rep)",
       "values_compared": 0
     },
@@ -36282,10 +36426,14 @@
       "values_compared": 0
     },
     {
+      "deferred": {
+        "symbol": "SmBrep::MakeTopologyFromData",
+        "unit": "topology.brep_p10"
+      },
       "max_rel_err": 0.0,
       "name": "rv_toruswvy_13_seam",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "fixture:fixtures/topology.loopuse/review_adversarial.json#4040 (upstream review adversarial sweep (PR #102): every op on loop index 0..23 of each B-rep)",
       "values_compared": 0
     },
@@ -36378,10 +36526,14 @@
       "values_compared": 0
     },
     {
+      "deferred": {
+        "symbol": "SmBrep::MakeTopologyFromData",
+        "unit": "topology.brep_p10"
+      },
       "max_rel_err": 0.0,
       "name": "rv_toruswvy_16_seam",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "fixture:fixtures/topology.loopuse/review_adversarial.json#4052 (upstream review adversarial sweep (PR #102): every op on loop index 0..23 of each B-rep)",
       "values_compared": 0
     },
@@ -36546,10 +36698,14 @@
       "values_compared": 0
     },
     {
+      "deferred": {
+        "symbol": "SmBrep::MakeTopologyFromData",
+        "unit": "topology.brep_p10"
+      },
       "max_rel_err": 0.0,
       "name": "rv_toruswvy_19_seam",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "fixture:fixtures/topology.loopuse/review_adversarial.json#4073 (upstream review adversarial sweep (PR #102): every op on loop index 0..23 of each B-rep)",
       "values_compared": 0
     },
@@ -36642,10 +36798,14 @@
       "values_compared": 0
     },
     {
+      "deferred": {
+        "symbol": "SmBrep::MakeTopologyFromData",
+        "unit": "topology.brep_p10"
+      },
       "max_rel_err": 0.0,
       "name": "rv_toruswvy_22_seam",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "fixture:fixtures/topology.loopuse/review_adversarial.json#4085 (upstream review adversarial sweep (PR #102): every op on loop index 0..23 of each B-rep)",
       "values_compared": 0
     },
@@ -36850,10 +37010,14 @@
       "values_compared": 0
     },
     {
+      "deferred": {
+        "symbol": "SmBrep::MakeTopologyFromData",
+        "unit": "topology.brep_p10"
+      },
       "max_rel_err": 0.0,
       "name": "rv_toruswvy_rb_0_seam",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "fixture:fixtures/topology.loopuse/review_adversarial.json#4111 (upstream review adversarial sweep (PR #102): every op on loop index 0..23 of each B-rep)",
       "values_compared": 0
     },
@@ -37066,10 +37230,14 @@
       "values_compared": 0
     },
     {
+      "deferred": {
+        "symbol": "SmBrep::MakeTopologyFromData",
+        "unit": "topology.brep_p10"
+      },
       "max_rel_err": 0.0,
       "name": "rv_toruswvy_rb_3_seam",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "fixture:fixtures/topology.loopuse/review_adversarial.json#4138 (upstream review adversarial sweep (PR #102): every op on loop index 0..23 of each B-rep)",
       "values_compared": 0
     },
@@ -37234,10 +37402,14 @@
       "values_compared": 0
     },
     {
+      "deferred": {
+        "symbol": "SmBrep::MakeTopologyFromData",
+        "unit": "topology.brep_p10"
+      },
       "max_rel_err": 0.0,
       "name": "rv_toruswvy_rb_6_seam",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "fixture:fixtures/topology.loopuse/review_adversarial.json#4159 (upstream review adversarial sweep (PR #102): every op on loop index 0..23 of each B-rep)",
       "values_compared": 0
     },
@@ -37330,10 +37502,14 @@
       "values_compared": 0
     },
     {
+      "deferred": {
+        "symbol": "SmBrep::MakeTopologyFromData",
+        "unit": "topology.brep_p10"
+      },
       "max_rel_err": 0.0,
       "name": "rv_toruswvy_rb_9_seam",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "fixture:fixtures/topology.loopuse/review_adversarial.json#4171 (upstream review adversarial sweep (PR #102): every op on loop index 0..23 of each B-rep)",
       "values_compared": 0
     },
@@ -37498,10 +37674,14 @@
       "values_compared": 0
     },
     {
+      "deferred": {
+        "symbol": "SmBrep::MakeTopologyFromData",
+        "unit": "topology.brep_p10"
+      },
       "max_rel_err": 0.0,
       "name": "rv_toruswvy_rb_12_seam",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "fixture:fixtures/topology.loopuse/review_adversarial.json#4192 (upstream review adversarial sweep (PR #102): every op on loop index 0..23 of each B-rep)",
       "values_compared": 0
     },
@@ -37594,10 +37774,14 @@
       "values_compared": 0
     },
     {
+      "deferred": {
+        "symbol": "SmBrep::MakeTopologyFromData",
+        "unit": "topology.brep_p10"
+      },
       "max_rel_err": 0.0,
       "name": "rv_toruswvy_rb_15_seam",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "fixture:fixtures/topology.loopuse/review_adversarial.json#4204 (upstream review adversarial sweep (PR #102): every op on loop index 0..23 of each B-rep)",
       "values_compared": 0
     },
@@ -37762,10 +37946,14 @@
       "values_compared": 0
     },
     {
+      "deferred": {
+        "symbol": "SmBrep::MakeTopologyFromData",
+        "unit": "topology.brep_p10"
+      },
       "max_rel_err": 0.0,
       "name": "rv_toruswvy_rb_18_seam",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "fixture:fixtures/topology.loopuse/review_adversarial.json#4225 (upstream review adversarial sweep (PR #102): every op on loop index 0..23 of each B-rep)",
       "values_compared": 0
     },
@@ -37858,10 +38046,14 @@
       "values_compared": 0
     },
     {
+      "deferred": {
+        "symbol": "SmBrep::MakeTopologyFromData",
+        "unit": "topology.brep_p10"
+      },
       "max_rel_err": 0.0,
       "name": "rv_toruswvy_rb_21_seam",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "fixture:fixtures/topology.loopuse/review_adversarial.json#4237 (upstream review adversarial sweep (PR #102): every op on loop index 0..23 of each B-rep)",
       "values_compared": 0
     },
@@ -38146,10 +38338,14 @@
       "values_compared": 0
     },
     {
+      "deferred": {
+        "symbol": "SmBrep::MakeTopologyFromData",
+        "unit": "topology.brep_p10"
+      },
       "max_rel_err": 0.0,
       "name": "rv_vase_rev_2_seam",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "fixture:fixtures/topology.loopuse/review_adversarial.json#4273 (upstream review adversarial sweep (PR #102): every op on loop index 0..23 of each B-rep)",
       "values_compared": 0
     },
@@ -38354,10 +38550,14 @@
       "values_compared": 0
     },
     {
+      "deferred": {
+        "symbol": "SmBrep::MakeTopologyFromData",
+        "unit": "topology.brep_p10"
+      },
       "max_rel_err": 0.0,
       "name": "rv_vase_rev_5_seam",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "fixture:fixtures/topology.loopuse/review_adversarial.json#4299 (upstream review adversarial sweep (PR #102): every op on loop index 0..23 of each B-rep)",
       "values_compared": 0
     },
@@ -38450,10 +38650,14 @@
       "values_compared": 0
     },
     {
+      "deferred": {
+        "symbol": "SmBrep::MakeTopologyFromData",
+        "unit": "topology.brep_p10"
+      },
       "max_rel_err": 0.0,
       "name": "rv_vase_rev_8_seam",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "fixture:fixtures/topology.loopuse/review_adversarial.json#4311 (upstream review adversarial sweep (PR #102): every op on loop index 0..23 of each B-rep)",
       "values_compared": 0
     },
@@ -38618,10 +38822,14 @@
       "values_compared": 0
     },
     {
+      "deferred": {
+        "symbol": "SmBrep::MakeTopologyFromData",
+        "unit": "topology.brep_p10"
+      },
       "max_rel_err": 0.0,
       "name": "rv_vase_rev_11_seam",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "fixture:fixtures/topology.loopuse/review_adversarial.json#4332 (upstream review adversarial sweep (PR #102): every op on loop index 0..23 of each B-rep)",
       "values_compared": 0
     },
@@ -38714,10 +38922,14 @@
       "values_compared": 0
     },
     {
+      "deferred": {
+        "symbol": "SmBrep::MakeTopologyFromData",
+        "unit": "topology.brep_p10"
+      },
       "max_rel_err": 0.0,
       "name": "rv_vase_rev_14_seam",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "fixture:fixtures/topology.loopuse/review_adversarial.json#4344 (upstream review adversarial sweep (PR #102): every op on loop index 0..23 of each B-rep)",
       "values_compared": 0
     },
@@ -38882,10 +39094,14 @@
       "values_compared": 0
     },
     {
+      "deferred": {
+        "symbol": "SmBrep::MakeTopologyFromData",
+        "unit": "topology.brep_p10"
+      },
       "max_rel_err": 0.0,
       "name": "rv_vase_rev_17_seam",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "fixture:fixtures/topology.loopuse/review_adversarial.json#4365 (upstream review adversarial sweep (PR #102): every op on loop index 0..23 of each B-rep)",
       "values_compared": 0
     },
@@ -38978,10 +39194,14 @@
       "values_compared": 0
     },
     {
+      "deferred": {
+        "symbol": "SmBrep::MakeTopologyFromData",
+        "unit": "topology.brep_p10"
+      },
       "max_rel_err": 0.0,
       "name": "rv_vase_rev_20_seam",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "fixture:fixtures/topology.loopuse/review_adversarial.json#4377 (upstream review adversarial sweep (PR #102): every op on loop index 0..23 of each B-rep)",
       "values_compared": 0
     },
@@ -39146,10 +39366,14 @@
       "values_compared": 0
     },
     {
+      "deferred": {
+        "symbol": "SmBrep::MakeTopologyFromData",
+        "unit": "topology.brep_p10"
+      },
       "max_rel_err": 0.0,
       "name": "rv_vase_rev_23_seam",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "fixture:fixtures/topology.loopuse/review_adversarial.json#4398 (upstream review adversarial sweep (PR #102): every op on loop index 0..23 of each B-rep)",
       "values_compared": 0
     },
@@ -39322,10 +39546,14 @@
       "values_compared": 0
     },
     {
+      "deferred": {
+        "symbol": "SmBrep::MakeTopologyFromData",
+        "unit": "topology.brep_p10"
+      },
       "max_rel_err": 0.0,
       "name": "rv_vase_rev_rb_1_seam",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "fixture:fixtures/topology.loopuse/review_adversarial.json#4420 (upstream review adversarial sweep (PR #102): every op on loop index 0..23 of each B-rep)",
       "values_compared": 0
     },
@@ -39570,10 +39798,14 @@
       "values_compared": 0
     },
     {
+      "deferred": {
+        "symbol": "SmBrep::MakeTopologyFromData",
+        "unit": "topology.brep_p10"
+      },
       "max_rel_err": 0.0,
       "name": "rv_vase_rev_rb_4_seam",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "fixture:fixtures/topology.loopuse/review_adversarial.json#4451 (upstream review adversarial sweep (PR #102): every op on loop index 0..23 of each B-rep)",
       "values_compared": 0
     },
@@ -39666,10 +39898,14 @@
       "values_compared": 0
     },
     {
+      "deferred": {
+        "symbol": "SmBrep::MakeTopologyFromData",
+        "unit": "topology.brep_p10"
+      },
       "max_rel_err": 0.0,
       "name": "rv_vase_rev_rb_7_seam",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "fixture:fixtures/topology.loopuse/review_adversarial.json#4463 (upstream review adversarial sweep (PR #102): every op on loop index 0..23 of each B-rep)",
       "values_compared": 0
     },
@@ -39834,10 +40070,14 @@
       "values_compared": 0
     },
     {
+      "deferred": {
+        "symbol": "SmBrep::MakeTopologyFromData",
+        "unit": "topology.brep_p10"
+      },
       "max_rel_err": 0.0,
       "name": "rv_vase_rev_rb_10_seam",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "fixture:fixtures/topology.loopuse/review_adversarial.json#4484 (upstream review adversarial sweep (PR #102): every op on loop index 0..23 of each B-rep)",
       "values_compared": 0
     },
@@ -39930,10 +40170,14 @@
       "values_compared": 0
     },
     {
+      "deferred": {
+        "symbol": "SmBrep::MakeTopologyFromData",
+        "unit": "topology.brep_p10"
+      },
       "max_rel_err": 0.0,
       "name": "rv_vase_rev_rb_13_seam",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "fixture:fixtures/topology.loopuse/review_adversarial.json#4496 (upstream review adversarial sweep (PR #102): every op on loop index 0..23 of each B-rep)",
       "values_compared": 0
     },
@@ -40098,10 +40342,14 @@
       "values_compared": 0
     },
     {
+      "deferred": {
+        "symbol": "SmBrep::MakeTopologyFromData",
+        "unit": "topology.brep_p10"
+      },
       "max_rel_err": 0.0,
       "name": "rv_vase_rev_rb_16_seam",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "fixture:fixtures/topology.loopuse/review_adversarial.json#4517 (upstream review adversarial sweep (PR #102): every op on loop index 0..23 of each B-rep)",
       "values_compared": 0
     },
@@ -40194,10 +40442,14 @@
       "values_compared": 0
     },
     {
+      "deferred": {
+        "symbol": "SmBrep::MakeTopologyFromData",
+        "unit": "topology.brep_p10"
+      },
       "max_rel_err": 0.0,
       "name": "rv_vase_rev_rb_19_seam",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "fixture:fixtures/topology.loopuse/review_adversarial.json#4529 (upstream review adversarial sweep (PR #102): every op on loop index 0..23 of each B-rep)",
       "values_compared": 0
     },
@@ -40362,10 +40614,14 @@
       "values_compared": 0
     },
     {
+      "deferred": {
+        "symbol": "SmBrep::MakeTopologyFromData",
+        "unit": "topology.brep_p10"
+      },
       "max_rel_err": 0.0,
       "name": "rv_vase_rev_rb_22_seam",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "fixture:fixtures/topology.loopuse/review_adversarial.json#4550 (upstream review adversarial sweep (PR #102): every op on loop index 0..23 of each B-rep)",
       "values_compared": 0
     },
@@ -63770,10 +64026,14 @@
       "values_compared": 2
     },
     {
+      "deferred": {
+        "symbol": "SmBrep::MakeTopologyFromData",
+        "unit": "topology.brep_p10"
+      },
       "max_rel_err": 0.0,
       "name": "surf_rev_002_missing_seam",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "fixture:fixtures/topology.loopuse/upstream_files.json#742 (upstream tests/prog_test/src/smAdvancedTest.cpp:2543)",
       "values_compared": 0
     },
@@ -63850,10 +64110,14 @@
       "values_compared": 2
     },
     {
+      "deferred": {
+        "symbol": "SmBrep::MakeTopologyFromData",
+        "unit": "topology.brep_p10"
+      },
       "max_rel_err": 0.0,
       "name": "surf_rev_012_missing_seam",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "fixture:fixtures/topology.loopuse/upstream_files.json#752 (upstream tests/prog_test/src/smAdvancedTest.cpp:2543)",
       "values_compared": 0
     },
@@ -63930,10 +64194,14 @@
       "values_compared": 2
     },
     {
+      "deferred": {
+        "symbol": "SmBrep::MakeTopologyFromData",
+        "unit": "topology.brep_p10"
+      },
       "max_rel_err": 0.0,
       "name": "surf_rev_022_missing_seam",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "fixture:fixtures/topology.loopuse/upstream_files.json#762 (upstream tests/prog_test/src/smAdvancedTest.cpp:2543)",
       "values_compared": 0
     },
@@ -64010,10 +64278,14 @@
       "values_compared": 2
     },
     {
+      "deferred": {
+        "symbol": "SmBrep::MakeTopologyFromData",
+        "unit": "topology.brep_p10"
+      },
       "max_rel_err": 0.0,
       "name": "surf_rev_032_missing_seam",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "fixture:fixtures/topology.loopuse/upstream_files.json#772 (upstream tests/prog_test/src/smAdvancedTest.cpp:2543)",
       "values_compared": 0
     },
@@ -64234,10 +64506,14 @@
       "values_compared": 2
     },
     {
+      "deferred": {
+        "symbol": "SmBrep::MakeTopologyFromData",
+        "unit": "topology.brep_p10"
+      },
       "max_rel_err": 0.0,
       "name": "surf_rev_rebuilt_002_missing_seam",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "fixture:fixtures/topology.loopuse/upstream_files.json#800 (upstream tests/prog_test/src/smAdvancedTest.cpp:2543)",
       "values_compared": 0
     },
@@ -64974,10 +65250,14 @@
       "values_compared": 2
     },
     {
+      "deferred": {
+        "symbol": "SmBrep::MakeTopologyFromData",
+        "unit": "topology.brep_p10"
+      },
       "max_rel_err": 0.0,
       "name": "torus_002_missing_seam",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "fixture:fixtures/topology.loopuse/upstream_files.json#890 (upstream tests/prog_test/src/smAdvancedTest.cpp:41)",
       "values_compared": 0
     },
@@ -65054,10 +65334,14 @@
       "values_compared": 2
     },
     {
+      "deferred": {
+        "symbol": "SmBrep::MakeTopologyFromData",
+        "unit": "topology.brep_p10"
+      },
       "max_rel_err": 0.0,
       "name": "torus_012_missing_seam",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "fixture:fixtures/topology.loopuse/upstream_files.json#900 (upstream tests/prog_test/src/smAdvancedTest.cpp:41)",
       "values_compared": 0
     },
@@ -65134,10 +65418,14 @@
       "values_compared": 2
     },
     {
+      "deferred": {
+        "symbol": "SmBrep::MakeTopologyFromData",
+        "unit": "topology.brep_p10"
+      },
       "max_rel_err": 0.0,
       "name": "torus_022_missing_seam",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "fixture:fixtures/topology.loopuse/upstream_files.json#910 (upstream tests/prog_test/src/smAdvancedTest.cpp:41)",
       "values_compared": 0
     },
@@ -65214,10 +65502,14 @@
       "values_compared": 2
     },
     {
+      "deferred": {
+        "symbol": "SmBrep::MakeTopologyFromData",
+        "unit": "topology.brep_p10"
+      },
       "max_rel_err": 0.0,
       "name": "torus_032_missing_seam",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "fixture:fixtures/topology.loopuse/upstream_files.json#920 (upstream tests/prog_test/src/smAdvancedTest.cpp:41)",
       "values_compared": 0
     },
@@ -65438,10 +65730,14 @@
       "values_compared": 2
     },
     {
+      "deferred": {
+        "symbol": "SmBrep::MakeTopologyFromData",
+        "unit": "topology.brep_p10"
+      },
       "max_rel_err": 0.0,
       "name": "torus_rebuilt_002_missing_seam",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "fixture:fixtures/topology.loopuse/upstream_files.json#948 (upstream tests/prog_test/src/smAdvancedTest.cpp:41)",
       "values_compared": 0
     },
@@ -65566,10 +65862,14 @@
       "values_compared": 2
     },
     {
+      "deferred": {
+        "symbol": "SmBrep::MakeTopologyFromData",
+        "unit": "topology.brep_p10"
+      },
       "max_rel_err": 0.0,
       "name": "toruswvy_002_missing_seam",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "fixture:fixtures/topology.loopuse/upstream_files.json#964 (upstream tests/prog_test/src/smAdvancedTest.cpp:547)",
       "values_compared": 0
     },
@@ -65646,10 +65946,14 @@
       "values_compared": 2
     },
     {
+      "deferred": {
+        "symbol": "SmBrep::MakeTopologyFromData",
+        "unit": "topology.brep_p10"
+      },
       "max_rel_err": 0.0,
       "name": "toruswvy_012_missing_seam",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "fixture:fixtures/topology.loopuse/upstream_files.json#974 (upstream tests/prog_test/src/smAdvancedTest.cpp:547)",
       "values_compared": 0
     },
@@ -65726,10 +66030,14 @@
       "values_compared": 2
     },
     {
+      "deferred": {
+        "symbol": "SmBrep::MakeTopologyFromData",
+        "unit": "topology.brep_p10"
+      },
       "max_rel_err": 0.0,
       "name": "toruswvy_022_missing_seam",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "fixture:fixtures/topology.loopuse/upstream_files.json#984 (upstream tests/prog_test/src/smAdvancedTest.cpp:547)",
       "values_compared": 0
     },
@@ -65806,10 +66114,14 @@
       "values_compared": 2
     },
     {
+      "deferred": {
+        "symbol": "SmBrep::MakeTopologyFromData",
+        "unit": "topology.brep_p10"
+      },
       "max_rel_err": 0.0,
       "name": "toruswvy_032_missing_seam",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "fixture:fixtures/topology.loopuse/upstream_files.json#994 (upstream tests/prog_test/src/smAdvancedTest.cpp:547)",
       "values_compared": 0
     },
@@ -66030,10 +66342,14 @@
       "values_compared": 2
     },
     {
+      "deferred": {
+        "symbol": "SmBrep::MakeTopologyFromData",
+        "unit": "topology.brep_p10"
+      },
       "max_rel_err": 0.0,
       "name": "toruswvy_rebuilt_002_missing_seam",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "fixture:fixtures/topology.loopuse/upstream_files.json#1022 (upstream tests/prog_test/src/smAdvancedTest.cpp:547)",
       "values_compared": 0
     },
@@ -66158,10 +66474,14 @@
       "values_compared": 2
     },
     {
+      "deferred": {
+        "symbol": "SmBrep::MakeTopologyFromData",
+        "unit": "topology.brep_p10"
+      },
       "max_rel_err": 0.0,
       "name": "vase_rev_002_missing_seam",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "fixture:fixtures/topology.loopuse/upstream_files.json#1038 (upstream tests/prog_test/src/smAdvancedTest.cpp:703)",
       "values_compared": 0
     },
@@ -66238,10 +66558,14 @@
       "values_compared": 2
     },
     {
+      "deferred": {
+        "symbol": "SmBrep::MakeTopologyFromData",
+        "unit": "topology.brep_p10"
+      },
       "max_rel_err": 0.0,
       "name": "vase_rev_012_missing_seam",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "fixture:fixtures/topology.loopuse/upstream_files.json#1048 (upstream tests/prog_test/src/smAdvancedTest.cpp:703)",
       "values_compared": 0
     },
@@ -66318,10 +66642,14 @@
       "values_compared": 2
     },
     {
+      "deferred": {
+        "symbol": "SmBrep::MakeTopologyFromData",
+        "unit": "topology.brep_p10"
+      },
       "max_rel_err": 0.0,
       "name": "vase_rev_022_missing_seam",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "fixture:fixtures/topology.loopuse/upstream_files.json#1058 (upstream tests/prog_test/src/smAdvancedTest.cpp:703)",
       "values_compared": 0
     },
@@ -66398,10 +66726,14 @@
       "values_compared": 2
     },
     {
+      "deferred": {
+        "symbol": "SmBrep::MakeTopologyFromData",
+        "unit": "topology.brep_p10"
+      },
       "max_rel_err": 0.0,
       "name": "vase_rev_032_missing_seam",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "fixture:fixtures/topology.loopuse/upstream_files.json#1068 (upstream tests/prog_test/src/smAdvancedTest.cpp:703)",
       "values_compared": 0
     },
@@ -66622,10 +66954,14 @@
       "values_compared": 2
     },
     {
+      "deferred": {
+        "symbol": "SmBrep::MakeTopologyFromData",
+        "unit": "topology.brep_p10"
+      },
       "max_rel_err": 0.0,
       "name": "vase_rev_rebuilt_002_missing_seam",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "fixture:fixtures/topology.loopuse/upstream_files.json#1096 (upstream tests/prog_test/src/smAdvancedTest.cpp:703)",
       "values_compared": 0
     },
@@ -66734,7 +67070,6 @@
       "values_compared": 8
     },
     {
-      "both_errored": true,
       "max_rel_err": 0.0,
       "name": "gen0000",
       "outcome": "pass",
@@ -66831,7 +67166,6 @@
       "values_compared": 0
     },
     {
-      "both_errored": true,
       "max_rel_err": 0.0,
       "name": "gen0012",
       "outcome": "pass",
@@ -66872,7 +67206,6 @@
       "values_compared": 0
     },
     {
-      "both_errored": true,
       "max_rel_err": 0.0,
       "name": "extra00001",
       "outcome": "pass",
@@ -66897,7 +67230,6 @@
       "values_compared": 0
     },
     {
-      "both_errored": true,
       "max_rel_err": 0.0,
       "name": "extra00004",
       "outcome": "pass",
@@ -66911,7 +67243,7 @@
       "outcome": "pass",
       "pass": true,
       "source": "generated:seed=269157856",
-      "values_compared": 2
+      "values_compared": 0
     },
     {
       "max_rel_err": 0.0,
@@ -66919,10 +67251,9 @@
       "outcome": "pass",
       "pass": true,
       "source": "generated:seed=269157856",
-      "values_compared": 0
+      "values_compared": 2
     },
     {
-      "both_errored": true,
       "max_rel_err": 0.0,
       "name": "extra00007",
       "outcome": "pass",
@@ -66936,7 +67267,7 @@
       "outcome": "pass",
       "pass": true,
       "source": "generated:seed=269157856",
-      "values_compared": 2
+      "values_compared": 0
     },
     {
       "max_rel_err": 0.0,
@@ -66944,7 +67275,7 @@
       "outcome": "pass",
       "pass": true,
       "source": "generated:seed=269157856",
-      "values_compared": 0
+      "values_compared": 2
     },
     {
       "max_rel_err": 0.0,
@@ -66976,7 +67307,7 @@
       "outcome": "pass",
       "pass": true,
       "source": "generated:seed=269157856",
-      "values_compared": 2
+      "values_compared": 0
     },
     {
       "max_rel_err": 0.0,
@@ -67027,7 +67358,6 @@
       "values_compared": 0
     },
     {
-      "both_errored": true,
       "max_rel_err": 0.0,
       "name": "extra00020",
       "outcome": "pass",
@@ -67041,7 +67371,7 @@
       "outcome": "pass",
       "pass": true,
       "source": "generated:seed=269157856",
-      "values_compared": 0
+      "values_compared": 2
     },
     {
       "max_rel_err": 0.0,
@@ -67097,7 +67427,7 @@
       "outcome": "pass",
       "pass": true,
       "source": "generated:seed=269157856",
-      "values_compared": 2
+      "values_compared": 0
     },
     {
       "max_rel_err": 0.0,
@@ -67145,7 +67475,7 @@
       "outcome": "pass",
       "pass": true,
       "source": "generated:seed=269157856",
-      "values_compared": 2
+      "values_compared": 0
     },
     {
       "max_rel_err": 0.0,
@@ -67153,7 +67483,7 @@
       "outcome": "pass",
       "pass": true,
       "source": "generated:seed=269157856",
-      "values_compared": 2
+      "values_compared": 0
     },
     {
       "max_rel_err": 0.0,
@@ -67161,7 +67491,7 @@
       "outcome": "pass",
       "pass": true,
       "source": "generated:seed=269157856",
-      "values_compared": 0
+      "values_compared": 2
     },
     {
       "max_rel_err": 0.0,
@@ -67177,7 +67507,7 @@
       "outcome": "pass",
       "pass": true,
       "source": "generated:seed=269157856",
-      "values_compared": 0
+      "values_compared": 2
     },
     {
       "max_rel_err": 0.0,
@@ -67212,7 +67542,6 @@
       "values_compared": 0
     },
     {
-      "both_errored": true,
       "max_rel_err": 0.0,
       "name": "extra00043",
       "outcome": "pass",
@@ -67250,7 +67579,7 @@
       "outcome": "pass",
       "pass": true,
       "source": "generated:seed=269157856",
-      "values_compared": 2
+      "values_compared": 0
     },
     {
       "max_rel_err": 0.0,
@@ -67274,7 +67603,7 @@
       "outcome": "pass",
       "pass": true,
       "source": "generated:seed=269157856",
-      "values_compared": 0
+      "values_compared": 2
     },
     {
       "max_rel_err": 0.0,
@@ -67354,7 +67683,7 @@
       "outcome": "pass",
       "pass": true,
       "source": "generated:seed=269157856",
-      "values_compared": 0
+      "values_compared": 2
     },
     {
       "max_rel_err": 0.0,
@@ -67397,7 +67726,6 @@
       "values_compared": 0
     },
     {
-      "both_errored": true,
       "max_rel_err": 0.0,
       "name": "extra00066",
       "outcome": "pass",
@@ -67427,7 +67755,7 @@
       "outcome": "pass",
       "pass": true,
       "source": "generated:seed=269157856",
-      "values_compared": 0
+      "values_compared": 2
     },
     {
       "max_rel_err": 0.0,
@@ -67438,7 +67766,6 @@
       "values_compared": 0
     },
     {
-      "both_errored": true,
       "max_rel_err": 0.0,
       "name": "extra00071",
       "outcome": "pass",
@@ -67460,7 +67787,7 @@
       "outcome": "pass",
       "pass": true,
       "source": "generated:seed=269157856",
-      "values_compared": 2
+      "values_compared": 0
     },
     {
       "max_rel_err": 0.0,
@@ -67500,7 +67827,7 @@
       "outcome": "pass",
       "pass": true,
       "source": "generated:seed=269157856",
-      "values_compared": 2
+      "values_compared": 0
     },
     {
       "max_rel_err": 0.0,
@@ -67532,7 +67859,7 @@
       "outcome": "pass",
       "pass": true,
       "source": "generated:seed=269157856",
-      "values_compared": 2
+      "values_compared": 0
     },
     {
       "max_rel_err": 0.0,
@@ -67564,7 +67891,7 @@
       "outcome": "pass",
       "pass": true,
       "source": "generated:seed=269157856",
-      "values_compared": 0
+      "values_compared": 2
     },
     {
       "max_rel_err": 0.0,
@@ -67639,7 +67966,6 @@
       "values_compared": 0
     },
     {
-      "both_errored": true,
       "max_rel_err": 0.0,
       "name": "extra00096",
       "outcome": "pass",
@@ -67648,7 +67974,6 @@
       "values_compared": 0
     },
     {
-      "both_errored": true,
       "max_rel_err": 0.0,
       "name": "extra00097",
       "outcome": "pass",
@@ -67673,7 +67998,6 @@
       "values_compared": 0
     },
     {
-      "both_errored": true,
       "max_rel_err": 0.0,
       "name": "extra00100",
       "outcome": "pass",
@@ -67695,7 +68019,7 @@
       "outcome": "pass",
       "pass": true,
       "source": "generated:seed=269157856",
-      "values_compared": 2
+      "values_compared": 0
     },
     {
       "max_rel_err": 0.0,
@@ -67714,7 +68038,6 @@
       "values_compared": 0
     },
     {
-      "both_errored": true,
       "max_rel_err": 0.0,
       "name": "extra00105",
       "outcome": "pass",
@@ -67736,7 +68059,7 @@
       "outcome": "pass",
       "pass": true,
       "source": "generated:seed=269157856",
-      "values_compared": 0
+      "values_compared": 2
     },
     {
       "max_rel_err": 0.0,
@@ -67787,15 +68110,18 @@
       "values_compared": 0
     },
     {
+      "deferred": {
+        "symbol": "SmBrep::MakeTopologyFromData",
+        "unit": "topology.brep_p10"
+      },
       "max_rel_err": 0.0,
       "name": "extra00114",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "generated:seed=269157856",
       "values_compared": 0
     },
     {
-      "both_errored": true,
       "max_rel_err": 0.0,
       "name": "extra00115",
       "outcome": "pass",
@@ -67812,14 +68138,10 @@
       "values_compared": 0
     },
     {
-      "deferred": {
-        "symbol": "SmSurface::DropCurve",
-        "unit": "intersect.surface_drop_lib_p3"
-      },
       "max_rel_err": 0.0,
       "name": "extra00117",
-      "outcome": "deferred",
-      "pass": false,
+      "outcome": "pass",
+      "pass": true,
       "source": "generated:seed=269157856",
       "values_compared": 0
     },
@@ -67829,7 +68151,7 @@
       "outcome": "pass",
       "pass": true,
       "source": "generated:seed=269157856",
-      "values_compared": 2
+      "values_compared": 0
     },
     {
       "max_rel_err": 0.0,
@@ -67837,7 +68159,7 @@
       "outcome": "pass",
       "pass": true,
       "source": "generated:seed=269157856",
-      "values_compared": 2
+      "values_compared": 0
     },
     {
       "max_rel_err": 0.0,
@@ -67869,10 +68191,9 @@
       "outcome": "pass",
       "pass": true,
       "source": "generated:seed=269157856",
-      "values_compared": 0
+      "values_compared": 2
     },
     {
-      "both_errored": true,
       "max_rel_err": 0.0,
       "name": "extra00124",
       "outcome": "pass",
@@ -67913,14 +68234,10 @@
       "values_compared": 0
     },
     {
-      "deferred": {
-        "symbol": "SurfaceKind::Sphere (SmSphere dispatch)",
-        "unit": "surface.surface_p2"
-      },
       "max_rel_err": 0.0,
       "name": "extra00129",
-      "outcome": "deferred",
-      "pass": false,
+      "outcome": "pass",
+      "pass": true,
       "source": "generated:seed=269157856",
       "values_compared": 0
     },
@@ -67989,7 +68306,6 @@
       "values_compared": 0
     },
     {
-      "both_errored": true,
       "max_rel_err": 0.0,
       "name": "extra00138",
       "outcome": "pass",
@@ -68003,7 +68319,7 @@
       "outcome": "pass",
       "pass": true,
       "source": "generated:seed=269157856",
-      "values_compared": 0
+      "values_compared": 2
     },
     {
       "max_rel_err": 0.0,
@@ -68011,7 +68327,7 @@
       "outcome": "pass",
       "pass": true,
       "source": "generated:seed=269157856",
-      "values_compared": 0
+      "values_compared": 2
     },
     {
       "max_rel_err": 0.0,
@@ -68019,7 +68335,7 @@
       "outcome": "pass",
       "pass": true,
       "source": "generated:seed=269157856",
-      "values_compared": 2
+      "values_compared": 0
     },
     {
       "max_rel_err": 0.0,
@@ -68027,7 +68343,7 @@
       "outcome": "pass",
       "pass": true,
       "source": "generated:seed=269157856",
-      "values_compared": 2
+      "values_compared": 0
     },
     {
       "max_rel_err": 0.0,
@@ -68062,13 +68378,12 @@
       "values_compared": 0
     },
     {
-      "both_errored": true,
       "max_rel_err": 0.0,
       "name": "extra00147",
       "outcome": "pass",
       "pass": true,
       "source": "generated:seed=269157856",
-      "values_compared": 0
+      "values_compared": 2
     },
     {
       "max_rel_err": 0.0,
@@ -68092,7 +68407,7 @@
       "outcome": "pass",
       "pass": true,
       "source": "generated:seed=269157856",
-      "values_compared": 2
+      "values_compared": 0
     },
     {
       "max_rel_err": 0.0,
@@ -68100,7 +68415,7 @@
       "outcome": "pass",
       "pass": true,
       "source": "generated:seed=269157856",
-      "values_compared": 0
+      "values_compared": 2
     },
     {
       "max_rel_err": 0.0,
@@ -68116,7 +68431,7 @@
       "outcome": "pass",
       "pass": true,
       "source": "generated:seed=269157856",
-      "values_compared": 2
+      "values_compared": 0
     },
     {
       "max_rel_err": 0.0,
@@ -68124,7 +68439,7 @@
       "outcome": "pass",
       "pass": true,
       "source": "generated:seed=269157856",
-      "values_compared": 0
+      "values_compared": 2
     },
     {
       "max_rel_err": 0.0,
@@ -68148,7 +68463,7 @@
       "outcome": "pass",
       "pass": true,
       "source": "generated:seed=269157856",
-      "values_compared": 2
+      "values_compared": 0
     },
     {
       "max_rel_err": 0.0,
@@ -68175,7 +68490,6 @@
       "values_compared": 0
     },
     {
-      "both_errored": true,
       "max_rel_err": 0.0,
       "name": "extra00161",
       "outcome": "pass",
@@ -68189,7 +68503,7 @@
       "outcome": "pass",
       "pass": true,
       "source": "generated:seed=269157856",
-      "values_compared": 2
+      "values_compared": 0
     },
     {
       "max_rel_err": 0.0,
@@ -68208,7 +68522,6 @@
       "values_compared": 0
     },
     {
-      "both_errored": true,
       "max_rel_err": 0.0,
       "name": "extra00165",
       "outcome": "pass",
@@ -68246,7 +68559,7 @@
       "outcome": "pass",
       "pass": true,
       "source": "generated:seed=269157856",
-      "values_compared": 2
+      "values_compared": 0
     },
     {
       "max_rel_err": 0.0,
@@ -68329,7 +68642,6 @@
       "values_compared": 0
     },
     {
-      "both_errored": true,
       "max_rel_err": 0.0,
       "name": "extra00180",
       "outcome": "pass",
@@ -68370,13 +68682,12 @@
       "values_compared": 0
     },
     {
-      "both_errored": true,
       "max_rel_err": 0.0,
       "name": "extra00185",
       "outcome": "pass",
       "pass": true,
       "source": "generated:seed=269157856",
-      "values_compared": 0
+      "values_compared": 2
     },
     {
       "max_rel_err": 0.0,
@@ -68408,7 +68719,7 @@
       "outcome": "pass",
       "pass": true,
       "source": "generated:seed=269157856",
-      "values_compared": 2
+      "values_compared": 0
     },
     {
       "max_rel_err": 0.0,
@@ -68416,19 +68727,17 @@
       "outcome": "pass",
       "pass": true,
       "source": "generated:seed=269157856",
-      "values_compared": 0
+      "values_compared": 2
     },
     {
-      "both_errored": true,
       "max_rel_err": 0.0,
       "name": "extra00191",
       "outcome": "pass",
       "pass": true,
       "source": "generated:seed=269157856",
-      "values_compared": 0
+      "values_compared": 2
     },
     {
-      "both_errored": true,
       "max_rel_err": 0.0,
       "name": "extra00192",
       "outcome": "pass",
@@ -68522,7 +68831,7 @@
       "outcome": "pass",
       "pass": true,
       "source": "generated:seed=269157856",
-      "values_compared": 2
+      "values_compared": 0
     },
     {
       "max_rel_err": 0.0,
@@ -68530,10 +68839,9 @@
       "outcome": "pass",
       "pass": true,
       "source": "generated:seed=269157856",
-      "values_compared": 0
+      "values_compared": 2
     },
     {
-      "both_errored": true,
       "max_rel_err": 0.0,
       "name": "extra00205",
       "outcome": "pass",
@@ -68566,7 +68874,6 @@
       "values_compared": 0
     },
     {
-      "both_errored": true,
       "max_rel_err": 0.0,
       "name": "extra00209",
       "outcome": "pass",
@@ -68575,13 +68882,12 @@
       "values_compared": 0
     },
     {
-      "both_errored": true,
       "max_rel_err": 0.0,
       "name": "extra00210",
       "outcome": "pass",
       "pass": true,
       "source": "generated:seed=269157856",
-      "values_compared": 0
+      "values_compared": 2
     },
     {
       "max_rel_err": 0.0,
@@ -68605,19 +68911,15 @@
       "outcome": "pass",
       "pass": true,
       "source": "generated:seed=269157856",
-      "values_compared": 0
+      "values_compared": 2
     },
     {
-      "deferred": {
-        "symbol": "SurfaceKind::Sphere (SmSphere dispatch)",
-        "unit": "surface.surface_p2"
-      },
       "max_rel_err": 0.0,
       "name": "extra00214",
-      "outcome": "deferred",
-      "pass": false,
+      "outcome": "pass",
+      "pass": true,
       "source": "generated:seed=269157856",
-      "values_compared": 0
+      "values_compared": 2
     },
     {
       "max_rel_err": 0.0,
@@ -68628,14 +68930,10 @@
       "values_compared": 0
     },
     {
-      "deferred": {
-        "symbol": "SurfaceKind::SurfOfExtrusion",
-        "unit": "surface.surf_of_extrusion_p2"
-      },
       "max_rel_err": 0.0,
       "name": "extra00216",
-      "outcome": "deferred",
-      "pass": false,
+      "outcome": "pass",
+      "pass": true,
       "source": "generated:seed=269157856",
       "values_compared": 0
     },
@@ -68648,10 +68946,14 @@
       "values_compared": 0
     },
     {
+      "deferred": {
+        "symbol": "SurfaceKind::Cone (SmCone dispatch)",
+        "unit": "surface.surface_p2"
+      },
       "max_rel_err": 0.0,
       "name": "extra00218",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "generated:seed=269157856",
       "values_compared": 0
     },
@@ -68664,7 +68966,6 @@
       "values_compared": 0
     },
     {
-      "both_errored": true,
       "max_rel_err": 0.0,
       "name": "extra00220",
       "outcome": "pass",
@@ -68678,7 +68979,7 @@
       "outcome": "pass",
       "pass": true,
       "source": "generated:seed=269157856",
-      "values_compared": 0
+      "values_compared": 2
     },
     {
       "max_rel_err": 0.0,
@@ -68702,7 +69003,7 @@
       "outcome": "pass",
       "pass": true,
       "source": "generated:seed=269157856",
-      "values_compared": 2
+      "values_compared": 0
     },
     {
       "max_rel_err": 0.0,
@@ -68718,7 +69019,7 @@
       "outcome": "pass",
       "pass": true,
       "source": "generated:seed=269157856",
-      "values_compared": 0
+      "values_compared": 2
     },
     {
       "max_rel_err": 0.0,
@@ -68726,10 +69027,9 @@
       "outcome": "pass",
       "pass": true,
       "source": "generated:seed=269157856",
-      "values_compared": 2
+      "values_compared": 0
     },
     {
-      "both_errored": true,
       "max_rel_err": 0.0,
       "name": "extra00228",
       "outcome": "pass",
@@ -68751,7 +69051,7 @@
       "outcome": "pass",
       "pass": true,
       "source": "generated:seed=269157856",
-      "values_compared": 0
+      "values_compared": 2
     },
     {
       "max_rel_err": 0.0,
@@ -68759,7 +69059,7 @@
       "outcome": "pass",
       "pass": true,
       "source": "generated:seed=269157856",
-      "values_compared": 0
+      "values_compared": 2
     },
     {
       "max_rel_err": 0.0,
@@ -68767,7 +69067,7 @@
       "outcome": "pass",
       "pass": true,
       "source": "generated:seed=269157856",
-      "values_compared": 2
+      "values_compared": 0
     },
     {
       "max_rel_err": 0.0,
@@ -68786,13 +69086,12 @@
       "values_compared": 0
     },
     {
-      "both_errored": true,
       "max_rel_err": 0.0,
       "name": "extra00235",
       "outcome": "pass",
       "pass": true,
       "source": "generated:seed=269157856",
-      "values_compared": 0
+      "values_compared": 2
     },
     {
       "max_rel_err": 0.0,
@@ -68819,14 +69118,10 @@
       "values_compared": 0
     },
     {
-      "deferred": {
-        "symbol": "SurfaceKind::Cone (SmCone dispatch)",
-        "unit": "surface.surface_p2"
-      },
       "max_rel_err": 0.0,
       "name": "extra00239",
-      "outcome": "deferred",
-      "pass": false,
+      "outcome": "pass",
+      "pass": true,
       "source": "generated:seed=269157856",
       "values_compared": 0
     },
@@ -68836,10 +69131,9 @@
       "outcome": "pass",
       "pass": true,
       "source": "generated:seed=269157856",
-      "values_compared": 0
+      "values_compared": 2
     },
     {
-      "both_errored": true,
       "max_rel_err": 0.0,
       "name": "extra00241",
       "outcome": "pass",
@@ -68853,7 +69147,7 @@
       "outcome": "pass",
       "pass": true,
       "source": "generated:seed=269157856",
-      "values_compared": 5
+      "values_compared": 2
     },
     {
       "max_rel_err": 0.0,
@@ -68885,7 +69179,7 @@
       "outcome": "pass",
       "pass": true,
       "source": "generated:seed=269157856",
-      "values_compared": 0
+      "values_compared": 2
     },
     {
       "max_rel_err": 0.0,
@@ -68901,7 +69195,7 @@
       "outcome": "pass",
       "pass": true,
       "source": "generated:seed=269157856",
-      "values_compared": 2
+      "values_compared": 0
     },
     {
       "max_rel_err": 0.0,
@@ -68920,7 +69214,6 @@
       "values_compared": 0
     },
     {
-      "both_errored": true,
       "max_rel_err": 0.0,
       "name": "extra00251",
       "outcome": "pass",
@@ -68950,7 +69243,7 @@
       "outcome": "pass",
       "pass": true,
       "source": "generated:seed=269157856",
-      "values_compared": 2
+      "values_compared": 0
     },
     {
       "max_rel_err": 0.0,
@@ -68961,7 +69254,6 @@
       "values_compared": 0
     },
     {
-      "both_errored": true,
       "max_rel_err": 0.0,
       "name": "extra00256",
       "outcome": "pass",
@@ -68975,7 +69267,7 @@
       "outcome": "pass",
       "pass": true,
       "source": "generated:seed=269157856",
-      "values_compared": 2
+      "values_compared": 0
     },
     {
       "max_rel_err": 0.0,
@@ -69007,7 +69299,7 @@
       "outcome": "pass",
       "pass": true,
       "source": "generated:seed=269157856",
-      "values_compared": 2
+      "values_compared": 0
     },
     {
       "max_rel_err": 0.0,
@@ -69039,7 +69331,7 @@
       "outcome": "pass",
       "pass": true,
       "source": "generated:seed=269157856",
-      "values_compared": 2
+      "values_compared": 0
     },
     {
       "max_rel_err": 0.0,
@@ -69071,7 +69363,7 @@
       "outcome": "pass",
       "pass": true,
       "source": "generated:seed=269157856",
-      "values_compared": 0
+      "values_compared": 2
     },
     {
       "max_rel_err": 0.0,
@@ -69119,10 +69411,9 @@
       "outcome": "pass",
       "pass": true,
       "source": "generated:seed=269157856",
-      "values_compared": 0
+      "values_compared": 2
     },
     {
-      "both_errored": true,
       "max_rel_err": 0.0,
       "name": "extra00276",
       "outcome": "pass",
@@ -69176,7 +69467,7 @@
       "outcome": "pass",
       "pass": true,
       "source": "generated:seed=269157856",
-      "values_compared": 0
+      "values_compared": 2
     },
     {
       "max_rel_err": 0.0,
@@ -69219,7 +69510,6 @@
       "values_compared": 0
     },
     {
-      "both_errored": true,
       "max_rel_err": 0.0,
       "name": "extra00288",
       "outcome": "pass",
@@ -69241,7 +69531,7 @@
       "outcome": "pass",
       "pass": true,
       "source": "generated:seed=269157856",
-      "values_compared": 2
+      "values_compared": 0
     },
     {
       "max_rel_err": 0.0,
@@ -69252,7 +69542,6 @@
       "values_compared": 0
     },
     {
-      "both_errored": true,
       "max_rel_err": 0.0,
       "name": "extra00292",
       "outcome": "pass",
@@ -69277,7 +69566,6 @@
       "values_compared": 0
     },
     {
-      "both_errored": true,
       "max_rel_err": 0.0,
       "name": "extra00295",
       "outcome": "pass",
@@ -69286,7 +69574,6 @@
       "values_compared": 0
     },
     {
-      "both_errored": true,
       "max_rel_err": 0.0,
       "name": "extra00296",
       "outcome": "pass",
@@ -69308,13 +69595,17 @@
       "outcome": "pass",
       "pass": true,
       "source": "generated:seed=269157856",
-      "values_compared": 0
+      "values_compared": 2
     },
     {
+      "deferred": {
+        "symbol": "SurfaceKind::Sphere (SmSphere dispatch)",
+        "unit": "surface.surface_p2"
+      },
       "max_rel_err": 0.0,
       "name": "extra00299",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "generated:seed=269157856",
       "values_compared": 0
     },
@@ -69340,7 +69631,7 @@
       "outcome": "pass",
       "pass": true,
       "source": "generated:seed=269157856",
-      "values_compared": 0
+      "values_compared": 2
     },
     {
       "max_rel_err": 0.0,
@@ -69380,7 +69671,7 @@
       "outcome": "pass",
       "pass": true,
       "source": "generated:seed=269157856",
-      "values_compared": 0
+      "values_compared": 2
     },
     {
       "max_rel_err": 0.0,
@@ -69388,7 +69679,7 @@
       "outcome": "pass",
       "pass": true,
       "source": "generated:seed=269157856",
-      "values_compared": 2
+      "values_compared": 0
     },
     {
       "max_rel_err": 0.0,
@@ -69399,7 +69690,6 @@
       "values_compared": 0
     },
     {
-      "both_errored": true,
       "max_rel_err": 0.0,
       "name": "extra00310",
       "outcome": "pass",
@@ -69413,7 +69703,7 @@
       "outcome": "pass",
       "pass": true,
       "source": "generated:seed=269157856",
-      "values_compared": 0
+      "values_compared": 2
     },
     {
       "max_rel_err": 0.0,
@@ -69472,7 +69762,6 @@
       "values_compared": 0
     },
     {
-      "both_errored": true,
       "max_rel_err": 0.0,
       "name": "extra00319",
       "outcome": "pass",
@@ -69486,10 +69775,9 @@
       "outcome": "pass",
       "pass": true,
       "source": "generated:seed=269157856",
-      "values_compared": 0
+      "values_compared": 2
     },
     {
-      "both_errored": true,
       "max_rel_err": 0.0,
       "name": "extra00321",
       "outcome": "pass",
@@ -69514,7 +69802,6 @@
       "values_compared": 0
     },
     {
-      "both_errored": true,
       "max_rel_err": 0.0,
       "name": "extra00324",
       "outcome": "pass",
@@ -69536,7 +69823,7 @@
       "outcome": "pass",
       "pass": true,
       "source": "generated:seed=269157856",
-      "values_compared": 2
+      "values_compared": 0
     },
     {
       "max_rel_err": 0.0,
@@ -69552,7 +69839,7 @@
       "outcome": "pass",
       "pass": true,
       "source": "generated:seed=269157856",
-      "values_compared": 0
+      "values_compared": 2
     },
     {
       "max_rel_err": 0.0,
@@ -69576,7 +69863,7 @@
       "outcome": "pass",
       "pass": true,
       "source": "generated:seed=269157856",
-      "values_compared": 2
+      "values_compared": 0
     },
     {
       "max_rel_err": 0.0,
@@ -69600,7 +69887,7 @@
       "outcome": "pass",
       "pass": true,
       "source": "generated:seed=269157856",
-      "values_compared": 0
+      "values_compared": 2
     },
     {
       "max_rel_err": 0.0,
@@ -69616,7 +69903,7 @@
       "outcome": "pass",
       "pass": true,
       "source": "generated:seed=269157856",
-      "values_compared": 2
+      "values_compared": 0
     },
     {
       "max_rel_err": 0.0,
@@ -69648,10 +69935,9 @@
       "outcome": "pass",
       "pass": true,
       "source": "generated:seed=269157856",
-      "values_compared": 2
+      "values_compared": 0
     },
     {
-      "both_errored": true,
       "max_rel_err": 0.0,
       "name": "extra00341",
       "outcome": "pass",
@@ -69681,7 +69967,7 @@
       "outcome": "pass",
       "pass": true,
       "source": "generated:seed=269157856",
-      "values_compared": 0
+      "values_compared": 2
     },
     {
       "max_rel_err": 0.0,
@@ -69697,7 +69983,7 @@
       "outcome": "pass",
       "pass": true,
       "source": "generated:seed=269157856",
-      "values_compared": 0
+      "values_compared": 2
     },
     {
       "max_rel_err": 0.0,
@@ -69705,7 +69991,7 @@
       "outcome": "pass",
       "pass": true,
       "source": "generated:seed=269157856",
-      "values_compared": 2
+      "values_compared": 0
     },
     {
       "max_rel_err": 0.0,
@@ -69745,10 +70031,9 @@
       "outcome": "pass",
       "pass": true,
       "source": "generated:seed=269157856",
-      "values_compared": 0
+      "values_compared": 2
     },
     {
-      "both_errored": true,
       "max_rel_err": 0.0,
       "name": "extra00353",
       "outcome": "pass",
@@ -69802,10 +70087,9 @@
       "outcome": "pass",
       "pass": true,
       "source": "generated:seed=269157856",
-      "values_compared": 2
+      "values_compared": 0
     },
     {
-      "both_errored": true,
       "max_rel_err": 0.0,
       "name": "extra00360",
       "outcome": "pass",
@@ -69838,14 +70122,10 @@
       "values_compared": 0
     },
     {
-      "deferred": {
-        "symbol": "SmSurface::DropCurve",
-        "unit": "intersect.surface_drop_lib_p3"
-      },
       "max_rel_err": 0.0,
       "name": "extra00364",
-      "outcome": "deferred",
-      "pass": false,
+      "outcome": "pass",
+      "pass": true,
       "source": "generated:seed=269157856",
       "values_compared": 0
     },
@@ -69858,13 +70138,12 @@
       "values_compared": 0
     },
     {
-      "both_errored": true,
       "max_rel_err": 0.0,
       "name": "extra00366",
       "outcome": "pass",
       "pass": true,
       "source": "generated:seed=269157856",
-      "values_compared": 0
+      "values_compared": 2
     },
     {
       "max_rel_err": 0.0,
@@ -69872,7 +70151,7 @@
       "outcome": "pass",
       "pass": true,
       "source": "generated:seed=269157856",
-      "values_compared": 2
+      "values_compared": 0
     },
     {
       "max_rel_err": 0.0,
@@ -69904,7 +70183,7 @@
       "outcome": "pass",
       "pass": true,
       "source": "generated:seed=269157856",
-      "values_compared": 0
+      "values_compared": 2
     },
     {
       "max_rel_err": 0.0,
@@ -69920,7 +70199,7 @@
       "outcome": "pass",
       "pass": true,
       "source": "generated:seed=269157856",
-      "values_compared": 2
+      "values_compared": 0
     },
     {
       "max_rel_err": 0.0,
@@ -69936,7 +70215,7 @@
       "outcome": "pass",
       "pass": true,
       "source": "generated:seed=269157856",
-      "values_compared": 0
+      "values_compared": 2
     },
     {
       "max_rel_err": 0.0,
@@ -69960,7 +70239,7 @@
       "outcome": "pass",
       "pass": true,
       "source": "generated:seed=269157856",
-      "values_compared": 0
+      "values_compared": 2
     },
     {
       "max_rel_err": 0.0,
@@ -69968,10 +70247,9 @@
       "outcome": "pass",
       "pass": true,
       "source": "generated:seed=269157856",
-      "values_compared": 2
+      "values_compared": 0
     },
     {
-      "both_errored": true,
       "max_rel_err": 0.0,
       "name": "extra00380",
       "outcome": "pass",
@@ -69985,7 +70263,7 @@
       "outcome": "pass",
       "pass": true,
       "source": "generated:seed=269157856",
-      "values_compared": 2
+      "values_compared": 0
     },
     {
       "max_rel_err": 0.0,
@@ -69993,7 +70271,7 @@
       "outcome": "pass",
       "pass": true,
       "source": "generated:seed=269157856",
-      "values_compared": 2
+      "values_compared": 0
     },
     {
       "max_rel_err": 0.0,
@@ -70033,7 +70311,7 @@
       "outcome": "pass",
       "pass": true,
       "source": "generated:seed=269157856",
-      "values_compared": 0
+      "values_compared": 2
     },
     {
       "max_rel_err": 0.0,
@@ -70076,7 +70354,6 @@
       "values_compared": 0
     },
     {
-      "both_errored": true,
       "max_rel_err": 0.0,
       "name": "extra00393",
       "outcome": "pass",
@@ -70098,7 +70375,7 @@
       "outcome": "pass",
       "pass": true,
       "source": "generated:seed=269157856",
-      "values_compared": 2
+      "values_compared": 0
     },
     {
       "max_rel_err": 0.0,
@@ -70146,7 +70423,7 @@
       "outcome": "pass",
       "pass": true,
       "source": "generated:seed=269157856",
-      "values_compared": 0
+      "values_compared": 2
     },
     {
       "max_rel_err": 0.0,
@@ -70170,7 +70447,7 @@
       "outcome": "pass",
       "pass": true,
       "source": "generated:seed=269157856",
-      "values_compared": 2
+      "values_compared": 0
     },
     {
       "max_rel_err": 0.0,
@@ -70178,7 +70455,7 @@
       "outcome": "pass",
       "pass": true,
       "source": "generated:seed=269157856",
-      "values_compared": 0
+      "values_compared": 2
     },
     {
       "max_rel_err": 0.0,
@@ -70186,7 +70463,7 @@
       "outcome": "pass",
       "pass": true,
       "source": "generated:seed=269157856",
-      "values_compared": 0
+      "values_compared": 2
     },
     {
       "max_rel_err": 0.0,
@@ -70221,7 +70498,6 @@
       "values_compared": 0
     },
     {
-      "both_errored": true,
       "max_rel_err": 0.0,
       "name": "extra00411",
       "outcome": "pass",
@@ -70243,7 +70519,7 @@
       "outcome": "pass",
       "pass": true,
       "source": "generated:seed=269157856",
-      "values_compared": 2
+      "values_compared": 0
     },
     {
       "max_rel_err": 0.0,
@@ -70254,19 +70530,14 @@
       "values_compared": 0
     },
     {
-      "deferred": {
-        "symbol": "SurfaceKind::Sphere (SmSphere dispatch)",
-        "unit": "surface.surface_p2"
-      },
       "max_rel_err": 0.0,
       "name": "extra00415",
-      "outcome": "deferred",
-      "pass": false,
+      "outcome": "pass",
+      "pass": true,
       "source": "generated:seed=269157856",
       "values_compared": 0
     },
     {
-      "both_errored": true,
       "max_rel_err": 0.0,
       "name": "extra00416",
       "outcome": "pass",
@@ -70315,7 +70586,6 @@
       "values_compared": 0
     },
     {
-      "both_errored": true,
       "max_rel_err": 0.0,
       "name": "extra00422",
       "outcome": "pass",
@@ -70348,7 +70618,6 @@
       "values_compared": 0
     },
     {
-      "both_errored": true,
       "max_rel_err": 0.0,
       "name": "extra00426",
       "outcome": "pass",
@@ -70469,11 +70738,14 @@
       "values_compared": 0
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "SmSurface::DropCurve",
+        "unit": "intersect.surface_drop_lib_p3"
+      },
       "max_rel_err": 0.0,
       "name": "extra00441",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "generated:seed=269157856",
       "values_compared": 0
     },
@@ -70523,7 +70795,7 @@
       "outcome": "pass",
       "pass": true,
       "source": "generated:seed=269157856",
-      "values_compared": 0
+      "values_compared": 2
     },
     {
       "max_rel_err": 0.0,
@@ -70547,17 +70819,13 @@
       "outcome": "pass",
       "pass": true,
       "source": "generated:seed=269157856",
-      "values_compared": 2
+      "values_compared": 0
     },
     {
-      "deferred": {
-        "symbol": "SurfaceKind::Cone (SmCone dispatch)",
-        "unit": "surface.surface_p2"
-      },
       "max_rel_err": 0.0,
       "name": "extra00451",
-      "outcome": "deferred",
-      "pass": false,
+      "outcome": "pass",
+      "pass": true,
       "source": "generated:seed=269157856",
       "values_compared": 0
     },
@@ -70570,7 +70838,6 @@
       "values_compared": 0
     },
     {
-      "both_errored": true,
       "max_rel_err": 0.0,
       "name": "extra00453",
       "outcome": "pass",
@@ -70616,7 +70883,7 @@
       "outcome": "pass",
       "pass": true,
       "source": "generated:seed=269157856",
-      "values_compared": 2
+      "values_compared": 0
     },
     {
       "max_rel_err": 0.0,
@@ -70664,17 +70931,13 @@
       "outcome": "pass",
       "pass": true,
       "source": "generated:seed=269157856",
-      "values_compared": 2
+      "values_compared": 0
     },
     {
-      "deferred": {
-        "symbol": "SmSurface::DropCurve",
-        "unit": "intersect.surface_drop_lib_p3"
-      },
       "max_rel_err": 0.0,
       "name": "extra00465",
-      "outcome": "deferred",
-      "pass": false,
+      "outcome": "pass",
+      "pass": true,
       "source": "generated:seed=269157856",
       "values_compared": 0
     },
@@ -70684,7 +70947,7 @@
       "outcome": "pass",
       "pass": true,
       "source": "generated:seed=269157856",
-      "values_compared": 0
+      "values_compared": 2
     },
     {
       "max_rel_err": 0.0,
@@ -70708,7 +70971,7 @@
       "outcome": "pass",
       "pass": true,
       "source": "generated:seed=269157856",
-      "values_compared": 0
+      "values_compared": 2
     },
     {
       "max_rel_err": 0.0,
@@ -70716,7 +70979,7 @@
       "outcome": "pass",
       "pass": true,
       "source": "generated:seed=269157856",
-      "values_compared": 0
+      "values_compared": 2
     },
     {
       "max_rel_err": 0.0,
@@ -70724,10 +70987,9 @@
       "outcome": "pass",
       "pass": true,
       "source": "generated:seed=269157856",
-      "values_compared": 2
+      "values_compared": 0
     },
     {
-      "both_errored": true,
       "max_rel_err": 0.0,
       "name": "extra00472",
       "outcome": "pass",
@@ -70752,7 +71014,6 @@
       "values_compared": 0
     },
     {
-      "both_errored": true,
       "max_rel_err": 0.0,
       "name": "extra00475",
       "outcome": "pass",
@@ -70801,7 +71062,6 @@
       "values_compared": 0
     },
     {
-      "both_errored": true,
       "max_rel_err": 0.0,
       "name": "extra00481",
       "outcome": "pass",
@@ -70831,10 +71091,9 @@
       "outcome": "pass",
       "pass": true,
       "source": "generated:seed=269157856",
-      "values_compared": 2
+      "values_compared": 0
     },
     {
-      "both_errored": true,
       "max_rel_err": 0.0,
       "name": "extra00485",
       "outcome": "pass",
@@ -70896,7 +71155,7 @@
       "outcome": "pass",
       "pass": true,
       "source": "generated:seed=269157856",
-      "values_compared": 0
+      "values_compared": 2
     },
     {
       "max_rel_err": 0.0,
@@ -70920,7 +71179,7 @@
       "outcome": "pass",
       "pass": true,
       "source": "generated:seed=269157856",
-      "values_compared": 2
+      "values_compared": 0
     },
     {
       "max_rel_err": 0.0,
@@ -70952,7 +71211,7 @@
       "outcome": "pass",
       "pass": true,
       "source": "generated:seed=269157856",
-      "values_compared": 2
+      "values_compared": 0
     },
     {
       "max_rel_err": 0.0,
@@ -70960,10 +71219,9 @@
       "outcome": "pass",
       "pass": true,
       "source": "generated:seed=269157856",
-      "values_compared": 0
+      "values_compared": 2
     },
     {
-      "both_errored": true,
       "max_rel_err": 0.0,
       "name": "extra00501",
       "outcome": "pass",
@@ -70980,7 +71238,6 @@
       "values_compared": 0
     },
     {
-      "both_errored": true,
       "max_rel_err": 0.0,
       "name": "extra00503",
       "outcome": "pass",
@@ -71002,7 +71259,7 @@
       "outcome": "pass",
       "pass": true,
       "source": "generated:seed=269157856",
-      "values_compared": 0
+      "values_compared": 2
     },
     {
       "max_rel_err": 0.0,
@@ -71021,10 +71278,14 @@
       "values_compared": 0
     },
     {
+      "deferred": {
+        "symbol": "SurfaceKind::Sphere (SmSphere dispatch)",
+        "unit": "surface.surface_p2"
+      },
       "max_rel_err": 0.0,
       "name": "extra00508",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "generated:seed=269157856",
       "values_compared": 0
     },
@@ -71042,7 +71303,7 @@
       "outcome": "pass",
       "pass": true,
       "source": "generated:seed=269157856",
-      "values_compared": 2
+      "values_compared": 0
     },
     {
       "max_rel_err": 0.0,
@@ -71061,11 +71322,14 @@
       "values_compared": 0
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "SurfaceKind::SurfOfExtrusion",
+        "unit": "surface.surf_of_extrusion_p2"
+      },
       "max_rel_err": 0.0,
       "name": "extra00513",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "generated:seed=269157856",
       "values_compared": 0
     },
@@ -71115,7 +71379,7 @@
       "outcome": "pass",
       "pass": true,
       "source": "generated:seed=269157856",
-      "values_compared": 0
+      "values_compared": 2
     },
     {
       "max_rel_err": 0.0,
@@ -71123,7 +71387,7 @@
       "outcome": "pass",
       "pass": true,
       "source": "generated:seed=269157856",
-      "values_compared": 0
+      "values_compared": 2
     },
     {
       "max_rel_err": 0.0,
@@ -71139,7 +71403,7 @@
       "outcome": "pass",
       "pass": true,
       "source": "generated:seed=269157856",
-      "values_compared": 0
+      "values_compared": 2
     },
     {
       "max_rel_err": 0.0,
@@ -71174,16 +71438,14 @@
       "values_compared": 0
     },
     {
-      "both_errored": true,
       "max_rel_err": 0.0,
       "name": "extra00527",
       "outcome": "pass",
       "pass": true,
       "source": "generated:seed=269157856",
-      "values_compared": 0
+      "values_compared": 2
     },
     {
-      "both_errored": true,
       "max_rel_err": 0.0,
       "name": "extra00528",
       "outcome": "pass",
@@ -71192,7 +71454,6 @@
       "values_compared": 0
     },
     {
-      "both_errored": true,
       "max_rel_err": 0.0,
       "name": "extra00529",
       "outcome": "pass",
@@ -71230,7 +71491,7 @@
       "outcome": "pass",
       "pass": true,
       "source": "generated:seed=269157856",
-      "values_compared": 2
+      "values_compared": 0
     },
     {
       "max_rel_err": 0.0,
@@ -71302,7 +71563,7 @@
       "outcome": "pass",
       "pass": true,
       "source": "generated:seed=269157856",
-      "values_compared": 2
+      "values_compared": 0
     },
     {
       "max_rel_err": 0.0,
@@ -71313,7 +71574,6 @@
       "values_compared": 0
     },
     {
-      "both_errored": true,
       "max_rel_err": 0.0,
       "name": "extra00544",
       "outcome": "pass",
@@ -71351,7 +71611,7 @@
       "outcome": "pass",
       "pass": true,
       "source": "generated:seed=269157856",
-      "values_compared": 2
+      "values_compared": 0
     },
     {
       "max_rel_err": 0.0,
@@ -71359,7 +71619,7 @@
       "outcome": "pass",
       "pass": true,
       "source": "generated:seed=269157856",
-      "values_compared": 2
+      "values_compared": 0
     },
     {
       "max_rel_err": 0.0,
@@ -71367,7 +71627,7 @@
       "outcome": "pass",
       "pass": true,
       "source": "generated:seed=269157856",
-      "values_compared": 2
+      "values_compared": 0
     },
     {
       "max_rel_err": 0.0,
@@ -71375,7 +71635,7 @@
       "outcome": "pass",
       "pass": true,
       "source": "generated:seed=269157856",
-      "values_compared": 2
+      "values_compared": 0
     },
     {
       "max_rel_err": 0.0,
@@ -71399,7 +71659,7 @@
       "outcome": "pass",
       "pass": true,
       "source": "generated:seed=269157856",
-      "values_compared": 0
+      "values_compared": 2
     },
     {
       "max_rel_err": 0.0,
@@ -71418,10 +71678,14 @@
       "values_compared": 2
     },
     {
+      "deferred": {
+        "symbol": "SurfaceKind::Sphere (SmSphere dispatch)",
+        "unit": "surface.surface_p2"
+      },
       "max_rel_err": 0.0,
       "name": "extra00557",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "generated:seed=269157856",
       "values_compared": 0
     },
@@ -71439,7 +71703,7 @@
       "outcome": "pass",
       "pass": true,
       "source": "generated:seed=269157856",
-      "values_compared": 0
+      "values_compared": 2
     },
     {
       "max_rel_err": 0.0,
@@ -71447,7 +71711,7 @@
       "outcome": "pass",
       "pass": true,
       "source": "generated:seed=269157856",
-      "values_compared": 0
+      "values_compared": 2
     },
     {
       "max_rel_err": 0.0,
@@ -71498,11 +71762,14 @@
       "values_compared": 0
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "SmBrep::MakeTopologyFromData",
+        "unit": "topology.brep_p10"
+      },
       "max_rel_err": 0.0,
       "name": "extra00567",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "generated:seed=269157856",
       "values_compared": 0
     },
@@ -71531,10 +71798,14 @@
       "values_compared": 0
     },
     {
+      "deferred": {
+        "symbol": "SmSurface::DropCurve",
+        "unit": "intersect.surface_drop_lib_p3"
+      },
       "max_rel_err": 0.0,
       "name": "extra00571",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "generated:seed=269157856",
       "values_compared": 0
     },
@@ -71560,10 +71831,9 @@
       "outcome": "pass",
       "pass": true,
       "source": "generated:seed=269157856",
-      "values_compared": 0
+      "values_compared": 2
     },
     {
-      "both_errored": true,
       "max_rel_err": 0.0,
       "name": "extra00575",
       "outcome": "pass",
@@ -71577,7 +71847,7 @@
       "outcome": "pass",
       "pass": true,
       "source": "generated:seed=269157856",
-      "values_compared": 0
+      "values_compared": 2
     },
     {
       "max_rel_err": 0.0,
@@ -71609,7 +71879,7 @@
       "outcome": "pass",
       "pass": true,
       "source": "generated:seed=269157856",
-      "values_compared": 2
+      "values_compared": 0
     },
     {
       "max_rel_err": 0.0,
@@ -71625,10 +71895,9 @@
       "outcome": "pass",
       "pass": true,
       "source": "generated:seed=269157856",
-      "values_compared": 2
+      "values_compared": 0
     },
     {
-      "both_errored": true,
       "max_rel_err": 0.0,
       "name": "extra00583",
       "outcome": "pass",
@@ -71650,7 +71919,7 @@
       "outcome": "pass",
       "pass": true,
       "source": "generated:seed=269157856",
-      "values_compared": 0
+      "values_compared": 2
     },
     {
       "max_rel_err": 0.0,
@@ -71669,22 +71938,22 @@
       "values_compared": 0
     },
     {
-      "deferred": {
-        "symbol": "SmSurface::DropCurve",
-        "unit": "intersect.surface_drop_lib_p3"
-      },
       "max_rel_err": 0.0,
       "name": "extra00588",
-      "outcome": "deferred",
-      "pass": false,
+      "outcome": "pass",
+      "pass": true,
       "source": "generated:seed=269157856",
       "values_compared": 0
     },
     {
+      "deferred": {
+        "symbol": "SmBrep::MakeTopologyFromData",
+        "unit": "topology.brep_p10"
+      },
       "max_rel_err": 0.0,
       "name": "extra00589",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "generated:seed=269157856",
       "values_compared": 0
     },
@@ -71702,7 +71971,7 @@
       "outcome": "pass",
       "pass": true,
       "source": "generated:seed=269157856",
-      "values_compared": 2
+      "values_compared": 0
     },
     {
       "max_rel_err": 0.0,
@@ -71710,7 +71979,7 @@
       "outcome": "pass",
       "pass": true,
       "source": "generated:seed=269157856",
-      "values_compared": 0
+      "values_compared": 2
     },
     {
       "max_rel_err": 0.0,
@@ -71745,7 +72014,6 @@
       "values_compared": 0
     },
     {
-      "both_errored": true,
       "max_rel_err": 0.0,
       "name": "extra00597",
       "outcome": "pass",
@@ -71754,7 +72022,6 @@
       "values_compared": 0
     },
     {
-      "both_errored": true,
       "max_rel_err": 0.0,
       "name": "extra00598",
       "outcome": "pass",
@@ -71771,15 +72038,16 @@
       "values_compared": 0
     }
   ],
-  "cases_both_errored": 333,
-  "cases_deferred": 151,
+  "cases_both_errored": 264,
+  "cases_deferred": 235,
   "cases_failed": 0,
-  "cases_passed": 8703,
+  "cases_passed": 8619,
   "cases_total": 8854,
   "deferred_by_unit": {
-    "intersect.surface_drop_lib_p3": 48,
+    "intersect.surface_drop_lib_p3": 46,
     "surface.surf_of_extrusion_p2": 33,
-    "surface.surface_p2": 70
+    "surface.surface_p2": 69,
+    "topology.brep_p10": 87
   },
   "max_rel_err": 0.0,
   "pass": true,
