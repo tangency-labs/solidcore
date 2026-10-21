@@ -57,7 +57,8 @@ enum : int32_t
     OP_ON_CURVE = 3,
     OP_BOUNDARY = 4,
     OP_BRANCH = 5,
-    OP_LAST = 5,
+    OP_CREATE = 6,
+    OP_LAST = 6,
 };
 
 struct Bad : std::runtime_error
@@ -335,11 +336,73 @@ struct Last
     SmTracePnt pnt;
 };
 
+// The program's silhouette parameters, for OP_CREATE.
+struct Params
+{
+    SmExtent2d dom;
+    bool persp;
+    SmVector3d eye;
+    bool has_tol;
+    double tol;
+    bool has_ang;
+    double ang;
+};
+
+// A B-spline curve: degree, control points (x, y, z, w), knots; or -1 for another
+// kind (upstream casts it to SmBSplineCurve).
+void put_bsc(std::vector<double>& o, const SmCurve* c)
+{
+    const SmBSplineCurve* b = c && c->IsKindOf(SmBSplineCurve_TYPE) ? (const SmBSplineCurve*)c : NULL;
+    const gw_CURVE* cur = b ? b->GetGwNurbPointer() : NULL;
+    if (!cur)
+    {
+        o.push_back(-1.0);
+        return;
+    }
+    o.push_back((double)cur->p);
+    o.push_back((double)(cur->pol->n + 1));
+    for (gw_INDEX i = 0; i <= cur->pol->n; i++)
+    {
+        o.push_back(cur->pol->Pw[i].x);
+        o.push_back(cur->pol->Pw[i].y);
+        o.push_back(cur->pol->Pw[i].z);
+        o.push_back(cur->pol->Pw[i].w);
+    }
+    o.push_back((double)(cur->knt->m + 1));
+    for (gw_INDEX i = 0; i <= cur->knt->m; i++)
+        o.push_back(cur->knt->U[i]);
+}
+
 void run_op(int32_t op, Rd& rd, const SmContext& ctx, const SmSurface* srf, Sil& t, Last& last,
-            std::vector<double>& o)
+            const Params& prm, std::vector<double>& o)
 {
     switch (op)
     {
+    case OP_CREATE:
+    {
+        // SmSurface::CreateSilhouetteCurves with the program's domain, eye and optional
+        // tolerances (the tracer t is not involved)
+        SmTArray<SmCurve*> c3, cuv;
+        SmApproxTol3d tol(prm.tol);
+        SmStatus s = srf->CreateSilhouetteCurves(ctx, prm.dom, prm.eye, prm.persp ? TRUE : FALSE,
+                                                 prm.has_tol ? &tol : NULL, prm.has_ang ? &prm.ang : NULL,
+                                                 &c3, &cuv);
+        o.push_back(st(s));
+        if (s == SM_SUCCESS)
+        {
+            o.push_back((double)c3.GetSize());
+            for (ULONG i = 0; i < c3.GetSize(); i++)
+                put_bsc(o, c3[i]);
+            o.push_back((double)cuv.GetSize());
+            for (ULONG i = 0; i < cuv.GetSize(); i++)
+                put_bsc(o, cuv[i]);
+        }
+        for (ULONG i = 0; i < c3.GetSize(); i++)
+            delete c3[i];
+        for (ULONG i = 0; i < cuv.GetSize(); i++)
+            delete cuv[i];
+        break;
+    }
     case OP_CPV:
     {
         double dir = rd.num();
@@ -464,12 +527,13 @@ SC_EXPORT int32_t sc_intersect_surface_silhouette_run(const double* in, int64_t 
             if (has_ang)
                 t.AngTol() = ang;
             Last last;
+            Params prm{dom, persp, eye, has_tol, tol, has_ang, ang};
             int64_t n_ops = rd.idx(0, 64);
             for (int64_t i = 0; i < n_ops; i++)
             {
                 int32_t op = (int32_t)rd.idx(1, OP_LAST);
                 o.push_back((double)op);
-                run_op(op, rd, ctx, srf, t, last, o);
+                run_op(op, rd, ctx, srf, t, last, prm, o);
             }
             o.push_back(t.Direction());
         }

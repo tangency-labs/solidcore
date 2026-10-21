@@ -8,7 +8,8 @@
 //! a program of ops: `ComputePointValues` (alone or with the previous point, which reaches the
 //! singularity searches through `SmFindSilSingEFO`), `LocalPointSolve`, `DoesPointLieOnCurve`,
 //! `FindSolutionsOnBoundaryCurve` and `BranchMayContainAnswers` on hand-built surface cache
-//! trees. Both sides produce the record documented in the ffi module, reported as the values
+//! trees, and the whole `SmSurface::CreateSilhouetteCurves` of the case (`create`, the fixtures
+//! `create_cases.json`). Both sides produce the record documented in the ffi module, reported as the values
 //! `rec`.
 //!
 //! Deferred cases: `SmSurface::EvaluateNormal` on B-spline surfaces and `SmSurface::DropVectors`
@@ -22,6 +23,7 @@
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
+use solidcore::curve::curve::{Curve, CurveKind};
 use solidcore::geom::extent1d::Extent1d;
 use solidcore::geom::extent2d::Extent2d;
 use solidcore::geom::global_solver::{Branch, GlobalSolver};
@@ -147,6 +149,9 @@ enum OpIn {
         nodes: Vec<NodeIn>,
         queries: Vec<usize>,
     },
+    /// `SmSurface::CreateSilhouetteCurves` with the case's domain, eye, projection and
+    /// tolerances.
+    Create {},
 }
 
 fn one() -> f64 {
@@ -252,6 +257,7 @@ fn ffi_program(i: &Inputs) -> ffi::Program {
                 nodes: nodes.iter().map(ffi_node).collect(),
                 queries: queries.clone(),
             },
+            OpIn::Create {} => ffi::Op::Create,
         })
         .collect();
     ffi::Program {
@@ -376,6 +382,25 @@ fn st<T>(r: solidcore::Result<T>) -> Result<Result<T, f64>, Fail> {
     }
 }
 
+/// A B-spline curve: degree, control points `x y z w`, knots; `-1` for another kind.
+fn put_bsc(o: &mut Vec<f64>, c: &Curve) {
+    let CurveKind::BSpline(b) = c.kind() else {
+        o.push(-1.0);
+        return;
+    };
+    let Some(cur) = b.gw_nurb() else {
+        o.push(-1.0);
+        return;
+    };
+    o.push(cur.degree() as f64);
+    o.push(cur.cpts().len() as f64);
+    for p in cur.cpts() {
+        o.extend([p.x, p.y, p.z, p.w]);
+    }
+    o.push(cur.knots().len() as f64);
+    o.extend_from_slice(cur.knots());
+}
+
 fn put_vec(o: &mut Vec<f64>, v: Vec3) {
     o.extend([v.x, v.y, v.z]);
 }
@@ -494,6 +519,7 @@ fn run_op(
     sil: &mut SurfaceSilhouette<'_>,
     k: &Kernel,
     surface: &Surface,
+    i: &Inputs,
     op: &OpIn,
     last: &mut Option<TracePoint>,
     o: &mut Vec<f64>,
@@ -555,6 +581,27 @@ fn run_op(
                 Err(s) => o.push(s),
             }
         }
+        OpIn::Create {} => {
+            match st(surface.create_silhouette_curves(
+                k,
+                &ext(i.domain),
+                v3(i.eye),
+                i.perspective,
+                i.tol,
+                i.ang,
+            ))? {
+                Ok((c3, cuv)) => {
+                    o.push(0.0);
+                    for list in [&c3, &cuv] {
+                        o.push(list.len() as f64);
+                        for c in list {
+                            put_bsc(o, c);
+                        }
+                    }
+                }
+                Err(s) => o.push(s),
+            }
+        }
         OpIn::Branch { nodes, queries } => {
             let cache = build_cache(surface, nodes)?;
             let tree = cache.tree().ok_or_else(|| harness("no tree"))?;
@@ -582,6 +629,7 @@ fn op_code(op: &OpIn) -> f64 {
         OpIn::OnCurve { .. } => 3.0,
         OpIn::Boundary { .. } => 4.0,
         OpIn::Branch { .. } => 5.0,
+        OpIn::Create {} => 6.0,
     }
 }
 
@@ -606,7 +654,7 @@ fn rust(i: &Inputs) -> Result<Output, HarnessError> {
     let mut last = None;
     for op in &i.ops {
         o.push(op_code(op));
-        match run_op(&mut sil, &k, &surface, op, &mut last, &mut o) {
+        match run_op(&mut sil, &k, &surface, i, op, &mut last, &mut o) {
             Ok(()) => {}
             Err(Fail::Deferred(d)) => return Ok(*d),
             Err(Fail::Harness(h)) => return Err(h),

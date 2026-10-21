@@ -24,6 +24,7 @@
 //! | `OnCurve`  | `DoesPointLieOnCurve(uv, refine)` (status always 0)            | `flag uv` |
 //! | `Boundary` | `FindSolutionsOnBoundaryCurve(curve, [a, b], 0, SM_SP_U, sols)` | `count` solutions (status 0 only) |
 //! | `Branch`   | a hand-built tree of a surface cache over the surface's natural domain, then `BranchMayContainAnswers({node, NULL..})` per queried node (status always 0) | one flag per query |
+//! | `Create`   | `SmSurface::CreateSilhouetteCurves(ctx, domain, eye, perspective, tol?, ang?, &c3, &cuv)` on the program's surface (the tracer is not involved) | `n3`, then per 3D curve `p n1 cpts.. m1 knots..` (`-1` for a curve that is not a B-spline), then the same for the UV curves (status 0 only) |
 //!
 //! [`run`] accepts only finite inputs of magnitude at most [`MAX_COORD`]; well-formed clamped
 //! B-splines (at most [`MAX_INDEX`] + 1 control points per surface direction, 33 per curve,
@@ -189,6 +190,9 @@ pub enum Op {
         /// The queried node indices.
         queries: Vec<usize>,
     },
+    /// `SmSurface::CreateSilhouetteCurves` over the program's domain with its eye,
+    /// projection and optional tolerances.
+    Create,
 }
 
 /// A whole case.
@@ -575,6 +579,7 @@ fn encode(prog: &Program) -> Result<Vec<f64>, FfiError> {
                     e.int(q);
                 }
             }
+            Op::Create => e.int(6),
         }
     }
     Ok(e.0)

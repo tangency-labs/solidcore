@@ -83,8 +83,10 @@
 //!   the array on to their basis; an offset's failure after a partial write keeps the
 //!   previous values) and keeps upstream's `SER` inside a boolean function: a failing
 //!   `Unitize` returns `TRUE`.
-//! - **Unported callees.** `CreateSilhouetteCurves` needs `SmSurfaceSilhouette`
-//!   (`intersect.surface_silhouette`), `ApproximateSize` of kinds other than B-splines needs
+//! - **Silhouettes.** `CreateSilhouetteCurves` does not copy the surface's colour
+//!   attribute (`SM_AI_COLOR`) onto the curves: attributes live in the caller's
+//!   attribute store, which this call does not take.
+//! - **Unported callees.** `ApproximateSize` of kinds other than B-splines needs
 //!   `SmIsoCurve` over any surface (the ported iso curve holds a B-spline), the zone
 //!   tolerance of a surface with a face needs `SmFace::GetTolerance`
 //!   (`topology.face_p2`): those calls return [`SolidError::Unported`]. Every tree build
@@ -99,10 +101,13 @@
 //! - **`SmDropCurveFail` copy constructor.** [`DropCurveFail::copy_of`]; the derived
 //!   `Clone` also copies the UV curves of a record without context.
 
+use crate::curve::curve::p2::CurvePropertyType;
+use crate::curve::curve::p7::PropertyAnalysisOptions;
 use crate::curve::curve::Curve;
+use crate::curve::curve::CurveKind;
 use crate::curve::iso_curve::IsoCurve;
 use crate::curve::line::Line;
-use crate::error::{ignored, Result, SolidError};
+use crate::error::{ignore_status, ignored, Result, SolidError};
 use crate::geom::a_object::{CacheId, ObjectCacheType};
 use crate::geom::assert_array::labels::FACE_TYPE;
 use crate::geom::extent1d::Extent1d;
@@ -115,7 +120,7 @@ use crate::geom::local_solve1d::{EvalFunction, FunctionValue};
 use crate::geom::object::ObjectRef;
 use crate::geom::polar_box::PolarBox;
 use crate::geom::pseudo_box::PseudoBox;
-use crate::geom::solution_array::SolutionObject;
+use crate::geom::solution_array::{ObjectKind, SolutionObject};
 use crate::geom::tol::{
     is_zero_to_tol, scaled_zero2, tol3d, zone_tol_3d as kernel_zone_tol_3d, ScaledZero,
     SmallTopoType, ANG_TOL_RAD,
@@ -123,10 +128,13 @@ use crate::geom::tol::{
 use crate::geom::tree::{AuxDataType, NodeClass, NodeData, Tree, TreeNode, TreeOwner};
 use crate::geom::vector2d::{Point2, Vec2};
 use crate::geom::vector3d::{Point3, Vec3};
+use crate::intersect::surface_silhouette::SurfaceSilhouette;
+use crate::intersect::surface_tracer::SurfaceTrace;
 use crate::kernel::Kernel;
 #[cfg(test)]
 use crate::math::EFF_ZERO_DEG;
 use crate::math::{max2, min2, BIG_DOUBLE, EFF_ZERO, EFF_ZERO_SQ, EFF_ZERO_SQRT, PI};
+use crate::nurbs::b_spline_curve_n_lib::TrimMode;
 use crate::nurbs::b_spline_surface::SurfParamType;
 use crate::nurbs::b_spline_surface_n_lib::p2::EvaluateFlags;
 use crate::nurbs::knots::Side;
@@ -707,10 +715,7 @@ pub fn map_to_2d_on_curve(
 ) -> Result<f64> {
     // the same-surface SmCrvOnSurf branch evaluates the curve's own UV curve (an identity
     // test on the base surface that the port cannot make)
-    if matches!(
-        trim_curve.kind(),
-        crate::curve::curve::CurveKind::CrvOnSurf(_)
-    ) {
+    if matches!(trim_curve.kind(), CurveKind::CrvOnSurf(_)) {
         // UNPORTED(surface.surface_p1): SmTol::MapTo2d (SmCrvOnSurf branch, SmTol.cpp:1118-1123)
         return Err(SolidError::unported(
             "SmTol::MapTo2d(SmCrvOnSurf)",
@@ -956,6 +961,41 @@ pub fn get_surface_cache<O: Copy + PartialEq>(
         // else - get or make SurfaceCache
         Err(_) => make_surface_cache(k, surface, handle),
     }
+}
+
+/// The object the property solutions of `CreateSilhouetteCurves` name: a silhouette
+/// curve (upstream the curve itself; nothing reads it back).
+#[derive(Debug, Clone, Copy, PartialEq)]
+struct SilhouetteObject;
+
+impl SolutionObject for SilhouetteObject {
+    fn kind(&self) -> ObjectKind {
+        ObjectKind::Curve
+    }
+}
+
+/// One split of `CreateSilhouetteCurves`: a copy of B-spline `curves[index]` trimmed
+/// to `head` joins `new_curves`, and `curves[index]` is trimmed to `tail` (each
+/// trim's status ignored, as upstream; both intervals may be snapped).
+fn split_at(
+    k: &Kernel,
+    curves: &mut [Curve],
+    index: usize,
+    new_curves: &mut Vec<Curve>,
+    tail: &mut Extent1d,
+    head: &mut Extent1d,
+    op: &'static str,
+) -> Result<()> {
+    let curve = curves
+        .get_mut(index)
+        .filter(|c| matches!(c.kind(), CurveKind::BSpline(_)))
+        .ok_or_else(|| SolidError::null_pointer(op))?;
+    // new SmBSplineCurve(*pCurve)
+    let mut copy = curve.clone();
+    ignore_status(copy.trim(k, head, TrimMode::Notify))?;
+    new_curves.push(copy);
+    ignore_status(curve.trim(k, tail, TrimMode::Notify))?;
+    Ok(())
 }
 
 // ---- bounding boxes -------------------------------------------------------------------
@@ -1755,28 +1795,95 @@ impl Surface {
     ///
     /// # Errors
     ///
-    /// Those of the surface cache; [`SolidError::Unported`]: `SmSurfaceTracer::DoTrace`
-    /// (`intersect.surface_tracer`).
+    /// Those of the surface cache and of the silhouette trace
+    /// (`SmSurfaceSilhouette::DoTrace`, `SmSurfaceTracer`'s); `SM_ERR_NULL_POINTER`
+    /// for a traced 3D or UV curve that is not a B-spline (upstream's
+    /// `SM_CAST_PTR` would give NULL); those of `GlobalPropertyAnalysis`. The status
+    /// of each `Trim` is ignored, as upstream.
     pub fn create_silhouette_curves(
         &self,
         k: &Kernel,
         uv_domain: &Extent2d,
-        _eye_point_or_view_vector: Point3,
-        _perspective: bool,
-        _approx_tol_3d: Option<f64>,
-        _ang_tol_rad: Option<f64>,
+        eye_point_or_view_vector: Point3,
+        perspective: bool,
+        approx_tol_3d: Option<f64>,
+        ang_tol_rad: Option<f64>,
     ) -> Result<(Vec<Curve>, Vec<Curve>)> {
-        let cache = get_surface_cache::<()>(k, self, None)?;
+        const OP: &str = "surface::surface::p1::Surface::create_silhouette_curves";
+        let mut cache = get_surface_cache::<SilhouetteObject>(k, self, None)?;
 
         // Check to make sure internal surface continuities are better then C0 (the
         // check only signals upstream)
         let _ = (cache.surface_continuity(uv_domain)? as i32) <= (ContinuityType::C0 as i32);
 
-        // UNPORTED(intersect.surface_tracer): SmSurfaceTracer::DoTrace (inherited by SmSurfaceSilhouette)
-        Err(SolidError::unported(
-            "SmSurfaceTracer::DoTrace",
-            "intersect.surface_tracer",
-        ))
+        let mut silhouette =
+            SurfaceSilhouette::new(k, self, uv_domain, perspective, eye_point_or_view_vector)?;
+        let traced = silhouette.do_trace(k, &mut cache, approx_tol_3d, ang_tol_rad)?;
+        let mut curves_3d = traced.curves_3d;
+        let mut curves_uv = traced.uv_curves;
+
+        // Post process silhouettes and break them up where the curve is parallel to
+        // the view vector.
+        if !perspective {
+            let mut new_curves = Vec::new();
+            let mut new_uv_curves = Vec::new();
+            let view = [eye_point_or_view_vector];
+            for ii in 0..curves_3d.len() {
+                let curve = curves_3d
+                    .get(ii)
+                    .filter(|c| matches!(c.kind(), CurveKind::BSpline(_)))
+                    .ok_or_else(|| SolidError::null_pointer(OP))?;
+                let mut ivl = curve.natural_interval();
+                let opts = PropertyAnalysisOptions {
+                    opt_vectors: &view,
+                    handle: Some(SilhouetteObject),
+                    ..PropertyAnalysisOptions::default()
+                };
+                let solutions = curve
+                    .global_property_analysis(
+                        k,
+                        &ivl,
+                        CurvePropertyType::ParallelToVector,
+                        EFF_ZERO_SQRT * 100.0,
+                        &opts,
+                    )?
+                    .solutions;
+                for sol in solutions.as_slice() {
+                    let param = sol.start.param(0)?;
+                    if param < ivl.min() + EFF_ZERO_SQRT || param > ivl.max() - EFF_ZERO_SQRT {
+                        continue;
+                    }
+                    let mut trim1 = Extent1d::from_min_max(param, ivl.max());
+                    let mut trim2 = Extent1d::from_min_max(ivl.min(), param);
+                    split_at(
+                        k,
+                        &mut curves_3d,
+                        ii,
+                        &mut new_curves,
+                        &mut trim1,
+                        &mut trim2,
+                        OP,
+                    )?;
+                    if !curves_uv.is_empty() {
+                        // the same intervals, as snapped by the 3D trims (and snapped
+                        // again by these), as upstream
+                        split_at(
+                            k,
+                            &mut curves_uv,
+                            ii,
+                            &mut new_uv_curves,
+                            &mut trim1,
+                            &mut trim2,
+                            OP,
+                        )?;
+                    }
+                    ivl = trim1;
+                }
+            }
+            curves_3d.extend(new_curves);
+            curves_uv.extend(new_uv_curves);
+        }
+        Ok((curves_3d, curves_uv))
     }
 
     // ---- shape tests ----------------------------------------------------------------
