@@ -15570,47 +15570,62 @@
       "values_compared": 0
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic surface import for vertex-use evaluation",
+        "unit": "topology.vertexuse"
+      },
       "max_rel_err": 0.0,
       "name": "Mouse_vu0_gap0_11",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "fixture:fixtures/topology.vertexuse/upstream_files.json#4 (upstream tests/prog_test/src/smFeatureTest.cpp:63)",
       "values_compared": 0
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic surface import for vertex-use evaluation",
+        "unit": "topology.vertexuse"
+      },
       "max_rel_err": 0.0,
       "name": "Mouse_vu0_gap1_11",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "fixture:fixtures/topology.vertexuse/upstream_files.json#5 (upstream tests/prog_test/src/smFeatureTest.cpp:63)",
       "values_compared": 0
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic surface import for vertex-use evaluation",
+        "unit": "topology.vertexuse"
+      },
       "max_rel_err": 0.0,
       "name": "Mouse_vu0_gap2_11",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "fixture:fixtures/topology.vertexuse/upstream_files.json#6 (upstream tests/prog_test/src/smFeatureTest.cpp:63)",
       "values_compared": 0
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic surface import for vertex-use evaluation",
+        "unit": "topology.vertexuse"
+      },
       "max_rel_err": 0.0,
       "name": "Mouse_vu0_gap3_11",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "fixture:fixtures/topology.vertexuse/upstream_files.json#7 (upstream tests/prog_test/src/smFeatureTest.cpp:63)",
       "values_compared": 0
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic surface import for vertex-use evaluation",
+        "unit": "topology.vertexuse"
+      },
       "max_rel_err": 0.0,
       "name": "Mouse_vu0_gap4_11",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "fixture:fixtures/topology.vertexuse/upstream_files.json#8 (upstream tests/prog_test/src/smFeatureTest.cpp:63)",
       "values_compared": 0
     },
@@ -15631,110 +15646,146 @@
       "values_compared": 48
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic surface import for vertex-use evaluation",
+        "unit": "topology.vertexuse"
+      },
       "max_rel_err": 0.0,
       "name": "Mouse_vu0_uvpt1",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "fixture:fixtures/topology.vertexuse/upstream_files.json#11 (upstream tests/prog_test/src/smFeatureTest.cpp:63)",
       "values_compared": 0
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic surface import for vertex-use evaluation",
+        "unit": "topology.vertexuse"
+      },
       "max_rel_err": 0.0,
       "name": "Mouse_vu0_sector1",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "fixture:fixtures/topology.vertexuse/upstream_files.json#12 (upstream tests/prog_test/src/smFeatureTest.cpp:63)",
       "values_compared": 0
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic surface import for vertex-use evaluation",
+        "unit": "topology.vertexuse"
+      },
       "max_rel_err": 0.0,
       "name": "Mouse_vu0_uvpt0",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "fixture:fixtures/topology.vertexuse/upstream_files.json#13 (upstream tests/prog_test/src/smFeatureTest.cpp:63)",
       "values_compared": 0
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic surface import for vertex-use evaluation",
+        "unit": "topology.vertexuse"
+      },
       "max_rel_err": 0.0,
       "name": "Mouse_vu0_sector0",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "fixture:fixtures/topology.vertexuse/upstream_files.json#14 (upstream tests/prog_test/src/smFeatureTest.cpp:63)",
       "values_compared": 0
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic surface import for vertex-use evaluation",
+        "unit": "topology.vertexuse"
+      },
       "max_rel_err": 0.0,
       "name": "Mouse_vu0_seam",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "fixture:fixtures/topology.vertexuse/upstream_files.json#15 (upstream tests/prog_test/src/smFeatureTest.cpp:63)",
       "values_compared": 0
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic surface import for vertex-use evaluation",
+        "unit": "topology.vertexuse"
+      },
       "max_rel_err": 0.0,
       "name": "Mouse_vu0_seam_nouv",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "fixture:fixtures/topology.vertexuse/upstream_files.json#16 (upstream tests/prog_test/src/smFeatureTest.cpp:63)",
       "values_compared": 0
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic surface import for vertex-use evaluation",
+        "unit": "topology.vertexuse"
+      },
       "max_rel_err": 0.0,
       "name": "Mouse_vu0_pole",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "fixture:fixtures/topology.vertexuse/upstream_files.json#17 (upstream tests/prog_test/src/smFeatureTest.cpp:63)",
       "values_compared": 0
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic surface import for vertex-use evaluation",
+        "unit": "topology.vertexuse"
+      },
       "max_rel_err": 0.0,
       "name": "Mouse_vu0_init_gap0_11",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "fixture:fixtures/topology.vertexuse/upstream_files.json#18 (upstream tests/prog_test/src/smFeatureTest.cpp:63)",
       "values_compared": 0
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic surface import for vertex-use evaluation",
+        "unit": "topology.vertexuse"
+      },
       "max_rel_err": 0.0,
       "name": "Mouse_vu0_init_gap1_11",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "fixture:fixtures/topology.vertexuse/upstream_files.json#19 (upstream tests/prog_test/src/smFeatureTest.cpp:63)",
       "values_compared": 0
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic surface import for vertex-use evaluation",
+        "unit": "topology.vertexuse"
+      },
       "max_rel_err": 0.0,
       "name": "Mouse_vu0_init_gap2_11",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "fixture:fixtures/topology.vertexuse/upstream_files.json#20 (upstream tests/prog_test/src/smFeatureTest.cpp:63)",
       "values_compared": 0
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic surface import for vertex-use evaluation",
+        "unit": "topology.vertexuse"
+      },
       "max_rel_err": 0.0,
       "name": "Mouse_vu0_init_gap3_11",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "fixture:fixtures/topology.vertexuse/upstream_files.json#21 (upstream tests/prog_test/src/smFeatureTest.cpp:63)",
       "values_compared": 0
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic surface import for vertex-use evaluation",
+        "unit": "topology.vertexuse"
+      },
       "max_rel_err": 0.0,
       "name": "Mouse_vu0_init_gap4_11",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "fixture:fixtures/topology.vertexuse/upstream_files.json#22 (upstream tests/prog_test/src/smFeatureTest.cpp:63)",
       "values_compared": 0
     },
@@ -15755,11 +15806,14 @@
       "values_compared": 48
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic surface import for vertex-use evaluation",
+        "unit": "topology.vertexuse"
+      },
       "max_rel_err": 0.0,
       "name": "Mouse_vu0_init_pole",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "fixture:fixtures/topology.vertexuse/upstream_files.json#25 (upstream tests/prog_test/src/smFeatureTest.cpp:63)",
       "values_compared": 0
     },
@@ -15796,47 +15850,62 @@
       "values_compared": 0
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic surface import for vertex-use evaluation",
+        "unit": "topology.vertexuse"
+      },
       "max_rel_err": 0.0,
       "name": "Mouse_vu5_gap0_11",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "fixture:fixtures/topology.vertexuse/upstream_files.json#30 (upstream tests/prog_test/src/smFeatureTest.cpp:63)",
       "values_compared": 0
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic surface import for vertex-use evaluation",
+        "unit": "topology.vertexuse"
+      },
       "max_rel_err": 0.0,
       "name": "Mouse_vu5_gap1_11",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "fixture:fixtures/topology.vertexuse/upstream_files.json#31 (upstream tests/prog_test/src/smFeatureTest.cpp:63)",
       "values_compared": 0
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic surface import for vertex-use evaluation",
+        "unit": "topology.vertexuse"
+      },
       "max_rel_err": 0.0,
       "name": "Mouse_vu5_gap2_11",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "fixture:fixtures/topology.vertexuse/upstream_files.json#32 (upstream tests/prog_test/src/smFeatureTest.cpp:63)",
       "values_compared": 0
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic surface import for vertex-use evaluation",
+        "unit": "topology.vertexuse"
+      },
       "max_rel_err": 0.0,
       "name": "Mouse_vu5_gap3_11",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "fixture:fixtures/topology.vertexuse/upstream_files.json#33 (upstream tests/prog_test/src/smFeatureTest.cpp:63)",
       "values_compared": 0
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic surface import for vertex-use evaluation",
+        "unit": "topology.vertexuse"
+      },
       "max_rel_err": 0.0,
       "name": "Mouse_vu5_gap4_11",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "fixture:fixtures/topology.vertexuse/upstream_files.json#34 (upstream tests/prog_test/src/smFeatureTest.cpp:63)",
       "values_compared": 0
     },
@@ -15857,110 +15926,146 @@
       "values_compared": 48
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic surface import for vertex-use evaluation",
+        "unit": "topology.vertexuse"
+      },
       "max_rel_err": 0.0,
       "name": "Mouse_vu5_uvpt1",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "fixture:fixtures/topology.vertexuse/upstream_files.json#37 (upstream tests/prog_test/src/smFeatureTest.cpp:63)",
       "values_compared": 0
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic surface import for vertex-use evaluation",
+        "unit": "topology.vertexuse"
+      },
       "max_rel_err": 0.0,
       "name": "Mouse_vu5_sector1",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "fixture:fixtures/topology.vertexuse/upstream_files.json#38 (upstream tests/prog_test/src/smFeatureTest.cpp:63)",
       "values_compared": 0
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic surface import for vertex-use evaluation",
+        "unit": "topology.vertexuse"
+      },
       "max_rel_err": 0.0,
       "name": "Mouse_vu5_uvpt0",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "fixture:fixtures/topology.vertexuse/upstream_files.json#39 (upstream tests/prog_test/src/smFeatureTest.cpp:63)",
       "values_compared": 0
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic surface import for vertex-use evaluation",
+        "unit": "topology.vertexuse"
+      },
       "max_rel_err": 0.0,
       "name": "Mouse_vu5_sector0",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "fixture:fixtures/topology.vertexuse/upstream_files.json#40 (upstream tests/prog_test/src/smFeatureTest.cpp:63)",
       "values_compared": 0
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic surface import for vertex-use evaluation",
+        "unit": "topology.vertexuse"
+      },
       "max_rel_err": 0.0,
       "name": "Mouse_vu5_seam",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "fixture:fixtures/topology.vertexuse/upstream_files.json#41 (upstream tests/prog_test/src/smFeatureTest.cpp:63)",
       "values_compared": 0
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic surface import for vertex-use evaluation",
+        "unit": "topology.vertexuse"
+      },
       "max_rel_err": 0.0,
       "name": "Mouse_vu5_seam_nouv",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "fixture:fixtures/topology.vertexuse/upstream_files.json#42 (upstream tests/prog_test/src/smFeatureTest.cpp:63)",
       "values_compared": 0
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic surface import for vertex-use evaluation",
+        "unit": "topology.vertexuse"
+      },
       "max_rel_err": 0.0,
       "name": "Mouse_vu5_pole",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "fixture:fixtures/topology.vertexuse/upstream_files.json#43 (upstream tests/prog_test/src/smFeatureTest.cpp:63)",
       "values_compared": 0
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic surface import for vertex-use evaluation",
+        "unit": "topology.vertexuse"
+      },
       "max_rel_err": 0.0,
       "name": "Mouse_vu5_init_gap0_11",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "fixture:fixtures/topology.vertexuse/upstream_files.json#44 (upstream tests/prog_test/src/smFeatureTest.cpp:63)",
       "values_compared": 0
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic surface import for vertex-use evaluation",
+        "unit": "topology.vertexuse"
+      },
       "max_rel_err": 0.0,
       "name": "Mouse_vu5_init_gap1_11",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "fixture:fixtures/topology.vertexuse/upstream_files.json#45 (upstream tests/prog_test/src/smFeatureTest.cpp:63)",
       "values_compared": 0
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic surface import for vertex-use evaluation",
+        "unit": "topology.vertexuse"
+      },
       "max_rel_err": 0.0,
       "name": "Mouse_vu5_init_gap2_11",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "fixture:fixtures/topology.vertexuse/upstream_files.json#46 (upstream tests/prog_test/src/smFeatureTest.cpp:63)",
       "values_compared": 0
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic surface import for vertex-use evaluation",
+        "unit": "topology.vertexuse"
+      },
       "max_rel_err": 0.0,
       "name": "Mouse_vu5_init_gap3_11",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "fixture:fixtures/topology.vertexuse/upstream_files.json#47 (upstream tests/prog_test/src/smFeatureTest.cpp:63)",
       "values_compared": 0
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic surface import for vertex-use evaluation",
+        "unit": "topology.vertexuse"
+      },
       "max_rel_err": 0.0,
       "name": "Mouse_vu5_init_gap4_11",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "fixture:fixtures/topology.vertexuse/upstream_files.json#48 (upstream tests/prog_test/src/smFeatureTest.cpp:63)",
       "values_compared": 0
     },
@@ -15981,11 +16086,14 @@
       "values_compared": 48
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic surface import for vertex-use evaluation",
+        "unit": "topology.vertexuse"
+      },
       "max_rel_err": 0.0,
       "name": "Mouse_vu5_init_pole",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "fixture:fixtures/topology.vertexuse/upstream_files.json#51 (upstream tests/prog_test/src/smFeatureTest.cpp:63)",
       "values_compared": 0
     },
@@ -16022,20 +16130,26 @@
       "values_compared": 0
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic surface import for vertex-use evaluation",
+        "unit": "topology.vertexuse"
+      },
       "max_rel_err": 0.0,
       "name": "Mouse_rebuild_vu2_gap0_11",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "fixture:fixtures/topology.vertexuse/upstream_files.json#56 (upstream tests/prog_test/src/smFeatureTest.cpp:63)",
       "values_compared": 0
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic surface import for vertex-use evaluation",
+        "unit": "topology.vertexuse"
+      },
       "max_rel_err": 0.0,
       "name": "Mouse_rebuild_vu2_gap1_11",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "fixture:fixtures/topology.vertexuse/upstream_files.json#57 (upstream tests/prog_test/src/smFeatureTest.cpp:63)",
       "values_compared": 0
     },
@@ -17200,47 +17314,62 @@
       "values_compared": 0
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic surface import for vertex-use evaluation",
+        "unit": "topology.vertexuse"
+      },
       "max_rel_err": 0.0,
       "name": "cone_vu0_gap0_11",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "fixture:fixtures/topology.vertexuse/upstream_files.json#178 (upstream tests/prog_test/src/smFeatureTest.cpp:63)",
       "values_compared": 0
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic surface import for vertex-use evaluation",
+        "unit": "topology.vertexuse"
+      },
       "max_rel_err": 0.0,
       "name": "cone_vu0_gap1_11",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "fixture:fixtures/topology.vertexuse/upstream_files.json#179 (upstream tests/prog_test/src/smFeatureTest.cpp:63)",
       "values_compared": 0
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic surface import for vertex-use evaluation",
+        "unit": "topology.vertexuse"
+      },
       "max_rel_err": 0.0,
       "name": "cone_vu0_gap2_11",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "fixture:fixtures/topology.vertexuse/upstream_files.json#180 (upstream tests/prog_test/src/smFeatureTest.cpp:63)",
       "values_compared": 0
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic surface import for vertex-use evaluation",
+        "unit": "topology.vertexuse"
+      },
       "max_rel_err": 0.0,
       "name": "cone_vu0_gap3_11",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "fixture:fixtures/topology.vertexuse/upstream_files.json#181 (upstream tests/prog_test/src/smFeatureTest.cpp:63)",
       "values_compared": 0
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic surface import for vertex-use evaluation",
+        "unit": "topology.vertexuse"
+      },
       "max_rel_err": 0.0,
       "name": "cone_vu0_gap4_11",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "fixture:fixtures/topology.vertexuse/upstream_files.json#182 (upstream tests/prog_test/src/smFeatureTest.cpp:63)",
       "values_compared": 0
     },
@@ -17261,110 +17390,146 @@
       "values_compared": 12
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic surface import for vertex-use evaluation",
+        "unit": "topology.vertexuse"
+      },
       "max_rel_err": 0.0,
       "name": "cone_vu0_uvpt1",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "fixture:fixtures/topology.vertexuse/upstream_files.json#185 (upstream tests/prog_test/src/smFeatureTest.cpp:63)",
       "values_compared": 0
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic surface import for vertex-use evaluation",
+        "unit": "topology.vertexuse"
+      },
       "max_rel_err": 0.0,
       "name": "cone_vu0_sector1",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "fixture:fixtures/topology.vertexuse/upstream_files.json#186 (upstream tests/prog_test/src/smFeatureTest.cpp:63)",
       "values_compared": 0
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic surface import for vertex-use evaluation",
+        "unit": "topology.vertexuse"
+      },
       "max_rel_err": 0.0,
       "name": "cone_vu0_uvpt0",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "fixture:fixtures/topology.vertexuse/upstream_files.json#187 (upstream tests/prog_test/src/smFeatureTest.cpp:63)",
       "values_compared": 0
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic surface import for vertex-use evaluation",
+        "unit": "topology.vertexuse"
+      },
       "max_rel_err": 0.0,
       "name": "cone_vu0_sector0",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "fixture:fixtures/topology.vertexuse/upstream_files.json#188 (upstream tests/prog_test/src/smFeatureTest.cpp:63)",
       "values_compared": 0
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic surface import for vertex-use evaluation",
+        "unit": "topology.vertexuse"
+      },
       "max_rel_err": 0.0,
       "name": "cone_vu0_seam",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "fixture:fixtures/topology.vertexuse/upstream_files.json#189 (upstream tests/prog_test/src/smFeatureTest.cpp:63)",
       "values_compared": 0
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic surface import for vertex-use evaluation",
+        "unit": "topology.vertexuse"
+      },
       "max_rel_err": 0.0,
       "name": "cone_vu0_seam_nouv",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "fixture:fixtures/topology.vertexuse/upstream_files.json#190 (upstream tests/prog_test/src/smFeatureTest.cpp:63)",
       "values_compared": 0
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic surface import for vertex-use evaluation",
+        "unit": "topology.vertexuse"
+      },
       "max_rel_err": 0.0,
       "name": "cone_vu0_pole",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "fixture:fixtures/topology.vertexuse/upstream_files.json#191 (upstream tests/prog_test/src/smFeatureTest.cpp:63)",
       "values_compared": 0
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic surface import for vertex-use evaluation",
+        "unit": "topology.vertexuse"
+      },
       "max_rel_err": 0.0,
       "name": "cone_vu0_init_gap0_11",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "fixture:fixtures/topology.vertexuse/upstream_files.json#192 (upstream tests/prog_test/src/smFeatureTest.cpp:63)",
       "values_compared": 0
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic surface import for vertex-use evaluation",
+        "unit": "topology.vertexuse"
+      },
       "max_rel_err": 0.0,
       "name": "cone_vu0_init_gap1_11",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "fixture:fixtures/topology.vertexuse/upstream_files.json#193 (upstream tests/prog_test/src/smFeatureTest.cpp:63)",
       "values_compared": 0
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic surface import for vertex-use evaluation",
+        "unit": "topology.vertexuse"
+      },
       "max_rel_err": 0.0,
       "name": "cone_vu0_init_gap2_11",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "fixture:fixtures/topology.vertexuse/upstream_files.json#194 (upstream tests/prog_test/src/smFeatureTest.cpp:63)",
       "values_compared": 0
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic surface import for vertex-use evaluation",
+        "unit": "topology.vertexuse"
+      },
       "max_rel_err": 0.0,
       "name": "cone_vu0_init_gap3_11",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "fixture:fixtures/topology.vertexuse/upstream_files.json#195 (upstream tests/prog_test/src/smFeatureTest.cpp:63)",
       "values_compared": 0
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic surface import for vertex-use evaluation",
+        "unit": "topology.vertexuse"
+      },
       "max_rel_err": 0.0,
       "name": "cone_vu0_init_gap4_11",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "fixture:fixtures/topology.vertexuse/upstream_files.json#196 (upstream tests/prog_test/src/smFeatureTest.cpp:63)",
       "values_compared": 0
     },
@@ -17385,11 +17550,14 @@
       "values_compared": 12
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic surface import for vertex-use evaluation",
+        "unit": "topology.vertexuse"
+      },
       "max_rel_err": 0.0,
       "name": "cone_vu0_init_pole",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "fixture:fixtures/topology.vertexuse/upstream_files.json#199 (upstream tests/prog_test/src/smFeatureTest.cpp:63)",
       "values_compared": 0
     },
@@ -17426,47 +17594,62 @@
       "values_compared": 0
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic surface import for vertex-use evaluation",
+        "unit": "topology.vertexuse"
+      },
       "max_rel_err": 0.0,
       "name": "cone_vu5_gap0_11",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "fixture:fixtures/topology.vertexuse/upstream_files.json#204 (upstream tests/prog_test/src/smFeatureTest.cpp:63)",
       "values_compared": 0
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic surface import for vertex-use evaluation",
+        "unit": "topology.vertexuse"
+      },
       "max_rel_err": 0.0,
       "name": "cone_vu5_gap1_11",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "fixture:fixtures/topology.vertexuse/upstream_files.json#205 (upstream tests/prog_test/src/smFeatureTest.cpp:63)",
       "values_compared": 0
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic surface import for vertex-use evaluation",
+        "unit": "topology.vertexuse"
+      },
       "max_rel_err": 0.0,
       "name": "cone_vu5_gap2_11",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "fixture:fixtures/topology.vertexuse/upstream_files.json#206 (upstream tests/prog_test/src/smFeatureTest.cpp:63)",
       "values_compared": 0
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic surface import for vertex-use evaluation",
+        "unit": "topology.vertexuse"
+      },
       "max_rel_err": 0.0,
       "name": "cone_vu5_gap3_11",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "fixture:fixtures/topology.vertexuse/upstream_files.json#207 (upstream tests/prog_test/src/smFeatureTest.cpp:63)",
       "values_compared": 0
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic surface import for vertex-use evaluation",
+        "unit": "topology.vertexuse"
+      },
       "max_rel_err": 0.0,
       "name": "cone_vu5_gap4_11",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "fixture:fixtures/topology.vertexuse/upstream_files.json#208 (upstream tests/prog_test/src/smFeatureTest.cpp:63)",
       "values_compared": 0
     },
@@ -17487,110 +17670,146 @@
       "values_compared": 12
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic surface import for vertex-use evaluation",
+        "unit": "topology.vertexuse"
+      },
       "max_rel_err": 0.0,
       "name": "cone_vu5_uvpt1",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "fixture:fixtures/topology.vertexuse/upstream_files.json#211 (upstream tests/prog_test/src/smFeatureTest.cpp:63)",
       "values_compared": 0
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic surface import for vertex-use evaluation",
+        "unit": "topology.vertexuse"
+      },
       "max_rel_err": 0.0,
       "name": "cone_vu5_sector1",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "fixture:fixtures/topology.vertexuse/upstream_files.json#212 (upstream tests/prog_test/src/smFeatureTest.cpp:63)",
       "values_compared": 0
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic surface import for vertex-use evaluation",
+        "unit": "topology.vertexuse"
+      },
       "max_rel_err": 0.0,
       "name": "cone_vu5_uvpt0",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "fixture:fixtures/topology.vertexuse/upstream_files.json#213 (upstream tests/prog_test/src/smFeatureTest.cpp:63)",
       "values_compared": 0
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic surface import for vertex-use evaluation",
+        "unit": "topology.vertexuse"
+      },
       "max_rel_err": 0.0,
       "name": "cone_vu5_sector0",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "fixture:fixtures/topology.vertexuse/upstream_files.json#214 (upstream tests/prog_test/src/smFeatureTest.cpp:63)",
       "values_compared": 0
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic surface import for vertex-use evaluation",
+        "unit": "topology.vertexuse"
+      },
       "max_rel_err": 0.0,
       "name": "cone_vu5_seam",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "fixture:fixtures/topology.vertexuse/upstream_files.json#215 (upstream tests/prog_test/src/smFeatureTest.cpp:63)",
       "values_compared": 0
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic surface import for vertex-use evaluation",
+        "unit": "topology.vertexuse"
+      },
       "max_rel_err": 0.0,
       "name": "cone_vu5_seam_nouv",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "fixture:fixtures/topology.vertexuse/upstream_files.json#216 (upstream tests/prog_test/src/smFeatureTest.cpp:63)",
       "values_compared": 0
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic surface import for vertex-use evaluation",
+        "unit": "topology.vertexuse"
+      },
       "max_rel_err": 0.0,
       "name": "cone_vu5_pole",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "fixture:fixtures/topology.vertexuse/upstream_files.json#217 (upstream tests/prog_test/src/smFeatureTest.cpp:63)",
       "values_compared": 0
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic surface import for vertex-use evaluation",
+        "unit": "topology.vertexuse"
+      },
       "max_rel_err": 0.0,
       "name": "cone_vu5_init_gap0_11",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "fixture:fixtures/topology.vertexuse/upstream_files.json#218 (upstream tests/prog_test/src/smFeatureTest.cpp:63)",
       "values_compared": 0
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic surface import for vertex-use evaluation",
+        "unit": "topology.vertexuse"
+      },
       "max_rel_err": 0.0,
       "name": "cone_vu5_init_gap1_11",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "fixture:fixtures/topology.vertexuse/upstream_files.json#219 (upstream tests/prog_test/src/smFeatureTest.cpp:63)",
       "values_compared": 0
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic surface import for vertex-use evaluation",
+        "unit": "topology.vertexuse"
+      },
       "max_rel_err": 0.0,
       "name": "cone_vu5_init_gap2_11",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "fixture:fixtures/topology.vertexuse/upstream_files.json#220 (upstream tests/prog_test/src/smFeatureTest.cpp:63)",
       "values_compared": 0
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic surface import for vertex-use evaluation",
+        "unit": "topology.vertexuse"
+      },
       "max_rel_err": 0.0,
       "name": "cone_vu5_init_gap3_11",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "fixture:fixtures/topology.vertexuse/upstream_files.json#221 (upstream tests/prog_test/src/smFeatureTest.cpp:63)",
       "values_compared": 0
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic surface import for vertex-use evaluation",
+        "unit": "topology.vertexuse"
+      },
       "max_rel_err": 0.0,
       "name": "cone_vu5_init_gap4_11",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "fixture:fixtures/topology.vertexuse/upstream_files.json#222 (upstream tests/prog_test/src/smFeatureTest.cpp:63)",
       "values_compared": 0
     },
@@ -17611,11 +17830,14 @@
       "values_compared": 12
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic surface import for vertex-use evaluation",
+        "unit": "topology.vertexuse"
+      },
       "max_rel_err": 0.0,
       "name": "cone_vu5_init_pole",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "fixture:fixtures/topology.vertexuse/upstream_files.json#225 (upstream tests/prog_test/src/smFeatureTest.cpp:63)",
       "values_compared": 0
     },
@@ -17652,20 +17874,26 @@
       "values_compared": 0
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic surface import for vertex-use evaluation",
+        "unit": "topology.vertexuse"
+      },
       "max_rel_err": 0.0,
       "name": "cone_rebuild_vu2_gap0_11",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "fixture:fixtures/topology.vertexuse/upstream_files.json#230 (upstream tests/prog_test/src/smFeatureTest.cpp:63)",
       "values_compared": 0
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic surface import for vertex-use evaluation",
+        "unit": "topology.vertexuse"
+      },
       "max_rel_err": 0.0,
       "name": "cone_rebuild_vu2_gap1_11",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "fixture:fixtures/topology.vertexuse/upstream_files.json#231 (upstream tests/prog_test/src/smFeatureTest.cpp:63)",
       "values_compared": 0
     },
@@ -19958,47 +20186,62 @@
       "values_compared": 0
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic surface import for vertex-use evaluation",
+        "unit": "topology.vertexuse"
+      },
       "max_rel_err": 0.0,
       "name": "sphere_vu0_gap0_11",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "fixture:fixtures/topology.vertexuse/upstream_files.json#468 (upstream tests/prog_test/src/smFeatureTest.cpp:63)",
       "values_compared": 0
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic surface import for vertex-use evaluation",
+        "unit": "topology.vertexuse"
+      },
       "max_rel_err": 0.0,
       "name": "sphere_vu0_gap1_11",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "fixture:fixtures/topology.vertexuse/upstream_files.json#469 (upstream tests/prog_test/src/smFeatureTest.cpp:63)",
       "values_compared": 0
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic surface import for vertex-use evaluation",
+        "unit": "topology.vertexuse"
+      },
       "max_rel_err": 0.0,
       "name": "sphere_vu0_gap2_11",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "fixture:fixtures/topology.vertexuse/upstream_files.json#470 (upstream tests/prog_test/src/smFeatureTest.cpp:63)",
       "values_compared": 0
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic surface import for vertex-use evaluation",
+        "unit": "topology.vertexuse"
+      },
       "max_rel_err": 0.0,
       "name": "sphere_vu0_gap3_11",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "fixture:fixtures/topology.vertexuse/upstream_files.json#471 (upstream tests/prog_test/src/smFeatureTest.cpp:63)",
       "values_compared": 0
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic surface import for vertex-use evaluation",
+        "unit": "topology.vertexuse"
+      },
       "max_rel_err": 0.0,
       "name": "sphere_vu0_gap4_11",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "fixture:fixtures/topology.vertexuse/upstream_files.json#472 (upstream tests/prog_test/src/smFeatureTest.cpp:63)",
       "values_compared": 0
     },
@@ -20019,110 +20262,146 @@
       "values_compared": 8
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic surface import for vertex-use evaluation",
+        "unit": "topology.vertexuse"
+      },
       "max_rel_err": 0.0,
       "name": "sphere_vu0_uvpt1",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "fixture:fixtures/topology.vertexuse/upstream_files.json#475 (upstream tests/prog_test/src/smFeatureTest.cpp:63)",
       "values_compared": 0
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic surface import for vertex-use evaluation",
+        "unit": "topology.vertexuse"
+      },
       "max_rel_err": 0.0,
       "name": "sphere_vu0_sector1",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "fixture:fixtures/topology.vertexuse/upstream_files.json#476 (upstream tests/prog_test/src/smFeatureTest.cpp:63)",
       "values_compared": 0
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic surface import for vertex-use evaluation",
+        "unit": "topology.vertexuse"
+      },
       "max_rel_err": 0.0,
       "name": "sphere_vu0_uvpt0",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "fixture:fixtures/topology.vertexuse/upstream_files.json#477 (upstream tests/prog_test/src/smFeatureTest.cpp:63)",
       "values_compared": 0
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic surface import for vertex-use evaluation",
+        "unit": "topology.vertexuse"
+      },
       "max_rel_err": 0.0,
       "name": "sphere_vu0_sector0",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "fixture:fixtures/topology.vertexuse/upstream_files.json#478 (upstream tests/prog_test/src/smFeatureTest.cpp:63)",
       "values_compared": 0
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic surface import for vertex-use evaluation",
+        "unit": "topology.vertexuse"
+      },
       "max_rel_err": 0.0,
       "name": "sphere_vu0_seam",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "fixture:fixtures/topology.vertexuse/upstream_files.json#479 (upstream tests/prog_test/src/smFeatureTest.cpp:63)",
       "values_compared": 0
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic surface import for vertex-use evaluation",
+        "unit": "topology.vertexuse"
+      },
       "max_rel_err": 0.0,
       "name": "sphere_vu0_seam_nouv",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "fixture:fixtures/topology.vertexuse/upstream_files.json#480 (upstream tests/prog_test/src/smFeatureTest.cpp:63)",
       "values_compared": 0
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic surface import for vertex-use evaluation",
+        "unit": "topology.vertexuse"
+      },
       "max_rel_err": 0.0,
       "name": "sphere_vu0_pole",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "fixture:fixtures/topology.vertexuse/upstream_files.json#481 (upstream tests/prog_test/src/smFeatureTest.cpp:63)",
       "values_compared": 0
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic surface import for vertex-use evaluation",
+        "unit": "topology.vertexuse"
+      },
       "max_rel_err": 0.0,
       "name": "sphere_vu0_init_gap0_11",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "fixture:fixtures/topology.vertexuse/upstream_files.json#482 (upstream tests/prog_test/src/smFeatureTest.cpp:63)",
       "values_compared": 0
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic surface import for vertex-use evaluation",
+        "unit": "topology.vertexuse"
+      },
       "max_rel_err": 0.0,
       "name": "sphere_vu0_init_gap1_11",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "fixture:fixtures/topology.vertexuse/upstream_files.json#483 (upstream tests/prog_test/src/smFeatureTest.cpp:63)",
       "values_compared": 0
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic surface import for vertex-use evaluation",
+        "unit": "topology.vertexuse"
+      },
       "max_rel_err": 0.0,
       "name": "sphere_vu0_init_gap2_11",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "fixture:fixtures/topology.vertexuse/upstream_files.json#484 (upstream tests/prog_test/src/smFeatureTest.cpp:63)",
       "values_compared": 0
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic surface import for vertex-use evaluation",
+        "unit": "topology.vertexuse"
+      },
       "max_rel_err": 0.0,
       "name": "sphere_vu0_init_gap3_11",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "fixture:fixtures/topology.vertexuse/upstream_files.json#485 (upstream tests/prog_test/src/smFeatureTest.cpp:63)",
       "values_compared": 0
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic surface import for vertex-use evaluation",
+        "unit": "topology.vertexuse"
+      },
       "max_rel_err": 0.0,
       "name": "sphere_vu0_init_gap4_11",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "fixture:fixtures/topology.vertexuse/upstream_files.json#486 (upstream tests/prog_test/src/smFeatureTest.cpp:63)",
       "values_compared": 0
     },
@@ -20143,11 +20422,14 @@
       "values_compared": 8
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic surface import for vertex-use evaluation",
+        "unit": "topology.vertexuse"
+      },
       "max_rel_err": 0.0,
       "name": "sphere_vu0_init_pole",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "fixture:fixtures/topology.vertexuse/upstream_files.json#489 (upstream tests/prog_test/src/smFeatureTest.cpp:63)",
       "values_compared": 0
     },
@@ -20184,47 +20466,62 @@
       "values_compared": 0
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic surface import for vertex-use evaluation",
+        "unit": "topology.vertexuse"
+      },
       "max_rel_err": 0.0,
       "name": "sphere_vu5_gap0_11",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "fixture:fixtures/topology.vertexuse/upstream_files.json#494 (upstream tests/prog_test/src/smFeatureTest.cpp:63)",
       "values_compared": 0
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic surface import for vertex-use evaluation",
+        "unit": "topology.vertexuse"
+      },
       "max_rel_err": 0.0,
       "name": "sphere_vu5_gap1_11",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "fixture:fixtures/topology.vertexuse/upstream_files.json#495 (upstream tests/prog_test/src/smFeatureTest.cpp:63)",
       "values_compared": 0
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic surface import for vertex-use evaluation",
+        "unit": "topology.vertexuse"
+      },
       "max_rel_err": 0.0,
       "name": "sphere_vu5_gap2_11",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "fixture:fixtures/topology.vertexuse/upstream_files.json#496 (upstream tests/prog_test/src/smFeatureTest.cpp:63)",
       "values_compared": 0
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic surface import for vertex-use evaluation",
+        "unit": "topology.vertexuse"
+      },
       "max_rel_err": 0.0,
       "name": "sphere_vu5_gap3_11",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "fixture:fixtures/topology.vertexuse/upstream_files.json#497 (upstream tests/prog_test/src/smFeatureTest.cpp:63)",
       "values_compared": 0
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic surface import for vertex-use evaluation",
+        "unit": "topology.vertexuse"
+      },
       "max_rel_err": 0.0,
       "name": "sphere_vu5_gap4_11",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "fixture:fixtures/topology.vertexuse/upstream_files.json#498 (upstream tests/prog_test/src/smFeatureTest.cpp:63)",
       "values_compared": 0
     },
@@ -20245,110 +20542,146 @@
       "values_compared": 8
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic surface import for vertex-use evaluation",
+        "unit": "topology.vertexuse"
+      },
       "max_rel_err": 0.0,
       "name": "sphere_vu5_uvpt1",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "fixture:fixtures/topology.vertexuse/upstream_files.json#501 (upstream tests/prog_test/src/smFeatureTest.cpp:63)",
       "values_compared": 0
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic surface import for vertex-use evaluation",
+        "unit": "topology.vertexuse"
+      },
       "max_rel_err": 0.0,
       "name": "sphere_vu5_sector1",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "fixture:fixtures/topology.vertexuse/upstream_files.json#502 (upstream tests/prog_test/src/smFeatureTest.cpp:63)",
       "values_compared": 0
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic surface import for vertex-use evaluation",
+        "unit": "topology.vertexuse"
+      },
       "max_rel_err": 0.0,
       "name": "sphere_vu5_uvpt0",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "fixture:fixtures/topology.vertexuse/upstream_files.json#503 (upstream tests/prog_test/src/smFeatureTest.cpp:63)",
       "values_compared": 0
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic surface import for vertex-use evaluation",
+        "unit": "topology.vertexuse"
+      },
       "max_rel_err": 0.0,
       "name": "sphere_vu5_sector0",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "fixture:fixtures/topology.vertexuse/upstream_files.json#504 (upstream tests/prog_test/src/smFeatureTest.cpp:63)",
       "values_compared": 0
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic surface import for vertex-use evaluation",
+        "unit": "topology.vertexuse"
+      },
       "max_rel_err": 0.0,
       "name": "sphere_vu5_seam",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "fixture:fixtures/topology.vertexuse/upstream_files.json#505 (upstream tests/prog_test/src/smFeatureTest.cpp:63)",
       "values_compared": 0
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic surface import for vertex-use evaluation",
+        "unit": "topology.vertexuse"
+      },
       "max_rel_err": 0.0,
       "name": "sphere_vu5_seam_nouv",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "fixture:fixtures/topology.vertexuse/upstream_files.json#506 (upstream tests/prog_test/src/smFeatureTest.cpp:63)",
       "values_compared": 0
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic surface import for vertex-use evaluation",
+        "unit": "topology.vertexuse"
+      },
       "max_rel_err": 0.0,
       "name": "sphere_vu5_pole",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "fixture:fixtures/topology.vertexuse/upstream_files.json#507 (upstream tests/prog_test/src/smFeatureTest.cpp:63)",
       "values_compared": 0
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic surface import for vertex-use evaluation",
+        "unit": "topology.vertexuse"
+      },
       "max_rel_err": 0.0,
       "name": "sphere_vu5_init_gap0_11",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "fixture:fixtures/topology.vertexuse/upstream_files.json#508 (upstream tests/prog_test/src/smFeatureTest.cpp:63)",
       "values_compared": 0
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic surface import for vertex-use evaluation",
+        "unit": "topology.vertexuse"
+      },
       "max_rel_err": 0.0,
       "name": "sphere_vu5_init_gap1_11",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "fixture:fixtures/topology.vertexuse/upstream_files.json#509 (upstream tests/prog_test/src/smFeatureTest.cpp:63)",
       "values_compared": 0
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic surface import for vertex-use evaluation",
+        "unit": "topology.vertexuse"
+      },
       "max_rel_err": 0.0,
       "name": "sphere_vu5_init_gap2_11",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "fixture:fixtures/topology.vertexuse/upstream_files.json#510 (upstream tests/prog_test/src/smFeatureTest.cpp:63)",
       "values_compared": 0
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic surface import for vertex-use evaluation",
+        "unit": "topology.vertexuse"
+      },
       "max_rel_err": 0.0,
       "name": "sphere_vu5_init_gap3_11",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "fixture:fixtures/topology.vertexuse/upstream_files.json#511 (upstream tests/prog_test/src/smFeatureTest.cpp:63)",
       "values_compared": 0
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic surface import for vertex-use evaluation",
+        "unit": "topology.vertexuse"
+      },
       "max_rel_err": 0.0,
       "name": "sphere_vu5_init_gap4_11",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "fixture:fixtures/topology.vertexuse/upstream_files.json#512 (upstream tests/prog_test/src/smFeatureTest.cpp:63)",
       "values_compared": 0
     },
@@ -20369,11 +20702,14 @@
       "values_compared": 8
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic surface import for vertex-use evaluation",
+        "unit": "topology.vertexuse"
+      },
       "max_rel_err": 0.0,
       "name": "sphere_vu5_init_pole",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "fixture:fixtures/topology.vertexuse/upstream_files.json#515 (upstream tests/prog_test/src/smFeatureTest.cpp:63)",
       "values_compared": 0
     },
@@ -20410,20 +20746,26 @@
       "values_compared": 0
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic surface import for vertex-use evaluation",
+        "unit": "topology.vertexuse"
+      },
       "max_rel_err": 0.0,
       "name": "sphere_rebuild_vu2_gap0_11",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "fixture:fixtures/topology.vertexuse/upstream_files.json#520 (upstream tests/prog_test/src/smFeatureTest.cpp:63)",
       "values_compared": 0
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic surface import for vertex-use evaluation",
+        "unit": "topology.vertexuse"
+      },
       "max_rel_err": 0.0,
       "name": "sphere_rebuild_vu2_gap1_11",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "fixture:fixtures/topology.vertexuse/upstream_files.json#521 (upstream tests/prog_test/src/smFeatureTest.cpp:63)",
       "values_compared": 0
     },
@@ -20460,47 +20802,62 @@
       "values_compared": 0
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic surface import for vertex-use evaluation",
+        "unit": "topology.vertexuse"
+      },
       "max_rel_err": 0.0,
       "name": "surf_extrude_vu0_gap0_11",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "fixture:fixtures/topology.vertexuse/upstream_files.json#526 (upstream tests/prog_test/src/smFeatureTest.cpp:63)",
       "values_compared": 0
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic surface import for vertex-use evaluation",
+        "unit": "topology.vertexuse"
+      },
       "max_rel_err": 0.0,
       "name": "surf_extrude_vu0_gap1_11",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "fixture:fixtures/topology.vertexuse/upstream_files.json#527 (upstream tests/prog_test/src/smFeatureTest.cpp:63)",
       "values_compared": 0
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic surface import for vertex-use evaluation",
+        "unit": "topology.vertexuse"
+      },
       "max_rel_err": 0.0,
       "name": "surf_extrude_vu0_gap2_11",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "fixture:fixtures/topology.vertexuse/upstream_files.json#528 (upstream tests/prog_test/src/smFeatureTest.cpp:63)",
       "values_compared": 0
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic surface import for vertex-use evaluation",
+        "unit": "topology.vertexuse"
+      },
       "max_rel_err": 0.0,
       "name": "surf_extrude_vu0_gap3_11",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "fixture:fixtures/topology.vertexuse/upstream_files.json#529 (upstream tests/prog_test/src/smFeatureTest.cpp:63)",
       "values_compared": 0
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic surface import for vertex-use evaluation",
+        "unit": "topology.vertexuse"
+      },
       "max_rel_err": 0.0,
       "name": "surf_extrude_vu0_gap4_11",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "fixture:fixtures/topology.vertexuse/upstream_files.json#530 (upstream tests/prog_test/src/smFeatureTest.cpp:63)",
       "values_compared": 0
     },
@@ -20521,110 +20878,146 @@
       "values_compared": 16
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic surface import for vertex-use evaluation",
+        "unit": "topology.vertexuse"
+      },
       "max_rel_err": 0.0,
       "name": "surf_extrude_vu0_uvpt1",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "fixture:fixtures/topology.vertexuse/upstream_files.json#533 (upstream tests/prog_test/src/smFeatureTest.cpp:63)",
       "values_compared": 0
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic surface import for vertex-use evaluation",
+        "unit": "topology.vertexuse"
+      },
       "max_rel_err": 0.0,
       "name": "surf_extrude_vu0_sector1",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "fixture:fixtures/topology.vertexuse/upstream_files.json#534 (upstream tests/prog_test/src/smFeatureTest.cpp:63)",
       "values_compared": 0
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic surface import for vertex-use evaluation",
+        "unit": "topology.vertexuse"
+      },
       "max_rel_err": 0.0,
       "name": "surf_extrude_vu0_uvpt0",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "fixture:fixtures/topology.vertexuse/upstream_files.json#535 (upstream tests/prog_test/src/smFeatureTest.cpp:63)",
       "values_compared": 0
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic surface import for vertex-use evaluation",
+        "unit": "topology.vertexuse"
+      },
       "max_rel_err": 0.0,
       "name": "surf_extrude_vu0_sector0",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "fixture:fixtures/topology.vertexuse/upstream_files.json#536 (upstream tests/prog_test/src/smFeatureTest.cpp:63)",
       "values_compared": 0
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic surface import for vertex-use evaluation",
+        "unit": "topology.vertexuse"
+      },
       "max_rel_err": 0.0,
       "name": "surf_extrude_vu0_seam",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "fixture:fixtures/topology.vertexuse/upstream_files.json#537 (upstream tests/prog_test/src/smFeatureTest.cpp:63)",
       "values_compared": 0
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic surface import for vertex-use evaluation",
+        "unit": "topology.vertexuse"
+      },
       "max_rel_err": 0.0,
       "name": "surf_extrude_vu0_seam_nouv",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "fixture:fixtures/topology.vertexuse/upstream_files.json#538 (upstream tests/prog_test/src/smFeatureTest.cpp:63)",
       "values_compared": 0
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic surface import for vertex-use evaluation",
+        "unit": "topology.vertexuse"
+      },
       "max_rel_err": 0.0,
       "name": "surf_extrude_vu0_pole",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "fixture:fixtures/topology.vertexuse/upstream_files.json#539 (upstream tests/prog_test/src/smFeatureTest.cpp:63)",
       "values_compared": 0
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic surface import for vertex-use evaluation",
+        "unit": "topology.vertexuse"
+      },
       "max_rel_err": 0.0,
       "name": "surf_extrude_vu0_init_gap0_11",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "fixture:fixtures/topology.vertexuse/upstream_files.json#540 (upstream tests/prog_test/src/smFeatureTest.cpp:63)",
       "values_compared": 0
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic surface import for vertex-use evaluation",
+        "unit": "topology.vertexuse"
+      },
       "max_rel_err": 0.0,
       "name": "surf_extrude_vu0_init_gap1_11",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "fixture:fixtures/topology.vertexuse/upstream_files.json#541 (upstream tests/prog_test/src/smFeatureTest.cpp:63)",
       "values_compared": 0
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic surface import for vertex-use evaluation",
+        "unit": "topology.vertexuse"
+      },
       "max_rel_err": 0.0,
       "name": "surf_extrude_vu0_init_gap2_11",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "fixture:fixtures/topology.vertexuse/upstream_files.json#542 (upstream tests/prog_test/src/smFeatureTest.cpp:63)",
       "values_compared": 0
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic surface import for vertex-use evaluation",
+        "unit": "topology.vertexuse"
+      },
       "max_rel_err": 0.0,
       "name": "surf_extrude_vu0_init_gap3_11",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "fixture:fixtures/topology.vertexuse/upstream_files.json#543 (upstream tests/prog_test/src/smFeatureTest.cpp:63)",
       "values_compared": 0
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic surface import for vertex-use evaluation",
+        "unit": "topology.vertexuse"
+      },
       "max_rel_err": 0.0,
       "name": "surf_extrude_vu0_init_gap4_11",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "fixture:fixtures/topology.vertexuse/upstream_files.json#544 (upstream tests/prog_test/src/smFeatureTest.cpp:63)",
       "values_compared": 0
     },
@@ -20645,11 +21038,14 @@
       "values_compared": 16
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic surface import for vertex-use evaluation",
+        "unit": "topology.vertexuse"
+      },
       "max_rel_err": 0.0,
       "name": "surf_extrude_vu0_init_pole",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "fixture:fixtures/topology.vertexuse/upstream_files.json#547 (upstream tests/prog_test/src/smFeatureTest.cpp:63)",
       "values_compared": 0
     },
@@ -20686,47 +21082,62 @@
       "values_compared": 0
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic surface import for vertex-use evaluation",
+        "unit": "topology.vertexuse"
+      },
       "max_rel_err": 0.0,
       "name": "surf_extrude_vu5_gap0_11",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "fixture:fixtures/topology.vertexuse/upstream_files.json#552 (upstream tests/prog_test/src/smFeatureTest.cpp:63)",
       "values_compared": 0
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic surface import for vertex-use evaluation",
+        "unit": "topology.vertexuse"
+      },
       "max_rel_err": 0.0,
       "name": "surf_extrude_vu5_gap1_11",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "fixture:fixtures/topology.vertexuse/upstream_files.json#553 (upstream tests/prog_test/src/smFeatureTest.cpp:63)",
       "values_compared": 0
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic surface import for vertex-use evaluation",
+        "unit": "topology.vertexuse"
+      },
       "max_rel_err": 0.0,
       "name": "surf_extrude_vu5_gap2_11",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "fixture:fixtures/topology.vertexuse/upstream_files.json#554 (upstream tests/prog_test/src/smFeatureTest.cpp:63)",
       "values_compared": 0
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic surface import for vertex-use evaluation",
+        "unit": "topology.vertexuse"
+      },
       "max_rel_err": 0.0,
       "name": "surf_extrude_vu5_gap3_11",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "fixture:fixtures/topology.vertexuse/upstream_files.json#555 (upstream tests/prog_test/src/smFeatureTest.cpp:63)",
       "values_compared": 0
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic surface import for vertex-use evaluation",
+        "unit": "topology.vertexuse"
+      },
       "max_rel_err": 0.0,
       "name": "surf_extrude_vu5_gap4_11",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "fixture:fixtures/topology.vertexuse/upstream_files.json#556 (upstream tests/prog_test/src/smFeatureTest.cpp:63)",
       "values_compared": 0
     },
@@ -20747,110 +21158,146 @@
       "values_compared": 16
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic surface import for vertex-use evaluation",
+        "unit": "topology.vertexuse"
+      },
       "max_rel_err": 0.0,
       "name": "surf_extrude_vu5_uvpt1",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "fixture:fixtures/topology.vertexuse/upstream_files.json#559 (upstream tests/prog_test/src/smFeatureTest.cpp:63)",
       "values_compared": 0
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic surface import for vertex-use evaluation",
+        "unit": "topology.vertexuse"
+      },
       "max_rel_err": 0.0,
       "name": "surf_extrude_vu5_sector1",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "fixture:fixtures/topology.vertexuse/upstream_files.json#560 (upstream tests/prog_test/src/smFeatureTest.cpp:63)",
       "values_compared": 0
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic surface import for vertex-use evaluation",
+        "unit": "topology.vertexuse"
+      },
       "max_rel_err": 0.0,
       "name": "surf_extrude_vu5_uvpt0",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "fixture:fixtures/topology.vertexuse/upstream_files.json#561 (upstream tests/prog_test/src/smFeatureTest.cpp:63)",
       "values_compared": 0
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic surface import for vertex-use evaluation",
+        "unit": "topology.vertexuse"
+      },
       "max_rel_err": 0.0,
       "name": "surf_extrude_vu5_sector0",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "fixture:fixtures/topology.vertexuse/upstream_files.json#562 (upstream tests/prog_test/src/smFeatureTest.cpp:63)",
       "values_compared": 0
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic surface import for vertex-use evaluation",
+        "unit": "topology.vertexuse"
+      },
       "max_rel_err": 0.0,
       "name": "surf_extrude_vu5_seam",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "fixture:fixtures/topology.vertexuse/upstream_files.json#563 (upstream tests/prog_test/src/smFeatureTest.cpp:63)",
       "values_compared": 0
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic surface import for vertex-use evaluation",
+        "unit": "topology.vertexuse"
+      },
       "max_rel_err": 0.0,
       "name": "surf_extrude_vu5_seam_nouv",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "fixture:fixtures/topology.vertexuse/upstream_files.json#564 (upstream tests/prog_test/src/smFeatureTest.cpp:63)",
       "values_compared": 0
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic surface import for vertex-use evaluation",
+        "unit": "topology.vertexuse"
+      },
       "max_rel_err": 0.0,
       "name": "surf_extrude_vu5_pole",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "fixture:fixtures/topology.vertexuse/upstream_files.json#565 (upstream tests/prog_test/src/smFeatureTest.cpp:63)",
       "values_compared": 0
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic surface import for vertex-use evaluation",
+        "unit": "topology.vertexuse"
+      },
       "max_rel_err": 0.0,
       "name": "surf_extrude_vu5_init_gap0_11",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "fixture:fixtures/topology.vertexuse/upstream_files.json#566 (upstream tests/prog_test/src/smFeatureTest.cpp:63)",
       "values_compared": 0
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic surface import for vertex-use evaluation",
+        "unit": "topology.vertexuse"
+      },
       "max_rel_err": 0.0,
       "name": "surf_extrude_vu5_init_gap1_11",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "fixture:fixtures/topology.vertexuse/upstream_files.json#567 (upstream tests/prog_test/src/smFeatureTest.cpp:63)",
       "values_compared": 0
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic surface import for vertex-use evaluation",
+        "unit": "topology.vertexuse"
+      },
       "max_rel_err": 0.0,
       "name": "surf_extrude_vu5_init_gap2_11",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "fixture:fixtures/topology.vertexuse/upstream_files.json#568 (upstream tests/prog_test/src/smFeatureTest.cpp:63)",
       "values_compared": 0
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic surface import for vertex-use evaluation",
+        "unit": "topology.vertexuse"
+      },
       "max_rel_err": 0.0,
       "name": "surf_extrude_vu5_init_gap3_11",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "fixture:fixtures/topology.vertexuse/upstream_files.json#569 (upstream tests/prog_test/src/smFeatureTest.cpp:63)",
       "values_compared": 0
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic surface import for vertex-use evaluation",
+        "unit": "topology.vertexuse"
+      },
       "max_rel_err": 0.0,
       "name": "surf_extrude_vu5_init_gap4_11",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "fixture:fixtures/topology.vertexuse/upstream_files.json#570 (upstream tests/prog_test/src/smFeatureTest.cpp:63)",
       "values_compared": 0
     },
@@ -20871,11 +21318,14 @@
       "values_compared": 16
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic surface import for vertex-use evaluation",
+        "unit": "topology.vertexuse"
+      },
       "max_rel_err": 0.0,
       "name": "surf_extrude_vu5_init_pole",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "fixture:fixtures/topology.vertexuse/upstream_files.json#573 (upstream tests/prog_test/src/smFeatureTest.cpp:63)",
       "values_compared": 0
     },
@@ -20912,20 +21362,26 @@
       "values_compared": 0
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic surface import for vertex-use evaluation",
+        "unit": "topology.vertexuse"
+      },
       "max_rel_err": 0.0,
       "name": "surf_extrude_rebuild_vu2_gap0_11",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "fixture:fixtures/topology.vertexuse/upstream_files.json#578 (upstream tests/prog_test/src/smFeatureTest.cpp:63)",
       "values_compared": 0
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic surface import for vertex-use evaluation",
+        "unit": "topology.vertexuse"
+      },
       "max_rel_err": 0.0,
       "name": "surf_extrude_rebuild_vu2_gap1_11",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "fixture:fixtures/topology.vertexuse/upstream_files.json#579 (upstream tests/prog_test/src/smFeatureTest.cpp:63)",
       "values_compared": 0
     },
@@ -20962,47 +21418,62 @@
       "values_compared": 0
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic surface import for vertex-use evaluation",
+        "unit": "topology.vertexuse"
+      },
       "max_rel_err": 0.0,
       "name": "surf_rev_vu0_gap0_11",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "fixture:fixtures/topology.vertexuse/upstream_files.json#584 (upstream tests/prog_test/src/smFeatureTest.cpp:63)",
       "values_compared": 0
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic surface import for vertex-use evaluation",
+        "unit": "topology.vertexuse"
+      },
       "max_rel_err": 0.0,
       "name": "surf_rev_vu0_gap1_11",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "fixture:fixtures/topology.vertexuse/upstream_files.json#585 (upstream tests/prog_test/src/smFeatureTest.cpp:63)",
       "values_compared": 0
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic surface import for vertex-use evaluation",
+        "unit": "topology.vertexuse"
+      },
       "max_rel_err": 0.0,
       "name": "surf_rev_vu0_gap2_11",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "fixture:fixtures/topology.vertexuse/upstream_files.json#586 (upstream tests/prog_test/src/smFeatureTest.cpp:63)",
       "values_compared": 0
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic surface import for vertex-use evaluation",
+        "unit": "topology.vertexuse"
+      },
       "max_rel_err": 0.0,
       "name": "surf_rev_vu0_gap3_11",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "fixture:fixtures/topology.vertexuse/upstream_files.json#587 (upstream tests/prog_test/src/smFeatureTest.cpp:63)",
       "values_compared": 0
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic surface import for vertex-use evaluation",
+        "unit": "topology.vertexuse"
+      },
       "max_rel_err": 0.0,
       "name": "surf_rev_vu0_gap4_11",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "fixture:fixtures/topology.vertexuse/upstream_files.json#588 (upstream tests/prog_test/src/smFeatureTest.cpp:63)",
       "values_compared": 0
     },
@@ -21023,110 +21494,146 @@
       "values_compared": 16
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic surface import for vertex-use evaluation",
+        "unit": "topology.vertexuse"
+      },
       "max_rel_err": 0.0,
       "name": "surf_rev_vu0_uvpt1",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "fixture:fixtures/topology.vertexuse/upstream_files.json#591 (upstream tests/prog_test/src/smFeatureTest.cpp:63)",
       "values_compared": 0
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic surface import for vertex-use evaluation",
+        "unit": "topology.vertexuse"
+      },
       "max_rel_err": 0.0,
       "name": "surf_rev_vu0_sector1",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "fixture:fixtures/topology.vertexuse/upstream_files.json#592 (upstream tests/prog_test/src/smFeatureTest.cpp:63)",
       "values_compared": 0
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic surface import for vertex-use evaluation",
+        "unit": "topology.vertexuse"
+      },
       "max_rel_err": 0.0,
       "name": "surf_rev_vu0_uvpt0",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "fixture:fixtures/topology.vertexuse/upstream_files.json#593 (upstream tests/prog_test/src/smFeatureTest.cpp:63)",
       "values_compared": 0
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic surface import for vertex-use evaluation",
+        "unit": "topology.vertexuse"
+      },
       "max_rel_err": 0.0,
       "name": "surf_rev_vu0_sector0",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "fixture:fixtures/topology.vertexuse/upstream_files.json#594 (upstream tests/prog_test/src/smFeatureTest.cpp:63)",
       "values_compared": 0
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic surface import for vertex-use evaluation",
+        "unit": "topology.vertexuse"
+      },
       "max_rel_err": 0.0,
       "name": "surf_rev_vu0_seam",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "fixture:fixtures/topology.vertexuse/upstream_files.json#595 (upstream tests/prog_test/src/smFeatureTest.cpp:63)",
       "values_compared": 0
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic surface import for vertex-use evaluation",
+        "unit": "topology.vertexuse"
+      },
       "max_rel_err": 0.0,
       "name": "surf_rev_vu0_seam_nouv",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "fixture:fixtures/topology.vertexuse/upstream_files.json#596 (upstream tests/prog_test/src/smFeatureTest.cpp:63)",
       "values_compared": 0
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic surface import for vertex-use evaluation",
+        "unit": "topology.vertexuse"
+      },
       "max_rel_err": 0.0,
       "name": "surf_rev_vu0_pole",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "fixture:fixtures/topology.vertexuse/upstream_files.json#597 (upstream tests/prog_test/src/smFeatureTest.cpp:63)",
       "values_compared": 0
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic surface import for vertex-use evaluation",
+        "unit": "topology.vertexuse"
+      },
       "max_rel_err": 0.0,
       "name": "surf_rev_vu0_init_gap0_11",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "fixture:fixtures/topology.vertexuse/upstream_files.json#598 (upstream tests/prog_test/src/smFeatureTest.cpp:63)",
       "values_compared": 0
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic surface import for vertex-use evaluation",
+        "unit": "topology.vertexuse"
+      },
       "max_rel_err": 0.0,
       "name": "surf_rev_vu0_init_gap1_11",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "fixture:fixtures/topology.vertexuse/upstream_files.json#599 (upstream tests/prog_test/src/smFeatureTest.cpp:63)",
       "values_compared": 0
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic surface import for vertex-use evaluation",
+        "unit": "topology.vertexuse"
+      },
       "max_rel_err": 0.0,
       "name": "surf_rev_vu0_init_gap2_11",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "fixture:fixtures/topology.vertexuse/upstream_files.json#600 (upstream tests/prog_test/src/smFeatureTest.cpp:63)",
       "values_compared": 0
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic surface import for vertex-use evaluation",
+        "unit": "topology.vertexuse"
+      },
       "max_rel_err": 0.0,
       "name": "surf_rev_vu0_init_gap3_11",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "fixture:fixtures/topology.vertexuse/upstream_files.json#601 (upstream tests/prog_test/src/smFeatureTest.cpp:63)",
       "values_compared": 0
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic surface import for vertex-use evaluation",
+        "unit": "topology.vertexuse"
+      },
       "max_rel_err": 0.0,
       "name": "surf_rev_vu0_init_gap4_11",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "fixture:fixtures/topology.vertexuse/upstream_files.json#602 (upstream tests/prog_test/src/smFeatureTest.cpp:63)",
       "values_compared": 0
     },
@@ -21147,11 +21654,14 @@
       "values_compared": 16
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic surface import for vertex-use evaluation",
+        "unit": "topology.vertexuse"
+      },
       "max_rel_err": 0.0,
       "name": "surf_rev_vu0_init_pole",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "fixture:fixtures/topology.vertexuse/upstream_files.json#605 (upstream tests/prog_test/src/smFeatureTest.cpp:63)",
       "values_compared": 0
     },
@@ -21188,47 +21698,62 @@
       "values_compared": 0
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic surface import for vertex-use evaluation",
+        "unit": "topology.vertexuse"
+      },
       "max_rel_err": 0.0,
       "name": "surf_rev_vu5_gap0_11",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "fixture:fixtures/topology.vertexuse/upstream_files.json#610 (upstream tests/prog_test/src/smFeatureTest.cpp:63)",
       "values_compared": 0
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic surface import for vertex-use evaluation",
+        "unit": "topology.vertexuse"
+      },
       "max_rel_err": 0.0,
       "name": "surf_rev_vu5_gap1_11",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "fixture:fixtures/topology.vertexuse/upstream_files.json#611 (upstream tests/prog_test/src/smFeatureTest.cpp:63)",
       "values_compared": 0
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic surface import for vertex-use evaluation",
+        "unit": "topology.vertexuse"
+      },
       "max_rel_err": 0.0,
       "name": "surf_rev_vu5_gap2_11",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "fixture:fixtures/topology.vertexuse/upstream_files.json#612 (upstream tests/prog_test/src/smFeatureTest.cpp:63)",
       "values_compared": 0
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic surface import for vertex-use evaluation",
+        "unit": "topology.vertexuse"
+      },
       "max_rel_err": 0.0,
       "name": "surf_rev_vu5_gap3_11",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "fixture:fixtures/topology.vertexuse/upstream_files.json#613 (upstream tests/prog_test/src/smFeatureTest.cpp:63)",
       "values_compared": 0
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic surface import for vertex-use evaluation",
+        "unit": "topology.vertexuse"
+      },
       "max_rel_err": 0.0,
       "name": "surf_rev_vu5_gap4_11",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "fixture:fixtures/topology.vertexuse/upstream_files.json#614 (upstream tests/prog_test/src/smFeatureTest.cpp:63)",
       "values_compared": 0
     },
@@ -21249,110 +21774,146 @@
       "values_compared": 16
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic surface import for vertex-use evaluation",
+        "unit": "topology.vertexuse"
+      },
       "max_rel_err": 0.0,
       "name": "surf_rev_vu5_uvpt1",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "fixture:fixtures/topology.vertexuse/upstream_files.json#617 (upstream tests/prog_test/src/smFeatureTest.cpp:63)",
       "values_compared": 0
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic surface import for vertex-use evaluation",
+        "unit": "topology.vertexuse"
+      },
       "max_rel_err": 0.0,
       "name": "surf_rev_vu5_sector1",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "fixture:fixtures/topology.vertexuse/upstream_files.json#618 (upstream tests/prog_test/src/smFeatureTest.cpp:63)",
       "values_compared": 0
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic surface import for vertex-use evaluation",
+        "unit": "topology.vertexuse"
+      },
       "max_rel_err": 0.0,
       "name": "surf_rev_vu5_uvpt0",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "fixture:fixtures/topology.vertexuse/upstream_files.json#619 (upstream tests/prog_test/src/smFeatureTest.cpp:63)",
       "values_compared": 0
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic surface import for vertex-use evaluation",
+        "unit": "topology.vertexuse"
+      },
       "max_rel_err": 0.0,
       "name": "surf_rev_vu5_sector0",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "fixture:fixtures/topology.vertexuse/upstream_files.json#620 (upstream tests/prog_test/src/smFeatureTest.cpp:63)",
       "values_compared": 0
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic surface import for vertex-use evaluation",
+        "unit": "topology.vertexuse"
+      },
       "max_rel_err": 0.0,
       "name": "surf_rev_vu5_seam",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "fixture:fixtures/topology.vertexuse/upstream_files.json#621 (upstream tests/prog_test/src/smFeatureTest.cpp:63)",
       "values_compared": 0
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic surface import for vertex-use evaluation",
+        "unit": "topology.vertexuse"
+      },
       "max_rel_err": 0.0,
       "name": "surf_rev_vu5_seam_nouv",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "fixture:fixtures/topology.vertexuse/upstream_files.json#622 (upstream tests/prog_test/src/smFeatureTest.cpp:63)",
       "values_compared": 0
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic surface import for vertex-use evaluation",
+        "unit": "topology.vertexuse"
+      },
       "max_rel_err": 0.0,
       "name": "surf_rev_vu5_pole",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "fixture:fixtures/topology.vertexuse/upstream_files.json#623 (upstream tests/prog_test/src/smFeatureTest.cpp:63)",
       "values_compared": 0
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic surface import for vertex-use evaluation",
+        "unit": "topology.vertexuse"
+      },
       "max_rel_err": 0.0,
       "name": "surf_rev_vu5_init_gap0_11",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "fixture:fixtures/topology.vertexuse/upstream_files.json#624 (upstream tests/prog_test/src/smFeatureTest.cpp:63)",
       "values_compared": 0
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic surface import for vertex-use evaluation",
+        "unit": "topology.vertexuse"
+      },
       "max_rel_err": 0.0,
       "name": "surf_rev_vu5_init_gap1_11",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "fixture:fixtures/topology.vertexuse/upstream_files.json#625 (upstream tests/prog_test/src/smFeatureTest.cpp:63)",
       "values_compared": 0
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic surface import for vertex-use evaluation",
+        "unit": "topology.vertexuse"
+      },
       "max_rel_err": 0.0,
       "name": "surf_rev_vu5_init_gap2_11",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "fixture:fixtures/topology.vertexuse/upstream_files.json#626 (upstream tests/prog_test/src/smFeatureTest.cpp:63)",
       "values_compared": 0
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic surface import for vertex-use evaluation",
+        "unit": "topology.vertexuse"
+      },
       "max_rel_err": 0.0,
       "name": "surf_rev_vu5_init_gap3_11",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "fixture:fixtures/topology.vertexuse/upstream_files.json#627 (upstream tests/prog_test/src/smFeatureTest.cpp:63)",
       "values_compared": 0
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic surface import for vertex-use evaluation",
+        "unit": "topology.vertexuse"
+      },
       "max_rel_err": 0.0,
       "name": "surf_rev_vu5_init_gap4_11",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "fixture:fixtures/topology.vertexuse/upstream_files.json#628 (upstream tests/prog_test/src/smFeatureTest.cpp:63)",
       "values_compared": 0
     },
@@ -21373,11 +21934,14 @@
       "values_compared": 16
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic surface import for vertex-use evaluation",
+        "unit": "topology.vertexuse"
+      },
       "max_rel_err": 0.0,
       "name": "surf_rev_vu5_init_pole",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "fixture:fixtures/topology.vertexuse/upstream_files.json#631 (upstream tests/prog_test/src/smFeatureTest.cpp:63)",
       "values_compared": 0
     },
@@ -21414,20 +21978,26 @@
       "values_compared": 0
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic surface import for vertex-use evaluation",
+        "unit": "topology.vertexuse"
+      },
       "max_rel_err": 0.0,
       "name": "surf_rev_rebuild_vu2_gap0_11",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "fixture:fixtures/topology.vertexuse/upstream_files.json#636 (upstream tests/prog_test/src/smFeatureTest.cpp:63)",
       "values_compared": 0
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic surface import for vertex-use evaluation",
+        "unit": "topology.vertexuse"
+      },
       "max_rel_err": 0.0,
       "name": "surf_rev_rebuild_vu2_gap1_11",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "fixture:fixtures/topology.vertexuse/upstream_files.json#637 (upstream tests/prog_test/src/smFeatureTest.cpp:63)",
       "values_compared": 0
     },
@@ -21464,47 +22034,62 @@
       "values_compared": 0
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic surface import for vertex-use evaluation",
+        "unit": "topology.vertexuse"
+      },
       "max_rel_err": 0.0,
       "name": "surf_sphere150_vu0_gap0_11",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "fixture:fixtures/topology.vertexuse/upstream_files.json#642 (upstream tests/prog_test/src/smFeatureTest.cpp:63)",
       "values_compared": 0
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic surface import for vertex-use evaluation",
+        "unit": "topology.vertexuse"
+      },
       "max_rel_err": 0.0,
       "name": "surf_sphere150_vu0_gap1_11",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "fixture:fixtures/topology.vertexuse/upstream_files.json#643 (upstream tests/prog_test/src/smFeatureTest.cpp:63)",
       "values_compared": 0
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic surface import for vertex-use evaluation",
+        "unit": "topology.vertexuse"
+      },
       "max_rel_err": 0.0,
       "name": "surf_sphere150_vu0_gap2_11",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "fixture:fixtures/topology.vertexuse/upstream_files.json#644 (upstream tests/prog_test/src/smFeatureTest.cpp:63)",
       "values_compared": 0
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic surface import for vertex-use evaluation",
+        "unit": "topology.vertexuse"
+      },
       "max_rel_err": 0.0,
       "name": "surf_sphere150_vu0_gap3_11",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "fixture:fixtures/topology.vertexuse/upstream_files.json#645 (upstream tests/prog_test/src/smFeatureTest.cpp:63)",
       "values_compared": 0
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic surface import for vertex-use evaluation",
+        "unit": "topology.vertexuse"
+      },
       "max_rel_err": 0.0,
       "name": "surf_sphere150_vu0_gap4_11",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "fixture:fixtures/topology.vertexuse/upstream_files.json#646 (upstream tests/prog_test/src/smFeatureTest.cpp:63)",
       "values_compared": 0
     },
@@ -21525,110 +22110,146 @@
       "values_compared": 8
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic surface import for vertex-use evaluation",
+        "unit": "topology.vertexuse"
+      },
       "max_rel_err": 0.0,
       "name": "surf_sphere150_vu0_uvpt1",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "fixture:fixtures/topology.vertexuse/upstream_files.json#649 (upstream tests/prog_test/src/smFeatureTest.cpp:63)",
       "values_compared": 0
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic surface import for vertex-use evaluation",
+        "unit": "topology.vertexuse"
+      },
       "max_rel_err": 0.0,
       "name": "surf_sphere150_vu0_sector1",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "fixture:fixtures/topology.vertexuse/upstream_files.json#650 (upstream tests/prog_test/src/smFeatureTest.cpp:63)",
       "values_compared": 0
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic surface import for vertex-use evaluation",
+        "unit": "topology.vertexuse"
+      },
       "max_rel_err": 0.0,
       "name": "surf_sphere150_vu0_uvpt0",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "fixture:fixtures/topology.vertexuse/upstream_files.json#651 (upstream tests/prog_test/src/smFeatureTest.cpp:63)",
       "values_compared": 0
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic surface import for vertex-use evaluation",
+        "unit": "topology.vertexuse"
+      },
       "max_rel_err": 0.0,
       "name": "surf_sphere150_vu0_sector0",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "fixture:fixtures/topology.vertexuse/upstream_files.json#652 (upstream tests/prog_test/src/smFeatureTest.cpp:63)",
       "values_compared": 0
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic surface import for vertex-use evaluation",
+        "unit": "topology.vertexuse"
+      },
       "max_rel_err": 0.0,
       "name": "surf_sphere150_vu0_seam",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "fixture:fixtures/topology.vertexuse/upstream_files.json#653 (upstream tests/prog_test/src/smFeatureTest.cpp:63)",
       "values_compared": 0
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic surface import for vertex-use evaluation",
+        "unit": "topology.vertexuse"
+      },
       "max_rel_err": 0.0,
       "name": "surf_sphere150_vu0_seam_nouv",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "fixture:fixtures/topology.vertexuse/upstream_files.json#654 (upstream tests/prog_test/src/smFeatureTest.cpp:63)",
       "values_compared": 0
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic surface import for vertex-use evaluation",
+        "unit": "topology.vertexuse"
+      },
       "max_rel_err": 0.0,
       "name": "surf_sphere150_vu0_pole",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "fixture:fixtures/topology.vertexuse/upstream_files.json#655 (upstream tests/prog_test/src/smFeatureTest.cpp:63)",
       "values_compared": 0
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic surface import for vertex-use evaluation",
+        "unit": "topology.vertexuse"
+      },
       "max_rel_err": 0.0,
       "name": "surf_sphere150_vu0_init_gap0_11",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "fixture:fixtures/topology.vertexuse/upstream_files.json#656 (upstream tests/prog_test/src/smFeatureTest.cpp:63)",
       "values_compared": 0
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic surface import for vertex-use evaluation",
+        "unit": "topology.vertexuse"
+      },
       "max_rel_err": 0.0,
       "name": "surf_sphere150_vu0_init_gap1_11",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "fixture:fixtures/topology.vertexuse/upstream_files.json#657 (upstream tests/prog_test/src/smFeatureTest.cpp:63)",
       "values_compared": 0
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic surface import for vertex-use evaluation",
+        "unit": "topology.vertexuse"
+      },
       "max_rel_err": 0.0,
       "name": "surf_sphere150_vu0_init_gap2_11",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "fixture:fixtures/topology.vertexuse/upstream_files.json#658 (upstream tests/prog_test/src/smFeatureTest.cpp:63)",
       "values_compared": 0
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic surface import for vertex-use evaluation",
+        "unit": "topology.vertexuse"
+      },
       "max_rel_err": 0.0,
       "name": "surf_sphere150_vu0_init_gap3_11",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "fixture:fixtures/topology.vertexuse/upstream_files.json#659 (upstream tests/prog_test/src/smFeatureTest.cpp:63)",
       "values_compared": 0
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic surface import for vertex-use evaluation",
+        "unit": "topology.vertexuse"
+      },
       "max_rel_err": 0.0,
       "name": "surf_sphere150_vu0_init_gap4_11",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "fixture:fixtures/topology.vertexuse/upstream_files.json#660 (upstream tests/prog_test/src/smFeatureTest.cpp:63)",
       "values_compared": 0
     },
@@ -21649,11 +22270,14 @@
       "values_compared": 8
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic surface import for vertex-use evaluation",
+        "unit": "topology.vertexuse"
+      },
       "max_rel_err": 0.0,
       "name": "surf_sphere150_vu0_init_pole",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "fixture:fixtures/topology.vertexuse/upstream_files.json#663 (upstream tests/prog_test/src/smFeatureTest.cpp:63)",
       "values_compared": 0
     },
@@ -21690,47 +22314,62 @@
       "values_compared": 0
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic surface import for vertex-use evaluation",
+        "unit": "topology.vertexuse"
+      },
       "max_rel_err": 0.0,
       "name": "surf_sphere150_vu5_gap0_11",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "fixture:fixtures/topology.vertexuse/upstream_files.json#668 (upstream tests/prog_test/src/smFeatureTest.cpp:63)",
       "values_compared": 0
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic surface import for vertex-use evaluation",
+        "unit": "topology.vertexuse"
+      },
       "max_rel_err": 0.0,
       "name": "surf_sphere150_vu5_gap1_11",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "fixture:fixtures/topology.vertexuse/upstream_files.json#669 (upstream tests/prog_test/src/smFeatureTest.cpp:63)",
       "values_compared": 0
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic surface import for vertex-use evaluation",
+        "unit": "topology.vertexuse"
+      },
       "max_rel_err": 0.0,
       "name": "surf_sphere150_vu5_gap2_11",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "fixture:fixtures/topology.vertexuse/upstream_files.json#670 (upstream tests/prog_test/src/smFeatureTest.cpp:63)",
       "values_compared": 0
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic surface import for vertex-use evaluation",
+        "unit": "topology.vertexuse"
+      },
       "max_rel_err": 0.0,
       "name": "surf_sphere150_vu5_gap3_11",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "fixture:fixtures/topology.vertexuse/upstream_files.json#671 (upstream tests/prog_test/src/smFeatureTest.cpp:63)",
       "values_compared": 0
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic surface import for vertex-use evaluation",
+        "unit": "topology.vertexuse"
+      },
       "max_rel_err": 0.0,
       "name": "surf_sphere150_vu5_gap4_11",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "fixture:fixtures/topology.vertexuse/upstream_files.json#672 (upstream tests/prog_test/src/smFeatureTest.cpp:63)",
       "values_compared": 0
     },
@@ -21751,110 +22390,146 @@
       "values_compared": 8
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic surface import for vertex-use evaluation",
+        "unit": "topology.vertexuse"
+      },
       "max_rel_err": 0.0,
       "name": "surf_sphere150_vu5_uvpt1",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "fixture:fixtures/topology.vertexuse/upstream_files.json#675 (upstream tests/prog_test/src/smFeatureTest.cpp:63)",
       "values_compared": 0
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic surface import for vertex-use evaluation",
+        "unit": "topology.vertexuse"
+      },
       "max_rel_err": 0.0,
       "name": "surf_sphere150_vu5_sector1",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "fixture:fixtures/topology.vertexuse/upstream_files.json#676 (upstream tests/prog_test/src/smFeatureTest.cpp:63)",
       "values_compared": 0
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic surface import for vertex-use evaluation",
+        "unit": "topology.vertexuse"
+      },
       "max_rel_err": 0.0,
       "name": "surf_sphere150_vu5_uvpt0",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "fixture:fixtures/topology.vertexuse/upstream_files.json#677 (upstream tests/prog_test/src/smFeatureTest.cpp:63)",
       "values_compared": 0
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic surface import for vertex-use evaluation",
+        "unit": "topology.vertexuse"
+      },
       "max_rel_err": 0.0,
       "name": "surf_sphere150_vu5_sector0",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "fixture:fixtures/topology.vertexuse/upstream_files.json#678 (upstream tests/prog_test/src/smFeatureTest.cpp:63)",
       "values_compared": 0
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic surface import for vertex-use evaluation",
+        "unit": "topology.vertexuse"
+      },
       "max_rel_err": 0.0,
       "name": "surf_sphere150_vu5_seam",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "fixture:fixtures/topology.vertexuse/upstream_files.json#679 (upstream tests/prog_test/src/smFeatureTest.cpp:63)",
       "values_compared": 0
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic surface import for vertex-use evaluation",
+        "unit": "topology.vertexuse"
+      },
       "max_rel_err": 0.0,
       "name": "surf_sphere150_vu5_seam_nouv",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "fixture:fixtures/topology.vertexuse/upstream_files.json#680 (upstream tests/prog_test/src/smFeatureTest.cpp:63)",
       "values_compared": 0
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic surface import for vertex-use evaluation",
+        "unit": "topology.vertexuse"
+      },
       "max_rel_err": 0.0,
       "name": "surf_sphere150_vu5_pole",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "fixture:fixtures/topology.vertexuse/upstream_files.json#681 (upstream tests/prog_test/src/smFeatureTest.cpp:63)",
       "values_compared": 0
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic surface import for vertex-use evaluation",
+        "unit": "topology.vertexuse"
+      },
       "max_rel_err": 0.0,
       "name": "surf_sphere150_vu5_init_gap0_11",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "fixture:fixtures/topology.vertexuse/upstream_files.json#682 (upstream tests/prog_test/src/smFeatureTest.cpp:63)",
       "values_compared": 0
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic surface import for vertex-use evaluation",
+        "unit": "topology.vertexuse"
+      },
       "max_rel_err": 0.0,
       "name": "surf_sphere150_vu5_init_gap1_11",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "fixture:fixtures/topology.vertexuse/upstream_files.json#683 (upstream tests/prog_test/src/smFeatureTest.cpp:63)",
       "values_compared": 0
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic surface import for vertex-use evaluation",
+        "unit": "topology.vertexuse"
+      },
       "max_rel_err": 0.0,
       "name": "surf_sphere150_vu5_init_gap2_11",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "fixture:fixtures/topology.vertexuse/upstream_files.json#684 (upstream tests/prog_test/src/smFeatureTest.cpp:63)",
       "values_compared": 0
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic surface import for vertex-use evaluation",
+        "unit": "topology.vertexuse"
+      },
       "max_rel_err": 0.0,
       "name": "surf_sphere150_vu5_init_gap3_11",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "fixture:fixtures/topology.vertexuse/upstream_files.json#685 (upstream tests/prog_test/src/smFeatureTest.cpp:63)",
       "values_compared": 0
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic surface import for vertex-use evaluation",
+        "unit": "topology.vertexuse"
+      },
       "max_rel_err": 0.0,
       "name": "surf_sphere150_vu5_init_gap4_11",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "fixture:fixtures/topology.vertexuse/upstream_files.json#686 (upstream tests/prog_test/src/smFeatureTest.cpp:63)",
       "values_compared": 0
     },
@@ -21875,11 +22550,14 @@
       "values_compared": 8
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic surface import for vertex-use evaluation",
+        "unit": "topology.vertexuse"
+      },
       "max_rel_err": 0.0,
       "name": "surf_sphere150_vu5_init_pole",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "fixture:fixtures/topology.vertexuse/upstream_files.json#689 (upstream tests/prog_test/src/smFeatureTest.cpp:63)",
       "values_compared": 0
     },
@@ -21916,20 +22594,26 @@
       "values_compared": 0
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic surface import for vertex-use evaluation",
+        "unit": "topology.vertexuse"
+      },
       "max_rel_err": 0.0,
       "name": "surf_sphere150_rebuild_vu2_gap0_11",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "fixture:fixtures/topology.vertexuse/upstream_files.json#694 (upstream tests/prog_test/src/smFeatureTest.cpp:63)",
       "values_compared": 0
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic surface import for vertex-use evaluation",
+        "unit": "topology.vertexuse"
+      },
       "max_rel_err": 0.0,
       "name": "surf_sphere150_rebuild_vu2_gap1_11",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "fixture:fixtures/topology.vertexuse/upstream_files.json#695 (upstream tests/prog_test/src/smFeatureTest.cpp:63)",
       "values_compared": 0
     },
@@ -21966,47 +22650,62 @@
       "values_compared": 0
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic surface import for vertex-use evaluation",
+        "unit": "topology.vertexuse"
+      },
       "max_rel_err": 0.0,
       "name": "torus_vu0_gap0_11",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "fixture:fixtures/topology.vertexuse/upstream_files.json#700 (upstream tests/prog_test/src/smFeatureTest.cpp:63)",
       "values_compared": 0
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic surface import for vertex-use evaluation",
+        "unit": "topology.vertexuse"
+      },
       "max_rel_err": 0.0,
       "name": "torus_vu0_gap1_11",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "fixture:fixtures/topology.vertexuse/upstream_files.json#701 (upstream tests/prog_test/src/smFeatureTest.cpp:63)",
       "values_compared": 0
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic surface import for vertex-use evaluation",
+        "unit": "topology.vertexuse"
+      },
       "max_rel_err": 0.0,
       "name": "torus_vu0_gap2_11",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "fixture:fixtures/topology.vertexuse/upstream_files.json#702 (upstream tests/prog_test/src/smFeatureTest.cpp:63)",
       "values_compared": 0
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic surface import for vertex-use evaluation",
+        "unit": "topology.vertexuse"
+      },
       "max_rel_err": 0.0,
       "name": "torus_vu0_gap3_11",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "fixture:fixtures/topology.vertexuse/upstream_files.json#703 (upstream tests/prog_test/src/smFeatureTest.cpp:63)",
       "values_compared": 0
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic surface import for vertex-use evaluation",
+        "unit": "topology.vertexuse"
+      },
       "max_rel_err": 0.0,
       "name": "torus_vu0_gap4_11",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "fixture:fixtures/topology.vertexuse/upstream_files.json#704 (upstream tests/prog_test/src/smFeatureTest.cpp:63)",
       "values_compared": 0
     },
@@ -22027,110 +22726,146 @@
       "values_compared": 16
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic surface import for vertex-use evaluation",
+        "unit": "topology.vertexuse"
+      },
       "max_rel_err": 0.0,
       "name": "torus_vu0_uvpt1",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "fixture:fixtures/topology.vertexuse/upstream_files.json#707 (upstream tests/prog_test/src/smFeatureTest.cpp:63)",
       "values_compared": 0
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic surface import for vertex-use evaluation",
+        "unit": "topology.vertexuse"
+      },
       "max_rel_err": 0.0,
       "name": "torus_vu0_sector1",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "fixture:fixtures/topology.vertexuse/upstream_files.json#708 (upstream tests/prog_test/src/smFeatureTest.cpp:63)",
       "values_compared": 0
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic surface import for vertex-use evaluation",
+        "unit": "topology.vertexuse"
+      },
       "max_rel_err": 0.0,
       "name": "torus_vu0_uvpt0",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "fixture:fixtures/topology.vertexuse/upstream_files.json#709 (upstream tests/prog_test/src/smFeatureTest.cpp:63)",
       "values_compared": 0
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic surface import for vertex-use evaluation",
+        "unit": "topology.vertexuse"
+      },
       "max_rel_err": 0.0,
       "name": "torus_vu0_sector0",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "fixture:fixtures/topology.vertexuse/upstream_files.json#710 (upstream tests/prog_test/src/smFeatureTest.cpp:63)",
       "values_compared": 0
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic surface import for vertex-use evaluation",
+        "unit": "topology.vertexuse"
+      },
       "max_rel_err": 0.0,
       "name": "torus_vu0_seam",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "fixture:fixtures/topology.vertexuse/upstream_files.json#711 (upstream tests/prog_test/src/smFeatureTest.cpp:63)",
       "values_compared": 0
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic surface import for vertex-use evaluation",
+        "unit": "topology.vertexuse"
+      },
       "max_rel_err": 0.0,
       "name": "torus_vu0_seam_nouv",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "fixture:fixtures/topology.vertexuse/upstream_files.json#712 (upstream tests/prog_test/src/smFeatureTest.cpp:63)",
       "values_compared": 0
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic surface import for vertex-use evaluation",
+        "unit": "topology.vertexuse"
+      },
       "max_rel_err": 0.0,
       "name": "torus_vu0_pole",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "fixture:fixtures/topology.vertexuse/upstream_files.json#713 (upstream tests/prog_test/src/smFeatureTest.cpp:63)",
       "values_compared": 0
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic surface import for vertex-use evaluation",
+        "unit": "topology.vertexuse"
+      },
       "max_rel_err": 0.0,
       "name": "torus_vu0_init_gap0_11",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "fixture:fixtures/topology.vertexuse/upstream_files.json#714 (upstream tests/prog_test/src/smFeatureTest.cpp:63)",
       "values_compared": 0
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic surface import for vertex-use evaluation",
+        "unit": "topology.vertexuse"
+      },
       "max_rel_err": 0.0,
       "name": "torus_vu0_init_gap1_11",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "fixture:fixtures/topology.vertexuse/upstream_files.json#715 (upstream tests/prog_test/src/smFeatureTest.cpp:63)",
       "values_compared": 0
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic surface import for vertex-use evaluation",
+        "unit": "topology.vertexuse"
+      },
       "max_rel_err": 0.0,
       "name": "torus_vu0_init_gap2_11",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "fixture:fixtures/topology.vertexuse/upstream_files.json#716 (upstream tests/prog_test/src/smFeatureTest.cpp:63)",
       "values_compared": 0
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic surface import for vertex-use evaluation",
+        "unit": "topology.vertexuse"
+      },
       "max_rel_err": 0.0,
       "name": "torus_vu0_init_gap3_11",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "fixture:fixtures/topology.vertexuse/upstream_files.json#717 (upstream tests/prog_test/src/smFeatureTest.cpp:63)",
       "values_compared": 0
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic surface import for vertex-use evaluation",
+        "unit": "topology.vertexuse"
+      },
       "max_rel_err": 0.0,
       "name": "torus_vu0_init_gap4_11",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "fixture:fixtures/topology.vertexuse/upstream_files.json#718 (upstream tests/prog_test/src/smFeatureTest.cpp:63)",
       "values_compared": 0
     },
@@ -22151,11 +22886,14 @@
       "values_compared": 16
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic surface import for vertex-use evaluation",
+        "unit": "topology.vertexuse"
+      },
       "max_rel_err": 0.0,
       "name": "torus_vu0_init_pole",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "fixture:fixtures/topology.vertexuse/upstream_files.json#721 (upstream tests/prog_test/src/smFeatureTest.cpp:63)",
       "values_compared": 0
     },
@@ -22192,47 +22930,62 @@
       "values_compared": 0
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic surface import for vertex-use evaluation",
+        "unit": "topology.vertexuse"
+      },
       "max_rel_err": 0.0,
       "name": "torus_vu5_gap0_11",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "fixture:fixtures/topology.vertexuse/upstream_files.json#726 (upstream tests/prog_test/src/smFeatureTest.cpp:63)",
       "values_compared": 0
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic surface import for vertex-use evaluation",
+        "unit": "topology.vertexuse"
+      },
       "max_rel_err": 0.0,
       "name": "torus_vu5_gap1_11",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "fixture:fixtures/topology.vertexuse/upstream_files.json#727 (upstream tests/prog_test/src/smFeatureTest.cpp:63)",
       "values_compared": 0
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic surface import for vertex-use evaluation",
+        "unit": "topology.vertexuse"
+      },
       "max_rel_err": 0.0,
       "name": "torus_vu5_gap2_11",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "fixture:fixtures/topology.vertexuse/upstream_files.json#728 (upstream tests/prog_test/src/smFeatureTest.cpp:63)",
       "values_compared": 0
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic surface import for vertex-use evaluation",
+        "unit": "topology.vertexuse"
+      },
       "max_rel_err": 0.0,
       "name": "torus_vu5_gap3_11",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "fixture:fixtures/topology.vertexuse/upstream_files.json#729 (upstream tests/prog_test/src/smFeatureTest.cpp:63)",
       "values_compared": 0
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic surface import for vertex-use evaluation",
+        "unit": "topology.vertexuse"
+      },
       "max_rel_err": 0.0,
       "name": "torus_vu5_gap4_11",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "fixture:fixtures/topology.vertexuse/upstream_files.json#730 (upstream tests/prog_test/src/smFeatureTest.cpp:63)",
       "values_compared": 0
     },
@@ -22253,110 +23006,146 @@
       "values_compared": 16
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic surface import for vertex-use evaluation",
+        "unit": "topology.vertexuse"
+      },
       "max_rel_err": 0.0,
       "name": "torus_vu5_uvpt1",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "fixture:fixtures/topology.vertexuse/upstream_files.json#733 (upstream tests/prog_test/src/smFeatureTest.cpp:63)",
       "values_compared": 0
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic surface import for vertex-use evaluation",
+        "unit": "topology.vertexuse"
+      },
       "max_rel_err": 0.0,
       "name": "torus_vu5_sector1",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "fixture:fixtures/topology.vertexuse/upstream_files.json#734 (upstream tests/prog_test/src/smFeatureTest.cpp:63)",
       "values_compared": 0
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic surface import for vertex-use evaluation",
+        "unit": "topology.vertexuse"
+      },
       "max_rel_err": 0.0,
       "name": "torus_vu5_uvpt0",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "fixture:fixtures/topology.vertexuse/upstream_files.json#735 (upstream tests/prog_test/src/smFeatureTest.cpp:63)",
       "values_compared": 0
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic surface import for vertex-use evaluation",
+        "unit": "topology.vertexuse"
+      },
       "max_rel_err": 0.0,
       "name": "torus_vu5_sector0",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "fixture:fixtures/topology.vertexuse/upstream_files.json#736 (upstream tests/prog_test/src/smFeatureTest.cpp:63)",
       "values_compared": 0
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic surface import for vertex-use evaluation",
+        "unit": "topology.vertexuse"
+      },
       "max_rel_err": 0.0,
       "name": "torus_vu5_seam",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "fixture:fixtures/topology.vertexuse/upstream_files.json#737 (upstream tests/prog_test/src/smFeatureTest.cpp:63)",
       "values_compared": 0
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic surface import for vertex-use evaluation",
+        "unit": "topology.vertexuse"
+      },
       "max_rel_err": 0.0,
       "name": "torus_vu5_seam_nouv",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "fixture:fixtures/topology.vertexuse/upstream_files.json#738 (upstream tests/prog_test/src/smFeatureTest.cpp:63)",
       "values_compared": 0
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic surface import for vertex-use evaluation",
+        "unit": "topology.vertexuse"
+      },
       "max_rel_err": 0.0,
       "name": "torus_vu5_pole",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "fixture:fixtures/topology.vertexuse/upstream_files.json#739 (upstream tests/prog_test/src/smFeatureTest.cpp:63)",
       "values_compared": 0
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic surface import for vertex-use evaluation",
+        "unit": "topology.vertexuse"
+      },
       "max_rel_err": 0.0,
       "name": "torus_vu5_init_gap0_11",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "fixture:fixtures/topology.vertexuse/upstream_files.json#740 (upstream tests/prog_test/src/smFeatureTest.cpp:63)",
       "values_compared": 0
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic surface import for vertex-use evaluation",
+        "unit": "topology.vertexuse"
+      },
       "max_rel_err": 0.0,
       "name": "torus_vu5_init_gap1_11",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "fixture:fixtures/topology.vertexuse/upstream_files.json#741 (upstream tests/prog_test/src/smFeatureTest.cpp:63)",
       "values_compared": 0
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic surface import for vertex-use evaluation",
+        "unit": "topology.vertexuse"
+      },
       "max_rel_err": 0.0,
       "name": "torus_vu5_init_gap2_11",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "fixture:fixtures/topology.vertexuse/upstream_files.json#742 (upstream tests/prog_test/src/smFeatureTest.cpp:63)",
       "values_compared": 0
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic surface import for vertex-use evaluation",
+        "unit": "topology.vertexuse"
+      },
       "max_rel_err": 0.0,
       "name": "torus_vu5_init_gap3_11",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "fixture:fixtures/topology.vertexuse/upstream_files.json#743 (upstream tests/prog_test/src/smFeatureTest.cpp:63)",
       "values_compared": 0
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic surface import for vertex-use evaluation",
+        "unit": "topology.vertexuse"
+      },
       "max_rel_err": 0.0,
       "name": "torus_vu5_init_gap4_11",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "fixture:fixtures/topology.vertexuse/upstream_files.json#744 (upstream tests/prog_test/src/smFeatureTest.cpp:63)",
       "values_compared": 0
     },
@@ -22377,11 +23166,14 @@
       "values_compared": 16
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic surface import for vertex-use evaluation",
+        "unit": "topology.vertexuse"
+      },
       "max_rel_err": 0.0,
       "name": "torus_vu5_init_pole",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "fixture:fixtures/topology.vertexuse/upstream_files.json#747 (upstream tests/prog_test/src/smFeatureTest.cpp:63)",
       "values_compared": 0
     },
@@ -22418,20 +23210,26 @@
       "values_compared": 0
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic surface import for vertex-use evaluation",
+        "unit": "topology.vertexuse"
+      },
       "max_rel_err": 0.0,
       "name": "torus_rebuild_vu2_gap0_11",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "fixture:fixtures/topology.vertexuse/upstream_files.json#752 (upstream tests/prog_test/src/smFeatureTest.cpp:63)",
       "values_compared": 0
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic surface import for vertex-use evaluation",
+        "unit": "topology.vertexuse"
+      },
       "max_rel_err": 0.0,
       "name": "torus_rebuild_vu2_gap1_11",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "fixture:fixtures/topology.vertexuse/upstream_files.json#753 (upstream tests/prog_test/src/smFeatureTest.cpp:63)",
       "values_compared": 0
     },
@@ -22468,47 +23266,62 @@
       "values_compared": 0
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic surface import for vertex-use evaluation",
+        "unit": "topology.vertexuse"
+      },
       "max_rel_err": 0.0,
       "name": "toruswvy_vu0_gap0_11",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "fixture:fixtures/topology.vertexuse/upstream_files.json#758 (upstream tests/prog_test/src/smFeatureTest.cpp:63)",
       "values_compared": 0
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic surface import for vertex-use evaluation",
+        "unit": "topology.vertexuse"
+      },
       "max_rel_err": 0.0,
       "name": "toruswvy_vu0_gap1_11",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "fixture:fixtures/topology.vertexuse/upstream_files.json#759 (upstream tests/prog_test/src/smFeatureTest.cpp:63)",
       "values_compared": 0
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic surface import for vertex-use evaluation",
+        "unit": "topology.vertexuse"
+      },
       "max_rel_err": 0.0,
       "name": "toruswvy_vu0_gap2_11",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "fixture:fixtures/topology.vertexuse/upstream_files.json#760 (upstream tests/prog_test/src/smFeatureTest.cpp:63)",
       "values_compared": 0
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic surface import for vertex-use evaluation",
+        "unit": "topology.vertexuse"
+      },
       "max_rel_err": 0.0,
       "name": "toruswvy_vu0_gap3_11",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "fixture:fixtures/topology.vertexuse/upstream_files.json#761 (upstream tests/prog_test/src/smFeatureTest.cpp:63)",
       "values_compared": 0
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic surface import for vertex-use evaluation",
+        "unit": "topology.vertexuse"
+      },
       "max_rel_err": 0.0,
       "name": "toruswvy_vu0_gap4_11",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "fixture:fixtures/topology.vertexuse/upstream_files.json#762 (upstream tests/prog_test/src/smFeatureTest.cpp:63)",
       "values_compared": 0
     },
@@ -22529,110 +23342,146 @@
       "values_compared": 16
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic surface import for vertex-use evaluation",
+        "unit": "topology.vertexuse"
+      },
       "max_rel_err": 0.0,
       "name": "toruswvy_vu0_uvpt1",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "fixture:fixtures/topology.vertexuse/upstream_files.json#765 (upstream tests/prog_test/src/smFeatureTest.cpp:63)",
       "values_compared": 0
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic surface import for vertex-use evaluation",
+        "unit": "topology.vertexuse"
+      },
       "max_rel_err": 0.0,
       "name": "toruswvy_vu0_sector1",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "fixture:fixtures/topology.vertexuse/upstream_files.json#766 (upstream tests/prog_test/src/smFeatureTest.cpp:63)",
       "values_compared": 0
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic surface import for vertex-use evaluation",
+        "unit": "topology.vertexuse"
+      },
       "max_rel_err": 0.0,
       "name": "toruswvy_vu0_uvpt0",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "fixture:fixtures/topology.vertexuse/upstream_files.json#767 (upstream tests/prog_test/src/smFeatureTest.cpp:63)",
       "values_compared": 0
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic surface import for vertex-use evaluation",
+        "unit": "topology.vertexuse"
+      },
       "max_rel_err": 0.0,
       "name": "toruswvy_vu0_sector0",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "fixture:fixtures/topology.vertexuse/upstream_files.json#768 (upstream tests/prog_test/src/smFeatureTest.cpp:63)",
       "values_compared": 0
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic surface import for vertex-use evaluation",
+        "unit": "topology.vertexuse"
+      },
       "max_rel_err": 0.0,
       "name": "toruswvy_vu0_seam",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "fixture:fixtures/topology.vertexuse/upstream_files.json#769 (upstream tests/prog_test/src/smFeatureTest.cpp:63)",
       "values_compared": 0
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic surface import for vertex-use evaluation",
+        "unit": "topology.vertexuse"
+      },
       "max_rel_err": 0.0,
       "name": "toruswvy_vu0_seam_nouv",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "fixture:fixtures/topology.vertexuse/upstream_files.json#770 (upstream tests/prog_test/src/smFeatureTest.cpp:63)",
       "values_compared": 0
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic surface import for vertex-use evaluation",
+        "unit": "topology.vertexuse"
+      },
       "max_rel_err": 0.0,
       "name": "toruswvy_vu0_pole",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "fixture:fixtures/topology.vertexuse/upstream_files.json#771 (upstream tests/prog_test/src/smFeatureTest.cpp:63)",
       "values_compared": 0
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic surface import for vertex-use evaluation",
+        "unit": "topology.vertexuse"
+      },
       "max_rel_err": 0.0,
       "name": "toruswvy_vu0_init_gap0_11",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "fixture:fixtures/topology.vertexuse/upstream_files.json#772 (upstream tests/prog_test/src/smFeatureTest.cpp:63)",
       "values_compared": 0
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic surface import for vertex-use evaluation",
+        "unit": "topology.vertexuse"
+      },
       "max_rel_err": 0.0,
       "name": "toruswvy_vu0_init_gap1_11",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "fixture:fixtures/topology.vertexuse/upstream_files.json#773 (upstream tests/prog_test/src/smFeatureTest.cpp:63)",
       "values_compared": 0
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic surface import for vertex-use evaluation",
+        "unit": "topology.vertexuse"
+      },
       "max_rel_err": 0.0,
       "name": "toruswvy_vu0_init_gap2_11",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "fixture:fixtures/topology.vertexuse/upstream_files.json#774 (upstream tests/prog_test/src/smFeatureTest.cpp:63)",
       "values_compared": 0
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic surface import for vertex-use evaluation",
+        "unit": "topology.vertexuse"
+      },
       "max_rel_err": 0.0,
       "name": "toruswvy_vu0_init_gap3_11",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "fixture:fixtures/topology.vertexuse/upstream_files.json#775 (upstream tests/prog_test/src/smFeatureTest.cpp:63)",
       "values_compared": 0
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic surface import for vertex-use evaluation",
+        "unit": "topology.vertexuse"
+      },
       "max_rel_err": 0.0,
       "name": "toruswvy_vu0_init_gap4_11",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "fixture:fixtures/topology.vertexuse/upstream_files.json#776 (upstream tests/prog_test/src/smFeatureTest.cpp:63)",
       "values_compared": 0
     },
@@ -22653,11 +23502,14 @@
       "values_compared": 16
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic surface import for vertex-use evaluation",
+        "unit": "topology.vertexuse"
+      },
       "max_rel_err": 0.0,
       "name": "toruswvy_vu0_init_pole",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "fixture:fixtures/topology.vertexuse/upstream_files.json#779 (upstream tests/prog_test/src/smFeatureTest.cpp:63)",
       "values_compared": 0
     },
@@ -22694,47 +23546,62 @@
       "values_compared": 0
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic surface import for vertex-use evaluation",
+        "unit": "topology.vertexuse"
+      },
       "max_rel_err": 0.0,
       "name": "toruswvy_vu5_gap0_11",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "fixture:fixtures/topology.vertexuse/upstream_files.json#784 (upstream tests/prog_test/src/smFeatureTest.cpp:63)",
       "values_compared": 0
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic surface import for vertex-use evaluation",
+        "unit": "topology.vertexuse"
+      },
       "max_rel_err": 0.0,
       "name": "toruswvy_vu5_gap1_11",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "fixture:fixtures/topology.vertexuse/upstream_files.json#785 (upstream tests/prog_test/src/smFeatureTest.cpp:63)",
       "values_compared": 0
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic surface import for vertex-use evaluation",
+        "unit": "topology.vertexuse"
+      },
       "max_rel_err": 0.0,
       "name": "toruswvy_vu5_gap2_11",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "fixture:fixtures/topology.vertexuse/upstream_files.json#786 (upstream tests/prog_test/src/smFeatureTest.cpp:63)",
       "values_compared": 0
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic surface import for vertex-use evaluation",
+        "unit": "topology.vertexuse"
+      },
       "max_rel_err": 0.0,
       "name": "toruswvy_vu5_gap3_11",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "fixture:fixtures/topology.vertexuse/upstream_files.json#787 (upstream tests/prog_test/src/smFeatureTest.cpp:63)",
       "values_compared": 0
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic surface import for vertex-use evaluation",
+        "unit": "topology.vertexuse"
+      },
       "max_rel_err": 0.0,
       "name": "toruswvy_vu5_gap4_11",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "fixture:fixtures/topology.vertexuse/upstream_files.json#788 (upstream tests/prog_test/src/smFeatureTest.cpp:63)",
       "values_compared": 0
     },
@@ -22755,110 +23622,146 @@
       "values_compared": 16
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic surface import for vertex-use evaluation",
+        "unit": "topology.vertexuse"
+      },
       "max_rel_err": 0.0,
       "name": "toruswvy_vu5_uvpt1",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "fixture:fixtures/topology.vertexuse/upstream_files.json#791 (upstream tests/prog_test/src/smFeatureTest.cpp:63)",
       "values_compared": 0
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic surface import for vertex-use evaluation",
+        "unit": "topology.vertexuse"
+      },
       "max_rel_err": 0.0,
       "name": "toruswvy_vu5_sector1",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "fixture:fixtures/topology.vertexuse/upstream_files.json#792 (upstream tests/prog_test/src/smFeatureTest.cpp:63)",
       "values_compared": 0
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic surface import for vertex-use evaluation",
+        "unit": "topology.vertexuse"
+      },
       "max_rel_err": 0.0,
       "name": "toruswvy_vu5_uvpt0",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "fixture:fixtures/topology.vertexuse/upstream_files.json#793 (upstream tests/prog_test/src/smFeatureTest.cpp:63)",
       "values_compared": 0
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic surface import for vertex-use evaluation",
+        "unit": "topology.vertexuse"
+      },
       "max_rel_err": 0.0,
       "name": "toruswvy_vu5_sector0",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "fixture:fixtures/topology.vertexuse/upstream_files.json#794 (upstream tests/prog_test/src/smFeatureTest.cpp:63)",
       "values_compared": 0
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic surface import for vertex-use evaluation",
+        "unit": "topology.vertexuse"
+      },
       "max_rel_err": 0.0,
       "name": "toruswvy_vu5_seam",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "fixture:fixtures/topology.vertexuse/upstream_files.json#795 (upstream tests/prog_test/src/smFeatureTest.cpp:63)",
       "values_compared": 0
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic surface import for vertex-use evaluation",
+        "unit": "topology.vertexuse"
+      },
       "max_rel_err": 0.0,
       "name": "toruswvy_vu5_seam_nouv",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "fixture:fixtures/topology.vertexuse/upstream_files.json#796 (upstream tests/prog_test/src/smFeatureTest.cpp:63)",
       "values_compared": 0
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic surface import for vertex-use evaluation",
+        "unit": "topology.vertexuse"
+      },
       "max_rel_err": 0.0,
       "name": "toruswvy_vu5_pole",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "fixture:fixtures/topology.vertexuse/upstream_files.json#797 (upstream tests/prog_test/src/smFeatureTest.cpp:63)",
       "values_compared": 0
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic surface import for vertex-use evaluation",
+        "unit": "topology.vertexuse"
+      },
       "max_rel_err": 0.0,
       "name": "toruswvy_vu5_init_gap0_11",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "fixture:fixtures/topology.vertexuse/upstream_files.json#798 (upstream tests/prog_test/src/smFeatureTest.cpp:63)",
       "values_compared": 0
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic surface import for vertex-use evaluation",
+        "unit": "topology.vertexuse"
+      },
       "max_rel_err": 0.0,
       "name": "toruswvy_vu5_init_gap1_11",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "fixture:fixtures/topology.vertexuse/upstream_files.json#799 (upstream tests/prog_test/src/smFeatureTest.cpp:63)",
       "values_compared": 0
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic surface import for vertex-use evaluation",
+        "unit": "topology.vertexuse"
+      },
       "max_rel_err": 0.0,
       "name": "toruswvy_vu5_init_gap2_11",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "fixture:fixtures/topology.vertexuse/upstream_files.json#800 (upstream tests/prog_test/src/smFeatureTest.cpp:63)",
       "values_compared": 0
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic surface import for vertex-use evaluation",
+        "unit": "topology.vertexuse"
+      },
       "max_rel_err": 0.0,
       "name": "toruswvy_vu5_init_gap3_11",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "fixture:fixtures/topology.vertexuse/upstream_files.json#801 (upstream tests/prog_test/src/smFeatureTest.cpp:63)",
       "values_compared": 0
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic surface import for vertex-use evaluation",
+        "unit": "topology.vertexuse"
+      },
       "max_rel_err": 0.0,
       "name": "toruswvy_vu5_init_gap4_11",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "fixture:fixtures/topology.vertexuse/upstream_files.json#802 (upstream tests/prog_test/src/smFeatureTest.cpp:63)",
       "values_compared": 0
     },
@@ -22879,11 +23782,14 @@
       "values_compared": 16
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic surface import for vertex-use evaluation",
+        "unit": "topology.vertexuse"
+      },
       "max_rel_err": 0.0,
       "name": "toruswvy_vu5_init_pole",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "fixture:fixtures/topology.vertexuse/upstream_files.json#805 (upstream tests/prog_test/src/smFeatureTest.cpp:63)",
       "values_compared": 0
     },
@@ -22920,20 +23826,26 @@
       "values_compared": 0
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic surface import for vertex-use evaluation",
+        "unit": "topology.vertexuse"
+      },
       "max_rel_err": 0.0,
       "name": "toruswvy_rebuild_vu2_gap0_11",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "fixture:fixtures/topology.vertexuse/upstream_files.json#810 (upstream tests/prog_test/src/smFeatureTest.cpp:63)",
       "values_compared": 0
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic surface import for vertex-use evaluation",
+        "unit": "topology.vertexuse"
+      },
       "max_rel_err": 0.0,
       "name": "toruswvy_rebuild_vu2_gap1_11",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "fixture:fixtures/topology.vertexuse/upstream_files.json#811 (upstream tests/prog_test/src/smFeatureTest.cpp:63)",
       "values_compared": 0
     },
@@ -22970,47 +23882,62 @@
       "values_compared": 0
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic surface import for vertex-use evaluation",
+        "unit": "topology.vertexuse"
+      },
       "max_rel_err": 0.0,
       "name": "vase_rev_vu0_gap0_11",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "fixture:fixtures/topology.vertexuse/upstream_files.json#816 (upstream tests/prog_test/src/smFeatureTest.cpp:63)",
       "values_compared": 0
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic surface import for vertex-use evaluation",
+        "unit": "topology.vertexuse"
+      },
       "max_rel_err": 0.0,
       "name": "vase_rev_vu0_gap1_11",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "fixture:fixtures/topology.vertexuse/upstream_files.json#817 (upstream tests/prog_test/src/smFeatureTest.cpp:63)",
       "values_compared": 0
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic surface import for vertex-use evaluation",
+        "unit": "topology.vertexuse"
+      },
       "max_rel_err": 0.0,
       "name": "vase_rev_vu0_gap2_11",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "fixture:fixtures/topology.vertexuse/upstream_files.json#818 (upstream tests/prog_test/src/smFeatureTest.cpp:63)",
       "values_compared": 0
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic surface import for vertex-use evaluation",
+        "unit": "topology.vertexuse"
+      },
       "max_rel_err": 0.0,
       "name": "vase_rev_vu0_gap3_11",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "fixture:fixtures/topology.vertexuse/upstream_files.json#819 (upstream tests/prog_test/src/smFeatureTest.cpp:63)",
       "values_compared": 0
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic surface import for vertex-use evaluation",
+        "unit": "topology.vertexuse"
+      },
       "max_rel_err": 0.0,
       "name": "vase_rev_vu0_gap4_11",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "fixture:fixtures/topology.vertexuse/upstream_files.json#820 (upstream tests/prog_test/src/smFeatureTest.cpp:63)",
       "values_compared": 0
     },
@@ -23031,110 +23958,146 @@
       "values_compared": 16
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic surface import for vertex-use evaluation",
+        "unit": "topology.vertexuse"
+      },
       "max_rel_err": 0.0,
       "name": "vase_rev_vu0_uvpt1",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "fixture:fixtures/topology.vertexuse/upstream_files.json#823 (upstream tests/prog_test/src/smFeatureTest.cpp:63)",
       "values_compared": 0
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic surface import for vertex-use evaluation",
+        "unit": "topology.vertexuse"
+      },
       "max_rel_err": 0.0,
       "name": "vase_rev_vu0_sector1",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "fixture:fixtures/topology.vertexuse/upstream_files.json#824 (upstream tests/prog_test/src/smFeatureTest.cpp:63)",
       "values_compared": 0
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic surface import for vertex-use evaluation",
+        "unit": "topology.vertexuse"
+      },
       "max_rel_err": 0.0,
       "name": "vase_rev_vu0_uvpt0",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "fixture:fixtures/topology.vertexuse/upstream_files.json#825 (upstream tests/prog_test/src/smFeatureTest.cpp:63)",
       "values_compared": 0
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic surface import for vertex-use evaluation",
+        "unit": "topology.vertexuse"
+      },
       "max_rel_err": 0.0,
       "name": "vase_rev_vu0_sector0",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "fixture:fixtures/topology.vertexuse/upstream_files.json#826 (upstream tests/prog_test/src/smFeatureTest.cpp:63)",
       "values_compared": 0
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic surface import for vertex-use evaluation",
+        "unit": "topology.vertexuse"
+      },
       "max_rel_err": 0.0,
       "name": "vase_rev_vu0_seam",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "fixture:fixtures/topology.vertexuse/upstream_files.json#827 (upstream tests/prog_test/src/smFeatureTest.cpp:63)",
       "values_compared": 0
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic surface import for vertex-use evaluation",
+        "unit": "topology.vertexuse"
+      },
       "max_rel_err": 0.0,
       "name": "vase_rev_vu0_seam_nouv",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "fixture:fixtures/topology.vertexuse/upstream_files.json#828 (upstream tests/prog_test/src/smFeatureTest.cpp:63)",
       "values_compared": 0
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic surface import for vertex-use evaluation",
+        "unit": "topology.vertexuse"
+      },
       "max_rel_err": 0.0,
       "name": "vase_rev_vu0_pole",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "fixture:fixtures/topology.vertexuse/upstream_files.json#829 (upstream tests/prog_test/src/smFeatureTest.cpp:63)",
       "values_compared": 0
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic surface import for vertex-use evaluation",
+        "unit": "topology.vertexuse"
+      },
       "max_rel_err": 0.0,
       "name": "vase_rev_vu0_init_gap0_11",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "fixture:fixtures/topology.vertexuse/upstream_files.json#830 (upstream tests/prog_test/src/smFeatureTest.cpp:63)",
       "values_compared": 0
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic surface import for vertex-use evaluation",
+        "unit": "topology.vertexuse"
+      },
       "max_rel_err": 0.0,
       "name": "vase_rev_vu0_init_gap1_11",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "fixture:fixtures/topology.vertexuse/upstream_files.json#831 (upstream tests/prog_test/src/smFeatureTest.cpp:63)",
       "values_compared": 0
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic surface import for vertex-use evaluation",
+        "unit": "topology.vertexuse"
+      },
       "max_rel_err": 0.0,
       "name": "vase_rev_vu0_init_gap2_11",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "fixture:fixtures/topology.vertexuse/upstream_files.json#832 (upstream tests/prog_test/src/smFeatureTest.cpp:63)",
       "values_compared": 0
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic surface import for vertex-use evaluation",
+        "unit": "topology.vertexuse"
+      },
       "max_rel_err": 0.0,
       "name": "vase_rev_vu0_init_gap3_11",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "fixture:fixtures/topology.vertexuse/upstream_files.json#833 (upstream tests/prog_test/src/smFeatureTest.cpp:63)",
       "values_compared": 0
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic surface import for vertex-use evaluation",
+        "unit": "topology.vertexuse"
+      },
       "max_rel_err": 0.0,
       "name": "vase_rev_vu0_init_gap4_11",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "fixture:fixtures/topology.vertexuse/upstream_files.json#834 (upstream tests/prog_test/src/smFeatureTest.cpp:63)",
       "values_compared": 0
     },
@@ -23155,11 +24118,14 @@
       "values_compared": 16
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic surface import for vertex-use evaluation",
+        "unit": "topology.vertexuse"
+      },
       "max_rel_err": 0.0,
       "name": "vase_rev_vu0_init_pole",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "fixture:fixtures/topology.vertexuse/upstream_files.json#837 (upstream tests/prog_test/src/smFeatureTest.cpp:63)",
       "values_compared": 0
     },
@@ -23196,47 +24162,62 @@
       "values_compared": 0
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic surface import for vertex-use evaluation",
+        "unit": "topology.vertexuse"
+      },
       "max_rel_err": 0.0,
       "name": "vase_rev_vu5_gap0_11",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "fixture:fixtures/topology.vertexuse/upstream_files.json#842 (upstream tests/prog_test/src/smFeatureTest.cpp:63)",
       "values_compared": 0
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic surface import for vertex-use evaluation",
+        "unit": "topology.vertexuse"
+      },
       "max_rel_err": 0.0,
       "name": "vase_rev_vu5_gap1_11",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "fixture:fixtures/topology.vertexuse/upstream_files.json#843 (upstream tests/prog_test/src/smFeatureTest.cpp:63)",
       "values_compared": 0
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic surface import for vertex-use evaluation",
+        "unit": "topology.vertexuse"
+      },
       "max_rel_err": 0.0,
       "name": "vase_rev_vu5_gap2_11",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "fixture:fixtures/topology.vertexuse/upstream_files.json#844 (upstream tests/prog_test/src/smFeatureTest.cpp:63)",
       "values_compared": 0
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic surface import for vertex-use evaluation",
+        "unit": "topology.vertexuse"
+      },
       "max_rel_err": 0.0,
       "name": "vase_rev_vu5_gap3_11",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "fixture:fixtures/topology.vertexuse/upstream_files.json#845 (upstream tests/prog_test/src/smFeatureTest.cpp:63)",
       "values_compared": 0
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic surface import for vertex-use evaluation",
+        "unit": "topology.vertexuse"
+      },
       "max_rel_err": 0.0,
       "name": "vase_rev_vu5_gap4_11",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "fixture:fixtures/topology.vertexuse/upstream_files.json#846 (upstream tests/prog_test/src/smFeatureTest.cpp:63)",
       "values_compared": 0
     },
@@ -23257,110 +24238,146 @@
       "values_compared": 16
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic surface import for vertex-use evaluation",
+        "unit": "topology.vertexuse"
+      },
       "max_rel_err": 0.0,
       "name": "vase_rev_vu5_uvpt1",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "fixture:fixtures/topology.vertexuse/upstream_files.json#849 (upstream tests/prog_test/src/smFeatureTest.cpp:63)",
       "values_compared": 0
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic surface import for vertex-use evaluation",
+        "unit": "topology.vertexuse"
+      },
       "max_rel_err": 0.0,
       "name": "vase_rev_vu5_sector1",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "fixture:fixtures/topology.vertexuse/upstream_files.json#850 (upstream tests/prog_test/src/smFeatureTest.cpp:63)",
       "values_compared": 0
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic surface import for vertex-use evaluation",
+        "unit": "topology.vertexuse"
+      },
       "max_rel_err": 0.0,
       "name": "vase_rev_vu5_uvpt0",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "fixture:fixtures/topology.vertexuse/upstream_files.json#851 (upstream tests/prog_test/src/smFeatureTest.cpp:63)",
       "values_compared": 0
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic surface import for vertex-use evaluation",
+        "unit": "topology.vertexuse"
+      },
       "max_rel_err": 0.0,
       "name": "vase_rev_vu5_sector0",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "fixture:fixtures/topology.vertexuse/upstream_files.json#852 (upstream tests/prog_test/src/smFeatureTest.cpp:63)",
       "values_compared": 0
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic surface import for vertex-use evaluation",
+        "unit": "topology.vertexuse"
+      },
       "max_rel_err": 0.0,
       "name": "vase_rev_vu5_seam",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "fixture:fixtures/topology.vertexuse/upstream_files.json#853 (upstream tests/prog_test/src/smFeatureTest.cpp:63)",
       "values_compared": 0
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic surface import for vertex-use evaluation",
+        "unit": "topology.vertexuse"
+      },
       "max_rel_err": 0.0,
       "name": "vase_rev_vu5_seam_nouv",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "fixture:fixtures/topology.vertexuse/upstream_files.json#854 (upstream tests/prog_test/src/smFeatureTest.cpp:63)",
       "values_compared": 0
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic surface import for vertex-use evaluation",
+        "unit": "topology.vertexuse"
+      },
       "max_rel_err": 0.0,
       "name": "vase_rev_vu5_pole",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "fixture:fixtures/topology.vertexuse/upstream_files.json#855 (upstream tests/prog_test/src/smFeatureTest.cpp:63)",
       "values_compared": 0
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic surface import for vertex-use evaluation",
+        "unit": "topology.vertexuse"
+      },
       "max_rel_err": 0.0,
       "name": "vase_rev_vu5_init_gap0_11",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "fixture:fixtures/topology.vertexuse/upstream_files.json#856 (upstream tests/prog_test/src/smFeatureTest.cpp:63)",
       "values_compared": 0
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic surface import for vertex-use evaluation",
+        "unit": "topology.vertexuse"
+      },
       "max_rel_err": 0.0,
       "name": "vase_rev_vu5_init_gap1_11",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "fixture:fixtures/topology.vertexuse/upstream_files.json#857 (upstream tests/prog_test/src/smFeatureTest.cpp:63)",
       "values_compared": 0
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic surface import for vertex-use evaluation",
+        "unit": "topology.vertexuse"
+      },
       "max_rel_err": 0.0,
       "name": "vase_rev_vu5_init_gap2_11",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "fixture:fixtures/topology.vertexuse/upstream_files.json#858 (upstream tests/prog_test/src/smFeatureTest.cpp:63)",
       "values_compared": 0
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic surface import for vertex-use evaluation",
+        "unit": "topology.vertexuse"
+      },
       "max_rel_err": 0.0,
       "name": "vase_rev_vu5_init_gap3_11",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "fixture:fixtures/topology.vertexuse/upstream_files.json#859 (upstream tests/prog_test/src/smFeatureTest.cpp:63)",
       "values_compared": 0
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic surface import for vertex-use evaluation",
+        "unit": "topology.vertexuse"
+      },
       "max_rel_err": 0.0,
       "name": "vase_rev_vu5_init_gap4_11",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "fixture:fixtures/topology.vertexuse/upstream_files.json#860 (upstream tests/prog_test/src/smFeatureTest.cpp:63)",
       "values_compared": 0
     },
@@ -23381,11 +24398,14 @@
       "values_compared": 16
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic surface import for vertex-use evaluation",
+        "unit": "topology.vertexuse"
+      },
       "max_rel_err": 0.0,
       "name": "vase_rev_vu5_init_pole",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "fixture:fixtures/topology.vertexuse/upstream_files.json#863 (upstream tests/prog_test/src/smFeatureTest.cpp:63)",
       "values_compared": 0
     },
@@ -23422,20 +24442,26 @@
       "values_compared": 0
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic surface import for vertex-use evaluation",
+        "unit": "topology.vertexuse"
+      },
       "max_rel_err": 0.0,
       "name": "vase_rev_rebuild_vu2_gap0_11",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "fixture:fixtures/topology.vertexuse/upstream_files.json#868 (upstream tests/prog_test/src/smFeatureTest.cpp:63)",
       "values_compared": 0
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic surface import for vertex-use evaluation",
+        "unit": "topology.vertexuse"
+      },
       "max_rel_err": 0.0,
       "name": "vase_rev_rebuild_vu2_gap1_11",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "fixture:fixtures/topology.vertexuse/upstream_files.json#869 (upstream tests/prog_test/src/smFeatureTest.cpp:63)",
       "values_compared": 0
     },
@@ -23472,11 +24498,14 @@
       "values_compared": 0
     },
     {
-      "both_errored": true,
+      "deferred": {
+        "symbol": "difftest: exact analytic surface import for vertex-use evaluation",
+        "unit": "topology.vertexuse"
+      },
       "max_rel_err": 0.0,
       "name": "gen0004",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "generated:seed=10388856500545030075",
       "values_compared": 0
     },
@@ -23577,14 +24606,15 @@
       "values_compared": 120
     }
   ],
-  "cases_both_errored": 343,
-  "cases_deferred": 436,
+  "cases_both_errored": 0,
+  "cases_deferred": 779,
   "cases_failed": 0,
-  "cases_passed": 2250,
+  "cases_passed": 1907,
   "cases_total": 2686,
   "deferred_by_unit": {
     "intersect.surface_drop_lib_p3": 92,
-    "topology.face_p2": 344
+    "topology.face_p2": 344,
+    "topology.vertexuse": 343
   },
   "max_rel_err": 0.0,
   "pass": true,

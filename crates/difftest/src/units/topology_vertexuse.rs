@@ -14,6 +14,11 @@
 //!
 //! The vertex use selector is taken modulo the vertex use count (so generated cases need
 //! no counts); target selectors of `IsConnectedTo` likewise, `-1` selecting null.
+//!
+//! Surface-evaluating operations on analytically inexact imports are deferred on the
+//! Rust side to exact analytic surface import, rather than counted as matched errors.
+//! The native-side refusal and the set of operations requiring exact surfaces are
+//! unchanged; queries on those B-reps and evaluations on exact imports still compare.
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -1175,7 +1180,8 @@ fn output(op: &OpIn, body: &[f64]) -> Output {
 /// Whether the op's vertex use is on a face whose surface was not imported exactly (an
 /// `SmBSplineSurface` subclass other than `SmPlane`, imported as its B-spline part):
 /// the ops reaching the face's surface would evaluate a different surface, so such
-/// cases are not compared (both sides report `inexact_surface`).
+/// cases are not compared. The native side refuses with `inexact_surface`; the Rust
+/// side defers until exact analytic surface import is available.
 fn inexact(op: &OpIn, b: &Brep, exact: &[bool]) -> bool {
     let vu = match op {
         OpIn::VuQuery { vu }
@@ -1304,7 +1310,10 @@ fn run_rust(i: &Inputs) -> Result<Output, HarnessError> {
         return Ok(Output::err("no_vertexuse"));
     };
     if inexact(&op, &b, &exact) {
-        return Ok(Output::err("inexact_surface"));
+        return Ok(Output::deferred(
+            "topology.vertexuse",
+            "difftest: exact analytic surface import for vertex-use evaluation",
+        ));
     }
     match run_rust_op(&mut b, &op) {
         Ok(o) => Ok(o),
@@ -1586,6 +1595,81 @@ mod tests {
             let error = push_surface(&mut encoded, &surface).unwrap_err();
             assert_eq!(error.to_string(), message);
             assert_eq!(encoded, vec![42.0]);
+        }
+    }
+
+    struct SelectedCases(Vec<Case>);
+
+    impl UnitDiff for SelectedCases {
+        fn id(&self) -> &'static str {
+            Runner.id()
+        }
+
+        fn run_cpp(&self, case: &Case) -> Result<Output, HarnessError> {
+            Runner.run_cpp(case)
+        }
+
+        fn run_rust(&self, case: &Case) -> Result<Output, HarnessError> {
+            Runner.run_rust(case)
+        }
+
+        fn cases(&self, _ctx: &crate::CaseContext) -> Result<Vec<Case>, HarnessError> {
+            Ok(self.0.clone())
+        }
+    }
+
+    // Keep native calls in one test and use --test-threads=1: C++ has global state.
+    #[test]
+    fn inexact_import_defers_but_exact_operations_still_compare() {
+        let ctx = crate::CaseContext {
+            root: crate::case::repo_root(),
+            seeds: 0,
+        };
+        let fixtures = ctx.fixture_cases(Runner.id()).unwrap();
+        let mut selected = Vec::new();
+        for (name, deferred) in [
+            ("Mouse_vu0_gap0_11", true),
+            ("Mouse_vu0_uvpt1", true),
+            ("Mouse_vu0_sector1", true),
+            ("Mouse_vu0_seam", true),
+            ("Mouse_vu0_pole", true),
+            // The same inexact B-rep still supports exact topology/cache queries.
+            ("Mouse_vu0_q", false),
+            ("Mouse_vu0_conn16006", false),
+            ("Mouse_vu0_notify11", false),
+            ("face0_vu0_gap0_11", false),
+            ("face2_vu0_gap0_11", false),
+        ] {
+            let case = fixtures.iter().find(|case| case.name == name).unwrap();
+            let cpp = Runner.run_cpp(case).unwrap();
+            let rust = Runner.run_rust(case).unwrap();
+            assert!(cpp.rejected.is_none() && rust.rejected.is_none(), "{name}");
+            assert!(cpp.deferred.is_none(), "{name}");
+            assert!(rust.error.is_none(), "{name}: {rust:?}");
+            if deferred {
+                assert_eq!(cpp.error.as_deref(), Some("inexact_surface"), "{name}");
+                let why = rust.deferred.as_ref().unwrap();
+                assert_eq!(why.unit, "topology.vertexuse");
+                assert_eq!(why.symbol, "difftest: exact analytic surface import for vertex-use evaluation");
+                assert!(rust.values.is_empty() && rust.ints.is_empty());
+                assert!(rust.topology.is_none());
+            } else {
+                assert!(rust.deferred.is_none() && cpp.error.is_none(), "{name}");
+                let diff = crate::compare(&cpp, &rust, Runner.abs_floors());
+                assert!(diff.pass(), "{name}: {diff:?}");
+                assert!(diff.values_compared + diff.exact_compared > 0, "{name}");
+            }
+            selected.push(case.clone());
+        }
+        let result = crate::run_unit(&SelectedCases(selected), &ctx, &crate::RunOptions::default());
+        assert_eq!((result.passed(), result.deferred(), result.failed()), (5, 5, 0));
+        assert_eq!(result.rejected(), 0);
+        assert_eq!(result.deferred_by_unit().get("topology.vertexuse"), Some(&5));
+        for case in &result.cases {
+            assert_eq!(case.is_deferred(), matches!(case.name.as_str(),
+                "Mouse_vu0_gap0_11" | "Mouse_vu0_uvpt1" | "Mouse_vu0_sector1" |
+                "Mouse_vu0_seam" | "Mouse_vu0_pole"), "{}", case.name);
+            assert_eq!(case.compared_values(), case.pass(), "{}", case.name);
         }
     }
 }

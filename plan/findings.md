@@ -5072,6 +5072,23 @@ there is no new SSI implementation or external corpus use.
 
 ## topology.vertexuse (`SmVertexuse`, 2026-10-14; partial, no disagreements)
 
+- **Reporting correction (issue #294 row 4, 2026-10-21).** Surface-evaluating
+  cases on analytic surfaces imported only as their B-spline part previously returned
+  `inexact_surface` on both sides. Those matched guard refusals were counted as passes
+  without comparing values. The Rust side now defers to `topology.vertexuse` with
+  reason `difftest: exact analytic surface import for vertex-use evaluation`; the C++
+  refusal and the `inexact` predicate are unchanged. Fresh default C++ baseline:
+  2686 cases, 2250 passes (1907 with values, 343 without), 436 deferred, no failures.
+  Exactly 343 guard-only passes move to deferred: gaps 198, UV point 36, UV sector 36,
+  missing seam 37, on pole 36. The corrected report has 1907 substantive passes,
+  779 deferred and no failures or empty passes; existing deferrals remain
+  `intersect.surface_drop_lib_p3` 92 and `topology.face_p2` 344. There are no other
+  current matched errors, so no legitimate operation error was relabelled; both
+  `no_vertexuse` paths are unchanged. This only corrects accounting, not geometric
+  capability or exact analytic import. Native regression covers every affected family,
+  exact query/connection/notification operations on the same Mouse B-rep, and actual
+  gap evaluations on exact plane and B-spline imports through the runner.
+
 - **B-rep import.** As `topology.edgeuse_p1`: the shim builds real `SmBrep`s (15 upstream
   `.smb` files, wire edges, faces from B-spline surfaces and `SmPlane`s, the wire network
   of prog_test `my_test_topology`) and exports the graph (now with each vertex use's
