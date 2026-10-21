@@ -59,8 +59,8 @@
 //! - The `SM_DEBUG_CODE` blocks (dumps, drawing) are not ported; release `SM_ASSERT`s
 //!   are expression statements whose only effect is the dereference they make.
 //! - **Callees not ported yet** return [`SolidError::Unported`]: the owning B-rep editing metadata for `SmBrep::MakeEdgeInFace`
-//!   (`topology.brep_p1`; part 5's typed arena entry point is available), `SmFace::CalculateUVDomainFromUVTrimCurves`
-//!   (`topology.face_p1`), `sm_ClassifyParamOnFaces` (`query.face_p2`),
+//!   (`topology.brep_p1`; part 5's typed arena entry point is available),
+//!   `sm_ClassifyParamOnFaces` (`query.face_p2`),
 //!   `SmSurface::DropPoint` (`surface.surface_p5`) and `SmEdgeuse::EvaluateBinormal`
 //!   (`topology.edgeuse_p3`).
 //! - **Recursion.** None.
@@ -121,6 +121,19 @@ pub trait ProtoBrep<O>: ProtoGeometry<O> + ProtoTopology<O> {
     fn set_face_uv_domain(&mut self, face: O, domain: Extent2d) -> Option<()>;
     /// `SmFace::GetSurface`: the handle of the face's surface (`Some(None)` for none).
     fn face_surface(&self, face: O) -> Option<Option<O>>;
+    /// `SmFace::CalculateUVDomainFromUVTrimCurves(rNewFaceDomain)` with upstream's
+    /// default arguments (`bLimitDomain = TRUE`, no loop gaps): the B-rep owner
+    /// implements it with `topology::face::p1::calculate_uv_domain_from_uv_trim_curves`.
+    /// Returns `rNewFaceDomain`.
+    ///
+    /// # Errors
+    ///
+    /// Those of `calculate_uv_domain_from_uv_trim_curves`.
+    fn face_calculate_uv_domain_from_uv_trim_curves(
+        &mut self,
+        k: &Kernel,
+        face: O,
+    ) -> Result<Extent2d>;
     /// `SmEdge::GetEdgeuseOfFace`: the edge's use bounding `face`, if any.
     ///
     /// # Errors
@@ -340,19 +353,6 @@ fn make_edge_in_face<O>() -> Result<(Option<O>, Option<O>, Option<O>)> {
     Err(SolidError::unported(
         "SmBrep::m_bEditingEnabled",
         "topology.brep_p1",
-    ))
-}
-
-/// `SmFace::CalculateUVDomainFromUVTrimCurves`.
-fn calculate_uv_domain_from_uv_trim_curves<O: Copy>(face: O) -> Result<Extent2d> {
-    let _ = face;
-    // UNPORTED(topology.face_p1): SmFace::CalculateUVDomainFromUVTrimCurves
-    // (ported as topology::face::p1::calculate_uv_domain_from_uv_trim_curves, which takes
-    // a Brep face; a ProtoBrep face handle cannot reach it until the ProtoBrep trait has
-    // a B-rep face query)
-    Err(SolidError::unported(
-        "SmFace::CalculateUVDomainFromUVTrimCurves",
-        "topology.face_p1",
     ))
 }
 
@@ -1680,8 +1680,8 @@ impl<O: ClassObject> ProtoTopologyManager<O> {
     ///
     /// # Errors
     ///
-    /// [`SolidError::Unported`]: the faces' UV domains from their trim curves
-    /// (`SmFace::CalculateUVDomainFromUVTrimCurves`, unit `topology.face_p1`), the
+    /// Those of [`ProtoBrep::face_calculate_uv_domain_from_uv_trim_curves`] that a
+    /// soft status does not cover; [`SolidError::Unported`]: the
     /// face classification of UV points (`sm_ClassifyParamOnFaces`, unit
     /// `query.face_p2`), the surface drops (unit `surface.surface_p5`) and the edge
     /// use binormals (unit `topology.edgeuse_p3`); [`SolidError::InvalidInput`] for
@@ -1702,9 +1702,11 @@ impl<O: ClassObject> ProtoTopologyManager<O> {
         // Face UVDomains = Min(current FaceUVDomain, UVTrimCurve domain) (statuses
         // ignored)
         let old_domain =
-            ignore_soft(calculate_uv_domain_from_uv_trim_curves(old_face))?.unwrap_or_default();
+            ignore_soft(brep.face_calculate_uv_domain_from_uv_trim_curves(k, old_face))?
+                .unwrap_or_default();
         let new_domain =
-            ignore_soft(calculate_uv_domain_from_uv_trim_curves(new_face))?.unwrap_or_default();
+            ignore_soft(brep.face_calculate_uv_domain_from_uv_trim_curves(k, new_face))?
+                .unwrap_or_default();
 
         if !brep
             .face_uv_domain(old_face)
@@ -2173,6 +2175,13 @@ mod tests {
             _cc: &mut CurveClassification<H>,
         ) -> Result<bool> {
             Ok(false)
+        }
+        fn face_calculate_uv_domain_from_uv_trim_curves(
+            &mut self,
+            _k: &Kernel,
+            _face: H,
+        ) -> Result<Extent2d> {
+            Err(SolidError::invalid_input(OP, "test faces have no B-rep"))
         }
     }
 

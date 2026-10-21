@@ -431,6 +431,27 @@ impl ProtoBrep<H> for ArenaPair<'_> {
             .map(|e| hd(v1.b, K_EDGE, e.index()))
             .collect())
     }
+    fn face_calculate_uv_domain_from_uv_trim_curves(
+        &mut self,
+        k: &Kernel,
+        face: H,
+    ) -> crate::Result<Extent2d> {
+        if face.kind != K_FACE {
+            return Err(invalid("not a face handle"));
+        }
+        let b = self.brep_m(face)?;
+        Ok(
+            crate::topology::face::p1::calculate_uv_domain_from_uv_trim_curves(
+                k,
+                b,
+                fid(face),
+                true,
+                false,
+                false,
+            )?
+            .domain,
+        )
+    }
     fn face_curve_on_classify(
         &self,
         k: &Kernel,
@@ -1061,6 +1082,12 @@ impl TopologyObjects<H> for ArenaPair<'_> {
     }
     fn face_tolerance(&self, face: H) -> crate::Result<f64> {
         fp2::tolerance(self.brep_r(face)?, fid(face))
+    }
+    fn face_entity(&self, face: H) -> Option<(&Brep, FaceId)> {
+        if face.kind != K_FACE {
+            return None;
+        }
+        Some((self.brep_r(face).ok()?, fid(face)))
     }
     fn surface_owner(&self, surface: H) -> crate::Result<Option<H>> {
         self.surface_face(surface)

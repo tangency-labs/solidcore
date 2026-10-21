@@ -1353,8 +1353,7 @@ impl ProtoBrep<H> for Pool {
             _ => None,
         }
     }
-    // The bare faces have no UV domain the port reads: `UpdateFaces` defers before
-    // (`SmFace::CalculateUVDomainFromUVTrimCurves`, unit topology.face_p1).
+    // The bare faces have no UV domain the port reads.
     fn face_uv_domain(&self, _face: H) -> Option<Extent2d> {
         None
     }
@@ -1385,6 +1384,20 @@ impl ProtoBrep<H> for Pool {
         Err(SolidError::invalid_input(
             "difftest::proto_p3::vertex_common_edges",
             "stand-in vertices have no edges",
+        ))
+    }
+    // The bare faces have no face uses, loops or B-rep for
+    // `topology::face::p1::calculate_uv_domain_from_uv_trim_curves`; the shim does not run
+    // `UpdateFaces` on them either (`P2_MGR_UPDATE_FACES` skips the rest of the script),
+    // so this refusal ends the compared script at the same op.
+    fn face_calculate_uv_domain_from_uv_trim_curves(
+        &mut self,
+        _k: &Kernel,
+        _face: H,
+    ) -> solidcore::Result<Extent2d> {
+        Err(SolidError::invalid_input(
+            "difftest::topology_proto_topology_p1::Pool",
+            "bare stand-in face has no B-rep",
         ))
     }
     // The stand-ins have no B-rep faces to run `query::face::p2::curve_on_classify` on,

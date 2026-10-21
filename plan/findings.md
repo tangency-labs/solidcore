@@ -11276,3 +11276,68 @@ guarded in `offset.offset_geometry_creation`; the fix belongs to the curve cache
   tessellation, before any intersection test, as in `fuzz00504`.
 - **Status.** Open, with `fuzz00504`. Reproduce with the fuzz output file as a fixture and
   the tolerance set to any accepted value.
+
+## wire: topology-faces (PR #334, 2026-10-20): stale `UNPORTED(topology.face_p1/p2/p3)` stubs
+
+Wired:
+
+- `topology.brep_p9` `compute_loop_orientation` (`SmBrep::MakeEdgeInFace`'s two
+  `SmFace::ComputeLoopOrientation(.., NULL, TRUE)` calls) now calls
+  `topology::face::p3::compute_loop_orientation`.
+- `topology.proto_topology_p2` `UpdateFaces`' two `SmFace::CalculateUVDomainFromUVTrimCurves`
+  calls go through a new `ProtoBrep::face_calculate_uv_domain_from_uv_trim_curves`
+  (upstream defaults: `bLimitDomain = TRUE`, no loop gaps). `boolean.merge_p4`'s
+  `ArenaPair` and the `boolean.topology_intersector_p1` runner's `Two` implement it with
+  `topology::face::p1::calculate_uv_domain_from_uv_trim_curves`. The proto-topology
+  runners' bare-stand-in `Pool` refuses it (`InvalidInput`): the shim does not run
+  `UpdateFaces` on its bare faces either (`P2_MGR_UPDATE_FACES` skips the rest of the
+  script), so those scripts now end their comparison at that op instead of deferring.
+- `intersect.topology_solver_p1` `face_silhouettes` (`sm_GetFaceSilhouettes`) now trims
+  with `topology::face::p2::create_curves_by_trimming`, registers the result with
+  `AddCurvesToCache` and reads it back with `HasCachedCurves` (`SM_ERR` when missing), as
+  upstream. The face is resolved through a new `TopologyObjects::face_entity` (default
+  `None`, an adapter gap reported as invalid input), implemented by `BrepObjects`,
+  `ArenaPair` and the `boolean.topology_intersector_p1` / `query.api_queries` runner
+  adapters. The path is still unreachable: `Surface::create_silhouette_curves` before it
+  is `UNPORTED(intersect.surface_tracer)`.
+
+Left (the target is ported, but the call cannot be made from the stub's context):
+
+- **A surface cannot reach its face's tolerance** (`SmSurface::GetFace()->GetTolerance()`;
+  3315 deferred cases in 32 unit reports on main, the biggest single `topology.face_p2`
+  blocker):
+  `surface/plane/p2.rs` `zone_tolerance`, `surface/surface/p1.rs` `zone_tol_3d` and
+  `calculate_bounding_box`, `p3.rs` `surface_approx_tol_3d`, `p4.rs` (curve/surface
+  tolerance heuristics), `p5.rs` `drop_point` and `local_surface_surface_intersect_xyz`,
+  `p7.rs` `is_planar`, `intersect/point_class.rs` `object_zone_tol_3d` (`Surface` branch)
+  and `surface/surface_cache/p1.rs` `SurfaceCache::face`. A `Surface` knows only its
+  owner's `ObjectRef` (type code and key), not the B-rep or `FaceId`, and these methods
+  take no B-rep. Wiring needs either a face-tolerance argument threaded through every
+  caller of those methods, or a face tolerance mirrored onto the face-owned `Surface`
+  and kept in sync with every write of the public `Face::tolerance` / `Face::surface`
+  fields (`face::p3::set_tolerance`, `brep::p10`, face construction, `set_surface`).
+  Both are cross-unit API changes for the owners of `surface.surface_p1` and
+  `topology.face_p2`, not stub wiring.
+- `geom/solution_array.rs` `face_surface` / `face_uv_domain`: a `SolutionObject` is an
+  opaque handle with no face accessor (the same blocker as the
+  `UNPORTED(surface.surface_p2)` `evaluate_surface` beside them); the
+  `geom.solution_array` runner's handles are bare kind codes with no faces behind them.
+- `geom/tol.rs` header note `SmTol::GetScaledZero(const SmFace&)`: an overload with no
+  caller; nothing to wire.
+- `intersect/curve_class/p1.rs` `compute_face_point_class`: the body of
+  `sm_ComputeFacePointClass` (surface cache point-test switch, three `GlobalPointSolve`
+  rounds, `SmFace::PointClassify`) is not ported, and nothing calls it.
+- `intersect/curve_class/p2.rs` `interval_uv_at` (`GetMinUV` / `GetMaxUV` of a 3D
+  curve): would need a `Kernel` argument and then reaches `Surface::drop_point` on the
+  face-owned surface, which stops at the face-tolerance stub above.
+- `query/poly.rs` `edge_is_degenerate` and `surface/trim_srf_cache.rs` (poly edge
+  implant): the poly B-rep and the trimmed surface cache keep the original face as an
+  opaque key / handle with no B-rep (as `topology.face_p3`'s "Stubs left for this unit").
+- `surface/surface/p3.rs` `remove_uv_trim_curves_of_owner` (`topology.face_p1`
+  `RemoveUVTrimCurves`): `CoverCoincidentSurface` runs on a bare `&Surface`; the owner
+  face's B-rep is not reachable there.
+- `topology.face_p3` stubs marked `justified:` (findings `topology.face_p3`, "Stubs left
+  for this unit"; `boolean.topology_intersector_p1` `FaceIntersect`): unchanged reasons.
+- Skipped because open PRs already remove them: `heal/stitch/p2.rs` and
+  `topology/brep/p9.rs` `SmFace::Notify` (#285, merged meanwhile; #303); `intersect/point_class.rs`
+  `GetSurface` (two sites) and `object_zone_tol_3d`'s `Face` branch (#316).

@@ -202,16 +202,12 @@
       "values_compared": 42
     },
     {
-      "deferred": {
-        "symbol": "SmFace::CalculateUVDomainFromUVTrimCurves",
-        "unit": "topology.face_p1"
-      },
       "max_rel_err": 0.0,
       "name": "gen0020",
-      "outcome": "deferred",
-      "pass": false,
+      "outcome": "pass",
+      "pass": true,
       "source": "generated:seed=11501319568046903699",
-      "values_compared": 0
+      "values_compared": 88
     },
     {
       "max_rel_err": 0.0,
@@ -702,16 +698,12 @@
       "values_compared": 392
     },
     {
-      "deferred": {
-        "symbol": "SmFace::CalculateUVDomainFromUVTrimCurves",
-        "unit": "topology.face_p1"
-      },
       "max_rel_err": 0.0,
       "name": "gen0078",
-      "outcome": "deferred",
-      "pass": false,
+      "outcome": "pass",
+      "pass": true,
       "source": "generated:seed=11501319568046903757",
-      "values_compared": 0
+      "values_compared": 61
     },
     {
       "max_rel_err": 0.0,
@@ -794,16 +786,12 @@
       "values_compared": 107
     },
     {
-      "deferred": {
-        "symbol": "SmFace::CalculateUVDomainFromUVTrimCurves",
-        "unit": "topology.face_p1"
-      },
       "max_rel_err": 0.0,
       "name": "gen0087",
-      "outcome": "deferred",
-      "pass": false,
+      "outcome": "pass",
+      "pass": true,
       "source": "generated:seed=11501319568046903766",
-      "values_compared": 0
+      "values_compared": 51
     },
     {
       "max_rel_err": 0.0,
@@ -1058,16 +1046,12 @@
       "values_compared": 44
     },
     {
-      "deferred": {
-        "symbol": "SmFace::CalculateUVDomainFromUVTrimCurves",
-        "unit": "topology.face_p1"
-      },
       "max_rel_err": 0.0,
       "name": "gen0117",
-      "outcome": "deferred",
-      "pass": false,
+      "outcome": "pass",
+      "pass": true,
       "source": "generated:seed=11501319568046903796",
-      "values_compared": 0
+      "values_compared": 81
     },
     {
       "max_rel_err": 0.0,
@@ -1178,16 +1162,12 @@
       "values_compared": 88
     },
     {
-      "deferred": {
-        "symbol": "SmFace::CalculateUVDomainFromUVTrimCurves",
-        "unit": "topology.face_p1"
-      },
       "max_rel_err": 0.0,
       "name": "gen0131",
-      "outcome": "deferred",
-      "pass": false,
+      "outcome": "pass",
+      "pass": true,
       "source": "generated:seed=11501319568046903810",
-      "values_compared": 0
+      "values_compared": 91
     },
     {
       "max_rel_err": 0.0,
@@ -1674,16 +1654,12 @@
       "values_compared": 294
     },
     {
-      "deferred": {
-        "symbol": "SmFace::CalculateUVDomainFromUVTrimCurves",
-        "unit": "topology.face_p1"
-      },
       "max_rel_err": 0.0,
       "name": "gen0188",
-      "outcome": "deferred",
-      "pass": false,
+      "outcome": "pass",
+      "pass": true,
       "source": "generated:seed=11501319568046903867",
-      "values_compared": 0
+      "values_compared": 87
     },
     {
       "deferred": {
@@ -1902,16 +1878,12 @@
       "values_compared": 0
     },
     {
-      "deferred": {
-        "symbol": "SmFace::CalculateUVDomainFromUVTrimCurves",
-        "unit": "topology.face_p1"
-      },
       "max_rel_err": 0.0,
       "name": "gen0213",
-      "outcome": "deferred",
-      "pass": false,
+      "outcome": "pass",
+      "pass": true,
       "source": "generated:seed=11501319568046903892",
-      "values_compared": 0
+      "values_compared": 78
     },
     {
       "max_rel_err": 0.0,
@@ -2382,16 +2354,12 @@
       "values_compared": 120
     },
     {
-      "deferred": {
-        "symbol": "SmFace::CalculateUVDomainFromUVTrimCurves",
-        "unit": "topology.face_p1"
-      },
       "max_rel_err": 0.0,
       "name": "gen0267",
-      "outcome": "deferred",
-      "pass": false,
+      "outcome": "pass",
+      "pass": true,
       "source": "generated:seed=11501319568046903946",
-      "values_compared": 0
+      "values_compared": 84
     },
     {
       "max_rel_err": 0.0,
@@ -2638,16 +2606,12 @@
       "values_compared": 296
     },
     {
-      "deferred": {
-        "symbol": "SmFace::CalculateUVDomainFromUVTrimCurves",
-        "unit": "topology.face_p1"
-      },
       "max_rel_err": 0.0,
       "name": "gen0296",
-      "outcome": "deferred",
-      "pass": false,
+      "outcome": "pass",
+      "pass": true,
       "source": "generated:seed=11501319568046903975",
-      "values_compared": 0
+      "values_compared": 107
     },
     {
       "max_rel_err": 0.0,
@@ -3646,16 +3610,12 @@
       "values_compared": 279
     },
     {
-      "deferred": {
-        "symbol": "SmFace::CalculateUVDomainFromUVTrimCurves",
-        "unit": "topology.face_p1"
-      },
       "max_rel_err": 0.0,
       "name": "gen0415",
-      "outcome": "deferred",
-      "pass": false,
+      "outcome": "pass",
+      "pass": true,
       "source": "generated:seed=11501319568046904094",
-      "values_compared": 0
+      "values_compared": 68
     },
     {
       "max_rel_err": 0.0,
@@ -4042,16 +4002,12 @@
       "values_compared": 338
     },
     {
-      "deferred": {
-        "symbol": "SmFace::CalculateUVDomainFromUVTrimCurves",
-        "unit": "topology.face_p1"
-      },
       "max_rel_err": 0.0,
       "name": "gen0460",
-      "outcome": "deferred",
-      "pass": false,
+      "outcome": "pass",
+      "pass": true,
       "source": "generated:seed=11501319568046904139",
-      "values_compared": 0
+      "values_compared": 87
     },
     {
       "max_rel_err": 0.0,
@@ -4534,16 +4490,12 @@
       "values_compared": 75
     },
     {
-      "deferred": {
-        "symbol": "SmFace::CalculateUVDomainFromUVTrimCurves",
-        "unit": "topology.face_p1"
-      },
       "max_rel_err": 0.0,
       "name": "gen0516",
-      "outcome": "deferred",
-      "pass": false,
+      "outcome": "pass",
+      "pass": true,
       "source": "generated:seed=11501319568046904195",
-      "values_compared": 0
+      "values_compared": 116
     },
     {
       "max_rel_err": 0.0,
@@ -5182,16 +5134,12 @@
       "values_compared": 506
     },
     {
-      "deferred": {
-        "symbol": "SmFace::CalculateUVDomainFromUVTrimCurves",
-        "unit": "topology.face_p1"
-      },
       "max_rel_err": 0.0,
       "name": "gen0589",
-      "outcome": "deferred",
-      "pass": false,
+      "outcome": "pass",
+      "pass": true,
       "source": "generated:seed=11501319568046904268",
-      "values_compared": 0
+      "values_compared": 87
     },
     {
       "max_rel_err": 0.0,
@@ -5322,16 +5270,12 @@
       "values_compared": 47
     },
     {
-      "deferred": {
-        "symbol": "SmFace::CalculateUVDomainFromUVTrimCurves",
-        "unit": "topology.face_p1"
-      },
       "max_rel_err": 0.0,
       "name": "gen0605",
-      "outcome": "deferred",
-      "pass": false,
+      "outcome": "pass",
+      "pass": true,
       "source": "generated:seed=11501319568046904284",
-      "values_compared": 0
+      "values_compared": 77
     },
     {
       "max_rel_err": 0.0,
@@ -5466,16 +5410,12 @@
       "values_compared": 0
     },
     {
-      "deferred": {
-        "symbol": "SmFace::CalculateUVDomainFromUVTrimCurves",
-        "unit": "topology.face_p1"
-      },
       "max_rel_err": 0.0,
       "name": "gen0621",
-      "outcome": "deferred",
-      "pass": false,
+      "outcome": "pass",
+      "pass": true,
       "source": "generated:seed=11501319568046904300",
-      "values_compared": 0
+      "values_compared": 103
     },
     {
       "max_rel_err": 0.0,
@@ -5698,16 +5638,12 @@
       "values_compared": 66
     },
     {
-      "deferred": {
-        "symbol": "SmFace::CalculateUVDomainFromUVTrimCurves",
-        "unit": "topology.face_p1"
-      },
       "max_rel_err": 0.0,
       "name": "gen0647",
-      "outcome": "deferred",
-      "pass": false,
+      "outcome": "pass",
+      "pass": true,
       "source": "generated:seed=11501319568046904326",
-      "values_compared": 0
+      "values_compared": 130
     },
     {
       "max_rel_err": 0.0,
@@ -5774,16 +5710,12 @@
       "values_compared": 298
     },
     {
-      "deferred": {
-        "symbol": "SmFace::CalculateUVDomainFromUVTrimCurves",
-        "unit": "topology.face_p1"
-      },
       "max_rel_err": 0.0,
       "name": "gen0656",
-      "outcome": "deferred",
-      "pass": false,
+      "outcome": "pass",
+      "pass": true,
       "source": "generated:seed=11501319568046904335",
-      "values_compared": 0
+      "values_compared": 66
     },
     {
       "max_rel_err": 0.0,
@@ -6322,16 +6254,12 @@
       "values_compared": 0
     },
     {
-      "deferred": {
-        "symbol": "SmFace::CalculateUVDomainFromUVTrimCurves",
-        "unit": "topology.face_p1"
-      },
       "max_rel_err": 0.0,
       "name": "gen0720",
-      "outcome": "deferred",
-      "pass": false,
+      "outcome": "pass",
+      "pass": true,
       "source": "generated:seed=11501319568046904399",
-      "values_compared": 0
+      "values_compared": 91
     },
     {
       "deferred": {
@@ -6934,16 +6862,12 @@
       "values_compared": 407
     },
     {
-      "deferred": {
-        "symbol": "SmFace::CalculateUVDomainFromUVTrimCurves",
-        "unit": "topology.face_p1"
-      },
       "max_rel_err": 0.0,
       "name": "gen0789",
-      "outcome": "deferred",
-      "pass": false,
+      "outcome": "pass",
+      "pass": true,
       "source": "generated:seed=11501319568046904468",
-      "values_compared": 0
+      "values_compared": 101
     },
     {
       "max_rel_err": 0.0,
@@ -7450,28 +7374,20 @@
       "values_compared": 0
     },
     {
-      "deferred": {
-        "symbol": "SmFace::CalculateUVDomainFromUVTrimCurves",
-        "unit": "topology.face_p1"
-      },
       "max_rel_err": 0.0,
       "name": "gen0847",
-      "outcome": "deferred",
-      "pass": false,
+      "outcome": "pass",
+      "pass": true,
       "source": "generated:seed=11501319568046904526",
-      "values_compared": 0
+      "values_compared": 115
     },
     {
-      "deferred": {
-        "symbol": "SmFace::CalculateUVDomainFromUVTrimCurves",
-        "unit": "topology.face_p1"
-      },
       "max_rel_err": 0.0,
       "name": "gen0848",
-      "outcome": "deferred",
-      "pass": false,
+      "outcome": "pass",
+      "pass": true,
       "source": "generated:seed=11501319568046904527",
-      "values_compared": 0
+      "values_compared": 36
     },
     {
       "max_rel_err": 0.0,
@@ -7714,16 +7630,12 @@
       "values_compared": 91
     },
     {
-      "deferred": {
-        "symbol": "SmFace::CalculateUVDomainFromUVTrimCurves",
-        "unit": "topology.face_p1"
-      },
       "max_rel_err": 0.0,
       "name": "gen0876",
-      "outcome": "deferred",
-      "pass": false,
+      "outcome": "pass",
+      "pass": true,
       "source": "generated:seed=11501319568046904555",
-      "values_compared": 0
+      "values_compared": 78
     },
     {
       "deferred": {
@@ -7842,16 +7754,12 @@
       "values_compared": 0
     },
     {
-      "deferred": {
-        "symbol": "SmFace::CalculateUVDomainFromUVTrimCurves",
-        "unit": "topology.face_p1"
-      },
       "max_rel_err": 0.0,
       "name": "gen0890",
-      "outcome": "deferred",
-      "pass": false,
+      "outcome": "pass",
+      "pass": true,
       "source": "generated:seed=11501319568046904569",
-      "values_compared": 0
+      "values_compared": 53
     },
     {
       "max_rel_err": 0.0,
@@ -8114,16 +8022,12 @@
       "values_compared": 331
     },
     {
-      "deferred": {
-        "symbol": "SmFace::CalculateUVDomainFromUVTrimCurves",
-        "unit": "topology.face_p1"
-      },
       "max_rel_err": 0.0,
       "name": "gen0922",
-      "outcome": "deferred",
-      "pass": false,
+      "outcome": "pass",
+      "pass": true,
       "source": "generated:seed=11501319568046904601",
-      "values_compared": 0
+      "values_compared": 88
     },
     {
       "max_rel_err": 0.0,
@@ -8198,16 +8102,12 @@
       "values_compared": 341
     },
     {
-      "deferred": {
-        "symbol": "SmFace::CalculateUVDomainFromUVTrimCurves",
-        "unit": "topology.face_p1"
-      },
       "max_rel_err": 0.0,
       "name": "gen0931",
-      "outcome": "deferred",
-      "pass": false,
+      "outcome": "pass",
+      "pass": true,
       "source": "generated:seed=11501319568046904610",
-      "values_compared": 0
+      "values_compared": 97
     },
     {
       "max_rel_err": 0.0,
@@ -8386,16 +8286,12 @@
       "values_compared": 68
     },
     {
-      "deferred": {
-        "symbol": "SmFace::CalculateUVDomainFromUVTrimCurves",
-        "unit": "topology.face_p1"
-      },
       "max_rel_err": 0.0,
       "name": "gen0953",
-      "outcome": "deferred",
-      "pass": false,
+      "outcome": "pass",
+      "pass": true,
       "source": "generated:seed=11501319568046904632",
-      "values_compared": 0
+      "values_compared": 88
     },
     {
       "max_rel_err": 0.0,
@@ -8514,16 +8410,12 @@
       "values_compared": 45
     },
     {
-      "deferred": {
-        "symbol": "SmFace::CalculateUVDomainFromUVTrimCurves",
-        "unit": "topology.face_p1"
-      },
       "max_rel_err": 0.0,
       "name": "gen0967",
-      "outcome": "deferred",
-      "pass": false,
+      "outcome": "pass",
+      "pass": true,
       "source": "generated:seed=11501319568046904646",
-      "values_compared": 0
+      "values_compared": 74
     },
     {
       "max_rel_err": 0.0,
@@ -8602,16 +8494,12 @@
       "values_compared": 390
     },
     {
-      "deferred": {
-        "symbol": "SmFace::CalculateUVDomainFromUVTrimCurves",
-        "unit": "topology.face_p1"
-      },
       "max_rel_err": 0.0,
       "name": "gen0977",
-      "outcome": "deferred",
-      "pass": false,
+      "outcome": "pass",
+      "pass": true,
       "source": "generated:seed=11501319568046904656",
-      "values_compared": 0
+      "values_compared": 100
     },
     {
       "deferred": {
@@ -8650,16 +8538,12 @@
       "values_compared": 125
     },
     {
-      "deferred": {
-        "symbol": "SmFace::CalculateUVDomainFromUVTrimCurves",
-        "unit": "topology.face_p1"
-      },
       "max_rel_err": 0.0,
       "name": "gen0982",
-      "outcome": "deferred",
-      "pass": false,
+      "outcome": "pass",
+      "pass": true,
       "source": "generated:seed=11501319568046904661",
-      "values_compared": 0
+      "values_compared": 89
     },
     {
       "max_rel_err": 0.0,
@@ -8902,16 +8786,12 @@
       "values_compared": 94
     },
     {
-      "deferred": {
-        "symbol": "SmFace::CalculateUVDomainFromUVTrimCurves",
-        "unit": "topology.face_p1"
-      },
       "max_rel_err": 0.0,
       "name": "gen1012",
-      "outcome": "deferred",
-      "pass": false,
+      "outcome": "pass",
+      "pass": true,
       "source": "generated:seed=11501319568046904691",
-      "values_compared": 0
+      "values_compared": 90
     },
     {
       "max_rel_err": 0.0,
@@ -9074,16 +8954,12 @@
       "values_compared": 360
     },
     {
-      "deferred": {
-        "symbol": "SmFace::CalculateUVDomainFromUVTrimCurves",
-        "unit": "topology.face_p1"
-      },
       "max_rel_err": 0.0,
       "name": "gen1032",
-      "outcome": "deferred",
-      "pass": false,
+      "outcome": "pass",
+      "pass": true,
       "source": "generated:seed=11501319568046904711",
-      "values_compared": 0
+      "values_compared": 57
     },
     {
       "max_rel_err": 0.0,
@@ -9446,16 +9322,12 @@
       "values_compared": 454
     },
     {
-      "deferred": {
-        "symbol": "SmFace::CalculateUVDomainFromUVTrimCurves",
-        "unit": "topology.face_p1"
-      },
       "max_rel_err": 0.0,
       "name": "gen1075",
-      "outcome": "deferred",
-      "pass": false,
+      "outcome": "pass",
+      "pass": true,
       "source": "generated:seed=11501319568046904754",
-      "values_compared": 0
+      "values_compared": 94
     },
     {
       "max_rel_err": 0.0,
@@ -10026,16 +9898,12 @@
       "values_compared": 50
     },
     {
-      "deferred": {
-        "symbol": "SmFace::CalculateUVDomainFromUVTrimCurves",
-        "unit": "topology.face_p1"
-      },
       "max_rel_err": 0.0,
       "name": "gen1141",
-      "outcome": "deferred",
-      "pass": false,
+      "outcome": "pass",
+      "pass": true,
       "source": "generated:seed=11501319568046904820",
-      "values_compared": 0
+      "values_compared": 40
     },
     {
       "max_rel_err": 0.0,
@@ -10066,16 +9934,12 @@
       "values_compared": 0
     },
     {
-      "deferred": {
-        "symbol": "SmFace::CalculateUVDomainFromUVTrimCurves",
-        "unit": "topology.face_p1"
-      },
       "max_rel_err": 0.0,
       "name": "gen1145",
-      "outcome": "deferred",
-      "pass": false,
+      "outcome": "pass",
+      "pass": true,
       "source": "generated:seed=11501319568046904824",
-      "values_compared": 0
+      "values_compared": 69
     },
     {
       "max_rel_err": 0.0,
@@ -10598,16 +10462,12 @@
       "values_compared": 0
     },
     {
-      "deferred": {
-        "symbol": "SmFace::CalculateUVDomainFromUVTrimCurves",
-        "unit": "topology.face_p1"
-      },
       "max_rel_err": 0.0,
       "name": "gen1209",
-      "outcome": "deferred",
-      "pass": false,
+      "outcome": "pass",
+      "pass": true,
       "source": "generated:seed=11501319568046904888",
-      "values_compared": 0
+      "values_compared": 90
     },
     {
       "max_rel_err": 0.0,
@@ -10942,16 +10802,12 @@
       "values_compared": 66
     },
     {
-      "deferred": {
-        "symbol": "SmFace::CalculateUVDomainFromUVTrimCurves",
-        "unit": "topology.face_p1"
-      },
       "max_rel_err": 0.0,
       "name": "gen1249",
-      "outcome": "deferred",
-      "pass": false,
+      "outcome": "pass",
+      "pass": true,
       "source": "generated:seed=11501319568046904928",
-      "values_compared": 0
+      "values_compared": 47
     },
     {
       "max_rel_err": 0.0,
@@ -11694,16 +11550,12 @@
       "values_compared": 497
     },
     {
-      "deferred": {
-        "symbol": "SmFace::CalculateUVDomainFromUVTrimCurves",
-        "unit": "topology.face_p1"
-      },
       "max_rel_err": 0.0,
       "name": "gen1334",
-      "outcome": "deferred",
-      "pass": false,
+      "outcome": "pass",
+      "pass": true,
       "source": "generated:seed=11501319568046905013",
-      "values_compared": 0
+      "values_compared": 119
     },
     {
       "deferred": {
@@ -11958,16 +11810,12 @@
       "values_compared": 0
     },
     {
-      "deferred": {
-        "symbol": "SmFace::CalculateUVDomainFromUVTrimCurves",
-        "unit": "topology.face_p1"
-      },
       "max_rel_err": 0.0,
       "name": "gen1363",
-      "outcome": "deferred",
-      "pass": false,
+      "outcome": "pass",
+      "pass": true,
       "source": "generated:seed=11501319568046905042",
-      "values_compared": 0
+      "values_compared": 64
     },
     {
       "deferred": {
@@ -12406,16 +12254,12 @@
       "values_compared": 447
     },
     {
-      "deferred": {
-        "symbol": "SmFace::CalculateUVDomainFromUVTrimCurves",
-        "unit": "topology.face_p1"
-      },
       "max_rel_err": 0.0,
       "name": "gen1413",
-      "outcome": "deferred",
-      "pass": false,
+      "outcome": "pass",
+      "pass": true,
       "source": "generated:seed=11501319568046905092",
-      "values_compared": 0
+      "values_compared": 112
     },
     {
       "max_rel_err": 0.0,
@@ -12870,16 +12714,12 @@
       "values_compared": 130
     },
     {
-      "deferred": {
-        "symbol": "SmFace::CalculateUVDomainFromUVTrimCurves",
-        "unit": "topology.face_p1"
-      },
       "max_rel_err": 0.0,
       "name": "gen1468",
-      "outcome": "deferred",
-      "pass": false,
+      "outcome": "pass",
+      "pass": true,
       "source": "generated:seed=11501319568046905147",
-      "values_compared": 0
+      "values_compared": 70
     },
     {
       "deferred": {
@@ -12894,16 +12734,12 @@
       "values_compared": 0
     },
     {
-      "deferred": {
-        "symbol": "SmFace::CalculateUVDomainFromUVTrimCurves",
-        "unit": "topology.face_p1"
-      },
       "max_rel_err": 0.0,
       "name": "gen1470",
-      "outcome": "deferred",
-      "pass": false,
+      "outcome": "pass",
+      "pass": true,
       "source": "generated:seed=11501319568046905149",
-      "values_compared": 0
+      "values_compared": 119
     },
     {
       "max_rel_err": 0.0,
@@ -13411,14 +13247,13 @@
     }
   ],
   "cases_both_errored": 0,
-  "cases_deferred": 286,
+  "cases_deferred": 245,
   "cases_failed": 0,
-  "cases_passed": 1247,
+  "cases_passed": 1288,
   "cases_total": 1533,
   "deferred_by_unit": {
     "topology.brep_p1": 20,
     "topology.edge": 105,
-    "topology.face_p1": 41,
     "topology.face_p2": 60,
     "topology.vertex": 60
   },

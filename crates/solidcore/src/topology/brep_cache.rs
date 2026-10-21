@@ -606,6 +606,12 @@ impl crate::intersect::topology_solver::p1::TopologyObjects<CacheObject> for Bre
         };
         Ok(self.brep.face(f)?.tolerance)
     }
+    fn face_entity(&self, object: CacheObject) -> Option<(&Brep, FaceId)> {
+        match object {
+            CacheObject::Face(f) => Some((self.brep, f)),
+            _ => None,
+        }
+    }
     fn surface_owner(&self, object: CacheObject) -> Result<Option<CacheObject>> {
         self.surface(object)?
             .owner()

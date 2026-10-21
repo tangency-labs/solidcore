@@ -550,6 +550,12 @@ impl TopologyObjects<Object> for Objects<'_> {
         };
         Ok(self.b(o)?.face(f)?.tolerance)
     }
+    fn face_entity(&self, o: Object) -> Option<(&Brep, FaceId)> {
+        let CacheObject::Face(f) = o.1 else {
+            return None;
+        };
+        Some((self.b(o).ok()?, f))
+    }
     fn surface_owner(&self, o: Object) -> Result<Option<Object>> {
         self.surface_face(o)
     }
