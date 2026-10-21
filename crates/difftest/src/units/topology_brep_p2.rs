@@ -926,7 +926,7 @@ fn run_rust(i: &Inputs) -> Result<Output, HarnessError> {
     let mut k = Kernel::default();
     if let OpIn::Merge { curves, tol, .. } = &i.op {
         let face = FaceId::from_index(args.first().copied().unwrap_or(0.0) as u32);
-        return merge_rust(&mut k, &mut b, face, curves, *tol);
+        return merge_rust(&mut k, &b, face, curves, *tol);
     }
     match run_rust_op(&mut k, &mut b, op, &args) {
         Ok(out) => Ok(Output::new().values("out", out)),
@@ -940,7 +940,7 @@ fn run_rust(i: &Inputs) -> Result<Output, HarnessError> {
 /// classification constructor.
 fn merge_rust(
     k: &mut Kernel,
-    b: &mut Brep,
+    b: &Brep,
     face: FaceId,
     curves: &[CrvIn],
     tol: f64,
@@ -949,11 +949,13 @@ fn merge_rust(
         .iter()
         .map(|c| rust_curve(c).map(SmCurve::from))
         .collect::<Result<_, _>>()?;
-    let objects = MergeObjects { curves: &crvs };
+    let objects = MergeObjects {
+        brep: b,
+        curves: &crvs,
+    };
     let handles: Vec<H> = (0..crvs.len()).map(H).collect();
     let r = bp2::merge_curves_on_surface(
         k,
-        b,
         &objects,
         face,
         tol,
@@ -992,6 +994,7 @@ fn merge_rust(
 
 /// Classification handles of a `Merge` case: curve `i` is handle `i`.
 struct MergeObjects<'a> {
+    brep: &'a Brep,
     curves: &'a [SmCurve],
 }
 
@@ -1051,6 +1054,9 @@ impl solidcore::intersect::point_class::ClassGeometry<H> for MergeObjects<'_> {
 }
 
 impl bp2::MergeCurvesObjects<H> for MergeObjects<'_> {
+    fn brep(&self) -> &Brep {
+        self.brep
+    }
     fn edge_of(&self, _object: H) -> Option<EdgeId> {
         None
     }

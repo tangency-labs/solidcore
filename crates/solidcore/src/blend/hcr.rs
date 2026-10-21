@@ -55,8 +55,8 @@
 //!   owns its surface record, so the object is identified by the surface's owner
 //!   (`SmSurface::m_pOwner`); see `same_surface`. Surface data is never compared.
 //! - `SmBrep::MergeCurvesOnSurface` of `ComputeSilhouettes` is
-//!   `topology::brep::p2::merge_curves_on_surface` through the B-rep cache's
-//!   classification world (`query.brep`, as in `topology.brep_p10`), so
+//!   `topology::brep::p2::merge_curves_on_surface` through the classification world
+//!   over the B-rep and the curves (as in `topology.brep_p10`), so
 //!   [`Hcr::compute_silhouettes`] and [`Hcr::compute_global_visibility`] take the
 //!   kernel mutably.
 //! - `IsPointVisible` keeps the ray tracer's surface set and grid and rebuilds the
@@ -269,8 +269,8 @@ fn add_deleted_surface(brep: &mut Brep, surface: &Surface) {
 }
 
 /// `MergeCurvesOnSurface(*pSurface, m_dThisApproxTol3d, s3DCurves, &sUVBSCurves,
-/// sNewFaces, sEdges, TRUE)` (`SmHCR.cpp:1229`): the edges of the curves, through the
-/// B-rep cache's classification world (`query.brep`) as in `topology.brep_p10`.
+/// sNewFaces, sEdges, TRUE)` (`SmHCR.cpp:1229`): the edges of the curves, through
+/// `topology.brep_p10`'s classification world.
 fn merge_curves_on_surface(
     k: &mut Kernel,
     brep: &mut Brep,

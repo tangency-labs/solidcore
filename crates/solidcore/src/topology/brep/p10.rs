@@ -95,6 +95,7 @@ use crate::topology::brep_cache::{make_brep_cache, BrepObjects, CacheObject, Cac
 use crate::topology::brep_data::{BrepData, TopologyData, NO_OBJECT, UNSURE};
 use crate::topology::edge::NotifyEnv;
 use crate::topology::edgeuse::p1 as eu1;
+use crate::topology::face::p2::{ClassHandle, FaceClassifyObjects};
 use crate::topology::shell::{ShellMembers, ShellType};
 use crate::topology::topology::Topology;
 use crate::topology::topology_traverser::Marks;
@@ -1716,97 +1717,11 @@ fn create_parallel_projection_curves(
     })
 }
 
-/// A classification handle over the B-rep's cache: what `query.brep`'s cache world will
-/// name (no value exists until then).
-#[derive(Debug, Clone, Copy, PartialEq)]
-enum CacheHandle {}
-
-impl crate::intersect::point_class::ClassObject for CacheHandle {
-    fn class_kind(&self) -> crate::intersect::point_class::ClassObjectKind {
-        match *self {}
-    }
-}
-
-/// The `MergeCurvesObjects` world over the B-rep's cache that `MergeCurvesOnSurface`
-/// classifies through (`query.brep`, todo): uninhabited, so [`merge_curves_world`] is
-/// the one place the gap is.
-enum CacheMergeWorld {}
-
-impl crate::intersect::point_class::ClassGeometry<CacheHandle> for CacheMergeWorld {
-    fn curve(&self, _o: CacheHandle) -> Option<&Curve> {
-        match *self {}
-    }
-    fn surface(&self, _o: CacheHandle) -> Option<&Surface> {
-        match *self {}
-    }
-    fn volume(&self, _o: CacheHandle) -> Option<&crate::surface::volume::Volume> {
-        match *self {}
-    }
-    fn point(&self, _o: CacheHandle) -> Option<Point3> {
-        match *self {}
-    }
-}
-
-impl crate::query::face::p2::CurveOnClassifyObjects<CacheHandle> for CacheMergeWorld {
-    fn face(&self, _f: FaceId) -> CacheHandle {
-        match *self {}
-    }
-    fn vertex(&self, _v: VertexId) -> CacheHandle {
-        match *self {}
-    }
-    fn edge(&self, _e: EdgeId) -> CacheHandle {
-        match *self {}
-    }
-    fn vertexuse(&self, _vu: VertexuseId) -> CacheHandle {
-        match *self {}
-    }
-    fn edgeuse(&self, _eu: EdgeuseId) -> CacheHandle {
-        match *self {}
-    }
-    fn edge_curve(&self, _e: EdgeId) -> CacheHandle {
-        match *self {}
-    }
-    fn trim_curve(&self, _eu: EdgeuseId) -> CacheHandle {
-        match *self {}
-    }
-    fn face_surface(&self, _f: FaceId) -> Option<CacheHandle> {
-        match *self {}
-    }
-    fn loop_id(&self, _tgt_loop: CacheHandle) -> Option<LoopId> {
-        match *self {}
-    }
-}
-
-impl crate::topology::brep::p2::MergeCurvesObjects<CacheHandle> for CacheMergeWorld {
-    fn edge_of(&self, _object: CacheHandle) -> Option<EdgeId> {
-        match *self {}
-    }
-    fn face_of(&self, _object: CacheHandle) -> Option<FaceId> {
-        match *self {}
-    }
-}
-
-/// The classification world over `b`'s cache with handles for the 3D and UV curves.
-fn merge_curves_world(
-    _b: &Brep,
-    _curves_3d: &[Curve],
-    _uv_curves: &[Curve],
-) -> Result<(CacheMergeWorld, Vec<CacheHandle>, Vec<CacheHandle>)> {
-    // DISPATCH GAP: SmBrep::MergeCurvesOnSurface is ported
-    // (`topology::brep::p2::merge_curves_on_surface`, topology.brep_p2 partial; no
-    // UNPORTED marker), but its classification world over the B-rep cache (handles for
-    // the 3D and UV curves next to the cached B-rep geometry) is not built here.
-    Err(SolidError::Unported {
-        upstream: "SmBrep::MergeCurvesOnSurface classification world over the B-rep cache",
-        unit: "topology.brep_p2",
-    })
-}
-
 /// `MergeCurvesOnSurface(*pSurf, dTol, s3DCurves, &sUVCurves, sNewFaces, sCurveEdges,
 /// bUseProjection)` with the header defaults for the rest (no intersection surface,
 /// `bUVSpaceOkay = TRUE`): [`crate::topology::brep::p2::merge_curves_on_surface`]
-/// through the B-rep cache's classification world ([`merge_curves_world`], not built
-/// yet). Called here (`SmBrep.cpp:25074`, default
+/// through the classification world over `b` and the curves
+/// ([`crate::topology::face::p2::FaceClassifyObjects`]). Called here (`SmBrep.cpp:25074`, default
 /// `bUseProjection = FALSE`) and by `blend.hcr` (`SmHCR.cpp:1229`, `TRUE`).
 pub(crate) fn merge_curves_on_surface(
     k: &mut Kernel,
@@ -1817,10 +1732,17 @@ pub(crate) fn merge_curves_on_surface(
     uv_curves: &[Curve],
     use_projection: bool,
 ) -> Result<(Vec<FaceId>, Vec<EdgeId>)> {
-    let (world, curves, uv) = merge_curves_world(b, curves_3d, uv_curves)?;
+    // curve `i` is handle `Curve(i)`, its UV curve `UvCurve(i)`; `b` stays `&mut` for
+    // the B-rep edits of `MergeInterval` (intersect.curve_class_p2), not ported yet
+    let world = FaceClassifyObjects {
+        brep: b,
+        curves: curves_3d,
+        uv_curves,
+    };
+    let curves: Vec<_> = (0..curves_3d.len()).map(ClassHandle::Curve).collect();
+    let uv: Vec<_> = (0..uv_curves.len()).map(ClassHandle::UvCurve).collect();
     let merged = crate::topology::brep::p2::merge_curves_on_surface(
         k,
-        b,
         &world,
         face,
         tol,
@@ -2519,6 +2441,33 @@ mod tests {
             assert!(d.curves_3d.iter().all(|c| c.object.owner().is_some()));
             assert!(d.surfaces[0].object.owner().is_some());
         }
+    }
+
+    #[test]
+    fn merge_curves_classify_through_the_breps_world() {
+        let mut d = square(0);
+        let mut b = build(&mut d, MakeTopologyOptions::default()).unwrap();
+        b.set_editing_enabled(true);
+        let mut k = Kernel::default();
+        let face = FaceId::from_index(0);
+        let a = Point3::new(0.25, 0.5, 0.0);
+        // curves shorter than the tolerance are skipped: nothing merged
+        let short = [line(a, Point3::new(0.25 + 1e-9, 0.5, 0.0))];
+        let merged = merge_curves_on_surface(&mut k, &mut b, face, 1e-6, &short, &[], false);
+        assert_eq!(merged.unwrap(), (vec![], vec![]));
+        // a longer one is classified against the face through the B-rep's world, up to
+        // the face's point classification (SmFace::PointClassify, query.face_p2), the
+        // next unported step
+        let long = [line(a, Point3::new(0.75, 0.5, 0.0))];
+        let uv = [line(a, Point3::new(0.75, 0.5, 0.0))];
+        assert!(matches!(
+            merge_curves_on_surface(&mut k, &mut b, face, 1e-6, &long, &uv, false),
+            Err(SolidError::Unported {
+                upstream: "SmFace::PointClassify",
+                unit: "query.face_p2",
+            })
+        ));
+        assert!(!k.context.doing_boolean());
     }
 
     #[test]

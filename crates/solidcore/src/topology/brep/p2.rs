@@ -42,7 +42,9 @@
 //! no cache). No recursion. Input-driven loops are bounded by their inputs:
 //! `MergeCurvesOnSurface`'s face queue only grows by the faces `MergeIntervals` creates
 //! (each split adds faces to the finite B-rep), `MateLaminaEdgeToSurface` samples 21
-//! points and scans the intersection curves once.
+//! points and scans the intersection curves once. `MergeCurvesOnSurface`'s `this` is
+//! the world's B-rep ([`MergeCurvesObjects::brep`]), so the classification handles can
+//! resolve its geometry while it runs (upstream's handles are pointers into it).
 //!
 //! Smaller deviations, none reachable as a difference today:
 //! - `ReplaceSurface` edits `pTopFace = pOld->GetFace()` (`SmBrep.cpp:26316`), the owner of
@@ -1832,8 +1834,12 @@ fn shell_transfer_children(k: &mut Kernel, b: &mut Brep, from: ShellId, to: Shel
 // ---- merging curves into faces ------------------------------------------------------------
 
 /// What [`merge_curves_on_surface`] needs of the caller's classification handles, on
-/// top of [`CurveOnClassifyObjects`] (which includes [`ClassGeometry`]).
+/// top of [`CurveOnClassifyObjects`] (which includes [`ClassGeometry`]). The world holds
+/// the B-rep, so its handles can resolve the B-rep's own geometry during the merge
+/// (upstream's handles are pointers into it).
 pub trait MergeCurvesObjects<O: ClassObject>: CurveOnClassifyObjects<O> {
+    /// The B-rep the curves are merged into (`this`).
+    fn brep(&self) -> &Brep;
     /// The edge behind an edge handle (an interval's `m_vMid.GetObject()`).
     fn edge_of(&self, object: O) -> Option<EdgeId>;
     /// The face behind a face handle (a new face of `MergeIntervals`).
@@ -1874,8 +1880,8 @@ pub struct MergedCurves {
 }
 
 /// `MergeCurvesOnSurface`: merges the 3D `curves` (with optional UV curves
-/// `uv_curves`, used on the first face only) lying on the surface of `face` into the
-/// face, splitting it (and the faces split off it) into new faces. Curves shorter than
+/// `uv_curves`, used on the first face only) lying on the surface of `face` of
+/// `objects`' B-rep ([`MergeCurvesObjects::brep`]) into the face, splitting it (and the faces split off it) into new faces. Curves shorter than
 /// `tolerance` are skipped. Each curve is classified against each face
 /// ([`curve_on_classify`]), coincident-maybe intervals are squeezed, the intervals are
 /// merged into the B-rep (a failed merge is ignored, as upstream \[B674\]) and the edges
@@ -1890,10 +1896,8 @@ pub struct MergedCurves {
 /// `MergeIntervals`; [`SolidError::Unported`] from the curve classification constructor
 /// (its `ReSet`, `intersect.curve_class_p2`), from `AreCoincidentMaybe`'s edge branch,
 /// and from the graph edits `MergeIntervals` defers.
-#[allow(clippy::too_many_arguments)]
 pub fn merge_curves_on_surface<O: ClassObject + Copy>(
     k: &mut Kernel,
-    b: &mut Brep,
     objects: &impl MergeCurvesObjects<O>,
     face: FaceId,
     tolerance: f64,
@@ -1902,21 +1906,19 @@ pub fn merge_curves_on_surface<O: ClassObject + Copy>(
     options: MergeCurvesOptions<O>,
 ) -> Result<MergedCurves> {
     // check state - m_bEditingEnabled must be on
-    if !b.editing_enabled() {
+    if !objects.brep().editing_enabled() {
         return Err(SolidError::sm_err(OP));
     }
 
     let saved = k.context.doing_boolean();
     k.context.set_doing_boolean(true);
-    let res = merge_curves_body(k, b, objects, face, tolerance, curves, uv_curves, options);
+    let res = merge_curves_body(k, objects, face, tolerance, curves, uv_curves, options);
     k.context.set_doing_boolean(saved);
     res
 }
 
-#[allow(clippy::too_many_arguments)]
 fn merge_curves_body<O: ClassObject + Copy>(
     k: &Kernel,
-    b: &mut Brep,
     objects: &impl MergeCurvesObjects<O>,
     face: FaceId,
     tolerance: f64,
@@ -1962,7 +1964,7 @@ fn merge_curves_body<O: ClassObject + Copy>(
             // classify the curve against the surface->Face
             let _modified = curve_on_classify(
                 k,
-                b,
+                objects.brep(),
                 f,
                 objects,
                 true,

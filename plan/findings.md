@@ -12913,10 +12913,12 @@ guarded in `offset.offset_geometry_creation`; the fix belongs to the curve cache
   150 wire segments at given tolerances) reaches the 500-vertex / 100-edge approximation
   shortcut and non-default tolerance expansion.
 - **Follow-ups for other units (no open PR covers them).**
-  - `topology.brep_p2`: `merge_curves_on_surface` takes `&mut Brep` and the classification
-    world separately, so no world can read the B-rep's geometry during the call;
-    `topology::brep::p10::merge_curves_world` stays a `DISPATCH GAP` until the world can
-    own the B-rep (as `boolean::merge::p4::ArenaPair` does).
+  - `topology.brep_p2` (done in the follow-up PR): `merge_curves_on_surface` took
+    `&mut Brep` and the classification world separately, so no world could read the
+    B-rep's geometry during the call. It now reads the B-rep through the world
+    (`MergeCurvesObjects::brep`; nothing in the merge edits it until `MergeInterval`'s
+    graph edits are ported in `intersect.curve_class_p2`), and `topology.brep_p10` builds
+    `FaceClassifyObjects` over the B-rep and its 3D/UV curves.
   - `geom.object`: `Shape::new` gets B-rep keys but no store to resolve them, so the B-rep
     box (and the face box, already a `DISPATCH GAP`) cannot be reached there.
 - **Wider seeds (2000 generated cases per unit, local macOS run).** `query.brep`,

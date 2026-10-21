@@ -31,9 +31,12 @@ decimation attributes and `SmApiEvaluateSurface*`); `geom.a_object` and
   The merge passes go through `boolean::merge::p1::classify_point_editing_disabled`.
 - **Lone B-reps** use `BrepIdentity::default()`; B-reps in a store pass their own
   `BrepIdentity`.
-- **Open follow-ups** (no PR yet): `topology::brep::p10::merge_curves_world` is a
-  `DISPATCH GAP` until the merge-curves world can own the B-rep (`topology.brep_p2`), and
-  `geom.object`'s `Shape` cannot reach the B-rep box without a store.
+- **Merge-curves world:** `topology::brep::p2::merge_curves_on_surface` reads its B-rep
+  through the world (`MergeCurvesObjects::brep`); `topology.brep_p10` and `blend.hcr` use
+  `topology::face::p2::FaceClassifyObjects` over the B-rep and the curves. The next
+  blocker is the face's point classification (`SmFace::PointClassify`, `query.face_p2`).
+- **Open follow-up** (no PR yet): `geom.object`'s `Shape` cannot reach the B-rep box
+  without a store.
 
 ## Port review note (2026-10-18, issue #210)
 

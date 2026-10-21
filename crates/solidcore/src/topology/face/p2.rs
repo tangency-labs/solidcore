@@ -479,11 +479,12 @@ impl qf3::ClassifyCurveObjects<UvLineHandle> for UvLineObjects<'_> {
     }
 }
 
-/// The handles of a curve classification of face `f` (`SmFace::CurveOnClassify`): the
-/// B-rep's topology (the face, its loops, edges, vertices and their uses), the face's
-/// surface, and the classified curve.
+/// The handles of a curve classification against a B-rep's faces
+/// (`SmFace::CurveOnClassify`, `SmBrep::MergeCurvesOnSurface`): the B-rep's topology (the
+/// faces, their loops, edges, vertices and their uses), the face surfaces, and the
+/// classified curves.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum ClassHandle {
+pub(crate) enum ClassHandle {
     /// A face.
     Face(FaceId),
     /// A vertex.
@@ -504,8 +505,10 @@ enum ClassHandle {
     EdgeCurve(EdgeId),
     /// The trim curve stored on an edge use.
     Trim(EdgeuseId),
-    /// The classified curve (and its UV curve: upstream passes the same curve for both).
-    Curve,
+    /// Classified 3D curve `i` of [`FaceClassifyObjects::curves`].
+    Curve(usize),
+    /// UV curve `i` of [`FaceClassifyObjects::uv_curves`].
+    UvCurve(usize),
 }
 
 impl ClassObject for ClassHandle {
@@ -519,17 +522,22 @@ impl ClassObject for ClassHandle {
             Self::Edgeuse(_) => ClassObjectKind::Edgeuse,
             Self::Vertexuse(_) => ClassObjectKind::Vertexuse,
             Self::Surface(_) => ClassObjectKind::Surface,
-            Self::EdgeCurve(_) | Self::Trim(_) | Self::Curve => ClassObjectKind::Curve,
+            Self::EdgeCurve(_) | Self::Trim(_) | Self::Curve(_) | Self::UvCurve(_) => {
+                ClassObjectKind::Curve
+            }
         }
     }
 }
 
-/// The objects behind the [`ClassHandle`]s of one `CurveOnClassify` call.
-struct FaceClassifyObjects<'c> {
-    /// The B-rep of the face.
-    brep: &'c Brep,
-    /// The classified curve.
-    curve: &'c Curve,
+/// The objects behind the [`ClassHandle`]s: a B-rep and the curves classified against
+/// its faces.
+pub(crate) struct FaceClassifyObjects<'c> {
+    /// The B-rep of the faces.
+    pub(crate) brep: &'c Brep,
+    /// The classified 3D curves.
+    pub(crate) curves: &'c [Curve],
+    /// Their UV curves, if any.
+    pub(crate) uv_curves: &'c [Curve],
 }
 
 impl CurveOnClassifyObjects<ClassHandle> for FaceClassifyObjects<'_> {
@@ -586,7 +594,8 @@ impl ClassGeometry<ClassHandle> for FaceClassifyObjects<'_> {
     }
     fn curve(&self, o: ClassHandle) -> Option<&Curve> {
         match o {
-            ClassHandle::Curve => Some(self.curve),
+            ClassHandle::Curve(i) => self.curves.get(i),
+            ClassHandle::UvCurve(i) => self.uv_curves.get(i),
             ClassHandle::EdgeCurve(e) => self.brep.edge(e).ok()?.curve.as_ref(),
             ClassHandle::Trim(eu) => eu1::uv_trim_curve(self.brep, eu).ok()?.0,
             _ => None,
@@ -616,7 +625,8 @@ impl ClassGeometry<ClassHandle> for FaceClassifyObjects<'_> {
             ClassHandle::Surface(_)
             | ClassHandle::EdgeCurve(_)
             | ClassHandle::Trim(_)
-            | ClassHandle::Curve => return None,
+            | ClassHandle::Curve(_)
+            | ClassHandle::UvCurve(_) => return None,
         };
         Some((self.brep, e))
     }
@@ -629,6 +639,24 @@ impl ClassGeometry<ClassHandle> for FaceClassifyObjects<'_> {
             EntityRef::Faceuse(fu) => Some(ClassHandle::Faceuse(fu)),
             EntityRef::Edgeuse(eu) => Some(ClassHandle::Edgeuse(eu)),
             EntityRef::Vertexuse(vu) => Some(ClassHandle::Vertexuse(vu)),
+            _ => None,
+        }
+    }
+}
+
+impl crate::topology::brep::p2::MergeCurvesObjects<ClassHandle> for FaceClassifyObjects<'_> {
+    fn brep(&self) -> &Brep {
+        self.brep
+    }
+    fn edge_of(&self, object: ClassHandle) -> Option<EdgeId> {
+        match object {
+            ClassHandle::Edge(e) => Some(e),
+            _ => None,
+        }
+    }
+    fn face_of(&self, object: ClassHandle) -> Option<FaceId> {
+        match object {
+            ClassHandle::Face(f) => Some(f),
             _ => None,
         }
     }
@@ -648,11 +676,16 @@ fn classify_curve_on_face(
     tol: f64,
     data_size: usize,
 ) -> Result<Vec<CurveInterval<ClassHandle>>> {
-    let objects = FaceClassifyObjects { brep: b, curve };
+    // (the UV curve, when given, is the classified curve itself, as upstream passes it)
+    let objects = FaceClassifyObjects {
+        brep: b,
+        curves: core::slice::from_ref(curve),
+        uv_curves: &[],
+    };
     let init = ClassificationInit {
-        curve: Some(ClassHandle::Curve),
+        curve: Some(ClassHandle::Curve(0)),
         interval: curve.natural_interval(),
-        uv_curve: with_uv_curve.then_some(ClassHandle::Curve),
+        uv_curve: with_uv_curve.then_some(ClassHandle::Curve(0)),
         src_zone_tol_3d: zone_tol3d(k, tol),
         opt_data_size: data_size,
         is_curve_owned: false,
