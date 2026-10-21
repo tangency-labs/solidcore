@@ -218,16 +218,12 @@
       "values_compared": 11565
     },
     {
-      "deferred": {
-        "symbol": "SmVertex::GetTolerance",
-        "unit": "topology.vertex"
-      },
       "max_rel_err": 0.0,
       "name": "gen0027",
-      "outcome": "deferred",
-      "pass": false,
+      "outcome": "pass",
+      "pass": true,
       "source": "generated:seed=12816349288120549987",
-      "values_compared": 0
+      "values_compared": 23534
     },
     {
       "max_rel_err": 0.0,
@@ -247,8 +243,8 @@
     },
     {
       "deferred": {
-        "symbol": "SmVertex::GetTolerance",
-        "unit": "topology.vertex"
+        "symbol": "SmEdge::GetTolerance",
+        "unit": "topology.edge"
       },
       "max_rel_err": 0.0,
       "name": "gen0030",
@@ -450,16 +446,12 @@
       "values_compared": 930
     },
     {
-      "deferred": {
-        "symbol": "SmVertex::GetTolerance",
-        "unit": "topology.vertex"
-      },
       "max_rel_err": 0.0,
       "name": "gen0055",
-      "outcome": "deferred",
-      "pass": false,
+      "outcome": "pass",
+      "pass": true,
       "source": "generated:seed=12816349288120550015",
-      "values_compared": 0
+      "values_compared": 8237
     },
     {
       "max_rel_err": 0.0,
@@ -535,8 +527,8 @@
     },
     {
       "deferred": {
-        "symbol": "SmVertex::GetTolerance",
-        "unit": "topology.vertex"
+        "symbol": "SmFace::GetTolerance",
+        "unit": "topology.face_p2"
       },
       "max_rel_err": 0.0,
       "name": "gen0065",
@@ -547,8 +539,8 @@
     },
     {
       "deferred": {
-        "symbol": "SmVertex::GetTolerance",
-        "unit": "topology.vertex"
+        "symbol": "SmFace::GetTolerance",
+        "unit": "topology.face_p2"
       },
       "max_rel_err": 0.0,
       "name": "gen0066",
@@ -695,8 +687,8 @@
     },
     {
       "deferred": {
-        "symbol": "SmVertex::GetTolerance",
-        "unit": "topology.vertex"
+        "symbol": "SmEdge::GetTolerance",
+        "unit": "topology.edge"
       },
       "max_rel_err": 0.0,
       "name": "gen0084",
@@ -838,16 +830,12 @@
       "values_compared": 4416
     },
     {
-      "deferred": {
-        "symbol": "SmVertex::GetTolerance",
-        "unit": "topology.vertex"
-      },
       "max_rel_err": 0.0,
       "name": "gen0101",
-      "outcome": "deferred",
-      "pass": false,
+      "outcome": "pass",
+      "pass": true,
       "source": "generated:seed=12816349288120550061",
-      "values_compared": 0
+      "values_compared": 10700
     },
     {
       "max_rel_err": 0.0,
@@ -1146,16 +1134,12 @@
       "values_compared": 11854
     },
     {
-      "deferred": {
-        "symbol": "SmVertex::GetTolerance",
-        "unit": "topology.vertex"
-      },
       "max_rel_err": 0.0,
       "name": "gen0138",
-      "outcome": "deferred",
-      "pass": false,
+      "outcome": "pass",
+      "pass": true,
       "source": "generated:seed=12816349288120550098",
-      "values_compared": 0
+      "values_compared": 8928
     },
     {
       "max_rel_err": 0.0,
@@ -1782,16 +1766,12 @@
       "values_compared": 3919
     },
     {
-      "deferred": {
-        "symbol": "SmVertex::GetTolerance",
-        "unit": "topology.vertex"
-      },
       "max_rel_err": 0.0,
       "name": "gen0216",
-      "outcome": "deferred",
-      "pass": false,
+      "outcome": "pass",
+      "pass": true,
       "source": "generated:seed=12816349288120550176",
-      "values_compared": 0
+      "values_compared": 3300
     },
     {
       "max_rel_err": 0.0,
@@ -1935,8 +1915,8 @@
     },
     {
       "deferred": {
-        "symbol": "SmVertex::GetTolerance",
-        "unit": "topology.vertex"
+        "symbol": "SmEdge::GetTolerance",
+        "unit": "topology.edge"
       },
       "max_rel_err": 0.0,
       "name": "gen0234",
@@ -2227,8 +2207,8 @@
     },
     {
       "deferred": {
-        "symbol": "SmVertex::GetTolerance",
-        "unit": "topology.vertex"
+        "symbol": "SmEdge::GetTolerance",
+        "unit": "topology.edge"
       },
       "max_rel_err": 0.0,
       "name": "gen0270",
@@ -2238,16 +2218,12 @@
       "values_compared": 0
     },
     {
-      "deferred": {
-        "symbol": "SmVertex::GetTolerance",
-        "unit": "topology.vertex"
-      },
       "max_rel_err": 0.0,
       "name": "gen0271",
-      "outcome": "deferred",
-      "pass": false,
+      "outcome": "pass",
+      "pass": true,
       "source": "generated:seed=12816349288120550231",
-      "values_compared": 0
+      "values_compared": 10018
     },
     {
       "max_rel_err": 0.0,
@@ -5667,8 +5643,8 @@
     },
     {
       "deferred": {
-        "symbol": "SmVertex::GetTolerance",
-        "unit": "topology.vertex"
+        "symbol": "SmEdge::GetTolerance",
+        "unit": "topology.edge"
       },
       "max_rel_err": 0.0,
       "name": "gen0692",
@@ -6823,8 +6799,8 @@
     },
     {
       "deferred": {
-        "symbol": "SmVertex::GetTolerance",
-        "unit": "topology.vertex"
+        "symbol": "SmFace::GetTolerance",
+        "unit": "topology.face_p2"
       },
       "max_rel_err": 0.0,
       "name": "gen0833",
@@ -8023,8 +7999,8 @@
     },
     {
       "deferred": {
-        "symbol": "SmVertex::GetTolerance",
-        "unit": "topology.vertex"
+        "symbol": "SmEdge::GetTolerance",
+        "unit": "topology.edge"
       },
       "max_rel_err": 0.0,
       "name": "gen0979",
@@ -8090,16 +8066,12 @@
       "values_compared": 17595
     },
     {
-      "deferred": {
-        "symbol": "SmVertex::GetTolerance",
-        "unit": "topology.vertex"
-      },
       "max_rel_err": 0.0,
       "name": "gen0987",
-      "outcome": "deferred",
-      "pass": false,
+      "outcome": "pass",
+      "pass": true,
       "source": "generated:seed=12816349288120550947",
-      "values_compared": 0
+      "values_compared": 5196
     },
     {
       "max_rel_err": 0.0,
@@ -9734,16 +9706,12 @@
       "values_compared": 1174
     },
     {
-      "deferred": {
-        "symbol": "SmVertex::GetTolerance",
-        "unit": "topology.vertex"
-      },
       "max_rel_err": 0.0,
       "name": "gen1189",
-      "outcome": "deferred",
-      "pass": false,
+      "outcome": "pass",
+      "pass": true,
       "source": "generated:seed=12816349288120551149",
-      "values_compared": 0
+      "values_compared": 3138
     },
     {
       "max_rel_err": 0.0,
@@ -10306,16 +10274,12 @@
       "values_compared": 4709
     },
     {
-      "deferred": {
-        "symbol": "SmVertex::GetTolerance",
-        "unit": "topology.vertex"
-      },
       "max_rel_err": 0.0,
       "name": "gen1259",
-      "outcome": "deferred",
-      "pass": false,
+      "outcome": "pass",
+      "pass": true,
       "source": "generated:seed=12816349288120551219",
-      "values_compared": 0
+      "values_compared": 11907
     },
     {
       "max_rel_err": 0.0,
@@ -10562,16 +10526,12 @@
       "values_compared": 5941
     },
     {
-      "deferred": {
-        "symbol": "SmVertex::GetTolerance",
-        "unit": "topology.vertex"
-      },
       "max_rel_err": 0.0,
       "name": "gen1290",
-      "outcome": "deferred",
-      "pass": false,
+      "outcome": "pass",
+      "pass": true,
       "source": "generated:seed=12816349288120551250",
-      "values_compared": 0
+      "values_compared": 887
     },
     {
       "max_rel_err": 0.0,
@@ -11331,8 +11291,8 @@
     },
     {
       "deferred": {
-        "symbol": "SmVertex::GetTolerance",
-        "unit": "topology.vertex"
+        "symbol": "SmFace::GetTolerance",
+        "unit": "topology.face_p2"
       },
       "max_rel_err": 0.0,
       "name": "gen1385",
@@ -12227,8 +12187,8 @@
     },
     {
       "deferred": {
-        "symbol": "SmVertex::GetTolerance",
-        "unit": "topology.vertex"
+        "symbol": "SmFace::GetTolerance",
+        "unit": "topology.face_p2"
       },
       "max_rel_err": 0.0,
       "name": "gen1496",
@@ -12347,8 +12307,8 @@
     },
     {
       "deferred": {
-        "symbol": "SmVertex::GetTolerance",
-        "unit": "topology.vertex"
+        "symbol": "SmFace::GetTolerance",
+        "unit": "topology.face_p2"
       },
       "max_rel_err": 0.0,
       "name": "gen1510",
@@ -12651,8 +12611,8 @@
     },
     {
       "deferred": {
-        "symbol": "SmVertex::GetTolerance",
-        "unit": "topology.vertex"
+        "symbol": "SmFace::GetTolerance",
+        "unit": "topology.face_p2"
       },
       "max_rel_err": 0.0,
       "name": "gen1547",
@@ -12694,16 +12654,12 @@
       "values_compared": 9023
     },
     {
-      "deferred": {
-        "symbol": "SmVertex::GetTolerance",
-        "unit": "topology.vertex"
-      },
       "max_rel_err": 0.0,
       "name": "gen1552",
-      "outcome": "deferred",
-      "pass": false,
+      "outcome": "pass",
+      "pass": true,
       "source": "generated:seed=12816349288120551512",
-      "values_compared": 0
+      "values_compared": 14907
     },
     {
       "max_rel_err": 0.0,
@@ -12771,8 +12727,8 @@
     },
     {
       "deferred": {
-        "symbol": "SmVertex::GetTolerance",
-        "unit": "topology.vertex"
+        "symbol": "SmFace::GetTolerance",
+        "unit": "topology.face_p2"
       },
       "max_rel_err": 0.0,
       "name": "gen1561",
@@ -13607,8 +13563,8 @@
     },
     {
       "deferred": {
-        "symbol": "SmVertex::GetTolerance",
-        "unit": "topology.vertex"
+        "symbol": "SmFace::GetTolerance",
+        "unit": "topology.face_p2"
       },
       "max_rel_err": 0.0,
       "name": "gen1664",
@@ -14867,8 +14823,8 @@
     },
     {
       "deferred": {
-        "symbol": "SmVertex::GetTolerance",
-        "unit": "topology.vertex"
+        "symbol": "SmEdge::GetTolerance",
+        "unit": "topology.edge"
       },
       "max_rel_err": 0.0,
       "name": "gen1818",
@@ -15402,16 +15358,12 @@
       "values_compared": 4215
     },
     {
-      "deferred": {
-        "symbol": "SmVertex::GetTolerance",
-        "unit": "topology.vertex"
-      },
       "max_rel_err": 0.0,
       "name": "gen1884",
-      "outcome": "deferred",
-      "pass": false,
+      "outcome": "pass",
+      "pass": true,
       "source": "generated:seed=12816349288120551844",
-      "values_compared": 0
+      "values_compared": 6476
     },
     {
       "max_rel_err": 0.0,
@@ -15875,8 +15827,8 @@
     },
     {
       "deferred": {
-        "symbol": "SmVertex::GetTolerance",
-        "unit": "topology.vertex"
+        "symbol": "SmEdge::GetTolerance",
+        "unit": "topology.edge"
       },
       "max_rel_err": 0.0,
       "name": "gen1942",
@@ -16554,16 +16506,12 @@
       "values_compared": 9937
     },
     {
-      "deferred": {
-        "symbol": "SmVertex::GetTolerance",
-        "unit": "topology.vertex"
-      },
       "max_rel_err": 0.0,
       "name": "gen2024",
-      "outcome": "deferred",
-      "pass": false,
+      "outcome": "pass",
+      "pass": true,
       "source": "generated:seed=12816349288120551984",
-      "values_compared": 0
+      "values_compared": 1622
     },
     {
       "max_rel_err": 0.0,
@@ -16831,8 +16779,8 @@
     },
     {
       "deferred": {
-        "symbol": "SmVertex::GetTolerance",
-        "unit": "topology.vertex"
+        "symbol": "SmEdge::GetTolerance",
+        "unit": "topology.edge"
       },
       "max_rel_err": 0.0,
       "name": "gen2058",
@@ -18590,16 +18538,12 @@
       "values_compared": 5920
     },
     {
-      "deferred": {
-        "symbol": "SmVertex::GetTolerance",
-        "unit": "topology.vertex"
-      },
       "max_rel_err": 0.0,
       "name": "gen2276",
-      "outcome": "deferred",
-      "pass": false,
+      "outcome": "pass",
+      "pass": true,
       "source": "generated:seed=12816349288120552236",
-      "values_compared": 0
+      "values_compared": 11479
     },
     {
       "max_rel_err": 0.0,
@@ -18699,8 +18643,8 @@
     },
     {
       "deferred": {
-        "symbol": "SmVertex::GetTolerance",
-        "unit": "topology.vertex"
+        "symbol": "SmEdge::GetTolerance",
+        "unit": "topology.edge"
       },
       "max_rel_err": 0.0,
       "name": "gen2289",
@@ -18727,8 +18671,8 @@
     },
     {
       "deferred": {
-        "symbol": "SmVertex::GetTolerance",
-        "unit": "topology.vertex"
+        "symbol": "SmFace::GetTolerance",
+        "unit": "topology.face_p2"
       },
       "max_rel_err": 0.0,
       "name": "gen2292",
@@ -18843,8 +18787,8 @@
     },
     {
       "deferred": {
-        "symbol": "SmVertex::GetTolerance",
-        "unit": "topology.vertex"
+        "symbol": "SmFace::GetTolerance",
+        "unit": "topology.face_p2"
       },
       "max_rel_err": 0.0,
       "name": "gen2306",
@@ -19142,16 +19086,12 @@
       "values_compared": 0
     },
     {
-      "deferred": {
-        "symbol": "SmVertex::GetTolerance",
-        "unit": "topology.vertex"
-      },
       "max_rel_err": 0.0,
       "name": "gen2342",
-      "outcome": "deferred",
-      "pass": false,
+      "outcome": "pass",
+      "pass": true,
       "source": "generated:seed=12816349288120552302",
-      "values_compared": 0
+      "values_compared": 1843
     },
     {
       "max_rel_err": 0.0,
@@ -19367,8 +19307,8 @@
     },
     {
       "deferred": {
-        "symbol": "SmVertex::GetTolerance",
-        "unit": "topology.vertex"
+        "symbol": "SmFace::GetTolerance",
+        "unit": "topology.face_p2"
       },
       "max_rel_err": 0.0,
       "name": "gen2369",
@@ -19458,16 +19398,12 @@
       "values_compared": 1508
     },
     {
-      "deferred": {
-        "symbol": "SmVertex::GetTolerance",
-        "unit": "topology.vertex"
-      },
       "max_rel_err": 0.0,
       "name": "gen2380",
-      "outcome": "deferred",
-      "pass": false,
+      "outcome": "pass",
+      "pass": true,
       "source": "generated:seed=12816349288120552340",
-      "values_compared": 0
+      "values_compared": 8332
     },
     {
       "max_rel_err": 0.0,
@@ -20035,8 +19971,8 @@
     },
     {
       "deferred": {
-        "symbol": "SmVertex::GetTolerance",
-        "unit": "topology.vertex"
+        "symbol": "SmEdge::GetTolerance",
+        "unit": "topology.edge"
       },
       "max_rel_err": 0.0,
       "name": "gen2450",
@@ -20783,8 +20719,8 @@
     },
     {
       "deferred": {
-        "symbol": "SmVertex::GetTolerance",
-        "unit": "topology.vertex"
+        "symbol": "SmFace::GetTolerance",
+        "unit": "topology.face_p2"
       },
       "max_rel_err": 0.0,
       "name": "gen2540",
@@ -20858,16 +20794,12 @@
       "values_compared": 1730
     },
     {
-      "deferred": {
-        "symbol": "SmVertex::GetTolerance",
-        "unit": "topology.vertex"
-      },
       "max_rel_err": 0.0,
       "name": "gen2549",
-      "outcome": "deferred",
-      "pass": false,
+      "outcome": "pass",
+      "pass": true,
       "source": "generated:seed=12816349288120552509",
-      "values_compared": 0
+      "values_compared": 1724
     },
     {
       "max_rel_err": 0.0,
@@ -20934,16 +20866,12 @@
       "values_compared": 15498
     },
     {
-      "deferred": {
-        "symbol": "SmVertex::GetTolerance",
-        "unit": "topology.vertex"
-      },
       "max_rel_err": 0.0,
       "name": "gen2558",
-      "outcome": "deferred",
-      "pass": false,
+      "outcome": "pass",
+      "pass": true,
       "source": "generated:seed=12816349288120552518",
-      "values_compared": 0
+      "values_compared": 5729
     },
     {
       "max_rel_err": 0.0,
@@ -21091,7 +21019,7 @@
     },
     {
       "deferred": {
-        "symbol": "SmVertex::GetTolerance",
+        "symbol": "SmVertex::SetPoint",
         "unit": "topology.vertex"
       },
       "max_rel_err": 0.0,
@@ -21703,8 +21631,8 @@
     },
     {
       "deferred": {
-        "symbol": "SmVertex::GetTolerance",
-        "unit": "topology.vertex"
+        "symbol": "SmEdge::GetTolerance",
+        "unit": "topology.edge"
       },
       "max_rel_err": 0.0,
       "name": "gen2653",
@@ -23135,8 +23063,8 @@
     },
     {
       "deferred": {
-        "symbol": "SmVertex::GetTolerance",
-        "unit": "topology.vertex"
+        "symbol": "SmFace::GetTolerance",
+        "unit": "topology.face_p2"
       },
       "max_rel_err": 0.0,
       "name": "gen2830",
@@ -26855,14 +26783,14 @@
     }
   ],
   "cases_both_errored": 0,
-  "cases_deferred": 129,
+  "cases_deferred": 111,
   "cases_failed": 0,
-  "cases_passed": 3163,
+  "cases_passed": 3181,
   "cases_total": 3292,
   "deferred_by_unit": {
-    "topology.edge": 35,
-    "topology.face_p2": 49,
-    "topology.vertex": 45
+    "topology.edge": 47,
+    "topology.face_p2": 63,
+    "topology.vertex": 1
   },
   "max_rel_err": 0.0,
   "pass": true,

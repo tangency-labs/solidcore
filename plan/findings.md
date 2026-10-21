@@ -11277,6 +11277,55 @@ guarded in `offset.offset_geometry_creation`; the fix belongs to the curve cache
 - **Status.** Open, with `fuzz00504`. Reproduce with the fuzz output file as a fixture and
   the tolerance set to any accepted value.
 
+## wire: topology-uses (PR #337, 2026-10-20; stale `UNPORTED(topology.vertex|vertexuse|edgeuse_p1|edgeuse_p3|loopuse)` stubs)
+
+### offset.offset_executive_p1: NormalizedEvaluate continuations
+
+`RemoveExcessFaces` now calls `topology::edgeuse::p3::normalized_evaluate` (3D, defaults).
+The `SmEdgeuse::NormalizedEvaluate` call in `FillGapEdgeuses` (cpp:3147) keeps a justified
+`UNPORTED(topology.edgeuse_p3)` deferral: the corner-blend matching after it (cpp:3149-3214)
+is not ported, so wiring the evaluation alone would let the body report success without
+doing its work. Port the continuation with the call. (`MapEdgeuses` was ported on main with
+its continuation.)
+
+### Stubs left (structural, not a missing unit)
+
+- `surface::trim_srf_cache` (`SmLoopuse::GetEdgeuses` / `GetVertexuses`,
+  `SmEdgeuse::GetUVTrimCurve`, `SmVertexuse::ComputeUVPoint` / `GetVertex`,
+  `SmVertex::GetTolerance`): the cache is generic over an opaque handle `O` with no B-rep;
+  the loop uses come from `SmFace::GetUpwardLoopuses` (`topology.face_p4`, todo). Wiring
+  needs a B-rep threaded through `TrimSrfCache`.
+- `geom::object::Shape::new`, `geom::solution_array` (`SmVertex::GetPoint`): the vertex
+  keys / solution objects name no B-rep.
+- `query::poly::PolyBrep::destroy` (`SmVertex::GetPolyVertex` / `SetPolyVertex`): the
+  original vertex is an opaque `ObjectKey` and no Rust path sets valid back pointers.
+- `intersect::point_class` `GetBrep` (needs a `BrepId` the handle hooks cannot name), the
+  `SetPoint` / `SetTolerance` / `SetExact` mutations of `merge_into_object` and
+  `MergePointClass`, and `intersect::curve_class::p7` `SmVertex::SetPoint`: the
+  classification handles reach the B-rep read-only (`ClassGeometry::topology_entity`).
+  The real mutating path is `merge_into_brep`.
+- `intersect::point_class::PointClassification::merge_into_object`, the read-only
+  `SmVertex::GetPoint` (cpp `_init_v_point`), `SmTol::GetScaledZero(const SmVertex&)` and
+  `SmVertex::GetTolerance` (justified: the helpers take only the handle, with no
+  `ClassGeometry`, and every path through them reaches the `SetPoint` / `SetExact` /
+  `SetTolerance` mutations above; wiring the reads alone would only move the deferral a
+  few lines down. They are wired together with the mutations in `merge_into_brep`).
+- `intersect::point_class::PointClassification::is_connected_to` (`IsConnectedTo` of a
+  vertex, edge, face, loop, vertexuse, edgeuse or loopuse; point_class.rs:761-803) and
+  `intersect::curve_class::p7` `vertex_is_connected_to` (`SmVertex::IsConnectedTo`)
+  (justified: structural; both take the opaque handles but no `ClassGeometry`, and the
+  point_class target is a generic `T` of another handle space, so they cannot reach the
+  B-rep. Wiring needs a geometry parameter on the query and on its callers, which open
+  PR #316 adds for these sites; this PR leaves them to it.)
+- Opaque-handle fallbacks: `point_class::edgeuse_edge` (`SmEdgeuse::GetEdge`),
+  `resolve_vertex_point` (`SmVertex::GetPoint`), `object_zone_tol_3d`
+  (`SmVertex::GetTolerance`, `SmEdgeuse::GetTolerance`) and `curve_class::p3::vertex_point`
+  (now `resolve_vertex_point`) keep a deferral only when the adapter resolves the handle
+  through neither `classification_vertex_point` nor `topology_entity` (justified: the
+  adapter has no B-rep to read).
+- `blend::fillet_solver::p1` `SmVertex::SetPoint` (#303's cluster),
+  `intersect::curve_class::p9` and `topology::proto_topology::p2` (already justified).
+
 ## intersect.curve_class_p4 — `ReSet` / `ConnectIntervals` back-edges left unwired (2026-10-20, small-fixes PR)
 
 Both `intersect.curve_class_p2` functions are ported (`CurveClassification::reset`,

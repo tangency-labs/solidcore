@@ -42,6 +42,7 @@
 //! | [`ScaledZero`] (`f64`, [`Vec2`], [`Vec3`], [`Extent1d`], `Extent2d`, [`Extent3d`], `PseudoBox`) | `SmTol::GetScaledZero(const double)`, `(const SmVector2d&)`, `(const SmVector3d&)`, `(const SmExtent1d&)`, `(const SmExtent2d&)` (impl in `geom::extent2d`), `(const SmExtent3d&)`, `(const SmPseudoBox&)` (impl in `geom::pseudo_box`) |
 //! | [`scaled_zero_of_equations`]           | `SmTol::GetScaledZero(const SmEvalNFunctionsObject&)` |
 //! | [`scaled_zero_of_volume`]              | `SmTol::GetScaledZero(const SmVolume&)`        |
+//! | [`scaled_zero_of_vertex`]              | `SmTol::GetScaledZero(const SmVertex&)`        |
 //! | [`map_to_1d`]                          | `SmTol::MapTo1d(SmTol3d&, SmVector3d&, const SmExtent1d&)` |
 //! | [`scaled_zero_sq_of`], [`scaled_zero_sqrt_of`] | unary `GetScaledZeroSq<cA>`, `GetScaledZeroSqrt<cA>` |
 //! | [`scaled_zero2`], [`scaled_zero_sq2`], [`scaled_zero_sqrt2`] | binary `GetScaledZero<cA,cB>`, `...Sq`, `...Sqrt` |
@@ -159,7 +160,7 @@ use crate::topology::{Brep, EdgeId, FaceId, VertexId};
 // the other GetApproxTol3d / GetAngTolRad overloads of algorithm objects (SmHCR,
 // SmPolyIntersector, SmSurfaceIntersector, SmSurfaceTracer, SmTopologyIntersector,
 // SmOffsetGeometryCreation) belong with those objects' units.
-// UNPORTED(topology.vertex): SmTol::GetScaledZero(const SmVertex&) (SmVertex::GetPoint).
+// SmTol::GetScaledZero(const SmVertex&) is scaled_zero_of_vertex below.
 // UNPORTED(topology.edge): SmTol::GetScaledZero(const SmEdge&) (SmEdge::GetCurve).
 // UNPORTED(topology.face_p2): SmTol::GetScaledZero(const SmFace&) (SmFace::GetSurface).
 // SmTol::GetScaledZero(const SmRegion&) and (const SmShell&) (SmTol.cpp:1394-1395) are not
@@ -679,6 +680,16 @@ pub fn scaled_zero_of_equations<E: EvalNFunctions + ?Sized>(equations: &E) -> f6
     tol3d(equations.scaled_zero())
 }
 
+/// `SmTol::GetScaledZero(const SmVertex&)`: the scaled zero of the vertex point
+/// (`GetScaledZero(rVertex.GetPoint())`).
+///
+/// # Errors
+///
+/// [`SolidError::NotFound`] for a dangling vertex id.
+pub fn scaled_zero_of_vertex(b: &Brep, v: VertexId) -> Result<f64> {
+    Ok(crate::topology::vertex::point(b, v)?.scaled_zero())
+}
+
 /// `SmTol::GetScaledZero(const SmVolume&)`: `100 * SM_EFF_ZERO` for an unbounded
 /// parameter domain; for a bounded one the scaled zero of the out-space bounding box
 /// of the domain (`EvaluateBoundingBox`, status ignored: on a failure the box holds
@@ -1085,6 +1096,20 @@ mod tests {
         assert!(!are_parallel(Vec3::X, Vec3::Y, None));
         assert!(are_perpendicular(Vec3::X, Vec3::Y, Some(0.1)));
         assert!(!are_perpendicular(Vec3::X, Vec3::ZERO, Some(0.1)));
+    }
+
+    #[test]
+    fn scaled_zero_of_a_vertex_is_that_of_its_point() {
+        let mut b = Brep::new();
+        let point = Vec3::new(16.0, -100.0, 1000.0);
+        let v = b
+            .add_vertex_record(crate::topology::Vertex {
+                point,
+                ..crate::topology::Vertex::default()
+            })
+            .unwrap();
+        assert_eq!(scaled_zero_of_vertex(&b, v).unwrap(), point.scaled_zero());
+        assert_eq!(scaled_zero_of_vertex(&b, v).unwrap(), EFF_ZERO * 1001.0);
     }
 
     #[test]

@@ -138,8 +138,9 @@ use crate::surface::surface::p4::global_point_solve_starts;
 use crate::surface::surface::Surface;
 use crate::surface::volume::Volume;
 use crate::topology::edge as topo_edge;
+use crate::topology::edgeuse::p1 as topo_edgeuse;
 use crate::topology::vertex as topo_vertex;
-use crate::topology::{Brep, BrepId};
+use crate::topology::{Brep, BrepId, EdgeId};
 
 /// Mutable topology and handle mapping for [`PointClassification::merge_into_brep`].
 /// The target belongs to `brep`; `handle` maps its arena ids back into the caller's
@@ -155,7 +156,7 @@ pub struct BrepMerge<'a, 'env, O> {
     /// Notification storage/identities shared with the caller's other mutations.
     pub notifications: &'a mut crate::topology::edge::NotifyEnv<'env>,
     /// Identity of each edge's curve from its id and actual native type code, including a new split edge.
-    pub curve_ref: &'a dyn Fn(crate::topology::EdgeId, i64) -> ObjectRef,
+    pub curve_ref: &'a dyn Fn(EdgeId, i64) -> ObjectRef,
 }
 
 const OP_GAP: &str = "intersect::point_class::PointClassification::gap_3d";
@@ -164,6 +165,7 @@ const OP_FIND: &str = "intersect::point_class::PointClassification::find_obj_poi
 const OP_MERGE: &str = "intersect::point_class::PointClassification::merge_into_object";
 const OP_LOAD: &str = "intersect::point_class::PointClassification::load_from_intersection";
 const OP_GEOMETRY: &str = "intersect::point_class::ClassGeometry";
+const OP_TOLERANCE: &str = "intersect::point_class::object_zone_tol_3d";
 
 /// The kind of object a point is classified to (`SmPointClassificationType`). The
 /// discriminants are the upstream values; `SmCurveClassification` depends on their
@@ -619,13 +621,13 @@ impl<O: ClassObject> PointClassification<O> {
                     .ok_or_else(|| unresolved(OP_GEOMETRY)),
                 None => Ok(None),
             },
-            PointClassType::Edgeuse if self.object.is_some() => {
-                // UNPORTED(topology.edgeuse_p1): SmEdgeuse::GetEdge
-                Err(SolidError::unported(
-                    "SmEdgeuse::GetEdge",
-                    "topology.edgeuse_p1",
-                ))
-            }
+            PointClassType::Edgeuse => match self.object {
+                Some(o) => {
+                    let (b, e) = edgeuse_edge(geometry, o, OP_GEOMETRY)?;
+                    topo_edge::curve(b, e)
+                }
+                None => Ok(None),
+            },
             _ => Ok(None),
         }
     }
@@ -1066,11 +1068,12 @@ impl<O: ClassObject> PointClassification<O> {
                 );
             }
             PointClassType::Edgeuse => {
-                // UNPORTED(topology.edgeuse_p1): SmEdgeuse::GetEdge
-                return Err(SolidError::unported(
-                    "SmEdgeuse::GetEdge",
-                    "topology.edgeuse_p1",
-                ));
+                let o = self.object.ok_or_else(|| null_object(OP_COMPUTE))?;
+                let (b, e) = edgeuse_edge(geometry, o, OP_COMPUTE)?;
+                // a NULL curve leaves pObjCurve NULL: no curve drop, as upstream
+                if let Some(c) = topo_edge::curve(b, e)? {
+                    obj_curve = Some((c, topo_edge::interval(b, e)?));
+                }
             }
             PointClassType::Edge => {
                 // UNPORTED(topology.edge): SmEdge::GetCurve
@@ -1205,12 +1208,10 @@ impl<O: ClassObject> PointClassification<O> {
                 curve.evaluate_point(self.t_param)
             }
             PointClassType::Edgeuse => {
-                self.cast(ClassObjectKind::Edgeuse)?;
-                // UNPORTED(topology.edgeuse_p1): SmEdgeuse::GetEdge
-                Err(SolidError::unported(
-                    "SmEdgeuse::GetEdge",
-                    "topology.edgeuse_p1",
-                ))
+                let o = self.cast(ClassObjectKind::Edgeuse)?;
+                let (b, e) = edgeuse_edge(geometry, o, OP_FIND)?;
+                let curve = topo_edge::curve(b, e)?.ok_or_else(|| null_object(OP_FIND))?;
+                curve.evaluate_point(self.t_param)
             }
             PointClassType::Face => {
                 self.cast(ClassObjectKind::Face)?;
@@ -1564,13 +1565,16 @@ pub fn object_zone_tol_3d<O: ClassObject>(
         }
     }
     match o.class_kind() {
-        ClassObjectKind::Vertex => {
-            // UNPORTED(topology.vertex): SmVertex::GetTolerance
-            Err(SolidError::unported(
+        ClassObjectKind::Vertex => match geometry.topology_entity(o) {
+            Some((b, EntityRef::Vertex(v))) => topo_vertex::tolerance(b, v),
+            Some(_) => Err(unresolved(OP_TOLERANCE)),
+            // an opaque handle (the adapter has no B-rep): still a deferral
+            // UNPORTED(topology.vertex): SmVertex::GetTolerance (unresolved handle)
+            None => Err(SolidError::unported(
                 "SmVertex::GetTolerance",
                 "topology.vertex",
-            ))
-        }
+            )),
+        },
         ClassObjectKind::Edge => {
             // UNPORTED(topology.edge): SmEdge::GetTolerance
             Err(SolidError::unported(
@@ -1585,13 +1589,16 @@ pub fn object_zone_tol_3d<O: ClassObject>(
                 "topology.face_p2",
             ))
         }
-        ClassObjectKind::Edgeuse => {
-            // UNPORTED(topology.edgeuse_p1): SmEdgeuse::GetTolerance
-            Err(SolidError::unported(
+        ClassObjectKind::Edgeuse => match geometry.topology_entity(o) {
+            Some((b, EntityRef::Edgeuse(eu))) => topo_edgeuse::tolerance(b, eu),
+            Some(_) => Err(unresolved(OP_TOLERANCE)),
+            // an opaque handle (the adapter has no B-rep): still a deferral
+            // UNPORTED(topology.edgeuse_p1): SmEdgeuse::GetTolerance (unresolved handle)
+            None => Err(SolidError::unported(
                 "SmEdgeuse::GetTolerance",
                 "topology.edgeuse_p1",
-            ))
-        }
+            )),
+        },
         // no GetTolerance override: SmTopology::GetTolerance, SM_ZONE_TOL_3D (unit
         // topology.topology, SM_USE_OLDTOL)
         ClassObjectKind::Faceuse
@@ -1820,11 +1827,36 @@ fn edge_curve<'g, O>(
     }
 }
 
+/// `SmEdgeuse::GetEdge` of edgeuse handle `edgeuse`, through
+/// [`ClassGeometry::topology_entity`]: the B-rep and its edge. A handle resolved to
+/// another entity is [`SolidError::InvalidInput`], an edgeuse without edge (a NULL
+/// dereference upstream) [`SolidError::NullPointer`], and one the adapter cannot
+/// resolve (no B-rep) stays [`SolidError::Unported`].
+fn edgeuse_edge<'g, O>(
+    geometry: &'g impl ClassGeometry<O>,
+    edgeuse: O,
+    op: &'static str,
+) -> Result<(&'g Brep, EdgeId)> {
+    match geometry.topology_entity(edgeuse) {
+        Some((b, EntityRef::Edgeuse(eu))) => {
+            let e = topo_edgeuse::edge(b, eu)?.ok_or_else(|| null_object(op))?;
+            Ok((b, e))
+        }
+        Some(_) => Err(unresolved(op)),
+        // an opaque handle (the adapter has no B-rep): still a deferral
+        // UNPORTED(topology.edgeuse_p1): SmEdgeuse::GetEdge (unresolved handle)
+        None => Err(SolidError::unported(
+            "SmEdgeuse::GetEdge",
+            "topology.edgeuse_p1",
+        )),
+    }
+}
+
 /// `SmVertex::GetPoint` of vertex handle `vertex`, through
 /// [`ClassGeometry::classification_vertex_point`] or else
 /// [`ClassGeometry::topology_entity`]; a handle resolved to another entity is
 /// [`SolidError::InvalidInput`], one neither resolves stays [`SolidError::Unported`].
-fn resolve_vertex_point<O: Copy>(
+pub(crate) fn resolve_vertex_point<O: Copy>(
     geometry: &impl ClassGeometry<O>,
     vertex: O,
     op: &'static str,

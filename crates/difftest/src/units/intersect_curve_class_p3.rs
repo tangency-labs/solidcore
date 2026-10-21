@@ -30,6 +30,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 
 use solidcore::curve::curve::p2::Curve;
+use solidcore::error::EntityRef;
 use solidcore::curve::ellipse::{Ellipse, EllipseOptions};
 use solidcore::curve::hermite_curve::HermiteCurve;
 use solidcore::curve::line::{BoundedLineOptions, Line};
@@ -52,6 +53,7 @@ use solidcore::nurbs::srf_basic::Surface as NurbSurface;
 use solidcore::surface::plane::Plane;
 use solidcore::surface::surface::Surface;
 use solidcore::surface::volume::Volume;
+use solidcore::topology::{Brep, Vertex, VertexId};
 use solidcore::SolidError;
 use solidcore_ffi::units::intersect_curve_class_p3::{self as ffi, kind, op};
 
@@ -555,6 +557,11 @@ enum PoolObj {
 struct Pool {
     objs: Vec<PoolObj>,
     handles: Vec<H>,
+    /// The B-rep holding one default vertex (`SmVertex()`: origin, tolerance 0) per
+    /// vertex object, as the shim's `ScVertex`.
+    brep: Brep,
+    /// The B-rep vertex of each object (`None` for other kinds).
+    vertices: Vec<Option<VertexId>>,
 }
 
 impl ClassGeometry<H> for Pool {
@@ -578,6 +585,14 @@ impl ClassGeometry<H> for Pool {
             Some(PoolObj::Point(p)) => Some(*p),
             _ => None,
         }
+    }
+    fn topology_zone_tol_3d(&self, o: H) -> Option<f64> {
+        let v = (*self.vertices.get(o.0)?)?;
+        solidcore::topology::vertex::tolerance(&self.brep, v).ok()
+    }
+    fn topology_entity(&self, o: H) -> Option<(&Brep, EntityRef)> {
+        let v = (*self.vertices.get(o.0)?)?;
+        Some((&self.brep, EntityRef::Vertex(v)))
     }
 }
 
@@ -624,6 +639,8 @@ fn build_pool(objects: &[ObjIn]) -> Result<Pool, HarnessError> {
     let mut pool = Pool {
         objs: Vec::new(),
         handles: Vec::new(),
+        brep: Brep::new(),
+        vertices: Vec::new(),
     };
     for (i, o) in objects.iter().enumerate() {
         let obj = match o {
@@ -635,8 +652,17 @@ fn build_pool(objects: &[ObjIn]) -> Result<Pool, HarnessError> {
             ObjIn::Point(p) => PoolObj::Point(v3(*p)),
             _ => PoolObj::Bare,
         };
+        let vertex = match o {
+            ObjIn::Vertex => Some(
+                pool.brep
+                    .add_vertex_record(Vertex::default())
+                    .map_err(|e| harness(format!("vertex record: {e}")))?,
+            ),
+            _ => None,
+        };
         pool.objs.push(obj);
         pool.handles.push(H(i, class_kind_of(obj_kind(o))));
+        pool.vertices.push(vertex);
     }
     Ok(pool)
 }

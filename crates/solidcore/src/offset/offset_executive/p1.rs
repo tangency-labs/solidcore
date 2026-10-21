@@ -35,7 +35,8 @@
 //! and uses the existing canonical arena-identity cache adapter; custom geometry owner keys
 //! or indirect owner chains are explicitly unsupported rather than silently skipped.
 //! Result-edge enumeration uses `SmBrep::GetEdges` list order (`topology::brep::p1::edges`);
-//! nonempty queries still defer at `NormalizedEvaluate`. `BuildSideWallOfEdgeuse` takes
+//! nonempty queries evaluate each primary edge use (`NormalizedEvaluate`) and still defer at the
+//! editing flag. `BuildSideWallOfEdgeuse` takes
 //! the original B-rep as an argument (upstream reaches it through the edge use pointer).
 //! `BuildOffsetOfFaceuse` moves the offset surface into `MakeFaceWithCurves` (upstream
 //! hands over the pointer); a failed constructor drops it and, as upstream, relates no
@@ -471,8 +472,8 @@ impl OffsetExecutive {
             let primary = required(eu::primary_edgeuse(result, id)?)?;
             // Upstream ignores the evaluation status and keeps the initialized point.
             // An unported evaluator must still propagate instead of supplying a fake point.
-            let point =
-                ignored(normalized_evaluate(result, primary, 0.5, false))?.unwrap_or(Vec3::UNDEF);
+            let point = ignored(normalized_evaluate(kernel, result, primary, 0.5, false))?
+                .unwrap_or(Vec3::UNDEF);
             if original_cache.is_none() {
                 original_cache = Some(make_original_brep_cache(kernel, original)?);
             }
@@ -641,7 +642,7 @@ impl OffsetExecutive {
             all_vertices.extend(face_vertices(brep, face)?);
         }
         for &gap in gaps {
-            let _midpoint = normalized_evaluate(brep, gap, 0.5, false)?;
+            let _midpoint = fill_gap_normalized_evaluate(brep, gap, 0.5, false)?;
             // Continuation cpp:3149–3214: for each endpoint find coincident candidate
             // vertices using the sum of vertex tolerances (strict <); take each
             // closest incident edge. The candidate list persists across gap uses.
@@ -1568,9 +1569,31 @@ fn collect_excess_faces(
     Ok(())
 }
 
-fn normalized_evaluate(brep: &Brep, edgeuse: EdgeuseId, _param: f64, _uv: bool) -> Result<Vec3> {
+/// `SmEdgeuse::NormalizedEvaluate(dParam, bUV, rPoint)` with the defaults
+/// (`pOptFirstDeriv = NULL`, `bOKToMakeUVTrimCurve = TRUE`): the point.
+fn normalized_evaluate(
+    kernel: &Kernel,
+    brep: &mut Brep,
+    edgeuse: EdgeuseId,
+    param: f64,
+    uv: bool,
+) -> Result<Vec3> {
+    Ok(eu3::normalized_evaluate(kernel, brep, edgeuse, param, uv, false, true)?.point)
+}
+
+/// `SmEdgeuse::NormalizedEvaluate` in `FillGapEdgeuses`, whose continuation
+/// (cpp:3149-3214) is not ported: the deferral stays at the evaluation so the body does not
+/// report success without it.
+fn fill_gap_normalized_evaluate(
+    brep: &Brep,
+    edgeuse: EdgeuseId,
+    _param: f64,
+    _uv: bool,
+) -> Result<Vec3> {
     brep.edgeuse(edgeuse)?;
-    // UNPORTED(topology.edgeuse_p3): SmEdgeuse::NormalizedEvaluate
+    // UNPORTED(topology.edgeuse_p3): SmEdgeuse::NormalizedEvaluate (justified: findings.md "offset.offset_executive_p1: NormalizedEvaluate continuations")
+    // justified: the evaluation itself is ported (`eu3::normalized_evaluate`), but the
+    // corner-blend matching after it in FillGapEdgeuses (cpp:3149-3214) is not
     Err(SolidError::unported(
         "SmEdgeuse::NormalizedEvaluate",
         "topology.edgeuse_p3",
@@ -2254,12 +2277,12 @@ mod tests {
         );
         add_use(&mut result, 0.0, 1.0, 1.0);
         add_use(&mut result, 0.0, 1.0, 2.0);
-        // Multiple arena entries do not establish linked-list order parity: this
-        // prefix must still defer before collecting or removing any result faces.
+        // The primary edge use is evaluated (NormalizedEvaluate), then the original
+        // B-rep cache defers before collecting or removing any result faces.
         assert_dependency(
             executive.remove_excess_faces(&kernel, &original, &mut result),
-            "SmEdgeuse::NormalizedEvaluate",
-            "topology.edgeuse_p3",
+            "SmBrep::CalculateBoundingBox",
+            "query.brep",
         );
         assert_eq!(result.edges().len(), 2);
         assert_eq!(result.edgeuses().len(), 2);

@@ -21,11 +21,11 @@
 //! Deviations:
 //! - **Object handles.** As in part 1, every `SmObject` pointer is a caller-chosen handle
 //!   `O` ([`ClassObject`]) and the geometry behind it comes from a [`ClassGeometry`]; the
-//!   kernel is passed explicitly. `SmEdge::GetCurve` reaches the edge's B-rep through
-//!   [`ClassGeometry::topology_entity`] (a handle the adapter cannot resolve stays
-//!   [`SolidError::Unported`]); the other topology members the code calls
-//!   (`SmEdge::GetVertex`, `GetInterval`, `SmVertex::GetPoint`, the zone tolerances of
-//!   both) are still [`SolidError::Unported`] here.
+//!   kernel is passed explicitly. `SmEdge::GetCurve` and `SmVertex::GetPoint` reach the
+//!   entity's B-rep through [`ClassGeometry::topology_entity`] (a handle the adapter cannot
+//!   resolve stays [`SolidError::Unported`]); the other topology members the code calls
+//!   (`SmEdge::GetVertex`, `GetInterval`, the zone tolerances of both) are still
+//!   [`SolidError::Unported`] here.
 //! - **Out-params.** `FindInterval` returns a [`FoundInterval`]; `InsertPointClass` returns
 //!   `rbInsertionMade`; `sm_ChangeEdgePointClassToNearVertex` returns
 //!   `rbChangedToVertexFlag`; `MergePointClass`'s optional output arrays are
@@ -91,6 +91,7 @@ const OP_CLEANUP: &str = "intersect::curve_class::p3::CurveClassification::clean
 const OP_NEAR_VERTEX: &str = "intersect::curve_class::p3::change_edge_point_class_to_near_vertex";
 const OP_SQUEEZE: &str = "intersect::curve_class::p3::fix_problems_by_squeezing";
 const OP_EDGE: &str = "intersect::curve_class::p3::edge_curve";
+const OP_VERTEX: &str = "intersect::curve_class::p3::vertex_point";
 
 /// `SM_ERR_OUTSIDE_OF_DOMAIN` (`SmMessages.h`).
 const SM_ERR_OUTSIDE_OF_DOMAIN: i32 = 1020;
@@ -164,14 +165,12 @@ fn edge_curve<O: ClassObject, G: ClassGeometry<O>>(
     }
 }
 
-/// `SmVertex::GetPoint`.
-fn vertex_point<O: ClassObject>(vertex: O) -> Result<Point3> {
-    let _ = vertex;
-    // UNPORTED(topology.vertex): SmVertex::GetPoint
-    Err(SolidError::unported(
-        "SmVertex::GetPoint",
-        "topology.vertex",
-    ))
+/// `SmVertex::GetPoint` of vertex handle `vertex`, through
+/// [`ClassGeometry::classification_vertex_point`] or else the B-rep vertex that
+/// [`ClassGeometry::topology_entity`] resolves it to (the same lookup as point
+/// classification's `InsertPointClass` path).
+fn vertex_point<O: ClassObject, G: ClassGeometry<O>>(geometry: &G, vertex: O) -> Result<Point3> {
+    crate::intersect::point_class::resolve_vertex_point(geometry, vertex, OP_VERTEX)
 }
 
 /// `SmCurveClassification::GetPointClassByIndex(index)`: the location of boundary
@@ -913,10 +912,12 @@ impl<O: ClassObject> CurveClassification<O> {
             {
                 // Gather CurvePtClass and IvlEndPt_PtClass local information
                 let ivl_end_pt_point = vertex_point(
+                    geometry,
                     ivl_end_pt_object.ok_or_else(|| SolidError::null_pointer(OP_INSERT))?,
                 )?;
                 // (the second vertex's point is only read by the SE_MSG test below)
                 let _pt_class_point = vertex_point(
+                    geometry,
                     point_class
                         .object()
                         .ok_or_else(|| SolidError::null_pointer(OP_INSERT))?,
@@ -1581,8 +1582,8 @@ pub fn change_edge_point_class_to_near_vertex<O: ClassObject>(
         .object()
         .ok_or_else(|| SolidError::null_pointer(OP_NEAR_VERTEX))?;
     let (edge_vertex1, edge_vertex2) = edge_vertices(edge)?;
-    let dist1 = vertex_point(edge_vertex1)?.distance(classify_point);
-    let dist2 = vertex_point(edge_vertex2)?.distance(classify_point);
+    let dist1 = vertex_point(geometry, edge_vertex1)?.distance(classify_point);
+    let dist2 = vertex_point(geometry, edge_vertex2)?.distance(classify_point);
 
     // We should not snap to vertices that are not within tolerances.
     let edge_zone_tol_3d = pc.obj_zone_tol_3d(k, geometry)?;
