@@ -1525,8 +1525,8 @@
     },
     {
       "deferred": {
-        "symbol": "SmFace::FaceIntersect",
-        "unit": "topology.face_p3"
+        "symbol": "SmFace::GetTolerance",
+        "unit": "topology.face_p2"
       },
       "max_rel_err": 0.0,
       "name": "gen0161",
@@ -6001,8 +6001,8 @@
     },
     {
       "deferred": {
-        "symbol": "SmFace::FaceIntersect",
-        "unit": "topology.face_p3"
+        "symbol": "SmFace::GetTolerance",
+        "unit": "topology.face_p2"
       },
       "max_rel_err": 0.0,
       "name": "gen0670",
@@ -6785,8 +6785,8 @@
     },
     {
       "deferred": {
-        "symbol": "SmFace::FaceIntersect",
-        "unit": "topology.face_p3"
+        "symbol": "SmFace::GetTolerance",
+        "unit": "topology.face_p2"
       },
       "max_rel_err": 0.0,
       "name": "gen0756",
@@ -6829,8 +6829,8 @@
     },
     {
       "deferred": {
-        "symbol": "SmFace::FaceIntersect",
-        "unit": "topology.face_p3"
+        "symbol": "SmFace::GetTolerance",
+        "unit": "topology.face_p2"
       },
       "max_rel_err": 0.0,
       "name": "gen0761",
@@ -6861,8 +6861,8 @@
     },
     {
       "deferred": {
-        "symbol": "SmFace::FaceIntersect",
-        "unit": "topology.face_p3"
+        "symbol": "SmFace::GetTolerance",
+        "unit": "topology.face_p2"
       },
       "max_rel_err": 0.0,
       "name": "gen0764",
@@ -7317,8 +7317,8 @@
     },
     {
       "deferred": {
-        "symbol": "SmFace::FaceIntersect",
-        "unit": "topology.face_p3"
+        "symbol": "SmFace::GetTolerance",
+        "unit": "topology.face_p2"
       },
       "max_rel_err": 0.0,
       "name": "iir",
@@ -7337,8 +7337,8 @@
     },
     {
       "deferred": {
-        "symbol": "SmFace::FaceIntersect",
-        "unit": "topology.face_p3"
+        "symbol": "SmFace::GetTolerance",
+        "unit": "topology.face_p2"
       },
       "max_rel_err": 0.0,
       "name": "iir_negative_tol",
@@ -7349,8 +7349,8 @@
     },
     {
       "deferred": {
-        "symbol": "SmFace::FaceIntersect",
-        "unit": "topology.face_p3"
+        "symbol": "SmFace::GetTolerance",
+        "unit": "topology.face_p2"
       },
       "max_rel_err": 0.0,
       "name": "iir_tiny_tol",
@@ -8001,8 +8001,8 @@
     "query.brep": 47,
     "topology.brep_p1": 4,
     "topology.brep_p3": 8,
-    "topology.face_p2": 67,
-    "topology.face_p3": 20,
+    "topology.face_p2": 75,
+    "topology.face_p3": 12,
     "topology.face_p4": 31
   },
   "max_rel_err": 0.0,
