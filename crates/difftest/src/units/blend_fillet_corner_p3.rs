@@ -391,7 +391,8 @@ fn inexact(b: &Brep, types: &ImportTypes, eus: &[EdgeuseId]) -> Option<Output> {
             .unwrap_or(-1);
         if st >= 0 && !EXACT_SURFACES.contains(&st) {
             let (unit, symbol) = match st {
-                15012 | 15013 => ("surface.cone_p1", "SmCone (no SurfaceKind)"),
+                15012 => ("surface.surface_p2", "SurfaceKind::Cone (SmCone dispatch)"),
+                15013 => ("surface.surface_p2", "SurfaceKind::Cone (SmCylinder dispatch)"),
                 15014 => ("surface.sphere", "SmSphere"),
                 15015 => ("surface.torus", "SmTorus (no SurfaceKind)"),
                 15030 => ("surface.surf_of_extrusion_p2", "SurfaceKind::SurfOfExtrusion"),

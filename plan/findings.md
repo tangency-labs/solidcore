@@ -10658,6 +10658,7 @@ Difftest (`fixtures/heal.stitch_p1/constructed.json`: the SM_API_test box tests,
 
 ## blend.fillet_corner_p3 (PR #256, 2026-10-19)
 
+- **Audit #294 (2026-10-20).** Cone/Cylinder import deferrals belong to surface.surface_p2 because SurfaceKind::Cone dispatch is missing. The original audit reattributed 11 deferrals from surface.cone_p1 without changing outcomes or comparisons.
 - **Stack.** Built on PR #252 (`blend.fillet_geom_p4`, which merges #147 `blend.fillet_geom_p1`
   and #192 `blend.fillet_solver_p1`): the corner operations run on p1's `FilletBrep` and
   its runner/shim `Model`. The corner-operation shim is `blend_fillet_corner_p3_static.inc`,
