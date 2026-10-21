@@ -13,10 +13,13 @@
 //! `SmBSplineCurve`, `1 dim P1 D1 P2 D2` an `SmHermiteCurve`, `2 3 P V d0 d1 scale io` a bounded
 //! `SmLine`, `3 dim C X Y d0 d1 rx ry io` an `SmEllipse`, `4 dim C X Y d0 d1 r io` an
 //! `SmCircle`), `1 O[3] N[3]` (`SmPlane(O, N)`), `2 oob n m p q r s cpts(x y z w, v fastest) u v`
-//! (an `SmBSplineSurface`), `3 P[3]` (an `SmPoint3d`), `4` vertex, `5 c` (an edge on pool curve
-//! `c`, `-1` none), `6 s` (a face on pool surface `s`, `-1` none), `7` loop stand-in, `8` other
-//! stand-in (used for the topology intersector and other-classification pointers, which are
-//! only stored).
+//! (an `SmBSplineSurface`), `3 P[3]` (an `SmPoint3d`), `4` vertex, `5 c tol` (an edge on pool
+//! curve `c`, `-1` none), `6 s tol` (a face on pool surface `s`, `-1` none), `7` loop stand-in,
+//! `8` other stand-in (used for the topology intersector and other-classification pointers,
+//! which are only stored). The vertex, edge and face stand-ins have no uses; the vertex has the
+//! system zone tolerance, an edge or face `m_sZoneTol3d = SmZoneTol3d(tol)` (`tol = -1`: the
+//! system zone tolerance); an edge spans the natural interval of its curve, a face the natural UV domain of
+//! its surface.
 //!
 //! | code | op (`op t ...`)                              | upstream                                    | outputs after the status |
 //! |------|----------------------------------------------|---------------------------------------------|--------------------------|
@@ -48,16 +51,17 @@
 //! | 38   | `j`                                          | `SmTol::GetSrcZoneTol3d(ivl)`, `GetObjZoneTol3d(ivl)`, `(NULL)`, `GetScaledZero(ivl)` | 4 values |
 //! | 39   | `obj`                                        | `sm_ObjectDimension`                        | `dim`                    |
 //! | 40   | `c tol n_uvc uvc* n_srf srf* n_uv (u v)* param dev P[3]` | `sm_SetXSectCurveThroughPoint` | `modified param dev set3d P[3] curve uvcurve*` |
-//! | 41   | `use_cc edge emate (s u v)*4 t0 t1 value P[3]` | `sm_ApplyPointSolution`                   | `P[3] flag mc me mm dev t0 t1 [curve]` |
+//! | 41   | `use_cc edge emate (s u v)*4 t0 t1 value P[3]` | `sm_ApplyPointSolution`                   | `P[3] flag mc me mm dev t0 t1 [curve] [edge_curve [mate_curve]]` |
 //! | 42   | `c1 t1 c2 t2 dev`                            | `sm_GetCurveCurveAngle`                     | `angle`                  |
 //! | 43   | `s uvc a0 a1 c2 b0 b1 tol n (type s0 s1 e0 e1 value)*n` | `sm_CullOrRefineCCIIn3d`         | `n (type s0 s1 e0 e1 value)*n` |
 //! | 44   | `c s p1 tol1 p2 tol2`                        | `sm_GetXSectTol2dOr3d_ForClassifyPair`      | `tol`                    |
 //! | 45   | `CP[3] EP[3] t0 t1 n (s uvc)*n count`        | `sm_GetCCISurfaceGaps`                      | `g1 g2 g3 n (u v)*n`     |
 //! | 46   | `c n touch*n`                                | `SmTouchData::GetConnectedTouches` (with and without list) | `cnt cnt2 touch*cnt` |
 //! | 47   | `n touch*n`                                  | `SmTouchData::GetWindingCount`              | `count orient`           |
-//! | 48   | `e P[3] (s u v)*2 param`                     | `sm_SetXSectEdgeThroughPoint`               | `param dev modified`     |
-//! | 49   | `e`                                          | `sm_GetCCIGeometry`                         | `n_surfaces count`       |
-//! | 50   | `f P[3] tol`                                 | `sm_ComputeFacePointClass`                  | `class`                  |
+//! | 48   | `e P[3] (s u v)*2 param set_ivl min max`     | `sm_SetXSectEdgeThroughPoint` (`SetInterval(min, max)` first when `set_ivl`) | `param dev modified curve` |
+//! | 49   | `e`                                          | `sm_GetCCIGeometry`                         | `emate n count (surface edgeuse uv_curve)*n` (edge use `-1` none, `-2` some) |
+//! | 50   | `f P[3] tol`                                 | `sm_ComputeFacePointClass`                  | `point_class`            |
+//! | 51   | `s side`                                     | `sm_GetCCIGeometry` on a real face's edge   | as 49                    |
 //!
 //! A touch is `connected_to loop_dir loop_index param pt_index pt_classify` (ids or `-1`).
 //! A curve record is `min max n m (status [P[3]])*7`: the natural interval, the NURB's highest
@@ -168,8 +172,9 @@ pub mod op {
     pub const EDGE_THROUGH: usize = 48;
     pub const CCI_GEOMETRY: usize = 49;
     pub const FACE_POINT_CLASS: usize = 50;
+    pub const CCI_FACE: usize = 51;
     /// Largest op code.
-    pub const LAST: usize = 50;
+    pub const LAST: usize = 51;
 }
 
 mod sys {
@@ -177,6 +182,16 @@ mod sys {
         pub fn sc_intersect_curve_class_p1_run(
             input: *const f64,
             n_in: i64,
+            out: *mut f64,
+            cap: i64,
+            out_len: *mut i64,
+        ) -> i32;
+        pub fn sc_intersect_curve_class_p1_consistent(
+            path: *const core::ffi::c_char,
+            block: *const f64,
+            n_block: i64,
+            args: *const f64,
+            n_args: i64,
             out: *mut f64,
             cap: i64,
             out_len: *mut i64,
@@ -446,9 +461,16 @@ fn touches(rd: &mut Reader<'_>, n_obj: usize) -> Result<(), FfiError> {
     Ok(())
 }
 
-/// Checks the object pool block `n_obj obj*n_obj` (also used by unit
-/// `intersect.curve_class_p7`) and returns the object count.
+/// Checks the object pool block `n_obj obj*n_obj` (also used by units
+/// `intersect.curve_class_p2` and `intersect.curve_class_p7`, whose edge and face
+/// objects carry no tolerance) and returns the object count.
 pub(crate) fn validate_objects(rd: &mut Reader<'_>) -> Result<usize, FfiError> {
+    validate_objects_with(rd, false)
+}
+
+/// [`validate_objects`]; with `topo_tol` an edge or face object is followed by its
+/// zone tolerance (`-1` for the system one, otherwise in `[0, 1e6]`).
+fn validate_objects_with(rd: &mut Reader<'_>, topo_tol: bool) -> Result<usize, FfiError> {
     let n_obj = rd.index(MAX_OBJECTS)?;
     for i in 0..n_obj {
         let k = rd.index(kind::OTHER)?;
@@ -464,6 +486,12 @@ pub(crate) fn validate_objects(rd: &mut Reader<'_>) -> Result<usize, FfiError> {
             }
             kind::EDGE | kind::FACE => {
                 rd.object(i)?;
+                if topo_tol {
+                    let tol = rd.finite()?;
+                    if tol != -1.0 && !(0.0..=1e6).contains(&tol) {
+                        return Err(bad(format!("bad topology tolerance {tol}")));
+                    }
+                }
             }
             _ => {}
         }
@@ -478,7 +506,7 @@ pub(crate) fn validate_objects(rd: &mut Reader<'_>) -> Result<usize, FfiError> {
 /// [`FfiError::InvalidArgument`] for a malformed script.
 pub fn validate(input: &[f64]) -> Result<(), FfiError> {
     let mut rd = Reader { input, at: 0 };
-    let n_obj = validate_objects(&mut rd)?;
+    let n_obj = validate_objects_with(&mut rd, true)?;
     let n_ops = rd.index(MAX_OPS)?;
     for _ in 0..n_ops {
         let code = rd.index(op::LAST)?;
@@ -669,11 +697,18 @@ pub fn validate(input: &[f64]) -> Result<(), FfiError> {
                     rd.finite()?;
                 }
                 rd.finite()?;
+                rd.flag()?;
+                rd.finite()?;
+                rd.finite()?;
             }
             op::FACE_POINT_CLASS => {
                 obj(&mut rd)?;
                 rd.vec3()?;
                 rd.value()?;
+            }
+            op::CCI_FACE => {
+                obj(&mut rd)?;
+                rd.index(1 << 20)?;
             }
             // MAKE_CONSISTENT, SRC_TOL: no arguments
             _ => {}
@@ -703,6 +738,83 @@ pub fn run(input: &[f64]) -> Result<Vec<f64>, FfiError> {
                 input.len() as i64,
                 buf.as_mut_ptr(),
                 buf.len() as i64,
+                &raw mut *len,
+            )
+        }
+    })
+}
+
+/// The most intervals of a [`consistent`] call.
+pub const MAX_CONSISTENT_INTERVALS: usize = 8;
+
+/// Checks the arguments of [`consistent`]: `curve_block src_tol n_extra P[3]*n_extra n (a b
+/// mid start_mode start_sel end_mode end_sel)*n` (modes `0` untouched, `1` vertex, `2` edge,
+/// `3` extra vertex; selectors are taken modulo the entity count).
+fn consistent_args(args: &[f64]) -> Result<(), FfiError> {
+    let mut rd = Reader { input: args, at: 0 };
+    curve_block(&mut rd)?;
+    rd.value()?;
+    let n_extra = rd.index(4)?;
+    for _ in 0..n_extra {
+        rd.vec3()?;
+    }
+    let n = rd.index(MAX_CONSISTENT_INTERVALS)?;
+    if n == 0 {
+        return Err(bad("no intervals"));
+    }
+    for _ in 0..n {
+        rd.finite()?;
+        rd.finite()?;
+        rd.index(1 << 20)?;
+        for _ in 0..2 {
+            rd.index(3)?;
+            rd.index(1 << 20)?;
+        }
+    }
+    if rd.at != args.len() {
+        return Err(bad("trailing input"));
+    }
+    Ok(())
+}
+
+/// `sm_MakeConsistentClassifications` on a classification of a real `SmBrep` built from
+/// unit `topology.edgeuse_p1`'s B-rep `block` (`path` names the `.smb` file of a file
+/// block): the classification curve (a 3D curve block, owned by the classification) and
+/// source tolerance (`SmTol::SetZoneTol3d`), `n_extra` acorn vertices added to the B-rep
+/// after its traversal (`MakeShellVertex`: vertices without edges), then `n` intervals `[a, b]` whose interior
+/// classifies to edge `mid` and whose start and end classify as their mode says. Output:
+/// `status (class kind index)*3*n` (start, mid, end of each interval; kind `0` none, `1`
+/// vertex, `2` edge, `3` other, `4` extra vertex; index in the edge-use export's traversal
+/// order, or among the extra vertices).
+///
+/// # Errors
+///
+/// [`FfiError::InvalidArgument`] for a block or arguments the checks reject or a B-rep
+/// that cannot be built; [`FfiError::Status`] with `SC_ERR_ARG` for a classification curve
+/// that is not 3D or a B-rep without edges.
+pub fn consistent(path: &str, block: &[f64], args: &[f64]) -> Result<Vec<f64>, FfiError> {
+    use super::topology_edgeuse_p1 as graph;
+    consistent_args(args)?;
+    let export = graph::eval(graph::Op::Export, path, block)?;
+    if graph::counts(&export).is_none() {
+        return Err(bad("native fixture construction failed"));
+    }
+    let path = std::ffi::CString::new(path).map_err(|_| bad("path contains NUL"))?;
+    let n_block = i64::try_from(block.len()).map_err(|_| bad("block too large"))?;
+    let n_args = i64::try_from(args.len()).map_err(|_| bad("arguments too large"))?;
+    call_with_buffer(256, |out, len| {
+        // SAFETY: the block was validated (and built) by the graph wrapper and the
+        // arguments above; all buffers and the C string stay live for the call, and the
+        // shim honours `cap`.
+        unsafe {
+            sys::sc_intersect_curve_class_p1_consistent(
+                path.as_ptr(),
+                block.as_ptr(),
+                n_block,
+                args.as_ptr(),
+                n_args,
+                out.as_mut_ptr(),
+                out.len() as i64,
                 &raw mut *len,
             )
         }

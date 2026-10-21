@@ -334,7 +334,7 @@ impl<O: ClassObject> CurveClassification<O> {
             }
             break;
         }
-        make_consistent_classifications(self)
+        make_consistent_classifications(k, self, geometry)
     }
 
     /// Inserts topology solutions in four passes: nonface ranges, vertices, other
