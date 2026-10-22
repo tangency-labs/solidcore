@@ -22,6 +22,8 @@ Latest port: `sweep.topology_sweep` ([PR #222](https://github.com/tangency-labs/
 
 Review follow-up merges canonical main `bb137d7d`, preserving both findings sections and main's full part 7 notes plus the sweep API extension. The merge p3/p4 integration boundary remains coordinated with the unavailable `merge_p2` constructor; the two `SM_DEG2RAD` sites now match upstream grouping.
 
+Latest cross-unit change: owner zone-tolerance cache on `Surface` (branch `surface/owner-zone-tol`, PR #301): `topology.face_p2` deferrals 3495 -> 766, `surface.surface_cache_p2` 223 -> 0, +1751 pass over 15 units, 0 FAIL; the 76 cases it exposed (`query.face_p3` 75: missing vertex/face gaps in `CurveOnClassify`; `query.face_p1` 1: `Point3DClassify` skipped the trimmed surface cache) are fixed and now defer on unported callees (see `plan/findings.md`).
+
 Latest harness: PR #295 (B-rep records for the classification shims' bare topology stand-ins, on top of main's real one-face B-rep adapter #347): curve_class_p1 2054->2070, p2 1495->1627, p7 1327->1474, point_class 2411->2466 passes, 0 failed.
 
 Latest harness: exact `SmSurfOfRevolution` face export in the shared graph exports (2026-10-20, branch `difftest/exact-surf-of-revolution-export`, refreshed on main ca3bbd2b): 238 units, 116 green, 122 partial, 0 failed; +714 compared passes (topology.brep_p1 +61, topology.edgeuse_p1 +200, topology.edgeuse_p3 +332, topology.loopuse +87, query.face_p1 +28, blend.fillet_standard_solver_p1 +6), -104 (topology.vertexuse 101 now on topology.face_p2, blend.hcr 3 on topology.edge); extrusion/cone/cylinder/sphere/torus faces and analytic edge curves still arrive as B-splines (no `SurfaceKind`, #76).
