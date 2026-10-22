@@ -44,11 +44,11 @@
 //!   `AdjustConcaveCornerTopology` and the `SmFilletConvexNxNCorner` /
 //!   `SmFilletNx1ClosedCorner` overrides (`blend.fillet_corner_p2`),
 //!   `TestAndConvertBigRadFillet` and `NoteFilletError` (`blend.fillet_executive_p1`),
-//!   `SmFilletEdge::MakeFilletEdge` (`blend.fillet_geom_p5`), `GetRailVertex`
-//!   (`blend.fillet_geom_p6`), `ReCalcFilletGeom` (`blend.fillet_geom_p3`),
-//!   `SplitFilletGeomAtSideEdge` (ported in `blend.fillet_solver_p1` on its own fillet
-//!   geometry handles; its first call `GetRailIndexOfVertexuse` is
-//!   `blend.fillet_geom_p6`, so the stub carries that tag) and `SmSurface::DropCurve`
+//!   `SmFilletEdge::MakeFilletEdge` (`blend.fillet_geom_p5`), `ReCalcFilletGeom`
+//!   (`blend.fillet_geom_p3`), `SplitFilletGeomAtSideEdge` (ported in
+//!   `blend.fillet_solver_p1`, but on the solver's own fillet geometry handles, which
+//!   carry no geometry data for its part 6 calls, so the stub carries that unit's tag)
+//!   and `SmSurface::DropCurve`
 //!   (`intersect.surface_drop_lib_p3`) return [`SolidError::Unported`] at the call site.
 //! - **Intersection-point user pointers.** `SmTsectPnt::m_apUserPointer[0..2]` (the two
 //!   surfaces of a fillet vertex use's intersection point, read by
@@ -75,8 +75,8 @@
 use std::collections::BTreeMap;
 
 use crate::blend::fillet_geom::p1::{
-    FilStatus, FilletBrep, FilletCornerId, FilletCornerType, FilletEdgeType, FilletGeomId,
-    FilletGeomType, FilletSolverId, FilletVertex, FilletVertexType,
+    FilStatus, FilletBrep, FilletCornerId, FilletCornerType, FilletEdgeType, FilletGeomType,
+    FilletSolverId, FilletVertex, FilletVertexType,
 };
 use crate::blend::fillet_solver::p1::{FilletSolver, FilletSurfaceGeneratorType};
 use crate::curve::curve::{Curve, CurveKind};
@@ -91,7 +91,7 @@ use crate::nurbs::b_spline_surface::BSplineSurface;
 use crate::nurbs::b_spline_surface_n_lib::p2::OrientType;
 use crate::surface::surface::{Surface, SurfaceKind};
 use crate::topology::edgeuse::{p1 as eu1, p2 as eu2, p3 as eu3};
-use crate::topology::{edge, Brep, EdgeId, EdgeuseId, FaceId, VertexId, VertexuseId};
+use crate::topology::{edge, vertex, Brep, EdgeId, EdgeuseId, FaceId, VertexId, VertexuseId};
 
 const OP_CREATE: &str = "blend::fillet_corner::p3::create";
 const OP_PATCH: &str = "blend::fillet_corner::p3::create_corner_patch";
@@ -245,6 +245,8 @@ pub struct CornerEnv<'a> {
     /// `m_apUserPointer[0..2]` of the intersection point of each fillet vertex use (see
     /// the module docs).
     pub tsect_surfaces: &'a BTreeMap<VertexuseId, [Option<Surface>; 2]>,
+    /// The fillet solvers the geometries' `GetFilletSolver()` ids index (`id.0`).
+    pub solvers: &'a mut [FilletSolver],
 }
 
 fn invalid(op: &'static str, reason: &'static str) -> SolidError {
@@ -1574,16 +1576,32 @@ impl FilletCorner {
                         .set_fillet_geom_type(FilletGeomType::TangentRollover);
                 }
 
-                // SmFilletSolver::SplitFilletGeomAtSideEdge is ported
-                // (`FilletSolver::split_fillet_geom_at_side_edge`, blend.fillet_solver_p1,
-                // on this pseudo B-rep's `FilletGeomId`s), but its first call is
-                // GetRailIndexOfVertexuse (blend.fillet_geom_p6). Wire it once
-                // fillet_geom_p6 lands (it needs the geometry's solver object).
-                // UNPORTED(blend.fillet_geom_p6): SmFilletSolver::SplitFilletGeomAtSideEdge
-                let new_geom: FilletGeomId = Err(unported(
-                    "SmFilletSolver::SplitFilletGeomAtSideEdge",
-                    "blend.fillet_geom_p6",
-                ))?;
+                // pOrigGeom->GetFilletSolver()->SplitFilletGeomAtSideEdge(..): upstream
+                // dereferences a NULL solver
+                let si = env
+                    .pseudo
+                    .geom(orig_geom)?
+                    .fillet_solver()
+                    .ok_or_else(|| SolidError::null_pointer(OP_TANGENT))?;
+                let fs = usize::try_from(si.0)
+                    .ok()
+                    .and_then(|i| env.solvers.get_mut(i))
+                    .ok_or_else(|| {
+                        invalid(OP_TANGENT, "fillet solver id not in the solver table")
+                    })?;
+                // a NULL fillet vertex use fails GetRailIndexOfVertexuse's NER
+                let split = match this_fv_use {
+                    Some(vu) => fs.split_fillet_geom_at_side_edge(
+                        env.k, env.target, env.pseudo, orig_geom, vu, which_end,
+                    ),
+                    None => Err(SolidError::null_pointer(OP_TANGENT)),
+                };
+                // If failure, the whole fillet could still succeed, so don't SER.
+                let new_geom = match split {
+                    Ok(g) => g,
+                    Err(e) if e.is_unported() => return Err(e),
+                    Err(_) => continue,
+                };
 
                 env.pseudo
                     .fillet_vertex_mut(this_fv)?
@@ -1635,10 +1653,44 @@ impl FilletCorner {
                         .set_status(FilStatus::Unprocessed);
                 }
 
-                // UNPORTED(blend.fillet_geom_p6): SmFilletGeom::GetRailVertex
+                // Also: there are now two new FilletVertex's, which belong
+                // to this FilletCorner.  Add them to our list, and set
+                // their back-pointer to us.
+                // 'Same' is on the same side as pThisFV, 'Opp' as pOppositeFV.
+                // Also recall that the new FilletVertex's are at the high end
+                // of the original FG -- hence the 2nd arguments:
+                let new_fv_same = env.pseudo.rail_vertex(orig_geom, rail_idx, 1)?;
+                let new_fv_opp = env.pseudo.rail_vertex(orig_geom, other_rail, 1)?;
+
+                // pNewFVSame should be all set, it's what pThisFV used to be.
+                // But pNewFVOpp is now in a face.
+                let opp_rail = env
+                    .pseudo
+                    .geom(orig_geom)?
+                    .rail(other_rail)
+                    .ok_or_else(|| SolidError::null_pointer(OP_TANGENT))?;
+                let opp_base_face = env.pseudo.fillet_edge(opp_rail)?.original_face();
+                env.pseudo
+                    .fillet_vertex_mut(new_fv_opp)?
+                    .set_point_class(PointClassType::Face, opp_base_face.map(EntityRef::Face));
+
+                // We also have to take responsibility for the new edge.
+                let new_edges =
+                    vertex::common_edges(env.pseudo.brep(), new_fv_same, Some(new_fv_opp), None)?;
+                if let Some(&this_fil_edge) = new_edges.first() {
+                    self.edges.push(this_fil_edge);
+                    env.pseudo
+                        .fillet_edge_mut(this_fil_edge)?
+                        .set_fillet_corner(env.corner);
+                }
+
+                // We have to update the fillet surfaces in the fillet geoms here.
+                // A prerequisite to that is recalculating the vertex geom (its status is
+                // ignored upstream).
+                // UNPORTED(blend.fillet_corner_p1): SmFilletCorner::CalcCornerVertGeom
                 return Err(unported(
-                    "SmFilletGeom::GetRailVertex",
-                    "blend.fillet_geom_p6",
+                    "SmFilletCorner::CalcCornerVertGeom",
+                    "blend.fillet_corner_p1",
                 ));
             }
 
@@ -1822,6 +1874,7 @@ mod tests {
             pseudo: &mut pseudo,
             corner: None,
             tsect_surfaces: &surfaces,
+            solvers: &mut [],
         };
         let mut c = FilletCorner::new(FilletCornerKind::FourByThree, None, None, None, 1e-3, 0.1);
         assert!(c.calc_corner_geom(&k, &mut env).is_ok());

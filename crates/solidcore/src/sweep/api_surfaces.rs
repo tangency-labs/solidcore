@@ -155,7 +155,7 @@ fn copy_skin_primitive_curves(k: &Kernel, input_curves: &[Option<&Curve>]) -> Re
 /// `InvalidInput` for fewer than two profiles, a degree outside `1..=3`, an empty
 /// profile, profile counts that do not add up to the curve count or a `None` curve;
 /// the error of a failing curve copy; [`SolidError::Unported`] otherwise
-/// (`SmPrimitiveCreation::CreateSkinPrimitive`).
+/// (`SmBrep::SmBrep`, until the B-rep constructor is ported).
 pub fn create_skin_primitive(
     k: &Kernel,
     curves_in_each_profile: &[usize],
@@ -173,12 +173,11 @@ pub fn create_skin_primitive(
     // UNPORTED(topology.brep_p3): SmBrep::SmBrep
     // ported (topology.brep_p1): SmBrep::GetInfiniteRegion is Brep::infinite_region, called
     // on the new B-rep once the constructor above lands
-    // UNPORTED(primitive.primitive_creation_p1): SmPrimitiveCreation::SmPrimitiveCreation
-    // UNPORTED(primitive.primitive_creation_p2): SmPrimitiveCreation::CreateSkinPrimitive
-    Err(SolidError::unported(
-        "SmPrimitiveCreation::CreateSkinPrimitive",
-        "primitive.primitive_creation_p2",
-    ))
+    // Ported: primitive::primitive_creation::p1::PrimitiveCreation::new;
+    // instantiate with the new B-rep's infinite region when its constructor lands.
+    // Ported: primitive::primitive_creation::p2::PrimitiveCreation::create_skin_primitive;
+    // supply the new B-rep through PrimitiveCreationAccess after its constructor is ported.
+    Err(SolidError::unported("SmBrep::SmBrep", "topology.brep_p3"))
 }
 
 /// A solid lofted between the matching loops of the face sequence `faces` of
@@ -199,12 +198,11 @@ pub fn create_skin_from_faces(
     // UNPORTED(topology.brep_p3): SmBrep::SmBrep
     // ported (topology.brep_p1): SmBrep::GetInfiniteRegion is Brep::infinite_region, called
     // on the new B-rep once the constructor above lands
-    // UNPORTED(primitive.primitive_creation_p1): SmPrimitiveCreation::SmPrimitiveCreation
-    // UNPORTED(primitive.primitive_creation_p3): SmPrimitiveCreation::CreateSkinFromFaces
-    Err(SolidError::unported(
-        "SmPrimitiveCreation::CreateSkinFromFaces",
-        "primitive.primitive_creation_p3",
-    ))
+    // Ported: primitive::primitive_creation::p1::PrimitiveCreation::new;
+    // instantiate with the new B-rep's infinite region when its constructor lands.
+    // Ported: primitive::primitive_creation::p3::PrimitiveCreation::create_skin_from_faces;
+    // supply the new B-rep through PrimitiveAccess after its constructor is ported.
+    Err(SolidError::unported("SmBrep::SmBrep", "topology.brep_p3"))
 }
 
 /// The surface extruded from `curve` along `sweep_vector` (`SmApiCreateExtrude`,
@@ -274,14 +272,13 @@ pub fn create_surface_revolution(
     // UNPORTED(topology.brep_p3): SmBrep::SmBrep
     // ported (topology.brep_p1): SmBrep::GetInfiniteRegion is Brep::infinite_region, called
     // on the new B-rep once the constructor above lands
-    // UNPORTED(primitive.primitive_creation_p1): SmPrimitiveCreation::SmPrimitiveCreation
-    // UNPORTED(primitive.primitive_creation_p3): SmPrimitiveCreation::CreateRotationalSweep
+    // Ported: primitive::primitive_creation::p1::PrimitiveCreation::new;
+    // instantiate with the new B-rep's infinite region when its constructor lands.
+    // Ported: primitive::primitive_creation::p3::PrimitiveCreation::create_partial_rotational_sweep;
+    // supply the new B-rep through PrimitiveAccess after its constructor is ported.
     // ported (topology.brep_p1): SmBrep::GetSurfaces is topology::brep::p1::surfaces, on the
     // sweep's B-rep after the call above
-    Err(SolidError::unported(
-        "SmPrimitiveCreation::CreateRotationalSweep",
-        "primitive.primitive_creation_p3",
-    ))
+    Err(SolidError::unported("SmBrep::SmBrep", "topology.brep_p3"))
 }
 
 /// The surface skinned through `profiles` (`SmApiCreateSkin`,
