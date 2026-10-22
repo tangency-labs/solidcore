@@ -19594,49 +19594,44 @@
       "values_compared": 0
     },
     {
-      "both_errored": true,
       "max_rel_err": 0.0,
       "name": "surf_rev_vu0_gap0_11",
       "outcome": "pass",
       "pass": true,
       "source": "fixture:fixtures/topology.vertexuse/upstream_files.json#584 (upstream tests/prog_test/src/smFeatureTest.cpp:63)",
-      "values_compared": 0
+      "values_compared": 17
     },
     {
-      "both_errored": true,
       "max_rel_err": 0.0,
       "name": "surf_rev_vu0_gap1_11",
       "outcome": "pass",
       "pass": true,
       "source": "fixture:fixtures/topology.vertexuse/upstream_files.json#585 (upstream tests/prog_test/src/smFeatureTest.cpp:63)",
-      "values_compared": 0
+      "values_compared": 17
     },
     {
-      "both_errored": true,
       "max_rel_err": 0.0,
       "name": "surf_rev_vu0_gap2_11",
       "outcome": "pass",
       "pass": true,
       "source": "fixture:fixtures/topology.vertexuse/upstream_files.json#586 (upstream tests/prog_test/src/smFeatureTest.cpp:63)",
-      "values_compared": 0
+      "values_compared": 18
     },
     {
-      "both_errored": true,
       "max_rel_err": 0.0,
       "name": "surf_rev_vu0_gap3_11",
       "outcome": "pass",
       "pass": true,
       "source": "fixture:fixtures/topology.vertexuse/upstream_files.json#587 (upstream tests/prog_test/src/smFeatureTest.cpp:63)",
-      "values_compared": 0
+      "values_compared": 18
     },
     {
-      "both_errored": true,
       "max_rel_err": 0.0,
       "name": "surf_rev_vu0_gap4_11",
       "outcome": "pass",
       "pass": true,
       "source": "fixture:fixtures/topology.vertexuse/upstream_files.json#588 (upstream tests/prog_test/src/smFeatureTest.cpp:63)",
-      "values_compared": 0
+      "values_compared": 17
     },
     {
       "max_rel_err": 0.0,
@@ -19655,43 +19650,38 @@
       "values_compared": 16
     },
     {
-      "both_errored": true,
       "max_rel_err": 0.0,
       "name": "surf_rev_vu0_uvpt1",
       "outcome": "pass",
       "pass": true,
       "source": "fixture:fixtures/topology.vertexuse/upstream_files.json#591 (upstream tests/prog_test/src/smFeatureTest.cpp:63)",
-      "values_compared": 0
+      "values_compared": 3
     },
     {
-      "both_errored": true,
       "max_rel_err": 0.0,
       "name": "surf_rev_vu0_sector1",
       "outcome": "pass",
       "pass": true,
       "source": "fixture:fixtures/topology.vertexuse/upstream_files.json#592 (upstream tests/prog_test/src/smFeatureTest.cpp:63)",
-      "values_compared": 0
+      "values_compared": 21
     },
     {
-      "both_errored": true,
       "max_rel_err": 0.0,
       "name": "surf_rev_vu0_uvpt0",
       "outcome": "pass",
       "pass": true,
       "source": "fixture:fixtures/topology.vertexuse/upstream_files.json#593 (upstream tests/prog_test/src/smFeatureTest.cpp:63)",
-      "values_compared": 0
+      "values_compared": 3
     },
     {
-      "both_errored": true,
       "max_rel_err": 0.0,
       "name": "surf_rev_vu0_sector0",
       "outcome": "pass",
       "pass": true,
       "source": "fixture:fixtures/topology.vertexuse/upstream_files.json#594 (upstream tests/prog_test/src/smFeatureTest.cpp:63)",
-      "values_compared": 0
+      "values_compared": 21
     },
     {
-      "both_errored": true,
       "max_rel_err": 0.0,
       "name": "surf_rev_vu0_seam",
       "outcome": "pass",
@@ -19700,7 +19690,6 @@
       "values_compared": 0
     },
     {
-      "both_errored": true,
       "max_rel_err": 0.0,
       "name": "surf_rev_vu0_seam_nouv",
       "outcome": "pass",
@@ -19709,58 +19698,52 @@
       "values_compared": 0
     },
     {
-      "both_errored": true,
       "max_rel_err": 0.0,
       "name": "surf_rev_vu0_pole",
       "outcome": "pass",
       "pass": true,
       "source": "fixture:fixtures/topology.vertexuse/upstream_files.json#597 (upstream tests/prog_test/src/smFeatureTest.cpp:63)",
-      "values_compared": 0
+      "values_compared": 17
     },
     {
-      "both_errored": true,
       "max_rel_err": 0.0,
       "name": "surf_rev_vu0_init_gap0_11",
       "outcome": "pass",
       "pass": true,
       "source": "fixture:fixtures/topology.vertexuse/upstream_files.json#598 (upstream tests/prog_test/src/smFeatureTest.cpp:63)",
-      "values_compared": 0
+      "values_compared": 17
     },
     {
-      "both_errored": true,
       "max_rel_err": 0.0,
       "name": "surf_rev_vu0_init_gap1_11",
       "outcome": "pass",
       "pass": true,
       "source": "fixture:fixtures/topology.vertexuse/upstream_files.json#599 (upstream tests/prog_test/src/smFeatureTest.cpp:63)",
-      "values_compared": 0
+      "values_compared": 17
     },
     {
-      "both_errored": true,
       "max_rel_err": 0.0,
       "name": "surf_rev_vu0_init_gap2_11",
       "outcome": "pass",
       "pass": true,
       "source": "fixture:fixtures/topology.vertexuse/upstream_files.json#600 (upstream tests/prog_test/src/smFeatureTest.cpp:63)",
-      "values_compared": 0
+      "values_compared": 18
     },
     {
-      "both_errored": true,
       "max_rel_err": 0.0,
       "name": "surf_rev_vu0_init_gap3_11",
       "outcome": "pass",
       "pass": true,
       "source": "fixture:fixtures/topology.vertexuse/upstream_files.json#601 (upstream tests/prog_test/src/smFeatureTest.cpp:63)",
-      "values_compared": 0
+      "values_compared": 18
     },
     {
-      "both_errored": true,
       "max_rel_err": 0.0,
       "name": "surf_rev_vu0_init_gap4_11",
       "outcome": "pass",
       "pass": true,
       "source": "fixture:fixtures/topology.vertexuse/upstream_files.json#602 (upstream tests/prog_test/src/smFeatureTest.cpp:63)",
-      "values_compared": 0
+      "values_compared": 17
     },
     {
       "max_rel_err": 0.0,
@@ -19779,13 +19762,12 @@
       "values_compared": 16
     },
     {
-      "both_errored": true,
       "max_rel_err": 0.0,
       "name": "surf_rev_vu0_init_pole",
       "outcome": "pass",
       "pass": true,
       "source": "fixture:fixtures/topology.vertexuse/upstream_files.json#605 (upstream tests/prog_test/src/smFeatureTest.cpp:63)",
-      "values_compared": 0
+      "values_compared": 17
     },
     {
       "max_rel_err": 0.0,
@@ -19820,49 +19802,44 @@
       "values_compared": 0
     },
     {
-      "both_errored": true,
       "max_rel_err": 0.0,
       "name": "surf_rev_vu5_gap0_11",
       "outcome": "pass",
       "pass": true,
       "source": "fixture:fixtures/topology.vertexuse/upstream_files.json#610 (upstream tests/prog_test/src/smFeatureTest.cpp:63)",
-      "values_compared": 0
+      "values_compared": 17
     },
     {
-      "both_errored": true,
       "max_rel_err": 0.0,
       "name": "surf_rev_vu5_gap1_11",
       "outcome": "pass",
       "pass": true,
       "source": "fixture:fixtures/topology.vertexuse/upstream_files.json#611 (upstream tests/prog_test/src/smFeatureTest.cpp:63)",
-      "values_compared": 0
+      "values_compared": 17
     },
     {
-      "both_errored": true,
       "max_rel_err": 0.0,
       "name": "surf_rev_vu5_gap2_11",
       "outcome": "pass",
       "pass": true,
       "source": "fixture:fixtures/topology.vertexuse/upstream_files.json#612 (upstream tests/prog_test/src/smFeatureTest.cpp:63)",
-      "values_compared": 0
+      "values_compared": 18
     },
     {
-      "both_errored": true,
       "max_rel_err": 0.0,
       "name": "surf_rev_vu5_gap3_11",
       "outcome": "pass",
       "pass": true,
       "source": "fixture:fixtures/topology.vertexuse/upstream_files.json#613 (upstream tests/prog_test/src/smFeatureTest.cpp:63)",
-      "values_compared": 0
+      "values_compared": 18
     },
     {
-      "both_errored": true,
       "max_rel_err": 0.0,
       "name": "surf_rev_vu5_gap4_11",
       "outcome": "pass",
       "pass": true,
       "source": "fixture:fixtures/topology.vertexuse/upstream_files.json#614 (upstream tests/prog_test/src/smFeatureTest.cpp:63)",
-      "values_compared": 0
+      "values_compared": 17
     },
     {
       "max_rel_err": 0.0,
@@ -19881,43 +19858,38 @@
       "values_compared": 16
     },
     {
-      "both_errored": true,
       "max_rel_err": 0.0,
       "name": "surf_rev_vu5_uvpt1",
       "outcome": "pass",
       "pass": true,
       "source": "fixture:fixtures/topology.vertexuse/upstream_files.json#617 (upstream tests/prog_test/src/smFeatureTest.cpp:63)",
-      "values_compared": 0
+      "values_compared": 3
     },
     {
-      "both_errored": true,
       "max_rel_err": 0.0,
       "name": "surf_rev_vu5_sector1",
       "outcome": "pass",
       "pass": true,
       "source": "fixture:fixtures/topology.vertexuse/upstream_files.json#618 (upstream tests/prog_test/src/smFeatureTest.cpp:63)",
-      "values_compared": 0
+      "values_compared": 21
     },
     {
-      "both_errored": true,
       "max_rel_err": 0.0,
       "name": "surf_rev_vu5_uvpt0",
       "outcome": "pass",
       "pass": true,
       "source": "fixture:fixtures/topology.vertexuse/upstream_files.json#619 (upstream tests/prog_test/src/smFeatureTest.cpp:63)",
-      "values_compared": 0
+      "values_compared": 3
     },
     {
-      "both_errored": true,
       "max_rel_err": 0.0,
       "name": "surf_rev_vu5_sector0",
       "outcome": "pass",
       "pass": true,
       "source": "fixture:fixtures/topology.vertexuse/upstream_files.json#620 (upstream tests/prog_test/src/smFeatureTest.cpp:63)",
-      "values_compared": 0
+      "values_compared": 21
     },
     {
-      "both_errored": true,
       "max_rel_err": 0.0,
       "name": "surf_rev_vu5_seam",
       "outcome": "pass",
@@ -19926,7 +19898,6 @@
       "values_compared": 0
     },
     {
-      "both_errored": true,
       "max_rel_err": 0.0,
       "name": "surf_rev_vu5_seam_nouv",
       "outcome": "pass",
@@ -19935,58 +19906,52 @@
       "values_compared": 0
     },
     {
-      "both_errored": true,
       "max_rel_err": 0.0,
       "name": "surf_rev_vu5_pole",
       "outcome": "pass",
       "pass": true,
       "source": "fixture:fixtures/topology.vertexuse/upstream_files.json#623 (upstream tests/prog_test/src/smFeatureTest.cpp:63)",
-      "values_compared": 0
+      "values_compared": 17
     },
     {
-      "both_errored": true,
       "max_rel_err": 0.0,
       "name": "surf_rev_vu5_init_gap0_11",
       "outcome": "pass",
       "pass": true,
       "source": "fixture:fixtures/topology.vertexuse/upstream_files.json#624 (upstream tests/prog_test/src/smFeatureTest.cpp:63)",
-      "values_compared": 0
+      "values_compared": 17
     },
     {
-      "both_errored": true,
       "max_rel_err": 0.0,
       "name": "surf_rev_vu5_init_gap1_11",
       "outcome": "pass",
       "pass": true,
       "source": "fixture:fixtures/topology.vertexuse/upstream_files.json#625 (upstream tests/prog_test/src/smFeatureTest.cpp:63)",
-      "values_compared": 0
+      "values_compared": 17
     },
     {
-      "both_errored": true,
       "max_rel_err": 0.0,
       "name": "surf_rev_vu5_init_gap2_11",
       "outcome": "pass",
       "pass": true,
       "source": "fixture:fixtures/topology.vertexuse/upstream_files.json#626 (upstream tests/prog_test/src/smFeatureTest.cpp:63)",
-      "values_compared": 0
+      "values_compared": 18
     },
     {
-      "both_errored": true,
       "max_rel_err": 0.0,
       "name": "surf_rev_vu5_init_gap3_11",
       "outcome": "pass",
       "pass": true,
       "source": "fixture:fixtures/topology.vertexuse/upstream_files.json#627 (upstream tests/prog_test/src/smFeatureTest.cpp:63)",
-      "values_compared": 0
+      "values_compared": 18
     },
     {
-      "both_errored": true,
       "max_rel_err": 0.0,
       "name": "surf_rev_vu5_init_gap4_11",
       "outcome": "pass",
       "pass": true,
       "source": "fixture:fixtures/topology.vertexuse/upstream_files.json#628 (upstream tests/prog_test/src/smFeatureTest.cpp:63)",
-      "values_compared": 0
+      "values_compared": 17
     },
     {
       "max_rel_err": 0.0,
@@ -20005,13 +19970,12 @@
       "values_compared": 16
     },
     {
-      "both_errored": true,
       "max_rel_err": 0.0,
       "name": "surf_rev_vu5_init_pole",
       "outcome": "pass",
       "pass": true,
       "source": "fixture:fixtures/topology.vertexuse/upstream_files.json#631 (upstream tests/prog_test/src/smFeatureTest.cpp:63)",
-      "values_compared": 0
+      "values_compared": 17
     },
     {
       "max_rel_err": 0.0,
@@ -20046,22 +20010,20 @@
       "values_compared": 0
     },
     {
-      "both_errored": true,
       "max_rel_err": 0.0,
       "name": "surf_rev_rebuild_vu2_gap0_11",
       "outcome": "pass",
       "pass": true,
       "source": "fixture:fixtures/topology.vertexuse/upstream_files.json#636 (upstream tests/prog_test/src/smFeatureTest.cpp:63)",
-      "values_compared": 0
+      "values_compared": 17
     },
     {
-      "both_errored": true,
       "max_rel_err": 0.0,
       "name": "surf_rev_rebuild_vu2_gap1_11",
       "outcome": "pass",
       "pass": true,
       "source": "fixture:fixtures/topology.vertexuse/upstream_files.json#637 (upstream tests/prog_test/src/smFeatureTest.cpp:63)",
-      "values_compared": 0
+      "values_compared": 17
     },
     {
       "max_rel_err": 0.0,
@@ -20598,49 +20560,44 @@
       "values_compared": 0
     },
     {
-      "both_errored": true,
       "max_rel_err": 0.0,
       "name": "torus_vu0_gap0_11",
       "outcome": "pass",
       "pass": true,
       "source": "fixture:fixtures/topology.vertexuse/upstream_files.json#700 (upstream tests/prog_test/src/smFeatureTest.cpp:63)",
-      "values_compared": 0
+      "values_compared": 17
     },
     {
-      "both_errored": true,
       "max_rel_err": 0.0,
       "name": "torus_vu0_gap1_11",
       "outcome": "pass",
       "pass": true,
       "source": "fixture:fixtures/topology.vertexuse/upstream_files.json#701 (upstream tests/prog_test/src/smFeatureTest.cpp:63)",
-      "values_compared": 0
+      "values_compared": 17
     },
     {
-      "both_errored": true,
       "max_rel_err": 0.0,
       "name": "torus_vu0_gap2_11",
       "outcome": "pass",
       "pass": true,
       "source": "fixture:fixtures/topology.vertexuse/upstream_files.json#702 (upstream tests/prog_test/src/smFeatureTest.cpp:63)",
-      "values_compared": 0
+      "values_compared": 18
     },
     {
-      "both_errored": true,
       "max_rel_err": 0.0,
       "name": "torus_vu0_gap3_11",
       "outcome": "pass",
       "pass": true,
       "source": "fixture:fixtures/topology.vertexuse/upstream_files.json#703 (upstream tests/prog_test/src/smFeatureTest.cpp:63)",
-      "values_compared": 0
+      "values_compared": 18
     },
     {
-      "both_errored": true,
       "max_rel_err": 0.0,
       "name": "torus_vu0_gap4_11",
       "outcome": "pass",
       "pass": true,
       "source": "fixture:fixtures/topology.vertexuse/upstream_files.json#704 (upstream tests/prog_test/src/smFeatureTest.cpp:63)",
-      "values_compared": 0
+      "values_compared": 17
     },
     {
       "max_rel_err": 0.0,
@@ -20659,43 +20616,38 @@
       "values_compared": 16
     },
     {
-      "both_errored": true,
       "max_rel_err": 0.0,
       "name": "torus_vu0_uvpt1",
       "outcome": "pass",
       "pass": true,
       "source": "fixture:fixtures/topology.vertexuse/upstream_files.json#707 (upstream tests/prog_test/src/smFeatureTest.cpp:63)",
-      "values_compared": 0
+      "values_compared": 3
     },
     {
-      "both_errored": true,
       "max_rel_err": 0.0,
       "name": "torus_vu0_sector1",
       "outcome": "pass",
       "pass": true,
       "source": "fixture:fixtures/topology.vertexuse/upstream_files.json#708 (upstream tests/prog_test/src/smFeatureTest.cpp:63)",
-      "values_compared": 0
+      "values_compared": 21
     },
     {
-      "both_errored": true,
       "max_rel_err": 0.0,
       "name": "torus_vu0_uvpt0",
       "outcome": "pass",
       "pass": true,
       "source": "fixture:fixtures/topology.vertexuse/upstream_files.json#709 (upstream tests/prog_test/src/smFeatureTest.cpp:63)",
-      "values_compared": 0
+      "values_compared": 3
     },
     {
-      "both_errored": true,
       "max_rel_err": 0.0,
       "name": "torus_vu0_sector0",
       "outcome": "pass",
       "pass": true,
       "source": "fixture:fixtures/topology.vertexuse/upstream_files.json#710 (upstream tests/prog_test/src/smFeatureTest.cpp:63)",
-      "values_compared": 0
+      "values_compared": 21
     },
     {
-      "both_errored": true,
       "max_rel_err": 0.0,
       "name": "torus_vu0_seam",
       "outcome": "pass",
@@ -20704,7 +20656,6 @@
       "values_compared": 0
     },
     {
-      "both_errored": true,
       "max_rel_err": 0.0,
       "name": "torus_vu0_seam_nouv",
       "outcome": "pass",
@@ -20713,58 +20664,52 @@
       "values_compared": 0
     },
     {
-      "both_errored": true,
       "max_rel_err": 0.0,
       "name": "torus_vu0_pole",
       "outcome": "pass",
       "pass": true,
       "source": "fixture:fixtures/topology.vertexuse/upstream_files.json#713 (upstream tests/prog_test/src/smFeatureTest.cpp:63)",
-      "values_compared": 0
+      "values_compared": 17
     },
     {
-      "both_errored": true,
       "max_rel_err": 0.0,
       "name": "torus_vu0_init_gap0_11",
       "outcome": "pass",
       "pass": true,
       "source": "fixture:fixtures/topology.vertexuse/upstream_files.json#714 (upstream tests/prog_test/src/smFeatureTest.cpp:63)",
-      "values_compared": 0
+      "values_compared": 17
     },
     {
-      "both_errored": true,
       "max_rel_err": 0.0,
       "name": "torus_vu0_init_gap1_11",
       "outcome": "pass",
       "pass": true,
       "source": "fixture:fixtures/topology.vertexuse/upstream_files.json#715 (upstream tests/prog_test/src/smFeatureTest.cpp:63)",
-      "values_compared": 0
+      "values_compared": 17
     },
     {
-      "both_errored": true,
       "max_rel_err": 0.0,
       "name": "torus_vu0_init_gap2_11",
       "outcome": "pass",
       "pass": true,
       "source": "fixture:fixtures/topology.vertexuse/upstream_files.json#716 (upstream tests/prog_test/src/smFeatureTest.cpp:63)",
-      "values_compared": 0
+      "values_compared": 18
     },
     {
-      "both_errored": true,
       "max_rel_err": 0.0,
       "name": "torus_vu0_init_gap3_11",
       "outcome": "pass",
       "pass": true,
       "source": "fixture:fixtures/topology.vertexuse/upstream_files.json#717 (upstream tests/prog_test/src/smFeatureTest.cpp:63)",
-      "values_compared": 0
+      "values_compared": 18
     },
     {
-      "both_errored": true,
       "max_rel_err": 0.0,
       "name": "torus_vu0_init_gap4_11",
       "outcome": "pass",
       "pass": true,
       "source": "fixture:fixtures/topology.vertexuse/upstream_files.json#718 (upstream tests/prog_test/src/smFeatureTest.cpp:63)",
-      "values_compared": 0
+      "values_compared": 17
     },
     {
       "max_rel_err": 0.0,
@@ -20783,13 +20728,12 @@
       "values_compared": 16
     },
     {
-      "both_errored": true,
       "max_rel_err": 0.0,
       "name": "torus_vu0_init_pole",
       "outcome": "pass",
       "pass": true,
       "source": "fixture:fixtures/topology.vertexuse/upstream_files.json#721 (upstream tests/prog_test/src/smFeatureTest.cpp:63)",
-      "values_compared": 0
+      "values_compared": 17
     },
     {
       "max_rel_err": 0.0,
@@ -20824,49 +20768,44 @@
       "values_compared": 0
     },
     {
-      "both_errored": true,
       "max_rel_err": 0.0,
       "name": "torus_vu5_gap0_11",
       "outcome": "pass",
       "pass": true,
       "source": "fixture:fixtures/topology.vertexuse/upstream_files.json#726 (upstream tests/prog_test/src/smFeatureTest.cpp:63)",
-      "values_compared": 0
+      "values_compared": 17
     },
     {
-      "both_errored": true,
       "max_rel_err": 0.0,
       "name": "torus_vu5_gap1_11",
       "outcome": "pass",
       "pass": true,
       "source": "fixture:fixtures/topology.vertexuse/upstream_files.json#727 (upstream tests/prog_test/src/smFeatureTest.cpp:63)",
-      "values_compared": 0
+      "values_compared": 17
     },
     {
-      "both_errored": true,
       "max_rel_err": 0.0,
       "name": "torus_vu5_gap2_11",
       "outcome": "pass",
       "pass": true,
       "source": "fixture:fixtures/topology.vertexuse/upstream_files.json#728 (upstream tests/prog_test/src/smFeatureTest.cpp:63)",
-      "values_compared": 0
+      "values_compared": 18
     },
     {
-      "both_errored": true,
       "max_rel_err": 0.0,
       "name": "torus_vu5_gap3_11",
       "outcome": "pass",
       "pass": true,
       "source": "fixture:fixtures/topology.vertexuse/upstream_files.json#729 (upstream tests/prog_test/src/smFeatureTest.cpp:63)",
-      "values_compared": 0
+      "values_compared": 18
     },
     {
-      "both_errored": true,
       "max_rel_err": 0.0,
       "name": "torus_vu5_gap4_11",
       "outcome": "pass",
       "pass": true,
       "source": "fixture:fixtures/topology.vertexuse/upstream_files.json#730 (upstream tests/prog_test/src/smFeatureTest.cpp:63)",
-      "values_compared": 0
+      "values_compared": 17
     },
     {
       "max_rel_err": 0.0,
@@ -20885,43 +20824,38 @@
       "values_compared": 16
     },
     {
-      "both_errored": true,
       "max_rel_err": 0.0,
       "name": "torus_vu5_uvpt1",
       "outcome": "pass",
       "pass": true,
       "source": "fixture:fixtures/topology.vertexuse/upstream_files.json#733 (upstream tests/prog_test/src/smFeatureTest.cpp:63)",
-      "values_compared": 0
+      "values_compared": 3
     },
     {
-      "both_errored": true,
       "max_rel_err": 0.0,
       "name": "torus_vu5_sector1",
       "outcome": "pass",
       "pass": true,
       "source": "fixture:fixtures/topology.vertexuse/upstream_files.json#734 (upstream tests/prog_test/src/smFeatureTest.cpp:63)",
-      "values_compared": 0
+      "values_compared": 21
     },
     {
-      "both_errored": true,
       "max_rel_err": 0.0,
       "name": "torus_vu5_uvpt0",
       "outcome": "pass",
       "pass": true,
       "source": "fixture:fixtures/topology.vertexuse/upstream_files.json#735 (upstream tests/prog_test/src/smFeatureTest.cpp:63)",
-      "values_compared": 0
+      "values_compared": 3
     },
     {
-      "both_errored": true,
       "max_rel_err": 0.0,
       "name": "torus_vu5_sector0",
       "outcome": "pass",
       "pass": true,
       "source": "fixture:fixtures/topology.vertexuse/upstream_files.json#736 (upstream tests/prog_test/src/smFeatureTest.cpp:63)",
-      "values_compared": 0
+      "values_compared": 21
     },
     {
-      "both_errored": true,
       "max_rel_err": 0.0,
       "name": "torus_vu5_seam",
       "outcome": "pass",
@@ -20930,7 +20864,6 @@
       "values_compared": 0
     },
     {
-      "both_errored": true,
       "max_rel_err": 0.0,
       "name": "torus_vu5_seam_nouv",
       "outcome": "pass",
@@ -20939,58 +20872,52 @@
       "values_compared": 0
     },
     {
-      "both_errored": true,
       "max_rel_err": 0.0,
       "name": "torus_vu5_pole",
       "outcome": "pass",
       "pass": true,
       "source": "fixture:fixtures/topology.vertexuse/upstream_files.json#739 (upstream tests/prog_test/src/smFeatureTest.cpp:63)",
-      "values_compared": 0
+      "values_compared": 17
     },
     {
-      "both_errored": true,
       "max_rel_err": 0.0,
       "name": "torus_vu5_init_gap0_11",
       "outcome": "pass",
       "pass": true,
       "source": "fixture:fixtures/topology.vertexuse/upstream_files.json#740 (upstream tests/prog_test/src/smFeatureTest.cpp:63)",
-      "values_compared": 0
+      "values_compared": 17
     },
     {
-      "both_errored": true,
       "max_rel_err": 0.0,
       "name": "torus_vu5_init_gap1_11",
       "outcome": "pass",
       "pass": true,
       "source": "fixture:fixtures/topology.vertexuse/upstream_files.json#741 (upstream tests/prog_test/src/smFeatureTest.cpp:63)",
-      "values_compared": 0
+      "values_compared": 17
     },
     {
-      "both_errored": true,
       "max_rel_err": 0.0,
       "name": "torus_vu5_init_gap2_11",
       "outcome": "pass",
       "pass": true,
       "source": "fixture:fixtures/topology.vertexuse/upstream_files.json#742 (upstream tests/prog_test/src/smFeatureTest.cpp:63)",
-      "values_compared": 0
+      "values_compared": 18
     },
     {
-      "both_errored": true,
       "max_rel_err": 0.0,
       "name": "torus_vu5_init_gap3_11",
       "outcome": "pass",
       "pass": true,
       "source": "fixture:fixtures/topology.vertexuse/upstream_files.json#743 (upstream tests/prog_test/src/smFeatureTest.cpp:63)",
-      "values_compared": 0
+      "values_compared": 18
     },
     {
-      "both_errored": true,
       "max_rel_err": 0.0,
       "name": "torus_vu5_init_gap4_11",
       "outcome": "pass",
       "pass": true,
       "source": "fixture:fixtures/topology.vertexuse/upstream_files.json#744 (upstream tests/prog_test/src/smFeatureTest.cpp:63)",
-      "values_compared": 0
+      "values_compared": 17
     },
     {
       "max_rel_err": 0.0,
@@ -21009,13 +20936,12 @@
       "values_compared": 16
     },
     {
-      "both_errored": true,
       "max_rel_err": 0.0,
       "name": "torus_vu5_init_pole",
       "outcome": "pass",
       "pass": true,
       "source": "fixture:fixtures/topology.vertexuse/upstream_files.json#747 (upstream tests/prog_test/src/smFeatureTest.cpp:63)",
-      "values_compared": 0
+      "values_compared": 17
     },
     {
       "max_rel_err": 0.0,
@@ -21050,22 +20976,20 @@
       "values_compared": 0
     },
     {
-      "both_errored": true,
       "max_rel_err": 0.0,
       "name": "torus_rebuild_vu2_gap0_11",
       "outcome": "pass",
       "pass": true,
       "source": "fixture:fixtures/topology.vertexuse/upstream_files.json#752 (upstream tests/prog_test/src/smFeatureTest.cpp:63)",
-      "values_compared": 0
+      "values_compared": 17
     },
     {
-      "both_errored": true,
       "max_rel_err": 0.0,
       "name": "torus_rebuild_vu2_gap1_11",
       "outcome": "pass",
       "pass": true,
       "source": "fixture:fixtures/topology.vertexuse/upstream_files.json#753 (upstream tests/prog_test/src/smFeatureTest.cpp:63)",
-      "values_compared": 0
+      "values_compared": 17
     },
     {
       "max_rel_err": 0.0,
@@ -21100,49 +21024,44 @@
       "values_compared": 0
     },
     {
-      "both_errored": true,
       "max_rel_err": 0.0,
       "name": "toruswvy_vu0_gap0_11",
       "outcome": "pass",
       "pass": true,
       "source": "fixture:fixtures/topology.vertexuse/upstream_files.json#758 (upstream tests/prog_test/src/smFeatureTest.cpp:63)",
-      "values_compared": 0
+      "values_compared": 17
     },
     {
-      "both_errored": true,
       "max_rel_err": 0.0,
       "name": "toruswvy_vu0_gap1_11",
       "outcome": "pass",
       "pass": true,
       "source": "fixture:fixtures/topology.vertexuse/upstream_files.json#759 (upstream tests/prog_test/src/smFeatureTest.cpp:63)",
-      "values_compared": 0
+      "values_compared": 17
     },
     {
-      "both_errored": true,
       "max_rel_err": 0.0,
       "name": "toruswvy_vu0_gap2_11",
       "outcome": "pass",
       "pass": true,
       "source": "fixture:fixtures/topology.vertexuse/upstream_files.json#760 (upstream tests/prog_test/src/smFeatureTest.cpp:63)",
-      "values_compared": 0
+      "values_compared": 18
     },
     {
-      "both_errored": true,
       "max_rel_err": 0.0,
       "name": "toruswvy_vu0_gap3_11",
       "outcome": "pass",
       "pass": true,
       "source": "fixture:fixtures/topology.vertexuse/upstream_files.json#761 (upstream tests/prog_test/src/smFeatureTest.cpp:63)",
-      "values_compared": 0
+      "values_compared": 18
     },
     {
-      "both_errored": true,
       "max_rel_err": 0.0,
       "name": "toruswvy_vu0_gap4_11",
       "outcome": "pass",
       "pass": true,
       "source": "fixture:fixtures/topology.vertexuse/upstream_files.json#762 (upstream tests/prog_test/src/smFeatureTest.cpp:63)",
-      "values_compared": 0
+      "values_compared": 17
     },
     {
       "max_rel_err": 0.0,
@@ -21161,43 +21080,38 @@
       "values_compared": 16
     },
     {
-      "both_errored": true,
       "max_rel_err": 0.0,
       "name": "toruswvy_vu0_uvpt1",
       "outcome": "pass",
       "pass": true,
       "source": "fixture:fixtures/topology.vertexuse/upstream_files.json#765 (upstream tests/prog_test/src/smFeatureTest.cpp:63)",
-      "values_compared": 0
+      "values_compared": 3
     },
     {
-      "both_errored": true,
       "max_rel_err": 0.0,
       "name": "toruswvy_vu0_sector1",
       "outcome": "pass",
       "pass": true,
       "source": "fixture:fixtures/topology.vertexuse/upstream_files.json#766 (upstream tests/prog_test/src/smFeatureTest.cpp:63)",
-      "values_compared": 0
+      "values_compared": 21
     },
     {
-      "both_errored": true,
       "max_rel_err": 0.0,
       "name": "toruswvy_vu0_uvpt0",
       "outcome": "pass",
       "pass": true,
       "source": "fixture:fixtures/topology.vertexuse/upstream_files.json#767 (upstream tests/prog_test/src/smFeatureTest.cpp:63)",
-      "values_compared": 0
+      "values_compared": 3
     },
     {
-      "both_errored": true,
       "max_rel_err": 0.0,
       "name": "toruswvy_vu0_sector0",
       "outcome": "pass",
       "pass": true,
       "source": "fixture:fixtures/topology.vertexuse/upstream_files.json#768 (upstream tests/prog_test/src/smFeatureTest.cpp:63)",
-      "values_compared": 0
+      "values_compared": 21
     },
     {
-      "both_errored": true,
       "max_rel_err": 0.0,
       "name": "toruswvy_vu0_seam",
       "outcome": "pass",
@@ -21206,7 +21120,6 @@
       "values_compared": 0
     },
     {
-      "both_errored": true,
       "max_rel_err": 0.0,
       "name": "toruswvy_vu0_seam_nouv",
       "outcome": "pass",
@@ -21215,58 +21128,52 @@
       "values_compared": 0
     },
     {
-      "both_errored": true,
       "max_rel_err": 0.0,
       "name": "toruswvy_vu0_pole",
       "outcome": "pass",
       "pass": true,
       "source": "fixture:fixtures/topology.vertexuse/upstream_files.json#771 (upstream tests/prog_test/src/smFeatureTest.cpp:63)",
-      "values_compared": 0
+      "values_compared": 17
     },
     {
-      "both_errored": true,
       "max_rel_err": 0.0,
       "name": "toruswvy_vu0_init_gap0_11",
       "outcome": "pass",
       "pass": true,
       "source": "fixture:fixtures/topology.vertexuse/upstream_files.json#772 (upstream tests/prog_test/src/smFeatureTest.cpp:63)",
-      "values_compared": 0
+      "values_compared": 17
     },
     {
-      "both_errored": true,
       "max_rel_err": 0.0,
       "name": "toruswvy_vu0_init_gap1_11",
       "outcome": "pass",
       "pass": true,
       "source": "fixture:fixtures/topology.vertexuse/upstream_files.json#773 (upstream tests/prog_test/src/smFeatureTest.cpp:63)",
-      "values_compared": 0
+      "values_compared": 17
     },
     {
-      "both_errored": true,
       "max_rel_err": 0.0,
       "name": "toruswvy_vu0_init_gap2_11",
       "outcome": "pass",
       "pass": true,
       "source": "fixture:fixtures/topology.vertexuse/upstream_files.json#774 (upstream tests/prog_test/src/smFeatureTest.cpp:63)",
-      "values_compared": 0
+      "values_compared": 18
     },
     {
-      "both_errored": true,
       "max_rel_err": 0.0,
       "name": "toruswvy_vu0_init_gap3_11",
       "outcome": "pass",
       "pass": true,
       "source": "fixture:fixtures/topology.vertexuse/upstream_files.json#775 (upstream tests/prog_test/src/smFeatureTest.cpp:63)",
-      "values_compared": 0
+      "values_compared": 18
     },
     {
-      "both_errored": true,
       "max_rel_err": 0.0,
       "name": "toruswvy_vu0_init_gap4_11",
       "outcome": "pass",
       "pass": true,
       "source": "fixture:fixtures/topology.vertexuse/upstream_files.json#776 (upstream tests/prog_test/src/smFeatureTest.cpp:63)",
-      "values_compared": 0
+      "values_compared": 17
     },
     {
       "max_rel_err": 0.0,
@@ -21285,13 +21192,12 @@
       "values_compared": 16
     },
     {
-      "both_errored": true,
       "max_rel_err": 0.0,
       "name": "toruswvy_vu0_init_pole",
       "outcome": "pass",
       "pass": true,
       "source": "fixture:fixtures/topology.vertexuse/upstream_files.json#779 (upstream tests/prog_test/src/smFeatureTest.cpp:63)",
-      "values_compared": 0
+      "values_compared": 17
     },
     {
       "max_rel_err": 0.0,
@@ -21326,49 +21232,44 @@
       "values_compared": 0
     },
     {
-      "both_errored": true,
       "max_rel_err": 0.0,
       "name": "toruswvy_vu5_gap0_11",
       "outcome": "pass",
       "pass": true,
       "source": "fixture:fixtures/topology.vertexuse/upstream_files.json#784 (upstream tests/prog_test/src/smFeatureTest.cpp:63)",
-      "values_compared": 0
+      "values_compared": 17
     },
     {
-      "both_errored": true,
       "max_rel_err": 0.0,
       "name": "toruswvy_vu5_gap1_11",
       "outcome": "pass",
       "pass": true,
       "source": "fixture:fixtures/topology.vertexuse/upstream_files.json#785 (upstream tests/prog_test/src/smFeatureTest.cpp:63)",
-      "values_compared": 0
+      "values_compared": 17
     },
     {
-      "both_errored": true,
       "max_rel_err": 0.0,
       "name": "toruswvy_vu5_gap2_11",
       "outcome": "pass",
       "pass": true,
       "source": "fixture:fixtures/topology.vertexuse/upstream_files.json#786 (upstream tests/prog_test/src/smFeatureTest.cpp:63)",
-      "values_compared": 0
+      "values_compared": 18
     },
     {
-      "both_errored": true,
       "max_rel_err": 0.0,
       "name": "toruswvy_vu5_gap3_11",
       "outcome": "pass",
       "pass": true,
       "source": "fixture:fixtures/topology.vertexuse/upstream_files.json#787 (upstream tests/prog_test/src/smFeatureTest.cpp:63)",
-      "values_compared": 0
+      "values_compared": 18
     },
     {
-      "both_errored": true,
       "max_rel_err": 0.0,
       "name": "toruswvy_vu5_gap4_11",
       "outcome": "pass",
       "pass": true,
       "source": "fixture:fixtures/topology.vertexuse/upstream_files.json#788 (upstream tests/prog_test/src/smFeatureTest.cpp:63)",
-      "values_compared": 0
+      "values_compared": 17
     },
     {
       "max_rel_err": 0.0,
@@ -21387,43 +21288,38 @@
       "values_compared": 16
     },
     {
-      "both_errored": true,
       "max_rel_err": 0.0,
       "name": "toruswvy_vu5_uvpt1",
       "outcome": "pass",
       "pass": true,
       "source": "fixture:fixtures/topology.vertexuse/upstream_files.json#791 (upstream tests/prog_test/src/smFeatureTest.cpp:63)",
-      "values_compared": 0
+      "values_compared": 3
     },
     {
-      "both_errored": true,
       "max_rel_err": 0.0,
       "name": "toruswvy_vu5_sector1",
       "outcome": "pass",
       "pass": true,
       "source": "fixture:fixtures/topology.vertexuse/upstream_files.json#792 (upstream tests/prog_test/src/smFeatureTest.cpp:63)",
-      "values_compared": 0
+      "values_compared": 21
     },
     {
-      "both_errored": true,
       "max_rel_err": 0.0,
       "name": "toruswvy_vu5_uvpt0",
       "outcome": "pass",
       "pass": true,
       "source": "fixture:fixtures/topology.vertexuse/upstream_files.json#793 (upstream tests/prog_test/src/smFeatureTest.cpp:63)",
-      "values_compared": 0
+      "values_compared": 3
     },
     {
-      "both_errored": true,
       "max_rel_err": 0.0,
       "name": "toruswvy_vu5_sector0",
       "outcome": "pass",
       "pass": true,
       "source": "fixture:fixtures/topology.vertexuse/upstream_files.json#794 (upstream tests/prog_test/src/smFeatureTest.cpp:63)",
-      "values_compared": 0
+      "values_compared": 21
     },
     {
-      "both_errored": true,
       "max_rel_err": 0.0,
       "name": "toruswvy_vu5_seam",
       "outcome": "pass",
@@ -21432,7 +21328,6 @@
       "values_compared": 0
     },
     {
-      "both_errored": true,
       "max_rel_err": 0.0,
       "name": "toruswvy_vu5_seam_nouv",
       "outcome": "pass",
@@ -21441,58 +21336,52 @@
       "values_compared": 0
     },
     {
-      "both_errored": true,
       "max_rel_err": 0.0,
       "name": "toruswvy_vu5_pole",
       "outcome": "pass",
       "pass": true,
       "source": "fixture:fixtures/topology.vertexuse/upstream_files.json#797 (upstream tests/prog_test/src/smFeatureTest.cpp:63)",
-      "values_compared": 0
+      "values_compared": 17
     },
     {
-      "both_errored": true,
       "max_rel_err": 0.0,
       "name": "toruswvy_vu5_init_gap0_11",
       "outcome": "pass",
       "pass": true,
       "source": "fixture:fixtures/topology.vertexuse/upstream_files.json#798 (upstream tests/prog_test/src/smFeatureTest.cpp:63)",
-      "values_compared": 0
+      "values_compared": 17
     },
     {
-      "both_errored": true,
       "max_rel_err": 0.0,
       "name": "toruswvy_vu5_init_gap1_11",
       "outcome": "pass",
       "pass": true,
       "source": "fixture:fixtures/topology.vertexuse/upstream_files.json#799 (upstream tests/prog_test/src/smFeatureTest.cpp:63)",
-      "values_compared": 0
+      "values_compared": 17
     },
     {
-      "both_errored": true,
       "max_rel_err": 0.0,
       "name": "toruswvy_vu5_init_gap2_11",
       "outcome": "pass",
       "pass": true,
       "source": "fixture:fixtures/topology.vertexuse/upstream_files.json#800 (upstream tests/prog_test/src/smFeatureTest.cpp:63)",
-      "values_compared": 0
+      "values_compared": 18
     },
     {
-      "both_errored": true,
       "max_rel_err": 0.0,
       "name": "toruswvy_vu5_init_gap3_11",
       "outcome": "pass",
       "pass": true,
       "source": "fixture:fixtures/topology.vertexuse/upstream_files.json#801 (upstream tests/prog_test/src/smFeatureTest.cpp:63)",
-      "values_compared": 0
+      "values_compared": 18
     },
     {
-      "both_errored": true,
       "max_rel_err": 0.0,
       "name": "toruswvy_vu5_init_gap4_11",
       "outcome": "pass",
       "pass": true,
       "source": "fixture:fixtures/topology.vertexuse/upstream_files.json#802 (upstream tests/prog_test/src/smFeatureTest.cpp:63)",
-      "values_compared": 0
+      "values_compared": 17
     },
     {
       "max_rel_err": 0.0,
@@ -21511,13 +21400,12 @@
       "values_compared": 16
     },
     {
-      "both_errored": true,
       "max_rel_err": 0.0,
       "name": "toruswvy_vu5_init_pole",
       "outcome": "pass",
       "pass": true,
       "source": "fixture:fixtures/topology.vertexuse/upstream_files.json#805 (upstream tests/prog_test/src/smFeatureTest.cpp:63)",
-      "values_compared": 0
+      "values_compared": 17
     },
     {
       "max_rel_err": 0.0,
@@ -21552,22 +21440,20 @@
       "values_compared": 0
     },
     {
-      "both_errored": true,
       "max_rel_err": 0.0,
       "name": "toruswvy_rebuild_vu2_gap0_11",
       "outcome": "pass",
       "pass": true,
       "source": "fixture:fixtures/topology.vertexuse/upstream_files.json#810 (upstream tests/prog_test/src/smFeatureTest.cpp:63)",
-      "values_compared": 0
+      "values_compared": 17
     },
     {
-      "both_errored": true,
       "max_rel_err": 0.0,
       "name": "toruswvy_rebuild_vu2_gap1_11",
       "outcome": "pass",
       "pass": true,
       "source": "fixture:fixtures/topology.vertexuse/upstream_files.json#811 (upstream tests/prog_test/src/smFeatureTest.cpp:63)",
-      "values_compared": 0
+      "values_compared": 17
     },
     {
       "max_rel_err": 0.0,
@@ -21602,49 +21488,44 @@
       "values_compared": 0
     },
     {
-      "both_errored": true,
       "max_rel_err": 0.0,
       "name": "vase_rev_vu0_gap0_11",
       "outcome": "pass",
       "pass": true,
       "source": "fixture:fixtures/topology.vertexuse/upstream_files.json#816 (upstream tests/prog_test/src/smFeatureTest.cpp:63)",
-      "values_compared": 0
+      "values_compared": 17
     },
     {
-      "both_errored": true,
       "max_rel_err": 0.0,
       "name": "vase_rev_vu0_gap1_11",
       "outcome": "pass",
       "pass": true,
       "source": "fixture:fixtures/topology.vertexuse/upstream_files.json#817 (upstream tests/prog_test/src/smFeatureTest.cpp:63)",
-      "values_compared": 0
+      "values_compared": 17
     },
     {
-      "both_errored": true,
       "max_rel_err": 0.0,
       "name": "vase_rev_vu0_gap2_11",
       "outcome": "pass",
       "pass": true,
       "source": "fixture:fixtures/topology.vertexuse/upstream_files.json#818 (upstream tests/prog_test/src/smFeatureTest.cpp:63)",
-      "values_compared": 0
+      "values_compared": 18
     },
     {
-      "both_errored": true,
       "max_rel_err": 0.0,
       "name": "vase_rev_vu0_gap3_11",
       "outcome": "pass",
       "pass": true,
       "source": "fixture:fixtures/topology.vertexuse/upstream_files.json#819 (upstream tests/prog_test/src/smFeatureTest.cpp:63)",
-      "values_compared": 0
+      "values_compared": 18
     },
     {
-      "both_errored": true,
       "max_rel_err": 0.0,
       "name": "vase_rev_vu0_gap4_11",
       "outcome": "pass",
       "pass": true,
       "source": "fixture:fixtures/topology.vertexuse/upstream_files.json#820 (upstream tests/prog_test/src/smFeatureTest.cpp:63)",
-      "values_compared": 0
+      "values_compared": 17
     },
     {
       "max_rel_err": 0.0,
@@ -21663,43 +21544,38 @@
       "values_compared": 16
     },
     {
-      "both_errored": true,
       "max_rel_err": 0.0,
       "name": "vase_rev_vu0_uvpt1",
       "outcome": "pass",
       "pass": true,
       "source": "fixture:fixtures/topology.vertexuse/upstream_files.json#823 (upstream tests/prog_test/src/smFeatureTest.cpp:63)",
-      "values_compared": 0
+      "values_compared": 3
     },
     {
-      "both_errored": true,
       "max_rel_err": 0.0,
       "name": "vase_rev_vu0_sector1",
       "outcome": "pass",
       "pass": true,
       "source": "fixture:fixtures/topology.vertexuse/upstream_files.json#824 (upstream tests/prog_test/src/smFeatureTest.cpp:63)",
-      "values_compared": 0
+      "values_compared": 21
     },
     {
-      "both_errored": true,
       "max_rel_err": 0.0,
       "name": "vase_rev_vu0_uvpt0",
       "outcome": "pass",
       "pass": true,
       "source": "fixture:fixtures/topology.vertexuse/upstream_files.json#825 (upstream tests/prog_test/src/smFeatureTest.cpp:63)",
-      "values_compared": 0
+      "values_compared": 3
     },
     {
-      "both_errored": true,
       "max_rel_err": 0.0,
       "name": "vase_rev_vu0_sector0",
       "outcome": "pass",
       "pass": true,
       "source": "fixture:fixtures/topology.vertexuse/upstream_files.json#826 (upstream tests/prog_test/src/smFeatureTest.cpp:63)",
-      "values_compared": 0
+      "values_compared": 21
     },
     {
-      "both_errored": true,
       "max_rel_err": 0.0,
       "name": "vase_rev_vu0_seam",
       "outcome": "pass",
@@ -21708,7 +21584,6 @@
       "values_compared": 0
     },
     {
-      "both_errored": true,
       "max_rel_err": 0.0,
       "name": "vase_rev_vu0_seam_nouv",
       "outcome": "pass",
@@ -21717,58 +21592,52 @@
       "values_compared": 0
     },
     {
-      "both_errored": true,
       "max_rel_err": 0.0,
       "name": "vase_rev_vu0_pole",
       "outcome": "pass",
       "pass": true,
       "source": "fixture:fixtures/topology.vertexuse/upstream_files.json#829 (upstream tests/prog_test/src/smFeatureTest.cpp:63)",
-      "values_compared": 0
+      "values_compared": 17
     },
     {
-      "both_errored": true,
       "max_rel_err": 0.0,
       "name": "vase_rev_vu0_init_gap0_11",
       "outcome": "pass",
       "pass": true,
       "source": "fixture:fixtures/topology.vertexuse/upstream_files.json#830 (upstream tests/prog_test/src/smFeatureTest.cpp:63)",
-      "values_compared": 0
+      "values_compared": 17
     },
     {
-      "both_errored": true,
       "max_rel_err": 0.0,
       "name": "vase_rev_vu0_init_gap1_11",
       "outcome": "pass",
       "pass": true,
       "source": "fixture:fixtures/topology.vertexuse/upstream_files.json#831 (upstream tests/prog_test/src/smFeatureTest.cpp:63)",
-      "values_compared": 0
+      "values_compared": 17
     },
     {
-      "both_errored": true,
       "max_rel_err": 0.0,
       "name": "vase_rev_vu0_init_gap2_11",
       "outcome": "pass",
       "pass": true,
       "source": "fixture:fixtures/topology.vertexuse/upstream_files.json#832 (upstream tests/prog_test/src/smFeatureTest.cpp:63)",
-      "values_compared": 0
+      "values_compared": 18
     },
     {
-      "both_errored": true,
       "max_rel_err": 0.0,
       "name": "vase_rev_vu0_init_gap3_11",
       "outcome": "pass",
       "pass": true,
       "source": "fixture:fixtures/topology.vertexuse/upstream_files.json#833 (upstream tests/prog_test/src/smFeatureTest.cpp:63)",
-      "values_compared": 0
+      "values_compared": 18
     },
     {
-      "both_errored": true,
       "max_rel_err": 0.0,
       "name": "vase_rev_vu0_init_gap4_11",
       "outcome": "pass",
       "pass": true,
       "source": "fixture:fixtures/topology.vertexuse/upstream_files.json#834 (upstream tests/prog_test/src/smFeatureTest.cpp:63)",
-      "values_compared": 0
+      "values_compared": 17
     },
     {
       "max_rel_err": 0.0,
@@ -21787,13 +21656,12 @@
       "values_compared": 16
     },
     {
-      "both_errored": true,
       "max_rel_err": 0.0,
       "name": "vase_rev_vu0_init_pole",
       "outcome": "pass",
       "pass": true,
       "source": "fixture:fixtures/topology.vertexuse/upstream_files.json#837 (upstream tests/prog_test/src/smFeatureTest.cpp:63)",
-      "values_compared": 0
+      "values_compared": 17
     },
     {
       "max_rel_err": 0.0,
@@ -21828,49 +21696,44 @@
       "values_compared": 0
     },
     {
-      "both_errored": true,
       "max_rel_err": 0.0,
       "name": "vase_rev_vu5_gap0_11",
       "outcome": "pass",
       "pass": true,
       "source": "fixture:fixtures/topology.vertexuse/upstream_files.json#842 (upstream tests/prog_test/src/smFeatureTest.cpp:63)",
-      "values_compared": 0
+      "values_compared": 17
     },
     {
-      "both_errored": true,
       "max_rel_err": 0.0,
       "name": "vase_rev_vu5_gap1_11",
       "outcome": "pass",
       "pass": true,
       "source": "fixture:fixtures/topology.vertexuse/upstream_files.json#843 (upstream tests/prog_test/src/smFeatureTest.cpp:63)",
-      "values_compared": 0
+      "values_compared": 17
     },
     {
-      "both_errored": true,
       "max_rel_err": 0.0,
       "name": "vase_rev_vu5_gap2_11",
       "outcome": "pass",
       "pass": true,
       "source": "fixture:fixtures/topology.vertexuse/upstream_files.json#844 (upstream tests/prog_test/src/smFeatureTest.cpp:63)",
-      "values_compared": 0
+      "values_compared": 18
     },
     {
-      "both_errored": true,
       "max_rel_err": 0.0,
       "name": "vase_rev_vu5_gap3_11",
       "outcome": "pass",
       "pass": true,
       "source": "fixture:fixtures/topology.vertexuse/upstream_files.json#845 (upstream tests/prog_test/src/smFeatureTest.cpp:63)",
-      "values_compared": 0
+      "values_compared": 18
     },
     {
-      "both_errored": true,
       "max_rel_err": 0.0,
       "name": "vase_rev_vu5_gap4_11",
       "outcome": "pass",
       "pass": true,
       "source": "fixture:fixtures/topology.vertexuse/upstream_files.json#846 (upstream tests/prog_test/src/smFeatureTest.cpp:63)",
-      "values_compared": 0
+      "values_compared": 17
     },
     {
       "max_rel_err": 0.0,
@@ -21889,43 +21752,38 @@
       "values_compared": 16
     },
     {
-      "both_errored": true,
       "max_rel_err": 0.0,
       "name": "vase_rev_vu5_uvpt1",
       "outcome": "pass",
       "pass": true,
       "source": "fixture:fixtures/topology.vertexuse/upstream_files.json#849 (upstream tests/prog_test/src/smFeatureTest.cpp:63)",
-      "values_compared": 0
+      "values_compared": 3
     },
     {
-      "both_errored": true,
       "max_rel_err": 0.0,
       "name": "vase_rev_vu5_sector1",
       "outcome": "pass",
       "pass": true,
       "source": "fixture:fixtures/topology.vertexuse/upstream_files.json#850 (upstream tests/prog_test/src/smFeatureTest.cpp:63)",
-      "values_compared": 0
+      "values_compared": 21
     },
     {
-      "both_errored": true,
       "max_rel_err": 0.0,
       "name": "vase_rev_vu5_uvpt0",
       "outcome": "pass",
       "pass": true,
       "source": "fixture:fixtures/topology.vertexuse/upstream_files.json#851 (upstream tests/prog_test/src/smFeatureTest.cpp:63)",
-      "values_compared": 0
+      "values_compared": 3
     },
     {
-      "both_errored": true,
       "max_rel_err": 0.0,
       "name": "vase_rev_vu5_sector0",
       "outcome": "pass",
       "pass": true,
       "source": "fixture:fixtures/topology.vertexuse/upstream_files.json#852 (upstream tests/prog_test/src/smFeatureTest.cpp:63)",
-      "values_compared": 0
+      "values_compared": 21
     },
     {
-      "both_errored": true,
       "max_rel_err": 0.0,
       "name": "vase_rev_vu5_seam",
       "outcome": "pass",
@@ -21934,7 +21792,6 @@
       "values_compared": 0
     },
     {
-      "both_errored": true,
       "max_rel_err": 0.0,
       "name": "vase_rev_vu5_seam_nouv",
       "outcome": "pass",
@@ -21943,58 +21800,52 @@
       "values_compared": 0
     },
     {
-      "both_errored": true,
       "max_rel_err": 0.0,
       "name": "vase_rev_vu5_pole",
       "outcome": "pass",
       "pass": true,
       "source": "fixture:fixtures/topology.vertexuse/upstream_files.json#855 (upstream tests/prog_test/src/smFeatureTest.cpp:63)",
-      "values_compared": 0
+      "values_compared": 17
     },
     {
-      "both_errored": true,
       "max_rel_err": 0.0,
       "name": "vase_rev_vu5_init_gap0_11",
       "outcome": "pass",
       "pass": true,
       "source": "fixture:fixtures/topology.vertexuse/upstream_files.json#856 (upstream tests/prog_test/src/smFeatureTest.cpp:63)",
-      "values_compared": 0
+      "values_compared": 17
     },
     {
-      "both_errored": true,
       "max_rel_err": 0.0,
       "name": "vase_rev_vu5_init_gap1_11",
       "outcome": "pass",
       "pass": true,
       "source": "fixture:fixtures/topology.vertexuse/upstream_files.json#857 (upstream tests/prog_test/src/smFeatureTest.cpp:63)",
-      "values_compared": 0
+      "values_compared": 17
     },
     {
-      "both_errored": true,
       "max_rel_err": 0.0,
       "name": "vase_rev_vu5_init_gap2_11",
       "outcome": "pass",
       "pass": true,
       "source": "fixture:fixtures/topology.vertexuse/upstream_files.json#858 (upstream tests/prog_test/src/smFeatureTest.cpp:63)",
-      "values_compared": 0
+      "values_compared": 18
     },
     {
-      "both_errored": true,
       "max_rel_err": 0.0,
       "name": "vase_rev_vu5_init_gap3_11",
       "outcome": "pass",
       "pass": true,
       "source": "fixture:fixtures/topology.vertexuse/upstream_files.json#859 (upstream tests/prog_test/src/smFeatureTest.cpp:63)",
-      "values_compared": 0
+      "values_compared": 18
     },
     {
-      "both_errored": true,
       "max_rel_err": 0.0,
       "name": "vase_rev_vu5_init_gap4_11",
       "outcome": "pass",
       "pass": true,
       "source": "fixture:fixtures/topology.vertexuse/upstream_files.json#860 (upstream tests/prog_test/src/smFeatureTest.cpp:63)",
-      "values_compared": 0
+      "values_compared": 17
     },
     {
       "max_rel_err": 0.0,
@@ -22013,13 +21864,12 @@
       "values_compared": 16
     },
     {
-      "both_errored": true,
       "max_rel_err": 0.0,
       "name": "vase_rev_vu5_init_pole",
       "outcome": "pass",
       "pass": true,
       "source": "fixture:fixtures/topology.vertexuse/upstream_files.json#863 (upstream tests/prog_test/src/smFeatureTest.cpp:63)",
-      "values_compared": 0
+      "values_compared": 17
     },
     {
       "max_rel_err": 0.0,
@@ -22054,22 +21904,20 @@
       "values_compared": 0
     },
     {
-      "both_errored": true,
       "max_rel_err": 0.0,
       "name": "vase_rev_rebuild_vu2_gap0_11",
       "outcome": "pass",
       "pass": true,
       "source": "fixture:fixtures/topology.vertexuse/upstream_files.json#868 (upstream tests/prog_test/src/smFeatureTest.cpp:63)",
-      "values_compared": 0
+      "values_compared": 17
     },
     {
-      "both_errored": true,
       "max_rel_err": 0.0,
       "name": "vase_rev_rebuild_vu2_gap1_11",
       "outcome": "pass",
       "pass": true,
       "source": "fixture:fixtures/topology.vertexuse/upstream_files.json#869 (upstream tests/prog_test/src/smFeatureTest.cpp:63)",
-      "values_compared": 0
+      "values_compared": 17
     },
     {
       "max_rel_err": 0.0,
@@ -22104,7 +21952,6 @@
       "values_compared": 0
     },
     {
-      "both_errored": true,
       "max_rel_err": 0.0,
       "name": "gen0004",
       "outcome": "pass",
@@ -22201,7 +22048,7 @@
       "values_compared": 120
     }
   ],
-  "cases_both_errored": 343,
+  "cases_both_errored": 190,
   "cases_deferred": 92,
   "cases_failed": 0,
   "cases_passed": 2594,

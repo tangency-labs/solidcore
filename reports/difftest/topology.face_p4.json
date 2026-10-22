@@ -79,8 +79,8 @@
     },
     {
       "deferred": {
-        "symbol": "SmCurveClassification::ReSet",
-        "unit": "intersect.curve_class_p2"
+        "symbol": "SmCrvOnSurf::SmCrvOnSurf (non-B-spline surface)",
+        "unit": "curve.crv_on_surf"
       },
       "max_rel_err": 0.0,
       "name": "gen0008",
@@ -32062,41 +32062,57 @@
       "values_compared": 0
     },
     {
+      "deferred": {
+        "symbol": "SmCrvOnSurf::SmCrvOnSurf (non-B-spline surface)",
+        "unit": "curve.crv_on_surf"
+      },
       "max_rel_err": 0.0,
       "name": "torus.smb_0_f0_op21",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "fixture:built-in: systematic cases#3781 (upstream tests/prog_test (the pt_TestFiles B-reps))",
-      "values_compared": 5
-    },
-    {
-      "max_rel_err": 0.0,
-      "name": "torus.smb_0_f0_op22",
-      "outcome": "pass",
-      "pass": true,
-      "source": "fixture:built-in: systematic cases#3782 (upstream tests/prog_test (the pt_TestFiles B-reps))",
-      "values_compared": 5
-    },
-    {
-      "max_rel_err": 0.0,
-      "name": "torus.smb_0_f0_op23",
-      "outcome": "pass",
-      "pass": true,
-      "source": "fixture:built-in: systematic cases#3783 (upstream tests/prog_test (the pt_TestFiles B-reps))",
-      "values_compared": 5
-    },
-    {
-      "max_rel_err": 0.0,
-      "name": "torus.smb_0_f0_op24",
-      "outcome": "pass",
-      "pass": true,
-      "source": "fixture:built-in: systematic cases#3784 (upstream tests/prog_test (the pt_TestFiles B-reps))",
-      "values_compared": 5
+      "values_compared": 0
     },
     {
       "deferred": {
-        "symbol": "SmCurveClassification::ReSet",
-        "unit": "intersect.curve_class_p2"
+        "symbol": "SmCrvOnSurf::SmCrvOnSurf (non-B-spline surface)",
+        "unit": "curve.crv_on_surf"
+      },
+      "max_rel_err": 0.0,
+      "name": "torus.smb_0_f0_op22",
+      "outcome": "deferred",
+      "pass": false,
+      "source": "fixture:built-in: systematic cases#3782 (upstream tests/prog_test (the pt_TestFiles B-reps))",
+      "values_compared": 0
+    },
+    {
+      "deferred": {
+        "symbol": "SmCrvOnSurf::SmCrvOnSurf (non-B-spline surface)",
+        "unit": "curve.crv_on_surf"
+      },
+      "max_rel_err": 0.0,
+      "name": "torus.smb_0_f0_op23",
+      "outcome": "deferred",
+      "pass": false,
+      "source": "fixture:built-in: systematic cases#3783 (upstream tests/prog_test (the pt_TestFiles B-reps))",
+      "values_compared": 0
+    },
+    {
+      "deferred": {
+        "symbol": "SmCrvOnSurf::SmCrvOnSurf (non-B-spline surface)",
+        "unit": "curve.crv_on_surf"
+      },
+      "max_rel_err": 0.0,
+      "name": "torus.smb_0_f0_op24",
+      "outcome": "deferred",
+      "pass": false,
+      "source": "fixture:built-in: systematic cases#3784 (upstream tests/prog_test (the pt_TestFiles B-reps))",
+      "values_compared": 0
+    },
+    {
+      "deferred": {
+        "symbol": "SmCrvOnSurf::SmCrvOnSurf (non-B-spline surface)",
+        "unit": "curve.crv_on_surf"
       },
       "max_rel_err": 0.0,
       "name": "torus.smb_0_f0_op25",
@@ -32314,17 +32330,21 @@
       "values_compared": 5
     },
     {
+      "deferred": {
+        "symbol": "SmCrvOnSurf::SmCrvOnSurf (non-B-spline surface)",
+        "unit": "curve.crv_on_surf"
+      },
       "max_rel_err": 0.0,
       "name": "torus.smb_0_f1_op24",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "fixture:built-in: systematic cases#3810 (upstream tests/prog_test (the pt_TestFiles B-reps))",
-      "values_compared": 5
+      "values_compared": 0
     },
     {
       "deferred": {
-        "symbol": "SmCurveClassification::ReSet",
-        "unit": "intersect.curve_class_p2"
+        "symbol": "SmCrvOnSurf::SmCrvOnSurf (non-B-spline surface)",
+        "unit": "curve.crv_on_surf"
       },
       "max_rel_err": 0.0,
       "name": "torus.smb_0_f1_op25",
@@ -32518,12 +32538,16 @@
       "values_compared": 0
     },
     {
+      "deferred": {
+        "symbol": "SmCrvOnSurf::SmCrvOnSurf (non-B-spline surface)",
+        "unit": "curve.crv_on_surf"
+      },
       "max_rel_err": 0.0,
       "name": "torus.smb_0_f2_op21",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "fixture:built-in: systematic cases#3833 (upstream tests/prog_test (the pt_TestFiles B-reps))",
-      "values_compared": 5
+      "values_compared": 0
     },
     {
       "max_rel_err": 0.0,
@@ -32551,8 +32575,8 @@
     },
     {
       "deferred": {
-        "symbol": "SmCurveClassification::ReSet",
-        "unit": "intersect.curve_class_p2"
+        "symbol": "SmCrvOnSurf::SmCrvOnSurf (non-B-spline surface)",
+        "unit": "curve.crv_on_surf"
       },
       "max_rel_err": 0.0,
       "name": "torus.smb_0_f2_op25",
@@ -32754,12 +32778,16 @@
       "values_compared": 5
     },
     {
+      "deferred": {
+        "symbol": "SmCrvOnSurf::SmCrvOnSurf (non-B-spline surface)",
+        "unit": "curve.crv_on_surf"
+      },
       "max_rel_err": 0.0,
       "name": "torus.smb_0_f3_op22",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "fixture:built-in: systematic cases#3860 (upstream tests/prog_test (the pt_TestFiles B-reps))",
-      "values_compared": 5
+      "values_compared": 0
     },
     {
       "max_rel_err": 0.0,
@@ -32770,17 +32798,21 @@
       "values_compared": 5
     },
     {
+      "deferred": {
+        "symbol": "SmCrvOnSurf::SmCrvOnSurf (non-B-spline surface)",
+        "unit": "curve.crv_on_surf"
+      },
       "max_rel_err": 0.0,
       "name": "torus.smb_0_f3_op24",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "fixture:built-in: systematic cases#3862 (upstream tests/prog_test (the pt_TestFiles B-reps))",
-      "values_compared": 5
+      "values_compared": 0
     },
     {
       "deferred": {
-        "symbol": "SmCurveClassification::ReSet",
-        "unit": "intersect.curve_class_p2"
+        "symbol": "SmCrvOnSurf::SmCrvOnSurf (non-B-spline surface)",
+        "unit": "curve.crv_on_surf"
       },
       "max_rel_err": 0.0,
       "name": "torus.smb_0_f3_op25",
@@ -32974,20 +33006,28 @@
       "values_compared": 0
     },
     {
+      "deferred": {
+        "symbol": "SmCrvOnSurf::SmCrvOnSurf (non-B-spline surface)",
+        "unit": "curve.crv_on_surf"
+      },
       "max_rel_err": 0.0,
       "name": "torus.smb_0_f4_op21",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "fixture:built-in: systematic cases#3885 (upstream tests/prog_test (the pt_TestFiles B-reps))",
-      "values_compared": 5
+      "values_compared": 0
     },
     {
+      "deferred": {
+        "symbol": "SmCrvOnSurf::SmCrvOnSurf (non-B-spline surface)",
+        "unit": "curve.crv_on_surf"
+      },
       "max_rel_err": 0.0,
       "name": "torus.smb_0_f4_op22",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "fixture:built-in: systematic cases#3886 (upstream tests/prog_test (the pt_TestFiles B-reps))",
-      "values_compared": 5
+      "values_compared": 0
     },
     {
       "max_rel_err": 0.0,
@@ -33007,8 +33047,8 @@
     },
     {
       "deferred": {
-        "symbol": "SmCurveClassification::ReSet",
-        "unit": "intersect.curve_class_p2"
+        "symbol": "SmCrvOnSurf::SmCrvOnSurf (non-B-spline surface)",
+        "unit": "curve.crv_on_surf"
       },
       "max_rel_err": 0.0,
       "name": "torus.smb_0_f4_op25",
@@ -33218,25 +33258,33 @@
       "values_compared": 5
     },
     {
+      "deferred": {
+        "symbol": "SmCrvOnSurf::SmCrvOnSurf (non-B-spline surface)",
+        "unit": "curve.crv_on_surf"
+      },
       "max_rel_err": 0.0,
       "name": "torus.smb_0_f5_op23",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "fixture:built-in: systematic cases#3913 (upstream tests/prog_test (the pt_TestFiles B-reps))",
-      "values_compared": 5
-    },
-    {
-      "max_rel_err": 0.0,
-      "name": "torus.smb_0_f5_op24",
-      "outcome": "pass",
-      "pass": true,
-      "source": "fixture:built-in: systematic cases#3914 (upstream tests/prog_test (the pt_TestFiles B-reps))",
-      "values_compared": 5
+      "values_compared": 0
     },
     {
       "deferred": {
-        "symbol": "SmCurveClassification::ReSet",
-        "unit": "intersect.curve_class_p2"
+        "symbol": "SmCrvOnSurf::SmCrvOnSurf (non-B-spline surface)",
+        "unit": "curve.crv_on_surf"
+      },
+      "max_rel_err": 0.0,
+      "name": "torus.smb_0_f5_op24",
+      "outcome": "deferred",
+      "pass": false,
+      "source": "fixture:built-in: systematic cases#3914 (upstream tests/prog_test (the pt_TestFiles B-reps))",
+      "values_compared": 0
+    },
+    {
+      "deferred": {
+        "symbol": "SmCrvOnSurf::SmCrvOnSurf (non-B-spline surface)",
+        "unit": "curve.crv_on_surf"
       },
       "max_rel_err": 0.0,
       "name": "torus.smb_0_f5_op25",
@@ -33446,25 +33494,33 @@
       "values_compared": 5
     },
     {
+      "deferred": {
+        "symbol": "SmCrvOnSurf::SmCrvOnSurf (non-B-spline surface)",
+        "unit": "curve.crv_on_surf"
+      },
       "max_rel_err": 0.0,
       "name": "torus.smb_1_f0_op23",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "fixture:built-in: systematic cases#3939 (upstream tests/prog_test (the pt_TestFiles B-reps))",
-      "values_compared": 5
-    },
-    {
-      "max_rel_err": 0.0,
-      "name": "torus.smb_1_f0_op24",
-      "outcome": "pass",
-      "pass": true,
-      "source": "fixture:built-in: systematic cases#3940 (upstream tests/prog_test (the pt_TestFiles B-reps))",
-      "values_compared": 5
+      "values_compared": 0
     },
     {
       "deferred": {
-        "symbol": "SmCurveClassification::ReSet",
-        "unit": "intersect.curve_class_p2"
+        "symbol": "SmCrvOnSurf::SmCrvOnSurf (non-B-spline surface)",
+        "unit": "curve.crv_on_surf"
+      },
+      "max_rel_err": 0.0,
+      "name": "torus.smb_1_f0_op24",
+      "outcome": "deferred",
+      "pass": false,
+      "source": "fixture:built-in: systematic cases#3940 (upstream tests/prog_test (the pt_TestFiles B-reps))",
+      "values_compared": 0
+    },
+    {
+      "deferred": {
+        "symbol": "SmCrvOnSurf::SmCrvOnSurf (non-B-spline surface)",
+        "unit": "curve.crv_on_surf"
       },
       "max_rel_err": 0.0,
       "name": "torus.smb_1_f0_op25",
@@ -33658,12 +33714,16 @@
       "values_compared": 0
     },
     {
+      "deferred": {
+        "symbol": "SmCrvOnSurf::SmCrvOnSurf (non-B-spline surface)",
+        "unit": "curve.crv_on_surf"
+      },
       "max_rel_err": 0.0,
       "name": "torus.smb_1_f1_op21",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "fixture:built-in: systematic cases#3963 (upstream tests/prog_test (the pt_TestFiles B-reps))",
-      "values_compared": 5
+      "values_compared": 0
     },
     {
       "max_rel_err": 0.0,
@@ -33674,12 +33734,16 @@
       "values_compared": 5
     },
     {
+      "deferred": {
+        "symbol": "SmCrvOnSurf::SmCrvOnSurf (non-B-spline surface)",
+        "unit": "curve.crv_on_surf"
+      },
       "max_rel_err": 0.0,
       "name": "torus.smb_1_f1_op23",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "fixture:built-in: systematic cases#3965 (upstream tests/prog_test (the pt_TestFiles B-reps))",
-      "values_compared": 5
+      "values_compared": 0
     },
     {
       "max_rel_err": 0.0,
@@ -33691,8 +33755,8 @@
     },
     {
       "deferred": {
-        "symbol": "SmCurveClassification::ReSet",
-        "unit": "intersect.curve_class_p2"
+        "symbol": "SmCrvOnSurf::SmCrvOnSurf (non-B-spline surface)",
+        "unit": "curve.crv_on_surf"
       },
       "max_rel_err": 0.0,
       "name": "torus.smb_1_f1_op25",
@@ -33894,33 +33958,45 @@
       "values_compared": 5
     },
     {
+      "deferred": {
+        "symbol": "SmCrvOnSurf::SmCrvOnSurf (non-B-spline surface)",
+        "unit": "curve.crv_on_surf"
+      },
       "max_rel_err": 0.0,
       "name": "torus.smb_1_f2_op22",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "fixture:built-in: systematic cases#3990 (upstream tests/prog_test (the pt_TestFiles B-reps))",
-      "values_compared": 5
-    },
-    {
-      "max_rel_err": 0.0,
-      "name": "torus.smb_1_f2_op23",
-      "outcome": "pass",
-      "pass": true,
-      "source": "fixture:built-in: systematic cases#3991 (upstream tests/prog_test (the pt_TestFiles B-reps))",
-      "values_compared": 5
-    },
-    {
-      "max_rel_err": 0.0,
-      "name": "torus.smb_1_f2_op24",
-      "outcome": "pass",
-      "pass": true,
-      "source": "fixture:built-in: systematic cases#3992 (upstream tests/prog_test (the pt_TestFiles B-reps))",
-      "values_compared": 5
+      "values_compared": 0
     },
     {
       "deferred": {
-        "symbol": "SmCurveClassification::ReSet",
-        "unit": "intersect.curve_class_p2"
+        "symbol": "SmCrvOnSurf::SmCrvOnSurf (non-B-spline surface)",
+        "unit": "curve.crv_on_surf"
+      },
+      "max_rel_err": 0.0,
+      "name": "torus.smb_1_f2_op23",
+      "outcome": "deferred",
+      "pass": false,
+      "source": "fixture:built-in: systematic cases#3991 (upstream tests/prog_test (the pt_TestFiles B-reps))",
+      "values_compared": 0
+    },
+    {
+      "deferred": {
+        "symbol": "SmCrvOnSurf::SmCrvOnSurf (non-B-spline surface)",
+        "unit": "curve.crv_on_surf"
+      },
+      "max_rel_err": 0.0,
+      "name": "torus.smb_1_f2_op24",
+      "outcome": "deferred",
+      "pass": false,
+      "source": "fixture:built-in: systematic cases#3992 (upstream tests/prog_test (the pt_TestFiles B-reps))",
+      "values_compared": 0
+    },
+    {
+      "deferred": {
+        "symbol": "SmCrvOnSurf::SmCrvOnSurf (non-B-spline surface)",
+        "unit": "curve.crv_on_surf"
       },
       "max_rel_err": 0.0,
       "name": "torus.smb_1_f2_op25",
@@ -34114,28 +34190,40 @@
       "values_compared": 0
     },
     {
+      "deferred": {
+        "symbol": "SmCrvOnSurf::SmCrvOnSurf (non-B-spline surface)",
+        "unit": "curve.crv_on_surf"
+      },
       "max_rel_err": 0.0,
       "name": "torus.smb_1_f3_op21",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "fixture:built-in: systematic cases#4015 (upstream tests/prog_test (the pt_TestFiles B-reps))",
-      "values_compared": 5
+      "values_compared": 0
     },
     {
+      "deferred": {
+        "symbol": "SmCrvOnSurf::SmCrvOnSurf (non-B-spline surface)",
+        "unit": "curve.crv_on_surf"
+      },
       "max_rel_err": 0.0,
       "name": "torus.smb_1_f3_op22",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "fixture:built-in: systematic cases#4016 (upstream tests/prog_test (the pt_TestFiles B-reps))",
-      "values_compared": 5
+      "values_compared": 0
     },
     {
+      "deferred": {
+        "symbol": "SmCrvOnSurf::SmCrvOnSurf (non-B-spline surface)",
+        "unit": "curve.crv_on_surf"
+      },
       "max_rel_err": 0.0,
       "name": "torus.smb_1_f3_op23",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "fixture:built-in: systematic cases#4017 (upstream tests/prog_test (the pt_TestFiles B-reps))",
-      "values_compared": 5
+      "values_compared": 0
     },
     {
       "max_rel_err": 0.0,
@@ -34147,8 +34235,8 @@
     },
     {
       "deferred": {
-        "symbol": "SmCurveClassification::ReSet",
-        "unit": "intersect.curve_class_p2"
+        "symbol": "SmCrvOnSurf::SmCrvOnSurf (non-B-spline surface)",
+        "unit": "curve.crv_on_surf"
       },
       "max_rel_err": 0.0,
       "name": "torus.smb_1_f3_op25",
@@ -34566,12 +34654,16 @@
       "values_compared": 0
     },
     {
+      "deferred": {
+        "symbol": "SmCrvOnSurf::SmCrvOnSurf (non-B-spline surface)",
+        "unit": "curve.crv_on_surf"
+      },
       "max_rel_err": 0.0,
       "name": "torus.smb_1_f5_op21",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "fixture:built-in: systematic cases#4067 (upstream tests/prog_test (the pt_TestFiles B-reps))",
-      "values_compared": 5
+      "values_compared": 0
     },
     {
       "max_rel_err": 0.0,
@@ -34590,17 +34682,21 @@
       "values_compared": 5
     },
     {
+      "deferred": {
+        "symbol": "SmCrvOnSurf::SmCrvOnSurf (non-B-spline surface)",
+        "unit": "curve.crv_on_surf"
+      },
       "max_rel_err": 0.0,
       "name": "torus.smb_1_f5_op24",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "fixture:built-in: systematic cases#4070 (upstream tests/prog_test (the pt_TestFiles B-reps))",
-      "values_compared": 5
+      "values_compared": 0
     },
     {
       "deferred": {
-        "symbol": "SmCurveClassification::ReSet",
-        "unit": "intersect.curve_class_p2"
+        "symbol": "SmCrvOnSurf::SmCrvOnSurf (non-B-spline surface)",
+        "unit": "curve.crv_on_surf"
       },
       "max_rel_err": 0.0,
       "name": "torus.smb_1_f5_op25",
@@ -34794,41 +34890,57 @@
       "values_compared": 0
     },
     {
+      "deferred": {
+        "symbol": "SmCrvOnSurf::SmCrvOnSurf (non-B-spline surface)",
+        "unit": "curve.crv_on_surf"
+      },
       "max_rel_err": 0.0,
       "name": "toruswvy.smb_0_f0_op21",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "fixture:built-in: systematic cases#4093 (upstream tests/prog_test (the pt_TestFiles B-reps))",
-      "values_compared": 5
-    },
-    {
-      "max_rel_err": 0.0,
-      "name": "toruswvy.smb_0_f0_op22",
-      "outcome": "pass",
-      "pass": true,
-      "source": "fixture:built-in: systematic cases#4094 (upstream tests/prog_test (the pt_TestFiles B-reps))",
-      "values_compared": 5
-    },
-    {
-      "max_rel_err": 0.0,
-      "name": "toruswvy.smb_0_f0_op23",
-      "outcome": "pass",
-      "pass": true,
-      "source": "fixture:built-in: systematic cases#4095 (upstream tests/prog_test (the pt_TestFiles B-reps))",
-      "values_compared": 5
-    },
-    {
-      "max_rel_err": 0.0,
-      "name": "toruswvy.smb_0_f0_op24",
-      "outcome": "pass",
-      "pass": true,
-      "source": "fixture:built-in: systematic cases#4096 (upstream tests/prog_test (the pt_TestFiles B-reps))",
-      "values_compared": 5
+      "values_compared": 0
     },
     {
       "deferred": {
-        "symbol": "SmCurveClassification::ReSet",
-        "unit": "intersect.curve_class_p2"
+        "symbol": "SmCrvOnSurf::SmCrvOnSurf (non-B-spline surface)",
+        "unit": "curve.crv_on_surf"
+      },
+      "max_rel_err": 0.0,
+      "name": "toruswvy.smb_0_f0_op22",
+      "outcome": "deferred",
+      "pass": false,
+      "source": "fixture:built-in: systematic cases#4094 (upstream tests/prog_test (the pt_TestFiles B-reps))",
+      "values_compared": 0
+    },
+    {
+      "deferred": {
+        "symbol": "SmCrvOnSurf::SmCrvOnSurf (non-B-spline surface)",
+        "unit": "curve.crv_on_surf"
+      },
+      "max_rel_err": 0.0,
+      "name": "toruswvy.smb_0_f0_op23",
+      "outcome": "deferred",
+      "pass": false,
+      "source": "fixture:built-in: systematic cases#4095 (upstream tests/prog_test (the pt_TestFiles B-reps))",
+      "values_compared": 0
+    },
+    {
+      "deferred": {
+        "symbol": "SmCrvOnSurf::SmCrvOnSurf (non-B-spline surface)",
+        "unit": "curve.crv_on_surf"
+      },
+      "max_rel_err": 0.0,
+      "name": "toruswvy.smb_0_f0_op24",
+      "outcome": "deferred",
+      "pass": false,
+      "source": "fixture:built-in: systematic cases#4096 (upstream tests/prog_test (the pt_TestFiles B-reps))",
+      "values_compared": 0
+    },
+    {
+      "deferred": {
+        "symbol": "SmCrvOnSurf::SmCrvOnSurf (non-B-spline surface)",
+        "unit": "curve.crv_on_surf"
       },
       "max_rel_err": 0.0,
       "name": "toruswvy.smb_0_f0_op25",
@@ -35046,17 +35158,21 @@
       "values_compared": 5
     },
     {
+      "deferred": {
+        "symbol": "SmCrvOnSurf::SmCrvOnSurf (non-B-spline surface)",
+        "unit": "curve.crv_on_surf"
+      },
       "max_rel_err": 0.0,
       "name": "toruswvy.smb_0_f1_op24",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "fixture:built-in: systematic cases#4122 (upstream tests/prog_test (the pt_TestFiles B-reps))",
-      "values_compared": 5
+      "values_compared": 0
     },
     {
       "deferred": {
-        "symbol": "SmCurveClassification::ReSet",
-        "unit": "intersect.curve_class_p2"
+        "symbol": "SmCrvOnSurf::SmCrvOnSurf (non-B-spline surface)",
+        "unit": "curve.crv_on_surf"
       },
       "max_rel_err": 0.0,
       "name": "toruswvy.smb_0_f1_op25",
@@ -35250,12 +35366,16 @@
       "values_compared": 0
     },
     {
+      "deferred": {
+        "symbol": "SmCrvOnSurf::SmCrvOnSurf (non-B-spline surface)",
+        "unit": "curve.crv_on_surf"
+      },
       "max_rel_err": 0.0,
       "name": "toruswvy.smb_0_f2_op21",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "fixture:built-in: systematic cases#4145 (upstream tests/prog_test (the pt_TestFiles B-reps))",
-      "values_compared": 5
+      "values_compared": 0
     },
     {
       "max_rel_err": 0.0,
@@ -35283,8 +35403,8 @@
     },
     {
       "deferred": {
-        "symbol": "SmCurveClassification::ReSet",
-        "unit": "intersect.curve_class_p2"
+        "symbol": "SmCrvOnSurf::SmCrvOnSurf (non-B-spline surface)",
+        "unit": "curve.crv_on_surf"
       },
       "max_rel_err": 0.0,
       "name": "toruswvy.smb_0_f2_op25",
@@ -35486,12 +35606,16 @@
       "values_compared": 5
     },
     {
+      "deferred": {
+        "symbol": "SmCrvOnSurf::SmCrvOnSurf (non-B-spline surface)",
+        "unit": "curve.crv_on_surf"
+      },
       "max_rel_err": 0.0,
       "name": "toruswvy.smb_0_f3_op22",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "fixture:built-in: systematic cases#4172 (upstream tests/prog_test (the pt_TestFiles B-reps))",
-      "values_compared": 5
+      "values_compared": 0
     },
     {
       "max_rel_err": 0.0,
@@ -35502,17 +35626,21 @@
       "values_compared": 5
     },
     {
+      "deferred": {
+        "symbol": "SmCrvOnSurf::SmCrvOnSurf (non-B-spline surface)",
+        "unit": "curve.crv_on_surf"
+      },
       "max_rel_err": 0.0,
       "name": "toruswvy.smb_0_f3_op24",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "fixture:built-in: systematic cases#4174 (upstream tests/prog_test (the pt_TestFiles B-reps))",
-      "values_compared": 5
+      "values_compared": 0
     },
     {
       "deferred": {
-        "symbol": "SmCurveClassification::ReSet",
-        "unit": "intersect.curve_class_p2"
+        "symbol": "SmCrvOnSurf::SmCrvOnSurf (non-B-spline surface)",
+        "unit": "curve.crv_on_surf"
       },
       "max_rel_err": 0.0,
       "name": "toruswvy.smb_0_f3_op25",
@@ -35706,20 +35834,28 @@
       "values_compared": 0
     },
     {
+      "deferred": {
+        "symbol": "SmCrvOnSurf::SmCrvOnSurf (non-B-spline surface)",
+        "unit": "curve.crv_on_surf"
+      },
       "max_rel_err": 0.0,
       "name": "toruswvy.smb_0_f4_op21",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "fixture:built-in: systematic cases#4197 (upstream tests/prog_test (the pt_TestFiles B-reps))",
-      "values_compared": 5
+      "values_compared": 0
     },
     {
+      "deferred": {
+        "symbol": "SmCrvOnSurf::SmCrvOnSurf (non-B-spline surface)",
+        "unit": "curve.crv_on_surf"
+      },
       "max_rel_err": 0.0,
       "name": "toruswvy.smb_0_f4_op22",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "fixture:built-in: systematic cases#4198 (upstream tests/prog_test (the pt_TestFiles B-reps))",
-      "values_compared": 5
+      "values_compared": 0
     },
     {
       "max_rel_err": 0.0,
@@ -35739,8 +35875,8 @@
     },
     {
       "deferred": {
-        "symbol": "SmCurveClassification::ReSet",
-        "unit": "intersect.curve_class_p2"
+        "symbol": "SmCrvOnSurf::SmCrvOnSurf (non-B-spline surface)",
+        "unit": "curve.crv_on_surf"
       },
       "max_rel_err": 0.0,
       "name": "toruswvy.smb_0_f4_op25",
@@ -35950,25 +36086,33 @@
       "values_compared": 5
     },
     {
+      "deferred": {
+        "symbol": "SmCrvOnSurf::SmCrvOnSurf (non-B-spline surface)",
+        "unit": "curve.crv_on_surf"
+      },
       "max_rel_err": 0.0,
       "name": "toruswvy.smb_0_f5_op23",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "fixture:built-in: systematic cases#4225 (upstream tests/prog_test (the pt_TestFiles B-reps))",
-      "values_compared": 5
-    },
-    {
-      "max_rel_err": 0.0,
-      "name": "toruswvy.smb_0_f5_op24",
-      "outcome": "pass",
-      "pass": true,
-      "source": "fixture:built-in: systematic cases#4226 (upstream tests/prog_test (the pt_TestFiles B-reps))",
-      "values_compared": 5
+      "values_compared": 0
     },
     {
       "deferred": {
-        "symbol": "SmCurveClassification::ReSet",
-        "unit": "intersect.curve_class_p2"
+        "symbol": "SmCrvOnSurf::SmCrvOnSurf (non-B-spline surface)",
+        "unit": "curve.crv_on_surf"
+      },
+      "max_rel_err": 0.0,
+      "name": "toruswvy.smb_0_f5_op24",
+      "outcome": "deferred",
+      "pass": false,
+      "source": "fixture:built-in: systematic cases#4226 (upstream tests/prog_test (the pt_TestFiles B-reps))",
+      "values_compared": 0
+    },
+    {
+      "deferred": {
+        "symbol": "SmCrvOnSurf::SmCrvOnSurf (non-B-spline surface)",
+        "unit": "curve.crv_on_surf"
       },
       "max_rel_err": 0.0,
       "name": "toruswvy.smb_0_f5_op25",
@@ -36178,25 +36322,33 @@
       "values_compared": 5
     },
     {
+      "deferred": {
+        "symbol": "SmCrvOnSurf::SmCrvOnSurf (non-B-spline surface)",
+        "unit": "curve.crv_on_surf"
+      },
       "max_rel_err": 0.0,
       "name": "toruswvy.smb_1_f0_op23",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "fixture:built-in: systematic cases#4251 (upstream tests/prog_test (the pt_TestFiles B-reps))",
-      "values_compared": 5
-    },
-    {
-      "max_rel_err": 0.0,
-      "name": "toruswvy.smb_1_f0_op24",
-      "outcome": "pass",
-      "pass": true,
-      "source": "fixture:built-in: systematic cases#4252 (upstream tests/prog_test (the pt_TestFiles B-reps))",
-      "values_compared": 5
+      "values_compared": 0
     },
     {
       "deferred": {
-        "symbol": "SmCurveClassification::ReSet",
-        "unit": "intersect.curve_class_p2"
+        "symbol": "SmCrvOnSurf::SmCrvOnSurf (non-B-spline surface)",
+        "unit": "curve.crv_on_surf"
+      },
+      "max_rel_err": 0.0,
+      "name": "toruswvy.smb_1_f0_op24",
+      "outcome": "deferred",
+      "pass": false,
+      "source": "fixture:built-in: systematic cases#4252 (upstream tests/prog_test (the pt_TestFiles B-reps))",
+      "values_compared": 0
+    },
+    {
+      "deferred": {
+        "symbol": "SmCrvOnSurf::SmCrvOnSurf (non-B-spline surface)",
+        "unit": "curve.crv_on_surf"
       },
       "max_rel_err": 0.0,
       "name": "toruswvy.smb_1_f0_op25",
@@ -36390,12 +36542,16 @@
       "values_compared": 0
     },
     {
+      "deferred": {
+        "symbol": "SmCrvOnSurf::SmCrvOnSurf (non-B-spline surface)",
+        "unit": "curve.crv_on_surf"
+      },
       "max_rel_err": 0.0,
       "name": "toruswvy.smb_1_f1_op21",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "fixture:built-in: systematic cases#4275 (upstream tests/prog_test (the pt_TestFiles B-reps))",
-      "values_compared": 5
+      "values_compared": 0
     },
     {
       "max_rel_err": 0.0,
@@ -36406,12 +36562,16 @@
       "values_compared": 5
     },
     {
+      "deferred": {
+        "symbol": "SmCrvOnSurf::SmCrvOnSurf (non-B-spline surface)",
+        "unit": "curve.crv_on_surf"
+      },
       "max_rel_err": 0.0,
       "name": "toruswvy.smb_1_f1_op23",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "fixture:built-in: systematic cases#4277 (upstream tests/prog_test (the pt_TestFiles B-reps))",
-      "values_compared": 5
+      "values_compared": 0
     },
     {
       "max_rel_err": 0.0,
@@ -36423,8 +36583,8 @@
     },
     {
       "deferred": {
-        "symbol": "SmCurveClassification::ReSet",
-        "unit": "intersect.curve_class_p2"
+        "symbol": "SmCrvOnSurf::SmCrvOnSurf (non-B-spline surface)",
+        "unit": "curve.crv_on_surf"
       },
       "max_rel_err": 0.0,
       "name": "toruswvy.smb_1_f1_op25",
@@ -36626,33 +36786,45 @@
       "values_compared": 5
     },
     {
+      "deferred": {
+        "symbol": "SmCrvOnSurf::SmCrvOnSurf (non-B-spline surface)",
+        "unit": "curve.crv_on_surf"
+      },
       "max_rel_err": 0.0,
       "name": "toruswvy.smb_1_f2_op22",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "fixture:built-in: systematic cases#4302 (upstream tests/prog_test (the pt_TestFiles B-reps))",
-      "values_compared": 5
-    },
-    {
-      "max_rel_err": 0.0,
-      "name": "toruswvy.smb_1_f2_op23",
-      "outcome": "pass",
-      "pass": true,
-      "source": "fixture:built-in: systematic cases#4303 (upstream tests/prog_test (the pt_TestFiles B-reps))",
-      "values_compared": 5
-    },
-    {
-      "max_rel_err": 0.0,
-      "name": "toruswvy.smb_1_f2_op24",
-      "outcome": "pass",
-      "pass": true,
-      "source": "fixture:built-in: systematic cases#4304 (upstream tests/prog_test (the pt_TestFiles B-reps))",
-      "values_compared": 5
+      "values_compared": 0
     },
     {
       "deferred": {
-        "symbol": "SmCurveClassification::ReSet",
-        "unit": "intersect.curve_class_p2"
+        "symbol": "SmCrvOnSurf::SmCrvOnSurf (non-B-spline surface)",
+        "unit": "curve.crv_on_surf"
+      },
+      "max_rel_err": 0.0,
+      "name": "toruswvy.smb_1_f2_op23",
+      "outcome": "deferred",
+      "pass": false,
+      "source": "fixture:built-in: systematic cases#4303 (upstream tests/prog_test (the pt_TestFiles B-reps))",
+      "values_compared": 0
+    },
+    {
+      "deferred": {
+        "symbol": "SmCrvOnSurf::SmCrvOnSurf (non-B-spline surface)",
+        "unit": "curve.crv_on_surf"
+      },
+      "max_rel_err": 0.0,
+      "name": "toruswvy.smb_1_f2_op24",
+      "outcome": "deferred",
+      "pass": false,
+      "source": "fixture:built-in: systematic cases#4304 (upstream tests/prog_test (the pt_TestFiles B-reps))",
+      "values_compared": 0
+    },
+    {
+      "deferred": {
+        "symbol": "SmCrvOnSurf::SmCrvOnSurf (non-B-spline surface)",
+        "unit": "curve.crv_on_surf"
       },
       "max_rel_err": 0.0,
       "name": "toruswvy.smb_1_f2_op25",
@@ -36846,28 +37018,40 @@
       "values_compared": 0
     },
     {
+      "deferred": {
+        "symbol": "SmCrvOnSurf::SmCrvOnSurf (non-B-spline surface)",
+        "unit": "curve.crv_on_surf"
+      },
       "max_rel_err": 0.0,
       "name": "toruswvy.smb_1_f3_op21",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "fixture:built-in: systematic cases#4327 (upstream tests/prog_test (the pt_TestFiles B-reps))",
-      "values_compared": 5
+      "values_compared": 0
     },
     {
+      "deferred": {
+        "symbol": "SmCrvOnSurf::SmCrvOnSurf (non-B-spline surface)",
+        "unit": "curve.crv_on_surf"
+      },
       "max_rel_err": 0.0,
       "name": "toruswvy.smb_1_f3_op22",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "fixture:built-in: systematic cases#4328 (upstream tests/prog_test (the pt_TestFiles B-reps))",
-      "values_compared": 5
+      "values_compared": 0
     },
     {
+      "deferred": {
+        "symbol": "SmCrvOnSurf::SmCrvOnSurf (non-B-spline surface)",
+        "unit": "curve.crv_on_surf"
+      },
       "max_rel_err": 0.0,
       "name": "toruswvy.smb_1_f3_op23",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "fixture:built-in: systematic cases#4329 (upstream tests/prog_test (the pt_TestFiles B-reps))",
-      "values_compared": 5
+      "values_compared": 0
     },
     {
       "max_rel_err": 0.0,
@@ -36879,8 +37063,8 @@
     },
     {
       "deferred": {
-        "symbol": "SmCurveClassification::ReSet",
-        "unit": "intersect.curve_class_p2"
+        "symbol": "SmCrvOnSurf::SmCrvOnSurf (non-B-spline surface)",
+        "unit": "curve.crv_on_surf"
       },
       "max_rel_err": 0.0,
       "name": "toruswvy.smb_1_f3_op25",
@@ -37298,12 +37482,16 @@
       "values_compared": 0
     },
     {
+      "deferred": {
+        "symbol": "SmCrvOnSurf::SmCrvOnSurf (non-B-spline surface)",
+        "unit": "curve.crv_on_surf"
+      },
       "max_rel_err": 0.0,
       "name": "toruswvy.smb_1_f5_op21",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "fixture:built-in: systematic cases#4379 (upstream tests/prog_test (the pt_TestFiles B-reps))",
-      "values_compared": 5
+      "values_compared": 0
     },
     {
       "max_rel_err": 0.0,
@@ -37322,17 +37510,21 @@
       "values_compared": 5
     },
     {
+      "deferred": {
+        "symbol": "SmCrvOnSurf::SmCrvOnSurf (non-B-spline surface)",
+        "unit": "curve.crv_on_surf"
+      },
       "max_rel_err": 0.0,
       "name": "toruswvy.smb_1_f5_op24",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "fixture:built-in: systematic cases#4382 (upstream tests/prog_test (the pt_TestFiles B-reps))",
-      "values_compared": 5
+      "values_compared": 0
     },
     {
       "deferred": {
-        "symbol": "SmCurveClassification::ReSet",
-        "unit": "intersect.curve_class_p2"
+        "symbol": "SmCrvOnSurf::SmCrvOnSurf (non-B-spline surface)",
+        "unit": "curve.crv_on_surf"
       },
       "max_rel_err": 0.0,
       "name": "toruswvy.smb_1_f5_op25",
@@ -37526,41 +37718,57 @@
       "values_compared": 0
     },
     {
+      "deferred": {
+        "symbol": "SmCrvOnSurf::SmCrvOnSurf (non-B-spline surface)",
+        "unit": "curve.crv_on_surf"
+      },
       "max_rel_err": 0.0,
       "name": "vase_rev.smb_0_f0_op21",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "fixture:built-in: systematic cases#4405 (upstream tests/prog_test (the pt_TestFiles B-reps))",
-      "values_compared": 5
-    },
-    {
-      "max_rel_err": 0.0,
-      "name": "vase_rev.smb_0_f0_op22",
-      "outcome": "pass",
-      "pass": true,
-      "source": "fixture:built-in: systematic cases#4406 (upstream tests/prog_test (the pt_TestFiles B-reps))",
-      "values_compared": 5
-    },
-    {
-      "max_rel_err": 0.0,
-      "name": "vase_rev.smb_0_f0_op23",
-      "outcome": "pass",
-      "pass": true,
-      "source": "fixture:built-in: systematic cases#4407 (upstream tests/prog_test (the pt_TestFiles B-reps))",
-      "values_compared": 5
-    },
-    {
-      "max_rel_err": 0.0,
-      "name": "vase_rev.smb_0_f0_op24",
-      "outcome": "pass",
-      "pass": true,
-      "source": "fixture:built-in: systematic cases#4408 (upstream tests/prog_test (the pt_TestFiles B-reps))",
-      "values_compared": 5
+      "values_compared": 0
     },
     {
       "deferred": {
-        "symbol": "SmCurveClassification::ReSet",
-        "unit": "intersect.curve_class_p2"
+        "symbol": "SmCrvOnSurf::SmCrvOnSurf (non-B-spline surface)",
+        "unit": "curve.crv_on_surf"
+      },
+      "max_rel_err": 0.0,
+      "name": "vase_rev.smb_0_f0_op22",
+      "outcome": "deferred",
+      "pass": false,
+      "source": "fixture:built-in: systematic cases#4406 (upstream tests/prog_test (the pt_TestFiles B-reps))",
+      "values_compared": 0
+    },
+    {
+      "deferred": {
+        "symbol": "SmCrvOnSurf::SmCrvOnSurf (non-B-spline surface)",
+        "unit": "curve.crv_on_surf"
+      },
+      "max_rel_err": 0.0,
+      "name": "vase_rev.smb_0_f0_op23",
+      "outcome": "deferred",
+      "pass": false,
+      "source": "fixture:built-in: systematic cases#4407 (upstream tests/prog_test (the pt_TestFiles B-reps))",
+      "values_compared": 0
+    },
+    {
+      "deferred": {
+        "symbol": "SmCrvOnSurf::SmCrvOnSurf (non-B-spline surface)",
+        "unit": "curve.crv_on_surf"
+      },
+      "max_rel_err": 0.0,
+      "name": "vase_rev.smb_0_f0_op24",
+      "outcome": "deferred",
+      "pass": false,
+      "source": "fixture:built-in: systematic cases#4408 (upstream tests/prog_test (the pt_TestFiles B-reps))",
+      "values_compared": 0
+    },
+    {
+      "deferred": {
+        "symbol": "SmCrvOnSurf::SmCrvOnSurf (non-B-spline surface)",
+        "unit": "curve.crv_on_surf"
       },
       "max_rel_err": 0.0,
       "name": "vase_rev.smb_0_f0_op25",
@@ -37778,17 +37986,21 @@
       "values_compared": 5
     },
     {
+      "deferred": {
+        "symbol": "SmCrvOnSurf::SmCrvOnSurf (non-B-spline surface)",
+        "unit": "curve.crv_on_surf"
+      },
       "max_rel_err": 0.0,
       "name": "vase_rev.smb_0_f1_op24",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "fixture:built-in: systematic cases#4434 (upstream tests/prog_test (the pt_TestFiles B-reps))",
-      "values_compared": 5
+      "values_compared": 0
     },
     {
       "deferred": {
-        "symbol": "SmCurveClassification::ReSet",
-        "unit": "intersect.curve_class_p2"
+        "symbol": "SmCrvOnSurf::SmCrvOnSurf (non-B-spline surface)",
+        "unit": "curve.crv_on_surf"
       },
       "max_rel_err": 0.0,
       "name": "vase_rev.smb_0_f1_op25",
@@ -37982,12 +38194,16 @@
       "values_compared": 0
     },
     {
+      "deferred": {
+        "symbol": "SmCrvOnSurf::SmCrvOnSurf (non-B-spline surface)",
+        "unit": "curve.crv_on_surf"
+      },
       "max_rel_err": 0.0,
       "name": "vase_rev.smb_0_f2_op21",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "fixture:built-in: systematic cases#4457 (upstream tests/prog_test (the pt_TestFiles B-reps))",
-      "values_compared": 5
+      "values_compared": 0
     },
     {
       "max_rel_err": 0.0,
@@ -38015,8 +38231,8 @@
     },
     {
       "deferred": {
-        "symbol": "SmCurveClassification::ReSet",
-        "unit": "intersect.curve_class_p2"
+        "symbol": "SmCrvOnSurf::SmCrvOnSurf (non-B-spline surface)",
+        "unit": "curve.crv_on_surf"
       },
       "max_rel_err": 0.0,
       "name": "vase_rev.smb_0_f2_op25",
@@ -38218,12 +38434,16 @@
       "values_compared": 5
     },
     {
+      "deferred": {
+        "symbol": "SmCrvOnSurf::SmCrvOnSurf (non-B-spline surface)",
+        "unit": "curve.crv_on_surf"
+      },
       "max_rel_err": 0.0,
       "name": "vase_rev.smb_0_f3_op22",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "fixture:built-in: systematic cases#4484 (upstream tests/prog_test (the pt_TestFiles B-reps))",
-      "values_compared": 5
+      "values_compared": 0
     },
     {
       "max_rel_err": 0.0,
@@ -38234,17 +38454,21 @@
       "values_compared": 5
     },
     {
+      "deferred": {
+        "symbol": "SmCrvOnSurf::SmCrvOnSurf (non-B-spline surface)",
+        "unit": "curve.crv_on_surf"
+      },
       "max_rel_err": 0.0,
       "name": "vase_rev.smb_0_f3_op24",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "fixture:built-in: systematic cases#4486 (upstream tests/prog_test (the pt_TestFiles B-reps))",
-      "values_compared": 5
+      "values_compared": 0
     },
     {
       "deferred": {
-        "symbol": "SmCurveClassification::ReSet",
-        "unit": "intersect.curve_class_p2"
+        "symbol": "SmCrvOnSurf::SmCrvOnSurf (non-B-spline surface)",
+        "unit": "curve.crv_on_surf"
       },
       "max_rel_err": 0.0,
       "name": "vase_rev.smb_0_f3_op25",
@@ -38438,20 +38662,28 @@
       "values_compared": 0
     },
     {
+      "deferred": {
+        "symbol": "SmCrvOnSurf::SmCrvOnSurf (non-B-spline surface)",
+        "unit": "curve.crv_on_surf"
+      },
       "max_rel_err": 0.0,
       "name": "vase_rev.smb_0_f4_op21",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "fixture:built-in: systematic cases#4509 (upstream tests/prog_test (the pt_TestFiles B-reps))",
-      "values_compared": 5
+      "values_compared": 0
     },
     {
+      "deferred": {
+        "symbol": "SmCrvOnSurf::SmCrvOnSurf (non-B-spline surface)",
+        "unit": "curve.crv_on_surf"
+      },
       "max_rel_err": 0.0,
       "name": "vase_rev.smb_0_f4_op22",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "fixture:built-in: systematic cases#4510 (upstream tests/prog_test (the pt_TestFiles B-reps))",
-      "values_compared": 5
+      "values_compared": 0
     },
     {
       "max_rel_err": 0.0,
@@ -38678,25 +38910,33 @@
       "values_compared": 5
     },
     {
+      "deferred": {
+        "symbol": "SmCrvOnSurf::SmCrvOnSurf (non-B-spline surface)",
+        "unit": "curve.crv_on_surf"
+      },
       "max_rel_err": 0.0,
       "name": "vase_rev.smb_0_f5_op23",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "fixture:built-in: systematic cases#4537 (upstream tests/prog_test (the pt_TestFiles B-reps))",
-      "values_compared": 5
-    },
-    {
-      "max_rel_err": 0.0,
-      "name": "vase_rev.smb_0_f5_op24",
-      "outcome": "pass",
-      "pass": true,
-      "source": "fixture:built-in: systematic cases#4538 (upstream tests/prog_test (the pt_TestFiles B-reps))",
-      "values_compared": 5
+      "values_compared": 0
     },
     {
       "deferred": {
-        "symbol": "SmCurveClassification::ReSet",
-        "unit": "intersect.curve_class_p2"
+        "symbol": "SmCrvOnSurf::SmCrvOnSurf (non-B-spline surface)",
+        "unit": "curve.crv_on_surf"
+      },
+      "max_rel_err": 0.0,
+      "name": "vase_rev.smb_0_f5_op24",
+      "outcome": "deferred",
+      "pass": false,
+      "source": "fixture:built-in: systematic cases#4538 (upstream tests/prog_test (the pt_TestFiles B-reps))",
+      "values_compared": 0
+    },
+    {
+      "deferred": {
+        "symbol": "SmCrvOnSurf::SmCrvOnSurf (non-B-spline surface)",
+        "unit": "curve.crv_on_surf"
       },
       "max_rel_err": 0.0,
       "name": "vase_rev.smb_0_f5_op25",
@@ -38906,25 +39146,33 @@
       "values_compared": 5
     },
     {
+      "deferred": {
+        "symbol": "SmCrvOnSurf::SmCrvOnSurf (non-B-spline surface)",
+        "unit": "curve.crv_on_surf"
+      },
       "max_rel_err": 0.0,
       "name": "vase_rev.smb_1_f0_op23",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "fixture:built-in: systematic cases#4563 (upstream tests/prog_test (the pt_TestFiles B-reps))",
-      "values_compared": 5
-    },
-    {
-      "max_rel_err": 0.0,
-      "name": "vase_rev.smb_1_f0_op24",
-      "outcome": "pass",
-      "pass": true,
-      "source": "fixture:built-in: systematic cases#4564 (upstream tests/prog_test (the pt_TestFiles B-reps))",
-      "values_compared": 5
+      "values_compared": 0
     },
     {
       "deferred": {
-        "symbol": "SmCurveClassification::ReSet",
-        "unit": "intersect.curve_class_p2"
+        "symbol": "SmCrvOnSurf::SmCrvOnSurf (non-B-spline surface)",
+        "unit": "curve.crv_on_surf"
+      },
+      "max_rel_err": 0.0,
+      "name": "vase_rev.smb_1_f0_op24",
+      "outcome": "deferred",
+      "pass": false,
+      "source": "fixture:built-in: systematic cases#4564 (upstream tests/prog_test (the pt_TestFiles B-reps))",
+      "values_compared": 0
+    },
+    {
+      "deferred": {
+        "symbol": "SmCrvOnSurf::SmCrvOnSurf (non-B-spline surface)",
+        "unit": "curve.crv_on_surf"
       },
       "max_rel_err": 0.0,
       "name": "vase_rev.smb_1_f0_op25",
@@ -39118,12 +39366,16 @@
       "values_compared": 0
     },
     {
+      "deferred": {
+        "symbol": "SmCrvOnSurf::SmCrvOnSurf (non-B-spline surface)",
+        "unit": "curve.crv_on_surf"
+      },
       "max_rel_err": 0.0,
       "name": "vase_rev.smb_1_f1_op21",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "fixture:built-in: systematic cases#4587 (upstream tests/prog_test (the pt_TestFiles B-reps))",
-      "values_compared": 5
+      "values_compared": 0
     },
     {
       "max_rel_err": 0.0,
@@ -39134,12 +39386,16 @@
       "values_compared": 5
     },
     {
+      "deferred": {
+        "symbol": "SmCrvOnSurf::SmCrvOnSurf (non-B-spline surface)",
+        "unit": "curve.crv_on_surf"
+      },
       "max_rel_err": 0.0,
       "name": "vase_rev.smb_1_f1_op23",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "fixture:built-in: systematic cases#4589 (upstream tests/prog_test (the pt_TestFiles B-reps))",
-      "values_compared": 5
+      "values_compared": 0
     },
     {
       "max_rel_err": 0.0,
@@ -39350,33 +39606,45 @@
       "values_compared": 5
     },
     {
+      "deferred": {
+        "symbol": "SmCrvOnSurf::SmCrvOnSurf (non-B-spline surface)",
+        "unit": "curve.crv_on_surf"
+      },
       "max_rel_err": 0.0,
       "name": "vase_rev.smb_1_f2_op22",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "fixture:built-in: systematic cases#4614 (upstream tests/prog_test (the pt_TestFiles B-reps))",
-      "values_compared": 5
-    },
-    {
-      "max_rel_err": 0.0,
-      "name": "vase_rev.smb_1_f2_op23",
-      "outcome": "pass",
-      "pass": true,
-      "source": "fixture:built-in: systematic cases#4615 (upstream tests/prog_test (the pt_TestFiles B-reps))",
-      "values_compared": 5
-    },
-    {
-      "max_rel_err": 0.0,
-      "name": "vase_rev.smb_1_f2_op24",
-      "outcome": "pass",
-      "pass": true,
-      "source": "fixture:built-in: systematic cases#4616 (upstream tests/prog_test (the pt_TestFiles B-reps))",
-      "values_compared": 5
+      "values_compared": 0
     },
     {
       "deferred": {
-        "symbol": "SmCurveClassification::ReSet",
-        "unit": "intersect.curve_class_p2"
+        "symbol": "SmCrvOnSurf::SmCrvOnSurf (non-B-spline surface)",
+        "unit": "curve.crv_on_surf"
+      },
+      "max_rel_err": 0.0,
+      "name": "vase_rev.smb_1_f2_op23",
+      "outcome": "deferred",
+      "pass": false,
+      "source": "fixture:built-in: systematic cases#4615 (upstream tests/prog_test (the pt_TestFiles B-reps))",
+      "values_compared": 0
+    },
+    {
+      "deferred": {
+        "symbol": "SmCrvOnSurf::SmCrvOnSurf (non-B-spline surface)",
+        "unit": "curve.crv_on_surf"
+      },
+      "max_rel_err": 0.0,
+      "name": "vase_rev.smb_1_f2_op24",
+      "outcome": "deferred",
+      "pass": false,
+      "source": "fixture:built-in: systematic cases#4616 (upstream tests/prog_test (the pt_TestFiles B-reps))",
+      "values_compared": 0
+    },
+    {
+      "deferred": {
+        "symbol": "SmCrvOnSurf::SmCrvOnSurf (non-B-spline surface)",
+        "unit": "curve.crv_on_surf"
       },
       "max_rel_err": 0.0,
       "name": "vase_rev.smb_1_f2_op25",
@@ -39570,28 +39838,40 @@
       "values_compared": 0
     },
     {
+      "deferred": {
+        "symbol": "SmCrvOnSurf::SmCrvOnSurf (non-B-spline surface)",
+        "unit": "curve.crv_on_surf"
+      },
       "max_rel_err": 0.0,
       "name": "vase_rev.smb_1_f3_op21",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "fixture:built-in: systematic cases#4639 (upstream tests/prog_test (the pt_TestFiles B-reps))",
-      "values_compared": 5
+      "values_compared": 0
     },
     {
+      "deferred": {
+        "symbol": "SmCrvOnSurf::SmCrvOnSurf (non-B-spline surface)",
+        "unit": "curve.crv_on_surf"
+      },
       "max_rel_err": 0.0,
       "name": "vase_rev.smb_1_f3_op22",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "fixture:built-in: systematic cases#4640 (upstream tests/prog_test (the pt_TestFiles B-reps))",
-      "values_compared": 5
+      "values_compared": 0
     },
     {
+      "deferred": {
+        "symbol": "SmCrvOnSurf::SmCrvOnSurf (non-B-spline surface)",
+        "unit": "curve.crv_on_surf"
+      },
       "max_rel_err": 0.0,
       "name": "vase_rev.smb_1_f3_op23",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "fixture:built-in: systematic cases#4641 (upstream tests/prog_test (the pt_TestFiles B-reps))",
-      "values_compared": 5
+      "values_compared": 0
     },
     {
       "max_rel_err": 0.0,
@@ -39603,8 +39883,8 @@
     },
     {
       "deferred": {
-        "symbol": "SmCurveClassification::ReSet",
-        "unit": "intersect.curve_class_p2"
+        "symbol": "SmCrvOnSurf::SmCrvOnSurf (non-B-spline surface)",
+        "unit": "curve.crv_on_surf"
       },
       "max_rel_err": 0.0,
       "name": "vase_rev.smb_1_f3_op25",
@@ -40022,12 +40302,16 @@
       "values_compared": 0
     },
     {
+      "deferred": {
+        "symbol": "SmCrvOnSurf::SmCrvOnSurf (non-B-spline surface)",
+        "unit": "curve.crv_on_surf"
+      },
       "max_rel_err": 0.0,
       "name": "vase_rev.smb_1_f5_op21",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "fixture:built-in: systematic cases#4691 (upstream tests/prog_test (the pt_TestFiles B-reps))",
-      "values_compared": 5
+      "values_compared": 0
     },
     {
       "max_rel_err": 0.0,
@@ -40046,17 +40330,21 @@
       "values_compared": 5
     },
     {
+      "deferred": {
+        "symbol": "SmCrvOnSurf::SmCrvOnSurf (non-B-spline surface)",
+        "unit": "curve.crv_on_surf"
+      },
       "max_rel_err": 0.0,
       "name": "vase_rev.smb_1_f5_op24",
-      "outcome": "pass",
-      "pass": true,
+      "outcome": "deferred",
+      "pass": false,
       "source": "fixture:built-in: systematic cases#4694 (upstream tests/prog_test (the pt_TestFiles B-reps))",
-      "values_compared": 5
+      "values_compared": 0
     },
     {
       "deferred": {
-        "symbol": "SmCurveClassification::ReSet",
-        "unit": "intersect.curve_class_p2"
+        "symbol": "SmCrvOnSurf::SmCrvOnSurf (non-B-spline surface)",
+        "unit": "curve.crv_on_surf"
       },
       "max_rel_err": 0.0,
       "name": "vase_rev.smb_1_f5_op25",
@@ -49187,13 +49475,13 @@
     }
   ],
   "cases_both_errored": 0,
-  "cases_deferred": 1284,
+  "cases_deferred": 1356,
   "cases_failed": 0,
-  "cases_passed": 4222,
+  "cases_passed": 4150,
   "cases_total": 5506,
   "deferred_by_unit": {
-    "curve.crv_on_surf": 80,
-    "intersect.curve_class_p2": 50,
+    "curve.crv_on_surf": 184,
+    "intersect.curve_class_p2": 18,
     "intersect.surface_drop_lib_p3": 9,
     "topology.face_p2": 1142,
     "topology.face_p3": 3
