@@ -17891,6 +17891,17 @@ cases stay deferred. It adds only `StaticScene::object_zone_tol_3d`, which turns
   difftest case. The unit test `slice_keeps_a_coincident_pair_on_the_sheet_same_side_only`
   pins the rule. A slice of a solid with a face in the sheet will differ from the pinned
   C++ here by design, until the pin takes the fork's fix (ee2a67b).
+### Issue #432: independently deleted gap edges
+
+`TopologyIntersector::fix_gaps` carried the pinned C++ condition requiring both
+combinations to delete an edge before either relationship was removed. The Rust
+arena prevents a use-after-free, but the maps still exposed a deleted edge.
+The port now carries tangency-labs/smlib be3fc10: unmate each deleted edge,
+removing a directly mated pair together and otherwise removing each actual mate.
+The regression covers deletion on either side alone, a directly mated pair,
+two unrelated pairs, no deletion, missing relationships, and repeated cleanup.
+It fails on the original one-sided branch. This changes only the documented
+stale-topology state; no differential case or tolerance is excluded or relaxed.
 
 ## Status index (2026-10-23, main CI `e33985411`)
 

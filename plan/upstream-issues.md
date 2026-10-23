@@ -4049,3 +4049,14 @@ title (other references in the repo in brackets):
 
 New entries take the next free number after the highest in their series, as the
 Numbering paragraph at the top says.
+
+### Issue #432: FixGaps retains a one-sided deleted edge in its mate maps
+
+- **Location:** `source/SMLib/src/SmTopologyIntersector.cpp:713`, `FixGaps`.
+- **Trigger:** `CombineCoincidentVertices` deletes an edge in only one operand.
+- **Effect:** the `pDeletedBrepEdge && pDeletedOtherEdge` guard skips cleanup; a
+  later `GetCommonEdges`/`Mark` reads freed memory (reported under ASan in #432).
+- **Confirmed locally:** the Rust regression reproduces the stale map before the
+  fix; the C++ memory error was not re-executed locally.
+- **Rust port:** Fixed in tangency-labs/smlib be3fc10; the port carries it, with
+  the safety deviation documented in the module header and `plan/findings.md`.
