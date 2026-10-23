@@ -4049,3 +4049,14 @@ title (other references in the repo in brackets):
 
 New entries take the next free number after the highest in their series, as the
 Numbering paragraph at the top says.
+
+### Issue #368: RemoveExcessFaces leaves removed faces in correspondence maps
+
+- **Location:** `source/SMLib/src/SmOffsetExecutive.cpp`, `RemoveExcessFaces`,
+  immediately before `pResult->RemoveFaces(sDeleteFaces)`.
+- **Trigger:** an excess offset face still named by face-use, edge, vertex or blend
+  correspondence, subsequently walked by `PiecewiseMerge`.
+- **Effect:** stale face pointers are read after removal (reported under ASan in #368).
+- **Confirmed locally:** direct Rust relation regression; native shell trigger not rerun.
+- **Rust port:** Fixed in tangency-labs/smlib 5fe723c; the port carries it. All
+  incoming face pairs and deleted blends' outgoing pairs are forgotten before removal.
