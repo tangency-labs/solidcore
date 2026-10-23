@@ -1320,3 +1320,45 @@ impl UnitDiff for Runner {
         })
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use solidcore::blend::fillet_executive::p2::{
+        with_temporary_radius_change, TemporaryRadiusChange,
+    };
+
+    #[test]
+    fn temporary_radius_setup_error_never_enters_the_filleting_body() {
+        let mut access = Access {
+            breps: vec![Brep::new()],
+            pseudo: FilletBrep::new(),
+            generators: vec![],
+            solvers: vec![],
+            laws: vec![FilletLaw::linear(1.0, 2.0, None)],
+        };
+        let solver = Handle::Solver(0);
+        let side = Handle::Edgeuse(EdgeuseId::from_index(0));
+        let expected = missing_error();
+        let error = TemporaryRadiusChange::new(&mut access, solver, 0, side).unwrap_err();
+        assert_eq!(error, expected);
+
+        let mut body_called = false;
+        let error = with_temporary_radius_change(&mut access, solver, 0, side, |_| {
+            body_called = true;
+            Ok(())
+        })
+        .unwrap_err();
+        assert_eq!(error, expected);
+        assert!(!body_called);
+        assert_eq!(access.laws.len(), 1);
+        assert!(matches!(
+            access.laws[0].kind,
+            FilletLawKind::Linear {
+                start_radius: 1.0,
+                end_radius: 2.0
+            }
+        ));
+        assert!(access.solvers.is_empty());
+    }
+}

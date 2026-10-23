@@ -50,7 +50,8 @@
 //!   plus one step, past which the port returns [`SolidError::InvalidInput`].
 //! - **Law evaluation status.** `SmTemporaryRadiusChange::SetUp` ignores the status of
 //!   `SmFilletLaw::Evaluate` and reads its first value, uninitialised after a failure;
-//!   the port propagates the error.
+//!   the port propagates the error, including from the constructor (issue #458,
+//!   tangency-labs/smlib 9a12ad7). A failed setup never enters the filleting body.
 //! - The upstream debug drawing (`SM_GFX_CODE`) is omitted.
 //! - Calls into units that are not ported return [`SolidError::Unported`]:
 //!   `LoadFilletSolver` and `CreateSmoothEdgeSequence` (`blend.fillet_executive_p1`), and the adapter defaults of [`ExecutiveAccess`].
@@ -1274,11 +1275,12 @@ pub struct TemporaryRadiusChange<O> {
 
 impl<O: ClassObject + SolutionObject + Ord> TemporaryRadiusChange<O> {
     /// The constructor: records the solver, rail and side edge use and runs
-    /// [`TemporaryRadiusChange::set_up`], whose status it ignores.
+    /// [`TemporaryRadiusChange::set_up`], returning its failure before any caller
+    /// starts filleting with a radius change that could not be established.
     ///
     /// # Errors
     ///
-    /// [`SolidError::Unported`] from the set-up.
+    /// Those of [`TemporaryRadiusChange::set_up`].
     pub fn new<A>(access: &mut A, fs: O, rail_index: usize, side_eu: O) -> Result<Self>
     where
         A: ExecutiveAccess<O> + ?Sized,
@@ -1291,7 +1293,7 @@ impl<O: ClassObject + SolutionObject + Ord> TemporaryRadiusChange<O> {
             fs,
             rail_idx: rail_index,
         };
-        ignored(change.set_up(access))?;
+        change.set_up(access)?;
         Ok(change)
     }
 

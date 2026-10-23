@@ -4049,3 +4049,12 @@ title (other references in the repo in brackets):
 
 New entries take the next free number after the highest in their series, as the
 Numbering paragraph at the top says.
+
+### UB-252 follow-up / issue #458: temporary radius constructor propagation
+
+The port already checks the law evaluation in `SetUp`, but
+`TemporaryRadiusChange::new` discarded that error and the scope wrapper could
+enter filleting without a valid temporary radius. The constructor now propagates
+all setup failures. Fixed in tangency-labs/smlib 9a12ad7; the port carries it.
+Direct regressions cover failed construction/body exclusion and unchanged offsets
+after a failed law evaluation; native uninitialised-value behavior is not invoked.
