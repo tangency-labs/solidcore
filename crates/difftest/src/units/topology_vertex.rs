@@ -518,7 +518,35 @@ fn read_curve(rd: &mut Rd<'_>, uv: bool) -> Result<Option<SmCurve>, HarnessError
     Ok(Some(SmCurve::from(base)))
 }
 
+/// A face surface block. A kind 2 head (an analytic surface sent as its upstream database
+/// record, `harness/cpp/shim/sc_analytic_export.h`) is rebuilt by the ported `ReadFromDB`
+/// and checked against the regular block that follows it (its B-spline part); a reader
+/// that is not ported keeps that B-spline part as a stand-in (`inexact`).
 fn read_surface(rd: &mut Rd<'_>) -> Result<Option<Surface>, HarnessError> {
+    if rd.v.get(rd.at) != Some(&2.0) {
+        return read_regular_surface(rd);
+    }
+    rd.at += 1;
+    let ty = rd.v.get(rd.at).copied().unwrap_or(-1.0) as i64;
+    let exact = crate::util::read_exact_surface(&mut || rd.num())?;
+    // A regular block must follow exactly once: another exact head is malformed,
+    // rather than an input-dependent recursive call to this reader.
+    if rd.v.get(rd.at) != Some(&0.0) {
+        return Err(harness("export: an exact surface head without its B-spline part"));
+    }
+    let fallback = read_regular_surface(rd)?;
+    if let Some(surface) = exact {
+        crate::util::check_exact_base(&surface, fallback.as_ref())?;
+        Ok(Some(surface))
+    } else {
+        rd.inexact.get_or_insert(ty);
+        Ok(fallback)
+    }
+}
+
+/// The regular surface block: a plane, a B-spline surface, or (kind 4) a subclass held as
+/// its B-spline part only.
+fn read_regular_surface(rd: &mut Rd<'_>) -> Result<Option<Surface>, HarnessError> {
     let kind = rd.num()?;
     if kind == -1.0 {
         return Ok(None);
@@ -1535,25 +1563,17 @@ fn run_rust(i: &Inputs) -> Result<Output, HarnessError> {
         Err(o) => return Ok(*o),
     };
     // The gap, topological-vertex and pole queries solve against the face surfaces: a face
-    // surface the export holds only as its B-spline part (a cone, sphere, torus, revolution
-    // or extrusion subclass) is a stand-in whose solves differ from the analytic ones.
+    // surface the export holds only as its B-spline part (an analytic subclass whose record
+    // `sc_analytic_export.h` could not send losslessly, or whose ported reader is missing)
+    // is a stand-in whose solves differ from the analytic ones.
     if let (Some(ty), OpIn::Gaps { .. } | OpIn::Topological { .. } | OpIn::OnPole { .. }) =
         (inexact, &op)
     {
-        let (unit, symbol) = match ty {
-            // the DISPATCH GAP of `Surface::read_from_db` (issue #76) belongs to
-            // `surface.surface_p2`, not to the analytic surface units (all green)
-            15012 => ("surface.surface_p2", "SurfaceKind::Cone (SmCone dispatch)"),
-            15013 => ("surface.surface_p2", "SurfaceKind::Cone (SmCylinder dispatch)"),
-            15014 => ("surface.surface_p2", "SurfaceKind::Sphere (SmSphere dispatch)"),
-            15015 => ("surface.surface_p2", "SurfaceKind::Torus (SmTorus dispatch)"),
-            15030 => (
-                "harness:analytic-geometry-export",
-                "SmSurfOfExtrusion face surface not exported exactly",
-            ),
-            _ => ("topology.brep_p10", "SmBrep::MakeTopologyFromData"),
-        };
-        return Ok(Output::deferred(unit, symbol));
+        let class = super::topology_edgeuse_p1::surface_class_name(ty);
+        return Ok(Output::deferred(
+            "harness:analytic-geometry-export",
+            format!("{class} face surface not exported exactly"),
+        ));
     }
     match run_rust_op(&mut b, &op) {
         Ok(o) => Ok(o),

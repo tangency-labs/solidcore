@@ -22,6 +22,7 @@
 // pointer-to-member access), never the functions under test. Ops whose upstream path
 // would dereference null (or read an uninitialised value) output -2 instead of calling it.
 #include "sc_shim.h"
+#include "sc_analytic_export.h"
 #include "support/topology_fixture.h"
 
 
@@ -584,9 +585,13 @@ void put_surface(std::vector<double>& o, const SmSurface* s)
     }
     const SmBSplineSurface* b = (const SmBSplineSurface*)s;
     gw_SURFACE* sur = b->GetGwNurbPointer();
-    // `4 type` marks a subclass (cone, sphere, torus, revolution, extrusion, ...) exported as
-    // its B-spline part only; the block follows as for kind 0
-    if (s->GetType() != SmBSplineSurface_TYPE)
+    // A kind sc_analytic_export.h sends exactly gets its record head (`2 type version
+    // surf_oob gen_oob nbytes bytes`), then its B-spline part as a kind 0 block, which the
+    // importer checks the rebuilt surface's base against. `4 type` marks any other subclass
+    // exported as its B-spline part only; the block follows as for kind 0
+    if (sc_analytic_export::put_exact_head(o, s, the_context()))
+        o.push_back(0.0);
+    else if (s->GetType() != SmBSplineSurface_TYPE)
     {
         o.push_back(4.0);
         o.push_back((double)s->GetType());
