@@ -92,7 +92,7 @@
 //!   `CreateDirectrixFromPoint` asks for the general intersection (upstream reads an
 //!   unset flag).
 //! - **Transform nesting.** The generator transform carries the caller's geometry
-//!   depth so volume appends remain subject to the 64-level whole-geometry bound.
+//!   depth so volume appends remain subject to the `MAX_GEOMETRY_NESTING` whole-geometry bound.
 //! - **Unported callees.** `STEPInversion` of a
 //!   generator not perpendicular to the extrusion uses `SmBSplineSurface::STEPInversion`
 //!   (whose solves are in `surface.surface_p1` / `surface.surface_p5`). Those return
@@ -326,7 +326,7 @@ pub struct SurfOfExtrusion {
 
 impl SurfOfExtrusion {
     /// An evaluation copy with an exact, owner-preserving generator. `depth` is
-    /// the generator's depth in the shared 64-level geometry traversal.
+    /// the generator's depth in the shared `MAX_GEOMETRY_NESTING` (32) geometry traversal.
     pub(crate) fn clone_for_evaluation(&self, depth: usize) -> Result<Self> {
         Ok(Self {
             base: self.base.clone_exact(),

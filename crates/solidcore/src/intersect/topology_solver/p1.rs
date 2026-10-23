@@ -768,6 +768,7 @@ impl<'t, 'a, O: SolutionObject + 't> TopologySolver<'t, 'a, O> {
             at_distance_sq,
             opt_vectors,
             solutions,
+            solve_depth,
             branches_visited,
         } = s;
         self.base = GlobalSolver {
@@ -784,6 +785,7 @@ impl<'t, 'a, O: SolutionObject + 't> TopologySolver<'t, 'a, O> {
             at_distance_sq,
             opt_vectors,
             solutions,
+            solve_depth,
             branches_visited,
         };
     }
