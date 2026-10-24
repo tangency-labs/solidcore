@@ -1,0 +1,204 @@
+{
+ "issue": "https://github.com/tangency-labs/solidcraft/issues/3604",
+ "pr": "https://github.com/tangency-labs/solidcraft/pull/3613",
+ "test": "crates/engine/src/cmd/sweep_options_tests.rs: g2_swept_round_over_cut_along_a_projected_edge",
+ "summary": "A G2 corner-removal profile swept along the bottom-face edge chain of a box, then cut from the box. On SolidCraft's earlier kernel the cut failed with `no result` for the left-rear chain (the symmetric front-left chain worked), side-dependently: the free-form tool swept along both path curves was the trigger. The profile (four lines and the G2 blend between them) and the projected path (the bottom boundary's corner spline and the straight edge after it) are the exact 3D curves SolidCraft's own sketches produced, read back with `sketch.inspect` on the issue's script. SM_API has no G2 fillet, so the box's four vertical edges use the circular `SmApiFilletEdges` (radius 5, as the issue's script asks): its bottom corner is the radius-5 quarter arc, which is the round-groove case's first path curve. Volumes are closed form: the profile's area is exactly 1081/1500 mm^2 (Green's theorem over the lines and the degree-5 Bezier), a straight sweep of a constant section has volume profile area * path length, and a circular fillet removes 25 - 25*pi/4 mm^2 per corner through the 10 mm height.",
+ "cases": [
+  {
+   "name": "freeform_tool_along_the_straight_path_curve",
+   "note": "The issue's investigation found each path curve alone sweeps and cuts: here the free-form profile is swept along the 30 mm straight bottom edge alone (`l3` in the issue's script). A straight path makes the swept solid an exact ruled one, so its volume is exactly profile area * path length.",
+   "steps": [
+    {
+     "op": "sweep",
+     "id": "result",
+     "profile": [
+      {"curve": "line", "start": [-0.2, 15, -0.2], "end": [0.8, 15, -0.2]},
+      {"curve": "line", "start": [0.8, 15, -0.2], "end": [0.8, 15, 0]},
+      {
+       "curve": "bezier",
+       "points": [
+        [0.8, 15, 0],
+        [0.8, 15, 0.04],
+        [0.8, 15, 0.08],
+        [0.08, 15, 0.8],
+        [0.04, 15, 0.8],
+        [0, 15, 0.8]
+       ]
+      },
+      {"curve": "line", "start": [0, 15, 0.8], "end": [-0.2, 15, 0.8]},
+      {"curve": "line", "start": [-0.2, 15, 0.8], "end": [-0.2, 15, -0.2]}
+     ],
+     "path": [
+      {"curve": "line", "start": [5.000000000000001, 20, 0], "end": [35, 20, 0]}
+     ],
+     "move_profile": true,
+     "cap_ends": 3
+    }
+   ],
+   "expect": {
+    "lumps": 1,
+    "volume": {
+     "value": 21.62,
+     "tol": 0.01,
+     "formula": "(1081/1500) mm^2 * 30 mm"
+    }
+   }
+  },
+  {
+   "name": "freeform_tool_along_the_projected_chain",
+   "note": "The issue's sweep tool itself: the free-form profile swept along the projected chain (the degree-5 Bezier corner spline, then the 30 mm straight edge). Its volume is not asserted: the issue measured the tool on SolidCraft's own sweep placement, while SM_API anchors the section's bounding-box centre (not its centroid) at the path start, and this asymmetric section's centroid is off the path, so the swept volume depends on the frame's in-plane orientation. That the sweep of the two-curve chain is one valid solid is asserted.",
+   "steps": [
+    {
+     "op": "sweep",
+     "id": "result",
+     "profile": [
+      {"curve": "line", "start": [-0.2, 15, -0.2], "end": [0.8, 15, -0.2]},
+      {"curve": "line", "start": [0.8, 15, -0.2], "end": [0.8, 15, 0]},
+      {
+       "curve": "bezier",
+       "points": [
+        [0.8, 15, 0],
+        [0.8, 15, 0.04],
+        [0.8, 15, 0.08],
+        [0.08, 15, 0.8],
+        [0.04, 15, 0.8],
+        [0, 15, 0.8]
+       ]
+      },
+      {"curve": "line", "start": [0, 15, 0.8], "end": [-0.2, 15, 0.8]},
+      {"curve": "line", "start": [-0.2, 15, 0.8], "end": [-0.2, 15, -0.2]}
+     ],
+     "path": [
+      {
+       "curve": "bezier",
+       "points": [
+        [0, 15, 0],
+        [0, 16.666666666666664, 0],
+        [0, 18.333333333333332, 0],
+        [1.666666666666667, 20, 0],
+        [3.333333333333334, 20, 0],
+        [5.000000000000001, 20, 0]
+       ]
+      },
+      {"curve": "line", "start": [5.000000000000001, 20, 0], "end": [35, 20, 0]}
+     ],
+     "move_profile": true,
+     "cap_ends": 3
+    }
+   ],
+   "expect": {"lumps": 1}
+  },
+  {
+   "name": "round_groove_cut",
+   "note": "The reported failure translated to SM_API's circular fillet: a circular section of radius 0.5 swept along the filleted box's bottom boundary (the radius-5 quarter arc, then the 30 mm straight edge) and cut from the box. The swept tool is the set of points within 0.5 mm of the path, whose perpendicular section centred on the path is a disc; at every path point the material cross-section is the inward-and-up quarter plane, so a quarter disc is removed per unit length. Around the arc the section turns with the path, which shifts the removed volume by the quarter disc's first moment: -pi*r^3/6 (r = 0.5).",
+   "steps": [
+    {"op": "box", "id": "box", "origin": [0, 0, 0], "size": [40, 20, 10]},
+    {
+     "op": "fillet",
+     "id": "filleted",
+     "body": "box",
+     "edges": [[0, 0, 5], [40, 0, 5], [40, 20, 5], [0, 20, 5]],
+     "radius": 5
+    },
+    {
+     "op": "sweep",
+     "id": "tool",
+     "profile": [
+      {
+       "curve": "bezier",
+       "points": [[0.5, 15, 0], [0.5, 15, 0.5], [0, 15, 0.5]],
+       "weights": [1, 0.7071067811865476, 1]
+      },
+      {
+       "curve": "bezier",
+       "points": [[0, 15, 0.5], [-0.5, 15, 0.5], [-0.5, 15, 0]],
+       "weights": [1, 0.7071067811865476, 1]
+      },
+      {
+       "curve": "bezier",
+       "points": [[-0.5, 15, 0], [-0.5, 15, -0.5], [0, 15, -0.5]],
+       "weights": [1, 0.7071067811865476, 1]
+      },
+      {
+       "curve": "bezier",
+       "points": [[0, 15, -0.5], [0.5, 15, -0.5], [0.5, 15, 0]],
+       "weights": [1, 0.7071067811865476, 1]
+      }
+     ],
+     "path": [
+      {
+       "curve": "bezier",
+       "points": [[0, 15, 0], [0, 20, 0], [5, 20, 0]],
+       "weights": [1, 0.7071067811865476, 1]
+      },
+      {"curve": "line", "start": [5, 20, 0], "end": [35, 20, 0]}
+     ],
+     "move_profile": true,
+     "cap_ends": 3
+    },
+    {"op": "difference", "id": "result", "a": "filleted", "b": "tool"}
+   ],
+   "expect": {
+    "lumps": 1,
+    "volume": {
+     "value": 7778.031001331246,
+     "tol": 0.05,
+     "formula": "40*20*10 - 4*10*(25 - 25*pi/4) - ((pi*0.5^2/4)*(2.5*pi + 30) - pi*0.5^3/6)"
+    }
+   }
+  },
+  {
+   "name": "freeform_tool_cut",
+   "note": "The reported case: the free-form tool cut from the box, whose vertical edges are circular fillets here. The earlier kernel's cut returned `no result`; this asserts the cut leaves one lump. Its volume is not asserted because SM_API repositions the profile (its bounding-box centre goes to the path start, its normal along the tangent) while SolidCraft's sketch sat where it was drawn, so the groove cut here is not the issue's exact one; the sweep geometry itself is pinned by the two tool cases and the cut volume by round_groove_cut.",
+   "steps": [
+    {"op": "box", "id": "box", "origin": [0, 0, 0], "size": [40, 20, 10]},
+    {
+     "op": "fillet",
+     "id": "filleted",
+     "body": "box",
+     "edges": [[0, 0, 5], [40, 0, 5], [40, 20, 5], [0, 20, 5]],
+     "radius": 5
+    },
+    {
+     "op": "sweep",
+     "id": "tool",
+     "profile": [
+      {"curve": "line", "start": [-0.2, 15, -0.2], "end": [0.8, 15, -0.2]},
+      {"curve": "line", "start": [0.8, 15, -0.2], "end": [0.8, 15, 0]},
+      {
+       "curve": "bezier",
+       "points": [
+        [0.8, 15, 0],
+        [0.8, 15, 0.04],
+        [0.8, 15, 0.08],
+        [0.08, 15, 0.8],
+        [0.04, 15, 0.8],
+        [0, 15, 0.8]
+       ]
+      },
+      {"curve": "line", "start": [0, 15, 0.8], "end": [-0.2, 15, 0.8]},
+      {"curve": "line", "start": [-0.2, 15, 0.8], "end": [-0.2, 15, -0.2]}
+     ],
+     "path": [
+      {
+       "curve": "bezier",
+       "points": [
+        [0, 15, 0],
+        [0, 16.666666666666664, 0],
+        [0, 18.333333333333332, 0],
+        [1.666666666666667, 20, 0],
+        [3.333333333333334, 20, 0],
+        [5.000000000000001, 20, 0]
+       ]
+      },
+      {"curve": "line", "start": [5.000000000000001, 20, 0], "end": [35, 20, 0]}
+     ],
+     "move_profile": true,
+     "cap_ends": 3
+    },
+    {"op": "difference", "id": "result", "a": "filleted", "b": "tool"}
+   ],
+   "expect": {"lumps": 1}
+  }
+ ]
+}
