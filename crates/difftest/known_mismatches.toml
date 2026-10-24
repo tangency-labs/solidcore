@@ -11,6 +11,128 @@
 # case = "gen0042"
 # why = "C++ succeeds with 0 points, Rust returns status_3 (plan/findings.md: ...)"
 
+# PR #674: explicit known differences for this issue.
+
+[[mismatch]]
+unit = "blend.fillet_geom_p1"
+case = "fb_trim_outside"
+why = "Out-of-domain rail trim: C++ returns success and replaces rail intervals with [1e20,-1e20]; Rust propagates SM_ERR and retains intervals (#483; plan/findings.md: FilletGeom Trim status propagation)"
+
+[[mismatch]]
+unit = "blend.fillet_geom_p1"
+case = "fb_trim_point"
+why = "Collapsed rail trim: C++ ignores failed trim and installs point intervals; Rust propagates SM_ERR_INVALID_INPUT (#483; plan/findings.md: FilletGeom Trim status propagation)"
+
+[[mismatch]]
+unit = "blend.fillet_geom_p1"
+case = "trim_failed_rail0"
+why = "Rail curve domain ends at 0.5 but trim ends at 0.75; C++ drops SM_ERR and changes edge intervals, Rust stops at the failing rail (#483; plan/findings.md: FilletGeom Trim status propagation)"
+
+[[mismatch]]
+unit = "blend.fillet_geom_p1"
+case = "trim_failed_rail1"
+why = "Rail curve domain ends at 0.5 but trim ends at 0.75; C++ drops SM_ERR and changes edge intervals, Rust stops at the failing rail (#483; plan/findings.md: FilletGeom Trim status propagation)"
+
+[[mismatch]]
+unit = "blend.fillet_geom_p1"
+case = "trim_failed_other1"
+why = "Rail curve domain ends at 0.5 but trim ends at 0.75; C++ drops SM_ERR and changes edge intervals, Rust stops at the failing rail (#483; plan/findings.md: FilletGeom Trim status propagation)"
+
+[[mismatch]]
+unit = "blend.fillet_geom_p1"
+case = "trim_failed_other2"
+why = "Rail curve domain ends at 0.5 but trim ends at 0.75; C++ drops SM_ERR and changes edge intervals, Rust stops at the failing rail (#483; plan/findings.md: FilletGeom Trim status propagation)"
+
+[[mismatch]]
+unit = "blend.fillet_geom_p1"
+case = "trim_disjoint_rail_interval"
+why = "Rail edge interval [2,3] is disjoint from [0.25,0.75]; C++ installs [1e20,-1e20] and succeeds, Rust preserves the interval and returns SM_ERR (#483; plan/findings.md: FilletGeom Trim status propagation)"
+
+[[mismatch]]
+unit = "blend.fillet_geom_p1"
+case = "trim_failed_center_line"
+why = "Center domain ends at 0.5 but trim ends at 0.75; C++ ignores SM_ERR and trims the surface, Rust stops (#483; plan/findings.md: FilletGeom Trim status propagation)"
+
+[[mismatch]]
+unit = "blend.fillet_geom_p1"
+case = "trim_disjoint_surface_domain"
+why = "Surface U domain [0,1] is disjoint from [2,3]; C++ ignores intersection/trim errors and reports success, Rust propagates SM_ERR (#483; plan/findings.md: FilletGeom Trim status propagation)"
+
+[[mismatch]]
+unit = "blend.fillet_geom_p1"
+case = "trim_failed_surface_point"
+why = "Surface U trim collapses to a point; C++ ignores SM_ERR_INVALID_INPUT and reports success, Rust propagates the trim error (#483; plan/findings.md: FilletGeom Trim status propagation)"
+
+[[mismatch]]
+unit = "blend.fillet_geom_p1"
+case = "gen0139"
+why = "Rail domain ends at 1 but requested trim ends at 1.1204134701886017; C++ ignores SM_ERR and edits intervals, Rust stops (#483; plan/findings.md: FilletGeom Trim status propagation)"
+
+[[mismatch]]
+unit = "blend.fillet_geom_p1"
+case = "gen0185"
+why = "Requested rail trim starts at -0.07859260674001911 outside its domain; C++ ignores SM_ERR and edits later rails, Rust stops (#483; plan/findings.md: FilletGeom Trim status propagation)"
+
+[[mismatch]]
+unit = "blend.fillet_geom_p1"
+case = "gen0245"
+why = "First rail has an unset edge interval; C++ ignores failed intersection and continues into center/surface edits, Rust propagates SM_ERR (#483; plan/findings.md: FilletGeom Trim status propagation)"
+
+[[mismatch]]
+unit = "blend.fillet_geom_p1"
+case = "gen0438"
+why = "Rails have no curves and center trim starts below its natural domain; C++ drops the center trim SM_ERR, Rust propagates it (#483; plan/findings.md: FilletGeom Trim status propagation)"
+
+[[mismatch]]
+unit = "blend.fillet_geom_p1"
+case = "gen0476"
+why = "First rail trim starts at -0.04356990655658127 outside its domain; C++ ignores SM_ERR and edits later geometry, Rust stops (#483; plan/findings.md: FilletGeom Trim status propagation)"
+
+[[mismatch]]
+unit = "blend.fillet_geom_p1"
+case = "gen0829"
+why = "Second rail has an unset interval (the reversed request is normalized); C++ ignores failed intersection and continues into center geometry, Rust stops (#483; plan/findings.md: FilletGeom Trim status propagation)"
+
+[[mismatch]]
+unit = "blend.fillet_geom_p1"
+case = "gen1351"
+why = "First rail trim starts below its domain; C++ ignores SM_ERR and edits the second rail, Rust stops (#483; plan/findings.md: FilletGeom Trim status propagation)"
+
+[[mismatch]]
+unit = "blend.fillet_geom_p1"
+case = "gen1440"
+why = "Second rail interval is disjoint from the request; C++ installs the unset intersection and succeeds, Rust propagates SM_ERR (#483; plan/findings.md: FilletGeom Trim status propagation)"
+
+[[mismatch]]
+unit = "blend.fillet_geom_p1"
+case = "gen1452"
+why = "First rail has an unset interval; C++ ignores failed intersection and trims subsequent geometry, Rust stops (#483; plan/findings.md: FilletGeom Trim status propagation)"
+
+[[mismatch]]
+unit = "blend.fillet_geom_p1"
+case = "gen1477"
+why = "Requested trim is wholly below the first rail domain; C++ ignores SM_ERR and installs unset intersections, Rust stops (#483; plan/findings.md: FilletGeom Trim status propagation)"
+
+[[mismatch]]
+unit = "blend.fillet_geom_p1"
+case = "gen1609"
+why = "Other rail has an unset interval; C++ ignores failed intersection and trims the center, Rust stops (#483; plan/findings.md: FilletGeom Trim status propagation)"
+
+[[mismatch]]
+unit = "blend.fillet_geom_p1"
+case = "gen1626"
+why = "First rail has an unset interval; C++ ignores failed intersection and edits other rails/center/surface, Rust stops (#483; plan/findings.md: FilletGeom Trim status propagation)"
+
+[[mismatch]]
+unit = "blend.fillet_geom_p1"
+case = "gen1647"
+why = "First rail interval is disjoint from the request; C++ installs unset intersections and succeeds, Rust propagates SM_ERR (#483; plan/findings.md: FilletGeom Trim status propagation)"
+
+[[mismatch]]
+unit = "blend.fillet_geom_p1"
+case = "gen1709"
+why = "First rail interval is disjoint from the request; C++ installs unset intersections and succeeds, Rust propagates SM_ERR (#483; plan/findings.md: FilletGeom Trim status propagation)"
+
 [[mismatch]]
 unit = "topology.brep_p3"
 case = "nurbs_off_Mouse_0.1"
