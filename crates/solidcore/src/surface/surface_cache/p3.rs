@@ -54,6 +54,21 @@
 //!   cache of a `1e-4`-scale face in the `topology.edgeuse_p3` adversarial fixtures,
 //!   measured on the C++ build), and `2^20` on 32-bit targets (wasm32), whose 4 GB
 //!   address space cannot hold a larger patch array.
+//! - **Node extent.** Neither does upstream bound how large a node may be. A surface
+//!   whose extent exceeds about `sqrt(f64::MAX)` cannot be measured by the tessellation
+//!   tests at all: every squared length they compare (a chord height squared, a normal's
+//!   squared components) overflows to infinity, so subdivision can never be shown to
+//!   converge and the tree grows until [`MAX_SUBDIVISION_NODES`] stops it, minutes and
+//!   gigabytes later. Measured on the `surface.surface_point_solve_p3` `*_rust_hang`
+//!   corpus input (a `1e300` control point): still splitting after 30 s, 40 000 nodes at
+//!   12 s in a debug build, pseudo boxes spanning `5.5e299`.
+//!   [`SurfaceCache::subdivide_to_tolerances_with`] returns [`SolidError::InvalidInput`]
+//!   for a node below the root beyond [`MAX_TESSELLATION_EXTENT`] as soon as its test
+//!   asks for a split (the root's box is the coarse box of the whole surface: the
+//!   HANG-20 `1e307` boundary fixtures overflow it at the root only, 6.6e306, and are
+//!   below the bound one split down). Upstream fixtures stay far below it otherwise (the
+//!   FFI bounds the same HANG-29 regime at `1e150`); ordinary and `1e8`-unit surfaces
+//!   build unchanged (31 nodes each), as do those boundary fixtures.
 //! - **Cyclic trees.** `FindUVNodes` walks the child links of a tree whose links form a
 //!   cycle forever (its stack grows without bound): the port stops after more node
 //!   visits than a tree of that size has (twice the node count plus one) with
@@ -144,6 +159,12 @@ pub const MAX_SUBDIVISION_NODES: usize = 1 << 22;
 /// 4 GB address space holds.
 #[cfg(not(target_pointer_width = "64"))]
 pub const MAX_SUBDIVISION_NODES: usize = 1 << 20;
+
+/// Largest node extent the tessellation tests can measure (see the module deviations):
+/// `sqrt(f64::MAX)`, past which every squared length (a chord height squared, a normal's
+/// squared components) overflows to infinity, so no test can report progress. A root
+/// node is exempt: its box is the coarse box of the whole surface.
+pub const MAX_TESSELLATION_EXTENT: f64 = 1.340_780_792_994_259_5e154;
 
 /// `SM_SS_UMIN` .. `SM_SS_VMAX`: the singular sides of a surface.
 const SS_UMIN: u32 = 1;
@@ -824,7 +845,9 @@ impl<O: Copy + PartialEq> SurfaceCache<O> {
     ///
     /// # Errors
     ///
-    /// As [`SurfaceCache::subdivide_to_tolerances`], with `tester`'s errors.
+    /// As [`SurfaceCache::subdivide_to_tolerances`], with `tester`'s errors, and
+    /// `InvalidInput` when the cache's tessellation tolerances are not finite (see the
+    /// module deviations).
     pub fn subdivide_to_tolerances_with(
         &mut self,
         k: &Kernel,
@@ -861,6 +884,26 @@ impl<O: Copy + PartialEq> SurfaceCache<O> {
         // no work - patch currently within tolerance
         if !test.needs_subdivision {
             return Ok(());
+        }
+
+        // a node below the root this large cannot be measured: its squared lengths
+        // overflow (see the module deviations), so subdividing it cannot be shown to
+        // converge. The root's box is the coarse box of the whole surface, which an
+        // exact rational patch can overflow even when the evaluated surface is ordinary
+        // (the HANG-20 boundary fixtures: 6.6e306 at the root, below the bound one split
+        // down), so it is exempt.
+        if depth > 0 {
+            let bbox = self.tree_or(OP_TOL)?.node(node)?.bbox;
+            let (min, max) = (bbox.min(), bbox.max());
+            let far = [min.x, min.y, min.z, max.x, max.y, max.z]
+                .into_iter()
+                .fold(0.0_f64, |a, v| a.max(v.abs()));
+            if far > MAX_TESSELLATION_EXTENT {
+                return Err(invalid(
+                    OP_TOL,
+                    "subdivision node exceeds MAX_TESSELLATION_EXTENT",
+                ));
+            }
         }
 
         // switch between subdivision strategies
@@ -1313,5 +1356,239 @@ fn ignore<T>(r: Result<T>) -> Result<Option<T>> {
         Ok(v) => Ok(Some(v)),
         Err(e) if e.is_unported() => Err(e),
         Err(_) => Ok(None),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::nurbs::math::CPoint;
+    use crate::surface::curve_bounded_surface::CurveBoundedSurface;
+    use crate::surface::surface::p1::{
+        cache_tolerances, make_surface_cache, make_trim_srf_cache, StepSurface,
+    };
+    use crate::surface::surface_cache::p1::SurfaceCacheOptions;
+
+    /// The exact surface of `surface.surface_point_solve_p3`'s `fuzz00349_rust_hang`
+    /// corpus input (`crates/difftest/tests/fuzz_corpus/surface.surface_point_solve_p3.json`),
+    /// built without the difftest/FFI coordinate validators.
+    fn corpus_surface() -> Surface {
+        let net = vec![
+            vec![
+                CPoint::new(
+                    0.000_282_115_039_950_964_9,
+                    0.0,
+                    0.0,
+                    0.940_383_466_503_216_2,
+                ),
+                CPoint::new(
+                    0.000_596_645_716_953_504_6,
+                    0.000_198_881_905_651_168_2,
+                    0.0,
+                    1.988_819_056_511_682,
+                ),
+                CPoint::new(
+                    0.000_413_727_792_694_957_6,
+                    1e300,
+                    0.0,
+                    1.379_092_642_316_525_3,
+                ),
+                CPoint::new(
+                    0.000_544_244_248_406_755,
+                    0.000_544_244_248_406_755,
+                    0.0,
+                    1.814_147_494_689_183_1,
+                ),
+            ],
+            vec![
+                CPoint::new(
+                    -0.000_254_573_732_578_935_63,
+                    0.0,
+                    0.000_190_172_254_527_736_9,
+                    1.059_209_724_859_549_1,
+                ),
+                CPoint::new(
+                    -0.000_222_818_281_601_881_3,
+                    9.270_842_217_628_493e-5,
+                    0.000_166_450_224_589_008_12,
+                    0.927_084_221_762_849_2,
+                ),
+                CPoint::new(
+                    -0.000_158_640_632_839_373_26,
+                    0.000_132_011_813_912_682_52,
+                    0.000_118_508_089_979_063_46,
+                    0.660_059_069_563_412_6,
+                ),
+                CPoint::new(
+                    -0.000_345_623_933_991_531_4,
+                    0.000_431_413_203_930_455,
+                    0.000_258_188_785_151_016_86,
+                    1.438_044_013_101_516_6,
+                ),
+            ],
+        ];
+        let nurb = NurbSurface::new(
+            net,
+            1,
+            3,
+            vec![0.0, 0.0, 1.0, 1.0],
+            vec![-0.767_456_479_409_241_3; 4]
+                .into_iter()
+                .chain(vec![2.150_404_835_288_109_8; 4])
+                .collect(),
+        )
+        .expect("corpus surface");
+        Surface::from(
+            CurveBoundedSurface::new(
+                Surface::from(BSplineSurface::from_nurb(nurb, false)),
+                Vec::new(),
+                Vec::new(),
+                true,
+            )
+            .expect("curve-bounded surface"),
+        )
+    }
+
+    /// The corpus input wraps its surface in an `SmSTEPSurface` (`"wrap": true`): the
+    /// approximation branch whose cache build hung.
+    fn corpus_step_surface() -> Surface {
+        Surface::from(StepSurface::new(corpus_surface(), true).expect("step surface"))
+    }
+
+    /// A cubic B-spline surface of ordinary shape, `scale` wide.
+    fn scaled_surface(scale: f64) -> Surface {
+        let net = (0..4)
+            .map(|i| {
+                (0..4)
+                    .map(|j| {
+                        CPoint::new(
+                            f64::from(i) * scale,
+                            f64::from(j) * scale,
+                            f64::from(i * j) * 0.3 * scale,
+                            1.0,
+                        )
+                    })
+                    .collect()
+            })
+            .collect();
+        let nurb = NurbSurface::new(
+            net,
+            3,
+            3,
+            vec![0.0, 0.0, 0.0, 0.0, 1.0, 1.0, 1.0, 1.0],
+            vec![0.0, 0.0, 0.0, 0.0, 1.0, 1.0, 1.0, 1.0],
+        )
+        .expect("scaled surface");
+        Surface::from(BSplineSurface::from_nurb(nurb, false))
+    }
+
+    fn assert_extent_guard(error: &SolidError) {
+        assert!(
+            matches!(
+                error,
+                SolidError::InvalidInput { operation, reason }
+                    if *operation == OP_TOL && reason.contains("MAX_TESSELLATION_EXTENT")
+            ),
+            "expected the node extent guard, got {error:?}"
+        );
+    }
+
+    /// The corpus input's surface is `1e299` wide once its `1e300` control point is
+    /// divided by its weight, so every squared length in the tessellation tests
+    /// overflows: the chord test is vacuous (`h * h <= inf`) and the angle test can
+    /// never report progress, so the tree grows exponentially. Before the guard the
+    /// trimmed cache build was still splitting after 30 s (40 000 nodes at 12 s in a
+    /// debug build, 147 MB); only [`MAX_SUBDIVISION_NODES`] could stop it, minutes
+    /// later. It now returns at once, from both cache constructors that
+    /// `get_surface_cache` tries.
+    #[test]
+    fn unmeasurable_corpus_surface_is_refused() {
+        let k = Kernel::default();
+        let surface = corpus_step_surface();
+
+        for error in [
+            make_trim_srf_cache::<i64>(&k, &surface, Some(0)).err(),
+            make_surface_cache::<i64>(&k, &surface, Some(0)).err(),
+        ] {
+            assert_extent_guard(&error.expect("an unmeasurable node must be refused"));
+        }
+    }
+
+    /// The HANG-20 boundary fixtures the FFI compares (`blend.fillet_geom_p1`'s
+    /// `*_hang20_boundary_1e307`) hold `1e307` control points with extreme weights:
+    /// their evaluated surface is ordinary-sized (`P / w`), it subdivides and
+    /// converges in milliseconds, and the guard must not touch it.
+    #[test]
+    fn huge_control_points_with_small_geometry_build() {
+        let k = Kernel::default();
+        let net = vec![
+            vec![
+                CPoint::new(-57.74e306, -4.79e306, -20.02e306, 1e306),
+                CPoint::new(-9e306, 3.69e306, -2.39e306, 1e306),
+            ],
+            vec![
+                CPoint::new(3.65e306, -7.33e306, -5.68e306, 1e306),
+                CPoint::new(-9e306, 4.03e306, -8.00e305, 1e306),
+            ],
+            vec![
+                CPoint::new(6.12e306, -7.88e305, 2.96e306, 1e306),
+                CPoint::new(6.83e306, 4.25e306, 1.05e306, 1e306),
+            ],
+        ];
+        let nurb = NurbSurface::new(
+            net,
+            2,
+            1,
+            vec![0.0, 0.0, 0.0, 1.0, 1.0, 1.0],
+            vec![0.0, 0.0, 1.0, 1.0],
+        )
+        .expect("boundary surface");
+        // the fixture's cache is the B-spline one (exact rational patches, whose
+        // projective control points are `P / w`, i.e. tiny)
+        let surface = Surface::from(BSplineSurface::from_nurb(nurb, false));
+
+        let cache = make_trim_srf_cache::<i64>(&k, &surface, Some(0))
+            .expect("a normalizing huge control net must still build");
+        let nodes = cache.base().tree().map_or(0, |t| t.nodes().len());
+        eprintln!("boundary nodes {nodes}");
+    }
+
+    /// Supported sizes keep their behaviour: an ordinary surface and one a hundred
+    /// million units wide both build the same 31-node tree.
+    #[test]
+    fn supported_sizes_build() {
+        let k = Kernel::default();
+        for scale in [1.0, 1e8] {
+            let surface =
+                Surface::from(StepSurface::new(scaled_surface(scale), true).expect("step"));
+            let tol = cache_tolerances(&k, &surface).expect("cache tolerances");
+            assert!(tol.chord_height_tol.is_finite(), "scale {scale}: {tol:?}");
+            let cache = make_trim_srf_cache::<i64>(&k, &surface, Some(0))
+                .expect("a supported size must build");
+            assert_eq!(
+                cache.base().tree().map_or(0, |t| t.nodes().len()),
+                31,
+                "scale {scale} node count changed"
+            );
+        }
+    }
+
+    /// A finite tolerance is never refused, however large (the guard is geometric).
+    #[test]
+    fn finite_tolerance_is_not_refused() {
+        let k = Kernel::default();
+        let opts = SurfaceCacheOptions {
+            chord_height_tolerance: f64::MAX,
+            ang_tol_rad: 0.0,
+            ..SurfaceCacheOptions::default()
+        };
+        let mut cache: SurfaceCache<i64> = SurfaceCache::new(
+            scaled_surface(1.0),
+            Extent2d::from_bounds(0.0, 0.0, 1.0, 1.0),
+            opts,
+        );
+        cache
+            .build_tree_base(&k)
+            .expect("a finite tolerance must still build");
     }
 }
