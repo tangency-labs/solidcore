@@ -11,6 +11,43 @@
 # case = "gen0042"
 # why = "C++ succeeds with 0 points, Rust returns status_3 (plan/findings.md: ...)"
 
+# PR #677: explicit known differences for this issue.
+
+[[mismatch]]
+unit = "nurbs.b_spline_curve_p3"
+case = "curvature_radius_tiny_2d_given"
+why = "C++ AssertValid compares its unchanged BIG_DOUBLE sentinel and misses the analyzed small radius; Rust reports check 13/14 (#475; plan/findings.md: Minimum curvature radius validity and solver dependency)"
+
+[[mismatch]]
+unit = "nurbs.b_spline_curve_p3"
+case = "curvature_radius_tiny_2d_base"
+why = "C++ AssertValid compares its unchanged BIG_DOUBLE sentinel and misses the analyzed small radius; Rust reports check 13/14 (#475; plan/findings.md: Minimum curvature radius validity and solver dependency)"
+
+[[mismatch]]
+unit = "nurbs.b_spline_curve_p3"
+case = "curvature_radius_tiny_3d_given"
+why = "C++ AssertValid compares its unchanged BIG_DOUBLE sentinel and misses the analyzed small radius; Rust reports check 13/14 (#475; plan/findings.md: Minimum curvature radius validity and solver dependency)"
+
+[[mismatch]]
+unit = "nurbs.b_spline_curve_p3"
+case = "curvature_radius_tiny_3d_base"
+why = "C++ AssertValid compares its unchanged BIG_DOUBLE sentinel and misses the analyzed small radius; Rust reports check 13/14 (#475; plan/findings.md: Minimum curvature radius validity and solver dependency)"
+
+[[mismatch]]
+unit = "nurbs.b_spline_curve_p3"
+case = "gen1393"
+why = "C++ AssertValid compares its unchanged BIG_DOUBLE sentinel and misses the analyzed small radius; Rust reports check 13/14 (#475; plan/findings.md: Minimum curvature radius validity and solver dependency)"
+
+[[mismatch]]
+unit = "nurbs.b_spline_curve_p3"
+case = "curve0_assert_given"
+why = "Known Rust dependency #481: enabling the radius check exposes a false zero from a failed oscillation sample. PR #668 fixes this; combined verification matches C++ here. Remove this entry after #668 lands. Not a claimed physical zero-radius result (plan/findings.md: Minimum curvature radius validity and solver dependency)"
+
+[[mismatch]]
+unit = "nurbs.b_spline_curve_p3"
+case = "curve0_assert_level0"
+why = "Known Rust dependency #481: enabling the radius check exposes a false zero from a failed oscillation sample. PR #668 fixes this; combined verification matches C++ here. Remove this entry after #668 lands. Not a claimed physical zero-radius result (plan/findings.md: Minimum curvature radius validity and solver dependency)"
+
 [[mismatch]]
 unit = "topology.brep_p3"
 case = "nurbs_off_Mouse_0.1"
