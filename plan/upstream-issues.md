@@ -4055,6 +4055,22 @@ meantime, whoever merges renumbers the new entry and every reference to it (here
 - **Severity:** wrong geometry (trims outside their edge's tolerance after any classification), so a downstream check or mesher sees gaps that SMLib's own check does not report.
 - **Rust port:** `topology::face::p2::fix_uv_trim_curves` follows the fork's fix (documented deviation): only the end control points move. Regression test `fix_uv_trim_curves_keeps_interior_parameters`. No difftest case reaches the removed branch: the `topology.face_p2` `FixUv` cases run on the fixture B-reps' own trims, which meet their vertices, so the drop point is the trim's end and upstream trims nothing; every unit's results are unchanged (`plan/findings.md`, issue #570).
 
+### WR-264: CheckLoop treats projected periodic ends as exact UV sheets (#530)
+
+- **Where:** `source/SMLib/src/SmTrimmingTools.cpp`, `SmTrimmingTools::CheckLoop`
+  (GetEdgeUVExtremes around 3109; large-UV-gap predicates around 3220).
+- **Trigger:** an endpoint without an exact UV trim is projected to the opposite
+  side of a closed natural domain from the adjoining endpoint. Its representative
+  differs by one period although its surface point closes in 3D.
+- **Effect:** the raw UV jump can produce SM_ERR 1001 and a loop-list-3/test-1
+  report, or a seam-only closure-1 classification at a singularity.
+- **How found:** issue #530; adversarial/public-file fixtures in
+  `fixtures/topology.trimming_tools/upstream.json`, `projected_seam_cone_eu0..3`.
+- **Confirmed:** yes, unchanged pinned C++ reference, macOS arm64: eu1/eu2 report
+  U gap 15.30733729460359 against 1.5307337294603591 and return 1001; eu0/eu3
+  return success with closure 1. Exact UV trim jumps must still be rejected.
+
+
 ## Note: duplicate IDs (2026-10-23)
 
 Parallel PRs gave six IDs to more than one entry. They are not renumbered, because code

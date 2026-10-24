@@ -1,3 +1,25 @@
+# PR #709: issue records precede the unchanged main header to avoid head/tail conflicts.
+
+[[mismatch]]
+unit = "topology.trimming_tools"
+case = "projected_seam_cone_eu0"
+why = "C++ reports seam-only closure 1; Rust lifts the projected endpoint and reports closure 0 (#530; WR-264; plan/findings.md: Projected loop endpoints on periodic seams)"
+
+[[mismatch]]
+unit = "topology.trimming_tools"
+case = "projected_seam_cone_eu1"
+why = "C++ rejects a one-period projected seam jump (1001); Rust succeeds and retains closure 1 for the singularity (#530; WR-264; plan/findings.md: Projected loop endpoints on periodic seams)"
+
+[[mismatch]]
+unit = "topology.trimming_tools"
+case = "projected_seam_cone_eu2"
+why = "C++ rejects a one-period projected seam jump (1001); Rust succeeds with closure 0 (#530; WR-264; plan/findings.md: Projected loop endpoints on periodic seams)"
+
+[[mismatch]]
+unit = "topology.trimming_tools"
+case = "projected_seam_cone_eu3"
+why = "C++ reports seam-only closure 1; Rust lifts the projected endpoint and reports closure 0 (#530; WR-264; plan/findings.md: Projected loop endpoints on periodic seams)"
+
 # Known Rust-vs-C++ mismatches (see crates/difftest/src/known.rs).
 #
 # A case listed here still fails its comparison; difftest reports it as
