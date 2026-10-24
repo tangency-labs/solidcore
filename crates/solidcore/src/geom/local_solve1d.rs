@@ -33,8 +33,9 @@
 //!   (brackets, iteration values, counters) is kept and public as upstream.
 //! - [`EvalFunction::evaluate`] keeps upstream's out-parameter shape: the solver
 //!   hands it the destination values and keeps whatever the evaluator wrote even
-//!   when it fails, because upstream reads such values afterwards (e.g. the
-//!   interior search of `SolveOscillating` continues after a failed evaluation).
+//!   when it fails, for upstream-compatible evaluator state. The oscillation
+//!   bracket search retries failed evaluations but never treats their outputs as
+//!   a sign change (#481 / WR-253), unlike the pinned reference.
 //! - Out-params become return values: [`SolveOutcome`] for `SolveIt` (the found
 //!   parameter is `None` where upstream leaves `rdFoundT` unwritten), `(t, f)` for
 //!   `SolveByBisection`/`SolveByBrent`. On failure nothing is returned (upstream
@@ -731,6 +732,7 @@ impl LocalSolve1d {
             let prev_t = self.prev1.t;
             let curr_f = self.curr.f;
 
+            let mut found_sign_change = false;
             for g in GUESSES {
                 let mid_t = prev_t + g * (curr_t - prev_t);
                 temp.t = mid_t;
@@ -743,11 +745,12 @@ impl LocalSolve1d {
                     best_interior_t = mid_t;
                 }
                 if temp.f * curr_f <= 0.0 {
-                    break; // opposite sign
+                    found_sign_change = true;
+                    break; // successfully evaluated opposite sign
                 }
             }
 
-            if temp.f * curr_f <= 0.0 {
+            if found_sign_change {
                 // Curr and prev have the same sign, opposite to mid: pick the end on
                 // the side of the given guess.
                 let pick_curr = if guess_t < temp.t {
@@ -1210,35 +1213,97 @@ mod tests {
         assert!(r.t.is_finite());
     }
 
-    /// WR-253 (#481): a failed interior evaluation in `SolveOscillating` leaves
-    /// its zeroed `F` behind, and the sign test after the guesses reads it as a
-    /// sign change. `F = t^3 - 2t + 2` has no root between the two values Newton
-    /// cycles on, so the clean solve finds nothing; when the last guess fails,
-    /// upstream brackets that guess with `F = 0`, bisection keeps it, and the solve
-    /// reports it converged there. The port does the same.
+    /// A failed final sample must not replace the valid, same-sign samples with
+    /// a fabricated zero (WR-253 / #481).
     #[test]
-    fn failed_guess_is_read_as_a_sign_change_as_upstream() {
-        let mut s = LocalSolve1d::with_interval(Extent1d::from_min_max(-3.0, 3.0), false);
-        let clean = s.solve_it(&mut Cycle, 0.0, 1e-9).unwrap();
+    fn failed_guess_does_not_supply_a_sign_change() {
+        let interval = Extent1d::from_min_max(-3.0, 3.0);
+        let mut clean_solver = LocalSolve1d::with_interval(interval, false);
+        let clean = clean_solver.solve_it(&mut Cycle, 0.0, 1e-9).unwrap();
         assert!(!clean.found);
-        assert_eq!(s.termination_reason(), TerminationReason::UnableToConverge);
+        let mut solver = LocalSolve1d::with_interval(interval, false);
+        let result = solver
+            .solve_it(&mut CycleFailingAtLastGuess, 0.0, 1e-9)
+            .unwrap();
+        assert!(!result.found);
+        assert_eq!(result.t.to_bits(), clean.t.to_bits());
+        assert_eq!(solver.curr.f, clean_solver.curr.f);
+        assert_eq!(
+            solver.termination_reason(),
+            TerminationReason::UnableToConverge
+        );
+        assert_eq!(solver.have_lower_bracket, clean_solver.have_lower_bracket);
+        assert_eq!(solver.have_upper_bracket, clean_solver.have_upper_bracket);
+    }
 
-        let mut s = LocalSolve1d::with_interval(Extent1d::from_min_max(-3.0, 3.0), false);
-        let r = s.solve_it(&mut CycleFailingAtLastGuess, 0.0, 1e-9).unwrap();
-        assert!(r.found);
-        assert_eq!(r.t.to_bits(), LAST_GUESS.to_bits());
-        assert_eq!(
-            s.termination_reason(),
-            TerminationReason::FoundAnswerConverged
-        );
-        assert_eq!(
-            (s.lower_bracket_t.to_bits(), s.lower_bracket_f),
-            (LAST_GUESS.to_bits(), 0.0)
-        );
-        // F really is about 0.95 there.
-        let mut out = FunctionValue::default();
-        Cycle.evaluate(LAST_GUESS, &mut out, true).unwrap();
-        assert!(out.f > 0.9);
+    #[test]
+    fn failed_interior_samples_cannot_create_a_bracket() {
+        struct FailedSamples(f64);
+        impl EvalFunction for FailedSamples {
+            fn evaluate(&mut self, t: f64, out: &mut FunctionValue, _: bool) -> Result<()> {
+                if [0.25, 0.75, 0.13, 0.38, 0.82, 0.87, 0.01, 0.99].contains(&t) {
+                    out.f = self.0;
+                    return Err(sm_err("test: failed interior sample"));
+                }
+                out.f = t * t + 1.0;
+                out.f_prime = 2.0 * t;
+                out.found_answer = false;
+                Ok(())
+            }
+        }
+        for failed_value in [0.0, -1.0] {
+            let mut solver = LocalSolve1d::new();
+            solver.prev1 = IterationValue {
+                t: 0.0,
+                f: 1.0,
+                ..IterationValue::default()
+            };
+            solver.curr = IterationValue {
+                t: 1.0,
+                f: 2.0,
+                ..IterationValue::default()
+            };
+            let result = solver
+                .solve_oscillating(&mut FailedSamples(failed_value), 0.9)
+                .unwrap();
+            assert!(!result.found);
+            assert_eq!(solver.curr.f, result.t * result.t + 1.0);
+            assert!(!solver.have_lower_bracket);
+            assert!(!solver.have_upper_bracket);
+        }
+    }
+
+    #[test]
+    fn successful_sample_after_a_failure_can_still_bracket_a_root() {
+        struct FailedQuarter;
+        impl EvalFunction for FailedQuarter {
+            fn evaluate(&mut self, t: f64, out: &mut FunctionValue, _: bool) -> Result<()> {
+                if t == 0.25 {
+                    *out = FunctionValue::default();
+                    return Err(sm_err("test: failed quarter sample"));
+                }
+                out.f = (t - 0.75) * (t - 0.75) - 0.01;
+                out.f_prime = 2.0 * (t - 0.75);
+                out.found_answer = false;
+                Ok(())
+            }
+        }
+        let mut solver = LocalSolve1d::new();
+        solver.prev1 = IterationValue {
+            t: 0.0,
+            f: 0.5525,
+            ..IterationValue::default()
+        };
+        solver.curr = IterationValue {
+            t: 1.0,
+            f: 0.0525,
+            ..IterationValue::default()
+        };
+        solver.set_desired_accuracy(1e-10);
+        let result = solver.solve_oscillating(&mut FailedQuarter, 0.9).unwrap();
+        assert!(result.found);
+        assert!((result.t - 0.85).abs() < 1e-8);
+        assert!(solver.curr.f.abs() < 1e-10);
     }
 
     #[test]

@@ -1,3 +1,10 @@
+# PR #668: issue records precede the unchanged main header to avoid head/tail conflicts.
+
+[[mismatch]]
+unit = "geom.local_solve1d"
+case = "oscillation_failed_last_guess_zeroed_outputs"
+why = "C++ treats the zeroed failed sample as a sign change and returns a false root; Rust requires a successful sample (#481 / WR-253; plan/findings.md: Oscillation bracket search ignores failed samples)"
+
 # Known Rust-vs-C++ mismatches (see crates/difftest/src/known.rs).
 #
 # A case listed here still fails its comparison; difftest reports it as
