@@ -1,3 +1,25 @@
+# PR #700: issue records precede the unchanged main header to avoid head/tail conflicts.
+
+[[mismatch]]
+unit = "heal.face_props"
+case = "gen0345"
+why = "WR-263 / #521: failed Stage3 retains in-progress marker 5 in C++; Rust retains the same 1040 error but restores incomplete stage 4 for retry; other compared outputs agree (plan/findings.md: Failed topology evaluations and incomplete healing stages)"
+
+[[mismatch]]
+unit = "heal.face_props"
+case = "gen0821"
+why = "WR-263 / #521: failed Stage3 retains in-progress marker 5 in C++; Rust retains the same 1040 error but restores incomplete stage 4 for retry; other compared outputs agree (plan/findings.md: Failed topology evaluations and incomplete healing stages)"
+
+[[mismatch]]
+unit = "heal.face_props"
+case = "gen0957"
+why = "WR-263 / #521: failed Stage3 retains in-progress marker 5 in C++; Rust retains the same 1040 error but restores incomplete stage 4 for retry; other compared outputs agree (plan/findings.md: Failed topology evaluations and incomplete healing stages)"
+
+[[mismatch]]
+unit = "heal.face_props"
+case = "stage3"
+why = "WR-263 / #521: failed Stage3 retains in-progress marker 5 in C++; Rust retains the same 1040 error but restores incomplete stage 4 for retry; other compared outputs agree (plan/findings.md: Failed topology evaluations and incomplete healing stages)"
+
 # Known Rust-vs-C++ mismatches (see crates/difftest/src/known.rs).
 #
 # A case listed here still fails its comparison; difftest reports it as

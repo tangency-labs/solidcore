@@ -4055,6 +4055,49 @@ meantime, whoever merges renumbers the new entry and every reference to it (here
 - **Confirmed:** yes, by the reporter on the C++ build (the fork's rig). Here: the source at `c9c5979` has the same code, and the port's regression test (below) shows the slide (interior knots 3.3333 -> 3.3324 for a 1e-3 overshoot on a 10 mm box edge) with the upstream code path.
 - **Severity:** wrong geometry (trims outside their edge's tolerance after any classification), so a downstream check or mesher sees gaps that SMLib's own check does not report.
 - **Rust port:** `topology::face::p2::fix_uv_trim_curves` follows the fork's fix (documented deviation): only the end control points move. Regression test `fix_uv_trim_curves_keeps_interior_parameters`. No difftest case reaches the removed branch: the `topology.face_p2` `FixUv` cases run on the fixture B-reps' own trims, which meet their vertices, so the drop point is the trim's end and upstream trims nothing; every unit's results are unchanged (`plan/findings.md`, issue #570).
+#### WR-257. `SmEdge::ReverseOrientation` installs an unset interval after a failed curve reversal
+- **Location:** `source/SMLib/src/SmEdge.cpp:3640`, the unchecked `ReverseParameterization` call before `m_vInterval = sNewIvl` and the edgeuse loop.
+- **Trigger:** a wire edge over `[0,1]` on a valid `SmHermiteCurve`, whose inherited reversal returns `SM_ERR` (1001).
+- **What happens:** the interval becomes `[1e20,-1e20]`, orientations flip and UV trims are deleted despite the failed curve edit.
+- **Confirmed:** yes, unchanged pinned C++ on macOS arm64: wire creation returns 1000, direct reversal returns 1001, interval `[0,1] -> [1e20,-1e20]`, primary orientation `1 -> 2`.
+- **Rust port:** propagates the curve error before downstream topology edits; the existing edge test module verifies interval/uses/trims remain intact for this failure. #521 / PR #700; findings: Failed topology evaluations and incomplete healing stages.
+
+#### WR-258. Vertex tangent predicates consume a failed angle as zero
+- **Location:** `source/SMLib/src/SmVertex.cpp`, `AreEdgesTangent` and `IsTopologicalVertex`, unchecked `AngleBetween` results.
+- **Trigger:** a zero derivative (constant B-spline) or a `1e-12` tangent below the angle routine's scaled zero threshold.
+- **What happens:** `AngleBetween` returns 1007 and writes zero; the predicates return a boolean computed from that sentinel. The failed calculation cannot certify tangency or removability.
+- **Confirmed:** yes, direct unchanged C++ angle calls reject lengths 0 and 1e-12 (1007, angle 0) and accept length 1 (1000). Native fixtures yield 29 TRUE and 14 FALSE predicates while Rust propagates 1007; 43 explicit known records retain all comparisons. The FALSE results differ only by their lost failure status.
+- **Rust port:** propagates tangent and angle errors; related UB-106 and the failed-tangent portion of WR-92 now preserve original evaluation errors too. Cusps retain existing behavior. #521 / PR #700; findings: Failed topology evaluations and incomplete healing stages.
+
+#### WR-259. `GetUVCornerBoundaries` reuses failed endpoint evaluations
+- **Location:** `source/SMLib/src/SmLoop.cpp:386`, the trim endpoint evaluations and 3D point-drop fallback in `GetUVCornerBoundaries`.
+- **What happens:** failed evaluations/drops leave unset or preceding-edgeuse endpoints available for boundary classification. The trim pointer acquisition status is also ignored upstream.
+- **Confirmed:** source and the #521 report; Rust regressions with an empty trim fail before the fix at both the first and a later edgeuse. Empty-NURB C++ calls were not executed because their reference behavior is unsafe.
+- **Rust port:** trim acquisition already propagated failure; endpoint evaluation and fallback drop failures now propagate too, with fresh locals per edgeuse. #521 / PR #700; findings: Failed topology evaluations and incomplete healing stages.
+
+#### WR-260. `GetStartPointUVLoopGap` computes a gap from failed evaluations or drops
+- **Location:** `source/SMLib/src/SmEdgeuse.cpp`, `GetStartPointUVLoopGap`, both trim evaluations and the fallback 3D evaluation/drop sequence.
+- **What happens:** unwritten/default endpoints, or the first drop's guess retained by the second failed drop, become a reported gap.
+- **Confirmed:** source and #521; Rust-only regressions exercise both trim endpoints and both 3D endpoints, with a healthy zero-gap control. Empty-NURB native calls were not executed.
+- **Rust port:** propagates evaluation/drop statuses and refuses unsuccessful drops before reading their UV results. All 4402 defined native edgeuse_p1 cases still match. #521 / PR #700; findings: Failed topology evaluations and incomplete healing stages.
+
+#### WR-261. `sm_CalcDistAndDev` ignores a failed surface derivative evaluation
+- **Location:** `source/SMLib/src/SmEdgeuse.cpp:1065`, `sm_CalcDistAndDev` before its normal and distance calculations.
+- **What happens:** a failed `Evaluate1stDerivatives` supplies no valid surface point or derivatives, but the helper continues with their defaults.
+- **Confirmed:** source and #521; the safe Rust empty-surface regression previously returned successful `(-1,-1)` and now preserves the derivative error. The unsafe empty native surface was not evaluated.
+- **Rust port:** requires successful derivatives; normal fallback for a successfully evaluated singular point and distance-only requests keep their existing paths. #521 / PR #700; findings: Failed topology evaluations and incomplete healing stages.
+
+#### WR-262. `SetProps_Stage3` consumes failed loop-classification outputs
+- **Location:** `source/SMLib/src/SmFaceProps.cpp`, `SetProps_Stage3`, the unchecked `ClassifyLoops` status before its classification arrays are read.
+- **What happens:** failed classification output can be consumed or an empty classification can be finalized as successful properties.
+- **Confirmed:** source and #521; a Rust pre-fix regression on a plane with no loops demonstrates lost `ClassifyLoops` status 1001. A live C++ empty-face probe was not run.
+- **Rust port:** restores the owned tree/problem type, then propagates the original classification error before reading output arrays. #521 / PR #700; findings: Failed topology evaluations and incomplete healing stages.
+
+#### WR-263. A failed `SetProps_Stage3` retains its in-progress marker and skips retry
+- **Location:** `source/SMLib/src/SmFaceProps.cpp`, `SetProps_Stage3`, `m_ePropStage = SM_PROPSTAGE_3a` and its early `>= SM_PROPSTAGE_3a` guard.
+- **What happens:** an error leaves Stage3A set, so a later call can return success without completing the stage.
+- **Confirmed:** a pre-fix Rust regression fails on retry after a dangling loopuse. Four actual native comparisons retain error 1040 on both sides but expose marker 5 (C++) versus 4 (Rust); other compared outputs agree. No live C++ dangling-loopuse probe was run.
+- **Rust port:** restores Stage2 on error without clearing partial diagnostics, so the next call retries. Four diagnostic differences stay explicit known records and the healer unit remains partial. #521 / PR #700; findings: Failed topology evaluations and incomplete healing stages.
 
 ## Note: duplicate IDs (2026-10-23)
 

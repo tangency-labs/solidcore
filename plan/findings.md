@@ -18176,6 +18176,165 @@ comparison or relabeled. No #596-owned source is included in this contribution.
   `&mut Kernel`. Together these unblock the traverser cases, the skin cases'
   `build_tree_with_face` deferral, and the brep_p6 Mark2 counter. Until then the
   in-place `IsInnerShell` cannot land without turning a green unit partial.
+## Failed topology evaluations and incomplete healing stages (#521, PR #700)
+
+A Hermite wire edge is a small defined failure: `SmHermiteCurve` inherits the base
+`ReverseParameterization`, which returns `SM_ERR`. `SmEdge::ReverseOrientation`
+drops that status, installs the unset output interval and flips the edge uses.
+The Rust port followed it. The fixed Rust call propagates the curve error before
+changing the edge interval, orientations or UV trims. The curve method's own
+mutation behavior remains its implementation's responsibility.
+
+The other implemented paths named by #521 now require successful evaluations:
+
+- `vertex::are_edges_tangent` and `is_topological_vertex` propagate tangent and
+  `AngleBetween` errors. A zero/too-small tangent no longer supplies a zero-angle
+  certificate. Healthy parallel edges, cusps and the angle thresholds keep their
+  previous behavior.
+- `loopuse::uv_corner_boundaries` evaluates fresh endpoints for each edge use and
+  propagates trim/3D evaluation and fallback point-drop errors. An unsuccessful
+  drop returns `SM_ERR`. Trim acquisition already propagated its error.
+- `edgeuse::p1::start_point_uv_loop_gap` propagates both curve evaluations and both
+  drops, including unsuccessful drops; `calc_dist_and_dev` propagates failed first
+  derivatives. A distance-only request still uses the stored solution value.
+- `FaceProps::set_props_stage3` restores the owned classification tree and problem
+  type, then propagates classification errors before reading its output arrays.
+  An error restores the stage marker to Stage2 while keeping partial diagnostics.
+  A subsequent call retries instead of returning success from a stale Stage3A.
+
+`query::loop::contains_uv_point` already propagates evaluation failures and uses
+Unknown safely for failed trim acquisition. `HasDogLegNearPole` has no Rust
+implementation to audit yet. The change covers the implemented paths above.
+
+### Reproduction and reference evidence
+
+Seven regressions in the existing test modules failed before these changes:
+failed Hermite reversal, original tangent/angle error propagation, failed trim
+corner evaluation (at the first and a later edge use), UV/3D gap evaluation,
+failed surface derivatives, failed loop classification, and an incomplete healing
+stage retried after a dangling loopuse. The first five failed together; the two
+healing regressions were separately reproduced before their production change.
+
+A standalone probe against the unchanged pinned C++ libraries on macOS arm64
+constructed the Hermite from points `(0,0,0)`, `(1,0,0)` and directions `(1,0,0)`,
+`(0,1,0)`, then called `CreateWireEdgeFromCurve` over `[0,1]` and reversed the edge:
+
+```text
+Hermite reverse status=1001 output=[1e+20,-1e+20]
+wire status=1000
+edge before=[0,1] after=[1e+20,-1e+20] orientation=1 -> 2
+tangent length=0 angle status=1007 value=0
+tangent length=1e-12 angle status=1007 value=0
+tangent length=1 angle status=1000 value=0
+```
+
+Twenty new cases in the existing `topology.vertex/constructed.json` cover constant
+B-splines at either end of a chain, both orientations and endpoint selectors, plus
+healthy line controls. The preserved pre-fix binary matched C++ in all 20; the fixed
+kernel matches 14 and propagates the failed angle in six. Additional existing cases
+exercise point curves and `1e-12` tangents. Raw C++/Rust outputs were inspected for
+all 43 angle differences and four healing differences, plus the 14 new controls.
+The temporary diagnostic example was removed.
+
+| Angle case group | Cases | C++ TRUE | C++ FALSE | Rust result |
+|---|---:|---:|---:|---|
+| New constant-tangent cases | 6 | 6 | 0 | `status_1007` |
+| Existing `point_curve_*` cases | 7 | 7 | 0 | `status_1007` |
+| Existing `rev_tiny_scale*` cases | 30 | 16 | 14 | `status_1007` |
+
+Those 43 cases concern lost failure statuses. Fourteen C++ predicates already
+return FALSE; their difference is the missing error status. The difftest runner
+preserves this specific angle error as `status_1007` instead of translating it to
+the null-dereference sentinel or a harness error. Every case still runs both sides.
+The 43 WR-258 records keep `topology.vertex` partial.
+
+Four existing healing cases (`stage3`, `gen0345`, `gen0821`, `gen0957`) retain status
+1040 on both sides. Their only compared differences are the incomplete stage marker:
+C++ 5 (Stage3A), Rust 4 (Stage2), including a subsequent diagnostic snapshot in
+`gen0345`. The four WR-263 records keep these diagnostic differences explicit.
+The unsafe empty-NURB native operations used by some Rust-only regressions were
+not executed against C++; their failed-output paths were checked in source.
+
+### Validation on `6ecdaaa21467a52461f1d39bc3e4c0d9a745988b` plus this change
+
+Fmt, default/native workspace Clippy with warnings denied, wasm, 2086 kernel unit
+tests, five integration tests and 48 runner tests pass. The existing unsupported
+partial-sphere/torus integration case remains ignored. The native matrix covered
+13 units; vertex and face_props were then rerun after recording their observed
+C++ differences and marking vertex partial. The other eleven passing units' code,
+fixtures and per-unit known records did not change.
+
+| Unit | Cases | Matching | Known | Deferred | Rejected |
+|---|---:|---:|---:|---:|---:|
+| topology.edge | 1787 | 1787 | 0 | 0 | 0 |
+| topology.vertex | 5528 | 5485 | 43 | 0 | 0 |
+| topology.loopuse | 8854 | 8854 | 0 | 0 | 0 |
+| topology.edgeuse_p1 | 4402 | 4402 | 0 | 0 | 0 |
+| topology.edgeuse_p3 | 4789 | 4789 | 0 | 0 | 0 |
+| topology.face_p1 | 2315 | 2276 | 2 | 37 | 0 |
+| query.loop | 3040 | 3040 | 0 | 0 | 0 |
+| query.face_p3 | 1199 | 1087 | 0 | 112 | 0 |
+| query.face_p4 | 500 | 395 | 0 | 105 | 0 |
+| boolean.merge_p1 | 248 | 243 | 0 | 5 | 0 |
+| topology.brep_p1 | 2627 | 2461 | 0 | 150 | 16 |
+| topology.brep_p5 | 797 | 795 | 0 | 2 | 0 |
+| heal.face_props | 1528 | 1427 | 4 | 97 | 0 |
+
+Total: 37,614 cases, 37,041 matching (including 646 both-error comparisons),
+49 known differences, 508 deferrals (471 UNPORTED plus 37 native UB-137 crash guards),
+16 native input-guard rejections and
+zero unexpected failures; five units green and eight partial. The 49 consist of
+47 differences explained above plus two existing main Rust/harness MoveSeam
+limitations in `topology.face_p1`. Those two are not C++ defect claims.
+All 17 pre-existing main mismatch records remain. No comparator tolerance, floor,
+reference implementation or FFI rejection guard was changed. The full macOS
+`--green` reader/hash/deformation baseline (#448-450) was not claimed.
+
+## #521 follow-up after merged #704: current scope of PR #700
+
+The earlier vertex error-policy draft and its 43 WR-258 native differences above
+are historical validation of that draft, not the current branch contract. Main
+#704's complete vertex implementation, regression, 70 end-tangent fixtures, shim,
+FFI and query-loop documentation are preserved byte for byte. The vertex error
+propagation change and its one regression were removed, as was the runner's
+angle-error normalization. All 43 formerly listed vertex cases now compare equal
+under the merged contract: the strict harness first rejected all 43 as stale
+passes, then they alone were removed and the full 5598-case vertex unit reran
+green. The 20 constant-segment fixtures remain matching parity coverage; they
+exercise zero tangents/angle failures, not failed GetEndTangent evaluation.
+
+Six remaining regressions cover edge reversal, loop UV corner evaluation, edge-use
+loop gaps and deviation, and healing classification/retry state. Their four kernel
+modules and the 20 fixture inputs are byte-identical to the original tested
+implementation. The four WR-263 healing differences remain explicit and partial:
+status 1040 is unchanged, and only the incomplete marker changes from 5 to 4
+(including gen0345's later snapshot). This was rechecked from raw native outputs.
+The earlier C++ WR-258 problem record remains valid; its altered Rust predicate
+policy is outside this follow-up.
+
+Current validation on `0cdc106a4a941c31be2f48402084dca3a72832f0`: fmt, default/native
+workspace Clippy with warnings denied, 2094 kernel unit tests, wasm, 48 runner
+tests, and five integration passes (one existing partial-sphere/torus case ignored)
+under the optimized difftest profile used by CI all pass. Fresh native 13-unit
+validation has 37684 cases: 37163 matching, six explicit known differences (four
+WR-263 healing markers, two existing main Rust/harness MoveSeam limitations),
+462 UNPORTED deferrals and 53 native guard rejections (37 UB-137 plus 16 existing
+input guards), zero unexpected failures. Twelve units come from the initial
+matrix; vertex was rerun strictly after removing the proven stale entries. No
+production source or fixture changed between those runs. The current main cache
+wiring is retained; old 6ec validation figures above retain their original base.
+No canonical CI pass or full macOS --green is claimed.
+
+
+Rejection-category clarification for the current PR #700 matrix: the 53 native
+rejections comprise 37 UB-137 crash traps, one HANG-39 input guard and
+15 missing-entity cases. Earlier references to the latter 16 as “input guards”
+were imprecise. No parity comparison ran for those rejected cases; none is counted
+as a matching result. The combined sixteen-fix matrix separately has 994 UNPORTED
+deferrals plus six `harness:offset-result-adapter` deferrals, and 95 rejections
+(37 crash traps, 25 other input guards, 18 construction failures, 15 missing
+entities). The recorded totals and zero-unexpected-failure results are unchanged.
+
 
 ## Status index (2026-10-23, main CI `e33985411`)
 
