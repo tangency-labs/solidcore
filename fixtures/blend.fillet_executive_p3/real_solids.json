@@ -1,0 +1,108 @@
+{
+  "cases": [
+    {
+      "name": "real-box-single-edge-radius-half",
+      "upstream_ref": "source/SM_API/src/SmApiBrep.cpp:2049",
+      "inputs": {
+        "real_solid": {
+          "dimensions": [
+            10,
+            20,
+            30
+          ],
+          "radius": 0.5,
+          "xsect": 1,
+          "continuity": 1,
+          "thumbweight": 1,
+          "edges": [
+            0
+          ]
+        }
+      }
+    },
+    {
+      "name": "real-box-prepared-actual-session",
+      "upstream_ref": "source/SMLib/src/SmFilletExecutive.cpp:720",
+      "inputs": {
+        "real_solid": {
+          "dimensions": [
+            10,
+            20,
+            30
+          ],
+          "radius": 0.5,
+          "xsect": 1,
+          "continuity": 1,
+          "thumbweight": 1,
+          "edges": [
+            0
+          ],
+          "checkpoint": "prepared"
+        }
+      }
+    },
+    {
+      "name": "real-box-corners-actual-session",
+      "upstream_ref": "source/SMLib/src/SmFilletExecutive.cpp:1834",
+      "inputs": {
+        "real_solid": {
+          "dimensions": [
+            10,
+            20,
+            30
+          ],
+          "radius": 0.5,
+          "xsect": 1,
+          "continuity": 1,
+          "thumbweight": 1,
+          "edges": [
+            0
+          ],
+          "checkpoint": "corners"
+        }
+      }
+    },
+    {
+      "name": "real-box-first_topology-actual-session",
+      "upstream_ref": "source/SMLib/src/SmFilletCorner.cpp:5990 (direct first corner after setup and creation)",
+      "inputs": {
+        "real_solid": {
+          "dimensions": [
+            10,
+            20,
+            30
+          ],
+          "radius": 0.5,
+          "xsect": 1,
+          "continuity": 1,
+          "thumbweight": 1,
+          "edges": [
+            0
+          ],
+          "checkpoint": "first_topology"
+        }
+      }
+    },
+    {
+      "name": "real-box-prepared-native-unknown-xsect-default",
+      "upstream_ref": "source/SM_API/src/SmApiBrep.cpp:2064",
+      "inputs": {
+        "real_solid": {
+          "dimensions": [
+            10,
+            20,
+            30
+          ],
+          "radius": 0.5,
+          "xsect": 99,
+          "continuity": 1,
+          "thumbweight": 1,
+          "edges": [
+            0
+          ],
+          "checkpoint": "prepared"
+        }
+      }
+    }
+  ]
+}
