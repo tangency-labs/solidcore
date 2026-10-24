@@ -3657,6 +3657,15 @@ meantime, whoever merges renumbers the new entry and every reference to it (here
 - **Severity:** memory leak; results unaffected.
 - **Rust port:** Faithful: the copies stay unreferenced in the caller's curve store and are not reported as deleted; after a failure the manager stays installed on the intersector.
 
+#### WR-209. A box face overlapping a cylinder by 1e-9..1e-6 mm collapses two intersection points into a tangent point; the union returns volume 0
+- **Location:** `source/SMLib/src/SmPlane.cpp:3939`-`3940` (`MakeNewPlaneEllipse`: `dH = dRad - smos_Sqrt(dRad*dRad - dDist*dDist*0.25); if (dH < dTol / 2.0) lXSectCount = 1;`), then `src/SmCone.cpp:3635`-`3648` (the curve is typed `SM_TC_TOUCHING`), `src/SmFace.cpp:11547`-`11573` (a touching curve is reduced to a point) and `src/SmCone.cpp:3365`-`3367` (the side-face tangent test only fires within about 1e-12).
+- **What happens:** When a circle crosses the boundary line of a plane face twice, the two crossings are merged into one tangent point whenever the sagitta `dH` is under `dTol / 2` (`dTol` = 5e-6). The chord length is ignored: with a chord of 3.1e-3 and `dH` = 1e-7 the arc between the two line ends is lost. The side face still returns two lines, so the intersection loop stays open and the added faces never enclose a solid region. `SmMerge::ManifoldBoolean` (`src/SmMerge.cpp:2510`) then returns SUCCESS with a void result.
+- **Trigger:** A hub cylinder (r 12) with rim and a first box spoke already unioned, a second box spoke whose inner face lies 1e-9, 1e-7 or 1e-6 mm inside the cylinder surface: status SUCCESS, volume 0.0000, `SmBrep::AssertValid()` false. At 1e-5 mm and above the volume is right and the body valid. A re-run found the failing band wider than first measured (it ends near 7e-6 mm), with a second mode between 2e-6 and 6.5e-6 mm that returns status 1001 and whose cause is not traced. The exact tangency (overlap 0) gives the right volume but fails `AssertValid()`; that has not been traced either.
+- **How found:** a hand-written C++ probe through SM_API (cylinders along Z, box, difference, union of rotated copies of the spoke one after another), a re-modelling of tangency-labs/solidcraft#3379, with instrumented copies of `SmPlane`/`SmCone`/`SmFace` in a scratch directory. Disabling the `if` at `SmPlane.cpp:3940` turns the silent volume 0 into a hard status 1001, so the collapse is necessary but not sufficient; the shell and region building after the open loop was not traced.
+- **Confirmed:** no (a hand-written probe, not a difftest case or fixture).
+- **Severity:** wrong result.
+- **Rust port:** Not ported yet (`boolean.merge_*`, `surface.plane`); the case is in `fixtures/solidcraft/3379-tangent-spokes-hub-ring.json` (#354).
+
 ### Healing
 
 #### WR-88. `BuildSampleSet` spaces the `v` samples of non-B-spline surfaces by array index
