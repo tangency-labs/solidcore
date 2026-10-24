@@ -1561,6 +1561,43 @@ pub trait FilletSolverOps: AsFilletSolverOps {
     /// The `SmFilletSolver` base, mutable.
     fn solver_mut(&mut self) -> &mut FilletSolver;
 
+    /// The selected offset surface; contexts can resolve an actual fillet geometry.
+    fn solver_surface(&self, rail: usize) -> Result<Option<&OffsetSurface>> {
+        Ok(self.solver().surface(rail)?.map(|slot| &slot.surface))
+    }
+
+    /// The same selected offset object for an in-place mutation.
+    fn solver_surface_mut(&mut self, rail: usize) -> Result<Option<&mut OffsetSurface>> {
+        Ok(self
+            .solver_mut()
+            .surface_mut(rail)?
+            .map(|slot| &mut slot.surface))
+    }
+
+    /// Rail intersection with the actual selected geometry available to derived
+    /// solvers. The default retains the existing context-free behavior.
+    #[allow(clippy::too_many_arguments)]
+    fn rail_edgeuse_intersect_on_geometry(
+        &mut self,
+        k: &Kernel,
+        _geometry: &mut FilletGeom,
+        b: &mut Brep,
+        rail_index: usize,
+        edgeuse: EdgeuseId,
+        guess: f64,
+        tsect: &mut TsectPnt,
+    ) -> Result<Option<f64>> {
+        FilletSolver::rail_edgeuse_intersect(
+            self.as_solver_ops(),
+            k,
+            b,
+            rail_index,
+            edgeuse,
+            guess,
+            tsect,
+        )
+    }
+
     /// `GetJacobianSize`: the base signals `SM_ERR` ("Called pure virtual method") and
     /// returns 0.
     ///
@@ -2120,7 +2157,10 @@ impl<'a> RailUvCurveIntersectEnfo<'a> {
 
         let mut num_equations = 2;
         let mut num_parameters = 3;
-        let surface1 = base_id(self.solver.solver(), self.rail_index)?;
+        let surface1 = self
+            .solver
+            .solver_surface(self.rail_index)?
+            .map(|surface| surface.base_id);
         let mut load = JacobianLoad {
             rail_index: self.rail_index,
             surface1,

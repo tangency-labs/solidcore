@@ -1209,7 +1209,7 @@ impl FilletSolver {
         tsect: &mut TsectPnt,
     ) -> Result<Option<f64>> {
         // check state - need both offset surfaces
-        if !has_surface(ops.solver(), 0)? || !has_surface(ops.solver(), 1)? {
+        if ops.solver_surface(0)?.is_none() || ops.solver_surface(1)?.is_none() {
             return Err(sm_err());
         }
         let rail_srf = srf_of_rail(rail_index)?;
@@ -1234,9 +1234,8 @@ impl FilletSolver {
         set_interval(&mut intervals, 0, uv_trim.natural_interval());
 
         let base = ops
-            .solver()
-            .surface(rail_index)?
-            .map(|slot| slot.surface.base_surface().clone())
+            .solver_surface(rail_index)?
+            .map(|surface| surface.base_surface().clone())
             .ok_or_else(|| invalid("no offset surface"))?;
         let mut domain = base.natural_uv_domain();
         // virtual SetupOffsetExtension: dispatched on the solver's kind
@@ -1259,7 +1258,10 @@ impl FilletSolver {
         let surf1_index = 1; // UV values of Surface1
 
         // given current inputs - place a good guess for upcoming solve in sGuessT
-        let mut surface1 = take_surface(ops.solver(), rail_index)?;
+        let mut surface1 = ops
+            .solver_surface(rail_index)?
+            .cloned()
+            .ok_or_else(|| invalid("no offset surface"))?;
         let loaded = ops.load_initial_values(
             k,
             Some(b),
@@ -1271,7 +1273,9 @@ impl FilletSolver {
             &mut periodicities,
             &mut guess_t,
         );
-        put_surface(ops.solver_mut(), rail_index, surface1)?;
+        if let Some(selected) = ops.solver_surface_mut(rail_index)? {
+            *selected = surface1;
+        }
         let loaded = loaded?;
 
         let side_tol = edge::tolerance(

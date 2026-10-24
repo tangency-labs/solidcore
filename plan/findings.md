@@ -19037,6 +19037,29 @@ round's complete input and 4125.906 mm net; the other rounds' tiny lower v exten
 bounds can differ in their last bits (at most 7e-20 in the checked run). The saved
 JSON inputs fix every bit for differential testing.
 
+## blend.fillet_geom p2-p5: corner accessors wired through CornerLookup (2026-10-24, PR #747)
+
+The `UNPORTED(blend.fillet_corner_p1)` stubs of the fillet vertex and edge calculators
+(`GetFilletedVertex`, `GetSetBackDist`, `GetCornerType`, `IsBevelCorner`,
+`IsBlendingCorner`, `IsCalcAsConstRad`, `IsExtendedSurfacePatch`, `GetFilletEdges`,
+`GetThisApproxTol3d`, `GetExtendedSurface`, `TestRailRailInterpolationCurve`) now read the
+`FilletCorner` record through `blend::fillet_geom::p1::CornerLookup`: the executive's corner
+table (indexed by `FilletCornerId.0`), or the running corner for
+`SmFilletCorner::CalcCornerVertGeom` / `CalcCornerEdgeGeom` (`CornerLookup::of_corner`,
+which also carries the executive's extended surfaces). A caller with no corner store
+(`CornerLookup::default()`) gets `Unported` tagged `blend.fillet_executive_p1`, which owns
+`m_vFilletCorners`: the fillet solvers' `TopologySplit` (`AddFilletVertex`,
+`GetCornerType`, `MakeRailEdgeuse`'s corner of a non-closed rail) and the rollover
+recovery's `CalcRailIntEdgeuse`. Those paths already stopped at
+`SmFilletExecutive::GetFilletCornerOfVertex` (same unit) or were deferred before; the tag
+moves from `blend.fillet_corner_p1` (fully ported) to the unit that owns the store.
+`RecordFilletError` (`blend.fillet_corner_p2`) still needs the executive and its object
+identities and stays stubbed (entry "RecordFilletError call sites").
+
+Corner types: the shims' stand-in corners (`blend_fillet_geom_p3.cpp`'s `ShimCorner`, the
+new `P2Corner` of `blend_fillet_geom_p2_static.inc`) are `SM_FCR_UNKNOWN`, which no
+`FilletCornerKind` has; the runners use `OneByOne` records. On the compared paths the type
+is only tested against `SM_FCR_N_x_N_CONCAVE`, which neither is. No disagreement.
 ## intersect.topology_solver_p2: sm_GetFaceSilhouettes trims through the face (2026-10-24)
 
 - `face_silhouettes` (`sm_GetFaceSilhouettes`) now calls the ported
@@ -19151,6 +19174,131 @@ other operand in the merge editing stages (`boolean.merge_p4` /
 of being kept reversed as a void. Listed in `known_mismatches.toml`; the offset
 port itself is not involved after the shell is built.
 
+
+### Real-solid fillet checkpoint: corner vertices are outside the pseudo owning list (2026-10-24)
+
+`blend.fillet_executive_p3`, fixture `real_solids.json`, case
+`real-box-first_topology-actual-session`: a 10×20×30 box, edge 0, radius 0.5.
+Actual shared setup and corner creation matched. The first direct Nx1 topology
+operation initially exposed seven integer mismatches: native `GetVertices`
+returned only the pseudo shell placeholder (1), while Rust also linked the two
+corner-owned fillet vertices (3). Their owning-list labels likewise differed.
+
+The producer now allocates those vertices into the arena without linking them
+into the B-rep's owning list. All original checks remain, with additional actual
+FV→corner, edge→corner and edgeuse→fillet-geometry backlinks. Four paired setup/
+corner/topology fixtures pass exactly; the full API fixture remains deferred.
+The direct topology checkpoint stops before vertex geometry and omits smoothing
+on both sides; it does not claim the full executive prelude or a finished fillet.
+### 2026-10-24 — Nx1 corner topology co-port for the live fillet session
+
+The real box-edge session creates two `NByOne` corners, then reaches the missing
+`MakeCornerTopology` producer. Neither `SmFilletNx1Corner::MakeCornerTopology` nor
+`sm_FindSurfaceExtensionDistAtCorner` is assigned in `harness/callgraph/units.json`.
+This follow-up co-ports the ordinary Nx1 producer and its three static side-edge /
+convexity helpers into `blend::fillet_corner::topology`, tracked with corner p3.
+It borrows the actual target, pseudo-B-rep, loaded solver and corner identity.
+The first real-box topology test retains two classified corner vertices and one
+end rib bound to the actual target end face; native paired-prefix proof is separate.
+
+Mixed-convexity extension remains unported at the actual missing
+`sm_FindSurfaceExtensionDistAtCorner` call, after the native two-vertex / rail prefix.
+Its `blend.fillet_corner_p1` tracking label is an explicit proposed home for that
+unassigned helper, not a claim of prior callgraph ownership. Keep this continuation
+visible and both corner units partial. No fake radius, solver table or extended
+surface is supplied. The native pseudo owning-vertex list differs from corner-owned
+fillet vertices; compare the two traversals separately.
+
+## Fillet session: retained solver reaches geometry-owned offset-surface boundary
+
+The actual constant-radius box-edge setup (`10 x 20 x 30`, first owning edge,
+radius `0.5`, circular/G1) now reaches `CalcCornerVertGeom` through the production
+session, after ordered parameter setup, corner creation and first ordinary Nx1
+topology. The retained concrete solver runs through the live rail provider; it
+returns `Unported("SmFilletGeom::GetOffsetSurface", "blend.fillet_geom_p1")` when
+native-order `m_pFGForSurfaces` selects the real geometry. `FilletSolver::surface`
+and `surface_mut` do not yet resolve that geometry-owned slot.
+
+The normal native full-API box fixture succeeds; a separate direct vertex-stage
+comparison is being added. This is a missing live-object context boundary, not
+successful end-to-end execution. Resolution must preserve actual geometry-owned
+offset surfaces, solver fallback and write-through semantics (`SmFilletSolver.cpp`
+130–162; `SmFilletGeom.cpp` 9672–9680). Clearing the selected geometry, copying a
+solver base, or swapping unrelated surface state would conceal the missing path.
+
+### Real fillet first-corner vertex calculation reaches offset-surface context (2026-10-24)
+
+The additive `real-box-first-vertex-geometry-actual-session` case runs shared
+parameter setup, actual corner creation, direct first Nx1 topology, then that
+corner's actual vertex calculation on both sides. It does not claim the complete
+executive prelude. Native returns success and processes both fillet vertices at
+(9.5, 0, 30) and (10, 0, 29.5), with zero tolerance and original parameters 9.5
+and 29.5. Rust reaches genuine `SmFilletGeom::GetOffsetSurface` in
+`blend.fillet_geom_p1`; the case remains deferred, with no fabricated result.
+
+The snapshot reads initialized fillet-vertex status/processed fields and samples
+geometry only after processing. It never reads the uninitialized native corner
+status or unevaluated pseudo-edge geometry. Full p3: 297 cases, 249 value passes,
+48 deferred, zero failures. All five earlier real-solid cases retain their full
+CPP and Rust output records byte-for-byte; no earlier record fields were removed.
+
+## Retained constant-radius geometry offsets (2026-10-24)
+
+The real box session reached `SmFilletGeom::GetOffsetSurface` while native calculated
+both first-corner vertices. The context-free solver getter could not resolve the
+selected fillet geometry. A borrowed constant-radius rail context now reads and
+mutates that actual geometry's offsets, including nested initial-value extension
+state and Jacobian offset resets. The concrete solver and its separate offsets
+remain retained; selected geometry is restored after success or failure. No surface
+swap, selected-FG clearing, cloned solver table or invented offset identity is used.
+The six real-box checkpoints now give five exact value passes, zero failures and
+one later full-API deferral (`blend.fillet_executive_p1`); maximum relative error is
+zero. This proves direct first-corner vertex geometry, not a full fillet result.
+
+The ordinary geometry is `SM_FG_DEFAULT`. The contextual tangent-rollover guess in
+`SmConstantRadiusFS::LoadInitialValues` (`SmFilletStandardSolver.cpp:493–537`) still
+needs actual pseudo-B-rep vertex-use context; that genuine branch remains explicitly
+Unported in the borrowed provider. Other concrete solver kinds keep their existing
+missing-context behavior. Existing context-free APIs and fixture coverage remain.
+
+## Nx1 rail endpoint orientation default (2026-10-24)
+
+The actual combined two-corner component caught six topology differences that
+vertex positions alone did not expose: the new Nx1 producer passed `Same` to
+MakeRailEdgeuse, while native omits the argument and defaults to `Unknown`
+(SmFilletGeom.h:604; SmFilletCorner.cpp:6092). Both endpoint uses were inserted at
+the front of the rail list, replacing the observed first endpoint. The producer
+now passes Unknown so the existing helper derives orientation from the actual
+original corner vertex. No shared edge-insertion algorithm or harness field changed.
+The same seven retained native/Rust fixtures now give six exact passes, zero
+failures and one later full-API deferral; all four vertex records and full topology
+agree, maximum relative error zero. The first failing comparison is retained as
+evidence that endpoint orientation/list order checks detect this regression.
+
+### Real two-corner fillet stage catches forced rail orientation (2026-10-24)
+
+`real-box-corner-vertices-component-actual-session` runs the shared production
+corner loop and its native counterpart, with smoothing omitted on both sides.
+All four actual vertex geometries and flags matched, but six directed rail
+integers differed: the Nx1 producer passed `Same` where the native omitted
+argument defaults to `Unknown` (SmFilletCorner.cpp6092; SmFilletGeom.h604).
+This forced both ends to insert at the front of each rail. Using the existing
+orientation inference fixes the identical fixture with every field retained.
+Seven real-box cases now give six exact value passes and one full-API deferral.
+The earlier direct vertex checkpoint now passes through the actual borrowed
+offset-surface provider. No finished fillet or mass parity is claimed.
+
+Full p3 after this component: 298 cases, 251 value passes, 47 deferred, zero
+failures, max_rel_err=0. The remaining deferrals belong to executive p1.
+
+### Retained corner-stage capability boundary
+
+The shared Session corner-vertex component currently dispatches ordinary `NByOne`
+corner topology/geometry. Other valid concrete corner contexts and unsupported
+concrete rail-solver contexts return `Unported(blend.fillet_executive_p1)` at the
+live virtual-dispatch seam; they are not converted into an ordinary native fillet
+failure. The explicitly named direct Nx1 helpers still validate their own type.
+This slice makes no cylinder, multi-edge, variable-radius or complete API claim.
 ## boolean.api_brep: tiny-box Booleans reach the UB-175 teardown once edge definitions imprint into faces
 
 Unit `boolean.api_brep`, cases `gen0059` (`with_options`, operation 3, boxes of

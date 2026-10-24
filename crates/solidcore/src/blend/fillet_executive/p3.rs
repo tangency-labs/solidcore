@@ -963,6 +963,142 @@ pub struct ContextMark {
     pub mark_type: crate::geom::context::MarkType,
 }
 
+/// Live operations consumed by the executive's ordered corner-vertex stage.
+/// Full executive adapters delegate these operations without changing behavior.
+pub trait CornerVertexAccess<O: ClassObject + SolutionObject + Ord> {
+    /// Construct actual corner topology.
+    ///
+    /// # Errors
+    /// Actual object resolution or operation failures.
+    fn vertices_make_topology(
+        &mut self,
+        k: &mut Kernel,
+        corner: O,
+        executive: &mut FilletExecutive<O>,
+    ) -> Result<()>;
+    /// Actual corner metadata for failure reporting.
+    ///
+    /// # Errors
+    /// Actual object resolution or operation failures.
+    fn vertices_error_info(
+        &self,
+        corner: O,
+        executive: &FilletExecutive<O>,
+    ) -> Result<CornerView<O>>;
+    /// Actual blending predicate.
+    ///
+    /// # Errors
+    /// Actual object resolution or operation failures.
+    fn vertices_is_blending(&self, corner: O) -> Result<bool>;
+    /// Actual tangent predicate.
+    ///
+    /// # Errors
+    /// Actual object resolution or operation failures.
+    fn vertices_is_tangent(&self, corner: O) -> Result<bool>;
+    /// Ordered actual corner solvers, preserving native lookup behavior.
+    ///
+    /// # Errors
+    /// Actual object resolution or operation failures.
+    fn vertices_solvers(&self, corner: O, executive: &FilletExecutive<O>) -> Result<Vec<O>>;
+    /// Actual edge of the solver.
+    ///
+    /// # Errors
+    /// Actual object resolution or operation failures.
+    fn vertices_solver_edge(&self, solver: O) -> Result<O>;
+    /// Actual edge curve endpoints.
+    ///
+    /// # Errors
+    /// Actual object resolution or operation failures.
+    fn vertices_curve_ends(&self, k: &Kernel, edge: O) -> Result<(Point3, Point3)>;
+    /// Actual filleted vertex, including native null.
+    ///
+    /// # Errors
+    /// Actual object resolution or operation failures.
+    fn vertices_corner_vertex(&self, corner: O) -> Result<Option<O>>;
+    /// Actual target vertex point.
+    ///
+    /// # Errors
+    /// Actual object resolution or operation failures.
+    fn vertices_point(&self, vertex: O) -> Result<Point3>;
+    /// Actual corner approximation tolerance.
+    ///
+    /// # Errors
+    /// Actual object resolution or operation failures.
+    fn vertices_approx_tolerance(&self, corner: O) -> Result<f64>;
+    /// Write the actual constant-radius calculation flag.
+    ///
+    /// # Errors
+    /// Actual object resolution or operation failures.
+    fn vertices_set_constant(&mut self, corner: O, value: bool) -> Result<()>;
+    /// Calculate actual corner vertex geometry.
+    ///
+    /// # Errors
+    /// Actual object resolution or operation failures.
+    fn vertices_calculate(
+        &mut self,
+        k: &mut Kernel,
+        corner: O,
+        executive: &mut FilletExecutive<O>,
+    ) -> Result<()>;
+}
+
+impl<O, A> CornerVertexAccess<O> for A
+where
+    O: ClassObject + SolutionObject + Ord,
+    A: ExecutiveAccess<O> + ?Sized,
+{
+    fn vertices_make_topology(
+        &mut self,
+        k: &mut Kernel,
+        corner: O,
+        executive: &mut FilletExecutive<O>,
+    ) -> Result<()> {
+        ExecutiveAccess::make_corner_topology(self, k, corner, executive)
+    }
+    fn vertices_error_info(
+        &self,
+        corner: O,
+        executive: &FilletExecutive<O>,
+    ) -> Result<CornerView<O>> {
+        ExecutiveAccess::corner_error_info(self, corner, executive)
+    }
+    fn vertices_is_blending(&self, corner: O) -> Result<bool> {
+        ExecutiveAccess::is_blending_corner(self, corner)
+    }
+    fn vertices_is_tangent(&self, corner: O) -> Result<bool> {
+        ExecutiveAccess::is_tangent_corner(self, corner)
+    }
+    fn vertices_solvers(&self, corner: O, executive: &FilletExecutive<O>) -> Result<Vec<O>> {
+        ExecutiveAccess::corner_solvers(self, corner, executive)
+    }
+    fn vertices_solver_edge(&self, solver: O) -> Result<O> {
+        ExecutiveAccess::solver_edge(self, solver)
+    }
+    fn vertices_curve_ends(&self, k: &Kernel, edge: O) -> Result<(Point3, Point3)> {
+        ExecutiveAccess::edge_curve_ends(self, k, edge)
+    }
+    fn vertices_corner_vertex(&self, corner: O) -> Result<Option<O>> {
+        ExecutiveAccess::corner_vertex(self, corner)
+    }
+    fn vertices_point(&self, vertex: O) -> Result<Point3> {
+        ExecutiveAccess::vertex_point(self, vertex)
+    }
+    fn vertices_approx_tolerance(&self, corner: O) -> Result<f64> {
+        ExecutiveAccess::corner_approx_tolerance(self, corner)
+    }
+    fn vertices_set_constant(&mut self, corner: O, value: bool) -> Result<()> {
+        ExecutiveAccess::set_calc_as_const_rad(self, corner, value)
+    }
+    fn vertices_calculate(
+        &mut self,
+        k: &mut Kernel,
+        corner: O,
+        executive: &mut FilletExecutive<O>,
+    ) -> Result<()> {
+        ExecutiveAccess::calc_corner_vertices(self, k, corner, executive)
+    }
+}
+
 /// The `SmStitch` switches passed to [`ExecutiveAccess::do_stitching`]. `Default` is
 /// the configuration `DoFilleting` builds.
 #[derive(Debug, Clone, Copy)]
@@ -1054,6 +1190,10 @@ impl<O: ClassObject + SolutionObject + Ord> FilletExecutive<O> {
         comment: &str,
     ) -> Result<()> {
         let view = access.corner_error_info(corner, self)?;
+        self.record_corner_failure(view, comment)
+    }
+
+    fn record_corner_failure(&mut self, view: CornerView<O>, comment: &str) -> Result<()> {
         self.error.code = 3; // SM_FILERR_VERTEX_PROBLEM
         self.error.status = 2; // SM_FIL_FAILURE
         self.error.corner_type = view.corner_type;
@@ -1081,6 +1221,73 @@ impl<O: ClassObject + SolutionObject + Ord> FilletExecutive<O> {
         Err(failure())
     }
 
+    /// Build topology and then vertex geometry for each corner in native order.
+    ///
+    /// This is the corner-vertex component of `CreateFilletBrep`; its smooth-sequence
+    /// prelude and subsequent topology adjustment are separate operations.
+    ///
+    /// # Errors
+    /// Actual lookup/operation failures, or the native corner failure with retained
+    /// error metadata. Genuine missing dependencies propagate.
+    pub fn create_corner_vertices(
+        &mut self,
+        k: &mut Kernel,
+        access: &mut impl CornerVertexAccess<O>,
+    ) -> Result<()> {
+        let mut index = 0;
+        while let Some(corner) = self.corners.get(index).copied() {
+            if ignore(access.vertices_make_topology(k, corner, self))?.is_none() {
+                return self.corner_vertex_failure(
+                    access,
+                    corner,
+                    "Fillet Corner Error: Unable to Make Topology",
+                );
+            }
+            let mut as_constant = access.vertices_is_blending(corner)?;
+            if as_constant && access.vertices_is_tangent(corner)? {
+                let solvers = access.vertices_solvers(corner, self)?;
+                if solvers.len() == 2 {
+                    let solver = solvers
+                        .first()
+                        .copied()
+                        .ok_or(invalid("missing first solver"))?;
+                    let edge = access.vertices_solver_edge(solver)?;
+                    let (start, end) = access.vertices_curve_ends(k, edge)?;
+                    let vertex = access
+                        .vertices_corner_vertex(corner)?
+                        .ok_or(invalid("null tangent corner vertex"))?;
+                    let point = access.vertices_point(vertex)?;
+                    let distance1 = start.distance(point);
+                    let distance2 = end.distance(point);
+                    let tolerance = 2.0 * access.vertices_approx_tolerance(corner)?;
+                    if distance1 > tolerance && distance2 > tolerance {
+                        as_constant = false;
+                    }
+                }
+            }
+            access.vertices_set_constant(corner, as_constant)?;
+            if ignore(access.vertices_calculate(k, corner, self))?.is_none() {
+                return self.corner_vertex_failure(
+                    access,
+                    corner,
+                    "Fillet Corner Error: Unable to Compute Geometry",
+                );
+            }
+            index += 1;
+        }
+        Ok(())
+    }
+
+    fn corner_vertex_failure(
+        &mut self,
+        access: &impl CornerVertexAccess<O>,
+        corner: O,
+        comment: &str,
+    ) -> Result<()> {
+        let view = access.vertices_error_info(corner, self)?;
+        self.record_corner_failure(view, comment)
+    }
+
     /// Construct and stitch the fillet shell, preserving every stage after each
     /// missing dependency call. `error_out` is assigned only on success.
     pub fn create_fillet_brep(
@@ -1097,47 +1304,7 @@ impl<O: ClassObject + SolutionObject + Ord> FilletExecutive<O> {
         })?;
         ignore(access.process_smooth_edge_sequences(k, self))?;
 
-        let mut index = 0;
-        while let Some(corner) = self.corners.get(index).copied() {
-            if ignore(access.make_corner_topology(k, corner, self))?.is_none() {
-                return self.corner_failure(
-                    access,
-                    corner,
-                    "Fillet Corner Error: Unable to Make Topology",
-                );
-            }
-            let mut as_constant = access.is_blending_corner(corner)?;
-            if as_constant && access.is_tangent_corner(corner)? {
-                let solvers = access.corner_solvers(corner, self)?;
-                if solvers.len() == 2 {
-                    let solver = solvers
-                        .first()
-                        .copied()
-                        .ok_or(invalid("missing first solver"))?;
-                    let edge = access.solver_edge(solver)?;
-                    let (start, end) = access.edge_curve_ends(k, edge)?;
-                    let vertex = access
-                        .corner_vertex(corner)?
-                        .ok_or(invalid("null tangent corner vertex"))?;
-                    let point = access.vertex_point(vertex)?;
-                    let distance1 = start.distance(point);
-                    let distance2 = end.distance(point);
-                    let tolerance = 2.0 * access.corner_approx_tolerance(corner)?;
-                    if distance1 > tolerance && distance2 > tolerance {
-                        as_constant = false;
-                    }
-                }
-            }
-            access.set_calc_as_const_rad(corner, as_constant)?;
-            if ignore(access.calc_corner_vertices(k, corner, self))?.is_none() {
-                return self.corner_failure(
-                    access,
-                    corner,
-                    "Fillet Corner Error: Unable to Compute Geometry",
-                );
-            }
-            index += 1;
-        }
+        self.create_corner_vertices(k, access)?;
         let mut index = 0;
         while let Some(corner) = self.corners.get(index).copied() {
             if !access.check_degeneracy(k, corner, self)?

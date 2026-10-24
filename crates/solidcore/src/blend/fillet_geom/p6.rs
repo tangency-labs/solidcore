@@ -81,7 +81,7 @@
 
 use crate::blend::fillet_corner::p3::FilletCorner;
 use crate::blend::fillet_custom_solver::OffsetSurface;
-use crate::blend::fillet_solver::p1::FilletSolver;
+use crate::blend::fillet_solver::p1::{FilletSolver, FilletSolverOps};
 use crate::curve::curve::p2::BSPLINE_CURVE_TYPE;
 use crate::curve::curve::Curve;
 use crate::curve::hermite_curve::HermiteCurve;
@@ -1694,6 +1694,35 @@ impl FilletBrep {
         guess_edge_parameter: f64,
         tsect: &mut TsectPnt,
     ) -> Result<Option<f64>> {
+        self.rail_edgeuse_intersect_with_solver_ops(
+            k,
+            g,
+            solver,
+            target,
+            rail_index,
+            edgeuse,
+            guess_edge_parameter,
+            tsect,
+        )
+    }
+
+    /// Intersect using the actual derived solver, restoring its surface geometry
+    /// after either success or failure.
+    ///
+    /// # Errors
+    /// As [`Self::rail_edgeuse_intersect`].
+    #[allow(clippy::too_many_arguments)]
+    pub fn rail_edgeuse_intersect_with_solver_ops(
+        &self,
+        k: &Kernel,
+        g: FilletGeomId,
+        solver: &mut dyn FilletSolverOps,
+        target: &mut Brep,
+        rail_index: usize,
+        edgeuse: EdgeuseId,
+        guess_edge_parameter: f64,
+        tsect: &mut TsectPnt,
+    ) -> Result<Option<f64>> {
         // NER( pFS )
         if self.geom(g)?.fillet_solver().is_none() {
             return Err(SolidError::null_pointer(OP_RAIL_EU));
@@ -1701,9 +1730,9 @@ impl FilletBrep {
 
         // Tell our FilletSolver to use our surfaces.
         // If there's anything there already, restore it when we're done.
-        let saved_fg = solver.fillet_geom_for_surfaces();
+        let saved_fg = solver.solver().fillet_geom_for_surfaces();
 
-        solver.set_fillet_geom_for_surfaces(Some(g));
+        solver.solver_mut().set_fillet_geom_for_surfaces(Some(g));
 
         let stat = FilletSolver::rail_edgeuse_intersect(
             solver,
@@ -1715,9 +1744,38 @@ impl FilletBrep {
             tsect,
         );
 
-        solver.set_fillet_geom_for_surfaces(saved_fg);
+        solver.solver_mut().set_fillet_geom_for_surfaces(saved_fg);
 
         stat
+    }
+
+    /// Intersect with access to the actual geometry's mutable offset objects.
+    ///
+    /// # Errors
+    /// As [`Self::rail_edgeuse_intersect_with_solver_ops`].
+    #[allow(clippy::too_many_arguments)]
+    pub fn rail_edgeuse_intersect_with_geometry(
+        &mut self,
+        k: &Kernel,
+        g: FilletGeomId,
+        solver: &mut dyn FilletSolverOps,
+        target: &mut Brep,
+        rail_index: usize,
+        edgeuse: EdgeuseId,
+        guess: f64,
+        tsect: &mut TsectPnt,
+    ) -> Result<Option<f64>> {
+        let geometry = self.geom_mut(g)?;
+        if geometry.fillet_solver().is_none() {
+            return Err(SolidError::null_pointer(OP_RAIL_EU));
+        }
+        let saved = solver.solver().fillet_geom_for_surfaces();
+        solver.solver_mut().set_fillet_geom_for_surfaces(Some(g));
+        let result = solver.rail_edgeuse_intersect_on_geometry(
+            k, geometry, target, rail_index, edgeuse, guess, tsect,
+        );
+        solver.solver_mut().set_fillet_geom_for_surfaces(saved);
+        result
     }
 
     /// `SmFilletGeom::TrimOriginalSurfaces(rFilletBrepFacesKept, rOriginalFacesDelete,
