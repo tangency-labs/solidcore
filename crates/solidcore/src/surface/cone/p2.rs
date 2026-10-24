@@ -39,6 +39,11 @@
 //! - **NURB.** As in `surface::cone::p1`, the cone is expected to have its NURB
 //!   ([`Cone::make_nurb`]); upstream makes a missing one inside `const` queries.
 //!   `Notify` (attribute copying in the recogniser) has no equivalent.
+//! - **Cylinder rebuild (#713).** An `SmCylinder` keeps a zero semi-angle. Its
+//!   recovered end radii must agree within `EFF_ZERO_SQRT * (1 + bottom_radius)`;
+//!   their mean becomes its radius. A larger taper returns `SM_ERR` before editing
+//!   the analytic state. The pinned C++ instead assigns a nonzero semi-angle to
+//!   cylinders. Ordinary `SmCone` objects retain upstream's radius/angle rules.
 //! - **Recursion.** None of these functions recurses.
 //! - **Debug code.** The `SM_DEBUG_CODE` checks and drawing are omitted.
 
@@ -689,14 +694,17 @@ impl Cone {
     /// (`RebuildSTEPFromNURBParameters`): the circles at both ends of the linear
     /// direction (tested as [`Self::is_nurb_surface_cone`] does with the scale `1000`,
     /// the corner points evaluated on the cone, without the knot and middle circle
-    /// tests) give the semi-angle (kept for equal radii), base radius, inside-out flag,
-    /// placement (the end circle's frame), STEP domain and a new generator line over
-    /// the NURB's linear interval; the polar converter is rebuilt before the generator
-    /// is replaced.
+    /// tests) give the semi-angle (kept for equal radii on cones), base radius,
+    /// inside-out flag, placement (the end circle's frame), STEP domain and a new
+    /// generator line over the NURB's linear interval; the polar converter is rebuilt
+    /// before the generator is replaced.
+    /// Cylinders require end radii equal within `EFF_ZERO_SQRT * (1 + bottom_radius)`;
+    /// they use the mean radius and an exactly zero semi-angle.
     ///
     /// # Errors
     ///
-    /// `SM_ERR` when the NURB is no longer a cone; those of the iso curves.
+    /// `SM_ERR` when the NURB is no longer a cone, or a cylinder's radii differ
+    /// beyond the reconstruction tolerance; those of the iso curves.
     pub fn rebuild_step_from_nurb_parameters(&mut self, k: &Kernel) -> Result<()> {
         // check m_pNurb - a degree 2 rational surface in at least 1 direction
         let deg_u = self.rev.base.degree(SurfParamType::U);
@@ -751,7 +759,7 @@ impl Cone {
         };
 
         // classify the top and bottom isoParameter curves (SmBSplineSurface's)
-        let Some((mut top, bot)) = end_circles(
+        let Some((mut top, mut bot)) = end_circles(
             k,
             &self.rev.base,
             sweep_iso_param,
@@ -794,8 +802,18 @@ impl Cone {
         // (upstream also computes the STEP Y axis from the top frame's X axis here;
         // it is unused)
 
-        // when top and bot radius values are nearly equal - make them exactly equal
-        if (bot.radius - top.radius).abs() < EFF_ZERO * (1.0 + bot.radius) {
+        // A cylinder's class must survive roundoff when recovering its end circles
+        // from the NURB (#713). Larger edits no longer represent that analytic type.
+        if self.is_cylinder_class() {
+            if (bot.radius - top.radius).abs() > EFF_ZERO_SQRT * (1.0 + bot.radius) {
+                return Err(SolidError::sm_err(OP_REBUILD));
+            }
+            let radius = (bot.radius + top.radius) / 2.0;
+            bot.radius = radius;
+            top.radius = radius;
+            self.semi_angle_deg = 0.0;
+        } else if (bot.radius - top.radius).abs() < EFF_ZERO * (1.0 + bot.radius) {
+            // Keep upstream's stricter equality test for ordinary cones.
             top.radius = bot.radius;
         }
 
@@ -1201,6 +1219,143 @@ mod tests {
         cone.rebuild_step_from_nurb_parameters(&k).unwrap();
         assert!((cone.base_radius() - before.base_radius()).abs() < 1e-9);
         assert!((cone.semi_angle_deg() - before.semi_angle_deg()).abs() < 1e-7);
+    }
+
+    // Edit the actual homogeneous NURB net, as SwapUV/canonicalisation can do,
+    // while retaining the object's SmCylinder class and its old analytic state.
+    fn edit_last_radius(cone: &mut Cone, factor: f64) {
+        let swap = cone.rev().swap_uv();
+        let s = cone.base_mut().get_or_create_gw_nurb().unwrap();
+        let (n, m) = (s.n(), s.m());
+        for i in 0..=n {
+            for j in 0..=m {
+                if if swap { i == n } else { j == m } {
+                    let p = s.cpt_mut(i, j).unwrap();
+                    p.x *= factor;
+                    p.y *= factor;
+                }
+            }
+        }
+    }
+
+    fn edited_cylinder(k: &Kernel, radius: f64, top: f64, swap: bool, inside: bool) -> Cone {
+        let mut c = Cone::new_cylinder_bounded(
+            Vec3::ZERO,
+            Vec3::X,
+            Vec3::Y,
+            radius,
+            0.0,
+            360.0,
+            3.0,
+            swap,
+            inside,
+            false,
+        );
+        c.make_nurb(k).unwrap();
+        edit_last_radius(&mut c, top / radius);
+        c
+    }
+
+    #[test]
+    fn rebuild_cylinder_roundoff_preserves_zero_semi_angle() {
+        let k = kernel();
+        // The radii recovered in issue #713, plus both sides of the rounding
+        // allowance at different model scales and in both parameter directions.
+        for (radius, top) in [(9.0000000000985, 9.0000000000757)].into_iter().chain(
+            [0.009, 9.0, 90_000.0]
+                .into_iter()
+                .flat_map(|r| [-0.5, 0.5].map(|sign| (r, r + sign * EFF_ZERO_SQRT * (1.0 + r)))),
+        ) {
+            for swap in [false, true] {
+                for inside in [false, true] {
+                    let mut c = edited_cylinder(&k, radius, top, swap, inside);
+                    c.rebuild_step_from_nurb_parameters(&k).unwrap();
+                    assert!(c.is_cylinder_class());
+                    assert_eq!(c.semi_angle_deg(), 0.0, "{radius} {top} {swap} {inside}");
+                    let mean = (radius + top) / 2.0;
+                    assert!((c.base_radius() - mean).abs() < 1e-12 * (1.0 + mean));
+                    assert_eq!(c.bot_radius(), c.top_radius());
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn rebuild_cylinder_rejects_a_taper_before_changing_analytic_state() {
+        let k = kernel();
+        for radius in [0.009, 9.0, 90_000.0] {
+            for sign in [-2.0, 2.0] {
+                for swap in [false, true] {
+                    for inside in [false, true] {
+                        let top = radius + sign * EFF_ZERO_SQRT * (1.0 + radius);
+                        let mut c = edited_cylinder(&k, radius, top, swap, inside);
+                        let before = c.clone();
+                        assert!(c.rebuild_step_from_nurb_parameters(&k).is_err());
+                        assert_eq!(c.base_radius(), before.base_radius());
+                        assert_eq!(c.semi_angle_deg(), before.semi_angle_deg());
+                        assert_eq!(c.rev().position(), before.rev().position());
+                        assert_eq!(c.rev().step_uv_domain(), before.rev().step_uv_domain());
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn rebuild_shallow_cone_keeps_its_nonzero_angle() {
+        let k = kernel();
+        for sign in [-0.5, 0.5] {
+            let radius = 9.0;
+            let top = radius + sign * EFF_ZERO_SQRT * (1.0 + radius);
+            let mut c = Cone::new_bounded(
+                Vec3::ZERO,
+                Vec3::X,
+                Vec3::Y,
+                radius,
+                top,
+                0.0,
+                360.0,
+                3.0,
+                false,
+                false,
+                false,
+            );
+            c.make_nurb(&k).unwrap();
+            assert!(!c.is_cylinder_class());
+            c.rebuild_step_from_nurb_parameters(&k).unwrap();
+            let expected = (top - radius).atan2(3.0) * 180.0 / PI;
+            assert!((c.semi_angle_deg() - expected).abs() < 1e-12);
+            assert_ne!(c.semi_angle_deg(), 0.0);
+        }
+    }
+
+    #[test]
+    fn rebuild_cylinder_small_arc_clears_a_stale_semi_angle() {
+        let k = kernel();
+        for swap in [false, true] {
+            for inside in [false, true] {
+                let mut c = Cone::new_cylinder_bounded(
+                    Vec3::ZERO,
+                    Vec3::X,
+                    Vec3::Y,
+                    9.0,
+                    0.0,
+                    360.0 / 256.0,
+                    3.0,
+                    swap,
+                    inside,
+                    false,
+                );
+                c.make_nurb(&k).unwrap();
+                // An earlier buggy rebuild can leave this angle even after the
+                // NURB is restored to an exact cylinder. Equal radii must reset it.
+                c.semi_angle_deg = -4.3550699142343645e-10;
+                c.rebuild_step_from_nurb_parameters(&k).unwrap();
+                assert_eq!(c.semi_angle_deg(), 0.0);
+                assert!((c.base_radius() - 9.0).abs() < 1e-8);
+                assert_eq!(c.bot_radius(), c.top_radius());
+            }
+        }
     }
 
     #[test]

@@ -4086,3 +4086,19 @@ title (other references in the repo in brackets):
 
 New entries take the next free number after the highest in their series, as the
 Numbering paragraph at the top says.
+
+#### WR-257. Cylinder NURB rebuild assigns a nonzero semi-angle (#713)
+- **Location:** `source/SMLib/src/SmCone.cpp:4695`,
+  `SmCone::RebuildSTEPFromNURBParameters`, particularly the end-radius equality
+  and semi-angle update at the end of its recognition checks.
+- **What happens:** an `SmCylinder` with circular NURB end sections whose radii
+  differ only through reconstruction roundoff receives a nonzero semi-angle.
+  A larger taper is also accepted without changing the object's cylinder type.
+- **Trigger:** radius `9.0000000000985`, height 3, full angular domain; scale X/Y
+  of the last NURB generator row by `9.0000000000757 / 9.0000000000985`.
+  `RebuildSTEPFromNURBParameters` returns 1000 with semi-angle
+  `-4.3550699142343645e-10` degrees, for both UV orders.
+- **How found:** reproducing GitHub issue #713 with a standalone C++ reference
+  probe and the `surface.cone_p2` differential fixtures named `issue713_*`.
+- **Confirmed:** yes, against the unpatched prebuilt `c9c5979` reference.
+- **Severity:** wrong analytic geometry / inconsistent cylinder type.
