@@ -392,10 +392,11 @@ fn guarded(f: impl FnOnce() -> Result<Output, HarnessError>, side: &str) -> Resu
 /// returns what was changed, or `None` if `out` has nothing comparable.
 ///
 /// In order of preference: the error string if the operation failed (only it is
-/// compared then); the first nonzero finite float (times `1 + PERTURBATION`); the
-/// first integer (`+1`); the first topology id (`+1`; an empty adjacency entry
-/// gains a neighbour); else the first float of an all-zero/non-finite array
-/// (`0` -> `PERTURBATION`, NaN -> `0`, `±inf` -> `∓inf`).
+/// compared then); the first nonzero finite float (times `1 + PERTURBATION`, or by a
+/// relative delta / one ulp when that product rounds back to the value, which it can
+/// for a subnormal); the first integer (`+1`); the first topology id (`+1`; an empty
+/// adjacency entry gains a neighbour); else the first float of an all-zero/non-finite
+/// array (`0` -> `PERTURBATION`, NaN -> `0`, `±inf` -> `∓inf`).
 pub fn perturb_output(out: &mut Output) -> Option<&'static str> {
     if let Some(e) = out.error.as_mut() {
         e.push_str("~perturbed");
@@ -403,7 +404,21 @@ pub fn perturb_output(out: &mut Output) -> Option<&'static str> {
     }
     for v in out.values.values_mut() {
         if let Some(x) = v.iter_mut().find(|x| x.is_finite() && **x != 0.0) {
-            *x *= 1.0 + PERTURBATION;
+            let old = *x;
+            // A subnormal's spacing is coarser than its relative spacing, so the
+            // product can round back to `old`; then add the delta, and fall back to
+            // one ulp when even that underflows. Both changes exceed `REL_TOL`.
+            let scaled = old * (1.0 + PERTURBATION);
+            *x = if scaled == old {
+                let shifted = old + old.abs() * PERTURBATION;
+                if shifted == old {
+                    old.next_up()
+                } else {
+                    shifted
+                }
+            } else {
+                scaled
+            };
             return Some("value");
         }
     }
@@ -578,6 +593,17 @@ pub fn run_unit(unit: &dyn UnitDiff, ctx: &CaseContext, opts: &RunOptions) -> Un
                 }
                 cr.both_errored = c.error.is_some() && r.error.is_some();
                 cr.diff = compare(&c, &r, unit.abs_floors());
+                if opts.perturb && cr.perturbed.is_some() && cr.pass() {
+                    // Only reachable when the perturbation is not observable in the
+                    // comparison; the records are the only way to see why.
+                    eprintln!(
+                        "uncaught perturbation {} ({})",
+                        cr.name,
+                        cr.perturbed.unwrap_or("")
+                    );
+                    eprintln!("  cpp:  {c:?}");
+                    eprintln!("  rust: {r:?}");
+                }
             }
             (c, r) => {
                 let msgs: Vec<String> = [c.err(), r.err()].into_iter().flatten().collect();
@@ -704,6 +730,26 @@ mod tests {
         assert_eq!(caught(&Output::new().scalar("n", f64::NAN)), Some("value"));
         let mut empty = Output::new().values("v", Vec::<f64>::new());
         assert_eq!(perturb_output(&mut empty), None);
+    }
+
+    #[test]
+    fn perturbs_subnormal_values_beyond_the_tolerance() {
+        // A subnormal's relative spacing is coarser than `1 + PERTURBATION` for
+        // several decades below the smallest normal number, so the product (and
+        // sometimes the delta) rounds back to the value. The shift must still be
+        // larger than `REL_TOL * |x|` for the comparison to catch it.
+        for x in [1e-310_f64, 1e-320, f64::from_bits(1)] {
+            assert_eq!(caught(&Output::new().values("v", vec![x])), Some("value"));
+            assert!(x.is_finite() && x != 0.0);
+            let mut out = Output::new().values("v", vec![x]);
+            perturb_output(&mut out);
+            let y = out.values["v"][0];
+            assert_ne!(y.to_bits(), x.to_bits(), "{x:e} -> {y:e}");
+            assert!(
+                crate::compare::rel_err(x, y) > crate::compare::REL_TOL,
+                "{x:e} -> {y:e}"
+            );
+        }
     }
 
     #[test]
