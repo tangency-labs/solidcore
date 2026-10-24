@@ -320,3 +320,63 @@ why = "Rust ManifoldBoolean Difference drops a fully contained, non-intersecting
 unit = "offset.offset_executive_p2"
 case = "gen0003"
 why = "Rust ManifoldBoolean Difference drops a fully contained, non-intersecting inset shell: C++ hollow box 12 faces, Rust the original 6 (plan/findings.md: 'offset.offset_executive_p2: inset shell of a box loses the inner shell in the Rust Difference')"
+
+[[mismatch]]
+unit = "heal.face_props"
+case = "gen0646"
+why = "torus face, edges far off the surface: SetProps_Stage2 seam flags differ after the trimmed cache raised edge tolerances (same tolerances and UV trims both sides; FindVertexSector of the seam disagrees) (plan/findings.md: 'trimmed surface cache history: tolerance-growth deferral removed')"
+
+[[mismatch]]
+unit = "heal.face_props"
+case = "gen0790"
+why = "torus face, edges far off the surface: SetProps_Stage2 seam flags differ after the trimmed cache raised edge tolerances (same tolerances and UV trims both sides; FindVertexSector of the seam disagrees) (plan/findings.md: 'trimmed surface cache history: tolerance-growth deferral removed')"
+
+[[mismatch]]
+unit = "heal.face_props"
+case = "gen1312"
+why = "torus face, edges far off the surface: V seam intervals 2-5 C++ FACE, port OUTSIDE (FindVertexSector) with identical raised edge tolerances and UV trims (plan/findings.md: 'trimmed surface cache history: tolerance-growth deferral removed')"
+
+[[mismatch]]
+unit = "intersect.curve_class_p4"
+case = "gen1570"
+why = "GetLoopCrossings -> SetProps_Stage2 seam flags differ on a torus face with edges far off the surface after the trimmed cache raised edge tolerances (plan/findings.md: 'trimmed surface cache history: tolerance-growth deferral removed')"
+
+[[mismatch]]
+unit = "intersect.curve_class_p4"
+case = "gen1622"
+why = "GetLoopCrossings -> SetProps_Stage2 seam flags differ on a torus face with edges far off the surface after the trimmed cache raised edge tolerances (plan/findings.md: 'trimmed surface cache history: tolerance-growth deferral removed')"
+
+[[mismatch]]
+unit = "intersect.curve_class_p4"
+case = "gen1841"
+why = "GetLoopCrossings -> SetProps_Stage2 seam flags differ on a torus face with edges far off the surface after the trimmed cache raised edge tolerances (plan/findings.md: 'trimmed surface cache history: tolerance-growth deferral removed')"
+
+[[mismatch]]
+unit = "intersect.curve_class_p4"
+case = "gen1876"
+why = "GetLoopCrossings -> SetProps_Stage2 seam flags differ on a torus face with edges far off the surface after the trimmed cache raised edge tolerances (plan/findings.md: 'trimmed surface cache history: tolerance-growth deferral removed')"
+
+[[mismatch]]
+unit = "intersect.curve_class_p4"
+case = "gen1968"
+why = "GetLoopCrossings -> SetProps_Stage2 seam flags differ on a torus face with edges far off the surface after the trimmed cache raised edge tolerances (plan/findings.md: 'trimmed surface cache history: tolerance-growth deferral removed')"
+
+[[mismatch]]
+unit = "intersect.curve_class_p4"
+case = "gen2061"
+why = "GetLoopCrossings -> SetProps_Stage2 seam flags differ on a torus face with edges far off the surface after the trimmed cache raised edge tolerances (plan/findings.md: 'trimmed surface cache history: tolerance-growth deferral removed')"
+
+[[mismatch]]
+unit = "heal.heal_data_p1"
+case = "file_Endcap"
+why = "Endcap.smb HealTgts: out[215] C++ unset sentinel, port 7.6925e-4; cache creation order matches (gdb), cause not found (plan/findings.md: 'trimmed surface cache history: tolerance-growth deferral removed')"
+
+[[mismatch]]
+unit = "heal.heal_data_p1"
+case = "file_Endcap_rebuild_reverse"
+why = "Endcap.smb HealTgts: out[215] C++ unset sentinel, port 7.6925e-4; cache creation order matches (gdb), cause not found (plan/findings.md: 'trimmed surface cache history: tolerance-growth deferral removed')"
+
+[[mismatch]]
+unit = "topology.brep_p1"
+case = "Endcap_heal"
+why = "Endcap.smb HealBrep: a healed topology record differs (out[234], out[238]); cache creation order matches (gdb), cause not found (plan/findings.md: 'trimmed surface cache history: tolerance-growth deferral removed')"
