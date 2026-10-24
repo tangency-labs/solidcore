@@ -11,6 +11,68 @@
 # case = "gen0042"
 # why = "C++ succeeds with 0 points, Rust returns status_3 (plan/findings.md: ...)"
 
+# PR #691: explicit known differences for this issue.
+
+[[mismatch]]
+unit = "topology.trimming_tools"
+case = "check_loop_mirror_Mouse_0_0_0"
+why = "WR-256 / #476: failed gap diagnostic uses edge-only limit in C++; shared-vertex-aware Rust limit is correct. values.out[9]: C++ 6.95115100281493e-4, Rust 2.1819300674131145e-3; operation status unchanged. See plan/findings.md: shared-vertex gap tolerance."
+
+[[mismatch]]
+unit = "topology.trimming_tools"
+case = "check_loop_mirror_Mouse_0_0_1"
+why = "WR-256 / #476: failed gap diagnostic uses edge-only limit in C++; shared-vertex-aware Rust limit is correct. values.out[9]: C++ 6.95115100281493e-4, Rust 2.1819300674131145e-3; operation status unchanged. See plan/findings.md: shared-vertex gap tolerance."
+
+[[mismatch]]
+unit = "topology.trimming_tools"
+case = "check_loop_mirror_Mouse_0_1_0"
+why = "WR-256 / #476: failed gap diagnostic uses edge-only limit in C++; shared-vertex-aware Rust limit is correct. values.out[9]: C++ 6.912139700099413e-4, Rust 2.1819300674131145e-3; operation status unchanged. See plan/findings.md: shared-vertex gap tolerance."
+
+[[mismatch]]
+unit = "topology.trimming_tools"
+case = "check_loop_mirror_Mouse_0_1_1"
+why = "WR-256 / #476: failed gap diagnostic uses edge-only limit in C++; shared-vertex-aware Rust limit is correct. values.out[9]: C++ 6.912139700099413e-4, Rust 2.1819300674131145e-3; operation status unchanged. See plan/findings.md: shared-vertex gap tolerance."
+
+[[mismatch]]
+unit = "topology.trimming_tools"
+case = "check_loop_mirror_Mouse_0_3_0"
+why = "WR-256 / #476: failed gap diagnostic uses edge-only limit in C++; shared-vertex-aware Rust limit is correct. values.out[9]: C++ 6.95115100281493e-4, Rust 2.1819300674131145e-3; operation status unchanged. See plan/findings.md: shared-vertex gap tolerance."
+
+[[mismatch]]
+unit = "topology.trimming_tools"
+case = "check_loop_mirror_Mouse_0_3_1"
+why = "WR-256 / #476: failed gap diagnostic uses edge-only limit in C++; shared-vertex-aware Rust limit is correct. values.out[9]: C++ 6.95115100281493e-4, Rust 2.1819300674131145e-3; operation status unchanged. See plan/findings.md: shared-vertex gap tolerance."
+
+[[mismatch]]
+unit = "topology.trimming_tools"
+case = "vertex_gap_covered_eu0"
+why = "WR-256 / #476: C++ reports closure 3 for gap 1.3000000000040757e-5 against edge sum 1.16e-5 despite shared vertex zone 2.6e-5; Rust reports closure 0. See plan/findings.md: shared-vertex gap tolerance."
+
+[[mismatch]]
+unit = "topology.trimming_tools"
+case = "vertex_gap_covered_eu1"
+why = "WR-256 / #476: C++ reports closure 3 for gap 1.3000000000040757e-5 against edge sum 1.16e-5 despite shared vertex zone 2.6e-5; Rust reports closure 0. See plan/findings.md: shared-vertex gap tolerance."
+
+[[mismatch]]
+unit = "topology.trimming_tools"
+case = "vertex_gap_covered_eu3"
+why = "WR-256 / #476: C++ reports closure 3 for gap 1.3000000000040757e-5 against edge sum 1.16e-5 despite shared vertex zone 2.6e-5; Rust reports closure 0. See plan/findings.md: shared-vertex gap tolerance."
+
+[[mismatch]]
+unit = "topology.trimming_tools"
+case = "vertex_gap_too_wide_eu0"
+why = "WR-256 / #476: failed gap diagnostic uses edge-only limit in C++; shared-vertex-aware Rust limit is correct. values.out[11]: C++ 1.16e-5, Rust 2.6e-5; operation status unchanged. See plan/findings.md: shared-vertex gap tolerance."
+
+[[mismatch]]
+unit = "topology.trimming_tools"
+case = "vertex_gap_too_wide_eu1"
+why = "WR-256 / #476: failed gap diagnostic uses edge-only limit in C++; shared-vertex-aware Rust limit is correct. values.out[11]: C++ 1.16e-5, Rust 2.6e-5; operation status unchanged. See plan/findings.md: shared-vertex gap tolerance."
+
+[[mismatch]]
+unit = "topology.trimming_tools"
+case = "vertex_gap_too_wide_eu3"
+why = "WR-256 / #476: failed gap diagnostic uses edge-only limit in C++; shared-vertex-aware Rust limit is correct. values.out[11]: C++ 1.16e-5, Rust 2.6e-5; operation status unchanged. See plan/findings.md: shared-vertex gap tolerance."
+
 [[mismatch]]
 unit = "topology.brep_p3"
 case = "nurbs_off_Mouse_0.1"

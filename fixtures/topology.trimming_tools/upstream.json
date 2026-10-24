@@ -1298,6 +1298,374 @@
     "tol": 1e-05,
     "outer": true
    }
+  },
+  {
+   "name": "vertex_gap_covered_eu0",
+   "upstream_ref": "issue #476: plane_square.smb with a measured UV trim endpoint gap and explicit model tolerances",
+   "inputs": {
+    "op": "b_check_loop",
+    "brep": {
+     "kind": "file",
+     "file": "plane_square.smb",
+     "rebuild": false
+    },
+    "l": 0,
+    "tol": 1e-05,
+    "list": true,
+    "tolerances": [
+     5.8e-06,
+     2.6e-05
+    ],
+    "gap": [
+     0,
+     1.3e-05
+    ]
+   }
+  },
+  {
+   "name": "vertex_gap_covered_eu1",
+   "upstream_ref": "issue #476: plane_square.smb with a measured UV trim endpoint gap and explicit model tolerances",
+   "inputs": {
+    "op": "b_check_loop",
+    "brep": {
+     "kind": "file",
+     "file": "plane_square.smb",
+     "rebuild": false
+    },
+    "l": 0,
+    "tol": 1e-05,
+    "list": true,
+    "tolerances": [
+     5.8e-06,
+     2.6e-05
+    ],
+    "gap": [
+     1,
+     1.3e-05
+    ]
+   }
+  },
+  {
+   "name": "vertex_gap_covered_eu2",
+   "upstream_ref": "issue #476: plane_square.smb with a measured UV trim endpoint gap and explicit model tolerances; control: this edit leaves the queried loop endpoints unchanged on both sides",
+   "inputs": {
+    "op": "b_check_loop",
+    "brep": {
+     "kind": "file",
+     "file": "plane_square.smb",
+     "rebuild": false
+    },
+    "l": 0,
+    "tol": 1e-05,
+    "list": true,
+    "tolerances": [
+     5.8e-06,
+     2.6e-05
+    ],
+    "gap": [
+     2,
+     1.3e-05
+    ]
+   }
+  },
+  {
+   "name": "vertex_gap_covered_eu3",
+   "upstream_ref": "issue #476: plane_square.smb with a measured UV trim endpoint gap and explicit model tolerances",
+   "inputs": {
+    "op": "b_check_loop",
+    "brep": {
+     "kind": "file",
+     "file": "plane_square.smb",
+     "rebuild": false
+    },
+    "l": 0,
+    "tol": 1e-05,
+    "list": true,
+    "tolerances": [
+     5.8e-06,
+     2.6e-05
+    ],
+    "gap": [
+     3,
+     1.3e-05
+    ]
+   }
+  },
+  {
+   "name": "vertex_gap_too_wide_eu0",
+   "upstream_ref": "issue #476: plane_square.smb with a measured UV trim endpoint gap and explicit model tolerances",
+   "inputs": {
+    "op": "b_check_loop",
+    "brep": {
+     "kind": "file",
+     "file": "plane_square.smb",
+     "rebuild": false
+    },
+    "l": 0,
+    "tol": 1e-05,
+    "list": true,
+    "tolerances": [
+     5.8e-06,
+     2.6e-05
+    ],
+    "gap": [
+     0,
+     2.61e-05
+    ]
+   }
+  },
+  {
+   "name": "vertex_gap_too_wide_eu1",
+   "upstream_ref": "issue #476: plane_square.smb with a measured UV trim endpoint gap and explicit model tolerances",
+   "inputs": {
+    "op": "b_check_loop",
+    "brep": {
+     "kind": "file",
+     "file": "plane_square.smb",
+     "rebuild": false
+    },
+    "l": 0,
+    "tol": 1e-05,
+    "list": true,
+    "tolerances": [
+     5.8e-06,
+     2.6e-05
+    ],
+    "gap": [
+     1,
+     2.61e-05
+    ]
+   }
+  },
+  {
+   "name": "vertex_gap_too_wide_eu2",
+   "upstream_ref": "issue #476: plane_square.smb with a measured UV trim endpoint gap and explicit model tolerances; control: this edit leaves the queried loop endpoints unchanged on both sides",
+   "inputs": {
+    "op": "b_check_loop",
+    "brep": {
+     "kind": "file",
+     "file": "plane_square.smb",
+     "rebuild": false
+    },
+    "l": 0,
+    "tol": 1e-05,
+    "list": true,
+    "tolerances": [
+     5.8e-06,
+     2.6e-05
+    ],
+    "gap": [
+     2,
+     2.61e-05
+    ]
+   }
+  },
+  {
+   "name": "vertex_gap_too_wide_eu3",
+   "upstream_ref": "issue #476: plane_square.smb with a measured UV trim endpoint gap and explicit model tolerances",
+   "inputs": {
+    "op": "b_check_loop",
+    "brep": {
+     "kind": "file",
+     "file": "plane_square.smb",
+     "rebuild": false
+    },
+    "l": 0,
+    "tol": 1e-05,
+    "list": true,
+    "tolerances": [
+     5.8e-06,
+     2.6e-05
+    ],
+    "gap": [
+     3,
+     2.61e-05
+    ]
+   }
+  },
+  {
+   "name": "vertex_gap_edge_covered_eu0",
+   "upstream_ref": "issue #476: plane_square.smb with a measured UV trim endpoint gap and explicit model tolerances",
+   "inputs": {
+    "op": "b_check_loop",
+    "brep": {
+     "kind": "file",
+     "file": "plane_square.smb",
+     "rebuild": false
+    },
+    "l": 0,
+    "tol": 1e-05,
+    "list": true,
+    "tolerances": [
+     5.8e-06,
+     1e-05
+    ],
+    "gap": [
+     0,
+     1e-05
+    ]
+   }
+  },
+  {
+   "name": "vertex_gap_edge_covered_eu1",
+   "upstream_ref": "issue #476: plane_square.smb with a measured UV trim endpoint gap and explicit model tolerances",
+   "inputs": {
+    "op": "b_check_loop",
+    "brep": {
+     "kind": "file",
+     "file": "plane_square.smb",
+     "rebuild": false
+    },
+    "l": 0,
+    "tol": 1e-05,
+    "list": true,
+    "tolerances": [
+     5.8e-06,
+     1e-05
+    ],
+    "gap": [
+     1,
+     1e-05
+    ]
+   }
+  },
+  {
+   "name": "vertex_gap_edge_covered_eu2",
+   "upstream_ref": "issue #476: plane_square.smb with a measured UV trim endpoint gap and explicit model tolerances; control: this edit leaves the queried loop endpoints unchanged on both sides",
+   "inputs": {
+    "op": "b_check_loop",
+    "brep": {
+     "kind": "file",
+     "file": "plane_square.smb",
+     "rebuild": false
+    },
+    "l": 0,
+    "tol": 1e-05,
+    "list": true,
+    "tolerances": [
+     5.8e-06,
+     1e-05
+    ],
+    "gap": [
+     2,
+     1e-05
+    ]
+   }
+  },
+  {
+   "name": "vertex_gap_edge_covered_eu3",
+   "upstream_ref": "issue #476: plane_square.smb with a measured UV trim endpoint gap and explicit model tolerances",
+   "inputs": {
+    "op": "b_check_loop",
+    "brep": {
+     "kind": "file",
+     "file": "plane_square.smb",
+     "rebuild": false
+    },
+    "l": 0,
+    "tol": 1e-05,
+    "list": true,
+    "tolerances": [
+     5.8e-06,
+     1e-05
+    ],
+    "gap": [
+     3,
+     1e-05
+    ]
+   }
+  },
+  {
+   "name": "vertex_gap_zero_eu0",
+   "upstream_ref": "issue #476: plane_square.smb with a measured UV trim endpoint gap and explicit model tolerances",
+   "inputs": {
+    "op": "b_check_loop",
+    "brep": {
+     "kind": "file",
+     "file": "plane_square.smb",
+     "rebuild": false
+    },
+    "l": 0,
+    "tol": 1e-05,
+    "list": true,
+    "tolerances": [
+     5.8e-06,
+     2.6e-05
+    ],
+    "gap": [
+     0,
+     0
+    ]
+   }
+  },
+  {
+   "name": "vertex_gap_zero_eu1",
+   "upstream_ref": "issue #476: plane_square.smb with a measured UV trim endpoint gap and explicit model tolerances",
+   "inputs": {
+    "op": "b_check_loop",
+    "brep": {
+     "kind": "file",
+     "file": "plane_square.smb",
+     "rebuild": false
+    },
+    "l": 0,
+    "tol": 1e-05,
+    "list": true,
+    "tolerances": [
+     5.8e-06,
+     2.6e-05
+    ],
+    "gap": [
+     1,
+     0
+    ]
+   }
+  },
+  {
+   "name": "vertex_gap_zero_eu2",
+   "upstream_ref": "issue #476: plane_square.smb with a measured UV trim endpoint gap and explicit model tolerances; control: this edit leaves the queried loop endpoints unchanged on both sides",
+   "inputs": {
+    "op": "b_check_loop",
+    "brep": {
+     "kind": "file",
+     "file": "plane_square.smb",
+     "rebuild": false
+    },
+    "l": 0,
+    "tol": 1e-05,
+    "list": true,
+    "tolerances": [
+     5.8e-06,
+     2.6e-05
+    ],
+    "gap": [
+     2,
+     0
+    ]
+   }
+  },
+  {
+   "name": "vertex_gap_zero_eu3",
+   "upstream_ref": "issue #476: plane_square.smb with a measured UV trim endpoint gap and explicit model tolerances",
+   "inputs": {
+    "op": "b_check_loop",
+    "brep": {
+     "kind": "file",
+     "file": "plane_square.smb",
+     "rebuild": false
+    },
+    "l": 0,
+    "tol": 1e-05,
+    "list": true,
+    "tolerances": [
+     5.8e-06,
+     2.6e-05
+    ],
+    "gap": [
+     3,
+     0
+    ]
+   }
   }
  ]
 }

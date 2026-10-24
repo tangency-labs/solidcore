@@ -986,6 +986,38 @@ void tt_brep_op(int32_t op, Rd& rd, const char* path, std::vector<double>& o)
         double tol = rd.num();
         bool want_list = rd.flag();
         tt_mirror_pre(rd, l, o);
+        if (rd.flag())
+        {
+            size_t selector = (size_t)rd.idx();
+            double displacement = rd.num();
+            SmLoopuse *lu, *mate;
+            l->GetLoopuses(lu, mate);
+            SmTArray<SmEdgeuse*> eus;
+            if (lu != nullptr)
+                lu->GetEdgeuses(eus);
+            SmBSplineCurve* curve = eus.GetSize() ? eus[(ULONG)(selector % eus.GetSize())]->GetUVTrimCurve() : nullptr;
+            if (curve == nullptr || (curve->GetType() != SmBSplineCurve_TYPE && curve->GetType() != SmLine_TYPE))
+                o.push_back(-1.0);
+            else
+            {
+                SmPoint3d point;
+                SmStatus r = curve->EvaluatePoint(curve->GetNaturalInterval().GetMin(), point);
+                if (r == SM_SUCCESS)
+                {
+                    point.x += displacement;
+                    r = curve->EditEndPoint(point, TRUE, NULL);
+                }
+                o.push_back(st(r));
+            }
+        }
+        if (rd.flag())
+        {
+            double edge_tol = rd.num(), vertex_tol = rd.num();
+            for (SmEdge* e : g.edges)
+                e->SetTolerance(SmZoneTol3d(edge_tol), FALSE, FALSE);
+            for (SmVertex* v : g.vertices)
+                v->SetTolerance(SmZoneTol3d(vertex_tol), FALSE, FALSE);
+        }
         SmFace* f = tt_ok_loop(l) ? tt_loop_face(l) : nullptr;
         SmSurface* s = f ? f->GetSurface() : nullptr;
         if (s == nullptr || !tt_ok_loop_extremes(l))
