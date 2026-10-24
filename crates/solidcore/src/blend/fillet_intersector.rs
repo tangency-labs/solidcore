@@ -636,7 +636,7 @@ impl FilletSolverOps for ConstantRadiusAssistedFs {
         geom: &FilletGeomId,
         center_line: BSplineCurve,
     ) -> Result<()> {
-        pseudo.geom_mut(*geom)?.center_line_curve = Some(center_line);
+        pseudo.geom_mut(*geom)?.center_line_curve = Some(Curve::from(center_line));
         Ok(())
     }
 

@@ -1584,13 +1584,12 @@ impl FilletCorner {
 
             // Drop pE's end points to center line to compute radius, axis & origin of
             // cross section
-            let center_line = Curve::from(
-                env.pseudo
-                    .geom(fg)?
-                    .center_line_curve()
-                    .cloned()
-                    .ok_or_else(null)?,
-            );
+            let center_line = env
+                .pseudo
+                .geom(fg)?
+                .center_line_geometry()
+                .cloned()
+                .ok_or_else(null)?;
             let center_line_ivl = center_line.natural_interval();
             let v = vertex_of(e)?;
             let start_pnt = env.pseudo.vertex_point(v)?;

@@ -11,6 +11,7 @@
 //! | [`FilletErrorType`], [`FilletCornerType`], [`FilStatus`], [`FilletVertexType`], [`BoundaryTrimmingType`], [`FilletEdgeType`], [`FilletGeomType`] | the enums of `SmFilletGeom.h` |
 //! | [`FilletBrep`]                                  | `SmFilletBrep` (`SmFilletBrep()` CO-PORTED from `blend.fillet_geom_p6`; `~SmFilletBrep` is `Drop`) |
 //! | [`FilletBrep::add_edge`], [`FilletBrep::remove_edge`] | `SmFilletBrep::AddEdge`, `RemoveEdge`  |
+//! | [`CornerLookup`]                                | a vertex's / edge's `GetFilletCorner()` dereferenced (the executive's `m_vFilletCorners`, or the running corner's `this`) and the executive's `m_vExtendedSurfacesMap` |
 //! | [`FilletVertexuse`], [`FilletVertexuse::new`]   | `SmFilletVertexuse` members, `SmFilletVertexuse()` (`~SmFilletVertexuse` is `Drop`) |
 //! | [`FilletVertexuse::tsect_pnt`], [`FilletVertexuse::tsect_pnt_mut`], [`FilletVertexuse::uv_point`], [`FilletVertexuse::set_uv_point`], [`FilletVertexuse::set_tsect_pnt`] | `GetTsectPnt`, `GetUVPoint`, `SetUVPoint`, `SetTsectPnt` |
 //! | [`FilletBrep::set_vertexuse_property`]          | `SmFilletVertexuse::SetProperty`           |
@@ -39,7 +40,7 @@
 //! | [`fillet_edge_is_kind_of`], [`FILLET_EDGE_TYPE`], [`FILLET_EDGE_CLASS_STRING`], [`FILLET_EDGE_TYPE_STRING`] | `SmFilletEdge::IsKindOf`, `GetType`, `GetClassString`, `GetTypeString` |
 //! | [`FilletGeom`], [`FilletGeom::new`]             | `SmFilletGeom` members, `SmFilletGeom(SmFilletSolver*, SmFilletGeomType)` (CO-PORTED from `blend.fillet_geom_p5`) |
 //! | [`FilletGeom::add_referenced_fillet_edgeuse`], [`FilletGeom::add_side_fillet_edgeuse`] | `AddReferencedFilletEdgeuse`, `AddSideFilletEdgeuse` |
-//! | [`FilletGeom::fillet_geom_type`], [`FilletGeom::fillet_solver`], [`FilletGeom::status`], [`FilletGeom::split_flag`], [`FilletGeom::fillet_edges`], [`FilletGeom::center_line_curve`], [`FilletGeom::fillet_surface`], [`FilletGeom::rail`] | `GetFilletGeomType`, `GetFilletSolver`, `GetStatus`, `GetSplitFlag`, `GetFilletEdges`, `GetCenterLineCurve`, `GetFilletSurface`, `GetRail` |
+//! | [`FilletGeom::fillet_geom_type`], [`FilletGeom::fillet_solver`], [`FilletGeom::status`], [`FilletGeom::split_flag`], [`FilletGeom::fillet_edges`], [`FilletGeom::center_line_curve`], [`FilletGeom::center_line_geometry`], [`FilletGeom::fillet_surface`], [`FilletGeom::rail`] | `GetFilletGeomType`, `GetFilletSolver`, `GetStatus`, `GetSplitFlag`, `GetFilletEdges`, `GetCenterLineCurve`, `GetFilletSurface`, `GetRail` |
 //! | [`FilletGeom::offset_surface`], [`FilletGeom::set_offset_surface`] | `GetOffsetSurface`, `SetOffsetSurface` |
 //! | [`FilletBrep::rail_vertexuse`]                  | `SmFilletGeom::GetRailVertexuse`           |
 //! | [`FilletGeom::set_fillet_surface`], [`FilletGeom::set_fillet_geom_type`], [`FilletGeom::set_rail`] | `SetFilletSurface`, `SetFilletGeomType`, `SetRail` |
@@ -185,6 +186,7 @@
 
 use std::collections::BTreeMap;
 
+use crate::blend::fillet_corner::p3::{FilletCorner, FilletExecutiveData};
 use crate::blend::fillet_custom_solver::{ConstantRadiusAssistedFs, OffsetSurface};
 use crate::blend::fillet_solver::p1::FilletSolver;
 use crate::curve::curve::p1::GlobalPointSolveOptions;
@@ -562,6 +564,110 @@ pub struct FilletSolverId(pub u32);
 /// pointer that is never dereferenced here.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub struct FilletCornerId(pub u32);
+
+const OP_CORNER: &str = "blend::fillet_geom::p1::CornerLookup::corner";
+
+/// How the fillet geometry calculators reach the `SmFilletCorner` a [`FilletCornerId`]
+/// names (upstream's `GetFilletCorner()` pointer, dereferenced) and the executive
+/// members a corner reads (`GetExtendedSurface`).
+///
+/// [`CornerLookup::default`] is a caller without a corner store: every lookup is
+/// [`SolidError::Unported`] (`blend.fillet_executive_p1`, which owns the corners).
+#[derive(Debug, Clone, Copy, Default)]
+pub struct CornerLookup<'c> {
+    /// The executive's corner table (`m_vFilletCorners`), indexed by the id (`id.0`);
+    /// `None`: the caller has none.
+    pub table: Option<&'c [FilletCorner]>,
+    /// The corner whose method is running and its id (`SmFilletCorner::CalcCornerVertGeom`
+    /// / `CalcCornerEdgeGeom` on its own vertices and edges, while it is borrowed out of
+    /// any table): an id equal to it resolves to it before the table.
+    pub this: Option<(Option<FilletCornerId>, &'c FilletCorner)>,
+    /// The executive's members the corners read; `None`: the caller has none.
+    pub exec: Option<&'c FilletExecutiveData>,
+}
+
+impl<'c> CornerLookup<'c> {
+    /// The executive's corner table `corners`, without executive data.
+    #[must_use]
+    pub const fn table(corners: &'c [FilletCorner]) -> Self {
+        Self {
+            table: Some(corners),
+            this: None,
+            exec: None,
+        }
+    }
+
+    /// Only the running corner `corner` (with its id `id`) and the executive data it
+    /// reads: another corner's id is [`SolidError::InvalidInput`] (upstream's corner
+    /// methods only reach their own vertices and edges).
+    #[must_use]
+    pub const fn of_corner(
+        id: Option<FilletCornerId>,
+        corner: &'c FilletCorner,
+        exec: &'c FilletExecutiveData,
+    ) -> Self {
+        Self {
+            table: None,
+            this: Some((id, corner)),
+            exec: Some(exec),
+        }
+    }
+
+    /// The corner `id` (`GetFilletCorner()`, dereferenced).
+    ///
+    /// # Errors
+    ///
+    /// [`SolidError::Unported`] without a corner store; [`SolidError::InvalidInput`]
+    /// for an id neither the running corner nor in the table.
+    pub fn corner(&self, id: FilletCornerId) -> Result<&'c FilletCorner> {
+        if let Some((this_id, this)) = self.this {
+            if this_id == Some(id) {
+                return Ok(this);
+            }
+        }
+        match self.table {
+            Some(table) => usize::try_from(id.0)
+                .ok()
+                .and_then(|i| table.get(i))
+                .ok_or_else(|| {
+                    SolidError::invalid_input(OP_CORNER, "fillet corner id not in the corner table")
+                }),
+            None if self.this.is_some() => Err(SolidError::invalid_input(
+                OP_CORNER,
+                "fillet vertex or edge of another corner",
+            )),
+            // UNPORTED(blend.fillet_executive_p1): SmFilletExecutive::m_vFilletCorners (the
+            // caller holds no corner store)
+            None => Err(SolidError::unported(
+                "SmFilletExecutive::m_vFilletCorners",
+                "blend.fillet_executive_p1",
+            )),
+        }
+    }
+
+    /// `pCorner->GetExtendedSurface(pOriginalFace)`
+    /// ([`FilletCorner::extended_surface`]): the extended surface the executive holds
+    /// for `face`, `None` when it has none.
+    ///
+    /// # Errors
+    ///
+    /// [`SolidError::Unported`] without executive data.
+    pub fn extended_surface(
+        &self,
+        corner: &FilletCorner,
+        face: FaceId,
+    ) -> Result<Option<&'c Surface>> {
+        match self.exec {
+            Some(exec) => Ok(corner.extended_surface(exec, face)),
+            // UNPORTED(blend.fillet_executive_p1): SmFilletExecutive::m_vExtendedSurfacesMap
+            // (the caller holds no executive)
+            None => Err(SolidError::unported(
+                "SmFilletExecutive::m_vExtendedSurfacesMap",
+                "blend.fillet_executive_p1",
+            )),
+        }
+    }
+}
 
 /// A fillet geometry stored in a [`FilletBrep`] (an `SmFilletGeom*`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
@@ -1034,7 +1140,7 @@ pub struct FilletGeom {
     /// `m_vOtherRails2`: rail edges appended to rail 1.
     pub other_rails2: Vec<EdgeId>,
     /// `m_pCenterLineCurve`.
-    pub center_line_curve: Option<BSplineCurve>,
+    pub center_line_curve: Option<Curve>,
     /// `m_pFilletSurface` (`SM_FILLETSURF_TYPE` is `SmSurface`).
     pub fillet_surface: Option<Surface>,
     /// `m_pOffSurfs[2]`: this geometry's own offset surfaces (may differ from the
@@ -1154,9 +1260,24 @@ impl FilletGeom {
         edges.extend_from_slice(&self.edges);
     }
 
-    /// `GetCenterLineCurve`.
+    /// The B-spline base of the actual retained centerline, for base-only callers.
+    /// Virtual operations must use [`Self::center_line_geometry`] to retain analytic state.
     #[must_use]
-    pub const fn center_line_curve(&self) -> Option<&BSplineCurve> {
+    pub fn center_line_curve(&self) -> Option<&BSplineCurve> {
+        use crate::curve::curve::CurveKind;
+        match self.center_line_curve.as_ref()?.kind() {
+            CurveKind::BSpline(curve) => Some(curve),
+            CurveKind::Line(curve) => Some(curve.base()),
+            CurveKind::Ellipse(curve) => Some(curve.base()),
+            CurveKind::Hyperbola(curve) => Some(curve.base()),
+            CurveKind::Parabola(curve) => Some(curve.base()),
+            _ => None,
+        }
+    }
+
+    /// `GetCenterLineCurve`: the actual object, including its analytic derived type.
+    #[must_use]
+    pub const fn center_line_geometry(&self) -> Option<&Curve> {
         self.center_line_curve.as_ref()
     }
 

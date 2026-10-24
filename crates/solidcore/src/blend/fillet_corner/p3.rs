@@ -1160,11 +1160,27 @@ impl FilletCorner {
     /// Those of [`FilletCorner::adjust_topology_nx2`] and
     /// [`FilletCorner::adjust_topology_convex_nxn`].
     pub fn adjust_topology(&mut self, env: &mut CornerEnv<'_>) -> Result<()> {
+        self.adjust_topology_with(
+            env,
+            Self::adjust_topology_nx2,
+            Self::adjust_topology_convex_nxn,
+        )
+    }
+
+    /// Dispatch topology adjustment using the caller's live derived-corner context.
+    /// The inherited native base implementation needs no context and returns success.
+    ///
+    /// # Errors
+    /// The selected concrete adjustment callback's errors.
+    pub fn adjust_topology_with<C>(
+        &mut self,
+        context: &mut C,
+        nx2: impl FnOnce(&mut Self, &mut C) -> Result<()>,
+        nxn: impl FnOnce(&mut Self, &mut C) -> Result<()>,
+    ) -> Result<()> {
         match self.kind {
-            FilletCornerKind::NByTwo => self.adjust_topology_nx2(env),
-            FilletCornerKind::ConvexNByN | FilletCornerKind::ConcaveNByN => {
-                self.adjust_topology_convex_nxn(env)
-            }
+            FilletCornerKind::NByTwo => nx2(self, context),
+            FilletCornerKind::ConvexNByN | FilletCornerKind::ConcaveNByN => nxn(self, context),
             _ => Ok(()),
         }
     }

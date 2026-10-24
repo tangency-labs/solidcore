@@ -1107,7 +1107,7 @@ impl RustModel {
                 geom.set_fillet_surface(Some(surface_of(s)?));
             }
             if let Some(c) = &g.center {
-                geom.center_line_curve = Some(bspline_of(c)?);
+                geom.center_line_curve = Some(Curve::from(bspline_of(c)?));
             }
             geom.deviations = g.devs;
             for (rail, off) in g.offs.iter().enumerate() {
