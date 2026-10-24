@@ -37,6 +37,8 @@
 //! | [`good_drop_result`]                              | `sm_GoodDropResult` (static)                     |
 //!
 //! Deviations:
+//! - **Flat-corner mask (#525).** Testing an optional point uses `&`, not upstream
+//!   `&=`, so requesting points preserves every classified corner bit.
 //! - **Face tolerance of `IsPlanar`.** The B-spline, revolution and cone boxes are
 //!   expanded by the face tolerance the B-rep cached on the surface
 //!   ([`Surface::owner_zone_tol_3d`]). A face-owned surface without it returns
@@ -961,11 +963,10 @@ impl Surface {
             }
         }
 
-        // optional output (upstream masks the return value while testing)
+        // Optional points do not change the corner classification (#525).
         if let Some(pts) = points.as_mut() {
             for ((c, bit), p) in corners.iter().zip(FLAT_CORNER_BITS).zip(pts.iter_mut()) {
-                rtn &= bit;
-                if rtn != 0 {
+                if rtn & bit != 0 {
                     if let Some(v) = ignored(self.evaluate_point(k, *c))? {
                         *p = v;
                     }
@@ -2662,6 +2663,88 @@ mod tests {
             Vec3::new(0.0, 0.0, 1.0),
             Vec3::new(0.0, 0.0, 1.0),
         ))
+    }
+
+    #[test]
+    fn flat_corner_points_preserve_each_mask_bit() {
+        use crate::nurbs::math::{CPoint, NOW};
+
+        let k = Kernel::default();
+        // Only the lower/lower corner has nonzero parallel tangents. Reverse
+        // either control-net direction to exercise each of the four bits.
+        for reverse_u in [false, true] {
+            for reverse_v in [false, true] {
+                let mut net = vec![
+                    vec![
+                        CPoint::new(0.0, 0.0, 0.0, NOW),
+                        CPoint::new(1.0, 0.0, 0.0, NOW),
+                    ],
+                    vec![
+                        CPoint::new(2.0, 0.0, 0.0, NOW),
+                        CPoint::new(1.0, 1.0, 0.0, NOW),
+                    ],
+                ];
+                if reverse_u {
+                    net.reverse();
+                }
+                if reverse_v {
+                    for row in &mut net {
+                        row.reverse();
+                    }
+                }
+                let knots = [0.0, 0.0, 1.0, 1.0];
+                let s = Surface::from(
+                    BSplineSurface::from_data(1, 1, 1, 1, 3, 3, &net, &knots, &knots).unwrap(),
+                );
+                let index = usize::from(reverse_u) * 2 + usize::from(reverse_v);
+                let flags = 1 << index;
+                assert_eq!(s.flat_corners(&k, 1e-8, false).unwrap().flags, flags);
+                let result = s.flat_corners(&k, 1e-8, true).unwrap();
+                assert_eq!(result.flags, flags);
+                for (i, point) in result.points.unwrap().iter().enumerate() {
+                    assert_eq!(*point, if i == index { Vec3::ZERO } else { Vec3::UNDEF });
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn flat_corner_points_preserve_multiple_bits_and_regular_corners() {
+        use crate::nurbs::math::{CPoint, NOW};
+        let k = Kernel::default();
+        let net = vec![
+            vec![
+                CPoint::new(0.0, 0.0, 0.0, NOW),
+                CPoint::new(2.0, 0.0, 0.0, NOW),
+            ],
+            vec![
+                CPoint::new(1.0, 0.0, 0.0, NOW),
+                CPoint::new(3.0, 0.0, 0.0, NOW),
+            ],
+        ];
+        let knots = [0.0, 0.0, 1.0, 1.0];
+        let s = Surface::from(
+            BSplineSurface::from_data(1, 1, 1, 1, 3, 3, &net, &knots, &knots).unwrap(),
+        );
+        assert_eq!(s.flat_corners(&k, 1e-8, false).unwrap().flags, 15);
+        let result = s.flat_corners(&k, 1e-8, true).unwrap();
+        assert_eq!(result.flags, 15);
+        assert_eq!(
+            result.points.unwrap(),
+            [
+                Vec3::ZERO,
+                Vec3::new(2.0, 0.0, 0.0),
+                Vec3::new(1.0, 0.0, 0.0),
+                Vec3::new(3.0, 0.0, 0.0)
+            ]
+        );
+        assert_eq!(
+            plane().flat_corners(&k, 1e-8, true).unwrap(),
+            FlatCorners {
+                flags: 0,
+                points: Some([Vec3::UNDEF; 4])
+            }
+        );
     }
 
     #[test]

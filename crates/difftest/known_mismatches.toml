@@ -11,6 +11,88 @@
 # case = "gen0042"
 # why = "C++ succeeds with 0 points, Rust returns status_3 (plan/findings.md: ...)"
 
+# PR #684: explicit known differences for this issue.
+
+[[mismatch]]
+unit = "surface.surface_p7"
+case = "flat_mask_1_points_1"
+why = "C++ GetFlatCorners &= destroys its mask and skips later points; Rust preserves mask 1e0 (plan/findings.md: #525 flat corners and perspective bounds)"
+
+[[mismatch]]
+unit = "surface.surface_p7"
+case = "flat_mask_2_points_1"
+why = "C++ GetFlatCorners &= destroys its mask and skips later points; Rust preserves mask 2e0 (plan/findings.md: #525 flat corners and perspective bounds)"
+
+[[mismatch]]
+unit = "surface.surface_p7"
+case = "flat_mask_4_points_1"
+why = "C++ GetFlatCorners &= destroys its mask and skips later points; Rust preserves mask 4e0 (plan/findings.md: #525 flat corners and perspective bounds)"
+
+[[mismatch]]
+unit = "surface.surface_p7"
+case = "flat_mask_8_points_1"
+why = "C++ GetFlatCorners &= destroys its mask and skips later points; Rust preserves mask 8e0 (plan/findings.md: #525 flat corners and perspective bounds)"
+
+[[mismatch]]
+unit = "surface.surface_p7"
+case = "flat_mask_all_points_1"
+why = "C++ GetFlatCorners &= destroys its mask and skips later points; Rust preserves mask 1.5e1 (plan/findings.md: #525 flat corners and perspective bounds)"
+
+[[mismatch]]
+unit = "surface.surface_p7"
+case = "gen0191"
+why = "C++ GetFlatCorners &= destroys its mask and skips later points; Rust preserves mask 1e0 (plan/findings.md: #525 flat corners and perspective bounds)"
+
+[[mismatch]]
+unit = "surface.surface_p7"
+case = "gen0796"
+why = "C++ GetFlatCorners &= destroys its mask and skips later points; Rust preserves mask 1e0 (plan/findings.md: #525 flat corners and perspective bounds)"
+
+[[mismatch]]
+unit = "surface.surface_p7"
+case = "gen1186"
+why = "C++ GetFlatCorners &= destroys its mask and skips later points; Rust preserves mask 1.5e1 (plan/findings.md: #525 flat corners and perspective bounds)"
+
+[[mismatch]]
+unit = "surface.surface_p7"
+case = "gen1584"
+why = "C++ GetFlatCorners &= destroys its mask and skips later points; Rust preserves mask 1.5e1 (plan/findings.md: #525 flat corners and perspective bounds)"
+
+[[mismatch]]
+unit = "surface.surface_p7"
+case = "gen2327"
+why = "C++ GetFlatCorners &= destroys its mask and skips later points; Rust preserves mask 1e0 (plan/findings.md: #525 flat corners and perspective bounds)"
+
+[[mismatch]]
+unit = "surface.surface_p7"
+case = "gen2351"
+why = "C++ GetFlatCorners &= destroys its mask and skips later points; Rust preserves mask 1.5e1 (plan/findings.md: #525 flat corners and perspective bounds)"
+
+[[mismatch]]
+unit = "surface.surface_p7"
+case = "gen2373"
+why = "C++ GetFlatCorners &= destroys its mask and skips later points; Rust preserves mask 1e0 (plan/findings.md: #525 flat corners and perspective bounds)"
+
+[[mismatch]]
+unit = "surface.surface_p7"
+case = "gen2405"
+why = "C++ GetFlatCorners &= destroys its mask and skips later points; Rust preserves mask 1.5e1 (plan/findings.md: #525 flat corners and perspective bounds)"
+
+[[mismatch]]
+unit = "geom.global_solver"
+case = "perspective_unequal_containing_swap_0"
+why = "C++ perspective cull drops a point inside the second box by reusing sphere 1 radius/center; Rust retains the actual overlap (plan/findings.md: #525 flat corners and perspective bounds)"
+
+[[mismatch]]
+unit = "geom.global_solver"
+case = "gen0207"
+why = "C++ perspective bounds keep two leaf pairs with projected z gaps > tolerance; Rust uses each sphere own radius/center and offset vectors (plan/findings.md: #525 flat corners and perspective bounds)"
+
+[[mismatch]]
+unit = "curve.curve_p9"
+case = "gen0415"
+why = "C++ perspective global curve solve culls a real projected intersection; Rust finds one within both intervals and projected residual <= 0.01 (plan/findings.md: #525 flat corners and perspective bounds)"
+
 [[mismatch]]
 unit = "topology.brep_p3"
 case = "nurbs_off_Mouse_0.1"

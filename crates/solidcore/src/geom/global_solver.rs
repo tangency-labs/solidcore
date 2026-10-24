@@ -35,6 +35,10 @@
 //! | [`GlobalSolver::identical_solutions_in`]     | `SmGlobalSolver::IdenticalSolutions` (object domains read through a caller's resolver) |
 //!
 //! Deviations:
+//! - **Perspective bounds (#525).** Each sphere uses its own radius and center.
+//!   The projected vector is an offset based at that center; upstream adds the
+//!   center to the offset before calling an API that adds it again. That also
+//!   underestimates radii and can cull a branch containing an actual intersection.
 //! - **Virtual methods.** Derived solvers (curve/curve, surface/surface, ...)
 //!   implement [`GlobalSolve`] and override its hooks; the base behaviour lives
 //!   in inherent methods of [`GlobalSolver`] (and [`subdivide`]) so an override
@@ -932,27 +936,16 @@ impl<'t, O: SolutionObject> GlobalSolver<'t, O> {
             let mut dir1 = eye_vec1.cross(v1).unitize_or_z(); // vec perp to eyevec and view norm
             let mut dir2 = dir1.cross(eye_vec1).unitize_or_z(); // vec perp to eyevec in view normal plane
             sph1_radius -= tol;
-            let new_rad1_max_sq = max_projected_radius_sq(
-                sph1_center,
-                sph1_center,
-                [dir1, dir2],
-                sph1_radius,
-                [v0, v1, v2],
-            );
+            let new_rad1_max_sq =
+                max_projected_radius_sq(sph1_center, [dir1, dir2], sph1_radius, [v0, v1, v2]);
 
             let eye_vec2 = sph2_center - v2;
             dir1 = eye_vec2.cross(v1).unitize_or_z(); // vec perp to eyevec and view norm
             dir2 = dir1.cross(eye_vec2).unitize_or_z(); // vec perp to eyevec in view normal plane
 
-            // (upstream offsets the second centre by the first radius and projects
-            // relative to the first centre)
-            let new_rad2_max_sq = max_projected_radius_sq(
-                sph2_center,
-                sph1_center,
-                [dir1, dir2],
-                sph1_radius,
-                [v0, v1, v2],
-            );
+            // Each sphere projects its own radius about its own center (#525).
+            let new_rad2_max_sq =
+                max_projected_radius_sq(sph2_center, [dir1, dir2], sph2_radius, [v0, v1, v2]);
 
             // arrive here when sProjPnt1 and sProjPnt2 are the projected centers of the spheres and
             //   dNewRad1Max and dNewRad2Max are the maximum radii of the sphere projections onto the viewing plane
@@ -1464,27 +1457,17 @@ fn other_index(index: usize) -> Result<usize> {
     })
 }
 
-/// The largest squared length of the four offsets `center ± dir1 * radius`,
-/// `center ± dir2 * radius`, each perspective projected relative to `base`
+/// The largest squared length of the four radius vectors `± dir1 * radius`,
+/// `± dir2 * radius`, each perspective projected relative to `center`
 /// (the radius loops of the perspective test in `BranchMayContainAnswers`).
 /// `view` is the plane point, the unit plane normal and the eye point.
-fn max_projected_radius_sq(
-    center: Point3,
-    base: Point3,
-    dirs: [Vec3; 2],
-    radius: f64,
-    view: [Vec3; 3],
-) -> f64 {
+fn max_projected_radius_sq(center: Point3, dirs: [Vec3; 2], radius: f64, view: [Vec3; 3]) -> f64 {
     let [dir1, dir2] = dirs;
     let [plane_point, plane_normal, eye_point] = view;
     let mut new_rad_max_sq = 0.0;
     for offset in [dir1 * radius, -dir1 * radius, dir2 * radius, -dir2 * radius] {
-        let rad_vec = (center + offset).perspective_project_to_plane(
-            base,
-            plane_point,
-            plane_normal,
-            eye_point,
-        );
+        let rad_vec =
+            offset.perspective_project_to_plane(center, plane_point, plane_normal, eye_point);
         let new_rad_sq = rad_vec.length_squared();
         if new_rad_sq > new_rad_max_sq {
             new_rad_max_sq = new_rad_sq;
@@ -2274,6 +2257,39 @@ mod tests {
         s.end.solution_value = v1;
         s.end.parameters[0] = p1;
         s
+    }
+
+    #[test]
+    fn perspective_culling_uses_each_spheres_own_radius_and_center() {
+        fn may(a: ([f64; 3], [f64; 3]), b: ([f64; 3], [f64; 3])) -> bool {
+            let mut first = Tree::new(None);
+            let ia = first.add_node(leaf(a.0, a.1));
+            first.set_top_node(Some(ia));
+            let mut second = Tree::new(None);
+            let ib = second.add_node(leaf(b.0, b.1));
+            second.set_top_node(Some(ib));
+            let mut solver = GlobalSolver::with_trees(&first, &second, 0);
+            solver.operation = SolverOperation::PerspectiveIntersect;
+            solver.opt_vectors = vec![
+                Vec3::new(0.0, 0.0, 1.0),
+                Vec3::new(0.0, 0.0, 1.0),
+                Vec3::ZERO,
+            ];
+            solver
+                .branch_may_contain_answers(&[Some(ia), Some(ib), None])
+                .unwrap()
+        }
+        let point = ([1.75, 0.0, 2.0], [1.75, 0.0, 2.0]);
+        let separate = ([3.0, 0.0, 2.0], [3.0, 0.0, 2.0]);
+        // Distinct point projections at x=.875 and x=1.5 have zero radii.
+        assert!(!may(point, separate));
+        assert!(!may(separate, point));
+        let contains = ([0.0, 0.0, 2.0], [2.0, 0.0, 2.0]);
+        // The second box actually contains the first point; using the first
+        // sphere's zero radius must not shrink away this intersection.
+        assert!(may(point, contains));
+        assert!(may(contains, point));
+        assert!(may(point, point));
     }
 
     #[test]
