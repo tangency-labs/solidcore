@@ -59,7 +59,7 @@
 //!   solver's own offsets keep a base extension they make, as upstream's `const`
 //!   evaluators do; `SmFindClippedRadiusEFO` evaluates copies (its iso curve and
 //!   `LocalCurveIntersect`), whose extension the solver's offsets then take
-//!   ([`FilletSolver::keep_extension_of_copy`]).
+//!   (`FilletSolver::keep_extension_of_copy`).
 //! - **Fillet geometries, executive, corners.** As in `blend.fillet_geom_p1`, the
 //!   solver's `SmFilletGeom`s live in the executive's pseudo B-rep ([`FilletBrep`],
 //!   `m_pExecutive->m_pPseudoBrep`) with its fillet vertices and edges; the solver
@@ -75,7 +75,9 @@
 //!   `SetSurface` with a geometry set for the surfaces (`m_pFGForSurfaces`) do not take
 //!   the pseudo B-rep and stay stubs (`plan/findings.md`, "`blend.fillet_solver_p1`:
 //!   the geometry for the surfaces"). `SmFilletExecutive` and the fillet corners belong
-//!   to unported units ([`FilletExecutiveRef`]); calls into unported units return
+//!   to executive/corner units. [`FilletExecutiveRef`] records only whether the
+//!   native back pointer is set. Callers pass the operation's executive explicitly.
+//!   Calls into unported operations return
 //!   [`SolidError::Unported`] naming the owning unit at the call site (`unported_on`,
 //!   tagged `UNPORTED`). `SplitFilletGeomAtSideEdge`, `SplitFilletGeom`, `TrimRails`,
 //!   `sm_SplitRail`, `sm_ComputeSupportEdge` and `sm_TestManifoldTangentRollover` are
@@ -181,7 +183,7 @@ fn unported_on<A, T>(_args: A, upstream: &'static str, unit: &'static str) -> Re
 // ---- small types ----------------------------------------------------------------------
 
 /// `SmFilStatus` (`SmFilletGeom.h`) is unit `blend.fillet_geom_p1`'s
-/// [`FilStatus`](crate::blend::fillet_geom::p1::FilStatus) (one type per class): the
+/// [`FilStatus`] (one type per class): the
 /// processing status of a solver and of fillet geometries, vertices and edges.
 pub use crate::blend::fillet_geom::p1::FilStatus;
 
@@ -365,7 +367,8 @@ impl FilletSurfaceGenerator {
     }
 }
 
-/// An `SmFilletExecutive*` (unit `blend.fillet_executive_p1`, not modelled).
+/// Whether the solver's native executive back pointer is set.
+/// The operation passes its one executive explicitly as context.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct FilletExecutiveRef;
 
@@ -2768,7 +2771,7 @@ fn binormal_status_ignored(
 /// [`SolidError::InvalidInput`] where upstream dereferences `NULL` (an edge without
 /// primary edge use, an edge use without face use, radial or mate); the binormal
 /// evaluation's [`SolidError::Unported`], `NotFound` and `InvalidInput` (its status
-/// is otherwise ignored, see [`binormal_status_ignored`]).
+/// is otherwise ignored, see `binormal_status_ignored`).
 pub fn test_manifold_tangent_rollover(
     k: &Kernel,
     b: &mut Brep,
