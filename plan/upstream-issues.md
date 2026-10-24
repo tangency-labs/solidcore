@@ -4068,3 +4068,12 @@ title (other references in the repo in brackets):
 
 New entries take the next free number after the highest in their series, as the
 Numbering paragraph at the top says.
+
+#### Issue #527. `sm_RefineCCSolutions` tests a range end against its start
+
+- **Location:** `source/SMLib/src/SmCurve.cpp:188-193`, end refinement after the two parameter fractions are normalized for reversed ranges.
+- **Trigger:** a refined end close to oriented fraction one is rejected; an end solve converging to fraction zero can instead collapse a range onto its start.
+- **How found:** issue #527; confirmed in the Rust counterpart while implementing PR #662, with analytic line/quadratic and line/line endpoint regressions and the production `GlobalCurveIntersect` generated case `gen2160` (seed `7577089526937863746`).
+- **Confirmed:** yes. The unchanged file-static helper copy in the native shim retains endpoint deviation `9.999e-6` at parameter `0.9999` where Rust now reaches the exact endpoint; on the line/line case C++ moves the end from `0.9` to approximately zero. Native `GlobalCurveIntersect` also drops the resulting collapsed tail (two solutions versus three).
+- **Severity:** missed endpoint refinement and lost approximate intersection ranges.
+- **Rust port:** compare an oriented end fraction to one, with the existing strict `0.002` limit. Keep the pinned C++ reference unchanged and record the seven observed comparisons as explicit known mismatches in the two partial units; see `plan/findings.md`, Curve range endpoint refinement.

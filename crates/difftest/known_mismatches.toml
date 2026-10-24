@@ -11,6 +11,43 @@
 # case = "gen0042"
 # why = "C++ succeeds with 0 points, Rust returns status_3 (plan/findings.md: ...)"
 
+# PR #662: explicit known differences for this issue.
+
+[[mismatch]]
+unit = "curve.curve_p1"
+case = "refine_range_end_0_0"
+why = "C++ leaves the range end unrefined; Rust polishes the analytic endpoint (#527; plan/findings.md: Curve range endpoint refinement)"
+
+[[mismatch]]
+unit = "curve.curve_p1"
+case = "refine_range_end_0_1"
+why = "C++ leaves the range end unrefined; Rust polishes the analytic endpoint (#527; plan/findings.md: Curve range endpoint refinement)"
+
+[[mismatch]]
+unit = "curve.curve_p1"
+case = "refine_range_end_1_0"
+why = "C++ leaves the range end unrefined; Rust polishes the analytic endpoint (#527; plan/findings.md: Curve range endpoint refinement)"
+
+[[mismatch]]
+unit = "curve.curve_p1"
+case = "refine_range_end_1_1"
+why = "C++ leaves the range end unrefined; Rust polishes the analytic endpoint (#527; plan/findings.md: Curve range endpoint refinement)"
+
+[[mismatch]]
+unit = "curve.curve_p1"
+case = "refine_range_end_rejects_start_jump"
+why = "C++ collapses the range end onto the start; Rust rejects the excessive end shift (#527; plan/findings.md: Curve range endpoint refinement)"
+
+[[mismatch]]
+unit = "curve.curve_p8"
+case = "gen2160"
+why = "C++ collapses and discards a range tail via the #527 endpoint bug; Rust preserves it (plan/findings.md: Curve range endpoint refinement)"
+
+[[mismatch]]
+unit = "curve.curve_p8"
+case = "range_end_preserves_noncollapsed_tail"
+why = "C++ collapses and discards a range tail via the #527 endpoint bug; Rust preserves it (plan/findings.md: Curve range endpoint refinement)"
+
 [[mismatch]]
 unit = "topology.brep_p3"
 case = "nurbs_off_Mouse_0.1"
