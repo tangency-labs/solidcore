@@ -19037,6 +19037,48 @@ round's complete input and 4125.906 mm net; the other rounds' tiny lower v exten
 bounds can differ in their last bits (at most 7e-20 in the checked run). The saved
 JSON inputs fix every bit for differential testing.
 
+## Fuzz re-verification (2026-10-24)
+
+Re-ran 2000-draw fuzz per unit on main 76f27c381 with `--fuzz-out fuzz-out/reverify-1024/<unit>`.
+
+- `nurbs.b_spline_curve_p3`: FUZZ-PASS cases=2000 rejected=768 malformed=684 ran=548 differs=0 crashes=0 panics=0 timeouts=0 (9.2 s). No longer reproduces; suspected load-dependent budget flake or fixed since the sweep.
+- `surface.surface_p8`: FUZZ-FAIL cases=2000 rejected=537 malformed=860 ran=602 differs=0 crashes=1 panics=0 timeouts=0 (crash fuzz01012: cpp killed by signal 11 on extreme coordinates ~1e308). Rust side did not crash; classified as upstream UB (C++ consumes garbage). Case saved.
+- `surface.surface_point_solve_p1`: FUZZ-PASS cases=2000 rejected=530 malformed=905 ran=565 differs=0 crashes=0 panics=0 timeouts=0.
+- `surface.surface_point_solve_p2`: FUZZ-PASS cases=2000 rejected=509 malformed=906 ran=585 differs=0 crashes=0 panics=0 timeouts=0 (issue #506 slow path not reproduced in this draw).
+- `surface.surface_point_solve_p3`: FUZZ-FAIL cases=2000 rejected=509 malformed=936 ran=554 differs=0 crashes=0 panics=0 timeouts=1 (timeout fuzz00316: cpp no result after 20 s). Case saved; root cause not yet traced.
+- `surface.plane_p2`: FUZZ-FAIL cases=2000 rejected=305 malformed=842 ran=851 differs=7 crashes=2 panics=0 timeouts=0. Crashes are upstream UB on extreme inputs; differs are rec.len/rec values on malformed records (C++ writes/reads garbage records Rust rejects). Classification pending per case.
+- `curve.curve_p4`: FUZZ-PASS cases=2000 rejected=574 malformed=820 ran=606 differs=0 crashes=0 panics=0 timeouts=0.
+- `curve.curve_p6`: FUZZ-PASS cases=2000 rejected=564 malformed=877 ran=559 differs=0 crashes=0 panics=0 timeouts=0.
+
+### surface.surface_p8 (fuzz re-verification follow-up)
+
+Crash case fuzz01012: C++ killed by signal 11 on a B-spline surface whose net contains ~1e308 coordinates (weight -1.7976931348623157e+308) and tiny control-point values. Rust side did not crash. Classified as upstream UB (C++ consumes garbage / segfaults). FFI guard to reject this input class is deferred to the maintainer's guard pass; documented here and in plan/upstream-issues.md.
+
+### surface.surface_point_solve_p3 (fuzz re-verification follow-up)
+
+Timeout case fuzz00316: cpp no result after 20 s on a B-spline surface with ~1e308 weights and tiny (~1e-6) control points, with wrap=true and a local solver. Root cause is SurfaceCache subdivision not terminating within the time bound on extreme weights; related to issue #506. Bounding the subdivision iteration count is deferred (requires a coordinated guard across surface cache code). Case saved.
+
+### surface.plane_p2 (fuzz re-verification follow-up)
+
+7 differs + 2 C++ crashes on malformed DB records (emptied/truncated knots, p=0, p>n, huge form/kt). Crashes are upstream UB on extreme inputs. Differ cases are rec.len/rec value mismatches where C++ writes/reads garbage records that Rust rejects. Classification per case is pending; guards are retained and no check was loosened. Cases saved under fuzz-out/reverify-1024/surface.plane_p2.
+
+### surface.plane_p2 per-case classification (2026-10-24)
+
+9 saved cases from `fuzz-out/reverify-1024/surface.plane_p2/`:
+
+| case | C++ behavior | Rust behavior | malformed aspect | verdict |
+|------|--------------|---------------|------------------|---------|
+| fuzz00090 | garbage rec (1.001e3) | rejects (1.007e3) | malformed record | guard legitimate |
+| fuzz00263 | 54 records | 1 record | truncated/emptied knots | guard legitimate |
+| fuzz00807 | 54 records | 1 record | truncated/emptied knots | guard legitimate |
+| fuzz00851 | crash (signal 11) | no crash | extreme input | upstream UB |
+| fuzz00977 | 54 records | 1 record | truncated/emptied knots | guard legitimate |
+| fuzz01069 | 54 records | 1 record | truncated/emptied knots | guard legitimate |
+| fuzz01159 | 54 records | 1 record | truncated/emptied knots | guard legitimate |
+| fuzz01255 | crash (signal 11) | no crash | extreme input | upstream UB |
+| fuzz01894 | garbage rec (1.001e3) | rejects (1.007e3) | malformed record | guard legitimate |
+
+No case was identified as Rust wrongly rejecting a valid record C++ handles correctly; all 9 confirm the garbage-class verdict. No Rust code change made.
 ## blend.fillet_geom p2-p5: corner accessors wired through CornerLookup (2026-10-24, PR #747)
 
 The `UNPORTED(blend.fillet_corner_p1)` stubs of the fillet vertex and edge calculators
@@ -19174,6 +19216,57 @@ other operand in the merge editing stages (`boolean.merge_p4` /
 of being kept reversed as a void. Listed in `known_mismatches.toml`; the offset
 port itself is not involved after the shell is built.
 
+## offset.offset_executive_p1: vertex-fixture inline test fails only in debug builds on fp-noise net values (2026-10-24)
+
+Found on upstream/main 859e06bcc, macOS arm64 (diag lane `diag/offset-exec-test`):
+`cargo test -p difftest --features cpp` fails
+`offset_offset_executive_p1::tests::vertex_fixtures_compare_actual_caps_not_only_presence`
+asserting `compare(&native, &rust, &[])` on fixture `vertex_strut_closed_circle_360`
+(vertex.json#8): `values.vertex.surface.net[8]` cpp `1.6653345369377348e-16` vs rust
+`2.7755575615628914e-16` (and 8 more entries, incl. `[20,32,44,...]`), rel_err 0.4.
+
+Classification: **profile-sensitive near-zero disagreement; first causal
+operation untraced.** The observations below do not establish whether the
+cause is code generation, an arithmetic-order difference or a profile-sensitive
+branch; no kernel correction is proposed in this diagnosis. Evidence:
+
+1. The unit runner on the same lane compares the same case:
+   `difftest --unit offset.offset_executive_p1 --jobs 2` → PARTIAL cases=1048
+   passed=909 failed=0 deferred=138 max_rel_err=1.850371707708594e-16; the
+   `vertex_strut_closed_circle_360` entry in `reports/difftest/offset.offset_executive_p1.json`
+   is `outcome: pass, max_rel_err: 0.0` (exact match, 204 values compared).
+2. The same inline test **passes** under `cargo test --release --features cpp` on
+   this machine and **passes** in the optimized difftest-profile runner. It fails
+   only under the unoptimized test (debug) profile. The C++ reference is
+   the same prebuilt `bin/cpp` library in both runs (built `-ffp-contract=off`),
+   so the observed discrepancy depends on the Rust build profile with the
+   native reference held fixed; a codegen cause has not been isolated.
+3. The mismatching magnitudes are 1e-16 arithmetic residue (both `cpp` and `rust`
+   values are multiples of ~5.55e-17 around a should-be-zero net entry); with a
+   pure `|a-b|/max(|a|,|b|)` relative rule the reported pair has relative error
+   0.4 despite an absolute difference of about 1.1e-16. The rule has no absolute
+   epsilon and the unit (`Runner.abs_floors()`, asserted empty in the test)
+   documents none.
+
+So the port's vertex-cap net matches the C++ reference bit-exactly in optimized
+builds, and differs by ~1.1e-16 absolute on 9 near-zero net entries in debug
+builds. A mul-add/summation lowering difference is a hypothesis, not a traced
+cause. The standard CI test job does not exercise this cpp-gated test because it
+does not enable cpp; compile-only coverage does not reproduce the runtime check.
+
+Recommended follow-up (owner brett19 via PR #737, which already touches this
+file — that overlap is why this is diagnose-only):
+- Decide policy for fp-residue keys ("values that should be zero"): either a
+  documented `AbsFloor` for `vertex.surface.net` (~1e-15 would cover the observed
+  residue while keeping real signal, note it in the unit notes per the gate's
+  abs-floor procedure) or an explicit near-zero rule in the test's comparison.
+  Do NOT loosen `REL_TOL`.
+- Or pin the inline test to a fused-math-consistent comparison context (run the
+  fixture both profiles? not portable) — the abs-floor route is simpler.
+- Independently, consider enabling at least one cpp-feature smoke test in CI so
+  this class of failure is exercised on main.
+
+No repo source change, no test change, no tolerance change was made for this.
 
 ### Real-solid fillet checkpoint: corner vertices are outside the pseudo owning list (2026-10-24)
 
