@@ -23,8 +23,8 @@ use std::collections::BTreeMap;
 use super::p1::{ExecutiveObjects, SolverLoadingAccess};
 use super::p2::{FilletParameters, FilletParametersAccess, SolverSpec};
 use super::p3::{
-    CornerAdjustmentAccess, CornerEdgeAccess, CornerVertexAccess, CornerView, ErrorInfo,
-    FaceConstructionAccess, FaceShrinkAccess, FaceStitchAccess, FilletExecutive,
+    BrepCreationAccess, CornerAdjustmentAccess, CornerEdgeAccess, CornerVertexAccess, CornerView,
+    ErrorInfo, FaceConstructionAccess, FaceShrinkAccess, FaceStitchAccess, FilletExecutive,
     RailClassificationAccess, RailTrimAccess, SolverGeometryAccess, StitchAttempt, VertexEntry,
 };
 use crate::blend::fillet_corner::p3::FilletCorner;
@@ -743,14 +743,7 @@ impl<'target> FilletSession<'target> {
     /// # Errors
     /// Missing live tangent collection when more than one solver is retained.
     pub fn process_smooth_edge_sequences(&mut self, k: &mut Kernel) -> Result<()> {
-        self.executive
-            .process_smooth_edge_sequences_with(k, |_, _, _| {
-                // UNPORTED(blend.fillet_executive_p2): retained tangent-corner context for CollectTangentEdgeSequence.
-                Err(SolidError::unported(
-                    "SmFilletExecutive::CollectTangentEdgeSequence (live corner context)",
-                    "blend.fillet_executive_p2",
-                ))
-            })
+        self.objects.creation_smooth(k, &mut self.executive)
     }
 
     /// Classify real solver rails and repair any adjusted corners in native order.
@@ -831,6 +824,23 @@ impl<'target> FilletSession<'target> {
     /// are ignored by the shared executive algorithm.
     pub fn shrink_fillet_faces(&mut self, k: &mut Kernel) -> Result<()> {
         self.executive.shrink_fillet_faces(k, &mut self.objects)
+    }
+
+    /// Run the complete native intermediate fillet-body construction algorithm
+    /// after solver setup and [`Self::create_corners`].
+    /// This constructor ends after attribute attachment and stitching; it does not
+    /// merge the intermediate body into the target or complete the public fillet API.
+    ///
+    /// # Errors
+    /// The original stage error or genuine missing live capability, retaining its
+    /// actual mutation prefix. Optional error information is assigned only on success.
+    pub fn create_fillet_brep(
+        &mut self,
+        k: &mut Kernel,
+        error_info: Option<&mut ErrorInfo<FilletObject>>,
+    ) -> Result<()> {
+        self.executive
+            .create_fillet_brep(k, &mut self.objects, error_info)
     }
 
     /// Load this actual solver through the native executive algorithm.
@@ -925,6 +935,22 @@ impl CornerEdgeAccess<FilletObject> for SessionObjects<'_> {
             |context| *context.do_global_merge,
             |context| &mut *context.pseudo,
         )
+    }
+}
+
+impl BrepCreationAccess<FilletObject> for SessionObjects<'_> {
+    fn creation_smooth(
+        &mut self,
+        k: &mut Kernel,
+        executive: &mut FilletExecutive<FilletObject>,
+    ) -> Result<()> {
+        executive.process_smooth_edge_sequences_with(k, |_, _, _| {
+            // UNPORTED(blend.fillet_executive_p2): retained tangent-corner context for CollectTangentEdgeSequence.
+            Err(SolidError::unported(
+                "SmFilletExecutive::CollectTangentEdgeSequence (live corner context)",
+                "blend.fillet_executive_p2",
+            ))
+        })
     }
 }
 

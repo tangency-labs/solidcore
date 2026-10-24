@@ -282,7 +282,7 @@ std::pair<std::vector<double>,std::vector<double>> rail_metadata(SmFilletExecuti
 
 SC_EXPORT int32_t sc_blend_fillet_executive_p3_real_prefix(
     const double* input,int64_t n,int32_t checkpoint,double* out,int64_t cap,int64_t* out_len) {
-    if(checkpoint<1 || checkpoint>13 || !input || n<9) return SC_ERR_ARG;
+    if(checkpoint<1 || checkpoint>14 || !input || n<9) return SC_ERR_ARG;
     for(int64_t i=0;i<n;++i) if(!std::isfinite(input[i])) return SC_ERR_ARG;
     for(int i=0;i<3;++i) if(input[i]<=SM_EFF_ZERO) return SC_ERR_ARG;
     const double ulong_limit=std::ldexp(1.0,std::numeric_limits<ULONG>::digits);
@@ -308,6 +308,17 @@ SC_EXPORT int32_t sc_blend_fillet_executive_p3_real_prefix(
     fillet_real_solid::FaceExecutive exec(*body->GetContext(),body.get());exec.SetDoGlobalMerge(TRUE);
     const auto xsect=input[4]==0?SM_FSG_LINEAR:input[4]==2?SM_FSG_BLEND_CURVE:SM_FSG_CIRCULAR;
     const auto prepare=exec.SetFilletParameters(body.get(),selected,xsect,SM_FS_CONST_RADIUS,input[3],nullptr,-1,-1,-1,-1,ULONG(input[5]),input[6]);
+    if(checkpoint==14) {
+        double corner_status=-1,constructor_status=-1;
+        if(prepare==SM_SUCCESS){auto c=exec.CreateFilletCorners();corner_status=fillet_real_solid::status(c);if(c==SM_SUCCESS)constructor_status=fillet_real_solid::status(exec.CreateFilletBrep(nullptr));}
+        std::vector<double> values;fillet_real_solid::section(values,before);
+        fillet_real_solid::section(values,std::vector<double>{fillet_real_solid::status(prepare),corner_status,constructor_status});
+        auto record=fillet_real_solid::intermediate_faces(exec.GetFilletBrep());
+        fillet_real_solid::section(values,record.first);fillet_real_solid::section(values,record.second);
+        fillet_real_solid::section(values,fillet_real_solid::source_surface_binding(exec,exec.GetFilletBrep()));
+        fillet_real_solid::section(values,exec.attribute_state());
+        return sc_copy_out(values.data(),int64_t(values.size()),out,cap,out_len);
+    }
     double corners=-1,topology=-1,vertex_geometry=-1,smooth=-1,adjust=-1,solver_geometry=-1,corner_edges=-1,trim=-1,classification=-1,faces_status=-1,stitch_status=-1,shrink_status=-1;
     std::vector<double> prior,parameters;
     std::pair<std::vector<double>,std::vector<double>> offsets_before,rails_before,classes_before;

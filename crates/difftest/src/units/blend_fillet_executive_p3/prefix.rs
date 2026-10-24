@@ -248,6 +248,29 @@ pub(super) fn run(
         Ok(()) => 0.0,
         Err(error) => status(error)?,
     };
+    if input.checkpoint == Checkpoint::CreatedFilletBrep {
+        if statuses[0] == 0.0 {
+            statuses[1] = match session.create_corners(k, None) {
+                Ok(()) => 0.0,
+                Err(error) => status(error)?,
+            };
+            if statuses[1] == 0.0 {
+                statuses[2] = match session.create_fillet_brep(k, None) {
+                    Ok(()) => 0.0,
+                    Err(error) => status(error)?,
+                };
+            }
+        }
+        let mut out = Vec::new();
+        section(&mut out, before);
+        section(&mut out, &statuses[..3]);
+        let (state, values) = intermediate_faces::snapshot(k, &session)?;
+        section(&mut out, &state);
+        section(&mut out, &values);
+        section(&mut out, &intermediate_faces::source_binding(&session)?);
+        section(&mut out, &stitch_state::attributes(&session)?);
+        return Ok(out);
+    }
     let mut prior = Vec::new();
     let mut offsets_before = (Vec::new(), Vec::new());
     let mut rails_before = (Vec::new(), Vec::new());
@@ -566,6 +589,35 @@ pub(super) fn output(mut values: &[f64], checkpoint: Checkpoint) -> Result<Outpu
         "selected_edge_before".into(),
         take_section(&mut values)?.to_vec(),
     );
+    if checkpoint == Checkpoint::CreatedFilletBrep {
+        for name in ["constructor_statuses", "intermediate_face_topology"] {
+            let state = take_section(&mut values)?;
+            if state.iter().any(|v| !v.is_finite() || v.fract() != 0.0) {
+                return Err(HarnessError::new("invalid constructor state"));
+            }
+            out.ints
+                .insert(name.into(), state.iter().map(|v| *v as i64).collect());
+        }
+        out.values.insert(
+            "intermediate_face_geometry".into(),
+            take_section(&mut values)?.to_vec(),
+        );
+        for name in [
+            "source_surface_binding",
+            "intermediate_attributes_after_constructor",
+        ] {
+            let state = take_section(&mut values)?;
+            if state.iter().any(|v| !v.is_finite() || v.fract() != 0.0) {
+                return Err(HarnessError::new("invalid constructor state"));
+            }
+            out.ints
+                .insert(name.into(), state.iter().map(|v| *v as i64).collect());
+        }
+        if !values.is_empty() {
+            return Err(HarnessError::new("trailing constructor data"));
+        }
+        return Ok(out);
+    }
     let count = checkpoint.status_count();
     let statuses = values
         .get(..count)
