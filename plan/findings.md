@@ -18758,3 +18758,72 @@ entry's reason:
 - **Fix.** The same as the entry above: thread `&mut Brep` through `ClassifyLoops` to the
   bisector. When that lands, re-run these nine cases and remove their known-mismatch
   entries.
+
+## surface.cone_p3 — requested axial domains on parallel cylinders (#711, 2026-10-24)
+
+- **Issue:** https://github.com/tangency-labs/solidcore/issues/711.
+- **Pinned source:** `source/SMLib/src/SmCone.cpp:2791-2810`,
+  `SmCone::IntersectWithCone`. The axial overlap uses the whole first cylinder's
+  `0..GetHeight()` and the second cylinder's full STEP domain. A line whose start
+  lies outside either requested face domain is then discarded at `:2968-2969`;
+  a line whose start is inside is not shortened to the face's upper axial bound.
+- **Confirmed through unmodified native FFI:** `issue711_overlapping_holes` uses
+  radius-5 cylinders of height 12 with origins `(6,0,-1)` and `(3,5.196,-1)`, axes
+  +Z. The first face requests STEP height `[1,11]` (world Z `[0,10]`), the second
+  `[0,12]`, both full angle; tolerance `1e-7`. C++ returns **0** curves; Rust returns
+  **2 crossing lines**, each from world Z **0 to 10**. The serialized `geometry`
+  lengths are C++ **5**, Rust **79**. Reversing the operands gives the same failure.
+- **Upper-only trim:** `issue711_upper_trim_crossing_1` uses radius-5, height-12
+  cylinders at `(0,0,0)` and `(6,0,0)`, with first STEP height `[0,4]` and second
+  `[0,12]`. Both produce two lines, but their axial length is C++ **12**, Rust
+  **4** (`values.geometry[11]` and `[44]`). Trimming only the second cylinder has
+  the same defect; tangent cylinders at offset 10 also return length 12 vs 4.
+- **Fix:** convert both requested NURB domains to STEP, subtract the first
+  cylinder's full STEP V minimum to retain the original axis-relative coordinate,
+  and project the other face's trimmed endpoints onto that axis. Reject disjoint
+  axial intervals before the existing tolerance-touch and overlap branches.
+  Conversion errors propagate. Swapped UV, inside-out parameterizations,
+  antiparallel axes and an already-trimmed nonzero STEP V origin are covered.
+- **Independent Rust regression assertions:** all five `issue711_*` unit tests
+  failed before the change and pass afterward. They check the analytic radii,
+  curve counts/types and world-space endpoints, including the 32 combinations
+  of axis direction and both surfaces' UV/inside-out flags, upper-only trims,
+  tangent lines, disjoint domains and endpoint-only contacts.
+- **Differential result (reference remains unchanged):**
+
+  ```text
+  FAIL surface.cone_p3 cases=1484 passed=1344 failed=140 deferred=0 max_rel_err=6.666666666666666e-1 with_values=1328 no_values=16 vacuous=0
+  ```
+
+  All 236 pre-existing fixtures pass. Of the 48 new fixtures, the disjoint-domain
+  and full-domain controls pass; 46 expose the defect. The other 94 failures are
+  existing generated axially trimmed cylinder cases: C++ returns zero curves,
+  while Rust returns one tangent or two crossing lines. With the unchanged
+  generator and its 1200 seeds they are reproducible as:
+
+  ```text
+  gen0015 gen0019 gen0020 gen0023 gen0025 gen0027 gen0028 gen0034 gen0043 gen0068
+  gen0073 gen0079 gen0131 gen0140 gen0146 gen0152 gen0186 gen0190 gen0193 gen0200
+  gen0201 gen0207 gen0226 gen0245 gen0252 gen0262 gen0273 gen0274 gen0284 gen0309
+  gen0313 gen0318 gen0319 gen0331 gen0348 gen0354 gen0356 gen0363 gen0364 gen0390
+  gen0413 gen0415 gen0418 gen0461 gen0468 gen0488 gen0505 gen0527 gen0543 gen0546
+  gen0585 gen0593 gen0601 gen0638 gen0639 gen0651 gen0719 gen0728 gen0751 gen0764
+  gen0792 gen0797 gen0812 gen0816 gen0824 gen0838 gen0839 gen0851 gen0880 gen0932
+  gen0938 gen0939 gen0940 gen0951 gen0955 gen0991 gen0999 gen1001 gen1009 gen1029
+  gen1038 gen1048 gen1051 gen1055 gen1105 gen1114 gen1127 gen1132 gen1148 gen1170
+  gen1180 gen1181 gen1190 gen1198
+  ```
+
+  Each of those inputs and both serialized values is retained in the local
+  `reports/difftest/surface.cone_p3.json` report (regenerate with the command below).
+  No original fixture, generated case, tolerance, absolute floor, FFI guard or
+  known-mismatch exemption is changed. The unit is **blocked**, pending a C++
+  reference update; these mismatches are neither deferred nor reported as green.
+- **Scope:** pinned `c9c5979` predates 1.0.1's `SmCylinder_TYPE` global-dispatch
+  addition. That dispatch is preserved. Both native `SmCylinder` objects and
+  equal-radius `SmCone` objects exercise the corrected analytic method directly;
+  a new equal-radius-cone fixture also exercises the existing global dispatch.
+  This verifies the intersection defect, not a complete two-hole boolean operation.
+- **Reproduce:**
+  `nice -n 10 cargo test -p solidcore --lib issue711` and
+  `nice -n 10 cargo run --profile difftest -p difftest --features cpp -- --unit surface.cone_p3`.

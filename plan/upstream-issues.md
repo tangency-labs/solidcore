@@ -4086,3 +4086,23 @@ title (other references in the repo in brackets):
 
 New entries take the next free number after the highest in their series, as the
 Numbering paragraph at the top says.
+
+### WR-257 — parallel-cylinder intersections ignore requested axial domains (#711)
+
+- **Location:** `source/SMLib/src/SmCone.cpp:2791-2810` and `:2968-2969`,
+  `SmCone::IntersectWithCone`, pinned upstream `c9c5979`.
+- **Trigger:** two radius-5, height-12 cylinders with origins `(6,0,-1)` and
+  `(3,5.196,-1)`, axes +Z, with the first face limited to STEP V `[1,11]`.
+  C++ returns zero curves instead of two crossing lines over world Z `[0,10]`.
+  With only an upper axial trim, it instead returns lines past the requested end
+  (length 12 instead of 4 in `issue711_upper_trim_crossing_1`).
+- **Cause:** overlap is computed from the full cylinder domains; only the resulting
+  start point is checked against the requested domains. Compute overlap from the
+  requested domains converted to STEP, including reversed-axis projection.
+- **Found:** issue https://github.com/tangency-labs/solidcore/issues/711, reproduced
+  using real native cylinders and equal-radius cones through the unchanged shim
+  `harness/cpp/shim/surface_cone_p3.cpp`. **C++ build confirmed** both missing and
+  overlong intersections. The report has 46 new and 94 existing generated failures;
+  see `plan/findings.md` for exact inputs, values and reproduction commands.
+- **Port:** corrected with independent analytic regression assertions; unit
+  `surface.cone_p3` remains blocked until the reference contains the fix.
