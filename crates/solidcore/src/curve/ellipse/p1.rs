@@ -42,6 +42,9 @@
 //! | [`PolarConversion::read_from_db`], [`PolarConversion::read_from_db_with_curve`] | `SmPolarConversion::ReadFromDB` (ellipse back pointer; null back pointer, from `SmSurfOfRevolution::ReadFromDB`) |
 //!
 //! Deviations:
+//! - **Collapsed STEP edits (#428).** Non-finite or inverted STEP intervals and a
+//!   conversion to an empty/non-finite NURBS interval are rejected before changing
+//!   the ellipse, instead of leaving a curve that a later edit turns into NaN knots.
 //! - **Circle class.** `SmCircle` derives from `SmEllipse` without data of its own;
 //!   it is an [`Ellipse`] whose `circle` flag is set ([`Ellipse::is_circle_class`]),
 //!   which picks the circle's type, its `IsKindOf`, `IsArc`, `CreateSimpleOffset` and
@@ -120,6 +123,7 @@ use crate::topology::database_io::{DatabaseReader, FileType, InputStream};
 
 use super::p2::{Ellipse, EllipseOptions, PolarConversion};
 
+const OP_ADJUST: &str = "curve::ellipse::p1::Ellipse::adjust_step_interval";
 const OP_MAKE_NURB: &str = "curve::ellipse::p1::Ellipse::make_nurb";
 const OP_TO_2D: &str = "curve::ellipse::p1::Ellipse::convert_to_2d";
 const OP_TO_POLAR: &str = "curve::ellipse::p1::PolarConversion::convert_to_polar_parameter";
@@ -1566,7 +1570,9 @@ impl Ellipse {
     ///
     /// # Errors
     ///
-    /// Those of [`PolarConversion::convert_to_nurbs_parameter`] (nothing changed) and
+    /// `InvalidInput` for a non-finite/inverted STEP interval or when its endpoints
+    /// map to the same NURBS parameter (nothing changed). Those of
+    /// [`PolarConversion::convert_to_nurbs_parameter`] (nothing changed) and
     /// [`Self::make_nurb_owned`] (the new domain is kept).
     pub fn adjust_step_interval(
         &mut self,
@@ -1574,6 +1580,17 @@ impl Ellipse {
         new_interval: &Extent1d,
         owner: Option<ObjectRef>,
     ) -> Result<()> {
+        if !new_interval.min().is_finite()
+            || !new_interval.max().is_finite()
+            || !new_interval.length().is_finite()
+            || new_interval.length() < 0.0
+        {
+            return Err(SolidError::invalid_input(
+                OP_ADJUST,
+                "STEP interval must have finite endpoints and nonnegative finite length",
+            ));
+        }
+
         // no work - new interval is same as old
         if new_interval.is_contained_by(&self.anal_domain, EFF_ZERO)
             && self.anal_domain.is_contained_by(new_interval, EFF_ZERO)
@@ -1595,6 +1612,20 @@ impl Ellipse {
             .convert_to_nurbs_parameter(k, self, step_t1, 0.0)?
             .0;
         let new_nurbs_ivl = Extent1d::from_min_max(nurbs_t0, nurbs_t1);
+        // The polar converter clamps out-of-arc angles to the old endpoints.
+        // Distinct STEP angles can therefore map to one NURBS parameter. Do not
+        // install that zero-length interval: the next reparameterization divides
+        // by its length and creates NaN interior knots (#428 / WR-211).
+        if !nurbs_t0.is_finite()
+            || !nurbs_t1.is_finite()
+            || !new_nurbs_ivl.length().is_finite()
+            || new_nurbs_ivl.length() <= 0.0
+        {
+            return Err(SolidError::invalid_input(
+                OP_ADJUST,
+                "STEP endpoints map to an empty or non-finite NURBS interval",
+            ));
+        }
 
         // save the input
         self.anal_domain = *new_interval;
@@ -1931,28 +1962,55 @@ mod tests {
         .unwrap()
     }
 
-    /// #428 (`WR-211`), as upstream: the polar converter clamps an angle outside the
-    /// current arc to its ends, so an arc moved a turn on (here to `[360, 540]`, past the
-    /// documented `Max <= 360`) gets both ends at one NURBS parameter. The next
-    /// reparameterisation then divides by that zero length: interior knots NaN.
+    /// #428 / WR-211: clamping both new endpoints to one old NURBS
+    /// parameter must fail before it collapses the curve or poisons later edits.
     #[test]
-    fn step_interval_past_a_turn_collapses_as_upstream() {
+    fn step_interval_past_a_turn_is_rejected_without_changing_the_curve() {
         let k = kernel();
         let past = Extent1d::from_min_max(360.0, 540.0);
-        for d1 in [360.0, 180.0] {
-            let mut c = circle(&k, 0.0, d1, 2.0);
-            c.adjust_step_interval(&k, &past, None).unwrap();
-            assert_eq!(c.anal_domain, past);
-            let nat = c.base.natural_interval();
-            assert_eq!(nat.min(), nat.max(), "[0, {d1}]");
+        for end in [360.0, 180.0] {
+            let mut c = circle(&k, 0.0, end, 2.0);
+            let old_domain = c.anal_domain;
+            let old_nurb = c.base.gw_nurb().unwrap().clone();
+            let old_angles = c.polar.angles.clone();
+            assert!(matches!(
+                c.adjust_step_interval(&k, &past, None),
+                Err(SolidError::InvalidInput { .. })
+            ));
+            assert_eq!(c.anal_domain, old_domain);
+            assert_eq!(c.base.gw_nurb().unwrap(), &old_nurb);
+            assert_eq!(c.polar.angles, old_angles);
+            // This was the second operation that produced interior NaN knots.
+            c.edit_parameterization(&k, &past, true, None).unwrap();
+            let knots = c.base.gw_nurb().unwrap().knots();
+            assert!(knots.iter().all(|v| v.is_finite()));
+            assert_eq!(c.base.natural_interval(), past);
         }
-        let mut c = circle(&k, 0.0, 360.0, 2.0);
-        c.adjust_step_interval(&k, &past, None).unwrap();
-        c.base.edit_parameterization(&past).unwrap();
-        let (knots, mults) = c.base.knots(None).unwrap();
-        assert_eq!(mults, [3, 1, 1, 3]);
-        assert_eq!([knots[0], knots[3]], [360.0, 540.0]);
-        assert!(knots[1].is_nan() && knots[2].is_nan());
+    }
+
+    #[test]
+    fn invalid_step_interval_is_rejected_before_an_ellipse_edit() {
+        let k = kernel();
+        // An equal-angle request is not retained as a point arc: MakeNurb
+        // expands it to a full turn, while the old converter still gives a
+        // zero-length NURBS interval. Reject it rather than creating that pair.
+        for interval in [
+            Extent1d::from_value(90.0),
+            Extent1d::from_raw(90.0, 0.0),
+            Extent1d::from_raw(f64::NAN, 90.0),
+            Extent1d::from_raw(0.0, f64::NAN),
+            Extent1d::from_raw(0.0, f64::INFINITY),
+            Extent1d::from_raw(-f64::MAX, f64::MAX),
+        ] {
+            let mut c = circle(&k, 0.0, 360.0, 2.0);
+            let old = c.base.gw_nurb().unwrap().clone();
+            assert!(matches!(
+                c.adjust_step_interval(&k, &interval, None),
+                Err(SolidError::InvalidInput { .. })
+            ));
+            assert_eq!(c.anal_domain, Extent1d::from_min_max(0.0, 360.0));
+            assert_eq!(c.base.gw_nurb().unwrap(), &old);
+        }
     }
 
     #[test]

@@ -11,6 +11,563 @@
 # case = "gen0042"
 # why = "C++ succeeds with 0 points, Rust returns status_3 (plan/findings.md: ...)"
 
+# PR #686: explicit known differences for this issue.
+
+[[mismatch]]
+unit = "curve.ellipse_p1"
+case = "collapsed_step_circle_180_reverse_0"
+why = "C++ accepts a collapsed STEP-to-NURBS mapping and continues editing the ellipse; Rust rejects it before mutation; later scripted state also differs (WR-211; plan/findings.md: #428 reject collapsed ellipse STEP intervals)"
+
+[[mismatch]]
+unit = "curve.ellipse_p1"
+case = "collapsed_step_circle_180_reverse_1"
+why = "C++ accepts a collapsed STEP-to-NURBS mapping and continues editing the ellipse; Rust rejects it before mutation; later scripted state also differs (WR-211; plan/findings.md: #428 reject collapsed ellipse STEP intervals)"
+
+[[mismatch]]
+unit = "curve.ellipse_p1"
+case = "collapsed_step_circle_360_reverse_0"
+why = "C++ accepts a collapsed STEP-to-NURBS mapping and continues editing the ellipse; Rust rejects it before mutation; later scripted state also differs (WR-211; plan/findings.md: #428 reject collapsed ellipse STEP intervals)"
+
+[[mismatch]]
+unit = "curve.ellipse_p1"
+case = "collapsed_step_circle_360_reverse_1"
+why = "C++ accepts a collapsed STEP-to-NURBS mapping and continues editing the ellipse; Rust rejects it before mutation; later scripted state also differs (WR-211; plan/findings.md: #428 reject collapsed ellipse STEP intervals)"
+
+[[mismatch]]
+unit = "curve.ellipse_p1"
+case = "collapsed_step_ellipse_180_reverse_0"
+why = "C++ accepts a collapsed STEP-to-NURBS mapping and continues editing the ellipse; Rust rejects it before mutation; later scripted state also differs (WR-211; plan/findings.md: #428 reject collapsed ellipse STEP intervals)"
+
+[[mismatch]]
+unit = "curve.ellipse_p1"
+case = "collapsed_step_ellipse_180_reverse_1"
+why = "C++ accepts a collapsed STEP-to-NURBS mapping and continues editing the ellipse; Rust rejects it before mutation; later scripted state also differs (WR-211; plan/findings.md: #428 reject collapsed ellipse STEP intervals)"
+
+[[mismatch]]
+unit = "curve.ellipse_p1"
+case = "collapsed_step_ellipse_360_reverse_0"
+why = "C++ accepts a collapsed STEP-to-NURBS mapping and continues editing the ellipse; Rust rejects it before mutation; later scripted state also differs (WR-211; plan/findings.md: #428 reject collapsed ellipse STEP intervals)"
+
+[[mismatch]]
+unit = "curve.ellipse_p1"
+case = "collapsed_step_ellipse_360_reverse_1"
+why = "C++ accepts a collapsed STEP-to-NURBS mapping and continues editing the ellipse; Rust rejects it before mutation; later scripted state also differs (WR-211; plan/findings.md: #428 reject collapsed ellipse STEP intervals)"
+
+[[mismatch]]
+unit = "curve.ellipse_p1"
+case = "gen0000"
+why = "C++ accepts a collapsed STEP-to-NURBS mapping and continues editing the ellipse; Rust rejects it before mutation; later scripted state also differs (WR-211; plan/findings.md: #428 reject collapsed ellipse STEP intervals)"
+
+[[mismatch]]
+unit = "curve.ellipse_p1"
+case = "gen0015"
+why = "C++ accepts a collapsed STEP-to-NURBS mapping and continues editing the ellipse; Rust rejects it before mutation; later scripted state also differs (WR-211; plan/findings.md: #428 reject collapsed ellipse STEP intervals)"
+
+[[mismatch]]
+unit = "curve.ellipse_p1"
+case = "gen0158"
+why = "C++ accepts a collapsed STEP-to-NURBS mapping and continues editing the ellipse; Rust rejects it before mutation; later scripted state also differs (WR-211; plan/findings.md: #428 reject collapsed ellipse STEP intervals)"
+
+[[mismatch]]
+unit = "curve.ellipse_p1"
+case = "gen0345"
+why = "C++ accepts a collapsed STEP-to-NURBS mapping and continues editing the ellipse; Rust rejects it before mutation; later scripted state also differs (WR-211; plan/findings.md: #428 reject collapsed ellipse STEP intervals)"
+
+[[mismatch]]
+unit = "curve.ellipse_p1"
+case = "gen0402"
+why = "C++ accepts a collapsed STEP-to-NURBS mapping and continues editing the ellipse; Rust rejects it before mutation; later scripted state also differs (WR-211; plan/findings.md: #428 reject collapsed ellipse STEP intervals)"
+
+[[mismatch]]
+unit = "curve.ellipse_p1"
+case = "gen0470"
+why = "C++ accepts a collapsed STEP-to-NURBS mapping and continues editing the ellipse; Rust rejects it before mutation; later scripted state also differs (WR-211; plan/findings.md: #428 reject collapsed ellipse STEP intervals)"
+
+[[mismatch]]
+unit = "curve.ellipse_p1"
+case = "gen0490"
+why = "C++ accepts a collapsed STEP-to-NURBS mapping and continues editing the ellipse; Rust rejects it before mutation; later scripted state also differs (WR-211; plan/findings.md: #428 reject collapsed ellipse STEP intervals)"
+
+[[mismatch]]
+unit = "curve.ellipse_p1"
+case = "gen0494"
+why = "C++ accepts a collapsed STEP-to-NURBS mapping and continues editing the ellipse; Rust rejects it before mutation; later scripted state also differs (WR-211; plan/findings.md: #428 reject collapsed ellipse STEP intervals)"
+
+[[mismatch]]
+unit = "curve.ellipse_p1"
+case = "gen0565"
+why = "C++ accepts a collapsed STEP-to-NURBS mapping and continues editing the ellipse; Rust rejects it before mutation; later scripted state also differs (WR-211; plan/findings.md: #428 reject collapsed ellipse STEP intervals)"
+
+[[mismatch]]
+unit = "curve.ellipse_p1"
+case = "gen0660"
+why = "C++ accepts a collapsed STEP-to-NURBS mapping and continues editing the ellipse; Rust rejects it before mutation; later scripted state also differs (WR-211; plan/findings.md: #428 reject collapsed ellipse STEP intervals)"
+
+[[mismatch]]
+unit = "curve.ellipse_p1"
+case = "gen0792"
+why = "C++ accepts a collapsed STEP-to-NURBS mapping and continues editing the ellipse; Rust rejects it before mutation; later scripted state also differs (WR-211; plan/findings.md: #428 reject collapsed ellipse STEP intervals)"
+
+[[mismatch]]
+unit = "curve.ellipse_p1"
+case = "gen0921"
+why = "C++ accepts a collapsed STEP-to-NURBS mapping and continues editing the ellipse; Rust rejects it before mutation; later scripted state also differs (WR-211; plan/findings.md: #428 reject collapsed ellipse STEP intervals)"
+
+[[mismatch]]
+unit = "curve.ellipse_p1"
+case = "gen0945"
+why = "C++ accepts a collapsed STEP-to-NURBS mapping and continues editing the ellipse; Rust rejects it before mutation; later scripted state also differs (WR-211; plan/findings.md: #428 reject collapsed ellipse STEP intervals)"
+
+[[mismatch]]
+unit = "curve.ellipse_p1"
+case = "gen1028"
+why = "C++ accepts a collapsed STEP-to-NURBS mapping and continues editing the ellipse; Rust rejects it before mutation; later scripted state also differs (WR-211; plan/findings.md: #428 reject collapsed ellipse STEP intervals)"
+
+[[mismatch]]
+unit = "curve.ellipse_p1"
+case = "gen1035"
+why = "C++ accepts a collapsed STEP-to-NURBS mapping and continues editing the ellipse; Rust rejects it before mutation; later scripted state also differs (WR-211; plan/findings.md: #428 reject collapsed ellipse STEP intervals)"
+
+[[mismatch]]
+unit = "curve.ellipse_p1"
+case = "gen1039"
+why = "C++ accepts a collapsed STEP-to-NURBS mapping and continues editing the ellipse; Rust rejects it before mutation; later scripted state also differs (WR-211; plan/findings.md: #428 reject collapsed ellipse STEP intervals)"
+
+[[mismatch]]
+unit = "curve.ellipse_p1"
+case = "gen1149"
+why = "C++ accepts a collapsed STEP-to-NURBS mapping and continues editing the ellipse; Rust rejects it before mutation; later scripted state also differs (WR-211; plan/findings.md: #428 reject collapsed ellipse STEP intervals)"
+
+[[mismatch]]
+unit = "curve.ellipse_p1"
+case = "gen1173"
+why = "C++ accepts a collapsed STEP-to-NURBS mapping and continues editing the ellipse; Rust rejects it before mutation; later scripted state also differs (WR-211; plan/findings.md: #428 reject collapsed ellipse STEP intervals)"
+
+[[mismatch]]
+unit = "curve.ellipse_p1"
+case = "gen1189"
+why = "C++ accepts a collapsed STEP-to-NURBS mapping and continues editing the ellipse; Rust rejects it before mutation; later scripted state also differs (WR-211; plan/findings.md: #428 reject collapsed ellipse STEP intervals)"
+
+[[mismatch]]
+unit = "curve.ellipse_p1"
+case = "gen1259"
+why = "C++ accepts a collapsed STEP-to-NURBS mapping and continues editing the ellipse; Rust rejects it before mutation; later scripted state also differs (WR-211; plan/findings.md: #428 reject collapsed ellipse STEP intervals)"
+
+[[mismatch]]
+unit = "curve.ellipse_p1"
+case = "gen1298"
+why = "C++ accepts a collapsed STEP-to-NURBS mapping and continues editing the ellipse; Rust rejects it before mutation; later scripted state also differs (WR-211; plan/findings.md: #428 reject collapsed ellipse STEP intervals)"
+
+[[mismatch]]
+unit = "curve.ellipse_p1"
+case = "gen1303"
+why = "C++ accepts a collapsed STEP-to-NURBS mapping and continues editing the ellipse; Rust rejects it before mutation; later scripted state also differs (WR-211; plan/findings.md: #428 reject collapsed ellipse STEP intervals)"
+
+[[mismatch]]
+unit = "curve.ellipse_p1"
+case = "gen1307"
+why = "C++ accepts a collapsed STEP-to-NURBS mapping and continues editing the ellipse; Rust rejects it before mutation; later scripted state also differs (WR-211; plan/findings.md: #428 reject collapsed ellipse STEP intervals)"
+
+[[mismatch]]
+unit = "curve.ellipse_p1"
+case = "gen1308"
+why = "C++ accepts a collapsed STEP-to-NURBS mapping and continues editing the ellipse; Rust rejects it before mutation; later scripted state also differs (WR-211; plan/findings.md: #428 reject collapsed ellipse STEP intervals)"
+
+[[mismatch]]
+unit = "curve.ellipse_p1"
+case = "gen1335"
+why = "C++ accepts a collapsed STEP-to-NURBS mapping and continues editing the ellipse; Rust rejects it before mutation; later scripted state also differs (WR-211; plan/findings.md: #428 reject collapsed ellipse STEP intervals)"
+
+[[mismatch]]
+unit = "curve.ellipse_p1"
+case = "gen1372"
+why = "C++ accepts a collapsed STEP-to-NURBS mapping and continues editing the ellipse; Rust rejects it before mutation; later scripted state also differs (WR-211; plan/findings.md: #428 reject collapsed ellipse STEP intervals)"
+
+[[mismatch]]
+unit = "curve.ellipse_p1"
+case = "gen1387"
+why = "C++ accepts a collapsed STEP-to-NURBS mapping and continues editing the ellipse; Rust rejects it before mutation; later scripted state also differs (WR-211; plan/findings.md: #428 reject collapsed ellipse STEP intervals)"
+
+[[mismatch]]
+unit = "curve.ellipse_p1"
+case = "gen1397"
+why = "C++ accepts a collapsed STEP-to-NURBS mapping and continues editing the ellipse; Rust rejects it before mutation; later scripted state also differs (WR-211; plan/findings.md: #428 reject collapsed ellipse STEP intervals)"
+
+[[mismatch]]
+unit = "curve.ellipse_p1"
+case = "gen1414"
+why = "C++ accepts a collapsed STEP-to-NURBS mapping and continues editing the ellipse; Rust rejects it before mutation; later scripted state also differs (WR-211; plan/findings.md: #428 reject collapsed ellipse STEP intervals)"
+
+[[mismatch]]
+unit = "curve.ellipse_p1"
+case = "gen1438"
+why = "C++ accepts a collapsed STEP-to-NURBS mapping and continues editing the ellipse; Rust rejects it before mutation; later scripted state also differs (WR-211; plan/findings.md: #428 reject collapsed ellipse STEP intervals)"
+
+[[mismatch]]
+unit = "curve.ellipse_p1"
+case = "gen1502"
+why = "C++ accepts a collapsed STEP-to-NURBS mapping and continues editing the ellipse; Rust rejects it before mutation; later scripted state also differs (WR-211; plan/findings.md: #428 reject collapsed ellipse STEP intervals)"
+
+[[mismatch]]
+unit = "curve.ellipse_p1"
+case = "gen1543"
+why = "C++ accepts a collapsed STEP-to-NURBS mapping and continues editing the ellipse; Rust rejects it before mutation; later scripted state also differs (WR-211; plan/findings.md: #428 reject collapsed ellipse STEP intervals)"
+
+[[mismatch]]
+unit = "curve.ellipse_p1"
+case = "gen1569"
+why = "C++ accepts a collapsed STEP-to-NURBS mapping and continues editing the ellipse; Rust rejects it before mutation; later scripted state also differs (WR-211; plan/findings.md: #428 reject collapsed ellipse STEP intervals)"
+
+[[mismatch]]
+unit = "curve.ellipse_p1"
+case = "gen1585"
+why = "C++ accepts a collapsed STEP-to-NURBS mapping and continues editing the ellipse; Rust rejects it before mutation; later scripted state also differs (WR-211; plan/findings.md: #428 reject collapsed ellipse STEP intervals)"
+
+[[mismatch]]
+unit = "curve.ellipse_p1"
+case = "gen1603"
+why = "C++ accepts a collapsed STEP-to-NURBS mapping and continues editing the ellipse; Rust rejects it before mutation; later scripted state also differs (WR-211; plan/findings.md: #428 reject collapsed ellipse STEP intervals)"
+
+[[mismatch]]
+unit = "curve.ellipse_p1"
+case = "gen1651"
+why = "C++ accepts a collapsed STEP-to-NURBS mapping and continues editing the ellipse; Rust rejects it before mutation; later scripted state also differs (WR-211; plan/findings.md: #428 reject collapsed ellipse STEP intervals)"
+
+[[mismatch]]
+unit = "curve.ellipse_p1"
+case = "gen1735"
+why = "C++ accepts a collapsed STEP-to-NURBS mapping and continues editing the ellipse; Rust rejects it before mutation; later scripted state also differs (WR-211; plan/findings.md: #428 reject collapsed ellipse STEP intervals)"
+
+[[mismatch]]
+unit = "curve.ellipse_p1"
+case = "gen1796"
+why = "C++ accepts a collapsed STEP-to-NURBS mapping and continues editing the ellipse; Rust rejects it before mutation; later scripted state also differs (WR-211; plan/findings.md: #428 reject collapsed ellipse STEP intervals)"
+
+[[mismatch]]
+unit = "curve.ellipse_p1"
+case = "gen1921"
+why = "C++ accepts a collapsed STEP-to-NURBS mapping and continues editing the ellipse; Rust rejects it before mutation; later scripted state also differs (WR-211; plan/findings.md: #428 reject collapsed ellipse STEP intervals)"
+
+[[mismatch]]
+unit = "curve.ellipse_p1"
+case = "gen1943"
+why = "C++ accepts a collapsed STEP-to-NURBS mapping and continues editing the ellipse; Rust rejects it before mutation; later scripted state also differs (WR-211; plan/findings.md: #428 reject collapsed ellipse STEP intervals)"
+
+[[mismatch]]
+unit = "curve.ellipse_p1"
+case = "gen1953"
+why = "C++ accepts a collapsed STEP-to-NURBS mapping and continues editing the ellipse; Rust rejects it before mutation; later scripted state also differs (WR-211; plan/findings.md: #428 reject collapsed ellipse STEP intervals)"
+
+[[mismatch]]
+unit = "curve.ellipse_p1"
+case = "gen1989"
+why = "C++ accepts a collapsed STEP-to-NURBS mapping and continues editing the ellipse; Rust rejects it before mutation; later scripted state also differs (WR-211; plan/findings.md: #428 reject collapsed ellipse STEP intervals)"
+
+[[mismatch]]
+unit = "surface.surf_of_extrusion_p1"
+case = "review3_circle_0_360_infinite_sw1_upd1"
+why = "C++ UpdateAnalyticalDomain continues with an empty/collapsed ellipse-generator STEP mapping; Rust propagates InvalidInput from the checked ellipse edit (WR-211; plan/findings.md: #428 reject collapsed ellipse STEP intervals)"
+
+[[mismatch]]
+unit = "surface.surf_of_extrusion_p1"
+case = "review3_circle_0_360_infinite_sw1_upd2"
+why = "C++ UpdateAnalyticalDomain continues with an empty/collapsed ellipse-generator STEP mapping; Rust propagates InvalidInput from the checked ellipse edit (WR-211; plan/findings.md: #428 reject collapsed ellipse STEP intervals)"
+
+[[mismatch]]
+unit = "surface.surf_of_extrusion_p1"
+case = "review3_circle_-360_0_infinite_sw1_upd1"
+why = "C++ UpdateAnalyticalDomain continues with an empty/collapsed ellipse-generator STEP mapping; Rust propagates InvalidInput from the checked ellipse edit (WR-211; plan/findings.md: #428 reject collapsed ellipse STEP intervals)"
+
+[[mismatch]]
+unit = "surface.surf_of_extrusion_p1"
+case = "review3_circle_-360_0_infinite_sw1_upd2"
+why = "C++ UpdateAnalyticalDomain continues with an empty/collapsed ellipse-generator STEP mapping; Rust propagates InvalidInput from the checked ellipse edit (WR-211; plan/findings.md: #428 reject collapsed ellipse STEP intervals)"
+
+[[mismatch]]
+unit = "surface.surf_of_extrusion_p1"
+case = "review3_circle_-180_180_infinite_sw1_upd1"
+why = "C++ UpdateAnalyticalDomain continues with an empty/collapsed ellipse-generator STEP mapping; Rust propagates InvalidInput from the checked ellipse edit (WR-211; plan/findings.md: #428 reject collapsed ellipse STEP intervals)"
+
+[[mismatch]]
+unit = "surface.surf_of_extrusion_p1"
+case = "review3_circle_-180_180_infinite_sw1_upd2"
+why = "C++ UpdateAnalyticalDomain continues with an empty/collapsed ellipse-generator STEP mapping; Rust propagates InvalidInput from the checked ellipse edit (WR-211; plan/findings.md: #428 reject collapsed ellipse STEP intervals)"
+
+[[mismatch]]
+unit = "surface.surf_of_extrusion_p1"
+case = "review3_ellipse_0_360_infinite_sw1_upd1"
+why = "C++ UpdateAnalyticalDomain continues with an empty/collapsed ellipse-generator STEP mapping; Rust propagates InvalidInput from the checked ellipse edit (WR-211; plan/findings.md: #428 reject collapsed ellipse STEP intervals)"
+
+[[mismatch]]
+unit = "surface.surf_of_extrusion_p1"
+case = "review3_ellipse_0_360_infinite_sw1_upd2"
+why = "C++ UpdateAnalyticalDomain continues with an empty/collapsed ellipse-generator STEP mapping; Rust propagates InvalidInput from the checked ellipse edit (WR-211; plan/findings.md: #428 reject collapsed ellipse STEP intervals)"
+
+[[mismatch]]
+unit = "surface.surf_of_extrusion_p1"
+case = "review3_ellipse_-360_0_infinite_sw1_upd1"
+why = "C++ UpdateAnalyticalDomain continues with an empty/collapsed ellipse-generator STEP mapping; Rust propagates InvalidInput from the checked ellipse edit (WR-211; plan/findings.md: #428 reject collapsed ellipse STEP intervals)"
+
+[[mismatch]]
+unit = "surface.surf_of_extrusion_p1"
+case = "review3_ellipse_-360_0_infinite_sw1_upd2"
+why = "C++ UpdateAnalyticalDomain continues with an empty/collapsed ellipse-generator STEP mapping; Rust propagates InvalidInput from the checked ellipse edit (WR-211; plan/findings.md: #428 reject collapsed ellipse STEP intervals)"
+
+[[mismatch]]
+unit = "surface.surf_of_extrusion_p1"
+case = "review3_ellipse_-180_180_infinite_sw1_upd1"
+why = "C++ UpdateAnalyticalDomain continues with an empty/collapsed ellipse-generator STEP mapping; Rust propagates InvalidInput from the checked ellipse edit (WR-211; plan/findings.md: #428 reject collapsed ellipse STEP intervals)"
+
+[[mismatch]]
+unit = "surface.surf_of_extrusion_p1"
+case = "review3_ellipse_-180_180_infinite_sw1_upd2"
+why = "C++ UpdateAnalyticalDomain continues with an empty/collapsed ellipse-generator STEP mapping; Rust propagates InvalidInput from the checked ellipse edit (WR-211; plan/findings.md: #428 reject collapsed ellipse STEP intervals)"
+
+[[mismatch]]
+unit = "surface.surf_of_extrusion_p1"
+case = "review6_ell_5e-324_canonical_update"
+why = "C++ UpdateAnalyticalDomain continues with an empty/collapsed ellipse-generator STEP mapping; Rust propagates InvalidInput from the checked ellipse edit (WR-211; plan/findings.md: #428 reject collapsed ellipse STEP intervals)"
+
+[[mismatch]]
+unit = "surface.surf_of_extrusion_p1"
+case = "review6_ell_5e-324_infinite_update"
+why = "C++ UpdateAnalyticalDomain continues with an empty/collapsed ellipse-generator STEP mapping; Rust propagates InvalidInput from the checked ellipse edit (WR-211; plan/findings.md: #428 reject collapsed ellipse STEP intervals)"
+
+[[mismatch]]
+unit = "surface.surf_of_revolution_p3"
+case = "r2_update_torus_1_[0.3, 0.3, 0.3, 0.3]"
+why = "C++ UpdateAnalyticalDomain continues with an empty/collapsed ellipse-generator STEP mapping; Rust propagates InvalidInput from the checked ellipse edit (WR-211; plan/findings.md: #428 reject collapsed ellipse STEP intervals)"
+
+[[mismatch]]
+unit = "surface.surf_of_revolution_p3"
+case = "r2_update_torus_sw_1_[0, 0, 0, 1]"
+why = "C++ UpdateAnalyticalDomain continues with an empty/collapsed ellipse-generator STEP mapping; Rust propagates InvalidInput from the checked ellipse edit (WR-211; plan/findings.md: #428 reject collapsed ellipse STEP intervals)"
+
+[[mismatch]]
+unit = "surface.surf_of_revolution_p3"
+case = "r2_update_torus_sw_1_[0.3, 0.3, 0.3, 0.3]"
+why = "C++ UpdateAnalyticalDomain continues with an empty/collapsed ellipse-generator STEP mapping; Rust propagates InvalidInput from the checked ellipse edit (WR-211; plan/findings.md: #428 reject collapsed ellipse STEP intervals)"
+
+[[mismatch]]
+unit = "surface.surf_of_revolution_p3"
+case = "r2_update_sphere_1_[0.3, 0.3, 0.3, 0.3]"
+why = "C++ UpdateAnalyticalDomain continues with an empty/collapsed ellipse-generator STEP mapping; Rust propagates InvalidInput from the checked ellipse edit (WR-211; plan/findings.md: #428 reject collapsed ellipse STEP intervals)"
+
+[[mismatch]]
+unit = "surface.surf_of_revolution_p3"
+case = "r2_update_sphere_part_1_[0.3, 0.3, 0.3, 0.3]"
+why = "C++ UpdateAnalyticalDomain continues with an empty/collapsed ellipse-generator STEP mapping; Rust propagates InvalidInput from the checked ellipse edit (WR-211; plan/findings.md: #428 reject collapsed ellipse STEP intervals)"
+
+[[mismatch]]
+unit = "surface.surf_of_revolution_p3"
+case = "r2_update_torus_0.0001_[0.3, 0.3, 0.3, 0.3]"
+why = "C++ UpdateAnalyticalDomain continues with an empty/collapsed ellipse-generator STEP mapping; Rust propagates InvalidInput from the checked ellipse edit (WR-211; plan/findings.md: #428 reject collapsed ellipse STEP intervals)"
+
+[[mismatch]]
+unit = "surface.surf_of_revolution_p3"
+case = "r2_update_torus_sw_0.0001_[0, 0, 0, 1]"
+why = "C++ UpdateAnalyticalDomain continues with an empty/collapsed ellipse-generator STEP mapping; Rust propagates InvalidInput from the checked ellipse edit (WR-211; plan/findings.md: #428 reject collapsed ellipse STEP intervals)"
+
+[[mismatch]]
+unit = "surface.surf_of_revolution_p3"
+case = "r2_update_torus_sw_0.0001_[0.3, 0.3, 0.3, 0.3]"
+why = "C++ UpdateAnalyticalDomain continues with an empty/collapsed ellipse-generator STEP mapping; Rust propagates InvalidInput from the checked ellipse edit (WR-211; plan/findings.md: #428 reject collapsed ellipse STEP intervals)"
+
+[[mismatch]]
+unit = "surface.surf_of_revolution_p3"
+case = "r2_update_sphere_0.0001_[0.3, 0.3, 0.3, 0.3]"
+why = "C++ UpdateAnalyticalDomain continues with an empty/collapsed ellipse-generator STEP mapping; Rust propagates InvalidInput from the checked ellipse edit (WR-211; plan/findings.md: #428 reject collapsed ellipse STEP intervals)"
+
+[[mismatch]]
+unit = "surface.surf_of_revolution_p3"
+case = "r2_update_sphere_part_0.0001_[0.3, 0.3, 0.3, 0.3]"
+why = "C++ UpdateAnalyticalDomain continues with an empty/collapsed ellipse-generator STEP mapping; Rust propagates InvalidInput from the checked ellipse edit (WR-211; plan/findings.md: #428 reject collapsed ellipse STEP intervals)"
+
+[[mismatch]]
+unit = "surface.surf_of_revolution_p3"
+case = "r2_update_torus_100000_[0.3, 0.3, 0.3, 0.3]"
+why = "C++ UpdateAnalyticalDomain continues with an empty/collapsed ellipse-generator STEP mapping; Rust propagates InvalidInput from the checked ellipse edit (WR-211; plan/findings.md: #428 reject collapsed ellipse STEP intervals)"
+
+[[mismatch]]
+unit = "surface.surf_of_revolution_p3"
+case = "r2_update_torus_sw_100000_[0, 0, 0, 1]"
+why = "C++ UpdateAnalyticalDomain continues with an empty/collapsed ellipse-generator STEP mapping; Rust propagates InvalidInput from the checked ellipse edit (WR-211; plan/findings.md: #428 reject collapsed ellipse STEP intervals)"
+
+[[mismatch]]
+unit = "surface.surf_of_revolution_p3"
+case = "r2_update_torus_sw_100000_[0.3, 0.3, 0.3, 0.3]"
+why = "C++ UpdateAnalyticalDomain continues with an empty/collapsed ellipse-generator STEP mapping; Rust propagates InvalidInput from the checked ellipse edit (WR-211; plan/findings.md: #428 reject collapsed ellipse STEP intervals)"
+
+[[mismatch]]
+unit = "surface.surf_of_revolution_p3"
+case = "r2_update_sphere_100000_[0.3, 0.3, 0.3, 0.3]"
+why = "C++ UpdateAnalyticalDomain continues with an empty/collapsed ellipse-generator STEP mapping; Rust propagates InvalidInput from the checked ellipse edit (WR-211; plan/findings.md: #428 reject collapsed ellipse STEP intervals)"
+
+[[mismatch]]
+unit = "surface.surf_of_revolution_p3"
+case = "r2_update_sphere_part_100000_[0.3, 0.3, 0.3, 0.3]"
+why = "C++ UpdateAnalyticalDomain continues with an empty/collapsed ellipse-generator STEP mapping; Rust propagates InvalidInput from the checked ellipse edit (WR-211; plan/findings.md: #428 reject collapsed ellipse STEP intervals)"
+
+[[mismatch]]
+unit = "surface.surf_of_revolution_p3"
+case = "r3_upd_torus_False_[0.5, 0.5, 0.5, 0.5]"
+why = "C++ UpdateAnalyticalDomain continues with an empty/collapsed ellipse-generator STEP mapping; Rust propagates InvalidInput from the checked ellipse edit (WR-211; plan/findings.md: #428 reject collapsed ellipse STEP intervals)"
+
+[[mismatch]]
+unit = "surface.surf_of_revolution_p3"
+case = "r3_upd_torus_False_[-0.5, -0.5, 1.5, 1.5]"
+why = "C++ UpdateAnalyticalDomain continues with an empty/collapsed ellipse-generator STEP mapping; Rust propagates InvalidInput from the checked ellipse edit (WR-211; plan/findings.md: #428 reject collapsed ellipse STEP intervals)"
+
+[[mismatch]]
+unit = "surface.surf_of_revolution_p3"
+case = "r3_upd_torus_True_[0.5, 0.5, 0.5, 0.5]"
+why = "C++ UpdateAnalyticalDomain continues with an empty/collapsed ellipse-generator STEP mapping; Rust propagates InvalidInput from the checked ellipse edit (WR-211; plan/findings.md: #428 reject collapsed ellipse STEP intervals)"
+
+[[mismatch]]
+unit = "surface.surf_of_revolution_p3"
+case = "r3_upd_torus_True_[-0.5, -0.5, 1.5, 1.5]"
+why = "C++ UpdateAnalyticalDomain continues with an empty/collapsed ellipse-generator STEP mapping; Rust propagates InvalidInput from the checked ellipse edit (WR-211; plan/findings.md: #428 reject collapsed ellipse STEP intervals)"
+
+[[mismatch]]
+unit = "surface.surf_of_revolution_p3"
+case = "r3_upd_sph_False_[0.5, 0.5, 0.5, 0.5]"
+why = "C++ UpdateAnalyticalDomain continues with an empty/collapsed ellipse-generator STEP mapping; Rust propagates InvalidInput from the checked ellipse edit (WR-211; plan/findings.md: #428 reject collapsed ellipse STEP intervals)"
+
+[[mismatch]]
+unit = "surface.surf_of_revolution_p3"
+case = "r3_upd_sph_True_[0.5, 0.5, 0.5, 0.5]"
+why = "C++ UpdateAnalyticalDomain continues with an empty/collapsed ellipse-generator STEP mapping; Rust propagates InvalidInput from the checked ellipse edit (WR-211; plan/findings.md: #428 reject collapsed ellipse STEP intervals)"
+
+[[mismatch]]
+unit = "surface.surf_of_revolution_p3"
+case = "r3b_upd_torus_0_False_[0.1, 0.2, 0.6, 0.7]"
+why = "C++ UpdateAnalyticalDomain continues with an empty/collapsed ellipse-generator STEP mapping; Rust propagates InvalidInput from the checked ellipse edit (WR-211; plan/findings.md: #428 reject collapsed ellipse STEP intervals)"
+
+[[mismatch]]
+unit = "surface.surf_of_revolution_p3"
+case = "r3b_upd_torus_0_True_[0.1, 0.2, 0.6, 0.7]"
+why = "C++ UpdateAnalyticalDomain continues with an empty/collapsed ellipse-generator STEP mapping; Rust propagates InvalidInput from the checked ellipse edit (WR-211; plan/findings.md: #428 reject collapsed ellipse STEP intervals)"
+
+[[mismatch]]
+unit = "surface.surf_of_revolution_p3"
+case = "r3b_upd_torus_0_True_[0.5, 0, 0.5, 1]"
+why = "C++ UpdateAnalyticalDomain continues with an empty/collapsed ellipse-generator STEP mapping; Rust propagates InvalidInput from the checked ellipse edit (WR-211; plan/findings.md: #428 reject collapsed ellipse STEP intervals)"
+
+[[mismatch]]
+unit = "surface.surf_of_revolution_p3"
+case = "r3b_upd_torus_1_False_[0.1, 0.2, 0.6, 0.7]"
+why = "C++ UpdateAnalyticalDomain continues with an empty/collapsed ellipse-generator STEP mapping; Rust propagates InvalidInput from the checked ellipse edit (WR-211; plan/findings.md: #428 reject collapsed ellipse STEP intervals)"
+
+[[mismatch]]
+unit = "surface.surf_of_revolution_p3"
+case = "r3b_upd_torus_1_True_[0.1, 0.2, 0.6, 0.7]"
+why = "C++ UpdateAnalyticalDomain continues with an empty/collapsed ellipse-generator STEP mapping; Rust propagates InvalidInput from the checked ellipse edit (WR-211; plan/findings.md: #428 reject collapsed ellipse STEP intervals)"
+
+[[mismatch]]
+unit = "surface.surf_of_revolution_p3"
+case = "r3b_upd_torus_1_True_[0.5, 0, 0.5, 1]"
+why = "C++ UpdateAnalyticalDomain continues with an empty/collapsed ellipse-generator STEP mapping; Rust propagates InvalidInput from the checked ellipse edit (WR-211; plan/findings.md: #428 reject collapsed ellipse STEP intervals)"
+
+[[mismatch]]
+unit = "surface.surf_of_revolution_p3"
+case = "r3b_upd_torus_2_False_[0.1, 0.2, 0.6, 0.7]"
+why = "C++ UpdateAnalyticalDomain continues with an empty/collapsed ellipse-generator STEP mapping; Rust propagates InvalidInput from the checked ellipse edit (WR-211; plan/findings.md: #428 reject collapsed ellipse STEP intervals)"
+
+[[mismatch]]
+unit = "surface.surf_of_revolution_p3"
+case = "r3b_upd_torus_2_True_[0.1, 0.2, 0.6, 0.7]"
+why = "C++ UpdateAnalyticalDomain continues with an empty/collapsed ellipse-generator STEP mapping; Rust propagates InvalidInput from the checked ellipse edit (WR-211; plan/findings.md: #428 reject collapsed ellipse STEP intervals)"
+
+[[mismatch]]
+unit = "surface.surf_of_revolution_p3"
+case = "r3b_upd_torus_2_True_[0.5, 0, 0.5, 1]"
+why = "C++ UpdateAnalyticalDomain continues with an empty/collapsed ellipse-generator STEP mapping; Rust propagates InvalidInput from the checked ellipse edit (WR-211; plan/findings.md: #428 reject collapsed ellipse STEP intervals)"
+
+[[mismatch]]
+unit = "surface.surf_of_revolution_p3"
+case = "r3b_upd_torus_3_False_[0.1, 0.2, 0.6, 0.7]"
+why = "C++ UpdateAnalyticalDomain continues with an empty/collapsed ellipse-generator STEP mapping; Rust propagates InvalidInput from the checked ellipse edit (WR-211; plan/findings.md: #428 reject collapsed ellipse STEP intervals)"
+
+[[mismatch]]
+unit = "surface.surf_of_revolution_p3"
+case = "r3b_upd_torus_3_True_[0.1, 0.2, 0.6, 0.7]"
+why = "C++ UpdateAnalyticalDomain continues with an empty/collapsed ellipse-generator STEP mapping; Rust propagates InvalidInput from the checked ellipse edit (WR-211; plan/findings.md: #428 reject collapsed ellipse STEP intervals)"
+
+[[mismatch]]
+unit = "surface.surf_of_revolution_p3"
+case = "r3b_upd_torus_3_True_[0.5, 0, 0.5, 1]"
+why = "C++ UpdateAnalyticalDomain continues with an empty/collapsed ellipse-generator STEP mapping; Rust propagates InvalidInput from the checked ellipse edit (WR-211; plan/findings.md: #428 reject collapsed ellipse STEP intervals)"
+
+[[mismatch]]
+unit = "surface.surf_of_revolution_p3"
+case = "r3b_upd_torus_4_False_[0.1, 0.2, 0.6, 0.7]"
+why = "C++ UpdateAnalyticalDomain continues with an empty/collapsed ellipse-generator STEP mapping; Rust propagates InvalidInput from the checked ellipse edit (WR-211; plan/findings.md: #428 reject collapsed ellipse STEP intervals)"
+
+[[mismatch]]
+unit = "surface.surf_of_revolution_p3"
+case = "r3b_upd_torus_4_True_[0.1, 0.2, 0.6, 0.7]"
+why = "C++ UpdateAnalyticalDomain continues with an empty/collapsed ellipse-generator STEP mapping; Rust propagates InvalidInput from the checked ellipse edit (WR-211; plan/findings.md: #428 reject collapsed ellipse STEP intervals)"
+
+[[mismatch]]
+unit = "surface.surf_of_revolution_p3"
+case = "r3b_upd_torus_4_True_[0.5, 0, 0.5, 1]"
+why = "C++ UpdateAnalyticalDomain continues with an empty/collapsed ellipse-generator STEP mapping; Rust propagates InvalidInput from the checked ellipse edit (WR-211; plan/findings.md: #428 reject collapsed ellipse STEP intervals)"
+
+[[mismatch]]
+unit = "surface.surf_of_revolution_p3"
+case = "r3b_upd_arc_0_True_[0.5, 0, 0.5, 1]"
+why = "C++ UpdateAnalyticalDomain continues with an empty/collapsed ellipse-generator STEP mapping; Rust propagates InvalidInput from the checked ellipse edit (WR-211; plan/findings.md: #428 reject collapsed ellipse STEP intervals)"
+
+[[mismatch]]
+unit = "surface.surf_of_revolution_p3"
+case = "r3b_upd_arc_1_True_[0.5, 0, 0.5, 1]"
+why = "C++ UpdateAnalyticalDomain continues with an empty/collapsed ellipse-generator STEP mapping; Rust propagates InvalidInput from the checked ellipse edit (WR-211; plan/findings.md: #428 reject collapsed ellipse STEP intervals)"
+
+[[mismatch]]
+unit = "surface.surf_of_revolution_p3"
+case = "r3b_upd_arc_2_True_[0.5, 0, 0.5, 1]"
+why = "C++ UpdateAnalyticalDomain continues with an empty/collapsed ellipse-generator STEP mapping; Rust propagates InvalidInput from the checked ellipse edit (WR-211; plan/findings.md: #428 reject collapsed ellipse STEP intervals)"
+
+[[mismatch]]
+unit = "surface.surf_of_revolution_p3"
+case = "r3b_upd_arc_3_True_[0.5, 0, 0.5, 1]"
+why = "C++ UpdateAnalyticalDomain continues with an empty/collapsed ellipse-generator STEP mapping; Rust propagates InvalidInput from the checked ellipse edit (WR-211; plan/findings.md: #428 reject collapsed ellipse STEP intervals)"
+
+[[mismatch]]
+unit = "surface.surf_of_revolution_p3"
+case = "r3b_upd_arc_4_True_[0.5, 0, 0.5, 1]"
+why = "C++ UpdateAnalyticalDomain continues with an empty/collapsed ellipse-generator STEP mapping; Rust propagates InvalidInput from the checked ellipse edit (WR-211; plan/findings.md: #428 reject collapsed ellipse STEP intervals)"
+
+[[mismatch]]
+unit = "surface.surf_of_revolution_p3"
+case = "rev2_update_torus_1"
+why = "C++ UpdateAnalyticalDomain continues with an empty/collapsed ellipse-generator STEP mapping; Rust propagates InvalidInput from the checked ellipse edit (WR-211; plan/findings.md: #428 reject collapsed ellipse STEP intervals)"
+
+[[mismatch]]
+unit = "surface.surf_of_revolution_p3"
+case = "rev2_update_torus_2"
+why = "C++ UpdateAnalyticalDomain continues with an empty/collapsed ellipse-generator STEP mapping; Rust propagates InvalidInput from the checked ellipse edit (WR-211; plan/findings.md: #428 reject collapsed ellipse STEP intervals)"
+
+[[mismatch]]
+unit = "surface.surf_of_revolution_p3"
+case = "rev2_update_torus_5"
+why = "C++ UpdateAnalyticalDomain continues with an empty/collapsed ellipse-generator STEP mapping; Rust propagates InvalidInput from the checked ellipse edit (WR-211; plan/findings.md: #428 reject collapsed ellipse STEP intervals)"
+
+[[mismatch]]
+unit = "surface.surf_of_revolution_p3"
+case = "rev2_update_sphere_1"
+why = "C++ UpdateAnalyticalDomain continues with an empty/collapsed ellipse-generator STEP mapping; Rust propagates InvalidInput from the checked ellipse edit (WR-211; plan/findings.md: #428 reject collapsed ellipse STEP intervals)"
+
+[[mismatch]]
+unit = "surface.surf_of_revolution_p3"
+case = "rev2_update_sphere_2"
+why = "C++ UpdateAnalyticalDomain continues with an empty/collapsed ellipse-generator STEP mapping; Rust propagates InvalidInput from the checked ellipse edit (WR-211; plan/findings.md: #428 reject collapsed ellipse STEP intervals)"
+
+[[mismatch]]
+unit = "surface.surf_of_revolution_p3"
+case = "rev2_update_sphere_5"
+why = "C++ UpdateAnalyticalDomain continues with an empty/collapsed ellipse-generator STEP mapping; Rust propagates InvalidInput from the checked ellipse edit (WR-211; plan/findings.md: #428 reject collapsed ellipse STEP intervals)"
+
 [[mismatch]]
 unit = "topology.brep_p3"
 case = "nurbs_off_Mouse_0.1"
