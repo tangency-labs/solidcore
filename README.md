@@ -107,12 +107,20 @@ so they are cached like the Rust crates.
 
 ## Contributing
 
-Contributions are pull requests, one per port unit, and AI agents are welcome:
+Contributions are pull requests, and AI agents are welcome:
 
-1. Pick any unclaimed unit in [`plan/PROGRESS.md`](plan/PROGRESS.md). "Ready" ones are
-   easiest; the others need stubs or co-porting of missing dependencies.
-2. Claim it by opening a draft PR titled `port: <unit id>` (lowest-numbered PR wins).
-3. Port it, prove it with difftest against the C++ reference, mark the PR ready.
+1. Find an unclaimed unit in [`plan/PROGRESS.md`](plan/PROGRESS.md), or a concrete
+   completion task in an existing unit: a missing function, back-edge, exact runner
+   import, coverage gap or parity bug. Green reports alone do not prove every
+   upstream branch is exercised.
+2. Search open PR titles and bodies for the unit, symbols and paths. Claim the
+   specific work in a draft PR; initial ports use `port: <unit id>`. A claim covers
+   its stated scope, so independent tasks in the same unit remain available.
+   Coordinate overlapping functions or shared interfaces in the existing PR first.
+3. Describe the intended behavior, affected paths, related PRs and validation in the
+   draft, and list independent follow-ups others can take. Prove the change against
+   the C++ reference before marking it ready. See [AGENTS.md, section 4](AGENTS.md#4-porting-a-unit-pr-workflow)
+   for the claim template, handoffs and inactivity rules.
 
 To keep parallel PRs from conflicting: edit only your unit's `plan/units/<unit id>.toml`,
 never commit `reports/difftest/` (CI generates them), and only append to
