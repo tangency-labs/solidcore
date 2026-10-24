@@ -11,6 +11,13 @@
 //! Deviations: typed services and owned curve slots replace pointers; null curve
 //! dereferences become errors. The existing sweep engine bounds repetitions to
 //! 4096. No additional recursion. Unavailable calls retain their full caller tails.
+//! **Analytic faces of a longer profile** (SolidCraft change, tangency-labs/smlib
+//! 0b143f7, tangency-labs/solidcore#545): upstream makes analytic faces only for a
+//! one-curve profile. With [`PrimitiveCreation::set_analytic_revolutions`] (off by
+//! default; the `SM_API` entry points turn it on) a whole turn gives each other curve
+//! its cylinder, cone, sphere or torus ([`analytic_revolution`]) before falling back
+//! to the `SmSurfOfRevolution`, and a partial turn sweeps with
+//! [`RotationalSweepGeometry::set_analytic_revolutions`] on.
 
 use super::{construct::target, geometry::bspline, PrimitiveAccess};
 use crate::curve::curve::Curve;
@@ -26,6 +33,7 @@ use crate::nurbs::b_spline_curve::p1::BSplineCurve;
 use crate::primitive::primitive_creation::p1::{analytic_rotational_sweep, PrimitiveCreation};
 use crate::surface::surf_of_revolution::p1::SurfOfRevolution;
 use crate::surface::surface::Surface;
+use crate::sweep::analytic_revolution::analytic_revolution;
 use crate::sweep::rotational_sweep_geometry::RotationalSweepGeometry;
 use crate::sweep::topology_sweep::{
     engine::SweepTargets, geometry::SweepGeometry, SweepEntity, TopologySweep,
@@ -286,16 +294,35 @@ impl PrimitiveCreation {
             }
             if face.is_none() {
                 if let Some(curve) = slot.as_ref() {
-                    let rev = ignored(SurfOfRevolution::create_canonical(
-                        a.kernel(brep)?,
-                        curve.clone(),
-                        axis_base,
-                        axis,
-                        false,
-                    ))?;
+                    // SolidCraft change (tangency-labs/smlib 0b143f7): the curve's
+                    // cylinder, cone, sphere or torus, else the surface of revolution
+                    let analytic = if self.analytic_revolutions() {
+                        let tolerance = a.brep(brep)?.tolerance();
+                        analytic_revolution(
+                            a.kernel(brep)?,
+                            curve,
+                            axis_base,
+                            axis,
+                            360.0,
+                            tolerance,
+                            None,
+                        )?
+                    } else {
+                        None
+                    };
+                    let rev = match analytic {
+                        Some(surface) => Some(surface),
+                        None => ignored(SurfOfRevolution::create_canonical(
+                            a.kernel(brep)?,
+                            curve.clone(),
+                            axis_base,
+                            axis,
+                            false,
+                        ))?
+                        .map(Surface::from),
+                    };
                     let mut success = false;
-                    if let Some(rev) = rev {
-                        let surface = Surface::from(rev);
+                    if let Some(surface) = rev {
                         let domain = surface.natural_uv_domain();
                         success =
                             ignored(a.surface_face(brep, surface, domain, &mut face))?.is_some();
@@ -374,9 +401,10 @@ impl PrimitiveCreation {
             } else {
                 cap = false;
             }
-            let geometry = SweepGeometry::Rotation(RotationalSweepGeometry::new(
-                axis_base, axis, angle_deg, tolerance,
-            ));
+            let mut rotation = RotationalSweepGeometry::new(axis_base, axis, angle_deg, tolerance);
+            // SolidCraft change (tangency-labs/smlib 0b143f7): analytic side faces
+            rotation.set_analytic_revolutions(self.analytic_revolutions());
+            let geometry = SweepGeometry::Rotation(rotation);
             let mut sweep = TopologySweep {
                 repetitions: options.repetitions,
                 ..Default::default()

@@ -843,13 +843,14 @@ fn new_brep(k: &mut Kernel) -> Result<Brep> {
     crate::topology::brep::p3::new_brep(k, USE_DEFAULT, USE_DEFAULT)
 }
 
-/// `new SmBrep()` and `SmPrimitiveCreation sPC(pBrep->GetInfiniteRegion())`.
+/// `new SmBrep()` and `SmPrimitiveCreation sPC(pBrep->GetInfiniteRegion())`, with
+/// [`PrimitiveCreation::set_analytic_revolutions`] on (SolidCraft change,
+/// tangency-labs/solidcore#545).
 fn new_primitive(k: &mut Kernel) -> Result<(PrimitiveCreation, Brep)> {
     let brep = new_brep(k)?;
-    Ok((
-        PrimitiveCreation::new(brep.infinite_region(), 0, true),
-        brep,
-    ))
+    let mut pc = PrimitiveCreation::new(brep.infinite_region(), 0, true);
+    pc.set_analytic_revolutions(true);
+    Ok((pc, brep))
 }
 
 /// Runs `body` on a new B-rep's [`PrimitiveCreation`] through a [`PrimitiveModel`] and

@@ -133,7 +133,9 @@ impl<'k> PrimitiveModel<'k> {
 
     /// `new SmBrep()` in `k`'s context, `SmPrimitiveCreation sPC(pBrep->GetInfiniteRegion(),
     /// 0, TRUE)` and `body` run on both through a model; the new B-rep and `body`'s
-    /// value. On error the new B-rep is dropped (upstream deletes it).
+    /// value. On error the new B-rep is dropped (upstream deletes it). The
+    /// `SmPrimitiveCreation` has [`PrimitiveCreation::set_analytic_revolutions`] on
+    /// (SolidCraft change, tangency-labs/solidcore#545).
     ///
     /// # Errors
     ///
@@ -148,6 +150,8 @@ impl<'k> PrimitiveModel<'k> {
             crate::geom::tol::USE_DEFAULT,
         )?;
         let mut pc = PrimitiveCreation::new(brep.infinite_region(), 0, true);
+        // SolidCraft change (tangency-labs/solidcore#545)
+        pc.set_analytic_revolutions(true);
         let mut model = Self::new(k, brep);
         let value = body(&mut pc, &mut model)?;
         Ok((model.into_brep()?, value))

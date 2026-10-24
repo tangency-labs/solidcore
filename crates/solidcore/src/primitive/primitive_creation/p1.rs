@@ -19,6 +19,8 @@
 //! Ignored statuses retain the previous output and propagate only Unported.
 //! No recursion. Primitive topology construction stops at the first unported
 //! B-rep edit; it never fabricates faces from arena records.
+//! [`PrimitiveCreation::set_analytic_revolutions`] is a SolidCraft switch with no
+//! upstream member (tangency-labs/solidcore#545).
 
 mod boolean;
 mod primitives;
@@ -60,6 +62,8 @@ pub struct PrimitiveCreation {
     tag_id: i64,
     /// Topology associations from the latest operation.
     pub maps: EntityMaps,
+    /// SolidCraft change: see [`Self::set_analytic_revolutions`].
+    analytic_revolutions: bool,
 }
 
 impl PrimitiveCreation {
@@ -70,7 +74,23 @@ impl PrimitiveCreation {
             region,
             tag_id,
             maps: EntityMaps::default(),
+            analytic_revolutions: false,
         }
+    }
+
+    /// SolidCraft change (tangency-labs/smlib 0b143f7, tangency-labs/solidcore#545):
+    /// the rotational sweeps give every profile curve that is a line or circular arc
+    /// in a plane through the axis its cylinder, cone, sphere or torus
+    /// ([`crate::sweep::analytic_revolution`]), not only a one-curve profile. Off by
+    /// default, as upstream at `c9c5979`; the `SM_API` entry points turn it on.
+    pub fn set_analytic_revolutions(&mut self, on: bool) {
+        self.analytic_revolutions = on;
+    }
+
+    /// Whether [`Self::set_analytic_revolutions`] is on.
+    #[must_use]
+    pub const fn analytic_revolutions(&self) -> bool {
+        self.analytic_revolutions
     }
 
     /// The target region (`NULL` for the protected default constructor).
