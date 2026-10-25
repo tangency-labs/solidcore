@@ -18,6 +18,13 @@ pub trait UnitDiff {
     /// Unit id as in `plan/units/<id>.toml` (e.g. `nlib.knots`).
     fn id(&self) -> &'static str;
 
+    /// Architecture restriction of the C++ oracle, if any. This does not restrict
+    /// Rust-only digest runs. Unsupported comparisons are skipped before fixtures
+    /// are constructed and never count as parity passes.
+    fn reference_platform(&self) -> Option<crate::platform::ReferencePlatform> {
+        None
+    }
+
     /// Runs the upstream C++ (via `solidcore_ffi::units::*`).
     /// Return `Ok(Output::err(..))` when the *operation* fails and `Err` only
     /// for harness problems (bad inputs); `Err` always fails the case. Native fixture
@@ -115,7 +122,7 @@ pub struct CaseResult {
     pub perturbed: Option<&'static str>,
     /// The Rust side's [`Output::diagnostics`] (reported, never compared).
     pub diagnostics: BTreeMap<String, i64>,
-    /// The case is listed in `known_mismatches.toml` (the entry's `why`).
+    /// The case is listed in `known_mismatches/<unit>.toml` (the entry's `why`).
     pub known_mismatch: Option<String>,
 }
 
@@ -133,7 +140,7 @@ pub enum CaseOutcome {
     Deferred,
     /// Skipped because the platform's C++ standard library is not libstdc++.
     SkippedPlatform,
-    /// A mismatch listed in `known_mismatches.toml` ([`crate::known`]): not a pass,
+    /// A mismatch listed in `known_mismatches/<unit>.toml` ([`crate::known`]): not a pass,
     /// keeps the unit from being green, reported like a failure.
     KnownMismatch,
 }
@@ -224,15 +231,18 @@ pub enum UnitStatus {
     Partial,
     /// Any failing case, a harness error, no cases, or only rejected fixtures.
     Fail,
+    /// The C++ reference is unsupported on this architecture; no cases ran.
+    SkippedPlatform,
 }
 
 impl UnitStatus {
-    /// `green`, `partial` or `fail`.
+    /// `green`, `partial`, `fail` or `skipped(platform)`.
     pub fn as_str(self) -> &'static str {
         match self {
             Self::Green => "green",
             Self::Partial => "partial",
             Self::Fail => "fail",
+            Self::SkippedPlatform => "skipped(platform)",
         }
     }
 }
@@ -246,6 +256,8 @@ pub struct UnitResult {
     pub cases: Vec<CaseResult>,
     /// Failure to build the case list.
     pub harness_error: Option<String>,
+    /// Reason the C++ reference cannot run on this architecture (no cases ran).
+    pub skipped_platform: Option<String>,
     /// Documented absolute floors used.
     pub abs_floors: Vec<AbsFloor>,
     /// `--seeds` value used.
@@ -307,13 +319,13 @@ impl UnitTiming {
 }
 
 impl UnitResult {
-    /// Green, partial or fail (see [`UnitStatus`]).
+    /// Comparison status, including an unsupported reference (see [`UnitStatus`]).
     pub fn status(&self) -> UnitStatus {
-        if self.harness_error.is_some()
-            || self.cases.is_empty()
-            || self.failed() > 0
-            || self.cases.len() == self.rejected()
-        {
+        if self.harness_error.is_some() || self.failed() > 0 {
+            UnitStatus::Fail
+        } else if self.skipped_platform.is_some() {
+            UnitStatus::SkippedPlatform
+        } else if self.cases.is_empty() || self.cases.len() == self.rejected() {
             UnitStatus::Fail
         } else if self.deferred() > 0 || self.known_mismatches() > 0 {
             UnitStatus::Partial
@@ -324,9 +336,9 @@ impl UnitResult {
         }
     }
 
-    /// No failure: the unit is green or partial (the exit status is 0).
+    /// Parity was checked: the unit is green or partial. Skipped units do not pass.
     pub fn pass(&self) -> bool {
-        self.status() != UnitStatus::Fail
+        matches!(self.status(), UnitStatus::Green | UnitStatus::Partial)
     }
 
     /// Number of passing cases.
@@ -489,10 +501,17 @@ pub fn run_unit(unit: &dyn UnitDiff, ctx: &CaseContext, opts: &RunOptions) -> Un
         unit: unit.id().to_string(),
         cases: Vec::new(),
         harness_error: None,
+        skipped_platform: unit
+            .reference_platform()
+            .and_then(|p| p.skip_reason(std::env::consts::ARCH))
+            .map(str::to_string),
         abs_floors: unit.abs_floors().to_vec(),
         seeds: ctx.seeds,
         timing: UnitTiming::default(),
     };
+    if res.skipped_platform.is_some() {
+        return res;
+    }
     let digest = std::env::var_os("DIFFTEST_RUST_DIGEST").is_some();
     let t0 = Instant::now();
     let cases = unit.cases(ctx);
@@ -520,7 +539,7 @@ pub fn run_unit(unit: &dyn UnitDiff, ctx: &CaseContext, opts: &RunOptions) -> Un
         if !missing.is_empty() {
             res.harness_error = Some(format!(
                 "{}: no such case(s): {}",
-                crate::known::KNOWN_MISMATCHES,
+                crate::known::path_for(unit.id()),
                 missing.join(", ")
             ));
             return res;
@@ -655,7 +674,7 @@ pub fn run_unit(unit: &dyn UnitDiff, ctx: &CaseContext, opts: &RunOptions) -> Un
         {
             cr.harness_error = Some(format!(
                 "listed in {} but the case is now {}: remove the entry",
-                crate::known::KNOWN_MISMATCHES,
+                crate::known::path_for(unit.id()),
                 cr.outcome().as_str()
             ));
         }
@@ -799,6 +818,7 @@ mod tests {
             unit: "u".into(),
             cases: vec![case(None, true), case(d(), true)],
             harness_error: None,
+            skipped_platform: None,
             abs_floors: Vec::new(),
             seeds: 0,
             timing: UnitTiming::default(),
@@ -1012,9 +1032,9 @@ mod tests {
     fn known_root(tag: &str, list: &str) -> CaseContext {
         let root =
             std::env::temp_dir().join(format!("difftest-known-{tag}-{}", std::process::id()));
-        let dir = root.join("crates/difftest");
+        let dir = root.join(crate::known::KNOWN_MISMATCHES_DIR);
         std::fs::create_dir_all(&dir).unwrap();
-        std::fs::write(dir.join("known_mismatches.toml"), list).unwrap();
+        std::fs::write(dir.join("empty.unit.toml"), list).unwrap();
         CaseContext { root, seeds: 0 }
     }
 

@@ -1075,6 +1075,33 @@ impl Surface {
         domain: &Extent2d,
         opts: &DropPointOptions,
     ) -> Result<DropPoint<O>> {
+        self.drop_point_from(k, pt_to_drop, domain, opts, None, None)
+    }
+
+    /// `DropPoint` with lazy cache preparation on the surface's owning face.
+    /// The context is consulted only at the original global-solve call; fast
+    /// and local drops use the same implementation and operation order.
+    pub(crate) fn drop_point_with_context<O: SolutionObject>(
+        &self,
+        k: &Kernel,
+        pt_to_drop: Point3,
+        domain: &Extent2d,
+        opts: &DropPointOptions,
+        handle: Option<O>,
+        context: &mut dyn SurfaceSolveContext<O>,
+    ) -> Result<DropPoint<O>> {
+        self.drop_point_from(k, pt_to_drop, domain, opts, handle, Some(context))
+    }
+
+    fn drop_point_from<O: SolutionObject>(
+        &self,
+        k: &Kernel,
+        pt_to_drop: Point3,
+        domain: &Extent2d,
+        opts: &DropPointOptions,
+        handle: Option<O>,
+        context: Option<&mut dyn SurfaceSolveContext<O>>,
+    ) -> Result<DropPoint<O>> {
         let op = opts.operation;
         let guess = opts.guess_uv;
 
@@ -1140,16 +1167,32 @@ impl Surface {
 
         if !success {
             // Haven't found it yet. Call GlobalPointSolve.
-            solutions = self.global_point_solve::<O>(
-                k,
-                None,
-                domain,
-                op,
-                pt_to_drop,
-                dist_tol,
-                None,
-                SolutionRequested::All,
-            )?;
+            if let Some(context) = context {
+                self.global_point_solve_into_with_context(
+                    k,
+                    handle,
+                    None,
+                    context,
+                    domain,
+                    op,
+                    pt_to_drop,
+                    dist_tol,
+                    None,
+                    SolutionRequested::All,
+                    &mut solutions,
+                )?;
+            } else {
+                solutions = self.global_point_solve::<O>(
+                    k,
+                    None,
+                    domain,
+                    op,
+                    pt_to_drop,
+                    dist_tol,
+                    None,
+                    SolutionRequested::All,
+                )?;
+            }
             if !solutions.is_empty() {
                 success = true;
                 answer_in_array = true;
@@ -2410,6 +2453,34 @@ pub fn cs_identical_solutions_in<O: SolutionObject>(
     surface_identical_solutions(k, base, surface, sol1, sol2, 1, true, domains)
 }
 
+pub(super) fn curve_operand<O: SolutionObject>(
+    base: &GlobalSolver<'_, O>,
+    slot: usize,
+    curve: Option<&Curve>,
+) -> Option<(O, super::p1::OperandDomain)> {
+    base.tree(slot)
+        .ok()
+        .and_then(|t| t.owner_object().ok().flatten())
+        .zip(curve)
+        .map(|(h, c)| (h, super::p1::OperandDomain::Curve(c.natural_interval())))
+}
+
+pub(super) fn surface_operand<O: SolutionObject>(
+    base: &GlobalSolver<'_, O>,
+    slot: usize,
+    cache: Option<&crate::surface::surface_cache::SurfaceCache<O>>,
+    surface: Option<&Surface>,
+) -> Option<(O, super::p1::OperandDomain)> {
+    let handle = base
+        .tree(slot)
+        .ok()
+        .and_then(|t| t.owner_object().ok().flatten())
+        .or_else(|| cache.and_then(crate::surface::surface_cache::SurfaceCache::surface_handle));
+    handle
+        .zip(surface)
+        .map(|(h, s)| (h, super::p1::OperandDomain::Surface(s.natural_uv_domain())))
+}
+
 /// `SmCSIGlobalSolver::IdenticalSolutions`: as [`cs_identical_solutions`].
 ///
 /// # Errors
@@ -2454,16 +2525,13 @@ impl<O: SolutionObject> LsiGlobalSolver<'_, '_, O> {
         sol1: &Solution<O>,
         sol2: &Solution<O>,
     ) -> Result<(SolutionPairType, Option<PreferredSolution>)> {
-        surface_identical_solutions(
-            k,
-            &self.base,
-            self.surface,
-            sol1,
-            sol2,
-            1,
-            true,
-            &OwnDomains,
-        )
+        let domains = super::p1::SolveOperands {
+            operands: [
+                surface_operand(&self.base, 0, self.surface_cache, self.surface),
+                None,
+            ],
+        };
+        surface_identical_solutions(k, &self.base, self.surface, sol1, sol2, 1, true, &domains)
     }
 }
 
@@ -2479,16 +2547,13 @@ impl<O: SolutionObject> SpGlobalSolver<'_, '_, O> {
         sol1: &Solution<O>,
         sol2: &Solution<O>,
     ) -> Result<(SolutionPairType, Option<PreferredSolution>)> {
-        surface_identical_solutions(
-            k,
-            &self.base,
-            self.surface,
-            sol1,
-            sol2,
-            0,
-            false,
-            &OwnDomains,
-        )
+        let domains = super::p1::SolveOperands {
+            operands: [
+                surface_operand(&self.base, 1, self.surface_cache, self.surface),
+                None,
+            ],
+        };
+        surface_identical_solutions(k, &self.base, self.surface, sol1, sol2, 0, false, &domains)
     }
 }
 

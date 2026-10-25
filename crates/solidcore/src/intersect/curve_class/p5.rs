@@ -107,6 +107,13 @@ pub trait ClassGeometryMut<O>: ClassGeometry<O> {
             _ => Err(SolidError::unported("SmEdge::SetCurve", "topology.edge")),
         }
     }
+    /// [`ClassGeometryMut::topology_entity_mut`] for a query (a classification or a
+    /// point solve on a face) that only makes caches and UV trim curves on the B-rep,
+    /// as upstream's queries of a face make them without editing it. An adapter that
+    /// keeps caches of the B-rep's faces keeps them over such a lend.
+    fn topology_entity_for_query(&mut self, o: O) -> Option<(&mut Brep, EntityRef)> {
+        self.topology_entity_mut(o)
+    }
 }
 
 /// The edits of part 5 over either kind of adapter.
@@ -130,21 +137,21 @@ impl<O, G: ClassGeometry<O>> Access<O> for ReadOnly<'_, G> {
         self.0
     }
     fn set_vertex_tolerance(&mut self, _vertex: O, _tol: f64) -> Result<()> {
-        // UNPORTED(topology.brep_p1): SmBrep mutable owning context
+        // DISPATCH GAP: SmBrep mutable owning context (read-only adapter without a Brep)
         Err(SolidError::unported(
             "SmBrep mutable owning context (SmVertex::SetTolerance)",
             "topology.brep_p1",
         ))
     }
     fn curve_mut(&mut self, _curve: O) -> Result<&mut Curve> {
-        // UNPORTED(topology.brep_p1): SmBrep mutable owning context
+        // DISPATCH GAP: SmBrep mutable owning context (read-only adapter without a Brep)
         Err(SolidError::unported(
             "SmBrep mutable owning context (sm_SetXSectCurveThroughPoint)",
             "topology.brep_p1",
         ))
     }
     fn delete_uv_trim_curve(&mut self, _edgeuse: O) -> Result<()> {
-        // UNPORTED(topology.brep_p1): SmBrep mutable owning context
+        // DISPATCH GAP: SmBrep mutable owning context (read-only adapter without a Brep)
         Err(SolidError::unported(
             "SmBrep mutable owning context (SmEdgeuse::SetUVTrimCurve)",
             "topology.brep_p1",
