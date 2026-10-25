@@ -153,7 +153,8 @@ use crate::topology::topology_traverser::{Entity, Marks};
 use crate::topology::vertex;
 use crate::topology::vertexuse;
 use crate::topology::{
-    Brep, EdgeId, EdgeuseId, FaceId, LoopId, RegionId, ShellId, VertexId, Vertexuse, VertexuseId,
+    Brep, EdgeId, EdgeuseId, FaceId, LoopId, NamingScheme, RegionId, ShellId, VertexId, Vertexuse,
+    VertexuseId,
 };
 
 /// `SmBoolean` `TRUE` / `FALSE`.
@@ -572,8 +573,46 @@ impl core::fmt::Debug for GeometryAttributeFilter<'_> {
     }
 }
 
+/// The default expected owner of `f`'s surface under `b`'s recorded naming scheme,
+/// falling back to a proven caller owner recorded on `b`.
+fn default_face_owner(b: &Brep, f: FaceId) -> ObjectRef {
+    let fallback = if b.naming() == NamingScheme::Notify {
+        loopuse::notify_ref(EntityRef::Face(f))
+    } else {
+        arena_identity(CacheObject::Face(f))
+    };
+    let actual = b.face(f).ok().and_then(|x| x.surface.as_ref()?.owner());
+    if actual != Some(fallback) {
+        if let Some(proven) = b.geometry_owner_key(EntityRef::Face(f)) {
+            if actual == Some(proven) {
+                return proven;
+            }
+        }
+    }
+    fallback
+}
+
+/// The default expected owner of `e`'s curve under `b`'s recorded naming scheme,
+/// falling back to a proven caller owner recorded on `b`.
+fn default_edge_owner(b: &Brep, e: EdgeId) -> ObjectRef {
+    let fallback = if b.naming() == NamingScheme::Notify {
+        loopuse::notify_ref(EntityRef::Edge(e))
+    } else {
+        arena_identity(CacheObject::Edge(e))
+    };
+    let actual = b.edge(e).ok().and_then(|x| x.curve.as_ref()?.owner());
+    if actual != Some(fallback) {
+        if let Some(proven) = b.geometry_owner_key(EntityRef::Edge(e)) {
+            if actual == Some(proven) {
+                return proven;
+            }
+        }
+    }
+    fallback
+}
+
 /// `GetSurfaces`: the surfaces owned by their faces (`pSurface->GetOwner() == pFace`,
-/// the owner being the face's [`arena_identity`]), in face order, those carrying
+/// resolved in `b`'s recorded naming scheme), in face order, those carrying
 /// `attribute` when given.
 ///
 /// # Errors
@@ -584,7 +623,7 @@ pub fn surfaces<'b>(
     b: &'b Brep,
     attribute: Option<&GeometryAttributeFilter<'_>>,
 ) -> Result<Vec<&'b Surface>> {
-    surface_owners(b, attribute, &|id| arena_identity(CacheObject::Face(id)))?
+    surface_owners(b, attribute, &|id| default_face_owner(b, id))?
         .into_iter()
         .map(|id| {
             b.face(id)?
@@ -624,8 +663,8 @@ pub(crate) fn surface_owners(
     Ok(out)
 }
 
-/// `GetCurves`: the 3D curves owned by their edges (`pCurve->GetOwner() == pEdge`, the
-/// owner being the edge's [`arena_identity`]), in edge order, those carrying
+/// `GetCurves`: the 3D curves owned by their edges (`pCurve->GetOwner() == pEdge`,
+/// resolved in `b`'s recorded naming scheme), in edge order, those carrying
 /// `attribute` when given.
 ///
 /// # Errors
@@ -635,7 +674,7 @@ pub fn curves<'b>(
     b: &'b Brep,
     attribute: Option<&GeometryAttributeFilter<'_>>,
 ) -> Result<Vec<&'b Curve>> {
-    curve_owners(b, attribute, &|id| arena_identity(CacheObject::Edge(id)))?
+    curve_owners(b, attribute, &|id| default_edge_owner(b, id))?
         .into_iter()
         .map(|id| {
             b.edge(id)?
@@ -2277,21 +2316,15 @@ pub fn brep_intersect(
     crv_angle_tolerance_deg: f64,
     want_points: bool,
 ) -> Result<(Vec<Curve>, Option<Vec<Point3>>)> {
-    // init output
-    let mut curves_3d: Vec<Option<Curve>> = Vec::new();
-    let mut points: Option<Vec<Point3>> = want_points.then(Vec::new);
-
-    // get all thisBrep and otherBrep Faces
     let this_faces = faces(b, None)?;
     let other_faces = faces(other, None)?;
-
-    // for every thisBrep Face
-    for &this_face in &this_faces {
-        // (NER: arena ids are never null)
-        // for every otherBrep Face
-        for &other_face in &other_faces {
-            // intersect the faces
-            let (mut curves, mut pts) = face_intersect(
+    brep_intersect_faces(
+        k,
+        &this_faces,
+        &other_faces,
+        want_points,
+        |this_face, other_face| {
+            face_intersect(
                 k,
                 b,
                 this_face,
@@ -2299,7 +2332,74 @@ pub fn brep_intersect(
                 other_face,
                 approx_tol_3d,
                 crv_angle_tolerance_deg,
+            )
+        },
+    )
+}
+
+/// [`brep_intersect`] of a B-rep with itself (`brep->BrepIntersect(ctx, brep, ..)`),
+/// the B-rep lent mutably: each face's surface reaches its face, so the faces' trimmed
+/// caches (and their UV trim curves) are made on it as upstream's
+/// `smsurf_GetSurfaceCache` does.
+///
+/// # Errors
+///
+/// As [`brep_intersect`].
+pub fn brep_intersect_self(
+    k: &Kernel,
+    b: &mut Brep,
+    approx_tol_3d: f64,
+    crv_angle_tolerance_deg: f64,
+    want_points: bool,
+) -> Result<(Vec<Curve>, Option<Vec<Point3>>)> {
+    let this_faces = faces(b, None)?;
+    brep_intersect_faces(
+        k,
+        &this_faces,
+        &this_faces,
+        want_points,
+        |this_face, other_face| {
+            let options = crate::topology::face::p3::FaceIntersectOptions {
+                want_points: true,
+                ..Default::default()
+            };
+            let out = crate::topology::face::p3::face_intersect_breps(
+                k,
+                crate::topology::face::p3::FaceBreps::One(&mut *b),
+                this_face,
+                other_face,
+                approx_tol_3d,
+                crv_angle_tolerance_deg,
+                &options,
             )?;
+            Ok((
+                out.curves_3d.into_iter().map(Some).collect(),
+                out.points_3d.unwrap_or_default(),
+            ))
+        },
+    )
+}
+
+/// The face-pair loop of `SmBrep::BrepIntersect`, with `face_pair` the
+/// `SmFace::FaceIntersect` of one pair.
+fn brep_intersect_faces(
+    k: &Kernel,
+    this_faces: &[FaceId],
+    other_faces: &[FaceId],
+    want_points: bool,
+    mut face_pair: impl FnMut(FaceId, FaceId) -> Result<(Vec<Option<Curve>>, Vec<Point3>)>,
+) -> Result<(Vec<Curve>, Option<Vec<Point3>>)> {
+    // init output
+    let mut curves_3d: Vec<Option<Curve>> = Vec::new();
+    let mut points: Option<Vec<Point3>> = want_points.then(Vec::new);
+
+    // for every thisBrep Face
+    for &this_face in this_faces {
+        // (NER: arena ids are never null)
+        // for every otherBrep Face
+        for &other_face in other_faces {
+            // intersect the faces
+            let (mut curves, mut pts) = face_pair(this_face, other_face)?;
 
             // accumulate the outputs
             curves_3d.append(&mut curves);
