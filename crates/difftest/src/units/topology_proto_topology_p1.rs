@@ -322,8 +322,9 @@ pub(super) enum Script {
     },
     /// One object and one API call.
     Transform { obj: TObjIn, op: TOpIn },
-    /// One constructed body retained across every API call and geometry snapshot.
+    /// One constructed-body transform with runtime types and directed topology.
     ScaleProbe { obj: TObjIn, op: TOpIn },
+    /// One constructed body retained across every API call and geometry snapshot.
     TransformSequence { obj: TObjIn, ops: Vec<TOpIn> },
 }
 

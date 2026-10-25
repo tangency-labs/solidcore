@@ -84,6 +84,7 @@ pub mod kind {
     pub const TRANSFORM: i64 = 2;
     /// A constructed body retained across two to eight API transformations.
     pub const TRANSFORM_SEQUENCE: i64 = 3;
+    /// Constructed-body transform with runtime types and directed topology observations.
     pub const SCALE_PROBE: i64 = 4;
 }
 
