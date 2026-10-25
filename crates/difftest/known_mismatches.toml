@@ -122,6 +122,41 @@ case = "upstream_merge_breps_operation_3"
 why = "same result topology and vertex positions, different vertex list order: C++ lists one part's exclusive vertices last (plan/findings.md: 'boolean.merge_p3: vertex list order after merges that imprint edges into faces'; issue #832)"
 
 [[mismatch]]
+unit = "intersect.curve_class_p4"
+case = "gen1570"
+why = "GetLoopCrossings -> SetProps_Stage2 seam flags differ (gen1570: a sphere face with a vertex at the pole); unchanged by keeping snapshot surface owners, cause not found (plan/findings.md: 'snapshot surfaces keep their face owner')"
+
+[[mismatch]]
+unit = "intersect.curve_class_p4"
+case = "gen1622"
+why = "GetLoopCrossings -> SetProps_Stage2 seam flags differ (gen1570: a sphere face with a vertex at the pole); unchanged by keeping snapshot surface owners, cause not found (plan/findings.md: 'snapshot surfaces keep their face owner')"
+
+[[mismatch]]
+unit = "intersect.curve_class_p4"
+case = "gen1841"
+why = "GetLoopCrossings -> SetProps_Stage2 seam flags differ (gen1570: a sphere face with a vertex at the pole); unchanged by keeping snapshot surface owners, cause not found (plan/findings.md: 'snapshot surfaces keep their face owner')"
+
+[[mismatch]]
+unit = "intersect.curve_class_p4"
+case = "gen1876"
+why = "GetLoopCrossings -> SetProps_Stage2 seam flags differ (gen1570: a sphere face with a vertex at the pole); unchanged by keeping snapshot surface owners, cause not found (plan/findings.md: 'snapshot surfaces keep their face owner')"
+
+[[mismatch]]
+unit = "intersect.curve_class_p4"
+case = "gen1968"
+why = "GetLoopCrossings -> SetProps_Stage2 seam flags differ (gen1570: a sphere face with a vertex at the pole); unchanged by keeping snapshot surface owners, cause not found (plan/findings.md: 'snapshot surfaces keep their face owner')"
+
+[[mismatch]]
+unit = "intersect.curve_class_p4"
+case = "gen2061"
+why = "GetLoopCrossings -> SetProps_Stage2 seam flags differ (gen1570: a sphere face with a vertex at the pole); unchanged by keeping snapshot surface owners, cause not found (plan/findings.md: 'snapshot surfaces keep their face owner')"
+
+[[mismatch]]
+unit = "topology.brep_p1"
+case = "Endcap_heal"
+why = "Endcap.smb HealBrep: Cache_FaceProps_Stage3 builds a trimmed surface cache (CreateUVTrimCurves: a UV trim curve, tolerance growth) where C++ reuses the one its load-time heal (ReadFromFile -> MakeTopologyFromData) kept on the surface; the import from the C++ export carries no surface cache (plan/findings.md: 'topology.brep_p1 Endcap_heal: the load-time heal's trimmed cache is not imported')"
+
+[[mismatch]]
 unit = "boolean.merge_p3"
 case = "upstream_piecewise_boxes_2_keep_other"
 why = "same result topology and vertex positions, different vertex list order: C++ lists one part's exclusive vertices last (plan/findings.md: 'boolean.merge_p3: vertex list order after merges that imprint edges into faces'; issue #832)"
@@ -160,16 +195,6 @@ why = "same result topology and vertex positions, different vertex list order; d
 unit = "blend.fillet_executive_p1"
 case = "remove_topo_edges_mouse_two_struts"
 why = "RemoveTopoEdges with topo edges 1 and 2 of Mouse.smb in sequence: after the second deletion one edge use's UV curve on the plane differs (faces, surfaces and the remaining edge agree; each edge alone matches); in DeleteEdge / DeleteTopologicalVertex / SetSurface, not located (plan/findings.md: 'blend.fillet_executive_p1, RemoveTopoEdges and SetBevelCorner')"
-
-[[mismatch]]
-unit = "boolean.merge_p3"
-case = "piecewise_box_other_shell_vertex_imprint_2"
-why = "shell vertex on a box edge: C++ splits the edge (13 edges), Rust imprints it on a face (12 edges); deferred on main at the face solve's surface cache (SmFace handle of a surface's face), compared since the intersector's solves reach their faces' caches (plan/findings.md: 'boolean.merge_p3: shell vertex on a box edge finds no edge solution')"
-
-[[mismatch]]
-unit = "boolean.merge_p3"
-case = "piecewise_box_other_shell_vertex_imprint_3"
-why = "shell vertex on a box edge: C++ splits the edge (13 edges), Rust imprints it on a face (12 edges); deferred on main at the face solve's surface cache (SmFace handle of a surface's face), compared since the intersector's solves reach their faces' caches (plan/findings.md: 'boolean.merge_p3: shell vertex on a box edge finds no edge solution')"
 
 [[mismatch]]
 unit = "primitive.primitive_creation_p2"
