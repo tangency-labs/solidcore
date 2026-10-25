@@ -2,7 +2,7 @@
 
 pub use difftest::HarnessError;
 
-#[path = "../src/units/nlib_bezier_sms.rs"]
+#[path = "../src/units/fixtures/nlib_bezier_sms.rs"]
 mod sms;
 
 fn assert_rejected(text: &str, message: &str) {

@@ -19,7 +19,7 @@
 //! Deviations: `.sms` headers and required token counts are checked before decoding;
 //! malformed dimensions cannot overflow or request header-sized allocations.
 
-#[path = "nlib_bezier_sms.rs"]
+#[path = "fixtures/nlib_bezier_sms.rs"]
 mod sms;
 
 use sms::{read_sms, InlineSrf};
