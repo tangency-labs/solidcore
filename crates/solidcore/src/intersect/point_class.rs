@@ -1482,7 +1482,7 @@ impl<O: ClassObject> PointClassification<O> {
                 // edit the B-rep that owns the object, which an opaque handle cannot
                 // reach mutably (the face's `GetBrep` itself is ported): the edit runs
                 // through merge_into_brep, which callers with the B-rep use.
-                // UNPORTED(topology.brep_p1): SmBrep mutable owning context
+                // DISPATCH GAP: SmBrep mutable owning context (opaque handle without a Brep)
                 return Err(SolidError::unported(
                     "SmBrep mutable owning context",
                     "topology.brep_p1",
@@ -2201,7 +2201,9 @@ impl<O: ClassObject, G: ClassGeometryMut<O>> SurfaceDrop<O> for MutableDrop<'_, 
                     .and_then(|(b, f)| geometry.topology_handle_in(b, EntityRef::Face(f)))
             }
         };
-        if let Some((b, EntityRef::Face(f))) = face.and_then(|o| self.0.topology_entity_mut(o)) {
+        if let Some((b, EntityRef::Face(f))) =
+            face.and_then(|o| self.0.topology_entity_for_query(o))
+        {
             return live_surface_global_point_solve(k, b, f, uv_domain, point, zone_tol_3d);
         }
         ReadOnlyDrop(&*self.0).global_point_solve(k, target, uv_domain, point, zone_tol_3d)
@@ -2404,7 +2406,7 @@ fn brep_id_of<O>(geometry: &impl ClassGeometry<O>, brep: Option<&Brep>) -> Resul
     match brep {
         None => Ok(None),
         Some(b) => geometry.brep_id(b).map(Some).ok_or(
-            // UNPORTED(topology.brep_p1): SmBrep identity (an adapter without B-rep ids)
+            // DISPATCH GAP: SmBrep identity (an adapter without B-rep ids)
             SolidError::unported("SmBrep identity of GetBrep", "topology.brep_p1"),
         ),
     }

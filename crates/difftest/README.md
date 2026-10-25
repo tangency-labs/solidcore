@@ -45,6 +45,7 @@ nice -n 10 cargo test -p difftest --features cpp                     # harness s
 | `--fuzz-out D` | where `--fuzz` writes failing inputs (default `bin/fuzz/`; files go to `D/<unit>/`) |
 | `--ssi-corpus [--tol T] [--jobs N] [glob]` | score the engines against the SSI corpus (see [below](#--ssi-corpus-exact-ground-truth-ssi-corpus)); not a gate; without the `cpp` feature, the `ssi` engine alone |
 | `--solidcraft-cases [glob]` | score the Rust port on SolidCraft's whole-operation regression cases (see [below](#--solidcraft-cases-solidcraft-regression-cases)); not a gate, no `cpp` feature needed |
+| `--step-corpus [--jobs N] [glob]` | import STEP Tools' AP203/AP214 sample files and build every B-rep body on both kernels from the same intermediate (see [below](#--step-corpus-real-world-step-files)); not a gate; without `cpp`, the Rust side alone |
 
 Exit status: `0` no failures (deferred cases are not failures), `1` any
 failure, `2` usage or setup error. Output: one summary line per unit,
@@ -54,6 +55,27 @@ PASS|PARTIAL|FAIL <unit> cases=… passed=… failed=… deferred=… max_rel_er
 ```
 
 then the first few failing cases and `reports/difftest/<unit>.json`.
+
+**Native reference restrictions ([#448](https://github.com/tangency-labs/solidcore/issues/448)).**
+`geom.hash_table`, `heal.heal_data_p1`, `heal.heal_data_p2`, `heal.heal_data_p3`
+and `surface.twist_volume` require an x86-64 C++ reference. Their out-of-range
+floating-point-to-integer conversions are undefined upstream; ARM64 saturates
+where the pinned x86-64 reference wraps. Rust deliberately reproduces the latter
+on every target. On other architectures these units print `SKIP ...
+skipped(platform)` (or `FUZZ-SKIP`), before building fixtures or calling C++.
+The twist unit is included because its period reduction has the same dependency,
+even though the current committed cases do not expose it.
+
+Skipped units are counted separately from passes, partials and failures. Their
+JSON reports have `status: "skipped(platform)"`, `pass: false`, a reason in
+`skipped_platform`, and no compared cases. `--status-of` prints `skipped(platform)`;
+ordinary comparison and fuzz runs exit successfully when they contain only passes,
+partials and platform skips. `--baseline` fails if any selected reference is
+unsupported, and skipped reports are invalid baselines: this cannot waive the CI
+coverage ratchet. Plan statuses and tolerances are unchanged. Rust-only
+`--digest-dir` runs remain enabled on every target. On Apple Silicon, an x86-64
+harness and difftest binary under Rosetta can compare these units; this does not
+address independent libc++ reader or libm differences.
 `with_values` / `no_values` split the passing cases into those that compared
 at least one float, integer or topology entry and those that compared nothing
 (both sides returned the same error, or empty outputs). `vacuous` counts the
@@ -357,7 +379,7 @@ ratchet waivers once the PR has merged.
 * **Absolute floor** only where the runner documents one via
   `abs_floors()` (key + value + reason, written into the report). Do not add a
   floor to make a case pass; if the C++ and Rust genuinely disagree, record it in
-  `plan/findings.md` and leave the unit non-green.
+  a new `plan/findings/<slug>.md` and leave the unit non-green.
 * Key sets and array lengths must match. A case with a harness error (bad
   input, panic) fails. A unit with zero cases fails.
 
@@ -668,6 +690,9 @@ nice -n 10 cargo run -p difftest -- --solidcraft-cases '3526-*'        # ids (<f
   glob): per case its source links, verdict, deferral, measured values and checks.
 * `cargo test -p difftest --lib solidcraft` checks that every case file loads, every
   case runs to a verdict, and every deferral names a plan unit.
+* **Adding cases:** add a new `fixtures/solidcraft/<issue>-<slug>.json`. Files load in
+  sorted order and nothing counts them, so no Rust file changes unless the case needs
+  a new step kind.
 
 ### Sheet flange corner overlap (SolidCraft #3170, PR #3472)
 
@@ -705,6 +730,45 @@ nice -n 10 cargo run -p difftest -- --solidcraft-cases '3170-*' --no-report
 
 This case builds on the whole-operation harness in solidcore PR #345; it does not
 change any unit status, kernel implementation or floating-point tolerance.
+
+## `--step-corpus`: real-world STEP files
+
+A correctness report on real CAD data, separate from the gate like `--ssi-corpus`:
+verdicts never fail the run and it is not part of CI. The files are STEP Tools' sample
+sets (<https://steptools.com/docs/stpfiles/>, AP203 and AP214), "All Rights Reserved"
+and copied only for informational, non-commercial use: they are never committed.
+
+```sh
+scripts/fetch-steptools-corpus.sh                                   # corpus/steptools/, SHA-256 pinned
+nice -n 10 cargo run --profile difftest -p difftest --features cpp -- --step-corpus --jobs 4
+nice -n 10 cargo run --profile difftest -p difftest --features cpp -- --step-corpus 'ap203/block*'
+```
+
+* **Import.** `crates/step-import` (clean room, from the public ISO 10303-21 syntax and
+  the Part 41/42 entity definitions; no other STEP implementation consulted) parses
+  each file and maps its `MANIFOLD_SOLID_BREP`, `BREP_WITH_VOIDS`, `FACETED_BREP` and
+  `SHELL_BASED_SURFACE_MODEL` bodies to a plain-data model in millimetres. A body that
+  reaches an unsupported entity is skipped with `unsupported: <ENTITY>` (listed in the
+  summary). Assembly instancing (`MAPPED_ITEM`, `CONTEXT_DEPENDENT_SHAPE_REPRESENTATION`)
+  is counted, not applied: each body is built once in its own coordinates.
+* **Build (both kernels, same numbers).** The body is encoded as one `f64` array
+  (`step_import::flat`); the C++ shim (`harness/cpp/shim/step_import.cpp`) reads that
+  array and the Rust side builds from its decoding. Per face: the surface by
+  `CreateCanonical`, the edge loops' 3D curves bounded to their edges, then
+  `CreateFacesWithCurves`; then `SmApiStitchIntoSolid`, counts (regions, shells, faces,
+  edges, vertices), `SmApiBrepIsManifoldSolid`, `SmApiBrepComputeArea` and
+  `SmApiBrepComputeVolume` (accuracy `1e-6`), `SmApiHealBrep`, and counts, manifold
+  test and volume again. Face orientation is left to the stitch.
+* **Verdicts** (per body): `MATCH` (every stage agrees: statuses and counts equal,
+  values within `1e-9` relative), `HEAL-DIFF` (every build stage agrees, the heal or a
+  later stage differs), `DIFF` (a build stage differs), `DEFERRED` (the Rust side
+  reached unported code; the unit is shown), `CRASH` (a child crashed, timed out or
+  the shim rejected the input), `SKIPPED` (no B-rep body in the file).
+* Each (body, kernel) runs in its own child process (`--step-case <file> <body>
+  <cpp|rust> <out.json>`). Output: one line per body, a `STEP-CORPUS` summary line, and
+  `bin/step-corpus/report.json` (per body: source counts, both sides' stages, verdict).
+* `cargo run -p step-import --example survey -- corpus/steptools` lists what the
+  importer maps per file; `--example dump_body -- <file> <body> [--flat]` prints one body.
 
 ## Notes
 
