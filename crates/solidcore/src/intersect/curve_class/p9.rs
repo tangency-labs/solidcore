@@ -34,6 +34,7 @@ use crate::geom::context::ALL_MARKS;
 use crate::geom::extent1d::Extent1d;
 use crate::geom::extent2d::Extent2d;
 use crate::geom::global_solver::SolverOperation;
+use crate::geom::solution_array::SolutionArray;
 use crate::geom::solution_array::{ObjectKind, Solution, SolutionObject, SolutionType};
 use crate::geom::tol::{xsect_tol3d, xsect_tol_3d_from_zones};
 use crate::intersect::point_class::{
@@ -213,6 +214,37 @@ fn named<O: Copy>(s: &Solution<Side>, source: O, target: O) -> Solution<O> {
     out
 }
 
+/// [`Curve::global_curve_intersect`] of `source` with `target` whose curve cache is kept
+/// on `target` between calls, as upstream keeps it on the curve object (the target's
+/// cache depends on the target alone: its handle is `Side::Target` of its natural
+/// interval). The source's cache is built per call, as before.
+#[allow(clippy::too_many_arguments)]
+fn intersect_target_cached(
+    source: &Curve,
+    k: &Kernel,
+    interval: &Extent1d,
+    target: &Curve,
+    target_interval: &Extent1d,
+    tol: f64,
+    opts: &CurveIntersectOptions<Side>,
+) -> Result<SolutionArray<Side>> {
+    let mut target_cache = target.take_target_cache::<Side>(k);
+    let found = source.global_curve_intersect_cached(
+        k,
+        interval,
+        target,
+        target_interval,
+        tol,
+        opts,
+        &mut None,
+        &mut target_cache,
+    )?;
+    if let Some(cache) = target_cache {
+        target.store_target_cache(k, cache);
+    }
+    Ok(found)
+}
+
 impl<O: ClassObject> CurveClassification<O> {
     /// Intersects the source curve with each edge, appending classifications in order.
     /// A shared curve uses the exact interval-overlap shortcut before insertion.
@@ -270,7 +302,8 @@ impl<O: ClassObject> CurveClassification<O> {
                     solutions.push(sol);
                 }
             } else {
-                let found = working.global_curve_intersect(
+                let found = intersect_target_cached(
+                    working,
                     k,
                     &self.interval(),
                     target,
@@ -590,7 +623,8 @@ impl<O: ClassObject> CurveClassification<O> {
                 ),
             )
         };
-        let mut solutions = source.global_curve_intersect(
+        let mut solutions = intersect_target_cached(
+            source,
             k,
             &self.interval(),
             trim,

@@ -163,6 +163,7 @@ use crate::curve::composite_curve::CompositeCurve;
 use crate::curve::conic::Conic;
 use crate::curve::crv_in_volume::CrvInVolume;
 use crate::curve::crv_on_surf::CrvOnSurf;
+use crate::curve::curve_cache::CurveCache;
 use crate::curve::ellipse::Ellipse;
 use crate::curve::hermite_curve::HermiteCurve;
 use crate::curve::hyperbola::Hyperbola;
@@ -568,6 +569,36 @@ pub enum CurveKind {
     Composite(CompositeCurve),
 }
 
+/// The curve cache that intersections with a curve as their target keep on the curve,
+/// as upstream keeps its caches on the curve object (`GetOrCreateObjectCache`),
+/// with the kernel tolerances it was built under. Every `&mut` access to the curve's
+/// geometry ([`Curve::kind_mut`] and the editing methods) clears it, and a clone
+/// starts without one, so a cache never outlives the geometry it was built from. The
+/// cache is type-erased because its handle type belongs to the intersection.
+#[derive(Default)]
+struct TargetCacheSlot(
+    std::sync::Mutex<Option<(crate::kernel::Tolerances, Box<dyn core::any::Any + Send>)>>,
+);
+
+impl core::fmt::Debug for TargetCacheSlot {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.write_str("TargetCacheSlot")
+    }
+}
+
+impl TargetCacheSlot {
+    const fn new() -> Self {
+        Self(std::sync::Mutex::new(None))
+    }
+
+    fn clear(&mut self) {
+        *self
+            .0
+            .get_mut()
+            .unwrap_or_else(std::sync::PoisonError::into_inner) = None;
+    }
+}
+
 /// A curve (`SmCurve`): its concrete kind and the object owning it (`m_pOwner`:
 /// an edge, edge use, face or another curve).
 #[derive(Debug)]
@@ -578,6 +609,9 @@ pub struct Curve {
     /// the object itself), issued by the context of the first notification that names
     /// it ([`IdentitySlot`]).
     notify_identity: IdentitySlot,
+    /// The curve cache an intersection with this curve as its target keeps here, as
+    /// upstream keeps it on the curve object ([`TargetCacheSlot`]).
+    target_cache: TargetCacheSlot,
 }
 
 /// The copy constructor: copies the geometry, resets the owner (and the identity: a
@@ -588,6 +622,7 @@ impl Clone for Curve {
             kind: self.kind.clone(),
             owner: None,
             notify_identity: IdentitySlot::new(),
+            target_cache: TargetCacheSlot::new(),
         }
     }
 }
@@ -621,6 +656,7 @@ impl Curve {
             owner: self.owner,
             // an evaluation snapshot is never notified under the original's identity
             notify_identity: IdentitySlot::new(),
+            target_cache: TargetCacheSlot::new(),
         }
     }
 }
@@ -768,6 +804,7 @@ impl Curve {
             kind,
             owner: self.owner,
             notify_identity: IdentitySlot::new(),
+            target_cache: TargetCacheSlot::new(),
         })
     }
 
@@ -779,6 +816,7 @@ impl Curve {
             kind,
             owner: None,
             notify_identity: IdentitySlot::new(),
+            target_cache: TargetCacheSlot::new(),
         }
     }
 
@@ -801,8 +839,35 @@ impl Curve {
         &self.kind
     }
 
+    /// Takes the target cache kept on this curve ([`TargetCacheSlot`]) when it is a
+    /// `CurveCache<O>` built under `k`'s tolerances; [`Curve::store_target_cache`]
+    /// returns it. A cache that is not taken back is simply dropped.
+    pub(crate) fn take_target_cache<O: 'static>(&self, k: &Kernel) -> Option<CurveCache<O>> {
+        let mut slot = self
+            .target_cache
+            .0
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        match slot.take() {
+            Some((tol, cache)) if tol == k.tolerances => cache.downcast().ok().map(|b| *b),
+            _ => None,
+        }
+    }
+
+    /// Keeps `cache` (of this curve as it is now) for later intersections under `k`'s
+    /// tolerances.
+    pub(crate) fn store_target_cache<O: Send + 'static>(&self, k: &Kernel, cache: CurveCache<O>) {
+        *self
+            .target_cache
+            .0
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner) =
+            Some((k.tolerances, Box::new(cache)));
+    }
+
     /// The concrete kind, mutable.
     pub fn kind_mut(&mut self) -> &mut CurveKind {
+        self.target_cache.clear();
         &mut self.kind
     }
 
@@ -1523,6 +1588,7 @@ impl Curve {
     /// `SM_ERR` for kinds without the conversion; those of
     /// [`BSplineCurve::convert_to_2d`].
     pub fn convert_to_2d(&mut self, k: &Kernel) -> Result<()> {
+        self.target_cache.clear();
         match &mut self.kind {
             CurveKind::BSpline(c) => c.convert_to_2d(),
             CurveKind::Hyperbola(c) => c.base.convert_to_2d(),
@@ -1547,6 +1613,7 @@ impl Curve {
     /// `SM_ERR` for kinds without the edit; those of
     /// [`BSplineCurve::edit_parameterization`].
     pub fn edit_parameterization(&mut self, k: &Kernel, new_param: &Extent1d) -> Result<()> {
+        self.target_cache.clear();
         match &mut self.kind {
             CurveKind::BSpline(c) => c.edit_parameterization(new_param),
             CurveKind::Hyperbola(c) => c.base.edit_parameterization(new_param),
@@ -1576,6 +1643,7 @@ impl Curve {
         old_interval: &Extent1d,
     ) -> Result<Extent1d> {
         let owner = self.owner;
+        self.target_cache.clear();
         match &mut self.kind {
             CurveKind::BSpline(c) => c.reverse_parameterization(old_interval),
             CurveKind::Hyperbola(c) => c.reverse_parameterization(old_interval, owner),
@@ -1616,6 +1684,7 @@ impl Curve {
         scale: Option<Vec3>,
         depth: usize,
     ) -> Result<()> {
+        self.target_cache.clear();
         match &mut self.kind {
             CurveKind::Composite(c) => c.transform_at_depth(k, rotate_n_move, scale, depth),
             CurveKind::BSpline(c) => c.transform(rotate_n_move, scale),
@@ -1639,6 +1708,7 @@ impl Curve {
     ///
     /// `SM_ERR` for kinds without the edit; those of [`BSplineCurve::trim`].
     pub fn trim(&mut self, k: &Kernel, trim_interval: &mut Extent1d, mode: TrimMode) -> Result<()> {
+        self.target_cache.clear();
         match &mut self.kind {
             CurveKind::BSpline(c) => c.trim(k, trim_interval, mode),
             CurveKind::Hyperbola(c) => c.base.trim(k, trim_interval, mode),
