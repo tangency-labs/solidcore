@@ -623,6 +623,9 @@ impl UnitDiff for Runner {
     }
 
     fn skipped_platform(&self, _case: &Case) -> Option<String> {
+        if solidcore_ffi::cpp_stdlib_is_libstdcxx() {
+            return None;
+        }
         // The C++ reference's ASCII reader relies on libstdc++ `istream`
         // extraction behaviour (UB-new, UB-5, UB-6); libc++ differs, so this
         // unit is only authoritative on a libstdc++ build.

@@ -2124,6 +2124,9 @@ impl UnitDiff for Runner {
     }
 
     fn skipped_platform(&self, case: &Case) -> Option<String> {
+        if solidcore_ffi::cpp_stdlib_is_libstdcxx() {
+            return None;
+        }
         let i: Inputs = case.parse().ok()?;
         if matches!(i.op, OpIn::ReadDb { .. }) {
             Some("libc++ istream extraction differs from libstdc++".into())

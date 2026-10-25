@@ -60,7 +60,34 @@ CMAKE_ARGS=(-S "$HERE" -B "$BUILD")
 if command -v ninja >/dev/null 2>&1; then CMAKE_ARGS+=(-G Ninja); fi
 
 # g++ (GNU) is the reference compiler; override with CXX=... if needed.
+# On macOS `g++` is Apple clang with libc++, whose istream extraction differs from the
+# libstdc++ the reference (and the Rust port) follow (#450). Prefer Homebrew's GNU
+# g++-<N> there (`brew install gcc`), so the reference links libstdc++ as on Linux.
+if [ -z "${CXX:-}" ] && [ "$(uname -s)" = Darwin ]; then
+  for v in 20 19 18 17 16 15 14 13; do
+    if command -v "g++-$v" >/dev/null 2>&1; then CXX="g++-$v"; break; fi
+  done
+  if [ -z "${CXX:-}" ]; then
+    echo "build.sh: no GNU g++-<N> found (brew install gcc); building with Apple clang and" \
+      "libc++, so libstdc++-dependent difftest cases report skipped(platform)" >&2
+  fi
+fi
 export CXX="${CXX:-g++}"
+
+# The C++ runtime solidcore-ffi links, from the compiler's own headers (macOS only; on
+# Linux it keeps its libstdc++ default and ffi.env does not change).
+FFI_TOOLCHAIN=""
+if [ "$(uname -s)" = Darwin ]; then
+  if printf '#include <cstddef>\n' | "$CXX" -x c++ -dM -E - 2>/dev/null | grep -q __GLIBCXX__; then
+    STDLIB_DIR="$(cd "$(dirname "$("$CXX" -print-file-name=libstdc++.dylib)")" && pwd -P)"
+    FFI_TOOLCHAIN="CXX=$CXX
+CXX_STDLIB=stdc++
+LIB_DIRS=$STDLIB_DIR"
+  else
+    FFI_TOOLCHAIN="CXX=$CXX
+CXX_STDLIB=c++"
+  fi
+fi
 
 start=$(date +%s)
 nice -n 10 cmake "${CMAKE_ARGS[@]}" \
@@ -82,6 +109,7 @@ LIBS=SM_API SMLib
 # No TBB: upstream TBB code is only compiled under SM_USE_TBB, which is never defined.
 SYSLIBS=pthread
 ENV
+if [ -n "$FFI_TOOLCHAIN" ]; then printf '%s\n' "$FFI_TOOLCHAIN" >> "$OUT/ffi.env"; fi
 echo "ffi.env -> $OUT/ffi.env"
 
 nice -n 10 cmake --build "$BUILD" --parallel "$JOBS"
