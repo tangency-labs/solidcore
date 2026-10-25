@@ -19264,6 +19264,35 @@ other operand in the merge editing stages (`boolean.merge_p4` /
 of being kept reversed as a void. Listed in `known_mismatches.toml`; the offset
 port itself is not involved after the shell is built.
 
+## ClassifyLoops' loop bisector keeps its B-rep edits: 37 of 49 listed cases match, 12 topology.brep_p10 cases still differ (2026-10-24)
+
+Follow-up to "ClassifyLoops' loop bisector builds UV trim curves upstream, on a copy in the
+port" and "Wiring FindVertexSector brings 9 more cases to the loop-bisector-on-a-copy
+mismatch". The bisector's `IsSeam` and `CurveOnClassify` calls now share one
+`CurveOnClassifyCache` snapshot, threaded through `classify_loops` and `SetProps_Stage3`. The
+healer's in-place `SetProps` (`set_props_with_query_gaps`, now also used by
+`CacheFaceProps_Stage3`) runs the seam classifications and `ClassifyLoops` on that snapshot
+and copies its UV trims, tolerance growth and gap caches back (`apply_uv_trim_updates`, as
+`IsInnerShell` does).
+
+- **Cleared (entries removed):** heal.heal_data_p1 28 and topology.brep_p1 9 now match C++
+  bit for bit, including `file_plane_circ`, `file_plane_circ_rebuild_reverse` and
+  `plane_circ_heal`.
+- **Still differ (entries kept, reason updated):** topology.brep_p10 `healer10_always_Defeature_inset_cube`,
+  `read_Boolean_extrudeHoles1`, `read_Fillet_bottle`, `read_Fillet_cyl_cyl_shell`,
+  `read_Fillet_fillet0227`, `read_Solids_InsetTaperedExtrude`, `read_Solids_extrusion2`,
+  `read_Solids_fillet_ts`, `gen0040`, `gen0115`, `gen0117`, `gen0165`. Their first differences
+  are unchanged, except gen0040's (now `ints.ints[1681]`: cpp 1, rust 0).
+- **Checked (port instrumented, not committed):** `gen0165` and `read_Fillet_bottle` take the
+  in-place path (`set_props_with_query_gaps` Stage2 and Stage3 → `classify_loops_cached`; 1 and
+  16 faces), so their bisector edits are kept. Reading the bisector's UV guess
+  (`eu1::uv_trim_curve`) on the snapshot instead of the B-rep, where `IsSeam` may just have
+  made the trim, changed none of the 12.
+- **Not traced.** Within one `SetProps` call the bisector's handles still resolve against
+  the caller's B-rep while its edits sit on the snapshot until the copy-back. Upstream sees
+  them at once. The remaining copy sites on these paths (`intersect::curve_class` p4/p7,
+  `topology::face::p4`) are other candidates. For `read_Fillet_cyl_cyl_shell`, the seam-path
+  caveat recorded in the entry above still applies.
 ## offset.offset_executive_p1: vertex-fixture inline test fails only in debug builds on fp-noise net values (2026-10-24)
 
 Found on upstream/main 859e06bcc, macOS arm64 (diag lane `diag/offset-exec-test`):
@@ -19614,6 +19643,12 @@ teardown would read a freed proto edge (UB-175), so the shim answers `-2`. No in
 predicts a failed imprint, so the case is listed in `known_mismatches.toml`. Follow-up:
 a runner classification for runs where both sides stop at a failed imprint, or a shim
 copy that carries the UB-242 fix.
+
+**Resolved (PR #839).** The shim copy now carries the UB-242 fix: it stops after a failed
+imprint and answers `-2`. The port records `"UB-242"` in `Kernel::upstream_ub_passed`
+at that point, and the runner answers `-2` for it. gen0111 and gen0498 pass and are no
+longer listed. gdb confirms that the C++ `SmEdgeDefinition::Imprint` and
+`ImprintIntersections` return 1006 in both.
 ## boolean.api_brep / boolean.topology_intersector_p2: UB-175 no longer refused; public booleans end to end (2026-10-24)
 
 `TopologyIntersector::intersect_insert_relate` used to return `InvalidInput` wherever
@@ -20013,6 +20048,31 @@ correction is gated by its own exact-head canonical CI, independently of the
 unresolved product findings. No tolerance, waiver, input, plan status or
 existing PR (#773) was changed to obtain green.
 
+## SolidCraft cases triage (2026-10-24)
+
+The `--solidcraft-cases` expected values are closed forms, not C++ results. Every
+case that builds only from boxes, spheres, cylinders and Booleans was also run on the
+C++ reference (scratch SM_API driver). Results on main 92454ca60:
+
+- **3665-column-in-channel (4 ERROR):** the C++ fails too, at the same step and in the
+  same function (`SmMerge::MakeFaceuse`, or `SmBrep::MakeFaceTopology` for
+  `control_column_clear`), with status 1001. This is an upstream limitation, not a port
+  bug (`plan/upstream-issues.md` FAIL-3665). The cases stay ERROR.
+- **3396-flush-stacked-layers (5 FAIL):** Rust and C++ agree on faces, edges, vertices
+  and volume (to 1e-13). The 0.01–0.16 error was the harness's integration accuracy:
+  `SmApiBrepComputeVolume` at 1e-6 relative cannot meet ±0.01 on 14000–30600 mm^3. At
+  1e-8 (the API's finest) both engines come within 0.0008 of the closed form.
+- **1717 patterned_sphere_cut, 2844 holed plates (3 FAIL, not in the original list):**
+  the driver cloned the pattern tool with `Clone`. A clone's geometry keeps the
+  source's owner names, so `SmApiTranslate` moved only its vertices. The driver now uses
+  `SmApiBrepCopy`. That needs two port fixes, which landed on main while this was
+  open: copied faces' tolerances on their surfaces (e42e955c4) and `FaceIntersect`
+  homogenizing on the lent B-reps (#809). All three now equal the C++ result.
+- **2844 plain_plate_ring_sunk (UNCHECKED):** `cylinder_faces_max` was never checked.
+  It now counts faces on `SmCone::IsCylinder` surfaces; the C++ reports 2 faces too.
+- **Open, passing:** `1510/above_groove_4` and `above_groove_5` differ from the C++
+  by about 1e-10 relative in volume, with identical topology. Everything else matches to
+  the printed digits.
 ## boolean.topology_intersector_p2: gen0498 failed imprint, as gen0111
 
 Unit `boolean.topology_intersector_p2`, case `gen0498` (`Endcap.smb` and `toruswvy.smb`
@@ -20174,3 +20234,10 @@ were not changed there. The `topology/brep/p3.rs` advance shifted that file's li
 numbers by +2; the p3 citations above use the post-merge numbers. Recursion
 conclusions remain pinned to `2ca17d8e9..f1ac1f4c1`; a claim about the #816 paths
 needs its own review.
+
+## offset.offset_executive_p2 (Issue #833: inset-shell Boolean, temporary transform & live topology projection, 2026-10-25)
+
+All 8 known mismatches in `offset.offset_executive_p2` (`gen0000`, `gen0003`, `gen0166`, `gen0054`, `gen0134`, `gen0177`, `gen0195`, `gen0210`) now pass at `max_rel_err = 5.53e-15` (`cases=322 passed=196 failed=0 deferred=109 rejected=17 known_mismatch=0`):
+
+- **Constructed/imported geometry owner records in `BrepQuery`, `ArenaPair`, and `transform_with_notifications`.** `BrepIdentity::of_brep` keyed attached face surfaces and edge curves unconditionally without `Kernel::geometry_owners`, so `BrepQuery::new` rejected those keys against an empty `proven_owners` map unless the caller went through `BrepIdentity::of_brep_in(kernel, brep)`. `Brep::geometry_owner_keys` already records proven topology ownership at `Brep` construction, topological mutation (`set_surface_owner`, `set_curve_owner`, `make_wire_edge`, `make_edge_in_face`, `turn_to_nurbs`, `make_topology_from_data`, `rebind_owners`), and Boolean/offset assembly (`edge_set_curve`, `adopt_namespace_owners`, `boolean_post_process`). Consulting `Brep::geometry_owner_key` in `BrepQuery::of_brep` / `of_brep_with_id`, `ArenaPair::brep_cache`, and `topology::brep::p5::transform_owner_key` lets `FindAndSetInfiniteRegion`, `ManifoldBoolean` point classification, and `SmTemporaryBrepTransform` include owned geometry on `create_box` and `MakeShellFromFaces` shapes while still filtering unowned or foreign-owned geometry (`tests/constructed_transforms.rs`).
+- **Live topology projection in `crates/difftest/src/units/offset_offset_executive_p2.rs`.** After Boolean/stitch post-processing (`gen0054`, `gen0134`, `gen0177`, `gen0195`, `gen0210`), arena tombstones and `Face::loops` skeleton lists diverge from the live doubly linked lists walked by `SmBrep::GetRegions`, `SmBrep::GetFaces`, `SmFace::GetLoops`, `SmBrep::GetEdges`, and `SmBrep::GetVertices`, and `SmOffsetExecutive::ShellBrep` returns the mutated input `Brep` in place (`result == source`), where the C++ shim passes `source = nullptr` to `observe_selections`. Matching the live topology walkers (`topology::brep::p1::{regions, faces, edges, vertices}` and `topology::face::p2::loops`) and nulling `live_source` when `source` was consumed in place aligns all 8 cases with C++.
