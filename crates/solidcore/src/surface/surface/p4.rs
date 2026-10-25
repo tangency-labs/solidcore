@@ -1508,7 +1508,7 @@ impl Surface {
         k: &Kernel,
         surface: Option<O>,
         cache: Option<&crate::surface::surface_cache::SurfaceCache<O>>,
-        context: Option<&mut dyn super::p1::SurfaceSolveContext<O>>,
+        mut context: Option<&mut dyn super::p1::SurfaceSolveContext<O>>,
         uv_domain: &Extent2d,
         op: SolverOperation,
         test_point: Point3,
@@ -1578,7 +1578,7 @@ impl Surface {
                                 }
                             }
                         }
-                    } else if let Some(context) = context {
+                    } else if let Some(context) = context.as_deref_mut() {
                         let built;
                         let cache = if let Some(cache) = cache {
                             cache
@@ -1623,20 +1623,7 @@ impl Surface {
                         }
                     } else {
                         get_surface_cache(k, self, None::<NoObject>)?;
-                        // UNPORTED(query.face_p2): SmFace::PointClassify
-                        // NOTE for the face_p2 porter: upstream callers disable the surface
-                        // cache's point test (`m_bPointTestEnabled`, SmTemporaryChangeValue)
-                        // around GlobalPointSolve so every solution is kept unclassified:
-                        // SmCurveClass.cpp:1040, SmTopologySolver.cpp:1665,
-                        // SmVertexUse.cpp:471-480, SmBrep.cpp:11098, SmFilletGeom.cpp:149-150,
-                        // 446-447, SmFace.cpp:12801 and SmOffsetExecutive.cpp:3725-3734 (Rust:
-                        // `intersect::curve_class::p1`, `intersect::topology_solver::p2`,
-                        // `topology::vertexuse`, `topology::brep::p1::find_sector_of_face`,
-                        // `blend::fillet_geom::p1`, `query::face::p1::point_3d_classify`, and
-                        // the lamina test in
-                        // `offset::offset_executive::p1::build_contained_offset_faces`).
-                        // The Rust cache has no such switch yet; add it when this stub is
-                        // wired.
+                        // DISPATCH GAP: SmFace::PointClassify (bare face-owned surface without FaceQueries)
                         return Err(SolidError::unported(
                             "SmFace::PointClassify",
                             "query.face_p2",
@@ -1671,9 +1658,12 @@ impl Surface {
             )?
             .without_objects()
         } else if let Some(surface) = surface {
-            self.global_point_solve_0(
+            self.global_point_solve_0_in(
                 k,
                 surface,
+                cache,
+                context,
+                point_test_off,
                 uv_domain,
                 op,
                 test_point,
@@ -1684,9 +1674,12 @@ impl Surface {
         } else {
             // no handle for the solutions' objects (upstream passes `this`): solve with
             // a stand-in and leave the objects null
-            let found = self.global_point_solve_0(
+            let found = self.global_point_solve_0_in(
                 k,
                 NoObject,
+                None,
+                None,
+                point_test_off,
                 uv_domain,
                 op,
                 test_point,
@@ -1759,7 +1752,6 @@ fn farther_line_param(params: &[f64]) -> f64 {
 /// [`SolidError::Unported`]: an edge or face tolerance of an owned curve or surface
 /// (`topology.edge`, `topology.face_p2`); those of the evaluations and of the
 /// line/circle intersections.
-#[allow(clippy::too_many_lines)]
 pub fn classify_curve_surface_xsect_point(
     k: &Kernel,
     surface: &Surface,
@@ -1768,6 +1760,30 @@ pub fn classify_curve_surface_xsect_point(
     interval: &Extent1d,
     current_uv: Point2,
     current_t: f64,
+) -> Result<XsectClassification> {
+    classify_curve_surface_xsect_point_with(
+        k, surface, uv_domain, curve, interval, current_uv, current_t, None,
+    )
+}
+
+/// [`classify_curve_surface_xsect_point`] by a caller that resolves the tolerance of
+/// the curve's owning edge (`pCurveOwner->GetTolerance()`): `edge_tolerance`, `None`
+/// when it cannot.
+///
+/// # Errors
+///
+/// As [`classify_curve_surface_xsect_point`]; [`SolidError::Unported`] for an
+/// edge's curve only when `edge_tolerance` is `None`.
+#[allow(clippy::too_many_lines, clippy::too_many_arguments)]
+pub fn classify_curve_surface_xsect_point_with(
+    k: &Kernel,
+    surface: &Surface,
+    uv_domain: &Extent2d,
+    curve: &Curve,
+    interval: &Extent1d,
+    current_uv: Point2,
+    current_t: f64,
+    edge_tolerance: Option<f64>,
 ) -> Result<XsectClassification> {
     let mut out = XsectClassification {
         found_guess: false,
@@ -1987,12 +2003,11 @@ pub fn classify_curve_surface_xsect_point(
     let mut curve_tol = EFF_ZERO_SQRT; // default values, if nothing else to use.
     let mut surface_tol = EFF_ZERO_SQRT;
     if curve.owner().is_some_and(|o| o.type_code == EDGE_TYPE) {
-        // UNPORTED(topology.edge): SmEdge::GetTolerance
-        let _ = curve_tol;
-        return Err(SolidError::unported(
-            "SmEdge::GetTolerance",
-            "topology.edge",
-        ));
+        // pCurveOwner->GetTolerance(), as the caller resolves it
+        curve_tol = edge_tolerance.ok_or(
+            // UNPORTED(topology.edge): SmEdge::GetTolerance (a caller without the edge)
+            SolidError::unported("SmEdge::GetTolerance", "topology.edge"),
+        )?;
     } else if !curve_line {
         curve_tol = curve_radius / 1000.0;
     }
