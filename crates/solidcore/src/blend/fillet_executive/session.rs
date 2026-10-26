@@ -357,8 +357,7 @@ impl SessionObjects<'_> {
     }
 }
 
-/// The retained virtual operations of a concrete solver whose live corner-vertex
-/// operations are ported.
+/// The retained virtual operations of concrete solvers supported by the live session.
 fn live_solver_ops(solver: &mut SolverObject) -> Result<&mut dyn FilletSolverOps> {
     match solver {
         SolverObject::ConstantRadius(solver) => Ok(solver.as_mut()),
@@ -2141,7 +2140,8 @@ impl RailClassificationAccess<FilletObject> for SessionObjects<'_> {
             &mut self.pseudo,
             &mut self.attributes,
             |k, pseudo, ownership| {
-                solver.base_mut().test_roll_over_with_context(
+                FilletSolver::test_roll_over_with_ops(
+                    live_solver_ops(solver)?,
                     k,
                     self.target,
                     pseudo,
