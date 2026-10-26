@@ -58,6 +58,12 @@ mkdir -p "$BUILD" "$OUT/lib"
 # Bash 3.2 treats an empty array as unset under set -u, so keep required args here.
 CMAKE_ARGS=(-S "$HERE" -B "$BUILD")
 if command -v ninja >/dev/null 2>&1; then CMAKE_ARGS+=(-G Ninja); fi
+# macOS: always Apple's archiver. With Homebrew binutils on PATH CMake would pick GNU ar,
+# whose archives Apple's linker skips member by member ("64-bit mach-o not 8-byte
+# aligned"), so linking the reference fails.
+if [ "$(uname -s)" = Darwin ] && command -v xcrun >/dev/null 2>&1; then
+  CMAKE_ARGS+=(-DCMAKE_AR="$(xcrun -f ar)" -DCMAKE_RANLIB="$(xcrun -f ranlib)")
+fi
 
 # g++ (GNU) is the reference compiler; override with CXX=... if needed.
 # On macOS `g++` is Apple clang with libc++, whose istream extraction differs from the
