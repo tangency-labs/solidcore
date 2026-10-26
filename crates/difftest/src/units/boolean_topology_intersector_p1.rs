@@ -424,6 +424,22 @@ pub(super) enum OpIn {
     CloseLoop {
         v: Hin,
     },
+    /// A marker, dropped by the resolver: later `FaceFace` ops (with no input
+    /// vertices) may follow a `VertexFace` or `EdgeFace` op, taking only face handles
+    /// (faces keep their handles through those edits; edges and vertices do not).
+    /// Existing cases never carry it, so their resolution is unchanged.
+    ChainFaces,
+    /// `pBrep->m_bEditingEnabled = enable` on the intersector's B-rep `which` (0 or 1),
+    /// which `IntersectTopology` sets around its stages and the edits need (shim op 34).
+    SetEditing {
+        which: u8,
+        enable: bool,
+    },
+    /// `pPrimaryBrep->MergeBrep(*pOtherBrep, NULL, NULL, FALSE)`, as `SmMerge` does before
+    /// it intersects, so both operands' faces share an owner. Only as the first op (shim
+    /// op 35); the other B-rep stays as it was, and the primary's handles then number the
+    /// primary's entities followed by the copies.
+    MergeBreps,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -1056,6 +1072,7 @@ impl ClassGeometry<H> for Two {
             K_FACE => EntityRef::Face(fid(o)),
             K_LOOP => EntityRef::Loop(LoopId::from_index(o.i)),
             K_EDGEUSE => EntityRef::Edgeuse(EdgeuseId::from_index(o.i)),
+            K_VERTEXUSE => EntityRef::Vertexuse(VertexuseId::from_index(o.i)),
             _ => return None,
         };
         Some((b, e))
@@ -2558,6 +2575,8 @@ fn resolve(
     let mut curves = 0usize;
     let mut has_mgr = false;
     let mut mutated = false;
+    let mut chain = false;
+    let mut soft = false;
     // the intersector's B-reps (the FFI's `have_breps`)
     let mut have_breps = [true, c.breps[1].is_some()];
     let mut closed = false;
@@ -2594,13 +2613,20 @@ fn resolve(
                 | OpIn::ShellVerts { .. }
                 | OpIn::WireLamina { .. }
                 | OpIn::MgrNew { .. }
+                | OpIn::SetEditing { .. }
+                | OpIn::MergeBreps
                 | OpIn::CommonEdges
                 | OpIn::CommonVertices
                 | OpIn::IntersectTopo
                 | OpIn::SetRels
                 | OpIn::Iir
         );
-        if mutated && takes_handles {
+        if matches!(op, OpIn::ChainFaces) {
+            chain = true;
+            continue;
+        }
+        let face_only = matches!(op, OpIn::FaceFace { verts, .. } if verts.is_empty());
+        if (mutated || (soft && !face_only)) && takes_handles {
             return Err(fail("after_mutation"));
         }
         // part 2: what the FFI refuses
@@ -2869,6 +2895,12 @@ fn resolve(
                 }
                 op.clone()
             }
+            OpIn::SetEditing { which, .. } => {
+                if *which > 1 || (*which == 1 && c.breps[1].is_none()) {
+                    return Err(fail("brep"));
+                }
+                op.clone()
+            }
             OpIn::MgrNew { .. } => {
                 if has_mgr || c.breps[1].is_none() {
                     return Err(fail("manager"));
@@ -2940,6 +2972,14 @@ fn resolve(
             OpIn::CloseLoop { v } => OpIn::CloseLoop {
                 v: hk(*v, &[K_VERTEX], true)?,
             },
+            // handled above (never reaches here)
+            OpIn::ChainFaces => continue,
+            OpIn::MergeBreps => {
+                if idx != 0 || c.breps[1].is_none() {
+                    return Err(fail("merge"));
+                }
+                op.clone()
+            }
         };
         if matches!(
             r,
@@ -2958,7 +2998,11 @@ fn resolve(
                 | OpIn::EdgeFaceCoin { .. }
                 | OpIn::CloseLoop { .. }
         ) {
-            mutated = true;
+            if chain && !mutated && matches!(r, OpIn::VertexFace { .. } | OpIn::EdgeFace { .. }) {
+                soft = true;
+            } else {
+                mutated = true;
+            }
         }
         out.push(ROp { op: r });
     }
@@ -3247,6 +3291,9 @@ fn encode(i: &Inputs, ops: &[ROp]) -> Result<Vec<f64>, HarnessError> {
                 capture,
                 override_tol,
             } => v.extend([33.0, *capture, *override_tol]),
+            OpIn::SetEditing { which, enable } => {
+                v.extend([34.0, f64::from(*which), flag(*enable)]);
+            }
             OpIn::RemoveRel { a, b } => {
                 v.push(41.0);
                 push_h(&mut v, *a);
@@ -3307,6 +3354,9 @@ fn encode(i: &Inputs, ops: &[ROp]) -> Result<Vec<f64>, HarnessError> {
                 v.push(52.0);
                 push_h(&mut v, *bv);
             }
+            // dropped by the resolver
+            OpIn::ChainFaces => {}
+            OpIn::MergeBreps => v.push(35.0),
         }
     }
     Ok(v)
@@ -3342,6 +3392,20 @@ fn put_cut(o: &mut Vec<f64>, cut: Option<&(usize, String)>) {
     }
 }
 
+/// `target->MergeBrep(other, NULL, NULL, FALSE)`: `topology::brep::p3::merge_brep`.
+fn merge_primary(target: &mut Brep, other: &mut Brep) -> Result<(), HarnessError> {
+    use solidcore::topology::brep::p3 as bp3;
+    let mut k = Kernel::default();
+    let serial = bp3::notify_serial(&mut k.context, other)
+        .map_err(|e| harness(format!("merge: {e}")))?;
+    let source_key = move |e| bp3::topology_ref(serial, e);
+    let other = &*other;
+    bp3::with_kernel_callbacks(&mut k, target, |k, b, env| {
+        bp3::merge_brep(k, env, b, other, &source_key, None, None, false)
+    })
+    .map_err(|e| harness(format!("merge: {e}")))
+}
+
 /// Exports and imports the B-reps and resolves the script; `Err(Ok(output))` is the
 /// output both sides report when the B-reps cannot be built or an op cannot be
 /// resolved.
@@ -3355,6 +3419,13 @@ fn prepare(k: &Kernel, i: &Inputs) -> Result<Prepared, Box<Result<Output, Harnes
         Some(b) => Some(import(b).map_err(|e| Box::new(Err(e)))?.0),
         None => None,
     };
+    let mut brep_a = brep_a;
+    let mut brep_b = brep_b;
+    if matches!(i.ops.first(), Some(OpIn::MergeBreps)) {
+        if let Some(other) = brep_b.as_mut() {
+            merge_primary(&mut brep_a, other).map_err(|e| Box::new(Err(e)))?;
+        }
+    }
     let count3 = |b: &Brep| [b.vertices().len(), b.edges().len(), b.faces().len()];
     let counts = Counts {
         breps: [Some(count3(&brep_a)), brep_b.as_ref().map(count3)],
@@ -3925,6 +3996,15 @@ fn run_rust_script(i: &Inputs, p: Prepared) -> Result<(Vec<f64>, Vec<usize>), Fa
                 put_hs(&mut o, &r.deleted_faces);
                 o.push(r.max_gap);
                 o.push(r.min_unstitched);
+            }
+            OpIn::MergeBreps => {
+                // (merged in `prepare`, which the resolution needs the counts of)
+                o.push(35.0);
+                o.push(0.0);
+            }
+            OpIn::SetEditing { which, enable } => {
+                o.push(34.0);
+                two.set_editing_enabled(brep_h(i8::try_from(*which).unwrap_or(0)), *enable)?;
             }
             OpIn::MgrNew {
                 capture,
@@ -5536,6 +5616,130 @@ fn edge_cases() -> Vec<(String, Value)> {
             },
         );
     }
+    // Crossing faces: the intersection edge is inserted inside each face
+    // (`SmBrep::MakeEdgeInFace`), appended after the cases above.
+    let plane = |o: [f64; 3], n: [f64; 3], dom: [f64; 4]| BrepIn::Face {
+        surface: SrfIn::Plane { o, n },
+        dom,
+    };
+    let cross = |name: &str,
+                 a: BrepIn,
+                 b: BrepIn,
+                 approx: f64,
+                 tail: Vec<OpIn>,
+                 add: &mut dyn FnMut(&str, Inputs)| {
+        let mut ops = vec![OpIn::FaceFace {
+            verts: vec![],
+            faces1: vec![f(0, 0)],
+            faces2: vec![f(1, 0)],
+            ignore: false,
+            nesting: false,
+        }];
+        ops.extend(tail);
+        add(
+            name,
+            Inputs {
+                brep_a: a,
+                brep_b: Some(b),
+                ctor: 0,
+                approx,
+                ang: 0.1,
+                ops,
+            },
+        );
+    };
+    let xy = [-1.0, -1.0, 1.0, 1.0];
+    for (name, na, nb, da, db) in [
+        (
+            "cross_planes_perpendicular",
+            [0.0, 0.0, 1.0],
+            [1.0, 0.0, 0.0],
+            xy,
+            xy,
+        ),
+        (
+            "cross_planes_tilted",
+            [0.0, 0.0, 1.0],
+            [1.0, 0.0, 1.0],
+            xy,
+            xy,
+        ),
+        (
+            "cross_planes_partial_overlap",
+            [0.0, 0.0, 1.0],
+            [0.0, 1.0, 0.0],
+            [-1.0, -1.0, 1.0, 1.0],
+            [-3.0, -1.0, 0.5, 1.0],
+        ),
+        (
+            "cross_planes_one_wide",
+            [0.0, 0.0, 1.0],
+            [1.0, 1.0, 0.0],
+            [-3.0, -3.0, 3.0, 3.0],
+            [-0.5, -1.0, 0.5, 1.0],
+        ),
+    ] {
+        for (suffix, tail) in [
+            ("", vec![]),
+            ("_resolve", vec![OpIn::Resolve, OpIn::Imprint]),
+        ] {
+            cross(
+                &format!("{name}{suffix}"),
+                plane([0.0, 0.0, 0.0], na, da),
+                plane([0.0, 0.0, 0.0], nb, db),
+                1e-5,
+                tail,
+                &mut add,
+            );
+        }
+    }
+    // Faces of one B-rep, as `SmMerge` intersects them: the other operand is merged into
+    // the primary B-rep first, so `GlueEdgesGeneral` sees edges of one owner. The edge
+    // intersections come first (they give the interval ends their vertices).
+    for (fa, na) in [("plane_square.smb", 4i64), ("disk.smb", 2)] {
+        for (fb, nb) in [("sphere.smb", 1i64), ("cone.smb", 2), ("torus.smb", 2)] {
+            add(
+                &format!("merged_{fa}_{fb}"),
+                Inputs {
+                    brep_a: file(fa),
+                    brep_b: Some(file(fb)),
+                    ctor: 0,
+                    approx: 1e-5,
+                    ang: 0.1,
+                    ops: vec![
+                        OpIn::MergeBreps,
+                        OpIn::SetEditing {
+                            which: 0,
+                            enable: true,
+                        },
+                        OpIn::ChainFaces,
+                        OpIn::EdgeFace {
+                            edges: (0..na + nb).map(|k| e(0, k)).collect(),
+                            faces: vec![f(0, 0), f(0, 1)],
+                            manifold: false,
+                            ignore: false,
+                        },
+                        OpIn::FaceFace {
+                            verts: vec![],
+                            faces1: vec![f(0, 0)],
+                            faces2: vec![f(0, 1)],
+                            ignore: false,
+                            nesting: false,
+                        },
+                    ],
+                },
+            );
+        }
+    }
+    // A plane through a B-spline surface and a file face.
+    cross(
+        "cross_plane_file_sphere",
+        plane([0.0, 0.0, 0.0], [0.0, 0.0, 1.0], [-3.0, -3.0, 3.0, 3.0]),
+        file("sphere.smb"),
+        1e-5,
+        vec![],
+        &mut add,
+    );
     out
 }
 
