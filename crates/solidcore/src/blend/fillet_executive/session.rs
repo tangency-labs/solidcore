@@ -2578,6 +2578,50 @@ impl FilletParametersAccess<FilletObject> for SessionObjects<'_> {
 }
 
 impl SessionObjects<'_> {
+    fn make_nx1_closed_corner_topology(
+        &mut self,
+        k: &Kernel,
+        id: FilletCornerId,
+        executive: &FilletExecutive<FilletObject>,
+    ) -> Result<()> {
+        let edgeuse = self
+            .corners
+            .get(id.0 as usize)
+            .and_then(|corner| corner.solver_eus.as_deref())
+            .and_then(|edgeuses| edgeuses.first())
+            .copied()
+            .ok_or_else(|| invalid("closed corner has no solver edge use"))?;
+        let object = FilletObject::Topology(FilletBody::Target, EntityRef::Edgeuse(edgeuse));
+        let Some(FilletObject::Solver(solver)) = executive.fillet_solver_of_edgeuse(object) else {
+            return Err(SolidError::null_pointer(
+                "SmFilletNx1ClosedCorner::MakeCornerTopology",
+            ));
+        };
+        let SessionObjects {
+            target,
+            pseudo,
+            solvers,
+            corners,
+            ..
+        } = self;
+        let solver = solvers
+            .get(solver.0 as usize)
+            .and_then(Option::as_ref)
+            .ok_or_else(|| invalid("closed corner solver is not live"))?
+            .base();
+        let corner = corners
+            .get_mut(id.0 as usize)
+            .ok_or_else(|| invalid("closed corner is not live"))?;
+        corner.make_nx1_closed_corner_topology(
+            crate::blend::fillet_corner::topology::ClosedNx1TopologyEnv {
+                k,
+                target,
+                pseudo,
+                corner: id,
+                solver,
+            },
+        )
+    }
     fn make_nx1_corner_topology(
         &mut self,
         k: &Kernel,
@@ -2862,6 +2906,9 @@ impl CornerVertexAccess<FilletObject> for SessionObjects<'_> {
             return Err(invalid("object is not a corner"));
         };
         match self.corner_object(corner)?.corner_type() {
+            FilletCornerType::NByOneClosed => {
+                self.make_nx1_closed_corner_topology(k, id, executive)
+            }
             FilletCornerType::NByOne => self.make_nx1_corner_topology(k, id, executive),
             FilletCornerType::NByTwo => self.make_nx2_corner_topology(k, id, executive),
             FilletCornerType::NByNConvex => self.make_convex_nxn_corner_topology(k, id, executive),
@@ -3056,5 +3103,151 @@ impl CornerAdjustmentAccess<FilletObject> for SessionObjects<'_> {
                 )
             },
         )
+    }
+}
+
+#[cfg(test)]
+mod closed_nx1_topology_tests {
+    use super::*;
+    use crate::blend::fillet_geom::p1::FilletEdgeType;
+    use crate::nurbs::b_spline_surface_n_lib::p2::OrientType;
+
+    fn with_cylinder_corner(
+        action: impl FnOnce(&mut Kernel, &mut FilletSession<'_>, FilletCornerId),
+    ) {
+        let mut k = Kernel::default();
+        let mut target = crate::primitive::api_primitives::create_cylinder(
+            &mut k,
+            crate::math::Point3::ZERO,
+            10.0,
+            20.0,
+        )
+        .unwrap();
+        let edge = crate::topology::brep::p1::edges(&target, None)
+            .unwrap()
+            .into_iter()
+            .find(|&edge| crate::topology::edge::is_closed(&target, edge).unwrap())
+            .unwrap();
+        let mut session = FilletSession::new(&mut k, &mut target).unwrap();
+        session
+            .prepare_constant_radius_edges(&mut k, &[edge], 0.5, 1, 1, 1.0)
+            .unwrap();
+        session.create_corners(&k, None).unwrap();
+        let corner = session.fillet_corners().unwrap()[0];
+        assert_eq!(
+            session.corner(corner).unwrap().corner_type(),
+            FilletCornerType::NByOneClosed
+        );
+        action(&mut k, &mut session, corner);
+    }
+
+    #[test]
+    fn closed_nx1_actual_cylinder_topology_connects_both_directions_and_complete_cross_edge() {
+        with_cylinder_corner(|k, session, id| {
+            CornerVertexAccess::vertices_make_topology(
+                &mut session.objects,
+                k,
+                FilletObject::Corner(id),
+                &mut session.executive,
+            )
+            .unwrap();
+            let corner = session.corner(id).unwrap();
+            assert!(corner.g1_case);
+            assert!(corner.blending);
+            assert_eq!(corner.vertices.len(), 2);
+            assert_eq!(corner.edges.len(), 1);
+            let pseudo = &session.objects.pseudo;
+            let first = corner.vertices[0];
+            let second = corner.vertices[1];
+            assert_eq!(
+                pseudo.fillet_vertex(first).unwrap().fillet_vertex_type(),
+                FilletVertexType::RailXEdgeuse
+            );
+            assert_eq!(
+                pseudo.fillet_vertex(second).unwrap().fillet_vertex_type(),
+                FilletVertexType::Mate
+            );
+            assert_eq!(pseudo.fillet_vertex(first).unwrap().mate(0), Some(second));
+            assert_eq!(pseudo.fillet_vertex(second).unwrap().mate(0), Some(first));
+            let FilletObject::Solver(solver) = session.executive.solvers[0] else {
+                panic!("actual solver");
+            };
+            let geom = session
+                .solver(solver)
+                .unwrap()
+                .base()
+                .first_fillet_geom()
+                .unwrap();
+            for rail in pseudo.geom(geom).unwrap().rails {
+                let uses =
+                    crate::topology::edge::edgeuses(pseudo.brep(), rail.unwrap(), None, None)
+                        .unwrap();
+                assert_eq!(uses.len(), 2);
+                assert_eq!(
+                    pseudo.brep().edgeuse(uses[0]).unwrap().orientation,
+                    OrientType::Same
+                );
+                assert_eq!(
+                    pseudo.brep().edgeuse(uses[1]).unwrap().orientation,
+                    OrientType::Opposite
+                );
+                for eu in uses {
+                    assert_eq!(pseudo.fillet_edgeuse(eu).unwrap().fillet_geom(), Some(geom));
+                }
+            }
+            let cross = corner.edges[0];
+            assert_eq!(
+                pseudo.fillet_edge(cross).unwrap().fillet_edge_type(),
+                FilletEdgeType::CrossSection
+            );
+            let uses = crate::topology::edge::edgeuses(pseudo.brep(), cross, None, None).unwrap();
+            assert_eq!(uses.len(), 2);
+            for eu in uses {
+                assert_eq!(pseudo.fillet_edgeuse(eu).unwrap().fillet_geom(), Some(geom));
+            }
+            assert!(!pseudo.geom(geom).unwrap().split_flag());
+        });
+    }
+
+    #[test]
+    fn closed_nx1_missing_rail_dependency_keeps_existing_builder_prefix() {
+        with_cylinder_corner(|k, session, id| {
+            let FilletObject::Solver(solver) = session.executive.solvers[0] else {
+                panic!("actual solver");
+            };
+            session.objects.solvers[solver.0 as usize]
+                .as_mut()
+                .unwrap()
+                .base_mut()
+                .edgeuses[1] = None;
+            let error = CornerVertexAccess::vertices_make_topology(
+                &mut session.objects,
+                k,
+                FilletObject::Corner(id),
+                &mut session.executive,
+            )
+            .unwrap_err();
+            assert!(matches!(
+                error,
+                SolidError::Upstream {
+                    code: crate::error::SM_ERR_NULL_POINTER,
+                    ..
+                }
+            ));
+            let corner = session.corner(id).unwrap();
+            assert!(corner.g1_case);
+            assert_eq!(corner.vertices.len(), 1);
+            assert!(corner.edges.is_empty());
+            let pseudo = &session.objects.pseudo;
+            assert_eq!(pseudo.edge_list().len(), 1);
+            assert_eq!(
+                pseudo
+                    .fillet_vertex(corner.vertices[0])
+                    .unwrap()
+                    .fillet_vertex_type(),
+                FilletVertexType::RailXEdgeuse
+            );
+            assert_eq!(pseudo.brep().edgeuses().len(), 1);
+        });
     }
 }

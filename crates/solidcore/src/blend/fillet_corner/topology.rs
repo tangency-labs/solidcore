@@ -1,10 +1,11 @@
 //! Topology at the end of one filleted edge.
 //!
-//! Upstream: `source/SMLib/src/SmFilletCorner.cpp` (44–119, 443–506, 5642–5815,
-//! 5990–6443, 6487–6859).
+//! Upstream: `source/SMLib/src/SmFilletCorner.cpp` (44–119, 443–506, 4962–5129,
+//! 5642–5815, 5990–6443, 6487–6859).
 //!
 //! | Rust | Upstream |
 //! |------|----------|
+//! | [`FilletCorner::make_nx1_closed_corner_topology`] | `SmFilletNx1ClosedCorner::MakeCornerTopology` |
 //! | [`FilletCorner::make_nx1_corner_topology`] | `SmFilletNx1Corner::MakeCornerTopology` |
 //! | [`FilletCorner::make_nx2_corner_topology`] | `SmFilletNx2Corner::MakeCornerTopology` |
 //! | [`FilletCorner::make_convex_nxn_corner_topology`] | `SmFilletConvexNxNCorner::MakeCornerTopology` |
@@ -36,7 +37,7 @@ use crate::intersect::point_class::PointClassType;
 use crate::kernel::Kernel;
 use crate::math::Point3;
 use crate::topology::edge;
-use crate::topology::edgeuse::{p1 as eu1, p2 as eu2};
+use crate::topology::edgeuse::{p1 as eu1, p2 as eu2, p3 as eu3};
 use crate::topology::{Brep, EdgeId, EdgeuseId, FaceId, Vertex, VertexId};
 
 const OP: &str = "blend::fillet_corner::topology::make_nx1_corner_topology";
@@ -73,6 +74,21 @@ pub struct Nx2TopologyEnv<'a> {
     /// The loaded solvers of the corner's first and second filleted edge use
     /// (`GetFilletSolverOfEdgeuse`).
     pub solvers: [&'a FilletSolver; 2],
+}
+
+/// Actual objects used by `SmFilletNx1ClosedCorner::MakeCornerTopology`.
+#[derive(Debug)]
+pub struct ClosedNx1TopologyEnv<'a> {
+    /// The executive's actual kernel.
+    pub k: &'a Kernel,
+    /// The target; binormal evaluation retains its lazy UV updates.
+    pub target: &'a mut Brep,
+    /// The executive's actual pseudo-B-rep.
+    pub pseudo: &'a mut FilletBrep,
+    /// This corner's identity in the executive's retained store.
+    pub corner: FilletCornerId,
+    /// The retained solver of the corner's one filleted edge use.
+    pub solver: &'a FilletSolver,
 }
 
 /// Actual objects used by `SmFilletNx1Corner::MakeCornerTopology`.
@@ -216,6 +232,199 @@ fn new_corner_vertex(
     })?;
     pseudo.insert_fillet_vertex(vertex, FilletVertex::new(k, Some(corner)));
     Ok(vertex)
+}
+
+impl FilletCorner {
+    /// `SmFilletNx1ClosedCorner::MakeCornerTopology`: connect seam vertices twice
+    /// to closed rails, then join the corner vertices by its cross edge.
+    /// Allocations and list writes remain visible when a later operation fails.
+    ///
+    /// # Errors
+    /// A different corner kind, missing topology, or the original geometry and
+    /// topology operations. Vertex geometry and tangent adjustment are separate.
+    #[allow(clippy::too_many_lines)] // one native routine, in source order
+    pub fn make_nx1_closed_corner_topology(&mut self, env: ClosedNx1TopologyEnv<'_>) -> Result<()> {
+        let ClosedNx1TopologyEnv {
+            k,
+            target,
+            pseudo,
+            corner,
+            solver,
+        } = env;
+        if self.kind != FilletCornerKind::NByOneClosed {
+            return Err(invalid("requires an NByOneClosed corner"));
+        }
+        let filleted = need(
+            self.solver_eus
+                .as_deref()
+                .and_then(|eus| eus.first())
+                .copied(),
+            "corner without filleted edge use",
+        )?;
+        let geometry = solver.first_fillet_geom()?;
+        let all = need(self.all_eus.as_deref(), "corner without outward edge uses")?;
+        let total = all.len();
+        let mut seam = None;
+        let filleted_edge = edge_of(target, filleted)?;
+        self.g1_case = test_g1_continuity(
+            k,
+            target,
+            self.vertex,
+            Some(filleted_edge),
+            Some(filleted_edge),
+            crate::math::rad_to_deg(self.tangency_tol_radians),
+        )?
+        .0;
+        for &outward in all {
+            if outward == filleted {
+                continue;
+            }
+            let mut side = outward;
+            let side_edge = edge_of(target, side)?;
+            let interval = edge::interval(target, side_edge)?;
+            let parameter = if eu1::orientation(target, side)?
+                == crate::nurbs::b_spline_surface_n_lib::p2::OrientType::Same
+            {
+                interval.min()
+            } else {
+                interval.max()
+            };
+            let binormal = eu3::evaluate_binormal(
+                k,
+                target,
+                side,
+                parameter,
+                false,
+                &eu3::BinormalOptions::default(),
+            )?
+            .binormal;
+            let interval = edge::interval(target, filleted_edge)?;
+            let parameter = if eu1::orientation(target, filleted)?
+                == crate::nurbs::b_spline_surface_n_lib::p2::OrientType::Same
+            {
+                interval.min()
+            } else {
+                interval.max()
+            };
+            let derivatives = need(
+                edge::curve(target, filleted_edge)?,
+                "filleted edge without curve",
+            )?
+            .evaluate(k, parameter, 1, true, true)?;
+            let tangent = need(
+                derivatives.get(1).copied(),
+                "short filleted edge evaluation",
+            )?;
+            if tangent.dot(binormal) < 0.0 {
+                side = radial(target, side)?;
+            }
+            seam = Some(side);
+            let vertex = new_corner_vertex(k, pseudo, corner)?;
+            pseudo
+                .fillet_vertex_mut(vertex)?
+                .set_point_class(PointClassType::Edgeuse, Some(EntityRef::Edgeuse(side)));
+            pseudo
+                .fillet_vertex_mut(vertex)?
+                .set_fillet_vertex_type(FilletVertexType::RailXEdgeuse);
+            self.vertices.push(vertex);
+            let rail = solver.find_index_of_rail_x_side_edgeuse(target, side)?;
+            for orientation in [
+                crate::nurbs::b_spline_surface_n_lib::p2::OrientType::Same,
+                crate::nurbs::b_spline_surface_n_lib::p2::OrientType::Opposite,
+            ] {
+                pseudo.make_rail_edgeuse_on(
+                    geometry,
+                    rail,
+                    Some(vertex),
+                    orientation,
+                    None,
+                    CornerLookup {
+                        this: Some((Some(corner), self)),
+                        ..Default::default()
+                    },
+                    solver,
+                    target,
+                )?;
+            }
+        }
+        let first = need(
+            self.vertices.first().copied(),
+            "closed corner without first vertex",
+        )?;
+        if total == 2 {
+            let vertex = new_corner_vertex(k, pseudo, corner)?;
+            let mut face = eu1::face(target, filleted)?;
+            if face == eu1::face(target, need(seam, "closed corner without seam")?)? {
+                face = eu1::face(target, radial(target, filleted)?)?;
+            }
+            pseudo
+                .fillet_vertex_mut(vertex)?
+                .set_point_class(PointClassType::Face, face.map(EntityRef::Face));
+            if self.g1_case {
+                pseudo
+                    .fillet_vertex_mut(vertex)?
+                    .set_fillet_vertex_type(FilletVertexType::Mate);
+                pseudo.fillet_vertex_mut(vertex)?.set_mate(0, Some(first));
+                pseudo.fillet_vertex_mut(first)?.set_mate(0, Some(vertex));
+            } else {
+                pseudo
+                    .fillet_vertex_mut(vertex)?
+                    .set_fillet_vertex_type(FilletVertexType::FilletXFillet);
+            }
+            self.vertices.push(vertex);
+            let rail = solver.find_index_of_rail_on_face(target, face)?;
+            for orientation in [
+                crate::nurbs::b_spline_surface_n_lib::p2::OrientType::Same,
+                crate::nurbs::b_spline_surface_n_lib::p2::OrientType::Opposite,
+            ] {
+                pseudo.make_rail_edgeuse_on(
+                    geometry,
+                    rail,
+                    Some(vertex),
+                    orientation,
+                    None,
+                    CornerLookup {
+                        this: Some((Some(corner), self)),
+                        ..Default::default()
+                    },
+                    solver,
+                    target,
+                )?;
+            }
+        }
+        let second = need(
+            self.vertices.get(1).copied(),
+            "closed corner without second vertex",
+        )?;
+        let cross_edge = pseudo.make_fillet_edge(Some(first), Some(second), Some(corner))?;
+        if self.g1_case {
+            pseudo
+                .fillet_edge_mut(cross_edge)?
+                .set_fillet_edge_type(FilletEdgeType::CrossSection);
+            self.blending = true;
+        } else {
+            pseudo.geom_mut(geometry)?.need_split = true;
+            pseudo
+                .fillet_edge_mut(cross_edge)?
+                .set_fillet_edge_type(FilletEdgeType::FilletXFillet);
+            self.blending = false;
+        }
+        if edge::edgeuses(pseudo.brep(), cross_edge, None, None)?.len() != 2 {
+            return Err(SolidError::sm_err(OP));
+        }
+        let primary = need(
+            eu1::primary_edgeuse(pseudo.brep(), cross_edge)?,
+            "closed cross edge without primary use",
+        )?;
+        pseudo.set_edgeuse_fillet_geom(primary, Some(geometry))?;
+        let mate = need(
+            eu1::mate(pseudo.brep(), primary)?,
+            "closed cross edge without mate",
+        )?;
+        pseudo.set_edgeuse_fillet_geom(mate, Some(geometry))?;
+        self.edges.push(cross_edge);
+        Ok(())
+    }
 }
 
 impl FilletCorner {
