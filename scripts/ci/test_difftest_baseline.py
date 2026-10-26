@@ -203,7 +203,7 @@ class BaselineTests(unittest.TestCase):
             c = r["cases"][0]
             c.update(outcome=outcome, exact_compared=exact)
             c["pass"] = outcome == "pass"
-            for kind, field in [("pass", "cases_passed"), ("fail", "cases_failed"), ("deferred", "cases_deferred"), ("rejected", "cases_rejected"), ("known_mismatch", "cases_known_mismatch")]:
+            for kind, field in [("pass", "cases_passed"), ("fail", "cases_failed"), ("deferred", "cases_deferred"), ("rejected", "cases_rejected"), ("known_mismatch", "cases_known_mismatch"), ("cpp_defect", "cases_cpp_defect"), ("parked", "cases_parked")]:
                 r[field] = int(outcome == kind)
             r["status"] = "fail" if outcome in {"fail", "rejected"} else "partial" if outcome in {"known_mismatch", "deferred"} else "green"
             r["pass"] = r["status"] != "fail"
@@ -216,6 +216,28 @@ class BaselineTests(unittest.TestCase):
             self.assertEqual(len(b.ratchet_reports({"a.b": before}, {"a.b": known(outcome, 0)})), 1)
         for outcome in ["deferred", "rejected", "fail"]:
             self.assertEqual(len(b.ratchet_reports({"a.b": before}, {"a.b": known(outcome, 0)})), 1)
+        # A confirmed C++ defect is green, ratchets like a known mismatch, and a pass
+        # may not become one (no silent waiver).
+        self.assertEqual(known("cpp_defect")["status"], "green")
+        b.validate_report(known("cpp_defect"), "a.b")
+        wrong = known("cpp_defect"); wrong["status"] = "partial"
+        with self.assertRaises(b.BaselineError): b.validate_report(wrong, "a.b")
+        for old, new in [("known_mismatch", "cpp_defect"), ("cpp_defect", "known_mismatch"), ("cpp_defect", "pass")]:
+            self.assertEqual(b.ratchet_reports({"a.b": known(old)}, {"a.b": known(new)}), [], (old, new))
+        for new in ["deferred", "rejected", "fail"]:
+            self.assertEqual(len(b.ratchet_reports({"a.b": known("cpp_defect")}, {"a.b": known(new, 0)})), 1, new)
+        self.assertEqual(len(b.ratchet_reports({"a.b": known("pass")}, {"a.b": known("cpp_defect")})), 1)
+        # A parked case (cpp_defect entry, not run) is green, compares nothing and is
+        # exempt from value coverage; it ratchets like the other listed outcomes.
+        self.assertEqual(known("parked", 0)["status"], "green")
+        b.validate_report(known("parked", 0), "a.b")
+        wrong = known("parked", 0); wrong["cases_parked"] = 0
+        with self.assertRaises(b.BaselineError): b.validate_report(wrong, "a.b")
+        for old, new in [("cpp_defect", "parked"), ("known_mismatch", "parked"), ("parked", "known_mismatch"), ("parked", "pass")]:
+            self.assertEqual(b.ratchet_reports({"a.b": known(old, 0 if old == "parked" else 1)}, {"a.b": known(new, 0 if new == "parked" else 1)}), [], (old, new))
+        for new in ["deferred", "rejected", "fail"]:
+            self.assertEqual(len(b.ratchet_reports({"a.b": known("parked", 0)}, {"a.b": known(new, 0)})), 1, new)
+        self.assertEqual(len(b.ratchet_reports({"a.b": known("pass")}, {"a.b": known("parked", 0)})), 1)
         legacy = known(); legacy.pop("schema_version"); legacy["cases"][0].pop("exact_compared")
         legacy["cases"][0]["mismatches"] = [dict(field="ints.status[0]", cpp="1006", rust="1001")]
         b.validate_report(legacy, "a.b")

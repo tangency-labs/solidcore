@@ -357,8 +357,7 @@ impl SessionObjects<'_> {
     }
 }
 
-/// The retained virtual operations of a concrete solver whose live corner-vertex
-/// operations are ported.
+/// The retained virtual operations of concrete solvers supported by the live session.
 fn live_solver_ops(solver: &mut SolverObject) -> Result<&mut dyn FilletSolverOps> {
     match solver {
         SolverObject::ConstantRadius(solver) => Ok(solver.as_mut()),
@@ -2136,22 +2135,22 @@ impl RailClassificationAccess<FilletObject> for SessionObjects<'_> {
             corners: &self.corners,
         };
         let mut actual_adjusted = Vec::new();
-        let result =
-            crate::geom::context::Context::with_notification_context(k, |k, notifications| {
-                let mut ownership = classification::Ownership::new(
-                    self.pseudo.brep(),
-                    &mut self.attributes,
-                    notifications,
-                )?;
-                solver.base_mut().test_roll_over_with_context(
+        let result = crate::blend::fillet_solver::p1::RetainedRailOwnership::with_context(
+            k,
+            &mut self.pseudo,
+            &mut self.attributes,
+            |k, pseudo, ownership| {
+                FilletSolver::test_roll_over_with_ops(
+                    live_solver_ops(solver)?,
                     k,
                     self.target,
-                    &mut self.pseudo,
+                    pseudo,
                     &mut context,
                     &mut actual_adjusted,
-                    &mut ownership,
+                    ownership,
                 )
-            })?;
+            },
+        );
         // Retain append-only adjusted-corner output even if a later rail fails.
         adjusted.extend(actual_adjusted.into_iter().map(FilletObject::Corner));
         result

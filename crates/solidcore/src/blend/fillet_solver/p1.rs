@@ -3058,6 +3058,7 @@ pub fn trim_rail(k: &Kernel, b: &mut Brep, rail: EdgeId, trim_interval: &Extent1
     // callbacks owned by boxed trait objects) cannot be cloned and nothing on the trim
     // path reads it
     tk.rng = k.rng.clone();
+    tk.fixes.bspline_trim_preserves_uv_spans = k.fixes.bspline_trim_preserves_uv_spans;
     b.edge_mut(rail)?
         .curve
         .as_mut()
@@ -3078,7 +3079,7 @@ pub fn trim_rail(k: &Kernel, b: &mut Brep, rail: EdgeId, trim_interval: &Extent1
 
 #[path = "p1/rails.rs"]
 pub(crate) mod rails;
-pub use rails::{compute_support_edge, split_rail, RailOwnership};
+pub use rails::{compute_support_edge, split_rail, RailOwnership, RetainedRailOwnership};
 
 #[cfg(test)]
 mod tests {

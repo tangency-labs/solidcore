@@ -4,11 +4,12 @@
 //! `source/SM_API/src/SmApiBrep.cpp`). Rust: `solidcore::boolean::api_brep`.
 //!
 //! A case is one API call (`api` plus its arguments). Operands are boxes
-//! (`SmApiCreateBox`) or spheres (`SmApiCreateSphere`), built on both sides by the same
-//! constructors (`primitive::api_primitives::create_box` / `create_sphere` on the Rust
-//! side) in the case's one kernel / context. A constructor that fails is a harness error
-//! on both sides (the shim's `SC_ERR_ARG`); one that stops at an unported callee defers
-//! the case. Both sides produce `status` (`0` = `SM_SUCCESS`, else the `SmStatus`:
+//! (`SmApiCreateBox`) or spheres (`SmApiCreateSphere`); fixture cases also use sheets
+//! (`SmApiCreatePlane`) and the result of an `SmApiBoolean` of two operands. Both sides
+//! build them with the same constructors (`primitive::api_primitives` and
+//! `boolean::api_brep::boolean` on the Rust side) in the case's one kernel / context, at the default `Kernel::fixes` (SMLib behaviour). A
+//! constructor that fails is a harness error on both sides (the shim's `SC_ERR_ARG`);
+//! one that stops at an unported callee defers the case. Both sides produce `status` (`0` = `SM_SUCCESS`, else the `SmStatus`:
 //! `1007` `SM_ERR_INVALID_INPUT`; `-1` on the Rust side for an error upstream cannot
 //! produce) and `record` (the op's outputs after the status, see the FFI module): on
 //! success the result B-reps' face, edge, vertex and region counts and
@@ -30,7 +31,9 @@ use solidcore::geom::vector3d::Point3;
 use solidcore::kernel::Kernel;
 use solidcore::primitive::api_primitives as primitives;
 use solidcore::topology::brep::{p1 as brep_p1, p2 as brep_p2};
-use solidcore::topology::Brep;
+use solidcore::topology::edgeuse::p1 as edgeuse_p1;
+use solidcore::topology::shell::shell_region;
+use solidcore::topology::{Brep, FaceuseId, RegionId};
 use solidcore::SolidError;
 use solidcore_ffi::units::boolean_api_brep::{self as ffi, BrepSpec, Call, Flags};
 
@@ -56,13 +59,21 @@ fn harness(msg: impl Into<String>) -> HarnessError {
 type P3 = [f64; 3];
 
 /// An operand.
-#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 enum BrepIn {
     /// `SmApiCreateBox`.
     Box { origin: P3, size: P3 },
     /// `SmApiCreateSphere`.
     Sphere { center: P3, radius: f64 },
+    /// `SmApiCreatePlane` (`SmBrep*&` overload).
+    Plane { origin: P3, size: [f64; 2] },
+    /// `SmApiBoolean(a, b, operation)`'s result.
+    Boolean {
+        operation: i32,
+        a: Box<BrepIn>,
+        b: Box<BrepIn>,
+    },
 }
 
 /// `SmApiBooleanWithOptions` flags; missing ones take the `SmMergeOptions` defaults.
@@ -132,9 +143,15 @@ enum Inputs {
 }
 
 fn spec(b: &BrepIn) -> BrepSpec {
-    match *b {
-        BrepIn::Box { origin, size } => BrepSpec::Box { origin, size },
-        BrepIn::Sphere { center, radius } => BrepSpec::Sphere { center, radius },
+    match b {
+        &BrepIn::Box { origin, size } => BrepSpec::Box { origin, size },
+        &BrepIn::Sphere { center, radius } => BrepSpec::Sphere { center, radius },
+        &BrepIn::Plane { origin, size } => BrepSpec::Plane { origin, size },
+        BrepIn::Boolean { operation, a, b } => BrepSpec::Boolean {
+            operation: *operation,
+            a: Box::new(spec(a)),
+            b: Box::new(spec(b)),
+        },
     }
 }
 
@@ -224,8 +241,8 @@ fn to_output(o: &[f64]) -> Result<Output, HarnessError> {
 fn cpp(i: &Inputs) -> Result<Output, HarnessError> {
     if ub_175(i)? {
         return Ok(Output::rejected(
-            "UB-175: ~SmProtoTopologyManager reads a freed proto edge (proto vertices \
-             collapsed below the 0.01 capture distance); not run",
+            "UB-175: ~SmProtoTopologyManager frees a proto edge that a proto vertex \
+             still lists, then ~SmProtoVertex reads it; not run",
         ));
     }
     match ffi::run(&to_call(i)) {
@@ -291,18 +308,32 @@ fn stop(what: &str, e: &SolidError) -> Stop {
     }
 }
 
-/// Builds an operand exactly as the shim does (`SmApiCreateBox` / `SmApiCreateSphere`).
+fn p3(p: P3) -> Point3 {
+    Point3::new(p[0], p[1], p[2])
+}
+
+/// Builds an operand exactly as the shim does (`SmApiCreateBox`, `SmApiCreateSphere`,
+/// `SmApiCreatePlane`, `SmApiBoolean`). Nested
+/// operands are at most `ffi::MAX_DEPTH` deep (the FFI rejects deeper ones first).
 fn build(k: &mut Kernel, b: &BrepIn) -> Result<Brep, Stop> {
-    let r = match *b {
-        BrepIn::Box { origin, size } => primitives::create_box(
-            k,
-            Point3::new(origin[0], origin[1], origin[2]),
-            size[0],
-            size[1],
-            size[2],
-        ),
-        BrepIn::Sphere { center, radius } => {
-            primitives::create_sphere(k, Point3::new(center[0], center[1], center[2]), radius)
+    build_at(k, b, 0)
+}
+
+fn build_at(k: &mut Kernel, b: &BrepIn, depth: usize) -> Result<Brep, Stop> {
+    if depth >= ffi::MAX_DEPTH {
+        return Err(Stop::Harness(harness("operand nested too deep")));
+    }
+    let r = match b {
+        &BrepIn::Box { origin, size } => {
+            primitives::create_box(k, p3(origin), size[0], size[1], size[2])
+        }
+        &BrepIn::Sphere { center, radius } => primitives::create_sphere(k, p3(center), radius),
+        &BrepIn::Plane { origin, size } => {
+            primitives::create_plane(k, p3(origin), size[0], size[1])
+        }
+        BrepIn::Boolean { operation, a, b } => {
+            let (a, b) = (build_at(k, a, depth + 1)?, build_at(k, b, depth + 1)?);
+            api::boolean(k, a, b, op(*operation)?).map(|out| out.result)
         }
     };
     r.map_err(|e| stop("operand constructor", &e))
@@ -325,7 +356,8 @@ fn count(n: usize) -> Result<i64, HarnessError> {
     i64::try_from(n).map_err(|_| harness("count overflow"))
 }
 
-/// `faces edges vertices regions manifold_solid` of a B-rep (the shim's `put_brep`).
+/// `faces edges vertices regions manifold_solid` of a B-rep, then per region
+/// `is_void is_infinite shells` and per shell `faceuses mate_region` (the shim's `put_brep`).
 fn put_brep(o: &mut Vec<i64>, b: &Brep) -> Result<(), Stop> {
     let regions = brep_p1::regions(b, None).map_err(|e| stop("GetRegions", &e))?;
     let manifold = brep_p2::is_manifold_solid(b).map_err(|e| stop("IsManifoldSolid", &e))?;
@@ -334,7 +366,43 @@ fn put_brep(o: &mut Vec<i64>, b: &Brep) -> Result<(), Stop> {
     o.push(count(b.vertex_list().len())?);
     o.push(count(regions.len())?);
     o.push(i64::from(manifold));
+    for &r in &regions {
+        let region = b.region(r).map_err(|e| stop("GetRegion", &e))?;
+        let shells = region
+            .get_shells(None, |_, _| Ok(false))
+            .map_err(|e| stop("GetShells", &e))?;
+        o.push(i64::from(region.is_void()));
+        o.push(i64::from(region.is_infinite_region(b, r)));
+        o.push(count(shells.len())?);
+        for s in shells {
+            let shell = b.shell(s).map_err(|e| stop("GetShell", &e))?;
+            let faceuses = shell.get_faceuses().map_err(|e| stop("GetFaceuses", &e))?;
+            o.push(count(faceuses.len())?);
+            o.push(mate_region(b, shell.first_faceuse(), &regions)?);
+        }
+    }
     Ok(())
+}
+
+/// Index in `regions` of the region on the other side of `fu` (the shell's first
+/// faceuse), `-1` without one (the shim's `mate_region`).
+fn mate_region(b: &Brep, fu: solidcore::Result<Option<FaceuseId>>, regions: &[RegionId]) -> Result<i64, Stop> {
+    let Some(fu) = fu.map_err(|e| stop("GetFirstFaceuse", &e))? else {
+        return Ok(-1);
+    };
+    let Some(mate) = edgeuse_p1::faceuse_mate(b, fu).map_err(|e| stop("GetMate", &e))? else {
+        return Ok(-1);
+    };
+    let shell = edgeuse_p1::faceuse_shell(b, mate).map_err(|e| stop("GetShell", &e))?;
+    let region = match shell {
+        Some(s) => shell_region(b, s).map_err(|e| stop("GetRegion", &e))?,
+        None => None,
+    };
+    match region.and_then(|m| regions.iter().position(|&r| r == m)) {
+        Some(k) => count(k),
+        None => Ok(-1),
+    }
+    .map_err(Stop::from)
 }
 
 /// Whether upstream keeps the second operand of a successful two-B-rep boolean
