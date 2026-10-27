@@ -1,0 +1,78 @@
+{
+  "source_result_sha256": "a2b292c4157547e7b9681af47089a6382df3f900373c6d199e3724eb3e0a0a56",
+  "point_double_hex": [
+    "0x1.476cb4e14edd8p+4",
+    "-0x1.465d35128b9d8p+4",
+    "-0x1.033fbb06ecf18p+3"
+  ],
+  "homogeneous_double_hex": [
+    [
+      "0x1.60264edc45086p+4",
+      "-0x1.60264edc45090p+4",
+      "-0x1.fffffe670450ep-21",
+      "0x1.fffffe57d867cp-1"
+    ],
+    [
+      "0x1.60264f6e22853p+4",
+      "-0x1.60264f6e22831p+4",
+      "-0x1.3013282b6be00p-19",
+      "0x1.ffffff2bec32cp-1"
+    ],
+    [
+      "0x1.602650000000ep+4",
+      "-0x1.60264ffffffc0p+4",
+      "-0x1.e026514f749ecp-19",
+      "0x1.0000000000000p+0"
+    ],
+    [
+      "0x1.2c941b08cf1ecp+4",
+      "-0x1.2c941a0fcd34ep+4",
+      "-0x1.f203d67a3f9a7p+2",
+      "0x1.b504f377390e9p-1"
+    ],
+    [
+      "0x1.a9150ef0f11b8p+3",
+      "-0x1.a9150b9ec6f87p+3",
+      "-0x1.a91511807888fp+3",
+      "0x1.b504f333f9de8p-1"
+    ]
+  ],
+  "degree": 2,
+  "knot_multiplicities": [
+    3,
+    2,
+    3
+  ],
+  "knots": [
+    "0x1.fffffd2bec318p-2",
+    "0x1.0000000000000p-1",
+    "0x1.7fffff8d33d55p-1"
+  ],
+  "whole_edge_lower_bound": "3/50",
+  "postmass_edge_tolerance_hex": "0x1.1c2f0f4f47499p-6",
+  "scope": "Exact bound for captured double XYZ against mathematical rational curve defined by actual stored homogeneous double controls. Independent of closest-point solver; not an interval proof of floating surface evaluation.",
+  "provenance": {
+    "upstream": "c9c5979",
+    "platform": "x86-64 Linux, release reference, -ffp-contract=off",
+    "fixture": "TestFiles/pt_TestFiles/Fillet/sphere_diff_3cylinders.smb",
+    "operation": "ReadFromFile; selected-edge samples at .17/.37/.83; FilletEdges(all edges, .1, 1, 1, 1); primitive geometry observation; mass query at1e-4; inspect actual stored trim",
+    "api_status": 1007,
+    "topology": [
+      25,
+      39,
+      8
+    ],
+    "mass_status": 0,
+    "face": 7,
+    "loop": 0,
+    "edgeuse": 2,
+    "edge": 30,
+    "point_parameter": 0.6249999722444795,
+    "control_getter": "GetControlPoint(SM_CP_HOMOGENEOUS_RATIONAL); raw weighted XYZ and W",
+    "note": "Captured with17 significant decimal digits then converted to exact binary64 hex; no ideal surface evaluation claim."
+  },
+  "edge_interval_double_hex": [
+    "0x1.fffffd2bec318p-2",
+    "0x1.7fffff8d33d55p-1"
+  ]
+}
