@@ -25,7 +25,7 @@
 //!   built, is left whole; only [`SolidError::Unported`] propagates.
 
 use crate::curve::curve::Curve;
-use crate::error::{ignored, Result};
+use crate::error::{ignored, Result, SolidError};
 use crate::geom::extent1d::Extent1d;
 use crate::geom::vector2d::Point2;
 use crate::geom::vector3d::Vec3;
@@ -55,7 +55,12 @@ const END_CLEARANCE: f64 = 10.0;
 
 /// The sine of the angle between the unit normals of the two surfaces at the curve
 /// parameter `t`, from the UV curves; `None` where a normal is zero.
-fn normals_sine(k: &Kernel, surfaces: [&Surface; 2], uv: [&Curve; 2], t: f64) -> Result<Option<f64>> {
+fn normals_sine(
+    k: &Kernel,
+    surfaces: [&Surface; 2],
+    uv: [&Curve; 2],
+    t: f64,
+) -> Result<Option<f64>> {
     let mut n = [Vec3::ZERO; 2];
     for ((surface, curve), n) in surfaces.into_iter().zip(uv).zip(&mut n) {
         let p = curve.evaluate_point(k, t)?;
@@ -170,12 +175,37 @@ fn pieces(k: &Kernel, curve: &Curve, params: &[f64]) -> Result<Vec<Curve>> {
         .windows(2)
         .map(|w| match *w {
             [lo, hi] => piece(k, curve, lo, hi),
-            _ => Err(crate::error::SolidError::sm_err(OP)),
+            _ => Err(SolidError::sm_err(OP_PIECES)),
         })
         .collect()
 }
 
-const OP: &str = "intersect::surface_intersector::split_singular::pieces";
+const OP_PIECES: &str = "intersect::surface_intersector::split_singular::pieces";
+
+/// The pieces of a 3D curve and its two UV curves split at its crossings, or `None`
+/// where it has none or cannot be split.
+fn split_one(
+    k: &Kernel,
+    surfaces: [&Surface; 2],
+    tol: f64,
+    curve: &Curve,
+    uv: [&Curve; 2],
+) -> Result<Option<[Vec<Curve>; 3]>> {
+    let Some(params) = crossing_parameters(k, surfaces, curve, uv, tol)? else {
+        return Ok(None);
+    };
+    if params.is_empty() {
+        return Ok(None);
+    }
+    let build = || -> Result<[Vec<Curve>; 3]> {
+        Ok([
+            pieces(k, curve, &params)?,
+            pieces(k, uv[0], &params)?,
+            pieces(k, uv[1], &params)?,
+        ])
+    };
+    ignored(build())
+}
 
 /// Splits the crossing and near tangent curves of `set` (3D curves with their UV curves
 /// on `surfaces`) at the points where the surface normals are parallel and the curve
@@ -184,75 +214,38 @@ const OP: &str = "intersect::surface_intersector::split_singular::pieces";
 ///
 /// # Errors
 ///
-/// [`crate::error::SolidError::Unported`] from the evaluations; any other failure leaves
-/// the curve it concerns whole.
+/// [`SolidError::Unported`] from the evaluations; any other failure leaves the curve it
+/// concerns whole.
 pub fn split_curves_at_singular_points(
     k: &Kernel,
     surfaces: [&Surface; 2],
     tol: f64,
     set: &mut InteriorCurves,
 ) -> Result<()> {
-    let n = set.curves_3d.len();
-    let mut out = InteriorCurves {
-        curves_3d: Vec::with_capacity(n),
-        surface1_uv_curves: Vec::with_capacity(n),
-        surface2_uv_curves: Vec::with_capacity(n),
-        curve_types: Vec::with_capacity(n),
-        deviations: Vec::with_capacity(n),
-    };
-    let whole = |out: &mut InteriorCurves, set: &mut InteriorCurves, i: usize| {
-        if let (Some(c), Some(u1), Some(u2), Some(&ty), Some(&dev)) = (
-            set.curves_3d.get(i).cloned(),
-            set.surface1_uv_curves.get(i).cloned(),
-            set.surface2_uv_curves.get(i).cloned(),
-            set.curve_types.get(i),
-            set.deviations.get(i),
-        ) {
-            out.curves_3d.push(c);
-            out.surface1_uv_curves.push(u1);
-            out.surface2_uv_curves.push(u2);
-            out.curve_types.push(ty);
-            out.deviations.push(dev);
-        }
-    };
-    for i in 0..n {
-        let split = match (
-            set.curves_3d.get(i),
-            set.surface1_uv_curves.get(i),
-            set.surface2_uv_curves.get(i),
-            set.curve_types.get(i),
-            set.deviations.get(i),
-        ) {
-            (Some(c), Some(u1), Some(u2), Some(&ty), Some(&dev))
-                if matches!(ty, TsectCurveType::Crossing | TsectCurveType::NearTangent) =>
-            {
-                match crossing_parameters(k, surfaces, c, [u1, u2], tol)? {
-                    Some(params) if !params.is_empty() => {
-                        let built = ignored((|| -> Result<_> {
-                            Ok((
-                                pieces(k, c, &params)?,
-                                pieces(k, u1, &params)?,
-                                pieces(k, u2, &params)?,
-                            ))
-                        })())?;
-                        built.map(|b| (b, ty, dev))
-                    }
-                    _ => None,
-                }
-            }
-            _ => None,
+    let curves = core::mem::take(&mut set.curves_3d);
+    let uv1 = core::mem::take(&mut set.surface1_uv_curves);
+    let uv2 = core::mem::take(&mut set.surface2_uv_curves);
+    let types = core::mem::take(&mut set.curve_types);
+    let deviations = core::mem::take(&mut set.deviations);
+    let all = curves
+        .into_iter()
+        .zip(uv1)
+        .zip(uv2)
+        .zip(types)
+        .zip(deviations);
+    for ((((curve, u1), u2), ty), dev) in all {
+        let crossing = matches!(ty, TsectCurveType::Crossing | TsectCurveType::NearTangent);
+        let split = if crossing {
+            split_one(k, surfaces, tol, &curve, [&u1, &u2])?
+        } else {
+            None
         };
-        match split {
-            Some(((c, u1, u2), ty, dev)) => {
-                out.curve_types.extend(core::iter::repeat_n(ty, c.len()));
-                out.deviations.extend(core::iter::repeat_n(dev, c.len()));
-                out.curves_3d.extend(c);
-                out.surface1_uv_curves.extend(u1);
-                out.surface2_uv_curves.extend(u2);
-            }
-            None => whole(&mut out, set, i),
-        }
+        let [c, a, b] = split.unwrap_or_else(|| [vec![curve], vec![u1], vec![u2]]);
+        set.curve_types.extend(core::iter::repeat_n(ty, c.len()));
+        set.deviations.extend(core::iter::repeat_n(dev, c.len()));
+        set.curves_3d.extend(c);
+        set.surface1_uv_curves.extend(a);
+        set.surface2_uv_curves.extend(b);
     }
-    *set = out;
     Ok(())
 }

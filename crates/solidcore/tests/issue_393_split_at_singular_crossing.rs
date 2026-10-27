@@ -85,8 +85,14 @@ fn assert_on_both_cylinders(k: &Kernel, x: &SurfaceIntersection) {
         for i in 0..=20 {
             let t = ivl.min() + ivl.length() * f64::from(i) / 20.0;
             let p = c.evaluate_point(k, t).unwrap();
-            assert!((p.x * p.x + p.y * p.y - 1.0).abs() < 1e-5, "{p:?} off x^2+y^2=1");
-            assert!((p.y * p.y + p.z * p.z - 1.0).abs() < 1e-5, "{p:?} off y^2+z^2=1");
+            assert!(
+                (p.x * p.x + p.y * p.y - 1.0).abs() < 1e-5,
+                "{p:?} off x^2+y^2=1"
+            );
+            assert!(
+                (p.y * p.y + p.z * p.z - 1.0).abs() < 1e-5,
+                "{p:?} off y^2+z^2=1"
+            );
         }
     }
 }
@@ -116,7 +122,11 @@ fn issue_393_split_ends_a_curve_at_each_crossing() {
     let x = steinmetz(&k);
     assert_on_both_cylinders(&k, &x);
     for q in CROSSINGS {
-        assert_eq!(curve_ends_at(&k, &x, q, 1e-6), 4, "four branches meet at {q:?}");
+        assert_eq!(
+            curve_ends_at(&k, &x, q, 1e-6),
+            4,
+            "four branches meet at {q:?}"
+        );
     }
     // the two long arcs are split at (0, -1, 0)
     assert_eq!(x.curves_3d.len(), 6);
@@ -126,4 +136,11 @@ fn issue_393_split_ends_a_curve_at_each_crossing() {
     assert_eq!(x.surface2_uv_curves.len(), n);
     assert_eq!(x.curve_types.len(), n);
     assert_eq!(x.deviations.len(), n);
+    for (i, c) in x.curves_3d.iter().enumerate() {
+        let ivl = c.natural_interval();
+        for uv in [&x.surface1_uv_curves[i], &x.surface2_uv_curves[i]] {
+            let u = uv.as_ref().unwrap().natural_interval();
+            assert!((u.min() - ivl.min()).abs() < 1e-12 && (u.max() - ivl.max()).abs() < 1e-12);
+        }
+    }
 }
