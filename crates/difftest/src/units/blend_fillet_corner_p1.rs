@@ -79,7 +79,7 @@ pub(super) const NULL_DEREF: &str = "upstream dereferences null";
 
 /// The box-like fillet test files (planar faces with convex and concave corners, one
 /// all-NURBS box, one with a cylinder; filleted and B-spline parts whose tangential
-/// edges reach the success paths of the tangency tests). Not `SmallBox.smb`: `SmBrep::ReadFromFile`
+/// edges reach the success paths of the tangency tests). Not `SmallBox.smp`: `SmBrep::ReadFromFile`
 /// crashes on it (UB-1).
 pub(super) const CORNER_FILES: [&str; 13] = [
     "Fillet/box1x1x2.smb",
@@ -1879,7 +1879,9 @@ fn corner_cpp(i: &Inputs) -> Result<Output, HarnessError> {
     Ok(match c.method {
         CornerMethod::Peek => Output::new().values("peek", rest.to_vec()),
         CornerMethod::Solvers => Output::new().values("solvers", rest.to_vec()),
-        CornerMethod::ExtSurface => Output::new().values("domains", rest.to_vec()),
+        CornerMethod::ExtSurface => Output::new()
+            .int("n_domains", rest.len() as i64)
+            .values("domains", rest.to_vec()),
         CornerMethod::Reinit => Output::new().values("model", rest.to_vec()),
         CornerMethod::Squeeze
         | CornerMethod::VertGeom
@@ -2127,7 +2129,9 @@ fn corner_rust(i: &Inputs) -> Result<Output, HarnessError> {
                     None => rec.extend([-1.0, -1.0]),
                 }
             }
-            Ok(Output::new().values("domains", rec))
+            Ok(Output::new()
+                .int("n_domains", rec.len() as i64)
+                .values("domains", rec))
         }
         CornerMethod::Reinit => {
             if let Err(e) = fc.re_initialize_corner_edges(&mut rm.fb) {
@@ -2667,9 +2671,15 @@ fn gen_corner(rng: &mut Rng) -> Inputs {
         Vec::new()
     };
     let queries: Vec<usize> = if nf > 0 {
-        (0..rng.below(3))
+        let mut q: Vec<usize> = (0..rng.below(3))
             .map(|_| rng.below(nf as u64) as usize)
-            .collect()
+            .collect();
+        // an ExtSurface case with no query compares an empty record on both sides;
+        // query face 0 instead (no extra rng draw, so the stream is unchanged)
+        if q.is_empty() {
+            q.push(0);
+        }
+        q
     } else {
         Vec::new()
     };
