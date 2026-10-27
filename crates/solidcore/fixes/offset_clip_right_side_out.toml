@@ -1,0 +1,5 @@
+records = ["WR-342"]
+issues = [974]
+doc = '''
+`BuildOffsetOfFaceuse` clips a face to its offset domain from its counterclockwise loops (an inset is not turned inside out) (WR-342, #974).
+'''

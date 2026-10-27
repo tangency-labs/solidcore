@@ -1,0 +1,5 @@
+records = ["WR-260"]
+issues = [521]
+doc = '''
+`SmEdge::ReverseOrientation` returns a failed curve reversal's status before installing the interval, flipping the edge uses or deleting their UV trims (WR-260, #521).
+'''

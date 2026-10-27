@@ -1,0 +1,5 @@
+records = ["WR-440"]
+issues = [530]
+doc = '''
+`CheckLoop` compares an end projected from its vertex (no UV trim) with its neighbour on the nearest natural period of a closed direction, so a one-period seam jump is not an `SM_ERR` (WR-440, #530).
+'''

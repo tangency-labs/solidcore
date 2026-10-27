@@ -1,0 +1,5 @@
+records = ["WR-268", "WR-266"]
+issues = [521]
+doc = '''
+`SetProps_Stage3` returns a failed `ClassifyLoops` status before reading its outputs, and a failed stage drops its in-progress marker so a retry reruns it (WR-268, WR-266, #521).
+'''

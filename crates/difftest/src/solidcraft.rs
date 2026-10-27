@@ -1371,17 +1371,13 @@ fn measure(k: &Kernel, b: &mut Brep) -> Result<Measured, SolidError> {
     })
 }
 
-/// Turns on the `UpstreamFixes` field `name` a case asks for.
+/// Turns on the `UpstreamFixes` field `name` a case asks for (any fix under
+/// `crates/solidcore/fixes/`).
 fn enable_fix(k: &mut Kernel, name: &str) -> Result<(), String> {
-    let field = match name {
-        "sweep_frame_on_planar_path_normal" => &mut k.fixes.sweep_frame_on_planar_path_normal,
-        "cover_refuses_folded_continuation" => &mut k.fixes.cover_refuses_folded_continuation,
-        "fillet_refuse_non_manifold_result" => &mut k.fixes.fillet_refuse_non_manifold_result,
-        "fillet_refuse_crossing_rails" => &mut k.fixes.fillet_refuse_crossing_rails,
-        "cone_parallel_line_midpoint" => &mut k.fixes.cone_parallel_line_midpoint,
-        "analytic_copy_keeps_parameterization" => &mut k.fixes.analytic_copy_keeps_parameterization,
-        _ => return Err(format!("unknown `fixes` entry `{name}`")),
-    };
+    let field = k
+        .fixes
+        .get_mut(name)
+        .ok_or_else(|| format!("unknown `fixes` entry `{name}`"))?;
     *field = true;
     Ok(())
 }

@@ -1,0 +1,5 @@
+records = ["WR-344"]
+issues = [469]
+doc = '''
+With extended convex edges, `piecewise_merge` relates the mated offsets of a manifold edge instead of intersecting them again (WR-344, #469).
+'''

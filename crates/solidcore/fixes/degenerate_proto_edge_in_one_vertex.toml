@@ -1,0 +1,5 @@
+records = ["WR-306"]
+issues = [1058]
+doc = '''
+`SmProtoEdge::Resolve` treats a proto edge from a proto vertex back to itself whose ends find one vertex definition as degenerate below twice the proto vertex's containment radius, and `ImprintIntersections` fits that vertex to its edges (WR-306, #1058).
+'''

@@ -1,0 +1,5 @@
+records = ["WR-345"]
+issues = [854]
+doc = '''
+Before the piecewise merge, `do_extended_offset` rebuilds every offset face whose loops cross from the stretches of its loops that bound it (WR-345, #854).
+'''

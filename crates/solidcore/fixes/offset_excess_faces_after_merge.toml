@@ -1,0 +1,5 @@
+records = ["WR-341"]
+issues = [977]
+doc = '''
+`DoExtendedOffset` finds the excess offset faces after the merge only, not also on the untrimmed faces before it (WR-341, #977).
+'''

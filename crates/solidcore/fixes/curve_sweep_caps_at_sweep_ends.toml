@@ -1,0 +1,5 @@
+records = ["WR-404"]
+issues = [411]
+doc = '''
+A curve sweep caps from the side faces at the sweep's start and end (WR-404, #411).
+'''

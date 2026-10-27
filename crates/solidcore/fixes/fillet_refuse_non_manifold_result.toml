@@ -1,0 +1,5 @@
+records = ["WR-212"]
+issues = [422]
+doc = '''
+`DoFillet` refuses a filleted target that is not a closed manifold solid (an edge that is not `SmEdge::IsManifold`) with `SM_FILERR_BAD_MERGE`, where upstream returns success (WR-212, #422).
+'''

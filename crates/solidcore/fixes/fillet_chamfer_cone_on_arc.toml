@@ -1,0 +1,5 @@
+records = ["WR-421"]
+issues = [420]
+doc = '''
+`CalcTorusFilletGeom` revolves a linear section into a cone (WR-421, #420).
+'''

@@ -1,0 +1,5 @@
+records = ["WR-468"]
+issues = [1022]
+doc = '''
+A fillet's trace also runs through the filleted edge's end where a rail ends on an extended edge, so the surface reaches that end (#1022, WR-468).
+'''

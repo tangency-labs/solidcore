@@ -1,0 +1,5 @@
+records = ["WR-456"]
+issues = [1181]
+doc = '''
+`SmFilletSolver::ComputePointValues`' bigger-step retry of the forward finite-difference step solves with the bigger step (`dBigStep`), not with the small `dStep` again (WR-456, #1181).
+'''

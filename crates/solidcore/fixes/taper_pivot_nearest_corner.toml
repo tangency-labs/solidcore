@@ -1,0 +1,5 @@
+records = ["WR-402"]
+issues = [479]
+doc = '''
+A taper extrude's corner whose links meet at both ends pivots on the joint nearest its offset curve (WR-402, #479).
+'''

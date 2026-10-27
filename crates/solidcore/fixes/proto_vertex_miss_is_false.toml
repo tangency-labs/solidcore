@@ -1,0 +1,5 @@
+records = ["WR-73"]
+issues = [848]
+doc = '''
+`RemoveCoincidentNoEdgeProtoVertex` reports a miss as `false` (WR-73, #848).
+'''

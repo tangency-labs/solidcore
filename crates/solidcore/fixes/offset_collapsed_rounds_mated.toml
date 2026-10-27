@@ -1,0 +1,5 @@
+records = []
+issues = [397]
+doc = '''
+An inward shell mates the walls across rounds thinner than it (collapsed faces) (#397).
+'''

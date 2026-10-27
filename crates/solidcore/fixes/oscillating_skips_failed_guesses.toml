@@ -1,0 +1,5 @@
+records = ["WR-253"]
+issues = [481]
+doc = '''
+The curve property solves ignore a failed guess in `SolveOscillating`'s sign-change search (WR-253, #481).
+'''

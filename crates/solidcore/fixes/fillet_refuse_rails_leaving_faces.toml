@@ -1,0 +1,5 @@
+records = ["WR-302"]
+issues = [1024, 841]
+doc = '''
+The fillet executive refuses a blend whose rails leave the faces they roll on (`RailsFitTheirFaces`, no room) (WR-302, #1024/#841).
+'''

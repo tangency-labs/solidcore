@@ -1,0 +1,5 @@
+records = ["WR-360"]
+issues = [746]
+doc = '''
+A volumetric Boolean removes the zero-area loops a contact curve inside a face leaves, and splits shells joined only through them (WR-360, #746).
+'''

@@ -1,0 +1,5 @@
+records = ["WR-460"]
+issues = [1073]
+doc = '''
+The fillet executive refuses two rounds on edges of one face whose rails cross on it (no room between them), before the target is edited, where upstream builds an open body (WR-460, #1073).
+'''

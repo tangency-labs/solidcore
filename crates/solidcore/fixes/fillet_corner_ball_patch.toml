@@ -1,0 +1,5 @@
+records = ["WR-420"]
+issues = [416]
+doc = '''
+The fillet solver tries the corner ball's patch after the torus when a round's centre line collapses to a point (WR-420, #416).
+'''

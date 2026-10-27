@@ -1,0 +1,5 @@
+records = ["WR-400"]
+issues = [837]
+doc = '''
+`SweepProfilesAlongPath` asks for caps only when the profile closes (WR-400, #837).
+'''

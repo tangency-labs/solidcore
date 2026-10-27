@@ -1,0 +1,5 @@
+records = ["WR-385"]
+issues = [713]
+doc = '''
+`SmCone::RebuildSTEPFromNURBParameters` gives a cylinder the mean of near-equal radii (semi-angle 0) (WR-385, #713).
+'''

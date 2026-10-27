@@ -1,0 +1,5 @@
+records = ["WR-259"]
+issues = [711]
+doc = '''
+`SmCone::IntersectWithCone` tests the line of two parallel cylinders against both face domains at its middle, not its bottom end (WR-259, #711).
+'''

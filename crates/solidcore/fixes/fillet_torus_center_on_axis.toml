@@ -1,0 +1,5 @@
+records = ["WR-422"]
+issues = [417]
+doc = '''
+A torus blend whose section centre is on the arc's axis turns rail points into the edge ends' half-planes (WR-422, #417).
+'''

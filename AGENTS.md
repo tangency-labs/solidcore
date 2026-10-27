@@ -276,6 +276,10 @@ into `upstream/` (see README), then run `scripts/fetch-cpp.sh`, or
   Known difftest mismatches likewise live in `crates/difftest/known_mismatches/<unit id>.toml`
   (one file per unit; see `crates/difftest/src/known.rs`), and SolidCraft cases in
   `fixtures/solidcraft/<issue>-<slug>.json` (one file per issue).
+  An opt-in fix of an upstream defect (a `Kernel::fixes` field) is likewise its own
+  file, `crates/solidcore/fixes/<field_name>.toml` (its `records`, `issues` and `doc`;
+  format in `crates/solidcore/build.rs`), from which the build generates the
+  `UpstreamFixes` struct: add a file there, never a field in `kernel.rs`.
   The same goes for anything new you design: a registry or log is a directory of
   per-entry files that tools read in sorted order, never one file everybody appends to.
 - **Branches from before the per-unit split** (they edit `plan/modules.toml` or commit

@@ -1,0 +1,5 @@
+records = ["WR-452"]
+issues = [435, 410]
+doc = '''
+`SmEdgeDefinition::Imprint` first moves each end of an intersection edge's interval to the curve's point nearest its proto vertex when that point lies inside the interval, so the edge does not run past its vertex along a face rim (screw-thread groove booleans: "Face has partially Coincident Edges", `SmFace` test #34; WR-452, #435, #410; tangency-labs/smlib b43876f).
+'''

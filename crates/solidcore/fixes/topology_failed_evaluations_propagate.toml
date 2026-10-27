@@ -1,0 +1,5 @@
+records = ["WR-262", "WR-263", "WR-264"]
+issues = [521]
+doc = '''
+`GetUVCornerBoundaries`, `GetStartPointUVLoopGap` and `sm_CalcDistAndDev` return failed curve/surface evaluations and point drops instead of reading unwritten or earlier outputs (WR-262, WR-263, WR-264, #521).
+'''

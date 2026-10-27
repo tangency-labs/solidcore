@@ -1,0 +1,5 @@
+records = ["WR-305"]
+issues = [1057]
+doc = '''
+`SmFace::CurveOnClassify` classifies an interval whose two ends lie on one face edge (or its vertices) and whose midpoint is within the intersection tolerance of it as on that edge (the fork's `ClassifyEdgeInterval`, WR-305, #1057).
+'''

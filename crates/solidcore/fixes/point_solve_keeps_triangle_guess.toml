@@ -1,0 +1,5 @@
+records = ["WR-444"]
+issues = [1164]
+doc = '''
+`FindPolygonGuess` keeps a suspicious control-net triangle guess as a candidate against the nearest control point's, and returns the nearer one on the surface, so a rational surface whose control points are farther apart than its neighbouring parts does not lose a good guess (WR-444, #1164).
+'''

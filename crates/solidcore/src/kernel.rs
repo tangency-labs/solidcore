@@ -138,135 +138,35 @@ impl Caches {
     }
 }
 
-/// Opt-in fixes of upstream SMLib defects (`plan/upstream-issues/`), all off by default
-/// (upstream behaviour). Set them on [`Kernel::fixes`] before running operations; each
-/// field names its record (`WR-…`) and the `tangency-labs/solidcore` issue.
-#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
-#[allow(clippy::struct_excessive_bools)]
-#[non_exhaustive]
-pub struct UpstreamFixes {
-    /// `CalcRailIntEdgeuse`'s retry rail search holds a variable round's radius only where its first search does (at a corner calculated as constant radius) (WR-300, #1023).
-    pub fillet_retry_radius_as_first: bool,
-    /// `TestRollOver` joins a rail's neighbouring intervals on its face or the face's boundary before the rollover, so a rail along its face's rim does not fail "Unable to Process Rollover" (WR-301, #485).
-    pub fillet_rail_rim_on_face: bool,
-    /// The fillet executive refuses a blend whose rails leave the faces they roll on (`RailsFitTheirFaces`, no room) (WR-302, #1024/#841).
-    pub fillet_refuse_rails_leaving_faces: bool,
-    /// `create_fillet_brep` refuses blends that take the whole of a face they roll on (`FacesOutlastTheirBlends`, no room) (WR-320, #879).
-    pub fillet_refuse_face_consuming_blends: bool,
-    /// `DoFillet` refuses a filleted target that is not a closed manifold solid (an edge that is not `SmEdge::IsManifold`) with `SM_FILERR_BAD_MERGE`, where upstream returns success (WR-212, #422).
-    pub fillet_refuse_non_manifold_result: bool,
-    /// The fillet executive refuses two rounds on edges of one face whose rails cross on it (no room between them), before the target is edited, where upstream builds an open body (WR-460, #1073).
-    pub fillet_refuse_crossing_rails: bool,
-    /// The fillet solver tries the corner ball's patch after the torus when a round's centre line collapses to a point (WR-420, #416).
-    pub fillet_corner_ball_patch: bool,
-    /// `CalcTorusFilletGeom` revolves a linear section into a cone (WR-421, #420).
-    pub fillet_chamfer_cone_on_arc: bool,
-    /// A torus blend whose section centre is on the arc's axis turns rail points into the edge ends' half-planes (WR-422, #417).
-    pub fillet_torus_center_on_axis: bool,
-    /// `DoExtendedOffset` finds the excess offset faces after the merge only, not also on the untrimmed faces before it (WR-341, #977).
-    pub offset_excess_faces_after_merge: bool,
-    /// `BuildOffsetOfFaceuse` clips a face to its offset domain from its counterclockwise loops (an inset is not turned inside out) (WR-342, #974).
-    pub offset_clip_right_side_out: bool,
-    /// `SmSurfOfRevolution::CreateOffsetSurface` cuts the offset generator at the axis on either side of the frame origin (WR-343, #973).
-    pub revolution_offset_axis_both_sides: bool,
-    /// With extended convex edges, `piecewise_merge` relates the mated offsets of a manifold edge instead of intersecting them again (WR-344, #469).
-    pub offset_extended_edges_mated: bool,
-    /// A volumetric Boolean removes the zero-area loops a contact curve inside a face leaves, and splits shells joined only through them (WR-360, #746).
-    pub remove_slit_loops_where_solids_touch: bool,
-    /// A face a Boolean takes over from its second operand keeps that operand's exact UV trims (WR-361, #488).
-    pub keep_operand_uv_trims: bool,
-    /// `smgu_EvaluateCurveContinuity`'s G2 test compares the two sides' Frenet curvatures and normals (WR-380, #933/#838).
-    pub geometric_g2_continuity: bool,
-    /// `RemoveCoincidentNoEdgeProtoVertex` reports a miss as `false` (WR-73, #848).
-    pub proto_vertex_miss_is_false: bool,
-    /// `CheckLoop` measures a gap against at least its vertex's zone tolerance (WR-381, #476).
-    pub check_loop_vertex_tolerance: bool,
-    /// `CheckLoop` compares an end projected from its vertex (no UV trim) with its neighbour on the nearest natural period of a closed direction, so a one-period seam jump is not an `SM_ERR` (WR-440, #530).
-    pub check_loop_projected_seam_ends: bool,
-    /// `SmBSplineCurve::AssertValid` reads the minimum radius of curvature before tests 13/14 compare it (WR-382, #475).
-    pub bspline_check_min_radius: bool,
-    /// The curve property solves ignore a failed guess in `SolveOscillating`'s sign-change search (WR-253, #481).
-    pub oscillating_skips_failed_guesses: bool,
-    /// `sm_RefineCCSolutions` judges a range end's shift by its distance from 1 (WR-383, #527).
-    pub refine_cc_range_ends: bool,
-    /// `SmSurface::GetFlatCorners` tests each corner bit instead of clearing the others (WR-384, #525).
-    pub flat_corners_test_bits: bool,
-    /// `SmCone::RebuildSTEPFromNURBParameters` gives a cylinder the mean of near-equal radii (semi-angle 0) (WR-385, #713).
-    pub cylinder_rebuild_mean_radius: bool,
-    /// `SweepProfilesAlongPath` asks for caps only when the profile closes (WR-400, #837).
-    pub planar_path_uncapped_open_profiles: bool,
-    /// A rotational sweep (whole or partial turn) makes each line and circular arc of its profile its cylinder, cone, sphere or torus, not only a one-curve profile's (WR-448, #545; SolidCraft change, tangency-labs/smlib 0b143f7).
-    pub revolve_analytic_profile_faces: bool,
-    /// A taper extrude's corner whose links meet at both ends pivots on the joint nearest its offset curve (WR-402, #479).
-    pub taper_pivot_nearest_corner: bool,
-    /// A full-turn rotational sweep makes a closed shell inside another solid its cavity (WR-403, #478).
-    pub revolve_nested_shells_as_cavities: bool,
-    /// A curve sweep caps from the side faces at the sweep's start and end (WR-404, #411).
-    pub curve_sweep_caps_at_sweep_ends: bool,
-    /// Planar faces from curves join a loop touching another loop at a vertex into that loop (WR-405, #892).
-    pub join_touching_loops: bool,
-    /// The pointer check judges a UV trim's end turn on its face's surface (first fundamental form), not in raw (u, v) (WR-406, #891).
-    pub uv_trim_reversal_on_surface: bool,
-    /// Before the piecewise merge, `do_extended_offset` rebuilds every offset face whose loops cross from the stretches of its loops that bound it (WR-345, #854).
-    pub offset_resolve_crossing_loops: bool,
-    /// An inward shell mates the walls across rounds thinner than it (collapsed faces) (#397).
-    pub offset_collapsed_rounds_mated: bool,
-    /// `FaceuseOffset` fails on a face whose offset surface is missing without collapsing (`SmSurface::OffsetCollapses`: a cone, cylinder, sphere or torus offset onto its spine), where upstream reads any missing surface as a collapsed round (WR-464, #1072).
-    pub offset_missing_surface_fails: bool,
-    /// At an Nx1 corner whose end rib cannot be built because a rail missed a side edge ending within the fillet's width, the rib is deleted and the global merge cuts the round off (WR-303, #841).
-    pub fillet_nx1_end_rib_global_merge: bool,
-    /// `sm_FixUVTrimCurves` moves only the end control points of the two UV trims meeting at a corner onto the vertex's UV point, without dropping the vertex onto them, trimming there and stretching them back over the edge interval (WR-255, #959/#570; the fork's tangency-labs/smlib@5af7070).
-    pub uv_trim_corner_end_points_only: bool,
-    /// `BSplineCurve::trim` removes short end spans only for model-space curves
-    /// (dimension 3), preserving exact UV trims in surface parameter units
-    /// (WR-441, #1114). Off by default for pinned SMLib compatibility.
-    pub bspline_trim_preserves_uv_spans: bool,
-    /// `SmCone::IntersectWithCone` tests the line of two parallel cylinders against both face domains at its middle, not its bottom end (WR-259, #711).
-    pub cone_parallel_line_midpoint: bool,
-    /// The Boolean's topology intersector treats a self-loop proto edge whose ends a vertex definition on a vertex combined (`CanCombineVertexDefinitions`) as degenerate, instead of `SmProtoEdge::Resolve` splitting it onto that one vertex, after which `SmMerge::MakeFaceuse` returns `SM_ERR` (WR-214, #480; `plan/upstream-issues/WR-214--smprotoedge-resolve-splits-a-self-loop-proto-edge-onto-one.md`).
-    pub proto_edge_self_loop_on_vertex_degenerate: bool,
-    /// `SM_BO_SLICE` keeps a coincident pair whose primary face bounds material on one side only when that material lies on the side the sheet's `SM_OT_SAME` faceuse bounds (step 7.4d's rule), instead of falling through to the difference rule, which keeps a face lying in the slicing sheet in both parts (WR-254, #528; `plan/upstream-issues/WR-254--manifoldboolean-keeps-a-face-lying-in-the-slicing-sheet-in.md`).
-    pub slice_coincident_faces_sheet_side: bool,
-    /// After step 8, a Union, Difference or Intersection whose result is a manifold solid with more than two regions (the infinite region first) runs `SetRegionIsVoidFlagsForNestedSolids`, which puts each region's enclosing shell first (the fork's tangency-labs/smlib `abastran/void-shell-check`). It also rewrites the void flags by nesting from the infinite region, so where step 7 left flags that disagree with the nesting the result's void flags change too, not only its shell order (WR-265, #388; `plan/upstream-issues/WR-265--manifold-boolean-void-shell-first.md` and its 2026-10-26 addendum).
-    pub boolean_outer_shell_first: bool,
-    /// `SmEdge::ReverseOrientation` returns a failed curve reversal's status before installing the interval, flipping the edge uses or deleting their UV trims (WR-260, #521).
-    pub edge_reversal_keeps_failed_edge: bool,
-    /// `GetUVCornerBoundaries`, `GetStartPointUVLoopGap` and `sm_CalcDistAndDev` return failed curve/surface evaluations and point drops instead of reading unwritten or earlier outputs (WR-262, WR-263, WR-264, #521).
-    pub topology_failed_evaluations_propagate: bool,
-    /// `SetProps_Stage3` returns a failed `ClassifyLoops` status before reading its outputs, and a failed stage drops its in-progress marker so a retry reruns it (WR-268, WR-266, #521).
-    pub heal_stage3_failures_propagate: bool,
-    /// `CreateCurveSweep` starts a planar path's sweep frame with its z on the plane's normal, not on `MakeUnitOrthoVectors` of the start tangent, so a flat cap stays flat to the rounding (WR-407, #434; SolidCraft change, tangency-labs/smlib 1b6f5fa).
-    pub sweep_frame_on_planar_path_normal: bool,
-    /// `CoverCoincidentSurface` refuses a cover that extends a B-spline-based surface onto a continuation whose normal vanishes or turns back (a fold) over the domain the merge would use (WR-407, #434; SolidCraft change, tangency-labs/smlib 1b6f5fa).
-    pub cover_refuses_folded_continuation: bool,
-    /// A boolean vertex takes its position from the intersection curve that crosses its edge most steeply (WR-410, #1059).
-    pub boolean_vertex_by_best_crossing: bool,
-    /// `SmMerge::BooleanPostProcess` also checks the merged face's edges that a face merge left with that face on both sides (slits), not only the intersection edges (WR-304, #1120).
-    pub boolean_cleanup_removes_slits: bool,
-    /// `SmFace::CurveOnClassify` classifies an interval whose two ends lie on one face edge (or its vertices) and whose midpoint is within the intersection tolerance of it as on that edge (the fork's `ClassifyEdgeInterval`, WR-305, #1057).
-    pub classify_edge_interval: bool,
-    /// `SmProtoEdge::Resolve` treats a proto edge from a proto vertex back to itself whose ends find one vertex definition as degenerate below twice the proto vertex's containment radius, and `ImprintIntersections` fits that vertex to its edges (WR-306, #1058).
-    pub degenerate_proto_edge_in_one_vertex: bool,
-    /// `MakeEdgeInFaceWithVU` grows each end vertex's tolerance to twice its gap to the new edge's end (only if larger), after `RefreshTolerance` keeps it as it was, so `AssertValid` does not refuse the edge (WR-469, #870; the SolidCraft fork's fix; `plan/upstream-issues/WR-469--make-edge-in-face-vertex-tolerance-gap.md`).
-    pub new_edge_vertex_tolerance_covers_gap: bool,
-    /// A torus rebuilt from its NURB measures its generating interval signed (WR-408, #1112).
-    pub torus_signed_gen_curve_interval: bool,
-    /// A sheet sweep's open-profile wires are glued where the curves meet (WR-409, #1113).
-    pub sheet_sweep_joins_profile_wires: bool,
-    /// `FindPolygonGuess` keeps a suspicious control-net triangle guess as a candidate against the nearest control point's, and returns the nearer one on the surface, so a rational surface whose control points are farther apart than its neighbouring parts does not lose a good guess (WR-444, #1164).
-    pub point_solve_keeps_triangle_guess: bool,
-    /// `SmFilletVertex::CalcSetBackVert` measures a corner setback from the vertex `GetStartVertex()` marks over the edge's own interval, not from `GetVertex()` over the curve's natural interval, so an edge whose primary edge use runs against its curve is not measured from its far end (WR-445, #1169).
-    pub fillet_setback_from_start_vertex: bool,
-    /// `SmEdgeDefinition::Imprint` first moves each end of an intersection edge's interval to the curve's point nearest its proto vertex when that point lies inside the interval, so the edge does not run past its vertex along a face rim (screw-thread groove booleans: "Face has partially Coincident Edges", `SmFace` test #34; WR-452, #435, #410; tangency-labs/smlib b43876f).
-    pub imprint_trims_edge_to_proto_vertex: bool,
-    /// `SmEdgeDefinition::Imprint` continues an intersection edge's 3d and UV curves, each by the polynomial of its own end span, to a proto vertex that lies a few tolerances past the curve's end, so the edge reaches its vertex (internal thread cuts; WR-453, #410; tangency-labs/smlib a8caccd).
-    pub imprint_extends_edge_to_proto_vertex: bool,
-    /// `SmBSplineSurface::CopyAndAddAnalytics` keeps an exact copy where the recognised analytic surface does not give the same points at the same parameters (7 x 7 grid), so a face split by `MakeEdgeInFaceWithVU` keeps trims that still lie on its edges (WR-450, #387; the fork's tangency-labs/smlib@276b509).
-    pub analytic_copy_keeps_parameterization: bool,
-    /// `SmFilletSolver::ComputePointValues`' bigger-step retry of the forward finite-difference step solves with the bigger step (`dBigStep`), not with the small `dStep` again (WR-456, #1181).
-    pub fillet_point_bigger_step_retry: bool,
-    /// A fillet's trace also runs through the filleted edge's end where a rail ends on an extended edge, so the surface reaches that end (#1022, WR-468).
-    pub fillet_through_extended_rail_end: bool,
+include!(concat!(env!("OUT_DIR"), "/upstream_fixes.rs"));
+
+define_upstream_fixes! {
+    /// Opt-in fixes of upstream SMLib defects (`plan/upstream-issues/`), all off by default
+    /// (upstream behaviour). Set them on [`Kernel::fixes`] before running operations; each
+    /// field names its record (`WR-…`) and the `tangency-labs/solidcore` issue.
+    ///
+    /// The fields are generated by `crates/solidcore/build.rs` from one file per fix,
+    /// `crates/solidcore/fixes/<field_name>.toml` (its doc comment, records and issues), in
+    /// field-name order. Add a fix by adding a file there, not by editing this struct.
+    /// [`UpstreamFixes::ALL`] lists them; [`UpstreamFixes::get`] and
+    /// [`UpstreamFixes::get_mut`] reach a field by name.
+    #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+    #[allow(clippy::struct_excessive_bools)]
+    #[non_exhaustive]
+    pub struct UpstreamFixes;
+}
+
+/// One entry of [`UpstreamFixes::ALL`]: an opt-in fix's field name, the
+/// `plan/upstream-issues/` records (`WR-…`) and the `tangency-labs/solidcore` issues
+/// its file names.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct FixInfo {
+    /// The [`UpstreamFixes`] field name.
+    pub name: &'static str,
+    /// Its records, e.g. `"WR-300"` (may be empty).
+    pub records: &'static [&'static str],
+    /// Its issue numbers (may be empty).
+    pub issues: &'static [u32],
 }
 
 /// Options for [`Kernel::new`].
@@ -386,6 +286,43 @@ mod tests {
     fn kernel_is_send() {
         fn assert_send<T: Send>() {}
         assert_send::<Kernel>();
+    }
+
+    #[test]
+    fn upstream_fixes_are_listed_by_name_and_off_by_default() {
+        let names: Vec<&str> = UpstreamFixes::ALL.iter().map(|f| f.name).collect();
+        let mut sorted = names.clone();
+        sorted.sort_unstable();
+        sorted.dedup();
+        assert_eq!(names, sorted, "ALL is sorted and has no duplicates");
+        let off = UpstreamFixes::default();
+        let on = UpstreamFixes::all_on();
+        for f in UpstreamFixes::ALL {
+            assert!(!f.records.is_empty() || !f.issues.is_empty(), "{}", f.name);
+            assert_eq!(off.get(f.name), Some(false), "{}", f.name);
+            assert_eq!(on.get(f.name), Some(true), "{}", f.name);
+            let mut one = UpstreamFixes::default();
+            *one.get_mut(f.name).unwrap() = true;
+            // Exactly this field turned on: every other name still reads off.
+            for g in UpstreamFixes::ALL {
+                assert_eq!(
+                    one.get(g.name),
+                    Some(g.name == f.name),
+                    "{} {}",
+                    f.name,
+                    g.name
+                );
+            }
+        }
+        // `all_on` sets every field, so turning every listed name on one by one reaches it:
+        // no field is missing from `ALL`.
+        let mut each = UpstreamFixes::default();
+        for f in UpstreamFixes::ALL {
+            *each.get_mut(f.name).unwrap() = true;
+        }
+        assert_eq!(each, on);
+        assert_eq!(off.get("no_such_fix"), None);
+        assert!(UpstreamFixes::default().get_mut("no_such_fix").is_none());
     }
 
     #[test]

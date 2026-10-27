@@ -730,7 +730,7 @@ nice -n 10 cargo run -p difftest -- --solidcraft-cases '3526-*'        # ids (<f
   (faces by a point on each), `sheet_corner` (the deferred sheet-flange recipe below). Each
   writes the body `id`; the last writes `result`.
 * **Fixes** (`fixes`, optional): `Kernel::fixes` (`UpstreamFixes`) fields the case turns
-  on, by name, for a case that needs an opt-in fix of an upstream defect (for example
+  on, by name (any file stem under `crates/solidcore/fixes/`), for a case that needs an opt-in fix of an upstream defect (for example
   `434-*`: `sweep_frame_on_planar_path_normal`, `cover_refuses_folded_continuation`);
   without it the case runs pinned SMLib behaviour.
 * **Known refusal** (`refused_by`, optional): for a case the kernel refuses on purpose,

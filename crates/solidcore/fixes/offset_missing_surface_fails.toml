@@ -1,0 +1,5 @@
+records = ["WR-464"]
+issues = [1072]
+doc = '''
+`FaceuseOffset` fails on a face whose offset surface is missing without collapsing (`SmSurface::OffsetCollapses`: a cone, cylinder, sphere or torus offset onto its spine), where upstream reads any missing surface as a collapsed round (WR-464, #1072).
+'''

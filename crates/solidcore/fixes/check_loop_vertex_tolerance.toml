@@ -1,0 +1,5 @@
+records = ["WR-381"]
+issues = [476]
+doc = '''
+`CheckLoop` measures a gap against at least its vertex's zone tolerance (WR-381, #476).
+'''

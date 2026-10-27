@@ -1,0 +1,5 @@
+records = ["WR-408"]
+issues = [1112]
+doc = '''
+A torus rebuilt from its NURB measures its generating interval signed (WR-408, #1112).
+'''

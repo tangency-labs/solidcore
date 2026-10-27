@@ -1,0 +1,5 @@
+records = ["WR-406"]
+issues = [891]
+doc = '''
+The pointer check judges a UV trim's end turn on its face's surface (first fundamental form), not in raw (u, v) (WR-406, #891).
+'''

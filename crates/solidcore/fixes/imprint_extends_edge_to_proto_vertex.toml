@@ -1,0 +1,5 @@
+records = ["WR-453"]
+issues = [410]
+doc = '''
+`SmEdgeDefinition::Imprint` continues an intersection edge's 3d and UV curves, each by the polynomial of its own end span, to a proto vertex that lies a few tolerances past the curve's end, so the edge reaches its vertex (internal thread cuts; WR-453, #410; tangency-labs/smlib a8caccd).
+'''

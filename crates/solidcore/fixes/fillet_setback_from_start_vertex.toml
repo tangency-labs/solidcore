@@ -1,0 +1,5 @@
+records = ["WR-445"]
+issues = [1169]
+doc = '''
+`SmFilletVertex::CalcSetBackVert` measures a corner setback from the vertex `GetStartVertex()` marks over the edge's own interval, not from `GetVertex()` over the curve's natural interval, so an edge whose primary edge use runs against its curve is not measured from its far end (WR-445, #1169).
+'''

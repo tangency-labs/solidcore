@@ -1,0 +1,5 @@
+records = ["WR-303"]
+issues = [841]
+doc = '''
+At an Nx1 corner whose end rib cannot be built because a rail missed a side edge ending within the fillet's width, the rib is deleted and the global merge cuts the round off (WR-303, #841).
+'''

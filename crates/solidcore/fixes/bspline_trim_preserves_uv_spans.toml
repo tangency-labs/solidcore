@@ -1,0 +1,7 @@
+records = ["WR-441"]
+issues = [1114]
+doc = '''
+`BSplineCurve::trim` removes short end spans only for model-space curves
+(dimension 3), preserving exact UV trims in surface parameter units
+(WR-441, #1114). Off by default for pinned SMLib compatibility.
+'''

@@ -1,0 +1,5 @@
+records = ["WR-382"]
+issues = [475]
+doc = '''
+`SmBSplineCurve::AssertValid` reads the minimum radius of curvature before tests 13/14 compare it (WR-382, #475).
+'''

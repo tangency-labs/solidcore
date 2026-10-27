@@ -1,0 +1,5 @@
+records = ["WR-304"]
+issues = [1120]
+doc = '''
+`SmMerge::BooleanPostProcess` also checks the merged face's edges that a face merge left with that face on both sides (slits), not only the intersection edges (WR-304, #1120).
+'''

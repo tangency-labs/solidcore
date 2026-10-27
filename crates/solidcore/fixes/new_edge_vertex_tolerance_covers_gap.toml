@@ -1,0 +1,5 @@
+records = ["WR-469"]
+issues = [870]
+doc = '''
+`MakeEdgeInFaceWithVU` grows each end vertex's tolerance to twice its gap to the new edge's end (only if larger), after `RefreshTolerance` keeps it as it was, so `AssertValid` does not refuse the edge (WR-469, #870; the SolidCraft fork's fix; `plan/upstream-issues/WR-469--make-edge-in-face-vertex-tolerance-gap.md`).
+'''

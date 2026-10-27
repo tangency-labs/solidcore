@@ -1,0 +1,5 @@
+records = ["WR-343"]
+issues = [973]
+doc = '''
+`SmSurfOfRevolution::CreateOffsetSurface` cuts the offset generator at the axis on either side of the frame origin (WR-343, #973).
+'''

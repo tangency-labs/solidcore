@@ -1,0 +1,5 @@
+records = ["WR-383"]
+issues = [527]
+doc = '''
+`sm_RefineCCSolutions` judges a range end's shift by its distance from 1 (WR-383, #527).
+'''

@@ -1,0 +1,5 @@
+records = ["WR-301"]
+issues = [485]
+doc = '''
+`TestRollOver` joins a rail's neighbouring intervals on its face or the face's boundary before the rollover, so a rail along its face's rim does not fail "Unable to Process Rollover" (WR-301, #485).
+'''

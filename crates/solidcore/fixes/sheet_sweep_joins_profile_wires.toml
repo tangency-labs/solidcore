@@ -1,0 +1,5 @@
+records = ["WR-409"]
+issues = [1113]
+doc = '''
+A sheet sweep's open-profile wires are glued where the curves meet (WR-409, #1113).
+'''

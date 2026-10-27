@@ -1,0 +1,5 @@
+records = ["WR-384"]
+issues = [525]
+doc = '''
+`SmSurface::GetFlatCorners` tests each corner bit instead of clearing the others (WR-384, #525).
+'''

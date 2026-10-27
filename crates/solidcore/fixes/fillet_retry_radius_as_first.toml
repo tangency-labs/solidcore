@@ -1,0 +1,5 @@
+records = ["WR-300"]
+issues = [1023]
+doc = '''
+`CalcRailIntEdgeuse`'s retry rail search holds a variable round's radius only where its first search does (at a corner calculated as constant radius) (WR-300, #1023).
+'''

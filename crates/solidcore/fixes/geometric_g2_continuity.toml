@@ -1,0 +1,5 @@
+records = ["WR-380"]
+issues = [933, 838]
+doc = '''
+`smgu_EvaluateCurveContinuity`'s G2 test compares the two sides' Frenet curvatures and normals (WR-380, #933/#838).
+'''
