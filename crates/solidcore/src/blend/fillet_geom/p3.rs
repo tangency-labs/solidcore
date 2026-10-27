@@ -897,22 +897,30 @@ impl FilletBrep {
         // trim 3DCurve and UVTrimCurves to dropPoint parameter values
         // (SetMinMax's status is ignored: an inverted pair leaves the interval)
         let _ = trim_ivl.set_min_max(param1, param2);
+        // each Trim reads SmTol::GetZoneTol3d of the curve's holding edge (the 3D curve's
+        // owner is this edge, set by every producer with SetOwner; a UV trim curve's is
+        // its edge use, whose owner is the edge)
+        let edge_tol = super::p5::held_curve_zone_tol_3d(k, self.brep(), Some(e))?;
+        let prim_edge = self.brep().edgeuse(prim_eu)?.edge;
+        let prim_tol = super::p5::held_curve_zone_tol_3d(k, self.brep(), prim_edge)?;
+        let mate_edge = self.brep().edgeuse(mate_eu)?.edge;
+        let mate_tol = super::p5::held_curve_zone_tol_3d(k, self.brep(), mate_edge)?;
         let brep = self.brep_mut();
-        brep.edge_mut(e)?.curve.as_mut().ok_or_else(nul)?.trim(
-            k,
-            &mut trim_ivl,
-            TrimMode::Notify,
-        )?;
+        brep.edge_mut(e)?
+            .curve
+            .as_mut()
+            .ok_or_else(nul)?
+            .trim_with_zone_tol(k, &mut trim_ivl, TrimMode::Notify, edge_tol)?;
         brep.edgeuse_mut(prim_eu)?
             .uv_trim_curve
             .as_mut()
             .ok_or_else(nul)?
-            .trim(k, &mut trim_ivl, TrimMode::Notify)?;
+            .trim_with_zone_tol(k, &mut trim_ivl, TrimMode::Notify, prim_tol)?;
         brep.edgeuse_mut(mate_eu)?
             .uv_trim_curve
             .as_mut()
             .ok_or_else(nul)?
-            .trim(k, &mut trim_ivl, TrimMode::Notify)?;
+            .trim_with_zone_tol(k, &mut trim_ivl, TrimMode::Notify, mate_tol)?;
         Ok(())
     }
 
@@ -1238,22 +1246,25 @@ impl FilletBrep {
 
                 i_try += 1;
                 let last_tsp_idx = tsect_pnts.len().saturating_sub(1);
-                let uv_at =
-                    |fb: &Self, i: usize, s: SrfIndex| -> Result<crate::geom::vector2d::Point2> {
+                // sm_CheckSeamOn(pSurf, sTsectPnts[i]->UVPos(which), ..) takes the UV by
+                // reference: a point on a seam moves to the other side in the vertex
+                // use's own SmTsectPnt, which the next DoPointIntersection try traces
+                let on_seam =
+                    |fb: &mut Self, s: &OffsetSurface, i: usize, which: SrfIndex, closure| {
                         let vu = *tsect_pnts
                             .get(i)
                             .ok_or_else(|| invalid(OP_RECALC, "no rail-end point"))?;
-                        Ok(fb.fillet_vertexuse(vu)?.tsect_pnt().uv_pos(s))
+                        let uv = fb
+                            .fillet_vertexuse_mut(vu)?
+                            .tsect_pnt_mut()
+                            .uv_pos_mut(which);
+                        Ok::<_, SolidError>(check_seam_on(
+                            &offset_as_surface(s),
+                            uv,
+                            tolerance,
+                            closure,
+                        ))
                     };
-                let on_seam = |fb: &Self, s: &OffsetSurface, i: usize, which: SrfIndex, closure| {
-                    let mut uv = uv_at(fb, i, which)?;
-                    Ok::<_, SolidError>(check_seam_on(
-                        &offset_as_surface(s),
-                        &mut uv,
-                        tolerance,
-                        closure,
-                    ))
-                };
                 // case 1 .. 4 fall through to the next when not on a seam
                 if i_try == 1 {
                     if on_seam(self, &off(&*solver, 0)?, 0, SrfIndex::First, surf_closure1)? {
