@@ -703,6 +703,11 @@ errors (unreadable case, report not writable); verdicts never fail the run.
   ```
 
   grades the same raw files (without `SSI_SC_RAW` it reruns the shim per case).
+* **Opt-in upstream fixes on the Rust engine.** `SSI_SC_FIXES=<name>[,<name>]` turns on
+  the named `Kernel::fixes` fields (`enable_fix` in `solidcraft.rs`) for the `rust` engine
+  only; the default is none, which is the parity run against C++. Use it with `--no-report`
+  (the raw files in `bin/ssi-corpus/raw/rust_*` are overwritten), e.g.
+  `SSI_SC_FIXES=ssi_empty_trace_not_reversed difftest --ssi-corpus --no-report 'c2n_quartic_contact*'`.
 
 ## `--solidcraft-cases`: SolidCraft regression cases
 

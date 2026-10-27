@@ -267,6 +267,8 @@ pub struct UpstreamFixes {
     pub fillet_point_bigger_step_retry: bool,
     /// A fillet's trace also runs through the filleted edge's end where a rail ends on an extended edge, so the surface reaches that end (#1022, WR-468).
     pub fillet_through_extended_rail_end: bool,
+    /// The surface/surface intersectors trace a curve backwards from its start point only when the forward trace left points: `TraceCurve` returns success with none for a start point already on a found curve, and `ReverseCurveDirection` of that empty curve fails with `SM_ERR_NULL_POINTER` (`SmSurfaceIntersector::DoIntersection`, `FindInteriorCurves`, `SmAdvSurfaceIntersector::FindInteriorCurves`; WR-80, #391).
+    pub ssi_empty_trace_not_reversed: bool,
 }
 
 /// Options for [`Kernel::new`].

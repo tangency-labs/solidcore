@@ -66,6 +66,13 @@
 //!   that this class overrides, `ComputeSingularityPoint`, dispatches through the
 //!   base's `advanced` flag. The start point is a zero-filled arena point
 //!   (`GetNewElement`, [`TsectPnt::zeroed`]).
+//! - **Opt-in fix (WR-80, #391).** `FindInteriorCurves` traces a curve the other way
+//!   too after a `TraceCurve` that may return success with no points (a start point
+//!   already on a found curve) and reverses the empty curve (`SM_ERR_NULL_POINTER`).
+//!   With
+//!   [`UpstreamFixes::ssi_empty_trace_not_reversed`](crate::kernel::UpstreamFixes::ssi_empty_trace_not_reversed)
+//!   it does not (`SurfaceIntersector::trace_may_go_backwards`); off by default
+//!   (upstream behaviour).
 //! - **Recursion.** `SolveBranch` nests at most once per tree node; deeper nesting
 //!   (cyclic tree links, which recurse forever upstream) is
 //!   [`SolidError::InvalidInput`], as is nesting past the base solver's
@@ -593,7 +600,7 @@ impl<'s, 't, O: SolutionObject + 't> AdvSurfaceIntersector<'s, 't, O> {
             trace_curve(k, &mut self.base, start_tsp, &out.curves_3d)?;
 
             // when appropriate - trace in the other direction as well
-            if !self.base.curve_is_closed
+            if self.base.trace_may_go_backwards(k)
                 && !self.base.point(start_tsp)?.is_bounded()
                 && input_trace_direction == self.base.curve_trace_direction
             {
