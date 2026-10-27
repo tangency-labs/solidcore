@@ -1,11 +1,15 @@
 //! Opt-in split of the intersection curves at singular crossings
-//! (`Kernel::fixes.ssi_split_curves_at_singular_points`, WR-491, tangency-labs/solidcore#393).
+//! (`Kernel::fixes.ssi_split_curves_at_singular_points`, WR-77, tangency-labs/solidcore#393).
 //!
 //! Upstream: none. Where two intersection branches cross, the surface normals are
-//! parallel, `TraceCurve` marches through the point without ending its curve, and
-//! `ComputeSingularityPoint` only runs on start points, so `DoIntersection` returns the
-//! complete point set with a curve running through the crossing. This pass runs on its
-//! final curve list (part 5, [`super::p5`]) when the flag is on, and is not a port.
+//! parallel and `TraceCurve` steps over the point without ending its curve (a marched
+//! point reaches `ComputeSingularityPoint` only when its tangent plane angle is below
+//! `m_dStartParallelTolRadians`, and none lands that close), so `DoIntersection` returns
+//! the complete point set with a curve running through the crossing. This pass runs on
+//! its final curve list (part 5, [`super::p5`]) when the flag is on, and is not a port.
+//! It acts on the general `DoIntersection` path only: the analytic special cases of
+//! `GlobalSurfaceIntersect` (plane, cone, sphere, torus) never reach it, and it also
+//! applies to `ParallelProjectCurve`, which runs the same intersector.
 //!
 //! | Rust                                  | Upstream |
 //! |---------------------------------------|----------|
@@ -21,8 +25,16 @@
 //!   where the normals stay nearly parallel, is not cut into slivers) and the point is
 //!   more than ten times the approximation tolerance from either end. Two crossings
 //!   closer than a sample spacing on one curve are not told apart.
+//! - **Undefined normals.** A curve with a zero normal anywhere on it (a pole or an apex)
+//!   is left whole.
+//! - **Pieces.** Each piece is trimmed with a zero zone tolerance, so no degenerate
+//!   segment is removed and the 3D curve and its UV curves keep one parameterisation;
+//!   a curve whose pieces do not all cover the same intervals is left whole. A closed
+//!   curve split at `n` crossings gives `n + 1` pieces.
 //! - **Failures.** A curve whose normals cannot be evaluated, or whose pieces cannot be
-//!   built, is left whole; only [`SolidError::Unported`] propagates.
+//!   built, is left whole; only [`SolidError::Unported`] and
+//!   [`SolidError::PreparationRequired`] propagate. Arrays of different lengths are
+//!   [`SolidError::InvalidInput`].
 
 use crate::curve::curve::Curve;
 use crate::error::{ignored, Result, SolidError};
@@ -125,7 +137,7 @@ fn crossing_parameters(
         Ok(ignored(normals_sine(k, surfaces, uv, t))?.flatten())
     };
 
-    // a zero normal (a surface singularity) is never a minimum
+    // a zero normal anywhere (a surface singularity) leaves the curve whole
     let mut sines = Vec::with_capacity(SAMPLES + 1);
     for i in 0..=SAMPLES {
         let Some(v) = f(at(i))? else {
@@ -134,11 +146,17 @@ fn crossing_parameters(
         sines.push(v);
     }
 
-    let ends = [curve.evaluate_point(k, t0)?, curve.evaluate_point(k, t1)?];
+    let (Some(start), Some(end)) = (
+        ignored(curve.evaluate_point(k, t0))?,
+        ignored(curve.evaluate_point(k, t1))?,
+    ) else {
+        return Ok(None);
+    };
+    let ends = [start, end];
     let mut found: Vec<f64> = Vec::new();
     for (i, w) in sines.windows(3).enumerate() {
         let [before, here, after] = *w else { continue };
-        // a local minimum (the first sample of a plateau), rising again on both sides
+        // a local minimum (the last sample of a falling run), rising again on both sides
         if !(here <= before && here < after && before > RISE_SINE && after > RISE_SINE) {
             continue;
         }
@@ -158,11 +176,32 @@ fn crossing_parameters(
     Ok(Some(found))
 }
 
-/// A copy of `curve` trimmed to `[lo, hi]`.
+/// A copy of `curve` trimmed to `[lo, hi]`, without removing degenerate segments (a zero
+/// zone tolerance), so the curve keeps its parameterisation.
 fn piece(k: &Kernel, curve: &Curve, lo: f64, hi: f64) -> Result<Curve> {
     let mut p = curve.copy(k)?;
-    p.trim(k, &mut Extent1d::from_min_max(lo, hi), TrimMode::Notify)?;
+    p.trim_with_zone_tol(
+        k,
+        &mut Extent1d::from_min_max(lo, hi),
+        TrimMode::Notify,
+        0.0,
+    )?;
     Ok(p)
+}
+
+/// Whether the pieces of the three curves cover the same parameter intervals.
+fn same_intervals(pieces: &[Vec<Curve>; 3]) -> bool {
+    let [a, b, c] = pieces;
+    a.len() == b.len()
+        && a.len() == c.len()
+        && a.iter().zip(b).zip(c).all(|((a, b), c)| {
+            let ivl = a.natural_interval();
+            let tol = 1e-12 * (1.0 + ivl.min().abs().max(ivl.max().abs()));
+            [b, c].into_iter().all(|o| {
+                let o = o.natural_interval();
+                (o.min() - ivl.min()).abs() <= tol && (o.max() - ivl.max()).abs() <= tol
+            })
+        })
 }
 
 /// Splits `curve` at `params` (increasing, inside its interval) into pieces.
@@ -181,6 +220,8 @@ fn pieces(k: &Kernel, curve: &Curve, params: &[f64]) -> Result<Vec<Curve>> {
 }
 
 const OP_PIECES: &str = "intersect::surface_intersector::split_singular::pieces";
+const OP_SPLIT: &str =
+    "intersect::surface_intersector::split_singular::split_curves_at_singular_points";
 
 /// The pieces of a 3D curve and its two UV curves split at its crossings, or `None`
 /// where it has none or cannot be split.
@@ -204,7 +245,7 @@ fn split_one(
             pieces(k, uv[1], &params)?,
         ])
     };
-    ignored(build())
+    Ok(ignored(build())?.filter(same_intervals))
 }
 
 /// Splits the crossing and near tangent curves of `set` (3D curves with their UV curves
@@ -214,14 +255,30 @@ fn split_one(
 ///
 /// # Errors
 ///
-/// [`SolidError::Unported`] from the evaluations; any other failure leaves the curve it
-/// concerns whole.
+/// [`SolidError::InvalidInput`] for arrays of different lengths;
+/// [`SolidError::Unported`] and [`SolidError::PreparationRequired`] from the evaluations;
+/// any other failure leaves the curve it concerns whole.
 pub fn split_curves_at_singular_points(
     k: &Kernel,
     surfaces: [&Surface; 2],
     tol: f64,
     set: &mut InteriorCurves,
 ) -> Result<()> {
+    let n = set.curves_3d.len();
+    if [
+        set.surface1_uv_curves.len(),
+        set.surface2_uv_curves.len(),
+        set.curve_types.len(),
+        set.deviations.len(),
+    ]
+    .iter()
+    .any(|&len| len != n)
+    {
+        return Err(SolidError::invalid_input(
+            OP_SPLIT,
+            "curve arrays of different lengths",
+        ));
+    }
     let curves = core::mem::take(&mut set.curves_3d);
     let uv1 = core::mem::take(&mut set.surface1_uv_curves);
     let uv2 = core::mem::take(&mut set.surface2_uv_curves);

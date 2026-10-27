@@ -50,6 +50,10 @@
 //! - **Bounded loops.** The start point loop pops one start point per pass; no pass
 //!   adds start points (`TraceCurve` adds none), so it ends after at most as many
 //!   passes as `FindBoundaryStartPoints` made points.
+//! - **Opt-in split (not upstream).** With `Kernel::fixes.ssi_split_curves_at_singular_points`
+//!   (WR-77, #393) the final curve list is split at the points where two branches
+//!   cross ([`super::split_singular`]); off, nothing changes. It also applies to
+//!   `ParallelProjectCurve`, which runs this function.
 //! - **Not ported here.** The `SM_DEBUG_CODE` blocks (graphics, dumps, the start
 //!   point reordering experiment), `SmCacheCheckOutIn` (the caches are owned by the
 //!   caller), the unused context argument and the `SM_ASSERT`s.
@@ -428,6 +432,9 @@ impl<'t, O: SolutionObject + Copy + PartialEq + 't> AdvSurfaceIntersector<'_, 't
     /// 5. The interior curves ([`AdvSurfaceIntersector::find_interior_curves`]).
     /// 6. Degenerate curves (`IsDegenerate()`, tolerance `SM_EFF_ZERO`) whose point
     ///    is on another curve are removed with their UV curves, type and deviation.
+    /// 7. Opt-in (`Kernel::fixes.ssi_split_curves_at_singular_points`, not upstream):
+    ///    the crossing curves are split where two branches cross
+    ///    ([`split_curves_at_singular_points`]).
     ///
     /// # Errors
     ///
@@ -766,7 +773,7 @@ impl<'t, O: SolutionObject + Copy + PartialEq + 't> AdvSurfaceIntersector<'_, 't
             ii += 1;
         }
 
-        // opt-in (WR-491, #393; not upstream): end the curves at the points where two
+        // opt-in (WR-77, #393; not upstream): end the curves at the points where two
         // branches cross
         if k.fixes.ssi_split_curves_at_singular_points {
             let mut set = InteriorCurves {
