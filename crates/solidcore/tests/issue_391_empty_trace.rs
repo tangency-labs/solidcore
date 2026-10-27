@@ -100,7 +100,10 @@ fn quartic_contact_patches_have_the_stated_shape() {
 /// `GlobalSurfaceIntersect` of the two patches at the corpus' approximation tolerance.
 fn intersect(k: &Kernel) -> solidcore::Result<SurfaceIntersection> {
     let (a, b) = (patch(true), patch(false));
-    let (da, db) = (a.natural_uv_domain(), b.natural_uv_domain());
+    let (da, db) = (
+        a.natural_uv_domain_with_nurb(k)?,
+        b.natural_uv_domain_with_nurb(k)?,
+    );
     a.global_surface_intersect(
         k,
         &da,
