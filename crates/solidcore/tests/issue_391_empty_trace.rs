@@ -120,17 +120,32 @@ fn intersect(k: &Kernel) -> solidcore::Result<SurfaceIntersection> {
 fn issue_391_empty_trace_is_not_reversed_with_the_fix() {
     let mut k = Kernel::default();
     k.fixes.ssi_empty_trace_not_reversed = true;
-    let r = intersect(&k);
-    assert!(r.is_ok(), "{:?}", r.map(|_| ()));
+    let x = intersect(&k).unwrap();
+    // whatever comes back is consistent: one entry per curve in every array
+    let n = x.curves_3d.len();
+    assert_eq!(x.surface1_uv_curves.len(), n);
+    assert_eq!(x.surface2_uv_curves.len(), n);
+    assert_eq!(x.curve_types.len(), n);
+    assert_eq!(x.deviations.len(), n);
 }
 
 /// As SMLib (the default): the reversal of the empty trace is `SM_ERR_NULL_POINTER`.
+/// The operation is checked too, so another `SM_ERR_NULL_POINTER` of the intersector
+/// cannot keep this test green while the fixed path becomes unreachable.
 #[test]
 fn issue_391_empty_trace_fails_by_default() {
     let k = Kernel::default();
     let r = intersect(&k);
     match r {
-        Err(SolidError::Upstream { code, .. }) => assert_eq!(code, SM_ERR_NULL_POINTER),
+        Err(SolidError::Upstream {
+            code, operation, ..
+        }) => {
+            assert_eq!(code, SM_ERR_NULL_POINTER);
+            assert_eq!(
+                operation,
+                "intersect::surface_intersector::p1::SurfaceIntersector::reverse_curve_direction"
+            );
+        }
         other => panic!("expected SM_ERR_NULL_POINTER, got {:?}", other.map(|_| ())),
     }
 }

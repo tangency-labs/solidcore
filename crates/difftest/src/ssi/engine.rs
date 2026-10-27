@@ -253,10 +253,8 @@ fn rust_status(e: &SolidError) -> (i64, Option<String>) {
 pub fn run_rust(case: &SsiCase, tol: Option<f64>) -> Result<RawOutput, EngineFailure> {
     let mut k = Kernel::default();
     // opt-in `UpstreamFixes` for this run (the children inherit the variable); none by default
-    if let Ok(list) = std::env::var("SSI_SC_FIXES") {
-        for name in list.split(',').map(str::trim).filter(|n| !n.is_empty()) {
-            crate::solidcraft::enable_fix(&mut k, name).map_err(EngineFailure::Other)?;
-        }
+    for name in super::fixes_from_env() {
+        crate::solidcraft::enable_fix(&mut k, &name).map_err(EngineFailure::Other)?;
     }
     let [(a, da), (b, db)] = &case.surfaces;
     let mut built = Vec::new();
