@@ -1383,6 +1383,7 @@ pub(crate) fn enable_fix(k: &mut Kernel, name: &str) -> Result<(), String> {
         "analytic_copy_keeps_parameterization" => &mut k.fixes.analytic_copy_keeps_parameterization,
         "ssi_empty_trace_not_reversed" => &mut k.fixes.ssi_empty_trace_not_reversed,
         "precise_properties_body_length_scale" => &mut k.fixes.precise_properties_body_length_scale,
+        "revolve_nested_shells_as_cavities" => &mut k.fixes.revolve_nested_shells_as_cavities,
         _ => return Err(format!("unknown `fixes` entry `{name}`")),
     };
     *field = true;

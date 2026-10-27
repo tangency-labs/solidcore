@@ -28,7 +28,7 @@
 //! | [`Solution::parameter_interval_in`], [`ParameterDomains`] | `SmSolution::GetParameterInterval` (object domains read through a caller's resolver) |
 //! | [`Solution::object_tolerance`]                | `SmSolution::GetObjectTolerance`                           |
 //! | [`Solution::object_tolerance_with`]           | `SmSolution::GetObjectTolerance` (caller-resolved handle)   |
-//! | [`Solution::is_equal`]                        | `SmSolution::IsEqual`                                      |
+//! | [`Solution::is_equal`], [`Solution::is_equal_in`] | `SmSolution::IsEqual`                                  |
 //! | `are_sequential` (private)                    | `sm_AreSequential`                                         |
 //! | [`SolutionObject`], [`ObjectKind`]            | the `SmObject*` of `m_apObjects` and its `IsKindOf` tests  |
 //! | [`SolutionArray`], [`SolutionArray::new`]     | `SmSolutionArray`, `SmSolutionArray()`                     |
@@ -43,7 +43,7 @@
 //! | [`SolutionArray::add`]                        | `SmSolutionArray::Add`                                     |
 //! | `set_at_grow` (private)                       | `SmSolutionArray::SetAtGrow`                               |
 //! | [`SolutionArray::append`]                     | `SmSolutionArray::Append`                                  |
-//! | [`SolutionArray::add_sorted_solution`]        | `SmSolutionArray::AddSortedSolution`                       |
+//! | [`SolutionArray::add_sorted_solution`], [`SolutionArray::add_sorted_solution_in`] | `SmSolutionArray::AddSortedSolution` |
 //! | [`SolutionArray::insert_at`], [`SolutionArray::try_insert_at`] | `SmSolutionArray::InsertAt(ULONG, const SmSolution&, ULONG)` |
 //! | [`SolutionArray::remove_at`]                  | `SmSolutionArray::RemoveAt`                                |
 //! | `OperandObject`, `SolutionArray::without_objects` (crate) | the non-null `this` / operand objects of upstream's solves |
@@ -59,7 +59,8 @@
 //!   points, an edge's curve and interval, a face's surface and UV domain: the
 //!   [`SolutionObject`] hooks). A caller holding the geometry behind opaque handles
 //!   reads parameter domains through its own [`ParameterDomains`] instead
-//!   ([`Solution::parameter_interval_in`]). Tree nodes (`m_apNodes`) are opaque
+//!   ([`Solution::parameter_interval_in`], [`Solution::is_equal_in`],
+//!   [`SolutionArray::add_sorted_solution_in`]). Tree nodes (`m_apNodes`) are opaque
 //!   [`NodeId`]s.
 //!   Solves whose caller gives no handle name `OperandObject` stand-ins internally
 //!   (upstream's solutions always name the solve's curves and surfaces, whose
@@ -1085,6 +1086,9 @@ impl<O: SolutionObject> Solution<O> {
         self.object_tolerance_with(index, |_| {
             // UNPORTED(geom.tol): SmTol::GetZoneTol3d(const SmObject*) on an opaque handle
             // (callers that can resolve it use `object_tolerance_with`)
+            // Proof (unreachable): no library caller (object_tolerance is used by tests and
+            // difftest); the library uses object_tolerance_with
+            // (GlobalSolve::object_zone_tol_3d); 0 hits in the green difftest sweep.
             Err(SolidError::Unported {
                 upstream: "SmTol::GetZoneTol3d(const SmObject*)",
                 unit: "geom.tol",
@@ -1130,6 +1134,16 @@ impl<O: SolutionObject> Solution<O> {
     ///
     /// As [`Solution::parameter_interval`].
     pub fn is_equal(&self, other: &Self) -> Result<bool> {
+        self.is_equal_in(other, &OwnDomains)
+    }
+
+    /// [`Solution::is_equal`] reading the objects' parameter domains through
+    /// `domains` ([`Solution::parameter_interval_in`]).
+    ///
+    /// # Errors
+    ///
+    /// As [`Solution::parameter_interval_in`].
+    pub fn is_equal_in(&self, other: &Self, domains: &dyn ParameterDomains<O>) -> Result<bool> {
         const OP: &str = "geom::solution_array::Solution::is_equal";
         self.check(OP)?;
         other.check(OP)?;
@@ -1153,8 +1167,8 @@ impl<O: SolutionObject> Solution<O> {
 
         // ParameterValues off by more than ScaledZero or more than 1/10000th of the parameter length
         for i in 0..s1.num_variables {
-            let ivl1 = s1.parameter_interval(i)?;
-            let ivl2 = s2.parameter_interval(i)?;
+            let ivl1 = s1.parameter_interval_in(i, domains)?;
+            let ivl2 = s2.parameter_interval_in(i, domains)?;
             let length1 = ivl1.map_or(0.0, |ivl| 0.0001 * ivl.length());
             let length2 = ivl2.map_or(0.0, |ivl| 0.0001 * ivl.length());
 
@@ -1186,6 +1200,9 @@ fn vertex_point<O: SolutionObject>(vertex: &O) -> Result<Point3> {
     }
     // UNPORTED(topology.vertex): SmVertex::GetPoint (a handle that cannot reach its
     // vertex)
+    // Proof (unreachable): no library caller (Solution::point/point_of are used by tests
+    // and difftest); the library resolves through query::api_queries::solution_point; 0
+    // hits in the green difftest sweep.
     Err(SolidError::Unported {
         upstream: "SmVertex::GetPoint",
         unit: "topology.vertex",
@@ -1198,6 +1215,9 @@ fn edge_curve<O: SolutionObject>(edge: &O) -> Result<O> {
         return Ok(c);
     }
     // UNPORTED(topology.edge): SmEdge::GetCurve (a handle that cannot reach its edge)
+    // Proof (unreachable): no library caller (Solution::point/point_of are used by tests
+    // and difftest); the library resolves through query::api_queries::solution_point; 0
+    // hits in the green difftest sweep.
     Err(SolidError::Unported {
         upstream: "SmEdge::GetCurve",
         unit: "topology.edge",
@@ -1227,6 +1247,9 @@ fn evaluate_curve<O: SolutionObject>(curve: &O, t: f64) -> Result<Point3> {
     }
     // UNPORTED(curve.curve_p2): SmCurve::EvaluatePoint (a handle that cannot reach its
     // curve, or a failed evaluation, whose point upstream leaves as it was)
+    // Proof (unreachable): no library caller (Solution::point/point_of are used by tests
+    // and difftest); the library resolves through query::api_queries::solution_point; 0
+    // hits in the green difftest sweep.
     Err(SolidError::Unported {
         upstream: "SmCurve::EvaluatePoint",
         unit: "curve.curve_p2",
@@ -1256,6 +1279,9 @@ fn face_surface<O: SolutionObject>(face: &O) -> Result<O> {
     }
     // UNPORTED(topology.face_p2): SmFace::GetSurface (a handle that cannot reach its
     // face)
+    // Proof (unreachable): no library caller (Solution::point/point_of are used by tests
+    // and difftest); the library resolves through query::api_queries::solution_point; 0
+    // hits in the green difftest sweep.
     Err(SolidError::Unported {
         upstream: "SmFace::GetSurface",
         unit: "topology.face_p2",
@@ -1286,6 +1312,9 @@ fn evaluate_surface<O: SolutionObject>(surface: &O, u: f64, v: f64) -> Result<Po
     }
     // UNPORTED(surface.surface_p2): SmSurface::EvaluatePoint (a handle that cannot
     // reach its surface, or a failed evaluation, whose point upstream leaves as it was)
+    // Proof (unreachable): no library caller (Solution::point/point_of are used by tests
+    // and difftest); the library resolves through query::api_queries::solution_point; 0
+    // hits in the green difftest sweep.
     Err(SolidError::Unported {
         upstream: "SmSurface::EvaluatePoint",
         unit: "surface.surface_p2",
@@ -1635,6 +1664,22 @@ impl<O: SolutionObject> SolutionArray<O> {
         new: &Solution<O>,
         key: SortKey,
     ) -> Result<Option<usize>> {
+        self.add_sorted_solution_in(new, key, &OwnDomains)
+    }
+
+    /// [`SolutionArray::add_sorted_solution`] comparing solutions with
+    /// [`Solution::is_equal_in`] over `domains` (the parameter domains of the
+    /// solutions' objects).
+    ///
+    /// # Errors
+    ///
+    /// Errors of [`Solution::is_equal_in`] and of the parameter reads.
+    pub fn add_sorted_solution_in(
+        &mut self,
+        new: &Solution<O>,
+        key: SortKey,
+        domains: &dyn ParameterDomains<O>,
+    ) -> Result<Option<usize>> {
         // skip BigSolutions - unitialized values
         if new.start.solution_value == BIG_DOUBLE {
             return Ok(None);
@@ -1647,7 +1692,7 @@ impl<O: SolutionObject> SolutionArray<O> {
         // for every current solution
         for (ii, old) in self.data.iter_mut().enumerate() {
             // don't add duplicate solutions (SolValues within ZeroSqrt and ParamValues within ScaledZero)
-            if old.is_equal(new)? {
+            if old.is_equal_in(new, domains)? {
                 // save the better solution - improve tolerances
                 if new.start.solution_value.abs() < old.start.solution_value.abs() {
                     *old = *new;

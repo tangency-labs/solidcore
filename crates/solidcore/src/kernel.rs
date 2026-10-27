@@ -283,6 +283,8 @@ pub struct UpstreamFixes {
     pub fillet_cleanup_keeps_target_faces: bool,
     /// The surface/surface intersectors trace a curve backwards from its start point only when the forward trace left points: `TraceCurve` returns success with none for a start point already on a found curve, and `ReverseCurveDirection` of that empty curve fails with `SM_ERR_NULL_POINTER` (`SmSurfaceIntersector::DoIntersection`, `FindInteriorCurves`, `SmAdvSurfaceIntersector::FindInteriorCurves`; WR-80, #391).
     pub ssi_empty_trace_not_reversed: bool,
+    /// `SmFilletNx1Corner::MakeCornerTopology` skips a side edge whose faces meet tangentially at the corner's vertex (a flat top running smoothly onto a round) round the vertex to the edge past it, so the end face is the one beyond the tangent seam (the slot wall), not the round the fillet never meets, and `SmFilletEdge::CalcEdgeOnExtendedEdge` intersects the side face with the end face's extension when the side face is not one of the edge's own faces (WR-457, #418; the fork's tangency-labs/smlib@d5ebcb3).
+    pub fillet_nx1_tangent_side_edge: bool,
 }
 
 /// Options for [`Kernel::new`].

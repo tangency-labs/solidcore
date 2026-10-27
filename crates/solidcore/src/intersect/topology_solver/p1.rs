@@ -287,6 +287,9 @@ pub trait TopologyObjects<O> {
         let _ = (k, object);
         // UNPORTED(geom.tol): SmTol::GetZoneTol3d(const SmObject*) on a handle this
         // adapter does not resolve to its B-rep entity
+        // Proof (unreachable): only Rayfire solvers read this; the library ones
+        // (offset_geometry_creation, brep p2) pass a resolver or override
+        // object_zone_tol_3d; 0 hits in the green difftest sweep.
         Err(SolidError::unported(
             "SmTol::GetZoneTol3d(const SmObject*)",
             "geom.tol",
@@ -945,7 +948,8 @@ impl<O: SolutionObject> ParameterDomains<O> for TopologyDomains<'_, O> {
             self.objects
                 .surface(*surface)
                 .ok()
-                .map(Surface::natural_uv_domain)
+                // (kernel-free: a lazy analytic answers its NURB-less base's empty domain)
+                .map(Surface::natural_uv_domain_if_built)
         })
     }
 }

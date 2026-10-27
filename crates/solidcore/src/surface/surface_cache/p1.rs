@@ -258,6 +258,7 @@ const fn bspline_curve_of(curve: &Curve) -> Option<&BSplineCurve> {
         | CurveKind::Offset(_)
         | CurveKind::CrvInVolume(_)
         | CurveKind::CrvOnSurf(_)
+        | CurveKind::TangentField(_)
         | CurveKind::Composite(_) => None,
     }
 }
@@ -1165,6 +1166,8 @@ impl<O> FaceContainmentClassifier<O> for BaseClassifier {
         // arm it dispatches to is ported (topology::{vertex, edge, face::p2, edgeuse::p1}::tolerance,
         // Brep::tolerance) but each takes `&Brep` and none is in scope here; wire once this code
         // receives the owning B-rep (justified: findings.md "stubs naming green units")
+        // Proof (unreachable): BaseClassifier only fronts the SM_ERR PointClassify path; 0
+        // hits in the green difftest sweep.
         Err(SolidError::unported(
             "SmTol::GetZoneTol3d(const SmObject*)",
             "geom.tol",
@@ -3469,7 +3472,7 @@ mod tests {
         )
         .unwrap();
         let surface = Surface::from(BSplineSurface::from_nurb(nurb, false));
-        let d = surface.natural_uv_domain();
+        let d = surface.natural_uv_domain_if_built();
         let mut c = SurfaceCache::new(surface, d, SurfaceCacheOptions::default());
         c.set_surface_handle(Some(-1));
         c

@@ -635,8 +635,8 @@ impl EvalNFunctions for SsiNormalizeEnfo<'_> {
         if let Some(jac) = jacobian {
             // The analytic Jacobian upstream builds is overwritten by the finite
             // difference one over the natural domains of both surfaces.
-            let dom = self.surface.natural_uv_domain();
-            let dom2 = self.other_surface.natural_uv_domain();
+            let dom = self.surface.natural_uv_domain_with_nurb(k)?;
+            let dom2 = self.other_surface.natural_uv_domain_with_nurb(k)?;
             let domains = [
                 dom.u_interval(),
                 dom.v_interval(),
@@ -1147,7 +1147,7 @@ impl Surface {
         known_closed: bool,
     ) -> Result<Option<CrvOnSurf>> {
         // locals
-        let uv_domain = self.natural_uv_domain();
+        let uv_domain = self.natural_uv_domain_with_nurb(kernel)?;
         let uv_min = uv_domain.min();
         let uv_max = uv_domain.max();
         let is_closed = known_closed || self.is_closed(kernel, &uv_domain, param, None, false)?.0;
@@ -1583,7 +1583,7 @@ impl Surface {
                         let cache = if let Some(cache) = cache {
                             cache
                         } else {
-                            built = context.build_surface_cache(k, self, surface)?;
+                            built = context.surface_cache_state(k, self, surface)?;
                             &built
                         };
                         if cache.is_trimmed()
@@ -2009,6 +2009,9 @@ pub fn classify_curve_surface_xsect_point_with(
         // pCurveOwner->GetTolerance(), as the caller resolves it
         curve_tol = edge_tolerance.ok_or(
             // UNPORTED(topology.edge): SmEdge::GetTolerance (a caller without the edge)
+            // Proof (unreachable): the plain wrapper passes None, the library callers
+            // (surface p9, p10) use classify_curve_surface_xsect_point_with with the
+            // caller's edge tolerance; 0 hits in the green difftest sweep.
             SolidError::unported("SmEdge::GetTolerance", "topology.edge"),
         )?;
     } else if !curve_line {
@@ -2019,6 +2022,9 @@ pub fn classify_curve_surface_xsect_point_with(
         // surface reaches; its tolerance as cached by the B-rep
         surface_tol = surface.owner_zone_tol_3d().ok_or(
             // UNPORTED(topology.face_p2): SmFace::GetTolerance (a bare face handle)
+            // Proof (unreachable): a B-rep face's surface carries the face tolerance
+            // (Brep::sync_face_surface_tolerance invariant, see Surface::face_zone_tol_3d);
+            // 0 hits in the green difftest sweep.
             SolidError::unported("SmFace::GetTolerance", "topology.face_p2"),
         )?;
     } else if !surface_line {
@@ -2360,7 +2366,7 @@ mod tests {
             3,
         ));
         let uv = Point2::new(0.1, 0.2);
-        let dom = s.natural_uv_domain();
+        let dom = s.natural_uv_domain_if_built();
         let r = classify_curve_surface_xsect_point(
             k,
             &s,

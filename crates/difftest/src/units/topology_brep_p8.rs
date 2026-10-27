@@ -82,12 +82,15 @@ fn hfail(e: impl core::fmt::Display) -> Fail {
 
 // ---- inputs -----------------------------------------------------------------------------
 
-/// A 3D curve: a B-spline or an `SmLine(a, b, 3)`.
+/// A 3D curve: a B-spline or an `SmLine(a, b, 3)`. `BsplineRaw` is the B-spline with
+/// its given knots written back over its own NURB after construction (undoing the
+/// constructor's knot fix-up, curve block kind `2`), on both sides.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 enum C3In {
     Bspline(CrvIn),
     Line { a: [f64; 3], b: [f64; 3] },
+    BsplineRaw(CrvIn),
 }
 
 /// A curve of `faces_with_curves`.
@@ -191,6 +194,10 @@ fn push_c3(v: &mut Vec<f64>, c: &C3In) -> Result<(), HarnessError> {
             v.extend(a);
             v.extend(b);
             Ok(())
+        }
+        C3In::BsplineRaw(c) => {
+            v.push(2.0);
+            push_curve(v, c)
         }
     }
 }
@@ -325,6 +332,15 @@ fn rust_c3(c: &C3In) -> Result<SmCurve, HarnessError> {
             Vec3::new(b[0], b[1], b[2]),
             3,
         )),
+        C3In::BsplineRaw(c) => {
+            let mut bs = rust_curve(c)?;
+            // undo the constructor's fix-up, as the shim does
+            bs.get_or_create_gw_nurb()
+                .map_err(|e| harness(format!("curve: {e}")))?
+                .knots_mut()
+                .copy_from_slice(&c.u);
+            SmCurve::from(bs)
+        }
     })
 }
 
@@ -463,7 +479,8 @@ fn put_surface(k: &Kernel, o: &mut Vec<f64>, s: Option<&Surface>, dom: &Extent2d
         o.push(-1.0);
         return;
     };
-    let n = s.natural_uv_domain();
+    // (runner helper that does not return Result)
+    let n = s.natural_uv_domain_if_built();
     o.extend([
         s.type_code() as f64,
         n.min().x,
@@ -561,10 +578,10 @@ fn rust_op(k: &mut Kernel, b: &mut Brep, i: &Inputs, fenv: &mut FaceBuildEnv<'_,
             continuity,
         } => {
             let s = surface.as_ref().map(rust_surface).transpose()?;
-            let dom = s.as_ref().map_or_else(
-                || Extent2d::from_points(Point2::new(0.0, 0.0), Point2::new(1.0, 1.0)),
-                Surface::natural_uv_domain,
-            );
+            let dom = match s.as_ref() {
+                Some(s) => s.natural_uv_domain_with_nurb(k).map_err(|e| HarnessError::new(e.to_string()))?,
+                None => Extent2d::from_points(Point2::new(0.0, 0.0), Point2::new(1.0, 1.0)),
+            };
             p8::create_faces_from_surface(k, b, s, &dom, continuity_of(*continuity)?, fenv).map(
                 |faces| Made {
                     faces,
@@ -1115,6 +1132,24 @@ fn builtin() -> Vec<(String, Inputs)> {
         a[0] += 1e-6;
     }
     planar_sets.push(("gap", gap));
+    // the bottom side as a degree-1 B-spline whose interior knots are 1.5e-12 apart
+    // around the sample parameter 0.5 (kept raw on both sides): upstream makes the edge
+    // with the curve itself, a fixed-up copy merges the two knots and moves the samples
+    let mut raw = polygon(&square, false);
+    if let Some(side) = raw.get_mut(0) {
+        *side = C3In::BsplineRaw(CrvIn {
+            dim: 3,
+            cpts: vec![
+                [0.0, 0.0, 0.0, NOW],
+                [0.8, 0.0, 0.0, NOW],
+                [1.2, 0.0, 0.0, NOW],
+                [2.0, 0.0, 0.0, NOW],
+            ],
+            p: 1,
+            u: vec![0.0, 0.0, 0.5 - 1e-12, 0.5 + 0.5e-12, 1.0, 1.0],
+        });
+    }
+    planar_sets.push(("square_raw_knots", raw));
     for (name, curves) in &planar_sets {
         for tol in [1e-6, 1e-3] {
             for region_null in [false, true] {
@@ -1302,6 +1337,90 @@ fn builtin() -> Vec<(String, Inputs)> {
             points: Vec::new(),
         },
     ));
+    // A UV loop whose arch crosses the crease twice: after the split, the middle piece of
+    // the arch has both ends on the iso curve, so AddSortedSolution compares two
+    // solutions on one (iso curve, loop curve) pair (IsEqual reads the curves' natural
+    // intervals). The arch is a quadratic Bezier whose apex is at v (or u) = 0.7.
+    let arch_v = |s: f64, e: f64| {
+        vec![
+            CrvIn {
+                dim: 2,
+                cpts: vec![[s, 0.3, NOZ, NOW], [0.5, 1.1, NOZ, NOW], [e, 0.3, NOZ, NOW]],
+                p: 2,
+                u: vec![0.0, 0.0, 0.0, 1.0, 1.0, 1.0],
+            },
+            bline(2, [e, 0.3, 0.0], [s, 0.3, 0.0]),
+        ]
+    };
+    let arch_u = vec![
+        CrvIn {
+            dim: 2,
+            cpts: vec![[0.3, 0.2, NOZ, NOW], [1.1, 0.5, NOZ, NOW], [0.3, 0.8, NOZ, NOW]],
+            p: 2,
+            u: vec![0.0, 0.0, 0.0, 1.0, 1.0, 1.0],
+        },
+        bline(2, [0.3, 0.8, 0.0], [0.3, 0.2, 0.0]),
+    ];
+    for (name, s, l) in [
+        ("crease_v_arch", patch(1, 2, 1, 4, 1.0, false, true, &bump), arch_v(0.2, 0.8)),
+        ("crease_v_wide_arch", patch(1, 2, 1, 4, 1.0, false, true, &bump), arch_v(0.05, 0.95)),
+        ("crease_u_arch", patch(2, 1, 4, 1, 1.0, true, false, &ridge), arch_u),
+        // one closed degree-1 curve (a triangle) whose seam is on the crease: the iso
+        // curve meets both ends of the loop's only curve
+        (
+            "crease_v_seam",
+            patch(1, 2, 1, 4, 1.0, false, true, &bump),
+            vec![CrvIn {
+                dim: 2,
+                cpts: vec![
+                    [0.5, 0.5, NOZ, NOW],
+                    [0.8, 0.2, NOZ, NOW],
+                    [0.2, 0.2, NOZ, NOW],
+                    [0.5, 0.5, NOZ, NOW],
+                ],
+                p: 1,
+                u: vec![0.0, 0.0, 1.0 / 3.0, 2.0 / 3.0, 1.0, 1.0],
+            }],
+        ),
+        // the same triangle crossing the crease, with its seam above it
+        (
+            "crease_v_seam_cross",
+            patch(1, 2, 1, 4, 1.0, false, true, &bump),
+            vec![CrvIn {
+                dim: 2,
+                cpts: vec![
+                    [0.5, 0.8, NOZ, NOW],
+                    [0.8, 0.2, NOZ, NOW],
+                    [0.2, 0.2, NOZ, NOW],
+                    [0.5, 0.8, NOZ, NOW],
+                ],
+                p: 1,
+                u: vec![0.0, 0.0, 1.0 / 3.0, 2.0 / 3.0, 1.0, 1.0],
+            }],
+        ),
+    ] {
+        v.push((
+            format!("make_faces_uv_{name}"),
+            Inputs::MakeFaces {
+                surface: s,
+                dom: [0.0, 0.0, 1.0, 1.0],
+                orient: 1,
+                region_null: false,
+                loops: vec![l.len()],
+                has3d: false,
+                has_uv: true,
+                curves: l
+                    .into_iter()
+                    .map(|c| LoopCurve {
+                        c3: None,
+                        uv: Some(c),
+                        orient: 1,
+                    })
+                    .collect(),
+                points: Vec::new(),
+            },
+        ));
+    }
     v
 }
 

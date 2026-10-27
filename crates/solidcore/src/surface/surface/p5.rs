@@ -1114,6 +1114,9 @@ impl Surface {
         // We need a tolerance value.
         // pFace ? pFace->GetTolerance() : SM_XSECT_TOL_3D (the face's tolerance cached
         // on the surface; UNPORTED(topology.face_p2) for a bare face handle)
+        // Proof (unreachable): a B-rep face's surface carries the face tolerance
+        // (Brep::sync_face_surface_tolerance invariant, see Surface::face_zone_tol_3d); 0
+        // hits in the green difftest sweep.
         let dist_tol = self.face_zone_tol_3d()?.unwrap_or(XSECT_TOL_3D);
 
         // first try DropPointFast(), to catch special cases.
@@ -1366,6 +1369,9 @@ impl Surface {
         // GWC:TODO - upstream's magic numbers for the tolerance
         // GetFace() ? its tolerance (cached on the surface; UNPORTED(topology.face_p2)
         // for a bare face handle) : 1e-05
+        // Proof (unreachable): a B-rep face's surface carries the face tolerance
+        // (Brep::sync_face_surface_tolerance invariant, see Surface::face_zone_tol_3d); 0
+        // hits in the green difftest sweep.
         let face_tol = |s: &Self| -> Result<f64> { Ok(s.face_zone_tol_3d()?.unwrap_or(1e-05)) };
         let tol1 = face_tol(self)?;
         let tol2 = face_tol(surface2)?;
@@ -2428,9 +2434,13 @@ pub(super) fn surface_operand<O: SolutionObject>(
         .ok()
         .and_then(|t| t.owner_object().ok().flatten())
         .or_else(|| cache.and_then(crate::surface::surface_cache::SurfaceCache::surface_handle));
-    handle
-        .zip(surface)
-        .map(|(h, s)| (h, super::p1::OperandDomain::Surface(s.natural_uv_domain())))
+    handle.zip(surface).map(|(h, s)| {
+        (
+            h,
+            // (kernel-free: a lazy analytic answers its NURB-less base's empty domain)
+            super::p1::OperandDomain::Surface(s.natural_uv_domain_if_built()),
+        )
+    })
 }
 
 /// `SmCSIGlobalSolver::IdenticalSolutions`: as [`cs_identical_solutions`].
@@ -2553,7 +2563,7 @@ mod tests {
     fn intersect_drop_converges_on_a_plane() {
         let k = &Kernel::default();
         let s = xy_plane();
-        let dom = s.natural_uv_domain();
+        let dom = s.natural_uv_domain_if_built();
         let p = Vec3::new(0.3, 0.4, 2.0);
         let r = s
             .local_point_solve_0::<Obj>(
@@ -2572,7 +2582,7 @@ mod tests {
     #[test]
     fn new_point_solver_projects_to_the_plane() {
         let s = xy_plane();
-        let dom = s.natural_uv_domain();
+        let dom = s.natural_uv_domain_if_built();
         let r = s.local_point_solve::<Obj>(
             &Kernel::default(),
             &dom,
@@ -2601,7 +2611,7 @@ mod tests {
     fn drop_point_uses_the_fast_drop_of_a_plane() {
         let k = &Kernel::default();
         let s = xy_plane();
-        let dom = s.natural_uv_domain();
+        let dom = s.natural_uv_domain_if_built();
         let c = dom.evaluate(0.5, 0.5);
         let p = s.evaluate_point(k, c).unwrap() + Vec3::new(0.0, 0.0, 1.5);
         let opts = DropPointOptions {
@@ -2620,7 +2630,7 @@ mod tests {
     fn filter_keeps_exact_solutions() {
         let k = &Kernel::default();
         let s = xy_plane();
-        let dom = s.natural_uv_domain();
+        let dom = s.natural_uv_domain_if_built();
         let line =
             Line::create_line_segment(3, Vec3::new(0.0, 0.0, 0.0), Vec3::new(1.0, 0.0, 0.0), None)
                 .unwrap();
@@ -2710,8 +2720,14 @@ mod tests {
                     (Err(p), Err(w)) => assert_eq!(p, w),
                     (p, w) => panic!("plain {p:?} vs context {w:?}"),
                 }
-                assert_eq!(a0.natural_uv_domain(), a1.natural_uv_domain());
-                assert_eq!(b0.natural_uv_domain(), b1.natural_uv_domain());
+                assert_eq!(
+                    a0.natural_uv_domain_if_built(),
+                    a1.natural_uv_domain_if_built()
+                );
+                assert_eq!(
+                    b0.natural_uv_domain_if_built(),
+                    b1.natural_uv_domain_if_built()
+                );
             }
         }
     }
