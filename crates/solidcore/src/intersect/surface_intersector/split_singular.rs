@@ -1,5 +1,5 @@
 //! Opt-in split of the intersection curves at singular crossings
-//! (`Kernel::fixes.ssi_split_curves_at_singular_points`, WR-TBD, tangency-labs/solidcore#393).
+//! (`Kernel::fixes.ssi_split_curves_at_singular_points`, WR-491, tangency-labs/solidcore#393).
 //!
 //! Upstream: none. Where two intersection branches cross, the surface normals are
 //! parallel, `TraceCurve` marches through the point without ending its curve, and

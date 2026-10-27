@@ -1,4 +1,4 @@
-//! tangency-labs/solidcore#393 (WR-TBD): two equal cylinders of radius 1 with perpendicular
+//! tangency-labs/solidcore#393 (WR-491): two equal cylinders of radius 1 with perpendicular
 //! axes, `x^2 + y^2 = 1` (axis z, height -2..2) and `y^2 + z^2 = 1` (axis x, length -2..2).
 //! They meet in the two ellipses `x = z` and `x = -z`, which cross at the singular points
 //! (0, 1, 0) and (0, -1, 0), where the surface normals are parallel. SMLib's tracer marches

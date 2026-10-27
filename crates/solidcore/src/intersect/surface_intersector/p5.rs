@@ -766,7 +766,7 @@ impl<'t, O: SolutionObject + Copy + PartialEq + 't> AdvSurfaceIntersector<'_, 't
             ii += 1;
         }
 
-        // opt-in (WR-TBD, #393; not upstream): end the curves at the points where two
+        // opt-in (WR-491, #393; not upstream): end the curves at the points where two
         // branches cross
         if k.fixes.ssi_split_curves_at_singular_points {
             let mut set = InteriorCurves {
