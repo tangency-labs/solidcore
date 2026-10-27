@@ -1371,8 +1371,9 @@ fn measure(k: &Kernel, b: &mut Brep) -> Result<Measured, SolidError> {
     })
 }
 
-/// Turns on the `UpstreamFixes` field `name` a case asks for.
-fn enable_fix(k: &mut Kernel, name: &str) -> Result<(), String> {
+/// Turns on the `UpstreamFixes` field `name` a case asks for (also the `SSI_SC_FIXES`
+/// list of the `--ssi-corpus` Rust engine).
+pub(crate) fn enable_fix(k: &mut Kernel, name: &str) -> Result<(), String> {
     let field = match name {
         "sweep_frame_on_planar_path_normal" => &mut k.fixes.sweep_frame_on_planar_path_normal,
         "cover_refuses_folded_continuation" => &mut k.fixes.cover_refuses_folded_continuation,
@@ -1380,6 +1381,7 @@ fn enable_fix(k: &mut Kernel, name: &str) -> Result<(), String> {
         "fillet_refuse_crossing_rails" => &mut k.fixes.fillet_refuse_crossing_rails,
         "cone_parallel_line_midpoint" => &mut k.fixes.cone_parallel_line_midpoint,
         "analytic_copy_keeps_parameterization" => &mut k.fixes.analytic_copy_keeps_parameterization,
+        "ssi_split_curves_at_singular_points" => &mut k.fixes.ssi_split_curves_at_singular_points,
         _ => return Err(format!("unknown `fixes` entry `{name}`")),
     };
     *field = true;

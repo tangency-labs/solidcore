@@ -1,0 +1,7 @@
+Updates: WR-77
+
+**Rust port (2026-10-27, tangency-labs/solidcore#393):** the defect is reached in `intersect.surface_intersector_p5`. On the general `DoIntersection` path the Rust port gives the same output as C++ (the six `WRONG TOPOLOGY` cases of this record are identical in both engines). The two `INCOMPLETE` cases (`y23_t2_ex3_loop_two_curves`, `y23_fig1d_two_quads`) also miss branches, which this does not address.
+
+**Cause (refined, not fully traced):** `ComputeSingularityPoint` is reached from `ComputePointValues`, also for points `ComputeNextPoint` reaches while marching, but only when the point's tangent plane angle is below `m_dStartParallelTolRadians` (or its curve tangent is short). The tracer steps over a crossing without a marched point landing that close, so the crossing is never identified and the curve runs through it.
+
+**Opt-in fix:** `Kernel::fixes.ssi_split_curves_at_singular_points` (off by default) splits the final curve list of `DoIntersection` (crossing and near tangent curves and both UV curves) at the local minima of the sine of the angle between the surface normals that are below 1e-6, rise again on both sides and lie more than ten approximation tolerances from either end. It acts on the general path only: the analytic special cases of `GlobalSurfaceIntersect` (plane, cone, sphere, torus) never reach it. See `plan/findings/intersect.surface_intersector_p5--ssi-393-split-at-singular-crossings.md`.
