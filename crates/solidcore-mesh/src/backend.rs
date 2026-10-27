@@ -133,6 +133,7 @@ mod grid {
             MeshError::LoopInsideCell => "a loop inside one grid cell",
             MeshError::OpenCell { .. } => "loop pieces in a grid cell did not close",
             MeshError::TooLarge => "too many vertices",
+            MeshError::BadPlanar(_) => "planar triangulation failed",
             MeshError::Internal => "nurbs-grid-mesh internal error",
         };
         SolidError::Unsupported {
