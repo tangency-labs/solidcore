@@ -668,8 +668,8 @@ pub fn run_corpus(root: &Path, opts: &CorpusOptions) -> ExitCode {
             "cases": entries,
         });
         // only a run with fixes on says so: the parity report stays as it was
-        if !fixes.is_empty() {
-            report["fixes"] = json!(fixes);
+        if let (false, Some(m)) = (fixes.is_empty(), report.as_object_mut()) {
+            m.insert("fixes".into(), json!(fixes));
         }
         let dir = opts
             .report_dir
