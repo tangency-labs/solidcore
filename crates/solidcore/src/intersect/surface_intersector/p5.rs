@@ -77,6 +77,7 @@ use crate::surface::surface_cache::p1::{PatchBoundaryBoundingPlanes, SurfaceCach
 
 use super::p1::{SrfIndex, SurfaceIntersector, TsectPnt};
 use super::p2::{BoundaryPlaneTestResult, TsectCurves};
+use super::split_singular::split_curves_at_singular_points;
 
 const OP_DI: &str = "intersect::surface_intersector::p5::AdvSurfaceIntersector::do_intersection";
 const OP_CACHES: &str = "intersect::surface_intersector::p5::intersection_surface_caches";
@@ -763,6 +764,34 @@ impl<'t, O: SolutionObject + Copy + PartialEq + 't> AdvSurfaceIntersector<'_, 't
                 }
             }
             ii += 1;
+        }
+
+        // opt-in (WR-TBD, #393; not upstream): end the curves at the points where two
+        // branches cross
+        if k.fixes.ssi_split_curves_at_singular_points {
+            let mut set = InteriorCurves {
+                curves_3d,
+                surface1_uv_curves,
+                surface2_uv_curves,
+                curve_types,
+                deviations,
+            };
+            split_curves_at_singular_points(
+                k,
+                [
+                    self.base.surface(SrfIndex::First),
+                    self.base.surface(SrfIndex::Second),
+                ],
+                tol,
+                &mut set,
+            )?;
+            InteriorCurves {
+                curves_3d,
+                surface1_uv_curves,
+                surface2_uv_curves,
+                curve_types,
+                deviations,
+            } = set;
         }
 
         // set outputs

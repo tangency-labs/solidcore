@@ -279,6 +279,8 @@ pub struct UpstreamFixes {
     pub corner_blend_stays_inside_neighbours: bool,
     /// `DoFilleting`'s `BooleanPostProcess` removes none of the target's own edges, nor an edge between two of its faces (the fork's `m_sPostProcessKeptEdges`/`Faces`), so the patches of a sphere imported in six faces are not merged into a face no patch's parameterization can carry (WR-459, #423; the fork's tangency-labs/smlib@9ddf4a8).
     pub fillet_cleanup_keeps_target_faces: bool,
+    /// `SmSurfaceIntersector::DoIntersection` ends no curve where two intersection branches cross (the surface normals are parallel there): the tracer marches through the point and `ComputeSingularityPoint` only runs on start points, so the points are complete but the topology is not. With this, the final curve list is split at each such crossing (WR-TBD, #393).
+    pub ssi_split_curves_at_singular_points: bool,
 }
 
 /// Options for [`Kernel::new`].
