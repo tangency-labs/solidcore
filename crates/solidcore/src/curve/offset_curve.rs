@@ -39,6 +39,12 @@
 //!   curve (`SetOwner(this)`) is not modelled (the offset curve has no object key).
 //!   The copy constructor's failure path for a base curve without `Copy` (upstream
 //!   then shares the pointer and deletes it twice) is a plain clone.
+//! - **`Clone`.** `Clone` is the copy constructor: a borrowed base curve becomes an
+//!   exact copy that keeps its raw knots and owner (upstream shares the pointer), an
+//!   owned one is copied through [`Curve::clone`] and the ownership flag becomes
+//!   `TRUE` (the empty curve's `UNSURE` included). Upstream's copy constructor is
+//!   undefined for the empty curve (it dereferences the null base); the port keeps it
+//!   a defined empty value instead.
 //! - **Context and notifications.** `SmContext` arguments are dropped
 //!   (`SetContext` is a no-op), as are the `SM_NO_PRE_EDIT`/`SM_NO_POST_EDIT`
 //!   notifications of `Trim` and `ReverseParameterization`: the offset curve keeps
@@ -100,7 +106,7 @@ const UNSURE: i32 = 2;
 /// with `N` the unit offset-plane normal and `D` the offset distance (positive to
 /// the right of the curve seen from above the offset plane). With the reversal flag
 /// set, `t` is mirrored within the curve interval first.
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct OffsetCurve {
     /// Image-space dimension (`SmCurve::m_lDim`).
     dim: u64,
@@ -116,6 +122,37 @@ pub struct OffsetCurve {
     reversed: i32,
     /// Whether upstream would own (delete) the base curve (`m_bOwnsCurve`).
     owns_curve: i32,
+}
+
+impl Clone for OffsetCurve {
+    /// The copy constructor (`SmOffsetCurve(const SmOffsetCurve&)`): a borrowed base
+    /// (`m_bOwnsCurve == FALSE`) is shared upstream, so here it is an exact copy that
+    /// keeps its raw knots and owner (`Curve::clone` would fix the knots up); an owned
+    /// one is copied through the base's copy constructor ([`Curve::clone`]) and the
+    /// flag becomes `TRUE`, as upstream sets it after the copy. The exact helper is
+    /// infallible here: [`OffsetCurve::new`] bounds the geometry nesting and the
+    /// database reader bounds its recursion, so the copied base cannot exceed
+    /// [`MAX_GEOMETRY_NESTING`](crate::surface::surface::p2::MAX_GEOMETRY_NESTING).
+    ///
+    /// The empty curve (no base, `UNSURE` ownership) stays a defined empty value: copying
+    /// it upstream dereferences the null base (undefined), so it is not modelled. An
+    /// owned base without a `Copy` (a Hermite curve) is left sharing the base upstream
+    /// and deleted twice; the port clones it instead, as [`OffsetCurve::copy`] documents.
+    fn clone(&self) -> Self {
+        let base = match &self.base {
+            Some(b) if self.owns_curve == 0 => Some(Box::new(b.clone_exact_bounded())),
+            b => b.clone(),
+        };
+        Self {
+            dim: self.dim,
+            base,
+            normal: self.normal,
+            distance: self.distance,
+            interval: self.interval,
+            reversed: self.reversed,
+            owns_curve: i32::from(self.owns_curve != 0),
+        }
+    }
 }
 
 impl OffsetCurve {
@@ -201,14 +238,29 @@ impl OffsetCurve {
         }
     }
 
-    /// `Copy` (the copy constructor): an equal offset curve with its own base curve.
-    #[must_use]
-    pub fn copy(&self) -> Self {
-        let mut c = self.clone();
-        if self.owns_curve != 0 {
-            c.owns_curve = 1;
-        }
-        c
+    /// `Copy` (the copy constructor): an equal offset curve. An owned base curve
+    /// (`TRUE` or `UNSURE`) is copied and owned by the copy; a borrowed one is shared
+    /// upstream, so here it is an exact copy that keeps its owner (`Curve::clone`
+    /// would fix its knots up).
+    ///
+    /// # Errors
+    ///
+    /// Those of [`Curve::clone_for_evaluation`] on a borrowed base curve (geometry
+    /// nested too deeply).
+    pub fn copy(&self) -> Result<Self> {
+        let base = match &self.base {
+            Some(b) if self.owns_curve == 0 => Some(Box::new(b.clone_for_evaluation()?)),
+            b => b.clone(),
+        };
+        Ok(Self {
+            dim: self.dim,
+            base,
+            normal: self.normal,
+            distance: self.distance,
+            interval: self.interval,
+            reversed: self.reversed,
+            owns_curve: i32::from(self.owns_curve != 0),
+        })
     }
 
     /// Image-space dimension (`GetDim`).
@@ -820,7 +872,7 @@ mod tests {
     fn equality_copy_and_types() {
         let k = &Kernel::default();
         let a = offset(0.5);
-        let b = a.copy();
+        let b = a.copy().unwrap();
         assert!(a.approx_eq(k, &b).unwrap());
         assert!(!a.approx_eq(k, &offset(0.6)).unwrap());
         assert!(a.is_kind_of(OffsetCurve::TYPE));

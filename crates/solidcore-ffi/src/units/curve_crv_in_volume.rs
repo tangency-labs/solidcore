@@ -5,7 +5,8 @@
 //!
 //! Object ops start with a block building the `SmCrvInVolume` `c` the op runs on:
 //! a curve block (`0 dim oob n p m cpts(x y z w) knots`: an `SmBSplineCurve`; or
-//! `1 dim P1[3] D1[3] P2[3] D2[3]`: an `SmHermiteCurve`), then `in_param copy_flag
+//! `1 dim P1[3] D1[3] P2[3] D2[3]`: an `SmHermiteCurve`; `2` is kind `0` with the given
+//! knots written back over the curve's own NURB after construction), then `in_param copy_flag
 //! owner_flag` (the constructor's arguments; the volume is a fresh identity
 //! `SmTransform`), then `has_cache` and, when set, `need nb B[nb] nc C[nc]` loaded
 //! into `m_bNeedBreaks`, `m_sBreaks`, `m_sConts`. Static ops have no block. Every
@@ -21,7 +22,8 @@
 //! | `Nnk`        | `GetNumberNaturalKnots`                    |                         | `count` cache |
 //! | `Conts`      | `CalculateContinuities`                    | `angle`                 | `min nc C` cache |
 //! | `Equal`      | `operator==`                               | `self` [object block]   | flag |
-//! | `Copy`       | `Copy` (copy constructor)                  |                         | state of the copy (on success) |
+//! | `Copy`       | `Copy` (copy constructor)                  |                         | state of the copy, then whether it equals the original (`operator==`) (on success) |
+//! | `CopyCtor`   | `SmCrvInVolume(const SmCrvInVolume&)` (the copy constructor itself, not the virtual `Copy`) | | as `Copy` |
 //! | `EditParam`  | `EditParameterization`                     | `a b`                   | state |
 //! | `Reverse`    | `ReverseParameterization`                  | `a b`                   | `[a' b']` state |
 //! | `Trim`       | `Trim(ivl, notify, FALSE)`                 | `a b mode` (0 `TRUE`, 1 `FALSE`, 2 `UNSURE`) | `a' b'` state |
@@ -51,9 +53,10 @@
 //! shapes for which upstream stays inside its arrays (`GetNumberNaturalKnots` sums
 //! multiplicities the size of the knots only when the cached arrays agree;
 //! `CalculateContinuities` needs a break; `GenerateMults` at most as many knots as
-//! breaks), no `Copy` of an owned Hermite base curve (its `Copy` fails and both objects
-//! would delete it), and database text without a volume type code (`22000..=22999`:
-//! reading those needs volume data, and `SmVolume_TYPE` dereferences a null volume).
+//! breaks), no `Copy` or `CopyCtor` of an owned Hermite base curve (its `Copy` fails
+//! and both objects would delete it), and database text without a volume type code
+//! (`22000..=22999`: reading those needs volume data, and `SmVolume_TYPE` dereferences
+//! a null volume).
 //! For `Exact` it also needs finite line ends, circles with independent axes, a
 //! positive radius and `-360 <= a0 < a1 <= a0 + 360`, at most [`MAX_MAPS`] maps with
 //! non-zero component axes, and no Hermite base curve under a twist head map (the twist
@@ -90,6 +93,7 @@ pub enum Op {
     Conts,
     Equal,
     Copy,
+    CopyCtor,
     EditParam,
     Reverse,
     Trim,
@@ -116,6 +120,7 @@ impl Op {
             Op::Reverse => 10,
             Op::Trim => 11,
             Op::Transform => 12,
+            Op::CopyCtor => 13,
             Op::ReadDb => 40,
             Op::Exact => 41,
         }
@@ -239,12 +244,13 @@ fn near(t: f64, a: f64, b: f64) -> Result<f64, FfiError> {
 
 /// An object block (see the module docs).
 fn object_block(rd: &mut Reader<'_>) -> Result<Block, FfiError> {
-    let kind = rd.index(1)?;
+    let kind = rd.index(2)?;
     let dim = rd.index(3)?;
     if dim < 2 {
         return Err(bad("curve block: dimension must be 2 or 3"));
     }
-    let (bspline, a, b) = if kind == 0 {
+    // 2: a B-spline whose raw knots are written back after construction
+    let (bspline, a, b) = if kind == 0 || kind == 2 {
         rd.flag()?;
         let (a, b) = bspline(rd)?;
         (true, a, b)
@@ -350,7 +356,7 @@ fn validate_object_op(op: Op, rd: &mut Reader<'_>, c: &Block) -> Result<(), FfiE
                 object_block(rd)?;
             }
         }
-        Op::Copy => {
+        Op::Copy | Op::CopyCtor => {
             let owns_curve = c.owner_flag == 1 || c.owner_flag == 3;
             if !c.bspline && owns_curve {
                 return Err(bad("copy: an owned Hermite base curve cannot be copied"));
@@ -570,4 +576,37 @@ pub fn eval(op: Op, input: &[f64]) -> Result<Vec<f64>, FfiError> {
             )
         }
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A Hermite base curve block followed by `in_param copy owner has_cache`: the
+    /// copy-constructor op takes no further parameters.
+    fn hermite_civ(owner: f64) -> Vec<f64> {
+        let mut v = vec![1.0, 3.0];
+        for p in [
+            [0.0, 0.0, 0.0],
+            [1.0, 0.0, 0.0],
+            [0.5, 0.5, 0.25],
+            [0.0, 1.0, 0.5],
+        ] {
+            v.extend(p);
+        }
+        v.extend([1.0, 0.0, owner, 0.0]);
+        v
+    }
+
+    /// Upstream's Hermite `Copy` fails and the copy constructor would leave both objects
+    /// owning the same curve, so the wrapper rejects that input before the unsafe call;
+    /// the same block with the curve borrowed is valid.
+    #[test]
+    fn clone_ctor_rejects_owned_hermite() {
+        assert!(matches!(
+            validate(Op::CopyCtor, &hermite_civ(1.0)),
+            Err(FfiError::InvalidArgument(_))
+        ));
+        assert!(validate(Op::CopyCtor, &hermite_civ(0.0)).is_ok());
+    }
 }

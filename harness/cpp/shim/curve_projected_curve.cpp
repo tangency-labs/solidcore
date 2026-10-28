@@ -7,7 +7,8 @@
 // documented in crates/solidcore-ffi/src/units/curve_projected_curve.rs, which validates every
 // input. Curve ops start with a projected-curve block: a base curve block (as unit
 // curve.curve_p2: 0 = SmBSplineCurve `dim oob n p m cpts(x y z w) knots`, 1 = SmHermiteCurve
-// `dim P1 D1 P2 D2`) then `ctor has_P P[3] has_V V[3] has_A A[3] type owns`.
+// `dim P1 D1 P2 D2`, 2 = kind 0 with the given knots written back over the curve's own NURB
+// after construction) then `ctor has_P P[3] has_V V[3] has_A A[3] type owns`.
 // `out` receives the op status (0 = SM_SUCCESS, else the SmStatus value) and the outputs.
 //
 // The private members are read through the explicit-instantiation access rule (no upstream
@@ -103,6 +104,7 @@ enum : int32_t
     OP_COPY = 10,
     OP_EQUAL = 11,
     OP_ENDS = 12,
+    OP_CLONE_CTOR = 13,
     OP_READ_DB = 20,
 };
 
@@ -114,10 +116,18 @@ SmCurve* read_curve(Rd& rd, const SmContext& ctx)
 {
     int64_t kind = rd.idx();
     ULONG dim = (ULONG)rd.idx();
-    if (kind == 0)
+    if (kind == 0 || kind == 2)
     {
         bool oob = rd.flag();
         SmBSplineCurve* c = new (ctx) SmBSplineCurve(read_nurb(rd), dim, FALSE);
+        if (kind == 2)
+        {
+            // write the given knots back over the fixed-up NURB
+            gw_CURVE* own = c->GetGwNurbPointer();
+            gw_INDEX m = own->knt->m;
+            for (gw_INDEX i = 0; i <= m; i++)
+                own->knt->U[i] = rd.in[rd.at - (int64_t)(m + 1) + (int64_t)i];
+        }
         c->SetOutOfBoundsEnabled(oob ? TRUE : FALSE);
         return c;
     }
@@ -398,6 +408,57 @@ void curve_op(int32_t op, Rd& rd, const SmContext& ctx, Built& b, std::vector<do
             }
         }
         delete nc;
+        break;
+    }
+    case OP_CLONE_CTOR:
+    {
+        // the copy constructor itself (`new (ctx) SmProjectedCurve(*pc)`, as upstream's
+        // Copy allocates it), not the virtual Copy; the copy gets the context from the
+        // overloaded new, so an owned base curve's Copy has one. The copy stays alive
+        // until its own base copy is inspected and destroyed; the original and a
+        // borrowed base live past that (the caller frees them).
+        SmProjectedCurve* copied = new (ctx) SmProjectedCurve(*pc);
+        const SmCurve* base = pc->*get(PcCurve());
+        const SmCurve* copied_base = copied->*get(PcCurve());
+        if (base != NULL && copied_base == NULL)
+        {
+            // upstream ignores the base curve's Copy failure (an owned or unsure
+            // Hermite curve) and keeps a null base curve: undefined use, outside this
+            // op's defined domain (the FFI validation rejects it), so report the
+            // shim's own arg error rather than an upstream status
+            o.push_back((double)SC_ERR_ARG);
+        }
+        else
+        {
+            o.push_back(st(b.status));
+            put_state(o, copied);
+            // a borrowed base curve is shared, an owned one copied
+            o.push_back(flg(copied_base == base));
+            o.push_back(flg(*copied == *pc));
+            double t = c->GetNaturalInterval().GetMid();
+            SmPoint3d pt;
+            SmStatus s = copied->EvaluatePoint(t, pt);
+            o.push_back(st(s));
+            if (s == SM_SUCCESS)
+                put_vec(o, pt);
+            // the copy's unique knots: a borrowed copy keeps the base's raw knots (a
+            // near-coincident pair stays distinct), an owned copy's knot fix-up merges
+            // them, so this reports the geometry the copy really has
+            SmTArray<double> kn;
+            SmTArray<ULONG> mult;
+            SmStatus ks = copied->GetKnots(kn, &mult, NULL);
+            o.push_back(st(ks));
+            if (ks == SM_SUCCESS)
+            {
+                o.push_back((double)kn.GetSize());
+                for (ULONG i = 0; i < kn.GetSize(); i++)
+                    o.push_back(kn[i]);
+                o.push_back((double)mult.GetSize());
+                for (ULONG i = 0; i < mult.GetSize(); i++)
+                    o.push_back((double)mult[i]);
+            }
+        }
+        delete copied;
         break;
     }
     case OP_EQUAL:
