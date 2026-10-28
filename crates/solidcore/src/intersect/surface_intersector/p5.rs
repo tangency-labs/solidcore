@@ -50,6 +50,13 @@
 //! - **Bounded loops.** The start point loop pops one start point per pass; no pass
 //!   adds start points (`TraceCurve` adds none), so it ends after at most as many
 //!   passes as `FindBoundaryStartPoints` made points.
+//! - **Opt-in fix (WR-80, #391).** The start point loop traces a curve the other way
+//!   too after a `TraceCurve` that may return success with no points (a start point
+//!   already on a found curve) and reverses the empty curve (`SM_ERR_NULL_POINTER`).
+//!   With
+//!   [`UpstreamFixes::ssi_empty_trace_not_reversed`](crate::kernel::UpstreamFixes::ssi_empty_trace_not_reversed)
+//!   it does not (`SurfaceIntersector::trace_may_go_backwards`, part 4); off by default
+//!   (upstream behaviour).
 //! - **Not ported here.** The `SM_DEBUG_CODE` blocks (graphics, dumps, the start
 //!   point reordering experiment), `SmCacheCheckOutIn` (the caches are owned by the
 //!   caller), the unused context argument and the `SM_ASSERT`s.
@@ -691,7 +698,7 @@ impl<'t, O: SolutionObject + Copy + PartialEq + 't> AdvSurfaceIntersector<'_, 't
                         && (sp.v_param_type(srf) == ExtentPointType::Inside
                             || is_zero_to_tol(sp.uv_deriv(srf).y, EFF_ZERO))
                 };
-                if !self.base.curve_is_closed
+                if self.base.trace_may_go_backwards(k)
                     && input_trace_direction == self.base.curve_trace_direction
                     && along(SrfIndex::First)
                     && along(SrfIndex::Second)

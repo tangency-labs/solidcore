@@ -12,6 +12,7 @@
 //! | [`SurfaceIntersector::find_interior_curves`], [`SurfaceIntersector::find_interior_curves_from_node_pairs`], [`InteriorNodePair`] | `FindInteriorCurves` |
 //! | [`SurfaceIntersector::do_point_intersection`], [`PointIntersectionOptions`] | `DoPointIntersection` |
 //! | [`SurfaceIntersector::do_law_intersection`], [`LawIntersectionOptions`] | `DoLawIntersection` |
+//! | `SurfaceIntersector::trace_may_go_backwards` (crate)  | the `!m_bCurveIsClosed` test of the "trace the other way too" blocks of `FindInteriorCurves` / `DoIntersection` |
 //! | [`IntersectionCurve`]                                 | the curve, type and deviation out-params of both drivers |
 //! | [`IntersectorVirtuals`], [`do_point_intersection_with`], [`trace_curve_with`], [`do_law_intersection_with`] | the virtual calls of `DoPointIntersection` / `TraceCurve` / `DoLawIntersection` (`this->ComputePointValues(..)`, ..) on a derived intersector |
 //!
@@ -72,6 +73,13 @@
 //!   the global surface solve's leaf solve that are not ported yet (`surface.surface_p3`,
 //!   `surface.surface_p8`) return [`SolidError::Unported`], which always propagates
 //!   (also where upstream ignores the status).
+//! - **Opt-in fix (WR-80, #391).** The "trace the other way too" blocks of
+//!   `FindInteriorCurves` and `DoIntersection` follow a `TraceCurve` that returns
+//!   success with no points for a start point already on a found curve, and reverse the
+//!   empty curve (`SM_ERR_NULL_POINTER`). With
+//!   [`UpstreamFixes::ssi_empty_trace_not_reversed`](crate::kernel::UpstreamFixes::ssi_empty_trace_not_reversed)
+//!   they are skipped when no points are left (`SurfaceIntersector::trace_may_go_backwards`),
+//!   as `DoPointIntersection` does; off by default (upstream behaviour).
 //! - **Not ported here.** The `SM_DEBUG_CODE` blocks (graphics, dumps), the
 //!   `SM_ASSERT`s and the point-count warnings (`MSG`).
 
@@ -446,6 +454,17 @@ impl SurfaceIntersector<'_> {
         trace_curve_with(self, k, start, curves_3d)
     }
 
+    /// The first test of the "trace the other way too" blocks of `FindInteriorCurves` and
+    /// `DoIntersection` (`!m_bCurveIsClosed`). `TraceCurve` returns success with no points,
+    /// and without setting the closed flag, for a start point already on a found curve, and
+    /// `ReverseCurveDirection` of that empty curve is `SM_ERR_NULL_POINTER`; with
+    /// [`UpstreamFixes::ssi_empty_trace_not_reversed`](crate::kernel::UpstreamFixes::ssi_empty_trace_not_reversed)
+    /// (WR-80, #391) an empty curve is not traced backwards.
+    pub(crate) fn trace_may_go_backwards(&self, k: &Kernel) -> bool {
+        !self.curve_is_closed
+            && (!k.fixes.ssi_empty_trace_not_reversed || !self.curve_points.is_empty())
+    }
+
     // ---- interior curves ---------------------------------------------------------------
 
     /// Finds the closed intersection curves inside both domains
@@ -595,7 +614,7 @@ impl SurfaceIntersector<'_> {
 
             // an open curve from an unbounded point, not reversed by the trace: trace
             // the other way too
-            if !self.curve_is_closed
+            if self.trace_may_go_backwards(k)
                 && !self.point(start)?.is_bounded()
                 && input_trace_direction == self.curve_trace_direction
             {

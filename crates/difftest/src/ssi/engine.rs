@@ -251,7 +251,11 @@ fn rust_status(e: &SolidError) -> (i64, Option<String>) {
 
 /// The ported `Surface::global_surface_intersect` on the case, sampled like the C++ side.
 pub fn run_rust(case: &SsiCase, tol: Option<f64>) -> Result<RawOutput, EngineFailure> {
-    let k = Kernel::default();
+    let mut k = Kernel::default();
+    // opt-in `UpstreamFixes` for this run (the children inherit the variable); none by default
+    for name in super::fixes_from_env() {
+        crate::solidcraft::enable_fix(&mut k, &name).map_err(EngineFailure::Other)?;
+    }
     let [(a, da), (b, db)] = &case.surfaces;
     let mut built = Vec::new();
     for (spec, dom) in [(a, da), (b, db)] {
