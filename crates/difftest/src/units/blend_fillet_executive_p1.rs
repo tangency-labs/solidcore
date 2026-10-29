@@ -369,7 +369,8 @@ impl SolutionObject for H {
 const SELF: H = H(u32::MAX);
 const PSEUDO: H = H(u32::MAX - 1);
 const ATTRIBUTE: H = H(u32::MAX - 2);
-/// The k-th fillet edge a script made is `H(MADE - k)` (`-2 - k` in the output).
+/// The k-th object a script made (a fillet edge, call 20, or a corner, call 21) is
+/// `H(MADE - k)` (`-2 - k` in the output).
 const MADE: u32 = u32::MAX - 16;
 
 fn opt(h: u32) -> Option<H> {

@@ -9,8 +9,9 @@
 // (the guard: merging the edges at a vertex can delete a later listed edge, whose pointer
 // upstream then reads freed); `-4` when a face of a listed edge does not own its surface
 // (upstream compares surface pointers and asks the deleted surface for its face; the
-// port's faces own their surfaces); else `status editing graph...`, the B-rep's editing flag and
-// its exported graph after the call.
+// port's faces own their surfaces); `-5` when a listed edge has no vertex, or a null one, or
+// one face with a surface and one without (upstream dereferences null); else
+// `status editing graph...`, the B-rep's editing flag and its exported graph after the call.
 #include "sc_topology_fixture.h"
 #include <SmFilletExecutive.h>
 
@@ -63,6 +64,14 @@ SC_EXPORT int32_t sc_blend_fillet_executive_p1_remove_topo_edges(const char* pat
         SmEdge* e = g.edges[(size_t)edges[i]];
         SmTArray<SmVertex*> verts;
         e->GetVertices(verts);
+        bool null_vertex = verts.GetSize() == 0;
+        for (ULONG j = 0; j < verts.GetSize(); j++)
+            null_vertex = null_vertex || verts[j] == NULL;
+        if (null_vertex)
+        {
+            o.push_back(-5.0);
+            return sc_copy_out(o.data(), (int64_t)o.size(), out, cap, out_len);
+        }
         for (ULONG j = 0; j < verts.GetSize(); j++)
         {
             if (!seen.insert(verts[j]).second)
@@ -73,6 +82,11 @@ SC_EXPORT int32_t sc_blend_fillet_executive_p1_remove_topo_edges(const char* pat
         }
         SmTArray<SmFace*> faces;
         e->GetFaces(faces);
+        if (faces.GetSize() == 2 && (faces[0]->GetSurface() == NULL) != (faces[1]->GetSurface() == NULL))
+        {
+            o.push_back(-5.0);
+            return sc_copy_out(o.data(), (int64_t)o.size(), out, cap, out_len);
+        }
         for (ULONG j = 0; j < faces.GetSize(); j++)
         {
             SmSurface* s = faces[j]->GetSurface();

@@ -21,6 +21,8 @@ use crate::{HarnessError, Output, Rng};
 const SHARED_VERTEX: f64 = -3.0;
 /// The shim's guard: a face of a listed edge does not own its surface.
 const UNOWNED_SURFACE: f64 = -4.0;
+/// The shim's guard: upstream dereferences a null vertex or surface of a listed edge.
+const NULL_DEREFERENCE: f64 = -5.0;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub(super) struct TopoIn {
@@ -64,6 +66,12 @@ pub(super) fn cpp(i: &TopoIn) -> Result<Output, HarnessError> {
         return Ok(Output::rejected(
             "a face of a topo edge does not own its surface: upstream compares surface \
              pointers and asks the deleted surface for its face (FFI guard)",
+        ));
+    }
+    if status == NULL_DEREFERENCE {
+        return Ok(Output::rejected(
+            "a topo edge without a vertex, or with one face without a surface: upstream \
+             dereferences null (FFI guard)",
         ));
     }
     let (&editing, body) = rest.split_first().ok_or_else(|| err("no editing flag"))?;

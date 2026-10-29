@@ -330,7 +330,7 @@ pub fn object_eval(op: ObjectOp, input: &[f64]) -> Result<Vec<f64>, FfiError> {
 /// (`topology_topology_traverser::export`), its `edges` given as indices into the walk
 /// of that B-rep. Output: `-1` when the fixture does not build, `-3` when two listed
 /// edges share a vertex and `-4` when a face of one does not own its surface (the
-/// shim's guards), else `status editing graph...` (the
+/// shim's guards; `-5` where upstream dereferences a null vertex or surface), else `status editing graph...` (the
 /// B-rep's exported graph after the call, as the traverser exports it).
 ///
 /// # Errors

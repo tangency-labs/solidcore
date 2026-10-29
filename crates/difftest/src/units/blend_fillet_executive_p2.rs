@@ -574,7 +574,7 @@ impl ExecutiveAccess<Handle> for Access {
         r
     }
     /// The fixture's B-reps carry no edge objects, so only an empty topo-edge list
-    /// (`remove_topo_edges` over no edges, a no-op) can run.
+    /// (`remove_topo_edges` over no edges, a no-op) can run; other lists defer.
     fn remove_topo_edges(
         &mut self,
         _: &mut Kernel,
@@ -583,7 +583,10 @@ impl ExecutiveAccess<Handle> for Access {
         if executive.topo_edges.is_empty() {
             Ok(())
         } else {
-            missing()
+            Err(SolidError::unported(
+                "SmFilletExecutive::RemoveTopoEdges on fixture edge handles",
+                "harness:fixture-edge-objects",
+            ))
         }
     }
     fn orient_trimmed_surfaces(

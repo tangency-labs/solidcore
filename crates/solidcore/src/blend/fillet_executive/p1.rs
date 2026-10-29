@@ -91,13 +91,13 @@
 //! - `RemoveTopoEdges` is the free function [`remove_topo_edges`] over the target
 //!   B-rep and the topo edges (the executive holds handles; its owner resolves them and
 //!   calls it from `ExecutiveAccess::remove_topo_edges`). Faces own their surfaces, so
-//!   two faces' surfaces differ unless both are null or the faces are the same face; a
+//!   two faces' surfaces differ unless both are null (`GetFaces` lists a face once); a
 //!   face with a surface beside one without is [`SolidError::InvalidInput`] (upstream
 //!   dereferences null). The copy replacing a deleted surface keeps the identity that
 //!   surface named its face by. An edge or vertex freed by an earlier deletion is
 //!   [`SolidError::NotFound`] (upstream reads freed memory). A failed
 //!   `DeleteTopologicalVertex` is ignored as upstream does, except
-//!   [`SolidError::Unported`] and the port's own [`SolidError::InvalidInput`] /
+//!   [`SolidError::Unported`], [`SolidError::PreparationRequired`] and the port's own
 //!   [`SolidError::NotFound`]. The deletions run with local notification
 //!   environments, and the replaced surface is dropped without a destruction
 //!   notification: an owner whose attributes (the fillet-edges attribute the topo
@@ -1359,7 +1359,7 @@ pub trait SmoothSequenceAccess<O: ClassObject + SolutionObject + Ord> {
 /// # Errors
 ///
 /// The statuses of `DeleteEdge`, `DeleteVertex` and `CopyAndAddAnalytics`; the port's
-/// own errors from `DeleteTopologicalVertex`;
+/// `Unported`, `PreparationRequired` and `NotFound` from `DeleteTopologicalVertex`;
 /// [`SolidError::InvalidInput`] for a null edge or vertex, or for one face with a
 /// surface and one without, where upstream dereferences null;
 /// [`SolidError::NotFound`] for an edge or vertex an earlier deletion removed
@@ -1427,12 +1427,12 @@ pub fn remove_topo_edges(k: &mut Kernel, b: &mut Brep, edges: &[Option<EdgeId>])
                     let editing = b.editing_enabled();
                     if let Err(
                         e @ (SolidError::Unported { .. }
-                        | SolidError::InvalidInput { .. }
+                        | SolidError::PreparationRequired { .. }
                         | SolidError::NotFound { .. }),
                     ) = brep_p5::delete_topological_vertex(k, b, editing, Some(vertex), None)
                     {
-                        // the port's own failures (a dangling id, a modelled null
-                        // dereference) are not upstream statuses
+                        // gaps in the port and a dangling id are not upstream statuses
+                        // (`InvalidInput` is also `SM_ERR_INVALID_INPUT`, ignored)
                         return Err(e);
                     }
                 }
@@ -1735,6 +1735,37 @@ mod tests {
             Some(&VertexEntry::SolverEdgeuses(vec![H(20)]))
         );
         assert_eq!(info.code, 99);
+    }
+
+    #[test]
+    fn set_bevel_corner_needs_a_created_corner() {
+        use crate::blend::fillet_executive::p3::VertexEntry;
+
+        let mut executive = corner_creation_executive();
+        // no entry: NER
+        let result = executive.set_bevel_corner(Some(H(2)), |_| unreachable!());
+        assert!(matches!(
+            result,
+            Err(SolidError::Upstream { code: 1006, .. })
+        ));
+        // still the pending edge-use list: upstream would cast it to a corner
+        executive
+            .vertex_corner_map
+            .insert(Some(H(2)), VertexEntry::SolverEdgeuses(vec![H(20)]));
+        let result = executive.set_bevel_corner(Some(H(2)), |_| unreachable!());
+        assert!(matches!(result, Err(SolidError::InvalidInput { .. })));
+        // a corner: the owner sets its bevel flag
+        executive
+            .vertex_corner_map
+            .insert(Some(H(2)), VertexEntry::Corner(H(30)));
+        let mut set = None;
+        executive
+            .set_bevel_corner(Some(H(2)), |c| {
+                set = Some(c);
+                Ok(())
+            })
+            .unwrap();
+        assert_eq!(set, Some(H(30)));
     }
 
     #[test]
