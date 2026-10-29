@@ -1706,7 +1706,7 @@ struct ProjectionCurves {
 fn create_parallel_projection_curves(
     k: &Kernel,
     b: &mut Brep,
-    curve: &BSplineCurve,
+    curve: &Curve,
     direction: Vec3,
     tol: f64,
     angle_tol: Option<f64>,
@@ -2077,9 +2077,10 @@ fn remove_faces(
 /// flag is set meanwhile. The merges' and face removals' B-rep edits are notified
 /// through `notify`.
 ///
-/// Whole-face side classification preserves the projection curve's exact knot
-/// values: reference, vertex, edge-midpoint and ray-fallback queries all evaluate
-/// one shared exact wrapper, rather than a knot-tuned copy.
+/// `curve` is one of the `SmBSplineCurve` classes (upstream `const SmBSplineCurve&`,
+/// whose virtuals dispatch on the curve's class). Whole-face side classification
+/// evaluates the caller's curve itself for the reference, vertex, edge-midpoint and
+/// ray-fallback queries, not a knot-tuned copy.
 ///
 /// # Errors
 ///
@@ -2091,7 +2092,7 @@ pub fn project_and_trim(
     b: &mut Brep,
     env: &ProjectEnv<'_>,
     notify: &mut NotifyEnv<'_>,
-    curve: &BSplineCurve,
+    curve: &Curve,
     direction: Vec3,
     reference: Point3,
     trim_type: TrimType,
@@ -2129,7 +2130,7 @@ fn project_and_trim_body(
     b: &mut Brep,
     env: &ProjectEnv<'_>,
     notify: &mut NotifyEnv<'_>,
-    curve: &BSplineCurve,
+    curve: &Curve,
     direction: Vec3,
     reference: Point3,
     trim_type: TrimType,
@@ -2182,7 +2183,7 @@ fn faces_to_delete(
     k: &mut Kernel,
     b: &mut Brep,
     env: &ProjectEnv<'_>,
-    curve: &BSplineCurve,
+    curve: &Curve,
     direction: Vec3,
     reference: Point3,
     trim_type: TrimType,
@@ -2191,10 +2192,10 @@ fn faces_to_delete(
     let mut to_delete = Vec::new();
     let mut edges: Vec<EdgeId> = Vec::new();
 
-    // Native classifies against crCurveToProject itself. One exact owning wrapper
-    // adapts the BSplineCurve to the polymorphic solver without tuning its knots;
-    // every reference, vertex, midpoint and ray-fallback vote shares that wrapper.
-    let curve = &Curve::from(curve.clone_exact());
+    // Native classifies against crCurveToProject itself: every reference, vertex,
+    // midpoint and ray-fallback vote uses the caller's curve, whose class's virtuals
+    // the solver dispatches (a caller wrapping a BSplineCurve uses `clone_exact`, so
+    // its knots are not tuned).
 
     // First find which side the reference point is on.
     let delete_right_side = find_side_of_curve(k, curve, reference, direction, tol)?;
