@@ -131,9 +131,9 @@ pub fn trim_surface_with_3d_curves(
 #[derive(Debug)]
 pub enum TrimObject {
     /// A surface without owner: it becomes the one face of a new B-rep.
-    Surface(Surface),
+    Surface(Box<Surface>),
     /// A B-rep, trimmed in place.
-    Brep(Brep),
+    Brep(Box<Brep>),
 }
 
 /// `SmBrep::ProjectAndTrim(curve, direction, reference, trim_type, NULL, NULL, NULL)` on
@@ -215,13 +215,13 @@ pub fn trim_project_parallel(
             crate::topology::brep::p8::create_face_from_surface(
                 k,
                 &mut b,
-                Some(surface),
+                Some(*surface),
                 &domain,
                 &mut fenv,
             )?;
             b
         }
-        TrimObject::Brep(b) => b,
+        TrimObject::Brep(b) => *b,
     };
     project_onto(k, &mut b, curve, direction, reference, trim_type)?;
     Ok(b)

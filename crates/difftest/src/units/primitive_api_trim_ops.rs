@@ -493,8 +493,8 @@ fn rust(i: &In) -> Result<Output, HarnessError> {
         } => {
             // (the shim reads every input before the first call)
             let object = match object {
-                Obj::Surface(s) => api::TrimObject::Surface(input!(surface_of(s))),
-                Obj::Box(b) => api::TrimObject::Brep(input!(box_of(&mut k, b))),
+                Obj::Surface(s) => api::TrimObject::Surface(Box::new(input!(surface_of(s)))),
+                Obj::Box(b) => api::TrimObject::Brep(Box::new(input!(box_of(&mut k, b)))),
             };
             let c = input!(projection_curve_of(&k, curve));
             let c2 = match again {
@@ -514,7 +514,7 @@ fn rust(i: &In) -> Result<Output, HarnessError> {
                     Ok(b) => {
                         let r2 = api::trim_project_parallel(
                             &mut k,
-                            api::TrimObject::Brep(b),
+                            api::TrimObject::Brep(Box::new(b)),
                             &c2,
                             v3(&a.direction),
                             v3(&a.reference),
@@ -653,7 +653,8 @@ fn gen_planar(rng: &mut Rng) -> In {
         }),
         1 => {
             let n = 3 + rng.below(5);
-            let pts = ngon(rng, 0.0, 0.0, rng.uniform(1.0, 10.0), z, n);
+            let r = rng.uniform(1.0, 10.0);
+            let pts = ngon(rng, 0.0, 0.0, r, z, n);
             curves.extend(polygon(&pts));
         }
         2 => curves.push(if rng.chance(0.5) {
