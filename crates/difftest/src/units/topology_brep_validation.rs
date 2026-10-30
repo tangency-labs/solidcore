@@ -306,9 +306,8 @@ fn sheet_grid(k: &mut Kernel, count: usize, shared: u8) -> solidcore::Result<Bre
                 builder.end_edge()?;
                 continue;
             }
-            let (a, z) = match (p.get(kk), p.get((kk + 1) % 4)) {
-                (Some(&a), Some(&z)) => (a, z),
-                _ => return Err(solidcore::SolidError::sm_err("sheet_grid")),
+            let (Some(&a), Some(&z)) = (p.get(kk), p.get((kk + 1) % 4)) else {
+                return Err(solidcore::SolidError::sm_err("sheet_grid"));
             };
             let curve = Curve::from(Line::from_points(a, z, 3));
             let ivl = curve.natural_interval();
