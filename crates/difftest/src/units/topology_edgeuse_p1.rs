@@ -1807,8 +1807,13 @@ fn run_rust_brep(k: &Kernel, b: &mut Brep, op: &OpIn) -> Result<Output, Fail> {
             let e = eid(*eu);
             // the builders and the import name UV trim curve owners as Notify B-reps do
             // (`own_builder::notify_edgeuse_owner`), so `SetUVTrimCurve` /
-            // `SetMemberUVTrimCurve` name the new owner the same way
-            if b.naming() == NamingScheme::Unknown {
+            // `SetMemberUVTrimCurve` name the new owner the same way. The renumbered
+            // B-rep records `Arena` (`Conventions::EDGEUSE_GRAPH`), but those conventions
+            // mix identities: faces and edges own geometry under arena identities, edge
+            // uses under notification identities, and `Arena` would name a new UV trim
+            // curve by the arena edge-use identity, which `owner_index` cannot map. So
+            // this op switches any naming other than `Notify` to `Notify`.
+            if b.naming() != NamingScheme::Notify {
                 b.set_naming(NamingScheme::Notify);
             }
             let mate = match eu1::mate(b, e) {
