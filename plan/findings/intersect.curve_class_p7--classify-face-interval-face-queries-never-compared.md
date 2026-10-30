@@ -31,10 +31,17 @@ fillets end to end; whether those units' fixtures exercise these queries was not
 
 ## How it was found
 
-Wiring the read-only `SmFace::FindVertexSector` (dropped, stub kept), read-only twin
-cases with a vertex start on the real B-rep were rejected by this guard, leaving 0 cases
-(1516 cases before and after, `--filter read_only` 0, 0 breakpoint hits in the Rust
-sector search).
+Wiring the read-only `SmFace::FindVertexSector` was dropped and the stub kept. It was
+never validly tested, so this record does not say that it reaches nothing:
+- In v1 and v2, the read-only twin cases with a vertex start on the real B-rep were all
+  rejected by this guard: 0 cases (1516 before and after, `--filter read_only` 0).
+- v3 added a guard-lifting op 13. Its checks never ran on a valid build. The first used a
+  stale binary, because main's difftest did not compile. In the second, the twin probe
+  test's filter matched nothing ("ran 0 tests").
+
+So the wiring's behaviour is unknown. The coverage gain is lifting this guard for real
+B-rep faces, so that `FindVertexSector`, `EdgeCurveOnClassify` and `PointClassify` are
+compared against C++ at all. Re-wiring the read-only stub can follow once they are.
 
 ## Available follow-up
 
