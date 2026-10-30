@@ -135,15 +135,15 @@
 //!   the shell's result runs [`make_edges_on_analytics_exact`]. Upstream's
 //!   `CreateTrimmedNURBSCurve` gives `NULL` where the port returns an error; any error
 //!   but [`SolidError::Unported`] skips the edge as `NULL` does, as does a failing
-//!   `GlobalSurfaceIntersect`. `SmBrep::ReplaceCurve` is written out in place
-//!   (`brep_replace_curve`, private), with `SmEdge::ClearUVCaches`.
+//!   `GlobalSurfaceIntersect`. `SmBrep::ReplaceCurve` is
+//!   [`crate::topology::brep::p2::replace_curve`].
 //! - **Recursion.** None.
 
 use crate::blend::fillet_standard_solver::p1::CircularCrossSectionFsg;
 use crate::curve::curve::p1::GlobalPointSolveOptions;
 use crate::curve::curve::p2::{Curve, CurveKind, ELLIPSE_TYPE, LINE_TYPE};
 use crate::curve::curve::p8::CurveIntersectOptions;
-use crate::error::{EntityRef, Result, SolidError};
+use crate::error::{Result, SolidError};
 use crate::geom::assert_array::ObjectKey;
 use crate::geom::axis2_placement::Axis2Placement;
 use crate::geom::context::MarkType;
@@ -152,10 +152,8 @@ use crate::geom::extent2d::Extent2d;
 use crate::geom::geom_utility::p1::point_project_to_plane;
 use crate::geom::geom_utility::p2::{circle_plane_intersect, ContinuityType, CurveIntersection};
 use crate::geom::global_solver::{ObjectZoneTol, SolutionRequested, SolverOperation};
-use crate::geom::object::NotifyOperation;
 use crate::geom::solution_array::{SolutionArray, SolutionObject, SolutionType};
 use crate::geom::tol::{are_same, zone_tol_3d_of_curve};
-use crate::heal::gap::{EdgeEdgeGap, VertexEdgeGap};
 use crate::intersect::point_class::{ClassGeometry, ClassObject};
 use crate::kernel::Kernel;
 use crate::math::{
@@ -183,8 +181,7 @@ use crate::surface::surface_cache::face_context::FaceQueries;
 use crate::surface::surface_cache::SurfaceCache;
 use crate::topology::brep::p1 as bp1;
 use crate::topology::brep::p2 as brep_p2;
-use crate::topology::edge::{self as topo_edge, NotificationStores, NotifyState, SetCurveOptions};
-use crate::topology::edgeuse::p1 as eu1;
+use crate::topology::edge::{self as topo_edge, NotificationStores};
 use crate::topology::face::p3::create_uv_trim_curves;
 use crate::topology::proto_topology::ProtoGeometry;
 use crate::topology::{Brep, EdgeId, FaceId};
@@ -1386,7 +1383,7 @@ pub fn make_edges_on_analytics_exact(
         if !valid {
             continue;
         }
-        brep_replace_curve(k, b, e, piece, stores)?;
+        brep_p2::replace_curve(k, b, e, piece, stores)?;
         for f in [f0, f1] {
             if !changed.contains(&f) {
                 changed.push(f);
@@ -1397,56 +1394,6 @@ pub fn make_edges_on_analytics_exact(
         create_uv_trim_curves(k, b, f, true, None)?;
     }
     Ok(())
-}
-
-/// `SmBrep::ReplaceCurve(pEdge, pNewCurve)`: the B-rep's pre-edit notification,
-/// `SmEdge::Replace3DCurve` (`SetCurve(curve, TRUE)`, the curve owned by the edge and
-/// the edge's interval the curve's natural interval) and `SmEdge::RemoveUVTrimCurves`
-/// (`ClearUVCaches`: the edge's pre-edit notification, every edge use's UV trim curve
-/// deleted and its gap to the next edge use reset, every vertex use's vertex/edge gap
-/// reset).
-fn brep_replace_curve(
-    k: &mut Kernel,
-    b: &mut Brep,
-    e: EdgeId,
-    mut curve: Curve,
-    stores: &mut NotificationStores<'_>,
-) -> Result<()> {
-    let interval = curve.natural_interval();
-    NotifyState::from_kernel_stores(stores).with_kernel_env(k, |_k, env| {
-        let this = Some(brep_p2::NotifyArg::Object(brep_p2::brep_ref(b)));
-        brep_p2::notify(b, env, None, NotifyOperation::PreEdit, [this, None, None])?;
-
-        // Replace3DCurve
-        let owner = (env.key_of)(EntityRef::Edge(e));
-        let _ = curve.set_owner(Some(owner), Some(brep_p2::brep_ref(b)));
-        let options = SetCurveOptions {
-            delete_old_curve: true,
-            ..SetCurveOptions::default()
-        };
-        let _ = topo_edge::set_curve(b, e, Some(curve), options, env, [None, None])?;
-        topo_edge::set_interval(b, e, &interval)?;
-
-        // RemoveUVTrimCurves (ClearUVCaches)
-        let edge_ref = (env.key_of)(EntityRef::Edge(e));
-        let brep_ref = brep_p2::brep_ref(b);
-        topo_edge::notify(
-            b,
-            e,
-            env,
-            NotifyOperation::PreEdit,
-            [Some(edge_ref), Some(brep_ref), None],
-        )?;
-        for eu in topo_edge::edgeuses(b, e, None, None)? {
-            let _ = eu1::set_uv_trim_curve(b, eu, eu1::UvTrimCurveArg::Null, 0.0, true, None)?;
-            b.edgeuse_mut(eu)?.edge_ccw_edge_gap = EdgeEdgeGap::new();
-        }
-        for vu in topo_edge::vertexuses(b, e, None)? {
-            let vu = vu.ok_or(dangling("edge use without vertex use"))?;
-            b.vertexuse_mut(vu)?.vertex_edge_gap = VertexEdgeGap::new();
-        }
-        Ok(())
-    })
 }
 
 /// `pSur->CreateOffsetSurface(ctx, signed_distance, approx_tol_3d, rNewSurface)`: the

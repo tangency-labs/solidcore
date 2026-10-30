@@ -442,6 +442,8 @@ pub struct UpstreamFixes {
     pub boolean_new_face_closure_both_sides: bool,
     /// `SmStitch::StitchIntoSolid`, when its stitch leaves no lamina edge and more than one region, makes the B-rep a nested solid model (`FindAndSetInfiniteRegion(NULL, SM_VS_NESTEDSOLID)`, with editing disabled): material inside the outer shell, a void inside a shell within it, and so on, each region's outer shell first. Upstream's stitch only finds the infinite region (`SM_VS_INFINITEREGION_SWAP`), so the region inside a closed shell nested in another stays solid and the shells stay where the gluing put them: a holed profile swept round a closed path measures as if it had no hole, and twisted a half turn fails the check (Test #12, an inner shell not inside its region's outer shell) (WR-569; the fork's tangency-labs/smlib@351c57c).
     pub stitch_solid_nests_cavities: bool,
+    /// `SmBrep::SubdivideFaceAtDiscontinuities` cuts along every V knot: its V pass counts the V knots, where upstream counts the U knots (`SmBrep.cpp:18483`), so a face whose surface has more V knots than U knots is left uncut at the rest, and one with none in U is not cut in V at all (WR-589; the fork's tangency-labs/smlib@6eecf04).
+    pub subdivide_face_counts_v_knots: bool,
 }
 
 /// Options for [`Kernel::new`].
