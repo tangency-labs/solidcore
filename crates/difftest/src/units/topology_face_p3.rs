@@ -736,7 +736,7 @@ fn own_brep(i: &Inputs) -> Result<crate::own_builder::RustBrep<(Brep, [usize; 10
             finish(&mut k, raw, i.validate_only, i.init_gaps, conv)?
         }
         (CaseBrep::Shared(src), _) => {
-            super::topology_face_p1::own_built(src, i.validate_only, i.init_gaps)?
+            super::topology_face_p1::own_built_with(src, i.validate_only, i.init_gaps, conv)?
         }
         (CaseBrep::EdgeLoop(f), _) => {
             let raw = rust_edge_loop_face(&mut k, f);
