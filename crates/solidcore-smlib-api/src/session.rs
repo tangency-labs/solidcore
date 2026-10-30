@@ -58,6 +58,7 @@ pub struct Smlib {
     last_error: Option<SolidError>,
     failed_point: Option<usize>,
     failed_corner: Option<usize>,
+    failed_corner_point: Option<[f64; 3]>,
 }
 
 /// The kernel the C API's results come from: solidcore's default with the SolidCraft
@@ -101,6 +102,7 @@ impl Smlib {
             last_error: None,
             failed_point: None,
             failed_corner: None,
+            failed_corner_point: None,
         }
     }
 
@@ -135,6 +137,19 @@ impl Smlib {
     #[must_use]
     pub const fn last_failed_corner(&self) -> Option<usize> {
         self.failed_corner
+    }
+
+    /// The C API's `out_corner` of the last call: the point on the profile of the corner a
+    /// drafted extrusion refused (`SMLIB_ERR_CORNER_APART`, `SMLIB_ERR_WALL_CLOSES` or
+    /// `SMLIB_ERR_NOT_EXACT`); `None` otherwise.
+    #[must_use]
+    pub const fn last_failed_corner_point(&self) -> Option<[f64; 3]> {
+        self.failed_corner_point
+    }
+
+    /// Records the call's `out_corner` (from inside `run`).
+    pub(crate) fn set_failed_corner_point(&mut self, point: [f64; 3]) {
+        self.failed_corner_point = Some(point);
     }
 
     /// Records the call's `out_failed_point` (from inside `run`).
@@ -208,6 +223,7 @@ impl Smlib {
         self.last_error = None;
         self.failed_point = None;
         self.failed_corner = None;
+        self.failed_corner_point = None;
         let result = f(self).map_err(|fail| match fail {
             Fail::Status(s) => s,
             Fail::Solid(e) => {

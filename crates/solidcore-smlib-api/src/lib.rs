@@ -58,6 +58,7 @@ mod pick;
 mod primitives;
 mod session;
 mod status;
+mod sweep;
 
 pub use boolean::{
     BOOLEAN_INTERSECT, BOOLEAN_MAX_BREPS, BOOLEAN_SUBTRACT, BOOLEAN_UNION, RESULT_NONMANIFOLD,
@@ -65,3 +66,9 @@ pub use boolean::{
 pub use session::{fork_kernel, LogFn, Smlib, ABI_VERSION};
 pub use solidcore::topology::Brep;
 pub use status::{Result, Status};
+pub use sweep::{
+    CURVE_ARC, CURVE_LINE, CURVE_MAX_CURVES, CURVE_MAX_DEGREE, CURVE_MAX_POINTS, CURVE_NURBS,
+    DRAFT_CORNER_CURVATURE, DRAFT_CORNER_ROUND, DRAFT_CORNER_TANGENT, ENDS_CAPPED, ENDS_JOINED,
+    ENDS_OPEN, FLAT_MAX_LEN, SWEEP_FOLLOW, SWEEP_MAX_STATIONS, SWEEP_MAX_STATION_CURVES,
+    SWEEP_TRANSLATE,
+};
