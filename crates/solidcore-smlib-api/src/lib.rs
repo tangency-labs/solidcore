@@ -46,7 +46,8 @@
 //! - each family PR flips its functions' `plan/smlib-api/<smlib_fn>.toml` status files.
 //!
 //! Ported so far: the B-rep basics, measures and validity ([`Smlib::brep_read`] to
-//! [`Smlib::brep_check`]), the primitives and the booleans.
+//! [`Smlib::brep_check`]), the primitives, the booleans and the offsets ([`Smlib::shell`]
+//! to [`Smlib::merge_faces`]).
 
 #![forbid(unsafe_code)]
 
@@ -54,6 +55,7 @@ mod body;
 mod boolean;
 mod check;
 mod measure;
+mod offset;
 mod pick;
 mod primitives;
 mod session;
