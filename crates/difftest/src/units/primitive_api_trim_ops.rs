@@ -307,7 +307,7 @@ fn to_call(i: &In) -> Call {
 fn cpp(i: &In) -> Result<Output, HarnessError> {
     match ffi::run(&to_call(i)) {
         Ok(v) => Ok(Output::new().values("rec", v)),
-        // an input that is undefined in C++ (loops counting more curves than given)
+        // an input the ffi guard refuses
         Err(e @ FfiError::InvalidArgument(_)) => Ok(Output::rejected(format!("ffi guard: {e}"))),
         Err(e) => Err(HarnessError::new(e.to_string())),
     }
@@ -633,7 +633,7 @@ fn gen_trim3d(rng: &mut Rng) -> In {
         loops.push(1);
     }
     if rng.chance(0.1) {
-        // a loop that counts fewer curves than it was given (more is undefined upstream)
+        // a loop that counts fewer curves than it was given
         if let Some(last) = loops.last_mut().filter(|n| **n > 1) {
             *last -= 1;
         }

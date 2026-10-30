@@ -611,7 +611,7 @@
    }
   },
   {
-   "name": "trim3d_too_many_counted",
+   "name": "trim3d_count_overrun",
    "inputs": {
     "op": "trim3d",
     "surface": {

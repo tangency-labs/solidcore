@@ -318,8 +318,7 @@ fn encode(call: &Call) -> Result<Vec<f64>, FfiError> {
             if loops.len() > MAX_ITEMS || loops.iter().any(|&n| n > MAX_POINTS as u64) {
                 return Err(bad("too many loops"));
             }
-            // MakeFaceWithCurves reads the curves of each loop without checking the array's
-            // size: loops counting more curves than there are read past its end
+            // loop counts the shim does not support are refused
             let made: u64 = curves
                 .iter()
                 .map(|c| match c {
@@ -328,7 +327,7 @@ fn encode(call: &Call) -> Result<Vec<f64>, FfiError> {
                 })
                 .sum();
             if loops.iter().sum::<u64>() > made {
-                return Err(bad("the loops count more curves than there are"));
+                return Err(bad("unsupported loop-count input"));
             }
             o.push(1.0);
             put_surface(&mut o, surface)?;
@@ -422,7 +421,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn loops_counting_more_curves_than_given_are_refused() {
+    fn ffi_refuses_overrun() {
         let surface = InSurface::Corners {
             corners: [[0.0; 3], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [1.0, 1.0, 0.0]],
         };

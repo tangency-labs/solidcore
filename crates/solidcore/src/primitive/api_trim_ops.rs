@@ -22,8 +22,9 @@
 //!   none, as upstream's `rpResult` is `NULL` then. [`project_and_trim`] edits the
 //!   caller's B-rep in place, as upstream (a failure can leave it partly edited).
 //! - **Context.** `SmApiGetOrCreateContext()` is the caller's [`Kernel`]; the B-rep edits
-//!   notify through a default record per object (`ArenaNotifyState`), the B-rep's
-//!   objects named by their arena identities.
+//!   notify through a default record per object (`ArenaNotifyState`); the projection
+//!   names the B-rep's objects by the identities its geometry owners use
+//!   ([`BrepIdentity::of_brep`]).
 //! - **Projection curve.** Upstream's `SmBSplineCurve*` is a [`Curve`] of one of its
 //!   classes (B-spline, line, ellipse, hyperbola, parabola); the projection dispatches on
 //!   its class as upstream's virtuals do.
@@ -34,20 +35,20 @@
 
 use crate::curve::curve::Curve;
 use crate::error::{EntityRef, Result, SolidError};
-use crate::geom::object::ObjectRef;
 use crate::geom::tol::USE_DEFAULT;
 use crate::geom::vector3d::{Point3, Vec3};
 use crate::kernel::Kernel;
 use crate::math::EFF_ZERO;
 use crate::nurbs::b_spline_surface_n_lib::p2::OrientType;
+use crate::query::brep::BrepIdentity;
 use crate::surface::surface::Surface;
 use crate::topology::brep::p10::{ProjectAndTrimOptions, ProjectEnv, TrimType};
-use crate::topology::brep::p2::{caller_cache_key, ArenaNotifyState};
+use crate::topology::brep::p2::ArenaNotifyState;
 use crate::topology::brep::p8::FaceBuildEnv;
 use crate::topology::loopuse::notify_ref;
 use crate::topology::topology_traverser::Marks;
 use crate::topology::trimming_tools::{trim_surface_with_model_space_curves, TrimInput};
-use crate::topology::{Brep, BrepId, FaceId};
+use crate::topology::{Brep, FaceId};
 
 const OP_PROJECT_PARALLEL: &str = "primitive::api_trim_ops::trim_project_parallel";
 const OP_PROJECT_AND_TRIM: &str = "primitive::api_trim_ops::project_and_trim";
@@ -137,7 +138,9 @@ pub enum TrimObject {
 }
 
 /// `SmBrep::ProjectAndTrim(curve, direction, reference, trim_type, NULL, NULL, NULL)` on
-/// `b`, its objects named by their arena identities.
+/// `b`, its objects named by the identities its geometry owners use (its naming scheme
+/// with the proven producer owner keys it records, as [`BrepIdentity::of_brep`]: a
+/// filleted B-rep's geometry keeps the fillet's owner keys).
 fn project_onto(
     k: &mut Kernel,
     b: &mut Brep,
@@ -146,12 +149,12 @@ fn project_onto(
     reference: Point3,
     trim_type: TrimType,
 ) -> Result<()> {
-    let keys = |object| caller_cache_key(&notify_ref, object);
-    let owner_of = |_: ObjectRef| -> Option<ObjectRef> { None };
+    let proven = BrepIdentity::of_brep(b);
+    let identity = proven.identity();
     let env = ProjectEnv {
-        brep_id: BrepId::from_index(0),
-        keys: &keys,
-        owner_of: &owner_of,
+        brep_id: identity.brep_id,
+        keys: identity.keys,
+        owner_of: identity.owner_of,
     };
     let mut state = ArenaNotifyState::new(b);
     let mut notify = state.env(None);
