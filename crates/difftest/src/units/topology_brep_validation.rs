@@ -1,12 +1,12 @@
 //! Differential checks of B-rep pointer reports and coincidence pairs against the
 //! unchanged c9c5979 C++ reference. The Rust side builds a [`BrepIn`] source itself
-//! ([`crate::own_builder`]) and reads an `.smb` file with the Rust reader
-//! ([`crate::own_reader::brep_in_order`]), both under this runner's conventions. Only
-//! the `SmBrepConstructor` sheet grids (`grid_faces`, `shared_boundaries`), whose
-//! constructor is not ported, still export their topology, geometry ownership and
-//! global list order for the Rust side to import. Post-call curve samples compare the
+//! ([`crate::own_builder`]), reads an `.smb` file with the Rust reader
+//! ([`crate::own_reader::brep_in_order`]) and builds the `SmBrepConstructor` sheet
+//! grids (`grid_faces`, `shared_boundaries`) with the ported constructor
+//! ([`sheet_grid`]), all renumbered under this runner's conventions; no C++ export
+//! reaches the Rust side. Post-call curve samples compare the
 //! reversal repairs and lazily created UV curves made by the checks themselves.
-use super::topology_edgeuse_p1::{brep_block_of, import_raw_with_types, path_of, BrepIn};
+use super::topology_edgeuse_p1::{brep_block_of, path_of, BrepIn};
 use crate::{Case, HarnessError, Output, Rng, UnitDiff};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -133,28 +133,6 @@ impl Reader<'_> {
         self.pos = end;
         Ok(x)
     }
-    fn list(&mut self) -> Result<Vec<usize>, HarnessError> {
-        let n = self.count()?;
-        let values = self.slice(n)?;
-        values
-            .iter()
-            .map(|&x| {
-                if x.is_finite() && x >= 0.0 && x.fract() == 0.0 && x < usize::MAX as f64 {
-                    Ok(x as usize)
-                } else {
-                    Err(herr("bad list index"))
-                }
-            })
-            .collect()
-    }
-    fn owner(&mut self) -> Result<Option<ObjectRef>, HarnessError> {
-        let t = self.num()? as i64;
-        let i = self.num()? as i64;
-        if t < 0 {
-            return Ok(None);
-        }
-        Ok(Some(notify_key(t, i as u32)))
-    }
 }
 fn args(i: &Inputs) -> [f64; 7] {
     [
@@ -183,77 +161,6 @@ fn exported(i: &Inputs) -> Result<(String, Vec<f64>, Vec<f64>), HarnessError> {
     let export = ffi::eval(0, &path, &block, args(i)).map_err(|e| herr(e.to_string()))?;
     Ok((path, block, export))
 }
-fn imported(export: &[f64]) -> Result<Brep, HarnessError> {
-    let mut rd = Reader {
-        data: export,
-        pos: 0,
-    };
-    if rd.num()? != 0.0 {
-        return Err(herr("native fixture failed"));
-    }
-    let n = rd.count()?;
-    let graph = rd.slice(n)?;
-    let (mut b, types) = import_raw_with_types(graph)?;
-    if (0..b.edges().len()).any(|e| types.inexact_curve(e).is_some())
-        || (0..b.faces().len()).any(|f| types.inexact_surface(f).is_some())
-    {
-        return Err(herr("validation fixture needs exact geometry import"));
-    }
-    b.set_face_list(
-        rd.list()?
-            .into_iter()
-            .map(|i| FaceId::from_index(i as u32))
-            .collect(),
-    )
-    .map_err(|e| herr(e.to_string()))?;
-    b.set_edge_list(
-        rd.list()?
-            .into_iter()
-            .map(|i| EdgeId::from_index(i as u32))
-            .collect(),
-    )
-    .map_err(|e| herr(e.to_string()))?;
-    b.set_vertex_list(
-        rd.list()?
-            .into_iter()
-            .map(|i| VertexId::from_index(i as u32))
-            .collect(),
-    )
-    .map_err(|e| herr(e.to_string()))?;
-    for index in 0..b.faces().len() {
-        let f = FaceId::from_index(index as u32);
-        let fu = rd.num()? as i64;
-        b.face_mut(f).map_err(|e| herr(e.to_string()))?.faceuse =
-            u32::try_from(fu).ok().map(FaceuseId::from_index);
-        let owner = rd.owner()?;
-        if let Some(s) = b
-            .face_mut(f)
-            .map_err(|e| herr(e.to_string()))?
-            .surface
-            .as_mut()
-        {
-            s.set_owner(owner);
-        }
-        b.sync_face_surface_tolerance(f)
-            .map_err(|e| herr(e.to_string()))?;
-    }
-    for index in 0..b.edges().len() {
-        let owner = rd.owner()?;
-        if let Some(c) = b
-            .edge_mut(EdgeId::from_index(index as u32))
-            .map_err(|e| herr(e.to_string()))?
-            .curve
-            .as_mut()
-        {
-            c.set_owner(owner, None);
-        }
-    }
-    b.set_naming(NamingScheme::Notify);
-    if rd.pos != export.len() {
-        return Err(herr("trailing export metadata"));
-    }
-    Ok(b)
-}
 fn own_face_owner(f: FaceId) -> ObjectRef {
     key(EntityRef::Face(f))
 }
@@ -267,7 +174,7 @@ fn own_edge_owner(e: EdgeId) -> (ObjectRef, ObjectRef) {
     )
 }
 /// The shim's build conventions (`sc_edgeuse_graph.h`), with the geometry owned under
-/// this runner's notification identities ([`key`]), as [`imported`] names it.
+/// this runner's notification identities ([`key`]), the keys the reports name.
 const CONVENTIONS: crate::own_builder::Conventions<'static> = crate::own_builder::Conventions {
     prefix_lists: false,
     vertex_edge_gaps: false,
@@ -280,19 +187,36 @@ const CONVENTIONS: crate::own_builder::Conventions<'static> = crate::own_builder
 /// The Rust B-rep of a [`BrepIn`] source built by the Rust kernel
 /// ([`crate::own_builder`]) or, for an `.smb` file, read by the Rust reader and
 /// renumbered into the shim's traversal order ([`crate::own_reader::brep_in_order`]):
-/// native lists, face uses and geometry owners under [`CONVENTIONS`], `Notify` naming as
-/// [`imported`] sets it. A failed build is the shim's failed construction; a failed
-/// read is a Rust divergence, reported as an error. `None` for the sources still
-/// imported from the shim's export: the `SmBrepConstructor` sheet grids (`grid_faces`,
-/// `shared_boundaries`), whose constructor is not ported.
-fn own_brep(i: &Inputs) -> Result<Option<Result<Brep, Output>>, HarnessError> {
+/// native lists, face uses and geometry owners under [`CONVENTIONS`], `Notify` naming.
+/// The `SmBrepConstructor` sheet grids (`grid_faces`, `shared_boundaries`) are built by
+/// [`sheet_grid`]. A failed build is the shim's failed
+/// construction; a failed read or grid construction is a Rust divergence, reported as
+/// an error.
+fn own_brep(i: &Inputs) -> Result<Result<Brep, Output>, HarnessError> {
     use crate::own_builder::Built;
-    if i.grid_faces.is_some() || i.shared_boundaries.is_some() {
-        return Ok(None);
+    let mut k = Kernel::default();
+    // the shim's blocks 101 (two coincident faces) and 100 (`count` separate faces)
+    let grid = match (i.shared_boundaries, i.grid_faces) {
+        (Some(mode), _) => Some((2, mode)),
+        (None, Some(count)) => Some((count, 0)),
+        (None, None) => None,
+    };
+    if let Some((count, shared)) = grid {
+        let raw = sheet_grid(&mut k, count, shared);
+        return Ok(
+            match crate::own_builder::finish(&mut k, raw, false, false, &CONVENTIONS)? {
+                Built::Brep(b) => {
+                    let mut b = *b;
+                    b.set_naming(NamingScheme::Notify);
+                    Ok(b)
+                }
+                Built::Failed(e) => Err(Output::unported(&e)
+                    .unwrap_or_else(|| Output::err(format!("rust sheet grid failed: {e}")))),
+            },
+        );
     }
     let file = matches!(i.brep, BrepIn::File { .. });
-    let mut k = Kernel::default();
-    Ok(Some(
+    Ok(
         match crate::own_reader::brep_in_order(&mut k, &i.brep, false, false, &CONVENTIONS)? {
             Built::Brep(b) => {
                 let mut b = *b;
@@ -307,7 +231,100 @@ fn own_brep(i: &Inputs) -> Result<Option<Result<Brep, Output>>, HarnessError> {
                 }
             })),
         },
-    ))
+    )
+}
+/// The shim's `sheet_grid`: `count` unit-square `SmPlane` faces of one open shell, each
+/// a loop of four `SmLine` edges, built with the ported `SmBrepConstructor`. With
+/// `shared` the faces lie on each other: `1` joins the later faces to the first face's
+/// edges (`StartEdge` with the existing edge), `2` gives their new edges the first face's
+/// edge vertices.
+fn sheet_grid(k: &mut Kernel, count: usize, shared: u8) -> solidcore::Result<Brep> {
+    use solidcore::curve::curve::Curve;
+    use solidcore::curve::line::Line;
+    use solidcore::geom::extent2d::Extent2d;
+    use solidcore::geom::vector2d::{Point2, Vec2};
+    use solidcore::math::{Point3, Vec3};
+    use solidcore::nurbs::b_spline_surface_n_lib::p2::OrientType;
+    use solidcore::surface::plane::Plane;
+    use solidcore::surface::surface::Surface;
+    use solidcore::topology::brep_constructor::{BrepConstructor, VertexNode};
+    use solidcore::topology::edge;
+    let mut builder = BrepConstructor::new();
+    builder.start_brep(k, solidcore::geom::tol::USE_DEFAULT)?;
+    builder.start_shell()?;
+    let mut first_edges: [Option<EdgeId>; 4] = [None; 4];
+    for i in 0..count {
+        let x = if shared != 0 { 0.0 } else { i as f64 * 4.0 };
+        builder.start_face(OrientType::Same)?;
+        let surface = Surface::from(Plane::new(
+            Point3::new(x, 0.0, 0.0),
+            Vec3::new(1.0, 0.0, 0.0),
+            Vec3::new(0.0, 1.0, 0.0),
+            Vec2::new(1.0, 1.0),
+            &Extent2d::from_points(Point2::new(0.0, 0.0), Point2::new(1.0, 1.0)),
+        ));
+        // `GetNaturalUVDomain` (`Surface::natural_uv_domain_with_nurb`)
+        let domain = surface.natural_uv_domain_with_nurb(k)?;
+        builder.set_face_surface(surface, &domain)?;
+        builder.start_loop(OrientType::Same)?;
+        let p = [
+            Point3::new(x, 0.0, 0.0),
+            Point3::new(x + 1.0, 0.0, 0.0),
+            Point3::new(x + 1.0, 1.0, 0.0),
+            Point3::new(x, 1.0, 0.0),
+        ];
+        for j in 0..4 {
+            let kk = (j + 1) % 4;
+            let original = if i > 0 && shared != 0 {
+                first_edges.get(j).copied().flatten()
+            } else {
+                None
+            };
+            let (start, end) = match original {
+                Some(o) if shared == 2 => {
+                    let b = builder
+                        .brep()
+                        .ok_or(solidcore::SolidError::sm_err("sheet_grid"))?;
+                    let v = edge::vertex(b, o)?;
+                    (v, edge::other_vertex(b, o, v)?)
+                }
+                _ => (None, None),
+            };
+            let new_edge = builder.start_edge(
+                k,
+                OrientType::Same,
+                if shared == 1 { original } else { None },
+                start,
+                end,
+            )?;
+            if i == 0 {
+                if let Some(slot) = first_edges.get_mut(j) {
+                    *slot = Some(new_edge);
+                }
+            }
+            if original.is_some() && shared == 1 {
+                builder.end_edge()?;
+                continue;
+            }
+            let (a, z) = match (p.get(kk), p.get((kk + 1) % 4)) {
+                (Some(&a), Some(&z)) => (a, z),
+                _ => return Err(solidcore::SolidError::sm_err("sheet_grid")),
+            };
+            let curve = Curve::from(Line::from_points(a, z, 3));
+            let ivl = curve.natural_interval();
+            builder.set_edge_curve(k, Some(curve), false)?;
+            builder.set_limits(
+                k,
+                &VertexNode::from_parameter(ivl.min()),
+                &VertexNode::from_parameter(ivl.max()),
+            )?;
+            builder.end_edge()?;
+        }
+        builder.end_loop(k)?;
+        builder.end_face()?;
+    }
+    builder.end_shell(k, false)?;
+    builder.end_brep()
 }
 fn orient(v: f64) -> solidcore::nurbs::b_spline_surface_n_lib::p2::OrientType {
     use solidcore::nurbs::b_spline_surface_n_lib::p2::OrientType;
@@ -536,15 +553,8 @@ impl UnitDiff for Runner {
     fn run_rust(&self, case: &Case) -> Result<Output, HarnessError> {
         let i: Inputs = case.parse()?;
         let mut b = match own_brep(&i)? {
-            Some(Ok(b)) => b,
-            Some(Err(o)) => return Ok(o),
-            None => {
-                let (_, _, export) = exported(&i)?;
-                if export.first() != Some(&0.0) {
-                    return Ok(Output::rejected("native fixture construction failed"));
-                }
-                imported(&export)?
-            }
+            Ok(b) => b,
+            Err(o) => return Ok(o),
         };
         mutate(&mut b, &i)?;
         let kernel = Kernel::default();
