@@ -698,15 +698,40 @@ macro_rules! status {
     };
 }
 
+fn own_face_owner(f: FaceId) -> ObjectRef {
+    key_of(EntityRef::Face(f))
+}
+
+fn own_edge_owner(e: solidcore::topology::EdgeId) -> (ObjectRef, ObjectRef) {
+    (
+        key_of(EntityRef::Edge(e)),
+        key_of(EntityRef::Brep(solidcore::topology::BrepId::from_index(0))),
+    )
+}
+
+fn own_edgeuse_owner(eu: solidcore::topology::EdgeuseId) -> ObjectRef {
+    key_of(EntityRef::Edgeuse(eu))
+}
+
+/// The shim's build conventions (`sc_topology_fixture.h`), with the geometry the build
+/// owns named by this runner's [`key_of`] identities: the names its notification
+/// environment gives the library (upstream compares owner pointers).
+const CONVENTIONS: crate::own_builder::Conventions<'static> = crate::own_builder::Conventions {
+    face_owner: &own_face_owner,
+    edge_owner: &own_edge_owner,
+    edgeuse_owner: &own_edgeuse_owner,
+    ..crate::own_builder::Conventions::TOPOLOGY_FIXTURE
+};
+
 /// The Rust B-rep of the case and its entity counts, built by the Rust kernel as the
 /// shim (`sc_topology_fixture.h`'s `build`) builds it, or the output of a failed build:
 /// the shared kinds by [`super::topology_face_p1::own_brep`], a face with an inner vertex
 /// loop (block kind 4) and the several-face B-rep (block kind 10) here. No C++ state
 /// reaches it.
 fn own_brep(i: &Inputs) -> Result<crate::own_builder::RustBrep<(Brep, [usize; 10])>, HarnessError> {
-    use crate::own_builder::{build_status, counts, finish, in_new_brep, Built as Own, Conventions};
+    use crate::own_builder::{build_status, counts, finish, in_new_brep, Built as Own};
     let mut k = Kernel::default();
-    let conv = &Conventions::TOPOLOGY_FIXTURE;
+    let conv = &CONVENTIONS;
     let built = match (&i.brep, i.vertex_loop) {
         (CaseBrep::Shared(BrepIn::Face { surface, dom }), Some([fu, fv])) => {
             let s = surface_of(surface)?;
