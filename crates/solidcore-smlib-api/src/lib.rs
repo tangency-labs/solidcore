@@ -46,22 +46,42 @@
 //! - each family PR flips its functions' `plan/smlib-api/<smlib_fn>.toml` status files.
 //!
 //! Ported so far: the B-rep basics, measures and validity ([`Smlib::brep_read`] to
-//! [`Smlib::brep_check`]), the primitives and the booleans.
+//! [`Smlib::brep_check`]), the primitives, the booleans; of the surface tools (F5)
+//! surface/surface intersection ([`Smlib::ssi`]), imprint, split and stitch
+//! ([`Smlib::imprint`], [`Smlib::split_faces`], [`Smlib::split_body`], [`Smlib::stitch`]),
+//! extend sheet ([`Smlib::extend_sheet`]), untrim face and face section
+//! ([`Smlib::untrim_face`], [`Smlib::face_section`]).
 
 #![forbid(unsafe_code)]
 
 mod body;
 mod boolean;
 mod check;
+mod extend;
+mod imprint;
 mod measure;
 mod pick;
 mod primitives;
+mod section;
 mod session;
+mod split;
+mod ssi;
 mod status;
+mod stitch;
+mod untrim;
 
 pub use boolean::{
     BOOLEAN_INTERSECT, BOOLEAN_MAX_BREPS, BOOLEAN_SUBTRACT, BOOLEAN_UNION, RESULT_NONMANIFOLD,
 };
+pub use extend::{EXTEND_CURVATURE, EXTEND_NATURAL, EXTEND_TANGENT};
+pub use section::Curves;
 pub use session::{fork_kernel, LogFn, Smlib, ABI_VERSION};
 pub use solidcore::topology::Brep;
+pub use split::{SPLIT_MAX_FACES, SPLIT_MAX_TOOLS};
+pub use ssi::{
+    SsiCurveInfo, SsiNurbs, SsiPoint, SsiResult, Surface, SSI_ADVANCED, SSI_BASIC, SSI_COINCIDENT,
+    SSI_CROSSING, SSI_CURVE_3D, SSI_CURVE_UV_A, SSI_CURVE_UV_B, SSI_GLOBAL, SSI_HAS_UV_A,
+    SSI_HAS_UV_B, SSI_NEAR_TANGENT, SSI_NONE, SSI_REGION_BOUNDARY, SSI_TANGENT, SSI_TOUCHING,
+    SSI_UNKNOWN, SURFACE_MAX_COORD, SURFACE_MAX_DEGREE, SURFACE_MAX_POLES,
+};
 pub use status::{Result, Status};
