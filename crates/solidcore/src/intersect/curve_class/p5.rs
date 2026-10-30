@@ -973,13 +973,11 @@ impl<O: ClassObject> CurveClassification<O> {
                         let s = h.and_then(|h| geometry.surface(h)).ok_or(
                             SolidError::invalid_input(OP, "unresolved classification surface"),
                         )?;
-                        // (upstream works on the surfaces themselves: exact copies,
-                        // without the copy constructor's knot fix-up)
-                        let mut c = s.clone_for_evaluation()?;
-                        if core::ptr::eq(s, face_surface) {
-                            c.set_owner(None);
-                        }
-                        Ok(c)
+                        Ok(if core::ptr::eq(s, face_surface) {
+                            s.clone()
+                        } else {
+                            s.clone_keeping_owner()
+                        })
                     };
                 (resolve(self.surface1())?, resolve(self.surface2())?)
             };
@@ -1167,8 +1165,11 @@ impl<O: ClassObject> CurveClassification<O> {
                     // UNPORTED(boolean.topology_intersector_p1): SmTopologyIntersector::GetOtherMate
                     // (an adapter that cannot reach the intersector behind its handle)
                     // Proof (unreachable): only if topology_intersector() is Some and the
-                    // adapter returns no mate; the library ClassGeometry impls resolve it;
-                    // 0 hits in the green difftest sweep.
+                    // adapter returns no mate (the boolean `ArenaPair` and fillet
+                    // `InsertionGeometry` do); pinned C++ reaches this site only through
+                    // the p5 runner's own topology harness, whose adapter answers the mate
+                    // (plan/findings/
+                    // intersect.curve_class_p1--getothermate-curve-class-path-unreached.md).
                     SolidError::unported(
                         "SmTopologyIntersector::GetOtherMate",
                         "boolean.topology_intersector_p1",
