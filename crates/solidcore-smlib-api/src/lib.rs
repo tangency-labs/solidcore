@@ -50,6 +50,7 @@
 
 #![forbid(unsafe_code)]
 
+mod blend;
 mod body;
 mod boolean;
 mod check;
@@ -59,6 +60,7 @@ mod primitives;
 mod session;
 mod status;
 
+pub use blend::{BLEND_CHAMFER, BLEND_CHORD, BLEND_CURVATURE, BLEND_ROUND};
 pub use boolean::{
     BOOLEAN_INTERSECT, BOOLEAN_MAX_BREPS, BOOLEAN_SUBTRACT, BOOLEAN_UNION, RESULT_NONMANIFOLD,
 };
