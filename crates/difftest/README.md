@@ -805,7 +805,8 @@ nice -n 10 cargo run -p difftest -- --solidcraft-cases '3526-*'        # ids (<f
   An empty or whitespace-only `error` never matches: the step failure stays an `ERROR`.
 * **Expectations** (`expect`): `lumps` (bounded regions; `0` = nothing left; a sealed
   void is a region of its own), `volume` (`value`, absolute `tol`, the `formula` it came
-  from), `removed` (the same with the earlier body `from`: its volume minus `result`'s,
+  from), `faces` (exact face count of `result`, counted from the analytic shape; default
+  off), `removed` (the same with the earlier body `from`: its volume minus `result`'s,
   for a result without a closed-form volume of its own), `cylinder_faces_max`,
   `sheet_corner` (signed end distances and flat-pattern invariants), `manifold`
   (`result` must, or must not, be a closed manifold solid, `SmBrep::IsManifoldSolid`, so a
