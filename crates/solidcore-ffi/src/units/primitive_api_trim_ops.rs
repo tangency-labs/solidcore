@@ -318,6 +318,18 @@ fn encode(call: &Call) -> Result<Vec<f64>, FfiError> {
             if loops.len() > MAX_ITEMS || loops.iter().any(|&n| n > MAX_POINTS as u64) {
                 return Err(bad("too many loops"));
             }
+            // MakeFaceWithCurves reads the curves of each loop without checking the array's
+            // size: loops counting more curves than there are read past its end
+            let made: u64 = curves
+                .iter()
+                .map(|c| match c {
+                    InCurve::Rectangle { .. } => 4,
+                    _ => 1,
+                })
+                .sum();
+            if loops.iter().sum::<u64>() > made {
+                return Err(bad("the loops count more curves than there are"));
+            }
             o.push(1.0);
             put_surface(&mut o, surface)?;
             o.push(loops.len() as f64);
@@ -408,6 +420,26 @@ pub fn run(call: &Call) -> Result<Vec<f64>, FfiError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn loops_counting_more_curves_than_given_are_refused() {
+        let surface = InSurface::Corners {
+            corners: [[0.0; 3], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [1.0, 1.0, 0.0]],
+        };
+        let rectangle = InCurve::Rectangle {
+            center: [0.5, 0.5, 0.0],
+            length: 0.5,
+            width: 0.5,
+        };
+        let call = |loops: Vec<u64>| Call::Trim3d {
+            surface: surface.clone(),
+            loops,
+            curves: vec![rectangle.clone()],
+        };
+        assert!(encode(&call(vec![4])).is_ok());
+        assert!(encode(&call(vec![3])).is_ok());
+        assert!(encode(&call(vec![4, 1])).is_err());
+    }
 
     #[test]
     fn a_rectangle_is_not_a_projection_curve() {

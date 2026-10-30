@@ -30,6 +30,7 @@ use solidcore::topology::brep::p1;
 use solidcore::topology::brep::p10::TrimType;
 use solidcore::topology::Brep;
 use solidcore::SolidError;
+use solidcore_ffi::FfiError;
 use solidcore_ffi::units::primitive_api_trim_ops::{
     self as ffi, Call, InBox, InCurve, InObject, InSurface, Reproject,
 };
@@ -306,6 +307,8 @@ fn to_call(i: &In) -> Call {
 fn cpp(i: &In) -> Result<Output, HarnessError> {
     match ffi::run(&to_call(i)) {
         Ok(v) => Ok(Output::new().values("rec", v)),
+        // an input that is undefined in C++ (loops counting more curves than given)
+        Err(e @ FfiError::InvalidArgument(_)) => Ok(Output::rejected(format!("ffi guard: {e}"))),
         Err(e) => Err(HarnessError::new(e.to_string())),
     }
 }
@@ -630,9 +633,9 @@ fn gen_trim3d(rng: &mut Rng) -> In {
         loops.push(1);
     }
     if rng.chance(0.1) {
-        // a count that does not match the curves
-        if let Some(last) = loops.last_mut() {
-            *last += 1;
+        // a loop that counts fewer curves than it was given (more is undefined upstream)
+        if let Some(last) = loops.last_mut().filter(|n| **n > 1) {
+            *last -= 1;
         }
     }
     In::Trim3d {
