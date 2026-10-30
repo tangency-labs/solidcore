@@ -1840,7 +1840,7 @@ impl Surface {
         // (the analytic classes' own NURB, swept exactly with no knot fix-up; when it is
         // missing, their virtual MakeNurb makes it on a copy)
         let mut sweep_curve: BSplineCurve = match curve.kind() {
-            CurveKind::BSpline(c) => c.clone(),
+            CurveKind::BSpline(c) => c.clone_exact(),
             CurveKind::Line(c) => c.base_with_nurb()?.clone_exact(),
             CurveKind::Ellipse(c) if c.base().gw_nurb().is_some() => c.base().clone_exact(),
             CurveKind::Ellipse(c) => {

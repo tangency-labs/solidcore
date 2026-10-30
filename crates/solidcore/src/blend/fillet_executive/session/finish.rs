@@ -29,6 +29,7 @@ use super::{invalid, FilletBody, FilletObject, FilletSession, SessionObjects};
 use crate::blend::fillet_executive::p3::{
     ErrorInfo, FilletExecutive, FilletFinishAccess, StitchAttempt, StitchSettings,
 };
+use crate::blend::fillet_geom::p1::FilletErrorType;
 use crate::error::{EntityRef, Result, SolidError};
 use crate::geom::object::NotifyOperation;
 use crate::kernel::Kernel;
@@ -408,6 +409,9 @@ impl FilletSession<'_> {
     ///
     /// # Errors
     /// The first stage error, with the executive's error info recorded as upstream.
+    /// With `fixes.fillet_vertex_error_diagnostics`, a missing-corner note from the
+    /// corner stage is kept in [`FilletSession::error_info`] across the later failure;
+    /// the returned error is still the later stage's own status.
     pub fn do_fillet(&mut self, k: &mut Kernel) -> Result<()> {
         if !self.executive.initialized {
             // The generic NoteError overload changes exactly these two members.
@@ -416,7 +420,19 @@ impl FilletSession<'_> {
             return Err(invalid("fillet parameters not set up"));
         }
         self.create_corners(k, None)?;
-        self.do_filleting(k, None)?;
+        // The opt-in missing-corner note is the reason the later stage fails; keep it
+        // through that later error so `error_info()` reports the unsupported vertex,
+        // while the returned failure stays the later stage's own status.
+        let missing_corner_note = (k.fixes.fillet_vertex_error_diagnostics
+            && self.executive.error.code == FilletErrorType::CornerUnsupported as i32)
+            .then(|| self.executive.error.clone());
+        let result = self.do_filleting(k, None);
+        if result.is_err() {
+            if let Some(note) = missing_corner_note {
+                self.executive.error = note;
+            }
+        }
+        result?;
         if !k.fixes.fillet_refuse_non_manifold_result {
             return Ok(());
         }
@@ -489,6 +505,9 @@ impl FilletSession<'_> {
                 session.refuse_crossing_rails(k)?;
             }
             session.shrink_fillet_faces(k)?;
+            // The fork's SetMarkCornerPatches (60af574): mark the set-back corners'
+            // patch faces, which the merge copies into the target with their marks.
+            session.mark_corner_patches()?;
             let editing = session.objects.target.editing_enabled();
             session.objects.target.set_editing_enabled(true);
             let result = session.merge_fillet(k);

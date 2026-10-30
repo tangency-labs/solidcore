@@ -7,6 +7,7 @@
 //! |------|----------|
 //! | [`FilletExecutive::do_fillet`] | `SmFilletExecutive::DoFillet` |
 //! | [`FilletExecutive::create_fillet_brep`] | `SmFilletExecutive::CreateFilletBrep` |
+//! | [`FilletExecutive::preview_fillet_geometry`] | `SmFilletExecutive::GetPreviewFilletSurfaces` after its `CreateFilletCorners` |
 //! | [`FilletExecutive::do_filleting`] | `SmFilletExecutive::DoFilleting` |
 //! | [`FilletExecutive`], [`ErrorInfo`] | executive/error-info member data (co-ported from p1) |
 //! | [`ExecutiveAccess`] | borrowed access to dependency-owned objects |
@@ -493,6 +494,14 @@ pub struct FilletExecutive<O> {
     pub edgeuse_solver_map: BTreeMap<O, O>,
     /// `m_pSelfIntersectionHandler` (added by `blend.fillet_executive_p1`).
     pub self_intersection_handler: Option<O>,
+    /// `m_bBlendCurveAtThirds` (the fork's, tangency-labs/smlib `fd3b6a7`; `FALSE` from
+    /// the constructor): `SetFilletParameters` builds its blend-curve generators with
+    /// their sections at thirds of the way to the corner.
+    pub blend_curve_at_thirds: bool,
+    /// `m_bMarkCornerPatches` (the fork's, tangency-labs/smlib `60af574`; `FALSE` from
+    /// the constructor): `DoFilleting` tags each face of a set-back corner's patch with
+    /// an `SM_AI_FILLET_CORNER_FACE` mark naming the corner before the merge.
+    pub mark_corner_patches: bool,
 }
 
 /// Error-only corner metadata, requested only after a corner operation fails.
@@ -2343,6 +2352,55 @@ impl<O: ClassObject + SolutionObject + Ord> FilletExecutive<O> {
                 );
             }
             index += 1;
+        }
+        Ok(())
+    }
+
+    /// `GetPreviewFilletSurfaces` after its `CreateFilletCorners` (which the caller runs,
+    /// as [`Self::do_fillet`]'s): every corner's topology and vertex geometry (without
+    /// `CreateFilletBrep`'s smooth sequences and constant-radius choice), the corner
+    /// topology adjustments, every solver's untrimmed geometry and the trim of its rails.
+    /// The preview surfaces are then those of each retained solver's fillet geometries in
+    /// order (`GetFilletGeoms`), which the caller reads.
+    ///
+    /// # Errors
+    /// `SM_ERR_NULL_POINTER` without a target; the stage failures of
+    /// [`Self::create_fillet_brep`], with the same error info; `SM_ERR` without solvers.
+    pub fn preview_fillet_geometry<A>(&mut self, k: &mut Kernel, access: &mut A) -> Result<()>
+    where
+        A: CornerAdjustmentAccess<O> + RailTrimAccess<O>,
+    {
+        // NER: upstream returns SM_ERR_NULL_POINTER, not invalid input.
+        self.target.ok_or(SolidError::Upstream {
+            operation: OP,
+            code: 1006,
+            entity: None,
+        })?;
+        // Process corners by calculating the vertices first.
+        let mut index = 0;
+        while let Some(corner) = self.corners.get(index).copied() {
+            if ignore(access.vertices_make_topology(k, corner, self))?.is_none() {
+                return self.corner_vertex_failure(
+                    access,
+                    corner,
+                    "Fillet Corner Error: Unable to Make Topology",
+                );
+            }
+            if ignore(access.vertices_calculate(k, corner, self))?.is_none() {
+                return self.corner_vertex_failure(
+                    access,
+                    corner,
+                    "Fillet Corner Error: Unable to Compute Geometry",
+                );
+            }
+            index += 1;
+        }
+        self.adjust_corner_topology(k, access)?;
+        self.calculate_solver_geometry(k, access)?;
+        // bTrimRails: always
+        self.trim_solver_rails(k, access)?;
+        if self.solvers.is_empty() {
+            return Err(SolidError::sm_err(OP));
         }
         Ok(())
     }

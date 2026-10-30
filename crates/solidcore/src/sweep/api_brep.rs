@@ -1,6 +1,7 @@
 //! High-level B-rep sweeps (`SM_API`): linear, rotational, draft (taper), pipe and
-//! curve sweeps of profile curves, faces or edges into solids, and sweeps along a
-//! planar path.
+//! curve sweeps of profile curves, faces or edges into solids, sweeps along a planar
+//! path, and non-manifold translational and rotational sweeps of a B-rep's own faces,
+//! edges and vertices.
 //!
 //! Upstream: `source/SM_API/src/SmApiBrep.cpp`, `source/SM_API/inc/SmApiBrep.h`.
 //!
@@ -13,11 +14,16 @@
 //! | [`create_pipe_sweep`]                        | `SmApiCreatePipeSweep`                         |
 //! | [`create_sweep_along_planar_path`]           | `SmApiCreateSweepAlongPlanarPath`              |
 //! | [`create_curve_sweep`], [`CurveSweep`]       | `SmApiCreateCurveSweep`                        |
+//! | [`create_curve_sweep_with_placements`], [`PlacedCurveSweep`] | `SmApiCreateCurveSweep` with the SolidCraft fork's `pOptPlacements` |
 //! | [`create_curve_sweep_from_faces`]            | `SmApiCreateCurveSweepFromFaces`               |
 //! | [`create_curve_sweep_from_edges`]            | `SmApiCreateCurveSweepFromEdges`               |
 //! | [`create_taper_extrude`]                     | `SmApiCreateTaperExtrude`                      |
+//! | [`create_taper_extrude_with_corner`], [`TaperExtrude`] | `SmApiCreateTaperExtrude` (fork: `eCorner`, `pOptRefusal`, `pOptRefusedCorner`) |
 //! | [`create_linear_sweep_with_repetitions`]     | `SmApiCreateLinearSweepWithRepetitions`        |
 //! | [`create_rotational_sweep_with_repetitions`] | `SmApiCreateRotationalSweepWithRepetitions`    |
+//! | `selection_is_owned_by` (private)            | `smApiSweepSelectionIsOwnedBy` (static template) |
+//! | [`non_manifold_sweep`], [`SweepSelection`], [`RegionBrep`] | `SmApiNonManifoldSweep`          |
+//! | [`non_manifold_rotational_sweep`]            | `SmApiNonManifoldRotationalSweep`              |
 //!
 //! Deviations:
 //! - **Out-params.** The created B-rep (and, for the curve sweeps, its start, side and
@@ -44,15 +50,31 @@
 //! - **Statuses.** `SM_ERR_INVALID_INPUT` is [`SolidError::InvalidInput`]; errors of
 //!   the curve copies pass through unchanged (`SM_ERR` for a curve kind without
 //!   `Copy`, e.g. a Hermite curve).
+//! - **Non-manifold sweeps.** [`non_manifold_sweep`] and
+//!   [`non_manifold_rotational_sweep`] sweep the caller's B-rep in place
+//!   (`pBrepToSweep`) through a [`PrimitiveModel`] over it, into its infinite region.
+//!   `pRegionBrep` is `region`: `None` is `NULL`, [`RegionBrep::Swept`] is
+//!   `pBrepToSweep` itself (`&mut` and `&` borrows of one B-rep cannot coexist) and
+//!   [`RegionBrep::Other`] another B-rep, which is `SM_ERR_INVALID_INPUT`
+//!   (`source/SM_API/src/SmApiBrep.cpp:1822`, `:1881`). The
+//!   selections are ids into it ([`SweepSelection`]); a `None` entry is a `NULL`
+//!   handle, and every entry must be live topology of the B-rep. On an error after
+//!   validation the B-rep keeps the sweep's partial edits, as upstream.
 //! - Every entry point validates and copies its inputs as upstream, then runs the
 //!   `SmPrimitiveCreation` method it wraps on a new B-rep through a
 //!   [`PrimitiveModel`]. Path and scale curves become their `SmBSplineCurve` part.
 //!   The faces and edges of the curve sweeps are `(&Brep, id)` pairs: upstream
 //!   objects reach their own B-rep.
+//! - **SolidCraft fork (tangency-labs/smlib 5d3939e, WR-523, #1450).** The fork's
+//!   optional `pOptPlacements` output of `SmApiCreateCurveSweep` is the sibling
+//!   [`create_curve_sweep_with_placements`], so [`create_curve_sweep`] keeps its
+//!   signature and does no extra work; the fork's `bProfileAtPathStart` is
+//!   [`SweepOptions::profile_at_path_start`] (WR-522), off by default.
 
 use crate::curve::curve::p2::CurveKind;
 use crate::curve::curve::Curve;
-use crate::error::{Result, SolidError};
+use crate::error::{EntityRef, Result, SolidError};
+use crate::geom::axis2_placement::Axis2Placement;
 use crate::geom::tol::ZONE_TOL_3D;
 use crate::geom::vector3d::{Point3, Vec3};
 use crate::kernel::Kernel;
@@ -61,7 +83,13 @@ use crate::primitive::primitive_creation::model::PrimitiveModel;
 use crate::primitive::primitive_creation::p1::PrimitiveCreation;
 use crate::primitive::primitive_creation::p3::RepeatedSweepOptions;
 use crate::primitive::primitive_creation::SweepOptions;
-use crate::topology::{Brep, EdgeId, FaceId};
+use crate::sweep::rotational_sweep_geometry::RotationalSweepGeometry;
+use crate::sweep::topology_sweep::engine::SweepTargets;
+use crate::sweep::topology_sweep::geometry::SweepGeometry;
+use crate::sweep::topology_sweep::{TopologySweep, TopologySweepOptions};
+use crate::sweep::trans_sweep_geometry::TranslationalSweepGeometry;
+use crate::topology::brep::p1::is_live_topology_member;
+use crate::topology::{Brep, EdgeId, FaceId, VertexId};
 
 const OP_COPY: &str = "sweep::api_brep::copy_curves_for_consuming_sweep";
 const OP_PIPE: &str = "sweep::api_brep::create_pipe_sweep";
@@ -73,10 +101,27 @@ const OP_FROM_EDGES: &str = "sweep::api_brep::create_curve_sweep_from_edges";
 const OP_TAPER: &str = "sweep::api_brep::create_taper_extrude";
 const OP_LINEAR_REPS: &str = "sweep::api_brep::create_linear_sweep_with_repetitions";
 const OP_ROTATIONAL_REPS: &str = "sweep::api_brep::create_rotational_sweep_with_repetitions";
+const OP_NON_MANIFOLD: &str = "sweep::api_brep::non_manifold_sweep";
 
 /// How the gaps between offset profile curves are filled by a draft sweep or taper
 /// extrusion (`SmOffsetCornerType`).
 pub use crate::curve::composite_curve::OffsetCornerType;
+
+/// Why a draft corner was refused, and where (`SmTaperCornerRefusal`,
+/// `pOptRefusedCorner`; SolidCraft change).
+pub use crate::primitive::primitive_creation::p2::{CornerRefusal, TaperCornerRefusal};
+
+/// The result of [`create_taper_extrude_with_corner`]: the solid, or the corner the
+/// draft could not close (the fork's `SM_ERR_INVALID_INPUT` with `pOptRefusal` set;
+/// no B-rep is returned then).
+#[derive(Debug)]
+#[allow(clippy::large_enum_variant)] // returned once, by value, like the `Brep` of `create_taper_extrude`
+pub enum TaperExtrude {
+    /// `rpResult`: the drafted solid.
+    Solid(Brep),
+    /// `pOptRefusal` and `pOptRefusedCorner`: the refused corner.
+    Refused(CornerRefusal),
+}
 
 /// A swept solid and its faces (the outputs of the curve sweeps).
 #[derive(Debug, Clone, Default)]
@@ -89,6 +134,17 @@ pub struct CurveSweep {
     pub side_faces: Vec<FaceId>,
     /// `pOptEndFaces`: the end cap faces.
     pub end_faces: Vec<FaceId>,
+}
+
+/// A curve sweep and where it placed the profile (the outputs of
+/// [`create_curve_sweep_with_placements`]; the SolidCraft fork's `pOptPlacements`).
+#[derive(Debug, Clone)]
+pub struct PlacedCurveSweep {
+    /// The swept solid and its faces, as [`create_curve_sweep`] returns them.
+    pub sweep: CurveSweep,
+    /// `pOptPlacements`: the rigid motions carrying the profile curves as given onto
+    /// the sweep's first, middle and last sections.
+    pub placements: [Axis2Placement; 3],
 }
 
 /// Deep-copies the caller's profile curves for the consuming `SmPrimitiveCreation`
@@ -372,6 +428,60 @@ pub fn create_curve_sweep(
     })
 }
 
+/// [`create_curve_sweep`] that also says where it placed the profile
+/// (`SmApiCreateCurveSweep` with the SolidCraft fork's `pOptPlacements`,
+/// tangency-labs/smlib 5d3939e, WR-523, #1450): the rigid motions carrying the profile
+/// curves as given onto the first, middle and last sections the sweep placed. Each
+/// placement maps the global system onto the motion's image (`transform_point` of a
+/// profile point is that point on the section). The solid and faces are the same as
+/// [`create_curve_sweep`]'s.
+///
+/// # Errors
+///
+/// Those of [`create_curve_sweep`]; `InvalidInput` with a scale curve (a scaled
+/// sweep's sections are no rigid images of the profile).
+pub fn create_curve_sweep_with_placements(
+    k: &mut Kernel,
+    profile_curves: &[Option<&Curve>],
+    path_curve: Option<&Curve>,
+    scale_reference: Option<&Curve>,
+    scale_curve: Option<&Curve>,
+    options: Option<&SweepOptions>,
+) -> Result<PlacedCurveSweep> {
+    let Some(path_curve) = path_curve.filter(|_| !profile_curves.is_empty()) else {
+        return Err(SolidError::invalid_input(
+            OP_CURVE_SWEEP,
+            "no profile curves or no path curve",
+        ));
+    };
+
+    let options = options.copied().unwrap_or_default();
+
+    let approx_tol = ZONE_TOL_3D;
+    let path = bspline_of(path_curve, OP_CURVE_SWEEP)?;
+    let scale = scale_curve
+        .map(|c| bspline_of(c, OP_CURVE_SWEEP))
+        .transpose()?;
+    let profiles: Vec<Option<Curve>> = profile_curves.iter().map(|c| c.cloned()).collect();
+    let (sweep, placements) = curve_sweep_with(k, |pc, model, faces| {
+        pc.create_curve_sweep_with_placements(
+            model,
+            PrimitiveModel::MAIN,
+            &profiles,
+            &path,
+            scale_reference,
+            scale.as_ref(),
+            approx_tol,
+            options,
+            true,
+            &mut faces.0,
+            &mut faces.1,
+            &mut faces.2,
+        )
+    })?;
+    Ok(PlacedCurveSweep { sweep, placements })
+}
+
 /// The solid swept by the boundaries of `faces` (each with its B-rep) along
 /// `path_curve` (`SmApiCreateCurveSweepFromFaces`), scaled and optioned as
 /// [`create_curve_sweep`]. The faces and their curves are not changed.
@@ -477,9 +587,10 @@ pub fn create_curve_sweep_from_edges(
 ///
 /// # Errors
 ///
-/// `InvalidInput` for no curves or a `None` curve; the error of a failing curve
-/// copy; [`SolidError::Unported`] otherwise
-/// (`SmBrep::SmBrep`, until the B-rep constructor is ported).
+/// `InvalidInput` for no curves or a `None` curve, or for a corner refused under
+/// `fixes.taper_tangent_corner_planes` (WR-521; [`create_taper_extrude_with_corner`]
+/// reports why and where); the error of a failing curve copy; [`SolidError::Unported`]
+/// otherwise (`SmBrep::SmBrep`, until the B-rep constructor is ported).
 pub fn create_taper_extrude(
     k: &mut Kernel,
     curves: &[Option<&Curve>],
@@ -488,6 +599,48 @@ pub fn create_taper_extrude(
     end_caps: i32,
     fillet_corner: bool,
 ) -> Result<Brep> {
+    let corner = if fillet_corner {
+        OffsetCornerType::FilletCorner
+    } else {
+        OffsetCornerType::LinearExtension
+    };
+    match create_taper_extrude_with_corner(k, curves, height, draft_angle_deg, end_caps, corner)? {
+        TaperExtrude::Solid(brep) => Ok(brep),
+        TaperExtrude::Refused(_) => {
+            Err(SolidError::invalid_input(OP_TAPER, "draft corner refused"))
+        }
+    }
+}
+
+/// [`create_taper_extrude`] with the corner rule as an argument and a refused corner
+/// as part of the result (SolidCraft change, tangency-labs/smlib 54148db: the fork's
+/// `SmApiCreateTaperExtrude(..., eCorner, rpResult, pOptRefusal, pOptRefusedCorner)`).
+///
+/// - [`OffsetCornerType::LinearExtension`]: tangent lines across a corner's gap; with
+///   `fixes.taper_tangent_corner_planes` (WR-521, off by default) a profile of lines
+///   and circular arcs with a sharp corner continues its walls as their tangent planes
+///   instead (two lines meet at a corner edge) and may be refused.
+/// - [`OffsetCornerType::FilletCorner`]: an arc about the corner.
+/// - [`OffsetCornerType::CurveExtension`]: each wall continues as itself (a line's
+///   plane, an arc's cone) to meet its neighbour along their exact seam; a profile with
+///   a curve that is neither a line nor an arc is refused at a sharp corner
+///   ([`TaperCornerRefusal::NotExact`]), and so is a corner whose walls do not meet or
+///   a wall that closes before the far end. Without a sharp corner it is
+///   `LinearExtension`.
+/// - [`OffsetCornerType::LinearChamfer`]: as the C++ passes it on to the offsetter.
+///
+/// # Errors
+///
+/// As [`create_taper_extrude`], except a refusal, which is
+/// [`TaperExtrude::Refused`].
+pub fn create_taper_extrude_with_corner(
+    k: &mut Kernel,
+    curves: &[Option<&Curve>],
+    height: f64,
+    draft_angle_deg: f64,
+    end_caps: i32,
+    corner: OffsetCornerType,
+) -> Result<TaperExtrude> {
     if curves.is_empty() {
         return Err(SolidError::invalid_input(OP_TAPER, "no curves"));
     }
@@ -495,16 +648,9 @@ pub fn create_taper_extrude(
     // Sweep copies of the inputs: CreateTaperExtrude consumes the curves.
     let curve_copies = copy_curves_for_consuming_sweep(k, curves)?;
 
-    let normal = Vec3::new(0.0, 0.0, 0.0);
-    let corner = if fillet_corner {
-        OffsetCornerType::FilletCorner
-    } else {
-        OffsetCornerType::LinearExtension
-    };
-
-    let mut normal = normal;
-    build(k, |pc, model| {
-        pc.create_taper_extrude(
+    let mut normal = Vec3::new(0.0, 0.0, 0.0);
+    let (mut brep, refusal) = PrimitiveModel::build_new(k, |pc, model| {
+        pc.create_taper_extrude_with_refusal(
             model,
             PrimitiveModel::MAIN,
             curve_copies,
@@ -514,7 +660,13 @@ pub fn create_taper_extrude(
             &mut normal,
             corner,
         )
-    })
+    })?;
+    if let Some(refusal) = refusal {
+        return Ok(TaperExtrude::Refused(refusal));
+    }
+    // (not upstream: the port's cached topology fields, true for the caller)
+    brep.refresh_cached_topology();
+    Ok(TaperExtrude::Solid(brep))
 }
 
 /// The solid swept by `curves_to_sweep` along `sweep_dir` over `sweep_dist`,
@@ -603,6 +755,170 @@ fn repeated(repetitions: u64, cap_ends: bool) -> RepeatedSweepOptions {
     }
 }
 
+/// The topology a non-manifold sweep sweeps one dimension higher (`pOptFaces`,
+/// `pOptEdges`, `pOptVertices`): ids into the swept B-rep. `None` is a `NULL` array and a
+/// `None` entry a `NULL` handle; with all three arrays `None` the whole B-rep is swept.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct SweepSelection<'a> {
+    /// Faces to sweep into solids.
+    pub faces: Option<&'a [Option<FaceId>]>,
+    /// Edges to sweep into faces.
+    pub edges: Option<&'a [Option<EdgeId>]>,
+    /// Vertices to sweep into edges.
+    pub vertices: Option<&'a [Option<VertexId>]>,
+}
+
+/// The `pRegionBrep` argument of the non-manifold sweeps, when not `NULL`.
+#[derive(Debug, Clone, Copy)]
+pub enum RegionBrep<'a> {
+    /// `pRegionBrep == pBrepToSweep`.
+    Swept,
+    /// A B-rep other than the swept one (rejected).
+    Other(&'a Brep),
+}
+
+/// `if( pRegionBrep && pRegionBrep != pBrepToSweep ) return SM_ERR_INVALID_INPUT;`
+fn check_region_brep(region: Option<RegionBrep<'_>>) -> Result<()> {
+    match region {
+        None | Some(RegionBrep::Swept) => Ok(()),
+        Some(RegionBrep::Other(_)) => Err(SolidError::invalid_input(
+            OP_NON_MANIFOLD,
+            "region B-rep other than the swept B-rep",
+        )),
+    }
+}
+
+/// Whether every entry of `selection` is live topology of `brep`
+/// (`smApiSweepSelectionIsOwnedBy` of each array; a `NULL` array passes, a `NULL`
+/// entry does not: `IsLiveTopologyMember(NULL)` is false).
+fn selection_is_owned_by(brep: &Brep, selection: &SweepSelection<'_>) -> bool {
+    fn owned<T: Copy>(brep: &Brep, list: Option<&[Option<T>]>, e: fn(T) -> EntityRef) -> bool {
+        list.is_none_or(|l| l.iter().all(|x| is_live_topology_member(brep, x.map(e))))
+    }
+    owned(brep, selection.faces, EntityRef::Face)
+        && owned(brep, selection.edges, EntityRef::Edge)
+        && owned(brep, selection.vertices, EntityRef::Vertex)
+}
+
+/// `SmTopologySweep sSweep(sSweepGeom, bDoStitching, FALSE, FALSE, bDoMerge)` and
+/// `DoSweep(pBrepToSweep, pBrepToSweep->GetInfiniteRegion(), pOptFaces, pOptEdges,
+/// pOptVertices, NULL, NULL, NULL)` on `brep` in place.
+fn non_manifold_sweep_with(
+    k: &mut Kernel,
+    brep: &mut Brep,
+    geometry: &SweepGeometry,
+    do_stitching: bool,
+    do_merge: bool,
+    selection: SweepSelection<'_>,
+) -> Result<()> {
+    const MAIN: crate::topology::BrepId = PrimitiveModel::MAIN;
+    let mut sweep = TopologySweep::new(TopologySweepOptions {
+        stitching: do_stitching,
+        merge: do_merge,
+        ..TopologySweepOptions::default()
+    });
+    let region = brep.infinite_region().map(|r| (MAIN, r));
+    let mut targets = SweepTargets {
+        faces_higher: selection
+            .faces
+            .map(|l| l.iter().map(|f| f.map(|f| (MAIN, f))).collect()),
+        edges_higher: selection
+            .edges
+            .map(|l| l.iter().map(|e| e.map(|e| (MAIN, e))).collect()),
+        vertices_higher: selection
+            .vertices
+            .map(|l| l.iter().map(|v| v.map(|v| (MAIN, v))).collect()),
+        ..SweepTargets::default()
+    };
+    let mut model = PrimitiveModel::new(k, core::mem::take(brep));
+    let result = sweep.do_sweep(&mut model, geometry, Some(MAIN), region, &mut targets);
+    // The caller gets its (swept or partly edited) B-rep back, as upstream's
+    // pBrepToSweep: `PrimitiveModel::delete_brep` refuses MAIN, and the sweep merges
+    // MAIN only as the destination, whose B-rep a merge keeps.
+    *brep = model.into_brep()?;
+    // (not upstream: the port's cached topology fields, true again for the caller)
+    brep.refresh_cached_topology();
+    result
+}
+
+/// Sweeps the selected faces, edges and vertices of `brep` (the whole B-rep when
+/// nothing is selected) along `sweep_dir` over `sweep_dist`, in place, into its
+/// infinite region (`SmApiNonManifoldSweep`; `region` is `pRegionBrep`): only
+/// `sweep_dir`'s direction is used. `do_stitching` stitches after the sweep; `do_merge`
+/// merges the swept topology (catching self-intersections).
+///
+/// # Errors
+///
+/// [`SolidError::InvalidInput`] (`brep` unchanged) for a [`RegionBrep::Other`] region,
+/// a selection entry that is `None` or not live topology of `brep`, and for a
+/// zero-length `sweep_dir`; those of the sweep.
+#[allow(clippy::too_many_arguments)] // upstream's arguments
+pub fn non_manifold_sweep(
+    k: &mut Kernel,
+    brep: &mut Brep,
+    region: Option<RegionBrep<'_>>,
+    sweep_dir: Vec3,
+    sweep_dist: f64,
+    do_stitching: bool,
+    do_merge: bool,
+    selection: SweepSelection<'_>,
+) -> Result<()> {
+    // Only pBrepToSweep is stitched, validated and returned: another region B-rep
+    // is rejected.
+    check_region_brep(region)?;
+    // A null, foreign or stale handle crashes or silently corrupts the B-rep below.
+    if !selection_is_owned_by(brep, &selection) {
+        return Err(SolidError::invalid_input(
+            OP_NON_MANIFOLD,
+            "selection entry not live topology of the B-rep",
+        ));
+    }
+    let sweep_vec = sweep_dir
+        .unitize()
+        .map_err(|_| SolidError::invalid_input(OP_NON_MANIFOLD, "zero sweep direction"))?
+        * sweep_dist;
+    let geometry = SweepGeometry::Translation(TranslationalSweepGeometry::new(sweep_vec));
+    non_manifold_sweep_with(k, brep, &geometry, do_stitching, do_merge, selection)
+}
+
+/// Sweeps the selected faces, edges and vertices of `brep` (the whole B-rep when
+/// nothing is selected) by `angle_deg` degrees about the axis through `base_pt` along
+/// `axis`, in place (`SmApiNonManifoldRotationalSweep`, tolerance `SM_ZONE_TOL_3D`).
+/// `region`, `do_stitching` and `do_merge` are those of [`non_manifold_sweep`].
+///
+/// # Errors
+///
+/// [`SolidError::InvalidInput`] (`brep` unchanged) for a [`RegionBrep::Other`] region
+/// or a selection entry that is `None` or not live topology of `brep`; those of the
+/// sweep.
+#[allow(clippy::too_many_arguments)] // upstream's arguments
+pub fn non_manifold_rotational_sweep(
+    k: &mut Kernel,
+    brep: &mut Brep,
+    region: Option<RegionBrep<'_>>,
+    base_pt: Point3,
+    axis: Vec3,
+    angle_deg: f64,
+    do_stitching: bool,
+    do_merge: bool,
+    selection: SweepSelection<'_>,
+) -> Result<()> {
+    check_region_brep(region)?;
+    if !selection_is_owned_by(brep, &selection) {
+        return Err(SolidError::invalid_input(
+            OP_NON_MANIFOLD,
+            "selection entry not live topology of the B-rep",
+        ));
+    }
+    let geometry = SweepGeometry::Rotation(RotationalSweepGeometry::new(
+        base_pt,
+        axis,
+        angle_deg,
+        ZONE_TOL_3D,
+    ));
+    non_manifold_sweep_with(k, brep, &geometry, do_stitching, do_merge, selection)
+}
+
 /// A new B-rep filled by `body` (`new SmBrep()`, `SmPrimitiveCreation`, the call).
 fn build(
     k: &mut Kernel,
@@ -623,20 +939,31 @@ fn curve_sweep(
     k: &mut Kernel,
     body: impl FnOnce(&mut PrimitiveCreation, &mut PrimitiveModel<'_>, &mut SweepFaces) -> Result<()>,
 ) -> Result<CurveSweep> {
-    let (mut brep, (start_faces, side_faces, end_faces)) =
+    curve_sweep_with(k, body).map(|(sweep, ())| sweep)
+}
+
+/// [`curve_sweep`] whose `body` also returns a value.
+fn curve_sweep_with<R>(
+    k: &mut Kernel,
+    body: impl FnOnce(&mut PrimitiveCreation, &mut PrimitiveModel<'_>, &mut SweepFaces) -> Result<R>,
+) -> Result<(CurveSweep, R)> {
+    let (mut brep, ((start_faces, side_faces, end_faces), extra)) =
         PrimitiveModel::build_new(k, |pc, model| {
             let mut faces = SweepFaces::default();
-            body(pc, model, &mut faces)?;
-            Ok(faces)
+            let extra = body(pc, model, &mut faces)?;
+            Ok((faces, extra))
         })?;
     // (not upstream: the port's cached topology fields, true for the caller)
     brep.refresh_cached_topology();
-    Ok(CurveSweep {
-        brep,
-        start_faces,
-        side_faces,
-        end_faces,
-    })
+    Ok((
+        CurveSweep {
+            brep,
+            start_faces,
+            side_faces,
+            end_faces,
+        },
+        extra,
+    ))
 }
 
 /// The `SmBSplineCurve` a path or scale curve is (upstream's parameter type): a
