@@ -32,6 +32,8 @@
 //! LIBS=SM_API SMLib          # optional explicit link order (names without lib/.a)
 //! SYSLIBS=tbb tbbmalloc pthread
 //! LIB_DIRS=/extra/lib/dir
+//! CXX=g++-16                 # optional: compiler for the shims (macOS: GNU g++)
+//! CXX_STDLIB=stdc++          # optional: C++ runtime to link (default: platform's)
 //! ```
 
 #![allow(
@@ -145,6 +147,14 @@ fn main() {
     if !shims.is_empty() {
         let mut b = cc::Build::new();
         b.cpp(true).warnings(false).include(&shim_dir);
+        if let Some(cxx) = &cfg.cxx {
+            b.compiler(cxx);
+        }
+        // `cc` adds the platform's C++ runtime for the shims; keep it to the configured one
+        // (otherwise a GNU g++ build on macOS links libc++ next to libstdc++).
+        if let Some(lib) = &cfg.cxx_stdlib {
+            b.cpp_link_stdlib(Some(lib.as_str()));
+        }
         // Default include dirs, then configured ones.
         for d in ["upstream/source/SMLib/inc", "upstream/source/SM_API/inc"] {
             let p = root.join(d);
@@ -237,12 +247,12 @@ fn main() {
         println!("cargo:rustc-link-lib=dylib={l}");
     }
     // Apple, FreeBSD and OpenBSD (clang platforms) ship libc++, not libstdc++. NetBSD
-    // still defaults to GCC and libstdc++.
+    // still defaults to GCC and libstdc++. `CXX_STDLIB` overrides it (macOS with GNU g++).
     let os = env::var("CARGO_CFG_TARGET_OS").unwrap_or_default();
-    let cxx = if matches!(os.as_str(), "macos" | "ios" | "freebsd" | "openbsd") {
-        "c++"
-    } else {
-        "stdc++"
+    let cxx = match &cfg.cxx_stdlib {
+        Some(lib) => lib.as_str(),
+        None if matches!(os.as_str(), "macos" | "ios" | "freebsd" | "openbsd") => "c++",
+        None => "stdc++",
     };
     println!("cargo:rustc-link-lib=dylib={cxx}");
     println!("cargo:rustc-link-lib=dylib=m");
@@ -256,6 +266,10 @@ struct Config {
     libs: Vec<String>,
     syslibs: Option<Vec<String>>,
     lib_dirs: Vec<PathBuf>,
+    /// Compiler the C++ libraries were built with; the shims must use the same one.
+    cxx: Option<String>,
+    /// C++ runtime library to link (`stdc++`, `c++`); `None` picks the platform's.
+    cxx_stdlib: Option<String>,
 }
 
 fn sorted_files(dir: &Path, ext: &str) -> Vec<PathBuf> {
@@ -298,6 +312,8 @@ fn parse_env_file(path: &Path, root: &Path) -> Config {
         libs: get("LIBS"),
         syslibs: kv.get("SYSLIBS").cloned(),
         lib_dirs: get("LIB_DIRS").iter().map(|p| abs(root, p)).collect(),
+        cxx: get("CXX").first().cloned(),
+        cxx_stdlib: get("CXX_STDLIB").first().cloned(),
     }
 }
 

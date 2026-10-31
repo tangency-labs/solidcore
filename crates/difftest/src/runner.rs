@@ -56,10 +56,12 @@ pub trait UnitDiff {
         default_cases(self, ctx)
     }
 
-    /// If this case depends on the C++ standard library being libstdc++ (e.g.
-    /// libc++ differs in `istream` extraction), return a short reason and the
-    /// runner reports the case as `skipped(platform)` instead of running it.
-    /// Only consulted when `solidcore_ffi::cpp_stdlib_is_libstdcxx()` is false.
+    /// If the C++ reference cannot act as this case's oracle on this platform (e.g.
+    /// it depends on libstdc++ `istream` extraction and
+    /// `solidcore_ffi::cpp_stdlib_is_libstdcxx()` is false, or on glibc's allocator
+    /// under an upstream use-after-free), return a short reason and the runner
+    /// reports the case as `skipped(platform)` instead of running it. The unit checks
+    /// the platform condition itself; the runner consults this for every case.
     fn skipped_platform(&self, _case: &Case) -> Option<String> {
         None
     }
@@ -723,29 +725,27 @@ pub fn run_unit(unit: &dyn UnitDiff, ctx: &CaseContext, opts: &RunOptions) -> Un
             });
             continue;
         }
-        // Platform-dependent cases (libstdc++-only C++ reference behaviour): on a
-        // non-libstdc++ build report them as skipped(platform) without running.
-        if !solidcore_ffi::cpp_stdlib_is_libstdcxx() {
-            if let Some(reason) = unit.skipped_platform(&case) {
-                let cr = CaseResult {
-                    name: case.name.clone(),
-                    source: case.source.clone(),
-                    inputs: case.inputs.clone(),
-                    diff: CaseDiff::default(),
-                    harness_error: None,
-                    both_errored: false,
-                    rejected: None,
-                    deferred: None,
-                    skipped_platform: Some(reason),
-                    perturbed: None,
-                    diagnostics: BTreeMap::new(),
-                    known_mismatch: entry.map(|k| k.why.clone()),
-                    cpp_defect: entry.and_then(|k| k.cpp_defect.clone()),
-                    parked: false,
-                };
-                res.cases.push(cr);
-                continue;
-            }
+        // Platform-dependent cases (e.g. libstdc++-only C++ reference behaviour):
+        // report them as skipped(platform) without running.
+        if let Some(reason) = unit.skipped_platform(&case) {
+            let cr = CaseResult {
+                name: case.name.clone(),
+                source: case.source.clone(),
+                inputs: case.inputs.clone(),
+                diff: CaseDiff::default(),
+                harness_error: None,
+                both_errored: false,
+                rejected: None,
+                deferred: None,
+                skipped_platform: Some(reason),
+                perturbed: None,
+                diagnostics: BTreeMap::new(),
+                known_mismatch: entry.map(|k| k.why.clone()),
+                cpp_defect: entry.and_then(|k| k.cpp_defect.clone()),
+                parked: false,
+            };
+            res.cases.push(cr);
+            continue;
         }
         // the Rust side reuses this case's C++ fixture exports (`export_memo`)
         let memo = crate::export_memo::CaseScope::new();
