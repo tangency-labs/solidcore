@@ -633,6 +633,8 @@ pub struct UpstreamFixes {
     /// are not sampled (31 points fill 16 of 30 columns), and with more than one point the
     /// V dither still comes from `kernel.rng`. Off by default (pinned behaviour).
     pub face_points_span_domain: bool,
+    /// `SmBrep::SubdivideFaceAtDiscontinuities` cuts along every V knot: its V pass counts the V knots, where upstream counts the U knots (`SmBrep.cpp:18483`), so a face whose surface has more V knots than U knots is left uncut at the rest, and one with none in U is not cut in V at all (WR-589; the fork's tangency-labs/smlib@6eecf04).
+    pub subdivide_face_counts_v_knots: bool,
 }
 
 /// Options for [`Kernel::new`].
