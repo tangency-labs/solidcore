@@ -12,3 +12,6 @@ pub mod p3;
 pub mod p4;
 pub mod p5;
 pub mod p6;
+
+// Supported public paths; numbered modules are implementation partitions.
+pub use p1::{FilletCornerType, FilletErrorType};
