@@ -1419,8 +1419,9 @@ fn measure(k: &Kernel, b: &mut Brep) -> Result<Measured, SolidError> {
     })
 }
 
-/// Turns on the `UpstreamFixes` field `name` a case asks for.
-fn enable_fix(k: &mut Kernel, name: &str) -> Result<(), String> {
+/// Turns on the `UpstreamFixes` field `name` a case asks for (also the `SSI_SC_FIXES`
+/// list of the `--ssi-corpus` Rust engine).
+pub(crate) fn enable_fix(k: &mut Kernel, name: &str) -> Result<(), String> {
     let field = match name {
         "sweep_frame_on_planar_path_normal" => &mut k.fixes.sweep_frame_on_planar_path_normal,
         "imprint_extends_edge_to_proto_vertex" => &mut k.fixes.imprint_extends_edge_to_proto_vertex,
@@ -1459,6 +1460,12 @@ fn enable_fix(k: &mut Kernel, name: &str) -> Result<(), String> {
         "fillet_nx1_tangent_side_edge" => &mut k.fixes.fillet_nx1_tangent_side_edge,
         "fillet_nx1_tangent_corner_edge" => &mut k.fixes.fillet_nx1_tangent_corner_edge,
         "fillet_trace_reaches_rails" => &mut k.fixes.fillet_trace_reaches_rails,
+        "ssi_tangent_contact_points" => &mut k.fixes.ssi_tangent_contact_points,
+        "ssi_trace_tangent_curves_once" => &mut k.fixes.ssi_trace_tangent_curves_once,
+        "ssi_no_reverse_of_empty_trace" => &mut k.fixes.ssi_no_reverse_of_empty_trace,
+        "ssi_singular_start_inside_direction" => &mut k.fixes.ssi_singular_start_inside_direction,
+        "ssi_pole_point_keeps_its_tangent" => &mut k.fixes.ssi_pole_point_keeps_its_tangent,
+        "ssi_tangent_curve_tracer" => &mut k.fixes.ssi_tangent_curve_tracer,
         _ => return Err(format!("unknown `fixes` entry `{name}`")),
     };
     *field = true;

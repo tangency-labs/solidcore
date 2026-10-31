@@ -92,6 +92,10 @@ pub struct CorpusOptions {
     pub report_dir: Option<PathBuf>,
     /// Do not write the report.
     pub no_report: bool,
+    /// `--ssi-corpus-fixes`: the `UpstreamFixes` the `rust` engine runs with, a
+    /// `SSI_SC_FIXES` list (names, or `all` for [`SSI_FIXES`]); `None` takes the
+    /// `SSI_SC_FIXES` variable (none when unset: the parity run).
+    pub fixes: Option<String>,
 }
 
 /// The corpus checkout.
@@ -250,6 +254,7 @@ fn read_raw(path: &Path) -> RunResult {
 fn run_children(
     files: &[PathBuf],
     tol: &str,
+    fixes: &[String],
     rawdirs: &[PathBuf; N_ENGINES],
     jobs: usize,
 ) -> Result<Vec<[RunResult; N_ENGINES]>, HarnessError> {
@@ -287,6 +292,8 @@ fn run_children(
                 .arg(tol)
                 .arg(engine)
                 .arg(&out)
+                // the run's fixes, whether they came from the command line or the variable
+                .env("SSI_SC_FIXES", fixes.join(","))
                 .stdin(Stdio::null())
                 .stdout(log_file)
                 .stderr(log_err)
@@ -437,6 +444,67 @@ fn score_all(
     graded
 }
 
+/// The `UpstreamFixes` names of a `SSI_SC_FIXES` list (comma separated, blanks skipped).
+pub fn fixes_in(list: &str) -> Vec<String> {
+    list.split(',')
+        .map(str::trim)
+        .filter(|n| !n.is_empty())
+        .map(String::from)
+        .collect()
+}
+
+/// The `UpstreamFixes` the `rust` engine runs with: the `SSI_SC_FIXES` variable, none by
+/// default (the parity run against C++).
+pub fn fixes_from_env() -> Vec<String> {
+    fixes_in(&std::env::var("SSI_SC_FIXES").unwrap_or_default())
+}
+
+/// What `all` in a fixes list stands for: the opt-in `UpstreamFixes` of the surface/surface
+/// intersector that came from the ssi corpus (#391 to #396) and its follow-ups.
+pub const SSI_FIXES: [&str; 7] = [
+    "ssi_tangent_contact_points",
+    "ssi_trace_tangent_curves_once",
+    "ssi_no_reverse_of_empty_trace",
+    "ssi_singular_start_inside_direction",
+    "ssi_pole_point_keeps_its_tangent",
+    "ssi_tangent_curve_tracer",
+    "sphere_small_circle_not_touching",
+];
+
+/// `fixes` with each `all` replaced by [`SSI_FIXES`] (the names the kernel is set with;
+/// the report and the raw directories keep the list as given).
+pub fn expand_fixes(fixes: &[String]) -> Vec<String> {
+    let mut out = Vec::new();
+    for f in fixes {
+        if f == "all" {
+            out.extend(SSI_FIXES.iter().map(|n| (*n).to_string()));
+        } else {
+            out.push(f.clone());
+        }
+    }
+    out
+}
+
+/// Suffix of the report file and the raw directories of a run with fixes on, so it never
+/// overwrites the parity run's; empty without fixes.
+fn fixes_suffix(fixes: &[String]) -> String {
+    let mut s = String::new();
+    if !fixes.is_empty() {
+        s.push_str("_fixes");
+    }
+    for f in fixes {
+        s.push('_');
+        s.extend(f.chars().map(|c| {
+            if c.is_alphanumeric() || c == '_' {
+                c
+            } else {
+                '_'
+            }
+        }));
+    }
+    s
+}
+
 /// `--ssi-corpus`: runs and scores the corpus. Exit `0` (also when the corpus is missing)
 /// unless the harness itself fails (`2`): the verdicts are a report, not a gate.
 pub fn run_corpus(root: &Path, opts: &CorpusOptions) -> ExitCode {
@@ -481,7 +549,17 @@ pub fn run_corpus(root: &Path, opts: &CorpusOptions) -> ExitCode {
         }
     }
     let raw_root = root.join("bin").join("ssi-corpus").join("raw");
-    let rawdirs = ENGINES.map(|e| raw_root.join(format!("{e}_{}", opts.tol)));
+    // a run with `SSI_SC_FIXES` writes next to the parity run, never over it
+    let fixes = opts.fixes.as_deref().map_or_else(fixes_from_env, fixes_in);
+    let mut probe = solidcore::Kernel::default();
+    for name in expand_fixes(&fixes) {
+        if let Err(e) = crate::solidcraft::enable_fix(&mut probe, &name) {
+            eprintln!("difftest: --ssi-corpus-fixes: {e}");
+            return ExitCode::from(2);
+        }
+    }
+    let fixes_tag = fixes_suffix(&fixes);
+    let rawdirs = ENGINES.map(|e| raw_root.join(format!("{e}_{}{fixes_tag}", opts.tol)));
     for (d, _) in rawdirs.iter().zip(BUILT).filter(|(_, run)| *run) {
         if let Err(e) = std::fs::create_dir_all(d) {
             eprintln!("difftest: {}: {e}", d.display());
@@ -501,7 +579,13 @@ pub fn run_corpus(root: &Path, opts: &CorpusOptions) -> ExitCode {
         opts.jobs,
         raw_root.strip_prefix(root).unwrap_or(&raw_root).display()
     );
-    let results = match run_children(&files, &opts.tol, &rawdirs, opts.jobs) {
+    if !fixes.is_empty() {
+        println!(
+            "SSI-CORPUS: rust engine with fixes {} (parity mismatches against the C++ are expected)",
+            fixes.join(",")
+        );
+    }
+    let results = match run_children(&files, &opts.tol, &fixes, &rawdirs, opts.jobs) {
         Ok(r) => r,
         Err(e) => {
             eprintln!("difftest: {e}");
@@ -621,7 +705,7 @@ pub fn run_corpus(root: &Path, opts: &CorpusOptions) -> ExitCode {
     }
 
     if !opts.no_report {
-        let report = json!({
+        let mut report = json!({
             "corpus": {"repo": CORPUS_REPO, "commit": CORPUS_COMMIT, "glob": opts.glob},
             "approx_tol": opts.tol,
             "acc_tol": acc_tol.map(crate::json::num),
@@ -629,6 +713,10 @@ pub fn run_corpus(root: &Path, opts: &CorpusOptions) -> ExitCode {
             "summary": summaries,
             "cases": entries,
         });
+        // only a run with fixes on says so: the parity report stays as it was
+        if let (false, Some(m)) = (fixes.is_empty(), report.as_object_mut()) {
+            m.insert("fixes".into(), json!(fixes));
+        }
         let dir = opts
             .report_dir
             .clone()
@@ -650,6 +738,7 @@ pub fn run_corpus(root: &Path, opts: &CorpusOptions) -> ExitCode {
             name.push('_');
             name.extend(g.chars().filter(|c| c.is_alphanumeric() || *c == '_'));
         }
+        name.push_str(&fixes_tag);
         let path = dir.join(format!("{name}.json"));
         let written = std::fs::create_dir_all(&dir)
             .and_then(|()| std::fs::write(&path, crate::json::to_canonical_string(&report)));
@@ -679,6 +768,35 @@ mod tests {
         assert!(glob_match("c?_*cyl*", "c1_plane_cyl_ellipse"));
         assert!(glob_match("c1_plane", "c1_plane"));
         assert!(!glob_match("c1_plan", "c1_plane"));
+    }
+
+    #[test]
+    fn no_fixes_by_default() {
+        assert!(fixes_in("").is_empty());
+        assert!(fixes_in(" , ,").is_empty());
+        assert_eq!(fixes_suffix(&[]), "");
+    }
+
+    #[test]
+    fn fixes_name_the_report_and_the_raw_dirs() {
+        let f = fixes_in("a_b, c-d/e");
+        assert_eq!(f, ["a_b", "c-d/e"]);
+        assert_eq!(fixes_suffix(&f), "_fixes_a_b_c_d_e");
+    }
+
+    #[test]
+    fn all_is_the_ssi_fixes() {
+        let f = expand_fixes(&fixes_in("all, cone_parallel_line_midpoint"));
+        assert_eq!(f.len(), SSI_FIXES.len() + 1);
+        assert_eq!(f.first().map(String::as_str), Some(SSI_FIXES[0]));
+        assert_eq!(fixes_suffix(&fixes_in("all")), "_fixes_all");
+        let mut k = solidcore::Kernel::default();
+        for name in SSI_FIXES {
+            assert!(
+                crate::solidcraft::enable_fix(&mut k, name).is_ok(),
+                "{name}"
+            );
+        }
     }
 
     #[test]
