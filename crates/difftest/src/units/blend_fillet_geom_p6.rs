@@ -2,7 +2,9 @@
 //! Rust: `solidcore::blend::fillet_geom::p6`.
 //!
 //! Every case builds a target B-rep from a B-rep block of unit `topology.edgeuse_p1` (an
-//! upstream `.smb` solid, a face or a wire network; the Rust side imports the C++ export),
+//! upstream `.smb` solid, a face or a wire network; the Rust side reads or builds it itself
+//! in the shim's traversal order, `crate::own_reader`, so its faces own their surfaces as
+//! in the C++ B-rep and the ops' surface caches reach the face through `BrepFaceServices`),
 //! fillet solvers (a base `SmFilletSolver` with edge uses of the target, offset surfaces of
 //! inline bases, optionally the model's fillet executive and reverse trimming), fillet
 //! corners (the filleted target vertex, a constant corner type and the corner's tolerance)
@@ -17,7 +19,9 @@
 //! and UVs can be given relative to the target (a fraction of an edge's interval or of a
 //! face's surface domain); both sides get the resolved values.
 //!
-//! Analytic target geometry the shared B-rep export carries exactly (cone, cylinder,
+//! The Rust target holds all of its geometry exactly (`ImportTypes::default()`); the
+//! import path below is the C++ side's selector resolution. Analytic target geometry the
+//! shared B-rep export carries exactly (cone, cylinder,
 //! sphere, torus, surfaces of revolution and extrusion rebuilt from their upstream
 //! database record; lossless ellipses and circles) is compared as its own kind, through
 //! `ImportTypes::inexact_surface` / `inexact_curve`. An op that evaluates a face surface
@@ -483,7 +487,31 @@ const EXACT_CURVES: [i64; 2] = [14033, 14010];
 /// shared B-rep export").
 const HARNESS_ANALYTIC_IMPORT: &str = "harness:analytic-geometry-export";
 
-/// Builds the target on both sides; `Err(output)` when it cannot be built.
+/// The Rust side's target: the source read by the Rust reader or built by the Rust
+/// kernel in the shim's traversal order ([`crate::own_reader::edgeuse_graph_brep`]),
+/// never imported from the C++ export, so all of its geometry is held exactly;
+/// `Err(output)` when the Rust build fails, as [`target`] reports the shim's.
+fn own_target(brep: &BrepIn) -> Result<Result<Target, Output>, HarnessError> {
+    let path = path_of(Some(brep))?;
+    let block = brep_block_of(Some(brep), false, false)?;
+    let brep = match crate::own_reader::edgeuse_graph_brep(&mut Kernel::default(), brep)? {
+        Ok(b) => b,
+        Err(e) => {
+            return Ok(Err(Output::unported(&e).unwrap_or_else(|| {
+                Output::new().values("flat", vec![1.0, crate::own_builder::build_status(&e)])
+            })))
+        }
+    };
+    Ok(Ok(Target {
+        path,
+        block,
+        counts: crate::own_builder::counts(&brep),
+        brep,
+        types: ImportTypes::default(),
+    }))
+}
+
+/// Builds the target on the C++ side (its selectors resolve on the shim's B-rep); `Err(output)` when it cannot be built.
 fn target(brep: &BrepIn) -> Result<Result<Target, Output>, HarnessError> {
     let path = path_of(Some(brep))?;
     let block = brep_block_of(Some(brep), false, false)?;
@@ -1303,7 +1331,7 @@ impl RustModel {
             for &eu in &geom.ref_eus {
                 self.put_eu(o, eu);
             }
-            dump_surface(o, geom.fillet_surface().map_err(h)?)?;
+            dump_surface(o, geom.fillet_surface(None).map_err(h)?)?;
             dump_bcurve(o, geom.center_line_curve());
             o.extend(geom.deviations);
             for off in &geom.off_surfs {
@@ -1382,7 +1410,7 @@ fn dump_surface(o: &mut Vec<f64>, s: Option<&Surface>) -> Result<(), HarnessErro
 /// The `SmStatus` of a Rust error; `-1` for one upstream cannot return.
 fn status(e: &SolidError) -> f64 {
     match e {
-        SolidError::InvalidInput { .. } => 1007.0,
+        SolidError::InvalidInput { .. } | SolidError::PortInvariant { .. } => 1007.0,
         SolidError::Upstream { code, .. } => f64::from(*code),
         _ => -1.0,
     }
@@ -1460,7 +1488,7 @@ fn inexact(i: &Inputs, tg: &Target) -> Result<Option<Output>, HarnessError> {
 
 #[allow(clippy::too_many_lines)]
 fn rust(i: &Inputs) -> Result<Output, HarnessError> {
-    let mut tg = match target(&i.brep)? {
+    let mut tg = match own_target(&i.brep)? {
         Ok(t) => t,
         Err(out) => return Ok(out),
     };
@@ -1486,7 +1514,7 @@ fn rust(i: &Inputs) -> Result<Output, HarnessError> {
         OpIn::Export => Ok(()),
         OpIn::BlendingRail { e } => {
             let e = edge(&m, *e)?;
-            m.fb.calc_blending_rail(&k, e, &tg.brep)
+            m.fb.calc_blending_rail(&k, e, &mut tg.brep)
         }
         OpIn::EdgeOnEdge { e, .. } => {
             let e = edge(&m, *e)?;
@@ -1700,7 +1728,7 @@ fn rust(i: &Inputs) -> Result<Output, HarnessError> {
                 .fb
                 .geom(g)
                 .map_err(h)?
-                .fillet_surface()
+                .fillet_surface(None)
                 .map_err(h)?
                 .map(|_| GeomErrorObject::FilletSurface(g));
             let comment = ((code & 1) != 0).then_some("SmFilletGeom::RecordFilletError");

@@ -19,6 +19,8 @@
 //! | [`create_regular_polygon`]   | `SmApiCreateRegularPolygon`                           |
 //! | [`create_curve`]             | `SmApiCreateCurve`                                    |
 //! | [`create_canonical_curve`], [`CanonicalCurveParams`] | `SmApiCreateCanonicalCurve`   |
+//! | [`create_curve_approx_points`] | `SmApiCreateCurveApproxPoints` (unit `nlib.crv_fit_p4`) |
+//! | [`remove_curve_knots`]       | `SmApiRemoveCurveKnots`                               |
 //!
 //! Deviations:
 //! - **Out-params.** The created curve is the return value; on failure there is none
@@ -39,14 +41,24 @@
 //! - `SmApiCreateHelix` returns the curve as an `SmBSplineCurve`; the fitter's
 //!   `TWOPI` literal `6.2831853071795864` is [`core::f64::consts::TAU`] (the same
 //!   double).
-//! - `SmApiRemoveCurveKnots`, also in this file, belongs to another unit.
+//! - **`SmApiRemoveCurveKnots`.** The curve is a `&mut` [`Curve`] (upstream's `NULL`
+//!   check has no counterpart). Its `dynamic_cast<SmBSplineCurve*>` holds for the
+//!   B-spline kinds that derive from `SmBSplineCurve` upstream: B-splines, lines,
+//!   ellipses (circles), hyperbolas and parabolas. Their NURB is made first when they
+//!   have none (`GetOrCreateGwNurbPointer`, status ignored); a curve still without one
+//!   is `SM_ERR` (upstream dereferences the `NULL`). Only the NURB changes, as
+//!   upstream swaps `m_pNurb` (the analytic data stays). The tolerance is
+//!   `SmTol::GetApproxTol3d(pCurve)`: half the recorded edge tolerance
+//!   ([`Curve::owner_zone_tol_3d`]), else half of [`zone_tol_3d_of_curve`].
 
 use core::f64::consts::TAU;
 
+use crate::curve::curve::{Curve, CurveKind};
 use crate::curve::ellipse::Ellipse;
 use crate::curve::line::Line;
-use crate::error::{Result, SolidError};
+use crate::error::{ignore_status, Result, SolidError};
 use crate::geom::axis2_placement::Axis2Placement;
+use crate::geom::tol::zone_tol_3d_of_curve;
 use crate::geom::vector3d::{is_valid_double, Point3, Vec3};
 use crate::kernel::Kernel;
 use crate::limits::try_reserve_total;
@@ -55,10 +67,11 @@ use crate::nurbs::b_spline_curve::{
     BSplineCurve, BSplineCurveForm, CanonicalData, KnotType, NurbCircleParam,
 };
 use crate::nurbs::b_spline_curve_n_lib::HelixSpec;
+use crate::nurbs::crv_fit::p1::ParamMethod;
 
 /// Upstream `SmStatus` value `SM_ERR_NOT_WITHIN_TOLERANCE`, as carried by
 /// [`SolidError::Upstream`].
-pub const SM_ERR_NOT_WITHIN_TOLERANCE: i32 = 1021;
+pub use crate::error::SM_ERR_NOT_WITHIN_TOLERANCE;
 
 const OP_LINE: &str = "primitive::api_curves::create_line";
 const OP_CIRCLE: &str = "primitive::api_curves::create_circle";
@@ -602,10 +615,119 @@ pub fn create_canonical_curve(params: &CanonicalCurveParams<'_>) -> Result<BSpli
     })
 }
 
+/// A cubic 3D B-spline approximating `points` with uniform parameters
+/// (`SmApiCreateCurveApproxPoints`, through [`BSplineCurve::create_approximating_curve`]):
+/// 4 control points, `n / 2` for more than 8 points, `n / 4` for more than 16.
+///
+/// # Errors
+///
+/// Those of [`BSplineCurve::create_approximating_curve`].
+pub fn create_curve_approx_points(points: &[Point3]) -> Result<BSplineCurve> {
+    // Determine number of points -- This algorithm can be improved
+    let mut max_cntrl_pts = 4; // min number of points
+    if points.len() > 8 {
+        max_cntrl_pts = points.len() / 2; // increase relative to number of input points
+    }
+    if points.len() > 16 {
+        max_cntrl_pts = points.len() / 4; // increase relative to number of input points
+    }
+
+    BSplineCurve::create_approximating_curve(
+        max_cntrl_pts,
+        ParamMethod::Uniform,
+        3,
+        3,
+        points,
+        &[],
+        None,
+    )
+}
+
+/// Removes the knots of a curve's NURB that can go within its approximation tolerance,
+/// keeping no end derivatives (`SmApiRemoveCurveKnots`, through
+/// [`BSplineCurve::remove_knots`]); a curve that is not an `SmBSplineCurve` upstream is
+/// left as it is.
+///
+/// # Errors
+///
+/// `SM_ERR` when the curve has (and gets) no NURB or the removal fails; those of the
+/// tolerance ([`zone_tol_3d_of_curve`]) and of making the NURB.
+pub fn remove_curve_knots(k: &Kernel, curve: &mut Curve) -> Result<()> {
+    // double dTol = SmTol::GetApproxTol3d(pCurve);
+    let tol = match curve.owner_zone_tol_3d() {
+        Some(zone_tol_3d) => 0.5 * zone_tol_3d,
+        None => 0.5 * zone_tol_3d_of_curve(k, curve)?,
+    };
+    let owner = curve.owner();
+    // GetOrCreateGwNurbPointer: the virtual MakeNurb when there is no NURB (status
+    // ignored)
+    let base = match curve.kind_mut() {
+        CurveKind::BSpline(c) => c,
+        CurveKind::Line(l) => {
+            if l.base().nurb.is_none() {
+                ignore_status(l.make_nurb_owned(owner))?;
+            }
+            l.base_mut()
+        }
+        CurveKind::Ellipse(e) => {
+            if e.base().nurb.is_none() {
+                ignore_status(e.make_nurb_owned(k, owner))?;
+            }
+            e.base_mut()
+        }
+        CurveKind::Hyperbola(h) => {
+            if h.base().nurb.is_none() {
+                ignore_status(h.make_nurb(owner))?;
+            }
+            h.base_mut()
+        }
+        CurveKind::Parabola(p) => {
+            if p.base().nurb.is_none() {
+                ignore_status(p.make_nurb(owner))?;
+            }
+            p.base_mut()
+        }
+        // not an SmBSplineCurve: SM_SUCCESS
+        _ => return Ok(()),
+    };
+    base.remove_knots(tol, false, 0)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::error::SM_ERR;
+
+    /// `TestSmRemoveCurveKnots` (`tests/SM_API_test/src/TestSmCurves.cpp:1122`): the
+    /// interior knot of a straight degree 1 polyline goes, leaving the four clamped end
+    /// knots; a bent one stays.
+    #[test]
+    fn remove_curve_knots_of_a_straight_polyline() {
+        let k = Kernel::default();
+        let make = |y: f64| {
+            Curve::from(
+                create_canonical_curve(&CanonicalCurveParams {
+                    points: &[p(0.0, 0.0, 0.0), p(1.0, y, 0.0), p(2.0, 0.0, 0.0)],
+                    knots: &[0.0, 0.5, 1.0],
+                    knot_multiplicities: &[2, 1, 2],
+                    weights: None,
+                    degree: 1,
+                    form: BSplineCurveForm::Unspecified,
+                })
+                .unwrap(),
+            )
+        };
+        let knot_count = |c: &Curve| match c.kind() {
+            CurveKind::BSpline(b) => b.gw_nurb().unwrap().knots().len(),
+            _ => panic!("not a B-spline"),
+        };
+        let mut straight = make(0.0);
+        remove_curve_knots(&k, &mut straight).unwrap();
+        assert_eq!(knot_count(&straight), 4);
+        let mut bent = make(1.0);
+        remove_curve_knots(&k, &mut bent).unwrap();
+        assert_eq!(knot_count(&bent), 5);
+    }
 
     fn p(x: f64, y: f64, z: f64) -> Point3 {
         Point3::new(x, y, z)

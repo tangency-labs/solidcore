@@ -80,8 +80,10 @@
 //!   the statuses upstream ignores ([`SolidError::Unported`] still propagates),
 //!   leaving the outputs of a failed evaluation at their `SM_UNDEF_DOUBLE` defaults.
 //!   With the opt-in `Kernel::fixes.topology_failed_evaluations_propagate` (WR-263,
-//!   WR-264, #521) they propagate evaluation failures instead of reading unwritten
-//!   outputs, and an unsuccessful point drop returns `SM_ERR`. `sm_AreSeamCurves`'
+//!   WR-264, #521) they answer as the fork (tangency-labs/smlib 666242b) instead of
+//!   reading unwritten outputs: a gap that cannot be measured (a failed evaluation or
+//!   drop status) is `SM_BIG_DOUBLE`, a distance without the derivatives or normal is
+//!   none. `sm_AreSeamCurves`'
 //!   unused edge use argument is dropped.
 //! - **Unported callees.** `SmEdgeuse::EvaluateBinormal` is wired
 //!   (`topology.edgeuse_p3`); its deferred callees return [`SolidError::Unported`]. The gap computations are [`crate::heal::gap`];
@@ -94,7 +96,6 @@
 
 use crate::curve::curve::Curve;
 use crate::error::{EntityRef, Result, SolidError};
-use crate::geom::attribute::ObjectKey;
 use crate::geom::extent1d::Extent1d;
 use crate::geom::global_solver::SolverOperation;
 use crate::geom::local_solve_nd::EvalNFunctions;
@@ -104,7 +105,7 @@ use crate::geom::solution_array::{ObjectKind, Solution, SolutionObject};
 use crate::geom::tol::{context_xsect_tol_3d, SmallTopoType, ZONE_TOL_3D};
 use crate::heal::gap::{EdgeEdgeGap, EdgeFaceGap, GapFunction};
 use crate::kernel::Kernel;
-use crate::math::{Point2, Point3, Vec3, EFF_ZERO, EFF_ZERO_SQ};
+use crate::math::{Point2, Point3, Vec3, BIG_DOUBLE, EFF_ZERO, EFF_ZERO_SQ};
 use crate::nurbs::b_spline_surface_n_lib::p2::OrientType;
 use crate::nurbs::knots::Side;
 use crate::surface::surface::p1::evaluate_1st_derivatives;
@@ -114,7 +115,7 @@ use crate::surface::surface::p5::DropPointOptions;
 use crate::surface::surface::Surface;
 use crate::topology::{
     topology as topo, Brep, EdgeId, EdgeuseId, EdgeuseOwner, FaceId, FaceuseId, LoopId, LoopuseId,
-    NamingScheme, ObjectHandle, RegionId, ShellId, VertexId, VertexuseId, VertexuseOwner,
+    ObjectHandle, RegionId, ShellId, VertexId, VertexuseId, VertexuseOwner,
 };
 
 const OP: &str = "topology::edgeuse::p1";
@@ -801,9 +802,7 @@ pub fn set_uv_trim_curve(
         };
         // pUVTrimCurve->SetOwner(holder), under the B-rep's naming (a UV trim curve
         // notifies nothing)
-        if let Some(owner) = owner_ref(b.naming(), holder) {
-            let _ = c.set_owner(Some(owner), None);
-        }
+        let _ = c.set_owner(Some(owner_ref_in(b, holder)), None);
         let r = b.edgeuse_mut(holder)?;
         r.uv_trim_curve = Some(c);
         r.drop_curve_fail = copy;
@@ -830,17 +829,16 @@ pub fn set_uv_trim_curve(
     Ok(detached)
 }
 
-/// The identity edge use `eu` owns geometry under in a B-rep with naming `naming`
-/// ([`NamingScheme`]); `None` when the B-rep records no scheme.
-pub(crate) fn owner_ref(naming: NamingScheme, eu: EdgeuseId) -> Option<ObjectRef> {
-    match naming {
-        NamingScheme::Unknown | NamingScheme::Caller => None,
-        NamingScheme::Notify => Some(crate::topology::loopuse::notify_ref(EntityRef::Edgeuse(eu))),
-        NamingScheme::Arena => Some(ObjectRef {
-            type_code: TYPE,
-            key: ObjectKey(u64::from(eu.index())),
-        }),
-    }
+/// The identity edge use `eu` of `b` owns geometry under ([`Brep::owner_identity`]:
+/// for a [`NamingScheme::Caller`](crate::topology::NamingScheme::Caller) B-rep the key recorded for it, else its notification
+/// identity, the identity `check_brep` checks the owner against), a B-rep that
+/// records no scheme included: upstream `SetUVTrimCurve` always owns the
+/// new curve by its holder (`pUVTrimCurve->SetOwner(eu)`), so leaving it without owner
+/// would differ from upstream for every B-rep made by `Brep::new`
+/// (`plan/findings/topology.edgeuse_p1--uv-trim-owner-under-unknown-naming.md`); the
+/// arena scheme names edge uses alike (`Brep::use_arena_naming` rebinds their trims).
+pub(crate) fn owner_ref_in(b: &Brep, eu: EdgeuseId) -> ObjectRef {
+    b.owner_identity(EntityRef::Edgeuse(eu))
 }
 
 /// `DeleteUVTrimCurve`: `SetUVTrimCurve(NULL, 0.0, TRUE, NULL)`.
@@ -857,7 +855,8 @@ pub type ReplacedUvTrimCurve = (Option<Curve>, Option<Box<DropCurveFail<ObjectHa
 
 /// `SetMemberUVTrimCurve`: places `curve` (and `drop_curve_fail` when given) on the
 /// [`OrientType::Same`] member of the mated pair (this edge use when it is the `SAME`
-/// one, else its mate) without any other bookkeeping; returns what the slots held.
+/// one, else its mate) and makes that member the curve's owner, without any other
+/// bookkeeping; returns what the slots held.
 ///
 /// # Errors
 ///
@@ -866,7 +865,7 @@ pub type ReplacedUvTrimCurve = (Option<Curve>, Option<Box<DropCurveFail<ObjectHa
 pub fn set_member_uv_trim_curve(
     b: &mut Brep,
     eu: EdgeuseId,
-    curve: Curve,
+    mut curve: Curve,
     drop_curve_fail: Option<DropCurveFail<ObjectHandle>>,
 ) -> Result<ReplacedUvTrimCurve> {
     let owner = if b.edgeuse(eu)?.orientation == OrientType::Same {
@@ -874,6 +873,9 @@ pub fn set_member_uv_trim_curve(
     } else {
         mate(b, eu)?.ok_or_else(|| null("SetMemberUVTrimCurve: edge use without mate"))?
     };
+    // pUVTrimCurve->SetOwner(pOwner), under the B-rep's naming (a UV trim curve notifies
+    // nothing), as `set_uv_trim_curve`
+    let _ = curve.set_owner(Some(owner_ref_in(b, owner)), None);
     let r = b.edgeuse_mut(owner)?;
     let old_curve = r.uv_trim_curve.replace(curve);
     let old_fail = match drop_curve_fail {
@@ -1108,13 +1110,15 @@ pub fn calc_edge_ccw_edge_gap(
 // ---- UV loop gap ------------------------------------------------------------------------
 
 /// A curve point at `t`, `SM_UNDEF_DOUBLE` where upstream ignores a failed
-/// evaluation (only [`SolidError::Unported`] propagates; with the opt-in
-/// [`crate::kernel::UpstreamFixes::topology_failed_evaluations_propagate`] every error).
-fn point_or_undef(k: &Kernel, r: Result<Point3>) -> Result<Point3> {
+/// evaluation (only [`SolidError::Unported`] propagates); `None` with the opt-in
+/// [`crate::kernel::UpstreamFixes::topology_failed_evaluations_propagate`], whose gap
+/// cannot then be measured (tangency-labs/smlib 666242b).
+fn point_or_undef(k: &Kernel, r: Result<Point3>) -> Result<Option<Point3>> {
+    let p = crate::error::ignored(r)?;
     if k.fixes.topology_failed_evaluations_propagate {
-        return r;
+        return Ok(p);
     }
-    Ok(crate::error::ignored(r)?.unwrap_or(Vec3::UNDEF))
+    Ok(Some(p.unwrap_or(Vec3::UNDEF)))
 }
 
 /// The edge interval of `eu`'s edge.
@@ -1133,8 +1137,8 @@ fn edge_interval(b: &Brep, eu: EdgeuseId, what: &'static str) -> Result<Extent1d
 /// [`SolidError::NotFound`] for a dangling id; [`SolidError::InvalidInput`] where
 /// upstream dereferences null; [`SolidError::Unported`] for the point drop
 /// (`SmSurface::DropPoint`, unit `surface.surface_p5`). With the opt-in
-/// `Kernel::fixes.topology_failed_evaluations_propagate`, also curve and point-drop
-/// errors, including `SM_ERR` when a drop does not converge.
+/// `Kernel::fixes.topology_failed_evaluations_propagate`, a gap that cannot be measured
+/// (a failed curve evaluation or point drop) is `SM_BIG_DOUBLE`, as the fork has it.
 pub fn start_point_uv_loop_gap(k: &Kernel, b: &Brep, eu: EdgeuseId) -> Result<f64> {
     // check state - only Loopuse Edgeuses have End_to_End gaps
     let r = b.edgeuse(eu)?;
@@ -1177,11 +1181,17 @@ pub fn start_point_uv_loop_gap(k: &Kernel, b: &Brep, eu: EdgeuseId) -> Result<f6
                 .as_ref()
                 .ok_or_else(|| null("GetStartPointUVLoopGap: edge without curve"))
         };
-        let start_3d = point_or_undef(k, curve_of(eu)?.evaluate_point(k, start_param))?;
-        let cw_end_3d = point_or_undef(k, curve_of(cw)?.evaluate_point(k, cw_end_param))?;
+        let Some(start_3d) = point_or_undef(k, curve_of(eu)?.evaluate_point(k, start_param))?
+        else {
+            return Ok(BIG_DOUBLE);
+        };
+        let Some(cw_end_3d) = point_or_undef(k, curve_of(cw)?.evaluate_point(k, cw_end_param))?
+        else {
+            return Ok(BIG_DOUBLE);
+        };
 
         // drop point to Surface (statuses ignored, as upstream; with the opt-in fix a
-        // failed drop supplies neither a valid point nor the next guess)
+        // failed drop status is a gap that cannot be measured, `bSuccess` stays unread)
         let fix = k.fixes.topology_failed_evaluations_propagate;
         let domain = surface.natural_uv_domain_with_nurb(k)?;
         let start_opts = DropPointOptions {
@@ -1190,13 +1200,10 @@ pub fn start_point_uv_loop_gap(k: &Kernel, b: &Brep, eu: EdgeuseId) -> Result<f6
         };
         let start_drop = surface.drop_point::<NoObject>(k, start_3d, &domain, &start_opts);
         let start_2d = if fix {
-            let d = start_drop?;
-            if !d.success {
-                return Err(SolidError::sm_err(
-                    "topology::edgeuse::p1::start_point_uv_loop_gap",
-                ));
+            match crate::error::ignored(start_drop)? {
+                Some(d) => d.result_uv,
+                None => return Ok(BIG_DOUBLE),
             }
-            d.result_uv
         } else {
             // `sStart2d` stays default-constructed when the call fails
             crate::error::ignored(start_drop)?.map_or(Point2::UNDEF, |d| d.result_uv)
@@ -1208,21 +1215,22 @@ pub fn start_point_uv_loop_gap(k: &Kernel, b: &Brep, eu: EdgeuseId) -> Result<f6
         };
         let cw_drop = surface.drop_point::<NoObject>(k, cw_end_3d, &domain, &cw_opts);
         let cw_end_2d = if fix {
-            let d = cw_drop?;
-            if !d.success {
-                return Err(SolidError::sm_err(
-                    "topology::edgeuse::p1::start_point_uv_loop_gap",
-                ));
+            match crate::error::ignored(cw_drop)? {
+                Some(d) => d.result_uv,
+                None => return Ok(BIG_DOUBLE),
             }
-            d.result_uv
         } else {
             // upstream's DropPoint sets rResultUV to the guess before anything can fail
             crate::error::ignored(cw_drop)?.map_or(start_2d, |d| d.result_uv)
         };
         return Ok(start_2d.distance(cw_end_2d));
     };
-    let start_uv = point_or_undef(k, tc.evaluate_point(k, start_param))?;
-    let cw_end_uv = point_or_undef(k, cc.evaluate_point(k, cw_end_param))?;
+    let Some(start_uv) = point_or_undef(k, tc.evaluate_point(k, start_param))? else {
+        return Ok(BIG_DOUBLE);
+    };
+    let Some(cw_end_uv) = point_or_undef(k, cc.evaluate_point(k, cw_end_param))? else {
+        return Ok(BIG_DOUBLE);
+    };
 
     // compute and return the EdgeEnd to EdgeEnd gap
     Ok(start_uv.distance(cw_end_uv))
@@ -1481,8 +1489,8 @@ pub fn faceuse_collect_adjacent(
 ///
 /// [`SolidError::Unported`] from the surface evaluations (their other failures are
 /// ignored, as upstream). With the opt-in
-/// `Kernel::fixes.topology_failed_evaluations_propagate` (WR-264), every error of the
-/// surface evaluations: failed derivatives cannot supply a distance.
+/// `Kernel::fixes.topology_failed_evaluations_propagate` (WR-264), failed derivatives or
+/// a failed normal give no distance (`-1`, as the fork, tangency-labs/smlib 666242b).
 pub fn calc_dist_and_dev<'s, O: SolutionObject>(
     k: &Kernel,
     pt: Point3,
@@ -1514,7 +1522,11 @@ pub fn calc_dist_and_dev<'s, O: SolutionObject>(
     let uv = Point2::new(u, v);
     let derivs = evaluate_1st_derivatives(k, srf, uv, Side::Left, Side::Left);
     let (s_pt, s_su, s_sv) = if k.fixes.topology_failed_evaluations_propagate {
-        derivs?
+        // tangency-labs/smlib 666242b: no distance without the derivatives
+        match crate::error::ignored(derivs)? {
+            Some(d) => d,
+            None => return Ok((dist, Some(dev))),
+        }
     } else {
         crate::error::ignored(derivs)?.unwrap_or((Vec3::UNDEF, Vec3::UNDEF, Vec3::UNDEF))
     };
@@ -1524,7 +1536,16 @@ pub fn calc_dist_and_dev<'s, O: SolutionObject>(
     if mag > EFF_ZERO {
         norm /= mag;
     } else {
-        norm = srf.evaluate_normal(k, uv, Side::Left, Side::Left)?;
+        let n = srf.evaluate_normal(k, uv, Side::Left, Side::Left);
+        norm = if k.fixes.topology_failed_evaluations_propagate {
+            // tangency-labs/smlib 666242b: no distance without the normal
+            match crate::error::ignored(n)? {
+                Some(n) => n,
+                None => return Ok((dist, Some(dev))),
+            }
+        } else {
+            n?
+        };
         if norm.length() < 0.5 {
             return Ok((dist, Some(dev)));
         }
@@ -1990,11 +2011,27 @@ mod tests {
             set_member_uv_trim_curve(&mut b, b0, uv_line([0.0, 0.0], [1.0, 0.0]), None).unwrap();
         assert!(old.is_none());
         assert!(uv_trim_curve_pointer(&b, a0).unwrap().is_some());
+
+        // the SAME member owns the curve it is given, whichever use of the pair placed
+        // it (SmEdgeuse::SetMemberUVTrimCurve's pUVTrimCurve->SetOwner(pOwner))
+        b.set_naming(crate::topology::NamingScheme::Notify);
+        let mut stale = uv_line([0.0, 1.0], [1.0, 1.0]);
+        let _ = stale.set_owner(Some(owner_ref_in(&b, b0)), None);
+        set_member_uv_trim_curve(&mut b, b0, stale, None).unwrap();
+        let owner = uv_trim_curve_pointer(&b, a0)
+            .unwrap()
+            .and_then(Curve::owner);
+        assert_eq!(owner, Some(owner_ref_in(&b, a0)));
+        assert!(owner.is_some());
     }
 
     #[test]
-    fn issue_521_loop_gap_refuses_failed_trim_and_edge_evaluations() {
+    fn issue_521_loop_gap_is_big_without_trim_and_edge_evaluations() {
+        // tangency-labs/smlib 666242b (SmEdgeuse::GetStartPointUVLoopGap): a gap that
+        // cannot be measured is SM_BIG_DOUBLE, no closure; upstream measures it from
+        // unset points.
         use crate::nurbs::b_spline_curve::BSplineCurve;
+        let off = Kernel::default();
         let mut k = Kernel::default();
         k.fixes.topology_failed_evaluations_propagate = true;
         let a0 = EdgeuseId::from_index(0);
@@ -2004,12 +2041,11 @@ mod tests {
             b.edgeuse_mut(EdgeuseId::from_index(6))
                 .unwrap()
                 .uv_trim_curve = Some(uv_line([0.0, 1.0], [0.0, 0.0]));
-            let empty = Curve::from(BSplineCurve::new(2));
-            let expected = empty.evaluate_point(&k, 0.0).unwrap_err();
             b.edgeuse_mut(EdgeuseId::from_index(bad))
                 .unwrap()
-                .uv_trim_curve = Some(empty);
-            assert_eq!(start_point_uv_loop_gap(&k, &b, a0), Err(expected));
+                .uv_trim_curve = Some(Curve::from(BSplineCurve::new(2)));
+            assert_eq!(start_point_uv_loop_gap(&k, &b, a0).unwrap(), BIG_DOUBLE);
+            assert_ne!(start_point_uv_loop_gap(&off, &b, a0).unwrap(), BIG_DOUBLE);
         }
         for bad in [0, 3] {
             let mut b = square();
@@ -2018,10 +2054,10 @@ mod tests {
                     Some(Curve::from(crate::curve::line::Line::from_points(a, z, 3)));
             }
             assert_eq!(start_point_uv_loop_gap(&k, &b, a0).unwrap(), 0.0);
-            let empty = Curve::from(BSplineCurve::new(3));
-            let expected = empty.evaluate_point(&k, 0.0).unwrap_err();
-            b.edge_mut(EdgeId::from_index(bad)).unwrap().curve = Some(empty);
-            assert_eq!(start_point_uv_loop_gap(&k, &b, a0), Err(expected));
+            b.edge_mut(EdgeId::from_index(bad)).unwrap().curve =
+                Some(Curve::from(BSplineCurve::new(3)));
+            assert_eq!(start_point_uv_loop_gap(&k, &b, a0).unwrap(), BIG_DOUBLE);
+            assert_ne!(start_point_uv_loop_gap(&off, &b, a0).unwrap(), BIG_DOUBLE);
         }
     }
 
@@ -2130,19 +2166,28 @@ mod tests {
     }
 
     #[test]
-    fn issue_521_dist_and_dev_propagates_surface_evaluation_failure() {
+    fn issue_521_dist_and_dev_is_none_without_surface_derivatives() {
+        // tangency-labs/smlib 666242b (sm_CalcDistAndDev): no distance without the
+        // derivatives (rDist stays -1); upstream measures from unset ones.
         let mut k = Kernel::default();
         k.fixes.topology_failed_evaluations_propagate = true;
         let s = Surface::from(crate::nurbs::b_spline_surface::BSplineSurface::default());
         let mut sol = Solution::<H>::new();
         sol.objects[0] = Some(H(ObjectKind::Surface));
         sol.start.solution_value = 0.5;
-        let expected =
+        assert!(
             evaluate_1st_derivatives(&k, &s, Point2::new(0.0, 0.0), Side::Left, Side::Left)
-                .unwrap_err();
+                .is_err()
+        );
         assert_eq!(
-            calc_dist_and_dev(&k, Vec3::Z, &sol, |_| Some(&s), true),
-            Err(expected)
+            calc_dist_and_dev(&k, Vec3::Z, &sol, |_| Some(&s), true).unwrap(),
+            (-1.0, Some(-1.0))
+        );
+        // coverage only: upstream reaches -1 here as well (the unset derivatives
+        // vanish and the empty surface's normal is short)
+        assert_eq!(
+            calc_dist_and_dev(&Kernel::default(), Vec3::Z, &sol, |_| Some(&s), true).ok(),
+            Some((-1.0, Some(-1.0)))
         );
         assert_eq!(
             calc_dist_and_dev(&k, Vec3::Z, &sol, |_| Some(&s), false).unwrap(),

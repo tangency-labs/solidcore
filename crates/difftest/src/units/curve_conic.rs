@@ -37,8 +37,7 @@ pub const MIN_GENERATED: usize = 3000;
 /// Upstream `SM_SUCCESS`.
 const SM_SUCCESS: f64 = 1000.0;
 
-/// Upstream `SM_ERR_INVALID_INPUT`.
-const SM_ERR_INVALID_INPUT: i32 = 1007;
+use solidcore::error::SM_ERR_INVALID_INPUT;
 
 /// `curve.conic` runner.
 pub struct Runner;
@@ -103,7 +102,7 @@ fn lookup(name: &str) -> Result<(Op, bool), HarnessError> {
 
 fn status_code(e: &SolidError) -> i64 {
     match e {
-        SolidError::InvalidInput { .. } => i64::from(SM_ERR_INVALID_INPUT),
+        SolidError::InvalidInput { .. } | SolidError::PortInvariant { .. } => i64::from(SM_ERR_INVALID_INPUT),
         SolidError::Upstream { code, .. } => i64::from(*code),
         _ => -1,
     }

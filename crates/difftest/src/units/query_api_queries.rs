@@ -1,6 +1,7 @@
-//! Public `SmApi` queries against real native geometry. Topology inputs are imported
-//! from the established raw graph exporter; all query results come from `SmApi*`.
-//! Analytic wire curves are reconstructed as their concrete Rust kinds after import.
+//! Public `SmApi` queries against real native geometry. The C++ side builds each
+//! topology input natively; the Rust side builds the same B-rep with the Rust kernel
+//! ([`own_brep`], in the shim's `sc_edgeuse_graph.h` traversal order), so no C++ state
+//! reaches it. All query results come from `SmApi*`.
 use crate::case::CaseContext;
 use crate::runner::default_cases;
 use crate::{Case, HarnessError, Output, Rng, UnitDiff};
@@ -30,7 +31,7 @@ use solidcore::surface::surface_cache::face_context::FaceQueries;
 use solidcore::surface::surface_cache::SurfaceCache;
 use solidcore::topology::brep_cache::BrepCache;
 use solidcore::topology::brep_cache::{arena_identity, CacheObject, CacheSource};
-use solidcore::topology::{Brep, BrepId, EdgeId, FaceId, FaceuseId, VertexId};
+use solidcore::topology::{Brep, BrepId, FaceId};
 use solidcore::{Result, SolidError};
 use solidcore_ffi::units::query_api_queries as ffi;
 
@@ -45,6 +46,11 @@ struct Inputs {
     other_box: Option<[f64; 4]>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     expected_relationship: Option<i32>,
+    /// Rust side only (op 19): the solve over a bare [`LiveBrepObjects`], as a library
+    /// caller makes it (no B-rep cache, no `face_entity`), not this runner's [`Objects`]
+    /// adapter. The C++ side is the same `SmApiFaceClosestPoint`.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    live: bool,
 }
 
 fn v(a: [f64; 3]) -> Vec3 {
@@ -63,7 +69,7 @@ fn cclosest(o: &mut Vec<f64>, p: api::CurveClosestPoint) {
 }
 fn status(e: &SolidError) -> f64 {
     match e {
-        SolidError::InvalidInput { .. } => 1007.,
+        SolidError::InvalidInput { .. } | SolidError::PortInvariant { .. } => 1007.,
         SolidError::Upstream { code, .. } => f64::from(*code),
         _ => -1.,
     }
@@ -75,15 +81,27 @@ fn output(op: i32, r: Result<Vec<f64>>) -> Output {
     }
 }
 
-/// The case ops are `1..=25`; the FFI's `0` and `26` are the graph exports
+/// The case ops are `1..=25` and `27` (`SmApiBrepMaterialCensus`); the FFI's `0` and `26` are the graph exports
 /// [`imported`] reads the native B-rep through, which have no Rust counterpart to
 /// compare.
 fn compared_op(op: i32) -> std::result::Result<(), HarnessError> {
-    if (1..=25).contains(&op) {
+    if (1..=25).contains(&op) || op == 27 {
         Ok(())
     } else {
         Err(HarnessError::new(format!("op {op} is not a compared query (1..=25)")))
     }
+}
+
+// Native null contracts are covered by the FFI tests; typed Rust APIs cannot
+// represent them. Refuse these fixtures on both sides of the comparison.
+fn compared_input(i: &Inputs) -> std::result::Result<(), HarnessError> {
+    compared_op(i.op)?;
+    if i.data[16] != 0. {
+        return Err(HarnessError::new(
+            "null pointers have no typed Rust equivalent; use the FFI contract tests",
+        ));
+    }
+    Ok(())
 }
 
 // Integer topology and status fields are compared exactly; only geometric
@@ -93,7 +111,7 @@ fn decode(op: i32, values: Vec<f64>) -> Output {
     let mut floats = Vec::new();
     for (i, value) in values.into_iter().enumerate() {
         let integer = i == 0
-            || matches!(op, 9 | 10 | 11 | 13 | 14 | 18 | 23)
+            || matches!(op, 9 | 10 | 11 | 13 | 14 | 18 | 23 | 27)
             || matches!(op, 2 | 6 | 12) && i == 1
             || op == 3 && i == 5
             || op == 7 && i == 2;
@@ -208,7 +226,8 @@ fn surface(k: &Kernel, a: &[f64; 22]) -> Result<Surface> {
             false,
         )?));
     }
-    if a[21] == 4. {
+    // `api_surface`: an `SmPlane` for kinds 4 and 11
+    if a[21] == 4. || a[21] == 11. {
         return Ok(Surface::from(Plane::from_normal(
             v([a[0], a[1], a[2]]),
             v([a[3], a[4], a[5]]),
@@ -297,135 +316,214 @@ fn surface(k: &Kernel, a: &[f64; 22]) -> Result<Surface> {
     )))
 }
 
-fn imported(k: &Kernel, a: &[f64; 22], export_op: i32) -> std::result::Result<Brep, HarnessError> {
-    let raw = ffi::eval(export_op, a).map_err(|e| HarnessError::new(e.to_string()))?;
-    let counts = solidcore_ffi::units::topology_edgeuse_p1::counts(&raw)
-        .ok_or_else(|| HarnessError::new("invalid topology export"))?;
-    let count = counts
-        .get(3)
-        .copied()
-        .ok_or_else(|| HarnessError::new("missing face count"))?;
-    // the B-rep's face, edge and vertex lists in their list order follow the metadata
-    let (n_e, n_v) = (
-        counts
-            .get(7)
-            .copied()
-            .ok_or_else(|| HarnessError::new("missing edge count"))?,
-        counts
-            .get(9)
-            .copied()
-            .ok_or_else(|| HarnessError::new("missing vertex count"))?,
-    );
-    let lists_len = 3 + count + n_e + n_v;
-    let lists_at = raw
-        .len()
-        .checked_sub(lists_len)
-        .ok_or_else(|| HarnessError::new("missing list orders"))?;
-    let (raw, lists) = raw.split_at(lists_at);
-    let tail = count
-        .checked_mul(2)
-        .ok_or_else(|| HarnessError::new("face metadata overflow"))?;
-    let split = raw
-        .len()
-        .checked_sub(tail)
-        .ok_or_else(|| HarnessError::new("missing face metadata"))?;
-    let (graph, metadata) = raw.split_at(split);
-    let (mut b, types) = crate::units::topology_edgeuse_p1::import_with_types(graph)?;
-    {
-        let mut at = 0usize;
-        let mut read_list = |expect: usize| -> std::result::Result<Vec<u32>, HarnessError> {
-            let n = lists.get(at).copied().unwrap_or(-1.0);
-            if n < 0.0 || n as usize != expect {
-                return Err(HarnessError::new("list order length mismatch"));
-            }
-            let v: Vec<u32> = lists
-                .get(at + 1..at + 1 + expect)
-                .ok_or_else(|| HarnessError::new("short list order"))?
-                .iter()
-                .map(|&i| i as u32)
-                .collect();
-            at += 1 + expect;
-            Ok(v)
+/// The shim's B-rep of a topology op, built by the Rust kernel (no C++ state reaches
+/// it): a wire edge on the case curve (kinds 0-3, 10), a face on the case surface (4, 5,
+/// 8, 9, 11; kind 11 then two vertex loops at the surface points at the domain fractions
+/// 0.25 and 0.75), `SmApiCreateBox` (6), a planar face with a square hole from 3D line
+/// segments (12), or an empty B-rep; renumbered into the shim's traversal order
+/// (`sc_edgeuse_graph.h`), then the shim's edits on the selected edge and face:
+/// `SetTolerance(a[19], FALSE, FALSE)` when `a[19] >= 0`, `SetCurve(NULL, TRUE, FALSE,
+/// FALSE)` when `a[17]`, and with `orient_edit` (the shim's ops 11 and 26) and `a[18]`
+/// the last edge use of the last upward loop use that has any set to unknown
+/// orientation. The geometry is owned under the arena identities, recorded as the
+/// B-rep's naming. A failed build is a harness error, as the shim's `SC_ERR_ARG`; an
+/// unported callee defers.
+fn own_brep(
+    k: &mut Kernel,
+    a: &[f64; 22],
+    orient_edit: bool,
+) -> std::result::Result<std::result::Result<Brep, Output>, HarnessError> {
+    use crate::own_builder::{create_face, finish, in_new_brep, Built, Conventions};
+    use solidcore::nurbs::b_spline_surface_n_lib::p2::OrientType;
+    use solidcore::topology::brep::p2::ArenaNotifyState;
+    let kind = a[21] as i32;
+    let raw = if kind <= 3 || kind == 10 {
+        match curve(k, a) {
+            Ok(c) => in_new_brep(k, |k, b| {
+                solidcore::topology::brep::p5::create_wire_edge_from_curve(
+                    k,
+                    b,
+                    c,
+                    Extent1d::from_min_max(a[7], a[8]),
+                )
+                .map(|_| ())
+            })?,
+            Err(e) => Err(e),
+        }
+    } else if matches!(kind, 4 | 5 | 8 | 9 | 11) {
+        match surface(k, a) {
+            Ok(s) => in_new_brep(k, |k, b| {
+                let f = create_face(k, b, s, [a[7], a[8], a[9], a[10]])?;
+                if kind == 11 {
+                    for fraction in [0.25, 0.75] {
+                        let uv = solidcore::geom::vector2d::Point2::new(
+                            a[7] + fraction * (a[9] - a[7]),
+                            a[8] + fraction * (a[10] - a[8]),
+                        );
+                        let point = solidcore::topology::face::p2::surface(b, f)?
+                            .ok_or_else(|| SolidError::sm_err("query::api_queries fixture"))?
+                            .evaluate_point(k, uv)?;
+                        let mut state = ArenaNotifyState::new(b);
+                        let mut env = state.env(None);
+                        solidcore::topology::brep::p9::make_vertex_loop(
+                            b,
+                            f,
+                            point,
+                            OrientType::Opposite,
+                            &mut env,
+                        )?;
+                    }
+                }
+                Ok(())
+            })?,
+            Err(e) => Err(e),
+        }
+    } else if kind == 6 {
+        solidcore::primitive::api_primitives::create_box(
+            k,
+            v([a[0], a[1], a[2]]),
+            a[6],
+            a[6],
+            a[6],
+        )
+    } else if (14..=16).contains(&kind) {
+        use solidcore::boolean::api_brep as bo;
+        let origin = v([a[0], a[1], a[2]]);
+        let first = solidcore::primitive::api_primitives::create_box(k, origin, a[6], a[6], a[6]);
+        let (at, size) = if kind == 15 {
+            (v([a[0] + 2. * a[6], a[1], a[2]]), a[6])
+        } else {
+            (
+                v([a[0] + 0.25 * a[6], a[1] + 0.25 * a[6], a[2] + 0.25 * a[6]]),
+                0.5 * a[6],
+            )
         };
-        let fl = read_list(count)?;
-        let el = read_list(n_e)?;
-        let vl = read_list(n_v)?;
-        b.set_face_list(fl.into_iter().map(FaceId::from_index).collect())
-            .map_err(|e| HarnessError::new(format!("face list: {e}")))?;
-        b.set_edge_list(el.into_iter().map(EdgeId::from_index).collect())
-            .map_err(|e| HarnessError::new(format!("edge list: {e}")))?;
-        b.set_vertex_list(vl.into_iter().map(VertexId::from_index).collect())
-            .map_err(|e| HarnessError::new(format!("vertex list: {e}")))?;
-    }
-    let faces: Vec<_> = b.faces().ids().collect();
-    let (metadata, remainder) = metadata.as_chunks::<2>();
-    if !remainder.is_empty() {
-        return Err(HarnessError::new("incomplete face metadata"));
-    }
-    for (id, &[fu, rect]) in faces.iter().zip(metadata) {
-        let face = b
-            .face_mut(*id)
-            .map_err(|e| HarnessError::new(e.to_string()))?;
-        face.faceuse = (fu >= 0.).then(|| FaceuseId::from_index(fu as u32));
-        face.rectangular_trim = rect as i32;
-    }
-    if (a[21] <= 3. || a[21] == 10.) && a[17] == 0. {
-        let ids: Vec<_> = b.edges().ids().collect();
-        for id in ids {
-            b.edge_mut(id)
-                .map_err(|e| HarnessError::new(e.to_string()))?
-                .curve = Some(curve(k, a).map_err(|e| HarnessError::new(e.to_string()))?);
+        match first {
+            Ok(outer) => solidcore::primitive::api_primitives::create_box(k, at, size, size, size)
+                .and_then(|inner| {
+                    if kind == 14 {
+                        bo::boolean_difference(k, outer, inner)
+                    } else {
+                        bo::boolean_merge(k, outer, inner)
+                    }
+                }),
+            Err(e) => Err(e),
         }
-    }
-    // Reject a lossy import instead of comparing a virtual call on a stand-in.
-    for ((_, edge), &native) in b.edges().iter().zip(&types.edge_curve_types) {
-        let rust = edge.curve.as_ref().map_or(-1, Curve::type_code);
-        if rust != native {
-            return Err(HarnessError::new(format!(
-                "native edge curve type {native} imported as {rust}"
-            )));
+    } else if kind == 12 {
+        // two real closed curve loops: an outer square and a square hole
+        const XY: [[f64; 2]; 8] = [
+            [0., 0.],
+            [4., 0.],
+            [4., 4.],
+            [0., 4.],
+            [1., 1.],
+            [1., 3.],
+            [3., 3.],
+            [3., 1.],
+        ];
+        let mut curves = Vec::new();
+        let mut failed = None;
+        for (i, [x, y]) in XY.iter().enumerate() {
+            let next = (i / 4) * 4 + (i + 1) % 4;
+            let [nx, ny] = XY.get(next).copied().unwrap_or([0., 0.]);
+            let start = Point3::new(a[0] + a[6] * x, a[1] + a[6] * y, a[2]);
+            let end = Point3::new(a[0] + a[6] * nx, a[1] + a[6] * ny, a[2]);
+            match BSplineCurve::create_line_segment(3, start, end) {
+                Ok(c) => curves.push(Curve::from(c)),
+                Err(e) => {
+                    failed = Some(e);
+                    break;
+                }
+            }
         }
-    }
-    for ((_, face), &native) in b.faces().iter().zip(&types.face_surface_types) {
-        let rust = face.surface.as_ref().map_or(-1, Surface::type_code);
-        if rust != native {
-            return Err(HarnessError::new(format!(
-                "native face surface type {native} imported as {rust}"
-            )));
+        match failed {
+            Some(e) => Err(e),
+            None => in_new_brep(k, |k, b| {
+                let mut state = ArenaNotifyState::new(b);
+                let mut env = state.env(None);
+                let mut marks = solidcore::topology::topology_traverser::Marks::default();
+                let this_face = |face| arena_identity(CacheObject::Face(face));
+                let mut fenv = solidcore::topology::brep::p8::FaceBuildEnv {
+                    env: &mut env,
+                    marks: &mut marks,
+                    this_face: &this_face,
+                };
+                solidcore::topology::brep::p8::create_planar_face_with_3d_curves(
+                    k, b, None, &curves, 1e-5, &mut fenv,
+                )
+                .map(|_| ())
+            })?,
         }
-    }
-    let edges: Vec<_> = b.edges().ids().collect();
-    for id in edges {
-        if let Some(curve) = b
-            .edge_mut(id)
-            .map_err(|e| HarnessError::new(e.to_string()))?
-            .curve
-            .as_mut()
-        {
-            let _ = curve.set_owner(
-                Some(arena_identity(CacheObject::Edge(id))),
-                Some(arena_identity(CacheObject::Brep)),
-            );
+    } else {
+        in_new_brep(k, |_, _| Ok(()))?
+    };
+    let mut b = match finish(k, raw, false, false, &Conventions::EDGEUSE_GRAPH)? {
+        Built::Brep(b) => *b,
+        Built::Failed(e) => {
+            return Output::unported(&e)
+                .map(Err)
+                .ok_or_else(|| HarnessError::new(format!("rust build: {e}")))
         }
+    };
+    if let Err(e) = own_edits(&mut b, a, orient_edit) {
+        return Output::unported(&e)
+            .map(Err)
+            .ok_or_else(|| HarnessError::new(format!("rust edit: {e}")));
     }
     let faces: Vec<_> = b.faces().ids().collect();
     for id in faces {
-        if let Some(surface) = b
-            .face_mut(id)
-            .map_err(|e| HarnessError::new(e.to_string()))?
-            .surface
-            .as_mut()
-        {
-            let _ = surface.set_owner(Some(arena_identity(CacheObject::Face(id))));
-        }
         // the face's tolerance, as the face upstream answers GetTolerance with
         b.sync_face_surface_tolerance(id)
             .map_err(|e| HarnessError::new(e.to_string()))?;
     }
-    // record the arena naming given to the owners above (and each owner)
+    // record the arena naming the build gave the owners
     b.use_arena_naming()
         .map_err(|e| HarnessError::new(e.to_string()))?;
-    Ok(b)
+    Ok(Ok(b))
+}
+
+/// The shim's edits after its walk (see [`own_brep`]), on the traversal-ordered B-rep.
+fn own_edits(b: &mut Brep, a: &[f64; 22], orient_edit: bool) -> Result<()> {
+    use solidcore::nurbs::b_spline_surface_n_lib::p2::OrientType;
+    use solidcore::topology::brep::p2::ArenaNotifyState;
+    use solidcore::topology::edge as ed;
+    let sel = a[20] as usize;
+    let es: Vec<_> = b.edges().ids().collect();
+    let fs: Vec<_> = b.faces().ids().collect();
+    let e = es.get(sel % es.len().max(1)).copied();
+    let f = fs.get(sel % fs.len().max(1)).copied();
+    if let Some(e) = e {
+        if a[19] >= 0. {
+            ed::set_tolerance(b, e, a[19], false, false)?;
+        }
+        if a[17] != 0. {
+            let mut state = ArenaNotifyState::new(b);
+            let mut env = state.env(None);
+            ed::set_curve(
+                b,
+                e,
+                None,
+                ed::SetCurveOptions {
+                    delete_old_curve: true,
+                    dbg_warn_leaks: false,
+                    call_notify: false,
+                },
+                &mut env,
+                [None, None],
+            )?;
+        }
+    }
+    if let (true, Some(f), true) = (orient_edit, f, a[18] != 0.) {
+        let loops = solidcore::topology::face::p4::upward_loopuses(b, f, false, None)?;
+        for lu in loops.iter().rev() {
+            let uses = solidcore::topology::loopuse::edgeuses(b, *lu, None, None)?;
+            if let Some(&last) = uses.last() {
+                solidcore::topology::edgeuse::p1::set_orientation(b, last, OrientType::Unknown)?;
+                break;
+            }
+        }
+    }
+    Ok(())
 }
 
 #[derive(Clone, Copy, PartialEq)]
@@ -798,18 +896,35 @@ fn topology(k: &mut Kernel, i: &Inputs, b: &mut Brep, second: &mut Brep) -> Resu
                 &[],
             )?;
             let identities = identities();
-            let mut empty = Brep::new();
-            let objects = Objects::new(k, [&mut *b, &mut empty], &identities)?;
-            closest(
-                &mut o,
-                api::face_closest_point_in_shape(
-                    k,
-                    &shape,
-                    &objects,
-                    (BrepId::from_index(0), face),
-                    point,
-                )?,
-            );
+            if i.live {
+                // the library path: a bare live view of the B-rep, its geometry named by
+                // its owners' arena identities (`own_brep`)
+                let [identity, _] = &identities;
+                let objects = LiveBrepObjects::new(b, identity, None)?;
+                closest(
+                    &mut o,
+                    api::face_closest_point_in_shape(
+                        k,
+                        &shape,
+                        &objects,
+                        (BrepId::from_index(0), face),
+                        point,
+                    )?,
+                );
+            } else {
+                let mut empty = Brep::new();
+                let objects = Objects::new(k, [&mut *b, &mut empty], &identities)?;
+                closest(
+                    &mut o,
+                    api::face_closest_point_in_shape(
+                        k,
+                        &shape,
+                        &objects,
+                        (BrepId::from_index(0), face),
+                        point,
+                    )?,
+                );
+            }
         }
         21 => cclosest(
             &mut o,
@@ -823,6 +938,22 @@ fn topology(k: &mut Kernel, i: &Inputs, b: &mut Brep, second: &mut Brep) -> Resu
             api::edge_classify_parameter(k, b, e.ok_or_else(missing)?, a[14])?.code(),
         )),
         24 => vec(&mut o, api::edge_tangent(k, b, e.ok_or_else(missing)?, a[14])?),
+        27 => {
+            if a[18] != 0. {
+                // the shim's rewrite of the void flags along the region list
+                let ids = solidcore::topology::brep::p1::regions(b, None)?;
+                for (n, id) in ids.into_iter().enumerate() {
+                    let flag = match (n + index) % 3 {
+                        0 => 0,
+                        1 => 1,
+                        _ => solidcore::topology::brep_data::UNSURE,
+                    };
+                    b.region_mut(id)?.set_is_void(flag);
+                }
+            }
+            let (solids, voids) = api::brep_material_census(b)?;
+            o.extend([solids as f64, voids as f64]);
+        }
         25 => vec(&mut o, api::vertex_get_point(b, vert.ok_or_else(missing)?)?),
         _ => return Err(missing()),
     }
@@ -835,7 +966,7 @@ impl UnitDiff for Runner {
     }
     fn run_cpp(&self, c: &Case) -> std::result::Result<Output, HarnessError> {
         let i: Inputs = c.parse()?;
-        compared_op(i.op)?;
+        compared_input(&i)?;
         let mut input = i.data.to_vec();
         if let Some(other) = i.other_box {
             input.extend(other);
@@ -852,14 +983,9 @@ impl UnitDiff for Runner {
     }
     fn run_rust(&self, c: &Case) -> std::result::Result<Output, HarnessError> {
         let i: Inputs = c.parse()?;
-        compared_op(i.op)?;
+        compared_input(&i)?;
         let a = &i.data;
         let mut k = Kernel::default();
-        if a[16] != 0. {
-            return Err(HarnessError::new(
-                "null pointers have no typed Rust equivalent; use the FFI contract tests",
-            ));
-        }
         let point = v([a[11], a[12], a[13]]);
         let result = match i.op {
             1 => curve(&k, a)
@@ -890,7 +1016,10 @@ impl UnitDiff for Runner {
                     o
                 }),
             _ => {
-                let mut b = imported(&k, a, if i.op == 11 { 26 } else { 0 })?;
+                let mut b = match own_brep(&mut k, a, i.op == 11)? {
+                    Ok(b) => b,
+                    Err(o) => return Ok(o),
+                };
                 let mut other = *a;
                 other[0] += 3. * a[6];
                 if let Some([x, y, z, size]) = i.other_box {
@@ -900,7 +1029,10 @@ impl UnitDiff for Runner {
                 other[21] = 6.;
                 other[17] = 0.;
                 let mut second = if i.op == 7 || i.op == 8 {
-                    imported(&k, &other, 0)?
+                    match own_brep(&mut k, &other, false)? {
+                        Ok(b) => b,
+                        Err(o) => return Ok(o),
+                    }
                 } else {
                     Brep::new()
                 };
@@ -952,6 +1084,7 @@ impl UnitDiff for Runner {
             data: a,
             other_box: None,
             expected_relationship: None,
+            live: false,
         })
         .ok()
     }

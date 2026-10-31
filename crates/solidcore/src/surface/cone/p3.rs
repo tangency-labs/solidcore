@@ -34,6 +34,10 @@
 //! parallel-cylinder spans use both requested domains converted to STEP, instead of
 //! the full cylinders' axial extents. Conversion errors propagate; the original
 //! tolerance branches are kept. This works independently of the midpoint option.
+//! Opt-in ([`UpstreamFixes::cylinder_plane_tangent_within_tolerance`](crate::kernel::UpstreamFixes::cylinder_plane_tangent_within_tolerance), WR-510 / #1525):
+//! a plane parallel to a cylinder's axis is also tangent when it lies within the zone
+//! tolerance of a bounded face's wall along a line (the larger of the cone's and the
+//! plane's face tolerances, 0 without a face); bare surfaces keep upstream's test.
 //! No input-driven recursion is introduced.
 
 use super::{Cone, ConeStepInversion};
@@ -323,12 +327,15 @@ impl Cone {
             PlaneOwner::NoFace,
             other_domain,
             approx_tol,
+            [None, None],
         )
     }
 
     /// [`Cone::intersect_with_plane`] with the plane's owner: its box is expanded by the
     /// tolerance of the plane's face (`GetFace()->GetTolerance()`), else by
-    /// `SM_ZONE_TOL_3D`.
+    /// `SM_ZONE_TOL_3D`. `zone_tols` are the zone tolerances of the cone's face and of
+    /// the plane's face (`None`: no face, 0), read only by the opt-in
+    /// `cylinder_plane_tangent_within_tolerance` test.
     ///
     /// # Errors
     ///
@@ -342,6 +349,7 @@ impl Cone {
         plane_owner: PlaneOwner,
         other_domain: &Extent2d,
         approx_tol: Option<f64>,
+        zone_tols: [Option<f64>; 2],
     ) -> Result<(bool, SurfaceIntersection)> {
         let mut out = SurfaceIntersection::default();
         let tol = approx_tol.map_or(EFF_ZERO_SQRT, |t| approx_tol3d(k, t));
@@ -378,10 +386,19 @@ impl Cone {
                 if distance.abs() > bot_radius + tol {
                     return Ok((false, out));
                 }
-                if distance.abs() >= bot_radius
+                // Upstream: tangent, or the two crossing lines are within tolerance of each
+                // other. WR-510 (#1525; tangency-labs/smlib#55, merged as bd20f6e): with the
+                // opt-in fix, also tangent within the zone tolerance of a face either surface
+                // bounds, so a plane a hair off a face's wall is one line; bare surfaces
+                // (zone tolerance 0) keep their two lines.
+                let mut tangent = distance.abs() >= bot_radius
                     || (distance.abs() > bot_radius - tol
-                        && bot_radius * bot_radius - distance * distance < tol * tol)
-                {
+                        && bot_radius * bot_radius - distance * distance < tol * tol);
+                if k.fixes.cylinder_plane_tangent_within_tolerance {
+                    let zone_tol = zone_tols[0].unwrap_or(0.0).max(zone_tols[1].unwrap_or(0.0));
+                    tangent = tangent || distance.abs() > bot_radius - zone_tol;
+                }
+                if tangent {
                     let dir = if distance > 0.0 { -normal } else { normal };
                     if angle_in_sweep(self, axis, dir, ang_tol)? {
                         let start = bottom + bot_radius * dir;
@@ -581,8 +598,33 @@ impl Cone {
         surfaces: [Option<&Surface>; 2],
     ) -> Result<(bool, SurfaceIntersection)> {
         let mut out = SurfaceIntersection::default();
+        let more = self.intersect_with_cone_on_into(
+            k,
+            domain,
+            other,
+            other_domain,
+            approx_tol,
+            surfaces,
+            &mut out,
+        )?;
+        Ok((more, out))
+    }
+
+    /// [`Self::intersect_with_cone_on`] into `out` (reset first). On an error `out` keeps what was
+    /// appended before it, as upstream leaves its output arrays.
+    fn intersect_with_cone_on_into(
+        &self,
+        k: &Kernel,
+        domain: &Extent2d,
+        other: &Self,
+        other_domain: &Extent2d,
+        approx_tol: Option<f64>,
+        surfaces: [Option<&Surface>; 2],
+        out: &mut SurfaceIntersection,
+    ) -> Result<bool> {
+        *out = SurfaceIntersection::default();
         if core::ptr::eq(self, other) {
-            return Ok((false, out));
+            return Ok(false);
         }
         let box1 = bbox(k, self, domain)?;
         let mut box2 = bbox(k, other, other_domain)?;
@@ -592,7 +634,7 @@ impl Cone {
         });
         box2.expand_absolute(tol);
         if box1.are_disjoint(&box2, 0.0) {
-            return Ok((false, out));
+            return Ok(false);
         }
         let height = self.height(k)?;
         let axis = self.rev().position().z_axis();
@@ -621,16 +663,16 @@ impl Cone {
                 || max_radius + tol < other_min_radius - distance
                 || other_max_radius + tol < min_radius - distance
             {
-                return Ok((false, out));
+                return Ok(false);
             }
             let param2 = line_closest_point(bottom, axis, other_top);
             if (param > height + tol && param2 > height + tol)
                 || (param < 0.0 - tol && param2 < 0.0 - tol)
             {
-                return Ok((false, out));
+                return Ok(false);
             }
             if !self.is_cylinder() || !other.is_cylinder() {
-                return Ok((true, out));
+                return Ok(true);
             }
             let (mut min, mut max, other_min, other_max) = if k.fixes.cone_parallel_line_domains {
                 // Face domains can be shorter than either underlying cylinder.
@@ -648,7 +690,7 @@ impl Cone {
                 let other_min = min2(other_param, other_param2);
                 let other_max = max2(other_param, other_param2);
                 if other_min > max + tol || other_max < min - tol {
-                    return Ok((false, out));
+                    return Ok(false);
                 }
                 (min, max, other_min, other_max)
             } else {
@@ -690,7 +732,7 @@ impl Cone {
                     other_domain,
                     boundary_tol,
                 ))? {
-                    append(&mut out, first);
+                    append(out, first);
                 }
                 let second = boundary_intersections(
                     k,
@@ -702,8 +744,8 @@ impl Cone {
                 );
                 // Upstream overwrites the first status/needs-more with the second.
                 let second = second?;
-                append_boundary_intersections(k, &mut out, second, tol)?;
-                return Ok((false, out));
+                append_boundary_intersections(k, out, second, tol)?;
+                return Ok(false);
             }
             let start = bottom + param * axis;
             let intersection = circle_coplanar_circle_intersect(
@@ -719,7 +761,7 @@ impl Cone {
                 CircleCircle::None => Vec::new(),
                 CircleCircle::Tangent(p) => vec![p],
                 CircleCircle::Crossing(p, q) => vec![p, q],
-                CircleCircle::Coincident => return Ok((true, out)),
+                CircleCircle::Coincident => return Ok(true),
             };
             for point in points {
                 let line_point = point + (min - param) * axis;
@@ -755,7 +797,7 @@ impl Cone {
                 }
                 if max - min < tol {
                     add(
-                        &mut out,
+                        out,
                         Curve::from(BSplineCurve::create_degenerate_curve(3, line_point)?),
                         TsectCurveType::Touching,
                     );
@@ -770,7 +812,7 @@ impl Cone {
                         },
                     );
                     add(
-                        &mut out,
+                        out,
                         Curve::from(curve),
                         if count == 1 {
                             TsectCurveType::Tangent
@@ -785,11 +827,11 @@ impl Cone {
                 || !other.is_cylinder()
                 || (self.top_radius() - other.top_radius()).abs() > tol
             {
-                return Ok((true, out));
+                return Ok(true);
             }
             let points = segment_segment_intersect(bottom, top, other_bottom, other_top, tol)?;
             let [point] = points.as_slice() else {
-                return Ok((true, out));
+                return Ok(true);
             };
             let (vec1, vec2) = parallelogram_cross_vectors(
                 axis,
@@ -848,7 +890,7 @@ impl Cone {
                 out.deviations.push(0.0);
             }
         }
-        Ok((false, out))
+        Ok(false)
     }
 }
 
@@ -856,7 +898,9 @@ impl Cone {
 // EXTERIOR classification. The one local error below is exactly the generator
 // solve's empty-result branch: it explicitly writes EXTERIOR before returning
 // SM_ERR. No UV coordinate is fabricated or consumed on that branch.
-// Start-plane transform errors still propagate (see the module Deviations).
+// Start-plane transform errors still propagate (see the module Deviations), which
+// is what the SolidCraft fork's `analytic_inversion_answers_apart` (tangency-labs/smlib
+// dfc7cb6, `SER` unless `STEPInversionAnswered`) does for every flag setting.
 fn intersection_inversion(
     cone: &Cone,
     k: &Kernel,
@@ -1030,6 +1074,48 @@ impl Cone {
         ang_tol_rad: Option<f64>,
         general: impl FnOnce(GeneralIntersectionRequest<'a>) -> Result<SurfaceIntersection>,
     ) -> Result<SurfaceIntersection> {
+        let mut out = SurfaceIntersection::default();
+        self.global_surface_intersect_on_into(
+            this,
+            k,
+            domain,
+            other,
+            other_domain,
+            use_surface_edges,
+            approx_tol_3d,
+            ang_tol_rad,
+            |req, out| {
+                *out = general(req)?;
+                Ok(())
+            },
+            &mut out,
+        )?;
+        Ok(out)
+    }
+
+    /// [`Cone::global_surface_intersect_on`] into `out` (upstream's output arrays). On an
+    /// error `out` keeps what the failing special case (or `general`, which fills it)
+    /// appended before it, as upstream leaves its output arrays; the general
+    /// intersection resets them first.
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn global_surface_intersect_on_into<'a, G>(
+        &'a self,
+        this: Option<&'a Surface>,
+        k: &'a Kernel,
+        domain: &'a Extent2d,
+        other: IntersectTarget<'a>,
+        other_domain: &'a Extent2d,
+        use_surface_edges: [bool; 2],
+        approx_tol_3d: Option<f64>,
+        ang_tol_rad: Option<f64>,
+        general: G,
+        out: &mut SurfaceIntersection,
+    ) -> Result<()>
+    where
+        G: FnOnce(GeneralIntersectionRequest<'a>, &mut SurfaceIntersection) -> Result<()>,
+    {
+        // (each special case resets the outputs on entry)
+        *out = SurfaceIntersection::default();
         let other_surface = match other {
             IntersectTarget::Surface(s) => Some(s),
             _ => None,
@@ -1045,60 +1131,79 @@ impl Cone {
             },
             _ => other,
         };
-        let (needs_more, out) = match target {
+        let needs_more = match target {
             IntersectTarget::Plane(p) => {
-                self.intersect_with_plane(k, domain, p, other_domain, approx_tol_3d)?
+                // the zone tolerances of this cone's face and of the plane's (WR-510)
+                let (more, found) = self.intersect_with_plane_owned(
+                    k,
+                    domain,
+                    p,
+                    PlaneOwner::NoFace,
+                    other_domain,
+                    approx_tol_3d,
+                    [
+                        this.and_then(Surface::owner_zone_tol_3d),
+                        other_surface.and_then(Surface::owner_zone_tol_3d),
+                    ],
+                )?;
+                *out = found;
+                more
             }
             IntersectTarget::Cone(c) if matches!(c.type_code(), CONE_TYPE | CYLINDER_TYPE) => self
-                .intersect_with_cone_on(
+                .intersect_with_cone_on_into(
                     k,
                     domain,
                     c,
                     other_domain,
                     approx_tol_3d,
                     [this, other_surface],
+                    out,
                 )?,
+            // the other surface's first surface is this one: its UV curves are swapped,
+            // also in a partial output
             IntersectTarget::Revolution(r) => {
-                let (more, mut out) =
-                    r.intersect_with_cone(k, other_domain, self, domain, approx_tol_3d)?;
+                let more =
+                    r.intersect_with_cone_into(k, other_domain, self, domain, approx_tol_3d, out);
                 core::mem::swap(&mut out.surface1_uv_curves, &mut out.surface2_uv_curves);
-                (more, out)
+                more?
             }
             IntersectTarget::Sphere(s) => {
-                let (more, mut out) =
-                    s.intersect_with_cone(k, other_domain, self, domain, approx_tol_3d)?;
+                let more =
+                    s.intersect_with_cone_into(k, other_domain, self, domain, approx_tol_3d, out);
                 core::mem::swap(&mut out.surface1_uv_curves, &mut out.surface2_uv_curves);
-                (more, out)
+                more?
             }
             IntersectTarget::Extrusion(e) if self.is_cylinder() => {
                 let r = e.intersect_with_cylinder(k, self, approx_tol_3d)?;
-                (
-                    r.needs_more_intersections,
-                    SurfaceIntersection {
-                        curves_3d: r.curves_3d,
-                        surface1_uv_curves: r.surface2_uv_curves,
-                        surface2_uv_curves: r.surface1_uv_curves,
-                        curve_types: r.curve_types,
-                        deviations: r.deviations,
-                    },
-                )
+                *out = SurfaceIntersection {
+                    curves_3d: r.curves_3d,
+                    surface1_uv_curves: r.surface2_uv_curves,
+                    surface2_uv_curves: r.surface1_uv_curves,
+                    curve_types: r.curve_types,
+                    deviations: r.deviations,
+                };
+                r.needs_more_intersections
             }
-            _ => (true, SurfaceIntersection::default()),
+            _ => true,
         };
         if needs_more {
             // DoIntersection resets every native output before its general solve.
-            return general(GeneralIntersectionRequest {
-                kernel: k,
-                cone: self,
-                domain,
-                other,
-                other_domain,
-                use_surface_edges,
-                approx_tol_3d,
-                ang_tol_rad,
-            });
+            *out = SurfaceIntersection::default();
+            general(
+                GeneralIntersectionRequest {
+                    kernel: k,
+                    cone: self,
+                    domain,
+                    other,
+                    other_domain,
+                    use_surface_edges,
+                    approx_tol_3d,
+                    ang_tol_rad,
+                },
+                out,
+            )?;
         }
-        Ok(out)
+        Ok(())
     }
 }
 
@@ -1299,6 +1404,95 @@ mod tests {
         let (more, out) = a.intersect_with_cone(&k, &da, &b, &db, Some(1e-7)).unwrap();
         assert!(!more);
         assert_axial_lines(&out, 2, 4.0, 9.0);
+    }
+
+    /// Section of the radius-3 cylinder along z by the plane `x = d`, parallel to its axis,
+    /// the plane owned as `owner` and the zone tolerances `zone_tols` (cone, plane).
+    fn wall_section(
+        k: &Kernel,
+        c: &Cone,
+        d: f64,
+        owner: PlaneOwner,
+        zone_tols: [Option<f64>; 2],
+    ) -> SurfaceIntersection {
+        let plane = Plane::from_normal(Vec3::new(d, 0.0, 0.0), Vec3::X);
+        let plane_domain = Extent2d::from_bounds(-20.0, -20.0, 20.0, 20.0);
+        let (more, out) = c
+            .intersect_with_plane_owned(
+                k,
+                &axial_domain(k, c, 0.0, 12.0),
+                &plane,
+                owner,
+                &plane_domain,
+                None,
+                zone_tols,
+            )
+            .unwrap();
+        assert!(!more);
+        out
+    }
+
+    /// WR-510 (#1525): a plane parallel to a cylinder's axis, turned a hair off its wall,
+    /// dips in by 1e-11, far below `tol` = 1e-6, but its two crossing lines each lie
+    /// `sqrt(2 R depth)` = 7.7e-6 from the foot, 1.5e-5 apart, so upstream cuts the wall
+    /// in two lines. Within a face's zone tolerance (1e-5) it is one tangent line.
+    #[test]
+    fn issue1525_plane_within_tolerance_of_wall_is_tangent() {
+        let mut k = Kernel::default();
+        let mut c = Cone::new_cylinder_bounded(
+            Vec3::ZERO,
+            Vec3::X,
+            Vec3::Y,
+            3.0,
+            0.0,
+            360.0,
+            12.0,
+            false,
+            false,
+            false,
+        );
+        c.make_nurb(&k).unwrap();
+        let hair = 3.0 - 1e-11;
+        let bare = [None, None];
+        let zone = Some(1e-5);
+
+        // Bare surfaces keep their two crossing lines, with the flag on as well.
+        let out = wall_section(&k, &c, hair, PlaneOwner::NoFace, bare);
+        assert_eq!(out.curve_types, vec![TsectCurveType::Crossing; 2]);
+        k.fixes.cylinder_plane_tangent_within_tolerance = true;
+        let out = wall_section(&k, &c, hair, PlaneOwner::NoFace, bare);
+        assert_eq!(out.curve_types, vec![TsectCurveType::Crossing; 2]);
+
+        // A face's zone tolerance, on the plane's face or on the cone's, makes the
+        // plane one tangent line on the wall with the flag on; the flag off keeps two.
+        for (owner, zone_tols) in [
+            (PlaneOwner::Face(zone), [None, zone]),
+            (PlaneOwner::NoFace, [zone, None]),
+        ] {
+            k.fixes.cylinder_plane_tangent_within_tolerance = false;
+            let out = wall_section(&k, &c, hair, owner, zone_tols);
+            assert_eq!(out.curve_types, vec![TsectCurveType::Crossing; 2]);
+
+            k.fixes.cylinder_plane_tangent_within_tolerance = true;
+            let out = wall_section(&k, &c, hair, owner, zone_tols);
+            assert_eq!(
+                out.curve_types,
+                vec![TsectCurveType::Tangent],
+                "{owner:?} {zone_tols:?}"
+            );
+            let CurveKind::Line(line) = out.curves_3d[0].kind() else {
+                panic!("expected an analytic line");
+            };
+            let p = line.evaluate_point(line.natural_interval().min());
+            assert!((p.x - 3.0).abs() < 1e-9 && p.y.abs() < 1e-9, "{p:?}");
+        }
+
+        // Clearly cutting the cylinder: two crossing lines; clearly outside: nothing.
+        let out = wall_section(&k, &c, 2.0, PlaneOwner::NoFace, bare);
+        assert_eq!(out.curve_types, vec![TsectCurveType::Crossing; 2]);
+        assert!(wall_section(&k, &c, 4.0, PlaneOwner::NoFace, bare)
+            .curves_3d
+            .is_empty());
     }
 
     #[test]

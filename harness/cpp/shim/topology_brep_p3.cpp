@@ -2,8 +2,9 @@
 // difftest shim for unit `topology.brep_p3`: the SmBrep members of the unit
 // (source/SMLib/src/SmBrep.cpp) and SmApiBrepCopy (source/SM_API/src/SmApiQueries.cpp)
 // on real SmBrep objects built by the shared topology fixture (sc_topology_fixture.h),
-// built and normalised exactly as the topology.brep_p2 shim does, so that its Export
-// and Extras ops describe the B-rep this shim runs on.
+// built exactly as the topology.brep_p2 shim builds it (its Export gives the entity
+// counts the selectors are resolved on). The ops run on the B-rep's real geometry:
+// analytic surfaces and curves are not replaced by B-spline copies.
 //
 // One entry point, sc_topology_brep_p3_eval(op, path, in, n_in, out, cap, out_len).
 // `in` is the fixture's B-rep block, then `editing` (-1 keep, 0/1 set
@@ -18,11 +19,14 @@
 #include "sc_topology_fixture.h"
 
 #include <SmApiQueries.h>
+#include <SmAttribute.h>
 #include <SmOffsetSurface.h>
 #include <SmTrackTopologyChanges.h>
 
+#include <algorithm>
 #include <array>
 #include <memory>
+#include <set>
 #include <stdexcept>
 
 namespace
@@ -40,11 +44,8 @@ enum P3Op : int32_t
     P3_TURN_NURBS = 10,
     P3_API_COPY_NULL = 11,
     P3_TURN_NURBS_OFFSET = 12,
-};
-
-struct EdgePeek : SmEdge
-{
-    static SmCurve* SmEdge::*curve() { return &EdgePeek::m_pCurve; }
+    P3_ATTRIBUTED_COPY = 13,
+    P3_ATTRIBUTED_MERGE = 14,
 };
 
 struct BrepPeek : SmBrep
@@ -62,53 +63,6 @@ struct ShellPeek : SmShell
 {
     static SM_TYPE SmShell::*shell_type() { return &ShellPeek::m_tShellType; }
 };
-
-// A plain SmBSplineCurve of `c`'s NURB, or nullptr when `c` already is one (or a line)
-// or has no NURB (as the topology.brep_p2 shim).
-SmBSplineCurve* plain_curve(SmCurve* c)
-{
-    if (c == nullptr || !c->IsKindOf(SmBSplineCurve_TYPE) || c->GetType() == SmBSplineCurve_TYPE ||
-        c->GetType() == SmLine_TYPE)
-        return nullptr;
-    SmBSplineCurve* b = (SmBSplineCurve*)c;
-    gw_CURVE* nurb = b->GetGwNurbPointer();
-    if (nurb == nullptr)
-        return nullptr;
-    return new (the_context()) SmBSplineCurve(sm_AllocateAndCopyNurbCurve(nurb), b->GetDim(), FALSE);
-}
-
-// Gives every analytic face and edge a plain B-spline copy owned by it (the
-// topology.brep_p2 shim's normalisation, so that the Rust import of its export is exact).
-void normalise(Graph& g)
-{
-    for (SmFace* f : g.faces)
-    {
-        SmSurface* s = f->*FPeek::srf();
-        if (s == nullptr || !s->IsKindOf(SmBSplineSurface_TYPE) || s->GetType() == SmBSplineSurface_TYPE ||
-            s->GetType() == SmPlane_TYPE)
-            continue;
-        SmBSplineSurface* b = (SmBSplineSurface*)s;
-        gw_SURFACE* nurb = b->GetGwNurbPointer();
-        if (nurb == nullptr)
-            continue;
-        SmBSplineSurface* nb = new (the_context()) SmBSplineSurface(sm_AllocateAndCopyNurbSurface(nurb), FALSE, NULL);
-        nb->GetOutOfBoundsEnabled() = b->GetOutOfBoundsEnabled();
-        nb->SetBSplineSurfaceForm(b->GetBSplineSurfaceForm());
-        if (s->GetOwner() == (SmObject*)f)
-            nb->SetOwner(f);
-        f->*FPeek::srf() = nb;
-    }
-    for (SmEdge* e : g.edges)
-    {
-        SmCurve* c = e->*EdgePeek::curve();
-        SmBSplineCurve* nc = plain_curve(c);
-        if (nc == nullptr)
-            continue;
-        if (c->GetOwner() == (SmObject*)e)
-            nc->SetOwner(e);
-        e->*EdgePeek::curve() = nc;
-    }
-}
 
 template <class T> T* at(std::vector<T*>& v, int64_t i)
 {
@@ -137,7 +91,6 @@ SmBrep* prepare(Rd& rd, const char* path, Graph& g, SmStatus& bst)
     for (ULONG i = 0; i < vs.GetSize(); i++)
         g.vertex(vs[i]);
     walk(brep, g, true);
-    normalise(g);
     return brep;
 }
 
@@ -554,6 +507,79 @@ void put_graph(std::vector<double>& o, SmBrep* brep)
     }
 }
 
+// P3_ATTRIBUTED_COPY: the first application attribute id (as the boolean.api_brep shim).
+const ULONG ATTRIBUTE_BASE = 10007;
+
+// Every face (GetFaces order) and edge (GetEdges order) of `b` gets its own
+// SmLongAttribute, id = value = ATTRIBUTE_BASE + 500 kind + index (kind 0 face, 1 edge),
+// behaviour `behavior`.
+void tag_brep(SmBrep* b, SmAttributeBehaviorType behavior)
+{
+    const SmContext& ctx = *b->GetContext();
+    SmTArray<SmFace*> faces;
+    b->GetFaces(faces);
+    for (ULONG i = 0; i < faces.GetSize(); i++)
+        faces[i]->AddAttribute(new (ctx) SmLongAttribute(ATTRIBUTE_BASE + i, (long)(ATTRIBUTE_BASE + i), behavior));
+    SmTArray<SmEdge*> edges;
+    b->GetEdges(edges);
+    for (ULONG i = 0; i < edges.GetSize(); i++)
+        edges[i]->AddAttribute(
+            new (ctx) SmLongAttribute(ATTRIBUTE_BASE + 500 + i, (long)(ATTRIBUTE_BASE + 500 + i), behavior));
+}
+
+// `faces rows... edges rows...` of `b`: per object `n` then per attribute (ascending)
+// `id behavior value users`, users counted among `b`'s faces and edges (the port keeps
+// one attribute store per B-rep); the rows sorted.
+void put_attribute_rows(std::vector<double>& o, SmBrep* b)
+{
+    SmTArray<SmFace*> faces;
+    b->GetFaces(faces);
+    SmTArray<SmEdge*> edges;
+    b->GetEdges(edges);
+    std::set<const SmAObject*> scope;
+    for (ULONG i = 0; i < faces.GetSize(); i++)
+        scope.insert(faces[i]);
+    for (ULONG i = 0; i < edges.GetSize(); i++)
+        scope.insert(edges[i]);
+    auto row = [&](const SmAObject* obj) {
+        SmTArray<SmAttribute*> attrs;
+        obj->GetAttributes(attrs);
+        std::vector<std::vector<double>> entries;
+        for (ULONG i = 0; i < attrs.GetSize(); i++)
+        {
+            SmLongAttribute* l = dynamic_cast<SmLongAttribute*>(attrs[i]);
+            SmTArray<SmAObject*> users;
+            attrs[i]->GetUsers(users);
+            double n = 0.0;
+            for (ULONG u = 0; u < users.GetSize(); u++)
+                if (scope.count(users[u]) != 0)
+                    n += 1.0;
+            entries.push_back({(double)attrs[i]->GetAttributeID(), (double)attrs[i]->GetBehavior(),
+                               l != NULL ? (double)l->GetValue() : 0.0, n});
+        }
+        std::sort(entries.begin(), entries.end());
+        std::vector<double> r;
+        r.push_back((double)entries.size());
+        for (auto& e : entries)
+            r.insert(r.end(), e.begin(), e.end());
+        return r;
+    };
+    for (int kind = 0; kind < 2; kind++)
+    {
+        std::vector<std::vector<double>> rows;
+        if (kind == 0)
+            for (ULONG i = 0; i < faces.GetSize(); i++)
+                rows.push_back(row(faces[i]));
+        else
+            for (ULONG i = 0; i < edges.GetSize(); i++)
+                rows.push_back(row(edges[i]));
+        std::sort(rows.begin(), rows.end());
+        o.push_back((double)rows.size());
+        for (auto& r : rows)
+            o.insert(o.end(), r.begin(), r.end());
+    }
+}
+
 void run(int32_t op, Rd& rd, const char* path, std::vector<double>& o)
 {
     const SmContext& ctx = the_context();
@@ -637,6 +663,46 @@ void run(int32_t op, Rd& rd, const char* path, std::vector<double>& o)
         o.push_back(flg(c->m_bEditingEnabled));
         put_counts(o, c);
         delete c;
+        break;
+    }
+    case P3_ATTRIBUTED_COPY:
+    {
+        // the B-rep's faces and edges tagged (tag_brep), then SmApiBrepCopy: `status tol
+        // editing counts`, then the copy's and the source's attribute rows
+        SmAttributeBehaviorType behavior = (SmAttributeBehaviorType)rd.idx();
+        tag_brep(brep, behavior);
+        SmBrep* c = nullptr;
+        SmStatus s = (SmStatus)SmApiBrepCopy(brep, c);
+        o.push_back(st(s));
+        o.push_back((double)c->GetTolerance());
+        o.push_back(flg(c->m_bEditingEnabled));
+        put_counts(o, c);
+        put_attribute_rows(o, c);
+        put_attribute_rows(o, brep);
+        delete c;
+        break;
+    }
+    case P3_ATTRIBUTED_MERGE:
+    {
+        // the B-rep's faces and edges tagged (tag_brep), then MergeBrep of it into a second
+        // build of it: `status counts`, then the second build's and the source's attribute rows
+        SmBoolean analytics = rd.bflag();
+        SmAttributeBehaviorType behavior = (SmAttributeBehaviorType)rd.idx();
+        tag_brep(brep, behavior);
+        Rd rd2{rd.in, 0};
+        SmStatus bst2;
+        Built b2;
+        Graph g2;
+        b2.brep = prepare(rd2, path, g2, bst2);
+        if (b2.brep == nullptr)
+        {
+            o.push_back(st(bst2));
+            break;
+        }
+        o.push_back(st(b2.brep->MergeBrep(*brep, NULL, NULL, analytics)));
+        put_counts(o, b2.brep);
+        put_attribute_rows(o, b2.brep);
+        put_attribute_rows(o, brep);
         break;
     }
     case P3_MERGE:

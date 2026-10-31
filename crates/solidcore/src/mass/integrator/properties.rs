@@ -18,7 +18,14 @@
 //! B-rep enumeration, bounding boxes, and region classification remain calls into
 //! their unported units. `boundary_properties` exposes the integration after trim
 //! construction for callers already holding oriented trim curves. Nested integration
-//! has a fixed two-level call structure, not input-driven recursion.
+//! has a fixed two-level call structure, not input-driven recursion. With
+//! `UpstreamFixes::precise_properties_split_at_surface_knots` (WR-494) both levels split
+//! at the surface's knots, as the SolidCraft fork's tangency-labs/smlib@08d9a14 does.
+//! With `UpstreamFixes::brep_area_between_solid_and_void` (WR-535) a volume-separating
+//! faceuse adds its volume only where it bounds a non void region and its area only
+//! where the area behaviour selects it (tangency-labs/smlib@d2d9586).
+//! With `UpstreamFixes::precise_properties_trim_base_v` (WR-563, #1556) the iso-u
+//! integrals start at the trims' lowest v, not at the face UV domain's.
 use super::{OdeIntegrator, OdeOptions};
 use crate::curve::curve::Curve;
 use crate::geom::attribute::{ids, AttributeStore, AttributeValue, ObjectKey};
@@ -31,7 +38,7 @@ use crate::nurbs::b_spline_surface_n_lib::p2::OrientType;
 use crate::query::brep::{self as qbrep, BoundingBoxOptions};
 use crate::surface::surface::Surface;
 use crate::topology::face::p2::{
-    OdeArea, PrecisePropertyLayout, PPF_ALL, PPF_AREA, PPF_AREA_FIRST_MOMENTS,
+    trim_curve_breaks, OdeArea, PrecisePropertyLayout, PPF_ALL, PPF_AREA, PPF_AREA_FIRST_MOMENTS,
 };
 use crate::topology::{edge, vertex, Brep, EdgeId, FaceId, FaceuseId, RegionId, VertexId};
 use crate::{EntityRef, Result, SolidError};
@@ -233,6 +240,34 @@ pub fn face_properties(
         flags,
     )
 }
+/// The lowest v of the union of the trims' bounding boxes (as
+/// `CalculateUVDomainFromUVTrimCurves` builds the trim domain), no lower than the face's
+/// UV domain; the domain's lowest v without trims.
+fn trims_base_v(k: &Kernel, trims: &[Curve], domain: &Extent2d) -> Result<f64> {
+    use crate::nurbs::b_spline_curve::p2::BoundingBoxRequest;
+    let req = BoundingBoxRequest {
+        normal: true,
+        pseudo: false,
+        polar: false,
+    };
+    let mut base = BIG_DOUBLE;
+    for trim in trims {
+        let bbox = trim
+            .calculate_bounding_box(k, &trim.natural_interval(), req, true)?
+            .normal
+            .ok_or_else(|| SolidError::sm_err(OP))?;
+        let v = bbox.min().y;
+        if v < base {
+            base = v;
+        }
+    }
+    let min_v = domain.min().y;
+    Ok(if trims.is_empty() || base < min_v {
+        min_v
+    } else {
+        base
+    })
+}
 fn valid_flags(flags: u64) -> Result<()> {
     if flags == 0 || flags & !PPF_ALL != 0 {
         Err(SolidError::invalid_input(OP, "invalid property mask"))
@@ -270,6 +305,16 @@ pub fn boundary_properties(
         -1.0
     } else {
         1.0
+    };
+    // The base of every iso-u integral: upstream's `GetUVDomain().GetMin().y`. Any base
+    // gives the same loop integral (a different base adds a function of u alone, whose
+    // integral round a closed loop is zero), but one far below the trims makes each
+    // integral long and the area a small difference of large terms. With
+    // `fixes.precise_properties_trim_base_v` (WR-563, #1556) it is the trims' lowest v.
+    let base_v = if k.fixes.precise_properties_trim_base_v {
+        trims_base_v(k, trims, domain)?
+    } else {
+        domain.min().y
     };
     let mut result = PreciseProperties::default();
     for trim in trims {
@@ -321,7 +366,7 @@ pub fn boundary_properties(
             kernel: k,
             surface,
             uv_curve: trim,
-            min_v: domain.min().y,
+            min_v: base_v,
             iso_curve_accuracy: accuracy / 10.0,
             y_scale: &scale,
             origin,
@@ -333,7 +378,16 @@ pub fn boundary_properties(
         // Integrate each knot span of the natural interval separately: the RK error
         // estimate assumes a smooth integrand, so a step across a knot can hide a large
         // error.
-        let (knots, _) = trim.knots(k, Some(&ivl))?;
+        //
+        // With `fixes.precise_properties_split_at_surface_knots` (WR-494; the SolidCraft
+        // fork's tangency-labs/smlib@08d9a14) the pieces are those between the trim
+        // curve's knots and its crossings of the surface's knot lines u = k, where the
+        // integrand's derivatives jump too.
+        let knots = if k.fixes.precise_properties_split_at_surface_knots {
+            trim_curve_breaks(k, trim, surface)?
+        } else {
+            trim.knots(k, Some(&ivl))?.0
+        };
 
         // A coarse first Runge-Kutta step can trip the integrator's abort guard for one
         // traversal direction, so a reversed cap loop fails where its twin succeeds. Try
@@ -345,6 +399,12 @@ pub fn boundary_properties(
             let &[a, b] = pair else {
                 continue;
             };
+            // (`!(dB > dA)`: also an unordered pair)
+            if k.fixes.precise_properties_split_at_surface_knots
+                && b.partial_cmp(&a) != Some(std::cmp::Ordering::Greater)
+            {
+                continue; // a crossing at a knot
+            }
             let mut status = Err(SolidError::sm_err(OP));
             for divisor in [2.0, 8.0, 64.0, 512.0, 4096.0] {
                 status = OdeIntegrator::default()
@@ -464,6 +524,30 @@ fn add(total: &mut PreciseProperties, delta: &PreciseProperties, density: f64) {
         *t += if i > 3 { *d * density } else { *d };
     }
 }
+/// [`add`] of a volume-separating faceuse with WR-535: its volume, mass and volume
+/// moments (`4..`) only with `volume`, its area and area moments (`..4`) only with
+/// `area`.
+fn add_selected(
+    total: &mut PreciseProperties,
+    delta: &PreciseProperties,
+    density: f64,
+    volume: bool,
+    area: bool,
+) {
+    if volume {
+        total.volume += delta.volume;
+        total.mass += delta.volume * density;
+        for (t, d) in total.moments.iter_mut().zip(delta.moments.iter()).skip(4) {
+            *t += *d * density;
+        }
+    }
+    if area {
+        total.area += delta.area;
+        for (t, d) in total.moments.iter_mut().zip(delta.moments.iter()).take(4) {
+            *t += *d;
+        }
+    }
+}
 /// `SmBrep::ComputePreciseProperties`, including density attributes and wire/point solids.
 /// Missing UV trim curves of the integrated faces are made on `b`.
 pub fn brep_properties(
@@ -544,7 +628,16 @@ pub fn brep_properties(
                     if separating { 0.0 } else { mass.y },
                     PPF_ALL,
                 )?;
-                add(&mut total, &delta, mass.x);
+                if separating && k.fixes.brep_area_between_solid_and_void {
+                    // Not upstream (WR-535, the fork's tangency-labs/smlib@d2d9586): the
+                    // faceuse's volume and mass enter only when it bounds a non void region,
+                    // its area and area moments only when the area behaviour selects it: a
+                    // face between two solid regions bounds both volumes but is no part of
+                    // the area
+                    add_selected(&mut total, &delta, mass.x, do_volume, do_area);
+                } else {
+                    add(&mut total, &delta, mass.x);
+                }
                 if !separating {
                     break;
                 }
@@ -603,10 +696,16 @@ pub fn brep_properties(
     }
     Ok(total)
 }
-/// `SmApiEdgeComputeLength` (the curve's virtual Length).
+/// `SmApiEdgeComputeLength` (the curve's virtual Length). The edge's curve is owned by
+/// the edge, so its zone tolerance (`SmTol::GetZoneTol3d(pCurve)`) is the edge's.
 pub fn edge_length(k: &Kernel, b: &Brep, e: EdgeId, accuracy: f64) -> Result<f64> {
     let c = edge::curve(b, e)?.ok_or_else(|| SolidError::sm_err(OP))?;
-    c.length(k, &edge::interval(b, e)?, accuracy)
+    let owner_zone_tol_3d = if c.owner().is_some() {
+        Some(edge::tolerance(b, e)?)
+    } else {
+        None
+    };
+    c.length_with_zone_tol(k, &edge::interval(b, e)?, accuracy, owner_zone_tol_3d)
 }
 fn area_estimate(bbox: &Extent3d) -> f64 {
     let s = bbox.size();
@@ -844,5 +943,34 @@ mod tests {
             b.edgeuses().iter().any(|(_, u)| u.uv_trim_curve.is_some()),
             "the trims are made on the box itself"
         );
+    }
+    /// WR-535 (the fork's tangency-labs/smlib@d2d9586): the merge of two overlapping 10
+    /// mm cubes has three solid regions; its area counts only the faces between solid
+    /// and void (800, not 1200 with the two inner faces counted from both sides), and
+    /// its volume is the union's.
+    #[test]
+    fn merged_cubes_area_counts_solid_void_faces_only() {
+        use crate::primitive::api_primitives::create_box;
+        let mut k = Kernel::default();
+        k.fixes.brep_area_between_solid_and_void = true;
+        let a = create_box(&mut k, Point3::ZERO, 10.0, 10.0, 10.0).unwrap();
+        let b = create_box(&mut k, Point3::new(5.0, 0.0, 0.0), 10.0, 10.0, 10.0).unwrap();
+        let mut merged = crate::boolean::api_brep::boolean_merge(&mut k, a, b).unwrap();
+        let store = AttributeStore::default();
+        let attrs = PropertyAttributes {
+            store: &store,
+            key_of: &|_| ObjectKey(0),
+        };
+        let p = brep_properties(
+            &k,
+            &mut merged,
+            1e-6,
+            Point3::ZERO,
+            MassPropertyBehavior::default(),
+            &attrs,
+        )
+        .unwrap();
+        assert!((p.area - 800.0).abs() <= 1e-6, "area {}", p.area);
+        assert!((p.volume - 1500.0).abs() <= 1e-6, "volume {}", p.volume);
     }
 }

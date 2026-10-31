@@ -70,6 +70,10 @@
 //! - **Iteration.** No recursion. Loops are bounded: two surfaces, two rails of two
 //!   edge uses, the G1 knots and points, ten trace passes, twenty cusp skips, three
 //!   drop tolerances.
+//! - **Exact round classes (WR-669, #2085).** With `fixes.fillet_exact_round_classes`, the
+//!   try-chain (`c3_try_analytic`) is replaced by the SolidCraft fork's classification
+//!   (tangency-labs/smlib@b5f2867, 7ac037e): `ClassifyExactBlend` and
+//!   `CalcExactFilletGeom` (`blend::fillet_exact`), whose failures are errors.
 
 use super::p1::{FilletSolver, FilletSolverOps};
 use super::p2::SolverErrorObject;
@@ -457,8 +461,13 @@ impl FilletSolver {
         // :1872-1920 no points; drop near-duplicate end points
         c2_clean_ends(ops, &mut cx, &mut st)?;
 
-        // :1955-2011 analytic fillet
-        if c3_try_analytic(ops, &mut cx, &mut st)? {
+        // :1955-2011 analytic fillet (WR-669, opt-in: the round's exact class instead)
+        let exact = if cx.k.fixes.fillet_exact_round_classes {
+            c3_exact_by_class(ops, &mut cx, &mut st)?
+        } else {
+            c3_try_analytic(ops, &mut cx, &mut st)?
+        };
+        if exact {
             return Ok(());
         }
 
@@ -583,7 +592,7 @@ const fn bspline_curve_cast(curve: &Curve) -> Option<&BSplineCurve> {
 /// `SM_CAST_PTR(SmBSplineSurface, pSurface) != NULL`: the kinds derived from
 /// `SmBSplineSurface` (`SmPlane`, `SmSurfOfRevolution`, `SmSurfOfExtrusion`, and
 /// through `SmSurfOfRevolution` `SmCone`/`SmCylinder`, `SmSphere`, `SmTorus`).
-const fn is_bspline_surface(surface: &Surface) -> bool {
+fn is_bspline_surface(surface: &Surface) -> bool {
     matches!(
         surface.kind(),
         SurfaceKind::BSpline(_)
@@ -1609,10 +1618,12 @@ fn c2_offset_point_ignored(
     uv: Point2,
 ) -> Result<Point3> {
     let surface = offset_surface_mut(ops, 0)?;
-    Ok(
-        crate::error::ignored(surface.surface.evaluate_point_extending(k, uv))?
-            .unwrap_or(Vec3::UNDEF),
-    )
+    // fork 66b02de passes this on (SER)
+    Ok(crate::error::ignored(crate::error::passed_on(
+        surface.surface.evaluate_point_extending(k, uv),
+        k.fixes.fillet_statuses_pass_on,
+    )?)?
+    .unwrap_or(Vec3::UNDEF))
 }
 
 /// :1872-1920: `SM_ERR` without points; with more than two, drop the penultimate
@@ -1914,6 +1925,31 @@ fn c3_try_analytic(
     }
 }
 
+/// Not upstream (WR-669, the SolidCraft fork's tangency-labs/smlib@b5f2867 and 7ac037e,
+/// opt-in `fixes.fillet_exact_round_classes`): in place of the try-chain, the round's exact
+/// class from its faces' kinds and placement at the first point
+/// (`ClassifyExactBlend(*sTsectPnts[0])`), and its exact surface by that class
+/// (`CalcExactFilletGeom(.., NULL, FALSE)`); a round of no exact class is traced. Every
+/// failure is an error, not a fall-through to the trace.
+fn c3_exact_by_class(
+    ops: &mut dyn FilletSolverOps,
+    cx: &mut Cx<'_>,
+    st: &mut CalcState,
+) -> Result<bool> {
+    use crate::blend::fillet_exact::{calc_exact_fillet_geom, classify_exact_blend};
+    if st.tsect_pnts.is_empty() {
+        return Ok(false);
+    }
+    let tsects = st.store.snapshot(cx.fillets, &st.tsect_pnts)?;
+    let Some(first) = tsects.first() else {
+        return Ok(false);
+    };
+    let blend = classify_exact_blend(ops, cx.k, cx.target, first)?;
+    calc_exact_fillet_geom(
+        ops, cx.k, cx.target, cx.fillets, &blend, &tsects, None, false,
+    )
+}
+
 /// :1960-1977: `SM_CAST_PTR(SmBSplineSurface, pBaseSrf)`, else (another level of
 /// offset surface) `SM_CAST_PTR(SmBSplineSurface, pOffsetSurf->GetBaseSurface())`;
 /// `NER` when the base is not an offset surface or its base not a B-spline.
@@ -1990,13 +2026,15 @@ fn c3_make_intersector<'s>(
 
 /// :2054-2090: the trace locals (tolerances, `sDir = sPVSt[1]`); a TANGENT last point
 /// reverses `st.tsect_pnts`, sets `sDir = -sPVEn[1]` and `bReverseTracing`; the local
-/// extension flags from the solver's.
+/// extension flags from the solver's. With
+/// `Kernel::fixes.fillet_trace_from_tangent_point_toward_next` (WR-603) a TANGENT first
+/// point starts the trace toward the next point.
 fn c3_trace_start(
     ops: &mut dyn FilletSolverOps,
     cx: &mut Cx<'_>,
     st: &mut CalcState,
 ) -> Result<()> {
-    use crate::intersect::surface_intersector::p1::IntersectionPointType;
+    use crate::intersect::surface_intersector::p1::{IntersectionPointType, SrfIndex};
 
     let solver = ops.solver();
     st.trace.approx_tol_3d = solver.this_approx_tol_3d();
@@ -2016,6 +2054,27 @@ fn c3_trace_start(
         }
     }
 
+    // `fixes.fillet_trace_from_tangent_point_toward_next` (WR-603): a trace whose first
+    // through point is a tangent point starts toward the next through point (the chord
+    // between their points on the first offset surface): the offsets touch there and the
+    // edge's end tangent can be the line along which they touch to second order.
+    if cx.k.fixes.fillet_trace_from_tangent_point_toward_next && st.tsect_pnts.len() > 1 {
+        if let (Some(&first), Some(&next)) = (st.tsect_pnts.first(), st.tsect_pnts.get(1)) {
+            let first = st.store.get(cx.fillets, first)?;
+            if first.point_type == IntersectionPointType::TangentPoint {
+                let uv_from = first.uv_pos(SrfIndex::First);
+                let uv_to = st.store.get(cx.fillets, next)?.uv_pos(SrfIndex::First);
+                let from = offset_evaluate_point(cx.k, ops, 0, uv_from)?;
+                let to = offset_evaluate_point(cx.k, ops, 0, uv_to)?;
+                let chord = to - from;
+                if chord.length() > st.trace.approx_tol_3d {
+                    st.trace.dir = chord;
+                }
+            }
+        }
+    }
+
+    let solver = ops.solver();
     st.trace.extend_before = solver.extend_before;
     st.trace.extend_after = solver.extend_after;
     Ok(())
@@ -2333,6 +2392,46 @@ mod tests_c3 {
         // the locals copy the solver's flags (C4 swaps them per pass)
         assert!(!st.trace.extend_before);
         assert!(st.trace.extend_after);
+    }
+
+    /// WR-603: two points, the first a tangent point, at uv `(0.2, 0.3)` and
+    /// `(0.6, 0.7)` of the first surface; the trace start direction with and without
+    /// `fixes.fillet_trace_from_tangent_point_toward_next`, and the chord between the
+    /// points on the first offset surface.
+    fn traced_from_tangent_first(fix: bool) -> (Vec3, Vec3) {
+        use crate::intersect::surface_intersector::p1::SrfIndex;
+
+        let mut k = Kernel::default();
+        k.fixes.fillet_trace_from_tangent_point_toward_next = fix;
+        let (a, b) = planes();
+        let mut fs = solver(&k, &a, &b);
+        let mut st = state(line(), [a, b]);
+        let (uv0, uv1) = (Point2::new(0.2, 0.3), Point2::new(0.6, 0.7));
+        let mut p = TsectPnt::new();
+        p.point_type = IntersectionPointType::TangentPoint;
+        *p.uv_pos_mut(SrfIndex::First) = uv0;
+        let r0 = st.store.alloc(p.clone());
+        p.point_type = IntersectionPointType::Crossing;
+        *p.uv_pos_mut(SrfIndex::First) = uv1;
+        let r1 = st.store.alloc(p);
+        st.tsect_pnts = vec![r0, r1];
+        with_cx(&k, |cx| c3_trace_start(&mut fs, cx, &mut st)).unwrap();
+        assert_eq!(st.tsect_pnts, vec![r0, r1]);
+        assert!(!st.trace.reverse_tracing);
+        let from = offset_evaluate_point(&k, &mut fs, 0, uv0).unwrap();
+        let to = offset_evaluate_point(&k, &mut fs, 0, uv1).unwrap();
+        (st.trace.dir, to - from)
+    }
+
+    #[test]
+    fn trace_from_a_tangent_first_point_starts_toward_the_next_with_the_fix() {
+        let (dir, chord) = traced_from_tangent_first(true);
+        assert_eq!(dir, chord);
+        assert!(chord.length() > 0.1, "{chord:?}");
+        // upstream: the filleted edge's start tangent
+        let (dir, chord) = traced_from_tangent_first(false);
+        assert_eq!(dir, state(line(), planes().into()).pv_start[1]);
+        assert_ne!(dir, chord);
     }
 
     #[test]
@@ -2821,7 +2920,7 @@ fn c5_split_original_fillet(
         let fillet_surface = cx
             .fillets
             .geom(geom0)?
-            .fillet_surface()?
+            .fillet_surface(None)?
             .ok_or_else(|| SolidError::null_pointer(OP))?;
         fillet_surface.split_at(cx.k, split_at_param, SurfParamType::U)?
     };
@@ -2929,7 +3028,11 @@ fn c5_split_rail(
         st.base_surfaces[1].evaluate_point(cx.k, uv)?
     };
 
-    ignore_status(trim_ivl.set_min_max(trim_ivl.min(), split_at_param))?;
+    // fork 66b02de passes this on (SER)
+    ignore_status(crate::error::passed_on(
+        trim_ivl.set_min_max(trim_ivl.min(), split_at_param),
+        cx.k.fixes.fillet_statuses_pass_on,
+    )?)?;
     cx.fillets
         .brep_mut()
         .edge_mut(rail)?
@@ -2937,7 +3040,12 @@ fn c5_split_rail(
         .as_mut()
         .ok_or_else(|| SolidError::null_pointer(OP))?
         .trim(cx.k, &mut trim_ivl, TrimMode::Notify)?; // may snap sIvl by tol to existing knots
-    ignore_status(new_trim_ivl.set_min_max(split_at_param, new_trim_ivl.max()))?;
+
+    // fork 66b02de passes this on (SER)
+    ignore_status(crate::error::passed_on(
+        new_trim_ivl.set_min_max(split_at_param, new_trim_ivl.max()),
+        cx.k.fixes.fillet_statuses_pass_on,
+    )?)?;
     cx.fillets
         .brep_mut()
         .edge_mut(new_rail)?
@@ -3066,15 +3174,19 @@ fn c5_undo_reversal(ops: &mut dyn FilletSolverOps, cx: &mut Cx<'_>) -> Result<()
                 .ok_or_else(|| invalid("reverse: rail edge use without mate"))?;
             // pMateEU->GetOrCreateUVTrimCurve(pUVCurve) (defaults): status ignored; the
             // curve attached to the edge use or its mate is reversed in place
-            let _ = edgeuse_p3::get_or_create_uv_trim_curve(
-                cx.k,
-                cx.fillets.brep_mut(),
-                mate_eu,
-                false,
-                false,
-                true,
-            )?
-            .status;
+            // fork 66b02de passes this on (SER)
+            let _ = crate::error::passed_on(
+                edgeuse_p3::get_or_create_uv_trim_curve(
+                    cx.k,
+                    cx.fillets.brep_mut(),
+                    mate_eu,
+                    false,
+                    false,
+                    true,
+                )?
+                .status,
+                cx.k.fixes.fillet_statuses_pass_on,
+            )?;
             let (uv_curve, uv_owner) = eu::uv_trim_curve(cx.fillets.brep(), mate_eu)?;
             let (Some(_), Some(uv_owner)) = (uv_curve, uv_owner) else {
                 return Err(SolidError::null_pointer(OP));
@@ -3105,7 +3217,7 @@ fn c5_undo_reversal(ops: &mut dyn FilletSolverOps, cx: &mut Cx<'_>) -> Result<()
             let ivl2 = center_line.natural_interval();
             center_line.reverse_parameterization(k, &ivl2)?;
         }
-        if let Some(fillet_surf) = geom.fillet_surface_mut()? {
+        if let Some(fillet_surf) = geom.fillet_surface_mut(None)? {
             fillet_surf.reverse(k, SurfParamType::U)?;
         }
     }
@@ -3297,7 +3409,7 @@ mod tests_c5 {
             self.fb
                 .geom(self.g)
                 .unwrap()
-                .fillet_surface()
+                .fillet_surface(None)
                 .unwrap()
                 .unwrap()
                 .evaluate_point(&Kernel::default(), uv)
@@ -3639,15 +3751,20 @@ fn c6_compute_point_values(
             None
         };
 
-        // :3664 central difference, or one-sided at a domain end
+        // :3664 central difference, or one-sided at a domain end. With
+        // `fixes.fillet_tangent_point_one_sided_step` (WR-595) a tangent point, where the
+        // intersection curve ends or branches, takes the forward step alone when it found
+        // one (`bFoundForw && bFoundBack && !bTangentPoint`).
+        let tangent_point = k.fixes.fillet_tangent_point_one_sided_step
+            && point.point_type == IntersectionPointType::TangentPoint;
         let (step_pt_forw, step_pt_back) = match (forw_pts, back_pts) {
-            (Some((f0, f1)), Some((b0, b1))) => {
+            (Some((f0, f1)), Some((b0, b1))) if !tangent_point => {
                 let fw = (f0 + f1) / 2.0;
                 let bk = (b0 + b1) / 2.0;
                 step *= 2.0; // 2.0 * dStep (multiplication commutes exactly)
                 (fw, bk)
             }
-            (Some((f0, f1)), None) => ((f0 + f1) / 2.0, point.crv_pos()),
+            (Some((f0, f1)), _) => ((f0 + f1) / 2.0, point.crv_pos()),
             (None, Some((b0, b1))) => (point.crv_pos(), (b0 + b1) / 2.0),
             (None, None) => return Err(SolidError::sm_err(OP)),
         };
@@ -3679,7 +3796,11 @@ fn c6_compute_point_values(
     point.point_type = IntersectionPointType::Crossing;
 
     // :3764 ComputeUVVectors, status ignored
-    ignore_status(compute_uv_vectors(point))?;
+    // fork 66b02de passes this on (SER)
+    ignore_status(crate::error::passed_on(
+        compute_uv_vectors(point),
+        k.fixes.fillet_statuses_pass_on,
+    )?)?;
 
     Ok(())
 }
@@ -4165,7 +4286,7 @@ fn calc_cross_section(ops: &dyn FilletSolverOps, cx: &mut Cx<'_>, edge: EdgeId) 
             solvers,
             cx.target,
         ),
-        GeometrySolvers::Live(context) => cx.fillets.calc_cross_section_with_lookup(
+        GeometrySolvers::Live(context) => cx.fillets.calc_cross_section_with_lookup_live(
             cx.k,
             edge,
             None,
@@ -4493,6 +4614,11 @@ impl crate::blend::fillet_intersector::FilletSolverOps for IntersectorSolver<'_>
         self.pre()?;
         let r = self.ops.solver_mut().reload_surface_offsets();
         self.synced(r)
+    }
+
+    /// The solver's virtual `OffsetRadiiCanChange`.
+    fn offset_radii_can_change(&self) -> Result<bool> {
+        self.ops.offset_radii_can_change()
     }
 
     /// `GetSurface(rail)->Evaluate1stDerivatives(uv, TRUE, TRUE, ..)` on the solver's

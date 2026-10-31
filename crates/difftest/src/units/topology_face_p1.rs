@@ -3,12 +3,12 @@
 //!
 //! Every op runs on a B-rep of unit `topology.vertexuse` (upstream `.smb` files, faces of
 //! B-spline surfaces or real `SmPlane`s, wire edges, the `my_test_topology` network): the
-//! C++ side builds a real `SmBrep`, preserves exactly exported analytic surfaces and
-//! gives other surfaces and edge curves the plain B-spline copies the Rust import
-//! rebuilds (keeping the owners), then runs the
-//! `SmFace` member on the selected face; the Rust side imports the graph that unit's shim
-//! exports (with each edge curve owned by its edge, as upstream) and runs the port. Face
-//! and loop selectors are taken modulo their counts. Both sides produce one flat record
+//! C++ side builds a real `SmBrep` and runs the `SmFace` member on the selected face of its
+//! native geometry; the Rust side builds the same B-rep itself ([`own_brep`]: the Rust
+//! kernel's builders, or the Rust `.smb` reader, renumbered into the shim's traversal
+//! order), gives each edge curve its edge as owner (as upstream) and runs the port. No
+//! C++ state reaches the Rust side: each side resolves the face and loop selectors
+//! (modulo their counts) on its own B-rep. Both sides produce one flat record
 //! (`out`, laid out as in the ffi module): statuses, domains, gaps, curve samples and
 //! the orientation / UV trim curve state after the mutating ops.
 //!
@@ -26,6 +26,13 @@
 //! that follows defers: the caller's classification geometry here cannot borrow the
 //! B-rep the call mutates, so its merges resolve no topology (`plan/findings.md`).
 //!
+//! After a seam op both sides also count the B-rep's geometry owners (`owners`, the ffi
+//! module): how many faces' surfaces, edges' curves and edge uses' UV trim curves are owned
+//! by their own entity, by nothing or by another object. Counted, so the two sides'
+//! numbering of the faces and edges the op made does not matter; each side reads its own
+//! B-rep (the Rust side resolves an owner key with `own_builder::resolve_owner`, or as
+//! this runner's own [`key_of`] names the entity).
+//!
 //! Deferred: the cone `TrimWithDomain` callbacks of `ShrinkGeometry`
 //! (`surface.surface_p2`), and the `MoveSeam` splits past the recomputed seam problem
 //! (merges whose handles the geometry cannot resolve). Rejected: the seam calls the C++ crash trap (below) catches.
@@ -41,9 +48,8 @@
 //! naming UB-137 and the trap: the harness then skips the Rust side and compares
 //! nothing. Seam calls the trap runs to completion compare as usual.
 //!
-//! **Not compared.** Edge curves and UV trim curves are still imported as plain
-//! B-splines (except lines), so conic curve paths (`SwapUV`'s conic mirrors) are not
-//! compared with the C++. Exactly exported analytic surface branches are retained.
+//! Both sides hold the B-rep's native geometry (analytic surfaces, conic edge curves),
+//! so the conic and analytic branches (`SwapUV`'s conic mirrors) are compared.
 
 use std::cell::RefCell;
 use std::rc::Rc;
@@ -57,9 +63,7 @@ use solidcore::geom::extent2d::Extent2d;
 use solidcore::geom::object::ObjectRef;
 use solidcore::heal::face_props::{FaceProps, LoopObject, Tri};
 use solidcore::intersect::curve_class::p1::CurveClassification;
-use solidcore::intersect::point_class::{
-    ClassObject, ClassObjectKind,
-};
+use solidcore::intersect::point_class::{ClassObject, ClassObjectKind};
 use solidcore::kernel::Kernel;
 use solidcore::nurbs::b_spline_surface::p1::SurfParamType;
 use solidcore::nurbs::b_spline_surface_n_lib::p2::OrientType;
@@ -168,6 +172,12 @@ enum OpIn {
         #[serde(default)]
         props: Option<PropsIn>,
     },
+    /// `DeleteInnerLoop` of each loop in turn (1 to 4 distinct loop selectors).
+    DeleteInnerLoop {
+        loops: Vec<i64>,
+        #[serde(default)]
+        attributed: bool,
+    },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -268,7 +278,30 @@ fn op_args(op: &OpIn) -> (Op, Vec<f64>) {
             v.extend([0.0, 0.0]);
             (Op::SplitAtSeam, v)
         }
+        OpIn::DeleteInnerLoop { loops, attributed } => {
+            let mut v = vec![flag(*attributed), loops.len() as f64];
+            v.extend((0..4).map(|i| loops.get(i).map_or(-1.0, |&l| l as f64)));
+            (Op::DeleteInnerLoop, v)
+        }
     }
+}
+
+/// The file of a B-rep: under `TestFiles/pt_TestFiles`, or with the prefix `fixture:`
+/// one of this unit's hand-built files in `fixtures/topology.face_p1` (planar plates with
+/// holes for `DeleteInnerLoop`).
+fn path_of(brep: &BrepIn) -> Result<String, HarnessError> {
+    if let BrepIn::File { file, .. } = brep {
+        if let Some(name) = file.strip_prefix("fixture:") {
+            if name.contains(['/', '\\']) {
+                return Err(harness("fixture file names have no directories"));
+            }
+            let p = crate::case::repo_root()
+                .join("fixtures/topology.face_p1")
+                .join(name);
+            return Ok(p.to_string_lossy().into_owned());
+        }
+    }
+    shared::path_of(brep)
 }
 
 /// A cached export with its key (the `.smb` path and the block's bits).
@@ -281,7 +314,7 @@ thread_local! {
 
 /// The export of a B-rep.
 fn export_of(brep: &BrepIn) -> Result<Rc<Vec<f64>>, HarnessError> {
-    let path = shared::path_of(brep)?;
+    let path = path_of(brep)?;
     let block = brep_block(brep)?;
     let bits: Vec<u64> = block.iter().map(|x| x.to_bits()).collect();
     if let Some(e) = EXPORTS.with(|c| {
@@ -317,9 +350,15 @@ fn resolve(i: &Inputs) -> Result<Resolved, HarnessError> {
     let Some(c) = fixture::counts(&ex) else {
         return Ok(Err(Output::new().values("out", ex.to_vec())));
     };
+    Ok(resolve_with(i, c).map(|r| (r, ex)).map_err(|o| *o))
+}
+
+/// The inputs with the selectors resolved against entity counts `c`, or the output of
+/// a case without a face (or loop).
+fn resolve_with(i: &Inputs, c: [usize; 10]) -> Result<Inputs, Box<Output>> {
     let [_, _, _, n_f, _, n_l, ..] = c;
     if n_f == 0 {
-        return Ok(Err(Output::err("no_face")));
+        return Err(Box::new(Output::err("no_face")));
     }
     let mut r = i.clone();
     r.face = shared::sel(i.face.max(0), n_f);
@@ -333,13 +372,27 @@ fn resolve(i: &Inputs) -> Result<Resolved, HarnessError> {
         }
         OpIn::LoopRoundTrip { loop_ } => {
             if n_l == 0 {
-                return Ok(Err(Output::err("no_loop")));
+                return Err(Box::new(Output::err("no_loop")));
             }
             *loop_ = shared::sel((*loop_).max(0), n_l);
         }
+        OpIn::DeleteInnerLoop { loops, .. } => {
+            if n_l == 0 || loops.is_empty() {
+                return Err(Box::new(Output::err("no_loop")));
+            }
+            // distinct selectors, at most four (a deleted loop cannot be named again)
+            let mut kept: Vec<i64> = Vec::new();
+            for l in loops.iter() {
+                let l = shared::sel((*l).max(0), n_l);
+                if !kept.contains(&l) && kept.len() < 4 {
+                    kept.push(l);
+                }
+            }
+            *loops = kept;
+        }
         _ => {}
     }
-    Ok(Ok((r, ex)))
+    Ok(r)
 }
 
 fn input_of(i: &Inputs) -> Result<(Op, String, Vec<f64>), HarnessError> {
@@ -347,7 +400,7 @@ fn input_of(i: &Inputs) -> Result<(Op, String, Vec<f64>), HarnessError> {
     let mut v = vec![i.face as f64];
     v.extend(args);
     v.extend(brep_block(&i.brep)?);
-    Ok((op, shared::path_of(&i.brep)?, v))
+    Ok((op, path_of(&i.brep)?, v))
 }
 
 // ---- C++ side ---------------------------------------------------------------------------
@@ -408,7 +461,7 @@ fn status<T>(r: &Result<T, SolidError>) -> Result<f64, Fail> {
     match r {
         Ok(_) => Ok(0.0),
         Err(SolidError::Upstream { code, .. }) => Ok(f64::from(*code)),
-        Err(SolidError::InvalidInput { .. }) => Ok(SM_ERR_INVALID_INPUT),
+        Err(SolidError::InvalidInput { .. } | SolidError::PortInvariant { .. }) => Ok(SM_ERR_INVALID_INPUT),
         Err(e) => Err(fail(e)),
     }
 }
@@ -638,13 +691,9 @@ fn seam_problem(
     ),
     Fail,
 > {
-    let check = fp4::has_seam_problem_in_brep_mut::<H>(
-        k,
-        b,
-        f,
-        fp4::HasSeamProblemOptions::default(),
-    )
-    .map_err(|e| fail(&e))?;
+    let check =
+        fp4::has_seam_problem_in_brep_mut::<H>(k, b, f, fp4::HasSeamProblemOptions::default())
+            .map_err(|e| fail(&e))?;
     o.push(flag(check.has_problem));
     o.extend([
         f64::from(check.problem.crossed as u8),
@@ -672,6 +721,59 @@ fn ok_round_trip(b: &Brep, f: FaceId, l: LoopId) -> Result<bool, SolidError> {
     Ok(true)
 }
 
+/// The shim's `fp1_put_owners`: for the faces' surfaces, the edges' curves and the edge
+/// uses' UV trim curves of `b` (reached from its faces and edges; an entity without one
+/// skipped), `n own none other`. An owner is the entity's own when it is the entity's
+/// [`key_of`] or names it under the harness identities (`own_builder::resolve_owner`,
+/// with `b`'s notify serial `serial`).
+fn put_owners(o: &mut Vec<f64>, b: &Brep, serial: u64) -> Result<(), SolidError> {
+    let class = |owner: Option<ObjectRef>, own: EntityRef| match owner {
+        None => 1,
+        Some(r) if r == key_of(own) => 0,
+        Some(r) => {
+            if crate::own_builder::resolve_owner(b, r, Some(serial), own) == Some(own) {
+                0
+            } else {
+                2
+            }
+        }
+    };
+    let mut put = |classes: Vec<usize>| {
+        let mut counts = [0.0; 3];
+        for c in &classes {
+            if let Some(n) = counts.get_mut(*c) {
+                *n += 1.0;
+            }
+        }
+        o.push(classes.len() as f64);
+        o.extend(counts);
+    };
+    let faces = solidcore::topology::brep::p1::faces(b, None)?;
+    let edges = solidcore::topology::brep::p1::edges(b, None)?;
+    let mut surfaces = Vec::new();
+    for &f in &faces {
+        if let Some(srf) = b.face(f)?.surface.as_ref() {
+            surfaces.push(class(srf.owner(), EntityRef::Face(f)));
+        }
+    }
+    let mut curves = Vec::new();
+    let mut uvs = Vec::new();
+    for &x in &edges {
+        if let Some(c) = b.edge(x)?.curve.as_ref() {
+            curves.push(class(c.owner(), EntityRef::Edge(x)));
+        }
+        for eu in solidcore::topology::edge::edgeuses(b, x, None, None)? {
+            if let Some(uv) = b.edgeuse(eu)?.uv_trim_curve.as_ref() {
+                uvs.push(class(uv.owner(), EntityRef::Edgeuse(eu)));
+            }
+        }
+    }
+    put(surfaces);
+    put(curves);
+    put(uvs);
+    Ok(())
+}
+
 /// `GetBrep() != NULL` as the shim checks it: the upward face use's shell reaches a B-rep.
 fn reaches_brep(b: &Brep, f: FaceId) -> Result<bool, SolidError> {
     let Some(fu) = b.face(f)?.faceuse else {
@@ -684,9 +786,8 @@ fn reaches_brep(b: &Brep, f: FaceId) -> Result<bool, SolidError> {
 }
 
 #[allow(clippy::too_many_lines)] // one record per op
-fn rust_record(i: &Inputs, ex: &[f64]) -> Result<Vec<f64>, Fail> {
+fn rust_record(i: &Inputs, mut b: Brep) -> Result<Vec<f64>, Fail> {
     let mut k = Kernel::default();
-    let (mut b, _) = shared::import(ex)?;
     // upstream edge curves are owned by their edges
     let edges: Vec<EdgeId> = b.edges().ids().collect();
     for e in edges {
@@ -798,7 +899,7 @@ fn rust_record(i: &Inputs, ex: &[f64]) -> Result<Vec<f64>, Fail> {
                 o.push(NULL_DEREF);
                 return Ok(o);
             };
-            let r = fp1::set_surface(&mut b, f, key_of(EntityRef::Face(f)), s, *delete);
+            let r = fp1::set_surface(&k, &mut b, f, key_of(EntityRef::Face(f)), s, *delete);
             status(&r)?;
             o.push(0.0);
             let face = b.face(f).map_err(e)?;
@@ -849,7 +950,11 @@ fn rust_record(i: &Inputs, ex: &[f64]) -> Result<Vec<f64>, Fail> {
             let face = b.face(f).map_err(e)?;
             put_domain(&mut o, &face.uv_domain);
             match face.surface.as_ref() {
-                Some(s) => put_domain(&mut o, &s.natural_uv_domain_with_nurb(&k).map_err(|e| HarnessError::new(e.to_string()))?),
+                Some(s) => put_domain(
+                    &mut o,
+                    &s.natural_uv_domain_with_nurb(&k)
+                        .map_err(|e| HarnessError::new(e.to_string()))?,
+                ),
                 None => o.push(-1.0),
             }
         }
@@ -890,6 +995,9 @@ fn rust_record(i: &Inputs, ex: &[f64]) -> Result<Vec<f64>, Fail> {
                 r.split.edges.len() as f64,
                 r.split.vertices.len() as f64,
             ]);
+            let serial =
+                solidcore::topology::brep::p3::notify_serial(&mut k.context, &mut b).map_err(e)?;
+            put_owners(&mut o, &b, serial).map_err(e)?;
         }
         OpIn::SplitAtSeam { props } => {
             let face = b.face(f).map_err(e)?;
@@ -916,17 +1024,276 @@ fn rust_record(i: &Inputs, ex: &[f64]) -> Result<Vec<f64>, Fail> {
                 r.edges.len() as f64,
                 r.vertices.len() as f64,
             ]);
+            let serial =
+                solidcore::topology::brep::p3::notify_serial(&mut k.context, &mut b).map_err(e)?;
+            put_owners(&mut o, &b, serial).map_err(e)?;
+        }
+        OpIn::DeleteInnerLoop { loops, attributed } => {
+            delete_inner_loop_record(&mut k, &mut b, f, loops, *attributed, &mut o)?;
         }
     }
     Ok(o)
 }
 
+/// The identity of every topology entity for `DeleteInnerLoop` ([`key_of`]'s for faces,
+/// edges, edge uses and loops, so the edge curves' owners agree).
+fn delete_key_of(e: EntityRef) -> ObjectRef {
+    let (type_code, key) = match e {
+        EntityRef::Vertex(x) => (16021, 5 << 40 | u64::from(x.index())),
+        EntityRef::Vertexuse(x) => (16006, 6 << 40 | u64::from(x.index())),
+        EntityRef::Loopuse(x) => (16004, 7 << 40 | u64::from(x.index())),
+        EntityRef::Faceuse(x) => (16002, 8 << 40 | u64::from(x.index())),
+        EntityRef::Shell(x) => (16008, 9 << 40 | u64::from(x.index())),
+        EntityRef::Region(x) => (16009, 10 << 40 | u64::from(x.index())),
+        e => return key_of(e),
+    };
+    ObjectRef {
+        type_code,
+        key: ObjectKey(key),
+    }
+}
+
+/// `DeleteInnerLoop`'s attributes, as the shim gives them (see the ffi module docs).
+const ATTR_BASE: u64 = 20000;
+const ATTR_STRIDE: u64 = 100_000;
+const ATTR_REF: u64 = 10001;
+const ATTR_STANDALONE: u64 = 10002;
+
+/// The `DeleteInnerLoop` record (the ffi module's layout): the shim's guards, the
+/// attributes, a status per loop, then the B-rep after.
+fn delete_inner_loop_record(
+    k: &mut Kernel,
+    b: &mut Brep,
+    f: FaceId,
+    loops: &[i64],
+    attributed: bool,
+    o: &mut Vec<f64>,
+) -> Result<(), Fail> {
+    use solidcore::geom::attribute::{Attribute, AttributeHandle, AttributeStore, Behavior};
+    let e = |e: SolidError| fail(&e);
+    let ls: Vec<LoopId> = loops.iter().map(|&l| LoopId::from_index(l as u32)).collect();
+    // the shim's guards: upstream reads the face's first loop and both loop uses
+    let mut guard = fp2::loops(b, f, false, None).map_err(e)?.is_empty();
+    for &l in &ls {
+        let lu = b.loop_(l).map_err(e)?.loopuse;
+        let mate = match lu {
+            Some(lu) => b.loopuse(lu).map_err(e)?.mate,
+            None => None,
+        };
+        guard |= mate.is_none();
+    }
+    if guard {
+        o.push(NULL_DEREF);
+        return Ok(());
+    }
+    let mut store = AttributeStore::default();
+    let mut shared: Option<(AttributeHandle, AttributeHandle)> = None;
+    if attributed {
+        let r = store
+            .insert(Attribute::new(ATTR_REF, Behavior::Reference))
+            .map_err(e)?;
+        let st = store
+            .insert(Attribute::new(ATTR_STANDALONE, Behavior::StandaloneReference))
+            .map_err(e)?;
+        shared = Some((r, st));
+        let give = |store: &mut AttributeStore,
+                        kind: u64,
+                        all: Vec<(u32, EntityRef)>,
+                        with_ref: bool,
+                        with_standalone: bool|
+         -> Result<(), SolidError> {
+            for (i, ent) in all {
+                let key = delete_key_of(ent).key;
+                let own = store.insert(Attribute::new(
+                    ATTR_BASE + kind * ATTR_STRIDE + u64::from(i),
+                    Behavior::Copy,
+                ))?;
+                store.add_attribute(key, own)?;
+                if with_ref {
+                    store.add_attribute(key, r)?;
+                }
+                if with_standalone {
+                    store.add_attribute(key, st)?;
+                }
+            }
+            Ok(())
+        };
+        let fus = b.faceuses().ids().map(|x| (x.index(), EntityRef::Faceuse(x))).collect();
+        give(&mut store, 2, fus, false, false).map_err(e)?;
+        let fs = b.faces().ids().map(|x| (x.index(), EntityRef::Face(x))).collect();
+        give(&mut store, 3, fs, false, false).map_err(e)?;
+        store
+            .add_attribute(delete_key_of(EntityRef::Face(f)).key, r)
+            .map_err(e)?;
+        let lus = b.loopuses().ids().map(|x| (x.index(), EntityRef::Loopuse(x))).collect();
+        give(&mut store, 4, lus, true, false).map_err(e)?;
+        let lps = b.loops().ids().map(|x| (x.index(), EntityRef::Loop(x))).collect();
+        give(&mut store, 5, lps, true, false).map_err(e)?;
+        let eus = b.edgeuses().ids().map(|x| (x.index(), EntityRef::Edgeuse(x))).collect();
+        give(&mut store, 6, eus, true, false).map_err(e)?;
+        let es = b.edges().ids().map(|x| (x.index(), EntityRef::Edge(x))).collect();
+        give(&mut store, 7, es, true, true).map_err(e)?;
+        let vus = b.vertexuses().ids().map(|x| (x.index(), EntityRef::Vertexuse(x))).collect();
+        give(&mut store, 8, vus, true, false).map_err(e)?;
+        let vs = b.vertices().ids().map(|x| (x.index(), EntityRef::Vertex(x))).collect();
+        give(&mut store, 9, vs, true, true).map_err(e)?;
+    }
+    let mut records = solidcore::topology::topology::NotifyRecords::new();
+    {
+        let mut env = solidcore::topology::edge::NotifyEnv {
+            records: &mut records,
+            attributes: &mut store,
+            context: None,
+            key_of: &delete_key_of,
+        };
+        for &l in &ls {
+            let r = fp1::delete_inner_loop(k, b, &mut env, f, l);
+            o.push(status(&r)?);
+        }
+    }
+    // the B-rep after
+    o.extend(crate::own_builder::counts(b).iter().map(|&n| n as f64));
+    let face_loops = fp2::loops(b, f, false, None).map_err(e)?;
+    o.push(face_loops.len() as f64);
+    for &l in &face_loops {
+        o.push(f64::from(l.index()));
+        let n = match b.loop_(l).map_err(e)?.loopuse {
+            Some(lu) => solidcore::topology::loopuse::edgeuses(b, lu, None, None)
+                .map_err(e)?
+                .len(),
+            None => 0,
+        };
+        o.push(n as f64);
+    }
+    let mut es: Vec<EdgeId> = b.edges().ids().collect();
+    es.sort_by_key(|x| x.index());
+    o.push(es.len() as f64);
+    o.extend(es.iter().map(|x| f64::from(x.index())));
+    let mut vs: Vec<VertexId> = b.vertices().ids().collect();
+    vs.sort_by_key(|x| x.index());
+    o.push(vs.len() as f64);
+    o.extend(vs.iter().map(|x| f64::from(x.index())));
+    let Some((r, st)) = shared else {
+        return Ok(());
+    };
+    let put_ids = |o: &mut Vec<f64>, ent: EntityRef| {
+        let key = delete_key_of(ent).key;
+        let mut ids: Vec<f64> = store
+            .attributes(key)
+            .into_iter()
+            .filter_map(|h| store.get(h).map(|a| a.attribute_id() as f64))
+            .collect();
+        ids.sort_by(f64::total_cmp);
+        o.push(ids.len() as f64);
+        o.extend(ids);
+    };
+    put_ids(o, EntityRef::Face(f));
+    for &l in &face_loops {
+        put_ids(o, EntityRef::Loop(l));
+    }
+    for &x in &es {
+        put_ids(o, EntityRef::Edge(x));
+    }
+    for &x in &vs {
+        put_ids(o, EntityRef::Vertex(x));
+    }
+    o.push(store.users(r).map_err(e)?.len() as f64);
+    o.push(store.users(st).map_err(e)?.len() as f64);
+    Ok(())
+}
+
+/// The Rust B-rep of a `topology.vertexuse` B-rep block, built by the Rust kernel as
+/// that unit's shim (`sc_topology_fixture.h`) builds it: a shim-built source by
+/// [`crate::own_builder`], an `.smb` file by the Rust reader, both renumbered into the
+/// shim's traversal order under its conventions, or the build's error. No C++ state
+/// reaches it.
+///
+/// # Errors
+///
+/// A harness error for a source the shim would not accept either.
+pub(super) fn own_built(
+    src: &BrepIn,
+    validate_only: bool,
+    init_gaps: bool,
+) -> Result<crate::own_builder::Built, HarnessError> {
+    use crate::own_builder::{build_as, read_as, renumber_with, Built, Conventions};
+    let mut k = Kernel::default();
+    let conv = &Conventions::TOPOLOGY_FIXTURE;
+    let BrepIn::File { rebuild, .. } = src else {
+        return build_as(&mut k, src, validate_only, init_gaps, conv)?
+            .ok_or_else(|| harness("own builder: no build for a shim-built source"));
+    };
+    let path = path_of(src)?;
+    if init_gaps {
+        // the gap walk may leave size estimates a copy does not carry: read afresh
+        return read_as(&mut k, &path, *rebuild, validate_only, init_gaps, conv);
+    }
+    let key = (path, *rebuild, validate_only);
+    // a copy of the same file's earlier Rust read (the reader is deterministic): the
+    // renumbering of a B-rep already in traversal order is a plain copy
+    let hit = OWN_READS.with(|c| {
+        c.borrow()
+            .iter()
+            .find(|(k, _)| *k == key)
+            .map(|(_, b)| renumber_with(b, conv))
+    });
+    if let Some(b) = hit {
+        return Ok(Built::Brep(Box::new(b?)));
+    }
+    let built = read_as(&mut k, &key.0, key.1, validate_only, false, conv)?;
+    if let Built::Brep(b) = &built {
+        let copy = renumber_with(b, conv)?;
+        OWN_READS.with(|c| {
+            let mut c = c.borrow_mut();
+            if c.len() >= 4 {
+                c.remove(0);
+            }
+            c.push((key, copy));
+        });
+    }
+    Ok(built)
+}
+
+/// A file source's key (path, rebuild, `validate_only`) and its Rust read.
+type OwnRead = ((String, bool, bool), Brep);
+
+thread_local! {
+    /// The last few Rust `.smb` reads, by key.
+    static OWN_READS: RefCell<Vec<OwnRead>> = const { RefCell::new(Vec::new()) };
+}
+
+/// [`own_built`] with its entity counts; a failed build is the record the shim gives
+/// one (`-1 status`), or the deferral of an unported callee.
+///
+/// # Errors
+///
+/// As [`own_built`].
+pub(super) fn own_brep(
+    src: &BrepIn,
+    validate_only: bool,
+    init_gaps: bool,
+) -> Result<crate::own_builder::RustBrep<(Brep, [usize; 10])>, HarnessError> {
+    use crate::own_builder::{build_status, counts, Built};
+    match own_built(src, validate_only, init_gaps)? {
+        Built::Brep(b) => {
+            let c = counts(&b);
+            Ok(Ok((*b, c)))
+        }
+        Built::Failed(e) => Ok(Err(Output::unported(&e)
+            .unwrap_or_else(|| Output::new().values("out", vec![-1.0, build_status(&e)])))),
+    }
+}
+
 fn run_rust(i: &Inputs) -> Result<Output, HarnessError> {
-    let (r, ex) = match resolve(i)? {
+    let (b, c) = match own_brep(&i.brep, false, false)? {
         Ok(x) => x,
         Err(o) => return Ok(o),
     };
-    match rust_record(&r, &ex) {
+    let r = match resolve_with(i, c) {
+        Ok(r) => r,
+        Err(o) => return Ok(*o),
+    };
+    match rust_record(&r, b) {
         Ok(v) => Ok(Output::new().values("out", v)),
         Err(Fail::Deferred(o)) => Ok(*o),
         Err(Fail::Harness(h)) => Err(h),
@@ -989,6 +1356,10 @@ fn ops_for(s: i64, v: usize) -> Vec<OpIn> {
         },
         OpIn::SplitAtSeam {
             props: props_of(PROPS.get((v + 3) % PROPS.len()).copied().flatten()),
+        },
+        OpIn::DeleteInnerLoop {
+            loops: vec![s, s + 1 + (v as i64 & 3)],
+            attributed: bit(3),
         },
     ]
 }
@@ -1106,6 +1477,95 @@ impl UnitDiff for Runner {
                                 .map_err(|e| harness(e.to_string()))?,
                         });
                     }
+                }
+            }
+        }
+        // DeleteInnerLoop: the plates of fixtures/topology.face_p1 (one face, 1 to 3
+        // square holes; a hole touching the outer loop at a vertex; a vertex loop; two
+        // holes sharing an edge, not lamina) and upstream files (ellips_ts2: a face with
+        // two holes; box_with_large_fillet: faces of a solid, a loop of another face),
+        // each loop alone and the inner loops in turn, with and without attributes
+        let plate = |name: &str| format!("fixture:{name}");
+        let mut delete_cases: Vec<(String, i64, Vec<Vec<i64>>)> = vec![
+            (plate("plate_1hole.smb"), 0, vec![vec![0], vec![1], vec![1, 0]]),
+            (
+                plate("plate_2holes.smb"),
+                0,
+                vec![vec![0], vec![1], vec![2], vec![1, 2], vec![2, 1], vec![0, 2, 1]],
+            ),
+            (
+                plate("plate_3holes.smb"),
+                0,
+                vec![
+                    vec![1],
+                    vec![2],
+                    vec![3],
+                    vec![1, 2, 3],
+                    vec![3, 2, 1],
+                    vec![2, 3, 1, 0],
+                ],
+            ),
+            (
+                plate("plate_touching_hole.smb"),
+                0,
+                vec![vec![1], vec![2], vec![1, 2], vec![2, 1]],
+            ),
+            (plate("plate_vertex_loop.smb"), 0, vec![vec![1], vec![2], vec![2, 1]]),
+            (
+                plate("two_holes_shared_edge.smb"),
+                0,
+                vec![vec![1], vec![2], vec![0, 1, 2]],
+            ),
+            (
+                "ellips_ts2.smb".to_string(),
+                0,
+                vec![vec![0], vec![1], vec![2], vec![1, 2], vec![2, 1]],
+            ),
+            (
+                "box_with_large_fillet.smb".to_string(),
+                0,
+                vec![vec![0], vec![1], vec![3]],
+            ),
+            // A solid with a through hole: each cap's inner loop shares its edge
+            // with the hole wall (face 8), so DeleteInnerLoop must refuse it.
+            ("Fillet/ext_w_hole.smb".to_string(), 0, vec![vec![1]]),
+            ("Fillet/ext_w_hole.smb".to_string(), 1, vec![vec![3]]),
+        ];
+        delete_cases.push(("Mouse.smb".to_string(), 1, vec![vec![0], vec![2]]));
+        for (file, face, sequences) in delete_cases {
+            for attributed in [false, true] {
+                for loops in &sequences {
+                    let inputs = Inputs {
+                        brep: BrepIn::File {
+                            file: file.clone(),
+                            rebuild: false,
+                        },
+                        face,
+                        op: OpIn::DeleteInnerLoop {
+                            loops: loops.clone(),
+                            attributed,
+                        },
+                    };
+                    let seq: Vec<String> = loops.iter().map(i64::to_string).collect();
+                    v.push(Case {
+                        unit: self.id().to_string(),
+                        name: format!(
+                            "delete_inner_loop_{}_f{face}_l{}_{}",
+                            file.trim_start_matches("fixture:"),
+                            seq.join("-"),
+                            u8::from(attributed)
+                        ),
+                        source: crate::CaseSource::Fixture {
+                            path: "built-in: DeleteInnerLoop cases".to_string(),
+                            index: v.len(),
+                            upstream_ref: Some(
+                                "source/SMLib/src/SmFace.cpp (SmFace::DeleteInnerLoop)"
+                                    .to_string(),
+                            ),
+                        },
+                        inputs: serde_json::to_value(inputs)
+                            .map_err(|e| harness(e.to_string()))?,
+                    });
                 }
             }
         }

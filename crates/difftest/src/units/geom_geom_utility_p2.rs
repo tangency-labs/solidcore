@@ -28,8 +28,7 @@ use crate::{Case, HarnessError, Output, Rng, UnitDiff};
 /// Generated cases per run, whatever `--seeds` says (it can only raise this).
 pub const MIN_GENERATED: usize = 3200;
 
-/// Upstream `SM_ERR`.
-const SM_ERR: i32 = 1001;
+use solidcore::error::SM_ERR;
 
 /// `geom.geom_utility_p2` runner.
 pub struct Runner;
@@ -75,7 +74,7 @@ fn status(code: i32) -> Output {
 
 fn normalise(e: &SolidError) -> String {
     match e {
-        SolidError::InvalidInput { .. } => "status_1007".into(),
+        SolidError::InvalidInput { .. } | SolidError::PortInvariant { .. } => "status_1007".into(),
         SolidError::Upstream { code, .. } => format!("status_{code}"),
         other => format!("rust_error: {other}"),
     }

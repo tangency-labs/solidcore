@@ -103,7 +103,7 @@ use crate::math::{Point3, Vec3, BIG_DOUBLE, EFF_ZERO, EFF_ZERO_SQRT, PI};
 use crate::query::face::p2::{
     point_classify_prepared, point_classify_requested, PointClassifyOptions,
 };
-use crate::surface::surface::p2::{surface_cache, Surface, SurfaceKind};
+use crate::surface::surface::p2::{surface_cache, Surface, B_SPLINE_SURFACE_TYPE};
 use crate::surface::surface_cache::p1::{AltCacheKey, AltSrfCacheType};
 use crate::surface::trim_srf_cache::POINT_CLASS_UNKNOWN;
 use crate::topology::face::p2::create_curves_by_trimming_snapshot;
@@ -390,6 +390,11 @@ pub struct LocalSolver<'a, O> {
     pub curve_face2: Option<O>,
     /// `m_pSurfaceCurve2` (`SmTLSCurveCurve`).
     pub surface_curve2: Option<&'a Curve>,
+    /// The curves are temporary (a face's silhouette curves, upstream's curve objects
+    /// made for this solve): their solves name no handle of their own, so their
+    /// solutions name the curves themselves, with their natural intervals, as
+    /// upstream's do (the face stands in only for the results).
+    pub(super) temporary_curves: bool,
 }
 
 /// `SmTopologySolver::GetBestAnswerSoFar` of the solver state `s`: the best answer
@@ -843,6 +848,7 @@ impl<'t, 'a, O: SolutionObject + 't> TopologySolver<'t, 'a, O> {
     /// longer exists).
     pub(super) fn restore_base(&mut self, s: GlobalSolver<'_, O>, tree2: &'t Tree<O>) {
         let GlobalSolver {
+            fixes,
             operation,
             category,
             projected_operation,
@@ -860,6 +866,7 @@ impl<'t, 'a, O: SolutionObject + 't> TopologySolver<'t, 'a, O> {
             branches_visited,
         } = s;
         self.base = GlobalSolver {
+            fixes,
             operation,
             category,
             projected_operation,
@@ -985,6 +992,7 @@ impl<'a, O> LocalSolver<'a, O> {
             curve_edge2: None,
             curve_face2: None,
             surface_curve2: None,
+            temporary_curves: false,
         }
     }
 
@@ -1444,8 +1452,12 @@ impl<'a, O: SolutionObject> LocalSolver<'a, O> {
             //   The target point is stored in m_vPoint, not the input args.
             //   So - put curve in as both args makes sure this works
             //        no matter the value of m_bSwapOrder
-            let curve = objects.curve(handle)?;
-            self.point_curve(k, ts, curve, Some(handle))?;
+            // the solve builds the edge curve's cache at the edge's tolerance
+            // (SmTol::GetApproxTol3d(&m_crCurve) reads pEdge->GetTolerance() through the
+            // owner)
+            let mut curve = objects.curve(handle)?.clone_for_evaluation()?;
+            curve.set_owner_zone_tol_3d(Some(objects.edge_tolerance(edge)?));
+            self.point_curve(k, ts, &curve, Some(handle))?;
         }
 
         Ok(())
@@ -1807,6 +1819,9 @@ impl<'a, O: SolutionObject> LocalSolver<'a, O> {
         } else {
             (curve1, &self.interval, curve2, &self.interval2)
         };
+        // a temporary curve's solve names the curve objects (their natural intervals),
+        // not the face standing in for it (`temporary_curves`)
+        let temporary = self.temporary_curves;
         let solutions = if op == SolverOperation::Intersect {
             this.curve.global_curve_intersect(
                 ts.kernel,
@@ -1816,11 +1831,19 @@ impl<'a, O: SolutionObject> LocalSolver<'a, O> {
                 s.tolerance_3d,
                 &CurveIntersectOptions {
                     skip_global_coincidence_check: false,
-                    handles: [Some(this.handle), Some(other.handle)],
-                    analytic_handles: [
-                        objects.analytic_curve_handle(this.handle),
-                        objects.analytic_curve_handle(other.handle),
-                    ],
+                    handles: if temporary {
+                        [None, None]
+                    } else {
+                        [Some(this.handle), Some(other.handle)]
+                    },
+                    analytic_handles: if temporary {
+                        [None, None]
+                    } else {
+                        [
+                            objects.analytic_curve_handle(this.handle),
+                            objects.analytic_curve_handle(other.handle),
+                        ]
+                    },
                 },
             )?
         } else {
@@ -1830,6 +1853,7 @@ impl<'a, O: SolutionObject> LocalSolver<'a, O> {
                 this_interval,
                 other,
                 other_interval,
+                temporary,
                 &CurveSolveArgs {
                     operation: op,
                     tolerance_3d: s.tolerance_3d,
@@ -1966,9 +1990,9 @@ pub(super) fn face_silhouettes<O: SolutionObject>(
     }
 
     // No cached trimmed silhouette curves in existance -- create them
-    // (SM_CAST_PTR(SmBSplineSurface, pSurface): upstream dereferences NULL for any
-    // other kind)
-    if !matches!(srf.kind(), SurfaceKind::BSpline(_) | SurfaceKind::Plane(_)) {
+    // (SM_CAST_PTR(SmBSplineSurface, pSurface): every kind derived from it; upstream
+    // dereferences NULL for any other kind)
+    if !srf.is_kind_of(B_SPLINE_SURFACE_TYPE)? {
         return Err(null_deref(
             OP_FACE_SIL,
             "face surface is not a B-spline surface",
@@ -2112,6 +2136,7 @@ fn curve_global_curve_solve<O: SolutionObject>(
     this_interval: &Extent1d,
     other: CurveRef<'_, O>,
     other_interval: &Extent1d,
+    temporary: bool,
     args: &CurveSolveArgs<'_>,
 ) -> Result<SolutionArray<O>> {
     this.curve.global_curve_solve(
@@ -2124,7 +2149,11 @@ fn curve_global_curve_solve<O: SolutionObject>(
         &CurveSolveOptions {
             target_distance: args.best_answer,
             opt_vectors: args.opt_vectors,
-            handles: [Some(this.handle), Some(other.handle)],
+            handles: if temporary {
+                [None, None]
+            } else {
+                [Some(this.handle), Some(other.handle)]
+            },
         },
         args.requested,
     )
@@ -2216,6 +2245,7 @@ pub(super) fn face_point_classify<O: Copy>(
         Err(
             e @ (SolidError::Unported { .. }
             | SolidError::InvalidInput { .. }
+            | SolidError::PortInvariant { .. }
             | SolidError::PreparationRequired { .. }),
         ) => Err(e),
         // (status ignored, as upstream)
@@ -2376,8 +2406,12 @@ pub(crate) mod tests {
                 _ => Err(SolidError::sm_err("edge")),
             }
         }
-        fn edge_tolerance(&self, _edge: Obj) -> Result<f64> {
-            Err(SolidError::sm_err("edge"))
+        fn edge_tolerance(&self, edge: Obj) -> Result<f64> {
+            // SmEdge's default tolerance (the point/edge solve reads it for the cache)
+            match edge {
+                Obj::Edge(_) => Ok(0.0),
+                _ => Err(SolidError::sm_err("edge")),
+            }
         }
         fn surface_face(&self, _surface: Obj) -> Result<Option<Obj>> {
             Ok(None)

@@ -21,6 +21,7 @@
 //! | [`is_live_topology_member`]                       | `SmBrep::IsLiveTopologyMember`                |
 //! | [`regions`], [`faces`], [`edges`], [`vertices`]   | `SmBrep::GetRegions`, `GetFaces`, `GetEdges`, `GetVertices` |
 //! | [`shells`]                                        | `SmBrep::GetShells`                           |
+//! | [`tessellate_boundaries`], [`BoundaryTessellation`] | `SmBrep::TessellateBoundaries`              |
 //! | [`surfaces`], [`curves`]                          | `SmBrep::GetSurfaces`, `GetCurves`            |
 //! | [`wire_edges`], [`topological_edges`], [`topological_vertices`] | `SmBrep::GetWireEdges`, `GetTopologicalEdges`, `GetTopologicalVertices` |
 //! | [`is_degenerate`]                                 | `SmBrep::IsDegenerate`                        |
@@ -62,7 +63,7 @@
 //!   reported by [`regions`].
 //! - [`surfaces`] / [`curves`]: upstream's `GetOwner() == pFace` / `pEdge` test compares
 //!   the geometry's owner with the face's / edge's
-//!   [`arena_identity`] (the kernel's
+//!   [`arena_identity`](crate::topology::brep_cache::arena_identity) (the kernel's
 //!   identity of arena entities; a B-rep whose geometry carries no owner reports no
 //!   surfaces or curves, as upstream for unowned geometry); the attribute filter
 //!   ([`GeometryAttributeFilter`]) looks the geometry up under its own keys.
@@ -76,7 +77,8 @@
 //!   (upstream overflows its stack or hangs on a cyclic radial walk; real loop
 //!   nestings are a handful).
 //! - `sm_RmAndDel_OldLoopVertices` deletes two vertex uses: the port unlinks them from
-//!   their vertex and resets their records (an arena record cannot be freed).
+//!   their vertex and removes their records (finding
+//!   `plan/findings/topology.brep--deleted-records-leave-their-arenas-follow-up.md`).
 //! - `sm_SetObjectMap` / `sm_GetObjectMap` keep an [`EntityRef`] `BTreeMap`
 //!   ([`ObjectMap`]) instead of the pointer hash map (plan hazard `ptr-hash`: upstream
 //!   `SmMapPtrToPtr` iteration order is pointer order; only lookups are used here) and
@@ -140,7 +142,7 @@ use crate::query::brep::{self as qbrep, BoundingBoxOptions};
 use crate::surface::surface::p2::{BlendEndType, CurvatureType, DerivSurfDefinition};
 use crate::surface::surface::p4::NoObject;
 use crate::surface::surface::Surface;
-use crate::topology::brep_cache::{arena_identity, CacheObject};
+use crate::topology::brep_cache::CacheObject;
 use crate::topology::edge::{self, AttributeFilter};
 use crate::topology::edgeuse::p1 as eu1;
 use crate::topology::edgeuse::p2::BinormalEval;
@@ -154,13 +156,12 @@ use crate::topology::topology_traverser::{Entity, Marks};
 use crate::topology::vertex;
 use crate::topology::vertexuse;
 use crate::topology::{
-    Brep, EdgeId, EdgeuseId, FaceId, LoopId, NamingScheme, RegionId, ShellId, VertexId, Vertexuse,
-    VertexuseId,
+    Brep, EdgeId, EdgeuseId, FaceId, LoopId, RegionId, ShellId, VertexId, VertexuseId,
 };
 
-/// `SmBoolean` `TRUE` / `FALSE`.
-const TRUE: i32 = 1;
-const FALSE: i32 = 0;
+// `SmBoolean` `TRUE` / `FALSE`.
+use crate::error::SM_FALSE as FALSE;
+use crate::error::SM_TRUE as TRUE;
 
 const OP: &str = "topology::brep::p1";
 
@@ -171,8 +172,8 @@ pub const TYPE_STRING: &str = "SmBrep_TYPE";
 /// `SmBrep::GetClassString`.
 pub const CLASS_STRING: &str = "SmBrep";
 
-/// `SM_ERR_INVALID_INPUT`.
-const SM_ERR_INVALID_INPUT: i32 = 1007;
+// `SM_ERR_INVALID_INPUT`.
+use crate::error::SM_ERR_INVALID_INPUT;
 
 /// Deepest loop nesting `sm_MarkLoopsToDelete` follows before failing (upstream
 /// recurses without bound).
@@ -485,6 +486,71 @@ pub fn edges(b: &Brep, attribute: Option<&AttributeFilter<'_>>) -> Result<Vec<Ed
     ))
 }
 
+/// The polylines of a B-rep's edges ([`tessellate_boundaries`]).
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct BoundaryTessellation {
+    /// Every edge's points, edge after edge (`rPoints`).
+    pub points: Vec<Point3>,
+    /// The number of points of each edge, `0` for one that failed (`rVertexCounts`).
+    pub vertex_counts: Vec<usize>,
+    /// The edges, in [`edges`] order (`rEdges`).
+    pub edges: Vec<EdgeId>,
+    /// Every edge was tessellated (`SM_SUCCESS`); `false` is upstream's `SM_ERR`, which
+    /// comes with the other edges' points.
+    pub complete: bool,
+}
+
+/// `TessellateBoundaries`: each edge's curve over the edge's interval as points
+/// ([`Curve::tessellate`] with no chord height, `angle_tol_deg`, at least one segment),
+/// in [`edges`] order. An edge without curve, whose tessellation fails or gives no
+/// point, has no points and makes the result incomplete.
+///
+/// # Errors
+///
+/// `InvalidInput` for an angle tolerance that is not finite and positive (upstream:
+/// `SM_ERR_INVALID_INPUT` with empty outputs); [`SolidError::Unported`] from a
+/// tessellation.
+pub fn tessellate_boundaries(
+    k: &Kernel,
+    b: &Brep,
+    angle_tol_deg: f64,
+) -> Result<BoundaryTessellation> {
+    const OP: &str = "topology::brep::p1::tessellate_boundaries";
+    if !angle_tol_deg.is_finite() || angle_tol_deg <= 0.0 {
+        return Err(SolidError::invalid_input(
+            OP,
+            "angle tolerance must be finite and positive",
+        ));
+    }
+
+    let mut out = BoundaryTessellation {
+        edges: edges(b, None)?,
+        complete: true,
+        ..BoundaryTessellation::default()
+    };
+    for &e in &out.edges {
+        let edge = b.edge(e)?;
+        let points = match edge.curve.as_ref() {
+            None => None,
+            Some(curve) => match curve.tessellate(k, &edge.interval, 0.0, angle_tol_deg, 1) {
+                Ok(t) if !t.points.is_empty() => Some(t.points),
+                Err(
+                    err @ (SolidError::Unported { .. } | SolidError::PreparationRequired { .. }),
+                ) => return Err(err),
+                Ok(_) | Err(_) => None,
+            },
+        };
+        if let Some(points) = points {
+            out.vertex_counts.push(points.len());
+            out.points.extend(points);
+        } else {
+            out.complete = false;
+            out.vertex_counts.push(0);
+        }
+    }
+    Ok(out)
+}
+
 /// `GetVertices`: every vertex in list order, those carrying `attribute` when given.
 ///
 /// # Errors
@@ -605,42 +671,36 @@ impl core::fmt::Debug for GeometryAttributeFilter<'_> {
     }
 }
 
-/// The default expected owner of `f`'s surface under `b`'s recorded naming scheme,
-/// falling back to a proven caller owner recorded on `b`.
+/// The default expected owner of `f`'s surface: its identity in `b`'s recorded naming
+/// scheme ([`Brep::owner_identity`]), falling back to a proven owner recorded on `b`.
 pub(crate) fn default_face_owner(b: &Brep, f: FaceId) -> ObjectRef {
-    let fallback = if b.naming() == NamingScheme::Notify {
-        loopuse::notify_ref(EntityRef::Face(f))
-    } else {
-        arena_identity(CacheObject::Face(f))
-    };
+    let entity = EntityRef::Face(f);
+    let expected = b.owner_identity(entity);
     let actual = b.face(f).ok().and_then(|x| x.surface.as_ref()?.owner());
-    if actual != Some(fallback) {
-        if let Some(proven) = b.geometry_owner_key(EntityRef::Face(f)) {
+    if actual != Some(expected) {
+        if let Some(proven) = b.geometry_owner_key(entity) {
             if actual == Some(proven) {
                 return proven;
             }
         }
     }
-    fallback
+    expected
 }
 
-/// The default expected owner of `e`'s curve under `b`'s recorded naming scheme,
-/// falling back to a proven caller owner recorded on `b`.
+/// The default expected owner of `e`'s curve: its identity in `b`'s recorded naming
+/// scheme ([`Brep::owner_identity`]), falling back to a proven owner recorded on `b`.
 pub(crate) fn default_edge_owner(b: &Brep, e: EdgeId) -> ObjectRef {
-    let fallback = if b.naming() == NamingScheme::Notify {
-        loopuse::notify_ref(EntityRef::Edge(e))
-    } else {
-        arena_identity(CacheObject::Edge(e))
-    };
+    let entity = EntityRef::Edge(e);
+    let expected = b.owner_identity(entity);
     let actual = b.edge(e).ok().and_then(|x| x.curve.as_ref()?.owner());
-    if actual != Some(fallback) {
-        if let Some(proven) = b.geometry_owner_key(EntityRef::Edge(e)) {
+    if actual != Some(expected) {
+        if let Some(proven) = b.geometry_owner_key(entity) {
             if actual == Some(proven) {
                 return proven;
             }
         }
     }
-    fallback
+    expected
 }
 
 /// `GetSurfaces`: the surfaces owned by their faces (`pSurface->GetOwner() == pFace`,
@@ -770,12 +830,16 @@ pub fn is_degenerate(k: &Kernel, b: &Brep, tol_3d: f64) -> Result<bool> {
     // status is ignored: a failure leaves the default box)
     // CalculateBoundingBox(sBBox): header defaults bApprox = FALSE, bTight = FALSE,
     // bExpandByZoneTol3d = TRUE
-    let bbox = ignored(qbrep::calculate_bounding_box(
+    let bbox = match ignored(qbrep::calculate_bounding_box(
         k,
         b,
         BoundingBoxOptions::default(),
-    ))?
-    .unwrap_or_default();
+    ))? {
+        Some(bbox) => bbox,
+        // fork 60a8a51: without a box there is no evidence the B-rep is a point
+        None if k.fixes.brep_edit_statuses_pass_on => return Ok(false),
+        None => crate::geom::extent3d::Extent3d::default(),
+    };
     Ok(bbox.is_point_sized(tol_3d))
 }
 
@@ -832,8 +896,13 @@ pub fn reset_infinite_region(
         SetRegionVoidType::NestedSolid => {
             // status ignored upstream; the port's null-dereference marker still propagates
             match set_region_is_void_flags_for_nested_solids(k, b) {
-                Err(e @ SolidError::InvalidInput { .. }) => return Err(e),
-                r => ignore_status(r)?,
+                Err(e @ (SolidError::InvalidInput { .. } | SolidError::PortInvariant { .. })) => {
+                    return Err(e)
+                }
+                r => ignore_status(crate::error::passed_on(
+                    r,
+                    k.fixes.brep_edit_statuses_pass_on,
+                )?)?,
             }
         }
         SetRegionVoidType::InfiniteRegionOnly => {
@@ -901,7 +970,12 @@ pub fn set_region_is_void_flags_for_nested_solids(k: &mut Kernel, b: &mut Brep) 
 
         // the shells mated to this one (increments an unused mark value)
         // (status ignored upstream: a failed call is read as no mated shells)
-        for mated in ignored(shell_mated_shells(k, b, shell))?.unwrap_or_default() {
+        for mated in ignored(crate::error::passed_on(
+            shell_mated_shells(k, b, shell),
+            k.fixes.brep_edit_statuses_pass_on,
+        )?)?
+        .unwrap_or_default()
+        {
             let nested = shell_region(b, mated)?.ok_or_else(|| {
                 null("SetRegionIsVoidFlagsForNestedSolids: mated shell without region")
             })?;
@@ -1163,7 +1237,7 @@ fn vertexuse_loop(b: &Brep, vu: VertexuseId) -> Result<Option<LoopId>> {
 
 /// `sm_RmAndDel_OldLoopVertices`: when `vu` is a loop vertex use, finds its partner
 /// (the next, else the previous, loop vertex use on the same loop in the vertex's
-/// list), removes both from the vertex and deletes them (their records are reset).
+/// list), removes both from the vertex and deletes them (their records are removed).
 ///
 /// # Errors
 ///
@@ -1205,8 +1279,8 @@ pub fn rm_and_del_old_loop_vertices(b: &mut Brep, vu: VertexuseId) -> Result<()>
     b.vertex_mut(v)?.vertexuses.retain(|&x| x != vu && x != del);
 
     // delete the LoopVertexuses
-    *b.vertexuse_mut(vu)? = Vertexuse::default();
-    *b.vertexuse_mut(del)? = Vertexuse::default();
+    b.remove_vertexuse_record(vu)?;
+    b.remove_vertexuse_record(del)?;
     Ok(())
 }
 
@@ -1388,8 +1462,11 @@ pub fn check_uv_trim_curve(k: &Kernel, b: &Brep, eu: EdgeuseId) -> Result<()> {
         .curve
         .as_ref()
         .ok_or_else(|| null("sm_CheckUVTrimCurve: edge without curve"))?;
-    let edge_3d_start =
-        ignored(curve.evaluate_point(k, edge_ivl.evaluate(0.0)))?.unwrap_or(Point3::UNDEF);
+    let edge_3d_start = ignored(crate::error::passed_on(
+        curve.evaluate_point(k, edge_ivl.evaluate(0.0)),
+        k.fixes.brep_edit_statuses_pass_on,
+    )?)?
+    .unwrap_or(Point3::UNDEF);
 
     let mate_vertex = |b: &Brep| -> Result<VertexId> {
         start_vertex(
@@ -1408,8 +1485,11 @@ pub fn check_uv_trim_curve(k: &Kernel, b: &Brep, eu: EdgeuseId) -> Result<()> {
         eu1::face(b, eu)?.ok_or_else(|| null("sm_CheckUVTrimCurve: edge use without face"))?;
     let surf = face2::surface(b, face)?
         .ok_or_else(|| null("sm_CheckUVTrimCurve: face without surface"))?;
-    let face_3d_start = ignored(surf.evaluate_point(k, Point2::new(start_uv.x, start_uv.y)))?
-        .unwrap_or(Point3::UNDEF);
+    let face_3d_start = ignored(crate::error::passed_on(
+        surf.evaluate_point(k, Point2::new(start_uv.x, start_uv.y)),
+        k.fixes.brep_edit_statuses_pass_on,
+    )?)?
+    .unwrap_or(Point3::UNDEF);
 
     let face_tol = face2::tolerance(b, face)?;
     let edge_tol = edge::tolerance(b, e)?;
@@ -1425,16 +1505,22 @@ pub fn check_uv_trim_curve(k: &Kernel, b: &Brep, eu: EdgeuseId) -> Result<()> {
     }
 
     // Now the other end:
-    let edge_3d_end =
-        ignored(curve.evaluate_point(k, edge_ivl.evaluate(1.0)))?.unwrap_or(Point3::UNDEF);
+    let edge_3d_end = ignored(crate::error::passed_on(
+        curve.evaluate_point(k, edge_ivl.evaluate(1.0)),
+        k.fixes.brep_edit_statuses_pass_on,
+    )?)?
+    .unwrap_or(Point3::UNDEF);
     let end_vtx = if reverse {
         start_vertex(b, eu)?
     } else {
         mate_vertex(b)?
     };
     let vrtx_3d_end = vertex::point(b, end_vtx)?;
-    let face_3d_end =
-        ignored(surf.evaluate_point(k, Point2::new(end_uv.x, end_uv.y)))?.unwrap_or(Point3::UNDEF);
+    let face_3d_end = ignored(crate::error::passed_on(
+        surf.evaluate_point(k, Point2::new(end_uv.x, end_uv.y)),
+        k.fixes.brep_edit_statuses_pass_on,
+    )?)?
+    .unwrap_or(Point3::UNDEF);
     vrtx_tol = vertex::tolerance(b, end_vtx)?; // have to update this to End vtx.
 
     let dist_face_vrtx_end = face_3d_end.distance(vrtx_3d_end);
@@ -1608,6 +1694,10 @@ fn evaluate_binormal_status_ignored(
         face_normal: Vec3::UNDEF,
         uv: Point2::UNDEF,
     };
+    // fork 60a8a51 passes the status on (`SER`)
+    if k.fixes.brep_edit_statuses_pass_on {
+        return evaluate_binormal(k, b, eu, parameter, true);
+    }
     if !eu1::is_loop_edgeuse(b, eu)? {
         return Ok(undefined); // SER(SM_ERR_INVALID_INPUT) before the outputs are set
     }
@@ -1964,8 +2054,9 @@ pub fn update_vertex_edge_intervals(
                         true,
                         None,
                     ))?;
-                    let _ignored_status =
-                        get_or_create_uv_trim_curve(k, b, eu, false, false, true)?;
+                    // (fork 60a8a51 passes this status on: `SER`)
+                    let status = get_or_create_uv_trim_curve(k, b, eu, false, false, true)?;
+                    crate::error::status_passed_on(status, k.fixes.brep_edit_statuses_pass_on)?;
                 }
             }
         }
@@ -2003,6 +2094,12 @@ pub fn redistribute_seam_uv_trim_curves(
         return Ok(false);
     }
     let eus = b.edge(new_edge)?.edgeuses.clone();
+    // fork 60a8a51: without its four edge uses, their trim curves and their end points
+    // there is nothing to compare, so nothing is swapped.
+    let soft = k.fixes.brep_edit_statuses_pass_on;
+    if soft && eus.len() != 4 {
+        return Ok(false);
+    }
     // SM_ASSERT upstream; this algorithm handles exactly two mated pairs (#520).
     if eus.len() != 4 {
         return Err(null(
@@ -2031,7 +2128,11 @@ pub fn redistribute_seam_uv_trim_curves(
     // Both the outer Result and the retained projection status must succeed.
     // Upstream checks these statuses and curves only with SM_ASSERT (#520).
     for eu in [prev_this, prev_other] {
-        eu3::get_or_create_uv_trim_curve(k, b, eu, false, false, true)?.status?;
+        let fetched = eu3::get_or_create_uv_trim_curve(k, b, eu, false, false, true)?;
+        if soft && (fetched.status.is_err() || eu1::uv_trim_curve(b, eu)?.0.is_none()) {
+            return Ok(false);
+        }
+        fetched.status?;
         if eu1::uv_trim_curve(b, eu)?.0.is_none() {
             return Err(null(
                 "sm_RedistributeSeamUVTrimCurves: neighbor without UV trim curve",
@@ -2042,11 +2143,26 @@ pub fn redistribute_seam_uv_trim_curves(
     // A failed evaluation must not feed unset points into seam-side classification.
     // First derivatives are requested but unused, as upstream.
     // NewE Start UV values from UVTrimCurves
-    let this_point_uv = normalized_evaluate(k, b, this_eu, 0.0, true, true)?;
-    let other_point_uv = normalized_evaluate(k, b, other_eu, 0.0, true, true)?;
-    // Prev Start UV values from PrevUVtrimCurves
-    let prev_this_point_uv = normalized_evaluate(k, b, prev_this, 1.0, true, true)?;
-    let prev_other_point_uv = normalized_evaluate(k, b, prev_other, 1.0, true, true)?;
+    // (fork 60a8a51: a failed evaluation swaps nothing; the four are tried in order)
+    let mut end_uvs = [Point3::UNDEF; 4];
+    for (slot, (eu, t)) in end_uvs.iter_mut().zip([
+        (this_eu, 0.0),
+        (other_eu, 0.0),
+        // Prev Start UV values from PrevUVtrimCurves
+        (prev_this, 1.0),
+        (prev_other, 1.0),
+    ]) {
+        let r = normalized_evaluate(k, b, eu, t, true, true);
+        *slot = if soft {
+            match ignored(r)? {
+                Some(p) => p,
+                None => return Ok(false),
+            }
+        } else {
+            r?
+        };
+    }
+    let [this_point_uv, other_point_uv, prev_this_point_uv, prev_other_point_uv] = end_uvs;
 
     // make sure sThisPointUV == sPrevThisPointUV, sOtherPointUV == sPrevOtherPointUV are
     // the same to tol by switching the UVTrimCurves if needed. Expect all 4 PointUVs to
@@ -2560,9 +2676,15 @@ pub fn make_vertex_split_uv_trim_curve(
     //    sIvl13D, sIvl23D = 3DCurve     [start,SplitParam],   [SplitParam,   end]
     let mut ivl2 = ivl1;
     // (the SetMinMax statuses are not checked upstream)
-    ignored(ivl1.set_min_max(ivl1.min(), edge_split_parameter_uv))?;
+    ignored(crate::error::passed_on(
+        ivl1.set_min_max(ivl1.min(), edge_split_parameter_uv),
+        k.fixes.brep_edit_statuses_pass_on,
+    )?)?;
     let ivl1_3d = Extent1d::from_min_max(ivl1.min(), edge_split_parameter);
-    ignored(ivl2.set_min_max(edge_split_parameter_uv, ivl2.max()))?;
+    ignored(crate::error::passed_on(
+        ivl2.set_min_max(edge_split_parameter_uv, ivl2.max()),
+        k.fixes.brep_edit_statuses_pass_on,
+    )?)?;
     let ivl2_3d = Extent1d::from_min_max(edge_split_parameter, ivl2.max());
 
     // trim and bind UVTrimCurves to Edgeuses (the attached curve is edited in place)
@@ -2617,8 +2739,37 @@ pub fn brep_intersect_mut(
     crv_angle_tolerance_deg: f64,
     want_points: bool,
 ) -> Result<(Vec<Curve>, Option<Vec<Point3>>)> {
-    let this_faces = faces(b, None)?;
-    let other_faces = faces(other, None)?;
+    let (curves, points, status) = brep_intersect_mut_with_partial(
+        k,
+        b,
+        other,
+        approx_tol_3d,
+        crv_angle_tolerance_deg,
+        want_points,
+    );
+    status?;
+    Ok((curves, points))
+}
+
+/// [`brep_intersect_mut`] for a caller that reads the outputs whatever the call returned
+/// (`SmApiIntersectBreps`): the curves and points with the status. On a failed face pair
+/// they are those the earlier pairs accumulated (duplicates not removed yet), as
+/// upstream's `SER` leaves them in the caller's arrays.
+pub fn brep_intersect_mut_with_partial(
+    k: &Kernel,
+    b: &mut Brep,
+    other: &mut Brep,
+    approx_tol_3d: f64,
+    crv_angle_tolerance_deg: f64,
+    want_points: bool,
+) -> (Vec<Curve>, Option<Vec<Point3>>, Result<()>) {
+    let faces_of = |b: &Brep, other: &Brep| -> Result<(Vec<FaceId>, Vec<FaceId>)> {
+        Ok((faces(b, None)?, faces(other, None)?))
+    };
+    let (this_faces, other_faces) = match faces_of(&*b, &*other) {
+        Ok(f) => f,
+        Err(e) => return (Vec::new(), want_points.then(Vec::new), Err(e)),
+    };
     brep_intersect_faces(
         k,
         &this_faces,
@@ -2661,7 +2812,25 @@ pub fn brep_intersect_self(
     crv_angle_tolerance_deg: f64,
     want_points: bool,
 ) -> Result<(Vec<Curve>, Option<Vec<Point3>>)> {
-    let this_faces = faces(b, None)?;
+    let (curves, points, status) =
+        brep_intersect_self_with_partial(k, b, approx_tol_3d, crv_angle_tolerance_deg, want_points);
+    status?;
+    Ok((curves, points))
+}
+
+/// [`brep_intersect_self`] with the partial outputs of a failed call, as
+/// [`brep_intersect_mut_with_partial`].
+pub fn brep_intersect_self_with_partial(
+    k: &Kernel,
+    b: &mut Brep,
+    approx_tol_3d: f64,
+    crv_angle_tolerance_deg: f64,
+    want_points: bool,
+) -> (Vec<Curve>, Option<Vec<Point3>>, Result<()>) {
+    let this_faces = match faces(b, None) {
+        Ok(f) => f,
+        Err(e) => return (Vec::new(), want_points.then(Vec::new), Err(e)),
+    };
     brep_intersect_faces(
         k,
         &this_faces,
@@ -2690,14 +2859,15 @@ pub fn brep_intersect_self(
 }
 
 /// The face-pair loop of `SmBrep::BrepIntersect`, with `face_pair` the
-/// `SmFace::FaceIntersect` of one pair.
+/// `SmFace::FaceIntersect` of one pair: the curves, the points (when `want_points`) and
+/// the status. A failed pair (`SER`) leaves the outputs of the pairs before it.
 fn brep_intersect_faces(
     k: &Kernel,
     this_faces: &[FaceId],
     other_faces: &[FaceId],
     want_points: bool,
     mut face_pair: impl FnMut(FaceId, FaceId) -> Result<(Vec<Option<Curve>>, Vec<Point3>)>,
-) -> Result<(Vec<Curve>, Option<Vec<Point3>>)> {
+) -> (Vec<Curve>, Option<Vec<Point3>>, Result<()>) {
     // init output
     let mut curves_3d: Vec<Option<Curve>> = Vec::new();
     let mut points: Option<Vec<Point3>> = want_points.then(Vec::new);
@@ -2708,7 +2878,10 @@ fn brep_intersect_faces(
         // for every otherBrep Face
         for &other_face in other_faces {
             // intersect the faces
-            let (mut curves, mut pts) = face_pair(this_face, other_face)?;
+            let (mut curves, mut pts) = match face_pair(this_face, other_face) {
+                Ok(out) => out,
+                Err(e) => return (curves_3d.into_iter().flatten().collect(), points, Err(e)),
+            };
 
             // accumulate the outputs
             curves_3d.append(&mut curves);
@@ -2718,8 +2891,8 @@ fn brep_intersect_faces(
         }
     }
 
-    crate::curve::curve::p5::remove_duplicate_curves(k, &mut curves_3d)?;
-    Ok((curves_3d.into_iter().flatten().collect(), points))
+    let status = crate::curve::curve::p5::remove_duplicate_curves(k, &mut curves_3d).map(|_| ());
+    (curves_3d.into_iter().flatten().collect(), points, status)
 }
 
 // ---- corner blends (SmBrep::CreateCornerBlend) ------------------------------------------
@@ -3097,10 +3270,18 @@ pub fn create_edge_edge_blend(
                 // sample unset; undefined coordinates here)
                 let t = ii as f64 / (num_loc - 1) as f64;
                 rail1_pos.push(
-                    ignored(rail1.evaluate_point(ivl1.evaluate(t)))?.unwrap_or(Point3::UNDEF),
+                    ignored(crate::error::passed_on(
+                        rail1.evaluate_point(ivl1.evaluate(t)),
+                        k.fixes.brep_edit_statuses_pass_on,
+                    )?)?
+                    .unwrap_or(Point3::UNDEF),
                 );
                 rail2_pos.push(
-                    ignored(rail2.evaluate_point(ivl2.evaluate(t)))?.unwrap_or(Point3::UNDEF),
+                    ignored(crate::error::passed_on(
+                        rail2.evaluate_point(ivl2.evaluate(t)),
+                        k.fixes.brep_edit_statuses_pass_on,
+                    )?)?
+                    .unwrap_or(Point3::UNDEF),
                 );
             }
 
@@ -3169,7 +3350,11 @@ pub fn create_edge_edge_blend(
     // make sure two curve intervals run in the same direction and share a common parameterization
     if !same_dir_curves {
         // (status not checked upstream; the interval is left as is on failure)
-        ivl2 = ignored(rail2.reverse_parameterization(&ivl2))?.unwrap_or(ivl2);
+        ivl2 = ignored(crate::error::passed_on(
+            rail2.reverse_parameterization(&ivl2),
+            k.fixes.brep_edit_statuses_pass_on,
+        )?)?
+        .unwrap_or(ivl2);
         in_from_the_left = !in_from_the_left;
     }
 
@@ -3183,8 +3368,14 @@ pub fn create_edge_edge_blend(
             let nat = rail2.natural_interval();
             let mut new_ivl = nat;
             // (neither status is checked upstream)
-            ignored(new_ivl.set_min_max(nat.min() * scale + offset, nat.max() * scale + offset))?;
-            ignored(rail2.edit_parameterization(&new_ivl))?;
+            ignored(crate::error::passed_on(
+                new_ivl.set_min_max(nat.min() * scale + offset, nat.max() * scale + offset),
+                k.fixes.brep_edit_statuses_pass_on,
+            )?)?;
+            ignored(crate::error::passed_on(
+                rail2.edit_parameterization(&new_ivl),
+                k.fixes.brep_edit_statuses_pass_on,
+            )?)?;
             *ivl2 = ivl1;
         }
         Ok(())
@@ -3207,7 +3398,11 @@ pub fn create_edge_edge_blend(
     // make sure two curve intervals run in the same direction and share a common
     // parameterization (upstream repeats both steps here)
     if !same_dir_curves {
-        ivl2 = ignored(rail2.reverse_parameterization(&ivl2))?.unwrap_or(ivl2);
+        ivl2 = ignored(crate::error::passed_on(
+            rail2.reverse_parameterization(&ivl2),
+            k.fixes.brep_edit_statuses_pass_on,
+        )?)?
+        .unwrap_or(ivl2);
     }
     rescale(&mut rail2, &mut ivl2)?;
 
@@ -3268,7 +3463,7 @@ pub struct ParallelProjectionCurves {
 /// `CreateParallelProjectionCurves`: projects `curve` along `projection_vector` onto
 /// every face (or `subset_faces`) of the B-rep (`SmSurface::CreateParallelProjectionCurves`
 /// over the face's UV domain, then `SmFace::CreateCurvesByTrimming`), collecting the
-/// outputs asked for in `opts`.
+/// outputs asked for in `opts`. `curve` is one of the `SmBSplineCurve` classes.
 ///
 /// # Errors
 ///
@@ -3278,7 +3473,7 @@ pub struct ParallelProjectionCurves {
 pub fn create_parallel_projection_curves(
     k: &Kernel,
     b: &mut Brep,
-    curve: &BSplineCurve,
+    curve: &Curve,
     projection_vector: Vec3,
     opts: &ParallelProjectionOptions<'_>,
 ) -> Result<ParallelProjectionCurves> {
@@ -3476,17 +3671,20 @@ pub fn heal_brep(
 ) -> Result<()> {
     let mut heal_data = HealData::<HealLoopHandle>::default();
     // pass the call along (status ignored upstream)
-    ignored(heal_data.heal_brep(
-        k,
-        Some(b),
-        healer_op,
-        HealBrepTargets {
-            vertices: opt_vertices,
-            edges: opt_edges,
-            faces: opt_faces,
-        },
-        make_uv_trim_curves,
-    ))?;
+    ignored(crate::error::passed_on(
+        heal_data.heal_brep(
+            k,
+            Some(b),
+            healer_op,
+            HealBrepTargets {
+                vertices: opt_vertices,
+                edges: opt_edges,
+                faces: opt_faces,
+            },
+            make_uv_trim_curves,
+        ),
+        k.fixes.brep_edit_statuses_pass_on,
+    )?)?;
     Ok(())
 }
 

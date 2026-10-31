@@ -57,7 +57,7 @@
 //! | [`PolyBrep::region_poly_shells`]             | `SmPolyRegion::GetPolyShells` (`GetPolyBrep` is `self`) |
 //! | [`PolyBrep::delete_region`]                  | `SmPolyRegion::~SmPolyRegion`                     |
 //! | [`PolyBrep::tolerance`], [`PolyBrep::ok_back_ptrs`] | `SmPolyBrep::GetTolerance`, `GetOKBackPtrs` |
-//! | [`PolyBrep::destroy`]                        | `SmPolyBrep::~SmPolyBrep`                         |
+//! | [`PolyBrep::destroy`], [`PolyBrep::destroy_with_original`] | `SmPolyBrep::~SmPolyBrep`           |
 //! | [`PolyBrep::calculate_bounding_box`]         | `SmPolyBrep::CalculateBoundingBox`                |
 //! | [`PolyBrep::aux_data_list`]                  | `SmPolyBrep::GetAuxDataList`                      |
 //! | [`PolyBrep::first_poly_face`]                | `SmPolyBrep::GetFirstPolyFace`                    |
@@ -103,17 +103,21 @@
 //!   labels. Reaching the objects behind them is outside this unit:
 //!   `SmPolyEdge::IsDegenerate` needs `SmFace::GetSurface` (unit `topology.face_p2`) when
 //!   the back pointers are valid and a face is set; `SetOriginalFace` with attribute
-//!   propagation calls `SmFace::Notify` (unit `topology.face_p3`); the destructor of a
-//!   poly B-rep with valid back pointers clears `SmVertex::m_pPolyVertex`
-//!   (`GetPolyVertex` / `SetPolyVertex`, unit `topology.vertex`). The key-only APIs
+//!   propagation calls `SmFace::Notify` (unit `topology.face_p3`). The key-only APIs
 //!   return [`SolidError::Unported`]; `IsDegenerate` additionally offers the explicit
 //!   [`PolyBrep::edge_is_degenerate_with_owner`] adapter.
+//! - The destructor of a poly B-rep with valid back pointers clears each original
+//!   vertex's `m_pPolyVertex` that names its poly vertex: the caller gives the original
+//!   B-rep and the resolver of the vertex keys ([`PolyBrep::destroy_with_original`]);
+//!   [`PolyBrep::destroy`] without them is [`SolidError::InvalidInput`] when a back
+//!   pointer would have to be cleared (upstream follows the pointer).
 //! - `SmPolyBrep::CalculateBoundingBox` asked for a pseudo box without a point array
 //!   dereferences the null `pOptPolyPoints` (it builds `sPolyPoints` and then reads the
 //!   caller's pointer); Rust returns [`SolidError::InvalidInput`] (see
 //!   `plan/upstream-issues.md`).
 //! - `SmCPolyFace::RemovePolyFace` of a face that is not a member removes the first
-//!   member (`FindElement` leaves the index at 0); kept (see `plan/upstream-issues.md`).
+//!   member (`FindElement` leaves the index at 0); kept by default for parity (WR-81;
+//!   opt-in fix [`UpstreamFixes::cpoly_remove_poly_face_check_member`]).
 //! - A composite face cannot be a member of a composite face, nor the source of
 //!   [`PolyBrep::add_cpoly_face`] ([`SolidError::InvalidInput`]). Upstream only ever
 //!   adds shell faces (`SmLineSegClass.cpp`), but `AddPolyFace` would accept a composite
@@ -173,16 +177,18 @@ use crate::geom::point_set::PointSet3d;
 use crate::geom::pseudo_box::PseudoBox;
 use crate::geom::tol;
 use crate::geom::vector2d::Vec2;
-use crate::kernel::Kernel;
+use crate::kernel::{Kernel, UpstreamFixes};
 use crate::math::{Point3, Vec3, BIG_DOUBLE, EFF_ZERO, EFF_ZERO_PARAM, EFF_ZERO_SQ, UNDEF_DOUBLE};
 use crate::topology::topology::TopologyRecords;
-use crate::topology::{Brep, FaceId};
+use crate::topology::{vertex, Brep, FaceId, VertexId};
+
+pub mod copy;
 
 /// `SM_UNDEF_ULONG` on LP64 (`0xFFFFFFFFFFFFFFFE`... upstream's `ULONG_MAX - 1`).
 pub const UNDEF_ULONG: u64 = u64::MAX - 1;
 
-/// `SM_ERR_INVALID_INPUT`.
-const SM_ERR_INVALID_INPUT: i32 = 1007;
+// `SM_ERR_INVALID_INPUT`.
+use crate::error::SM_ERR_INVALID_INPUT;
 
 macro_rules! poly_id {
     ($(#[$doc:meta])* $name:ident) => {
@@ -743,6 +749,8 @@ fn transform_poly_normal(
 pub struct PolyBrep {
     /// `m_sZoneTol3d`.
     tolerance: f64,
+    /// Opt-in upstream defect fixes.
+    pub fixes: UpstreamFixes,
     /// `m_bOKBackPtrs`.
     ok_back_ptrs: bool,
     /// `m_bOwnsContext`.
@@ -764,6 +772,10 @@ pub struct PolyBrep {
     aux_slots: Vec<Option<PolyVertAuxData>>,
 }
 
+/// Resolves an original vertex's key to its id in the original B-rep (see
+/// [`PolyBrep::destroy_with_original`]).
+pub type VertexOfKey<'a> = &'a dyn Fn(ObjectKey) -> Option<VertexId>;
+
 impl PolyBrep {
     // ---- construction (mirrors of upstream constructors outside this unit) ---------
 
@@ -773,6 +785,7 @@ impl PolyBrep {
     pub fn new(k: &Kernel, zone_tol: f64) -> Self {
         Self {
             tolerance: tol::zone_tol3d(k, zone_tol),
+            fixes: k.fixes,
             ok_back_ptrs: false,
             owns_context: false,
             aobject: AObject::new(),
@@ -1928,7 +1941,10 @@ impl PolyBrep {
         if let Some(v) = x.vertex {
             // the status is ignored upstream
             if let Err(err) = self.vertex_remove_poly_edge(v, e) {
-                if matches!(err, SolidError::InvalidInput { .. }) {
+                if matches!(
+                    err,
+                    SolidError::InvalidInput { .. } | SolidError::PortInvariant { .. }
+                ) {
                     return Err(err);
                 }
             }
@@ -2544,8 +2560,12 @@ impl PolyBrep {
     }
 
     /// `SmCPolyFace::RemovePolyFace`: removes the first occurrence of `face` from the
-    /// members; a face that is not a member removes the first member (upstream's
-    /// found index stays 0), nothing when there are no members.
+    /// members.
+    ///
+    /// By default (upstream behaviour, WR-81), a face that is not a member removes
+    /// the first member (upstream's `FindElement` status is ignored and found index
+    /// stays 0). With [`Kernel::fixes.cpoly_remove_poly_face_check_member`](crate::kernel::UpstreamFixes::cpoly_remove_poly_face_check_member)
+    /// (or [`PolyBrep::fixes`]), removing a non-member does nothing.
     ///
     /// # Errors
     ///
@@ -2559,9 +2579,16 @@ impl PolyBrep {
         .composite
         .as_mut()
         .ok_or(dead("query::poly::PolyBrep::cpoly_remove_poly_face"))?;
-        let found = members.iter().position(|&m| m == face).unwrap_or(0);
-        if found < members.len() {
-            members.remove(found);
+        let pos = members.iter().position(|&m| m == face);
+        if self.fixes.cpoly_remove_poly_face_check_member {
+            if let Some(i) = pos {
+                members.remove(i);
+            }
+        } else {
+            let found = pos.unwrap_or(0);
+            if found < members.len() {
+                members.remove(found);
+            }
         }
         Ok(())
     }
@@ -3352,29 +3379,63 @@ impl PolyBrep {
         Ok(())
     }
 
-    /// `SmPolyBrep::~SmPolyBrep`: deletes the composite faces, then every edge, loop,
-    /// face, shell and region, then the vertices; with valid back pointers each
-    /// original vertex's poly vertex pointer would be cleared first.
+    /// `SmPolyBrep::~SmPolyBrep` without the original B-rep
+    /// ([`PolyBrep::destroy_with_original`] with `None`).
     ///
     /// # Errors
     ///
-    /// [`SolidError::Unported`] (`topology.vertex`, `SmVertex::GetPolyVertex`) when the
-    /// back pointers are valid and a vertex has an original vertex.
-    pub fn destroy(mut self) -> Result<()> {
-        if self.ok_back_ptrs {
-            for &v in &self.vertex_list {
-                if self.vertex(v)?.original_vertex.is_some() {
-                    // UNPORTED(topology.vertex): SmVertex::GetPolyVertex / SetPolyVertex
-                    return Err(SolidError::unported(
-                        "SmVertex::GetPolyVertex",
-                        "topology.vertex",
-                    ));
-                }
-            }
-        }
+    /// As [`PolyBrep::destroy_with_original`].
+    pub fn destroy(self) -> Result<()> {
+        self.destroy_with_original(None)
+    }
+
+    /// `SmPolyBrep::~SmPolyBrep`: deletes the composite faces, then every edge, loop,
+    /// face, shell and region, then the vertices. With valid back pointers, each poly
+    /// vertex with an original vertex whose poly vertex is this one clears it
+    /// (`SetPolyVertex(NULL)`) on `original`: the B-rep of the original vertices and the
+    /// resolver of their keys.
+    ///
+    /// # Errors
+    ///
+    /// [`SolidError::InvalidInput`] when a back pointer has to be followed without
+    /// `original`, or its resolver does not know the key (upstream's pointer is always
+    /// live); [`SolidError::NotFound`] for a resolved vertex not in `original`.
+    pub fn destroy_with_original(
+        mut self,
+        mut original: Option<(&mut Brep, VertexOfKey<'_>)>,
+    ) -> Result<()> {
+        const OP: &str = "query::poly::PolyBrep::destroy_with_original";
+
+        // delete m_pCPolyFaceListHead list members
         for c in self.cpoly_faces() {
             self.delete_face(c)?;
         }
+
+        // delete m_pVertexListHead list members
+        for v in self.poly_vertices() {
+            // if this PolyBrep is pointing to a current Brep - clear Brep back pointers if
+            // possible
+            let Some(key) = self.vertex(v)?.original_vertex else {
+                continue;
+            };
+            if !self.ok_back_ptrs {
+                continue;
+            }
+            let Some((b, vertex_of)) = original.as_mut() else {
+                return Err(SolidError::invalid_input(
+                    OP,
+                    "the original B-rep is needed to clear its poly vertex back pointers",
+                ));
+            };
+            let vertex_of: &dyn Fn(ObjectKey) -> Option<VertexId> = *vertex_of;
+            let vertex = vertex_of(key)
+                .ok_or_else(|| SolidError::invalid_input(OP, "unknown original vertex"))?;
+            if vertex::poly_vertex(b, vertex)? == Some(v) {
+                vertex::set_poly_vertex(b, vertex, None)?;
+            }
+        }
+
+        // clear remaining internal member values
         self.tolerance = UNDEF_DOUBLE;
         self.ok_back_ptrs = false;
         Ok(())
@@ -3410,6 +3471,67 @@ mod tests {
         }
         b.finish_poly_edge_loop(l).unwrap();
         (b, f, l, es)
+    }
+
+    #[test]
+    fn destroy_clears_original_back_pointers() {
+        let k = Kernel::default();
+        let build = |ok: bool| {
+            let (mut poly, ..) = square(&k);
+            let pv = poly.poly_vertices();
+            let mut b = Brep::new();
+            let ov: Vec<VertexId> = (0..3)
+                .map(|_| {
+                    b.add_vertex_record(crate::topology::Vertex::default())
+                        .unwrap()
+                })
+                .collect();
+            // ov[0] names pv[0]; ov[1] names another poly vertex; ov[2] names none.
+            vertex::set_poly_vertex(&mut b, ov[0], Some(pv[0])).unwrap();
+            vertex::set_poly_vertex(&mut b, ov[1], Some(pv[3])).unwrap();
+            for (j, &v) in pv.iter().take(3).enumerate() {
+                poly.vertex_set_original_vertex(v, Some(ObjectKey(j as u64 + 1)))
+                    .unwrap();
+            }
+            poly.set_ok_back_ptrs(ok);
+            (poly, b, ov, pv)
+        };
+        let resolve = |ov: Vec<VertexId>| {
+            move |key: ObjectKey| {
+                ov.get(usize::try_from(key.0).ok()?.checked_sub(1)?)
+                    .copied()
+            }
+        };
+
+        let (poly, mut b, ov, pv) = build(true);
+        let r = resolve(ov.clone());
+        let r: &dyn Fn(ObjectKey) -> Option<VertexId> = &r;
+        poly.destroy_with_original(Some((&mut b, r))).unwrap();
+        assert_eq!(vertex::poly_vertex(&b, ov[0]).unwrap(), None);
+        assert_eq!(vertex::poly_vertex(&b, ov[1]).unwrap(), Some(pv[3]));
+        assert_eq!(vertex::poly_vertex(&b, ov[2]).unwrap(), None);
+
+        // Without valid back pointers nothing is followed.
+        let (poly, b, ov, pv) = build(false);
+        poly.destroy().unwrap();
+        assert_eq!(vertex::poly_vertex(&b, ov[0]).unwrap(), Some(pv[0]));
+
+        // A back pointer to follow needs the original B-rep and a known key.
+        let (poly, ..) = build(true);
+        assert!(matches!(
+            poly.destroy(),
+            Err(SolidError::InvalidInput { .. })
+        ));
+        let (poly, mut b, ..) = build(true);
+        let none: &dyn Fn(ObjectKey) -> Option<VertexId> = &|_| None;
+        assert!(matches!(
+            poly.destroy_with_original(Some((&mut b, none))),
+            Err(SolidError::InvalidInput { .. })
+        ));
+
+        // No original vertices: nothing to clear.
+        let (poly, ..) = square(&k);
+        poly.destroy().unwrap();
     }
 
     #[test]
@@ -3866,5 +3988,51 @@ mod tests {
         let mut d = DisplayList::new(3);
         assert_eq!(d.set_display_list_id(7), 3);
         assert_eq!(d.display_list_id(), 7);
+    }
+
+    #[test]
+    fn wr81_remove_poly_face_non_member() {
+        let mut k = Kernel::default();
+        let (mut b, f1, _, _) = square(&k);
+        let shell = b.face_poly_shell(f1).unwrap().unwrap();
+        let f2 = b.add_face(&k, shell, 1.0e-5, None).unwrap();
+        let c = b.add_cpoly_face(f1).unwrap();
+        b.cpoly_add_poly_face(c, f2, false).unwrap();
+        assert_eq!(b.cpoly_faces_of_composite(c).unwrap(), vec![f1, f2]);
+
+        // Default behavior (WR-81 bug preserved): removing non-member removes element 0 (f1)
+        let non_member = PolyFaceId::from_index(999);
+        b.cpoly_remove_poly_face(c, non_member).unwrap();
+        assert_eq!(b.cpoly_faces_of_composite(c).unwrap(), vec![f2]);
+
+        // Opt-in fix enabled: removing non-member does not remove anything
+        k.fixes.cpoly_remove_poly_face_check_member = true;
+        let (mut b_fixed, f3, _, _) = square(&k);
+        let shell_fixed = b_fixed.face_poly_shell(f3).unwrap().unwrap();
+        let f4 = b_fixed.add_face(&k, shell_fixed, 1.0e-5, None).unwrap();
+        let c_fixed = b_fixed.add_cpoly_face(f3).unwrap();
+        b_fixed.cpoly_add_poly_face(c_fixed, f4, false).unwrap();
+        assert_eq!(
+            b_fixed.cpoly_faces_of_composite(c_fixed).unwrap(),
+            vec![f3, f4]
+        );
+
+        b_fixed.cpoly_remove_poly_face(c_fixed, non_member).unwrap();
+        assert_eq!(
+            b_fixed.cpoly_faces_of_composite(c_fixed).unwrap(),
+            vec![f3, f4]
+        );
+
+        // Valid member removal works
+        b_fixed.cpoly_remove_poly_face(c_fixed, f3).unwrap();
+        assert_eq!(b_fixed.cpoly_faces_of_composite(c_fixed).unwrap(), vec![f4]);
+
+        // Trigger 1: removing a removed member a second time does not remove the remaining member
+        b_fixed.cpoly_remove_poly_face(c_fixed, f3).unwrap();
+        assert_eq!(b_fixed.cpoly_faces_of_composite(c_fixed).unwrap(), vec![f4]);
+
+        // Trigger 2: deleting a face after removing it from composite does not remove remaining members
+        b_fixed.delete_face(f3).unwrap();
+        assert_eq!(b_fixed.cpoly_faces_of_composite(c_fixed).unwrap(), vec![f4]);
     }
 }

@@ -22,9 +22,12 @@
 //! ignored failure leaves `UNSURE`, which counts as inner. Upstream's face-use
 //! distribution loop reuses its index in the inner re-mark loop, so after each move the
 //! scan resumes past the count of distributed face uses; the port keeps that. A deleted
-//! region (`delete pRegion`, after `SM_NO_DESTRUCTION`) is reset in its arena like a
-//! deleted shell, with the void flag `UNSURE`; the infinite region moves to the head
-//! of the region list.
+//! region (`delete pRegion`, after `SM_NO_DESTRUCTION`) leaves its arena like a deleted
+//! shell; the infinite region moves to the head of the region list.
+//! Opt-in (WR-584, fork tangency-labs/smlib@69c5198):
+//! [`UpstreamFixes::boolean_new_face_closure_both_sides`](crate::kernel::UpstreamFixes::boolean_new_face_closure_both_sides)
+//! makes the closure test search from the face use and its mate at once
+//! ([`tr::closure_traversal_from_both_sides`]): the same answer without marks.
 //! `MakeFaceTopology`: the caller's [`Marks`] hold the objects' mark values (the
 //! `SmNewMarkAndLock` block claims and releases a new mark, also on error). New objects
 //! get their `SmTopology` record in the [`NotifyEnv`] under its identity, which also
@@ -444,8 +447,7 @@ fn set_surface_owner(
 }
 
 // `delete pShell` of an emptied shell: `~SmShell` notifies `SM_NO_DESTRUCTION`
-// and resets the type. An arena record cannot be freed, so it is reset to
-// `SmShell()` (already off its region's list, so unreachable).
+// (already off its region's list), then its record leaves the arena.
 fn delete_shell(
     k: &mut Kernel,
     brep: &mut Brep,
@@ -465,7 +467,7 @@ fn delete_shell(
             None,
         ))
     })?;
-    *brep.shell_mut(shell)? = Shell::default();
+    brep.remove_shell_record(shell)?;
     Ok(())
 }
 
@@ -473,7 +475,9 @@ fn delete_shell(
 // not on the region's list, `InvalidInput` in the shell port) is the native status.
 fn region_remove(brep: &mut Brep, region: RegionId, shell: ShellId) -> Result<()> {
     shell::region_remove_shell(brep, region, shell).map_err(|error| match error {
-        SolidError::InvalidInput { .. } => SolidError::sm_err(OP),
+        SolidError::InvalidInput { .. } | SolidError::PortInvariant { .. } => {
+            SolidError::sm_err(OP)
+        }
         other => other,
     })
 }
@@ -899,7 +903,8 @@ fn build_face(
             let shell_region = deref(eu::shell_region(brep, shell_vu)?)?;
             match shell::region_remove_shell(brep, shell_region, shell_vu) {
                 // `SmOwningTopology::Remove`'s SM_ERR (not on the list) is ignored
-                Ok(()) | Err(SolidError::InvalidInput { .. }) => {}
+                Ok(())
+                | Err(SolidError::InvalidInput { .. } | SolidError::PortInvariant { .. }) => {}
                 Err(error) => return Err(error),
             }
             delete_shell(k, brep, env, shell_vu)?;
@@ -1306,7 +1311,10 @@ fn assign_uv_curves(
             // set pUVCurve->ParameterRange = assoc Edgeuse->Edge->ParamRange
             let edge = deref(brep.edgeuse(e)?.edge)?;
             let interval = crate::topology::edge::interval(brep, edge)?;
-            ignore_status(curve.edit_parameterization(&interval))?;
+            ignore_status(crate::error::passed_on(
+                curve.edit_parameterization(&interval),
+                k.fixes.brep_edit_statuses_pass_on,
+            )?)?;
 
             ignore_status(
                 crate::topology::edgeuse::p2::check_and_set_uv_trim_curve(
@@ -1468,7 +1476,15 @@ fn split_closed(
     lock: &MarkLock,
     attempt: &mut RegionSplitAttempt,
 ) -> Result<()> {
-    if !tr::closure_traversal(k, brep, marks, start, lock, None)? {
+    // WR-584 (opt-in, fork tangency-labs/smlib@69c5198): search from both sides at
+    // once. Same answer; no walk across the whole shell, no marks (nothing below
+    // reads the walk's marks: the replacement claims a new mark before it moves).
+    let closed = if k.fixes.boolean_new_face_closure_both_sides {
+        tr::closure_traversal_from_both_sides(brep, start)?
+    } else {
+        tr::closure_traversal(k, brep, marks, start, lock, None)?
+    };
+    if !closed {
         return Ok(());
     }
     let new_shell = brep.add_shell_record(Shell {
@@ -1673,6 +1689,7 @@ fn native<T>(r: Result<T>) -> Result<Option<T>> {
         Err(
             e @ (SolidError::Unported { .. }
             | SolidError::InvalidInput { .. }
+            | SolidError::PortInvariant { .. }
             | SolidError::NotFound { .. }),
         ) => Err(e),
         Err(_) => Ok(None),
@@ -1989,7 +2006,10 @@ fn nest_shells(
 /// `nest_shells` fires), tells whether it lies inside. A candidate inside exactly one
 /// other, itself inside none, has its outside shell moved into that solid's region,
 /// its own region marked void and its faces swapped to point into the cavity.
-/// Deeper nesting is left as built.
+/// Deeper nesting is left as built. With `Kernel::fixes.revolve_holed_profile_void`
+/// (WR-529), a B-rep whose infinite region holds one shell, more than two regions and
+/// only closed face-use shells gets its void flags from the nesting instead
+/// ([`super::p1::set_region_is_void_flags_for_nested_solids`]).
 pub(crate) fn nest_closed_shells_as_cavities(
     k: &mut Kernel,
     brep: &mut Brep,
@@ -1998,6 +2018,26 @@ pub(crate) fn nest_closed_shells_as_cavities(
     let Some(infinite) = brep.infinite_region() else {
         return Ok(());
     };
+    // Not upstream (WR-529, opt-in `revolve_holed_profile_void`; the fork's
+    // tangency-labs/smlib@38b4212): the stitch may have nested the shells itself (a hole in
+    // the profile: the ring it turns into lies inside the ring around it, in that ring's
+    // region) and left the region inside the inner shell material. Where every shell is
+    // closed the regions alternate material and void from the infinite region in.
+    if k.fixes.revolve_holed_profile_void && brep.region(infinite)?.shells.len() < 2 {
+        let regions = super::p1::regions(brep, None)?;
+        if regions.len() <= 2 {
+            return Ok(());
+        }
+        for &region in &regions {
+            for &s in &brep.region(region)?.shells {
+                let shell = brep.shell(s)?;
+                if !shell.is_faceuse_shell() || !shell.is_closed(brep, s)? {
+                    return Ok(());
+                }
+            }
+        }
+        return super::p1::set_region_is_void_flags_for_nested_solids(k, brep);
+    }
     // (solid region, its shell, the mated shell in the infinite region)
     let mut solids: Vec<(RegionId, ShellId, ShellId)> = Vec::new();
     for region in super::p1::regions(brep, None)? {
@@ -2217,8 +2257,7 @@ fn brep_remove_region(brep: &mut Brep, region: RegionId) -> Result<()> {
 }
 
 // `delete pRegion` of an emptied region: `~SmRegion` notifies `SM_NO_DESTRUCTION`
-// and sets the void flag to `UNSURE`. An arena record cannot be freed, so it is
-// reset (already off the B-rep's list, so unreachable).
+// (already off the B-rep's list), then its record leaves the arena.
 fn delete_region(
     k: &mut Kernel,
     brep: &mut Brep,
@@ -2238,11 +2277,7 @@ fn delete_region(
             None,
         ))
     })?;
-    *brep.region_mut(region)? = Region {
-        in_brep: false,
-        shells: Vec::new(),
-        is_void: crate::topology::brep_data::UNSURE,
-    };
+    brep.remove_region_record(region)?;
     Ok(())
 }
 
@@ -2254,6 +2289,7 @@ fn ignore_status(r: Result<()>) -> Result<()> {
         Err(
             e @ (SolidError::Unported { .. }
             | SolidError::InvalidInput { .. }
+            | SolidError::PortInvariant { .. }
             | SolidError::NotFound { .. }),
         ) => Err(e),
         _ => Ok(()),
@@ -2485,7 +2521,8 @@ mod tests {
         .unwrap();
         let shell = made.shell.unwrap();
         assert_eq!(b.region(region).unwrap().shells, vec![shell]);
-        assert_eq!(b.shell(old_shell).unwrap(), &Shell::default());
+        // `delete pShell`: the emptied vertex shell's record left its arena
+        assert!(b.shell(old_shell).is_err());
         let uses = &b.vertex(v).unwrap().vertexuses;
         assert_eq!(uses.len(), 2);
         let face = b.face(made.face).unwrap();

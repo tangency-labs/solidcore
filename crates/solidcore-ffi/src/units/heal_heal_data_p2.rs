@@ -7,13 +7,18 @@
 //! A B-rep block is one of [`super::topology_vertexuse`]'s (kinds `0..=3`),
 //! `4 dx dy dz validate_only init_gaps` (`SmPrimitiveCreation::CreateBox`) or
 //! `5 radius swap_uv validate_only init_gaps` (a face on the full
-//! `SmSphere::CreateCanonical` domain); `init_gaps` computes the cached gaps first. The shim replaces analytic face surfaces and edge curves other than
-//! `SmPlane` / `SmLine` by plain B-spline copies before anything runs.
+//! `SmSphere::CreateCanonical` domain), `6 radius swap_uv surface validate_only
+//! init_gaps` (an `SmBrepConstructor` face with one vertex loop on a sphere, plane or
+//! torus: `surface` 0, 1, 2) or `7 r0 r1 height a0 a1 seam quintic validate_only
+//! init_gaps` (`prog_test` `my_test_move_seam_refreshes_face_props`: an
+//! `SmBSplineSurface::CreateConePatch` face over `a0..a1` degrees whose surface is
+//! replaced by the full patch with its seam turned by `seam` degrees);
+//! `init_gaps` computes the cached gaps first. The B-rep keeps its native geometry (the
+//! difftest runner builds the same B-rep with the Rust kernel).
 //!
 //! | [`Op`]   | input | output |
 //! |----------|-------|--------|
 //! | `Export` | block | `0` and the graph of [`super::topology_vertexuse`]'s export (walked with the vertex lists), or `-1 status` |
-//! | `VertexLists` | block | `0`, per vertex its vertex use list (`len vu*`), then the cached gap records of every edge use (`init gap eu0 eu1 t0 t1`, `init gap eu t u v`) and vertex use (`init gap vu t`, `init gap vu u v`); or `-1 status` |
 //! | `Prob`   | `kind n nops (code a b c)*` | per op `code result` (`-2`: upstream would read past the end or a null member, and nothing follows), then `-100`, the array (`size elem* orig get_op labels`), `coin_pair_cnt orig`, and per object its 19 flags, 2 mixed and 3 tried members |
 //! | `Heal`   | block `targets vx vy vz nsteps step*` | `0`, per step `code` and its outputs, then `-100` and the healer's state (layout in the difftest runner); or `-1 status` |
 //!
@@ -57,7 +62,6 @@ pub enum Op {
     Export = 0,
     Prob = 1,
     Heal = 2,
-    VertexLists = 3,
 }
 
 mod sys {
@@ -139,8 +143,15 @@ fn raw(op: Op, path: &str, input: &[f64]) -> Result<Vec<f64>, FfiError> {
     })
 }
 
-/// Checks a B-rep block (all of `block`).
-pub(crate) fn check_block(path: &str, block: &[f64]) -> Result<(), FfiError> {
+/// Checks a B-rep block (all of `block`) without building it: the box and sphere
+/// ranges, and for the other kinds [`super::topology_vertexuse`]'s block layout and
+/// HANG-29 bound. Pure Rust, so the difftest runner's Rust side applies the same guard
+/// without running the shim.
+///
+/// # Errors
+///
+/// [`FfiError::InvalidArgument`] for a malformed block.
+pub fn check_source(path: &str, block: &[f64]) -> Result<(), FfiError> {
     let kind = block.first().copied().ok_or_else(|| bad("empty block"))?;
     let mut rd = Reader {
         input: block,
@@ -163,15 +174,56 @@ pub(crate) fn check_block(path: &str, block: &[f64]) -> Result<(), FfiError> {
             return Err(bad("sphere radius out of range"));
         }
         rd.flag()?;
+        if kind == 6.0 {
+            rd.index(2)?;
+        }
         rd.flag()?;
         rd.flag()?;
         return rd.done();
     }
-    // kinds 0..=3: the topology.vertexuse validator (it builds the export once)
+    if kind == 7.0 {
+        let (r0, r1, height) = (rd.num()?, rd.num()?, rd.num()?);
+        if !(1e-3..=1e3).contains(&r0) || !(0.0..=1e3).contains(&r1) {
+            return Err(bad("cone patch radius out of range"));
+        }
+        if !(1e-3..=1e3).contains(&height) {
+            return Err(bad("cone patch height out of range"));
+        }
+        let (a0, a1, seam) = (rd.num()?, rd.num()?, rd.num()?);
+        let angles_ok = (-360.0..=360.0).contains(&a0)
+            && a1 > a0
+            && a1 - a0 <= 360.0
+            && (-360.0..=360.0).contains(&seam);
+        if !angles_ok {
+            return Err(bad("cone patch angles out of range"));
+        }
+        rd.flag()?;
+        rd.flag()?;
+        rd.flag()?;
+        return rd.done();
+    }
+    // the topology.vertexuse block checks of its `eval`
+    let at = vu::brep_block_at(block, path)?;
+    let head = block.get(..at).ok_or_else(|| bad("input too short"))?;
+    super::topology_edgeuse_p2::check_block_magnitudes(head)?;
+    if at != block.len() {
+        return Err(bad("trailing input after the B-rep block"));
+    }
+    Ok(())
+}
+
+/// Checks a B-rep block (all of `block`): [`check_source`], then for kinds `0..=3`
+/// and `9` the topology.vertexuse validator (it builds the export once).
+pub(crate) fn check_block(path: &str, block: &[f64]) -> Result<(), FfiError> {
+    check_source(path, block)?;
+    let kind = block.first().copied().ok_or_else(|| bad("empty block"))?;
+    if kind == 4.0 || kind == 5.0 || kind == 6.0 || kind == 7.0 {
+        return Ok(());
+    }
     vu::eval(vu::Op::Export, path, block).map(|_| ())
 }
 
-/// The graph export of `block` (validated), with the analytic geometry replaced.
+/// The graph export of `block` (validated).
 ///
 /// # Errors
 ///
@@ -180,17 +232,6 @@ pub(crate) fn check_block(path: &str, block: &[f64]) -> Result<(), FfiError> {
 pub fn export(path: &str, block: &[f64]) -> Result<Vec<f64>, FfiError> {
     check_block(path, block)?;
     raw(Op::Export, path, block)
-}
-
-/// Each vertex's vertex use list of `block`'s B-rep, as `len vu*` per vertex in the
-/// export's order.
-///
-/// # Errors
-///
-/// As [`export`].
-pub fn vertex_lists(path: &str, block: &[f64]) -> Result<Vec<f64>, FfiError> {
-    check_block(path, block)?;
-    raw(Op::VertexLists, path, block)
 }
 
 /// Checks a problem array script: `kind n nops (code a b c)*`. Codes: `0` `Setup(a,

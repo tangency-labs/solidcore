@@ -7,7 +7,8 @@
 //! way on both sides: the `SM_API` curve constructors (`SmApiCreateCurve`,
 //! `SmApiCreateArc`, `SmApiCreateCircle`, `SmApiCreateLineSegment`, ported in
 //! `primitive.api_curves`), or a 3D `SmHermiteCurve` (a curve without `Copy`). Faces
-//! and edges come from `SmApiCreatePlanarCircle` B-reps on both sides. Both sides
+//! and edges come from `SmApiCreatePlanarCircle` B-reps on both sides (fixture op
+//! `from_box_face`: one face of an `SmApiCreateBox` B-rep, plus the result's volume). Both sides
 //! produce the flat record documented in the FFI module, split into keys: `status`
 //! (`0` = `SM_SUCCESS`, else the `SmStatus`: `1001` `SM_ERR`, `1007`
 //! `SM_ERR_INVALID_INPUT`; `-1` on the Rust side for an error upstream cannot produce),
@@ -33,6 +34,8 @@ use serde_json::Value;
 
 use solidcore::curve::curve::Curve as SmCurve;
 use solidcore::curve::hermite_curve::HermiteCurve;
+use solidcore::error::EntityRef;
+use solidcore::geom::attribute::{Attribute, Behavior};
 use solidcore::geom::vector3d::{Point3, Vec3};
 use solidcore::kernel::Kernel;
 use solidcore::primitive::api_curves;
@@ -146,9 +149,22 @@ enum Inputs {
     FromFaces {
         circles: Vec<(P3, f64)>,
         sweep: SweepIn,
+        /// Tag every disc face and edge first (this behaviour) and compare the
+        /// attribute sets of the result and of the discs.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        attributed: Option<u8>,
     },
     FromEdges {
         circles: Vec<(P3, f64)>,
+        sweep: SweepIn,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        attributed: Option<u8>,
+    },
+    /// Fixtures only: face `face` of `SmApiCreateBox(origin, size)`, then the volume.
+    FromBoxFace {
+        origin: P3,
+        size: P3,
+        face: u64,
         sweep: SweepIn,
     },
     Taper {
@@ -288,12 +304,33 @@ fn call_of(i: &Inputs) -> Call {
             profile: specs(profile),
             args: sweep_args(sweep),
         },
-        Inputs::FromFaces { circles, sweep } => Call::FromFaces {
+        Inputs::FromFaces {
+            circles,
+            sweep,
+            attributed,
+        } => Call::FromFaces {
             circles: circles.clone(),
             args: sweep_args(sweep),
+            attributed: *attributed,
         },
-        Inputs::FromEdges { circles, sweep } => Call::FromEdges {
+        Inputs::FromEdges {
+            circles,
+            sweep,
+            attributed,
+        } => Call::FromEdges {
             circles: circles.clone(),
+            args: sweep_args(sweep),
+            attributed: *attributed,
+        },
+        Inputs::FromBoxFace {
+            origin,
+            size,
+            face,
+            sweep,
+        } => Call::FromBoxFace {
+            origin: *origin,
+            size: *size,
+            face: *face,
             args: sweep_args(sweep),
         },
         Inputs::Taper {
@@ -375,10 +412,25 @@ fn to_output(i: &Inputs, flat: &[f64]) -> Result<Output, HarnessError> {
         }
         if matches!(
             i,
-            Inputs::CurveSweep { .. } | Inputs::FromFaces { .. } | Inputs::FromEdges { .. }
+            Inputs::CurveSweep { .. }
+                | Inputs::FromFaces { .. }
+                | Inputs::FromEdges { .. }
+                | Inputs::FromBoxFace { .. }
         ) {
             out = out.values("faces", take(flat, &mut at, 3)?.to_vec());
         }
+        if matches!(i, Inputs::FromBoxFace { .. }) && has.first().copied() == Some(1.0) {
+            let [volume_status, volume] = take(flat, &mut at, 2)? else {
+                return Err(harness("missing volume record"));
+            };
+            out = out
+                .int("volume_status", *volume_status as i64)
+                .scalar("volume", *volume);
+        }
+    }
+    if attributed(i).is_some() {
+        out = out.values("attributes", flat.get(at..).unwrap_or_default().to_vec());
+        at = flat.len();
     }
     if observes(i) && out.values.get("has").and_then(|v| v.first()) == Some(&1.0) {
         let counts = out
@@ -494,13 +546,14 @@ fn options_of(o: Option<[bool; 5]>) -> Option<SweepOptions> {
         move_profile_center_to_path: c,
         orient_profile_perpendicular_to_path: d,
         move_to_profile: e,
+        profile_at_path_start: false,
     })
 }
 
 /// The `SmStatus` of a Rust error; `-1` for one upstream cannot return.
 fn status(e: &SolidError) -> f64 {
     match e {
-        SolidError::InvalidInput { .. } => 1007.0,
+        SolidError::InvalidInput { .. } | SolidError::PortInvariant { .. } => 1007.0,
         SolidError::Upstream { code, .. } => f64::from(*code),
         _ => -1.0,
     }
@@ -548,6 +601,16 @@ fn success(s: &Swept) -> Output {
 }
 
 fn rust(i: &Inputs) -> Result<Output, HarnessError> {
+    // an input the FFI refuses is a harness error on both sides: the curve sweeps'
+    // path polygonization does not return upstream for a huge curved path (HANG-5 /
+    // HANG-43, nightly fuzz00293), so the Rust port does not run it either
+    if let Inputs::CurveSweep { sweep, .. }
+    | Inputs::FromFaces { sweep, .. }
+    | Inputs::FromEdges { sweep, .. }
+    | Inputs::FromBoxFace { sweep, .. } = i
+    {
+        ffi::check_path_extent(&spec(&sweep.path)).map_err(|e| harness(e.to_string()))?;
+    }
     let mut k = Kernel::default();
     let v = |p: &P3| Vec3::new(p[0], p[1], p[2]);
     // A successful call is compared by its status, presence and counts; a path that
@@ -622,7 +685,17 @@ fn rust(i: &Inputs) -> Result<Output, HarnessError> {
             )
             .map(Swept::CurveSweep)
         }
-        Inputs::FromFaces { circles, sweep } | Inputs::FromEdges { circles, sweep } => {
+        Inputs::FromFaces {
+            circles,
+            sweep,
+            attributed: Some(behavior),
+        }
+        | Inputs::FromEdges {
+            circles,
+            sweep,
+            attributed: Some(behavior),
+        } => return rust_attributed(&mut k, i, circles, sweep, *behavior),
+        Inputs::FromFaces { circles, sweep, .. } | Inputs::FromEdges { circles, sweep, .. } => {
             let path = curve(&k, &sweep.path)?;
             let sref = curve(&k, &sweep.scale_reference)?;
             let scl = curve(&k, &sweep.scale_curve)?;
@@ -659,6 +732,41 @@ fn rust(i: &Inputs) -> Result<Output, HarnessError> {
                     .map(Swept::CurveSweep)
                 }
             })()
+        }
+        Inputs::FromBoxFace {
+            origin,
+            size,
+            face,
+            sweep,
+        } => {
+            let path = curve(&k, &sweep.path)?;
+            let sref = curve(&k, &sweep.scale_reference)?;
+            let scl = curve(&k, &sweep.scale_curve)?;
+            let opts = options_of(sweep.options);
+            let bx = built(
+                solidcore::primitive::api_primitives::create_box(
+                    &mut k,
+                    pt(origin),
+                    size[0],
+                    size[1],
+                    size[2],
+                ),
+                "box",
+            )?;
+            let faces = built(solidcore::topology::brep::p1::faces(&bx, None), "box faces")?;
+            let f = usize::try_from(*face)
+                .ok()
+                .and_then(|i| faces.get(i).copied())
+                .ok_or_else(|| harness("box face index out of range"))?;
+            api::create_curve_sweep_from_faces(
+                &mut k,
+                &[(&bx, f)],
+                path.as_ref(),
+                sref.as_ref(),
+                scl.as_ref(),
+                opts.as_ref(),
+            )
+            .map(Swept::CurveSweep)
         }
         Inputs::Taper {
             curves: cs,
@@ -713,6 +821,12 @@ fn rust(i: &Inputs) -> Result<Output, HarnessError> {
     match res {
         Ok(mut s) => {
             let out = success(&s);
+            if let (Inputs::FromBoxFace { .. }, Swept::CurveSweep(c)) = (i, &mut s) {
+                return Ok(match box_volume(&k, &mut c.brep) {
+                    Ok((st, v)) => out.int("volume_status", st).scalar("volume", v),
+                    Err(e) => Output::unported(&e).unwrap_or_else(|| Output::err(e.to_string())),
+                });
+            }
             if !observes(i) {
                 return Ok(out);
             }
@@ -736,6 +850,141 @@ fn rust(i: &Inputs) -> Result<Output, HarnessError> {
             None => to_output(i, &[status(&e)]),
         },
     }
+}
+
+/// The behaviour of an attributed curve sweep's tags.
+fn attributed(i: &Inputs) -> Option<u8> {
+    match i {
+        Inputs::FromFaces { attributed, .. } | Inputs::FromEdges { attributed, .. } => *attributed,
+        _ => None,
+    }
+}
+
+/// The shim's `tag_disc`: every face and edge of disc `disc` gets its own long attribute.
+fn tag_disc(b: &mut Brep, disc: u64, behavior: Behavior) -> solidcore::Result<()> {
+    use solidcore::topology::brep::p1;
+    let faces = p1::faces(b, None)?;
+    let edges = p1::edges(b, None)?;
+    let tagged = faces
+        .into_iter()
+        .enumerate()
+        .map(|(i, f)| (EntityRef::Face(f), 0, i))
+        .chain(
+            edges
+                .into_iter()
+                .enumerate()
+                .map(|(i, e)| (EntityRef::Edge(e), 1, i)),
+        );
+    for (entity, kind, index) in tagged {
+        let id = ffi::ATTRIBUTE_BASE + 1000 * disc + 500 * kind + index as u64;
+        b.add_attribute(entity, Attribute::long(id, id as i64, behavior))?;
+    }
+    Ok(())
+}
+
+/// The shim's `put_attribute_rows`: the sorted face rows then edge rows of `b`.
+fn put_attribute_rows(o: &mut Vec<f64>, b: &Brep) -> solidcore::Result<()> {
+    use solidcore::topology::brep::p1;
+    let row = |e: EntityRef| -> Vec<f64> {
+        let mut entries: Vec<[f64; 4]> = b
+            .entity_attributes(e)
+            .into_iter()
+            .map(|(_, a)| {
+                [
+                    a.attribute_id() as f64,
+                    f64::from(a.behavior() as u8),
+                    a.long_value().map_or(0.0, |v| v as f64),
+                    a.users().len() as f64,
+                ]
+            })
+            .collect();
+        entries.sort_by(|x, y| total(x, y));
+        let mut r = vec![entries.len() as f64];
+        r.extend(entries.into_iter().flatten());
+        r
+    };
+    let faces: Vec<EntityRef> = p1::faces(b, None)?.into_iter().map(EntityRef::Face).collect();
+    let edges: Vec<EntityRef> = p1::edges(b, None)?.into_iter().map(EntityRef::Edge).collect();
+    for list in [faces, edges] {
+        let mut rows: Vec<Vec<f64>> = list.into_iter().map(row).collect();
+        rows.sort_by(|x, y| total(x, y));
+        o.push(rows.len() as f64);
+        o.extend(rows.into_iter().flatten());
+    }
+    Ok(())
+}
+
+/// Lexicographic `total_cmp` order (the shim's `std::sort` of value vectors).
+fn total(x: &[f64], y: &[f64]) -> core::cmp::Ordering {
+    x.iter()
+        .zip(y)
+        .map(|(p, q)| p.total_cmp(q))
+        .find(|o| o.is_ne())
+        .unwrap_or_else(|| x.len().cmp(&y.len()))
+}
+
+/// An attributed `FromFaces` / `FromEdges`: the discs tagged as the shim tags them, the
+/// sweep, then the result's and the discs' attribute rows.
+fn rust_attributed(
+    k: &mut Kernel,
+    i: &Inputs,
+    circles: &[(P3, f64)],
+    sweep: &SweepIn,
+    behavior: u8,
+) -> Result<Output, HarnessError> {
+    let behavior = Behavior::from_code(i32::from(behavior))
+        .map_err(|e| harness(format!("behavior: {e}")))?;
+    let path = curve(k, &sweep.path)?;
+    let sref = curve(k, &sweep.scale_reference)?;
+    let scl = curve(k, &sweep.scale_curve)?;
+    let opts = options_of(sweep.options);
+    let from_faces = matches!(i, Inputs::FromFaces { .. });
+    let mut discs = built(discs(k, circles), "discs")?;
+    for (d, b) in discs.iter_mut().enumerate() {
+        built(tag_disc(b, d as u64, behavior), "tag")?;
+    }
+    let result = (|| -> solidcore::Result<api::CurveSweep> {
+        let faces = disc_faces(&discs)?;
+        if from_faces {
+            api::create_curve_sweep_from_faces(
+                k,
+                &faces,
+                path.as_ref(),
+                sref.as_ref(),
+                scl.as_ref(),
+                opts.as_ref(),
+            )
+        } else {
+            let mut edges: Vec<(&Brep, EdgeId)> = Vec::new();
+            for (b, f) in &faces {
+                let fe = solidcore::topology::face::p4::edges(b, *f, None, false, None)?;
+                edges.extend(fe.into_iter().map(|e| (*b, e)));
+            }
+            api::create_curve_sweep_from_edges(
+                k,
+                &edges,
+                path.as_ref(),
+                sref.as_ref(),
+                scl.as_ref(),
+                opts.as_ref(),
+            )
+        }
+    })();
+    let mut rows = Vec::new();
+    let out = match &result {
+        Ok(c) => {
+            built(put_attribute_rows(&mut rows, &c.brep), "attributes")?;
+            success(&Swept::CurveSweep(c.clone()))
+        }
+        Err(e) => match Output::unported(e) {
+            Some(out) => return Ok(out),
+            None => Output::new().values("status", vec![status(e)]),
+        },
+    };
+    for b in &discs {
+        built(put_attribute_rows(&mut rows, b), "attributes")?;
+    }
+    Ok(out.values("attributes", rows))
 }
 
 fn observes(i: &Inputs) -> bool {
@@ -789,6 +1038,22 @@ fn decode_observation(
         return Err(harness("trailing observation values"));
     }
     Ok(out)
+}
+
+/// `SmApiBrepComputeVolume(body, 1e-6)`: its status and, on success, the volume.
+fn box_volume(k: &Kernel, body: &mut Brep) -> solidcore::Result<(i64, f64)> {
+    use solidcore::geom::attribute::{AttributeStore, ObjectKey};
+    use solidcore::mass::integrator::properties::{brep_volume, PropertyAttributes};
+    let store = AttributeStore::default();
+    let attrs = PropertyAttributes {
+        store: &store,
+        key_of: &|_| ObjectKey(0),
+    };
+    match brep_volume(k, body, 1e-6, &attrs) {
+        Ok(v) => Ok((0, v)),
+        Err(e) if e.is_unported() => Err(e),
+        Err(e) => Ok((status(&e) as i64, 0.0)),
+    }
 }
 
 fn rust_observation(k: &Kernel, body: &mut Brep) -> solidcore::Result<Vec<f64>> {
@@ -1143,9 +1408,17 @@ fn gen_case_at(rng: &mut Rng, s: f64) -> Inputs {
                 .collect();
             let sweep = gen_sweep_in(rng, s);
             if rng.chance(0.5) {
-                Inputs::FromFaces { circles, sweep }
+                Inputs::FromFaces {
+                    circles,
+                    sweep,
+                    attributed: None,
+                }
             } else {
-                Inputs::FromEdges { circles, sweep }
+                Inputs::FromEdges {
+                    circles,
+                    sweep,
+                    attributed: None,
+                }
             }
         }
         8 => Inputs::Taper {
@@ -1209,6 +1482,49 @@ impl UnitDiff for Runner {
 mod tests {
     use super::*;
     use std::collections::BTreeMap;
+
+    /// The nightly fuzz00293 input (run 41040730716, HANG-43): a disc swept along a
+    /// four-point path whose third point is at `z`.
+    fn from_faces(z: f64) -> Inputs {
+        serde_json::from_value(serde_json::json!({
+            "op": "from_faces",
+            "circles": [[[0.0, 0.0, 0.0], 2.388303630595588]],
+            "sweep": {
+                "options": null,
+                "path": {"kind": "curve", "points": [
+                    [0.0, 0.0, 0.0],
+                    [2.8458631679264377, 0.0, 5.636683100796663],
+                    [3.0752528636317265, 0.0, z],
+                    [0.4772692587692055, 0.0, 16.91004930238999]
+                ]},
+                "scale_curve": {"kind": "line", "start": [2.4410083596487024, 0.0, 0.0],
+                                "end": [4.882016719297405, 0.0, 12.205041798243512]},
+                "scale_reference": {"kind": "curve", "points": [
+                    [0.0, 0.0, 0.0], [0.0, 0.0, 4.140555904167603],
+                    [0.0, 0.0, 8.281111808335206], [0.0, 0.0, 12.42166771250281]
+                ]}
+            }
+        }))
+        .unwrap()
+    }
+
+    /// HANG-5 / HANG-43: the C++ path polygonization never returns for a path point of
+    /// `1e300`; both sides refuse it with the same message. The path at `1e7` (inside
+    /// the bound) still runs on both sides and agrees.
+    #[test]
+    fn huge_curve_sweep_path_is_refused_on_both_sides() {
+        let i = from_faces(1e300);
+        let c = cpp(&i).unwrap_err().to_string();
+        let r = rust(&i).unwrap_err().to_string();
+        assert!(c.contains("HANG-5"), "{c}");
+        assert_eq!(c, r);
+
+        let i = from_faces(1e7);
+        let (c, r) = (cpp(&i).unwrap(), rust(&i).unwrap());
+        assert!(r.deferred.is_none(), "{:?}", r.deferred);
+        let d = crate::compare(&c, &r, Runner.abs_floors());
+        assert!(d.mismatches.is_empty(), "{:?}", d.mismatches);
+    }
 
     /// Golden stream executed against the pre-observer runner at 11595407bedc.
     /// Includes each next RNG draw, not only serialized case identities.

@@ -25,8 +25,9 @@
 //!   itself then names stand-ins for the four curves (`operand_handles`) reporting
 //!   their natural intervals, so `IdenticalSolutions` merges within 1/10000th of
 //!   them and `sm_RefineCCSolutions` resolves each curve, as upstream.
-//! - **Caches.** The caches are built for the call with [`make_curve_cache`] (see
-//!   unit `curve.curve_p5`), or kept across calls in slots the caller lends
+//! - **Caches.** The caches are built for the call with
+//!   [`make_curve_cache`](crate::curve::curve::p5::make_curve_cache) (see unit
+//!   `curve.curve_p5`), or kept across calls in slots the caller lends
 //!   (`global_curve_intersect_cached`, as upstream keeps them on the curves; the
 //!   composite curve offsetter uses it for its offset pairs, and
 //!   `global_curve_intersect_unnamed_cached` serves callers that name no handles,
@@ -34,6 +35,8 @@
 //!   identity, [`core::ptr::eq`]) shares one cache and so one tree, which makes the
 //!   intersection a self intersection, as upstream's shared object cache. A cache that cannot be built is
 //!   `SM_ERR_NULL_POINTER` (upstream `NER`).
+//!   Callers holding topology may supply each curve owner's zone tolerance to the
+//!   lazy build without changing intersection tolerance or copying geometry.
 //! - **Leaf pair solve.** Upstream calls `LocalSolve` on the intersection test
 //!   solver directly, which appends to the solution array the solver still points
 //!   at; the port lends the array to the solver for that call.
@@ -53,13 +56,18 @@
 //!   solution combination evaluates the other curve inside its trimmed interval
 //!   (`sIvl2.Evaluate(0.38)`), as upstream. `bIsDegenerate` keeps its value from one
 //!   range solution to the next when the classification is skipped.
+//! - **Statuses passed on (WR-663).** With the opt-in
+//!   `Kernel::fixes.query_statuses_pass_on` the statuses SMLib drops are passed on, as the
+//!   fork (tangency-labs/smlib 8311f8e): `GlobalCurveIntersect`'s refinement, interval
+//!   trims, combine and cull evaluations and range classification, and the evaluations of
+//!   its consistency check (which the port otherwise leaves out: it only warns).
 
 use crate::curve::curve::p1::refine_cc_solutions;
 use crate::curve::curve::p2::{at, CciGlobalSolver, Curve};
-use crate::curve::curve::p4::{analytic_curve_intersect, point_or_undef, AnalyticOperand};
-use crate::curve::curve::p5::make_curve_cache;
+use crate::curve::curve::p4::{analytic_curve_intersect, point_or_pass_on, AnalyticOperand};
+use crate::curve::curve::p5::make_curve_cache_with_zone_tol;
 use crate::curve::curve_cache::CurveCache;
-use crate::error::{ignored, Result, SolidError};
+use crate::error::{ignore_or_pass_on, ignored_or_pass_on, Result, SolidError};
 use crate::geom::extent1d::Extent1d;
 use crate::geom::global_solver::{
     Branch, GlobalSolve, SolutionRequested, SolveRequest, SolverOperation, MAX_SOLVER_TREES,
@@ -67,7 +75,7 @@ use crate::geom::global_solver::{
 use crate::geom::solution_array::{
     OperandObject, Solution, SolutionArray, SolutionEnd, SolutionObject, SolutionType,
 };
-use crate::geom::tol::{are_same, scaled_zero2};
+use crate::geom::tol::{are_same, scaled_zero2, ScaledZero};
 use crate::geom::tree::Tree;
 use crate::kernel::Kernel;
 use crate::math::{max2, min2, min4, BIG_DOUBLE, EFF_ZERO, EFF_ZERO_SQRT, PI};
@@ -262,14 +270,18 @@ fn move_contacts_to_curve_ends<O: SolutionObject>(
     Ok(())
 }
 
-/// Runs `sm_RefineCCSolutions` on `sols` (status ignored).
+/// Runs `sm_RefineCCSolutions` on `sols` (status ignored; passed on with the opt-in
+/// [`crate::kernel::UpstreamFixes::query_statuses_pass_on`], as the fork,
+/// tangency-labs/smlib 8311f8e).
 fn refine<O: SolutionObject>(
     k: &Kernel,
     sols: &mut SolutionArray<O>,
     named: &Named<'_, O>,
 ) -> Result<()> {
-    ignored(refine_cc_solutions(k, sols, |o| named.curve_of(o)))?;
-    Ok(())
+    ignore_or_pass_on(
+        refine_cc_solutions(k, sols, |o| named.curve_of(o)),
+        k.fixes.query_statuses_pass_on,
+    )
 }
 
 /// The analytic curve of a cache (`GetAnalyticCurve`), copied out of the cache.
@@ -285,13 +297,24 @@ fn cache_tree<O: SolutionObject>(cache: &CurveCache<O>) -> Result<&Tree<O>> {
     cache.tree().ok_or(SolidError::null_pointer(OP_GCI))
 }
 
-/// `GetOrCreateObjectCache` for a curve (`NER` on failure).
+/// `GetOrCreateObjectCache` for a curve (`NER` on failure). `zone_tol_3d` is the zone
+/// tolerance the caller resolved for the curve's owner: an edge curve's cache
+/// tessellates at half that tolerance ([`make_curve_cache_with_zone_tol`]), as
+/// upstream's `SmTol::GetApproxTol3d(&m_crCurve)` reads it from the curve's edge
+/// (`SmCurveCache.cpp:1496`). `None` preserves the curve's recorded owner tolerance,
+/// falling back to the system tolerance when the curve has none.
 fn build_cache<O: SolutionObject>(
     k: &Kernel,
     curve: &Curve,
     handle: Option<O>,
+    zone_tol_3d: Option<f64>,
 ) -> Result<CurveCache<O>> {
-    match make_curve_cache::<O>(k, curve, handle) {
+    match make_curve_cache_with_zone_tol::<O>(
+        k,
+        curve,
+        handle,
+        zone_tol_3d.or_else(|| curve.owner_zone_tol_3d()),
+    ) {
         Ok(c) => Ok(c),
         Err(e) if e.is_unported() => Err(e),
         Err(_) => Err(SolidError::null_pointer(OP_GCI)),
@@ -375,6 +398,7 @@ impl Curve {
             opts,
             &mut None,
             &mut None,
+            [None, None],
         )
     }
 
@@ -403,8 +427,65 @@ impl Curve {
         cache1: &mut Option<CurveCache<O>>,
         cache2: &mut Option<CurveCache<O>>,
     ) -> Result<SolutionArray<O>> {
+        self.global_curve_intersect_cached_with_zone_tols(
+            k,
+            interval,
+            other,
+            other_interval,
+            dist_tol,
+            opts,
+            cache1,
+            cache2,
+            [None, None],
+        )
+    }
+
+    /// [`Curve::global_curve_intersect_cached`] with the zone tolerances the caller
+    /// resolved for the curves' owners. Upstream builds each curve's cache on the curve
+    /// object itself, so an edge curve tessellates at half the edge's tolerance
+    /// (`SmTol::GetApproxTol3d(&m_crCurve)`, `SmCurveCache.cpp:1496`); a caller whose
+    /// handle geometry is not that owned object supplies the tolerance here. A slot is
+    /// used exactly as in [`Curve::global_curve_intersect_cached`]: nothing is built
+    /// before the body reaches it, and a `None` tolerance builds as that method does.
+    /// A populated slot must also match its supplied owner tolerance. These hints
+    /// govern the two intersection-tree slots only; nested coincidence and drop
+    /// routines retain their existing curve-owner context.
+    ///
+    /// # Errors
+    ///
+    /// As [`Curve::global_curve_intersect`].
+    pub(crate) fn global_curve_intersect_cached_with_zone_tols<O: SolutionObject>(
+        &self,
+        k: &Kernel,
+        interval: &Extent1d,
+        other: &Self,
+        other_interval: &Extent1d,
+        dist_tol: f64,
+        opts: &CurveIntersectOptions<O>,
+        cache1: &mut Option<CurveCache<O>>,
+        cache2: &mut Option<CurveCache<O>>,
+        zone_tols: [Option<f64>; 2],
+    ) -> Result<SolutionArray<O>> {
         if opts.handles == [None, None] && opts.analytic_handles == [None, None] {
-            return self.global_curve_intersect(k, interval, other, other_interval, dist_tol, opts);
+            let own = operand_handles(self, other);
+            let inner = CurveIntersectOptions {
+                skip_global_coincidence_check: opts.skip_global_coincidence_check,
+                handles: [Some(own[0]), Some(own[1])],
+                analytic_handles: [Some(own[2]), Some(own[3])],
+            };
+            return Ok(self
+                .global_curve_intersect_cached_with_zone_tols(
+                    k,
+                    interval,
+                    other,
+                    other_interval,
+                    dist_tol,
+                    &inner,
+                    &mut None,
+                    &mut None,
+                    zone_tols,
+                )?
+                .without_objects());
         }
         self.global_curve_intersect_body(
             k,
@@ -415,6 +496,7 @@ impl Curve {
             opts,
             cache1,
             cache2,
+            zone_tols,
         )
     }
 
@@ -456,12 +538,16 @@ impl Curve {
                 &inner,
                 cache1,
                 cache2,
+                [None, None],
             )?
             .without_objects())
     }
 
     /// The body of [`Curve::global_curve_intersect`] for a caller giving handles, with
-    /// the cache slots of [`Curve::global_curve_intersect_cached`].
+    /// the cache slots of [`Curve::global_curve_intersect_cached`]. `zone_tols` are the
+    /// zone tolerances the caller resolved for the curves' owners, used only where a
+    /// slot's cache is built ([`build_cache`]); `None` preserves the corresponding
+    /// curve's recorded owner tolerance.
     fn global_curve_intersect_body<O: SolutionObject>(
         &self,
         k: &Kernel,
@@ -472,6 +558,7 @@ impl Curve {
         opts: &CurveIntersectOptions<O>,
         cache1_slot: &mut Option<CurveCache<O>>,
         cache2_slot: &mut Option<CurveCache<O>>,
+        zone_tols: [Option<f64>; 2],
     ) -> Result<SolutionArray<O>> {
         let [h_this, h_other] = opts.handles;
         let same_curve = core::ptr::eq(self, other);
@@ -518,12 +605,13 @@ impl Curve {
         }
 
         // get target curves' caches (kept in the caller's slots, see
-        // `global_curve_intersect_cached`)
+        // `global_curve_intersect_cached`), each at its owner's zone tolerance when the
+        // caller resolved one
         if cache1_slot.is_none() {
-            *cache1_slot = Some(build_cache(k, self, h_this)?);
+            *cache1_slot = Some(build_cache(k, self, h_this, zone_tols[0])?);
         }
         if !same_curve && cache2_slot.is_none() {
-            *cache2_slot = Some(build_cache(k, other, h_other)?);
+            *cache2_slot = Some(build_cache(k, other, h_other, zone_tols[1])?);
         }
         let cache1 = cache1_slot
             .as_mut()
@@ -784,7 +872,10 @@ impl Curve {
             // when solution starts at ivl1.min and stops short of ivl1.max
             if are_same(ivl1.min(), s0) && e0 < ivl1.max() {
                 // trim ivl1 to remove solution range (status ignored)
-                let _ = ivl1.set_min_max(e0, ivl1.max());
+                ignore_or_pass_on(
+                    ivl1.set_min_max(e0, ivl1.max()),
+                    k.fixes.query_statuses_pass_on,
+                )?;
 
                 // for zero length regions - curve is entirely coincident - no more work
                 if ivl1.length().abs() < EFF_ZERO {
@@ -796,7 +887,10 @@ impl Curve {
             // when solution ends at ivl1.max and starts after ivl1.min
             if are_same(ivl1.max(), e0) && ivl1.min() < s0 {
                 // trim ivl1 to remove solution range (status ignored)
-                let _ = ivl1.set_min_max(ivl1.min(), s0);
+                ignore_or_pass_on(
+                    ivl1.set_min_max(ivl1.min(), s0),
+                    k.fixes.query_statuses_pass_on,
+                )?;
 
                 // for zero length regions - curve is entirely coincident - no more work
                 if ivl1.length().abs() < EFF_ZERO {
@@ -812,7 +906,10 @@ impl Curve {
             // when solution starts at ivl2.min and stops short of ivl2.max
             if are_same(ivl2.min(), ivl_tmp.min()) && ivl_tmp.max() < ivl2.max() {
                 // trim ivl2 to remove solution range (status ignored)
-                let _ = ivl2.set_min_max(ivl_tmp.max(), ivl2.max());
+                ignore_or_pass_on(
+                    ivl2.set_min_max(ivl_tmp.max(), ivl2.max()),
+                    k.fixes.query_statuses_pass_on,
+                )?;
 
                 // for zero length regions - curve is entirely coincident - no more work
                 if ivl2.length().abs() < EFF_ZERO {
@@ -824,7 +921,10 @@ impl Curve {
             // when solution ends at ivl2.max and starts after ivl2.min
             if are_same(ivl2.max(), ivl_tmp.max()) && ivl2.min() < ivl_tmp.min() {
                 // trim (upstream: sIvl1) to remove solution range (status ignored)
-                let _ = ivl1.set_min_max(ivl2.min(), ivl_tmp.min());
+                ignore_or_pass_on(
+                    ivl1.set_min_max(ivl2.min(), ivl_tmp.min()),
+                    k.fixes.query_statuses_pass_on,
+                )?;
 
                 // for zero length regions - curve is entirely coincident - no more work
                 if ivl2.length().abs() < EFF_ZERO {
@@ -1025,6 +1125,15 @@ impl Curve {
         // coincident segment: keep the point, discard the segment).
         Self::cull_ranges_near_points(&mut sols, tree1, tree2, interval)?;
 
+        // For SMLib intersection consistency upstream evaluates each pair of
+        // consecutive point solutions (not across a seam) and only warns when they lie
+        // within tolerance; the port leaves that out. The fork passes on the statuses
+        // of those evaluations (tangency-labs/smlib 8311f8e), so with the opt-in fix
+        // they are made and a failure is returned.
+        if k.fixes.query_statuses_pass_on {
+            self.consistency_evaluations(k, &sols, other)?;
+        }
+
         // Check adjacent point solutions: a 'precise' solution with a not-so-good
         // solution very close may be an artifact of the local intersector; when the
         // gap steadily decreases from the bad solution to the tight one, delete the
@@ -1129,8 +1238,10 @@ impl Curve {
         // for point solutions only
         if curr.solution_type == SolutionType::SingleValue {
             // evaluate solution points (statuses ignored)
-            let pt1 = point_or_undef(k, self, cs0)?;
-            let pt2 = point_or_undef(k, self, le0)?;
+            // (statuses ignored; passed on with the opt-in fix, tangency-labs/smlib
+            // 8311f8e)
+            let pt1 = point_or_pass_on(k, self, cs0)?;
+            let pt2 = point_or_pass_on(k, self, le0)?;
             let dist2 = pt1.distance_squared(pt2);
 
             // combine solutions when points are close enough together
@@ -1440,6 +1551,50 @@ impl Curve {
         Ok(())
     }
 
+    /// The evaluations of the consistency check of [`Curve::global_curve_intersect`]
+    /// (consecutive single-value solutions not across a seam of either curve), whose
+    /// statuses the fork passes on (`SER`, tangency-labs/smlib 8311f8e); the check
+    /// itself only warns upstream.
+    fn consistency_evaluations<O: SolutionObject>(
+        &self,
+        k: &Kernel,
+        sols: &SolutionArray<O>,
+        other: &Self,
+    ) -> Result<()> {
+        let same_to_scaled_zero =
+            |a: f64, b: f64, scale: f64| crate::geom::tol::in_tol(a - b, scale.scaled_zero());
+        for i1 in 1..sols.len() {
+            let sol0 = sol_at(sols, i1 - 1)?;
+            let sol1 = sol_at(sols, i1)?;
+            // compare single value solutions
+            if sol0.solution_type != SolutionType::SingleValue
+                || sol1.solution_type != SolutionType::SingleValue
+            {
+                continue;
+            }
+            let this_ivl = self.natural_interval();
+            let other_ivl = other.natural_interval();
+
+            // but skip solutions across seams
+            if (same_to_scaled_zero(sol0.start.param(0)?, this_ivl.min(), this_ivl.length())
+                && same_to_scaled_zero(sol1.start.param(0)?, this_ivl.max(), this_ivl.length())
+                && !are_same(this_ivl.min(), this_ivl.max()))
+                || (same_to_scaled_zero(sol0.start.param(1)?, other_ivl.min(), other_ivl.length())
+                    && same_to_scaled_zero(
+                        sol1.start.param(1)?,
+                        other_ivl.max(),
+                        other_ivl.length(),
+                    )
+                    && !are_same(other_ivl.min(), other_ivl.max()))
+            {
+                continue;
+            }
+            self.evaluate_point(k, sol0.start.param(0)?)?;
+            self.evaluate_point(k, sol1.start.param(0)?)?;
+        }
+        Ok(())
+    }
+
     /// The spurious point check of [`Curve::global_curve_intersect`]: of two nearby
     /// point solutions with very different values, the worse is removed when the
     /// curves' gap at the midpoint is smaller than at the worse one.
@@ -1511,18 +1666,18 @@ impl Curve {
                 let curve_b = named
                     .curve_of(sol_a.objects[1])
                     .ok_or(SolidError::null_pointer(OP_GCI))?;
-                let pt_a = point_or_undef(k, curve_a, param_a1)?;
-                let pt_b = point_or_undef(k, curve_b, param_b1)?;
+                let pt_a = point_or_pass_on(k, curve_a, param_a1)?;
+                let pt_b = point_or_pass_on(k, curve_b, param_b1)?;
                 let dist1 = pt_a.distance(pt_b);
 
-                let pt_a = point_or_undef(k, curve_a, param_a2)?;
-                let pt_b = point_or_undef(k, curve_b, param_b2)?;
+                let pt_a = point_or_pass_on(k, curve_a, param_a2)?;
+                let pt_b = point_or_pass_on(k, curve_b, param_b2)?;
                 let dist2 = pt_a.distance(pt_b);
 
                 let t = (param_a1 + param_a2) / 2.0;
-                let pt_a = point_or_undef(k, curve_a, t)?;
+                let pt_a = point_or_pass_on(k, curve_a, t)?;
                 let t = (param_b1 + param_b2) / 2.0;
-                let pt_b = point_or_undef(k, curve_b, t)?;
+                let pt_b = point_or_pass_on(k, curve_b, t)?;
                 let dist_mid = pt_a.distance(pt_b);
 
                 if dist1 < dist2 && dist_mid < dist2 {
@@ -1627,9 +1782,12 @@ impl Curve {
             if !small_interval {
                 // if GapVector is diverging over length of solution range change
                 // solution to a tangent point intersection (status ignored)
-                let (deg, point) =
-                    ignored(self.classify_intersecting_range_solution(k, other, &curr))?
-                        .unwrap_or((false, None));
+                // (passed on with the opt-in fix, tangency-labs/smlib 8311f8e)
+                let (deg, point) = ignored_or_pass_on(
+                    self.classify_intersecting_range_solution(k, other, &curr),
+                    k.fixes.query_statuses_pass_on,
+                )?
+                .unwrap_or((false, None));
                 is_degenerate = deg;
                 if let Some(p) = point {
                     curr.start.solution_value = p.solution_value;

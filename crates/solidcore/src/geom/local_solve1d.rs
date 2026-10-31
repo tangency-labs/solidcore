@@ -60,8 +60,8 @@ use crate::geom::tol::{in_tol, scaled_zero};
 use crate::limits::try_filled;
 use crate::math::{BIG_DOUBLE, EFF_ZERO, EFF_ZERO_SQ, UNDEF_DOUBLE};
 
-/// Upstream status `SM_ERR`.
-const SM_ERR: i32 = 1001;
+// Upstream status `SM_ERR`.
+use crate::error::SM_ERR;
 
 /// Upstream `SM_UNDEF_ULONG`.
 pub const UNDEF_ULONG: u64 = 123456789;
@@ -339,8 +339,9 @@ pub struct LocalSolve1d {
     /// Why the last solve stopped.
     pub termination_reason: TerminationReason,
     /// Not upstream (WR-253, tangency-labs/solidcore#481): `SolveOscillating` takes a
-    /// sign change only from an interior guess that evaluated (`false`, the default:
-    /// upstream also reads a failed guess's leftover `F`).
+    /// sign change only from an interior guess that evaluated, and `SolveIt` without an
+    /// interval returns a failed first evaluation's status instead of iterating from it
+    /// (`false`, the default: upstream reads the failed evaluation's leftover `F` in both).
     failed_guess_no_sign_change: bool,
 }
 
@@ -432,7 +433,9 @@ impl LocalSolve1d {
     /// Not upstream (WR-253, tangency-labs/solidcore#481): whether `SolveOscillating`
     /// ignores an interior guess whose evaluation failed when it looks for a sign change
     /// (`true`), instead of reading the `F` the failed evaluation left behind (`false`,
-    /// upstream and the default).
+    /// upstream and the default). With `true`, `SolveIt` without an interval also returns
+    /// the evaluator's error when the first evaluation fails, where upstream iterates
+    /// from the failed guess (the fork's tangency-labs/smlib@d2757e1).
     pub fn set_failed_guess_no_sign_change(&mut self, on: bool) {
         self.failed_guess_no_sign_change = on;
     }
@@ -920,6 +923,11 @@ impl LocalSolve1d {
                 }
                 Self::eval_into(eval, &mut self.curr, &mut found_answer, true)
                     .map_err(|err| eval_failed(err, OP))?;
+            } else if self.failed_guess_no_sign_change {
+                // No other start point: the failed evaluation left `curr` with no
+                // function value to iterate from, so its status is returned. Upstream
+                // iterates from it (WR-253; the fork's tangency-labs/smlib@d2757e1).
+                return Err(e);
             }
         }
 
@@ -1199,6 +1207,56 @@ mod tests {
         }
     }
 
+    /// `Sq`, except that the evaluation at 1 fails after zeroing its outputs, as
+    /// `SmCurvePropertyEFO::Evaluate` does.
+    struct SqFailingAtOne;
+    impl EvalFunction for SqFailingAtOne {
+        fn evaluate(&mut self, t: f64, out: &mut FunctionValue, s: bool) -> Result<()> {
+            if t.to_bits() == 1f64.to_bits() {
+                *out = FunctionValue::default();
+                return Err(sm_err("test: no value here"));
+            }
+            Sq.evaluate(t, out, s)
+        }
+    }
+
+    /// WR-253 (the fork's tangency-labs/smlib@d2757e1): without an interval, upstream
+    /// iterates from a failed first evaluation. Its zeroed `F` reads as converged, so
+    /// upstream reports `t = 1` as a root of `t^2 - 2`; the port does the same.
+    #[test]
+    fn failed_first_evaluation_without_interval_is_a_root_as_upstream() {
+        let mut s = LocalSolve1d::new();
+        let r = s.solve_it(&mut SqFailingAtOne, 1.0, 1e-9).unwrap();
+        assert!(r.found);
+        assert_eq!(r.t, 1.0);
+    }
+
+    /// WR-253 (the fork's tangency-labs/smlib@d2757e1): with the opt-in, a failed first
+    /// evaluation without an interval returns the evaluator's status, as the interval
+    /// case does when its tweaked start fails too. A good start is unaffected.
+    #[test]
+    fn d2757e1_failed_first_evaluation_without_interval_fails_with_the_flag() {
+        let mut s = LocalSolve1d::new();
+        s.set_failed_guess_no_sign_change(true);
+        let e = s.solve_it(&mut SqFailingAtOne, 1.0, 1e-9).unwrap_err();
+        assert!(
+            matches!(
+                e,
+                SolidError::Upstream {
+                    code: SM_ERR,
+                    operation: "test: no value here",
+                    ..
+                }
+            ),
+            "{e:?}"
+        );
+
+        // A start whose evaluation succeeds solves as without the flag.
+        let r = s.solve_it(&mut SqFailingAtOne, 1.5, 1e-9).unwrap();
+        let plain = LocalSolve1d::new().solve_it(&mut Sq, 1.5, 1e-9).unwrap();
+        assert_eq!((r.found, r.t.to_bits()), (plain.found, plain.t.to_bits()));
+    }
+
     struct Unp;
     impl EvalFunction for Unp {
         fn evaluate(&mut self, _: f64, _: &mut FunctionValue, _: bool) -> Result<()> {
@@ -1272,6 +1330,102 @@ mod tests {
         assert!(!r.found, "{r:?}");
         assert_ne!(r.t.to_bits(), LAST_GUESS.to_bits());
         assert_ne!(s.lower_bracket_t.to_bits(), LAST_GUESS.to_bits());
+    }
+
+    /// A failed final sample must not replace the valid, same-sign samples with
+    /// a fabricated zero (WR-253 / #481).
+    #[test]
+    fn failed_guess_does_not_supply_a_sign_change() {
+        let interval = Extent1d::from_min_max(-3.0, 3.0);
+        let mut clean_solver = LocalSolve1d::with_interval(interval, false);
+        let clean = clean_solver.solve_it(&mut Cycle, 0.0, 1e-9).unwrap();
+        assert!(!clean.found);
+        let mut solver = LocalSolve1d::with_interval(interval, false);
+        solver.set_failed_guess_no_sign_change(true);
+        let result = solver
+            .solve_it(&mut CycleFailingAtLastGuess, 0.0, 1e-9)
+            .unwrap();
+        assert!(!result.found);
+        assert_eq!(result.t.to_bits(), clean.t.to_bits());
+        assert_eq!(solver.curr.f, clean_solver.curr.f);
+        assert_eq!(
+            solver.termination_reason(),
+            TerminationReason::UnableToConverge
+        );
+        assert_eq!(solver.have_lower_bracket, clean_solver.have_lower_bracket);
+        assert_eq!(solver.have_upper_bracket, clean_solver.have_upper_bracket);
+    }
+
+    #[test]
+    fn failed_interior_samples_cannot_create_a_bracket() {
+        struct FailedSamples(f64);
+        impl EvalFunction for FailedSamples {
+            fn evaluate(&mut self, t: f64, out: &mut FunctionValue, _: bool) -> Result<()> {
+                if [0.25, 0.75, 0.13, 0.38, 0.82, 0.87, 0.01, 0.99].contains(&t) {
+                    out.f = self.0;
+                    return Err(sm_err("test: failed interior sample"));
+                }
+                out.f = t * t + 1.0;
+                out.f_prime = 2.0 * t;
+                out.found_answer = false;
+                Ok(())
+            }
+        }
+        for failed_value in [0.0, -1.0] {
+            let mut solver = LocalSolve1d::new();
+            solver.set_failed_guess_no_sign_change(true);
+            solver.prev1 = IterationValue {
+                t: 0.0,
+                f: 1.0,
+                ..IterationValue::default()
+            };
+            solver.curr = IterationValue {
+                t: 1.0,
+                f: 2.0,
+                ..IterationValue::default()
+            };
+            let result = solver
+                .solve_oscillating(&mut FailedSamples(failed_value), 0.9)
+                .unwrap();
+            assert!(!result.found);
+            assert_eq!(solver.curr.f, result.t * result.t + 1.0);
+            assert!(!solver.have_lower_bracket);
+            assert!(!solver.have_upper_bracket);
+        }
+    }
+
+    #[test]
+    fn successful_sample_after_a_failure_can_still_bracket_a_root() {
+        struct FailedQuarter;
+        impl EvalFunction for FailedQuarter {
+            fn evaluate(&mut self, t: f64, out: &mut FunctionValue, _: bool) -> Result<()> {
+                if t == 0.25 {
+                    *out = FunctionValue::default();
+                    return Err(sm_err("test: failed quarter sample"));
+                }
+                out.f = (t - 0.75) * (t - 0.75) - 0.01;
+                out.f_prime = 2.0 * (t - 0.75);
+                out.found_answer = false;
+                Ok(())
+            }
+        }
+        let mut solver = LocalSolve1d::new();
+        solver.set_failed_guess_no_sign_change(true);
+        solver.prev1 = IterationValue {
+            t: 0.0,
+            f: 0.5525,
+            ..IterationValue::default()
+        };
+        solver.curr = IterationValue {
+            t: 1.0,
+            f: 0.0525,
+            ..IterationValue::default()
+        };
+        solver.set_desired_accuracy(1e-10);
+        let result = solver.solve_oscillating(&mut FailedQuarter, 0.9).unwrap();
+        assert!(result.found);
+        assert!((result.t - 0.85).abs() < 1e-8);
+        assert!(solver.curr.f.abs() < 1e-10);
     }
 
     #[test]

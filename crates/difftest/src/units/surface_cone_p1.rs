@@ -516,13 +516,19 @@ fn push_v(o: &mut Vec<f64>, v: Vec3) {
 fn status(e: &SolidError) -> f64 {
     match e {
         SolidError::Upstream { code, .. } => f64::from(*code),
-        SolidError::InvalidInput { .. } => SM_ERR_INVALID_INPUT,
+        SolidError::InvalidInput { .. } | SolidError::PortInvariant { .. } => SM_ERR_INVALID_INPUT,
         _ => -1.0,
     }
 }
 
 /// Builds the cone; `Ok(Err(e))` when the construction fails.
 fn rust_cone(k: &Kernel, c: &ConeIn) -> solidcore::Result<Cone> {
+    rust_cone_made(k, c, true)
+}
+
+/// [`rust_cone`]; without `make`, the constructor modes skip their `MakeNurb` (the cone
+/// as its constructor leaves it, as the shim's op 19).
+fn rust_cone_made(k: &Kernel, c: &ConeIn, make: bool) -> solidcore::Result<Cone> {
     let (o, x, y) = (v3(c.origin), v3(c.x), v3(c.y));
     let a2p = Axis2Placement::new(o, x, y);
     let mut cone = match c.mode {
@@ -548,7 +554,9 @@ fn rust_cone(k: &Kernel, c: &ConeIn) -> solidcore::Result<Cone> {
             inside,
         } => {
             let mut c = Cone::new_unbounded(k, o, x, y, base, semi, swap, inside)?;
-            c.make_nurb(k)?;
+            if make {
+                c.make_nurb(k)?;
+            }
             c
         }
         ModeIn::ConeBounded {
@@ -574,7 +582,9 @@ fn rust_cone(k: &Kernel, c: &ConeIn) -> solidcore::Result<Cone> {
                 inside,
                 make_nurb_gen,
             );
-            c.make_nurb(k)?;
+            if make {
+                c.make_nurb(k)?;
+            }
             c
         }
         ModeIn::CylBounded {
@@ -598,7 +608,9 @@ fn rust_cone(k: &Kernel, c: &ConeIn) -> solidcore::Result<Cone> {
                 inside,
                 make_nurb_gen,
             );
-            c.make_nurb(k)?;
+            if make {
+                c.make_nurb(k)?;
+            }
             c
         }
         ModeIn::CylUnbounded {
@@ -607,7 +619,9 @@ fn rust_cone(k: &Kernel, c: &ConeIn) -> solidcore::Result<Cone> {
             inside,
         } => {
             let mut c = Cone::new_cylinder_unbounded(k, o, x, y, radius, swap, inside)?;
-            c.make_nurb(k)?;
+            if make {
+                c.make_nurb(k)?;
+            }
             c
         }
     };
@@ -1119,6 +1133,26 @@ pub(super) fn common_cases(ctx: &CaseContext) -> Result<Vec<Case>, HarnessError>
             }
         }
     }
+    // the cone as its constructor leaves it (no NURB), then a const query that makes the
+    // NURB and keeps it, the copy constructor and Transform (shim op 19)
+    for swap in [false, true] {
+        for inside in [false, true] {
+            let modes = [
+                ("cone_unbounded", serde_json::json!({"kind":"cone_unbounded","base":2.0,"semi":20.0,"swap":swap,"inside":inside})),
+                ("cone_bounded", serde_json::json!({"kind":"cone_bounded","bot":2.0,"top":3.0,"start":0.0,"end":270.0,"height":3.0,"swap":swap,"inside":inside})),
+                ("cone_bounded_gen", serde_json::json!({"kind":"cone_bounded","bot":2.0,"top":1.0,"start":30.0,"end":200.0,"height":2.0,"swap":swap,"inside":inside,"make_nurb_gen":true})),
+                ("cyl_bounded", serde_json::json!({"kind":"cyl_bounded","radius":2.0,"start":0.0,"end":360.0,"height":3.0,"swap":swap,"inside":inside})),
+                ("cyl_unbounded", serde_json::json!({"kind":"cyl_unbounded","radius":1.5,"swap":swap,"inside":inside})),
+            ];
+            for (class, mode) in modes {
+                database_cases.push(Case {unit:"surface.surface_p2".into(),
+                    name:format!("common_const_make_{class}_{swap}_{inside}"),
+                    source:crate::case::CaseSource::Generated {seed:76},
+                    inputs:serde_json::json!({"common_const_make":true,"common_cone":{"op":"build",
+                        "cone":{"mode":mode,"origin":[0.5,-1.0,2.0],"x":[0.0,0.0,1.0],"y":[1.0,0.0,0.0]}}}), });
+            }
+        }
+    }
     let mut queries = Vec::new();
     for case in &database_cases {
         if !case.name.starts_with("common_lazy_") || !case.name.ends_with("_0.25") { continue; }
@@ -1154,6 +1188,201 @@ pub(super) fn common_cpp(value: Value, database: Option<&Value>, lazy: bool, sub
         output.values.insert("out".into(), Vec::new());
     }
     Ok(output)
+}
+
+/// The native side of a `common_const_make` case ([`ffi::const_make`]).
+pub(super) fn const_make_cpp(value: Value) -> Result<Output, HarnessError> {
+    let i: Inputs = serde_json::from_value(value).map_err(|e| harness(e.to_string()))?;
+    let build = ffi_cone(i.cone.as_ref().ok_or_else(|| harness("missing cone"))?);
+    const_make_output(&ffi::const_make(&build).map_err(|e| harness(e.to_string()))?)
+}
+
+/// A `common_const_make` record: the build status, then the sequence's values.
+fn const_make_output(flat: &[f64]) -> Result<Output, HarnessError> {
+    let (b, rest) = flat.split_first().ok_or_else(|| harness("empty record"))?;
+    let out = Output::new().values("build", vec![*b]);
+    if *b != SUCCESS {
+        return Ok(out);
+    }
+    Ok(out.values("out", rest.to_vec()))
+}
+
+/// The Rust side of a `common_const_make` case: the same sequence on a `Surface` holding
+/// the cone as its constructor leaves it.
+pub(super) fn const_make_rust(value: Value) -> Result<Output, HarnessError> {
+    use solidcore::surface::surface::{Surface, SurfaceKind};
+    fn has_nurb(s: &Surface) -> bool {
+        matches!(s.kind(), SurfaceKind::Cone(c) if c.rev().base().gw_nurb().is_some())
+    }
+    fn eval(k: &Kernel, s: &Surface, uv: Point2, out: &mut Vec<f64>) -> solidcore::Result<()> {
+        match s.evaluate_point(k, uv) {
+            Ok(p) => { out.push(SUCCESS); push_v(out, p); }
+            Err(e) if e.is_unported() => return Err(e),
+            Err(e) => out.push(status(&e)),
+        }
+        Ok(())
+    }
+    fn dom(d: &Extent2d, out: &mut Vec<f64>) {
+        out.extend([d.min().x, d.min().y, d.max().x, d.max().y]);
+    }
+    let i: Inputs = serde_json::from_value(value).map_err(|e| harness(e.to_string()))?;
+    let k = Kernel::default();
+    let cone = i.cone.as_ref().ok_or_else(|| harness("missing cone"))?;
+    let mut surface = match rust_cone_made(&k, cone, false) {
+        Ok(c) => Surface::from(c),
+        Err(e) => return const_make_output(&[status(&e)]),
+    };
+    let mut out = vec![SUCCESS, SUCCESS];
+    let result = (|| -> solidcore::Result<()> {
+        out.push(flag(has_nurb(&surface)));
+        let d = surface.natural_uv_domain_with_nurb(&k)?;
+        dom(&d, &mut out);
+        out.push(flag(has_nurb(&surface)));
+        out.push(flag(matches!(surface.kind(), SurfaceKind::Cone(c) if c.rev().have_polar_conversion())));
+        eval(&k, &surface, d.evaluate(0.3, 0.6), &mut out)?;
+        match surface.copy(&k) {
+            Ok(copy) => {
+                out.push(SUCCESS);
+                out.push(flag(has_nurb(&copy)));
+                out.push(flag(copy.approx_eq(&k, &surface)?));
+                eval(&k, &copy, d.evaluate(0.7, 0.2), &mut out)?;
+            }
+            Err(e) if e.is_unported() => return Err(e),
+            Err(e) => out.push(status(&e)),
+        }
+        let rot = Axis2Placement::new(Vec3::new(1.0, 2.0, 3.0), Vec3::new(0.0, 1.0, 0.0), Vec3::new(-1.0, 0.0, 0.0));
+        match surface.transform(&k, &rot, None) {
+            Ok(()) => out.push(SUCCESS),
+            Err(e) if e.is_unported() => return Err(e),
+            Err(e) => out.push(status(&e)),
+        }
+        out.push(flag(has_nurb(&surface)));
+        let t = surface.natural_uv_domain_with_nurb(&k)?;
+        dom(&t, &mut out);
+        eval(&k, &surface, t.evaluate(0.3, 0.6), &mut out)?;
+        Ok(())
+    })();
+    if let Err(e) = result { return Ok(Output::unported(&e).unwrap_or_else(|| Output::err(e.to_string()))); }
+    const_make_output(&out)
+}
+
+/// The Rust side of a sphere, torus or surface of revolution `common_const_make` case
+/// (the shim's `sc::put_const_make`): the same sequence on a `Surface` holding the
+/// surface as its constructor leaves it (`built`, no NURB), with the NURB data dumped
+/// after the const query, on the copy and after the transform.
+pub(super) fn const_make_nurb_rust(k: &Kernel, built: solidcore::Result<solidcore::surface::surface::p2::Surface>) -> Result<Output, HarnessError> {
+    use solidcore::surface::surface::{Surface, SurfaceKind};
+    fn nurb(s: &Surface) -> Option<&solidcore::nurbs::srf_basic::Surface> {
+        match s.kind() {
+            SurfaceKind::Cone(c) => c.rev().base().gw_nurb(),
+            SurfaceKind::Sphere(x) => x.base().base().gw_nurb(),
+            SurfaceKind::Torus(x) => x.base().base().gw_nurb(),
+            SurfaceKind::SurfOfRevolution(r) => r.base().gw_nurb(),
+            _ => None,
+        }
+    }
+    fn polar(s: &Surface) -> bool {
+        match s.kind() {
+            SurfaceKind::Cone(c) => c.rev().have_polar_conversion(),
+            SurfaceKind::Sphere(x) => x.base().have_polar_conversion(),
+            SurfaceKind::Torus(x) => x.base().have_polar_conversion(),
+            SurfaceKind::SurfOfRevolution(r) => r.have_polar_conversion(),
+            _ => false,
+        }
+    }
+    fn put_nurb(s: &Surface, out: &mut Vec<f64>) {
+        let sur = nurb(s);
+        out.push(flag(sur.is_some()));
+        let Some(sur) = sur else { return };
+        let ix = sur.indices();
+        out.extend([ix.p, ix.q, ix.n + 1, ix.m + 1].map(|x| x as f64));
+        for row in sur.rows() {
+            for p in row {
+                out.extend([p.x, p.y, p.z, p.w]);
+            }
+        }
+        out.push(sur.u_knots().len() as f64);
+        out.extend_from_slice(sur.u_knots());
+        out.push(sur.v_knots().len() as f64);
+        out.extend_from_slice(sur.v_knots());
+    }
+    fn eval(k: &Kernel, s: &Surface, uv: Point2, out: &mut Vec<f64>) -> solidcore::Result<()> {
+        match s.evaluate_point(k, uv) {
+            Ok(p) => { out.push(SUCCESS); push_v(out, p); }
+            Err(e) if e.is_unported() => return Err(e),
+            Err(e) => out.push(status(&e)),
+        }
+        Ok(())
+    }
+    fn dom(d: &Extent2d, out: &mut Vec<f64>) {
+        out.extend([d.min().x, d.min().y, d.max().x, d.max().y]);
+    }
+    let mut surface = match built {
+        Ok(s) => s,
+        Err(e) if e.is_unported() => return Ok(Output::unported(&e).unwrap_or_else(|| Output::err(e.to_string()))),
+        Err(e) => return nurb_output(&[status(&e)]),
+    };
+    let mut out = vec![0.0];
+    let result = (|| -> solidcore::Result<()> {
+        out.push(flag(nurb(&surface).is_some()));
+        let d = surface.natural_uv_domain_with_nurb(k)?;
+        dom(&d, &mut out);
+        out.push(flag(nurb(&surface).is_some()));
+        put_nurb(&surface, &mut out);
+        out.push(flag(polar(&surface)));
+        eval(k, &surface, d.evaluate(0.3, 0.6), &mut out)?;
+        for c in 0..4_u8 {
+            let uv = d.evaluate(f64::from(c & 1), f64::from(c >> 1));
+            eval(k, &surface, uv, &mut out)?;
+            match surface.evaluate_normal(k, uv, Side::Left, Side::Left) {
+                Ok(n) => { out.push(SUCCESS); push_v(&mut out, n); }
+                Err(e) if e.is_unported() => return Err(e),
+                Err(e) => out.push(status(&e)),
+            }
+        }
+        match surface.copy(k) {
+            Ok(copy) => {
+                out.push(SUCCESS);
+                out.push(flag(nurb(&copy).is_some()));
+                put_nurb(&copy, &mut out);
+                out.push(flag(copy.approx_eq(k, &surface)?));
+                eval(k, &copy, d.evaluate(0.7, 0.2), &mut out)?;
+            }
+            Err(e) if e.is_unported() => return Err(e),
+            Err(e) => out.push(status(&e)),
+        }
+        let rot = Axis2Placement::new(Vec3::new(1.0, 2.0, 3.0), Vec3::new(0.0, 1.0, 0.0), Vec3::new(-1.0, 0.0, 0.0));
+        match surface.transform(k, &rot, None) {
+            Ok(()) => out.push(SUCCESS),
+            Err(e) if e.is_unported() => return Err(e),
+            Err(e) => out.push(status(&e)),
+        }
+        out.push(flag(nurb(&surface).is_some()));
+        put_nurb(&surface, &mut out);
+        let t = surface.natural_uv_domain_with_nurb(k)?;
+        dom(&t, &mut out);
+        eval(k, &surface, t.evaluate(0.3, 0.6), &mut out)?;
+        Ok(())
+    })();
+    if let Err(e) = result { return Ok(Output::unported(&e).unwrap_or_else(|| Output::err(e.to_string()))); }
+    nurb_output(&out)
+}
+
+/// The native side of a sphere, torus or surface of revolution `common_const_make` case:
+/// the shim record (`const_make_output` splits off the build status).
+pub(super) fn const_make_nurb_cpp(flat: &[f64]) -> Result<Output, HarnessError> {
+    nurb_output(flat)
+}
+
+/// A sphere, torus or revolution `common_const_make` record: the build status (`0` =
+/// success: those shims write `st(status)`), then the sequence's values.
+fn nurb_output(flat: &[f64]) -> Result<Output, HarnessError> {
+    let (b, rest) = flat.split_first().ok_or_else(|| harness("empty record"))?;
+    let out = Output::new().values("build", vec![*b]);
+    if *b != 0.0 {
+        return Ok(out);
+    }
+    Ok(out.values("out", rest.to_vec()))
 }
 
 pub(super) fn common_rust(value: Value, database: Option<&Value>, lazy: bool, subdomain: bool, queries: bool) -> Result<Output, HarnessError> {

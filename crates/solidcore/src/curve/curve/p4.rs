@@ -67,16 +67,26 @@
 //!   `SmFindCCNormalENFO` (unit `curve.curve_p5`) and `SmFindPCExtremaEFO`
 //!   (`curve.curve_p3`) are not ported here: their structs carry only the
 //!   constructors' data, and those units add the trait implementations.
+//! - **No evidence (WR-663).** With the opt-in `Kernel::fixes.query_statuses_pass_on`,
+//!   `IsClosed` and `IsDegenerate` are `false` when a point or tangent cannot be
+//!   evaluated, as the fork (tangency-labs/smlib 8311f8e).
+//! - **Statuses passed on (WR-663).** With the opt-in
+//!   `Kernel::fixes.query_statuses_pass_on` the statuses SMLib drops are passed on, as the
+//!   fork (tangency-labs/smlib 8311f8e): `ApproximatePolarBox`, the property evaluator's
+//!   unitizations; `FixChainCurvesList` links nothing to a curve that cannot be evaluated
+//!   and ends a chain at one that cannot be reversed; `HasPlaneCrossings` is `TRUE` when
+//!   the intersection fails.
 
 #[cfg(doc)]
 use crate::curve::curve::p2::FindCurveDistanceExtrema;
 use crate::curve::curve::p2::{
-    at, unitize_tangent, Curve, CurveEvaluate, CurveKind, CurvePropertyType,
+    at, ignored_or_soft, unitize_or_pass_on, unitize_tangent, Curve, CurveEvaluate, CurveKind,
+    CurvePropertyType, Soft,
 };
 use crate::curve::curve::p3::eval_n;
 use crate::curve::ellipse::Ellipse;
 use crate::curve::line::Line;
-use crate::error::{ignore_status, ignored, Result, SolidError};
+use crate::error::{ignored, ignored_or_pass_on, Result, SolidError};
 use crate::geom::a_object;
 use crate::geom::assert_array::{labels, AssertArray, AssertReport, ObjectKey, ReportSpec};
 use crate::geom::extent1d::{Extent1d, ExtentNd};
@@ -104,18 +114,40 @@ const OP_EFO: &str = "curve::curve::p4::CurvePropertyEfo::evaluate";
 const OP_TAN: &str = "curve::curve::p4::CcTangentIntEnfo::static_evaluate";
 const OP_DIST_AT: &str = "curve::curve::p4::CpDistAtEnfo::evaluate";
 
-/// `EvaluatePoint` whose status upstream ignores: [`Vec3::UNDEF`] (a never-written
-/// `SmPoint3d`) on failure; [`SolidError::Unported`] is propagated.
-pub(crate) fn point_or_undef<C: CurveEvaluate + ?Sized>(
+/// `EvaluatePoint` whose status upstream ignores ([`Vec3::UNDEF`] on failure), at a
+/// site where SMLib drops the status and the fork passes it on
+/// (`SER`, tangency-labs/smlib 8311f8e): with the opt-in
+/// [`crate::kernel::UpstreamFixes::query_statuses_pass_on`] a failed evaluation is
+/// returned.
+pub(crate) fn point_or_pass_on<C: CurveEvaluate + ?Sized>(
     k: &Kernel,
     curve: &C,
     t: f64,
 ) -> Result<Point3> {
-    Ok(ignored(curve.evaluate_point(k, t))?.unwrap_or(Vec3::UNDEF))
+    Ok(
+        ignored_or_pass_on(curve.evaluate_point(k, t), k.fixes.query_statuses_pass_on)?
+            .unwrap_or(Vec3::UNDEF),
+    )
+}
+
+/// `EvaluatePoint` whose status upstream ignores ([`Vec3::UNDEF`] on failure), or
+/// `None` when, with the opt-in
+/// [`crate::kernel::UpstreamFixes::query_statuses_pass_on`], the point cannot be
+/// evaluated (the fork's predicates then show nothing, tangency-labs/smlib 8311f8e).
+fn point_or_none<C: CurveEvaluate + ?Sized>(
+    k: &Kernel,
+    curve: &C,
+    t: f64,
+) -> Result<Option<Point3>> {
+    match ignored(curve.evaluate_point(k, t))? {
+        None if k.fixes.query_statuses_pass_on => Ok(None),
+        p => Ok(Some(p.unwrap_or(Vec3::UNDEF))),
+    }
 }
 
 /// `Evaluate` whose status upstream ignores into `pv` (entries not written keep
-/// their values); [`SolidError::Unported`] is propagated.
+/// their values); [`SolidError::Unported`] is propagated. `false` when, with the
+/// opt-in [`crate::kernel::UpstreamFixes::query_statuses_pass_on`], it fails.
 fn eval_into<C: CurveEvaluate + ?Sized>(
     k: &Kernel,
     curve: &C,
@@ -123,8 +155,33 @@ fn eval_into<C: CurveEvaluate + ?Sized>(
     num_derivs: usize,
     non_zero_tangents: bool,
     pv: &mut [Vec3],
+) -> Result<bool> {
+    match ignored(curve.evaluate(k, t, num_derivs, true, non_zero_tangents))? {
+        Some(v) => {
+            for (d, s) in pv.iter_mut().zip(v) {
+                *d = s;
+            }
+        }
+        None if k.fixes.query_statuses_pass_on => return Ok(false),
+        None => (),
+    }
+    Ok(true)
+}
+
+/// `Evaluate` into `pv` (entries not written keep their values) whose status SMLib
+/// drops and the fork passes on (`SER`, tangency-labs/smlib 8311f8e): with the opt-in
+/// [`crate::kernel::UpstreamFixes::query_statuses_pass_on`] a failed evaluation is
+/// returned.
+fn eval_into_or_pass_on<C: CurveEvaluate + ?Sized>(
+    k: &Kernel,
+    curve: &C,
+    t: f64,
+    num_derivs: usize,
+    non_zero_tangents: bool,
+    pv: &mut [Vec3],
 ) -> Result<()> {
-    if let Some(v) = ignored(curve.evaluate(k, t, num_derivs, true, non_zero_tangents))? {
+    let r = curve.evaluate(k, t, num_derivs, true, non_zero_tangents);
+    if let Some(v) = ignored_or_pass_on(r, k.fixes.query_statuses_pass_on)? {
         for (d, s) in pv.iter_mut().zip(v) {
             *d = s;
         }
@@ -157,14 +214,22 @@ enum Link {
     Index(usize),
 }
 
-/// Start, end and mid point of `curve` over its natural interval (statuses ignored).
-fn ends_and_mid(k: &Kernel, curve: &Curve) -> Result<(Point3, Point3, Point3)> {
+/// Start, end and mid point of `curve` over its natural interval (statuses ignored);
+/// `None` when, with the opt-in
+/// [`crate::kernel::UpstreamFixes::query_statuses_pass_on`], one cannot be evaluated
+/// (the fork's chain then links nothing to that curve, tangency-labs/smlib 8311f8e).
+fn ends_and_mid(k: &Kernel, curve: &Curve) -> Result<Option<(Point3, Point3, Point3)>> {
     let domain = curve.natural_interval();
-    Ok((
-        point_or_undef(k, curve, domain.min())?,
-        point_or_undef(k, curve, domain.max())?,
-        point_or_undef(k, curve, domain.evaluate(0.5))?,
-    ))
+    let Some(start) = point_or_none(k, curve, domain.min())? else {
+        return Ok(None);
+    };
+    let Some(end) = point_or_none(k, curve, domain.max())? else {
+        return Ok(None);
+    };
+    let Some(mid) = point_or_none(k, curve, domain.evaluate(0.5))? else {
+        return Ok(None);
+    };
+    Ok(Some((start, end, mid)))
 }
 
 /// Orders `curves` (any order and direction, `None` entries skipped) into head to
@@ -205,12 +270,17 @@ pub fn fix_chain_curves_list(
         chain_starts.push(loop_start);
 
         // last link Min(start), Max(end), and Mid(mid_start, mid_end) points
-        let (mut start_point, mut end_point, mut mid_start_point) = ends_and_mid(k, &c0)?;
-        let mut mid_end_point = mid_start_point;
+        let ends0 = ends_and_mid(k, &c0)?;
 
         // move the curve into the growing chained array
         chained.push(c0);
         origin.push(kk);
+
+        // (with the opt-in fix a chain start that cannot be evaluated stays alone)
+        let Some((mut start_point, mut end_point, mut mid_start_point)) = ends0 else {
+            continue;
+        };
+        let mut mid_end_point = mid_start_point;
 
         loop {
             // REDOLOOP: persistent locals for the following scan
@@ -229,8 +299,11 @@ pub fn fix_chain_curves_list(
                     continue;
                 };
 
-                // next link Min(start1), Max(end1) and Mid(mid) points
-                let (start_point1, end_point1, mid_point) = ends_and_mid(k, c1)?;
+                // next link Min(start1), Max(end1) and Mid(mid) points (with the opt-in
+                // fix a curve that cannot be evaluated links nothing)
+                let Some((start_point1, end_point1, mid_point)) = ends_and_mid(k, c1)? else {
+                    continue;
+                };
 
                 let d_s1e = (start_point1 - end_point).length_squared();
                 let d_e1e = (end_point1 - end_point).length_squared();
@@ -342,7 +415,14 @@ pub fn fix_chain_curves_list(
                 }
                 2 => {
                     let domain1 = next_crv.natural_interval();
-                    reverse_ignored(k, &mut next_crv, &domain1)?;
+                    if !reverse_ignored(k, &mut next_crv, &domain1)? {
+                        // (opt-in: a curve that cannot be reversed ends the chain and
+                        // stays in the list)
+                        if let Some(slot) = curves.get_mut(idx) {
+                            *slot = Some(next_crv);
+                        }
+                        break;
+                    }
                     chained.push(next_crv);
                     origin.push(idx);
                     end_point = tmp_end_pt;
@@ -356,7 +436,13 @@ pub fn fix_chain_curves_list(
                 }
                 _ => {
                     let domain1 = next_crv.natural_interval();
-                    reverse_ignored(k, &mut next_crv, &domain1)?;
+                    if !reverse_ignored(k, &mut next_crv, &domain1)? {
+                        // (opt-in: as case 2)
+                        if let Some(slot) = curves.get_mut(idx) {
+                            *slot = Some(next_crv);
+                        }
+                        break;
+                    }
                     chained.insert(loop_start, next_crv);
                     origin.insert(loop_start, idx);
                     start_point = tmp_start_pt;
@@ -376,9 +462,12 @@ pub fn fix_chain_curves_list(
     })
 }
 
-/// `ReverseParameterization(domain, domain)` with its status ignored.
-fn reverse_ignored(k: &Kernel, curve: &mut Curve, domain: &Extent1d) -> Result<()> {
-    ignore_status(curve.reverse_parameterization(k, domain))
+/// `ReverseParameterization(domain, domain)` with its status ignored; `false` when,
+/// with the opt-in [`crate::kernel::UpstreamFixes::query_statuses_pass_on`], it failed
+/// (the fork then ends the chain, tangency-labs/smlib 8311f8e).
+fn reverse_ignored(k: &Kernel, curve: &mut Curve, domain: &Extent1d) -> Result<bool> {
+    let reversed = ignored(curve.reverse_parameterization(k, domain))?.is_some();
+    Ok(reversed || !k.fixes.query_statuses_pass_on)
 }
 
 // ---- solver helpers -----------------------------------------------------------------------
@@ -768,7 +857,8 @@ pub fn approximate_polar_box<C: CurveEvaluate + ?Sized>(
     let mut pv = [Vec3::UNDEF; 2];
     let mut polar_box = PolarBox::new();
     polar_box.reset();
-    eval_into(k, curve, ivl.evaluate(0.5), 1, true, &mut pv)?;
+    // (statuses ignored; passed on with the opt-in fix, tangency-labs/smlib 8311f8e)
+    eval_into_or_pass_on(k, curve, ivl.evaluate(0.5), 1, true, &mut pv)?;
     polar_box.add_vector(at(&pv, 1), None);
 
     // iteration locals
@@ -778,7 +868,7 @@ pub fn approximate_polar_box<C: CurveEvaluate + ?Sized>(
     // for every sample point
     for _ in 0..point_count {
         // evaluate this param point
-        eval_into(k, curve, param, 1, true, &mut pv)?;
+        eval_into_or_pass_on(k, curve, param, 1, true, &mut pv)?;
 
         // add the tangent to the PolarBox
         polar_box.add_vector(at(&pv, 1), None);
@@ -802,10 +892,17 @@ pub fn is_closed_base<C: CurveEvaluate + ?Sized>(
     interval: &Extent1d,
     tol: f64,
 ) -> Result<bool> {
-    // get curve start, end, and mid 3d Points
-    let p1 = point_or_undef(k, curve, interval.min())?;
-    let p2 = point_or_undef(k, curve, interval.max())?;
-    let p_mid = point_or_undef(k, curve, interval.evaluate(0.5))?;
+    // get curve start, end, and mid 3d Points (with the opt-in fix, ends that cannot be
+    // evaluated do not show it closed, tangency-labs/smlib 8311f8e)
+    let Some(p1) = point_or_none(k, curve, interval.min())? else {
+        return Ok(false);
+    };
+    let Some(p2) = point_or_none(k, curve, interval.max())? else {
+        return Ok(false);
+    };
+    let Some(p_mid) = point_or_none(k, curve, interval.evaluate(0.5))? else {
+        return Ok(false);
+    };
 
     // let dTol = dTolerance (when given) or dScaledZero
     let tol = if tol == 0.0 {
@@ -843,8 +940,14 @@ pub fn is_degenerate_base<C: CurveEvaluate + ?Sized>(
     if ivl.min() == ivl.max() {
         return Ok(true);
     }
-    let p1 = point_or_undef(k, curve, ivl.min())?;
-    let p2 = point_or_undef(k, curve, ivl.max())?;
+    // (with the opt-in fix a curve that cannot be evaluated is not shown degenerate,
+    // tangency-labs/smlib 8311f8e)
+    let Some(p1) = point_or_none(k, curve, ivl.min())? else {
+        return Ok(false);
+    };
+    let Some(p2) = point_or_none(k, curve, ivl.max())? else {
+        return Ok(false);
+    };
 
     // select a tolerance - scale it to p1 location
     let scaled_zero = EFF_ZERO * (1.0 + p1.max_dimension());
@@ -856,18 +959,24 @@ pub fn is_degenerate_base<C: CurveEvaluate + ?Sized>(
         let lsq = ivl.length() * ivl.length();
 
         // if start, mid, or end tangents are nonZero - the curve is not degenerate
-        eval_into(k, curve, ivl.min(), 1, false, &mut pv)?; // exact tangent lengths
+        if !eval_into(k, curve, ivl.min(), 1, false, &mut pv)? {
+            return Ok(false);
+        }
         if at(&pv, 1).length_squared() * lsq > tol2 {
             return Ok(false);
         }
 
-        eval_into(k, curve, ivl.max(), 1, false, &mut pv)?;
+        if !eval_into(k, curve, ivl.max(), 1, false, &mut pv)? {
+            return Ok(false);
+        }
         if at(&pv, 1).length_squared() * lsq > tol2 {
             return Ok(false);
         }
 
         // not the exact midpoint (a projected circle seen edge-on) [091023]
-        eval_into(k, curve, ivl.evaluate(0.4567), 1, false, &mut pv)?;
+        if !eval_into(k, curve, ivl.evaluate(0.4567), 1, false, &mut pv)? {
+            return Ok(false);
+        }
         if at(&pv, 1).length_squared() * lsq > tol2 {
             return Ok(false);
         }
@@ -900,11 +1009,16 @@ pub fn has_plane_crossings(k: &Kernel, curve: &Curve, planes: &[Plane]) -> Resul
     // for every plane
     for plane in planes {
         // find all Curve/Plane intersections
-        // (status ignored: an error leaves the solution array empty)
-        let solutions = ignored(plane_global_curve_intersect(
-            k, plane, curve, &ivl, EFF_ZERO,
-        ))?
-        .unwrap_or_default();
+        // (status ignored: an error leaves the solution array empty; with the opt-in
+        // fix a crossing cannot be ruled out then, tangency-labs/smlib 8311f8e)
+        let Soft::Kept(solutions) = ignored_or_soft(
+            plane_global_curve_intersect(k, plane, curve, &ivl, EFF_ZERO),
+            k.fixes.query_statuses_pass_on,
+        )?
+        else {
+            return Ok(true);
+        };
+        let solutions = solutions.unwrap_or_default();
 
         // for every solution - classify the intersection
         for (solution_type, start, end) in &solutions {
@@ -1027,6 +1141,8 @@ pub fn assert_valid_base(
                 | super::p2::CRV_IN_VOLUME_TYPE
                 | super::p2::OFFSET_CURVE_TYPE
                 | super::p2::CRV_ON_SURF_TYPE
+                // IsKindOf(SmCrvOnSurf_TYPE) of an SmTangentField owner
+                | super::p2::TANGENT_FIELD_TYPE
         ) || (dim == 2 && o.type_code == labels::FACE_TYPE)
     });
     rtn &= if owner_ok {
@@ -1408,12 +1524,13 @@ impl<C: CurveEvaluate + ?Sized> EvalFunction for CurvePropertyEfo<'_, C> {
                     return Err(err());
                 }
 
-                cpu = cpu.unitize_or_z();
+                // (SER(Unitize) with the opt-in fix, tangency-labs/smlib 8311f8e)
+                cpu = unitize_or_pass_on(cpu, self.kernel.fixes.query_statuses_pass_on)?;
                 let cpup = c[1].unitized_derivative(c[2]);
                 if c[2].length_squared() < EFF_ZERO {
                     return Err(err());
                 }
-                let cppu = c[2].unitize_or_z();
+                let cppu = unitize_or_pass_on(c[2], self.kernel.fixes.query_statuses_pass_on)?;
                 let cppup = c[2].unitized_derivative(c[3]);
                 let a = cpu.cross(cppu);
                 if a.length_squared() < EFF_ZERO {
@@ -1440,12 +1557,13 @@ impl<C: CurveEvaluate + ?Sized> EvalFunction for CurvePropertyEfo<'_, C> {
                     return Err(err());
                 }
 
-                cpu = cpu.unitize_or_z();
+                // (SER(Unitize) with the opt-in fix, tangency-labs/smlib 8311f8e)
+                cpu = unitize_or_pass_on(cpu, self.kernel.fixes.query_statuses_pass_on)?;
                 let cpup = c[1].unitized_derivative(c[2]);
                 if c[2].length_squared() < EFF_ZERO {
                     return Err(err());
                 }
-                let cppu = c[2].unitize_or_z();
+                let cppu = unitize_or_pass_on(c[2], self.kernel.fixes.query_statuses_pass_on)?;
                 let cppup = c[2].unitized_derivative(c[3]);
                 let a = cpu.cross(cppu);
                 if a.length_squared() < EFF_ZERO {
@@ -2161,6 +2279,50 @@ mod tests {
     }
 
     #[test]
+    fn issue_2009_unreversible_link_ends_the_chain() {
+        // tangency-labs/smlib 8311f8e (SmCurve::FixChainCurvesList): a curve that
+        // cannot be reversed ends the chain and stays in the list (it starts the next
+        // one); upstream chains it unreversed. A Hermite curve cannot be reversed.
+        // Discriminating.
+        let curves = || {
+            vec![
+                Some(seg([0.0, 0.0, 0.0], [1.0, 0.0, 0.0])),
+                Some(seg([2.0, 0.0, 0.0], [1.0, 0.0, 0.0])),
+            ]
+        };
+        let off = fix_chain_curves_list(&Kernel::default(), curves(), 1e-6, true).unwrap();
+        assert_eq!(off.chain_starts, vec![0]);
+        assert_eq!(off.origin, vec![0, 1]);
+        let mut on_k = Kernel::default();
+        on_k.fixes.query_statuses_pass_on = true;
+        let on = fix_chain_curves_list(&on_k, curves(), 1e-6, true).unwrap();
+        assert_eq!(on.chain_starts, vec![0, 1]);
+        assert_eq!(on.origin, vec![0, 1]);
+    }
+
+    #[test]
+    fn issue_2009_unevaluable_curves_link_nothing_and_have_no_polar_box() {
+        // tangency-labs/smlib 8311f8e: in FixChainCurvesList an end that cannot be
+        // evaluated links nothing (upstream links the unset ends, here as duplicates,
+        // deleting one); ApproximatePolarBox passes on its evaluations. Both
+        // discriminating.
+        let empty = || Curve::from(crate::nurbs::b_spline_curve::BSplineCurve::new(3));
+        let off = Kernel::default();
+        let mut on = Kernel::default();
+        on.fixes.query_statuses_pass_on = true;
+        let r_off =
+            fix_chain_curves_list(&off, vec![Some(empty()), Some(empty())], 1e-6, true).unwrap();
+        assert_eq!(r_off.deleted, 1);
+        let r_on =
+            fix_chain_curves_list(&on, vec![Some(empty()), Some(empty())], 1e-6, true).unwrap();
+        assert_eq!((r_on.deleted, r_on.chain_starts.len()), (0, 2));
+
+        let ivl = Extent1d::from_min_max(0.0, 1.0);
+        assert!(approximate_polar_box(&off, &empty(), &ivl, 5).is_ok());
+        assert!(approximate_polar_box(&on, &empty(), &ivl, 5).is_err());
+    }
+
+    #[test]
     fn chain_deletes_duplicates() {
         let curves = vec![
             Some(seg([0.0, 0.0, 0.0], [1.0, 0.0, 0.0])),
@@ -2169,6 +2331,25 @@ mod tests {
         let r = fix_chain_curves_list(&Kernel::default(), curves, 1e-6, true).unwrap();
         assert_eq!(r.deleted, 1);
         assert_eq!(r.origin, vec![0]);
+    }
+
+    #[test]
+    fn issue_2009_unevaluable_curve_is_not_shown_degenerate_or_closed() {
+        // tangency-labs/smlib 8311f8e (SmCurve::IsDegenerate, SmCurve::IsClosed): a
+        // curve that cannot be evaluated is shown neither degenerate nor closed;
+        // upstream compares the unset points, which coincide.
+        let empty = Curve::from(crate::nurbs::b_spline_curve::BSplineCurve::new(3));
+        let ivl = Extent1d::from_min_max(0.0, 1.0);
+        assert!(empty.evaluate_point(&Kernel::default(), 0.0).is_err());
+        let off = Kernel::default();
+        let mut on = Kernel::default();
+        on.fixes.query_statuses_pass_on = true;
+        // IsDegenerate: discriminating
+        assert!(is_degenerate_base(&off, &empty, 0.0, Some(&ivl)).unwrap());
+        assert!(!is_degenerate_base(&on, &empty, 0.0, Some(&ivl)).unwrap());
+        // IsClosed: coverage only (the coincident unset points fail the mid test too)
+        assert!(!is_closed_base(&off, &empty, &ivl, 0.0).unwrap());
+        assert!(!is_closed_base(&on, &empty, &ivl, 0.0).unwrap());
     }
 
     #[test]

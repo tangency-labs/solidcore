@@ -54,9 +54,15 @@
 //! - **Analytic fillets.** `CalcConeFilletGeom` / `CalcTorusFilletGeom`
 //!   (`blend.fillet_solver_p2`) read copies of the sorted vertex uses' points
 //!   (`SmTArray<SmTsectPnt*>` upstream; the builders only read them).
-//! - **Unported callees.** `SmFilletEdge::CalcCrossSection`
-//!   (`blend.fillet_geom_p5`) after the intersection (it needs a solver table `ReCalcFilletGeom` does
-//!   not have); after a failed intersection in the edge's `CalcFilletIntFillet`,
+//!   With `fixes.fillet_exact_round_classes` (WR-669, the SolidCraft fork's
+//!   tangency-labs/smlib@b5f2867 and 7ac037e) they are `ClassifyExactBlend` and
+//!   `CalcExactFilletGeom(.., TRUE)` instead (`blend::fillet_exact`), with errors passed on,
+//!   and only when there are points.
+//! - **Unported callees.** `SmFilletEdge::CalcCrossSection` (`blend.fillet_geom_p5`)
+//!   after the intersection reads only the recalculated geometry's own solver; a
+//!   neighbour's is a port invariant (`SolidError::PortInvariant`; plan/findings
+//!   `blend.fillet_geom_p3--calc-cross-section-neighbour-unreachable`). After a failed
+//!   intersection in the edge's `CalcFilletIntFillet`,
 //!   `SmFilletCorner::RecordFilletError` (`blend.fillet_corner_p2`) records into the
 //!   caller's [`ErrorInfo`] (a scratch record when the caller has none; the
 //!   dispatchers' vertex and edge calculators of parts 2, 4, 5 and 6 are called); in
@@ -392,8 +398,13 @@ impl FilletBrep {
             .mate(0)
             .ok_or_else(|| SolidError::null_pointer(OP_MATE))?;
         if !self.fillet_vertex(main_fv)?.is_processed() {
+            // fork 9b7cd48 passes this on (SER)
             match main(self, target, solvers, main_fv) {
-                Err(e) if e.is_unported() || is_depth_error(&e) => return Err(e),
+                Err(e)
+                    if e.is_unported() || is_depth_error(&e) || k.fixes.fillet_statuses_pass_on =>
+                {
+                    return Err(e)
+                }
                 _ => {} // status ignored
             }
         }
@@ -586,7 +597,7 @@ impl FilletBrep {
             .fillet_corner()
             .ok_or_else(|| SolidError::null_pointer(OP_CORNER_EDGE))?;
         match edge.fillet_edge_type() {
-            FilletEdgeType::CrossSection => self.calc_cross_section_with_lookup(
+            FilletEdgeType::CrossSection => self.calc_cross_section_with_lookup_live(
                 k,
                 e,
                 Some(corner),
@@ -766,8 +777,8 @@ impl FilletBrep {
         let g2 = self.geom(fillet_geom2)?;
         let fil_solver1 = context.solver(g1.fillet_solver().ok_or_else(nul)?)?;
         let fil_solver2 = context.solver(g2.fillet_solver().ok_or_else(nul)?)?;
-        let fillet_surface1 = g1.fillet_surface()?.ok_or_else(nul)?;
-        let fillet_surface2 = g2.fillet_surface()?.ok_or_else(nul)?;
+        let fillet_surface1 = g1.fillet_surface(None)?.ok_or_else(nul)?;
+        let fillet_surface2 = g2.fillet_surface(None)?.ok_or_else(nul)?;
 
         // pick appoxTol and angTol as tightest filletSolver tolerances
         let approx_tol = smos_min(fil_solver1.approx_tol_3d, fil_solver2.approx_tol_3d);
@@ -895,8 +906,12 @@ impl FilletBrep {
         };
 
         // trim 3DCurve and UVTrimCurves to dropPoint parameter values
-        // (SetMinMax's status is ignored: an inverted pair leaves the interval)
-        let _ = trim_ivl.set_min_max(param1, param2);
+        // (SetMinMax's status is ignored: an inverted pair leaves the interval); fork
+        // 9b7cd48 passes this on (SER)
+        let _ = crate::error::passed_on(
+            trim_ivl.set_min_max(param1, param2),
+            k.fixes.fillet_statuses_pass_on,
+        )?;
         // each Trim reads SmTol::GetZoneTol3d of the curve's holding edge (the 3D curve's
         // owner is this edge, set by every producer with SetOwner; a UV trim curve's is
         // its edge use, whose owner is the edge)
@@ -1144,7 +1159,37 @@ impl FilletBrep {
         } // end loop on both main rails, sorting SmTsectPnts
 
         let mut fillet_created = false;
-        if is_analytic_fillet && geom_type != FilletGeomType::TangentRollover {
+        let exact_classes = k.fixes.fillet_exact_round_classes;
+        if exact_classes
+            && is_analytic_fillet
+            && geom_type != FilletGeomType::TangentRollover
+            && !tsect_pnts.is_empty()
+        {
+            // Not upstream (WR-669, the SolidCraft fork's tangency-labs/smlib@b5f2867 and
+            // 7ac037e): rebuilt exactly by the round's class (`ClassifyExactBlend`,
+            // `CalcExactFilletGeom(.., this, TRUE)`); errors are passed on
+            let tsects = tsect_pnts
+                .iter()
+                .map(|&vu| Ok(self.fillet_vertexuse(vu)?.tsect_pnt().clone()))
+                .collect::<Result<Vec<TsectPnt>>>()?;
+            let first = tsects
+                .first()
+                .ok_or_else(|| invalid(OP_RECALC, "no rail-end point"))?;
+            let blend = crate::blend::fillet_exact::classify_exact_blend(solver, k, target, first)?;
+            fillet_created = crate::blend::fillet_exact::calc_exact_fillet_geom(
+                solver,
+                k,
+                target,
+                self,
+                &blend,
+                &tsects,
+                Some(g),
+                true,
+            )?;
+        } else if !exact_classes
+            && is_analytic_fillet
+            && geom_type != FilletGeomType::TangentRollover
+        {
             // Create analytics (the solver reads copies of the vertex uses' points)
             let tsects = tsect_pnts
                 .iter()
@@ -1268,9 +1313,11 @@ impl FilletBrep {
                 // case 1 .. 4 fall through to the next when not on a seam
                 if i_try == 1 {
                     if on_seam(self, &off(&*solver, 0)?, 0, SrfIndex::First, surf_closure1)? {
-                        ignore_status(move_tsp(&mut tsect_pnts, 0, last_tsp_idx, |vu| {
-                            self.tsect_of(*vu)
-                        }))?;
+                        // fork 9b7cd48 passes this on (SER)
+                        ignore_status(crate::error::passed_on(
+                            move_tsp(&mut tsect_pnts, 0, last_tsp_idx, |vu| self.tsect_of(*vu)),
+                            k.fixes.fillet_statuses_pass_on,
+                        )?)?;
                         continue;
                     }
                     i_try += 1;
@@ -1283,18 +1330,22 @@ impl FilletBrep {
                         SrfIndex::First,
                         surf_closure1,
                     )? {
-                        ignore_status(move_tsp(&mut tsect_pnts, last_tsp_idx, 0, |vu| {
-                            self.tsect_of(*vu)
-                        }))?;
+                        // fork 9b7cd48 passes this on (SER)
+                        ignore_status(crate::error::passed_on(
+                            move_tsp(&mut tsect_pnts, last_tsp_idx, 0, |vu| self.tsect_of(*vu)),
+                            k.fixes.fillet_statuses_pass_on,
+                        )?)?;
                         continue;
                     }
                     i_try += 1;
                 }
                 if i_try == 3 {
                     if on_seam(self, &off(&*solver, 1)?, 0, SrfIndex::Second, surf_closure2)? {
-                        ignore_status(move_tsp(&mut tsect_pnts, 0, last_tsp_idx, |vu| {
-                            self.tsect_of(*vu)
-                        }))?;
+                        // fork 9b7cd48 passes this on (SER)
+                        ignore_status(crate::error::passed_on(
+                            move_tsp(&mut tsect_pnts, 0, last_tsp_idx, |vu| self.tsect_of(*vu)),
+                            k.fixes.fillet_statuses_pass_on,
+                        )?)?;
                         continue;
                     }
                     i_try += 1;
@@ -1308,9 +1359,11 @@ impl FilletBrep {
                         surf_closure2,
                     )?
                 {
-                    ignore_status(move_tsp(&mut tsect_pnts, last_tsp_idx, 0, |vu| {
-                        self.tsect_of(*vu)
-                    }))?;
+                    // fork 9b7cd48 passes this on (SER)
+                    ignore_status(crate::error::passed_on(
+                        move_tsp(&mut tsect_pnts, last_tsp_idx, 0, |vu| self.tsect_of(*vu)),
+                        k.fixes.fillet_statuses_pass_on,
+                    )?)?;
                     continue;
                 }
                 // case 4 without a seam, and default: that's all.
@@ -1334,13 +1387,15 @@ impl FilletBrep {
                     if id == own {
                         return Ok(own_solver);
                     }
-                    // UNPORTED(blend.fillet_geom_p5): SmFilletEdge::CalcCrossSection (a neighbouring geometry's solver: ReCalcFilletGeom holds only its own)
-                    // Unreachable by construction upstream: no geometry's m_vEdges holds a cross-section
-                    // edge with a use on another solver's geometry; see
+                    // A port invariant, not a missing port: no geometry's m_vEdges holds a
+                    // cross-section edge whose mate use has another solver's geometry
+                    // (CreateEndCurve gives the primary use none; TopologySplit leaves the
+                    // mate without one), so upstream's CalcCrossSection never reads a
+                    // neighbouring geometry's solver here; see
                     // plan/findings/blend.fillet_geom_p3--calc-cross-section-neighbour-unreachable.md
-                    Err(SolidError::unported(
-                        "SmFilletEdge::CalcCrossSection (neighbouring geometry's solver)",
-                        "blend.fillet_geom_p5",
+                    Err(SolidError::port_invariant(
+                        OP_RECALC,
+                        "a cross-section edge never needs another geometry's solver here",
                     ))
                 };
                 self.calc_cross_section_with_lookup(
@@ -1887,6 +1942,38 @@ mod tests {
         assert!(!fb.fillet_vertex(a).unwrap().is_processed());
     }
 
+    /// Fork 9b7cd48 (`CalcMateGeom`: `SER( pMainFV->CalcCornerVertGeom() )`): the main
+    /// vertex's geometry fails. Upstream drops the status and the mate stays
+    /// unprocessed (success); with `fillet_statuses_pass_on` the error is returned.
+    #[test]
+    fn fillet_statuses_pass_on_mate_returns_a_failed_main_vertex() {
+        for pass_on in [false, true] {
+            let mut k = Kernel::default();
+            k.fixes.fillet_statuses_pass_on = pass_on;
+            let mut fb = FilletBrep::new();
+            let a = vertex(&mut fb, &k, Point3::new(0.0, 0.0, 0.0));
+            let b = vertex(&mut fb, &k, Point3::new(1.0, 0.0, 0.0));
+            let fv = fb.fillet_vertex_mut(a).unwrap();
+            fv.set_fillet_vertex_type(FilletVertexType::Mate);
+            fv.set_mate(0, Some(b));
+            let r = fb.calc_mate_geom_with(
+                &k,
+                a,
+                &mut Brep::new(),
+                &mut (),
+                0,
+                |_, _, (), _| Err(SolidError::sm_err("main vertex")),
+                |(), _, _, _| Ok(0),
+            );
+            if pass_on {
+                assert_eq!(r.unwrap_err(), SolidError::sm_err("main vertex"));
+            } else {
+                r.unwrap();
+            }
+            assert!(!fb.fillet_vertex(a).unwrap().is_processed());
+        }
+    }
+
     #[test]
     fn mate_without_main_vertex_is_a_null_pointer() {
         let k = Kernel::default();
@@ -2110,5 +2197,272 @@ mod tests {
             ]
         );
         assert_eq!(error_info.entity_name, "SmFillet2x2Corner");
+    }
+
+    /// A non-rational curve of dimension `dim` (`NOW` weights; `NOZ` z for 2D).
+    fn nl_curve(dim: u64, cpts: &[[f64; 3]], p: usize, u: &[f64]) -> Curve {
+        use crate::nurbs::math::{CPoint, NOW};
+        let pw = cpts
+            .iter()
+            .map(|&[x, y, z]| CPoint::new(x, y, z, NOW))
+            .collect();
+        let nurb = crate::nurbs::crv_basic::Curve::new(pw, p, u.to_vec()).unwrap();
+        Curve::from(crate::nurbs::b_spline_curve::BSplineCurve::from_nurb(
+            nurb, dim, false,
+        ))
+    }
+
+    fn nl_surface(net: &[&[[f64; 3]]], p: usize, q: usize, u: &[f64], v: &[f64]) -> Surface {
+        use crate::nurbs::math::{CPoint, NOW};
+        let net = net
+            .iter()
+            .map(|r| {
+                r.iter()
+                    .map(|&[x, y, z]| CPoint::new(x, y, z, NOW))
+                    .collect()
+            })
+            .collect();
+        let nl = crate::nurbs::srf_basic::Surface::new(net, p, q, u.to_vec(), v.to_vec()).unwrap();
+        Surface::from(crate::nurbs::b_spline_surface::BSplineSurface::from_nurb(
+            nl, false,
+        ))
+    }
+
+    /// Regression for #1260: `SmFilletEdge::CalcFilletIntFillet` trims the edge's 3D
+    /// curve with `SmTol::GetZoneTol3d` of its holding edge (tolerance 0 here), not the
+    /// system zone tolerance (1e-5). `blend.fillet_geom_p3` case gen0252 (seed
+    /// 9207379614715588057): the trimmed curve's last span is about 5e-6 long, which a
+    /// 1e-5 trim removes as degenerate; the C++ reference keeps it.
+    #[test]
+    fn fillet_int_fillet_trims_with_the_holding_edges_zone_tolerance() {
+        use crate::nurbs::math::NOZ;
+        // the C++ reference's trimmed 3D curve: degree 1, three control points
+        const CPP_KNOTS: [f64; 5] = [
+            -1.104_513_452_122_645_8,
+            -1.104_513_452_122_645_8,
+            1.201_280_111_256_772_8,
+            1.222_877_848_654_892_6,
+            1.222_877_848_654_892_6,
+        ];
+        const CPP_LAST_CPT: [f64; 3] = [
+            0.000_338_501_802_028_413_25,
+            0.000_078_518_153_924_537_57,
+            -0.000_248_006_678_376_056_8,
+        ];
+        let k = Kernel::default();
+        let mut fb = FilletBrep::new();
+        let mut processed = |p: Point3| {
+            let v = vertex(&mut fb, &k, p);
+            let fv = fb.fillet_vertex_mut(v).unwrap();
+            fv.set_fillet_vertex_type(FilletVertexType::FilletXFillet);
+            fv.set_status(FilStatus::Processed);
+            v
+        };
+        let vs = processed(Point3::new(
+            0.000_105_817_878_476_310_83,
+            -0.000_066_443_487_047_124_61,
+            0.000_112_863_628_475_403_11,
+        ));
+        let ve = processed(Point3::new(
+            0.000_338_501_802_028_413_25,
+            0.000_078_518_153_924_537_57,
+            -0.000_248_006_678_376_056_8,
+        ));
+        let (e, [eu0, eu1]) = edge_with_uses(&mut fb, vs, ve, FilletEdgeType::FilletXFillet);
+        let (a, b) = (-2.177_188_262_530_754_6, 3.695_862_267_709_534_5);
+        {
+            let edge = fb.brep_mut().edge_mut(e).unwrap();
+            edge.curve = Some(nl_curve(
+                3,
+                &[
+                    [
+                        0.0,
+                        -0.000_133_769_082_604_263_4,
+                        0.000_280_931_205_387_305_47,
+                    ],
+                    [
+                        0.000_333_333_333_333_333_3,
+                        0.000_078_339_309_224_387_8,
+                        -0.000_248_352_554_485_777_14,
+                    ],
+                    [
+                        0.000_666_666_666_666_666_6,
+                        0.000_089_873_654_030_745_55,
+                        -0.000_226_045_746_923_379_07,
+                    ],
+                    [
+                        0.001,
+                        -0.000_255_656_071_096_027,
+                        -0.000_239_737_035_766_988_37,
+                    ],
+                ],
+                1,
+                &[a, a, 1.201_280_111_256_772_8, 2.594_196_703_017_6, b, b],
+            ));
+            edge.interval = crate::geom::extent1d::Extent1d::from_min_max(a, b);
+        }
+        fb.brep_mut().edgeuse_mut(eu0).unwrap().uv_trim_curve = Some(nl_curve(
+            2,
+            &[
+                [0.277_635_386_028_107_06, 0.881_132_710_821_883_4, NOZ],
+                [0.893_729_069_862_596_6, 0.388_682_638_272_226_16, NOZ],
+                [2.234_800_311_318_374, 0.193_686_268_600_660_4, NOZ],
+                [2.702_601_334_513_802_5, -0.644_854_980_880_039_2, NOZ],
+            ],
+            2,
+            &[0.0, 0.0, 0.0, 0.145_627_121_098_850_12, 1.0, 1.0, 1.0],
+        ));
+        fb.brep_mut().edgeuse_mut(eu1).unwrap().uv_trim_curve = Some(nl_curve(
+            2,
+            &[
+                [0.0, 0.293_485_605_878_511_3, NOZ],
+                [0.25, 0.162_720_483_899_117_97, NOZ],
+                [0.5, -0.056_321_910_574_329_476, NOZ],
+                [0.75, -0.255_386_910_539_379_5, NOZ],
+                [1.0, -0.261_044_370_175_247_56, NOZ],
+            ],
+            2,
+            &[
+                a,
+                a,
+                a,
+                2.650_093_897_450_678_2,
+                3.015_371_142_299_211_5,
+                b,
+                b,
+                b,
+            ],
+        ));
+
+        let solvers = [
+            FilletSolver::new(1.000_000_000_000_000_1e-7, 0.003_870_572_434_734_073, 0.01),
+            FilletSolver::new(1.000_000_000_000_000_1e-7, 0.096_393_681_031_218_52, 0.01),
+        ];
+        let s1 = nl_surface(
+            &[
+                &[
+                    [0.0, 0.0, -0.000_173_903_058_274_925_46],
+                    [0.0, 0.0005, -0.000_172_803_636_844_708_77],
+                    [0.0, 0.001, 0.000_038_076_718_940_271_59],
+                ],
+                &[
+                    [
+                        0.000_333_333_333_333_333_3,
+                        0.0,
+                        -0.000_085_774_398_936_551_81,
+                    ],
+                    [
+                        0.000_333_333_333_333_333_3,
+                        0.0005,
+                        0.000_133_617_778_651_449_14,
+                    ],
+                    [
+                        0.000_333_333_333_333_333_3,
+                        0.001,
+                        -0.000_076_690_057_952_548_91,
+                    ],
+                ],
+                &[
+                    [
+                        0.000_666_666_666_666_666_6,
+                        0.0,
+                        0.000_026_802_323_645_016_252,
+                    ],
+                    [
+                        0.000_666_666_666_666_666_6,
+                        0.0005,
+                        0.000_107_681_378_539_725_81,
+                    ],
+                    [
+                        0.000_666_666_666_666_666_6,
+                        0.001,
+                        -0.000_179_497_678_246_563_82,
+                    ],
+                ],
+                &[
+                    [0.001, 0.0, -0.000_128_131_732_519_285_1],
+                    [0.001, 0.0005, 0.000_096_610_858_228_524_5],
+                    [0.001, 0.001, 0.000_057_059_943_579_616_247],
+                ],
+            ],
+            2,
+            1,
+            &[0.0, 0.0, 0.0, 0.499_833_800_950_345_1, 1.0, 1.0, 1.0],
+            &[0.0, 0.0, 0.164_652_975_445_663_43, 1.0, 1.0],
+        );
+        let s2 = nl_surface(
+            &[
+                &[
+                    [0.0, 0.0, 0.000_411_449_121_375_960_54],
+                    [0.0, 0.000_333_333_333_333_333_3, 0.000_349_270_388_934_398],
+                    [
+                        0.0,
+                        0.000_666_666_666_666_666_6,
+                        0.000_584_502_492_069_972_4,
+                    ],
+                    [0.0, 0.001, 0.000_645_357_628_003_180_3],
+                ],
+                &[
+                    [0.0005, 0.0, 0.000_374_530_506_766_174_14],
+                    [
+                        0.0005,
+                        0.000_333_333_333_333_333_3,
+                        0.000_451_442_735_062_868_35,
+                    ],
+                    [
+                        0.0005,
+                        0.000_666_666_666_666_666_6,
+                        0.000_649_504_122_310_550_2,
+                    ],
+                    [0.0005, 0.001, 0.000_674_899_707_060_231_2],
+                ],
+                &[
+                    [0.001, 0.0, 0.000_608_871_472_768_614_4],
+                    [
+                        0.001,
+                        0.000_333_333_333_333_333_3,
+                        0.000_361_322_113_274_977_2,
+                    ],
+                    [
+                        0.001,
+                        0.000_666_666_666_666_666_6,
+                        0.000_693_412_711_301_771,
+                    ],
+                    [0.001, 0.001, 0.000_463_392_478_135_597_3],
+                ],
+            ],
+            2,
+            2,
+            &[0.0, 0.0, 0.0, 1.0, 1.0, 1.0],
+            &[0.0, 0.0, 0.0, 0.242_484_947_411_334_47, 1.0, 1.0, 1.0],
+        );
+        for (i, (eu, srf)) in [(eu0, s1), (eu1, s2)].into_iter().enumerate() {
+            let id = FilletSolverId(i as u32);
+            let mut g =
+                new_solver_fillet_geom(&k, id, &solvers[i], FilletGeomType::Blends).unwrap();
+            g.set_fillet_surface(Some(srf));
+            let g = fb.add_geom(g);
+            fb.set_edgeuse_fillet_geom(eu, Some(g)).unwrap();
+        }
+
+        fb.calc_edge_fillet_int_fillet(
+            &k,
+            e,
+            None,
+            CornerLookup::default(),
+            &solvers,
+            &Brep::new(),
+        )
+        .unwrap();
+
+        let curve = fb.brep().edge(e).unwrap().curve.as_ref().unwrap();
+        let nurb = match curve.kind() {
+            CurveKind::BSpline(bs) => bs.gw_nurb().unwrap(),
+            other => panic!("not a B-spline: {other:?}"),
+        };
+        assert_eq!(nurb.knots(), &CPP_KNOTS[..]);
+        assert_eq!(nurb.cpts().len(), 3);
+        let last = nurb.cpts().last().unwrap();
+        assert_eq!([last.x, last.y, last.z], CPP_LAST_CPT);
     }
 }

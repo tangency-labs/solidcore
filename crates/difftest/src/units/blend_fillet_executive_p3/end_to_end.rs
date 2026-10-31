@@ -127,7 +127,7 @@ pub(super) enum Source {
 }
 impl Source {
     /// Source kind code and the shim's fixed-length parameter block.
-    fn wire(&self) -> (f64, [f64; ffi::SOURCE_PARAMS]) {
+    pub(super) fn wire(&self) -> (f64, [f64; ffi::SOURCE_PARAMS]) {
         let mut p = [0.0; ffi::SOURCE_PARAMS];
         let boxes = |p: &mut [f64; ffi::SOURCE_PARAMS], a: &BoxSpec, b: &BoxSpec| {
             for (slot, v) in p.iter_mut().zip(
@@ -162,7 +162,7 @@ impl Source {
             }
         }
     }
-    fn path(&self) -> Option<&str> {
+    pub(super) fn path(&self) -> Option<&str> {
         match self {
             Self::File { path } => Some(path),
             _ => None,
@@ -196,6 +196,10 @@ pub(super) struct RealSolid {
     radius: f64,
     #[serde(default)]
     radius_end: Option<f64>,
+    /// A B-spline radius law (`SmBSplineFilletLaw`) instead of `radius_end`'s linear
+    /// one; `radius` is still `SetFilletParameters`' radius (full checkpoint, box only).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    radius_law: Option<RadiusLaw>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     corner_setback: Option<CornerSetback>,
     xsect: u32,
@@ -225,6 +229,68 @@ pub(super) struct RealSolid {
     /// tangency-labs/solidcore#460: shell the filleted box (`SmApiShellBrepFull`).
     #[serde(default)]
     shell: Option<ShellAfter>,
+}
+
+/// A radius law curve for `SmBSplineCurve::CreateCanonical(dim 3, degree, (r, 0, 0)
+/// control points, unique knots with multiplicities)` and the edge map of
+/// `SmBSplineFilletLaw(pCurve, crEdgeMap)`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(super) struct RadiusLaw {
+    degree: u32,
+    /// Control-point radii (the curve's x coordinates).
+    radii: Vec<f64>,
+    /// Unique knots, strictly increasing.
+    knots: Vec<f64>,
+    /// One multiplicity per unique knot.
+    multiplicities: Vec<u32>,
+    /// The part of the law's parameter range mapped onto the edge.
+    #[serde(default = "unit_edge_map")]
+    edge_map: [f64; 2],
+}
+
+const fn unit_edge_map() -> [f64; 2] {
+    [0.0, 1.0]
+}
+
+impl RadiusLaw {
+    /// The law block of [`ffi::real_law_solid`].
+    fn wire(&self) -> Vec<f64> {
+        let mut out = vec![f64::from(self.degree), self.radii.len() as f64];
+        out.extend(&self.radii);
+        out.push(self.knots.len() as f64);
+        out.extend(&self.knots);
+        out.extend(self.multiplicities.iter().map(|m| f64::from(*m)));
+        out.extend(self.edge_map);
+        out
+    }
+
+    /// The law curve and `SmBSplineFilletLaw(pCurve, crEdgeMap)`.
+    fn law(&self) -> SolidResult<solidcore::blend::fillet_standard_solver::p1::FilletLaw> {
+        use solidcore::nurbs::b_spline_curve::p1::{
+            BSplineCurve, BSplineCurveForm, CanonicalData, KnotType,
+        };
+        let control: Vec<Vec3> = self.radii.iter().map(|r| Vec3::new(*r, 0.0, 0.0)).collect();
+        let multiplicities: Vec<usize> =
+            self.multiplicities.iter().map(|m| *m as usize).collect();
+        let curve = BSplineCurve::create_canonical(&CanonicalData {
+            dim: 3,
+            degree: self.degree as usize,
+            control_points: &control,
+            form: BSplineCurveForm::default(),
+            knot_multiplicities: &multiplicities,
+            knots: &self.knots,
+            knot_type: KnotType::default(),
+            weights: None,
+            trim: None,
+        })?;
+        let [min, max] = self.edge_map;
+        Ok(solidcore::blend::fillet_standard_solver::p1::FilletLaw::bspline(
+            curve,
+            // `SmExtent1d(dMin, dMax)` swaps reversed ends, as the shim's does.
+            &solidcore::geom::extent1d::Extent1d::from_min_max(min, max),
+        ))
+    }
 }
 
 /// Edges a case picks by geometry on the constructed box (the same owning-list order
@@ -335,15 +401,27 @@ impl RealSolid {
         if self.select.is_some() && !self.edges.is_empty() {
             return Err(HarnessError::new("select replaces edges"));
         }
-        if self.radius_end.is_some()
+        if self.radius_law.is_some()
+            && (self.radius_end.is_some()
+                || self.corner_setback.is_some()
+                || self.select.is_some()
+                || self.shell.is_some())
+        {
+            return Err(HarnessError::new(
+                "radius_law excludes radius_end, corner setback, select and shell",
+            ));
+        }
+        if (self.radius_end.is_some() || self.radius_law.is_some())
             && (self.checkpoint != Checkpoint::Full
-                || self.source.is_some()
                 || self.piecewise_merge
                 || self.curve_blend_sih.is_some())
         {
             return Err(HarnessError::new(
-                "radius_end requires the full checkpoint on a box without merge options",
+                "radius_end and radius_law require the full checkpoint without merge options",
             ));
+        }
+        if self.radius_law.is_some() && self.source.is_some() {
+            return Err(HarnessError::new("radius_law requires the box"));
         }
         if self.piecewise_merge && self.checkpoint != Checkpoint::Full {
             return Err(HarnessError::new(
@@ -359,6 +437,18 @@ impl RealSolid {
         }
         match (&self.source, self.dimensions) {
             (None, Some(_)) if !self.all_edges => Ok(()),
+            // a file's body at a checkpoint (the shim's `real_prefix_file`): selected edges
+            // and the box form's options only
+            (Some(Source::File { .. }), None)
+                if self.checkpoint != Checkpoint::Full
+                    && !self.all_edges
+                    && !self.edges.is_empty()
+                    && self.radius_end.is_none()
+                    && self.select.is_none()
+                    && self.shell.is_none() =>
+            {
+                Ok(())
+            }
             (Some(_), None)
                 if self.checkpoint == Checkpoint::Full
                     && self.all_edges == self.edges.is_empty() =>
@@ -375,8 +465,17 @@ impl RealSolid {
             return ffi::validate_real_solid_setback(&self.wire(), setback.wire())
                 .map_err(|e| HarnessError::new(e.to_string()));
         }
+        if let Some(law) = &self.radius_law {
+            return ffi::validate_real_law_solid(&self.wire(), &law.wire())
+                .map_err(|e| HarnessError::new(e.to_string()));
+        }
         match (&self.source, self.radius_end) {
-            (Some(source), _) => {
+            (Some(source), Some(end)) => ffi::validate_real_variable_source(
+                &self.source_wire(source),
+                source.path().is_some(),
+                end,
+            ),
+            (Some(source), None) => {
                 ffi::validate_real_source(&self.source_wire(source), source.path().is_some())
             }
             (None, Some(end)) => ffi::validate_real_variable_solid(&self.wire(), end),
@@ -434,7 +533,7 @@ pub(super) fn take_section<'a>(values: &mut &'a [f64]) -> Result<&'a [f64], Harn
     *values = rest;
     Ok(section)
 }
-fn output(mut values: &[f64]) -> Result<Output, HarnessError> {
+pub(super) fn output(mut values: &[f64]) -> Result<Output, HarnessError> {
     let mut out = Output::new();
     out.values.insert(
         "selected_edge_before".into(),
@@ -527,6 +626,16 @@ pub(super) fn cpp(input: &RealSolid) -> Result<Output, HarnessError> {
             ffi::curve_sih_solid(step_back, &input.wire())
         }));
     }
+    if let (Some(source), Some(end)) = (&input.source, input.radius_end) {
+        return source_output(super::fresh_cpp(|| {
+            ffi::real_variable_source(&input.source_wire(source), source.path(), end)
+        }));
+    }
+    if let (Some(Source::File { path }), true) =
+        (&input.source, input.checkpoint != Checkpoint::Full)
+    {
+        return prefix::cpp_file(input, path);
+    }
     if let Some(source) = &input.source {
         let run = if input.piecewise_merge {
             ffi::piecewise_source
@@ -539,6 +648,9 @@ pub(super) fn cpp(input: &RealSolid) -> Result<Output, HarnessError> {
     }
     if input.checkpoint != Checkpoint::Full {
         return prefix::cpp(input);
+    }
+    if let Some(law) = &input.radius_law {
+        return solid_output(super::fresh_cpp(|| ffi::real_law_solid(&input.wire(), &law.wire())));
     }
     if let Some(end) = input.radius_end {
         return solid_output(super::fresh_cpp(|| ffi::real_variable_solid(&input.wire(), end)));
@@ -560,12 +672,12 @@ fn point(out: &mut Vec<f64>, p: Vec3) {
 }
 pub(super) fn status(error: SolidError) -> SolidResult<f64> {
     match error {
-        SolidError::InvalidInput { .. } => Ok(1007.0),
+        SolidError::InvalidInput { .. } | SolidError::PortInvariant { .. } => Ok(1007.0),
         SolidError::Upstream { code, .. } => Ok(f64::from(code)),
         error => Err(error),
     }
 }
-fn sample(out: &mut Vec<f64>, value: SolidResult<Vec3>) -> SolidResult<()> {
+pub(super) fn sample(out: &mut Vec<f64>, value: SolidResult<Vec3>) -> SolidResult<()> {
     match value {
         Ok(p) => {
             out.push(0.0);
@@ -629,26 +741,36 @@ pub(super) fn topology(b: &Brep, out: &mut Vec<f64>) -> SolidResult<()> {
 /// The Rust body of `input`'s source (the box by default).
 fn build(k: &mut Kernel, input: &RealSolid) -> Result<SolidResult<Brep>, HarnessError> {
     use solidcore::primitive::api_primitives as primitives;
-    let boxed = |k: &mut Kernel, b: &BoxSpec| {
-        let [x, y, z] = b.size;
-        primitives::create_box(k, Vec3::from(b.origin), x, y, z)
-    };
     Ok(match &input.source {
         None => {
             let [x, y, z] = input.dimensions.unwrap_or_default();
             primitives::create_box(k, Vec3::ZERO, x, y, z)
         }
-        Some(Source::File { path }) => crate::own_reader::read_file(k, path)?,
-        Some(Source::Cylinder {
+        Some(source) => build_source(k, source)?,
+    })
+}
+/// The Rust body of a non-box `source` (the shim's `build_source`).
+pub(super) fn build_source(
+    k: &mut Kernel,
+    source: &Source,
+) -> Result<SolidResult<Brep>, HarnessError> {
+    use solidcore::primitive::api_primitives as primitives;
+    let boxed = |k: &mut Kernel, b: &BoxSpec| {
+        let [x, y, z] = b.size;
+        primitives::create_box(k, Vec3::from(b.origin), x, y, z)
+    };
+    Ok(match source {
+        Source::File { path } => crate::own_reader::read_file(k, path)?,
+        Source::Cylinder {
             origin,
             radius,
             height,
-        }) => primitives::create_cylinder(k, Vec3::from(*origin), *radius, *height),
-        Some(Source::BoxUnion { a, b }) => boxed(k, a).and_then(|first| {
+        } => primitives::create_cylinder(k, Vec3::from(*origin), *radius, *height),
+        Source::BoxUnion { a, b } => boxed(k, a).and_then(|first| {
             let second = boxed(k, b)?;
             solidcore::boolean::api_brep::boolean_union(k, first, second)
         }),
-        Some(Source::BoxDifference { a, b }) => boxed(k, a).and_then(|first| {
+        Source::BoxDifference { a, b } => boxed(k, a).and_then(|first| {
             let second = boxed(k, b)?;
             solidcore::boolean::api_brep::boolean_difference(k, first, second)
         }),
@@ -809,12 +931,15 @@ fn setback_fillet_edges(
     }
     // SmApiSetBevelCorners ignores the ordinary StitchAndOrient return status.
     match stitch_and_orient(k, body, &StitchAndOrientOptions::default()) {
-        Ok(()) | Err(SolidError::Upstream { .. } | SolidError::InvalidInput { .. }) => Ok(()),
+        Ok(()) | Err(SolidError::Upstream { .. } | SolidError::InvalidInput { .. } | SolidError::PortInvariant { .. }) => Ok(()),
         Err(error) => Err(error.into()),
     }
 }
 
 fn apply(k: &mut Kernel, body: &mut Brep, edges: &[EdgeId], input: &RealSolid) -> SolidResult<()> {
+    if let Some(law) = &input.radius_law {
+        return law_fillet_edges(k, body, edges, input, law.law()?);
+    }
     if let Some(end) = input.radius_end {
         return solidcore::blend::fillet_executive::api::variable_radius_fillet(
             k,
@@ -877,6 +1002,35 @@ fn piecewise_fillet_edges(
 /// `SmMakeCurveBlendSIH(step_back)` installed on the executive before
 /// `SetDoGlobalMerge(TRUE)`, `SetFilletParameters`, `DoFillet` and
 /// `StitchAndOrient` with its defaults.
+/// The shim's `law_fillet_edges`: `SmApiVariableRadiusFillet`'s body with an
+/// `SmBSplineFilletLaw` (no radius-support check; `StitchAndOrient`'s status ignored).
+fn law_fillet_edges(
+    k: &mut Kernel,
+    body: &mut Brep,
+    edges: &[EdgeId],
+    input: &RealSolid,
+    law: solidcore::blend::fillet_standard_solver::p1::FilletLaw,
+) -> SolidResult<()> {
+    use solidcore::blend::fillet_executive::session::FilletSession;
+    use solidcore::topology::brep::p5::{stitch_and_orient, StitchAndOrientOptions};
+    {
+        let mut session = FilletSession::new(k, body)?;
+        session.prepare_variable_radius_edges(
+            k,
+            edges,
+            input.radius,
+            law,
+            input.xsect,
+            input.continuity,
+        )?;
+        session.do_fillet(k)?;
+    }
+    match stitch_and_orient(k, body, &StitchAndOrientOptions::default()) {
+        Ok(()) | Err(SolidError::Upstream { .. } | SolidError::InvalidInput { .. } | SolidError::PortInvariant { .. }) => Ok(()),
+        Err(error) => Err(error),
+    }
+}
+
 fn curve_sih_fillet_edges(
     k: &mut Kernel,
     body: &mut Brep,
@@ -1596,6 +1750,73 @@ mod tests {
         input.radius_end = Some(f64::NAN);
         assert!(super::cpp(&input).is_err());
         assert!(super::rust(&input).is_err());
+    }
+
+    #[test]
+    fn variable_radius_on_a_source_validates_its_endpoint_and_thumbweight() {
+        let mut input: super::RealSolid = serde_json::from_value(serde_json::json!({
+            "source": { "kind": "cylinder", "origin": [0,0,0], "radius": 10, "height": 20 },
+            "radius": 10, "radius_end": 10,
+            "xsect": 1, "continuity": 1, "thumbweight": 1, "edges": [1]
+        }))
+        .expect("valid variable source fixture schema");
+        assert!(input.validate().is_ok());
+        input.thumbweight = 1.5;
+        assert!(input.validate().is_err());
+        input.thumbweight = 1.0;
+        input.radius_end = Some(f64::NAN);
+        assert!(input.validate().is_err());
+    }
+
+    fn law_input() -> super::RealSolid {
+        serde_json::from_value(serde_json::json!({
+            "dimensions": [20,20,20], "radius": 4,
+            "radius_law": { "degree": 1, "radii": [4,2,4], "knots": [0,0.5,1],
+                            "multiplicities": [2,1,2] },
+            "xsect": 1, "continuity": 1, "thumbweight": 1, "edges": [0]
+        }))
+        .expect("valid law fixture schema")
+    }
+
+    #[test]
+    fn radius_law_wire_and_form() {
+        let mut input = law_input();
+        let law = input.radius_law.clone().expect("law");
+        assert_eq!(
+            law.wire(),
+            [1.0, 3.0, 4.0, 2.0, 4.0, 3.0, 0.0, 0.5, 1.0, 2.0, 1.0, 2.0, 0.0, 1.0]
+        );
+        assert!(input.validate().is_ok());
+        input.radius_end = Some(2.0);
+        assert!(input.validate().is_err());
+        input.radius_end = None;
+        input.checkpoint = super::Checkpoint::IntermediateFaces;
+        assert!(input.validate().is_err());
+        input.checkpoint = super::Checkpoint::Full;
+        input.thumbweight = 1.5;
+        assert!(input.validate().is_err());
+    }
+
+    #[test]
+    fn radius_law_rejects_malformed_curves() {
+        let set = |f: &dyn Fn(&mut super::RadiusLaw)| {
+            let mut input = law_input();
+            f(input.radius_law.as_mut().expect("law"));
+            input
+        };
+        for input in [
+            set(&|law| law.multiplicities = vec![2, 2, 2]),
+            set(&|law| law.multiplicities = vec![1, 1, 2]),
+            set(&|law| law.knots = vec![0.0, 0.5, 0.5]),
+            set(&|law| law.degree = 0),
+            set(&|law| law.degree = 4),
+            set(&|law| law.radii[1] = f64::NAN),
+            set(&|law| law.edge_map = [0.0, f64::INFINITY]),
+        ] {
+            assert!(input.validate().is_err(), "{input:?}");
+            assert!(super::cpp(&input).is_err());
+            assert!(super::rust(&input).is_err());
+        }
     }
 
     #[test]

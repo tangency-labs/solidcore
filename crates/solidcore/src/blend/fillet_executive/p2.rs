@@ -6,18 +6,20 @@
 //!
 //! | Rust | Upstream |
 //! |------|----------|
-//! | [`FilletExecutive::set_fillet_parameters`], [`FilletParameters`] | `SmFilletExecutive::SetFilletParameters` (edge pointers, per-edge parameters) |
+//! | [`FilletExecutive::set_fillet_parameters`], [`FilletParameters`] | `SmFilletExecutive::SetFilletParameters` (edge pointers, per-edge parameters; the fork's `pOptSecondRadii`, `f653ac9`) |
 //! | `check_edges_are_in_brep` (private) | `SmFilletExecutive::CheckEdgesAreInBrep` |
+//! | [`FilletParametersAccess::parameters_split_blended_vertex_fans`] | the fork's `SmFilletExecutive::SplitBlendedVertexFans` (`e418750`, WR-665; with `fixes.fillet_corner_per_vertex_fan`) |
 //! | [`surface_surface_fillet`], [`SurfaceFilletOptions`] | `SmFilletExecutive::SurfaceSurfaceFillet` |
 //! | [`FilletExecutive::do_surface_filleting`] | `SmFilletExecutive::DoSurfaceFilleting` |
 //! | [`FilletExecutive::set_fillet_brep_edge_map`] | `SmFilletExecutive::SetFilletBrepEdgeMap` |
-//! | [`FilletExecutive::process_smooth_edge_sequences`], [`FilletExecutive::process_smooth_edge_sequences_with`] | `SmFilletExecutive::ProcessSmoothEdgeSequences` |
+//! | [`FilletExecutive::process_smooth_edge_sequences`], `FilletExecutive::process_smooth_edge_sequences_with` | `SmFilletExecutive::ProcessSmoothEdgeSequences` |
 //! | [`FilletExecutive::collect_tangent_edge_sequence`] | `SmFilletExecutive::CollectTangentEdgeSequence` |
 //! | [`TemporaryRadiusChange::new`], [`TemporaryRadiusChange::revert`], [`with_temporary_radius_change`] | `SmTemporaryRadiusChange` (constructor, destructor) |
 //! | [`TemporaryRadiusChange::set_up`] | `SmTemporaryRadiusChange::SetUp` |
 //! | `revert_change` (private) | `SmTemporaryRadiusChange::Revert` |
 //! | [`FilletLaw::linear`] | `SmLinearFilletLaw::SmLinearFilletLaw` |
 //! | [`FilletLaw::bspline_elliptical`] | `SmBSplineFilletLaw::SmBSplineFilletLaw` (elliptical blend) |
+//! | [`FilletLaw::bspline`] | `SmBSplineFilletLaw::SmBSplineFilletLaw(SmBSplineCurve*, const SmExtent1d&)` |
 //!
 //! Deviations:
 //! - **Object model.** As in `p3`, solvers, corners, fillet geometry, surface
@@ -50,7 +52,9 @@
 //!   plus one step, past which the port returns [`SolidError::InvalidInput`].
 //! - **Law evaluation status.** `SmTemporaryRadiusChange::SetUp` ignores the status of
 //!   `SmFilletLaw::Evaluate` and reads its first value, uninitialised after a failure;
-//!   the port propagates the error.
+//!   the port propagates the error before reading that value (UB-252). Constructors
+//!   retain pinned status handling by default; `new_with_fixes` and the matching
+//!   scope helper opt into reporting setup errors before entering the body (#458).
 //! - The upstream debug drawing (`SM_GFX_CODE`) is omitted.
 //! - Calls into units that are not ported return [`SolidError::Unported`] through the
 //!   adapter defaults of [`ExecutiveAccess`].
@@ -226,6 +230,23 @@ impl FilletLaw {
         law
     }
 
+    /// `SmBSplineFilletLaw(pCurve, crEdgeMap)`: the radius is the x coordinate of
+    /// `law_curve` (which the law takes over), and `edge_map` is the part of the
+    /// curve's parameter range that maps onto the edge; `[0, 1]` when it is shorter
+    /// than `SM_EFF_ZERO`.
+    #[must_use]
+    pub fn bspline(law_curve: BSplineCurve, edge_map: &Extent1d) -> Self {
+        let mut law = Self::new(FilletLawKind::BSpline {
+            law_curve,
+            extended_law: None,
+        });
+        law.edge_map = *edge_map;
+        if law.edge_map.length() < EFF_ZERO {
+            law.edge_map = Extent1d::from_raw(0.0, 1.0);
+        }
+        law
+    }
+
     /// `SmBSplineFilletLaw(crContext, dStartRadius, dEndRadius, dOuterRadius,
     /// dAngleSpan, dStartDeriv, dEndDeriv, pOptEdgeMap)`: an elliptical cosine/sine
     /// blend from `start_radius` to `end_radius` under an arc of `outer_radius`
@@ -318,7 +339,8 @@ fn law_evaluate(
 /// `SurfaceSurfaceFillet` applies right after construction.
 #[derive(Debug, Clone, Copy)]
 pub enum SolverSpec<'a, O> {
-    /// `SmConstantRadiusFS(ctx, dApproxTol, dAngTolRad, dTanTolRad, dRadius, pEU)`.
+    /// `SmConstantRadiusFS(ctx, dApproxTol, dAngTolRad, dTanTolRad, dRadius, pEU,
+    /// pdOptSecondRadius)`.
     ConstantRadius {
         /// `dApproxTol`.
         approx_tol: f64,
@@ -330,6 +352,9 @@ pub enum SolverSpec<'a, O> {
         radius: f64,
         /// `pEU`.
         edgeuse: O,
+        /// `pdOptSecondRadius`: the offset of the second edge use's surface (`None` for
+        /// null, the upstream call; the fork's `pOptSecondRadii` entry, f653ac9).
+        second_radius: Option<f64>,
     },
     /// `SmConstantDistanceFS(ctx, dApproxTol, dAngTolRad, dTanTolRad, dRadius, pEU)`.
     ConstantDistance {
@@ -433,6 +458,24 @@ pub trait FilletParametersAccess<O: ClassObject + SolutionObject + Ord>:
     /// # Errors
     /// Object resolution failures.
     fn parameters_edge_is_live(&self, brep: O, edge: O) -> Result<bool>;
+    /// The fork's `SplitBlendedVertexFans` (tangency-labs/smlib `e418750`, WR-665; run only
+    /// with `fixes.fillet_corner_per_vertex_fan`): each filleted edge's start and end
+    /// vertex, once each and not one made here, split into one vertex per fan of faces
+    /// (`SmBrep::SplitVertexByFans`); the points of the vertices split, in order, for
+    /// `JoinBlendedVertexFans`. Only an adapter over a live target can split; the default
+    /// splits nothing.
+    ///
+    /// # Errors
+    /// Those of the split.
+    fn parameters_split_blended_vertex_fans(
+        &mut self,
+        k: &Kernel,
+        brep: O,
+        edges: &[O],
+    ) -> Result<Vec<Point3>> {
+        let _ = (k, brep, edges);
+        Ok(Vec::new())
+    }
 }
 
 impl<O, A> FilletParametersAccess<O> for A
@@ -496,6 +539,11 @@ pub struct FilletParameters<'a, O> {
     pub continuity: u32,
     /// `dThumbweight` (header default 1.0).
     pub thumbweight: f64,
+    /// The fork's `pOptSecondRadii` (tangency-labs/smlib `f653ac9`; header default
+    /// `NULL`, here `None`): one entry per edge, the offset of each constant-radius
+    /// solver's second edge use's surface (`radius_values` gives the first's), for a
+    /// chamfer with unequal setbacks. Read only for `SM_FS_CONST_RADIUS` edges.
+    pub second_radii: Option<&'a [f64]>,
 }
 
 /// `SetFilletParameters`' factor from an edge's tolerance to its solver's
@@ -583,6 +631,14 @@ impl<O: ClassObject + SolutionObject + Ord> FilletExecutive<O> {
             trimming: true,
             classification: true,
         };
+        // the fork's (WR-631): no cliff overflow, no open ends yet
+        self.cliff_overflow = false;
+        self.open_ends.clear();
+        // the fork's (WR-634): no overflow edges yet, no mitred edges (9ba2b12)
+        self.overflow_edges.clear();
+        self.mitred_edges.clear();
+        // the fork's (WR-665, e418750): no fan split points yet
+        self.fan_split_points.clear();
 
         let num_filleted_edges = params.edges.len();
         if num_filleted_edges < 1 {
@@ -590,6 +646,12 @@ impl<O: ClassObject + SolutionObject + Ord> FilletExecutive<O> {
         }
 
         self.check_edges_are_in_brep(access, params.brep, params.edges)?;
+        // the fork's SplitBlendedVertexFans (WR-665, tangency-labs/smlib@e418750)
+        if k.fixes.fillet_corner_per_vertex_fan {
+            let brep = params.brep.ok_or_else(|| null!("null B-rep"))?;
+            let points = access.parameters_split_blended_vertex_fans(k, brep, params.edges)?;
+            self.fan_split_points.extend(points);
+        }
 
         let single_xsect_type = single(params.xsect_types.len(), num_filleted_edges);
         let single_radius_type = single(params.radius_types.len(), num_filleted_edges);
@@ -644,6 +706,7 @@ impl<O: ClassObject + SolutionObject + Ord> FilletExecutive<O> {
             .ok_or_else(|| first("no radius"))?;
         let mut generator: Option<O> = None;
 
+        let at_thirds = self.blend_curve_at_thirds;
         let generator_spec = |kind: FilletSurfaceGeneratorType, circular_tol: f64| match kind {
             FilletSurfaceGeneratorType::Linear => Some(FilletSurfaceGenerator::Linear),
             FilletSurfaceGeneratorType::Circular => Some(FilletSurfaceGenerator::circular(
@@ -652,10 +715,13 @@ impl<O: ClassObject + SolutionObject + Ord> FilletExecutive<O> {
                 false,
                 false,
             )),
-            FilletSurfaceGeneratorType::BlendCurve => Some(FilletSurfaceGenerator::blend_curve(
-                params.thumbweight,
-                params.continuity,
-            )),
+            FilletSurfaceGeneratorType::BlendCurve => {
+                Some(FilletSurfaceGenerator::blend_curve_at_thirds(
+                    params.thumbweight,
+                    params.continuity,
+                    at_thirds,
+                ))
+            }
             FilletSurfaceGeneratorType::Unknown => None,
         };
 
@@ -705,13 +771,28 @@ impl<O: ClassObject + SolutionObject + Ord> FilletExecutive<O> {
             let approx_tol = TOL_FACTOR * access.parameters_edge_tolerance(edge)?;
 
             let spec = match radius_type {
-                FilletSolverType::ConstRadius => Some(SolverSpec::ConstantRadius {
-                    approx_tol,
-                    ang_tol_rad,
-                    tan_tol_rad,
-                    radius,
-                    edgeuse: eu,
-                }),
+                FilletSolverType::ConstRadius => {
+                    // the fork's pOptSecondRadii (tangency-labs/smlib f653ac9)
+                    let mut second_radius = None;
+                    if let Some(second_radii) = params.second_radii {
+                        if second_radii.len() != num_filleted_edges {
+                            self.error.note_error(
+                                FilletErrorType::InvalidInput,
+                                Some("SetFilletParameters: second radii size mismatch."),
+                            );
+                            return Err(status(SM_ERR_INVALID_INPUT));
+                        }
+                        second_radius = second_radii.get(ii).copied();
+                    }
+                    Some(SolverSpec::ConstantRadius {
+                        approx_tol,
+                        ang_tol_rad,
+                        tan_tol_rad,
+                        radius,
+                        edgeuse: eu,
+                        second_radius,
+                    })
+                }
                 FilletSolverType::ConstDist => Some(SolverSpec::ConstantDistance {
                     approx_tol,
                     ang_tol_rad,
@@ -1201,8 +1282,14 @@ impl<O: ClassObject + SolutionObject + Ord> FilletExecutive<O> {
 
             // Traverse forwards.
             if let Some(edge) = start_edge {
+                // fork 873c7c9 (SolidCraft change): GetFilletSolverOfEdge returns NULL
+                // when GetEdgeuses fails
+                let pass_on = k.fixes.fillet_statuses_pass_on;
                 fs = self
-                    .fillet_solver_of_edge_with(edge, |e| access.smooth_edge_edgeuses(e))?
+                    .fillet_solver_of_edge_with(edge, |e| match access.smooth_edge_edgeuses(e) {
+                        Err(err) if pass_on && !err.is_unported() => Ok(Vec::new()),
+                        r => r,
+                    })?
                     .ok_or_else(|| null!("no solver of edge"))?;
             }
 
@@ -1496,12 +1583,36 @@ pub struct TemporaryRadiusChange<O> {
 
 impl<O: ClassObject + SolutionObject + Ord> TemporaryRadiusChange<O> {
     /// The constructor: records the solver, rail and side edge use and runs
-    /// [`TemporaryRadiusChange::set_up`], whose status it ignores.
+    /// [`TemporaryRadiusChange::set_up`], ignoring ordinary statuses as upstream.
+    /// Use [`Self::new_with_fixes`] to opt into reporting setup failure.
     ///
     /// # Errors
     ///
-    /// [`SolidError::Unported`] from the set-up.
+    /// Unported dependencies or preparation requests from the setup.
     pub fn new<A>(access: &mut A, fs: O, rail_index: usize, side_eu: O) -> Result<Self>
+    where
+        A: ExecutiveAccess<O> + ?Sized,
+    {
+        Self::new_with_fixes(
+            access,
+            fs,
+            rail_index,
+            side_eu,
+            &crate::kernel::UpstreamFixes::default(),
+        )
+    }
+
+    /// Constructs a radius change with the caller's opt-in upstream policy.
+    /// `temporary_radius_setup_errors` reports a failed setup before the caller
+    /// starts filleting; the original constructor keeps its default call shape.
+    /// Unported dependencies still propagate under either policy.
+    pub fn new_with_fixes<A>(
+        access: &mut A,
+        fs: O,
+        rail_index: usize,
+        side_eu: O,
+        fixes: &crate::kernel::UpstreamFixes,
+    ) -> Result<Self>
     where
         A: ExecutiveAccess<O> + ?Sized,
     {
@@ -1513,7 +1624,14 @@ impl<O: ClassObject + SolutionObject + Ord> TemporaryRadiusChange<O> {
             fs,
             rail_idx: rail_index,
         };
-        ignored(change.set_up(access))?;
+        // fork 873c7c9 SERs inside SetUp (its constructor still cannot report, so the
+        // status reaches the caller only with temporary_radius_setup_errors)
+        let setup = change.set_up_with(access, fixes.fillet_statuses_pass_on);
+        if fixes.temporary_radius_setup_errors {
+            setup?;
+        } else {
+            ignored(setup)?;
+        }
         Ok(change)
     }
 
@@ -1527,6 +1645,15 @@ impl<O: ClassObject + SolutionObject + Ord> TemporaryRadiusChange<O> {
     /// `SM_ERR_NULL_POINTER` for a missing edge use or owning edge; those of the law
     /// evaluation (`SmFilletLaw::Evaluate`) and the constant law curve.
     pub fn set_up<A>(&mut self, access: &mut A) -> Result<()>
+    where
+        A: ExecutiveAccess<O> + ?Sized,
+    {
+        self.set_up_with(access, false)
+    }
+
+    /// [`Self::set_up`]; with `pass_on` the constant law curve's re-parameterization
+    /// status is returned (fork 873c7c9 `SER`) instead of ignored.
+    fn set_up_with<A>(&mut self, access: &mut A, pass_on: bool) -> Result<()>
     where
         A: ExecutiveAccess<O> + ?Sized,
     {
@@ -1620,7 +1747,11 @@ impl<O: ClassObject + SolutionObject + Ord> TemporaryRadiusChange<O> {
                 Point3::new(end_rad, 1.0, 0.0),
                 Point3::new(end_rad, 2.0, 0.0),
             )?;
-            ignored(const_bsp.edit_parameterization(&unit_ivl))?;
+            // fork 873c7c9 passes this on (SER)
+            ignored(crate::error::passed_on(
+                const_bsp.edit_parameterization(&unit_ivl),
+                pass_on,
+            )?)?;
 
             let vrfs = access
                 .variable_radius_solver_mut(self.fs)?
@@ -1717,7 +1848,32 @@ where
     O: ClassObject + SolutionObject + Ord,
     A: ExecutiveAccess<O> + ?Sized,
 {
-    let change = TemporaryRadiusChange::new(access, fs, rail_index, side_eu)?;
+    with_temporary_radius_change_with_fixes(
+        access,
+        fs,
+        rail_index,
+        side_eu,
+        &crate::kernel::UpstreamFixes::default(),
+        body,
+    )
+}
+
+/// Runs a temporary radius scope using the caller's upstream fix policy.
+/// With `temporary_radius_setup_errors`, a setup failure returns before `body`.
+/// A completed setup is reverted even when `body` fails.
+pub fn with_temporary_radius_change_with_fixes<O, A, T>(
+    access: &mut A,
+    fs: O,
+    rail_index: usize,
+    side_eu: O,
+    fixes: &crate::kernel::UpstreamFixes,
+    body: impl FnOnce(&mut A) -> Result<T>,
+) -> Result<T>
+where
+    O: ClassObject + SolutionObject + Ord,
+    A: ExecutiveAccess<O> + ?Sized,
+{
+    let change = TemporaryRadiusChange::new_with_fixes(access, fs, rail_index, side_eu, fixes)?;
     let result = body(access);
     let reverted = change.revert(access);
     match result {
@@ -1921,6 +2077,31 @@ mod tests {
         assert_eq!((law.edge_map.min(), law.edge_map.max()), (0.25, 0.75));
         let short = Extent1d::from_min_max(0.5, 0.5);
         let law = FilletLaw::linear(1.0, 2.0, Some(&short));
+        assert_eq!((law.edge_map.min(), law.edge_map.max()), (0.0, 1.0));
+    }
+
+    #[test]
+    fn bspline_law_keeps_curve_and_edge_map() {
+        let curve = || {
+            BSplineCurve::create_line_segment(
+                3,
+                Point3::new(2.0, 0.0, 0.0),
+                Point3::new(4.0, 0.0, 0.0),
+            )
+            .unwrap()
+        };
+        let map = Extent1d::from_min_max(0.25, 0.75);
+        let law = FilletLaw::bspline(curve(), &map);
+        assert!(matches!(
+            law.kind,
+            FilletLawKind::BSpline {
+                extended_law: None,
+                ..
+            }
+        ));
+        assert_eq!((law.edge_map.min(), law.edge_map.max()), (0.25, 0.75));
+        let short = Extent1d::from_min_max(0.5, 0.5);
+        let law = FilletLaw::bspline(curve(), &short);
         assert_eq!((law.edge_map.min(), law.edge_map.max()), (0.0, 1.0));
     }
 

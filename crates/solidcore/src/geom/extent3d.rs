@@ -39,6 +39,7 @@
 //! | [`Extent3d::planes`]                   | `GetPlanes`                                    |
 //! | [`Extent3d::x_length`] .. [`Extent3d::z_length`] | `XLength`, `YLength`, `ZLength`      |
 //! | [`Extent3d::sphere_bound`]             | `ComputeSphereBound`                           |
+//! | [`Extent3d::distance_to_plane`]        | `DistanceToPlane`                              |
 //! | [`Extent3d::cone_bound_to`]            | `ComputeConeBoundTo`                           |
 //! | [`Extent3d::are_disjoint`]             | `AreDisjoint`                                  |
 //! | [`Extent3d::is_contained_by`]          | `IsContainedBy`                                |
@@ -54,8 +55,8 @@
 //! | [`Extent3d::u_interval`], [`Extent3d::v_interval`], [`Extent3d::w_interval`] | `GetUInterval`, `GetVInterval`, `GetWInterval` |
 //! | [`Extent3d::set_u_interval`], [`Extent3d::set_v_interval`] | `SetUInterval`, `SetVInterval` |
 //! | [`Extent3d::approximate_unbounded`], [`Extent3d::approximate_unbounded_expanded`] | `ApproximateUnbounded` |
-//! | [`Extent3d::from_pseudo_box`]          | `SmExtent3d(const SmPseudoBox&)`               |
-//! | [`Extent3d::circumscribe`]             | `Circumscribe`                                 |
+//! | [`Extent3d::from_pseudo_box`], [`Extent3d::from_pseudo_box_with`] | `SmExtent3d(const SmPseudoBox&)` |
+//! | [`Extent3d::circumscribe`], [`Extent3d::circumscribe_with`] | `Circumscribe`                       |
 //! | [`BoundaryType`]                       | `SmBoundaryType` (`SmTypes.h`)                 |
 //!
 //! Deviations:
@@ -77,22 +78,25 @@
 //! - `SM_ASSERT*` debug checks are not ported (they do not change results).
 //! - Upstream bug kept: `ContainsLineSeg3d` returns true when *either* end point is
 //!   inside (it ORs the two tests). See `plan/findings.md`.
-//! - Upstream quirk kept: `Circumscribe` of an axis-aligned pseudo box reads the
-//!   `IsAxisAligned` map (basis -> axis) as if it were axis -> basis, so a basis that is
-//!   a non-involutive permutation of the axes (e.g. `y, z, x`) gets its intervals on the
-//!   wrong axes. See `plan/findings.md`.
+//! - Upstream quirk kept by default: `Circumscribe` of an axis-aligned pseudo box
+//!   reads the `IsAxisAligned` map (basis -> axis) as if it were axis -> basis, so a
+//!   basis that is a non-involutive permutation of the axes (e.g. `y, z, x`) gets its
+//!   intervals on the wrong axes. [`Extent3d::circumscribe_with`] reads it by basis
+//!   behind `Kernel::fixes.circumscribe_axis_map_by_basis` (WR-5;
+//!   `plan/upstream-issues/WR-5--addendum-2026-10-31-opt-in-axis-map-by-basis.md`).
 
 use crate::error::{Result, SolidError};
 use crate::geom::extent1d::Extent1d;
 use crate::geom::pseudo_box::PseudoBox;
 use crate::geom::vector3d::{asin, sqrt};
+use crate::kernel::Kernel;
 use crate::math::{
     is_infinite_param, max2, max3, min2, min3, Point3, Vec3, BIG_DOUBLE, EFF_ZERO, EFF_ZERO_SQ,
     INFINITE_PARAMETER, PI, UNDEF_DOUBLE,
 };
 
-/// Upstream status `SM_ERR`.
-const SM_ERR: i32 = 1001;
+// Upstream status `SM_ERR`.
+use crate::error::SM_ERR;
 
 /// Classification of one interval of an extent (`SmBoundaryType`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -323,36 +327,71 @@ impl Extent3d {
         }
     }
 
-    /// The box circumscribing `pb` (`SmExtent3d(const SmPseudoBox&)`); see
-    /// [`Extent3d::circumscribe`].
+    /// The box circumscribing `pb` with a default kernel
+    /// (`SmExtent3d(const SmPseudoBox&)`); see [`Extent3d::from_pseudo_box_with`].
     #[must_use]
     pub fn from_pseudo_box(pb: &PseudoBox) -> Self {
+        Self::from_pseudo_box_with(pb, &Kernel::default())
+    }
+
+    /// The box circumscribing `pb` with `k`'s opt-in fixes
+    /// (`SmExtent3d(const SmPseudoBox&)`); see [`Extent3d::circumscribe_with`].
+    #[must_use]
+    pub fn from_pseudo_box_with(pb: &PseudoBox, k: &Kernel) -> Self {
         let mut e = Self::new();
-        e.circumscribe(pb);
+        e.circumscribe_with(pb, k);
         e
+    }
+
+    /// Becomes the box circumscribing `pb` with a default kernel (`Circumscribe`); see
+    /// [`Extent3d::circumscribe_with`].
+    pub fn circumscribe(&mut self, pb: &PseudoBox) {
+        self.circumscribe_with(pb, &Kernel::default());
     }
 
     /// Becomes the box circumscribing `pb` (`Circumscribe`): the same size for an
     /// axis-aligned pseudo box (copied from its intervals, so partially unbounded
     /// pseudo boxes stay partially unbounded), fully unbounded for an unaligned
-    /// unbounded one, else the bounding box of its corners.
-    pub fn circumscribe(&mut self, pb: &PseudoBox) {
+    /// unbounded one, else the bounding box of its corners. With
+    /// `Kernel::fixes.circumscribe_axis_map_by_basis` the axis-aligned map is read by
+    /// basis (WR-5); otherwise its entries are read as bases, as upstream does.
+    pub fn circumscribe_with(&mut self, pb: &PseudoBox, k: &Kernel) {
         // low work - axis aligned PseudoBox
         if let Some(axis_map) = pb.is_axis_aligned() {
-            for (ii, &m) in axis_map.iter().enumerate() {
-                // upstream indexes the basis with the axis map entry of axis `ii`
-                let lx = (m.unsigned_abs() as usize).wrapping_sub(1);
-                let ivl = pb.interval(lx).unwrap_or_default();
-                let (lo, hi) = if m > 0 {
-                    (ivl.min(), ivl.max())
-                } else {
-                    (-ivl.max(), -ivl.min())
-                };
-                if let Ok(c) = self.min.component_mut(ii) {
-                    *c = lo;
+            if k.fixes.circumscribe_axis_map_by_basis {
+                // Basis `ii` is parallel to axis `|axis_map[ii]| - 1`: its interval
+                // belongs on that axis, negated when the basis is reversed.
+                for (ii, &m) in axis_map.iter().enumerate() {
+                    let ivl = pb.interval(ii).unwrap_or_default();
+                    let (lo, hi) = if m < 0 {
+                        (-ivl.max(), -ivl.min())
+                    } else {
+                        (ivl.min(), ivl.max())
+                    };
+                    let axis = (m.unsigned_abs() as usize).wrapping_sub(1);
+                    if let Ok(c) = self.min.component_mut(axis) {
+                        *c = lo;
+                    }
+                    if let Ok(c) = self.max.component_mut(axis) {
+                        *c = hi;
+                    }
                 }
-                if let Ok(c) = self.max.component_mut(ii) {
-                    *c = hi;
+            } else {
+                for (ii, &m) in axis_map.iter().enumerate() {
+                    // upstream indexes the basis with the axis map entry of axis `ii`
+                    let lx = (m.unsigned_abs() as usize).wrapping_sub(1);
+                    let ivl = pb.interval(lx).unwrap_or_default();
+                    let (lo, hi) = if m > 0 {
+                        (ivl.min(), ivl.max())
+                    } else {
+                        (-ivl.max(), -ivl.min())
+                    };
+                    if let Ok(c) = self.min.component_mut(ii) {
+                        *c = lo;
+                    }
+                    if let Ok(c) = self.max.component_mut(ii) {
+                        *c = hi;
+                    }
                 }
             }
             return;
@@ -848,6 +887,35 @@ impl Extent3d {
     #[must_use]
     pub fn z_length(&self) -> f64 {
         self.max.z - self.min.z
+    }
+
+    /// The signed distance along the unit `plane_unit_normal` from the plane through
+    /// `plane_point` to the nearest corner of the box, `0` when corners lie on both
+    /// sides of (or in) the plane (`DistanceToPlane`).
+    #[must_use]
+    pub fn distance_to_plane(&self, plane_point: Point3, plane_unit_normal: Vec3) -> f64 {
+        let mut min_dist = BIG_DOUBLE;
+        let mut x = self.min.x;
+        for _ in 0..2 {
+            let mut y = self.min.y;
+            for _ in 0..2 {
+                let mut z = self.min.z;
+                for _ in 0..2 {
+                    let this_pt = Point3::new(x, y, z);
+                    let this_dist = plane_unit_normal.dot(this_pt - plane_point);
+                    if min_dist < BIG_DOUBLE - 1.0 && this_dist * min_dist <= 0.0 {
+                        return 0.0; // opposite sides of (or in) plane
+                    }
+                    if this_dist.abs() < min_dist.abs() {
+                        min_dist = this_dist;
+                    }
+                    z = self.max.z;
+                }
+                y = self.max.y;
+            }
+            x = self.max.x;
+        }
+        min_dist
     }
 
     /// Centre and radii of the enclosing and the inscribed centred spheres

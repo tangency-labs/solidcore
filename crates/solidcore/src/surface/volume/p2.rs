@@ -881,6 +881,7 @@ impl Volume {
             non_zero_tangents,
             do_zero_sampling: true,
             with_compounding,
+            ..EvalOptions::default()
         };
         // sMat[2][2][2]
         let m = self.evaluate(param_point, 1, &opts)?;
@@ -1534,9 +1535,10 @@ pub(crate) fn ignore_read<T>(r: Result<T>) -> Result<Option<T>> {
     match r {
         Ok(v) => Ok(Some(v)),
         Err(e @ (SolidError::Unported { .. } | SolidError::Unsupported { .. })) => Err(e),
-        Err(e @ SolidError::InvalidInput { reason, .. }) if reason == NESTING_LIMIT_REASON => {
-            Err(e)
-        }
+        Err(
+            e
+            @ (SolidError::InvalidInput { reason, .. } | SolidError::PortInvariant { reason, .. }),
+        ) if reason == NESTING_LIMIT_REASON => Err(e),
         Err(_) => Ok(None),
     }
 }

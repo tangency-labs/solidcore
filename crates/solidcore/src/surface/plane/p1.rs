@@ -69,7 +69,9 @@
 //!   with more `u` than `v` derivatives; the port returns `InvalidInput` there, and
 //!   for derivative orders above `MAX_DERIVATIVE` (upstream writes into a caller-sized
 //!   array; the port allocates it, as `BSplineSurface::evaluate` bounds it).
-//!   Entries upstream leaves untouched are zero.
+//!   Entries upstream leaves untouched are zero: the unwritten lower half is 0 here and
+//!   `SM_UNDEF` upstream (a fresh caller's `SmVector3d` array); unreachable today (no
+//!   caller reads it).
 //! - **`Reparameterize`** computes a new origin only in debug code: the release
 //!   build keeps the old origin while changing the scales and the domain, so the
 //!   analytic plane moves unless the new domain starts where the old one did. The
@@ -297,6 +299,21 @@ impl Plane {
     /// Detaches a NURB cell shared with evaluation copies ([`Plane::clone_shared`]).
     pub(crate) fn detach_nurb(&mut self) {
         self.base.detach_nurb();
+    }
+
+    /// The `SmBSplineSurface` part, mutable (CO-PORTED by unit `blend.fillet_removal`,
+    /// whose `ExpandBoundarySpan` edits the plane's NURB).
+    pub(crate) fn base_mut(&mut self) -> &mut BSplineSurface {
+        &mut self.base
+    }
+
+    /// `UpdateAnalyticalDomain(crNewNurbsDomain)` (`SmPlane.h`, CO-PORTED by unit
+    /// `blend.fillet_removal`): the analytic domain becomes `new_nurbs_domain` and the
+    /// NURB is dropped (made again from the analytic data when next needed).
+    pub(crate) fn update_analytical_domain(&mut self, new_nurbs_domain: &Extent2d) {
+        self.anal_uv_domain = *new_nurbs_domain;
+        self.base.nurb = crate::nurbs::b_spline_surface::p1::NurbSlot::none();
+        self.base.nurb_is_borrowed = false;
     }
 
     /// A copy of every member as is (no NURB is made).

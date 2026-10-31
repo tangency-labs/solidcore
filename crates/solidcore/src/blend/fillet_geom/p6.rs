@@ -61,6 +61,11 @@
 //!   B-reps and the mark-lock index of the target B-rep's context
 //!   (`pMatchedOrigFace->GetContext()`); upstream's three possible B-reps reduce to
 //!   one target B-rep.
+//!   `CalcBlendingRail` takes the target as `&mut Brep`: the original face's surface
+//!   is solved, lifted and dropped onto as a copy through the B-rep's
+//!   `BrepFaceServices` (handle `CacheObject::Surface(face)`), so its surface cache is
+//!   the face's trimmed cache, made on the B-rep as upstream's `smsurf_GetSurfaceCache`
+//!   makes it through `GetFace()`.
 //! - **Statuses.** `SER`/`NER` failures are errors (`SM_ERR`, `SM_ERR_NULL_POINTER`);
 //!   ignored upstream statuses (curve and surface copies, `SetMinMax`, `Unitize`,
 //!   `EvaluatePoint` in `ShouldSwapFaces`) are ignored here too, except that
@@ -86,12 +91,14 @@ use crate::curve::hermite_curve::HermiteCurve;
 use crate::error::{ignored, EntityRef, Result, SolidError};
 use crate::geom::context::{MarkLock, MarkType};
 use crate::geom::extent1d::Extent1d;
+use crate::geom::extent2d::Extent2d;
 use crate::geom::geom_utility::p1::line_line_closest_point;
 use crate::geom::global_solver::{SolutionRequested, SolverOperation};
 use crate::geom::object::ObjectRef;
 use crate::geom::solution_array::{SolutionArray, SolutionObject};
 use crate::geom::vector2d::{Point2, Vec2};
 use crate::intersect::point_class::{PointClassType, PointClassification};
+use crate::intersect::surface_drop_lib::p3::DropSolveContext;
 use crate::intersect::surface_intersector::p1::{IntersectionPointType, SrfIndex, TsectPnt};
 use crate::kernel::Kernel;
 use crate::math::{Point3, Vec3, EFF_ZERO, EFF_ZERO_SQ, EFF_ZERO_SQRT};
@@ -101,10 +108,12 @@ use crate::nurbs::b_spline_curve_n_lib::TrimMode;
 use crate::nurbs::b_spline_surface::p1::SurfParamType;
 use crate::nurbs::b_spline_surface_n_lib::p2::OrientType;
 use crate::nurbs::knots::Side;
+use crate::query::brep::BrepFaceServices;
 use crate::surface::surface::p2::B_SPLINE_SURFACE_TYPE;
 use crate::surface::surface::p4::NoObject;
 use crate::surface::surface::p7::drop_vectors_at;
 use crate::surface::surface::Surface;
+use crate::topology::brep_cache::CacheObject;
 use crate::topology::edge;
 use crate::topology::edgeuse::p1::{self as eu1, primary_edgeuse};
 use crate::topology::edgeuse::p3::{evaluate_binormal, BinormalOptions};
@@ -167,9 +176,12 @@ pub(crate) fn corner_of<'c>(
 }
 
 /// `SM_CAST_PTR(SmBSplineCurve, pCopy)` after an ignored `Copy`: the copy when it is a
-/// B-spline curve, else `NULL`.
+/// B-spline curve, else `NULL`. Every caller's `Copy` is one fork 9b7cd48 passes on
+/// (SER): with `fillet_statuses_pass_on` its error is returned.
 fn copy_as_b_spline(k: &Kernel, curve: &Curve) -> Result<Option<Curve>> {
-    Ok(ignored(curve.copy(k))?.filter(|c| c.is_kind_of(BSPLINE_CURVE_TYPE)))
+    // fork 9b7cd48 passes this on (SER)
+    let copy = crate::error::passed_on(curve.copy(k), k.fixes.fillet_statuses_pass_on)?;
+    Ok(ignored(copy)?.filter(|c| c.is_kind_of(BSPLINE_CURVE_TYPE)))
 }
 
 /// `SmCurve::Evaluate(t, 1, TRUE, aPV)`: the position and first derivative.
@@ -219,9 +231,14 @@ fn drop_param(
 }
 
 /// `SM_CAST_PTR(SmBSplineSurface, pCopy)` after an ignored `Copy`: the copy when it
-/// `IsKindOf(SmBSplineSurface_TYPE)`, else `NULL`.
+/// `IsKindOf(SmBSplineSurface_TYPE)`, else `NULL`. Its one caller's `Copy` is one fork
+/// 9b7cd48 passes on (SER): with `fillet_statuses_pass_on` its error is returned.
 fn copy_as_b_spline_surface(k: &Kernel, surface: &Surface) -> Result<Option<Surface>> {
-    match ignored(surface.copy(k))? {
+    // fork 9b7cd48 passes this on (SER)
+    match ignored(crate::error::passed_on(
+        surface.copy(k),
+        k.fixes.fillet_statuses_pass_on,
+    )?)? {
         Some(s) if s.is_kind_of(B_SPLINE_SURFACE_TYPE)? => Ok(Some(s)),
         _ => Ok(None),
     }
@@ -420,7 +437,7 @@ pub(super) fn join_two_fillet_verts_by_curves_resolved<'s>(
 
     // locals
     let geom = fb.geom(g)?;
-    let fillet_surface = geom.fillet_surface()?;
+    let fillet_surface = geom.fillet_surface(None)?;
     let solver_id = geom
         .fillet_solver()
         .ok_or_else(|| invalid(OP_JOIN, "fillet geometry without solver"))?;
@@ -538,6 +555,35 @@ pub(super) fn join_two_fillet_verts_by_curves_resolved<'s>(
     Ok(curr_fv == end_fv)
 }
 
+/// `pSurf->GlobalPointSolve(sUVDomain, SM_SO_INTERSECT, crPoint, dTol, NULL, sSolutions,
+/// SM_SR_SINGLE)` on a face's surface (`handle`) under the face's services, so the
+/// solve's surface cache is the face's trimmed one.
+fn global_point_solve_on_face(
+    k: &Kernel,
+    surf: &Surface,
+    handle: Option<CacheObject>,
+    services: &mut BrepFaceServices<'_>,
+    uv_domain: &Extent2d,
+    p: Point3,
+    tol: f64,
+) -> Result<SolutionArray<CacheObject>> {
+    let mut solutions = SolutionArray::new();
+    surf.global_point_solve_into_with_context(
+        k,
+        handle,
+        None,
+        services,
+        uv_domain,
+        SolverOperation::Intersect,
+        p,
+        tol,
+        None,
+        SolutionRequested::Single,
+        &mut solutions,
+    )?;
+    Ok(solutions)
+}
+
 impl FilletBrep {
     // ---- SmFilletEdge -------------------------------------------------------------------
 
@@ -565,12 +611,18 @@ impl FilletBrep {
     /// surface, or for an empty drop; those of the evaluations, the curve
     /// construction, `LiftCurve` and the 3D branch's `DropCurve`.
     #[allow(clippy::too_many_lines)]
-    pub fn calc_blending_rail(&mut self, k: &Kernel, e: EdgeId, target: &Brep) -> Result<()> {
+    pub fn calc_blending_rail(&mut self, k: &Kernel, e: EdgeId, target: &mut Brep) -> Result<()> {
         let nul = || SolidError::null_pointer(OP_BLENDING);
         let face = self.fillet_edge(e)?.original_face().ok_or_else(nul)?;
-        let surf = face2::surface(target, face)?.ok_or_else(nul)?;
+        // the face's own surface (evaluated as a copy: its trimmed surface cache is made
+        // on `target` through the face, as `smsurf_GetSurfaceCache` reaches `GetFace()`)
+        let surf = &face2::surface(target, face)?
+            .ok_or_else(nul)?
+            .clone_for_evaluation()?;
         let tol = face2::tolerance(target, face)?;
         let uv_domain = surf.natural_uv_domain_with_nurb(k)?;
+        let handle = Some(CacheObject::Surface(face));
+        let mut services = BrepFaceServices::new(target);
         let (start_fv, end_fv) = self.edge_end_vertices(e, OP_BLENDING)?;
 
         let prim_eu = primary_edgeuse(self.brep(), e)?.ok_or_else(nul)?;
@@ -587,26 +639,17 @@ impl FilletBrep {
             // Special cases, such as in 4x2 concave case
             // Drop pStartFV onto pSurf
             let p = self.vertex_point(start_fv)?;
-            let mut solutions = surf.global_point_solve::<NoObject>(
-                k,
-                None,
-                &uv_domain,
-                SolverOperation::Intersect,
-                p,
-                tol,
-                None,
-                SolutionRequested::Single,
-            )?;
+            let mut solutions =
+                global_point_solve_on_face(k, surf, handle, &mut services, &uv_domain, p, tol)?;
             if solutions.is_empty() {
-                solutions = surf.global_point_solve::<NoObject>(
+                solutions = global_point_solve_on_face(
                     k,
-                    None,
+                    surf,
+                    handle,
+                    &mut services,
                     &uv_domain,
-                    SolverOperation::Intersect,
                     p,
                     1.0e2 * EFF_ZERO,
-                    None,
-                    SolutionRequested::Single,
                 )?;
             }
             if solutions.is_empty() {
@@ -629,26 +672,24 @@ impl FilletBrep {
             self.fillet_vertex(end_fv)?.original_uv()
         } else {
             let p = self.vertex_point(end_fv)?;
-            let mut solutions = surf.global_point_solve::<NoObject>(
+            let mut solutions = global_point_solve_on_face(
                 k,
-                None,
+                surf,
+                handle,
+                &mut services,
                 &uv_domain,
-                SolverOperation::Intersect,
                 p,
                 EFF_ZERO,
-                None,
-                SolutionRequested::Single,
             )?;
             if solutions.is_empty() {
-                solutions = surf.global_point_solve::<NoObject>(
+                solutions = global_point_solve_on_face(
                     k,
-                    None,
+                    surf,
+                    handle,
+                    &mut services,
                     &uv_domain,
-                    SolverOperation::Intersect,
                     p,
                     1.0e2 * EFF_ZERO,
-                    None,
-                    SolutionRequested::Single,
                 )?;
             }
             if solutions.is_empty() {
@@ -767,11 +808,31 @@ impl FilletBrep {
         let curve = Curve::from(curve);
         let ivl = curve.natural_interval();
         let (new_3d_curve, uv_curve) = if curve_dim == 2 {
-            let lifted = surf.lift_curve(k, &uv_domain, &curve, &ivl, tol, false)?;
+            let lifted = surf.lift_curve_with_context(
+                k,
+                &uv_domain,
+                &curve,
+                &ivl,
+                tol,
+                false,
+                &mut services,
+                handle,
+            )?;
             (lifted.curve, curve)
         } else {
             // Project 3D curve onto the plane
-            let uv_curves = super::p2::surface_drop_curve(k, surf, &uv_domain, &curve, &ivl, tol)?;
+            let uv_curves = super::p2::surface_drop_curve_with_context(
+                k,
+                surf,
+                &uv_domain,
+                &curve,
+                &ivl,
+                tol,
+                DropSolveContext {
+                    solver: &mut services,
+                    handle,
+                },
+            )?;
             let uv_curve = uv_curves
                 .into_iter()
                 .next()
@@ -953,7 +1014,7 @@ impl FilletBrep {
 
         let fillet_surface = self
             .geom(fillet_geom1)?
-            .fillet_surface()?
+            .fillet_surface(None)?
             .ok_or_else(nul)?
             .clone();
 
@@ -1186,7 +1247,10 @@ impl FilletBrep {
             c.clone()
         } else {
             // RailUVCurve as the appropriate FilletSurface IsoParameterCurve
-            let surface = self.geom(fillet_geom)?.fillet_surface()?.ok_or_else(nul)?;
+            let surface = self
+                .geom(fillet_geom)?
+                .fillet_surface(None)?
+                .ok_or_else(nul)?;
             let uv_domain = surface.natural_uv_domain_with_nurb(k)?;
 
             // compare RailPoint to a FilletSurface Point to see if rail runs along
@@ -1473,7 +1537,7 @@ impl FilletBrep {
 
         // copy FilletSurface and CenterLineCurve
         let to_copy = self.geom(other)?;
-        let copy_surface = match to_copy.fillet_surface()? {
+        let copy_surface = match to_copy.fillet_surface(None)? {
             Some(s) => copy_as_b_spline_surface(k, s)?,
             None => None,
         };
@@ -1503,8 +1567,12 @@ impl FilletBrep {
 
             // when given an OffsetSurface to copy - copy it
             if let Some(off) = other_off_surf {
-                // SmOffsetSurface::Copy(); a failed copy leaves the slot unchanged
-                if let Some(surface) = ignored(off.surface.copy(k))? {
+                // SmOffsetSurface::Copy(); a failed copy leaves the slot unchanged; fork
+                // 9b7cd48 passes this on (SER)
+                if let Some(surface) = ignored(crate::error::passed_on(
+                    off.surface.copy(k),
+                    k.fixes.fillet_statuses_pass_on,
+                )?)? {
                     let new_off = OffsetSurface {
                         surface,
                         base_id: off.base_id,
@@ -1817,7 +1885,7 @@ impl FilletBrep {
         // Get UV value (in the fillet surface) for this corner vertexuse
         let surface = self
             .geom(g)?
-            .fillet_surface()?
+            .fillet_surface(None)?
             .ok_or_else(|| SolidError::null_pointer(OP_SETUP))?;
         let uv_domain = surface.natural_uv_domain_with_nurb(k)?;
         let mut uv = uv_domain.evaluate(end_index as f64, rail_index as f64);
@@ -2266,7 +2334,43 @@ impl FilletBrep {
                 // for every Orig m_pTargetBrep->pBrepEdge->Edgeuse - find the Face
                 // connected to the edgeuse no longer needed
                 let edgeuses = edge::edgeuses(target, brep_edge, None, None)?;
-                for &eu in edgeuses.iter().step_by(2) {
+                // With `fillet_trim_inside_by_best_dot` (WR-611, fork de4dae6): of the original
+                // face's pieces along the rail, the one 'inside' is the one whose binormal
+                // points most the way the fillet's does. The pieces' binormals are opposite,
+                // so its dot is the positive one, however steeply the fillet meets the face;
+                // only a fillet square to the face (no side) is ambiguous.
+                let inside = if k.fixes.fillet_trim_inside_by_best_dot {
+                    let mut inside = None;
+                    let mut best_dot = EFF_ZERO_SQRT;
+                    for (index, &eu) in edgeuses.iter().enumerate().step_by(2) {
+                        let eu_face = eu1::face(target, eu)?;
+                        if !(eu_face == orig_face
+                            || eu_face.is_some_and(|f| splt_faces.contains(&f)))
+                        {
+                            continue;
+                        }
+                        let mut bin2 = evaluate_binormal(
+                            k,
+                            target,
+                            eu,
+                            dropped_parameter,
+                            false,
+                            &BinormalOptions::default(),
+                        )?
+                        .binormal;
+                        if fs.reverse_trim {
+                            bin2 = -bin2;
+                        }
+                        if fillet_bin.dot(bin2) > best_dot {
+                            best_dot = fillet_bin.dot(bin2);
+                            inside = Some(index);
+                        }
+                    }
+                    Some(inside)
+                } else {
+                    None
+                };
+                for (index, &eu) in edgeuses.iter().enumerate().step_by(2) {
                     // skip Orig m_pTargetBrep->pBrepEdge->Edgeuses not attached to the
                     // original Face(s).
                     let eu_face = eu1::face(target, eu)?;
@@ -2295,8 +2399,12 @@ impl FilletBrep {
                     // m_pTargetBrep->Edgeuse->Face is 'inside' the closed loop of common
                     // edges and it (and all Faces connected to it) get marked for
                     // deletion.
-                    if fillet_bin.dot(bin2) > 0.2 {
+                    let is_inside = match inside {
+                        Some(chosen) => chosen == Some(index),
                         // 0.2: just to avoid noise around 0.0.
+                        None => fillet_bin.dot(bin2) > 0.2,
+                    };
+                    if is_inside {
                         let matched_orig_face = eu1::face(target, eu)?;
                         let radial = eu1::radial(target, eu)?
                             .ok_or_else(|| invalid(OP_TRIM, "edge use without radial"))?;
@@ -2740,7 +2848,7 @@ mod tests {
         fb.brep_mut().edge_mut(rails_b[0]).unwrap().curve = None;
         fb.copy_geom(&k, b, a, &solvers).unwrap();
         let gb = fb.geom(b).unwrap();
-        assert!(gb.fillet_surface().unwrap().is_some() && gb.center_line_curve().is_some());
+        assert!(gb.fillet_surface(None).unwrap().is_some() && gb.center_line_curve().is_some());
         assert_eq!(gb.deviations, [1e-3, 2e-3]);
         assert_eq!(
             fb.fillet_edge(rails_b[0]).unwrap().original_face(),

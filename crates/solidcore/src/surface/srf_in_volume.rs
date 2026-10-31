@@ -85,8 +85,10 @@
 //!   branch and writes `Duv` one slot past the single entry requested (the caller's
 //!   array must be at least that long); the port skips that write and returns
 //!   success with `D`, as upstream does.
-//! - **Not in this unit.** `GetMemoryUsed`, `Draw`, `DrawUV`, `Dump`, `WriteToDB`
-//!   and `AssertValid` are out of scope (no counterpart, as for `SmCrvInVolume`).
+//! - **Not in this unit.** `GetMemoryUsed`, `Draw`, `DrawUV`, `Dump` and `WriteToDB`
+//!   are out of scope (no counterpart, as for `SmCrvInVolume`); `AssertValid` is ported
+//!   with the other surface checks (`surface::surface::assert_valid`), with the volume
+//!   checks it nests into ([`Volume::assert_valid`]).
 //! - **`ReadFromDB`** always builds a new object (the "fill the surface passed in"
 //!   branch and its `IsKindOf` check have no counterpart; `lType` and the context
 //!   are unused). The nested surface read is depth-limited
@@ -833,6 +835,7 @@ impl SrfInVolume {
         let tangent = at(&srf_derivs, n_eval + 1);
         let side = |c: f64| if c > 0.0 { u_from_left } else { !u_from_left };
         let opts = EvalOptions {
+            fixes: k.fixes,
             from_left: [side(tangent.x), side(tangent.y), side(tangent.z)],
             non_zero_tangents,
             ..EvalOptions::default()
