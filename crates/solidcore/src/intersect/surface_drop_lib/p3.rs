@@ -43,8 +43,9 @@
 //!   `NULL`), and two curve `EvaluatePoint`s (the curve's scaled zero and the end gap
 //!   check) are read after an ignored failure (uninitialised points): here those
 //!   errors propagate (plan/upstream-issues.md UB-129).
-//! - **`bDegenSurfV`** tests the domain's `XLength`, as upstream (plan/upstream-issues.md
-//!   WR-100).
+//! - **`bDegenSurfV`** tests the domain's `XLength`, as upstream, unless
+//!   [`crate::kernel::UpstreamFixes::drop_curve_v_domain_degeneracy`] selects
+//!   `YLength` (WR-100).
 //! - **Temporary state.** The out-of-bounds convergence upstream enables on the surface
 //!   for the call (`SmTemporaryChangeValue`) runs on an evaluation copy with the flag
 //!   set. The surface cache flags (`m_bPointTestEnabled` off, `m_bProcessBoundaryCurves`
@@ -634,7 +635,11 @@ impl Surface {
             self.natural_uv_domain_with_nurb(k)?
         };
         let degen_surf_u = s_uv_domain.x_length() < EFF_ZERO;
-        let degen_surf_v = s_uv_domain.x_length() < EFF_ZERO; // (sic) WR-100
+        let degen_surf_v = if k.fixes.drop_curve_v_domain_degeneracy {
+            s_uv_domain.y_length() < EFF_ZERO
+        } else {
+            s_uv_domain.x_length() < EFF_ZERO // (sic) WR-100: pinned C++ behaviour
+        };
         let contained =
             s_uv_domain.is_contained_by(&self.natural_uv_domain_with_nurb(k)?, EFF_ZERO);
 

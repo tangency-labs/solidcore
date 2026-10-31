@@ -145,6 +145,9 @@ impl Caches {
 #[allow(clippy::struct_excessive_bools)]
 #[non_exhaustive]
 pub struct UpstreamFixes {
+    /// `SmSurface::DropCurve` tests the V domain length for V degeneracy instead
+    /// of repeating the U test (WR-100). Off by default for pinned C++ parity.
+    pub drop_curve_v_domain_degeneracy: bool,
     /// The generic temporary-radius constructor reports setup failures before filleting (#458, UB-252 follow-up).
     pub temporary_radius_setup_errors: bool,
     /// `SmFilletGeom::Trim` returns the first curve/surface trim or interval-intersection error instead of dropping it and continuing with an unset interval (WR-604, #483). Earlier successful edits remain; off by default for pinned C++ parity.
