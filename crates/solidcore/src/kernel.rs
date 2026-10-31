@@ -371,6 +371,11 @@ pub struct UpstreamFixes {
     pub circumscribe_axis_map_by_basis: bool,
     /// Perspective culling projects each sphere's own radius offsets about its center (WR-608, #525).
     pub perspective_sphere_offsets: bool,
+    /// `SmCPolyFace::RemovePolyFace` checks whether the face is a member of the
+    /// composite before removing it, so removing a non-member face does nothing
+    /// instead of removing the first member (WR-81). Off by default for pinned
+    /// C++ parity.
+    pub cpoly_remove_poly_face_check_member: bool,
     /// `SmCone::RebuildSTEPFromNURBParameters` gives a cylinder the mean of near-equal radii (semi-angle 0) (WR-385, #713).
     pub cylinder_rebuild_mean_radius: bool,
     /// `SmCylinder::IsNurbSurfaceCylinder` gives an inside-out NURB (its iso circles turning against the line through their centres) the frame `IsNurbSurfaceCone` gives one: Z against the NURB's linear direction, origin at its top-knot circle; upstream keeps the bottom-knot circle and the NURB's direction, so the cylinder's Z is reversed and its STEP evaluation is mirrored in height (WR-496, #1463).
@@ -709,7 +714,7 @@ pub struct UpstreamFixes {
     pub fillet_rails_meet_at_one_end_point: bool,
     /// `SmFilletNx1Corner::MakeCornerTopology`'s tangent side-edge skip (`fillet_nx1_tangent_side_edge`, which must be on too) takes the edge reached past the tangent side edge as the corner's edge also when that edge's own faces meet tangentially at the vertex (a stadium bar's flat side running onto its round end, below the cylinder wall the bar's top meets): such an edge has no convexity, and `IsConvexRadialSector` on it reads only the sign of rounding residues in the geometry, so one end of the round's arc could read "opposite", leave no corner edge and fail with status 1001 (fillet error 3, corner type 8) (WR-593; the fork's tangency-labs/smlib@1ff7353).
     pub fillet_nx1_tangent_corner_edge: bool,
-    /// `SmFilletNx1Corner::MakeCornerTopology` takes a side edge whose faces meet tangentially at the corner's vertex (a stadium bar's flat side running onto the cylinder its round end lies on) as of the filleted edge's convexity: `same_convexity_edges` on such a G1 edge reads only the sign of rounding residues, so with a sketch's 1e-10 residues the two ends of one concave arc read differently, the front corner was not built as the mixed-convexity one the back end is, and the round failed with status 1001, "Corner Edge Computation Failure" (WR-600; the fork's tangency-labs/smlib@7992ec7).
+    /// `SmFilletNx1Corner::MakeCornerTopology` takes a side edge whose faces meet tangentially at the corner's vertex (a stadium bar's flat side running onto the cylinder its round end lies on) as of the filleted edge's convexity: `same_convexity_edges` on such a G1 edge reads only the sign of rounding residues, so with a sketch's 1e-10 residues the two ends of one concave arc read differently, the front corner was not built as the mixed-convexity one the back end is, and the round failed with status 1001, "Corner Edge Computation Failure" (WR-600; the fork's tangency-labs/smlib@7992ec7). Such a side edge that is a tangent seam the rail crosses (its faces' normal curvatures across it differ: a bar's flat side running into the cylinder of its round end) is the rail's tangent end: the rail end is a rail/edge crossing, the end face the face across the seam continued as itself, the end rib solved from the tangent end outward (`blend::fillet_geom::tangent_end_rib`) and the cap edge the seam's own curve (the fork's tangency-labs/smlib@856b54e; a chamfer ending there failed with status 1001). Its `RailEdgeuseIntersect` run-on past the corner's vertex along the seam acts only with `fillet_run_on_past_far_end_only` on too. On a cylinder it also needs `fillet_run_on_bspline_trims` (WR-654), because the seam's B-spline UV trim clamps: without it a concave blend whose rail crosses the seam past the vertex fails with status 1001.
     pub fillet_nx1_tangent_side_edge_same_convexity: bool,
     /// `SmFillet3x2MixedConvexityCorner::MakeCornerTopology` gives the roles of the corner's two filleted edges by the unfilleted edge's convexity: where it is concave (a boss standing over a bar's side face, its line on that face running down from the vertex) the convex fillet's rail crosses it and the concave fillet's rail crosses its continuation past the vertex, instead of the other way round as in an L-shaped box, so the corner no longer fails with status 1001 "Corner Geometry Computation Failure" (WR-524, #1475; the fork's tangency-labs/smlib@1255993).
     pub fillet_3x2_mixed_concave_side_edge: bool,
@@ -837,6 +842,12 @@ pub struct UpstreamFixes {
     /// are not sampled (31 points fill 16 of 30 columns), and with more than one point the
     /// V dither still comes from `kernel.rng`. Off by default (pinned behaviour).
     pub face_points_span_domain: bool,
+    /// `sm_CheckSeamCrossing` returns `false` (no seam crossed) for a surface closed
+    /// in neither direction (`!closed_u && !closed_v`). Upstream returns `SM_SUCCESS`
+    /// (1000), which reads as `true` from a function documented to return whether a
+    /// shift happened (WR-87; `plan/upstream-issues/WR-87--sm-checkseamcrossing-returns-sm-success-as-its-smboolean.md`
+    /// and its 2026-10-31 addendum). Off by default for pinned C++ parity.
+    pub check_seam_crossing_unclosed: bool,
     /// `DoIntersection`'s start-point loop fails with [`crate::SolidError::InvalidInput`]
     /// once its traces have taken [`MAX_START_LOOP_TRACE_STEPS`] `ComputeNextPoint` calls
     /// together. Upstream's loop ignores a failed trace and goes on to the next start point,
