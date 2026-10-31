@@ -1,0 +1,24 @@
+#### WR-653. A shallow-crease fillet retains split vertices off the completed fillet curves
+
+- **Severity:** Wrong result
+- **Area:** Blends
+- **Location:** `source/SM_API/src/SmApiBrep.cpp`, `SmApiFilletEdges`; insertion through `source/SMLib/src/SmFilletGeom.cpp:11890`, `SmFilletGeom::InsertIntersectionTopology`, and `source/SMLib/src/SmPointClass.cpp:895`, `SmPointClassification::MergeIntoObject`.
+- **What happens:** filleting a shallow roof crease returns `SM_SUCCESS` and a manifold solid, but the two degree-two vertices splitting the fillet's end arcs retain the old ridge locations. The incident curve endpoints agree with each other, while the vertices are displaced from them. Level2 validation reports edge/vertex, vertex/face and vertex-corner gaps above the body's tolerance. A successful return and manifoldness alone do not detect this defect.
+- **Trigger:** extrude the closed XY polygon `(0,0), (6,0), (6,1), (3,1+h), (0,1)` by 2, where `h = 3*tan(d*pi/360)`. Use `SmApiCreateLineSegment`, `SmApiCreateTaperExtrude(curves, 2, 0, 3, FALSE, result)`, then `SmApiFilletEdges` on the edge along Z at `(3,1+h)`, radius `r`, circular cross section 1, continuity 1, thumbweight 1. The body tolerance is `1e-5`.
+- **How found:** issue #1999, reported by MarkusReichart; independently reconstructed in Rust and unmodified native C++ on Linux.
+- **Confirmed:** yes, pinned v1.0.1 (`3fd5b9548d19aa8c12c29bc9637a96d42a06f8a5`), reference key `v1-3fd5b9548d19-726643fb17a52b7d`, GCC 13.3, `-O2 -ffp-contract=off -fno-fast-math`, release configuration. Both engines construct their own input. The input validates; the following single-edge calls return success:
+
+  | d | r | Native Level2 | Native vertex/face gap | Tolerance |
+  | --- | --- | --- | --- | --- |
+  | 2.5 degrees | 0.12 | 14 failed reports | `2.8563547761928376e-5`, `2.8563548908566716e-5` | `2e-5` |
+  | 3 degrees | 0.12 | 14 failed reports | `4.113508557868073e-5`, `4.1135058920227507e-5` | `2e-5` |
+  | 2.5 degrees | 2 | no failed reports | none | `2e-5` |
+
+  Rust reproduces the 2.5-degree case's two vertex gaps and all 14 failed reports. With the separate WR-621 half-degree option, Rust also reproduces the reported 0.6-degree/radius-2 and 1.5-degree/radius-0.5 cases. Those two enabled-option operations are not claimed as native parity tests.
+
+- **Repair boundary:** the incident curves already meet. A diagnostic `SetPoint` to their common endpoint, with `ChangeGeometry` notification, makes all three reported single-crease Rust results pass Level2. Merely assigning the coordinate leaves stale edge-use gap caches and does not suffice. The final split vertices and edges have zone tolerance `4e-5`; the existing body intersection tolerance remains `2e-5`. No tolerance needs to be increased.
+- **Rust opt-in:** `Kernel::fixes.fillet_repair_split_vertices`, off by default, applies to `fillet_edges`, `fillet_edges_per_edge` and `variable_radius_fillet`. After session destruction, stitching and cached-topology refresh, it checks an independent owner-preserving copy. An already valid result is untouched. An invalid result may move only a degree-two topological vertex whose incident edge endpoints agree within scaled zero, whose displacement exceeds the body intersection tolerance, and whose new position remains within both existing vertex/edge intersection tolerances. Geometry-change notifications invalidate dependent caches. Curves, surfaces, parameters, topology and tolerances are not repaired or enlarged. The whole result must then pass Level2, otherwise the input body is restored and the operation returns an error.
+- **Remaining limitation:** this does not redesign intersection classification, handle arbitrary inconsistent curves, or repair general multi-edge corners. Rounding the crease and both adjoining roof edges at one end with `d=2.5`, `r=1` produces native failed reports 59 and 82 (five reports, despite `AssertValid` returning true). The opt-in uses the complete `BrepCheck::is_valid()` result and refuses unsupported results transactionally. Direct `FilletSession`, circular/chamfer-all-edge and surface-surface wrappers are outside this change.
+- **Regression:** `crates/solidcore/tests/issue_1999_shallow_crease.rs`, including an ignored export test for independent native validation of the repaired models. The default numerical gate continues to compare the unchanged pinned behavior; enabled-option validity tests are separate from native parity.
+
+- **Independent repaired-model check:** all three exported single-crease models (2.5/0.12, 0.6/2, 1.5/0.5) pass unmodified native `ValidatePointers` and `AssertValid` at Level0 (twice) and Level2 with zero reports. This independently validates the repaired Rust geometry; it is not a claim that native filleting itself implements this correction.
