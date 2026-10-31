@@ -1808,6 +1808,24 @@ fn classify_seam<O: LoopObject, M: CurveOnClassifyBrep<O>>(
     Ok((class, crossed, missing, near_miss, curves))
 }
 
+/// `sm_SeamCollapses`: whether the seam curve in direction `dir` is degenerate within
+/// `tol` (a point, as a horn torus's minor seam is at its centre). A seam that cannot be
+/// made, or whose degeneracy test fails, does not collapse (upstream checks
+/// `!= SM_SUCCESS`); only the errors [`must_propagate`] names are passed on.
+fn seam_collapses(k: &Kernel, surface: &Surface, dir: SurfParamType, tol: f64) -> Result<bool> {
+    let seam = match surface.create_seam_curve(k, dir, true) {
+        Ok(Some(seam)) => seam,
+        Ok(None) => return Ok(false),
+        Err(e) if must_propagate(&e) => return Err(e),
+        Err(_) => return Ok(false),
+    };
+    match Curve::from(seam).is_degenerate(k, tol, None) {
+        Ok(collapses) => Ok(collapses),
+        Err(e) if must_propagate(&e) => Err(e),
+        Err(_) => Ok(false),
+    }
+}
+
 /// `HasSeamProblem`: whether the seams of the face's periodic surface are badly
 /// represented: crossed by face edges without a vertex there, or not represented by
 /// seam edges (allowing for edge/face gaps beyond tolerance). Each periodic direction's
@@ -1910,12 +1928,12 @@ pub fn has_seam_problem_mut<O: LoopObject, M: CurveOnClassifyBrep<O>>(
     let closed_c1 = |closed: Tri, val: ContinuityType| {
         closed != Tri::False && val as i32 >= ContinuityType::C1 as i32
     };
-    let periodic_u = match (opt_periodic_u, face_props.as_deref()) {
+    let mut periodic_u = match (opt_periodic_u, face_props.as_deref()) {
         (Some(p), _) => p,
         (None, Some(fp)) => closed_c1(fp.closed_u, fp.closed_val_u),
         (None, None) => surface.is_periodic(k, &uv_domain, SurfParamType::U)?,
     };
-    let periodic_v = match (opt_periodic_v, face_props.as_deref()) {
+    let mut periodic_v = match (opt_periodic_v, face_props.as_deref()) {
         (Some(p), _) => p,
         (None, Some(fp)) => closed_c1(fp.closed_v, fp.closed_val_v),
         (None, None) => surface.is_periodic(k, &uv_domain, SurfParamType::V)?,
@@ -2009,6 +2027,18 @@ pub fn has_seam_problem_mut<O: LoopObject, M: CurveOnClassifyBrep<O>>(
     }
 
     // arrive here when HasSeamProblems() is called from SetProps_Stage2
+
+    // SolidCraft change (WR-506, #1516): a seam that collapses to a point is no seam an edge
+    // could cross or must lie on, so that direction is not classified (the fork's
+    // sm_SeamCollapses; off unless `seam_check_skips_collapsed_seam`)
+    if k.fixes.seam_check_skips_collapsed_seam {
+        if periodic_u && seam_collapses(k, surface, SurfParamType::U, surface_zone_tol_3d)? {
+            periodic_u = false;
+        }
+        if periodic_v && seam_collapses(k, surface, SurfParamType::V, surface_zone_tol_3d)? {
+            periodic_v = false;
+        }
+    }
 
     // periodic in U
     if periodic_u {
