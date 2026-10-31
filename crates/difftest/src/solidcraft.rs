@@ -1419,8 +1419,15 @@ fn measure(k: &Kernel, b: &mut Brep) -> Result<Measured, SolidError> {
     })
 }
 
-/// Turns on the `UpstreamFixes` field `name` a case asks for.
+/// Turns on the `UpstreamFixes` field `name` a case asks for (`solidcraft`: the whole
+/// SolidCraft preset).
 fn enable_fix(k: &mut Kernel, name: &str) -> Result<(), String> {
+    // The whole SolidCraft preset (`UpstreamFixes::solidcraft`); it replaces the fixes
+    // set so far, so a case lists it first.
+    if name == "solidcraft" {
+        k.fixes = solidcore::kernel::UpstreamFixes::solidcraft();
+        return Ok(());
+    }
     let field = match name {
         "sweep_frame_on_planar_path_normal" => &mut k.fixes.sweep_frame_on_planar_path_normal,
         "delete_vertex_joins_seam_iso_curve" => &mut k.fixes.delete_vertex_joins_seam_iso_curve,
@@ -1442,6 +1449,7 @@ fn enable_fix(k: &mut Kernel, name: &str) -> Result<(), String> {
         "precise_properties_trim_base_v" => &mut k.fixes.precise_properties_trim_base_v,
         "loops_go_on_round_the_vertex" => &mut k.fixes.loops_go_on_round_the_vertex,
         "revolve_nested_shells_as_cavities" => &mut k.fixes.revolve_nested_shells_as_cavities,
+        "revolve_splits_curves_on_axis" => &mut k.fixes.revolve_splits_curves_on_axis,
         "stitch_solid_nests_cavities" => &mut k.fixes.stitch_solid_nests_cavities,
         "sphere_small_circle_not_touching" => &mut k.fixes.sphere_small_circle_not_touching,
         "curve_tight_box_interval_knots" => &mut k.fixes.curve_tight_box_interval_knots,
