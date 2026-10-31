@@ -793,6 +793,12 @@ nice -n 10 cargo run -p difftest -- --solidcraft-cases '3526-*'        # ids (<f
   `SmApiCreateLinearSweep` and capped; for a cut by a face's own boundary, #968),
   `sheet_corner` (the deferred sheet-flange recipe below). Each
   writes the body `id`; the last writes `result`.
+* **Sweep along a planar path** (`"op": "sweep_along_planar_path"`): `profile` and `path`
+  curves as `line` (`start`, `end`) or `bezier` (`points`, optional positional `weights`:
+  a clamped single-segment B-spline; `move_profile` default `true`, anchor the profile's
+  bounding-box centre (`false`: its first point) at the path start; `cap_ends` default
+  `3`: `0` none, `1` profile/start, `2` far end, `3` both). Writes the body `id`; the last
+  writes `result`.
 * **Fixes** (`fixes`, optional): `Kernel::fixes` (`UpstreamFixes`) fields the case turns
   on, by name, for a case that needs an opt-in fix of an upstream defect (for example
   `434-*`: `sweep_frame_on_planar_path_normal`, `cover_refuses_folded_continuation`);
@@ -815,7 +821,8 @@ nice -n 10 cargo run -p difftest -- --solidcraft-cases '3526-*'        # ids (<f
   defers the case on the unit in its `SolidError::Unported`; `fillet` has no Rust
   `SmApiFilletEdges` yet and defers on `blend.fillet_executive_p1`; `offset_faces` defers
   on `no SM_API entry point`, since `SM_API` only offsets or shells whole bodies
-  (`SmApiOffsetBrepFull`, `SmApiShellBrepFull`).
+  (`SmApiOffsetBrepFull`, `SmApiShellBrepFull`); `sweep` defers on
+  `primitive.primitive_creation_p2` (`SmApiCreateSweepAlongPlanarPath`).
 * **Engines.** Rust only for now. A C++ engine (a shim running the same steps through
   `SM_API`) would show which of these bugs upstream SMLib has.
 * **Output.** One line per case, then
