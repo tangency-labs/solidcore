@@ -1,0 +1,22 @@
+[package]
+name = "solidcore-mesh"
+description = "Watertight, configurable triangle meshes of solidcore B-reps (new code beside the ported query::tess)"
+edition.workspace = true
+license.workspace = true
+version = "0.0.1"
+rust-version.workspace = true
+repository = "https://github.com/tangency-labs/solidcore"
+publish = false
+
+[features]
+default = []
+# The nurbs-grid-mesh face backend for dense NURBS faces (backend::NurbsGridBackend).
+nurbs-grid-mesh = ["dep:nurbs-grid-mesh"]
+
+[dependencies]
+nurbs-grid-mesh = { path = "../nurbs-grid-mesh", optional = true }
+solidcore = { path = "../solidcore" }
+spade = "2.15"
+
+[lints]
+workspace = true
