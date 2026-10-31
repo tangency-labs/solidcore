@@ -75,3 +75,10 @@ incremental = true
 # Reports are byte-identical at either level.
 [profile.difftest.package.difftest]
 opt-level = 0
+
+# `cargo test` (the dev profile) builds the kernel optimised as well, for the same reason:
+# FP results are unchanged and overflow checks and debug assertions stay on. Since the
+# v1.0.1 pin's precise-properties scales, the unoptimised kernel made the workspace
+# tests run 85 minutes on an M3 Max; at opt-level 2 they take 6 (build 1 -> 6 minutes).
+[profile.dev.package.solidcore]
+opt-level = 2
