@@ -791,6 +791,163 @@ fn reseed_records(
     }
 }
 
+/// The keys an exact reseeding ([`reseed_exact`]) gives the objects of a B-rep: the
+/// kernel's identities of a serial ([`topology_ref`]) or the arena identities
+/// ([`notify_ref`](crate::topology::loopuse::notify_ref), as
+/// [`ArenaNotifyState`](p2::ArenaNotifyState) names them).
+#[derive(Debug, Clone, Copy)]
+pub(crate) enum ReseedScheme {
+    /// [`topology_ref`] with this serial.
+    Kernel(u64),
+    /// [`notify_ref`](crate::topology::loopuse::notify_ref).
+    Arena,
+}
+
+impl ReseedScheme {
+    /// The key of `e`.
+    fn key(self, e: EntityRef) -> ObjectKey {
+        match self {
+            Self::Kernel(serial) => topology_ref(serial, e).key,
+            Self::Arena => crate::topology::loopuse::notify_ref(e).key,
+        }
+    }
+
+    /// The object whose key `key` is, if any (the inverse of [`Self::key`]).
+    fn entity(self, key: ObjectKey) -> Option<EntityRef> {
+        match self {
+            Self::Kernel(serial) => topology_entity(serial, key),
+            Self::Arena => crate::topology::loopuse::entity_of_notify_key(key),
+        }
+    }
+
+    /// The scheme as a [`topo::ReseedMark`] records it (no serial is `u64::MAX`).
+    const fn code(self) -> u64 {
+        match self {
+            Self::Kernel(serial) => serial,
+            Self::Arena => u64::MAX,
+        }
+    }
+}
+
+/// The kind (in [`entities`]' order) and arena index of `e`; `None` for the B-rep.
+const fn entity_kind_index(e: EntityRef) -> Option<(usize, u32)> {
+    Some(match e {
+        EntityRef::Brep(_) => return None,
+        EntityRef::Region(x) => (0, x.index()),
+        EntityRef::Shell(x) => (1, x.index()),
+        EntityRef::Faceuse(x) => (2, x.index()),
+        EntityRef::Face(x) => (3, x.index()),
+        EntityRef::Loopuse(x) => (4, x.index()),
+        EntityRef::Loop(x) => (5, x.index()),
+        EntityRef::Edgeuse(x) => (6, x.index()),
+        EntityRef::Edge(x) => (7, x.index()),
+        EntityRef::Vertexuse(x) => (8, x.index()),
+        EntityRef::Vertex(x) => (9, x.index()),
+    })
+}
+
+/// The removal journal of each kind (in [`entities`]' order).
+fn removal_journals(b: &Brep) -> [&[u32]; KINDS] {
+    [
+        b.regions().removed(),
+        b.shells().removed(),
+        b.faceuses().removed(),
+        b.faces().removed(),
+        b.loopuses().removed(),
+        b.loops().removed(),
+        b.edgeuses().removed(),
+        b.edges().removed(),
+        b.vertexuses().removed(),
+        b.vertices().removed(),
+    ]
+}
+
+/// Leaves `records` exactly as `full` does: a default record under `scheme` for every
+/// object of `b` and for the B-rep (`brep_key`), and no seeding progress, whatever it
+/// held before. (Not upstream: a cache.) When `records` was last left so by this
+/// function for the same B-rep value (its [`Brep::removal_tag`] lineage: the arenas
+/// only appended and emptied slots since, each removal journaled), the same scheme and
+/// B-rep key, and every write since went through [`topo::NotifyRecords`]' methods
+/// (which note the keys, [`topo::ReseedMark`]), only what changed is visited: the
+/// records of the objects removed since are dropped, the objects added since get one,
+/// and every key written since is reset to a default record or dropped, by whether it
+/// is an object's. Every other record is still the default record of a live object,
+/// so the store ends equal to `full`'s. Otherwise `full` runs.
+pub(crate) fn reseed_exact(
+    records: &mut topo::NotifyRecords,
+    b: &mut Brep,
+    scheme: ReseedScheme,
+    brep_key: ObjectKey,
+    full: impl FnOnce(&mut topo::NotifyRecords, &Brep),
+) {
+    let tag = b.removal_tag();
+    let b: &Brep = b;
+    let slots = slot_counts(b);
+    let journals = removal_journals(b);
+    let code = [scheme.code(), brep_key.0];
+    let (map, progress, mark) = records.reseed_parts();
+    let fits = mark.as_ref().is_some_and(|m| {
+        m.scheme == code
+            && std::sync::Arc::ptr_eq(&m.tag, &tag)
+            && m.slots.iter().zip(&slots).all(|(then, now)| then <= now)
+            && m.removed
+                .iter()
+                .zip(&journals)
+                .all(|(&then, now)| then <= now.len())
+    });
+    match mark.take() {
+        Some(m) if fits => {
+            // (the objects removed since: never live again)
+            for (kind, (journal, from)) in journals.iter().zip(m.removed).enumerate() {
+                for &index in journal.get(from..).unwrap_or_default() {
+                    map.remove(&scheme.key(kind_entity(kind, index)));
+                }
+            }
+            // (the objects added since)
+            for (kind, (&to, from)) in slots.iter().zip(m.slots).enumerate() {
+                for index in (from..to).map_while(|i| u32::try_from(i).ok()) {
+                    if is_live(b, kind, index) {
+                        map.insert(
+                            scheme.key(kind_entity(kind, index)),
+                            topo::Topology::default(),
+                        );
+                    }
+                }
+            }
+            // (every key written since: an object's record is reset, the rest dropped)
+            let mut written = m.written;
+            written.sort_unstable();
+            written.dedup();
+            for key in written {
+                let live = key == brep_key
+                    || scheme.entity(key).is_some_and(|e| {
+                        scheme.key(e) == key
+                            && entity_kind_index(e)
+                                .is_some_and(|(kind, index)| is_live(b, kind, index))
+                    });
+                if live {
+                    map.insert(key, topo::Topology::default());
+                } else {
+                    map.remove(&key);
+                }
+            }
+            progress.clear();
+        }
+        _ => full(records, b),
+    }
+    // (a mark only where the scheme's keys decode back to their objects)
+    let brep = brep_entity();
+    if scheme.key(brep) == brep_key && scheme.entity(brep_key) == Some(brep) {
+        *records.reseed_parts().2 = Some(topo::ReseedMark {
+            scheme: code,
+            tag,
+            removed: journals.map(<[u32]>::len),
+            slots,
+            written: Vec::new(),
+        });
+    }
+}
+
 /// The kinds of topology keys with their class type codes (`GetType`), by kind number:
 /// the B-rep, then region, shell, face use, face, loop use, loop, edge use, edge,
 /// vertex use, vertex.
@@ -1153,7 +1310,7 @@ fn check_keys_once(
     let own = |e: EntityRef, key: ObjectKey| {
         !is_reserved_key(key) || serial.is_some_and(|s| topology_entity(s, key) == Some(e))
     };
-    let (_, progress) = records
+    let progress = records
         .progress_for(progress.0, progress.1)
         .ok_or(RESERVED_KEY)?;
     // (the progress only moves once every index this edit covers has passed)
@@ -1225,22 +1382,28 @@ fn seed_records_once(
     key_of: &dyn Fn(EntityRef) -> ObjectRef,
 ) -> Result<()> {
     let brep_key = p2::brep_ref(b).key;
-    let (map, progress) = records
-        .progress_for(progress.0, progress.1)
-        .ok_or(RESERVED_KEY)?;
+    let (id, instance) = progress;
+    let mut seeded = records
+        .progress_for(id.clone(), std::sync::Arc::clone(&instance))
+        .ok_or(RESERVED_KEY)?
+        .seeded_to;
     let kinds = slot_counts(b)
         .into_iter()
-        .zip(progress.seeded_to.iter_mut())
+        .zip(seeded.iter_mut())
         .enumerate();
     for (kind, (slots, seeded_to)) in kinds {
         for index in (*seeded_to..slots).map_while(|i| u32::try_from(i).ok()) {
             if is_live(b, kind, index) {
-                map.entry(key_of(kind_entity(kind, index)).key).or_default();
+                records.seed_default(key_of(kind_entity(kind, index)).key);
             }
         }
         *seeded_to = slots.max(*seeded_to);
     }
-    map.entry(brep_key).or_default();
+    records.seed_default(brep_key);
+    records
+        .progress_for(id, instance)
+        .ok_or(RESERVED_KEY)?
+        .seeded_to = seeded;
     Ok(())
 }
 
@@ -1290,7 +1453,14 @@ pub(crate) fn kernel_named_edit<R>(
     let label = b.key();
     b.set_key(topology_ref(serial, brep_entity()).key);
     let mut records = std::mem::take(&mut k.notify_records);
-    reseed_records(&mut records, b, &key_of);
+    let brep_key = p2::brep_ref(b).key;
+    reseed_exact(
+        &mut records,
+        b,
+        ReseedScheme::Kernel(serial),
+        brep_key,
+        |records, b| reseed_records(records, b, &key_of),
+    );
     let mut attributes = crate::geom::attribute::AttributeStore::default();
     // (not upstream) the B-rep's own attributes, under the edit's identities
     let seeded = p2::seed_brep_attributes(&mut attributes, b.take_attributes(), &key_of);
@@ -4522,6 +4692,115 @@ fn brep_curve_solve(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// `reseed_exact` after removals, additions, record writes, a removed record and a
+    /// foreign key leaves the store equal to a full reseeding, visiting only the
+    /// changes (its `full` is not called); a clone of the B-rep, another scheme or a
+    /// bulk write rebuild it. Both schemes.
+    #[test]
+    fn reseed_exact_equals_a_full_reseeding() {
+        use crate::topology::topology::NotifyRecords;
+        use std::cell::Cell;
+        let mut k = Kernel::default();
+        let mut b =
+            crate::primitive::api_primitives::create_box(&mut k, Point3::ZERO, 1.0, 2.0, 3.0)
+                .unwrap();
+        let serial = 5;
+        b.set_key(topology_ref(serial, brep_entity()).key);
+        for scheme in [ReseedScheme::Kernel(serial), ReseedScheme::Arena] {
+            let brep_key = scheme.key(brep_entity());
+            let fulls = Cell::new(0);
+            let full = |r: &mut NotifyRecords, b: &Brep| {
+                fulls.set(fulls.get() + 1);
+                r.clear();
+                for e in entities(b) {
+                    r.or_default(scheme.key(e));
+                }
+                r.or_default(brep_key);
+            };
+            let fresh = |b: &Brep| {
+                let mut r = NotifyRecords::new();
+                for e in entities(b) {
+                    r.or_default(scheme.key(e));
+                }
+                r.or_default(brep_key);
+                r
+            };
+            let mut records = NotifyRecords::new();
+            records.or_default(ObjectKey(99)).set_user_index1(1);
+            reseed_exact(&mut records, &mut b, scheme, brep_key, full);
+            assert_eq!(records, fresh(&b));
+            assert_eq!(fulls.get(), 1);
+
+            // record writes, a removed record and a foreign key
+            let face = b.face_list()[0];
+            let edge = b.edges().ids().next().unwrap();
+            let vertex = b.vertices().ids().last().unwrap();
+            records
+                .get_mut(&scheme.key(EntityRef::Face(face)))
+                .unwrap()
+                .set_user_index2(7);
+            records.remove(&scheme.key(EntityRef::Edge(edge)));
+            records.or_default(ObjectKey(12_345)).set_all_flags(3);
+            records
+                .get_mut(&scheme.key(EntityRef::Vertex(vertex)))
+                .unwrap()
+                .set_all_flags(1);
+            // removals (one of an object whose record was written) and additions
+            b.remove_vertex_record(vertex).unwrap();
+            let shell = b.shells().ids().next().unwrap();
+            b.remove_shell_record(shell).unwrap();
+            let added = b
+                .add_vertex_record(crate::topology::Vertex::default())
+                .unwrap();
+            let gone = b
+                .add_vertex_record(crate::topology::Vertex::default())
+                .unwrap();
+            b.remove_vertex_record(gone).unwrap();
+            records.or_default(scheme.key(EntityRef::Vertex(gone)));
+            reseed_exact(&mut records, &mut b, scheme, brep_key, full);
+            assert_eq!(records, fresh(&b));
+            assert!(records.contains_key(&scheme.key(EntityRef::Vertex(added))));
+            assert_eq!(fulls.get(), 1, "the changes alone were visited");
+
+            // a clone is another lineage
+            let mut copy = b.clone();
+            reseed_exact(&mut records, &mut copy, scheme, brep_key, full);
+            assert_eq!(records, fresh(&copy));
+            assert_eq!(fulls.get(), 2);
+
+            // a bulk write drops the mark
+            records.values_mut().for_each(|r| r.set_all_flags(2));
+            reseed_exact(&mut records, &mut copy, scheme, brep_key, full);
+            assert_eq!(records, fresh(&copy));
+            assert_eq!(fulls.get(), 3);
+        }
+        // another scheme rebuilds
+        let mut records = NotifyRecords::new();
+        let arena = ReseedScheme::Arena;
+        reseed_exact(
+            &mut records,
+            &mut b,
+            arena,
+            arena.key(brep_entity()),
+            |r, b| {
+                seed_records(r, b, &|e| crate::topology::loopuse::notify_ref(e));
+            },
+        );
+        let kernel = ReseedScheme::Kernel(serial);
+        let rebuilt = Cell::new(false);
+        reseed_exact(
+            &mut records,
+            &mut b,
+            kernel,
+            kernel.key(brep_entity()),
+            |r, b| {
+                rebuilt.set(true);
+                reseed_records(r, b, &|e| topology_ref(serial, e));
+            },
+        );
+        assert!(rebuilt.get());
+    }
 
     /// `TurnToNURBS`' copy of a B-spline kind surface (`new SmBSplineSurface(*pBSS)`)
     /// and its offset arm's `ApproximateOffsetSurface` read the NURB through
