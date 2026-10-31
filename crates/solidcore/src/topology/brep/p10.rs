@@ -2540,7 +2540,7 @@ fn subdivide_face_body(
     continuity: ContinuityType,
 ) -> Result<Vec<FaceId>> {
     // locals
-    let surface = face_surface(b, face)?;
+    let surface = surface_of_face(b, face)?;
     let domain = surface.natural_uv_domain_with_nurb(k)?;
 
     // get all surface Knot discontinuties
@@ -2567,7 +2567,7 @@ fn subdivide_face_body(
                 "null segment clean-up does not end",
             ));
         }
-        let segments = edge_curve(b, e)?.null_segments(k)?;
+        let segments = curve_of_edge(b, e)?.null_segments(k)?;
 
         // When BSpline curve has an interval that maps to a point in 3 space
         let (Some(&first), Some(&second)) = (segments.first(), segments.get(1)) else {
@@ -2640,15 +2640,10 @@ fn subdivide_face_body(
             };
 
             // create IsoLineCrvOnSurf (status ignored upstream; a failure is not compared)
-            let line = match face_surface(b, face)?.create_line_on_surf(k, start, end) {
+            let line = match surface_of_face(b, face)?.create_line_on_surf(k, start, end) {
                 Ok(line) => line,
                 Err(e) if e.is_unported() => return Err(e),
-                Err(_) => {
-                    return Err(SolidError::invalid_input(
-                        OP_SUBDIVIDE,
-                        "no iso line",
-                    ))
-                }
+                Err(_) => return Err(SolidError::invalid_input(OP_SUBDIVIDE, "no iso line")),
             };
             curves_3d.push(Curve::from(line));
         }
@@ -2684,20 +2679,20 @@ fn trim_null_segment(
     mut edge_ivl: Extent1d,
     edges: &mut Vec<EdgeId>,
 ) -> Result<()> {
-    let num_knots = edge_curve(b, e)?.number_natural_knots(k)?;
+    let num_knots = curve_of_edge(b, e)?.number_natural_knots(k)?;
     // SmTol::GetZoneTol3d(curve) follows its edge
     let tol = b.edge(e)?.tolerance;
-    edge_curve_mut(b, e)?.trim_with_zone_tol(k, &mut edge_ivl, TrimMode::Notify, tol)?;
+    curve_of_edge_mut(b, e)?.trim_with_zone_tol(k, &mut edge_ivl, TrimMode::Notify, tol)?;
     let edge_ivl = edge::interval(b, e)?;
-    ignore_status(edge_curve_mut(b, e)?.edit_parameterization(k, &edge_ivl))?;
-    if edge_curve(b, e)?.number_natural_knots(k)? != num_knots {
+    ignore_status(curve_of_edge_mut(b, e)?.edit_parameterization(k, &edge_ivl))?;
+    if curve_of_edge(b, e)?.number_natural_knots(k)? != num_knots {
         edges.push(e);
     }
     Ok(())
 }
 
 /// `pFace->GetSurface()`, dereferenced upstream.
-fn face_surface(b: &Brep, f: FaceId) -> Result<&Surface> {
+fn surface_of_face(b: &Brep, f: FaceId) -> Result<&Surface> {
     b.face(f)?.surface.as_ref().ok_or(SolidError::invalid_input(
         OP_SUBDIVIDE,
         "face without surface",
@@ -2705,14 +2700,14 @@ fn face_surface(b: &Brep, f: FaceId) -> Result<&Surface> {
 }
 
 /// `pEdge->GetCurve()`, dereferenced upstream.
-fn edge_curve(b: &Brep, e: EdgeId) -> Result<&Curve> {
+fn curve_of_edge(b: &Brep, e: EdgeId) -> Result<&Curve> {
     edge::curve(b, e)?.ok_or(SolidError::invalid_input(
         OP_SUBDIVIDE,
         "edge without curve",
     ))
 }
 
-fn edge_curve_mut(b: &mut Brep, e: EdgeId) -> Result<&mut Curve> {
+fn curve_of_edge_mut(b: &mut Brep, e: EdgeId) -> Result<&mut Curve> {
     b.edge_mut(e)?
         .curve
         .as_mut()
@@ -3008,7 +3003,7 @@ mod tests {
                 start_vertex: i as u64,
                 end_vertex: n as u64,
                 prim_eu: i as i64,
-                interval: crate::geom::extent1d::Extent1d::from_raw(0.0, 1.0),
+                interval: Extent1d::from_raw(0.0, 1.0),
                 zone_tol_3d: 1e-6,
                 ..EdgeData::zeroed()
             });
@@ -3249,7 +3244,7 @@ mod tests {
                         start_vertex: key.0 as u64,
                         end_vertex: key.1 as u64,
                         prim_eu: d.edgeuses.len() as i64,
-                        interval: crate::geom::extent1d::Extent1d::from_raw(0.0, 1.0),
+                        interval: Extent1d::from_raw(0.0, 1.0),
                         ..EdgeData::zeroed()
                     });
                     edges.len() - 1

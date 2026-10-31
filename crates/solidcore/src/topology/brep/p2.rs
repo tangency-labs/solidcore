@@ -1960,30 +1960,23 @@ pub fn replace_surface(
 ///
 /// # Errors
 ///
-/// Those of the notifications and of [`edge::set_curve`]; [`SolidError::InvalidInput`]
-/// for an edge use without vertex use (upstream dereferences it).
+/// Those of the notifications and of `SmEdge::Replace3DCurve`;
+/// [`SolidError::InvalidInput`] for an edge use without vertex use (upstream
+/// dereferences it).
 pub fn replace_curve(
     k: &mut Kernel,
     b: &mut Brep,
     e: EdgeId,
-    mut curve: Curve,
+    curve: Curve,
     stores: &mut NotificationStores<'_>,
 ) -> Result<()> {
-    let interval = curve.natural_interval();
     NotifyState::from_kernel_stores(stores).with_kernel_env(k, |_k, env| {
         // notify the Brep
         let this = Some(NotifyArg::Object(brep_ref(b)));
         notify(b, env, None, NotifyOperation::PreEdit, [this, None, None])?;
 
         // change the edge (Replace3DCurve)
-        let owner = (env.key_of)(EntityRef::Edge(e));
-        let _ = curve.set_owner(Some(owner), Some(brep_ref(b)));
-        let options = SetCurveOptions {
-            delete_old_curve: true,
-            ..SetCurveOptions::default()
-        };
-        let _ = edge::set_curve(b, e, Some(curve), options, env, [None, None])?;
-        edge::set_interval(b, e, &interval)?;
+        edge::replace_3d_curve(b, e, Some(curve), env)?;
 
         // remove existing UVTrimCurves (ClearUVCaches)
         let edge_ref = (env.key_of)(EntityRef::Edge(e));
