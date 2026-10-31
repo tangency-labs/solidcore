@@ -323,6 +323,8 @@ pub struct NotifyRecords {
     since_reseed: Option<ReseedMark>,
 }
 
+// (the reseeding mark is a cache, left out so the output is the derived one of before)
+#[allow(clippy::missing_fields_in_debug)]
 impl core::fmt::Debug for NotifyRecords {
     /// The records and the seeding progress (the reseeding mark is a cache).
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
