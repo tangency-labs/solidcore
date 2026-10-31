@@ -1,0 +1,178 @@
+{
+ "issue": "https://github.com/tangency-labs/solidcraft/issues/2963",
+ "pr": "https://github.com/tangency-labs/solidcraft/pull/3327",
+ "test": "cut_ending_flush_with_a_side_leaves_no_skin (SolidCraft PR #3327, closed unmerged: main fixed it first with #2827, coplanar::has_skin); own minimal reproduction, the reporter's data is not used",
+ "summary": "A cut whose tool is flush with a wall (its end face on the plate's side y = 30) and whose top face is tilted by 4e-8 rad off the plate's top face (z = 2) left a skin of thickness ~1e-4 mm on SolidCraft's truck kernel: the near-coplanar boolean failed on every route and only the last-resort tool displacement succeeded, pushing the tool's end into the wall, so the flush cut had one face more than the same cut overshooting the wall by 1 mm (14 against 13 in the PR's test). Geometry: a 60 x 30 x 2 plate united with a 60 x 15 x 10 wall block (y 0..15), cut by the box x 25..35, y 5..y1, z -1..2 rotated by 4e-8 rad (2.29183e-6 degrees) about the axis (0.6, 0.8, 0) through (30, 17.5, 0.5); y1 = 30 is flush, y1 = 31 overshoots. Both variants must give the same solid: a tunnel under the wall block (end wall, two side walls, ceiling) opening into a slot through the plate to the side y = 30. Faces: the L-shaped base has 8 (bottom, y = 0, top z = 10, y = 15, top z = 2, y = 30, x = 0, x = 60); the slot splits each of top z = 2 and y = 30 into two faces (8 + 2 = 10) and the tunnel adds four (end wall, two side walls, ceiling): 14. Volume 10800 - 500 = 10300 mm^3 from the box dimensions, the same for both.",
+ "cases": [
+  {
+   "name": "flush_with_wall",
+   "note": "the tool's end face lies on the plate's side y = 30 (the reporter's case; 13 faces with the skin)",
+   "steps": [
+    {
+     "op": "box",
+     "id": "plate",
+     "origin": [
+      0,
+      0,
+      0
+     ],
+     "size": [
+      60,
+      30,
+      2
+     ]
+    },
+    {
+     "op": "box",
+     "id": "wall",
+     "origin": [
+      0,
+      0,
+      0
+     ],
+     "size": [
+      60,
+      15,
+      10
+     ]
+    },
+    {
+     "op": "union",
+     "id": "base",
+     "a": "plate",
+     "b": "wall"
+    },
+    {
+     "op": "box",
+     "id": "tool0",
+     "origin": [
+      25,
+      5,
+      -1
+     ],
+     "size": [
+      10,
+      25,
+      3
+     ]
+    },
+    {
+     "op": "rotate",
+     "id": "tool",
+     "body": "tool0",
+     "point": [
+      30,
+      17.5,
+      0.5
+     ],
+     "axis": [
+      0.6,
+      0.8,
+      0
+     ],
+     "degrees": 2.291831180523293e-06
+    },
+    {
+     "op": "difference",
+     "id": "result",
+     "a": "base",
+     "b": "tool"
+    }
+   ],
+   "expect": {
+    "lumps": 1,
+    "faces": 14,
+    "volume": {
+     "value": 10300,
+     "tol": 0.1,
+     "formula": "plate 60*30*2 = 3600 plus wall 60*15*10 = 9000 minus their overlap 60*15*2 = 1800 gives 10800; the cut removes 10 * 25 * 2 = 500 (x 25..35, y 5..30, z 0..2; the tool's other 1 mm below z = 0 and the overshoot past y = 30 hold no material); tol 0.1 = 1e-5 relative, the rotation moves the volume by about 1e-6"
+    }
+   }
+  },
+  {
+   "name": "overshoots_wall",
+   "note": "the tool passes 1 mm beyond y = 30 (control; 14 faces on the old kernel)",
+   "steps": [
+    {
+     "op": "box",
+     "id": "plate",
+     "origin": [
+      0,
+      0,
+      0
+     ],
+     "size": [
+      60,
+      30,
+      2
+     ]
+    },
+    {
+     "op": "box",
+     "id": "wall",
+     "origin": [
+      0,
+      0,
+      0
+     ],
+     "size": [
+      60,
+      15,
+      10
+     ]
+    },
+    {
+     "op": "union",
+     "id": "base",
+     "a": "plate",
+     "b": "wall"
+    },
+    {
+     "op": "box",
+     "id": "tool0",
+     "origin": [
+      25,
+      5,
+      -1
+     ],
+     "size": [
+      10,
+      26,
+      3
+     ]
+    },
+    {
+     "op": "rotate",
+     "id": "tool",
+     "body": "tool0",
+     "point": [
+      30,
+      17.5,
+      0.5
+     ],
+     "axis": [
+      0.6,
+      0.8,
+      0
+     ],
+     "degrees": 2.291831180523293e-06
+    },
+    {
+     "op": "difference",
+     "id": "result",
+     "a": "base",
+     "b": "tool"
+    }
+   ],
+   "expect": {
+    "lumps": 1,
+    "faces": 14,
+    "volume": {
+     "value": 10300,
+     "tol": 0.1,
+     "formula": "plate 60*30*2 = 3600 plus wall 60*15*10 = 9000 minus their overlap 60*15*2 = 1800 gives 10800; the cut removes 10 * 25 * 2 = 500 (x 25..35, y 5..30, z 0..2; the tool's other 1 mm below z = 0 and the overshoot past y = 30 hold no material); tol 0.1 = 1e-5 relative, the rotation moves the volume by about 1e-6"
+    }
+   }
+  }
+ ]
+}

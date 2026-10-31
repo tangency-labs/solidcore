@@ -800,7 +800,8 @@ nice -n 10 cargo run -p difftest -- --solidcraft-cases '3526-*'        # ids (<f
   `324-*/round_4_over_hole`, tangency-labs/solidcore#422).
   An empty or whitespace-only `error` never matches: the step failure stays an `ERROR`.
 * **Expectations** (`expect`): `lumps` (bounded regions; `0` = nothing left), `volume`
-  (`value`, absolute `tol`, the `formula` it came from), `cylinder_faces_max`,
+  (`value`, absolute `tol`, the `formula` it came from), `faces` (exact face count of
+  `result`, counted from the analytic shape; default off), `cylinder_faces_max`,
   `sheet_corner` (signed end distances and flat-pattern invariants).
 * **Verdicts**: `PASS`, `FAIL`, `UNCHECKED` (no expectations were supplied, or no check
   failed but one cannot be measured
