@@ -1,6 +1,7 @@
 //! Runner for unit `corpus.parity`: the Rust port is at least as good as upstream on
 //! every real model file under `upstream/TestFiles/pt_TestFiles` (188 `.smb` B-rep
-//! files and 74 `.smp` part files). C++: `solidcore_ffi::units::corpus_parity`. Rust:
+//! files and 74 `.smp` part files), and on the generated case inputs of
+//! `REPO_MODEL_DIRS`. C++: `solidcore_ffi::units::corpus_parity`. Rust:
 //! the readers (`SmBrep::ReadFromFile`, `SmBrepData::ReadPartFromFile`) and the
 //! measures of `crates/solidcore/examples/corpus`.
 //!
@@ -71,6 +72,11 @@ pub const TIMEOUT: Duration = Duration::from_secs(300);
 pub const CHILD_FLAG: &str = "--corpus-parity-child";
 /// Deepest directory level searched below the test files.
 const MAX_DEPTH: usize = 32;
+/// Repository directories of generated `.smb` case inputs other runners read on both
+/// sides, measured here too so a difference in those runners cannot be a reader
+/// difference (#1528: `offset.offset_executive_p2`'s `issue1528_plate_api_shell_2`
+/// shells `issue1528_plate.smb`). Their case names keep the repository-relative path.
+const REPO_MODEL_DIRS: [&str; 1] = ["fixtures/offset.offset_executive_p2/data"];
 /// Values per B-rep in a measurement (as [`ffi::PER_BREP`]).
 const PER_BREP: usize = ffi::PER_BREP;
 /// First identity of the geometry the readers make (topology identities stay below).
@@ -81,7 +87,8 @@ pub struct Runner;
 
 #[derive(Serialize, Deserialize)]
 struct Inputs {
-    /// The model file, relative to `upstream/TestFiles/pt_TestFiles`.
+    /// The model file, relative to `upstream/TestFiles/pt_TestFiles` (a
+    /// `REPO_MODEL_DIRS` file: relative to the repository root).
     file: String,
     /// Its absolute path.
     path: String,
@@ -175,15 +182,7 @@ fn disagreement_except(cpp: &[&[f64]], rust: &[&[f64]], skip: &[&str]) -> Option
 
 /// Files where upstream's result is a known C++ defect and the port's is right: the file,
 /// the quantities the defect affects (empty: the whole result) and the evidence.
-const KNOWN_CPP_DEFECTS: [(&str, &[&str], &str); 2] = [
-    (
-        "Fillet/sphere_diff_3cylinders.smb",
-        &["area", "volume"],
-        "plan/upstream-issues/WR-449--sphere-diff-3cylinders-one-fillet-face-integrates-0-6-too-large.md: \
-         upstream's fillet face 7 integrates 0.60 more area and 2.14 more volume than its five \
-         symmetric siblings, which the port matches; the trims differ on edge 30, made on demand \
-         (CreateUVTrimCurve / DropCurve / sm_FixUVTrimCurves), the diverging step not yet pinned",
-    ),
+const KNOWN_CPP_DEFECTS: [(&str, &[&str], &str); 1] = [
     (
         "Solids/fillet_ts.smb",
         &[],
@@ -482,10 +481,10 @@ pub fn run_child(args: &[String]) -> ExitCode {
 /// system temp directory for the C++ round trip's file and removed with everything in it
 /// when dropped (on every return path). `create_dir` fails on any existing entry,
 /// a planted symlink included, and the next name is tried.
-struct PrivateDir(PathBuf);
+pub(super) struct PrivateDir(pub(super) PathBuf);
 
 impl PrivateDir {
-    fn new() -> std::io::Result<Self> {
+    pub(super) fn new() -> std::io::Result<Self> {
         let base = std::env::temp_dir();
         let nanos = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
@@ -725,12 +724,19 @@ impl UnitDiff for Runner {
 
     fn cases(&self, ctx: &CaseContext) -> Result<Vec<Case>, HarnessError> {
         let dir = ctx.root.join(crate::fixtures::UPSTREAM_TEST_FILES);
-        let files = model_files(&dir);
+        let mut files = model_files(&dir);
         if files.is_empty() {
             return Err(HarnessError::new(format!(
                 "no .smb/.smp files under {}",
                 dir.display()
             )));
+        }
+        for repo_dir in REPO_MODEL_DIRS {
+            files.extend(
+                model_files(&ctx.root.join(repo_dir))
+                    .into_iter()
+                    .map(|(path, file)| (path, format!("{repo_dir}/{file}"))),
+            );
         }
         files
             .into_iter()

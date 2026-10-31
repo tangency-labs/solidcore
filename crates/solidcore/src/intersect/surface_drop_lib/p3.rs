@@ -43,14 +43,16 @@
 //!   `NULL`), and two curve `EvaluatePoint`s (the curve's scaled zero and the end gap
 //!   check) are read after an ignored failure (uninitialised points): here those
 //!   errors propagate (plan/upstream-issues.md UB-129).
-//! - **`bDegenSurfV`** tests the domain's `XLength`, as upstream (plan/upstream-issues.md
-//!   WR-100).
+//! - **`bDegenSurfV`** tests the domain's `XLength`, as upstream (WR-100); with
+//!   `Kernel::fixes.drop_curve_v_domain_degeneracy` it tests `YLength` instead (WR-100
+//!   addendum 2026-10-31).
 //! - **Temporary state.** The out-of-bounds convergence upstream enables on the surface
 //!   for the call (`SmTemporaryChangeValue`) runs on an evaluation copy with the flag
 //!   set. The surface cache flags (`m_bPointTestEnabled` off, `m_bProcessBoundaryCurves`
 //!   on) are modelled by the start point drop keeping every solution
-//!   ([`Surface::global_point_solve_point_test_off`], `SmSurfaceDropLib.cpp:4310-4316`)
-//!   unless the caller's face test or context replaces it. The
+//!   ([`Surface::global_point_solve_point_test_off`], `SmSurfaceDropLib.cpp:4310-4316`;
+//!   through the caller's context, its point-test-off variant) unless the caller's face
+//!   test replaces it. The
 //!   curve cache is built fresh (`make_curve_cache`); a failed build is
 //!   `SM_ERR_NULL_POINTER` (`NER`).
 //! - **Offset surface.** `SmOffsetSurface(1.0, *this, FALSE, lSingularities)` is a
@@ -106,14 +108,14 @@ use super::p2::{
 };
 
 /// `SM_ERR_NOT_CONVERGING` (`SmMessages.h`).
-pub const SM_ERR_NOT_CONVERGING: i32 = 1022;
+pub use crate::error::SM_ERR_NOT_CONVERGING;
 
 /// `SM_ERR_DEGENERATE_SURFACE` (`SmMessages.h`): the drop domain is degenerate.
-pub const SM_ERR_DEGENERATE_SURFACE: i32 = 1034;
+pub use crate::error::SM_ERR_DEGENERATE_SURFACE;
 
 /// `SM_ERR_BAD_FIND_DEGEN_PARAM` (`SmMessages.h`): `FindDegenParamForDirection` failed
 /// for a start point on a pole (recorded only).
-pub const SM_ERR_BAD_FIND_DEGEN_PARAM: i32 = 1036;
+pub use crate::error::SM_ERR_BAD_FIND_DEGEN_PARAM;
 
 /// Most drop points the span subdivision stack of [`Surface::drop_curve_base`] holds
 /// (upstream: unbounded).
@@ -147,7 +149,7 @@ pub struct DropCurveOut {
 fn status_of(e: &SolidError) -> i32 {
     match e {
         SolidError::Upstream { code, .. } => *code,
-        SolidError::InvalidInput { .. } => SM_ERR_INVALID_INPUT,
+        SolidError::InvalidInput { .. } | SolidError::PortInvariant { .. } => SM_ERR_INVALID_INPUT,
         SolidError::NotConverged { .. } => SM_ERR_NOT_CONVERGING,
         _ => SM_ERR,
     }
@@ -633,7 +635,11 @@ impl Surface {
             self.natural_uv_domain_with_nurb(k)?
         };
         let degen_surf_u = s_uv_domain.x_length() < EFF_ZERO;
-        let degen_surf_v = s_uv_domain.x_length() < EFF_ZERO; // (sic) WR-100
+        let degen_surf_v = if k.fixes.drop_curve_v_domain_degeneracy {
+            s_uv_domain.y_length() < EFF_ZERO
+        } else {
+            s_uv_domain.x_length() < EFF_ZERO // (sic) WR-100, pinned C++ behaviour
+        };
         let contained =
             s_uv_domain.is_contained_by(&self.natural_uv_domain_with_nurb(k)?, EFF_ZERO);
 
@@ -750,10 +756,12 @@ impl Surface {
             *dst = *src;
         }
 
-        // Drop curve StartPoint to surface (SM_SO_MINIMIZE, all solutions)
+        // Drop curve StartPoint to surface (SM_SO_MINIMIZE, all solutions; the cache's
+        // point testing is off for the whole call, `sChange1`, SmSurfaceDropLib.cpp:4315:
+        // the face's cache comes from the context, its trims are not tested)
         let mut solutions: SolutionArray<O> = if let Some(ctx) = context {
             let mut solutions = SolutionArray::new();
-            this.global_point_solve_into_with_context(
+            this.global_point_solve_into_with_context_point_test_off(
                 k,
                 ctx.handle,
                 None,
@@ -1503,6 +1511,7 @@ impl Surface {
 mod tests {
     use super::*;
     use crate::geom::vector2d::Vec2;
+    use crate::nurbs::b_spline_surface::BSplineSurface;
     use crate::nurbs::crv_basic::Curve as NurbCurve;
     use crate::nurbs::math::{CPoint, NOW};
     use crate::surface::plane::Plane;
@@ -1617,5 +1626,163 @@ mod tests {
             run(crate::geom::tol::USE_DEFAULT),
             run(k.tolerances.zone_tol_3d / 2.0)
         );
+    }
+
+    // ---- WR-100: the V degeneracy test ------------------------------------------------
+
+    const WR100_NORMAL_KNOTS: [f64; 6] = [0.0, 0.0, 0.0, 1.0, 1.0, 1.0];
+    const WR100_TINY_KNOTS: [f64; 6] = [0.0, 0.0, 0.0, 1.0e-15, 1.0e-15, 1.0e-15];
+
+    /// The WR-100 witness surface (fixture `natural_domain_degeneracy.json`): a
+    /// non-rational degree 2x2 B-spline over a 3x3 net, its `u`/`v` knot vectors given.
+    fn wr100_surface(u: [f64; 6], v: [f64; 6]) -> Surface {
+        let net = vec![
+            vec![
+                CPoint::new(0.0, 0.0, 0.0, NOW),
+                CPoint::new(0.0, 0.5, 0.1, NOW),
+                CPoint::new(0.0, 1.0, 0.0, NOW),
+            ],
+            vec![
+                CPoint::new(0.5, 0.0, 0.1, NOW),
+                CPoint::new(0.5, 0.5, 0.2, NOW),
+                CPoint::new(0.5, 1.0, 0.1, NOW),
+            ],
+            vec![
+                CPoint::new(1.0, 0.0, 0.0, NOW),
+                CPoint::new(1.0, 0.5, 0.1, NOW),
+                CPoint::new(1.0, 1.0, 0.0, NOW),
+            ],
+        ];
+        Surface::from(
+            BSplineSurface::from_data(2, 2, 2, 2, 5, 5, &net, &u, &v).expect("witness surface"),
+        )
+    }
+
+    /// [`Surface::drop_curve`] (the public dispatch, not the private base) with the
+    /// witness point curve at `(10, 10, 10)` over `domain` and a failure record.
+    fn wr100_drop(
+        k: &Kernel,
+        surface: &Surface,
+        domain: [f64; 4],
+    ) -> (Result<PlaneDropCurve>, DropCurveFail<NoObject>) {
+        let mut fail: DropCurveFail<NoObject> = DropCurveFail::default();
+        let r = surface.drop_curve::<NoObject>(
+            k,
+            &Extent2d::from_bounds(domain[0], domain[1], domain[2], domain[3]),
+            &point_curve(Point3::new(10.0, 10.0, 10.0)),
+            &Extent1d::from_min_max(0.0, 1.0),
+            1.0e-4,
+            true,
+            Some(DropFailRecord {
+                fail: &mut fail,
+                surface: None,
+                curve: None,
+            }),
+            true,
+        );
+        (r, fail)
+    }
+
+    /// The V-degenerate witness: `sm_FixupKnotVector` collapses the `1e-15` span, so the
+    /// natural domain is `[0,0,1,0]` (U length 1, V length 0), not a `1e-15` span. The
+    /// natural lengths classify the degeneracy independently of the record's flags.
+    #[test]
+    fn wr100_v_domain_degeneracy_flag_reports_a_degenerate_v_surface() {
+        let mut k = Kernel::default();
+        k.fixes.drop_curve_v_domain_degeneracy = true;
+        let srf = wr100_surface(WR100_NORMAL_KNOTS, WR100_TINY_KNOTS);
+        let nat = srf.natural_uv_domain_with_nurb(&k).expect("natural domain");
+        assert_eq!((nat.x_length(), nat.y_length()), (1.0, 0.0));
+        assert!(nat.x_length() >= EFF_ZERO);
+        assert!(nat.y_length() < EFF_ZERO);
+
+        let (r, fail) = wr100_drop(&k, &srf, [0.0, 1.0, 1.0, 1.0]);
+        assert!(matches!(r, Err(SolidError::Upstream { code: SM_ERR, .. })));
+        assert_eq!(fail.fail_status, SM_ERR_DEGENERATE_SURFACE);
+        assert_eq!(
+            fail.create_path_type,
+            CreateUvTrimCurvePathType::DegenSurfaceFail
+        );
+        assert_eq!((fail.degen_surf_u, fail.degen_surf_v), (0, 1));
+    }
+
+    /// The U-degenerate counterpart: U length 0 (degenerate) and V length 1, so with the
+    /// fix the record's V flag is 0. The status and path were already `1034 / 17`:
+    /// the U flag alone triggered the early exit; the wrong V flag only coincided.
+    #[test]
+    fn wr100_u_domain_degeneracy_keeps_its_status_and_clears_the_v_flag() {
+        let mut k = Kernel::default();
+        k.fixes.drop_curve_v_domain_degeneracy = true;
+        let srf = wr100_surface(WR100_TINY_KNOTS, WR100_NORMAL_KNOTS);
+        let nat = srf.natural_uv_domain_with_nurb(&k).expect("natural domain");
+        assert_eq!((nat.x_length(), nat.y_length()), (0.0, 1.0));
+        assert!(nat.x_length() < EFF_ZERO);
+        assert!(nat.y_length() >= EFF_ZERO);
+
+        let (r, fail) = wr100_drop(&k, &srf, [1.0, 0.0, 1.0, 1.0]);
+        assert!(matches!(r, Err(SolidError::Upstream { code: SM_ERR, .. })));
+        assert_eq!(fail.fail_status, SM_ERR_DEGENERATE_SURFACE);
+        assert_eq!(
+            fail.create_path_type,
+            CreateUvTrimCurvePathType::DegenSurfaceFail
+        );
+        assert_eq!((fail.degen_surf_u, fail.degen_surf_v), (1, 0));
+    }
+
+    /// The positive control: both natural lengths are 1, so neither degeneracy applies
+    /// and the fix changes nothing (same `1020 / 19` first-drop failure and zero flags
+    /// with it off and on).
+    #[test]
+    fn wr100_normal_domain_is_unaffected_by_the_v_domain_fix() {
+        let srf = wr100_surface(WR100_NORMAL_KNOTS, WR100_NORMAL_KNOTS);
+        let run = |fix: bool| {
+            let mut k = Kernel::default();
+            k.fixes.drop_curve_v_domain_degeneracy = fix;
+            let nat = srf.natural_uv_domain_with_nurb(&k).expect("natural domain");
+            assert_eq!((nat.x_length(), nat.y_length()), (1.0, 1.0));
+            let (r, fail) = wr100_drop(&k, &srf, [0.0, 0.0, 1.0, 1.0]);
+            // `FirstDropUncontainedFail` returns the (empty) output, not an error.
+            assert!(r
+                .expect("first drop failure returns the output")
+                .uv_curves
+                .is_empty());
+            (
+                fail.fail_status,
+                fail.create_path_type,
+                fail.degen_surf_u,
+                fail.degen_surf_v,
+            )
+        };
+        assert_eq!(run(false), run(true));
+        assert_eq!(
+            run(true),
+            (
+                SM_ERR_OUTSIDE_OF_DOMAIN,
+                CreateUvTrimCurvePathType::FirstDropUncontainedFail,
+                0,
+                0
+            )
+        );
+    }
+
+    /// Off by default the V-degenerate witness keeps the pinned C++ result (`1020 / 19`,
+    /// both flags 0): the V flag copies the U test, which passes.
+    #[test]
+    fn wr100_v_domain_degeneracy_is_off_by_default() {
+        let k = Kernel::default();
+        assert!(!k.fixes.drop_curve_v_domain_degeneracy);
+        let srf = wr100_surface(WR100_NORMAL_KNOTS, WR100_TINY_KNOTS);
+        let (r, fail) = wr100_drop(&k, &srf, [0.0, 1.0, 1.0, 1.0]);
+        // `FirstDropUncontainedFail` returns the (empty) output, not an error.
+        assert!(r
+            .expect("first drop failure returns the output")
+            .uv_curves
+            .is_empty());
+        assert_eq!(fail.fail_status, SM_ERR_OUTSIDE_OF_DOMAIN);
+        assert_eq!(
+            fail.create_path_type,
+            CreateUvTrimCurvePathType::FirstDropUncontainedFail
+        );
+        assert_eq!((fail.degen_surf_u, fail.degen_surf_v), (0, 0));
     }
 }

@@ -1,6 +1,7 @@
-//! `SmFace`, part 1: construction and destruction, loop insertion and removal, the
-//! surface swap and replacement, orientation flip, UV trim curve removal, the trim
-//! boundary and UV domain built from the UV trim curves, the rectangular-trim test,
+//! `SmFace`, part 1: construction and destruction, loop insertion and removal, inner
+//! loop deletion, the surface swap and replacement, orientation flip, UV trim curve
+//! removal, the trim boundary and UV domain built from the UV trim curves, the
+//! rectangular-trim test,
 //! geometry shrinking, and the seam repair of faces on periodic surfaces (`MoveSeam`,
 //! `SplitAtSeam`).
 //!
@@ -18,6 +19,7 @@
 //! | [`insert_loop`]                              | `SmFace::InsertLoop`                         |
 //! | [`remove_loop`]                              | `SmFace::RemoveLoop`                         |
 //! | [`remove_uv_trim_curves`]                    | `SmFace::RemoveUVTrimCurves`                 |
+//! | [`delete_inner_loop`], [`delete_inner_loop_with_kernel_callbacks`] | `SmFace::DeleteInnerLoop` |
 //! | [`swap_uv`]                                  | `SmFace::SwapUV`                             |
 //! | [`move_seam`], [`move_seam_notified`], [`MoveSeamOptions`], [`MoveSeamResult`], [`SeamProblem`] | `SmFace::MoveSeam` |
 //! | [`split_at_seam`], [`SeamSplit`]             | `SmFace::SplitAtSeam`                        |
@@ -130,6 +132,15 @@
 //!   (upstream asserts the recursion only fixes V seams); the port carries a depth and
 //!   returns [`SolidError::InvalidInput`] past [`MAX_SPLIT_AT_SEAM_DEPTH`]. Every other
 //!   loop is over B-rep arrays, knots or a fixed sample count.
+//! - **`DeleteInnerLoop`** notifies through the caller's environment
+//!   ([`delete_inner_loop`]) or the kernel context's callbacks
+//!   ([`delete_inner_loop_with_kernel_callbacks`]); its `RemoveLoop` sends the face's
+//!   edit notifications there too (the [`remove_loop`] entry uses the empty environment
+//!   above). The destructors' `~SmTopology` list removals (vertex use from its vertex,
+//!   edge use from its edge, vertex and edge from the B-rep's lists) are explicit; the
+//!   records leave their arenas. A loop without both loop uses, or an edge use without
+//!   edge, vertex use or vertex (upstream dereferences null) is
+//!   [`SolidError::InvalidInput`].
 //! - **Not upstream: [`shrink_geometry_with`]** (tangency-labs/solidcore#472) passes
 //!   [`TrimOptions`] to the surface trim; [`shrink_geometry`] uses the defaults
 //!   (upstream). See `nurbs::b_spline_surface_n_lib::p2`'s Deviations.
@@ -167,6 +178,7 @@ use crate::surface::surface::p5::DropPointOptions;
 use crate::surface::surface::p7::drop_vectors_at;
 use crate::surface::surface::{Surface, SurfaceKind};
 use crate::topology::brep::p2::{self as brep_p2, OldSurface};
+use crate::topology::brep::p3 as brep_p3;
 use crate::topology::edgeuse::p1 as eu1;
 use crate::topology::edgeuse::p3 as eu3;
 use crate::topology::face::p2 as fp2;
@@ -182,12 +194,19 @@ use crate::topology::{
 
 const OP: &str = "topology::face::p1";
 
-/// Upstream `SM_ERR_ASSERT_FAILURE` (`SmMessages.h`).
-const SM_ERR_ASSERT_FAILURE: i32 = 1005;
+// Upstream `SM_ERR_ASSERT_FAILURE` (`SmMessages.h`).
+use crate::error::SM_ERR_ASSERT_FAILURE;
 
 /// The deepest [`split_at_seam`] recursion accepted (upstream recurses once, from a U
 /// merge into the V merges of the faces it made).
 pub const MAX_SPLIT_AT_SEAM_DEPTH: usize = 8;
+
+/// A status SMLib drops and the fork passes on (`SER`, tangency-labs/smlib 6997962):
+/// returned with the opt-in [`crate::kernel::UpstreamFixes::query_statuses_pass_on`],
+/// handed on to the site's own ignore otherwise.
+fn pass<T>(k: &Kernel, r: Result<T>) -> Result<Result<T>> {
+    crate::error::passed_on(r, k.fixes.query_statuses_pass_on)
+}
 
 fn null(reason: &'static str) -> SolidError {
     SolidError::invalid_input(OP, reason)
@@ -341,7 +360,15 @@ fn has_near_misses<O: LoopObject>(
 ) -> Result<bool> {
     match c.has_near_misses(k, geometry, false) {
         Ok(v) => Ok(v),
-        Err(e) if e.is_unported() || matches!(e, SolidError::InvalidInput { .. }) => Err(e),
+        Err(e)
+            if e.is_unported()
+                || matches!(
+                    e,
+                    SolidError::InvalidInput { .. } | SolidError::PortInvariant { .. }
+                ) =>
+        {
+            Err(e)
+        }
         Err(_) => Ok(false),
     }
 }
@@ -727,6 +754,13 @@ pub fn create_oriented_trim_boundary(
         eu1::faceuse_loopuses(b, fu, false, None)?
     };
 
+    // WR-491, opt-in: the periods of the directions in which the surface is closed
+    let periods = if k.fixes.trim_boundary_seam_wrap && parameter_space && fill_singularities {
+        seam_periods(k, b, f)?
+    } else {
+        [None, None]
+    };
+
     // for every loop
     for lu in loopuses {
         // no work - lone vertex
@@ -740,83 +774,229 @@ pub fn create_oriented_trim_boundary(
             continue;
         };
 
-        // the last edge's end-point (status ignored)
-        let mut last_pnt = Vec3::UNDEF;
-        if let Some(p) = ignored(normalized_evaluate_uv(k, b, last_eu, 1.0))? {
-            last_pnt = p;
-        }
+        let first_curve = out.curves.len();
+        // With the fix, a first pass shifts the curves after a seam wrap; a loop that does
+        // not close that way is made again as upstream does.
+        for wrap in [periods != [None, None], false] {
+            out.curves.truncate(first_curve);
+            let mut shift = Vec3::new(0.0, 0.0, 0.0);
 
-        let mut edges_in_loop = 0usize;
-
-        // for every edgeuse in this loop
-        for &eu in &edgeuses {
-            if eu1::orientation(b, eu)? == OrientType::Same {
-                let uv_curve = get_or_create_uv_trim_curve(k, b, eu)?;
-                let ivl = uv_curve.natural_interval();
-
-                // get trim curve's start UV point
-                let pnt = uv_curve.evaluate_point(k, ivl.min())?;
-
-                // get dist from this start pt to last curve's end-point
-                let diff = pnt - last_pnt;
-                let scaled_zero = EFF_ZERO * (1.0 + pnt.max_dimension());
-                if diff.length_squared() > scaled_zero && parameter_space && fill_singularities {
-                    // If there is a gap create a line to fill it
-                    edges_in_loop += 1;
-                    out.curves.push(gap_line(last_pnt, pnt)?);
-                }
-
-                // Get UVCurve->End UVPoint
-                last_pnt = uv_curve.evaluate_point(k, ivl.max())?;
-                edges_in_loop += 1;
-                if parameter_space {
-                    // (status ignored upstream; only NER(pOrig))
-                    let orig = fetch_uv_trim_curve(k, b, eu)?
-                        .1
-                        .ok_or_else(|| SolidError::null_pointer(OP))?;
-                    let mut bsc = orig.copy(k)?;
-                    bsc.convert_to_2d(k)?;
-                    let _ = bsc.set_owner(Some(key_of(EntityRef::Edgeuse(eu))), None);
-                    out.curves.push(bsc);
-                } else {
-                    let e = edge_deref(b, eu)?;
-                    out.curves.push(trimmed_edge_curve(k, b, e)?);
-                }
-            } else {
-                let mut bsc = if parameter_space {
-                    let orig = get_or_create_uv_trim_curve(k, b, eu)?;
-                    let mut bsc = orig.copy(k)?;
-                    bsc.convert_to_2d(k)?;
-                    let _ = bsc.set_owner(orig.owner(), None);
-                    bsc
-                } else {
-                    let e = edge_deref(b, eu)?;
-                    let owner = edge_bspline_curve(b, e)?.owner();
-                    let mut bsc = trimmed_edge_curve(k, b, e)?;
-                    let _ = bsc.set_owner(owner, None);
-                    bsc
-                };
-
-                let ivl = bsc.natural_interval();
-                let ivl = bsc.reverse_parameterization(k, &ivl)?;
-                let pnt = bsc.evaluate_point(k, ivl.min())?;
-                let diff = pnt - last_pnt;
-                let scaled_zero = EFF_ZERO * (1.0 + pnt.max_dimension());
-                if diff.length_squared() > scaled_zero && parameter_space && fill_singularities {
-                    // If there is a gap create a line to fill it
-                    edges_in_loop += 1;
-                    out.curves.push(gap_line(last_pnt, pnt)?);
-                }
-                last_pnt = bsc.evaluate_point(k, ivl.max())?;
-                edges_in_loop += 1;
-                out.curves.push(bsc);
+            // the last edge's end-point (status ignored)
+            let mut last_pnt = Vec3::UNDEF;
+            if let Some(p) = ignored(normalized_evaluate_uv(k, b, last_eu, 1.0))? {
+                last_pnt = p;
             }
-        }
 
-        out.loops.push(edges_in_loop);
+            let mut edges_in_loop = 0usize;
+
+            // for every edgeuse in this loop
+            for &eu in &edgeuses {
+                if eu1::orientation(b, eu)? == OrientType::Same {
+                    let uv_curve = get_or_create_uv_trim_curve(k, b, eu)?;
+                    let ivl = uv_curve.natural_interval();
+
+                    // get trim curve's start UV point
+                    let mut pnt = uv_curve.evaluate_point(k, ivl.min())?;
+                    if wrap {
+                        shift = shift + seam_wrap(k, b, f, last_pnt, pnt, shift, periods)?;
+                        pnt += shift;
+                    }
+
+                    // get dist from this start pt to last curve's end-point
+                    let diff = pnt - last_pnt;
+                    let scaled_zero = EFF_ZERO * (1.0 + pnt.max_dimension());
+                    if diff.length_squared() > scaled_zero && parameter_space && fill_singularities
+                    {
+                        // If there is a gap create a line to fill it
+                        edges_in_loop += 1;
+                        out.curves.push(gap_line(last_pnt, pnt)?);
+                    }
+
+                    // Get UVCurve->End UVPoint
+                    last_pnt = uv_curve.evaluate_point(k, ivl.max())?;
+                    if wrap {
+                        last_pnt += shift;
+                    }
+                    edges_in_loop += 1;
+                    if parameter_space {
+                        // (status ignored upstream; only NER(pOrig))
+                        let orig = fetch_uv_trim_curve(k, b, eu)?
+                            .1
+                            .ok_or_else(|| SolidError::null_pointer(OP))?;
+                        let mut bsc = orig.copy(k)?;
+                        bsc.convert_to_2d(k)?;
+                        let _ = bsc.set_owner(Some(key_of(EntityRef::Edgeuse(eu))), None);
+                        if wrap {
+                            shift_curve(k, &mut bsc, shift)?;
+                        }
+                        out.curves.push(bsc);
+                    } else {
+                        let e = edge_deref(b, eu)?;
+                        out.curves.push(trimmed_edge_curve(k, b, e)?);
+                    }
+                } else {
+                    let mut bsc = if parameter_space {
+                        let orig = get_or_create_uv_trim_curve(k, b, eu)?;
+                        let mut bsc = orig.copy(k)?;
+                        bsc.convert_to_2d(k)?;
+                        let _ = bsc.set_owner(orig.owner(), None);
+                        bsc
+                    } else {
+                        let e = edge_deref(b, eu)?;
+                        let owner = edge_bspline_curve(b, e)?.owner();
+                        let mut bsc = trimmed_edge_curve(k, b, e)?;
+                        let _ = bsc.set_owner(owner, None);
+                        bsc
+                    };
+
+                    let ivl = bsc.natural_interval();
+                    let ivl = bsc.reverse_parameterization(k, &ivl)?;
+                    let mut pnt = bsc.evaluate_point(k, ivl.min())?;
+                    if wrap {
+                        shift = shift + seam_wrap(k, b, f, last_pnt, pnt, shift, periods)?;
+                        pnt += shift;
+                    }
+                    let diff = pnt - last_pnt;
+                    let scaled_zero = EFF_ZERO * (1.0 + pnt.max_dimension());
+                    if diff.length_squared() > scaled_zero && parameter_space && fill_singularities
+                    {
+                        // If there is a gap create a line to fill it
+                        edges_in_loop += 1;
+                        out.curves.push(gap_line(last_pnt, pnt)?);
+                    }
+                    last_pnt = bsc.evaluate_point(k, ivl.max())?;
+                    if wrap {
+                        last_pnt += shift;
+                    }
+                    edges_in_loop += 1;
+                    if wrap {
+                        shift_curve(k, &mut bsc, shift)?;
+                    }
+                    out.curves.push(bsc);
+                }
+            }
+
+            // a loop shifted by a net period is not closed: upstream's gap lines instead
+            if wrap && (shift.x != 0.0 || shift.y != 0.0) {
+                continue;
+            }
+            out.loops.push(edges_in_loop);
+            break;
+        }
     }
 
     Ok(out)
+}
+
+/// How near a whole number of periods a UV gap must be to count as a seam wrap, as a
+/// fraction of the period (WR-491).
+const SEAM_WRAP_RESIDUAL: f64 = 0.01;
+
+/// The periods (natural domain lengths) of the directions in which the face's surface is
+/// closed within twice the face tolerance (two of its points each that near a shared place), `None` in the others (WR-491).
+fn seam_periods(k: &Kernel, b: &Brep, f: FaceId) -> Result<[Option<f64>; 2]> {
+    let surface = b
+        .face(f)?
+        .surface
+        .as_ref()
+        .ok_or_else(|| null("face without surface"))?;
+    let tolerance = fp2::tolerance(b, f)?;
+    let dom = surface.natural_uv_domain_with_nurb(k)?;
+    let mut periods = [None, None];
+    for (slot, (length, direction)) in periods.iter_mut().zip([
+        (dom.x_length(), SurfParamType::U),
+        (dom.y_length(), SurfParamType::V),
+    ]) {
+        if length.is_finite()
+            && length > 0.0
+            && surface
+                .is_closed(k, &dom, direction, Some(2.0 * tolerance), false)?
+                .0
+        {
+            *slot = Some(length);
+        }
+    }
+    Ok(periods)
+}
+
+/// The further shift that takes a curve starting at `start` (not yet shifted) onto
+/// `last_end`, the shifted end of the curve before it, given the `shift` of the curves so
+/// far: where the gap is whole periods in a closed direction up to [`SEAM_WRAP_RESIDUAL`]
+/// (WR-491), a seam crossing. A gap along a singular side of the surface (a sphere's
+/// pole, a cone's apex) is a surface singularity instead, whatever its length: no shift
+/// (#1437).
+fn seam_wrap(
+    k: &Kernel,
+    b: &Brep,
+    f: FaceId,
+    last_end: Point3,
+    start: Point3,
+    shift: Vec3,
+    periods: [Option<f64>; 2],
+) -> Result<Vec3> {
+    let wrap = seam_wrap_of_gap(start + shift - last_end, periods);
+    if (wrap.x == 0.0 && wrap.y == 0.0) || gap_is_singular(k, b, f, last_end - shift, start)? {
+        return Ok(Vec3::new(0.0, 0.0, 0.0));
+    }
+    Ok(wrap)
+}
+
+/// Whether the UV line from `end` to `start` maps to one point on face `f`'s surface
+/// within twice the face tolerance (the closedness test of [`seam_periods`]): sampled at
+/// its quarter points, as on a sphere's pole or a cone's apex. Across a seam the line runs
+/// round the whole surface instead (#1437, WR-491).
+fn gap_is_singular(k: &Kernel, b: &Brep, f: FaceId, end: Point3, start: Point3) -> Result<bool> {
+    let surface = b
+        .face(f)?
+        .surface
+        .as_ref()
+        .ok_or_else(|| null("face without surface"))?;
+    let tolerance = 2.0 * fp2::tolerance(b, f)?;
+    let at = |t: f64| {
+        let p = end + (start - end) * t;
+        surface.evaluate_point(k, Point2::new(p.x, p.y))
+    };
+    let anchor = at(0.0)?;
+    for t in [0.25, 0.5, 0.75, 1.0] {
+        if (at(t)? - anchor).length() > tolerance {
+            return Ok(false);
+        }
+    }
+    Ok(true)
+}
+
+/// The shift that takes a curve starting at `gap` from the end of the one before it onto
+/// that end, where `gap` is whole periods in a closed direction up to
+/// [`SEAM_WRAP_RESIDUAL`] (WR-491).
+fn seam_wrap_of_gap(gap: Vec3, periods: [Option<f64>; 2]) -> Vec3 {
+    let mut shift = Vec3::new(0.0, 0.0, 0.0);
+    for (d, period, s) in [
+        (gap.x, periods[0], &mut shift.x),
+        (gap.y, periods[1], &mut shift.y),
+    ] {
+        if let Some(p) = period {
+            let n = (d / p).round();
+            if n != 0.0 && (d - n * p).abs() <= SEAM_WRAP_RESIDUAL * p {
+                *s = -n * p;
+            }
+        }
+    }
+    shift
+}
+
+/// `curve` (2D) moved by `shift` in the parameter plane (WR-491).
+fn shift_curve(k: &Kernel, curve: &mut Curve, shift: Vec3) -> Result<()> {
+    if shift.x == 0.0 && shift.y == 0.0 {
+        return Ok(());
+    }
+    let x = Vec3::new(1.0, 0.0, 0.0);
+    let y = Vec3::new(0.0, 1.0, 0.0);
+    curve.transform(
+        k,
+        &Axis2Placement::new(Point3::new(shift.x, shift.y, 0.0), x, y),
+        None,
+    )?;
+    curve.convert_to_2d(k)
 }
 
 /// `SmLine::CreateLineSegment(ctx, 2, start, end, pLine)`.
@@ -969,7 +1149,8 @@ pub fn flip_face_orientation(b: &mut Brep, f: FaceId) -> Result<()> {
 }
 
 /// `SetSurface`: gives the face `surface` (owned by the face, `this`) and its natural
-/// domain. The previous surface is dropped with `delete_current`, else returned.
+/// domain (`GetNaturalUVDomain`, which makes a lazy analytic's missing NURB). The
+/// previous surface is dropped with `delete_current`, else returned.
 /// The `SM_NO_CHANGE_GEOMETRY` notification runs with the empty notification
 /// environment of a B-rep face and null data (see [`set_surface_notified`] for a
 /// caller's environment and the surfaces' identities).
@@ -977,8 +1158,9 @@ pub fn flip_face_orientation(b: &mut Brep, f: FaceId) -> Result<()> {
 /// # Errors
 ///
 /// [`SolidError::NotFound`] for a dangling id; those of the `SM_NO_CHANGE_GEOMETRY`
-/// notification ([`fp3::notify`]).
+/// notification ([`fp3::notify`]); [`SolidError::Unported`] from making the NURB.
 pub fn set_surface(
+    k: &Kernel,
     b: &mut Brep,
     f: FaceId,
     this: ObjectRef,
@@ -987,7 +1169,7 @@ pub fn set_surface(
 ) -> Result<Option<Surface>> {
     // inform the public
     face_notify_change_geometry(b, f)?;
-    store_surface(b, f, this, surface, delete_current)
+    store_surface(k, b, f, this, surface, delete_current)
 }
 
 /// [`set_surface`] notified through the caller's `env`: `SM_NO_CHANGE_GEOMETRY` carries
@@ -999,6 +1181,7 @@ pub fn set_surface(
 ///
 /// As [`set_surface`].
 pub fn set_surface_notified(
+    k: &Kernel,
     b: &mut Brep,
     env: &mut crate::topology::edge::NotifyEnv<'_>,
     f: FaceId,
@@ -1017,17 +1200,21 @@ pub fn set_surface_notified(
         NotifyOperation::ChangeGeometry,
         [new_ref, None, old_ref],
     )?;
-    store_surface(b, f, this, surface, delete_current)
+    store_surface(k, b, f, this, surface, delete_current)
 }
 
 /// `SetSurface` after its notification.
 fn store_surface(
+    k: &Kernel,
     b: &mut Brep,
     f: FaceId,
     this: ObjectRef,
     mut surface: Surface,
     delete_current: bool,
 ) -> Result<Option<Surface>> {
+    // (the domain is read first, so that a failing make leaves the face as it was)
+    let uv_domain = surface.natural_uv_domain_with_nurb(k)?;
+
     // when asked - delete current surface
     let face = b.face_mut(f)?;
     let mut old = face.surface.take();
@@ -1036,8 +1223,7 @@ fn store_surface(
     }
 
     // update the Face domain, change the surface owner, save the surface
-    // (kernel-free: a lazy analytic answers its NURB-less base's empty domain)
-    face.uv_domain = surface.natural_uv_domain_if_built();
+    face.uv_domain = uv_domain;
     surface.set_owner(Some(this));
     face.surface = Some(surface);
     b.geometry_owner_keys.insert(EntityRef::Face(f), this);
@@ -1287,7 +1473,10 @@ fn swap_uv_notifying(
     let x_axis = Vec3::new(1.0, 1.0, 0.0).unitize()?;
     let mut mirror = Axis2Placement::default();
     // x:[1 1 0] y:[0 0 1] z=cross(x,y):[1 -1 0] (status ignored)
-    let _ = mirror.set_canonical(Point3::new(0.0, 0.0, 0.0), x_axis, Vec3::new(0.0, 0.0, 1.0));
+    let _ = pass(
+        k,
+        mirror.set_canonical(Point3::new(0.0, 0.0, 0.0), x_axis, Vec3::new(0.0, 0.0, 1.0)),
+    )?;
 
     // Mirror the UV trims and swap the surface (the steps that can fail) before changing
     // the face, so that a failure leaves the face unchanged.
@@ -1495,11 +1684,12 @@ fn shrink_geometry_notifying(
 
     // Trim the surface (status ignored)
     if let Some(s) = b.face_mut(f)?.surface.as_mut() {
-        ignore_status(s.trim_with_domain_with(k, &mut new_domain, trim))?;
+        ignore_status(pass(k, s.trim_with_domain_with(k, &mut new_domain, trim))?)?;
     }
 
-    // remove all associated UVTrimCurves (status ignored)
-    ignore_status(remove_uv_trim_curves_notifying(b, f, notify))?;
+    // remove all associated UVTrimCurves (status ignored; passed on with the opt-in fix,
+    // tangency-labs/smlib 6997962, which keeps the curve trims below ignored)
+    ignore_status(pass(k, remove_uv_trim_curves_notifying(b, f, notify))?)?;
 
     // Now Trim all Curves to the face edges
     for e in face_edges(b, f)? {
@@ -1595,26 +1785,23 @@ fn sample_uv(
     param: f64,
     pv: &mut [Vec3; 2],
 ) -> Result<Point2> {
-    if let Some(v) = ignored(evaluate_geometric(k, curve, param, 1, true))? {
+    if let Some(v) = ignored(pass(k, evaluate_geometric(k, curve, param, 1, true))?)? {
         if let [p, d, ..] = v.as_slice() {
             *pv = [*p, *d];
         }
     }
     let mut uv = Vec2::UNDEF;
-    if let Some(r) =
-        ignored(surface.drop_point::<NoObject>(k, pv[0], uv_domain, &DropPointOptions::default()))?
-    {
+    if let Some(r) = ignored(pass(
+        k,
+        surface.drop_point::<NoObject>(k, pv[0], uv_domain, &DropPointOptions::default()),
+    )?)? {
         uv = r.result_uv;
     }
     // DropVectors of the tangent (its output is never read)
-    ignore_status(drop_vectors_at(
+    ignore_status(pass(
         k,
-        surface,
-        uv,
-        Side::Left,
-        Side::Left,
-        &pv[1..],
-    ))?;
+        drop_vectors_at(k, surface, uv, Side::Left, Side::Left, &pv[1..]),
+    )?)?;
     Ok(uv)
 }
 
@@ -1624,7 +1811,7 @@ fn vertexuse_uv(k: &Kernel, b: &mut Brep, vu: VertexuseId, prev: Point2) -> Resu
     if let Some(Some(gap)) = ignored(vu1::vertex_face_gap(k, b, vu, false))? {
         return Ok(gap.face_uv);
     }
-    Ok(ignored(vu1::compute_uv_point(k, b, vu, false))?.unwrap_or(prev))
+    Ok(ignored(pass(k, vu1::compute_uv_point(k, b, vu, false))?)?.unwrap_or(prev))
 }
 
 /// `MoveSeam`: on a periodic B-spline surface whose seam the face's edges cross (or
@@ -1724,9 +1911,9 @@ pub fn move_seam_notified<O: LoopObject>(
     let ivl_u = uv_domain.u_interval();
     let ivl_v = uv_domain.v_interval();
     let mut periodic_u = PeriodicExtent1d::full(ivl_u.length());
-    let _ = periodic_u.set_min_max(0.0, 0.0, None, true);
+    let _ = pass(k, periodic_u.set_min_max(0.0, 0.0, None, true))?;
     let mut periodic_v = PeriodicExtent1d::full(ivl_v.length());
-    let _ = periodic_v.set_min_max(0.0, 0.0, None, true);
+    let _ = pass(k, periodic_v.set_min_max(0.0, 0.0, None, true))?;
 
     // check State - SmBSplineSurfaces only
     if !surface0.is_kind_of(B_SPLINE_SURFACE_TYPE)? {
@@ -1815,7 +2002,7 @@ pub fn move_seam_notified<O: LoopObject>(
                     &mut periodic_v
                 };
                 let s = comp(uv_prev, ii) - ivl.min();
-                let _ = periodic.set_min_max(s, s, None, true);
+                let _ = pass(k, periodic.set_min_max(s, s, None, true))?;
             }
 
             'loops: for (j0, &lu) in loopuses.iter().enumerate() {
@@ -2004,7 +2191,7 @@ pub fn move_seam_notified<O: LoopObject>(
             let mut dist = BIG_DOUBLE;
             let mut this_ivl = periodic;
             this_ivl.set_full_period(false);
-            let knots = ignored(surface.knots_with_nurb(k, surf_param, None))?
+            let knots = ignored(pass(k, surface.knots_with_nurb(k, surf_param, None))?)?
                 .map(|(k, _)| k)
                 .unwrap_or_default();
             let k0 = knots.first().copied().unwrap_or(0.0);
@@ -2014,7 +2201,7 @@ pub fn move_seam_notified<O: LoopObject>(
                 if this_dist < dist {
                     let lo = periodic.map_value(this_knot - ivl.min() - far);
                     let hi = periodic.map_value(this_knot - ivl.min() + far);
-                    let _ = this_ivl.set_min_max(lo, hi, None, false);
+                    let _ = pass(k, this_ivl.set_min_max(lo, hi, None, false))?;
                     if periodic.are_disjoint(&this_ivl) {
                         best = Some(jj);
                         dist = this_dist;
@@ -2046,7 +2233,7 @@ pub fn move_seam_notified<O: LoopObject>(
             let mut joined = Surface::from(joined);
             if surface_is_analytic {
                 if let SurfaceKind::BSpline(j) = joined.kind() {
-                    if let Some(a) = ignored(j.copy_and_add_analytics(k))? {
+                    if let Some(a) = ignored(pass(k, j.copy_and_add_analytics(k))?)? {
                         if a.is_kind_of(B_SPLINE_SURFACE_TYPE)? {
                             joined = a;
                         }
@@ -2083,12 +2270,12 @@ pub fn move_seam_notified<O: LoopObject>(
                         false,
                     )?;
                 } else {
-                    set_surface_notified(b, env, f, this, joined, true, [None, None])?;
+                    set_surface_notified(k, b, env, f, this, joined, true, [None, None])?;
                 }
             } else if has_brep(b, f)? {
                 replace_surface(k, b, f, this, joined)?;
             } else {
-                set_surface(b, f, this, joined, true)?;
+                set_surface(k, b, f, this, joined, true)?;
             }
         }
     }
@@ -2108,18 +2295,22 @@ pub fn move_seam_notified<O: LoopObject>(
         .unwrap_or(false)
     {
         // status ignored upstream
-        if let Some(s) = ignored(split_at_seam_depth(
-            k,
-            b,
-            env,
-            f,
-            crv_class_u,
-            crv_class_v,
-            problem,
-            props,
-            resolve,
-            0,
-        ))? {
+        let pass_on = k.fixes.query_statuses_pass_on;
+        if let Some(s) = ignored(crate::error::passed_on(
+            split_at_seam_depth(
+                k,
+                b,
+                env,
+                f,
+                crv_class_u,
+                crv_class_v,
+                problem,
+                props,
+                resolve,
+                0,
+            ),
+            pass_on,
+        )?)? {
             out.split = s;
         }
     }
@@ -2399,18 +2590,22 @@ fn split_at_seam_merges<O: LoopObject>(
             ))?
             .unwrap_or(false);
             if has {
-                let s = ignored(split_at_seam_depth(
-                    k,
-                    b,
-                    env.as_deref_mut(),
-                    f,
-                    &mut cu,
-                    &mut cv,
-                    this_problem,
-                    props,
-                    resolve,
-                    depth + 1,
-                ))?
+                let pass_on = k.fixes.query_statuses_pass_on;
+                let s = ignored(crate::error::passed_on(
+                    split_at_seam_depth(
+                        k,
+                        b,
+                        env.as_deref_mut(),
+                        f,
+                        &mut cu,
+                        &mut cv,
+                        this_problem,
+                        props,
+                        resolve,
+                        depth + 1,
+                    ),
+                    pass_on,
+                )?)?
                 .unwrap_or_default();
                 out.faces.extend_from_slice(&s.faces);
                 if tgt != f && !out.faces.contains(&tgt) {
@@ -2514,6 +2709,293 @@ fn split_at_seam_merges<O: LoopObject>(
         face_notify(b, f, NotifyOperation::PostEdit)?;
     }
     Ok(out)
+}
+
+// ---- DeleteInnerLoop --------------------------------------------------------------------
+
+/// `DeleteInnerLoop`: removes the inner loop `l` from face `f` and deletes the loop, its
+/// two loop uses, their edge uses and vertex uses, the loop's edges, and those of its
+/// vertices no vertex use is left on. Notified through the caller's `env`:
+/// `SM_NO_PRE_EDIT` of the face and of its B-rep, then `SM_NO_DESTRUCTION` of every
+/// deleted object, each followed by `~SmAObject`'s `ClearAttributes` (SMLib's default
+/// handlers: a deleted object's dependent attributes go with their last user).
+///
+/// # Errors
+///
+/// `SM_ERR` when `l` is the face's outer loop or not one of its loops, or one of its
+/// edges is not lamina (another face, or another loop of this face, uses it); nothing
+/// has changed then. [`SolidError::InvalidInput`] where upstream dereferences null (a
+/// loop without both loop uses, an edge use without edge, vertex use or vertex) and
+/// for a caller key in the kernel's reserved range; those of the notifications
+/// ([`SolidError::Unported`]).
+pub fn delete_inner_loop(
+    k: &mut Kernel,
+    b: &mut Brep,
+    env: &mut crate::topology::edge::NotifyEnv<'_>,
+    f: FaceId,
+    l: LoopId,
+) -> Result<()> {
+    brep_p3::with_caller_identities_for(k, b, env, None, 0, |k, b, env| {
+        delete_inner_loop_in(k, b, env, f, l)
+    })
+}
+
+/// [`delete_inner_loop`] for a caller without notification state of its own: through the
+/// kernel context's callbacks, with the B-rep's own attributes
+/// ([`Brep::add_attribute`]) lent for the edit
+/// ([`crate::topology::brep::p3::with_kernel_callbacks`]).
+///
+/// # Errors
+///
+/// As [`delete_inner_loop`].
+pub fn delete_inner_loop_with_kernel_callbacks(
+    k: &mut Kernel,
+    b: &mut Brep,
+    f: FaceId,
+    l: LoopId,
+) -> Result<()> {
+    brep_p3::with_kernel_callbacks(k, b, |k, b, env| delete_inner_loop(k, b, env, f, l))
+}
+
+/// [`delete_inner_loop`] once the identities are checked and seeded.
+fn delete_inner_loop_in(
+    k: &mut Kernel,
+    b: &mut Brep,
+    env: &mut crate::topology::edge::NotifyEnv<'_>,
+    f: FaceId,
+    l: LoopId,
+) -> Result<()> {
+    // Check that this loop is indeed in this Face, and that it's not an outer loop.
+    let face_loops = fp2::loops(b, f, false, None)?;
+
+    // Outer loop? (for a face without loops upstream reads past its empty array; the
+    // port compares with nothing and the membership test below fails)
+    if face_loops.first() == Some(&l) {
+        return Err(SolidError::sm_err(OP));
+    }
+
+    // One of our loops?
+    if !face_loops.contains(&l) {
+        return Err(SolidError::sm_err(OP));
+    }
+
+    // Check that there are no other Faces connected to this Loop.
+    let loop_edges = lu1::loop_edges(b, l)?
+        .into_iter()
+        .map(|e| e.ok_or_else(|| null("DeleteInnerLoop: edge use without edge")))
+        .collect::<Result<Vec<EdgeId>>>()?;
+    for &e in &loop_edges {
+        if !crate::topology::edge::is_lamina(b, e)? {
+            return Err(SolidError::sm_err(OP));
+        }
+    }
+
+    // Notify the face that we are about to start
+    let data = face_edit_data(b, env, f)?;
+    ignore_status(fp3::notify(b, f, env, None, NotifyOperation::PreEdit, data))?;
+
+    // Must notify brep (owner) as well to delete the cache
+    if has_brep(b, f)? {
+        let brep = brep_p2::brep_ref(b);
+        ignore_status(brep_p2::notify(
+            b,
+            env,
+            None,
+            NotifyOperation::PreEdit,
+            [Some(brep_p2::NotifyArg::Object(brep)), None, None],
+        ))?;
+    }
+
+    // Note, Loop's Loopuse's Edgeuses are required in order to retrieve the Loop's
+    // Vertices, so get them first.
+    let verts = lu1::loop_vertices(b, l)?
+        .into_iter()
+        .map(|v| v.ok_or_else(|| null("DeleteInnerLoop: vertex use without vertex")))
+        .collect::<Result<Vec<VertexId>>>()?;
+
+    // Now remove the ...uses.
+    let (lu_1, lu_2) = lu1::loop_loopuses(b, l)?;
+    let lu_2 = lu_2.ok_or_else(|| null("DeleteInnerLoop: loop without second loop use"))?;
+    let mut eus_to_delete = Vec::new();
+    let mut vus_to_delete = Vec::new();
+    // For both Loopuses:
+    for lu in [lu_1, lu_2] {
+        eus_to_delete.extend(lu1::edgeuses(b, lu, None, None)?);
+        vus_to_delete.extend(lu1::vertexuses(b, lu, None)?);
+    }
+
+    for vu in vus_to_delete {
+        let vu = vu.ok_or_else(|| null("DeleteInnerLoop: edge use without vertex use"))?;
+        destroy_vertexuse(k, b, env, vu)?; // Also deletes: nothing.
+    }
+
+    for eu in eus_to_delete {
+        destroy_edgeuse(k, b, env, eu)?; // Also deletes: its uv trim curve.
+    }
+
+    // Now Vertices and Edges.
+    for v in verts {
+        if b.vertex(v)?.vertexuses.is_empty() {
+            destroy_vertex(k, b, env, v)?; // Also deletes: nothing.
+        }
+    }
+    for e in loop_edges {
+        crate::topology::edge::destroy(k, b, e, env)?; // Also deletes: its curve.
+    }
+
+    // Finally, remove the Loop.
+    // Removes the Loop and its Loopuses from the Face but deletes nothing.
+    remove_loop_notified(b, env, f, l)?;
+
+    for lu in [lu_1, lu_2] {
+        destroy_loop_record(k, b, env, EntityRef::Loopuse(lu))?;
+    }
+    destroy_loop_record(k, b, env, EntityRef::Loop(l))
+}
+
+/// The data of the face's edit notifications: the face and `SM_NO_GET_BREP(this)`.
+fn face_edit_data(
+    b: &Brep,
+    env: &crate::topology::edge::NotifyEnv<'_>,
+    f: FaceId,
+) -> Result<[Option<ObjectRef>; 3]> {
+    let brep = if has_brep(b, f)? {
+        Some(brep_p2::brep_ref(b))
+    } else {
+        None
+    };
+    Ok([Some((env.key_of)(EntityRef::Face(f))), brep, None])
+}
+
+/// [`remove_loop`] with the face's notifications through the caller's `env`.
+fn remove_loop_notified(
+    b: &mut Brep,
+    env: &mut crate::topology::edge::NotifyEnv<'_>,
+    f: FaceId,
+    l: LoopId,
+) -> Result<()> {
+    // inform the public
+    let data = face_edit_data(b, env, f)?;
+    ignore_status(fp3::notify(b, f, env, None, NotifyOperation::PreEdit, data))?;
+    let (lu_1, lu_2) = lu1::loop_loopuses(b, l)?;
+    let lu_2 = lu_2.ok_or_else(|| null("loop without second loop use"))?;
+    let fu_1 = lu1::faceuse(b, lu_1)?.ok_or_else(|| SolidError::null_pointer(OP))?;
+    let fu_2 = lu1::faceuse(b, lu_2)?.ok_or_else(|| SolidError::null_pointer(OP))?;
+    faceuse_remove(b, fu_1, lu_1)?;
+    faceuse_remove(b, fu_2, lu_2)?;
+    // (the port-only face loop list)
+    b.face_mut(f)?.loops.retain(|&x| x != l);
+    let data = face_edit_data(b, env, f)?;
+    ignore_status(fp3::notify(
+        b,
+        f,
+        env,
+        None,
+        NotifyOperation::PostEdit,
+        data,
+    ))
+}
+
+/// `delete pVU`: `~SmVertexuse` notifies `SM_NO_DESTRUCTION` (status ignored), then
+/// `~SmTopology` takes it off its vertex's list and `~SmAObject` clears its attributes.
+fn destroy_vertexuse(
+    k: &mut Kernel,
+    b: &mut Brep,
+    env: &mut crate::topology::edge::NotifyEnv<'_>,
+    vu: VertexuseId,
+) -> Result<()> {
+    let this = (env.key_of)(EntityRef::Vertexuse(vu));
+    crate::topology::edge::with_object_context(k, env, |n| {
+        ignore_status(vu1::notify(
+            b,
+            vu,
+            &mut *n.records,
+            &mut *n.attributes,
+            n.context.as_deref_mut(),
+            NotifyOperation::Destruction,
+            this,
+            [Some(this), None, None],
+        ))
+    })?;
+    if let Some(v) = b.vertexuse(vu)?.vertex {
+        b.vertex_mut(v)?.vertexuses.retain(|&x| x != vu);
+    }
+    b.remove_vertexuse_record(vu)?;
+    env.attributes.clear_attributes(this.key)
+}
+
+/// `delete pEU`: [`crate::topology::edgeuse::p2::destroy`] (`~SmEdgeuse`'s notification,
+/// its UV trim curve, `~SmAObject`); `~SmTopology` takes it off its edge's list.
+fn destroy_edgeuse(
+    k: &mut Kernel,
+    b: &mut Brep,
+    env: &mut crate::topology::edge::NotifyEnv<'_>,
+    eu: EdgeuseId,
+) -> Result<()> {
+    let e = eu1::edge(b, eu)?;
+    crate::topology::edgeuse::p2::destroy(k, b, eu, env)?;
+    if let Some(e) = e {
+        b.edge_mut(e)?.edgeuses.retain(|&x| x != eu);
+    }
+    Ok(())
+}
+
+/// `delete pVtx`: `~SmVertex` notifies `SM_NO_DESTRUCTION` (status ignored), then
+/// `~SmTopology` takes it off the B-rep's vertex list and `~SmAObject` clears its
+/// attributes.
+fn destroy_vertex(
+    k: &mut Kernel,
+    b: &mut Brep,
+    env: &mut crate::topology::edge::NotifyEnv<'_>,
+    v: VertexId,
+) -> Result<()> {
+    let this = (env.key_of)(EntityRef::Vertex(v));
+    let key_of = env.key_of;
+    crate::topology::edge::with_object_context(k, env, |n| {
+        ignore_status(vx::notify(
+            b,
+            v,
+            &mut *n.records,
+            &mut *n.attributes,
+            n.context.as_deref_mut(),
+            NotifyOperation::Destruction,
+            this,
+            [Some(this), None, None],
+            &|vu| key_of(EntityRef::Vertexuse(vu)),
+        ))
+    })?;
+    b.remove_vertex_record(v)?;
+    env.attributes.clear_attributes(this.key)
+}
+
+/// `delete pLU` / `delete pLoopToDelete` once off their face uses: `~SmLoopuse` /
+/// `~SmLoop` notify `SM_NO_DESTRUCTION` (`SmTopology::Notify`, status ignored) and
+/// `~SmAObject` clears the attributes.
+fn destroy_loop_record(
+    k: &mut Kernel,
+    b: &mut Brep,
+    env: &mut crate::topology::edge::NotifyEnv<'_>,
+    entity: EntityRef,
+) -> Result<()> {
+    let this = (env.key_of)(entity);
+    crate::topology::edge::with_object_context(k, env, |n| {
+        ignore_status(crate::topology::topology::notify(
+            &mut *n.records,
+            &mut *n.attributes,
+            n.context.as_deref_mut(),
+            NotifyOperation::Destruction,
+            this,
+            Some(this),
+            None,
+            None,
+        ))
+    })?;
+    match entity {
+        EntityRef::Loopuse(lu) => drop(b.remove_loopuse_record(lu)?),
+        EntityRef::Loop(l) => drop(b.remove_loop_record(l)?),
+        _ => return Err(null("DeleteInnerLoop: not a loop or loop use")),
+    }
+    env.attributes.clear_attributes(this.key)
 }
 
 #[cfg(test)]
@@ -2676,13 +3158,38 @@ mod tests {
         // old surface is dropped (`bDeleteCurrFace`) or handed back
         let (mut b, f, _, _) = plane_face_with_faceuses();
         let s = Surface::from(Plane::from_normal(Vec3::ZERO, Vec3::X));
-        let domain = s.natural_uv_domain_if_built();
-        assert!(set_surface(&mut b, f, me(f), s, true).unwrap().is_none());
+        let domain = s.natural_uv_domain_with_nurb(&k).unwrap();
+        assert!(set_surface(&k, &mut b, f, me(f), s, true)
+            .unwrap()
+            .is_none());
         let face = b.face(f).unwrap();
         assert_eq!(face.uv_domain, domain);
         assert_eq!(face.surface.as_ref().unwrap().owner(), Some(me(f)));
         let s = Surface::from(Plane::from_normal(Vec3::ZERO, Vec3::Y));
-        assert!(set_surface(&mut b, f, me(f), s, false).unwrap().is_some());
+        assert!(set_surface(&k, &mut b, f, me(f), s, false)
+            .unwrap()
+            .is_some());
+
+        // a lazy analytic (no NURB yet) gives the face the domain of the NURB it makes,
+        // as `GetNaturalUVDomain` does upstream, not its NURB-less base's empty one
+        let lazy = Surface::from(crate::surface::cone::Cone::new_bounded(
+            Point3::new(0.0, 0.0, 0.0),
+            Vec3::X,
+            Vec3::Y,
+            2.0,
+            1.0,
+            0.0,
+            270.0,
+            3.0,
+            false,
+            false,
+            false,
+        ));
+        assert!(lazy.natural_uv_domain_if_built().is_degenerate(0.0));
+        let domain = lazy.natural_uv_domain_with_nurb(&k).unwrap();
+        assert!(!domain.is_degenerate(0.0));
+        set_surface(&k, &mut b, f, me(f), lazy, true).unwrap();
+        assert_eq!(b.face(f).unwrap().uv_domain, domain);
 
         // SwapUV starts at `GetBrep()->GetContext()`: null without a B-rep
         let (mut b, f) = plane_face();

@@ -65,8 +65,15 @@
 //! operation, tolerance,
 //! offset_distance, member_distance, member_approx_tol, member_operation,
 //! inset, extend_convex, merge_results, create_offset_solid, skip_stitch_merge,
-//! source_fixture, foreign_fixture, selection_count, (origin, index)...
+//! source_fixture, foreign_fixture, selection_count, (origin, index)..., attributed
 //! ```
+//!
+//! `attributed` is `-1`, or the `SmAttributeBehaviorType` (0 to 4) of the
+//! `SmLongAttribute` each source face (`GetFaces` order) and edge (`GetEdges` order)
+//! gets before the call (#1462): id = value = [`ATTRIBUTE_BASE`] `+ index` (`+ 500` for
+//! an edge). An attributed snapshot ends with `present` (a result) then `count` and the
+//! result's face rows then edge rows, each `rows` then sorted rows: a row is `n` then
+//! per attribute (ascending) `id behavior value` (value: the long value, else 0).
 //!
 //! Fixture tags: `0` null; `1` empty; `2` wire followed by start xyz, end xyz,
 //! domain min/max, trim min/max; `3` plane sheet followed by origin xyz, X axis
@@ -103,7 +110,7 @@
 //! its PRE-operation index; absent/null indices are `-1`. No address is emitted.
 //!
 //! Each optional B-rep is `0`, or `1, integer_count, integers..., value_count,
-//! values...`. Integers and floats are separated by the safe decoder into
+//! values..., cache_count, caches...`. Integers and floats are separated by the safe decoder into
 //! [`BrepSnapshot`]; counted lists below are `count, traversal IDs...`. IDs are
 //! zero-based in native traversal order, `-1` null, `-2` not in that traversal.
 //! B-rep integer layout:
@@ -133,6 +140,10 @@
 //! Samples are observations, not
 //! an exact serialization of arbitrary returned geometry. In particular they
 //! must not be advertised as complete offset/shell equivalence.
+//! Cache layout (only compared before/after on the native side, for `input.pure`):
+//! per vertex use in `GetVertexuses` order `edge_gap_init, edge_t, face_gap_init,
+//! face_u, face_v` (zeros when not initialised), then per edgeuse
+//! `max_edge_face_gap_init`. They are read only through already-initialised caches.
 
 use crate::{call_with_buffer, FfiError};
 
@@ -140,8 +151,16 @@ use crate::{call_with_buffer, FfiError};
 pub const MAX_SELECTIONS: usize = 1024;
 /// Aggregate input budget (geometry is fixed-size; selections are bounded).
 pub const MAX_PACKED_VALUES: usize = 4096;
+/// Adapter limit on a [`Fixture::File`] path, in bytes.
+pub const MAX_FILE_PATH: usize = 1024;
+/// Selection index bound of a [`Fixture::File`] source, whose face count is only
+/// known once the shim has read it (a selection past its faces is then rejected
+/// as a fixture-construction error).
+pub const MAX_FILE_FACES: usize = 1024;
 /// Maximum native snapshot size, bounding buffer retries and decoding allocation.
 pub const MAX_OUTPUT_VALUES: usize = 262_144;
+/// The first attribute id of an attributed case's source tags (#1462).
+pub const ATTRIBUTE_BASE: u64 = 10007;
 /// Unmodified `SM_SUCCESS`, not the transport status `SC_OK`.
 pub const NATIVE_SUCCESS: i32 = 1000;
 /// Unmodified native member NER error for a null original B-rep.
@@ -226,15 +245,34 @@ pub enum Fixture {
         /// Radius; degenerate radii reach native rejection.
         radius: f64,
     },
+    /// An ASCII `.smb` file read by `SmBrep::ReadFromFile(ctx, path, SM_ASCII)`; the
+    /// file's own tolerance is kept. A read failure is a construction rejection.
+    File {
+        /// Path of the file: non-empty, at most [`MAX_FILE_PATH`] bytes, no NUL.
+        path: String,
+    },
+    /// A one-face cylinder sheet: `CreateFaceFromSurface` on a bounded `SmCylinder`
+    /// (`origin`, X axis `(1,0,0)`, Y axis `(0,1,0)`, 0 to 360 degrees, `height` up,
+    /// line generator) over its natural domain, closed round along a seam edge. Its
+    /// two circles are lamina edges, so thickening it builds a wall on each.
+    CylinderSheet {
+        /// Centre of the base circle.
+        origin: [f64; 3],
+        /// Radius.
+        radius: f64,
+        /// Height along Z.
+        height: f64,
+    },
 }
 
 impl Fixture {
     fn face_count(&self) -> usize {
         match self {
             Self::EmptyBrep | Self::Wire { .. } => 0,
-            Self::PlaneSheet { .. } | Self::Sphere { .. } => 1,
+            Self::PlaneSheet { .. } | Self::Sphere { .. } | Self::CylinderSheet { .. } => 1,
             Self::Box { .. } => 6,
             Self::Cylinder { .. } => 3,
+            Self::File { .. } => MAX_FILE_FACES,
         }
     }
 }
@@ -309,6 +347,9 @@ pub struct Request {
     pub tolerance: f64,
     /// Operation-specific settings; unused scalars remain finite but are not applied.
     pub config: Config,
+    /// `Some(behavior)`: tag every source face and edge with its own `SmLongAttribute`
+    /// of that `SmAttributeBehaviorType` (0 to 4) and report the result's attributes.
+    pub attributed: Option<u8>,
 }
 
 /// Cheap observed topology and sampled numerical geometry, in native traversal order.
@@ -320,6 +361,9 @@ pub struct BrepSnapshot {
     /// Actual tolerances, domains, intervals, points and sampled normals.
     /// The exact layout is documented in the module header.
     pub values: Vec<f64>,
+    /// The lazily filled vertex-use and edge-use gap caches (layout in the module
+    /// header), observed without filling any cache.
+    pub caches: Vec<f64>,
 }
 
 /// Final inherited executive state, observed before its destructor runs.
@@ -375,6 +419,9 @@ pub struct Snapshot {
     pub result: Option<BrepSnapshot>,
     /// Executive-owned intermediate, sampled before destruction; never deleted twice.
     pub executive_offset: Option<BrepSnapshot>,
+    /// An attributed case's `present`, then the result's face rows then edge rows (see
+    /// the module protocol); `None` for a case that is not attributed.
+    pub attributes: Option<Vec<i64>>,
 }
 
 /// Native fixture rejection is distinct from an ordinary operation failure.
@@ -395,6 +442,14 @@ mod sys {
         pub fn sc_offset_offset_executive_p2_eval(
             input: *const f64,
             input_len: i64,
+            out: *mut f64,
+            cap: i64,
+            out_len: *mut i64,
+        ) -> i32;
+        pub fn sc_offset_offset_executive_p2_eval_measured(
+            input: *const f64,
+            input_len: i64,
+            volume_query: i32,
             out: *mut f64,
             cap: i64,
             out_len: *mut i64,
@@ -511,6 +566,30 @@ fn pack_fixture(fixture: Option<&Fixture>, out: &mut Vec<f64>) -> Result<(), Ffi
             out.extend_from_slice(origin);
             out.push(*radius);
         }
+        Fixture::File { path } => {
+            // kind 7, the byte count, then one value per byte (the protocol is f64s)
+            let bytes = path.as_bytes();
+            if bytes.is_empty() || bytes.len() > MAX_FILE_PATH || bytes.contains(&0) {
+                return Err(invalid("file fixture path empty, too long or with NUL"));
+            }
+            out.push(7.0);
+            out.push(bytes.len() as f64);
+            out.extend(bytes.iter().map(|&b| f64::from(b)));
+        }
+        Fixture::CylinderSheet {
+            origin,
+            radius,
+            height,
+        } => {
+            primitive_finite(origin, *radius)?;
+            finite(&[*height, origin[2] + height])?;
+            if *radius <= 0.0 || *height <= 0.0 {
+                return Err(invalid("cylinder sheet needs a positive radius and height"));
+            }
+            out.push(8.0);
+            out.extend_from_slice(origin);
+            out.extend_from_slice(&[*radius, *height]);
+        }
     }
     Ok(())
 }
@@ -592,6 +671,11 @@ fn pack(request: &Request) -> Result<Vec<f64>, FfiError> {
         }
         out.extend_from_slice(&[origin, index as f64]);
     }
+    match request.attributed {
+        None => out.push(-1.0),
+        Some(behavior) if behavior <= 4 => out.push(f64::from(behavior)),
+        Some(_) => return Err(invalid("attribute behaviour outside native enum")),
+    }
     if out.len() > MAX_PACKED_VALUES {
         return Err(invalid("aggregate fixture budget exceeded"));
     }
@@ -667,6 +751,21 @@ impl Reader<'_> {
             .collect()
     }
 
+    fn attributes(&mut self) -> Result<Vec<i64>, FfiError> {
+        if !self.flag()? {
+            return Ok(vec![0]);
+        }
+        let count = self.count()?;
+        if count > self.remaining.len() {
+            return Err(invalid("truncated native attributes"));
+        }
+        let mut out = vec![1, count as i64];
+        for _ in 0..count {
+            out.push(self.integer(i64::from(i32::MIN), i64::from(i32::MAX))?);
+        }
+        Ok(out)
+    }
+
     fn brep(&mut self) -> Result<Option<BrepSnapshot>, FfiError> {
         if !self.flag()? {
             return Ok(None);
@@ -687,11 +786,24 @@ impl Reader<'_> {
             .remaining
             .get(count..)
             .ok_or_else(|| invalid("truncated native geometry"))?;
-        Ok(Some(BrepSnapshot { integers, values }))
+        let count = self.count()?;
+        let Some(caches) = self.remaining.get(..count) else {
+            return Err(invalid("truncated native caches"));
+        };
+        let caches = caches.to_vec();
+        self.remaining = self
+            .remaining
+            .get(count..)
+            .ok_or_else(|| invalid("truncated native caches"))?;
+        Ok(Some(BrepSnapshot {
+            integers,
+            values,
+            caches,
+        }))
     }
 }
 
-fn decode(raw: &[f64], operation: Operation) -> Result<Outcome, FfiError> {
+fn decode(raw: &[f64], operation: Operation, attributed: bool) -> Result<Outcome, FfiError> {
     if raw.len() > MAX_OUTPUT_VALUES {
         return Err(invalid("native snapshot exceeds output budget"));
     }
@@ -744,6 +856,11 @@ fn decode(raw: &[f64], operation: Operation) -> Result<Outcome, FfiError> {
         foreign_after: rd.brep()?,
         result: rd.brep()?,
         executive_offset: rd.brep()?,
+        attributes: if attributed {
+            Some(rd.attributes()?)
+        } else {
+            None
+        },
     };
     if !rd.remaining.is_empty() {
         return Err(invalid("trailing native snapshot values"));
@@ -774,7 +891,87 @@ pub fn eval(request: &Request) -> Result<Outcome, FfiError> {
             )
         }
     })?;
-    decode(&raw, request.operation)
+    decode(&raw, request.operation, request.attributed.is_some())
+}
+
+/// Which volumes [`eval_measured`] queries with `SmApiBrepComputeVolume` (accuracy `1e-6`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum VolumeQuery {
+    /// The result's volume after the call.
+    Result,
+    /// Also the source's volume, queried on the operand before the call (#1528).
+    SourceFirst,
+}
+
+/// `status volume` pairs of [`eval_measured`]: the source's before the call (`-1 0`
+/// unless [`VolumeQuery::SourceFirst`] or without source) and the result's after it
+/// (`-1 0` without result); the status is the native one ([`NATIVE_SUCCESS`] on
+/// success), a failure keeps volume `0`. Also the operand state the shim reads right
+/// after the (optional) query and before the call (its `put_operand_state` layout:
+/// trimmed edge use count, per edge use its trim's end control points, per vertex use
+/// its vertex/face gap).
+#[derive(Debug, Clone, PartialEq)]
+pub struct Volumes {
+    /// The source's volume query before the call.
+    pub source_before: [f64; 2],
+    /// The result's volume query after the call.
+    pub result: [f64; 2],
+    /// The operand state before the call (empty without source).
+    pub operand: Vec<f64>,
+}
+
+/// [`eval`] with the volume queries of `query` (the shim's
+/// `sc_offset_offset_executive_p2_eval_measured`). A fixture rejection has no volumes.
+pub fn eval_measured(
+    request: &Request,
+    query: VolumeQuery,
+) -> Result<(Outcome, Option<Volumes>), FfiError> {
+    let input = pack(request)?;
+    let code = match query {
+        VolumeQuery::Result => 0,
+        VolumeQuery::SourceFirst => 1,
+    };
+    let raw = call_with_buffer(4096, |out, len| {
+        if out.len() > MAX_OUTPUT_VALUES {
+            return crate::SC_ERR_ARG;
+        }
+        // SAFETY: as for [`eval`]; `code` is 0 or 1.
+        unsafe {
+            sys::sc_offset_offset_executive_p2_eval_measured(
+                input.as_ptr(),
+                input.len() as i64,
+                code,
+                out.as_mut_ptr(),
+                out.len() as i64,
+                &raw mut *len,
+            )
+        }
+    })?;
+    // a fixture rejection (`-1 status`) ends before the volumes
+    if raw.first().is_some_and(|&tag| tag < 0.0) {
+        return Ok((
+            decode(&raw, request.operation, request.attributed.is_some())?,
+            None,
+        ));
+    }
+    // `operand_state... operand_len pre_status pre_volume post_status post_volume`
+    let short = || invalid("measured snapshot without its tail");
+    let split = raw.len().checked_sub(5).ok_or_else(short)?;
+    let (rest, tail) = raw.split_at(split);
+    let [len, a, b, c, d] = <[f64; 5]>::try_from(tail).map_err(|_| short())?;
+    if len < 0.0 || len.fract() != 0.0 || len > rest.len() as f64 {
+        return Err(invalid("operand state length"));
+    }
+    let (snapshot, operand) = rest.split_at(rest.len() - len as usize);
+    let outcome = decode(snapshot, request.operation, request.attributed.is_some())?;
+    Ok((
+        outcome,
+        Some(Volumes {
+            source_before: [a, b],
+            result: [c, d],
+            operand: operand.to_vec(),
+        }),
+    ))
 }
 
 #[cfg(test)]
@@ -789,6 +986,7 @@ mod tests {
             faces: Vec::new(),
             tolerance: 1e-6,
             config: Config::default(),
+            attributed: None,
         }
     }
 
@@ -1107,12 +1305,12 @@ mod tests {
     #[test]
     fn decoder_does_not_conflate_transport_success_and_native_status() {
         assert_eq!(
-            decode(&[-1.0, 1007.0], Operation::ApiShell).unwrap(),
+            decode(&[-1.0, 1007.0], Operation::ApiShell, false).unwrap(),
             Outcome::Rejected { status: 1007 }
         );
-        assert!(decode(&[-1.0, 1000.0], Operation::ApiShell).is_err());
-        assert!(decode(&[0.0, 1.0, 4.0], Operation::ApiShell).is_err());
-        assert!(decode(&[f64::NAN], Operation::ApiShell).is_err());
+        assert!(decode(&[-1.0, 1000.0], Operation::ApiShell, false).is_err());
+        assert!(decode(&[0.0, 1.0, 4.0], Operation::ApiShell, false).is_err());
+        assert!(decode(&[f64::NAN], Operation::ApiShell, false).is_err());
     }
 
     #[cfg(feature = "cpp")]
@@ -1310,7 +1508,9 @@ mod tests {
         r.config.offset_distance = 0.5;
         let base = pack(&r).unwrap();
         let mut invalid_selector = base.clone();
-        *invalid_selector.last_mut().unwrap() = 6.0;
+        // the selector index (the attributed flag follows it)
+        let at = invalid_selector.len() - 2;
+        invalid_selector[at] = 6.0;
         let mut trailing_data = base;
         trailing_data.push(0.0);
         for input in [invalid_selector, trailing_data] {
@@ -1494,7 +1694,9 @@ mod tests {
             let base = pack(&r).unwrap();
             let mut invalid_inputs = Vec::new();
             let mut invalid_selector = base.clone();
-            *invalid_selector.last_mut().unwrap() = 1.0;
+            // the selector index (the attributed flag follows it)
+        let at = invalid_selector.len() - 2;
+        invalid_selector[at] = 1.0;
             invalid_inputs.push(invalid_selector);
             let mut trailing_data = base.clone();
             trailing_data.push(0.0);
@@ -1650,8 +1852,11 @@ mod tests {
         r.config.extend_convex = true;
         r.faces = vec![FaceSelection::Foreign(0), FaceSelection::Source(0)];
         let mut input = pack(&r).unwrap();
-        // Malformed later selectors remain rejected despite the first foreign face.
-        *input.last_mut().unwrap() = 1.0;
+        // Malformed later selectors remain rejected despite the first foreign face: the
+        // last selector's index (before the trailing `attributed`) names a face the
+        // one-face source does not have.
+        let at = input.len() - 2;
+        input[at] = 1.0;
         invalid_inputs.push(input);
         for input in invalid_inputs {
             let mut out = [42.0; 2];

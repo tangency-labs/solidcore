@@ -15,6 +15,7 @@
 //! | [`TrimSrfCache::point_test`]              | `SmTrimSrfCache::PointTest`                |
 //! | [`TrimSrfCache::point_classify`]          | `SmTrimSrfCache::PointClassify`            |
 //! | [`TrimSrfCache::build_tree`], [`TrimSrfCache::build_tree_with_face`] | `SmTrimSrfCache::BuildTree` |
+//! | [`TrimSrfCache::get_tree_with_face`]      | `SmSurfaceCache::GetTree` of a trimmed cache (virtual `BuildTree`) |
 //! | [`TrimSrfCache::point_test_in`], [`TrimSrfCache::point_classify_in`] | `PointTest`, `PointClassify` over the given face |
 //! | [`CacheFace`]                             | `GetFace()` and what the cache reads from the face and its B-rep |
 //! | [`TrimSrfCache::bind_face`]                 | `GetFace()` with an explicit caller-handle mapping |
@@ -78,17 +79,23 @@
 //!   `PointClassify` of a cache whose surface has no face; the port returns
 //!   `SM_ERR_NULL_POINTER`. A node without surface data in this cache gives
 //!   [`SolidError::InvalidInput`].
+//! - **Statuses.** `BuildTree`'s `SER(sSurfaceDomain.Intersect(sFaceDomain, ..))` of
+//!   disjoint domains (no edge use grew the face domain) is the upstream status
+//!   `SM_ERR_INVALID_INPUT` ([`SolidError::Upstream`]), not
+//!   [`SolidError::InvalidInput`], so the cache factory falls back to the plain
+//!   surface cache as `smsurf_GetSurfaceCache` does when `CacheMakeOrValidate` fails;
+//!   a `GetTree` that builds a deferred tree returns the same status.
 //! - **Not ported here.** `GetMemoryUsed` (the base class sum) and `Dump` (debug
 //!   output).
 
 use crate::curve::curve::Curve;
 use crate::curve::curve_cache::{CurveCache, CurveCacheOptions};
-use crate::error::{Result, SolidError};
+use crate::error::{Result, SolidError, SM_ERR_INVALID_INPUT};
 use crate::geom::extent1d::Extent1d;
 use crate::geom::extent2d::Extent2d;
 use crate::geom::extent3d::Extent3d;
 use crate::geom::object::ObjectRef;
-use crate::geom::tree::{NodeClass, NodeData, NodeId};
+use crate::geom::tree::{NodeClass, NodeData, NodeId, Tree};
 use crate::geom::vector2d::{Point2, Vec2};
 use crate::geom::vector3d::{Point3, Vec3};
 use crate::kernel::Kernel;
@@ -133,6 +140,7 @@ pub const POINT_CLASS_VERTEX: i32 = 104;
 const OP_CLASSIFY: &str = "surface::trim_srf_cache::TrimSrfCache::point_classify";
 const OP_EU: &str = "surface::trim_srf_cache::TrimSrfCache::implant_edgeuse";
 const OP_VU: &str = "surface::trim_srf_cache::TrimSrfCache::implant_vertexuse";
+const OP_GET_TREE: &str = "surface::trim_srf_cache::TrimSrfCache::get_tree_with_face";
 const OP_BUILD: &str = "surface::trim_srf_cache::TrimSrfCache::build_tree_with_face";
 
 /// `SmTrimSrfCache::IsKindOf`: the trimmed surface cache or a base type.
@@ -696,6 +704,39 @@ impl<O: Copy + PartialEq> TrimSrfCache<O> {
         self.build_tree_in(k, Some(face))
     }
 
+    /// The tree, built first when there is none, or when the surface belongs to a face
+    /// whose boundary is not in the tree yet and no build is under way
+    /// (`SmSurfaceCache::GetTree`, whose virtual `BuildTree` is this cache's
+    /// [`TrimSrfCache::build_tree_with_face`]); `face` is the face owning the cache's
+    /// surface (`GetFace()`). A cache that is not a trimmed one (the plain
+    /// `SmSurfaceCache` fallback of `smsurf_GetSurfaceCache`) runs its own
+    /// [`SurfaceCache::get_tree`].
+    ///
+    /// # Errors
+    ///
+    /// Those of [`TrimSrfCache::build_tree_with_face`] (upstream returns NULL), and
+    /// of [`SurfaceCache::get_tree`] for a plain cache.
+    pub fn get_tree_with_face(
+        &mut self,
+        k: &Kernel,
+        face: &mut dyn CacheFace<O>,
+    ) -> Result<&mut Tree<O>> {
+        if !self.base.trimmed_dispatch {
+            return self.base.get_tree(k);
+        }
+        let face_owned = self.base.surface().face()?.is_some();
+        if self.base.tree().is_none()
+            || (!self.base.have_t_surface_cache
+                && face_owned
+                && self.base.face_containment_done != FaceContainment::UnderConstruction)
+        {
+            self.build_tree_with_face(k, face)?;
+        }
+        self.base
+            .tree_mut()
+            .ok_or_else(|| invalid(OP_GET_TREE, "cache has no tree"))
+    }
+
     fn build_tree_in(&mut self, k: &Kernel, face: Option<&mut dyn CacheFace<O>>) -> Result<()> {
         // prevent bad recursion back into BuildTree
         let saved = self.base.face_containment_done;
@@ -825,7 +866,15 @@ impl<O: Copy + PartialEq> TrimSrfCache<O> {
             Some(d) => d,
             None => self.base.surface().natural_uv_domain_with_nurb(k)?,
         };
-        let domain = surface_domain.intersect(&face_domain)?;
+        // SER: disjoint domains (a face domain no edge use grew) are the status
+        // SM_ERR_INVALID_INPUT, a failed build the cache factory falls back from
+        let domain = surface_domain
+            .intersect(&face_domain)
+            .map_err(|_| SolidError::Upstream {
+                operation: OP_BUILD,
+                code: SM_ERR_INVALID_INPUT,
+                entity: None,
+            })?;
         self.base.set_uv_domain(domain);
 
         // When the surface has UVTrimCurves

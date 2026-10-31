@@ -80,7 +80,9 @@ use crate::runner::default_cases;
 use crate::{Case, HarnessError, Output, Rng, UnitDiff};
 
 /// Generated cases per run, whatever `--seeds` says (it can only raise this).
-pub const MIN_GENERATED: usize = 300;
+// Keep the larger corpus canonical: it covers additional failed center trims,
+// disjoint rail intervals and unset edge intervals from #483.
+pub const MIN_GENERATED: usize = 2000;
 
 /// `blend.fillet_geom_p1` runner.
 pub struct Runner;
@@ -1181,7 +1183,7 @@ fn uv(p: [f64; 2]) -> Point2 {
 /// The `SmStatus` of a Rust error; `-1` for one upstream cannot return.
 pub(crate) fn status(e: &SolidError) -> f64 {
     match e {
-        SolidError::InvalidInput { .. } => 1007.0,
+        SolidError::InvalidInput { .. } | SolidError::PortInvariant { .. } => 1007.0,
         SolidError::Upstream { code, .. } => f64::from(*code),
         _ => -1.0,
     }

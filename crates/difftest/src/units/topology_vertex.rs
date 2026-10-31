@@ -7,18 +7,18 @@
 //! B-spline surface or a plane (`CreateFaceFromSurface`), or the wire network of
 //! `prog_test` `my_test_topology`, or a chain of wire edges. The Rust side builds every
 //! non-file source itself ([`crate::own_builder`] under this shim's [`CONVENTIONS`], a
-//! chain by [`build_chain`]). For an `.smb` file it imports the graph the shim exports
-//! in traversal order (raw members, including each vertex's vertex use list in upstream list order,
-//! each vertex use's cached gaps, each edge's curve identity and each face's upward face
-//! use) into a [`Brep`] and runs the ported functions on it; their results are compared
-//! as traversal indices, flags, statuses and values. `init_gaps` has the C++ side compute the cached
-//! gaps before the op, so that cached gaps and their resets are observable. A B-rep
-//! whose edges share a curve object, or whose edge curves are not B-splines or lines,
-//! is a harness error (the Rust side could not represent it). An analytic face surface
-//! (cone, sphere, ...) travels exactly as its upstream database record when that record
-//! is lossless (`sc_analytic_export.h`, read by [`crate::util::read_exact_surface`]);
-//! any other `SmBSplineSurface` subclass is held only as its B-spline part, and the
-//! solving ops on such a B-rep are deferred.
+//! chain by [`build_chain`]) and reads an `.smb` file with the Rust reader
+//! ([`crate::own_reader::file_in_order`]), both renumbered into the shim's traversal
+//! order: no C++ export reaches the Rust side. It runs the ported functions on that
+//! B-rep; their results are compared as traversal indices, flags, statuses and values.
+//! `init_gaps` has the C++ side compute the cached gaps before the op, so that cached
+//! gaps and their resets are observable. The C++ side resolves its selectors on the
+//! import of the shim's export ([`import`]): a B-rep whose edges share a curve object, or
+//! whose edge curves are not B-splines or lines, is a harness error there. An analytic
+//! face surface (cone, sphere, ...) travels in that export exactly as its upstream
+//! database record when that record is lossless (`sc_analytic_export.h`, read by
+//! [`crate::util::read_exact_surface`]); any other `SmBSplineSurface` subclass only as
+//! its B-spline part, which the Rust side, reading the file itself, never sees.
 //!
 //! The vertex selector is taken modulo the vertex count (so generated cases need no
 //! counts); other selectors likewise, `-1` selecting null.
@@ -46,8 +46,9 @@ use solidcore::nurbs::srf_basic::Surface as NlSurface;
 use solidcore::query::poly::PolyVertexId;
 use solidcore::surface::surface::p2::DropCurveFail;
 use solidcore::surface::surface::Surface;
+use solidcore::topology::brep_cache::{arena_identity, CacheObject};
 use solidcore::topology::topology::Topology;
-use solidcore::topology::vertex::{self as vx, VertexGap};
+use solidcore::topology::vertex::{self as vx, corner, VertexGap};
 use solidcore::topology::{
     Brep, Edge, EdgeId, Edgeuse, EdgeuseId, EdgeuseOwner, Face, FaceId, Faceuse, FaceuseId, Loop,
     LoopId, Loopuse, LoopuseId, LoopuseStart, ObjectHandle, Region, RegionId, Shell, ShellId,
@@ -239,6 +240,14 @@ enum OpIn {
         v: i64,
         exact: bool,
         poly: bool,
+    },
+    /// `sm_AssertTestVertex1` (as `SmVertex::AssertValid` calls it), then
+    /// `IsOnFaceCorner`, `HasParallelFaces` and a forced `IsWithinXSectTol3dOfFaces`,
+    /// after moving the vertex by `d` (`SetPoint`) when given.
+    Corner {
+        v: i64,
+        #[serde(default)]
+        d: Option<[f64; 3]>,
     },
 }
 
@@ -840,8 +849,14 @@ fn import(ex: &[f64]) -> Result<(Brep, Option<i64>), HarnessError> {
             .collect();
         b.add_shell_record(s).map_err(|e| harness(e.to_string()))?;
     }
-    for (f, (surface, faceuse, uv_domain, tolerance)) in surfaces.into_iter().enumerate() {
+    for (f, (mut surface, faceuse, uv_domain, tolerance)) in surfaces.into_iter().enumerate() {
         let shell = face_shells.get(f).copied().unwrap_or(ShellId::from_index(0));
+        // `SmFace::SetSurface` owns the surface (`GetOwner() == face`): its solvers read
+        // the face tolerance through it (`LocalPointSolve_1`'s loose tolerance, which
+        // decides a seam jump), under the arena identity of [`CONVENTIONS`]
+        if let Some(s) = surface.as_mut() {
+            s.set_owner(Some(arena_identity(CacheObject::Face(FaceId::from_index(f as u32)))));
+        }
         // The rectangular-trim flag is not exported (`SmFace()` default); the UV domain and
         // tolerance are (the vertex/face gaps solve against them).
         b.add_face_record(Face {
@@ -1349,6 +1364,7 @@ fn resolve(op: &OpIn, c: [usize; 10], b: &Brep) -> Result<OpIn, Box<Output>> {
             operation,
         },
         OpIn::SetPoint { v, p } => OpIn::SetPoint { v: vs(v), p },
+        OpIn::Corner { v, d } => OpIn::Corner { v: vs(v), d },
         OpIn::SetTolerance {
             v,
             tol,
@@ -1411,6 +1427,13 @@ fn op_args(op: &OpIn) -> (Op, Vec<f64>) {
         ),
         OpIn::RefreshTolerance { v, nested } => (Op::RefreshTolerance, vec![f(*v), flag(*nested)]),
         OpIn::Exact { v, exact, poly } => (Op::Exact, vec![f(*v), flag(*exact), flag(*poly)]),
+        OpIn::Corner { v, d } => {
+            let m = d.unwrap_or([0.0; 3]);
+            (
+                Op::Corner,
+                vec![f(*v), flag(d.is_some()), m[0], m[1], m[2]],
+            )
+        }
     }
 }
 
@@ -1475,7 +1498,7 @@ impl From<HarnessError> for Fail {
 fn or_null<T>(r: Result<T, SolidError>) -> Result<Option<T>, SolidError> {
     match r {
         Ok(v) => Ok(Some(v)),
-        Err(SolidError::InvalidInput { .. }) => Ok(None),
+        Err(SolidError::InvalidInput { .. } | SolidError::PortInvariant { .. }) => Ok(None),
         Err(e) => Err(e),
     }
 }
@@ -1500,6 +1523,50 @@ fn put_list<T>(
 fn put_flag(q: &mut Vec<i64>, r: Result<bool, SolidError>) -> Result<(), SolidError> {
     q.push(or_null(r)?.map_or(NULL_DEREF, i64::from));
     Ok(())
+}
+
+/// A face as the shim's `g.find(3, face)`.
+fn face_index(f: Option<FaceId>) -> f64 {
+    f.map_or(-1.0, |f| f64::from(f.index()))
+}
+
+/// The corner outputs as the shim's `put_corner`.
+fn put_corner(out: &mut Vec<f64>, on: bool, c: &corner::FaceCorner) {
+    out.extend([flag(on), flag(c.found_point), c.max_gap_3d]);
+    out.extend([c.best_point.x, c.best_point.y, c.best_point.z]);
+}
+
+/// The `Corner` op after the move, as the shim's `OP_CORNER`.
+fn corner_op(k: &Kernel, b: &mut Brep, v: VertexId) -> Result<Vec<f64>, SolidError> {
+    let mut out = vec![0.0];
+    // sm_AssertTestVertex1, spelled out as the shim does
+    let (within, max_gap, max_face) = corner::is_within_xsect_tol_3d_of_faces(k, b, v, false)?;
+    let mut passed = within;
+    out.extend([flag(within), max_gap, face_index(max_face)]);
+    if within {
+        let (on, c) = corner::is_on_face_corner(k, b, v)?;
+        passed &= on;
+        put_corner(&mut out, on, &c);
+    }
+    out.push(flag(passed));
+    let (on, c) = corner::is_on_face_corner(k, b, v)?;
+    put_corner(&mut out, on, &c);
+    if vx::faces(b, v)?.is_empty() {
+        out.push(-1.0);
+    } else {
+        let p = corner::has_parallel_faces(k, b, v, Some(solidcore::geom::tol::ANG_TOL_DEG))?;
+        out.extend([
+            flag(p.parallel),
+            p.min_dihedral_ang_deg,
+            p.max_parallel_face_gap,
+            face_index(p.face1),
+            face_index(p.face2),
+        ]);
+    }
+    let (within, gap, face) = corner::is_within_xsect_tol_3d_of_faces(k, b, v, true)?;
+    out.extend([flag(within), gap, face_index(face)]);
+    gap_states(b, &mut out);
+    Ok(out)
 }
 
 /// The cached gap states of every vertex use, as the shim's `put_gap_states`.
@@ -1637,11 +1704,13 @@ fn build_chain(
     Ok(())
 }
 
-/// The Rust B-rep of a case, the face surface subclass held only inexactly (none for a
-/// built source) and its entity counts, or the output of a failed build. Shim-built
-/// sources are built by the Rust kernel ([`crate::own_builder`] under this shim's
-/// [`CONVENTIONS`]; a chain by [`build_chain`]); only `.smb` file sources are still
-/// imported from the C++ export ([`import`]).
+/// The Rust B-rep of a case, the face surface subclass held only inexactly (always
+/// none: the Rust side builds or reads every source itself) and its entity counts, or
+/// the output of a failed build or read. Shim-built sources are built by the Rust kernel
+/// ([`crate::own_builder`] under this shim's [`CONVENTIONS`]; a chain by
+/// [`build_chain`]), `.smb` file sources read by the Rust reader
+/// ([`crate::own_reader::file_in_order`]), both renumbered into the shim's traversal
+/// order.
 fn own_brep(i: &Inputs) -> Result<crate::own_builder::RustBrep<OwnBrep>, HarnessError> {
     use crate::own_builder::{build_as, counts, failed_output, finish, in_new_brep, Built};
     let mut k = Kernel::default();
@@ -1666,12 +1735,26 @@ fn own_brep(i: &Inputs) -> Result<crate::own_builder::RustBrep<OwnBrep>, Harness
         }
         Some(Built::Failed(e)) => Ok(Err(failed_output(&e))),
         None => {
-            let ex = export(i)?;
-            let Some(c) = ffi::counts(&ex) else {
-                return Ok(Err(build_failure(&ex)));
+            // an `.smb` file: the Rust reader, renumbered into the shim's traversal order
+            let BrepIn::File { rebuild, .. } = &i.brep else {
+                return Err(harness("own builder: a non-file source was not built"));
             };
-            let (b, inexact) = import(&ex)?;
-            Ok(Ok((b, inexact, c)))
+            let path = path_of(&i.brep)?;
+            let read = crate::own_reader::file_in_order(
+                &mut k,
+                &path,
+                *rebuild,
+                i.validate_only,
+                i.init_gaps,
+                &CONVENTIONS,
+            )?;
+            match read {
+                Built::Brep(b) => {
+                    let c = counts(&b);
+                    Ok(Ok((*b, None, c)))
+                }
+                Built::Failed(e) => Ok(Err(failed_output(&e))),
+            }
         }
     }
 }
@@ -1699,7 +1782,10 @@ fn run_rust(i: &Inputs) -> Result<Output, HarnessError> {
     // The gap, topological-vertex and pole queries solve against the face surfaces: a face
     // surface the export holds only as its B-spline part (a cone, sphere, torus, revolution
     // or extrusion subclass) is a stand-in whose solves differ from the analytic ones.
-    if let (Some(ty), OpIn::Gaps { .. } | OpIn::Topological { .. } | OpIn::OnPole { .. }) =
+    if let (
+        Some(ty),
+        OpIn::Gaps { .. } | OpIn::Topological { .. } | OpIn::OnPole { .. } | OpIn::Corner { .. },
+    ) =
         (inexact, &op)
     {
         let (unit, symbol) = match ty {
@@ -1915,6 +2001,27 @@ fn run_rust_op(b: &mut Brep, op: &OpIn) -> Result<Output, Fail> {
             gap_states(b, &mut out);
             out
         }
+        OpIn::Corner { v, d } => {
+            let v = vid(*v);
+            if let Some(d) = d {
+                let mut env = NotifyEnv::new(b);
+                let p = vx::point(b, v)? + Vec3::new(d[0], d[1], d[2]);
+                vx::set_point(
+                    b,
+                    v,
+                    p,
+                    &mut env.records,
+                    &mut env.attributes,
+                    None,
+                    env.this,
+                    &vertexuse_ref,
+                )?;
+            }
+            match or_null(corner_op(&k, b, v))? {
+                Some(out) => out,
+                None => vec![NULL_DEREF as f64],
+            }
+        }
         OpIn::SetPoint { v, p } => {
             let mut env = NotifyEnv::new(b);
             vx::set_point(
@@ -2084,11 +2191,27 @@ impl UnitDiff for Runner {
     }
 
     fn run_cpp(&self, case: &Case) -> Result<Output, HarnessError> {
+        if super::topology_face_p4::level0::is_level0(case) {
+            return super::topology_face_p4::level0::run_cpp(case);
+        }
         run_cpp(&case.parse::<Inputs>()?)
     }
 
     fn run_rust(&self, case: &Case) -> Result<Output, HarnessError> {
+        if super::topology_face_p4::level0::is_level0(case) {
+            return super::topology_face_p4::level0::run_rust(case);
+        }
         run_rust(&case.parse::<Inputs>()?)
+    }
+
+    fn cases(&self, ctx: &crate::CaseContext) -> Result<Vec<Case>, HarnessError> {
+        let mut v = crate::runner::default_cases(self, ctx)?;
+        {
+            use super::topology_face_p4::level0::Level0Op;
+            let ops: Vec<Level0Op> = vec![Level0Op::CheckPointers];
+            v.extend(super::topology_face_p4::level0::cases(self.id(), &ops, 0x1419_0101, 24)?);
+        }
+        Ok(v)
     }
 
     fn generate(&self, rng: &mut Rng) -> Option<Value> {

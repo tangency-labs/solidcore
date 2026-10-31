@@ -1325,6 +1325,32 @@ impl SurfOfRevolution {
         hu: usize,
         hv: usize,
     ) -> Result<Vec<Vec3>> {
+        // (an order above the limit is refused before the array is read)
+        let n = if hu <= 5 && hv <= 5 {
+            (hu + 1) * (hv + 1)
+        } else {
+            0
+        };
+        let mut d = vec![Vec3::ZERO; n];
+        self.evaluate_step_at_into(k, uv, hu, hv, &mut d)?;
+        Ok(d)
+    }
+
+    /// [`Self::evaluate_step_at`] into the caller's array `d` (`(hu + 1) * (hv + 1)` entries):
+    /// the entries upstream does not write keep the caller's values, as upstream's
+    /// `aDerivatives` does (a fresh `SmVector3d` array holds `SM_UNDEF_DOUBLE`).
+    ///
+    /// # Errors
+    ///
+    /// As [`Self::evaluate_step_at`]; `InvalidInput` when `d` is too short.
+    pub(crate) fn evaluate_step_at_into(
+        &self,
+        k: &Kernel,
+        uv: Point2,
+        hu: usize,
+        hv: usize,
+        d: &mut [Vec3],
+    ) -> Result<()> {
         // check input
         if hu > 3 || hv > 3 {
             return Err(SolidError::sm_err(OP_EVAL_STEP));
@@ -1361,7 +1387,9 @@ impl SurfOfRevolution {
         let pz = p.dot(s_z);
 
         let n = (hu + 1) * (hv + 1);
-        let mut d = vec![Vec3::ZERO; n];
+        let d = d
+            .get_mut(..n)
+            .ok_or_else(|| SolidError::invalid_input(OP_EVAL_STEP, "derivative array too short"))?;
         let mut set = |i: usize, v: Vec3| {
             if let Some(slot) = d.get_mut(i) {
                 *slot = v;
@@ -1451,8 +1479,8 @@ impl SurfOfRevolution {
         }
 
         // The formulas above are per radian; STEP U is in degrees.
-        scale_step_angular_derivatives(&mut d, hu, hv, true, false)?;
-        Ok(d)
+        scale_step_angular_derivatives(d, hu, hv, true, false)?;
+        Ok(())
     }
 
     /// The point at the STEP parameters `uv` (`EvaluateSTEPPoint`: [`Self::evaluate_step`]
@@ -1550,10 +1578,36 @@ impl SurfOfRevolution {
         iso: SweepIsoFn<'_>,
     ) -> Result<(bool, SurfaceIntersection)> {
         let mut out = SurfaceIntersection::default();
+        let more = self.intersect_with_plane_owned_using_into(
+            k,
+            plane,
+            plane_owner,
+            other_uv_domain,
+            approx_tol_3d,
+            iso,
+            &mut out,
+        )?;
+        Ok((more, out))
+    }
+
+    /// [`Self::intersect_with_plane_owned_using`] into `out` (reset first). On an error
+    /// `out` keeps what was appended before it, as upstream leaves its output arrays.
+    #[allow(clippy::too_many_lines)] // one upstream function
+    pub(crate) fn intersect_with_plane_owned_using_into(
+        &self,
+        k: &Kernel,
+        plane: &Plane,
+        plane_owner: PlaneOwner,
+        other_uv_domain: &Extent2d,
+        approx_tol_3d: Option<f64>,
+        iso: SweepIsoFn<'_>,
+        out: &mut SurfaceIntersection,
+    ) -> Result<bool> {
+        *out = SurfaceIntersection::default();
 
         // use general intersection for nonPlanar generators
         if !self.planar_generator {
-            return Ok((true, out));
+            return Ok(true);
         }
 
         // plane and RevolutionSurface locals
@@ -1576,8 +1630,6 @@ impl SurfOfRevolution {
                 .map(|(_, p)| p)
                 .unwrap_or_default();
         plane_pbox.expand_absolute(tol);
-
-        let mut types: Vec<TsectCurveType> = Vec::new();
 
         // The curve pieces of `crv` inside the plane domain when its pseudo box meets
         // the plane's (statuses ignored).
@@ -1605,7 +1657,7 @@ impl SurfOfRevolution {
             let vec_between = self.position.origin() - plane_origin;
             let dist_plane_to_center = vec_between.dot(plane_normal);
             if dist_plane_to_center.abs() > tol {
-                return Ok((true, SurfaceIntersection::default()));
+                return Ok(true);
             }
 
             let start_ang_rad = self.start_angle_deg() * PI / 180.0;
@@ -1641,7 +1693,7 @@ impl SurfOfRevolution {
                     }
                     for c in trim(&Curve::from(crv), &plane_pbox)? {
                         out.curves_3d.push(c);
-                        types.push(TsectCurveType::Crossing);
+                        out.curve_types.push(TsectCurveType::Crossing);
                     }
                 }
             }
@@ -1690,8 +1742,7 @@ impl SurfOfRevolution {
                     // empties only the 3D curves: the curve types found so far stay)
                     if d2.length() < EFF_ZERO_SQRT {
                         out.curves_3d.clear();
-                        out.curve_types = types;
-                        return Ok((true, out));
+                        return Ok(true);
                     }
                 }
 
@@ -1702,7 +1753,7 @@ impl SurfOfRevolution {
                 let crv = iso(self, k, surf_param, iso_param)?;
                 for c in trim(&crv, &plane_pbox)? {
                     out.curves_3d.push(c);
-                    types.push(if is_tangent {
+                    out.curve_types.push(if is_tangent {
                         TsectCurveType::Tangent
                     } else {
                         TsectCurveType::Crossing
@@ -1712,10 +1763,11 @@ impl SurfOfRevolution {
         }
         // Plane cuts RevolutionSurface at an angle
         else {
-            return Ok((true, SurfaceIntersection::default()));
+            return Ok(true);
         }
 
-        for (c, t) in out.curves_3d.iter().zip(types.iter_mut()) {
+        // (the curve types are appended with the curves, as upstream's)
+        for (c, t) in out.curves_3d.iter().zip(out.curve_types.iter_mut()) {
             out.surface1_uv_curves.push(None);
             out.surface2_uv_curves.push(None);
             if c.is_degenerate(k, EFF_ZERO, None)? {
@@ -1723,8 +1775,7 @@ impl SurfOfRevolution {
             }
             out.deviations.push(0.0);
         }
-        out.curve_types = types;
-        Ok((false, out))
+        Ok(false)
     }
 
     /// Rotates `point` about the axis onto the start (X/Z) half plane and returns the
@@ -2048,6 +2099,45 @@ mod tests {
             retained.polar_curve.as_ref().unwrap().notify_key(),
             Some(key)
         );
+    }
+
+    #[test]
+    fn rejected_shifted_generator_interval_preserves_the_revolution() {
+        let mut k = k();
+        k.fixes.ellipse_step_interval_checks = true;
+        for swap in [false, true] {
+            let g = Ellipse::new_circle(
+                &k,
+                Vec3::new(3.0, 0.0, 0.0),
+                Vec3::X,
+                Vec3::Z,
+                Extent1d::from_min_max(0.0, 360.0),
+                1.0,
+                &EllipseOptions::default(),
+            )
+            .unwrap();
+            let mut s =
+                SurfOfRevolution::create_canonical(&k, Curve::from(g), Vec3::ZERO, Vec3::Z, swap)
+                    .unwrap();
+            let old_domain = s.step_uv_domain();
+            let old_nurb = s.base().gw_nurb().unwrap().clone();
+            let target = Extent2d::from_bounds(0.0, 360.0, 180.0, 540.0);
+            assert!(matches!(
+                s.adjust_step_uv_domain(&k, &target),
+                Err(SolidError::InvalidInput { .. })
+            ));
+            assert_eq!(s.step_uv_domain(), old_domain);
+            assert_eq!(s.base().gw_nurb().unwrap(), &old_nurb);
+            let CurveKind::Ellipse(gen) = s.gen_curve().unwrap().kind() else {
+                panic!("circle generator changed type");
+            };
+            assert_eq!(gen.step_interval(), old_domain.v_interval());
+            // A supported trim still succeeds after the rejected edit.
+            s.adjust_step_uv_domain(&k, &Extent2d::from_bounds(0.0, 0.0, 180.0, 90.0))
+                .unwrap();
+            let n = s.base().gw_nurb().unwrap();
+            assert!(n.u_knots().iter().chain(n.v_knots()).all(|v| v.is_finite()));
+        }
     }
 
     #[test]

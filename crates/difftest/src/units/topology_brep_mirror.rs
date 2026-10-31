@@ -8,28 +8,35 @@
 //! edge curve, every edge use's UV trim curve and every face surface (type code,
 //! natural domain, evaluated points). Inputs the native reader cannot build are
 //! `rejected`, not failed.
+//!
+//! A case with a `matrix` runs `SmBrep::Transform(const double[4][4], bScaleTol)`
+//! (`topology::brep::mirror::transform_matrix`) instead of the mirror, compared the same
+//! way: the fixture file `transform_matrix.json` (identity, rotation, uniform and
+//! non-uniform scale, shear, mirror, near-singular, singular, huge and tiny scale) and
+//! [`MATRIX_GENERATED`] generated `mat####` cases, seeded apart from the `gen####`
+//! mirror stream.
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use solidcore::geom::axis2_placement::Axis2Placement;
 use solidcore::kernel::Kernel;
 use solidcore::math::Vec3;
-use solidcore::topology::brep::mirror::mirror;
-use solidcore::topology::brep::p3::{notify_serial, topology_ref};
+use solidcore::topology::brep::mirror::{mirror, transform_matrix};
+use solidcore::topology::brep::p3::notify_serial;
 use solidcore::topology::Brep;
-use solidcore::{EntityRef, Result as SolidResult, SolidError};
+use solidcore::{Result as SolidResult, SolidError};
 use solidcore_ffi::units::topology_brep_mirror as ffi;
 use solidcore_ffi::FfiError;
 
-use super::boolean_merge_p1::graph;
-use super::topology_vertexuse::{import, import_raw, path_of, BrepIn};
+use super::boolean_merge_p1::{graph_owned, OwnerSource};
+use super::topology_vertexuse::{import_raw_with_owners, path_of, BrepIn};
 use crate::{Case, CaseContext, HarnessError, Output, Rng, UnitDiff};
 
 /// The runner of `SmBrep::Mirror`.
 pub struct Runner;
 
 /// Upstream solids (relative to `TestFiles/pt_TestFiles`) the generated cases mirror.
-const FILES: [&str; 12] = [
+pub(super) const FILES: [&str; 12] = [
     "Solids/box.smb",
     "Solids/cylinder.smb",
     "Solids/sphere.smb",
@@ -57,7 +64,15 @@ struct Inputs {
     origin: [f64; 3],
     x: [f64; 3],
     y: [f64; 3],
+    /// When set, `SmBrep::Transform` by this 4x4 matrix (rows; the translation is row
+    /// 3) instead of the mirror.
+    matrix: Option<[[f64; 4]; 4]>,
+    /// `bScaleTol` of the matrix transform (upstream's default `TRUE`).
+    scale_tol: bool,
 }
+
+/// Generated matrix-transform cases per run.
+pub const MATRIX_GENERATED: usize = 96;
 
 impl Default for Inputs {
     fn default() -> Self {
@@ -68,11 +83,13 @@ impl Default for Inputs {
             origin: [0.; 3],
             x: [1., 0., 0.],
             y: [0., 1., 0.],
+            matrix: None,
+            scale_tol: true,
         }
     }
 }
 
-fn herr(e: impl std::fmt::Display) -> HarnessError {
+pub(super) fn herr(e: impl std::fmt::Display) -> HarnessError {
     HarnessError::new(e.to_string())
 }
 
@@ -109,23 +126,37 @@ fn path(i: &Inputs) -> Result<String, HarnessError> {
 
 /// The native output, or `Err(output)` when the FFI guard refuses the input.
 fn native(i: &Inputs, op: u8) -> Result<Result<Vec<f64>, Output>, HarnessError> {
-    match ffi::eval(op, &path(i)?, &block(i), &args(i)) {
+    let r = match (op, i.matrix) {
+        (1, Some(m)) => {
+            let mut a = [0.0; 18];
+            a[0] = f64::from(i.editing);
+            a[1] = f64::from(i.scale_tol);
+            for (slot, x) in a.iter_mut().skip(2).zip(m.iter().flatten()) {
+                *slot = *x;
+            }
+            ffi::transform(&path(i)?, &block(i), &a)
+        }
+        _ => ffi::eval(op, &path(i)?, &block(i), &args(i)),
+    };
+    match r {
         Ok(raw) if raw.first() == Some(&-999.) => Ok(Err(Output::rejected(format!(
             "fixture constructor status {}",
             raw.get(1).copied().unwrap_or(-1.)
         )))),
         Ok(raw) => Ok(Ok(raw)),
-        Err(e @ FfiError::InvalidArgument(_)) => Ok(Err(Output::rejected(format!("ffi guard: {e}")))),
+        Err(e @ FfiError::InvalidArgument(_)) => {
+            Ok(Err(Output::rejected(format!("ffi guard: {e}"))))
+        }
         Err(e) => Err(herr(e)),
     }
 }
 
-fn status(r: SolidResult<()>) -> SolidResult<f64> {
+pub(super) fn status(r: SolidResult<()>) -> SolidResult<f64> {
     match r {
         Ok(()) => Ok(0.),
         Err(e) if e.is_unported() => Err(e),
         Err(SolidError::Upstream { code, .. }) => Ok(f64::from(code)),
-        Err(SolidError::InvalidInput { .. }) => Ok(1007.),
+        Err(SolidError::InvalidInput { .. } | SolidError::PortInvariant { .. }) => Ok(1007.),
         Err(e) => Err(e),
     }
 }
@@ -175,7 +206,9 @@ fn surface_samples(
     }
 }
 
-fn geometry(k: &Kernel, b: &Brep) -> SolidResult<Vec<f64>> {
+/// The geometry record of the shim's `put_geometry`; `uv_trim` samples the edge uses' UV trim
+/// curves too.
+pub(super) fn geometry(k: &Kernel, b: &Brep, uv_trim: bool) -> SolidResult<Vec<f64>> {
     use solidcore::topology::brep::p1;
     let mut out = Vec::new();
     let edges = p1::edges(b, None)?;
@@ -185,7 +218,9 @@ fn geometry(k: &Kernel, b: &Brep) -> SolidResult<Vec<f64>> {
         curve_samples(k, &mut out, edge.curve.as_ref());
         out.push(edge.edgeuses.len() as f64);
         for &eu in &edge.edgeuses {
-            curve_samples(k, &mut out, b.edgeuse(eu)?.uv_trim_curve.as_ref());
+            if uv_trim {
+                curve_samples(k, &mut out, b.edgeuse(eu)?.uv_trim_curve.as_ref());
+            }
         }
     }
     let faces = p1::faces(b, None)?;
@@ -196,24 +231,17 @@ fn geometry(k: &Kernel, b: &Brep) -> SolidResult<Vec<f64>> {
     Ok(out)
 }
 
-// The native geometry keeps its actual edge/face owners while the import labels them
-// by arena index; a plain edit notifies under the kernel's identities. Bind the owned
-// geometry into that context before mirroring (as `topology.brep_p5`'s transform runner).
-fn bind_owners(k: &mut Kernel, b: &mut Brep) -> SolidResult<()> {
-    let serial = notify_serial(&mut k.context, b)?;
-    let edges: Vec<_> = b.edges().ids().collect();
-    for edge in edges {
-        if let Some(curve) = b.edge_mut(edge)?.curve.as_mut() {
-            curve.set_owner(Some(topology_ref(serial, EntityRef::Edge(edge))), None);
-        }
-    }
+/// Clears the faces' `loops` and the loops' `edges` lists: Rust-only logical records
+/// the native export walk never has, so the import leaves them empty while the Rust
+/// reader fills them (as `topology.brep_cutting` and `topology.brep_local_operation`).
+fn clear_logical_lists(b: &mut Brep) -> SolidResult<()> {
     let faces: Vec<_> = b.faces().ids().collect();
-    for face in faces {
-        if let Some(surface) = b.face_mut(face)?.surface.as_mut() {
-            if surface.owner().is_some() {
-                surface.set_owner(Some(topology_ref(serial, EntityRef::Face(face))));
-            }
-        }
+    for id in faces {
+        b.face_mut(id)?.loops.clear();
+    }
+    let loops: Vec<_> = b.loops().ids().collect();
+    for id in loops {
+        b.loop_mut(id)?.edges.clear();
     }
     Ok(())
 }
@@ -231,63 +259,43 @@ impl UnitDiff for Runner {
         };
         let n = *raw.first().ok_or_else(|| herr("short record"))? as usize;
         let record = raw.get(1..=n).ok_or_else(|| herr("short record"))?.to_vec();
-        let (mut b, _) = import_raw(raw.get(n + 1..).ok_or_else(|| herr("short graph"))?)?;
+        let (mut b, owners) =
+            import_raw_with_owners(raw.get(n + 1..).ok_or_else(|| herr("short graph"))?)?;
+        clear_logical_lists(&mut b).map_err(herr)?;
         normalize_face_shells(&mut b).map_err(herr)?;
-        Ok(graph(&b, record))
+        graph_owned(&b, record, OwnerSource::Native(&owners))
     }
 
     fn run_rust(&self, case: &Case) -> Result<Output, HarnessError> {
         let i: Inputs = case.parse()?;
-        // the native side rejects the case: nothing is compared
-        let Ok(raw) = native(&i, 0)? else {
-            return Ok(Output::new());
-        };
-        let (mut b, _) = import(&raw)?;
-        b.set_editing_enabled(i.editing);
-        // the native face and vertex list orders (the import orders them by the walk)
-        let lists = native(&i, 2)?.map_err(|_| herr("native lists"))?;
-        let mut at = 0;
-        let take = |at: &mut usize| -> Result<Vec<u32>, HarnessError> {
-            let n = *lists.get(*at).ok_or_else(|| herr("short lists"))? as usize;
-            let out = lists
-                .get(*at + 1..*at + 1 + n)
-                .ok_or_else(|| herr("short lists"))?
-                .iter()
-                .map(|&x| x as u32)
-                .collect();
-            *at += 1 + n;
-            Ok(out)
-        };
-        let faces = take(&mut at)?;
-        let vertices = take(&mut at)?;
-        let (nf, nv) = (faces.len(), vertices.len());
-        b.set_face_list(
-            faces
-                .iter()
-                .map(|&x| solidcore::topology::FaceId::from_index(x))
-                .collect(),
-        )
-        .map_err(|e| herr(format!("{e}: faces {nf} of {} {faces:?}", b.faces().len())))?;
-        b.set_vertex_list(
-            vertices
-                .iter()
-                .map(|&x| solidcore::topology::VertexId::from_index(x))
-                .collect(),
-        )
-        .map_err(|e| herr(format!("{e}: vertices {nv} of {} {vertices:?}", b.vertices().len())))?;
         let mut k = Kernel::default();
-        bind_owners(&mut k, &mut b).map_err(herr)?;
+        // the Rust reader's B-rep of the same file, its geometry owners named by the
+        // Rust reader (no C++ export or owner reaches the Rust side)
+        let mut b = match crate::own_reader::read_file_rebuild(&mut k, &path(&i)?, i.rebuild)? {
+            Ok(b) => b,
+            Err(e) => {
+                return Output::unported(&e).ok_or_else(|| herr(format!("rust read: {e}")));
+            }
+        };
+        b.set_editing_enabled(i.editing);
         let plane = Axis2Placement::new(v(i.origin), v(i.x), v(i.y));
         let mut run = || -> SolidResult<Vec<f64>> {
-            let st = status(mirror(&mut k, &mut b, &plane))?;
+            let r = match &i.matrix {
+                Some(m) => transform_matrix(&mut k, &mut b, m, i.scale_tol),
+                None => mirror(&mut k, &mut b, &plane),
+            };
+            let st = status(r)?;
             let mut record = vec![st];
-            record.extend(geometry(&k, &b)?);
+            record.extend(geometry(&k, &b, true)?);
             Ok(record)
         };
         match run() {
             Ok(record) => {
+                clear_logical_lists(&mut b).map_err(herr)?;
                 normalize_face_shells(&mut b).map_err(herr)?;
-        Ok(graph(&b, record))
+                // (the serial whose topology keys name the edit's new geometry)
+                let serial = notify_serial(&mut k.context, &mut b).map_err(herr)?;
+                graph_owned(&b, record, OwnerSource::Rust { serial: Some(serial) })
             }
             Err(e) => Output::unported(&e).ok_or_else(|| herr(e)),
         }
@@ -321,7 +329,13 @@ impl UnitDiff for Runner {
         } else {
             // an arbitrary plane
             {
-                let mut dir = || [rng.uniform(-1., 1.), rng.uniform(-1., 1.), rng.uniform(-1., 1.)];
+                let mut dir = || {
+                    [
+                        rng.uniform(-1., 1.),
+                        rng.uniform(-1., 1.),
+                        rng.uniform(-1., 1.),
+                    ]
+                };
                 i.x = dir();
                 i.y = dir();
                 i.origin = [
@@ -338,8 +352,84 @@ impl UnitDiff for Runner {
     fn cases(&self, ctx: &CaseContext) -> Result<Vec<Case>, HarnessError> {
         let mut ctx = ctx.clone();
         ctx.seeds = ctx.seeds.max(128);
-        crate::runner::default_cases(self, &ctx)
+        let mut cases = crate::runner::default_cases(self, &ctx)?;
+        for n in 0..MATRIX_GENERATED {
+            let seed = CaseContext::seed_for("topology.brep_mirror.transform_matrix", n);
+            let mut rng = Rng::new(seed);
+            let Some(inputs) = generate_matrix(&mut rng) else {
+                break;
+            };
+            cases.push(Case {
+                unit: self.id().to_string(),
+                name: format!("mat{n:04}"),
+                source: crate::case::CaseSource::Generated { seed },
+                inputs,
+            });
+        }
+        Ok(cases)
     }
+}
+
+/// A matrix-transform case: a generated 3x3 block (rotation times a scale of one of
+/// the kinds below, sometimes sheared) and translation, on one of [`FILES`].
+fn generate_matrix(rng: &mut Rng) -> Option<Value> {
+    let file = FILES.get(rng.below(FILES.len() as u64) as usize)?;
+    let (a, c) = (rng.uniform(-3.2, 3.2), rng.uniform(-3.2, 3.2));
+    let (ca, sa, cc, sc) = (a.cos(), a.sin(), c.cos(), c.sin());
+    // a rotation about Z then X
+    let rot = [[ca, sa, 0.], [-sa * cc, ca * cc, sc], [sa * sc, -ca * sc, cc]];
+    let d = match rng.below(9) {
+        0 => [1., 1., 1.],
+        1 => {
+            let s = rng.uniform(0.2, 5.0);
+            [s, s, s]
+        }
+        2 | 3 => [
+            rng.uniform(0.2, 5.0),
+            rng.uniform(0.2, 5.0),
+            rng.uniform(0.2, 5.0),
+        ],
+        4 => [-1., 1., 1.],
+        5 => [-rng.uniform(0.2, 5.0), rng.uniform(0.2, 5.0), 1.],
+        6 => [1., 1., 10f64.powi(-(rng.range_i64(3, 10) as i32))],
+        7 => {
+            let s = 10f64.powi(rng.range_i64(-6, 6) as i32);
+            [s, s, s]
+        }
+        _ => [1., 1., 0.],
+    };
+    let mut m = [[0.; 4]; 4];
+    for ((out, row), dr) in m.iter_mut().zip(rot).zip(d) {
+        for (o, x) in out.iter_mut().zip(row) {
+            *o = x * dr;
+        }
+    }
+    if rng.chance(0.4) {
+        // a shear term
+        let (r, k) = (rng.below(3) as usize, rng.below(3) as usize);
+        let shear = rng.uniform(-1.0, 1.0);
+        if let Some(x) = m.get_mut(r).and_then(|row| row.get_mut(k)) {
+            *x += shear;
+        }
+    }
+    let scale = 10f64.powi(rng.range_i64(-1, 2) as i32);
+    let t = [
+        rng.uniform(-10., 10.) * scale,
+        rng.uniform(-10., 10.) * scale,
+        rng.uniform(-10., 10.) * scale,
+        1.,
+    ];
+    if let Some(row) = m.get_mut(3) {
+        *row = t;
+    }
+    let i = Inputs {
+        file: (*file).into(),
+        matrix: Some(m),
+        scale_tol: rng.chance(0.8),
+        editing: rng.chance(0.9),
+        ..Inputs::default()
+    };
+    serde_json::to_value(i).ok()
 }
 
 /// `Face::shell` and `Shell::faces` have no upstream counterpart: the import derives them
@@ -347,7 +437,7 @@ impl UnitDiff for Runner {
 /// face use (`swap_reflection_shells`). Both are recomputed here from the face's own
 /// first face use (`m_pFaceuse`, exported and compared), so the record the graph
 /// compares is the same on both sides; the face uses' own shells are compared as they are.
-fn normalize_face_shells(b: &mut Brep) -> SolidResult<()> {
+pub(super) fn normalize_face_shells(b: &mut Brep) -> SolidResult<()> {
     // the faces in the graph's walk order (the import numbers them so), then the rest
     let mut faces: Vec<_> = super::boolean_merge_p1::Canon::reachable(b).faces.items;
     for f in b.faces().ids() {

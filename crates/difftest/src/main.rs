@@ -38,7 +38,7 @@ const USAGE: &str = "usage: difftest [--unit <id>]... [--green] [--all] [--list]
        difftest --unit <id>... --fuzz N [--fuzz-out <dir>] [--seeds N] [--filter <substr>]
        difftest --ssi-corpus [--tol 1e-6|default] [--jobs N] [--report-dir <dir>] [--no-report] [case-glob]
        difftest --solidcraft-cases [--report-dir <dir>] [--no-report] [case-glob]
-       difftest --step-corpus [--jobs N] [--report-dir <dir>] [--no-report] [file-glob]";
+       difftest --step-corpus [--constructor] [--jobs N] [--report-dir <dir>] [--no-report] [file-glob]";
 
 /// Default child processes of `--ssi-corpus`.
 const DEFAULT_SSI_JOBS: usize = 2;
@@ -74,6 +74,7 @@ struct Args {
     ssi_corpus: bool,
     solidcraft_cases: bool,
     step_corpus: bool,
+    constructor: bool,
     tol: Option<String>,
     jobs: Option<usize>,
     glob: Option<String>,
@@ -112,6 +113,7 @@ fn parse_args() -> Result<Args, String> {
             "--ssi-corpus" => a.ssi_corpus = true,
             "--solidcraft-cases" => a.solidcraft_cases = true,
             "--step-corpus" => a.step_corpus = true,
+            "--constructor" => a.constructor = true,
             "--tol" => a.tol = Some(val("--tol")?),
             "--jobs" | "-j" => {
                 let v = val("--jobs")?;
@@ -226,6 +228,7 @@ fn main() -> ExitCode {
             jobs: args.jobs.unwrap_or(DEFAULT_SSI_JOBS).max(1),
             report_dir: args.report_dir.clone(),
             no_report: args.no_report,
+            constructor: args.constructor,
         };
         return difftest::step::run_corpus(&root, &opts);
     }
@@ -429,7 +432,10 @@ fn main() -> ExitCode {
         .unwrap_or_else(|| root.join("reports").join("difftest"));
 
     let jobs = difftest::jobs::resolve(args.jobs.unwrap_or(1)).min(wanted.len());
-    if jobs > 1 {
+    // Several units run one at a time still get a child process each: C++ state that one
+    // unit's in-process calls latch (ND-3's `sdStaticStep`) would otherwise reach a later
+    // unit's `fresh_process` children, which fork from this process.
+    if jobs > 1 || (wanted.len() > 1 && args.digest_dir.is_none()) {
         let fwd = difftest::jobs::forwarded_args(&raw);
         // Previous reports order the queue; a fresh --report-dir falls back to the default,
         // and a unit with no report anywhere to its fixture size (reports are not committed).

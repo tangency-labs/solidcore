@@ -748,6 +748,15 @@ fn state() -> FilletExecutive<Handle> {
         vertex_corner_map: BTreeMap::new(),
         edgeuse_solver_map: BTreeMap::new(),
         self_intersection_handler: None,
+        blend_curve_at_thirds: false,
+        mark_corner_patches: false,
+        cliff_overflow: false,
+        open_ends: Vec::new(),
+        overflow_first: false,
+        classify_only: false,
+        overflow_edges: Vec::new(),
+        mitred_edges: Vec::new(),
+        fan_split_points: Vec::new(),
     }
 }
 
@@ -760,7 +769,7 @@ fn uninitialized_changes_only_generic_error_members() {
     let mut k = Kernel::default();
     assert!(matches!(
         executive.do_fillet(&mut k, &mut access),
-        Err(SolidError::InvalidInput { .. })
+        Err(SolidError::InvalidInput { .. } | SolidError::PortInvariant { .. })
     ));
     assert_eq!(executive.error.code, 1);
     assert_eq!(executive.error.status, 9);

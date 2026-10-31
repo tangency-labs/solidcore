@@ -18,13 +18,14 @@
 //! Ordinary split failures retain the nearby vertex alongside their status. All six
 //! owned bodies are present; individual dependency calls defer to their owners.
 //! `FindInfiniteRegion` retries a failed `SmShell::RayFire` as upstream, but propagates
-//! errors that have no upstream status (unported, stale id, pending preparation, B-rep
-//! cache owner/handle resolution) instead of treating them as a missed ray.
+//! errors that have no upstream status (unported, stale id, pending preparation, any
+//! port invariant such as B-rep cache owner/handle resolution) instead of treating them
+//! as a missed ray; so does its `SmBrep::RayFire` fallback.
 //! Part 1's `add_*_record` appends a face, edge or vertex to its owning list at
 //! allocation; native `PostInsert`s later, with no same-kind allocation in between,
 //! so the list order matches, but a record allocated before a dependency error stays
-//! listed (native leaks it unlisted). Deleted loops and loop uses are reset in place
-//! (arena records cannot be freed), as part 1 deletes vertex uses. Topology record
+//! listed (native leaks it unlisted). Deleted loops and loop uses leave their arenas
+//! (`Brep::remove_*_record`), as part 1's deleted vertex uses do. Topology record
 //! construction uses the shared arena model (no allocator/debug notifications).
 //! Owned geometry arguments are dropped on Rust errors. The shell-to-no-shell
 //! retry is a two-pass loop (at most one retry), so there is no recursion. Inner
@@ -42,6 +43,10 @@
 //! `UpdateVertexEdgeIntervals` sets it. By default it leaves gaps up to the full
 //! tolerance, as the pinned C++ does, which `AssertValid` refuses above half of it.
 //! See `plan/upstream-issues/WR-469--make-edge-in-face-vertex-tolerance-gap.md`.
+//! Opt-in ([`UpstreamFixes::boolean_skips_faces_apart`](crate::kernel::UpstreamFixes::boolean_skips_faces_apart),
+//! WR-527, #1527): on two planes, `MakeEdgeInFaceWithVU` leaves an inner loop whose
+//! test point lies outside the new face's outer loop box (at the retry tolerance)
+//! in place without classifying it, as the fork's tangency-labs/smlib@60b1c6a.
 
 use crate::curve::curve::Curve;
 use crate::error::{ignore_status, Result, SolidError, SM_ERR};
@@ -177,11 +182,10 @@ pub fn find_infinite_region(
         };
         let bounds = match supplied_box {
             Some(bounds) => bounds,
-            None => crate::error::ignored(qbrep::calculate_bounding_box(
-                k,
-                &mut *b,
-                BoundingBoxOptions::default(),
-            ))?
+            None => crate::error::ignored(crate::error::passed_on(
+                qbrep::calculate_bounding_box(k, &mut *b, BoundingBoxOptions::default()),
+                k.fixes.brep_edit_statuses_pass_on,
+            )?)?
             .unwrap_or_else(crate::geom::extent3d::Extent3d::new),
         };
         let ray_start = bounds.max() + (bounds.max() - bounds.min()) * 0.5;
@@ -400,7 +404,8 @@ fn brep_edges(b: &Brep) -> Result<Vec<EdgeId>> {
 
 /// `this->RayFire(start, direction, tolerance, pRegion, sPC)` (unit `topology.brep_p2`)
 /// on `query`'s cache: `Ok(true)` with the region in `state` on success, `Ok(false)` on
-/// an ordinary failure (the caller tries its next ray). The intersection is not read
+/// an ordinary failure (the caller tries its next ray). Errors with no upstream status
+/// propagate, as for the shell ray fires. The intersection is not read
 /// after the ray fires, so `state.classification` stays as it was.
 fn brep_ray_fire<O>(
     k: &Kernel,
@@ -412,7 +417,7 @@ fn brep_ray_fire<O>(
     state: &mut crate::topology::shell::ShellRayState<O>,
 ) -> Result<bool> {
     let fired = query.ray_fire_live(k, b, start, direction, tolerance);
-    match crate::error::ignored(fired)? {
+    match crate::error::native_failure(fired)? {
         Some(hit) => {
             state.region = hit.region;
             Ok(true)
@@ -431,20 +436,11 @@ fn ray_direction(direction: Vec3) -> Result<Vec3> {
 
 /// Whether a `SmShell::RayFire` call succeeded. Upstream retries on any failed status;
 /// an error with no upstream status (an unported callee, a stale id, a pending
-/// geometry preparation, or the B-rep cache failing to resolve an owner under the
-/// query's identities) is propagated instead, so a naming mismatch cannot pass for a
-/// missed ray and silently select another region.
+/// geometry preparation, or any port invariant such as the B-rep cache failing to
+/// resolve an owner under the query's identities) is propagated instead, so a naming
+/// mismatch cannot pass for a missed ray and silently select another region.
 fn ray_success(status: &Result<()>) -> Result<bool> {
-    match status {
-        Ok(()) => Ok(true),
-        Err(
-            e @ (SolidError::Unported { .. }
-            | SolidError::NotFound { .. }
-            | SolidError::PreparationRequired { .. }),
-        ) => Err(e.clone()),
-        Err(e) if crate::topology::brep_cache::is_identity_error(e) => Err(e.clone()),
-        Err(_) => Ok(false),
-    }
+    Ok(crate::error::native_failure(status.clone())?.is_some())
 }
 
 fn is_intersector_approx(curve: &Curve) -> Result<bool> {
@@ -481,7 +477,10 @@ pub fn orient_sheet_surfaces(
     if is_oriented_sheet(k, b)? {
         if !same {
             // Status ignored upstream (SmBrep.cpp:11644).
-            ignore_status(swap_brep_uv(k, b))?;
+            ignore_status(crate::error::passed_on(
+                swap_brep_uv(k, b),
+                k.fixes.brep_edit_statuses_pass_on,
+            )?)?;
         }
         return Ok(());
     }
@@ -1151,6 +1150,12 @@ pub(crate) fn make_vertex_split_edge_with_curve_identity_state(
             state,
             &[EntityRef::Edge(new_edge), EntityRef::Vertex(new_vertex)],
         );
+        // `SER(sIvl1.SetMinMax(..))`, `SER(sIvl2.SetMinMax(..))` (fork 60a8a51): a split
+        // parameter outside the edge's interval fails here instead of being swapped in
+        if k.fixes.brep_edit_statuses_pass_on {
+            interval.clone().set_min_max(interval.min(), parameter)?;
+            interval.clone().set_min_max(parameter, interval.max())?;
+        }
         let mut ivl1 = Extent1d::from_min_max(interval.min(), parameter);
         let mut ivl2 = Extent1d::from_min_max(parameter, interval.max());
         let primary = required(
@@ -1198,7 +1203,7 @@ pub(crate) fn make_vertex_split_edge_with_curve_identity_state(
         })?;
         let split_parameter;
         if same {
-            ignore_status(
+            ignore_status(crate::error::passed_on(
                 required(
                     b.edge_mut(edge_id)?.curve.as_mut(),
                     "split edge without curve",
@@ -1208,9 +1213,10 @@ pub(crate) fn make_vertex_split_edge_with_curve_identity_state(
                     &mut ivl1,
                     crate::nurbs::b_spline_curve_n_lib::TrimMode::Notify,
                 ),
-            )?;
+                k.fixes.brep_edit_statuses_pass_on,
+            )?)?;
             split_parameter = ivl1.max();
-            ignore_status(
+            ignore_status(crate::error::passed_on(
                 required(
                     b.edge_mut(new_edge)?.curve.as_mut(),
                     "new split edge without curve",
@@ -1220,11 +1226,12 @@ pub(crate) fn make_vertex_split_edge_with_curve_identity_state(
                     &mut ivl2,
                     crate::nurbs::b_spline_curve_n_lib::TrimMode::Notify,
                 ),
-            )?;
+                k.fixes.brep_edit_statuses_pass_on,
+            )?)?;
             b.edge_mut(edge_id)?.interval = ivl1;
             b.edge_mut(new_edge)?.interval = ivl2;
         } else {
-            ignore_status(
+            ignore_status(crate::error::passed_on(
                 required(
                     b.edge_mut(edge_id)?.curve.as_mut(),
                     "split edge without curve",
@@ -1234,9 +1241,10 @@ pub(crate) fn make_vertex_split_edge_with_curve_identity_state(
                     &mut ivl2,
                     crate::nurbs::b_spline_curve_n_lib::TrimMode::Notify,
                 ),
-            )?;
+                k.fixes.brep_edit_statuses_pass_on,
+            )?)?;
             split_parameter = ivl2.min();
-            ignore_status(
+            ignore_status(crate::error::passed_on(
                 required(
                     b.edge_mut(new_edge)?.curve.as_mut(),
                     "new split edge without curve",
@@ -1246,7 +1254,8 @@ pub(crate) fn make_vertex_split_edge_with_curve_identity_state(
                     &mut ivl1,
                     crate::nurbs::b_spline_curve_n_lib::TrimMode::Notify,
                 ),
-            )?;
+                k.fixes.brep_edit_statuses_pass_on,
+            )?)?;
             b.edge_mut(edge_id)?.interval = ivl2;
             b.edge_mut(new_edge)?.interval = ivl1;
         }
@@ -1338,19 +1347,22 @@ pub(crate) fn make_vertex_split_edge_with_curve_identity_state(
             let old1 = *required(old_pair.first(), "missing original pair")?;
             let orientation = b.edgeuse(old1)?.orientation;
             for (&old, &new) in old_pair.iter().zip(new_pair) {
-                ignore_status(split_uv_trim(
-                    k,
-                    b,
-                    SplitUvInput {
-                        original: old,
-                        new,
-                        point,
-                        parameter: split_parameter,
-                        scaled_zero,
-                        orientation,
-                        for_tessellation,
-                    },
-                ))?;
+                ignore_status(crate::error::passed_on(
+                    split_uv_trim(
+                        k,
+                        b,
+                        SplitUvInput {
+                            original: old,
+                            new,
+                            point,
+                            parameter: split_parameter,
+                            scaled_zero,
+                            orientation,
+                            for_tessellation,
+                        },
+                    ),
+                    k.fixes.brep_edit_statuses_pass_on,
+                )?)?;
             }
         }
         let tolerance = b.edge(edge_id)?.tolerance;
@@ -1628,7 +1640,11 @@ pub fn make_edge_in_face_with_vu_with_curve_identity(
         } else {
             eu2
         };
-        trim.set_owner(Some((env.key_of)(EntityRef::Edgeuse(top))), None);
+        // SetOwner(pEu): named by the caller's key, recorded as for the edge's curve
+        // (`set_curve_owner`) so the B-rep's checks name the edge use alike
+        let top_owner = (env.key_of)(EntityRef::Edgeuse(top));
+        trim.set_owner(Some(top_owner), None);
+        b.set_geometry_owner_key(EntityRef::Edgeuse(top), Some(top_owner));
         b.edgeuse_mut(top)?.uv_trim_curve = Some(trim);
         b.edgeuse_mut(top)?.drop_curve_fail = drop_fail;
         let mut copy =
@@ -1650,14 +1666,19 @@ pub fn make_edge_in_face_with_vu_with_curve_identity(
             };
             let mut transform = Axis2Placement::default();
             transform.translate(translation);
-            ignore_status(copy.transform(k, &transform, None))?;
+            ignore_status(crate::error::passed_on(
+                copy.transform(k, &transform, None),
+                k.fixes.brep_edit_statuses_pass_on,
+            )?)?;
         }
         let bottom = if b.edgeuse(eu4)?.orientation == OrientType::Same {
             eu4
         } else {
             eu3
         };
-        copy.set_owner(Some((env.key_of)(EntityRef::Edgeuse(bottom))), None);
+        let bottom_owner = (env.key_of)(EntityRef::Edgeuse(bottom));
+        copy.set_owner(Some(bottom_owner), None);
+        b.set_geometry_owner_key(EntityRef::Edgeuse(bottom), Some(bottom_owner));
         b.edgeuse_mut(bottom)?.uv_trim_curve = Some(copy);
         b.edgeuse_mut(bottom)?.drop_curve_fail = fail_copy;
         original_trim_owner = Some(top);
@@ -1884,7 +1905,10 @@ pub fn make_edge_in_face_with_vu_with_curve_identity(
         remove_old_loop_vertices(b, start)?;
         remove_old_loop_vertices(b, end)?;
         redistribute_seam_trims(k, b, edge_id, original_trim_owner, seam, &domain)?;
-        ignore_status(fp1::remove_loop(b, face, delete))?;
+        ignore_status(crate::error::passed_on(
+            fp1::remove_loop(b, face, delete),
+            k.fixes.brep_edit_statuses_pass_on,
+        )?)?;
         delete_loop_records(b, delete, env)?;
     }
     brep_notify(
@@ -2147,14 +2171,17 @@ fn delete_loop_records(b: &mut Brep, loop_: LoopId, env: &mut edge::NotifyEnv<'_
             None,
         ))?;
     }
-    // `delete` of the loop and both loop uses. An arena record cannot be freed, so
-    // (as part 1's sm_RmAndDel_OldLoopVertices) the records are reset: RemoveLoop
-    // already unlinked both loop uses from their face uses.
-    *b.loopuse_mut(a)? = Loopuse::default();
-    *b.loopuse_mut(z)? = Loopuse::default();
-    let record = b.loop_mut(loop_)?;
-    record.edges.clear();
-    record.loopuse = None;
+    // `delete` of the loop and both loop uses (RemoveLoop already unlinked both loop
+    // uses from their face uses): their records leave the arenas, and the loop leaves
+    // its face's cached loop list (`Face::loops`), so no later read of that cache
+    // reaches the removed record.
+    let face = b.loop_(loop_)?.face;
+    b.remove_loopuse_record(a)?;
+    b.remove_loopuse_record(z)?;
+    b.remove_loop_record(loop_)?;
+    if let Ok(record) = b.face_mut(face) {
+        record.loops.retain(|&x| x != loop_);
+    }
     Ok(())
 }
 
@@ -2226,6 +2253,16 @@ fn redistribute_inner_loops(
     let missing_new = lu::is_missing_seam_at_vertices(k, b, new_outer)?;
     let classify_to_original = !missing_original;
     let mut loops = fp2::loops(b, face, false, None)?;
+
+    // Opt-in (WR-527, #1526/#1527): on a plane the region a loop bounds lies within the
+    // loop's box, so an inner loop sampled outside the box of the new face's outer loop
+    // is not in the new face and stays: only when every edge has a box.
+    let new_outer_box = if k.fixes.boolean_skips_faces_apart {
+        new_face_outer_box(k, b, face, new_face)?
+    } else {
+        None
+    };
+
     let mut i = 1;
     while let Some(&loop_) = loops.get(i) {
         if loop_ == new_loop || loop_ == start_loop {
@@ -2243,6 +2280,12 @@ fn redistribute_inner_loops(
             )?;
             (b.vertex(v)?.point, b.vertex(v)?.tolerance)
         };
+        // Opt-in (WR-527): no move - the test point is outside the new face's outer loop
+        // box, even at the retry tolerance below
+        if new_outer_box.is_some_and(|bbox| !bbox.contains_point(point, tolerance * 100.0)) {
+            i += 1;
+            continue;
+        }
         let target = if classify_to_original { face } else { new_face };
         let other = if classify_to_original { new_face } else { face };
         let mut pc = PointClassification::<EntityRef>::new(tolerance);
@@ -2251,12 +2294,15 @@ fn redistribute_inner_loops(
             let _old_domain = computed_uv_domain(k, b, face)?;
             let new_domain = computed_uv_domain(k, b, new_face)?;
             let surface = required(b.face(face)?.surface.as_ref(), "split face without surface")?;
-            let uv = crate::error::ignored(surface.drop_point::<crate::topology::ObjectHandle>(
-                k,
-                point,
-                &surface.natural_uv_domain_with_nurb(k)?,
-                &crate::surface::surface::p5::DropPointOptions::default(),
-            ))?
+            let uv = crate::error::ignored(crate::error::passed_on(
+                surface.drop_point::<crate::topology::ObjectHandle>(
+                    k,
+                    point,
+                    &surface.natural_uv_domain_with_nurb(k)?,
+                    &crate::surface::surface::p5::DropPointOptions::default(),
+                ),
+                k.fixes.brep_edit_statuses_pass_on,
+            )?)?
             .map_or(crate::geom::vector2d::Vec2::UNDEF, |drop| drop.result_uv);
             new_domain.contains_point(uv, 0.0)
         } else {
@@ -2331,8 +2377,14 @@ fn redistribute_inner_loops(
         if need_move {
             face_notify(b, face, env, NotifyOperation::PreEdit)?;
             face_notify(b, new_face, env, NotifyOperation::PreEdit)?;
-            ignore_status(fp1::remove_loop(b, face, loop_))?;
-            ignore_status(fp1::insert_loop(b, new_face, loop_))?;
+            ignore_status(crate::error::passed_on(
+                fp1::remove_loop(b, face, loop_),
+                k.fixes.brep_edit_statuses_pass_on,
+            )?)?;
+            ignore_status(crate::error::passed_on(
+                fp1::insert_loop(b, new_face, loop_),
+                k.fixes.brep_edit_statuses_pass_on,
+            )?)?;
             let refreshed = fp2::loops(b, face, false, None)?;
             if refreshed.len() >= loops.len() {
                 return Err(SolidError::invalid_input(
@@ -2348,6 +2400,54 @@ fn redistribute_inner_loops(
         }
     }
     Ok(())
+}
+
+/// The box of `new_face`'s outer loop edges, each grown by its tolerance, when both
+/// faces lie on planes and every one of those edges has a curve whose box can be
+/// computed (the fork's `sNewFOuterBox`, WR-527).
+fn new_face_outer_box(
+    k: &Kernel,
+    b: &Brep,
+    face: FaceId,
+    new_face: FaceId,
+) -> Result<Option<crate::geom::extent3d::Extent3d>> {
+    use crate::nurbs::b_spline_curve::BoundingBoxRequest;
+    use crate::surface::surface::SurfaceKind;
+    let on_plane = |f: FaceId| -> Result<bool> {
+        Ok(b.face(f)?
+            .surface
+            .as_ref()
+            .is_some_and(|s| matches!(s.kind(), SurfaceKind::Plane(_))))
+    };
+    if !on_plane(face)? || !on_plane(new_face)? {
+        return Ok(None);
+    }
+    let edges = face_outer_edges(b, new_face)?;
+    if edges.is_empty() {
+        return Ok(None);
+    }
+    let req = BoundingBoxRequest {
+        normal: true,
+        pseudo: false,
+        polar: false,
+    };
+    let mut outer_box = crate::geom::extent3d::Extent3d::new();
+    for edge in edges {
+        let record = b.edge(edge)?;
+        let Some(curve) = record.curve.as_ref() else {
+            return Ok(None);
+        };
+        let Some(mut edge_box) = curve
+            .calculate_bounding_box(k, &record.interval, req, true)
+            .ok()
+            .and_then(|boxes| boxes.normal)
+        else {
+            return Ok(None);
+        };
+        edge_box.expand_absolute(record.tolerance);
+        outer_box = outer_box.union(&edge_box);
+    }
+    Ok(Some(outer_box))
 }
 
 fn edge_sample(k: &Kernel, b: &Brep, edge: EdgeId) -> Result<(Point3, f64)> {
@@ -2377,11 +2477,12 @@ fn computed_uv_domain(
     face: FaceId,
 ) -> Result<crate::geom::extent2d::Extent2d> {
     let initial = b.face(face)?.uv_domain;
-    Ok(crate::error::ignored(
+    Ok(crate::error::ignored(crate::error::passed_on(
         crate::topology::face::p1::calculate_uv_domain_from_uv_trim_curves(
             k, b, face, true, false, false,
         ),
-    )?
+        k.fixes.brep_edit_statuses_pass_on,
+    )?)?
     .map_or(initial, |out| out.domain))
 }
 
@@ -2528,9 +2629,9 @@ pub fn drop_edge_curve_on_face(
 }
 
 /// [`drop_edge_curve`] onto face `face` of `b`, whose surface `surface` is (a copy for
-/// evaluation): upstream's surface is owned by the face, so the start point drop's
-/// fast-drop trim test classifies on the face
-/// ([`crate::intersect::point_class::live_face_fast_drop_test`]).
+/// evaluation): upstream's surface is owned by the face, so `DropCurve` fetches the
+/// face's cache (made here when its start point drop first asks) but, with that cache's
+/// point testing off for the whole call, never classifies a drop on the face.
 #[allow(clippy::too_many_arguments)]
 fn drop_edge_curve_in_face(
     k: &Kernel,
@@ -2542,17 +2643,21 @@ fn drop_edge_curve_in_face(
     interval: &Extent1d,
     face_tolerance: f64,
 ) -> Result<EdgeCurveDrop> {
-    let mut test_on: Option<bool> = None;
+    let mut cache_made = false;
     for factor in [1.0, 10.0, 300.0] {
-        let mut classify = |k: &Kernel, uv: crate::math::Point2, src_tol: f64| -> Result<bool> {
-            crate::intersect::point_class::live_face_fast_drop_test(
-                k,
-                b,
-                face,
-                &mut test_on,
-                uv,
-                src_tol,
-            )
+        // SmSurface::DropCurve turns the face cache's point testing off for its whole call
+        // (`sChange1`, SmSurfaceDropLib.cpp:4315), so its start point drop keeps every
+        // fast-drop solution without classifying it on the face; the face's cache is
+        // still made there (`smsurf_GetSurfaceCache`, which may create its UV trims)
+        let mut classify = |k: &Kernel, _: crate::math::Point2, _: f64| -> Result<bool> {
+            if !cache_made {
+                cache_made = true;
+                // (`GetOwner()` is NULL while `CreateUVTrimCurve(s)` clears it: no face)
+                if !b.is_surface_owner_cleared(face) {
+                    crate::query::face::p2::face_surface_cache(k, b, face)?.release();
+                }
+            }
+            Ok(true)
         };
         // the virtual SmSurface::DropCurve with the defaults bKeepAllDropCurves = TRUE,
         // no failure record, bCreatingUVTrimCurve = TRUE
@@ -3165,7 +3270,11 @@ mod tests {
                 entity: EntityRef::Edge(EdgeId::from_index(7)),
             },
             SolidError::PreparationRequired { operation: OP },
-            SolidError::invalid_input("topology::brep_cache", "edge owner is not in source B-rep"),
+            SolidError::port_invariant("topology::brep_cache", "edge owner is not in source B-rep"),
+            // A port invariant from any operation, not only the B-rep cache's own
+            // identity errors (these used to pass for a missed ray).
+            SolidError::port_invariant("topology::shell", "faceuse without face"),
+            SolidError::port_invariant("query::brep", "solver owner is not a cache owner"),
         ];
         for e in internal {
             assert_eq!(ray_success(&Err(e.clone())), Err(e));

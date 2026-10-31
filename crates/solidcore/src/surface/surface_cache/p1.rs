@@ -210,8 +210,13 @@ pub(super) fn invalid(operation: &'static str, reason: &'static str) -> SolidErr
 /// `SM_CAST_PTR(SmBSplineSurface, surface)` for callers that run only non-virtual
 /// `SmBSplineSurface` members: an `SmPlane` gives its B-spline part. Callers that
 /// reach a virtual member deal with planes first.
-pub(super) const fn bspline_of(surface: &Surface) -> Option<&BSplineSurface> {
-    match surface.kind() {
+pub(super) fn bspline_of(surface: &Surface) -> Option<&BSplineSurface> {
+    bspline_of_kind(surface.kind())
+}
+
+/// [`bspline_of`] of a surface kind (a made kind with its NURB, say).
+fn bspline_of_kind(kind: &SurfaceKind) -> Option<&BSplineSurface> {
+    match kind {
         SurfaceKind::BSpline(b) => Some(b),
         SurfaceKind::Plane(p) => Some(p.base()),
         SurfaceKind::Cone(s) => Some(s.rev().base()),
@@ -775,12 +780,22 @@ impl PatchBoundaryBoundingPlanes {
         let tolerance = 0.0001;
 
         // local
-        let bs = bspline_of(surface).ok_or(SolidError::null_pointer(OP_PLANES))?;
-        // (the canonical form asks for the NURB through the virtual GetOrCreateGwNurbPointer,
-        // which makes a plane's)
-        let bs = match surface.kind() {
+        bspline_of(surface).ok_or(SolidError::null_pointer(OP_PLANES))?;
+        // (the control point count and the canonical form read the NURB, made through
+        // the virtual GetOrCreateGwNurbPointer when missing: a plane's, a cone's,
+        // sphere's, torus's or surface of revolution's or extrusion's)
+        let bs = match surface.kind_with_nurb(k)? {
             SurfaceKind::Plane(p) => p.base_for_query(),
-            _ => std::borrow::Cow::Borrowed(bs),
+            SurfaceKind::SurfOfExtrusion(_) => match surface.extrusion_base_with_nurb(k) {
+                Ok(base) => base,
+                Err(e) if e.is_unported() => return Err(e),
+                Err(_) => std::borrow::Cow::Borrowed(
+                    bspline_of(surface).ok_or(SolidError::null_pointer(OP_PLANES))?,
+                ),
+            },
+            made => std::borrow::Cow::Borrowed(
+                bspline_of_kind(made).ok_or(SolidError::null_pointer(OP_PLANES))?,
+            ),
         };
 
         // for every boundary
@@ -2143,6 +2158,12 @@ impl<O: Copy + PartialEq> SurfaceCache<O> {
                 })
             }
             // An object key is not a typed arena index or a caller handle.
+            // UNPORTED(topology.face_p2): SmSurface::GetFace (the SmFace handle of a
+            // face-owned surface whose cache was made without its face). Reachable: a
+            // solve on a B-rep face's surface without face context lands here (seen in
+            // blend.fillet_geom_p6 on own-reader targets, which now pass the face's
+            // B-rep through BrepFaceServices). Callers thread it with the
+            // `*_with_context` variants or `get_surface_cache_with_face`.
             Some(_) if self.trimmed_face_key.is_none() => Err(SolidError::unported(
                 "SmFace handle of a surface's face",
                 "topology.face_p2",

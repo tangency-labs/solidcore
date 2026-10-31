@@ -78,7 +78,7 @@
 
 use crate::blend::fillet_standard_solver::p1::FilletLaw;
 use crate::curve::curve::Curve;
-use crate::error::{Result, SolidError, SM_ERR_NULL_POINTER};
+use crate::error::{passed_on, Result, SolidError, SM_ERR_NULL_POINTER};
 use crate::geom::extent1d::{Extent1d, ExtentPointType};
 use crate::geom::extent2d::Extent2d;
 use crate::geom::extent3d::Extent3d;
@@ -376,12 +376,14 @@ impl SurfaceIntersector<'_> {
             })?;
             let iso = cache.iso_boundary_curves(k, &domain, self.this_approx_tol_3d / 3.0)?;
 
-            // add the intervals of the iso curves (statuses ignored)
+            // add the intervals of the iso curves (statuses ignored, passed on with
+            // `ssi_proto_topology_statuses_pass_on`, fork bcc6f01)
+            let pass = k.fixes.ssi_proto_topology_statuses_pass_on;
             for (ii, ivl) in intervals.iter_mut().enumerate() {
                 if ii % 2 == 1 {
-                    let _ = ivl.set_min_max(domain.min().x, domain.max().x);
+                    let _ = passed_on(ivl.set_min_max(domain.min().x, domain.max().x), pass)?;
                 } else {
-                    let _ = ivl.set_min_max(domain.min().y, domain.max().y);
+                    let _ = passed_on(ivl.set_min_max(domain.min().y, domain.max().y), pass)?;
                 }
             }
 
@@ -525,8 +527,8 @@ impl SurfaceIntersector<'_> {
                             let mut uv_ivl2 =
                                 Extent1d::from_min_max(par(&sol.start, 0), par(&sol.end, 0));
                             uv_ivl2.expand_absolute(ivl_size * EFF_ZERO_SQRT);
-                            uv_ivl2 = uv_ivl2
-                                .intersect(&tgt.natural_interval())
+                            // (status ignored, passed on with the flag)
+                            uv_ivl2 = passed_on(uv_ivl2.intersect(&tgt.natural_interval()), pass)?
                                 .unwrap_or_default();
 
                             // use the better end unless the start is on a boundary
@@ -604,7 +606,10 @@ impl SurfaceIntersector<'_> {
         // Add the surface-edge crossings last (statuses ignored)
         for p in core::mem::take(&mut work.edge_crossings) {
             let id = self.alloc_point(p);
-            ignored(self.add_start_point(k, id))?;
+            ignored(passed_on(
+                self.add_start_point(k, id),
+                k.fixes.ssi_proto_topology_statuses_pass_on,
+            )?)?;
         }
 
         // make degenerate curves of the touching points
@@ -615,7 +620,7 @@ impl SurfaceIntersector<'_> {
             // skip points that are on a curve or a start point already
             let starts = self.start_points().to_vec();
             if self.is_point_on_curve(k, degenerate_point, &out.curves_3d, None)?
-                || self.is_point_on_start_point(tsp, &starts, None)?
+                || self.is_point_on_start_point(k, tsp, &starts, None)?
             {
                 continue;
             }
@@ -656,13 +661,19 @@ impl SurfaceIntersector<'_> {
         work: &mut BoundaryWork,
     ) -> Result<()> {
         // boundary curve point (status ignored: an uninitialised point)
-        let pt = ignored(tgt.evaluate(k, par(&sol.start, 0), 1, true, true))?
-            .and_then(|v| v.first().copied())
-            .unwrap_or(Vec3::UNDEF);
+        let pt = ignored(passed_on(
+            tgt.evaluate(k, par(&sol.start, 0), 1, true, true),
+            k.fixes.ssi_proto_topology_statuses_pass_on,
+        )?)?
+        .and_then(|v| v.first().copied())
+        .unwrap_or(Vec3::UNDEF);
 
         // Set bIsDegenerate = TRUE: a degenerate point xsect curve (status ignored)
-        let is_degenerate =
-            ignored(self.classify_boundary_start_point_intersection(k, &tsp))?.unwrap_or(false);
+        let is_degenerate = ignored(passed_on(
+            self.classify_boundary_start_point_intersection(k, &tsp),
+            k.fixes.ssi_proto_topology_statuses_pass_on,
+        )?)?
+        .unwrap_or(false);
 
         // when a degenerate point not on an output curve yet: classify it at the end
         if is_degenerate && !self.is_point_on_curve(k, tsp.crv_pos(), &out.curves_3d, None)? {
@@ -686,7 +697,10 @@ impl SurfaceIntersector<'_> {
             } else {
                 // add the point to the list of start points (status ignored)
                 let id = self.alloc_point(tsp);
-                ignored(self.add_start_point(k, id))?;
+                ignored(passed_on(
+                    self.add_start_point(k, id),
+                    k.fixes.ssi_proto_topology_statuses_pass_on,
+                )?)?;
             }
         }
         Ok(())

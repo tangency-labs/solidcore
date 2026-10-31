@@ -37,8 +37,8 @@ use solidcore::topology::shell::ShellMembers;
 use solidcore::topology::topology_traverser::Marks;
 use solidcore::topology::{
     Brep, Edge, EdgeId, Edgeuse, EdgeuseId, EdgeuseOwner, Face, FaceId, Faceuse, FaceuseId, Loop,
-    LoopEdge, LoopId, Loopuse, LoopuseId, LoopuseStart, Region, RegionId, Shell, ShellId, Vertex,
-    VertexId, Vertexuse, VertexuseId, VertexuseOwner,
+    LoopEdge, LoopId, Loopuse, LoopuseId, LoopuseStart, NamingScheme, Region, RegionId, Shell,
+    ShellId, Vertex, VertexId, Vertexuse, VertexuseId, VertexuseOwner,
 };
 use solidcore::{EntityRef, SolidError};
 
@@ -72,6 +72,7 @@ pub(crate) enum Built {
 /// How a runner's shim orders, names and initialises the B-rep it builds: the
 /// differences between `sc_edgeuse_graph.h` ([`Conventions::EDGEUSE_GRAPH`]) and
 /// `sc_topology_fixture.h` as the `topology.brep_p2` shim uses it.
+#[allow(clippy::struct_excessive_bools)] // independent per-shim switches
 pub(crate) struct Conventions<'a> {
     /// Register the B-rep's face, edge and vertex lists (`GetFaces`, `GetEdges`,
     /// `GetVertices`) before the traversal (the `topology.brep_p2` shim).
@@ -82,10 +83,23 @@ pub(crate) struct Conventions<'a> {
     /// The traversal follows the vertex use lists after the loops' loop uses (the
     /// `topology.vertex` shim's own `walk`) instead of before them.
     pub(crate) vertex_lists_last: bool,
+    /// The traversal does not register the B-rep's edge list (`GetEdges`) before the
+    /// regions' contents (the `query.edge` shim's own `walk`).
+    pub(crate) skip_edge_list: bool,
     /// The owner identity of face `f`'s surface (when the surface has an owner).
     pub(crate) face_owner: &'a dyn Fn(FaceId) -> ObjectRef,
     /// The owner identity (and its B-rep's) of edge `e`'s curve (when it has an owner).
     pub(crate) edge_owner: &'a dyn Fn(EdgeId) -> (ObjectRef, ObjectRef),
+    /// The owner identity of edge use `eu`'s UV trim curve (when it has an owner).
+    pub(crate) edgeuse_owner: &'a dyn Fn(EdgeuseId) -> ObjectRef,
+    /// The naming the renumbered B-rep records ([`Brep::naming`]). The shim's B-rep
+    /// names its geometry by the owning topology objects themselves; the Rust analog is
+    /// [`NamingScheme::Arena`], and [`renumber_with`] records it
+    /// ([`Brep::use_arena_naming`]) when `face_owner` and `edge_owner` are the arena
+    /// identities (it refuses `Arena` with any other owners). A runner whose owners are
+    /// its own `key_of` identities (passed to the library through its environment)
+    /// keeps [`NamingScheme::Unknown`].
+    pub(crate) naming: NamingScheme,
 }
 
 fn arena_face_owner(f: FaceId) -> ObjectRef {
@@ -99,6 +113,16 @@ fn arena_edge_owner(e: EdgeId) -> (ObjectRef, ObjectRef) {
     )
 }
 
+/// The identity [`ArenaNotifyState`] binds an edge use's UV trim curve owner under
+/// (`loopuse::notify_ref`: its type code and arena index), the naming of the B-reps
+/// the builders here make.
+pub(crate) fn notify_edgeuse_owner(eu: EdgeuseId) -> ObjectRef {
+    ObjectRef {
+        type_code: eu1::TYPE,
+        key: solidcore::geom::attribute::ObjectKey(1 + (7 << 32) + u64::from(eu.index())),
+    }
+}
+
 impl Conventions<'static> {
     /// `sc_edgeuse_graph.h`: the traversal alone, geometry owned under the kernel's
     /// arena identities (as the `topology.brep_p1` import names them).
@@ -106,8 +130,11 @@ impl Conventions<'static> {
         prefix_lists: false,
         vertex_edge_gaps: false,
         vertex_lists_last: false,
+        skip_edge_list: false,
         face_owner: &arena_face_owner,
         edge_owner: &arena_edge_owner,
+        edgeuse_owner: &notify_edgeuse_owner,
+        naming: NamingScheme::Arena,
     };
 
     /// `sc_topology_fixture.h` (`build`, then `walk` for the export of its
@@ -118,8 +145,11 @@ impl Conventions<'static> {
         prefix_lists: false,
         vertex_edge_gaps: true,
         vertex_lists_last: false,
+        skip_edge_list: false,
         face_owner: &fixture_face_owner,
         edge_owner: &fixture_edge_owner,
+        edgeuse_owner: &fixture_edgeuse_owner,
+        naming: NamingScheme::Unknown,
     };
 }
 
@@ -145,6 +175,10 @@ fn fixture_face_owner(f: FaceId) -> ObjectRef {
     fixture_key(solidcore::topology::face::p2::TYPE, f.index())
 }
 
+fn fixture_edgeuse_owner(eu: EdgeuseId) -> ObjectRef {
+    fixture_key(eu1::TYPE, eu.index())
+}
+
 fn fixture_edge_owner(e: EdgeId) -> (ObjectRef, ObjectRef) {
     // `SmBrep_TYPE` has no Rust constant; 16999 is the B-rep code the runners' `key_of`
     // use
@@ -152,6 +186,125 @@ fn fixture_edge_owner(e: EdgeId) -> (ObjectRef, ObjectRef) {
         fixture_key(solidcore::topology::edge::TYPE, e.index()),
         fixture_key(16999, 0),
     )
+}
+
+/// The entities of `b` an owner identity `r` can name, under every identity the
+/// harness's B-reps use, whatever naming scheme `b` records:
+/// - the notification identity (`loopuse::notify_ref`; `edgeuse::p1::owner_ref` under
+///   both the `Notify` and the `Arena` scheme, [`notify_edgeuse_owner`]):
+///   `(type, 1 + (kind << 32) + index)`;
+/// - the arena identity of a face or an edge (`arena_identity`);
+/// - the fixture identity ([`fixture_key`]);
+/// - the topology key of notify serial `serial` (`topology::brep::p3::topology_ref`).
+///
+/// (A `Caller` scheme's proven keys are reached through `p1::surfaces` / `p1::curves`
+/// for faces and edges; edge uses have no public resolver for them.)
+pub(crate) fn owner_candidates(b: &Brep, r: ObjectRef, serial: Option<u64>) -> Vec<EntityRef> {
+    use EntityRef as E;
+    let mut out = Vec::new();
+    if let Some(n) = serial {
+        if let Some(e) = solidcore::topology::brep::p3::topology_entity(n, r.key) {
+            if solidcore::topology::brep::p3::topology_ref(n, e) == r {
+                out.push(e);
+            }
+        }
+    }
+    // (type code, notify kind) of the kinds whose geometry has an owner
+    let kinds = [
+        (solidcore::topology::face::p2::TYPE, 4u64),
+        (eu1::TYPE, 7),
+        (solidcore::topology::edge::TYPE, 8),
+    ];
+    let entity = |kind: u64, i: u32| match kind {
+        4 => E::Face(FaceId::from_index(i)),
+        7 => E::Edgeuse(EdgeuseId::from_index(i)),
+        _ => E::Edge(EdgeId::from_index(i)),
+    };
+    let live = |e: E| match e {
+        E::Face(f) => b.face(f).is_ok(),
+        E::Edgeuse(eu) => b.edgeuse(eu).is_ok(),
+        E::Edge(x) => b.edge(x).is_ok(),
+        _ => false,
+    };
+    for (type_code, kind) in kinds {
+        if r.type_code != type_code {
+            continue;
+        }
+        let k = r.key.0;
+        let mut add = |e: E| {
+            if live(e) && !out.contains(&e) {
+                out.push(e);
+            }
+        };
+        // notify (`loopuse::notify_ref`): 1 + (kind << 32) + index
+        if k > kind << 32 && (k - 1) >> 32 == kind {
+            if let Ok(i) = u32::try_from((k - 1) & 0xffff_ffff) {
+                add(entity(kind, i));
+            }
+        }
+        // arena (`arena_identity`, faces and edges only: an edge use is named by its
+        // notification identity under the arena scheme too)
+        if let Ok(i) = u32::try_from(k) {
+            let e = entity(kind, i);
+            let o = match e {
+                E::Face(f) => Some(arena_identity(CacheObject::Face(f))),
+                E::Edge(x) => Some(arena_identity(CacheObject::Edge(x))),
+                _ => None,
+            };
+            if o == Some(r) {
+                add(e);
+            }
+        }
+        // fixture: a face `1 + index`, other kinds `(type << 32) | (1 + index)`
+        let fixture = if kind == 4 {
+            k.checked_sub(1)
+        } else if k >> 32 == type_code.unsigned_abs() {
+            (k & 0xffff_ffff).checked_sub(1)
+        } else {
+            None
+        };
+        if let Some(i) = fixture.and_then(|i| u32::try_from(i).ok()) {
+            if fixture_key(type_code, i) == r {
+                add(entity(kind, i));
+            }
+        }
+    }
+    out
+}
+
+/// The entity `r` names, preferring `own` (the object holding the geometry) when it is
+/// one of the candidates ([`owner_candidates`]); `None` when it names none or several.
+pub(crate) fn resolve_owner(
+    b: &Brep,
+    r: ObjectRef,
+    serial: Option<u64>,
+    own: EntityRef,
+) -> Option<EntityRef> {
+    let c = owner_candidates(b, r, serial);
+    if c.contains(&own) {
+        return Some(own);
+    }
+    match c.as_slice() {
+        [one] => Some(*one),
+        _ => None,
+    }
+}
+
+/// The shims' `g.find(6, uv->GetOwner())` of the UV trim curve `eu` holds, in arena
+/// numbering: the index of the edge use its owner names ([`resolve_owner`]), `-1` for
+/// no curve or no owner, `-3` for an owner that is no edge use of `b`.
+pub(crate) fn uv_owner_index(b: &Brep, eu: EdgeuseId, serial: Option<u64>) -> f64 {
+    let owner = b
+        .edgeuse(eu)
+        .ok()
+        .and_then(|x| x.uv_trim_curve.as_ref()?.owner());
+    match owner {
+        None => -1.0,
+        Some(r) => match resolve_owner(b, r, serial, EntityRef::Edgeuse(eu)) {
+            Some(EntityRef::Edgeuse(x)) => f64::from(x.index()),
+            _ => -3.0,
+        },
+    }
 }
 
 /// [`build_with`] for a runner's own source type: any value whose JSON has the shape
@@ -294,6 +447,9 @@ pub(crate) fn build_with(
                 },
             )
         })?,
+        BrepIn::HermiteSheetFace { scale, edge_tol } => {
+            in_new_brep(k, |k, b| hermite_sheet_face(k, b, *scale, *edge_tol))?
+        }
     };
     finish(k, raw, validate_only, init_gaps, conv).map(Some)
 }
@@ -360,6 +516,48 @@ pub(crate) fn read_with(
         }
     }
     Ok(Built::Brep(Box::new(b)))
+}
+
+/// A shim's `.smb` file source (`SmBrep::ReadFromFile(ctx, path, SM_ASCII, rebuild)`
+/// into `new (ctx) SmBrep()`), read by the Rust reader ([`crate::own_reader`]) and
+/// finished as a built source ([`finish`]): renumbered into the shim's traversal order
+/// under `conv`, so selector indices name the same entities on both sides. A failed
+/// Rust read is the build's error, as the shim's NULL build reports its status.
+///
+/// # Errors
+///
+/// A harness error when the file cannot be opened, or as [`finish`].
+pub(crate) fn read_as(
+    k: &mut Kernel,
+    path: &str,
+    rebuild: bool,
+    validate_only: bool,
+    init_gaps: bool,
+    conv: &Conventions<'_>,
+) -> Result<Built, HarnessError> {
+    let raw = crate::own_reader::read_file_rebuild(k, path, rebuild)?;
+    finish(k, raw, validate_only, init_gaps, conv)
+}
+
+/// Any source of the shim's `build` under `conv`: an `.smb` file read by the Rust
+/// reader ([`read_as`]), every other kind built by the Rust kernel ([`build_with`]).
+///
+/// # Errors
+///
+/// As [`read_as`] and [`build_with`].
+pub(crate) fn build_any(
+    k: &mut Kernel,
+    src: &BrepIn,
+    validate_only: bool,
+    init_gaps: bool,
+    conv: &Conventions<'_>,
+) -> Result<Built, HarnessError> {
+    if let BrepIn::File { rebuild, .. } = src {
+        let path = crate::units::topology_edgeuse_p1::path_of(Some(src))?;
+        return read_as(k, &path, *rebuild, validate_only, init_gaps, conv);
+    }
+    build_with(k, src, validate_only, init_gaps, conv)?
+        .ok_or_else(|| harness("own builder: a non-file source was not built"))
 }
 
 /// `new (ctx) SmBrep()` then `f` on it: the B-rep, or the build's error.
@@ -754,13 +952,157 @@ fn ellipse_face(k: &mut Kernel, b: &mut Brep, i: &EllipseIn) -> Result<(), Solid
     }
 }
 
+/// The four boundary segments of the kind-15 sheet in loop order as their UV corner
+/// pairs, the native fixture's `u`/`v` arrays: edge 0 is the diagonal
+/// `(0.2, 0.2)`-`(0.8, 0.7)`, edge 1 the `u = 0.8` isoparametric curve, edge 2 the
+/// diagonal back and edge 3 the `u = 0.2` isoparametric curve.
+const HERMITE_SHEET_EDGES: [[[f64; 2]; 2]; 4] = [
+    [[0.2, 0.2], [0.8, 0.7]],
+    [[0.8, 0.7], [0.8, 0.9]],
+    [[0.8, 0.9], [0.2, 0.4]],
+    [[0.2, 0.4], [0.2, 0.2]],
+];
+
+/// The kind-15 face's Hermite data for `scale`: the start point and tangent, the end
+/// point and tangent, and the extrusion vector (`Shape` in
+/// `harness/cpp/shim/support/hermite_sheet_fixture.h`).
+fn hermite_shape(scale: f64) -> (Vec3, Vec3, Vec3, Vec3, Vec3) {
+    (
+        Vec3::new(0.0, 0.0, 0.0),
+        Vec3::new(scale, 0.2 * scale, 0.1 * scale),
+        Vec3::new(0.6 * scale, 1.2 * scale, 0.7 * scale),
+        Vec3::new(1.2 * scale, -0.8 * scale, -0.4 * scale),
+        Vec3::new(0.0, 0.0, scale),
+    )
+}
+
+/// `Shape::at`: the shape curve's point at `u` (Hermite basis, the native fixture's
+/// operation order).
+fn hermite_shape_at(scale: f64, u: f64) -> Vec3 {
+    let (p0, p1, d0, d1, _) = hermite_shape(scale);
+    let u2 = u * u;
+    let u3 = u2 * u;
+    p0 * (2.0 * u3 - 3.0 * u2 + 1.0)
+        + d0 * (u3 - 2.0 * u2 + u)
+        + p1 * (-2.0 * u3 + 3.0 * u2)
+        + d1 * (u3 - u2)
+}
+
+/// `Shape::tangent`: the shape curve's derivative at `u`.
+fn hermite_shape_tangent(scale: f64, u: f64) -> Vec3 {
+    let (p0, p1, d0, d1, _) = hermite_shape(scale);
+    let u2 = u * u;
+    p0 * (6.0 * u2 - 6.0 * u)
+        + d0 * (3.0 * u2 - 4.0 * u + 1.0)
+        + p1 * (-6.0 * u2 + 6.0 * u)
+        + d1 * (3.0 * u2 - 2.0 * u)
+}
+
+/// Kind 15: the unit-domain sheet face on the cubic Hermite shape surface
+/// `S(u, v) = C(u) + v * extrusion` (degree 3 x 1, clamped, rational weights 1),
+/// bounded by four cubic `HermiteCurve`s of the affine UV segments of
+/// [`HERMITE_SHEET_EDGES`]: one loop, every orientation `Same`, no UV trims, the
+/// face tolerance `1e-7` and each edge's exactly `edge_tol`.
+///
+/// The surface, the curves and the tolerances come from the raw scalars here, never from
+/// a native export; `finish` renumbers the result into the shim's traversal order as for
+/// every other source.
+fn hermite_sheet_face(
+    k: &mut Kernel,
+    b: &mut Brep,
+    scale: f64,
+    edge_tol: f64,
+) -> Result<(), SolidError> {
+    use solidcore::curve::hermite_curve::HermiteCurve;
+    use solidcore::nurbs::b_spline_surface::BSplineSurface;
+    use solidcore::nurbs::math::CPoint;
+    use solidcore::topology::brep::p7::{make_face_with_curves, FaceCurvesInput};
+
+    let (p0, p1, d0, d1, extrusion) = hermite_shape(scale);
+    let control = [p0, p0 + d0 / 3.0, p1 - d1 / 3.0, p1];
+    let mut net: Vec<Vec<CPoint>> = Vec::new();
+    for c in &control {
+        let mut row = Vec::new();
+        for j in [0.0, 1.0] {
+            let p = *c + extrusion * j;
+            row.push(CPoint::new(p.x, p.y, p.z, 1.0));
+        }
+        net.push(row);
+    }
+    let u_knots = [0.0, 0.0, 0.0, 0.0, 1.0, 1.0, 1.0, 1.0];
+    let v_knots = [0.0, 0.0, 1.0, 1.0];
+    let nurb = BSplineSurface::from_data(3, 1, 3, 1, 7, 3, &net, &u_knots, &v_knots)?;
+    let surface = Surface::from(nurb);
+    let mut curves = Vec::new();
+    for &[[ua, va], [ub, vb]] in &HERMITE_SHEET_EDGES {
+        let du = ub - ua;
+        let dv = vb - va;
+        let start = hermite_shape_at(scale, ua) + extrusion * va;
+        let end = hermite_shape_at(scale, ub) + extrusion * vb;
+        let start_tangent = hermite_shape_tangent(scale, ua) * du + extrusion * dv;
+        let end_tangent = hermite_shape_tangent(scale, ub) * du + extrusion * dv;
+        let curve = HermiteCurve::new(start, start_tangent, end, end_tangent, 3);
+        curves.push(Some(Curve::from(curve)));
+    }
+    let input = FaceCurvesInput {
+        loops: vec![curves.len()],
+        curves_3d: Some(curves),
+        uv_curves: None,
+        orientations: vec![OrientType::Same; HERMITE_SHEET_EDGES.len()],
+        loop_points: Vec::new(),
+    };
+    let dom = Extent2d::from_points(Point2::new(0.0, 0.0), Point2::new(1.0, 1.0));
+    let mut state = ArenaNotifyState::new(b);
+    let this_face = |face| arena_identity(CacheObject::Face(face));
+    let made = {
+        let mut env = state.env(None);
+        let region = b.infinite_region();
+        make_face_with_curves(
+            k,
+            b,
+            region,
+            input,
+            surface,
+            &dom,
+            OrientType::Same,
+            None,
+            &this_face,
+            &mut env,
+        )?
+    };
+    let face = made
+        .face
+        .ok_or_else(|| SolidError::sm_err("own_builder::hermite_sheet_face"))?;
+    let edges = solidcore::topology::face::p4::edges(b, face, None, false, None)?;
+    if edges.len() != 4 {
+        return Err(SolidError::sm_err("own_builder::hermite_sheet_face"));
+    }
+    for edge in edges {
+        if !b
+            .edge(edge)?
+            .curve
+            .as_ref()
+            .is_some_and(|curve| matches!(curve.kind(), CurveKind::Hermite(_)))
+        {
+            return Err(SolidError::sm_err("own_builder::hermite_sheet_face"));
+        }
+        solidcore::topology::edge::set_tolerance(b, edge, edge_tol, false, false)?;
+    }
+    solidcore::topology::face::p3::set_tolerance(b, face, 1e-7, false, false)?;
+    Ok(())
+}
+
 /// The shim's `init_gaps` walk: `GetVertexFaceGap` on loop and edge vertex uses of a
 /// face with a surface, then `GetMaxEdgeFaceGap` and `GetEdgeCCWEdgeGap` on loop edge
 /// uses with a CCW neighbour, a face surface and an edge curve, in traversal order
 /// (the arena order of a [`renumber_with`]ed B-rep); with `vertex_edge_gaps` each vertex
 /// use's `GetVertexEdgeGap` follows when `HasVertexEdgeGap`. Their statuses are
 /// ignored, as there; an unported callee is returned.
-fn init_gap_walk(k: &Kernel, b: &mut Brep, vertex_edge_gaps: bool) -> Result<(), SolidError> {
+pub(crate) fn init_gap_walk(
+    k: &Kernel,
+    b: &mut Brep,
+    vertex_edge_gaps: bool,
+) -> Result<(), SolidError> {
     use solidcore::topology::vertexuse as vu1;
     let vus: Vec<VertexuseId> = b.vertexuses().ids().collect();
     for vu in vus {
@@ -874,12 +1216,42 @@ pub(crate) fn walk(b: &Brep) -> Result<Walk, SolidError> {
 ///
 /// A dangling id.
 pub(crate) fn walk_with(b: &Brep, prefix_lists: bool) -> Result<Walk, SolidError> {
-    walk_order(b, prefix_lists, false)
+    walk_order(b, ListPrefix::of(prefix_lists), false, false)
 }
 
-/// [`walk_with`]; with `vertex_lists_last` the vertex use lists are followed after the
-/// loops' loop uses ([`Conventions::vertex_lists_last`]).
-fn walk_order(b: &Brep, prefix_lists: bool, vertex_lists_last: bool) -> Result<Walk, SolidError> {
+/// The B-rep lists a traversal registers before it starts.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ListPrefix {
+    /// None.
+    None,
+    /// The face, edge and vertex lists ([`Conventions::prefix_lists`]).
+    All,
+    /// The edge and vertex lists alone (the merge shims' `native_graph`,
+    /// [`renumber_native`]).
+    Native,
+}
+
+impl ListPrefix {
+    /// [`ListPrefix::All`] when `prefix_lists`, else [`ListPrefix::None`].
+    const fn of(prefix_lists: bool) -> Self {
+        if prefix_lists {
+            Self::All
+        } else {
+            Self::None
+        }
+    }
+}
+
+/// [`walk_with`] with the lists `prefix` registers first; with `vertex_lists_last` the
+/// vertex use lists are followed after the loops' loop uses
+/// ([`Conventions::vertex_lists_last`]); with `skip_edge_list` the edge list is not
+/// registered ahead of the traversal ([`Conventions::skip_edge_list`]).
+fn walk_order(
+    b: &Brep,
+    prefix: ListPrefix,
+    vertex_lists_last: bool,
+    skip_edge_list: bool,
+) -> Result<Walk, SolidError> {
     let mut g = Walk {
         regions: Reg::new(),
         shells: Reg::new(),
@@ -892,7 +1264,7 @@ fn walk_order(b: &Brep, prefix_lists: bool, vertex_lists_last: bool) -> Result<W
         vertexuses: Reg::new(),
         vertices: Reg::new(),
     };
-    if prefix_lists {
+    if prefix == ListPrefix::All {
         for &id in b.face_list() {
             g.faces.add(Some(id), FaceId::index);
         }
@@ -903,11 +1275,21 @@ fn walk_order(b: &Brep, prefix_lists: bool, vertex_lists_last: bool) -> Result<W
             g.vertices.add(Some(id), VertexId::index);
         }
     }
+    if prefix == ListPrefix::Native {
+        for &id in b.edge_list() {
+            g.edges.add(Some(id), EdgeId::index);
+        }
+        for &id in b.vertex_list() {
+            g.vertices.add(Some(id), VertexId::index);
+        }
+    }
     for id in solidcore::topology::brep::p1::regions(b, None)? {
         g.regions.add(Some(id), RegionId::index);
     }
-    for &id in b.edge_list() {
-        g.edges.add(Some(id), EdgeId::index);
+    if !skip_edge_list {
+        for &id in b.edge_list() {
+            g.edges.add(Some(id), EdgeId::index);
+        }
     }
     let (mut r, mut s, mut fu, mut lu, mut eu, mut vu, mut l, mut e, mut v) =
         (0, 0, 0, 0, 0, 0, 0, 0, 0);
@@ -1083,6 +1465,26 @@ impl Map<'_> {
     }
 }
 
+/// The renumbered second edge use of edge use `id`'s cached CCW gap
+/// (`m_sEdgeCCWEdgeGap3d.m_pEdgeuse1`, `edgeuse1`). A gap stays cached after
+/// `SmBrep::SqueezeEdge` takes its CCW neighbour out of the loop and deletes it
+/// (`ReadFromFile`'s healer on `Fillet/open_shell.smb`: the C++ gap then names a freed
+/// edge use, the Rust one an unlinked arena record). No live entity corresponds, so
+/// such a reference takes the convention of the C++ export import, which carries only
+/// the gap's `IsInit` flag: the edge use's own CCW edge use (itself without one). Every
+/// other unreached reference is still a renumbering error.
+fn stale_ccw_gap_edgeuse(
+    m: &Map<'_>,
+    edgeuse1: Option<EdgeuseId>,
+    ccw: Option<EdgeuseId>,
+    id: EdgeuseId,
+) -> Result<Option<EdgeuseId>, HarnessError> {
+    match edgeuse1 {
+        Some(x) if m.edgeuse(x).is_err() => Ok(Some(m.edgeuse(ccw.unwrap_or(id))?)),
+        _ => opt(edgeuse1, |x| m.edgeuse(x)),
+    }
+}
+
 fn opt<T, F: Fn(T) -> Result<T, HarnessError>>(
     x: Option<T>,
     f: F,
@@ -1100,7 +1502,36 @@ fn opt<T, F: Fn(T) -> Result<T, HarnessError>>(
 ///
 /// A reached object referring to one the traversal did not reach.
 pub(crate) fn renumber_with(src: &Brep, conv: &Conventions<'_>) -> Result<Brep, HarnessError> {
-    let g = walk_order(src, conv.prefix_lists, conv.vertex_lists_last).map_err(solid)?;
+    let g = walk_order(
+        src,
+        ListPrefix::of(conv.prefix_lists),
+        conv.vertex_lists_last,
+        conv.skip_edge_list,
+    )
+    .map_err(solid)?;
+    renumber_walk(src, &g, conv)
+}
+
+/// [`renumber_with`] into the order of the merge shims' `native_graph`
+/// (`sc_merge_fixture.h`): the B-rep's edge and vertex lists (`GetEdges`,
+/// `GetVertices`) registered before the traversal.
+///
+/// # Errors
+///
+/// As [`renumber_with`].
+pub(crate) fn renumber_native(src: &Brep, conv: &Conventions<'_>) -> Result<Brep, HarnessError> {
+    // (with `prefix_lists` the edge and vertex lists are registered first anyway)
+    let prefix = if conv.prefix_lists {
+        ListPrefix::All
+    } else {
+        ListPrefix::Native
+    };
+    let g = walk_order(src, prefix, conv.vertex_lists_last, conv.skip_edge_list).map_err(solid)?;
+    renumber_walk(src, &g, conv)
+}
+
+/// The copy of [`renumber_with`] under the traversal order `g`.
+fn renumber_walk(src: &Brep, g: &Walk, conv: &Conventions<'_>) -> Result<Brep, HarnessError> {
     // the geometry `src` itself counts as owned by its face / edge (`GetSurfaces` /
     // `GetCurves`, under its own naming; either errs on a face without surface or an
     // edge without curve, then any recorded owner counts): relabelled to the new ids
@@ -1114,13 +1545,13 @@ pub(crate) fn renumber_with(src: &Brep, conv: &Conventions<'_>) -> Result<Brep, 
         .into_iter()
         .map(std::ptr::from_ref)
         .collect();
-    let m = Map(&g);
+    let m = Map(g);
     let mut b = Brep::new();
     b.set_validate_only(src.validate_only());
     b.set_tolerance(src.tolerance());
     b.set_key(src.key());
-    // geometry owners are relabelled under arena identities below, the naming the
-    // B-rep keeps by default (`NamingScheme::Unknown` falls back to it)
+    // geometry owners are relabelled under `conv`'s identities below, and the copy
+    // records `conv.naming` at the end (`record_naming`)
     b.set_editing_enabled(src.editing_enabled());
     let probe = Kernel::default();
     if src.this_model_size_estimate(&probe, false) != tol::USE_DEFAULT
@@ -1290,11 +1721,23 @@ pub(crate) fn renumber_with(src: &Brep, conv: &Conventions<'_>) -> Result<Brep, 
     }
     for &id in &g.edgeuses.items {
         let e = src.edgeuse(id).map_err(solid)?;
+        // `SetUVTrimCurve`'s `SetOwner(holder)`: an owned UV trim curve is relabelled
+        // to its edge use's new id, as the face and edge geometry above (ownership read
+        // on the source: `Curve::clone` is the copy constructor and drops the owner)
+        let owned = e
+            .uv_trim_curve
+            .as_ref()
+            .is_some_and(|x| x.owner().is_some());
+        let mut uv_trim_curve = e.uv_trim_curve.clone();
+        if let Some(c) = uv_trim_curve.as_mut().filter(|_| owned) {
+            let _ = c.set_owner(Some((conv.edgeuse_owner)(m.edgeuse(id)?)), None);
+        }
         let mut max_edge_face_gap = e.max_edge_face_gap;
         max_edge_face_gap.edgeuse = opt(max_edge_face_gap.edgeuse, |x| m.edgeuse(x))?;
         let mut edge_ccw_edge_gap = e.edge_ccw_edge_gap;
         edge_ccw_edge_gap.edgeuse0 = opt(edge_ccw_edge_gap.edgeuse0, |x| m.edgeuse(x))?;
-        edge_ccw_edge_gap.edgeuse1 = opt(edge_ccw_edge_gap.edgeuse1, |x| m.edgeuse(x))?;
+        edge_ccw_edge_gap.edgeuse1 =
+            stale_ccw_gap_edgeuse(&m, edge_ccw_edge_gap.edgeuse1, e.ccw, id)?;
         b.add_edgeuse_record(Edgeuse {
             edge: opt(e.edge, |x| m.edge(x))?,
             owner: match e.owner {
@@ -1306,7 +1749,7 @@ pub(crate) fn renumber_with(src: &Brep, conv: &Conventions<'_>) -> Result<Brep, 
             cw: opt(e.cw, |x| m.edgeuse(x))?,
             vertexuse: opt(e.vertexuse, |x| m.vertexuse(x))?,
             orientation: e.orientation,
-            uv_trim_curve: e.uv_trim_curve.clone(),
+            uv_trim_curve,
             max_edge_face_gap,
             edge_ccw_edge_gap,
             drop_curve_fail: e.drop_curve_fail.clone(),
@@ -1360,7 +1803,35 @@ pub(crate) fn renumber_with(src: &Brep, conv: &Conventions<'_>) -> Result<Brep, 
     for f in faces {
         b.sync_face_surface_tolerance(f).map_err(solid)?;
     }
+    record_naming(&mut b, conv)?;
     Ok(b)
+}
+
+/// Records `conv`'s naming on the renumbered `b` (see [`Conventions::naming`]).
+///
+/// # Errors
+///
+/// A harness error for [`NamingScheme::Arena`] under owners that are not the arena
+/// identities, or for a naming other than `Arena` / `Unknown` (a runner records those
+/// itself, after the build).
+fn record_naming(b: &mut Brep, conv: &Conventions<'_>) -> Result<(), HarnessError> {
+    match conv.naming {
+        NamingScheme::Unknown => Ok(()),
+        NamingScheme::Arena => {
+            let (f, e) = (FaceId::from_index(0), EdgeId::from_index(0));
+            if (conv.face_owner)(f) != arena_face_owner(f)
+                || (conv.edge_owner)(e).0 != arena_edge_owner(e).0
+            {
+                return Err(harness(
+                    "conventions: arena naming with non-arena geometry owners",
+                ));
+            }
+            b.use_arena_naming().map_err(solid)
+        }
+        other => Err(harness(format!(
+            "conventions: naming {other:?} is recorded by the runner"
+        ))),
+    }
 }
 
 /// The entity counts of a B-rep in the order of the shim's export header (regions,
@@ -1386,7 +1857,110 @@ pub(crate) fn counts(b: &Brep) -> [usize; 10] {
 pub(crate) fn build_status(e: &SolidError) -> f64 {
     match e {
         SolidError::Upstream { code, .. } => f64::from(*code),
-        SolidError::InvalidInput { .. } => f64::from(solidcore::error::SM_ERR_INVALID_INPUT),
+        SolidError::InvalidInput { .. } | SolidError::PortInvariant { .. } => {
+            f64::from(solidcore::error::SM_ERR_INVALID_INPUT)
+        }
         _ => f64::from(solidcore::error::SM_ERR),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A B-rep renumbered under arena-owned conventions records `Arena` (as the
+    /// `.smb` reader's B-rep does before the renumbering), so library code that
+    /// names new geometry by the B-rep's scheme sees the owners it was given; the
+    /// `sc_topology_fixture.h` conventions, which own geometry under runner keys,
+    /// keep `Unknown`. Before this, every renumbered B-rep came back `Unknown`.
+    #[test]
+    fn renumber_records_the_conventions_naming() {
+        let src = BrepIn::Box {
+            origin: [0.0; 3],
+            size: [1.0, 2.0, 3.0],
+        };
+        let naming = |conv: &Conventions<'_>| {
+            let k = &mut Kernel::default();
+            match build_with(k, &src, false, false, conv).unwrap().unwrap() {
+                Built::Brep(b) => b.naming(),
+                Built::Failed(e) => panic!("box build failed: {e}"),
+            }
+        };
+        assert_eq!(naming(&Conventions::EDGEUSE_GRAPH), NamingScheme::Arena);
+        assert_eq!(
+            naming(&Conventions::TOPOLOGY_FIXTURE),
+            NamingScheme::Unknown
+        );
+    }
+
+    /// `Arena` naming over non-arena owners is refused instead of recorded.
+    #[test]
+    fn arena_naming_requires_arena_owners() {
+        let conv = Conventions {
+            naming: NamingScheme::Arena,
+            ..Conventions::TOPOLOGY_FIXTURE
+        };
+        let mut b = Brep::new();
+        assert!(record_naming(&mut b, &conv).is_err());
+        assert_eq!(b.naming(), NamingScheme::Unknown);
+    }
+
+    /// The UV trim curves of a file read under [`Conventions::EDGEUSE_GRAPH`] are owned
+    /// by their holding edge use under its notification identity, which
+    /// [`uv_owner_index`] maps back to that edge use; a curve the library attaches
+    /// afterwards (`SetUVTrimCurve`, which owns it by the B-rep's naming) is owned the
+    /// same way, with no `set_naming` call by the runner (the conventions record
+    /// `Arena`, whose edge-use identity is the notification one). Skipped when the
+    /// pinned upstream checkout is absent.
+    #[test]
+    fn read_trim_owners_map_to_their_edge_uses() {
+        use solidcore::topology::edgeuse::p1::{set_uv_trim_curve, UvTrimCurveArg};
+        let root = crate::case::repo_root();
+        let Ok(path) = crate::fixtures::upstream_test_file(&root, "Solids/box.smb") else {
+            eprintln!("unavailable upstream test file: Solids/box.smb");
+            return;
+        };
+        let k = &mut Kernel::default();
+        let path = path.to_string_lossy();
+        let conv = &Conventions::EDGEUSE_GRAPH;
+        let mut b = match read_with(k, &path, false, false, false, conv).unwrap() {
+            Built::Brep(b) => *b,
+            Built::Failed(e) => panic!("box read failed: {e}"),
+        };
+        let held: Vec<EdgeuseId> = b
+            .edgeuses()
+            .iter()
+            .filter_map(|(id, r)| r.uv_trim_curve.as_ref().map(|_| id))
+            .collect();
+        assert!(!held.is_empty(), "the box has no UV trim curves");
+        for &eu in &held {
+            assert_eq!(
+                uv_owner_index(&b, eu, None),
+                f64::from(eu.index()),
+                "read trim of {eu:?}"
+            );
+        }
+        // an unowned copy (`Curve::clone` drops the owner) attached by SetUVTrimCurve
+        let eu = held.first().copied().unwrap();
+        let copy = b.edgeuse(eu).unwrap().uv_trim_curve.clone().unwrap();
+        assert_eq!(copy.owner(), None);
+        set_uv_trim_curve(
+            &mut b,
+            eu,
+            UvTrimCurveArg::New(Box::new(copy)),
+            0.0,
+            true,
+            None,
+        )
+        .unwrap();
+        for (id, r) in b.edgeuses().iter() {
+            if r.uv_trim_curve.is_some() {
+                assert_eq!(
+                    uv_owner_index(&b, id, None),
+                    f64::from(id.index()),
+                    "trim of {id:?} after SetUVTrimCurve"
+                );
+            }
+        }
     }
 }

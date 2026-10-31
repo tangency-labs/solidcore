@@ -6,6 +6,7 @@
 //! | Rust                                          | Upstream                                  |
 //! |-----------------------------------------------|-------------------------------------------|
 //! | [`BSplineSurface::create_corner_blend`], [`OrientType`], [`BlendNeighbour`] | `CreateCornerBlend`, `SmOrientType`, its `SmSurface*` |
+//! | [`BSplineSurface::create_corner_blend_on_faces`] | `CreateCornerBlend` with the fork's `lFaceSides` (WR-613) |
 //! | [`BSplineSurface::create_skinned_surface`], [`SkinnedSurfaceOptions`] | `CreateSkinnedSurface` |
 //! | [`BSplineSurface::trim_with_domain`], [`BSplineSurface::trim_with_domain_with`], [`TrimOptions`] | `TrimWithDomain` |
 //! | [`BSplineSurface::evaluate`], [`EvaluateFlags`] | `Evaluate`                              |
@@ -35,7 +36,9 @@
 //!   as upstream.
 //! - **`Evaluate`** returns the derivative matrix `D[i][j]` (`i <= u`, `j <= v`
 //!   derivatives) instead of writing the caller's array; entries upstream leaves
-//!   untouched (the lower half with `bOnlyUpperHalf`) are zero. Its flags are an
+//!   untouched (the lower half with `bOnlyUpperHalf`) are zero. The unwritten lower
+//!   half is 0 here and `SM_UNDEF` upstream (a fresh caller's `SmVector3d` array);
+//!   unreachable today (no caller reads it). Its flags are an
 //!   [`EvaluateFlags`] value; the internal `bDoZeroSampling` argument is private.
 //!   `SmSurfaceEval` retains the matrix written before a zero-tangent correction
 //!   failure, because upstream accessors ignore that failure and read the output.
@@ -63,6 +66,15 @@
 //! - Status values upstream ignores stay ignored (`EditParameterization` before
 //!   `MakeCurvesCompatible`, the curve evaluations of the n-sided blend, `Scale`,
 //!   `GetKnots`, `N_CrvElevateDegree`, `SetMinMax`).
+//! - **Not upstream: a Coons corner patch tangent to its sides** (WR-547, the fork's
+//!   tangency-labs/smlib@cae8618), only with
+//!   `Kernel::fixes.corner_blend_coons_patch_tangent_to_sides`: the four-sided
+//!   `CreateCornerBlend` (not bilinear) replaces its Coons patch by
+//!   `make_coons_patch_tangent_to_sides` (`sm_MakeCoonsPatchTangentToSides` and its
+//!   helpers `sm_CoonsSideNormal`, `sm_CoonsSideAngle`, `sm_RefineToSpans` and
+//!   `sm_ProjectCoonsSideRows`, all private). Its refinement is bounded (8 to 64 spans).
+//!   `sm_CoonsSideAngle` makes the patch normal unit by its own length, not `Unitize`
+//!   (tangency-labs/smlib@701da4b, same option).
 
 use crate::curve::curve::p1::{SpanAccuracy, MAX_APPROX_SPANS};
 use crate::curve::curve::p2::Curve as SmCurve;
@@ -73,17 +85,21 @@ use crate::curve::curve::p3::PointSolveOptions;
 use crate::curve::curve::p4::is_degenerate_base;
 use crate::curve::hermite_curve::HermiteCurve;
 use crate::curve::tangent_field::{CurveEnd as TangentFieldEnd, TangentDirType, TangentField};
-use crate::error::{ignored, Result, SolidError};
+use crate::error::{ignore_or_pass_on, ignored, Result, SolidError};
 use crate::geom::extent1d::Extent1d;
 use crate::geom::extent2d::{Extent2d, SS_UMAX, SS_UMIN, SS_VMIN};
 use crate::geom::extent3d::Extent3d;
 use crate::geom::global_solver::SolverOperation;
+use crate::geom::tol::ANG_TOL_DEG;
 use crate::geom::vector2d::Point2;
+use crate::geom::vector3d::acos;
 use crate::geom::vector3d::Point3;
 use crate::geom::vector3d::Vec3;
-use crate::math::{max2, min2, EFF_ZERO, EFF_ZERO_PARAM, EFF_ZERO_SQ, EFF_ZERO_SQRT, UNDEF_DOUBLE};
+use crate::math::{
+    max2, min2, EFF_ZERO, EFF_ZERO_PARAM, EFF_ZERO_SQ, EFF_ZERO_SQRT, PI, UNDEF_DOUBLE,
+};
 use crate::nurbs::b_spline_curve::{
-    BSplineCurve, BSplineCurveForm, BoundingBoxRequest, CanonicalData, KnotType,
+    BSplineCurve, BSplineCurveForm, BoundingBoxRequest, CanonicalData, ControlPointForm, KnotType,
 };
 use crate::nurbs::b_spline_surface::{BSplineSurface, BSplineSurfaceForm, SurfParamType};
 use crate::nurbs::crv_basic::Boundary;
@@ -102,6 +118,7 @@ use crate::surface::surface::Surface as SmSurface;
 
 use super::p1::{
     create_nlib_curve, create_nlib_surface, create_non_rational_curve_with_context, make_knots,
+    COONS_FACE_BOTTOM, COONS_FACE_LEFT, COONS_FACE_RIGHT, COONS_FACE_TOP,
 };
 use crate::intersect::surface_drop_lib::p3::DropSolveContext;
 
@@ -416,8 +433,12 @@ fn approximate_tangent_field(
         let degenerate = BSplineCurve::create_degenerate_curve(curve.dim(), pnt)?;
         let mut c = SmCurve::from(degenerate);
         let ivl = Extent1d::from_min_max(first, last);
-        // (status ignored)
-        ignored(c.edit_parameterization(k, &ivl))?;
+        // (status ignored; passed on with the opt-in fix, as SmCurve::ApproximateCurve
+        // in tangency-labs/smlib 8311f8e)
+        ignore_or_pass_on(
+            c.edit_parameterization(k, &ivl),
+            k.fixes.query_statuses_pass_on,
+        )?;
         let CurveKind::BSpline(bs) = c.into_kind() else {
             return Err(SolidError::invalid_input(
                 OP_APPROX_FIELD,
@@ -533,9 +554,17 @@ fn approximate_tangent_field(
     }
 
     // create pBSC curve from control polygon
-    let bsc = flush_crv(approx_tol_3d, &mut ctrl_poly, &mut knots, create_analytics)?.ok_or(
-        SolidError::invalid_input(OP_APPROX_FIELD, "no approximating curve built"),
-    )?;
+    let bsc = flush_crv(
+        approx_tol_3d,
+        &mut ctrl_poly,
+        &mut knots,
+        create_analytics,
+        k.fixes.query_statuses_pass_on,
+    )?
+    .ok_or(SolidError::invalid_input(
+        OP_APPROX_FIELD,
+        "no approximating curve built",
+    ))?;
 
     // pBSCurve->Copy(crContext, rpNewBSplineCurve)
     Ok(bsc.copy())
@@ -594,6 +623,7 @@ fn interpolated_tangent_field_curve(
 ) -> Result<BSplineCurve> {
     let base_uv = as_sm_curve(uv_curve);
     let field = TangentField::new(
+        k,
         &base_uv,
         surface,
         TangentDirType::Interpolate,
@@ -732,6 +762,39 @@ impl BSplineSurface {
         tangency_tol_radians: f64,
         create_bilinear_patch: bool,
     ) -> Result<Vec<Self>> {
+        Self::create_corner_blend_on_faces(
+            k,
+            curves_3d,
+            curve_orients,
+            uv_curves,
+            neighbours,
+            approx_tol,
+            tangency_tol_radians,
+            create_bilinear_patch,
+            0,
+        )
+    }
+
+    /// [`BSplineSurface::create_corner_blend`] with the fork's `lFaceSides` (WR-613,
+    /// tangency-labs/smlib@7fd9fb0): bit `i` of `face_sides` marks `curves_3d[i]` as
+    /// lying on a face of the body. A four-sided bicubic patch passes the marks on to
+    /// [`BSplineSurface::create_coons_patch_on_faces`] in its left, right, bottom, top
+    /// order; other patches ignore them. `0` is upstream's `CreateCornerBlend`.
+    ///
+    /// # Errors
+    ///
+    /// As [`BSplineSurface::create_corner_blend`].
+    pub fn create_corner_blend_on_faces(
+        k: &crate::kernel::Kernel,
+        curves_3d: &[BSplineCurve],
+        curve_orients: &[OrientType],
+        uv_curves: &[Option<BSplineCurve>],
+        neighbours: &[Option<BlendNeighbour<'_>>],
+        approx_tol: f64,
+        tangency_tol_radians: f64,
+        create_bilinear_patch: bool,
+        face_sides: u32,
+    ) -> Result<Vec<Self>> {
         let refs: Vec<Option<&BSplineCurve>> = curves_3d.iter().map(Some).collect();
         Self::create_corner_blend_in::<crate::surface::surface::p4::NoObject>(
             k,
@@ -743,6 +806,7 @@ impl BSplineSurface {
             tangency_tol_radians,
             create_bilinear_patch,
             None,
+            face_sides,
         )
     }
 
@@ -791,6 +855,7 @@ impl BSplineSurface {
             tangency_tol_radians,
             create_bilinear_patch,
             context,
+            0,
         )
     }
 
@@ -808,6 +873,7 @@ impl BSplineSurface {
             &mut dyn crate::surface::surface::p1::SurfaceSolveContext<O>,
             &[Option<O>],
         )>,
+        face_sides: u32,
     ) -> Result<Vec<Self>> {
         const OP: &str = OP_CORNER;
 
@@ -885,6 +951,7 @@ impl BSplineSurface {
                 approx_tol,
                 tangency_tol_radians,
                 create_bilinear_patch,
+                face_sides,
             );
         }
 
@@ -1821,7 +1888,8 @@ const BOT: usize = 1;
 const RIGHT: usize = 2;
 const TOP: usize = 3;
 
-/// The four-sided branch of `CreateCornerBlend`.
+/// The four-sided branch of `CreateCornerBlend`; `face_sides` is the fork's
+/// `lFaceSides` (WR-613), bit `i` for curve `i`.
 fn corner_blend_4(
     k: &crate::kernel::Kernel,
     mut boundaries: Vec<BSplineCurve>,
@@ -1831,6 +1899,7 @@ fn corner_blend_4(
     approx_tol: f64,
     tangency_tol_radians: f64,
     create_bilinear_patch: bool,
+    face_sides: u32,
 ) -> Result<Vec<BSplineSurface>> {
     const OP: &str = OP_CORNER;
     let oob = || SolidError::invalid_input(OP, "curve index out of range");
@@ -1984,9 +2053,325 @@ fn corner_blend_4(
     }
 
     // build coons patch and save result
-    let coons =
-        BSplineSurface::create_coons_patch(tol, create_bilinear_patch, &mut bounds, &mut tans)?;
+    // Not upstream (WR-613; tangency-labs/smlib@7fd9fb0): the face sides in bounds'
+    // order (left, right, bottom, top)
+    let mut coons_face_sides = 0;
+    if face_sides & (1 << LEFT) != 0 {
+        coons_face_sides |= COONS_FACE_LEFT;
+    }
+    if face_sides & (1 << RIGHT) != 0 {
+        coons_face_sides |= COONS_FACE_RIGHT;
+    }
+    if face_sides & (1 << BOT) != 0 {
+        coons_face_sides |= COONS_FACE_BOTTOM;
+    }
+    if face_sides & (1 << TOP) != 0 {
+        coons_face_sides |= COONS_FACE_TOP;
+    }
+    let coons = BSplineSurface::create_coons_patch_on_faces(
+        tol,
+        create_bilinear_patch,
+        &mut bounds,
+        &mut tans,
+        coons_face_sides,
+    )?;
+
+    // Not upstream (WR-547; tangency-labs/smlib@cae8618): the patch tangent to its sides'
+    // surfaces
+    if k.fixes.corner_blend_coons_patch_tangent_to_sides && !create_bilinear_patch {
+        if let Some(tangent) =
+            make_coons_patch_tangent_to_sides(k, &coons, &uv_crvs, surfaces, tangency_tol_radians)?
+        {
+            return Ok(vec![tangent]);
+        }
+    }
     Ok(vec![coons])
+}
+
+// ---- the fork's Coons patch tangency (tangency-labs/smlib@cae8618) ----------------------
+
+/// The fork's `sm_CoonsSideNormal`: the unit normal of `surface` along a Coons patch's
+/// side, at patch parameter `s` along that side (`patch_ivl`: the side's interval in
+/// the patch's parameters), found through the side's UV curve.
+fn coons_side_normal(
+    k: &crate::kernel::Kernel,
+    uv_curve: &BSplineCurve,
+    surface: &SmSurface,
+    patch_ivl: &Extent1d,
+    s: f64,
+) -> Result<Vec3> {
+    let ivl = uv_curve.natural_interval();
+    let t = ivl.evaluate((s - patch_ivl.min()) / patch_ivl.length());
+    let uv = uv_curve.evaluate_point(t)?;
+    evaluate_normal(k, surface, Point2::new(uv.x, uv.y))
+}
+
+/// Side `ii`'s UV curve and surface, `None` when either is missing.
+fn coons_side<'a>(
+    uv_curves: &'a [Option<BSplineCurve>],
+    surfaces: &[Option<&'a SmSurface>],
+    ii: usize,
+) -> Option<(&'a BSplineCurve, &'a SmSurface)> {
+    let uv = uv_curves.get(ii)?.as_ref()?;
+    let srf = (*surfaces.get(ii)?)?;
+    Some((uv, srf))
+}
+
+/// The fork's `sm_CoonsSideAngle`: the largest angle (radians) between a Coons patch's
+/// normal and the normals of the surfaces along its sides, at four stations a knot
+/// span (33 at least). Sides are ordered left (u min), bottom (v min), right (u max),
+/// top (v max); a side with no surface is skipped, and so is a station where the
+/// patch has no normal (a degenerate side's point).
+fn coons_side_angle(
+    k: &crate::kernel::Kernel,
+    patch: &BSplineSurface,
+    uv_curves: &[Option<BSplineCurve>],
+    surfaces: &[Option<&SmSurface>],
+) -> Result<f64> {
+    let mut max_angle = 0.0;
+    let domain = patch.natural_uv_domain();
+    let su = Extent1d::from_min_max(domain.min.x, domain.max.x);
+    let sv = Extent1d::from_min_max(domain.min.y, domain.max.y);
+    for ii in 0..4 {
+        let Some((uv_curve, surface)) = coons_side(uv_curves, surfaces, ii) else {
+            continue;
+        };
+        let along_u = ii == BOT || ii == TOP;
+        let along = if along_u { &su } else { &sv };
+        let dir = if along_u {
+            SurfParamType::U
+        } else {
+            SurfParamType::V
+        };
+        // four stations a knot span, so a miss between control points is seen
+        let spans = patch
+            .number_control_points(dir)
+            .saturating_sub(patch.degree(dir));
+        let stations = (4 * spans + 1).max(33);
+        for kk in 0..stations {
+            let s = along.evaluate(kk as f64 / (stations - 1) as f64);
+            let uv = match ii {
+                LEFT => Point2::new(su.min(), s),
+                BOT => Point2::new(s, sv.min()),
+                RIGHT => Point2::new(su.max(), s),
+                _ => Point2::new(s, sv.max()),
+            };
+            let side = |below_max: bool| if below_max { Side::Left } else { Side::Right };
+            let (_, du, dv) = crate::surface::surface::p1::evaluate_1st_derivatives(
+                k,
+                patch,
+                uv,
+                side(uv.x < su.max()),
+                side(uv.y < sv.max()),
+            )?;
+            let mut normal = du.cross(dv);
+            let scale = du.length() * dv.length();
+            // No normal where the derivatives are (near) parallel, measured against their
+            // own size; where there is one it is made unit by its own length (the fork's
+            // tangency-labs/smlib@701da4b): `unitize`'s absolute floor, 1e-12, refused the
+            // normal of a station near a collapsing side of a patch 0.01 across.
+            let normal_length = normal.length();
+            if scale < EFF_ZERO_SQ || normal_length <= EFF_ZERO_SQRT * scale {
+                continue;
+            }
+            normal /= normal_length;
+            let side_normal = coons_side_normal(k, uv_curve, surface, along, s)?;
+            let cos = normal.dot(side_normal).abs();
+            let angle = acos(if cos < 1.0 { cos } else { 1.0 });
+            if angle > max_angle {
+                max_angle = angle;
+            }
+        }
+    }
+    Ok(max_angle)
+}
+
+/// The fork's `sm_RefineToSpans`: knots inserted in `param`'s direction until no span
+/// is longer than `1 / spans` of the domain (the surface's shape is unchanged).
+fn refine_to_spans(surface: &mut BSplineSurface, param: SurfParamType, spans: usize) -> Result<()> {
+    const OP: &str = OP_CORNER;
+    let (knots, _) = surface.knots(param, None)?;
+    let (Some(&first), Some(&last)) = (knots.first(), knots.last()) else {
+        return Err(SolidError::sm_err(OP));
+    };
+    if knots.len() < 2 {
+        return Err(SolidError::sm_err(OP));
+    }
+    let max_span = (last - first) / spans as f64;
+    let mut new_knots = Vec::new();
+    for pair in knots.windows(2) {
+        let [lo, hi] = pair else {
+            continue;
+        };
+        let length = hi - lo;
+        let pieces = (length / max_span - 1.0e-9).ceil() as usize;
+        for kk in 1..pieces {
+            new_knots.push(lo + length * kk as f64 / pieces as f64);
+        }
+    }
+    if !new_knots.is_empty() {
+        surface.insert_knots(param, &new_knots)?;
+    }
+    Ok(())
+}
+
+/// The fork's `sm_ProjectCoonsSideRows`: each control point next to a side of a Coons
+/// patch moved, by the least distance, into the tangent plane of that side's surface at
+/// the point's Greville station along the side; a point next to two sides (at a
+/// corner) onto the mean of their planes. Needs at least 5 control points each way, so
+/// that no point is next to two opposite sides. Every plane is read from the unmoved
+/// net before any point is written.
+fn project_coons_side_rows(
+    k: &crate::kernel::Kernel,
+    patch: &mut BSplineSurface,
+    uv_curves: &[Option<BSplineCurve>],
+    surfaces: &[Option<&SmSurface>],
+) -> Result<()> {
+    const OP: &str = OP_CORNER;
+    let nu = patch.number_control_points(SurfParamType::U);
+    let nv = patch.number_control_points(SurfParamType::V);
+    let pu = patch.degree(SurfParamType::U);
+    let pv = patch.degree(SurfParamType::V);
+    if nu < 5 || nv < 5 || pu < 1 || pv < 1 {
+        return Err(SolidError::sm_err(OP));
+    }
+    let nurb = patch.gw_nurb().ok_or_else(|| SolidError::sm_err(OP))?;
+    let (ku, kv) = (nurb.u_knots().to_vec(), nurb.v_knots().to_vec());
+    if ku.len() != nu + pu + 1 || kv.len() != nv + pv + 1 {
+        return Err(SolidError::sm_err(OP));
+    }
+    let (Some(&ku_first), Some(&ku_last), Some(&kv_first), Some(&kv_last)) =
+        (ku.first(), ku.last(), kv.first(), kv.last())
+    else {
+        return Err(SolidError::sm_err(OP));
+    };
+    let su = Extent1d::from_min_max(ku_first, ku_last);
+    let sv = Extent1d::from_min_max(kv_first, kv_last);
+
+    // the Greville station of control point `index` in one direction
+    let greville = |knots: &[f64], degree: usize, index: usize| -> Result<f64> {
+        let mut sum = 0.0;
+        for kk in 1..=degree {
+            sum += at(knots, index + kk, OP)?;
+        }
+        Ok(sum / degree as f64)
+    };
+
+    let mut moved: Vec<(usize, usize, Point3)> = Vec::new();
+    for i in 1..nu - 1 {
+        for j in 1..nv - 1 {
+            // the sides this control point is next to: (side, anchor u, anchor v)
+            let mut sides: Vec<(usize, usize, usize)> = Vec::with_capacity(2);
+            if i == 1 {
+                sides.push((LEFT, 0, j));
+            }
+            if i == nu - 2 {
+                sides.push((RIGHT, nu - 1, j));
+            }
+            if j == 1 {
+                sides.push((BOT, i, 0));
+            }
+            if j == nv - 2 && sides.len() < 2 {
+                sides.push((TOP, i, nv - 1));
+            }
+            if sides.is_empty() {
+                continue;
+            }
+
+            let (mut pnt, _) = patch.control_point(ControlPointForm::NonRational, i, j)?;
+
+            // each side's plane: unit normal and the signed distance of pnt from it
+            let mut planes: Vec<(Vec3, f64)> = Vec::with_capacity(2);
+            for &(side, anchor_u, anchor_v) in &sides {
+                let Some((uv_curve, surface)) = coons_side(uv_curves, surfaces, side) else {
+                    continue;
+                };
+                let along_u = side == BOT || side == TOP;
+                let s = if along_u {
+                    greville(&ku, pu, i)?
+                } else {
+                    greville(&kv, pv, j)?
+                };
+                let (anchor, _) =
+                    patch.control_point(ControlPointForm::NonRational, anchor_u, anchor_v)?;
+                let normal =
+                    coons_side_normal(k, uv_curve, surface, if along_u { &su } else { &sv }, s)?;
+                planes.push((normal, normal.dot(pnt - anchor)));
+            }
+            match planes.as_slice() {
+                [] => continue,
+                [(normal, dist)] => pnt -= *normal * *dist,
+                [(normal0, dist0), (normal1, dist1), ..] => {
+                    // next to two sides at a corner: both planes are near the corner's
+                    // tangent plane, their line far off; onto their mean plane, which
+                    // leaves each a second-order miss
+                    let mean = if normal0.dot(*normal1) < 0.0 {
+                        *normal0 - *normal1
+                    } else {
+                        *normal0 + *normal1
+                    };
+                    let Ok(mean) = mean.unitize() else {
+                        continue;
+                    };
+                    let anchor0 = pnt - *normal0 * *dist0;
+                    let anchor1 = pnt - *normal1 * *dist1;
+                    let dist = 0.5 * (mean.dot(pnt - anchor0) + mean.dot(pnt - anchor1));
+                    pnt -= mean * dist;
+                }
+            }
+            moved.push((i, j, pnt));
+        }
+    }
+
+    // write the moved points once every plane was read from the unmoved net
+    for (i, j, pnt) in moved {
+        patch.set_control_point(ControlPointForm::NonRational, i, j, pnt, 1.0)?;
+    }
+    Ok(())
+}
+
+/// The fork's `sm_MakeCoonsPatchTangentToSides`: a Coons corner patch tangent to the
+/// surfaces along its sides, to within `SM_CONTINUITY_ANGLE` (or `tangency_tol_radians`
+/// where smaller). A bicubic Coons patch meets its cross-boundary derivative curves
+/// only where their twists agree at the corners; where two rounds of different
+/// curvature meet, `sm_CreateCoonsSrf` takes the mean twist and the patch leaves both
+/// rounds at an angle. A copy of the patch is refined to 8, 16, 32 and 64 spans each
+/// way and the control points next to each side moved into the side's tangent planes,
+/// until every side reads within tolerance. Returns the first copy within it, or else
+/// the one nearest it if that is nearer than `patch`; `None` when `patch` is rational,
+/// within tolerance already, or no copy is nearer.
+fn make_coons_patch_tangent_to_sides(
+    k: &crate::kernel::Kernel,
+    patch: &BSplineSurface,
+    uv_curves: &[Option<BSplineCurve>],
+    surfaces: &[Option<&SmSurface>],
+    tangency_tol_radians: f64,
+) -> Result<Option<BSplineSurface>> {
+    if patch.is_rational() {
+        return Ok(None);
+    }
+    // a seam SMLib calls tangent (SmEdgeuse::IsTangentSector) is within
+    // SM_CONTINUITY_ANGLE
+    let mut target = ANG_TOL_DEG * (PI / 180.0);
+    if tangency_tol_radians < target {
+        target = tangency_tol_radians;
+    }
+    let mut best_angle = coons_side_angle(k, patch, uv_curves, surfaces)?;
+    let mut best = None;
+    let mut spans = 8;
+    while spans <= 64 && best_angle > target {
+        let mut attempt = patch.clone();
+        refine_to_spans(&mut attempt, SurfParamType::U, spans)?;
+        refine_to_spans(&mut attempt, SurfParamType::V, spans)?;
+        project_coons_side_rows(k, &mut attempt, uv_curves, surfaces)?;
+        let angle = coons_side_angle(k, &attempt, uv_curves, surfaces)?;
+        if angle < best_angle {
+            best_angle = angle;
+            best = Some(attempt);
+        }
+        spans *= 2;
+    }
+    Ok(best)
 }
 
 // ---- CreateCornerBlend: n curves --------------------------------------------------------

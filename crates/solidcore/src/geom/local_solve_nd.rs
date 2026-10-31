@@ -66,8 +66,8 @@ use crate::geom::extent1d::{Extent1d, ExtentNd};
 use crate::geom::matrix::Matrix;
 use crate::math::{BIG_DOUBLE, EFF_ZERO, EFF_ZERO_SQ, EFF_ZERO_SQRT};
 
-/// Upstream status `SM_ERR`.
-const SM_ERR: i32 = 1001;
+// Upstream status `SM_ERR`.
+use crate::error::SM_ERR;
 
 fn sm_err(operation: &'static str) -> SolidError {
     SolidError::Upstream {
@@ -290,6 +290,7 @@ pub struct LocalSolveNd<'a, E: EvalNFunctions + ?Sized> {
     boundary_handler: BoundaryHandler,
     max_boundary_hits: u64,
     step_cutting_enabled: bool,
+    skips_failed_evaluations: bool,
     current_iteration: u64,
     termination_reason: TerminationReason,
 }
@@ -316,6 +317,7 @@ impl<'a, E: EvalNFunctions + ?Sized> LocalSolveNd<'a, E> {
             boundary_handler: BoundaryHandler::HitsAllBoundaries,
             max_boundary_hits: 3,
             step_cutting_enabled: false,
+            skips_failed_evaluations: false,
             current_iteration: 0,
             termination_reason: TerminationReason::Undefined,
         }
@@ -350,6 +352,19 @@ impl<'a, E: EvalNFunctions + ?Sized> LocalSolveNd<'a, E> {
     /// worse (`SetStepCuttingEnabled`).
     pub fn set_step_cutting_enabled(&mut self, enabled: bool) {
         self.step_cutting_enabled = enabled;
+    }
+
+    /// Opt-in, not upstream (WR-253 addendum; the fork's tangency-labs/smlib@d2757e1,
+    /// `Kernel::fixes.oscillating_skips_failed_guesses`): when `true`,
+    /// [`LocalSolveNd::solve_it`] takes no value from a failed evaluation. Each step
+    /// takes its equations, Jacobian and found flag from the evaluation it uses (upstream
+    /// kept the unscaled point's Jacobian and found flag for a clamped-and-scaled step),
+    /// the line search stops when no evaluation of the step succeeded, and a best guess
+    /// that cannot be re-evaluated is no solution, and so is a guess whose first
+    /// evaluation fails (WR-20; the fork's tangency-labs/smlib@d5c5cfd). Default `false`
+    /// (upstream).
+    pub fn set_skips_failed_evaluations(&mut self, enabled: bool) {
+        self.skips_failed_evaluations = enabled;
     }
 
     /// Sets the tight stopping tolerance on the sum of `|F_i|`
@@ -443,8 +458,12 @@ impl<'a, E: EvalNFunctions + ?Sized> LocalSolveNd<'a, E> {
             Some(&mut jacobian),
         ))?
         else {
-            // exit case - the evaluation failed
-            return Ok(self.done(true, TerminationReason::UnableToConverge, solution));
+            // exit case - the evaluation failed. Upstream reports the unevaluated guess as
+            // found; with `skips_failed_evaluations` (WR-20; the fork's
+            // tangency-labs/smlib@d5c5cfd) it is no solution, as when an evaluation fails
+            // during the iteration.
+            let found = !self.skips_failed_evaluations;
+            return Ok(self.done(found, TerminationReason::UnableToConverge, solution));
         };
 
         // exit case - the evaluator signalled a converged answer
@@ -545,8 +564,13 @@ impl<'a, E: EvalNFunctions + ?Sized> LocalSolveNd<'a, E> {
                     }
                 }
 
-                // accumulate the errors
-                next_sum_f = sum_abs(&equation_values);
+                // accumulate the errors (with the fork's fix: a failed evaluation has no
+                // equation values)
+                next_sum_f = if self.skips_failed_evaluations && first_failed {
+                    0.0
+                } else {
+                    sum_abs(&equation_values)
+                };
 
                 // if clamped, compare the unscaled and scaled locations
                 if clamped {
@@ -599,15 +623,39 @@ impl<'a, E: EvalNFunctions + ?Sized> LocalSolveNd<'a, E> {
                         }
 
                         // and see how good it is
-                        let next_sum_f2 = sum_abs(&equation_values2);
+                        let fixed = self.skips_failed_evaluations;
+                        let next_sum_f2 = if fixed && second.is_none() {
+                            0.0
+                        } else {
+                            sum_abs(&equation_values2)
+                        };
 
-                        // take the scaled step if it is better (or the first failed)
-                        if next_sum_f2 < next_sum_f || first_failed {
+                        // take the scaled step if it is better (or the first failed); with
+                        // the fork's fix only when it evaluated, and with its own Jacobian
+                        // and found flag
+                        if fixed {
+                            if let Some(found2) = second {
+                                if next_sum_f2 < next_sum_f || first_failed {
+                                    next_guess_clamped.clone_from(&next_guess_clamped_scaled);
+                                    equation_values.clone_from(&equation_values2);
+                                    jacobian.clone_from(&jacobian2);
+                                    found_answer = found2;
+                                    next_sum_f = next_sum_f2;
+                                    first_failed = false;
+                                }
+                            }
+                        } else if next_sum_f2 < next_sum_f || first_failed {
                             next_guess_clamped.clone_from(&next_guess_clamped_scaled);
                             equation_values.clone_from(&equation_values2);
                             next_sum_f = next_sum_f2;
                         }
                     }
+                }
+
+                // with the fork's fix: the clamped step could not be evaluated, and no
+                // scaled one was
+                if self.skips_failed_evaluations && first_failed {
+                    break;
                 }
 
                 // record the better clamped value
@@ -738,12 +786,16 @@ impl<'a, E: EvalNFunctions + ?Sized> LocalSolveNd<'a, E> {
         if sum_f > best_sum_f && best_sum_f.abs() < BIG_DOUBLE {
             sum_f = best_sum_f;
             solution = best_guess;
-            // upstream ignores this evaluation's status
-            eval_outcome(self.evaluator.evaluate(
+            // upstream ignores this evaluation's status; with the fork's fix a best
+            // guess that cannot be evaluated is no solution (not converged)
+            let reevaluated = eval_outcome(self.evaluator.evaluate(
                 &solution,
                 &mut equation_values,
                 Some(&mut jacobian),
             ))?;
+            if self.skips_failed_evaluations && reevaluated.is_none() {
+                return Ok(self.done(false, TerminationReason::UnableToConverge, solution));
+            }
         }
 
         // converged
@@ -918,6 +970,18 @@ mod tests {
         assert!(r.found);
         assert_eq!(s.termination_reason(), TerminationReason::UnableToConverge);
         assert_eq!(r.x, vec![1.0, 2.0]);
+    }
+
+    /// WR-20 (the fork's tangency-labs/smlib@d5c5cfd): with the flag a guess whose first
+    /// evaluation fails is no solution, as when an evaluation fails mid-iteration.
+    #[test]
+    fn wr20_failing_first_evaluation_finds_no_solution_with_the_flag() {
+        let mut e = Failing;
+        let mut s = LocalSolveNd::new(&mut e, None, None);
+        s.set_skips_failed_evaluations(true);
+        let r = s.solve_it(&[1.0, 2.0], EFF_ZERO).unwrap();
+        assert!(!r.found);
+        assert_eq!(s.termination_reason(), TerminationReason::UnableToConverge);
     }
 
     struct Unported;

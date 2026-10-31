@@ -294,6 +294,10 @@ fn new_edgeuse(
 ) -> Result<EdgeuseId> {
     let id = b.add_edgeuse_record(rec)?;
     new_record(env, EntityRef::Edgeuse(id));
+    // the edge use owns its UV trim curve under the caller's key (`SetOwner(m_pEdgeuse)`
+    // here and in `SetUVTrimCurve`), recorded for the trims made later
+    let owner = (env.key_of)(EntityRef::Edgeuse(id));
+    b.set_geometry_owner_key(EntityRef::Edgeuse(id), Some(owner));
     Ok(id)
 }
 
@@ -1650,9 +1654,11 @@ fn set_primary_edgeuses(b: &mut Brep, data: &BrepData, built: &Built) -> Result<
         // This takes care of next/last pointers.
         match edge::reset_primary_edgeuse(b, e, prim) {
             Err(err) if err.is_unported() => return Err(err),
-            Err(err @ (SolidError::InvalidInput { .. } | SolidError::NotFound { .. })) => {
-                return Err(err)
-            }
+            Err(
+                err @ (SolidError::InvalidInput { .. }
+                | SolidError::PortInvariant { .. }
+                | SolidError::NotFound { .. }),
+            ) => return Err(err),
             // the status is ignored upstream
             Ok(()) | Err(_) => {}
         }
@@ -1704,7 +1710,7 @@ struct ProjectionCurves {
 fn create_parallel_projection_curves(
     k: &Kernel,
     b: &mut Brep,
-    curve: &BSplineCurve,
+    curve: &Curve,
     direction: Vec3,
     tol: f64,
     angle_tol: Option<f64>,
@@ -1922,9 +1928,9 @@ pub fn merge_curves_on_surface(
 ) -> Result<(Vec<FaceId>, Vec<EdgeId>)> {
     // curve i is IntersectObject::Curve(i), its UV curve IntersectObject::UvCurve(i, false)
     let curves: Vec<IntersectObject> = (0..curves_3d.len()).map(IntersectObject::Curve).collect();
-    let uv: Option<Vec<IntersectObject>> = uv_curves.map(|uv| {
+    let uv: Option<Vec<Option<IntersectObject>>> = uv_curves.map(|uv| {
         (0..uv.len())
-            .map(|i| IntersectObject::UvCurve(i, false))
+            .map(|i| Some(IntersectObject::UvCurve(i, false)))
             .collect()
     });
     let mut world = MergeCurvesWorld {
@@ -1957,7 +1963,9 @@ pub fn merge_curves_on_surface(
 
 /// `MergeCurvesOnSurface(*pSurf, dTol, s3DCurves, pOptUVCurves, sNewFaces, sCurveEdges,
 /// FALSE, pOptIntersectionSurface)` (`bUVSpaceOkay = TRUE`): as
-/// [`merge_curves_on_surface`], with the optional intersection surface the curves came
+/// [`merge_curves_on_surface`], with one optional UV curve per curve (`None` for a null
+/// entry of upstream's array, which leaves that curve without one) and the optional
+/// intersection surface the curves came
 /// from (`SmPlaneCutter::MergeIntersection`'s cutting plane), which every curve
 /// classification gets as its second surface
 /// ([`IntersectObject::FreeSurface`]`(0)`) for `sm_RefineCCIToSurfaces`'s
@@ -1977,26 +1985,23 @@ pub fn merge_curves_on_surface_through_surface(
     face: FaceId,
     tol: f64,
     curves_3d: &mut [Curve],
-    uv_curves: Option<&[Curve]>,
+    uv_curves: Option<&[Option<Curve>]>,
     intersection_surface: Option<Surface>,
 ) -> Result<(Vec<FaceId>, Vec<EdgeId>)> {
     // curve i is IntersectObject::Curve(i), its UV curve IntersectObject::UvCurve(i, false)
+    // (none for a null entry of upstream's array)
     let curves: Vec<IntersectObject> = (0..curves_3d.len()).map(IntersectObject::Curve).collect();
-    let uv: Option<Vec<IntersectObject>> = uv_curves.map(|uv| {
-        (0..uv.len())
-            .map(|i| IntersectObject::UvCurve(i, false))
+    let uv: Option<Vec<Option<IntersectObject>>> = uv_curves.map(|uv| {
+        uv.iter()
+            .enumerate()
+            .map(|(i, c)| c.as_ref().map(|_| IntersectObject::UvCurve(i, false)))
             .collect()
     });
     let has_surface = intersection_surface.is_some();
     let mut world = MergeCurvesWorld {
         b,
         curves_3d: curves_3d.to_vec(),
-        uv: uv_curves
-            .unwrap_or_default()
-            .iter()
-            .cloned()
-            .map(Some)
-            .collect(),
+        uv: uv_curves.unwrap_or_default().to_vec(),
         env,
         curve_ref,
         free_surfaces: intersection_surface.into_iter().collect(),
@@ -2075,9 +2080,10 @@ fn remove_faces(
 /// flag is set meanwhile. The merges' and face removals' B-rep edits are notified
 /// through `notify`.
 ///
-/// Whole-face side classification preserves the projection curve's exact knot
-/// values: reference, vertex, edge-midpoint and ray-fallback queries all evaluate
-/// one shared exact wrapper, rather than a knot-tuned copy.
+/// `curve` is one of the `SmBSplineCurve` classes (upstream `const SmBSplineCurve&`,
+/// whose virtuals dispatch on the curve's class). Whole-face side classification
+/// evaluates the caller's curve itself for the reference, vertex, edge-midpoint and
+/// ray-fallback queries, not a knot-tuned copy.
 ///
 /// # Errors
 ///
@@ -2089,7 +2095,7 @@ pub fn project_and_trim(
     b: &mut Brep,
     env: &ProjectEnv<'_>,
     notify: &mut NotifyEnv<'_>,
-    curve: &BSplineCurve,
+    curve: &Curve,
     direction: Vec3,
     reference: Point3,
     trim_type: TrimType,
@@ -2127,7 +2133,7 @@ fn project_and_trim_body(
     b: &mut Brep,
     env: &ProjectEnv<'_>,
     notify: &mut NotifyEnv<'_>,
-    curve: &BSplineCurve,
+    curve: &Curve,
     direction: Vec3,
     reference: Point3,
     trim_type: TrimType,
@@ -2180,7 +2186,7 @@ fn faces_to_delete(
     k: &mut Kernel,
     b: &mut Brep,
     env: &ProjectEnv<'_>,
-    curve: &BSplineCurve,
+    curve: &Curve,
     direction: Vec3,
     reference: Point3,
     trim_type: TrimType,
@@ -2189,10 +2195,10 @@ fn faces_to_delete(
     let mut to_delete = Vec::new();
     let mut edges: Vec<EdgeId> = Vec::new();
 
-    // Native classifies against crCurveToProject itself. One exact owning wrapper
-    // adapts the BSplineCurve to the polymorphic solver without tuning its knots;
-    // every reference, vertex, midpoint and ray-fallback vote shares that wrapper.
-    let curve = &Curve::from(curve.clone_exact());
+    // Native classifies against crCurveToProject itself: every reference, vertex,
+    // midpoint and ray-fallback vote uses the caller's curve, whose class's virtuals
+    // the solver dispatches (a caller wrapping a BSplineCurve uses `clone_exact`, so
+    // its knots are not tuned).
 
     // First find which side the reference point is on.
     let delete_right_side = find_side_of_curve(k, curve, reference, direction, tol)?;
@@ -2381,12 +2387,18 @@ pub fn remove_all_topology_notified(
 
     for e in brep_wire_edges(b)? {
         // status ignored upstream
-        ignored(delete_edge(k, b, env, e))?;
+        ignored(crate::error::passed_on(
+            delete_edge(k, b, env, e),
+            k.fixes.brep_edit_statuses_pass_on,
+        )?)?;
     }
 
     for v in brep_shell_vertices(b)? {
         // status ignored upstream
-        ignored(delete_vertex(k, b, env, v))?;
+        ignored(crate::error::passed_on(
+            delete_vertex(k, b, env, v),
+            k.fixes.brep_edit_statuses_pass_on,
+        )?)?;
     }
     Ok(())
 }
@@ -2466,13 +2478,27 @@ fn find_and_set_infinite_region(
 /// Completes the native `SetUVTrimCurve` owner binding (`pUVTrimCurve->SetOwner(eu)`)
 /// under the caller's names `key_of` for the UV trim curves the B-rep's own routines
 /// left without owner (a B-rep under [`crate::topology::NamingScheme::Caller`]: lazy
-/// face queries, edge splits). Existing owners are kept so a foreign or incorrect
-/// owner remains detectable.
+/// face queries, edge splits), or named by the default identity of an edge use without
+/// a recorded key (`Brep::owner_identity`, the same owner). Other existing owners are
+/// kept so a foreign or incorrect owner remains detectable. An edge use the B-rep's routines added (edge splits) gets
+/// its caller key recorded (`Brep::geometry_owner_key`) so trims made later are named
+/// alike.
 fn bind_uv_trim_owners(b: &mut Brep, key_of: &dyn Fn(EntityRef) -> ObjectRef) -> Result<()> {
     for edge in p1::edges(b, None)? {
         for id in b.edge(edge)?.edgeuses.clone() {
+            let entity = EntityRef::Edgeuse(id);
+            // a trim bound before the key was recorded is named by the edge use's
+            // default identity (`Brep::owner_identity`); it is the same owner
+            let unrecorded = b
+                .geometry_owner_key(entity)
+                .is_none()
+                .then(|| b.owner_identity(entity));
+            if unrecorded.is_some() {
+                b.set_geometry_owner_key(entity, Some(key_of(entity)));
+            }
             if let Some(curve) = b.edgeuse_mut(id)?.uv_trim_curve.as_mut() {
-                if curve.owner().is_none() {
+                if curve.owner().is_none() || (unrecorded.is_some() && curve.owner() == unrecorded)
+                {
                     curve.set_owner(Some(key_of(EntityRef::Edgeuse(id))), None);
                 }
             }

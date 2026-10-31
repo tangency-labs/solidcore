@@ -6,21 +6,17 @@
 //! B-spline curve (`CreateWireEdgeFromCurve`), a face from a B-spline surface or a plane
 //! (`CreateFaceFromSurface`), or the wire network of `prog_test` `my_test_topology`. The
 //! Rust side builds every non-file source with the Rust kernel in the shim's call order
-//! ([`crate::own_builder`], renumbered into the shim's traversal order). For an `.smb`
-//! file it still imports the graph the shim exports in traversal order (raw members: list owners,
-//! list order, loop neighbours, orientations, UV trim curves, cached gap states,
-//! tolerances, face UV domains, geometry as B-splines; an `SmPlane` face surface as the
-//! exact [`Plane`] (origin, axes, scales, analytic domain), an `SmSurfOfRevolution` face
-//! surface as the exact surface of revolution (its database record, read by the ported
-//! `ReadFromDB`: [`crate::util::read_exact_surface`]), an `SmLine` edge curve as
-//! the exact [`Line`]; ellipse/circle edge curves retain their native record and
-//! stored NURB, with unchanged UV trim parameters) into a [`Brep`] and runs the ported functions on it; their
-//! results are compared as traversal indices, and the gaps the gap ops compute by
-//! value. A case that evaluates a face surface or edge curve the import holds only as
-//! its B-spline part (an analytic subclass: cone, sphere, torus, extrusion,
-//! unsupported curve kinds, ...) is deferred ([`inexact_geometry`]): the gap calculations and the 3D
-//! drop branch of `GetStartPointUVLoopGap`. The skeleton fields no ported function
-//! reads (`Loop::edges`, `Shell::faces`, `Face::loops`) are filled minimally.
+//! ([`crate::own_builder`], renumbered into the shim's traversal order), and reads an
+//! `.smb` file with the Rust reader, renumbered the same way
+//! ([`crate::own_reader::brep_in_order`]): its geometry, UV trim owners, drop records and
+//! cached gap states are the Rust reader's and the Rust gap walk's, never the C++
+//! export's. Results are compared as traversal indices, and the gaps the gap ops
+//! compute by value. The graph import ([`import_with_types`]: raw members, an `SmPlane`
+//! face surface as the exact [`Plane`], an `SmSurfOfRevolution` face surface exactly
+//! through [`crate::util::read_exact_surface`], an `SmLine` edge curve as the exact
+//! [`Line`], other analytic kinds as their B-spline part) remains for the runners that
+//! share it; a case evaluating geometry such an import holds only as its B-spline part
+//! is deferred ([`inexact_geometry`]), which no Rust-built or Rust-read source triggers.
 //!
 //! Index arguments are selectors taken modulo the entity count (so generated cases
 //! need no counts); `-1` selects null.
@@ -58,12 +54,13 @@ use solidcore::topology::edgeuse::p1 as eu1;
 use solidcore::topology::shell::{ShellMembers, ShellType};
 use solidcore::topology::{
     Brep, Edge, EdgeId, Edgeuse, EdgeuseId, EdgeuseOwner, Face, FaceId, Faceuse, FaceuseId, Loop,
-    LoopId, Loopuse, LoopuseId, LoopuseStart, ObjectHandle, Region, RegionId, Shell, ShellId,
-    Vertex, VertexId, Vertexuse, VertexuseId, VertexuseOwner,
+    LoopId, Loopuse, LoopuseId, LoopuseStart, ObjectHandle, Region, RegionId, Shell,
+    ShellId, Vertex, VertexId, Vertexuse, VertexuseId, VertexuseOwner,
 };
 use solidcore::{EntityRef, SolidError};
 use solidcore_ffi::units::topology_edgeuse_p1::{self as ffi, Op};
 
+use crate::util::trim_curve::put_trim_curve;
 use crate::{Case, HarnessError, Output, Rng, UnitDiff};
 
 /// The difftest runner.
@@ -154,6 +151,14 @@ pub(crate) enum BrepIn {
         natural: [f64; 2],
         inside_out: bool,
         oob: bool,
+    },
+    /// Native sheet face on the cubic Hermite shape `S(u, v) = C(u) + v * (0, 0, scale)`
+    /// over the unit domain: its four edges are cubic Hermite curves of the affine UV
+    /// segments of that sheet, with the edge tolerance `edge_tol` (kind 15; `scale` is
+    /// the sheet's physical size).
+    HermiteSheetFace {
+        scale: f64,
+        edge_tol: f64,
     },
     Network,
     Vertices {
@@ -394,6 +399,9 @@ pub(crate) fn brep_block_of(
             v.extend(angles);
             v.extend(natural);
             v.extend([flag(*inside_out), flag(*oob)]);
+        }
+        BrepIn::HermiteSheetFace { scale, edge_tol } => {
+            v.extend([15.0, *scale, *edge_tol]);
         }
         BrepIn::Network => v.push(3.0),
         BrepIn::Vertices { points } => {
@@ -1013,19 +1021,6 @@ impl ImportTypes {
     }
 }
 
-/// The upstream class of an `SmBSplineSurface` subclass type code, for deferral symbols.
-pub(crate) const fn surface_class_name(t: i64) -> &'static str {
-    match t {
-        15012 => "SmCone",
-        15013 => "SmCylinder",
-        15014 => "SmSphere",
-        15015 => "SmTorus",
-        15030 => "SmSurfOfExtrusion",
-        15020 => "SmSurfOfRevolution",
-        _ => "analytic",
-    }
-}
-
 /// A face's surface block: an exact analytic head (`2 ...`,
 /// [`crate::util::read_exact_surface`]) and the regular block after it, or the regular
 /// block alone. Returns the surface and whether the export carried it exactly (the
@@ -1057,39 +1052,6 @@ pub(crate) fn import_with_types(ex: &[f64]) -> Result<(Brep, ImportTypes), Harne
     let (mut b, types) = import_raw_with_types(ex)?;
     super::topology_vertexuse::refill_gaps(&mut b);
     Ok((b, types))
-}
-
-/// Restores the cache slot of every face surface of `b` (imported from the export of
-/// the same `path` and `block`) to its state after the C++ build (`Op::CacheStates`):
-/// reading a file builds the B-rep while doing a Boolean operation, so its healing
-/// (`SmVertexuse::ComputeUVPoint` -> `smsurf_GetSurfaceCache`) can leave face surfaces
-/// with trimmed surface caches whose trees were never built. Upstream reuses such a
-/// cache, so a later `smsurf_GetSurfaceCache` (as `SmEdgeuse::EvaluateBinormal`'s)
-/// does not build the face's UV trim curves.
-pub(crate) fn seed_cache_tree_states(
-    b: &Brep,
-    path: &str,
-    block: &[f64],
-) -> Result<(), HarnessError> {
-    use solidcore::surface::surface::CacheTreeState;
-    let out = ffi::eval(Op::CacheStates, path, block)
-        .map_err(|e| harness(format!("c++ cache states: {e}")))?;
-    let states = ffi::cache_states(&out).ok_or_else(|| harness("malformed cache states"))?;
-    if states.len() != b.faces().len() {
-        return Err(harness("cache states do not match the face list"));
-    }
-    for (i, &s) in states.iter().enumerate() {
-        let f = FaceId::from_index(u32::try_from(i).map_err(|_| harness("face index"))?);
-        let state = match s {
-            0 => CacheTreeState::NoCache,
-            1 => CacheTreeState::Unbuilt,
-            _ => CacheTreeState::Built,
-        };
-        if let Some(surface) = b.face(f).map_err(|e| harness(e.to_string()))?.surface.as_ref() {
-            surface.set_cache_tree_state(state);
-        }
-    }
-    Ok(())
 }
 
 /// [`import_with_types`] without refilling the cached gaps: they stay marked as set
@@ -1212,7 +1174,7 @@ pub(crate) fn import_raw_with_types(ex: &[f64]) -> Result<(Brep, ImportTypes), H
         let vertexuse = opt(rd.idx()?, VertexuseId::from_index)?;
         let orientation = orient_of(rd.idx()?)?;
         let uv_trim_curve = read_curve(&mut rd, true)?;
-        rd.idx()?; // the curve's owner: the holding edge use
+        rd.idx()?; // the curve's owner: the C++ side reports it in its own output
         let has_fail = rd.num()? != 0.0;
         let fail_status = rd.idx()?;
         let fail_brep = rd.num()? != 0.0;
@@ -1457,7 +1419,7 @@ pub(crate) fn import_raw_with_types(ex: &[f64]) -> Result<(Brep, ImportTypes), H
 fn slot<T>(r: Result<T, SolidError>, f: impl FnOnce(T) -> i64) -> Result<i64, SolidError> {
     match r {
         Ok(v) => Ok(f(v)),
-        Err(SolidError::InvalidInput { .. }) => Ok(NULL_DEREF),
+        Err(SolidError::InvalidInput { .. } | SolidError::PortInvariant { .. }) => Ok(NULL_DEREF),
         Err(e) => Err(e),
     }
 }
@@ -1475,8 +1437,10 @@ fn rust_err(e: &SolidError) -> Result<Output, HarnessError> {
 
 /// The Rust B-rep of a B-rep input, its geometry types and its entity counts, or the
 /// output of a failed build. Shim-built sources are built by the Rust kernel
-/// ([`crate::own_builder`]); only `.smb` file sources are still imported from the
-/// C++ export.
+/// ([`crate::own_builder`]); `.smb` file sources are read by the Rust reader and
+/// renumbered into the shim's traversal order ([`crate::own_reader::brep_in_order`]),
+/// so every field the Rust side reports (geometry, owners, drop records, cached gap
+/// states) is Rust's own; only the C++ side imports the export.
 pub(crate) fn rust_brep(
     k: &mut Kernel,
     brep: Option<&BrepIn>,
@@ -1499,17 +1463,21 @@ pub(crate) fn rust_brep(
             )))),
         },
         None => {
-            let path = path_of(brep)?;
-            let block = brep_block_of(brep, validate_only, init_gaps)?;
-            let ex = crate::export_memo::export("topology_edgeuse_p1", &[&path], &block, || {
-                ffi::eval(Op::Export, &path, &block)
-            })
-            .map_err(|e| harness(format!("c++ export: {e}")))?;
-            let Some(c) = ffi::counts(&ex) else {
-                return Ok(Err(build_failure(&ex)));
-            };
-            let (b, types) = import_with_types(&ex)?;
-            Ok(Ok((b, types, c)))
+            let conv = &crate::own_builder::Conventions::EDGEUSE_GRAPH;
+            match crate::own_reader::brep_in_order(k, src, validate_only, init_gaps, conv)? {
+                Built::Brep(b) => {
+                    let b = *b;
+                    let c = counts(&b);
+                    Ok(Ok((b, ImportTypes::default(), c)))
+                }
+                Built::Failed(e) => match Output::unported(&e) {
+                    Some(o) => Ok(Err(o)),
+                    None => Ok(Err(Output::err(format!(
+                        "brep_build_status_{}",
+                        build_status(&e)
+                    )))),
+                },
+            }
         }
     }
 }
@@ -1651,23 +1619,9 @@ fn eu_state(k: &Kernel, b: &Brep, eu: Option<EdgeuseId>, out: &mut Vec<f64>) -> 
     };
     out.push(1.0);
     let r = b.edgeuse(eu)?;
-    match r.uv_trim_curve.as_ref() {
-        None => out.push(-1.0),
-        Some(c) => {
-            out.push(1.0);
-            let ivl = c.natural_interval();
-            out.extend([ivl.min(), ivl.max()]);
-            for t in [ivl.min(), ivl.mid(), ivl.max()] {
-                let p = c.evaluate_point(k, t).unwrap_or(Vec3::UNDEF);
-                out.extend([p.x, p.y, p.z]);
-            }
-        }
-    }
-    out.push(if r.uv_trim_curve.is_some() {
-        f64::from(eu.index())
-    } else {
-        -1.0
-    });
+    put_trim_curve(k, out, r.uv_trim_curve.as_ref())?;
+    // the curve's owner, as the shim's `g.find(6, uv->GetOwner())`
+    out.push(crate::own_builder::uv_owner_index(b, eu, None));
     match r.drop_curve_fail.as_deref() {
         Some(f) => out.extend([1.0, f64::from(f.fail_status), flag(f.brep.is_some())]),
         None => out.extend([0.0, 0.0, 0.0]),
@@ -1682,11 +1636,12 @@ fn eu_state(k: &Kernel, b: &Brep, eu: Option<EdgeuseId>, out: &mut Vec<f64>) -> 
 fn status_of(e: &SolidError) -> f64 {
     match e {
         SolidError::Upstream { code, .. } => f64::from(*code),
-        SolidError::InvalidInput { .. } => NULL_DEREF as f64,
+        SolidError::InvalidInput { .. } | SolidError::PortInvariant { .. } => NULL_DEREF as f64,
         _ => -9.0,
     }
 }
 
+/// The Rust side of B-rep op `op` on `b`.
 fn run_rust_brep(k: &Kernel, b: &mut Brep, op: &OpIn) -> Result<Output, Fail> {
     match op {
         OpIn::EuQuery { eu, vertex } => {
@@ -1842,7 +1797,7 @@ fn run_rust_brep(k: &Kernel, b: &mut Brep, op: &OpIn) -> Result<Output, Fail> {
             let e = eid(*eu);
             let mate = match eu1::mate(b, e) {
                 Ok(m) => m,
-                Err(SolidError::InvalidInput { .. }) => {
+                Err(SolidError::InvalidInput { .. } | SolidError::PortInvariant { .. }) => {
                     return Ok(Output::new().values("state", vec![NULL_DEREF as f64]))
                 }
                 Err(x) => return Err(x.into()),
@@ -1874,7 +1829,7 @@ fn run_rust_brep(k: &Kernel, b: &mut Brep, op: &OpIn) -> Result<Output, Fail> {
             };
             match r {
                 Ok(()) => {}
-                Err(SolidError::InvalidInput { .. }) => {
+                Err(SolidError::InvalidInput { .. } | SolidError::PortInvariant { .. }) => {
                     return Ok(Output::new().values("state", vec![NULL_DEREF as f64]))
                 }
                 Err(x) => return Err(x.into()),

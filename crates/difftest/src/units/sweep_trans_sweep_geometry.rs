@@ -80,7 +80,7 @@ fn v(p: [f64; 3]) -> Vec3 {
 fn status(e: &SolidError) -> f64 {
     match e {
         SolidError::Upstream { code, .. } => f64::from(*code),
-        SolidError::InvalidInput { .. } => 1007.,
+        SolidError::InvalidInput { .. } | SolidError::PortInvariant { .. } => 1007.,
         SolidError::Nlib { .. } => 1001.,
         _ => -1.,
     }
@@ -242,6 +242,7 @@ fn rust(i: &Input) -> Result<Vec<f64>> {
         base: SweepGeometryCreation {
             eps: i.epsilon,
             make_analytics: i.analytics,
+            statuses_pass_on: false,
         },
     };
     let mut o = vec![0.];

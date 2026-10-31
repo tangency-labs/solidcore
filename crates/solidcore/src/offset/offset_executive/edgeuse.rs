@@ -47,7 +47,7 @@ use crate::topology::face::{p1 as face1, p2 as face2};
 use crate::topology::proto_topology::ProtoGeometry;
 use crate::topology::{vertex, Brep, EdgeId, EdgeuseId, FaceId, VertexId};
 
-use super::p1::OffsetExecutive;
+use super::p1::{OffsetExecutive, OffsetOperation};
 
 const OP: &str = "offset::offset_executive::edgeuse";
 
@@ -407,6 +407,7 @@ impl EdgeBrep<'_> {
             surface,
             trim_curves,
             trim_orientations: made.trim_orientations,
+            closing_wall: made.closing_wall,
         })
     }
 }
@@ -419,6 +420,9 @@ pub(super) struct EdgeCap {
     pub(super) trim_curves: Vec<Curve>,
     /// `sTrimOrientations`.
     pub(super) trim_orientations: Vec<OrientType>,
+    /// Not upstream (`bClosingWall`, opt-in `Kernel::fixes.local_operation_step_walls`):
+    /// the cap is a step wall, kept out of the face extensions.
+    pub(super) closing_wall: bool,
 }
 
 impl ClassGeometry<Handle> for EdgeBrep<'_> {
@@ -630,18 +634,22 @@ impl FaceQueries<Handle> for EdgeBrep<'_> {
     }
 }
 
-impl OffsetBrep<Handle> for EdgeBrep<'_> {
-    fn prepare_surface_solve_cache(
+impl EdgeBrep<'_> {
+    /// `smsurf_GetSurfaceCache` of `surface` for a solve: with its `GetTree` when
+    /// `get_tree` ([`OffsetBrep::prepare_surface_solve_cache`]), else as handed to a
+    /// reader of the state bits only ([`OffsetBrep::prepare_surface_state_cache`]).
+    fn surface_cache_for(
         &mut self,
         k: &Kernel,
         surface: &Surface,
         handle: Option<Handle>,
+        get_tree: bool,
     ) -> Result<SurfaceCache<Handle>> {
-        use crate::query::face::p2::solve_surface_cache_of_face;
+        use crate::query::face::p2::{solve_surface_cache_of_face, surface_cache_state_of_face};
         use crate::surface::surface::p1::{get_surface_cache, make_surface_cache};
         // the solve's GetTree: a reused cache whose tree is not built builds it now
         let with_tree = |mut cache: SurfaceCache<Handle>| {
-            if cache.tree().is_none() {
+            if get_tree && cache.tree().is_none() {
                 cache.get_tree(k)?;
             }
             Ok(cache)
@@ -671,10 +679,35 @@ impl OffsetBrep<Handle> for EdgeBrep<'_> {
         // the surface's trimmed cache, kept with it as upstream keeps it (reused by
         // later solves on the same surface)
         let map = cache_handle(arena);
-        match solve_surface_cache_of_face(k, b, face, owner, surface, handle, map)? {
+        let cache = if get_tree {
+            solve_surface_cache_of_face(k, b, face, owner, surface, handle, map)?
+        } else {
+            surface_cache_state_of_face(k, b, face, owner, surface, handle, map)?
+        };
+        match cache {
             Some(cache) => Ok(cache),
             None => make_surface_cache(k, surface, handle),
         }
+    }
+}
+
+impl OffsetBrep<Handle> for EdgeBrep<'_> {
+    fn prepare_surface_solve_cache(
+        &mut self,
+        k: &Kernel,
+        surface: &Surface,
+        handle: Option<Handle>,
+    ) -> Result<SurfaceCache<Handle>> {
+        self.surface_cache_for(k, surface, handle, true)
+    }
+
+    fn prepare_surface_state_cache(
+        &mut self,
+        k: &Kernel,
+        surface: &Surface,
+        handle: Option<Handle>,
+    ) -> Result<SurfaceCache<Handle>> {
+        self.surface_cache_for(k, surface, handle, false)
     }
 
     fn prepared_face_queries(&self) -> Option<&dyn FaceQueries<Handle>> {
@@ -879,6 +912,25 @@ impl OffsetBrep<Handle> for EdgeBrep<'_> {
             .collect())
     }
 
+    fn edge_is_closed(&self, e: Handle) -> Result<bool> {
+        let (arena, e) = e.edge()?;
+        edge::is_closed(self.brep(arena), e)
+    }
+
+    fn vertex_edges(&self, v: Handle) -> Result<Vec<Handle>> {
+        let (arena, v) = v.vertex()?;
+        Ok(vertex::edges(self.brep(arena), v, None)?
+            .into_iter()
+            .map(|e| Handle::topology(arena, EntityRef::Edge(e)))
+            .collect())
+    }
+
+    fn faceuse_shell(&self, fu: Handle) -> Result<Option<Handle>> {
+        let (arena, fu) = fu.faceuse()?;
+        Ok(eu::faceuse_shell(self.brep(arena), fu)?
+            .map(|s| Handle::topology(arena, EntityRef::Shell(s))))
+    }
+
     fn edge_is_lamina(&self, e: Handle) -> Result<bool> {
         let (arena, e) = e.edge()?;
         edge::is_lamina(self.brep(arena), e)
@@ -1023,6 +1075,11 @@ impl OffsetBrep<Handle> for EdgeBrep<'_> {
         Ok(eu::face(self.brep(arena), u)?.map(|f| Handle::topology(arena, EntityRef::Face(f))))
     }
 
+    fn edgeuse_orientation(&self, u: Handle) -> Result<OrientType> {
+        let (arena, u) = u.edgeuse()?;
+        eu::orientation(self.brep(arena), u)
+    }
+
     fn edgeuse_faceuse(&self, u: Handle) -> Result<Option<Handle>> {
         let (arena, u) = u.edgeuse()?;
         Ok(eu::faceuse(self.brep(arena), u)?
@@ -1153,6 +1210,10 @@ impl CreatorExecutive<Handle> for Executive<'_> {
             .collect()
     }
 
+    fn is_local_operation(&self) -> bool {
+        self.inner.operation() == OffsetOperation::LocalOperation
+    }
+
     fn has_collapsed_faces(&self) -> bool {
         !self.inner.collapsed_faces.is_empty()
     }
@@ -1173,6 +1234,12 @@ impl CreatorExecutive<Handle> for Executive<'_> {
                 .offset_edgeuse(u)
                 .map(|o| Handle::topology(Arena::Offset, EntityRef::Edgeuse(o))),
             _ => None,
+        }
+    }
+
+    fn note_unmated_edgeuse(&mut self, original: Handle) {
+        if let Object::Topology(Arena::Original, EntityRef::Edgeuse(u)) = original.object {
+            self.inner.unmated_edgeuses.insert(u);
         }
     }
 

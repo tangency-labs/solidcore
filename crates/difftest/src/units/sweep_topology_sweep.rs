@@ -86,7 +86,7 @@ fn entity_id(e: Option<E>) -> i64 {
 fn status(e: &SolidError) -> i64 {
     match e {
         SolidError::Upstream { code, .. } => i64::from(*code),
-        SolidError::InvalidInput { .. } => 1007,
+        SolidError::InvalidInput { .. } | SolidError::PortInvariant { .. } => 1007,
         SolidError::Nlib { .. } => 1001,
         _ => -1,
     }
@@ -1458,7 +1458,7 @@ mod tests {
             // FindVertexSector (topology.face_p4) finds no sector of a face without
             // face uses, so MakeEdgeInFace's NER(pStartVU) reports a null pointer
             Err(SolidError::Upstream {
-                operation: "topology::brep::p5",
+                operation: solidcore::topology::brep::p5::NO_VERTEX_SECTOR_OP,
                 code: 1006,
                 ..
             })

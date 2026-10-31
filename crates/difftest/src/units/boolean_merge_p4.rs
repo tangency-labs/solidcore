@@ -102,17 +102,19 @@ fn import(input: &Operand) -> Result<Option<Brep>, HarnessError> {
     }
 }
 
-/// Give the imported geometry the owners the library's arena adapter keys its B-rep
-/// cache by (`arena_identity`): each edge's curve is owned by its edge, as natively,
-/// and each surface the importer marked as owned by its face keeps that face. Without
-/// this the cache would leave every curve and owned surface out of its trees.
+/// Relabels the geometry the build owns under the identities the library's arena adapter
+/// keys its B-rep cache by (`arena_identity`): each owned curve by its edge and each
+/// owned surface by its face, as natively. Geometry the build left without owner stays
+/// unowned (no owner is taken from the holder).
 fn own_geometry(b: &mut Brep) -> Result<(), HarnessError> {
     use solidcore::topology::brep_cache::{arena_identity, CacheObject};
     let edges: Vec<_> = b.edges().ids().collect();
     for e in edges {
         let edge = b.edge_mut(e).map_err(|x| error(&x.to_string()))?;
         if let Some(curve) = edge.curve.as_mut() {
-            curve.set_owner(Some(arena_identity(CacheObject::Edge(e))), None);
+            if curve.owner().is_some() {
+                curve.set_owner(Some(arena_identity(CacheObject::Edge(e))), None);
+            }
         }
     }
     let faces: Vec<_> = b.faces().ids().collect();
@@ -429,6 +431,8 @@ impl UnitDiff for Runner {
         }
     }
     fn generate(&self, rng: &mut Rng) -> Option<Value> {
+        /// Redraws of a generated case whose operand cannot be built.
+        const REDRAWS: usize = 16;
         let scale = match rng.below(5) {
             0 => 1e-9,
             1 => 1e-3,
@@ -449,8 +453,18 @@ impl UnitDiff for Runner {
                 rng.uniform(0.5, 2.0) * scale,
             ]
         };
-        let a = operand();
-        let b = operand();
+        // Setup must succeed on both sides: a draw whose operand the Rust port of the shim's
+        // constructors refuses (a plane face over a domain too large at scale 1e6) is drawn
+        // again, up to REDRAWS times; the first draw is kept whenever it builds.
+        let mut a = operand();
+        let mut b = operand();
+        for _ in 0..REDRAWS {
+            if import(&a).is_ok() && import(&b).is_ok() {
+                break;
+            }
+            a = operand();
+            b = operand();
+        }
         Some(json!({"primary":a,"other":b,"operation":rng.below(11),
             "flags":[rng.chance(0.2),rng.chance(0.2),rng.chance(0.5),rng.chance(0.2),rng.chance(0.5)],
             "manifold":rng.chance(0.8),"distinct_contexts":rng.chance(0.5),"caller_lock":rng.chance(0.5)}))

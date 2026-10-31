@@ -14,6 +14,7 @@
 //! | [`TopologyData::write_to_db`] ... [`VertexData::write_to_db`] | `SmTopologyData::WriteToDB` ... `SmVertexData::WriteToDB` |
 //! | [`AttributeTable`]                    | `rAllAttributes` and `rAttrMap`                  |
 //! | [`BrepData::from_brep`], [`FromBrepEnv`] | `SmBrepData::FromBrep`                        |
+//! | [`write_brep_to_file`]                | `SmBrep::WriteToFile` (new file, native geometry) |
 //! | `get_map`, `edgeuse_index` (private)  | `sm_GetMap`, `sm_GetEdgeuseIndex`                |
 //! | `extract_attributes` (private)        | `sm_ExtractAttributes`, `sm_FindAttribute`       |
 //! | `write_indexed_attributes` (private)  | `SmAttributeData::WriteIndexedAttributesToDB`    |
@@ -22,6 +23,12 @@
 //! Deviations:
 //! - **Files.** [`BrepData::write_to_file`] returns the file's bytes (no filesystem on
 //!   wasm32); only a new file (`bNewFile = TRUE`) is supported.
+//! - **ASCII doubles (opt-in).** With
+//!   [`crate::kernel::UpstreamFixes::ascii_doubles_round_trip`],
+//!   [`write_brep_to_file`] (through [`BrepData::write_to_file_with_nurbs`]) writes
+//!   an ASCII file's doubles so that they read back unchanged
+//!   ([`BrepData::write_to_file_with`]; WR-655), where upstream's `%.16f` loses digits
+//!   below 1.
 //! - **Native formats only.** `bWriteAsBSplines = TRUE` approximates every non-B-spline
 //!   curve and surface (`ApproximateCurve`, `ApproximateSurface`); it is not ported,
 //!   and the writers always write native formats (the upstream default). The kinds
@@ -42,9 +49,13 @@
 //!   them exactly (no copy-constructor knot fix-up). Each edge owns its curve, so the
 //!   3D curve list has one curve per edge (upstream shares a curve between edges
 //!   only when they share the object). `GetSurfaces` keeps the surfaces owned by
-//!   their faces, as upstream. Dereferences of null objects (a loop without loop
-//!   uses, an edge use without mate, next edge use, loop use or loop; an edge without
-//!   primary edge use or curve) are `SM_ERR_NULL_POINTER`.
+//!   their faces, as upstream: a face is named by the caller's identity when its
+//!   surface's owner is that, else by the B-rep's own owner identity
+//!   ([`Brep::owner_identity`]), so a caller whose names differ from the B-rep's
+//!   naming scheme still gets every owned surface written. Dereferences of null
+//!   objects (a loop without loop uses, an edge use without mate, next edge use, loop
+//!   use or loop; an edge without primary edge use or curve) are
+//!   `SM_ERR_NULL_POINTER`.
 //! - **Statuses.** Upstream ignores the status of every record write and of the curve
 //!   and surface writes; the port's record writes cannot fail, and a curve or surface
 //!   that cannot be written (no ported writer, no NURB) is an error instead of a
@@ -61,7 +72,7 @@ use crate::nurbs::b_spline_surface::BSplineSurface;
 use crate::nurbs::b_spline_surface_n_lib::p2::OrientType;
 use crate::nurbs::math::NOZ;
 use crate::surface::surface::{Surface, SurfaceKind};
-use crate::topology::brep::p1::{self as bl, surface_owners};
+use crate::topology::brep::p1::{self as bl, default_face_owner, surface_owners};
 use crate::topology::brep::p10::HEALER_VERSION;
 use crate::topology::brep::p2::is_manifold_solid;
 use crate::topology::brep_data::{
@@ -506,8 +517,14 @@ fn bspline_curve_part_mut(c: &mut Curve) -> Option<&mut BSplineCurve> {
 
 /// `SM_CAST_PTR(SmBSplineSurface, pSrf)`: the B-spline part of the kinds derived from
 /// `SmBSplineSurface` (a plane's made with its NURB when missing), `None` for the
-/// others.
-fn bspline_surface_part(s: &Surface) -> Result<Option<Cow<'_, BSplineSurface>>> {
+/// others. Public for exporters that write a surface as its B-spline part, as
+/// `smu_AddSmBSplineSurface` does (#1767).
+///
+/// # Errors
+///
+/// Those of [`Plane::base_with_nurb`](crate::surface::plane::Plane::base_with_nurb) for a
+/// plane without its NURB.
+pub fn bspline_surface_part(s: &Surface) -> Result<Option<Cow<'_, BSplineSurface>>> {
     Ok(match s.kind() {
         SurfaceKind::BSpline(b) => Some(Cow::Borrowed(b)),
         SurfaceKind::Plane(p) => Some(p.base_with_nurb()?),
@@ -728,6 +745,8 @@ impl BrepData {
     /// [`Self::write_to_file`] after [`make_missing_nurb`] on every surface: upstream's
     /// `SmBSplineSurface::WriteToDB` reaches the NURB through
     /// `GetOrCreateGwNurbPointer`, so a lazy surface is written with the NURB it makes.
+    /// With `k.fixes.ascii_doubles_round_trip` an ASCII file's doubles read back
+    /// unchanged ([`Self::write_to_file_with`]).
     ///
     /// # Errors
     ///
@@ -736,7 +755,7 @@ impl BrepData {
         for s in &mut self.surfaces {
             make_missing_nurb(k, &mut s.object)?;
         }
-        self.write_to_file(file_type)
+        self.write_to_file_with(file_type, k.fixes.ascii_doubles_round_trip)
     }
 
     /// `SmBrepData::WriteToFile(name, eType, TRUE)`: the `Version` and
@@ -748,7 +767,24 @@ impl BrepData {
     ///
     /// Those of [`Self::write_to_db`].
     pub fn write_to_file(&mut self, file_type: FileType) -> Result<Vec<u8>> {
-        let mut db = DatabaseWriter::open_for_write(file_type);
+        self.write_to_file_with(file_type, false)
+    }
+
+    /// [`Self::write_to_file`], an ASCII file's doubles written so that they read back
+    /// unchanged when `round_trip_doubles` (not upstream: WR-655's opt-in,
+    /// [`crate::kernel::UpstreamFixes::ascii_doubles_round_trip`];
+    /// [`DatabaseWriter::with_round_trip_doubles`]).
+    ///
+    /// # Errors
+    ///
+    /// Those of [`Self::write_to_db`].
+    pub fn write_to_file_with(
+        &mut self,
+        file_type: FileType,
+        round_trip_doubles: bool,
+    ) -> Result<Vec<u8>> {
+        let mut db =
+            DatabaseWriter::open_for_write(file_type).with_round_trip_doubles(round_trip_doubles);
 
         // virtual preWrite for derived classes - base class does nothing
         db.begin_writing();
@@ -1105,6 +1141,27 @@ pub struct FromBrepEnv<'a> {
     pub surface_key: &'a dyn Fn(FaceId) -> ObjectKey,
 }
 
+/// `SmBrep::WriteToFile(name, eType, TRUE, FALSE, 0.0)`: `b` flattened into a
+/// temporary `SmBrepData` ([`BrepData::from_brep`]) and written as a new file in
+/// native formats ([`BrepData::write_to_file_with_nurbs`]). Returns the file's
+/// contents. Upstream ignores `FromBrep`'s status; its failures here are the null
+/// dereferences upstream would crash on, so they are returned.
+///
+/// # Errors
+///
+/// Those of [`BrepData::from_brep`] and [`BrepData::write_to_file_with_nurbs`].
+pub fn write_brep_to_file(
+    k: &Kernel,
+    b: &Brep,
+    env: &FromBrepEnv<'_>,
+    file_type: FileType,
+) -> Result<Vec<u8>> {
+    // (the attribute pointers FromBrep collects; the file is written without them)
+    let mut attributes = Vec::new();
+    let mut data = BrepData::from_brep(b, env, &mut attributes)?;
+    data.write_to_file_with_nurbs(k, file_type)
+}
+
 /// `SM_ERR_NULL_POINTER` of [`BrepData::from_brep`].
 fn null() -> SolidError {
     SolidError::null_pointer(OP_FROM)
@@ -1304,8 +1361,18 @@ impl BrepData {
             bd.faceuses.push(fd);
         }
 
-        // Surfaces owned by their faces
-        let face_ref = |f: FaceId| (env.key_of)(EntityRef::Face(f));
+        // Surfaces owned by their faces (`pSurface->GetOwner() == pFace`): the face's
+        // identity is the caller's name for it when the surface carries that, else the
+        // B-rep's own owner identity (`GetSurfaces`)
+        let face_ref = |f: FaceId| {
+            let caller = (env.key_of)(EntityRef::Face(f));
+            let owner = b.face(f).ok().and_then(|x| x.surface.as_ref()?.owner());
+            if owner == Some(caller) {
+                caller
+            } else {
+                default_face_owner(b, f)
+            }
+        };
         let mut surface_index: BTreeMap<FaceId, u64> = BTreeMap::new();
         for f in surface_owners(b, None, &face_ref)? {
             let surface = b.face(f)?.surface.as_ref().ok_or_else(null)?;

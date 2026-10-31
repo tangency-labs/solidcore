@@ -30,7 +30,7 @@ nice -n 10 cargo test -p difftest --features cpp                     # harness s
 | flag | meaning |
 |---|---|
 | `--unit <id>` | run one unit (repeatable; `*` and `?` match several registered runners, e.g. `--unit 'nlib.*'`) |
-| `--jobs N` / `-j N` | run N units at a time, each in its own child process (default `1`: one process, in order; `0`: every core). Output, reports and exit status are the same as with `1` (below) |
+| `--jobs N` / `-j N` | run N units at a time, each in its own child process (default `1`: one at a time; `0`: every core). Output, reports and exit status are the same as with `1` (below). A run of one unit runs in this process; with several, even `--jobs 1` gives each its own child, so C++ process state one unit latches cannot reach the next (`--digest-dir` runs in this process) |
 | `--green` | all port units with `status = "green"` or `"partial"` in `plan/units/*.toml`, excluding `audit.recursion` (a crate-wide audit with no runner; a port without a runner FAILS; a `green` port that comes out partial FAILS) |
 | `--status-of <id>` | run the unit (no report) and print only `green`, `partial` or `fail`; exit `1` on `fail` (also when no runner is registered) |
 | `--all` | every registered runner |
@@ -46,7 +46,7 @@ nice -n 10 cargo test -p difftest --features cpp                     # harness s
 | `--fuzz-out D` | where `--fuzz` writes failing inputs (default `bin/fuzz/`; files go to `D/<unit>/`) |
 | `--ssi-corpus [--tol T] [--jobs N] [glob]` | score the engines against the SSI corpus (see [below](#--ssi-corpus-exact-ground-truth-ssi-corpus)); not a gate; without the `cpp` feature, the `ssi` engine alone |
 | `--solidcraft-cases [glob]` | score the Rust port on SolidCraft's whole-operation regression cases (see [below](#--solidcraft-cases-solidcraft-regression-cases)); not a gate, no `cpp` feature needed |
-| `--step-corpus [--jobs N] [glob]` | import STEP Tools' AP203/AP214 sample files and build every B-rep body on both kernels from the same intermediate (see [below](#--step-corpus-real-world-step-files)); not a gate; without `cpp`, the Rust side alone |
+| `--step-corpus [--constructor] [--jobs N] [glob]` | import STEP Tools' AP203/AP214 sample files and build every B-rep body on both kernels from the same intermediate (`--constructor`: through `SmBrepConstructor`) (see [below](#--step-corpus-real-world-step-files)); not a gate; without `cpp`, the Rust side alone |
 
 Exit status: `0` no failures (deferred cases are not failures), `1` any
 failure, `2` usage or setup error. Output: one summary line per unit,
@@ -251,6 +251,12 @@ HEAP blend.fillet_executive_p3 pads=1,3,8 checked=1 padded=1 address_dependent=1
 `padded=` counts the cases whose reruns really forked a padded child. With
 `padded=0` the line says so (`C++ runs in-process here: reruns unpadded, no address
 check`), because then nothing was tested for address dependence.
+
+Padding settings and counters are per calling thread; clearing padding leaves later
+children unpadded. A particular allocation is not guaranteed to keep its address
+between unpadded forks, or to change under a pad: parent allocations and allocator
+policy can move it. Check native output sensitivity rather than pinning raw heap
+addresses in a regression.
 
 It is a flag, not a gate: each case's outcome is judged against that run's first C++
 result, the summary line and exit status follow those outcomes, and no report is
@@ -775,8 +781,17 @@ nice -n 10 cargo run -p difftest -- --solidcraft-cases '3526-*'        # ids (<f
   `sweep` (a closed `profile` in `plane` at `origin` swept along one `path` arc or line in
   the XY plane, `SmApiCreateCurveSweep`), `loft` (`SmApiCreateSkinPrimitive` through
   `sections`, each one closed `profile` with its `plane` and `origin`; `degree` 1, ruled,
-  by default; capped at both ends), `fillet` (edges by a point on each), `offset_faces`
-  (faces by a point on each), `sheet_corner` (the deferred sheet-flange recipe below). Each
+  by default; capped at both ends), `fillet` (edges by a point on each), `chamfer` (the same
+  edge picking, `SmApiFilletEdges` with a linear cross section: `distance` is the radius of
+  the rolling ball of the constant-radius solver, the leg on each face for a right-angle edge
+  between planes (`distance * cot(α/2)` for an interior angle `α`, varying along curved
+  faces); one distance for all edges; `SmApiChamferFillet` is not used, it chamfers every
+  edge of a body), `offset_faces`
+  (faces by a point on each), `sweep_face` (the prism of a body's face: the face through
+  the point `face`, the one whose surface holds it and which classifies it inside, has its
+  loops' edge curves, trimmed to the edges, swept `distance` along `direction` with
+  `SmApiCreateLinearSweep` and capped; for a cut by a face's own boundary, #968),
+  `sheet_corner` (the deferred sheet-flange recipe below). Each
   writes the body `id`; the last writes `result`.
 * **Fixes** (`fixes`, optional): `Kernel::fixes` (`UpstreamFixes`) fields the case turns
   on, by name, for a case that needs an opt-in fix of an upstream defect (for example
@@ -787,10 +802,14 @@ nice -n 10 cargo run -p difftest -- --solidcraft-cases '3526-*'        # ids (<f
   that step failing with that error defers the case on the issue; any other error stays
   an `ERROR`, and the deferral keeps the full error text (for example
   `324-*/round_4_over_hole`, tangency-labs/solidcore#422).
-* **Expectations** (`expect`): `lumps` (bounded regions; `0` = nothing left), `volume`
-  (`value`, absolute `tol`, the `formula` it came from), `cylinder_faces_max`,
+  An empty or whitespace-only `error` never matches: the step failure stays an `ERROR`.
+* **Expectations** (`expect`): `lumps` (bounded regions; `0` = nothing left; a sealed
+  void is a region of its own), `volume` (`value`, absolute `tol`, the `formula` it came
+  from), `removed` (the same with the earlier body `from`: its volume minus `result`'s,
+  for a result without a closed-form volume of its own), `cylinder_faces_max`,
   `sheet_corner` (signed end distances and flat-pattern invariants).
-* **Verdicts**: `PASS`, `FAIL`, `UNCHECKED` (no check failed but one cannot be measured
+* **Verdicts**: `PASS`, `FAIL`, `UNCHECKED` (no expectations were supplied, or no check
+  failed but one cannot be measured
   yet: `cylinder_faces_max` until solidcore has a cylinder surface kind), `ERROR` (a step
   returned an error other than `Unported`), `DEFERRED`. A step that reaches unported code
   defers the case on the unit in its `SolidError::Unported`; `fillet` has no Rust
@@ -808,6 +827,8 @@ nice -n 10 cargo run -p difftest -- --solidcraft-cases '3526-*'        # ids (<f
 
   and `reports/solidcraft-cases.json` (`reports/solidcraft-cases_<glob>.json` for a
   glob): per case its source links, verdict, deferral, measured values and checks.
+  With no matching cases, the report still contains an empty case list and zero
+  verdict counts, replacing any earlier report at that path. `--no-report` writes nothing.
 * `cargo test -p difftest --lib solidcraft` checks that every case file loads, every
   case runs to a verdict, and every deferral names a plan unit.
 * **Adding cases:** add a new `fixtures/solidcraft/<issue>-<slug>.json`. Files load in
@@ -862,6 +883,7 @@ and copied only for informational, non-commercial use: they are never committed.
 scripts/fetch-steptools-corpus.sh                                   # corpus/steptools/, SHA-256 pinned
 nice -n 10 cargo run --profile difftest -p difftest --features cpp -- --step-corpus --jobs 4
 nice -n 10 cargo run --profile difftest -p difftest --features cpp -- --step-corpus 'ap203/block*'
+nice -n 10 cargo run --profile difftest -p difftest --features cpp -- --step-corpus --constructor --jobs 4
 ```
 
 * **Import.** `crates/step-import` (clean room, from the public ISO 10303-21 syntax and
@@ -879,11 +901,22 @@ nice -n 10 cargo run --profile difftest -p difftest --features cpp -- --step-cor
   edges, vertices), `SmApiBrepIsManifoldSolid`, `SmApiBrepComputeArea` and
   `SmApiBrepComputeVolume` (accuracy `1e-6`), `SmApiHealBrep`, and counts, manifold
   test and volume again. Face orientation is left to the stitch.
+* **`--constructor`.** The body is built instead the way a B-rep importer builds it,
+  through `SmBrepConstructor` (unit `topology.brep_constructor`): the constructor
+  script `step_import::script::from_body` (a region and shell per solid shell, void
+  regions for `BREP_WITH_VOIDS`, the face's outward face use from the file's face and
+  shell orientations, outer loop first, every edge made once and joined by the next
+  face that uses it, limits from the vertex points) runs on both kernels
+  (`harness/cpp/shim/topology_brep_constructor.cpp`, `crates/difftest/src/constructor.rs`).
+  No stitch: the `construct` stage (calls, failed calls, the first failure, a C++ crash,
+  geometry failures, B-rep made, `IsManifold`) replaces `faces` and `stitch`; the stages
+  after it are the same. The child gets `--constructor` as a fifth argument.
 * **Verdicts** (per body): `MATCH` (every stage agrees: statuses and counts equal,
   values within `1e-9` relative), `HEAL-DIFF` (every build stage agrees, the heal or a
   later stage differs), `DIFF` (a build stage differs), `DEFERRED` (the Rust side
   reached unported code; the unit is shown), `CRASH` (a child crashed, timed out or
-  the shim rejected the input), `SKIPPED` (no B-rep body in the file).
+  the shim rejected the input), `SKIPPED` (no B-rep body in the file), `RUST-ONLY` (a
+  build without `cpp`: the Rust side built the body, nothing was compared).
 * Each (body, kernel) runs in its own child process (`--step-case <file> <body>
   <cpp|rust> <out.json>`). Output: one line per body, a `STEP-CORPUS` summary line, and
   `bin/step-corpus/report.json` (per body: source counts, both sides' stages, verdict).
@@ -892,9 +925,11 @@ nice -n 10 cargo run --profile difftest -p difftest --features cpp -- --step-cor
 
 ## Notes
 
-* Cases run sequentially in one process: the C++ kernel has global state. A
+* A unit's cases run sequentially in one process: the C++ kernel has global state. A
   C++ crash (segfault) kills the run; use `--filter` to bisect (`--fuzz` runs
-  its cases in child processes instead).
+  its cases in child processes instead). Several units each run in a child process
+  of their own (`--jobs`), so one unit's latched C++ state (ND-3's `sdStaticStep`)
+  never reaches another's forked `fresh_process` children.
 * Rust panics in a runner are caught and reported as a failing case.
 * `solidcore-ffi` without feature `cpp` is an empty crate that builds for
   `wasm32-unknown-unknown`; the difftest binary refuses to run without `cpp`, except for `--solidcraft-cases` (Rust only).

@@ -503,7 +503,7 @@ fn domain(d: Option<[f64; 4]>) -> Result<Option<Extent2d>, HarnessError> {
 /// cannot return.
 fn status(e: &SolidError) -> i64 {
     match e {
-        SolidError::InvalidInput { .. } => 1007,
+        SolidError::InvalidInput { .. } | SolidError::PortInvariant { .. } => 1007,
         SolidError::Upstream { code, .. } => i64::from(*code),
         _ => -1,
     }
@@ -587,6 +587,7 @@ fn rust(k: &solidcore::kernel::Kernel, i: &Inputs) -> Result<Output, HarnessErro
     let fa = i.field.as_ref().ok_or_else(|| harness("missing field"))?;
     let uv_a = build(&fa.curve)?;
     let a = match TangentField::new(
+        k,
         &uv_a,
         &srf,
         dir_type(fa.dir)?,
@@ -628,6 +629,7 @@ fn rust(k: &solidcore::kernel::Kernel, i: &Inputs) -> Result<Output, HarnessErro
             let uv_b_own = build(&fb.curve)?;
             let uv_b = if i.flags & 2 != 0 { &uv_a } else { &uv_b_own };
             let b = match TangentField::new(
+                k,
                 uv_b,
                 srf_b_ref,
                 dir_type(fb.dir)?,

@@ -10,21 +10,26 @@
 //! operands use the passed Kernel. On success the result owns the primary arena;
 //! the two consumed input slots become empty arenas. The local `SmTopologyIntersector`
 //! is merge p4's [`KernelManifoldIntersector`] over the two arenas, notifying under
-//! the caller's `key_of` for both operands (the identities are unique within one
-//! B-rep, as the arena notification scheme's are), a split edge's new curve under its
-//! edge's identity with the curve's type code. No recursion.
+//! the caller's `key_of` for the primary operand and for the other one too unless the
+//! caller names it disjoint identities (the arena identities are unique only within
+//! one B-rep), a split edge's new curve under its edge's identity with the curve's type
+//! code. The closing `StitchFaces` runs on the caller's notification state, as
+//! upstream's glues notify A's own objects. No recursion.
 
-use super::primitives::{detailed_face, stitch_faces, Boolean2d};
+use super::primitives::{detailed_face, Boolean2d};
 use crate::boolean::merge::p4::{
     BooleanKernels, KernelManifoldIntersector, ManifoldIntersector, ManifoldKernelAdapter,
     ManifoldNotificationKeys,
 };
-use crate::error::{ignore_status, EntityRef, Result, SolidError};
+use crate::error::{ignore_or_pass_on, EntityRef, Result, SolidError};
 use crate::geom::attribute::AttributeStore;
 use crate::geom::context::{Context, MarkLock};
 use crate::geom::object::ObjectRef;
+use crate::heal::stitch::p1::BorrowedStitchEdits;
 use crate::kernel::Kernel;
 use crate::nurbs::b_spline_surface_n_lib::p2::OrientType;
+use crate::topology::brep::p4::stitch_faces_with_context;
+use crate::topology::brep::p9::CurveIdentity;
 use crate::topology::edge;
 use crate::topology::edgeuse::p1 as eu;
 use crate::topology::topology_traverser::{Entity, Marks};
@@ -53,15 +58,23 @@ pub(super) fn finish(
     result: &mut Option<Brep>,
     marks: (&mut Marks, &mut Marks),
     notifications: &mut edge::NotifyEnv<'_>,
+    other_key_of: Option<&dyn Fn(EntityRef) -> ObjectRef>,
 ) -> Result<()> {
     // SmTopologyIntersector sTI(*pContext, pBrepA, pBrepB,
     // SM_ZONE_TO_APPROXTOL3D(dZoneTol3d), 20.0*SM_PI/180.0)
     let tolerance = crate::math::max2(a.tolerance(), b.tolerance());
     let key_of = notifications.key_of;
+    let other_key_of = other_key_of.unwrap_or(key_of);
     let curve = |e: EdgeId, kind: i64| {
         Ok(ObjectRef {
             type_code: kind,
             ..key_of(EntityRef::Edge(e))
+        })
+    };
+    let other_curve = |e: EdgeId, kind: i64| {
+        Ok(ObjectRef {
+            type_code: kind,
+            ..other_key_of(EntityRef::Edge(e))
         })
     };
     let no_sources = |_| {
@@ -72,9 +85,9 @@ pub(super) fn finish(
     };
     let keys = ManifoldNotificationKeys {
         primary: key_of,
-        other: key_of,
+        other: other_key_of,
         primary_curve: &curve,
-        other_curve: &curve,
+        other_curve: &other_curve,
         source_lists: &no_sources,
         actual_curve_identities: false,
     };
@@ -87,6 +100,7 @@ pub(super) fn finish(
             attributes,
             context,
             key_of,
+            curve: &curve,
         };
         finish_with(k, a, b, first, operation, result, marks, session)
     })
@@ -100,6 +114,8 @@ struct Session<'s, 'k, 'c> {
     attributes: &'s mut AttributeStore,
     context: &'s mut Option<&'c mut Context>,
     key_of: &'s dyn Fn(EntityRef) -> ObjectRef,
+    /// The primary operand's edge curve identities (for the stitch's split curves).
+    curve: &'s dyn Fn(EdgeId, i64) -> Result<ObjectRef>,
 }
 
 impl Session<'_, '_, '_> {
@@ -124,6 +140,8 @@ fn finish_with(
     marks: (&mut Marks, &mut Marks),
     mut session: Session<'_, '_, '_>,
 ) -> Result<()> {
+    // fork c8f6a31 (WR-662): Boolean2D's Relate and DeleteFaces are SER.
+    let p = k.fixes.sweep_statuses_pass_on;
     // intersect, merge, and relate the intersection geometry between the two topology graphs
     session.ti.intersect_insert_relate(
         &mut BooleanKernels {
@@ -177,7 +195,7 @@ fn finish_with(
                         .ok_or_else(|| SolidError::null_pointer(OP))?;
                     marks_b.mark(k, Entity::Face(mate), mark_b);
                     // sTI.Relate(pF,pOFace), its status unchecked
-                    ignore_status(session.ti.relate_faces(a, face, b, mate))?;
+                    ignore_or_pass_on(session.ti.relate_faces(a, face, b, mate), p)?;
                 }
             }
             for edgeuse in edge::edgeuses(b, other, None, None)?.into_iter().step_by(2) {
@@ -259,18 +277,30 @@ fn finish_with(
             }
         }
         // sTI.DeleteFaces(sDelFaces), its status unchecked
-        ignore_status(session.ti.delete_faces(
-            &mut BooleanKernels {
-                primary: k,
-                other: None,
-            },
-            a,
-            session.attributes,
-            &delete,
-            None,
-        ))?;
+        ignore_or_pass_on(
+            session.ti.delete_faces(
+                &mut BooleanKernels {
+                    primary: k,
+                    other: None,
+                },
+                a,
+                session.attributes,
+                &delete,
+                None,
+            ),
+            p,
+        )?;
         if operation != Boolean2d::Merge {
-            stitch_faces(k, a, a.tolerance())?;
+            // pBrepA->StitchFaces(pBrepA->GetTolerance()): its glues notify A's own
+            // objects, so it runs on the caller's notification state
+            let tolerance = a.tolerance();
+            let curve = session.curve;
+            let mut env = session.env();
+            let mut edits = BorrowedStitchEdits {
+                env: &mut env,
+                curve_identity: CurveIdentity::Checked(curve),
+            };
+            stitch_faces_with_context(k, a, tolerance, None, false, None, Some(&mut edits))?;
             remove_topology(k, a, &mut session.env())?;
         }
         *result = Some(core::mem::take(a));

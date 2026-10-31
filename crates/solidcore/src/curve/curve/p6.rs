@@ -14,7 +14,7 @@
 //! | [`Curve::global_point_solve_step`]                      | `SmCurve::GlobalPointSolveSTEP` (and its dispatch) |
 //! | [`Curve::curve_max_distance_between`], [`MaxDistance`]  | `SmCurve::CurveMaxDistanceBetween`    |
 //! | [`Curve::simple_coincidence_checker`]                   | `SmCurve::SimpleCoincidenceChecker`   |
-//! | [`Curve::global_coincidence_checker`], [`Coincidence`]  | `SmCurve::GlobalCoincidenceChecker`   |
+//! | [`Curve::global_coincidence_checker`], [`Curve::global_coincidence_checker_with_partial`], [`Coincidence`]  | `SmCurve::GlobalCoincidenceChecker`   |
 //! | [`Curve::deform_to_end_point_targets`]                  | `SmCurve::DeformToEndPointTargets`    |
 //!
 //! Deviations: endpoint deformation rejects non-B-spline UV curves with
@@ -57,8 +57,8 @@
 //!   tripled per split) keeps the two curves' caches for its whole recursion instead
 //!   (`Curve::global_point_solve_cached`), built at the first global solve as
 //!   upstream's; the build is deterministic, so the solutions are those of a fresh
-//!   cache. [`Curve::drop_point_in`] keeps the caches of a caller's curves in a
-//!   [`DropPointCaches`] (`IsPointOnCurve` in `FindInteriorCurves`). Other
+//!   cache. `Curve::drop_point_in` keeps the caches of a caller's curves in a
+//!   `DropPointCaches` (`IsPointOnCurve` in `FindInteriorCurves`). Other
 //!   `DropPoint` callers still build one per call.
 //! - **Recursion.** `GlobalCoincidenceChecker` splits closed and half closed curves
 //!   recursively; past [`MAX_COINCIDENCE_DEPTH`] nested splits it fails with
@@ -72,26 +72,42 @@
 //!   `curve.curve_p5`) is told whether the solution's first object is its `this`
 //!   curve: the split solutions name `[this, other]`, so it is when the coincidence
 //!   check split the other curve, or `this` and the other are the same curve.
+//! - **Crossing, not a range (opt-in).** With
+//!   `Kernel::fixes.simple_coincidence_crossing_is_point`,
+//!   [`Curve::simple_coincidence_checker`] returns a range whose separation changes
+//!   sides between its ends as the crossing inside it (WR-647; the fork's
+//!   tangency-labs/smlib@c2e3d9d). Off, it is upstream's.
+//! - **Statuses passed on (WR-663).** With the opt-in
+//!   `Kernel::fixes.query_statuses_pass_on` the statuses SMLib drops are passed on, as the
+//!   fork (tangency-labs/smlib 8311f8e): `CalculateBoundingBox`'s samples, interval and
+//!   boxes, `CurveMaxDistanceBetween`'s knots, `DeformToEndPointTargets`' drops (a target
+//!   that does not drop is `SM_ERR`) and `ConvertTo2D` (before the UV curve is replaced);
+//!   `IsPlanar` is `FALSE` without its box.
 
 use crate::curve::curve::knots_ignoring_status;
 use crate::curve::curve::p1::{ApproximateCurveOptions, GlobalPointSolveOptions};
 use crate::curve::curve::p2::{
-    at, snap_sol_to_specified_endpoint, Curve, CurveKind, CurvePropertyType,
+    at, ignored_or_soft, snap_sol_to_specified_endpoint, Curve, CurveKind, CurvePropertyType, Soft,
 };
-use crate::curve::curve::p3::PointSolveOptions;
+use crate::curve::curve::p3::{local_curve_intersect, PointSolveOptions};
 use crate::curve::curve::p5::{
     is_point_solution_across_closed_seam_boundary, local_property_analysis,
 };
 use crate::curve::curve_cache::CurveCache;
-use crate::error::{ignore_status, ignored, Result, SolidError};
+use crate::error::{
+    ignore_or_pass_on, ignore_status, ignored, ignored_or_pass_on, passed_on, Result, SolidError,
+};
 use crate::geom::extent1d::Extent1d;
 use crate::geom::extent3d::Extent3d;
-use crate::geom::global_solver::{GlobalSolve, GlobalSolver, SolutionRequested, SolverOperation};
+use crate::geom::global_solver::{
+    GlobalSolve, GlobalSolver, PreferredSolution, SolutionPairType, SolutionRequested,
+    SolverOperation,
+};
 use crate::geom::object::ObjectRef;
 use crate::geom::polar_box::{PolarBox, PolarBoxState};
 use crate::geom::pseudo_box::{Planar, PseudoBox};
 use crate::geom::solution_array::{
-    ObjectKind, Solution, SolutionArray, SolutionObject, SolutionType, SortKey,
+    ObjectKind, ParameterDomains, Solution, SolutionArray, SolutionObject, SolutionType, SortKey,
 };
 use crate::geom::tol::{approx_tol_3d, are_same, is_zero, SmallTopoType, ZONE_TOL_3D};
 use crate::geom::vector3d::{Point3, Vec3};
@@ -125,7 +141,7 @@ const NUM_SPANS: u64 = 12;
 /// The handle of a curve inside this unit's own solves (upstream `this`): a curve with
 /// its natural interval.
 #[derive(Debug, Clone, Copy, PartialEq)]
-struct CurveHandle(Extent1d);
+pub(crate) struct CurveHandle(Extent1d);
 
 impl SolutionObject for CurveHandle {
     fn kind(&self) -> ObjectKind {
@@ -137,12 +153,64 @@ impl SolutionObject for CurveHandle {
     }
 }
 
+/// The two curves of [`Curve::global_coincidence_checker`] as its merged solutions name
+/// them (upstream's `this` and `crOtherCurve`): each handle's natural interval is its
+/// curve's (a handle's own answer first).
+struct CurvePair<O> {
+    objects: [Option<O>; 2],
+    intervals: [Extent1d; 2],
+}
+
+impl<O: SolutionObject> ParameterDomains<O> for CurvePair<O> {
+    fn natural_interval(&self, curve: &O) -> Option<Extent1d> {
+        curve.natural_interval().or_else(|| {
+            self.objects
+                .iter()
+                .zip(&self.intervals)
+                .find_map(|(h, ivl)| (h.as_ref() == Some(curve)).then_some(*ivl))
+        })
+    }
+}
+
+/// The `SmGlobalSolver` merging the split parts' solutions, its `IdenticalSolutions`
+/// (not overridden upstream) reading the curves' natural intervals ([`CurvePair`]).
+struct MergeSolver<'t, O> {
+    base: GlobalSolver<'t, O>,
+    domains: CurvePair<O>,
+}
+
+impl<'t, O: SolutionObject + 't> GlobalSolve<'t, O> for MergeSolver<'t, O> {
+    fn solver(&self) -> &GlobalSolver<'t, O> {
+        &self.base
+    }
+
+    fn solver_mut(&mut self) -> &mut GlobalSolver<'t, O> {
+        &mut self.base
+    }
+
+    fn identical_solutions(
+        &self,
+        sol1: &Solution<O>,
+        sol2: &Solution<O>,
+    ) -> Result<(SolutionPairType, Option<PreferredSolution>)> {
+        self.base.identical_solutions_in(sol1, sol2, &self.domains)
+    }
+}
+
 /// The curve caches of [`Curve::drop_point_in`], kept across calls on the same
 /// curves (performance only: upstream keeps each cache on its curve; see
 /// [`Curve::global_point_solve_cached`]). Slot `i` belongs to the caller's curve `i`,
 /// which must not change while the slots are used.
 #[derive(Debug, Default)]
 pub(crate) struct DropPointCaches(Vec<Option<CurveCache<CurveHandle>>>);
+
+impl DropPointCaches {
+    /// Drops the caches of slots `len..`, for a caller whose curves from `len` on were
+    /// removed (a slot must not outlive its curve).
+    pub(crate) fn truncate(&mut self, len: usize) {
+        self.0.truncate(len);
+    }
+}
 
 // ---- CalculateBoundingBox --------------------------------------------------------------
 
@@ -182,9 +250,13 @@ pub fn calculate_bounding_box_base(
     let mut rel_t1 = 0.0;
     let num_derivs = usize::from(want_tangents);
     let mut pt_der = [Vec3::UNDEF, Vec3::UNDEF];
+    // (the statuses below are ignored upstream and passed on with the opt-in fix,
+    // tangency-labs/smlib 8311f8e)
+    let pass_on = k.fixes.query_statuses_pass_on;
     let sample = |t: f64, pt_der: &mut [Vec3; 2]| -> Result<()> {
         // nonZeroTangent values (status ignored)
-        if let Some(v) = ignored(curve.evaluate(k, t, num_derivs, false, true))? {
+        let r = curve.evaluate(k, t, num_derivs, false, true);
+        if let Some(v) = ignored_or_pass_on(r, pass_on)? {
             for (dst, src) in pt_der.iter_mut().zip(v) {
                 *dst = src;
             }
@@ -209,7 +281,10 @@ pub fn calculate_bounding_box_base(
         if ii >= NUM_SPANS - 1 {
             rel_t1 = 1.0;
         }
-        ignored(sub_ivl.set_min_max(interval.evaluate(rel_t0), interval.evaluate(rel_t1)))?;
+        ignore_or_pass_on(
+            sub_ivl.set_min_max(interval.evaluate(rel_t0), interval.evaluate(rel_t1)),
+            pass_on,
+        )?;
 
         let pt0 = pt1;
         sample(sub_ivl.max(), &mut pt_der)?;
@@ -315,7 +390,7 @@ pub fn calculate_bounding_box_base(
     let mut bbox = Extent3d::new();
     if req.normal {
         let p0 = point(0)?;
-        ignored(bbox.set_min_max(p0, p0))?;
+        ignore_or_pass_on(bbox.set_min_max(p0, p0), pass_on)?;
     }
 
     // init pseudobox
@@ -346,7 +421,7 @@ pub fn calculate_bounding_box_base(
             // use basis vectors based on selected sample points
             let v2 = point(l3)? - point(l2)?;
             let [b1, b2, b3] = v1.make_unit_ortho_vectors(Some(v2))?;
-            ignored(pseudo.set_basis(b1, b2, b3))?;
+            ignore_or_pass_on(pseudo.set_basis(b1, b2, b3), pass_on)?;
         }
     }
 
@@ -512,9 +587,21 @@ impl Curve {
             pseudo: true,
             polar: false,
         };
-        let pseudo = ignored(self.calculate_bounding_box(k, &self.natural_interval(), req, true))?
-            .and_then(|b| b.pseudo)
-            .unwrap_or_else(PseudoBox::new);
+        let boxes = ignored_or_soft(
+            self.calculate_bounding_box(k, &self.natural_interval(), req, true),
+            k.fixes.query_statuses_pass_on,
+        )?;
+        // with the opt-in fix a curve that cannot be boxed is not shown planar; its
+        // outputs are not written (tangency-labs/smlib 8311f8e)
+        let Soft::Kept(boxes) = boxes else {
+            return Ok(Planar {
+                is_planar: false,
+                point: Vec3::UNDEF,
+                normal: Vec3::UNDEF,
+                deviation: crate::math::UNDEF_DOUBLE,
+            });
+        };
+        let pseudo = boxes.and_then(|b| b.pseudo).unwrap_or_else(PseudoBox::new);
         Ok(pseudo.is_planar(tol))
     }
 
@@ -583,8 +670,8 @@ impl Curve {
 
     /// [`Curve::drop_point`] keeping the curve's cache for the global solve in
     /// `cache` across calls on this unchanged curve (upstream keeps it on the curve;
-    /// see [`Curve::global_point_solve_cached`]). The `SmCrvOnSurf` override keeps its
-    /// own approximation and does not use it.
+    /// see [`Curve::global_point_solve_cached`]). The `SmCrvOnSurf` override (also as
+    /// the base of an `SmTangentField`) passes it to its base-class drop.
     fn drop_point_cached(
         &self,
         k: &Kernel,
@@ -597,10 +684,19 @@ impl Curve {
         cache: &mut Option<CurveCache<CurveHandle>>,
     ) -> Result<DroppedPoint> {
         match self.kind() {
-            // the SmCrvOnSurf override (its cache update is lost on this copy)
-            CurveKind::CrvOnSurf(c) => {
-                c.drop_point_ref(k, interval, point, vec_to_inside, dist_tol, guess, op)
-            }
+            // the SmCrvOnSurf override (its approximation and break updates are lost on
+            // this copy; the curve cache is the caller's)
+            CurveKind::CrvOnSurf(c) => c.drop_point_ref_as(
+                k,
+                interval,
+                point,
+                vec_to_inside,
+                dist_tol,
+                guess,
+                op,
+                None,
+                cache,
+            ),
             // the SmCrvOnSurf override on the derived object (its Evaluate)
             CurveKind::TangentField(c) => c.base().drop_point_ref_as(
                 k,
@@ -611,6 +707,7 @@ impl Curve {
                 guess,
                 op,
                 Some(c.members()),
+                cache,
             ),
             _ => self.drop_point_base_cached(
                 k,
@@ -654,7 +751,7 @@ impl Curve {
 
     /// [`Curve::drop_point_base`] with the global solve's curve cache kept in `cache`
     /// (see [`Curve::drop_point_cached`]).
-    fn drop_point_base_cached(
+    pub(crate) fn drop_point_base_cached(
         &self,
         k: &Kernel,
         interval: &Extent1d,
@@ -948,12 +1045,17 @@ impl Curve {
         // there are a large number of knots.
         if num_samples == 0 {
             do_precise = true;
-            let knots = knots_ignoring_status(self.knots_with_status(k, None))?
-                .0
-                .len();
-            let other_knots = knots_ignoring_status(other.knots_with_status(k, None))?
-                .0
-                .len();
+            // (statuses ignored; passed on with the opt-in fix, tangency-labs/smlib
+            // 8311f8e)
+            let pass_on = k.fixes.query_statuses_pass_on;
+            let knots =
+                knots_ignoring_status(passed_on(self.knots_with_status(k, None), pass_on)?)?
+                    .0
+                    .len();
+            let other_knots =
+                knots_ignoring_status(passed_on(other.knots_with_status(k, None), pass_on)?)?
+                    .0
+                    .len();
             num_samples = 22 + knots as u64 + other_knots as u64;
         }
 
@@ -1387,6 +1489,51 @@ impl Curve {
             ]);
         }
 
+        // The curves stay within tolerance over the interval; they coincide there only
+        // if the separation between them keeps one side. Where it changes sides between
+        // the interval's ends the curves cross inside it: the answer is that crossing,
+        // as a curve/curve intersection finds it, not a range. A separation that
+        // vanishes to numeric zero has no side (WR-647, fork c2e3d9d).
+        if k.fixes.simple_coincidence_crossing_is_point {
+            let this_a = self.evaluate_point(k, first.0)?;
+            let this_b = self.evaluate_point(k, last.0)?;
+            let other_a = other.evaluate_point(k, first.1)?;
+            let other_b = other.evaluate_point(k, last.1)?;
+            let separation_a = other_a - this_a;
+            let separation_b = other_b - this_b;
+            let scaled_zero =
+                EFF_ZERO * (1.0 + max2(this_a.max_dimension(), this_b.max_dimension()));
+            if separation_a.length() > scaled_zero
+                && separation_b.length() > scaled_zero
+                && separation_a.dot(separation_b) < 0.0
+            {
+                // start where the separation, taken as linear between the ends, vanishes
+                let (da, db) = (separation_a.length(), separation_b.length());
+                let w = da / (da + db);
+                let found = local_curve_intersect(
+                    k,
+                    self,
+                    &ivl_t1,
+                    other,
+                    &ivl_t2,
+                    tol,
+                    first.0 + w * (last.0 - first.0),
+                    first.1 + w * (last.1 - first.1),
+                )?;
+                let Some(cross) = found else {
+                    // curves change sides but no crossing found
+                    return Err(SolidError::sm_err(
+                        "curve::simple_coincidence_checker (crossing)",
+                    ));
+                };
+                return Ok(vec![pair_solution(
+                    objects,
+                    (cross.my_param, cross.other_param, cross.deviation),
+                    None,
+                )]);
+            }
+        }
+
         // add 1 coincident intersection to solution array
         Ok(vec![pair_solution(objects, first, Some(last))])
     }
@@ -1437,6 +1584,42 @@ impl Curve {
         )
     }
 
+    /// [`Curve::global_coincidence_checker`] for a caller that ignores its status, as
+    /// upstream's callers that read `rSolutions` whatever the call returned: the check
+    /// and, with its error, the solutions it had added before failing (the end to end
+    /// point solutions; a split check adds its parts only once all of them succeeded).
+    pub fn global_coincidence_checker_with_partial<O: SolutionObject>(
+        &self,
+        k: &Kernel,
+        interval: &Extent1d,
+        other: &Self,
+        other_interval: &Extent1d,
+        tol: f64,
+        snap_to_ends: bool,
+        objects: [Option<O>; 2],
+    ) -> (Coincidence<O>, Result<()>) {
+        let mut caches = [None, None];
+        let mut calls = 0;
+        let mut out = Coincidence {
+            additional_work_needed: false,
+            solutions: Vec::new(),
+        };
+        let r = self.global_coincidence_checker_into(
+            k,
+            interval,
+            other,
+            other_interval,
+            tol,
+            snap_to_ends,
+            objects,
+            0,
+            &mut caches,
+            &mut calls,
+            &mut out,
+        );
+        (out, r)
+    }
+
     /// [`Curve::global_coincidence_checker`] at split depth `depth`; `calls` counts the
     /// calls of the whole check.
     fn global_coincidence_checker_at<O: SolutionObject>(
@@ -1452,6 +1635,43 @@ impl Curve {
         caches: &mut [Option<CurveCache<CurveHandle>>; 2],
         calls: &mut usize,
     ) -> Result<Coincidence<O>> {
+        let mut out = Coincidence {
+            additional_work_needed: false,
+            solutions: Vec::new(),
+        };
+        self.global_coincidence_checker_into(
+            k,
+            interval,
+            other,
+            other_interval,
+            tol,
+            snap_to_ends,
+            objects,
+            depth,
+            caches,
+            calls,
+            &mut out,
+        )?;
+        Ok(out)
+    }
+
+    /// [`Curve::global_coincidence_checker_at`] into `out` (upstream's `rSolutions` and
+    /// `rbAdditionalWorkNeeded`): on an error `out` keeps what the check had added
+    /// before it (the end to end point solutions).
+    fn global_coincidence_checker_into<O: SolutionObject>(
+        &self,
+        k: &Kernel,
+        interval: &Extent1d,
+        other: &Self,
+        other_interval: &Extent1d,
+        tol: f64,
+        snap_to_ends: bool,
+        objects: [Option<O>; 2],
+        depth: usize,
+        caches: &mut [Option<CurveCache<CurveHandle>>; 2],
+        calls: &mut usize,
+        out: &mut Coincidence<O>,
+    ) -> Result<()> {
         *calls += 1;
         if depth > MAX_COINCIDENCE_DEPTH {
             return Err(SolidError::invalid_input(
@@ -1467,17 +1687,17 @@ impl Curve {
         }
 
         // init output
-        let mut out = Coincidence {
+        *out = Coincidence {
             additional_work_needed: false,
             solutions: Vec::new(),
         };
 
         // no work - either curve is degenerate - no solutions possible
         if self.is_degenerate(k, tol / 2.0, Some(interval))? {
-            return Ok(out);
+            return Ok(());
         }
         if other.is_degenerate(k, tol / 2.0, Some(other_interval))? {
-            return Ok(out);
+            return Ok(());
         }
 
         // Cheap reject: segments whose bounding boxes are farther apart than the
@@ -1494,7 +1714,7 @@ impl Curve {
                 {
                     if let (Some(a), Some(b)) = (this_box.normal, other_box.normal) {
                         if a.are_disjoint(&b, tol) {
-                            return Ok(out);
+                            return Ok(());
                         }
                     }
                 }
@@ -1523,7 +1743,16 @@ impl Curve {
                     .solutions,
                 );
             }
-            return self.merge_split_solutions(k, &parts, interval, other, other_interval, true);
+            *out = self.merge_split_solutions(
+                k,
+                &parts,
+                interval,
+                other,
+                other_interval,
+                true,
+                objects,
+            )?;
+            return Ok(());
         }
 
         // Do the same recursive division if the second curve is closed.
@@ -1547,7 +1776,16 @@ impl Curve {
                     .solutions,
                 );
             }
-            return self.merge_split_solutions(k, &parts, interval, other, other_interval, false);
+            *out = self.merge_split_solutions(
+                k,
+                &parts,
+                interval,
+                other,
+                other_interval,
+                false,
+                objects,
+            )?;
+            return Ok(());
         }
 
         // Two non closed intervals: drop the endPoints, sort them and test the
@@ -1662,7 +1900,7 @@ impl Curve {
         // No work - No points dropped so far no solutions possible
         if drops.is_empty() {
             out.additional_work_needed = true;
-            return Ok(out);
+            return Ok(());
         }
 
         // drop thisCurve EndPoint onto otherCurve
@@ -1682,7 +1920,7 @@ impl Curve {
 
         let (Some(&first), Some(&last)) = (drops.first(), drops.last()) else {
             out.additional_work_needed = true;
-            return Ok(out);
+            return Ok(());
         };
         let num_t = drops.len();
 
@@ -1697,7 +1935,7 @@ impl Curve {
                     || (last.1 - first.1).abs() < scaled_zero2))
         {
             out.additional_work_needed = true;
-            return Ok(out);
+            return Ok(());
         }
 
         // Test additional points for intersection.
@@ -1720,7 +1958,7 @@ impl Curve {
         if gap.distance > tol {
             // we need additional work - to pull out the sub-intervals that are coincident
             out.additional_work_needed = true;
-            return Ok(out);
+            return Ok(());
         }
 
         // Add coincident Intersection to solution
@@ -1777,7 +2015,7 @@ impl Curve {
         }
 
         // all done
-        Ok(out)
+        Ok(())
     }
 
     /// Whether [`Curve::global_coincidence_checker`] splits this curve over
@@ -1807,7 +2045,9 @@ impl Curve {
     /// [`Curve::global_coincidence_checker`] (this curve split when `split_this`,
     /// else the other), skipping point solutions across a closed seam, sorted by all
     /// parameters, and decides whether more work is needed: not when the leading
-    /// contiguous run of range solutions covers all of either interval.
+    /// contiguous run of range solutions covers all of either interval. The solutions
+    /// name this curve and `other` (`objects`), whose natural intervals the merge's
+    /// `IdenticalSolutions` reads ([`MergeSolver`]).
     fn merge_split_solutions<O: SolutionObject>(
         &self,
         k: &Kernel,
@@ -1816,13 +2056,21 @@ impl Curve {
         other: &Self,
         other_interval: &Extent1d,
         split_this: bool,
+        objects: [Option<O>; 2],
     ) -> Result<Coincidence<O>> {
         // Now Combine the solutions if there are any
-        let mut gs: GlobalSolver<'_, O> = GlobalSolver::new();
-        gs.num_trees = 2;
-        gs.num_variables = 2;
-        gs.tolerance_3d = 0.0;
-        gs.set_solutions(SolutionArray::new());
+        let mut base: GlobalSolver<'_, O> = GlobalSolver::new();
+        base.num_trees = 2;
+        base.num_variables = 2;
+        base.tolerance_3d = 0.0;
+        base.set_solutions(SolutionArray::new());
+        let mut gs = MergeSolver {
+            base,
+            domains: CurvePair {
+                objects,
+                intervals: [self.natural_interval(), other.natural_interval()],
+            },
+        };
 
         for part in parts {
             for sol in part {
@@ -1858,7 +2106,7 @@ impl Curve {
                 gs.add_sorted_solution(sol, SortKey::ByAllParameters, true)?;
             }
         }
-        let solutions = gs.set_solutions(SolutionArray::new());
+        let solutions = gs.base.set_solutions(SolutionArray::new());
 
         // accumulate coincident range domains
         let mut check_ivl1 = Extent1d::new();
@@ -1996,10 +2244,20 @@ impl Curve {
                         guess_uv: Some(crate::math::Vec2::new(current.x, current.y)),
                         ..Default::default()
                     };
-                    let uv = ignored(surface.drop_point::<crate::surface::surface::p4::NoObject>(
-                        k, target, &domain, &options,
-                    ))?
-                    .map_or(crate::math::Vec2::UNDEF, |result| result.result_uv);
+                    // (status ignored; with the opt-in fix a failed drop is passed on
+                    // and a target that does not drop onto the surface has no UV
+                    // point, SM_ERR, tangency-labs/smlib 8311f8e)
+                    let pass_on = k.fixes.query_statuses_pass_on;
+                    let dropped = ignored_or_pass_on(
+                        surface.drop_point::<crate::surface::surface::p4::NoObject>(
+                            k, target, &domain, &options,
+                        ),
+                        pass_on,
+                    )?;
+                    if pass_on && !dropped.as_ref().is_some_and(|d| d.success) {
+                        return Err(SolidError::sm_err(OP_DEFORM));
+                    }
+                    let uv = dropped.map_or(crate::math::Vec2::UNDEF, |result| result.result_uv);
                     Ok(Some(Point3::new(uv.x, uv.y, 0.0)))
                 };
                 let start = drop_target(tgt_start, ends.start)?;
@@ -2029,7 +2287,13 @@ impl Curve {
                     InValueType::Same,
                 )?;
                 if let Some(mut replacement) = replacement {
-                    ignore_status(replacement.convert_to_2d(k))?;
+                    // (status ignored; passed on with the opt-in fix before the UV
+                    // curve is replaced, so a failure leaves it as it was,
+                    // tangency-labs/smlib 8311f8e)
+                    ignore_or_pass_on(
+                        replacement.convert_to_2d(k),
+                        k.fixes.query_statuses_pass_on,
+                    )?;
                     curve.set_uv_curve(replacement)?;
                 }
                 return Ok(None);
@@ -2169,6 +2433,20 @@ mod tests {
     /// earlier drop filled gives exactly the result of a fresh slot for that drop alone
     /// (no reuse at all), and lands where it should. Points on and just off the circle
     /// at 48 angles, so the global solve runs on the pre-filled slot.
+    #[test]
+    fn issue_2009_unboxable_curve_is_not_shown_planar() {
+        // tangency-labs/smlib 8311f8e (SmCurve::IsPlanar, CalculateBoundingBox): a
+        // curve that cannot be boxed is not shown planar; the box passes on its
+        // evaluations. Upstream reads the default box, which is planar.
+        // Discriminating.
+        let c = Curve::from(BSplineCurve::new(3));
+        let off = Kernel::default();
+        let mut on = Kernel::default();
+        on.fixes.query_statuses_pass_on = true;
+        assert!(c.is_planar(&off, EFF_ZERO).unwrap().is_planar);
+        assert!(!c.is_planar(&on, EFF_ZERO).unwrap().is_planar);
+    }
+
     #[test]
     fn drop_with_prefilled_cache_slot_matches_fresh_slot_per_drop() {
         let k = Kernel::default();

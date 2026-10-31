@@ -28,7 +28,8 @@ and the same with the degree-1 law `radii [4, 2, 4], knots [0, 0.5, 1], multipli
 
 Controls that pass: the same edge pair with a linear law (`radius_end`, or a two-point
 degree-1 B-spline law) and with a constant r4; every single-edge law case. `--heap-pads
-1,2,3,5,8,13`: all 5 pair cases padded, `address_dependent=0`, `unstable=0`, so this is
+1,2,3,5,8,13` over 5 pair cases (the two above and the three controls: `radius_end`, the
+two-point degree-1 law, constant r4): all padded, `address_dependent=0`, `unstable=0`, so this is
 not heap order.
 
 ## Cause
@@ -60,7 +61,7 @@ well; the linear pair above happens to give the same values.
 ## Status
 
 The two corner-pair cases are left out of `fixtures/blend.fillet_executive_p3/bspline_radius_law.json`
-in this PR (no known-mismatch entries). Follow-up: "fix: blend.fillet_standard_solver —
+in this PR (no known-mismatch entries). Follow-up: #1406, "fix: blend.fillet_standard_solver —
 variable-radius solvers share one law, as upstream": the laws live in the fillet session's
 law store, each solver holds a handle, and evaluation, `SmTemporaryRadiusChange` set-up and
 revert, and the extended-law cache go through it. That PR adds the corner-pair cases at

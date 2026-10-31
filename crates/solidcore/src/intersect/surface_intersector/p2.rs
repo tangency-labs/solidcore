@@ -59,7 +59,7 @@ use core::cmp::Ordering;
 use crate::blend::fillet_standard_solver::p1::FilletLaw;
 use crate::curve::curve::p8::CurveIntersectOptions;
 use crate::curve::curve::Curve;
-use crate::error::{Result, SolidError};
+use crate::error::{passed_on, Result, SolidError};
 use crate::geom::extent1d::Extent1d;
 use crate::geom::extent2d::Extent2d;
 use crate::geom::extent3d::Extent3d;
@@ -76,7 +76,7 @@ use crate::nurbs::b_spline_curve_n_lib::TrimMode;
 use crate::nurbs::b_spline_surface::SurfParamType;
 use crate::nurbs::b_spline_surface_n_lib::p2::EvaluateFlags;
 use crate::nurbs::knots::Side;
-use crate::surface::surface::p2::{drop_vectors, TsectCurveType};
+use crate::surface::surface::p2::{drop_vectors, TsectCurveType, B_SPLINE_SURFACE_TYPE};
 use crate::surface::surface::{Surface, SurfaceKind};
 use crate::surface::surface_cache::PatchBoundaryBoundingPlanes;
 
@@ -268,11 +268,11 @@ impl SurfaceIntersector<'_> {
         let surf2 = self.surface(SrfIndex::Second);
 
         // Control polygons are not available for general surfaces: bail out if not
-        // a BSplineSurface (SM_CAST_PTR(SmBSplineSurface, ..): B-splines and planes;
-        // curve-bounded and STEP surfaces derive from SmSurface only)
-        let is_bss =
-            |s: &Surface| matches!(s.kind(), SurfaceKind::BSpline(_) | SurfaceKind::Plane(_));
-        if !is_bss(surf1) || !is_bss(surf2) {
+        // a BSplineSurface (SM_CAST_PTR(SmBSplineSurface, ..): every kind derived from
+        // it, planes, cones, spheres, tori and surfaces of revolution and extrusion;
+        // curve-bounded, STEP, offset and volume surfaces derive from SmSurface only)
+        let is_bss = |s: &Surface| s.is_kind_of(B_SPLINE_SURFACE_TYPE);
+        if !is_bss(surf1)? || !is_bss(surf2)? {
             return Ok(BoundaryPlaneTestResult::Unknown);
         }
 
@@ -391,7 +391,12 @@ impl SurfaceIntersector<'_> {
                             // (`new SmBSplineCurve(*pBSC1)`: a plain B-spline copy)
                             let mut bsc =
                                 crate::surface::surface_cache::p1::copy_as_bspline(&bsc1)?;
-                            ignored(bsc.trim(k, &mut trim_ivl1, TrimMode::Notify))?;
+                            // (passed on with `ssi_proto_topology_statuses_pass_on`,
+                            // fork bcc6f01)
+                            ignored(passed_on(
+                                bsc.trim(k, &mut trim_ivl1, TrimMode::Notify),
+                                k.fixes.ssi_proto_topology_statuses_pass_on,
+                            )?)?;
 
                             // get SurfacePoints for each interval endPoint
                             let (s0, e0) = if are_same(min1.x, max1p.x) {
@@ -420,20 +425,14 @@ impl SurfaceIntersector<'_> {
                             // get endPoint SurfaceValues (statuses ignored)
                             let mut start_pnt = TsectPnt::new();
                             let mut end_pnt = TsectPnt::new();
-                            ignored(self.compute_point_values(
-                                k,
-                                [s0, s1],
-                                &mut start_pnt,
-                                None,
-                                None,
-                            ))?;
-                            ignored(self.compute_point_values(
-                                k,
-                                [e0, e1],
-                                &mut end_pnt,
-                                None,
-                                None,
-                            ))?;
+                            ignored(passed_on(
+                                self.compute_point_values(k, [s0, s1], &mut start_pnt, None, None),
+                                k.fixes.ssi_proto_topology_statuses_pass_on,
+                            )?)?;
+                            ignored(passed_on(
+                                self.compute_point_values(k, [e0, e1], &mut end_pnt, None, None),
+                                k.fixes.ssi_proto_topology_statuses_pass_on,
+                            )?)?;
 
                             // classify IntersectionCurve from its endPoint classifications
                             let ty = if start_pnt.point_type == IntersectionPointType::Coincidence
@@ -630,6 +629,7 @@ impl SurfaceIntersector<'_> {
                             uv_values,
                             point,
                             previous.map(TsectPnt::crv_deriv),
+                            k.fixes.dupin_bottom_hyperbola_axis,
                         ) {
                             Ok(()) => {}
                             Err(e) if e.is_unported() => return Err(e),
@@ -1176,8 +1176,11 @@ impl SurfaceIntersector<'_> {
             if self.domain(s).contains_point(uv0, 10.0 * EFF_ZERO)
                 && self.domain(o).contains_point(uv1, 10.0 * EFF_ZERO)
             {
-                // this surface's natural boundary point (status ignored)
-                if let Some(p) = ignored(self.surface(s).evaluate_point(k, uv0))? {
+                // this surface's natural boundary point (status ignored, passed on with
+                // `ssi_proto_topology_statuses_pass_on`, fork bcc6f01)
+                let pass = k.fixes.ssi_proto_topology_statuses_pass_on;
+                if let Some(p) = ignored(passed_on(self.surface(s).evaluate_point(k, uv0), pass)?)?
+                {
                     set3(&mut w.curve_point, tgt, p);
                 }
                 let cp = get3(&w.curve_point, tgt);
@@ -1195,10 +1198,11 @@ impl SurfaceIntersector<'_> {
                 )?;
                 if let Some([du, dv]) = found {
                     uv_drop = Point2::new(du, dv);
-                    // status ignored: the old values stay
-                    if let Some(m) =
-                        ignored(self.surface(o).evaluate(k, uv_drop, 1, 1, LEFT_UPPER))?
-                    {
+                    // status ignored: the old values stay (passed on with the flag)
+                    if let Some(m) = ignored(passed_on(
+                        self.surface(o).evaluate(k, uv_drop, 1, 1, LEFT_UPPER),
+                        pass,
+                    )?)? {
                         copy_upper_half(o_surf_pv, &m, 1);
                     }
 
@@ -1604,16 +1608,24 @@ pub fn compute_law_point_values_with<'s, V: IntersectorVirtuals<'s> + ?Sized>(
             ],
         };
 
-        // the plane and delta plane to intersect (statuses ignored)
+        // the plane and delta plane to intersect (statuses ignored; passed on with
+        // `ssi_proto_topology_statuses_pass_on`, fork bcc6f01)
+        let pass = k.fixes.ssi_proto_topology_statuses_pass_on;
         let delta_param = parameter + delta_step;
         let mut pv = [Vec3::UNDEF; 2];
         let mut pv_delta = [Vec3::UNDEF; 2];
-        if let Some(r) = ignored(law.point_curve.evaluate(k, parameter, 1, true, true))? {
+        if let Some(r) = ignored(passed_on(
+            law.point_curve.evaluate(k, parameter, 1, true, true),
+            pass,
+        )?)? {
             for (d, s) in pv.iter_mut().zip(r) {
                 *d = s;
             }
         }
-        if let Some(r) = ignored(law.point_curve.evaluate(k, delta_param, 1, true, true))? {
+        if let Some(r) = ignored(passed_on(
+            law.point_curve.evaluate(k, delta_param, 1, true, true),
+            pass,
+        )?)? {
             for (d, s) in pv_delta.iter_mut().zip(r) {
                 *d = s;
             }
@@ -1621,9 +1633,21 @@ pub fn compute_law_point_values_with<'s, V: IntersectorVirtuals<'s> + ?Sized>(
 
         if law.average_normals {
             let [n0, n1] = law.normals;
-            let t = ivl.inversion(parameter).parameter.unwrap_or(UNDEF_DOUBLE);
+            let inv = ivl.inversion(parameter);
+            // `SER( Inversion(dParameter, ..) )`: SM_ERR outside the interval or for a
+            // zero-length one
+            if pass && !inv.is_success() {
+                return Err(SolidError::sm_err(OP_LAW));
+            }
+            let t = inv.parameter.unwrap_or(UNDEF_DOUBLE);
             pv[1] = n0 * (1.0 - t) + n1 * t;
-            let t = ivl.inversion(delta_param).parameter.unwrap_or(UNDEF_DOUBLE);
+            let inv = ivl.inversion(delta_param);
+            // the step may end just past the interval, where the unclamped parameter
+            // is set and extrapolates as wanted: only an undefined one is passed on
+            if pass && inv.parameter.is_none() {
+                return Err(SolidError::sm_err(OP_LAW));
+            }
+            let t = inv.parameter.unwrap_or(UNDEF_DOUBLE);
             pv_delta[1] = n0 * (1.0 - t) + n1 * t;
         }
 

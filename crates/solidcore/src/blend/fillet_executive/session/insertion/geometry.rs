@@ -426,6 +426,54 @@ impl<'a> InsertionGeometry<'a> {
                 .collect(),
         )
     }
+    /// `SmTools::FindCoincidentEdge` over an actual face's edges (`SmFace::GetEdges`):
+    /// its first edge between the same-body vertices `start` and `end` along `curve`
+    /// within `tolerance`, with the sampled maximum deviation (WR-580, opt-in).
+    /// # Errors
+    /// Invalid/cross-body operands, topology walks and the search's evaluations.
+    #[allow(clippy::too_many_arguments)] // FindCoincidentEdge's in-params
+    pub fn face_coincident_edge(
+        &self,
+        k: &crate::Kernel,
+        face: FilletObject,
+        start: FilletObject,
+        end: FilletObject,
+        curve: &Curve,
+        interval: crate::geom::extent1d::Extent1d,
+        tolerance: f64,
+    ) -> Result<Option<(FilletObject, f64)>> {
+        let (role, EntityRef::Face(face)) =
+            Self::topology(face).ok_or_else(|| invalid("unknown Face role"))?
+        else {
+            return Err(invalid("handle is not a Face"));
+        };
+        let vertex = |object| match Self::topology(object) {
+            Some((r, EntityRef::Vertex(v))) if r == role => Ok(v),
+            _ => Err(invalid("handle is not a Vertex of the face's body")),
+        };
+        let (start, end) = (vertex(start)?, vertex(end)?);
+        let body = self.body(role);
+        let edges = crate::topology::face::p4::edges(body, face, None, false, None)?;
+        let query = crate::geom::tools::CoincidentEdgeQuery {
+            start_vertex: start,
+            end_vertex: end,
+            curve,
+            curve_owner: None,
+            interval,
+            tolerance,
+        };
+        Ok(
+            crate::geom::tools::find_coincident_edge(k, body, &query, &edges, 0)?.and_then(
+                |found| {
+                    let edge = *edges.get(found.index)?;
+                    Some((
+                        Self::handle(role, EntityRef::Edge(edge)),
+                        found.max_deviation,
+                    ))
+                },
+            ),
+        )
+    }
     /// Classify against the actual B-rep with its existing proven-owner query provider.
     /// # Errors
     /// Invalid body handle or the original point-query failure.
@@ -1515,6 +1563,56 @@ mod tests {
             assert_ne!(identities.first(), identities.get(1));
             let vertex = output.new_vertices.first().copied().unwrap();
             assert_eq!(view.point(vertex), Some(point));
+            Ok(())
+        })
+        .unwrap()
+        .unwrap();
+    }
+
+    #[test]
+    fn vertex_update_edge_intervals_delegates_to_brep_p1() {
+        let mut k = Kernel::default();
+        let mut target = box_at(&mut k, 0.0);
+        let mut intermediate = box_at(&mut k, 100.0);
+        let mut pseudo = FilletBrep::new();
+        *pseudo.brep_mut() = box_at(&mut k, 200.0);
+        let mut curves = InsertionCurves::default();
+        let mut records = crate::topology::topology::NotifyRecords::new();
+        let mut attributes = AttributeStore::default();
+
+        crate::topology::brep::p3::with_lent_context(&mut k, |k, context| -> Result<()> {
+            let mut view = InsertionGeometry::new(&mut target, &mut pseudo, &mut intermediate)?
+                .with_notifications(
+                    &mut curves,
+                    InsertionNotifications {
+                        records: &mut records,
+                        attributes: &mut attributes,
+                        context,
+                    },
+                )?;
+
+            // 1. Invalid handle returns error (not a vertex)
+            let edge = view.target.edges().ids().next().unwrap();
+            let edge_handle = FilletObject::Topology(FilletBody::Target, EntityRef::Edge(edge));
+            assert!(
+                crate::boolean::topology_intersector::p1::IntersectorBrep::vertex_update_edge_intervals(
+                    &mut view,
+                    k,
+                    edge_handle,
+                )
+                .is_err()
+            );
+
+            // 2. Valid vertex handle updates edge intervals successfully without UNPORTED error
+            let vertex = view.target.vertices().ids().next().unwrap();
+            let vertex_handle = FilletObject::Topology(FilletBody::Target, EntityRef::Vertex(vertex));
+            let res = crate::boolean::topology_intersector::p1::IntersectorBrep::vertex_update_edge_intervals(
+                &mut view,
+                k,
+                vertex_handle,
+            );
+            assert!(res.is_ok(), "vertex_update_edge_intervals must succeed: {:?}", res.err());
+
             Ok(())
         })
         .unwrap()
