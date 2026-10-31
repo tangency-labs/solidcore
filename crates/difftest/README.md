@@ -780,7 +780,7 @@ nice -n 10 cargo run -p difftest -- --solidcraft-cases '3526-*'        # ids (<f
   the other), `intersection`, `extrude`, `revolve`, `pipe` (a circle swept along a path),
   `sweep` (a closed `profile` in `plane` at `origin` swept along one `path` arc or line in
   the XY plane, `SmApiCreateCurveSweep`), `loft` (`SmApiCreateSkinPrimitive` through
-  `sections`, each one closed `profile` with its `plane` and `origin`; `degree` 1, ruled,
+  `sections`, each one closed `profile` with its `plane`, optional `turn_deg` about Z and `origin`; `degree` 1, ruled,
   by default; capped at both ends), `fillet` (edges by a point on each), `chamfer` (the same
   edge picking, `SmApiFilletEdges` with a linear cross section: `distance` is the radius of
   the rolling ball of the constant-radius solver, the leg on each face for a right-angle edge

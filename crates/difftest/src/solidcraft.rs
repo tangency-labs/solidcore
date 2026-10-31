@@ -434,6 +434,11 @@ pub struct LoftSection {
     /// Where the plane's origin sits.
     #[serde(default)]
     pub origin: P3,
+    /// Turn of the section about the world Z axis, in degrees (default 0: none). It is
+    /// applied after `plane` and before `origin`, so a section drawn in a plane that
+    /// contains Z (`xz`) and placed on the axis sweeps round Z as the angles grow.
+    #[serde(default)]
+    pub turn_deg: f64,
 }
 
 /// The plane a profile is drawn in, as a right-handed rotation of XY.
@@ -764,7 +769,9 @@ pub fn validate(case: &Case) -> Result<(), String> {
             Step::Loft { sections, .. } => {
                 sections.len() >= 2
                     && sections.iter().all(|s| {
-                        s.origin.iter().all(|x| x.is_finite()) && valid_profile(&s.profile)
+                        s.origin.iter().all(|x| x.is_finite())
+                            && s.turn_deg.is_finite()
+                            && valid_profile(&s.profile)
                     })
             }
             Step::Mirror { at, .. } => at.is_finite(),
@@ -1146,12 +1153,13 @@ fn cylinder(k: &mut Kernel, origin: P3, axis: P3, radius: f64, height: f64) -> R
     Ok(b)
 }
 
-/// The curves of `profile`, drawn in XY, turned onto `plane` about the origin and moved
-/// by `origin`.
+/// The curves of `profile`, drawn in XY, turned onto `plane` about the origin, turned
+/// `turn_deg` degrees about Z and moved by `origin`.
 fn profile_curves(
     k: &mut Kernel,
     profile: &[Seg],
     plane: ProfilePlane,
+    turn_deg: f64,
     origin: P3,
 ) -> Result<Vec<Curve>, Run> {
     let at = |[u, v]: [f64; 2]| Vec3::new(u, v, 0.0);
@@ -1203,6 +1211,16 @@ fn profile_curves(
                 Vec3::new(0.0, 0.0, 0.0),
                 axis,
                 deg,
+            )
+            .map_err(|e| solid(&e))?;
+        }
+        if turn_deg != 0.0 {
+            api_rotate(
+                k,
+                Some(TransformObject::Curve(c)),
+                Vec3::new(0.0, 0.0, 0.0),
+                Vec3::Z,
+                turn_deg,
             )
             .map_err(|e| solid(&e))?;
         }
@@ -1295,7 +1313,7 @@ fn step_rust(k: &mut Kernel, bodies: &mut BTreeMap<String, Brep>, step: &Step) -
             distance,
             ..
         } => {
-            let cs = profile_curves(k, profile, *plane, *origin)?;
+            let cs = profile_curves(k, profile, *plane, 0.0, *origin)?;
             let refs: Vec<Option<&Curve>> = cs.iter().map(Some).collect();
             let normal = match plane {
                 ProfilePlane::Xy => Vec3::new(0.0, 0.0, 1.0),
@@ -1314,7 +1332,7 @@ fn step_rust(k: &mut Kernel, bodies: &mut BTreeMap<String, Brep>, step: &Step) -
             angle_deg,
             ..
         } => {
-            let cs = profile_curves(k, profile, *plane, *origin)?;
+            let cs = profile_curves(k, profile, *plane, 0.0, *origin)?;
             let refs: Vec<Option<&Curve>> = cs.iter().map(Some).collect();
             sweeps::create_rotational_sweep(
                 k,
@@ -1333,7 +1351,7 @@ fn step_rust(k: &mut Kernel, bodies: &mut BTreeMap<String, Brep>, step: &Step) -
             origin,
             ..
         } => {
-            let cs = profile_curves(k, path, *plane, *origin)?;
+            let cs = profile_curves(k, path, *plane, 0.0, *origin)?;
             if let [single] = cs.as_slice() {
                 sweeps::create_pipe_sweep(k, *radius, Some(single), true).map_err(|e| solid(&e))?
             } else {
@@ -1387,7 +1405,7 @@ fn step_rust(k: &mut Kernel, bodies: &mut BTreeMap<String, Brep>, step: &Step) -
             let mut counts = Vec::new();
             let mut cs = Vec::new();
             for s in sections {
-                let section = profile_curves(k, &s.profile, s.plane, s.origin)?;
+                let section = profile_curves(k, &s.profile, s.plane, s.turn_deg, s.origin)?;
                 counts.push(section.len());
                 cs.extend(section);
             }
@@ -1403,13 +1421,19 @@ fn step_rust(k: &mut Kernel, bodies: &mut BTreeMap<String, Brep>, step: &Step) -
             path,
             ..
         } => {
-            let cs = profile_curves(k, profile, *plane, *origin)?;
+            let cs = profile_curves(k, profile, *plane, 0.0, *origin)?;
             // The path is one arc or line in the XY plane at the world origin (no plane
             // turn, no translation), so the profile's plane is normal to its start tangent.
-            let path = profile_curves(k, std::slice::from_ref(path), ProfilePlane::Xy, [0.0; 3])?
-                .into_iter()
-                .next()
-                .ok_or_else(|| Run::Error("sweep path has no curve".into()))?;
+            let path = profile_curves(
+                k,
+                std::slice::from_ref(path),
+                ProfilePlane::Xy,
+                0.0,
+                [0.0; 3],
+            )?
+            .into_iter()
+            .next()
+            .ok_or_else(|| Run::Error("sweep path has no curve".into()))?;
             let refs: Vec<Option<&Curve>> = cs.iter().map(Some).collect();
             let options = SweepOptions {
                 cap_ends: true,
@@ -2624,5 +2648,31 @@ mod tests {
         let one = r#"{"op": "loft", "id": "result", "sections": [{"profile": [{"kind": "circle", "center": [0, 0], "radius": 2}]}]}"#;
         assert!(validate(&case(vec![step(one)])).is_err());
         assert!(serde_json::from_str::<Step>(&loft.replace("\"origin\"", "\"orign\"")).is_err());
+        // `turn_deg` defaults to 0, loads when given, and must be finite.
+        let Step::Loft { sections, .. } = step(loft) else {
+            panic!("not a loft")
+        };
+        assert!(sections.iter().all(|s| s.turn_deg == 0.0));
+        let turned = loft.replace(
+            r#""origin": [0, 0, 5]"#,
+            r#""origin": [0, 0, 5], "turn_deg": 45.5"#,
+        );
+        let Step::Loft { sections, .. } = step(&turned) else {
+            panic!("not a loft")
+        };
+        assert_eq!(sections.get(1).map(|s| s.turn_deg), Some(45.5));
+        assert!(validate(&case(vec![step(&turned)])).is_ok());
+        let Step::Loft { mut sections, .. } = step(loft) else {
+            panic!("not a loft")
+        };
+        if let Some(s) = sections.get_mut(0) {
+            s.turn_deg = f64::NAN;
+        }
+        let nan = Step::Loft {
+            id: "result".into(),
+            sections,
+            degree: 1,
+        };
+        assert!(validate(&case(vec![nan])).is_err());
     }
 }
