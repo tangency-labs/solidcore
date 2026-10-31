@@ -1887,6 +1887,100 @@ mod tests {
     }
 
     #[test]
+    fn perspective_culling_keeps_a_projected_curve_intersection() {
+        use crate::curve::line::{BoundedLineOptions, Line};
+        use crate::nurbs::b_spline_curve::BSplineCurve;
+        use crate::nurbs::math::{CPoint, NOW};
+        // Existing native gen0415: the reference culls this entire sub-domain.
+        let mut k = Kernel::default();
+        k.fixes.perspective_sphere_offsets = true;
+        let end = 3.066334533625111;
+        let a = Curve::from(
+            BSplineCurve::from_data(
+                2,
+                2,
+                5,
+                2,
+                &[
+                    CPoint::new(
+                        -75.26250629633024,
+                        97.47471433423402,
+                        -96.4853230967887,
+                        NOW,
+                    ),
+                    CPoint::new(
+                        106.83943715202776,
+                        -85.98632559252543,
+                        -92.48715344473686,
+                        NOW,
+                    ),
+                    CPoint::new(
+                        79.32494730910105,
+                        81.21198890959349,
+                        -27.56301636148916,
+                        NOW,
+                    ),
+                ],
+                &[0.0, 0.0, 0.0, end, end, end],
+            )
+            .unwrap(),
+        );
+        let b_interval = Extent1d::from_min_max(-1.2053506543218062, 1.496161033133057);
+        let b = Curve::from(Line::bounded(
+            Vec3::new(46.02891374423513, 2.8018565682500896, -79.79499635658999),
+            Vec3::new(-2.4780729014824168, 1.814640352630617, -1.7427761407404312),
+            &b_interval,
+            &BoundedLineOptions {
+                scale: 2.0,
+                ..BoundedLineOptions::default()
+            },
+        ));
+        let view = [
+            Vec3::new(45.60954593743767, 4.1857714751382185, -86.49128048389895),
+            Vec3::new(0.0, 0.0, 1.0),
+            Vec3::new(45.60954593743767, 4.1857714751382185, -61.09184272346882),
+        ];
+        let interval = Extent1d::from_min_max(1.3133174130867764, 1.3925062245994866);
+        let opts = CurveSolveOptions {
+            opt_vectors: Some(&view),
+            handles: handles(&a, &b),
+            ..CurveSolveOptions::default()
+        };
+        let sols = a
+            .global_curve_solve(
+                &k,
+                &interval,
+                &b,
+                &b_interval,
+                SolverOperation::PerspectiveIntersect,
+                0.01,
+                &opts,
+                SolutionRequested::All,
+            )
+            .unwrap();
+        assert!(!sols.is_empty());
+        for s in sols.as_slice() {
+            let ta = s.start.parameters[0];
+            let tb = s.start.parameters[1];
+            assert!(ta >= interval.min() && ta <= interval.max());
+            assert!(tb >= b_interval.min() && tb <= b_interval.max());
+            let pa = a
+                .evaluate_point(&k, ta)
+                .unwrap()
+                .perspective_project_point_to_plane(view[0], view[1], view[2]);
+            let pb = b
+                .evaluate_point(&k, tb)
+                .unwrap()
+                .perspective_project_point_to_plane(view[0], view[1], view[2]);
+            assert!(
+                pa.distance(pb) <= 0.01,
+                "projected residual {}",
+                pa.distance(pb)
+            );
+        }
+    }
+
+    #[test]
     fn minimum_between_parallel_segments() {
         let k = Kernel::default();
         let a = segment([0.0, 0.0, 0.0], [4.0, 0.0, 0.0]);
@@ -1953,6 +2047,62 @@ mod tests {
                 bx.w_max()
             ],
             [1.0, -2.0, 0.5, 4.0, 3.0, 0.5]
+        );
+    }
+
+    #[test]
+    fn tight_box_over_a_sub_interval_holds_the_knots_inside() {
+        // Regression for #1054: `CalculateTightBoundingBox` used to add a B-spline's last
+        // (and any tangent-discontinuous) knot whatever the queried interval was, so an
+        // edge on part of a NURBS arc pulled its box out to the arc's far end. Only the
+        // knots strictly inside the interval may be added; the interval's ends are already
+        // in the box. The correction is opt-in; default behavior matches pinned C++.
+        use crate::geom::axis2_placement::Axis2Placement;
+        use crate::nurbs::b_spline_curve::NurbCircleParam;
+
+        let mut k = Kernel::default();
+        k.fixes.curve_tight_box_interval_knots = true;
+        let frame = Axis2Placement::new(
+            Vec3::from_array([0.0, 0.0, 0.0]),
+            Vec3::from_array([1.0, 0.0, 0.0]),
+            Vec3::from_array([0.0, 1.0, 0.0]),
+        );
+        let arc = Curve::from(
+            BSplineCurve::create_circle_segment(
+                3,
+                &frame,
+                50.0,
+                0.0,
+                90.0,
+                NurbCircleParam::Quadratic,
+            )
+            .unwrap(),
+        );
+        let ivl = arc.natural_interval();
+        // Half the arc: from its start to the midpoint of its interval (0 deg to 45 deg).
+        let half = Extent1d::from_min_max(ivl.min(), 0.5 * (ivl.max() - ivl.min()) + ivl.min());
+        let pinned = arc
+            .calculate_tight_bounding_box(&Kernel::default(), &half)
+            .expect("upstream tight box over a sub-interval");
+        assert!(pinned.u_min().abs() < 1e-6);
+        assert!((pinned.v_max() - 50.0).abs() < 1e-6);
+        let bx = arc
+            .calculate_tight_bounding_box(&k, &half)
+            .expect("tight box over a sub-interval");
+        // The arc's own point at 45 deg is (50 cos45, 50 sin45) = (35.355, 35.355); the
+        // buggy box reached the 90 deg endpoint (0, 50), so its u_min was 0 and v_max 50.
+        let r = 50.0 / sqrt(2.0);
+        assert!(
+            (bx.u_min() - r).abs() < 1e-6,
+            "u_min {} should be {}",
+            bx.u_min(),
+            r
+        );
+        assert!(
+            (bx.v_max() - r).abs() < 1e-6,
+            "v_max {} should be {}",
+            bx.v_max(),
+            r
         );
     }
 

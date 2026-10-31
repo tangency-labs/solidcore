@@ -135,8 +135,17 @@
 //!   the shell's result runs [`make_edges_on_analytics_exact`]. Upstream's
 //!   `CreateTrimmedNURBSCurve` gives `NULL` where the port returns an error; any error
 //!   but [`SolidError::Unported`] skips the edge as `NULL` does, as does a failing
+<<<<<<< 117a3b86dd
+//!   `GlobalSurfaceIntersect`. `SmBrep::ReplaceCurve` is written out in place
+//!   (`brep_replace_curve`, private), with `SmEdge::ClearUVCaches`. The faces'
+//!   surfaces are intersected through a [`BrepFaceServices`] of the result (the face
+//!   context upstream's `SmSurface::GetFace` gives each surface's trimmed cache), made
+//!   for each edge: the face caches are not kept from one edge to the next, where
+//!   upstream's stay on the surfaces between curve replacements.
+=======
 //!   `GlobalSurfaceIntersect`. `SmBrep::ReplaceCurve` is
 //!   [`crate::topology::brep::p2::replace_curve`].
+>>>>>>> 25ee959d855ff6348d4fd90d5881ffa16cb2e542
 //! - **Recursion.** None.
 
 use crate::blend::fillet_standard_solver::p1::CircularCrossSectionFsg;
@@ -169,6 +178,7 @@ use crate::nurbs::b_spline_surface::BSplineSurface;
 use crate::nurbs::b_spline_surface_n_lib::p2::{EvaluateFlags, OrientType};
 use crate::nurbs::knots::Side;
 use crate::nurbs::math::{NOW, NOZ};
+use crate::query::brep::BrepFaceServices;
 use crate::query::edge::ClosestPoint;
 use crate::surface::offset_surface::{OffsetSurface, SS_UNKNOWN as OFFSET_SS_UNKNOWN};
 use crate::surface::surface::p1::SurfaceSolveContext;
@@ -181,7 +191,13 @@ use crate::surface::surface_cache::face_context::FaceQueries;
 use crate::surface::surface_cache::SurfaceCache;
 use crate::topology::brep::p1 as bp1;
 use crate::topology::brep::p2 as brep_p2;
+<<<<<<< 117a3b86dd
+use crate::topology::brep_cache::CacheObject;
+use crate::topology::edge::{self as topo_edge, NotificationStores, NotifyState};
+use crate::topology::edgeuse::p1 as eu1;
+=======
 use crate::topology::edge::{self as topo_edge, NotificationStores};
+>>>>>>> 25ee959d855ff6348d4fd90d5881ffa16cb2e542
 use crate::topology::face::p3::create_uv_trim_curves;
 use crate::topology::proto_topology::ProtoGeometry;
 use crate::topology::{Brep, EdgeId, FaceId};
@@ -369,6 +385,13 @@ pub trait OffsetExecutive<O> {
     /// `GetOffsetEdgeuse`: the offset edge use related to `original`, only when exactly
     /// one is (`m_vEUToEU` is a many-to-many `SmRelation`; none or several give `None`).
     fn offset_edgeuse(&self, original: O) -> Option<O>;
+    /// Not upstream (WR-344 refinement, tangency-labs/solidcore#1795): `EdgeuseOffset`
+    /// could not mate the offsets of `original`'s edge (`MateEdges` failed, which upstream
+    /// only reports), so the merge must still intersect them; called only with
+    /// `Kernel::fixes.offset_extended_edges_mated`. The default ignores it.
+    fn note_unmated_edgeuse(&mut self, original: O) {
+        let _ = original;
+    }
     /// `GetCreateExtendedSurface(pBase, rUVDomainOfOffset, rpExtSurface)`: the extension
     /// of `base` cached by the executive (`m_vSurfExtSurf`), created on a miss by
     /// extending `base` by five offset distances
@@ -1338,12 +1361,25 @@ pub fn make_edges_on_analytics_exact(
         if !s1.is_analytic()? || !s2.is_analytic()? {
             continue;
         }
+        // The faces' own surfaces: the SSI reaches each one's cache through its face
+        // (`SmSurface::GetFace`, a trimmed surface cache), so the evaluation copies
+        // (same owner and cache slot) are intersected through the B-rep's face
+        // services, the handles naming the two faces.
+        let s1 = s1.clone_for_evaluation()?;
+        let s2 = s2.clone_for_evaluation()?;
+        let domain1 = s1.natural_uv_domain_with_nurb(k)?;
+        let domain2 = s2.natural_uv_domain_with_nurb(k)?;
         // The surfaces' own intersection: none found (tangent surfaces) leaves the edge.
-        let exact = match s1.global_surface_intersect(
+        let exact = match s1.global_surface_intersect_with_context(
             k,
-            &s1.natural_uv_domain_with_nurb(k)?,
-            s2,
-            &s2.natural_uv_domain_with_nurb(k)?,
+            [
+                Some(CacheObject::Surface(f0)),
+                Some(CacheObject::Surface(f1)),
+            ],
+            &mut BrepFaceServices::new(&mut *b),
+            &domain1,
+            &s2,
+            &domain2,
             use_surface_edges,
             Some(ssi_tol),
             Some(deg20_rad),
@@ -1396,6 +1432,51 @@ pub fn make_edges_on_analytics_exact(
     Ok(())
 }
 
+<<<<<<< 117a3b86dd
+/// `SmBrep::ReplaceCurve(pEdge, pNewCurve)`: the B-rep's pre-edit notification,
+/// `SmEdge::Replace3DCurve` (`SetCurve(curve, TRUE)`, the curve owned by the edge and
+/// the edge's interval the curve's natural interval) and `SmEdge::RemoveUVTrimCurves`
+/// (`ClearUVCaches`: the edge's pre-edit notification, every edge use's UV trim curve
+/// deleted and its gap to the next edge use reset, every vertex use's vertex/edge gap
+/// reset).
+fn brep_replace_curve(
+    k: &mut Kernel,
+    b: &mut Brep,
+    e: EdgeId,
+    curve: Curve,
+    stores: &mut NotificationStores<'_>,
+) -> Result<()> {
+    NotifyState::from_kernel_stores(stores).with_kernel_env(k, |_k, env| {
+        let this = Some(brep_p2::NotifyArg::Object(brep_p2::brep_ref(b)));
+        brep_p2::notify(b, env, None, NotifyOperation::PreEdit, [this, None, None])?;
+
+        // Replace3DCurve
+        topo_edge::replace_3d_curve(b, e, Some(curve), env)?;
+
+        // RemoveUVTrimCurves (ClearUVCaches)
+        let edge_ref = (env.key_of)(EntityRef::Edge(e));
+        let brep_ref = brep_p2::brep_ref(b);
+        topo_edge::notify(
+            b,
+            e,
+            env,
+            NotifyOperation::PreEdit,
+            [Some(edge_ref), Some(brep_ref), None],
+        )?;
+        for eu in topo_edge::edgeuses(b, e, None, None)? {
+            let _ = eu1::set_uv_trim_curve(b, eu, eu1::UvTrimCurveArg::Null, 0.0, true, None)?;
+            b.edgeuse_mut(eu)?.edge_ccw_edge_gap = EdgeEdgeGap::new();
+        }
+        for vu in topo_edge::vertexuses(b, e, None)? {
+            let vu = vu.ok_or(dangling("edge use without vertex use"))?;
+            b.vertexuse_mut(vu)?.vertex_edge_gap = VertexEdgeGap::new();
+        }
+        Ok(())
+    })
+}
+
+=======
+>>>>>>> 25ee959d855ff6348d4fd90d5881ffa16cb2e542
 /// `pSur->CreateOffsetSurface(ctx, signed_distance, approx_tol_3d, rNewSurface)`: the
 /// virtual call ([`Surface::create_offset_surface`] dispatches on the kind: the plane,
 /// surface of revolution and offset surface overrides, else `SmSurface`'s, which
@@ -3994,7 +4075,7 @@ impl OffsetGeometryCreation {
             }
 
             // Mate a couple of edges by extension and intersection (a problem is only reported).
-            let _ = ignore_soft(self.mate_edges(
+            let mated = ignore_soft(self.mate_edges(
                 k,
                 brep,
                 executive,
@@ -4004,6 +4085,11 @@ impl OffsetGeometryCreation {
                 other_offset_edgeuse,
                 mark,
             ))?;
+            // Not upstream (WR-344 refinement, #1795): the merge must still intersect the
+            // offsets of an edge that could not be mated
+            if mated.is_none() && k.fixes.offset_extended_edges_mated {
+                executive.note_unmated_edgeuse(original_edgeuse);
+            }
             return Ok(out);
         } // end when extending convex edges
 

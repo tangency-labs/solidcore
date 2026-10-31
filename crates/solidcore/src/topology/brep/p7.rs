@@ -63,7 +63,12 @@
 //!   (`topology.brep_p4`). `GlueVertices` calls `topology.brep_p5` with the caller's
 //!   notification environment. `CopyFaces` with the merge builds `boolean.merge_p2`'s
 //!   merge and calls its `MakeFaceuse` (so it takes the kernel mutably, for the
-//!   context's `DoingBoolean`); its copies are notified in `env`'s one identity space.
+//!   context's `DoingBoolean`). (not upstream: upstream's objects are their own
+//!   identities) `CopyFaces` names the copies by `env.key_of` (`this_face` for faces)
+//!   and the source by `env.key_of` too, or by its own naming in [`copy_faces_from`];
+//!   two namings that coincide on the source's objects name the source in a private
+//!   domain for the copy, and are refused where a source object's attribute list is on
+//!   a key the copies' naming gives out (the copies would share it).
 //!   `MergeSelfIntersectionCurves` classifies each UV curve with
 //!   `intersect.curve_class_p4`'s constructor and `query.face_p2`'s `CurveOnClassify`,
 //!   then `intersect.curve_class_p1`'s `SetCurve` and `intersect.curve_class_p5`'s
@@ -117,6 +122,7 @@ use crate::boolean::topology_intersector::p1::{Relations, TopologyIntersector};
 use crate::curve::crv_on_surf::CrvOnSurf;
 use crate::curve::curve::Curve;
 use crate::error::{ignore_status, ignored, EntityRef, Result, SolidError};
+use crate::geom::attribute::ObjectKey;
 use crate::geom::extent1d::Extent1d;
 use crate::geom::extent2d::Extent2d;
 use crate::geom::object::{NotifyOperation, ObjectRef};
@@ -644,7 +650,7 @@ fn mid_edge(ivl: &CurveInterval<IntersectObject>) -> Result<EdgeId> {
 // ---- owning-list edits ----------------------------------------------------------------------
 
 /// `SmEdge::Remove(eu)`: unlinks the edge use from the edge.
-fn edge_remove(b: &mut Brep, e: EdgeId, eu: EdgeuseId) -> Result<()> {
+pub(crate) fn edge_remove(b: &mut Brep, e: EdgeId, eu: EdgeuseId) -> Result<()> {
     let list = &mut b.edge_mut(e)?.edgeuses;
     let Some(at) = list.iter().position(|&x| x == eu) else {
         return Err(SolidError::sm_err(OP));
@@ -695,9 +701,10 @@ fn merge_shells(
 /// The tail of the shell merge once `reg` lost its last shell: `this->Remove(pReg)`
 /// (status ignored), then `m_pInfiniteRegion = m_pList`.
 fn remove_emptied_region(b: &mut Brep, reg: RegionId) -> Result<()> {
-    // Upstream deletes pReg even when Remove fails; a failed removal here leaves the
-    // region (and its in_brep) as it was. Unreachable: a merged shell's region is listed.
+    // Upstream deletes pReg even when Remove fails (unreachable: a merged shell's
+    // region is listed); `delete pReg` removes its record.
     ignore_status(brep_remove_region(b, reg))?;
+    b.remove_region_record(reg)?;
     // make sure infinite region points where it should: the first region of the list
     // (a stored head of None starts at the first region on the list; it is not an
     // empty list)
@@ -2047,15 +2054,134 @@ pub fn glue_edges_general(
 /// never lowered). Returns the
 /// new faces of `dest`, and whether every face was copied.
 ///
+/// (not upstream: upstream's objects are their own identities.) `env.key_of` names both
+/// B-reps here, so a copy and a source object of one arena id would share a key; the
+/// source is named apart for the copy as [`copy_faces_from`] describes. A caller whose
+/// source objects carry attributes names them apart itself ([`copy_faces_from`]).
+///
 /// # Errors
 ///
-/// `SM_ERR` for a face of another B-rep; [`SolidError::Unported`] (see the module docs).
+/// `SM_ERR` for a face of another B-rep; [`SolidError::Unported`] (see the module docs);
+/// `InvalidInput` as [`copy_faces_from`].
 pub fn copy_faces(
     k: &mut Kernel,
     src: &mut Brep,
     faces: &[FaceId],
     dest: &mut Brep,
     use_merge: bool,
+    this_face: &dyn Fn(FaceId) -> ObjectRef,
+    env: &mut ed::NotifyEnv<'_>,
+) -> Result<(Vec<FaceId>, bool)> {
+    let source_key = env.key_of;
+    copy_faces_from(k, src, faces, dest, use_merge, source_key, this_face, env)
+}
+
+/// [`copy_faces`] with the source objects notified under `source_key` instead of the
+/// environment's identities ([`ed::NotifyEnv::key_of`], which name the destination's):
+/// a copy between two B-reps whose attributes travel with the notifications
+/// (`crate::topology::brep::p2::CopyNotifyState`, `source_key` its
+/// `copy_source_ref`), as upstream's `SM_NO_COPY` gives each new object its source's.
+///
+/// (not upstream: upstream's objects are their own identities.) Namings that coincide
+/// on `src`'s objects (`source_key` and `env.key_of` / `this_face` alike, as
+/// [`copy_faces`] has them) would make a copy and a source object of one arena id share
+/// a key, and `SM_NO_COPY` would cross their attribute lists both ways (#1869 review).
+/// `src` is then named in a private domain for the copy (as `api_brep_copy` does, #1884),
+/// with the caller's records and attribute lists of it lent there and taken back after.
+/// Where a source object's list is on a key that naming gives the copies too, the call
+/// is refused: the source and its copies cannot keep their own lists apart in one store.
+/// `this_face` owns each new face's surface: [`super::validation::check_brep`] resolves
+/// owners by `dest`'s naming scheme, so a key outside it (a caller's own domain on a
+/// [`crate::topology::NamingScheme::Notify`] B-rep) reads as no owner (Test #35).
+///
+/// # Errors
+///
+/// As [`copy_faces`]; `InvalidInput` (before anything changes) for coinciding namings
+/// where a source object's attribute list is on a key the copies' naming gives out, or
+/// when no private domain is left for `src`'s names.
+#[allow(clippy::too_many_arguments)] // copy_faces's arguments and the source identities
+pub fn copy_faces_from(
+    k: &mut Kernel,
+    src: &mut Brep,
+    faces: &[FaceId],
+    dest: &mut Brep,
+    use_merge: bool,
+    source_key: &dyn Fn(EntityRef) -> ObjectRef,
+    this_face: &dyn Fn(FaceId) -> ObjectRef,
+    env: &mut ed::NotifyEnv<'_>,
+) -> Result<(Vec<FaceId>, bool)> {
+    // (not upstream) the copies' names (`env.key_of`, `this_face` for faces) against
+    // the source's: where they coincide on the source's objects, a copy would take the
+    // key of the source object of its arena id.
+    let dest_key_of = env.key_of;
+    let dest_name = |e: EntityRef| match e {
+        EntityRef::Face(f) => this_face(f),
+        other => dest_key_of(other),
+    };
+    let live = p2::live_entities(src);
+    let shift = super::p3::private_source_shift(&live, source_key, &dest_name)?;
+    let Some(shift) = shift else {
+        return copy_faces_named(k, src, faces, dest, use_merge, source_key, this_face, env);
+    };
+    // a source object's list on a key the copies' naming also gives out would be a
+    // copy's list too
+    let dest_keys: std::collections::BTreeSet<ObjectKey> =
+        live.iter().map(|&e| dest_name(e).key).collect();
+    let listed: Vec<EntityRef> = live
+        .iter()
+        .copied()
+        .filter(|&e| !env.attributes.attributes(source_key(e).key).is_empty())
+        .collect();
+    if listed
+        .iter()
+        .any(|&e| dest_keys.contains(&source_key(e).key))
+    {
+        return Err(SolidError::invalid_input(
+            OP,
+            "the source and its copies are named alike where the source has attributes",
+        ));
+    }
+    let shifted = |e: EntityRef| {
+        let r = source_key(e);
+        ObjectRef {
+            type_code: r.type_code,
+            key: ObjectKey(r.key.0 + shift),
+        }
+    };
+    // the caller's records and lists of the source, lent to its private names for the
+    // copy and taken back after
+    for &e in &live {
+        if let Some(&r) = env.records.get(&source_key(e).key) {
+            env.records.insert(shifted(e).key, r);
+        }
+    }
+    let mut lent = Vec::new();
+    for &e in &listed {
+        let key = shifted(e).key;
+        for h in env.attributes.attributes(source_key(e).key) {
+            env.attributes.add_attribute(key, h)?;
+            lent.push((key, h));
+        }
+    }
+    let copied = copy_faces_named(k, src, faces, dest, use_merge, &shifted, this_face, env);
+    for (key, h) in lent {
+        env.attributes.remove_attribute(key, h, true)?;
+    }
+    for &e in &live {
+        env.records.remove(&shifted(e).key);
+    }
+    copied
+}
+
+/// [`copy_faces_from`] once the source's names (`source_key`) are apart from the copies'.
+#[allow(clippy::too_many_arguments)] // copy_faces_from's arguments
+fn copy_faces_named(
+    k: &mut Kernel,
+    src: &mut Brep,
+    faces: &[FaceId],
+    dest: &mut Brep,
+    use_merge: bool,
+    source_key: &dyn Fn(EntityRef) -> ObjectRef,
     this_face: &dyn Fn(FaceId) -> ObjectRef,
     env: &mut ed::NotifyEnv<'_>,
 ) -> Result<(Vec<FaceId>, bool)> {
@@ -2078,16 +2204,16 @@ pub fn copy_faces(
             20.0 * PI / 180.0,
             None,
         )?;
-        let source_key = env.key_of;
+        let destination_key = env.key_of;
         let mut copy = TopologyCopy {
             vertices: VertexCopy {
                 records: env.records,
                 attributes: env.attributes,
                 source_key: &|v| source_key(EntityRef::Vertex(v)),
-                destination_key: source_key,
+                destination_key,
             },
             edge_source_key: &|e| source_key(EntityRef::Edge(e)),
-            edge_destination_key: &|e| source_key(EntityRef::Edge(e)),
+            edge_destination_key: &|e| destination_key(EntityRef::Edge(e)),
             face_source_key: &|f| source_key(EntityRef::Face(f)),
             face_destination_key: this_face,
         };
@@ -2162,16 +2288,23 @@ pub fn copy_faces(
                 // the default record its constructor gives it, so a face the caller
                 // has no record for gets one (#1628: a fresh empty map failed as soon
                 // as the new face's identity differed from the source face's).
-                let this = (env.key_of)(EntityRef::Face(f));
+                let this = source_key(EntityRef::Face(f));
                 let new_face = made.face.map(this_face);
                 env.records.or_default(this.key);
                 if let Some(nf) = new_face {
                     env.records.or_default(nf.key);
                 }
+                // (the source face notifies under its own identities)
+                let mut src_env = ed::NotifyEnv {
+                    records: &mut *env.records,
+                    attributes: &mut *env.attributes,
+                    context: env.context.as_deref_mut(),
+                    key_of: source_key,
+                };
                 crate::topology::face::p3::notify(
                     src,
                     f,
-                    env,
+                    &mut src_env,
                     None,
                     NotifyOperation::Copy,
                     [new_face, None, None],

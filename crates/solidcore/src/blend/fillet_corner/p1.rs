@@ -25,6 +25,7 @@
 //! | [`FilletCorner::this_approx_tol_3d`]         | `GetThisApproxTol3d` (and the `SmFilletCorner` branch of `SmTol::GetApproxTol3d(const SmObject*)`) |
 //! | [`FilletCorner::fillet_edges`], [`FilletCorner::fillet_vertices`] | `GetFilletEdges`, `GetFilletVertices` |
 //! | [`FilletCorner::filleted_vertex`], [`FilletCorner::set_back_dist`], [`FilletCorner::status`] | `GetFilletedVertex`, `GetSetBackDist`, `GetStatus` |
+//! | [`FilletCorner::ease_dist`] | `GetEaseDist` (the fork's, tangency-labs/smlib `e74bbd3`) |
 //! | [`FilletCorner::type_code`], [`FilletCorner::type_string`], [`FilletCorner::is_kind_of`] | `GetType`, `GetTypeString`, `IsKindOf` (`SM_COMMON`) |
 //! | [`FilletCorner::add_fillet_vertex`]          | `AddFilletVertex`                           |
 //! | [`FilletCorner::set_bevel`], [`FilletCorner::set_calc_as_const_rad`], [`FilletCorner::set_chamfer`] | `SetBevel`, `SetCalcAsConstRad`, `SmFilletConvexNxNCorner::SetChamfer` |
@@ -170,6 +171,8 @@ use crate::nurbs::b_spline_surface_n_lib::p2::OrientType;
 use crate::nurbs::knots::Side;
 use crate::query::brep::{BrepFaceServices, FaceCaches};
 use crate::surface::plane::Plane;
+use crate::surface::surface::p4::NoObject;
+use crate::surface::surface::p5::DropPointOptions;
 use crate::surface::surface::Surface;
 use crate::topology::brep::p7::{make_face_with_curves, FaceCurvesInput};
 use crate::topology::brep_cache::CacheObject;
@@ -701,6 +704,13 @@ impl FilletCorner {
     #[must_use]
     pub const fn set_back_dist(&self) -> f64 {
         self.set_back_dist
+    }
+
+    /// `GetEaseDist` (the fork's, tangency-labs/smlib `e74bbd3`, #1376): see
+    /// [`FilletCorner::ease_dist`].
+    #[must_use]
+    pub const fn ease_dist(&self) -> f64 {
+        self.ease_dist
     }
 
     /// `GetStatus`.
@@ -1460,33 +1470,70 @@ impl FilletCorner {
 
     /// The start of the fork's `SmFilletNx1Corner::CalcCornerEdgeGeom` (not upstream; opt-in
     /// `fixes.fillet_nx1_end_rib_global_merge`, WR-303, tangency-labs/solidcore#841;
-    /// tangency-labs/smlib `967f7ab`). At a corner of at most three edges the one corner
-    /// edge is the end rib, from one rail's end on its side edge to the other's. When
-    /// one rail missed its side edge (`SM_FV_NO_INT_RAIL_EU`) because that edge ends
-    /// within the fillet's width, there is no end rib: it is deleted and the caller sets
-    /// the executive's global merge, which cuts the round off where it meets the body.
-    /// Not when the side edge also lies on the fillet's other side surface: it continues
-    /// the filleted edge between the fillet's own two surfaces, no end exists there, and
-    /// the end rib fails as before. Returns whether the rib was deleted.
+    /// tangency-labs/smlib `967f7ab`), outside a cliff overflow: see
+    /// [`FilletCorner::drop_end_rib`]. Returns whether the rib was deleted for the global
+    /// merge.
     ///
     /// # Errors
-    /// `SM_ERR_NULL_POINTER` for a missing edge use, face, surface or curve (upstream
-    /// dereferences them); those of the surface coincidence test and the deletion.
+    /// Those of [`FilletCorner::drop_end_rib`].
     pub fn drop_end_rib_for_global_merge(
         &mut self,
         k: &mut Kernel,
         target: &mut Brep,
         pseudo: &mut FilletBrep,
     ) -> Result<bool> {
-        const OP: &str = "blend::fillet_corner::p1::drop_end_rib_for_global_merge";
+        let mut no_open_ends = |_, _, _| Ok(());
+        Ok(
+            self.drop_end_rib(k, target, pseudo, false, &mut no_open_ends)?
+                == EndRibDrop::GlobalMerge,
+        )
+    }
+
+    /// The start of the fork's `SmFilletNx1Corner::CalcCornerEdgeGeom` (not upstream; opt-in
+    /// `fixes.fillet_nx1_end_rib_global_merge`, WR-303, tangency-labs/solidcore#841;
+    /// tangency-labs/smlib `967f7ab`; in a cliff overflow, `fixes.fillet_cliff_overflow`,
+    /// WR-631, tangency-labs/smlib `8ba4667` and `3f22e97`). At a corner of at most three
+    /// edges the one corner edge is the end rib, from one rail's end on its side edge to
+    /// the other's. When one rail missed its side edge (`SM_FV_NO_INT_RAIL_EU`) because
+    /// that edge ends within the fillet's width, there is no end rib: it is deleted and
+    /// the caller sets the executive's global merge, which cuts the round off where it
+    /// meets the body. Not when the side edge also lies on the fillet's other side
+    /// surface: it continues the filleted edge between the fillet's own two surfaces, no
+    /// end exists there, and the end rib fails as before.
+    ///
+    /// In a cliff overflow (`cliff_overflow`, the executive's `m_bCliffOverflow`) a rail
+    /// end off the fillet surface (farther than ten times the corner's tolerance), or
+    /// found on its side edge's line past the edge's end (off the edge by more than the
+    /// tolerance), is a miss too, and its fillet vertex's status becomes
+    /// `SM_FV_NO_INT_RAIL_EU`; both rails may miss. A miss that does not run on leaves the
+    /// end uncut: `note_open_end` (the executive's `NoteOpenEnd`) takes the filleted
+    /// edge's edge use, the corner's vertex and the end face, then the end rib is deleted
+    /// ([`EndRibDrop::OpenEnd`]), without the global merge. Both rails missing outside
+    /// that case is no global merge either.
+    ///
+    /// # Errors
+    /// `SM_ERR_NULL_POINTER` for a missing edge use, face, surface or curve (upstream
+    /// dereferences them; in a cliff overflow, the end rib's fillet surface); `SM_ERR`
+    /// for an open end whose end face is a face of the filleted edge; those of the
+    /// drops, the surface coincidence test and the deletion.
+    #[allow(clippy::too_many_lines)] // one fork routine
+    pub fn drop_end_rib(
+        &mut self,
+        k: &mut Kernel,
+        target: &mut Brep,
+        pseudo: &mut FilletBrep,
+        cliff_overflow: bool,
+        note_open_end: &mut dyn FnMut(EdgeuseId, VertexId, FaceId) -> Result<()>,
+    ) -> Result<EndRibDrop> {
+        const OP: &str = "blend::fillet_corner::p1::drop_end_rib";
         let [end_rib] = self.edges[..] else {
-            return Ok(false);
+            return Ok(EndRibDrop::Kept);
         };
-        if !k.fixes.fillet_nx1_end_rib_global_merge
+        if !(k.fixes.fillet_nx1_end_rib_global_merge || cliff_overflow)
             || !matches!(self.kind, FilletCornerKind::NByOne | FilletCornerKind::Open)
             || pseudo.fillet_edge(end_rib)?.edge_type != FilletEdgeType::FilletXSideFace
         {
-            return Ok(false);
+            return Ok(EndRibDrop::Kept);
         }
         let start_fv =
             edge::vertex(pseudo.brep(), end_rib)?.ok_or_else(|| SolidError::null_pointer(OP))?;
@@ -1498,19 +1545,93 @@ impl FilletCorner {
                     && pseudo.fillet_vertex(other)?.is_processed(),
             )
         };
-        let miss_fv = if missed(start_fv, end_fv)? {
-            start_fv
+        let mut miss_fv = if missed(start_fv, end_fv)? {
+            Some(start_fv)
         } else if missed(end_fv, start_fv)? {
-            end_fv
+            Some(end_fv)
         } else {
-            return Ok(false);
+            None
+        };
+        // The fork's (8ba4667, 3f22e97): in a cliff overflow a rail can miss its side edge
+        // with the intersection clamped to the side edge's far vertex, off the fillet, or
+        // found on the side edge's line past its end: that is a miss too; and both rails
+        // can miss.
+        let mut misses = [false, false];
+        if cliff_overflow {
+            misses = [
+                pseudo.fillet_vertex(start_fv)?.status() == FilStatus::NoIntRailEu,
+                pseudo.fillet_vertex(end_fv)?.status() == FilStatus::NoIntRailEu,
+            ];
+            let rib_eu = eu1::primary_edgeuse(pseudo.brep(), end_rib)?;
+            let rib_geom = match rib_eu {
+                Some(eu) => pseudo.fillet_edgeuse(eu)?.fillet_geom(),
+                None => None,
+            };
+            let fillet_surface = match rib_geom {
+                Some(g) => pseudo.geom(g)?.fillet_surface(None)?.cloned(),
+                None => None,
+            }
+            .ok_or_else(|| SolidError::null_pointer(OP))?;
+            let domain = fillet_surface.natural_uv_domain_with_nurb(k)?;
+            for (miss, fv) in misses.iter_mut().zip([start_fv, end_fv]) {
+                if *miss || !pseudo.fillet_vertex(fv)?.is_processed() {
+                    continue;
+                }
+                let point = pseudo.vertex_point(fv)?;
+                let dropped = fillet_surface.drop_point::<NoObject>(
+                    k,
+                    point,
+                    &domain,
+                    &DropPointOptions::default(),
+                )?;
+                let mut off = !dropped.success || dropped.gap > 10.0 * self.approx_tol_3d;
+                // The rail's end found on the side edge's line continued past the edge's
+                // end (SmFilletSolver::RailEdgeuseIntersect continues a straight side
+                // edge): the rail misses the side edge itself, however close past the end.
+                let record = pseudo.fillet_vertex(fv)?;
+                if !off && record.point_class() == PointClassType::Edgeuse {
+                    let Some(EntityRef::Edgeuse(side_eu)) = record.point_class_object() else {
+                        return Err(SolidError::null_pointer(OP));
+                    };
+                    let side_edge =
+                        eu1::edge(target, side_eu)?.ok_or_else(|| SolidError::null_pointer(OP))?;
+                    let curve = edge::curve(target, side_edge)?
+                        .ok_or_else(|| SolidError::null_pointer(OP))?;
+                    let on_side = curve.drop_point(
+                        k,
+                        &edge::interval(target, side_edge)?,
+                        point,
+                        None,
+                        BIG_DOUBLE,
+                        None,
+                        SolverOperation::Minimize,
+                    )?;
+                    off = !on_side.success || on_side.distance > self.approx_tol_3d;
+                }
+                if off {
+                    *miss = true;
+                    // its rail is not trimmed there
+                    pseudo
+                        .fillet_vertex_mut(fv)?
+                        .set_status(FilStatus::NoIntRailEu);
+                }
+            }
+            match misses {
+                [true, _] => miss_fv = Some(start_fv),
+                [false, true] => miss_fv = Some(end_fv),
+                [false, false] => {}
+            }
+        }
+        let both_miss = cliff_overflow && misses == [true, true];
+        let Some(miss_fv) = miss_fv else {
+            return Ok(EndRibDrop::Kept);
         };
         let fv = pseudo.fillet_vertex(miss_fv)?;
         let Some(EntityRef::Edgeuse(side_eu)) = fv.point_class_object() else {
-            return Ok(false);
+            return Ok(EndRibDrop::Kept);
         };
         if fv.point_class() != PointClassType::Edgeuse {
-            return Ok(false);
+            return Ok(EndRibDrop::Kept);
         }
 
         // The side edge the rail missed, and the fillet's side face it does not bound.
@@ -1526,6 +1647,7 @@ impl FilletCorner {
             eu1::face(target, eu)?.ok_or_else(|| SolidError::null_pointer(OP))
         };
         let side_faces = [face_of(side_eu)?, face_of(radial(side_eu)?)?];
+        let fil_faces = [face_of(fil_eu)?, face_of(radial(fil_eu)?)?];
         let mut other_face = face_of(fil_eu)?;
         if side_faces.contains(&other_face) {
             other_face = face_of(radial(fil_eu)?)?;
@@ -1557,11 +1679,31 @@ impl FilletCorner {
             )?
             .is_some();
         if runs_on {
-            return Ok(false);
+            return Ok(EndRibDrop::Kept);
+        }
+        if cliff_overflow {
+            // The end face: the side edge's face that is neither of the fillet's side faces.
+            let [first, second] = side_faces;
+            let end_face = if first == other_face || fil_faces.contains(&first) {
+                second
+            } else {
+                first
+            };
+            if fil_faces.contains(&end_face) {
+                return Err(SolidError::sm_err(OP));
+            }
+            let vertex = self.vertex.ok_or_else(|| SolidError::null_pointer(OP))?;
+            note_open_end(fil_eu, vertex, end_face)?;
+            pseudo.delete_wire_fillet_edge(k, end_rib)?;
+            self.edges.clear();
+            return Ok(EndRibDrop::OpenEnd);
+        }
+        if both_miss || !k.fixes.fillet_nx1_end_rib_global_merge {
+            return Ok(EndRibDrop::Kept);
         }
         pseudo.delete_wire_fillet_edge(k, end_rib)?;
         self.edges.clear();
-        Ok(true)
+        Ok(EndRibDrop::GlobalMerge)
     }
 
     /// `CalcCornerEdgeGeom`: `SmFilletEdge::CalcCornerEdgeGeom` on every corner fillet edge
@@ -2816,6 +2958,18 @@ fn make_face(
         &mut fillet.notify,
     )?;
     Ok(made.face)
+}
+
+/// What [`FilletCorner::drop_end_rib`] did with an Nx1 corner's end rib.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum EndRibDrop {
+    /// The end rib stays.
+    Kept,
+    /// The end rib was deleted; the executive does a global merge (WR-303).
+    GlobalMerge,
+    /// The end rib was deleted in a cliff overflow and the fillet left uncut there,
+    /// noted as an open end (the executive's `NoteOpenEnd`, WR-631).
+    OpenEnd,
 }
 
 #[cfg(test)]

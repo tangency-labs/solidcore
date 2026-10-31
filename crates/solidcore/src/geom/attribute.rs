@@ -159,6 +159,10 @@ pub mod ids {
     pub const TESSELLATING: u64 = 124;
     /// `SM_AI_REPLACE_COMPOSITES`.
     pub const REPLACE_COMPOSITES: u64 = 126;
+    /// `SM_AI_FOLLOWED_BLEND` (the fork's, tangency-labs/smlib `a96ce9f`): the marks of
+    /// one face move whose tangent blends follow (`SmOffsetFacesExecutive`,
+    /// [`crate::offset::offset_faces::FollowedBlendMark`]).
+    pub const FOLLOWED_BLEND: u64 = 130;
     /// `SM_AI_FILLET_CORNER_FACE` (the fork's, tangency-labs/smlib `60af574`): a face of
     /// a set-back fillet corner's patch (`SmFilletExecutive::SetMarkCornerPatches`).
     pub const FILLET_CORNER_FACE: u64 = 132;
@@ -1488,6 +1492,24 @@ impl AttributeStore {
         Ok(())
     }
 
+    /// (not upstream) Deletes every attribute no object's list names (a standalone one
+    /// that outlived its users, or one only another store's objects held), so a store
+    /// handed to one body carries that body's attributes alone. Handles stay valid: a
+    /// deleted slot is never reused.
+    pub(crate) fn retain_listed(&mut self) {
+        let mut listed = vec![false; self.slots.len()];
+        for h in self.lists.values().flatten() {
+            if let Some(flag) = listed.get_mut(h.index()) {
+                *flag = true;
+            }
+        }
+        for (slot, listed) in self.slots.iter_mut().zip(listed) {
+            if !listed {
+                *slot = None;
+            }
+        }
+    }
+
     // ---- propagation handlers -----------------------------------------------------
 
     /// Places this attribute on `target` with its behaviour when `target` has no
@@ -2463,5 +2485,29 @@ mod tests {
         );
         assert_eq!(all.len(), 3);
         assert!(all[1].is_none());
+    }
+
+    #[test]
+    fn retain_listed_drops_unlisted_attributes_and_keeps_handles() {
+        let mut s = AttributeStore::new();
+        let listed = s
+            .insert(Attribute::long(10_007, 1, Behavior::Reference))
+            .unwrap();
+        let orphan = s
+            .insert(Attribute::long(10_008, 2, Behavior::StandaloneCopy))
+            .unwrap();
+        let shared = s
+            .insert(Attribute::long(10_009, 3, Behavior::Reference))
+            .unwrap();
+        s.add_attribute(O1, listed).unwrap();
+        s.add_attribute(O1, shared).unwrap();
+        s.add_attribute(O2, shared).unwrap();
+        s.retain_listed();
+        assert!(s.is_live(listed));
+        assert!(!s.is_live(orphan));
+        // a reference shared by two objects of the store stays one attribute
+        assert!(s.is_live(shared));
+        assert_eq!(s.attributes(O2), vec![shared]);
+        assert_eq!(s.users(shared).unwrap(), vec![O1, O2]);
     }
 }

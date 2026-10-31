@@ -66,12 +66,24 @@
 //!   bit instead, WR-384); `SmSSGlobalSolver::BranchMayContainAnswers` returns
 //!   `SM_SUCCESS` (that is, `FALSE`) for a node outside its face and `NER`'s status
 //!   (non-zero: `TRUE`) for a missing patch; `sm_GoodDropResult` compares the guess and
-//!   result distances with swapped names; `FindDegenParamForDirection` compares a
-//!   sample fraction with the parameter `dS`.
+//!   result distances with swapped names (the opt-in
+//!   `Kernel::fixes.good_drop_result_distances_in_order` compares them the right way round,
+//!   WR-56); `FindDegenParamForDirection` compares a sample fraction with the parameter
+//!   `dS`.
 //! - **Projection curve class.** `CreateParallelProjectionCurves` takes a [`Curve`] for
 //!   upstream's `const SmBSplineCurve&`; a curve outside the `SmBSplineCurve` classes
 //!   (B-spline, line, ellipse, hyperbola, parabola), which upstream's type rules out,
 //!   is `SM_ERR_INVALID_INPUT` before the sweep.
+//! - **Projection approximation tolerance (HANG-32).** The public
+//!   `CreateParallelProjectionCurves` refuses a supplied approximation tolerance that
+//!   is not finite, positive and normal before preparing the cache or geometry. The
+//!   C++ reference is reported to run for more than 15 minutes on the smallest
+//!   subnormal (the looping routine was not located), and the FFI already refuses such
+//!   inputs. `None` and every finite positive normal value are accepted, with no upper
+//!   cap. This is a deterministic early public-API contract, not a claim that the Rust
+//!   solver would otherwise fail to terminate: its global solves are bounded
+//!   ([`crate::geom::global_solver::MAX_SOLVE_DEPTH`] /
+//!   [`crate::geom::global_solver::MAX_SOLVE_BRANCHES`]).
 //! - **`GlobalPointSolve_0`** takes the kernel and the surface's handle `surface: O`
 //!   (the cache's owner object and the solutions' object), as `GlobalLineIntersect`
 //!   does; it and `SmSPGlobalSolver::BranchMayContainAnswers` (which reads the cache
@@ -1709,10 +1721,12 @@ impl Surface {
     ///
     /// # Errors
     ///
-    /// `SM_ERR_INVALID_INPUT` for a zero projection vector or a curve of another class;
-    /// `SM_ERR_NULL_POINTER` without a surface cache; those of the continuities, the
-    /// boxes, the sweep, its move and the intersection; [`SolidError::Unported`] from
-    /// unported callees of the surface cache and the intersector.
+    /// `SM_ERR_INVALID_INPUT` for a zero projection vector, a supplied approximation
+    /// tolerance that is not finite, positive and normal (HANG-32), or a curve of
+    /// another class; `SM_ERR_NULL_POINTER` without a surface cache; those of the
+    /// continuities, the boxes, the sweep, its move and the intersection;
+    /// [`SolidError::Unported`] from unported callees of the surface cache and the
+    /// intersector.
     pub fn create_parallel_projection_curves(
         &self,
         k: &Kernel,
@@ -1788,6 +1802,16 @@ impl Surface {
             .is_none_or(core::cmp::Ordering::is_lt)
         {
             return Err(SolidError::invalid_input(OP_PROJ, "zero projection vector"));
+        }
+
+        // check input - a supplied approximation tolerance must be finite, positive and
+        // normal (HANG-32): a subnormal one spins the C++ projector, and the FFI already
+        // refuses it. Done before any cache or geometry preparation; `None` is unchanged.
+        if opt_approx_tol_3d.is_some_and(|t| !(t.is_finite() && t >= f64::MIN_POSITIVE)) {
+            return Err(SolidError::invalid_input(
+                OP_PROJ,
+                "approximation tolerance must be finite, positive and normal (HANG-32)",
+            ));
         }
 
         // check state - internal surface continuities are better than C0 (NER; the
@@ -2628,6 +2652,11 @@ pub fn check_seam_drop<S: SurfaceEvaluate + ?Sized>(
 /// Whether a local point drop from `guess_uv` (solution value `sol_value` at
 /// `sol_uv`) converged well enough to skip the global solve (`sm_GoodDropResult`).
 ///
+/// Its last test, meant to refuse a result farther from the point than the guess,
+/// measures the two distances the wrong way round, as upstream; with
+/// `Kernel::fixes.good_drop_result_distances_in_order` (WR-56, the fork's
+/// tangency-labs/smlib@0b4de8c) it measures them the right way.
+///
 /// # Errors
 ///
 /// Only [`SolidError::Unported`] (upstream ignores the evaluation statuses).
@@ -2701,8 +2730,18 @@ pub fn good_drop_result<S: SurfaceEvaluate + ?Sized>(
     if let Some(p) = ignored(surface.evaluate_point(k, guess_uv))? {
         guess_3d = p;
     }
-    let dsq_guess = pt_to_drop.distance_squared(srf_point);
-    let dsq_result = pt_to_drop.distance_squared(guess_3d);
+    let (dsq_guess, dsq_result) = if k.fixes.good_drop_result_distances_in_order {
+        // Not upstream (WR-56; tangency-labs/smlib@0b4de8c): each distance to its own point
+        (
+            pt_to_drop.distance_squared(guess_3d),
+            pt_to_drop.distance_squared(srf_point),
+        )
+    } else {
+        (
+            pt_to_drop.distance_squared(srf_point),
+            pt_to_drop.distance_squared(guess_3d),
+        )
+    };
     if dsq_result > dsq_guess {
         return Ok(false);
     }
@@ -2983,6 +3022,7 @@ fn singular_param_solve(
         EFF_ZERO,
     );
     let mut ls = crate::geom::local_solve1d::LocalSolve1d::with_interval(*ivl, false);
+    ls.set_failed_guess_no_sign_change(k.fixes.oscillating_skips_failed_guesses);
     let r = ls.solve_it(&mut efo, start, tol)?;
     Ok((r.found, r.t))
 }
@@ -3028,6 +3068,7 @@ fn cs_normalize_local_solve(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::curve::hermite_curve::HermiteCurve;
     use crate::surface::plane::Plane;
 
     /// tangency-labs/solidcore#525 (WR-384): with the corner points wanted, upstream's
@@ -3060,6 +3101,212 @@ mod tests {
             Vec3::new(0.0, 0.0, 1.0),
             Vec3::new(0.0, 0.0, 1.0),
         ))
+    }
+
+    #[test]
+    fn flat_corner_points_preserve_each_mask_bit() {
+        use crate::nurbs::math::{CPoint, NOW};
+
+        let mut k = Kernel::default();
+        k.fixes.flat_corners_test_bits = true;
+        // Only the lower/lower corner has nonzero parallel tangents. Reverse
+        // either control-net direction to exercise each of the four bits.
+        for reverse_u in [false, true] {
+            for reverse_v in [false, true] {
+                let mut net = vec![
+                    vec![
+                        CPoint::new(0.0, 0.0, 0.0, NOW),
+                        CPoint::new(1.0, 0.0, 0.0, NOW),
+                    ],
+                    vec![
+                        CPoint::new(2.0, 0.0, 0.0, NOW),
+                        CPoint::new(1.0, 1.0, 0.0, NOW),
+                    ],
+                ];
+                if reverse_u {
+                    net.reverse();
+                }
+                if reverse_v {
+                    for row in &mut net {
+                        row.reverse();
+                    }
+                }
+                let knots = [0.0, 0.0, 1.0, 1.0];
+                let s = Surface::from(
+                    BSplineSurface::from_data(1, 1, 1, 1, 3, 3, &net, &knots, &knots).unwrap(),
+                );
+                let index = usize::from(reverse_u) * 2 + usize::from(reverse_v);
+                let flags = 1 << index;
+                assert_eq!(s.flat_corners(&k, 1e-8, false).unwrap().flags, flags);
+                let result = s.flat_corners(&k, 1e-8, true).unwrap();
+                assert_eq!(result.flags, flags);
+                for (i, point) in result.points.unwrap().iter().enumerate() {
+                    assert_eq!(*point, if i == index { Vec3::ZERO } else { Vec3::UNDEF });
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn flat_corner_points_preserve_multiple_bits_and_regular_corners() {
+        use crate::nurbs::math::{CPoint, NOW};
+        let mut k = Kernel::default();
+        k.fixes.flat_corners_test_bits = true;
+        let net = vec![
+            vec![
+                CPoint::new(0.0, 0.0, 0.0, NOW),
+                CPoint::new(2.0, 0.0, 0.0, NOW),
+            ],
+            vec![
+                CPoint::new(1.0, 0.0, 0.0, NOW),
+                CPoint::new(3.0, 0.0, 0.0, NOW),
+            ],
+        ];
+        let knots = [0.0, 0.0, 1.0, 1.0];
+        let s = Surface::from(
+            BSplineSurface::from_data(1, 1, 1, 1, 3, 3, &net, &knots, &knots).unwrap(),
+        );
+        assert_eq!(s.flat_corners(&k, 1e-8, false).unwrap().flags, 15);
+        let result = s.flat_corners(&k, 1e-8, true).unwrap();
+        assert_eq!(result.flags, 15);
+        assert_eq!(
+            result.points.unwrap(),
+            [
+                Vec3::ZERO,
+                Vec3::new(2.0, 0.0, 0.0),
+                Vec3::new(1.0, 0.0, 0.0),
+                Vec3::new(3.0, 0.0, 0.0)
+            ]
+        );
+        assert_eq!(
+            plane().flat_corners(&k, 1e-8, true).unwrap(),
+            FlatCorners {
+                flags: 0,
+                points: Some([Vec3::UNDEF; 4])
+            }
+        );
+    }
+
+    /// WR-56 (#1852; the fork's tangency-labs/smlib@0b4de8c): the flat patch
+    /// (10 u, 10 v, 0) and the point (5, 5, 1), whose foot is (0.5, 0.5). A local result
+    /// 5e-4 along the patch from the foot passes every test before the last (the gap
+    /// along the patch is between 1e-4 and 1e-3); the last should take it when its guess
+    /// is farther from the point and refuse it when its guess is the foot itself.
+    #[test]
+    fn wr_56_good_drop_result_compares_the_right_distances() {
+        use crate::nurbs::math::{CPoint, NOW};
+
+        let net = vec![
+            vec![
+                CPoint::new(0.0, 0.0, 0.0, NOW),
+                CPoint::new(0.0, 10.0, 0.0, NOW),
+            ],
+            vec![
+                CPoint::new(10.0, 0.0, 0.0, NOW),
+                CPoint::new(10.0, 10.0, 0.0, NOW),
+            ],
+        ];
+        let knots = [0.0, 0.0, 1.0, 1.0];
+        let s = Surface::from(
+            BSplineSurface::from_data(1, 1, 1, 1, 3, 3, &net, &knots, &knots).unwrap(),
+        );
+        let domain = Extent2d::from_bounds(0.0, 0.0, 1.0, 1.0);
+        let point = Point3::new(5.0, 5.0, 1.0);
+        let mut sol = SolutionEnd::new();
+        sol.solution_value = 1.0;
+        sol.parameters[0] = 0.500_05;
+        sol.parameters[1] = 0.5;
+        // the result is nearer the point than the guess (0.3, 0.5), farther than the
+        // guess (0.5, 0.5)
+        let nearer_guess = Point2::new(0.3, 0.5);
+        let foot_guess = Point2::new(0.5, 0.5);
+        let mut k = Kernel::default();
+        let good = |k: &Kernel, guess: Point2| {
+            good_drop_result(k, &s, &domain, point, guess, &sol).unwrap()
+        };
+        // upstream: the nearer result is refused, the farther one taken
+        assert!(!good(&k, nearer_guess));
+        assert!(good(&k, foot_guess));
+        k.fixes.good_drop_result_distances_in_order = true;
+        assert!(good(&k, nearer_guess));
+        assert!(!good(&k, foot_guess));
+    }
+
+    /// HANG-32: the public projection entry rejects a supplied approximation
+    /// tolerance that is not finite, positive and normal before it prepares any cache
+    /// or geometry; the FFI already refuses the same inputs. The unsupported Hermite
+    /// curve keeps the accepted cases on the cheap path to the existing
+    /// `not an SmBSplineCurve` refusal (no intersector), so this is a contract test,
+    /// not a successful projection.
+    #[test]
+    fn hang_32_projection_rejects_non_normal_approximation_tolerance() {
+        let k = Kernel::default();
+        let s = plane();
+        let domain = Extent2d::from_bounds(0.0, 0.0, 1.0, 1.0);
+        let unsupported = Curve::from(HermiteCurve::new(
+            Point3::new(0.0, 0.0, 0.0),
+            Vec3::X,
+            Point3::new(1.0, 0.0, 0.0),
+            Vec3::X,
+            3,
+        ));
+        let call = |approx: Option<f64>, vector: Vec3| {
+            s.create_parallel_projection_curves(
+                &k,
+                &domain,
+                &unsupported,
+                vector,
+                Some(1.0),
+                approx,
+                None,
+            )
+        };
+
+        let rejected = |approx: f64| match call(Some(approx), Vec3::Z) {
+            Err(SolidError::InvalidInput { operation, reason }) => {
+                assert_eq!(operation, OP_PROJ);
+                assert_eq!(
+                    reason,
+                    "approximation tolerance must be finite, positive and normal (HANG-32)"
+                );
+            }
+            other => panic!("approximation tolerance {approx:e} was not rejected: {other:?}"),
+        };
+        for approx in [
+            f64::from_bits(1),
+            f64::from_bits(0x000F_FFFF_FFFF_FFFF),
+            0.0,
+            -0.0,
+            -1.0,
+            f64::NAN,
+            f64::INFINITY,
+            f64::NEG_INFINITY,
+        ] {
+            rejected(approx);
+        }
+
+        // The precondition accepts `None` and every finite positive normal value, with
+        // no upper cap: each reaches the later unsupported-kind refusal.
+        for approx in [None, Some(f64::MIN_POSITIVE), Some(1e-6), Some(f64::MAX)] {
+            match call(approx, Vec3::Z) {
+                Err(SolidError::InvalidInput { operation, reason }) => {
+                    assert_eq!(operation, OP_PROJ);
+                    assert_eq!(reason, "not an SmBSplineCurve");
+                }
+                other => {
+                    panic!("approximation tolerance {approx:?} was rejected too early: {other:?}")
+                }
+            }
+        }
+
+        // The zero projection vector keeps its precedence over the new check.
+        match call(Some(f64::from_bits(1)), Vec3::ZERO) {
+            Err(SolidError::InvalidInput { operation, reason }) => {
+                assert_eq!(operation, OP_PROJ);
+                assert_eq!(reason, "zero projection vector");
+            }
+            other => panic!("zero vector did not take precedence: {other:?}"),
+        }
     }
 
     #[test]
@@ -3101,5 +3348,47 @@ mod tests {
         let d = s.natural_uv_domain_if_built();
         let v = compute_inward_vector(k, &s, d.min()).unwrap();
         assert!((v.length() - 1.0).abs() < 1e-12);
+    }
+
+    /// tangency-labs/solidcore#1852 (WR-56): `sm_GoodDropResult` stores the result
+    /// distance in `dDsqGuess` and the guess distance in `dDsqResult`, so its last
+    /// test rejects a drop that improved on the guess. The opt-in
+    /// `Kernel::fixes.good_drop_result_distances_in_order` compares the actual
+    /// guess and result distances. Every case reaches the final comparison: the
+    /// point lies on the plane, `1/2048` from the result along `S_u`, so `Fu` is
+    /// `1/2048` and `Fv` is zero, past the residual early return and inside the
+    /// interior tolerance.
+    #[test]
+    fn issue_1852_good_drop_compares_the_actual_guess_distance() {
+        let h = 1.0 / 2048.0;
+        let domain = Extent2d::from_bounds(0.0, 0.0, 1.0, 1.0);
+        let s = Surface::from(Plane::from_normal(Point3::ZERO, Vec3::Z));
+        let mut k = Kernel::default();
+        let result_uv = Point2::new(0.5, 0.5);
+        let (result_point, su, _) =
+            evaluate_1st_derivatives(&k, &s, result_uv, Side::Left, Side::Left).unwrap();
+        let pt_to_drop = result_point + h * su;
+        let mut sol = SolutionEnd::new();
+        sol.solution_value = 1.0;
+        *sol.param_mut(0).unwrap() = result_uv.x;
+        *sol.param_mut(1).unwrap() = result_uv.y;
+
+        // The result is closer than the guess: upstream rejects it (its swapped
+        // names make the guess look farther); the fix accepts it.
+        let nearer_guess = result_uv - Point2::new(0.1, 0.0);
+        // The guess is closer than the result: upstream accepts it; the fix
+        // rejects it, as the final test intends.
+        let farther_guess = result_uv + Point2::new(h, 0.0);
+        // Equidistant: both accept.
+        let equal_guess = result_uv + Point2::new(2.0 * h, 0.0);
+
+        assert!(!good_drop_result(&k, &s, &domain, pt_to_drop, nearer_guess, &sol).unwrap());
+        assert!(good_drop_result(&k, &s, &domain, pt_to_drop, farther_guess, &sol).unwrap());
+        assert!(good_drop_result(&k, &s, &domain, pt_to_drop, equal_guess, &sol).unwrap());
+
+        k.fixes.good_drop_result_distances_in_order = true;
+        assert!(good_drop_result(&k, &s, &domain, pt_to_drop, nearer_guess, &sol).unwrap());
+        assert!(!good_drop_result(&k, &s, &domain, pt_to_drop, farther_guess, &sol).unwrap());
+        assert!(good_drop_result(&k, &s, &domain, pt_to_drop, equal_guess, &sol).unwrap());
     }
 }

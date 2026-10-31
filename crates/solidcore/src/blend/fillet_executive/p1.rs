@@ -699,6 +699,11 @@ impl<O: ClassObject + SolutionObject + Ord> FilletExecutive<O> {
             self_intersection_handler: None,
             blend_curve_at_thirds: false,
             mark_corner_patches: false,
+            cliff_overflow: false,
+            open_ends: Vec::new(),
+            overflow_first: false,
+            classify_only: false,
+            overflow_edges: Vec::new(),
         }
     }
 
@@ -843,6 +848,26 @@ impl<O: ClassObject + SolutionObject + Ord> FilletExecutive<O> {
     /// `DoFilleting`.
     pub fn set_mark_corner_patches(&mut self, value: bool) {
         self.mark_corner_patches = value;
+    }
+
+    /// `SetOverflowFirst` (the fork's, WR-634, tangency-labs/smlib@241f7ba): before
+    /// `CreateFilletBrep`.
+    pub fn set_overflow_first(&mut self, value: bool) {
+        self.overflow_first = value;
+    }
+
+    /// `SetClassifyOnly` (the fork's, WR-634, tangency-labs/smlib@241f7ba): before
+    /// `CreateFilletBrep`.
+    pub fn set_classify_only(&mut self, value: bool) {
+        self.classify_only = value;
+    }
+
+    /// `GetOverflowEdges` (the fork's, WR-634, tangency-labs/smlib@241f7ba): the edges of
+    /// the blends that overflow, when `CreateFilletBrep` stopped with
+    /// `FilletErrorType::OverflowFirst`; empty otherwise.
+    #[must_use]
+    pub fn overflow_edges(&self) -> &[O] {
+        &self.overflow_edges
     }
 
     /// `SetSelfIntersectionHandler`.
@@ -1468,7 +1493,8 @@ pub trait SmoothSequenceAccess<O: ClassObject + SolutionObject + Ord> {
 /// and a vertex left between two different manifold edges (four vertex uses) is
 /// removed by `DeleteTopologicalVertex`, merging the edges; when that fails the
 /// vertex stays, as upstream ignores the status. The faces of `b` own their surfaces
-/// (as every face here does); the edits notify through local environments only.
+/// (as every face here does); the edits notify through local environments
+/// ([`remove_topo_edges_with_notifications`] takes the caller's).
 ///
 /// # Errors
 ///
@@ -1479,6 +1505,24 @@ pub trait SmoothSequenceAccess<O: ClassObject + SolutionObject + Ord> {
 /// [`SolidError::NotFound`] for an edge or vertex an earlier deletion removed
 /// (upstream reads freed memory).
 pub fn remove_topo_edges(k: &mut Kernel, b: &mut Brep, edges: &[Option<EdgeId>]) -> Result<()> {
+    remove_topo_edges_with_notifications(k, b, edges, None)
+}
+
+/// [`remove_topo_edges`] with the caller's notification state: the face merges of
+/// `DeleteEdge` and the edge merges of `DeleteVertex` / `DeleteTopologicalVertex`
+/// notify through `notifications` (its records, attributes and identities), so the
+/// surviving faces and edges keep the attributes of those merged into them
+/// (`SM_NO_MERGE_IN_BREP`). Without it each deletion notifies through a store of its
+/// own.
+///
+/// # Errors
+/// As [`remove_topo_edges`].
+pub(crate) fn remove_topo_edges_with_notifications(
+    k: &mut Kernel,
+    b: &mut Brep,
+    edges: &[Option<EdgeId>],
+    mut notifications: Option<&mut topo_edge::NotifyEnv<'_>>,
+) -> Result<()> {
     const OP: &str = "blend::fillet_executive::p1::remove_topo_edges";
 
     // for every Edge in the m_vTopoEdges list
@@ -1522,13 +1566,30 @@ pub fn remove_topo_edges(k: &mut Kernel, b: &mut Brep, edges: &[Option<EdgeId>])
         }
 
         // Now delete the edge
-        brep_p4::with_local_env(|d| brep_p4::delete_edge(k, b, d, edge, None))?;
+        match notifications.as_deref_mut() {
+            Some(env) => {
+                brep_p4::delete_edge(k, b, &mut brep_p4::DeleteEnv::from_notify(env), edge, None)?;
+            }
+            None => brep_p4::with_local_env(|d| brep_p4::delete_edge(k, b, d, edge, None))?,
+        }
 
         // Delete topological vertex and combine two adjacent edges
         for vertex in verts {
             let vertex = vertex.ok_or_else(|| SolidError::invalid_input(OP, "null vertex"))?;
             match vertex::edges(b, vertex, None)?[..] {
-                [] => brep_p4::with_local_env(|d| brep_p4::delete_vertex(k, b, d, vertex))?,
+                [] => match notifications.as_deref_mut() {
+                    Some(env) => {
+                        brep_p4::delete_vertex(
+                            k,
+                            b,
+                            &mut brep_p4::DeleteEnv::from_notify(env),
+                            vertex,
+                        )?;
+                    }
+                    None => {
+                        brep_p4::with_local_env(|d| brep_p4::delete_vertex(k, b, d, vertex))?;
+                    }
+                },
                 // when vertex is connected to just two different manifold edges
                 [e1, e2]
                     if vertex::vertexuses(b, vertex)?.len() == 4
@@ -1544,8 +1605,14 @@ pub fn remove_topo_edges(k: &mut Kernel, b: &mut Brep, edges: &[Option<EdgeId>])
                         | SolidError::InvalidInput { .. }
                         | SolidError::PortInvariant { .. }
                         | SolidError::NotFound { .. }),
-                    ) = brep_p5::delete_topological_vertex(k, b, editing, Some(vertex), None)
-                    {
+                    ) = brep_p5::delete_topological_vertex_with_notifications(
+                        k,
+                        b,
+                        editing,
+                        Some(vertex),
+                        None,
+                        notifications.as_deref_mut(),
+                    ) {
                         // the port's own failures (a dangling id, a modelled null
                         // dereference) are not upstream statuses
                         return Err(e);

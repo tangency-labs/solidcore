@@ -7,6 +7,7 @@
 //! | Rust                | Upstream                  |
 //! |---------------------|---------------------------|
 //! | [`local_operation`] | `SmBrep::LocalOperation`  |
+//! | [`local_operation_simple`] | (not upstream) `SmBrep::LocalOperation` with its own notification identities |
 //!
 //! Deviations: the offset executive's local-operation geometry creator
 //! (`SmLocalOperationGeometryCreation`) is the face and surface lists the executive
@@ -44,6 +45,8 @@ use crate::topology::brep_cache::{arena_identity, CacheObject};
 use crate::topology::face::p2 as face_ops;
 use crate::topology::{Brep, FaceId};
 
+pub use crate::offset::offset_executive::p2::local_operation_simple;
+
 const OP: &str = "topology::brep::local_operation::local_operation";
 
 fn null() -> SolidError {
@@ -54,6 +57,14 @@ fn null() -> SolidError {
 /// `faces[i]` (turned about if its normal opposes the old one's), every other face
 /// keeping a copy of its surface (as an analytic one when possible), and the faces are
 /// rebuilt by an extended offset that extends the surfaces to intersect.
+///
+/// To find where `surfaces[i]` went, mark `faces[i]` before the call
+/// ([`Brep::add_attribute`], [`Behavior::Copy`](crate::geom::attribute::Behavior::Copy))
+/// and look for the mark on the result's faces: upstream callers mark the `SmSurface`
+/// itself, but the port names a surface by its owning face, and `faces[i]`'s offset face
+/// takes `surfaces[i]`, so the mark travels with it as upstream's does with the surface
+/// (tangency-labs/solidcore#1875; the one difference, a merge keeping an unpicked
+/// survivor, is `plan/findings/topology.brep_local_operation--1875-face-mark-for-surface-mark.md`).
 ///
 /// # Errors
 ///

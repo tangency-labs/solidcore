@@ -26,11 +26,20 @@
 //! them. `SmBrep` is caller-owned; edits retain upstream edit-mode side effects.
 //! Face construction uses caller notification records, attributes and identity keys.
 //! No recursion.
+//! Not upstream (WR-565, tangency-labs/solidcore#1477, opt-in
+//! `Kernel::fixes.linear_sweep_arc_is_cylinder`; SolidCraft change, tangency-labs/smlib
+//! 12918e9): [`PrimitiveCreation::create_linear_sweep`] makes a circular arc short of a
+//! whole turn that is swept square to its plane a cylinder (`arc_sweep_cylinder`), where
+//! upstream makes it an `SmSurfOfExtrusion`.
 //! Not upstream (WR-576, tangency-labs/solidcore#1507, opt-in
 //! `Kernel::fixes.linear_sweep_arc_to_cylinder_zero`; SolidCraft change, tangency-labs/smlib
 //! fd59111): [`PrimitiveCreation::create_linear_sweep`] tests a profile curve for an arc
 //! to the zero an `SmCylinder`'s own check holds its generating curve to (`arc_zero`),
 //! not to the B-rep's tolerance.
+//! Not upstream (WR-596, opt-in `Kernel::fixes.box_face_failures_propagate`; the fork's
+//! tangency-labs/smlib 0df62c8, 35008b1, 449c81c): [`PrimitiveCreation::create_box`]
+//! returns each face's and the stitch's status and skips sides of zero extent, as the
+//! fork's `AddBoxFace` does; upstream drops them.
 
 use super::PrimitiveCreation;
 use crate::curve::curve::Curve;
@@ -413,6 +422,61 @@ pub fn create_circle(
     Ok(brep)
 }
 
+/// The six faces of [`PrimitiveCreation::create_box`] (`length`, `width`, `height`) and
+/// their stitch; `propagate`: WR-596's statuses.
+fn box_faces(
+    k: &mut Kernel,
+    brep: &mut Brep,
+    [length, width, height]: [f64; 3],
+    frame: &Axis2Placement,
+    propagate: bool,
+) -> Result<()> {
+    let mut placement = Axis2Placement::new(frame.origin(), frame.x_axis(), frame.y_axis());
+    let planes = [
+        (frame.x_axis(), frame.y_axis(), length, width, height),
+        (frame.y_axis(), frame.z_axis(), width, height, length),
+        (frame.x_axis(), frame.z_axis(), length, height, -width),
+    ];
+    for (index, (x, y, u, v, offset)) in planes.into_iter().enumerate() {
+        if index != 0 {
+            let set = placement.set_canonical(frame.origin(), x, y);
+            if propagate {
+                set?;
+            } else {
+                ignore_status(set)?;
+            }
+        }
+        let domain = Extent2d::from_bounds(0.0, 0.0, u, v);
+        for side in 0..2 {
+            if side == 1 {
+                placement.translate(placement.z_axis().unitize_or_z() * offset);
+            }
+            if propagate {
+                // `AddBoxFace`: no face on a side of zero extent; a plane or face that
+                // cannot be made, or a face whose making fails after it was made,
+                // returns its status (the face keeps its plane)
+                if domain.x_length() == 0.0 || domain.y_length() == 0.0 {
+                    continue;
+                }
+                let mut plane = Plane::create_canonical(&placement)?;
+                plane.adjust_step_uv_domain(&domain)?;
+                let uv = plane.step_uv_domain();
+                create_face(k, brep, Surface::from(plane), uv)?;
+            } else {
+                let mut plane = Plane::create_canonical(&placement)?;
+                ignore_status(plane.adjust_step_uv_domain(&domain))?;
+                let uv = plane.step_uv_domain();
+                ignore_status(create_face(k, brep, Surface::from(plane), uv))?;
+            }
+        }
+    }
+    if propagate {
+        stitch(k, brep)
+    } else {
+        ignore_status(stitch(k, brep))
+    }
+}
+
 impl PrimitiveCreation {
     /// Build six planar faces, then stitch and orient them (`CreateBox`).
     pub fn create_box(
@@ -425,30 +489,14 @@ impl PrimitiveCreation {
         frame: &Axis2Placement,
     ) -> Result<()> {
         brep.set_editing_enabled(true);
-        let mut placement = Axis2Placement::new(frame.origin(), frame.x_axis(), frame.y_axis());
-        let planes = [
-            (frame.x_axis(), frame.y_axis(), length, width, height),
-            (frame.y_axis(), frame.z_axis(), width, height, length),
-            (frame.x_axis(), frame.z_axis(), length, height, -width),
-        ];
-        for (index, (x, y, u, v, offset)) in planes.into_iter().enumerate() {
-            if index != 0 {
-                ignore_status(placement.set_canonical(frame.origin(), x, y))?;
-            }
-            let domain = Extent2d::from_bounds(0.0, 0.0, u, v);
-            for side in 0..2 {
-                if side == 1 {
-                    placement.translate(placement.z_axis().unitize_or_z() * offset);
-                }
-                let mut plane = Plane::create_canonical(&placement)?;
-                ignore_status(plane.adjust_step_uv_domain(&domain))?;
-                let uv = plane.step_uv_domain();
-                ignore_status(create_face(k, brep, Surface::from(plane), uv))?;
-            }
+        // (WR-596, opt-in: the fork's `AddBoxFace`, every status returned; editing is
+        // turned off again on every way out)
+        let propagate = k.fixes.box_face_failures_propagate;
+        let result = box_faces(k, brep, [length, width, height], frame, propagate);
+        if propagate || result.is_ok() {
+            brep.set_editing_enabled(false);
         }
-        ignore_status(stitch(k, brep))?;
-        brep.set_editing_enabled(false);
-        Ok(())
+        result
     }
 
     /// Cylindrical box validation, followed by the first trimmed plane edit.
@@ -910,6 +958,44 @@ fn cover_face_surface(
     Ok(r.success)
 }
 
+/// Not upstream (WR-565, #1477, `fixes.linear_sweep_arc_is_cylinder`): the cylinder of
+/// the circular arc of `frame` and `radius` from `start` to `end` degrees, swept square
+/// to its plane over `distance` along the unit `sweep_dir`. The frame is turned about
+/// its Z axis to the arc's start or, for a sweep against the arc's normal, to its end
+/// and then flipped about its X axis, so that STEP u runs over the arc from 0 to its
+/// sweep angle and v along the sweep from 0 to `distance`. `None` when the cylinder
+/// cannot be made.
+fn arc_sweep_cylinder(
+    k: &Kernel,
+    mut frame: Axis2Placement,
+    radius: f64,
+    (start, end): (f64, f64),
+    sweep_dir: Vec3,
+    distance: f64,
+) -> Result<Option<Cone>> {
+    let against = sweep_dir.dot(frame.z_axis()) < 0.0;
+    let turn = if against { end } else { start };
+    frame.rotate_about_axis_at_point(
+        turn * core::f64::consts::PI / 180.0,
+        frame.origin(),
+        frame.z_axis(),
+    );
+    if against {
+        frame.rotate_about_axis_at_point(
+            180.0 * core::f64::consts::PI / 180.0,
+            frame.origin(),
+            frame.x_axis(),
+        );
+    }
+    let Some(mut cylinder) = ignored(Cone::create_canonical_cylinder(k, &frame, radius))? else {
+        return Ok(None);
+    };
+    ignore_status(
+        cylinder.adjust_step_uv_domain(k, &Extent2d::from_bounds(0.0, 0.0, end - start, distance)),
+    )?;
+    Ok(Some(cylinder))
+}
+
 /// Not upstream (WR-576, #1507, `fixes.linear_sweep_arc_to_cylinder_zero`): the zero a
 /// linear sweep tests a profile curve's arc to, the one an `SmCylinder`'s own check holds
 /// its generating curve to: `SM_EFF_ZERO * 1000 * (1 + the largest coordinate of the
@@ -927,6 +1013,8 @@ impl PrimitiveCreation {
     /// The curve overload of `CreateLinearSweep`. It consumes the curves, chooses
     /// a rectangular plane for an orthogonal line, a cylinder for a full circle
     /// swept along its axis, and an extrusion otherwise. Topology edits defer.
+    /// With `k.fixes.linear_sweep_arc_is_cylinder` (not upstream, WR-565) an arc
+    /// short of a full circle swept along its axis is a cylinder too.
     /// With `k.fixes.linear_sweep_arc_to_cylinder_zero` (not upstream, WR-576) the arc
     /// test is to the cylinder check's zero (`arc_zero`), not the B-rep's tolerance.
     pub fn create_linear_sweep(
@@ -1007,6 +1095,21 @@ impl PrimitiveCreation {
                                 k,
                                 &Extent2d::from_bounds(0.0, 0.0, 360.0, distance),
                             ))?;
+                            let domain = cylinder.rev.base().natural_uv_domain();
+                            ignore_status(cone_face(k, brep, &cylinder, domain))?;
+                            continue;
+                        }
+                    }
+                    // Not upstream (WR-565, #1477): with the fix, an arc short of a
+                    // whole turn swept square to its plane is a cylinder too.
+                    if k.fixes.linear_sweep_arc_is_cylinder
+                        && angle > 0.0
+                        && angle <= 360.0 - brep.tolerance()
+                        && distance * frame.z_axis().cross(sweep_dir).length() <= brep.tolerance()
+                    {
+                        if let Some(cylinder) =
+                            arc_sweep_cylinder(k, frame, radius, (start, end), sweep_dir, distance)?
+                        {
                             let domain = cylinder.rev.base().natural_uv_domain();
                             ignore_status(cone_face(k, brep, &cylinder, domain))?;
                             continue;
