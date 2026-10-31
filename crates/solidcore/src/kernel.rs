@@ -473,6 +473,8 @@ pub struct UpstreamFixes {
     /// turn on) collapses to one NURBS parameter and the surface built on it gets NaN knots
     /// and fails with `SM_ERR` (WR-211, #428; the fork's tangency-labs/smlib@5c0b5ed).
     pub ellipse_adjust_step_interval_keeps_turns: bool,
+    /// `SmTopologyIntersector::IntersectInsertRelate`, before `ResolveIntersections`, removes the edge definition of two planar faces' crossing line (and its proto edge when that is left without one) when an edge of one face lies on the other face parallel to the crossing, covering it and farther from it than the tolerance, either in the crossing's own proto edge or on each side of it in proto edges of their own: the planes are then within tolerance of each other across the strip, and the crossing, fixed only to `tol / sin(angle)`, is not an edge. Upstream imprints it with end vertices picked per B-rep (`SmProtoVertex::GetFinalVertex`) that `SetRelationships` never relates, so `SmMerge::MakeFaceuse` fails on the edge's inconsistent vertex mates (`SM_ERR`): two 4 mm cubes, one turned 5.7 deg about z, within 1e-5 of each other across a 2e-4 strip (WR-614, #1794; own design, not in the fork).
+    pub boolean_coincident_strip_drops_crossing: bool,
 }
 
 /// Options for [`Kernel::new`].
