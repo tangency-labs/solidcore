@@ -677,6 +677,17 @@ pub struct UpstreamFixes {
     /// are 1e-4 apart is non-manifold and at 1e-3 not a solid (WR-647, #1979; the fork's
     /// tangency-labs/smlib@c2e3d9d).
     pub simple_coincidence_crossing_is_point: bool,
+    /// `SmOffsetSurface::EvaluatePlainOrSimple` uses the correct coefficients and base
+    /// derivatives in its four third-order terms: `Cuuv`'s `Buuv x Buv` coefficient is
+    /// `1` (the derivative of `Cuu`, not `3`), `Cuvv`'s `Buvv x Buv` coefficient is
+    /// `-1` (the derivative of `Cvv`, not `3`), and `Duvv` / `Dvvv` add `Buvv` / `Bvvv`
+    /// (not `Buuv`), so `Duuv`, `Duvv` and `Dvvv` agree with the closed-form derivatives
+    /// of the offset (WR-160 and WR-161; PR #1914). Orders 0..2 and `Duuu` are
+    /// unchanged. Off by default for pinned C++ parity. `WR-162` (the upper-half,
+    /// unequal-order second-derivative slot write) is still unfixed. An in-kernel
+    /// `CrvOnSurf` evaluator that reads these third partials can consume the corrected
+    /// values, but no production case that does was measured.
+    pub offset_surface_third_derivative_terms: bool,
     /// `SmFace::GetPointsInFace` samples a rectangularly trimmed face from its UV domain's
     /// minimum: each column starts at the domain's minimum u plus the column increment and
     /// each row at the domain's minimum v plus the row increment, and the column increment
