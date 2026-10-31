@@ -226,6 +226,8 @@ pub struct UpstreamFixes {
     pub keep_operand_uv_trims: bool,
     /// `smgu_EvaluateCurveContinuity`'s G2 test compares the two sides' Frenet curvatures and normals (WR-380, #933/#838).
     pub geometric_g2_continuity: bool,
+    /// Surface-cache continuity queries include the last internal v knot (WR-42).
+    pub surface_cache_last_v_knot: bool,
     /// `RemoveCoincidentNoEdgeProtoVertex` reports a miss as `false` (WR-73, #848).
     pub proto_vertex_miss_is_false: bool,
     /// `CheckLoop` measures a gap against at least its vertex's zone tolerance (WR-381, #476).

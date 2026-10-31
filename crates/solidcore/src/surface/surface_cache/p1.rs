@@ -57,6 +57,8 @@
 //! | [`is_kind_of`], [`SurfaceCache::is_kind_of`]      | `SmSurfaceCache::IsKindOf`                       |
 //!
 //! Deviations:
+//! - **WR-42.** [`SurfaceCache::surface_continuity`] includes the last
+//!   internal v knot when `Kernel::fixes.surface_cache_last_v_knot` is enabled.
 //! - **Ownership.** Upstream holds a pointer to its surface; the cache owns the
 //!   [`Surface`] it is built for (moved in, so its owner is kept). The surface's
 //!   handle in the caller's object space (`O`, see [`crate::geom::tree`]) is optional;
@@ -2679,14 +2681,17 @@ impl<O: Copy + PartialEq> SurfaceCache<O> {
     }
 
     /// The lowest continuity at an internal knot of the surface inside `uv_domain`
-    /// (`GetSurfaceContinuity`); `SM_CT_CINFINITY` without internal knots. Keeps
-    /// upstream's v loop bound, which skips the last internal v knot.
+    /// (`GetSurfaceContinuity`); `SM_CT_CINFINITY` without internal knots. Includes
+    /// the last internal v knot when
+    /// [`crate::kernel::UpstreamFixes::surface_cache_last_v_knot`] is enabled;
+    /// otherwise preserves the pinned upstream loop bound (WR-42).
     ///
     /// # Errors
     ///
     /// `InvalidInput` when a continuity array is longer than the knot list (upstream
     /// reads past it); [`SolidError::Unported`] from `GetKnots`.
-    pub fn surface_continuity(&self, uv_domain: &Extent2d) -> Result<ContinuityType> {
+    pub fn surface_continuity(&self, k: &Kernel, uv_domain: &Extent2d) -> Result<ContinuityType> {
+        let include_last_v_knot = k.fixes.surface_cache_last_v_knot;
         // init return
         let mut ret = ContinuityType::CInfinity;
 
@@ -2724,7 +2729,7 @@ impl<O: Copy + PartialEq> SurfaceCache<O> {
         // remember lowest internal V continuity value
         if !v_conts.is_empty() {
             let mut iv = 1;
-            while iv + 1 < v_conts.len() - 1 {
+            while iv + 1 < v_conts.len() - usize::from(!include_last_v_knot) {
                 let c = *v_conts.get(iv).ok_or_else(|| invalid(OP_CONT, "index"))?;
                 let knot = *knots
                     .get(iv)

@@ -1215,7 +1215,7 @@ fn rust_op(i: &Inputs) -> Result<Run, HarnessError> {
                 .map(|&c| continuity_of(c))
                 .collect::<Result<Vec<_>, _>>()?;
             cache.set_continuities(uc, vc);
-            cache.surface_continuity(&dom_of(*dom)).map(|c| {
+            cache.surface_continuity(&k, &dom_of(*dom)).map(|c| {
                 o.push(f64::from(c as i32));
                 o
             })
