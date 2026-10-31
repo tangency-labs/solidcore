@@ -227,11 +227,21 @@ impl<T: Clone> core::ops::DerefMut for Shared<T> {
 /// be removed (upstream's `delete` of a topology object, unit `topology.brep_p4`),
 /// which empties its slot for good: ids are never reused, so the ids of the other
 /// items do not change, and iteration skips the empty slots.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone)]
 pub struct Arena<I, T> {
     items: Vec<Option<T>>,
     live: usize,
+    /// (not upstream, a cache key) The indices of the removed items, in removal order:
+    /// what the notify records' reseeding (`topology::brep::p3`) drops since it last
+    /// looked. Not part of the arena's value ([`PartialEq`] ignores it).
+    removed: Vec<u32>,
     _id: PhantomData<fn() -> I>,
+}
+
+impl<I, T: PartialEq> PartialEq for Arena<I, T> {
+    fn eq(&self, other: &Self) -> bool {
+        self.items == other.items && self.live == other.live
+    }
 }
 
 impl<I, T> Default for Arena<I, T> {
@@ -239,6 +249,7 @@ impl<I, T> Default for Arena<I, T> {
         Self {
             items: Vec::new(),
             live: 0,
+            removed: Vec::new(),
             _id: PhantomData,
         }
     }
@@ -270,7 +281,15 @@ impl<I: ArenaId, T> Arena<I, T> {
     pub fn remove(&mut self, id: I) -> Option<T> {
         let item = self.items.get_mut(id.index() as usize)?.take()?;
         self.live = self.live.saturating_sub(1);
+        self.removed.push(id.index());
         Some(item)
+    }
+
+    /// The indices of the removed items, in removal order (each once: a slot is
+    /// emptied for good).
+    #[must_use]
+    pub(crate) fn removed(&self) -> &[u32] {
+        &self.removed
     }
 
     /// The item with id `id`, or `None` if the id is out of range or removed.
@@ -809,6 +828,11 @@ pub struct Brep {
     /// (not upstream) Names this B-rep value for the notify records' seeding progress
     /// (`topology::brep::p3`); a clone is another value without one.
     progress_tag: topology::ProgressTag,
+    /// (not upstream) Names the lineage of this value's arenas for the notify records'
+    /// reseeding (`topology::brep::p3`): within one tag the arenas only append and
+    /// empty slots for good, each removal journaled ([`Arena::removed`]). A clone, and
+    /// a rollback ([`Brep::restore_from`]), starts another.
+    removal_tag: topology::ProgressTag,
     /// Edge/face/edge-use identities supplied when their geometry was bound. These
     /// record producer provenance; they are never inferred from an opaque geometry
     /// owner.
@@ -885,6 +909,7 @@ impl Brep {
             locked_bounding_box: self.locked_bounding_box,
             notify_identity: self.notify_identity.clone(),
             progress_tag: self.progress_tag.clone(),
+            removal_tag: self.removal_tag.clone(),
             geometry_owner_keys: self.geometry_owner_keys.clone(),
             attributes: self.attributes.clone(),
         }
@@ -922,6 +947,7 @@ impl Default for Brep {
             locked_bounding_box: None,
             notify_identity: IdentitySlot::default(),
             progress_tag: topology::ProgressTag::default(),
+            removal_tag: topology::ProgressTag::default(),
             geometry_owner_keys: std::collections::BTreeMap::new(),
             attributes: AttributeStore::default(),
         }
@@ -1709,6 +1735,12 @@ impl Brep {
     /// The tag naming this B-rep value for the notify records' seeding progress.
     pub(crate) fn progress_tag(&mut self) -> Arc<()> {
         self.progress_tag.get()
+    }
+
+    /// The tag naming the lineage of this value's arenas for the notify records'
+    /// reseeding (see the field).
+    pub(crate) fn removal_tag(&mut self) -> Arc<()> {
+        self.removal_tag.get()
     }
 
     /// Appends a region record as is (no validation).

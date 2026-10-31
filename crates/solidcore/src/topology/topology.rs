@@ -313,10 +313,45 @@ pub trait TopologyRecords {
 /// members). Reads go through the map ([`Deref`](std::ops::Deref)); writes go through
 /// the methods here, so a store also remembers how far each B-rep's objects have been
 /// checked and given a record (`topology::brep::p3`), which a removal forgets.
-#[derive(Debug, Clone, Default)]
+#[derive(Clone, Default)]
 pub struct NotifyRecords {
     map: BTreeMap<ObjectKey, Topology>,
     progress: Vec<SeedProgress>,
+    /// (not upstream, a cache) What changed since the store was last made exactly the
+    /// default records of one B-rep value's objects (`topology::brep::p3`'s reseeding):
+    /// `None` when that is unknown, so the next reseeding rebuilds the whole store.
+    since_reseed: Option<ReseedMark>,
+}
+
+// (the reseeding mark is a cache, left out so the output is the derived one of before)
+#[allow(clippy::missing_fields_in_debug)]
+impl core::fmt::Debug for NotifyRecords {
+    /// The records and the seeding progress (the reseeding mark is a cache).
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.debug_struct("NotifyRecords")
+            .field("map", &self.map)
+            .field("progress", &self.progress)
+            .finish()
+    }
+}
+
+/// Where a [`NotifyRecords`] stood when `topology::brep::p3`'s reseeding last made it
+/// exactly a default record for every object of one B-rep value (and the B-rep), under
+/// one key scheme: enough to bring it there again by visiting only what changed since.
+#[derive(Debug, Clone)]
+pub(crate) struct ReseedMark {
+    /// The key scheme and B-rep key the records were made under (the caller's own
+    /// encoding, compared for equality only).
+    pub(crate) scheme: [u64; 2],
+    /// The B-rep value's removal lineage (`Brep::removal_tag`).
+    pub(crate) tag: Arc<()>,
+    /// Per kind: the length of the arena's removal journal then.
+    pub(crate) removed: [usize; 10],
+    /// Per kind: the arena's slot count then.
+    pub(crate) slots: [usize; 10],
+    /// The keys whose record was added, changed or removed since, in write order
+    /// (repeats included).
+    pub(crate) written: Vec<ObjectKey>,
 }
 
 /// How far a [`NotifyRecords`] has checked and seeded the objects of one B-rep value,
@@ -375,6 +410,7 @@ impl From<BTreeMap<ObjectKey, Topology>> for NotifyRecords {
         Self {
             map,
             progress: Vec::new(),
+            since_reseed: None,
         }
     }
 }
@@ -394,16 +430,19 @@ impl NotifyRecords {
 
     /// The record of `key`, made default first if it has none.
     pub fn or_default(&mut self, key: ObjectKey) -> &mut Topology {
+        self.wrote(key);
         self.map.entry(key).or_default()
     }
 
     /// Sets the record of `key`, returning the previous one.
     pub fn insert(&mut self, key: ObjectKey, record: Topology) -> Option<Topology> {
+        self.wrote(key);
         self.map.insert(key, record)
     }
 
     /// Mutable access to the record of `key`.
     pub fn get_mut(&mut self, key: &ObjectKey) -> Option<&mut Topology> {
+        self.wrote(*key);
         self.map.get_mut(key)
     }
 
@@ -411,53 +450,92 @@ impl NotifyRecords {
     pub fn values_mut(
         &mut self,
     ) -> std::collections::btree_map::ValuesMut<'_, ObjectKey, Topology> {
+        self.since_reseed = None;
         self.map.values_mut()
     }
 
     /// Removes the record of `key`.
     pub fn remove(&mut self, key: &ObjectKey) -> Option<Topology> {
         self.progress.clear();
+        self.wrote(*key);
         self.map.remove(key)
     }
 
     /// Keeps the records `keep` accepts (it may also change them).
     pub fn retain(&mut self, keep: impl FnMut(&ObjectKey, &mut Topology) -> bool) {
         self.progress.clear();
+        self.since_reseed = None;
         self.map.retain(keep);
     }
 
     /// Removes every record.
     pub fn clear(&mut self) {
         self.progress.clear();
+        self.since_reseed = None;
         self.map.clear();
     }
 
-    /// The records and the progress kept for `id` on the B-rep value `instance` (made
-    /// empty if there is none), for `topology::brep::p3`'s per-edit check and seeding,
-    /// which only adds records.
+    /// Notes that the record of `key` may differ from the last reseeding's (see
+    /// [`ReseedMark`]); past as many notes as the store has records, a rebuild is no
+    /// dearer, so the mark is dropped instead.
+    fn wrote(&mut self, key: ObjectKey) {
+        if let Some(mark) = self.since_reseed.as_mut() {
+            if mark.written.len() > self.map.len() {
+                self.since_reseed = None;
+            } else {
+                mark.written.push(key);
+            }
+        }
+    }
+
+    /// Gives `key` a default record if it has none (for seeding: an existing record is
+    /// left as it is).
+    pub(crate) fn seed_default(&mut self, key: ObjectKey) {
+        if let std::collections::btree_map::Entry::Vacant(entry) = self.map.entry(key) {
+            entry.insert(Topology::default());
+            if let Some(mark) = self.since_reseed.as_mut() {
+                mark.written.push(key);
+            }
+        }
+    }
+
+    /// The bare record map, the progress (which a reseeding forgets) and the mark slot,
+    /// for `topology::brep::p3`'s reseeding, which leaves the store exactly as a
+    /// rebuild would and then sets the mark.
+    pub(crate) fn reseed_parts(
+        &mut self,
+    ) -> (
+        &mut BTreeMap<ObjectKey, Topology>,
+        &mut Vec<SeedProgress>,
+        &mut Option<ReseedMark>,
+    ) {
+        (&mut self.map, &mut self.progress, &mut self.since_reseed)
+    }
+
+    /// The progress kept for `id` on the B-rep value `instance` (made empty if there is
+    /// none), for `topology::brep::p3`'s per-edit check and seeding, which only adds
+    /// records ([`Self::seed_default`]).
     pub(crate) fn progress_for(
         &mut self,
         id: Vec<u64>,
         instance: Arc<()>,
-    ) -> Option<(&mut BTreeMap<ObjectKey, Topology>, &mut SeedProgress)> {
+    ) -> Option<&mut SeedProgress> {
         // (a value only the store still names is gone: its progress is never used again)
         self.progress.retain(|p| Arc::strong_count(&p.instance) > 1);
         let at = self
             .progress
             .iter()
             .position(|p| p.id == id && Arc::ptr_eq(&p.instance, &instance));
-        let Self { map, progress } = self;
-        let p = if let Some(at) = at {
-            progress.get_mut(at)
+        if let Some(at) = at {
+            self.progress.get_mut(at)
         } else {
-            progress.push(SeedProgress {
+            self.progress.push(SeedProgress {
                 id,
                 instance,
                 ..SeedProgress::default()
             });
-            progress.last_mut()
-        };
-        Some((map, p?))
+            self.progress.last_mut()
+        }
     }
 }
 
@@ -467,6 +545,7 @@ impl TopologyRecords for NotifyRecords {
     }
 
     fn topology_mut(&mut self, key: ObjectKey) -> Option<&mut Topology> {
+        self.wrote(key);
         self.map.get_mut(&key)
     }
 }
