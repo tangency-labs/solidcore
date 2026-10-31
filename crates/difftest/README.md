@@ -44,7 +44,7 @@ nice -n 10 cargo test -p difftest --features cpp                     # harness s
 | `--report-dir D` / `--no-report` | report location (default `reports/difftest/`) / skip writing |
 | `--fuzz N` | with `--unit`: probe the unit's FFI guard with N mutated cases, each run in a child process (below). No report written. |
 | `--fuzz-out D` | where `--fuzz` writes failing inputs (default `bin/fuzz/`; files go to `D/<unit>/`) |
-| `--ssi-corpus [--tol T] [--jobs N] [glob]` | score the engines against the SSI corpus (see [below](#--ssi-corpus-exact-ground-truth-ssi-corpus)); not a gate; without the `cpp` feature, the `ssi` engine alone |
+| `--ssi-corpus [--tol T] [--ssi-corpus-fixes F] [--jobs N] [glob]` | score the engines against the SSI corpus (see [below](#--ssi-corpus-exact-ground-truth-ssi-corpus)); not a gate; without the `cpp` feature, the `ssi` engine alone |
 | `--solidcraft-cases [glob]` | score the Rust port on SolidCraft's whole-operation regression cases (see [below](#--solidcraft-cases-solidcraft-regression-cases)); not a gate, no `cpp` feature needed |
 | `--step-corpus [--constructor] [--jobs N] [glob]` | import STEP Tools' AP203/AP214 sample files and build every B-rep body on both kernels from the same intermediate (`--constructor`: through `SmBrepConstructor`) (see [below](#--step-corpus-real-world-step-files)); not a gate; without `cpp`, the Rust side alone |
 
@@ -690,6 +690,7 @@ nice -n 10 cargo run --profile difftest -p difftest --features cpp -- --ssi-corp
 nice -n 10 cargo run --profile difftest -p difftest --features cpp -- --ssi-corpus 'c3_*'      # case ids matching a glob (`*`, `?`)
 nice -n 10 cargo run --profile difftest -p difftest --features cpp -- --ssi-corpus --tol default --jobs 4
 nice -n 10 cargo run --profile difftest -p difftest -- --ssi-corpus                         # the ssi engine only, no C++
+nice -n 10 cargo run --profile difftest -p difftest --features cpp -- --ssi-corpus --ssi-corpus-fixes all 'y23_*'
 ```
 
 Without `corpus/ssi/` it prints how to fetch it and exits `0`. The corpus is data only:
@@ -723,6 +724,16 @@ errors (unreadable case, report not writable); verdicts never fail the run.
     parameters and each patch evaluated there; the points are the touch points, then
     the curves' vertices. A refusal is status `SM_ERR` named by its code
     (`BOOLEAN_TANGENT (...)`). Never compared for parity.
+* **Opt-in fixes.** By default the `rust` engine runs `Kernel::default()` (upstream
+  behaviour, the parity run). `--ssi-corpus-fixes <fix,...>` (or the `SSI_SC_FIXES`
+  variable, which the flag overrides) turns on those `UpstreamFixes` fields in the `rust`
+  engine only, by the names `src/solidcraft.rs`'s `enable_fix` knows; `all` stands for
+  every SSI opt-in (`ssi::SSI_FIXES`). An unknown name is a harness error (exit `2`)
+  before any case runs. Such a run says so on its first line, writes its raw output to
+  `bin/ssi-corpus/raw/<engine>_<tol>_fixes_<list>/` and its report to
+  `reports/ssi-corpus_..._fixes_<list>.json` with a `fixes` entry, so it never overwrites
+  the parity run's; its parity mismatches against the C++ are the fixes' effect, not
+  port bugs.
 * **Scorer** (`src/ssi/score.rs`, `polyset.rs`, `geom.rs`): a port of the corpus'
   `scoring/score.py` and the distance helpers of `ssi_geom.py` (not the truth
   generators). Accuracy tolerance `10 * tol`. Verdicts, most severe first: `CRASH`,

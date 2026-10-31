@@ -36,7 +36,7 @@ const USAGE: &str = "usage: difftest [--unit <id>]... [--green] [--all] [--list]
        [--baseline <dir>] [--compare-reports <dir>] [--digest-dir <dir> [--digest-debug]]
        [--heap-pads N[,N...]]
        difftest --unit <id>... --fuzz N [--fuzz-out <dir>] [--seeds N] [--filter <substr>]
-       difftest --ssi-corpus [--tol 1e-6|default] [--jobs N] [--report-dir <dir>] [--no-report] [case-glob]
+       difftest --ssi-corpus [--tol 1e-6|default] [--ssi-corpus-fixes all|<fix,...>] [--jobs N] [--report-dir <dir>] [--no-report] [case-glob]
        difftest --solidcraft-cases [--report-dir <dir>] [--no-report] [case-glob]
        difftest --step-corpus [--constructor] [--jobs N] [--report-dir <dir>] [--no-report] [file-glob]";
 
@@ -76,6 +76,8 @@ struct Args {
     step_corpus: bool,
     constructor: bool,
     tol: Option<String>,
+    /// `--ssi-corpus-fixes`: the opt-in fixes of the corpus' `rust` engine.
+    ssi_corpus_fixes: Option<String>,
     jobs: Option<usize>,
     glob: Option<String>,
     fuzz: Option<usize>,
@@ -115,6 +117,7 @@ fn parse_args() -> Result<Args, String> {
             "--step-corpus" => a.step_corpus = true,
             "--constructor" => a.constructor = true,
             "--tol" => a.tol = Some(val("--tol")?),
+            "--ssi-corpus-fixes" => a.ssi_corpus_fixes = Some(val("--ssi-corpus-fixes")?),
             "--jobs" | "-j" => {
                 let v = val("--jobs")?;
                 a.jobs = Some(v.parse().map_err(|_| format!("bad --jobs `{v}`"))?);
@@ -253,6 +256,7 @@ fn main() -> ExitCode {
             jobs: args.jobs.unwrap_or(DEFAULT_SSI_JOBS).max(1),
             report_dir: args.report_dir.clone(),
             no_report: args.no_report,
+            fixes: args.ssi_corpus_fixes.clone(),
         };
         return difftest::ssi::run_corpus(&root, &opts);
     }
@@ -277,6 +281,10 @@ fn main() -> ExitCode {
     }
     if args.tol.is_some() {
         eprintln!("difftest: --tol only applies to --ssi-corpus");
+        return ExitCode::from(2);
+    }
+    if args.ssi_corpus_fixes.is_some() {
+        eprintln!("difftest: --ssi-corpus-fixes only applies to --ssi-corpus");
         return ExitCode::from(2);
     }
     if args.jobs.is_some() && (args.fuzz.is_some() || args.list || args.status_of.is_some()) {
