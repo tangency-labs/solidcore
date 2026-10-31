@@ -38,7 +38,7 @@ nice -n 10 cargo test -p difftest --features cpp                     # harness s
 | `--seeds N` | generated cases per unit (default 16) |
 | `--filter S` | only cases whose name contains `S` |
 | `--perturb` | change one item of each case's Rust output (below); passes only if **every** perturbed case is caught. No report written. |
-| `--heap-pads N[,N...]` | after each case, rerun its C++ side (a forked child's heap padded by N small blocks) and list the cases whose C++ output changes ([below](#address-dependent-c-output---heap-pads)). Flag only, not a gate. No report written. |
+| `--heap-pads N[,N...]` | after each case, rerun its C++ side (a forked child's heap padded by N small blocks) and list the cases whose C++ output changes; also writes per-case `heap_qualification` evidence into the report ([below](#address-dependent-c-output---heap-pads)). Flag only, not a gate. |
 | `--compare-reports R` | with `--baseline D` only: run no case, apply the same ratchet to the finished reports in `R` (CI's `difftest-compare` job; needs no C++) |
 | `--baseline D` | regression ratchet: compare each unit with its earlier report `D/<unit>.json` (see [Regression gate](#regression-gate---baseline-value-share)). CI passes the exact base revision's validated report artifact |
 | `--report-dir D` / `--no-report` | report location (default `reports/difftest/`) / skip writing |
@@ -259,8 +259,27 @@ policy can move it. Check native output sensitivity rather than pinning raw heap
 addresses in a regression.
 
 It is a flag, not a gate: each case's outcome is judged against that run's first C++
-result, the summary line and exit status follow those outcomes, and no report is
-written. The reruns do shift the parent's heap and any in-process C++ state before the
+result, and the summary line and exit status follow those outcomes. It also writes the
+usual unit report, plus a `heap_qualification` object:
+
+```json
+"heap_qualification": {
+  "pads": [1, 2, 3],
+  "cases": [{"case": "fuzz00712", "observed": 3, "padded": 3},
+            {"case": "drift", "observed": 1, "padded": 0,
+             "divergence": "pad=1: values.result_geometry[801]: -5.75e0 vs -7.5e-1"}]
+}
+```
+
+One record per checked case: how many pads were rerun, how many of those really padded a
+forked child, and the first divergence or failed rerun (the reruns stop there). A result
+is heap-qualified only when every requested pad was rerun against a padded child with no
+divergence; `observed` short of `len(pads)`, `padded` short of `observed` (in-process
+C++) or any `divergence` means it is not. The upstream watcher additionally requires its
+fixed pad sequence and evidence naming the same unit and case before advertising an
+`ND-*` pass as adoptable (#1405); missing or malformed observations fail closed.
+
+The reruns do shift the parent's heap and any in-process C++ state before the
 next case, so for exactly the kind of case this flag hunts, an outcome can differ from a
 plain run's. Compare with a plain run before drawing conclusions. A case that is not
 flagged is not proven address-independent: try several pads. `--heap-pads` cannot be
@@ -332,7 +351,10 @@ The report records `status`, `cases_passed`/`cases_failed`/`cases_deferred`
 (and `cases_known_mismatch`/`cases_cpp_defect`/`cases_parked` when nonzero),
 `deferred_by_unit` (`{"<blocking unit>": <cases>}`, sorted), and per case
 `outcome` (`pass|fail|deferred|rejected|known_mismatch|cpp_defect|parked`) plus
-`deferred: {unit, symbol}`. When the
+`deferred: {unit, symbol}`. A `--heap-pads` run adds `heap_qualification`
+(`{"pads": [...], "cases": [{"case", "observed", "padded", "divergence"?}]}`), the
+evidence [`scripts/ci/parked_upstream.py`](../../scripts/ci/parked_upstream.py) requires
+before it calls an `ND-*` pass agreement. When the
 blocking unit lands and its stubs are wired, re-run: the deferred count drops
 and the unit can move from `partial` to `green`.
 
@@ -384,9 +406,15 @@ that is the state it has already seen. When upstream changed (or on a manual run
 builds the C++ reference with `harness/cpp/build.sh` from upstream's HEAD instead of
 the pinned commit (only the SMLib/SM_API sources the harness builds), runs
 `difftest --run-parked` on every unit with a parked case, and opens or updates one
-issue, `usd-brep <tag> released: N parked cases now agree, adopt?` (or `... none
-changed`). `--run-parked` runs only the parked cases: one that still disagrees is
-reported as `cpp_defect` (with its mismatches), one that agrees as an ordinary `pass`.
+issue, `usd-brep <tag> released: N parked cases now agree, adopt?` (or `... none changed`).
+`--run-parked` runs only the parked cases: one that still disagrees is reported as
+`cpp_defect` (with its mismatches), one that agrees as an ordinary `pass`.
+For units with `ND-*` cases, `scripts/ci/parked_upstream.py pads --unit <id>` supplies
+`1,2,3,5,8,13,21,34,55,89` for `--heap-pads`; other units keep the single-run path.
+The report records per-case `heap_qualification` (see
+[Address-dependent C++ output](#address-dependent-c-output---heap-pads)). An ND pass is
+listed only after every required pad was observed on a padded child without divergence.
+That is stronger evidence than a single lucky pass, not proof about every heap layout.
 `scripts/ci/parked_upstream.py` selects the units and writes the issue. Upstream's
 unpinned HEAD runs only in the `run-parked` job, which has a read-only token (credentials
 not kept in the checkout) and no sccache or rust-cache; its one cache, the C++ build, uses

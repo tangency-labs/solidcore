@@ -11,7 +11,8 @@
 //!          --baseline <dir>   # regression ratchet against earlier reports (see `difftest::baseline`)
 //!          --run-parked       # only the parked cases (`cpp_defect` entries); nightly, never the gate
 //!          --heap-pads 1,3,8  # also rerun each case's C++ side with a padded heap; lists
-//!                             # address-dependent cases (flag only, no report)
+//!                             # address-dependent cases and, with --report-dir, writes the
+//!                             # per-case `heap_qualification` evidence to the report
 //!          --jobs N (-j; default 1, 0 = all cores)   # units in N child processes (`difftest::jobs`)
 //! cargo run -p difftest --features cpp -- --unit <id> --fuzz N [--fuzz-out <dir>]   # FFI guard probing
 //! cargo run -p difftest --features cpp -- --ssi-corpus [--tol 1e-6|default] [--jobs N] [glob]
@@ -64,7 +65,8 @@ struct Args {
     seeds: Option<usize>,
     filter: Option<String>,
     perturb: bool,
-    /// `--heap-pads`: rerun each case's C++ side with these heap pads (flag only).
+    /// `--heap-pads`: rerun each case's C++ side with these heap pads, and record the
+    /// per-case observations in the report's `heap_qualification` section.
     heap_pads: Vec<usize>,
     run_parked: bool,
     report_dir: Option<PathBuf>,
@@ -438,7 +440,7 @@ fn main() -> ExitCode {
         // and a unit with no report anywhere to its fixture size (reports are not committed).
         let default_dir = root.join("reports").join("difftest");
         let dirs = [report_dir.as_path(), default_dir.as_path()];
-        // (`--heap-pads` writes no report, so it leaves no report directory to time into)
+        // (a `--heap-pads` qualification run feeds no queue: its reports are evidence)
         let times = (!args.no_report && args.heap_pads.is_empty())
             .then(|| report_dir.join(difftest::jobs::TIMES_FILE));
         return difftest::jobs::run_parallel(
@@ -584,7 +586,7 @@ fn main() -> ExitCode {
         } else if res.status() == UnitStatus::SkippedPlatform {
             skipped += 1;
         }
-        if !args.no_report && !args.perturb && args.heap_pads.is_empty() {
+        if !args.no_report && !args.perturb {
             match report::write_unit_report(&report_dir, &res) {
                 Ok(p) => println!(
                     "  report: {}",

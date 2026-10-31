@@ -10,15 +10,19 @@ name: Parked cases vs upstream latest
 #   one already seen it stops there.
 # - `run-parked` (contents: read, checkout without persisted credentials) runs only when
 #   upstream changed or on workflow_dispatch. It builds the C++ reference from upstream's
-#   HEAD with harness/cpp/build.sh, runs `difftest --run-parked` on every unit with a
-#   parked case and uploads the reports as an artifact. It uses no sccache and no
-#   rust-cache; its one cache, the C++ build, is keyed `parked-upstream-cpp-*`, a namespace
-#   main CI never restores.
+#   HEAD with harness/cpp/build.sh, runs `difftest --run-parked --heap-pads <pads>` on
+#   every unit with a parked case and uploads the reports as an artifact. The pads come
+#   from scripts/ci/parked_upstream.py (`pads`): each case's C++ side is rerun against a
+#   heap-padded forked child, and the report records the per-case `heap_qualification`.
+#   Without that evidence an `ND-*` pass is a single lucky observation, not agreement
+#   (issue #1405). It uses no sccache and no rust-cache; its one cache, the C++ build, is
+#   keyed `parked-upstream-cpp-*`, a namespace main CI never restores.
 # - `report` (issues: write) downloads that artifact and runs only
 #   scripts/ci/parked_upstream.py and gh: it opens or updates the one tracking issue,
 #   "usd-brep <tag> released: N parked cases now agree, adopt?" (or "... none changed"),
 #   then records the new state as seen. No upstream code runs there; the reports are
-#   read as data.
+#   read as data, and an `ND-*` case is listed only when its heap qualification is
+#   complete.
 #
 # The last-seen state is an actions/cache entry keyed by the hash of the ls-remote output
 # (GITHUB_TOKEN cannot write repository variables, and a state branch would need
@@ -165,13 +169,20 @@ jobs:
 
       # Each unit separately so one failure does not hide the others; the exit status is
       # ignored (a parked case that agrees is the news, and the reports carry it).
+      # Only units with ND-* cases need heap reruns; other parked defects keep the
+      # existing single-run path. The report step requires the ND evidence.
       - name: Run the parked cases
         if: steps.units.outputs.units != ''
         env:
           UNITS: ${{ steps.units.outputs.units }}
         run: |
           for u in $UNITS; do
-            bin/difftest/difftest --unit "$u" --run-parked --report-dir bin/parked || true
+            pads=$(python3 scripts/ci/parked_upstream.py pads --unit "$u")
+            args=(--unit "$u" --run-parked --report-dir bin/parked)
+            if [ -n "$pads" ]; then
+              args+=(--heap-pads "$pads")
+            fi
+            bin/difftest/difftest "${args[@]}" || true
           done
 
       - name: Upload the reports

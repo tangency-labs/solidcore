@@ -128,6 +128,31 @@ pub fn unit_report(r: &UnitResult) -> Value {
         "cases".into(),
         Value::Array(r.cases.iter().map(case_json).collect()),
     );
+    // Structured `--heap-pads` evidence: the requested pads and, per case, how many
+    // reruns were observed, how many really padded a forked C++ child, and the first
+    // divergence. A consumer qualifies a parked result only when every pad was observed
+    // on a padded child with no divergence (see `scripts/ci/parked_upstream.py`).
+    if !r.heap_check.pads.is_empty() {
+        let observations: Vec<Value> = r
+            .heap_check
+            .observations
+            .iter()
+            .map(|o| {
+                let mut e = Map::new();
+                e.insert("case".into(), json!(o.case));
+                e.insert("observed".into(), json!(o.observed));
+                e.insert("padded".into(), json!(o.padded));
+                if let Some(d) = &o.divergence {
+                    e.insert("divergence".into(), json!(d));
+                }
+                Value::Object(e)
+            })
+            .collect();
+        m.insert(
+            "heap_qualification".into(),
+            json!({"pads": r.heap_check.pads, "cases": observations}),
+        );
+    }
     if let Some(h) = &r.harness_error {
         m.insert("harness_error".into(), json!(h));
     }
@@ -371,6 +396,52 @@ mod tests {
             assert_eq!(report["values_compared"], 0);
             assert_eq!(report["exact_compared"], expected);
         }
+    }
+
+    #[test]
+    fn heap_qualification_is_reported_only_for_a_padded_run() {
+        let plain = UnitResult {
+            unit: "a.b".into(),
+            cases: Vec::new(),
+            harness_error: None,
+            skipped_platform: None,
+            abs_floors: Vec::new(),
+            seeds: 16,
+            timing: crate::runner::UnitTiming::default(),
+            heap_check: crate::runner::HeapCheck::default(),
+        };
+        assert!(unit_report(&plain).get("heap_qualification").is_none());
+        let r = UnitResult {
+            heap_check: crate::runner::HeapCheck {
+                pads: vec![1, 2],
+                checked: 2,
+                padded: 1,
+                observations: vec![
+                    crate::runner::HeapObservation {
+                        case: "qualified".into(),
+                        observed: 2,
+                        padded: 2,
+                        divergence: None,
+                    },
+                    crate::runner::HeapObservation {
+                        case: "shifted".into(),
+                        observed: 1,
+                        padded: 1,
+                        divergence: Some("pad=1: values.x[0]: 1 vs 2".into()),
+                    },
+                ],
+                ..crate::runner::HeapCheck::default()
+            },
+            ..plain
+        };
+        let v = unit_report(&r);
+        let q = &v["heap_qualification"];
+        assert_eq!(q["pads"], json!([1, 2]));
+        assert_eq!(q["cases"][0]["case"], "qualified");
+        assert_eq!(q["cases"][0]["observed"], 2);
+        assert_eq!(q["cases"][0]["padded"], 2);
+        assert!(q["cases"][0].get("divergence").is_none());
+        assert_eq!(q["cases"][1]["divergence"], "pad=1: values.x[0]: 1 vs 2");
     }
 
     #[test]

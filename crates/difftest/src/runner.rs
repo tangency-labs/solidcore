@@ -94,8 +94,9 @@ pub struct RunOptions {
     pub run_parked: bool,
     /// Address-dependence check (`--heap-pads`): after each case, rerun its C++ side once
     /// per entry with the forked child's heap padded by that many small blocks, and
-    /// record the case in [`UnitResult::heap_check`] if a rerun's output differs from the
-    /// unpadded one. Flag only: outcomes are unchanged. Empty (the default): no rerun.
+    /// record the reruns in [`UnitResult::heap_check`] (one observation per checked case,
+    /// plus the cases whose rerun differed from the unpadded one). Flag only: outcomes
+    /// are unchanged. Empty (the default): no rerun.
     pub heap_pads: Vec<usize>,
 }
 
@@ -306,13 +307,16 @@ pub struct UnitResult {
     pub seeds: usize,
     /// Wall time spent per phase (not written to the report).
     pub timing: UnitTiming,
-    /// The `--heap-pads` check (not written to the report).
+    /// The `--heap-pads` check (written to the report as `heap_qualification` when the
+    /// run used pads, so a consumer can tell a qualified result from a lucky one).
     pub heap_check: HeapCheck,
 }
 
 /// What [`RunOptions::heap_pads`] found in one unit.
 #[derive(Debug, Clone, Default)]
 pub struct HeapCheck {
+    /// The pads this run requested (empty when the run used none).
+    pub pads: Vec<usize>,
     /// Cases whose C++ side was rerun: every case whose C++ side ran and did not reject
     /// the input (parked cases only under `--run-parked`, where they run).
     pub checked: usize,
@@ -320,6 +324,10 @@ pub struct HeapCheck {
     /// ([`solidcore_ffi::isolate::fresh_process`]). A runner that calls C++ in-process
     /// is rerun unpadded, so its cases are checked but not padded.
     pub padded: usize,
+    /// One record per checked case, in case order: how many pads were rerun, how many of
+    /// those really padded a forked child, and the first divergence. This is the
+    /// structured evidence [`HeapCheck::pads`] alone cannot carry.
+    pub observations: Vec<HeapObservation>,
     /// `(case, note)`: a padded rerun's C++ output differs from the unpadded one. The note
     /// names the pad and the first differing field (unpadded value, then padded).
     pub address_dependent: Vec<(String, String)>,
@@ -330,6 +338,25 @@ pub struct HeapCheck {
     /// `(case, note)`: a rerun failed (harness error, child crash or timeout) where the
     /// first run did not. Worth a look, but not evidence of address dependence.
     pub rerun_errors: Vec<(String, String)>,
+}
+
+/// One case's [`RunOptions::heap_pads`] reruns (structured form of [`HeapCheck`]'s
+/// flags). A consumer qualifies a result only when every requested pad was rerun against
+/// a really padded child and none diverged: anything less is a single observation, not
+/// evidence that the result does not depend on heap addresses (ND-2, ND-258).
+#[derive(Debug, Clone, Default)]
+pub struct HeapObservation {
+    /// Case name.
+    pub case: String,
+    /// Pads actually rerun for this case; fewer than the requested pads when a rerun
+    /// already diverged or failed (the reruns stop there).
+    pub observed: usize,
+    /// Of [`HeapObservation::observed`], how many forked a padded child. A case whose
+    /// C++ side runs in-process is rerun unpadded, so it cannot qualify.
+    pub padded: usize,
+    /// The first divergence or failed rerun (`pad=N: ...`); `None` when every rerun
+    /// reproduced the first C++ output.
+    pub divergence: Option<String>,
 }
 
 /// What one case's reruns showed ([`heap_dependence`]).
@@ -357,31 +384,32 @@ fn padded_children() -> usize {
 
 /// Reruns `case`'s C++ side once per pad in `pads`, each in a fresh C++-phase export memo
 /// (as a first C++ run, and never followed by a Rust side), and compares each output
-/// with `base`, the first C++ run, as C++ against C++ with the unit's floors. Returns
-/// whether any rerun forked a padded child, and the first rerun that differed or failed.
+/// with `base`, the first C++ run, as C++ against C++ with the unit's floors. Returns how
+/// many pads were rerun, how many of those forked a padded child, and the first rerun
+/// that differed or failed (the reruns stop there).
 fn heap_dependence(
     unit: &dyn UnitDiff,
     case: &Case,
     base: &Output,
     pads: &[usize],
-) -> (bool, Option<HeapFlag>) {
-    let mut padded_any = false;
-    for &pad in pads {
+) -> (usize, usize, Option<HeapFlag>) {
+    let mut padded = 0usize;
+    for (i, &pad) in pads.iter().enumerate() {
         let before = padded_children();
         set_heap_pad(pad);
         let memo = crate::export_memo::CaseScope::new();
         let again = guarded(|| unit.run_cpp(case), "cpp");
         drop(memo);
         set_heap_pad(0);
-        let padded = padded_children() != before;
-        padded_any |= padded;
+        let this_padded = padded_children() != before;
+        padded += usize::from(this_padded);
         let flag = match again {
             Ok(o) => compare(base, &o, unit.abs_floors())
                 .mismatches
                 .first()
                 .map(|m| {
                     let note = format!("pad={pad}: {}: {} vs {}", m.field, m.cpp, m.rust);
-                    if padded {
+                    if this_padded {
                         HeapFlag::AddressDependent(note)
                     } else {
                         HeapFlag::Unstable(note)
@@ -390,10 +418,10 @@ fn heap_dependence(
             Err(e) => Some(HeapFlag::RerunError(format!("pad={pad}: {e}"))),
         };
         if flag.is_some() {
-            return (padded_any, flag);
+            return (i + 1, padded, flag);
         }
     }
-    (padded_any, None)
+    (pads.len(), padded, None)
 }
 
 /// Wall time of one unit's run, split by phase (diagnostic only; printed to stderr).
@@ -648,7 +676,10 @@ pub fn run_unit(unit: &dyn UnitDiff, ctx: &CaseContext, opts: &RunOptions) -> Un
         abs_floors: unit.abs_floors().to_vec(),
         seeds: ctx.seeds,
         timing: UnitTiming::default(),
-        heap_check: HeapCheck::default(),
+        heap_check: HeapCheck {
+            pads: opts.heap_pads.clone(),
+            ..HeapCheck::default()
+        },
     };
     if res.skipped_platform.is_some() {
         return res;
@@ -806,9 +837,24 @@ pub fn run_unit(unit: &dyn UnitDiff, ctx: &CaseContext, opts: &RunOptions) -> Un
             if let Ok(base) = &cpp {
                 if base.rejected.is_none() {
                     res.heap_check.checked += 1;
-                    let (padded, flag) = heap_dependence(unit, &case, base, &opts.heap_pads);
-                    res.heap_check.padded += usize::from(padded);
+                    let (observed, padded, flag) =
+                        heap_dependence(unit, &case, base, &opts.heap_pads);
+                    res.heap_check.padded += usize::from(padded > 0);
                     let name = case.name.clone();
+                    let divergence = match &flag {
+                        Some(
+                            HeapFlag::AddressDependent(n)
+                            | HeapFlag::Unstable(n)
+                            | HeapFlag::RerunError(n),
+                        ) => Some(n.clone()),
+                        None => None,
+                    };
+                    res.heap_check.observations.push(HeapObservation {
+                        case: name.clone(),
+                        observed,
+                        padded,
+                        divergence,
+                    });
                     match flag {
                         Some(HeapFlag::AddressDependent(n)) => {
                             res.heap_check.address_dependent.push((name, n));
@@ -1546,11 +1592,24 @@ mod tests {
         let (case, note) = &r.heap_check.unstable[0];
         assert_eq!(case, "drift");
         assert!(note.starts_with("pad=1: values.v[0]"), "{note}");
-        // the first pad that differs ends the reruns
+        // the first pad that differs ends the reruns, and the observation says so
+        assert_eq!(r.heap_check.pads, vec![1, 8]);
+        assert_eq!(r.heap_check.observations.len(), 2);
+        let stable = &r.heap_check.observations[0];
         assert_eq!(
-            unit.drift_runs.load(std::sync::atomic::Ordering::Relaxed),
-            2
+            (stable.case.as_str(), stable.observed, stable.padded),
+            ("stable", 2, 0)
         );
+        assert!(stable.divergence.is_none());
+        let drift = &r.heap_check.observations[1];
+        assert_eq!(
+            (drift.case.as_str(), drift.observed, drift.padded),
+            ("drift", 1, 0)
+        );
+        assert!(drift
+            .divergence
+            .as_deref()
+            .is_some_and(|d| d.starts_with("pad=1: values.v[0]")));
 
         let plain = Drifting {
             drift_runs: std::sync::atomic::AtomicUsize::new(0),
