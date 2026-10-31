@@ -2073,8 +2073,10 @@ pub fn get_cci_geometry_in<'g, O: ClassObject, G: ClassGeometry<O>>(
             // UNPORTED(boolean.topology_intersector_p1): SmTopologyIntersector::GetOtherMate
             // (an adapter that cannot reach the intersector behind its handle)
             // Proof (unreachable): only if topology_intersector() is Some and the adapter
-            // returns no mate; the library ClassGeometry impls resolve it; 0 hits in the
-            // green difftest sweep.
+            // returns no mate (the boolean `ArenaPair` and fillet `InsertionGeometry` do);
+            // pinned C++ reaches this site in none of the boolean, blend, offset, heal,
+            // sweep or curve-class units (plan/findings/
+            // intersect.curve_class_p1--getothermate-curve-class-path-unreached.md).
             SolidError::unported(
                 "SmTopologyIntersector::GetOtherMate",
                 "boolean.topology_intersector_p1",
