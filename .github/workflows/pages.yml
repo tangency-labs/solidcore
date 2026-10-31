@@ -7,14 +7,14 @@ name: Pages
 #
 # Triggers:
 # - push to main: every merge (statuses, upstream issues, the site itself).
-# - workflow_run of "CI" on main: fresh difftest reports (case counts).
+# - workflow_run of "CI" or "SSI corpus" on main: fresh measured reports.
 # - schedule (hourly): claims from open "port: <unit id>" PRs.
 # - workflow_dispatch: manual rebuild.
 on:
   push:
     branches: [main]
   workflow_run:
-    workflows: ["CI"]
+    workflows: ["CI", "SSI corpus"]
     types: [completed]
     branches: [main]
   schedule:
@@ -23,7 +23,7 @@ on:
 
 permissions:
   contents: read
-  actions: read  # download main's difftest-reports artifact
+  actions: read  # download main's measured report artifacts
   pull-requests: read  # open "port:" PRs for the checklist's claims
   pages: write
   id-token: write
@@ -48,6 +48,10 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: scripts/fetch-solids.sh || echo "no solids report; the Solids page will say so"
+      - name: Fetch main's measured SSI report
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 scripts/ssi_report.py fetch || echo "no SSI report; the SSI page will say so"
       - name: Test checklist generator
         run: python3 -m unittest discover -s harness/plan -p 'test_*.py'
       - name: Generate checklist

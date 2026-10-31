@@ -62,6 +62,8 @@ jobs:
       - uses: actions/checkout@v4
       - run: scripts/ci/test-difftest-baseline.sh
       - run: python3 -I scripts/ci/check_record_ids.py
+      - run: python3 -m unittest discover -s scripts/ci -p 'test_ssi_report.py'
+      - run: python3 -m unittest discover -s site -p 'test_ssi.py'
 
   fmt:
     runs-on: blacksmith-4vcpu-ubuntu-2404

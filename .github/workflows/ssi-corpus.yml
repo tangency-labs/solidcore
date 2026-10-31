@@ -1,0 +1,64 @@
+name: SSI corpus
+
+# A measured report, not a required merge check. Geometry verdicts remain data;
+# missing corpus inputs, missing engine grades and invalid provenance fail the job.
+on:
+  schedule:
+    - cron: "23 3 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ssi-corpus
+  cancel-in-progress: false
+
+env:
+  CARGO_BUILD_JOBS: 2
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: 0
+
+jobs:
+  report:
+    if: github.repository == 'tangency-labs/solidcore' && github.ref == 'refs/heads/main'
+    runs-on: blacksmith-4vcpu-ubuntu-2404
+    timeout-minutes: 90
+    env:
+      SOLIDCORE_CPP_DIR: ${{ github.workspace }}/.cpp
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - uses: ./.github/actions/cpp-reference
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: ". -> bin"
+          key: difftest
+      - name: Fetch pinned corpus
+        run: scripts/fetch-ssi-corpus.sh
+      - name: Build runner
+        # Unlike the unit runners, SSI's geometric scorer does substantial work in
+        # difftest itself. Optimise it without changing the workspace's usual profile.
+        run: >-
+          nice -n 10 cargo build --profile difftest -p difftest --features cpp
+          --config 'profile.difftest.package.difftest.opt-level=1'
+      - name: Measure all cases and all four engines
+        run: nice -n 10 bin/difftest/difftest --ssi-corpus --tol 1e-6 --jobs 4 --report-dir reports/ssi
+      - name: Validate report and record measured revisions
+        run: python3 scripts/ssi_report.py record
+      - name: Upload report and provenance
+        uses: actions/upload-artifact@v4
+        with:
+          name: ssi-corpus-report
+          path: |
+            reports/ssi/ssi-corpus.json
+            reports/ssi/ssi-provenance.json
+          if-no-files-found: error
+          retention-days: 90
+      - name: Keep engine logs and raw outputs
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: ssi-corpus-raw
+          path: bin/ssi-corpus/raw/
+          if-no-files-found: ignore
+          retention-days: 14
