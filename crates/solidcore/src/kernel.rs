@@ -453,6 +453,8 @@ pub struct UpstreamFixes {
     pub edge_check_orders_tangent_faces: bool,
     /// `CreateOrientedTrimBoundary` takes a UV gap of whole periods (up to 1% of one) in a closed direction between consecutive curves for a seam crossing and moves the curves after it by the period, instead of filling it with a line across the whole domain that doubles the loop back on itself (WR-491). A loop that does not close that way keeps the line, and so does a gap along a singular side of the surface (a sphere's pole, a cone's apex; #1437).
     pub trim_boundary_seam_wrap: bool,
+    /// `SmFace::HasSeamProblem` does not classify a periodic direction whose seam curve collapses to a point within the face's zone tolerance (a horn torus's minor seam, where every minor circle starts at its centre), so the face check does not fail on it (WR-506, #1516; tangency-labs/smlib#42).
+    pub seam_check_skips_collapsed_seam: bool,
     /// `SmBSplineCurve::AssertValid` reads the minimum radius of curvature before tests 13/14 compare it (WR-382, #475).
     pub bspline_check_min_radius: bool,
     /// `SmEllipse::AdjustSTEPInterval` rejects inverted STEP edits and collapsed or non-finite converted NURBS intervals before mutation, and revolution edits install their domain only after their generator accepts it (WR-211, #428).
