@@ -9,6 +9,7 @@
 //! `source/SMLib/inc/SmFilletSolver.h` and `source/SMLib/src/SmFilletSection.cpp`
 //! (tangency-labs/smlib@11ea2d9); see [`super`] for the table.
 
+use super::certificate::{gn_certify_span, NurbsCurve};
 use super::form::{gn_form, hermite_knots, hermite_points};
 use super::series::Trunc;
 use super::station::{gn_solve_station, smax, surface_partials, vec3, GnStation, Nurbs};
@@ -402,7 +403,7 @@ impl GnSectionFsg {
             return Err(SolidError::sm_err(OP));
         };
         let face_n = [n0, n1];
-        certify_leader(center)?;
+        let leader = NurbsCurve::of(center)?;
         let target = 0.1 * tol;
         let solve_tol = |s: f64| -> Result<f64> {
             let m = center.evaluate_point(s)?;
@@ -495,8 +496,9 @@ impl GnSectionFsg {
                     let (Some(a), Some(b)) = (stations.get(j), stations.get(j + 1)) else {
                         return Err(SolidError::sm_err(OP));
                     };
-                    *bj =
-                        certify_span(k, face_n, faces, center, a, b, r, side, self.order, target)?;
+                    *bj = gn_certify_span(
+                        k, face_n, &leader, faces, center, a, b, r, side, self.order, target,
+                    )?;
                 }
                 let within = *bj <= target;
                 if !within {
@@ -625,38 +627,6 @@ impl GnSectionFsg {
             n + 2
         })
     }
-}
-
-/// `sm_NurbsCurveOf` of the centre line for the certificate (slice 4).
-fn certify_leader(_center: &BSplineCurve) -> Result<()> {
-    // UNPORTED(blend.fillet_section): sm_NurbsCurveOf — ported in this PR's certificate
-    // slice (fillet_section/certificate.rs), wired here when it merges.
-    Err(SolidError::Unported {
-        upstream: "sm_NurbsCurveOf",
-        unit: "blend.fillet_section",
-    })
-}
-
-/// `sm_GnCertifySpan` (slice 4).
-#[allow(clippy::too_many_arguments)]
-fn certify_span(
-    _k: &Kernel,
-    _faces_n: [&Nurbs; 2],
-    _faces: [&Surface; 2],
-    _center: &BSplineCurve,
-    _a: &GnStation,
-    _b: &GnStation,
-    _r: [f64; 2],
-    _side: [f64; 2],
-    _n: usize,
-    _target: f64,
-) -> Result<f64> {
-    // UNPORTED(blend.fillet_section): sm_GnCertifySpan — ported in this PR's certificate
-    // slice (fillet_section/certificate.rs), wired here when it merges.
-    Err(SolidError::Unported {
-        upstream: "sm_GnCertifySpan",
-        unit: "blend.fillet_section",
-    })
 }
 
 #[cfg(test)]
