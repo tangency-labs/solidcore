@@ -928,6 +928,9 @@ pub struct Stitch<'c> {
     /// Remove sliver faces smaller than tolerance first (`m_bRemoveLaminarSlivers`,
     /// default `FALSE`).
     pub remove_laminar_slivers: bool,
+    /// (not upstream, a cache) The default records of the last edge glue's arena-only
+    /// notification state, reset for the next one (`glue_edges_general_reusing`).
+    arena_records: crate::topology::topology::NotifyRecords,
 }
 
 impl core::fmt::Debug for Stitch<'_> {
@@ -1041,7 +1044,17 @@ impl<'c> Stitch<'c> {
         if let Some(edits) = self.edits.as_deref_mut() {
             edits.glue_edges(k, b, keep, orientation, dist, nest, delete, inside)
         } else {
-            glue_edges_general(k, b, keep, orientation, dist, nest, delete, inside)
+            glue_edges_general_reusing(
+                k,
+                b,
+                keep,
+                orientation,
+                dist,
+                nest,
+                delete,
+                inside,
+                &mut self.arena_records,
+            )
         }
     }
     #[allow(clippy::too_many_arguments)]
@@ -1147,6 +1160,7 @@ impl<'c> Stitch<'c> {
             split_edges_with_vertices: true,
             making_manifold_solid: true,
             remove_laminar_slivers: false,
+            arena_records: crate::topology::topology::NotifyRecords::new(),
         }
     }
 
@@ -2460,7 +2474,9 @@ fn stitch_and_orient(
 /// its own, so the call runs on a default record per arena object
 /// ([`brep_p2::ArenaNotifyState`](crate::topology::brep::p2::ArenaNotifyState), so
 /// that `SmTopology::Notify`'s propagation finds both edges) and on the kernel's
-/// notification context, so its installed callbacks see the events.
+/// notification context, so its installed callbacks see the events. (The stitcher
+/// reuses one state's records across its glues, `glue_edges_general_reusing`.)
+#[cfg(test)]
 pub(crate) fn glue_edges_general(
     k: &mut Kernel,
     b: &mut Brep,
@@ -2471,8 +2487,40 @@ pub(crate) fn glue_edges_general(
     delete: EdgeId,
     inside_faceuses: Option<&[FaceuseId]>,
 ) -> Result<()> {
+    glue_edges_general_reusing(
+        k,
+        b,
+        keep,
+        orientation,
+        dist,
+        do_region_nesting,
+        delete,
+        inside_faceuses,
+        &mut crate::topology::topology::NotifyRecords::new(),
+    )
+}
+
+/// `glue_edges_general` on the default records of an earlier glue's state (`records`,
+/// left there for the next glue): the state is reset to exactly a fresh one
+/// ([`ArenaNotifyState::with_attributes_of_reusing`](crate::topology::brep::p2::ArenaNotifyState::with_attributes_of_reusing)),
+/// visiting only what the earlier glues changed (not upstream: a cache).
+#[allow(clippy::too_many_arguments)]
+fn glue_edges_general_reusing(
+    k: &mut Kernel,
+    b: &mut Brep,
+    keep: EdgeId,
+    orientation: OrientType,
+    dist: f64,
+    do_region_nesting: bool,
+    delete: EdgeId,
+    inside_faceuses: Option<&[FaceuseId]>,
+    records: &mut crate::topology::topology::NotifyRecords,
+) -> Result<()> {
     // (not upstream) with `b`'s own attributes, given back afterwards
-    let mut state = crate::topology::brep::p2::ArenaNotifyState::with_attributes_of(b);
+    let mut state = crate::topology::brep::p2::ArenaNotifyState::with_attributes_of_reusing(
+        b,
+        std::mem::take(records),
+    );
     let r = Context::with_notification_context(k, |k, context| {
         let mut env = state.env(Some(context));
         crate::topology::brep::p7::glue_edges_general(
@@ -2488,6 +2536,7 @@ pub(crate) fn glue_edges_general(
         )
     });
     let restored = state.restore_attributes(b);
+    *records = std::mem::take(&mut state.records);
     r??;
     restored
 }

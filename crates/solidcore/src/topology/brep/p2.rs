@@ -792,29 +792,36 @@ impl ArenaNotifyState {
     /// Adds a default record for every object of `b` that has none yet (a second B-rep
     /// of the same edit, or objects the edit created).
     pub fn seed(&mut self, b: &Brep) {
+        seed_arena_records(&mut self.records, b);
+    }
+
+    /// [`Self::with_attributes_of`] on the records of an earlier state (`records`, the
+    /// [`Self::records`] of a state this function made, of any B-rep), reset to exactly
+    /// what [`Self::new`] gives (`topology::brep::p3::reseed_exact`): only what changed
+    /// since that state was made is visited when it was made for the same B-rep value.
+    /// (Not upstream: a cache for a caller editing one B-rep many times.)
+    pub(crate) fn with_attributes_of_reusing(
+        b: &mut Brep,
+        records: crate::topology::topology::NotifyRecords,
+    ) -> Self {
         use crate::topology::loopuse::notify_ref;
-        let mut all = vec![EntityRef::Brep(BrepId::from_index(0))];
-        all.extend(b.regions().iter().map(|(x, _)| EntityRef::Region(x)));
-        all.extend(b.shells().iter().map(|(x, _)| EntityRef::Shell(x)));
-        all.extend(b.faceuses().iter().map(|(x, _)| EntityRef::Faceuse(x)));
-        all.extend(b.faces().iter().map(|(x, _)| EntityRef::Face(x)));
-        all.extend(b.loopuses().iter().map(|(x, _)| EntityRef::Loopuse(x)));
-        all.extend(b.loops().iter().map(|(x, _)| EntityRef::Loop(x)));
-        all.extend(b.edgeuses().iter().map(|(x, _)| EntityRef::Edgeuse(x)));
-        all.extend(b.edges().iter().map(|(x, _)| EntityRef::Edge(x)));
-        all.extend(b.vertexuses().iter().map(|(x, _)| EntityRef::Vertexuse(x)));
-        all.extend(b.vertices().iter().map(|(x, _)| EntityRef::Vertex(x)));
-        if self.records.is_empty() {
-            // Bulk build (sorted input is O(n)); the same map as entry-by-entry.
-            self.records = all
-                .into_iter()
-                .map(|e| (notify_ref(e).key, Topology::default()))
-                .collect();
-            return;
-        }
-        for e in all {
-            self.records.or_default(notify_ref(e).key);
-        }
+        let mut state = Self {
+            records,
+            attributes: AttributeStore::default(),
+        };
+        let brep_key = notify_ref(EntityRef::Brep(BrepId::from_index(0))).key;
+        crate::topology::brep::p3::reseed_exact(
+            &mut state.records,
+            b,
+            crate::topology::brep::p3::ReseedScheme::Arena,
+            brep_key,
+            |records, b| {
+                records.clear();
+                seed_arena_records(records, b);
+            },
+        );
+        state.attributes = b.take_attributes();
+        state
     }
 
     /// [`Self::new`] holding `b`'s own attributes ([`Brep::add_attribute`], keyed by the
@@ -864,6 +871,33 @@ impl ArenaNotifyState {
             context,
             key_of: &crate::topology::loopuse::notify_ref,
         }
+    }
+}
+
+/// [`ArenaNotifyState::seed`] of `records`.
+fn seed_arena_records(records: &mut crate::topology::topology::NotifyRecords, b: &Brep) {
+    use crate::topology::loopuse::notify_ref;
+    let mut all = vec![EntityRef::Brep(BrepId::from_index(0))];
+    all.extend(b.regions().iter().map(|(x, _)| EntityRef::Region(x)));
+    all.extend(b.shells().iter().map(|(x, _)| EntityRef::Shell(x)));
+    all.extend(b.faceuses().iter().map(|(x, _)| EntityRef::Faceuse(x)));
+    all.extend(b.faces().iter().map(|(x, _)| EntityRef::Face(x)));
+    all.extend(b.loopuses().iter().map(|(x, _)| EntityRef::Loopuse(x)));
+    all.extend(b.loops().iter().map(|(x, _)| EntityRef::Loop(x)));
+    all.extend(b.edgeuses().iter().map(|(x, _)| EntityRef::Edgeuse(x)));
+    all.extend(b.edges().iter().map(|(x, _)| EntityRef::Edge(x)));
+    all.extend(b.vertexuses().iter().map(|(x, _)| EntityRef::Vertexuse(x)));
+    all.extend(b.vertices().iter().map(|(x, _)| EntityRef::Vertex(x)));
+    if records.is_empty() {
+        // Bulk build (sorted input is O(n)); the same map as entry-by-entry.
+        *records = all
+            .into_iter()
+            .map(|e| (notify_ref(e).key, Topology::default()))
+            .collect();
+        return;
+    }
+    for e in all {
+        records.or_default(notify_ref(e).key);
     }
 }
 
