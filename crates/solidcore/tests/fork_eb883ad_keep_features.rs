@@ -10,13 +10,14 @@
 use solidcore::blend::fillet_executive::api::fillet_edges;
 use solidcore::boolean::api_brep::{boolean_difference, boolean_union};
 use solidcore::geom::attribute::{AttributeStore, ObjectKey};
-use solidcore::mass::integrator::properties::{brep_volume, PropertyAttributes};
-use solidcore::math::{Point3, PI};
-use solidcore::primitive::api_primitives::{create_box, create_cylinder};
+use solidcore::kernel::UpstreamFixes;
+use solidcore::mass::integrator::properties::{PropertyAttributes, brep_volume};
+use solidcore::math::{PI, Point3};
+use solidcore::primitive::api_primitives::{create_box, create_cone, create_cylinder};
 use solidcore::query::api_queries::edge_closest_point;
-use solidcore::topology::brep::validation::{check_brep, CheckLevel};
-use solidcore::topology::{edge, EdgeId};
-use solidcore::{Brep, Kernel};
+use solidcore::topology::brep::validation::{CheckLevel, check_brep};
+use solidcore::topology::{EdgeId, edge};
+use solidcore::{Brep, Kernel, Result};
 
 fn kernel(keep: bool) -> Kernel {
     let mut k = Kernel::default();
@@ -137,7 +138,10 @@ fn assert_feature_in_band(
     fillet_edges(&mut k, &mut b, &[e], r, 1, 1, 1.0).unwrap();
     let v = volume_of(&k, &mut b);
     let turned = wall_on_round(&k, &b);
-    println!("boss {boss} keep {keep} r {r}: volume {v:.9}, want {want:.9}; {} faces, want {faces}; wall on the round {turned:.9}", b.face_list().len());
+    println!(
+        "boss {boss} keep {keep} r {r}: volume {v:.9}, want {want:.9}; {} faces, want {faces}; wall on the round {turned:.9}",
+        b.face_list().len()
+    );
     assert!((v - want).abs() <= rel * want, "volume {v}, want {want}");
     assert_eq!(b.face_list().len(), faces);
     if reach {
@@ -202,5 +206,114 @@ fn a_band_short_of_the_feature_leaves_it_either_way() {
         for boss in [true, false] {
             assert_feature_in_band(boss, keep, 1.9, featured_rounded(boss, 1.9), 1e-9, 9, false);
         }
+    }
+}
+
+// ---- Beyond the fork's own cases: every flag on, the figures from the fork's kernel at eb883ad ----
+
+/// The block with a feature on or in its top.
+fn block_with(k: &mut Kernel, feature: fn(&mut Kernel) -> Result<Brep>, boss: bool) -> Brep {
+    let block = create_box(k, Point3::new(0.0, 0.0, 0.0), 40.0, 30.0, 20.0).unwrap();
+    let cutter = feature(k).unwrap();
+    if boss {
+        boolean_union(k, block, cutter).unwrap()
+    } else {
+        boolean_difference(k, block, cutter).unwrap()
+    }
+}
+
+/// The block's edge rounded 8, picked away from the feature: its volume and faces.
+fn rounded_with(
+    keep: bool,
+    feature: fn(&mut Kernel) -> Result<Brep>,
+    boss: bool,
+) -> Result<(f64, usize)> {
+    let mut k = Kernel::default();
+    k.fixes = UpstreamFixes::all();
+    k.fixes.fillet_keep_features = keep;
+    let mut b = block_with(&mut k, feature, boss);
+    let e = pick(&k, &b, Point3::new(5.0, 0.0, 20.0));
+    fillet_edges(&mut k, &mut b, &[e], 8.0, 1, 1, 1.0)?;
+    assert!(solidcore::topology::brep::p2::is_manifold_solid(&b).unwrap());
+    let lines = check_brep(&mut k, &mut b, CheckLevel::Level2)
+        .unwrap()
+        .lines();
+    assert!(lines.is_empty(), "{lines:?}");
+    Ok((volume_of(&k, &mut b), b.face_list().len()))
+}
+
+fn assert_kept_as_the_fork(
+    feature: fn(&mut Kernel) -> Result<Brep>,
+    boss: bool,
+    volume: f64,
+    faces: usize,
+) {
+    let (v, n) = rounded_with(true, feature, boss).unwrap();
+    assert!(
+        (v - volume).abs() <= 1e-9 * volume,
+        "volume {v}, the fork's {volume}"
+    );
+    assert_eq!(n, faces);
+    let (v, n) = rounded_with(false, feature, boss).unwrap();
+    let taken = 24000.0 - 40.0 * spandrel(8.0);
+    assert!(
+        (v - taken).abs() <= 1e-9 * taken,
+        "volume {v}, want {taken}"
+    );
+    assert_eq!(n, 7);
+}
+
+fn prism_boss(k: &mut Kernel) -> Result<Brep> {
+    create_box(k, Point3::new(18.0, 2.0, 20.0), 4.0, 4.0, 5.0)
+}
+
+fn prism_pocket(k: &mut Kernel) -> Result<Brep> {
+    create_box(k, Point3::new(18.0, 2.0, 15.0), 4.0, 4.0, 6.0)
+}
+
+fn tapered_boss(k: &mut Kernel) -> Result<Brep> {
+    create_cone(k, Point3::new(20.0, 4.0, 20.0), 2.0, 1.0, 5.0)
+}
+
+fn tapered_pit(k: &mut Kernel) -> Result<Brep> {
+    create_cone(k, Point3::new(20.0, 4.0, 15.0), 1.0, 2.0, 5.5)
+}
+
+/// Planar walls: each crease is an exact section, and the volume is the fork's in 17 digits.
+#[test]
+fn a_prism_s_planar_walls_are_kept_as_the_fork_keeps_them() {
+    assert_kept_as_the_fork(prism_boss, true, 23549.896259768986, 12);
+    assert_kept_as_the_fork(prism_pocket, false, 23389.896259952176, 12);
+}
+
+/// Walls that lean: as the fork, kept, with no refusal for the boss's.
+#[test]
+fn a_cone_s_walls_are_kept_as_the_fork_keeps_them() {
+    assert_kept_as_the_fork(tapered_boss, true, 23501.985588925883, 11);
+    assert_kept_as_the_fork(tapered_pit, false, 23427.540889420579, 9);
+}
+
+/// A boss astride the round's contact line: refused with the flag on or off, as the fork.
+#[test]
+fn a_boss_astride_the_contact_line_is_refused_either_way() {
+    fn astride(k: &mut Kernel) -> Result<Brep> {
+        create_box(k, Point3::new(18.0, 6.0, 20.0), 4.0, 4.0, 5.0)
+    }
+    for keep in [true, false] {
+        assert!(rounded_with(keep, astride, true).is_err(), "keep {keep}");
+    }
+}
+
+/// A pocket astride the contact line stands either way: the merge keeps it, as the fork.
+#[test]
+fn a_pocket_astride_the_contact_line_stands_either_way() {
+    fn astride(k: &mut Kernel) -> Result<Brep> {
+        create_box(k, Point3::new(18.0, 6.0, 15.0), 4.0, 4.0, 6.0)
+    }
+    for keep in [true, false] {
+        let (v, n) = rounded_with(keep, astride, false).unwrap();
+        let fork = 23371.292359325398;
+        assert!((v - fork).abs() <= 1e-9 * fork, "keep {keep}: volume {v}");
+        assert_eq!(n, 12);
     }
 }
