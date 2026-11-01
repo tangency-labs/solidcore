@@ -20,7 +20,10 @@ use solidcore::geom::object::ObjectRef;
 use solidcore::kernel::Kernel;
 use solidcore::mass::integrator::properties::{brep_area, brep_volume, PropertyAttributes};
 use solidcore::math::Point3;
+use solidcore::nurbs::b_spline_surface::BSplineSurface;
+use solidcore::nurbs::math::{CPoint, NOW};
 use solidcore::primitive::api_primitives as api;
+use solidcore::surface::surface::Surface;
 use solidcore::topology::brep::p1 as bl;
 use solidcore::topology::brep::p10::TopologyEnv;
 use solidcore::topology::brep::p7::read_from_file;
@@ -617,4 +620,128 @@ fn corpus_models_watertight_within_tolerance() {
             "{rel}: {errors:?}"
         );
     }
+}
+
+/// A bicubic 8 x 9 NURBS face over its natural domain, made by the blend API's
+/// `create_face_from_surface` (the way a face is made from a surface). `f(gu, gv)` is the point
+/// at the Greville abscissae of the pole row and column.
+fn nurbs_face(k: &mut Kernel, f: &dyn Fn(f64, f64) -> [f64; 3]) -> Brep {
+    let (nu, nv, p) = (8_usize, 9_usize, 3_usize);
+    // clamped knots with uniform interior values, as the issue's generator writes them
+    let knots = |n: usize| {
+        let m = n - p - 1;
+        let mut v = vec![0.0; p + 1];
+        v.extend((0..m).map(|i| (i + 1) as f64 / (m + 1) as f64));
+        v.extend(std::iter::repeat_n(1.0, p + 1));
+        v
+    };
+    let greville = |t: &[f64], i: usize| t[i + 1..=i + p].iter().sum::<f64>() / p as f64;
+    let (uk, vk) = (knots(nu), knots(nv));
+    let pw: Vec<Vec<CPoint>> = (0..nu)
+        .map(|i| {
+            (0..nv)
+                .map(|j| {
+                    let [x, y, z] = f(greville(&uk, i), greville(&vk, j));
+                    CPoint { x, y, z, w: NOW }
+                })
+                .collect()
+        })
+        .collect();
+    let s = BSplineSurface::from_data(
+        nu - 1,
+        nv - 1,
+        p,
+        p,
+        uk.len() - 1,
+        vk.len() - 1,
+        &pw,
+        &uk,
+        &vk,
+    )
+    .unwrap();
+    let mut b = Brep::new_with_infinite_region().unwrap();
+    solidcore::blend::fillet_executive::api::create_face_from_surface(k, &mut b, &Surface::from(s))
+        .unwrap();
+    b
+}
+
+/// A dome point with its apex pole at `g = 0` (the u = 0 row collapsed to one point), swept
+/// `span` radians round in `h`.
+fn dome_point(g: f64, h: f64, span: f64) -> [f64; 3] {
+    let (r, z) = (100.0 * g, 60.0 * (1.0 - g * g));
+    let a = span * h;
+    [r * a.cos(), r * a.sin(), z]
+}
+
+/// A lune of a sphere: its two ends, `g = 0` and `g = 1`, are poles.
+fn lune_point(g: f64, h: f64, span: f64) -> [f64; 3] {
+    let (r, z) = if g >= 1.0 {
+        (0.0, 60.0)
+    } else {
+        (
+            100.0 * (std::f64::consts::PI * g).sin(),
+            -60.0 * (std::f64::consts::PI * g).cos(),
+        )
+    };
+    let a = span * h;
+    [r * a.cos(), r * a.sin(), z]
+}
+
+/// Meshes the NURBS face `f` at chord 0.05 and 15 degrees, and checks it the way `check_closed`
+/// does: no failure, and every triangle within the chord (plus the B-rep's own gap) against its
+/// surface, none wound against it.
+fn assert_nurbs_face_within_chord(name: &str, f: &dyn Fn(f64, f64) -> [f64; 3]) {
+    let mut k = Kernel::default();
+    let b = nurbs_face(&mut k, f);
+    let chord = 0.05;
+    let mut o = TessellateOptions::default().with_chord(chord);
+    o.angle_tolerance = 15.0_f64.to_radians();
+    let m = tessellate(&k, &b, &o).unwrap();
+    assert!(m.failures.is_empty(), "{name}: failures {:?}", m.failures);
+    assert!(!m.triangles.is_empty(), "{name}: no triangles");
+    let d = deviation(&k, &b, &m, chord).unwrap();
+    assert_eq!(d.flipped, 0, "{name}: triangles wound against the surface");
+    let gap = m.stats.boundary_gap.unwrap_or(0.0);
+    assert!(
+        d.max <= 1.05 * (m.stats.chord_tolerance + gap),
+        "{name}: measured deviation {} over chord {} + gap {gap}",
+        d.max,
+        m.stats.chord_tolerance
+    );
+}
+
+/// Regression: a NURBS face whose u = 0 row is an apex pole used to fail with "two boundary
+/// points at one UV position" (the first inverted edge use had no seed, and the apex corner
+/// stalled its feet).
+#[test]
+fn nurbs_face_with_apex_pole_meshes_within_chord() {
+    for span in [0.5 * std::f64::consts::PI, 1.5 * std::f64::consts::PI] {
+        assert_nurbs_face_within_chord(&format!("apex pole, span {span:.3}"), &|g, h| {
+            dome_point(g, h, span)
+        });
+    }
+}
+
+/// The apex pole at u = 1 (the dome reflected in u) at a half turn: the edge that starts at the
+/// pole took the previous edge's UV on the pole, which pointed its guess the wrong way.
+#[test]
+fn apex_pole_at_u1_meshes_within_chord() {
+    let pi = std::f64::consts::PI;
+    assert_nurbs_face_within_chord("apex pole at u = 1, span pi", &|g, h| {
+        dome_point(1.0 - g, h, pi)
+    });
+}
+
+/// The apex pole at v = 0 (the dome with u and v swapped) at a half turn.
+#[test]
+fn apex_pole_at_v0_meshes_within_chord() {
+    let pi = std::f64::consts::PI;
+    assert_nurbs_face_within_chord("apex pole at v = 0, span pi", &|g, h| dome_point(h, g, pi));
+}
+
+/// A lune with a pole at each end (both u = 0 and u = 1 collapsed), at a half turn.
+#[test]
+fn lune_with_two_poles_meshes_within_chord() {
+    let pi = std::f64::consts::PI;
+    assert_nurbs_face_within_chord("lune, two poles, span pi", &|g, h| lune_point(g, h, pi));
 }
