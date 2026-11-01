@@ -753,9 +753,15 @@ fn with_solidcraft_s_fixes_the_chords_and_circles_have_the_fork_s_marks() {
     }
 }
 
+/// The mark is the fork's at ea59e9c, the great circles. #2262's flag brings the fork's later
+/// touch circles, which is that port's to test, so it stays off here wherever it exists.
 #[test]
 fn with_solidcraft_s_fixes_the_variable_round_has_the_fork_s_mark() {
-    assert_variable_mark(&mut solidcraft_kernel());
+    let mut k = solidcraft_kernel();
+    if let Some(gn) = k.fixes.flag_mut("fillet_gn_section_generator") {
+        *gn = false;
+    }
+    assert_variable_mark(&mut k);
 }
 
 #[test]
