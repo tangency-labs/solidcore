@@ -922,6 +922,17 @@ pub struct UpstreamFixes {
     pub imprint_trims_edge_to_proto_vertex: bool,
     /// `SmEdgeDefinition::Imprint` continues an intersection edge's 3d and UV curves, each by the polynomial of its own end span, to a proto vertex that lies a few tolerances past the curve's end, so the edge reaches its vertex (internal thread cuts; WR-453, #410; tangency-labs/smlib bf5d3ae (was a8caccd)). The end goes to its proto vertex's position only when that proto vertex is one vertex in each B-rep, else to its own final vertex (WR-498, #1480; tangency-labs/smlib 0b1b945 (was ffaf4e8)).
     pub imprint_extends_edge_to_proto_vertex: bool,
+    /// `SmTLSPointVertex::SolveIt` ([`crate::intersect::topology_solver::p1::LocalSolver::solve_it`]
+    /// on [`crate::intersect::topology_solver::p1::LocalSolverKind::PointVertex`] and
+    /// [`crate::intersect::topology_solver::p1::LocalSolverKind::VertexVertex`]) ends its
+    /// `SM_SO_RAYFIRE` (`SolverOperation::Rayfire`) arm after setting `dDistSq = dParam * dParam`
+    /// from the ray-snapped `dParam >= 0.0` (leaving `dSign = 1.0`), instead of missing `break;`
+    /// and falling through into `SM_SO_3D_SIGNED_DIRECTED_MINIMIZE` — which recomputed `dParam`
+    /// without snapping `[-SM_EFF_ZERO * dScale, 0.0)` to `0.0` and negated `dParam` / flipped
+    /// `dSign` to `-1.0` when `m_bSwapOrder` was `TRUE` (WR-62, #2206; see
+    /// `plan/upstream-issues/WR-62--addendum-2026-11-01-point-vertex-rayfire-break.md`).
+    /// Off by default for pinned C++ parity.
+    pub point_vertex_rayfire_does_not_fall_through: bool,
     /// With `imprint_extends_edge_to_proto_vertex`, a line, circle or ellipse is continued to its proto vertex over its NURB and stays that kind: a circle or ellipse keeps its frame, radii and inside-out sense, its angular domain carried on to the new end, and a line runs between the continued ends (the bar-top/boss arc of a union, an exact `SmCircle` from `SmCone::IntersectWithPlane`, stopped 5.4e-10 short of its tangent point). Without it those kinds are not continued (the fork before this change made them plain B-splines). The new curve must evaluate as the continued NURB does, or the curve is not continued (WR-601; the fork's tangency-labs/smlib@bec8a0b).
     pub imprint_extension_keeps_analytic_curve: bool,
     /// `SmEdgeDefinition::Imprint` takes an edge Brep2's face already has between the definition's two vertices along its curve (`SmTools::FindCoincidentEdge` within the larger of the face's and the definition's tolerance) as the definition's edge there, where upstream makes a second edge beside it: the face then has coincident edges and the merge copies the boundary edge into Brep1 beside the curve's (`SmFace` tests 33 and 34; two equal tubes meeting end to end) (WR-580, #1519; the fork's tangency-labs/smlib@81cd61a).
