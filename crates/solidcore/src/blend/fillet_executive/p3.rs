@@ -135,6 +135,11 @@ pub enum NoRoomReason {
     /// the offset along it, which folds there (the fork's `BallIsRegular`, 410dfe1;
     /// `fixes.fillet_gn_section_generator`, WR-696).
     OffsetFolds,
+    /// A convex blend (one that removes material) would take all of the part between its
+    /// rails somewhere along its edge and cut it into pieces (the fork's `BandCutsThePart`,
+    /// tangency-labs/smlib#79 862971f, e568e45 and aac4288;
+    /// `fixes.fillet_gn_section_generator`, WR-696).
+    CutsThePart,
     /// A cliff overflow runs past a fillet end whose end face is not planar (WR-631).
     CliffEndFaceNotPlanar,
     /// The end face's plane does not cut a fillet that overflows its end in two, or does
@@ -2011,6 +2016,35 @@ pub trait BrepCreationAccess<O: ClassObject + SolutionObject + Ord>:
     /// # Errors
     /// Topology lookups; the adapter over [`ExecutiveAccess`] has no solvers.
     fn creation_solver_fit(&self, solver: O) -> Result<Option<SolverFit<O>>>;
+
+    /// The fork's `sm_BlendAddsMaterial` then `SmFilletSolver::BandCutsThePart`
+    /// (tangency-labs/smlib#79 862971f, e568e45, aac4288) on this solver: `None` for a
+    /// concave blend (one that adds material) or one that keeps the part whole; otherwise
+    /// where it would cut the part, with its edge and whether it is a chamfer (its
+    /// generator `SM_FSG_LINEAR`). Only a live session has solvers to judge.
+    ///
+    /// # Errors
+    /// The judging's own errors; the adapter over [`ExecutiveAccess`] has no solver
+    /// geometry to judge.
+    fn creation_band_cuts_the_part(
+        &mut self,
+        k: &mut Kernel,
+        solver: O,
+    ) -> Result<Option<SolverCut<O>>>;
+}
+
+/// Where a solver's convex blend would cut the part
+/// ([`BrepCreationAccess::creation_band_cuts_the_part`]).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct SolverCut<O> {
+    /// `rdRadius`: the largest ball radius that keeps the part whole.
+    pub radius: f64,
+    /// `rdSetback`: that radius's setback from the edge to the first rail.
+    pub setback: f64,
+    /// `GetEdgeuse(0)->GetEdge()`, `None` without the edge use.
+    pub edge: Option<O>,
+    /// The generator is `SM_FSG_LINEAR` (a chamfer).
+    pub chamfer: bool,
 }
 
 /// What a refusal's fit reads of a solver ([`BrepCreationAccess::creation_solver_fit`]).
@@ -2055,6 +2089,14 @@ where
 
     fn creation_solver_fit(&self, _solver: O) -> Result<Option<SolverFit<O>>> {
         Err(invalid("a refusal's fit needs a live fillet session"))
+    }
+
+    fn creation_band_cuts_the_part(
+        &mut self,
+        _k: &mut Kernel,
+        _solver: O,
+    ) -> Result<Option<SolverCut<O>>> {
+        Err(invalid("the band's cut needs a live fillet session"))
     }
 }
 
@@ -3274,6 +3316,55 @@ impl<O: ClassObject + SolutionObject + Ord> FilletExecutive<O> {
         Err(failure())
     }
 
+    /// The fork's `CreateFilletBrep` block after the ball's regularity (862971f, e568e45,
+    /// aac4288): a convex blend that would take all of the part between its rails
+    /// somewhere along its edge would cut the part into pieces; the one whose size that
+    /// keeps it whole is least is refused with [`FilletErrorType::NoRoom`], noting that
+    /// size less the fit margin (the bound is open: at it the part is joined at a line or
+    /// a point).
+    fn refuse_blends_cutting_the_part(
+        &mut self,
+        k: &mut Kernel,
+        access: &mut impl BrepCreationAccess<O>,
+    ) -> Result<()> {
+        let mut worst: Option<SolverCut<O>> = None;
+        let mut worst_solver: Option<O> = None;
+        let mut index = 0;
+        while let Some(solver) = self.solvers.get(index).copied() {
+            if let Some(cut) = access.creation_band_cuts_the_part(k, solver)? {
+                if worst.is_none_or(|w| cut.radius < w.radius) {
+                    worst = Some(cut);
+                    worst_solver = Some(solver);
+                }
+            }
+            index += 1;
+        }
+        let (Some(cut), Some(solver)) = (worst, worst_solver) else {
+            return Ok(());
+        };
+        let g = |x: f64| c_general(x, 0, 7);
+        self.error.code = FilletErrorType::NoRoom as i32;
+        self.error.comment = if cut.chamfer {
+            format!("Fillet Error: the chamfer would take all of the part between its sides along the edge and cut it into pieces: a chamfer set back less than {} keeps it whole", g(cut.setback))
+        } else {
+            format!("Fillet Error: the round would take all of the part between its rails along the edge and cut it into pieces: a radius below {} keeps it whole", g(cut.radius))
+        };
+        self.error.no_room = Some(NoRoomReason::CutsThePart);
+        // the largest radius that keeps it whole: the bound is open (at it the part is joined at a
+        // line or a point), so less the fit margin (FitMargin)
+        if cut.edge.is_some() {
+            if let Some(fit) = access.creation_solver_fit(solver)? {
+                let size = if cut.radius > 0.0 {
+                    smos_max(0.0, cut.radius - fit.fit_margin)
+                } else {
+                    0.0
+                };
+                self.note_fit_radius(size, cut.edge, FitKind::Radius);
+            }
+        }
+        Err(failure())
+    }
+
     /// Construct and stitch the fillet shell, preserving every stage after each
     /// missing dependency call. `error_out` is assigned only on success.
     pub fn create_fillet_brep(
@@ -3326,6 +3417,9 @@ impl<O: ClassObject + SolutionObject + Ord> FilletExecutive<O> {
         // regularity along each blend's edge, refused naming the radius that works.
         if k.fixes.fillet_gn_section_generator {
             self.refuse_irregular_balls(k, access)?;
+            // the fork's 862971f, e568e45 and aac4288: a convex blend that would cut the part
+            // into pieces, refused naming the largest size that keeps it whole
+            self.refuse_blends_cutting_the_part(k, access)?;
         }
 
         self.create_corner_vertices(k, access)?;

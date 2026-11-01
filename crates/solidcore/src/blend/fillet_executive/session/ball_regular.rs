@@ -660,7 +660,7 @@ pub fn judge_ball_at(k: &Kernel, solver: &mut SolverObject, pnt: &TsectPnt) -> R
 /// `sm_BallSectionAt`: the solver's section in the plane square to its filleted edge at
 /// the edge's `t`, on the faces' surfaces extended as the trace extends them; its guess
 /// is the edge point dropped on each face, or where that finds none, `guess`'s contacts.
-fn ball_section_at(
+pub(crate) fn ball_section_at(
     k: &Kernel,
     target: &mut Brep,
     solver: &mut SolverObject,
