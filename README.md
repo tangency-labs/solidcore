@@ -95,6 +95,10 @@ Building from source requires Bash, CMake 3.20 or newer, and a C++17 toolchain.
 Ninja is optional: when absent, CMake uses its default generator (typically Unix
 Makefiles, which requires `make`). Linux with GNU C++ is the parity reference used
 in CI; shell compatibility on macOS does not establish Apple-Clang difftest parity.
+On macOS install GNU GCC (`brew install gcc`): `build.sh` then builds the reference
+with Homebrew's `g++-<N>` against libstdc++, as on Linux, and solidcore-ffi compiles
+the shims with the same compiler. Without it the build falls back to Apple clang and
+libc++, and the libstdc++-dependent reader cases report `skipped(platform)` (#450).
 Rust-only builds do not need these C++ build tools.
 
 ```sh
