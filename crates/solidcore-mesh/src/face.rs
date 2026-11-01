@@ -1318,9 +1318,17 @@ impl FaceState {
                             poly.vertices.last()
                         };
                         if let Some(v) = last {
-                            invert_point(k, s, edges.position(*v)?, &grid, &search)
-                                .ok()
-                                .map(|uv| (uv, false))
+                            let at = edges.position(*v)?;
+                            match invert_point(k, s, at, &grid, &search).ok() {
+                                // a pole's UV is ambiguous (every (0, v) is the pole), and the
+                                // grid's nearest sample is a corner where the surface has no
+                                // normal: the end is found from the use's own middle instead
+                                Some(uv) if at_pole(k, s, uv) => {
+                                    let p = pole_uv(k, s, edges, poly, at, &grid, &search)?;
+                                    Some((p.unwrap_or(uv), false))
+                                }
+                                nearest => nearest.map(|uv| (uv, false)),
+                            }
                         } else {
                             None
                         }
@@ -1335,7 +1343,29 @@ impl FaceState {
                     seq
                 } else {
                     inverted.push(*eu);
-                    let seed = pts.last().map(|q| q.uv);
+                    // the seed is the previous point, unless that is at a pole: then (and for
+                    // the first use, which has none) the use starts at its own start vertex,
+                    // found from its middle at a pole. Its feet are guided towards `end`;
+                    // a foot from a pole's corner, or from another use's pole UV, may not move
+                    let start = if *reverse {
+                        poly.vertices.last()
+                    } else {
+                        poly.vertices.first()
+                    };
+                    let seed = match (pts.last().copied(), start) {
+                        (Some(q), _) if !at_pole(k, s, q.uv) => Some(q.uv),
+                        (prev, Some(v)) => {
+                            let at = edges.position(*v)?;
+                            match invert_point(k, s, at, &grid, &search).ok() {
+                                Some(uv) if prev.is_some() || at_pole(k, s, uv) => {
+                                    let p = pole_uv(k, s, edges, poly, at, &grid, &search)?;
+                                    p.or(Some(uv))
+                                }
+                                nearest => nearest,
+                            }
+                        }
+                        (_, None) => None,
+                    };
                     ctx.edgeuse_points(poly, ivl, None, *reverse, seed, end)?
                 };
                 if let Some(t) = trace.as_deref_mut() {
@@ -2606,6 +2636,39 @@ impl MapContext<'_> {
             });
         }
         Ok(out)
+    }
+}
+
+/// The UV of `at`, a pole at an end of an inverted edge use, as a foot from the use's middle
+/// point. A foot from there stays on the use's own side of the pole: a meridian's middle
+/// stays in its meridian plane, whose angular tangent vanishes at the pole, so the foot does
+/// not leave the meridian. `None` for a use too short to have a middle point.
+fn pole_uv(
+    k: &Kernel,
+    s: &Surface,
+    edges: &EdgeSet,
+    poly: &EdgePolyline,
+    at: Point3,
+    grid: &Extent2d,
+    domain: &Extent2d,
+) -> Result<Option<Point2>> {
+    if poly.vertices.len() < 3 {
+        return Ok(None);
+    }
+    let Some(mid) = poly.vertices.get(poly.vertices.len() / 2) else {
+        return Ok(None);
+    };
+    let Ok(anchor) = invert_point(k, s, edges.position(*mid)?, grid, domain) else {
+        return Ok(None);
+    };
+    Ok(Some(foot(k, s, anchor, at, domain).0))
+}
+
+/// Whether the surface has no normal at `uv` (a pole, or a degenerate corner).
+fn at_pole(k: &Kernel, s: &Surface, uv: Point2) -> bool {
+    match s.evaluate_1st_derivatives(k, uv, false, false) {
+        Ok((_, su, sv)) => unit_cross(su, sv).is_none(),
+        Err(_) => false,
     }
 }
 
