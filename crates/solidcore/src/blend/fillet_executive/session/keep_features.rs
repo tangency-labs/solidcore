@@ -218,8 +218,8 @@ fn pieces_in_face(k: &Kernel, b: &Brep, f: FaceId, curve: &Curve, tol: f64) -> R
     curve_on_classify(k, b, f, &objects, true, &mut class, true, false, true)?;
     let closed = curve.is_closed(k, &natural, tol)?;
     let mut out = Vec::new();
-    for j in 0..class.size() {
-        if class.intervals()[j].mid.point_class() != PointClassType::Face {
+    for (j, interval) in class.intervals().iter().enumerate() {
+        if interval.mid.point_class() != PointClassType::Face {
             continue;
         }
         let mut run = class.sub_interval(j)?;
@@ -599,8 +599,7 @@ impl FilletSession<'_> {
         let mut wall_creases: BTreeMap<FaceId, Vec<Curve>> = BTreeMap::new();
         // per continued wall of a boss, the round's surface its creases lie on (when one)
         let mut wall_round: BTreeMap<FaceId, Option<FaceId>> = BTreeMap::new();
-        let mut kept: Vec<usize> = Vec::new();
-        for (index, feature) in features.iter_mut().enumerate() {
+        for feature in &mut features {
             if feature.boss && feature.walls.is_empty() {
                 // a boss whose walls aren't upright: reached when its footprint's rim crosses a
                 // sheet face's box
@@ -622,8 +621,7 @@ impl FilletSession<'_> {
                 }
                 continue;
             }
-            for wall_at in 0..feature.walls.len() {
-                let wall = feature.walls[wall_at];
+            for wall in feature.walls.clone() {
                 let wall_body: Brep = if feature.boss {
                     sheet.clone()
                 } else {
@@ -631,8 +629,8 @@ impl FilletSession<'_> {
                 };
                 let wall_box =
                     crate::query::api_queries::face_bounding_box(k, &wall_body, wall, false)?;
-                for (s, &sheet_face) in sheet_faces.iter().enumerate() {
-                    if sheet_boxes[s].are_disjoint(&wall_box, on_tol) {
+                for (sheet_box, &sheet_face) in sheet_boxes.iter().zip(&sheet_faces) {
+                    if sheet_box.are_disjoint(&wall_box, on_tol) {
                         continue;
                     }
                     let found = creases(k, sheet, sheet_face, &wall_body, wall, crease_tol)?;
@@ -663,19 +661,20 @@ impl FilletSession<'_> {
                     }
                 }
             }
-            if !feature.creases.is_empty() {
-                kept.push(index);
-            }
         }
         // the continued walls of the bosses no band reaches leave the sheet
-        for (index, feature) in features.iter_mut().enumerate() {
-            if !feature.boss || kept.contains(&index) {
+        for feature in &mut features {
+            if !feature.boss || !feature.creases.is_empty() {
                 continue;
             }
             for wall in std::mem::take(&mut feature.walls) {
                 delete(k, sheet, wall)?;
             }
         }
+        let kept: Vec<Feature> = features
+            .into_iter()
+            .filter(|feature| !feature.creases.is_empty())
+            .collect();
         if kept.is_empty() {
             return Ok(false);
         }
@@ -693,13 +692,13 @@ impl FilletSession<'_> {
                 domain_from_trims(k, sheet, piece)?;
                 let edges = face::p4::edges(sheet, piece, None, false, None)?;
                 let mut over = false;
-                for &index in &kept {
+                for feature in &kept {
                     let mut every = !edges.is_empty();
                     for &e in &edges {
                         if !every {
                             break;
                         }
-                        every = edge_along(k, sheet, e, &features[index].creases, on_tol)?;
+                        every = edge_along(k, sheet, e, &feature.creases, on_tol)?;
                     }
                     if every {
                         over = true;
@@ -713,11 +712,11 @@ impl FilletSession<'_> {
         }
         // a boss's continued walls split along their creases, each keeping its piece up to the
         // footprint
-        for &index in &kept {
-            if !features[index].boss {
+        for feature in &kept {
+            if !feature.boss {
                 continue;
             }
-            for wall in features[index].walls.clone() {
+            for wall in feature.walls.clone() {
                 let Some(curves) = wall_creases.get(&wall) else {
                     self.note_keep_refusal(FilletErrorType::BadMerge, NO_ROUND);
                     return Err(SolidError::sm_err(OP));
@@ -737,7 +736,7 @@ impl FilletSession<'_> {
                     domain_from_trims(k, sheet, piece)?;
                     let mut up_to_footprint = false;
                     for e in face::p4::edges(sheet, piece, None, false, None)? {
-                        if edge_along(k, sheet, e, &features[index].rim_curves, on_tol)? {
+                        if edge_along(k, sheet, e, &feature.rim_curves, on_tol)? {
                             up_to_footprint = true;
                             break;
                         }
@@ -753,10 +752,10 @@ impl FilletSession<'_> {
         // and its continued walls' tops at its footprint are left out: they meet no target face
         // to cut)
         let mut boss_creases: Vec<Curve> = Vec::new();
-        for &index in &kept {
-            if features[index].boss {
-                boss_creases.extend(features[index].creases.iter().cloned());
-                boss_creases.extend(features[index].rim_curves.iter().cloned());
+        for feature in &kept {
+            if feature.boss {
+                boss_creases.extend(feature.creases.iter().cloned());
+                boss_creases.extend(feature.rim_curves.iter().cloned());
             }
         }
         let sheet_edges = crate::topology::brep::p1::edges(sheet, None)?;
@@ -783,13 +782,13 @@ impl FilletSession<'_> {
         }
         // a kept boss stands on its footprint: the faces the blends take stop there
         for e in crate::topology::brep::p1::edges(self.objects.target, None)? {
-            for &index in &kept {
-                if features[index].boss
+            for feature in &kept {
+                if feature.boss
                     && edge_along(
                         k,
                         self.objects.target,
                         e,
-                        &features[index].rim_curves,
+                        &feature.rim_curves,
                         on_tol,
                     )?
                 {
@@ -897,14 +896,14 @@ impl FilletSession<'_> {
         let mut any_rim = false;
         for e in crate::topology::brep::p1::edges(self.objects.target, None)? {
             let mut rim = false;
-            for &index in &kept {
-                if features[index].boss
+            for feature in &kept {
+                if feature.boss
                     && !rim
                     && edge_along(
                         k,
                         self.objects.target,
                         e,
-                        &features[index].rim_curves,
+                        &feature.rim_curves,
                         on_tol,
                     )?
                 {
