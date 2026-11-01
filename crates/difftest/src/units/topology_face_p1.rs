@@ -788,13 +788,8 @@ fn reaches_brep(b: &Brep, f: FaceId) -> Result<bool, SolidError> {
 #[allow(clippy::too_many_lines)] // one record per op
 fn rust_record(i: &Inputs, mut b: Brep) -> Result<Vec<f64>, Fail> {
     let mut k = Kernel::default();
-    // upstream edge curves are owned by their edges
-    let edges: Vec<EdgeId> = b.edges().ids().collect();
-    for e in edges {
-        if let Some(c) = b.edge_mut(e).map_err(|e| fail(&e))?.curve.as_mut() {
-            let _ = c.set_owner(Some(key_of(EntityRef::Edge(e))), None);
-        }
-    }
+    // (the edges own their curves under `key_of`, as the build gives them,
+    // [`CONVENTIONS`]; no owner is added to a curve the build left without one)
     let f = FaceId::from_index(i.face as u32);
     let ko = &key_of;
     let mut o = vec![0.0];
@@ -1202,11 +1197,36 @@ fn delete_inner_loop_record(
     Ok(())
 }
 
+fn own_face_owner(f: FaceId) -> ObjectRef {
+    key_of(EntityRef::Face(f))
+}
+
+fn own_edge_owner(e: EdgeId) -> (ObjectRef, ObjectRef) {
+    (
+        key_of(EntityRef::Edge(e)),
+        key_of(EntityRef::Brep(solidcore::topology::BrepId::from_index(0))),
+    )
+}
+
+fn own_edgeuse_owner(eu: solidcore::topology::EdgeuseId) -> ObjectRef {
+    key_of(EntityRef::Edgeuse(eu))
+}
+
+/// The shim's build conventions (`sc_topology_fixture.h`), with the geometry the build
+/// owns named by this runner's [`key_of`] identities: the names its notification
+/// environments give the library (upstream compares owner pointers).
+const CONVENTIONS: crate::own_builder::Conventions<'static> = crate::own_builder::Conventions {
+    face_owner: &own_face_owner,
+    edge_owner: &own_edge_owner,
+    edgeuse_owner: &own_edgeuse_owner,
+    ..crate::own_builder::Conventions::TOPOLOGY_FIXTURE
+};
+
 /// The Rust B-rep of a `topology.vertexuse` B-rep block, built by the Rust kernel as
 /// that unit's shim (`sc_topology_fixture.h`) builds it: a shim-built source by
 /// [`crate::own_builder`], an `.smb` file by the Rust reader, both renumbered into the
-/// shim's traversal order under its conventions, or the build's error. No C++ state
-/// reaches it.
+/// shim's traversal order under this runner's [`CONVENTIONS`], or the build's error. No
+/// C++ state reaches it.
 ///
 /// # Errors
 ///
@@ -1216,9 +1236,22 @@ pub(super) fn own_built(
     validate_only: bool,
     init_gaps: bool,
 ) -> Result<crate::own_builder::Built, HarnessError> {
-    use crate::own_builder::{build_as, read_as, renumber_with, Built, Conventions};
+    own_built_with(src, validate_only, init_gaps, &CONVENTIONS)
+}
+
+/// [`own_built`] under the conventions `conv` (another runner's names for the owners).
+///
+/// # Errors
+///
+/// As [`own_built`].
+pub(super) fn own_built_with(
+    src: &BrepIn,
+    validate_only: bool,
+    init_gaps: bool,
+    conv: &crate::own_builder::Conventions<'_>,
+) -> Result<crate::own_builder::Built, HarnessError> {
+    use crate::own_builder::{build_as, read_as, renumber_with, Built};
     let mut k = Kernel::default();
-    let conv = &Conventions::TOPOLOGY_FIXTURE;
     let BrepIn::File { rebuild, .. } = src else {
         return build_as(&mut k, src, validate_only, init_gaps, conv)?
             .ok_or_else(|| harness("own builder: no build for a shim-built source"));
