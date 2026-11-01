@@ -21,6 +21,11 @@ pub const MAX_E: usize = 4;
 pub const TAYLOR: usize = 2;
 /// `SM_GN_MAXK`: the highest order of a face's partial derivatives the series need.
 pub const MAX_K: usize = MAX_S + MAX_E + 2;
+/// The highest power of eps a series stores: one past [`MAX_E`], for the one truncation
+/// that keeps it, `(0, MAX_E + 1)` (`ContactOrderAt` at order 4). The fork's
+/// `c[SM_GN_MAXS + 1][SM_GN_MAXE + 1]` has no room for `c[0][5]` and writes it over
+/// `c[1][0]`, which a series truncated at sigma^0 never reads; this column holds it instead.
+pub const STORE_E: usize = MAX_E + 1;
 
 /// The number type of the fork's templates (`double` or `sm_Ivl`).
 pub trait GnScalar:
@@ -67,9 +72,11 @@ pub struct Trunc {
 }
 
 impl Trunc {
-    /// A truncation keeping `sigma^s` and `eps^e`; errors past [`MAX_S`] or [`MAX_E`].
+    /// A truncation keeping `sigma^s` and `eps^e`; errors past [`MAX_S`] or [`MAX_E`]
+    /// (past [`STORE_E`] for `s = 0`).
     pub fn new(s: usize, e: usize) -> Result<Self> {
-        if s > MAX_S || e > MAX_E {
+        let e_max = if s == 0 { STORE_E } else { MAX_E };
+        if s > MAX_S || e > e_max {
             return Err(SolidError::InvalidInput {
                 operation: "blend::fillet_section::Trunc::new",
                 reason: "a series' orders exceed SM_GN_MAXS or SM_GN_MAXE",
@@ -94,15 +101,15 @@ impl Trunc {
 /// `sm_Ser`: the coefficients `c[i][k]` of `sigma^i eps^k`.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Ser<T> {
-    /// `c[i][k]`, `i <= MAX_S`, `k <= MAX_E`.
-    pub c: [[T; MAX_E + 1]; MAX_S + 1],
+    /// `c[i][k]`, `i <= MAX_S`, `k <= STORE_E`.
+    pub c: [[T; STORE_E + 1]; MAX_S + 1],
 }
 
 impl<T: GnScalar> Ser<T> {
     /// `sm_SerConst`: the constant series `v`.
     #[must_use]
     pub fn constant(v: T) -> Self {
-        let mut c = [[T::of(0.0); MAX_E + 1]; MAX_S + 1];
+        let mut c = [[T::of(0.0); STORE_E + 1]; MAX_S + 1];
         if let Some(c00) = c.first_mut().and_then(|row| row.first_mut()) {
             *c00 = v;
         }
@@ -303,7 +310,9 @@ mod tests {
     fn truncation_is_bounded() {
         assert!(Trunc::new(MAX_S, MAX_E).is_ok());
         assert!(Trunc::new(MAX_S + 1, 0).is_err());
-        assert!(Trunc::new(0, MAX_E + 1).is_err());
+        assert!(Trunc::new(1, MAX_E + 1).is_err());
+        assert!(Trunc::new(0, MAX_E + 1).is_ok());
+        assert!(Trunc::new(0, MAX_E + 2).is_err());
     }
 
     #[test]

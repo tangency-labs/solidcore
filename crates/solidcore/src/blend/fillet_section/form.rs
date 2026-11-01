@@ -129,7 +129,7 @@ pub fn hermite_points(s: &[f64], v: &[Vec3], d: &[Vec3]) -> Vec<Vec3> {
 /// `sm_HermiteKnots`: the knots of those curves, the stations with the end ones four times
 /// and the inner ones three times (piecewise Bezier), as (knots, multiplicities).
 #[must_use]
-pub fn hermite_knots(s: &[f64]) -> (Vec<f64>, Vec<u32>) {
+pub fn hermite_knots(s: &[f64]) -> (Vec<f64>, Vec<usize>) {
     let last = s.len().saturating_sub(1);
     let mult = (0..s.len())
         .map(|j| if j == 0 || j == last { 4 } else { 3 })

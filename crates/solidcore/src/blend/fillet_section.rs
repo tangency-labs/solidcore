@@ -38,12 +38,21 @@
 //! | [`station::as_b_spline`], [`station::surface_partials`] | `IsKindOf(SmBSplineSurface_TYPE)` and the cast, `sm_SurfacePartials` |
 //! | [`station::GnSystem`], [`station::gn_evaluate`], [`station::gn_jacobian`], [`station::solve4`] | `sm_GnSystem`, `sm_GnEvaluate`, `sm_GnJacobian`, `sm_Solve4` |
 //! | [`station::GnStation`], [`station::leader_series`], [`station::gn_solve_station`] | `sm_GnStation`, `sm_LeaderSeries`, `sm_GnSolveStation` |
+//! | [`section::GN_MAX_ORDER`], [`section::GN_DEFAULT_THUMBWEIGHT`] | `SM_GN_MAX_ORDER`, `SM_GN_DEFAULT_THUMBWEIGHT` |
+//! | [`section::GnSectionFsg`], [`section::GnSectionFsg::new`], [`section::GnSectionFsg::is_valid`] | `SmGnSectionFSG`, its constructor, `IsValid` (and `GetOrder`, `GetThumbweight`, `GetCertifiedBound`, `GetCertifiedSpans` as fields) |
+//! | [`section::GnSectionFsg::create_surface`], [`section::GnSectionFsg::create_surface_from_curves`], `build` and `certify` (private) | `CreateSurface`, `CreateSurfaceFromCurves`, `Build` (its certificate block in `certify`) |
+//! | [`section::GnSectionFsg::contact_order_at`] | `ContactOrderAt` |
 //!
 //! Deviations:
 //! - **Bounds.** `sm_Trunc`'s orders are checked against the series' fixed size
 //!   (`SM_GN_MAXS`, `SM_GN_MAXE`) when a [`series::Trunc`] is made; the fork leaves them
 //!   to its callers. An empty Bernstein polynomial (which the fork never forms) multiplies
 //!   to an empty one instead of reading out of bounds.
+//! - **Order-4 contact (fork out-of-bounds write).** `ContactOrderAt` at order 4 truncates
+//!   at `(0, 5)`, one eps power past `sm_Ser`'s storage (`SM_GN_MAXE = 4`): the fork writes
+//!   `c[0][5]` over `c[1][0]`, unused at sigma order 0. The series here store one more eps
+//!   column ([`series::STORE_E`]) that only that truncation uses, so the values are the
+//!   ones the fork's layout gives, without the overrun.
 //! - **`std::min`/`std::max`.** Kept as `(b < a) ? b : a` / `(a < b) ? b : a`, not
 //!   `f64::min`/`f64::max`, so a NaN operand propagates as in the fork.
 //! - **Out-params.** `sm_SerInvSqrt` returns its series; `sm_HermitePoints`,
@@ -56,8 +65,12 @@
 //! - **Indices.** The fork's nested vectors are read and written through checked signed
 //!   indices (`Mat`, `knot`): an index outside reads 0 (a knot NaN) and is not written; the
 //!   fork's indices stay inside.
+//! - **Generator state.** `CreateSurface`'s solver argument is replaced by its tolerance;
+//!   `Build` stores the certified bound and span count as the fork does (`&mut self`). The
+//!   fork's `SM_ERR_MESSAGE` report of them is not logged.
 
 pub mod form;
 pub mod interval;
+pub mod section;
 pub mod series;
 pub mod station;
