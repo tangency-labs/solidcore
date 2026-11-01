@@ -9,9 +9,9 @@ plan/units/*.toml, plan/PROGRESS.md (claims; generated, not committed), harness/
 line counts at the pin), scripts/upstream-pin.env (upstream version and commit),
 reports/difftest/*.json (not committed: CI's artifact, see scripts/fetch-reports.sh),
 reports/solids/solids.json (not committed: CI's artifact, see scripts/fetch-solids.sh),
-reports/ssi-corpus.json, plan/upstream-issues/*.md, the
+reports/ssi/*.json (nightly Actions artifact), plan/upstream-issues/*.md, the
 module file headers under crates/solidcore/src and git history (timeline). Output is
-deterministic: sorted, and the only date is the commit date of HEAD.
+deterministic: dates come from commits and measured-report provenance.
 
 All repo text (notes, issue entries, headers) is HTML-escaped before a small markdown
 subset (inline code, bold, italic, http(s) links, nested bullet lists) is applied, so no
@@ -34,6 +34,7 @@ sys.dont_write_bytecode = True  # keep harness/plan clean
 sys.path.insert(0, str(ROOT / "harness/plan"))
 import progress  # noqa: E402  (reuse the checklist's counting logic)
 import units as plan_units  # noqa: E402  (the shared plan loader)
+import ssi as ssi_site  # noqa: E402  (measured SSI artifact and rendering)
 
 REPO = os.environ.get("GITHUB_REPOSITORY", "tangency-labs/solidcore")
 REPO_URL = f"https://github.com/{REPO}"
@@ -810,7 +811,7 @@ def build(out):
     callgraph = json.loads((ROOT / "harness/callgraph/units.json").read_text())
     reports = load_reports()
     solids = load_solids()
-    ssi = json.loads((ROOT / "reports/ssi-corpus.json").read_text())
+    ssi, ssi_provenance = ssi_site.load(ROOT, REPO)
     intro_md, issues = parse_issues()
     points, area_points, unit_hist = aggregate(timeline())
     tl0, tl1 = (points[0][0], points[-1][0]) if points else (0, 0)
@@ -875,11 +876,6 @@ def build(out):
         f'{chart_svg(area_points.get(m, []), f"chart-{area_slug(m)}", f"Share of {m} upstream lines ported over time")}'
         f'<p class="small"><a href="areas/{area_slug(m)}.html">{esc(m)} module page</a></p></div>'
         for m in present)
-    ssum = ssi.get("summary", {})
-    verdicts = sorted(set(ssum.get("cpp", {})) | set(ssum.get("rust", {})))
-    ssi_rows = "".join(f"<tr><td>{esc(v)}</td><td class=num>{ssum.get('cpp', {}).get(v, 0)}</td>"
-                       f"<td class=num>{ssum.get('rust', {}).get(v, 0)}</td></tr>" for v in verdicts)
-    par = ssum.get("parity", {})
     s_total, s_built, s_passed = solids_counts(solids)
     solids_tile = (f'<div class="tile"><div class="k"><a href="solids.html">Solids</a></div>'
                    + (f'<div class="v">{s_passed} / {s_total}</div><div class="sub">primitives pass; '
@@ -926,16 +922,7 @@ v{esc(UPSTREAM_VERSION)} in green or partial units; {gpct:.1f}% green</div></div
 <th class="barcell">Progress</th><th>%</th></tr></thead><tbody>{''.join(modrows)}</tbody></table></div>
 <p class="legend"><span><i class="sw green"></i>green</span><span><i class="sw partial"></i>partial</span></p>
 </section>
-<section>
-<h2>Surface/surface intersection corpus</h2>
-<p>{len(ssi.get('cases', []))} cases from the external
-<a href="{esc(ssi.get('corpus', {}).get('repo', ''))}">ssi-corpus</a>, scored against known true intersections.
-Rust and C++ are compared where the Rust path is ported: {par.get('compared', 0)} compared,
-{par.get('identical', 0)} agree within 1e-9, {par.get('mismatched', 0)} mismatched.
-<a href="ssi.html">All cases</a>.</p>
-<div class="scroll narrow"><table><thead><tr><th>Verdict</th><th>C++</th><th>Rust</th></tr></thead>
-<tbody>{ssi_rows}</tbody></table></div>
-</section>
+{ssi_site.overview(ssi, ssi_provenance, REPO, UPSTREAM_COMMIT)}
 <section>
 <h2>Elsewhere</h2>
 <ul>
@@ -1203,61 +1190,14 @@ counts). Click a column heading to sort.</p>
 """
     write("issues.html", P("Upstream issues · solidcore", body, 0, "issues", path="issues.html"))
 
-    # ---- ssi corpus
-    cases = sorted(ssi.get("cases", []), key=lambda c: c["id"])
-    classes = sorted({c.get("class", "") for c in cases})
-    crow = []
-    for c in cases:
-        cpp, rust = c.get("cpp", {}), c.get("rust", {})
-        rv = rust.get("verdict", "")
-        rdet = ""
-        if rust.get("deferred"):
-            d = rust["deferred"]
-            rdet = (f'<div class="small">waits on <a href="units/{esc(d.get("unit", ""))}.html">{esc(d.get("unit", ""))}</a>: '
-                    f'<code>{esc(d.get("symbol", ""))}</code></div>')
-        flags = cpp.get("flags", [])
-        rflags = rust.get("flags", []) if rv != "DEFERRED" else []
-        ftxt = "".join(f"<li>{esc(f)}</li>" for f in flags)
-        if rflags and rflags != flags:
-            ftxt += "".join(f"<li>Rust: {esc(f)}</li>" for f in rflags)
-        par = c.get("parity") or {}
-        ptxt = ("agree" if par.get("pass") and not par.get("mismatches") else
-                f"{par.get('mismatches')} mismatches" if par else "")
-        crow.append(
-            f'<tr data-class="{esc(c.get("class", ""))}" data-cpp="{esc(cpp.get("verdict", ""))}" data-rust="{esc(rv)}">'
-            f'<td><code>{esc(c["id"])}</code></td><td>{esc(c.get("class", ""))}</td>'
-            f'<td>{esc(" × ".join(c.get("surfaces", [])))}</td>'
-            f'<td><span class="v v-{esc(cpp.get("verdict", "").replace(" ", "-"))}">{esc(cpp.get("verdict", ""))}</span>'
-            f'<div class="small">{esc(cpp.get("status_name", ""))}</div></td>'
-            f'<td><span class="v v-{esc(rv.replace(" ", "-"))}">{esc(rv)}</span>{rdet}</td>'
-            f'<td>{esc(ptxt)}</td><td class="flags">{"<ul>" + ftxt + "</ul>" if ftxt else ""}</td></tr>')
-    cls_opts = "".join(f'<option value="{esc(k)}">{esc(k)}</option>' for k in classes)
-    cv_opts = "".join(f'<option value="{esc(k)}">{esc(k)} ({n})</option>' for k, n in sorted(ssum.get("cpp", {}).items()))
-    rv_opts = "".join(f'<option value="{esc(k)}">{esc(k)} ({n})</option>' for k, n in sorted(ssum.get("rust", {}).items()))
-    corpus = ssi.get("corpus", {})
-    body = f"""
-<h1>SSI corpus</h1>
-<p class="muted">{len(cases)} surface/surface intersection cases from
-<a href="{esc(corpus.get('repo', ''))}">{esc(corpus.get('repo', ''))}</a> at <code>{esc(str(corpus.get('commit', ''))[:12])}</code>,
-from <a href="{REPO_URL}/blob/main/reports/ssi-corpus.json"><code>reports/ssi-corpus.json</code></a>. Each output is
-scored against the known intersection ({esc(str(ssi.get('samples_per_curve', '')))} samples per curve, accuracy
-tolerance {esc(format(ssi.get('acc_tol', 0), 'g'))}, approximation tolerance {esc(str(ssi.get('approx_tol', '')))}). Flags are
-the C++ result's.</p>
-<div class="scroll narrow"><table><thead><tr><th>Verdict</th><th>C++</th><th>Rust</th></tr></thead>
-<tbody>{ssi_rows}</tbody></table></div>
-<div class="filters" data-table="ssi">
-<label>Search <input type="search" name="q" placeholder="case id or surface"></label>
-<label>Class <select name="class"><option value="">all</option>{cls_opts}</select></label>
-<label>C++ <select name="cpp"><option value="">all</option>{cv_opts}</select></label>
-<label>Rust <select name="rust"><option value="">all</option>{rv_opts}</select></label>
-<span class="count" aria-live="polite"></span>
-</div>
-<div class="scroll"><table id="ssi" class="sortable"><thead><tr><th data-sort="text">Case</th><th data-sort="text">Class</th>
-<th data-sort="text">Surfaces</th><th data-sort="text">C++</th><th data-sort="text">Rust</th><th data-sort="text">Parity</th><th>Flags</th></tr></thead>
-<tbody>{''.join(crow)}</tbody></table></div>
-"""
+    # ---- ssi corpus (only validated measured artifacts, never a committed snapshot)
+    if ssi is not None:
+        (out / "reports").mkdir(parents=True, exist_ok=True)
+        for name in ("ssi-corpus.json", "ssi-provenance.json"):
+            shutil.copyfile(ROOT / "reports/ssi" / name, out / "reports" / name)
+    body = ssi_site.body(ssi, ssi_provenance, REPO, UPSTREAM_COMMIT)
     write("ssi.html", P("SSI corpus · solidcore", body, 0, "ssi", path="ssi.html"))
-    return {"units": len(units), "areas": len(present), "issues": len(issues), "ssi": len(cases),
+    return {"units": len(units), "areas": len(present), "issues": len(issues), "ssi": len(ssi["cases"]) if ssi is not None else 0,
             "solids": "{1}/{0} build, {2}/{0} pass".format(*solids_counts(solids)) if solids else "no data",
             "timeline": len(points),
             "seconds": time.time() - t_start}

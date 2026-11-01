@@ -2,7 +2,7 @@
 
 # solidcore
 
-**📊 Live progress: [tangency-labs.github.io/solidcore](https://tangency-labs.github.io/solidcore/)**: every unit's port status and difftest results, the upstream-issues log, and the surface/surface intersection corpus scores, regenerated on every merge.
+**📊 Live progress: [tangency-labs.github.io/solidcore](https://tangency-labs.github.io/solidcore/)**: every unit's port status and difftest results, the upstream-issues log, and the surface/surface intersection corpus scores. The site rebuilds on every merge; SSI measurements run nightly and show the tested revision.
 
 solidcore is a Rust port of NVIDIA's SMLib: a boundary-representation (B-rep) solid
 modeling kernel in safe Rust (SMLib is from [USD BRep](https://github.com/NVIDIA-Omniverse/usd-brep), Apache-2.0).

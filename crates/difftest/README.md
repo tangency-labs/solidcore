@@ -44,7 +44,7 @@ nice -n 10 cargo test -p difftest --features cpp                     # harness s
 | `--report-dir D` / `--no-report` | report location (default `reports/difftest/`) / skip writing |
 | `--fuzz N` | with `--unit`: probe the unit's FFI guard with N mutated cases, each run in a child process (below). No report written. |
 | `--fuzz-out D` | where `--fuzz` writes failing inputs (default `bin/fuzz/`; files go to `D/<unit>/`) |
-| `--ssi-corpus [--tol T] [--jobs N] [glob]` | score the engines against the SSI corpus (see [below](#--ssi-corpus-exact-ground-truth-ssi-corpus)); not a gate; without the `cpp` feature, the `ssi` engine alone |
+| `--ssi-corpus [--tol T] [--jobs N] [glob]` | score the engines against the SSI corpus (see [below](#--ssi-corpus-exact-ground-truth-ssi-corpus)); not a gate; without the `cpp` feature, the `ssi` and `solidcore-ssi` engines |
 | `--solidcraft-cases [glob]` | score the Rust port on SolidCraft's whole-operation regression cases (see [below](#--solidcraft-cases-solidcraft-regression-cases)); not a gate, no `cpp` feature needed |
 | `--step-corpus [--constructor] [--jobs N] [glob]` | import STEP Tools' AP203/AP214 sample files and build every B-rep body on both kernels from the same intermediate (`--constructor`: through `SmBrepConstructor`) (see [below](#--step-corpus-real-world-step-files)); not a gate; without `cpp`, the Rust side alone |
 
@@ -678,8 +678,8 @@ PR instead. Then set `status` in `plan/units/foo.bar.toml` to what
 ## `--ssi-corpus`: exact ground-truth SSI corpus
 
 A correctness report, separate from the gate: it never changes a unit's status, and
-CI's gating `difftest` job does not run it. It grades the C++, the port and the `ssi`
-crate's surface/surface intersection against [jyviko's SSI corpus](https://github.com/jyviko/ssi-corpus) (commit
+CI's gating `difftest` job does not run it. It grades C++, the Rust port, the `ssi` crate and `solidcore-ssi`
+surface/surface intersection against [jyviko's SSI corpus](https://github.com/jyviko/ssi-corpus) (commit
 `b04c8a6`, MIT OR Apache-2.0; issue #17): 119 cases (plane, quadrics, torus, B-spline and
 NURBS pairs, 25 of them from Yang, Jia & Yan, ACM TOG 42(6) 211, 2023), each with the dense
 exact intersection and the expected topology.
@@ -689,7 +689,7 @@ scripts/fetch-ssi-corpus.sh               # clones the corpus into corpus/ssi/ (
 nice -n 10 cargo run --profile difftest -p difftest --features cpp -- --ssi-corpus             # all cases, tol 1e-6
 nice -n 10 cargo run --profile difftest -p difftest --features cpp -- --ssi-corpus 'c3_*'      # case ids matching a glob (`*`, `?`)
 nice -n 10 cargo run --profile difftest -p difftest --features cpp -- --ssi-corpus --tol default --jobs 4
-nice -n 10 cargo run --profile difftest -p difftest -- --ssi-corpus                         # the ssi engine only, no C++
+nice -n 10 cargo run --profile difftest -p difftest -- --ssi-corpus                         # ssi and solidcore-ssi, no C++
 ```
 
 Without `corpus/ssi/` it prints how to fetch it and exits `0`. The corpus is data only:
@@ -698,7 +698,7 @@ pins the full commit SHA and checks the checkout's origin and `HEAD` against it.
 errors (unreadable case, report not writable); verdicts never fail the run.
 
 * **Engines.** Each case runs in a child process per engine (`difftest --ssi-case <case>
-  <tol> <cpp|rust|ssi> <out.json>`), so a C++ segfault or a 300 s timeout is a `CRASH`
+  <tol> <cpp|rust|ssi|solidcore-ssi> <out.json>`), so a C++ segfault or a 300 s timeout is a `CRASH`
   verdict, as with the corpus' runner. `--jobs N` (default 2) children run at once.
   `cpp` and `rust` need the `cpp` feature.
   * `cpp`: shim `harness/cpp/shim/ssi_corpus.cpp` mirrors the corpus'
@@ -723,6 +723,10 @@ errors (unreadable case, report not writable); verdicts never fail the run.
     parameters and each patch evaluated there; the points are the touch points, then
     the curves' vertices. A refusal is status `SM_ERR` named by its code
     (`BOOLEAN_TANGENT (...)`). Never compared for parity.
+  * `solidcore-ssi` (`src/ssi/solidcore_ssi_engine.rs`): the independent `ssi`
+    algorithm through `solidcore-ssi`, using solidcore's surfaces and intersection
+    output types. Its curves are sampled like the port's. Scored independently,
+    never compared with C++ for parity.
 * **Scorer** (`src/ssi/score.rs`, `polyset.rs`, `geom.rs`): a port of the corpus'
   `scoring/score.py` and the distance helpers of `ssi_geom.py` (not the truth
   generators). Accuracy tolerance `10 * tol`. Verdicts, most severe first: `CRASH`,
@@ -741,14 +745,29 @@ errors (unreadable case, report not writable); verdicts never fail the run.
   SSI-CORPUS cpp: PASS=… INACCURATE=… WRONG_TOPOLOGY=… INCOMPLETE=… ERROR=… CRASH=… (cases=119)
   SSI-CORPUS rust: PASS=… DEFERRED=… (cases=119)
   SSI-CORPUS ssi: PASS=… (cases=119)
+  SSI-CORPUS solidcore-ssi: PASS=… (cases=119)
   SSI-CORPUS parity: compared=… identical=… mismatched=… same_verdict=…
   ```
 
   and `reports/ssi-corpus.json` (`reports/ssi-corpus_<tol>_<glob>.json` for other
-  tolerances or a glob; `reports/ssi-corpus_ssi.json` from a build without `cpp`, so it
+  tolerances or a glob; `reports/ssi-corpus_ssi_solidcore-ssi.json` from a build without `cpp`, so it
   never overwrites the full report): per case every grade with its flags, distances and
   topology signatures, the deferral reason and the parity result. No timings, so it is
   deterministic.
+* **Published measurements.** `.github/workflows/ssi-corpus.yml` runs all 119 cases
+  and all four engines at `1e-6` on `main`, daily at 03:23 UTC and on manual dispatch.
+  The workflow builds the harness at opt-level 1 because SSI's geometric scorer runs
+  inside `difftest`; the normal workspace profile and kernel profile stay unchanged.
+  The `ssi-corpus-report` artifact contains the report plus provenance (solidcore SHA,
+  SMLib version/commit, corpus commit, measurement date and Actions run URL), retained
+  for 90 days. Raw outputs and logs are kept for 14 days. No generated SSI report is
+  committed. `python3 scripts/ssi_report.py fetch` downloads the latest validated
+  bundle to `reports/ssi/`; Pages displays the measured revisions and all four scores,
+  and rebuilds when the benchmark finishes. A missing artifact is shown as unavailable,
+  without falling back to the old committed snapshot. Geometry failures and parity
+  mismatches remain report data; missing inputs, incomplete reports, inconsistent
+  summaries or unbound provenance fail publication. The validator also catches the
+  runner's missing-corpus exit `0` by requiring the complete report.
 * **Cross-check with the corpus' own scorer.** `scripts/ssi-corpus-runner.sh` is an
   `SSI_RUNNER` for `score.py` (Python 3, numpy):
 

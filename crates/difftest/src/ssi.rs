@@ -359,6 +359,10 @@ fn verdict_of(r: &RunResult, s: Option<&Score>) -> String {
     }
 }
 
+fn same_cpp_rust_verdict(verdicts: &[String]) -> bool {
+    matches!(verdicts, [cpp, rust, ..] if rust != "DEFERRED" && cpp == rust)
+}
+
 fn summary(engine: &str, counts: &BTreeMap<String, usize>) -> String {
     let mut parts = Vec::new();
     for v in VERDICTS.iter().copied().chain(["DEFERRED"]) {
@@ -563,10 +567,8 @@ pub fn run_corpus(root: &Path, opts: &CorpusOptions) -> ExitCode {
                 );
             }
         }
-        if let [a, b, _] = verdicts.as_slice() {
-            if PARITY && b != "DEFERRED" && a == b {
-                same_verdict += 1;
-            }
+        if PARITY && same_cpp_rust_verdict(&verdicts) {
+            same_verdict += 1;
         }
         // the flags of the first engine run (the C++ when it runs)
         let flags = scores
@@ -670,6 +672,28 @@ pub fn run_corpus(root: &Path, opts: &CorpusOptions) -> ExitCode {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn cpp_rust_verdict_agreement_ignores_other_engines() {
+        let verdicts = |v: &[&str]| v.iter().map(|s| (*s).to_owned()).collect::<Vec<_>>();
+        assert!(same_cpp_rust_verdict(&verdicts(&[
+            "PASS",
+            "PASS",
+            "ERROR",
+            "INCOMPLETE",
+        ])));
+        assert!(same_cpp_rust_verdict(&verdicts(&["ERROR", "ERROR"])));
+        assert!(!same_cpp_rust_verdict(&verdicts(&[
+            "PASS",
+            "INCOMPLETE",
+            "PASS",
+            "PASS",
+        ])));
+        assert!(!same_cpp_rust_verdict(&verdicts(&[
+            "DEFERRED", "DEFERRED", "PASS", "PASS",
+        ])));
+        assert!(!same_cpp_rust_verdict(&verdicts(&["PASS"])));
+    }
 
     #[test]
     fn globs() {

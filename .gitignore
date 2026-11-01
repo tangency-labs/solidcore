@@ -25,5 +25,8 @@ __pycache__/
 # Solids report: the primitives example's --json output, uploaded by CI from main
 # (artifact solids-report, scripts/fetch-solids.sh); never committed
 /reports/solids/
+# SSI reports and provenance are generated locally or fetched from Actions.
+/reports/ssi/
+/reports/ssi-corpus*.json
 # Mutation-testing reports (scripts/mutants.sh); never committed
 /reports/mutants/
