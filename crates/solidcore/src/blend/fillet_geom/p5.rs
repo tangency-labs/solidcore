@@ -182,7 +182,7 @@ fn rail_solve_options(curve: &Curve) -> GlobalPointSolveOptions<'static, CurveOb
 /// Ignores a status upstream does not check, but never an [`SolidError::Unported`].
 fn ignore_non_unported<T>(r: Result<T>) -> Result<()> {
     match r {
-        Err(e) if e.is_unported() => Err(e),
+        Err(e) if e.is_unported_or_cancelled() => Err(e),
         _ => Ok(()),
     }
 }
@@ -431,6 +431,24 @@ pub trait FilletEdgeContext {
         id1: FilletSolverId,
         id2: FilletSolverId,
     ) -> Result<(&mut dyn FilletSolverOps, &mut dyn FilletSolverOps)>;
+
+    /// `SmFilletVertex::CalcRailIntEdgeuse()` (no `pOptFG`: every fillet geometry at the
+    /// vertex) on pseudo vertex `v` of `fb`, with the solvers of this context, which it
+    /// changes (`SetExtensionFactor`, the temporary radius change): the rail/edge
+    /// crossing `CalcRailIntExtendedEdgeuse` takes with
+    /// `fixes.fillet_extended_rail_end_at_side_edge_crossing`.
+    ///
+    /// # Errors
+    /// Those of [`FilletBrep::calc_rail_int_edgeuse`]; [`SolidError::InvalidInput`] when
+    /// the context holds its solvers read-only.
+    fn calc_rail_int_edgeuse(
+        &mut self,
+        k: &Kernel,
+        fb: &mut FilletBrep,
+        v: VertexId,
+        corners: CornerLookup<'_>,
+        target: &mut Brep,
+    ) -> Result<()>;
 }
 
 /// A caller's indexed solver table as a [`FilletEdgeContext`]; `op` names the
@@ -459,6 +477,63 @@ impl FilletEdgeContext for IndexedEdgeContext<'_, '_> {
             self.op,
             "indexed edge context holds its solvers read-only",
         ))
+    }
+
+    fn calc_rail_int_edgeuse(
+        &mut self,
+        _k: &Kernel,
+        _fb: &mut FilletBrep,
+        _v: VertexId,
+        _corners: CornerLookup<'_>,
+        _target: &mut Brep,
+    ) -> Result<()> {
+        Err(SolidError::invalid_input(
+            self.op,
+            "indexed edge context holds its solvers read-only",
+        ))
+    }
+}
+
+/// A caller's indexed solver table, held mutably, as a [`FilletEdgeContext`]: the
+/// indexed `CalcRailIntExtendedEdgeuse`, whose rail/edge crossing
+/// (`CalcRailIntEdgeuse`) changes the solvers; `op` names the calculator in a
+/// missing-solver error.
+pub(super) struct IndexedEdgeContextMut<'s, 'c> {
+    pub(super) solvers: &'s mut [FilletSolver],
+    pub(super) corners: CornerLookup<'c>,
+    pub(super) op: &'static str,
+}
+
+impl FilletEdgeContext for IndexedEdgeContextMut<'_, '_> {
+    fn solver(&self, id: FilletSolverId) -> Result<&FilletSolver> {
+        solver_of(self.solvers, id, self.op)
+    }
+
+    fn extended_surface(&self, corner: &FilletCorner, face: FaceId) -> Result<Option<&Surface>> {
+        self.corners.extended_surface(corner, face)
+    }
+
+    fn solver_pair_ops_mut(
+        &mut self,
+        _id1: FilletSolverId,
+        _id2: FilletSolverId,
+    ) -> Result<(&mut dyn FilletSolverOps, &mut dyn FilletSolverOps)> {
+        // CalcRailIntExtendedEdgeuse solves no rail/rail pair
+        Err(SolidError::invalid_input(
+            self.op,
+            "indexed extended-edge-use context has no rail/rail solve",
+        ))
+    }
+
+    fn calc_rail_int_edgeuse(
+        &mut self,
+        k: &Kernel,
+        fb: &mut FilletBrep,
+        v: VertexId,
+        corners: CornerLookup<'_>,
+        target: &mut Brep,
+    ) -> Result<()> {
+        fb.calc_rail_int_edgeuse(k, v, None, corners, self.solvers, target)
     }
 }
 
@@ -646,7 +721,7 @@ impl FilletBrep {
                 None,
             );
             let curves = match result {
-                Err(e) if e.is_unported() => return Err(e),
+                Err(e) if e.is_unported_or_cancelled() => return Err(e),
                 Ok(SrfSrfCurves {
                     curve_3d: Some(c),
                     uv_curve1,
@@ -1304,7 +1379,7 @@ impl FilletBrep {
                 }
             };
             match intersection {
-                Err(err) if err.is_unported() => return Err(err),
+                Err(err) if err.is_unported_or_cancelled() => return Err(err),
                 Ok(c) if c.curve_3d.is_some() => new_curves = Some(c),
                 _ => {
                     self.fillet_edge_mut(e)?
@@ -2354,7 +2429,7 @@ impl FilletBrep {
                                     t = d.parameter;
                                 }
                             }
-                            Err(e) if e.is_unported() => return Err(e),
+                            Err(e) if e.is_unported_or_cancelled() => return Err(e),
                             // TrimRailCurve(): Suffered a SmCurve::DropPoint() failure
                             Err(_) => success = false,
                         }
@@ -2728,7 +2803,7 @@ impl FilletBrep {
                                 SolverOperation::Minimize,
                             ) {
                                 Ok(d) if d.success => Ok(Some(d.parameter)),
-                                Err(e) if e.is_unported() => Err(e),
+                                Err(e) if e.is_unported_or_cancelled() => Err(e),
                                 _ => Ok(None),
                             }
                         };

@@ -60,7 +60,8 @@
 //!   a report that was added, and report equality ignores those fields). `WARN`
 //!   messages are not ported.
 //!   Opt-in (WR-668, `Kernel::fixes.curve_check_zero_speed_tangent_end`, the fork's
-//!   tangency-labs/smlib ecf1963): at a zero-speed tangent end of an edge's curve or
+//!   tangency-labs/smlib ecf1963, replayed patch for patch as 6ca3405 in
+//!   tangency-labs/smlib#76): at a zero-speed tangent end of an edge's curve or
 //!   trim, test 3 passes over the coincident first control points and tests 13/14
 //!   pass over a radius below the tolerance within the end's growth stretch. The fork
 //!   reads the curve's edge (`GetEdge`, `GetEdgeuse()->GetEdge()`); a Rust curve has
@@ -367,15 +368,18 @@ fn is_zero_speed_tangent_end(
         return Ok(false);
     }
 
-    // the second derivative there
+    // the second derivative there (`sPV[2].Length() <= dScaledZero` refuses the end, so
+    // a NaN length does not)
     let ivl = curve.natural_interval();
     let param = if end == 0 { ivl.min() } else { ivl.max() };
     match curve.evaluate(param, 2, end == 0, false) {
-        Ok(pv) => match pv.get(2) {
-            Some(d2) if d2.length() > scaled_zero => {}
-            _ => return Ok(false),
+        Ok(pv) => match pv.get(2).map(|d2| d2.length().partial_cmp(&scaled_zero)) {
+            Some(Some(std::cmp::Ordering::Less | std::cmp::Ordering::Equal)) | None => {
+                return Ok(false)
+            }
+            Some(_) => {}
         },
-        Err(e) if e.is_unported() => return Err(e),
+        Err(e) if e.is_unported_or_cancelled() => return Err(e),
         Err(_) => return Ok(false),
     }
 
@@ -420,7 +424,7 @@ fn zero_speed_radius_stretch(
     let param = if end == 0 { ivl.min() } else { ivl.max() };
     let pv = match curve.evaluate(param, 3, end == 0, false) {
         Ok(pv) => pv,
-        Err(e) if e.is_unported() => return Err(e),
+        Err(e) if e.is_unported_or_cancelled() => return Err(e),
         Err(_) => return Ok(None),
     };
     let (Some(&d2), Some(&d3)) = (pv.get(2), pv.get(3)) else {
@@ -443,7 +447,7 @@ fn zero_speed_radius_stretch(
     };
     let at = match curve.evaluate(at_param, 2, true, false) {
         Ok(at) => at,
-        Err(e) if e.is_unported() => return Err(e),
+        Err(e) if e.is_unported_or_cancelled() => return Err(e),
         Err(_) => return Ok(None),
     };
     let (Some(&a1), Some(&a2)) = (at.get(1), at.get(2)) else {
@@ -473,7 +477,7 @@ fn first_fundamental_form(
 ) -> Result<Option<[f64; 3]>> {
     match surface.evaluate_1st_derivatives(k, uv, u_from_left, v_from_left) {
         Ok((_, du, dv)) => Ok(Some([du.dot(du), du.dot(dv), dv.dot(dv)])),
-        Err(e) if e.is_unported() => Err(e),
+        Err(e) if e.is_unported_or_cancelled() => Err(e),
         Err(_) => Ok(None),
     }
 }
@@ -510,13 +514,13 @@ fn trim_metric(
     };
     let mut form = match trim.evaluate_point(domain.evaluate(0.5)) {
         Ok(mid) => form_at(Point2::new(mid.x, mid.y))?,
-        Err(e) if e.is_unported() => return Err(e),
+        Err(e) if e.is_unported_or_cancelled() => return Err(e),
         Err(_) => None,
     };
     if form.is_none() {
         let centre = match surface.natural_uv_domain_with_nurb(k) {
             Ok(d) => Some(d.evaluate(0.5, 0.5)),
-            Err(e) if e.is_unported() => return Err(e),
+            Err(e) if e.is_unported_or_cancelled() => return Err(e),
             Err(_) => None,
         };
         if let Some(centre) = centre {
@@ -1041,7 +1045,7 @@ impl BSplineCurve {
         *other = other_back;
         let composite = match composite {
             Ok(c) => c,
-            Err(e @ SolidError::Unported { .. }) => return Err(e),
+            Err(e @ (SolidError::Unported { .. } | SolidError::Cancelled { .. })) => return Err(e),
             Err(_) => return Err(SolidError::sm_err(OP_JOIN)),
         };
         self.set_from_gw_nurb(composite.gw_nurb())
@@ -2487,6 +2491,78 @@ mod tests {
                 edge_failed_tests(&k, &c, Some(&tangent)),
                 edge_failed_tests(&k, &c, None)
             );
+        }
+    }
+
+    /// [`zero_speed_end_curve`] run backwards, of dimension `dim`: its zero-speed end
+    /// is the curve's end (`t = 1`).
+    fn zero_speed_at_end_curve(dim: u64) -> BSplineCurve {
+        let fwd = zero_speed_end_curve();
+        let cur = fwd.nurb.as_ref().unwrap();
+        let pts: Vec<[f64; 3]> = cur.cpts().iter().rev().map(|p| [p.x, p.y, p.z]).collect();
+        let knots: Vec<f64> = cur.knots().iter().rev().map(|u| 1.0 - u).collect();
+        let mut c = curve(3, &pts, &knots);
+        c.dim = dim;
+        c
+    }
+
+    /// A zero-speed tangent end at the curve's end (the fork's `lEnd` 1), as an edge's
+    /// 3D curve (test 14) and as a UV trim (test 13): the stretch is measured back from
+    /// the domain's max and the radius below the tolerance there is passed over. Test 3
+    /// reads only the first pair, and test 4 reports the first pair's values, so with
+    /// the minimum radius read only the radius test fails before the fix.
+    #[test]
+    fn wr_668_zero_speed_tangent_end_at_the_curve_end() {
+        let tol = 1e-4;
+        let tangent = ends((0.0, 1.0), true);
+        for (dim, radius_test) in [(3, 14), (2, 13)] {
+            let c = zero_speed_at_end_curve(dim);
+            let s = zero_speed_radius_stretch(&c, 1, tol).unwrap().unwrap();
+            assert!((s - tol * 0.75).abs() <= 1e-9 * s, "{s}");
+            assert_eq!(zero_speed_radius_stretch(&c, 0, tol).unwrap(), None);
+            assert!(is_zero_speed_tangent_end(&c, 1, 1e-15, Some(&tangent)).unwrap());
+            assert!(!is_zero_speed_tangent_end(&c, 0, 1e-15, Some(&tangent)).unwrap());
+
+            let mut k = Kernel::default();
+            assert!(edge_failed_tests(&k, &c, Some(&tangent)).is_empty());
+            k.fixes.bspline_check_min_radius = true;
+            assert_eq!(edge_failed_tests(&k, &c, Some(&tangent)), vec![radius_test]);
+            k.fixes.curve_check_zero_speed_tangent_end = true;
+            assert!(edge_failed_tests(&k, &c, Some(&tangent)).is_empty());
+            // on no edge, or on an edge that ends past the curve's end, it still fails
+            assert_eq!(edge_failed_tests(&k, &c, None), vec![radius_test]);
+            let longer = ends((0.0, 1.25), true);
+            assert_eq!(edge_failed_tests(&k, &c, Some(&longer)), vec![radius_test]);
+        }
+    }
+
+    /// Coincident end control points that are no zero-speed end stay a fault with the
+    /// fix, at a vertex where the edge's faces touch: the quartic Bezier `(0,0) (0,0)
+    /// (0,0) (1,0) (1,1)` has its second derivative vanish at `t = 0` as well
+    /// (`sm_IsZeroSpeedTangentEnd` refuses `|C''| <= dScaledZero`), so tests 3 and 14
+    /// report what they report without it.
+    #[test]
+    fn wr_668_coincident_points_without_curvature_stay_a_fault() {
+        let c = curve(
+            4,
+            &[
+                [0.0, 0.0, 0.0],
+                [0.0, 0.0, 0.0],
+                [0.0, 0.0, 0.0],
+                [1.0, 0.0, 0.0],
+                [1.0, 1.0, 0.0],
+            ],
+            &[0.0, 0.0, 0.0, 0.0, 0.0, 1.0, 1.0, 1.0, 1.0, 1.0],
+        );
+        let tangent = ends((0.0, 1.0), true);
+        assert!(!is_zero_speed_tangent_end(&c, 0, EFF_ZERO, Some(&tangent)).unwrap());
+        for min_radius in [false, true] {
+            let mut k = Kernel::default();
+            k.fixes.bspline_check_min_radius = min_radius;
+            let before = edge_failed_tests(&k, &c, Some(&tangent));
+            assert!(before.contains(&3), "{before:?}");
+            k.fixes.curve_check_zero_speed_tangent_end = true;
+            assert_eq!(edge_failed_tests(&k, &c, Some(&tangent)), before);
         }
     }
 }
