@@ -65,7 +65,7 @@
 //! | [`IsoCurveLengthIntegrand`]                       | `SmIsoCurveLengthIFEO` (constructor)             |
 //!
 //! Deviations:
-//! - **SwapUV keeps an analytic's definition (WR-701, opt-in).** With
+//! - **`SwapUV` keeps an analytic's definition (WR-701, opt-in).** With
 //!   `Kernel::fixes.swap_uv_keeps_analytic_definition` (the fork's
 //!   tangency-labs/smlib@0c00de7, `SwapUVDefinition`), a cone, sphere, torus or surface
 //!   of revolution swapped by [`Surface::swap_uv`] keeps its frame, generator and

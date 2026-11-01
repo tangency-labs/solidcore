@@ -41,7 +41,7 @@
 //! | [`Plane::create_extended_surface`], [`Plane::create_extended_surface_dir`] | `SmBSplineSurface::CreateExtendedSurface` (both overloads; inherited, re-dispatched to the `IsSingularity` / `IsClosed` overrides) |
 //!
 //! Deviations:
-//! - **SwapUV keeps the plane's definition (WR-701, opt-in).** With
+//! - **`SwapUV` keeps the plane's definition (WR-701, opt-in).** With
 //!   `Kernel::fixes.swap_uv_keeps_analytic_definition` the swap keeps the axes, domain
 //!   and scales [`Plane::toggle_swap_uv_bit`] swapped (`SmPlane::SwapUVDefinition`, the
 //!   fork's tangency-labs/smlib@0c00de7) instead of rebuilding them from the net.

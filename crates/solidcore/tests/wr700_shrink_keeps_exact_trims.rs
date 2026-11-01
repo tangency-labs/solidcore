@@ -57,7 +57,7 @@ fn key_of(entity: EntityRef) -> ObjectRef {
         EntityRef::Faceuse(f) => (8, f.index()),
         EntityRef::Shell(s) => (9, s.index()),
         EntityRef::Region(r) => (10, r.index()),
-        _ => (11, 0),
+        EntityRef::Brep(_) => (11, 0),
     };
     ObjectRef {
         type_code: 0,
