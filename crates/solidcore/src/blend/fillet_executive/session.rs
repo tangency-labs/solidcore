@@ -94,6 +94,7 @@ use crate::kernel::Kernel;
 use crate::surface::surface::Surface;
 use crate::topology::{Brep, EdgeId, EdgeuseId, FaceId, VertexId};
 
+pub mod ball_regular;
 mod big_radius;
 mod classification;
 mod cliff_overflow;
@@ -2205,6 +2206,25 @@ impl<'target> FilletSession<'target> {
         &self.executive.error
     }
 
+    /// `GetFitRadius`, `GetFitEdge`, `GetFitKind` (the fork's, tangency-labs/smlib#79
+    /// a3d6d81): with a refusal as too large ([`ErrorInfo::no_room_reason`]), the largest
+    /// size that builds the refused blend and its edge, computed from the refusal's cause;
+    /// `None` when its cause has no size (a radius law) or no refusal noted one. Only with
+    /// `fixes.fillet_gn_section_generator`.
+    #[must_use]
+    pub fn fit_size(&self) -> Option<crate::blend::fillet_executive::FitSize<EdgeId>> {
+        let fit = self.executive.fit_size()?;
+        let edge = match fit.edge {
+            Some(FilletObject::Topology(FilletBody::Target, EntityRef::Edge(e))) => Some(e),
+            _ => None,
+        };
+        Some(crate::blend::fillet_executive::FitSize {
+            size: fit.size,
+            edge,
+            kind: fit.kind,
+        })
+    }
+
     /// `SetDoGlobalMerge`.
     pub fn set_do_global_merge(&mut self, do_global_merge: bool) {
         self.executive.set_do_global_merge(do_global_merge);
@@ -2843,6 +2863,56 @@ impl BrepCreationAccess<FilletObject> for SessionObjects<'_> {
             .and_then(Option::as_mut)
             .ok_or_else(|| invalid("solver is not live in this session"))?;
         trace_reach::extend_trace_to_its_rails(k, self.target, current)
+    }
+
+    fn creation_ball_is_regular(
+        &mut self,
+        k: &mut Kernel,
+        solver: FilletObject,
+    ) -> Result<(ball_regular::BallStation, bool)> {
+        let FilletObject::Solver(id) = solver else {
+            return Err(invalid("object is not a solver"));
+        };
+        let current = self
+            .solvers
+            .get_mut(id.0 as usize)
+            .and_then(Option::as_mut)
+            .ok_or_else(|| invalid("solver is not live in this session"))?;
+        let const_radius = current.solver_type()? == FilletSolverType::ConstRadius;
+        let station = ball_regular::ball_is_regular(k, self.target, current)?;
+        Ok((station, const_radius))
+    }
+
+    fn creation_solver_fit(
+        &self,
+        solver: FilletObject,
+    ) -> Result<Option<crate::blend::fillet_executive::p3::SolverFit<FilletObject>>> {
+        let FilletObject::Solver(id) = solver else {
+            return Err(invalid("object is not a solver"));
+        };
+        let current = self
+            .solvers
+            .get(id.0 as usize)
+            .and_then(Option::as_ref)
+            .ok_or_else(|| invalid("solver is not live in this session"))?;
+        let base = current.base();
+        let Some(edgeuse) = base.edgeuse(0)? else {
+            return Ok(None);
+        };
+        let Some(edge) = crate::topology::edgeuse::p1::edge(self.target, edgeuse)? else {
+            return Ok(None);
+        };
+        // FitMargin: a thousand of the blended edge's tolerances
+        let fit_margin = 1000.0 * crate::topology::edge::tolerance(self.target, edge)?;
+        let offsets = match (base.surface(0)?, base.surface(1)?) {
+            (Some(a), Some(b)) => Some([a.surface.offset_distance(), b.surface.offset_distance()]),
+            _ => None,
+        };
+        Ok(Some(crate::blend::fillet_executive::p3::SolverFit {
+            edge: FilletObject::Topology(FilletBody::Target, EntityRef::Edge(edge)),
+            fit_margin,
+            offsets,
+        }))
     }
 }
 
