@@ -1887,10 +1887,10 @@ impl Surface {
             Some((context, handle)) => context
                 .build_surface_cache(k, self, *handle)
                 .map_err(ner)?
-                .surface_continuity(uv_domain)?,
+                .surface_continuity_with_kernel(k, uv_domain)?,
             None => super::p2::surface_cache::<()>(k, self, None)
                 .map_err(ner)?
-                .surface_continuity(uv_domain)?,
+                .surface_continuity_with_kernel(k, uv_domain)?,
         };
 
         // check state - internal curve continuities are better than C0 (only reported)
@@ -2948,7 +2948,7 @@ impl<O: SolutionObject> SpGlobalSolver<'_, '_, O> {
                     for corner in patch.pseudo_box.corners() {
                         let vec = corner - test_pnt;
                         if vec.length_squared() > EFF_ZERO {
-                            tmp_polar.add_vector(vec, None);
+                            tmp_polar.add_vector_with_kernel(k, vec, None);
                         }
                     }
 

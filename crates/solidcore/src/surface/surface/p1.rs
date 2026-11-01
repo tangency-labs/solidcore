@@ -2718,7 +2718,8 @@ impl Surface {
 
         // Check to make sure internal surface continuities are better then C0 (the
         // check only signals upstream)
-        let _ = (cache.surface_continuity(uv_domain)? as i32) <= (ContinuityType::C0 as i32);
+        let _ = (cache.surface_continuity_with_kernel(k, uv_domain)? as i32)
+            <= (ContinuityType::C0 as i32);
 
         let mut silhouette =
             SurfaceSilhouette::new(k, self, uv_domain, perspective, eye_point_or_view_vector)?;
@@ -3202,7 +3203,7 @@ pub(crate) fn plane_bounding_box(
         .calculate_bounding_box(k, uv_domain, &base_req)?;
     if req.polar {
         let mut pb = PolarBox::new();
-        pb.add_vector(plane.evaluate_normal(), None);
+        pb.add_vector_with_kernel(k, plane.evaluate_normal(), None);
         r.polar = Some(pb);
     }
     Ok(r)
@@ -3948,11 +3949,15 @@ impl AreaIntegrand<'_> {
     ///
     /// # Errors
     ///
-    /// Those of the surface evaluator; scalar numerical failures yield zero upstream.
+    /// [`SolidError::Unported`] from the surface evaluator, plus numerical and
+    /// surface-evaluator failures when
+    /// [`crate::kernel::UpstreamFixes::integrator_propagates_failure`] is enabled
+    /// (WR-94; off by default, where scalar failures yield zero as upstream does).
     pub fn evaluate(&self, k: &Kernel, t: f64) -> Result<f64> {
         // set up the strip integral of [deltaX, IntervalY]
         let eval = IsoCurveLengthIntegrand::new(self.surface, t);
-        crate::mass::integrator::integrate(
+        crate::mass::integrator::integrate_with_kernel(
+            k,
             self.uv_domain.min().y,
             self.uv_domain.max().y,
             crate::mass::integrator::IntegrationAlgorithm::Romberg,
@@ -4101,7 +4106,7 @@ impl<'t, 's, O: SolutionObject> CsiGlobalSolver<'t, 's, O> {
     ) -> Self {
         Self {
             kernel: k,
-            base: GlobalSolver::with_trees(curve_tree, surface_tree, 3),
+            base: GlobalSolver::with_trees_and_kernel(k, curve_tree, surface_tree, 3),
             curve: None,
             surface_cache: None,
             face_queries: None,
@@ -4193,7 +4198,7 @@ impl<'t, 's, O: SolutionObject> CsGlobalSolver<'t, 's, O> {
         uv_domain: Extent2d,
     ) -> Self {
         Self {
-            base: GlobalSolver::with_trees(curve_tree, surface_tree, 3),
+            base: GlobalSolver::with_trees_and_kernel(k, curve_tree, surface_tree, 3),
             surface,
             interval,
             uv_domain,
@@ -4258,7 +4263,7 @@ impl<'t, 's, O: SolutionObject> LsiGlobalSolver<'t, 's, O> {
     ) -> Self {
         Self {
             kernel: k,
-            base: GlobalSolver::with_tree(surface_tree, 2),
+            base: GlobalSolver::with_tree_and_kernel(k, surface_tree, 2),
             surface,
             uv_domain,
             line_point,
@@ -4286,7 +4291,7 @@ impl<'t, 's, O: SolutionObject> SpGlobalSolver<'t, 's, O> {
     ) -> Self {
         Self {
             kernel: k,
-            base: GlobalSolver::with_trees(point_tree, surface_tree, 2),
+            base: GlobalSolver::with_trees_and_kernel(k, point_tree, surface_tree, 2),
             surface,
             uv_domain,
             surface_cache: None,
@@ -4307,7 +4312,7 @@ impl<'t, 's, O: SolutionObject> SsGlobalSolver<'t, 's, O> {
         kernel: &'s Kernel,
     ) -> Self {
         Self {
-            base: GlobalSolver::with_trees(surface_tree1, surface_tree2, 4),
+            base: GlobalSolver::with_trees_and_kernel(kernel, surface_tree1, surface_tree2, 4),
             surface1: surfaces[0],
             surface2: surfaces[1],
             uv_domain1,

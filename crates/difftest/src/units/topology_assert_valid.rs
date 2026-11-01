@@ -13,9 +13,11 @@ use serde_json::Value;
 use solidcore::geom::assert_array::{labels, obj_type_string, AssertArray, ObjectKey as ReportKey};
 use solidcore::geom::attribute::ObjectKey;
 use solidcore::geom::object::ObjectRef;
+use solidcore::geom::tol::zone_tol3d;
 use solidcore::topology::brep::validation;
+use solidcore::topology::face::p3 as face_p3;
 use solidcore::topology::{
-    Brep, EdgeId, EdgeuseId, FaceId, FaceuseId, LoopuseId, NamingScheme, VertexId,
+    edge, vertex, Brep, EdgeId, EdgeuseId, FaceId, FaceuseId, LoopuseId, NamingScheme, VertexId,
 };
 use solidcore::{EntityRef, Kernel, Vec3};
 use solidcore_ffi::units::topology_assert_valid as ffi;
@@ -64,7 +66,8 @@ struct Inputs {
     /// With `copy`: check the result of an operation on the copy instead (shim op 4,
     /// `copy_operation`; #1631): 1 union with a 10 mm box at `value` on each axis, 2
     /// the same with that box's copy, 3 `fillet_edges` of edge `index` with radius
-    /// `value`, 4 a shell of distance `value` with face `index` open.
+    /// `value`, 4 a shell of distance `value` with face `index` open, 5 an offset of
+    /// distance `value` (`SmApiOffsetBrepFull`, extended, merged; #2111).
     #[serde(default)]
     copy_op: u8,
     #[serde(default)]
@@ -257,8 +260,10 @@ fn orient(v: f64) -> solidcore::nurbs::b_spline_surface_n_lib::p2::OrientType {
         _ => OrientType::Unknown,
     }
 }
-/// The shim's `Mutation` (kinds 1-10 of `topology_brep_validation`).
-fn mutate(b: &mut Brep, i: &Inputs) -> Result<(), HarnessError> {
+/// The shim's `Mutation` (kinds 1-10 of `topology_brep_validation`). The tolerance
+/// kinds call the ported setters as the shim calls `SetTolerance(value, FALSE[, FALSE])`:
+/// the `SmZoneTol3d` argument takes fabs ([`zone_tol3d`]) and nothing is cascaded.
+fn mutate(k: &Kernel, b: &mut Brep, i: &Inputs) -> Result<(), HarnessError> {
     let n = match i.mutation {
         1 | 6 => b.vertices().len(),
         2 | 7 | 9 => b.edges().len(),
@@ -274,12 +279,17 @@ fn mutate(b: &mut Brep, i: &Inputs) -> Result<(), HarnessError> {
     let index = (i.index % n) as u32;
     let e = |e: solidcore::SolidError| herr(e.to_string());
     match i.mutation {
-        1 => b.vertex_mut(VertexId::from_index(index)).map_err(e)?.tolerance = i.value,
-        2 => b.edge_mut(EdgeId::from_index(index)).map_err(e)?.tolerance = i.value,
+        1 => {
+            let v = VertexId::from_index(index);
+            vertex::set_tolerance(b, v, zone_tol3d(k, i.value), false, true).map_err(e)?;
+        }
+        2 => {
+            let ed = EdgeId::from_index(index);
+            edge::set_tolerance(b, ed, zone_tol3d(k, i.value), false, false).map_err(e)?;
+        }
         3 => {
             let f = FaceId::from_index(index);
-            b.face_mut(f).map_err(e)?.tolerance = i.value;
-            b.sync_face_surface_tolerance(f).map_err(e)?;
+            face_p3::set_tolerance(b, f, zone_tol3d(k, i.value), false, false).map_err(e)?;
         }
         4 => {
             b.faceuse_mut(FaceuseId::from_index(index))
@@ -538,12 +548,12 @@ fn level2_tests(k: &mut Kernel, b: &mut Brep) -> solidcore::Result<Vec<f64>> {
         });
     }
     for e in edges {
-        let (ok, gap) = solidcore::topology::edge::edge_form::assert_test_edge13(k, b, e)?;
+        let (ok, gap) = edge::edge_form::assert_test_edge13(k, b, e)?;
         out.push(flag(ok));
         out.push(gap);
     }
     for v in vertices {
-        let (ok, gap, face) = solidcore::topology::vertex::corner::assert_test_vertex1(k, b, v)?;
+        let (ok, gap, face) = vertex::corner::assert_test_vertex1(k, b, v)?;
         out.push(flag(ok));
         out.push(gap);
         out.push(face.map_or(-1.0, |f| f64::from(f.index())));
@@ -679,7 +689,8 @@ fn copy_operation(
             Ok(copy)
         })(),
         4 => shell_copy(k, copy, i),
-        _ => return Err(herr("copy_op takes 0 to 4")),
+        5 => offset_copy(k, copy, i),
+        _ => return Err(herr("copy_op takes 0 to 5")),
     })
 }
 /// `SmApiShellBrepFull` of a copy case: the copy shelled by `value` (extended convex
@@ -732,6 +743,40 @@ fn shell_copy(k: &mut Kernel, mut copy: Brep, i: &Inputs) -> solidcore::Result<B
         b
     })
 }
+/// `SmApiOffsetBrepFull` of a copy case: the copy offset by `value` (extended convex
+/// edges, merged results), under the offset runner's notification identities.
+fn offset_copy(k: &mut Kernel, mut copy: Brep, i: &Inputs) -> solidcore::Result<Brep> {
+    use super::offset_offset_executive_p2 as off;
+    use solidcore::geom::attribute::AttributeStore;
+    use solidcore::offset::offset_executive::p2::{api_offset_brep_full, OffsetNotifications, OffsetOptions};
+    let mut records = solidcore::topology::topology::NotifyRecords::new();
+    let mut attributes = AttributeStore::default();
+    off::register_notification_brep(&mut records, &mut copy, off::NAMESPACE_SOURCE);
+    let result_brep =
+        off::result_notification_key(EntityRef::Brep(solidcore::topology::BrepId::from_index(0)));
+    records.insert(result_brep.key, solidcore::topology::topology::Topology::new());
+    let mut notifications = OffsetNotifications {
+        records: &mut records,
+        attributes: &mut attributes,
+        original_key_of: &off::original_notification_key,
+        result_key_of: &off::result_notification_key,
+        original_curve_ref: &off::original_curve_key,
+        result_curve_ref: &off::result_curve_key,
+        boolean_source_lists: &off::boolean_source_lists,
+        result_brep,
+        merge_identities: Some(&off::MergeBodies),
+    };
+    api_offset_brep_full(
+        k,
+        Some(&mut copy),
+        OffsetOptions {
+            distance: i.value,
+            extend_convex_edges: true,
+            merge_results: true,
+        },
+        &mut notifications,
+    )
+}
 const NULL_LINK_TESTS: &str =
     "the level-2 tests dereference the nulled surface or curve (crash in C++, UB-281)";
 
@@ -773,7 +818,7 @@ impl UnitDiff for Runner {
         if i.copy {
             return copy_check(&mut k, &b, &i);
         }
-        mutate(&mut b, &i)?;
+        mutate(&k, &mut b, &i)?;
         if i.tests {
             return match level2_tests(&mut k, &mut b) {
                 Ok(out) => tests_output(&out),
