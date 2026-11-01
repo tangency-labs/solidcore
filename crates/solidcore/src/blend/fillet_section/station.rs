@@ -483,6 +483,9 @@ pub struct GnSystem<'a, T> {
 /// G's four series and the two feet's (`sm_GnEvaluate`'s `rG`, `rF`).
 pub type GnValues<T> = ([Ser<T>; 4], [VSer<T>; 2]);
 
+/// [`GnValues`] and V (`sm_GnEvaluate`'s `pV`).
+pub type GnValuesV<T> = ([Ser<T>; 4], [VSer<T>; 2], VSer<T>);
+
 /// `sm_GnEvaluate`: G and the feet `F_i` as series, given the feet's parameters as series
 /// `x[0..3]` (u1, v1, u2, v2), whose constant terms are the point the partials were taken
 /// at.
@@ -495,6 +498,21 @@ pub fn gn_evaluate<T: GnScalar>(
     x: &[Ser<T>; 4],
     tr: Trunc,
 ) -> Result<GnValues<T>> {
+    let (g, f, _) = gn_evaluate_v(sys, x, tr)?;
+    Ok((g, f))
+}
+
+/// `sm_GnEvaluate` with its `pV`: G, the feet `F_i`, and the point `V(tau)` off face 1
+/// (the ball's centre at `tau = 1`), as series.
+///
+/// # Errors
+///
+/// `SM_ERR` where a face's normal vanishes at a foot.
+pub fn gn_evaluate_v<T: GnScalar>(
+    sys: &GnSystem<'_, T>,
+    x: &[Ser<T>; 4],
+    tr: Trunc,
+) -> Result<GnValuesV<T>> {
     let zero = V3 {
         x: T::of(0.0),
         y: T::of(0.0),
@@ -563,7 +581,7 @@ pub fn gn_evaluate<T: GnScalar>(
     let diff = v0.sub(v1, tr);
     let [g0, g1, g2] = diff.a;
     let g3 = v0.sub(&sys.leader, tr).dot(&sys.tangent, tr);
-    Ok(([g0, g1, g2, g3], f_out))
+    Ok(([g0, g1, g2, g3], f_out, *v0))
 }
 
 /// `sm_GnJacobian`: the Jacobian `dG/dx` at x's constant terms, offsets held: G along
@@ -661,6 +679,12 @@ pub struct GnStation {
     pub x: [Ser<f64>; 4],
     /// The feet on faces 1 and 2.
     pub f: [VSer<f64>; 2],
+    /// `sV`: V, the point at `tau r_i` from the faces (the ball's centre at `tau = 1`).
+    pub v: VSer<f64>,
+    /// `dW`: the equal area thumbweight there (NaN: not resolved).
+    pub w: f64,
+    /// `dWds`: and its s-derivative (NaN: not resolved).
+    pub wds: f64,
 }
 
 /// `sm_LeaderSeries`: the leader (centre line) at `s` as series in sigma up to `tr.s`: its
@@ -809,8 +833,15 @@ pub fn gn_solve_station(
             }
         }
     }
-    let (_, f) = gn_evaluate(&sys, &sx, tr)?;
-    Ok(GnStation { s, x: sx, f })
+    let (_, f, v) = gn_evaluate_v(&sys, &sx, tr)?;
+    Ok(GnStation {
+        s,
+        x: sx,
+        f,
+        v,
+        w: f64::NAN,
+        wds: f64::NAN,
+    })
 }
 
 /// A unit vector check helper for tests and callers: `Vec3` of a `V3<f64>`.
