@@ -57,6 +57,7 @@
 //!   indices (`Mat`, `knot`): an index outside reads 0 (a knot NaN) and is not written; the
 //!   fork's indices stay inside.
 
+pub mod certificate;
 pub mod form;
 pub mod interval;
 pub mod series;
