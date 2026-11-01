@@ -1918,7 +1918,7 @@ pub fn is_topological(
     // sides for two faces and merge the face into itself, deleting it. Not removable. With
     // the pair in one loop use it is a slit, which `DeleteEdge` splits off the loop.
     {
-        let Some(primary) = eu1::primary_edgeuse(b, e)? else {
+        let Some(primary) = primary_edgeuse(b, e)? else {
             return Ok(out);
         };
         let Some(radial) = eu1::radial(b, primary)? else {
