@@ -33,6 +33,11 @@
 //! | [`form::bern_mul`], [`form::bern_pow`] | `sm_BernMul`, `sm_BernPow`                       |
 //! | [`form::GnSectionForm`], [`form::gn_form`] | `sm_GnSectionForm`, `sm_GnForm`              |
 //! | [`form::hermite_points`], [`form::hermite_knots`] | `sm_HermitePoints`, `sm_HermiteKnots` |
+//! | [`station::Partials`], [`station::Nurbs`], [`station::Nurbs::of`] | `sm_Partials`, `sm_Nurbs`, `sm_NurbsOf` |
+//! | [`station::span`], [`station::ders_basis`], [`station::nurbs_partials`] | `sm_Span`, `sm_DersBasis`, `sm_NurbsPartials` |
+//! | [`station::as_b_spline`], [`station::surface_partials`] | `IsKindOf(SmBSplineSurface_TYPE)` and the cast, `sm_SurfacePartials` |
+//! | [`station::GnSystem`], [`station::gn_evaluate`], [`station::gn_jacobian`], [`station::solve4`] | `sm_GnSystem`, `sm_GnEvaluate`, `sm_GnJacobian`, `sm_Solve4` |
+//! | [`station::GnStation`], [`station::leader_series`], [`station::gn_solve_station`] | `sm_GnStation`, `sm_LeaderSeries`, `sm_GnSolveStation` |
 //!
 //! Deviations:
 //! - **Bounds.** `sm_Trunc`'s orders are checked against the series' fixed size
@@ -41,9 +46,18 @@
 //!   to an empty one instead of reading out of bounds.
 //! - **`std::min`/`std::max`.** Kept as `(b < a) ? b : a` / `(a < b) ? b : a`, not
 //!   `f64::min`/`f64::max`, so a NaN operand propagates as in the fork.
-//! - **Out-params.** `sm_SerInvSqrt` returns its series; `sm_HermitePoints` and
-//!   `sm_HermiteKnots` return theirs.
+//! - **Out-params.** `sm_SerInvSqrt` returns its series; `sm_HermitePoints`,
+//!   `sm_HermiteKnots`, `sm_DersBasis`, `sm_NurbsPartials`, `sm_SurfacePartials`,
+//!   `sm_GnEvaluate`, `sm_GnJacobian`, `sm_Solve4`, `sm_LeaderSeries` and
+//!   `sm_GnSolveStation` return theirs.
+//! - **Knots.** `sm_NurbsOf` reads `GetKnotsPointers`' full knot vectors; here they are
+//!   expanded from [`crate::nurbs::b_spline_surface::BSplineSurface::knots`]' unique knots and
+//!   multiplicities (the same vectors).
+//! - **Indices.** The fork's nested vectors are read and written through checked signed
+//!   indices (`Mat`, `knot`): an index outside reads 0 (a knot NaN) and is not written; the
+//!   fork's indices stay inside.
 
 pub mod form;
 pub mod interval;
 pub mod series;
+pub mod station;
