@@ -69,6 +69,7 @@
 //!   `Build` stores the certified bound and span count as the fork does (`&mut self`). The
 //!   fork's `SM_ERR_MESSAGE` report of them is not logged.
 
+pub mod certificate;
 pub mod form;
 pub mod interval;
 pub mod section;
