@@ -966,6 +966,33 @@ mod tests {
         assert!(g.thumbweight_at(-1.0).is_err());
     }
 
+    /// The marker, passed by name, selects the equal area section: its thumbweight is
+    /// resolved from each station's wedge. A caller still passing the marker's value from
+    /// before b9d6a72 (-2) gets an ordinary section of that fixed thumbweight instead.
+    #[test]
+    fn the_equal_area_marker_selects_the_equal_area_section() {
+        let marked = GnSectionFsg::new(2, GN_THUMBWEIGHT_EQUAL_AREA);
+        let square = GnSectionFsg::equal_area_thumbweight(2, core::f64::consts::FRAC_PI_2).unwrap();
+        let sixty = GnSectionFsg::equal_area_thumbweight(2, PI / 3.0).unwrap();
+        // radii at a right angle (cos 0): the square corner's; at 120 degrees: the 60 degree wedge's
+        assert_eq!(
+            marked.thumbweight_at(0.0).unwrap().to_bits(),
+            square.to_bits()
+        );
+        assert!((marked.thumbweight_at(-0.5).unwrap() - sixty).abs() < 1e-12);
+        assert!((square - sixty).abs() > 0.1);
+        assert_eq!(
+            GN_DEFAULT_THUMBWEIGHT.to_bits(),
+            GN_THUMBWEIGHT_EQUAL_AREA.to_bits()
+        );
+        // the stale value is an ordinary thumbweight, kept at every station
+        let stale_marker = -2.0;
+        let stale = GnSectionFsg::new(2, stale_marker);
+        assert!(GnSectionFsg::is_valid(2, stale_marker));
+        assert_eq!(stale.thumbweight_at(0.0).unwrap(), stale_marker);
+        assert_eq!(stale.thumbweight_at(-0.5).unwrap(), stale_marker);
+    }
+
     #[test]
     fn valid_orders_and_thumbweights() {
         assert!(GnSectionFsg::is_valid(2, 0.0));
@@ -981,7 +1008,8 @@ mod tests {
         assert!(GnSectionFsg::is_valid(2, -1e300));
         assert!(GnSectionFsg::is_valid(2, -2.0));
         assert!(GnSectionFsg::is_valid(2, GN_THUMBWEIGHT_EQUAL_AREA));
-        assert_eq!(GN_THUMBWEIGHT_EQUAL_AREA, 2.0);
+        // the marker lies outside the ordinary thumbweights (w < 1), so it is never one
+        assert!(GN_THUMBWEIGHT_EQUAL_AREA >= 1.0);
         assert!(!GnSectionFsg::is_valid(2, f64::NEG_INFINITY));
         assert!(!GnSectionFsg::is_valid(2, f64::NAN));
         let g = GnSectionFsg::new(3, 0.25);
