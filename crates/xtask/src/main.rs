@@ -200,10 +200,15 @@ fn refuse(path: &Path, why: &str) -> io::Error {
     )
 }
 
+/// The home directory: `HOME`, else `USERPROFILE` (Windows, where PowerShell and cmd
+/// usually have no `HOME`).
 fn home() -> io::Result<PathBuf> {
-    env::var_os("HOME")
-        .map(PathBuf::from)
-        .ok_or_else(|| io::Error::other("HOME is not set"))
+    home_from(env::var_os("HOME"), env::var_os("USERPROFILE"))
+        .ok_or_else(|| io::Error::other("neither HOME nor USERPROFILE is set"))
+}
+
+fn home_from(home: Option<OsString>, user_profile: Option<OsString>) -> Option<PathBuf> {
+    home.or(user_profile).map(PathBuf::from)
 }
 
 fn canonical(p: &Path) -> io::Result<PathBuf> {
@@ -266,6 +271,21 @@ mod tests {
         assert!(r.check(&tmp.join("wt/../main")).is_err());
         assert!(r.check(&tmp.join("wt/a/.git")).is_err());
         assert!(r.check(&tmp.join("elsewhere")).is_err());
+    }
+
+    #[test]
+    fn home_falls_back_to_user_profile_only_without_home() {
+        let s = |x: &str| Some(OsString::from(x));
+        assert_eq!(
+            home_from(s("/home/a"), s(r"C:\Users\a")),
+            Some("/home/a".into())
+        );
+        assert_eq!(home_from(s(""), s(r"C:\Users\a")), Some("".into()));
+        assert_eq!(
+            home_from(None, s(r"C:\Users\a")),
+            Some(r"C:\Users\a".into())
+        );
+        assert_eq!(home_from(None, None), None);
     }
 
     #[cfg(unix)]
