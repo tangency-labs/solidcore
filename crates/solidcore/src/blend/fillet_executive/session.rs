@@ -1107,6 +1107,11 @@ fn replay_solver_error(
     }
     error.location = note.location;
     error.comment.clone_from(&note.comment);
+    // the typed reason of a `NoRoom` the solver noted (the fork's circular section's
+    // fold of its balls, WR-685)
+    if note.no_room.is_some() {
+        error.no_room = note.no_room;
+    }
 }
 
 /// Replay one corner error note (`SmFilletErrorInfo::NoteError` with the corner

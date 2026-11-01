@@ -75,10 +75,10 @@
 //!   (tangency-labs/smlib@b5f2867, 7ac037e): `ClassifyExactBlend` and
 //!   `CalcExactFilletGeom` (`blend::fillet_exact`), whose failures are errors.
 
-use super::p1::{FilletSolver, FilletSolverOps};
+use super::p1::{FilletSolver, FilletSolverOps, FilletSolverType, FilletSurfaceGenerator};
 use super::p2::SolverErrorObject;
 use crate::blend::fillet_custom_solver::OffsetSurface;
-use crate::blend::fillet_executive::p3::ErrorInfo;
+use crate::blend::fillet_executive::p3::{ErrorInfo, NoRoomReason};
 use crate::blend::fillet_geom::p1::{
     CornerLookup, FilletBrep, FilletErrorType, FilletGeomId, FilletGeomType, FilletSolverId,
 };
@@ -2330,6 +2330,7 @@ mod tests_c3 {
                 ops: &mut fs,
                 trace: [&surfaces[0], &surfaces[1]],
                 brep: None,
+                error_info: None,
             };
             solver.set_surfaces_to_zero_offset().unwrap();
             assert_eq!(dist(&surfaces[0]), 0.0);
@@ -4399,6 +4400,7 @@ fn do_point_intersection(
         ops,
         trace,
         brep: Some(&mut *cx.target),
+        error_info: cx.error_info.as_deref_mut(),
     };
     let r = fi.do_point_intersection(&mut solver, &mut *cx.fillets, k, &ids, &opts);
     for (p, &id) in points.iter_mut().zip(&ids) {
@@ -4467,6 +4469,10 @@ pub(crate) struct IntersectorSolver<'b> {
     /// `ComputePointValues` and `StepSolve`, and read for the rails' original faces
     /// by `SmoothOutIntersection`; `None` where the caller has none.
     brep: Option<&'b mut Brep>,
+    /// The executive's error record (`GetFilletExecutive()->GetFilletErrorInfo()`) the
+    /// fork's circular section notes a fold of its balls into (WR-685); `None` where the
+    /// solver has no executive.
+    error_info: Option<&'b mut ErrorInfo<SolverErrorObject>>,
 }
 
 /// Upstream's intersector evaluates the solver's own `SmOffsetSurface`s, so every
@@ -4516,6 +4522,7 @@ impl<'b> IntersectorSolver<'b> {
             ops,
             trace,
             brep: None,
+            error_info: None,
         })
     }
 
@@ -4739,6 +4746,46 @@ impl crate::blend::fillet_intersector::FilletSolverOps for IntersectorSolver<'_>
         let generator = solver
             .fillet_surface_generator()
             .ok_or_else(|| SolidError::null_pointer(OP))?;
+        // The fork's `SmGnSectionFSG::CircleSurface` (WR-685, tangency-labs/smlib d622107
+        // = d01d7b0's 2714d37): balls whose radius varies must not fold over one another
+        // between the law's corners; folded, the round is refused, naming the radius there.
+        if k.fixes.fillet_gn_section_generator
+            && matches!(generator, FilletSurfaceGenerator::Circular(_))
+            && matches!(
+                solver_type,
+                FilletSolverType::VariableRadius | FilletSolverType::ConstDist
+            )
+        {
+            use crate::blend::fillet_standard_solver::touch_circle::{
+                balls_fold, corner_angle, fillet_curve_corners, fold_comment, fold_cuts,
+            };
+            let corners = fillet_curve_corners(
+                center_line,
+                curve1,
+                curve2,
+                corner_angle(solver.this_ang_tol_rad()),
+            )?;
+            let cuts = fold_cuts(curve1, &corners);
+            for w in cuts.windows(2) {
+                let &[a, b] = w else { continue };
+                let Some(radius) = balls_fold(
+                    center_line,
+                    curve1,
+                    curve2,
+                    a,
+                    b,
+                    solver.this_approx_tol_3d(),
+                )?
+                else {
+                    continue;
+                };
+                if let Some(info) = self.error_info.as_deref_mut() {
+                    info.note_error(FilletErrorType::NoRoom, Some(&fold_comment(radius)));
+                    info.no_room = Some(NoRoomReason::BallsFold);
+                }
+                return Err(SolidError::sm_err(OP));
+            }
+        }
         generator
             .create_surface_replacing_uv(
                 k,
