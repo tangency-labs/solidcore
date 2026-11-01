@@ -4743,9 +4743,10 @@ impl crate::blend::fillet_intersector::FilletSolverOps for IntersectorSolver<'_>
         self.pre()?;
         let sur0 = Surface::from(offset_surface(&*self.ops, 0)?.surface.clone());
         let sur1 = Surface::from(offset_surface(&*self.ops, 1)?.surface.clone());
-        let solver = self.ops.solver();
+        let solver = self.ops.solver_mut();
+        let approx_tol_3d = solver.approx_tol_3d;
         let generator = solver
-            .fillet_surface_generator()
+            .fillet_surface_generator_mut()
             .ok_or_else(|| SolidError::null_pointer(OP))?;
         // The fork's `SmGnSectionFSG::CircleSurface` (WR-685, tangency-labs/smlib d622107
         // = d01d7b0's 2714d37): balls whose radius varies must not fold over one another
@@ -4790,7 +4791,7 @@ impl crate::blend::fillet_intersector::FilletSolverOps for IntersectorSolver<'_>
         generator
             .create_surface_replacing_uv(
                 k,
-                solver.approx_tol_3d,
+                approx_tol_3d,
                 solver_type,
                 Some(center_line),
                 curve1,
