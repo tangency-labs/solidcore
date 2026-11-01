@@ -89,7 +89,7 @@ fn status_of(e: &SolidError) -> i32 {
 
 impl FilletSession<'_> {
     /// `GetFilletErrorInfo()->NoteError(code, comment)` of a [`Refusal`].
-    fn note_refusal(&mut self, refusal: Refusal) {
+    pub(super) fn note_refusal(&mut self, refusal: Refusal) {
         self.executive.error.code = refusal.code as i32;
         self.executive.error.comment = refusal.comment.into();
         self.executive.error.no_room = refusal.reason;
