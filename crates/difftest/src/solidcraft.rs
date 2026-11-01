@@ -26,17 +26,21 @@ use serde_json::{json, Value};
 use solidcore::blend::fillet_executive::api as fillet_api;
 use solidcore::boolean::api_brep as boolean;
 use solidcore::curve::curve::Curve;
+use solidcore::curve::line::Line;
 use solidcore::geom::attribute::{AttributeStore, ObjectKey};
 use solidcore::geom::axis2_placement::Axis2Placement;
 use solidcore::geom::object::ObjectRef;
 use solidcore::geom::vector3d::{Point3, Vec3};
 use solidcore::kernel::Kernel;
 use solidcore::mass::integrator::properties::{brep_volume, PropertyAttributes};
+use solidcore::nurbs::b_spline_curve::BSplineCurve;
+use solidcore::nurbs::math::CPoint;
 use solidcore::primitive::api_curves as curves;
 use solidcore::primitive::api_primitives as primitives;
 use solidcore::primitive::primitive_creation::SweepOptions;
 use solidcore::surface::surface::p2::SurfaceKind;
 use solidcore::surface::surface::Surface;
+use solidcore::sweep::api_brep as sweep;
 use solidcore::sweep::api_brep as sweeps;
 use solidcore::sweep::api_surfaces::create_skin_primitive;
 use solidcore::topology::brep::mirror::mirror;
@@ -353,6 +357,23 @@ pub enum Step {
         /// Offset distance (negative: inward).
         distance: f64,
     },
+    /// `SmApiCreateSweepAlongPlanarPath`: the profile curves swept along the path
+    /// curves, which bounds a solid when capped.
+    SweepAlongPlanarPath {
+        /// Body written.
+        id: String,
+        /// The profile curves swept (the section).
+        profile: Vec<CurveSpec>,
+        /// The path curves the profile follows.
+        path: Vec<CurveSpec>,
+        /// Anchor the profile's bounding-box centre (`true`, the default) or its first
+        /// point (`false`) at the path start.
+        #[serde(default = "move_profile_default")]
+        move_profile: bool,
+        /// Ends to cap: `0` none, `1` profile/start, `2` far end, `3` both (default `3`).
+        #[serde(default = "cap_ends_default")]
+        cap_ends: i32,
+    },
     /// SolidCraft #3170: four inside flanges on an XY rectangle, then close the
     /// corner between flanges 0 (front) and 3 (left). Flange order is front,
     /// right, rear, left; negative angles reverse the bend direction.
@@ -381,6 +402,28 @@ pub enum Step {
         covering: usize,
         /// Overlap length: half the thickness for Partial, the thickness for Full.
         overlap: f64,
+    },
+}
+
+/// A profile or path curve of a [`Step::SweepAlongPlanarPath`], tagged by its `"curve"` kind.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(tag = "curve", rename_all = "snake_case", deny_unknown_fields)]
+pub enum CurveSpec {
+    /// A bounded line segment.
+    Line {
+        /// Start point.
+        start: P3,
+        /// End point.
+        end: P3,
+    },
+    /// A single-segment Bézier: the clamped B-spline of degree `points.len() - 1`
+    /// through these control points.
+    Bezier {
+        /// Control points.
+        points: Vec<P3>,
+        /// Weights, one per control point; present makes the curve rational.
+        #[serde(default)]
+        weights: Option<Vec<f64>>,
     },
 }
 
@@ -543,6 +586,14 @@ fn z_axis() -> P3 {
     [0.0, 0.0, 1.0]
 }
 
+fn move_profile_default() -> bool {
+    true
+}
+
+fn cap_ends_default() -> i32 {
+    3
+}
+
 fn ruled() -> usize {
     1
 }
@@ -631,6 +682,7 @@ impl Step {
             | Self::Fillet { id, .. }
             | Self::Chamfer { id, .. }
             | Self::OffsetFaces { id, .. }
+            | Self::SweepAlongPlanarPath { id, .. }
             | Self::SweepFace { id, .. }
             | Self::SheetCorner { id, .. } => id,
         }
@@ -642,11 +694,12 @@ impl Step {
             Self::Box { .. }
             | Self::Sphere { .. }
             | Self::Cylinder { .. }
+            | Self::Sweep { .. }
             | Self::Extrude { .. }
             | Self::Revolve { .. }
             | Self::Pipe { .. }
             | Self::Loft { .. }
-            | Self::Sweep { .. }
+            | Self::SweepAlongPlanarPath { .. }
             | Self::SheetCorner { .. } => Vec::new(),
             Self::Union { a, b, .. }
             | Self::Difference { a, b, .. }
@@ -659,6 +712,55 @@ impl Step {
             | Self::Mirror { body, .. } => vec![body],
         }
     }
+}
+
+/// Checks the curves and the cap selector of a `sweep` step.
+fn validate_sweep(profile: &[CurveSpec], path: &[CurveSpec], cap_ends: i32) -> Result<(), String> {
+    if profile.is_empty() || path.is_empty() {
+        return Err("a sweep needs at least one profile curve and one path curve".into());
+    }
+    if !(0..=3).contains(&cap_ends) {
+        return Err(format!("cap_ends must be 0..=3, got {cap_ends}"));
+    }
+    for spec in profile.iter().chain(path) {
+        validate_curve_spec(spec)?;
+    }
+    Ok(())
+}
+
+/// Checks one [`CurveSpec`].
+fn validate_curve_spec(spec: &CurveSpec) -> Result<(), String> {
+    match spec {
+        CurveSpec::Line { start, end } => {
+            if !start.iter().chain(end).all(|x| x.is_finite()) {
+                return Err("a sweep line has a non-finite point".into());
+            }
+        }
+        CurveSpec::Bezier { points, weights } => {
+            if !(2..=11).contains(&points.len()) {
+                return Err(format!(
+                    "a sweep bezier needs 2..=11 points, got {}",
+                    points.len()
+                ));
+            }
+            if !points.iter().flatten().all(|x| x.is_finite()) {
+                return Err("a sweep bezier has a non-finite point".into());
+            }
+            if let Some(weights) = weights {
+                if weights.len() != points.len() {
+                    return Err(format!(
+                        "a sweep bezier has {} weights for {} points",
+                        weights.len(),
+                        points.len()
+                    ));
+                }
+                if weights.iter().any(|w| !w.is_finite() || *w <= 0.0) {
+                    return Err("a sweep bezier weight must be finite and positive".into());
+                }
+            }
+        }
+    }
+    Ok(())
 }
 
 /// A profile has pieces, and every number in them is finite.
@@ -787,6 +889,15 @@ pub fn validate(case: &Case) -> Result<(), String> {
             Step::OffsetFaces {
                 faces, distance, ..
             } => faces.iter().flatten().all(|x| x.is_finite()) && distance.is_finite(),
+            Step::SweepAlongPlanarPath {
+                profile,
+                path,
+                cap_ends,
+                ..
+            } => {
+                validate_sweep(profile, path, *cap_ends).map_err(|e| format!("step {i}: {e}"))?;
+                true
+            }
             Step::SweepFace {
                 face,
                 direction,
@@ -1146,6 +1257,33 @@ fn cylinder(k: &mut Kernel, origin: P3, axis: P3, radius: f64, height: f64) -> R
     Ok(b)
 }
 
+/// The solidcore [`Curve`] of a `sweep` step's profile or path entry.
+fn build_curve(spec: &CurveSpec) -> Result<Curve, Run> {
+    match spec {
+        CurveSpec::Line { start, end } => {
+            Ok(Curve::from(Line::from_points(p3(*start), p3(*end), 3)))
+        }
+        CurveSpec::Bezier { points, weights } => {
+            // A clamped single-segment B-spline: degree `points.len() - 1`, the first
+            // `degree + 1` knots 0 and the last `degree + 1` knots 1.
+            let degree = points.len().saturating_sub(1);
+            let mut knots = vec![0.0; degree + 1];
+            knots.extend(std::iter::repeat_n(1.0, degree + 1));
+            let cpoints: Vec<CPoint> = match weights {
+                Some(weights) => points
+                    .iter()
+                    .zip(weights)
+                    .map(|(p, w)| CPoint::weighted(p3(*p), *w))
+                    .collect(),
+                None => points.iter().map(|p| CPoint::from_point(p3(*p))).collect(),
+            };
+            BSplineCurve::from_data(3, degree, knots.len() - 1, degree, &cpoints, &knots)
+                .map(Curve::from)
+                .map_err(|e| solid(&e))
+        }
+    }
+}
+
 /// The curves of `profile`, drawn in XY, turned onto `plane` about the origin and moved
 /// by `origin`.
 fn profile_curves(
@@ -1480,6 +1618,20 @@ fn step_rust(k: &mut Kernel, bodies: &mut BTreeMap<String, Brep>, step: &Step) -
                 blocked_by: "no SM_API entry point".into(),
                 symbol: "offset of selected faces (SmApiOffsetBrepFull moves every face)".into(),
             }))
+        }
+        Step::SweepAlongPlanarPath {
+            profile,
+            path,
+            move_profile,
+            cap_ends,
+            ..
+        } => {
+            let profile: Vec<Curve> = profile.iter().map(build_curve).collect::<Result<_, _>>()?;
+            let path: Vec<Curve> = path.iter().map(build_curve).collect::<Result<_, _>>()?;
+            let profile: Vec<&Curve> = profile.iter().collect();
+            let path: Vec<&Curve> = path.iter().collect();
+            sweep::create_sweep_along_planar_path(k, &profile, &path, *move_profile, *cap_ends)
+                .map_err(|e| solid(&e))?
         }
         Step::SheetCorner { .. } => {
             return Err(Run::Deferred(Deferral {
@@ -2029,6 +2181,12 @@ mod tests {
             assert!(n > 0, "{p:?}: no cases");
             expected += n;
         }
+        // 165 cases in 38 files after the merge (counted 2026-10-31); update both
+        // numbers together when a fixture is added.
+        assert_eq!(
+            expected, 165,
+            "fixture total changed: recount fixtures/solidcraft"
+        );
         let cases = all();
         assert_eq!(
             cases.len(),
@@ -2640,6 +2798,54 @@ mod tests {
             r#"{"kind": "circle", "center": [0, 0], "radius": 5}"#,
         );
         assert!(validate(&case(vec![step(&circle_path)])).is_err());
+        // A valid sweep, with the optional fields defaulted.
+        let path = r#"{"curve": "line", "start": [0, 0, 0], "end": [0, 20, 0]}"#;
+        let profile = r#"{"curve": "bezier", "points": [[0, 0, 0], [2, 2, 0], [4, 0, 0]]}"#;
+        let sweep = format!(
+            r#"{{"op": "sweep_along_planar_path", "id": "result", "profile": [{profile}], "path": [{path}]}}"#
+        );
+        assert!(validate(&case(vec![step(&sweep)])).is_ok());
+        let Step::SweepAlongPlanarPath {
+            move_profile,
+            cap_ends,
+            ..
+        } = step(&sweep)
+        else {
+            panic!("expected a sweep step");
+        };
+        assert!(move_profile, "move_profile defaults to true");
+        assert_eq!(cap_ends, 3, "cap_ends defaults to 3");
+
+        // Rejections: a cap selector outside 0..=3, an empty profile, a non-positive
+        // weight and a non-finite coordinate.
+        let bad_cap = format!(
+            r#"{{"op": "sweep_along_planar_path", "id": "result", "profile": [{profile}], "path": [{path}], "cap_ends": 4}}"#
+        );
+        assert!(validate(&case(vec![step(&bad_cap)])).is_err());
+        let empty = format!(
+            r#"{{"op": "sweep_along_planar_path", "id": "result", "profile": [], "path": [{path}]}}"#
+        );
+        assert!(validate(&case(vec![step(&empty)])).is_err());
+        let bad_weight = r#"{"curve": "bezier", "points": [[0, 0, 0], [1, 1, 0], [2, 0, 0]], "weights": [1, 0, 1]}"#;
+        let bad_weight = format!(
+            r#"{{"op": "sweep_along_planar_path", "id": "result", "profile": [{bad_weight}], "path": [{path}]}}"#
+        );
+        assert!(validate(&case(vec![step(&bad_weight)])).is_err());
+        let non_finite = Step::SweepAlongPlanarPath {
+            id: "result".into(),
+            profile: vec![CurveSpec::Line {
+                start: [0.0, 0.0, 0.0],
+                end: [f64::NAN, 0.0, 0.0],
+            }],
+            path: vec![CurveSpec::Line {
+                start: [0.0, 0.0, 0.0],
+                end: [0.0, 20.0, 0.0],
+            }],
+            move_profile: true,
+            cap_ends: 3,
+        };
+        assert!(validate(&case(vec![non_finite])).is_err());
+
         let loft = r#"{"op": "loft", "id": "result", "sections": [{"profile": [{"kind": "circle", "center": [0, 0], "radius": 2}]}, {"profile": [{"kind": "circle", "center": [0, 0], "radius": 1}], "origin": [0, 0, 5]}]}"#;
         assert!(validate(&case(vec![step(loft)])).is_ok());
         let Step::Loft { degree, .. } = step(loft) else {
@@ -2649,5 +2855,32 @@ mod tests {
         let one = r#"{"op": "loft", "id": "result", "sections": [{"profile": [{"kind": "circle", "center": [0, 0], "radius": 2}]}]}"#;
         assert!(validate(&case(vec![step(one)])).is_err());
         assert!(serde_json::from_str::<Step>(&loft.replace("\"origin\"", "\"orign\"")).is_err());
+    }
+
+    #[test]
+    fn sweep_curves_build() {
+        use solidcore::curve::curve::CurveKind;
+
+        let spec = |json: &str| serde_json::from_str::<CurveSpec>(json).unwrap();
+        let line = spec(r#"{"curve": "line", "start": [0, 0, 0], "end": [0, 20, 0]}"#);
+        assert!(matches!(
+            build_curve(&line).unwrap().kind(),
+            CurveKind::Line(_)
+        ));
+
+        let bezier = spec(r#"{"curve": "bezier", "points": [[0, 0, 0], [1, 1, 0], [2, 0, 0]]}"#);
+        let bezier = build_curve(&bezier).unwrap();
+        assert_eq!(bezier.degree().unwrap(), 2);
+        assert!(!bezier.is_rational().unwrap());
+        // The clamped quadratic's midpoint: 0.25*P0 + 0.5*P1 + 0.25*P2.
+        let k = Kernel::default();
+        let t = bezier.natural_interval().evaluate(0.5);
+        let point = bezier.evaluate(&k, t, 0, false, false).unwrap();
+        assert_eq!(point, vec![Vec3::new(1.0, 0.5, 0.0)]);
+
+        let rational = spec(
+            r#"{"curve": "bezier", "points": [[0, 0, 0], [1, 1, 0], [2, 0, 0]], "weights": [1, 0.5, 1]}"#,
+        );
+        assert!(build_curve(&rational).unwrap().is_rational().unwrap());
     }
 }
