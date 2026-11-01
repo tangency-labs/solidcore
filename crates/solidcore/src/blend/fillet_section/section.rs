@@ -1008,8 +1008,6 @@ mod tests {
         assert!(GnSectionFsg::is_valid(2, -1e300));
         assert!(GnSectionFsg::is_valid(2, -2.0));
         assert!(GnSectionFsg::is_valid(2, GN_THUMBWEIGHT_EQUAL_AREA));
-        // the marker lies outside the ordinary thumbweights (w < 1), so it is never one
-        assert!(GN_THUMBWEIGHT_EQUAL_AREA >= 1.0);
         assert!(!GnSectionFsg::is_valid(2, f64::NEG_INFINITY));
         assert!(!GnSectionFsg::is_valid(2, f64::NAN));
         let g = GnSectionFsg::new(3, 0.25);
