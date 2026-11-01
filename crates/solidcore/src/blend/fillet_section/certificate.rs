@@ -167,7 +167,8 @@ pub fn curve_derivs_over(
     let mut rd = vec![VZ; ld + 1];
     for k in k0..=k1 {
         let ki = k as isize;
-        if !(knot(&cn.u, ki) < knot(&cn.u, ki + 1)) {
+        let has_span = knot(&cn.u, ki) < knot(&cn.u, ki + 1);
+        if !has_span {
             continue; // a knot repeated: no span
         }
         let a = if k == p || fixed {
@@ -357,7 +358,8 @@ pub fn nurbs_partials_over_piece(
         }
     }
     let w00 = at2(&wv, 0, 0, IZ);
-    if !(w00.lo > 0.0) {
+    let positive = w00.lo > 0.0;
+    if !positive {
         // "SmGnSectionFSG: a face's weights are not positive over a box"
         return Err(SolidError::sm_err(OP));
     }
@@ -482,16 +484,16 @@ fn f_at(x: &[f64; 4], i: usize) -> f64 {
 /// The system over the partials `p` (`sSys` with `apP` at `asP`).
 fn system<'a>(
     p: &'a [Partials<Ivl>; 2],
-    leader: VSer<Ivl>,
-    tangent: VSer<Ivl>,
+    leader: &VSer<Ivl>,
+    tangent: &VSer<Ivl>,
     r: [f64; 2],
     side: [f64; 2],
 ) -> GnSystem<'a, Ivl> {
     let [p0, p1] = p;
     GnSystem {
         p: [p0, p1],
-        leader,
-        tangent,
+        leader: *leader,
+        tangent: *tangent,
         r,
         side,
         hold: false,
@@ -574,14 +576,14 @@ pub fn gn_enclose(
         let pc = gn_try!(partials_over(xm, xm, 2), None);
         let sxc = xm.map(|x| Ser::constant(Ivl::from(x)));
         let (sg, _) = gn_try!(
-            gn_evaluate(&system(&pc, leader, tangent, r, side), &sxc, point),
+            gn_evaluate(&system(&pc, &leader, &tangent, r, side), &sxc, point),
             None
         );
         // the Jacobian over the box
         let pb = gn_try!(partials_over(bx_.map(|x| x.lo), bx_.map(|x| x.hi), 2), None);
         let sxb = bx_.map(Ser::constant);
         let jac = gn_try!(
-            gn_jacobian(&system(&pb, leader, tangent, r, side), &sxb),
+            gn_jacobian(&system(&pb, &leader, &tangent, r, side), &sxb),
             None
         );
         let jm = jac.map(|row| row.map(Ivl::mid));
@@ -621,7 +623,8 @@ pub fn gn_enclose(
             }
             proved = true;
         } else {
-            if !(q < 1.0) {
+            let contracts = q < 1.0;
+            if !contracts {
                 return Ok(None); // the span is too long for its Jacobian to be one preconditioner's
             }
             // the next box from the contraction: K's radii are at most d + |C| w for a box
@@ -667,7 +670,7 @@ pub fn gn_enclose(
         partials_over(bx_.map(|x| x.lo), bx_.map(|x| x.hi), lk),
         None
     );
-    let sysk = system(&pk, leader, tangent, r, side);
+    let sysk = system(&pk, &leader, &tangent, r, side);
     let mut sx = bx_.map(Ser::constant);
     for tot in 1..=(tr.s() + tr.e()) {
         let (sg, _) = gn_try!(gn_evaluate(&sysk, &sx, tr), None);
@@ -906,12 +909,14 @@ pub fn gn_certify_span(
             );
             for (((m4f, pmf), uvf), &puvf) in m4.iter_mut().zip(&pm).zip(uv4.iter_mut()).zip(&puv) {
                 for (m4fk, &pmfk) in m4f.iter_mut().zip(pmf).take(n + 1) {
-                    if !(pmfk < f64::INFINITY) {
+                    let finite = pmfk < f64::INFINITY;
+                    if !finite {
                         proved = false;
                     }
                     *m4fk = cmax(*m4fk, pmfk);
                 }
-                if !(puvf < f64::INFINITY) {
+                let finite = puvf < f64::INFINITY;
+                if !finite {
                     proved = false;
                 }
                 *uvf = cmax(*uvf, puvf);
@@ -1054,8 +1059,8 @@ mod tests {
         let mut best = (f64::INFINITY, u0, v0);
         for i in 0..=400 {
             for j in 0..=40 {
-                let u = u0 + (u1 - u0) * i as f64 / 400.0;
-                let v = v0 + (v1 - v0) * j as f64 / 40.0;
+                let u = u0 + (u1 - u0) * f64::from(i) / 400.0;
+                let v = v0 + (v1 - v0) * f64::from(j) / 40.0;
                 let ku = span(&n.u, n.p, n.nu, u);
                 let kv = span(&n.v, n.q, n.nv, v);
                 let d = (vec3(nurbs_partials(n, ku, kv, u, v, 0).at(0, 0)) - p).length();
@@ -1155,7 +1160,7 @@ mod tests {
         // L'''' over the span, sampled
         let (mut l4, mut l4x, mut l4y) = (0.0_f64, 0.0_f64, 0.0_f64);
         for i in 0..=200 {
-            let s = sa + (sb - sa) * i as f64 / 200.0;
+            let s = sa + (sb - sa) * f64::from(i) / 200.0;
             let d = leader.evaluate(s, 4, true, false).unwrap();
             let d4 = d[4];
             assert!(d4.z.abs() < 1e-9);
@@ -1239,7 +1244,7 @@ mod tests {
         let mut l4l = 0.0_f64;
         for i in 0..=500 {
             let d = leader
-                .evaluate(sa + hl * i as f64 / 500.0, 4, true, false)
+                .evaluate(sa + hl * f64::from(i) / 500.0, 4, true, false)
                 .unwrap();
             l4l = l4l.max(Vec3::new(d[4].x, d[4].y, 0.0).length());
         }
