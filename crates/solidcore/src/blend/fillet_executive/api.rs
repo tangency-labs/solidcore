@@ -55,7 +55,14 @@
 //! construction helper adds one face; its callers finalize the body. [`fillet_preview`]
 //! returns copies of the preview surfaces (upstream hands out the executive's own, which
 //! it never frees); like upstream it does not check the radius
-//! ([`is_radius_supported`]). No recursion.
+//! ([`is_radius_supported`]). With `fixes.fillet_repair_split_vertices` (#1999),
+//! the three edge-fillet wrappers check an independent owner-preserving copy of the
+//! completed, refreshed result at Level2. Invalid results may be repaired by placing
+//! a misplaced degree-two split vertex at the agreed incident-curve endpoint, within
+//! its existing intersection tolerance, then validating again. Failed or unsupported
+//! repairs restore the input body. Already valid results, direct sessions and the
+//! other APIs are unchanged.
+//! No recursion.
 
 use super::p1::is_radius_supported;
 use super::session::finish::{is_non_manifold_refusal, without_entity};
@@ -74,39 +81,51 @@ use crate::topology::brep::p1;
 use crate::topology::brep::p5::{stitch_and_orient, StitchAndOrientOptions};
 use crate::topology::{Brep, EdgeId, FaceId, VertexId};
 
+mod repair;
+
 const OP: &str = "blend::fillet_executive::api";
 
 /// Run `fillet` (a session's set-up, `do_fillet` and the stitch) on `brep`; with
 /// `fixes.fillet_refuse_non_manifold_result` (WR-212, not upstream), a refusal of a
 /// result that is not a closed manifold solid puts back the body as it was before the
 /// call (a [`Brep::clone_for_rollback`] taken first) and names no entity, as the
-/// refused result's edge is gone with it. Every other result is `fillet`'s own, and
-/// a result the check keeps is the flag-off result: the copy shares nothing with
+/// refused result's edge is gone with it. With `fixes.fillet_repair_split_vertices`,
+/// an otherwise successful operation is checked and misplaced split vertices are
+/// repaired when possible; a still-invalid result or validation error rolls back.
+/// Every other result is `fillet`'s own. Already valid results are unchanged: the
+/// copy shares nothing with
 /// `brep`, so `fillet` edits the caller's own objects (curve owners included). The
 /// copy fails only on geometry nested deeper than `MAX_GEOMETRY_NESTING`.
-fn refusing_non_manifold_result(
+fn refusing_invalid_result(
     k: &mut Kernel,
     brep: &mut Brep,
     fillet: impl FnOnce(&mut Kernel, &mut Brep) -> Result<()>,
 ) -> Result<()> {
-    let saved = if k.fixes.fillet_refuse_non_manifold_result {
+    let saved = if k.fixes.fillet_refuse_non_manifold_result || k.fixes.fillet_repair_split_vertices
+    {
         Some(brep.clone_for_rollback()?)
     } else {
         None
     };
     let result = fillet(k, brep);
+    brep.refresh_cached_topology();
+    if result.is_ok() && k.fixes.fillet_repair_split_vertices {
+        // Validation uses an owner-preserving copy; an already valid result is
+        // untouched. A supported repair notifies geometry changes and is rechecked.
+        let validation = repair::repair_result(k, brep);
+        if let Err(error) = validation {
+            if let Some(saved) = saved {
+                brep.restore_from(saved);
+            }
+            return Err(without_entity(error));
+        }
+    }
     match (saved, result) {
         (Some(saved), Err(error)) if is_non_manifold_refusal(&error) => {
             brep.restore_from(saved);
             Err(without_entity(error))
         }
-        (_, result) => {
-            // (not upstream: the port's cached topology fields, true again for the
-            // caller; the body keeps the edits the executive made before a failure,
-            // as upstream)
-            brep.refresh_cached_topology();
-            result
-        }
+        (_, result) => result,
     }
 }
 
@@ -131,7 +150,10 @@ fn invalid_input() -> SolidError {
 /// # Errors
 /// `SM_ERR_INVALID_INPUT` for an empty edge list or a radius below 8 times the
 /// B-rep tolerance ([`is_radius_supported`]); the fillet executive's errors (the body
-/// keeps the edits made before the failure, as upstream).
+/// keeps the edits made before the failure, as upstream). With
+/// `fixes.fillet_repair_split_vertices`, a failed final Level2 check returns
+/// `SM_ERR` and restores the input body if the split-vertex repair cannot make
+/// it valid; validation errors also restore it.
 pub fn fillet_edges(
     k: &mut Kernel,
     brep: &mut Brep,
@@ -147,7 +169,7 @@ pub fn fillet_edges(
     if !is_radius_supported(radius, brep.tolerance()) {
         return Err(invalid_input());
     }
-    refusing_non_manifold_result(k, brep, |k, brep| {
+    refusing_invalid_result(k, brep, |k, brep| {
         {
             let mut session = FilletSession::new(k, brep)?;
             session
@@ -171,7 +193,8 @@ pub fn fillet_edges(
 /// # Errors
 /// `SM_ERR_INVALID_INPUT` for an empty edge list, when `radii` or `xsect_types`
 /// does not hold one entry per edge, or for a radius below 8 times the B-rep
-/// tolerance ([`is_radius_supported`]); the fillet executive's errors.
+/// tolerance ([`is_radius_supported`]); the fillet executive's errors. The optional
+/// final validity check and rollback are as in [`fillet_edges`].
 pub fn fillet_edges_per_edge(
     k: &mut Kernel,
     brep: &mut Brep,
@@ -192,7 +215,7 @@ pub fn fillet_edges_per_edge(
             return Err(invalid_input());
         }
     }
-    refusing_non_manifold_result(k, brep, |k, brep| {
+    refusing_invalid_result(k, brep, |k, brep| {
         {
             let mut session = FilletSession::new(k, brep)?;
             session
@@ -220,7 +243,8 @@ pub fn fillet_edges_per_edge(
 /// # Errors
 /// `SM_ERR_INVALID_INPUT` for an empty edge list or a start or end radius below 8
 /// times the B-rep tolerance ([`is_radius_supported`]); the fillet executive's errors
-/// (the body keeps the edits made before the failure, as upstream).
+/// (the body keeps the edits made before the failure, as upstream). The optional
+/// final validity check and rollback are as in [`fillet_edges`].
 pub fn variable_radius_fillet(
     k: &mut Kernel,
     brep: &mut Brep,
@@ -239,7 +263,7 @@ pub fn variable_radius_fillet(
         return Err(invalid_input());
     }
     let law = FilletLaw::linear(start_radius, end_radius, None);
-    refusing_non_manifold_result(k, brep, |k, brep| {
+    refusing_invalid_result(k, brep, |k, brep| {
         {
             let mut session = FilletSession::new(k, brep)?;
             session
