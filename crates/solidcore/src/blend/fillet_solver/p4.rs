@@ -4735,14 +4735,15 @@ impl crate::blend::fillet_intersector::FilletSolverOps for IntersectorSolver<'_>
         self.pre()?;
         let sur0 = Surface::from(offset_surface(&*self.ops, 0)?.surface.clone());
         let sur1 = Surface::from(offset_surface(&*self.ops, 1)?.surface.clone());
-        let solver = self.ops.solver();
+        let solver = self.ops.solver_mut();
+        let approx_tol_3d = solver.approx_tol_3d;
         let generator = solver
-            .fillet_surface_generator()
+            .fillet_surface_generator_mut()
             .ok_or_else(|| SolidError::null_pointer(OP))?;
         generator
             .create_surface_replacing_uv(
                 k,
-                solver.approx_tol_3d,
+                approx_tol_3d,
                 solver_type,
                 Some(center_line),
                 curve1,
