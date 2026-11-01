@@ -122,6 +122,14 @@ pub fn write_surface_at(
     check_depth(depth)?;
     match s.kind() {
         SurfaceKind::BSpline(b) => b.write_to_db(db, version),
+        // the fork writes the definition, then the net (SmProceduralBlend::WriteToDB)
+        SurfaceKind::ProceduralBlend(_) => {
+            // UNPORTED(surface.procedural_blend): SmProceduralBlend::WriteToDB
+            Err(SolidError::Unported {
+                upstream: "SmProceduralBlend::WriteToDB",
+                unit: "surface.procedural_blend",
+            })
+        }
         SurfaceKind::Plane(p) => p.write_to_db(db, version),
         SurfaceKind::Cone(c) => write_cone(c, db, version, depth),
         SurfaceKind::Sphere(sp) => write_sphere(sp, db, version, depth),

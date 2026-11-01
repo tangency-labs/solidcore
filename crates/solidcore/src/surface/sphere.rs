@@ -1046,6 +1046,7 @@ impl Sphere {
                 need_nurb_intersection = more?;
             }
             SurfaceKind::BSpline(_)
+            | SurfaceKind::ProceduralBlend(_)
             | SurfaceKind::Cone(_)
             | SurfaceKind::Torus(_)
             | SurfaceKind::SurfOfExtrusion(_)

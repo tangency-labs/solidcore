@@ -2920,6 +2920,10 @@ fn evaluate_point_out_of_bounds(k: &Kernel, base: &Surface, uv: Point2) -> Resul
     let mut s = base.clone_for_evaluation()?;
     match s.kind_mut() {
         SurfaceKind::BSpline(b) => *b.out_of_bounds_enabled_mut() = true,
+        SurfaceKind::ProceduralBlend(pb) => {
+            let b = pb.net_mut();
+            *b.out_of_bounds_enabled_mut() = true;
+        }
         SurfaceKind::Plane(p) => *p.out_of_bounds_enabled_mut() = true,
         SurfaceKind::SurfOfRevolution(r) => *r.base_mut().out_of_bounds_enabled_mut() = true,
         SurfaceKind::SurfOfExtrusion(r) => *r.base_mut().out_of_bounds_enabled_mut() = true,

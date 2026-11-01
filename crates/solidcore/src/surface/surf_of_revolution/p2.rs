@@ -866,6 +866,7 @@ impl SurfOfRevolution {
             SurfaceKind::Torus(_)
             | SurfaceKind::SurfOfExtrusion(_)
             | SurfaceKind::BSpline(_)
+            | SurfaceKind::ProceduralBlend(_)
             | SurfaceKind::Cone(_)
             | SurfaceKind::CurveBounded(_)
             | SurfaceKind::Step(_)
@@ -925,6 +926,10 @@ impl SurfOfRevolution {
         let plane_base;
         let tgt: &BSplineSurface = match test_surface.kind_with_nurb(k)? {
             SurfaceKind::BSpline(s) => s,
+            SurfaceKind::ProceduralBlend(pb) => {
+                let s = pb.net();
+                s
+            }
             // (an SmSurfOfExtrusion is an SmBSplineSurface: its NURB is tested)
             SurfaceKind::SurfOfExtrusion(s) => s.base(),
             SurfaceKind::Plane(p) => {

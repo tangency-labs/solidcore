@@ -1353,6 +1353,8 @@ pub struct UpstreamFixes {
     ///
     /// With it a variable round is the union of its balls (the fork's d2a6125, f2ec002, e9560e3, 2714d37 and 6007a3d, rebased from 6b346f6, 5db8feb, fb5c060, d622107 and 8bedf89): a variable-radius or constant-distance solver's circle section is the circle along which the balls' envelope touches the ball, square to the centre line and moved along it by `-r r'/|c'|`, not the great circle through the rails; a round whose balls fold over one another is refused (`FilletErrorType::NoRoom`, `NoRoomReason::BallsFold`, naming the radius there); a cliff overflow's law check (`sm_HoldsItsLaw`) tests the touch circle; and `SmApiVariableRadiusFillet` takes the G^n section's default thumbweight (WR-685 addendum 2026-11-01).
     pub fillet_gn_section_generator: bool,
+    /// With [`Self::fillet_gn_section_generator`] also on (a no-op otherwise): constant and variable-radius rounds between NURBS faces are built as their definition, a [`crate::surface::procedural_blend::ProceduralBlend`] (the fork's `SmProceduralBlend`): the two faces the ball rolls on, its radius or radius law, the section's order and thumbweight rule and the leader, which evaluate exactly; its net, the certified B-spline approximation within the certificate's bound (the radius law in the certificate), is what the surface cache and tessellation use (`SmBlendNetScope`), the cache's node boxes grown by the net's bound. With it the file reader reads a definition (`SmProceduralBlend_TYPE`, `SURF_BASE_TYPE + 41`); without it that type is refused as the pinned reader refuses it (WR-698, #2273; the fork's tangency-labs/smlib@014f66f to 729f893, smlib#79 step 7, merged at 5e8c9c1).
+    pub fillet_round_as_definition: bool,
 }
 }
 
@@ -1482,6 +1484,18 @@ pub struct Kernel {
     /// to the records of a fresh seeding, so it never carries state between edits.
     #[doc(hidden)]
     pub notify_records: crate::topology::topology::NotifyRecords,
+    /// Not upstream: the fork's `SmBlendNetScope` depth (a `thread_local` there): while it
+    /// is above 0, procedural blends evaluate as their nets
+    /// ([`crate::surface::procedural_blend::NetScope`]). A [`Cell`]: the scope is
+    /// entered and read on paths that hold `&Kernel` (every surface evaluation).
+    pub blend_net_scope: Cell<u32>,
+    /// Not upstream: the fork's process-wide `SmBlendCounts` (diagnostics only, no
+    /// result reads them). A [`Cell`]: the definition's evaluators count through `&Kernel`.
+    pub blend_counts: Cell<crate::surface::procedural_blend::BlendCounts>,
+    /// Not upstream: the fork's `s_lLastSerial`, the last serial a procedural blend's
+    /// definition took (`Renew`), so a station memo entry is never another definition's.
+    /// A [`Cell`]: definitions are made and copied through `&Kernel`.
+    pub blend_last_serial: Cell<u64>,
 }
 
 impl Default for Kernel {
@@ -1505,6 +1519,9 @@ impl Kernel {
             fixes: UpstreamFixes::default(),
             cancel: None,
             notify_records: crate::topology::topology::NotifyRecords::new(),
+            blend_net_scope: Cell::new(0),
+            blend_counts: Cell::new(crate::surface::procedural_blend::BlendCounts::default()),
+            blend_last_serial: Cell::new(0),
         }
     }
 

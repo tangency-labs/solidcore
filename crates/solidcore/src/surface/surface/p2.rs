@@ -280,6 +280,7 @@ use crate::surface::cone::Cone;
 use crate::surface::curve_bounded_surface::CurveBoundedSurface;
 use crate::surface::offset_surface::OffsetSurface;
 use crate::surface::plane::Plane;
+use crate::surface::procedural_blend::{NetScope, ProceduralBlend};
 use crate::surface::sphere::Sphere;
 use crate::surface::srf_in_volume::SrfInVolume;
 use crate::surface::surf_of_extrusion::SurfOfExtrusion;
@@ -382,6 +383,9 @@ pub enum SurfaceKind {
     Torus(Box<Torus>),
     /// `SmSurfOfExtrusion` (an `SmBSplineSurface`; boxed, it holds a generator).
     SurfOfExtrusion(Box<SurfOfExtrusion>),
+    /// Not upstream (opt-in, the fork's `SmProceduralBlend`, an `SmBSplineSurface`): a
+    /// blend by its definition on its certified net (boxed, it holds two supports).
+    ProceduralBlend(Box<ProceduralBlend>),
 }
 
 /// A surface (`SmSurface`): its concrete kind and the object owning it (`m_pOwner`:
@@ -739,6 +743,11 @@ pub(crate) fn check_geometry_nesting(
         match geometry {
             Geometry::Surface(surface) => match surface.kind() {
                 SurfaceKind::BSpline(_) | SurfaceKind::Plane(_) => {}
+                SurfaceKind::ProceduralBlend(p) => {
+                    for support in p.supports() {
+                        push(Geometry::Surface(support));
+                    }
+                }
                 SurfaceKind::Cone(s) => {
                     if let Some(c) = s.rev().gen_curve() {
                         push(Geometry::Curve(c));
@@ -836,6 +845,9 @@ impl Surface {
         self.check_evaluation_copy_depth(depth)?;
         let kind = match &self.kind {
             SurfaceKind::BSpline(s) => SurfaceKind::BSpline(s.clone_exact()),
+            SurfaceKind::ProceduralBlend(pb) => {
+                SurfaceKind::ProceduralBlend(Box::new(pb.clone_for_evaluation(depth + 1)?))
+            }
             SurfaceKind::Plane(s) => SurfaceKind::Plane(s.clone_shared()),
             SurfaceKind::Cone(s) => SurfaceKind::Cone(Box::new(Cone {
                 rev: s.rev().clone_for_evaluation(depth + 1)?,
@@ -900,6 +912,7 @@ impl Surface {
             match &mut s.kind {
                 SurfaceKind::Plane(p) => p.detach_nurb(),
                 SurfaceKind::SurfOfExtrusion(e) => e.detach_nurb(),
+                SurfaceKind::ProceduralBlend(p) => stack.extend(p.supports_mut()),
                 SurfaceKind::Step(st) => stack.extend(st.nested_surfaces_mut()),
                 SurfaceKind::CurveBounded(c) => stack.extend(c.nested_surfaces_mut()),
                 SurfaceKind::SrfInVolume(v) => stack.extend(v.nested_surfaces_mut()),
@@ -913,6 +926,9 @@ impl Surface {
     pub(crate) fn clone_exact_bounded(&self) -> Self {
         let kind = match &self.kind {
             SurfaceKind::BSpline(s) => SurfaceKind::BSpline(s.clone_exact()),
+            SurfaceKind::ProceduralBlend(pb) => {
+                SurfaceKind::ProceduralBlend(Box::new(pb.clone_exact_bounded()))
+            }
             SurfaceKind::Plane(s) => SurfaceKind::Plane(s.clone_shared()),
             SurfaceKind::Cone(s) => {
                 let mut c = s.as_ref().clone();
@@ -987,6 +1003,12 @@ impl From<Sphere> for Surface {
 impl From<StepSurface> for Surface {
     fn from(s: StepSurface) -> Self {
         Self::new(SurfaceKind::Step(s))
+    }
+}
+
+impl From<ProceduralBlend> for Surface {
+    fn from(s: ProceduralBlend) -> Self {
+        Self::new(SurfaceKind::ProceduralBlend(Box::new(s)))
     }
 }
 
@@ -1611,6 +1633,7 @@ impl Surface {
     pub const fn type_code(&self) -> i64 {
         match &self.kind {
             SurfaceKind::BSpline(_) => BSplineSurface::TYPE,
+            SurfaceKind::ProceduralBlend(s) => s.type_code(),
             SurfaceKind::CurveBounded(s) => s.type_code(),
             SurfaceKind::Step(s) => s.type_code(),
             SurfaceKind::SrfInVolume(s) => s.type_code(),
@@ -1629,6 +1652,7 @@ impl Surface {
     pub const fn type_string(&self) -> &'static str {
         match &self.kind {
             SurfaceKind::BSpline(s) => s.type_string(),
+            SurfaceKind::ProceduralBlend(s) => s.type_string(),
             SurfaceKind::CurveBounded(s) => s.type_string(),
             SurfaceKind::Step(s) => s.type_string(),
             SurfaceKind::SrfInVolume(s) => s.type_string(),
@@ -1647,6 +1671,7 @@ impl Surface {
     pub const fn class_string(&self) -> &'static str {
         match &self.kind {
             SurfaceKind::BSpline(s) => s.class_string(),
+            SurfaceKind::ProceduralBlend(s) => s.class_string(),
             SurfaceKind::CurveBounded(s) => s.class_string(),
             SurfaceKind::Step(s) => s.class_string(),
             SurfaceKind::SrfInVolume(s) => s.class_string(),
@@ -1668,6 +1693,7 @@ impl Surface {
     pub fn is_kind_of(&self, t: i64) -> Result<bool> {
         match self.kind() {
             SurfaceKind::BSpline(s) => s.is_kind_of(t),
+            SurfaceKind::ProceduralBlend(s) => s.is_kind_of(t),
             SurfaceKind::CurveBounded(s) => Ok(s.is_kind_of(t)),
             SurfaceKind::Step(_) => Ok(StepSurface::is_kind_of(t)),
             SurfaceKind::SrfInVolume(s) => Ok(s.is_kind_of(t)),
@@ -1696,6 +1722,7 @@ impl Surface {
         self.make_revolution_nurb_for_copy(k)?;
         match self.kind() {
             SurfaceKind::BSpline(s) => Ok(Self::from(s.copy())),
+            SurfaceKind::ProceduralBlend(s) => Ok(Self::from(s.copy(k))),
             SurfaceKind::CurveBounded(_) | SurfaceKind::Step(_) => base_copy(),
             SurfaceKind::SrfInVolume(s) => Ok(Self::from(s.copy(k)?)),
             SurfaceKind::Plane(s) => Ok(Self::from(s.copy())),
@@ -1736,6 +1763,8 @@ impl Surface {
         self.make_revolution_nurb_for_copy(k)?;
         match self.kind() {
             SurfaceKind::BSpline(s) => s.copy_and_add_analytics(k),
+            // SmBSplineSurface::CopyAndAddAnalytics: not SmBSplineSurface_TYPE, so Copy
+            SurfaceKind::ProceduralBlend(s) => Ok(Self::from(s.copy(k))),
             SurfaceKind::CurveBounded(_) | SurfaceKind::Step(_) | SurfaceKind::SrfInVolume(_) => {
                 base_copy_and_add_analytics()
             }
@@ -1768,6 +1797,10 @@ impl Surface {
         // source first; a kind without one makes it on a copy
         let base = match &self.kind {
             SurfaceKind::BSpline(s) => s.create_mirror_surface(mirror_plane)?,
+            SurfaceKind::ProceduralBlend(pb) => {
+                let s = pb.net();
+                s.create_mirror_surface(mirror_plane)?
+            }
             SurfaceKind::Plane(s) => {
                 if s.base().gw_nurb().is_some() {
                     s.base().create_mirror_surface(mirror_plane)?
@@ -1855,6 +1888,9 @@ impl Surface {
         self.check_evaluation_copy_depth(0)?;
         match self.kind_with_nurb(k)? {
             SurfaceKind::BSpline(s) => s.evaluate(uv, highest_u_deriv, highest_v_deriv, flags),
+            SurfaceKind::ProceduralBlend(s) => {
+                s.evaluate(k, uv, highest_u_deriv, highest_v_deriv, flags)
+            }
             SurfaceKind::CurveBounded(s) => {
                 s.evaluate(k, uv, highest_u_deriv, highest_v_deriv, flags)
             }
@@ -1929,6 +1965,18 @@ impl Surface {
             SurfaceKind::BSpline(s) => {
                 s.evaluate_ignoring_status(uv, highest_u_deriv, highest_v_deriv, flags)
             }
+            // SmProceduralBlend::Evaluate writes its array only once it succeeds
+            SurfaceKind::ProceduralBlend(s) => {
+                if NetScope::is_active(k) {
+                    s.net()
+                        .evaluate_ignoring_status(uv, highest_u_deriv, highest_v_deriv, flags)
+                } else if flags.only_upper_half && highest_u_deriv != highest_v_deriv {
+                    Ok(None)
+                } else {
+                    s.evaluate(k, uv, highest_u_deriv, highest_v_deriv, flags)
+                        .map(Some)
+                }
+            }
             // (not overridden: the SmBSplineSurface evaluation, on the m_pNurb upstream's
             // analytic surfaces always hold)
             SurfaceKind::SurfOfRevolution(_) | SurfaceKind::Sphere(_) | SurfaceKind::Torus(_) => {
@@ -1985,6 +2033,7 @@ impl Surface {
         self.check_evaluation_copy_depth(0)?;
         match self.kind_with_nurb(k)? {
             SurfaceKind::BSpline(s) => s.evaluate_point(uv),
+            SurfaceKind::ProceduralBlend(s) => s.evaluate_point(k, uv),
             SurfaceKind::CurveBounded(s) => s.evaluate_point(k, uv),
             SurfaceKind::Step(s) => s.evaluate_point(k, uv),
             SurfaceKind::SrfInVolume(s) => s.evaluate_point(k, uv),
@@ -2012,6 +2061,10 @@ impl Surface {
     pub fn natural_uv_domain_if_built(&self) -> Extent2d {
         match self.kind() {
             SurfaceKind::BSpline(s) => s.natural_uv_domain(),
+            SurfaceKind::ProceduralBlend(pb) => {
+                let s = pb.net();
+                s.natural_uv_domain()
+            }
             SurfaceKind::CurveBounded(s) => s.natural_uv_domain(),
             SurfaceKind::Step(s) => s.natural_uv_domain(),
             SurfaceKind::SrfInVolume(s) => s.natural_uv_domain(),
@@ -2039,6 +2092,7 @@ impl Surface {
             SurfaceKind::SurfOfExtrusion(s) => s.step_uv_domain(),
             SurfaceKind::SrfInVolume(s) => s.step_uv_domain(),
             SurfaceKind::BSpline(_)
+            | SurfaceKind::ProceduralBlend(_)
             | SurfaceKind::CurveBounded(_)
             | SurfaceKind::Step(_)
             | SurfaceKind::OffsetSurface(_) => base_step_uv_domain(self),
@@ -2050,6 +2104,10 @@ impl Surface {
     pub fn degree(&self, param: SurfParamType) -> usize {
         match self.kind() {
             SurfaceKind::BSpline(s) => s.degree(param),
+            SurfaceKind::ProceduralBlend(pb) => {
+                let s = pb.net();
+                s.degree(param)
+            }
             SurfaceKind::CurveBounded(_) | SurfaceKind::Step(_) => base_degree(),
             SurfaceKind::SrfInVolume(s) => s.degree(param),
             SurfaceKind::Plane(s) => s.base_for_query().degree(param),
@@ -2166,6 +2224,10 @@ impl Surface {
     pub fn number_control_points(&self, k: &Kernel, param: SurfParamType) -> usize {
         match self.kind() {
             SurfaceKind::BSpline(s) => s.number_control_points(param),
+            SurfaceKind::ProceduralBlend(pb) => {
+                let s = pb.net();
+                s.number_control_points(param)
+            }
             SurfaceKind::CurveBounded(_)
             | SurfaceKind::Step(_)
             | SurfaceKind::OffsetSurface(_)
@@ -2190,6 +2252,10 @@ impl Surface {
     pub fn max_analytic_domain(&self, k: &Kernel) -> Result<Extent2d> {
         match self.kind() {
             SurfaceKind::BSpline(s) => s.max_analytic_domain(k),
+            SurfaceKind::ProceduralBlend(pb) => {
+                let s = pb.net();
+                s.max_analytic_domain(k)
+            }
             SurfaceKind::CurveBounded(_) | SurfaceKind::Step(_) => Ok(base_max_analytic_domain()),
             SurfaceKind::SrfInVolume(s) => s.max_analytic_domain(k),
             SurfaceKind::Plane(s) => Ok(s.max_analytic_domain()),
@@ -2207,6 +2273,10 @@ impl Surface {
     pub fn is_bilinear(&self, k: &Kernel) -> bool {
         match self.kind() {
             SurfaceKind::BSpline(s) => s.is_bilinear(),
+            SurfaceKind::ProceduralBlend(pb) => {
+                let s = pb.net();
+                s.is_bilinear()
+            }
             SurfaceKind::CurveBounded(_)
             | SurfaceKind::Step(_)
             | SurfaceKind::OffsetSurface(_)
@@ -2231,6 +2301,10 @@ impl Surface {
     pub fn is_parallel_to_vector(&self, k: &Kernel, vector: Vec3) -> Result<bool> {
         let bspline = match self.kind() {
             SurfaceKind::BSpline(s) => s,
+            SurfaceKind::ProceduralBlend(pb) => {
+                let s = pb.net();
+                s
+            }
             SurfaceKind::CurveBounded(_)
             | SurfaceKind::Step(_)
             | SurfaceKind::OffsetSurface(_)
@@ -2262,6 +2336,10 @@ impl Surface {
     ) -> Result<(Vec<f64>, Vec<usize>)> {
         match self.kind() {
             SurfaceKind::BSpline(s) => s.knots(param, ivl),
+            SurfaceKind::ProceduralBlend(pb) => {
+                let s = pb.net();
+                s.knots(param, ivl)
+            }
             SurfaceKind::CurveBounded(_) => base_knots(),
             SurfaceKind::Step(s) => s.knots(param, ivl),
             SurfaceKind::SrfInVolume(s) => s.knots(param, ivl),
@@ -2436,6 +2514,12 @@ impl Surface {
         match self.kind_with_nurb(k)? {
             SurfaceKind::BSpline(s) => {
                 s.step_inversion_on(k, self, anal_domain, point_on_surf, tol_3d, uv_guess)
+            }
+            SurfaceKind::ProceduralBlend(pb) => {
+                let s = pb.net();
+                {
+                    s.step_inversion_on(k, self, anal_domain, point_on_surf, tol_3d, uv_guess)
+                }
             }
             SurfaceKind::CurveBounded(_) | SurfaceKind::Step(_) => base_step_inversion(),
             SurfaceKind::OffsetSurface(s) => {
@@ -2663,6 +2747,7 @@ impl Surface {
                 )?
                 .without_objects()),
             SurfaceKind::BSpline(_)
+            | SurfaceKind::ProceduralBlend(_)
             | SurfaceKind::CurveBounded(_)
             | SurfaceKind::Step(_)
             | SurfaceKind::OffsetSurface(_)
@@ -2737,6 +2822,7 @@ impl Surface {
                 )
                 .map(|x| (x.needs_more_intersections, SurfaceIntersection::from(x))),
             SurfaceKind::BSpline(_)
+            | SurfaceKind::ProceduralBlend(_)
             | SurfaceKind::CurveBounded(_)
             | SurfaceKind::Step(_)
             | SurfaceKind::OffsetSurface(_)
@@ -2761,6 +2847,10 @@ impl Surface {
         self.boundary_memo = BoundaryMemo::new();
         match &mut self.kind {
             SurfaceKind::BSpline(s) => s.adjust_step_uv_domain(new_step_uv_domain),
+            SurfaceKind::ProceduralBlend(pb) => {
+                let s = pb.net_mut();
+                s.adjust_step_uv_domain(new_step_uv_domain)
+            }
             SurfaceKind::CurveBounded(_)
             | SurfaceKind::Step(_)
             | SurfaceKind::OffsetSurface(_)
@@ -2786,6 +2876,7 @@ impl Surface {
         self.boundary_memo = BoundaryMemo::new();
         match &mut self.kind {
             SurfaceKind::BSpline(s) => s.reverse(param),
+            SurfaceKind::ProceduralBlend(s) => s.reverse(param),
             SurfaceKind::CurveBounded(_) | SurfaceKind::Step(_) => base_edit(),
             SurfaceKind::SrfInVolume(s) => s.reverse(k, param),
             SurfaceKind::Plane(s) => s.reverse(param),
@@ -2850,6 +2941,7 @@ impl Surface {
         self.boundary_memo = BoundaryMemo::new();
         match &mut self.kind {
             SurfaceKind::BSpline(s) => s.reparameterize(new_domain),
+            SurfaceKind::ProceduralBlend(s) => s.reparameterize(new_domain),
             SurfaceKind::CurveBounded(_)
             | SurfaceKind::Step(_)
             | SurfaceKind::OffsetSurface(_)
@@ -2908,6 +3000,16 @@ impl Surface {
         let mut own = |op| edit_notify(cache_slot, slot, type_code, notify, op);
         match kind {
             SurfaceKind::BSpline(s) => s.swap_uv_notifying(&mut own),
+            // SmBSplineSurface::SwapUV toggles SmProceduralBlend::ToggleSwapUVBit, and
+            // back when SetCanonical fails
+            SurfaceKind::ProceduralBlend(s) => {
+                s.toggle_swap_uv_bit();
+                let status = s.net_mut().swap_uv_notifying(&mut own);
+                if status.is_err() {
+                    s.toggle_swap_uv_bit();
+                }
+                status
+            }
             SurfaceKind::CurveBounded(_) | SurfaceKind::Step(_) => base_edit(),
             SurfaceKind::SrfInVolume(s) => {
                 // check input - Can not swap UV on an unowned surface
@@ -3031,6 +3133,7 @@ impl Surface {
             }
             SurfaceKind::SurfOfExtrusion(s) => s.transform_at_depth(k, rotate_n_move, scale, depth),
             SurfaceKind::BSpline(s) => s.transform(rotate_n_move, scale),
+            SurfaceKind::ProceduralBlend(s) => s.transform_at_depth(k, rotate_n_move, scale, depth),
             SurfaceKind::CurveBounded(_) | SurfaceKind::Step(_) => base_edit(),
             SurfaceKind::OffsetSurface(s) => s.transform_at_depth(k, rotate_n_move, scale, depth),
             SurfaceKind::SrfInVolume(s) => s.transform_at_depth(rotate_n_move, scale, depth),
@@ -3065,6 +3168,10 @@ impl Surface {
         self.boundary_memo = BoundaryMemo::new();
         match &mut self.kind {
             SurfaceKind::BSpline(s) => s.trim_with_domain_with(trim_domain, options),
+            SurfaceKind::ProceduralBlend(pb) => {
+                let s = pb.net_mut();
+                s.trim_with_domain_with(trim_domain, options)
+            }
             SurfaceKind::CurveBounded(_) | SurfaceKind::Step(_) => base_edit(),
             SurfaceKind::OffsetSurface(s) => s.trim_with_domain(k, trim_domain),
             SurfaceKind::SrfInVolume(s) => s.trim_with_domain(k, trim_domain),
@@ -3096,6 +3203,10 @@ impl Surface {
         match self.kind() {
             SurfaceKind::BSpline(s) => {
                 let (l, r) = s.split_at(param, surf_param)?;
+                Ok((Self::from(l), Self::from(r)))
+            }
+            SurfaceKind::ProceduralBlend(s) => {
+                let (l, r) = s.split_at(k, param, surf_param)?;
                 Ok((Self::from(l), Self::from(r)))
             }
             SurfaceKind::CurveBounded(_) | SurfaceKind::Step(_) => base_split_at(),
@@ -3146,6 +3257,14 @@ impl Surface {
                 dist,
                 extension_continuity,
             )?)),
+            SurfaceKind::ProceduralBlend(pb) => {
+                let s = pb.net();
+                Ok(Self::from(s.create_extended_surface(
+                    k,
+                    dist,
+                    extension_continuity,
+                )?))
+            }
             SurfaceKind::CurveBounded(_) | SurfaceKind::Step(_) | SurfaceKind::SrfInVolume(_) => {
                 base_create_extended_surface()
             }
@@ -3224,6 +3343,15 @@ impl Surface {
                 dist,
                 extension_continuity,
             )?)),
+            SurfaceKind::ProceduralBlend(pb) => {
+                let s = pb.net();
+                Ok(Self::from(s.create_extended_surface_dir(
+                    k,
+                    ext_direction,
+                    dist,
+                    extension_continuity,
+                )?))
+            }
             SurfaceKind::CurveBounded(_) | SurfaceKind::Step(_) | SurfaceKind::SrfInVolume(_) => {
                 base_create_extended_surface()
             }
@@ -3735,6 +3863,7 @@ impl Surface {
                 Ok(())
             }
             SurfaceKind::BSpline(_)
+            | SurfaceKind::ProceduralBlend(_)
             | SurfaceKind::CurveBounded(_)
             | SurfaceKind::Step(_)
             | SurfaceKind::OffsetSurface(_)

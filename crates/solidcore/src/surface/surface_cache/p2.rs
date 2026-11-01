@@ -559,6 +559,7 @@ impl<O: Copy + PartialEq> SurfaceCache<O> {
             | SurfaceKind::Sphere(_)
             | SurfaceKind::Torus(_)
             | SurfaceKind::BSpline(_)
+            | SurfaceKind::ProceduralBlend(_)
             | SurfaceKind::Plane(_)
             | SurfaceKind::SurfOfRevolution(_)
             | SurfaceKind::SurfOfExtrusion(_) => None,
@@ -993,6 +994,10 @@ impl<O: Copy + PartialEq> SurfaceCache<O> {
                 // for the node's bounding box
                 let patch = match surface.kind_with_nurb(k)? {
                     SurfaceKind::BSpline(b) => b.copy_sub_patch(&node_uv),
+                    SurfaceKind::ProceduralBlend(pb) => {
+                        let b = pb.net();
+                        b.copy_sub_patch(&node_uv)
+                    }
                     SurfaceKind::Plane(p) => p.base().copy_sub_patch(&node_uv),
                     SurfaceKind::Cone(s) => s.rev().base().copy_sub_patch(&node_uv),
                     SurfaceKind::Sphere(s) => s.base().base().copy_sub_patch(&node_uv),

@@ -976,6 +976,10 @@ impl<O: Copy + PartialEq> SurfaceCache<O> {
         // when it has none, as GetOrCreateGwNurbPointer)
         let bspline: Option<std::borrow::Cow<'_, BSplineSurface>> = match self.surface().kind() {
             SurfaceKind::BSpline(b) => Some(std::borrow::Cow::Borrowed(b)),
+            SurfaceKind::ProceduralBlend(pb) => {
+                let b = pb.net();
+                Some(std::borrow::Cow::Borrowed(b))
+            }
             SurfaceKind::Plane(p) => Some(p.base_with_nurb()?),
             // GetOrCreateGwNurbPointer: SmSurfOfRevolution::MakeNurb when it has none,
             // kept on the surface (`Surface::kind_with_nurb`, status ignored)

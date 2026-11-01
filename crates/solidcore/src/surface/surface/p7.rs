@@ -840,6 +840,7 @@ impl Surface {
             SurfaceKind::Cone(_)
             | SurfaceKind::Torus(_)
             | SurfaceKind::BSpline(_)
+            | SurfaceKind::ProceduralBlend(_)
             | SurfaceKind::SurfOfRevolution(_)
             | SurfaceKind::SurfOfExtrusion(_)
             | SurfaceKind::Step(_) => base_evaluate_normal(k, self, uv, u_side, v_side),
@@ -879,6 +880,7 @@ impl Surface {
             SurfaceKind::Cone(_)
             | SurfaceKind::Torus(_)
             | SurfaceKind::BSpline(_)
+            | SurfaceKind::ProceduralBlend(_)
             | SurfaceKind::CurveBounded(_)
             | SurfaceKind::SurfOfRevolution(_)
             | SurfaceKind::SurfOfExtrusion(_)
@@ -916,6 +918,12 @@ impl Surface {
             }
             SurfaceKind::BSpline(s) => {
                 Ok(planar_of(k, s, &self.natural_uv_domain_with_nurb(k)?)?.is_planar(tol_3d))
+            }
+            SurfaceKind::ProceduralBlend(pb) => {
+                let s = pb.net();
+                {
+                    Ok(planar_of(k, s, &self.natural_uv_domain_with_nurb(k)?)?.is_planar(tol_3d))
+                }
             }
             // SmSurfOfRevolution (and SmCone, SmSphere, SmTorus) inherit
             // SmBSplineSurface::CalculateBoundingBox

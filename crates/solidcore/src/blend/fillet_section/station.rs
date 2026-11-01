@@ -406,6 +406,10 @@ pub fn nurbs_partials<T: GnScalar>(
 pub fn as_b_spline<'a>(k: &Kernel, s: &'a Surface) -> Result<Option<Cow<'a, BSplineSurface>>> {
     Ok(match s.kind_with_nurb(k)? {
         SurfaceKind::BSpline(b) => Some(Cow::Borrowed(b)),
+        SurfaceKind::ProceduralBlend(pb) => {
+            let b = pb.net();
+            Some(Cow::Borrowed(b))
+        }
         SurfaceKind::Plane(p) => Some(p.base_with_nurb()?),
         SurfaceKind::Cone(c) => Some(Cow::Borrowed(c.rev().base())),
         SurfaceKind::SurfOfRevolution(r) => Some(Cow::Borrowed(r.base())),
