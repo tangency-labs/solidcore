@@ -20,6 +20,7 @@
 //! | [`Caches`]                             | `SmCacheMgr`, `SmCacheMgrCrv/Srf/TSrf/Brep` |
 //! | [`Kernel::fillet_point_step`], [`Kernel::latch_fillet_point_step`] | the function-static `sdStaticStep` of `SmFilletSolver::ComputePointValues` |
 //! | [`Kernel::upstream_ub_passed`], [`Kernel::note_upstream_ub`] | (none: upstream undefined behaviour the port went past) |
+//! | [`CancelToken`], [`Kernel::cancel`], [`Kernel::set_cancel_token`], [`Kernel::check_cancelled`] | (none: cooperative cancellation for worker-thread jobs) |
 //!
 //! Upstream seeds `rand()` from the clock in a few places; the port replaces that with
 //! [`Rng`], seeded from [`KernelOptions::seed`], so runs are reproducible. Results that
@@ -34,7 +35,10 @@
 //! already holds.
 
 use core::cell::Cell;
+use core::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
 
+use crate::error::SolidError;
 use crate::geom::context::Context;
 
 /// Geometric tolerances in model units (upstream defaults from `SmMath.h`).
@@ -1227,7 +1231,7 @@ pub struct UpstreamFixes {
     pub point_on_start_point_squared_tolerance: bool,
     /// `SmSurfaceIntersector::StepBackFromSingularity` leaves each point its own curve tangent: the tangent at a surface pole comes from the pole's limit normal and is exact, and copying the previous point's over it bent the Hermite span into the pole (a line projected through a sphere's pole, r 20, came out 2.02e-4 off the sphere). Only the surface derivatives come from the stepped-back point (WR-550; the fork's tangency-labs/smlib@8d95600).
     pub ssi_pole_point_keeps_its_tangent: bool,
-    /// `DoIntersection` traces the tangential intersection curves the marcher cannot follow (the surfaces touch along them, `n1 x n2 = 0`), and the crossing branches through the contact points where crossing curves meet, which it reports as touching points (WR-75; tangency-labs/smlib ef4ab25, e9fde8f, d8c61db, 1693c9d). `FindInteriorCurves` keeps the node pairs it skips for parallel normals as seeds.
+    /// `DoIntersection` traces the tangential intersection curves the marcher cannot follow (the surfaces touch along them, `n1 x n2 = 0`), and the crossing branches through the contact points where crossing curves meet, which it reports as touching points (WR-75; tangency-labs/smlib ef4ab25, e9fde8f, d8c61db, 1693c9d). `FindInteriorCurves` keeps the node pairs it skips for parallel normals as seeds. A crossing branch the marcher's curve covers except inside the band where the surfaces are within tolerance of each other is dropped, not traced on along a tangency past that curve's end (#2089).
     pub ssi_tangent_curve_tracer: bool,
     /// `SmSurfaceIntersector::DoIntersection` splits each traced crossing (or near-tangent) B-spline curve, with its two UV curves, where it passes through a singular point of the intersection (the normals parallel while two branches cross): `|n1 x n2|` is sampled 8 times per knot span, each sharp minimum refined by golden section, and the curve split where the sine is below 1e-6 and rises above 1e-3 again on both sides, more than 10 approximation tolerances from its ends; the tails are appended. Upstream's marcher steps straight through such a node, so the curves cross there without ending; two cylinders touching inside at one point then union to a body that loses one of them, fails 1001 in `MakeFaceuse`, or fails the check's seam tests (WR-77, #393, #2110; the fork's tangency-labs/smlib@3c9d1d3, `sm_SplitCurvesAtSingularPoints`).
     pub ssi_split_curves_at_singular_points: bool,
@@ -1346,6 +1350,8 @@ pub struct UpstreamFixes {
     /// `SmFilletVertex::CalcRailIntExtendedEdgeuse`, outside the 3x2 mixed-convexity corner, takes a rail end of type `SM_FV_RAIL_X_EXTENDED_EDGEUSE` classed on a side edge use as the solver's rail/edge crossing (`CalcRailIntEdgeuse`, which `RailEdgeuseIntersect` finds on the edge or its continuation) when that point lies on the end face's extended surface within the solver's approximation tolerance, passes it to `sm_SrfSrfIntersection` as the second known point, and trims the end curve between the two rail ends (failing with `SM_FIL_SURF_INT_FAILURE` when either is more than ten times that tolerance off it); otherwise the vertex is reset to unprocessed and its end is, as upstream, where the fillet surface's intersection with the end face, marched from the other rail's end, leaves the fillet surface. Where the side face runs tangentially into the end face along the side edge (the fork's tangent peg: a bar's front face into the cylinder of its round end), that march ran on past the rail (a chamfer's plane cuts the cylinder in an ellipse touching the rail) and the corner failed with status 1001, Corner Edge Computation Failure (WR-681, #2243; the fork's tangency-labs/smlib@a87c502, smlib#76). The fork removed this again in tangency-labs/smlib@0cc48bd, once its tangent ends became rail/edge crossings of the trace (WR-600's `fillet_nx1_tangent_side_edge_same_convexity` here), so at the fork revision SolidCraft pins (cd47efd) an extended rail end is the march's end again.
     pub fillet_extended_rail_end_at_side_edge_crossing: bool,
     /// A blend-curve fillet (`SM_FSG_BLEND_CURVE`) is built by the G^n section generator ([`crate::blend::fillet_section::section::GnSectionFsg`], the fork's `SmGnSectionFSG`) in place of `SmBlendCurveCrossSectionFSG`: the section of order n = continuity (2 to 4) and thumbweight w (in (-1, 1), or `GN_THUMBWEIGHT_EQUAL_AREA` = -2, the default: the w at which the section takes off the area the ball's circle does, resolved once per generator from the wedge at the first blend's middle station and shared by every solver of that generator; the fork's 6148773 = d01d7b0's 1947a45), `S(t) = f T1(1 - p1) + (1 - f) T2(p2)` over the faces' order-n jets along the rails, a rational Bezier section times the jets' cubic Hermite curves along the rails, certified span by span within a tenth of the fillet's tolerance; its contact with each face is of order n + 1 (n + 2 between planes). `SetFilletParameters` refuses another order or thumbweight (`SM_ERR_INVALID_INPUT`), the corners build theirs with the same order and thumbweight (and refuse to convert two that differ), the tangent end's rib takes the order of contact found at its rail (`ContactOrderAt`), and a round's ease before a setback blends into the order-2 section at thumbweight 0, not the equal area default (the fork's 22d258a = d01d7b0's adb9854). With it the `blend_curve_at_thirds` executive option is not used: the fork removed `SetBlendCurveAtThirds` when this generator replaced the blend curve, the ease's at-thirds G2 target among it; `fillet_blend_curve_revolved_on_arc` does not revolve it (the fork's `AdjustCrossSection` change, which refuses an order above 3, has no port: the function is not ported) (WR-685, #2250; the fork's tangency-labs/smlib@11ea2d9 = d01d7b0's 0bd3f4d, smlib#78).
+    ///
+    /// With it a variable round is the union of its balls (the fork's d2a6125, f2ec002, e9560e3, 2714d37 and 6007a3d, rebased from 6b346f6, 5db8feb, fb5c060, d622107 and 8bedf89): a variable-radius or constant-distance solver's circle section is the circle along which the balls' envelope touches the ball, square to the centre line and moved along it by `-r r'/|c'|`, not the great circle through the rails; a round whose balls fold over one another is refused (`FilletErrorType::NoRoom`, `NoRoomReason::BallsFold`, naming the radius there); a cliff overflow's law check (`sm_HoldsItsLaw`) tests the touch circle; and `SmApiVariableRadiusFillet` takes the G^n section's default thumbweight (WR-685 addendum 2026-11-01).
     pub fillet_gn_section_generator: bool,
 }
 }
@@ -1365,6 +1371,63 @@ impl Default for KernelOptions {
             tolerances: Tolerances::default(),
             seed: Rng::DEFAULT_SEED,
         }
+    }
+}
+
+#[cold]
+#[inline(never)]
+const fn cancelled_error(operation: &'static str) -> SolidError {
+    SolidError::cancelled(operation)
+}
+
+/// Shared cooperative cancellation flag for cancelling a [`Kernel`] operation from
+/// another thread.
+///
+/// Cloning a `CancelToken` shares the underlying `AtomicBool`: calling [`Self::cancel`]
+/// on any clone signals every [`Kernel`] configured with [`Kernel::set_cancel_token`], so
+/// one token can also cancel a group of jobs.
+#[derive(Clone, Debug, Default)]
+pub struct CancelToken {
+    flag: Arc<AtomicBool>,
+}
+
+impl CancelToken {
+    /// Creates an uncancelled token (`false`).
+    #[must_use]
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Signals cancellation (`true`) to every clone of this token.
+    pub fn cancel(&self) {
+        self.flag.store(true, Ordering::Relaxed);
+    }
+
+    /// Clears the cancellation signal (`false`) so the token can be reused.
+    pub fn reset(&self) {
+        self.flag.store(false, Ordering::Relaxed);
+    }
+
+    /// Whether [`Self::cancel`] has been called since construction or the last
+    /// [`Self::reset`].
+    #[must_use]
+    #[inline]
+    pub fn is_cancelled(&self) -> bool {
+        self.flag.load(Ordering::Relaxed)
+    }
+
+    /// Returns `Err(SolidError::Cancelled { operation })` when [`Self::is_cancelled`] is
+    /// `true`, else `Ok(())`.
+    ///
+    /// # Errors
+    ///
+    /// [`SolidError::Cancelled`] when [`Self::cancel`] has been signalled.
+    #[inline]
+    pub fn check(&self, operation: &'static str) -> crate::Result<()> {
+        if self.is_cancelled() {
+            return Err(cancelled_error(operation));
+        }
+        Ok(())
     }
 }
 
@@ -1406,6 +1469,14 @@ pub struct Kernel {
     pub memoize_curve_caches: bool,
     /// Opt-in fixes of upstream defects (all off: upstream behaviour).
     pub fixes: UpstreamFixes,
+    /// Optional cooperative cancellation token polled at outer solver, trace, cache,
+    /// stitch, heal, integration, fillet, and boolean loops (`None` by default).
+    ///
+    /// When cancellation fires, operations unwind through normal `Result` paths with
+    /// [`SolidError::Cancelled`]; never a partial or altered `Ok` result. Values borrowed
+    /// mutably by the cancelled call (such as mutable `Brep` operands or `Kernel` caches
+    /// and RNG state) may have been partly modified, as on any other error return.
+    pub cancel: Option<CancelToken>,
     /// Not upstream: the default-record map of the last `kernel_named_edit`
     /// (`topology::brep::p3`), kept only to reuse its allocation; every edit resets it
     /// to the records of a fresh seeding, so it never carries state between edits.
@@ -1432,8 +1503,53 @@ impl Kernel {
             upstream_ub_passed: Vec::new(),
             memoize_curve_caches: !cfg!(feature = "curve-memo-off"),
             fixes: UpstreamFixes::default(),
+            cancel: None,
             notify_records: crate::topology::topology::NotifyRecords::new(),
         }
+    }
+
+    /// Installs `token` as this kernel's cooperative cancellation token.
+    ///
+    /// Inputs borrowed mutably by an operation when `token.cancel()` is observed may be
+    /// left partially modified, as on any other error return.
+    pub fn set_cancel_token(&mut self, token: CancelToken) {
+        self.cancel = Some(token);
+    }
+
+    /// Removes any configured cooperative cancellation token (`None`).
+    pub fn clear_cancel_token(&mut self) {
+        self.cancel = None;
+    }
+
+    /// The configured [`CancelToken`], if any.
+    #[must_use]
+    #[inline]
+    pub const fn cancel_token(&self) -> Option<&CancelToken> {
+        self.cancel.as_ref()
+    }
+
+    /// Polls [`Self::cancel`] (`false` when unset).
+    #[must_use]
+    #[inline]
+    pub fn is_cancelled(&self) -> bool {
+        match &self.cancel {
+            Some(token) => token.is_cancelled(),
+            None => false,
+        }
+    }
+
+    /// Polls [`Self::cancel`] and returns `Err(SolidError::Cancelled { operation })` when
+    /// cancellation has been signalled.
+    ///
+    /// # Errors
+    ///
+    /// [`SolidError::Cancelled`] when [`Self::cancel`] is `Some` and cancelled.
+    #[inline]
+    pub fn check_cancelled(&self, operation: &'static str) -> crate::Result<()> {
+        if let Some(token) = &self.cancel {
+            return token.check(operation);
+        }
+        Ok(())
     }
 
     /// Records that an operation went past upstream undefined behaviour `id` (see
@@ -1472,8 +1588,42 @@ mod tests {
 
     #[test]
     fn kernel_is_send() {
-        fn assert_send<T: Send>() {}
+        fn assert_send<T: Send + core::fmt::Debug>() {}
+        fn assert_send_sync<T: Send + Sync + Clone + core::fmt::Debug + Default>() {}
         assert_send::<Kernel>();
+        assert_send_sync::<CancelToken>();
+    }
+
+    #[test]
+    fn cancel_token_round_trip() {
+        let mut k = Kernel::default();
+        assert!(k.cancel.is_none());
+        assert!(k.cancel_token().is_none());
+        assert!(!k.is_cancelled());
+        assert_eq!(k.check_cancelled("kernel::test"), Ok(()));
+
+        let token = CancelToken::new();
+        k.set_cancel_token(token.clone());
+        assert!(k.cancel_token().is_some());
+        assert!(!k.is_cancelled());
+        assert!(format!("{token:?}").contains("false"));
+        assert_eq!(k.check_cancelled("kernel::test"), Ok(()));
+
+        token.cancel();
+        assert!(k.is_cancelled());
+        assert!(format!("{token:?}").contains("true"));
+        assert_eq!(
+            k.check_cancelled("kernel::test"),
+            Err(SolidError::cancelled("kernel::test"))
+        );
+
+        token.reset();
+        assert!(!k.is_cancelled());
+        assert_eq!(k.check_cancelled("kernel::test"), Ok(()));
+
+        k.clear_cancel_token();
+        assert!(k.cancel.is_none());
+        assert_eq!(k.check_cancelled("kernel::test"), Ok(()));
     }
 
     #[test]

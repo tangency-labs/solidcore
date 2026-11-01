@@ -940,7 +940,7 @@ impl FilletCorner {
                 pass_on,
             )? {
                 Ok(ev) => Ok(ev.first_deriv.unwrap_or(Vec3::UNDEF)),
-                Err(e) if e.is_unported() => Err(e),
+                Err(e) if e.is_unported_or_cancelled() => Err(e),
                 Err(_) => Ok(Vec3::UNDEF),
             }
         };
@@ -1109,7 +1109,7 @@ impl FilletCorner {
         // If failure, the whole fillet could still succeed, so don't SER.
         let new_fg = match split {
             Ok(g) => g,
-            Err(e) if e.is_unported() => return Err(e),
+            Err(e) if e.is_unported_or_cancelled() => return Err(e),
             Err(_) => return Ok(()),
         };
 
@@ -1340,6 +1340,7 @@ impl FilletCorner {
             Ok(made) => Ok(made),
             Err(
                 e @ (SolidError::Unported { .. }
+                | SolidError::Cancelled { .. }
                 | SolidError::InvalidInput { .. }
                 | SolidError::PortInvariant { .. }),
             ) => Err(e),
@@ -2101,7 +2102,7 @@ impl FilletCorner {
             Some(&center_curve),
         ) {
             Ok(()) => {}
-            Err(e) if e.is_unported() => return Err(e),
+            Err(e) if e.is_unported_or_cancelled() => return Err(e),
             Err(_) => return Err(sm_err()), // Unable to convert
         }
 
@@ -2299,6 +2300,7 @@ fn soft<T>(r: Result<T>) -> Result<Option<T>> {
         Ok(v) => Ok(Some(v)),
         Err(
             e @ (SolidError::Unported { .. }
+            | SolidError::Cancelled { .. }
             | SolidError::InvalidInput { .. }
             | SolidError::PortInvariant { .. }),
         ) => Err(e),
@@ -2372,7 +2374,7 @@ fn rail_on_surface(
         });
         match gap {
             Ok(drop) if drop.success && drop.gap <= tol => {}
-            Err(e) if e.is_unported() => return Err(e),
+            Err(e) if e.is_unported_or_cancelled() => return Err(e),
             _ => return Ok(false),
         }
     }
