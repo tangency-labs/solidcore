@@ -816,12 +816,15 @@ pub fn find_ed_on_degen_face<O: Copy + PartialEq>(
         let _ = face;
         // UNPORTED(topology.face_p4): SmFace::GetEdges, then SmBrep::DeleteFace(pFace,
         // FALSE, TRUE, &sTopos)
+        // DISPATCH GAP, kept as a documented limit: both callees are ported
+        // (`topology::face::p4::edges`, `topology::brep::p3::delete_face`), but
+        // `ProtoTopology` is a read-only view of the B-rep with no hook to delete a face.
         // Proof (unreachable): the only caller, `CanCombineEdgeDefinitions`, gets here
         // with two different edges of one B-rep, which `sm_AreConnected` (no edge-edge
         // case, upstream and `are_connected`) reports unconnected, so it has already
         // returned 0. Upstream's `DeleteFace` without `bDeleteEdgesVertices` also leaves
         // `sTopos` empty, so even a reached call would answer 0 (its only effect being
-        // the face deletion).
+        // the face deletion), and wiring it would mean a mutating hook used by nothing.
         return Err(SolidError::unported("SmFace::GetEdges", "topology.face_p4"));
     }
 
