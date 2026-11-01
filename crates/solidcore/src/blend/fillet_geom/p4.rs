@@ -20,6 +20,10 @@
 //! | [`FilletBrep::calc_blending_geom`]                | `SmFilletGeom::CalcBlendingGeom`             |
 //!
 //! Deviations:
+//! - **Kept trim curves (opt-in, WR-700).** With
+//!   `Kernel::fixes.face_trim_curves_kept_where_exact`, `MakeFaceBrep` passes
+//!   `pbOptCrvOnSurf = TRUE` to `MakeFaceWithCurves`, so the face's edgeuses keep the
+//!   fillet's own trim curves (the fork's tangency-labs/smlib@32fd80a).
 //! - **Object model.** As in `blend.fillet_geom_p1`, a fillet vertex, edge or geometry
 //!   is an id of the [`FilletBrep`] (`self`). `GetFilletSolver()` is an opaque
 //!   [`FilletSolverId`] resolved in the caller's `solvers` table (index `id.0`); an id
@@ -2186,6 +2190,12 @@ impl FilletBrep {
             }
         }
 
+        // Not upstream (WR-700, the fork's tangency-labs/smlib@32fd80a): the face's
+        // edgeuses keep these trim curves, the fillet's own (each its edge's curve on this
+        // surface, made with it). Without it MakeFaceWithCurves drops them and each is
+        // made again later by projecting its edge's curve onto the surface.
+        let keep_uv_curves = k.fixes.face_trim_curves_kept_where_exact.then_some(true);
+
         // Make Face: transfer the original surface only at the native call boundary.
         let region = brep.infinite_region();
         if matches!(surface_backend, FaceSurfaceBackend::IndexedValue) {
@@ -2209,7 +2219,7 @@ impl FilletBrep {
                     surface,
                     &uv_domain,
                     OrientType::Same,
-                    None,
+                    keep_uv_curves,
                     &|face| key_of(EntityRef::Face(face)),
                     env,
                 )?;
@@ -2257,7 +2267,7 @@ impl FilletBrep {
                 &mut transfer,
                 &uv_domain,
                 OrientType::Same,
-                None,
+                keep_uv_curves,
                 &face_ref,
                 env,
                 &mut NewFace::default(),
