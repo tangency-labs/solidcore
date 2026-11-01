@@ -2575,4 +2575,50 @@ mod tests {
         c.set_out_of_bounds_enabled(false);
         assert_eq!(c.base().evaluate_point(-0.1).unwrap(), clamped);
     }
+    #[test]
+    fn tiny_ellipse_piece_step_inversion_round_trip() {
+        use crate::geom::assert_array::ObjectKey;
+        use crate::nurbs::b_spline_curve_n_lib::TrimMode;
+        // Test 2 of SmEllipse (issue #1518): an ellipse arc trimmed to 7e-5 degrees
+        // (8.6e-5 mm) must invert accurately instead of collapsing all points to the start.
+        let k = kernel();
+        let a: f64 = 70.923209845254902;
+        let b: f64 = 16.0;
+        let c = b / a;
+        let sn = f64::sqrt(1.0 - c * c);
+        let mut e = Ellipse::new(
+            &k,
+            Point3::new(0.0, 0.0, 0.0),
+            Vec3::new(c, 0.0, sn),
+            Vec3::new(0.0, 1.0, 0.0),
+            Extent1d::from_min_max(-90.001360025099643, -69.456240994119256),
+            a,
+            b,
+            &EllipseOptions::default(),
+        )
+        .expect("ellipse");
+        assert!(e
+            .assert_valid(&k, None, false, ObjectKey(1), ObjectKey(2))
+            .unwrap());
+
+        let mut piece = Extent1d::from_min_max(0.0, 3.3871206151482126e-06);
+        e.trim(&k, &mut piece, TrimMode::default()).expect("trim");
+        assert!(e
+            .assert_valid(&k, None, false, ObjectKey(1), ObjectKey(2))
+            .unwrap());
+
+        let nurb = e.base().natural_interval();
+        let mut worst: f64 = 0.0;
+        for i in 0..=8 {
+            let t = nurb.min() + (nurb.max() - nurb.min()) * f64::from(i) / 8.0;
+            let p = e.base().evaluate_point(t).expect("evaluate point");
+            let (deg, _) = e.step_inversion(&k, p, false, 0.0);
+            let q = e.evaluate_step_point(deg).expect("eval step point");
+            let dist = p.distance(q);
+            if dist > worst {
+                worst = dist;
+            }
+        }
+        assert!(worst < 1e-9, "worst round trip error {worst} exceeded 1e-9");
+    }
 }

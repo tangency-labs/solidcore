@@ -80,17 +80,8 @@ fn volume(k: &Kernel, b: &mut Brep) -> f64 {
     brep_volume(k, b, 1e-6, &attrs).unwrap()
 }
 
-/// #1518's report, the one check failure the joined body still has: the ellipse piece
-/// 8.6e-5 long (the top tube's wall cut by the seat's end plane) whose NURB lies 2.1e-5
-/// off its ellipse (`SmExtent1d::ContainsPeriodicValue`, a separate defect the fork's
-/// commit also leaves). The numbers are deterministic.
-const ELLIPSE_1518: &str = "SmEllipse::Test #2 Bad Nurb to STEP Approx: \
-Dist(NurbPt, EvalSTEP(STEPInversion(NurbPt)) greater than tol \
-(offset=2.1419823e-05, tolerance=8.2099963e-08) [owner SmEllipse]";
-
 /// The union with the fix set to `fixed`: the result's volume when it is one manifold
-/// solid whose check reports exactly #1518's ellipse ([`ELLIPSE_1518`]), else what went
-/// wrong.
+/// solid whose check reports no errors (#1518 fixed), else what went wrong.
 fn join(fixed: bool) -> Result<f64, String> {
     let mut k = Kernel::default();
     k.fixes.proto_edge_splits_at_captured_vertices = fixed;
@@ -103,8 +94,8 @@ fn join(fixed: bool) -> Result<f64, String> {
         .unwrap()
         .lines();
     println!("check (fix {fixed}): {lines:?}");
-    // exactly #1518's line, once; any other report fails
-    if lines != [ELLIPSE_1518] {
+    // With #1518 fixed, the joined body is completely sound with no check errors
+    if !lines.is_empty() {
         return Err(format!("check: {lines:?}"));
     }
     Ok(volume(&k, &mut r))

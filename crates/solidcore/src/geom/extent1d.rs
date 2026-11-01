@@ -832,12 +832,12 @@ impl Extent1d {
 
         contained = map > self.min - zero && map < self.max + zero;
 
-        if !contained
-            && are_same_to_tol(map, ivl.max(), zero)
-            && are_same_to_tol(map - period, self.min, zero)
-        {
-            map = self.min;
-            contained = true;
+        if !contained && are_same_to_tol(map, ivl.max(), zero) {
+            let down = map - period;
+            if down > self.min - zero && down < self.max + zero {
+                map = down;
+                contained = true;
+            }
         }
 
         let periodic_value =
@@ -1151,5 +1151,19 @@ mod tests {
         assert_eq!(counts, vec![6, 0, 0]);
         assert!(nd.clamp_vector(&[1.0], None, &mut out, None).is_err());
         assert_eq!(nd.get(5), None);
+    }
+    #[test]
+    fn periodic_value_near_period_top_moves_down_instead_of_snapping_to_start() {
+        // Issue #1518: an interval shorter than the default tolerance (1e-4 degrees).
+        // A value just above period top must move down by the period without snapping to min.
+        let ivl = Extent1d::from_min_max(0.0, 7e-5);
+        let c = ivl.contains_periodic_value(360.0 + 3e-5, 360.0, -1.0);
+        assert!(c.contained);
+        assert!((c.periodic_value - 3e-5).abs() < 1e-12);
+
+        // A value within tolerance of period top that falls into the interval when shifted down:
+        let c2 = ivl.contains_periodic_value(360.0 - 2e-5, 360.0, -1.0);
+        assert!(c2.contained);
+        assert!((c2.periodic_value - (-2e-5)).abs() < 1e-12);
     }
 }
