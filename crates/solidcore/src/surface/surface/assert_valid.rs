@@ -2248,7 +2248,7 @@ fn sphere_assert_valid(k: &Kernel, s: &Surface, r: &mut Reporter<'_>) -> Result<
 
     /*  4 */
     // Analytic V Direction Domain places v=-90 pole within domain interior
-    let c0 = ivl_v.contains_periodic_value(-90.0, 360.0, EFF_ZERO_DEG);
+    let c0 = ivl_v.contains_periodic_value_with(-90.0, 360.0, EFF_ZERO_DEG, &k.fixes);
     rtn &= r.report(
         CLASS,
         4,
@@ -2262,7 +2262,7 @@ fn sphere_assert_valid(k: &Kernel, s: &Surface, r: &mut Reporter<'_>) -> Result<
 
     /*  5 */
     // Analytic V Direction Domain places v=+90 pole within domain interior
-    let c1 = ivl_v.contains_periodic_value(90.0, 360.0, EFF_ZERO_DEG);
+    let c1 = ivl_v.contains_periodic_value_with(90.0, 360.0, EFF_ZERO_DEG, &k.fixes);
     rtn &= r.report(
         CLASS,
         5,
