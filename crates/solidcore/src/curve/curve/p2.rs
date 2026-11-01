@@ -201,12 +201,12 @@ use crate::curve::offset_curve::OffsetCurve;
 use crate::curve::parabola::Parabola;
 use crate::curve::projected_curve::ProjectedCurve;
 use crate::curve::tangent_field::TangentFieldCurve;
-use crate::error::{ignore_or_pass_on, ignored, ignored_or_pass_on, Result, SolidError, SM_ERR};
+use crate::error::{ignore_or_pass_on, ignored, ignored_or_pass_on, Result, SolidError};
 use crate::geom::a_object::{self, AObject, CacheStore};
 use crate::geom::attribute::{AttributeStore, ObjectKey};
 use crate::geom::axis2_placement::Axis2Placement;
 use crate::geom::context::{Context, IdentitySlot};
-use crate::geom::extent1d::{Extent1d, Inversion};
+use crate::geom::extent1d::Extent1d;
 use crate::geom::extent2d::Extent2d;
 use crate::geom::extent3d::Extent3d;
 use crate::geom::geom_utility::p1::{
@@ -2281,22 +2281,6 @@ pub fn base_ends<C: CurveEvaluate + ?Sized>(k: &Kernel, curve: &C) -> Result<End
     })
 }
 
-/// The status of `Inversion` (`SM_ERR` when `v` is outside the interval or the
-/// interval has no length) at a site where SMLib drops it and the fork passes it on
-/// (`SER`, tangency-labs/smlib 8311f8e): with the opt-in
-/// [`crate::kernel::UpstreamFixes::query_statuses_pass_on`] (`pass_on`) a failed
-/// inversion is returned; without it the status is dropped, as upstream.
-pub(crate) fn inversion_passed_on(inv: &Inversion, pass_on: bool) -> Result<()> {
-    if pass_on && !inv.is_success() {
-        return Err(SolidError::Upstream {
-            operation: "geom::extent1d::Extent1d::inversion",
-            code: SM_ERR,
-            entity: None,
-        });
-    }
-    Ok(())
-}
-
 /// The outcome of [`ignored_or_soft`].
 #[derive(Debug)]
 pub(crate) enum Soft<T> {
@@ -2386,7 +2370,7 @@ pub fn approximate_length<C: CurveEvaluate + ?Sized>(
 
         // Get base of ActTurnAngRad = BaseTurnAngRad +- N*2PI
         let base_turn_ang_rad = match z.ccw_angle_between(last[1], curr[1]) {
-            Err(e) if no_length && !e.is_unported() => return undef,
+            Err(e) if no_length && !e.is_unported_or_cancelled() => return undef,
             r => r?,
         };
 
@@ -2409,7 +2393,7 @@ pub fn approximate_length<C: CurveEvaluate + ?Sized>(
 
             // accumulate turn angle
             let this_turn_ang_rad = match z.ccw_angle_between(last[1], curr[1]) {
-                Err(e) if no_length && !e.is_unported() => return undef,
+                Err(e) if no_length && !e.is_unported_or_cancelled() => return undef,
                 r => r?,
             };
             turn_ang_rad += this_turn_ang_rad;
@@ -3472,15 +3456,11 @@ impl<'t, O: SolutionObject + 't> CcGlobalSolver<'t, O> {
     /// The solver with `curve1` and `curve2`, the curves its trees were built for,
     /// and the kernel `k`, which [`GlobalSolve::local_solve`] needs.
     #[must_use]
-    pub const fn with_curves(
-        mut self,
-        curve1: &'t Curve,
-        curve2: &'t Curve,
-        k: &'t Kernel,
-    ) -> Self {
+    pub fn with_curves(mut self, curve1: &'t Curve, curve2: &'t Curve, k: &'t Kernel) -> Self {
         self.curves = Some([curve1, curve2]);
         self.kernel = Some(k);
         self.base.fixes = k.fixes;
+        self.base.cancel.clone_from(&k.cancel);
         self
     }
 
@@ -3694,7 +3674,7 @@ impl<'t, O: SolutionObject + 't> CpGlobalSolver<'t, O> {
     ) -> Self {
         Self {
             kernel: k,
-            base: GlobalSolver::with_trees(point_tree, curve_tree, 1),
+            base: GlobalSolver::with_trees_and_kernel(k, point_tree, curve_tree, 1),
             interval,
             curve: None,
             zone_tol_3d: None,
@@ -3861,8 +3841,7 @@ impl<'t, O: SolutionObject + 't> CurvePropertyGs<'t, O> {
         property_value: Option<f64>,
         opt_vectors: Vec<Vec3>,
     ) -> Self {
-        let mut base = GlobalSolver::with_tree(curve_tree, 1);
-        base.fixes = k.fixes;
+        let mut base = GlobalSolver::with_tree_and_kernel(k, curve_tree, 1);
         if k.fixes.curve_property_gs_branch_bounds {
             base.opt_vectors.clone_from(&opt_vectors);
         }
@@ -4075,7 +4054,7 @@ impl<'t, O: SolutionObject + 't> CurvePropertyGs<'t, O> {
                             // rules nothing out (tangency-labs/smlib 8311f8e)
                             let cos_theta = match property_angle(prop, o1, o2, vec) {
                                 Err(e) if self.kernel.fixes.query_statuses_pass_on => {
-                                    if e.is_unported() {
+                                    if e.is_unported_or_cancelled() {
                                         return Err(e);
                                     }
                                     return Ok(true);
@@ -4308,14 +4287,10 @@ impl<'t, O: SolutionObject + 't> CciGlobalSolver<'t, O> {
     /// (the owner objects of the trees' nodes upstream), and the kernel `k`, which
     /// [`GlobalSolve::local_solve`] needs.
     #[must_use]
-    pub const fn with_curves(
-        mut self,
-        curve1: &'t Curve,
-        curve2: &'t Curve,
-        k: &'t Kernel,
-    ) -> Self {
+    pub fn with_curves(mut self, curve1: &'t Curve, curve2: &'t Curve, k: &'t Kernel) -> Self {
         self.curves = Some([curve1, curve2]);
         self.kernel = Some(k);
+        self.base.cancel.clone_from(&k.cancel);
         self.base.fixes = k.fixes;
         self
     }
@@ -4475,19 +4450,6 @@ mod tests {
             panic!("expected B-spline");
         };
         b
-    }
-
-    #[test]
-    fn issue_2009_inversion_status_is_passed_on() {
-        // tangency-labs/smlib 8311f8e (sm_RefineCCSolutions `SER(Inversion)`): a value
-        // outside the interval (or one that a zero-length interval cannot map) is
-        // SM_ERR with the opt-in fix and dropped without it.
-        let ivl = Extent1d::from_min_max(0.0, 1.0);
-        assert!(inversion_passed_on(&ivl.inversion(0.5), true).is_ok());
-        assert!(inversion_passed_on(&ivl.inversion(2.0), true).is_err());
-        assert!(inversion_passed_on(&ivl.inversion(2.0), false).is_ok());
-        let flat = Extent1d::from_min_max(1.0, 1.0);
-        assert!(inversion_passed_on(&flat.inversion(2.0), true).is_err());
     }
 
     #[test]
