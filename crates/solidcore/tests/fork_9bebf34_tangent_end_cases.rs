@@ -1,7 +1,7 @@
 //! The SolidCraft fork's tangent-end blends (tangency-labs/smlib@9bebf34, the first commit
-//! of smlib#76; #2243), and its a87c502 under
-//! `fixes.fillet_extended_rail_end_at_side_edge_crossing` (WR-681): a rail's end on its side
-//! edge is the solver's rail/edge crossing, not where the end curve leaves the fillet.
+//! of smlib#76; #2243). Its a87c502 (WR-681: a rail's end on its side edge taken as the
+//! solver's rail/edge crossing) was taken back out by 0cc48bd, and so was its flag here: at the
+//! fork's end of smlib#76 (cd47efd) `CalcRailIntExtendedEdgeuse` is the pinned routine again.
 //!
 //! The part is the fork's tangent peg (capi `tangent_peg`): a bar 40 x 16 x 10 whose far end
 //! is a half disc R 8 about (40, 8), with a disc R 8 about the same centre standing 10 on its
@@ -13,14 +13,13 @@
 //! the front face runs tangent into a cone instead.
 //!
 //! [`TANGENT_END_CASES`] holds the fork's thirteen cases with its reason for each that fails
-//! at a87c502 (`TANGENT_END_CASES` in capi `tests/ops_kernel.cpp`, after a87c502 dropped
-//! `front_chamfer_d2`'s), kept as they are. Each case checks, as the fork's
+//! at 9bebf34 (`TANGENT_END_CASES` in capi `tests/ops_kernel.cpp`), kept as they are. Each case checks, as the fork's
 //! `peg_blend`/`peg_result`/`done` do, the blend's success, SMLib's check at level 2, the box
 //! (where the case has one) and the volume to 1e-6 relative of the fork's quadrature (where
 //! it has one, at volume accuracy 1e-7). Where solidcore's outcome differs from the fork's
 //! mark, the case says so ([`TangentEndCase::here`]).
 //!
-//! The kernel is the fork's at a87c502 as far as solidcore models it: every fix SolidCraft
+//! The kernel is the fork's at 9bebf34 as far as solidcore models it: every fix SolidCraft
 //! turns on (all but `geometric_g2_continuity`, as `issue_2174_cap_rim_two_edges.rs`)
 //! except WR-600's `fillet_nx1_tangent_side_edge_same_convexity`, whose tangent end of the
 //! trace is the fork's later 6d73e4f/0cc48bd/b34d61b (under it a tangent end is a rail/edge
@@ -29,7 +28,7 @@
 //! Four of the cases have tests already, under WR-600 on (the fork's later state):
 //! `fork_856b54e_tangent_end.rs` (front chamfer, concave chamfer, front round) and
 //! `fork_cd47efd_tangent_end_rib_sqrt_s.rs` (the curvature round). They stay in the table
-//! because the marks are the fork's at a87c502, a different profile. The fork's twins on
+//! because the marks are the fork's at 9bebf34, a different profile. The fork's twins on
 //! its `smlib-tangent-ends` branch, c5ea180 and 169adea, have the same diffs as 9bebf34
 //! and a87c502.
 //!
@@ -68,11 +67,11 @@ use solidcore::{Brep, Kernel};
 
 const PI: f64 = core::f64::consts::PI;
 
-/// The fork's profile at a87c502 (module doc), with or without its crossing.
-fn kernel(crossing: bool) -> Kernel {
+/// The fork's profile before its tangent end of the trace (module doc): every fix SolidCraft
+/// turns on but WR-600's.
+fn kernel() -> Kernel {
     let mut k = solidcraft_kernel();
     k.fixes.fillet_nx1_tangent_side_edge_same_convexity = false;
-    k.fixes.fillet_extended_rail_end_at_side_edge_crossing = crossing;
     k
 }
 
@@ -379,7 +378,7 @@ enum Here {
     FailsOtherwise(&'static str),
 }
 
-/// A tangent-end case: the fork's name and reason it fails at a87c502 (`None`: it passes
+/// A tangent-end case: the fork's name and reason it fails at 9bebf34 (`None`: it passes
 /// there), and how solidcore's outcome differs from that, if it does.
 struct TangentEndCase {
     name: &'static str,
@@ -439,7 +438,7 @@ const TANGENT_END_CASES: [TangentEndCase; 13] = [
     TangentEndCase {
         name: "front_chamfer_d2",
         run: front_chamfer_d2,
-        fails_today: None,
+        fails_today: Some("status 1001: SmFilletNx1Corner, Corner Edge Computation Failure, where the chamfer's end on the cylinder leaves its contact line on the front face tangentially"),
         here: None,
     },
     TangentEndCase {
@@ -488,7 +487,7 @@ fn tangent_end_cases(known_failing: bool) -> Vec<String> {
         .iter()
         .filter(|c| c.fails_here() == known_failing)
     {
-        let mut k = kernel(true);
+        let mut k = kernel();
         let out = (c.run)(&mut k);
         let failed = !out.failed.is_empty();
         if failed != known_failing {
@@ -529,72 +528,16 @@ fn tangent_end_marks_are_the_fork_s() {
     }
 }
 
-/// a87c502: the front chamfer's rail end on the cylinder is the rail/edge crossing. The
-/// fork: "`front_chamfer_d2` passes, volume 9341.798354 against the quadrature's 9341.798377
-/// (2.4e-9)"; at 9bebf34 it failed with status 1001.
+/// 0cc48bd: without the tangent end of the trace the front chamfer fails with status 1001
+/// again, as at 9bebf34 (a87c502's crossing is gone); with it (SolidCraft's profile, the fork at
+/// cd47efd) it passes through the tangent end. The fork's 0cc48bd: "the tangent ends as on the
+/// previous commit (front_chamfer_d2 passes through the tangent end)".
 #[test]
-fn front_chamfer_ends_at_the_rail_edge_crossing() {
-    let mut k = kernel(false);
-    let before = front_chamfer_d2(&mut k);
+fn front_chamfer_passes_only_through_the_tangent_end() {
+    let before = front_chamfer_d2(&mut kernel());
     assert_eq!(before.failed.len(), 1, "{:?}", before.failed);
     assert!(before.failed[0].contains("1001"), "{:?}", before.failed);
 
-    let mut k = kernel(true);
-    let after = front_chamfer_d2(&mut k);
+    let after = front_chamfer_d2(&mut solidcraft_kernel());
     assert!(after.failed.is_empty(), "{:?}", after.failed);
-    let v = after.volume.unwrap();
-    let quadrature = PEG_V0 - PEG_FRONT_CHAMFER_D2;
-    // 9341.798353087 here, 1.0e-10 relative below the fork's 9341.798354 and 2.5e-9 below
-    // the quadrature's 9341.798377
-    assert!((v - 9341.798354).abs() < 2e-6, "V {v}");
-    assert!(
-        (v - quadrature).abs() < 3e-9 * quadrature,
-        "V {v} vs {quadrature}"
-    );
-}
-
-/// a87c502: "The round cases keep their results". A round's rail end at the tangent seam
-/// is where the round touches the cylinder, so the crossing changes nothing there: the same
-/// volumes to the last bit, and the same outcomes for the rounds in turn.
-#[test]
-fn round_cases_keep_their_results() {
-    let volume_cases: [fn(&mut Kernel) -> Outcome; 2] = [front_round_r2, front_curvature_round_r2];
-    for case in volume_cases {
-        let (off, on) = (case(&mut kernel(false)), case(&mut kernel(true)));
-        assert!(
-            off.failed.is_empty() && on.failed.is_empty(),
-            "{off:?} {on:?}"
-        );
-        assert_eq!(off.volume.unwrap().to_bits(), on.volume.unwrap().to_bits());
-    }
-    let in_turn: [fn(&mut Kernel) -> Outcome; 2] = [
-        front_round_then_concave_round_r2,
-        concave_round_then_front_round_r2,
-    ];
-    for case in in_turn {
-        let (off, on) = (case(&mut kernel(false)), case(&mut kernel(true)));
-        assert!(
-            off.failed.is_empty() && on.failed.is_empty(),
-            "{off:?} {on:?}"
-        );
-    }
-}
-
-/// With WR-600's tangent end of the trace on too (SolidCraft's profile, the fork's later
-/// commits), a tangent end is a rail/edge crossing of the trace and never reaches
-/// `CalcRailIntExtendedEdgeuse`: the crossing changes none of the front blends.
-#[test]
-fn with_the_tangent_end_of_the_trace_the_crossing_changes_nothing() {
-    let cases: [fn(&mut Kernel) -> Outcome; 3] =
-        [front_chamfer_d2, front_round_r2, front_curvature_round_r2];
-    for case in cases {
-        let mut off = solidcraft_kernel();
-        off.fixes.fillet_extended_rail_end_at_side_edge_crossing = false;
-        let (off, on) = (case(&mut off), case(&mut solidcraft_kernel()));
-        assert!(
-            off.failed.is_empty() && on.failed.is_empty(),
-            "{off:?} {on:?}"
-        );
-        assert_eq!(off.volume.unwrap().to_bits(), on.volume.unwrap().to_bits());
-    }
 }
