@@ -2038,6 +2038,7 @@ impl<'target> FilletSession<'target> {
                     let event = crate::blend::blend_corner::ball::classify_ball(
                         k,
                         target,
+                        vertex,
                         &edgeuses,
                         &all_eus,
                         set_back_vertices.contains(&vertex),
