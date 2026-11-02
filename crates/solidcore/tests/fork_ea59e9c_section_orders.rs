@@ -763,12 +763,15 @@ fn with_solidcraft_s_fixes_the_chords_and_circles_have_the_fork_s_marks() {
     }
 }
 
-/// The mark is the fork's at ea59e9c, the great circles. `fillet_gn_section_generator` brings
-/// the fork's later touch circles, tested with that port, so it stays off here.
+/// The mark is the fork's at ea59e9c, the great circles of approximated arcs.
+/// `fillet_gn_section_generator` brings the fork's later touch circles and
+/// `fillet_exact_arc_sections` its later exact circles (523bc25), tested with those ports
+/// (`wr685_variable_round_touch_circle`, `wr708_exact_arc_sections`), so both stay off here.
 #[test]
 fn with_solidcraft_s_fixes_the_variable_round_has_the_fork_s_mark() {
     let mut k = solidcraft_kernel();
     k.fixes.fillet_gn_section_generator = false;
+    k.fixes.fillet_exact_arc_sections = false;
     assert_variable_mark(&mut k);
 }
 
