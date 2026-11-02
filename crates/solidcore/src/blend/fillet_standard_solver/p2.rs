@@ -2502,6 +2502,136 @@ impl CircularCrossSectionFsg {
     }
 }
 
+/// What the fork's circle generator reads off its solver for the round by its definition
+/// (`SmGnSectionFSG::CircleSurface`, cc08236): a constant-radius solver's radii
+/// (`static_cast<SmConstantRadiusFS *>(&rFilletSolver)->GetFilletRadius(0)`, `(1)`;
+/// `None` for another class) and its angle tolerance (`GetThisAngTolRad`, the corners').
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct CircleBall {
+    /// The constant-radius solver's radii.
+    pub radii: Option<[f64; 2]>,
+    /// `GetThisAngTolRad()`.
+    pub ang_tol_rad: f64,
+}
+
+impl CircularCrossSectionFsg {
+    /// The fork's `SmGnSectionFSG::CircleSurface` gate (cc08236, 308cc40, c596548; with
+    /// `fixes.fillet_gn_section_generator` and `fixes.fillet_round_as_definition`,
+    /// WR-698): a ball of one radius between faces that are NURBS surfaces is the round by
+    /// its definition, the order-1 section's `Build` with the rails and uv curves
+    /// replaced ([`GnSectionFsg::build_given_ball`]), unless the rails or the centre line
+    /// turn at a knot (`sm_FilletCurveCorners`: the pieces are built as before), the ball's
+    /// radius varies, a face is not an offset of a NURBS surface (or is a blend by its
+    /// definition), the circle is not exact (approximated, mirrored or the larger arc),
+    /// the solver is not a constant-radius one with one radius above the tolerance, the
+    /// circles sweep a cylinder or revolve a torus (which stay those exact surfaces), the
+    /// rails meet at an end (the section fades to a point there, which the definition does
+    /// not take yet), or the solver's rails are not the ball's feet on the two faces
+    /// everywhere (a rail held on a face's boundary while the ball rolls on its edge).
+    /// `None`: the round is built as before.
+    ///
+    /// # Errors
+    ///
+    /// Those of the corners, the sweep and revolve tests, the evaluations and `Build`.
+    #[allow(clippy::too_many_arguments)]
+    pub fn definition_surface(
+        &self,
+        k: &Kernel,
+        approx_tol_3d: f64,
+        solver_type: FilletSolverType,
+        center_line: &BSplineCurve,
+        rails: [&mut BSplineCurve; 2],
+        surfaces: [&Surface; 2],
+        uv: [&mut BSplineCurve; 2],
+        ball: CircleBall,
+    ) -> Result<Option<Surface>> {
+        use crate::blend::fillet_section::section::{ArcSection, GnSectionFsg};
+        use crate::blend::fillet_standard_solver::touch_circle::{
+            corner_angle, fillet_curve_corners,
+        };
+        use crate::surface::surface::SurfaceKind;
+        if !(k.fixes.fillet_gn_section_generator && k.fixes.fillet_round_as_definition) {
+            return Ok(None);
+        }
+        let [rail1, rail2] = rails;
+        let corners =
+            fillet_curve_corners(center_line, rail1, rail2, corner_angle(ball.ang_tol_rad))?;
+        if !corners.is_empty() {
+            return Ok(None);
+        }
+        let ball_radius_varies = matches!(
+            solver_type,
+            FilletSolverType::VariableRadius | FilletSolverType::ConstDist
+        );
+        let arcs = ArcSection {
+            approximate_arcs: self.approximate_arcs,
+            tol_percent_radius: self.tol_percent_radius,
+            mirror: self.mirror,
+            complement: self.complement,
+        };
+        let [s1, s2] = surfaces;
+        let (SurfaceKind::OffsetSurface(o1), SurfaceKind::OffsetSurface(o2)) =
+            (s1.kind(), s2.kind())
+        else {
+            return Ok(None);
+        };
+        if ball_radius_varies || !arcs.is_exact_circle() {
+            return Ok(None);
+        }
+        let bases = [o1.base_surface(), o2.base_surface()];
+        for b in bases {
+            let nurbs = matches!(
+                b.kind(),
+                SurfaceKind::BSpline(_)
+                    | SurfaceKind::Plane(_)
+                    | SurfaceKind::SurfOfRevolution(_)
+                    | SurfaceKind::SurfOfExtrusion(_)
+                    | SurfaceKind::Cone(_)
+                    | SurfaceKind::Sphere(_)
+                    | SurfaceKind::Torus(_)
+            );
+            if !nurbs {
+                return Ok(None);
+            }
+        }
+        // the ball's radius: the constant radius solver's, the same for both faces
+        let radius = match (solver_type, ball.radii) {
+            (FilletSolverType::ConstRadius, Some([r0, r1])) => {
+                let above_tol = r0 > approx_tol_3d;
+                if !above_tol || r1 != r0 {
+                    return Ok(None);
+                }
+                r0
+            }
+            _ => return Ok(None),
+        };
+        let cl = Curve::from(center_line.clone());
+        let (sweep, revolve, _) =
+            super::p1::circle_swept_or_revolved(k, &cl, rail1, rail2, approx_tol_3d)?;
+        let ivl = rail1.natural_interval();
+        for t in [ivl.min(), ivl.max()] {
+            let end1 = rail1.evaluate_point(t)?;
+            let end2 = rail2.evaluate_point(t)?;
+            if end1.distance(end2) < approx_tol_3d {
+                return Ok(None);
+            }
+        }
+        if sweep || revolve {
+            return Ok(None);
+        }
+        let mut gn = GnSectionFsg::circle(arcs);
+        gn.build_given_ball(
+            k,
+            center_line,
+            [rail1, rail2],
+            approx_tol_3d,
+            bases,
+            uv,
+            radius,
+        )
+    }
+}
+
 impl BlendCurveCrossSectionFsg {
     /// `SmBlendCurveCrossSectionFSG::CreateSurface(rFilletSolver, pCenterLine,
     /// pRail1Curve, pRail2Curve, crFilletPoints, pSurf1, pUV1, pSurf2, pUV2,

@@ -616,6 +616,7 @@ impl FilletSolverOps for ConstantRadiusAssistedFs {
                 points,
                 [&sur0, &sur1],
                 [uv1, uv2],
+                None,
             )
             .map(Some)
     }

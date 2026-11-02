@@ -448,6 +448,11 @@ impl FilletSurfaceGenerator {
     ///
     /// The G^n section generator keeps what its build resolves (the equal area
     /// thumbweight, the certificate), as the fork's generator object does.
+    ///
+    /// `ball`: what the circular generator reads off the solver (`None` where the caller
+    /// has no such solver); with it and `fixes.fillet_round_as_definition` a constant
+    /// round between NURBS faces is its definition, the rails and uv curves rebuilt on its
+    /// stations ([`CircularCrossSectionFsg::definition_surface`], the fork's cc08236).
     #[allow(clippy::too_many_arguments)]
     pub fn create_surface_replacing_uv(
         &mut self,
@@ -460,6 +465,7 @@ impl FilletSurfaceGenerator {
         points: &[TsectPnt],
         surfaces: [&Surface; 2],
         uv: [&mut BSplineCurve; 2],
+        ball: Option<crate::blend::fillet_standard_solver::p2::CircleBall>,
     ) -> Result<Surface> {
         use crate::blend::fillet_standard_solver::p1::RailSurface;
         if let Self::GnSection(g) = self {
@@ -467,6 +473,24 @@ impl FilletSurfaceGenerator {
                 center_line.ok_or_else(|| SolidError::invalid_input(OP, "NULL centre line"))?;
             return g.create_surface(k, approx_tol_3d, center, [rail1, rail2], surfaces, uv);
         }
+        let [uv1, uv2] = uv;
+        if let (Self::Circular(g), Some(ball), Some(center)) =
+            (&*self, ball, center_line.as_deref())
+        {
+            if let Some(s) = g.definition_surface(
+                k,
+                approx_tol_3d,
+                solver_type,
+                center,
+                [&mut *rail1, &mut *rail2],
+                surfaces,
+                [&mut *uv1, &mut *uv2],
+                ball,
+            )? {
+                return Ok(s);
+            }
+        }
+        let uv = [uv1, uv2];
         let [s1, s2] = surfaces;
         let [uv1, uv2] = uv;
         self.create_surface(
@@ -2120,6 +2144,13 @@ pub trait FilletSolverOps: AsFilletSolverOps {
     /// unit.
     fn solver_type(&self) -> Result<FilletSolverType> {
         Ok(FilletSolverType::Unknown)
+    }
+
+    /// `static_cast<SmConstantRadiusFS *>(this)->GetFilletRadius(0)`, `(1)`: the radii of
+    /// a constant-radius solver, which the fork's circle generator reads for a solver whose
+    /// `GetSolverType()` is `SM_FS_CONST_RADIUS` (cc08236); `None` for another class.
+    fn constant_radii(&self) -> Option<[f64; 2]> {
+        None
     }
 
     /// `SM_CAST_PTR(SmVariableRadiusFS, this)`: mutable borrow when the concrete solver

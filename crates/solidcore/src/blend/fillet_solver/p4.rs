@@ -4744,6 +4744,7 @@ impl crate::blend::fillet_intersector::FilletSolverOps for IntersectorSolver<'_>
         self.pre()?;
         let sur0 = Surface::from(offset_surface(&*self.ops, 0)?.surface.clone());
         let sur1 = Surface::from(offset_surface(&*self.ops, 1)?.surface.clone());
+        let radii = self.ops.constant_radii();
         let solver = self.ops.solver_mut();
         let approx_tol_3d = solver.approx_tol_3d;
         let this_ang_tol_rad = solver.this_ang_tol_rad();
@@ -4781,6 +4782,11 @@ impl crate::blend::fillet_intersector::FilletSolverOps for IntersectorSolver<'_>
                 return Err(SolidError::sm_err(OP));
             }
         }
+        // (a constant round between NURBS faces is its definition, the fork's cc08236)
+        let ball = crate::blend::fillet_standard_solver::p2::CircleBall {
+            radii,
+            ang_tol_rad: this_ang_tol_rad,
+        };
         generator
             .create_surface_replacing_uv(
                 k,
@@ -4792,6 +4798,7 @@ impl crate::blend::fillet_intersector::FilletSolverOps for IntersectorSolver<'_>
                 points,
                 [&sur0, &sur1],
                 [uv1, uv2],
+                Some(ball),
             )
             .map(Some)
     }

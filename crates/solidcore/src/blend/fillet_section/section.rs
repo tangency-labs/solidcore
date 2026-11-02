@@ -364,7 +364,18 @@ impl GnSectionFsg {
     ) -> Result<Surface> {
         let [s1, s2] = surfaces;
         let faces = [base_of(s1), base_of(s2)];
-        self.build(k, center_line, rails, approx_tol_3d, faces, uvs, true, 0.0)
+        self.build(
+            k,
+            center_line,
+            rails,
+            approx_tol_3d,
+            faces,
+            uvs,
+            true,
+            0.0,
+            false,
+        )?
+        .ok_or_else(|| SolidError::sm_err(OP))
     }
 
     /// `CreateSurfaceFromCurves`: the blend surface between two rails on the faces'
@@ -393,7 +404,9 @@ impl GnSectionFsg {
             [&mut uv1, &mut uv2],
             false,
             0.0,
-        )
+            false,
+        )?
+        .ok_or_else(|| SolidError::sm_err(OP))
     }
 
     /// `Build(..., bReplaceRails, rpFilletSurface, dRadius)` (cc08236): [`Self::build`]
@@ -417,7 +430,43 @@ impl GnSectionFsg {
         replace_rails: bool,
         radius: f64,
     ) -> Result<Surface> {
-        self.build(k, center, rails, tol, faces, uvs, replace_rails, radius)
+        self.build(
+            k,
+            center,
+            rails,
+            tol,
+            faces,
+            uvs,
+            replace_rails,
+            radius,
+            false,
+        )?
+        .ok_or_else(|| SolidError::sm_err(OP))
+    }
+
+    /// `Build(..., TRUE, rpFilletSurface, dRadius, &bNotTheFeet)` as the fork's circle
+    /// generator calls it (cc08236, 308cc40, c596548): the rails and uv curves replaced,
+    /// the ball's radius given; `None` (nothing built, the rails and uv curves unchanged)
+    /// where the solver's rails are not that ball's feet on the two faces: a station that
+    /// does not solve from them (Newton from within the tolerance of a regular root
+    /// converges), or a foot farther than `tol` from its rail (a rail held on a face's
+    /// boundary while the ball rolls on its edge).
+    ///
+    /// # Errors
+    ///
+    /// Those of `Build`.
+    #[allow(clippy::too_many_arguments)]
+    pub fn build_given_ball(
+        &mut self,
+        k: &Kernel,
+        center: &BSplineCurve,
+        rails: [&mut BSplineCurve; 2],
+        tol: f64,
+        faces: [&Surface; 2],
+        uvs: [&mut BSplineCurve; 2],
+        radius: f64,
+    ) -> Result<Option<Surface>> {
+        self.build(k, center, rails, tol, faces, uvs, true, radius, true)
     }
 
     /// `Build`: the G^n blend surface between the rails, its stations the knots of the
@@ -439,7 +488,8 @@ impl GnSectionFsg {
         uvs: [&mut BSplineCurve; 2],
         replace_rails: bool,
         radius: f64,
-    ) -> Result<Surface> {
+        feet_check: bool,
+    ) -> Result<Option<Surface>> {
         let n = self.order;
         let exact_circle = n == 1 && self.arcs.is_exact_circle();
         if !exact_circle && !Self::is_valid(n, self.thumbweight) {
@@ -528,11 +578,30 @@ impl GnSectionFsg {
             // a constant ball: the station's centre on the centre line at the same offsets
             let m = center.evaluate_point(s)?;
             let solve_tol = 1.0e-9 * smax(1.0, m.length());
-            let st = solve_top(
+            // with a ball of a given radius (feet_check), a station that does not solve
+            // from the solver's rails (Newton from within the tolerance of a regular root
+            // converges) says the rails are not that ball's feet there (c596548)
+            let solved = solve_top(
                 k, faces, center, s, seed, r, side, tr, solve_tol, n, None, false,
-            )?;
+            );
+            let st = match solved {
+                Ok(st) => st,
+                Err(_) if feet_check => return Ok(None),
+                Err(e) => return Err(e),
+            };
             for (f, &rf) in r.iter().enumerate() {
                 let rho = foot(&st, f, 0, 0);
+                // the ball's circle of a given radius: the solver's rails are this ball's
+                // feet on the two faces, or the round is not their ball's (a rail held on
+                // a face's boundary, the ball rolling on its edge), which the caller
+                // builds otherwise (308cc40)
+                if feet_check {
+                    let rail: &BSplineCurve = if f == 0 { rail1 } else { rail2 };
+                    if rail.evaluate_point(s)?.distance(rho) > tol {
+                        return Ok(None);
+                    }
+                    continue;
+                }
                 if (m.distance(rho) - rf).abs() > smax(tol, 1.0e-6 * rf) {
                     return Err(SolidError::invalid_input(
                         OP,
@@ -879,7 +948,7 @@ impl GnSectionFsg {
             }
         }
         if !definition {
-            return Ok(Surface::from(surface));
+            return Ok(Some(Surface::from(surface)));
         }
 
         // the blend by its definition on this net (4a10ed8): the faces, the ball's offsets
@@ -902,7 +971,7 @@ impl GnSectionFsg {
         let blend = ProceduralBlend::create(k, &surface, &input, |order, w| {
             Self::is_valid(order as usize, w)
         })?;
-        Ok(Surface::from(blend))
+        Ok(Some(Surface::from(blend)))
     }
 
     /// The certificate block of `Build`: a station wherever a foot crosses a knot line of

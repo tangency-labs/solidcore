@@ -2093,6 +2093,11 @@ impl FilletSolverOps for ConstantRadiusAssistedFs {
         &self.solver
     }
 
+    /// `GetFilletRadius(0)`, `(1)`.
+    fn constant_radii(&self) -> Option<[f64; 2]> {
+        Some(self.fillet_radii)
+    }
+
     fn solver_mut(&mut self) -> &mut FilletSolver {
         &mut self.solver
     }
