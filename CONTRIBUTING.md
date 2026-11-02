@@ -53,8 +53,10 @@ Fillet and chamfer cases from SolidCraft's kernel rig are listed in
 [docs/generic-blend.md §7](docs/generic-blend.md#7-case-gallery), each with its state: passes,
 refused as expected (with the size that fits), or known failing (with its reason). When your change
 makes a case pass, or fixes a known failure, update its row **and its image** in the same pull
-request: a new render of the result (`docs/generic-blend/cases/<case>.jpg`, an isometric view framed
-on the body, as the gallery's other renders). A changed row without a new image is not accepted.
+request: a new render of the result (`docs/generic-blend/cases/<case>.jpg`) whose view shows the
+case's issue (the corner, the seam, the spot refused or fixed), framed close on it, not a fixed
+angle. Agents: choose the view from the case's geometry. A changed row without a new image is not
+accepted.
 
 ## Concurrency and parallelism
 
