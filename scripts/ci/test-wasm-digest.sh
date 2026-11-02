@@ -150,7 +150,7 @@ case ${1:-} in
 esac
 SH
 
-  # GNU-only `readlink -f`: works only for a directory (the upstream symlink).
+  # GNU-style `readlink -f`: works only for a directory (the upstream symlink).
   cat >"$rig/fakebin/readlink-gnu" <<'SH'
 #!/bin/sh
 [ "${1:-}" = "-f" ] || { echo "fake readlink: only -f" >&2; exit 2; }
