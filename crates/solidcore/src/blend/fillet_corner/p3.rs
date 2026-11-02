@@ -707,6 +707,14 @@ pub struct FilletCorner {
     /// The fork's Ball's own members (`m_pBallSurface` and its loop; smlib#79 step 4c,
     /// WR-697): set by its topology on a blend corner that is a Ball.
     pub ball: Option<crate::blend::blend_corner::ball::BallCorner>,
+    /// The fork's Setback's own members (`m_vSetBacks`, `m_lFillOrder`, `m_bConvexSetBack`,
+    /// `m_bSetBackOverflows`, `m_pFill`; smlib#104, WR-697): set at its creation on a blend
+    /// corner that is a Setback.
+    pub setback: Option<crate::blend::blend_corner::setback::SetbackCorner>,
+    /// The fork's Mixed corner's own members (its ring and blends' solvers, and its two
+    /// faces' surfaces and loops; smlib#82, WR-697): set by its topology on a blend corner
+    /// that is a Mixed one.
+    pub mixed: Option<crate::blend::blend_corner::mixed::MixedCorner>,
 }
 
 /// What the corner methods operate on besides the corner itself.
@@ -1039,6 +1047,8 @@ impl FilletCorner {
             blend: None,
             swept: None,
             ball: None,
+            setback: None,
+            mixed: None,
         }
     }
 
@@ -1329,6 +1339,40 @@ impl FilletCorner {
                                 && eu2::is_convex_radial_sector(k, b, eu0, 4, false, 0.0)?
                                     != eu2::is_convex_radial_sector(k, b, eu1_, 4, false, 0.0)?
                             {
+                                // The fork's (WR-697, 6fd0411; smlib#82): a convex and a
+                                // concave blend continuing each other across a tangent
+                                // seam are the blend corner's Mixed
+                                // (SmBlendCorner::ClassifyMixed); a failed classification
+                                // builds no corner.
+                                let mixed = if k.fixes.fillet_blend_corner {
+                                    let lookup = |eu: EdgeuseId| solver_of(eu).ok();
+                                    match crate::blend::blend_corner::mixed::classify_mixed(
+                                        k,
+                                        b,
+                                        vertex,
+                                        solver_eus,
+                                        &all_eus,
+                                        &lookup,
+                                        tan_tol_deg,
+                                    ) {
+                                        Ok(found) => Some(found),
+                                        Err(e) if e.is_unported_or_cancelled() => return Err(e),
+                                        Err(_) => None,
+                                    }
+                                } else {
+                                    Some(false)
+                                };
+                                if mixed == Some(true) {
+                                    let mut c = make(FilletCornerKind::NByTwo);
+                                    c.blend = Some(crate::blend::blend_corner::BlendCorner {
+                                        event: crate::blend::blend_corner::BlendCornerEvent::Mixed,
+                                        turn: crate::blend::blend_corner::BlendTurn::Mitre,
+                                    });
+                                    return Ok(Some(c));
+                                }
+                                if mixed.is_none() {
+                                    return Ok(None); // MSG: Corner Case Not Implemented
+                                }
                                 // Not upstream (WR-710, opt-in
                                 // `fillet_refuse_mixed_corner_crossing_rails`, #2256):
                                 // where the two edges leave the vertex along one tangent,
@@ -2144,12 +2188,11 @@ impl FilletCorner {
         nx2: impl FnOnce(&mut Self, &mut C) -> Result<()>,
         nxn: impl FnOnce(&mut Self, &mut C) -> Result<()>,
     ) -> Result<()> {
-        // the fork's SmBlendCorner::AdjustTopology: a Ball or a Swept turn adjusts nothing
-        // (WR-697)
-        if self
-            .blend
-            .is_some_and(|blend| blend.is_ball() || blend.is_swept())
-        {
+        // the fork's SmBlendCorner::AdjustTopology: a Ball, a Setback, a Mixed corner or a
+        // Swept turn adjusts nothing (WR-697)
+        if self.blend.is_some_and(|blend| {
+            blend.is_ball() || blend.is_setback() || blend.is_mixed() || blend.is_swept()
+        }) {
             return Ok(());
         }
         match self.kind {
@@ -2504,12 +2547,11 @@ impl FilletCorner {
         nx2: impl FnOnce(&mut Self, &mut C) -> Result<()>,
         nx1_closed: impl FnOnce(&mut Self, &mut C) -> Result<()>,
     ) -> Result<()> {
-        // the fork's SmBlendCorner::AdjustTangentCorner: nothing at a Ball or a Swept turn
-        // (WR-697; the Mitre turn's is the Nx2 port's)
-        if self
-            .blend
-            .is_some_and(|blend| blend.is_ball() || blend.is_swept())
-        {
+        // the fork's SmBlendCorner::AdjustTangentCorner: nothing at a Ball, a Setback, a Mixed
+        // corner or a Swept turn (WR-697; the Mitre turn's is the Nx2 port's)
+        if self.blend.is_some_and(|blend| {
+            blend.is_ball() || blend.is_setback() || blend.is_mixed() || blend.is_swept()
+        }) {
             return Ok(());
         }
         match self.kind {
