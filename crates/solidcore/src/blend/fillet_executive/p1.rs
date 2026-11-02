@@ -1092,6 +1092,9 @@ pub enum CornerCreation<O> {
         error: FilletErrorType,
         /// Its reason.
         comment: String,
+        /// The blended edge no size builds (the fork's `NoteFitRadius(0.0, edge)`), noted
+        /// before the refusal.
+        fit_edge: Option<O>,
     },
 }
 
@@ -1180,7 +1183,14 @@ impl<O: ClassObject + SolutionObject + Ord> FilletExecutive<O> {
                     location,
                     error,
                     comment,
+                    fit_edge,
                 } => {
+                    // NoteFitRadius(0.0, edge)
+                    if let Some(edge) = fit_edge {
+                        self.fit_radius = 0.0;
+                        self.fit_edge = Some(edge);
+                        self.fit_kind = crate::blend::fillet_executive::FitKind::Radius;
+                    }
                     self.error.note_vertex_error(
                         vertex,
                         location,

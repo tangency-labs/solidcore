@@ -1972,6 +1972,9 @@ impl<'target> FilletSession<'target> {
                             location,
                             error: refusal.error,
                             comment: refusal.comment,
+                            fit_edge: refusal.fit_edge.map(|e| {
+                                FilletObject::Topology(FilletBody::Target, EntityRef::Edge(e))
+                            }),
                         });
                     }
                 }

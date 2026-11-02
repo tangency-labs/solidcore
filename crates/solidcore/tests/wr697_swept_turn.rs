@@ -197,6 +197,26 @@ fn a_pocket_rim_is_refused_naming_the_radius() {
     );
 }
 
+/// The fork's `NoteFitRadius(0.0, edge)` (5e8c9c1) at the pocket rim's sharp concave side
+/// edge: no radius builds the swept turn, so the refusal's fit size is 0, for the first
+/// round's edge.
+#[test]
+fn a_pocket_rim_notes_that_no_radius_fits() {
+    let mut k = all_fixes(true);
+    let mut b = pocket(&mut k);
+    let edges: Vec<EdgeId> = RIM.iter().map(|&p| pick(&k, &b, p)).collect();
+    let xs = vec![FilletSurfaceGeneratorType::Circular; edges.len()];
+    let mut s = FilletSession::new(&mut k, &mut b).unwrap();
+    s.prepare_per_edge_constant_radius(&mut k, &edges, &[1.0; 4], &xs, 1, 1.0)
+        .unwrap();
+    s.set_swept_turns(true);
+    assert!(s.do_fillet(&mut k).is_err());
+    let fit = s.fit_size().expect("a fit size is noted");
+    eprintln!("{fit:?}");
+    assert_eq!(fit.size, 0.0);
+    assert!(fit.edge.is_some_and(|e| edges.contains(&e)), "{fit:?}");
+}
+
 #[test]
 fn unequal_rounds_are_not_swept_yet() {
     let mut k = all_fixes(true);
