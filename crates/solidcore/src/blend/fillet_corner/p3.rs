@@ -221,6 +221,9 @@ pub enum ExecutiveErrorObject {
     /// The temporary planar end-face surface constructed by `CalcFilletIntSideFace`
     /// when `!corner.is_extended_surface_patch()`.
     TempEndPlane(EdgeId),
+    /// The cap plane of an End at a smooth vertex (`GetEndCapSurface()`, the fork's
+    /// 41a39ec), whose corner's end rib is this edge.
+    EndCap(EdgeId),
 }
 
 /// The members of `SmFilletExecutive` read and written by the corner code (CO-PORTED from
@@ -716,6 +719,9 @@ pub struct FilletCorner {
     /// faces' surfaces and loops; smlib#82, WR-697): set by its topology on a blend corner
     /// that is a Mixed one.
     pub mixed: Option<crate::blend::blend_corner::mixed::MixedCorner>,
+    /// The fork's `m_pEndCap` (smlib 41a39ec, WR-697): an End at a smooth vertex's plane
+    /// square to its edge there (`GetEndCapSurface`), set by its topology.
+    pub end_cap: Option<Surface>,
 }
 
 /// What the corner methods operate on besides the corner itself.
@@ -1050,6 +1056,7 @@ impl FilletCorner {
             ball: None,
             setback: None,
             mixed: None,
+            end_cap: None,
         }
     }
 
@@ -1352,6 +1359,23 @@ impl FilletCorner {
                             BlendCornerEvent::End,
                             BlendEnd::Open,
                         ))
+                    } else if crate::blend::blend_corner::end::end_at_smooth_vertex(
+                        k,
+                        b,
+                        vertex,
+                        eu0,
+                        &all_eus,
+                        tan_tol_deg,
+                    )? {
+                        // The fork's (41a39ec): a blended edge running on tangentially into
+                        // an edge of its convexity not blended ends at the smooth vertex,
+                        // cut square to its edge there (MakeEndAtSmoothVertex: its own
+                        // construction, a blend corner of type SM_FCR_BLEND)
+                        Some(blend_corner(
+                            FilletCornerKind::NByTwo,
+                            BlendCornerEvent::End,
+                            BlendEnd::AtSmooth,
+                        ))
                     } else {
                         Some(blend_corner(
                             FilletCornerKind::NByOne,
@@ -1590,6 +1614,19 @@ impl FilletCorner {
             .blend
             .is_some_and(crate::blend::blend_corner::BlendCorner::is_join)
         {
+            return Ok(());
+        }
+        // the fork's (41a39ec): an End at a smooth vertex's patch is its cap
+        if self
+            .blend
+            .is_some_and(|blend| blend.is_end() && blend.end == BlendEnd::AtSmooth)
+        {
+            let built = env.with_patch_env(|env| {
+                crate::blend::blend_corner::end::create_end_cap_patch(self, env)
+            })?;
+            if !built {
+                return Err(SolidError::sm_err("SmBlendCorner::CreateEndPatchOfEnd"));
+            }
             return Ok(());
         }
         if self
