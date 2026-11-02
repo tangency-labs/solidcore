@@ -531,6 +531,10 @@ pub fn bspline_surface_part(s: &Surface) -> Result<Option<Cow<'_, BSplineSurface
             let b = pb.net();
             Some(Cow::Borrowed(b))
         }
+        SurfaceKind::BallPatch(bp) => {
+            let b = bp.net();
+            Some(Cow::Borrowed(b))
+        }
         SurfaceKind::Plane(p) => Some(p.base_with_nurb()?),
         SurfaceKind::Cone(c) => Some(Cow::Borrowed(c.rev().base())),
         SurfaceKind::Sphere(sp) => Some(Cow::Borrowed(sp.base().base())),
@@ -611,7 +615,9 @@ pub fn write_surface_to_db(
         } else {
             db.write_double(distance);
         }
-        let base = off.extended_base_surface().unwrap_or(off.base_surface());
+        let base = off
+            .extended_base_surface()
+            .unwrap_or_else(|| off.base_surface());
         let b = bspline_surface_part(base)?.ok_or_else(|| SolidError::null_pointer(OP_SURFACE))?;
         b.write_to_db(db, version)?;
     } else {
