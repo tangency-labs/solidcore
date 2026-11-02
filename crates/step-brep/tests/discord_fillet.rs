@@ -17,60 +17,63 @@ const TOP: f64 = 458.266019821167;
 const CYLINDER_RADIUS: f64 = 304.8;
 const RADIUS: f64 = 70.0;
 
-fn operand() -> (Kernel, Brep, Vec<EdgeId>) {
+fn operand() -> Result<(Kernel, Brep, Vec<EdgeId>), Box<dyn std::error::Error>> {
     let model = step_import::import(
         include_bytes!("fixtures/discord-2026-10-30-fillet.step"),
         &step_import::Limits::default(),
-    )
-    .unwrap();
+    )?;
     assert_eq!(model.bodies.len(), 1);
     assert!(model.skipped.is_empty());
-    let built =
-        step_brep::build_body(&model.bodies[0], step_brep::BuildOptions::default()).unwrap();
+    let built = step_brep::build_body(
+        model.bodies.first().ok_or("missing body")?,
+        step_brep::BuildOptions::default(),
+    )?;
     assert!(built.face_failures.is_empty());
     let b = built.brep;
     let k = Kernel::default();
     let mut selected = Vec::new();
     for e in b.edges().ids() {
-        let (Some(a), Some(z)) = edge::start_end_vertices(&b, e).unwrap() else {
+        let (Some(a), Some(z)) = edge::start_end_vertices(&b, e)? else {
             continue;
         };
-        let a = vertex::point(&b, a).unwrap();
-        let z = vertex::point(&b, z).unwrap();
+        let a = vertex::point(&b, a)?;
+        let z = vertex::point(&b, z)?;
         if (a.z - TOP).abs() > 1e-5 || (z.z - TOP).abs() > 1e-5 {
             continue;
         }
-        let curve = edge::curve(&b, e).unwrap().unwrap();
-        let interval = edge::interval(&b, e).unwrap();
-        let mid = curve.evaluate_point(&k, interval.evaluate(0.5)).unwrap();
+        let curve = edge::curve(&b, e)?.ok_or("missing edge curve")?;
+        let interval = edge::interval(&b, e)?;
+        let mid = curve.evaluate_point(&k, interval.evaluate(0.5))?;
         if ((mid.x * mid.x + mid.y * mid.y).sqrt() - CYLINDER_RADIUS).abs() < 1e-3 {
             selected.push(e);
         }
     }
     assert_eq!(selected.len(), 4);
-    (k, b, selected)
+    Ok((k, b, selected))
 }
 
-fn round(k: &mut Kernel, b: &mut Brep, edges: &[EdgeId]) -> (solidcore::Result<()>, i32) {
-    let mut session = FilletSession::new(k, b).unwrap();
-    session
-        .prepare_per_edge_constant_radius(
-            k,
-            edges,
-            &vec![RADIUS; edges.len()],
-            &vec![FilletSurfaceGeneratorType::Circular; edges.len()],
-            1,
-            1.0,
-        )
-        .unwrap();
+fn round(
+    k: &mut Kernel,
+    b: &mut Brep,
+    edges: &[EdgeId],
+) -> Result<(solidcore::Result<()>, i32), Box<dyn std::error::Error>> {
+    let mut session = FilletSession::new(k, b)?;
+    session.prepare_per_edge_constant_radius(
+        k,
+        edges,
+        &vec![RADIUS; edges.len()],
+        &vec![FilletSurfaceGeneratorType::Circular; edges.len()],
+        1,
+        1.0,
+    )?;
     let result = session.do_fillet(k);
-    (result, session.error_info().code)
+    Ok((result, session.error_info().code))
 }
 
 #[test]
 fn pinned_construction_fails_at_the_four_arc_corner_edges() {
-    let (mut k, mut b, edges) = operand();
-    let (result, code) = round(&mut k, &mut b, &edges);
+    let (mut k, mut b, edges) = operand().unwrap();
+    let (result, code) = round(&mut k, &mut b, &edges).unwrap();
     assert!(matches!(
         result,
         Err(SolidError::Upstream { code: 1001, .. })
@@ -80,14 +83,14 @@ fn pinned_construction_fails_at_the_four_arc_corner_edges() {
 
 #[test]
 fn exact_classes_build_four_rounds_on_the_expected_seventy_mm_torus() {
-    let (mut k, mut b, edges) = operand();
+    let (mut k, mut b, edges) = operand().unwrap();
     k.fixes.fillet_exact_round_classes = true;
     let input_check = check_brep(&mut k, &mut b, CheckLevel::Level2).unwrap();
     assert!(b.faces().ids().all(|f| !matches!(
         face::surface(&b, f).unwrap().unwrap().kind(),
         SurfaceKind::SurfOfRevolution(_) | SurfaceKind::Torus(_)
     )));
-    round(&mut k, &mut b, &edges).0.unwrap();
+    round(&mut k, &mut b, &edges).unwrap().0.unwrap();
     let mut count = 0;
     for f in b.faces().ids() {
         let s = face::surface(&b, f).unwrap().unwrap();
