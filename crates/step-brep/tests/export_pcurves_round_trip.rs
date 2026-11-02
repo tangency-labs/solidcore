@@ -3,6 +3,8 @@
 //! or cone's v in millimetres), converted from the kernel's NURB parameters, so the
 //! importer's checks accept them.
 
+#![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)] // test helpers
+
 use solidcore::kernel::Kernel;
 use solidcore::math::Point3;
 use solidcore::primitive::api_primitives as api;
@@ -116,10 +118,7 @@ fn wall_face(brep: &Brep) -> (FaceId, FaceuseId) {
 /// Every face's loops' bounds in file order, `Bound::Edges` and its oriented edges
 /// included: the whole boundary, not just its size.
 fn loop_bounds(model: &step_import::model::Model) -> Vec<(u64, Vec<Bound>)> {
-    let body = model
-        .bodies
-        .first()
-        .expect("the model has a body");
+    let body = model.bodies.first().expect("the model has a body");
     body.faces
         .iter()
         .map(|face| {
@@ -186,8 +185,7 @@ fn a_wall_without_uv_trims_keeps_every_loop_edge_and_its_order() {
 
     // The file the stripped B-rep writes keeps that non-empty loop topology.
     let text = step_export::write(&after).unwrap();
-    let imported =
-        step_import::import(text.as_bytes(), &step_import::Limits::default()).unwrap();
+    let imported = step_import::import(text.as_bytes(), &step_import::Limits::default()).unwrap();
     let mut walls = 0;
     for body in &imported.bodies {
         for face in &body.faces {
@@ -243,9 +241,9 @@ fn one_missing_middle_uv_trim_keeps_the_other_pcurve_keys() {
         };
         own && mate_clear
     };
-    let cleared = candidates.into_iter().find(|&index| {
-        index != 0 && index + 1 != uses.len() && own_trim(index)
-    });
+    let cleared = candidates
+        .into_iter()
+        .find(|&index| index != 0 && index + 1 != uses.len() && own_trim(index));
     let cleared_index = cleared.unwrap_or_else(|| {
         let slots: Vec<_> = uses
             .iter()
@@ -254,13 +252,11 @@ fn one_missing_middle_uv_trim_keeps_the_other_pcurve_keys() {
                     eu::uv_trim_curve_pointer(&cylinder, use_)
                         .unwrap()
                         .is_some(),
-                    eu::mate(&cylinder, use_)
-                        .unwrap()
-                        .map(|mate| {
-                            eu::uv_trim_curve_pointer(&cylinder, mate)
-                                .unwrap()
-                                .is_some()
-                        }),
+                    eu::mate(&cylinder, use_).unwrap().map(|mate| {
+                        eu::uv_trim_curve_pointer(&cylinder, mate)
+                            .unwrap()
+                            .is_some()
+                    }),
                 )
             })
             .collect();
@@ -319,9 +315,11 @@ fn one_missing_middle_uv_trim_keeps_the_other_pcurve_keys() {
     );
     // The use after the missing trim still has its own pcurve, and the boundaries
     // before and after it are unchanged.
-    if before.pcurves.keys().any(|&(face, loop_, use_)| {
-        face == wall_id && loop_ == 0 && use_ > cleared_index
-    }) {
+    if before
+        .pcurves
+        .keys()
+        .any(|&(face, loop_, use_)| face == wall_id && loop_ == 0 && use_ > cleared_index)
+    {
         assert!(
             after.pcurves.keys().any(|&(face, loop_, use_)| {
                 face == wall_id && loop_ == 0 && use_ > cleared_index
