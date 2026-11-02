@@ -220,6 +220,20 @@ class FetchReportsTest(unittest.TestCase):
         self.assertEqual((self.dest / "new.json/keep.txt").read_text(), "subdir")
         self.assertFalse((self.dest / "next.json").exists())
 
+    def test_staged_times_directory_is_rejected_before_dest_is_touched(self):
+        self.write_files(self.dest, {"old.json": "old", "times.tsv": "old\n",
+                                     "notes.txt": "keep"})
+        self.stage("101", {"new.json": "new", "times.tsv/child.txt": "directory"})
+
+        result = self.run_script(FAKE_GH_RUNS="101")
+
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("refusing directory named times.tsv", result.stderr)
+        self.assertEqual((self.dest / "old.json").read_text(), "old")
+        self.assertEqual((self.dest / "times.tsv").read_text(), "old\n")
+        self.assertEqual((self.dest / "notes.txt").read_text(), "keep")
+        self.assertFalse((self.dest / "new.json").exists())
+
     def test_publish_failure_rolls_back_the_previous_set(self):
         self.write_files(self.dest, {"a.json": "old-a", "b.json": "old-b",
                                      "extra.txt": "keep", "times.tsv": "old\n"})
@@ -236,6 +250,40 @@ class FetchReportsTest(unittest.TestCase):
         self.assertEqual((self.dest / "times.tsv").read_text(), "old\n")
         self.assertFalse((self.dest / "a-new.json").exists())
         self.assertFalse((self.dest / "z-new.json").exists())
+
+    def test_publish_failure_restores_overwritten_report_names(self):
+        self.write_files(self.dest, {"a.json": "old-a", "b.json": "old-b",
+                                     "extra.txt": "keep", "times.tsv": "old\n"})
+        self.stage("101", {"a.json": "new-a", "z-new.json": "new-z",
+                           "times.tsv": "new\n"})
+
+        result = self.run_script(FAKE_GH_RUNS="101",
+                                 FAKE_MV_FAIL_SUBSTRING="z-new.json")
+
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("previous reports restored", result.stderr)
+        self.assertEqual((self.dest / "a.json").read_text(), "old-a")
+        self.assertEqual((self.dest / "b.json").read_text(), "old-b")
+        self.assertEqual((self.dest / "extra.txt").read_text(), "keep")
+        self.assertEqual((self.dest / "times.tsv").read_text(), "old\n")
+        self.assertFalse((self.dest / "z-new.json").exists())
+
+    def test_timing_publish_failure_restores_reports_and_timing(self):
+        self.write_files(self.dest, {"a.json": "old-a", "b.json": "old-b",
+                                     "times.tsv": "old\n", "notes.txt": "keep"})
+        self.stage("101", {"a.json": "new-a", "new.json": "new",
+                           "times.tsv": "new\n"})
+
+        result = self.run_script(FAKE_GH_RUNS="101",
+                                 FAKE_MV_FAIL_SUBSTRING="/run/times.tsv")
+
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("previous reports restored", result.stderr)
+        self.assertEqual((self.dest / "a.json").read_text(), "old-a")
+        self.assertEqual((self.dest / "b.json").read_text(), "old-b")
+        self.assertEqual((self.dest / "times.tsv").read_text(), "old\n")
+        self.assertEqual((self.dest / "notes.txt").read_text(), "keep")
+        self.assertFalse((self.dest / "new.json").exists())
 
     def test_failed_rollback_keeps_and_reports_the_backup(self):
         self.write_files(self.dest, {"old.json": "old"})
