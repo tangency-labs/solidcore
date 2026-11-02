@@ -109,6 +109,7 @@ mod overflow_first;
 mod piecewise;
 mod surface;
 mod trace_reach;
+mod trim_at_creases;
 mod two_offsets;
 pub use original_trim::{OriginalSurfaceDeletion, OriginalSurfaceSelection};
 
