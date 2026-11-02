@@ -933,6 +933,11 @@ impl FilletBrep {
                     let the_corner = corners.corner(corner)?;
                     let filleted_vertex = the_corner.filleted_vertex();
                     match the_corner.corner_type() {
+                        // the fork's SM_FCR_BLEND (WR-697): a closed Join's one blend
+                        // meets itself, its start its end (543d25a)
+                        FilletCornerType::NByTwo if the_corner.is_closed_join() => {
+                            check_connectivity = true;
+                        }
                         FilletCornerType::NByTwo => {
                             at_start_of_geom1 = fs1.vertex(target.brep(), 0)? == filleted_vertex;
                             // pFilSolver2 stays NULL when both uses share the geometry
@@ -1019,7 +1024,8 @@ impl FilletBrep {
         let closed_blending = match corner {
             Some(c) => {
                 let c = corners.corner(c)?;
-                c.corner_type() == FilletCornerType::NByOneClosed
+                // the fork's `|| IsClosedJoin()` (543d25a; WR-697)
+                (c.corner_type() == FilletCornerType::NByOneClosed || c.is_closed_join())
                     && g1 == g2
                     && c.is_blending_corner()
             }
@@ -1072,7 +1078,10 @@ impl FilletBrep {
         // Need second UV curve when we had a closed fillet surface
         let closed = match corner {
             Some(c) => {
-                corners.corner(c)?.corner_type() == FilletCornerType::NByOneClosed && g1 == g2
+                let c = corners.corner(c)?;
+                // the fork's `|| IsClosedJoin()` (543d25a; WR-697)
+                (c.corner_type() == FilletCornerType::NByOneClosed || c.is_closed_join())
+                    && g1 == g2
             }
             None => false,
         };

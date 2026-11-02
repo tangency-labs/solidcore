@@ -451,6 +451,10 @@ pub enum FilletVertexType {
     /// `SM_FV_UNKNOWN`.
     #[default]
     Unknown = 13,
+    /// The fork's `SM_FV_JOIN_SECTION` (543d25a; WR-697): a Join's shared section, its end
+    /// on the first blend's side (`CalcJoinSection`). Its code here follows the pinned
+    /// `SM_FV_UNKNOWN`, which keeps its value (the fork inserts it before).
+    JoinSection = 14,
 }
 
 impl FilletVertexType {
@@ -472,6 +476,7 @@ impl FilletVertexType {
             11 => Self::RailXExtendedEdgeuse,
             12 => Self::Setback,
             13 => Self::Unknown,
+            14 => Self::JoinSection,
             _ => return None,
         })
     }
