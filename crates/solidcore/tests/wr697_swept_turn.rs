@@ -207,14 +207,17 @@ fn unequal_rounds_are_not_swept_yet() {
     assert!(why.contains("constant rounds of one radius"), "{why}");
 }
 
-/// The swept boss base's torus faces turned round (`SmFace::SwapUV`) `times` times: the
-/// volume, check lines and tori after.
+/// The swept boss base's torus faces turned round (`SmFace::SwapUV`, rebuilding each torus
+/// from its NURB) `times` times: the volume, check lines and tori after.
 fn turned_round(fixed: bool, times: usize) -> (f64, Vec<String>, Vec<(f64, f64)>) {
     let mut k = all_fixes(true);
     k.fixes.fillet_blend_corner = true;
     let mut b = boss_base(&mut k);
     round(&mut k, &mut b, &BASE, &[1.0; 4]).unwrap();
     k.fixes.fillet_blend_corner = fixed;
+    // the rebuild from the NURB is what `SwapUV` runs without WR-701's
+    // `swap_uv_keeps_analytic_definition` (which keeps the analytic torus instead)
+    k.fixes.swap_uv_keeps_analytic_definition = false;
     let torus_faces: Vec<_> = get_faces(&b)
         .unwrap()
         .into_iter()
