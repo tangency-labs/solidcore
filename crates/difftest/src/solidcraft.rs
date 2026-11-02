@@ -24,6 +24,7 @@ use serde::Deserialize;
 use serde_json::{json, Value};
 
 use solidcore::blend::fillet_executive::api as fillet_api;
+use solidcore::blend::fillet_executive::FitKind;
 use solidcore::boolean::api_brep as boolean;
 use solidcore::curve::curve::Curve;
 use solidcore::geom::attribute::{AttributeStore, ObjectKey};
@@ -516,6 +517,29 @@ pub struct RefusedExpect {
     pub step: String,
     /// Text the step's error contains. Empty or whitespace-only text is invalid.
     pub error: String,
+    /// The largest size that builds, which the refusal must report
+    /// (`SolidError::FilletRefused`'s `fit`; needs `fillet_gn_section_generator`).
+    #[serde(default)]
+    pub fit_size: Option<FitSizeExpect>,
+}
+
+/// A refusal's expected largest size that builds.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct FitSizeExpect {
+    /// The size.
+    pub value: f64,
+    /// Absolute tolerance.
+    pub tol: f64,
+    /// What it sizes (default `radius`).
+    #[serde(default = "radius_kind")]
+    pub kind: FitKindName,
+    /// Where the value comes from (SolidCraft's test, the fork, a closed form).
+    pub source: String,
+}
+
+fn radius_kind() -> FitKindName {
+    FitKindName::Radius
 }
 
 /// A valid folded solid, one connected non-overlapping flat pattern whose area
@@ -889,6 +913,11 @@ pub fn validate(case: &Case) -> Result<(), String> {
         if r.error.trim().is_empty() {
             return Err("refused needs the text its error contains".into());
         }
+        if let Some(f) = &r.fit_size {
+            if !(f.value.is_finite() && f.value >= 0.0 && f.tol.is_finite() && f.tol > 0.0) {
+                return Err("refused fit_size value must be finite and >= 0, tol positive".into());
+            }
+        }
         if !case.steps.iter().any(|s| s.id() == r.step) {
             return Err(format!("refused names `{}`, which no step writes", r.step));
         }
@@ -956,6 +985,54 @@ pub enum Run {
     Deferred(Deferral),
     /// A step returned an error other than `Unported`.
     Error(String),
+    /// A fillet or chamfer step was refused as too large, with the largest size that
+    /// builds it (`SolidError::FilletRefused`, opt-in `fillet_gn_section_generator`).
+    /// Scored as an `ERROR`, except by a case that expects the refusal.
+    Refused {
+        /// The error, prefixed with the step as for [`Run::Error`].
+        message: String,
+        /// The largest size that builds the blend.
+        fit: Fit,
+    },
+}
+
+/// A refusal's largest size that builds (`FitSize` without its edge).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Fit {
+    /// The size: `> 0`, or `0` when no size builds.
+    pub size: f64,
+    /// What it sizes.
+    pub kind: FitKindName,
+}
+
+/// What a [`Fit`] sizes (`FitKind`), as a case names it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum FitKindName {
+    /// A constant ball's radius (a round's radius, an equal chamfer's solver radius).
+    Radius,
+    /// The factor on two unequal offsets.
+    Scale,
+    /// A chord width.
+    Chord,
+}
+
+impl FitKindName {
+    fn of(kind: FitKind) -> Self {
+        match kind {
+            FitKind::Radius => Self::Radius,
+            FitKind::Scale => Self::Scale,
+            FitKind::Chord => Self::Chord,
+        }
+    }
+
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Radius => "radius",
+            Self::Scale => "scale",
+            Self::Chord => "chord",
+        }
+    }
 }
 
 fn p3(p: P3) -> Point3 {
@@ -969,6 +1046,13 @@ fn solid(e: &SolidError) -> Run {
             blocked_by: (*unit).to_string(),
             symbol: (*upstream).to_string(),
         }),
+        SolidError::FilletRefused { fit, .. } => Run::Refused {
+            message: e.to_string(),
+            fit: Fit {
+                size: fit.size,
+                kind: FitKindName::of(fit.kind),
+            },
+        },
         _ => Run::Error(e.to_string()),
     }
 }
@@ -1712,6 +1796,19 @@ pub fn run_rust_on(mut k: Kernel, case: &Case) -> Run {
                     None => Run::Error(msg),
                 };
             }
+            Err(Run::Refused { message, fit }) => {
+                let refused = case.refused_by.as_ref().filter(|r| {
+                    !r.error.trim().is_empty() && r.step == step.id() && message.contains(&r.error)
+                });
+                let message = format!("step {} (`{}`): {message}", n + 1, step.id());
+                return match refused {
+                    Some(r) => Run::Deferred(Deferral {
+                        blocked_by: r.issue.clone(),
+                        symbol: message,
+                    }),
+                    None => Run::Refused { message, fit },
+                };
+            }
             Err(stop) => return stop,
         }
     }
@@ -1740,7 +1837,7 @@ pub fn run_rust_on(mut k: Kernel, case: &Case) -> Run {
 #[derive(Debug, Clone, PartialEq)]
 pub struct Check {
     /// `lumps`, `volume`, `removed`, `cylinder_faces_max`, `manifold`, `sheet_corner`,
-    /// `refused`.
+    /// `refused`, `fit_size`.
     pub name: &'static str,
     /// `pass`, `fail` or `unchecked`.
     pub status: &'static str,
@@ -1824,7 +1921,7 @@ pub fn verdict(e: &Expect, run: &Run) -> (&'static str, Vec<Check>) {
     }
     match run {
         Run::Deferred(_) => ("DEFERRED", Vec::new()),
-        Run::Error(_) => ("ERROR", Vec::new()),
+        Run::Error(_) | Run::Refused { .. } => ("ERROR", Vec::new()),
         Run::Done(m) => {
             let c = checks(e, m);
             let v = if c.iter().any(|c| c.status == "fail") {
@@ -1850,7 +1947,7 @@ fn refusal_verdict(r: &RefusedExpect, run: &Run) -> (&'static str, Vec<Check>) {
     };
     match run {
         Run::Deferred(_) => ("DEFERRED", Vec::new()),
-        Run::Error(msg) => {
+        Run::Error(msg) | Run::Refused { message: msg, .. } => {
             // `run_rust_on` names the failing step as "step N (`id`): ...".
             let ok = msg.contains(&format!("(`{}`): ", r.step))
                 && !r.error.trim().is_empty()
@@ -1859,7 +1956,39 @@ fn refusal_verdict(r: &RefusedExpect, run: &Run) -> (&'static str, Vec<Check>) {
                 "expected `{}` to fail with `{}`, got: {msg}",
                 r.step, r.error
             );
-            (if ok { "PASS" } else { "FAIL" }, vec![check(ok, detail)])
+            let mut checks = vec![check(ok, detail)];
+            if let Some(want) = &r.fit_size {
+                let got = match run {
+                    Run::Refused { fit, .. } => Some(*fit),
+                    _ => None,
+                };
+                let fit_ok = got.is_some_and(|g| {
+                    g.kind == want.kind && (g.size - want.value).abs() <= want.tol
+                });
+                checks.push(Check {
+                    name: "fit_size",
+                    status: if fit_ok { "pass" } else { "fail" },
+                    detail: match got {
+                        Some(g) => format!(
+                            "expected {} {} +- {}, got {} {} (off by {})",
+                            want.kind.as_str(),
+                            want.value,
+                            want.tol,
+                            g.kind.as_str(),
+                            g.size,
+                            (g.size - want.value).abs()
+                        ),
+                        None => format!(
+                            "expected {} {} +- {}, the refusal reports no size",
+                            want.kind.as_str(),
+                            want.value,
+                            want.tol
+                        ),
+                    },
+                });
+            }
+            let all = checks.iter().all(|c| c.status == "pass");
+            (if all { "PASS" } else { "FAIL" }, checks)
         }
         Run::Done(_) => (
             "FAIL",
@@ -1895,8 +2024,14 @@ fn run_entry(run: &Run, verdict: &str, checks: &[Check]) -> Value {
                 json!({"blocked_by": d.blocked_by, "symbol": d.symbol}),
             );
         }
-        Run::Error(msg) => {
+        Run::Error(msg) | Run::Refused { message: msg, .. } => {
             e.insert("error".into(), json!(msg));
+            if let Run::Refused { fit, .. } = run {
+                e.insert(
+                    "fit".into(),
+                    json!({"size": crate::json::num(fit.size), "kind": fit.kind.as_str()}),
+                );
+            }
             if !checks.is_empty() {
                 e.insert(
                     "checks".into(),
@@ -1973,6 +2108,18 @@ pub fn run_cases(root: &Path, opts: &CasesOptions) -> ExitCode {
                 format!("{}: {}", d.blocked_by, d.symbol)
             }
             Run::Error(msg) => msg.clone(),
+            Run::Refused { message, fit } => {
+                let fit_checks: Vec<String> = c
+                    .iter()
+                    .filter(|c| c.name == "fit_size")
+                    .map(|c| format!("fit_size {}: {}", c.status, c.detail))
+                    .collect();
+                if fit_checks.is_empty() {
+                    format!("{message} [fit {} {}]", fit.kind.as_str(), fit.size)
+                } else {
+                    format!("{message}; {}", fit_checks.join("; "))
+                }
+            }
             Run::Done(m) => {
                 let [f, e, v] = m.topology;
                 let checked = c
@@ -2452,6 +2599,11 @@ mod tests {
         ))
         .is_ok());
         assert!(validate(&case(json!({"refused": {"step": "result", "error": "  "}}))).is_err());
+        assert!(
+            validate(&case(json!({"refused": {"step": "result", "error": "1001",
+            "fit_size": {"value": -1.0, "tol": 1e-6, "source": "s"}}})))
+            .is_err()
+        );
         assert!(validate(&case(json!({"refused": {"step": "nope", "error": "1001"}}))).is_err());
         assert!(validate(&case(
             json!({"lumps": 1, "refused": {"step": "result", "error": "1001"}})
@@ -2494,6 +2646,63 @@ mod tests {
                  "radius": 2.001}
             ],
             "expect": {"refused": {"step": "result", "error": "status 1001"}}
+        }))
+        .unwrap();
+        validate(&case).unwrap();
+        let run = run_rust(&case);
+        assert_eq!(verdict(&case.expect, &run).0, "PASS", "{run:?}");
+    }
+
+    #[test]
+    fn refused_fit_size_is_checked_against_the_refusal() {
+        let e: Expect = serde_json::from_value(json!({
+            "refused": {"step": "result", "error": "status 1001",
+                        "fit_size": {"value": 3.0, "tol": 1e-6, "source": "s"}}
+        }))
+        .unwrap();
+        let refused = |size: f64, kind: FitKindName| Run::Refused {
+            message: "step 2 (`result`): x: upstream status 1001: refused".into(),
+            fit: Fit { size, kind },
+        };
+        assert_eq!(verdict(&e, &refused(3.0, FitKindName::Radius)).0, "PASS");
+        let (v, c) = verdict(&e, &refused(2.5, FitKindName::Radius));
+        assert_eq!(v, "FAIL");
+        assert!(
+            c.iter().any(|c| c.name == "fit_size" && c.status == "fail"),
+            "{c:?}"
+        );
+        assert_eq!(verdict(&e, &refused(3.0, FitKindName::Scale)).0, "FAIL");
+        // a refusal without a size does not meet a fit_size expectation
+        let plain = Run::Error("step 2 (`result`): x: upstream status 1001".into());
+        let (v, c) = verdict(&e, &plain);
+        assert_eq!(v, "FAIL");
+        assert!(
+            c.iter().any(|c| c.detail.contains("reports no size")),
+            "{c:?}"
+        );
+        // and a refusal with a size is still an ERROR where no refusal is expected
+        let none: Expect = serde_json::from_value(json!({"lumps": 1})).unwrap();
+        assert_eq!(
+            verdict(&none, &refused(3.0, FitKindName::Radius)).0,
+            "ERROR"
+        );
+    }
+
+    #[test]
+    fn a_round_past_the_end_face_reports_its_fit() {
+        // SolidCraft #199: r 3.5 on a 14 x 6 bar's vertical edges; with the generic
+        // blend's checks the refusal reports the largest radius that builds, 3.
+        let case: Case = serde_json::from_value(json!({
+            "name": "bar-round-too-large",
+            "fixes": ["fillet_refuse_overlapping_bands", "fillet_gn_section_generator"],
+            "steps": [
+                {"op": "box", "id": "bar", "origin": [14.0, 0.0, 0.0], "size": [14.0, 6.0, 10.0]},
+                {"op": "fillet", "id": "result", "body": "bar",
+                 "edges": [[14.0, 0.0, 5.0], [28.0, 0.0, 5.0], [14.0, 6.0, 5.0], [28.0, 6.0, 5.0]],
+                 "radius": 3.5}
+            ],
+            "expect": {"refused": {"step": "result", "error": "refused",
+                                   "fit_size": {"value": 3.0, "tol": 1e-6, "source": "half the end face"}}}
         }))
         .unwrap();
         validate(&case).unwrap();
