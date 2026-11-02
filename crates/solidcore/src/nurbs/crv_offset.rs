@@ -33,6 +33,7 @@
 //!   unchanged), four times the curvature-free count a curve of that many Bezier
 //!   segments needs at `tol` (a swept wall of 127 segments at `1e-5` needs 38 227),
 //!   and never more than [`MAX_OFFSET_SAMPLES_ANY`] (about 30 s at opt-level 3).
+//! - Cancellation: `offset_pt_sampling_cancellable` (crate-private) polls a cancel token (#2136, #2372) per sample point and per knot removal step; `offset_pt_sampling` passes none.
 
 use crate::error::{NlibCode, Result, SolidError};
 use crate::math::{max2, Vec3};

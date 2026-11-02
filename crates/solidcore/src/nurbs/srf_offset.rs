@@ -39,6 +39,7 @@
 //!   With inherited parameters, fits are checked on cell edges and centers and
 //!   refined for at most 24 iterations, still within the 10000-point grid budget;
 //!   exhausting either bound returns an error instead of an unchecked surface.
+//! - Cancellation: `offset_cancellable` (crate-private) passes a cancel token (#2136, #2372) to its profile offsets; `offset` and `offset_with` pass none.
 
 use crate::error::{NlibCode, Result, SolidError};
 use crate::math::{max2, Vec3};

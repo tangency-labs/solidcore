@@ -113,6 +113,7 @@
 //! - Status values upstream ignores stay ignored: the reparametrisation of
 //!   `ApproximateOffsetSurface` and `RebuildSTEPFromNURBParameters`, a no-op for a
 //!   plain B-spline.
+//! - Cancellation: `approximate_offset_surface_cancellable` (crate-private) passes a cancel token (#2136, #2372) to `N_SrfOffset`; the public wrappers pass none.
 
 use crate::error::{Result, SolidError};
 use crate::geom::axis2_placement::Axis2Placement;

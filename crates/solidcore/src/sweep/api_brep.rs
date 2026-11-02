@@ -77,6 +77,7 @@
 //!   [`create_curve_sweep_with_placements`], so [`create_curve_sweep`] keeps its
 //!   signature and does no extra work; the fork's `bProfileAtPathStart` is
 //!   [`SweepOptions::profile_at_path_start`] (WR-522), off by default.
+//! - Cancellation: a sweep under a fired cancel token (#2136, #2372) returns `Cancelled`, not `Ok`.
 
 use crate::curve::curve::p2::CurveKind;
 use crate::curve::curve::Curve;

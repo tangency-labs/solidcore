@@ -24,6 +24,8 @@
 //! `GetOrCreateGwNurbPointer` in `EdgeSweepHigher` already made it in place.
 //! Opt-in `translation_sweep_regularize` removes degenerate swept faces and
 //! isolated slit loops after non-merged in-place whole-body translations.
+//!
+//! Cancellation: the sweep polls the cancel token (#2136, #2372) of the source's kernel per repetition, vertex, edge and face.
 
 use super::access::{
     EdgeRef, EdgeuseRef, FaceBuild, FaceInput, FaceRef, RegionRef, SweepAccess, VertexRef,

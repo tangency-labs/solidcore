@@ -46,6 +46,7 @@
 //!   (impossible upstream, where `NL_DEGREE` is a `short`) is
 //!   [`SolidError::InvalidInput`], so index arithmetic and allocations sized from the
 //!   degree cannot overflow.
+//! - Cancellation: `remove_knots_constrained` takes an optional cancel token (#2136, #2372), polled once per removal step; `None` or an unfired token changes nothing.
 
 // Index arithmetic follows upstream's signed `NL_INDEX` (`isize` here); every access
 // goes through `get`/`set`, which reject negative or too-large indices.
