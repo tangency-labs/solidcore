@@ -504,4 +504,98 @@ mod tests {
         s.net = [[0.5; 3]; 9];
         assert!(accepted(&s));
     }
+
+    /// A canonical surface of revolution of a line generator (kind 3): axis point
+    /// `net[0]`, axis direction `net[1]`, line start `net[2]`, line end `net[3]`,
+    /// `net[4][0]` the swap flag.
+    fn canonical_revolution() -> SurfaceInput {
+        SurfaceInput {
+            kind: 3,
+            net: [
+                [0.0, 0.0, 0.0],
+                [0.0, 0.0, 1.0],
+                [1.0, 0.0, 0.0],
+                [1.0, 0.0, 2.0],
+                [0.0; 3],
+                [0.0; 3],
+                [0.0; 3],
+                [0.0; 3],
+                [0.0; 3],
+            ],
+            domain: [0.5, 0.1, 5.7, 0.9],
+        }
+    }
+
+    #[test]
+    fn canonical_revolution_guard_cylinder_accepted() {
+        assert!(accepted(&canonical_revolution()));
+    }
+
+    #[test]
+    fn canonical_revolution_guard_zero_axis_accepted() {
+        // `CreateCanonical` calls `Unitize()` and ignores its status; a zero axis
+        // becomes (0,0,1), so the constructor still builds a defined frame.
+        let mut s = canonical_revolution();
+        s.net[1] = [0.0; 3];
+        assert!(accepted(&s));
+    }
+
+    #[test]
+    fn canonical_revolution_guard_non_unit_and_oblique_axis_accepted() {
+        let mut s = canonical_revolution();
+        s.net[1] = [0.1, 0.2, 5.0];
+        assert!(accepted(&s));
+    }
+
+    #[test]
+    fn canonical_revolution_guard_swap_flag_accepted() {
+        let mut s = canonical_revolution();
+        s.net[4][0] = 1.0;
+        assert!(accepted(&s));
+        s.net[4][0] = -2.5;
+        assert!(accepted(&s));
+    }
+
+    #[test]
+    fn canonical_revolution_guard_start_on_axis_with_oblique_generator_accepted() {
+        // The start point lies on the axis, so `CreateCanonical` retries at 45% of
+        // the generator's STEP interval, where the line is off the axis.
+        let mut s = canonical_revolution();
+        s.net[2] = [0.0, 0.0, 0.0];
+        s.net[3] = [1.0, 0.0, 2.0];
+        assert!(accepted(&s));
+    }
+
+    #[test]
+    fn canonical_revolution_guard_zero_length_generator_rejected() {
+        // `SmLine::CreateLineSegment` unitizes the generator vector and fails on a
+        // zero-length one, so the fixture would not construct.
+        let mut s = canonical_revolution();
+        s.net[3] = s.net[2];
+        assert!(!accepted(&s));
+    }
+
+    #[test]
+    fn canonical_revolution_guard_generator_on_axis_rejected() {
+        // A generator coincident with the axis makes `CreateCanonical` return SM_ERR
+        // before it builds a surface.
+        let mut s = canonical_revolution();
+        s.net[2] = [0.0, 0.0, 0.5];
+        s.net[3] = [0.0, 0.0, 1.5];
+        assert!(!accepted(&s));
+    }
+
+    #[test]
+    fn canonical_revolution_guard_non_finite_generator_rejected() {
+        let mut s = canonical_revolution();
+        s.net[2][0] = f64::NAN;
+        assert!(!accepted(&s));
+    }
+
+    #[test]
+    fn canonical_revolution_guard_inverted_domain_rejected() {
+        let mut s = canonical_revolution();
+        s.domain = [5.7, 0.1, 0.5, 0.9];
+        assert!(!accepted(&s));
+    }
 }
