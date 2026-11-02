@@ -384,9 +384,9 @@ impl FilletSurfaceGenerator {
         points: &[TsectPnt],
         side1: crate::blend::fillet_standard_solver::p1::RailSurface<'_>,
         side2: crate::blend::fillet_standard_solver::p1::RailSurface<'_>,
-    ) -> Result<crate::nurbs::b_spline_surface::BSplineSurface> {
+    ) -> Result<Surface> {
         let no_center = || SolidError::invalid_input(OP, "NULL centre line");
-        match self {
+        let surface = match self {
             Self::Base => Err(SolidError::sm_err(OP)),
             Self::EiffelTower => {
                 crate::blend::fillet_custom_solver::EiffelTowerCrossSectionFsg::new()
@@ -422,16 +422,18 @@ impl FilletSurfaceGenerator {
                 let mut uv1 = side1.uv_curve.ok_or_else(none)?.clone();
                 let mut uv2 = side2.uv_curve.ok_or_else(none)?.clone();
                 let mut g = *g;
-                g.create_surface(
+                // (a blend by its definition with `fillet_round_as_definition`, 4a10ed8)
+                return g.create_surface(
                     k,
                     approx_tol_3d,
                     center_line.ok_or_else(no_center)?,
                     [rail1, rail2],
                     [s1, s2],
                     [&mut uv1, &mut uv2],
-                )
+                );
             }
-        }
+        };
+        surface.map(Surface::from)
     }
 
     /// [`FilletSurfaceGenerator::create_surface`] for a caller that owns the rails' uv
@@ -458,7 +460,7 @@ impl FilletSurfaceGenerator {
         points: &[TsectPnt],
         surfaces: [&Surface; 2],
         uv: [&mut BSplineCurve; 2],
-    ) -> Result<crate::nurbs::b_spline_surface::BSplineSurface> {
+    ) -> Result<Surface> {
         use crate::blend::fillet_standard_solver::p1::RailSurface;
         if let Self::GnSection(g) = self {
             let center =
@@ -2929,6 +2931,10 @@ fn evaluate_point_out_of_bounds(k: &Kernel, base: &Surface, uv: Point2) -> Resul
     let mut s = base.clone_for_evaluation()?;
     match s.kind_mut() {
         SurfaceKind::BSpline(b) => *b.out_of_bounds_enabled_mut() = true,
+        SurfaceKind::ProceduralBlend(pb) => {
+            let b = pb.net_mut();
+            *b.out_of_bounds_enabled_mut() = true;
+        }
         SurfaceKind::Plane(p) => *p.out_of_bounds_enabled_mut() = true,
         SurfaceKind::SurfOfRevolution(r) => *r.base_mut().out_of_bounds_enabled_mut() = true,
         SurfaceKind::SurfOfExtrusion(r) => *r.base_mut().out_of_bounds_enabled_mut() = true,
@@ -3160,6 +3166,9 @@ pub fn test_analytic_surface(k: &Kernel, surface: AnalyticTestSurface<'_>) -> Re
             SurfaceKind::Cone(c) => c.rev().base(),
             SurfaceKind::Sphere(s) => s.base().base(),
             SurfaceKind::Torus(s) => s.base().base(),
+            // (the fork's SmProceduralBlend is an SmBSplineSurface: its net, its corner
+            // points the definition's, below)
+            SurfaceKind::ProceduralBlend(pb) => pb.net(),
             // not an SmBSplineSurface: upstream's parameter type excludes these
             _ => {
                 return Err(SolidError::InvalidInput {
@@ -3172,7 +3181,13 @@ pub fn test_analytic_surface(k: &Kernel, surface: AnalyticTestSurface<'_>) -> Re
         AnalyticTestSurface::Sphere(s) => s.base().base(),
         AnalyticTestSurface::Torus(t) => t.base().base(),
     };
-    Ok(Cone::is_nurb_surface_cone(k, bss, 1.0)?.is_some())
+    let this = match surface {
+        AnalyticTestSurface::Surface(s) if matches!(s.kind(), SurfaceKind::ProceduralBlend(_)) => {
+            Some(s)
+        }
+        _ => None,
+    };
+    Ok(Cone::is_nurb_surface_cone_on(k, bss, 1.0, this)?.is_some())
 }
 
 /// `SE(pEU->EvaluateBinormal(dParameter, FALSE, rPnt, rBinVec, NULL, &rFaceuseNormal))`

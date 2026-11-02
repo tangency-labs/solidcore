@@ -44,12 +44,14 @@
 //! - **Indices.** Knots and nets are read by checked indices (a knot or a coordinate
 //!   outside reads NaN, which shows in the result); the fork's indices stay inside.
 
+use super::form::{binom, gn_form_normalized, GnSectionFormT};
 use super::interval::{cmax, cmin, round_up, Ivl};
 use super::series::{Ser, Trunc, VSer, MAX_E, TAYLOR, V3};
 use super::station::{
-    ders_basis, gn_evaluate, gn_jacobian, gn_solve_station, knot, smax, solve4, span, GnStation,
-    GnSystem, Nurbs, Partials,
+    ders_basis, gn_evaluate, gn_evaluate_v, gn_jacobian, gn_solve_station, knot, smax, solve4,
+    span, GnStation, GnSystem, Nurbs, Partials,
 };
+use super::tay::{gn_area_sum, gn_half_angle, gn_invert, gn_target, GnAreaCells, Tay, TAY};
 use crate::error::{Result, SolidError};
 use crate::kernel::Kernel;
 use crate::nurbs::b_spline_curve::BSplineCurve;
@@ -471,6 +473,8 @@ pub struct Enclosure {
     /// Per face, `|S_u| + |S_v|` over the feet's box (`pDS`): it bounds `|dS|` per unit uv
     /// step (max norm).
     pub ds: [f64; 2],
+    /// The point V's series over the span (`pV`, 7102bc5).
+    pub v: VSer<Ivl>,
 }
 
 fn ivl_at(x: &[Ivl; 4], i: usize) -> Ivl {
@@ -497,6 +501,7 @@ fn system<'a>(
         r,
         side,
         hold: false,
+        law: None,
     }
 }
 
@@ -702,7 +707,7 @@ pub fn gn_enclose(
             }
         }
     }
-    let (_, f) = gn_try!(gn_evaluate(&sysk, &sx, tr), None);
+    let (_, f, v) = gn_try!(gn_evaluate_v(&sysk, &sx, tr), None);
     // the faces' first partials over the box: |S_u| + |S_v| bounds |dS| per unit uv step
     // (max norm)
     let mut ds = [0.0_f64; 2];
@@ -717,7 +722,7 @@ pub fn gn_enclose(
         );
         *dsf = du + dv;
     }
-    Ok(Some(Enclosure { f, x: sx, ds }))
+    Ok(Some(Enclosure { f, x: sx, ds, v }))
 }
 
 /// `std::min` of the loop bound `i <= tr.s && i <= lTot`.
@@ -779,7 +784,48 @@ pub fn gn_fourth_over(
     side: [f64; 2],
     n: usize,
 ) -> Result<Fourth> {
-    let none: Fourth = ([[f64::INFINITY; MAX_E + 1]; 2], [f64::INFINITY; 2]);
+    let (fourth, _) = gn_fourth_over_series(k, faces_n, leader_n, faces, center, a, b, r, side, n)?;
+    Ok(fourth)
+}
+
+/// The series `sm_GnFourthOver` hands a varying thumbweight's row terms (its `pF`, `pV`,
+/// `pFm`, `pVm`, `pdMid`, 7102bc5): the feet's and V's over the span to order
+/// `4 + SM_GN_TAYLOR` in s, at its middle to one less, and the middle.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct PieceSeries {
+    /// `pF`: the feet over the span.
+    pub f: [VSer<Ivl>; 2],
+    /// `pV`: V over the span.
+    pub v: VSer<Ivl>,
+    /// `pFm`: the feet at the middle.
+    pub fm: [VSer<Ivl>; 2],
+    /// `pVm`: V at the middle.
+    pub vm: VSer<Ivl>,
+    /// `pdMid`: the middle.
+    pub mid: f64,
+}
+
+/// [`gn_fourth_over`] with the series of [`PieceSeries`] (`None` where they are not all
+/// proved, as the fork's out-params are then not all set).
+///
+/// # Errors
+///
+/// `InvalidInput` when `n` exceeds `SM_GN_MAXE`.
+#[allow(clippy::too_many_arguments)]
+pub fn gn_fourth_over_series(
+    k: &Kernel,
+    faces_n: [&Nurbs; 2],
+    leader_n: &NurbsCurve,
+    faces: [&Surface; 2],
+    center: &BSplineCurve,
+    a: &GnStation,
+    b: &GnStation,
+    r: [f64; 2],
+    side: [f64; 2],
+    n: usize,
+) -> Result<(Fourth, Option<PieceSeries>)> {
+    let none: (Fourth, Option<PieceSeries>) =
+        (([[f64::INFINITY; MAX_E + 1]; 2], [f64::INFINITY; 2]), None);
     let h = b.s - a.s;
     let Some(e5) = gn_enclose(faces_n, leader_n, a, b, r, side, n, 4 + TAYLOR)? else {
         return Ok(none);
@@ -802,15 +848,21 @@ pub fn gn_fourth_over(
     let Some(e4) = gn_enclose(faces_n, leader_n, &smid, &smid, r, side, n, 4 + TAYLOR - 1)? else {
         return Ok(none);
     };
-    let mut m4 = none.0;
-    let mut uv4 = none.1;
+    let series = PieceSeries {
+        f: e5.f,
+        v: e5.v,
+        fm: e4.f,
+        vm: e4.v,
+        mid,
+    };
+    let (mut m4, mut uv4) = none.0;
     // the uv curves' fourth derivatives, in the same Taylor form, times the faces'
     // |S_u| + |S_v| over the span's box
     for (f, (uvf, &dsf)) in uv4.iter_mut().zip(&e5.ds).enumerate() {
         let mut dmax = 0.0_f64;
         for c in (2 * f)..(2 * f + 2) {
             let (Some(x4), Some(x5)) = (e4.x.get(c), e5.x.get(c)) else {
-                return Ok(none);
+                return Ok((none.0, Some(series)));
             };
             let m = taylor_bound(|i| x4.at(i, 0).mag(), x5.at(4 + TAYLOR, 0).mag(), h);
             dmax = cmax(dmax, m);
@@ -829,7 +881,203 @@ pub fn gn_fourth_over(
             *m4fk = crate::geom::vector3d::sqrt(sq);
         }
     }
-    Ok((m4, uv4))
+    Ok(((m4, uv4), Some(series)))
+}
+
+/// `sm_GnVarying`: a section whose thumbweight varies along s (the equal area one,
+/// resolved per station): its order, `r1 r2`, and I's enclosures on their grid.
+#[derive(Clone, Debug, PartialEq)]
+pub struct GnVarying {
+    /// `n`.
+    pub n: usize,
+    /// `dRR`: `r1 r2`.
+    pub rr: f64,
+    /// `pCells`: I's enclosures, computed once per cell.
+    pub cells: GnAreaCells,
+}
+
+/// `sm_GnRowTerms`: the largest `|(sum_ik dg_ikj c'_ik)|` (`x`) and `|W_j|` (`y`),
+/// the least `W_j` (`w_lo`) per row, and the largest `|S - O|` (`r`).
+#[derive(Clone, Debug, PartialEq)]
+pub struct GnRowTerms {
+    /// `X`.
+    pub x: Vec<f64>,
+    /// `Y`.
+    pub y: Vec<f64>,
+    /// `Wlo`.
+    pub w_lo: Vec<f64>,
+    /// `R`.
+    pub r: f64,
+}
+
+/// `sm_Centred`: the coefficients `0..=SM_GN_TAY` of a series over a piece in their
+/// Taylor form at its middle m: `c_i(s) = sum_{j < K - i} C(i + j, i) c_(i+j)(m) d^j +
+/// C(K, i) c_K(xi) d^(K-i)`, `d = s - m`, from the middle's coefficients `mid[0..K-1]` and
+/// the piece's `top` at order K.
+#[must_use]
+pub fn centred(mid: &[Ivl], top: Ivl, kk: usize, d: Ivl) -> Tay<Ivl> {
+    let mut r = Tay::<Ivl>::zero();
+    for i in 0..=TAY {
+        let mut sum = Ivl::from(0.0);
+        let mut pow = Ivl::from(1.0);
+        let mut j = 0;
+        while i + j < kk {
+            if j > 0 {
+                pow = pow * d;
+            }
+            let m = mid.get(i + j).copied().unwrap_or(IZ);
+            sum = sum + Ivl::from(binom(i + j, i)) * m * pow;
+            j += 1;
+        }
+        pow = pow * d;
+        r.set(i, sum + Ivl::from(binom(kk, i)) * top * pow);
+    }
+    r
+}
+
+/// A vector series' coordinate q's coefficient `(i, k)`.
+fn vat(v: &VSer<Ivl>, q: usize, i: usize, k: usize) -> Ivl {
+    v.a.get(q).map_or(IZ, |c| c.at(i, k))
+}
+
+/// `sm_GnRowTermsOver`: the row terms over one piece, folded into `rt` (largest X, Y, R;
+/// least W); `false` where w's enclosure or a term is not proved. `f`, `centre`: the
+/// feet's and V's series over the piece (to order `K = 4 + SM_GN_TAYLOR` in s); `fm`,
+/// `cm`: at its middle (to K - 1); `d`: s less the middle over the piece.
+#[allow(clippy::too_many_arguments)]
+pub fn gn_row_terms_over(
+    vary: &mut GnVarying,
+    f: &[VSer<Ivl>; 2],
+    centre: &VSer<Ivl>,
+    fm: &[VSer<Ivl>; 2],
+    cm: &VSer<Ivl>,
+    d: Ivl,
+    guess: f64,
+    bar: &GnSectionFormT<Ivl>,
+    o: [f64; 3],
+    rt: &mut GnRowTerms,
+) -> bool {
+    const K: usize = 4 + TAYLOR;
+    let n = vary.n;
+    let [f0, f1] = f;
+    let [fm0, fm1] = fm;
+    // x = (F1 - V).(F2 - V) / (r1 r2): at the middle to order K - 1, over the piece at
+    // order K
+    let mut x_mid = [IZ; K];
+    let mut x_top = IZ;
+    for q in 0..3 {
+        for i in 0..=K {
+            for l in 0..=i {
+                if i < K {
+                    let t = (vat(fm0, q, l, 0) - vat(cm, q, l, 0))
+                        * (vat(fm1, q, i - l, 0) - vat(cm, q, i - l, 0));
+                    if let Some(xi) = x_mid.get_mut(i) {
+                        *xi = *xi + t;
+                    }
+                } else {
+                    x_top = x_top
+                        + (vat(f0, q, l, 0) - vat(centre, q, l, 0))
+                            * (vat(f1, q, i - l, 0) - vat(centre, q, i - l, 0));
+                }
+            }
+        }
+    }
+    let inv_rr = Ivl::from(1.0) / Ivl::from(vary.rr);
+    for xi in &mut x_mid {
+        *xi = *xi * inv_rr;
+    }
+    x_top = x_top * inv_rr;
+    let u = gn_half_angle(&centred(&x_mid, x_top, K, d));
+    let tg = gn_target(&u);
+    let phi = gn_area_sum::<Ivl>(n, Ivl::from(guess)) - tg.at(0);
+    let mut w0 = IZ;
+    let mut root = false;
+    let mut rho = 1.0e-12 * (1.0 + guess.abs());
+    let mut it = 0;
+    while it < 40 && !root {
+        let w = Ivl::new(guess - rho, guess + rho);
+        let below_one = w.hi < 1.0;
+        if !below_one {
+            break;
+        }
+        let d1 = vary.cells.over(w).at(1);
+        if d1.hi < 0.0 {
+            let nn = Ivl::from(guess) - phi / d1;
+            if nn.lo > w.lo && nn.hi < w.hi {
+                w0 = nn;
+                root = true;
+            }
+        }
+        it += 1;
+        rho *= 4.0;
+    }
+    if !root {
+        return false;
+    }
+    let over_w0 = vary.cells.over(w0);
+    let sw = gn_invert(&tg, &over_w0, w0);
+    let form = gn_form_normalized(n, sw);
+    // the jets c'_ik as series in s over the piece
+    let mut c = [[[Tay::<Ivl>::zero(); 3]; MAX_E + 1]; 2];
+    let mut r_max = 0.0_f64;
+    for (cf, (ff, ffm)) in c.iter_mut().zip(f.iter().zip(fm)) {
+        let mut sum = 0.0_f64;
+        for (kk, ck) in cf.iter_mut().enumerate().take(n + 1) {
+            let mut sq = 0.0_f64;
+            for (q, ckq) in ck.iter_mut().enumerate() {
+                let mut ac_mid = [IZ; K];
+                for (i, a) in ac_mid.iter_mut().enumerate() {
+                    *a = vat(ffm, q, i, kk);
+                }
+                *ckq = centred(&ac_mid, vat(ff, q, K, kk), K, d);
+                if kk == 0 {
+                    let oq = o.get(q).copied().unwrap_or(f64::NAN);
+                    ckq.set(0, ckq.at(0) - Ivl::from(oq));
+                }
+                sq += ckq.at(0).mag() * ckq.at(0).mag();
+            }
+            sum += crate::geom::vector3d::sqrt(sq);
+        }
+        r_max = cmax(r_max, sum);
+    }
+    for (j, wj) in form.w.iter().enumerate() {
+        let mut sq = 0.0_f64;
+        for q in 0..3 {
+            // the coefficient of sigma^4 of sum_ik dg_ikj c'_ik
+            let mut s4 = IZ;
+            for ((gf, bf), cf) in form.g.iter().zip(&bar.g).zip(&c) {
+                for ((gk, bk), ck) in gf.iter().zip(bf).zip(cf).take(n + 1) {
+                    let (Some(&g), Some(&b), Some(ckq)) = (gk.get(j), bk.get(j), ck.get(q)) else {
+                        continue;
+                    };
+                    let mut dg = g;
+                    dg.set(0, dg.at(0) - b);
+                    for i in 0..=TAY {
+                        s4 = s4 + dg.at(i) * ckq.at(TAY - i);
+                    }
+                }
+            }
+            sq += s4.mag() * s4.mag();
+        }
+        let dx = 24.0 * crate::geom::vector3d::sqrt(sq);
+        let dy = 24.0 * wj.at(TAY).mag();
+        let dwlo = wj.at(0).lo;
+        if !(dx.is_finite() && dy.is_finite() && dwlo > 0.0) {
+            return false;
+        }
+        let (Some(xj), Some(yj), Some(lj)) = (rt.x.get_mut(j), rt.y.get_mut(j), rt.w_lo.get_mut(j))
+        else {
+            return false;
+        };
+        *xj = cmax(*xj, dx);
+        *yj = cmax(*yj, dy);
+        *lj = cmin(*lj, dwlo);
+    }
+    if !r_max.is_finite() {
+        return false;
+    }
+    rt.r = cmax(rt.r, r_max);
+    true
 }
 
 /// `sm_GnCertifySpan`: the certified bound on the Hermite span between two stations, or
@@ -858,12 +1106,28 @@ pub fn gn_certify_span(
     side: [f64; 2],
     n: usize,
     target: f64,
+    mut vary: Option<&mut GnVarying>,
 ) -> Result<f64> {
     // the series' orders are checked once (the fork leaves them to its callers)
     Trunc::new(4 + TAYLOR, n)?;
     let mut bound_out = f64::INFINITY;
     let h = b.s - a.s;
     let mut last = f64::INFINITY;
+    // the varying thumbweight's fixed one wb and point O: the first station's
+    let mut bar = GnSectionFormT::<Ivl> {
+        w: Vec::new(),
+        g: [Vec::new(), Vec::new()],
+    };
+    let mut o = [0.0_f64; 3];
+    if let Some(v) = vary.as_deref() {
+        if !(a.w.is_finite() && b.w.is_finite()) {
+            return Err(SolidError::sm_err(OP));
+        }
+        bar = gn_form_normalized(v.n, Ivl::from(a.w));
+        for (q, oq) in o.iter_mut().enumerate() {
+            *oq = a.f[0].a.get(q).map_or(f64::NAN, |c| c.at(0, 0));
+        }
+    }
     for level in 0..=6_u32 {
         let pieces = 1_usize << level;
         // the pieces' end stations
@@ -896,6 +1160,13 @@ pub fn gn_certify_span(
         let mut m4 = [[0.0_f64; MAX_E + 1]; 2];
         let mut uv4 = [0.0_f64; 2];
         let mut proved = true;
+        let ld = bar.w.len();
+        let mut rows = GnRowTerms {
+            x: vec![0.0; ld],
+            y: vec![0.0; ld],
+            w_lo: vec![f64::INFINITY; ld],
+            r: 0.0,
+        };
         for pair in ends.windows(2) {
             if !proved {
                 break;
@@ -903,8 +1174,8 @@ pub fn gn_certify_span(
             let [ea, eb] = pair else {
                 return Err(SolidError::sm_err(OP));
             };
-            let (pm, puv) = gn_try!(
-                gn_fourth_over(k, faces_n, leader_n, faces, center, ea, eb, r, side, n),
+            let ((pm, puv), series) = gn_try!(
+                gn_fourth_over_series(k, faces_n, leader_n, faces, center, ea, eb, r, side, n),
                 bound_out
             );
             for (((m4f, pmf), uvf), &puvf) in m4.iter_mut().zip(&pm).zip(uv4.iter_mut()).zip(&puv) {
@@ -921,17 +1192,61 @@ pub fn gn_certify_span(
                 }
                 *uvf = cmax(*uvf, puvf);
             }
+            if proved {
+                if let Some(v) = vary.as_deref_mut() {
+                    // the root's guess at the piece's middle: the stations' thumbweights,
+                    // linearly
+                    proved = match series {
+                        Some(ps) => {
+                            let t = (ps.mid - a.s) / h;
+                            let d = Ivl::new(ea.s, eb.s) - Ivl::from(ps.mid);
+                            let guess = (1.0 - t) * a.w + t * b.w;
+                            gn_row_terms_over(
+                                v, &ps.f, &ps.v, &ps.fm, &ps.vm, d, guess, &bar, o, &mut rows,
+                            )
+                        }
+                        None => false,
+                    };
+                }
+            }
         }
         if !proved {
             continue;
         }
+        let varying = vary.is_some();
         let mut bound = 0.0_f64;
+        let mut da = 0.0_f64;
         for (m4f, &uvf) in m4.iter().zip(&uv4) {
             let mut sum = 0.0_f64;
             for &m4fk in m4f.iter().take(n + 1) {
                 sum += h * h * h * h / 384.0 * m4fk;
             }
-            bound = cmax(bound, cmax(sum, h * h * h * h / 384.0 * uvf));
+            da = cmax(da, sum);
+            bound = cmax(
+                bound,
+                cmax(if varying { 0.0 } else { sum }, h * h * h * h / 384.0 * uvf),
+            );
+        }
+        if varying {
+            let kh = h * h * h * h / 384.0;
+            for (j, wj) in bar.w.iter().enumerate() {
+                let (Some(&lj), Some(&yj), Some(&xj)) =
+                    (rows.w_lo.get(j), rows.y.get(j), rows.x.get(j))
+                else {
+                    break;
+                };
+                let den = lj - kh * yj;
+                let num = wj.hi * da + kh * xj + kh * yj * rows.r;
+                let positive = den > 0.0;
+                bound = if positive {
+                    cmax(bound, num / den)
+                } else {
+                    f64::INFINITY
+                };
+                if !positive {
+                    break;
+                }
+            }
         }
         if !bound.is_finite() {
             continue;
@@ -1047,6 +1362,7 @@ mod tests {
             side,
             n,
             1e-6,
+            None,
         )
         .unwrap();
         assert!((0.0..1e-9).contains(&bound), "{bound}");
@@ -1222,6 +1538,7 @@ mod tests {
             side,
             n,
             target,
+            None,
         )
         .unwrap();
         let jets = h * h * h * h / 384.0 * (want[0][0] + want[0][1]);
@@ -1262,6 +1579,7 @@ mod tests {
             side,
             n,
             target,
+            None,
         )
         .unwrap();
         let jl = hl * hl * hl * hl / 384.0 * (1.0 + r / (big_r + r)) * l4l;
