@@ -931,6 +931,21 @@ pub struct UpstreamFixes {
     /// or curve (WR-662, #2009 group C; tangency-labs/smlib dfc7cb6). Off by default for
     /// pinned parity.
     pub analytic_inversion_answers_apart: bool,
+    /// `SmCone::CreateIsoCircleFromPoint` as the SolidCraft fork has it (WR-704;
+    /// tangency-labs/smlib 1279539, with 672a437's `SER` on the NURB conversion): the
+    /// circle's STEP height is the reference point's projection onto the axis clamped to
+    /// the cone's height interval, instead of the height an inversion of the point moved
+    /// onto the cone finds, and a failed NURB conversion is returned instead of read.
+    /// Past the apex end of a cone whose apex is an end (within the tolerance the call
+    /// accepts), that point is on the far nappe: the inversion mirrors it through the
+    /// apex and comes back with a height outside the cone, and the circle fails with
+    /// `SM_ERR`, failing `SmSphere::IntersectWithCone` for a sphere crossing the cone's
+    /// line just past its apex. Other points within the tolerance past an end also get
+    /// that end's circle. On an unbounded cone of negative semi-angle the fork's circle
+    /// is at the point's axial height over the cosine of the semi-angle, not at that
+    /// height; the WR record lists the cases this flag changes. Off by default for
+    /// pinned parity.
+    pub cone_iso_circle_at_axial_height: bool,
     /// The fillet executive, solvers, corners and geometry pass on the statuses SMLib
     /// drops: a failed solver load, orientation, list edit, copy, trim, interval edit,
     /// evaluation, knot edit or split-face update returns its error instead of the fillet
@@ -1290,7 +1305,11 @@ pub struct UpstreamFixes {
     /// a little apart graze within tolerance over a stretch set by the subdivision, and the
     /// range becomes a tiny edge, so a ring unioned with a half-annulus prism whose r 5 walls
     /// are 1e-4 apart is non-manifold and at 1e-3 not a solid (WR-647, #1979; the fork's
-    /// tangency-labs/smlib@c2e3d9d).
+    /// tangency-labs/smlib@c2e3d9d). A range whose separation keeps one side without
+    /// vanishing (two curves running close within tolerance without touching, or a
+    /// tangency) is the one point where the curves come nearest (`LocalCurveSolve`
+    /// minimum from the range's middle); only curves whose separation vanishes coincide
+    /// over a range (the fork's 04b42b4).
     pub simple_coincidence_crossing_is_point: bool,
     /// `SmFace::GetPointsInFace` samples a rectangularly trimmed face from its UV domain's
     /// minimum: each column starts at the domain's minimum u plus the column increment and
