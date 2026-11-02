@@ -133,7 +133,7 @@ fn edges_crossing_plane(
     let domain = plane.natural_uv_domain_with_nurb(k)?;
     let tol = body.tolerance();
     for e in crate::topology::brep::p1::edges(body, None)? {
-        let Some(curve) = edge::curve(body, e)? else {
+        let Some(curve) = edge::evaluation_curve(body, e)? else {
             continue;
         };
         let interval = edge::interval(body, e)?;
@@ -144,7 +144,7 @@ fn edges_crossing_plane(
                 Operand::Plane(domain),
             ],
             &domain,
-            curve,
+            &curve,
             &interval,
             tol,
         )?;
@@ -440,7 +440,7 @@ pub fn band_cuts_the_part(
         return Ok(None);
     };
     let edge_id = eu::edge(target, edgeuse)?.ok_or_else(|| SolidError::null_pointer(OP))?;
-    let curve = edge::curve(target, edge_id)?
+    let curve = edge::evaluation_curve(target, edge_id)?
         .ok_or_else(|| SolidError::null_pointer(OP))?
         .clone();
     let ivl = edge::interval(target, edge_id)?;
