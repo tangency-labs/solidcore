@@ -214,6 +214,12 @@ impl FilletCorner {
         fs: S,
         mut solver_of: impl FnMut(EdgeuseId) -> Option<S>,
     ) -> Result<Option<S>> {
+        // With `fillet_blend_corner` the edge meets itself at an angle (a G1 one is the blend
+        // corner's Join), so there is no tangent solver: the fork has no override here, and
+        // the base class answers NULL (WR-697; smlib#113 caa67d0)
+        if k.fixes.fillet_blend_corner {
+            return Ok(None);
+        }
         let solver_eus = self
             .solver_eus
             .as_deref()
@@ -1074,6 +1080,13 @@ impl FilletCorner {
         env: &mut TangentSplitEnv<'_>,
     ) -> Result<()> {
         const OP: &str = OP_NX1_TANGENT;
+        // With `fillet_blend_corner` the closed corner makes no tangent adjustment: the fork
+        // has no override here, and the base class's is a success. The adjustment acts only
+        // where the edge's end tangents are parallel within 2 degrees, which `create` made a
+        // Join at any tolerance of 2 degrees or more (WR-697; smlib#113 caa67d0)
+        if env.k.fixes.fillet_blend_corner {
+            return Ok(());
+        }
         let Some((orig_fg, this_fv_use)) =
             self.nx1_closed_tangent_split(env.k, env.target, env.pseudo)?
         else {
@@ -2817,7 +2830,7 @@ mod tests {
     }
 
     /// `SmFilletNx1ClosedCorner::GetTangentFilletSolver`: at a closed edge meeting itself
-    /// G1 the corner's one solver continues itself.
+    /// G1 the corner's one solver continues itself; with `fillet_blend_corner` there is none.
     #[test]
     fn a_closed_g1_corner_s_tangent_solver_is_its_own() {
         for blend in [false, true] {
@@ -2827,7 +2840,9 @@ mod tests {
             let fs = c
                 .tangent_fillet_solver_nx1_closed_with_lookup(&k, &b, 7_u8, |_| Some(7))
                 .unwrap();
-            assert_eq!(fs, Some(7), "fillet_blend_corner {blend}");
+            // with the flag the edge would have been the blend corner's Join, and the
+            // closed corner has no tangent solver (smlib#113 caa67d0)
+            assert_eq!(fs, (!blend).then_some(7), "fillet_blend_corner {blend}");
         }
     }
 
