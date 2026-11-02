@@ -322,6 +322,31 @@ fn cones_match_the_fork() {
     assert_as_the_fork(false, cone_pit, 8.0, TAKEN, 7);
 }
 
+/// A boss's walls count as upright within the fillet's angular tolerance: at 19 degrees off they
+/// are carried down, at 30 and 45 the round is refused with the flag on and takes the boss with it
+/// off, as the fork.
+#[test]
+fn a_boss_leaning_past_the_angular_tolerance_is_refused_as_the_fork() {
+    fn lean_19(k: &mut Kernel, block: Brep) -> Result<Brep> {
+        let c = create_cone(k, Point3::new(20.0, 4.0, 20.0), 2.0, 1.0, 2.9)?;
+        boolean_union(k, block, c)
+    }
+    fn lean_30(k: &mut Kernel, block: Brep) -> Result<Brep> {
+        let c = create_cone(k, Point3::new(20.0, 4.0, 20.0), 2.0, 1.0, 1.732)?;
+        boolean_union(k, block, c)
+    }
+    fn lean_45(k: &mut Kernel, block: Brep) -> Result<Brep> {
+        let c = create_cone(k, Point3::new(20.0, 4.0, 20.0), 2.0, 1.0, 1.0)?;
+        boolean_union(k, block, c)
+    }
+    assert_as_the_fork(true, lean_19, 8.0, 23486.591790759474, 11);
+    assert_as_the_fork(false, lean_19, 8.0, TAKEN, 7);
+    for steep in [lean_30 as Feature, lean_45] {
+        assert!(rounded_with(true, steep, 8.0).is_err());
+        assert_as_the_fork(false, steep, 8.0, TAKEN, 7);
+    }
+}
+
 /// A boss astride the round's contact line: refused with the flag on or off, as the fork.
 #[test]
 fn a_boss_astride_the_contact_line_is_refused_as_the_fork() {
