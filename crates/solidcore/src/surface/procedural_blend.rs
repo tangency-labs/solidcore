@@ -19,6 +19,8 @@
 //! | `reparametrize_map` (private)                | `ReparametrizeMap`                           |
 //! | [`ProceduralBlend::toggle_swap_uv_bit`]      | `ToggleSwapUVBit`                            |
 //! | [`ProceduralBlend::same_definition`]         | `operator==` (past the net's)                |
+//! | [`ProceduralBlend::read_from_db`], `read_curve` (private) | `ReadFromDB`, `sm_ReadCurve`     |
+//! | [`ProceduralBlend::evaluate_definition`]     | `EvaluateDefinition` ([`crate::blend::fillet_section::definition`]) |
 //! | [`PROCEDURAL_BLEND_TYPE`], [`BLEND_MAX_DEPTH`] | `SmProceduralBlend_TYPE`, `SM_BLEND_MAX_DEPTH` |
 //! | [`NetScope`], [`NetScope::is_active`]        | `SmBlendNetScope`, `IsActive`                |
 //! | [`BlendCounts`]                              | `SmBlendCounts` (`GetCounts`, `ResetCounts` on [`crate::kernel::Kernel`]) |
@@ -38,6 +40,8 @@
 
 use std::cell::Cell;
 
+use crate::blend::fillet_section::section::GnSectionFsg;
+use crate::curve::curve::{Curve, CurveKind};
 use crate::error::{Result, SolidError};
 use crate::geom::axis2_placement::Axis2Placement;
 use crate::geom::extent2d::Extent2d;
@@ -50,12 +54,14 @@ use crate::nurbs::b_spline_surface::{BSplineSurface, SurfParamType};
 use crate::nurbs::b_spline_surface_n_lib::p2::EvaluateFlags;
 use crate::nurbs::knots::Side;
 use crate::surface::surface::{Surface, SurfaceKind};
+use crate::topology::database_io::{DatabaseReader, FileType, InputStream};
 
 const OP_CREATE: &str = "surface::procedural_blend::ProceduralBlend::create";
 const OP_EVAL: &str = "surface::procedural_blend::ProceduralBlend::evaluate";
 const OP_EVAL_SIMPLE: &str = "surface::procedural_blend::ProceduralBlend::evaluate_simple";
 const OP_REPARAM: &str = "surface::procedural_blend::ProceduralBlend::reparameterize";
 const OP_TRANSFORM: &str = "surface::procedural_blend::ProceduralBlend::transform";
+const OP_READ: &str = "surface::procedural_blend::ProceduralBlend::read_from_db";
 
 /// `SURF_BASE_TYPE` (`SmTypes.h`).
 const SURF_BASE_TYPE: i64 = 15000;
@@ -182,6 +188,24 @@ pub struct ProceduralBlend {
     pub(crate) def: BlendDefinition,
 }
 
+/// `sm_ReadCurve`: a curve of a definition (its type header with its dimension, then its
+/// record), which must be a B-spline; it evaluates past its ends.
+fn read_curve(k: &Kernel, db: &mut DatabaseReader, version: u64) -> Result<BSplineCurve> {
+    let header = db.read_type(true)?;
+    let ty = header
+        .type_code
+        .ok_or_else(|| SolidError::invalid_input(OP_READ, "curve type not read"))?;
+    let curve = Curve::read_from_db(k, ty, db, header.dim.unwrap_or(0), version)?;
+    match curve.into_kind() {
+        CurveKind::BSpline(mut b) => {
+            b.set_out_of_bounds_enabled(true);
+            Ok(b)
+        }
+        // "a curve of its definition is not a B-spline"
+        _ => Err(SolidError::sm_err(OP_READ)),
+    }
+}
+
 /// `sm_CopyCurve`: a copy of a curve that evaluates past its ends on its end spans.
 fn copy_curve(curve: &BSplineCurve) -> BSplineCurve {
     let mut copy = curve.copy();
@@ -195,6 +219,24 @@ fn support_depth(surface: &Surface) -> u32 {
         SurfaceKind::ProceduralBlend(p) => p.depth(),
         _ => 0,
     }
+}
+
+/// `CountEvaluation`: one point evaluated on a definition.
+pub(crate) fn count_evaluation(k: &Kernel) {
+    let mut c = k.blend_counts.get();
+    c.evaluations = c.evaluations.wrapping_add(1);
+    k.blend_counts.set(c);
+}
+
+/// `CountSolve`: one station solve of `newton_steps` Newton steps.
+pub(crate) fn count_solve(k: &Kernel, newton_steps: u32) {
+    let mut c = k.blend_counts.get();
+    c.solves = c.solves.wrapping_add(1);
+    c.newton_steps = c.newton_steps.wrapping_add(u64::from(newton_steps));
+    if u64::from(newton_steps) > c.most_newton_steps {
+        c.most_newton_steps = u64::from(newton_steps);
+    }
+    k.blend_counts.set(c);
 }
 
 /// `++s_lLastSerial`: a new serial from the kernel.
@@ -506,24 +548,153 @@ impl ProceduralBlend {
     }
 
     /// `EvaluateDefinition`: the definition's partials at `(s, t)`,
-    /// `d[i][j] = d^(i+j) S / ds^i dt^j`, `i <= highest_s`, `j <= highest_t`.
+    /// `d[i][j] = d^(i+j) S / ds^i dt^j`, `i <= highest_s`, `j <= highest_t`
+    /// ([`crate::blend::fillet_section::definition::evaluate_definition`]).
     ///
     /// # Errors
     ///
-    /// Not yet ported (the next slice of #2274): [`SolidError::Unported`].
+    /// Those of [`crate::blend::fillet_section::definition::evaluate_definition`].
     pub fn evaluate_definition(
         &self,
-        _k: &Kernel,
-        _s: f64,
-        _t: f64,
-        _highest_s: usize,
-        _highest_t: usize,
+        k: &Kernel,
+        s: f64,
+        t: f64,
+        highest_s: usize,
+        highest_t: usize,
     ) -> Result<Vec<Vec<Vec3>>> {
-        // UNPORTED(surface.procedural_blend): SmProceduralBlend::EvaluateDefinition
-        Err(SolidError::Unported {
-            upstream: "SmProceduralBlend::EvaluateDefinition",
-            unit: "surface.procedural_blend",
-        })
+        crate::blend::fillet_section::definition::evaluate_definition(
+            k, self, s, t, highest_s, highest_t,
+        )
+    }
+
+    /// `ReadFromDB`: a blend's definition and net, as [`crate::topology::geometry_write`]
+    /// writes them (the fork's `SmProceduralBlend::WriteToDB`). A hostile record (an order
+    /// out of range, a side other than +-1, a radius or bound not positive, a number not
+    /// finite, a singular map, a depth past the cap) is refused as `Create` refuses it.
+    /// The supports are read through [`Surface::read_from_db`], which bounds the nesting
+    /// ([`DatabaseReader::enter_nested`]); nothing is allocated from a count in the file.
+    ///
+    /// # Errors
+    ///
+    /// `SM_ERR` where the ASCII record cannot be read or a curve of the definition is not
+    /// a B-spline; `SM_ERR_INVALID_INPUT` for a negative order, a number not finite, a
+    /// singular map and those of [`ProceduralBlend::create`]; those of the readers.
+    pub fn read_from_db(k: &Kernel, db: &mut DatabaseReader, version: u64) -> Result<Self> {
+        let ascii = db.file_type() == FileType::Ascii;
+        let (order, swapped, has_law, values) = if ascii {
+            let st = db
+                .in_stream_mut()
+                .ok_or_else(|| SolidError::null_pointer(OP_READ))?;
+            let order = st.extract_ulong();
+            let swapped = st.extract_int();
+            let has_law = st.extract_int();
+            db.go_to_next_line();
+            let mut values = [0.0_f64; 10];
+            let st = db
+                .in_stream_mut()
+                .ok_or_else(|| SolidError::null_pointer(OP_READ))?;
+            let mut read = true;
+            for v in &mut values {
+                match st.extract_double() {
+                    Some(x) => *v = x,
+                    None => read = false,
+                }
+            }
+            db.go_to_next_line();
+            let failed = db.in_stream().is_none_or(InputStream::fail);
+            match (order, swapped, has_law) {
+                (Some(o), Some(s), Some(h)) if read && !failed => (o, s != 0, h != 0, values),
+                // "its definition could not be read"
+                _ => return Err(SolidError::sm_err(OP_READ)),
+            }
+        } else {
+            let order = db.read_long()?;
+            if order < 0 {
+                return Err(SolidError::invalid_input(
+                    OP_READ,
+                    "a section's order is 1 to 4",
+                ));
+            }
+            let swapped = db.read_boolean()? != 0;
+            let has_law = db.read_boolean()? != 0;
+            let v = db.read_doubles(10)?;
+            let mut values = [0.0_f64; 10];
+            for (x, &y) in values.iter_mut().zip(&v) {
+                *x = y;
+            }
+            (order as u64, swapped, has_law, values)
+        };
+        let mut supports = Vec::new();
+        for _ in 0..2 {
+            if ascii {
+                db.go_to_next_line();
+            }
+            let ty = db
+                .read_type(false)?
+                .type_code
+                .ok_or_else(|| SolidError::invalid_input(OP_READ, "surface type not read"))?;
+            supports.push(Surface::read_from_db(k, ty, db, version)?);
+        }
+        if ascii {
+            db.go_to_next_line();
+        }
+        let leader = read_curve(k, db, version)?;
+        let mut seeds = Vec::new();
+        for _ in 0..2 {
+            if ascii {
+                db.go_to_next_line();
+            }
+            seeds.push(read_curve(k, db, version)?);
+        }
+        let law = if has_law {
+            if ascii {
+                db.go_to_next_line();
+            }
+            Some(read_curve(k, db, version)?)
+        } else {
+            None
+        };
+        let net = BSplineSurface::read_from_db(db, version)?;
+        if values.iter().any(|v| !v.is_finite()) {
+            return Err(SolidError::invalid_input(
+                OP_READ,
+                "its definition holds a number that is not finite",
+            ));
+        }
+        let [side0, side1, r0, r1, thumbweight, bound, a0, b0, a1, b1] = values;
+        if !(b0 != 0.0 && b1 != 0.0) {
+            return Err(SolidError::invalid_input(
+                OP_READ,
+                "its parametrization is singular",
+            ));
+        }
+        let (Some(s0), Some(s1), Some(seed0), Some(seed1)) = (
+            supports.first(),
+            supports.get(1),
+            seeds.first(),
+            seeds.get(1),
+        ) else {
+            return Err(SolidError::sm_err(OP_READ));
+        };
+        let input = BlendDefinitionInput {
+            supports: [s0, s1],
+            sides: [side0, side1],
+            offsets: [r0, r1],
+            law: law.as_ref(),
+            // (a ULONG past u32 is no order: Create refuses it)
+            order: u32::try_from(order).unwrap_or(u32::MAX),
+            thumbweight,
+            leader: &leader,
+            seeds: [seed0, seed1],
+            bound,
+        };
+        let mut blend = Self::create(k, &net, &input, |n, w| {
+            GnSectionFsg::is_valid(n as usize, w)
+        })?;
+        blend.def.map_a = [a0, a1];
+        blend.def.map_b = [b0, b1];
+        blend.def.swapped = swapped;
+        Ok(blend)
     }
 
     /// `Evaluate`: the definition's partials at `uv` in the surface's parameters (the
@@ -974,7 +1145,8 @@ mod tests {
         let k = Kernel::default();
         let b = Surface::from(blend(&k, 1, [1.0, 1.0], [2.0, 2.0], 1e-6).unwrap());
         let uv = Point2::new(0.5, 0.5);
-        // the definition's evaluation is the next slice
+        // outside a scope the definition is solved: two parallel planes 1 apart hold no
+        // ball of radius 2, so its station does not solve
         assert!(b.evaluate_point(&k, uv).is_err());
         let _scope = NetScope::new(&k);
         let p = b.evaluate_point(&k, uv).unwrap();

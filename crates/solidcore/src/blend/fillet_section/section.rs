@@ -112,7 +112,7 @@ fn smin(a: f64, b: f64) -> f64 {
 /// `sm_GnEqualAreaW`: the thumbweight at which the order-n section takes off what the
 /// ball's circle does, for half the angle u between the ball's radii
 /// ([`GnSectionFsg::equal_area_thumbweight`]): the root of `I(w) = target(u)`.
-fn gn_equal_area_w(order: usize, u: f64) -> Result<f64> {
+pub(crate) fn gn_equal_area_w(order: usize, u: f64) -> Result<f64> {
     const OP_EA: &str = "blend::fillet_section::GnSectionFsg::equal_area_thumbweight";
     if !((2..=GN_MAX_ORDER).contains(&order) && u > 0.0 && u < 0.5 * PI) {
         return Err(SolidError::invalid_input(OP_EA, "order or wedge angle"));

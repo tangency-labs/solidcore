@@ -425,7 +425,8 @@ pub fn as_b_spline<'a>(k: &Kernel, s: &'a Surface) -> Result<Option<Cow<'a, BSpl
 
 /// `sm_SurfacePartials`: the partials of a face's surface at `uv` up to total order `lk`:
 /// a NURBS (every analytic surface is one, evaluated in its net's parameters) by its net,
-/// continued past its knots; any other surface by its own evaluator.
+/// continued past its knots; any other surface, and a blend by its definition (whose net
+/// is only its approximation, 014f66f), by its own evaluator.
 ///
 /// # Errors
 ///
@@ -434,7 +435,9 @@ pub fn surface_partials(k: &Kernel, s: &Surface, uv: Point2, lk: usize) -> Resul
     if lk > MAX_K {
         return Err(SolidError::sm_err(OP));
     }
-    if let Some(bs) = as_b_spline(k, s)? {
+    let definition = matches!(s.kind(), SurfaceKind::ProceduralBlend(_));
+    let bs = if definition { None } else { as_b_spline(k, s)? };
+    if let Some(bs) = bs {
         let n = Nurbs::of(&bs)?;
         let ku = span(&n.u, n.p, n.nu, uv.x);
         let kv = span(&n.v, n.q, n.nv, uv.y);
@@ -478,6 +481,9 @@ pub struct GnSystem<'a, T> {
     pub side: [f64; 2],
     /// The offsets held at `tau = 1`.
     pub hold: bool,
+    /// `pR`: a ball whose radius varies, `r(s)` as a series in sigma (`r` unused), or
+    /// none (014f66f).
+    pub law: Option<&'a Ser<T>>,
 }
 
 /// G's four series and the two feet's (`sm_GnEvaluate`'s `rG`, `rF`).
@@ -566,10 +572,18 @@ pub fn gn_evaluate_v<T: GnScalar>(
         }
         let nrm = su.cross(&sv, tr);
         let inv_len = nrm.dot(&nrm, tr).inv_sqrt(tr)?;
-        // the offset towards the ball: tau r_i s_i, tau = 1 + eps
+        // the offset towards the ball: tau r_i s_i, tau = 1 + eps (r_i a series in sigma
+        // for a law)
         let mut d = Ser::constant(T::of(rf * sidef));
+        if let Some(law) = sys.law {
+            for i in 0..=tr.s() {
+                d.set(i, 0, law.at(i, 0) * T::of(sidef));
+            }
+        }
         if !sys.hold && tr.e() >= 1 {
-            d.set(0, 1, T::of(rf * sidef));
+            for i in 0..=tr.s() {
+                d.set(i, 1, d.at(i, 0));
+            }
         }
         let vf = s.add(&nrm.times(&inv_len.mul(&d, tr), tr), tr);
         if let (Some(vo), Some(fo)) = (v_out.get_mut(f), f_out.get_mut(f)) {
@@ -685,6 +699,8 @@ pub struct GnStation {
     pub w: f64,
     /// `dWds`: and its s-derivative (NaN: not resolved).
     pub wds: f64,
+    /// `lSteps`: the Newton steps the feet took (014f66f).
+    pub steps: u32,
 }
 
 /// `sm_LeaderSeries`: the leader (centre line) at `s` as series in sigma up to `tr.s`: its
@@ -695,8 +711,17 @@ pub struct GnStation {
 /// Those of the curve's evaluation; `SM_ERR` where its tangent vanishes.
 pub fn leader_series(c: &BSplineCurve, s: f64, tr: Trunc) -> Result<(VSer<f64>, VSer<f64>)> {
     let sigma = Trunc::new(tr.s(), 0)?;
-    // Evaluate(dS, tr.s + 1, TRUE, asD, FALSE)
-    let d = c.evaluate(s, tr.s() + 1, true, false)?;
+    // a polynomial leader's derivatives past its degree are zero; a rational one's are
+    // evaluated (014f66f)
+    let mut derivs = tr.s() + 1;
+    if !c.is_rational()? {
+        derivs = derivs.min(c.degree()?);
+    }
+    // "SmGnSectionFSG: the leader's derivatives of this order are not evaluated"
+    let mut d = c
+        .evaluate(s, derivs, true, false)
+        .map_err(|_| SolidError::sm_err(OP))?;
+    d.resize(tr.s() + 2, Vec3::ZERO);
     let zero = V3 {
         x: 0.0,
         y: 0.0,
@@ -744,6 +769,44 @@ pub fn gn_solve_station(
     tr: Trunc,
     tol: f64,
 ) -> Result<GnStation> {
+    gn_solve_station_counted(k, faces, leader, s, seed, r, side, tr, tol, None).0
+}
+
+/// [`gn_solve_station`] with the fork's `pR` (a radius law as a series in sigma, 014f66f)
+/// and the Newton steps taken, which are counted even where the solve fails.
+#[allow(clippy::too_many_arguments)]
+pub fn gn_solve_station_counted(
+    k: &Kernel,
+    faces: [&Surface; 2],
+    leader: &BSplineCurve,
+    s: f64,
+    seed: [f64; 4],
+    r: [f64; 2],
+    side: [f64; 2],
+    tr: Trunc,
+    tol: f64,
+    law: Option<&Ser<f64>>,
+) -> (Result<GnStation>, u32) {
+    let mut steps = 0_u32;
+    let st = solve_station_body(k, faces, leader, s, seed, r, side, tr, tol, law, &mut steps);
+    (st, steps)
+}
+
+/// The body of [`gn_solve_station_counted`].
+#[allow(clippy::too_many_arguments)]
+fn solve_station_body(
+    k: &Kernel,
+    faces: [&Surface; 2],
+    leader: &BSplineCurve,
+    s: f64,
+    seed: [f64; 4],
+    r: [f64; 2],
+    side: [f64; 2],
+    tr: Trunc,
+    tol: f64,
+    law: Option<&Ser<f64>>,
+    steps: &mut u32,
+) -> Result<GnStation> {
     if tr.s() > MAX_S {
         return Err(SolidError::sm_err(OP));
     }
@@ -763,6 +826,7 @@ pub fn gn_solve_station(
     let mut converged = false;
     let mut it = 0;
     while it < 50 && !converged {
+        *steps += 1;
         let pp = partials_at(&x, 2)?;
         let [p0, p1] = &pp;
         let sys = GnSystem {
@@ -772,6 +836,7 @@ pub fn gn_solve_station(
             r,
             side,
             hold: false,
+            law,
         };
         let sx = x.map(Ser::constant);
         let (g, _) = gn_evaluate(&sys, &sx, point)?;
@@ -808,6 +873,7 @@ pub fn gn_solve_station(
         r,
         side,
         hold: false,
+        law,
     };
     let mut sx = x.map(Ser::constant);
     let jac = gn_jacobian(&sys, &sx)?;
@@ -841,6 +907,7 @@ pub fn gn_solve_station(
         v,
         w: f64::NAN,
         wds: f64::NAN,
+        steps: *steps,
     })
 }
 

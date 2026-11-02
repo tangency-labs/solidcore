@@ -34,7 +34,7 @@
 //! unlatched and a difftest runner can seed the latch with the value the C++ process
 //! already holds.
 
-use core::cell::Cell;
+use core::cell::{Cell, RefCell};
 use core::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
@@ -1515,6 +1515,12 @@ pub struct Kernel {
     /// definition took (`Renew`), so a station memo entry is never another definition's.
     /// A [`Cell`]: definitions are made and copied through `&Kernel`.
     pub blend_last_serial: Cell<u64>,
+    /// Not upstream: the fork's `thread_local` station memo (`t_asMemo`), the stations
+    /// the definitions of procedural blends solved last
+    /// ([`crate::blend::fillet_section::definition::StationMemo`]). A [`RefCell`]: the
+    /// definition is evaluated through `&Kernel`; it is never borrowed across a solve, and
+    /// a hit returns what a fresh solve from the same seeds gives.
+    pub blend_station_memo: RefCell<crate::blend::fillet_section::definition::StationMemo>,
 }
 
 impl Default for Kernel {
@@ -1541,6 +1547,9 @@ impl Kernel {
             blend_net_scope: Cell::new(0),
             blend_counts: Cell::new(crate::surface::procedural_blend::BlendCounts::default()),
             blend_last_serial: Cell::new(0),
+            blend_station_memo: RefCell::new(
+                crate::blend::fillet_section::definition::StationMemo::default(),
+            ),
         }
     }
 

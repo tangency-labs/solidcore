@@ -37,7 +37,8 @@
 //! | [`station::span`], [`station::ders_basis`], [`station::nurbs_partials`] | `sm_Span`, `sm_DersBasis`, `sm_NurbsPartials` |
 //! | [`station::as_b_spline`], [`station::surface_partials`] | `IsKindOf(SmBSplineSurface_TYPE)` and the cast, `sm_SurfacePartials` |
 //! | [`station::GnSystem`], [`station::gn_evaluate`], [`station::gn_jacobian`], [`station::solve4`] | `sm_GnSystem`, `sm_GnEvaluate`, `sm_GnJacobian`, `sm_Solve4` |
-//! | [`station::GnStation`], [`station::leader_series`], [`station::gn_solve_station`] | `sm_GnStation`, `sm_LeaderSeries`, `sm_GnSolveStation` |
+//! | [`station::GnStation`], [`station::leader_series`], [`station::gn_solve_station`], [`station::gn_solve_station_counted`] | `sm_GnStation`, `sm_LeaderSeries`, `sm_GnSolveStation` (its `pR` and `lSteps`, 014f66f) |
+//! | [`definition::T2`], [`definition::t2_pow`], [`definition::Tv`], [`definition::bern_taylor`], [`definition::StationMemo`], [`definition::evaluate_definition`] | `sm_T2`, `sm_T2Pow`, `sm_TV`, `sm_BernTaylor`, `sm_StationMemo`, `SmProceduralBlend::EvaluateDefinition` (014f66f, c6d9b9a, 0136260) |
 //! | [`section::GN_MAX_ORDER`], [`section::GN_DEFAULT_THUMBWEIGHT`], [`section::GN_THUMBWEIGHT_EQUAL_AREA`] | `SM_GN_MAX_ORDER`, `SM_GN_DEFAULT_THUMBWEIGHT`, `SM_GN_THUMBWEIGHT_EQUAL_AREA` (6148773 = 1947a45) |
 //! | [`section::GnSectionFsg::equal_area_thumbweight`], [`section::GnSectionFsg::thumbweight_at`], `gn_equal_area_w`, `gn_station_thumbweight` (private) | `EqualAreaThumbweight` (6148773 = 1947a45; b9d6a72, 7102bc5), `ThumbweightAt`, `sm_GnEqualAreaW`, `sm_GnStationThumbweight` (7102bc5) |
 //! | [`tay::Tay`], [`tay::Ring`], [`tay::TayScalar`], [`tay::tay_sqrt`], [`tay::tay_sin_cos`], [`tay::pow_n`], [`tay::wide`], [`tay::acos_clamped`] | `sm_Tay`, `sm_TayOf`, its operators, the templates' `Z` and `S`, `sm_TaySqrt`, `sm_TaySinCos`, `sm_PowN`, `sm_Wide`, `sm_Acos`, `sm_SinCos` (7102bc5) |
@@ -80,6 +81,7 @@
 //!   fork's `SM_ERR_MESSAGE` report of them is not logged.
 
 pub mod certificate;
+pub mod definition;
 pub mod form;
 pub mod interval;
 pub mod section;

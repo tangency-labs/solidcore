@@ -280,7 +280,7 @@ use crate::surface::cone::Cone;
 use crate::surface::curve_bounded_surface::CurveBoundedSurface;
 use crate::surface::offset_surface::OffsetSurface;
 use crate::surface::plane::Plane;
-use crate::surface::procedural_blend::{NetScope, ProceduralBlend};
+use crate::surface::procedural_blend::{NetScope, ProceduralBlend, PROCEDURAL_BLEND_TYPE};
 use crate::surface::sphere::Sphere;
 use crate::surface::srf_in_volume::SrfInVolume;
 use crate::surface::surf_of_extrusion::SurfOfExtrusion;
@@ -3470,6 +3470,13 @@ impl Surface {
             OFFSET_SURFACE_TYPE => Ok(Self::from(OffsetSurface::read_from_db(k, db, version)?)),
             SRF_IN_VOLUME_TYPE => Ok(Self::from(SrfInVolume::read_from_db(k, db, version)?)),
             STEP_SURFACE_TYPE => Ok(Self::from(StepSurface::read_from_db(k, db, version)?)),
+            // the fork's SmProceduralBlend (014f66f), read only with its flag: the pinned
+            // reader refuses the type
+            PROCEDURAL_BLEND_TYPE
+                if k.fixes.fillet_round_as_definition && k.fixes.fillet_gn_section_generator =>
+            {
+                Ok(Self::from(ProceduralBlend::read_from_db(k, db, version)?))
+            }
             _ => Err(SolidError::sm_err(OP_READ)),
         }
     }
