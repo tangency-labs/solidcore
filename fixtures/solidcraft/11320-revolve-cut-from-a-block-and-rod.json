@@ -1,6 +1,6 @@
 {
  "issue": "https://github.com/tangency-labs/solidcraft/issues/11320",
- "pr": "https://github.com/tangency-labs/solidcore/pull/0",
+ "pr": "https://github.com/tangency-labs/solidcore/pull/2458",
  "test": "none: the issue is open and has no fixing PR (SolidCraft's kernel work is paused, #3992), so `pr` points at the PR that adds this fixture, as the loader requires a /pull/ URL; the issue reports it on 0.30.1 with the reporter's design (combine-cut-failure.zip); reproduced with solidcraft-cli 0.26.0 from that design's sketches; the numbers here are by quadrature",
  "summary": "A block (x -12..28, y -12..12, z 0..24) with a cylinder of radius 12 along X over it (its axis at z = 24.2, so its sides touch the block's sides along y = +-12), cut with a body made by turning a profile half a turn (180 deg, symmetric about the sketch plane) about a line parallel to X at z = 24: a quarter-round of radius 12 and a rectangle, as in the reporter's sketch. Combine > Cut of the body with the tool fails on SolidCraft's kernel with 'boolean Cut: the operation failed: no result' (reported on 0.30.1, filed twice as #11215; reproduced with solidcraft-cli 0.26.0). The union and the tool alone both build. Volumes are closed form for the union and by Pappus and polar quadrature for the tool and the cut, and checked by Monte Carlo. Here the half turn is built from the plane z = 24 turned 180 degrees about +X, which gives the same body as the symmetric turn. The tolerance is 0.01 mm^3, as in the other boolean cases.",
  "cases": [
