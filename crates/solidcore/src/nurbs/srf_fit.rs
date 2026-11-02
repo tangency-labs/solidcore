@@ -806,34 +806,63 @@ mod tests {
     }
 
     /// `i64::MAX` as a `usize` where `usize` is wide enough; on a 32-bit target every
-    /// `usize` fits the signed index, so the size check or the allocation rejects it
-    /// instead of the sum.
+    /// `usize` fits the signed index, so the knot-count comparison rejects it.
     fn huge_count() -> usize {
         usize::try_from(i64::MAX).unwrap_or(usize::MAX)
     }
 
+    /// An overflowing u count `n + p + 1` cannot equal `knu`'s last index, so the
+    /// comparison is the `NL_INP_ERR` mismatch (`NlibCode::Input`); `q = 1` makes the
+    /// v count `m + q + 1 = 3` match `knv`, so only the u sum is under test.
     #[test]
-    fn huge_degrees_are_rejected_without_overflow() {
-        // `n + p + 1` / `m + q + 1` are compared before the degree check, as upstream.
+    fn huge_u_degree_is_rejected_as_input_mismatch() {
+        let a = grid(0, 1, |_, _| [0.0, 0.0, 0.0]);
+        let u = [0.0, 1.0];
+        let v = [0.0, 1.0];
+        let kn = KnotVector::from_slice(&[0.0, 0.0, 1.0, 1.0]).unwrap();
+        assert!(matches!(
+            interp_given_knots(&a, &u, &v, &kn, &kn, huge_count(), 1),
+            Err(SolidError::Nlib {
+                code: NlibCode::Input,
+                ..
+            })
+        ));
+    }
+
+    /// An overflowing v count `m + q + 1` cannot equal `knv`'s last index; `n = 1`,
+    /// `m = 0` and `p = 1` make the u count `n + p + 1 = 3` match `knu`, so the raw
+    /// `||` reaches the v sum. Asserted separately from the u case so one overflow
+    /// cannot mask the other.
+    #[test]
+    fn huge_v_degree_is_rejected_as_input_mismatch() {
+        let a = grid(1, 0, |_, _| [0.0, 0.0, 0.0]);
+        let u = [0.0, 1.0];
+        let v = [0.0, 1.0];
+        let kn = KnotVector::from_slice(&[0.0, 0.0, 1.0, 1.0]).unwrap();
+        assert!(matches!(
+            interp_given_knots(&a, &u, &v, &kn, &kn, 1, huge_count()),
+            Err(SolidError::Nlib {
+                code: NlibCode::Input,
+                ..
+            })
+        ));
+    }
+
+    /// A count that does not fit the signed index is a conversion error
+    /// (`InvalidInput`), not the knot-count mismatch; `usize::MAX` is a safe error on
+    /// every target width.
+    #[test]
+    fn oversized_degrees_are_rejected_by_conversion() {
         let a = grid(0, 0, |_, _| [0.0, 0.0, 0.0]);
         let u = [0.0, 1.0];
         let v = [0.0, 1.0];
         let kn = KnotVector::from_slice(&[0.0, 0.0, 1.0, 1.0]).unwrap();
-        assert!(interp_given_knots(&a, &u, &v, &kn, &kn, huge_count(), 1).is_err());
-        assert!(interp_given_knots(&a, &u, &v, &kn, &kn, 1, huge_count()).is_err());
-        // `usize::MAX` itself is a safe error on every target width.
         assert!(interp_given_knots(&a, &u, &v, &kn, &kn, usize::MAX, usize::MAX).is_err());
         #[cfg(target_pointer_width = "64")]
-        {
-            assert!(matches!(
-                interp_given_knots(&a, &u, &v, &kn, &kn, huge_count(), 1),
-                Err(SolidError::InvalidInput { .. })
-            ));
-            assert!(matches!(
-                interp_given_knots(&a, &u, &v, &kn, &kn, 1, huge_count()),
-                Err(SolidError::InvalidInput { .. })
-            ));
-        }
+        assert!(matches!(
+            interp_given_knots(&a, &u, &v, &kn, &kn, usize::MAX, usize::MAX),
+            Err(SolidError::InvalidInput { .. })
+        ));
     }
 
     #[test]
