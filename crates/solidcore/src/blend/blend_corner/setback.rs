@@ -265,7 +265,7 @@ fn corner_planes(
         let mut others = Vec3::new(0.0, 0.0, 0.0);
         for (j, &aj) in away.iter().enumerate() {
             if j != i && j != (i + n - 1) % n {
-                others = others + aj;
+                others += aj;
             }
         }
         let side = normal.dot(others);

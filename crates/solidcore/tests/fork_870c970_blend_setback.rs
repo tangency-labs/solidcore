@@ -460,7 +460,7 @@ fn setback_box_corner(radii: [f64; 3], round_order: usize, ease: f64, order: usi
         })
         .collect();
     let patches: Vec<Surface> = fill.patches.iter().cloned().map(Surface::from).collect();
-    let round_surfaces: Vec<Surface> = rounds.iter().cloned().map(Surface::from).collect();
+    let round_surfaces: Vec<Surface> = rounds.clone();
     let at = |x: f64, y: f64| Point2::new(x, y);
     let origin = |_: f64| Point2::new(0.0, 0.0);
     for m in 0..3 {

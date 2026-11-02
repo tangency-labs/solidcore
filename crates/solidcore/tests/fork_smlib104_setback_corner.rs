@@ -128,7 +128,7 @@ fn dump(radii: [f64; 3], setback: f64) -> String {
     };
     for pass in 0..2 {
         let k = if pass == 0 { 1.0 } else { k_scale };
-        if pass == 1 && !(k_scale > 0.0) {
+        if pass == 1 && k_scale <= 0.0 {
             break;
         }
         let rs: Vec<Surface> = (0..3)

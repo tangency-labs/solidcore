@@ -81,11 +81,11 @@ pub(super) fn faces_common_point(faces: &[Face]) -> Option<Vec3> {
         let nrm = face.normal;
         let c = [nrm.x, nrm.y, nrm.z];
         let d = nrm.dot(face.point);
-        for i in 0..3 {
-            for j in 0..3 {
-                a[i][j] += c[i] * c[j];
+        for ((ai, bi), &ci) in a.iter_mut().zip(b.iter_mut()).zip(&c) {
+            for (aij, &cj) in ai.iter_mut().zip(&c) {
+                *aij += ci * cj;
             }
-            b[i] += c[i] * d;
+            *bi += ci * d;
         }
     }
     let det3 = |m: &[[f64; 3]; 3]| {
@@ -100,9 +100,9 @@ pub(super) fn faces_common_point(faces: &[Face]) -> Option<Vec3> {
     let mut x = [0.0; 3];
     for (k, xk) in x.iter_mut().enumerate() {
         let mut m = [[0.0; 3]; 3];
-        for i in 0..3 {
-            for j in 0..3 {
-                m[i][j] = if j == k { b[i] } else { a[i][j] };
+        for ((mi, ai), &bi) in m.iter_mut().zip(&a).zip(&b) {
+            for (j, (mij, &aij)) in mi.iter_mut().zip(ai).enumerate() {
+                *mij = if j == k { bi } else { aij };
             }
         }
         *xk = det3(&m) / det;
@@ -195,7 +195,7 @@ pub(super) fn graph_g1(
     }
     let mut faces: Vec<Face> = world_faces.to_vec();
     for f in &mut faces {
-        f.point = f.point - o;
+        f.point -= o;
     }
     // the nets moved back, the faces' points snapped onto their planes there
     let to_world = |nets: &mut Vec<Net>| -> Result<()> {
@@ -303,7 +303,7 @@ pub(super) fn graph_g1(
     let mut convex = 0;
     for m in 0..n {
         let face = el_ref(&faces, el(cycle_face, m)?)?;
-        sum = sum + face.normal;
+        sum += face.normal;
         let side = if (el(&mids, m)? - face.point).dot(face.normal) < 0.0 {
             1
         } else {
@@ -441,15 +441,15 @@ pub(super) fn graph_g1(
                 let mut s0 = vec![0.0; h0.len()];
                 let mut s1 = vec![0.0; h0.len()];
                 for j in 0..s0.len() {
-                    *el_mut(&mut s0, j)? = el_ref(h0, j)?[c];
-                    *el_mut(&mut s1, j)? = el_ref(h1, j)?[c];
+                    *el_mut(&mut s0, j)? = el(el_ref(h0, j)?, c)?;
+                    *el_mut(&mut s1, j)? = el(el_ref(h1, j)?, c)?;
                 }
                 let s1 = bern_mul(&lam, &s1)?;
                 let s0 = bern_elevate(&s0, qv)?;
                 let s1 = bern_elevate(&s1, qv)?;
                 for j in 0..=qv {
-                    el_mut(el_mut(&mut rows, 0)?, j)?[c] = el(&s0, j)?;
-                    el_mut(el_mut(&mut rows, 1)?, j)?[c] = el(&s0, j)? + el(&s1, j)?;
+                    *el_mut(el_mut(el_mut(&mut rows, 0)?, j)?, c)? = el(&s0, j)?;
+                    *el_mut(el_mut(el_mut(&mut rows, 1)?, j)?, c)? = el(&s0, j)? + el(&s1, j)?;
                 }
             }
             // F's projection along edge m and its derivative along the field d (linear in v)
@@ -457,9 +457,10 @@ pub(super) fn graph_g1(
             let x1 = el(&xi, (m + 1) % n)?;
             let d0 = el(&sigma, m)?;
             let s1n = el(&sigma, (m + 1) % n)?;
+            // `sSigma[(m + 1) % n] * -1.0`: negation, bit for bit the product
             let d1 = P2 {
-                x: s1n.x * -1.0,
-                y: s1n.y * -1.0,
+                x: -s1n.x,
+                y: -s1n.y,
             };
             for c in 0..3 {
                 let da1 = a1.component(c);
@@ -469,8 +470,9 @@ pub(super) fn graph_g1(
                 let s3 = bern_elevate(&sp, qv)?;
                 let sde = bern_elevate(&sdp, qv)?;
                 for j in 0..=qv {
-                    el_mut(el_mut(&mut rows, 3)?, j)?[c] = el(&s3, j)?;
-                    el_mut(el_mut(&mut rows, 2)?, j)?[c] = el(&s3, j)? + el(&sde, j)? / NC as f64;
+                    *el_mut(el_mut(el_mut(&mut rows, 3)?, j)?, c)? = el(&s3, j)?;
+                    *el_mut(el_mut(el_mut(&mut rows, 2)?, j)?, c)? =
+                        el(&s3, j)? + el(&sde, j)? / NC as f64;
                 }
             }
             for j in 0..=qv {
