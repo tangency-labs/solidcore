@@ -35,8 +35,8 @@ use std::collections::BTreeMap;
 
 use super::{invalid, FilletBody, FilletObject, FilletSession, SolverObject};
 use crate::blend::fillet_cliff_overflow::{
-    close_removal_region, close_section_ended_round, cut_fillet_at_open_end, Blended, Refusal,
-    SectionEnd,
+    close_removal_region, close_section_ended_round, cut_fillet_at_open_end, section_end, Blended,
+    Refusal,
 };
 use crate::blend::fillet_executive::p3::NoRoomReason;
 use crate::blend::fillet_geom::p1::{FilletErrorType, FilletGeomId, FilletSurfaceStorage};
@@ -89,14 +89,14 @@ fn status_of(e: &SolidError) -> i32 {
 
 impl FilletSession<'_> {
     /// `GetFilletErrorInfo()->NoteError(code, comment)` of a [`Refusal`].
-    fn note_refusal(&mut self, refusal: Refusal) {
+    pub(super) fn note_refusal(&mut self, refusal: Refusal) {
         self.executive.error.code = refusal.code as i32;
         self.executive.error.comment = refusal.comment.into();
         self.executive.error.no_room = refusal.reason;
     }
 
     /// Note `note`'s refusal, if any, and pass `result` on.
-    fn noted<T>(&mut self, note: Option<Refusal>, result: Result<T>) -> Result<T> {
+    pub(super) fn noted<T>(&mut self, note: Option<Refusal>, result: Result<T>) -> Result<T> {
         if let Some(refusal) = note {
             self.note_refusal(refusal);
         }
@@ -121,7 +121,7 @@ impl FilletSession<'_> {
     /// square to the centres' line, its centre moved along that line by `-r dr/ds` (`s` the
     /// centres' arc length) and its radius `r sqrt(1 - (dr/ds)^2)`, its point in the
     /// bisector plane on the edge's side; the law's value and slope are read with `SER`.
-    fn holds_its_law(&self, k: &Kernel, solver: FilletObject) -> Result<bool> {
+    pub(super) fn holds_its_law(&self, k: &Kernel, solver: FilletObject) -> Result<bool> {
         let FilletObject::Solver(id) = solver else {
             return Err(invalid("object is not a solver"));
         };
@@ -275,7 +275,10 @@ impl FilletSession<'_> {
 
     /// The face of the intermediate body each of `solver`'s fillet geometries' surfaces is
     /// on (`pFG->GetFilletSurface()->GetOwner()` in `m_pFilletBrep`), `None` for none.
-    fn fillet_faces(&self, solver: FilletObject) -> Result<Vec<(FilletGeomId, Option<FaceId>)>> {
+    pub(super) fn fillet_faces(
+        &self,
+        solver: FilletObject,
+    ) -> Result<Vec<(FilletGeomId, Option<FaceId>)>> {
         let FilletObject::Solver(id) = solver else {
             return Err(invalid("object is not a solver"));
         };
@@ -401,29 +404,10 @@ impl FilletSession<'_> {
             let vertex_point = vertex::point(target, v)?;
             let end_surface = if end.section {
                 // WR-674: the section through the vertex, normal to the filleted edge
-                let interval = edge::interval(target, fil_edge)?;
-                let t = if edge::start_vertex(target, fil_edge)? == Some(v) {
-                    interval.min()
-                } else {
-                    interval.max()
-                };
-                let derivs = edge::curve(target, fil_edge)?
-                    .ok_or_else(|| SolidError::null_pointer(OP))?
-                    .evaluate(k, t, 1, true, true)?;
-                let tangent = derivs
-                    .get(1)
-                    .copied()
-                    .ok_or_else(|| SolidError::null_pointer(OP))?;
-                let length = tangent.length();
-                if length <= EFF_ZERO {
-                    return Err(SolidError::sm_err(OP));
-                }
-                let normal = tangent * (1.0 / length);
-                section_ends.push(SectionEnd {
-                    vertex: v,
-                    at: vertex_point,
-                    normal,
-                });
+                let end =
+                    section_end(k, target, fil_edge, v)?.ok_or_else(|| SolidError::sm_err(OP))?;
+                let normal = end.normal;
+                section_ends.push(end);
                 Surface::from(Plane::from_normal(vertex_point, normal))
             } else {
                 face::p2::surface(target, end_face)?

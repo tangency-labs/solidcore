@@ -41,6 +41,10 @@
 //! | [`Plane::create_extended_surface`], [`Plane::create_extended_surface_dir`] | `SmBSplineSurface::CreateExtendedSurface` (both overloads; inherited, re-dispatched to the `IsSingularity` / `IsClosed` overrides) |
 //!
 //! Deviations:
+//! - **`SwapUV` keeps the plane's definition (WR-701, opt-in).** With
+//!   `Kernel::fixes.swap_uv_keeps_analytic_definition` the swap keeps the axes, domain
+//!   and scales [`Plane::toggle_swap_uv_bit`] swapped (`SmPlane::SwapUVDefinition`, the
+//!   fork's tangency-labs/smlib@0c00de7) instead of rebuilding them from the net.
 //! - **Derived class.** `SmPlane` derives from `SmBSplineSurface`; a [`Plane`] holds
 //!   its B-spline part ([`Plane::base`]) next to the analytic data, and is the
 //!   [`SurfaceKind::Plane`] kind of [`Surface`]. Inherited methods whose upstream
@@ -1014,6 +1018,22 @@ impl Plane {
         &mut self,
         notify: &mut crate::nurbs::b_spline_surface::p2::EditNotify<'_>,
     ) -> Result<()> {
+        self.swap_uv_notifying_keeping(notify, false)
+    }
+
+    /// [`Plane::swap_uv_notifying`]; with `keep_definition` (not upstream, WR-701, the
+    /// fork's tangency-labs/smlib@0c00de7, `SmPlane::SwapUVDefinition`) the definition
+    /// [`Plane::toggle_swap_uv_bit`] has swapped (axes, domain, scales) is kept, not
+    /// rebuilt from the transposed net.
+    ///
+    /// # Errors
+    ///
+    /// Those of [`Plane::swap_uv`].
+    pub(crate) fn swap_uv_notifying_keeping(
+        &mut self,
+        notify: &mut crate::nurbs::b_spline_surface::p2::EditNotify<'_>,
+        keep_definition: bool,
+    ) -> Result<()> {
         // get current surface description
         self.ensure_nurb();
         let c = self.base.canonical()?;
@@ -1048,6 +1068,9 @@ impl Plane {
         if let Err(e) = status {
             self.toggle_swap_uv_bit();
             return Err(e);
+        }
+        if keep_definition {
+            return Ok(());
         }
         self.rebuild_step_from_nurb_parameters()
     }
@@ -1334,7 +1357,7 @@ impl Plane {
                 // the interval is [tStart - 1, tEnd + 1], or the caller's interval
                 let sub_interval = line_interval
                     .copied()
-                    .unwrap_or(Extent1d::from_min_max(t_start - 1.0, t_end + 1.0));
+                    .unwrap_or_else(|| Extent1d::from_min_max(t_start - 1.0, t_end + 1.0));
                 // try global surface/curve solver (SmSurface::GlobalLineIntersect: the
                 // solutions name `surface`)
                 return base(&sub_interval);
