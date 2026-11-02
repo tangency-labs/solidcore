@@ -20,15 +20,20 @@
 //!   fork's in address order).
 //! - **Fit sizes.** The three refusals step 5 sizes (`NoteFitOnFace` after the tangent
 //!   edge and the extension, `NoteFitRadius` from `sm_CornerTakesPerRadius` after the
-//!   whole edge; tangency-labs/smlib a3d6d81, 49f393d) are ported as refusals; their fit
-//!   sizes are not (`FIT(#2278)` at each).
-//! - **Section ends.** A round with WR-674's section ends (not the fork's) is not trimmed
-//!   here: the caller subtracts it, as before.
+//!   whole edge; tangency-labs/smlib a3d6d81, 49f393d) note them with
+//!   `fixes.fillet_gn_section_generator` (WR-696, #2278).
+//! - **Section ends (not the fork's).** A round with WR-674's section ends is trimmed here
+//!   only with `fixes.fillet_section_end_trim_at_creases` (WR-706, #2223): each such end is
+//!   cut by its section's plane and closed by the section's flat face, and a side of that
+//!   face that lies along an edge of the body is sewn to the edge's piece the rail's
+//!   imprint cuts off, not imprinted. Without it the caller subtracts the round, as before.
 
 use std::collections::{BTreeMap, BTreeSet};
 
 use super::{invalid, FilletBody, FilletObject, FilletSession, SessionObjects};
-use crate::blend::fillet_cliff_overflow::{cut_fillet_at_open_end, Refusal};
+use crate::blend::fillet_cliff_overflow::{
+    cut_fillet_at_open_end, section_edge, section_end, section_end_face, Refusal, SectionEnd,
+};
 use crate::blend::fillet_executive::p3::NoRoomReason;
 use crate::blend::fillet_geom::p1::{FilletErrorType, FilletGeomId};
 use crate::blend::fillet_overflow::{
@@ -43,6 +48,7 @@ use crate::geom::object::ObjectRef;
 use crate::kernel::Kernel;
 use crate::math::{Point3, BIG_DOUBLE};
 use crate::query::brep::BrepIdentity;
+use crate::surface::plane::Plane;
 use crate::surface::surface::Surface;
 use crate::topology::brep::p3::{self, delete_face, with_kernel_callbacks, DeleteFaceOptions};
 use crate::topology::brep_cache::CacheObject;
@@ -167,6 +173,80 @@ const fn refusal(
 }
 
 impl FilletSession<'_> {
+    /// The fork's fit for a blend whose corners take the whole of its edge (a3d6d81): for a
+    /// constant ball, the edge's length over what its corners take per unit radius at both
+    /// ends (`sm_CornerTakesPerRadius`, over the solvers of the same radius), less the fit
+    /// margin, noted where some corner takes any.
+    fn note_fit_of_corners_taking_the_edge(
+        &mut self,
+        k: &mut Kernel,
+        solver: FilletObject,
+        solvers: &[FilletObject],
+    ) -> Result<()> {
+        let FilletObject::Solver(id) = solver else {
+            return Err(invalid("object is not a solver"));
+        };
+        let current = self.objects.solver(id)?;
+        let Some(eu) = current.base().edgeuse(0)? else {
+            return Ok(());
+        };
+        let Some(e) = eu1::edge(self.objects.target, eu)? else {
+            return Ok(());
+        };
+        let (rolls, on_edge) = super::ball_regular::rolls_a_ball(current);
+        if !rolls || on_edge {
+            return Ok(());
+        }
+        let offset = |o: &super::SolverObject| -> Result<f64> {
+            Ok(o.base()
+                .surface(0)?
+                .ok_or_else(|| SolidError::null_pointer(OP))?
+                .surface
+                .offset_distance())
+        };
+        let own = offset(current)?;
+        let mut blended = BTreeSet::new();
+        for &other in solvers {
+            let FilletObject::Solver(oid) = other else {
+                return Err(invalid("object is not a solver"));
+            };
+            let o = self.objects.solver(oid)?;
+            let (r, law) = super::ball_regular::rolls_a_ball(o);
+            if r && !law && (offset(o)? - own).abs() <= crate::math::EFF_ZERO * (1.0 + own.abs()) {
+                if let Some(oeu) = o.base().edgeuse(0)? {
+                    if let Some(oe) = eu1::edge(self.objects.target, oeu)? {
+                        blended.insert(oe);
+                    }
+                }
+            }
+        }
+        let target: &Brep = self.objects.target;
+        let v0 = edge::vertex(target, e)?;
+        let v1 = edge::other_vertex(target, e, v0)?;
+        let mut per = [0.0_f64; 2];
+        for (slot, v) in per.iter_mut().zip([v0, v1]) {
+            if let Some(v) = v {
+                *slot = super::fit_size::corner_takes_per_radius(k, target, v, e, &blended)?;
+            }
+        }
+        let curve =
+            edge::evaluation_curve(target, e)?.ok_or_else(|| SolidError::null_pointer(OP))?;
+        let length = curve.length(k, &edge::interval(target, e)?, crate::math::EFF_ZERO)?;
+        if per[0] + per[1] > 0.0 {
+            let margin = 1000.0 * edge::tolerance(target, e)?;
+            let fit = smos_max(0.0, length / (per[0] + per[1]) - margin);
+            self.executive.note_fit_radius(
+                fit,
+                Some(FilletObject::Topology(
+                    FilletBody::Target,
+                    EntityRef::Edge(e),
+                )),
+                crate::blend::fillet_executive::FitKind::Radius,
+            );
+        }
+        Ok(())
+    }
+
     /// Runs `edit` on the target through the session's notifications (its records and
     /// attribute store, under the target's identities), with the identity its queries
     /// resolve the target's records by, as the session's own stitch of the target does.
@@ -212,6 +292,54 @@ impl FilletSession<'_> {
             };
             edit(k, target, &mut env, identity)
         })?
+    }
+
+    /// WR-706: whether the lamina edge `e` of `sheet` is a side of a section's flat face
+    /// (`section_ends`) that runs from the end's vertex along an edge of the target at that
+    /// vertex (its samples on the section's plane and its middle on the edge, within ten
+    /// times `tol`): its two end points if so.
+    fn seam_side(
+        &self,
+        k: &Kernel,
+        sheet: &Brep,
+        e: EdgeId,
+        section_ends: &[SectionEnd],
+        tol: f64,
+    ) -> Result<Option<(Point3, Point3)>> {
+        let on_tol = 10.0 * tol;
+        let (sv, ev) = (
+            edge::start_vertex(sheet, e)?.ok_or_else(|| SolidError::null_pointer(OP))?,
+            edge::end_vertex(sheet, e)?.ok_or_else(|| SolidError::null_pointer(OP))?,
+        );
+        let (a, b) = (vertex::point(sheet, sv)?, vertex::point(sheet, ev)?);
+        let curve = edge_curve(k, sheet, e)?;
+        let ivl = curve.natural_interval();
+        let mid = curve.evaluate_point(k, ivl.evaluate(0.5))?;
+        let target = &*self.objects.target;
+        for end in section_ends {
+            if a.distance(end.at) > on_tol && b.distance(end.at) > on_tol {
+                continue;
+            }
+            let on_plane = |p: Point3| (p - end.at).dot(end.normal).abs() <= on_tol;
+            if !(on_plane(a) && on_plane(b) && on_plane(mid)) {
+                continue;
+            }
+            for te in crate::topology::brep::p1::edges(target, None)? {
+                if edge::start_vertex(target, te)? != Some(end.vertex)
+                    && edge::end_vertex(target, te)? != Some(end.vertex)
+                {
+                    continue;
+                }
+                let t_curve =
+                    edge::curve(target, te)?.ok_or_else(|| SolidError::null_pointer(OP))?;
+                if let Some((_, dist)) = drop_on(k, t_curve, &edge::interval(target, te)?, mid)? {
+                    if dist <= on_tol {
+                        return Ok(Some((a, b)));
+                    }
+                }
+            }
+        }
+        Ok(None)
     }
 
     /// The fork's `SmFilletExecutive::TrimAtCreases` (WR-695): in a cliff overflow, trim
@@ -280,7 +408,11 @@ impl FilletSession<'_> {
             faces_of.insert(solver, self.fillet_faces(solver)?);
         }
         let open_ends = self.executive.open_ends.clone();
-        if open_ends.iter().any(|end| end.section) {
+        // WR-706: a section end (WR-674) is trimmed here only with its own fix
+        let section_trim = k.fixes.fillet_section_end_trim_at_creases
+            && k.fixes.fillet_overflow_trim_at_creases
+            && k.fixes.fillet_round_ends_at_tangent_continuation;
+        if !section_trim && open_ends.iter().any(|end| end.section) {
             return Err(invalid("a section end is not trimmed at its creases"));
         }
 
@@ -294,6 +426,7 @@ impl FilletSession<'_> {
         // (an end's event: the end face cuts the blend whatever lies past it, a lip over a
         // wall's top)
         let mut note = None;
+        let mut section_ends: Vec<SectionEnd> = Vec::new();
         for end in &open_ends {
             let FilletObject::Solver(id) = end.solver else {
                 return Err(invalid("open end solver is not a solver"));
@@ -316,9 +449,18 @@ impl FilletSession<'_> {
                 .ok_or_else(|| SolidError::null_pointer(OP))?
                 .evaluate_point(k, edge::interval(target, fil_edge)?.evaluate(0.5))?;
             let vertex_point = vertex::point(target, v)?;
-            let end_surface = face::p2::surface(target, end_face)?
-                .ok_or_else(|| SolidError::null_pointer(OP))?
-                .clone_for_evaluation()?;
+            let end_surface = if end.section {
+                // WR-706: a section end (WR-674) is cut by the section through the vertex,
+                // normal to the filleted edge
+                let section =
+                    section_end(k, target, fil_edge, v)?.ok_or_else(|| SolidError::sm_err(OP))?;
+                section_ends.push(section);
+                Surface::from(Plane::from_normal(vertex_point, section.normal))
+            } else {
+                face::p2::surface(target, end_face)?
+                    .ok_or_else(|| SolidError::null_pointer(OP))?
+                    .clone_for_evaluation()?
+            };
             let entry = faces_of
                 .get_mut(&end.solver)
                 .ok_or_else(|| SolidError::null_pointer(OP))?;
@@ -339,6 +481,27 @@ impl FilletSession<'_> {
             self.noted(note.take(), cut)?;
         }
 
+        // WR-706: each section end closed by its flat face, from the round's section to the
+        // vertex (WR-674's, as the subtraction closes it)
+        if !section_ends.is_empty() {
+            let mut tol = 0.0;
+            for &a in &approx {
+                tol = smos_max(tol, a);
+            }
+            for end in &section_ends {
+                let Some(section) = section_edge(k, &sheet, end, 10.0 * tol)? else {
+                    self.objects.intermediate = Some(sheet);
+                    self.note_refusal(refusal(
+                        FilletErrorType::NoRoom,
+                        Some(NoRoomReason::TangentContinuationEndUnsupported),
+                        "Fillet Error: a round ending where its edge runs on tangentially has no single section there",
+                    ));
+                    return Err(SolidError::sm_err(OP));
+                };
+                section_end_face(k, &mut sheet, end, section, 10.0 * tol)?;
+            }
+        }
+
         // the target is trimmed in place; a failed trim puts it back as it was
         let kept = (*self.objects.target).clone();
         let trimmed = self.trim_sheet_into(
@@ -349,6 +512,7 @@ impl FilletSession<'_> {
             &blended_edges,
             &approx,
             tangency,
+            &section_ends,
             &mut note,
         );
         if let Some(refused) = note.take() {
@@ -372,6 +536,7 @@ impl FilletSession<'_> {
         blended_edges: &[EdgeId],
         approx: &[f64],
         tangency: f64,
+        section_ends: &[SectionEnd],
         note: &mut Option<Refusal>,
     ) -> Result<()> {
         let refuse = |note: &mut Option<Refusal>, r: Refusal| -> Result<()> {
@@ -479,7 +644,16 @@ impl FilletSession<'_> {
                                 && rolled_on.contains(&g)
                                 && is_tangent_edge(k, self.objects.target, e, tangency)?
                             {
-                                // FIT(#2278): NoteFitOnFace(g)
+                                // the fork's NoteFitOnFace(g) (49f393d; with
+                                // `fixes.fillet_gn_section_generator`, WR-696)
+                                if k.fixes.fillet_gn_section_generator {
+                                    let face = FilletObject::Topology(
+                                        FilletBody::Target,
+                                        EntityRef::Face(g),
+                                    );
+                                    self.executive
+                                        .note_fit_on_face(k, &mut self.objects, face)?;
+                                }
                                 return refuse(
                                     note,
                                     refusal(
@@ -545,7 +719,15 @@ impl FilletSession<'_> {
         for i in 0..solvers.len() {
             let has = round_of.values().any(|&r| r == i);
             if has && !kept_rounds.contains(&i) {
-                // FIT(#2278): NoteFitRadius from sm_CornerTakesPerRadius at each end
+                // the largest radius that keeps a length of the edge: its corners take
+                // r <u, e> at each end (sm_CornerTakesPerRadius), the edge's length L in all
+                // at r = L / (s0 + s1); open, so less the fit margin (the fork's a3d6d81;
+                // with `fixes.fillet_gn_section_generator`, WR-696)
+                if k.fixes.fillet_gn_section_generator {
+                    if let Some(&solver) = solvers.get(i) {
+                        self.note_fit_of_corners_taking_the_edge(k, solver, solvers)?;
+                    }
+                }
                 return refuse(
                     note,
                     refusal(
@@ -565,6 +747,21 @@ impl FilletSession<'_> {
             if edge::is_lamina(&sheet, e)? {
                 lamina_edges.push(e);
             }
+        }
+        // WR-706: a side of a section's flat face that runs from the end's vertex along an
+        // edge of the body (the seam where the corner's cylinder runs on tangentially into
+        // the flat side) is sewn to that edge's piece, not imprinted on its faces
+        let mut seam_sides: Vec<(Point3, Point3)> = Vec::new();
+        if !section_ends.is_empty() {
+            let mut kept_lamina = Vec::new();
+            for &e in &lamina_edges {
+                let side = self.seam_side(k, &sheet, e, section_ends, tol)?;
+                match side {
+                    Some(ends) => seam_sides.push(ends),
+                    None => kept_lamina.push(e),
+                }
+            }
+            lamina_edges = kept_lamina;
         }
         let mut extensions: Vec<Extension> = Vec::new();
         let mut along: Vec<Curve> = Vec::new();
@@ -591,7 +788,13 @@ impl FilletSession<'_> {
             let outcome = extend(k, self.objects.target, f, &rails, blended_edges, tol)?;
             match outcome {
                 ExtendOutcome::Refused(why) => {
-                    // FIT(#2278): NoteFitOnFace(f)
+                    // the fork's NoteFitOnFace(f) (49f393d; with
+                    // `fixes.fillet_gn_section_generator`, WR-696)
+                    if k.fixes.fillet_gn_section_generator {
+                        let face = FilletObject::Topology(FilletBody::Target, EntityRef::Face(f));
+                        self.executive
+                            .note_fit_on_face(k, &mut self.objects, face)?;
+                    }
                     return refuse(
                         note,
                         refusal(
@@ -627,6 +830,35 @@ impl FilletSession<'_> {
             let (_, on_edges) =
                 self.with_target_env(k, |k, b, env, _| merge_curves(k, b, env, f, tol, on, None))?;
             imprinted.extend(on_edges);
+        }
+        // WR-706: the pieces of the body's edges a section's side lies along, cut off at
+        // the rails' ends by the imprint
+        for &(a, b) in &seam_sides {
+            let target = &*self.objects.target;
+            let mut found = false;
+            for e in crate::topology::brep::p1::edges(target, None)? {
+                let (sv, ev) = (
+                    edge::start_vertex(target, e)?.ok_or_else(|| SolidError::null_pointer(OP))?,
+                    edge::end_vertex(target, e)?.ok_or_else(|| SolidError::null_pointer(OP))?,
+                );
+                let (s_pt, e_pt) = (vertex::point(target, sv)?, vertex::point(target, ev)?);
+                if (s_pt.distance(a) <= on_tol && e_pt.distance(b) <= on_tol)
+                    || (s_pt.distance(b) <= on_tol && e_pt.distance(a) <= on_tol)
+                {
+                    imprinted.insert(e);
+                    found = true;
+                }
+            }
+            if !found {
+                return refuse(
+                    note,
+                    refusal(
+                        FilletErrorType::BadMerge,
+                        None,
+                        "Fillet Error: a round's section end lies along an edge of the body that its rail does not cut",
+                    ),
+                );
+            }
         }
 
         // the faces round the blended edges, up to the imprint and the extensions' edges
