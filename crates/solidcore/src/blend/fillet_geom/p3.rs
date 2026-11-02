@@ -1971,6 +1971,7 @@ mod tests {
         let k = Kernel::default();
         let mut fb = FilletBrep::new();
         let (g, ends) = two_rail_geom(&mut fb, &k);
+        let split_vertex_index = fb.brep().vertices().len();
         let rail0 = fb.geom(g).unwrap().rail(0).unwrap();
         let e = fb
             .topology_split(
@@ -2000,9 +2001,15 @@ mod tests {
         // the end edge use was taken off the first rail before the stub
         assert!(!fb.brep().edge(rail0).unwrap().edgeuses.contains(&ends[0]));
         assert_eq!(fb.brep().edgeuse(ends[0]).unwrap().edge, None);
-        // The split vertex already exists even though rail-use construction fails.
+        // The first allocation is the split vertex; rail-use construction can
+        // subsequently allocate a shell placeholder before failing.
         // SmFilletVertex() inherits SmVertex's zero tolerance, not ZoneTol3d.
-        let (split_id, split_vertex) = fb.brep().vertices().iter().next_back().unwrap();
+        let (split_id, split_vertex) = fb
+            .brep()
+            .vertices()
+            .iter()
+            .nth(split_vertex_index)
+            .unwrap();
         assert_eq!(split_vertex.point, Point3::ZERO);
         assert_eq!(split_vertex.tolerance, 0.0);
         assert!(!fb.brep().vertex_list().contains(&split_id));
