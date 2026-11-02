@@ -962,6 +962,19 @@ pub struct UpstreamFixes {
     /// height; the WR record lists the cases this flag changes. Off by default for
     /// pinned parity.
     pub cone_iso_circle_at_axial_height: bool,
+    /// Unbounded `SmCone`s are parameterised as their NURB is (WR-713, #2313). The
+    /// unbounded constructor rotates the generator by a negative semi-angle too, not only
+    /// a positive one, and a cone of negative semi-angle runs from `-SM_INFINITE_PARAMETER`
+    /// up to its apex (above the origin) instead of from the apex up, so it is the cone
+    /// through its base circle, not a cylinder of the base radius cut off above the apex.
+    /// `ConvertUVFromSTEPToNURBS` and `ConvertUVFromNURBSToSTEP` map the height of an
+    /// inside-out unbounded cone onto its NURB's reversed height interval, as for a
+    /// bounded cone, instead of negating it: the NURB runs over the STEP heights
+    /// reversed, not over their negatives. Upstream's iso circle through a point at
+    /// height 1 on an inside-out unbounded cone is then near `SM_INFINITE_PARAMETER`,
+    /// its NURB-parameter points disagree with its NURB, and a negative-angle unbounded
+    /// cone holds none of its points below the apex. Off by default for pinned parity.
+    pub cone_unbounded_parameterized_as_nurb: bool,
     /// The fillet executive, solvers, corners and geometry pass on the statuses SMLib
     /// drops: a failed solver load, orientation, list edit, copy, trim, interval edit,
     /// evaluation, knot edit or split-face update returns its error instead of the fillet
@@ -1562,6 +1575,16 @@ pub struct Kernel {
     /// to the records of a fresh seeding, so it never carries state between edits.
     #[doc(hidden)]
     pub notify_records: crate::topology::topology::NotifyRecords,
+    /// Not upstream: the arena-identity record map of the last stitch glue or split
+    /// (`heal::stitch::p1`) and the B-rep value it was kept for (its progress tag, held
+    /// weakly), kept only to reuse its allocation. An edit of another B-rep value starts
+    /// on an empty map instead, and every edit resets it to a default record for every
+    /// object of its B-rep, so it never carries state between edits.
+    #[doc(hidden)]
+    pub arena_notify_records: (
+        std::sync::Weak<()>,
+        crate::topology::topology::NotifyRecords,
+    ),
 }
 
 impl Default for Kernel {
@@ -1585,6 +1608,10 @@ impl Kernel {
             fixes: UpstreamFixes::default(),
             cancel: None,
             notify_records: crate::topology::topology::NotifyRecords::new(),
+            arena_notify_records: (
+                std::sync::Weak::new(),
+                crate::topology::topology::NotifyRecords::new(),
+            ),
         }
     }
 
