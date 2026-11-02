@@ -2405,6 +2405,37 @@ impl CornerEdgeAccess<FilletObject> for SessionObjects<'_> {
         let corner = corners
             .get_mut(id.0 as usize)
             .ok_or_else(|| invalid("corner is not live"))?;
+        // The fork's (WR-697, 32fd80a): a blend corner's Mitre turn makes its mitre
+        // exact where the rounds' class allows (SmBlendCorner::CalcCornerEdgeGeom), before
+        // the edges' own kinds compute the rest
+        if corner
+            .blend
+            .is_some_and(|blend| blend.is_mitre_turn(corner.all_eus.as_deref()))
+        {
+            struct Live<'s>(&'s mut [Option<SolverObject>]);
+            impl crate::blend::blend_corner::MitreSolvers for Live<'_> {
+                fn ops(&mut self, id: FilletSolverId) -> Result<&mut dyn FilletSolverOps> {
+                    self.0
+                        .get_mut(id.0 as usize)
+                        .and_then(Option::as_mut)
+                        .map(live_solver_ops)
+                        .ok_or_else(|| invalid("mitre solver is not live"))
+                }
+            }
+            let mut live = Live(solvers.as_mut_slice());
+            for e in corner.edges.clone() {
+                let edge = pseudo.fillet_edge(e)?;
+                if edge.fillet_edge_type()
+                    != crate::blend::fillet_geom::p1::FilletEdgeType::FilletXFillet
+                    || pseudo.brep().edge(e)?.curve.is_some()
+                {
+                    continue;
+                }
+                crate::blend::blend_corner::exact_mitre_curve(
+                    k, target, pseudo, corner, e, &mut live,
+                )?;
+            }
+        }
         // WR-303: the Nx1 corner's end rib hands the round to the global merge; in a
         // cliff overflow (WR-631) the end is left open, noted for the subtraction.
         let cliff_overflow = executive.cliff_overflow;

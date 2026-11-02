@@ -687,6 +687,11 @@ pub struct FilletCorner {
     /// concave corner (`MakeCornerTopology`'s bevel at a corner of mixed convexity). Read
     /// by [`Self::is_mitre`].
     pub mitre: bool,
+    /// The fork's blend corner (`SmBlendCorner`, smlib#79 step 4b; WR-697): its event and
+    /// turn where the corner is one (`Kernel::fixes.fillet_blend_corner`), `None` for the
+    /// pinned corners. A blend corner is built by the Nx2 port (see
+    /// [`crate::blend::blend_corner`]).
+    pub blend: Option<crate::blend::blend_corner::BlendCorner>,
 }
 
 /// What the corner methods operate on besides the corner itself.
@@ -1016,6 +1021,7 @@ impl FilletCorner {
             g1_case: false,
             // SmFilletNx2Corner: m_bMitre = FALSE (the fork's, 9ba2b12)
             mitre: false,
+            blend: None,
         }
     }
 
@@ -1303,6 +1309,22 @@ impl FilletCorner {
                                     != eu2::is_convex_radial_sector(k, b, eu1_, 4, false, 0.0)?
                             {
                                 Some(make(FilletCornerKind::ThreeByTwoMixed))
+                            } else if k.fixes.fillet_blend_corner {
+                                // The fork's (WR-697, smlib#79 step 4b, 74e9beb): two blends of
+                                // one convexity among three or four edges are the blend
+                                // corner's (SmBlendCorner::Classify: a Turn or a Join), built
+                                // by the two-blend construction moved from SmFilletNx2Corner
+                                let blend = crate::blend::blend_corner::classify(
+                                    k,
+                                    b,
+                                    Some(vertex),
+                                    solver_eus,
+                                    &all_eus,
+                                    tan_tol_deg,
+                                )?;
+                                let mut c = make(FilletCornerKind::NByTwo);
+                                c.blend = Some(blend);
+                                Some(c)
                             } else {
                                 // else continue with case 4
                                 Some(make(FilletCornerKind::NByTwo))
