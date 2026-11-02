@@ -38,6 +38,11 @@
 //! - Degree `p == 0` makes `N_FitSrfToPtsKnots` / `N_FitSrfFuncInterp` request a
 //!   banded matrix of bandwidth `-1` (a negative-sized allocation);
 //!   [`interp_given_knots`] / [`func_interp`] return `InvalidInput` there.
+//! - The degree counts of `N_FitSrfToPtsKnots` are added checked (the `fit_arrays`
+//!   `add`, as everywhere else in the fitting port): a `n + p + 1` / `m + q + 1` knot
+//!   count that overflows gives `InvalidInput` where upstream's signed `NL_INDEX`
+//!   arithmetic is undefined behaviour. Every count that fits keeps the upstream sum,
+//!   the comparison order and the `NL_INP_ERR` outcomes.
 //! - Upstream's 2D work arrays and banded matrices are single row-major blocks, and
 //!   the port indexes them the same way (a column index may leave its row). Accesses
 //!   outside a whole block return `InvalidInput` instead of undefined behaviour.
@@ -51,8 +56,8 @@ use crate::nurbs::crv_fit::p1::{
     cpts_from_srf_data, interp_knot_vector, knot_vector_approx, DataDir, FitPoint, ParamMethod,
 };
 use crate::nurbs::fit_arrays::{
-    alloc, alloc2, at, at2, at_mut, banded, basis, copy_knots, head, hi, idx, invalid, mget, mset,
-    put, put2, sg, Block,
+    add, alloc, alloc2, at, at2, at_mut, banded, basis, copy_knots, head, hi, idx, invalid, mget,
+    mset, put, put2, sg, Block,
 };
 use crate::nurbs::funcs_basic::SurfaceFunction;
 use crate::nurbs::knots::{KnotVector, Side};
@@ -258,9 +263,10 @@ fn interp_matrix(
 /// # Errors
 ///
 /// [`NlibCode::Input`] when `knu` / `knv` do not have `n + p + 2` / `m + q + 2`
-/// knots, `p > n`, `q > m`, or a basis span falls outside the matrix band; errors
-/// of [`KnotVector::basis_eval`] and of the LU decomposition and solves;
-/// `InvalidInput` for an empty grid, a short row, too few parameters, or `p == 0`.
+/// knots, `p > n`, `q > m`, or a basis span falls outside the matrix band;
+/// `InvalidInput` for an empty grid, a short row, too few parameters, `p == 0`, or a
+/// `n + p + 1` / `m + q + 1` knot count that overflows the signed index; errors
+/// of [`KnotVector::basis_eval`] and of the LU decomposition and solves.
 pub fn interp_given_knots<P: FitPoint>(
     a: &[Vec<P>],
     u: &[f64],
@@ -277,7 +283,9 @@ pub fn interp_given_knots<P: FitPoint>(
     // Check for surface memory.
     let r = sg(knu.last_index(), OP)?;
     let s = sg(knv.last_index(), OP)?;
-    if r != n + p + 1 || s != m + q + 1 {
+    let rs = add(add(n, p, OP)?, 1, OP)?;
+    let ss = add(add(m, q, OP)?, 1, OP)?;
+    if r != rs || s != ss {
         return Err(SolidError::nlib(OP, NlibCode::Input));
     }
     if p > n || q > m {

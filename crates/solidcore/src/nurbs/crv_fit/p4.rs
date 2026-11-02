@@ -19,6 +19,11 @@
 //!   `NL_STACKS` arguments, `N_InitNurbs` / `N_EndNurbs` and the routine-name strings
 //!   have no counterpart.
 //! - `ROUND(x)` is `(NL_INDEX)(x + 0.5)`, a truncation toward zero, as upstream.
+//! - The caller counts `n`, `p`, `k` and `l`, which upstream adds as `NL_INDEX` values,
+//!   are added checked (the `fit_arrays` `add`, as everywhere else in the fitting port):
+//!   a `k + l` or `n + p + 1` sum that overflows gives [`SolidError::InvalidInput`]
+//!   where upstream's signed arithmetic is undefined behaviour. Every count that fits
+//!   keeps the upstream sum and behaviour.
 
 use crate::error::{NlibCode, Result, SolidError};
 use crate::math::Vec3;
@@ -26,7 +31,7 @@ use crate::nurbs::basis_basic::basis_derivs;
 use crate::nurbs::crv_basic::Curve;
 use crate::nurbs::crv_fit::p1::{param_values, ParamMethod};
 use crate::nurbs::fit_arrays::{
-    alloc, at, at_mut, banded, basis, curve, idx, mget, mset, out_of_range, put, sg, Block,
+    add, alloc, at, at_mut, banded, basis, curve, idx, mget, mset, out_of_range, put, sg, Block,
 };
 use crate::nurbs::knots::{KnotVector, Side};
 use crate::nurbs::math::{blend_pt, float_op_is_bad, CPoint, FloatOp};
@@ -60,7 +65,8 @@ fn scale_pt(alpha: f64, p: Vec3) -> Vec3 {
 /// # Errors
 ///
 /// [`NlibCode::Input`] when `n > m` (also for empty `u`) or `n <= k + l`;
-/// `InvalidInput` for an access outside upstream's arrays.
+/// `InvalidInput` for an access outside upstream's arrays, or for a `k + l` or
+/// `n + p + 1` sum that overflows the signed index (undefined behaviour upstream).
 pub fn knots_end_derivs(u: &[f64], n: usize, p: usize, k: usize, l: usize) -> Result<Vec<f64>> {
     const OP: &str = OP_KNOTS;
     // highest index (-1 without parameters: the `n > m` check rejects it, as upstream)
@@ -71,12 +77,13 @@ pub fn knots_end_derivs(u: &[f64], n: usize, p: usize, k: usize, l: usize) -> Re
     if n > m {
         return Err(SolidError::nlib(OP, NlibCode::Input));
     }
-    if n <= k + l {
+    let kl = add(k, l, OP)?;
+    if n <= kl {
         return Err(SolidError::nlib(OP, NlibCode::Input));
     }
-    let nc = n - k - l;
+    let nc = n - kl;
 
-    let mut uu = alloc(n + p + 1, 0.0, OP)?;
+    let mut uu = alloc(add(add(n, p, OP)?, 1, OP)?, 0.0, OP)?;
     for i in 0..=p {
         put(&mut uu, i, at(u, 0, OP)?, OP)?;
         put(&mut uu, n + i + 1, at(u, m, OP)?, OP)?;
