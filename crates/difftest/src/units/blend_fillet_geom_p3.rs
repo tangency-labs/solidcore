@@ -714,14 +714,28 @@ impl RustModel {
         }
 
         let mut fb = FilletBrep::new();
-        let corner = |c: i64| u32::try_from(c).ok().map(FilletCornerId);
+        // A corner tag is `-1` or below the FFI's `MAX_LIST`, as the FFI checks before the
+        // shim runs: the shim's corner table (and [`shim_corners`]) is indexed by tag, so a
+        // fuzzed tag of 2^31 sized it at 3.7 TB and aborted the Rust side (#2393, nightly
+        // fuzz00137; the C++ side was refused).
+        let corner = |c: i64| -> Result<Option<FilletCornerId>, HarnessError> {
+            match c {
+                -1 => Ok(None),
+                0.. if (c as u64) < ffi::MAX_LIST as u64 => Ok(Some(FilletCornerId(c as u32))),
+                0.. => Err(harness(format!(
+                    "invalid argument: index {c} out of range ({})",
+                    ffi::MAX_LIST
+                ))),
+                _ => Err(harness(format!("invalid argument: bad index/count {c}"))),
+            }
+        };
         let mut vertices = Vec::new();
         for v in &m.vertices {
             let id = fb
                 .brep_mut()
                 .add_vertex(Point3::new(v.point[0], v.point[1], v.point[2]))
                 .map_err(h)?;
-            let mut fv = FilletVertex::new(&k, corner(v.corner));
+            let mut fv = FilletVertex::new(&k, corner(v.corner)?);
             fv.set_fillet_vertex_type(
                 FilletVertexType::from_code(v.vtype).ok_or_else(|| harness("bad vertex type"))?,
             );
@@ -773,7 +787,7 @@ impl RustModel {
         for e in &m.edges {
             let vs = *vertices.get(e.vs).ok_or_else(|| harness("edge vertex"))?;
             let ve = *vertices.get(e.ve).ok_or_else(|| harness("edge vertex"))?;
-            let id = fb.new_fillet_edge(vs, ve, corner(e.corner)).map_err(h)?;
+            let id = fb.new_fillet_edge(vs, ve, corner(e.corner)?).map_err(h)?;
             let eus = link_uses(fb.brep_mut(), id, vs, ve)?;
             {
                 let fe = fb.fillet_edge_mut(id).map_err(h)?;
@@ -1870,5 +1884,47 @@ impl UnitDiff for Runner {
 
     fn run_rust(&self, case: &crate::Case) -> Result<Output, HarnessError> {
         rust(&case.parse()?)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// #2393 (nightly fuzz00137): a vertex corner tag of 2^31 sized the shim's corner
+    /// table from the input; the FFI refuses it before the shim runs and the Rust side
+    /// aborted on a 3.7 TB allocation. Both sides now refuse it with the same message,
+    /// and the largest tag the FFI allows still builds and compares.
+    #[test]
+    fn corner_tags_past_the_ffi_bound_are_refused_on_both_sides() {
+        let text =
+            include_str!("../../../../fixtures/blend.fillet_geom_p3/nightly-fuzz00137-corner-tag.json");
+        let fixtures: Value = serde_json::from_str(text).unwrap();
+        let case = &fixtures["cases"][0];
+        assert_eq!(case["inputs"]["model"]["vertices"][0]["corner"], 2147483648_i64);
+        assert_eq!(case["inputs"]["expected_rejection"], true);
+        let mut v = case["inputs"].clone();
+        v["expected_rejection"] = serde_json::json!(false);
+        for tag in [2147483648_i64, ffi::MAX_LIST as i64, -2] {
+            v["model"]["vertices"][0]["corner"] = serde_json::json!(tag);
+            let input: Inputs = serde_json::from_value(v.clone()).unwrap();
+            let c = cpp(&input).unwrap_err().to_string();
+            let r = rust(&input).unwrap_err().to_string();
+            if tag >= 0 {
+                assert!(c.contains("out of range (64)"), "{c}");
+                assert_eq!(c.strip_prefix("c++: "), Some(r.as_str()), "tag {tag}");
+            } else {
+                assert!(c.contains("bad index/count -2"), "{c}");
+                assert!(r.contains("bad index/count -2"), "{r}");
+            }
+        }
+        v["model"]["vertices"][0]["corner"] = serde_json::json!(ffi::MAX_LIST as i64 - 1);
+        let input: Inputs = serde_json::from_value(v).unwrap();
+        let tg = own_target(&input.brep).unwrap().unwrap();
+        let m = RustModel::build(&input, &tg).unwrap();
+        assert_eq!(shim_corners(&m).unwrap().len(), ffi::MAX_LIST);
+        let diff = crate::compare::compare(&cpp(&input).unwrap(), &rust(&input).unwrap(), &[]);
+        assert!(diff.pass(), "{diff:?}");
+        assert!(diff.values_compared > 0, "empty comparison");
     }
 }
