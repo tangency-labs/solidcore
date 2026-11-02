@@ -155,6 +155,27 @@ impl Curve {
         par: OffsetParam,
         tol: f64,
     ) -> Result<Curve> {
+        self.offset_pt_sampling_cancellable(b, d, deg, tangents, par, tol, None)
+    }
+
+    /// [`Curve::offset_pt_sampling`] that polls `cancel` (#2136, #2372) once per sample
+    /// point and per knot removal step and returns `Cancelled` once it fires; `None`, or
+    /// a token that never fires, changes nothing.
+    ///
+    /// # Errors
+    ///
+    /// As [`Curve::offset_pt_sampling`]; `Cancelled` when `cancel` fires.
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn offset_pt_sampling_cancellable(
+        &self,
+        b: Vec3,
+        d: f64,
+        deg: usize,
+        tangents: bool,
+        par: OffsetParam,
+        tol: f64,
+        cancel: Option<&crate::kernel::CancelToken>,
+    ) -> Result<Curve> {
         check_short_degree(deg, OP)?;
 
         // Get curve type.
@@ -281,6 +302,9 @@ impl Curve {
         // Sample curve.
         let mut pts: Vec<Vec3> = storage(mu, OP)?;
         for i in 0..=mu {
+            if let Some(token) = cancel {
+                token.check(OP)?;
+            }
             let (q, ts) = self.eval_tangent(get(&u, i, OP)?, Side::Left)?;
             let n = b.cross(ts);
             set(&mut pts, i, pt_along_vector(q, d, n), OP)?;
@@ -327,7 +351,12 @@ impl Curve {
 
         // Remove knots.
         let der = usize::from(tangents && deg == 2);
-        cur_q = cur_q.remove_knots_deriv_constraints(tol, ConstrainedEnds::Both, der)?;
+        cur_q = cur_q.remove_knots_deriv_constraints_cancellable(
+            tol,
+            ConstrainedEnds::Both,
+            der,
+            cancel,
+        )?;
 
         // Compact output curve.
         let (n, _) = cur_q.array_sizes();

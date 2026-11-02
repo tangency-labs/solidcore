@@ -802,6 +802,7 @@ impl OffsetExecutive {
         // for every face
         let mut fix = Vec::new();
         for f in bp1::faces(brep, None)? {
+            kernel.check_cancelled(OP)?;
             // skip non SmOffsetSurfaces
             let Some(SurfaceKind::OffsetSurface(offset)) =
                 brep.face(f)?.surface.as_ref().map(Surface::kind)
@@ -819,10 +820,13 @@ impl OffsetExecutive {
                 return Err(SolidError::sm_err(OP));
             };
             // use NLIB function to build offset surface approximation
-            let approximation = nurb.approximate_offset_surface(
+            // (the cancel token polled inside, #2136 / #2372; none changes nothing)
+            let approximation = nurb.approximate_offset_surface_cancellable(
                 offset.offset_distance(),
                 approximation_tol_3d,
                 OffsetParamType::Inherited,
+                crate::nurbs::srf_offset::OffsetOptions::default(),
+                kernel.cancel_token(),
             )?;
             // remember face/surface pair
             fix.push((f, Surface::from(approximation)));
