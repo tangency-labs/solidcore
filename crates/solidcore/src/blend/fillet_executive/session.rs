@@ -709,12 +709,25 @@ fn live_corner_vert_geom(
                 target,
             )
         }
+        // the fork's SM_FV_JOIN_SECTION (543d25a; WR-697)
+        FilletVertexType::JoinSection => {
+            let live = live_vertex_solvers(pseudo, solvers, fv)?;
+            pseudo.calc_join_section_with_live_solvers(
+                k,
+                fv,
+                CornerLookup::table(corners),
+                live,
+                target,
+            )
+        }
         // SM_FV_FILLET_X_EDGEUSE and the rest: nothing to calculate.
         FilletVertexType::FilletXEdgeuse
         | FilletVertexType::CliffRailXEdge
         | FilletVertexType::RailEnd
         | FilletVertexType::RailXVertex
-        | FilletVertexType::Unknown => Ok(()),
+        | FilletVertexType::Unknown
+        // the fork's SM_FV_PRECOMPUTED (61547af): placed by its corner's own build
+        | FilletVertexType::Precomputed => Ok(()),
     }
 }
 
@@ -772,6 +785,20 @@ fn live_corner_vertices_geom(
             executive: None,
         };
         crate::blend::blend_corner::ball::place_ball_contacts(k, target, pseudo, corner, &lookup)?;
+    }
+    // The fork's (WR-697, 6fd0411): a Mixed corner places its vertices A, P, Q and B once
+    // both blends are traced (CalcMixedVertGeom), after the base's vertex geometry
+    if corner
+        .blend
+        .is_some_and(crate::blend::blend_corner::BlendCorner::is_mixed)
+    {
+        let lookup = SweptSessionSolvers {
+            solvers: &*solvers,
+            executive: None,
+        };
+        crate::blend::blend_corner::mixed::calc_mixed_vert_geom(
+            k, target, pseudo, corner, &lookup,
+        )?;
     }
     Ok(())
 }
@@ -2022,6 +2049,7 @@ impl<'target> FilletSession<'target> {
                     let event = crate::blend::blend_corner::ball::classify_ball(
                         k,
                         target,
+                        vertex,
                         &edgeuses,
                         &all_eus,
                         set_back_vertices.contains(&vertex),
@@ -2044,6 +2072,7 @@ impl<'target> FilletSession<'target> {
                             ball.blend = Some(crate::blend::blend_corner::BlendCorner {
                                 event: crate::blend::blend_corner::BlendCornerEvent::Ball,
                                 turn: crate::blend::blend_corner::BlendTurn::Mitre,
+                                end: crate::blend::blend_corner::BlendEnd::OnEndFace,
                             });
                             corner = ball;
                         }
@@ -2677,6 +2706,30 @@ impl CornerEdgeAccess<FilletObject> for SessionObjects<'_> {
                 executive: None,
             };
             crate::blend::blend_corner::ball::ball_corner_edge_geom(
+                k, target, pseudo, corner, &lookup,
+            )?;
+        }
+        // The fork's (61547af, smlib#104): a Setback's fill, its base points and its spring
+        // curves (SmBlendCorner::BuildSetBackFill, CalcCornerEdgeGeom), before the edges' own
+        // kinds compute their curves
+        if corner
+            .blend
+            .is_some_and(crate::blend::blend_corner::BlendCorner::is_setback)
+        {
+            return Err(SolidError::sm_err("SmBlendCorner::BuildSetBackFill"));
+        }
+        // The fork's (WR-697, 6fd0411, 6e79de5): a Mixed corner's edges and its two faces'
+        // surfaces (SmBlendCorner::CalcMixedEdgeGeom), before the base's
+        // CalcCornerEdgeGeom; its edges are all precomputed
+        if corner
+            .blend
+            .is_some_and(crate::blend::blend_corner::BlendCorner::is_mixed)
+        {
+            let lookup = SweptSessionSolvers {
+                solvers: solvers.as_slice(),
+                executive: None,
+            };
+            crate::blend::blend_corner::mixed::calc_mixed_edge_geom(
                 k, target, pseudo, corner, &lookup,
             )?;
         }
@@ -3874,6 +3927,33 @@ impl FaceConstructionAccess<FilletObject> for SessionObjects<'_> {
                     };
                     return crate::blend::blend_corner::ball::create_ball_patch(corner, &mut env);
                 }
+                // The fork's (61547af, smlib#104): a Setback's patches are its fill's
+                // (SmBlendCorner::CreateSetBackPatches)
+                if corner
+                    .blend
+                    .is_some_and(crate::blend::blend_corner::BlendCorner::is_setback)
+                {
+                    return Err(SolidError::sm_err("SmBlendCorner::CreateSetBackPatches"));
+                }
+                // The fork's (WR-697, 6fd0411): a Mixed corner's two faces are its patches
+                // (SmBlendCorner::CreateMixedPatches)
+                if corner
+                    .blend
+                    .is_some_and(crate::blend::blend_corner::BlendCorner::is_mixed)
+                {
+                    let mut no_note = |_: &FilletCorner| {};
+                    let mut env = CornerPatchEnv {
+                        k,
+                        target,
+                        pseudo,
+                        solvers: &store,
+                        fillet: Some(&mut fillet),
+                        note_face_error: &mut no_note,
+                    };
+                    return crate::blend::blend_corner::mixed::create_mixed_patches(
+                        corner, &mut env,
+                    );
+                }
                 // The fork's (WR-697, e647dac): a Swept turn's patch is its torus
                 // (SmBlendCorner::CreateSweptPatch)
                 if corner
@@ -3890,6 +3970,14 @@ impl FaceConstructionAccess<FilletObject> for SessionObjects<'_> {
                         note_face_error: &mut no_note,
                     };
                     return crate::blend::blend_corner::swept::create_swept_patch(corner, &mut env);
+                }
+                // The fork's (WR-697, 543d25a): a Join has no patch of its own
+                // (SmBlendCorner::CreateCornerPatch)
+                if corner
+                    .blend
+                    .is_some_and(crate::blend::blend_corner::BlendCorner::is_join)
+                {
+                    return Ok(());
                 }
                 let comment = if end_patch {
                     "Fillet Corner Error: Corner End Face Creation Error"
@@ -4111,6 +4199,9 @@ impl crate::blend::fillet_solver::p5::RailClassificationContext for SessionRollO
     }
     fn corner_type(&self, corner: FilletCornerId) -> Result<FilletCornerType> {
         self.classification().corner_type(corner)
+    }
+    fn corner_blend_tests(&self, corner: FilletCornerId) -> Result<(bool, bool)> {
+        self.classification().corner_blend_tests(corner)
     }
     fn corner_of_vertex(&self, vertex: VertexId) -> Result<Option<FilletCornerId>> {
         Ok(session_corner_of_vertex(self.executive, vertex))
@@ -5200,7 +5291,7 @@ impl SessionObjects<'_> {
             extended_surfaces,
             topo_edges: &mut executive.topo_edges,
         };
-        let gaps = if corner.corner_type() == FilletCornerType::NByOneClosed {
+        let gaps = if corner.kind.corner_type() == FilletCornerType::NByOneClosed {
             corner.make_nx1_closed_corner_topology(env)?;
             None
         } else {
@@ -5333,6 +5424,26 @@ impl SessionObjects<'_> {
         {
             return self.make_ball_corner_topology(k, id, executive);
         }
+        // The fork's (61547af, smlib#104): SmBlendCorner::MakeCornerTopology builds a
+        // Setback its own way (MakeSetBackTopology)
+        if self
+            .corners
+            .get(id.0 as usize)
+            .and_then(|corner| corner.blend)
+            .is_some_and(crate::blend::blend_corner::BlendCorner::is_setback)
+        {
+            return self.make_setback_corner_topology(k, id, executive);
+        }
+        // The fork's (WR-697, 543d25a): SmBlendCorner::MakeCornerTopology builds a Join on
+        // its shared section (MakeJoinTopology)
+        if self
+            .corners
+            .get(id.0 as usize)
+            .and_then(|corner| corner.blend)
+            .is_some_and(crate::blend::blend_corner::BlendCorner::is_join)
+        {
+            return self.make_join_corner_topology(k, id, executive);
+        }
         let edgeuses = self
             .corners
             .get(id.0 as usize)
@@ -5440,6 +5551,78 @@ impl SessionObjects<'_> {
             solvers,
         })
     }
+    /// The fork's `SmBlendCorner::MakeJoinTopology` (WR-697, 543d25a) with the solvers of
+    /// the corner's blended edge uses (`GetFilletSolverOfEdgeuse`) resolved first; its
+    /// refusal noted at the vertex (`SM_FIL_FAILURE`, `SM_FILERR_CORNER_UNSUPPORTED`).
+    fn make_join_corner_topology(
+        &mut self,
+        k: &Kernel,
+        id: FilletCornerId,
+        executive: &mut FilletExecutive<FilletObject>,
+    ) -> Result<()> {
+        use crate::blend::fillet_corner::topology::join::{
+            JoinTopology, JoinTopologyEnv, JOIN_ACROSS_EDGES,
+        };
+        let corner = self
+            .corners
+            .get(id.0 as usize)
+            .ok_or_else(|| invalid("corner is not live"))?;
+        let mut solver_eu_solvers = Vec::new();
+        for &eu in corner.solver_eus.as_deref().unwrap_or_default() {
+            let object = FilletObject::Topology(FilletBody::Target, EntityRef::Edgeuse(eu));
+            solver_eu_solvers.push(match executive.fillet_solver_of_edgeuse(object) {
+                Some(FilletObject::Solver(solver)) => Some(solver),
+                None => None,
+                Some(_) => return Err(invalid("edge use does not name an actual solver")),
+            });
+        }
+        let vertex = corner.filleted_vertex();
+        let SessionObjects {
+            target,
+            pseudo,
+            solvers,
+            corners,
+            ..
+        } = self;
+        let corner = corners
+            .get_mut(id.0 as usize)
+            .ok_or_else(|| invalid("corner is not live"))?;
+        let built = corner.make_join_topology(JoinTopologyEnv {
+            k,
+            target,
+            pseudo,
+            corner: id,
+            solvers,
+            solver_eu_solvers,
+        })?;
+        if built == JoinTopology::RefusedAcrossEdges {
+            let location = match vertex {
+                Some(v) => crate::topology::vertex::point(target, v).ok(),
+                None => None,
+            };
+            executive.error.note_vertex_error(
+                vertex.map(|v| FilletObject::Topology(FilletBody::Target, EntityRef::Vertex(v))),
+                location,
+                crate::blend::fillet_geom::p1::FilStatus::Failure,
+                crate::blend::fillet_geom::p1::FilletErrorType::CornerUnsupported,
+                Some(JOIN_ACROSS_EDGES),
+            );
+            return Err(SolidError::sm_err("SmBlendCorner::MakeJoinTopology"));
+        }
+        Ok(())
+    }
+
+    /// The fork's `SmBlendCorner::MakeSetBackTopology` (61547af, smlib#104) with the solver
+    /// of each of the corner's ring edge uses, else of its mate.
+    #[allow(clippy::unused_self)]
+    fn make_setback_corner_topology(
+        &mut self,
+        _k: &Kernel,
+        _id: FilletCornerId,
+        _executive: &mut FilletExecutive<FilletObject>,
+    ) -> Result<()> {
+        Err(SolidError::sm_err("SmBlendCorner::MakeSetBackTopology"))
+    }
     /// `MakeCornerTopology` of a 1x1, 2x2, 4x3, open or degenerate corner, with the
     /// solvers of its edge uses (`GetFilletSolverOfEdgeuse`) resolved first.
     fn make_end_corner_topology(
@@ -5467,7 +5650,7 @@ impl SessionObjects<'_> {
                 .collect()
         };
         let solver_eu_solvers = resolve(corner.solver_eus.as_deref())?;
-        let all_eu_solvers = if corner.corner_type() == FilletCornerType::FourByThree {
+        let all_eu_solvers = if corner.kind.corner_type() == FilletCornerType::FourByThree {
             resolve(corner.all_eus.as_deref())?
         } else {
             Vec::new()
@@ -5491,7 +5674,7 @@ impl SessionObjects<'_> {
             solver_eu_solvers,
             all_eu_solvers,
         };
-        match corner.corner_type() {
+        match corner.kind.corner_type() {
             FilletCornerType::OneByOne => corner.make_1x1_corner_topology(env),
             FilletCornerType::TwoByTwo => corner.make_2x2_corner_topology(env),
             FilletCornerType::FourByThree => corner.make_4x3_corner_topology(env),
@@ -5650,7 +5833,10 @@ impl CornerVertexAccess<FilletObject> for SessionObjects<'_> {
         let FilletObject::Corner(id) = corner else {
             return Err(invalid("object is not a corner"));
         };
-        match self.corner_object(corner)?.corner_type() {
+        // by the corner's construction (its class): a blend corner's End builds the Nx1,
+        // open or degenerate corner's moved code (the fork's 53c47b8), a Join is dispatched
+        // in the Nx2 corner's (WR-697)
+        match self.corner_object(corner)?.kind.corner_type() {
             FilletCornerType::NByOne | FilletCornerType::NByOneClosed => {
                 self.make_nx1_corner_topology(k, id, executive)
             }
