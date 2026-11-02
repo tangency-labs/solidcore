@@ -184,6 +184,20 @@ fn copy_as_b_spline(k: &Kernel, curve: &Curve) -> Result<Option<Curve>> {
     Ok(ignored(copy)?.filter(|c| c.is_kind_of(BSPLINE_CURVE_TYPE)))
 }
 
+/// The `SmBSplineCurve` a curve of a B-spline class is (`SM_CAST_PTR(SmBSplineCurve, ..)`):
+/// a B-spline, a line's NURB, or a conic's B-spline; `SM_ERR` for any other kind.
+fn b_spline_of_piece(c: &Curve) -> Result<BSplineCurve> {
+    use crate::curve::curve::CurveKind;
+    Ok(match c.kind() {
+        CurveKind::BSpline(b) => b.clone(),
+        CurveKind::Line(l) => l.base_with_nurb()?.into_owned(),
+        CurveKind::Ellipse(e) => e.base().clone(),
+        CurveKind::Hyperbola(h) => h.base().clone(),
+        CurveKind::Parabola(p) => p.base().clone(),
+        _ => return Err(SolidError::sm_err(OP_ON_EDGE)),
+    })
+}
+
 /// `SmCurve::Evaluate(t, 1, TRUE, aPV)`: the position and first derivative.
 fn evaluate_tangent(k: &Kernel, curve: &Curve, t: f64, op: &'static str) -> Result<(Point3, Vec3)> {
     let pv = curve.evaluate(k, t, 1, true, true)?;
@@ -977,16 +991,14 @@ impl FilletBrep {
                 };
                 let piece_edge = eu1::edge(target, eu)?.ok_or_else(nul)?;
                 let piece_curve = target.edge(piece_edge)?.curve.as_ref().ok_or_else(nul)?;
-                let Some(piece) = copy_as_b_spline(k, piece_curve)? else {
+                // SM_CAST_PTR(SmBSplineCurve, copy): a conic or a line is one too; its
+                // Trim is its own (virtual), the join reads its B-spline
+                let Some(mut piece) = copy_as_b_spline(k, piece_curve)? else {
                     return Err(SolidError::sm_err(OP_ON_EDGE));
-                };
-                let mut piece = match piece.kind() {
-                    crate::curve::curve::CurveKind::BSpline(b) => b.clone(),
-                    _ => return Err(SolidError::sm_err(OP_ON_EDGE)),
                 };
                 let mut piece_ivl = edge::interval(target, piece_edge)?;
                 piece.trim(k, &mut piece_ivl, TrimMode::Notify)?;
-                pieces.push(piece);
+                pieces.push(b_spline_of_piece(&piece)?);
                 let start = edge::start_vertex(target, piece_edge)?;
                 senses.push(start == from);
                 let to = if start == from {
