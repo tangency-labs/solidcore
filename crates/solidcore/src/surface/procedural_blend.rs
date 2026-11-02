@@ -23,15 +23,20 @@
 //! | [`ProceduralBlend::evaluate_definition`]     | `EvaluateDefinition` ([`crate::blend::fillet_section::definition`]) |
 //! | [`PROCEDURAL_BLEND_TYPE`], [`BLEND_MAX_DEPTH`] | `SmProceduralBlend_TYPE`, `SM_BLEND_MAX_DEPTH` |
 //! | [`NetScope`], [`NetScope::is_active`]        | `SmBlendNetScope`, `IsActive`                |
+//! | [`record`], [`convert`]                      | not in the fork (#2388: the definition as plain data) |
 //! | [`BlendCounts`]                              | `SmBlendCounts` (`GetCounts`, `ResetCounts` on [`crate::kernel::Kernel`]) |
 //!
 //! Deviations:
-//! - **Kernel state.** The fork's `thread_local` net-scope depth, its process-wide
-//!   evaluation counts and its serial counter are fields of [`crate::kernel::Kernel`]
-//!   (`blend_net_scope`, `blend_counts`, `blend_last_serial`). They are `Cell`s: the
-//!   evaluators that read the scope and count their work take `&Kernel` (every surface
-//!   evaluation does), so they cannot take `&mut Kernel`. A `Cell` keeps the kernel
-//!   `Send`, and the values are deterministic (one kernel, one thread at a time).
+//! - **Kernel state.** The fork's `thread_local` net-scope depth and its process-wide
+//!   evaluation counts are fields of [`crate::kernel::Kernel`] (`blend_net_scope`,
+//!   `blend_counts`). They are `Cell`s: the evaluators that read the scope and count their
+//!   work take `&Kernel` (every surface evaluation does), so they cannot take
+//!   `&mut Kernel`. A `Cell` keeps the kernel `Send`, and the values are deterministic
+//!   (one kernel, one thread at a time).
+//! - **Identity.** The fork's serial (`m_lSerial`, from the process-wide `s_lLastSerial`)
+//!   is a [`DefinitionIdentity`] the definition holds, compared by identity: unique
+//!   among every definition alive in any kernel, so the station memo of one kernel never
+//!   takes the station of a definition another kernel (another thread) made (#2388).
 //! - **Ownership.** The supports, the leader, the seeds and the law are owned values, not
 //!   pointers; a copy is a deep copy, as the fork's `CopyDefinition`.
 //! - **Nesting.** A support may itself be a procedural blend, at most
@@ -42,6 +47,7 @@ pub mod convert;
 pub mod record;
 
 use std::cell::Cell;
+use std::sync::Arc;
 
 use crate::blend::fillet_section::section::GnSectionFsg;
 use crate::curve::curve::{Curve, CurveKind};
@@ -127,8 +133,15 @@ impl Drop for NetScope<'_> {
     }
 }
 
+/// The identity of a definition for the station memo (the fork's `m_lSerial`): a
+/// definition made, copied or moved takes a new one, and two are the same only when they
+/// are one allocation ([`Arc::ptr_eq`]). The memo holds one while it keeps a station, so
+/// an identity is never reused while a station is kept for it.
+#[derive(Debug, Default)]
+pub struct DefinitionIdentity;
+
 /// A blend's definition (the members of `SmProceduralBlend` past its net). A clone
-/// keeps the serial: it is the same definition (the fork's copy constructor renews it,
+/// keeps the identity: it is the same definition (the fork's copy constructor renews it,
 /// which only matters once one of the two moves, and every move here renews).
 #[derive(Debug, Clone)]
 pub struct BlendDefinition {
@@ -157,8 +170,8 @@ pub struct BlendDefinition {
     /// `m_bSwapped`: `(p, q)` is `(v, u)`.
     pub(crate) swapped: bool,
     /// `m_lSerial`: the definition's identity for the station memo, new whenever the
-    /// definition is made or moved (`Renew`), never reused.
-    pub(crate) serial: u64,
+    /// definition is made or moved (`Renew`), never reused while it is held.
+    pub(crate) identity: Arc<DefinitionIdentity>,
 }
 
 /// The inputs of [`ProceduralBlend::create`] (`SmProceduralBlend::Create`'s arguments).
@@ -245,11 +258,9 @@ pub(crate) fn count_solve(k: &Kernel, newton_steps: u32) {
     k.blend_counts.set(c);
 }
 
-/// `++s_lLastSerial`: a new serial from the kernel.
-pub(crate) fn next_serial(k: &Kernel) -> u64 {
-    let serial = k.blend_last_serial.get().wrapping_add(1);
-    k.blend_last_serial.set(serial);
-    serial
+/// `++s_lLastSerial`: a new identity.
+fn new_identity() -> Arc<DefinitionIdentity> {
+    Arc::new(DefinitionIdentity)
 }
 
 impl ProceduralBlend {
@@ -344,7 +355,7 @@ impl ProceduralBlend {
             map_a: [0.0, 0.0],
             map_b: [1.0, 1.0],
             swapped: false,
-            serial: next_serial(k),
+            identity: new_identity(),
         };
         Ok(Self {
             net: net.copy(),
@@ -536,20 +547,20 @@ impl ProceduralBlend {
         self.net.is_kind_of(t)
     }
 
-    /// `Renew`: a new serial, so the station memo never takes another definition's.
-    pub(crate) fn renew(&mut self, k: &Kernel) {
-        self.def.serial = next_serial(k);
+    /// `Renew`: a new identity, so the station memo never takes another definition's.
+    pub(crate) fn renew(&mut self) {
+        self.def.identity = new_identity();
     }
 
     /// `Copy` (the copy constructor and `CopyDefinition`): a deep copy whose definition
-    /// takes a new serial.
+    /// takes a new identity (the kernel, which the surfaces' copies take, is not needed).
     #[must_use]
-    pub fn copy(&self, k: &Kernel) -> Self {
+    pub fn copy(&self, _k: &Kernel) -> Self {
         let mut c = Self {
             net: self.net.copy(),
             def: self.def.clone(),
         };
-        c.renew(k);
+        c.renew();
         c
     }
 
@@ -1014,14 +1025,15 @@ impl ProceduralBlend {
         Ok(())
     }
 
-    /// `SplitAt`: the net's pieces, each with this definition and map (a new serial).
+    /// `SplitAt`: the net's pieces, each with this definition and map (a new identity; the
+    /// kernel, which the surfaces' splits take, is not needed).
     ///
     /// # Errors
     ///
     /// Those of the net's.
     pub fn split_at(
         &self,
-        k: &Kernel,
+        _k: &Kernel,
         param: f64,
         surf_param: SurfParamType,
     ) -> Result<(Self, Self)> {
@@ -1030,12 +1042,12 @@ impl ProceduralBlend {
             net: l,
             def: self.def.clone(),
         };
-        left.renew(k);
+        left.renew();
         let mut right = Self {
             net: r,
             def: self.def.clone(),
         };
-        right.renew(k);
+        right.renew();
         Ok((left, right))
     }
 
@@ -1074,14 +1086,14 @@ impl ProceduralBlend {
             *r *= factor;
         }
         self.def.bound *= factor;
-        self.renew(k);
+        self.renew();
         self.net.transform(rotate_n_move, scale)
     }
 }
 
 impl BlendDefinition {
     /// This definition on the given supports (copies that copy the supports their own
-    /// way), the serial kept.
+    /// way), the identity kept.
     fn with_supports(&self, supports: [Box<Surface>; 2]) -> Self {
         Self {
             supports,
@@ -1096,7 +1108,7 @@ impl BlendDefinition {
             map_a: self.map_a,
             map_b: self.map_b,
             swapped: self.swapped,
-            serial: self.serial,
+            identity: Arc::clone(&self.identity),
         }
     }
 }
@@ -1248,7 +1260,7 @@ mod tests {
         let k = Kernel::default();
         let b = blend(&k, 1, [1.0, 1.0], [2.0, 2.0], 1e-6).unwrap();
         let c = b.copy(&k);
-        assert_ne!(b.def.serial, c.def.serial);
+        assert!(!Arc::ptr_eq(&b.def.identity, &c.def.identity));
         assert!(b.same_definition(&k, &c).unwrap());
         let (l, r) = b.split_at(&k, 0.5, SurfParamType::U).unwrap();
         assert_eq!(

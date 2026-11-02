@@ -1662,10 +1662,6 @@ pub struct Kernel {
     /// Not upstream: the fork's process-wide `SmBlendCounts` (diagnostics only, no
     /// result reads them). A [`Cell`]: the definition's evaluators count through `&Kernel`.
     pub blend_counts: Cell<crate::surface::procedural_blend::BlendCounts>,
-    /// Not upstream: the fork's `s_lLastSerial`, the last serial a procedural blend's
-    /// definition took (`Renew`), so a station memo entry is never another definition's.
-    /// A [`Cell`]: definitions are made and copied through `&Kernel`.
-    pub blend_last_serial: Cell<u64>,
     /// Not upstream: the fork's `thread_local` station memo (`t_asMemo`), the stations
     /// the definitions of procedural blends solved last
     /// ([`crate::blend::fillet_section::definition::StationMemo`]). A [`RefCell`]: the
@@ -1711,7 +1707,6 @@ impl Kernel {
             notify_records: crate::topology::topology::NotifyRecords::new(),
             blend_net_scope: Cell::new(0),
             blend_counts: Cell::new(crate::surface::procedural_blend::BlendCounts::default()),
-            blend_last_serial: Cell::new(0),
             blend_station_memo: RefCell::new(
                 crate::blend::fillet_section::definition::StationMemo::default(),
             ),
