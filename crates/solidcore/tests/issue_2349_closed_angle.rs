@@ -161,7 +161,7 @@ fn small_closed_angle_round_builds_a_valid_body() {
 }
 
 #[test]
-#[ignore = "#2349: exact closed-angle blend event awaits #2307 / #2353"]
+#[ignore = "#2349: exact closed-angle blend event awaits #2307 and certified self-mitre"]
 fn closed_angle_is_a_blend_event_instead_of_the_legacy_corner() {
     let mut k = Kernel::default();
     k.fixes.fillet_blend_corner = true;
@@ -180,7 +180,7 @@ fn closed_angle_is_a_blend_event_instead_of_the_legacy_corner() {
 }
 
 #[test]
-#[ignore = "#2349: closed mitre event and sized refusal await #2307 / #2353"]
+#[ignore = "#2349: closed mitre event and sized refusal await #2307 and certified self-mitre"]
 fn closed_angle_round_builds_validly_or_refuses_with_a_fit_size() {
     let mut k = Kernel::default();
     k.fixes.fillet_blend_corner = true;
