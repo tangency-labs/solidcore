@@ -153,7 +153,7 @@ fn at(m: &[Vec<Vec3>], i: usize, j: usize, op: &'static str) -> Result<Vec3> {
     m.get(i)
         .and_then(|r| r.get(j))
         .copied()
-        .ok_or(SolidError::invalid_input(op, "evaluation result too short"))
+        .ok_or_else(|| SolidError::invalid_input(op, "evaluation result too short"))
 }
 
 // ---- IsSingularity ----------------------------------------------------------------------------
@@ -540,6 +540,21 @@ impl Surface {
                     max_gap_3d: r.max_gap_3d,
                     uv_iso_curve: r.uv_iso_curve,
                 });
+            }
+            SurfaceKind::ProceduralBlend(pb) => {
+                let b = pb.net();
+                {
+                    let opts = crate::nurbs::b_spline_surface::p2::IsoCurveOptions {
+                        domain: domain.copied(),
+                        uv_iso_curve: want_uv_iso_curve,
+                    };
+                    let r = b.create_iso_parametric_curve(k, param, iso_parameter, opts)?;
+                    return Ok(IsoParametricCurve {
+                        curve: Curve::from(r.curve),
+                        max_gap_3d: r.max_gap_3d,
+                        uv_iso_curve: r.uv_iso_curve,
+                    });
+                }
             }
             SurfaceKind::Plane(p) => {
                 let r =
@@ -2376,12 +2391,12 @@ fn surface_identical_solutions<O: SolutionObject>(
         // evaluated are not shown the same, WR-663, tangency-labs/smlib 21dcf69).
         let not_shown = k.fixes.query_statuses_pass_on;
         let Some(pt1) =
-            ignored(surf.evaluate_point(k, uv1))?.or((!not_shown).then_some(Vec3::UNDEF))
+            ignored(surf.evaluate_point(k, uv1))?.or_else(|| (!not_shown).then_some(Vec3::UNDEF))
         else {
             return Ok((SolutionPairType::DiffParameters, None));
         };
         let Some(pt2) =
-            ignored(surf.evaluate_point(k, uv2))?.or((!not_shown).then_some(Vec3::UNDEF))
+            ignored(surf.evaluate_point(k, uv2))?.or_else(|| (!not_shown).then_some(Vec3::UNDEF))
         else {
             return Ok((SolutionPairType::DiffParameters, None));
         };

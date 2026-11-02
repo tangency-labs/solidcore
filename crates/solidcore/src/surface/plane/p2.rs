@@ -954,7 +954,7 @@ impl Plane {
         // for every solution
         for solution in solutions.as_slice() {
             // get curve interval from last boundary to start of this solution
-            let s_param = ends.last().copied().unwrap_or(ivl.min());
+            let s_param = ends.last().copied().unwrap_or_else(|| ivl.min());
             let e_param = solution.start.param(0)?;
 
             // skip zero length intervals at the curve start, curve end, and
@@ -985,7 +985,7 @@ impl Plane {
         }
 
         // get interval from last solution end to curve end
-        let s_param = ends.last().copied().unwrap_or(ivl.min());
+        let s_param = ends.last().copied().unwrap_or_else(|| ivl.min());
         let e_param = ivl.max();
 
         // add non-zero length interval at the end of the curve
@@ -1557,6 +1557,7 @@ pub(crate) fn global_surface_intersect_into<O: SolutionObject + Copy + PartialEq
         // (an SmTorus has no special case: the default branch)
         SurfaceKind::Torus(_)
         | SurfaceKind::BSpline(_)
+        | SurfaceKind::ProceduralBlend(_)
         | SurfaceKind::CurveBounded(_)
         | SurfaceKind::Step(_)
         | SurfaceKind::OffsetSurface(_)
