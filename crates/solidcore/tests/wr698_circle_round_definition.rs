@@ -529,3 +529,90 @@ fn an_analytic_support_stays_its_kind_through_the_record() {
         "a moved plane label was taken"
     );
 }
+
+/// What one kernel computes on a round: S's partials over a grid, the section by the
+/// plane y = x (its curves' points), and closest point distances, as bits.
+fn evaluate_section_measure(k: &Kernel, s: &Surface) -> Vec<u64> {
+    use solidcore::nurbs::b_spline_surface_n_lib::p2::EvaluateFlags;
+    use solidcore::query::api_queries::surface_closest_point;
+    use solidcore::topology::brep::planar_section::surface_planar_section_curves;
+    let mut out = Vec::new();
+    let mut push = |p: Point3| out.extend([p.x.to_bits(), p.y.to_bits(), p.z.to_bits()]);
+    let d = s.natural_uv_domain_with_nurb(k).unwrap();
+    for i in 0..=6 {
+        for j in 0..=4 {
+            let uv = d.evaluate(f64::from(i) / 6.0, f64::from(j) / 4.0);
+            for row in s.evaluate(k, uv, 1, 1, EvaluateFlags::default()).unwrap() {
+                row.into_iter().for_each(&mut push);
+            }
+        }
+    }
+    let bbox = s
+        .calculate_bounding_box(k, &d, [true, false, false], false)
+        .unwrap()
+        .normal_box
+        .unwrap();
+    let section = surface_planar_section_curves(
+        k,
+        s,
+        &d,
+        &bbox,
+        Point3::new(0.0, 0.0, 0.0),
+        Vec3::new(1.0, -1.0, 0.0),
+        None,
+        None,
+        None,
+    )
+    .unwrap();
+    assert!(!section.curves_3d.is_empty(), "the section is empty");
+    for c in &section.curves_3d {
+        let ivl = c.natural_interval();
+        for i in 0..=8 {
+            push(
+                c.evaluate_point(k, ivl.min() + ivl.length() * f64::from(i) / 8.0)
+                    .unwrap(),
+            );
+        }
+    }
+    for p in [
+        Point3::new(9.0, 3.0, 1.0),
+        Point3::new(6.0, 6.0, 0.5),
+        Point3::new(2.0, 9.5, 1.5),
+    ] {
+        let c = surface_closest_point(k, s, p).unwrap();
+        push(c.closest.point);
+        push(Point3::new(c.closest.distance, 0.0, 0.0));
+    }
+    out
+}
+
+/// #2388, contract 4: one round rebuilt from its record, one `Surface` shared by reference
+/// (`Arc`) between two threads, each with its own kernel, evaluated, sectioned and measured
+/// there: each thread's results are one kernel's alone, bit for bit.
+#[test]
+fn a_rebuilt_round_shared_between_threads_gives_one_thread_s_results() {
+    use solidcore::surface::procedural_blend::convert::{rebuild, to_record};
+    use std::sync::Arc;
+    let k = kernel(true);
+    let (s, _, _) = root_round(&k);
+    let SurfaceKind::ProceduralBlend(pb) = s.kind() else {
+        panic!("not a blend")
+    };
+    let rec = to_record(&k, pb).unwrap();
+    // one thread, on a round of its own rebuilt from the same record
+    let serial =
+        evaluate_section_measure(&kernel(true), &Surface::from(rebuild(&k, &rec).unwrap()));
+    let shared = Arc::new(Surface::from(rebuild(&k, &rec).unwrap()));
+    let parallel: Vec<Vec<u64>> = std::thread::scope(|scope| {
+        let handles: Vec<_> = (0..2)
+            .map(|_| {
+                let s = Arc::clone(&shared);
+                scope.spawn(move || evaluate_section_measure(&kernel(true), &s))
+            })
+            .collect();
+        handles.into_iter().map(|h| h.join().unwrap()).collect()
+    });
+    for (thread, got) in parallel.iter().enumerate() {
+        assert!(got == &serial, "thread {thread} differs from one thread");
+    }
+}
