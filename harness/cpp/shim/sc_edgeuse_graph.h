@@ -9,7 +9,11 @@
 #define SC_EDGEUSE_GRAPH_H
 
 #include "sc_shim.h"
+#include "sc_analytic_export.h"
+#include "sc_exact_curve_export.h"
 #include "support/topology_fixture.h"
+#include "support/ellipse_face_fixture.h"
+#include "support/hermite_sheet_fixture.h"
 #include <algorithm>
 #include <memory>
 
@@ -35,6 +39,7 @@
 #include <SmNurbsCrv.h>
 #include <SmNurbsSrf.h>
 #include <SmPlane.h>
+#include <SmPrimitiveCreation.h>
 #include <SmRegion.h>
 #include <SmShell.h>
 #include <SmSolutionArray.h>
@@ -47,6 +52,7 @@
 #include <nurbs.h>
 #include <map>
 #include <vector>
+#include "sc_trim_curve_record.h"
 
 namespace
 {
@@ -561,6 +567,9 @@ void export_graph(SmBrep* brep, Graph& g, std::vector<double>& o)
     }
     for (SmFace* p : g.faces)
     {
+        // an exactly exportable analytic surface first (sc_analytic_export.h), then the
+        // regular block, which the importer falls back to
+        sc_analytic_export::put_exact_head(o, p->GetSurface(), the_context());
         put_surface(o, p->GetSurface());
         SmExtent2d d = p->GetUVDomain();
         o.push_back(d.GetMin().x);
@@ -614,7 +623,7 @@ void export_graph(SmBrep* brep, Graph& g, std::vector<double>& o)
         for (SmTopology* t : list_of(p->GetList()))
             v.push_back(g.find(6, t));
         put_list(o, v);
-        put_curve(o, p->GetCurve());
+        sc_exact_curve_export::put_export_curve(o, p->GetCurve(), the_context(), put_curve);
     }
     for (SmVertexuse* p : g.vertexuses)
     {
@@ -650,6 +659,21 @@ SmBrep* build(Rd& rd, const char* path, SmStatus& status)
     {
         bool rebuild = rd.flag();
         status = brep->ReadFromFile(ctx, path, SM_ASCII, rebuild ? TRUE : FALSE);
+    }
+    else if (kind == 9)
+    {
+        status = sc_topology_fixture::ellipse_face(brep, rd, ctx);
+    }
+    else if (kind == 15)
+    {
+        // `15 scale edge_tol`: a native sheet face with four real Hermite edges.
+        status = sc_topology_fixture::hermite_sheet_face(brep, rd, ctx);
+    }
+    else if (kind >= 10 && kind <= 14)
+    {
+        // Reserved for other fixtures (kind 14 in particular is not ours): reject
+        // explicitly instead of building the wire network of the wildcard branch.
+        status = SM_ERR_INVALID_INPUT;
     }
     else if (kind == 1)
     {
@@ -716,6 +740,62 @@ SmBrep* build(Rd& rd, const char* path, SmStatus& status)
         const int64_t networks = rd.idx();
         for (int64_t i = 0; i < networks && status == SM_SUCCESS; ++i)
             status = build_wire_network(ctx, brep);
+    }
+    else if (kind == 7)
+    {
+        // `7 origin[3] length width height`: the closed solid of SmApiCreateBox
+        // (SmPrimitiveCreation::CreateBox on canonical axes at the origin; planes and
+        // lines), built in this B-rep.
+        SmPoint3d origin = rd.vec();
+        double l = rd.num(), w = rd.num(), h = rd.num();
+        SmAxis2Placement frame;
+        frame.SetCanonical(origin, SmVector3d(1.0, 0.0, 0.0), SmVector3d(0.0, 1.0, 0.0));
+        SmPrimitiveCreation pc(brep->GetInfiniteRegion());
+        status = pc.CreateBox(l, w, h, frame);
+    }
+    else if (kind == 8)
+    {
+        // `8 nv (x y z tol)*nv ne (x0 y0 z0 x1 y1 z1 tol)*ne`: isolated vertices
+        // (MakeShellVertex) and wire edges over line segments (CreateWireEdgeFromCurve over
+        // the segment's natural interval), each given its tolerance (SetTolerance, not only
+        // if larger, no cascade).
+        const int64_t nv = rd.idx();
+        for (int64_t i = 0; i < nv; ++i)
+        {
+            const SmPoint3d point = rd.vec();
+            const double tol = rd.num();
+            if (status != SM_SUCCESS)
+                continue;
+            SmShell* shell = nullptr;
+            SmVertex* vertex = nullptr;
+            status = brep->MakeShellVertex(brep->GetInfiniteRegion(), point, shell, vertex);
+            if (status == SM_SUCCESS && vertex != nullptr)
+                vertex->SetTolerance(SmZoneTol3d(tol), FALSE, FALSE);
+        }
+        const int64_t ne = rd.idx();
+        for (int64_t i = 0; i < ne; ++i)
+        {
+            const SmPoint3d a = rd.vec();
+            const SmPoint3d b = rd.vec();
+            const double tol = rd.num();
+            if (status != SM_SUCCESS)
+                continue;
+            SmBSplineCurve* line = nullptr;
+            status = SmBSplineCurve::CreateLineSegment(ctx, 3, a, b, line);
+            if (status != SM_SUCCESS || line == nullptr)
+                continue;
+            SmEdge* edge = nullptr;
+            status = brep->CreateWireEdgeFromCurve(line, line->GetNaturalInterval(), edge);
+            if (status == SM_SUCCESS && edge != nullptr)
+                edge->SetTolerance(SmZoneTol3d(tol), FALSE, FALSE);
+        }
+    }
+    else if (kind == 14)
+    {
+        // kind 14 (an edge-loop face with per-edge tolerances) exists only in
+        // sc_topology_fixture.h (topology.face_p3's source): never build it as a wire
+        // network here.
+        status = SM_ERR;
     }
     else
     {
@@ -786,7 +866,8 @@ void put_curve_id(std::vector<double>& o, const SmBSplineCurve* c)
     }
 }
 
-// The state of an edgeuse after SetUVTrimCurve: its uv curve (fingerprint and owner),
+// The state of an edgeuse after SetUVTrimCurve: its uv curve (full record, see
+// sc_trim_curve_record.h) and owner,
 // drop curve fail (presence, status, B-rep set) and its vertexuse's vertex/face gap.
 void put_eu_state(std::vector<double>& o, Graph& g, SmEdgeuse* p)
 {
@@ -797,7 +878,7 @@ void put_eu_state(std::vector<double>& o, Graph& g, SmEdgeuse* p)
     }
     o.push_back(1.0);
     SmBSplineCurve* uv = p->*EuPeek::uv();
-    put_curve_id(o, uv);
+    sc_trim_curve::put_trim_curve(o, uv);
     o.push_back(uv ? (double)g.find(6, uv->GetOwner()) : -1.0);
     SmDropCurveFail* fail = p->*EuPeek::fail();
     o.push_back(fail ? 1.0 : 0.0);

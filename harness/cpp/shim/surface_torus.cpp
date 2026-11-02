@@ -4,7 +4,8 @@
 // (the constructor and MakeNurb), operator==, Copy, CreateOffsetSurface,
 // ConvertUVFromSTEPToNURBS, ConvertUVFromNURBSToSTEP, EvaluateSTEP, EvaluateSTEPPoint,
 // CreateIsoParametricCurve, RebuildSTEPFromNURBParameters, Transform, GetMaxAnalyticDomain,
-// GetInsideOut and IsKindOf.
+// GetInsideOut, IsKindOf and IsNurbSurfaceTorus; and the inherited SmSurfOfRevolution::TrimWithDomain,
+// IntersectWithPlane and GlobalSurfaceIntersect (with a plane).
 //
 // One entry point, sc_surface_torus_eval(op, in, n_in, out, cap, out_len). Layouts are
 // documented in crates/solidcore-ffi/src/units/surface_torus.rs, which validates every input
@@ -23,8 +24,10 @@
 #include <SmExtent2d.h>
 #include <SmNurbsCrv.h>
 #include <SmNurbsSrf.h>
+#include <SmPlane.h>
 #include <SmSurfOfRevolution.h>
 #include <SmSurface.h>
+#include <SmTArray.h>
 #include <SmTorus.h>
 #include <SmVector2d.h>
 #include <SmVector3d.h>
@@ -32,6 +35,7 @@
 
 #include <vector>
 
+#include "sc_const_make.h"
 #include "sc_sm.h"
 
 using sc::flg;
@@ -53,6 +57,11 @@ enum : int32_t
     OP_TRANSFORM = 7,
     OP_EQ = 8,
     OP_COPY = 9,
+    OP_TRIM_DOMAIN = 10,
+    OP_ISECT_PLANE = 11,
+    OP_GLOBAL = 12,
+    OP_IS_NURB = 13,
+    OP_CONST_MAKE = 20, // the constructor with no MakeNurb, then sc::put_const_make
 };
 
 // Reads the protected members through pointers to members named in a derived class.
@@ -89,7 +98,7 @@ struct Rd
 // A torus block `O[3] X[3] Y[3] major minor swap inside_out has_dom D[4] has_circle
 // [c[3] x[3] y[3] d0 d1 r]`: SmTorus::CreateCanonical(SmAxis2Placement(O, X, Y), ..).
 // Writes the status; NULL on failure.
-SmTorus* read_torus(Rd& rd, const SmContext& ctx, std::vector<double>& o)
+SmTorus* read_torus(Rd& rd, const SmContext& ctx, std::vector<double>& o, bool lazy = false)
 {
     SmPoint3d org = rd.vec();
     SmVector3d x = rd.vec();
@@ -118,9 +127,19 @@ SmTorus* read_torus(Rd& rd, const SmContext& ctx, std::vector<double>& o)
             rd.num();
     }
     SmTorus* t = NULL;
-    SmStatus stt = SmTorus::CreateCanonical(ctx, SmAxis2Placement(org, x, y), major, minor, t,
-                                            swap ? TRUE : FALSE, inside ? TRUE : FALSE, circle,
-                                            has_dom ? &dom : NULL);
+    SmStatus stt = SM_SUCCESS;
+    if (lazy)
+    {
+        // the constructor alone (CreateCanonical's MakeNurb skipped); the FFI guards the
+        // radii (the constructor asserts on a non-positive one)
+        t = new (ctx) SmTorus(org, x, y, has_dom ? dom : SmExtent2d(0.0, 0.0, 360.0, 360.0),
+                              major, minor, swap ? TRUE : FALSE, inside ? TRUE : FALSE, circle,
+                              NULL);
+    }
+    else
+        stt = SmTorus::CreateCanonical(ctx, SmAxis2Placement(org, x, y), major, minor, t,
+                                       swap ? TRUE : FALSE, inside ? TRUE : FALSE, circle,
+                                       has_dom ? &dom : NULL);
     o.push_back(st(stt));
     if (stt != SM_SUCCESS || t == NULL)
     {
@@ -239,6 +258,61 @@ void put_state(std::vector<double>& o, const SmTorus* s)
         o.push_back(sur->knv->U[i]);
 }
 
+// A domain block `natural D[4]`: the surface's natural domain or D.
+SmExtent2d read_dom(Rd& rd, const SmSurface* s)
+{
+    bool natural = rd.flag();
+    SmExtent2d d = rd.domain();
+    return natural ? s->GetNaturalUVDomain() : d;
+}
+
+// A plane block `kind`: 0 `O[3] X[3] Y[3] su sv D[4]` (SmPlane(O, X, Y, (su, sv), D)),
+// 1 `O[3] N[3]` (SmPlane(O, N)).
+SmPlane* read_plane(Rd& rd, const SmContext& ctx)
+{
+    int64_t kind = rd.idx();
+    if (kind == 0)
+    {
+        SmPoint3d o = rd.vec();
+        SmVector3d x = rd.vec();
+        SmVector3d y = rd.vec();
+        double su = rd.num();
+        double sv = rd.num();
+        SmExtent2d d = rd.domain();
+        return new (ctx) SmPlane(o, x, y, SmVector2d(su, sv), d, &ctx);
+    }
+    SmPoint3d o = rd.vec();
+    SmVector3d n = rd.vec();
+    return new (ctx) SmPlane(o, n, &ctx);
+}
+
+// The intersection record: `more ncurves curves ntypes types ndevs devs nuv1 nuv2 nnull1
+// nnull2`.
+void put_intersection(std::vector<double>& o, SmBoolean more, SmTArray<SmCurve*>& c3d,
+                      SmTArray<SmCurve*>& uv1, SmTArray<SmCurve*>& uv2,
+                      SmTArray<SmTsectCurveType>& types, SmTArray<double>& devs)
+{
+    o.push_back(flg(more));
+    o.push_back((double)c3d.GetSize());
+    for (ULONG i = 0; i < c3d.GetSize(); i++)
+        put_curve(o, c3d[i]);
+    o.push_back((double)types.GetSize());
+    for (ULONG i = 0; i < types.GetSize(); i++)
+        o.push_back((double)types[i]);
+    o.push_back((double)devs.GetSize());
+    for (ULONG i = 0; i < devs.GetSize(); i++)
+        o.push_back(devs[i]);
+    ULONG null1 = 0, null2 = 0;
+    for (ULONG i = 0; i < uv1.GetSize(); i++)
+        null1 += uv1[i] == NULL ? 1 : 0;
+    for (ULONG i = 0; i < uv2.GetSize(); i++)
+        null2 += uv2[i] == NULL ? 1 : 0;
+    o.push_back((double)uv1.GetSize());
+    o.push_back((double)uv2.GetSize());
+    o.push_back((double)null1);
+    o.push_back((double)null2);
+}
+
 void torus_op(int32_t op, Rd& rd, const SmContext& ctx, SmTorus* s, std::vector<double>& o)
 {
     switch (op)
@@ -336,6 +410,48 @@ void torus_op(int32_t op, Rd& rd, const SmContext& ctx, SmTorus* s, std::vector<
         delete off;
         break;
     }
+    case OP_IS_NURB:
+    {
+        double scale = rd.num();
+        double sx = rd.num();
+        double sy = rd.num();
+        double sz = rd.num();
+        int64_t npert = rd.idx();
+        const gw_SURFACE* src = s->GetGwNurbPointer();
+        gw_SURFACE* g = sm_AllocateAndCopyNurbSurface((gw_SURFACE*)src);
+        for (gw_INDEX i = 0; i <= g->net->n; i++)
+            for (gw_INDEX j = 0; j <= g->net->m; j++)
+            {
+                g->net->Pw[i][j].x *= sx;
+                g->net->Pw[i][j].y *= sy;
+                g->net->Pw[i][j].z *= sz;
+            }
+        for (int64_t k = 0; k < npert; k++)
+        {
+            int64_t i = rd.idx();
+            int64_t j = rd.idx();
+            double dx = rd.num();
+            double dy = rd.num();
+            double dz = rd.num();
+            if (i < 0 || j < 0 || i > g->net->n || j > g->net->m)
+                continue;
+            g->net->Pw[i][j].x += dx;
+            g->net->Pw[i][j].y += dy;
+            g->net->Pw[i][j].z += dz;
+        }
+        SmBSplineSurface* test = new (ctx) SmBSplineSurface(g, FALSE, NULL);
+        SmTorus* r = NULL;
+        // SmBoolean is an int: a failed `SER(..)` returns its status as a truthy "found" with
+        // no torus, so the value is recorded as is.
+        SmBoolean found = SmTorus::IsNurbSurfaceTorus(ctx, test, r, scale);
+        o.push_back((double)found);
+        o.push_back(flg(r != NULL));
+        if (r)
+            put_state(o, r);
+        delete r;
+        delete test;
+        break;
+    }
     case OP_REBUILD:
     {
         SmStatus stt = s->RebuildSTEPFromNURBParameters();
@@ -382,6 +498,46 @@ void torus_op(int32_t op, Rd& rd, const SmContext& ctx, SmTorus* s, std::vector<
         delete c;
         break;
     }
+    case OP_ISECT_PLANE:
+    case OP_GLOBAL:
+    {
+        SmPlane* plane = read_plane(rd, ctx);
+        SmExtent2d dom = read_dom(rd, s);
+        SmExtent2d odom = read_dom(rd, plane);
+        bool has_tol = rd.flag();
+        SmApproxTol3d tol = rd.num();
+        SmBoolean edges[2] = {TRUE, TRUE};
+        SmBoolean more = FALSE;
+        SmTArray<SmCurve*> c3d, uv1, uv2;
+        SmTArray<SmTsectCurveType> types;
+        SmTArray<double> devs;
+        SmStatus stt = op == OP_ISECT_PLANE
+                           ? s->IntersectWithPlane(ctx, dom, *plane, odom, edges,
+                                                   has_tol ? &tol : NULL, NULL, more, &c3d,
+                                                   &uv1, &uv2, &types, &devs)
+                           : s->GlobalSurfaceIntersect(ctx, dom, *plane, odom, edges,
+                                                       has_tol ? &tol : NULL, NULL, &c3d, &uv1,
+                                                       &uv2, &types, &devs);
+        o.push_back(st(stt));
+        if (stt == SM_SUCCESS)
+            put_intersection(o, more, c3d, uv1, uv2, types, devs);
+        for (ULONG i = 0; i < c3d.GetSize(); i++)
+            delete c3d[i];
+        delete plane;
+        break;
+    }
+    case OP_TRIM_DOMAIN:
+    {
+        SmExtent2d dom = rd.domain();
+        SmStatus stt = s->TrimWithDomain(dom);
+        o.push_back(st(stt));
+        o.push_back(dom.GetMin().x);
+        o.push_back(dom.GetMin().y);
+        o.push_back(dom.GetMax().x);
+        o.push_back(dom.GetMax().y);
+        put_state(o, s);
+        break;
+    }
     default: o.push_back((double)SC_ERR_ARG); break;
     }
 }
@@ -395,10 +551,13 @@ SC_EXPORT int32_t sc_surface_torus_eval(int32_t op, const double* in, int64_t n_
     SmContext ctx;
     std::vector<double> o;
     Rd rd{in, 0};
-    SmTorus* s = read_torus(rd, ctx, o);
+    SmTorus* s = read_torus(rd, ctx, o, op == OP_CONST_MAKE);
     if (s)
     {
-        torus_op(op, rd, ctx, s, o);
+        if (op == OP_CONST_MAKE)
+            sc::put_const_make(ctx, s, o);
+        else
+            torus_op(op, rd, ctx, s, o);
         delete s;
     }
     return sc_copy_out(o.data(), (int64_t)o.size(), out, cap, out_len);

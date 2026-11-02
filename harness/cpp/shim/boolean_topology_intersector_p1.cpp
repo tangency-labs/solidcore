@@ -8,8 +8,9 @@
 // sm_FindFirstLowestDimensionSol, sm_IntersectShellVertices, sm_IntersectWireLaminaEdges,
 // sm_SetEdgeClass, sm_CheckInteriorEdge, sReasonType, sm_TestAndSplitTwoEdges and
 // sm_TestAndImprintFace are VERBATIM copies of upstream (commit c9c5979, lines 1272-1572,
-// 2676-2829 and 6564-6861) inside namespace sc_ti_p1 (SM_DEBUG_CODE and CBI_CACHE are not
-// defined in the reference build).
+// 2676-2829 and 6564-6861; byte-identical in v1.0.1 3fd5b95, lines 1272-1572, 2676-2829 and
+// 6578-6875) inside namespace sc_ti_p1 (SM_DEBUG_CODE and CBI_CACHE are not defined in the
+// reference build).
 //
 // One entry point, sc_boolean_topology_intersector_p1_eval(op, path, in, n_in, out, cap,
 // out_len). Layouts are documented in
@@ -820,62 +821,6 @@ struct TiMgr
 };
 template struct TiRob<TiMgr, &SmTopologyIntersector::m_pProtoTopoMgr>;
 
-// UB-175: ~SmProtoTopologyManager deletes the listed proto edges before the listed proto
-// vertices; each ~SmProtoEdge unlists itself once from its start vertex and once from a
-// different end vertex, then each ~SmProtoVertex calls RemoveProtoVertex on every edge it
-// still lists. An edge whose ends coincide is listed twice there (AddProtoEdge, DD1) and a
-// combined vertex keeps entries of edges that no longer end at it: those entries are freed
-// edges. Replays the unlisting on copies and returns whether any listed vertex keeps a
-// listed edge; with `unlink`, removes those entries first so the destructor stays defined
-// (the script's own manager: its teardown is ours, lesson 23). Scope: only the edge-phase
-// unlisting is modelled; a proto vertex freed before the manager's destructor would be a
-// different use-after-free and is not flagged (no such path in source for these ops; the
-// pre-ready valgrind sample of the op-47 family covers it).
-static bool mgr_teardown_stale(SmProtoTopologyManager* mgr, bool unlink)
-{
-    SmTArray<SmProtoVertex*>& pvs = mgr->GetProtoVertices();
-    SmTArray<SmProtoEdge*>& pes = mgr->GetProtoEdges();
-    std::map<SmProtoVertex*, std::vector<SmProtoEdge*>> lists;
-    for (ULONG i = 0; i < pvs.GetSize(); i++)
-    {
-        if (pvs[i] == nullptr || lists.count(pvs[i]))
-            continue;
-        std::vector<SmProtoEdge*>& l = lists[pvs[i]];
-        SmTArray<SmProtoEdge*>& src = pvs[i]->GetProtoEdges();
-        for (ULONG j = 0; j < src.GetSize(); j++)
-            l.push_back(src[j]);
-    }
-    auto unlist = [&](SmProtoVertex* v, SmProtoEdge* e) {
-        auto it = lists.find(v);
-        if (it == lists.end())
-            return;
-        auto f = std::find(it->second.begin(), it->second.end(), e);
-        if (f != it->second.end())
-            it->second.erase(f);
-    };
-    std::vector<SmProtoEdge*> freed;
-    for (ULONG i = 0; i < pes.GetSize(); i++)
-    {
-        SmProtoEdge* e = pes[i];
-        if (e == nullptr || std::find(freed.begin(), freed.end(), e) != freed.end())
-            continue;
-        freed.push_back(e);
-        unlist(e->GetStartProtoVertex(), e);
-        if (e->GetEndProtoVertex() != e->GetStartProtoVertex())
-            unlist(e->GetEndProtoVertex(), e);
-    }
-    bool stale = false;
-    for (auto& kv : lists)
-        for (SmProtoEdge* e : kv.second)
-            if (std::find(freed.begin(), freed.end(), e) != freed.end())
-            {
-                stale = true;
-                if (unlink)
-                    kv.first->RemoveProtoEdge(e);
-            }
-    return stale;
-}
-
 enum TiOp : int32_t
 {
     TI_EXPORT = 0,
@@ -917,6 +862,8 @@ enum TiScriptOp : int64_t
     S_SHELL_VERTS = 31,
     S_WIRE_LAMINA = 32,
     S_MGR_NEW = 33,
+    S_SET_EDITING = 34,
+    S_MERGE_BREPS = 35,
 };
 
 // Handle kinds (`kind` of a `brep kind index` triple).
@@ -1661,6 +1608,35 @@ void run_script(Rd& rd, Two& t, std::vector<double>& o)
             o.push_back(mn);
             break;
         }
+        case S_MERGE_BREPS:
+        {
+            // the first op only: copies the other B-rep into the primary one, as SmMerge
+            // does before it intersects, so both operands' faces share an owner
+            if (t.brep[1] == nullptr)
+            {
+                o.push_back(ST_NULL_DEREF);
+                break;
+            }
+            SmStatus s = t.brep[0]->MergeBrep(*t.brep[1], NULL, NULL, FALSE);
+            o.push_back(st(s));
+            t.g[0] = Graph();
+            walk(t.brep[0], t.g[0]);
+            t.index_geometry();
+            break;
+        }
+        case S_SET_EDITING:
+        {
+            // pBrep->m_bEditingEnabled = flag (IntersectTopology sets it around the stages)
+            int64_t which = rd.idx();
+            SmBoolean enable = rd.bflag();
+            if (which < 0 || which > 1 || t.brep[which] == nullptr)
+            {
+                o.push_back(ST_NULL_DEREF);
+                break;
+            }
+            t.brep[which]->m_bEditingEnabled = enable;
+            break;
+        }
         case S_MGR_NEW:
         {
             double capture = rd.num();
@@ -1720,14 +1696,42 @@ void run_script(Rd& rd, Two& t, std::vector<double>& o)
         }
     }
     delete ti; // the destructor frees the table (and its curves), maps and subset
-    if (mgr)
-    {
-        mgr_teardown_stale(mgr, true);
-        delete mgr;
-    }
+    delete mgr;
 }
 
-void run_ti(int32_t op, Rd& rd, const char* path, std::vector<double>& o)
+// UB-166: the B-spline surface constructor's sm_FixupKnotVector can raise a v knot
+// vector's start multiplicity above q + 1 (a first interior knot snapped or spread onto
+// the start knot, e.g. a v knot of 1e-300); sm_DecomposeSrf then writes past its patch
+// array when the face/face intersection builds the surface cache. As in the
+// blend.fillet_geom_p1 shim, read back the knot vectors the constructor left and refuse
+// such a B-rep (the precondition: some runs never build that cache).
+bool decomposition_overflows(const Two& t)
+{
+    for (int b = 0; b < 2; b++)
+    {
+        if (t.brep[b] == nullptr)
+            continue;
+        for (SmFace* f : t.g[b].faces)
+        {
+            const SmSurface* s = f ? f->GetSurface() : nullptr;
+            if (s == nullptr || !s->IsKindOf(SmBSplineSurface_TYPE))
+                continue;
+            const gw_SURFACE* g = ((SmBSplineSurface*)s)->GetGwNurbPointer();
+            if (g == NULL)
+                continue;
+            const gw_INDEX last = g->knv->m;
+            gw_INDEX mult = 1;
+            while (mult <= last && g->knv->U[mult] == g->knv->U[0])
+                ++mult;
+            if (mult > (gw_INDEX)g->q + 1)
+                return true;
+        }
+    }
+    return false;
+}
+
+// Runs one call; false when the B-reps are refused (UB-166).
+bool run_ti(int32_t op, Rd& rd, const char* path, std::vector<double>& o)
 {
     Two t;
     struct Clean
@@ -1742,7 +1746,9 @@ void run_ti(int32_t op, Rd& rd, const char* path, std::vector<double>& o)
         }
     } clean{t};
     if (!build_two(rd, path, t, o))
-        return;
+        return true;
+    if (decomposition_overflows(t))
+        return false;
     o.push_back(0.0);
     if (op == TI_EXPORT)
     {
@@ -1759,9 +1765,10 @@ void run_ti(int32_t op, Rd& rd, const char* path, std::vector<double>& o)
             o.push_back((double)ex.size());
             o.insert(o.end(), ex.begin(), ex.end());
         }
-        return;
+        return true;
     }
     run_script(rd, t, o);
+    return true;
 }
 } // namespace
 
@@ -1773,7 +1780,8 @@ SC_EXPORT int32_t SC_TI_EVAL_NAME(int32_t op, const char* path, const double* in
     SC_TRY
     Rd rd{in, 0};
     std::vector<double> o;
-    run_ti(op, rd, path, o);
+    if (!run_ti(op, rd, path, o))
+        return SC_ERR_ARG;
     return sc_copy_out(o.data(), (int64_t)o.size(), out, cap, out_len);
     SC_CATCH
 }

@@ -10,6 +10,7 @@
 #include "sc_shim.h"
 
 #include "StdAfx.h"
+#include "support/primitive_record.h"
 #include <SmApiCurves.h>
 #include <SmApiGeneral.h>
 #include <SmApiPrimitives.h>
@@ -17,11 +18,14 @@
 #include <SmBSplineCurve.h>
 #include <SmBSplineSurface.h>
 #include <SmBrep.h>
+#include <SmCircle.h>
 #include <SmCone.h>
 #include <SmContext.h>
 #include <SmCurve.h>
 #include <SmCylinder.h>
 #include <SmExtent2d.h>
+#include <SmLine.h>
+#include <SmLoop.h>
 #include <SmPlane.h>
 #include <SmSurface.h>
 #include <SmTArray.h>
@@ -58,6 +62,8 @@ enum : int32_t
     OP_PARTIAL_CYLINDER = 23,
     OP_PARTIAL_TORUS = 24,
     OP_SWUNG = 25,
+    OP_BLEND_PRIMITIVE = 26,
+    OP_OFFSET_PROFILE = 27,
 };
 
 // Samples per STEP direction of the surface evaluation grid.
@@ -230,8 +236,11 @@ void put_torus(std::vector<double>& o, SmTorus* t)
     put_grid(o, t, d, true);
 }
 
-// The status, then on success `has` and the B-rep's face, edge and vertex counts.
-void put_brep(std::vector<double>& o, SmApiStatus s, SmBrep* b)
+// The status, then on success `has` and the B-rep's face, edge and vertex counts. `b` is
+// taken by reference: call sites pass the out-parameter of the call that is their status
+// argument, and a by-value `b` could be read before that call writes it (unspecified
+// argument evaluation order).
+void put_brep(std::vector<double>& o, SmApiStatus s, SmBrep*& b, bool rays=false)
 {
     o.push_back(st(s));
     if (s != SM_SUCCESS)
@@ -245,8 +254,33 @@ void put_brep(std::vector<double>& o, SmApiStatus s, SmBrep* b)
         o.push_back((double)b->GetNumFaces());
         o.push_back((double)b->GetNumEdges());
         o.push_back((double)b->GetNumVertices());
+        primitive_record::append(o, b);
+        if(rays) primitive_record::pyramid_rays(o, b);
     }
     delete b;
+}
+
+// The blend face's own record: kind, tolerance, UV domain, loop count, then its surface
+// (kind, NURB for a B-spline and a 5 x 5 evaluation grid over the face's UV domain).
+void put_face_detail(std::vector<double>& o, SmFace* f)
+{
+    o.push_back((double)f->GetType());
+    o.push_back(f->GetTolerance());
+    SmExtent2d d = f->GetUVDomain();
+    put_dom(o, d);
+    SmTArray<SmLoop*> loops;
+    f->GetLoops(loops);
+    o.push_back((double)loops.GetSize());
+    SmSurface* s = f->GetSurface();
+    o.push_back(flg(s != NULL));
+    if (!s)
+        return;
+    o.push_back((double)s->GetType());
+    const gw_SURFACE* sur = NULL;
+    if (s->IsKindOf(SmBSplineSurface_TYPE))
+        sur = static_cast<SmBSplineSurface*>(s)->GetGwNurbPointer();
+    put_surface_nurb(o, sur);
+    put_grid(o, s, d, false);
 }
 
 // A curve list: `k`, then `k` arcs `C[3] r a0 a1` (SmApiCreateArc). A failing constructor is
@@ -277,9 +311,82 @@ void free_curves(SmTArray<SmCurve*>& cs)
     cs.ReSet();
 }
 
+// One profile curve of OP_OFFSET_PROFILE: `kind` then its values (see the ffi module).
+// A failing constructor is a harness error.
+SmCurve* read_profile_curve(Rd& rd)
+{
+    const SmContext& ctx = *SmApiGetOrCreateContext();
+    int64_t kind = rd.idx(0, 4);
+    SmCurve* made = NULL;
+    SmStatus s = SM_ERR;
+    switch (kind)
+    {
+    case 0:
+    {
+        SmVector3d p0 = rd.vec();
+        SmVector3d p1 = rd.vec();
+        SmLine* line = NULL;
+        s = SmApiCreateLineSegment(p0, p1, line);
+        made = line;
+        break;
+    }
+    case 1:
+    {
+        SmVector3d c = rd.vec();
+        double r = rd.num();
+        double a0 = rd.num();
+        double a1 = rd.num();
+        SmBSplineCurve* arc = NULL;
+        s = SmApiCreateArc(c, r, a0, a1, arc);
+        made = arc;
+        break;
+    }
+    case 2:
+    {
+        SmVector3d c = rd.vec();
+        double r = rd.num();
+        SmCircle* circle = NULL;
+        s = SmApiCreateCircle(c, r, circle);
+        made = circle;
+        break;
+    }
+    case 3:
+    {
+        SmVector3d p0 = rd.vec();
+        SmVector3d p1 = rd.vec();
+        SmBSplineCurve* line = NULL;
+        s = SmBSplineCurve::CreateLineSegment(ctx, 3, p0, p1, line);
+        made = line;
+        break;
+    }
+    default:
+    {
+        SmVector3d origin = rd.vec();
+        SmVector3d x = rd.vec();
+        SmVector3d y = rd.vec();
+        double r = rd.num();
+        double a0 = rd.num();
+        double a1 = rd.num();
+        SmAxis2Placement frame;
+        if (frame.SetCanonical(origin, x, y) != SM_SUCCESS)
+            throw Bad();
+        SmBSplineCurve* circle = NULL;
+        s = SmBSplineCurve::CreateCircleSegment(ctx, 3, frame, r, a0, a1, SM_CO_QUADRATIC, circle);
+        made = circle;
+        break;
+    }
+    }
+    if (s != SM_SUCCESS || made == NULL)
+    {
+        delete made;
+        throw Bad();
+    }
+    return made;
+}
+
 void run(Rd& rd, std::vector<double>& o)
 {
-    int32_t op = (int32_t)rd.idx(1, 25);
+    int32_t op = (int32_t)rd.idx(1, 27);
     SmBrep* b = NULL;
     switch (op)
     {
@@ -402,7 +509,7 @@ void run(Rd& rd, std::vector<double>& o)
         SmVector3d org = rd.vec();
         double l = rd.num();
         double h = rd.num();
-        put_brep(o, SmApiCreatePyramid(org, l, h, b), b);
+        put_brep(o, SmApiCreatePyramid(org, l, h, b), b, true);
         return;
     }
     case OP_CYLINDRICAL_BOX:
@@ -487,6 +594,83 @@ void run(Rd& rd, std::vector<double>& o)
         SmApiStatus s = SmApiCreateSwungPrimitive(xy, xz, scale, b);
         free_curves(xy);
         free_curves(xz);
+        put_brep(o, s, b);
+        return;
+    }
+    case OP_BLEND_PRIMITIVE:
+    {
+        SmVector3d org = rd.vec();
+        double l = rd.num();
+        double w = rd.num();
+        double h = rd.num();
+        int64_t e1 = rd.idx(0, 64);
+        int64_t f1 = rd.idx(0, 64);
+        int64_t e2 = rd.idx(0, 64);
+        int64_t f2 = rd.idx(0, 64);
+        bool same = rd.idx(0, 1) != 0;
+        SmApiStatus s = SmApiCreateBox(org, l, w, h, b);
+        if (s != SM_SUCCESS)
+        {
+            o.push_back(st(s));
+            delete b;
+            return;
+        }
+        // Resolve the caller's indices against this B-rep's lists; an index outside them
+        // would make the API touch a foreign pointer, so it is a malformed program.
+        SmTArray<SmEdge*> edges;
+        SmTArray<SmFace*> faces;
+        b->GetEdges(edges);
+        b->GetFaces(faces);
+        if (e1 >= (int64_t)edges.GetSize() || e2 >= (int64_t)edges.GetSize() ||
+            f1 >= (int64_t)faces.GetSize() || f2 >= (int64_t)faces.GetSize())
+        {
+            delete b;
+            throw Bad();
+        }
+        SmFace* blend = NULL;
+        s = SmApiCreateBlendPrimitive(b, edges[(size_t)e1], faces[(size_t)f1], edges[(size_t)e2],
+                                      faces[(size_t)f2], same ? TRUE : FALSE, blend);
+        o.push_back(st(s));
+        o.push_back(flg(blend != NULL));
+        if (s == SM_SUCCESS)
+        {
+            o.push_back((double)b->GetNumFaces());
+            o.push_back((double)b->GetNumEdges());
+            o.push_back((double)b->GetNumVertices());
+            primitive_record::append(o, b);
+            if (blend)
+                put_face_detail(o, blend);
+        }
+        // `blend` is owned by the B-rep.
+        delete b;
+        return;
+    }
+    case OP_OFFSET_PROFILE:
+    {
+        SmTArray<SmCurve*> curves;
+        double distance = 0.0;
+        int64_t type = 0;
+        bool round = false;
+        bool shell = false;
+        try
+        {
+            int64_t k = rd.idx(0, 16);
+            for (int64_t i = 0; i < k; i++)
+                curves.Add(read_profile_curve(rd));
+            distance = rd.num();
+            type = rd.idx(0, 4);
+            round = rd.idx(0, 1) != 0;
+            shell = rd.idx(0, 1) != 0;
+        }
+        catch (...)
+        {
+            free_curves(curves);
+            throw;
+        }
+        // The curves are borrowed: upstream copies them.
+        SmApiStatus s = SmApiCreateOffsetProfile(curves, distance, (ULONG)type, round ? TRUE : FALSE,
+                                                 shell ? TRUE : FALSE, b);
+        free_curves(curves);
         put_brep(o, s, b);
         return;
     }

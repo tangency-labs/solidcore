@@ -3,7 +3,7 @@
 //!
 //! C++: `solidcore_ffi::units::query_loop` (upstream `source/SMLib/src/SmLoop.cpp`) on a
 //! one-face B-rep built with `SmBrepConstructor`: real `SmPlane`, `SmBSplineSurface` and
-//! `SmSurfOfRevolution` faces, `SmLine`, `SmCircle` and `SmBSplineCurve` edges, explicit
+//! `SmSurfOfRevolution` faces, `SmLine`, `SmCircle`, `SmBSplineCurve` and `SmHermiteCurve` edges, explicit
 //! 2D B-spline UV trim curves and explicit face / edge zone tolerances. Rust:
 //! `solidcore::query::r#loop::contains_uv_point` on a one-face `Brep` built from the same
 //! data (the loop walks the B-rep, which it may edit where it creates UV trim curves).
@@ -25,6 +25,7 @@ use serde_json::Value;
 
 use solidcore::curve::curve::Curve;
 use solidcore::curve::ellipse::{Ellipse, EllipseOptions};
+use solidcore::curve::hermite_curve::HermiteCurve;
 use solidcore::curve::line::Line;
 use solidcore::geom::extent1d::Extent1d;
 use solidcore::geom::extent2d::Extent2d;
@@ -89,6 +90,15 @@ enum CurveIn {
         r: f64,
     },
     Bspline(NurbIn),
+    /// `SmHermiteCurve(p1, d1, p2, d2, 3)` (a curve kind without a NURB: its curve cache
+    /// measures the distance of its cubic spans, so the tree depends on the edge's
+    /// tolerance).
+    Hermite {
+        p1: [f64; 3],
+        d1: [f64; 3],
+        p2: [f64; 3],
+        d2: [f64; 3],
+    },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -239,6 +249,12 @@ fn ffi_case(i: &Inputs) -> ffi::Case {
                         r: *r,
                     },
                     CurveIn::Bspline(n) => ffi::Curve3::BSpline(ffi_nurb(n)),
+                    CurveIn::Hermite { p1, d1, p2, d2 } => ffi::Curve3::Hermite {
+                        p1: *p1,
+                        d1: *d1,
+                        p2: *p2,
+                        d2: *d2,
+                    },
                 },
                 interval: e.interval,
                 tol: e.tol,
@@ -320,6 +336,13 @@ fn rust_curve(k: &Kernel, c: &CurveIn) -> Result<Curve, HarnessError> {
         CurveIn::Line { a, b } => Ok(Curve::from(Line::from_points(v3(*a), v3(*b), 3))),
         CurveIn::Circle { c, x, y, d, r } => rust_circle(k, *c, *x, *y, *d, *r),
         CurveIn::Bspline(n) => rust_nurb(n, 3),
+        CurveIn::Hermite { p1, d1, p2, d2 } => Ok(Curve::from(HermiteCurve::new(
+            v3(*p1),
+            v3(*d1),
+            v3(*p2),
+            v3(*d2),
+            3,
+        ))),
     }
 }
 
@@ -392,7 +415,7 @@ fn rust_brep(
     let err = |e: SolidError| harness(format!("brep: {e}"));
     let lu = LoopuseId::from_index(0);
     let n = u32::try_from(i.edgeuses.len()).map_err(|_| harness("edge uses"))?;
-    let uv_domain = surface.natural_uv_domain();
+    let uv_domain = surface.natural_uv_domain_with_nurb(k).map_err(|e| HarnessError::new(e.to_string()))?;
     let mut b = Brep::new();
     b.add_region_record(Region {
         in_brep: true,
@@ -748,8 +771,8 @@ fn gen_shape(rng: &mut Rng, a: P2, b: P2) -> (Vec<[f64; 3]>, usize, bool) {
 
 /// Evaluates a UV trim point on the surface (Rust; the 3D data only has to be the
 /// same numbers on both sides).
-fn srf_pt(s: &Surface, uv: P2) -> Option<[f64; 3]> {
-    let p = s.evaluate_point(Point2::new(uv[0], uv[1])).ok()?;
+fn srf_pt(k: &Kernel, s: &Surface, uv: P2) -> Option<[f64; 3]> {
+    let p = s.evaluate_point(k, Point2::new(uv[0], uv[1])).ok()?;
     (p.x.is_finite() && p.y.is_finite() && p.z.is_finite()).then_some([p.x, p.y, p.z])
 }
 
@@ -787,8 +810,8 @@ fn push_segment(
         let p1 = lerp2(s0, s1, 1.0 + e);
         let t0 = rng.uniform(-2.0, 2.0);
         let t1 = t0 + rng.uniform(0.5, 4.0);
-        let a3 = srf_pt(s, p0)?;
-        let b3 = srf_pt(s, p1)?;
+        let a3 = srf_pt(k, s, p0)?;
+        let b3 = srf_pt(k, s, p1)?;
         let iv = [
             t0 + (t1 - t0) * e / (1.0 + 2.0 * e),
             t0 + (t1 - t0) * (1.0 + e) / (1.0 + 2.0 * e),
@@ -834,9 +857,9 @@ fn push_segment(
             mid[0] - to_apex[0] / la * r * alpha.cos(),
             mid[1] - to_apex[1] / la * r * alpha.cos(),
         ];
-        let c3 = srf_pt(s, centre)?;
-        let a3 = srf_pt(s, pa)?;
-        let b3 = srf_pt(s, pb)?;
+        let c3 = srf_pt(k, s, centre)?;
+        let a3 = srf_pt(k, s, pa)?;
+        let b3 = srf_pt(k, s, pb)?;
         let xa = [a3[0] - c3[0], a3[1] - c3[1], a3[2] - c3[2]];
         let xb = [b3[0] - c3[0], b3[1] - c3[1], b3[2] - c3[2]];
         let rad = (xa[0] * xa[0] + xa[1] * xa[1] + xa[2] * xa[2]).sqrt();
@@ -857,8 +880,8 @@ fn push_segment(
         (ci, [d.min(), d.max()])
     } else if linear2 && rng.chance(0.6) {
         let (c0, c1) = (*cpts.first()?, *cpts.get(1)?);
-        let a3 = srf_pt(s, [c0[0], c0[1]])?;
-        let b3 = srf_pt(s, [c1[0], c1[1]])?;
+        let a3 = srf_pt(k, s, [c0[0], c0[1]])?;
+        let b3 = srf_pt(k, s, [c1[0], c1[1]])?;
         let c = CurveIn::Line { a: a3, b: b3 };
         let d = rust_curve(k, &c).ok()?.natural_interval();
         (c, [d.min(), d.max()])
@@ -878,7 +901,7 @@ fn push_segment(
             } else {
                 (c[0] / c[2], c[1] / c[2], c[2])
             };
-            let q = srf_pt(s, [u, v])?;
+            let q = srf_pt(k, s, [u, v])?;
             c3.push(if w == NOW {
                 [q[0], q[1], q[2], NOW]
             } else {
@@ -915,7 +938,7 @@ fn gen_tol(rng: &mut Rng, gs: f64) -> f64 {
 }
 
 /// The point to classify: random, on the loop, at or near a vertex, on a domain side.
-fn gen_point(rng: &mut Rng, verts: &[P2], built: &Built, dom: &Extent2d) -> P2 {
+fn gen_point(k: &Kernel, rng: &mut Rng, verts: &[P2], built: &Built, dom: &Extent2d) -> P2 {
     let (lo, hi) = (dom.min(), dom.max());
     let mut bmin = [f64::MAX, f64::MAX];
     let mut bmax = [f64::MIN, f64::MIN];
@@ -930,7 +953,7 @@ fn gen_point(rng: &mut Rng, verts: &[P2], built: &Built, dom: &Extent2d) -> P2 {
         let c = rust_nurb(&eu.trim, 2).ok()?;
         let d = c.natural_interval();
         let t = d.evaluate(rng.unit());
-        let p = c.evaluate_point(t).ok()?;
+        let p = c.evaluate_point(k, t).ok()?;
         Some([p.x, p.y])
     };
     let pick = rng.below(100);
@@ -979,7 +1002,8 @@ fn gen_case(rng: &mut Rng) -> Option<Inputs> {
     let surface_in = gen_surface(rng, gs);
     let surface = rust_surface(&k, &surface_in).ok()??;
     let plane = matches!(surface_in, SurfIn::Plane { .. });
-    let dom = surface.natural_uv_domain();
+    // (runner helper that does not return Result)
+    let dom = surface.natural_uv_domain_if_built();
     let (lo, hi) = (dom.min(), dom.max());
     let (w, h) = (hi.x - lo.x, hi.y - lo.y);
     if !(w.is_finite() && h.is_finite() && w > 0.0 && h > 0.0) {
@@ -1019,8 +1043,8 @@ fn gen_case(rng: &mut Rng) -> Option<Inputs> {
             let tol = gen_tol(rng, gs);
             // bottom, seam (c1 -> c2), top, seam reversed (c3 -> c0, the same edge)
             push_segment(rng, &k, &surface, plane, &mut built, c[0], c[1], tol)?;
-            let a3 = srf_pt(&surface, c[1])?;
-            let b3 = srf_pt(&surface, c[2])?;
+            let a3 = srf_pt(&k, &surface, c[1])?;
+            let b3 = srf_pt(&k, &surface, c[2])?;
             let seam = CurveIn::Line { a: a3, b: b3 };
             let d = rust_curve(&k, &seam).ok()?.natural_interval();
             let dom1 = [d.min(), d.max()];
@@ -1097,7 +1121,7 @@ fn gen_case(rng: &mut Rng) -> Option<Inputs> {
             built.edgeuses.remove(r);
         }
     }
-    let uv = gen_point(rng, &verts, &built, &dom);
+    let uv = gen_point(&k, rng, &verts, &built, &dom);
     Some(Inputs {
         face_tol,
         vertex_loop,

@@ -20,9 +20,10 @@
 // The B-rep graph is exported in traversal order (each pointer mapped to its first-seen
 // index per kind; -1 is null), reading raw members (protected ones through
 // pointer-to-member access), never the functions under test. Ops whose upstream path
-// would dereference null (or read an uninitialised value) output -2 instead of calling it.
+// would dereference null output -2 instead of calling it.
 #include "sc_shim.h"
 #include "support/topology_fixture.h"
+#include "sc_analytic_export.h"
 
 
 #include "StdAfx.h"
@@ -82,6 +83,7 @@ enum Op : int32_t
     OP_SET_TOLERANCE = 14,
     OP_REFRESH_TOLERANCE = 15,
     OP_EXACT = 16,
+    OP_CORNER = 17,
 };
 
 // Status of an op the shim refuses because upstream would dereference null.
@@ -661,6 +663,10 @@ void export_graph(SmBrep* brep, Graph& g, std::vector<double>& o)
     }
     for (SmFace* p : g.faces)
     {
+        // an analytic face surface whose record is lossless travels exactly first
+        // (sc_analytic_export.h: `2 type version surf_oob gen_oob nbytes bytes`), then
+        // its regular block as for any face
+        sc_analytic_export::put_exact_head(o, p->GetSurface(), the_context());
         put_surface(o, p->GetSurface());
         // the face's UV domain and tolerance (the vertex/face gaps solve against them)
         SmExtent2d d = p->GetUVDomain();
@@ -1076,18 +1082,18 @@ bool ok_on_pole(SmVertex* v)
     return true;
 }
 
-// AreEdgesTangent: GetStartVertex and the end tangent it reads (a failed evaluation
-// leaves it uninitialised; a null curve is dereferenced).
-bool ok_tangent(SmVertex* v, SmEdge* e)
+// AreEdgesTangent: GetStartVertex and GetEndTangent (a null curve is dereferenced; a
+// failed evaluation leaves the default SmVector3d, SM_UNDEF_DOUBLE, which is defined:
+// WR-256).
+bool ok_tangent(SmEdge* e)
 {
-    if (!ok_start(e) || e->GetCurve() == nullptr)
-        return false;
-    SmVector3d t;
-    return e->GetEndTangent(e->GetStartVertex() == v ? TRUE : FALSE, t) == SM_SUCCESS;
+    return ok_start(e) && e->GetCurve() != nullptr;
 }
 
 // IsTopologicalVertex, following its control flow up to the tangent reads (IsOnPole is
 // evaluated here as upstream does; it only fills caches the real call fills as well).
+// Only a null curve whose tangent is read is refused: a failed GetEndTangent leaves the
+// tangent IsLine wrote or the default SmVector3d (WR-256).
 bool ok_topological(SmVertex* v)
 {
     if (!ok_edges(v))
@@ -1121,22 +1127,15 @@ bool ok_topological(SmVertex* v)
         return true;
     if (c[0] == c[1])
         return true;
-    bool uninit = false;
     for (int i = 0; i < 2; i++)
     {
         if (c[i] == nullptr)
             return false;
         SmVector3d t;
-        SmStatus s = e[i]->GetEndTangent(at_start[i] ? TRUE : FALSE, t);
-        if (s != SM_SUCCESS)
-        {
-            if (at_start[i])
-                return !uninit; // SER returns before the angle is read
-            if (!line[i])
-                uninit = true;
-        }
+        if (at_start[i] && e[i]->GetEndTangent(TRUE, t) != SM_SUCCESS)
+            return true; // SER returns before the other edge's tangent is read
     }
-    return !uninit;
+    return true;
 }
 
 // The cached gap states of every vertex use (vertex/edge, vertex/face).
@@ -1178,6 +1177,35 @@ void put_gap(std::vector<double>& o, Graph& g, const SmGap* p)
     }
     o.push_back(-3.0);
 }
+
+
+// sm_AssertTestVertex1 and its callees: GetBrep()->GetTolerance() (IsWithinXSectTol3dOfFaces),
+// the face gaps (CalcVertexFaceGap / ComputeUVPoint), GetFaceuse()->GetFace()->GetSurface()
+// (HasParallelFaces, CalcCornerFromFaces) are dereferenced.
+bool ok_corner(SmVertex* v)
+{
+    if (v->GetBrep() == nullptr)
+        return false;
+    for (SmVertexuse* p : uses_of(v))
+    {
+        if (!ok_faceuse(p) || !ok_face_gap(p))
+            return false;
+        SmFaceuse* fu = p->GetFaceuse();
+        if (fu != nullptr && (fu->GetFace() == nullptr || fu->GetFace()->GetSurface() == nullptr))
+            return false;
+    }
+    return true;
+}
+
+void put_corner(std::vector<double>& o, Graph& g, SmBoolean on, SmBoolean found, double gap, const SmPoint3d& best)
+{
+    o.push_back(flg(on));
+    o.push_back(flg(found));
+    o.push_back(gap);
+    put_vec(o, best);
+}
+
+void put_gap_states(std::vector<double>& o, Graph& g);
 
 void run_brep_op(int32_t op, Rd& rd, const char* path, std::vector<double>& o)
 {
@@ -1378,7 +1406,7 @@ void run_brep_op(int32_t op, Rd& rd, const char* path, std::vector<double>& o)
         SmEdge* e1 = g.edges[(size_t)rd.idx()];
         SmEdge* e2 = g.edges[(size_t)rd.idx()];
         double tol = rd.num();
-        if (!ok_tangent(v, e1) || !ok_tangent(v, e2))
+        if (!ok_tangent(e1) || !ok_tangent(e2))
         {
             o.push_back(ST_NULL_DEREF);
             break;
@@ -1491,6 +1519,70 @@ void run_brep_op(int32_t op, Rd& rd, const char* path, std::vector<double>& o)
         o.push_back(flg(v->IsExact()));
         o.push_back(v->GetPolyVertex() != NULL ? 1.0 : 0.0);
         v->SetPolyVertex(NULL);
+        break;
+    }
+    case OP_CORNER:
+    {
+        bool has_move = rd.flag();
+        SmPoint3d d = rd.vec();
+        if (has_move)
+            v->SetPoint(v->GetPoint() + d);
+        if (!ok_corner(v))
+        {
+            o.push_back(ST_NULL_DEREF);
+            break;
+        }
+        o.push_back(0.0);
+        // sm_AssertTestVertex1(v, &dMaxGap3d, &pMaxGapFace) as SmVertex::AssertValid calls it
+        double max_gap = -7.0;
+        SmFace* max_face = (SmFace*)0x1;
+        SmBoolean within = v->IsWithinXSectTol3dOfFaces(&max_gap, &max_face);
+        SmBoolean passed = within;
+        o.push_back(flg(within));
+        o.push_back(max_gap);
+        o.push_back((double)g.find(3, max_face));
+        if (within)
+        {
+            SmBoolean found = FALSE;
+            double gap = -7.0;
+            SmPoint3d best;
+            SmBoolean on = v->IsOnFaceCorner(&found, &gap, &best);
+            passed &= on;
+            put_corner(o, g, on, found, gap, best);
+        }
+        o.push_back(flg(passed));
+        // then IsOnFaceCorner on its own
+        {
+            SmBoolean found = FALSE;
+            double gap = -7.0;
+            SmPoint3d best;
+            SmBoolean on = v->IsOnFaceCorner(&found, &gap, &best);
+            put_corner(o, g, on, found, gap, best);
+        }
+        // then HasParallelFaces (an empty face list is read past upstream)
+        SmTArray<SmFace*> fs;
+        v->GetFaces(fs);
+        if (fs.GetSize() == 0)
+            o.push_back(-1.0);
+        else
+        {
+            double tol = SM_ANG_TOL_DEG, min_ang = -7.0, max_par = -7.0;
+            SmFace *f1 = (SmFace*)0x1, *f2 = (SmFace*)0x1;
+            SmPoint2d uv1, uv2;
+            SmBoolean par = v->HasParallelFaces(&tol, &min_ang, &max_par, &f1, &f2, &uv1, &uv2);
+            o.push_back(flg(par));
+            o.push_back(min_ang);
+            o.push_back(max_par);
+            o.push_back((double)g.find(3, f1));
+            o.push_back((double)g.find(3, f2));
+        }
+        // and IsWithinXSectTol3dOfFaces forcing every gap
+        double fgap = -7.0;
+        SmFace* fface = (SmFace*)0x1;
+        o.push_back(flg(v->IsWithinXSectTol3dOfFaces(&fgap, &fface, TRUE)));
+        o.push_back(fgap);
+        o.push_back((double)g.find(3, fface));
+        put_gap_states(o, g);
         break;
     }
     default:

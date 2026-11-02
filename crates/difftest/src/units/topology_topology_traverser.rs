@@ -1,5 +1,9 @@
-//! Differential topology traversal on real SMLib graphs. Fixture construction and
-//! raw arena import reuse topology.vertexuse; no traversal result is imported.
+//! Differential topology traversal on real SMLib graphs. Fixture construction reuses
+//! topology.vertexuse: the Rust side builds a wire edge, face or network source itself
+//! ([`crate::own_builder`]) and reads an `.smb` file with the Rust reader
+//! ([`crate::own_reader::file_in_order`]), both renumbered into the shim's traversal order;
+//! no C++ export (graph or vertex use lists) and no traversal result reaches the Rust
+//! side.
 use super::topology_vertexuse::{self as shared, BrepIn};
 use crate::{Case, HarnessError, Output, Rng, UnitDiff};
 use serde::{Deserialize, Serialize};
@@ -93,6 +97,71 @@ fn available(r: Request) -> bool {
         && (r.op != 6 || r.start != r.target)
 }
 
+// Generator eligibility is stricter than `available`: explicit fixtures may use
+// null starts, while random cases should exercise entities the fixture contains.
+fn eligible_ops(c: [usize; 10]) -> Vec<i32> {
+    (0..8)
+        .filter(|op| match op {
+            0 => c[3] > 0,
+            1 => c[7] > 0,
+            2 | 3 => c[2] > 0,
+            4 => c[9] > 0 && c[1] > 0,
+            5 | 7 => c[2] > 0 && c[1] > 0,
+            6 => c[1] > 1,
+            _ => false,
+        })
+        .collect()
+}
+
+fn select_generated_op(i: &mut Inputs, counts: [usize; 10], rng: &mut Rng) {
+    let ops = eligible_ops(counts);
+    if let Some(&op) = rng.choose(&ops) {
+        i.op = op;
+        if op == 6 {
+            let shells = counts[1] as u64;
+            i.start = rng.below(shells) as i64;
+            i.target = (i.start + 1 + rng.below(shells - 1) as i64) % shells as i64;
+        }
+    }
+}
+
+/// The Rust B-rep of a case and its entity counts, or the output of a failed build.
+/// Shim-built sources are built by the Rust kernel ([`crate::own_builder`]) and `.smb`
+/// file sources read by the Rust reader ([`crate::own_reader::file_in_order`]), both
+/// renumbered under `sc_topology_fixture.h`'s conventions, each vertex's vertex use list
+/// the Rust build's own (nothing of the shim's export reaches the Rust side).
+fn own_brep(
+    k: &mut Kernel,
+    i: &Inputs,
+) -> Result<Result<(solidcore::topology::Brep, [usize; 10]), Output>, HarnessError> {
+    use crate::own_builder::{build_as, counts, Built, Conventions};
+    let conv = &Conventions::TOPOLOGY_FIXTURE;
+    let built = if let Some(b) = build_as(k, &i.brep, false, false, conv)? {
+        b
+    } else {
+        let BrepIn::File { rebuild, .. } = &i.brep else {
+            return Err(HarnessError::new(
+                "own builder: a non-file source was not built",
+            ));
+        };
+        let path = shared::path_of(&i.brep)?;
+        crate::own_reader::file_in_order(k, &path, *rebuild, false, false, conv)?
+    };
+    match built {
+        Built::Brep(b) => {
+            let c = counts(&b);
+            Ok(Ok((*b, c)))
+        }
+        Built::Failed(e) => Ok(Err(match Output::unported(&e) {
+            Some(o) => o,
+            None => Output::new().values(
+                "build",
+                vec![-1.0, crate::own_builder::build_status(&e)],
+            ),
+        })),
+    }
+}
+
 impl UnitDiff for Runner {
     fn id(&self) -> &'static str {
         "topology.topology_traverser"
@@ -120,25 +189,15 @@ impl UnitDiff for Runner {
 
     fn run_rust(&self, case: &Case) -> Result<Output, HarnessError> {
         let i: Inputs = case.parse()?;
-        let ex = export(&i)?;
-        let Some(c) = fixture::counts(&ex.graph) else {
-            return Ok(Output::new().values("build", ex.graph));
+        let mut k = Kernel::default();
+        let (mut b, c) = match own_brep(&mut k, &i)? {
+            Ok(x) => x,
+            Err(o) => return Ok(o),
         };
         let r = request(&i, c);
         if !available(r) {
             return Ok(Output::err("no seed of requested kind"));
         }
-        let (mut b, _) = shared::import(&ex.graph)?;
-        for (index, list) in ex.vertexuses.iter().enumerate() {
-            b.vertex_mut(VertexId::from_index(index as u32))
-                .map_err(|e| HarnessError::new(e.to_string()))?
-                .vertexuses = list
-                .iter()
-                .copied()
-                .map(solidcore::topology::VertexuseId::from_index)
-                .collect();
-        }
-        let mut k = Kernel::default();
         let lock = MarkLock::new(std::slice::from_mut(&mut k.context), 0, r.mask)
             .map_err(|e| HarnessError::new(e.to_string()))?;
         let mt = lock.mark_type();
@@ -232,15 +291,14 @@ impl UnitDiff for Runner {
                     &mut k, &mut b, &mut marks, start_fu, target, &mut fus, &lock,
                 ),
                 6 => tr::remove_shell(&mut k, &mut b, ShellId::from_index(r.start as u32), target),
-                _ => tr::is_inner_shell(
-                    &mut k,
-                    &b,
-                    &b.faceuses()
+                _ => {
+                    let faceuses = b
+                        .faceuses()
                         .iter()
                         .filter_map(|(id, fu)| (fu.shell == Some(target)).then_some(id))
-                        .collect::<Vec<_>>(),
-                )
-                .map(|v| closed = i64::from(v)),
+                        .collect::<Vec<_>>();
+                    tr::is_inner_shell(&mut k, &mut b, &faceuses).map(|v| closed = i64::from(v))
+                }
             };
             if let Err(e) = result {
                 if let Some(out) = Output::unported(&e) {
@@ -303,7 +361,7 @@ impl UnitDiff for Runner {
     }
 
     fn generate(&self, rng: &mut Rng) -> Option<Value> {
-        let i = Inputs {
+        let mut i = Inputs {
             brep: shared::gen_brep(rng),
             op: rng.below(8) as i32,
             start: rng.below(10) as i64,
@@ -314,6 +372,74 @@ impl UnitDiff for Runner {
             prefill: rng.below(2) != 0,
             repeat: 1 + rng.below(2) as i32,
         };
+        // Failed exports and empty graphs keep their original case so errors
+        // remain visible. Never stop generation or discard a difficult input.
+        if let Some(counts) = export(&i).ok().and_then(|ex| fixture::counts(&ex.graph)) {
+            select_generated_op(&mut i, counts, rng);
+        }
         serde_json::to_value(i).ok()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn generator_requires_nonempty_entity_kinds() {
+        assert!(eligible_ops([0; 10]).is_empty());
+        assert_eq!(eligible_ops([1, 1, 0, 0, 0, 0, 2, 1, 2, 2]), vec![1, 4]);
+        assert_eq!(
+            eligible_ops([1, 1, 2, 1, 2, 1, 8, 4, 8, 4]),
+            vec![0, 1, 2, 3, 4, 5, 7]
+        );
+        assert_eq!(
+            eligible_ops([1, 2, 4, 2, 4, 2, 16, 8, 16, 8]),
+            (0..8).collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn generated_shell_removal_uses_distinct_shells() {
+        let mut rng = Rng::new(7);
+        for shells in [2, 3] {
+            let counts = [1, shells, 0, 0, 0, 0, 0, 0, 0, 0];
+            for _ in 0..100 {
+                let mut i = Inputs {
+                    brep: BrepIn::Network,
+                    op: 0,
+                    start: 0,
+                    target: 0,
+                    mask: 1,
+                    want: 3,
+                    pre: 0,
+                    prefill: false,
+                    repeat: 1,
+                };
+                select_generated_op(&mut i, counts, &mut rng);
+                let r = request(&i, counts);
+                assert_eq!(r.op, 6);
+                assert_ne!(r.start, r.target);
+                assert!(available(r));
+            }
+        }
+    }
+
+    #[test]
+    fn empty_graph_keeps_the_original_case() {
+        let mut i = Inputs {
+            brep: BrepIn::Network,
+            op: 6,
+            start: 8,
+            target: 3,
+            mask: 2,
+            want: 1,
+            pre: 4,
+            prefill: true,
+            repeat: 2,
+        };
+        let before = serde_json::to_value(&i).unwrap();
+        select_generated_op(&mut i, [0; 10], &mut Rng::new(7));
+        assert_eq!(serde_json::to_value(&i).unwrap(), before);
     }
 }

@@ -13,6 +13,7 @@
 //! | `2 surface u0 v0 u1 v1 validate_only init_gaps` | `CreateFaceFromSurface(surface, dom)`   |
 //! | `3 validate_only init_gaps`                   | the wire network of `prog_test` `my_test_topology` |
 //! | `4 P[3] V[3] a b scale inside_out f0 f1 validate_only init_gaps` | `CreateWireEdgeFromCurve(SmLine(P, V, [a, b], scale), ..)` over the fractions `[f0, f1]` of the line's interval |
+//! | `5 circle C[3] X[3] Y[3] angles[2] radii[2] inside_out natural[2] fractions[2] oob tolerance orientation validate_only init_gaps` | real `SmEllipse`/`SmCircle`, reparameterized before wire construction; circle radii must agree |
 //!
 //! A surface block is `0 oob form n m p q r s cpts(x y z w) u v` (`SmBSplineSurface`) or
 //! `1 O[3] N[3]` (`SmPlane(O, N)`); a curve block `dim n p m cpts(x y z w) knots`
@@ -20,6 +21,28 @@
 //! op's output starts with `0`, or with `-1 status` when the B-rep could not be built.
 //! `-2` in an output is "upstream would dereference null" (the shim did not call it).
 //! "state" is the mutable graph state of the shim's `put_state`. `e` is an edge index.
+//!
+//! Exported face surfaces use a different block from fixture inputs: `-1` for null,
+//! `1 O[3] X[3] Y[3] scale[2] analytic_domain[4]` for a plane, or
+//! `0 type oob form n m p q r s cpts(x y z w) u v` for the B-spline part. A lossless
+//! `SmSurfOfRevolution` export prefixes that regular B-spline block with
+//! `2 type version surf_oob gen_oob nbytes byte[nbytes]`, using
+//! `sc_analytic_export::put_exact_head`. The record preserves the analytic domain,
+//! generator and polar curve; the separate flags restore out-of-bounds state.
+//! The importer uses the shared record reader and requires the reconstructed base
+//! to match the regular block bitwise. Face ownership and tolerance metadata follow
+//! the surface block as before. Unsupported kinds keep their regular block and
+//! operation-specific deferrals; fixture input layouts are unchanged.
+//!
+//! Exported ellipse/circle edge curves prefix the old curve block with
+//! `-3 type version dim oob nbytes byte[nbytes]`. The binary database record is
+//! emitted only after native non-mutation, whole-record read/write round-trip,
+//! concrete-type and independent base-bit checks. The Rust reader restores `oob`
+//! explicitly (absent from the record), checks full consumption and checks its
+//! B-spline base against the following old block. Analytic UV curves remain
+//! unsupported. Ellipse operation results use the old curve block followed by
+//! `O[3] X[3] Y[3] angles[2] radii[2] inside_out oob knot_type form`; existing
+//! line/B-spline layouts do not change.
 //!
 //! | [`Op`]         | parameters after the block | outputs |
 //! |----------------|----------------------------|---------|
@@ -49,6 +72,7 @@
 //! | `Blend`        | `e`                        | `eu` |
 //! | `Ode`          | `e ox oy oz radius t n`    | `status dydx*n` |
 //! | `SetInterval`  | `e a b`                    | `min max` |
+//! | `EdgeForm`     | `e dx dy dz`               | `moved ok max_gap` (`moved`: 0 = translated or not moved, 1 = `Transform` failed) |
 //!
 //! [`eval`] accepts only what upstream handles without undefined behaviour: existing
 //! `.smb` files, well-formed clamped B-splines, planes with a non-zero normal, indices
@@ -96,6 +120,7 @@ pub enum Op {
     Blend = 23,
     Ode = 24,
     SetInterval = 25,
+    EdgeForm = 26,
 }
 
 impl Op {
@@ -250,7 +275,56 @@ fn curve(rd: &mut Reader<'_>) -> Result<(f64, f64), FfiError> {
 
 /// A B-rep block.
 fn brep_block(rd: &mut Reader<'_>, path: &str) -> Result<(), FfiError> {
-    match rd.index(4)? {
+    match rd.index(5)? {
+        5 => {
+            let circle = rd.flag()?;
+            // Match the existing standalone ellipse constructor's finite input
+            // envelope; do not pass its known huge-coordinate crash inputs on to
+            // a B-rep constructor that immediately evaluates the result.
+            let analytic = |rd: &mut Reader<'_>| -> Result<f64, FfiError> {
+                let value = rd.finite()?;
+                if value.abs() > super::curve_ellipse_p1::MAX_COORD {
+                    return Err(bad("analytic wire coordinate outside ellipse fixture bounds"));
+                }
+                Ok(value)
+            };
+            for _ in 0..3 {
+                analytic(rd)?;
+            }
+            for _ in 0..2 {
+                let axis = [analytic(rd)?, analytic(rd)?, analytic(rd)?];
+                if axis.iter().map(|v| v * v).sum::<f64>() < 1e-12 {
+                    return Err(bad("analytic wire zero axis"));
+                }
+            }
+            let a = analytic(rd)?;
+            let b = analytic(rd)?;
+            if a < -360.0 || b > 360.0 || !(1e-4..=360.0).contains(&(b - a)) {
+                return Err(bad("analytic wire invalid STEP interval"));
+            }
+            let rx = analytic(rd)?;
+            let ry = analytic(rd)?;
+            if rx <= 0.0 || ry <= 0.0 || (circle && rx != ry) {
+                return Err(bad("analytic wire invalid radii"));
+            }
+            rd.flag()?;
+            let n0 = analytic(rd)?;
+            let n1 = analytic(rd)?;
+            if n0 >= n1 {
+                return Err(bad("analytic wire natural interval not ordered"));
+            }
+            let f0 = rd.finite()?;
+            let f1 = rd.finite()?;
+            if !(0.0 <= f0 && f0 < f1 && f1 <= 1.0) {
+                return Err(bad("analytic wire fractions not 0 <= f0 < f1 <= 1"));
+            }
+            rd.flag()?;
+            if rd.finite()? < 0.0 {
+                return Err(bad("analytic wire negative tolerance"));
+            }
+            rd.index(2)?;
+        }
+
         4 => {
             rd.vec3()?;
             rd.nonzero3()?;
@@ -480,6 +554,14 @@ fn brep_args(op: Op, rd: &mut Reader<'_>, c: [usize; 10]) -> Result<(), FfiError
         Op::SetInterval => {
             rd.finite()?;
             rd.finite()?;
+        }
+        Op::EdgeForm => {
+            for _ in 0..3 {
+                let d = rd.finite()?;
+                if d.abs() > MAX_COORD {
+                    return Err(bad("bad translation"));
+                }
+            }
         }
     }
     Ok(())

@@ -1,7 +1,13 @@
 //! Real native `ManifoldBoolean` versus the Rust orchestration entry point.
-//! All non-null Rust inputs currently stop at `merge_p1`'s `query.brep` transform
-//! dependency. The real kernel adapter delegates the ported later stages;
+//! The real kernel adapter delegates the ported later stages;
 //! genuine missing dependencies still defer at their exact call sites.
+//!
+//! Both sides' B-reps are compared with each loop use's start edge use chosen
+//! canonically ([`canonical_loop_starts`]): upstream's `BooleanPostProcess` deletes
+//! the intersection edges in `m_sIntersectionEdges` order, which `GetMappedBrepObjects`
+//! takes from a pointer-keyed map (`plan/upstream-issues.md` ND-258), and each
+//! `DeleteEdge` -> `SmLoopuse::CollectEdgeuses` resets the loop's start, so the native
+//! start (and the walk numbering it seeds) depends on heap addresses.
 use crate::{Case, HarnessError, Output, Rng, UnitDiff};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
@@ -50,19 +56,163 @@ fn request(i: &Inputs) -> ffi::Request {
         caller_lock: i.caller_lock,
     }
 }
+/// The Rust operand B-rep, built by the Rust kernel as the shim's `make_operand` builds
+/// the native one (kind 1 `MakeShellVertex`, kind 2 `CreateWireEdgeFromCurve` over a
+/// `CreateLineSegment` line on its natural interval, kind 3 `CreateFaceFromSurface` of
+/// an `SmPlane` with normal `+z`, any other kind the empty B-rep), renumbered into the
+/// shim's traversal order ([`crate::own_builder`]); no C++ export is read.
 fn import(input: &Operand) -> Result<Option<Brep>, HarnessError> {
+    use crate::own_builder::{create_face, finish, in_new_brep, line, Built, Conventions};
+    use solidcore::geom::vector3d::Vec3;
     if input[0] == -1.0 {
         return Ok(None);
     }
-    let raw = ffi::export(input).map_err(|e| error(&e))?;
-    if raw == [-1.0] {
-        return Err(error("native input constructor rejected"));
+    let mut k = Kernel::default();
+    let p = Vec3::new(input[1], input[2], input[3]);
+    let raw = match input[0] as i32 {
+        1 => in_new_brep(&mut k, |_, b| {
+            let region = b.infinite_region();
+            let mut state = solidcore::topology::brep::p2::ArenaNotifyState::new(b);
+            let mut env = state.env(None);
+            solidcore::topology::brep::p9::make_shell_vertex(b, region, p, &mut env).map(|_| ())
+        })?,
+        2 => in_new_brep(&mut k, |k, b| {
+            let c = line(p, p + Vec3::new(input[4], input[5], input[6]))?;
+            let ivl = c.natural_interval();
+            solidcore::topology::brep::p5::create_wire_edge_from_curve(k, b, c, ivl).map(|_| ())
+        })?,
+        3 => in_new_brep(&mut k, |k, b| {
+            let plane = solidcore::surface::plane::Plane::from_normal(p, Vec3::new(0.0, 0.0, 1.0));
+            let dom = [0.0, 0.0, input[4], input[5]];
+            create_face(k, b, solidcore::surface::surface::Surface::from(plane), dom).map(|_| ())
+        })?,
+        _ => in_new_brep(&mut k, |_, _| Ok(()))?,
+    };
+    // the shim's `walk(brep, g, true)` (no gap walk); the geometry owned under the arena
+    // identities [`own_geometry`] gives it, so its face tolerances stay recorded
+    match finish(&mut k, raw, false, false, &Conventions::EDGEUSE_GRAPH)? {
+        Built::Brep(b) => {
+            let mut b = *b;
+            own_geometry(&mut b)?;
+            // record the arena naming `own_geometry` gives the owners (and each owner)
+            b.use_arena_naming().map_err(|x| error(&x.to_string()))?;
+            Ok(Some(b))
+        }
+        Built::Failed(e) => Err(error(&format!("native input constructor rejected: {e}"))),
     }
-    super::topology_vertexuse::import(&raw).map(|(b, _)| Some(b))
 }
 
-fn append_graph(output: &mut Output, prefix: &str, brep: &Brep) -> Result<(), HarnessError> {
-    let graph = super::topology_brep_p10::snapshot(brep)?;
+/// Relabels the geometry the build owns under the identities the library's arena adapter
+/// keys its B-rep cache by (`arena_identity`): each owned curve by its edge and each
+/// owned surface by its face, as natively. Geometry the build left without owner stays
+/// unowned (no owner is taken from the holder).
+fn own_geometry(b: &mut Brep) -> Result<(), HarnessError> {
+    use solidcore::topology::brep_cache::{arena_identity, CacheObject};
+    let edges: Vec<_> = b.edges().ids().collect();
+    for e in edges {
+        let edge = b.edge_mut(e).map_err(|x| error(&x.to_string()))?;
+        if let Some(curve) = edge.curve.as_mut() {
+            if curve.owner().is_some() {
+                curve.set_owner(Some(arena_identity(CacheObject::Edge(e))), None);
+            }
+        }
+    }
+    let faces: Vec<_> = b.faces().ids().collect();
+    for f in faces {
+        let face = b.face_mut(f).map_err(|x| error(&x.to_string()))?;
+        if let Some(surface) = face.surface.as_mut() {
+            if surface.owner().is_some() {
+                surface.set_owner(Some(arena_identity(CacheObject::Face(f))));
+            }
+        }
+    }
+    Ok(())
+}
+
+/// Rotates the start of every edge loop use the fixture walk reaches to its canonical
+/// edge use: the one whose own vertex point, then its CCW neighbour's vertex point, is
+/// least (exact, `f64::total_cmp`, x before y before z). The loop and its cycle are
+/// unchanged; only where the walk enters it. An exact tie between two edge uses of one loop has no
+/// canonical answer and is a harness error rather than a guess (ND-258).
+pub(super) fn canonical_loop_starts(b: &mut Brep) -> Result<(), HarnessError> {
+    use solidcore::topology::{EdgeuseId, LoopuseId, LoopuseStart};
+    let point = |b: &Brep, eu: EdgeuseId| -> Result<[f64; 3], HarnessError> {
+        let vu = b
+            .edgeuse(eu)
+            .map_err(|x| error(&x.to_string()))?
+            .vertexuse
+            .ok_or_else(|| error("loop edge use without vertex use"))?;
+        let v = b
+            .vertexuse(vu)
+            .map_err(|x| error(&x.to_string()))?
+            .vertex
+            .ok_or_else(|| error("vertex use without vertex"))?;
+        let p = b.vertex(v).map_err(|x| error(&x.to_string()))?.point;
+        Ok([p.x, p.y, p.z])
+    };
+    let cmp = |a: &[f64; 6], c: &[f64; 6]| {
+        a.iter()
+            .zip(c)
+            .map(|(x, y)| x.total_cmp(y))
+            .find(|o| o.is_ne())
+            .unwrap_or(core::cmp::Ordering::Equal)
+    };
+    // only the loop uses the fixture walk reaches: after a Boolean's deletes the arena
+    // keeps dead loop use records whose edge uses are gone
+    let walk_error = |_| error("fixture walk failed");
+    let g = super::topology_brep_p3::walk(b).map_err(walk_error)?;
+    let mut loopuses = Vec::with_capacity(g.len(4));
+    for i in 0..g.len(4) {
+        loopuses.push(LoopuseId::from_index(g.at(4, i).map_err(walk_error)?));
+    }
+    for lu in loopuses {
+        let start = b.loopuse(lu).map_err(|x| error(&x.to_string()))?.start;
+        let LoopuseStart::Edgeuse(Some(start)) = start else {
+            continue;
+        };
+        // the CCW cycle from the start
+        let mut cycle = vec![start];
+        loop {
+            let last = *cycle.last().ok_or_else(|| error("empty loop"))?;
+            let next = b
+                .edgeuse(last)
+                .map_err(|x| error(&x.to_string()))?
+                .ccw
+                .ok_or_else(|| error("open loop"))?;
+            if next == start {
+                break;
+            }
+            if cycle.len() > b.edgeuses().len() {
+                return Err(error("loop cycle does not close"));
+            }
+            cycle.push(next);
+        }
+        let mut keyed = Vec::with_capacity(cycle.len());
+        for &eu in &cycle {
+            let ccw = b
+                .edgeuse(eu)
+                .map_err(|x| error(&x.to_string()))?
+                .ccw
+                .ok_or_else(|| error("open loop"))?;
+            let [a, c, d] = point(b, eu)?;
+            let [e, f, g] = point(b, ccw)?;
+            keyed.push(([a, c, d, e, f, g], eu));
+        }
+        keyed.sort_by(|x, y| cmp(&x.0, &y.0));
+        if let [first, second, ..] = keyed.as_slice() {
+            if cmp(&first.0, &second.0).is_eq() {
+                return Err(error("unbreakable loop-start tie (ND-258)"));
+            }
+        }
+        let best = keyed.first().map(|x| x.1).ok_or_else(|| error("empty loop"))?;
+        b.loopuse_mut(lu).map_err(|x| error(&x.to_string()))?.start =
+            LoopuseStart::Edgeuse(Some(best));
+    }
+    Ok(())
+}
+
+fn append_graph(k: &Kernel, output: &mut Output, prefix: &str, brep: &Brep) -> Result<(), HarnessError> {
+    let graph = super::topology_brep_p10::snapshot(k, brep)?;
     for (key, values) in graph.ints {
         output.ints.insert(format!("{prefix}.{key}"), values);
     }
@@ -101,7 +251,7 @@ impl<'a> Record<'a> {
     }
 }
 
-fn native_snapshot(raw: &[f64]) -> Result<Output, HarnessError> {
+fn native_snapshot(k: &Kernel, raw: &[f64]) -> Result<Output, HarnessError> {
     let mut rd = Record { remaining: raw };
     let mut header = Vec::new();
     for _ in 0..9 {
@@ -127,7 +277,9 @@ fn native_snapshot(raw: &[f64]) -> Result<Output, HarnessError> {
             return Err(error("inexact post-state surface import"));
         }
         b.set_editing_enabled(*editing != 0.0);
-        append_graph(&mut output, prefix, &b)
+        // (the loop starts in canonical order, as the Rust side's: ND-258)
+        canonical_loop_starts(&mut b)?;
+        append_graph(k, &mut output, prefix, &b)
     };
     let mut presence = Vec::new();
     for prefix in ["primary", "other"] {
@@ -153,6 +305,7 @@ fn rust_snapshot(
     state: &ManifoldState,
 ) -> Result<Output, HarnessError> {
     let other_kernel = kernels.other.as_deref().unwrap_or(kernels.primary);
+    let k: &Kernel = kernels.primary;
     let mut output = Output::new()
         .ints(
             "status_and_state",
@@ -174,7 +327,7 @@ fn rust_snapshot(
         );
     for (prefix, b) in [("primary", primary), ("other", other)] {
         if let Some(b) = b {
-            append_graph(&mut output, prefix, b)?;
+            append_graph(k, &mut output, prefix, b)?;
         }
     }
     for (i, b) in state
@@ -183,7 +336,7 @@ fn rust_snapshot(
         .chain(&state.other_components)
         .enumerate()
     {
-        append_graph(&mut output, &format!("component.{i}"), b)?;
+        append_graph(k, &mut output, &format!("component.{i}"), b)?;
     }
     Ok(output)
 }
@@ -193,13 +346,14 @@ impl UnitDiff for Runner {
         "boolean.merge_p4"
     }
     fn run_cpp(&self, case: &Case) -> Result<Output, HarnessError> {
+        let k = &Kernel::default();
         let i: Inputs = case.parse()?;
         let raw = ffi::eval(&i.primary, &i.other, request(&i)).map_err(|e| error(&e))?;
         if raw == [-1.0] {
             return Ok(Output::rejected("native primitive constructor"));
         }
         // Status is data: Output::err would suppress all state comparison.
-        native_snapshot(&raw)
+        native_snapshot(k, &raw)
     }
     fn run_rust(&self, case: &Case) -> Result<Output, HarnessError> {
         let i: Inputs = case.parse()?;
@@ -242,6 +396,17 @@ impl UnitDiff for Runner {
             operation,
             if i.caller_lock { Some(&mut lock) } else { None },
         );
+        // (the loop starts in canonical order, as the native side's: ND-258)
+        if !matches!(&result, Err(e) if e.is_unported()) {
+            for b in primary
+                .iter_mut()
+                .chain(other.iter_mut())
+                .chain(state.primary_components.iter_mut())
+                .chain(state.other_components.iter_mut())
+            {
+                canonical_loop_starts(b)?;
+            }
+        }
         match result {
             Err(e) if e.is_unported() => {
                 Ok(Output::unported(&e).ok_or_else(|| error("missing deferral"))?)
@@ -266,6 +431,8 @@ impl UnitDiff for Runner {
         }
     }
     fn generate(&self, rng: &mut Rng) -> Option<Value> {
+        /// Redraws of a generated case whose operand cannot be built.
+        const REDRAWS: usize = 16;
         let scale = match rng.below(5) {
             0 => 1e-9,
             1 => 1e-3,
@@ -286,8 +453,18 @@ impl UnitDiff for Runner {
                 rng.uniform(0.5, 2.0) * scale,
             ]
         };
-        let a = operand();
-        let b = operand();
+        // Setup must succeed on both sides: a draw whose operand the Rust port of the shim's
+        // constructors refuses (a plane face over a domain too large at scale 1e6) is drawn
+        // again, up to REDRAWS times; the first draw is kept whenever it builds.
+        let mut a = operand();
+        let mut b = operand();
+        for _ in 0..REDRAWS {
+            if import(&a).is_ok() && import(&b).is_ok() {
+                break;
+            }
+            a = operand();
+            b = operand();
+        }
         Some(json!({"primary":a,"other":b,"operation":rng.below(11),
             "flags":[rng.chance(0.2),rng.chance(0.2),rng.chance(0.5),rng.chance(0.2),rng.chance(0.5)],
             "manifold":rng.chance(0.8),"distinct_contexts":rng.chance(0.5),"caller_lock":rng.chance(0.5)}))

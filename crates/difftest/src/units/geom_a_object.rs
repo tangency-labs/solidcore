@@ -515,7 +515,9 @@ impl RustRun {
             }
             return self.handles.get(i).copied();
         }
-        let k = -r - 1;
+        // i64::MIN resolves to nothing (the C++ side's `-ref - 1` wraps to a
+        // huge object index)
+        let k = r.checked_neg()? - 1;
         let (o, i) = (k / REF_STRIDE, k % REF_STRIDE);
         let o = usize::try_from(o).ok()?;
         if o >= self.objs.len() {
@@ -917,7 +919,13 @@ impl RustRun {
                 let target = self.obj(a2)?.r.type_code;
                 let old = self.cache_arg(a3)?;
                 let made = if target == a_object::BREP_TYPE && old.is_none() {
-                    self.new_brep_cache().map(Some)
+                    // A successful build ends with `SetCacheObj(pBrepCache)` on `this`.
+                    self.new_brep_cache().map(|c| {
+                        if let Some(o) = self.objs.get_mut(a1 as usize) {
+                            o.a.set_cache_obj(Some(c));
+                        }
+                        Some(c)
+                    })
                 } else {
                     a_object::sag_cache_make_or_validate(ct, target, old)
                 };

@@ -272,26 +272,13 @@ fn read_sms(path: &str) -> Result<InlineSrf, HarnessError> {
     Ok(InlineSrf { net, p, q, u, v })
 }
 
-/// Reads an upstream 3D `.smc` text file: `n`, `p`, rational flag, dimension (3),
-/// `n+1` points (`x y z`, or `wx wy wz w` when rational), `n+p+2` knots.
 fn read_smc(path: &str) -> Result<InlineCrv, HarnessError> {
-    let v = numbers(path)?;
-    let mut it = v.into_iter();
-    let mut num = || it.next().ok_or_else(|| harness(format!("{path}: truncated")));
-    let n = int(path, num()?)?;
-    let p = int(path, num()?)?;
-    let rat = num()? != 0.0;
-    if int(path, num()?)? != 3 {
-        return Err(harness(format!("{path}: not a 3D curve")));
-    }
-    let mut cpts = Vec::with_capacity(n + 1);
-    for _ in 0..=n {
-        let (x, y, z) = (num()?, num()?, num()?);
-        let w = if rat { num()? } else { NOW };
-        cpts.push([x, y, z, w]);
-    }
-    let u = (0..n + p + 2).map(|_| num()).collect::<Result<Vec<_>, _>>()?;
-    Ok(InlineCrv { cpts, p, u })
+    let c = crate::fixtures::text_curve::read_3d(path)?;
+    Ok(InlineCrv {
+        cpts: c.cpts,
+        p: c.p,
+        u: c.u,
+    })
 }
 
 fn srf(s: &SrfIn) -> Result<InlineSrf, HarnessError> {
@@ -768,7 +755,7 @@ fn dump_curve(o: &mut Vec<f64>, c: &BSplineCurve) {
 /// The `SmStatus` of a Rust error; `-1` for one upstream cannot return.
 fn status(e: &SolidError) -> f64 {
     match e {
-        SolidError::InvalidInput { .. } => 1007.0,
+        SolidError::InvalidInput { .. } | SolidError::PortInvariant { .. } => 1007.0,
         SolidError::Upstream { code, .. } => f64::from(*code),
         _ => -1.0,
     }
@@ -823,7 +810,7 @@ fn rust(i: &Inputs) -> Result<Output, HarnessError> {
         (OpIn::DegenPt { tol, dom }, Some(t)) => {
             let d = dom.as_ref().map(dom_of);
             this_of(t)?
-                .is_degenerate_point(*tol, d.as_ref())
+                .is_degenerate_point(&k, *tol, d.as_ref())
                 .map(|b| o.push(flag(b)))
         }
         (OpIn::Bilinear {}, Some(t)) => {
@@ -860,7 +847,7 @@ fn rust(i: &Inputs) -> Result<Output, HarnessError> {
                     o.extend_from_slice(&v);
                 })
         }
-        (OpIn::MaxDomain {}, Some(t)) => this_of(t)?.max_analytic_domain().map(|d| {
+        (OpIn::MaxDomain {}, Some(t)) => this_of(t)?.max_analytic_domain(&k).map(|d| {
             o.extend([d.min().x, d.min().y, d.max().x, d.max().y]);
         }),
         (
@@ -939,7 +926,7 @@ fn rust(i: &Inputs) -> Result<Output, HarnessError> {
                 .iter()
                 .map(|a| bsc_of(a).map(SmCurve::from))
                 .collect::<Result<Vec<_>, _>>()?;
-            BSplineSurface::create_sphere_from_arcs(&cs, *tol).map(|r| {
+            BSplineSurface::create_sphere_from_arcs(&k, &cs, *tol).map(|r| {
                 o.push(r.ccw_arcs.len() as f64);
                 o.extend(r.ccw_arcs.iter().map(|&j| j as f64));
                 o.extend(r.orients.iter().map(|&x| orient_code(x)));

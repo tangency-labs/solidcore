@@ -442,7 +442,7 @@ fn ext(d: &[[f64; 3]; 2]) -> Extent3d {
 /// cannot return.
 fn status(e: &SolidError) -> f64 {
     match e {
-        SolidError::InvalidInput { .. } => 1007.0,
+        SolidError::InvalidInput { .. } | SolidError::PortInvariant { .. } => 1007.0,
         SolidError::Upstream { code, .. } => f64::from(*code),
         _ => -1.0,
     }
@@ -464,7 +464,7 @@ macro_rules! tri {
     };
 }
 
-fn rust(i: &Inputs) -> Result<Output, HarnessError> {
+fn rust(k: &Kernel, i: &Inputs) -> Result<Output, HarnessError> {
     let mut o: Vec<f64> = Vec::new();
     let vol = match i.unbend() {
         Some(u) => Some(tri!(o, build(u))),
@@ -527,7 +527,7 @@ fn rust(i: &Inputs) -> Result<Output, HarnessError> {
             let mut pseudo = PseudoBox::new();
             tri!(
                 o,
-                u.evaluate_bounding_box_simple(
+                u.evaluate_bounding_box_simple(k, 
                     v,
                     &param_box,
                     want_box.then_some(&mut proj),
@@ -597,7 +597,7 @@ fn rust(i: &Inputs) -> Result<Output, HarnessError> {
         Inputs::Preds { p, a, b, .. } => {
             let v = need()?;
             let in_point = tri!(o, v.is_point_in_param_domain_simple(v3(*p)));
-            let in_line = tri!(o, v.is_line_in_param_domain_simple(v3(*a), v3(*b)));
+            let in_line = tri!(o, v.is_line_in_param_domain_simple(k, v3(*a), v3(*b)));
             let bounded = tri!(o, v.is_bounded_simple());
             o.push(0.0);
             o.extend([fl(in_point), fl(in_line), fl(bounded)]);
@@ -956,6 +956,7 @@ impl UnitDiff for Runner {
     }
 
     fn run_rust(&self, case: &Case) -> Result<Output, HarnessError> {
-        rust(&case.parse()?)
+        let k = &Kernel::default();
+        rust(k, &case.parse()?)
     }
 }

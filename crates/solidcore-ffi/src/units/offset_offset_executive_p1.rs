@@ -8,8 +8,10 @@
 //! | [`config`] | constructor/destructor, `Get/SetInset`, `Get/SetExtendConvexEdges`, `SetMergeResults`, `SetCreateOffsetSolid`, `GetTangencyTolDegrees`, `GetOffsetBrep`, `Get/SetShellFaces`, `GetOffsetEdgeuse` |
 //! | [`synchronize`] | `SyncronizeOffsetEdgeuses`, indirectly `sm_RemoveSmallStuff`, `sm_InsertBreaks`, `sm_SortEdgeuses`, `sm_ExtractGaps` |
 //! | [`extend`] | `GetCreateExtendedSurface` |
+//! | [`vertex`] | `BuildOffsetOfVertex`, including both real `VertexOffset` callsites |
 //! | [`face_tail`] | `BuildOffsetOfFaceuse` (contained-domain branch), `MapEdgeuses`, `MakeFaceWithCurves` (fixture) |
 //! | [`map_twin`] | `MapEdgeuses` alone, between two `MakeFaceWithCurves` rectangle faces |
+//! | [`replace`] | `ReplaceImplicitOffsets` on one face whose surface is an owning `SmOffsetSurface` of a real `SmPlane`, `SmBSplineSurface` or `SmSurfOfExtrusion` |
 //! | [`probe`] | `ReplaceImplicitOffsets`, `RemoveExcessFaces`, `BuildSideWallOfEdgeuse`, `BuildOffsetOfEdgeuses`, `FillGapEdgeuses`, `BuildOffsetOfVertex`, `BuildOffsetOfFaceuse`, `PiecewiseMerge`, `MapEdgeuses`; `sm_NotifyEdgeAndVertices` indirectly via `MapEdgeuses` |
 //!
 //! Deviations: caller-owned flat snapshots instead of pointers/out-parameters;
@@ -95,6 +97,20 @@
 //!   3 other. Result IDs are assigned on first successful encounter, never reused
 //!   after eviction. Forget records: `1, was_cached, remaining_cache_count`;
 //!   Clear records: `2, previous_cache_count, 0`.
+//! * `vertex` (ABI mode 6; modes 4/5 are `face_tail`/`map_twin`): input `point[3], distance, approx_tol, original_tol,
+//!   result_tol, has_strut`, optional `radius, height, map_mate`, then counted UV
+//!   fractions. A strut is made with `MakeVertexLoop`/`MakeEdgeInFace` on a real
+//!   planar face; its mapped result face is a planar disk with one closed rational
+//!   B-spline circular edge (never a cached/prebuilt cap). Output: `0, status`,
+//!   effective original/result tolerances, `curve_count, orientation_count,
+//!   has_surface`, orientations, then each trim's `type, interval[2]`, counted
+//!   samples `point_status, xyz[3]`. If present the cap is `type, domain[4],
+//!   has_nurb`; a NURB adds `n,m,p,q,r,s`, homogeneous net in U-major/V-minor
+//!   order, all U knots and all V knots. Finally counted cap samples contain
+//!   `Evaluate2ndDerivatives_status, [P,Du,Dv,Duv,Duu,Dvv][18]` (TRUE/TRUE sides).
+//!   All type codes/statuses are native, all arithmetic uses the runner's normal
+//!   1e-9 relative comparator with no absolute floors. The unchanged `probe`
+//!   isolated-vertex fixture remains a counts-only smoke test.
 //! * `probe`: `0, status, curve_count, orientation_count, has_surface,
 //!   has_result_brep, has_offset_brep, counted_original_to_offset_EU_lookups`.
 //! * `face_tail`: `0, status, related_face_count`, per related face
@@ -106,6 +122,9 @@
 //!   `1, start_xyz[3], mate_start_xyz[3]` of the offset use.
 //! * `map_twin`: `0, status, number_original_edgeuses` and the same per-use
 //!   records as `face_tail`.
+//! * `replace`: `0, status, face_count`, per face `surface_type, face_uv_domain[4]`
+//!   and, with a surface, its `natural_uv_domain[4]` and counted samples (fractions
+//!   of that domain) `point_status, xyz[3]`.
 //!
 //! **Relation ordering:** this checkout uses pointer-hashed `unordered_set`
 //! values in `SmRelation`. We preserve actual `GetSeconds` order; equal-minimum
@@ -290,6 +309,36 @@ pub struct Extension {
     pub samples: Vec<[f64; 2]>,
 }
 
+/// A real source strut and mapped circular result face for [`vertex`].
+#[derive(Debug, Clone, PartialEq)]
+pub struct VertexStrut {
+    /// Radius of the closed B-spline edge on the result disk.
+    pub radius: f64,
+    /// Result disk center's Z displacement from the original vertex.
+    pub height: f64,
+    /// Map the source faceuse's mate, exercising the executive's fallback lookup.
+    pub map_mate: bool,
+}
+
+/// Geometry-valued `BuildOffsetOfVertex` fixture on two independently toleranced B-reps.
+#[derive(Debug, Clone, PartialEq)]
+pub struct VertexFixture {
+    /// Location of the original shell vertex or interior strut endpoint.
+    pub point: [f64; 3],
+    /// Geometry creator's offset distance, forwarded unchanged.
+    pub offset_distance: f64,
+    /// Geometry creator's approximation tolerance, forwarded unchanged.
+    pub approx_tol: f64,
+    /// Original B-rep tolerance (the creator reads this, not the result tolerance).
+    pub original_tolerance: f64,
+    /// Result B-rep tolerance (used by the executive's edge-selection predicates).
+    pub result_tolerance: f64,
+    /// Absent for an isolated original shell vertex, present for a real mapped strut.
+    pub strut: Option<VertexStrut>,
+    /// Normalized samples of the returned cap's natural domain, in `[0, 1]^2`.
+    pub samples: Vec<[f64; 2]>,
+}
+
 /// Independent native topology paths, never implicitly mixed into arithmetic cases.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(i32)]
@@ -371,6 +420,42 @@ pub struct MapTwin {
     /// Split the offset rectangle's bottom edge at this `x` (strictly inside the
     /// rectangle) into two collinear edges, so the loop has five edges.
     pub split_bottom: Option<f64>,
+}
+
+/// The base of the offset surface of a [`replace`] fixture.
+#[derive(Debug, Clone, PartialEq)]
+pub enum OffsetBase {
+    /// A real `SmPlane` or `SmBSplineSurface`.
+    Surface(SurfaceFixture),
+    /// `SmSurfOfExtrusion(generator, origin, direction, domain, swap_uv)`, without
+    /// NURB (the executive's `GetOrCreateGwNurbPointer` makes it).
+    Extrusion {
+        /// The generator (an `SmBSplineCurve` kind).
+        generator: CurveFixture,
+        /// A point on the generator.
+        origin: [f64; 3],
+        /// The extrusion vector.
+        direction: [f64; 3],
+        /// The analytic domain `umin, vmin, umax, vmax` (U = the generator's domain).
+        domain: [f64; 4],
+        /// The generator is a constant-U iso-curve of the NURB.
+        swap_uv: bool,
+    },
+}
+
+/// A [`replace`] fixture: one `CreateFaceFromSurface` face (natural domain) on an
+/// owning `SmOffsetSurface(offset_distance, base)`, then
+/// `ReplaceImplicitOffsets(brep, approx_tol)`.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Replace {
+    /// The offset surface's base.
+    pub base: OffsetBase,
+    /// The offset distance.
+    pub offset_distance: f64,
+    /// The approximation tolerance passed to `ReplaceImplicitOffsets`.
+    pub approx_tol: f64,
+    /// Sample fractions in `[0, 1]^2` of each result face surface's natural domain.
+    pub samples: Vec<[f64; 2]>,
 }
 
 mod sys {
@@ -728,6 +813,53 @@ fn extension_input(input: &Extension) -> Result<Pack, FfiError> {
     Ok(pack)
 }
 
+fn vertex_input(input: &VertexFixture) -> Result<Pack, FfiError> {
+    finite(&input.point)?;
+    finite(&[
+        input.offset_distance,
+        input.approx_tol,
+        input.original_tolerance,
+        input.result_tolerance,
+    ])?;
+    count(input.samples.len())?;
+    let mut pack = Pack::default();
+    pack.add(&input.point)?;
+    pack.add(&[
+        input.offset_distance,
+        input.approx_tol,
+        input.original_tolerance,
+        input.result_tolerance,
+        f64::from(input.strut.is_some()),
+    ])?;
+    if let Some(strut) = &input.strut {
+        // These are arithmetic in the fixture constructors; avoid overflowing
+        // before native geometry validation can report a constructor rejection.
+        finite(&[
+            strut.radius,
+            strut.height,
+            input.point[0] - 2.0,
+            input.point[0] + 2.0,
+            input.point[1] - 2.0,
+            input.point[1] + 2.0,
+            input.point[2] + strut.height,
+            input.point[0] + strut.radius,
+            input.point[0] - strut.radius,
+            input.point[1] + strut.radius,
+            input.point[1] - strut.radius,
+        ])?;
+        pack.add(&[strut.radius, strut.height, f64::from(strut.map_mate)])?;
+    }
+    pack.size(input.samples.len())?;
+    for sample in &input.samples {
+        finite(sample)?;
+        if sample.iter().any(|value| !(0.0..=1.0).contains(value)) {
+            return Err(bad("vertex sample fractions must be in [0, 1]"));
+        }
+        pack.add(sample)?;
+    }
+    Ok(pack)
+}
+
 fn run(mode: i32, pack: &Pack) -> Result<Vec<f64>, FfiError> {
     call_with_buffer(1024, |out, len| {
         // SAFETY: only the typed, validated packers call this private function.
@@ -763,6 +895,12 @@ pub fn synchronize(input: &Synchronize) -> Result<Vec<f64>, FfiError> {
 /// signed zero is allowed. Native operation/evaluation errors remain in the snapshot.
 pub fn extend(input: &Extension) -> Result<Vec<f64>, FfiError> {
     run(2, &extension_input(input)?)
+}
+
+/// Calls native `BuildOffsetOfVertex` on real topology and snapshots the resulting cap.
+/// Native geometry-constructor rejections remain separate from operation statuses.
+pub fn vertex(input: &VertexFixture) -> Result<Vec<f64>, FfiError> {
+    run(6, &vertex_input(input)?)
 }
 
 /// Runs one independent topology probe. The tolerance is forwarded unchanged;
@@ -849,6 +987,55 @@ pub fn map_twin(input: &MapTwin) -> Result<Vec<f64>, FfiError> {
     run(5, &map_twin_input(input)?)
 }
 
+fn replace_input(input: &Replace) -> Result<Pack, FfiError> {
+    finite(&[input.offset_distance, input.approx_tol])?;
+    if input.samples.len() > 64 {
+        return Err(bad("at most 64 replace samples"));
+    }
+    let mut pack = Pack::default();
+    match &input.base {
+        OffsetBase::Surface(surface) => {
+            pack.add(&[0.0])?;
+            pack.surface(surface)?;
+        }
+        OffsetBase::Extrusion {
+            generator,
+            origin,
+            direction,
+            domain,
+            swap_uv,
+        } => {
+            finite(origin)?;
+            finite(direction)?;
+            let [a, b, c, d] = *domain;
+            interval([a, c], true)?;
+            interval([b, d], true)?;
+            pack.add(&[1.0])?;
+            pack.curve(generator)?;
+            pack.add(origin)?;
+            pack.add(direction)?;
+            pack.add(domain)?;
+            pack.add(&[f64::from(u8::from(*swap_uv))])?;
+        }
+    }
+    pack.add(&[input.offset_distance, input.approx_tol])?;
+    pack.size(input.samples.len())?;
+    for sample in &input.samples {
+        finite(sample)?;
+        if sample.iter().any(|v| !(0.0..=1.0).contains(v)) {
+            return Err(bad("surface sample fractions must be in [0, 1]"));
+        }
+        pack.add(sample)?;
+    }
+    Ok(pack)
+}
+
+/// Runs the native `ReplaceImplicitOffsets` on one real offset-surface face. See the
+/// module-level protocol for the returned record.
+pub fn replace(input: &Replace) -> Result<Vec<f64>, FfiError> {
+    run(7, &replace_input(input)?)
+}
+
 // The packers' input checks without the native call: the difftest runner's Rust
 // side refuses exactly what the FFI refuses by running the same code (counts,
 // finiteness, selector ranges, fixture geometry validation and the packed-size
@@ -871,6 +1058,10 @@ pub fn validate_extend(input: &Extension) -> Result<(), FfiError> {
 pub fn validate_face_tail(input: &FaceTail) -> Result<(), FfiError> {
     face_tail_input(input).map(|_| ())
 }
+/// [`replace`]'s input checks alone.
+pub fn validate_replace(input: &Replace) -> Result<(), FfiError> {
+    replace_input(input).map(|_| ())
+}
 /// [`map_twin`]'s input checks alone.
 pub fn validate_map_twin(input: &MapTwin) -> Result<(), FfiError> {
     map_twin_input(input).map(|_| ())
@@ -885,6 +1076,75 @@ pub fn face_tail(input: &FaceTail) -> Result<Vec<f64>, FfiError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn vertex_fixture() -> VertexFixture {
+        VertexFixture {
+            point: [1.25, -2.5, 3.75],
+            offset_distance: 1.0,
+            approx_tol: 1e-6,
+            original_tolerance: 2e-7,
+            result_tolerance: 5e-6,
+            strut: Some(VertexStrut {
+                radius: 0.6,
+                height: 0.8,
+                map_mate: true,
+            }),
+            samples: vec![[0.137, 0.219], [0.371, 0.683]],
+        }
+    }
+
+    #[test]
+    fn vertex_protocol_preserves_original_and_result_tolerances_and_real_mapping() {
+        let input = vertex_fixture();
+        let packed = vertex_input(&input).unwrap();
+        assert_eq!(
+            packed.0,
+            [
+                1.25, -2.5, 3.75, 1.0, 1e-6, 2e-7, 5e-6, 1.0, 0.6, 0.8, 1.0, 2.0, 0.137, 0.219,
+                0.371, 0.683
+            ]
+        );
+        let mut isolated = input;
+        isolated.strut = None;
+        assert_eq!(vertex_input(&isolated).unwrap().0.len(), 13);
+        // Defined finite constructor/operation errors must reach native code,
+        // not disappear as guard rejections of a successful comparison domain.
+        isolated.offset_distance = -1.0;
+        isolated.approx_tol = -1.0;
+        isolated.original_tolerance = 0.0;
+        isolated.result_tolerance = -0.0;
+        assert!(vertex_input(&isolated).is_ok());
+        let mut input = vertex_fixture();
+        input.strut.as_mut().unwrap().radius = 0.0;
+        assert!(vertex_input(&input).is_ok()); // actual native circle-constructor rejection
+    }
+
+    #[test]
+    fn vertex_preflight_bounds_samples_and_refuses_nonfinite_constructor_arithmetic() {
+        for value in [f64::NAN, f64::INFINITY, f64::NEG_INFINITY] {
+            let mut input = vertex_fixture();
+            input.point[1] = value;
+            assert!(vertex_input(&input).is_err());
+            input = vertex_fixture();
+            input.result_tolerance = value;
+            assert!(vertex_input(&input).is_err());
+            input = vertex_fixture();
+            input.strut.as_mut().unwrap().height = value;
+            assert!(vertex_input(&input).is_err());
+        }
+        for sample in [[-0.01, 0.5], [0.5, 1.01], [f64::NAN, 0.5]] {
+            let mut input = vertex_fixture();
+            input.samples = vec![sample];
+            assert!(vertex_input(&input).is_err());
+        }
+        let mut input = vertex_fixture();
+        input.samples = vec![[0.3, 0.7]; MAX_ITEMS + 1];
+        assert!(vertex_input(&input).is_err());
+        input = vertex_fixture();
+        input.point[2] = f64::MAX;
+        input.strut.as_mut().unwrap().height = f64::MAX;
+        assert!(vertex_input(&input).is_err());
+    }
 
     fn line(interval: [f64; 2]) -> EdgeFixture {
         EdgeFixture {

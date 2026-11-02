@@ -3,30 +3,38 @@
 //!
 //! C++: `solidcore_ffi::units::curve_crv_on_surf` (upstream
 //! `source/SMLib/src/SmCrvOnSurf.cpp` on objects built from a 2D `SmBSplineCurve` UV
-//! curve, or the UV-line constructor, on an `SmBSplineSurface`; the break cache is
-//! loaded directly). Rust: `solidcore::curve::crv_on_surf` (the `&mut` methods, so the
-//! caches evolve as upstream's; `Info` and `Equal` go through the [`Curve`] dispatch).
+//! curve, or the UV-line constructor, over a B-spline base or a real
+//! `SmOffsetSurface`). Rust: `solidcore::curve::crv_on_surf` (the `&mut` methods, so
+//! the caches evolve as upstream's; `Info` and `Equal` go through the [`Curve`] dispatch).
 //!
-//! A case is either an object (`cos`: `uv` (`bspline` or `line`), `srf` (inline or an
-//! upstream `.sms` file), optional `domain`, `owner`, optional `cache` `{need,
-//! breaks}`) with an op list run in order on it, or a database record (`read_db`).
+//! A case is either an object (`cos`: `uv` (`bspline` or `line`), B-spline `srf` (inline
+//! or an upstream `.sms` file), optional `offset`, `domain`, `owner`, `cache` `{need, breaks}`)
+//! with an op list run in order on it, or a database record (`read_db`). Inline UV
+//! B-splines and surfaces accept `borrow_nurb` to preserve raw knots.
 //! Both sides produce the flat record documented in the ffi module (every op's status,
 //! `0` = `SM_SUCCESS`, else the `SmStatus`; `1007` for a Rust `InvalidInput`, `-1` for a
 //! Rust error upstream cannot produce, then its outputs), compared as `out`.
 //!
-//! Deferred cases: what reaches the unported parts: the curve classification of
-//! uncached breaks (`intersect.curve_class_*`, behind `GetKnots`, the approximation
-//! without breaks, ...), `SmSurface::EvaluateNormal` (`surface.surface_p7`: the surface
-//! normal and the gap sampler), `SmSurface::Evaluate2ndDerivatives`
-//! (`surface.surface_p1`) and `SmSurface::ReadFromDB` (`surface.surface_p2`). Every run
-//! has at least [`MIN_GENERATED`] generated cases; generated inputs the ffi wrapper
-//! rejects are redrawn.
+//! Knot and drop operations compare the break-cache state as well as their answers:
+//! a local solve may leave breaks uncached, while a later global solve populates
+//! them through the base curve's virtual knot queries. Every run has at least
+//! [`MIN_GENERATED`] generated cases; generated inputs the ffi wrapper rejects are
+//! redrawn. Any genuinely unported downstream call still defers the whole case.
+//!
+//! Deviations: the runner-local SMS reader validates counts below the exclusive
+//! `2^usize::BITS` bound, checks dimension and payload arithmetic and the available
+//! tokens before constructing the net, and grows storage incrementally. Valid point
+//! order, weights, knots, lazy float parsing and path-bearing errors are unchanged.
+
+#[path = "fixtures/crv_on_surf_sms.rs"]
+mod sms;
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use solidcore::curve::crv_on_surf::CrvOnSurf;
 use solidcore::curve::curve::{Curve, CurveKind};
+use solidcore::geom::assert_array::{AssertArray, ObjectKey};
 use solidcore::geom::axis2_placement::Axis2Placement;
 use solidcore::geom::extent1d::Extent1d;
 use solidcore::geom::extent2d::Extent2d;
@@ -40,12 +48,16 @@ use solidcore::nurbs::b_spline_surface::BSplineSurface;
 use solidcore::nurbs::crv_basic::Curve as NurbCurve;
 use solidcore::nurbs::math::CPoint;
 use solidcore::nurbs::srf_basic::Surface;
+use solidcore::surface::offset_surface::{OffsetSurface, SS_UNKNOWN};
+use solidcore::surface::surface::{Surface as SmSurface, SurfaceKind};
+use solidcore::topology::brep::validation::curve_assert_valid;
 use solidcore::topology::database_io::{DatabaseReader, FileType, InputStream};
 use solidcore::SolidError;
 use solidcore_ffi::units::curve_crv_on_surf::{self as ffi, ObjOp, Op, NOW, NOZ};
 
 use crate::case::CaseContext;
 use crate::runner::default_cases;
+use crate::util::assert_reports::put_assert_reports;
 use crate::{Case, HarnessError, Output, Rng, UnitDiff};
 
 /// Generated cases per run, whatever `--seeds` says (it can only raise this).
@@ -67,6 +79,9 @@ struct UvBspline {
     cpts: Vec<[f64; 3]>,
     p: usize,
     u: Vec<f64>,
+    /// Borrow the supplied NURB without constructor knot repair on both sides.
+    #[serde(default)]
+    borrow_nurb: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -85,6 +100,9 @@ struct InlineSrf {
     q: usize,
     u: Vec<f64>,
     v: Vec<f64>,
+    /// Borrow the supplied NURB without constructor knot repair on both sides.
+    #[serde(default)]
+    borrow_nurb: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -97,6 +115,14 @@ enum SrfIn {
     Inline(InlineSrf),
 }
 
+/// A real `SmOffsetSurface` wrapped around the B-spline `srf`; ownership controls
+/// whether the wrapper deletes its base.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct OffsetIn {
+    distance: f64,
+    #[serde(default)]
+    owns_base: bool,
+}
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct CacheIn {
     need: bool,
@@ -108,6 +134,7 @@ struct CosIn {
     uv: UvIn,
     srf: SrfIn,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    offset: Option<OffsetIn>,
     domain: Option<[f64; 4]>,
     #[serde(default)]
     owner: u64,
@@ -122,6 +149,12 @@ enum OpIn {
         types: Vec<i64>,
     },
     State,
+    /// `AssertValid` at `level` (0..2, 4 = `SM_LEVEL_GIVEN`), with or without a
+    /// report list; the reports as `crate::util::assert_reports` writes them.
+    AssertValid {
+        level: u8,
+        list: bool,
+    },
     Eval {
         t: f64,
         n: usize,
@@ -155,6 +188,12 @@ enum OpIn {
         other: Option<Box<CosIn>>,
     },
     Copy,
+    CopyEval {
+        t: f64,
+        n: usize,
+        left: bool,
+        nonzero: bool,
+    },
     EditParam {
         a: f64,
         b: f64,
@@ -232,41 +271,15 @@ enum Inputs {
 /// `m+q+2` v knots.
 fn read_sms(path: &str) -> Result<InlineSrf, HarnessError> {
     let text = std::fs::read_to_string(path).map_err(|e| harness(format!("{path}: {e}")))?;
-    let mut it = text.split_whitespace();
-    let mut num = || -> Result<f64, HarnessError> {
-        it.next()
-            .ok_or_else(|| harness(format!("{path}: truncated")))?
-            .parse::<f64>()
-            .map_err(|e| harness(format!("{path}: {e}")))
-    };
-    let int = |v: f64| -> Result<usize, HarnessError> {
-        if v.fract() != 0.0 || v < 0.0 {
-            return Err(harness(format!("{path}: bad count {v}")));
-        }
-        Ok(v as usize)
-    };
-    let n = int(num()?)?;
-    let m = int(num()?)?;
-    let p = int(num()?)?;
-    let q = int(num()?)?;
-    let rat = num()? != 0.0;
-    let mut net = Vec::with_capacity(n + 1);
-    for _ in 0..=n {
-        let mut row = Vec::with_capacity(m + 1);
-        for _ in 0..=m {
-            let (x, y, z) = (num()?, num()?, num()?);
-            let w = if rat { num()? } else { NOW };
-            row.push([x, y, z, w]);
-        }
-        net.push(row);
-    }
-    let u = (0..n + p + 2)
-        .map(|_| num())
-        .collect::<Result<Vec<_>, _>>()?;
-    let v = (0..m + q + 2)
-        .map(|_| num())
-        .collect::<Result<Vec<_>, _>>()?;
-    Ok(InlineSrf { net, p, q, u, v })
+    let s = sms::parse_sms(&text, path)?;
+    Ok(InlineSrf {
+        net: s.net,
+        p: s.p,
+        q: s.q,
+        u: s.u,
+        v: s.v,
+        borrow_nurb: false,
+    })
 }
 
 fn resolve(s: &SrfIn) -> Result<InlineSrf, HarnessError> {
@@ -296,7 +309,7 @@ fn cos_block(v: &mut Vec<f64>, c: &CosIn) -> Result<(), HarnessError> {
         UvIn::Bspline(bs) => {
             let n = bs.cpts.len().saturating_sub(1);
             let m = bs.u.len().saturating_sub(1);
-            v.extend([0.0, n as f64, bs.p as f64, m as f64]);
+            v.extend([0.0, b(bs.borrow_nurb), n as f64, bs.p as f64, m as f64]);
             for &[x, y, w] in &bs.cpts {
                 v.extend([x, y, NOZ, w]);
             }
@@ -307,7 +320,9 @@ fn cos_block(v: &mut Vec<f64>, c: &CosIn) -> Result<(), HarnessError> {
             v.extend_from_slice(l);
         }
     }
+    v.push(b(c.offset.is_some()));
     let s = resolve(&c.srf)?;
+    v.push(b(s.borrow_nurb));
     let n = s.net.len().saturating_sub(1);
     let m = s.net.first().map_or(0, Vec::len).saturating_sub(1);
     v.extend([
@@ -323,6 +338,9 @@ fn cos_block(v: &mut Vec<f64>, c: &CosIn) -> Result<(), HarnessError> {
     }
     v.extend_from_slice(&s.u);
     v.extend_from_slice(&s.v);
+    if let Some(offset) = &c.offset {
+        v.extend([offset.distance, b(offset.owns_base)]);
+    }
     v.push(b(c.domain.is_some()));
     v.extend_from_slice(&c.domain.unwrap_or([0.0; 4]));
     v.push(c.owner as f64);
@@ -340,6 +358,7 @@ fn obj_op_of(op: &OpIn) -> ObjOp {
     match op {
         OpIn::Info { .. } => ObjOp::Info,
         OpIn::State => ObjOp::State,
+        OpIn::AssertValid { .. } => ObjOp::AssertValid,
         OpIn::Eval { .. } => ObjOp::Eval,
         OpIn::EvalPoint { .. } => ObjOp::EvalPoint,
         OpIn::EvalUv { .. } => ObjOp::EvalUv,
@@ -350,6 +369,7 @@ fn obj_op_of(op: &OpIn) -> ObjOp {
         OpIn::Conts { .. } => ObjOp::Conts,
         OpIn::Equal { .. } => ObjOp::Equal,
         OpIn::Copy => ObjOp::Copy,
+        OpIn::CopyEval { .. } => ObjOp::CopyEval,
         OpIn::EditParam { .. } => ObjOp::EditParam,
         OpIn::Reverse { .. } => ObjOp::Reverse,
         OpIn::Trim { .. } => ObjOp::Trim,
@@ -369,7 +389,14 @@ fn op_params(v: &mut Vec<f64>, op: &OpIn) -> Result<(), HarnessError> {
             v.extend(types.iter().map(|&t| t as f64));
         }
         OpIn::State | OpIn::Nnk | OpIn::Copy => {}
+        OpIn::AssertValid { level, list } => v.extend([f64::from(*level), b(*list)]),
         OpIn::Eval {
+            t,
+            n,
+            left,
+            nonzero,
+        }
+        | OpIn::CopyEval {
             t,
             n,
             left,
@@ -521,10 +548,14 @@ fn build_uv(bs: &UvBspline) -> Result<Curve, HarnessError> {
         .collect();
     let cur =
         NurbCurve::new(pw, bs.p, bs.u.clone()).map_err(|e| harness(format!("uv curve: {e}")))?;
-    Ok(Curve::from(BSplineCurve::from_nurb(cur, 2, false)))
+    Ok(Curve::from(BSplineCurve::from_nurb(cur, 2, bs.borrow_nurb)))
 }
 
-fn build_surface(s: &SrfIn) -> Result<BSplineSurface, HarnessError> {
+fn build_surface(
+    k: &Kernel,
+    s: &SrfIn,
+    offset: Option<&OffsetIn>,
+) -> Result<SmSurface, HarnessError> {
     let i = resolve(s)?;
     let net = i
         .net
@@ -537,21 +568,26 @@ fn build_surface(s: &SrfIn) -> Result<BSplineSurface, HarnessError> {
         .collect();
     let sur =
         Surface::new(net, i.p, i.q, i.u, i.v).map_err(|e| harness(format!("surface: {e}")))?;
-    Ok(BSplineSurface::from_nurb(sur, false))
+    let base = SmSurface::from(BSplineSurface::from_nurb(sur, i.borrow_nurb));
+    match offset {
+        None => Ok(base),
+        Some(offset) => OffsetSurface::new(k, offset.distance, base, offset.owns_base, SS_UNKNOWN)
+            .map(SmSurface::from)
+            .map_err(|e| harness(format!("offset surface: {e}"))),
+    }
 }
 
 /// The object, or the error (status) its construction gives.
 fn build(c: &CosIn) -> Result<solidcore::Result<CrvOnSurf>, HarnessError> {
-    let srf = build_surface(&c.srf)?;
+    let k = Kernel::default();
+    let srf = build_surface(&k, &c.srf, c.offset.as_ref())?;
     let domain = c
         .domain
         .map(|[a, bb, cc, d]| Extent2d::from_bounds(a, bb, cc, d));
     let r = match &c.uv {
-        UvIn::Bspline(bs) => {
-            CrvOnSurf::new(&Kernel::default(), build_uv(bs)?, srf, domain, c.owner)
-        }
+        UvIn::Bspline(bs) => CrvOnSurf::new(&k, build_uv(bs)?, srf, domain, c.owner),
         UvIn::Line([x0, y0, x1, y1]) => CrvOnSurf::from_uv_line(
-            &Kernel::default(),
+            &k,
             Point2::new(*x0, *y0),
             Point2::new(*x1, *y1),
             srf,
@@ -600,19 +636,27 @@ fn put_curve(o: &mut Vec<f64>, c: &Curve) {
     }
 }
 
-fn put_surface(o: &mut Vec<f64>, s: &BSplineSurface) {
-    match s.gw_nurb() {
-        None => o.push(-1.0),
-        Some(sur) => {
-            o.extend([sur.n() as f64, sur.m() as f64]);
-            for row in sur.cpts() {
-                for p in row {
-                    o.extend([p.x, p.y, p.z, p.w]);
+fn put_surface(o: &mut Vec<f64>, s: &SmSurface) {
+    o.push(s.type_code() as f64);
+    match s.kind() {
+        SurfaceKind::BSpline(s) => match s.gw_nurb() {
+            None => o.push(-1.0),
+            Some(sur) => {
+                o.extend([sur.n() as f64, sur.m() as f64]);
+                for row in sur.cpts() {
+                    for p in row {
+                        o.extend([p.x, p.y, p.z, p.w]);
+                    }
                 }
+                o.extend_from_slice(sur.u_knots());
+                o.extend_from_slice(sur.v_knots());
             }
-            o.extend_from_slice(sur.u_knots());
-            o.extend_from_slice(sur.v_knots());
+        },
+        SurfaceKind::OffsetSurface(s) => {
+            o.extend([s.offset_distance(), b(s.owns_surface())]);
+            put_surface(o, s.base_surface());
         }
+        _ => {}
     }
 }
 
@@ -621,15 +665,16 @@ fn put_state(o: &mut Vec<f64>, c: &CrvOnSurf) {
     let d = c.uv_domain();
     o.extend([d.min().x, d.min().y, d.max().x, d.max().y]);
     o.push(b(c.need_breaks()));
-    o.push(c.breaks().len() as f64);
-    o.extend_from_slice(c.breaks());
+    let breaks = c.breaks();
+    o.push(breaks.len() as f64);
+    o.extend_from_slice(&breaks);
     o.push(c.bs_approx_max_gap_3d());
     o.push(b(c.parametrization_matches()));
     match c.bs_approx() {
         None => o.push(0.0),
         Some(a) => {
             o.push(1.0);
-            put_nurb(o, a);
+            put_nurb(o, &a);
         }
     }
     put_curve(o, c.uv_curve());
@@ -640,7 +685,7 @@ fn put_state(o: &mut Vec<f64>, c: &CrvOnSurf) {
 /// cannot return.
 fn status(e: &SolidError) -> f64 {
     match e {
-        SolidError::InvalidInput { .. } => 1007.0,
+        SolidError::InvalidInput { .. } | SolidError::PortInvariant { .. } => 1007.0,
         SolidError::Upstream { code, .. } => f64::from(*code),
         _ => -1.0,
     }
@@ -707,13 +752,28 @@ fn rust_op(o: &mut Vec<f64>, c: &mut CrvOnSurf, op: &OpIn, k: &Kernel) -> Result
             o.push(0.0);
             put_state(o, c);
         }
+        OpIn::AssertValid { level, list } => {
+            // the object itself, not a copy (`Clone` is the copy constructor, which
+            // links the parts it copies to the copy)
+            let stand_in = CrvOnSurf::empty(c.uv_curve().clone(), c.surface().clone())
+                .map_err(|e| Stop::Harness(harness(e.to_string())))?;
+            let mut w = Curve::from(std::mem::replace(c, stand_in));
+            let mut reports = AssertArray::new();
+            let key = ObjectKey(1);
+            let r = curve_assert_valid(k, &mut w, list.then_some(&mut reports), *level, key);
+            *c = cos_of(w).map_err(Stop::Harness)?;
+            o.push(st(&r)?);
+            if let Ok(ok) = r {
+                put_assert_reports(o, ok, &reports, key);
+            }
+        }
         OpIn::Eval {
             t,
             n,
             left,
             nonzero,
         } => {
-            let r = c.evaluate(*t, *n, *left, *nonzero);
+            let r = c.evaluate(k, *t, *n, *left, *nonzero);
             o.push(st(&r)?);
             if let Ok(v) = r {
                 for p in v {
@@ -722,21 +782,21 @@ fn rust_op(o: &mut Vec<f64>, c: &mut CrvOnSurf, op: &OpIn, k: &Kernel) -> Result
             }
         }
         OpIn::EvalPoint { t } => {
-            let r = c.evaluate_point(*t);
+            let r = c.evaluate_point(k, *t);
             o.push(st(&r)?);
             if let Ok(p) = r {
                 pv(o, p);
             }
         }
         OpIn::EvalUv { t } => {
-            let r = c.evaluate_uv_point(*t);
+            let r = c.evaluate_uv_point(k, *t);
             o.push(st(&r)?);
             if let Ok(p) = r {
                 o.extend([p.x, p.y]);
             }
         }
         OpIn::EvalNormal { t, left } => {
-            let r = c.evaluate_surface_normal(*t, *left);
+            let r = c.evaluate_surface_normal(k, *t, *left);
             o.push(st(&r)?);
             if let Ok(s) = r {
                 o.extend([s.uv.x, s.uv.y, s.uv_tangent.x, s.uv_tangent.y]);
@@ -744,7 +804,7 @@ fn rust_op(o: &mut Vec<f64>, c: &mut CrvOnSurf, op: &OpIn, k: &Kernel) -> Result
             }
         }
         OpIn::Eval1st { t, left, .. } => {
-            let r = c.evaluate_surface_1st_deriv_derivs(*t, *left);
+            let r = c.evaluate_surface_1st_deriv_derivs(k, *t, *left);
             o.push(st(&r)?);
             if let Ok((du, dv)) = r {
                 for (u, v) in du.iter().zip(&dv) {
@@ -755,9 +815,17 @@ fn rust_op(o: &mut Vec<f64>, c: &mut CrvOnSurf, op: &OpIn, k: &Kernel) -> Result
         }
         OpIn::Knots { ivl, want } => {
             let iv = ivl.map(|[x, y]| Extent1d::from_min_max(x, y));
-            let r = c.knots(iv.as_ref());
-            o.push(st(&r)?);
-            let (kn, m) = r.unwrap_or_default();
+            // the status, then what GetKnots wrote (also on a failing status)
+            let (kn, m) = match c.knots_with_status(k, iv.as_ref()) {
+                Ok(w) => {
+                    o.push(st(&w.status)?);
+                    (w.knots, w.mults)
+                }
+                Err(e) => {
+                    o.push(st(&Err::<(), _>(e))?);
+                    (Vec::new(), Vec::new())
+                }
+            };
             o.push(kn.len() as f64);
             o.extend_from_slice(&kn);
             if *want {
@@ -767,13 +835,13 @@ fn rust_op(o: &mut Vec<f64>, c: &mut CrvOnSurf, op: &OpIn, k: &Kernel) -> Result
             put_state(o, c);
         }
         OpIn::Nnk => {
-            let r = c.number_natural_knots();
+            let r = c.number_natural_knots(k);
             st(&r)?;
             o.extend([0.0, r.unwrap_or(0) as f64]);
             put_state(o, c);
         }
         OpIn::Conts { angle } => {
-            let r = c.calculate_continuities(*angle);
+            let r = c.calculate_continuities(k, *angle);
             o.push(st(&r)?);
             let (mn, cs) = r.unwrap_or((
                 solidcore::geom::geom_utility::p2::ContinuityType::Undefined,
@@ -786,7 +854,7 @@ fn rust_op(o: &mut Vec<f64>, c: &mut CrvOnSurf, op: &OpIn, k: &Kernel) -> Result
         OpIn::Equal { other } => match other {
             None => {
                 let w = wrap(c);
-                let r = w.approx_eq(&w);
+                let r = w.approx_eq(k, &w);
                 o.push(st(&r)?);
                 o.push(b(r.unwrap_or(false)));
             }
@@ -796,22 +864,42 @@ fn rust_op(o: &mut Vec<f64>, c: &mut CrvOnSurf, op: &OpIn, k: &Kernel) -> Result
                     Err(e) => return Err(Stop::Harness(harness(format!("other: {e}")))),
                 };
                 let (wa, wb) = (wrap(c), Curve::from(d));
-                let r1 = wa.approx_eq(&wb);
-                let r2 = wb.approx_eq(&wa);
+                let r1 = wa.approx_eq(k, &wb);
+                let r2 = wb.approx_eq(k, &wa);
                 st(&r1)?;
                 st(&r2)?;
                 o.extend([0.0, b(r1.unwrap_or(false)), b(r2.unwrap_or(false))]);
             }
         },
         OpIn::Copy => {
-            let r = wrap(c).copy(&Kernel::default());
+            let r = wrap(c).copy(k);
             o.push(st(&r)?);
             if let Ok(cp) = r {
-                let eq = cp.approx_eq(&wrap(c));
+                let eq = cp.approx_eq(k, &wrap(c));
                 st(&eq)?;
                 let cp = cos_of(cp)?;
                 put_state(o, &cp);
                 o.push(b(eq.unwrap_or(false)));
+            }
+        }
+        OpIn::CopyEval {
+            t,
+            n,
+            left,
+            nonzero,
+        } => {
+            let r = wrap(c).copy(k);
+            o.push(st(&r)?);
+            if let Ok(cp) = r {
+                let cp = cos_of(cp)?;
+                put_state(o, &cp);
+                let r = cp.evaluate(k, *t, *n, *left, *nonzero);
+                o.push(st(&r)?);
+                if let Ok(v) = r {
+                    for p in v {
+                        pv(o, p);
+                    }
+                }
             }
         }
         OpIn::EditParam { a, b: bb } => {
@@ -847,7 +935,7 @@ fn rust_op(o: &mut Vec<f64>, c: &mut CrvOnSurf, op: &OpIn, k: &Kernel) -> Result
             scale,
         } => {
             let ax = Axis2Placement::new(v3(*origin), v3(*x), v3(*y));
-            let r = c.transform(&ax, scale.map(v3));
+            let r = c.transform(k, &ax, scale.map(v3));
             o.push(st(&r)?);
             put_state(o, c);
         }
@@ -941,6 +1029,11 @@ fn rust_op(o: &mut Vec<f64>, c: &mut CrvOnSurf, op: &OpIn, k: &Kernel) -> Result
             tol,
             max,
         } => {
+            // the FFI rejects more than 8 samples; upstream (and the port) would loop that
+            // many times, so a larger count is not a case for Rust either
+            if *samples > 8 {
+                return Err(HarnessError::new(format!("{samples} samples")).into());
+            }
             let ivl = Extent1d::from_min_max(*a, *bb);
             let run = |this: &CrvOnSurf, oc: &Curve| {
                 this.surface_curve_max_distance_between(k, &ivl, oc, *s0, *s1, *samples, *tol, *max)
@@ -1092,6 +1185,7 @@ fn gen_srf(rng: &mut Rng) -> InlineSrf {
             q: 1,
             u: vec![a, a, a + la, a + la],
             v: vec![c, c, c + lc, c + lc],
+            borrow_nurb: false,
         };
     }
     let p = 1 + rng.below(3) as usize;
@@ -1128,7 +1222,14 @@ fn gen_srf(rng: &mut Rng) -> InlineSrf {
                 .collect()
         })
         .collect();
-    InlineSrf { net, p, q, u, v }
+    InlineSrf {
+        net,
+        p,
+        q,
+        u,
+        v,
+        borrow_nurb: false,
+    }
 }
 
 /// The upstream test surfaces.
@@ -1182,7 +1283,12 @@ fn gen_uv_curve(rng: &mut Rng, d: [f64; 4], outside: bool) -> UvIn {
             }
         })
         .collect();
-    UvIn::Bspline(UvBspline { cpts, p, u })
+    UvIn::Bspline(UvBspline {
+        cpts,
+        p,
+        u,
+        borrow_nurb: false,
+    })
 }
 
 fn range_of(c: &CosIn) -> (f64, f64) {
@@ -1258,6 +1364,7 @@ fn gen_cos(rng: &mut Rng, outside: bool) -> (CosIn, [f64; 4]) {
     let mut c = CosIn {
         uv,
         srf,
+        offset: None,
         domain,
         owner,
         cache: None,
@@ -1575,6 +1682,24 @@ fn gen_case(rng: &mut Rng) -> Option<Inputs> {
     })
 }
 
+/// Generated `assert_valid` cases (their own seed stream, `<unit>:assert_valid`).
+pub const ASSERT_VALID_CASES: usize = 300;
+
+/// An `assert_valid` case: a generated curve on a B-spline surface (any owner flag,
+/// domain and cache; a fifth with the UV curve leaving the domain), any test level,
+/// with or without a report list.
+fn gen_assert_valid(rng: &mut Rng) -> Inputs {
+    let outside = rng.chance(0.2);
+    let (c, _) = gen_cos(rng, outside);
+    Inputs::Object {
+        cos: Box::new(c),
+        ops: vec![OpIn::AssertValid {
+            level: *rng.choose(&[0u8, 1, 2, 4]).unwrap_or(&0),
+            list: rng.chance(0.8),
+        }],
+    }
+}
+
 impl UnitDiff for Runner {
     fn id(&self) -> &'static str {
         "curve.crv_on_surf"
@@ -1596,11 +1721,34 @@ impl UnitDiff for Runner {
     }
 
     fn cases(&self, ctx: &CaseContext) -> Result<Vec<Case>, HarnessError> {
-        let ctx = CaseContext {
+        let main = CaseContext {
             seeds: ctx.seeds.max(MIN_GENERATED),
             ..ctx.clone()
         };
-        default_cases(self, &ctx)
+        let mut v = default_cases(self, &main)?;
+        // AssertValid with native report comparison: their own seed stream (the other
+        // generated cases are unchanged); named `avNNNN`
+        let av = CaseContext {
+            seeds: ctx.seeds.max(ASSERT_VALID_CASES),
+            ..ctx.clone()
+        };
+        for mut c in av.generated_cases("curve.crv_on_surf:assert_valid", |rng| {
+            for _ in 0..64 {
+                let i = gen_assert_valid(rng);
+                let Ok((op, input)) = cpp_input(&i) else {
+                    continue;
+                };
+                if ffi::validate(op, &input).is_ok() {
+                    return serde_json::to_value(i).ok();
+                }
+            }
+            None
+        }) {
+            c.name = c.name.replacen("gen", "av", 1);
+            c.unit = self.id().to_string();
+            v.push(c);
+        }
+        Ok(v)
     }
 
     fn run_cpp(&self, case: &Case) -> Result<Output, HarnessError> {
@@ -1608,6 +1756,11 @@ impl UnitDiff for Runner {
     }
 
     fn run_rust(&self, case: &Case) -> Result<Output, HarnessError> {
-        rust(&case.parse()?)
+        let i = case.parse()?;
+        // Run only what the FFI accepts, as the C++ side: its guards refuse inputs
+        // upstream (and the faithful port) never finish on (fuzz Rust-side hangs).
+        let (code, input) = cpp_input(&i)?;
+        ffi::validate(code, &input).map_err(|e| HarnessError::new(e.to_string()))?;
+        rust(&i)
     }
 }

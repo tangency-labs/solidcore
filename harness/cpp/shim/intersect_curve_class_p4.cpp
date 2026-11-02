@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // difftest shim for unit `intersect.curve_class_p4`: the part-4 members of SmCurveClassification
-// (the full constructor, GetLoopCrossings), SmCurveInterval::GetIvlBound_EdgeuseObj and the static
-// function sm_SqueezeOutSmallestInterval of source/SMLib/src/SmCurveClass.cpp.
+// (the full constructor, GetLoopCrossings, GetLoopTouches), SmCurveInterval::GetIvlBound_EdgeuseObj
+// and the static function sm_SqueezeOutSmallestInterval of source/SMLib/src/SmCurveClass.cpp.
 //
 // The static function cannot be linked against, so it is a VERBATIM copy of upstream
 // SmCurveClass.cpp (commit c9c5979) inside the namespace sc_cc_p4 (line range noted at the
@@ -19,9 +19,10 @@
 // GetIvlBound_EdgeuseObj an interval index past the intervals, an interval whose back pointer is
 // not its classification, a classification without face (UB-124: GetUpwardFaceuse / GetSurface
 // on NULL) and, when the end is on an edge of a face with a surface, a NULL classification or
-// edge curve (both are evaluated); for GetLoopCrossings over loops a classification without
-// curve (UB-124: GetNaturalInterval on NULL). Geometry objects live for the whole process (never
-// deleted); the B-rep is deleted at the end of the run.
+// edge curve (both are evaluated); for GetLoopCrossings or GetLoopTouches over loops a
+// classification without curve (UB-124: GetNaturalInterval on NULL) or without intervals
+// (GetPointClassifiesConnectedTo reads m_pData[0]). Geometry objects live for the whole process
+// (never deleted); the B-rep is deleted at the end of the run.
 
 #include "sc_shim.h"
 #include "sc_one_face_brep.h"
@@ -165,6 +166,7 @@ enum : int64_t
     OP_IVL_BOUND = 31,
     OP_LOOP_CROSSINGS = 32,
     OP_CONSTRUCT = 33,
+    OP_LOOP_TOUCHES = 34,
 };
 
 // Access to private / protected members through explicit instantiation.
@@ -855,6 +857,7 @@ int32_t run(Rd& rd, std::vector<double>& o)
             break;
         }
         case OP_LOOP_CROSSINGS:
+        case OP_LOOP_TOUCHES:
         {
             int64_t n = rd.idx();
             if (rd.bad || n < 0 || n > 8)
@@ -869,6 +872,13 @@ int32_t run(Rd& rd, std::vector<double>& o)
                 loops[(ULONG)i] = l;
             }
             bool with_props = rd.flag();
+            // GetPointClassifiesConnectedTo reads GetAt(0) unchecked: an empty classification
+            // (e.g. after a squeeze) reaches it with loops whose first loop's face has a
+            // surface, and a curve. (Refused even for a degenerate curve, which returns
+            // before it.)
+            if (n > 0 && cc.GetSize() == 0 && loops[0]->GetFace() != NULL
+                && loops[0]->GetFace()->GetSurface() != NULL && cc.GetCurve() != NULL)
+                return SC_ERR_ARG;
             // the face props seeds (`field idx value`, as the heal.face_props shim), applied to
             // the props passed: a preset at SM_PROPSTAGE_2a or later skips SetProps_Stage2
             int64_t n_seeds = rd.idx();
@@ -885,6 +895,25 @@ int32_t run(Rd& rd, std::vector<double>& o)
             // UB-124: the classification curve's GetNaturalInterval() before its NULL check
             if (rd.bad || (n > 0 && cc.GetCurve() == NULL))
                 return SC_ERR_ARG;
+            // GetPointClassifiesConnectedTo reads m_pData[0]: an empty classification (left by
+            // a squeeze of its only interval, or never sized) reads a removed or missing
+            // interval
+            if (n > 0 && size == 0)
+                return SC_ERR_ARG;
+            if (op == OP_LOOP_TOUCHES)
+            {
+                // GetLoopTouches (new in 1.0.1): on a failing status the list may hold the
+                // touches collected before it, so only the status is compared then
+                SmTArray<SmTouchData> touches;
+                SmStatus s = cc.GetLoopTouches(loops, with_props ? &props : NULL, touches);
+                o.push_back(st(s));
+                if (s != SM_SUCCESS)
+                    break;
+                put_touches(o, touches, pool);
+                if (with_props)
+                    sc_one_face::snapshot(o, props, of.face);
+                break;
+            }
             SmTArray<ULONG> counts;
             SmTArray<SmTouchData> raw, done;
             SmStatus s = cc.GetLoopCrossings(loops, with_props ? &props : NULL, &counts, &raw, &done);

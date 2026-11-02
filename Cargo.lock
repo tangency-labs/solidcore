@@ -28,6 +28,9 @@ dependencies = [
  "serde_json",
  "solidcore",
  "solidcore-ffi",
+ "solidcore-ssi",
+ "ssi",
+ "step-import",
  "toml",
 ]
 
@@ -97,6 +100,10 @@ name = "memchr"
 version = "2.8.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "cf8baf1c55e62ffcace7a9f06f4bd9cd3f0c4beb022d3b367256b91b87513d98"
+
+[[package]]
+name = "nurbs-grid-mesh"
+version = "0.1.0"
 
 [[package]]
 name = "proc-macro2"
@@ -182,7 +189,7 @@ checksum = "f8fadd59c855ef2080decdef8ff161eb6661b86933c9d82e5ba29dc602a55aba"
 
 [[package]]
 name = "solidcore"
-version = "0.0.1"
+version = "1.0.1"
 dependencies = [
  "thiserror",
 ]
@@ -193,7 +200,40 @@ version = "0.1.0"
 dependencies = [
  "cc",
  "serde_json",
+ "step-import",
 ]
+
+[[package]]
+name = "solidcore-ssi"
+version = "0.1.0"
+dependencies = [
+ "solidcore",
+ "ssi",
+]
+
+[[package]]
+name = "ssi"
+version = "0.1.0"
+
+[[package]]
+name = "step-brep"
+version = "0.1.0"
+dependencies = [
+ "solidcore",
+ "step-export",
+ "step-import",
+]
+
+[[package]]
+name = "step-export"
+version = "0.1.0"
+dependencies = [
+ "step-import",
+]
+
+[[package]]
+name = "step-import"
+version = "0.1.0"
 
 [[package]]
 name = "syn"
@@ -281,6 +321,10 @@ checksum = "df79d97927682d2fd8adb29682d1140b343be4ac0f08fd68b7765d9c059d3945"
 dependencies = [
  "memchr",
 ]
+
+[[package]]
+name = "xtask"
+version = "0.1.0"
 
 [[package]]
 name = "zmij"

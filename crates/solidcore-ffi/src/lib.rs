@@ -5,12 +5,18 @@
 //!   for `wasm32-unknown-unknown`).
 //! * With feature `cpp`, `build.rs` compiles `harness/cpp/shim/*.cpp` and links
 //!   the static libraries in `bin/cpp/lib`. Each file `src/units/<unit>.rs`
-//!   becomes the module [`units`]`::<unit>` automatically (no registry edits).
+//!   becomes the module `units::<unit>` automatically (no registry edits).
 //!
 //! This is the only crate in the workspace allowed to contain `unsafe`. Every
 //! `extern "C"` declaration must be private to its unit module and wrapped by
 //! a safe function that validates all lengths/indices *before* the call so the
 //! C++ side can never read or write out of bounds.
+//!
+//! Native shim bodies share a recursive mutex, acquired before native state is
+//! accessed and held through object destruction and callback restoration. This
+//! also covers wrappers that do not use [`call_with_buffer`]: upstream's API
+//! context, notification callbacks and system tolerances are process-global.
+//! Concurrent callers are therefore serialized at each native entrypoint.
 
 #![allow(unsafe_code)] // the only crate allowed unsafe: safe wrappers over extern "C" shims
 #![deny(missing_docs)]
@@ -45,6 +51,27 @@ pub const SC_ERR_EXCEPTION: i32 = -1000;
 pub const SC_ERR_BUFFER: i32 = -1001;
 /// Shim status: the shim rejected its arguments.
 pub const SC_ERR_ARG: i32 = -1002;
+/// Status of a case whose C++ side ran in a fresh child process (`isolate`) that did
+/// not finish normally (a native crash, the 600 s alarm, an abnormal exit).
+pub const SC_ERR_CHILD_CRASHED: i32 = -1100;
+/// Shim status: the isolated worker's pipes could not be made or written
+/// (`harness/cpp/shim/sc_rollover_worker.h`; the shim also logs the stage and errno).
+pub const SC_ERR_WORKER_PIPE: i32 = -1120;
+/// Shim status: the isolated worker could not be spawned.
+pub const SC_ERR_WORKER_SPAWN: i32 = -1121;
+/// Shim status: the isolated worker did not reply within its timeout and was killed.
+pub const SC_ERR_WORKER_TIMEOUT: i32 = -1122;
+/// Shim status: the isolated worker's reply was short, unreadable or malformed.
+pub const SC_ERR_WORKER_IO: i32 = -1123;
+/// Shim status: the isolated worker exited with a nonzero code.
+pub const SC_ERR_WORKER_EXIT: i32 = -1124;
+/// Shim status: the isolated worker was killed by a signal (a native crash or abort).
+pub const SC_ERR_WORKER_SIGNAL: i32 = -1125;
+/// Shim status: the isolated worker could not be reaped.
+pub const SC_ERR_WORKER_WAIT: i32 = -1126;
+/// Shim status on wasm32: the C++ kernel is not linked (returned by every stub of the
+/// module that `scripts/wasm_stub.py` generates for `difftest --digest-dir`).
+pub const SC_ERR_UNLINKED: i32 = -1009;
 
 /// Human readable, stable name of a shim status code (used in difftest outputs).
 pub fn status_name(s: i32) -> String {
@@ -53,6 +80,15 @@ pub fn status_name(s: i32) -> String {
         SC_ERR_EXCEPTION => "cpp_exception".into(),
         SC_ERR_BUFFER => "buffer_too_small".into(),
         SC_ERR_ARG => "shim_rejected_args".into(),
+        SC_ERR_UNLINKED => "cpp_unlinked".into(),
+        SC_ERR_CHILD_CRASHED => "cpp_child_crashed".into(),
+        SC_ERR_WORKER_PIPE => "cpp_worker_pipe_failed".into(),
+        SC_ERR_WORKER_SPAWN => "cpp_worker_spawn_failed".into(),
+        SC_ERR_WORKER_TIMEOUT => "cpp_worker_timeout".into(),
+        SC_ERR_WORKER_IO => "cpp_worker_short_reply".into(),
+        SC_ERR_WORKER_EXIT => "cpp_worker_nonzero_exit".into(),
+        SC_ERR_WORKER_SIGNAL => "cpp_worker_signal".into(),
+        SC_ERR_WORKER_WAIT => "cpp_worker_not_reaped".into(),
         other => format!("status_{other}"),
     }
 }
@@ -101,9 +137,51 @@ pub fn call_with_buffer<T: Copy + Default>(
     Err(FfiError::Status(SC_ERR_BUFFER))
 }
 
-/// Whether this build links the C++ kernel (feature `cpp`).
+/// Whether this build links the C++ kernel (feature `cpp`; on wasm32 the shims are
+/// stubs, see [`unlinked_calls`]).
 pub const LINKED: bool = cfg!(feature = "cpp");
 
+#[cfg(feature = "cpp")]
+extern "C" {
+    fn sc_cpp_stdlib_is_libstdcxx() -> i32;
+}
+
+/// Whether the linked C++ reference was built against libstdc++.
+#[cfg(feature = "cpp")]
+pub fn cpp_stdlib_is_libstdcxx() -> bool {
+    unsafe { sc_cpp_stdlib_is_libstdcxx() != 0 }
+}
+
+/// Whether the linked C++ reference was built against libstdc++.
+///
+/// Without the C++ kernel there is no probe: nothing links against a C++
+/// standard library, so treat it as "not libstdc++" would never be seen.
+#[cfg(not(feature = "cpp"))]
+pub fn cpp_stdlib_is_libstdcxx() -> bool {
+    false
+}
+
+/// Number of shim calls so far that reached a stub instead of the C++ kernel: always 0
+/// natively; on wasm32 the count kept by the stub module from `scripts/wasm_stub.py`.
+pub fn unlinked_calls() -> u64 {
+    #[cfg(all(feature = "cpp", target_arch = "wasm32"))]
+    {
+        extern "C" {
+            fn sc_wasm_unlinked_calls() -> i64;
+        }
+        // SAFETY: the stub module's counter getter takes no arguments and touches no
+        // memory of ours.
+        let n = unsafe { sc_wasm_unlinked_calls() };
+        u64::try_from(n).unwrap_or(0)
+    }
+    #[cfg(not(all(feature = "cpp", target_arch = "wasm32")))]
+    {
+        0
+    }
+}
+
+#[cfg(feature = "cpp")]
+pub mod isolate;
 #[cfg(feature = "cpp")]
 mod reader;
 #[cfg(feature = "cpp")]

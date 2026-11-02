@@ -55,8 +55,27 @@ pub struct Request<'a> {
     pub parameter: f64,
 }
 
+/// Whether the primary and other fixtures (entity counts from
+/// [`fixture::counts`]) have the entities operation `op` selects; [`eval`] rejects
+/// the fixtures otherwise (the selectors are taken modulo these counts).
+#[must_use]
+pub fn selection_valid(op: u8, a: &[usize; 10], b: &[usize; 10]) -> bool {
+    match op {
+        2 => a[3] > 0 && b[3] > 0,
+        3 => a[9] > 0 && b[9] > 0 && a[0] > 0,
+        4 => a[0] > 0 && b[0] > 0,
+        5 => b[2] > 0,
+        6 => a[7] > 0,
+        8 | 9 => a[6] > 0 && b[6] > 0,
+        _ => true,
+    }
+}
+
 /// Call a merge helper. Result: status, record length, record, then a raw graph
-/// export in the `topology_vertexuse` format. Op 0 returns only control flags.
+/// export in the `topology_vertexuse` format (the primary B-rep's, after the call).
+/// Op 0 returns only control flags. Op 2 (`FixFoundFaceCoincidence`, which can edit
+/// both B-reps) ends its record with the other B-rep's graph after the call: the
+/// export's length, then the export itself in the same format.
 pub fn eval(request: Request<'_>) -> Result<Vec<f64>, FfiError> {
     let Request {
         op,
@@ -82,16 +101,7 @@ pub fn eval(request: Request<'_>) -> Result<Vec<f64>, FfiError> {
             .ok_or_else(|| FfiError::InvalidArgument("primary fixture rejected".into()))?;
         let b = fixture::counts(&bc)
             .ok_or_else(|| FfiError::InvalidArgument("other fixture rejected".into()))?;
-        let valid = match op {
-            2 => a[3] > 0 && b[3] > 0,
-            3 => a[9] > 0 && b[9] > 0 && a[0] > 0,
-            4 => a[0] > 0 && b[0] > 0,
-            5 => b[2] > 0,
-            6 => a[7] > 0,
-            8 | 9 => a[6] > 0 && b[6] > 0,
-            _ => true,
-        };
-        if !valid {
+        if !selection_valid(op, &a, &b) {
             return Err(FfiError::InvalidArgument(
                 "fixture lacks selected entity".into(),
             ));

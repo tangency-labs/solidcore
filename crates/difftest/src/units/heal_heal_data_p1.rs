@@ -28,6 +28,8 @@ use serde_json::Value;
 
 use solidcore::heal::heal_data::p1::api_heal_brep;
 use solidcore::kernel::Kernel;
+use solidcore::math::Point3;
+use solidcore::primitive::api_primitives::create_box;
 use solidcore::SolidError;
 use solidcore_ffi::units::heal_heal_data_p1 as ffi;
 
@@ -45,6 +47,8 @@ pub const MIN_GENERATED: usize = 320;
 
 /// `SM_ERR_INVALID_INPUT`.
 const SM_ERR_INVALID_INPUT: f64 = 1007.0;
+/// `SM_SUCCESS`.
+const SM_SUCCESS: f64 = 1000.0;
 
 /// The difftest runner.
 pub struct Runner;
@@ -67,9 +71,35 @@ fn harness(msg: impl Into<String>) -> HarnessError {
     HarnessError::new(msg)
 }
 
+/// Largest magnitude of a script value the C++ side is given (the `±f64::MAX` markers
+/// aside). HANG-29: a B-rep coordinate whose square overflows (from about `1.34e154`)
+/// makes the healer's face work (`SmCurve::GlobalCoincidenceChecker` through
+/// `DropPoint`) split forever; weights stay within `1e-3..=1e3`, so this bound keeps
+/// every Euclidean point under that regime.
+const MAX_MAGNITUDE: f64 = 1.0e150;
+
+/// Whether `v` holds a number above [`MAX_MAGNITUDE`] (other than `±f64::MAX`).
+fn has_huge(v: &Value) -> bool {
+    match v {
+        Value::Number(n) => n.as_f64().is_some_and(|x| {
+            let a = x.abs();
+            a > MAX_MAGNITUDE && a < f64::MAX
+        }),
+        Value::Array(a) => a.iter().any(has_huge),
+        Value::Object(o) => o.values().any(has_huge),
+        _ => false,
+    }
+}
+
 fn run_cpp(i: &Inputs) -> Result<Output, HarnessError> {
     match i {
-        Inputs::Script(s) => p2_cpp(s),
+        Inputs::Script(s) => {
+            let v = serde_json::to_value(s).map_err(|e| harness(e.to_string()))?;
+            if has_huge(&v) {
+                return Err(harness("script value above 1e150 (HANG-29)"));
+            }
+            p2_cpp(s)
+        }
         Inputs::Api { api } => {
             let r = match api.box_size {
                 None => ffi::api_heal_null(),
@@ -86,26 +116,42 @@ fn run_cpp(i: &Inputs) -> Result<Output, HarnessError> {
 
 fn run_rust(i: &Inputs) -> Result<Output, HarnessError> {
     match i {
-        Inputs::Script(s) => p2_rust(s),
+        Inputs::Script(s) => {
+            // as the C++ side: the Rust side builds its B-rep through the same C++
+            // export, which hangs under HANG-29
+            let v = serde_json::to_value(s).map_err(|e| harness(e.to_string()))?;
+            if has_huge(&v) {
+                return Err(harness("script value above 1e150 (HANG-29)"));
+            }
+            p2_rust(s)
+        }
         Inputs::Api { api } => {
             let mut k = Kernel::default();
-            // The C++ side heals a box made by `SmApiCreateBox`, which the Rust side
-            // cannot build yet (unit primitive.api_primitives): healing any stand-in
-            // B-rep would compare a different input. Build the box with the ported
-            // `SmApiCreateBox` when that lands and compare its status here.
+            // The C++ side heals a box made by `SmApiCreateBox(origin, dx, dy, dz)`;
+            // the output is `create_status heal_status`.
+            let mut create_status = 0.0;
             let r = match api.box_size {
                 None => api_heal_brep(&mut k, None),
-                Some(_) => {
-                    return Ok(Output::deferred(
-                        "primitive.api_primitives",
-                        "SmApiCreateBox",
-                    ));
+                Some([dx, dy, dz]) => {
+                    match create_box(&mut k, Point3::new(0.0, 0.0, 0.0), dx, dy, dz) {
+                        Ok(mut b) => {
+                            create_status = SM_SUCCESS;
+                            api_heal_brep(&mut k, Some(&mut b))
+                        }
+                        Err(SolidError::InvalidInput { .. } | SolidError::PortInvariant { .. }) => {
+                            return Ok(Output::new().values("out", vec![SM_ERR_INVALID_INPUT, 0.0]));
+                        }
+                        Err(e) => {
+                            return Ok(Output::unported(&e)
+                                .unwrap_or_else(|| Output::err(e.to_string())));
+                        }
+                    }
                 }
             };
             Ok(match r {
-                Ok(()) => Output::new().values("out", vec![0.0, 0.0]),
-                Err(SolidError::InvalidInput { .. }) => {
-                    Output::new().values("out", vec![0.0, SM_ERR_INVALID_INPUT])
+                Ok(()) => Output::new().values("out", vec![create_status, SM_SUCCESS]),
+                Err(SolidError::InvalidInput { .. } | SolidError::PortInvariant { .. }) => {
+                    Output::new().values("out", vec![create_status, SM_ERR_INVALID_INPUT])
                 }
                 Err(e) => Output::unported(&e).unwrap_or_else(|| Output::err(e.to_string())),
             })
@@ -302,6 +348,10 @@ fn gen_api(rng: &mut Rng) -> Inputs {
 }
 
 impl UnitDiff for Runner {
+    fn reference_platform(&self) -> Option<crate::platform::ReferencePlatform> {
+        Some(crate::platform::X86_64_HASH_CASTS)
+    }
+
     fn id(&self) -> &'static str {
         "heal.heal_data_p1"
     }

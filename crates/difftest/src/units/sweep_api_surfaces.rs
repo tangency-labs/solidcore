@@ -15,11 +15,11 @@
 //! `srf_u`, `srf_v`) and, for extrusions, the extruded curve's NURB afterwards
 //! (`crv_has`, `crv_n`, `crv_cpts`).
 //!
-//! Cases reaching `SmPrimitiveCreation` (valid skin primitives, surfaces of
-//! revolution of a curve, skins from faces) are deferred on the Rust side
-//! (`primitive.primitive_creation_p2` / `_p3`); their input validation (`NULL` curve,
-//! malformed profile structure, bad degree) is compared. Every run has at least
-//! [`MIN_GENERATED`] generated cases.
+//! Successful revolutions retain the API status/presence fields and compare the
+//! detached surface's owner state, natural UV domain and 25 virtual point
+//! evaluations/statuses. Skin construction can still defer at actual face/cache
+//! services. Input validation (`NULL` curve, malformed profiles, bad degree)
+//! remains compared. Every run has at least [`MIN_GENERATED`] generated cases.
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -33,7 +33,6 @@ use solidcore::nurbs::crv_basic::Curve as NurbCurve;
 use solidcore::nurbs::math::{CPoint, NOW, NOZ};
 use solidcore::primitive::api_curves;
 use solidcore::sweep::api_surfaces as api;
-use solidcore::topology::Brep;
 use solidcore::SolidError;
 use solidcore_ffi::units::sweep_api_surfaces::{self as ffi, Call, CurveSpec};
 
@@ -313,8 +312,20 @@ fn to_output(i: &Inputs, flat: &[f64]) -> Result<Output, HarnessError> {
             }
         }
         Inputs::Revolution { .. } => {
-            if ok {
-                s.vals("has", 1)?;
+            if ok && s.flag("has")? {
+                s.vals("revolution_owner_clear", 1)?;
+                s.vals("revolution_domain", 4)?;
+                let mut statuses = Vec::new();
+                let mut points = Vec::new();
+                for _ in 0..25 {
+                    let status = s.take(1)?;
+                    if status.first().copied() == Some(0.0) {
+                        points.extend(s.take(3)?);
+                    }
+                    statuses.extend(status);
+                }
+                s.put("revolution_status", statuses);
+                s.put("revolution_points", points);
             }
         }
         Inputs::SkinPrimitive { .. } => {
@@ -434,14 +445,17 @@ fn dump_surface(o: &mut Vec<f64>, s: &BSplineSurface) {
 /// The `SmStatus` of a Rust error; `-1` for one upstream cannot return.
 fn status(e: &SolidError) -> f64 {
     match e {
-        SolidError::InvalidInput { .. } => 1007.0,
+        SolidError::InvalidInput { .. } | SolidError::PortInvariant { .. } => 1007.0,
         SolidError::Upstream { code, .. } => f64::from(*code),
         _ => -1.0,
     }
 }
 
 /// Pushes the status then, on success, the surface.
-fn surface_result(o: &mut Vec<f64>, r: solidcore::Result<BSplineSurface>) -> Result<(), SolidError> {
+fn surface_result(
+    o: &mut Vec<f64>,
+    r: solidcore::Result<BSplineSurface>,
+) -> Result<(), SolidError> {
     match r {
         Ok(s) => {
             o.push(0.0);
@@ -457,7 +471,7 @@ fn surface_result(o: &mut Vec<f64>, r: solidcore::Result<BSplineSurface>) -> Res
 }
 
 fn rust(i: &Inputs) -> Result<Output, HarnessError> {
-    let k = Kernel::default();
+    let mut k = Kernel::default();
     let mut o = Vec::new();
     let res: Result<(), SolidError> = match i {
         Inputs::Extrude { curve, vector } => {
@@ -476,6 +490,10 @@ fn rust(i: &Inputs) -> Result<Output, HarnessError> {
             res
         }
         Inputs::Sweep { curve, path } => {
+            // an input the FFI refuses is a harness error on both sides: the path
+            // polygonization does not return upstream for a long curved path (HANG-5),
+            // so the Rust port does not run it either
+            ffi::check_path_extent(&spec(path)).map_err(|e| harness(e.to_string()))?;
             let c = need(bspline(curve)?)?;
             let p = need(bspline(path)?)?;
             surface_result(&mut o, api::create_sweep(&c, &p))
@@ -493,12 +511,45 @@ fn rust(i: &Inputs) -> Result<Output, HarnessError> {
         } => {
             let c = bspline(curve)?;
             match api::create_surface_revolution(
+                &mut k,
                 c.as_ref(),
                 pt(origin),
                 Vec3::new(axis[0], axis[1], axis[2]),
                 *angle_deg,
             ) {
-                Ok(_) => Err(SolidError::sm_err("runner: revolution cannot succeed yet")),
+                Ok(surface) => {
+                    o.extend([0.0, 1.0, flag(surface.owner().is_none())]);
+                    let domain = surface.natural_uv_domain_with_nurb(&k).map_err(|e| HarnessError::new(e.to_string()))?;
+                    o.extend([
+                        domain.min().x,
+                        domain.min().y,
+                        domain.max().x,
+                        domain.max().y,
+                    ]);
+                    let mut result = Ok(());
+                    for u in 0..=4 {
+                        for v in 0..=4 {
+                            match surface.evaluate_point(
+                                &k,
+                                domain.evaluate(f64::from(u) / 4.0, f64::from(v) / 4.0),
+                            ) {
+                                Ok(point) => {
+                                    o.push(0.0);
+                                    o.extend(point.to_array());
+                                }
+                                Err(e) if e.is_unported() => {
+                                    result = Err(e);
+                                    break;
+                                }
+                                Err(e) => o.push(status(&e)),
+                            }
+                        }
+                        if result.is_err() {
+                            break;
+                        }
+                    }
+                    result
+                }
                 Err(e) if e.is_unported() => Err(e),
                 Err(e) => {
                     o.push(status(&e));
@@ -511,7 +562,7 @@ fn rust(i: &Inputs) -> Result<Output, HarnessError> {
                 .iter()
                 .map(|c| need(bspline(c)?))
                 .collect::<Result<Vec<_>, _>>()?;
-            surface_result(&mut o, api::create_skin(&ps))
+            surface_result(&mut o, api::create_skin(&k, &ps))
         }
         Inputs::SkinPrimitive {
             counts,
@@ -529,7 +580,7 @@ fn rust(i: &Inputs) -> Result<Output, HarnessError> {
                 .map(|&c| usize::try_from(c).map_err(|_| harness("count too large")))
                 .collect::<Result<Vec<_>, _>>()?;
             let degree = usize::try_from(*degree).map_err(|_| harness("degree too large"))?;
-            match api::create_skin_primitive(&k, &counts, &refs, degree, *cap_ends) {
+            match api::create_skin_primitive(&mut k, &counts, &refs, degree, *cap_ends) {
                 Ok(r) => {
                     o.extend([
                         0.0,
@@ -547,11 +598,32 @@ fn rust(i: &Inputs) -> Result<Output, HarnessError> {
                 }
             }
         }
-        Inputs::SkinFromFaces { circles: _, degree } => {
-            // The planar circle breps (`SmApiCreatePlanarCircle`) cannot be built in
-            // Rust yet; the entry point is unported whatever its faces.
+        Inputs::SkinFromFaces { circles, degree } => {
             let degree = usize::try_from(*degree).map_err(|_| harness("degree too large"))?;
-            match api::create_skin_from_faces(&k, &Brep::default(), &[], degree) {
+            // The first face of each `SmApiCreatePlanarCircle` B-rep, as the C++ side.
+            let discs = circles
+                .iter()
+                .map(|(c, r)| {
+                    solidcore::primitive::api_primitives::create_planar_circle(&mut k, pt(c), *r)
+                })
+                .collect::<solidcore::Result<Vec<_>>>();
+            let discs = match discs {
+                Ok(d) => d,
+                Err(e) if e.is_unported() => {
+                    return Output::unported(&e).ok_or_else(|| harness("unported"))
+                }
+                Err(e) => return Err(harness(format!("planar circle: {e}"))),
+            };
+            let mut faces = Vec::new();
+            for b in &discs {
+                if let Some(f) = solidcore::topology::brep::p1::faces(b, None)
+                    .map_err(|e| harness(format!("faces: {e}")))?
+                    .first()
+                {
+                    faces.push((b, *f));
+                }
+            }
+            match api::create_skin_from_faces(&mut k, &faces, degree) {
                 Ok(r) => {
                     o.extend([0.0, 1.0, r.new_faces.len() as f64]);
                     Ok(())
@@ -820,7 +892,11 @@ fn gen_revolution(rng: &mut Rng) -> Inputs {
     };
     Inputs::Revolution {
         curve,
-        origin: if null { rng.point3(-5.0, 5.0) } else { [0.0; 3] },
+        origin: if null {
+            rng.point3(-5.0, 5.0)
+        } else {
+            [0.0; 3]
+        },
         axis,
         angle_deg: rng.uniform(-360.0, 360.0),
     }
@@ -952,6 +1028,85 @@ impl UnitDiff for Runner {
 mod tests {
     use super::*;
     use std::collections::BTreeMap;
+
+    /// The `fuzz00746` input of the 2026-10-20 fuzz sweep (HANG-5): an arc swept along a
+    /// five-point `SmApiCreateCurve` path whose fourth point is at `y`.
+    fn spike_path_sweep(y: f64) -> Inputs {
+        serde_json::from_value(serde_json::json!({
+            "op": "sweep",
+            "curve": {"kind": "arc", "center": [9.691279491139237, -0.25065508872083697,
+                      0.10543616211517737], "radius": 0.5613553819727618,
+                      "start_deg": -21.215518313383996, "end_deg": 221.33817097968685},
+            "path": {"kind": "curve", "points": [
+                [9.310532027500017, 0.03441225140058868, 0.10543616211517737],
+                [9.543316912856312, -0.2627291077483791, 0.8765544036562793],
+                [9.795804103350964, -0.5334509891102114, 1.6476726451973813],
+                [9.493750182254796, y, 2.418790886738483],
+                [9.416473612794082, 0.040403946082708864, 0.0]
+            ]}
+        }))
+        .unwrap()
+    }
+
+    /// A unit circle swept along a quarter arc of `radius`.
+    fn arc_path_sweep(radius: f64) -> Inputs {
+        serde_json::from_value(serde_json::json!({
+            "op": "sweep",
+            "curve": {"kind": "circle", "center": [0.0, 0.0, 0.0], "radius": 1.0},
+            "path": {"kind": "arc", "center": [0.0, 0.0, 0.0], "radius": radius,
+                     "start_deg": 0.0, "end_deg": 90.0}
+        }))
+        .unwrap()
+    }
+
+    /// HANG-5: the C++ path polygonization never returns for a path point of `1e300`
+    /// and gives no result in 30 s for a quarter-arc path of radius `1e8`; both sides
+    /// refuse them with the same message. The spike path with a control polygon just
+    /// inside the bound (`9.8e7`) runs on both sides and agrees.
+    #[cfg(feature = "cpp")]
+    #[test]
+    fn huge_curved_sweep_path_is_refused_on_both_sides() {
+        for i in [spike_path_sweep(1e300), arc_path_sweep(1e8)] {
+            let c = cpp(&i).unwrap_err().to_string();
+            let r = rust(&i).unwrap_err().to_string();
+            assert!(c.contains("(HANG-5)"), "{c}");
+            assert_eq!(c, r);
+        }
+
+        let i = spike_path_sweep(4.9e7);
+        let (c, r) = (cpp(&i).unwrap(), rust(&i).unwrap());
+        assert!(r.deferred.is_none(), "{:?}", r.deferred);
+        let d = crate::compare(&c, &r, Runner.abs_floors());
+        assert!(d.mismatches.is_empty(), "{:?}", d.mismatches);
+    }
+
+    #[cfg(feature = "cpp")]
+    #[test]
+    fn successful_revolution_compares_detached_native_surface_geometry() {
+        let context = CaseContext {
+            root: std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../.."),
+            seeds: 0,
+        };
+        let cases = context.fixture_cases("sweep.api_surfaces").unwrap();
+        let case = cases
+            .iter()
+            .find(|case| case.name == "revolution_wave_x_axis")
+            .unwrap();
+        let inputs = case.parse().unwrap();
+        let native = cpp(&inputs).unwrap();
+        let result = rust(&inputs).unwrap();
+        assert_eq!(native.values.get("status"), Some(&vec![0.0]));
+        assert_eq!(native.values.get("has"), Some(&vec![1.0]));
+        assert_eq!(
+            native.values.get("revolution_owner_clear"),
+            Some(&vec![1.0])
+        );
+        assert_eq!(native.values.get("revolution_status"), Some(&vec![0.0; 25]));
+        let points = native.values.get("revolution_points").unwrap();
+        assert_eq!(points.len(), 75);
+        assert!(points.iter().any(|value| *value != 0.0));
+        assert_eq!(result, native);
+    }
 
     /// The generators reach success and failure of the compared ops on the Rust side.
     #[test]

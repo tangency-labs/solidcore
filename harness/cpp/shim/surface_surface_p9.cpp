@@ -6,6 +6,11 @@
 #include <SmBSplineSurface.h>
 #include <SmPlane.h>
 #include <SmSurfOfRevolution.h>
+#include <SmCone.h>
+#include <SmCylinder.h>
+#include <SmSphere.h>
+#include <SmTorus.h>
+#include <SmAxis2Placement.h>
 #include <SmBSplineCurve.h>
 #include <SmContext.h>
 #include <SmCurveCache.h>
@@ -54,12 +59,42 @@ SC_EXPORT int32_t sc_surface_surface_p9_eval(int32_t op, int32_t surface_kind, c
         ScP9Revolution* revolution = new(context) ScP9Revolution(generator);
         if (revolution->MakeNurb() != SM_SUCCESS) { delete revolution; return SC_ERR_ARG; }
         surface = revolution;
+    } else if (surface_kind == 3) {
+        // the corpus engine's cylinder (radius 1, full sweep, height 2)
+        surface = new(context) SmCylinder(SmPoint3d(0,0,0), SmVector3d(1,0,0), SmVector3d(0,1,0),
+            1.0, 0.0, 360.0, 2.0, FALSE, FALSE, FALSE, &context);
+    } else if (surface_kind == 4) {
+        // a canonical cone (radii 0.5 and 1.5, height 2)
+        SmAxis2Placement placement(SmPoint3d(0,0,0), SmVector3d(1,0,0), SmVector3d(0,1,0));
+        SmCone* cone = NULL;
+        if (SmCone::CreateCanonical(context, placement, 0.5, 1.5, 2.0, cone) != SM_SUCCESS || !cone)
+            { delete cone; return SC_ERR_ARG; }
+        surface = cone;
+    } else if (surface_kind == 5) {
+        // a canonical sphere (radius 1.5)
+        SmAxis2Placement placement(SmPoint3d(0,0,0), SmVector3d(1,0,0), SmVector3d(0,1,0));
+        SmSphere* sphere = NULL;
+        if (SmSphere::CreateCanonical(context, placement, 1.5, sphere) != SM_SUCCESS || !sphere)
+            { delete sphere; return SC_ERR_ARG; }
+        surface = sphere;
+    } else if (surface_kind == 6) {
+        // a canonical torus (major radius 2, minor radius 0.5)
+        SmAxis2Placement placement(SmPoint3d(0,0,0), SmVector3d(1,0,0), SmVector3d(0,1,0));
+        SmTorus* torus = NULL;
+        if (SmTorus::CreateCanonical(context, placement, 2.0, 0.5, torus) != SM_SUCCESS || !torus)
+            { delete torus; return SC_ERR_ARG; }
+        surface = torus;
     } else if (surface_kind == 1) {
         surface = new(context) SmPlane(SmPoint3d(0,0,0), SmVector3d(1,0,0), SmVector3d(0,1,0), SmVector2d(1,1), SmExtent2d(0,0,1,1), &context);
     } else {
         surface = new(context) SmBSplineSurface(2,2,2,2,5,5,rows,knots,knots);
     }
     SmExtent2d domain(bounds[0],bounds[1],bounds[2],bounds[3]);
+    if (surface_kind >= 3) {
+        // cone kinds: the bounds are fractions of the natural (NURB) domain
+        const SmExtent2d natural = surface->GetNaturalUVDomain();
+        domain = SmExtent2d(natural.Evaluate(bounds[0],bounds[1]), natural.Evaluate(bounds[2],bounds[3]));
+    }
     std::vector<double> out;
     auto status=[](SmStatus r){return r==SM_SUCCESS ? 0.0 : (double)r;};
     if(op==0) {

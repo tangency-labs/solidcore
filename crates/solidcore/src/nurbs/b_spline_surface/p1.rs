@@ -16,7 +16,7 @@
 //! | [`BSplineSurface::copy`], `Clone`                 | copy constructor, `Copy`                         |
 //! | `Drop` (implicit)                                 | `~SmBSplineSurface`                              |
 //! | [`BSplineSurface::approx_eq`]                     | `operator==`                                     |
-//! | [`BSplineSurface::calculate_bounding_box`], [`BoundingBoxRequest`], [`BoundingBoxes`] | `CalculateBoundingBox` |
+//! | [`BSplineSurface::calculate_bounding_box`], [`BSplineSurface::calculate_bounding_box_of`], [`BoundingBoxRequest`], [`BoundingBoxes`] | `CalculateBoundingBox` |
 //! | [`BSplineSurface::create_bilinear_surface`]       | `CreateBilinearSurface`                          |
 //! | [`BSplineSurface::create_canonical`], [`CanonicalSurfaceData`] | `CreateCanonical`                   |
 //! | `create_cone_patch_dir` (private)                 | `sm_CreateConePatch` (static)                    |
@@ -29,7 +29,7 @@
 //! | [`BSplineSurface::number_natural_knots`]          | `GetNumberNaturalKnots`                          |
 //! | [`BSplineSurface::number_control_points`]         | `GetNumberControlPoints`                         |
 //! | [`BSplineSurface::is_degenerate_curve`]           | `IsDegenerateCurve`                              |
-//! | [`BSplineSurface::is_parallel_to_vector`]         | `IsParallelToVector`                             |
+//! | [`BSplineSurface::is_parallel_to_vector`], [`BSplineSurface::is_parallel_to_vector_opt_in`], [`BSplineSurface::is_parallel_to_vector_with_kernel`] | `IsParallelToVector` |
 //! | [`BSplineSurface::is_rational`]                   | `IsRational`                                     |
 //! | [`BSplineSurface::greville_abscissa`]             | `GetGrevilleAbscissa`                            |
 //! | [`BSplineSurface::degree`]                        | `GetDegree`                                      |
@@ -40,6 +40,7 @@
 //! | [`BSplineSurface::transform`]                     | `Transform`                                      |
 //! | [`BSplineSurface::is_kind_of`]                    | `IsKindOf`                                       |
 //! | [`BSplineSurface::read_from_db`]                  | `ReadFromDB`                                     |
+//! | [`BSplineSurface::write_to_db`]                   | `WriteToDB`                                      |
 //! | [`BSplineSurface::TYPE`], [`BSplineSurface::type_code`], [`BSplineSurface::type_string`], [`BSplineSurface::class_string`] | `GetType`, `GetTypeString`, `GetClassString` (`SM_COMMON`) |
 //! | [`BSplineSurface::out_of_bounds_enabled_mut`]     | `GetOutOfBoundsEnabled`                          |
 //! | [`BSplineSurface::is_out_of_bounds_enabled`]      | `IsOutOfBoundsEnabled`                           |
@@ -83,22 +84,29 @@
 //!   [`SolidError::InvalidInput`]. Where upstream would index outside its arrays or
 //!   allocate from wrapped or negative sizes (fewer multiplicities than knots or no
 //!   control points in `CreateCanonical`, too short arrays for the data constructor,
-//!   negative sizes, an unreadable header or a short binary stream in `ReadFromDB`,
-//!   knot type / form values outside the enums) the port returns `InvalidInput`.
-//! - **Data constructor.** `SmBSplineSurface(n, m, p, q, r, s, Pw, U, V)` copies `V`
-//!   with `smos_MemCpy(.., (s+1) doubles, (r+1) doubles)`: the destination size is the
-//!   u knot count, so the copy is refused (status ignored) when `s > r` and the v
-//!   knots stay 0 (then fixed up). [`BSplineSurface::from_data`] keeps that
-//!   (`plan/findings.md`).
+//!   knot type / form values outside the enums in `ReadFromDB`) the port returns
+//!   `InvalidInput`. An unreadable header or stream, a degree or a size `ReadFromDB`
+//!   rejects itself (`SM_ERR_INVALID_INPUT`) is `InvalidInput` as well.
+//! - **Canonical knots.** `CreateCanonical` expands the knots by the caller's
+//!   multiplicities with `SmTArray::Add` (failed growth ignored). The port counts the
+//!   expanded knots first and materialises them only after the control point rows
+//!   are taken, which bounds them by the point count; the checks and their order are
+//!   upstream's, so an absurd multiplicity fails the same point-count check without
+//!   allocating. A total count above `usize::MAX` is `InvalidInput`.
 //! - **Returned pointers.** `GetControlPointsPointer` returns a pointer into the NURB;
 //!   [`BSplineSurface::control_points`] returns a copy of the control points, row by
 //!   row (u index slowest).
 //! - **`IsParallelToVector`** returns its `SER(sTestVec.Unitize())` status
 //!   (`SM_ERR_INVALID_INPUT`, nonzero) as the boolean for a zero vector, so upstream
-//!   callers see `TRUE`; the port returns `Ok(true)` there. Its line distance test
-//!   passes the second line point as the *direction* of the line
+//!   callers see `TRUE`; the port returns `Ok(true)` there by default. Its line
+//!   distance test passes the second line point as the *direction* of the line
 //!   (`smgu_LinePointDistance(LinePnt, LineEnd, Pnt, ..)` binds the `SmVector3d`
-//!   overload); the port keeps that.
+//!   overload); the port keeps that by default, with an opt-in fix
+//!   `Kernel::fixes.surface_parallel_to_vector_checks` (WR-39, #2145) via
+//!   [`BSplineSurface::is_parallel_to_vector_opt_in`] and
+//!   [`BSplineSurface::is_parallel_to_vector_with_kernel`] that returns `Ok(false)` for
+//!   a zero vector and passes the unitised chord direction `line_vec` instead of
+//!   `line_end`.
 //! - **`CreateLinearSweep`** extrudes the curve's own NURB, which NLib makes 3D in
 //!   place for a 2D curve (upstream casts away `const`); the port takes the curve
 //!   mutably for that reason.
@@ -106,16 +114,24 @@
 //!   types to `SmSurface::IsKindOf` ([`crate::surface::surface::p2::is_kind_of`]);
 //!   a plain B-spline is never one of the analytic types `CalculateBoundingBox` and
 //!   `IsParallelToVector` test for first. `CalculateBoundingBox` also calls
-//!   `SmSurface::EvaluateNormal` (`surface::surface::p7`); its zone tolerance expansion
+//!   `SmSurface::EvaluateNormal` (`surface::surface::p7`). The analytic surfaces that
+//!   inherit `CalculateBoundingBox` (`SmCone`, `SmSphere`, `SmTorus`, ...) run it as
+//!   [`BSplineSurface::calculate_bounding_box_of`] with themselves as `this`: their
+//!   `IsKindOf` makes the polar box the sampled "analytic" one and their virtual
+//!   `EvaluateNormal` gives the samples. Its zone tolerance expansion
 //!   reads `GetFace()`, and a bare B-spline has no owner (the owner is held by the
 //!   [`Surface`](crate::surface::surface::Surface) wrapper), so it uses
-//!   `SM_ZONE_TOL_3D`; `CreateOffsetSurface` uses the base `SmSurface` body and
+//!   `SM_ZONE_TOL_3D` unless the wrapper passes its face's cached tolerance as
+//!   [`BoundingBoxRequest::expand_tolerance`]; `CreateOffsetSurface` uses the base `SmSurface` body and
 //!   constructs an `OffsetSurface`, asking the copy for its singularities.
 //!   `STEPInversion` runs `GlobalPointSolve` and `IsClosed` on the owning surface
 //!   (including plane overrides) and calls the base `LocalPointSolve` and
 //!   `IsSingularity`. Errors and unported prerequisites of these calls propagate.
 //!   `IsDegenerateCurve` runs the `SmSurface` base body on a copy of the B-spline
 //!   wrapped as a `Surface` (without owner).
+
+use core::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, OnceLock};
 
 use crate::error::{Result, SolidError};
 use crate::geom::axis2_placement::Axis2Placement;
@@ -126,20 +142,24 @@ use crate::geom::geom_utility::p1::line_point_distance;
 use crate::geom::global_solver::{SolutionRequested, SolverOperation};
 use crate::geom::polar_box::{PolarBox, PolarBoxState};
 use crate::geom::pseudo_box::PseudoBox;
+use crate::geom::solution_array::SolutionObject;
 use crate::geom::tol::are_same;
 use crate::geom::vector2d::Point2;
 use crate::geom::vector3d::{Point3, Vec3};
 use crate::kernel::Kernel;
 use crate::math::{EFF_ZERO, EFF_ZERO_PARAM, EFF_ZERO_SQ};
+use crate::nurbs::b_spline_curve::p1::ExpandedKnots;
 use crate::nurbs::b_spline_curve::{BSplineCurve, KnotType, NurbCircleParam};
 use crate::nurbs::crv_basic::ConicType;
 use crate::nurbs::iges::{iges_128_surface, Entity128};
+use crate::nurbs::knots::MAX_DEGREE;
 use crate::nurbs::math::{CPoint, MatrixType, RealMatrix, NOW};
 use crate::nurbs::nurbs_crv::{extract_frame, fixup_knot_vector, get_knots, to_euclid};
 use crate::nurbs::nurbs_srf::{allocate_nurb_surface, copy_nurb_surface};
 use crate::nurbs::srf_basic::{Direction, Surface};
 use crate::nurbs::srf_common::{corner_pts, cyl_cone, extrude_crv, CylCone};
-use crate::topology::database_io::{DatabaseReader, FileType};
+use crate::surface::surface::p1::SurfaceSolveContext;
+use crate::topology::database_io::{DatabaseReader, DatabaseWriter, FileType};
 
 /// `SURF_BASE_TYPE` (`SmTypes.h`).
 const SURF_BASE_TYPE: i64 = 15000;
@@ -166,6 +186,9 @@ const OP_KNOTS: &str = "nurbs::b_spline_surface::p1::BSplineSurface::knots";
 const OP_STEP_INV: &str = "nurbs::b_spline_surface::p1::BSplineSurface::step_inversion";
 const OP_XFORM: &str = "nurbs::b_spline_surface::p1::BSplineSurface::transform";
 const OP_READ: &str = "nurbs::b_spline_surface::p1::BSplineSurface::read_from_db";
+/// `ReadFromDB`'s message when the stream fails part way (`ReadFailed`).
+const READ_FAILED: &str = "NURBS surface data ends early or holds text that is not a number";
+const OP_WRITE: &str = "nurbs::b_spline_surface::p1::BSplineSurface::write_to_db";
 
 /// `SmBSplineSurfaceForm`: the STEP form of a B-spline surface; discriminants are the
 /// upstream values.
@@ -372,6 +395,11 @@ pub struct BoundingBoxRequest<'a> {
     /// Expand the normal and pseudo boxes by the zone tolerance
     /// (`bExpandPosBoxesByZoneTol3d`, upstream default `TRUE`).
     pub expand_by_zone_tol: bool,
+    /// The zone tolerance of the owning face to expand by (`GetFace()->GetTolerance()`):
+    /// a bare B-spline has no owner, so the [`Surface`](crate::surface::surface::Surface)
+    /// wrapper holding it passes its face's cached tolerance here; `None` expands by
+    /// the ownerless `SM_ZONE_TOL_3D`.
+    pub expand_tolerance: Option<f64>,
 }
 
 /// The boxes of [`BSplineSurface::calculate_bounding_box`] (each present when asked).
@@ -389,16 +417,96 @@ pub struct BoundingBoxes {
 /// flags.
 #[derive(Debug)]
 pub struct BSplineSurface {
-    /// The NURB (`m_pNurb`); `None` is `NULL`.
-    pub(crate) nurb: Option<Surface>,
+    /// The NURB (`m_pNurb`); empty is `NULL`. A lazy analytic kind fills it once from a
+    /// read-only query ([`NurbSlot::fill`]), as upstream's `GetOrCreateGwNurbPointer`
+    /// does through a `const_cast`.
+    pub(crate) nurb: NurbSlot,
     /// `m_bNurbIsBorrowed`.
     pub(crate) nurb_is_borrowed: bool,
-    /// `m_bOutOfBoundsEnabled`: evaluate beyond the natural domain.
-    pub(crate) out_of_bounds_enabled: bool,
+    /// `m_bOutOfBoundsEnabled`: evaluate beyond the natural domain. Interior-mutable
+    /// (an `AtomicBool`, relaxed: a plain `Cell` would make every arena holding a
+    /// surface non-`Sync`), so a solve can enable it for its scope on a shared surface,
+    /// as upstream's `SmTemporaryChangeValue` does on a `const` one (no copy of the
+    /// surface).
+    pub(crate) out_of_bounds_enabled: AtomicBool,
     /// `m_eKnotType`.
     pub(crate) knot_type: KnotType,
     /// `m_eBSplineSurfaceForm`.
     pub(crate) form: BSplineSurfaceForm,
+}
+
+/// The storage of a B-spline surface's NURB (`m_pNurb`): set and edited through
+/// `&mut` like an `Option`, and also fillable once through `&` ([`NurbSlot::fill`]).
+///
+/// Upstream's `GetOrCreateGwNurbPointer` runs the virtual `MakeNurb` when `m_pNurb` is
+/// null and keeps the NURB on the object, also when called from a `const` method
+/// (through a `const_cast`), so every later reader of that surface (`IntersectWithPlane`'s
+/// "has a NURB" test, `operator==`, the copy constructor, `ToggleSwapUVBit`, transforms)
+/// sees it. A `OnceLock` gives the port the same once-only fill from `&self` while
+/// keeping the surface `Send + Sync`; the made value depends only on the surface's own
+/// data, so the result is deterministic.
+///
+/// The cell sits behind an `Arc` so that an evaluation copy of a surface (which stands
+/// for upstream's pointer to the one object, as the surface's cache slot does) can share
+/// it ([`NurbSlot::shared`]): a NURB made through the copy is then kept on the surface
+/// too. Every `&mut` access detaches a shared cell first (copy on write), so an edit of
+/// one never reaches the other.
+#[derive(Debug, Default)]
+pub(crate) struct NurbSlot(Arc<OnceLock<Surface>>);
+
+impl NurbSlot {
+    /// No NURB (`NULL`).
+    pub(crate) fn none() -> Self {
+        Self(Arc::new(OnceLock::new()))
+    }
+
+    /// The same cell (for an evaluation copy that stands for the same surface object).
+    pub(crate) fn shared(&self) -> Self {
+        Self(Arc::clone(&self.0))
+    }
+
+    /// The NURB, if any.
+    pub(crate) fn as_ref(&self) -> Option<&Surface> {
+        self.0.get()
+    }
+
+    /// The NURB, mutable, if any (detaches a shared cell first).
+    pub(crate) fn as_mut(&mut self) -> Option<&mut Surface> {
+        Arc::make_mut(&mut self.0).get_mut()
+    }
+
+    /// Whether there is no NURB.
+    pub(crate) fn is_none(&self) -> bool {
+        self.0.get().is_none()
+    }
+
+    /// Whether there is a NURB.
+    pub(crate) fn is_some(&self) -> bool {
+        self.0.get().is_some()
+    }
+
+    /// Takes the NURB out, leaving none (detaches a shared cell first).
+    pub(crate) fn take(&mut self) -> Option<Surface> {
+        Arc::make_mut(&mut self.0).take()
+    }
+
+    /// Detaches a shared cell, so that what is made through this surface from now on
+    /// is its own (for an edit of the surface's other data).
+    pub(crate) fn detach(&mut self) {
+        Arc::make_mut(&mut self.0);
+    }
+
+    /// Stores `made` when there is no NURB yet (the first fill wins, as upstream's
+    /// `GetOrCreateGwNurbPointer` makes once) and returns the stored NURB.
+    pub(crate) fn fill(&self, made: Surface) -> &Surface {
+        self.0.get_or_init(|| made)
+    }
+}
+
+impl From<Option<Surface>> for NurbSlot {
+    fn from(nurb: Option<Surface>) -> Self {
+        Self(Arc::new(nurb.map_or_else(OnceLock::new, OnceLock::from)))
+    }
 }
 
 impl Clone for BSplineSurface {
@@ -477,8 +585,9 @@ fn nl_dir(param: SurfParamType) -> Direction {
 // ---- unported SmSurface methods ------------------------------------------------------
 
 /// `SmSurface::EvaluateNormal(uv, TRUE, TRUE, normal)`.
-fn evaluate_normal(srf: &BSplineSurface, uv: Point2) -> Result<Vec3> {
+fn evaluate_normal(k: &Kernel, srf: &BSplineSurface, uv: Point2) -> Result<Vec3> {
     crate::surface::surface::p7::base_evaluate_normal(
+        k,
         srf,
         uv,
         crate::nurbs::knots::Side::Left,
@@ -491,23 +600,27 @@ fn evaluate_normal(srf: &BSplineSurface, uv: Point2) -> Result<Vec3> {
 /// bare B-spline has no owner (the owner is held by the
 /// [`Surface`](crate::surface::surface::Surface) wrapper, whose
 /// [`calculate_bounding_box`](crate::surface::surface::Surface::calculate_bounding_box)
-/// handles a face owner before calling here): `SM_ZONE_TOL_3D`. Callers that hold a
-/// `Surface` with a face must check it first (as `Surface::calculate_bounding_box` and
-/// `Surface::is_planar` do); the patch boxes of surface caches are ownerless.
-const fn owner_zone_tolerance(_srf: &BSplineSurface) -> f64 {
-    crate::geom::tol::ZONE_TOL_3D
+/// passes a face owner's tolerance as [`BoundingBoxRequest::expand_tolerance`]):
+/// that tolerance when given, else `SM_ZONE_TOL_3D`. Callers that hold a `Surface` with
+/// a face must pass it (as `Surface::calculate_bounding_box` and `Surface::is_planar`
+/// do); the patch boxes of surface caches are ownerless.
+fn owner_zone_tolerance(req: &BoundingBoxRequest<'_>) -> f64 {
+    req.expand_tolerance
+        .unwrap_or(crate::geom::tol::ZONE_TOL_3D)
 }
 
-/// `SmSurface::IsDegenerateCurve` (the base body, on a copy of the B-spline as an
-/// [`SmSurface`](crate::surface::surface::Surface)).
+/// `SmSurface::IsDegenerateCurve` (the base body, on an exact copy of the B-spline as
+/// an [`SmSurface`](crate::surface::surface::Surface): upstream passes the call along
+/// on the object itself, and [`BSplineSurface::copy`] would fix the knots up).
 fn surface_is_degenerate_curve(
+    k: &Kernel,
     srf: &BSplineSurface,
     angle_tol_deg: f64,
     uv_domain: Option<&Extent2d>,
     tol_3d: f64,
 ) -> Result<bool> {
-    let s = crate::surface::surface::Surface::from(srf.clone());
-    crate::surface::surface::p1::base_is_degenerate_curve(&s, angle_tol_deg, uv_domain, tol_3d)
+    let s = crate::surface::surface::Surface::from(srf.clone_exact());
+    crate::surface::surface::p1::base_is_degenerate_curve(k, &s, angle_tol_deg, uv_domain, tol_3d)
 }
 
 /// `SmSurface::LocalPointSolve(domain, SM_SO_INTERSECT, point, guess, ..)`: whether it
@@ -536,6 +649,43 @@ fn local_point_solve(
 /// `SmSurface::GlobalPointSolve(domain, SM_SO_INTERSECT, point, tol, NULL,
 /// SM_SR_ALL, ..)` on `surface` (the surface the B-spline part belongs to): the start
 /// parameters of every solution.
+/// [`global_point_solve`] under the caller's face context (the context and the
+/// surface's handle in it).
+fn global_point_solve_with_context<O: SolutionObject>(
+    k: &Kernel,
+    surface: &crate::surface::surface::Surface,
+    domain: &Extent2d,
+    point: Point3,
+    tol_3d: f64,
+    context: (&mut dyn SurfaceSolveContext<O>, Option<O>),
+) -> Result<Vec<Point2>> {
+    let (context, handle) = context;
+    let mut solutions = crate::geom::solution_array::SolutionArray::<O>::new();
+    surface.global_point_solve_into_with_context(
+        k,
+        handle,
+        None,
+        context,
+        domain,
+        SolverOperation::Intersect,
+        point,
+        tol_3d,
+        None,
+        SolutionRequested::All,
+        &mut solutions,
+    )?;
+    Ok(solutions
+        .as_slice()
+        .iter()
+        .map(|s| {
+            Point2::new(
+                s.start.parameters.first().copied().unwrap_or(0.0),
+                s.start.parameters.get(1).copied().unwrap_or(0.0),
+            )
+        })
+        .collect())
+}
+
 fn global_point_solve(
     k: &Kernel,
     surface: &crate::surface::surface::Surface,
@@ -576,6 +726,7 @@ fn is_singularity(
 /// `SmSurface::IsClosed(domain, dir)` (unit `surface.surface_p7`), virtual:
 /// `SmPlane::IsClosed` is an inline override returning FALSE (`SmPlane.h:432`).
 fn is_closed(
+    k: &Kernel,
     surface: &crate::surface::surface::Surface,
     srf: &BSplineSurface,
     domain: &Extent2d,
@@ -584,7 +735,7 @@ fn is_closed(
     if let crate::surface::surface::SurfaceKind::Plane(p) = surface.kind() {
         return Ok(p.is_closed().0);
     }
-    Ok(crate::surface::surface::p7::base_is_closed(srf, domain, dir, None, false)?.0)
+    Ok(crate::surface::surface::p7::base_is_closed(k, srf, domain, dir, None, false)?.0)
 }
 
 impl BSplineSurface {
@@ -596,11 +747,11 @@ impl BSplineSurface {
     /// A surface without NURB data (`SmBSplineSurface()`); only set methods can give it
     /// one.
     #[must_use]
-    pub const fn new() -> Self {
+    pub fn new() -> Self {
         Self {
-            nurb: None,
+            nurb: NurbSlot::none(),
             nurb_is_borrowed: false,
-            out_of_bounds_enabled: false,
+            out_of_bounds_enabled: AtomicBool::new(false),
             knot_type: KnotType::Unspecified,
             form: BSplineSurfaceForm::Unspecified,
         }
@@ -634,14 +785,10 @@ impl BSplineSurface {
             .get(..=r)
             .ok_or_else(|| invalid(OP_DATA, "fewer than r + 1 u knots"))?;
         new_sur.u_knots_mut().copy_from_slice(src_u);
-        // upstream passes the u size (r + 1) as the destination size of the v copy, so
-        // smos_MemCpy refuses it (status ignored) when s > r: the v knots stay 0
-        if s <= r {
-            let src_v = v
-                .get(..=s)
-                .ok_or_else(|| invalid(OP_DATA, "fewer than s + 1 v knots"))?;
-            new_sur.v_knots_mut().copy_from_slice(src_v);
-        }
+        let src_v = v
+            .get(..=s)
+            .ok_or_else(|| invalid(OP_DATA, "fewer than s + 1 v knots"))?;
+        new_sur.v_knots_mut().copy_from_slice(src_v);
 
         // copy control point values from target surface to new surface one row at a time
         for i in 0..=n {
@@ -658,7 +805,7 @@ impl BSplineSurface {
         fixup_knot_vector(new_sur.u_knots_mut(), EFF_ZERO_PARAM);
         fixup_knot_vector(new_sur.v_knots_mut(), EFF_ZERO_PARAM);
         Ok(Self {
-            nurb: Some(new_sur),
+            nurb: Some(new_sur).into(),
             ..Self::new()
         })
     }
@@ -674,7 +821,7 @@ impl BSplineSurface {
             fixup_knot_vector(nurb.v_knots_mut(), EFF_ZERO_PARAM);
         }
         Self {
-            nurb: Some(nurb),
+            nurb: Some(nurb).into(),
             nurb_is_borrowed: borrowed,
             ..Self::new()
         }
@@ -688,7 +835,7 @@ impl BSplineSurface {
         fixup_knot_vector(nurb.u_knots_mut(), EFF_ZERO_PARAM);
         fixup_knot_vector(nurb.v_knots_mut(), EFF_ZERO_PARAM);
         Self {
-            nurb: Some(nurb),
+            nurb: Some(nurb).into(),
             ..Self::new()
         }
     }
@@ -705,9 +852,11 @@ impl BSplineSurface {
             nurb
         });
         Self {
-            nurb,
+            nurb: nurb.into(),
             nurb_is_borrowed: false,
-            out_of_bounds_enabled: self.out_of_bounds_enabled,
+            out_of_bounds_enabled: AtomicBool::new(
+                self.out_of_bounds_enabled.load(Ordering::Relaxed),
+            ),
             knot_type: self.knot_type,
             form: self.form,
         }
@@ -719,10 +868,30 @@ impl BSplineSurface {
     /// `Surface` holding the surface) use this one.
     #[must_use]
     pub fn clone_exact(&self) -> Self {
+        self.clone_exact_with(NurbSlot::from(self.nurb.as_ref().map(copy_nurb_surface)))
+    }
+
+    /// [`BSplineSurface::clone_exact`] for an evaluation copy that stands for this
+    /// surface object: the copy shares this surface's NURB cell ([`NurbSlot::shared`]),
+    /// so a NURB made through it is kept here too.
+    #[must_use]
+    pub(crate) fn clone_exact_shared(&self) -> Self {
+        self.clone_exact_with(self.nurb.shared())
+    }
+
+    /// Detaches a NURB cell shared with evaluation copies (before an edit of this
+    /// surface or of the analytic data it is made from).
+    pub(crate) fn detach_nurb(&mut self) {
+        self.nurb.detach();
+    }
+
+    fn clone_exact_with(&self, nurb: NurbSlot) -> Self {
         Self {
-            nurb: self.nurb.as_ref().map(copy_nurb_surface),
+            nurb,
             nurb_is_borrowed: false,
-            out_of_bounds_enabled: self.out_of_bounds_enabled,
+            out_of_bounds_enabled: AtomicBool::new(
+                self.out_of_bounds_enabled.load(Ordering::Relaxed),
+            ),
             knot_type: self.knot_type,
             form: self.form,
         }
@@ -736,7 +905,7 @@ impl BSplineSurface {
         if core::ptr::eq(self, other) {
             return true;
         }
-        match (&self.nurb, &other.nurb) {
+        match (self.nurb.as_ref(), other.nurb.as_ref()) {
             (None, None) => true,
             (Some(a), Some(b)) => a.equals(b, EFF_ZERO, EFF_ZERO),
             _ => false,
@@ -793,13 +962,20 @@ impl BSplineSurface {
 
     /// Mutable access to the out-of-bounds evaluation flag (`GetOutOfBoundsEnabled`).
     pub fn out_of_bounds_enabled_mut(&mut self) -> &mut bool {
-        &mut self.out_of_bounds_enabled
+        self.out_of_bounds_enabled.get_mut()
     }
 
     /// Whether evaluation beyond the natural domain is enabled (`IsOutOfBoundsEnabled`).
     #[must_use]
     pub fn is_out_of_bounds_enabled(&self) -> bool {
-        self.out_of_bounds_enabled
+        self.out_of_bounds_enabled.load(Ordering::Relaxed)
+    }
+
+    /// Sets the out-of-bounds evaluation flag through a shared reference: for a
+    /// temporary change that the caller restores (`SmTemporaryChangeValue` on
+    /// `GetOutOfBoundsEnabled()` of a `const` surface).
+    pub(crate) fn set_out_of_bounds_enabled_in_place(&self, enabled: bool) {
+        self.out_of_bounds_enabled.store(enabled, Ordering::Relaxed);
     }
 
     /// Whether the NURB is borrowed (`IsNurbBorrowed`).
@@ -1060,12 +1236,13 @@ impl BSplineSurface {
     /// Those of `SmSurface::IsDegenerateCurve`.
     pub fn is_degenerate_curve(
         &self,
+        k: &Kernel,
         angle_tol_deg: f64,
         uv_domain: Option<&Extent2d>,
         tol_3d: f64,
     ) -> Result<bool> {
         // gwc: for now - pass the call along
-        surface_is_degenerate_curve(self, angle_tol_deg, uv_domain, tol_3d)
+        surface_is_degenerate_curve(k, self, angle_tol_deg, uv_domain, tol_3d)
     }
 
     /// Whether the surface is parallel to `vector`: all control points of every u row
@@ -1079,9 +1256,30 @@ impl BSplineSurface {
     ///
     /// None (the `Result` is kept for the derived surfaces).
     pub fn is_parallel_to_vector(&self, vector: Vec3) -> Result<bool> {
+        self.is_parallel_to_vector_opt_in(vector, false)
+    }
+
+    /// [`BSplineSurface::is_parallel_to_vector`] with kernel opt-in fixes applied
+    /// (`IsParallelToVector`).
+    ///
+    /// # Errors
+    ///
+    /// None (the `Result` is kept for the derived surfaces).
+    pub fn is_parallel_to_vector_with_kernel(&self, k: &Kernel, vector: Vec3) -> Result<bool> {
+        self.is_parallel_to_vector_opt_in(vector, k.fixes.surface_parallel_to_vector_checks)
+    }
+
+    /// [`BSplineSurface::is_parallel_to_vector`], optionally returning `false` for a
+    /// zero `vector` and testing subsequent control points against the chord direction
+    /// rather than `line_end` when `fix_checks` is `true` (WR-39).
+    ///
+    /// # Errors
+    ///
+    /// None (the `Result` is kept for the derived surfaces).
+    pub fn is_parallel_to_vector_opt_in(&self, vector: Vec3, fix_checks: bool) -> Result<bool> {
         let Ok(test_vec) = vector.unitize() else {
             // SER(sTestVec.Unitize()): SM_ERR_INVALID_INPUT returned as the boolean
-            return Ok(true);
+            return Ok(!fix_checks);
         };
 
         // the SmPlane branch (|Z . v| < SM_EFF_ZERO * (1 + |origin|max)) is
@@ -1107,9 +1305,11 @@ impl BSplineSurface {
             if line_vec.dot(test_vec).abs() < 1.0 - tol {
                 return Ok(false);
             }
+            let dir = if fix_checks { line_vec } else { line_end };
             for pnt in rest {
                 // smgu_LinePointDistance(LinePnt, LineEnd, ..): LineEnd is the direction
-                let (distance, _) = line_point_distance(line_pnt, line_end, pnt?);
+                // upstream; line_vec under WR-39 opt-in.
+                let (distance, _) = line_point_distance(line_pnt, dir, pnt?);
                 if distance > tol {
                     return Ok(false);
                 }
@@ -1164,9 +1364,44 @@ impl BSplineSurface {
     /// `SmSurface::GetFace`. `SM_ERR` without NURB (upstream crashes).
     pub fn calculate_bounding_box(
         &self,
+        k: &Kernel,
         uv_domain: &Extent2d,
         req: &BoundingBoxRequest<'_>,
     ) -> Result<BoundingBoxes> {
+        self.calculate_bounding_box_of(k, uv_domain, req, None)
+    }
+
+    /// [`BSplineSurface::calculate_bounding_box`] run for `derived`, the surface this
+    /// B-spline is the base of (an `SmCone`, `SmSphere`, `SmTorus`, ... inheriting the
+    /// override): its `IsKindOf` answers the analytic type test and its virtual
+    /// `EvaluateNormal` gives the sampled normals. `None` is a plain B-spline.
+    ///
+    /// # Errors
+    ///
+    /// As [`BSplineSurface::calculate_bounding_box`], and those of `derived`'s normal
+    /// evaluation.
+    pub fn calculate_bounding_box_of(
+        &self,
+        k: &Kernel,
+        uv_domain: &Extent2d,
+        req: &BoundingBoxRequest<'_>,
+        derived: Option<&crate::surface::surface::Surface>,
+    ) -> Result<BoundingBoxes> {
+        // the virtual IsKindOf and EvaluateNormal of `this`
+        let kind_of = |t: i64| match derived {
+            Some(d) => d.is_kind_of(t),
+            None => self.is_kind_of(t),
+        };
+        let evaluate_normal = |k: &Kernel, _: &Self, uv: Point2| match derived {
+            Some(d) => d.evaluate_normal(
+                k,
+                uv,
+                crate::nurbs::knots::Side::Left,
+                crate::nurbs::knots::Side::Left,
+            ),
+            None => evaluate_normal(k, self, uv),
+        };
+
         // init output
         let mut normal_box = req.normal.then(Extent3d::new);
         let mut pseudo_box = req.pseudo.then(PseudoBox::new);
@@ -1200,10 +1435,10 @@ impl BSplineSurface {
             || (u_degree == 2 && v_degree == 2));
 
         // also check the derived type of the surface
-        if self.is_kind_of(PLANE_TYPE)?
-            || self.is_kind_of(CONE_TYPE)?
-            || self.is_kind_of(SPHERE_TYPE)?
-            || self.is_kind_of(TORUS_TYPE)?
+        if kind_of(PLANE_TYPE)?
+            || kind_of(CONE_TYPE)?
+            || kind_of(SPHERE_TYPE)?
+            || kind_of(TORUS_TYPE)?
         {
             analytic = true;
         }
@@ -1258,19 +1493,19 @@ impl BSplineSurface {
             let mut norm = [Vec3::UNDEF; V_CNT];
 
             // get center normal
-            norm[9] = evaluate_normal(self, uv_domain.evaluate(0.5, 0.5))?;
+            norm[9] = evaluate_normal(k, self, uv_domain.evaluate(0.5, 0.5))?;
 
             if planar {
-                pol.add_vector(norm[9], None);
+                pol.add_vector_with_kernel(k, norm[9], None);
                 if polar_guess.is_some() {
-                    trial_polar_box.add_vector(norm[9], None);
+                    trial_polar_box.add_vector_with_kernel(k, norm[9], None);
                 }
             } else {
                 // get corner normals
-                norm[5] = evaluate_normal(self, uv_domain.evaluate(0.0, 0.0))?;
-                norm[6] = evaluate_normal(self, uv_domain.evaluate(1.0, 0.0))?;
-                norm[7] = evaluate_normal(self, uv_domain.evaluate(1.0, 1.0))?;
-                norm[8] = evaluate_normal(self, uv_domain.evaluate(0.0, 1.0))?;
+                norm[5] = evaluate_normal(k, self, uv_domain.evaluate(0.0, 0.0))?;
+                norm[6] = evaluate_normal(k, self, uv_domain.evaluate(1.0, 0.0))?;
+                norm[7] = evaluate_normal(k, self, uv_domain.evaluate(1.0, 1.0))?;
+                norm[8] = evaluate_normal(k, self, uv_domain.evaluate(0.0, 1.0))?;
 
                 // Build a central vector that can be used as a good PolarBox base vector
                 norm[0] = if n <= 2 && m <= 2 {
@@ -1282,22 +1517,22 @@ impl BSplineSurface {
                 // when we have a midPoint vector for the polar box
                 if norm[0].length_squared() > EFF_ZERO_SQ {
                     // get mid side normals
-                    norm[1] = evaluate_normal(self, uv_domain.evaluate(0.0, 0.5))?;
-                    norm[2] = evaluate_normal(self, uv_domain.evaluate(1.0, 0.5))?;
-                    norm[3] = evaluate_normal(self, uv_domain.evaluate(0.5, 0.0))?;
-                    norm[4] = evaluate_normal(self, uv_domain.evaluate(0.5, 1.0))?;
+                    norm[1] = evaluate_normal(k, self, uv_domain.evaluate(0.0, 0.5))?;
+                    norm[2] = evaluate_normal(k, self, uv_domain.evaluate(1.0, 0.5))?;
+                    norm[3] = evaluate_normal(k, self, uv_domain.evaluate(0.5, 0.0))?;
+                    norm[4] = evaluate_normal(k, self, uv_domain.evaluate(0.5, 1.0))?;
 
                     // build the polar box by adding all the vectors
                     pol.reset();
                     for v in norm {
-                        pol.add_vector(v, None);
+                        pol.add_vector_with_kernel(k, v, None);
                     }
 
                     if let Some(g) = polar_guess {
                         guess_basis = Some(polar_guess_basis(g));
                         trial_polar_box.reset();
                         for v in norm {
-                            trial_polar_box.add_vector(v, guess_basis);
+                            trial_polar_box.add_vector_with_kernel(k, v, guess_basis);
                         }
                     }
                 }
@@ -1307,19 +1542,19 @@ impl BSplineSurface {
         // Do a little work to try to get the polar box to be centered - use the
         // derivatives of the midpoints to establish the base line vector.
         if let (Some(pol), false) = (polar_box.as_mut(), analytic) {
-            let n0 = evaluate_normal(self, uv_domain.evaluate(0.5, 0.5))?;
-            pol.add_vector(n0, None);
-            let n1 = evaluate_normal(self, uv_domain.evaluate(1.0, 0.5))?;
-            pol.add_vector(n1, None);
-            let n2 = evaluate_normal(self, uv_domain.evaluate(0.5, 1.0))?;
-            pol.add_vector(n2, None);
+            let n0 = evaluate_normal(k, self, uv_domain.evaluate(0.5, 0.5))?;
+            pol.add_vector_with_kernel(k, n0, None);
+            let n1 = evaluate_normal(k, self, uv_domain.evaluate(1.0, 0.5))?;
+            pol.add_vector_with_kernel(k, n1, None);
+            let n2 = evaluate_normal(k, self, uv_domain.evaluate(0.5, 1.0))?;
+            pol.add_vector_with_kernel(k, n2, None);
 
             if let Some(g) = polar_guess {
                 guess_basis = Some(polar_guess_basis(g));
                 trial_polar_box.reset();
-                trial_polar_box.add_vector(n0, guess_basis);
-                trial_polar_box.add_vector(n1, guess_basis);
-                trial_polar_box.add_vector(n2, guess_basis);
+                trial_polar_box.add_vector_with_kernel(k, n0, guess_basis);
+                trial_polar_box.add_vector_with_kernel(k, n1, guess_basis);
+                trial_polar_box.add_vector_with_kernel(k, n2, guess_basis);
             }
         }
 
@@ -1348,9 +1583,9 @@ impl BSplineSurface {
                     if let (Some(pol), true) = (polar_box.as_mut(), net_polar) {
                         // get control net tangent vectors
                         let mut add = |cross: Vec3, pol: &mut PolarBox| {
-                            pol.add_vector(cross, None);
+                            pol.add_vector_with_kernel(k, cross, None);
                             if polar_guess.is_some() {
-                                trial_polar_box.add_vector(cross, guess_basis);
+                                trial_polar_box.add_vector_with_kernel(k, cross, guess_basis);
                             }
                         };
                         let dv0 = if j > 1 {
@@ -1403,11 +1638,11 @@ impl BSplineSurface {
         // When asked, expand the normal box by the zone tolerance
         if req.expand_by_zone_tol {
             if let Some(nb) = normal_box.as_mut() {
-                nb.expand_absolute(owner_zone_tolerance(self));
+                nb.expand_absolute(owner_zone_tolerance(req));
             }
             // When asked, expand the pPseudoBox box by the zone tolerance
             if let Some(pb) = pseudo_box.as_mut() {
-                pb.expand_absolute(owner_zone_tolerance(self));
+                pb.expand_absolute(owner_zone_tolerance(req));
             }
         }
 
@@ -1474,22 +1709,13 @@ impl BSplineSurface {
         }
 
         // Make sNewUKnots / sNewVKnots arrays with one entry for each multiplicity
-        let expand = |knots: &[f64], mults: &[usize]| -> Result<Vec<f64>> {
-            let mut out = Vec::new();
-            for (i, &knot) in knots.iter().enumerate() {
-                let mult = *mults
-                    .get(i)
-                    .ok_or_else(|| invalid(OP_CANON, "fewer multiplicities than knots"))?;
-                out.extend(core::iter::repeat_n(knot, mult));
-            }
-            Ok(out)
-        };
-        let new_u_knots = expand(data.u_knots, data.u_multiplicities)?;
-        let new_v_knots = expand(data.v_knots, data.v_multiplicities)?;
+        // (kept implicit until the control points bound their size)
+        let exp_u = ExpandedKnots::new(data.u_knots, data.u_multiplicities, OP_CANON)?;
+        let exp_v = ExpandedKnots::new(data.v_knots, data.v_multiplicities, OP_CANON)?;
 
         // Get number of ControlPoints (ULONG arithmetic)
-        let num_u_cpts = new_u_knots.len().wrapping_sub(u_degree).wrapping_sub(1);
-        let num_v_cpts = new_v_knots.len().wrapping_sub(v_degree).wrapping_sub(1);
+        let num_u_cpts = exp_u.len().wrapping_sub(u_degree).wrapping_sub(1);
+        let num_v_cpts = exp_v.len().wrapping_sub(v_degree).wrapping_sub(1);
 
         // check input - number of ControlPoints is consistent with Knot Count and degree
         if num_u_cpts.wrapping_mul(num_v_cpts) != cps.len() {
@@ -1500,8 +1726,8 @@ impl BSplineSurface {
         }
         if num_u_cpts == 0
             || num_v_cpts == 0
-            || num_u_cpts > new_u_knots.len()
-            || num_v_cpts > new_v_knots.len()
+            || num_u_cpts > exp_u.len()
+            || num_v_cpts > exp_v.len()
         {
             // upstream builds k1 = -1 or wraps its sizes
             return Err(invalid(OP_CANON, "no control points"));
@@ -1522,19 +1748,25 @@ impl BSplineSurface {
             Some(w) if non1_weight && !w.is_empty() => w.to_vec(),
             _ => vec![1.0; cps.len()],
         };
-        let rows = |k: usize| k * num_v_cpts..(k + 1) * num_v_cpts;
-        let mut w_rows: Vec<Vec<f64>> = Vec::with_capacity(num_u_cpts);
-        let mut p_rows: Vec<Vec<Point3>> = Vec::with_capacity(num_u_cpts);
+        let rows = |k: usize| -> Option<core::ops::Range<usize>> {
+            Some(k.checked_mul(num_v_cpts)?..k.checked_add(1)?.checked_mul(num_v_cpts)?)
+        };
+        let mut w_rows: Vec<Vec<f64>> = Vec::new();
+        let mut p_rows: Vec<Vec<Point3>> = Vec::new();
         for k in 0..num_u_cpts {
-            let wr = weights_flat
-                .get(rows(k))
+            let wr = rows(k)
+                .and_then(|r| weights_flat.get(r))
                 .ok_or_else(|| invalid(OP_CANON, "too few weights"))?;
-            let pr = cps
-                .get(rows(k))
+            let pr = rows(k)
+                .and_then(|r| cps.get(r))
                 .ok_or_else(|| invalid(OP_CANON, "too few control points"))?;
             w_rows.push(wr.to_vec());
             p_rows.push(pr.to_vec());
         }
+
+        // the control net bounds the knot counts now (num_u_cpts * num_v_cpts points)
+        let new_u_knots = exp_u.prefix(exp_u.len(), OP_CANON)?;
+        let new_v_knots = exp_v.prefix(exp_v.len(), OP_CANON)?;
 
         let knot = |k: &[f64], i: usize| -> Result<f64> {
             k.get(i)
@@ -1777,6 +2009,29 @@ impl BSplineSurface {
         Ok(())
     }
 
+    /// A copy mirrored about the XY plane of `mirror_plane` (`CreateMirrorSurface`):
+    /// the copy constructor's compact NURB copy (knots fixed up), its control points
+    /// transformed by the 3x3-sized mirror matrix (`N_SrfTransform`).
+    ///
+    /// # Errors
+    ///
+    /// `SM_ERR` without a NURB (upstream dereferences a null one).
+    pub fn create_mirror_surface(&self, mirror_plane: &Axis2Placement) -> Result<Self> {
+        let mut rma = RealMatrix::new(3, 3, MatrixType::Full, 3)?;
+        for (i, row) in mirror_plane.mirror_matrix().iter().enumerate() {
+            for (j, &v) in row.iter().enumerate() {
+                rma.set(i, j, v)?;
+            }
+        }
+        let mut bss = self.copy();
+        // (N_SrfTransform status ignored)
+        let _ = bss
+            .get_or_create_gw_nurb()
+            .map_err(|_| SolidError::sm_err(OP_XFORM))?
+            .transform(&rma);
+        Ok(bss)
+    }
+
     // ---- inversion --------------------------------------------------------------------
 
     /// The parameters of `point_on_surf` (which must lie on the surface within
@@ -1818,6 +2073,58 @@ impl BSplineSurface {
         tol_3d: f64,
         uv_guess: Option<Point2>,
     ) -> Result<(Point2, LocationType)> {
+        self.step_inversion_on_in::<crate::surface::surface::p4::NoObject>(
+            k,
+            surface,
+            anal_domain,
+            point_on_surf,
+            tol_3d,
+            uv_guess,
+            None,
+        )
+    }
+
+    /// [`BSplineSurface::step_inversion_on`] whose `GlobalPointSolve` runs under the
+    /// caller's face context (`context`: the solve context and the surface's handle in
+    /// it): a face-owned surface's solutions are then classified against the face's
+    /// trims, as upstream's `GlobalPointSolve` does through the surface's face.
+    ///
+    /// # Errors
+    ///
+    /// As [`BSplineSurface::step_inversion`], with those of the context.
+    #[allow(clippy::too_many_arguments)]
+    pub fn step_inversion_on_with_context<O: SolutionObject>(
+        &self,
+        k: &Kernel,
+        surface: &crate::surface::surface::Surface,
+        anal_domain: &Extent2d,
+        point_on_surf: Point3,
+        tol_3d: f64,
+        uv_guess: Option<Point2>,
+        context: (&mut dyn SurfaceSolveContext<O>, Option<O>),
+    ) -> Result<(Point2, LocationType)> {
+        self.step_inversion_on_in(
+            k,
+            surface,
+            anal_domain,
+            point_on_surf,
+            tol_3d,
+            uv_guess,
+            Some(context),
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn step_inversion_on_in<O: SolutionObject>(
+        &self,
+        k: &Kernel,
+        surface: &crate::surface::surface::Surface,
+        anal_domain: &Extent2d,
+        point_on_surf: Point3,
+        tol_3d: f64,
+        uv_guess: Option<Point2>,
+        context: Option<(&mut dyn SurfaceSolveContext<O>, Option<O>)>,
+    ) -> Result<(Point2, LocationType)> {
         // init output
         let mut location = LocationType::Interior;
 
@@ -1835,13 +2142,17 @@ impl BSplineSurface {
         }
 
         if !local_succeeded {
-            solutions.extend(global_point_solve(
-                k,
-                surface,
-                anal_domain,
-                point_on_surf,
-                tol_3d,
-            )?);
+            solutions.extend(match context {
+                Some(context) => global_point_solve_with_context(
+                    k,
+                    surface,
+                    anal_domain,
+                    point_on_surf,
+                    tol_3d,
+                    context,
+                )?,
+                None => global_point_solve(k, surface, anal_domain, point_on_surf, tol_3d)?,
+            });
         }
 
         // Point not close enough to surface - error
@@ -1860,7 +2171,7 @@ impl BSplineSurface {
         }
 
         // when surface is closed in U direction and solution on Seam
-        if is_closed(surface, self, anal_domain, SurfParamType::U)? {
+        if is_closed(k, surface, self, anal_domain, SurfParamType::U)? {
             let ivl = Extent1d::from_min_max(anal_domain.min().x, anal_domain.max().x);
             if ivl.is_value_on_boundary(uv.x, EFF_ZERO).0 {
                 location = LocationType::USeam;
@@ -1868,7 +2179,7 @@ impl BSplineSurface {
         }
 
         // when surface is closed in V direction and solution on Seam
-        if is_closed(surface, self, anal_domain, SurfParamType::V)? {
+        if is_closed(k, surface, self, anal_domain, SurfParamType::V)? {
             let ivl = Extent1d::from_min_max(anal_domain.min().y, anal_domain.max().y);
             if ivl.is_value_on_boundary(uv.y, EFF_ZERO).0 {
                 location = if location == LocationType::Interior {
@@ -1891,9 +2202,10 @@ impl BSplineSurface {
     ///
     /// # Errors
     ///
-    /// `SM_ERR` for a rational flag other than 0 or 1; `InvalidInput` for an
-    /// unreadable or negative header, a knot type or form outside its enum, or a
-    /// short binary stream (upstream: undefined values).
+    /// `InvalidInput` (`SM_ERR_INVALID_INPUT`) when a read fails part way (data ends
+    /// early or is not a number), for degrees outside `1..=NL_MAXDEG`, fewer control
+    /// points than degree + 1 in a direction or too many to size, a rational flag other
+    /// than 0 or 1, a knot type or form outside its enum, or a short binary stream.
     pub fn read_from_db(db: &mut DatabaseReader, version: u64) -> Result<Self> {
         let bad = |reason: &'static str| invalid(OP_READ, reason);
 
@@ -1932,7 +2244,7 @@ impl BSplineSurface {
             }
             match (n, m, p, q, rat) {
                 (Some(n), Some(m), Some(p), Some(q), Some(rat)) => (n, m, p, q, rat),
-                _ => return Err(bad("unreadable header (uninitialised upstream)")),
+                _ => return Err(bad(READ_FAILED)),
             }
         } else {
             let n = db.read_long()?;
@@ -1946,6 +2258,40 @@ impl BSplineSurface {
             }
             (n, m, p, q, rat)
         };
+        if db.read_failed() {
+            return Err(bad(READ_FAILED));
+        }
+
+        // NLib's surface evaluators (e.g. N_SrfBasisDerivs) size their basis-function
+        // stack arrays by NL_MAXDEG, so a higher degree overflows the stack on the first
+        // evaluation. A degree-0 surface reads, but its derivatives fail and its normal is
+        // zero. The degrees come straight from the file, so reject anything outside
+        // [1, NL_MAXDEG].
+        let max_degree = MAX_DEGREE as i64;
+        if p < 1 || i64::from(p) > max_degree || q < 1 || i64::from(q) > max_degree {
+            return Err(bad(
+                "NURBS surface degree is outside the supported range 1 to NL_MAXDEG",
+            ));
+        }
+
+        // The counts come straight from the file too, as highest indices. Each direction
+        // needs at least degree + 1 control points, and the NURB is one block whose byte
+        // size is a ULONG, so reject counts that would overflow it before they size
+        // anything.
+        let max_cpoints = u64::MAX / (4 * 32);
+        if n < i64::from(p) || m < i64::from(q) {
+            return Err(bad(
+                "NURBS surface control point counts are fewer than degree + 1",
+            ));
+        }
+        if n as u64 >= max_cpoints || m as u64 >= max_cpoints / (n as u64 + 1) {
+            return Err(bad("NURBS surface control point counts are too large"));
+        }
+        if rat != 0 && rat != 1 {
+            return Err(bad(
+                "NURBS surface rational flag is neither NL_NO nor NL_YES",
+            ));
+        }
 
         // surface knot counts
         let to_size = |x: i64| usize::try_from(x).map_err(|_| bad("negative size"));
@@ -1961,14 +2307,8 @@ impl BSplineSurface {
             .and_then(|x| x.checked_add(1))
             .ok_or_else(too_big)?;
 
-        // Upstream checks the rational flag right after allocating; check it before
-        // the size bound so a bad flag reports the same error as upstream.
-        let rational = match rat {
-            0 => false,
-            1 => true,
-            // Wrong type
-            _ => return Err(SolidError::sm_err(OP_READ)),
-        };
+        // (any other flag was rejected with the header above)
+        let rational = rat == 1;
 
         // Bound the header against the bytes left before allocating (Rust aborts on a
         // failed huge allocation where upstream's malloc returned NULL). Binary: three
@@ -2000,24 +2340,18 @@ impl BSplineSurface {
         let mut wy = f64::NAN;
         let mut wz = f64::NAN;
         let mut w = f64::NAN;
-        let mut first = true;
         for i in 0..=n {
             for j in 0..=m {
                 if ascii {
                     let s = db.in_stream_mut().ok_or_else(|| bad("no input stream"))?;
-                    let mut all = true;
                     let targets: [&mut f64; 4] = [&mut wx, &mut wy, &mut wz, &mut w];
                     for (k, t) in targets.into_iter().enumerate() {
                         if k == 3 && !rational {
                             break;
                         }
-                        match s.extract_double() {
-                            Some(x) => *t = x,
-                            None => all = false,
+                        if let Some(x) = s.extract_double() {
+                            *t = x;
                         }
-                    }
-                    if first && !all {
-                        return Err(bad("unreadable control point (uninitialised upstream)"));
                     }
                     db.go_to_next_line();
                 } else {
@@ -2028,7 +2362,9 @@ impl BSplineSurface {
                         w = db.read_double()?;
                     }
                 }
-                first = false;
+                if db.read_failed() {
+                    return Err(bad(READ_FAILED));
+                }
                 *sur.cpt_mut(i, j)? = CPoint::new(wx, wy, wz, if rational { w } else { NOW });
             }
         }
@@ -2047,6 +2383,9 @@ impl BSplineSurface {
             if let (Some(k), Some(slot)) = (k, sur.u_knots_mut().get_mut(i)) {
                 *slot = k;
             }
+            if db.read_failed() {
+                return Err(bad(READ_FAILED));
+            }
         }
         for j in 0..=s {
             let k = if ascii {
@@ -2061,6 +2400,9 @@ impl BSplineSurface {
             if let (Some(k), Some(slot)) = (k, sur.v_knots_mut().get_mut(j)) {
                 *slot = k;
             }
+            if db.read_failed() {
+                return Err(bad(READ_FAILED));
+            }
         }
 
         // output locals
@@ -2071,12 +2413,73 @@ impl BSplineSurface {
 
         // set output
         Ok(Self {
-            nurb: Some(sur),
+            nurb: Some(sur).into(),
             nurb_is_borrowed: false,
-            out_of_bounds_enabled: false,
+            out_of_bounds_enabled: AtomicBool::new(false),
             knot_type,
             form,
         })
+    }
+
+    /// `WriteToDB`: writes the NURB's last control point indices `n m`, degrees `p q`,
+    /// rational flag and, for `version > 32`, knot type and form; then the control
+    /// net row by row (`wx wy wz`, plus `w` when rational: the stored, weighted
+    /// values) and the u and v knots.
+    ///
+    /// # Errors
+    ///
+    /// `SM_ERR` without NURB (upstream dereferences `NULL`).
+    pub fn write_to_db(&self, db: &mut DatabaseWriter, version: u64) -> Result<()> {
+        let sur = self.nurb_or_err(OP_WRITE)?;
+        let (n, m) = (sur.n() as i64, sur.m() as i64);
+        let (p, q) = (sur.p() as i16, sur.q() as i16);
+        let knot_type = self.knot_type as u64;
+        let form = self.form as u64;
+
+        // rational flag
+        let rat: i16 = i16::from(sur.is_rational());
+
+        if db.file_type() == FileType::Ascii {
+            db.out_i64(n).out_str(" ").out_i64(m).out_str("\n");
+            db.out_i64(p.into()).out_str(" ").out_i64(q.into());
+            db.out_str("\n");
+            db.out_i64(rat.into()).out_str("\n");
+            if version > 32 {
+                db.out_u64(knot_type);
+                db.out_str(" BSplineSurface Knot Type Flag \n");
+                db.out_u64(form).out_str(" BSplineSurfaceForm Flag \n");
+            }
+        } else {
+            db.write_long(n);
+            db.write_long(m);
+            db.write_short(p);
+            db.write_short(q);
+            db.write_short(rat);
+            if version > 32 {
+                db.write_long(knot_type as i64);
+                db.write_long(form as i64);
+            }
+        }
+
+        // control points, by rational / non-rational
+        for row in sur.rows() {
+            for pw in row {
+                if rat == 1 {
+                    db.reals(&[pw.x, pw.y, pw.z, pw.w]);
+                } else {
+                    db.reals(&[pw.x, pw.y, pw.z]);
+                }
+            }
+        }
+
+        // output u knots, then v knots
+        for &u in sur.u_knots() {
+            db.reals(&[u]);
+        }
+        for &v in sur.v_knots() {
+            db.reals(&[v]);
+        }
+        Ok(())
     }
 }
 
@@ -2107,6 +2510,12 @@ fn polar_guess_basis(g: &PolarBox) -> Vec3 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::curve::curve::Curve;
+    use crate::kernel::UpstreamFixes;
+    use crate::nurbs::b_spline_curve::{BSplineCurveForm, CanonicalData};
+    use crate::surface::plane::Plane;
+    use crate::surface::surf_of_extrusion::SurfOfExtrusion;
+    use crate::surface::surface::Surface as SmSurface;
 
     fn bilinear() -> BSplineSurface {
         BSplineSurface::create_bilinear_surface(
@@ -2256,6 +2665,7 @@ mod tests {
 
     #[test]
     fn back_edges_are_unported() {
+        let k = &Kernel::default();
         let s = bilinear();
         assert!(s.is_kind_of(BSplineSurface::TYPE).unwrap());
         assert!(!s.is_kind_of(PLANE_TYPE).unwrap());
@@ -2264,7 +2674,7 @@ mod tests {
             ..BoundingBoxRequest::default()
         };
         assert!(s
-            .calculate_bounding_box(&s.natural_uv_domain(), &req)
+            .calculate_bounding_box(k, &s.natural_uv_domain(), &req)
             .is_ok());
         // the polar box uses SmSurface::EvaluateNormal (surface::surface::p7)
         let req = BoundingBoxRequest {
@@ -2272,7 +2682,7 @@ mod tests {
             ..BoundingBoxRequest::default()
         };
         assert!(s
-            .calculate_bounding_box(&s.natural_uv_domain(), &req)
+            .calculate_bounding_box(k, &s.natural_uv_domain(), &req)
             .is_ok());
         assert!(s.is_parallel_to_vector(Vec3::new(0.0, 0.0, 0.0)).unwrap());
     }
@@ -2308,5 +2718,262 @@ mod tests {
         let (_, _, cps) = s.control_points().unwrap();
         assert_eq!(cps[3].z, 1.0);
         assert_eq!(cps[3].w, NOW);
+    }
+
+    #[test]
+    fn canonical_huge_multiplicities_do_not_allocate() {
+        // fuzz regressions (nurbs.b_spline_surface_p1 fuzz00115, fuzz00156): huge
+        // multiplicities aborted (or overflowed) the knot expansion
+        let pts: Vec<Point3> = (0..6)
+            .map(|k| Point3::new(f64::from(k / 3), f64::from(k % 3), f64::from(k)))
+            .collect();
+        let data = |u: &'static [usize], v: &'static [usize]| CanonicalSurfaceData {
+            u_degree: 1,
+            v_degree: 2,
+            control_points: &[],
+            form: BSplineSurfaceForm::QuadricSurf,
+            u_multiplicities: u,
+            v_multiplicities: v,
+            u_knots: &[0.0, 1.0],
+            v_knots: &[0.0, 2.0],
+            knot_type: KnotType::PiecewiseBezierKnots,
+            weights: None,
+            uv_domain: None,
+        };
+        for (u, v) in [
+            (&[2, 1 << 31][..], &[3, 3][..]),
+            (&[2, 2][..], &[3, usize::MAX][..]),
+            (&[usize::MAX, 2][..], &[3, 3][..]),
+            // wrapped point count 2^63 * 2 == 0 with no points: still no allocation
+            (&[2, 1 << 63][..], &[3, 2][..]),
+        ] {
+            let mut d = data(u, v);
+            d.control_points = &pts;
+            assert!(BSplineSurface::create_canonical(&d).is_err());
+            d.control_points = &[];
+            assert!(BSplineSurface::create_canonical(&d).is_err());
+        }
+    }
+
+    fn quadratic_patch(pts: &[Point3; 9]) -> BSplineSurface {
+        BSplineSurface::create_canonical(&CanonicalSurfaceData {
+            u_degree: 2,
+            v_degree: 2,
+            control_points: pts,
+            form: BSplineSurfaceForm::Unspecified,
+            u_multiplicities: &[3, 3],
+            v_multiplicities: &[3, 3],
+            u_knots: &[0.0, 1.0],
+            v_knots: &[0.0, 1.0],
+            knot_type: KnotType::PiecewiseBezierKnots,
+            weights: None,
+            uv_domain: None,
+        })
+        .unwrap()
+    }
+
+    fn parallel(s: &BSplineSurface, k: &Kernel, v: Vec3) -> bool {
+        s.is_parallel_to_vector_with_kernel(k, v).unwrap()
+    }
+
+    fn srf_parallel(s: &SmSurface, k: &Kernel, v: Vec3) -> bool {
+        s.is_parallel_to_vector(k, v).unwrap()
+    }
+
+    #[test]
+    fn wr39_zero_vector_returns_false_when_opted_in() {
+        let k_def = Kernel::default();
+        let mut k_fix = Kernel::default();
+        k_fix.fixes.surface_parallel_to_vector_checks = true;
+
+        let srf = bilinear();
+        let empty = BSplineSurface::new();
+        let axis = Axis2Placement::default();
+        let plane = Plane::create_canonical(&axis).unwrap();
+        let tiny = Vec3::new(1.0e-15, 0.0, 0.0);
+
+        for v in [Vec3::ZERO, tiny] {
+            assert!(srf.is_parallel_to_vector(v).unwrap());
+            assert!(parallel(&srf, &k_def, v));
+            assert!(!parallel(&srf, &k_fix, v));
+            assert!(!srf.is_parallel_to_vector_opt_in(v, true).unwrap());
+
+            assert!(empty.is_parallel_to_vector(v).unwrap());
+            assert!(!empty.is_parallel_to_vector_opt_in(v, true).unwrap());
+
+            assert!(plane.is_parallel_to_vector(v));
+            assert!(plane.is_parallel_to_vector_with_kernel(&k_def, v));
+            assert!(!plane.is_parallel_to_vector_with_kernel(&k_fix, v));
+            assert!(!plane.is_parallel_to_vector_opt_in(v, true));
+        }
+
+        assert!(plane.is_parallel_to_vector_with_kernel(&k_fix, Vec3::X));
+        assert!(!plane.is_parallel_to_vector_with_kernel(&k_fix, Vec3::Z));
+        assert!(!empty.is_parallel_to_vector_opt_in(Vec3::X, true).unwrap());
+    }
+
+    #[test]
+    fn wr39_translated_quadratic_extruded_surfaces_u_and_v_directions() {
+        let k_def = Kernel::default();
+        let mut k_fix = Kernel::default();
+        k_fix.fixes.surface_parallel_to_vector_checks = true;
+
+        // Constant-U rulings parallel to +Z, translated near (10, 20, 5).
+        let u_extruded = quadratic_patch(&[
+            Point3::new(10.0, 20.0, 5.0),
+            Point3::new(10.0, 20.0, 7.0),
+            Point3::new(10.0, 20.0, 9.0),
+            Point3::new(11.0, 21.0, 5.0),
+            Point3::new(11.0, 21.0, 7.0),
+            Point3::new(11.0, 21.0, 9.0),
+            Point3::new(12.0, 20.0, 5.0),
+            Point3::new(12.0, 20.0, 7.0),
+            Point3::new(12.0, 20.0, 9.0),
+        ]);
+        assert!(!parallel(&u_extruded, &k_def, Vec3::Z));
+        assert!(parallel(&u_extruded, &k_fix, Vec3::Z));
+        assert!(parallel(&u_extruded, &k_fix, Vec3::new(0.0, 0.0, -3.0)));
+        assert!(!parallel(&u_extruded, &k_fix, Vec3::X));
+
+        // Constant-V rulings parallel to +X, translated near (10, 20, 5).
+        let v_extruded = quadratic_patch(&[
+            Point3::new(10.0, 20.0, 5.0),
+            Point3::new(10.0, 21.0, 6.0),
+            Point3::new(10.0, 22.0, 5.0),
+            Point3::new(13.0, 20.0, 5.0),
+            Point3::new(13.0, 21.0, 6.0),
+            Point3::new(13.0, 22.0, 5.0),
+            Point3::new(16.0, 20.0, 5.0),
+            Point3::new(16.0, 21.0, 6.0),
+            Point3::new(16.0, 22.0, 5.0),
+        ]);
+        assert!(!parallel(&v_extruded, &k_def, Vec3::X));
+        assert!(parallel(&v_extruded, &k_fix, Vec3::X));
+        assert!(!parallel(&v_extruded, &k_fix, Vec3::Y));
+
+        // Ruling whose second control point lands at (0, 0, 0) while non-degenerate.
+        let through_origin = quadratic_patch(&[
+            Point3::new(0.0, 0.0, -1.0),
+            Point3::new(0.0, 0.0, 0.0),
+            Point3::new(0.0, 0.0, 1.0),
+            Point3::new(1.0, 0.0, -1.0),
+            Point3::new(1.0, 0.0, 0.0),
+            Point3::new(1.0, 0.0, 1.0),
+            Point3::new(2.0, 1.0, -1.0),
+            Point3::new(2.0, 1.0, 0.0),
+            Point3::new(2.0, 1.0, 1.0),
+        ]);
+        assert!(!parallel(&through_origin, &k_def, Vec3::Z));
+        assert!(parallel(&through_origin, &k_fix, Vec3::Z));
+    }
+
+    #[test]
+    fn wr39_bent_non_parallel_surface_false_positive_rejected() {
+        let k_def = Kernel::default();
+        let mut k_fix = Kernel::default();
+        k_fix.fixes.surface_parallel_to_vector_checks = true;
+
+        // Each i_u row has P[i_u][1] - P[i_u][0] = (0, 0, 2) parallel to +Z, while
+        // P[i_u][2] = P[i_u][0] + 0.5 * P[i_u][1] bends >11 units off the +Z line yet
+        // lies on the wrong line P[i_u][0] + t * P[i_u][1].
+        let bent_u = quadratic_patch(&[
+            Point3::new(10.0, 20.0, 5.0),
+            Point3::new(10.0, 20.0, 7.0),
+            Point3::new(15.0, 30.0, 8.5),
+            Point3::new(11.0, 20.0, 5.0),
+            Point3::new(11.0, 20.0, 7.0),
+            Point3::new(16.5, 30.0, 8.5),
+            Point3::new(12.0, 20.0, 5.0),
+            Point3::new(12.0, 20.0, 7.0),
+            Point3::new(18.0, 30.0, 8.5),
+        ]);
+        assert!(parallel(&bent_u, &k_def, Vec3::Z));
+        assert!(!parallel(&bent_u, &k_fix, Vec3::Z));
+
+        // Same false-positive pattern in the V-constant loop along +X.
+        let bent_v = quadratic_patch(&[
+            Point3::new(10.0, 20.0, 5.0),
+            Point3::new(10.0, 21.0, 5.0),
+            Point3::new(10.0, 22.0, 6.0),
+            Point3::new(12.0, 20.0, 5.0),
+            Point3::new(12.0, 21.0, 5.0),
+            Point3::new(12.0, 22.0, 6.0),
+            Point3::new(16.0, 30.0, 7.5),
+            Point3::new(16.0, 31.5, 7.5),
+            Point3::new(16.0, 33.0, 9.0),
+        ]);
+        assert!(parallel(&bent_v, &k_def, Vec3::X));
+        assert!(!parallel(&bent_v, &k_fix, Vec3::X));
+    }
+
+    #[test]
+    fn wr39_surface_dispatch_and_flag_mut() {
+        assert!(UpstreamFixes::NAMES.contains(&"surface_parallel_to_vector_checks"));
+        let k_def = Kernel::default();
+        let mut k_fix = Kernel::default();
+        let slot = k_fix.fixes.flag_mut("surface_parallel_to_vector_checks");
+        assert_eq!(slot.as_deref(), Some(&false));
+        *slot.unwrap() = true;
+        assert!(k_fix.fixes.surface_parallel_to_vector_checks);
+
+        let axis = Axis2Placement::default();
+        let plane = Plane::create_canonical(&axis).unwrap();
+        let s_plane = SmSurface::from(plane);
+        assert!(srf_parallel(&s_plane, &k_def, Vec3::ZERO));
+        assert!(!srf_parallel(&s_plane, &k_fix, Vec3::ZERO));
+        assert!(srf_parallel(&s_plane, &k_fix, Vec3::Y));
+        assert!(!srf_parallel(&s_plane, &k_fix, Vec3::Z));
+
+        let patch = quadratic_patch(&[
+            Point3::new(10.0, 20.0, 5.0),
+            Point3::new(10.0, 20.0, 7.0),
+            Point3::new(10.0, 20.0, 9.0),
+            Point3::new(11.0, 21.0, 5.0),
+            Point3::new(11.0, 21.0, 7.0),
+            Point3::new(11.0, 21.0, 9.0),
+            Point3::new(12.0, 20.0, 5.0),
+            Point3::new(12.0, 20.0, 7.0),
+            Point3::new(12.0, 20.0, 9.0),
+        ]);
+        let s_bspline = SmSurface::from(patch);
+        assert!(srf_parallel(&s_bspline, &k_def, Vec3::ZERO));
+        assert!(!srf_parallel(&s_bspline, &k_fix, Vec3::ZERO));
+        assert!(!srf_parallel(&s_bspline, &k_def, Vec3::Z));
+        assert!(srf_parallel(&s_bspline, &k_fix, Vec3::Z));
+
+        let gen_pts = [
+            Point3::new(10.0, 20.0, 5.0),
+            Point3::new(12.0, 20.0, 5.0),
+            Point3::new(14.0, 20.0, 5.0),
+        ];
+        let gen_bs = BSplineCurve::create_canonical(&CanonicalData {
+            dim: 3,
+            degree: 2,
+            control_points: &gen_pts,
+            form: BSplineCurveForm::Unspecified,
+            knot_multiplicities: &[3, 3],
+            knots: &[0.0, 1.0],
+            knot_type: KnotType::PiecewiseBezierKnots,
+            weights: None,
+            trim: None,
+        })
+        .unwrap();
+        let ext = SurfOfExtrusion::new(
+            &k_def,
+            Curve::from(gen_bs),
+            Point3::new(10.0, 20.0, 5.0),
+            Vec3::Z,
+            Extent2d::from_bounds(0.0, 0.0, 1.0, 2.0),
+            false,
+        )
+        .unwrap();
+        let s_ext = SmSurface::from(ext);
+        assert!(srf_parallel(&s_ext, &k_def, Vec3::ZERO));
+        assert!(!srf_parallel(&s_ext, &k_fix, Vec3::ZERO));
+        assert!(srf_parallel(&s_ext, &k_def, Vec3::Z));
+        assert!(srf_parallel(&s_ext, &k_fix, Vec3::Z));
+        assert!(!srf_parallel(&s_ext, &k_def, Vec3::X));
+        assert!(srf_parallel(&s_ext, &k_fix, Vec3::X));
+        assert!(!srf_parallel(&s_ext, &k_fix, Vec3::Y));
     }
 }

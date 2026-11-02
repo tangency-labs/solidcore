@@ -5,8 +5,11 @@
     python3 site/build.py --out DIR       # elsewhere
 
 Standard library only (Python 3.11+ for tomllib). Every number comes from the repo:
-plan/modules.toml, plan/PROGRESS.md (claims), harness/callgraph/units.json,
-reports/difftest/*.json, reports/ssi-corpus.json, plan/upstream-issues.md, the
+plan/units/*.toml, plan/PROGRESS.md (claims; generated, not committed), harness/callgraph/units.json (upstream
+line counts at the pin), scripts/upstream-pin.env (upstream version and commit),
+reports/difftest/*.json (not committed: CI's artifact, see scripts/fetch-reports.sh),
+reports/solids/solids.json (not committed: CI's artifact, see scripts/fetch-solids.sh),
+reports/ssi-corpus.json, plan/upstream-issues/*.md, the
 module file headers under crates/solidcore/src and git history (timeline). Output is
 deterministic: sorted, and the only date is the commit date of HEAD.
 
@@ -30,11 +33,17 @@ ROOT = pathlib.Path(__file__).resolve().parents[1]
 sys.dont_write_bytecode = True  # keep harness/plan clean
 sys.path.insert(0, str(ROOT / "harness/plan"))
 import progress  # noqa: E402  (reuse the checklist's counting logic)
+import units as plan_units  # noqa: E402  (the shared plan loader)
 
 REPO = os.environ.get("GITHUB_REPOSITORY", "tangency-labs/solidcore")
 REPO_URL = f"https://github.com/{REPO}"
-UPSTREAM_URL = "https://github.com/NVIDIA-Omniverse/usd-brep"
-UPSTREAM_COMMIT = "c9c5979f04cea8c38213004d4f04df0dcfb40d05"
+VIEWER_URL = "https://tangency-labs.github.io/solidcore-viewer/"
+PIN = plan_units.load_pin(ROOT)  # scripts/upstream-pin.env: the one place the pin is set
+UPSTREAM_URL = PIN["UPSTREAM_REPO"]
+UPSTREAM_VERSION = PIN["UPSTREAM_VERSION"]
+UPSTREAM_COMMIT = PIN["UPSTREAM_COMMIT"]
+UPSTREAM_PIN_HTML = (f'<a href="{UPSTREAM_URL}/tree/{UPSTREAM_COMMIT}">usd-brep v{html.escape(UPSTREAM_VERSION)} '
+                     f'(<code>{UPSTREAM_COMMIT[:7]}</code>)</a>')
 STATUSES = ["green", "partial", "claimed", "blocked", "todo"]
 STATUS_TEXT = {"green": "green", "partial": "partial", "claimed": "claimed",
                "blocked": "blocked", "todo": "todo"}
@@ -58,46 +67,69 @@ def head_info():
     return sha, date
 
 
-def timeline():
-    """[(unix time, units)] for plan/modules.toml along main's first-parent history.
+def cat_blobs(oids):
+    """{oid: text} for git blobs, read in one `git cat-file --batch`."""
+    oids = list(dict.fromkeys(oids))
+    if not oids:
+        return {}
+    raw = subprocess.run(["git", "-C", str(ROOT), "cat-file", "--batch"], check=True,
+                         capture_output=True, input="".join(f"{o}\n" for o in oids).encode()).stdout
+    out, pos = {}, 0
+    for o in oids:
+        nl = raw.index(b"\n", pos)
+        size = int(raw[pos:nl].split()[2])
+        out[o] = raw[nl + 1:nl + 1 + size].decode()
+        pos = nl + 1 + size + 1
+    return out
 
-    Consecutive commits with the same modules.toml blob are dropped, then the history is
-    thinned to at most MAX_TIMELINE_POINTS states (the last state in each time bucket),
-    always keeping the first and last.
+
+def timeline():
+    """[(unix time, units)] for the plan along main's first-parent history.
+
+    The plan is the tree plan/units/ (one file per unit) or, before the split, the single
+    file plan/modules.toml. Consecutive commits with the same plan object are dropped,
+    then the history is thinned to at most MAX_TIMELINE_POINTS states (the last state in
+    each time bucket), always keeping the first and last.
     """
     log = git("log", "--first-parent", "--format=%H %ct", "HEAD").split("\n")
     commits = [tuple(line.split()) for line in reversed(log) if line.strip()]
     if not commits:
         return []
-    req = "".join(f"{h}:plan/modules.toml\n" for h, _ in commits)
+    req = "".join(f"{h}:plan/units\n{h}:plan/modules.toml\n" for h, _ in commits)
     checks = git("cat-file", "--batch-check", inp=req).split("\n")
-    states = []  # (time, blob)
+    states = []  # (time, oid, kind)
     last = None
-    for (h, t), chk in zip(commits, checks):
-        parts = chk.split()
-        if len(parts) < 2 or parts[1] != "blob":
-            continue
-        if parts[0] != last:
-            states.append((int(t), parts[0]))
-            last = parts[0]
+    for i, (h, t) in enumerate(commits):
+        for chk in checks[2 * i:2 * i + 2]:
+            parts = chk.split()
+            if len(parts) >= 2 and parts[1] in ("tree", "blob"):
+                if parts[0] != last:
+                    states.append((int(t), parts[0], parts[1]))
+                    last = parts[0]
+                break
     if len(states) > MAX_TIMELINE_POINTS:
         t0, t1 = states[0][0], states[-1][0]
         width = max(1, (t1 - t0) / (MAX_TIMELINE_POINTS - 1))
         buckets = {}
-        for t, b in states:
-            buckets[int((t - t0) / width)] = (t, b)
+        for s in states:
+            buckets[int((s[0] - t0) / width)] = s
         thinned = [states[0]] + [buckets[k] for k in sorted(buckets)]
         states = sorted(set(thinned), key=lambda s: s[0])
-    raw = subprocess.run(["git", "-C", str(ROOT), "cat-file", "--batch"], check=True,
-                         capture_output=True, input="".join(f"{b}\n" for _, b in states).encode()).stdout
-    out, pos = [], 0
-    for t, _ in states:
-        nl = raw.index(b"\n", pos)
-        size = int(raw[pos:nl].split()[2])
-        text = raw[nl + 1:nl + 1 + size].decode()
-        pos = nl + 1 + size + 1
+    trees = {}
+    for _, oid, kind in states:
+        if kind == "tree":
+            entries = [ln.split(None, 3) for ln in git("ls-tree", oid).splitlines()]
+            trees[oid] = {e[3][:-5]: e[2] for e in entries
+                          if len(e) == 4 and e[1] == "blob" and e[3].endswith(".toml")}
+    blobs = cat_blobs([oid for _, oid, kind in states if kind == "blob"] +
+                      [b for files in trees.values() for b in files.values()])
+    out = []
+    for t, oid, kind in states:
         try:
-            units = progress.load_units(text)
+            if kind == "blob":
+                units = plan_units.parse_modules_toml(blobs[oid])
+            else:
+                units = plan_units.units_from_texts({k: blobs[b] for k, b in trees[oid].items()})
         except Exception:  # an early revision may not parse; skip it
             continue
         out.append((t, units))
@@ -115,7 +147,7 @@ def unit_module(u):
 
 
 def aggregate(samples):
-    """One pass over the sampled states of plan/modules.toml.
+    """One pass over the sampled states of the plan.
 
     Returns (overall, by_area, by_unit): overall is [(t, summary)], by_area maps an area
     to [(t, summary)] for the states in which it has units, and by_unit maps a unit id to
@@ -136,7 +168,7 @@ def aggregate(samples):
 # ---------------------------------------------------------------- data
 
 def load_claims():
-    """id -> claim text from the bot-maintained "In progress" section of PROGRESS.md."""
+    """id -> claim text from the "In progress" section of the generated PROGRESS.md."""
     claims = {}
     path = ROOT / "plan/PROGRESS.md"
     if not path.exists():
@@ -153,12 +185,167 @@ def load_claims():
 
 
 def load_reports():
+    """unit -> (report without its cases, path) from reports/difftest/. The reports are
+    not committed; CI fetches main's latest set first (scripts/fetch-reports.sh)."""
     reports = {}
     for p in sorted((ROOT / "reports/difftest").glob("*.json")):
         d = json.loads(p.read_text())
         d.pop("cases", None)
-        reports[d.get("unit", p.stem)] = (d, p.relative_to(ROOT).as_posix())
+        reports[d.get("unit", p.stem)] = (d, p)
     return reports
+
+
+SOLIDS_SCHEMA = 1
+
+
+def load_solids():
+    """The primitives example's report (reports/solids/solids.json), or None.
+
+    Not committed; CI fetches main's latest with scripts/fetch-solids.sh. A missing or
+    unreadable file, or another schema version, means "no data yet".
+    """
+    p = ROOT / "reports/solids/solids.json"
+    try:
+        d = json.loads(p.read_text())
+    except (OSError, ValueError):
+        return None
+    if not isinstance(d, dict) or d.get("schema") != SOLIDS_SCHEMA:
+        return None
+    return d
+
+
+def solids_counts(sol):
+    """(total, built, passed) over the primitives."""
+    prims = sol.get("primitives", []) if sol else []
+    return (len(prims), sum(1 for x in prims if x.get("built")),
+            sum(1 for x in prims if x.get("pass")))
+
+
+def fmt_num(x):
+    """A measured or analytic value, compactly."""
+    if x is None:
+        return "–"
+    if isinstance(x, bool):
+        return "yes" if x else "no"
+    if isinstance(x, int):
+        return str(x)
+    if isinstance(x, float):
+        return f"{x:.10g}"
+    if isinstance(x, list):
+        return "(" + ", ".join(fmt_num(v) for v in x) + ")"
+    if isinstance(x, dict) and "min" in x:
+        return f"{fmt_num(x.get('min'))} – {fmt_num(x.get('max'))}"
+    return str(x)
+
+
+SOLID_CHECKS = [("manifold", "Closed manifold"), ("euler", "Euler"), ("counts", "F, E, V"),
+                ("volume", "Volume"), ("area", "Area"), ("bbox", "Bounding box")]
+
+
+def solids_body(sol, depth=0):
+    """The Solids page body (also says "no data yet" when `sol` is None)."""
+    up = "../" * depth
+    corpus = (sol or {}).get("corpus") or {}
+    models = corpus.get("models") or []
+    if models:
+        cpass = sum(1 for m in models if m.get("pass"))
+        crows = "".join(
+            f'<tr><td>{esc(str(m.get("name", "")))}</td>'
+            f'<td><span class="v v-{"PASS" if m.get("pass") else "FAIL"}">{"PASS" if m.get("pass") else "FAIL"}</span></td>'
+            + "".join(f'<td class=num>{esc(fmt_num((m.get("actual") or {}).get(k)))}'
+                      f'<div class="small">expected {esc(fmt_num((m.get("expected") or {}).get(k)))}</div></td>'
+                      for k in ("volume", "area", "center_of_mass"))
+            + "</tr>" for m in models)
+        corpus_html = (f'<p>{cpass} / {len(models)} models pass.</p><div class="scroll"><table><thead><tr>'
+                       '<th>Model</th><th>Result</th><th>Volume</th><th>Area</th><th>Centre of mass</th>'
+                       f'</tr></thead><tbody>{crows}</tbody></table></div>')
+    else:
+        corpus_html = """<p class="warn">Placeholder: pass rate TBD, waiting on the choice of a corpus of real models.</p>
+<p class="muted">Each model will be read, its mass properties computed, and the result compared with the
+reference: per model the JSON's <code>corpus.models[]</code> records <code>name</code>, <code>source</code>,
+<code>built</code>, <code>pass</code>, <code>blocker</code>, and <code>expected</code> vs <code>actual</code>
+<code>volume</code>, <code>area</code> and <code>center_of_mass</code> with their <code>rel_err</code>.</p>"""
+    corpus_section = f'<h2 id="corpus">Corpus (real models)</h2>\n{corpus_html}'
+    intro = f"""<h1>Solids</h1>
+<p class="muted">Units passing difftest says the port matches the C++ function by function; this page says
+whether whole solids come out. The <code>primitives</code> example
+(<a href="{REPO_URL}/tree/main/crates/solidcore/examples/primitives"><code>crates/solidcore/examples/primitives</code></a>)
+builds each primitive through the public API in pure Rust and checks that it is a closed manifold solid with the
+analytic Euler-Poincare characteristic, volume, area and bounding box (relative tolerance
+{esc(fmt_num((sol or {}).get("rel_tol", 1e-9)))}). A primitive that stops at code not ported yet names the
+unit and upstream symbol it is blocked on.</p>"""
+    if not sol:
+        return (intro + '<p class="warn">No data yet: <code>reports/solids/solids.json</code> is missing. CI uploads it '
+                'from every push to <code>main</code> (<code>scripts/fetch-solids.sh</code>); locally, run '
+                '<code>cargo run -p solidcore --example primitives -- --json reports/solids/solids.json</code>.</p>\n'
+                + corpus_section)
+    total, built, passed = solids_counts(sol)
+    prims = sol.get("primitives", [])
+    blockers = collections.Counter((x.get("blocker") or {}).get("unit") for x in prims if x.get("blocker"))
+    rows = []
+    for x in prims:
+        blk = x.get("blocker")
+        if x.get("pass"):
+            st = '<span class="badge s-green">passes</span>'
+        elif x.get("built"):
+            st = '<span class="badge s-partial">built, fails</span>'
+        else:
+            st = '<span class="badge s-blocked">blocked</span>'
+        if blk:
+            btxt = (f'<a href="{up}units/{esc(str(blk.get("unit", "")))}.html"><code>{esc(str(blk.get("unit", "")))}</code></a>'
+                    f'<div class="small"><code>{esc(str(blk.get("upstream", "")))}</code>'
+                    f'{" (while measuring)" if blk.get("stage") == "measure" else ""}</div>')
+        elif x.get("error"):
+            btxt = f'<div class="small"><code>{esc(str(x["error"]))}</code></div>'
+        else:
+            btxt = '<span class="muted">none</span>'
+        checks = {c.get("name"): c for c in x.get("checks", [])}
+        an = x.get("analytic") or {}
+        expected_of = {"manifold": True, "euler": an.get("euler"), "counts": an.get("counts"),
+                       "volume": an.get("volume"), "area": an.get("area"), "bbox": an.get("bbox")}
+        cells = []
+        for key, _ in SOLID_CHECKS:
+            c = checks.get(key)
+            if c is None:
+                exp = expected_of.get(key)
+                cells.append('<td><span class="muted">–</span>' + (
+                    f'<div class="small">expected {esc(fmt_num(exp))}</div>' if exp is not None else "") + "</td>")
+                continue
+            if c.get("actual") is None:
+                verdict = '<span class="v v-DEFERRED">not measured</span>'
+            elif c.get("pass"):
+                verdict = '<span class="v v-PASS">PASS</span>'
+            else:
+                verdict = '<span class="v v-FAIL">FAIL</span>'
+            detail = f'{esc(fmt_num(c.get("actual")))}' if c.get("actual") is not None else ""
+            sub = f'expected {esc(fmt_num(c.get("expected")))}'
+            if c.get("rel_err") is not None:
+                sub += f'; rel. err {c["rel_err"]:.2e}'
+            msg = c.get("message") or ""
+            title = f' title="{esc(msg)}"' if msg else ""
+            cells.append(f'<td{title}>{verdict} {detail}<div class="small">{sub}</div></td>')
+        rows.append(f'<tr><td>{esc(str(x.get("name", "")))}</td><td>{st}</td><td>{btxt}</td>{"".join(cells)}</tr>')
+    head = "".join(f"<th>{esc(label)}</th>" for _, label in SOLID_CHECKS)
+    btiles = ", ".join(f'<a href="{up}units/{esc(u)}.html"><code>{esc(u)}</code></a> ({n})'
+                       for u, n in sorted(blockers.items(), key=lambda kv: (-kv[1], kv[0])))
+    return f"""{intro}
+<section class="kpis">
+<div class="tile big"><div class="k">Solids (primitives)</div><div class="v">{passed} / {total}</div>
+<div class="sub">pass every check; {built} / {total} build</div></div>
+<div class="tile"><div class="k">build</div><div class="v">{built}</div><div class="sub">of {total} primitives</div></div>
+<div class="tile"><div class="k">pass</div><div class="v">{passed}</div><div class="sub">of {total} primitives</div></div>
+<div class="tile"><div class="k">not built</div><div class="v">{total - built}</div><div class="sub">build stops at an error</div></div>
+</section>
+<p><strong>Solids: {built}/{total} build, {passed}/{total} pass.</strong>
+{('Blocked on: ' + btiles + '.') if btiles else ''}</p>
+<h2>Primitives</h2>
+<p class="muted">From <a href="{up}reports/solids.json"><code>reports/solids.json</code></a> (CI's latest
+<code>main</code> run). Each check shows the measured value, the analytic one and the relative error; a check
+that could not be measured says so. Hover a failed check for its message.</p>
+<div class="scroll"><table><thead><tr><th>Primitive</th><th>Status</th><th>Blocker</th>{head}</tr></thead>
+<tbody>{"".join(rows)}</tbody></table></div>
+{corpus_section}
+"""
 
 
 def module_path(u):
@@ -258,44 +445,67 @@ def markdown(text):
 
 
 def parse_issues():
-    text = (ROOT / "plan/upstream-issues.md").read_text()
-    lines = text.splitlines()
-    intro, entries = [], []
-    severity = area = ""
-    cur = None
-    for line in lines:
-        if line.startswith("# "):
+    """Upstream issues: the intro is plan/upstream-issues/README.md (without its title),
+    the entries are the files in that directory (parse_issue_files)."""
+    readme = ROOT / "plan/upstream-issues/README.md"
+    lines = readme.read_text().splitlines() if readme.exists() else []
+    intro = "\n".join(l for l in lines if not l.startswith("<!-- archive:"))
+    intro = re.sub(r"\A# [^\n]*\n", "", intro).strip()
+    return intro, parse_issue_files()
+
+
+def issue_file_order(path):
+    """Name order, except that `<ID>--...--dupN.md` follows the other files of its ID, so
+    the site's `#<id>-dupN` anchors keep pointing at the same entries as in the archive."""
+    m = re.search(r"--dup(\d+)$", path.stem)
+    return (path.stem.split("--")[0], int(m.group(1)) if m else 1, path.name)
+
+
+def parse_issue_files():
+    """Entries: one file each under plan/upstream-issues/ (plan/upstream-issues/README.md).
+
+    A file is a `#### <ID>. <title>` heading followed by the usual field bullets, starting
+    with `- **Severity:**` and `- **Area:**` (the section headings of the former archive).
+    Only those leading Severity/Area lines are header fields; a Severity bullet further
+    down (archive entries have their own) stays in the body. Files are read in name order
+    (issue_file_order) so the page is deterministic.
+    """
+    entries = []
+    for path in sorted((ROOT / "plan/upstream-issues").glob("*.md"), key=issue_file_order):
+        if path.name == "README.md":
             continue
-        h = re.match(r"(#{2,4}) (.*)$", line)
-        if h:
-            level, title = len(h.group(1)), h.group(2).strip()
-            if level == 2:
-                severity, area = title, ""
-            elif level == 3:
-                area = title
-            if level == 4:
-                m = re.match(r"([A-Z]+)-(\d+)\.\s*(.*)$", title)
-                cur = {"series": m.group(1) if m else "OTHER", "num": int(m.group(2)) if m else 0,
-                       "id": f"{m.group(1)}-{m.group(2)}" if m else title,
-                       "title": m.group(3) if m else title, "severity": severity, "area": area,
-                       "body": []}
-                entries.append(cur)
-            else:
-                cur = None
+        lines = path.read_text().splitlines()
+        head = next((i for i, l in enumerate(lines) if l.startswith("#### ")), None)
+        if head is None:
             continue
-        if cur is not None:
-            cur["body"].append(line)
-        elif not entries and not severity:
-            intro.append(line)
-    for e in entries:
-        body = "\n".join(e["body"]).strip()
-        e["body"] = body
+        title = lines[head][5:].strip()
+        m = re.match(r"([A-Z]+)-(\d+)\.\s*(.*)$", title)
+        header, i = {}, head + 1
+        while i < len(lines):
+            f = re.match(r"^- \*\*(Severity|Area):\*\*\s*(.*)$", lines[i])
+            if lines[i].strip() and (not f or f.group(1) in header):
+                break
+            if f:
+                header[f.group(1)] = f.group(2).strip()
+            i += 1
+        body = "\n".join(lines[i:]).strip()
         fields = dict(re.findall(r"^- \*\*([^*]+?):\*\*\s*(.*)$", body, re.M))
+        for k in ("Severity", "Area"):
+            if k not in header and k in fields:  # header field not at the top: take it out
+                header[k] = fields[k].strip()
+                body = re.sub(rf"^- \*\*{k}:\*\*.*\n?", "", body, count=1, flags=re.M).strip()
         conf = fields.get("Confirmed", "").strip().lower()
-        e["confirmed"] = "yes" if conf.startswith("yes") else ("no" if conf.startswith("no") else "unknown")
-        e["how_found"] = fields.get("How found", "")
-        e["psirt"] = "[PSIRT]" in e["title"]
-    return "\n".join(intro).strip(), entries
+        entries.append({
+            "series": m.group(1) if m else "OTHER", "num": int(m.group(2)) if m else 0,
+            "id": f"{m.group(1)}-{m.group(2)}" if m else title,
+            "title": m.group(3) if m else title,
+            "severity": header.get("Severity", ""), "area": header.get("Area", ""),
+            "body": body,
+            "confirmed": "yes" if conf.startswith("yes") else ("no" if conf.startswith("no") else "unknown"),
+            "how_found": fields.get("How found", ""),
+            "psirt": "[PSIRT]" in title,
+        })
+    return entries
 
 
 # ---------------------------------------------------------------- page shell
@@ -303,7 +513,7 @@ def parse_issues():
 def page(title, body, depth, nav, head_sha, head_date, description="", path="", scripts=()):
     up = "../" * depth
     links = [("index.html", "Overview", "overview"), ("units/index.html", "Units", "units"),
-             ("graph.html", "Graph", "graph"),
+             ("graph.html", "Graph", "graph"), ("solids.html", "Solids", "solids"),
              ("issues.html", "Upstream issues", "issues"), ("ssi.html", "SSI corpus", "ssi")]
     extra_js = "".join(f'\n<script src="{up}assets/{js}"></script>' for js in scripts)
     navhtml = "".join(
@@ -339,13 +549,14 @@ def page(title, body, depth, nav, head_sha, head_date, description="", path="", 
 <body>
 <header class="top"><div class="wrap">
 <a class="brand" href="{up}index.html"><img src="{up}assets/logo.svg" alt="" width="28" height="28">solidcore</a>
-<nav>{navhtml}<a href="{REPO_URL}">GitHub</a></nav>
+<nav>{navhtml}<a href="{VIEWER_URL}">Model viewer</a><a href="{REPO_URL}">GitHub</a></nav>
 </div></header>
 <main class="wrap">
 {body}
 </main>
 <footer class="wrap">Generated from <a href="{REPO_URL}/tree/{head_sha}"><code>{short}</code></a>
-({esc(head_date)}) by <code>site/build.py</code>. Apache-2.0. Not affiliated with or endorsed by NVIDIA.</footer>
+({esc(head_date)}) by <code>site/build.py</code>; upstream reference {UPSTREAM_PIN_HTML}.
+Apache-2.0. Not affiliated with or endorsed by NVIDIA.</footer>
 <script src="{up}assets/app.js"></script>{extra_js}
 </body>
 </html>
@@ -417,17 +628,25 @@ def chart_svg(points, cid="chart", title="Share of upstream lines ported over ti
     parts.append(f'<line class="cross" x1="0" x2="0" y1="{T}" y2="{H - B}" visibility="hidden"/>')
     parts.append(f'<rect class="hit" x="{L}" y="{T}" width="{W - L - R}" height="{H - T - B}"/>')
     parts.append("</svg>")
-    legend = ('<div class="legend"><span><i class="sw green"></i>green (bit-identical to C++)</span>'
+    legend = ('<div class="legend"><span><i class="sw green"></i>green (matches C++ within 1e-9)</span>'
               '<span><i class="sw partial"></i>green + partial (ported)</span></div>')
     return (legend + '<div class="chartbox">' + "".join(parts) +
             '<div class="tip" hidden></div></div>')
+
+
+def local_time(t):
+    """A <time> element for epoch `t`: UTC text as the no-script fallback, and the exact
+    instant in `datetime`/`data-ts` so app.js rewrites it in the viewer's own locale and zone."""
+    iso = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(t))
+    return (f'<time datetime="{iso}" data-ts="{int(t)}">'
+            f"{time.strftime('%Y-%m-%d %H:%M', time.gmtime(t))} UTC</time>")
 
 
 def chart_table(points):
     rows = []
     for t, s in points:
         tot = s["total_lines"] or 1
-        rows.append(f"<tr><td>{time.strftime('%Y-%m-%d %H:%M', time.gmtime(t))} UTC</td>"
+        rows.append(f"<tr><td>{local_time(t)}</td>"
                     f"<td class=num>{100 * s['green_lines'] / tot:.1f}%</td>"
                     f"<td class=num>{100 * s['done_lines'] / tot:.1f}%</td>"
                     f"<td class=num>{s['count']['green'] + s['count']['partial']} / {s['units']}</td></tr>")
@@ -459,7 +678,7 @@ def status_steps(hist, t0, t1):
         segs.append(f'<i class="st-{esc(st)}" style="width:{w:.2f}%" '
                     f'title="{esc(st)} from {time.strftime("%Y-%m-%d", time.gmtime(t))}"></i>')
     label = ", then ".join(f"{st} from {time.strftime('%Y-%m-%d', time.gmtime(t))}" for t, st, _ in runs)
-    items = "".join(f"<li><time>{time.strftime('%Y-%m-%d %H:%M', time.gmtime(t))} UTC</time> {badge(st)}"
+    items = "".join(f"<li>{local_time(t)} {badge(st)}"
                     f" <span class=muted>{fmt_int(n)} lines</span></li>" for t, st, n in runs)
     d0, d1 = (time.strftime("%b %d", time.gmtime(v)) for v in (t0, t1))
     return (f'<div class="steps" role="img" aria-label="Status history: {esc(label)}">{"".join(segs)}</div>'
@@ -544,7 +763,7 @@ def graph_body(g):
     return f"""
 <h1>Dependency graph</h1>
 <p class="muted">{len(nodes)} units and their {fmt_int(g['edges'])} <code>depends_on</code> edges from
-<code>plan/modules.toml</code> (soft dependencies are not drawn). Units cluster by module, and dependency
+<code>plan/units/</code> (soft dependencies are not drawn). Units cluster by module, and dependency
 edges pull related modules together. Data: <a href="assets/graph.json"><code>assets/graph.json</code></a>.</p>
 <section class="kpis">{tiles}</section>
 <div class="graphui" hidden>
@@ -590,6 +809,7 @@ def build(out):
     s = progress.summary(units)
     callgraph = json.loads((ROOT / "harness/callgraph/units.json").read_text())
     reports = load_reports()
+    solids = load_solids()
     ssi = json.loads((ROOT / "reports/ssi-corpus.json").read_text())
     intro_md, issues = parse_issues()
     points, area_points, unit_hist = aggregate(timeline())
@@ -616,6 +836,11 @@ def build(out):
 
     def write(rel, text):
         (out / rel).write_text(text)
+
+    # The checklist harness/plan/progress.py generated (not committed; pages.yml runs it).
+    checklist = ROOT / "plan/PROGRESS.md"
+    if checklist.exists():
+        shutil.copy(checklist, out / "PROGRESS.md")
 
     # ---- overview
     count = s["count"]
@@ -655,11 +880,17 @@ def build(out):
     ssi_rows = "".join(f"<tr><td>{esc(v)}</td><td class=num>{ssum.get('cpp', {}).get(v, 0)}</td>"
                        f"<td class=num>{ssum.get('rust', {}).get(v, 0)}</td></tr>" for v in verdicts)
     par = ssum.get("parity", {})
+    s_total, s_built, s_passed = solids_counts(solids)
+    solids_tile = (f'<div class="tile"><div class="k"><a href="solids.html">Solids</a></div>'
+                   + (f'<div class="v">{s_passed} / {s_total}</div><div class="sub">primitives pass; '
+                      f'{s_built} / {s_total} build</div>' if solids else
+                      '<div class="v">–</div><div class="sub">no data yet</div>') + '</div>')
     body = f"""
 <section class="hero">
 <h1>solidcore</h1>
 <p class="lede">solidcore is a Rust port of NVIDIA's SMLib, the boundary-representation (B-rep) solid
-modeling kernel from <a href="{UPSTREAM_URL}">usd-brep</a> (Apache-2.0), written in safe Rust: no
+modeling kernel from <a href="{UPSTREAM_URL}">usd-brep</a> (Apache-2.0; ported from and tested against
+{UPSTREAM_PIN_HTML}), written in safe Rust: no
 <code>unsafe</code>, no panics on bad input, deterministic, and buildable for WebAssembly. The upstream
 code is split into {s['units']} port units. A unit only counts as <strong>green</strong> when the
 <em>difftest</em> gate runs the Rust and the upstream C++ (through FFI) on the same inputs (upstream tests,
@@ -670,15 +901,16 @@ fixtures and fixed-seed generated cases) and the topology is identical and every
 </section>
 <section class="kpis">
 <div class="tile big"><div class="k">Upstream lines ported</div><div class="v">{pct:.1f}%</div>
-<div class="sub">{fmt_int(s['done_lines'])} of {fmt_int(s['total_lines'])} lines in green or partial units;
-{gpct:.1f}% green</div></div>
+<div class="sub">{fmt_int(s['done_lines'])} of {fmt_int(s['total_lines'])} lines of usd-brep
+v{esc(UPSTREAM_VERSION)} in green or partial units; {gpct:.1f}% green</div></div>
 {tiles}
 <div class="tile"><div class="k">ready to claim</div><div class="v">{ready_n}</div><div class="sub">todo with all dependencies done</div></div>
+{solids_tile}
 </section>
-<section>
+{reference_history_html()}<section>
 <h2>Progress over time</h2>
 <p class="muted">Share of in-scope upstream lines in green and partial units, from
-<code>plan/modules.toml</code> along <code>main</code>'s history ({len(points)} sampled states).</p>
+<code>plan/units/</code> along <code>main</code>'s history ({len(points)} sampled states).</p>
 <div class="chartpick" hidden><label>Module <select data-charts="overview-charts">
 <option value="all">all units</option>{area_opts}</select></label></div>
 <div id="overview-charts">
@@ -699,7 +931,7 @@ fixtures and fixed-seed generated cases) and the topology is identical and every
 <p>{len(ssi.get('cases', []))} cases from the external
 <a href="{esc(ssi.get('corpus', {}).get('repo', ''))}">ssi-corpus</a>, scored against known true intersections.
 Rust and C++ are compared where the Rust path is ported: {par.get('compared', 0)} compared,
-{par.get('identical', 0)} identical, {par.get('mismatched', 0)} mismatched.
+{par.get('identical', 0)} agree within 1e-9, {par.get('mismatched', 0)} mismatched.
 <a href="ssi.html">All cases</a>.</p>
 <div class="scroll narrow"><table><thead><tr><th>Verdict</th><th>C++</th><th>Rust</th></tr></thead>
 <tbody>{ssi_rows}</tbody></table></div>
@@ -709,9 +941,11 @@ Rust and C++ are compared where the Rust path is ported: {par.get('compared', 0)
 <ul>
 <li><a href="units/index.html">All {len(units)} units</a>, with difftest results and blockers.</li>
 <li><a href="graph.html">Dependency graph</a>: what is ready to claim and what blocks the most.</li>
+<li><a href="solids.html">Solids</a>: {f"{s_built}/{s_total} primitives build, {s_passed}/{s_total} pass" if solids else "no data yet"}, and what blocks each.</li>
 <li><a href="issues.html">{len(issues)} upstream issues</a> found while porting.</li>
+<li><a href="{VIEWER_URL}">Model viewer</a>: the upstream test models rendered by SMLib and by solidcore, side by side.</li>
 <li><a href="{REPO_URL}">Repository</a>: <a href="{REPO_URL}/blob/main/AGENTS.md">how to port a unit</a>,
-<a href="{REPO_URL}/blob/main/plan/PROGRESS.md">checklist</a>.</li>
+<a href="PROGRESS.md">checklist</a>.</li>
 </ul>
 </section>
 """
@@ -743,7 +977,7 @@ Rust and C++ are compared where the Rust path is ported: {par.get('compared', 0)
 </dl>
 <h2>Progress over time</h2>
 <p class="muted">Share of this module's upstream lines in green and partial units, from
-<code>plan/modules.toml</code> along <code>main</code>'s history ({len(apts)} sampled states).</p>
+<code>plan/units/</code> along <code>main</code>'s history ({len(apts)} sampled states).</p>
 {chart_svg(apts, f"chart-{area_slug(m)}", f"Share of {m} upstream lines ported over time")}
 {chart_table(apts)}
 <h2>Units</h2>
@@ -762,7 +996,10 @@ for difftest counts and blockers.</p>
         rep = reports.get(u["id"], (None, None))[0]
         nfn = len(callgraph.get(u["id"], {}).get("functions", []))
         if rep:
-            cp, cd, cf = rep.get("cases_passed", 0), rep.get("cases_deferred", 0), rep.get("cases_failed", 0)
+            # a confirmed C++ defect run anyway (cpp_defect) counts as passed; a parked one
+            # (not run) is neither passed nor failed and is listed on the unit page
+            cp = rep.get("cases_passed", 0) + rep.get("cases_cpp_defect", 0)
+            cd, cf = rep.get("cases_deferred", 0), rep.get("cases_failed", 0)
             blockers = sorted(rep.get("deferred_by_unit", {}).items(), key=lambda kv: (-kv[1], kv[0]))
             btxt = ", ".join(f'<a href="{esc(b)}.html">{esc(b)}</a>&nbsp;({n})' for b, n in blockers[:3])
             if len(blockers) > 3:
@@ -782,7 +1019,7 @@ for difftest counts and blockers.</p>
     mod_opts = "".join(f'<option value="{esc(m)}">{esc(m)}</option>' for m in modules)
     body = f"""
 <h1>Units</h1>
-<p class="muted">{len(units)} port units from <code>plan/modules.toml</code>. Cases come from
+<p class="muted">{len(units)} port units from <code>plan/units/</code>. Cases come from
 <code>reports/difftest/&lt;unit&gt;.json</code>; blockers are the units deferred cases wait on (with case
 counts). Click a column heading to sort.</p>
 <div class="filters" data-table="units">
@@ -814,6 +1051,9 @@ counts). Click a column heading to sort.</p>
         hrows = header_table(src) if exists else []
         look = header_lookup(hrows)
         rep, rep_path = reports.get(uid, (None, None))
+        if rep_path is not None:
+            (out / "reports").mkdir(parents=True, exist_ok=True)
+            shutil.copy(rep_path, out / "reports" / f"{uid}.json")
         fns = sorted(cg.get("functions", []), key=lambda f: (f["file"], f["line"], f["name"]))
         frows = []
         for f in fns:
@@ -838,10 +1078,26 @@ counts). Click a column heading to sort.</p>
             dtable = "".join(f'<tr><td><a href="{esc(b)}.html"><code>{esc(b)}</code></a> {badge(status.get(b, "?"))}</td>'
                              f'<td class=num>{n}</td></tr>' for b, n in dbu)
             floors = rep.get("abs_floors") or []
+            defects = [c for c in rep.get("cases", []) if isinstance(c, dict) and c.get("outcome") == "cpp_defect"]
+            cpp_defects = ("<p>Cases where the C++ reference is verified wrong (a confirmed upstream issue; "
+                           "the Rust result is kept and the case counts as passed): "
+                           + ", ".join(f'<code>{esc(c.get("name", ""))}</code> ({esc(c.get("cpp_defect", ""))})'
+                                       for c in defects) + "</p>") if defects else ""
+            parked = [c for c in rep.get("cases", []) if isinstance(c, dict) and c.get("outcome") == "parked"]
+            parked_cases = ("<p>Parked cases: the C++ reference is verified wrong (a confirmed upstream "
+                            "issue), so they are not run in the gate and count neither as passed nor as "
+                            "failed. A nightly job runs them against upstream's latest release and reports "
+                            "any that start to agree; removing the entry's <code>cpp_defect</code> runs one "
+                            "again. "
+                            + ", ".join(f'<code>{esc(c.get("name", ""))}</code> ({esc(c.get("cpp_defect", ""))})'
+                                        for c in parked) + "</p>") if parked else ""
             diff = f"""
 <dl class="facts">
 <div><dt>Cases</dt><dd>{fmt_int(rep.get('cases_total', 0))}</dd></div>
 <div><dt>Passed</dt><dd>{fmt_int(rep.get('cases_passed', 0))}</dd></div>
+{f"<div><dt>C++ defect (counted as passed)</dt><dd>{fmt_int(rep['cases_cpp_defect'])}</dd></div>" if rep.get('cases_cpp_defect') else ''}
+{f"<div><dt>Parked (C++ defect, not run)</dt><dd>{fmt_int(rep['cases_parked'])}</dd></div>" if rep.get('cases_parked') else ''}
+{f"<div><dt>Known mismatch</dt><dd>{fmt_int(rep['cases_known_mismatch'])}</dd></div>" if rep.get('cases_known_mismatch') else ''}
 <div><dt>Deferred</dt><dd>{fmt_int(rep.get('cases_deferred', 0))}</dd></div>
 <div><dt>Failed</dt><dd>{fmt_int(rep.get('cases_failed', 0))}</dd></div>
 <div><dt>Both errored</dt><dd>{fmt_int(rep.get('cases_both_errored', 0))}</dd></div>
@@ -850,9 +1106,11 @@ counts). Click a column heading to sort.</p>
 <div><dt>Seeds</dt><dd>{esc(str(rep.get('seeds', '')))}</dd></div>
 </dl>
 {('<p>Absolute floors: <code>' + esc(json.dumps(floors)) + '</code></p>') if floors else ''}
+{cpp_defects}
+{parked_cases}
 <h3>Blocked by</h3>
 {('<div class="scroll narrow"><table><thead><tr><th>Unported unit</th><th>Deferred cases</th></tr></thead><tbody>' + dtable + '</tbody></table></div>') if dtable else '<p class="muted">Nothing: no deferred cases.</p>'}
-<p><a href="{REPO_URL}/blob/{head_sha}/{esc(rep_path)}">Report JSON</a> (per-case results)</p>"""
+<p><a href="../reports/{esc(uid)}.json">Report JSON</a> (per-case results, from CI's latest <code>main</code> run)</p>"""
         else:
             diff = '<p class="muted">No difftest report yet.</p>'
         claim = f'<p>Claimed: {inline(u["claim"])}</p>' if u.get("claim") else ""
@@ -899,6 +1157,13 @@ counts). Click a column heading to sort.</p>
                           description="Port units of solidcore and their dependencies, by status.",
                           scripts=("vendor/d3-force.bundle.min.js", "graph.js")))
 
+    # ---- solids
+    if solids:
+        (out / "reports").mkdir(parents=True, exist_ok=True)
+        (out / "reports/solids.json").write_text(json.dumps(solids, indent=1, sort_keys=True))
+    write("solids.html", P("Solids · solidcore", solids_body(solids), 0, "solids", path="solids.html",
+                           description="Which solids solidcore builds in pure Rust, and what blocks the rest."))
+
     # ---- issues
     sc = collections.Counter(e["series"] for e in issues)
     cc = collections.Counter(e["confirmed"] for e in issues)
@@ -922,8 +1187,8 @@ counts). Click a column heading to sort.</p>
     ser_opts += "".join(f'<option value="{esc(k)}">{esc(k)} ({sc[k]})</option>' for k in sorted(set(sc) - set(SERIES)))
     body = f"""
 <h1>Upstream issues</h1>
-<p class="muted">{len(issues)} entries from <a href="{REPO_URL}/blob/main/plan/upstream-issues.md"><code>plan/upstream-issues.md</code></a>,
-rendered as written: {', '.join(f'{sc[k]} {k}' for k in SERIES if sc[k])}; {cc['yes']} confirmed by a C++ run.</p>
+<p class="muted">{len(issues)} entries from <a href="{REPO_URL}/tree/main/plan/upstream-issues"><code>plan/upstream-issues/</code></a>
+(one file each), rendered as written: {', '.join(f'{sc[k]} {k}' for k in SERIES if sc[k])}; {cc['yes']} confirmed by a C++ run.</p>
 {('<p class="warn">Duplicate IDs in the source file: ' + ', '.join(esc(d) for d in dups) + '. Both entries are shown; the later one is linked as <code>#&lt;id&gt;-dup2</code>.</p>') if dups else ''}
 <details class="intro"><summary>About this list</summary>{markdown(intro_md)}</details>
 <div class="filters" data-list="issues">
@@ -956,7 +1221,7 @@ rendered as written: {', '.join(f'{sc[k]} {k}' for k in SERIES if sc[k])}; {cc['
         if rflags and rflags != flags:
             ftxt += "".join(f"<li>Rust: {esc(f)}</li>" for f in rflags)
         par = c.get("parity") or {}
-        ptxt = ("identical" if par.get("pass") and not par.get("mismatches") else
+        ptxt = ("agree" if par.get("pass") and not par.get("mismatches") else
                 f"{par.get('mismatches')} mismatches" if par else "")
         crow.append(
             f'<tr data-class="{esc(c.get("class", ""))}" data-cpp="{esc(cpp.get("verdict", ""))}" data-rust="{esc(rv)}">'
@@ -993,16 +1258,40 @@ the C++ result's.</p>
 """
     write("ssi.html", P("SSI corpus · solidcore", body, 0, "ssi", path="ssi.html"))
     return {"units": len(units), "areas": len(present), "issues": len(issues), "ssi": len(cases),
+            "solids": "{1}/{0} build, {2}/{0} pass".format(*solids_counts(solids)) if solids else "no data",
             "timeline": len(points),
             "seconds": time.time() - t_start}
 
+
+
+def reference_history_html():
+    """Rows for site/reference-history/*.json: one file per past upstream pin."""
+    rows = []
+    for f in sorted((ROOT / "site" / "reference-history").glob("*.json")):
+        h = json.loads(f.read_text())
+        pk, fn, nx = h.get("peak", {}), h.get("final", {}), h.get("superseded_by", {})
+        peak = (f'{pk.get("green")}/{pk.get("units")} green on {esc(pk.get("date", ""))} '
+                f'(<a href="{REPO_URL}/pull/{pk.get("pr")}">#{pk.get("pr")}</a>, '
+                f'<code>{esc(pk.get("commit", ""))}</code>)') if pk else ""
+        final = (f'{fn.get("green")} green, {fn.get("partial", 0)} partial at '
+                 f'<code>{esc(fn.get("commit", ""))}</code>: {esc(fn.get("note", ""))}') if fn else ""
+        moved = (f'v{esc(nx.get("version", ""))} on {esc(nx.get("date", ""))} '
+                 f'(<a href="{REPO_URL}/pull/{nx.get("pr")}">#{nx.get("pr")}</a>)') if nx else ""
+        rows.append(f'<tr><td>v{esc(h["version"])} <code>{esc(h.get("commit", ""))}</code></td>'
+                    f'<td>{peak}</td><td>{final}</td><td>{moved}</td></tr>')
+    if not rows:
+        return ""
+    return ('<section>\n<h2>Earlier upstream pins</h2>\n<p class="muted">Difftest results against '
+            'previous C++ references, kept after the pin moved on.</p>\n<div class="scroll"><table>'
+            '<thead><tr><th>Pin</th><th>Best</th><th>Last state</th><th>Moved to</th></tr></thead><tbody>'
+            + "".join(rows) + '</tbody></table></div>\n</section>\n')
 
 def main():
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     ap.add_argument("--out", default=str(ROOT / "bin/site"))
     a = ap.parse_args()
     r = build(pathlib.Path(a.out).resolve())
-    print(f"site: {r['units']} unit pages, {r['areas']} module pages, {r['issues']} issues, {r['ssi']} SSI cases, "
+    print(f"site: {r['units']} unit pages, {r['areas']} module pages, {r['issues']} issues, {r['ssi']} SSI cases, solids {r['solids']}, "
           f"{r['timeline']} timeline points -> {a.out} ({r['seconds']:.1f}s)")
 
 

@@ -31,8 +31,7 @@ use crate::{Case, HarnessError, Output, Rng, UnitDiff};
 /// Generated cases per run, whatever `--seeds` says (it can only raise this).
 pub const MIN_GENERATED: usize = 4000;
 
-/// Upstream `SM_ERR_INVALID_INPUT`.
-const SM_ERR_INVALID_INPUT: i32 = 1007;
+use solidcore::error::SM_ERR_INVALID_INPUT;
 
 /// `geom.axis2_placement` runner.
 pub struct Runner;
@@ -114,7 +113,7 @@ fn lookup<T: Copy>(table: &[(&str, T)], name: &str) -> Result<T, HarnessError> {
 
 fn status_code(e: &SolidError) -> f64 {
     match e {
-        SolidError::InvalidInput { .. } => f64::from(SM_ERR_INVALID_INPUT),
+        SolidError::InvalidInput { .. } | SolidError::PortInvariant { .. } => f64::from(SM_ERR_INVALID_INPUT),
         SolidError::Upstream { code, .. } => f64::from(*code),
         _ => -1.0,
     }

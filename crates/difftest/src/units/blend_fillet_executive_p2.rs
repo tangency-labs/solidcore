@@ -10,23 +10,27 @@
 //! (the executive constructor belongs to `blend.fillet_executive_p1`). Their output is
 //! one float array (`out`): the status, then the switches, solver count and error code
 //! (`SetFilletParameters`) or the sequence and list lengths. `-2` in the status slot
-//! (upstream would dereference null) is a guard: an error on both sides. An elliptical
+//! (upstream would dereference null) and `-4` (a box with fewer than 12 edges) are
+//! guards: an error on both sides. An elliptical
 //! law whose interpolation failed (no such input is known) would have a null curve
 //! upstream and an error here: also an error on both sides.
 //!
-//! Whatever reaches `AddFilletSurfaceGenerator`, `LoadFilletSolver`, `NoteError` or
-//! `CreateFilletCorners` defers to `blend.fillet_executive_p1`, so `SmTemporaryRadiusChange`
-//! (which needs a loaded solver) is not compared yet.
+//! Constant-radius solvers are retained and loaded into actual registered executives.
+//! Remaining corner/sequence operations still report their missing implementation.
 
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
+use std::collections::BTreeMap;
 
 use solidcore::blend::fillet_custom_solver::ConstantRadiusAssistedFs;
+use solidcore::blend::fillet_executive::p1::ExecutiveObjects;
 use solidcore::blend::fillet_executive::p2::FilletParameters;
 use solidcore::blend::fillet_executive::p3::{
     ContextMark, CornerView, ErrorInfo, ExecutionOptions, ExecutiveAccess, FilletExecutive,
     StitchAttempt, StitchSettings, TopoEdgeView,
 };
+use solidcore::blend::fillet_geom::p1::{FilStatus, FilletEdgeType};
+use solidcore::blend::fillet_geom::p1::{FilletBrep, FilletSolverId};
 use solidcore::blend::fillet_solver::p1::FilletSurfaceGenerator;
 use solidcore::blend::fillet_standard_solver::p1::{
     constant_radius_from_edgeuse, FilletLaw, FilletLawKind, FilletSolverType,
@@ -39,11 +43,10 @@ use solidcore::geom::solution_array::{ObjectKind, SolutionObject};
 use solidcore::intersect::point_class::{ClassObject, ClassObjectKind};
 use solidcore::kernel::Kernel;
 use solidcore::math::Point3;
+use solidcore::topology::proto_topology::p1::CopyBrepMap;
 use solidcore::topology::{edge, Brep, EdgeId, EdgeuseId};
 use solidcore::{Result as SolidResult, SolidError};
 use solidcore_ffi::units::blend_fillet_executive_p2::{self as ffi, Op};
-use solidcore_ffi::units::heal_stitch_p2 as stitch_ffi;
-use solidcore_ffi::units::topology_brep_p1::counts;
 
 use crate::{Case, HarnessError, Output, Rng, UnitDiff};
 
@@ -57,10 +60,8 @@ fn harness(msg: impl Into<String>) -> HarnessError {
 /// "Upstream would dereference null" in a status slot.
 const NULL_DEREF: f64 = -2.0;
 
-/// `SmPlane_TYPE`; `SmLine_TYPE`: the geometry of an `SmApiCreateBox` box, which the
-/// export carries exactly.
-const BOX_SURFACE: i64 = 15011;
-const BOX_CURVE: i64 = 14010;
+/// The box has fewer than 12 edges (`-4 n_edges`): no op runs on either side.
+const SHORT_BOX: f64 = -4.0;
 
 // ---- inputs -----------------------------------------------------------------------------
 
@@ -225,6 +226,7 @@ fn record(i: &Inputs) -> (Op, Vec<f64>) {
 fn values_output(o: Vec<f64>) -> Output {
     match o.first() {
         Some(&s) if s == NULL_DEREF => Output::err("null_deref"),
+        Some(&s) if s == SHORT_BOX => Output::err("box_edge_count"),
         _ => Output::new().values("out", o),
     }
 }
@@ -249,10 +251,14 @@ fn run_cpp(i: &Inputs) -> Result<Output, HarnessError> {
 enum Handle {
     Brep(usize),
     Edge(EdgeId),
+    Vertex(solidcore::topology::VertexId),
     Edgeuse(EdgeuseId),
     Generator(usize),
     Solver(usize),
+    Corner(usize),
     Law(usize),
+    Geom(solidcore::blend::fillet_geom::p1::FilletGeomId),
+    Pseudo,
 }
 impl ClassObject for Handle {
     fn class_kind(&self) -> ClassObjectKind {
@@ -265,11 +271,42 @@ impl SolutionObject for Handle {
     }
 }
 
+enum SolverEntry {
+    ConstantRadius(ConstantRadiusAssistedFs),
+    ConstantDistance(solidcore::blend::fillet_standard_solver::p1::ConstantDistanceFs),
+    VariableRadius(Box<solidcore::blend::fillet_standard_solver::p1::VariableRadiusFs>),
+    SurfaceSurface(solidcore::blend::fillet_standard_solver::p1::SurfaceSurfaceFs),
+}
+
+impl SolverEntry {
+    fn base(&self) -> &solidcore::blend::fillet_solver::p1::FilletSolver {
+        match self {
+            Self::ConstantRadius(s) => &s.solver,
+            Self::ConstantDistance(s) => &s.solver,
+            Self::VariableRadius(s) => &s.curve_based.solver,
+            Self::SurfaceSurface(s) => &s.base.solver,
+        }
+    }
+
+    fn base_mut(&mut self) -> &mut solidcore::blend::fillet_solver::p1::FilletSolver {
+        match self {
+            Self::ConstantRadius(s) => &mut s.solver,
+            Self::ConstantDistance(s) => &mut s.solver,
+            Self::VariableRadius(s) => &mut s.curve_based.solver,
+            Self::SurfaceSurface(s) => &mut s.base.solver,
+        }
+    }
+}
+
 struct Access {
     breps: Vec<Brep>,
+    /// The executive's pseudo B-rep (`m_pPseudoBrep`): the solvers' fillet geometries.
+    pseudo: FilletBrep,
     generators: Vec<FilletSurfaceGenerator>,
-    solvers: Vec<ConstantRadiusAssistedFs>,
+    solvers: Vec<SolverEntry>,
+    corners: Vec<solidcore::blend::fillet_corner::p3::FilletCorner>,
     laws: Vec<FilletLaw>,
+    edge_caches: BTreeMap<EdgeId, solidcore::curve::curve_cache::CurveCache<Handle>>,
 }
 fn missing_error() -> SolidError {
     SolidError::InvalidInput {
@@ -281,21 +318,240 @@ fn missing<T>() -> SolidResult<T> {
     Err(missing_error())
 }
 impl Access {
+    /// `new SmConstantRadiusFS(ctx, dApproxTol, dAngTolRad, dTanTolRad, dRadius, pEU,
+    /// pdOptSecondRadius)`.
+    #[allow(clippy::too_many_arguments)] // the native constructor's parameters
+    fn constant_radius_solver(
+        &mut self,
+        k: &mut Kernel,
+        approx_tol: f64,
+        ang_tol_rad: f64,
+        tan_tol_rad: f64,
+        radius: f64,
+        edgeuse: Handle,
+        second_radius: Option<f64>,
+    ) -> SolidResult<Handle> {
+        let Handle::Edgeuse(eu) = edgeuse else {
+            return missing();
+        };
+        let id = FilletSolverId(
+            u32::try_from(self.solvers.len()).map_err(|_| missing_error())?,
+        );
+        let b = self.breps.first_mut().ok_or_else(missing_error)?;
+        let fs = constant_radius_from_edgeuse(
+            k,
+            b,
+            &mut self.pseudo,
+            id,
+            approx_tol,
+            ang_tol_rad,
+            tan_tol_rad,
+            radius,
+            eu,
+            second_radius,
+        )?;
+        self.solvers.push(SolverEntry::ConstantRadius(fs));
+        Ok(Handle::Solver(self.solvers.len() - 1))
+    }
+    fn solver_surface(
+        &self,
+        solver: Handle,
+        rail: usize,
+    ) -> SolidResult<Option<&solidcore::blend::fillet_custom_solver::OffsetSurface>> {
+        let solver = self.solver_base(solver)?;
+        if let Some(geom) = solver.fg_for_surfaces {
+            self.pseudo.geom(geom)?.offset_surface(rail, Some(solver))
+        } else {
+            Ok(solver.surface(rail)?.map(|slot| &slot.surface))
+        }
+    }
     fn brep(&self, h: Handle) -> SolidResult<&Brep> {
         match h {
             Handle::Brep(i) => self.breps.get(i).ok_or_else(missing_error),
+            Handle::Pseudo => Ok(self.pseudo.brep()),
             _ => missing(),
         }
     }
     fn brep_mut(&mut self, h: Handle) -> SolidResult<&mut Brep> {
         match h {
             Handle::Brep(i) => self.breps.get_mut(i).ok_or_else(missing_error),
+            Handle::Pseudo => Ok(self.pseudo.brep_mut()),
             _ => missing(),
         }
     }
 }
 
+/// `target->MergeBrep(other, NULL, NULL, bAddAnalytics)` for this fixture, which keeps no
+/// notification state: `topology::brep::p3::merge_brep` under the kernel's identities
+/// (`with_kernel_callbacks`), `other` enrolled in the same identity domain first so its
+/// objects never share a key with `target`'s.
+fn merge_breps(
+    k: &mut Kernel,
+    target: &mut Brep,
+    other: &mut Brep,
+    add_analytics: bool,
+) -> SolidResult<()> {
+    use solidcore::topology::brep::p3 as bp3;
+    let serial = bp3::notify_serial(&mut k.context, other)?;
+    let source_key = move |e| bp3::topology_ref(serial, e);
+    let other = &*other;
+    bp3::with_kernel_callbacks(k, target, |k, b, env| {
+        bp3::merge_brep(k, env, b, other, &source_key, None, None, add_analytics)
+    })
+}
+
+/// `brep->OrientTrimmedSurfaces(..)` for this fixture: `topology::brep::p3`'s under the
+/// kernel's identities. The fixture has no face handles, so only an empty
+/// `pOptFacesToSwapUV` list is accepted.
+fn orient_brep(
+    k: &mut Kernel,
+    b: &mut Brep,
+    outward: bool,
+    maybe_not_solid: &mut bool,
+    just_unify: bool,
+    faces_to_swap_uv: Option<&mut Vec<Handle>>,
+) -> SolidResult<()> {
+    use solidcore::topology::brep::p3 as bp3;
+    if faces_to_swap_uv.as_ref().is_some_and(|f| !f.is_empty()) {
+        return missing();
+    }
+    let swap: Option<&[solidcore::topology::FaceId]> = faces_to_swap_uv.map(|_| &[][..]);
+    let r = bp3::with_kernel_callbacks(k, b, |k, b, env| {
+        let mut marks = solidcore::topology::topology_traverser::Marks::default();
+        bp3::orient_trimmed_surfaces(k, b, env, &mut marks, outward, just_unify, swap)
+    })?;
+    *maybe_not_solid = r.maybe_not_closed_solid;
+    Ok(())
+}
+
 impl ExecutiveAccess<Handle> for Access {
+    fn solver_base(
+        &self,
+        solver: Handle,
+    ) -> SolidResult<&solidcore::blend::fillet_solver::p1::FilletSolver> {
+        let Handle::Solver(index) = solver else {
+            return missing();
+        };
+        self.solvers
+            .get(index)
+            .map(SolverEntry::base)
+            .ok_or_else(missing_error)
+    }
+    fn solver_base_mut(
+        &mut self,
+        solver: Handle,
+    ) -> SolidResult<&mut solidcore::blend::fillet_solver::p1::FilletSolver> {
+        let Handle::Solver(index) = solver else {
+            return missing();
+        };
+        self.solvers
+            .get_mut(index)
+            .map(SolverEntry::base_mut)
+            .ok_or_else(missing_error)
+    }
+    fn solver_has_surface(&self, solver: Handle, rail: usize) -> SolidResult<bool> {
+        Ok(self.solver_surface(solver, rail)?.is_some())
+    }
+    fn edge_g1_knots(&mut self, k: &Kernel, edge: Handle) -> SolidResult<Vec<f64>> {
+        const OP: &str = "SmFilletExecutive::LoadFilletSolver";
+        let Handle::Edge(id) = edge else {
+            return missing();
+        };
+        let curve = self
+            .breps
+            .first()
+            .ok_or_else(missing_error)?
+            .edge(id)?
+            .curve
+            .as_ref()
+            .ok_or_else(|| SolidError::null_pointer(OP))?;
+        let knots = curve.knots(k, None)?.0;
+        if let std::collections::btree_map::Entry::Vacant(entry) = self.edge_caches.entry(id) {
+            // The cache manager returns null on construction failure; LoadFilletSolver
+            // applies NER to that pointer after GetKnots has succeeded.
+            // the cache is the edge curve's own: its tolerance is the edge's
+            let zone_tol_3d = edge::tolerance(self.breps.first().ok_or_else(missing_error)?, id)?;
+            let cache = solidcore::curve::curve::p5::make_curve_cache_with_zone_tol(
+                k,
+                curve,
+                Some(edge),
+                Some(zone_tol_3d),
+            )
+            .map_err(|error| {
+                if error.is_unported() {
+                    error
+                } else {
+                    SolidError::null_pointer(OP)
+                }
+            })?;
+            entry.insert(cache);
+        }
+        let cache = self.edge_caches.get(&id).ok_or_else(missing_error)?;
+        cache
+            .continuities()
+            .iter()
+            .enumerate()
+            .filter(|(_, continuity)| {
+                **continuity == solidcore::geom::geom_utility::p2::ContinuityType::G1
+            })
+            .map(|(index, _)| knots.get(index).copied().ok_or_else(missing_error))
+            .collect()
+    }
+    fn edgeuse_vertex(&self, edgeuse: Handle) -> SolidResult<Option<Handle>> {
+        let Handle::Edgeuse(id) = edgeuse else {
+            return missing();
+        };
+        let b = self.brep(Handle::Brep(0))?;
+        let vertexuse = b.edgeuse(id)?.vertexuse.ok_or_else(missing_error)?;
+        Ok(b.vertexuse(vertexuse)?.vertex.map(Handle::Vertex))
+    }
+    // (the fixture's handles name no corners)
+    fn corner_solvers(&self, _: Handle, _: &FilletExecutive<Handle>) -> SolidResult<Vec<Handle>> {
+        missing()
+    }
+    fn calc_corner_vertices(
+        &mut self,
+        _: &mut Kernel,
+        _: Handle,
+        _: &mut FilletExecutive<Handle>,
+    ) -> SolidResult<()> {
+        missing()
+    }
+    fn check_degeneracy(
+        &mut self,
+        _: &mut Kernel,
+        _: Handle,
+        _: &mut FilletExecutive<Handle>,
+    ) -> SolidResult<bool> {
+        missing()
+    }
+    fn calc_corner_edges(
+        &mut self,
+        _: &mut Kernel,
+        _: Handle,
+        _: &mut FilletExecutive<Handle>,
+    ) -> SolidResult<()> {
+        missing()
+    }
+    fn reinitialize_corner_edges(
+        &mut self,
+        _: &mut Kernel,
+        _: Handle,
+        _: &mut FilletExecutive<Handle>,
+    ) -> SolidResult<()> {
+        missing()
+    }
+    fn insert_corner_topology(
+        &mut self,
+        _: &mut Kernel,
+        _: Handle,
+        _: &mut FilletExecutive<Handle>,
+    ) -> SolidResult<()> {
+        missing()
+    }
+    fn corner_tangent_solver(&self, _: Handle, _: Handle) -> SolidResult<Option<Handle>> {
+        missing()
+    }
     // The adapters SetFilletParameters and the empty-list executive members reach
     // before their executive p1 deferrals are real (below). The others reject
     // objects this fixture does not build; they are not UNPORTED calls.
@@ -325,6 +581,54 @@ impl ExecutiveAccess<Handle> for Access {
         _: Option<&[Handle]>,
     ) -> SolidResult<()> {
         missing()
+    }
+    fn merge_brep(
+        &mut self,
+        k: &mut Kernel,
+        target: Handle,
+        other: Handle,
+        copy_map: Option<&mut CopyBrepMap<Handle>>,
+        reverse_map: Option<&mut CopyBrepMap<Handle>>,
+        add_analytics: bool,
+    ) -> SolidResult<()> {
+        // (the fixture's handles name no topology objects: no copy maps of them)
+        if copy_map.is_some() || reverse_map.is_some() || target == other {
+            return missing();
+        }
+        let mut src = std::mem::take(self.brep_mut(other)?);
+        let r = match self.brep_mut(target) {
+            Ok(dst) => merge_breps(k, dst, &mut src, add_analytics),
+            Err(e) => Err(e),
+        };
+        if let Ok(slot) = self.brep_mut(other) {
+            *slot = src;
+        }
+        r
+    }
+    /// The fixture's B-reps carry no edge objects, so only an empty topo-edge list
+    /// (`remove_topo_edges` over no edges, a no-op) can run.
+    fn remove_topo_edges(
+        &mut self,
+        _: &mut Kernel,
+        executive: &mut FilletExecutive<Handle>,
+    ) -> SolidResult<()> {
+        if executive.topo_edges.is_empty() {
+            Ok(())
+        } else {
+            missing()
+        }
+    }
+    fn orient_trimmed_surfaces(
+        &mut self,
+        k: &mut Kernel,
+        brep: Handle,
+        outward: bool,
+        maybe_not_solid: &mut bool,
+        just_unify: bool,
+        faces_to_swap_uv: Option<&mut Vec<Handle>>,
+    ) -> SolidResult<()> {
+        let b = self.brep_mut(brep)?;
+        orient_brep(k, b, outward, maybe_not_solid, just_unify, faces_to_swap_uv)
     }
     fn do_stitching(
         &mut self,
@@ -356,10 +660,30 @@ impl ExecutiveAccess<Handle> for Access {
     ) -> SolidResult<()> {
         missing()
     }
+    fn trim_original_surfaces(
+        &mut self,
+        _: &mut Kernel,
+        _: Handle,
+        _: &mut Vec<Handle>,
+        _: &mut Vec<Handle>,
+        _: &[ContextMark],
+        _: &mut FilletExecutive<Handle>,
+    ) -> SolidResult<()> {
+        missing()
+    }
     fn calc_corner_geom(
         &mut self,
         _: &mut Kernel,
         _: Handle,
+        _: &mut FilletExecutive<Handle>,
+    ) -> SolidResult<()> {
+        missing()
+    }
+    fn test_rollover(
+        &mut self,
+        _: &mut Kernel,
+        _: Handle,
+        _: &mut Vec<Handle>,
         _: &mut FilletExecutive<Handle>,
     ) -> SolidResult<()> {
         missing()
@@ -383,30 +707,33 @@ impl ExecutiveAccess<Handle> for Access {
     fn adjust_topology(
         &mut self,
         _: &mut Kernel,
-        _: Handle,
+        corner: Handle,
         _: &mut FilletExecutive<Handle>,
     ) -> SolidResult<()> {
-        // No concrete object is constructed here. Future fixtures must dispatch
-        // derived types to their owners, as documented on ExecutiveAccess.
-        // UNPORTED(blend.fillet_corner_p1): SmFilletCorner::AdjustTopology
-        Err(SolidError::unported(
-            "SmFilletCorner::AdjustTopology",
-            "blend.fillet_corner_p1",
-        ))
+        // The virtual `pCorner->AdjustTopology()` on the actual corner: every kind but
+        // Nx2 and Convex/Concave NxN returns SM_SUCCESS; those overrides need a
+        // CornerEnv over a contiguous solver table, which this fixture does not build
+        // (as for CheckAndFixDegeneracy above).
+        let Handle::Corner(cid) = corner else {
+            return missing();
+        };
+        let c = self.corners.get_mut(cid).ok_or_else(missing_error)?;
+        c.adjust_topology_with(&mut (), |_, ()| missing(), |_, ()| missing())
     }
     fn adjust_tangent_corner(
         &mut self,
         _: &mut Kernel,
-        _: Handle,
+        corner: Handle,
         _: &mut FilletExecutive<Handle>,
     ) -> SolidResult<()> {
-        // No concrete object is constructed here. Future fixtures must dispatch
-        // derived types to their owners, as documented on ExecutiveAccess.
-        // UNPORTED(blend.fillet_corner_p1): SmFilletCorner::AdjustTangentCorner
-        Err(SolidError::unported(
-            "SmFilletCorner::AdjustTangentCorner",
-            "blend.fillet_corner_p1",
-        ))
+        // The virtual `pCorner->AdjustTangentCorner()` on the actual corner: the base
+        // returns SM_SUCCESS; the Nx2 and closed Nx1 overrides need a TangentSplitEnv
+        // over the solvers' virtual operations, which this fixture does not build.
+        let Handle::Corner(cid) = corner else {
+            return missing();
+        };
+        let c = self.corners.get_mut(cid).ok_or_else(missing_error)?;
+        c.adjust_tangent_corner_with(&mut (), |_, ()| missing(), |_, ()| missing())
     }
     fn calc_fillet_geom(
         &mut self,
@@ -414,13 +741,10 @@ impl ExecutiveAccess<Handle> for Access {
         _: Handle,
         _: &mut FilletExecutive<Handle>,
     ) -> SolidResult<()> {
-        // No concrete object is constructed here. Future fixtures must dispatch
-        // derived types to their owners, as documented on ExecutiveAccess.
-        // UNPORTED(blend.fillet_solver_p4): SmFilletSolver::CalcFilletGeom
-        Err(SolidError::unported(
-            "SmFilletSolver::CalcFilletGeom",
-            "blend.fillet_solver_p4",
-        ))
+        // This fixture builds no solver, so there is nothing to dispatch to: the
+        // base `CalcFilletGeom` is ported (`blend::fillet_solver::p4`) and
+        // `SmSurfaceSurfaceFS`'s override is blend.fillet_standard_solver_p2's.
+        missing()
     }
     fn corner_error_info(
         &self,
@@ -441,14 +765,33 @@ impl ExecutiveAccess<Handle> for Access {
     fn corner_approx_tolerance(&self, _: Handle) -> SolidResult<f64> {
         missing()
     }
-    fn solver_geoms(&self, _: Handle) -> SolidResult<Vec<Handle>> {
-        missing()
+    fn solver_geoms(&self, solver: Handle) -> SolidResult<Vec<Handle>> {
+        Ok(self
+            .solver_base(solver)?
+            .fillet_geoms()
+            .into_iter()
+            .map(Handle::Geom)
+            .collect())
     }
-    fn solver_geom(&self, _: Handle, _: usize) -> SolidResult<Option<Handle>> {
-        missing()
+    fn solver_geom(&self, solver: Handle, index: usize) -> SolidResult<Option<Handle>> {
+        Ok(self
+            .solver_base(solver)?
+            .fillet_geoms
+            .get(index)
+            .copied()
+            .map(Handle::Geom))
     }
-    fn solver_edge(&self, _: Handle) -> SolidResult<Handle> {
-        missing()
+    fn solver_edge(&self, solver: Handle) -> SolidResult<Handle> {
+        const OP: &str = "blend::fillet_executive::p2: solver_edge";
+        let eu = self
+            .solver_base(solver)?
+            .edgeuse(0)?
+            .ok_or_else(|| SolidError::null_pointer(OP))?;
+        self.brep(Handle::Brep(0))?
+            .edgeuse(eu)?
+            .edge
+            .map(Handle::Edge)
+            .ok_or_else(|| SolidError::null_pointer(OP))
     }
     fn solver_approx_tolerance(&self, _: Handle) -> SolidResult<f64> {
         missing()
@@ -510,8 +853,34 @@ impl ExecutiveAccess<Handle> for Access {
     fn geom_side_edgeuses(&self, _: Handle) -> SolidResult<Vec<Handle>> {
         missing()
     }
-    fn edgeuse_edge(&self, _: Handle) -> SolidResult<Option<Handle>> {
+    fn edge_edgeuses(&self, edge: Handle) -> SolidResult<Vec<Handle>> {
+        let Handle::Edge(e) = edge else {
+            return missing();
+        };
+        let b = self.brep(Handle::Brep(0))?;
+        Ok(edge::edgeuses(b, e, None, None)?
+            .into_iter()
+            .map(Handle::Edgeuse)
+            .collect())
+    }
+    fn fillet_edge_note(
+        &self,
+        _: Handle,
+    ) -> SolidResult<(Option<&'static str>, FilletEdgeType, FilStatus)> {
         missing()
+    }
+    fn new_executive_objects(&mut self, _: &mut Kernel) -> SolidResult<ExecutiveObjects<Handle>> {
+        missing()
+    }
+    fn edgeuse_edge(&self, edgeuse: Handle) -> SolidResult<Option<Handle>> {
+        let Handle::Edgeuse(id) = edgeuse else {
+            return missing();
+        };
+        Ok(self
+            .brep(Handle::Brep(0))?
+            .edgeuse(id)?
+            .edge
+            .map(Handle::Edge))
     }
     fn fillet_edge_original_face(&self, _: Handle) -> SolidResult<Option<Handle>> {
         missing()
@@ -531,23 +900,242 @@ impl ExecutiveAccess<Handle> for Access {
     fn corner_edges(&self, _: Handle) -> SolidResult<Vec<Option<Handle>>> {
         missing()
     }
-    fn edge_vertices(&self, _: Handle) -> SolidResult<(Option<Handle>, Option<Handle>)> {
-        missing()
+    fn edge_vertices(&self, edge_handle: Handle) -> SolidResult<(Option<Handle>, Option<Handle>)> {
+        let Handle::Edge(e) = edge_handle else {
+            return missing();
+        };
+        let b = self.brep(Handle::Brep(0))?;
+        let v1 = edge::start_vertex(b, e)?;
+        let v2 = match v1 {
+            Some(s) => edge::other_vertex(b, e, Some(s))?,
+            None => None,
+        };
+        Ok((v1.map(Handle::Vertex), v2.map(Handle::Vertex)))
     }
     fn variable_radius_solver(
         &self,
-        _: Handle,
+        solver: Handle,
     ) -> SolidResult<Option<&solidcore::blend::fillet_standard_solver::p1::VariableRadiusFs>> {
-        missing()
+        let Handle::Solver(idx) = solver else {
+            return missing();
+        };
+        match self.solvers.get(idx).ok_or_else(missing_error)? {
+            SolverEntry::VariableRadius(vr) => Ok(Some(vr.as_ref())),
+            _ => Ok(None),
+        }
     }
     fn variable_radius_solver_mut(
         &mut self,
-        _: Handle,
+        solver: Handle,
     ) -> SolidResult<Option<&mut solidcore::blend::fillet_standard_solver::p1::VariableRadiusFs>>
     {
+        let Handle::Solver(idx) = solver else {
+            return missing();
+        };
+        match self.solvers.get_mut(idx).ok_or_else(missing_error)? {
+            SolverEntry::VariableRadius(vr) => Ok(Some(vr.as_mut())),
+            _ => Ok(None),
+        }
+    }
+    fn solver_edgeuse(&self, solver: Handle, rail: usize) -> SolidResult<Option<Handle>> {
+        self.solver_base(solver)?
+            .edgeuse(rail)
+            .map(|edgeuse| edgeuse.map(Handle::Edgeuse))
+    }
+    fn solver_corner(&self, _: Handle, _: usize) -> SolidResult<Option<Handle>> {
         missing()
     }
-    fn solver_edgeuse(&self, _: Handle, _: usize) -> SolidResult<Option<Handle>> {
+    fn solver_other_corner(&self, _: Handle, _: Handle) -> SolidResult<Option<Handle>> {
+        missing()
+    }
+    fn solver_corner_in(
+        &self,
+        executive: &FilletExecutive<Handle>,
+        solver: Handle,
+        index: usize,
+    ) -> SolidResult<Option<Handle>> {
+        let b = self.brep(Handle::Brep(0))?;
+        let Some(v) = self.solver_base(solver)?.vertex(b, index)? else {
+            return Ok(None);
+        };
+        executive.fillet_corner_of_vertex(Handle::Vertex(v))
+    }
+    fn solver_other_corner_in(
+        &self,
+        executive: &FilletExecutive<Handle>,
+        solver: Handle,
+        corner: Handle,
+    ) -> SolidResult<Option<Handle>> {
+        let c0 = self.solver_corner_in(executive, solver, 0)?;
+        let c1 = self.solver_corner_in(executive, solver, 1)?;
+        if c0 == Some(corner) {
+            Ok(c1)
+        } else if c1 == Some(corner) {
+            Ok(c0)
+        } else {
+            Ok(None)
+        }
+    }
+    fn corner_tangent_solver_in(
+        &self,
+        k: &Kernel,
+        executive: &FilletExecutive<Handle>,
+        corner: Handle,
+        solver: Handle,
+    ) -> SolidResult<Option<Handle>> {
+        let Handle::Corner(cid) = corner else {
+            return missing();
+        };
+        let c = self.corners.get(cid).ok_or_else(missing_error)?;
+        let b = self.brep(Handle::Brep(0))?;
+        c.tangent_fillet_solver_with_lookup(k, b, solver, |eu| {
+            executive.fillet_solver_of_edgeuse(Handle::Edgeuse(eu))
+        })
+    }
+    fn smooth_solver_edge0_id(&self, solver: Handle) -> SolidResult<EdgeId> {
+        let Handle::Edge(e) = self.solver_edge(solver)? else {
+            return missing();
+        };
+        Ok(e)
+    }
+    fn smooth_target_brep(&self) -> SolidResult<&Brep> {
+        self.brep(Handle::Brep(0))
+    }
+    fn smooth_with_target_mut<T>(
+        &mut self,
+        edges: &[EdgeId],
+        f: impl FnOnce(&mut Brep) -> SolidResult<T>,
+    ) -> SolidResult<T> {
+        for &e in edges {
+            self.edge_caches.remove(&e);
+        }
+        let b = self.breps.first_mut().ok_or_else(missing_error)?;
+        f(b)
+    }
+    fn smooth_set_edge_curve(
+        &mut self,
+        k: &mut Kernel,
+        edge_id: EdgeId,
+        curve: solidcore::curve::curve::Curve,
+    ) -> SolidResult<()> {
+        use solidcore::topology::brep::p3 as bp3;
+        self.edge_caches.remove(&edge_id);
+        let b = self.breps.first_mut().ok_or_else(missing_error)?;
+        bp3::with_kernel_callbacks(k, b, |_k, b, env| {
+            let _ = edge::set_curve(
+                b,
+                edge_id,
+                Some(curve),
+                edge::SetCurveOptions {
+                    delete_old_curve: true,
+                    dbg_warn_leaks: true,
+                    call_notify: true,
+                },
+                env,
+                [None, None],
+            )?;
+            Ok(())
+        })
+    }
+    fn smooth_solver_original_curve(
+        &self,
+        solver: Handle,
+    ) -> SolidResult<Option<&solidcore::curve::curve::Curve>> {
+        let Handle::Solver(idx) = solver else {
+            return missing();
+        };
+        Ok(match self.solvers.get(idx).ok_or_else(missing_error)? {
+            SolverEntry::VariableRadius(vr) => vr.curve_based.original_curve(),
+            _ => None,
+        })
+    }
+    fn smooth_set_solver_original_curve(
+        &mut self,
+        solver: Handle,
+        curve: solidcore::curve::curve::Curve,
+    ) -> SolidResult<()> {
+        let Handle::Solver(idx) = solver else {
+            return missing();
+        };
+        if let SolverEntry::VariableRadius(vr) =
+            self.solvers.get_mut(idx).ok_or_else(missing_error)?
+        {
+            vr.curve_based.set_original_curve(Some(curve));
+        }
+        Ok(())
+    }
+    fn smooth_set_solver_law_interval(
+        &mut self,
+        solver: Handle,
+        interval: Extent1d,
+    ) -> SolidResult<()> {
+        let Handle::Solver(idx) = solver else {
+            return missing();
+        };
+        if let SolverEntry::VariableRadius(vr) =
+            self.solvers.get_mut(idx).ok_or_else(missing_error)?
+        {
+            vr.set_fillet_law_interval(interval);
+        }
+        Ok(())
+    }
+    fn create_corners(
+        &mut self,
+        k: &mut Kernel,
+        executive: &mut FilletExecutive<Handle>,
+        error: Option<&mut ErrorInfo<Handle>>,
+    ) -> SolidResult<()> {
+        let b = self.breps.first_mut().ok_or_else(missing_error)?;
+        let solvers = &self.solvers;
+        let corners = &mut self.corners;
+        executive.create_fillet_corners(
+            k,
+            |k, executive, vertex, edgeuses| {
+                let Some(Handle::Vertex(v)) = vertex else {
+                    return missing();
+                };
+                let eus = edgeuses
+                    .iter()
+                    .map(|h| match *h {
+                        Handle::Edgeuse(eu) => Ok(eu),
+                        _ => missing(),
+                    })
+                    .collect::<SolidResult<Vec<_>>>()?;
+                let made =
+                    solidcore::blend::fillet_corner::p3::FilletCorner::create_with_solver_lookup(
+                        k,
+                        b,
+                        v,
+                        &eus,
+                        |eu| {
+                            let Some(Handle::Solver(idx)) =
+                                executive.fillet_solver_of_edgeuse(Handle::Edgeuse(eu))
+                            else {
+                                return missing();
+                            };
+                            solvers
+                                .get(idx)
+                                .map(SolverEntry::base)
+                                .ok_or_else(missing_error)
+                        },
+                    )?;
+                let Some(corner) = made else {
+                    return Ok(None);
+                };
+                let id = corners.len();
+                corners.push(corner);
+                Ok(Some(Handle::Corner(id)))
+            },
+            error,
+        )
+    }
+    /// `SmFilletExecutive::DoPiecewiseMerge`: this runner drives the executive's set-up
+    /// stages only and never builds a fillet B-rep to merge piecewise.
+    fn piecewise_merge(
+        &mut self,
+        _: &mut Kernel,
+        _: &mut FilletExecutive<Handle>,
+    ) -> SolidResult<()> {
         missing()
     }
     fn corner_setback_distance(&self, _: Handle) -> SolidResult<f64> {
@@ -560,6 +1148,42 @@ impl ExecutiveAccess<Handle> for Access {
     }
     fn delete_brep(&mut self, _: Handle) -> SolidResult<()> {
         missing()
+    }
+    fn set_brep_tolerance(
+        &mut self,
+        k: &mut Kernel,
+        brep: Handle,
+        tolerance: f64,
+        update_only_if_larger: bool,
+        cascade_to_boundaries: bool,
+    ) -> SolidResult<()> {
+        solidcore::topology::brep::p2::set_tolerance(
+            k,
+            self.brep_mut(brep)?,
+            tolerance,
+            update_only_if_larger,
+            cascade_to_boundaries,
+        )
+    }
+    fn stitch_faces(
+        &mut self,
+        k: &mut Kernel,
+        brep: Handle,
+        tolerance: f64,
+        faces: Option<&[Handle]>,
+        allow_spine_edges: bool,
+    ) -> SolidResult<StitchAttempt> {
+        // both executive call sites stitch every face (pOptFaces = NULL)
+        if faces.is_some() {
+            return missing();
+        }
+        StitchAttempt::from_stitch(solidcore::topology::brep::p4::stitch_faces(
+            k,
+            self.brep_mut(brep)?,
+            tolerance,
+            None,
+            allow_spine_edges,
+        ))
     }
     fn tolerance(&self, k: &Kernel, brep: Handle, approx: bool) -> SolidResult<f64> {
         let tolerance = self.brep(brep)?.tolerance();
@@ -582,6 +1206,9 @@ impl ExecutiveAccess<Handle> for Access {
             return missing();
         }
         Ok(b.edges().ids().map(Handle::Edge).collect())
+    }
+    fn edge_is_manifold(&self, _: Handle) -> SolidResult<bool> {
+        missing()
     }
     fn vertices(&self, handle: Handle) -> SolidResult<Vec<Handle>> {
         if !self.brep(handle)?.vertices().is_empty() {
@@ -625,22 +1252,138 @@ impl ExecutiveAccess<Handle> for Access {
         radius: f64,
         edgeuse: Handle,
     ) -> SolidResult<Handle> {
-        let Handle::Edgeuse(eu) = edgeuse else {
-            return missing();
-        };
-        let b = self.brep_mut(Handle::Brep(0))?;
-        let fs = constant_radius_from_edgeuse(
+        self.constant_radius_solver(
             k,
-            b,
             approx_tol,
             ang_tol_rad,
             tan_tol_rad,
             radius,
-            eu,
+            edgeuse,
             None,
-        )?;
-        self.solvers.push(fs);
-        Ok(Handle::Solver(self.solvers.len() - 1))
+        )
+    }
+    fn new_fillet_solver(
+        &mut self,
+        k: &mut Kernel,
+        spec: &solidcore::blend::fillet_executive::p2::SolverSpec<'_, Handle>,
+    ) -> SolidResult<Handle> {
+        use solidcore::blend::fillet_custom_solver::SurfaceId;
+        use solidcore::blend::fillet_executive::p2::SolverSpec;
+        use solidcore::blend::fillet_standard_solver::p1::{
+            ConstantDistanceFs, SurfaceSurfaceFs, VariableRadiusFs,
+        };
+
+        match *spec {
+            SolverSpec::ConstantRadius {
+                approx_tol,
+                ang_tol_rad,
+                tan_tol_rad,
+                radius,
+                edgeuse,
+                second_radius,
+            } => self.constant_radius_solver(
+                k,
+                approx_tol,
+                ang_tol_rad,
+                tan_tol_rad,
+                radius,
+                edgeuse,
+                second_radius,
+            ),
+            SolverSpec::ConstantDistance {
+                approx_tol,
+                ang_tol_rad,
+                tan_tol_rad,
+                radius,
+                edgeuse,
+            } => {
+                let Handle::Edgeuse(eu) = edgeuse else {
+                    return missing();
+                };
+                let id =
+                    FilletSolverId(u32::try_from(self.solvers.len()).map_err(|_| missing_error())?);
+                let b = self.breps.first_mut().ok_or_else(missing_error)?;
+                let fs = ConstantDistanceFs::from_edgeuse(
+                    k,
+                    b,
+                    &mut self.pseudo,
+                    id,
+                    approx_tol,
+                    ang_tol_rad,
+                    tan_tol_rad,
+                    radius,
+                    eu,
+                )?;
+                self.solvers.push(SolverEntry::ConstantDistance(fs));
+                Ok(Handle::Solver(self.solvers.len() - 1))
+            }
+            SolverSpec::VariableRadius {
+                approx_tol,
+                ang_tol_rad,
+                tan_tol_rad,
+                radius,
+                edgeuse,
+                law,
+                reverse,
+            } => {
+                let (Handle::Edgeuse(eu), Handle::Law(law_idx)) = (edgeuse, law) else {
+                    return missing();
+                };
+                let law = self.laws.get(law_idx).ok_or_else(missing_error)?.clone();
+                let id =
+                    FilletSolverId(u32::try_from(self.solvers.len()).map_err(|_| missing_error())?);
+                let b = self.breps.first_mut().ok_or_else(missing_error)?;
+                let fs = VariableRadiusFs::from_edgeuse(
+                    k,
+                    b,
+                    &mut self.pseudo,
+                    id,
+                    approx_tol,
+                    ang_tol_rad,
+                    tan_tol_rad,
+                    radius,
+                    eu,
+                    law,
+                    reverse,
+                )?;
+                self.solvers.push(SolverEntry::VariableRadius(Box::new(fs)));
+                Ok(Handle::Solver(self.solvers.len() - 1))
+            }
+            SolverSpec::SurfaceSurface {
+                tolerance,
+                ang_tol,
+                tan_tol,
+                radii,
+                surfaces,
+                orientations,
+                guesses,
+                trim_type,
+                reverse_trim,
+            } => {
+                let id =
+                    FilletSolverId(u32::try_from(self.solvers.len()).map_err(|_| missing_error())?);
+                let pair = [
+                    (surfaces[0].clone(), SurfaceId::Free(0)),
+                    (surfaces[1].clone(), SurfaceId::Free(1)),
+                ];
+                let mut fs = SurfaceSurfaceFs::new(
+                    k,
+                    &mut self.pseudo,
+                    id,
+                    tolerance,
+                    ang_tol,
+                    tan_tol,
+                    radii,
+                    pair,
+                    orientations,
+                    guesses,
+                )?;
+                fs.set_fillet_trim_type(trim_type);
+                fs.base.solver.set_reverse_trim(reverse_trim);
+                self.solvers.push(SolverEntry::SurfaceSurface(fs));
+                Ok(Handle::Solver(self.solvers.len() - 1))
+            }
+        }
     }
     fn set_surface_generator(&mut self, solver: Handle, generator: Handle) -> SolidResult<()> {
         let (Handle::Solver(s), Handle::Generator(g)) = (solver, generator) else {
@@ -648,21 +1391,22 @@ impl ExecutiveAccess<Handle> for Access {
         };
         let fsg = *self.generators.get(g).ok_or_else(missing_error)?;
         let fs = self.solvers.get_mut(s).ok_or_else(missing_error)?;
-        fs.solver.set_fillet_surface_generator(Some(fsg));
+        fs.base_mut().set_fillet_surface_generator(Some(fsg));
         Ok(())
     }
 }
 
-/// The p2 module's error operation (`SM_ERR_NULL_POINTER` raised there marks a null
-/// dereference upstream, `-2`).
-const OP_P2: &str = "blend::fillet_executive::p2";
+/// The prefix of the p2 module's null-object operations (`SM_ERR_NULL_POINTER` raised
+/// there, `blend::fillet_executive::p2: <what>`, marks a null dereference upstream,
+/// `-2`).
+const OP_P2: &str = "blend::fillet_executive::p2: ";
 
 /// The `SmStatus` of a Rust error.
 fn status_of(e: &SolidError) -> f64 {
     match e {
         SolidError::Upstream {
             operation, code, ..
-        } if *code == SM_ERR_NULL_POINTER && *operation == OP_P2 => NULL_DEREF,
+        } if *code == SM_ERR_NULL_POINTER && operation.starts_with(OP_P2) => NULL_DEREF,
         SolidError::Upstream { code, .. } => f64::from(*code),
         _ => -9.0,
     }
@@ -741,38 +1485,33 @@ fn law_elliptic(
     values_output(o)
 }
 
-/// The box B-rep (index 0), or the deferral of an inexact import.
+/// The box B-rep (index 0): `SmApiCreateBox(P, l, w, h)` (the `heal.stitch_p2` shim's
+/// box block) made by the Rust kernel in the shim's traversal order
+/// ([`crate::own_builder`]), or the output of a failed build. No C++ state reaches the
+/// Rust side.
 fn box_access(bx: &BoxIn) -> Result<Result<Access, Output>, HarnessError> {
-    let mut block = vec![2.0];
-    push_box(&mut block, bx);
-    let ex = stitch_ffi::eval(stitch_ffi::Op::Export, "", &block)
-        .map_err(|e| harness(format!("c++ export: {e}")))?;
-    let Some((_, graph_at)) = counts(&ex) else {
-        return Ok(Err(Output::err(format!(
-            "brep_build_status_{}",
-            ex.get(1).copied().unwrap_or(0.0)
-        ))));
+    use crate::own_builder::{build, Built};
+    let src = super::topology_edgeuse_p1::BrepIn::Box {
+        origin: bx.origin,
+        size: bx.size,
     };
-    let (b, types) = super::topology_brep_p1::import(&ex, graph_at)?;
-    if types
-        .face_surface_types
-        .iter()
-        .any(|&t| t >= 0 && t != BOX_SURFACE)
-        || types
-            .edge_curve_types
-            .iter()
-            .any(|&t| t >= 0 && t != BOX_CURVE)
-    {
-        return Err(harness("box geometry is not planes and lines"));
-    }
+    let b = match build(&mut Kernel::default(), &src, false, false)? {
+        Some(Built::Brep(b)) => *b,
+        Some(Built::Failed(e)) => return Ok(Err(crate::own_builder::failed_output(&e))),
+        None => return Err(harness("box source not built")),
+    };
     if b.edges().len() != ffi::BOX_EDGES {
-        return Err(harness("box without 12 edges"));
+        // The shim reports the same box as `-4 n_edges`.
+        return Ok(Err(Output::err("box_edge_count")));
     }
     Ok(Ok(Access {
         breps: vec![b],
+        pseudo: FilletBrep::new(),
         generators: Vec::new(),
         solvers: Vec::new(),
+        corners: Vec::new(),
         laws: Vec::new(),
+        edge_caches: BTreeMap::new(),
     }))
 }
 
@@ -803,6 +1542,25 @@ fn executive(target: Option<Handle>) -> FilletExecutive<Handle> {
         intersection_edges: vec![],
         intersection_vertices: vec![],
         law_sequence_edges: vec![],
+        pseudo_brep: None,
+        surface_generators: vec![],
+        filleted_vertices: Vec::new(),
+        vertex_corner_map: BTreeMap::new(),
+        edgeuse_solver_map: BTreeMap::new(),
+        self_intersection_handler: None,
+        blend_curve_at_thirds: false,
+        mark_corner_patches: false,
+        cliff_overflow: false,
+        open_ends: Vec::new(),
+        overflow_first: false,
+        classify_only: false,
+        overflow_edges: Vec::new(),
+        mitred_edges: Vec::new(),
+        fan_split_points: Vec::new(),
+        // the fork's refusal fit (WR-696): none noted, as `FilletExecutive::new` leaves it
+        fit_radius: -1.0,
+        fit_edge: None,
+        fit_kind: solidcore::blend::fillet_executive::FitKind::Radius,
     };
     executive.intersector.ignore_tangency = true;
     executive
@@ -818,13 +1576,14 @@ fn xsect_type(code: usize) -> Result<FilletSurfaceGeneratorType, HarnessError> {
     })
 }
 
+/// `SmFilletSolverType` (`SmFilletSolver.h:47`) from its code.
 fn radius_type(code: usize) -> Result<FilletSolverType, HarnessError> {
     Ok(match code {
         0 => FilletSolverType::Unknown,
-        1 => FilletSolverType::ConstRadius,
-        2 => FilletSolverType::ConstDist,
+        1 => FilletSolverType::SurfSurf,
+        2 => FilletSolverType::ConstRadius,
         3 => FilletSolverType::VariableRadius,
-        4 => FilletSolverType::SurfSurf,
+        4 => FilletSolverType::ConstDist,
         5 => FilletSolverType::CurveBased,
         6 => FilletSolverType::ConstRadiusAssisted,
         _ => return Err(harness("radius type code out of range")),
@@ -854,8 +1613,15 @@ fn set_params(
         Ok(a) => a,
         Err(o) => return Ok(o),
     };
+    // the shim drops an index past the box's edges
+    let edge_count = access
+        .brep(Handle::Brep(0))
+        .map_err(|e| harness(format!("box: {e}")))?
+        .edges()
+        .len();
     let edges: Vec<Handle> = edges
         .iter()
+        .filter(|&&e| e < edge_count)
         .map(|&e| Handle::Edge(EdgeId::from_index(e as u32)))
         .collect();
     let xsect_types = xsect_types
@@ -891,9 +1657,11 @@ fn set_params(
         xsect_tol,
         continuity,
         thumbweight,
+        second_radii: None,
     };
     let mut k = Kernel::default();
-    let mut ex = executive(None);
+    let mut executive = executive(None);
+    let ex = &mut executive;
     let status = match ex.set_fillet_parameters(&mut k, &mut access, &params) {
         Ok(()) => 0.0,
         Err(e) if e.is_unported() => return Ok(error_output(&e)),
@@ -937,8 +1705,35 @@ fn load_solvers(
         xsect_tol: 0.0,
         continuity: 1,
         thumbweight: 1.0,
+        second_radii: None,
     };
     ex.set_fillet_parameters(k, access, &params)
+}
+
+fn push_bspline_curve(o: &mut Vec<f64>, crv: Option<&solidcore::curve::curve::Curve>) {
+    use solidcore::curve::curve::CurveKind;
+    let bsc = crv.and_then(|c| match c.kind() {
+        CurveKind::BSpline(b) => Some(std::borrow::Cow::Borrowed(b)),
+        CurveKind::Line(l) => l.base_with_nurb().ok(),
+        CurveKind::Ellipse(e) => Some(std::borrow::Cow::Borrowed(e.base())),
+        CurveKind::Parabola(p) => Some(std::borrow::Cow::Borrowed(p.base())),
+        CurveKind::Hyperbola(h) => Some(std::borrow::Cow::Borrowed(h.base())),
+        _ => None,
+    });
+    let Some(nurb) = bsc.as_deref().and_then(|b| b.gw_nurb()) else {
+        o.push(0.0);
+        return;
+    };
+    o.push(1.0);
+    let cpts = nurb.cpts();
+    let knots = nurb.knots();
+    o.push(cpts.len() as f64 - 1.0);
+    o.push(nurb.degree() as f64);
+    o.push(knots.len() as f64 - 1.0);
+    for p in cpts {
+        o.extend([p.x, p.y, p.z, p.w]);
+    }
+    o.extend_from_slice(knots);
 }
 
 fn exec(sub: usize, n: usize, bx: &BoxIn) -> Result<Output, HarnessError> {
@@ -947,14 +1742,182 @@ fn exec(sub: usize, n: usize, bx: &BoxIn) -> Result<Output, HarnessError> {
         Err(o) => return Ok(o),
     };
     let mut k = Kernel::default();
-    let mut ex = executive(Some(Handle::Brep(0)));
+    let mut executive = executive(Some(Handle::Brep(0)));
+    let ex = &mut executive;
+    if sub >= 3 {
+        use solidcore::geom::attribute::ObjectKey;
+        use solidcore::geom::object::ObjectRef;
+        use solidcore::topology::brep::{p3 as bp3, p9 as bp9};
+
+        let all_edges: Vec<EdgeId> = access
+            .brep(Handle::Brep(0))
+            .map_err(|e| harness(e.to_string()))?
+            .edges()
+            .ids()
+            .collect();
+        let e0 = *all_edges
+            .first()
+            .ok_or_else(|| harness("empty box edges"))?;
+        let ivl = access
+            .brep(Handle::Brep(0))
+            .and_then(|b| edge::interval(b, e0))
+            .map_err(|e| harness(e.to_string()))?;
+        let split_t = 0.35 * ivl.min() + 0.65 * ivl.max();
+        let split_res = {
+            let b = access
+                .brep_mut(Handle::Brep(0))
+                .map_err(|e| harness(e.to_string()))?;
+            bp3::with_kernel_callbacks(&mut k, b, |k, b, env| {
+                bp9::make_vertex_split_edge(k, b, e0, split_t, env, &|eid, kind| ObjectRef {
+                    key: ObjectKey(((kind as u64) << 32) | u64::from(eid.index())),
+                    type_code: kind,
+                })
+            })
+        };
+        let split = match split_res {
+            Ok(s) => s,
+            Err(e) => return Ok(error_output(&e)),
+        };
+        let Some([e1, e2]) = split.edges else {
+            return Ok(values_output(vec![f64::from(split.status())]));
+        };
+        {
+            let b = access
+                .brep_mut(Handle::Brep(0))
+                .map_err(|e| harness(e.to_string()))?;
+            if let Err(e) = edge::reverse_orientation(&k, b, e2) {
+                return Ok(error_output(&e));
+            }
+            let e2_ivl = Extent1d::from_min_max(0.0, 2.0);
+            if let Some(crv) = b
+                .edge_mut(e2)
+                .map_err(|e| harness(e.to_string()))?
+                .curve
+                .as_mut()
+            {
+                let _ = crv.edit_parameterization(&k, &e2_ivl);
+            }
+            b.edge_mut(e2).map_err(|e| harness(e.to_string()))?.interval = e2_ivl;
+        }
+        let mut edges = vec![Handle::Edge(e2), Handle::Edge(e1)];
+        for &eid in all_edges.iter().skip(1).take(n.saturating_sub(2)) {
+            edges.push(Handle::Edge(eid));
+        }
+        let mut law_handles = Vec::new();
+        if sub == 5 {
+            for i in 0..edges.len() {
+                access.laws.push(FilletLaw::linear(1.0, 2.0, None));
+                law_handles.push(Some(Handle::Law(i)));
+            }
+        }
+        let radius_types = [if sub == 5 {
+            FilletSolverType::VariableRadius
+        } else {
+            FilletSolverType::ConstRadius
+        }];
+        let params = FilletParameters {
+            brep: Some(Handle::Brep(0)),
+            edges: &edges,
+            xsect_types: &[FilletSurfaceGeneratorType::Linear],
+            radius_types: &radius_types,
+            radius_values: &[1.0],
+            var_rad_laws: if sub == 5 { Some(&law_handles) } else { None },
+            approx_tol: 0.0,
+            ang_tol_deg: 0.0,
+            tan_tol_deg: 0.0,
+            xsect_tol: 0.0,
+            continuity: 1,
+            thumbweight: 1.0,
+            second_radii: None,
+        };
+        if let Err(e) = ex.set_fillet_parameters(&mut k, &mut access, &params) {
+            return Ok(if e.is_unported() {
+                error_output(&e)
+            } else {
+                values_output(vec![status_of(&e)])
+            });
+        }
+        if let Err(e) = access.create_corners(&mut k, ex, None) {
+            return Ok(if e.is_unported() {
+                error_output(&e)
+            } else {
+                values_output(vec![status_of(&e)])
+            });
+        }
+        if sub == 3 {
+            let mut list: Vec<Option<Handle>> = ex.solvers.iter().copied().map(Some).collect();
+            let mut seq = Vec::new();
+            return match ex.collect_tangent_edge_sequence_narrow(&k, &access, &mut list, &mut seq) {
+                Ok(()) => Ok(values_output(vec![
+                    0.0,
+                    seq.len() as f64,
+                    list.len() as f64,
+                ])),
+                Err(e) if e.is_unported() => Ok(error_output(&e)),
+                Err(e) => Ok(values_output(vec![
+                    status_of(&e),
+                    seq.len() as f64,
+                    list.len() as f64,
+                ])),
+            };
+        }
+        if let Err(e) = ex.process_smooth_edge_sequences(&mut k, &mut access) {
+            return Ok(if e.is_unported() {
+                error_output(&e)
+            } else {
+                values_output(vec![status_of(&e)])
+            });
+        }
+        let b = access
+            .brep(Handle::Brep(0))
+            .map_err(|e| harness(e.to_string()))?;
+        let ivl1 = edge::interval(b, e1).map_err(|e| harness(e.to_string()))?;
+        let ivl2 = edge::interval(b, e2).map_err(|e| harness(e.to_string()))?;
+        let mut o = vec![0.0, ivl1.min(), ivl1.max(), ivl2.min(), ivl2.max()];
+        if sub == 5 {
+            let vr0 = access
+                .variable_radius_solver(Handle::Solver(0))
+                .map_err(|e| harness(e.to_string()))?;
+            let vr1 = access
+                .variable_radius_solver(Handle::Solver(1))
+                .map_err(|e| harness(e.to_string()))?;
+            o.push(vr0.map_or(-1.0, |v| v.fillet_law_interval().min()));
+            o.push(vr0.map_or(-1.0, |v| v.fillet_law_interval().max()));
+            o.push(vr1.map_or(-1.0, |v| v.fillet_law_interval().min()));
+            o.push(vr1.map_or(-1.0, |v| v.fillet_law_interval().max()));
+            push_bspline_curve(
+                &mut o,
+                b.edge(e1)
+                    .map_err(|e| harness(e.to_string()))?
+                    .curve
+                    .as_ref(),
+            );
+            push_bspline_curve(&mut o, vr0.and_then(|v| v.curve_based.original_curve()));
+        } else {
+            push_bspline_curve(
+                &mut o,
+                b.edge(e1)
+                    .map_err(|e| harness(e.to_string()))?
+                    .curve
+                    .as_ref(),
+            );
+            push_bspline_curve(
+                &mut o,
+                b.edge(e2)
+                    .map_err(|e| harness(e.to_string()))?
+                    .curve
+                    .as_ref(),
+            );
+        }
+        return Ok(values_output(o));
+    }
     if n > 0 {
-        if let Err(e) = load_solvers(&mut k, &mut access, &mut ex, n) {
+        if let Err(e) = load_solvers(&mut k, &mut access, ex, n) {
             return Ok(error_output(&e));
         }
     }
     if sub > 0 && n > 1 {
-        if let Err(e) = access.create_corners(&mut k, &mut ex, None) {
+        if let Err(e) = access.create_corners(&mut k, ex, None) {
             return Ok(error_output(&e));
         }
     }
@@ -974,7 +1937,7 @@ fn exec(sub: usize, n: usize, bx: &BoxIn) -> Result<Output, HarnessError> {
         _ => {
             let mut list: Vec<Option<Handle>> = ex.solvers.iter().copied().map(Some).collect();
             let mut seq = Vec::new();
-            ex.collect_tangent_edge_sequence(&access, &mut list, &mut seq)
+            ex.collect_tangent_edge_sequence_narrow(&k, &access, &mut list, &mut seq)
                 .map(|()| vec![0.0, seq.len() as f64, list.len() as f64])
         }
     };
@@ -1010,16 +1973,83 @@ fn temp_radius(variable: bool, start: f64, end: f64, bx: &BoxIn) -> Result<Outpu
         xsect_tol: 0.0,
         continuity: 1,
         thumbweight: 1.0,
+        second_radii: None,
     };
     let mut k = Kernel::default();
-    let mut ex = executive(Some(Handle::Brep(0)));
-    match ex.set_fillet_parameters(&mut k, &mut access, &params) {
-        Err(e) => Ok(error_output(&e)),
-        // Reached once executive p1 lands: the side edge use and the change are not
-        // modelled yet, so this is a harness error rather than a pass.
-        Ok(()) => Err(harness(
-            "temp_radius past SetFilletParameters is not modelled",
-        )),
+    let mut executive = executive(Some(Handle::Brep(0)));
+    let ex = &mut executive;
+    if let Err(e) = ex.set_fillet_parameters(&mut k, &mut access, &params) {
+        Ok(error_output(&e))
+    } else {
+        let solver = ex
+            .solvers
+            .first()
+            .copied()
+            .ok_or_else(|| harness("no retained solver"))?;
+        let b = access
+            .brep(Handle::Brep(0))
+            .map_err(|e| harness(e.to_string()))?;
+        let first =
+            edge::start_vertex(b, EdgeId::from_index(0)).map_err(|e| harness(e.to_string()))?;
+        let mut side = None;
+        for (id, _) in b.edges().iter().skip(1) {
+            let start = edge::start_vertex(b, id).map_err(|e| harness(e.to_string()))?;
+            let end = edge::other_vertex(b, id, start).map_err(|e| harness(e.to_string()))?;
+            if start == first || end == first {
+                side = Some(Handle::Edge(id));
+                break;
+            }
+        }
+        let side = match side {
+            Some(side) => access
+                .blend_edgeuse(&mut k, side)
+                .map_err(|e| harness(e.to_string()))?,
+            None => None,
+        };
+        let Some(side) = side else {
+            return Ok(error_output(&SolidError::sm_err(
+                "harness::fillet_executive_p2::temporary_radius_change",
+            )));
+        };
+        let read_linear_radii = |acc: &Access| -> SolidResult<(f64, f64)> {
+            let vrfs = acc
+                .variable_radius_solver(solver)?
+                .ok_or_else(missing_error)?;
+            match vrfs.fillet_law().kind {
+                FilletLawKind::Linear {
+                    start_radius,
+                    end_radius,
+                } => Ok((start_radius, end_radius)),
+                _ => missing(),
+            }
+        };
+        if variable {
+            let during = match solidcore::blend::fillet_executive::p2::with_temporary_radius_change(
+                &mut access,
+                solver,
+                0,
+                side,
+                |acc| read_linear_radii(acc),
+            ) {
+                Ok(pair) => pair,
+                Err(e) => return Ok(error_output(&e)),
+            };
+            let after = read_linear_radii(&access).map_err(|e| harness(e.to_string()))?;
+            Ok(values_output(vec![
+                0.0, during.0, during.1, after.0, after.1,
+            ]))
+        } else {
+            match solidcore::blend::fillet_executive::p2::with_temporary_radius_change(
+                &mut access,
+                solver,
+                0,
+                side,
+                |_| Ok(()),
+            ) {
+                Ok(()) => Ok(values_output(vec![0.0])),
+                Err(e) => Ok(error_output(&e)),
+            }
+        }
     }
 }
 
@@ -1139,5 +2169,72 @@ impl UnitDiff for Runner {
             json!({"op": "law_elliptic", "start": start, "end": end, "outer": outer,
                    "span": span, "start_deriv": 0.0, "end_deriv": 0.0, "map": map})
         })
+    }
+}
+
+#[path = "blend_fillet_executive_p2/loader.rs"]
+mod loader;
+pub(crate) use loader::{loader_cpp, loader_rust, LoaderScript};
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use solidcore::blend::fillet_executive::p2::{
+        with_temporary_radius_change, with_temporary_radius_change_with_fixes, TemporaryRadiusChange,
+    };
+
+    #[test]
+    fn temporary_radius_setup_error_never_enters_the_filleting_body() {
+        let mut access = Access {
+            breps: vec![Brep::new()],
+            pseudo: FilletBrep::new(),
+            generators: vec![],
+            solvers: vec![],
+            corners: vec![],
+            laws: vec![FilletLaw::linear(1.0, 2.0, None)],
+            edge_caches: BTreeMap::new(),
+        };
+        let solver = Handle::Solver(0);
+        let side = Handle::Edgeuse(EdgeuseId::from_index(0));
+        let expected = missing_error();
+        // The additive API keeps the existing constructor's pinned default.
+        assert!(TemporaryRadiusChange::new(&mut access, solver, 0, side).is_ok());
+        let mut default_body_called = false;
+        // Revert can fail for this intentionally absent solver; the body still ran.
+        let _ = with_temporary_radius_change(&mut access, solver, 0, side, |_| {
+            default_body_called = true;
+            Ok(())
+        });
+        assert!(default_body_called);
+        let mut fixes = solidcore::kernel::UpstreamFixes::default();
+        fixes.temporary_radius_setup_errors = true;
+        let error =
+            TemporaryRadiusChange::new_with_fixes(&mut access, solver, 0, side, &fixes).unwrap_err();
+        assert_eq!(error, expected);
+
+        let mut body_called = false;
+        let error = with_temporary_radius_change_with_fixes(
+            &mut access,
+            solver,
+            0,
+            side,
+            &fixes,
+            |_| {
+                body_called = true;
+                Ok(())
+            },
+        )
+        .unwrap_err();
+        assert_eq!(error, expected);
+        assert!(!body_called);
+        assert_eq!(access.laws.len(), 1);
+        assert!(matches!(
+            access.laws[0].kind,
+            FilletLawKind::Linear {
+                start_radius: 1.0,
+                end_radius: 2.0
+            }
+        ));
+        assert!(access.solvers.is_empty());
     }
 }

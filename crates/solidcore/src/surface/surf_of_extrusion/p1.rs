@@ -40,9 +40,9 @@
 //!
 //! Deviations:
 //! - **Derived class.** `SmSurfOfExtrusion` derives from `SmBSplineSurface`; the base
-//!   object is the [`SurfOfExtrusion::base`] field. The surface is not a
-//!   [`crate::surface::surface::SurfaceKind`] yet: its overrides need a [`Kernel`] the
-//!   `Surface` dispatchers do not take (see `surface.surf_of_extrusion_p2`).
+//!   object is the [`SurfOfExtrusion::base`] field. As a
+//!   [`crate::surface::surface::SurfaceKind::SurfOfExtrusion`] the `Surface` dispatchers
+//!   run its overrides, else the inherited bodies on that base.
 //! - **Generator.** `m_pGenCurve` is a [`Curve`] of a kind derived from
 //!   `SmBSplineCurve` (B-spline, ellipse, line, hyperbola, parabola); other kinds are
 //!   rejected (`InvalidInput`) where upstream casts. It is `None` only for the empty
@@ -50,25 +50,52 @@
 //!   [`crate::geom::object::ObjectRef`] to give it). The one place where upstream's
 //!   owner matters for these methods, an `SmLine`, `SmHyperbola` or `SmParabola`
 //!   generator whose `MakeNurb` (run by `AdjustSTEPInterval` when its interval
-//!   changes) reparameterises its NURB to the owner's
+//!   changes, or by a lazy line's first `GetCanonical`) reparameterises its NURB to the owner's
 //!   [`SurfOfExtrusion::gen_dir_param_extent`], is done here by the surface
-//!   (see `adjust_generator_interval`), also where `STEPInversion`'s
+//!   (see `adjust_generator_interval` and [`SurfOfExtrusion::make_nurb`]), also where `STEPInversion`'s
 //!   `GlobalPointSolveSTEP` of a hyperbola or parabola generator first adjusts it to
 //!   the solve interval (upstream on the owned generator itself, which `STEPInversion`
 //!   leaves adjusted; here on a copy). An ellipse generator's owner step is
 //!   overwritten by `AdjustSTEPInterval`'s own reparameterisation upstream, so it is
 //!   not repeated (the knots then agree within rounding, not bit for bit).
+//! - **Lazy line owner.** A constructor's `IsLinear` can build a lazy line and
+//!   its owning surface through virtual `GetEnds`. `classify_generator` performs
+//!   that owner build and retains the domain captured before `GetEnds` for the
+//!   remaining `IsLinear` samples; the finite constructor may adjust the line's
+//!   interval before storing its classification point.
 //! - **Lazy NURB.** Upstream's `const` methods make a missing NURB through
 //!   `GetOrCreateGwNurbPointer`; the `&self` methods here cannot. The parameter
-//!   conversions and `DropPointFast` return `SM_ERR` without a NURB (call
+//!   conversions return `SM_ERR` without a NURB (call
 //!   [`SurfOfExtrusion::make_nurb`] first) instead of reading a `(0, 0, 0, 0)` domain;
+//!   `DropPointFast` solves on an evaluation copy with the NURB made, as upstream's
+//!   lazy `GetNaturalUVDomain` would;
 //!   [`SurfOfExtrusion::gen_dir_param_extent`] reads the NURB as it is (an empty
-//!   interval without one). `Reparameterize` makes it.
+//!   interval without one). `Reparameterize` and a non-identity `Transform` make it.
+//!   Inherited `Surface` evaluation and iso-curve queries go through
+//!   `base_with_nurb`, which makes a missing NURB once on a bounded exact copy and
+//!   keeps it in the surface's NURB slot, as upstream keeps it on the object (later
+//!   readers, copies and `operator==` see it). Upstream's in-place `MakeNurb` also
+//!   adjusts the generator's STEP interval to the analytic U interval and makes a lazy
+//!   line generator's NURB; that generator state stays on the copy and is not kept.
+//!   `Clone` copies the NURB the surface has (knots fixed up, as the copy
+//!   constructor), but cannot make a missing one first as upstream's copy constructor
+//!   does (`MakeNurb` needs the [`Kernel`]). A lazy
+//!   B-spline generator (as returned by the extrusion recogniser) uses the analytic
+//!   domain, swapped when needed, for `Surface::natural_uv_domain_if_built`; other lazy
+//!   generator kinds still require an explicit `MakeNurb` for that domain query.
 //! - **Out-of-bounds evaluation.** `SmTemporaryChangeValue` gives the generator the
 //!   surface's out-of-bounds flag for the evaluation / drop; only a B-spline generator
 //!   reads it, so only that kind is copied with the flag changed. `STEPInversion`
 //!   turns the generator's flag on (upstream permanently, through the `const`
 //!   method's pointer); here a copy is used for the solve.
+//! - **Clamped STEP parameters.** `EvaluateSTEP` and `EvaluateSTEPPoint` clamp a copy
+//!   of the STEP parameters and then evaluate the caller's; the port keeps that by
+//!   default and, with `Kernel::fixes.extrusion_step_uses_clamped_uv`, evaluates the
+//!   clamped copy in the analytic UV domain (both bodies ignore `SwapUV`), as their
+//!   comment says (WR-61; see
+//!   `plan/upstream-issues/WR-61--addendum-2026-10-31-step-evaluators-use-clamped-uv.md`).
+//!   `EvaluateSTEP`'s temporary generator out-of-bounds copy and `EvaluateSTEPPoint`'s
+//!   use of the generator's own flag are unchanged.
 //! - **Arguments.** Out-params become return values; `SmContext` arguments and the
 //!   arguments upstream does not use (`EvaluateSTEP`'s side flags) are dropped.
 //!   `EvaluateSTEP` entries it does not write are `0` (upstream leaves the caller's
@@ -81,6 +108,9 @@
 //!   parameter conversion) is returned. A failed `IntersectWithLine` in
 //!   `CreateDirectrixFromPoint` asks for the general intersection (upstream reads an
 //!   unset flag).
+//! - **Transform nesting.** The generator transform carries the caller's geometry
+//!   depth so volume appends remain subject to the whole-geometry
+//!   [`MAX_GEOMETRY_NESTING`](crate::surface::surface::p2::MAX_GEOMETRY_NESTING) bound.
 //! - **Unported callees.** `STEPInversion` of a
 //!   generator not perpendicular to the extrusion uses `SmBSplineSurface::STEPInversion`
 //!   (whose solves are in `surface.surface_p1` / `surface.surface_p5`). Those return
@@ -88,6 +118,8 @@
 //! - **`sm_IntersectGenerators`** reads `pOpt3DCurves->GetSize()` before checking the
 //!   pointer and compares offset curves it may not have set; here a missing curve list
 //!   has size 0 and unset offsets compare unequal.
+
+use std::borrow::Cow;
 
 use crate::curve::curve::p1::GlobalPointSolveOptions;
 use crate::curve::curve::p8::CurveIntersectOptions;
@@ -188,15 +220,15 @@ fn gen_evaluate_step(k: &Kernel, c: &Curve, t: f64, num_derivs: usize) -> Result
         CurveKind::Line(l) => Ok(l.evaluate_step(t, num_derivs)),
         CurveKind::Hyperbola(h) => h.evaluate_step(t, num_derivs),
         CurveKind::Parabola(p) => p.evaluate_step(t, num_derivs),
-        CurveKind::BSpline(_) => crate::curve::curve::p2::evaluate_step(c, t, num_derivs, true),
+        CurveKind::BSpline(_) => crate::curve::curve::p2::evaluate_step(k, c, t, num_derivs, true),
         _ => Err(not_b_spline()),
     }
 }
 
 /// `GetMaxAnalyticDomain` of a generator.
-fn gen_max_analytic_domain(c: &Curve) -> Result<Extent1d> {
+fn gen_max_analytic_domain(k: &Kernel, c: &Curve) -> Result<Extent1d> {
     match c.kind() {
-        CurveKind::BSpline(b) => b.max_analytic_domain(),
+        CurveKind::BSpline(b) => b.max_analytic_domain(k),
         CurveKind::Ellipse(e) => Ok(e.max_analytic_domain()),
         CurveKind::Line(l) => Ok(l.max_analytic_domain()),
         CurveKind::Hyperbola(h) => Ok(h.max_analytic_domain()),
@@ -311,6 +343,41 @@ pub struct SurfOfExtrusion {
 }
 
 impl SurfOfExtrusion {
+    /// An evaluation copy with an exact, owner-preserving generator. `depth` is
+    /// the generator's depth in the shared `MAX_GEOMETRY_NESTING` (32) geometry traversal.
+    pub(crate) fn clone_for_evaluation(&self, depth: usize) -> Result<Self> {
+        Ok(Self {
+            base: self.base.clone_exact(),
+            gen_curve: self
+                .gen_curve
+                .as_ref()
+                .map(|c| c.clone_for_evaluation_depth(depth))
+                .transpose()?,
+            origin: self.origin,
+            extrusion_vec: self.extrusion_vec,
+            anal_uv_domain: self.anal_uv_domain,
+            orientation: self.orientation,
+            swap_uv: self.swap_uv,
+            curve_point: self.curve_point,
+            curve_vec: self.curve_vec,
+        })
+    }
+
+    /// [`SurfOfExtrusion::clone_for_evaluation`] for a copy that stands for this surface
+    /// object (upstream's pointer to it): it shares this surface's NURB cell, so a NURB a
+    /// read-only query makes through the copy is kept on this surface too.
+    pub(crate) fn clone_for_evaluation_shared(&self, depth: usize) -> Result<Self> {
+        let mut copy = self.clone_for_evaluation(depth)?;
+        copy.base = self.base.clone_exact_shared();
+        Ok(copy)
+    }
+
+    /// Detaches a NURB cell shared with evaluation copies
+    /// ([`SurfOfExtrusion::clone_for_evaluation_shared`]).
+    pub(crate) fn detach_nurb(&mut self) {
+        self.base.detach_nurb();
+    }
+
     /// `SmSurfOfExtrusion_TYPE` (`SURF_BASE_TYPE + 30`).
     pub const TYPE: i64 = SURF_OF_EXTRUSION_TYPE;
 
@@ -335,7 +402,8 @@ impl SurfOfExtrusion {
 
     /// The finite surface sweeping `gen_curve` along `extrusion_vec` over
     /// `anal_uv_domain` (generator parameters by extrusion parameters) from `origin`
-    /// (a point on the generator), without NURB (constructor). The generator's STEP
+    /// (a point on the generator), normally without NURB (constructor). A lazy
+    /// line may build its owner's NURB during the linearity test. The generator's STEP
     /// interval should equal the domain's U interval and it should not be inside out
     /// (upstream only logs otherwise). The orientation is classified with the tolerance
     /// `ANALYTIC_TOL_SCALE * SM_EFF_ZERO * (1 + |origin| + |P|)` for the generator
@@ -344,7 +412,7 @@ impl SurfOfExtrusion {
     /// # Errors
     ///
     /// `InvalidInput` for a generator not derived from `SmBSplineCurve`; those of the
-    /// generator's evaluation and tests (see [`Self::classify`]).
+    /// generator's evaluation and tests (see `Self::classify`).
     pub fn new(
         k: &Kernel,
         gen_curve: Curve,
@@ -358,7 +426,7 @@ impl SurfOfExtrusion {
         // (the inside-out and STEP interval checks only log upstream)
 
         // select tol based on origin and mid Point evaluation locations
-        let pnt = gen_curve.evaluate_point(gen_curve.natural_interval().evaluate(0.45678))?;
+        let pnt = gen_curve.evaluate_point(k, gen_curve.natural_interval().evaluate(0.45678))?;
         let tol =
             ANALYTIC_TOL_SCALE * EFF_ZERO * (1.0 + origin.max_dimension() + pnt.max_dimension());
 
@@ -373,13 +441,13 @@ impl SurfOfExtrusion {
             curve_point: Vec3::UNDEF,
             curve_vec: Vec3::UNDEF,
         };
-        surf.classify(k, &gen_curve, tol, pnt)?;
-        surf.gen_curve = Some(gen_curve);
+        surf.classify_generator(k, gen_curve, tol, pnt)?;
         Ok(surf)
     }
 
     /// The surface sweeping `gen_curve` infinitely along `extrusion_vec`, without
-    /// NURB (constructor): the origin is the generator's STEP point at 45.678% of its
+    /// NURB (constructor, except for the lazy-line owner build described in the module
+    /// docs): the origin is the generator's STEP point at 45.678% of its
     /// STEP interval, the domain that interval by `[-SM_INFINITE_PARAMETER,
     /// SM_INFINITE_PARAMETER]`. The orientation is classified with the tolerance
     /// `ANALYTIC_TOL_SCALE * SM_EFF_ZERO * (1 + |origin| + |P|)` for the generator's
@@ -388,7 +456,7 @@ impl SurfOfExtrusion {
     /// # Errors
     ///
     /// `InvalidInput` for a generator not derived from `SmBSplineCurve`; those of the
-    /// generator's evaluations and tests (see [`Self::classify`]).
+    /// generator's evaluations and tests (see `Self::classify`).
     pub fn new_infinite(
         k: &Kernel,
         gen_curve: Curve,
@@ -413,7 +481,7 @@ impl SurfOfExtrusion {
         );
 
         // select tol based on origin and mid Point evaluation locations
-        let pnt = gen_curve.evaluate_point(gen_curve.natural_interval().evaluate(0.0))?;
+        let pnt = gen_curve.evaluate_point(k, gen_curve.natural_interval().evaluate(0.0))?;
         let tol =
             ANALYTIC_TOL_SCALE * EFF_ZERO * (1.0 + origin.max_dimension() + pnt.max_dimension());
 
@@ -428,9 +496,39 @@ impl SurfOfExtrusion {
             curve_point: Vec3::UNDEF,
             curve_vec: Vec3::UNDEF,
         };
-        surf.classify(k, &gen_curve, tol, origin)?;
-        surf.gen_curve = Some(gen_curve);
+        surf.classify_generator(k, gen_curve, tol, origin)?;
         Ok(surf)
+    }
+
+    /// `GetEnds` in `IsLinear` materializes a lazy line's NURB. Its owner call
+    /// builds this surface, possibly adjusting the line's STEP interval first.
+    fn classify_generator(
+        &mut self,
+        k: &Kernel,
+        mut gen: Curve,
+        tol: f64,
+        plane_point: Point3,
+    ) -> Result<()> {
+        let lazy_line =
+            matches!(gen.kind(), CurveKind::Line(line) if line.base().gw_nurb().is_none());
+        let linearity = if lazy_line {
+            // IsLinear snapshots the domain before its virtual GetEnds call.
+            let domain = gen.natural_interval();
+            self.gen_curve = Some(gen);
+            ignore_status(self.make_nurb(k))?;
+            gen = self
+                .gen_curve
+                .take()
+                .ok_or(SolidError::null_pointer(OP_GEN))?;
+            let (start, end) = ignored(gen.ends(k))?
+                .map_or((Vec3::UNDEF, Vec3::UNDEF), |ends| (ends.start, ends.end));
+            Some(gen.is_linear_after_ends(k, tol, false, domain, start, end)?)
+        } else {
+            None
+        };
+        self.classify(k, &gen, tol, plane_point, linearity)?;
+        self.gen_curve = Some(gen);
+        Ok(())
     }
 
     /// The constructors' orientation classification: linear (`IsLinear(tol)`, its
@@ -446,9 +544,19 @@ impl SurfOfExtrusion {
     ///
     /// Those of the linearity and planarity tests and of `IsOnPlane` (whose output
     /// upstream reads even on failure).
-    fn classify(&mut self, k: &Kernel, gen: &Curve, tol: f64, plane_point: Point3) -> Result<()> {
+    fn classify(
+        &mut self,
+        k: &Kernel,
+        gen: &Curve,
+        tol: f64,
+        plane_point: Point3,
+        linearity: Option<crate::curve::curve::p5::Linearity>,
+    ) -> Result<()> {
         // if GenCurve is linear
-        let lin = gen.is_linear(tol, false)?;
+        let lin = match linearity {
+            Some(linearity) => linearity,
+            None => gen.is_linear(k, tol, false)?,
+        };
         if lin.linear {
             self.curve_point = lin.line_point;
             self.curve_vec = lin.line_tangent;
@@ -542,6 +650,18 @@ impl SurfOfExtrusion {
         // ignored)
         ignore_status(self.adjust_gen_step_interval(k, &anal_u_ivl))?;
 
+        // GetCanonical calls the generator's virtual GetOrCreateGwNurbPointer.
+        // SmLine(StartPoint, EndPoint) deliberately starts without a NURB.
+        let owner_ivl = self.owner_ivl();
+        if let Some(CurveKind::Line(line)) = self.gen_curve.as_mut().map(Curve::kind_mut) {
+            if line.base().gw_nurb().is_none() {
+                ignore_status(line.make_nurb())?;
+                if let Some(ivl) = owner_ivl {
+                    ignore_status(line.edit_parameterization_owned(None, &ivl))?;
+                }
+            }
+        }
+
         // Extract the m_pGenCurve BSplineCurve parameters
         let bsc = gen_base(self.gen()?)?;
         let canon = bsc.canonical()?;
@@ -630,6 +750,78 @@ impl SurfOfExtrusion {
     #[must_use]
     pub const fn base(&self) -> &BSplineSurface {
         &self.base
+    }
+
+    /// The `SmBSplineSurface` base object, mutably.
+    pub fn base_mut(&mut self) -> &mut BSplineSurface {
+        &mut self.base
+    }
+
+    /// The inherited NURB for a query (`GetOrCreateGwNurbPointer` from a `const`
+    /// method): an existing (possibly reparameterised) NURB is borrowed unchanged; a
+    /// missing one is made by [`SurfOfExtrusion::make_nurb`] on a bounded exact copy
+    /// and kept on this surface, as upstream keeps it on the object (the copy's
+    /// generator adjustments are not kept; see the module docs, **Lazy NURB**).
+    pub(crate) fn base_with_nurb(&self, k: &Kernel) -> Result<Cow<'_, BSplineSurface>> {
+        if self.base.gw_nurb().is_none() {
+            let mut copy = self.clone_for_evaluation(0)?;
+            copy.make_nurb(k)?;
+            if let Some(made) = copy.base.nurb.take() {
+                self.base.nurb.fill(made);
+            }
+        }
+        Ok(Cow::Borrowed(&self.base))
+    }
+
+    /// The inherited NURB as `GetOrCreateGwNurbPointer` leaves it for a query whose
+    /// missing NURB reads as a failure (`GetDegree`, `GetNumberControlPoints`,
+    /// `GetKnots`, ...): [`SurfOfExtrusion::base_with_nurb`], or the base itself, still
+    /// without a NURB, when the make fails (upstream ignores `MakeNurb`'s status).
+    /// [`SolidError::Unported`] is passed on.
+    pub(crate) fn base_with_nurb_or_base(&self, k: &Kernel) -> Result<Cow<'_, BSplineSurface>> {
+        match self.base_with_nurb(k) {
+            Ok(b) => Ok(b),
+            Err(e) if e.is_unported_or_cancelled() => Err(e),
+            Err(_) => Ok(Cow::Borrowed(&self.base)),
+        }
+    }
+
+    /// The recogniser's lazy B-spline generator has the STEP interval as its NURB
+    /// interval. Read that domain without making a NURB or choosing a kernel.
+    pub(crate) fn natural_uv_domain_for_query(&self) -> Extent2d {
+        if self.base.gw_nurb().is_none()
+            && matches!(
+                self.gen_curve.as_ref().map(Curve::kind),
+                Some(CurveKind::BSpline(_))
+            )
+        {
+            let min = self.anal_uv_domain.min();
+            let max = self.anal_uv_domain.max();
+            return if self.swap_uv {
+                Extent2d::from_bounds(min.y, min.x, max.y, max.x)
+            } else {
+                self.anal_uv_domain
+            };
+        }
+        self.base.natural_uv_domain()
+    }
+
+    /// A temporary evaluation copy: the surface's and the generator's NURBS data are
+    /// kept exactly (no copy-constructor knot fix-up), as
+    /// [`crate::surface::surf_of_revolution::SurfOfRevolution::clone_exact`].
+    #[must_use]
+    pub fn clone_exact(&self) -> Self {
+        let mut copy = Self {
+            base: self.base.clone_exact(),
+            ..self.clone()
+        };
+        if let (Some(dst), Some(src)) = (
+            copy.gen_curve.as_mut().and_then(|g| gen_base_mut(g).ok()),
+            self.gen_curve.as_ref().and_then(|g| gen_base(g).ok()),
+        ) {
+            *dst = src.clone_exact();
+        }
+        copy
     }
 
     fn gen(&self) -> Result<&Curve> {
@@ -786,11 +978,11 @@ impl SurfOfExtrusion {
     /// # Errors
     ///
     /// `SM_ERR_NULL_POINTER` without generator; those of the generator's domain.
-    pub fn max_analytic_domain(&self) -> Result<Extent2d> {
+    pub fn max_analytic_domain(&self, k: &Kernel) -> Result<Extent2d> {
         let mut dom = self.anal_uv_domain;
 
         // Expand u and v separately.
-        let u_dom = gen_max_analytic_domain(self.gen()?)?;
+        let u_dom = gen_max_analytic_domain(k, self.gen()?)?;
         let mut v_dom = dom.v_interval();
         v_dom.expand_relative(100.0);
 
@@ -806,7 +998,7 @@ impl SurfOfExtrusion {
     /// # Errors
     ///
     /// Those of the generator comparison.
-    pub fn approx_eq(&self, other: &Self) -> Result<bool> {
+    pub fn approx_eq(&self, k: &Kernel, other: &Self) -> Result<bool> {
         // low work
         if core::ptr::eq(self, other) {
             return Ok(true);
@@ -820,7 +1012,7 @@ impl SurfOfExtrusion {
         // check equivalence of these objects
         let gen_eq = match (&self.gen_curve, &other.gen_curve) {
             (None, None) => true,
-            (Some(a), Some(b)) => a.approx_eq(b)?,
+            (Some(a), Some(b)) => a.approx_eq(k, b)?,
             _ => false,
         };
         Ok(gen_eq
@@ -914,7 +1106,7 @@ impl SurfOfExtrusion {
         ignore_status(gen_base_mut(gen)?.scale_knot_vector(gen_ivl.min(), gen_ivl.max()))?;
 
         // recompute a m_vOrigin point to ensure that the origin is still on the genCurve
-        if let Some(p) = ignored(gen.evaluate_point(gen.natural_interval().min()))? {
+        if let Some(p) = ignored(gen.evaluate_point(k, gen.natural_interval().min()))? {
             self.origin = p;
         }
         Ok(())
@@ -991,14 +1183,14 @@ impl SurfOfExtrusion {
     ///
     /// `SM_ERR` without NURB (upstream makes it); `SM_ERR_NULL_POINTER` without
     /// generator; those of the generator's conversion.
-    pub fn convert_uv_from_step_to_nurbs(&self, step_uv: Point2) -> Result<Point2> {
+    pub fn convert_uv_from_step_to_nurbs(&self, k: &Kernel, step_uv: Point2) -> Result<Point2> {
         // locals
         let natural_uv_domain = self.nurb_uv_domain(OP_CONVERT)?;
         let step_uv_domain = self.anal_uv_domain;
 
         // Map the STEP u-param to Nurbs u:
         let mut nurbs_uv = Point2::new(0.0, 0.0);
-        nurbs_uv.x = self.gen()?.convert_t_from_step_to_nurbs(step_uv.x)?;
+        nurbs_uv.x = self.gen()?.convert_t_from_step_to_nurbs(k, step_uv.x)?;
 
         // Map the STEP v-param to Nurbs v: a linear mapping
         let fraction = (step_uv.y - step_uv_domain.min().y) / step_uv_domain.y_length();
@@ -1052,28 +1244,88 @@ impl SurfOfExtrusion {
 
     // ---- evaluation -----------------------------------------------------------------
 
+    /// The STEP parameters the evaluators use: `uv`, clamped to the analytic UV domain
+    /// when `Kernel::fixes.extrusion_step_uses_clamped_uv` is set and out-of-bounds
+    /// evaluation is off, else `uv` itself (the pinned C++ evaluates `crUV`). The guard
+    /// is `ContainsPoint2d` with its default `tol = 0`, so a NaN coordinate (never
+    /// outside by that comparison) stays unclamped. Both upstream bodies clamp in
+    /// `m_vAnalUVDomain` and neither reads `SwapUV`.
+    fn step_eval_uv(&self, k: &Kernel, uv: Point2) -> Point2 {
+        if k.fixes.extrusion_step_uses_clamped_uv
+            && !self.is_out_of_bounds_enabled()
+            && !self.anal_uv_domain.contains_point(uv, 0.0)
+        {
+            self.anal_uv_domain.clamp_point(uv)
+        } else {
+            uv
+        }
+    }
+
     /// The point and derivatives at the STEP parameters `uv` (`EvaluateSTEP`):
     /// `(hu + 1) * (hv + 1)` vectors, entry `i * (hv + 1) + j` the derivative of order
     /// `i` in u and `j` in v. Only the position, `Sv = E`, the pure u derivatives (the
     /// generator's STEP derivatives at `uv.x`, evaluated with the surface's
-    /// out-of-bounds flag) are non-zero. `uv` is not clamped (upstream clamps a copy it
-    /// does not use).
+    /// out-of-bounds flag) are non-zero. `uv` is not clamped by default (upstream
+    /// clamps a copy it does not use); with
+    /// `Kernel::fixes.extrusion_step_uses_clamped_uv` and out-of-bounds evaluation
+    /// off, both coordinates are clamped to the analytic domain first (WR-61).
     ///
     /// # Errors
     ///
     /// `SM_ERR` for an order above 5 (`MAXDER`); `SM_ERR_NULL_POINTER` without
     /// generator; those of the generator's evaluation.
     pub fn evaluate_step(&self, k: &Kernel, uv: Point2, hu: usize, hv: usize) -> Result<Vec<Vec3>> {
+        // (an order above the limit is refused before the array is read)
+        let n = if hu <= 5 && hv <= 5 {
+            (hu + 1) * (hv + 1)
+        } else {
+            0
+        };
+        let mut d = vec![Vec3::ZERO; n];
+        self.evaluate_step_into(k, uv, hu, hv, &mut d)?;
+        Ok(d)
+    }
+
+    /// [`Self::evaluate_step`] into the caller's array `d` (`(hu + 1) * (hv + 1)` entries):
+    /// the entries upstream does not write keep the caller's values, as upstream's
+    /// `aDerivatives` does (a fresh `SmVector3d` array holds `SM_UNDEF_DOUBLE`).
+    ///
+    /// # Errors
+    ///
+    /// As [`Self::evaluate_step`]; `InvalidInput` when `d` is too short.
+    pub(crate) fn evaluate_step_into(
+        &self,
+        k: &Kernel,
+        uv: Point2,
+        hu: usize,
+        hv: usize,
+        d: &mut [Vec3],
+    ) -> Result<()> {
         // check state:
         if hu > MAX_DERIV || hv > MAX_DERIV {
             return Err(SolidError::sm_err(OP_EVAL_STEP));
         }
 
-        // Set zero derivative values - anything with a partial V term
         let n = (hu + 1) * (hv + 1);
-        let mut d = vec![Vec3::ZERO; n];
+        let d = d
+            .get_mut(..n)
+            .ok_or_else(|| SolidError::invalid_input(OP_EVAL_STEP, "derivative array too short"))?;
 
-        // (per SMLib practice upstream clamps a copy of uv it never reads)
+        // Set zero derivative values - anything with a partial V term (only those to
+        // be set: the rest of the caller's array is left untouched)
+        for i in 0..=hu {
+            for j in 0..=hv {
+                if j > 0 && i + j <= hu && i + j <= hv {
+                    if let Some(slot) = d.get_mut(i * (hv + 1) + j) {
+                        *slot = Vec3::ZERO;
+                    }
+                }
+            }
+        }
+
+        // per SMLib practice clamp the input point to the surface domain (upstream
+        // clamps a copy it then ignores; WR-61 makes that copy the one evaluated)
+        let uv = self.step_eval_uv(k, uv);
 
         // the generator with the surface's out-of-bounds flag
         let gen_own = self.gen()?;
@@ -1102,17 +1354,22 @@ impl SurfOfExtrusion {
         for i in 1..=hu {
             set(i * (hv + 1), pv_at(i));
         }
-        Ok(d)
+        Ok(())
     }
 
     /// The point at the STEP parameters `uv` (`EvaluateSTEPPoint`): the generator's
     /// STEP point at `uv.x` (with its own out-of-bounds flag) plus `uv.y` times the
-    /// extrusion vector. `uv` is not clamped (upstream clamps a copy it does not use).
+    /// extrusion vector. `uv` is not clamped by default (upstream clamps a copy it
+    /// does not use); with `Kernel::fixes.extrusion_step_uses_clamped_uv` and
+    /// out-of-bounds evaluation off, both coordinates are clamped to the analytic
+    /// domain first (WR-61).
     ///
     /// # Errors
     ///
     /// `SM_ERR_NULL_POINTER` without generator; those of the generator's evaluation.
     pub fn evaluate_step_point(&self, k: &Kernel, uv: Point2) -> Result<Point3> {
+        // per SMLib practice clamp the input point to the surface domain (WR-61)
+        let uv = self.step_eval_uv(k, uv);
         let pv = first(&gen_evaluate_step(k, self.gen()?, uv.x, 0)?)?;
         Ok(pv + uv.y * self.extrusion_vec)
     }
@@ -1145,8 +1402,8 @@ impl SurfOfExtrusion {
         // When the extrusion was not perpendicular to the genCurve plane
         if self.orientation != CurveOrientType::Perpendicular {
             // convert analytical domain to NURBS domain (statuses ignored upstream)
-            let nurbs_uv_min = self.convert_uv_from_step_to_nurbs(anal_domain.min())?;
-            let nurbs_uv_max = self.convert_uv_from_step_to_nurbs(anal_domain.max())?;
+            let nurbs_uv_min = self.convert_uv_from_step_to_nurbs(k, anal_domain.min())?;
+            let nurbs_uv_max = self.convert_uv_from_step_to_nurbs(k, anal_domain.max())?;
             let nurbs_domain = Extent2d::from_points(nurbs_uv_min, nurbs_uv_max);
 
             // map 3dPoint to NurbUV parameter
@@ -1182,7 +1439,7 @@ impl SurfOfExtrusion {
         let mut gen = self.gen()?.clone();
         let mut ivl = gen_step_interval(&gen)?;
         if self.is_out_of_bounds_enabled() {
-            ivl = gen_max_analytic_domain(&gen)?;
+            ivl = gen_max_analytic_domain(k, &gen)?;
             gen_base_mut(&mut gen)?.set_out_of_bounds_enabled(true);
         }
 
@@ -1217,7 +1474,7 @@ impl SurfOfExtrusion {
 
         // when point falls on a seam - remember that in the output
         if solutions.len() > 1
-            && gen.is_closed(&ivl, tol_3d)?
+            && gen.is_closed(k, &ivl, tol_3d)?
             && ivl.is_value_on_boundary(uv.x, EFF_ZERO).0
         {
             if location == LocationType::Interior {
@@ -1248,9 +1505,10 @@ impl SurfOfExtrusion {
     ///
     /// # Errors
     ///
-    /// `SM_ERR` for any other orientation (the caller then drops generally) and
-    /// without NURB (upstream makes it); `SM_ERR_NULL_POINTER` without generator; those
-    /// of the generator's solve and the evaluations.
+    /// `SM_ERR` for any other orientation (the caller then drops generally);
+    /// `SM_ERR_NULL_POINTER` without generator; those of [`Self::make_nurb`] (on an
+    /// evaluation copy when the NURB is missing), the generator's solve and the
+    /// evaluations.
     #[allow(clippy::too_many_arguments)] // upstream's DropPointFast signature
     pub fn drop_point_fast<O: SolutionObject>(
         &self,
@@ -1267,6 +1525,27 @@ impl SurfOfExtrusion {
         // return SM_ERR when this function can't compute a solution.
         if self.orientation != CurveOrientType::Perpendicular {
             return Err(SolidError::sm_err(OP_DROP));
+        }
+
+        // upstream's GetNaturalUVDomain makes a missing NURB (GetOrCreateGwNurbPointer);
+        // solve on an evaluation copy that has it, as the inherited queries do
+        if self.base.gw_nurb().is_none() {
+            let mut copy = self.clone_for_evaluation(0)?;
+            copy.make_nurb(k)?;
+            if copy.base.gw_nurb().is_none() {
+                return Err(SolidError::sm_err(OP_DROP));
+            }
+            return copy.drop_point_fast(
+                k,
+                uv_domain,
+                op,
+                test_point,
+                in_pointing_vector,
+                dist_tol,
+                target_distance,
+                requested,
+                this,
+            );
         }
 
         // init output
@@ -1309,6 +1588,7 @@ impl SurfOfExtrusion {
                 opt_vectors: None,
                 handle: Some(gen_handle),
                 analytic_handle: Some(analytic_handle),
+                zone_tol_3d: None,
             },
         )?;
 
@@ -1327,10 +1607,10 @@ impl SurfOfExtrusion {
             // when given an option interior pointing vector and we have a possible set
             // of seam solutions - skip solutions not wanted
             if let Some(in_vec) = in_pointing_vector {
-                if n_sols > 1 && gen.is_periodic(&ivl)? {
+                if n_sols > 1 && gen.is_periodic(k, &ivl)? {
                     // when solution is at start of curve
                     if are_same(t, ivl.min()) {
-                        let pv = gen.evaluate(t, 1, true, false)?;
+                        let pv = gen.evaluate(k, t, 1, true, false)?;
                         let dot = pv.get(1).copied().unwrap_or(Vec3::UNDEF).dot(in_vec);
                         if dot < -EFF_ZERO_SQRT {
                             continue;
@@ -1339,7 +1619,7 @@ impl SurfOfExtrusion {
 
                     // when solution is at end of curve
                     if are_same(t, ivl.max()) {
-                        let pv = gen.evaluate(t, 1, true, false)?;
+                        let pv = gen.evaluate(k, t, 1, true, false)?;
                         let dot = pv.get(1).copied().unwrap_or(Vec3::UNDEF).dot(in_vec);
                         if dot > EFF_ZERO_SQRT {
                             continue;
@@ -1518,6 +1798,17 @@ impl SurfOfExtrusion {
         rotate_n_move: &Axis2Placement,
         scale: Option<Vec3>,
     ) -> Result<()> {
+        self.transform_at_depth(k, rotate_n_move, scale, 0)
+    }
+
+    /// Carries the caller's whole-geometry depth into the generator transform.
+    pub(crate) fn transform_at_depth(
+        &mut self,
+        k: &Kernel,
+        rotate_n_move: &Axis2Placement,
+        scale: Option<Vec3>,
+        depth: usize,
+    ) -> Result<()> {
         let identity_scale = Vec3::new(1.0, 1.0, 1.0);
 
         // no work - identity transform
@@ -1539,11 +1830,15 @@ impl SurfOfExtrusion {
         }
 
         // transform m_pNurb
+        // SmBSplineSurface::Transform reaches the virtual GetOrCreateGwNurbPointer.
+        if self.base.gw_nurb().is_none() {
+            ignore_status(self.make_nurb(k))?;
+        }
         self.base.transform(rotate_n_move, scale)?;
 
         // transform the rest of the 3d data (status ignored)
         if let Some(gen) = self.gen_curve.as_mut() {
-            ignore_status(gen.transform(k, rotate_n_move, scale))?;
+            ignore_status(gen.transform_at_depth(k, rotate_n_move, scale, depth + 1))?;
         }
 
         // Scale first.
@@ -1764,8 +2059,8 @@ pub fn intersect_generators(
             let other_end = end.parameters[1];
 
             // Get points on each curve that fall on the same sweep vector
-            let ep = ext_gen.evaluate_point(extrusion_end)?;
-            let op = other_gen.evaluate_point(other_end)?;
+            let ep = ext_gen.evaluate_point(k, extrusion_end)?;
+            let op = other_gen.evaluate_point(k, other_end)?;
 
             // the parameter of the sOtherPoint on line = sExtrusionPoint + t * ExtrusionVec
             let line_param = line_closest_point(ep, extrusion_vec, op);
@@ -2050,6 +2345,116 @@ mod tests {
         Kernel::default()
     }
 
+    #[test]
+    fn lazy_transform_matches_materialized_transform() {
+        let k = k();
+        let mut lazy = SurfOfExtrusion::new(
+            &k,
+            arc_gen(),
+            Point3::ZERO,
+            Vec3::new(0.0, 0.0, 2.0),
+            Extent2d::from_bounds(0.0, 0.0, 1.0, 1.0),
+            false,
+        )
+        .unwrap();
+        assert!(lazy.base().gw_nurb().is_none());
+        lazy.transform(&k, &Axis2Placement::IDENTITY, None).unwrap();
+        assert!(lazy.base().gw_nurb().is_none());
+        assert!(lazy
+            .transform(
+                &k,
+                &Axis2Placement::IDENTITY,
+                Some(Vec3::new(2.0, 3.0, 2.0))
+            )
+            .is_err());
+        assert!(lazy.base().gw_nurb().is_none());
+
+        let mut ready = lazy.clone_exact();
+        ready.make_nurb(&k).unwrap();
+        let mut transform = Axis2Placement::IDENTITY;
+        transform.translate(Vec3::new(3.0, -2.0, 1.0));
+        lazy.transform(&k, &transform, None).unwrap();
+        ready.transform(&k, &transform, None).unwrap();
+        assert!(lazy.base().gw_nurb().is_some());
+        assert_eq!(lazy.origin(), ready.origin());
+        for uv in [
+            Point2::new(0.0, 0.0),
+            Point2::new(0.25, 0.75),
+            Point2::new(1.0, 1.0),
+        ] {
+            assert_eq!(
+                lazy.base().evaluate_point(uv).unwrap(),
+                ready.base().evaluate_point(uv).unwrap()
+            );
+        }
+    }
+
+    #[test]
+    fn kept_made_nurb_is_bit_identical_to_a_fresh_one() {
+        use crate::nurbs::b_spline_surface_n_lib::p2::EvaluateFlags;
+        use crate::surface::surface::{Surface, SurfaceKind};
+        let k = k();
+        let lazy = SurfOfExtrusion::new(
+            &k,
+            arc_gen(),
+            Point3::ZERO,
+            Vec3::new(0.0, 0.0, 2.0),
+            Extent2d::from_bounds(0.0, 0.0, 1.0, 1.0),
+            false,
+        )
+        .unwrap();
+        assert!(lazy.base().gw_nurb().is_none());
+        let surf = Surface::from(lazy);
+        // a lazy exact copy: makes its own NURB afresh
+        let fresh = |surf: &Surface| {
+            let SurfaceKind::SurfOfExtrusion(e) = surf.kind() else {
+                panic!("an extrusion");
+            };
+            let mut c = e.clone_exact();
+            c.base.nurb.take();
+            Surface::from(c)
+        };
+        let eval = |surf: &Surface, uv: Point2| -> Vec<u64> {
+            let mut out = Vec::new();
+            let p = surf.evaluate_point(&k, uv).unwrap();
+            out.extend([p.x, p.y, p.z].map(f64::to_bits));
+            let flags = EvaluateFlags::default();
+            for row in surf.evaluate(&k, uv, 2, 2, flags).unwrap() {
+                for v in row {
+                    out.extend([v.x, v.y, v.z].map(f64::to_bits));
+                }
+            }
+            out
+        };
+        let uvs = [
+            Point2::new(0.0, 0.0),
+            Point2::new(0.25, 0.75),
+            Point2::new(0.6, 0.1),
+            Point2::new(1.0, 1.0),
+        ];
+        for round in 0..2 {
+            for &uv in &uvs {
+                assert_eq!(
+                    eval(&surf, uv),
+                    eval(&fresh(&surf), uv),
+                    "round {round} at {uv:?}"
+                );
+            }
+        }
+        // the made NURB is kept on the extrusion itself (no side memo), as upstream
+        // keeps it on the object
+        assert!(!surf.has_made_nurb());
+        let SurfaceKind::SurfOfExtrusion(e) = surf.kind() else {
+            panic!("an extrusion");
+        };
+        assert!(e.base().gw_nurb().is_some(), "the made NURB is kept");
+        // a copy carries it (the copy constructor copies the source's NURB)
+        let SurfaceKind::SurfOfExtrusion(c) = surf.clone().into_kind() else {
+            panic!("an extrusion");
+        };
+        assert!(c.base().gw_nurb().is_some());
+    }
+
     /// A planar quadratic B-spline in the z = 0 plane.
     fn arc_gen() -> Curve {
         let pw = vec![
@@ -2059,6 +2464,33 @@ mod tests {
         ];
         let cur = NurbCurve::new(pw, 2, vec![0.0, 0.0, 0.0, 1.0, 1.0, 1.0]).unwrap();
         Curve::from(BSplineCurve::from_nurb(cur, 3, false))
+    }
+
+    #[test]
+    fn canonical_extrusion_makes_a_lazy_line_nurb() {
+        let k = k();
+        let line = Line::from_points(Vec3::ZERO, Vec3::new(1.0, 0.0, 1.0), 3);
+        assert!(line.base().gw_nurb().is_none());
+        let mut s = SurfOfExtrusion::create_canonical(&k, Curve::from(line), Vec3::Z).unwrap();
+        assert!(s.base().gw_nurb().is_some());
+        assert!(gen_base(s.gen().unwrap()).unwrap().gw_nurb().is_some());
+        s.adjust_step_uv_domain(&k, &Extent2d::from_bounds(0.0, -2.0, 1.0, 3.0))
+            .unwrap();
+        let p = s.evaluate_step_point(&k, Point2::new(0.25, 0.5)).unwrap();
+        assert!((p - Vec3::new(0.25, 0.0, 0.75)).length() < 1e-12);
+
+        let line = Line::from_points(Vec3::ZERO, Vec3::new(1.0, 0.0, 1.0), 3);
+        let s = SurfOfExtrusion::new(
+            &k,
+            Curve::from(line),
+            Vec3::ZERO,
+            Vec3::Z,
+            Extent2d::from_bounds(-0.5, -2.0, 2.0, 3.0),
+            true,
+        )
+        .unwrap();
+        assert!(s.base().gw_nurb().is_some());
+        assert!((s.curve_point - Vec3::new(-0.5, 0.0, -0.5)).length() < 1e-12);
     }
 
     #[test]
@@ -2076,8 +2508,263 @@ mod tests {
         assert_eq!(ders.len(), 9);
         assert_eq!(ders[1], Vec3::new(0.0, 0.0, 2.0));
         assert!(s.evaluate_step(&k, Point2::new(0.5, 1.0), 6, 6).is_err());
-        // order 5 of a B-spline generator: upstream overruns NL_MAXDER (UB-80)
-        assert!(s.evaluate_step(&k, Point2::new(0.5, 1.0), 5, 5).is_err());
+        // order 5 of a B-spline generator: upstream overruns sm_CrvDerivs' rows (UB-80,
+        // UB-33); the port evaluates it
+        let d5 = s.evaluate_step(&k, Point2::new(0.5, 1.0), 5, 5).unwrap();
+        assert_eq!(d5.len(), 36);
+        assert_eq!(d5[1], Vec3::new(0.0, 0.0, 2.0));
+    }
+
+    /// WR-61: the unit X line swept along Z, with the analytic domain `domain`.
+    fn step_clamp_line_surface(k: &Kernel, domain: Extent2d, swap_uv: bool) -> SurfOfExtrusion {
+        let line = Line::from_points(Vec3::ZERO, Vec3::new(1.0, 0.0, 0.0), 3);
+        SurfOfExtrusion::new(k, Curve::from(line), Point3::ZERO, Vec3::Z, domain, swap_uv).unwrap()
+    }
+
+    /// WR-61: a line that already has its NURB (`CreateLineSegment`), so the finite
+    /// constructor does not trim the generator's own STEP interval to the surface's U
+    /// interval: the surface can hold a U domain that is a strict subset of `[0, 1]`.
+    fn step_clamp_owned_line_surface(k: &Kernel, domain: Extent2d) -> SurfOfExtrusion {
+        let line =
+            Line::create_line_segment(3, Vec3::ZERO, Vec3::new(1.0, 0.0, 0.0), None).unwrap();
+        SurfOfExtrusion::new(k, Curve::from(line), Point3::ZERO, Vec3::Z, domain, false).unwrap()
+    }
+
+    #[test]
+    fn step_clamped_uv_fix_is_off_by_default() {
+        let k = k();
+        assert!(!k.fixes.extrusion_step_uses_clamped_uv);
+
+        // V outside the domain [0, 3] of the unit X line swept along Z: the caller's
+        // parameters extrapolate, as the pinned C++ does with `crUV`.
+        let s = step_clamp_line_surface(&k, Extent2d::from_bounds(0.0, 0.0, 1.0, 3.0), false);
+        assert_eq!(s.anal_uv_domain, Extent2d::from_bounds(0.0, 0.0, 1.0, 3.0));
+        assert_eq!(s.step_uv_domain(), s.anal_uv_domain);
+        assert_eq!(
+            s.evaluate_step_point(&k, Point2::new(0.5, 4.0)).unwrap(),
+            Vec3::new(0.5, 0.0, 4.0)
+        );
+
+        // A generator whose own STEP interval is [0, 1] under a surface U domain of
+        // [0.2, 0.8]: u = 0.9 is inside the generator and outside the surface.
+        let s = step_clamp_owned_line_surface(&k, Extent2d::from_bounds(0.2, 0.0, 0.8, 3.0));
+        assert_eq!(s.anal_uv_domain, Extent2d::from_bounds(0.2, 0.0, 0.8, 3.0));
+        assert_eq!(
+            gen_step_interval(s.gen().unwrap()).unwrap(),
+            Extent1d::from_min_max(0.0, 1.0)
+        );
+        assert_eq!(
+            s.evaluate_step_point(&k, Point2::new(0.9, 1.0)).unwrap(),
+            Vec3::new(0.9, 0.0, 1.0)
+        );
+
+        // The matrix: position and the pure derivatives; an entry upstream does not
+        // write keeps the caller's value and a short array is refused.
+        let mut d = vec![Vec3::new(9.0, 9.0, 9.0); 4];
+        s.evaluate_step_into(&k, Point2::new(0.9, 4.0), 1, 1, &mut d)
+            .unwrap();
+        assert_eq!(d[0], Vec3::new(0.9, 0.0, 4.0));
+        assert_eq!(d[1], Vec3::Z);
+        assert_eq!(d[2], Vec3::new(1.0, 0.0, 0.0));
+        assert_eq!(d[3], Vec3::new(9.0, 9.0, 9.0), "untouched entry");
+        let mut short = [Vec3::ZERO; 3];
+        assert_eq!(
+            s.evaluate_step_into(&k, Point2::new(0.9, 4.0), 2, 2, &mut short)
+                .unwrap_err(),
+            SolidError::invalid_input(OP_EVAL_STEP, "derivative array too short")
+        );
+
+        // A missing generator and an order above the limit keep their exact errors.
+        let empty = SurfOfExtrusion::empty();
+        assert_eq!(
+            empty
+                .evaluate_step_point(&k, Point2::new(0.5, 0.5))
+                .unwrap_err(),
+            SolidError::null_pointer(OP_GEN)
+        );
+        assert_eq!(
+            empty
+                .evaluate_step(&k, Point2::new(0.5, 0.5), 0, 0)
+                .unwrap_err(),
+            SolidError::null_pointer(OP_GEN)
+        );
+        assert_eq!(
+            s.evaluate_step(&k, Point2::new(0.5, 0.5), 6, 0)
+                .unwrap_err(),
+            SolidError::sm_err(OP_EVAL_STEP)
+        );
+        assert_eq!(
+            s.evaluate_step(&k, Point2::new(0.5, 0.5), 0, 6)
+                .unwrap_err(),
+            SolidError::sm_err(OP_EVAL_STEP)
+        );
+    }
+
+    #[test]
+    fn step_clamped_uv_fix_clamps_when_enabled_and_out_of_bounds_off() {
+        let mut k = k();
+        k.fixes.extrusion_step_uses_clamped_uv = true;
+
+        // V outside [0, 3] on the unit X line swept along Z.
+        let s = step_clamp_line_surface(&k, Extent2d::from_bounds(0.0, 0.0, 1.0, 3.0), false);
+        assert_eq!(
+            s.evaluate_step_point(&k, Point2::new(0.5, 4.0)).unwrap(),
+            Vec3::new(0.5, 0.0, 3.0)
+        );
+
+        // U outside the surface's [0.2, 0.8] but inside the generator's [0, 1]: the
+        // clamp is the surface's.
+        let s = step_clamp_owned_line_surface(&k, Extent2d::from_bounds(0.2, 0.0, 0.8, 3.0));
+        assert_eq!(s.anal_uv_domain, Extent2d::from_bounds(0.2, 0.0, 0.8, 3.0));
+        assert_eq!(
+            gen_step_interval(s.gen().unwrap()).unwrap(),
+            Extent1d::from_min_max(0.0, 1.0)
+        );
+        assert_eq!(
+            s.evaluate_step_point(&k, Point2::new(0.9, 1.0)).unwrap(),
+            Vec3::new(0.8, 0.0, 1.0)
+        );
+        assert_eq!(
+            s.evaluate_step_point(&k, Point2::new(0.9, 4.0)).unwrap(),
+            Vec3::new(0.8, 0.0, 3.0)
+        );
+
+        // The matrix: position and the pure derivatives, both coordinates clamped.
+        let d = s.evaluate_step(&k, Point2::new(0.9, 4.0), 2, 2).unwrap();
+        assert_eq!(d.len(), 9);
+        assert_eq!(d[0], Vec3::new(0.8, 0.0, 3.0));
+        assert_eq!(d[1], Vec3::Z);
+        assert_eq!(d[2], Vec3::ZERO);
+        assert_eq!(d[3], Vec3::new(1.0, 0.0, 0.0));
+        assert_eq!(d[4], Vec3::ZERO);
+        assert_eq!(d[6], Vec3::ZERO);
+
+        // `SwapUV` does not decide which domain the clamp reads (upstream ignores it
+        // in both bodies).
+        let swapped = step_clamp_line_surface(&k, Extent2d::from_bounds(0.0, 0.0, 1.0, 3.0), true);
+        assert_eq!(
+            swapped
+                .evaluate_step_point(&k, Point2::new(0.5, 4.0))
+                .unwrap(),
+            Vec3::new(0.5, 0.0, 3.0)
+        );
+
+        // In-domain and exact-boundary parameters are bit-identical with the fix off
+        // and on.
+        let off = Kernel::default();
+        let inside = step_clamp_owned_line_surface(&off, Extent2d::from_bounds(0.2, 0.0, 0.8, 3.0));
+        let on = step_clamp_owned_line_surface(&k, Extent2d::from_bounds(0.2, 0.0, 0.8, 3.0));
+        for uv in [
+            Point2::new(0.5, 1.5),
+            Point2::new(0.2, 0.0),
+            Point2::new(0.8, 3.0),
+            Point2::new(0.2, 3.0),
+            Point2::new(0.8, 0.0),
+            Point2::new(0.5, 3.0),
+        ] {
+            assert_eq!(
+                on.evaluate_step_point(&k, uv).unwrap(),
+                inside.evaluate_step_point(&off, uv).unwrap(),
+                "point at {uv:?}"
+            );
+            assert_eq!(
+                on.evaluate_step(&k, uv, 2, 2).unwrap(),
+                inside.evaluate_step(&off, uv, 2, 2).unwrap(),
+                "matrix at {uv:?}"
+            );
+        }
+
+        // Out-of-bounds evaluation stays the old extrapolation with the fix either
+        // way.
+        let mut off_oob =
+            step_clamp_owned_line_surface(&off, Extent2d::from_bounds(0.2, 0.0, 0.8, 3.0));
+        off_oob.set_out_of_bounds_enabled(true);
+        let mut on_oob =
+            step_clamp_owned_line_surface(&k, Extent2d::from_bounds(0.2, 0.0, 0.8, 3.0));
+        on_oob.set_out_of_bounds_enabled(true);
+        assert_eq!(
+            off_oob
+                .evaluate_step_point(&off, Point2::new(0.9, 4.0))
+                .unwrap(),
+            Vec3::new(0.9, 0.0, 4.0)
+        );
+        assert_eq!(
+            on_oob
+                .evaluate_step_point(&k, Point2::new(0.9, 4.0))
+                .unwrap(),
+            Vec3::new(0.9, 0.0, 4.0)
+        );
+    }
+
+    #[test]
+    fn step_clamped_uv_fix_keeps_the_generator_flag_policy() {
+        // A B-spline generator whose own out-of-bounds flag is on under a surface
+        // whose flag is off: `EvaluateSTEP` evaluates a copy with the surface's flag,
+        // `EvaluateSTEPPoint` the generator itself.
+        let mut g = arc_gen();
+        gen_base_mut(&mut g)
+            .unwrap()
+            .set_out_of_bounds_enabled(true);
+        let k = k();
+        let s = SurfOfExtrusion::new(
+            &k,
+            g,
+            Point3::ZERO,
+            Vec3::new(0.0, 0.0, 2.0),
+            Extent2d::from_bounds(0.0, 0.0, 1.0, 1.0),
+            false,
+        )
+        .unwrap();
+        assert!(gen_base(s.gen().unwrap())
+            .unwrap()
+            .is_out_of_bounds_enabled());
+        assert!(!s.is_out_of_bounds_enabled());
+        // u = 1.5 is outside both domains: the generator extrapolates for the point
+        // (the quadratic's Bernstein form at 1.5 is (3, -1.5, 0)), the STEP copy
+        // clamps to u = 1.
+        assert_eq!(
+            s.evaluate_step_point(&k, Point2::new(1.5, 0.5)).unwrap(),
+            Vec3::new(3.0, -1.5, 1.0)
+        );
+        assert_eq!(
+            s.evaluate_step(&k, Point2::new(1.5, 0.5), 1, 1).unwrap()[0],
+            Vec3::new(2.0, 0.0, 1.0)
+        );
+
+        // With the fix both clamp the parameters, so the generator's flag no longer
+        // changes the point.
+        let mut k_on = Kernel::default();
+        k_on.fixes.extrusion_step_uses_clamped_uv = true;
+        assert_eq!(
+            s.evaluate_step_point(&k_on, Point2::new(1.5, 0.5)).unwrap(),
+            Vec3::new(2.0, 0.0, 1.0)
+        );
+        assert_eq!(
+            s.evaluate_step(&k_on, Point2::new(1.5, 0.5), 1, 1).unwrap()[0],
+            Vec3::new(2.0, 0.0, 1.0)
+        );
+
+        // The same generator with its flag off clamps for the point too: only the
+        // generator's own flag decides `EvaluateSTEPPoint`.
+        let k_off = Kernel::default();
+        let s_off = SurfOfExtrusion::new(
+            &k_off,
+            arc_gen(),
+            Point3::ZERO,
+            Vec3::new(0.0, 0.0, 2.0),
+            Extent2d::from_bounds(0.0, 0.0, 1.0, 1.0),
+            false,
+        )
+        .unwrap();
+        assert!(!gen_base(s_off.gen().unwrap())
+            .unwrap()
+            .is_out_of_bounds_enabled());
+        assert_eq!(
+            s_off
+                .evaluate_step_point(&k_off, Point2::new(1.5, 0.5))
+                .unwrap(),
+            Vec3::new(2.0, 0.0, 1.0)
+        );
     }
 
     #[test]
@@ -2095,11 +2782,11 @@ mod tests {
         s.make_nurb(&k).unwrap();
         assert_eq!(s.orientation(), CurveOrientType::Independent);
         let n = s
-            .convert_uv_from_step_to_nurbs(Point2::new(0.25, 1.5))
+            .convert_uv_from_step_to_nurbs(&k, Point2::new(0.25, 1.5))
             .unwrap();
         let back = s.convert_uv_from_nurbs_to_step(&k, n).unwrap();
         assert!((back.x - 0.25).abs() < 1e-12 && (back.y - 1.5).abs() < 1e-12);
-        assert!(s.approx_eq(&s.copy().unwrap()).unwrap());
+        assert!(s.approx_eq(&k, &s.copy().unwrap()).unwrap());
     }
 
     #[test]
@@ -2115,14 +2802,14 @@ mod tests {
         )
         .unwrap();
         assert!(s
-            .convert_uv_from_step_to_nurbs(Point2::new(0.25, 1.5))
+            .convert_uv_from_step_to_nurbs(&k, Point2::new(0.25, 1.5))
             .is_err());
         assert!(s
             .convert_uv_from_nurbs_to_step(&k, Point2::new(0.25, 1.5))
             .is_err());
         s.make_nurb(&k).unwrap();
         assert!(s
-            .convert_uv_from_step_to_nurbs(Point2::new(0.25, 1.5))
+            .convert_uv_from_step_to_nurbs(&k, Point2::new(0.25, 1.5))
             .is_ok());
     }
 
@@ -2130,7 +2817,7 @@ mod tests {
     fn empty_surface_has_no_generator() {
         let s = SurfOfExtrusion::empty();
         assert!(s.copy().is_err());
-        assert!(s.max_analytic_domain().is_err());
+        assert!(s.max_analytic_domain(&k()).is_err());
     }
 
     fn full_circle(k: &Kernel) -> Curve {
@@ -2238,6 +2925,135 @@ mod tests {
         let knots = vec![0.0, 0.0, 0.0, 0.0, 1.0 / 3.0, 2.0 / 3.0, 1.0, 1.0, 1.0, 1.0];
         let cur = NurbCurve::new(pw, 3, knots).unwrap();
         Curve::from(BSplineCurve::from_nurb(cur, 3, false))
+    }
+
+    /// `GetDegree` makes a lazy extrusion's NURB first: a straight generator extruded is
+    /// bilinear, so a long step on it crosses no seam (`sm_CrossedSeamOrPole`), and it is
+    /// no analytic-low-degree surface for the cache tolerances unless its NURB says so.
+    #[test]
+    fn lazy_extrusion_degree_callers_see_the_made_nurb() {
+        use crate::surface::surface::p1::crossed_seam_or_pole;
+        use crate::surface::surface::Surface;
+        let k = k();
+        let pw = vec![
+            CPoint::new(0.0, 0.0, 0.0, NOW),
+            CPoint::new(2.0, 1.0, 0.0, NOW),
+        ];
+        let line = NurbCurve::new(pw, 1, vec![0.0, 0.0, 1.0, 1.0]).unwrap();
+        let gen = Curve::from(BSplineCurve::from_nurb(line, 1, false));
+        let lazy = SurfOfExtrusion::new(
+            &k,
+            gen,
+            Point3::ZERO,
+            Vec3::new(0.0, 0.0, 2.0),
+            Extent2d::from_bounds(0.0, 0.0, 1.0, 1.0),
+            false,
+        )
+        .unwrap();
+        assert!(lazy.base().gw_nurb().is_none());
+        let surf = Surface::from(lazy);
+        assert_eq!(
+            surf.degree(SurfParamType::U),
+            0,
+            "the stored base has no NURB"
+        );
+        assert_eq!(surf.degree_with_nurb(&k, SurfParamType::U).unwrap(), 1);
+        assert_eq!(surf.degree_with_nurb(&k, SurfParamType::V).unwrap(), 1);
+        let dom = Extent2d::from_bounds(0.0, 0.0, 1.0, 1.0);
+        let crossed = crossed_seam_or_pole(
+            &k,
+            &surf,
+            Point2::new(0.0, 0.0),
+            Point2::new(1.0, 1.0),
+            &dom,
+        )
+        .unwrap();
+        assert!(!crossed, "bilinear: never a seam");
+    }
+
+    /// `GetKnots` makes a lazy extrusion's NURB first, also through a STEP surface's
+    /// base `GetDegree`: `knots_with_nurb` answers the made NURB's knots.
+    #[test]
+    fn lazy_extrusion_knots_read_the_made_nurb() {
+        use crate::surface::surface::{StepSurface, Surface};
+        let k = k();
+        let lazy = SurfOfExtrusion::new(
+            &k,
+            arc_gen(),
+            Point3::ZERO,
+            Vec3::new(0.0, 0.0, 2.0),
+            Extent2d::from_bounds(0.0, 0.0, 1.0, 1.0),
+            false,
+        )
+        .unwrap();
+        assert!(lazy.base().gw_nurb().is_none());
+        let made = lazy.clone_exact().base_with_nurb(&k).unwrap().into_owned();
+        let surf = Surface::from(lazy.clone_exact());
+        for param in [SurfParamType::U, SurfParamType::V] {
+            let want = made.knots(param, None).unwrap();
+            if param == SurfParamType::U {
+                assert!(surf.knots(param, None).is_err(), "the stored base has none");
+            }
+            assert_eq!(surf.knots_with_nurb(&k, param, None).unwrap(), want);
+            // the made NURB is kept: the stored base now answers it too
+            assert_eq!(surf.knots(param, None).ok(), Some(want));
+        }
+        // a STEP surface's knots: its domain ends, each `degree + 1` times
+        let step = Surface::from(StepSurface::new(Surface::from(lazy), true).unwrap());
+        let (_, mults) = step.knots_with_nurb(&k, SurfParamType::U, None).unwrap();
+        let degree = made.degree(SurfParamType::U);
+        assert!(degree > 0);
+        assert!(mults.iter().all(|&m| m == degree + 1), "{mults:?}");
+    }
+
+    /// The virtual `GetKnots` of `SurfaceMaxDistanceBetween` (through `SurfaceEvaluate`),
+    /// `SnapToKnots` and `GetDomainWithContinuity` make a lazy extrusion's NURB first
+    /// instead of failing on the NURB-less base.
+    #[test]
+    fn lazy_extrusion_knot_callers_make_the_nurb() {
+        use crate::geom::geom_utility::p2::ContinuityType;
+        use crate::math::Vec2;
+        use crate::surface::surface::p2::SurfaceEvaluate;
+        use crate::surface::surface::Surface;
+        let k = k();
+        let lazy = SurfOfExtrusion::new(
+            &k,
+            arc_gen(),
+            Point3::ZERO,
+            Vec3::new(0.0, 0.0, 2.0),
+            Extent2d::from_bounds(0.0, 0.0, 1.0, 1.0),
+            false,
+        )
+        .unwrap();
+        assert!(lazy.base().gw_nurb().is_none());
+        let made = lazy.clone_exact().base_with_nurb(&k).unwrap().into_owned();
+        let surf = Surface::from(lazy.clone_exact());
+        assert!(
+            surf.knots(SurfParamType::U, None).is_err(),
+            "the stored base has none"
+        );
+        for param in [SurfParamType::U, SurfParamType::V] {
+            let want = made.knots(param, None).unwrap();
+            assert_eq!(
+                SurfaceEvaluate::knots(&surf, &k, param, None).unwrap(),
+                want
+            );
+        }
+        let (u_knots, _) = made.knots(SurfParamType::U, None).unwrap();
+        let first = u_knots[0];
+        let snapped = surf
+            .snap_to_knots(&k, Point2::new(first + 1e-12, 0.5), 1e-9)
+            .unwrap();
+        assert_eq!(snapped.x, first);
+        let dom = surf
+            .domain_with_continuity(
+                &k,
+                ContinuityType::G1,
+                Point2::new(0.5, 0.5),
+                Vec2::new(1.0, 0.0),
+            )
+            .unwrap();
+        assert!(dom.min().x <= 0.5 && dom.max().x >= 0.5, "{dom:?}");
     }
 
     #[test]

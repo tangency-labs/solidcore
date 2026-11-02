@@ -13,7 +13,8 @@
 //! inside_out}}` (domain in degrees), as in unit
 //! `curve.curve_p8`): `gcs` (`GlobalCurveSolve`: `c2: null` solves the first curve
 //! against itself; `sop` the `SmSolverOperationType`, `target` the optional target
-//! distance, `vecs` the option vectors, `requested` the `SmSolutionRequestedType`),
+//! distance, `vecs` the option vectors, `requested` the `SmSolutionRequestedType`,
+//! optional `transform1` an `[origin, x, y]` placement `c1` is `Transform`ed by first),
 //! `self_intersect`, `tight_box`, `tight_pseudo_box` (`basis`), `on_plane` (`p`, `n`,
 //! `tol`, optional `ivl`) and `positive_side` (`planes`: point and normal pairs). Both
 //! sides produce the flat record documented in the ffi module; the runner reports its
@@ -296,7 +297,7 @@ fn build(c: &CurveIn) -> Result<Curve, HarnessError> {
 /// cannot return.
 fn status(e: &SolidError) -> f64 {
     match e {
-        SolidError::InvalidInput { .. } => 1007.0,
+        SolidError::InvalidInput { .. } | SolidError::PortInvariant { .. } => 1007.0,
         SolidError::Upstream { code, .. } => f64::from(*code),
         _ => -1.0,
     }
@@ -624,10 +625,10 @@ fn scale3(a: [f64; 3], s: f64) -> [f64; 3] {
 }
 
 /// The point of `c` at `t` (Rust evaluation, used only to place test points).
-fn point_at(c: &CurveIn, t: f64) -> [f64; 3] {
+fn point_at(k: &Kernel, c: &CurveIn, t: f64) -> [f64; 3] {
     build(c)
         .ok()
-        .and_then(|cc| cc.evaluate_point(t).ok())
+        .and_then(|cc| cc.evaluate_point(k, t).ok())
         .map_or([0.0; 3], |p| [p.x, p.y, p.z])
 }
 
@@ -676,7 +677,7 @@ fn translated(c: &CurveIn, d: [f64; 3]) -> CurveIn {
 
 /// A second curve near `c`: an identical copy, a slightly moved copy, the same line
 /// reparameterised, or an unrelated curve.
-fn gen_partner(rng: &mut Rng, c: &CurveIn) -> CurveIn {
+fn gen_partner(k: &Kernel, rng: &mut Rng, c: &CurveIn) -> CurveIn {
     match rng.below(8) {
         0..=2 => c.clone(),
         3 | 4 => {
@@ -686,8 +687,8 @@ fn gen_partner(rng: &mut Rng, c: &CurveIn) -> CurveIn {
         5 => {
             // a line on the same carrier with another parameterisation
             let (a, bb) = range_of(c);
-            let p = point_at(c, a);
-            let q = point_at(c, bb);
+            let p = point_at(k, c, a);
+            let q = point_at(k, c, bb);
             let d = [q[0] - p[0], q[1] - p[1], q[2] - p[2]];
             if rng.chance(0.5) {
                 CurveIn::Line(LineIn {
@@ -751,6 +752,11 @@ enum OpIn {
         /// The `SmSolutionRequestedType` value.
         #[serde(default = "one_i")]
         requested: i32,
+        /// Optional `[origin, x, y]` of an `SmAxis2Placement` (`SetCanonical`, status
+        /// ignored) that `c1` is `Transform`ed by before the solve (as in the upstream
+        /// tests that move a curve).
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        transform1: Option<[[f64; 3]; 3]>,
     },
     SelfIntersect {
         c: CurveIn,
@@ -794,6 +800,7 @@ fn cpp_input(op: &OpIn) -> Result<(Op, Vec<f64>), HarnessError> {
             target,
             vecs,
             requested,
+            transform1,
         } => {
             curve_block(&mut v, c1)?;
             v.extend_from_slice(ivl1);
@@ -813,6 +820,10 @@ fn cpp_input(op: &OpIn) -> Result<(Op, Vec<f64>), HarnessError> {
                 v.extend_from_slice(x);
             }
             v.push(f64::from(*requested));
+            v.push(b(transform1.is_some()));
+            for x in transform1.iter().flatten() {
+                v.extend_from_slice(x);
+            }
             Op::Gcs
         }
         OpIn::SelfIntersect { c, ivl, tol } => {
@@ -883,8 +894,13 @@ fn rust(op: &OpIn) -> Result<Output, HarnessError> {
             target,
             vecs,
             requested,
+            transform1,
         } => {
-            let a = build(c1)?;
+            let mut a = build(c1)?;
+            if let Some([org, x, y]) = transform1 {
+                let frame = Axis2Placement::new(v3(*org), v3(*x), v3(*y));
+                tri!(o, a.transform(&k, &frame, None));
+            }
             let other = match c2 {
                 Some(c) => Some(build(c)?),
                 None => None,
@@ -993,12 +1009,12 @@ fn rust(op: &OpIn) -> Result<Output, HarnessError> {
 
 /// A curve through the point of `c` at `t` (a random curve moved so that one of its
 /// points lands there, optionally a little off).
-fn gen_crossing(rng: &mut Rng, c: &CurveIn, t: f64) -> CurveIn {
+fn gen_crossing(k: &Kernel, rng: &mut Rng, c: &CurveIn, t: f64) -> CurveIn {
     let other = gen_curve(rng);
     let (a, bb) = range_of(&other);
     let s = a + (bb - a) * rng.uniform(0.05, 0.95);
-    let p = point_at(c, t);
-    let q = point_at(&other, s);
+    let p = point_at(k, c, t);
+    let q = point_at(k, &other, s);
     let off = *rng.choose(&[0.0, 0.0, 1e-9, 1e-7, 1e-5]).unwrap_or(&0.0);
     let d = add(
         [p[0] - q[0], p[1] - q[1], p[2] - q[2]],
@@ -1008,12 +1024,12 @@ fn gen_crossing(rng: &mut Rng, c: &CurveIn, t: f64) -> CurveIn {
 }
 
 /// A line tangent to `c` at `t` (along the chord to a nearby point), possibly offset.
-fn gen_tangent_line(rng: &mut Rng, c: &CurveIn, t: f64) -> CurveIn {
+fn gen_tangent_line(k: &Kernel, rng: &mut Rng, c: &CurveIn, t: f64) -> CurveIn {
     let (a, bb) = range_of(c);
     let h = 1e-4 * (bb - a);
-    let p0 = point_at(c, t - h);
-    let p1 = point_at(c, t + h);
-    let p = point_at(c, t);
+    let p0 = point_at(k, c, t - h);
+    let p1 = point_at(k, c, t + h);
+    let p = point_at(k, c, t);
     let dir = [p1[0] - p0[0], p1[1] - p0[1], p1[2] - p0[2]];
     let off = *rng.choose(&[0.0, 1e-8, 1e-6, 1e-3]).unwrap_or(&0.0);
     let p = add(p, scale3(gen_dir(rng), off));
@@ -1173,7 +1189,7 @@ fn flattened(c: &CurveIn, z0: f64) -> CurveIn {
     }
 }
 
-fn gen_gcs(rng: &mut Rng) -> OpIn {
+fn gen_gcs(k: &Kernel, rng: &mut Rng) -> OpIn {
     let c1 = match rng.below(10) {
         0 => gen_closed_curve(rng),
         1 => gen_looping(rng),
@@ -1184,9 +1200,9 @@ fn gen_gcs(rng: &mut Rng) -> OpIn {
     let t = a + (bb - a) * rng.uniform(0.0, 1.0);
     let c2 = match rng.below(20) {
         0 => None,
-        1..=4 => Some(gen_crossing(rng, &c1, t)),
-        5 | 6 => Some(gen_tangent_line(rng, &c1, t)),
-        7..=10 => Some(gen_partner(rng, &c1)),
+        1..=4 => Some(gen_crossing(k, rng, &c1, t)),
+        5 | 6 => Some(gen_tangent_line(k, rng, &c1, t)),
+        7..=10 => Some(gen_partner(k, rng, &c1)),
         11 => Some(translated(&gen_curve(rng), [30.0, -20.0, 5.0])),
         12 | 13 => Some(CurveIn::Line(gen_line(rng))),
         _ => Some(gen_curve(rng)),
@@ -1217,13 +1233,13 @@ fn gen_gcs(rng: &mut Rng) -> OpIn {
     } else {
         (c1, c2)
     };
-    let near = point_at(&c1, (ivl1[0] + ivl1[1]) / 2.0);
+    let near = point_at(k, &c1, (ivl1[0] + ivl1[1]) / 2.0);
     let target = if sop == 6 {
         // mostly a distance some pair of points of the two curves really has
         if rng.chance(0.8) {
-            let p = point_at(&c1, ivl1[0] + (ivl1[1] - ivl1[0]) * rng.uniform(0.0, 1.0));
+            let p = point_at(k, &c1, ivl1[0] + (ivl1[1] - ivl1[0]) * rng.uniform(0.0, 1.0));
             let other = c2.as_ref().unwrap_or(&c1);
-            let q = point_at(other, ivl2[0] + (ivl2[1] - ivl2[0]) * rng.uniform(0.0, 1.0));
+            let q = point_at(k, other, ivl2[0] + (ivl2[1] - ivl2[0]) * rng.uniform(0.0, 1.0));
             let d = [p[0] - q[0], p[1] - q[1], p[2] - q[2]];
             Some(d.iter().map(|x| x * x).sum::<f64>().sqrt().max(0.05))
         } else {
@@ -1251,7 +1267,7 @@ fn gen_gcs(rng: &mut Rng) -> OpIn {
         (16..=18 | 22, Some(&n)) if rng.chance(0.7) => {
             let t = ivl1[0] + (ivl1[1] - ivl1[0]) * rng.uniform(0.0, 1.0);
             let c = if sop == 22 {
-                gen_tangent_line(rng, &c1, t)
+                gen_tangent_line(k, rng, &c1, t)
             } else {
                 let shifts: &[f64] = if sop == 18 {
                     &[0.0, 0.0, 0.0, 0.3]
@@ -1259,7 +1275,7 @@ fn gen_gcs(rng: &mut Rng) -> OpIn {
                     &[0.0, 0.5, -1.0, 3.0]
                 };
                 let shift = *rng.choose(shifts).unwrap_or(&0.0);
-                translated(&gen_crossing(rng, &c1, t), scale3(n, shift))
+                translated(&gen_crossing(k, rng, &c1, t), scale3(n, shift))
             };
             // mostly the whole second curve, so that it contains the crossing
             let ivl = if rng.chance(0.8) {
@@ -1282,12 +1298,13 @@ fn gen_gcs(rng: &mut Rng) -> OpIn {
         target,
         vecs,
         requested: i32::from(!rng.chance(0.3)),
+        transform1: None,
     }
 }
 
-fn gen_case(rng: &mut Rng) -> OpIn {
+fn gen_case(k: &Kernel, rng: &mut Rng) -> OpIn {
     match rng.below(100) {
-        0..=64 => gen_gcs(rng),
+        0..=64 => gen_gcs(k, rng),
         65..=67 => {
             let c = if rng.chance(0.75) {
                 gen_looping(rng)
@@ -1324,7 +1341,7 @@ fn gen_case(rng: &mut Rng) -> OpIn {
             let c0 = gen_curve(rng);
             let c = if planar { flattened(&c0, z0) } else { c0 };
             let (a, bb) = range_of(&c);
-            let mut p = point_at(&c, a + (bb - a) * rng.uniform(0.0, 1.0));
+            let mut p = point_at(k, &c, a + (bb - a) * rng.uniform(0.0, 1.0));
             if rng.chance(0.2) {
                 p = add(
                     p,
@@ -1365,7 +1382,7 @@ fn gen_case(rng: &mut Rng) -> OpIn {
             let planes = (0..count)
                 .map(|_| {
                     let n = unit(gen_dir(rng));
-                    let on = point_at(&c, a + (bb - a) * rng.uniform(0.0, 1.0));
+                    let on = point_at(k, &c, a + (bb - a) * rng.uniform(0.0, 1.0));
                     let back = *rng.choose(&[0.0, 0.0, 1.0, 50.0, 500.0]).unwrap_or(&50.0);
                     [add(on, scale3(n, -back)), n]
                 })
@@ -1375,18 +1392,69 @@ fn gen_case(rng: &mut Rng) -> OpIn {
     }
 }
 
+/// Cases whose C++ result depends on an uninitialised Jacobian (UB-204, #94): the generator
+/// keeps them away from the C++ side, like an input the FFI guard rejects.
+///
+/// `SM_SO_3D_SIGNED_DIRECTED_MINIMIZE` (9) runs `SmCurve::LocalCurveIntersect` on the two projected
+/// curves. When a Newton step ends at a Hermite end whose tangent has zero length (`d2` at
+/// `t = 1`, `d1` at `t = 0`) while the other curve passes within 0.1 of that end (the
+/// `gap^2 < 0.01` test of `SmCCIntersectENFO::Evaluate`), upstream calls
+/// `SmCCTangentIntENFO::StaticEvaluate`, which fails before it writes the Jacobian, and the
+/// solver goes on with whatever the stack held. Rust's `Matrix::new` zeroes it instead, so the two
+/// sides cannot agree. In the default 30,093 cases this is 4 cases (`gen21507` and 3 pairs
+/// that touch exactly at that end and agree anyway); the other 38 with a zero end tangent are 0.5 or more apart.
+fn reads_uninitialised_jacobian(k: &Kernel, op: &OpIn) -> bool {
+    let OpIn::Gcs {
+        c1,
+        ivl1,
+        c2,
+        ivl2,
+        sop: 9,
+        ..
+    } = op
+    else {
+        return false;
+    };
+    let other_curve = c2.as_ref().unwrap_or(c1);
+    [(c1, ivl1, other_curve, ivl2), (other_curve, ivl2, c1, ivl1)]
+        .into_iter()
+        .any(|(c, ivl, other, other_ivl)| {
+            let CurveIn::Hermite(h) = c else { return false };
+            let end = if h.d2 == [0.0; 3] && ivl[1] >= 1.0 {
+                1.0
+            } else if h.d1 == [0.0; 3] && ivl[0] <= 0.0 {
+                0.0
+            } else {
+                return false;
+            };
+            let e = point_at(k, c, end);
+            (0..=64).any(|i| {
+                let q = point_at(
+                    k,
+                    other,
+                    other_ivl[0] + (other_ivl[1] - other_ivl[0]) * f64::from(i) / 64.0,
+                );
+                (e[0] - q[0]).powi(2) + (e[1] - q[1]).powi(2) + (e[2] - q[2]).powi(2) < 0.01
+            })
+        })
+}
+
 impl UnitDiff for Runner {
     fn id(&self) -> &'static str {
         "curve.curve_p9"
     }
 
     fn generate(&self, rng: &mut Rng) -> Option<Value> {
+        let k = &Kernel::default();
         for _ in 0..64 {
-            let op = gen_case(rng);
+            let op = gen_case(k, rng);
             let Ok((code, input)) = cpp_input(&op) else {
                 continue;
             };
             if ffi::validate(code, &input).is_err() {
+                continue;
+            }
+            if reads_uninitialised_jacobian(k, &op) {
                 continue;
             }
             return serde_json::to_value(op).ok();
@@ -1407,7 +1475,12 @@ impl UnitDiff for Runner {
     }
 
     fn run_rust(&self, case: &Case) -> Result<Output, HarnessError> {
-        rust(&case.parse()?)
+        let op = case.parse()?;
+        // Run only what the FFI accepts, as the C++ side: its guards refuse inputs
+        // upstream (and the faithful port) never finish on (fuzz Rust-side hangs).
+        let (code, input) = cpp_input(&op)?;
+        ffi::validate(code, &input).map_err(|e| HarnessError::new(e.to_string()))?;
+        rust(&op)
     }
 }
 
@@ -1415,13 +1488,57 @@ impl UnitDiff for Runner {
 mod tests {
     use super::*;
 
+    /// The corpus case `name` of `tests/fuzz_corpus/curve.curve_p9.json`, run on the
+    /// Rust side only (as the library would be called; the runner refuses it first).
+    fn corpus_rust(name: &str) -> Output {
+        let corpus: Value = serde_json::from_str(include_str!(
+            "../../tests/fuzz_corpus/curve.curve_p9.json"
+        ))
+        .unwrap();
+        let case = corpus["cases"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|c| c["name"] == name)
+            .unwrap();
+        let op: OpIn = serde_json::from_value(case["inputs"].clone()).unwrap();
+        rust(&op).unwrap()
+    }
+
+    #[test]
+    fn infinite_tangents_stop_scaling() {
+        // fuzz00144 / fuzz01222: the FFI refuses their `-1.8e308` weights; run
+        // directly, `FindPcExtremaEfo::evaluate` divided an infinite tangent by ten
+        // forever (issue #504). It now fails past `MAX_PC_SCALE_STEPS`, and the end
+        // solve treats that as no answer.
+        for name in ["fuzz00144_rust_hang", "fuzz01222_rust_hang"] {
+            let out = corpus_rust(name);
+            assert_eq!(out.ints["status"], vec![0], "{name}: {out:?}");
+            assert_eq!(out.values["out"], vec![0.0], "{name}: {out:?}");
+        }
+    }
+
+    #[test]
+    fn unculled_solves_stop_at_the_branch_bound() {
+        // fuzz01043: boxes of `-1.8e308` weights cull nothing, so the global solve
+        // visited branches for minutes (issue #504). It now stops past
+        // `MAX_SOLVE_BRANCHES` (`2^23`); `GlobalCurveSolve` ignores the solve's status
+        // (as upstream) and keeps the 139 solutions found by then (20 under the old
+        // `2^20`). It takes about 14 s in the difftest profile, the optimised build CI
+        // runs the unit runners in (`--profile difftest --features cpp`).
+        let out = corpus_rust("fuzz01043_rust_hang");
+        assert_eq!(out.ints["status"], vec![0], "{out:?}");
+        assert_eq!(out.values["out"].first(), Some(&139.0), "{out:?}");
+    }
+
     /// Generated cases mostly run (pass or defer), not harness errors.
     #[test]
     fn generated_cases_run() {
+        let k = &Kernel::default();
         let mut rng = Rng::new(7);
         let mut stats = [0usize; 4];
         for _ in 0..200 {
-            let op = gen_case(&mut rng);
+            let op = gen_case(k, &mut rng);
             stats[0] += 1;
             match rust(&op) {
                 Err(_) => stats[3] += 1,

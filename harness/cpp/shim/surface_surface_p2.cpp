@@ -15,7 +15,9 @@
 // One entry point, sc_surface_surface_p2_eval(op, in, n_in, out, cap, out_len). Layouts are
 // documented in crates/solidcore-ffi/src/units/surface_surface_p2.rs, which validates every
 // input. The input starts with a surface block `ctor` (0: none, static op; 1: SmSurface();
-// 2: SmBSplineSurface(gw_SURFACE*, FALSE, NULL) from `oob form n m p q r s cpts(x y z w) u v`).
+// 2: SmBSplineSurface(gw_SURFACE*, FALSE, NULL) from `oob form n m p q r s cpts(x y z w) u v`;
+// 3: a canonical SmTorus or SmCone written with WriteToDB to an ASCII stream, its planar
+// generator flag optionally cleared in the record, and read back with SmSurface::ReadFromDB).
 // `out` receives the op status (0 = SM_SUCCESS, else the SmStatus value) and the op's outputs.
 #include "sc_shim.h"
 
@@ -24,6 +26,7 @@
 #include <SmAxis2Placement.h>
 #include <SmBSplineCurve.h>
 #include <SmBSplineSurface.h>
+#include <SmCone.h>
 #include <SmContext.h>
 #include <SmCurve.h>
 #include <SmCurveCache.h>
@@ -40,6 +43,7 @@
 #include <SmSurface.h>
 #include <SmSurfaceCache.h>
 #include <SmTArray.h>
+#include <SmTorus.h>
 #include <SmTree.h>
 #include <SmVector2d.h>
 #include <SmVector3d.h>
@@ -699,6 +703,7 @@ enum : int32_t
     CT_NONE = 0,
     CT_BASE = 1,
     CT_BSPLINE = 2,
+    CT_REVOLUTION = 3,
 };
 
 struct Peek : SmBSplineSurface
@@ -1204,12 +1209,56 @@ void surface_op(int32_t op, Rd& rd, const SmContext& ctx, SmSurface* s, std::vec
         SmExtent2d d = rd.domain();
         SmBSplineSurface* other = read_bspline(rd, ctx);
         SmExtent2d d2 = rd.domain();
+        bool has_tol = rd.flag();
+        SmApproxTol3d tol = rd.num();
+        bool has_move = rd.flag();
+        SmVector3d move = rd.vec();
+        // prog_test my_test_one_ssi: both B-reps translated by the same vector first
+        if (has_move)
+        {
+            SmAxis2Placement ax;
+            ax.Translate(move);
+            SmStatus ts = s->Transform(ax, NULL);
+            if (ts == SM_SUCCESS)
+                ts = other->Transform(ax, NULL);
+            if (ts != SM_SUCCESS)
+            {
+                o.push_back(st(ts));
+                delete other;
+                break;
+            }
+        }
+        // all outputs requested, as smTopoTest my_test_ssi does
         SmBoolean edges[2] = {TRUE, TRUE};
         SmTArray<SmCurve*> c3, c1, c2;
-        SmStatus stt =
-            s->GlobalSurfaceIntersect(ctx, d, *other, d2, edges, NULL, NULL, &c3, &c1, &c2, NULL, NULL);
+        SmTArray<SmTsectCurveType> types;
+        SmTArray<double> devs;
+        SmStatus stt = s->GlobalSurfaceIntersect(ctx, d, *other, d2, edges, has_tol ? &tol : NULL,
+                                                 NULL, &c3, &c1, &c2, &types, &devs);
         o.push_back(st(stt));
-        o.push_back((double)c3.GetSize());
+        // on success: `n`, `same` (the output arrays agree in length) and per curve: 3D
+        // curve, UV curve on this, UV curve on other (each `GetType()`, `0` when null, then
+        // `put_curve` for a B-spline), type, deviation
+        if (stt == SM_SUCCESS)
+        {
+            ULONG n = c3.GetSize();
+            o.push_back((double)n);
+            bool same = c1.GetSize() == n && c2.GetSize() == n && types.GetSize() == n &&
+                        devs.GetSize() == n;
+            o.push_back(flg(same));
+            for (ULONG i = 0; same && i < n; i++)
+            {
+                const SmCurve* cs[3] = {c3[i], c1[i], c2[i]};
+                for (const SmCurve* c : cs)
+                {
+                    o.push_back(c != NULL ? (double)c->GetType() : 0.0);
+                    if (c != NULL && c->IsKindOf(SmBSplineCurve_TYPE))
+                        put_curve(o, (const SmBSplineCurve*)c);
+                }
+                o.push_back((double)types[i]);
+                o.push_back(devs[i]);
+            }
+        }
         for (ULONG i = 0; i < c3.GetSize(); i++)
             delete c3[i];
         for (ULONG i = 0; i < c1.GetSize(); i++)
@@ -1714,6 +1763,86 @@ void static_op(int32_t op, Rd& rd, SmContext& ctx, std::vector<double>& o)
 }
 } // namespace
 
+// The planar generator flag line of an ASCII SmSurfOfRevolution record (its value first).
+const char* const PLANAR_LINE = "1 SmSurfOfRevolution Planar Generator Curve";
+
+// A revolution record block `kind O X Y a b c swap inside non_planar`: SmTorus::CreateCanonical
+// (kind 0: major a, minor b) or SmCone::CreateCanonical (kind 1: bot a, top b, height c),
+// WriteToDB to an ASCII stream, the planar generator flag cleared in the record when
+// non_planar is set (the way SmTorus/SmCone::ReadFromDB get a non-planar generator), then
+// SmSurface::ReadFromDB. On failure writes the status and returns NULL.
+static SmSurface* read_revolution(Rd& rd, const SmContext& ctx, std::vector<double>& o)
+{
+    int64_t kind = rd.idx();
+    SmPoint3d org = rd.vec();
+    SmVector3d x = rd.vec();
+    SmVector3d y = rd.vec();
+    double a = rd.num();
+    double b = rd.num();
+    double c = rd.num();
+    SmBoolean swap = rd.flag() ? TRUE : FALSE;
+    SmBoolean inside = rd.flag() ? TRUE : FALSE;
+    bool non_planar = rd.flag();
+    SmAxis2Placement a2p(org, x, y);
+    SmSurface* made = NULL;
+    SM_TYPE type = SmTorus_TYPE;
+    SmStatus stt = SM_SUCCESS;
+    if (kind == 0)
+    {
+        SmTorus* t = NULL;
+        stt = SmTorus::CreateCanonical(ctx, a2p, a, b, t, swap, inside);
+        made = t;
+    }
+    else
+    {
+        SmCone* cn = NULL;
+        stt = SmCone::CreateCanonical(ctx, a2p, a, b, c, cn, swap, inside);
+        made = cn;
+        type = SmCone_TYPE;
+    }
+    if (stt != SM_SUCCESS || made == NULL)
+    {
+        o.push_back(st(stt == SM_SUCCESS ? SM_ERR : stt));
+        delete made;
+        return NULL;
+    }
+    // the format SmDatabaseIOFile::OpenFileForWrite sets for an ASCII file (a stream the
+    // caller passes in keeps the stream's own 6-digit default)
+    std::ostringstream oss;
+    oss.setf(std::ios::fixed);
+    oss.precision(16);
+    SmDatabaseIOStream writer(SM_ASCII, &oss);
+    stt = made->WriteToDB(writer, 30);
+    delete made;
+    if (stt != SM_SUCCESS)
+    {
+        o.push_back(st(stt));
+        return NULL;
+    }
+    std::string text = oss.str();
+    if (non_planar)
+    {
+        size_t at = text.find(PLANAR_LINE);
+        if (at == std::string::npos)
+        {
+            o.push_back((double)SC_ERR_ARG);
+            return NULL;
+        }
+        text[at] = '0';
+    }
+    std::istringstream iss(text);
+    SmDatabaseIOStream reader(SM_ASCII, &iss);
+    SmSurface* s = NULL;
+    stt = SmSurface::ReadFromDB(type, reader, ctx, s, 30);
+    if (stt != SM_SUCCESS || s == NULL)
+    {
+        o.push_back(st(stt == SM_SUCCESS ? SM_ERR : stt));
+        delete s;
+        return NULL;
+    }
+    return s;
+}
+
 SC_EXPORT int32_t sc_surface_surface_p2_eval(int32_t op, const double* in, int64_t n_in, double* out,
                                              int64_t cap, int64_t* out_len)
 {
@@ -1734,6 +1863,12 @@ SC_EXPORT int32_t sc_surface_surface_p2_eval(int32_t op, const double* in, int64
             s = new (ctx) SmSurface();
         else if (ctor == CT_BSPLINE)
             s = read_bspline(rd, ctx);
+        else if (ctor == CT_REVOLUTION)
+        {
+            s = read_revolution(rd, ctx, o);
+            if (s == NULL)
+                return sc_copy_out(o.data(), (int64_t)o.size(), out, cap, out_len);
+        }
         else
             return SC_ERR_ARG;
         surface_op(op, rd, ctx, s, o);

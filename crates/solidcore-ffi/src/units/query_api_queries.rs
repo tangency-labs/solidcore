@@ -35,7 +35,7 @@ mod sys {
 pub fn eval(op: i32, input: &[f64]) -> Result<Vec<f64>, FfiError> {
     let bad = || FfiError::InvalidArgument("query.api_queries layout or construction range".into());
     if (input.len() != 22 && !(input.len() == 26 && matches!(op, 7 | 8)))
-        || !(0..=26).contains(&op)
+        || !(0..=27).contains(&op)
         || input.iter().any(|x| !x.is_finite() || x.abs() > 1e12)
     {
         return Err(bad());
@@ -45,7 +45,7 @@ pub fn eval(op: i32, input: &[f64]) -> Result<Vec<f64>, FfiError> {
         .ok_or_else(bad)?
         .try_into()
         .map_err(|_| bad())?;
-    if !(0.0..=13.0).contains(&a[21])
+    if !(0.0..=16.0).contains(&a[21])
         || a[21].fract() != 0.0
         || a[6] <= 1e-10
         || a[6] > 1e6
@@ -75,9 +75,18 @@ pub fn eval(op: i32, input: &[f64]) -> Result<Vec<f64>, FfiError> {
     {
         return Err(bad());
     }
+    // Building the B-rep of a rational sphere (kind 9) of radius about 1e-5 .. 1e-4
+    // does not return in upstream (the face's `SmSurface::LocalCurveIntersect` ->
+    // `SmLocalSolveNd::SolveIt` inside `SmGlobalSolver::SolveBranch`, shape-dependent:
+    // 1e-6 and 1e-3 return), so B-rep ops (all but 3) need a radius of at least 1e-3
+    // (the fixtures use 1).
+    if kind == 9 && op != 3 && a[6] < 1e-3 {
+        return Err(bad());
+    }
     if (op == 1 || op == 2) && !is_curve
         || op == 3 && !matches!(kind, 4 | 5 | 8 | 9 | 13)
         || kind == 13 && op != 3
+        || (14..=16).contains(&kind) && op != 27
     {
         return Err(bad());
     }

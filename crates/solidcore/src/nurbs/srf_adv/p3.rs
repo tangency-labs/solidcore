@@ -19,7 +19,13 @@
 //!   point and normal grids) instead of filling caller-provided ones. Upstream's
 //!   in-place mode of `N_SrfExtendByParamDist` (`surP == surQ`) computes the same
 //!   result into fresh arrays, so a caller replaces its surface with the returned one.
-//!   The `NL_STACKS` arguments have no counterpart and allocation cannot fail.
+//!   The `NL_STACKS` arguments have no counterpart; Rust owns the allocations.
+//! - Grid points and normals have a local aggregate requested-storage limit of
+//!   [`crate::limits::MAX_ALLOC_BYTES`], including both grids' row-vector metadata.
+//!   Overflow, excess and failed output reservations return `NL_MEM_ERR`. This is
+//!   stronger than upstream's allocation policy and excludes allocator overhead,
+//!   basis arrays, control-point copies and other workspace; those existing
+//!   allocations are not all fallible.
 //! - Errors are [`SolidError::Nlib`] values with the upstream `NL_*_ERR` number
 //!   instead of a flag plus the global `NL_ERROR` record. `N_CreateSkinSrf` builds the
 //!   surface before it reports invalid weights (`NL_WEI_ERR`); [`create_skin_srf`]
@@ -48,6 +54,10 @@
 //!   arrays (invalid knot vectors, incompatible cross sections with `cmp == NL_NO`,
 //!   extension parameters on the wrong side of the domain, ...) the functions return
 //!   [`SolidError::InvalidInput`].
+//! - Scratch and output nets that cannot be allocated are `NL_MEM_ERR` (upstream's
+//!   failed `N_Alloc*`); index arithmetic on a degree that overflows (`p + 1`,
+//!   `ns + p + 1` for a degree near `isize::MAX`, where upstream's signed overflow is
+//!   undefined) is `InvalidInput`.
 
 use crate::error::{NlibCode, Result, SolidError};
 use crate::math::Vec3;
@@ -99,10 +109,11 @@ fn s2<T>(w: &mut [Vec<T>], i: isize, j: isize, x: T, op: &'static str) -> Result
 }
 
 /// A zero-filled `(n+1) x (m+1)` array (upstream allocates uninitialised storage).
+/// `NL_MEM_ERR` where it cannot be allocated.
 fn net<T: Clone + Default>(n: isize, m: isize, op: &'static str) -> Result<Vec<Vec<T>>> {
-    let row: Vec<T> = storage(m, op)?;
+    let cols = ux(m, op)?.checked_add(1).ok_or_else(|| oob(op))?;
     let rows = ux(n, op)?.checked_add(1).ok_or_else(|| oob(op))?;
-    Ok(vec![row; rows])
+    super::grid(rows, cols, T::default(), op)
 }
 
 /// `v[i]` for a `usize` index.
@@ -111,6 +122,35 @@ fn at<T: Copy>(v: &[T], i: usize, op: &'static str) -> Result<T> {
 }
 
 // ---- N_SrfGetGridPtsNormals ---------------------------------------------------------
+
+/// Requested storage for both grids, including their row-vector metadata only.
+fn grid_output_bytes(rows: usize, cols: usize) -> Option<usize> {
+    let payload = rows.checked_mul(cols)?.checked_mul(size_of::<Vec3>())?;
+    let metadata = rows.checked_mul(size_of::<Vec<Vec3>>())?;
+    payload.checked_add(metadata)?.checked_mul(2)
+}
+
+/// The local aggregate output policy admits equality, but not overflow.
+fn admit_grid_output(bytes: Option<usize>) -> Result<()> {
+    match bytes {
+        Some(bytes) if bytes <= crate::limits::MAX_ALLOC_BYTES => Ok(()),
+        _ => Err(SolidError::nlib(OP_GRID, NlibCode::Memory)),
+    }
+}
+
+/// Reserve every output allocation before filling it; never clone populated rows.
+fn grid_output(rows: usize, cols: usize) -> Result<Vec<Vec<Vec3>>> {
+    let memory = || SolidError::nlib(OP_GRID, NlibCode::Memory);
+    let mut grid = Vec::new();
+    grid.try_reserve_exact(rows).map_err(|_| memory())?;
+    for _ in 0..rows {
+        let mut row = Vec::new();
+        row.try_reserve_exact(cols).map_err(|_| memory())?;
+        row.resize(cols, Vec3::ZERO);
+        grid.push(row);
+    }
+    Ok(grid)
+}
 
 /// Result of [`grid_pts_normals`]: `points[a][b]` and unit `normals[a][b]` at
 /// `(u[a], v[b])`.
@@ -133,6 +173,11 @@ pub struct GridPtsNormals {
 /// [`NlibCode::Index`] for an empty `u` or `v`; [`NlibCode::Parameter`] when
 /// `u[0] < U[0]`, `u[last] > U[r]` (or the same in v); errors of
 /// [`basis_derivs_array`] and [`Surface::eval_pt_normal_at_pole`].
+/// [`NlibCode::Memory`] if the two output grids' aggregate requested storage,
+/// including row-vector metadata, overflows or exceeds
+/// [`crate::limits::MAX_ALLOC_BYTES`], or an output reservation fails. This local
+/// budget excludes allocator overhead and other workspace and is checked after
+/// basis evaluation and control-point preparation.
 pub fn grid_pts_normals(
     sur: &Surface,
     u: &[f64],
@@ -179,8 +224,9 @@ pub fn grid_pts_normals(
         Vec::new()
     };
 
-    let mut points = vec![vec![Vec3::ZERO; mv + 1]; mu + 1];
-    let mut normals = vec![vec![Vec3::ZERO; mv + 1]; mu + 1];
+    admit_grid_output(grid_output_bytes(u.len(), v.len()))?;
+    let mut points = grid_output(u.len(), v.len())?;
+    let mut normals = grid_output(u.len(), v.len())?;
 
     // Compute grid of points and normals.
     for a in 0..=mu {
@@ -399,7 +445,7 @@ fn extend_rec(
     };
     let mut d1 = f64::MAX;
     let mut jj: isize = 0;
-    for ii in (p + 1)..(r - p) {
+    for ii in p.checked_add(1).ok_or_else(|| oob(OP))?..(r - p) {
         let x = get(&up, ii, OP)?;
         if (uu - x).abs() < d1 {
             d1 = (uu - x).abs();
@@ -1242,7 +1288,10 @@ pub fn create_skin_srf(
     };
 
     // Compute surface control points (rows of the skinning direction).
-    let rs = ns + ps + 1;
+    let rs = ns
+        .checked_add(ps)
+        .and_then(|x| x.checked_add(1))
+        .ok_or_else(|| oob(OP))?;
     let kn_s: Vec<f64>;
     let knt: Option<Vec<f64>>;
     if let Some(uc) = &skc {
@@ -1252,7 +1301,7 @@ pub fn create_skin_srf(
         knt = None;
         kn_s = interp_knot_vector(&sk, deg)?;
     }
-    if sx(kn_s.len(), OP)? != rs + 1 {
+    if sx(kn_s.len(), OP)? - 1 != rs {
         return Err(oob(OP));
     }
     let kv_s = KnotVector::from_slice(&kn_s)?;
@@ -1335,7 +1384,11 @@ mod tests {
             let u = [0.0, 0.3, 0.5, 1.0];
             let v = [0.0, 0.25, 1.0];
             let g = grid_pts_normals(&s, &u, &v, Side::Left, Side::Left).unwrap();
+            assert_eq!(g.points.len(), u.len());
+            assert_eq!(g.normals.len(), u.len());
             for (a, &uu) in u.iter().enumerate() {
+                assert_eq!(g.points[a].len(), v.len());
+                assert_eq!(g.normals[a].len(), v.len());
                 for (b, &vv) in v.iter().enumerate() {
                     let p = s.eval(uu, vv, Side::Left, Side::Left).unwrap();
                     assert!((g.points[a][b] - p).length() < 1e-12);
@@ -1348,9 +1401,116 @@ mod tests {
     #[test]
     fn grid_rejects_bad_params() {
         let s = plane_srf(false);
-        assert!(grid_pts_normals(&s, &[], &[0.0], Side::Left, Side::Left).is_err());
-        assert!(grid_pts_normals(&s, &[-0.1], &[0.0], Side::Left, Side::Left).is_err());
-        assert!(grid_pts_normals(&s, &[0.0], &[1.5], Side::Left, Side::Left).is_err());
+        for (u, v) in [
+            (&[][..], &[0.0][..]),
+            (&[0.0][..], &[][..]),
+            (&[][..], &[][..]),
+            (&[][..], &[1.5][..]),
+            (&[-0.1][..], &[][..]),
+        ] {
+            assert_eq!(
+                grid_pts_normals(&s, u, v, Side::Left, Side::Left).unwrap_err(),
+                SolidError::nlib(OP_GRID, NlibCode::Index)
+            );
+        }
+        for (u, v) in [
+            (&[-0.1][..], &[0.0][..]),
+            (&[1.5][..], &[0.0][..]),
+            (&[0.0][..], &[-0.1][..]),
+            (&[0.0][..], &[1.5][..]),
+            (&[-0.1][..], &[1.5][..]),
+            (&[-0.1][..], &[0.0, 1.0, 1.0][..]),
+        ] {
+            assert_eq!(
+                grid_pts_normals(&s, u, v, Side::Left, Side::Left).unwrap_err(),
+                SolidError::nlib(OP_GRID, NlibCode::Parameter)
+            );
+        }
+    }
+
+    #[test]
+    fn grid_output_budget_boundaries_and_overflow() {
+        let limit = crate::limits::MAX_ALLOC_BYTES;
+        let point = size_of::<Vec3>();
+        let row = size_of::<Vec<Vec3>>();
+        assert_eq!(grid_output_bytes(4, 3), Some(2 * (4 * 3 * point + 4 * row)));
+        assert_ne!(grid_output_bytes(4, 3), grid_output_bytes(3, 4));
+        let cols = (limit / 2 - row) / point;
+        assert!(admit_grid_output(grid_output_bytes(1, cols)).is_ok());
+        let memory = SolidError::nlib(OP_GRID, NlibCode::Memory);
+        assert_eq!(
+            admit_grid_output(grid_output_bytes(1, cols + 1)),
+            Err(memory.clone())
+        );
+        assert!(admit_grid_output(Some(limit)).is_ok());
+        assert_eq!(admit_grid_output(Some(limit + 1)), Err(memory.clone()));
+        // Cell product, payload, metadata, sum, and final doubling overflow.
+        for (rows, cols) in [
+            (usize::MAX, 2),
+            (1, usize::MAX / point + 1),
+            (usize::MAX / row + 1, 0),
+            (1, usize::MAX / point),
+            (1, usize::MAX / point / 2 + 1),
+            (usize::MAX, usize::MAX),
+        ] {
+            assert_eq!(grid_output_bytes(rows, cols), None, "{rows} x {cols}");
+            assert_eq!(
+                admit_grid_output(grid_output_bytes(rows, cols)),
+                Err(memory.clone())
+            );
+        }
+    }
+
+    #[test]
+    fn grid_preserves_basis_error_precedence() {
+        let s = plane_srf(false);
+        let (ku, kv) = s.knot_vectors().unwrap();
+        let bad_u = [0.0, 1.0, 1.0];
+        let bad_v = [0.25, 1.0, 1.0];
+        let eu = basis_derivs_array(&ku, s.indices().p, &bad_u, Side::Left, 1).unwrap_err();
+        let ev = basis_derivs_array(&kv, s.indices().q, &bad_v, Side::Left, 1).unwrap_err();
+        for (u, v, error) in [
+            (&bad_u[..], &[0.25][..], &eu),
+            (&[0.25][..], &bad_v[..], &ev),
+            (&bad_u[..], &bad_v[..], &eu),
+        ] {
+            assert_eq!(
+                grid_pts_normals(&s, u, v, Side::Left, Side::Left).unwrap_err(),
+                *error
+            );
+        }
+    }
+
+    /// Small inputs and linear basis workspace only: the output guard must be in
+    /// place before this regression is run. Never run against the old allocator.
+    #[test]
+    fn grid_rejects_moderate_over_budget_output_after_basis() {
+        let mut dim = 1usize;
+        while admit_grid_output(grid_output_bytes(dim, dim)).is_ok() {
+            dim += 1;
+        }
+        assert!(admit_grid_output(grid_output_bytes(dim - 1, dim - 1)).is_ok());
+        assert!(dim < 10_000, "keep the parameter/basis inputs bounded");
+        let valid: Vec<f64> = (0..dim).map(|i| (i as f64 + 0.5) / dim as f64).collect();
+        let s = plane_srf(false);
+        assert_eq!(
+            grid_pts_normals(&s, &valid, &valid, Side::Left, Side::Left).unwrap_err(),
+            SolidError::nlib(OP_GRID, NlibCode::Memory)
+        );
+        // A basis-invalid inner domain endpoint wins over the output budget in
+        // either direction, and the u basis still runs first when both fail.
+        let mut bad = valid.clone();
+        bad[dim - 2] = 1.0;
+        bad[dim - 1] = 1.0;
+        let (ku, kv) = s.knot_vectors().unwrap();
+        let eu = basis_derivs_array(&ku, s.indices().p, &bad, Side::Left, 1).unwrap_err();
+        let ev = basis_derivs_array(&kv, s.indices().q, &bad, Side::Left, 1).unwrap_err();
+        for (u, v, error) in [(&bad, &valid, &eu), (&valid, &bad, &ev), (&bad, &bad, &eu)] {
+            assert_eq!(
+                grid_pts_normals(&s, u, v, Side::Left, Side::Left).unwrap_err(),
+                *error
+            );
+        }
     }
 
     #[test]
@@ -1439,5 +1599,36 @@ mod tests {
         assert!(create_skin_srf(&mut cs, false, false, 2, Direction::UV, 0.0).is_err());
         let mut one = vec![cs[0].clone()];
         assert!(create_skin_srf(&mut one, false, true, 2, Direction::U, 0.0).is_err());
+    }
+
+    #[test]
+    fn absurd_degrees_are_errors() {
+        // fuzz (nlib.srf_adv_p3 fuzz00356, fuzz00379): degrees of i64::MAX overflowed
+        // the extension's knot loop and the skin's knot count.
+        let s = plane_srf(false);
+        let (u, v) = (s.u_knots().to_vec(), s.v_knots().to_vec());
+        let bad = Surface::new(s.cpts(), s.p(), i64::MAX as usize, u, v).unwrap();
+        assert!(extend_by_param_dist(
+            &bad,
+            1.2,
+            Direction::V,
+            CurveEnd::End,
+            ExtendContinuity::Cmax
+        )
+        .is_err());
+        let mut cs: Vec<Curve> = (0..3)
+            .map(|i| {
+                let z = f64::from(i);
+                line([0.0, 0.0, z], [1.0, 0.0, z], NOW)
+            })
+            .collect();
+        assert!(
+            create_skin_srf(&mut cs, false, false, i64::MAX as usize, Direction::V, 0.0).is_err()
+        );
+        // Byte counts past isize::MAX, so the reservation fails on every target; sizes
+        // the OS merely cannot back (2^40 x 2^40) are granted lazily on macOS and the
+        // zero fill then commits terabytes.
+        assert!(net::<f64>(1 << 61, 0, "t").is_err());
+        assert!(net::<f64>(0, 1 << 61, "t").is_err());
     }
 }

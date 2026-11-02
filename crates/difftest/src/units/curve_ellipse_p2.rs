@@ -314,7 +314,7 @@ fn b(x: bool) -> f64 {
 /// cannot return.
 fn status(e: &SolidError) -> f64 {
     match e {
-        SolidError::InvalidInput { .. } => 1007.0,
+        SolidError::InvalidInput { .. } | SolidError::PortInvariant { .. } => 1007.0,
         SolidError::Upstream { code, .. } => f64::from(*code),
         _ => -1.0,
     }
@@ -503,14 +503,14 @@ fn run_op(k: &Kernel, a: &mut Ellipse, op: &OpJ, o: &mut Vec<f64>) -> Result<(),
             }
         }
         OpJ::ToNurbs { t } => {
-            if let Some(r) = st(o, a.convert_t_from_step_to_nurbs(*t))? {
+            if let Some(r) = st(o, a.convert_t_from_step_to_nurbs(k, *t))? {
                 o.push(r);
             }
         }
         OpJ::PolarToNurbs { t, zone_tol } => {
             let r = a
                 .polar_converter()
-                .convert_to_nurbs_parameter(a, *t, *zone_tol);
+                .convert_to_nurbs_parameter(k, a, *t, *zone_tol);
             if let Some((r, exact)) = st(o, r)? {
                 o.extend([r, b(exact)]);
             }
@@ -555,7 +555,7 @@ fn run_op(k: &Kernel, a: &mut Ellipse, op: &OpJ, o: &mut Vec<f64>) -> Result<(),
                 SolutionRequested::All
             };
             let r = a.drop_point_fast::<i64>(
-                &i,
+                k, &i,
                 sop,
                 v3(*p),
                 in_vec.map(v3),
@@ -786,7 +786,7 @@ fn near_point(rng: &mut Rng, e: &EllipseJ) -> [f64; 3] {
         let t = rng.uniform(e.domain[0] - 30.0, e.domain[1] + 30.0);
         el.evaluate_step_point(t).ok()
     })
-    .unwrap_or(Vec3::from_array(e.c));
+    .unwrap_or_else(|| Vec3::from_array(e.c));
     let s = *rng.choose(&[0.0, 1e-9, 1e-6, 1e-3, 0.5, 3.0]).unwrap_or(&0.0);
     let d = rng.point3(-1.0, 1.0);
     let mut p = [base.x + s * d[0], base.y + s * d[1], base.z + s * d[2]];

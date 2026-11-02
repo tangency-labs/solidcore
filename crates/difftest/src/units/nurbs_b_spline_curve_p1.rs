@@ -299,41 +299,13 @@ impl OpIn {
     }
 }
 
-/// Whitespace-separated numbers of an upstream text file.
-fn numbers(path: &str) -> Result<Vec<f64>, HarnessError> {
-    let text = std::fs::read_to_string(path).map_err(|e| harness(format!("{path}: {e}")))?;
-    text.split_whitespace()
-        .map(|t| t.parse::<f64>().map_err(|e| harness(format!("{path}: {e}"))))
-        .collect()
-}
-
-fn int(path: &str, v: f64) -> Result<usize, HarnessError> {
-    if v.fract() != 0.0 || v < 0.0 {
-        return Err(harness(format!("{path}: bad count {v}")));
-    }
-    Ok(v as usize)
-}
-
-/// Reads an upstream `.smc` text file (as `N_CrvReadFromFilePtr`, without its
-/// validity check and pruning): `n`, `p`, rational flag, dimension, `n+1` points
-/// (`x y [z]`, or `wx wy [wz] w` when rational), `n+p+2` knots.
 fn read_smc(path: &str) -> Result<InlineCrv, HarnessError> {
-    let v = numbers(path)?;
-    let mut it = v.into_iter();
-    let mut num = || it.next().ok_or_else(|| harness(format!("{path}: truncated")));
-    let n = int(path, num()?)?;
-    let p = int(path, num()?)?;
-    let rat = num()? != 0.0;
-    let dim = int(path, num()?)?;
-    let mut cpts = Vec::with_capacity(n + 1);
-    for _ in 0..=n {
-        let (x, y) = (num()?, num()?);
-        let z = if dim == 3 { num()? } else { NOZ };
-        let w = if rat { num()? } else { NOW };
-        cpts.push([x, y, z, w]);
-    }
-    let u = (0..n + p + 2).map(|_| num()).collect::<Result<Vec<_>, _>>()?;
-    Ok(InlineCrv { cpts, p, u })
+    let c = crate::fixtures::text_curve::read(path)?;
+    Ok(InlineCrv {
+        cpts: c.cpts,
+        p: c.p,
+        u: c.u,
+    })
 }
 
 fn resolve(c: &CrvIn) -> Result<InlineCrv, HarnessError> {
@@ -734,7 +706,7 @@ fn dump_state(o: &mut Vec<f64>, c: &BSplineCurve) {
 /// The `SmStatus` of a Rust error; `-1` for one upstream cannot return.
 fn status(e: &SolidError) -> f64 {
     match e {
-        SolidError::InvalidInput { .. } => 1007.0,
+        SolidError::InvalidInput { .. } | SolidError::PortInvariant { .. } => 1007.0,
         SolidError::Upstream { code, .. } => f64::from(*code),
         _ => -1.0,
     }
@@ -878,7 +850,7 @@ fn rust_static(op: &OpIn, o: &mut Vec<f64>) -> Result<(), Fail> {
 }
 
 /// Runs a curve op on `c`; pushes its outputs (after the status) on success.
-fn rust_curve(op: &OpIn, c: &mut BSplineCurve, o: &mut Vec<f64>) -> Result<(), Fail> {
+fn rust_curve(k: &solidcore::kernel::Kernel, op: &OpIn, c: &mut BSplineCurve, o: &mut Vec<f64>) -> Result<(), Fail> {
     match op {
         OpIn::State | OpIn::Convert2d | OpIn::Convert3d | OpIn::MakeNurb => match op {
             OpIn::Convert2d => c.convert_to_2d()?,
@@ -983,7 +955,7 @@ fn rust_curve(op: &OpIn, c: &mut BSplineCurve, o: &mut Vec<f64>) -> Result<(), F
         OpIn::IsKindOf { t } => o.push(flag(c.is_kind_of(*t)?)),
         OpIn::Type => o.extend([c.type_code() as f64, BSplineCurve::TYPE as f64]),
         OpIn::Continuities { tol } => {
-            let (mn, all) = c.calculate_continuities(*tol)?;
+            let (mn, all) = c.calculate_continuities(k, *tol)?;
             o.push(f64::from(mn as i32));
             o.push(all.len() as f64);
             o.extend(all.iter().map(|&x| f64::from(x as i32)));
@@ -994,7 +966,7 @@ fn rust_curve(op: &OpIn, c: &mut BSplineCurve, o: &mut Vec<f64>) -> Result<(), F
             angle,
             min_segments,
         } => {
-            let t = c.tessellate(&Extent1d::from_min_max(ivl[0], ivl[1]), *chord, *angle, *min_segments)?;
+            let t = c.tessellate(k, &Extent1d::from_min_max(ivl[0], ivl[1]), *chord, *angle, *min_segments)?;
             o.push(t.parameters.len() as f64);
             o.extend_from_slice(&t.parameters);
             o.push(t.points.len() as f64);
@@ -1012,11 +984,11 @@ fn rust_curve(op: &OpIn, c: &mut BSplineCurve, o: &mut Vec<f64>) -> Result<(), F
     Ok(())
 }
 
-fn rust(i: &Inputs) -> Result<Output, HarnessError> {
+fn rust(k: &solidcore::kernel::Kernel, i: &Inputs) -> Result<Output, HarnessError> {
     let mut this = i.this.as_ref().map(build_this).transpose()?;
     let mut o = vec![0.0];
     let res = match this.as_mut() {
-        Some(c) => rust_curve(&i.op, c, &mut o),
+        Some(c) => rust_curve(k, &i.op, c, &mut o),
         None => rust_static(&i.op, &mut o),
     };
     match res {
@@ -1650,6 +1622,7 @@ impl UnitDiff for Runner {
     }
 
     fn run_rust(&self, case: &Case) -> Result<Output, HarnessError> {
-        rust(&case.parse()?)
+        let k = &solidcore::Kernel::default();
+        rust(k, &case.parse()?)
     }
 }

@@ -13,8 +13,10 @@
 //! | [`Grid::voxel_address`]                | `SmGrid::GetVoxelAddress`                        |
 //! | [`Grid::find_voxels_in_box`]           | `SmGrid::FindVoxelsInBox`                        |
 //! | [`Grid::add_element`], [`ElementSource`] | `SmGrid::AddElement`, `SmGridElementType`      |
+//! | [`Grid::add_surface_node`], [`Grid::add_surface_element`] | `SmGrid::AddElement(SM_GE_SURFACE)` (from a tree node; from prepared leaf data) |
 //! | [`Grid::add_hierarchy_element`]        | `SmGrid::AddHierarchyElement`                    |
-//! | [`Grid::expand_hierarchy`]             | `SmSurfaceHierarchyElement::ExpandHierarchy`     |
+//! | [`Grid::expand_hierarchy`], [`Grid::expand_hierarchy_fetched`] | `SmSurfaceHierarchyElement::ExpandHierarchy` |
+//! | [`Grid::expand_hierarchy_with`]        | `SmSurfaceHierarchyElement::ExpandHierarchy` over a caller-held surface cache tree |
 //! | [`Grid::setup_3ddda`]                  | `SmGrid::Setup3DDDA`                             |
 //! | `AxisStep` (private)                   | one axis of `SmGrid::Setup3DDDA`                 |
 //! | [`Grid::step_3ddda`], [`StepHits`]     | `SmGrid::Step3DDDA`                              |
@@ -27,7 +29,9 @@
 //! | `GridElement::polygon` (private)       | `SmPolygonGridElement::Init`                     |
 //! | `GridElement::hierarchy` (private)     | `SmHierarchyGridElement::Init`                   |
 //! | `GridElement::user` (private)          | `SmUserGridElement::Init`                        |
-//! | [`SurfaceGridElement`]                 | `SmSurfaceGridElement` (`Init`: see deviations)  |
+//! | [`SurfaceGridElement`]                 | `SmSurfaceGridElement`                           |
+//! | [`SurfaceGridElement::init`]           | `SmSurfaceGridElement::Init`                     |
+//! | [`SurfaceGridElement::from_leaf_data`] | `SmSurfaceGridElement::Init` after the Bezier patch data (domain, boxes) is known |
 //! | [`HierarchyElement::new`]              | `SmHierarchyElement::SmHierarchyElement`         |
 //! | [`HierarchyElement::new_surface`]      | `SmSurfaceHierarchyElement::SmSurfaceHierarchyElement` |
 //! | `Drop` (implicit)                      | `~SmHierarchyElement`, `~SmSurfaceHierarchyElement` |
@@ -40,18 +44,39 @@
 //!   caller-chosen `Copy` handle `O` (upstream `void*` user data and `SmSurface*`);
 //!   polygon elements hold the [`NodeId`] of their `SmBrepCache` tree node.
 //! - `SmGrid(bbox, lSize)` rejects a zero voxel count (upstream builds a grid its
-//!   destructor then reads out of bounds) and a voxel count whose total overflows.
+//!   destructor then reads out of bounds) and a voxel count whose total overflows;
+//!   a voxel array that cannot be allocated, or would take more than
+//!   [`crate::limits::MAX_ALLOC_BYTES`], is `SM_ERR`, as upstream's failed
+//!   `smos_Calloc` (upstream's own grids are at most `40 x 40 x 20`).
 //! - `AddElement`'s `SM_GE_HIERARCHY` type (a null-pointer crash upstream) cannot be
 //!   expressed: [`ElementSource`] has no such variant.
-//! - Surface elements need the surface subdivision caches, pseudo boxes and polar
-//!   boxes of units not ported yet: `SmSurfaceGridElement::Init` (reached through
-//!   [`Grid::add_element`] with [`ElementSource::Surface`]) and
-//!   `SmSurfaceHierarchyElement::ExpandHierarchy` return [`SolidError::Unported`]
-//!   (see the `UNPORTED` markers). [`SurfaceGridElement`] (co-ported by
-//!   `intersect.ray_tracer`) holds only the data members; [`Grid::add_surface_element`]
-//!   adds a leaf whose data the caller filled in.
-//!   `ExpandHierarchy` on a plain [`HierarchyElement::new`] is upstream's base-class
-//!   "pure virtual" body: `SM_ERR`.
+//! - **Surface elements.** The grid holds surface handles, not surfaces, so the
+//!   operations that need a surface take the surface's `smsurf_GetSurfaceCache`
+//!   cache from the caller: [`Grid::expand_hierarchy`] (`ExpandHierarchy`) and
+//!   [`Grid::add_surface_node`] (`AddElement(SM_GE_SURFACE)`) read the subdivision
+//!   tree and the patch data of a node from it ([`SurfaceGridElement::init`]), and
+//!   the cache is the one the caller keeps for the surface, as upstream's, so polar
+//!   boxes are built once. `ExpandHierarchy` on a cache of another surface is
+//!   [`SolidError::InvalidInput`] (upstream always fetches the cache of
+//!   `m_pSurface`); `Init` on a node that is not a Bezier patch node is too
+//!   (upstream casts it and reads garbage). `SM_GE_SURFACE` is not an
+//!   [`ElementSource`] variant for the same reason (its node needs the cache).
+//!   [`Grid::expand_hierarchy_with`] is the tree-level primitive, with `Init` as a
+//!   caller closure; [`Grid::add_surface_element`] adds a leaf whose data the caller
+//!   made with [`SurfaceGridElement::from_leaf_data`] (the ray tracer's
+//!   `add_leaf`). `ExpandHierarchy` on a plain [`HierarchyElement::new`] is
+//!   upstream's base-class "pure virtual" body: `SM_ERR`, before the cache is
+//!   touched.
+//! - **Statuses of the surface path.** Upstream `Init` is `void` and signals with
+//!   `SE`, then carries on; `ExpandHierarchy` ignores `AddElement`'s status
+//!   (SmGrid.cpp:117) and `AddSurfaceToGrid` ignores `ExpandHierarchy`'s. The port
+//!   propagates a failure: an `Evaluate` that fails even without `non_zero_tangents`
+//!   (see [`SurfaceGridElement::from_leaf_data`], which retries the first attempt
+//!   and keeps the cross product when `EvaluateNormal` fails, as upstream's `SE`
+//!   carries on), and [`SolidError::Unported`].
+//! - `Step3DDDA` returns [`SolidError::InvalidInput`] after more than
+//!   `1 + nx + ny + nz` voxel steps in one call (a walk that advances leaves the grid
+//!   sooner); upstream loops forever when the chosen axis has step 0.
 //! - `GetVoxelAddress` truncates with Rust's saturating `as` cast, so a NaN
 //!   coordinate (a grid with a zero-size axis) gives index 0 instead of undefined
 //!   behaviour. Its status (always `SM_SUCCESS`) is dropped.
@@ -65,7 +90,7 @@
 //!   [`SolidError::InvalidInput`].
 //! - The 3DDDA step/exit increments of an axis the ray does not move along keep
 //!   their previous values (zero for a new grid); upstream leaves them
-//!   uninitialised. Neither is ever read.
+//!   uninitialised. They are read only by a walk that stalls (see the next item).
 //! - `SmHierarchyGridElement`'s sphere centre starts as [`Vec3::UNDEF`] and its box as
 //!   [`Extent3d::new`] (upstream's default constructors).
 //! - `GetMemoryUsed`, the drawing methods and `SmVoxel::m_pGrid` (a back pointer)
@@ -77,8 +102,14 @@ use crate::geom::extent2d::Extent2d;
 use crate::geom::extent3d::{Extent3d, LineHit};
 use crate::geom::polar_box::PolarBox;
 use crate::geom::pseudo_box::PseudoBox;
-use crate::geom::tree::NodeId;
+use crate::geom::tree::{AuxDataType, NodeClass, NodeData, NodeId, Tree};
+use crate::kernel::Kernel;
+use crate::limits::try_filled;
 use crate::math::{Point3, Vec3, BIG_DOUBLE, EFF_ZERO, EFF_ZERO_SQRT};
+use crate::nurbs::b_spline_surface_n_lib::p2::EvaluateFlags;
+use crate::nurbs::knots::Side;
+use crate::surface::surface::Surface;
+use crate::surface::surface_cache::SurfaceCache;
 
 /// `SmGridElement_TYPE` (`CONT_BASE_TYPE + 155`).
 pub const GRID_ELEMENT_TYPE: i64 = 12155;
@@ -105,12 +136,8 @@ pub type VoxelAddress = [usize; 3];
 
 /// The cached data of one surface subdivision leaf (`SmSurfaceGridElement`): the
 /// surface, the leaf's parameter domain, boxes and the mid-point data read by
-/// `SmLSI3LocalSolver::LocalSolve`.
-///
-/// CO-PORTED in `intersect.ray_tracer`: the data members only. `Init` (which
-/// computes them from a surface subdivision tree node) needs `SmBezierPatch`, whose
-/// cache is not ported yet (see [`Grid::add_element`]); [`Grid::add_surface_element`]
-/// takes a leaf with the data already filled in.
+/// `SmLSI3LocalSolver::LocalSolve`. [`SurfaceGridElement::init`] makes it from a
+/// subdivision tree node (`SmSurfaceGridElement::Init`).
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct SurfaceGridElement<O> {
     /// `m_pSurface`: the leaf's surface.
@@ -131,6 +158,123 @@ pub struct SurfaceGridElement<O> {
     pub mid_dv: Vec3,
     /// `m_sMidNormal`: the unit normal there.
     pub mid_normal: Vec3,
+}
+
+impl<O: Copy> SurfaceGridElement<O> {
+    /// The leaf data `SmSurfaceGridElement::Init` derives from the surface once it has
+    /// the Bezier patch data (domain, box, pseudo box and polar box): the surface
+    /// point, derivatives and unit normal at the middle of the domain. `handle` is the
+    /// surface's handle (`m_pSurface`).
+    ///
+    /// # Errors
+    ///
+    /// Only [`SolidError::Unported`], or an `Evaluate` that also fails without
+    /// `non_zero_tangents`: upstream signals those with `SE` and carries on.
+    pub fn from_leaf_data(
+        k: &Kernel,
+        handle: O,
+        surface: &Surface,
+        uv_domain: &Extent2d,
+        bbox: &Extent3d,
+        pseudo_box: &PseudoBox,
+        polar_box: &PolarBox,
+    ) -> Result<Self> {
+        // Precomputation of derivative information for this little patch
+        let uv_mid = uv_domain.evaluate(0.5, 0.5);
+        let eval_flags = |non_zero_tangents: bool| EvaluateFlags {
+            u_side: Side::Left,
+            v_side: Side::Left,
+            only_upper_half: true,
+            non_zero_tangents,
+        };
+        // `SE(Evaluate)` signals the error and carries on. Asking for (1,1) derivatives
+        // makes `SmBSplineSurface::Evaluate` take its "not enough derivatives" branch,
+        // `SER(Evaluate(crUV, 2, 2, ...))` (SmBSplineSurfaceNLib.cpp:8335), which returns
+        // before the fixed-up tangents are written back: `sEval` keeps the plain NLib
+        // derivatives, which is what `non_zero_tangents: false` gives.
+        let eval = match surface.evaluate(k, uv_mid, 1, 1, eval_flags(true)) {
+            Ok(eval) => eval,
+            Err(e) if e.is_unported_or_cancelled() => return Err(e),
+            Err(_) => surface.evaluate(k, uv_mid, 1, 1, eval_flags(false))?,
+        };
+        let at = |i: usize, j: usize| -> Result<Vec3> {
+            eval.get(i)
+                .and_then(|r| r.get(j))
+                .copied()
+                .ok_or_else(|| SolidError::sm_err("geom::grid::SurfaceGridElement::from_leaf_data"))
+        };
+        let mid_point = at(0, 0)?;
+        let mid_du = at(1, 0)?;
+        let mid_dv = at(0, 1)?;
+        let mut mid_normal = mid_du.cross(mid_dv);
+        if mid_normal.length_squared() > EFF_ZERO {
+            mid_normal = mid_normal.unitize()?;
+        } else {
+            // `SE(EvaluateNormal)`: on failure keep the cross product (the unit's
+            // `m_sMidNormal` is whatever the call left in it; see findings.md)
+            mid_normal = match surface.evaluate_normal(k, uv_mid, Side::Left, Side::Left) {
+                Ok(n) => n,
+                Err(e) if e.is_unported_or_cancelled() => return Err(e),
+                Err(_) => mid_normal,
+            };
+        }
+        Ok(Self {
+            surface: handle,
+            uv_domain: *uv_domain,
+            bbox: *bbox,
+            pseudo_box: *pseudo_box,
+            polar_box: *polar_box,
+            mid_point,
+            mid_du,
+            mid_dv,
+            mid_normal,
+        })
+    }
+}
+
+impl<O: Copy + PartialEq> SurfaceGridElement<O> {
+    /// `SmSurfaceGridElement::Init(pNode)`: the leaf for the `SM_AD_BEZIER_SURFACE`
+    /// subdivision tree node `node` of `cache`, in upstream's statement order. The
+    /// surface is the node's owner object, the domain and pseudo box those of the
+    /// node's `SmBezierPatch`, the box the node's own (unexpanded) one, and the polar
+    /// box the one `SmBezierAux2d::GetPolarBox` builds on first use.
+    ///
+    /// # Errors
+    ///
+    /// `SM_ERR` when the tree has no owner object (upstream `SM_ASSERT`);
+    /// `InvalidInput` for a cache without a tree (a node can only come from a built
+    /// one: upstream `Init` never fetches the tree, which for a face-owned surface
+    /// would rebuild it), for an unknown node and for a node that is not a Bezier
+    /// patch node (upstream casts it and reads garbage); those of
+    /// [`SurfaceGridElement::from_leaf_data`].
+    pub fn init(k: &Kernel, cache: &mut SurfaceCache<O>, node: NodeId) -> Result<Self> {
+        const OP: &str = "geom::grid::SurfaceGridElement::init";
+        let no_tree = || SolidError::InvalidInput {
+            operation: OP,
+            reason: "surface cache has no tree",
+        };
+        let owner = cache
+            .tree()
+            .ok_or_else(no_tree)?
+            .node_owner_object(node)?
+            .ok_or(SolidError::sm_err(OP))?;
+        let (uv_domain, pseudo_box) = {
+            let patch = cache.patch(node)?;
+            (patch.aux.uv_domain, *patch.pseudo_box())
+        };
+        let bbox = cache.tree().ok_or_else(no_tree)?.node(node)?.bbox;
+        let polar_box = cache.polar_box(k, node)?;
+        let surface = cache.node_surface(Some(owner))?;
+        Self::from_leaf_data(
+            k,
+            owner,
+            surface,
+            &uv_domain,
+            &bbox,
+            &pseudo_box,
+            &polar_box,
+        )
+    }
 }
 
 /// What a [`GridElement`] stands for (the derived `SmGridElement` classes, and
@@ -371,8 +515,6 @@ pub struct StepHits {
 /// `SmGridElementType`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ElementSource<O> {
-    /// `SM_GE_SURFACE`: a leaf node of a surface subdivision tree.
-    Surface(NodeId),
     /// `SM_GE_POLYBREP`: a leaf node of a poly B-rep cache tree.
     PolyBrep(NodeId),
     /// `SM_GE_USERDATA`: application data.
@@ -445,7 +587,8 @@ impl<O: Copy> Grid<O> {
     /// A grid of `size[0] x size[1] x size[2]` empty voxels over `bbox`
     /// (`SmGrid(crGridBBox, lSize)`).
     ///
-    /// Fails when a count is zero or the voxel total overflows.
+    /// Fails when a count is zero, the voxel total overflows or the voxels cannot be
+    /// allocated (including more than [`crate::limits::MAX_ALLOC_BYTES`] of voxels).
     pub fn new(bbox: &Extent3d, size: [usize; 3]) -> Result<Self> {
         const OP: &str = "geom::grid::Grid::new";
         let [nx, ny, nz] = size;
@@ -470,13 +613,17 @@ impl<O: Copy> Grid<O> {
 
         let voxel_tolerance = EFF_ZERO_SQRT * (1.0 + voxel_size.max_dimension()) / 100.0;
 
+        // Upstream's `smos_Calloc` of the voxel array fails softly (`SM_ERR`); above
+        // `MAX_ALLOC_BYTES` the port fails the same way without trying.
+        let voxels = try_filled(total, Voxel::default()).ok_or_else(|| SolidError::sm_err(OP))?;
+
         Ok(Self {
             bbox: *bbox,
             size,
             voxel_size,
             voxel_tolerance,
             current_mark: 0,
-            voxels: vec![Voxel::default(); total],
+            voxels,
             elements: Vec::new(),
             hierarchy: Vec::new(),
             dda: Dda::default(),
@@ -677,19 +824,6 @@ impl<O: Copy> Grid<O> {
     pub fn add_element(&mut self, source: ElementSource<O>, bbox: &Extent3d) -> Result<ElementId> {
         const OP: &str = "geom::grid::Grid::add_element";
         let mut ge = match source {
-            ElementSource::Surface(_) => {
-                // SmBezierPatch::GetPseudoBox and SmBezierAux2d::GetPolarBox are ported
-                // (surface::surface_cache::p1), but the patch data lives in the surface
-                // cache, which a tree node reaches once the tree construction hands it
-                // over (SmSurfaceGridElement::Init also needs SmPseudoBox/SmPolarBox
-                // copies, SmSurface::Evaluate and SmSurface::EvaluateNormal)
-                // DISPATCH GAP: SmBezierPatch::GetPseudoBox (surface.surface_cache_p1,
-                // ported; no UNPORTED marker: the callee is ported, the tree cannot reach the cache's data yet)
-                return Err(SolidError::Unported {
-                    upstream: "SmBezierPatch::GetPseudoBox",
-                    unit: "surface.surface_cache_p1",
-                });
-            }
             ElementSource::PolyBrep(node) => GridElement::polygon(node),
             ElementSource::UserData(o) => GridElement::user(o),
         };
@@ -697,10 +831,9 @@ impl<O: Copy> Grid<O> {
     }
 
     /// `AddElement(SM_GE_SURFACE)` with the leaf data supplied by the caller instead
-    /// of computed by `SmSurfaceGridElement::Init` from a subdivision tree node
-    /// (which needs the unported surface cache, so [`Grid::add_element`] with
-    /// [`ElementSource::Surface`] cannot run yet): lists the element in every voxel
-    /// that `bbox` meets.
+    /// of computed by `SmSurfaceGridElement::Init` from a subdivision tree node (see
+    /// [`Grid::add_surface_node`] for that): lists the element in every voxel that
+    /// `bbox` meets.
     pub fn add_surface_element(
         &mut self,
         leaf: SurfaceGridElement<O>,
@@ -733,27 +866,65 @@ impl<O: Copy> Grid<O> {
         Ok(id)
     }
 
-    /// Embeds the subdivision leaves of hierarchy element `id` into the voxels
-    /// (`SmSurfaceHierarchyElement::ExpandHierarchy`; on a base-class element,
-    /// `SmHierarchyElement::ExpandHierarchy`, which fails with `SM_ERR`).
-    pub fn expand_hierarchy(&mut self, id: HierarchyId) -> Result<()> {
-        const OP: &str = "geom::grid::Grid::expand_hierarchy";
+    /// `SmSurfaceHierarchyElement::ExpandHierarchy` over the subdivision `tree` of
+    /// the element's surface cache (the `smsurf_GetSurfaceCache(m_pSurface)->GetTree()`
+    /// the caller holds): for every node in `GetAllTreeNodes` order that is the
+    /// lowest `SM_AD_BEZIER_SURFACE` node (its first child, if any, is not one) and
+    /// not classified outside, adds a surface element made by `init`
+    /// (`SmSurfaceGridElement::Init` of that node, given the element's surface) over
+    /// the node box grown by the expansion tolerance. A base-class element fails
+    /// with `SM_ERR`, as [`Grid::expand_hierarchy`]. This is the tree-level primitive
+    /// of [`Grid::expand_hierarchy`].
+    ///
+    /// # Errors
+    ///
+    /// `InvalidInput` for an unknown id; `SM_ERR` for a base-class element;
+    /// `SM_ERR_NULL_POINTER` for a Bezier node without subdivision data (upstream
+    /// `NER`); those of `init` and of the voxel lookup.
+    pub fn expand_hierarchy_with<T: Copy + PartialEq>(
+        &mut self,
+        id: HierarchyId,
+        tree: &Tree<T>,
+        mut init: impl FnMut(O, NodeId) -> Result<SurfaceGridElement<O>>,
+    ) -> Result<()> {
+        const OP: &str = "geom::grid::Grid::expand_hierarchy_with";
         let element = self.hierarchy.get(id.0).ok_or_else(|| bad_id(OP))?;
-        if element.surface.is_none() {
-            return Err(SolidError::sm_err(OP));
+        let surface = element.surface.ok_or(SolidError::sm_err(OP))?;
+        let expansion_tolerance = element.expansion_tolerance;
+
+        // For every Surface subdivision tree node
+        for node_id in tree.all_tree_nodes() {
+            let node = tree.node(node_id)?;
+
+            // skip non-leaf nodes: add the lowest SM_AD_BEZIER_SURFACE node
+            let child_is_bezier = match node.child1 {
+                Some(c) => tree.node(c)?.aux_type == AuxDataType::BezierSurface,
+                None => false,
+            };
+            if node.aux_type != AuxDataType::BezierSurface || child_is_bezier {
+                continue;
+            }
+
+            // skip leaf-nodes classified outside of associated trim boundaries
+            let node_class = match &node.data {
+                NodeData::Surface(a) => a.node_class,
+                NodeData::None | NodeData::ObjectList(_) | NodeData::Curve(_) => {
+                    return Err(SolidError::null_pointer(OP));
+                }
+            };
+            if node_class == NodeClass::Outside {
+                continue;
+            }
+
+            // expand leaf-node bounding box by tolerance
+            let mut bbox = node.bbox;
+            bbox.expand_absolute(expansion_tolerance);
+
+            // AddElement(pNode, SM_GE_SURFACE, sBBox)
+            let leaf = init(surface, node_id)?;
+            self.add_surface_element(leaf, &bbox)?;
         }
-        // DISPATCH GAP: smsurf_GetSurfaceCache (surface::surface::p2::surface_cache,
-        // unit surface.surface_p2 per harness/callgraph/units.json, ported over
-        // surface::surface::p1::get_surface_cache; no UNPORTED marker: the element holds
-        // a surface handle, and no store turns it into the Surface the cache is built
-        // from)
-        // (then SmSurfaceCache::GetTree, SmTree::GetAllTreeNodes, and for every
-        // lowest SM_AD_BEZIER_SURFACE node not classified outside:
-        // AddElement(node, SM_GE_SURFACE, node box grown by the expansion tolerance))
-        Err(SolidError::Unported {
-            upstream: "smsurf_GetSurfaceCache",
-            unit: "surface.surface_p2",
-        })
+        Ok(())
     }
 
     /// Starts a 3DDDA walk of the ray `start + t * vector` (`Setup3DDDA`): finds
@@ -852,7 +1023,24 @@ impl<O: Copy> Grid<O> {
         let rv = self.dda.ray_vector;
         let mark = self.current_mark;
 
+        // Every step moves one address coordinate one voxel towards its exit, so a
+        // walk that advances leaves the grid within nx + ny + nz steps. Upstream
+        // loops forever when the chosen axis does not move (step 0, e.g. all
+        // plane parameters at SM_BIG_DOUBLE on a grid with huge voxels).
+        let max_steps = self
+            .size
+            .iter()
+            .fold(1usize, |acc, &n| acc.saturating_add(n));
+        let mut steps = 0usize;
+
         loop {
+            steps += 1;
+            if steps > max_steps {
+                return Err(SolidError::InvalidInput {
+                    operation: OP,
+                    reason: "3DDDA ray walk does not advance",
+                });
+            }
             let vi = self
                 .voxel_index(self.dda.address)
                 .ok_or_else(|| bad_address(OP))?;
@@ -971,6 +1159,100 @@ impl AxisStep {
     }
 }
 
+/// The operations that read a surface cache, whose handles need `PartialEq`.
+impl<O: Copy + PartialEq> Grid<O> {
+    /// Embeds the subdivision leaves of hierarchy element `id` into the voxels
+    /// (`SmSurfaceHierarchyElement::ExpandHierarchy`; on a base-class element,
+    /// `SmHierarchyElement::ExpandHierarchy`, which fails with `SM_ERR`).
+    ///
+    /// `cache` is `smsurf_GetSurfaceCache(m_pSurface)`: the one cache of the element's
+    /// surface, which the caller holds and keeps between calls (so its polar boxes are
+    /// built once). The leaves are made by [`SurfaceGridElement::init`].
+    ///
+    /// # Errors
+    ///
+    /// `InvalidInput` for an unknown id and for a cache of another surface (upstream
+    /// always fetches the cache of `m_pSurface`); `SM_ERR` for a base-class element,
+    /// before the cache is touched; those of [`Grid::expand_hierarchy_with`] and of
+    /// the cache's tree build.
+    pub fn expand_hierarchy(
+        &mut self,
+        k: &Kernel,
+        id: HierarchyId,
+        cache: &mut SurfaceCache<O>,
+    ) -> Result<()> {
+        self.expand_hierarchy_in(k, id, cache, true)
+    }
+
+    /// [`Grid::expand_hierarchy`] for a cache whose `GetTree` the caller has already
+    /// run (a face-owned trimmed cache, whose tree build needs its face:
+    /// [`TrimSrfCache::get_tree_with_face`](crate::surface::trim_srf_cache::TrimSrfCache::get_tree_with_face)):
+    /// the cache's tree is read as is, never rebuilt.
+    ///
+    /// # Errors
+    ///
+    /// As [`Grid::expand_hierarchy`]; `InvalidInput` when the cache has no tree.
+    pub fn expand_hierarchy_fetched(
+        &mut self,
+        k: &Kernel,
+        id: HierarchyId,
+        cache: &mut SurfaceCache<O>,
+    ) -> Result<()> {
+        self.expand_hierarchy_in(k, id, cache, false)
+    }
+
+    fn expand_hierarchy_in(
+        &mut self,
+        k: &Kernel,
+        id: HierarchyId,
+        cache: &mut SurfaceCache<O>,
+        fetch: bool,
+    ) -> Result<()> {
+        const OP: &str = "geom::grid::Grid::expand_hierarchy";
+        let element = self.hierarchy.get(id.0).ok_or_else(|| bad_id(OP))?;
+        let surface = element.surface.ok_or(SolidError::sm_err(OP))?;
+        if cache.surface_handle() != Some(surface) {
+            return Err(SolidError::InvalidInput {
+                operation: OP,
+                reason: "surface cache is not the cache of the element's surface",
+            });
+        }
+        // The clone lets `init` borrow the cache mutably (it builds polar boxes).
+        let tree = if fetch {
+            cache.get_tree(k)?.clone()
+        } else {
+            cache
+                .tree()
+                .ok_or(SolidError::InvalidInput {
+                    operation: OP,
+                    reason: "surface cache has no tree",
+                })?
+                .clone()
+        };
+        self.expand_hierarchy_with(id, &tree, |_, node| {
+            SurfaceGridElement::init(k, cache, node)
+        })
+    }
+
+    /// `AddElement(pNode, SM_GE_SURFACE, bbox)`: `SmSurfaceGridElement::Init` of the
+    /// Bezier patch node `node` of `cache` first (polar box included), then the
+    /// sphere bound, box and voxel lists as [`Grid::add_surface_element`].
+    ///
+    /// # Errors
+    ///
+    /// Those of [`SurfaceGridElement::init`] and of the voxel lookup.
+    pub fn add_surface_node(
+        &mut self,
+        k: &Kernel,
+        cache: &mut SurfaceCache<O>,
+        node: NodeId,
+        bbox: &Extent3d,
+    ) -> Result<ElementId> {
+        let leaf = SurfaceGridElement::init(k, cache, node)?;
+        self.add_surface_element(leaf, bbox)
+    }
+}
+
 /// A voxel address (or count triple) as upstream `long`s.
 fn signed(a: [usize; 3]) -> Option<[i64; 3]> {
     Some([
@@ -983,6 +1265,14 @@ fn signed(a: [usize; 3]) -> Option<[i64; 3]> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::geom::polar_box::PolarBoxState;
+    use crate::geom::vector2d::{Point2, Vec2};
+    use crate::kernel::Kernel;
+    use crate::nurbs::b_spline_surface::p1::SurfParamType;
+    use crate::surface::plane::Plane;
+    use crate::surface::surface::p2::surface_cache;
+    use crate::surface::surface::Surface;
+    use crate::surface::surface_cache::SurfaceCache;
 
     fn unit_grid(n: usize) -> Grid<u32> {
         let bbox = Extent3d::from_bounds(0.0, 0.0, 0.0, 1.0, 1.0, 1.0);
@@ -999,6 +1289,21 @@ mod tests {
         assert!(g.voxel([2, 0, 0]).is_err());
         assert!(Grid::<u32>::new(&bbox, [0, 1, 1]).is_err());
         assert!(Grid::<u32>::new(&bbox, [usize::MAX, 2, 1]).is_err());
+    }
+
+    /// Fuzz regression (geom.grid fuzz09254): with voxels of size ~1e299 the
+    /// plane parameters reach `SM_BIG_DOUBLE` and the walk picks an axis that does
+    /// not move; upstream loops forever, the port stops with an error.
+    #[test]
+    fn stalled_walk_is_an_error() {
+        let bbox = Extent3d::from_bounds(-1e-4, -1e-4, -1e-4, 1e300, 1.0001, 1.0001);
+        let mut g: Grid<u32> = Grid::new(&bbox, [10, 10, 10]).unwrap();
+        let start = Point3::new(1.000003, 0.5, 0.5);
+        assert!(!g.setup_3ddda(start, Vec3::new(1.0, 0.0, 0.0)).unwrap());
+        assert!(matches!(
+            g.step_3ddda(1e20),
+            Err(SolidError::InvalidInput { .. })
+        ));
     }
 
     #[test]
@@ -1038,24 +1343,281 @@ mod tests {
         let he = g.hierarchy_element(h).unwrap();
         assert_eq!(he.grid_element().item(), GridItem::Hierarchy(Some(h)));
         assert_eq!(he.grid_element().bounding_box().min().x, 0.1 - 0.01);
+        // a base-class element fails before the cache is touched
+        let k = &Kernel::default();
+        let mut cache = plane_cache(k, Some(3));
         assert!(matches!(
-            g.expand_hierarchy(h),
+            g.expand_hierarchy(k, h, &mut cache),
             Err(SolidError::Upstream {
                 code: crate::error::SM_ERR,
                 ..
             })
         ));
-        let hs = g
-            .add_hierarchy_element(HierarchyElement::new_surface(3, 0.0), &b)
+        assert!(matches!(
+            g.expand_hierarchy(k, HierarchyId(99), &mut cache),
+            Err(SolidError::InvalidInput { .. })
+        ));
+    }
+
+    fn unit_plane() -> Surface {
+        Surface::from(Plane::new(
+            Vec3::new(0.0, 0.0, 0.0),
+            Vec3::new(1.0, 0.0, 0.0),
+            Vec3::new(0.0, 1.0, 0.0),
+            Vec2::new(1.0, 1.0),
+            &Extent2d::from_bounds(0.0, 0.0, 1.0, 1.0),
+        ))
+    }
+
+    fn plane_cache(k: &Kernel, handle: Option<u32>) -> SurfaceCache<u32> {
+        surface_cache(k, &unit_plane(), handle).unwrap()
+    }
+
+    /// The box of the cache's top node and the ids of its lowest Bezier leaves.
+    fn top_box_and_leaves(k: &Kernel, cache: &mut SurfaceCache<u32>) -> (Extent3d, Vec<NodeId>) {
+        let tree = cache.get_tree(k).unwrap().clone();
+        let top_box = tree.node(tree.top_node().unwrap()).unwrap().bbox;
+        let leaves = tree
+            .all_tree_nodes()
+            .into_iter()
+            .filter(|&n| {
+                let node = tree.node(n).unwrap();
+                node.aux_type == AuxDataType::BezierSurface
+                    && node.child1.is_none_or(|c| {
+                        tree.node(c).unwrap().aux_type != AuxDataType::BezierSurface
+                    })
+            })
+            .collect();
+        (top_box, leaves)
+    }
+
+    fn surface_leaves(g: &Grid<u32>) -> Vec<(ElementId, SurfaceGridElement<u32>)> {
+        g.elements()
+            .iter()
+            .enumerate()
+            .filter_map(|(i, e)| match e.item() {
+                GridItem::Surface(leaf) => Some((ElementId(i), leaf)),
+                _ => None,
+            })
+            .collect()
+    }
+
+    #[test]
+    fn expanding_a_surface_hierarchy_adds_its_leaves() {
+        let k = &Kernel::default();
+        let mut g = unit_grid(4);
+        let mut cache = plane_cache(k, Some(3));
+        let (top_box, leaves) = top_box_and_leaves(k, &mut cache);
+        let h = g
+            .add_hierarchy_element(HierarchyElement::new_surface(3, 0.05), &top_box)
             .unwrap();
+        g.expand_hierarchy(k, h, &mut cache).unwrap();
+
+        let added = surface_leaves(&g);
+        assert!(!leaves.is_empty());
+        assert_eq!(added.len(), leaves.len());
+        for (id, leaf) in added {
+            // the owner object of the node, not the hierarchy element's index
+            assert_eq!(leaf.surface, 3);
+            // the leaf keeps the node box, the grid element has it grown
+            let mut grown = leaf.bbox;
+            grown.expand_absolute(0.05);
+            assert_eq!(g.element(id).unwrap().bounding_box(), &grown);
+            assert_ne!(leaf.bbox, grown);
+            // a plane's normals are one vector
+            assert_eq!(leaf.polar_box.state(), PolarBoxState::SinglePoint);
+            assert!((leaf.mid_normal.z.abs() - 1.0).abs() < 1e-12);
+            assert!(leaf.uv_domain.contains_point(Point2::new(0.5, 0.5), 0.0));
+        }
+    }
+
+    /// Upstream `Init` reads a node of an existing tree: it never fetches (so never
+    /// builds or, for a face-owned surface, rebuilds) the tree. Only `ExpandHierarchy`
+    /// does, once.
+    #[test]
+    fn init_reads_the_tree_and_never_builds_it() {
+        use crate::surface::surface_cache::SurfaceCacheOptions;
+        let k = &Kernel::default();
+        let mut g = unit_grid(4);
+        // a cache whose tree is not built (a node can only come from a built tree)
+        let mut cache = SurfaceCache::<u32>::new(
+            unit_plane(),
+            Extent2d::from_bounds(0.0, 0.0, 1.0, 1.0),
+            SurfaceCacheOptions::default(),
+        );
+        cache.set_surface_handle(Some(3));
+        assert!(cache.tree().is_none());
+        let b = Extent3d::from_bounds(0.1, 0.1, 0.1, 0.4, 0.2, 0.1);
         assert!(matches!(
-            g.expand_hierarchy(hs),
-            Err(SolidError::Unported { .. })
+            g.add_surface_node(k, &mut cache, NodeId(0), &b),
+            Err(SolidError::InvalidInput { .. })
         ));
+        assert!(cache.tree().is_none());
+        assert!(g.elements().is_empty());
+    }
+
+    #[test]
+    fn a_cache_of_another_surface_is_rejected() {
+        let k = &Kernel::default();
+        let mut g = unit_grid(4);
+        let mut cache = plane_cache(k, Some(3));
+        let (top_box, _) = top_box_and_leaves(k, &mut cache);
+        let h = g
+            .add_hierarchy_element(HierarchyElement::new_surface(3, 0.0), &top_box)
+            .unwrap();
+        let mut other = plane_cache(k, Some(4));
         assert!(matches!(
-            g.add_element(ElementSource::Surface(NodeId(0)), &b),
-            Err(SolidError::Unported { .. })
+            g.expand_hierarchy(k, h, &mut other),
+            Err(SolidError::InvalidInput { .. })
         ));
+        assert!(g.elements().is_empty());
+    }
+
+    #[test]
+    fn add_surface_node_makes_the_leaf_from_the_node() {
+        let k = &Kernel::default();
+        let mut g = unit_grid(4);
+        let mut cache = plane_cache(k, Some(3));
+        let (_, leaves) = top_box_and_leaves(k, &mut cache);
+        let node = *leaves.first().unwrap();
+        let node_box = cache.tree().unwrap().node(node).unwrap().bbox;
+        let id = g.add_surface_node(k, &mut cache, node, &node_box).unwrap();
+        let e = g.element(id).unwrap();
+        assert_eq!(e.type_code(), SURFACE_GRID_ELEMENT_TYPE);
+        assert_eq!(e.bounding_box(), &node_box);
+        let GridItem::Surface(leaf) = e.item() else {
+            panic!("not a surface element")
+        };
+        assert_eq!(leaf.surface, 3);
+        assert_eq!(leaf.bbox, node_box);
+        // the sphere bound and voxel lists are those of `register_element`
+        let mid = node_box.sphere_bound();
+        assert_eq!(e.sphere_center(), mid.center);
+        let (v, _) = g.voxel_address(node_box.min());
+        assert!(g.voxel(v).unwrap().grid_elements().unwrap().contains(&id));
+    }
+
+    #[test]
+    fn add_surface_node_rejects_what_has_no_patch() {
+        let k = &Kernel::default();
+        let mut g = unit_grid(4);
+        let mut cache = plane_cache(k, Some(3));
+        let b = Extent3d::from_bounds(0.1, 0.1, 0.1, 0.4, 0.2, 0.1);
+        // a node of the tree that is not a Bezier patch node (upstream casts it
+        // anyway and reads garbage): splitting a node with `only_aux_data` makes
+        // `SM_AD_AUX_DATA` children
+        let top = cache.get_tree(k).unwrap().top_node().unwrap();
+        cache.set_subdivision_handles(Some(|n| 100 + n as u32));
+        cache
+            .subdivide_node(k, top, SurfParamType::U, true)
+            .unwrap();
+        let aux = cache.tree().unwrap().node(top).unwrap().child1.unwrap();
+        assert_eq!(
+            cache.tree().unwrap().node(aux).unwrap().aux_type,
+            AuxDataType::AuxData
+        );
+        assert!(matches!(
+            g.add_surface_node(k, &mut cache, aux, &b),
+            Err(SolidError::InvalidInput { .. })
+        ));
+        // a node the tree does not have
+        assert!(matches!(
+            g.add_surface_node(k, &mut cache, NodeId(usize::MAX), &b),
+            Err(SolidError::InvalidInput { .. })
+        ));
+        assert!(g.elements().is_empty());
+        // a cache without a surface handle: the node has no owner object
+        // (upstream `SM_ASSERT`)
+        let mut anonymous = plane_cache(k, None);
+        let (_, leaves) = top_box_and_leaves(k, &mut anonymous);
+        assert!(matches!(
+            g.add_surface_node(k, &mut anonymous, leaves[0], &b),
+            Err(SolidError::Upstream {
+                code: crate::error::SM_ERR,
+                ..
+            })
+        ));
+        assert!(g.elements().is_empty());
+    }
+
+    #[test]
+    fn expand_hierarchy_over_a_tree() {
+        use crate::geom::tree::{SurfaceAux, TreeNode};
+        let mut g = unit_grid(4);
+        let mut t: Tree<u32> = Tree::new(None);
+        let mk = |t: &mut Tree<u32>, parent, aux_type, class, bbox| {
+            t.add_node(TreeNode {
+                parent,
+                aux_type,
+                bbox,
+                data: NodeData::Surface(SurfaceAux {
+                    node_class: class,
+                    ..SurfaceAux::default()
+                }),
+                ..TreeNode::new()
+            })
+        };
+        let left = Extent3d::from_bounds(0.1, 0.1, 0.1, 0.2, 0.2, 0.2);
+        let right = Extent3d::from_bounds(0.6, 0.6, 0.6, 0.7, 0.7, 0.7);
+        let all = Extent3d::from_bounds(0.1, 0.1, 0.1, 0.7, 0.7, 0.7);
+        let root = mk(
+            &mut t,
+            None,
+            AuxDataType::BezierSurface,
+            NodeClass::Unknown,
+            all,
+        );
+        let a = mk(
+            &mut t,
+            Some(root),
+            AuxDataType::BezierSurface,
+            NodeClass::Inside,
+            left,
+        );
+        let b = mk(
+            &mut t,
+            Some(root),
+            AuxDataType::BezierSurface,
+            NodeClass::Outside,
+            right,
+        );
+        t.node_mut(root).unwrap().child1 = Some(a);
+        t.node_mut(root).unwrap().child2 = Some(b);
+        t.set_top_node(Some(root));
+
+        let base = g
+            .add_hierarchy_element(HierarchyElement::new(0.0), &all)
+            .unwrap();
+        assert!(g
+            .expand_hierarchy_with(base, &t, |_, _| unreachable!())
+            .is_err());
+
+        let h = g
+            .add_hierarchy_element(HierarchyElement::new_surface(9, 0.05), &all)
+            .unwrap();
+        let mut seen = Vec::new();
+        g.expand_hierarchy_with(h, &t, |s, n| {
+            seen.push((s, n));
+            Ok(SurfaceGridElement {
+                surface: s,
+                uv_domain: Extent2d::default(),
+                bbox: left,
+                pseudo_box: PseudoBox::default(),
+                polar_box: PolarBox::default(),
+                mid_point: Vec3::ZERO,
+                mid_du: Vec3::ZERO,
+                mid_dv: Vec3::ZERO,
+                mid_normal: Vec3::ZERO,
+            })
+        })
+        .unwrap();
+        // the root has a Bezier first child, the right leaf is outside
+        assert_eq!(seen, vec![(9, a)]);
+        let mut grown = left;
+        grown.expand_absolute(0.05);
+        let e = g.voxel([0, 0, 0]).unwrap().grid_elements().unwrap();
+        let last = *e.last().unwrap();
+        assert_eq!(g.element(last).unwrap().bounding_box(), &grown);
     }
 
     #[test]

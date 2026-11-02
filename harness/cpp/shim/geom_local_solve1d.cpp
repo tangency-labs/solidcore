@@ -37,13 +37,14 @@ enum ScLs1dKind : int32_t
 
 namespace
 {
-const int64_t N_FN_PARAMS = 14; // kind, p[8], found_tol, fail_lo, fail_hi, fail_first, partial
+const int64_t N_FN_PARAMS = 14; // kind, p[8], found_tol, fail_lo, fail_hi, fail_first, failure_write
 
 // Test function.
-//   fn_params: [kind, p0..p7, found_tol, fail_lo, fail_hi, fail_first, partial]
+//   fn_params: [kind, p0..p7, found_tol, fail_lo, fail_hi, fail_first, failure_write]
 // Fails (SM_ERR_INVALID_INPUT) on the first `fail_first` calls and for
-// fail_lo <= t <= fail_hi; on failure writes F first when `partial`, and always
-// sets the found flag FALSE. Records every call (t, ok, signal).
+// fail_lo <= t <= fail_hi. Failure writes: 0 keeps outputs, 1 writes F,
+// 2 zeroes F and F'. Always sets the found flag FALSE on failure.
+// Records every call (t, ok, signal).
 class ScTestFn : public SmEvalFunctionObject
 {
 public:
@@ -89,8 +90,19 @@ public:
         case K_TRIG:
         {
             double arg = p[1] * dT + p[2];
+#if defined(__APPLE__)
+            // Apple clang combines the direct calls into __sincos_stret, whose
+            // rounding can differ from the separate calls in the Rust evaluator.
+            // Volatile function pointers keep this synthetic test function on
+            // the same platform sin/cos paths without changing kernel flags.
+            double (*volatile sine)(double) = std::sin;
+            double (*volatile cosine)(double) = std::cos;
+            f = p[0] * sine(arg) + p[3] * dT + p[4];
+            fp = p[0] * p[1] * cosine(arg) + p[3];
+#else
             f = p[0] * std::sin(arg) + p[3] * dT + p[4];
             fp = p[0] * p[1] * std::cos(arg) + p[3];
+#endif
             break;
         }
         case K_ATAN:
@@ -133,7 +145,12 @@ public:
         bool fail = (double)m_calls <= fail_first || (fail_lo <= dT && dT <= fail_hi);
         if (fail)
         {
-            if (partial)
+            if (m_fp[13] == 2.0)
+            {
+                rdF = 0.0;
+                rdFp = 0.0;
+            }
+            else if (partial)
                 rdF = f;
             rbFound = FALSE;
             m_flags.push_back(0.0 + (bSignalErrors ? 2.0 : 0.0));

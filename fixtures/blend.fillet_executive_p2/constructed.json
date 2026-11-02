@@ -3995,6 +3995,80 @@
      ]
     }
    }
+  },
+  {
+   "name": "set_params_short_box_regression",
+   "inputs": {
+    "op": "set_params",
+    "has_brep": true,
+    "box": {
+     "origin": [
+      1000000.0,
+      -1000000.0,
+      0.0
+     ],
+     "size": [
+      0.001,
+      0.001,
+      0.001
+     ]
+    },
+    "edges": [
+     11
+    ],
+    "xsect_types": [
+     1
+    ],
+    "radius_types": [
+     1
+    ],
+    "radius_values": [
+     1.0
+    ],
+    "laws": null,
+    "approx": 0.0,
+    "ang": 0.0,
+    "tan": 0.0,
+    "xsect": 0.0,
+    "continuity": 1,
+    "thumbweight": 1.0
+   }
+  },
+  {
+   "name": "exec_collect_smooth_split",
+   "inputs": {
+    "op": "exec",
+    "sub": 3,
+    "solvers": 3,
+    "box": {
+     "origin": [0.0, 0.0, 0.0],
+     "size": [10.0, 20.0, 30.0]
+    }
+   }
+  },
+  {
+   "name": "exec_process_smooth_split_const",
+   "inputs": {
+    "op": "exec",
+    "sub": 4,
+    "solvers": 3,
+    "box": {
+     "origin": [0.0, 0.0, 0.0],
+     "size": [10.0, 20.0, 30.0]
+    }
+   }
+  },
+  {
+   "name": "exec_process_smooth_split_vr",
+   "inputs": {
+    "op": "exec",
+    "sub": 5,
+    "solvers": 2,
+    "box": {
+     "origin": [0.0, 0.0, 0.0],
+     "size": [10.0, 20.0, 30.0]
+    }
+   }
   }
  ]
 }

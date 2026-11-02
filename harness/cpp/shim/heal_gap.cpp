@@ -7,10 +7,14 @@
 // The geometry blocks build real SmBSplineCurve, SmHermiteCurve, SmLine, SmEllipse,
 // SmCircle and SmCrvOnSurf curves and SmBSplineSurface, SmPlane and SmCurveBoundedSurface
 // surfaces. The topology op builds its SmBrep, walks and exports it exactly as the
-// `topology.vertexuse` shim does (that code is copied below, unchanged), so the Rust side
-// can import the graph with that runner's importer; ops whose upstream path would
-// dereference null output -2 instead of calling it.
+// `topology.vertexuse` shim does (that code is copied below; the build also accepts the
+// shared kind-9 circle/ellipse face and the export uses the shared exact circle/ellipse
+// transport), so the Rust side can import the graph with that runner's importer; ops
+// whose upstream path would dereference null output -2 instead of calling it.
 #include "sc_shim.h"
+#include "sc_analytic_export.h"
+#include "sc_exact_curve_export.h"
+#include "support/ellipse_face_fixture.h"
 #include "support/topology_fixture.h"
 
 
@@ -53,6 +57,7 @@
 
 #include <map>
 #include <vector>
+#include <stdexcept>
 
 #include "sc_sm.h"
 
@@ -580,7 +585,7 @@ void export_graph(SmBrep* brep, Graph& g, std::vector<double>& o)
         for (SmTopology* t : list_of(p->GetList()))
             v.push_back(g.find(6, t));
         put_list(o, v);
-        put_curve(o, p->GetCurve());
+        sc_exact_curve_export::put_export_curve(o, p->GetCurve(), the_context(), put_curve);
     }
     for (SmVertexuse* p : g.vertexuses)
     {
@@ -622,6 +627,11 @@ SmBrep* build(Rd& rd, const char* path, SmStatus& status)
     {
         bool rebuild = rd.flag();
         status = brep->ReadFromFile(ctx, path, SM_ASCII, rebuild ? TRUE : FALSE);
+    }
+    else if (kind == 9)
+    {
+        // native planar face with an exact circle/ellipse edge (shared fixture builder)
+        status = sc_topology_fixture::ellipse_face(brep, rd, ctx);
     }
     else if (kind == 1)
     {
@@ -684,6 +694,7 @@ enum : int32_t
     OP_SAMPLE = 3,
     OP_GAP_ARRAY = 4,
     OP_TOPO = 5,
+    OP_RAW_TRIM_GAP = 6,
 };
 
 gw_CURVE* gf_nurb_curve(Rd& rd)
@@ -1042,9 +1053,26 @@ SmBSplineCurve* plain_curve(SmCurve* c)
     return new (the_context()) SmBSplineCurve(sm_AllocateAndCopyNurbCurve(nurb), b->GetDim(), FALSE);
 }
 
-// The Rust side imports the export's NURBs as plain B-splines (and lines), and SmPlanes
-// as planes: give every other face and edge of the C++ B-rep the same geometry (the
-// analytic originals are left unowned and leaked).
+// Whether the graph export sends `c` losslessly as a native circle/ellipse:
+// sc_exact_curve_export::put_export_curve then emits its `-3` head and the shared
+// importer rebuilds the same concrete kind instead of only the B-spline part. The probe
+// runs the real exporter with this file's curve block writer, so it decides exactly what
+// the export of `c` contains (a curve the round trip cannot preserve falls back to its
+// B-spline part and is normalised below).
+bool exact_edge_curve(const SmCurve* c)
+{
+    if (c == nullptr || (c->GetType() != SmEllipse_TYPE && c->GetType() != SmCircle_TYPE))
+        return false;
+    std::vector<double> probe;
+    sc_exact_curve_export::put_export_curve(probe, c, the_context(), put_curve);
+    return !probe.empty() && probe.front() == -3.0;
+}
+
+// The Rust side imports the export's NURBs as plain B-splines (and lines), SmPlanes as
+// planes, the analytic surfaces the export sends exactly (sc_analytic_export.h) and the
+// circles/ellipses the export sends exactly (sc_exact_curve_export.h) as their own kind:
+// give every other face and edge of the C++ B-rep the same geometry (the analytic
+// originals are left unowned and leaked).
 void normalise(Graph& g)
 {
     for (SmFace* f : g.faces)
@@ -1052,6 +1080,10 @@ void normalise(Graph& g)
         SmSurface* s = f->*FacePeek::surface();
         if (s == nullptr || !s->IsKindOf(SmBSplineSurface_TYPE) || s->GetType() == SmBSplineSurface_TYPE ||
             s->GetType() == SmPlane_TYPE)
+            continue;
+        // exported exactly: the Rust side runs the same analytic surface
+        std::vector<double> head;
+        if (sc_analytic_export::put_exact_head(head, s, the_context()))
             continue;
         SmBSplineSurface* b = (SmBSplineSurface*)s;
         gw_SURFACE* nurb = b->GetGwNurbPointer();
@@ -1065,7 +1097,11 @@ void normalise(Graph& g)
     }
     for (SmEdge* e : g.edges)
     {
-        SmBSplineCurve* nc = plain_curve(e->*EdgePeek::curve());
+        SmCurve* c = e->*EdgePeek::curve();
+        // exported exactly: the Rust side imports the same native circle/ellipse
+        if (exact_edge_curve(c))
+            continue;
+        SmBSplineCurve* nc = plain_curve(c);
         if (nc != nullptr)
             e->*EdgePeek::curve() = nc;
     }
@@ -1157,8 +1193,83 @@ void run_topo(Rd& rd, const char* path, std::vector<double>& o)
     c->CacheGap();
     o.push_back(c->GetLength());
     delete c;
+    // The concrete kind of the first edge's curve after `normalise`: the shared import
+    // keeps native circles/ellipses, so a stand-in here is a visible disagreement.
+    SmEdge* e0 = gap->GetEdge(0);
+    o.push_back(e0 && e0->GetCurve() ? (double)e0->GetCurve()->GetType() : -1.0);
     delete gap;
     delete brep;
+}
+
+// Independent construction: no exported native geometry is an input to Rust.
+void run_raw_trim_gap(Rd& rd, std::vector<double>& o)
+{
+    const SmContext& ctx = the_context();
+    bool edge_gap = rd.flag(), on_mate = rd.flag(), raw_knots = rd.flag();
+    double t = rd.num();
+    gw_CURVE* g = gf_nurb_curve(rd);
+    std::vector<double> knots(g->knt->U, g->knt->U + g->knt->m + 1);
+    SmBSplineCurve* trim = new (ctx) SmBSplineCurve(g, 2, FALSE);
+    if (raw_knots)
+        for (gw_INDEX i = 0; i <= trim->GetGwNurbPointer()->knt->m; ++i)
+            trim->GetGwNurbPointer()->knt->U[i] = knots[(size_t)i];
+    SmBrep* b = new (ctx) SmBrep();
+    SmExtent2d domain(0.0, 0.0, 1.0, 1.0);
+    SmPlane* plane = new (ctx) SmPlane(SmPoint3d(0, 0, 0), SmVector3d(1, 0, 0),
+        SmVector3d(0, 1, 0), SmVector2d(1, 1), domain, &ctx);
+    SmFace* face = nullptr;
+    SmStatus status = b->CreateFaceFromSurface(plane, domain, face);
+    if (status != SM_SUCCESS || face == nullptr)
+    {
+        o.push_back(st(status));
+        delete trim;
+        delete b;
+        return;
+    }
+    SmTArray<SmEdge*> edges(ctx);
+    face->GetEdges(edges);
+    SmEdge* edge = edges[0];
+    SmEdgeuse* eu = edge->GetPrimaryEdgeuse();
+    SmEdgeuse* mate = eu->GetMate();
+    SmVertexuse* vu = eu->GetVertexuse();
+    vu->GetVertex()->SetPoint(SmPoint3d(0, 0, 1));
+    SmLine* line = new (ctx) SmLine(SmPoint3d(0, 0, 1), SmVector3d(1, 0, 0),
+        SmExtent1d(0, 1), 1.0, 3, &ctx);
+    edge->SetCurve(line, TRUE);
+    line->SetOwner(edge);
+    // Direct record transport preserves the requested owner, including mate lookup.
+    delete (eu->*EuPeek::uv());
+    eu->*EuPeek::uv() = nullptr;
+    if (mate)
+    {
+        delete (mate->*EuPeek::uv());
+        mate->*EuPeek::uv() = nullptr;
+    }
+    SmEdgeuse* attached = on_mate ? mate : eu;
+    attached->*EuPeek::uv() = trim;
+    trim->SetOwner(attached);
+    const gw_CURVE* stored = trim->GetGwNurbPointer();
+    for (gw_INDEX i = 0; raw_knots && i <= stored->knt->m; ++i)
+        if (stored->knt->U[i] != knots[(size_t)i])
+        {
+            delete b;
+            throw std::runtime_error("raw trim input transport changed knots");
+        }
+    SmGap* gap = edge_gap ? (SmGap*)new SmEdgeFaceTrimCurveGap(eu, 0.25, t)
+                         : (SmGap*)new SmVertexFaceTrimCurveGap(vu, t);
+    o.push_back(gap->GetLength());
+    SmPoint2d uv = gap->GetFaceUV();
+    o.push_back(uv.x);
+    o.push_back(uv.y);
+    SmPoint3d p1, p2;
+    status = gap->GetGapEndPoints(p1, p2);
+    o.push_back(status == SM_SUCCESS ? 2.0 : 0.0);
+    put_vec(o, p1);
+    put_vec(o, p2);
+    gap->CacheGap();
+    o.push_back(gap->GetLength());
+    delete gap;
+    delete b;
 }
 
 void run(int32_t op, Rd& rd, const char* path, std::vector<double>& o)
@@ -1290,6 +1401,7 @@ void run(int32_t op, Rd& rd, const char* path, std::vector<double>& o)
         break;
     }
     case OP_TOPO: run_topo(rd, path, o); break;
+    case OP_RAW_TRIM_GAP: run_raw_trim_gap(rd, o); break;
     default: o.push_back((double)SC_ERR_ARG); break;
     }
 }

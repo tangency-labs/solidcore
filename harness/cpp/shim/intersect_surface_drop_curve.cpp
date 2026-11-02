@@ -341,10 +341,24 @@ void put_point(std::vector<double>& o, const SmTracePnt& p)
     put_vec(o, p.m_vSurfacePV[2][2]);
 }
 
+// Start list value when a start point is also linked on the curve list (DoTrace's
+// TraceCurve2 appends the start node it traces to m_vCurvePoints without removing it
+// from m_vStartPoints, upstream-issues.md WR-182): the start list then walks the curve
+// ring, which the port's id lists do not model, so it is not read.
+const double SHARED_START_LIST = -3.0;
+
 void put_start_points(std::vector<double>& o, Drop& t)
 {
     SmTArray<SmTracePnt*> a;
     t.StartPoints().GetAllNodes(a);
+    for (ULONG i = 0; i < a.GetSize(); i++)
+    {
+        if (t.CurvePoints().IsInList(a[i]))
+        {
+            o.push_back(SHARED_START_LIST);
+            return;
+        }
+    }
     o.push_back((double)a.GetSize());
     for (ULONG i = 0; i < a.GetSize(); i++)
     {
@@ -606,6 +620,7 @@ SC_EXPORT int32_t sc_intersect_surface_drop_curve_run(const double* in, int64_t 
         return SC_ERR_ARG;
     try
     {
+        SC_NATIVE_LOCK;
         SmContext ctx;
         std::vector<double> o;
         Rd rd{in, n_in, 0};

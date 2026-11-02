@@ -6,7 +6,8 @@
 //! (both), `SmApiCreateCone` (both), `SmApiCreateTorus` (both), `SmApiCreatePyramid`,
 //! `SmApiCreateCylindricalBox`, `SmApiCreatePartialSphere`, `SmApiCreateSphereNoPole`,
 //! `SmApiCreatePartialCone`, `SmApiCreateConeEllipticEnds`, `SmApiCreatePartialCylinder`,
-//! `SmApiCreatePartialTorus`, `SmApiCreateSwungPrimitive`).
+//! `SmApiCreatePartialTorus`, `SmApiCreateSwungPrimitive`, `SmApiCreateBlendPrimitive`,
+//! `SmApiCreateOffsetProfile`).
 //!
 //! A call is `op args...` with the arguments in the API's order (`O[3]` = the origin,
 //! center or base center):
@@ -33,11 +34,34 @@
 //! | `PartialCylinder`   | 23 | `O[3] radius height start end`         |
 //! | `PartialTorus`      | 24 | `O[3] major minor start end`           |
 //! | `Swung`             | 25 | `k` x `C[3] r a0 a1` (XY arcs), `k` x arcs (XZ), `scale` |
+//! | `BlendPrimitive`    | 26 | `O[3] length width height edge1 face1 edge2 face2 same_dir` |
+//! | `OffsetProfile`     | 27 | `k` x curve ([`ProfileCurve`]), `distance type round shell` |
 //!
 //! The swung curves are `SmApiCreateArc(C, r, a0, a1)` B-splines.
 //!
+//! `OffsetProfile` ([`run_offset_profile`]) builds its profile curves first, each `kind`
+//! then its values: `0 P0[3] P1[3]` (`SmApiCreateLineSegment`, an `SmLine`), `1 C[3] r a0
+//! a1` (`SmApiCreateArc`), `2 C[3] r` (`SmApiCreateCircle`, the `SmCircle*&` overload),
+//! `3 P0[3] P1[3]` (`SmBSplineCurve::CreateLineSegment` of dimension 3) or `4 O[3] X[3]
+//! Y[3] r a0 a1` (`SmBSplineCurve::CreateCircleSegment` of dimension 3, `SM_CO_QUADRATIC`,
+//! in the frame `SetCanonical(O, X, Y)`); a failing constructor is `SC_ERR_ARG`. Then
+//! `SmApiCreateOffsetProfile(curves, distance, type, round, shell)` runs on them (they stay
+//! the caller's); its output is that of the other B-rep entry points.
+//!
+//! `BlendPrimitive` first builds the box `SmApiCreateBox(O, length, width, height)` and
+//! then calls `SmApiCreateBlendPrimitive` with the boundary edge and face given as
+//! indices into that B-rep's `GetEdges`/`GetFaces` lists (the list order the B-rep record
+//! uses). `same_dir` is `TRUE` (1) for start-of-edge1 to start-of-edge2, `FALSE` (0) for
+//! start to end. Its output is the box's status when the box fails, else the API's
+//! status; on success `has` (the out blend face is non-null), the mutated B-rep's
+//! face/edge/vertex counts and its geometry/trim record, then the blend face's record:
+//! `GetType`, tolerance, UV domain, loop count, `has surface`, the surface's `GetType`,
+//! its NURB (for a B-spline kind) and a 5 x 5 `EvaluatePoint` grid over the face's UV
+//! domain.
+//!
 //! The output is the API status (`0` = `SM_SUCCESS`, else the `SmStatus`), then on success
-//! `has` and the result record. A B-rep's record is its face, edge and vertex counts. A
+//! `has` and the result record. A B-rep's record contains its face, edge and vertex counts, then the geometry/trim
+//! record in `crates/difftest/src/util/primitive.rs`. A
 //! surface's record is its `GetType`, position (`O X Y Z`), STEP UV domain, the kind's
 //! values (plane: the UV scale; cylinder / cone: bottom and top radius, inside-out and
 //! swap-UV flags; torus: major and minor radius, inside-out and swap-UV flags), its NURB
@@ -75,6 +99,14 @@
 //!   `PartialSphere`, `PartialCone`, `ConeEllipticEnds`, `PartialCylinder`,
 //!   `PartialTorus`, `Swung`): every argument (and arc value) finite and at most
 //!   [`MAX_KERNEL_COORD`] in magnitude (a non-finite origin segfaults `CreateTorus`).
+//! - `OffsetProfile`: every curve value, the distance finite and at most
+//!   [`MAX_KERNEL_COORD`] in magnitude, at most [`MAX_PROFILE_CURVES`] curves, the
+//!   offset type an integer in `0..=`[`MAX_OFFSET_TYPE`] and the flags `0`/`1`.
+//! - `BlendPrimitive`: the box's origin and dimensions finite and at most
+//!   [`MAX_KERNEL_COORD`] in magnitude (the blend surface is built with the same
+//!   kernel machinery, on inputs this unit's generated cases only reach at moderate
+//!   scale), its four entity indices integers in `0..`[`MAX_BLEND_ENTITY`] (the shim
+//!   checks them against the B-rep's actual lists) and `same_dir` `0`/`1`.
 //!
 //! The kernel-side bounds are conservative where the crashes are erratic: they may also
 //! reject some inputs upstream survives, all of them deferred on the Rust side.
@@ -98,6 +130,15 @@ pub const MIN_ARC_CHORD: f64 = 1.0e-4;
 pub const MIN_ARC_SAGITTA: f64 = 1.0e-8;
 /// Smallest gap (degrees) between a `CylindricalBox` sweep and a full turn.
 pub const MIN_FULL_TURN_GAP: f64 = 1.0e-8;
+/// Largest edge/face index of `BlendPrimitive` (program shape; the shim also checks
+/// it against the box's actual lists).
+pub const MAX_BLEND_ENTITY: usize = 64;
+
+/// Most profile curves of one `OffsetProfile` call.
+pub const MAX_PROFILE_CURVES: usize = 16;
+/// Largest `lOffsetType` passed on (1 left, 2 right, 3 both; others are refused by
+/// `CreateOffsetsOfManyCurves` with `SM_ERR`).
+pub const MAX_OFFSET_TYPE: u64 = 4;
 
 /// `SM_EFF_ZERO`.
 const EFF_ZERO: f64 = 1.0e-12;
@@ -112,7 +153,10 @@ fn bad(m: &str) -> FfiError {
 }
 
 fn bounded(xs: &[f64], what: &str) -> Result<(), FfiError> {
-    if xs.iter().all(|x| x.is_finite() && x.abs() <= MAX_KERNEL_COORD) {
+    if xs
+        .iter()
+        .all(|x| x.is_finite() && x.abs() <= MAX_KERNEL_COORD)
+    {
         Ok(())
     } else {
         Err(bad(what))
@@ -179,7 +223,9 @@ pub fn guard(op: Op, args: &[f64], arcs: Option<(&[Arc], &[Arc])>) -> Result<(),
             if valid {
                 let sweep = a1 - a0;
                 let theta = sweep.to_radians();
-                if !origin.iter().all(|x| x.is_finite() && x.abs() <= MAX_KERNEL_COORD)
+                if !origin
+                    .iter()
+                    .all(|x| x.is_finite() && x.abs() <= MAX_KERNEL_COORD)
                     || ri * theta < MIN_ARC_CHORD
                     || ri * theta * theta / 8.0 < MIN_ARC_SAGITTA
                     || 360.0 - sweep < MIN_FULL_TURN_GAP
@@ -201,12 +247,47 @@ pub fn guard(op: Op, args: &[f64], arcs: Option<(&[Arc], &[Arc])>) -> Result<(),
             if let Some((xy, xz)) = arcs {
                 for c in xy.iter().chain(xz) {
                     bounded(&c.center, "swung: arc out of bounds")?;
-                    bounded(&[c.radius, c.start_deg, c.end_deg], "swung: arc out of bounds")?;
+                    bounded(
+                        &[c.radius, c.start_deg, c.end_deg],
+                        "swung: arc out of bounds",
+                    )?;
                 }
             }
         }
-        Op::CylinderSurface | Op::ConeSurface | Op::Box | Op::Cylinder
-        | Op::Cone | Op::Pyramid => {}
+        Op::BlendPrimitive => {
+            for i in 0..6 {
+                let v = a(i);
+                if !v.is_finite() || v.abs() > MAX_KERNEL_COORD {
+                    return Err(bad("blend primitive: box out of bounds"));
+                }
+            }
+            for i in 6..10 {
+                let v = a(i);
+                if !(v >= 0.0 && v <= MAX_BLEND_ENTITY as f64) || v != v.trunc() {
+                    return Err(bad("blend primitive: entity index out of range"));
+                }
+            }
+            let same = a(10);
+            if same != 0.0 && same != 1.0 {
+                return Err(bad("blend primitive: direction flag"));
+            }
+        }
+        Op::OffsetProfile => {
+            bounded(&[a(0)], "offset profile: distance out of bounds")?;
+            let flag = |v: f64| v == 0.0 || v == 1.0;
+            let kind = a(1);
+            // (NaN fails every comparison but `!=`, so it is rejected by the last)
+            if kind < 0.0
+                || kind > MAX_OFFSET_TYPE as f64
+                || kind != kind.trunc()
+                || !flag(a(2))
+                || !flag(a(3))
+            {
+                return Err(bad("offset profile: offset type or flag"));
+            }
+        }
+        Op::CylinderSurface | Op::ConeSurface | Op::Box | Op::Cylinder | Op::Cone | Op::Pyramid => {
+        }
     }
     Ok(())
 }
@@ -266,6 +347,12 @@ pub enum Op {
     PartialTorus = 24,
     /// `SmApiCreateSwungPrimitive(xy, xz, scale)`.
     Swung = 25,
+    /// `SmApiCreateBlendPrimitive(brep, edge1, face1, edge2, face2, same_dir)` on a
+    /// box built by `SmApiCreateBox`.
+    BlendPrimitive = 26,
+    /// `SmApiCreateOffsetProfile(curves, distance, type, round, shell)`
+    /// ([`run_offset_profile`]).
+    OffsetProfile = 27,
 }
 
 impl Op {
@@ -279,11 +366,14 @@ impl Op {
             | Self::Box
             | Self::Cone
             | Self::PartialSphere => 6,
-            Self::PlaneSurface | Self::PlaneBrep | Self::Cylinder | Self::Torus | Self::Pyramid => 5,
-            Self::PlanarCircle | Self::Sphere | Self::SphereNoPole => 4,
+            Self::PlaneSurface | Self::PlaneBrep | Self::Cylinder | Self::Torus | Self::Pyramid => {
+                5
+            }
+            Self::PlanarCircle | Self::Sphere | Self::SphereNoPole | Self::OffsetProfile => 4,
             Self::CylindricalBox | Self::PartialCone | Self::ConeEllipticEnds => 8,
             Self::PartialCylinder | Self::PartialTorus => 7,
             Self::Swung => 1,
+            Self::BlendPrimitive => 11,
         }
     }
 }
@@ -299,6 +389,88 @@ pub struct Arc {
     pub start_deg: f64,
     /// End angle (degrees).
     pub end_deg: f64,
+}
+
+/// A profile curve of `OffsetProfile`, built by the shim (see the module docs).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum ProfileCurve {
+    /// `SmApiCreateLineSegment(start, end)` (an `SmLine`).
+    Line {
+        /// Start point.
+        start: [f64; 3],
+        /// End point.
+        end: [f64; 3],
+    },
+    /// `SmApiCreateArc(center, radius, start_deg, end_deg)`.
+    Arc(Arc),
+    /// `SmApiCreateCircle(center, radius)`, the `SmCircle*&` overload.
+    Circle {
+        /// Center.
+        center: [f64; 3],
+        /// Radius.
+        radius: f64,
+    },
+    /// `SmBSplineCurve::CreateLineSegment(ctx, 3, start, end)`.
+    BSplineLine {
+        /// Start point.
+        start: [f64; 3],
+        /// End point.
+        end: [f64; 3],
+    },
+    /// `SmBSplineCurve::CreateCircleSegment(ctx, 3, frame, radius, start_deg, end_deg,
+    /// SM_CO_QUADRATIC)` with `frame.SetCanonical(origin, x_axis, y_axis)`.
+    BSplineCircle {
+        /// Frame origin (the center).
+        origin: [f64; 3],
+        /// Frame X axis.
+        x_axis: [f64; 3],
+        /// Frame Y axis.
+        y_axis: [f64; 3],
+        /// Radius.
+        radius: f64,
+        /// Start angle (degrees).
+        start_deg: f64,
+        /// End angle (degrees).
+        end_deg: f64,
+    },
+}
+
+impl ProfileCurve {
+    /// `kind` then the values (see the module docs).
+    fn push(&self, prog: &mut Vec<f64>) {
+        match self {
+            Self::Line { start, end } => {
+                prog.push(0.0);
+                prog.extend(start.iter().chain(end));
+            }
+            Self::Arc(a) => {
+                prog.push(1.0);
+                prog.extend_from_slice(&a.center);
+                prog.extend([a.radius, a.start_deg, a.end_deg]);
+            }
+            Self::Circle { center, radius } => {
+                prog.push(2.0);
+                prog.extend_from_slice(center);
+                prog.push(*radius);
+            }
+            Self::BSplineLine { start, end } => {
+                prog.push(3.0);
+                prog.extend(start.iter().chain(end));
+            }
+            Self::BSplineCircle {
+                origin,
+                x_axis,
+                y_axis,
+                radius,
+                start_deg,
+                end_deg,
+            } => {
+                prog.push(4.0);
+                prog.extend(origin.iter().chain(x_axis).chain(y_axis));
+                prog.extend([*radius, *start_deg, *end_deg]);
+            }
+        }
+    }
 }
 
 fn push_arcs(prog: &mut Vec<f64>, arcs: &[Arc]) {
@@ -332,6 +504,11 @@ pub fn run(op: Op, args: &[f64], arcs: Option<(&[Arc], &[Arc])>) -> Result<Vec<f
             return Err(FfiError::InvalidArgument("caps".into()));
         }
     }
+    if op == Op::OffsetProfile {
+        return Err(FfiError::InvalidArgument(
+            "OffsetProfile runs through run_offset_profile".into(),
+        ));
+    }
     guard(op, args, arcs)?;
     let mut prog = vec![f64::from(op as i32)];
     match (op, arcs) {
@@ -346,6 +523,53 @@ pub fn run(op: Op, args: &[f64], arcs: Option<(&[Arc], &[Arc])>) -> Result<Vec<f
             return Err(FfiError::InvalidArgument("arcs".into()));
         }
         (_, None) => {}
+    }
+    prog.extend_from_slice(args);
+    call_with_buffer(4096, |buf, len| {
+        // SAFETY: prog is valid for prog.len() reads; buf valid for buf.len() writes; len
+        // valid.
+        unsafe {
+            sys::sc_primitive_api_primitives_run(
+                prog.as_ptr(),
+                prog.len() as i64,
+                buf.as_mut_ptr(),
+                buf.len() as i64,
+                &raw mut *len,
+            )
+        }
+    })
+}
+
+/// Runs `SmApiCreateOffsetProfile` on `curves` (built first by the shim) with `args`
+/// `distance type round shell`. Returns the output record (status first).
+///
+/// # Errors
+///
+/// [`FfiError::InvalidArgument`] for a wrong argument count, more than
+/// [`MAX_PROFILE_CURVES`] curves, a curve value that is not finite or beyond
+/// [`MAX_KERNEL_COORD`], or arguments [`guard`] rejects; [`FfiError::Status`] for a shim
+/// error (`SC_ERR_ARG` when a curve constructor fails).
+pub fn run_offset_profile(curves: &[ProfileCurve], args: &[f64]) -> Result<Vec<f64>, FfiError> {
+    let op = Op::OffsetProfile;
+    if args.len() != op.arity() {
+        return Err(FfiError::InvalidArgument(format!(
+            "{op:?} takes {} arguments, got {}",
+            op.arity(),
+            args.len()
+        )));
+    }
+    if curves.len() > MAX_PROFILE_CURVES {
+        return Err(bad("offset profile: too many curves"));
+    }
+    guard(op, args, None)?;
+    let mut prog = vec![f64::from(op as i32), curves.len() as f64];
+    for c in curves {
+        let start = prog.len() + 1;
+        c.push(&mut prog);
+        bounded(
+            prog.get(start..).unwrap_or_default(),
+            "offset profile: curve out of bounds",
+        )?;
     }
     prog.extend_from_slice(args);
     call_with_buffer(4096, |buf, len| {

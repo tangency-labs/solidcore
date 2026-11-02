@@ -10,6 +10,12 @@
 //! which return [`SolidError::InvalidInput`] where upstream would read or write
 //! outside a whole block.
 //!
+//! Deviations: `alloc` reserves fallibly and returns [`NlibCode::Memory`] (upstream's
+//! `NL_MEM_ERR` for a failed `N_Malloc`) instead of aborting on a size taken from
+//! caller input, also above [`crate::limits::MAX_ALLOC_BYTES`] (so a degree of `2^31`
+//! fails on every machine); `add` / `mul` return `InvalidInput` where upstream's signed `NL_INDEX`
+//! sum or product would overflow (undefined behaviour).
+//!
 //! | Rust                         | Upstream                                       |
 //! |------------------------------|------------------------------------------------|
 //! | `at`, `at_mut`, `put`        | `a[i]`, `&a[i]`, `a[i] = v`                    |
@@ -22,8 +28,10 @@
 //! | `basis`                      | `N_BasisEval(.., NL_LEFT, ..)`                 |
 //! | `curve`                      | filling an output `NL_CURVE`                   |
 //! | `sg`, `idx`, `hi`, `head`    | `NL_INDEX` <-> slice length conversions        |
+//! | `add`, `mul`                 | `NL_INDEX` `a + b`, `a * b`                    |
 
-use crate::error::{Result, SolidError};
+use crate::error::{NlibCode, Result, SolidError};
+use crate::limits;
 use crate::nurbs::crv_basic::Curve;
 use crate::nurbs::knots::{KnotVector, Side};
 use crate::nurbs::math::{CPoint, MatrixType, RealMatrix};
@@ -105,17 +113,44 @@ pub(crate) fn put2<T>(a: &mut [Vec<T>], i: i64, j: i64, v: T, op: &'static str) 
 
 /// A vector of `n + 1` copies of `v` (`n` an upstream highest index; empty for
 /// `n == -1`).
+///
+/// [`NlibCode::Memory`] (upstream `NL_MEM_ERR` from a failed `N_Malloc`) when the
+/// storage cannot be reserved or would take more than [`limits::MAX_ALLOC_BYTES`],
+/// instead of an allocation abort.
 pub(crate) fn alloc<T: Clone>(n: i64, v: T, op: &'static str) -> Result<Vec<T>> {
     let len = n
         .checked_add(1)
         .and_then(|l| usize::try_from(l).ok())
         .ok_or_else(|| out_of_range(op))?;
-    Ok(vec![v; len])
+    limits::try_filled(len, v).ok_or_else(|| SolidError::nlib(op, NlibCode::Memory))
 }
 
-/// An `(n+1) x (m+1)` grid of `v`.
+/// `a + b` on upstream `NL_INDEX` values, `InvalidInput` where the sum overflows
+/// (signed overflow is undefined behaviour upstream).
+pub(crate) fn add(a: i64, b: i64, op: &'static str) -> Result<i64> {
+    a.checked_add(b)
+        .ok_or_else(|| invalid(op, "index arithmetic overflow"))
+}
+
+/// `a * b` on upstream `NL_INDEX` values, `InvalidInput` where the product overflows.
+pub(crate) fn mul(a: i64, b: i64, op: &'static str) -> Result<i64> {
+    a.checked_mul(b)
+        .ok_or_else(|| invalid(op, "index arithmetic overflow"))
+}
+
+/// An `(n+1) x (m+1)` grid of `v`; [`NlibCode::Memory`] also when the whole grid
+/// would take more than [`limits::MAX_ALLOC_BYTES`] (upstream allocates it as one
+/// block).
 pub(crate) fn alloc2<T: Clone>(n: i64, m: i64, v: T, op: &'static str) -> Result<Vec<Vec<T>>> {
-    alloc(n, alloc(m, v, op)?, op)
+    let row = alloc(m, v, op)?;
+    let rows = n
+        .checked_add(1)
+        .and_then(|l| usize::try_from(l).ok())
+        .ok_or_else(|| out_of_range(op))?;
+    if !rows.checked_mul(row.len()).is_some_and(limits::fits::<T>) {
+        return Err(SolidError::nlib(op, NlibCode::Memory));
+    }
+    alloc(n, row, op)
 }
 
 /// Upstream's row-major block of reals (`N_AllocReal2dArray` plus its zeroing loops),
@@ -253,5 +288,20 @@ mod tests {
         mset(&mut cm, 0, 2, 5.0, "t").unwrap();
         assert_eq!(mget(&cm, 1, 0, "t").unwrap(), 5.0);
         assert!(mget(&cm, -1, 0, "t").is_err());
+    }
+
+    #[test]
+    fn huge_sizes_fail_softly() {
+        // Upstream's failed N_Malloc is NL_MEM_ERR; the port must not abort.
+        assert!(matches!(
+            alloc(1_i64 << 61, 0.0, "t"),
+            Err(SolidError::Nlib {
+                code: NlibCode::Memory,
+                ..
+            })
+        ));
+        assert!(add(i64::MAX, 1, "t").is_err());
+        assert!(mul(2, i64::MAX, "t").is_err());
+        assert_eq!(add(2, 3, "t").unwrap(), 5);
     }
 }

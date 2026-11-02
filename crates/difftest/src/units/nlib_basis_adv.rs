@@ -17,6 +17,13 @@
 //! is not called), the Rust side from its out-of-range error, so the two detections are
 //! compared. Every run has at least [`MIN_GENERATED`] generated inputs (more with
 //! `--seeds`).
+//!
+//! Known vacuous fixtures: the `inc_mult` fixtures taken from Bezier-form knot vectors
+//! (`vNN_..._inc_mult_t*` whose vector has no interior knot, e.g. `DropCurveCurve.smc`)
+//! succeed on both sides with an empty knot list, since upstream inserts only copies of
+//! interior knots. There is no value to record, so the output also carries the count of
+//! inserted knots (`n`, an exact integer from each side), which is 0 for them; the
+//! generator still avoids such inputs.
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -152,7 +159,11 @@ fn cpp(i: Inputs) -> Result<Output, HarnessError> {
             ffi::insert(&r, i32_of(p)?, &x).map(|s| Output::new().values("s", s))
         }
         Inputs::IncMult { u, p, t } => {
-            ffi::inc_mult(&u, i32_of(p)?, i64_of(t)?).map(|x| Output::new().values("x", x))
+            ffi::inc_mult(&u, i32_of(p)?, i64_of(t)?).map(|x| {
+                Output::new()
+                    .int("n", x.len() as i64)
+                    .values("x", x)
+            })
         }
         Inputs::DerivsArray {
             knots,
@@ -193,7 +204,11 @@ fn rust(i: Inputs) -> Result<Output, HarnessError> {
             ba::insert_knots(&r, p, &x).map(|s| Output::new().values("s", s))
         }
         Inputs::IncMult { u, p, t } => {
-            ba::increase_knot_mult(&u, p, t).map(|x| Output::new().values("x", x))
+            ba::increase_knot_mult(&u, p, t).map(|x| {
+                Output::new()
+                    .int("n", x.len() as i64)
+                    .values("x", x)
+            })
         }
         Inputs::DerivsArray {
             knots,
@@ -455,10 +470,26 @@ fn gen_insert(rng: &mut Rng) -> Inputs {
 }
 
 fn gen_inc_mult(rng: &mut Rng) -> Inputs {
-    let p = pick_degree(rng).min(8);
-    let u = gen_knots(rng, p, (p + 1).max(1));
-    let t = rng.below(p as u64 + 2) as usize;
-    Inputs::IncMult { u, p, t }
+    // `increase_knot_mult` returns t copies of every interior knot, so a vector with
+    // none (len <= 2p + 2) or t = 0 yields an empty result on both sides and compares
+    // nothing (a vacuous pass). Retry a bounded number of times to reach a case that
+    // produces knots; the last draw is kept so degenerate shapes stay reachable.
+    let mut last = None;
+    for _ in 0..8 {
+        let p = pick_degree(rng).min(8);
+        let u = gen_knots(rng, p, (p + 1).max(1));
+        let t = rng.below(p as u64 + 2) as usize;
+        let produces = t > 0 && u.len() > 2 * p + 2;
+        last = Some(Inputs::IncMult { u, p, t });
+        if produces {
+            break;
+        }
+    }
+    last.unwrap_or_else(|| Inputs::IncMult {
+        u: vec![0.0],
+        p: 0,
+        t: 0,
+    })
 }
 
 fn gen_compat_mult(rng: &mut Rng) -> Inputs {

@@ -23,6 +23,9 @@
 //!   (`SmTol::GetZoneTol3d(pSurface)` of the face's own surface, whose owner is the
 //!   face; the arena surfaces carry no owner). A face without surface gives
 //!   [`PointContainment::Unknown`], as upstream.
+//!   The same walk accepts prepared, read-only topology internally; a missing trim
+//!   reports [`SolidError::Unported`] only when the walk needs it, without eager work.
+//!   Temporary surface copies retain exact evaluation data and owner tolerances.
 //! - **UV trim curves.** A failing status of `GetOrCreateUVTrimCurve` (a recorded drop
 //!   failure of the existing curve, or a failed creation) or a missing curve gives
 //!   `SM_POC_UNKNOWN`, as upstream.
@@ -30,8 +33,17 @@
 //!   reached when the point lies on a side of the surface's natural domain and an edge
 //!   use end of the loop does too.
 //! - **Ignored statuses.** Upstream ignores the status of `EvaluatePoint` /
-//!   `Evaluate` of the surface and the trim curves and then reads the (uninitialised)
-//!   outputs; the port returns their error instead (no valid input reaches it).
+//!   `Evaluate` of the surface and the trim curves and then reads the outputs they did
+//!   not write. For the trim curves (B-splines, whose failed evaluation writes
+//!   nothing) the port does the same: a failed `EvaluatePoint` of the last edge use's
+//!   trim leaves `sLastEndUV` at its `SM_UNDEF_DOUBLE` default, and a failed
+//!   `Evaluate(.., 1, ..)` leaves `sPtDer` as it was (its `SM_UNDEF_DOUBLE` defaults
+//!   for the edge use's first evaluation, else the previous evaluation's point and
+//!   derivative). A trim curve whose basis fails to evaluate (degree 3 with 2 control
+//!   points, from a STEP cylinder band) reaches it. A failed surface `EvaluatePoint`
+//!   still returns its error (no input reaches it). With the opt-in
+//!   `Kernel::fixes.query_statuses_pass_on` (WR-663) a failed evaluation or local solve
+//!   answers `SM_POC_UNKNOWN`, as the fork (tangency-labs/smlib 7a35f33).
 //!   `DropPoint` and `LocalPointSolve` failures are "no answer" (both reset their
 //!   success flag first upstream). [`SolidError::Unported`] from any callee is
 //!   returned.
@@ -54,7 +66,7 @@ use crate::nurbs::b_spline_surface_n_lib::p2::OrientType;
 use crate::surface::surface::p1::map_to_2d;
 use crate::surface::surface::Surface;
 use crate::topology::edgeuse::p1 as eu1;
-use crate::topology::edgeuse::p3::get_or_create_uv_trim_curve;
+use crate::topology::loopuse::{uv_corner_boundaries_with_topology, QueryTopology};
 use crate::topology::{Brep, EdgeId, EdgeuseId, LoopId};
 
 /// Upper bound of the steps along one edge use and of the re-evaluations of one step
@@ -107,15 +119,6 @@ fn null(reason: &'static str) -> SolidError {
     SolidError::invalid_input("query::loop::contains_uv_point", reason)
 }
 
-/// `pEU->GetOrCreateUVTrimCurve(pUVCurve)` with its status tested as `ContainsUVPoint`
-/// does (`stat != SM_SUCCESS || pUVCurve == NULL`): whether the edge use now has a UV
-/// trim curve and the status is a success. The B-rep is edited (the curve attached,
-/// the edge trimmed) where upstream edits it.
-fn ensure_trim_curve(k: &Kernel, b: &mut Brep, eu: EdgeuseId) -> Result<bool> {
-    let fetch = get_or_create_uv_trim_curve(k, b, eu, false, false, true)?;
-    Ok(fetch.status.is_ok() && eu1::uv_trim_curve(b, eu)?.0.is_some())
-}
-
 /// The edge of an edge use (`GetEdge`, dereferenced by `ContainsUVPoint`).
 fn edge_of(b: &Brep, eu: EdgeuseId) -> Result<EdgeId> {
     eu1::edge(b, eu)?.ok_or_else(|| null("ContainsUVPoint: edge use without edge"))
@@ -146,38 +149,69 @@ fn drop_on_edge(
         SolverOperation::Intersect,
     ) {
         Ok(d) => Ok(d.success.then_some(d.parameter)),
-        Err(e @ SolidError::Unported { .. }) => Err(e),
+        Err(e @ (SolidError::Unported { .. } | SolidError::Cancelled { .. })) => Err(e),
         Err(_) => Ok(None),
+    }
+}
+
+/// The value of a call whose failure the port returns, or `None` when, with the opt-in
+/// [`crate::kernel::UpstreamFixes::query_statuses_pass_on`], the point is not classified
+/// (`SM_POC_UNKNOWN`, tangency-labs/smlib 7a35f33). [`SolidError::Unported`] propagates.
+fn or_unknown<T>(k: &Kernel, r: Result<T>) -> Result<Option<T>> {
+    match r {
+        Err(e) if k.fixes.query_statuses_pass_on && !e.is_unported_or_cancelled() => Ok(None),
+        r => r.map(Some),
     }
 }
 
 /// `LocalPointSolve(SM_SO_MINIMIZE)` of the test point on a UV trim curve: whether it
 /// converged and the solution. A failing solve has not converged (its status is
-/// ignored upstream and the flag is reset first).
+/// ignored upstream and the flag is reset first); with the opt-in
+/// [`crate::kernel::UpstreamFixes::query_statuses_pass_on`] it classifies nothing
+/// (`Err(())`, the fork's `SM_POC_UNKNOWN`).
 fn local_minimize(
+    k: &Kernel,
     trim: &Curve,
     interval: &Extent1d,
     point: Point3,
     tol_uv: f64,
     guess: f64,
-) -> Result<Option<Solution<()>>> {
+) -> Result<std::result::Result<Option<Solution<()>>, ()>> {
     let opts = PointSolveOptions {
         distance_tolerance: Some(tol_uv),
         ..PointSolveOptions::default()
     };
-    match trim.local_point_solve::<()>(interval, SolverOperation::Minimize, point, &opts, guess) {
-        Ok((true, sol)) => Ok(Some(sol)),
-        Err(e @ SolidError::Unported { .. }) => Err(e),
-        Ok((false, _)) | Err(_) => Ok(None),
+    match trim.local_point_solve::<()>(k, interval, SolverOperation::Minimize, point, &opts, guess)
+    {
+        Ok((true, sol)) => Ok(Ok(Some(sol))),
+        Err(e @ (SolidError::Unported { .. } | SolidError::Cancelled { .. })) => Err(e),
+        Err(_) if k.fixes.query_statuses_pass_on => Ok(Err(())),
+        Ok((false, _)) | Err(_) => Ok(Ok(None)),
     }
 }
 
 /// The point and unit tangent (in the edge use's direction) of a trim curve at `t`,
-/// with the tangent's length (`1` when below `SM_EFF_ZERO`).
-fn eval_with_tangent(trim: &Curve, t: f64, orient: OrientType) -> Result<(Point3, Vec3, f64)> {
-    let der = trim.evaluate(t, 1, false, true)?;
-    let pt = der.first().copied().unwrap_or(Vec3::UNDEF);
-    let mut tan = der.get(1).copied().unwrap_or(Vec3::UNDEF);
+/// with the tangent's length (`1` when below `SM_EFF_ZERO`), evaluated into `pt_der`
+/// (upstream `sPtDer`). A failed evaluation leaves `pt_der` as it was, as upstream
+/// ignores the status of `Evaluate`; with `query_statuses_pass_on` it is the error.
+fn eval_with_tangent(
+    k: &Kernel,
+    trim: &Curve,
+    t: f64,
+    orient: OrientType,
+    pt_der: &mut [Vec3; 2],
+) -> Result<(Point3, Vec3, f64)> {
+    match trim.evaluate(k, t, 1, false, true) {
+        Ok(der) => {
+            for (slot, v) in pt_der.iter_mut().zip(der) {
+                *slot = v;
+            }
+        }
+        Err(e) if e.is_unported_or_cancelled() || k.fixes.query_statuses_pass_on => return Err(e),
+        // status ignored upstream: sPtDer keeps its values
+        Err(_) => {}
+    }
+    let [pt, mut tan] = *pt_der;
     if orient == OrientType::Opposite {
         tan = -tan;
     }
@@ -225,6 +259,18 @@ pub fn contains_uv_point(
     l: LoopId,
     surface: Option<&Surface>,
     uv: Point2,
+    tol_3d: f64,
+) -> Result<UvContainment> {
+    contains_uv_point_with_topology(k, &mut QueryTopology::Mutable(b), l, surface, uv, tol_3d)
+}
+
+/// Shared containment walk, with lazy trim creation limited to mutable topology.
+pub(crate) fn contains_uv_point_with_topology(
+    k: &Kernel,
+    b: &mut QueryTopology<'_>,
+    l: LoopId,
+    surface: Option<&Surface>,
+    uv: Point2,
     _tol_3d: f64,
 ) -> Result<UvContainment> {
     // Work from Loopuses, because they will give us an ordered list of Edgeuses.
@@ -253,11 +299,9 @@ pub fn contains_uv_point(
         Some(s) => s,
         None => match face_rec.surface.as_ref() {
             Some(s) => {
-                // (a copy: the B-rep is edited while the walk uses the surface; the
-                // copy constructor resets the owner, which the face's surface keeps)
-                let mut copy = s.clone();
-                copy.set_owner(s.owner());
-                own_surface = copy;
+                // Keep the exact evaluation data and owner tolerance while the
+                // mutable walk may attach trim curves to the B-rep.
+                own_surface = s.clone_for_evaluation()?;
                 &own_surface
             }
             None => return Ok(UvContainment::of(PointContainment::Unknown)),
@@ -267,13 +311,15 @@ pub fn contains_uv_point(
     // upstream), so the face's tolerance
     let zone_tol = face_rec.tolerance;
 
-    let srf_uv_domain = surface.natural_uv_domain();
-    let point_3d = surface.evaluate_point(uv)?;
+    let srf_uv_domain = surface.natural_uv_domain_with_nurb(k)?;
+    let Some(point_3d) = or_unknown(k, surface.evaluate_point(k, uv))? else {
+        return Ok(UvContainment::of(PointContainment::Unknown));
+    };
     let uv_pt = Point3::new(uv.x, uv.y, 0.0);
 
     // Get a tolerance in uv space.
     // Scale the input tolerance by the UV deriv size.
-    let mut tol_uv = map_to_2d(zone_tol, uv, surface)?;
+    let mut tol_uv = map_to_2d(k, zone_tol, uv, surface)?;
 
     // minimize pole checking - if UVPnt on boundary -then-> if Loop on boundary -then->
     // if GetSingularities -then-> expensive check
@@ -284,7 +330,7 @@ pub fn contains_uv_point(
     // When crUVPoint is on Surface UVBoundary - does Loop have any edgeuse ends on
     // Surface Natural UVBoundary
     let corners = if uv_boundaries != 0 {
-        crate::topology::loopuse::uv_corner_boundaries(k, b, l, &srf_uv_domain, tol_uv)?
+        uv_corner_boundaries_with_topology(k, b, l, &srf_uv_domain, tol_uv)?
     } else {
         crate::topology::loopuse::UvCorners::default()
     };
@@ -345,7 +391,7 @@ pub fn contains_uv_point(
             ivl.min()
         }
     };
-    if !ensure_trim_curve(k, b, last_eu)? {
+    if !b.ensure_trim_curve(k, last_eu)? {
         // stat != SM_SUCCESS || pThisUVCurve == NULL
         return Ok(UvContainment::of(PointContainment::Unknown));
     }
@@ -353,7 +399,15 @@ pub fn contains_uv_point(
         let last_trim = eu1::uv_trim_curve(b, last_eu)?
             .0
             .ok_or_else(|| null("ContainsUVPoint: edge use without UV trim curve"))?;
-        last_trim.evaluate_point(last_end_param)?
+        // (status ignored upstream: a failed evaluation leaves sLastEndUV undefined)
+        match last_trim.evaluate_point(k, last_end_param) {
+            Ok(p) => p,
+            Err(e) if e.is_unported_or_cancelled() => return Err(e),
+            Err(_) if k.fixes.query_statuses_pass_on => {
+                return Ok(UvContainment::of(PointContainment::Unknown));
+            }
+            Err(_) => Vec3::UNDEF,
+        }
     };
     let mut last_end_quad_num = calc_quad_num(uv_pt, last_end_uv);
 
@@ -364,18 +418,23 @@ pub fn contains_uv_point(
         // low work: see if TgtPoint is on this EdgeCurve
         let on_edge_curve = {
             let edge = b.edge(this_edge)?;
-            let curve = edge
+            // the drop builds the edge curve's cache at the edge's tolerance
+            // (SmTol::GetApproxTol3d(&m_crCurve) reads pEdge->GetTolerance() through the
+            // owner)
+            let mut curve = edge
                 .curve
                 .as_ref()
-                .ok_or_else(|| null("ContainsUVPoint: edge without curve"))?;
-            drop_on_edge(k, curve, &edge.interval, point_3d, edge.tolerance)?
+                .ok_or_else(|| null("ContainsUVPoint: edge without curve"))?
+                .clone_for_evaluation()?;
+            curve.set_owner_zone_tol_3d(Some(edge.tolerance));
+            drop_on_edge(k, &curve, &edge.interval, point_3d, edge.tolerance)?
         };
         if let Some(param) = on_edge_curve {
             // TgtPoint is on EdgeCurve - set output and return
             return Ok(UvContainment::on(this_edge, param));
         }
 
-        if !ensure_trim_curve(k, b, this_eu)? {
+        if !b.ensure_trim_curve(k, this_eu)? {
             // we can't work
             return Ok(UvContainment::of(PointContainment::Unknown));
         }
@@ -398,18 +457,27 @@ pub fn contains_uv_point(
         let _default_param_step = domain.length() / trim.number_control_points()? as f64;
         let min_param_step = domain.length() / 1000.0;
         let max_param_step = domain.length() / 20.0;
-        let curve_is_linear = trim.is_linear(tol_uv, false)?.linear;
+        let curve_is_linear = trim.is_linear(k, tol_uv, false)?.linear;
 
         // Eval info for start point of this EU.
-        let (mut prev_uv, mut prev_uv_tan, mut prev_uv_tan_len) =
-            eval_with_tangent(trim, prev_param, orient)?;
+        let mut pt_der = [Vec3::UNDEF; 2];
+        let Some((mut prev_uv, mut prev_uv_tan, mut prev_uv_tan_len)) = or_unknown(
+            k,
+            eval_with_tangent(k, trim, prev_param, orient, &mut pt_der),
+        )?
+        else {
+            return Ok(UvContainment::of(PointContainment::Unknown));
+        };
         let (prev_vec, mut prev_dist) = unit_from(uv_pt, prev_uv);
         let mut prev_cos = prev_vec.dot(prev_uv_tan);
 
         // Note: if dPrevDist < tol, then this uv pt is on the edge.
         if prev_dist < tol_uv {
             // We should refine the point.
-            if let Some(sol) = local_minimize(trim, &domain, uv_pt, tol_uv, prev_param)? {
+            let Ok(sol) = local_minimize(k, trim, &domain, uv_pt, tol_uv, prev_param)? else {
+                return Ok(UvContainment::of(PointContainment::Unknown));
+            };
+            if let Some(sol) = sol {
                 // since the guess was good enough - we expect the refined solution to
                 // be as good or better
                 if sol.start.solution_value <= tol_uv {
@@ -516,8 +584,13 @@ pub fn contains_uv_point(
                     return Ok(UvContainment::of(PointContainment::Unknown));
                 }
 
-                let (uv_at, this_uv_tan, this_uv_tan_len) =
-                    eval_with_tangent(trim, this_param, orient)?;
+                let Some((uv_at, this_uv_tan, this_uv_tan_len)) = or_unknown(
+                    k,
+                    eval_with_tangent(k, trim, this_param, orient, &mut pt_der),
+                )?
+                else {
+                    return Ok(UvContainment::of(PointContainment::Unknown));
+                };
                 this_uv = uv_at;
                 let (this_vec, this_dist) = unit_from(uv_pt, this_uv);
                 let this_cos = this_vec.dot(this_uv_tan);
@@ -599,7 +672,10 @@ pub fn contains_uv_point(
                     crv_ivl.add_value(this_param);
                     crv_ivl.expand_absolute(EFF_ZERO);
 
-                    if let Some(sol) = local_minimize(trim, &crv_ivl, uv_pt, tol_uv, guess_t)? {
+                    let Ok(sol) = local_minimize(k, trim, &crv_ivl, uv_pt, tol_uv, guess_t)? else {
+                        return Ok(UvContainment::of(PointContainment::Unknown));
+                    };
+                    if let Some(sol) = sol {
                         if sol.start.solution_value <= tol_uv {
                             return Ok(UvContainment::on(this_edge, sol.start.param(0)?));
                         }
@@ -704,6 +780,41 @@ mod tests {
         Edge, Edgeuse, EdgeuseOwner, Face, FaceId, Faceuse, FaceuseId, Loop, Loopuse, LoopuseId,
         LoopuseStart, Region, RegionId, Shell, ShellId, Vertex, VertexId,
     };
+
+    /// A degree-3 trim with only 2 control points: its basis fails to evaluate.
+    fn bad_trim() -> Curve {
+        let pw = vec![
+            CPoint::new(1.0, 2.0, 0.0, NOW),
+            CPoint::new(3.0, 4.0, 0.0, NOW),
+        ];
+        let cur = NurbCurve::new(pw, 3, vec![0.0, 0.0, 0.0, 0.0, 1.0, 1.0]).unwrap();
+        Curve::from(BSplineCurve::from_nurb(cur, 2, false))
+    }
+
+    #[test]
+    fn failed_trim_evaluation_keeps_the_previous_derivatives() {
+        let k = Kernel::default();
+        let trim = bad_trim();
+        assert!(trim.evaluate(&k, 0.0, 1, false, true).is_err());
+        // first evaluation of an edge use: the SM_UNDEF_DOUBLE defaults
+        let mut pt_der = [Vec3::UNDEF; 2];
+        let (pt, tan, len) =
+            eval_with_tangent(&k, &trim, 0.0, OrientType::Same, &mut pt_der).unwrap();
+        assert_eq!(pt, Vec3::UNDEF);
+        assert_eq!(tan, Vec3::UNDEF);
+        assert_eq!(len, 1.0);
+        // a later evaluation: the previous point and derivative
+        let mut pt_der = [Vec3::new(1.0, 2.0, 0.0), Vec3::new(0.0, 2.0, 0.0)];
+        let (pt, tan, len) =
+            eval_with_tangent(&k, &trim, 0.5, OrientType::Opposite, &mut pt_der).unwrap();
+        assert_eq!(pt, Vec3::new(1.0, 2.0, 0.0));
+        assert_eq!(tan, Vec3::new(0.0, -1.0, 0.0));
+        assert_eq!(len, 2.0);
+        // with the opt-in the failure is returned (SM_POC_UNKNOWN at the caller)
+        let mut k = Kernel::default();
+        k.fixes.query_statuses_pass_on = true;
+        assert!(eval_with_tangent(&k, &trim, 0.0, OrientType::Same, &mut pt_der).is_err());
+    }
 
     fn plane() -> Surface {
         Surface::from(Plane::new(
@@ -821,6 +932,31 @@ mod tests {
     }
 
     #[test]
+    fn issue_2009_unevaluable_trim_is_unknown() {
+        // tangency-labs/smlib 7a35f33 (SmLoop::ContainsUVPoint): a trim point that
+        // cannot be evaluated is not classified (SM_POC_UNKNOWN); without the flag the
+        // port ignores the failed evaluation as upstream does (its outputs keep their
+        // values) and classifies on.
+        let mut b = square(plane(), true, &[]);
+        b.edgeuse_mut(EdgeuseId::from_index(3))
+            .unwrap()
+            .uv_trim_curve = Some(Curve::from(BSplineCurve::new(2)));
+        assert!(contains(&mut b.clone(), [0.0, 0.0]).is_ok());
+        let mut k = Kernel::default();
+        k.fixes.query_statuses_pass_on = true;
+        let r = contains_uv_point(
+            &k,
+            &mut b,
+            LoopId::from_index(0),
+            None,
+            Point2::new(0.0, 0.0),
+            0.0,
+        )
+        .unwrap();
+        assert_eq!(r, UvContainment::of(PointContainment::Unknown));
+    }
+
+    #[test]
     fn square_inside_outside_on() {
         let mut b = square(plane(), true, &[]);
         let r = contains(&mut b, [0.0, 0.0]).unwrap();
@@ -883,6 +1019,50 @@ mod tests {
         // a plane has no singular sides, so GetSingularities is wired and no longer defers
         let r = contains(&mut b, [-5.0, 0.0]);
         assert!(!matches!(r, Err(SolidError::Unported { .. })));
+    }
+
+    #[test]
+    fn prepared_walk_keeps_lazy_trim_order() {
+        let k = Kernel::default();
+        // The final trim is read first. The first edge's 3D drop then exits before
+        // needing its missing trim or the missing trims of later edge uses.
+        let mut b = square(plane(), true, &[0, 1, 2]);
+        let prepared = contains_uv_point_with_topology(
+            &k,
+            &mut QueryTopology::Prepared(&b),
+            LoopId::from_index(0),
+            None,
+            Point2::new(0.0, -5.0),
+            0.0,
+        )
+        .unwrap();
+        assert_eq!(prepared.containment, PointContainment::OnBoundary);
+        assert_eq!(prepared.on_edge, Some(EdgeId::from_index(0)));
+        assert_eq!(prepared, contains(&mut b, [0.0, -5.0]).unwrap());
+        for i in 0..3 {
+            assert!(b
+                .edgeuse(EdgeuseId::from_index(i))
+                .unwrap()
+                .uv_trim_curve
+                .is_none());
+        }
+
+        // Conversely, a missing final trim is needed even for that same 3D drop.
+        let b = square(plane(), true, &[3]);
+        assert!(matches!(
+            contains_uv_point_with_topology(
+                &k,
+                &mut QueryTopology::Prepared(&b),
+                LoopId::from_index(0),
+                None,
+                Point2::new(0.0, -5.0),
+                0.0,
+            ),
+            Err(SolidError::Unported {
+                unit: "topology.edgeuse_p3",
+                ..
+            })
+        ));
     }
 
     #[test]

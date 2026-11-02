@@ -73,7 +73,8 @@
 //! `.smb` files, well-formed clamped B-splines, handles inside the B-reps' exports (it
 //! builds the B-reps once more to count), the registered curves that exist, edges with a
 //! curve and vertices and faces with a surface where upstream dereferences them, no
-//! handle-taking op after an op that may delete topology (23 to 28, 30), ops 7 and 8
+//! handle-taking op after an op that may delete topology (23 to 28, 30; only a `FaceFace`
+//! without input vertices may follow a `VertexFace` or an `EdgeFace`), ops 7 and 8
 //! only while the intersector's primary B-rep is set and 27 to 30 only while both are
 //! (either constructor sets both from the blocks, then `SetBreps` may change them; they
 //! dereference them unchecked); ops 29 to 33 need the
@@ -90,6 +91,13 @@ pub const MAX_INDEX: usize = 32;
 pub const MAX_DEGREE: usize = 5;
 /// Largest coordinate magnitude.
 pub const MAX_COORD: f64 = 1.0e300;
+/// Bound (exclusive) on B-spline surface and curve control point coordinates: from
+/// about `1e154`, where their squares overflow, upstream's face/face, edge/face,
+/// coincidence and full intersections do not finish (HANG-29,
+/// `SmCurve::GlobalCoincidenceChecker` splitting a boundary forever; a surface point of
+/// `1e154` gave no result in 60 s, `1e150` returned in 0.1 s; a curve point of `-1e155`
+/// took 27 s, `-1e154` none).
+pub const MAX_GEOMETRY_COORD: f64 = 1.0e154;
 /// Most ops in a script.
 pub const MAX_OPS: usize = 64;
 /// Most handles in one list.
@@ -150,6 +158,8 @@ pub enum ScriptOp {
     ShellVerts = 31,
     WireLamina = 32,
     MgrNew = 33,
+    SetEditing = 34,
+    MergeBreps = 35,
 }
 
 impl ScriptOp {
@@ -166,10 +176,10 @@ impl ScriptOp {
             BrepMate, CanImprint, CheckInterior, CheckSsi, ClearSsi, CommonEdges, CommonVertices,
             EdgeFace, FaceFace, FaceFaceCoin, FixupEnd, FixupMid, Getters, Imprint, ImprintFace,
             IsMated, Lowest, MappedBrep, MgrNew, OtherMate, RegisterSsi, Relate, Resolve, SetBreps,
-            SetEdgeClass, SetSubset, SetTols, ShellVerts, SplitTwo, ThisMate, VertexFace,
+            MergeBreps, SetEdgeClass, SetEditing, SetSubset, SetTols, ShellVerts, SplitTwo, ThisMate, VertexFace,
             WireLamina,
         };
-        const ALL: [ScriptOp; 32] = [
+        const ALL: [ScriptOp; 34] = [
             Relate,
             OtherMate,
             ThisMate,
@@ -202,6 +212,8 @@ impl ScriptOp {
             ShellVerts,
             WireLamina,
             MgrNew,
+            SetEditing,
+            MergeBreps,
         ];
         ALL.iter().copied().find(|o| o.code() == code)
     }
@@ -366,7 +378,13 @@ fn check_knots(knots: &[f64], p: usize, what: &str) -> Result<(f64, f64), FfiErr
 
 /// Checks `k` control points sharing their rational marker (`z = NOZ` allowed for
 /// curves when `planar`).
-fn check_points(rd: &mut Reader<'_>, k: usize, planar: bool, what: &str) -> Result<(), FfiError> {
+fn check_points(
+    rd: &mut Reader<'_>,
+    k: usize,
+    planar: bool,
+    bound: f64,
+    what: &str,
+) -> Result<(), FfiError> {
     let mut w0 = None;
     for _ in 0..k {
         let x = rd.num()?;
@@ -386,7 +404,7 @@ fn check_points(rd: &mut Reader<'_>, k: usize, planar: bool, what: &str) -> Resu
         let z = if z == NOZ { 0.0 } else { z };
         if [x, y, z]
             .iter()
-            .any(|c| !c.is_finite() || c.abs() > MAX_COORD)
+            .any(|c| !c.is_finite() || c.abs() > MAX_COORD || c.abs() >= bound)
         {
             return Err(bad(format!("{what}: point out of range")));
         }
@@ -418,7 +436,7 @@ fn surface(rd: &mut Reader<'_>) -> Result<Domain, FfiError> {
             "surface: need 1 <= p <= n, 1 <= q <= m, r = n+p+1, s = m+q+1",
         ));
     }
-    check_points(rd, (n + 1) * (m + 1), false, "surface")?;
+    check_points(rd, (n + 1) * (m + 1), false, MAX_GEOMETRY_COORD, "surface")?;
     let u = rd.finites(r + 1)?;
     let v = rd.finites(s + 1)?;
     let (u0, u1) = check_knots(&u, p, "surface u")?;
@@ -438,7 +456,7 @@ fn curve(rd: &mut Reader<'_>) -> Result<(f64, f64), FfiError> {
     if p == 0 || p > n || m != n + p + 1 {
         return Err(bad("curve: need 1 <= p <= n and m = n + p + 1"));
     }
-    check_points(rd, n + 1, dim == 2, "curve")?;
+    check_points(rd, n + 1, dim == 2, MAX_GEOMETRY_COORD, "curve")?;
     let knots = rd.finites(m + 1)?;
     check_knots(&knots, p, "curve")
 }
@@ -492,6 +510,19 @@ fn brep_blocks(rd: &mut Reader<'_>, paths: [&str; 2]) -> Result<(), FfiError> {
         brep_block(rd, paths[1])?;
     }
     Ok(())
+}
+
+/// Validates the two B-rep blocks at the start of `input` (for the
+/// `boolean.topology_intersector_p3` wrapper, whose shim builds the same blocks) and
+/// returns their length.
+///
+/// # Errors
+///
+/// [`FfiError::InvalidArgument`] for a malformed block or a missing `.smb` file.
+pub fn blocks_len(paths: [&str; 2], input: &[f64]) -> Result<usize, FfiError> {
+    let mut rd = Reader { input, at: 0 };
+    brep_blocks(&mut rd, paths)?;
+    Ok(rd.at)
 }
 
 /// The entity counts of an export block (`0 validate_only counts[10] ...`), in the
@@ -690,6 +721,9 @@ fn script(
     rd.finite()?; // ang
     let n_ops = rd.index(MAX_OPS)?;
     let mut mutated = false;
+    // after a `VertexFace` / `EdgeFace` only: face handles stay valid (neither deletes
+    // a face), so a `FaceFace` without input vertices may still follow
+    let mut soft = false;
     let mut has_mgr = false;
     // the intersector's B-reps: both from the blocks with either constructor (1 sets
     // them with SetPrimaryBrep / SetOtherBrep), then whatever SetBreps sets
@@ -703,13 +737,13 @@ fn script(
         HandleKind::Curve,
         Brep,
     ];
-    for _ in 0..n_ops {
-        let code = rd.int(1, extra.map_or(33, |x| x.max_code().max(33)))?;
+    for op_index in 0..n_ops {
+        let code = rd.int(1, extra.map_or(35, |x| x.max_code().max(35)))?;
         let Some(op) = ScriptOp::from_code(code) else {
             let extra = extra.ok_or_else(|| bad("bad script op"))?;
             let mut st = ScriptState {
                 ctor,
-                mutated,
+                mutated: mutated || soft,
                 has_mgr,
                 have_breps,
                 closed: false,
@@ -720,6 +754,7 @@ fn script(
                 return Err(bad("bad script op"));
             }
             mutated = st.mutated;
+            soft = false;
             has_mgr = st.has_mgr;
             have_breps = st.have_breps;
             if st.closed {
@@ -739,10 +774,12 @@ fn script(
                 | ScriptOp::ShellVerts
                 | ScriptOp::WireLamina
                 | ScriptOp::MgrNew
+                | ScriptOp::SetEditing
+                | ScriptOp::MergeBreps
                 | ScriptOp::CommonEdges
                 | ScriptOp::CommonVertices
         );
-        if mutated && takes_handles {
+        if (mutated || (soft && !matches!(op, ScriptOp::FaceFace))) && takes_handles {
             return Err(bad("handle-taking op after a mutating op"));
         }
         // the ops that dereference the intersector's B-reps without checking
@@ -850,7 +887,13 @@ fn script(
                 rd.flag()?;
             }
             ScriptOp::FaceFace => {
-                c.list(rd, &[Vertex], false)?;
+                if soft {
+                    if rd.index(MAX_LIST)? != 0 {
+                        return Err(bad("vertex handles after a mutating op"));
+                    }
+                } else {
+                    c.list(rd, &[Vertex], false)?;
+                }
                 c.list(rd, &[Face], false)?;
                 c.list(rd, &[Face], false)?;
                 rd.flag()?;
@@ -882,6 +925,23 @@ fn script(
                 rd.flag()?;
                 rd.flag()?;
             }
+            ScriptOp::MergeBreps => {
+                // the first op only; the primary B-rep then holds both operands
+                let (Some(a), Some(b)) = (c.breps[0], c.breps[1]) else {
+                    return Err(bad("no second B-rep"));
+                };
+                if op_index != 0 {
+                    return Err(bad("merge is not the first op"));
+                }
+                c.breps[0] = Some([a[0] + b[0], a[1] + b[1], a[2] + b[2]]);
+            }
+            ScriptOp::SetEditing => {
+                let which = rd.index(2)?;
+                if which == 1 && c.breps[1].is_none() {
+                    return Err(bad("no second B-rep"));
+                }
+                rd.flag()?;
+            }
             ScriptOp::MgrNew => {
                 if has_mgr || c.breps[1].is_none() {
                     return Err(bad("manager already made or no second B-rep"));
@@ -892,7 +952,11 @@ fn script(
             }
         }
         if op.mutates() {
-            mutated = true;
+            if !mutated && matches!(op, ScriptOp::VertexFace | ScriptOp::EdgeFace) {
+                soft = true;
+            } else {
+                mutated = true;
+            }
         }
     }
     Ok(())

@@ -667,6 +667,7 @@ enum Op
     OP_PARALLEL_PROJ = 25,
     OP_HEAL = 26,
     OP_EDGE_EDGE_BLEND2 = 27,
+    OP_BREP_INTERSECT2 = 28,
 };
 
 // The type codes IsKindOf is asked about.
@@ -1009,42 +1010,12 @@ static bool corner_blend_refused(SmBrep* brep, const SmContext& ctx, const SmTAr
     return false;
 }
 
-// UB-157 (plan/upstream-issues.md): SmSurface::CreateBlendSurface ignores the statuses of its
-// two GetSampleValues calls, and CreateSkinnedSurface reads and writes sIntParams[numSections + ii]
+// UB-157 (plan/upstream-issues.md): CreateSkinnedSurface reads and writes sIntParams[numSections + ii]
 // past the array when SyncronizeKnotsOfCurves moves rail 2's natural interval. The probe of the
-// surface.surface_p8 shim (OP_BLEND), for CreateBlendSurface's default definition: SM_ERR for a
-// failing sample (the port fails at the first failing sample), 1007 for a moving rail 2 (the port's
-// InvalidInput "too few intersection parameters"), 0 when the blend is defined.
-static double blend_surface_ub157(const SmContext& ctx, const SmSurface& s1, const SmCurve& c1, SmExtent1d ivl1,
-                                  bool right, const SmSurface& s2, const SmCurve& c2, SmExtent1d ivl2, bool left)
+// surface.surface_p8 shim (OP_BLEND): 1007 for a moving rail 2 (the port's InvalidInput "too few
+// intersection parameters"), otherwise 0 so native runs, including ordinary sampling failures.
+static double blend_surface_ub157(const SmContext& ctx, const SmCurve& c1, const SmCurve& c2)
 {
-    SmDerivSurfDefinition def;
-    def.m_lNumSamples = 100;
-    def.m_eTangencyType = SM_TT_DIR_TO_REFERENCE_CURVE;
-    def.m_dStartDerivDirAngleDeg = 0.0;
-    def.m_dEndDerivDirAngleDeg = 0.0;
-    def.m_dStartTanLength = 1.0;
-    def.m_dEndTanScale = 1.0;
-    def.m_dStartAngleDeg = 0.0;
-    def.m_dEndAngleDeg = 0.0;
-    def.m_vVector.Set(0, 0, 0);
-    def.m_eCurvatureType = SM_CT_G2_FROM_SURFACE;
-    def.m_eBlendEndType = SM_BE_NO_CUSP;
-    def.m_dStartRadius = 0.0;
-    def.m_dEndRadScale = 0.0;
-    def.m_pCurvatureReference = NULL;
-    def.m_bFlipCurvature = FALSE;
-    ULONG nd = def.GetNumDerivs();
-    SmTArray<double> params;
-    SmTArray<SmVector3d> p0, d0, p1, d1, s20, s30, s21, s31;
-    def.m_pTangentReference = &c2;
-    SmStatus r1 = def.GetSampleValues(s1, c1, ivl1, right ? TRUE : FALSE, TRUE, params, p0, d0,
-                                      nd >= 2 ? &s20 : NULL, nd >= 3 ? &s30 : NULL);
-    def.m_pTangentReference = &c1;
-    SmStatus r2 = def.GetSampleValues(s2, c2, ivl2, left ? TRUE : FALSE, FALSE, params, p1, d1,
-                                      nd >= 2 ? &s21 : NULL, nd >= 3 ? &s31 : NULL);
-    if (r1 != SM_SUCCESS || r2 != SM_SUCCESS)
-        return st(SM_ERR);
     SmCurve* k1 = NULL;
     SmCurve* k2 = NULL;
     bool moves = false;
@@ -1071,9 +1042,7 @@ static double blend_surface_ub157(const SmContext& ctx, const SmSurface& s1, con
 // SmBrep::CreateEdgeEdgeBlend (SmBrep.cpp:2850-3020) for a blend flag != 0 and no definition,
 // replayed up to its CreateBlendSurface call on its own fresh rails (the edge uses are only read):
 // the UB-157 probe of that call, 0 when upstream returns before it or the blend is defined.
-// The probe's GetSampleValues may build and keep the face surfaces' caches before the real
-// call; the real CreateBlendSurface builds the same caches from the same surfaces at that
-// point, so the reference results are unchanged. A refusal is a status the shim decides (the
+// A refusal is a status the shim decides (the
 // port's code for the same input): once the Rust side stops deferring, such a case is a guard
 // agreement, not a compared C++ run.
 static double edge_edge_blend_ub157(const SmContext& ctx, SmEdgeuse* e1, SmEdgeuse* e2, ULONG dir)
@@ -1119,21 +1088,6 @@ static double edge_edge_blend_ub157(const SmContext& ctx, SmEdgeuse* e1, SmEdgeu
     SmSurface* surf2 = e2->GetFace()->GetSurface();
     if (surf1 == NULL || surf2 == NULL)
         return 0.0;
-    SmVector3d pos_1, pos_2, tan1, tan2, bin1, bin2, nrm1, nrm2;
-    e1->EvaluateBinormal(ivl1.Evaluate(.5), TRUE, pos_1, bin1, &tan1, &nrm1);
-    e2->EvaluateBinormal(ivl2.Evaluate(.5), TRUE, pos_2, bin2, &tan2, &nrm2);
-    if (e1->GetOrientation() == SM_OT_OPPOSITE)
-        tan1 = -tan1;
-    if (e2->GetOrientation() == SM_OT_OPPOSITE)
-        tan2 = -tan2;
-    if (e1->GetFaceuse()->GetOrientation() == SM_OT_OPPOSITE)
-        nrm1 = -nrm1;
-    if (e2->GetFaceuse()->GetOrientation() == SM_OT_OPPOSITE)
-        nrm2 = -nrm2;
-    SmVector3d left1 = nrm1 * tan1;
-    SmVector3d left2 = nrm2 * tan2;
-    SmBoolean right = bin1.Dot(left1) >= 0.0 ? TRUE : FALSE;
-    SmBoolean left = bin2.Dot(left2) >= 0.0 ? FALSE : TRUE;
     auto rescale = [&]() {
         if (!ivl1.AreEqual(ivl2))
         {
@@ -1149,13 +1103,12 @@ static double edge_edge_blend_ub157(const SmContext& ctx, SmEdgeuse* e1, SmEdgeu
     if (same == FALSE)
     {
         rail2->ReverseParameterization(ivl2, ivl2);
-        left = (left == TRUE) ? FALSE : TRUE;
     }
     rescale();
     if (same == FALSE)
         rail2->ReverseParameterization(ivl2, ivl2);
     rescale();
-    return blend_surface_ub157(ctx, *surf1, *rail1, ivl1, right == TRUE, *surf2, *rail2, ivl2, left == TRUE);
+    return blend_surface_ub157(ctx, *rail1, *rail2);
 }
 
 // The healed B-rep (OP_HEAL): a fresh walk, the extras of OP_EXPORT, then the fields the
@@ -1272,10 +1225,84 @@ void put_healed(SmBrep* brep, std::vector<double>& o)
     o.push_back(flg(brep->m_bValidateOnly));
 }
 
+// Additive cross-body observer. Unlike the legacy curve fingerprint, always retain
+// the actual dynamic type, domain and evaluation statuses, even for non-B-splines.
+void put_intersection_curve(std::vector<double>& o, const SmCurve& curve)
+{
+    o.push_back((double)curve.GetType());
+    SmExtent1d domain = curve.GetNaturalInterval();
+    o.push_back(domain.GetMin());
+    o.push_back(domain.GetMax());
+    for (double fraction : {0.0, 0.17, 0.37, 0.5, 0.83, 1.0})
+    {
+        SmPoint3d point(0.0, 0.0, 0.0);
+        SmStatus status = curve.EvaluatePoint(domain.Evaluate(fraction), point);
+        o.push_back(st(status));
+        // On failure XYZ is omitted, never manufactured from the initialized point.
+        if (status == SM_SUCCESS)
+            put_vec(o, point);
+    }
+    const SmBSplineCurve* spline = SM_CAST_PTR(SmBSplineCurve, &curve);
+    o.push_back(spline ? 1.0 : 0.0);
+    if (spline == nullptr)
+        return; // the type/domain/samples above still describe this result
+    o.push_back((double)spline->GetDim());
+    gw_CURVE* nurb = spline->GetGwNurbPointer();
+    o.push_back(nurb ? 1.0 : 0.0);
+    if (nurb == nullptr)
+        return;
+    o.push_back((double)nurb->pol->n);
+    o.push_back((double)nurb->p);
+    o.push_back((double)nurb->knt->m);
+    for (gw_INDEX i = 0; i <= nurb->pol->n; ++i)
+    {
+        o.push_back(nurb->pol->Pw[i].x);
+        o.push_back(nurb->pol->Pw[i].y);
+        o.push_back(nurb->pol->Pw[i].z);
+        o.push_back(nurb->pol->Pw[i].w);
+    }
+    for (gw_INDEX i = 0; i <= nurb->knt->m; ++i)
+        o.push_back(nurb->knt->U[i]);
+}
+
+void run_brep_intersect2(Rd& rd, std::vector<double>& o)
+{
+    const SmContext& ctx = the_context();
+    SmStatus first_status, second_status;
+    Built first, second;
+    first.brep = build(rd, "", first_status);
+    second.brep = build(rd, "", second_status);
+    double tol = rd.num(), angle = rd.num();
+    bool want_points = rd.flag();
+    o.push_back(st(first_status));
+    o.push_back(st(second_status));
+    bool ran = first.brep != nullptr && second.brep != nullptr;
+    o.push_back(ran ? 1.0 : 0.0);
+    if (!ran)
+        return;
+    SmTArray<SmCurve*> curves;
+    SmObjsDelete<SmCurve*> clean_curves(&curves);
+    SmTArray<SmPoint3d> points;
+    SmStatus status = first.brep->BrepIntersect(ctx, second.brep, tol, angle, curves,
+                                              want_points ? &points : NULL);
+    o.push_back(st(status));
+    o.push_back((double)curves.GetSize());
+    o.push_back(want_points ? (double)points.GetSize() : -1.0);
+    for (ULONG i = 0; i < curves.GetSize(); ++i)
+        put_intersection_curve(o, *curves[i]);
+    for (ULONG i = 0; i < points.GetSize(); ++i)
+        put_vec(o, points[i]);
+}
+
 void run_op(int32_t op, Rd& rd, const char* path, std::vector<double>& o)
 {
     SmContext& ctx = const_cast<SmContext&>(the_context());
     CtxSave save(ctx);
+    if (op == OP_BREP_INTERSECT2)
+    {
+        run_brep_intersect2(rd, o);
+        return;
+    }
     SmStatus bst;
     Built b;
     b.brep = build(rd, path, bst);
@@ -1603,6 +1630,18 @@ void run_op(int32_t op, Rd& rd, const char* path, std::vector<double>& o)
         for (SmShell* s2 : g.shells)
             v.push_back(s2->*ShPeek::type() == SmFaceuse_TYPE ? (int64_t)list_of(s2->GetList()).size() : -1);
         put_list(o, v);
+        // Owner pointers alone cannot detect stale shell membership after reflection.
+        for (SmShell* s2 : g.shells)
+        {
+            SmTArray<SmFaceuse*> members;
+            s2->GetFaceuses(members);
+            put_found(o, g, 2, members);
+            for (ULONG i = 0; i < members.GetSize(); ++i)
+            {
+                o.push_back((double)g.find(2, members[i]->GetNext()));
+                o.push_back((double)g.find(2, members[i]->GetLast()));
+            }
+        }
         break;
     }
     case OP_RM_LOOP_VU:
@@ -1815,11 +1854,6 @@ void run_op(int32_t op, Rd& rd, const char* path, std::vector<double>& o)
         double tol = rd.num();
         double ang = rd.num();
         bool want_points = rd.flag();
-        if (g.faces.size() > 0)
-        {
-            o.push_back(-3.0); // SmFace::FaceIntersect: the Rust side defers
-            break;
-        }
         SmTArray<SmCurve*> curves;
         SmTArray<SmPoint3d> points;
         SmStatus s = brep->BrepIntersect(ctx, brep, tol, ang, curves, want_points ? &points : NULL);

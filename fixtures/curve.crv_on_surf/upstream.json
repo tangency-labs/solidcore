@@ -2,7 +2,7 @@
  "cases": [
   {
    "name": "loop_uv_gap_0_edge0_info",
-   "upstream_ref": "tests/prog_test/src/smTopoTest.cpp:4030 (my_check_loop_uv_gap: SmCrvOnSurf(*pUV, *pSurface, &sDomain, 1, &ctx) over SmBSplineCurve::CreateLineSegment UV edges; bulge patch at :4185)",
+   "upstream_ref": "tests/prog_test/src/smFaceTest.cpp:944 (my_check_loop_uv_gap: SmCrvOnSurf(*pUV, *pSurface, &sDomain, 1, &ctx) over SmBSplineCurve::CreateLineSegment UV edges; bulge patch at :4185)",
    "inputs": {
     "cos": {
      "uv": {
@@ -114,7 +114,7 @@
   },
   {
    "name": "loop_uv_gap_0_edge0_eval",
-   "upstream_ref": "tests/prog_test/src/smTopoTest.cpp:4030 (my_check_loop_uv_gap: SmCrvOnSurf(*pUV, *pSurface, &sDomain, 1, &ctx) over SmBSplineCurve::CreateLineSegment UV edges; bulge patch at :4185)",
+   "upstream_ref": "tests/prog_test/src/smFaceTest.cpp:944 (my_check_loop_uv_gap: SmCrvOnSurf(*pUV, *pSurface, &sDomain, 1, &ctx) over SmBSplineCurve::CreateLineSegment UV edges; bulge patch at :4185)",
    "inputs": {
     "cos": {
      "uv": {
@@ -245,7 +245,7 @@
   },
   {
    "name": "loop_uv_gap_0_edge0_approx",
-   "upstream_ref": "tests/prog_test/src/smTopoTest.cpp:4030 (my_check_loop_uv_gap: SmCrvOnSurf(*pUV, *pSurface, &sDomain, 1, &ctx) over SmBSplineCurve::CreateLineSegment UV edges; bulge patch at :4185)",
+   "upstream_ref": "tests/prog_test/src/smFaceTest.cpp:944 (my_check_loop_uv_gap: SmCrvOnSurf(*pUV, *pSurface, &sDomain, 1, &ctx) over SmBSplineCurve::CreateLineSegment UV edges; bulge patch at :4185)",
    "inputs": {
     "cos": {
      "uv": {
@@ -370,7 +370,7 @@
   },
   {
    "name": "loop_uv_gap_0_edge0_cached",
-   "upstream_ref": "tests/prog_test/src/smTopoTest.cpp:4030 (my_check_loop_uv_gap: SmCrvOnSurf(*pUV, *pSurface, &sDomain, 1, &ctx) over SmBSplineCurve::CreateLineSegment UV edges; bulge patch at :4185)",
+   "upstream_ref": "tests/prog_test/src/smFaceTest.cpp:944 (my_check_loop_uv_gap: SmCrvOnSurf(*pUV, *pSurface, &sDomain, 1, &ctx) over SmBSplineCurve::CreateLineSegment UV edges; bulge patch at :4185)",
    "inputs": {
     "cos": {
      "uv": {
@@ -510,7 +510,7 @@
   },
   {
    "name": "loop_uv_gap_0_edge0_edit",
-   "upstream_ref": "tests/prog_test/src/smTopoTest.cpp:4030 (my_check_loop_uv_gap: SmCrvOnSurf(*pUV, *pSurface, &sDomain, 1, &ctx) over SmBSplineCurve::CreateLineSegment UV edges; bulge patch at :4185)",
+   "upstream_ref": "tests/prog_test/src/smFaceTest.cpp:944 (my_check_loop_uv_gap: SmCrvOnSurf(*pUV, *pSurface, &sDomain, 1, &ctx) over SmBSplineCurve::CreateLineSegment UV edges; bulge patch at :4185)",
    "inputs": {
     "cos": {
      "uv": {
@@ -647,7 +647,7 @@
   },
   {
    "name": "loop_uv_gap_0_edge0_gap_self",
-   "upstream_ref": "tests/prog_test/src/smTopoTest.cpp:4030 (my_check_loop_uv_gap: SmCrvOnSurf(*pUV, *pSurface, &sDomain, 1, &ctx) over SmBSplineCurve::CreateLineSegment UV edges; bulge patch at :4185)",
+   "upstream_ref": "tests/prog_test/src/smFaceTest.cpp:944 (my_check_loop_uv_gap: SmCrvOnSurf(*pUV, *pSurface, &sDomain, 1, &ctx) over SmBSplineCurve::CreateLineSegment UV edges; bulge patch at :4185)",
    "inputs": {
     "cos": {
      "uv": {
@@ -760,7 +760,7 @@
   },
   {
    "name": "loop_uv_gap_0_edge1_info",
-   "upstream_ref": "tests/prog_test/src/smTopoTest.cpp:4030 (my_check_loop_uv_gap: SmCrvOnSurf(*pUV, *pSurface, &sDomain, 1, &ctx) over SmBSplineCurve::CreateLineSegment UV edges; bulge patch at :4185)",
+   "upstream_ref": "tests/prog_test/src/smFaceTest.cpp:944 (my_check_loop_uv_gap: SmCrvOnSurf(*pUV, *pSurface, &sDomain, 1, &ctx) over SmBSplineCurve::CreateLineSegment UV edges; bulge patch at :4185)",
    "inputs": {
     "cos": {
      "uv": {
@@ -872,7 +872,7 @@
   },
   {
    "name": "loop_uv_gap_0_edge1_eval",
-   "upstream_ref": "tests/prog_test/src/smTopoTest.cpp:4030 (my_check_loop_uv_gap: SmCrvOnSurf(*pUV, *pSurface, &sDomain, 1, &ctx) over SmBSplineCurve::CreateLineSegment UV edges; bulge patch at :4185)",
+   "upstream_ref": "tests/prog_test/src/smFaceTest.cpp:944 (my_check_loop_uv_gap: SmCrvOnSurf(*pUV, *pSurface, &sDomain, 1, &ctx) over SmBSplineCurve::CreateLineSegment UV edges; bulge patch at :4185)",
    "inputs": {
     "cos": {
      "uv": {
@@ -1003,7 +1003,7 @@
   },
   {
    "name": "loop_uv_gap_0_edge1_approx",
-   "upstream_ref": "tests/prog_test/src/smTopoTest.cpp:4030 (my_check_loop_uv_gap: SmCrvOnSurf(*pUV, *pSurface, &sDomain, 1, &ctx) over SmBSplineCurve::CreateLineSegment UV edges; bulge patch at :4185)",
+   "upstream_ref": "tests/prog_test/src/smFaceTest.cpp:944 (my_check_loop_uv_gap: SmCrvOnSurf(*pUV, *pSurface, &sDomain, 1, &ctx) over SmBSplineCurve::CreateLineSegment UV edges; bulge patch at :4185)",
    "inputs": {
     "cos": {
      "uv": {
@@ -1128,7 +1128,7 @@
   },
   {
    "name": "loop_uv_gap_0_edge1_cached",
-   "upstream_ref": "tests/prog_test/src/smTopoTest.cpp:4030 (my_check_loop_uv_gap: SmCrvOnSurf(*pUV, *pSurface, &sDomain, 1, &ctx) over SmBSplineCurve::CreateLineSegment UV edges; bulge patch at :4185)",
+   "upstream_ref": "tests/prog_test/src/smFaceTest.cpp:944 (my_check_loop_uv_gap: SmCrvOnSurf(*pUV, *pSurface, &sDomain, 1, &ctx) over SmBSplineCurve::CreateLineSegment UV edges; bulge patch at :4185)",
    "inputs": {
     "cos": {
      "uv": {
@@ -1268,7 +1268,7 @@
   },
   {
    "name": "loop_uv_gap_0_edge1_edit",
-   "upstream_ref": "tests/prog_test/src/smTopoTest.cpp:4030 (my_check_loop_uv_gap: SmCrvOnSurf(*pUV, *pSurface, &sDomain, 1, &ctx) over SmBSplineCurve::CreateLineSegment UV edges; bulge patch at :4185)",
+   "upstream_ref": "tests/prog_test/src/smFaceTest.cpp:944 (my_check_loop_uv_gap: SmCrvOnSurf(*pUV, *pSurface, &sDomain, 1, &ctx) over SmBSplineCurve::CreateLineSegment UV edges; bulge patch at :4185)",
    "inputs": {
     "cos": {
      "uv": {
@@ -1405,7 +1405,7 @@
   },
   {
    "name": "loop_uv_gap_0_edge1_gap_self",
-   "upstream_ref": "tests/prog_test/src/smTopoTest.cpp:4030 (my_check_loop_uv_gap: SmCrvOnSurf(*pUV, *pSurface, &sDomain, 1, &ctx) over SmBSplineCurve::CreateLineSegment UV edges; bulge patch at :4185)",
+   "upstream_ref": "tests/prog_test/src/smFaceTest.cpp:944 (my_check_loop_uv_gap: SmCrvOnSurf(*pUV, *pSurface, &sDomain, 1, &ctx) over SmBSplineCurve::CreateLineSegment UV edges; bulge patch at :4185)",
    "inputs": {
     "cos": {
      "uv": {
@@ -1518,7 +1518,7 @@
   },
   {
    "name": "loop_uv_gap_0_edge2_info",
-   "upstream_ref": "tests/prog_test/src/smTopoTest.cpp:4030 (my_check_loop_uv_gap: SmCrvOnSurf(*pUV, *pSurface, &sDomain, 1, &ctx) over SmBSplineCurve::CreateLineSegment UV edges; bulge patch at :4185)",
+   "upstream_ref": "tests/prog_test/src/smFaceTest.cpp:944 (my_check_loop_uv_gap: SmCrvOnSurf(*pUV, *pSurface, &sDomain, 1, &ctx) over SmBSplineCurve::CreateLineSegment UV edges; bulge patch at :4185)",
    "inputs": {
     "cos": {
      "uv": {
@@ -1630,7 +1630,7 @@
   },
   {
    "name": "loop_uv_gap_0_edge2_eval",
-   "upstream_ref": "tests/prog_test/src/smTopoTest.cpp:4030 (my_check_loop_uv_gap: SmCrvOnSurf(*pUV, *pSurface, &sDomain, 1, &ctx) over SmBSplineCurve::CreateLineSegment UV edges; bulge patch at :4185)",
+   "upstream_ref": "tests/prog_test/src/smFaceTest.cpp:944 (my_check_loop_uv_gap: SmCrvOnSurf(*pUV, *pSurface, &sDomain, 1, &ctx) over SmBSplineCurve::CreateLineSegment UV edges; bulge patch at :4185)",
    "inputs": {
     "cos": {
      "uv": {
@@ -1761,7 +1761,7 @@
   },
   {
    "name": "loop_uv_gap_0_edge2_approx",
-   "upstream_ref": "tests/prog_test/src/smTopoTest.cpp:4030 (my_check_loop_uv_gap: SmCrvOnSurf(*pUV, *pSurface, &sDomain, 1, &ctx) over SmBSplineCurve::CreateLineSegment UV edges; bulge patch at :4185)",
+   "upstream_ref": "tests/prog_test/src/smFaceTest.cpp:944 (my_check_loop_uv_gap: SmCrvOnSurf(*pUV, *pSurface, &sDomain, 1, &ctx) over SmBSplineCurve::CreateLineSegment UV edges; bulge patch at :4185)",
    "inputs": {
     "cos": {
      "uv": {
@@ -1886,7 +1886,7 @@
   },
   {
    "name": "loop_uv_gap_0_edge2_cached",
-   "upstream_ref": "tests/prog_test/src/smTopoTest.cpp:4030 (my_check_loop_uv_gap: SmCrvOnSurf(*pUV, *pSurface, &sDomain, 1, &ctx) over SmBSplineCurve::CreateLineSegment UV edges; bulge patch at :4185)",
+   "upstream_ref": "tests/prog_test/src/smFaceTest.cpp:944 (my_check_loop_uv_gap: SmCrvOnSurf(*pUV, *pSurface, &sDomain, 1, &ctx) over SmBSplineCurve::CreateLineSegment UV edges; bulge patch at :4185)",
    "inputs": {
     "cos": {
      "uv": {
@@ -2026,7 +2026,7 @@
   },
   {
    "name": "loop_uv_gap_0_edge2_edit",
-   "upstream_ref": "tests/prog_test/src/smTopoTest.cpp:4030 (my_check_loop_uv_gap: SmCrvOnSurf(*pUV, *pSurface, &sDomain, 1, &ctx) over SmBSplineCurve::CreateLineSegment UV edges; bulge patch at :4185)",
+   "upstream_ref": "tests/prog_test/src/smFaceTest.cpp:944 (my_check_loop_uv_gap: SmCrvOnSurf(*pUV, *pSurface, &sDomain, 1, &ctx) over SmBSplineCurve::CreateLineSegment UV edges; bulge patch at :4185)",
    "inputs": {
     "cos": {
      "uv": {
@@ -2163,7 +2163,7 @@
   },
   {
    "name": "loop_uv_gap_0_edge2_gap_self",
-   "upstream_ref": "tests/prog_test/src/smTopoTest.cpp:4030 (my_check_loop_uv_gap: SmCrvOnSurf(*pUV, *pSurface, &sDomain, 1, &ctx) over SmBSplineCurve::CreateLineSegment UV edges; bulge patch at :4185)",
+   "upstream_ref": "tests/prog_test/src/smFaceTest.cpp:944 (my_check_loop_uv_gap: SmCrvOnSurf(*pUV, *pSurface, &sDomain, 1, &ctx) over SmBSplineCurve::CreateLineSegment UV edges; bulge patch at :4185)",
    "inputs": {
     "cos": {
      "uv": {
@@ -2276,7 +2276,7 @@
   },
   {
    "name": "loop_uv_gap_1_edge0_info",
-   "upstream_ref": "tests/prog_test/src/smTopoTest.cpp:4030 (my_check_loop_uv_gap: SmCrvOnSurf(*pUV, *pSurface, &sDomain, 1, &ctx) over SmBSplineCurve::CreateLineSegment UV edges; bulge patch at :4185)",
+   "upstream_ref": "tests/prog_test/src/smFaceTest.cpp:944 (my_check_loop_uv_gap: SmCrvOnSurf(*pUV, *pSurface, &sDomain, 1, &ctx) over SmBSplineCurve::CreateLineSegment UV edges; bulge patch at :4185)",
    "inputs": {
     "cos": {
      "uv": {
@@ -2388,7 +2388,7 @@
   },
   {
    "name": "loop_uv_gap_1_edge0_eval",
-   "upstream_ref": "tests/prog_test/src/smTopoTest.cpp:4030 (my_check_loop_uv_gap: SmCrvOnSurf(*pUV, *pSurface, &sDomain, 1, &ctx) over SmBSplineCurve::CreateLineSegment UV edges; bulge patch at :4185)",
+   "upstream_ref": "tests/prog_test/src/smFaceTest.cpp:944 (my_check_loop_uv_gap: SmCrvOnSurf(*pUV, *pSurface, &sDomain, 1, &ctx) over SmBSplineCurve::CreateLineSegment UV edges; bulge patch at :4185)",
    "inputs": {
     "cos": {
      "uv": {
@@ -2519,7 +2519,7 @@
   },
   {
    "name": "loop_uv_gap_1_edge0_approx",
-   "upstream_ref": "tests/prog_test/src/smTopoTest.cpp:4030 (my_check_loop_uv_gap: SmCrvOnSurf(*pUV, *pSurface, &sDomain, 1, &ctx) over SmBSplineCurve::CreateLineSegment UV edges; bulge patch at :4185)",
+   "upstream_ref": "tests/prog_test/src/smFaceTest.cpp:944 (my_check_loop_uv_gap: SmCrvOnSurf(*pUV, *pSurface, &sDomain, 1, &ctx) over SmBSplineCurve::CreateLineSegment UV edges; bulge patch at :4185)",
    "inputs": {
     "cos": {
      "uv": {
@@ -2644,7 +2644,7 @@
   },
   {
    "name": "loop_uv_gap_1_edge0_cached",
-   "upstream_ref": "tests/prog_test/src/smTopoTest.cpp:4030 (my_check_loop_uv_gap: SmCrvOnSurf(*pUV, *pSurface, &sDomain, 1, &ctx) over SmBSplineCurve::CreateLineSegment UV edges; bulge patch at :4185)",
+   "upstream_ref": "tests/prog_test/src/smFaceTest.cpp:944 (my_check_loop_uv_gap: SmCrvOnSurf(*pUV, *pSurface, &sDomain, 1, &ctx) over SmBSplineCurve::CreateLineSegment UV edges; bulge patch at :4185)",
    "inputs": {
     "cos": {
      "uv": {
@@ -2784,7 +2784,7 @@
   },
   {
    "name": "loop_uv_gap_1_edge0_edit",
-   "upstream_ref": "tests/prog_test/src/smTopoTest.cpp:4030 (my_check_loop_uv_gap: SmCrvOnSurf(*pUV, *pSurface, &sDomain, 1, &ctx) over SmBSplineCurve::CreateLineSegment UV edges; bulge patch at :4185)",
+   "upstream_ref": "tests/prog_test/src/smFaceTest.cpp:944 (my_check_loop_uv_gap: SmCrvOnSurf(*pUV, *pSurface, &sDomain, 1, &ctx) over SmBSplineCurve::CreateLineSegment UV edges; bulge patch at :4185)",
    "inputs": {
     "cos": {
      "uv": {
@@ -2921,7 +2921,7 @@
   },
   {
    "name": "loop_uv_gap_1_edge0_gap_self",
-   "upstream_ref": "tests/prog_test/src/smTopoTest.cpp:4030 (my_check_loop_uv_gap: SmCrvOnSurf(*pUV, *pSurface, &sDomain, 1, &ctx) over SmBSplineCurve::CreateLineSegment UV edges; bulge patch at :4185)",
+   "upstream_ref": "tests/prog_test/src/smFaceTest.cpp:944 (my_check_loop_uv_gap: SmCrvOnSurf(*pUV, *pSurface, &sDomain, 1, &ctx) over SmBSplineCurve::CreateLineSegment UV edges; bulge patch at :4185)",
    "inputs": {
     "cos": {
      "uv": {
@@ -3034,7 +3034,7 @@
   },
   {
    "name": "loop_uv_gap_1_edge1_info",
-   "upstream_ref": "tests/prog_test/src/smTopoTest.cpp:4030 (my_check_loop_uv_gap: SmCrvOnSurf(*pUV, *pSurface, &sDomain, 1, &ctx) over SmBSplineCurve::CreateLineSegment UV edges; bulge patch at :4185)",
+   "upstream_ref": "tests/prog_test/src/smFaceTest.cpp:944 (my_check_loop_uv_gap: SmCrvOnSurf(*pUV, *pSurface, &sDomain, 1, &ctx) over SmBSplineCurve::CreateLineSegment UV edges; bulge patch at :4185)",
    "inputs": {
     "cos": {
      "uv": {
@@ -3146,7 +3146,7 @@
   },
   {
    "name": "loop_uv_gap_1_edge1_eval",
-   "upstream_ref": "tests/prog_test/src/smTopoTest.cpp:4030 (my_check_loop_uv_gap: SmCrvOnSurf(*pUV, *pSurface, &sDomain, 1, &ctx) over SmBSplineCurve::CreateLineSegment UV edges; bulge patch at :4185)",
+   "upstream_ref": "tests/prog_test/src/smFaceTest.cpp:944 (my_check_loop_uv_gap: SmCrvOnSurf(*pUV, *pSurface, &sDomain, 1, &ctx) over SmBSplineCurve::CreateLineSegment UV edges; bulge patch at :4185)",
    "inputs": {
     "cos": {
      "uv": {
@@ -3277,7 +3277,7 @@
   },
   {
    "name": "loop_uv_gap_1_edge1_approx",
-   "upstream_ref": "tests/prog_test/src/smTopoTest.cpp:4030 (my_check_loop_uv_gap: SmCrvOnSurf(*pUV, *pSurface, &sDomain, 1, &ctx) over SmBSplineCurve::CreateLineSegment UV edges; bulge patch at :4185)",
+   "upstream_ref": "tests/prog_test/src/smFaceTest.cpp:944 (my_check_loop_uv_gap: SmCrvOnSurf(*pUV, *pSurface, &sDomain, 1, &ctx) over SmBSplineCurve::CreateLineSegment UV edges; bulge patch at :4185)",
    "inputs": {
     "cos": {
      "uv": {
@@ -3402,7 +3402,7 @@
   },
   {
    "name": "loop_uv_gap_1_edge1_cached",
-   "upstream_ref": "tests/prog_test/src/smTopoTest.cpp:4030 (my_check_loop_uv_gap: SmCrvOnSurf(*pUV, *pSurface, &sDomain, 1, &ctx) over SmBSplineCurve::CreateLineSegment UV edges; bulge patch at :4185)",
+   "upstream_ref": "tests/prog_test/src/smFaceTest.cpp:944 (my_check_loop_uv_gap: SmCrvOnSurf(*pUV, *pSurface, &sDomain, 1, &ctx) over SmBSplineCurve::CreateLineSegment UV edges; bulge patch at :4185)",
    "inputs": {
     "cos": {
      "uv": {
@@ -3542,7 +3542,7 @@
   },
   {
    "name": "loop_uv_gap_1_edge1_edit",
-   "upstream_ref": "tests/prog_test/src/smTopoTest.cpp:4030 (my_check_loop_uv_gap: SmCrvOnSurf(*pUV, *pSurface, &sDomain, 1, &ctx) over SmBSplineCurve::CreateLineSegment UV edges; bulge patch at :4185)",
+   "upstream_ref": "tests/prog_test/src/smFaceTest.cpp:944 (my_check_loop_uv_gap: SmCrvOnSurf(*pUV, *pSurface, &sDomain, 1, &ctx) over SmBSplineCurve::CreateLineSegment UV edges; bulge patch at :4185)",
    "inputs": {
     "cos": {
      "uv": {
@@ -3679,7 +3679,7 @@
   },
   {
    "name": "loop_uv_gap_1_edge1_gap_self",
-   "upstream_ref": "tests/prog_test/src/smTopoTest.cpp:4030 (my_check_loop_uv_gap: SmCrvOnSurf(*pUV, *pSurface, &sDomain, 1, &ctx) over SmBSplineCurve::CreateLineSegment UV edges; bulge patch at :4185)",
+   "upstream_ref": "tests/prog_test/src/smFaceTest.cpp:944 (my_check_loop_uv_gap: SmCrvOnSurf(*pUV, *pSurface, &sDomain, 1, &ctx) over SmBSplineCurve::CreateLineSegment UV edges; bulge patch at :4185)",
    "inputs": {
     "cos": {
      "uv": {
@@ -3792,7 +3792,7 @@
   },
   {
    "name": "loop_uv_gap_1_edge2_info",
-   "upstream_ref": "tests/prog_test/src/smTopoTest.cpp:4030 (my_check_loop_uv_gap: SmCrvOnSurf(*pUV, *pSurface, &sDomain, 1, &ctx) over SmBSplineCurve::CreateLineSegment UV edges; bulge patch at :4185)",
+   "upstream_ref": "tests/prog_test/src/smFaceTest.cpp:944 (my_check_loop_uv_gap: SmCrvOnSurf(*pUV, *pSurface, &sDomain, 1, &ctx) over SmBSplineCurve::CreateLineSegment UV edges; bulge patch at :4185)",
    "inputs": {
     "cos": {
      "uv": {
@@ -3904,7 +3904,7 @@
   },
   {
    "name": "loop_uv_gap_1_edge2_eval",
-   "upstream_ref": "tests/prog_test/src/smTopoTest.cpp:4030 (my_check_loop_uv_gap: SmCrvOnSurf(*pUV, *pSurface, &sDomain, 1, &ctx) over SmBSplineCurve::CreateLineSegment UV edges; bulge patch at :4185)",
+   "upstream_ref": "tests/prog_test/src/smFaceTest.cpp:944 (my_check_loop_uv_gap: SmCrvOnSurf(*pUV, *pSurface, &sDomain, 1, &ctx) over SmBSplineCurve::CreateLineSegment UV edges; bulge patch at :4185)",
    "inputs": {
     "cos": {
      "uv": {
@@ -4035,7 +4035,7 @@
   },
   {
    "name": "loop_uv_gap_1_edge2_approx",
-   "upstream_ref": "tests/prog_test/src/smTopoTest.cpp:4030 (my_check_loop_uv_gap: SmCrvOnSurf(*pUV, *pSurface, &sDomain, 1, &ctx) over SmBSplineCurve::CreateLineSegment UV edges; bulge patch at :4185)",
+   "upstream_ref": "tests/prog_test/src/smFaceTest.cpp:944 (my_check_loop_uv_gap: SmCrvOnSurf(*pUV, *pSurface, &sDomain, 1, &ctx) over SmBSplineCurve::CreateLineSegment UV edges; bulge patch at :4185)",
    "inputs": {
     "cos": {
      "uv": {
@@ -4160,7 +4160,7 @@
   },
   {
    "name": "loop_uv_gap_1_edge2_cached",
-   "upstream_ref": "tests/prog_test/src/smTopoTest.cpp:4030 (my_check_loop_uv_gap: SmCrvOnSurf(*pUV, *pSurface, &sDomain, 1, &ctx) over SmBSplineCurve::CreateLineSegment UV edges; bulge patch at :4185)",
+   "upstream_ref": "tests/prog_test/src/smFaceTest.cpp:944 (my_check_loop_uv_gap: SmCrvOnSurf(*pUV, *pSurface, &sDomain, 1, &ctx) over SmBSplineCurve::CreateLineSegment UV edges; bulge patch at :4185)",
    "inputs": {
     "cos": {
      "uv": {
@@ -4300,7 +4300,7 @@
   },
   {
    "name": "loop_uv_gap_1_edge2_edit",
-   "upstream_ref": "tests/prog_test/src/smTopoTest.cpp:4030 (my_check_loop_uv_gap: SmCrvOnSurf(*pUV, *pSurface, &sDomain, 1, &ctx) over SmBSplineCurve::CreateLineSegment UV edges; bulge patch at :4185)",
+   "upstream_ref": "tests/prog_test/src/smFaceTest.cpp:944 (my_check_loop_uv_gap: SmCrvOnSurf(*pUV, *pSurface, &sDomain, 1, &ctx) over SmBSplineCurve::CreateLineSegment UV edges; bulge patch at :4185)",
    "inputs": {
     "cos": {
      "uv": {
@@ -4437,7 +4437,7 @@
   },
   {
    "name": "loop_uv_gap_1_edge2_gap_self",
-   "upstream_ref": "tests/prog_test/src/smTopoTest.cpp:4030 (my_check_loop_uv_gap: SmCrvOnSurf(*pUV, *pSurface, &sDomain, 1, &ctx) over SmBSplineCurve::CreateLineSegment UV edges; bulge patch at :4185)",
+   "upstream_ref": "tests/prog_test/src/smFaceTest.cpp:944 (my_check_loop_uv_gap: SmCrvOnSurf(*pUV, *pSurface, &sDomain, 1, &ctx) over SmBSplineCurve::CreateLineSegment UV edges; bulge patch at :4185)",
    "inputs": {
     "cos": {
      "uv": {
@@ -4550,7 +4550,7 @@
   },
   {
    "name": "loop_uv_gap_2_edge0_info",
-   "upstream_ref": "tests/prog_test/src/smTopoTest.cpp:4030 (my_check_loop_uv_gap: SmCrvOnSurf(*pUV, *pSurface, &sDomain, 1, &ctx) over SmBSplineCurve::CreateLineSegment UV edges; bulge patch at :4185)",
+   "upstream_ref": "tests/prog_test/src/smFaceTest.cpp:944 (my_check_loop_uv_gap: SmCrvOnSurf(*pUV, *pSurface, &sDomain, 1, &ctx) over SmBSplineCurve::CreateLineSegment UV edges; bulge patch at :4185)",
    "inputs": {
     "cos": {
      "uv": {
@@ -4662,7 +4662,7 @@
   },
   {
    "name": "loop_uv_gap_2_edge0_eval",
-   "upstream_ref": "tests/prog_test/src/smTopoTest.cpp:4030 (my_check_loop_uv_gap: SmCrvOnSurf(*pUV, *pSurface, &sDomain, 1, &ctx) over SmBSplineCurve::CreateLineSegment UV edges; bulge patch at :4185)",
+   "upstream_ref": "tests/prog_test/src/smFaceTest.cpp:944 (my_check_loop_uv_gap: SmCrvOnSurf(*pUV, *pSurface, &sDomain, 1, &ctx) over SmBSplineCurve::CreateLineSegment UV edges; bulge patch at :4185)",
    "inputs": {
     "cos": {
      "uv": {
@@ -4793,7 +4793,7 @@
   },
   {
    "name": "loop_uv_gap_2_edge0_approx",
-   "upstream_ref": "tests/prog_test/src/smTopoTest.cpp:4030 (my_check_loop_uv_gap: SmCrvOnSurf(*pUV, *pSurface, &sDomain, 1, &ctx) over SmBSplineCurve::CreateLineSegment UV edges; bulge patch at :4185)",
+   "upstream_ref": "tests/prog_test/src/smFaceTest.cpp:944 (my_check_loop_uv_gap: SmCrvOnSurf(*pUV, *pSurface, &sDomain, 1, &ctx) over SmBSplineCurve::CreateLineSegment UV edges; bulge patch at :4185)",
    "inputs": {
     "cos": {
      "uv": {
@@ -4918,7 +4918,7 @@
   },
   {
    "name": "loop_uv_gap_2_edge0_cached",
-   "upstream_ref": "tests/prog_test/src/smTopoTest.cpp:4030 (my_check_loop_uv_gap: SmCrvOnSurf(*pUV, *pSurface, &sDomain, 1, &ctx) over SmBSplineCurve::CreateLineSegment UV edges; bulge patch at :4185)",
+   "upstream_ref": "tests/prog_test/src/smFaceTest.cpp:944 (my_check_loop_uv_gap: SmCrvOnSurf(*pUV, *pSurface, &sDomain, 1, &ctx) over SmBSplineCurve::CreateLineSegment UV edges; bulge patch at :4185)",
    "inputs": {
     "cos": {
      "uv": {
@@ -5058,7 +5058,7 @@
   },
   {
    "name": "loop_uv_gap_2_edge0_edit",
-   "upstream_ref": "tests/prog_test/src/smTopoTest.cpp:4030 (my_check_loop_uv_gap: SmCrvOnSurf(*pUV, *pSurface, &sDomain, 1, &ctx) over SmBSplineCurve::CreateLineSegment UV edges; bulge patch at :4185)",
+   "upstream_ref": "tests/prog_test/src/smFaceTest.cpp:944 (my_check_loop_uv_gap: SmCrvOnSurf(*pUV, *pSurface, &sDomain, 1, &ctx) over SmBSplineCurve::CreateLineSegment UV edges; bulge patch at :4185)",
    "inputs": {
     "cos": {
      "uv": {
@@ -5195,7 +5195,7 @@
   },
   {
    "name": "loop_uv_gap_2_edge0_gap_self",
-   "upstream_ref": "tests/prog_test/src/smTopoTest.cpp:4030 (my_check_loop_uv_gap: SmCrvOnSurf(*pUV, *pSurface, &sDomain, 1, &ctx) over SmBSplineCurve::CreateLineSegment UV edges; bulge patch at :4185)",
+   "upstream_ref": "tests/prog_test/src/smFaceTest.cpp:944 (my_check_loop_uv_gap: SmCrvOnSurf(*pUV, *pSurface, &sDomain, 1, &ctx) over SmBSplineCurve::CreateLineSegment UV edges; bulge patch at :4185)",
    "inputs": {
     "cos": {
      "uv": {
@@ -5308,7 +5308,7 @@
   },
   {
    "name": "loop_uv_gap_2_edge1_info",
-   "upstream_ref": "tests/prog_test/src/smTopoTest.cpp:4030 (my_check_loop_uv_gap: SmCrvOnSurf(*pUV, *pSurface, &sDomain, 1, &ctx) over SmBSplineCurve::CreateLineSegment UV edges; bulge patch at :4185)",
+   "upstream_ref": "tests/prog_test/src/smFaceTest.cpp:944 (my_check_loop_uv_gap: SmCrvOnSurf(*pUV, *pSurface, &sDomain, 1, &ctx) over SmBSplineCurve::CreateLineSegment UV edges; bulge patch at :4185)",
    "inputs": {
     "cos": {
      "uv": {
@@ -5420,7 +5420,7 @@
   },
   {
    "name": "loop_uv_gap_2_edge1_eval",
-   "upstream_ref": "tests/prog_test/src/smTopoTest.cpp:4030 (my_check_loop_uv_gap: SmCrvOnSurf(*pUV, *pSurface, &sDomain, 1, &ctx) over SmBSplineCurve::CreateLineSegment UV edges; bulge patch at :4185)",
+   "upstream_ref": "tests/prog_test/src/smFaceTest.cpp:944 (my_check_loop_uv_gap: SmCrvOnSurf(*pUV, *pSurface, &sDomain, 1, &ctx) over SmBSplineCurve::CreateLineSegment UV edges; bulge patch at :4185)",
    "inputs": {
     "cos": {
      "uv": {
@@ -5551,7 +5551,7 @@
   },
   {
    "name": "loop_uv_gap_2_edge1_approx",
-   "upstream_ref": "tests/prog_test/src/smTopoTest.cpp:4030 (my_check_loop_uv_gap: SmCrvOnSurf(*pUV, *pSurface, &sDomain, 1, &ctx) over SmBSplineCurve::CreateLineSegment UV edges; bulge patch at :4185)",
+   "upstream_ref": "tests/prog_test/src/smFaceTest.cpp:944 (my_check_loop_uv_gap: SmCrvOnSurf(*pUV, *pSurface, &sDomain, 1, &ctx) over SmBSplineCurve::CreateLineSegment UV edges; bulge patch at :4185)",
    "inputs": {
     "cos": {
      "uv": {
@@ -5676,7 +5676,7 @@
   },
   {
    "name": "loop_uv_gap_2_edge1_cached",
-   "upstream_ref": "tests/prog_test/src/smTopoTest.cpp:4030 (my_check_loop_uv_gap: SmCrvOnSurf(*pUV, *pSurface, &sDomain, 1, &ctx) over SmBSplineCurve::CreateLineSegment UV edges; bulge patch at :4185)",
+   "upstream_ref": "tests/prog_test/src/smFaceTest.cpp:944 (my_check_loop_uv_gap: SmCrvOnSurf(*pUV, *pSurface, &sDomain, 1, &ctx) over SmBSplineCurve::CreateLineSegment UV edges; bulge patch at :4185)",
    "inputs": {
     "cos": {
      "uv": {
@@ -5816,7 +5816,7 @@
   },
   {
    "name": "loop_uv_gap_2_edge1_edit",
-   "upstream_ref": "tests/prog_test/src/smTopoTest.cpp:4030 (my_check_loop_uv_gap: SmCrvOnSurf(*pUV, *pSurface, &sDomain, 1, &ctx) over SmBSplineCurve::CreateLineSegment UV edges; bulge patch at :4185)",
+   "upstream_ref": "tests/prog_test/src/smFaceTest.cpp:944 (my_check_loop_uv_gap: SmCrvOnSurf(*pUV, *pSurface, &sDomain, 1, &ctx) over SmBSplineCurve::CreateLineSegment UV edges; bulge patch at :4185)",
    "inputs": {
     "cos": {
      "uv": {
@@ -5953,7 +5953,7 @@
   },
   {
    "name": "loop_uv_gap_2_edge1_gap_self",
-   "upstream_ref": "tests/prog_test/src/smTopoTest.cpp:4030 (my_check_loop_uv_gap: SmCrvOnSurf(*pUV, *pSurface, &sDomain, 1, &ctx) over SmBSplineCurve::CreateLineSegment UV edges; bulge patch at :4185)",
+   "upstream_ref": "tests/prog_test/src/smFaceTest.cpp:944 (my_check_loop_uv_gap: SmCrvOnSurf(*pUV, *pSurface, &sDomain, 1, &ctx) over SmBSplineCurve::CreateLineSegment UV edges; bulge patch at :4185)",
    "inputs": {
     "cos": {
      "uv": {
@@ -6066,7 +6066,7 @@
   },
   {
    "name": "loop_uv_gap_2_edge2_info",
-   "upstream_ref": "tests/prog_test/src/smTopoTest.cpp:4030 (my_check_loop_uv_gap: SmCrvOnSurf(*pUV, *pSurface, &sDomain, 1, &ctx) over SmBSplineCurve::CreateLineSegment UV edges; bulge patch at :4185)",
+   "upstream_ref": "tests/prog_test/src/smFaceTest.cpp:944 (my_check_loop_uv_gap: SmCrvOnSurf(*pUV, *pSurface, &sDomain, 1, &ctx) over SmBSplineCurve::CreateLineSegment UV edges; bulge patch at :4185)",
    "inputs": {
     "cos": {
      "uv": {
@@ -6178,7 +6178,7 @@
   },
   {
    "name": "loop_uv_gap_2_edge2_eval",
-   "upstream_ref": "tests/prog_test/src/smTopoTest.cpp:4030 (my_check_loop_uv_gap: SmCrvOnSurf(*pUV, *pSurface, &sDomain, 1, &ctx) over SmBSplineCurve::CreateLineSegment UV edges; bulge patch at :4185)",
+   "upstream_ref": "tests/prog_test/src/smFaceTest.cpp:944 (my_check_loop_uv_gap: SmCrvOnSurf(*pUV, *pSurface, &sDomain, 1, &ctx) over SmBSplineCurve::CreateLineSegment UV edges; bulge patch at :4185)",
    "inputs": {
     "cos": {
      "uv": {
@@ -6309,7 +6309,7 @@
   },
   {
    "name": "loop_uv_gap_2_edge2_approx",
-   "upstream_ref": "tests/prog_test/src/smTopoTest.cpp:4030 (my_check_loop_uv_gap: SmCrvOnSurf(*pUV, *pSurface, &sDomain, 1, &ctx) over SmBSplineCurve::CreateLineSegment UV edges; bulge patch at :4185)",
+   "upstream_ref": "tests/prog_test/src/smFaceTest.cpp:944 (my_check_loop_uv_gap: SmCrvOnSurf(*pUV, *pSurface, &sDomain, 1, &ctx) over SmBSplineCurve::CreateLineSegment UV edges; bulge patch at :4185)",
    "inputs": {
     "cos": {
      "uv": {
@@ -6434,7 +6434,7 @@
   },
   {
    "name": "loop_uv_gap_2_edge2_cached",
-   "upstream_ref": "tests/prog_test/src/smTopoTest.cpp:4030 (my_check_loop_uv_gap: SmCrvOnSurf(*pUV, *pSurface, &sDomain, 1, &ctx) over SmBSplineCurve::CreateLineSegment UV edges; bulge patch at :4185)",
+   "upstream_ref": "tests/prog_test/src/smFaceTest.cpp:944 (my_check_loop_uv_gap: SmCrvOnSurf(*pUV, *pSurface, &sDomain, 1, &ctx) over SmBSplineCurve::CreateLineSegment UV edges; bulge patch at :4185)",
    "inputs": {
     "cos": {
      "uv": {
@@ -6574,7 +6574,7 @@
   },
   {
    "name": "loop_uv_gap_2_edge2_edit",
-   "upstream_ref": "tests/prog_test/src/smTopoTest.cpp:4030 (my_check_loop_uv_gap: SmCrvOnSurf(*pUV, *pSurface, &sDomain, 1, &ctx) over SmBSplineCurve::CreateLineSegment UV edges; bulge patch at :4185)",
+   "upstream_ref": "tests/prog_test/src/smFaceTest.cpp:944 (my_check_loop_uv_gap: SmCrvOnSurf(*pUV, *pSurface, &sDomain, 1, &ctx) over SmBSplineCurve::CreateLineSegment UV edges; bulge patch at :4185)",
    "inputs": {
     "cos": {
      "uv": {
@@ -6711,7 +6711,7 @@
   },
   {
    "name": "loop_uv_gap_2_edge2_gap_self",
-   "upstream_ref": "tests/prog_test/src/smTopoTest.cpp:4030 (my_check_loop_uv_gap: SmCrvOnSurf(*pUV, *pSurface, &sDomain, 1, &ctx) over SmBSplineCurve::CreateLineSegment UV edges; bulge patch at :4185)",
+   "upstream_ref": "tests/prog_test/src/smFaceTest.cpp:944 (my_check_loop_uv_gap: SmCrvOnSurf(*pUV, *pSurface, &sDomain, 1, &ctx) over SmBSplineCurve::CreateLineSegment UV edges; bulge patch at :4185)",
    "inputs": {
     "cos": {
      "uv": {
@@ -6824,7 +6824,7 @@
   },
   {
    "name": "loop_uv_gap_3_edge0_info",
-   "upstream_ref": "tests/prog_test/src/smTopoTest.cpp:4030 (my_check_loop_uv_gap: SmCrvOnSurf(*pUV, *pSurface, &sDomain, 1, &ctx) over SmBSplineCurve::CreateLineSegment UV edges; bulge patch at :4185)",
+   "upstream_ref": "tests/prog_test/src/smFaceTest.cpp:944 (my_check_loop_uv_gap: SmCrvOnSurf(*pUV, *pSurface, &sDomain, 1, &ctx) over SmBSplineCurve::CreateLineSegment UV edges; bulge patch at :4185)",
    "inputs": {
     "cos": {
      "uv": {
@@ -6936,7 +6936,7 @@
   },
   {
    "name": "loop_uv_gap_3_edge0_eval",
-   "upstream_ref": "tests/prog_test/src/smTopoTest.cpp:4030 (my_check_loop_uv_gap: SmCrvOnSurf(*pUV, *pSurface, &sDomain, 1, &ctx) over SmBSplineCurve::CreateLineSegment UV edges; bulge patch at :4185)",
+   "upstream_ref": "tests/prog_test/src/smFaceTest.cpp:944 (my_check_loop_uv_gap: SmCrvOnSurf(*pUV, *pSurface, &sDomain, 1, &ctx) over SmBSplineCurve::CreateLineSegment UV edges; bulge patch at :4185)",
    "inputs": {
     "cos": {
      "uv": {
@@ -7067,7 +7067,7 @@
   },
   {
    "name": "loop_uv_gap_3_edge0_approx",
-   "upstream_ref": "tests/prog_test/src/smTopoTest.cpp:4030 (my_check_loop_uv_gap: SmCrvOnSurf(*pUV, *pSurface, &sDomain, 1, &ctx) over SmBSplineCurve::CreateLineSegment UV edges; bulge patch at :4185)",
+   "upstream_ref": "tests/prog_test/src/smFaceTest.cpp:944 (my_check_loop_uv_gap: SmCrvOnSurf(*pUV, *pSurface, &sDomain, 1, &ctx) over SmBSplineCurve::CreateLineSegment UV edges; bulge patch at :4185)",
    "inputs": {
     "cos": {
      "uv": {
@@ -7192,7 +7192,7 @@
   },
   {
    "name": "loop_uv_gap_3_edge0_cached",
-   "upstream_ref": "tests/prog_test/src/smTopoTest.cpp:4030 (my_check_loop_uv_gap: SmCrvOnSurf(*pUV, *pSurface, &sDomain, 1, &ctx) over SmBSplineCurve::CreateLineSegment UV edges; bulge patch at :4185)",
+   "upstream_ref": "tests/prog_test/src/smFaceTest.cpp:944 (my_check_loop_uv_gap: SmCrvOnSurf(*pUV, *pSurface, &sDomain, 1, &ctx) over SmBSplineCurve::CreateLineSegment UV edges; bulge patch at :4185)",
    "inputs": {
     "cos": {
      "uv": {
@@ -7332,7 +7332,7 @@
   },
   {
    "name": "loop_uv_gap_3_edge0_edit",
-   "upstream_ref": "tests/prog_test/src/smTopoTest.cpp:4030 (my_check_loop_uv_gap: SmCrvOnSurf(*pUV, *pSurface, &sDomain, 1, &ctx) over SmBSplineCurve::CreateLineSegment UV edges; bulge patch at :4185)",
+   "upstream_ref": "tests/prog_test/src/smFaceTest.cpp:944 (my_check_loop_uv_gap: SmCrvOnSurf(*pUV, *pSurface, &sDomain, 1, &ctx) over SmBSplineCurve::CreateLineSegment UV edges; bulge patch at :4185)",
    "inputs": {
     "cos": {
      "uv": {
@@ -7469,7 +7469,7 @@
   },
   {
    "name": "loop_uv_gap_3_edge0_gap_self",
-   "upstream_ref": "tests/prog_test/src/smTopoTest.cpp:4030 (my_check_loop_uv_gap: SmCrvOnSurf(*pUV, *pSurface, &sDomain, 1, &ctx) over SmBSplineCurve::CreateLineSegment UV edges; bulge patch at :4185)",
+   "upstream_ref": "tests/prog_test/src/smFaceTest.cpp:944 (my_check_loop_uv_gap: SmCrvOnSurf(*pUV, *pSurface, &sDomain, 1, &ctx) over SmBSplineCurve::CreateLineSegment UV edges; bulge patch at :4185)",
    "inputs": {
     "cos": {
      "uv": {
@@ -7582,7 +7582,7 @@
   },
   {
    "name": "loop_uv_gap_3_edge1_info",
-   "upstream_ref": "tests/prog_test/src/smTopoTest.cpp:4030 (my_check_loop_uv_gap: SmCrvOnSurf(*pUV, *pSurface, &sDomain, 1, &ctx) over SmBSplineCurve::CreateLineSegment UV edges; bulge patch at :4185)",
+   "upstream_ref": "tests/prog_test/src/smFaceTest.cpp:944 (my_check_loop_uv_gap: SmCrvOnSurf(*pUV, *pSurface, &sDomain, 1, &ctx) over SmBSplineCurve::CreateLineSegment UV edges; bulge patch at :4185)",
    "inputs": {
     "cos": {
      "uv": {
@@ -7694,7 +7694,7 @@
   },
   {
    "name": "loop_uv_gap_3_edge1_eval",
-   "upstream_ref": "tests/prog_test/src/smTopoTest.cpp:4030 (my_check_loop_uv_gap: SmCrvOnSurf(*pUV, *pSurface, &sDomain, 1, &ctx) over SmBSplineCurve::CreateLineSegment UV edges; bulge patch at :4185)",
+   "upstream_ref": "tests/prog_test/src/smFaceTest.cpp:944 (my_check_loop_uv_gap: SmCrvOnSurf(*pUV, *pSurface, &sDomain, 1, &ctx) over SmBSplineCurve::CreateLineSegment UV edges; bulge patch at :4185)",
    "inputs": {
     "cos": {
      "uv": {
@@ -7825,7 +7825,7 @@
   },
   {
    "name": "loop_uv_gap_3_edge1_approx",
-   "upstream_ref": "tests/prog_test/src/smTopoTest.cpp:4030 (my_check_loop_uv_gap: SmCrvOnSurf(*pUV, *pSurface, &sDomain, 1, &ctx) over SmBSplineCurve::CreateLineSegment UV edges; bulge patch at :4185)",
+   "upstream_ref": "tests/prog_test/src/smFaceTest.cpp:944 (my_check_loop_uv_gap: SmCrvOnSurf(*pUV, *pSurface, &sDomain, 1, &ctx) over SmBSplineCurve::CreateLineSegment UV edges; bulge patch at :4185)",
    "inputs": {
     "cos": {
      "uv": {
@@ -7950,7 +7950,7 @@
   },
   {
    "name": "loop_uv_gap_3_edge1_cached",
-   "upstream_ref": "tests/prog_test/src/smTopoTest.cpp:4030 (my_check_loop_uv_gap: SmCrvOnSurf(*pUV, *pSurface, &sDomain, 1, &ctx) over SmBSplineCurve::CreateLineSegment UV edges; bulge patch at :4185)",
+   "upstream_ref": "tests/prog_test/src/smFaceTest.cpp:944 (my_check_loop_uv_gap: SmCrvOnSurf(*pUV, *pSurface, &sDomain, 1, &ctx) over SmBSplineCurve::CreateLineSegment UV edges; bulge patch at :4185)",
    "inputs": {
     "cos": {
      "uv": {
@@ -8090,7 +8090,7 @@
   },
   {
    "name": "loop_uv_gap_3_edge1_edit",
-   "upstream_ref": "tests/prog_test/src/smTopoTest.cpp:4030 (my_check_loop_uv_gap: SmCrvOnSurf(*pUV, *pSurface, &sDomain, 1, &ctx) over SmBSplineCurve::CreateLineSegment UV edges; bulge patch at :4185)",
+   "upstream_ref": "tests/prog_test/src/smFaceTest.cpp:944 (my_check_loop_uv_gap: SmCrvOnSurf(*pUV, *pSurface, &sDomain, 1, &ctx) over SmBSplineCurve::CreateLineSegment UV edges; bulge patch at :4185)",
    "inputs": {
     "cos": {
      "uv": {
@@ -8227,7 +8227,7 @@
   },
   {
    "name": "loop_uv_gap_3_edge1_gap_self",
-   "upstream_ref": "tests/prog_test/src/smTopoTest.cpp:4030 (my_check_loop_uv_gap: SmCrvOnSurf(*pUV, *pSurface, &sDomain, 1, &ctx) over SmBSplineCurve::CreateLineSegment UV edges; bulge patch at :4185)",
+   "upstream_ref": "tests/prog_test/src/smFaceTest.cpp:944 (my_check_loop_uv_gap: SmCrvOnSurf(*pUV, *pSurface, &sDomain, 1, &ctx) over SmBSplineCurve::CreateLineSegment UV edges; bulge patch at :4185)",
    "inputs": {
     "cos": {
      "uv": {
@@ -8340,7 +8340,7 @@
   },
   {
    "name": "loop_uv_gap_3_edge2_info",
-   "upstream_ref": "tests/prog_test/src/smTopoTest.cpp:4030 (my_check_loop_uv_gap: SmCrvOnSurf(*pUV, *pSurface, &sDomain, 1, &ctx) over SmBSplineCurve::CreateLineSegment UV edges; bulge patch at :4185)",
+   "upstream_ref": "tests/prog_test/src/smFaceTest.cpp:944 (my_check_loop_uv_gap: SmCrvOnSurf(*pUV, *pSurface, &sDomain, 1, &ctx) over SmBSplineCurve::CreateLineSegment UV edges; bulge patch at :4185)",
    "inputs": {
     "cos": {
      "uv": {
@@ -8452,7 +8452,7 @@
   },
   {
    "name": "loop_uv_gap_3_edge2_eval",
-   "upstream_ref": "tests/prog_test/src/smTopoTest.cpp:4030 (my_check_loop_uv_gap: SmCrvOnSurf(*pUV, *pSurface, &sDomain, 1, &ctx) over SmBSplineCurve::CreateLineSegment UV edges; bulge patch at :4185)",
+   "upstream_ref": "tests/prog_test/src/smFaceTest.cpp:944 (my_check_loop_uv_gap: SmCrvOnSurf(*pUV, *pSurface, &sDomain, 1, &ctx) over SmBSplineCurve::CreateLineSegment UV edges; bulge patch at :4185)",
    "inputs": {
     "cos": {
      "uv": {
@@ -8583,7 +8583,7 @@
   },
   {
    "name": "loop_uv_gap_3_edge2_approx",
-   "upstream_ref": "tests/prog_test/src/smTopoTest.cpp:4030 (my_check_loop_uv_gap: SmCrvOnSurf(*pUV, *pSurface, &sDomain, 1, &ctx) over SmBSplineCurve::CreateLineSegment UV edges; bulge patch at :4185)",
+   "upstream_ref": "tests/prog_test/src/smFaceTest.cpp:944 (my_check_loop_uv_gap: SmCrvOnSurf(*pUV, *pSurface, &sDomain, 1, &ctx) over SmBSplineCurve::CreateLineSegment UV edges; bulge patch at :4185)",
    "inputs": {
     "cos": {
      "uv": {
@@ -8708,7 +8708,7 @@
   },
   {
    "name": "loop_uv_gap_3_edge2_cached",
-   "upstream_ref": "tests/prog_test/src/smTopoTest.cpp:4030 (my_check_loop_uv_gap: SmCrvOnSurf(*pUV, *pSurface, &sDomain, 1, &ctx) over SmBSplineCurve::CreateLineSegment UV edges; bulge patch at :4185)",
+   "upstream_ref": "tests/prog_test/src/smFaceTest.cpp:944 (my_check_loop_uv_gap: SmCrvOnSurf(*pUV, *pSurface, &sDomain, 1, &ctx) over SmBSplineCurve::CreateLineSegment UV edges; bulge patch at :4185)",
    "inputs": {
     "cos": {
      "uv": {
@@ -8848,7 +8848,7 @@
   },
   {
    "name": "loop_uv_gap_3_edge2_edit",
-   "upstream_ref": "tests/prog_test/src/smTopoTest.cpp:4030 (my_check_loop_uv_gap: SmCrvOnSurf(*pUV, *pSurface, &sDomain, 1, &ctx) over SmBSplineCurve::CreateLineSegment UV edges; bulge patch at :4185)",
+   "upstream_ref": "tests/prog_test/src/smFaceTest.cpp:944 (my_check_loop_uv_gap: SmCrvOnSurf(*pUV, *pSurface, &sDomain, 1, &ctx) over SmBSplineCurve::CreateLineSegment UV edges; bulge patch at :4185)",
    "inputs": {
     "cos": {
      "uv": {
@@ -8985,7 +8985,7 @@
   },
   {
    "name": "loop_uv_gap_3_edge2_gap_self",
-   "upstream_ref": "tests/prog_test/src/smTopoTest.cpp:4030 (my_check_loop_uv_gap: SmCrvOnSurf(*pUV, *pSurface, &sDomain, 1, &ctx) over SmBSplineCurve::CreateLineSegment UV edges; bulge patch at :4185)",
+   "upstream_ref": "tests/prog_test/src/smFaceTest.cpp:944 (my_check_loop_uv_gap: SmCrvOnSurf(*pUV, *pSurface, &sDomain, 1, &ctx) over SmBSplineCurve::CreateLineSegment UV edges; bulge patch at :4185)",
    "inputs": {
     "cos": {
      "uv": {
@@ -10422,7 +10422,7 @@
   },
   {
    "name": "Surface_cubic_eval",
-   "upstream_ref": "tests/prog_test/src/smTopoTest.cpp:2825 (SmCrvOnSurf s3DCurve(*pUVCurve, *cpFace->GetSurface()); DrawWDeriv)",
+   "upstream_ref": "tests/prog_test/src/smTopoTest.cpp:2554 (SmCrvOnSurf s3DCurve(*pUVCurve, *cpFace->GetSurface()); DrawWDeriv)",
    "inputs": {
     "cos": {
      "uv": {
@@ -10511,7 +10511,7 @@
   },
   {
    "name": "Surface_cubic_approx",
-   "upstream_ref": "tests/prog_test/src/smTopoTest.cpp:2825 (SmCrvOnSurf s3DCurve(*pUVCurve, *cpFace->GetSurface()); DrawWDeriv)",
+   "upstream_ref": "tests/prog_test/src/smTopoTest.cpp:2554 (SmCrvOnSurf s3DCurve(*pUVCurve, *cpFace->GetSurface()); DrawWDeriv)",
    "inputs": {
     "cos": {
      "uv": {
@@ -10597,7 +10597,7 @@
   },
   {
    "name": "Surface_cubic_cached",
-   "upstream_ref": "tests/prog_test/src/smTopoTest.cpp:2825 (SmCrvOnSurf s3DCurve(*pUVCurve, *cpFace->GetSurface()); DrawWDeriv)",
+   "upstream_ref": "tests/prog_test/src/smTopoTest.cpp:2554 (SmCrvOnSurf s3DCurve(*pUVCurve, *cpFace->GetSurface()); DrawWDeriv)",
    "inputs": {
     "cos": {
      "uv": {
@@ -10680,7 +10680,7 @@
   },
   {
    "name": "Surface_cubic_normal",
-   "upstream_ref": "tests/prog_test/src/smTopoTest.cpp:2825 (SmCrvOnSurf s3DCurve(*pUVCurve, *cpFace->GetSurface()); DrawWDeriv)",
+   "upstream_ref": "tests/prog_test/src/smTopoTest.cpp:2554 (SmCrvOnSurf s3DCurve(*pUVCurve, *cpFace->GetSurface()); DrawWDeriv)",
    "inputs": {
     "cos": {
      "uv": {
@@ -10742,7 +10742,7 @@
   },
   {
    "name": "Surface_cubic_knots",
-   "upstream_ref": "tests/prog_test/src/smTopoTest.cpp:2825 (SmCrvOnSurf s3DCurve(*pUVCurve, *cpFace->GetSurface()); DrawWDeriv)",
+   "upstream_ref": "tests/prog_test/src/smTopoTest.cpp:2554 (SmCrvOnSurf s3DCurve(*pUVCurve, *cpFace->GetSurface()); DrawWDeriv)",
    "inputs": {
     "cos": {
      "uv": {
@@ -10804,7 +10804,7 @@
   },
   {
    "name": "DropCurveSurface_cubic_eval",
-   "upstream_ref": "tests/prog_test/src/smTopoTest.cpp:2825 (SmCrvOnSurf s3DCurve(*pUVCurve, *cpFace->GetSurface()); DrawWDeriv)",
+   "upstream_ref": "tests/prog_test/src/smTopoTest.cpp:2554 (SmCrvOnSurf s3DCurve(*pUVCurve, *cpFace->GetSurface()); DrawWDeriv)",
    "inputs": {
     "cos": {
      "uv": {
@@ -10893,7 +10893,7 @@
   },
   {
    "name": "DropCurveSurface_cubic_approx",
-   "upstream_ref": "tests/prog_test/src/smTopoTest.cpp:2825 (SmCrvOnSurf s3DCurve(*pUVCurve, *cpFace->GetSurface()); DrawWDeriv)",
+   "upstream_ref": "tests/prog_test/src/smTopoTest.cpp:2554 (SmCrvOnSurf s3DCurve(*pUVCurve, *cpFace->GetSurface()); DrawWDeriv)",
    "inputs": {
     "cos": {
      "uv": {
@@ -10979,7 +10979,7 @@
   },
   {
    "name": "DropCurveSurface_cubic_cached",
-   "upstream_ref": "tests/prog_test/src/smTopoTest.cpp:2825 (SmCrvOnSurf s3DCurve(*pUVCurve, *cpFace->GetSurface()); DrawWDeriv)",
+   "upstream_ref": "tests/prog_test/src/smTopoTest.cpp:2554 (SmCrvOnSurf s3DCurve(*pUVCurve, *cpFace->GetSurface()); DrawWDeriv)",
    "inputs": {
     "cos": {
      "uv": {
@@ -11062,7 +11062,7 @@
   },
   {
    "name": "DropCurveSurface_cubic_normal",
-   "upstream_ref": "tests/prog_test/src/smTopoTest.cpp:2825 (SmCrvOnSurf s3DCurve(*pUVCurve, *cpFace->GetSurface()); DrawWDeriv)",
+   "upstream_ref": "tests/prog_test/src/smTopoTest.cpp:2554 (SmCrvOnSurf s3DCurve(*pUVCurve, *cpFace->GetSurface()); DrawWDeriv)",
    "inputs": {
     "cos": {
      "uv": {
@@ -11124,7 +11124,7 @@
   },
   {
    "name": "DropCurveSurface_cubic_knots",
-   "upstream_ref": "tests/prog_test/src/smTopoTest.cpp:2825 (SmCrvOnSurf s3DCurve(*pUVCurve, *cpFace->GetSurface()); DrawWDeriv)",
+   "upstream_ref": "tests/prog_test/src/smTopoTest.cpp:2554 (SmCrvOnSurf s3DCurve(*pUVCurve, *cpFace->GetSurface()); DrawWDeriv)",
    "inputs": {
     "cos": {
      "uv": {
@@ -11181,6 +11181,577 @@
       "ivl": null,
       "want": true
      }
+    ]
+   }
+  }
+  ,
+  {
+   "name": "offset_planar_positive_eval_derivatives_normals",
+   "upstream_ref": "edge case: SmCrvOnSurf over SmOffsetSurface(+0.25, planar SmBSplineSurface); Evaluate, EvaluateSurfaceNormal and EvaluateSurface1stDerivDerivs",
+   "inputs": {
+    "cos": {
+     "uv": {
+      "line": [
+       0.15,
+       0.2,
+       0.85,
+       0.75
+      ]
+     },
+     "srf": {
+      "net": [
+       [
+        [
+         0,
+         0,
+         0,
+         -1.7976931348623157e+308
+        ],
+        [
+         0,
+         1,
+         0,
+         -1.7976931348623157e+308
+        ]
+       ],
+       [
+        [
+         1,
+         0,
+         0,
+         -1.7976931348623157e+308
+        ],
+        [
+         1,
+         1,
+         0,
+         -1.7976931348623157e+308
+        ]
+       ]
+      ],
+      "p": 1,
+      "q": 1,
+      "u": [
+       0,
+       0,
+       1,
+       1
+      ],
+      "v": [
+       0,
+       0,
+       1,
+       1
+      ]
+     },
+     "offset": {
+      "distance": 0.25
+     },
+     "owner": 0
+    },
+    "ops": [
+     {
+      "op": "state"
+     },
+     {
+      "op": "eval",
+      "t": 0.4,
+      "n": 2,
+      "left": true,
+      "nonzero": true
+     },
+     {
+      "op": "eval_normal",
+      "t": 0.4,
+      "left": true
+     },
+     {
+      "op": "eval1st",
+      "t": 0.4,
+      "n": 1,
+      "left": true
+     }
+    ]
+   }
+  },
+  {
+   "name": "offset_curved_negative_rail_approx_reuse",
+   "upstream_ref": "edge case: SmCrvOnSurf rail over SmOffsetSurface(-0.1, curved SmBSplineSurface); supplied knots, match_parameterization FALSE and cached approximation reuse",
+   "inputs": {
+    "cos": {
+     "uv": {
+      "bspline": {
+       "cpts": [
+        [
+         0.1,
+         0.2,
+         -1.7976931348623157e+308
+        ],
+        [
+         0.5,
+         0.8,
+         -1.7976931348623157e+308
+        ],
+        [
+         0.9,
+         0.4,
+         -1.7976931348623157e+308
+        ]
+       ],
+       "p": 2,
+       "u": [
+        0,
+        0,
+        0,
+        1,
+        1,
+        1
+       ]
+      }
+     },
+     "srf": {
+      "net": [
+       [
+        [
+         0,
+         0,
+         0,
+         -1.7976931348623157e+308
+        ],
+        [
+         0,
+         1,
+         0,
+         -1.7976931348623157e+308
+        ]
+       ],
+       [
+        [
+         0.5,
+         0,
+         0.4,
+         -1.7976931348623157e+308
+        ],
+        [
+         0.5,
+         1,
+         0.4,
+         -1.7976931348623157e+308
+        ]
+       ],
+       [
+        [
+         1,
+         0,
+         0,
+         -1.7976931348623157e+308
+        ],
+        [
+         1,
+         1,
+         0,
+         -1.7976931348623157e+308
+        ]
+       ]
+      ],
+      "p": 2,
+      "q": 1,
+      "u": [
+       0,
+       0,
+       0,
+       1,
+       1,
+       1
+      ],
+      "v": [
+       0,
+       0,
+       1,
+       1
+      ]
+     },
+     "offset": {
+      "distance": -0.1
+     },
+     "owner": 0
+    },
+    "ops": [
+     {
+      "op": "approx",
+      "breaks": [
+       0,
+       0.5,
+       1
+      ],
+      "tol": 0.0001,
+      "match": false
+     },
+     {
+      "op": "get_or_create",
+      "tol": 0.0001,
+      "breaks": [
+       0,
+       0.5,
+       1
+      ],
+      "match": false
+     },
+     {
+      "op": "get_or_create",
+      "tol": 0.0001,
+      "breaks": [
+       0,
+       0.5,
+       1
+      ],
+      "match": false
+     }
+    ]
+   }
+  },
+  {
+   "name": "offset_curved_owner_copy_transform",
+   "upstream_ref": "edge case: owned SmCrvOnSurf over SmOffsetSurface(+0.15, curved SmBSplineSurface); Copy and Transform preserve the wrapped base ownership path",
+   "inputs": {
+    "cos": {
+     "uv": {
+      "line": [
+       0.2,
+       0.25,
+       0.8,
+       0.7
+      ]
+     },
+     "srf": {
+      "net": [
+       [
+        [
+         0,
+         0,
+         0,
+         -1.7976931348623157e+308
+        ],
+        [
+         0,
+         1,
+         0,
+         -1.7976931348623157e+308
+        ]
+       ],
+       [
+        [
+         0.5,
+         0,
+         0.4,
+         -1.7976931348623157e+308
+        ],
+        [
+         0.5,
+         1,
+         0.4,
+         -1.7976931348623157e+308
+        ]
+       ],
+       [
+        [
+         1,
+         0,
+         0,
+         -1.7976931348623157e+308
+        ],
+        [
+         1,
+         1,
+         0,
+         -1.7976931348623157e+308
+        ]
+       ]
+      ],
+      "p": 2,
+      "q": 1,
+      "u": [
+       0,
+       0,
+       0,
+       1,
+       1,
+       1
+      ],
+      "v": [
+       0,
+       0,
+       1,
+       1
+      ]
+     },
+     "offset": {
+      "distance": 0.15,
+      "owns_base": true
+     },
+     "owner": 3
+    },
+    "ops": [
+     {
+      "op": "copy"
+     },
+     {
+      "op": "transform",
+      "origin": [
+       1,
+       -0.5,
+       0.25
+      ],
+      "x": [
+       0,
+       1,
+       0
+      ],
+      "y": [
+       -1,
+       0,
+       0
+      ],
+      "scale": [
+       1.2,
+       1.2,
+       1.2
+      ]
+     },
+     {
+      "op": "eval_point",
+      "t": 0.6
+     }
+    ]
+   }
+  },
+  {
+   "name": "offset_owner0_borrowed_base_transform_errors",
+   "upstream_ref": "SmCrvOnSurf owner 0 / borrowed SmOffsetSurface base: Copy/Evaluate, cached approximation transform before ownership early-return, nonuniform then uniform scaling and post-transform evaluation",
+   "inputs": {
+    "cos": {
+     "uv": {"bspline": {"cpts": [[0.15,0.2,-1.7976931348623157e308],[0.85,0.7,-1.7976931348623157e308]], "p": 1, "u": [0,0,1,1]}},
+     "srf": {"net": [[[0,0,0,-1.7976931348623157e308],[0,1,0,-1.7976931348623157e308]],[[0.5,0,0.4,-1.7976931348623157e308],[0.5,1,0.4,-1.7976931348623157e308]],[[1,0,0,-1.7976931348623157e308],[1,1,0,-1.7976931348623157e308]]], "p": 2, "q": 1, "u": [0,0,0,1,1,1], "v": [0,0,1,1]},
+     "offset": {"distance": 0.15, "owns_base": false}, "owner": 0
+    },
+    "ops": [
+     {"op":"state"},
+     {"op":"copy_eval","t":0.4,"n":1,"left":false,"nonzero":false},
+     {"op":"approx","breaks":[0,0.5,1],"tol":0.0001,"match":false},
+     {"op":"transform","origin":[1,-0.5,0.25],"x":[1,0,0],"y":[0,1,0],"scale":[1.2,0.8,1.1]},
+     {"op":"eval_point","t":0.4},
+     {"op":"get_or_create","tol":0.0001,"breaks":[0,0.5,1],"match":false},
+     {"op":"transform","origin":[-0.25,0.5,0.1],"x":[0,1,0],"y":[-1,0,0],"scale":[1.5,1.5,1.5]},
+     {"op":"eval","t":0.4,"n":1,"left":false,"nonzero":false},
+     {"op":"copy_eval","t":0.4,"n":1,"left":false,"nonzero":false},
+     {"op":"get_or_create","tol":0.0001,"breaks":[0,0.5,1],"match":false}
+    ]
+   }
+  },
+  {
+   "name": "offset_owner0_owned_base_transform_errors",
+   "upstream_ref": "SmCrvOnSurf owner 0 / owned SmOffsetSurface base: ownership early-return leaves the real surface untouched while the cached approximation transforms",
+   "inputs": {
+    "cos": {
+     "uv": {"bspline": {"cpts": [[0.15,0.2,-1.7976931348623157e308],[0.85,0.7,-1.7976931348623157e308]], "p": 1, "u": [0,0,1,1]}},
+     "srf": {"net": [[[0,0,0,-1.7976931348623157e308],[0,1,0,-1.7976931348623157e308]],[[0.5,0,0.4,-1.7976931348623157e308],[0.5,1,0.4,-1.7976931348623157e308]],[[1,0,0,-1.7976931348623157e308],[1,1,0,-1.7976931348623157e308]]], "p": 2, "q": 1, "u": [0,0,0,1,1,1], "v": [0,0,1,1]},
+     "offset": {"distance": 0.15, "owns_base": true}, "owner": 0
+    },
+    "ops": [
+     {"op":"state"},
+     {"op":"copy_eval","t":0.4,"n":1,"left":false,"nonzero":false},
+     {"op":"approx","breaks":[0,0.5,1],"tol":0.0001,"match":false},
+     {"op":"transform","origin":[1,-0.5,0.25],"x":[1,0,0],"y":[0,1,0],"scale":[1.2,0.8,1.1]},
+     {"op":"eval_point","t":0.4},
+     {"op":"get_or_create","tol":0.0001,"breaks":[0,0.5,1],"match":false},
+     {"op":"transform","origin":[-0.25,0.5,0.1],"x":[0,1,0],"y":[-1,0,0],"scale":[1.5,1.5,1.5]},
+     {"op":"eval","t":0.4,"n":1,"left":false,"nonzero":false},
+     {"op":"copy_eval","t":0.4,"n":1,"left":false,"nonzero":false},
+     {"op":"get_or_create","tol":0.0001,"breaks":[0,0.5,1],"match":false}
+    ]
+   }
+  },
+  {
+   "name": "offset_owner1_borrowed_base_transform_errors",
+   "upstream_ref": "SmCrvOnSurf owner 1 / borrowed SmOffsetSurface base: copied UV, copied offset wrapper on Copy, shared NURB, cached approximation transforms despite surface ownership early-return",
+   "inputs": {
+    "cos": {
+     "uv": {"bspline": {"cpts": [[0.15,0.2,-1.7976931348623157e308],[0.85,0.7,-1.7976931348623157e308]], "p": 1, "u": [0,0,1,1]}},
+     "srf": {"net": [[[0,0,0,-1.7976931348623157e308],[0,1,0,-1.7976931348623157e308]],[[0.5,0,0.4,-1.7976931348623157e308],[0.5,1,0.4,-1.7976931348623157e308]],[[1,0,0,-1.7976931348623157e308],[1,1,0,-1.7976931348623157e308]]], "p": 2, "q": 1, "u": [0,0,0,1,1,1], "v": [0,0,1,1]},
+     "offset": {"distance": 0.15, "owns_base": false}, "owner": 1
+    },
+    "ops": [
+     {"op":"state"},
+     {"op":"copy_eval","t":0.4,"n":1,"left":false,"nonzero":false},
+     {"op":"approx","breaks":[0,0.5,1],"tol":0.0001,"match":false},
+     {"op":"transform","origin":[1,-0.5,0.25],"x":[1,0,0],"y":[0,1,0],"scale":[1.2,0.8,1.1]},
+     {"op":"eval_point","t":0.4},
+     {"op":"get_or_create","tol":0.0001,"breaks":[0,0.5,1],"match":false},
+     {"op":"transform","origin":[-0.25,0.5,0.1],"x":[0,1,0],"y":[-1,0,0],"scale":[1.5,1.5,1.5]},
+     {"op":"eval","t":0.4,"n":1,"left":false,"nonzero":false},
+     {"op":"copy_eval","t":0.4,"n":1,"left":false,"nonzero":false},
+     {"op":"get_or_create","tol":0.0001,"breaks":[0,0.5,1],"match":false}
+    ]
+   }
+  },
+  {
+   "name": "offset_owner1_owned_base_transform_errors",
+   "upstream_ref": "SmCrvOnSurf owner 1 / owned SmOffsetSurface base: Copy owns a deep base copy but the source curve transform only edits its cached approximation",
+   "inputs": {
+    "cos": {
+     "uv": {"bspline": {"cpts": [[0.15,0.2,-1.7976931348623157e308],[0.85,0.7,-1.7976931348623157e308]], "p": 1, "u": [0,0,1,1]}},
+     "srf": {"net": [[[0,0,0,-1.7976931348623157e308],[0,1,0,-1.7976931348623157e308]],[[0.5,0,0.4,-1.7976931348623157e308],[0.5,1,0.4,-1.7976931348623157e308]],[[1,0,0,-1.7976931348623157e308],[1,1,0,-1.7976931348623157e308]]], "p": 2, "q": 1, "u": [0,0,0,1,1,1], "v": [0,0,1,1]},
+     "offset": {"distance": 0.15, "owns_base": true}, "owner": 1
+    },
+    "ops": [
+     {"op":"state"},
+     {"op":"copy_eval","t":0.4,"n":1,"left":false,"nonzero":false},
+     {"op":"approx","breaks":[0,0.5,1],"tol":0.0001,"match":false},
+     {"op":"transform","origin":[1,-0.5,0.25],"x":[1,0,0],"y":[0,1,0],"scale":[1.2,0.8,1.1]},
+     {"op":"eval_point","t":0.4},
+     {"op":"get_or_create","tol":0.0001,"breaks":[0,0.5,1],"match":false},
+     {"op":"transform","origin":[-0.25,0.5,0.1],"x":[0,1,0],"y":[-1,0,0],"scale":[1.5,1.5,1.5]},
+     {"op":"eval","t":0.4,"n":1,"left":false,"nonzero":false},
+     {"op":"copy_eval","t":0.4,"n":1,"left":false,"nonzero":false},
+     {"op":"get_or_create","tol":0.0001,"breaks":[0,0.5,1],"match":false}
+    ]
+   }
+  },
+  {
+   "name": "offset_owner2_borrowed_base_transform_errors",
+   "upstream_ref": "SmCrvOnSurf owner 2 / borrowed SmOffsetSurface base: constructor Copy preserves borrowed base, nonuniform transform errors after approximation edit, uniform transform scales distance before borrowed-base error",
+   "inputs": {
+    "cos": {
+     "uv": {"bspline": {"cpts": [[0.15,0.2,-1.7976931348623157e308],[0.85,0.7,-1.7976931348623157e308]], "p": 1, "u": [0,0,1,1]}},
+     "srf": {"net": [[[0,0,0,-1.7976931348623157e308],[0,1,0,-1.7976931348623157e308]],[[0.5,0,0.4,-1.7976931348623157e308],[0.5,1,0.4,-1.7976931348623157e308]],[[1,0,0,-1.7976931348623157e308],[1,1,0,-1.7976931348623157e308]]], "p": 2, "q": 1, "u": [0,0,0,1,1,1], "v": [0,0,1,1]},
+     "offset": {"distance": 0.15, "owns_base": false}, "owner": 2
+    },
+    "ops": [
+     {"op":"state"},
+     {"op":"copy_eval","t":0.4,"n":1,"left":false,"nonzero":false},
+     {"op":"approx","breaks":[0,0.5,1],"tol":0.0001,"match":false},
+     {"op":"transform","origin":[1,-0.5,0.25],"x":[1,0,0],"y":[0,1,0],"scale":[1.2,0.8,1.1]},
+     {"op":"eval_point","t":0.4},
+     {"op":"get_or_create","tol":0.0001,"breaks":[0,0.5,1],"match":false},
+     {"op":"transform","origin":[-0.25,0.5,0.1],"x":[0,1,0],"y":[-1,0,0],"scale":[1.5,1.5,1.5]},
+     {"op":"eval","t":0.4,"n":1,"left":false,"nonzero":false},
+     {"op":"copy_eval","t":0.4,"n":1,"left":false,"nonzero":false},
+     {"op":"get_or_create","tol":0.0001,"breaks":[0,0.5,1],"match":false}
+    ]
+   }
+  },
+  {
+   "name": "offset_owner2_owned_base_transform_errors",
+   "upstream_ref": "SmCrvOnSurf owner 2 / owned SmOffsetSurface base: constructor and Copy own deep bases; nonuniform error still edits approximation; subsequent uniform transform succeeds",
+   "inputs": {
+    "cos": {
+     "uv": {"bspline": {"cpts": [[0.15,0.2,-1.7976931348623157e308],[0.85,0.7,-1.7976931348623157e308]], "p": 1, "u": [0,0,1,1]}},
+     "srf": {"net": [[[0,0,0,-1.7976931348623157e308],[0,1,0,-1.7976931348623157e308]],[[0.5,0,0.4,-1.7976931348623157e308],[0.5,1,0.4,-1.7976931348623157e308]],[[1,0,0,-1.7976931348623157e308],[1,1,0,-1.7976931348623157e308]]], "p": 2, "q": 1, "u": [0,0,0,1,1,1], "v": [0,0,1,1]},
+     "offset": {"distance": 0.15, "owns_base": true}, "owner": 2
+    },
+    "ops": [
+     {"op":"state"},
+     {"op":"copy_eval","t":0.4,"n":1,"left":false,"nonzero":false},
+     {"op":"approx","breaks":[0,0.5,1],"tol":0.0001,"match":false},
+     {"op":"transform","origin":[1,-0.5,0.25],"x":[1,0,0],"y":[0,1,0],"scale":[1.2,0.8,1.1]},
+     {"op":"eval_point","t":0.4},
+     {"op":"get_or_create","tol":0.0001,"breaks":[0,0.5,1],"match":false},
+     {"op":"transform","origin":[-0.25,0.5,0.1],"x":[0,1,0],"y":[-1,0,0],"scale":[1.5,1.5,1.5]},
+     {"op":"eval","t":0.4,"n":1,"left":false,"nonzero":false},
+     {"op":"copy_eval","t":0.4,"n":1,"left":false,"nonzero":false},
+     {"op":"get_or_create","tol":0.0001,"breaks":[0,0.5,1],"match":false}
+    ]
+   }
+  },
+  {
+   "name": "offset_owner3_borrowed_base_transform_errors",
+   "upstream_ref": "SmCrvOnSurf owner 3 / borrowed SmOffsetSurface base: adopted offset wrapper, Copy ownership 2, both nonuniform and uniform failures expose partially transformed approximation and offset distance",
+   "inputs": {
+    "cos": {
+     "uv": {"bspline": {"cpts": [[0.15,0.2,-1.7976931348623157e308],[0.85,0.7,-1.7976931348623157e308]], "p": 1, "u": [0,0,1,1]}},
+     "srf": {"net": [[[0,0,0,-1.7976931348623157e308],[0,1,0,-1.7976931348623157e308]],[[0.5,0,0.4,-1.7976931348623157e308],[0.5,1,0.4,-1.7976931348623157e308]],[[1,0,0,-1.7976931348623157e308],[1,1,0,-1.7976931348623157e308]]], "p": 2, "q": 1, "u": [0,0,0,1,1,1], "v": [0,0,1,1]},
+     "offset": {"distance": 0.15, "owns_base": false}, "owner": 3
+    },
+    "ops": [
+     {"op":"state"},
+     {"op":"copy_eval","t":0.4,"n":1,"left":false,"nonzero":false},
+     {"op":"approx","breaks":[0,0.5,1],"tol":0.0001,"match":false},
+     {"op":"transform","origin":[1,-0.5,0.25],"x":[1,0,0],"y":[0,1,0],"scale":[1.2,0.8,1.1]},
+     {"op":"eval_point","t":0.4},
+     {"op":"get_or_create","tol":0.0001,"breaks":[0,0.5,1],"match":false},
+     {"op":"transform","origin":[-0.25,0.5,0.1],"x":[0,1,0],"y":[-1,0,0],"scale":[1.5,1.5,1.5]},
+     {"op":"eval","t":0.4,"n":1,"left":false,"nonzero":false},
+     {"op":"copy_eval","t":0.4,"n":1,"left":false,"nonzero":false},
+     {"op":"get_or_create","tol":0.0001,"breaks":[0,0.5,1],"match":false}
+    ]
+   }
+  },
+  {
+   "name": "offset_owner3_owned_base_transform_errors",
+   "upstream_ref": "SmCrvOnSurf owner 3 / owned SmOffsetSurface base: adopted owned base and deep Copy cleanup; nonuniform failure then successful uniform transform with numeric source and copy evaluation",
+   "inputs": {
+    "cos": {
+     "uv": {"bspline": {"cpts": [[0.15,0.2,-1.7976931348623157e308],[0.85,0.7,-1.7976931348623157e308]], "p": 1, "u": [0,0,1,1]}},
+     "srf": {"net": [[[0,0,0,-1.7976931348623157e308],[0,1,0,-1.7976931348623157e308]],[[0.5,0,0.4,-1.7976931348623157e308],[0.5,1,0.4,-1.7976931348623157e308]],[[1,0,0,-1.7976931348623157e308],[1,1,0,-1.7976931348623157e308]]], "p": 2, "q": 1, "u": [0,0,0,1,1,1], "v": [0,0,1,1]},
+     "offset": {"distance": 0.15, "owns_base": true}, "owner": 3
+    },
+    "ops": [
+     {"op":"state"},
+     {"op":"copy_eval","t":0.4,"n":1,"left":false,"nonzero":false},
+     {"op":"approx","breaks":[0,0.5,1],"tol":0.0001,"match":false},
+     {"op":"transform","origin":[1,-0.5,0.25],"x":[1,0,0],"y":[0,1,0],"scale":[1.2,0.8,1.1]},
+     {"op":"eval_point","t":0.4},
+     {"op":"get_or_create","tol":0.0001,"breaks":[0,0.5,1],"match":false},
+     {"op":"transform","origin":[-0.25,0.5,0.1],"x":[0,1,0],"y":[-1,0,0],"scale":[1.5,1.5,1.5]},
+     {"op":"eval","t":0.4,"n":1,"left":false,"nonzero":false},
+     {"op":"copy_eval","t":0.4,"n":1,"left":false,"nonzero":false},
+     {"op":"get_or_create","tol":0.0001,"breaks":[0,0.5,1],"match":false}
+    ]
+   }
+  },
+  {
+   "name": "offset_borrowed_close_knot_shared_copy_evaluation",
+   "upstream_ref": "SmBSplineSurface(gw_SURFACE*, TRUE, NULL) bypasses sm_FixupKnotVector; SmOffsetSurface borrows that real NURB. Crv owner 0 Copy must retain exact knots. Endpoint derivatives magnify unintended knot repair; approximation must sample the original curve",
+   "inputs": {
+    "cos": {
+     "uv": {"bspline": {"cpts": [[0,0.2,-1.7976931348623157e308],[0.8,0.7,-1.7976931348623157e308]], "p": 1, "u": [0,0,1,1]}},
+     "srf": {
+      "net": [[[0,0,0,-1.7976931348623157e308],[0,1,0,-1.7976931348623157e308]],[[0.1,0,0,-1.7976931348623157e308],[0.1,1,0,-1.7976931348623157e308]],[[0.4,0,0,-1.7976931348623157e308],[0.4,1,0,-1.7976931348623157e308]],[[0.7,0,0,-1.7976931348623157e308],[0.7,1,0,-1.7976931348623157e308]],[[1,0,0,-1.7976931348623157e308],[1,1,0,-1.7976931348623157e308]]],
+      "p": 2, "q": 1, "u": [0,0,0,1e-9,0.5,1,1,1], "v": [0,0,1,1], "borrow_nurb": true
+     },
+     "offset": {"distance": 0.125, "owns_base": false}, "owner": 0
+    },
+    "ops": [
+     {"op":"state"},
+     {"op":"eval","t":0,"n":1,"left":false,"nonzero":false},
+     {"op":"copy_eval","t":0,"n":1,"left":false,"nonzero":false},
+     {"op":"eval_point","t":0.0000000005},
+     {"op":"copy_eval","t":0.0000000005,"n":1,"left":false,"nonzero":false},
+     {"op":"approx","breaks":[0,0.00000000125,0.001,0.5,1],"tol":0.0001,"match":false},
+     {"op":"get_or_create","tol":0.0001,"breaks":[0,0.00000000125,0.001,0.5,1],"match":false},
+     {"op":"state"}
+    ]
+   }
+  },
+  {
+   "name": "offset_borrowed_close_uv_knot_shared_copy_evaluation",
+   "upstream_ref": "SmBSplineCurve(gw_CURVE*, 2, TRUE) preserves raw UV knots; SmBSplineCurve.cpp:88,230 passes SM_EFF_ZERO=1e-12 to sm_FixupKnotVector (SmNurbsCrv.cpp:396-421), which would collapse 1e-12 below the [0,1] scaled-zero threshold 2e-12. Owner 0 shares that UV through the real offset and Copy; endpoint/interior derivatives expose accidental repair. First control displacement of order 1e-12 limits endpoint tangent magnitude; supplied breaks [0,0.5,1] avoid explicitly requesting the narrow span.",
+   "inputs": {
+    "cos": {
+     "uv": {"bspline": {"cpts": [[0.1,0.2,-1.7976931348623157e308],[0.100000000001,0.2,-1.7976931348623157e308],[0.4,0.4,-1.7976931348623157e308],[0.7,0.6,-1.7976931348623157e308],[0.9,0.8,-1.7976931348623157e308]], "p": 2, "u": [0,0,0,1e-12,0.5,1,1,1], "borrow_nurb": true}},
+     "srf": {"net": [[[0,0,0,-1.7976931348623157e308],[0,1,0,-1.7976931348623157e308]],[[1,0,0,-1.7976931348623157e308],[1,1,0,-1.7976931348623157e308]]], "p": 1, "q": 1, "u": [0,0,1,1], "v": [0,0,1,1]},
+     "offset": {"distance": 0.125, "owns_base": false}, "owner": 0
+    },
+    "ops": [
+     {"op":"state"},
+     {"op":"eval","t":0,"n":1,"left":false,"nonzero":false},
+     {"op":"copy_eval","t":0,"n":1,"left":false,"nonzero":false},
+     {"op":"eval_point","t":7.5e-13},
+     {"op":"eval","t":7.5e-13,"n":1,"left":false,"nonzero":false},
+     {"op":"copy_eval","t":7.5e-13,"n":1,"left":false,"nonzero":false},
+     {"op":"approx","breaks":[0,0.5,1],"tol":0.0001,"match":false},
+     {"op":"get_or_create","tol":0.0001,"breaks":[0,0.5,1],"match":false},
+     {"op":"state"}
     ]
    }
   }

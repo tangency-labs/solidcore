@@ -12,8 +12,8 @@
 //!
 //! Deferred cases: `CoincidenceCheck` with a surface that is not a plane
 //! (`SmSurface::IsPlanar`, `surface.surface_p7`), `DropCurve` falling back to the
-//! general `SmSurface::DropCurve` (`intersect.surface_drop_lib_p3`) and
-//! `GlobalLineIntersect` of a line in the plane meeting the domain in one line
+//! general `SmSurface::DropCurve` (ported, `intersect.surface_drop_lib_p3`) where that
+//! reaches a unit not ported yet, and `GlobalLineIntersect` of a line in the plane meeting the domain in one line
 //! parameter (`SmSurface::GlobalLineIntersect`, `surface.surface_p8`).
 
 use serde::{Deserialize, Serialize};
@@ -483,7 +483,7 @@ fn b(x: bool) -> f64 {
 /// cannot return.
 fn status(e: &SolidError) -> f64 {
     match e {
-        SolidError::InvalidInput { .. } => 1007.0,
+        SolidError::InvalidInput { .. } | SolidError::PortInvariant { .. } => 1007.0,
         SolidError::Upstream { code, .. } => f64::from(*code),
         _ => -1.0,
     }
@@ -576,6 +576,7 @@ fn put_state(o: &mut Vec<f64>, a: &Plane) {
         f64::from(base.knot_type() as i32),
         f64::from(base.form() as i32),
     ]);
+    o.push(b(base.gw_nurb().is_some()));
     match a.base_with_nurb() {
         Ok(w) => put_surface_nurb(o, w.gw_nurb()),
         Err(_) => o.push(0.0),
@@ -910,7 +911,7 @@ fn rust_op(k: &Kernel, op: &OpIn, a: &mut Plane, o: &mut Vec<f64>) -> Result<(),
             let d = dom_of(a, *dom);
             let c = rust_curve(curve)?;
             let i = ivl.map_or_else(|| c.natural_interval(), |[x, y]| Extent1d::from_min_max(x, y));
-            let r = a.drop_curve(k, &d, &c, &i, *tol, *keep_all, *creating);
+            let r = a.drop_curve(k, &d, &c, &i, *tol, *keep_all, *creating, None);
             if let Some(res) = st(o, r)? {
                 o.extend([
                     res.max_drop_to_surf,
@@ -941,28 +942,28 @@ fn rust_op(k: &Kernel, op: &OpIn, a: &mut Plane, o: &mut Vec<f64>) -> Result<(),
             let c = rust_curve(curve)?;
             let l = Line::create_line_segment(3, v3(line[0]), v3(line[1]), None)
                 .map_err(|e| harness(format!("segment: {e}")))?;
-            if let Some(g) = st(o, is_grazing_intersection(&c, *t, &l, *s))? {
+            if let Some(g) = st(o, is_grazing_intersection(k, &c, *t, &l, *s))? {
                 o.push(b(g));
             }
         }
         OpIn::Inherited { v } => {
             let s = Surface::from(a.clone());
             o.push(0.0);
-            put_dom(o, &s.natural_uv_domain());
+            put_dom(o, &s.natural_uv_domain_with_nurb(k).map_err(|e| HarnessError::new(e.to_string()))?);
             let max = s
-                .max_analytic_domain()
+                .max_analytic_domain(k)
                 .map_err(|e| harness(format!("max analytic domain: {e}")))?;
             put_dom(o, &max);
-            o.push(b(s.is_bilinear()));
+            o.push(b(s.is_bilinear(k)));
             let par = s
-                .is_parallel_to_vector(v3(*v))
+                .is_parallel_to_vector(k, v3(*v))
                 .map_err(|e| harness(format!("parallel: {e}")))?;
             o.push(b(par));
             o.extend([
                 s.degree(SurfParamType::U) as f64,
                 s.degree(SurfParamType::V) as f64,
-                s.number_control_points(SurfParamType::U) as f64,
-                s.number_control_points(SurfParamType::V) as f64,
+                s.number_control_points(k, SurfParamType::U) as f64,
+                s.number_control_points(k, SurfParamType::V) as f64,
             ]);
         }
         OpIn::Reverse { v_dir } => {
@@ -1378,7 +1379,7 @@ fn gen_other(rng: &mut Rng, m: &MakeIn, g: &Geo) -> SurfaceIn {
     SurfaceIn::Plane { make }
 }
 
-fn gen_op(rng: &mut Rng, m: &MakeIn, g: &Geo, nurb_safe: bool) -> OpIn {
+fn gen_op(rng: &mut Rng, m: &MakeIn, g: &Geo) -> OpIn {
     let r = rng.below(27);
     match r {
         0 => OpIn::State,
@@ -1407,7 +1408,7 @@ fn gen_op(rng: &mut Rng, m: &MakeIn, g: &Geo, nurb_safe: bool) -> OpIn {
         11 => OpIn::Reparam {
             dom: DomIn::Explicit(gen_domain(rng)),
         },
-        12 if nurb_safe => OpIn::Toggle,
+        12 => OpIn::Toggle,
         13 => OpIn::Rebuild,
         14 | 15 => {
             let sop = pick(rng, &[3u8, 5, 0, 4, 1]);
@@ -1485,10 +1486,10 @@ fn gen_op(rng: &mut Rng, m: &MakeIn, g: &Geo, nurb_safe: bool) -> OpIn {
             tol: pick(rng, &[1e-6, 1e-3, 0.1]),
             whole: rng.chance(0.4),
         },
-        24 if nurb_safe => OpIn::Eq {
+        24 => OpIn::Eq {
             other: if rng.chance(0.5) { m.clone() } else { gen_make(rng) },
         },
-        10 | 12 | 24 => OpIn::MakeNurb,
+        10 => OpIn::MakeNurb,
         25 => {
             if rng.chance(0.5) {
                 OpIn::Copy
@@ -1556,27 +1557,10 @@ fn gen_case(rng: &mut Rng) -> Inputs {
     let make = gen_make(rng);
     let g = Geo::of(&make);
     let n = 1 + rng.below(5) as usize;
-    // A NURB upstream makes lazily in a const method (or a copy) stays with the plane;
-    // the port makes it on a copy. ToggleSwapUVBit (which leaves the NURB alone) and
-    // operator== (which compares NURBs) observe the difference, so they come only
-    // while both sides agree: before any such method or once the NURB is made in place.
-    let mut made = matches!(make, MakeIn::Canonical { .. });
-    let mut lazy = false;
-    let mut ops = Vec::with_capacity(n);
-    for _ in 0..n {
-        let op = gen_op(rng, &make, &g, made || !lazy);
-        match &op {
-            OpIn::MakeNurb
-            | OpIn::Reparam { .. }
-            | OpIn::Rebuild
-            | OpIn::Reverse { .. }
-            | OpIn::Swap => made = true,
-            OpIn::Coincidence { .. } | OpIn::Iso { .. } | OpIn::Copy => lazy = true,
-            OpIn::Drop { sop, .. } if *sop == 5 => lazy = true,
-            _ => {}
-        }
-        ops.push(op);
-    }
+    // A NURB upstream makes lazily in a const method (or a copy) stays with the plane,
+    // and the port keeps it too, so ToggleSwapUVBit (which leaves the NURB alone) and
+    // operator== (which compares NURBs) may come anywhere in the program.
+    let ops = (0..n).map(|_| gen_op(rng, &make, &g)).collect();
     Inputs { make, ops }
 }
 

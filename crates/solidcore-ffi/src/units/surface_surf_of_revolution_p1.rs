@@ -28,10 +28,12 @@
 //! positive weights or all non-rational, non-decreasing knots with end multiplicity
 //! `p + 1` and interior multiplicity at most `p`), non-degenerate lines, circles with a
 //! positive radius, independent axes and an angular domain inside `[-360, 360]` at most
-//! 360 long, finite rotation axes (`CreateCanonical` makes a zero one `(0, 0, 1)`),
-//! independent unit placement axes for the constructor (a longer Y axis leaves
-//! `IsOnPlane`'s output uninitialised), ordered domains, finite parameters and
-//! derivative orders up to 3.
+//! 360 long, hyperbolas with positive semi axes and a STEP domain inside `[-10, 10]`
+//! (the shims also refuse, as a C++ exception, a hyperbola whose constructor left no
+//! finite NURB: `SmHyperbola` ignores a failing `MakeNurb`), finite rotation axes
+//! (`CreateCanonical` makes a zero one `(0, 0, 1)`), independent unit placement axes
+//! for the constructor (a longer Y axis leaves `IsOnPlane`'s output uninitialised),
+//! ordered domains, finite parameters and derivative orders up to 3.
 
 use crate::validate::{bad, NOW};
 use crate::{call_with_buffer, FfiError};
@@ -105,6 +107,21 @@ pub enum Gen {
         d: [f64; 2],
         /// Radius.
         r: f64,
+    },
+    /// `SmHyperbola(c, x, y, [d0, d1], a, b, 3)`.
+    Hyperbola {
+        /// Centre.
+        c: [f64; 3],
+        /// X axis.
+        x: [f64; 3],
+        /// Y axis.
+        y: [f64; 3],
+        /// STEP domain (`|t| <= 10`).
+        d: [f64; 2],
+        /// Semi axis.
+        a: f64,
+        /// Semi imaginary axis.
+        b: f64,
     },
 }
 
@@ -252,11 +269,17 @@ fn cross(a: [f64; 3], b: [f64; 3]) -> [f64; 3] {
     [ay * bz - az * by, az * bx - ax * bz, ax * by - ay * bx]
 }
 
-/// Checks two axes are long enough and far from parallel.
+/// Checks two axes are long enough, far from parallel, and of a length whose square
+/// does not overflow: unitizing an axis of infinite length gives a zero axis, so a
+/// generator circle on it gets no NURB, which `SmSurfOfRevolution`'s constructor then
+/// evaluates (`EvaluatePoint` dereferences the NULL NURB).
 fn axes(x: [f64; 3], y: [f64; 3], what: &str) -> Result<(), FfiError> {
     finite(&x, what)?;
     finite(&y, what)?;
     let (lx, ly) = (len(x), len(y));
+    if !lx.is_finite() || !ly.is_finite() {
+        return Err(bad(format!("{what}: axis length overflows")));
+    }
     if lx < 1e-6 || ly < 1e-6 || len(cross(x, y)) < 1e-3 * lx * ly {
         return Err(bad(format!("{what}: degenerate or parallel axes")));
     }
@@ -438,6 +461,25 @@ fn push_gen(o: &mut Vec<f64>, g: &Gen) -> Result<(), FfiError> {
             o.extend_from_slice(y);
             o.extend([d0, d1, *r]);
         }
+        Gen::Hyperbola { c, x, y, d, a, b } => {
+            // (the guard of the surface.surf_of_extrusion_p1 FFI: a bounded STEP domain
+            // keeps `cosh` finite, positive semi axes)
+            finite(c, "hyperbola")?;
+            axes(*x, *y, "hyperbola")?;
+            let [d0, d1] = *d;
+            finite(&[d0, d1], "hyperbola")?;
+            if !(d0 < d1 && d0 >= -10.0 && d1 <= 10.0) {
+                return Err(bad("hyperbola: domain"));
+            }
+            if !(a.is_finite() && *a > 1e-6 && b.is_finite() && *b > 1e-6) {
+                return Err(bad("hyperbola: semi axes"));
+            }
+            o.push(3.0);
+            o.extend_from_slice(c);
+            o.extend_from_slice(x);
+            o.extend_from_slice(y);
+            o.extend([d0, d1, *a, *b]);
+        }
     }
     Ok(())
 }
@@ -470,8 +512,21 @@ pub(crate) fn push_surf(o: &mut Vec<f64>, s: &Surf) -> Result<(), FfiError> {
             unit(*x, "placement X")?;
             unit(*y, "placement Y")?;
             domain(*d, "surface domain")?;
-            let [u0, _, u1, _] = *d;
+            let [u0, v0, u1, v1] = *d;
             angular(u0, u1, "surface domain")?;
+            // A circle/ellipse generator's v parameter is an angle in degrees;
+            // huge v domains hang in C++ (HANG-23 / HANG-1: polar set-up shifts
+            // one turn per iteration). Bound them like the generator's angular
+            // domain. Hyperbola/parabola generators bound v to their STEP range.
+            match &s.gen {
+                Gen::Circle { .. } => {
+                    angular(v0, v1, "surface domain")?;
+                }
+                Gen::Hyperbola { .. } if !(v0 < v1 && v0 >= -10.0 && v1 <= 10.0) => {
+                    return Err(bad("surface domain: bad hyperbola v domain"));
+                }
+                _ => {}
+            }
             o.push(1.0);
             push_gen(o, &s.gen)?;
             o.extend([f64::from(u8::from(s.oob)), f64::from(u8::from(s.swap))]);
@@ -613,4 +668,25 @@ pub fn iso_circles(
     input.extend_from_slice(&surface.v);
     input.extend([f64::from(param), tol, ang_tol_rad]);
     call(OP_ISO_CIRCLES, &input)
+}
+
+/// The surface of revolution as its constructor leaves it (no `MakeNurb`; a
+/// [`Build::Ctor`] surface),
+/// then the shim's `sc::put_const_make` sequence: has-NURB, the `const`
+/// `GetNaturalUVDomain` (which makes the NURB and keeps it), has-NURB, the NURB,
+/// `HavePolarConversion`, `EvaluatePoint` at the domain's `(0.3, 0.6)`, `Copy` (status,
+/// the copy's has-NURB and NURB, `*copy == *this`, its `EvaluatePoint` at `(0.7, 0.2)`) and
+/// `Transform` by a fixed rotation and move (status, has-NURB, NURB, the natural domain,
+/// `EvaluatePoint`). The record starts with the construction status.
+///
+/// # Errors
+///
+/// Exactly the constructor guards of [`surface_op`], and a canonical build.
+pub fn const_make(s: &Surf) -> Result<Vec<f64>, FfiError> {
+    if !matches!(s.build, Build::Ctor { .. }) {
+        return Err(bad("const_make: constructor build required"));
+    }
+    let mut input = Vec::new();
+    push_surf(&mut input, s)?;
+    call(21, &input)
 }

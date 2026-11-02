@@ -15,6 +15,10 @@
 //! `SM_SUCCESS`, else the `SmStatus`; `1007` for a Rust `InvalidInput`, `-1` for a Rust
 //! error upstream cannot produce) and the rest as the `out` values.
 //!
+//! `{"o", "x", "y", "scale"?, "repeat"?}` transforms (`gps` `xf`) are applied on both sides
+//! (`SmAxis2Placement::SetCanonical` + `SmCurve::Transform` / `Curve::transform`) before
+//! the op; `gps` `pts` are more points, each its own solve (`status_i` / `out_i`).
+//!
 //! Deferred cases (unit `curve.curve_p5`): `GlobalPointSolve` of the directed and
 //! projected operations (`SmCurve::LocalPropertyAnalysis`) and of minimise / intersect
 //! on curved B-splines (the cache's analytic conversion reaches `SmCurve::IsArc`), and
@@ -106,6 +110,23 @@ fn one() -> f64 {
     1.0
 }
 
+/// A transform applied to the curve before the op, `repeat` times
+/// (`SmAxis2Placement::SetCanonical(o, x, y)`, then `SmCurve::Transform` with `scale`).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct XformIn {
+    o: [f64; 3],
+    x: [f64; 3],
+    y: [f64; 3],
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    scale: Option<[f64; 3]>,
+    #[serde(default = "one_u64")]
+    repeat: u64,
+}
+
+fn one_u64() -> u64 {
+    1
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 enum CurveIn {
@@ -186,6 +207,20 @@ fn push_vecs(v: &mut Vec<f64>, vecs: &[[f64; 3]]) {
     }
 }
 
+/// The transforms block `nt (O X Y has_s S)*nt` (see the ffi module docs).
+fn push_xf(v: &mut Vec<f64>, xf: &[XformIn]) {
+    v.push(xf.iter().map(|t| t.repeat).sum::<u64>() as f64);
+    for t in xf {
+        for _ in 0..t.repeat {
+            v.extend_from_slice(&t.o);
+            v.extend_from_slice(&t.x);
+            v.extend_from_slice(&t.y);
+            v.push(b(t.scale.is_some()));
+            v.extend_from_slice(&t.scale.unwrap_or([1.0; 3]));
+        }
+    }
+}
+
 fn push_opt(v: &mut Vec<f64>, x: Option<f64>) {
     v.extend([b(x.is_some()), x.unwrap_or(0.0)]);
 }
@@ -252,6 +287,18 @@ fn build(c: &CurveIn) -> Result<Curve, HarnessError> {
     }
 }
 
+/// `c` transformed by `xf` in order (`Curve::transform`).
+fn apply_xf(k: &Kernel, c: &mut Curve, xf: &[XformIn]) -> Result<(), HarnessError> {
+    for t in xf {
+        let a2p = Axis2Placement::new(v3(t.o), v3(t.x), v3(t.y));
+        for _ in 0..t.repeat {
+            c.transform(k, &a2p, t.scale.map(v3))
+                .map_err(|e| harness(format!("transform: {e}")))?;
+        }
+    }
+    Ok(())
+}
+
 fn pv(o: &mut Vec<f64>, v: Vec3) {
     o.extend([v.x, v.y, v.z]);
 }
@@ -260,7 +307,7 @@ fn pv(o: &mut Vec<f64>, v: Vec3) {
 /// cannot return.
 fn status(e: &SolidError) -> f64 {
     match e {
-        SolidError::InvalidInput { .. } => 1007.0,
+        SolidError::InvalidInput { .. } | SolidError::PortInvariant { .. } => 1007.0,
         SolidError::Upstream { code, .. } => f64::from(*code),
         _ => -1.0,
     }
@@ -365,9 +412,15 @@ fn objs() -> [u64; 2] {
 enum OpIn {
     Gps {
         curve: CurveIn,
+        /// Transforms applied to `curve` first.
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        xf: Vec<XformIn>,
         ivl: [f64; 2],
         sop: i32,
         p: [f64; 3],
+        /// More points, each solved like `p` (as its own solve; outputs `*_i`).
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        pts: Vec<[f64; 3]>,
         tol: f64,
         target: Option<f64>,
         vecs: Vec<[f64; 3]>,
@@ -449,6 +502,7 @@ fn cpp_input(op: &OpIn) -> Result<(Op, Vec<f64>), HarnessError> {
     match op {
         OpIn::Gps {
             curve,
+            xf,
             ivl,
             sop,
             p,
@@ -456,8 +510,10 @@ fn cpp_input(op: &OpIn) -> Result<(Op, Vec<f64>), HarnessError> {
             target,
             vecs,
             req,
+            ..
         } => {
             curve_block(&mut v, curve)?;
+            push_xf(&mut v, xf);
             v.extend([ivl[0], ivl[1], f64::from(*sop)]);
             v.extend_from_slice(p);
             v.push(*tol);
@@ -537,7 +593,56 @@ fn cpp_input(op: &OpIn) -> Result<(Op, Vec<f64>), HarnessError> {
     Ok((op_of(op), v))
 }
 
+/// A `Gps` with extra points `pts`: one solve per point (`p` first) by `f`, point `i > 0`
+/// reported as `status_i` / `out_i`; deferred when any solve is. `None` for other cases.
+fn per_point(
+    op: &OpIn,
+    f: impl Fn(&OpIn) -> Result<Output, HarnessError>,
+) -> Result<Option<Output>, HarnessError> {
+    let OpIn::Gps { p, pts, .. } = op else {
+        return Ok(None);
+    };
+    if pts.is_empty() {
+        return Ok(None);
+    }
+    let mut all = Output::new();
+    for (i, q) in std::iter::once(p).chain(pts).enumerate() {
+        let mut one = op.clone();
+        if let OpIn::Gps { p, pts, .. } = &mut one {
+            *p = *q;
+            pts.clear();
+        }
+        let o = f(&one)?;
+        if o.deferred.is_some() {
+            return Ok(Some(o));
+        }
+        let sfx = if i == 0 { String::new() } else { format!("_{i}") };
+        for (key, v) in o.ints {
+            all.ints.insert(format!("{key}{sfx}"), v);
+        }
+        for (key, v) in o.values {
+            all.values.insert(format!("{key}{sfx}"), v);
+        }
+    }
+    Ok(Some(all))
+}
+
+/// The FFI's own validation of `op` (what [`cpp`] runs, point by point as there),
+/// applied to the Rust side too: its guards refuse inputs upstream (and the
+/// faithful port) never finish on (fuzz Rust-side hangs).
+fn validate(op: &OpIn) -> Result<Output, HarnessError> {
+    if let Some(o) = per_point(op, validate)? {
+        return Ok(o);
+    }
+    let (code, input) = cpp_input(op)?;
+    ffi::validate(code, &input).map_err(|e| harness(e.to_string()))?;
+    Ok(Output::new())
+}
+
 fn cpp(op: &OpIn) -> Result<Output, HarnessError> {
+    if let Some(o) = per_point(op, cpp)? {
+        return Ok(o);
+    }
     let (code, input) = cpp_input(op)?;
     match ffi::eval(code, &input) {
         Ok(flat) => Ok(to_output(&flat)),
@@ -636,11 +741,15 @@ fn solution_of(s: &SolIn) -> Solution<Obj> {
 }
 
 fn rust(op: &OpIn) -> Result<Output, HarnessError> {
+    if let Some(o) = per_point(op, rust)? {
+        return Ok(o);
+    }
     let k = Kernel::default();
     let mut o: Vec<f64> = Vec::new();
     match op {
         OpIn::Gps {
             curve,
+            xf,
             ivl,
             sop,
             p,
@@ -648,14 +757,24 @@ fn rust(op: &OpIn) -> Result<Output, HarnessError> {
             target,
             vecs,
             req,
+            ..
         } => {
-            let c = build(curve)?;
+            let mut c = build(curve)?;
+            apply_xf(&k, &mut c, xf)?;
             let vs: Vec<Vec3> = vecs.iter().map(|x| v3(*x)).collect();
+            // SmTol::GetZoneTol3d of the (unowned) curve: the system zone tolerance
+            let system_zone_tol = |_: Obj| {
+                Ok(solidcore::geom::tol::zone_tol_3d(
+                    &k,
+                    solidcore::geom::tol::SmallTopoType::NormalSize,
+                ))
+            };
             let opts = GlobalPointSolveOptions {
                 target_distance: *target,
                 opt_vectors: if vs.is_empty() { None } else { Some(&vs) },
                 handle: Some(Obj(0, Some(c.natural_interval()))),
                 analytic_handle: Some(Obj(2, None)),
+                zone_tol_3d: Some(solidcore::geom::global_solver::ObjectZoneTol(&system_zone_tol)),
             };
             let req = SolutionRequested::from_code(*req).ok_or_else(|| harness("req"))?;
             let sols = tri!(
@@ -699,7 +818,7 @@ fn rust(op: &OpIn) -> Result<Output, HarnessError> {
             let c = build(curve)?;
             let t = tri!(
                 o,
-                c.tessellate_by_bisection(&ivl_of(*ivl), *chord, *angle, *max3d)
+                c.tessellate_by_bisection(&k, &ivl_of(*ivl), *chord, *angle, *max3d)
             );
             put_tess(&mut o, &t);
         }
@@ -711,14 +830,14 @@ fn rust(op: &OpIn) -> Result<Output, HarnessError> {
             minseg,
         } => {
             let c = build(curve)?;
-            let t = tri!(o, c.tessellate(&ivl_of(*ivl), *chord, *angle, *minseg));
+            let t = tri!(o, c.tessellate(&k, &ivl_of(*ivl), *chord, *angle, *minseg));
             put_tess(&mut o, &t);
         }
         OpIn::Classify { c1, c2, sol } => {
             let a = build(c1)?;
             let bb = build(c2)?;
             let s = solution_of(sol);
-            let (degen, pt) = tri!(o, a.classify_intersecting_range_solution(&bb, &s));
+            let (degen, pt) = tri!(o, a.classify_intersecting_range_solution(&k, &bb, &s));
             o.extend([0.0, b(degen), b(pt.is_some())]);
             if let Some(pt) = pt {
                 o.extend([pt.solution_value, pt.parameters[0], pt.parameters[1]]);
@@ -738,7 +857,7 @@ fn rust(op: &OpIn) -> Result<Output, HarnessError> {
             let c = build(curve)?;
             let r = tri!(
                 o,
-                test_span_accuracy(
+                test_span_accuracy(&k, 
                     &c,
                     *lt,
                     [v3(*lp), v3(*ld)],
@@ -757,7 +876,7 @@ fn rust(op: &OpIn) -> Result<Output, HarnessError> {
             for s in sols {
                 arr.add(&solution_of(s));
             }
-            let r = refine_cc_solutions(&mut arr, |ob| match ob {
+            let r = refine_cc_solutions(&k, &mut arr, |ob| match ob {
                 Some(Obj(0, _)) => Some(&a),
                 Some(Obj(1, _)) => Some(&bb),
                 _ => None,
@@ -1019,12 +1138,12 @@ fn gen_curve_or_degenerate(rng: &mut Rng) -> CurveIn {
 }
 
 /// A point near the curve (or anywhere).
-fn gen_point_near(rng: &mut Rng, c: &CurveIn) -> [f64; 3] {
+fn gen_point_near(k: &Kernel, rng: &mut Rng, c: &CurveIn) -> [f64; 3] {
     let Ok(curve) = build(c) else {
         return rp(rng, 10.0);
     };
     let t = gen_t(rng, c);
-    let base = curve.evaluate_point(t).map_or([0.0; 3], |p| [p.x, p.y, p.z]);
+    let base = curve.evaluate_point(k, t).map_or([0.0; 3], |p| [p.x, p.y, p.z]);
     match rng.below(5) {
         0 => base,
         1 => rp(rng, 20.0),
@@ -1096,7 +1215,7 @@ fn gen_any(rng: &mut Rng) -> CurveIn {
     }
 }
 
-fn gen_gps(rng: &mut Rng) -> OpIn {
+fn gen_gps(k: &Kernel, rng: &mut Rng) -> OpIn {
     let curve = gen_any(rng);
     let &(sop, need) = rng.choose(&GPS_OPS).unwrap_or(&(3, 0));
     // weight the operations the port runs without deferral
@@ -1112,13 +1231,13 @@ fn gen_gps(rng: &mut Rng) -> OpIn {
         build(&curve)
             .ok()
             .and_then(|c| {
-                let p0 = c.evaluate_point(a).ok()?;
-                let p1 = c.evaluate_point(0.5 * (a + bb)).ok()?;
+                let p0 = c.evaluate_point(k, a).ok()?;
+                let p1 = c.evaluate_point(k, 0.5 * (a + bb)).ok()?;
                 Some([(p0.x + p1.x) / 2.0, (p0.y + p1.y) / 2.0, (p0.z + p1.z) / 2.0])
             })
             .unwrap_or([0.0; 3])
     } else {
-        gen_point_near(rng, &curve)
+        gen_point_near(k, rng, &curve)
     };
     let ivl = if rng.chance(0.6) {
         let (a, bb) = range_of(&curve);
@@ -1140,9 +1259,11 @@ fn gen_gps(rng: &mut Rng) -> OpIn {
         .collect();
     OpIn::Gps {
         curve,
+        xf: Vec::new(),
         ivl,
         sop,
         p,
+        pts: Vec::new(),
         tol: *rng.choose(&[1e-5, 1e-6, 1e-3, 0.05]).unwrap_or(&1e-5),
         target,
         vecs,
@@ -1258,7 +1379,7 @@ fn gen_classify(rng: &mut Rng) -> OpIn {
     OpIn::Classify { c1, c2, sol }
 }
 
-fn gen_span(rng: &mut Rng) -> OpIn {
+fn gen_span(k: &Kernel, rng: &mut Rng) -> OpIn {
     let curve = gen_any(rng);
     let (a, bb) = range_of(&curve);
     let mut lt = a + (bb - a) * rng.unit();
@@ -1272,7 +1393,7 @@ fn gen_span(rng: &mut Rng) -> OpIn {
     let ev = |t: f64| -> ([f64; 3], [f64; 3]) {
         build(&curve)
             .ok()
-            .and_then(|c| c.evaluate(t, 1, true, true).ok())
+            .and_then(|c| c.evaluate(k, t, 1, true, true).ok())
             .map_or(([0.0; 3], [1.0, 0.0, 0.0]), |v| {
                 let p = v.first().copied().unwrap_or(Vec3::ZERO);
                 let d = v.get(1).copied().unwrap_or(Vec3::ZERO);
@@ -1302,14 +1423,14 @@ fn gen_refine(rng: &mut Rng) -> OpIn {
     OpIn::Refine { c1, c2, sols }
 }
 
-fn gen_case(rng: &mut Rng) -> OpIn {
+fn gen_case(k: &Kernel, rng: &mut Rng) -> OpIn {
     match rng.below(100) {
-        0..=39 => gen_gps(rng),
+        0..=39 => gen_gps(k, rng),
         40..=54 => gen_approx(rng),
         55..=69 => gen_bisect(rng),
         70..=79 => gen_tess(rng),
         80..=86 => gen_classify(rng),
-        87..=95 => gen_span(rng),
+        87..=95 => gen_span(k, rng),
         _ => gen_refine(rng),
     }
 }
@@ -1320,8 +1441,9 @@ impl UnitDiff for Runner {
     }
 
     fn generate(&self, rng: &mut Rng) -> Option<Value> {
+        let k = &Kernel::default();
         for _ in 0..64 {
-            let op = gen_case(rng);
+            let op = gen_case(k, rng);
             let Ok((code, input)) = cpp_input(&op) else {
                 continue;
             };
@@ -1346,7 +1468,9 @@ impl UnitDiff for Runner {
     }
 
     fn run_rust(&self, case: &Case) -> Result<Output, HarnessError> {
-        rust(&case.parse()?)
+        let op = case.parse()?;
+        validate(&op)?;
+        rust(&op)
     }
 }
 
@@ -1355,13 +1479,35 @@ mod tests {
     use super::*;
     use std::collections::BTreeMap;
 
+    #[test]
+    fn approximation_of_a_break_at_1e300_fails_softly() {
+        // fuzz01255 (`tests/fuzz_corpus/curve.curve_p1.json`): the FFI refuses the
+        // `1e300` break, so the runner never hands it to the port; run directly, the
+        // port's `approximate_curve` used to abort on a 6 GiB allocation and now stops
+        // at `MAX_APPROX_SPANS` with an error status.
+        let corpus: Value = serde_json::from_str(include_str!(
+            "../../tests/fuzz_corpus/curve.curve_p1.json"
+        ))
+        .unwrap();
+        let case = corpus["cases"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|c| c["name"] == "fuzz01255_approx_break_1e300")
+            .unwrap();
+        let op: OpIn = serde_json::from_value(case["inputs"].clone()).unwrap();
+        let out = rust(&op).unwrap();
+        assert_ne!(out.ints["status"], vec![0], "{out:?}");
+    }
+
     /// Generated cases cover every op, with passing (not deferred) cases.
     #[test]
     fn generated_cases_are_diverse() {
+        let k = &Kernel::default();
         let mut rng = Rng::new(7);
         let mut stats: BTreeMap<String, [usize; 4]> = BTreeMap::new();
         for _ in 0..600 {
-            let op = gen_case(&mut rng);
+            let op = gen_case(k, &mut rng);
             let name = serde_json::to_value(&op).unwrap()["op"].as_str().unwrap().to_string();
             let out = rust(&op);
             let e = stats.entry(name).or_default();

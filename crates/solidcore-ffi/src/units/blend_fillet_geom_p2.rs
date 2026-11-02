@@ -21,7 +21,7 @@
 //! | `RailIntEdgeuse` | `SmFilletVertex::CalcRailIntEdgeuse`      | block, solvers, `v g` (`-1`: `NULL`) | as above |
 //! | `CrossSection`   | `SmFilletVertex::CalcVertOnCrossSection`  | block, solvers, `v has_param param` | as above |
 //! | `SetBack`        | `SmFilletVertex::CalcSetBackVert`         | block, solvers, `v` | as above |
-//! | `RailRail`       | `SmFilletEdge::CalcRailRailInterpolation` (no corner) | block, solvers, `e face [tol]` (`-1`: no original face, else a surface as above and the face tolerance (`SetTolerance(SmZoneTol3d(tol), FALSE, FALSE)`), made a target face and the edge's original face) | `cs`, then (when `0`) status, the edge's fillet status, its curve, the primary and mate edge uses' UV curves |
+//! | `RailRail`       | `SmFilletEdge::CalcRailRailInterpolation` | block, solvers, `e face [tol] nc [edges..]` (`face` `-1`: no original face, else a surface as above and the face tolerance (`SetTolerance(SmZoneTol3d(tol), FALSE, FALSE)`), made a target face and the edge's original face; `nc` `-1`: `pCorner` `NULL`, else a corner of type `SM_FCR_UNKNOWN` whose fillet edges are those `nc` model edges) | `cs`, then (when `0`) status, the edge's fillet status, its curve, the primary and mate edge uses' UV curves |
 //! | `SplitFace`      | `SmFilletEdge::UpdateSplitFace`           | block, solvers, `e set f1 f2` (target faces, `-1`: `NULL`; `set` becomes the original face first) | status, original face index, `n` split face indices |
 //!
 //! The block is [`super::blend_fillet_geom_p1`]'s pseudo-B-rep block, the solvers
@@ -37,16 +37,23 @@
 //! vertex calculators (the block's corners are opaque tags; each routine asks the
 //! corner for its filleted vertex right after its null check), a `RailRail` edge whose
 //! chosen rail curve (the mate edge use's UV curve or the rail's 3D curve, picked as
-//! upstream picks it) is `NULL` (dropped onto unchecked), a `SplitFace` whose edge's
-//! original face is the split face (`ShouldSwapFaces`, unit `blend.fillet_geom_p6`,
-//! then dereferences the edge's curve, curve classification or corner and both faces
-//! unchecked; the Rust side defers there anyway), and, as in
+//! upstream picks it) is `NULL` (dropped onto unchecked; not checked when the corner's
+//! edge list returns first), a `RailRail` corner of at most four edges whose test edge
+//! (two places after the queried one) is a cross-section edge with a `NULL` primary edge use
+//! or with a geometry (its solver and surface generator are dereferenced unchecked; the
+//! harness's solvers have no generator), a `SplitFace` whose edge's
+//! original face is the split face (`ShouldSwapFaces` then dereferences the edge's
+//! curve, curve classification or corner and both faces unchecked; the block's
+//! corners carry no data, and part 6's own difftest compares `ShouldSwapFaces`), and,
+//! as in
 //! `blend.fillet_geom_p1`, surfaces whose constructed v knot vector would make the
 //! surface cache write out of bounds (UB-166).
 
 use crate::{call_with_buffer, FfiError};
 
-use super::blend_fillet_geom_p1::{surface, validate_block, Reader, MAX_LIST, MAX_SOLVER_MAGNITUDE};
+use super::blend_fillet_geom_p1::{
+    surface, validate_block, Reader, MAX_LIST, MAX_MAGNITUDE, MAX_SOLVER_MAGNITUDE,
+};
 
 /// The upstream routine run by the shim.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -148,8 +155,19 @@ pub fn validate(op: Op, input: &[f64]) -> Result<(), FfiError> {
         Op::RailRail => {
             rd.opt_index(b.ne())?.ok_or_else(|| bad("edge -1"))?;
             if let Some(kind) = rd.opt_index(3)? {
+                // the original face's boundary reaches HANG-29 (UV trim curves dropped
+                // through GlobalCurveIntersect), bounded as for `blend.fillet_geom_p1`'s
+                // ClassifyFacePoint
+                rd.bound = MAX_MAGNITUDE;
                 any_surface(&mut rd, kind)?;
+                rd.bound = MAX_SOLVER_MAGNITUDE;
                 rd.finite()?;
+            }
+            if let Some(n) = rd.opt_index(MAX_LIST)? {
+                for _ in 0..n {
+                    rd.opt_index(b.ne())?
+                        .ok_or_else(|| bad("corner edge -1"))?;
+                }
             }
         }
         Op::SplitFace => {

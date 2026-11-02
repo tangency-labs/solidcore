@@ -25,11 +25,23 @@
 //! | `Min`         | `a b` | `min` |
 //! | `Loops`       | `ns curve*ns nl counts*nl nk key*nk orient*nk mode has_srf [surface] nops op*` | per op `code` and its results, then the final state |
 //! | `TrimNull`    | `surface k curve*k` | `status` |
+//! | `TrimConstructed` | exactly `kind` (`0` Plane square, `1` creased strip) | continuity/trim statuses, returned-face availability and indices, then the complete `topology.brep_p10` snapshot (tagged ints/doubles, validate-only, face-use links, gap flags and vertex-use UVs) |
 //! | `BPresent` .. | B-rep block, then the op's selectors | `0` (or `-1 status`) then the op's results |
+//!
+//! `TrimConstructed` returns `continuity_status g1 trim_status returned_available`,
+//! then, only on trim success, `face_count owning_face_indices*`. The snapshot follows:
+//! `item_count (tag value)* validate_only link_count links* gap_count flags* uv_count uv*`.
+//! Tag `0` is an exact integer and tag `1` a double. The snapshot retains all existing
+//! p10 topology, geometry, owner, lazy-gap, sibling-link and vertex-use UV fields.
+//!
+//! `BCheckLoop` appends `l tol want_list mirror_eu mirror_side has_gap_edit`
+//! `[gap_eu gap_u] has_model_tolerances [edge_zone_tol vertex_zone_tol]`.
+//! Gap displacement is finite; model tolerances are finite and nonnegative.
+//! These set model inputs on both sides; comparison tolerances are unchanged.
 //!
 //! [`eval`] accepts only what upstream handles without undefined behaviour: well-formed
 //! clamped B-splines, lines with a non-zero vector, ellipses with non-zero radii and
-//! independent axes, planes with a non-zero normal, finite values, indices inside the
+//! independent axes whose squared lengths do not overflow (UB-46, WR-159), planes with a non-zero normal, finite values, indices inside the
 //! B-rep's export and the curve store, and curve loops whose counts add up to their
 //! curves (every script op keeps that).
 
@@ -50,7 +62,12 @@ pub const MAX_CURVES: usize = 64;
 /// Largest number of script ops.
 pub const MAX_OPS: usize = 64;
 /// Largest loop index argument of a script op.
-pub const MAX_LOOP_INDEX: usize = 1 << 40;
+/// (`usize::MAX` where `usize` is narrower than 41 bits, e.g. wasm32, which never calls C++.)
+pub const MAX_LOOP_INDEX: usize = if usize::BITS > 40 {
+    1 << 40
+} else {
+    usize::MAX
+};
 
 /// Shim operations.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -67,6 +84,7 @@ pub enum Op {
     Min = 9,
     Loops = 10,
     TrimNull = 11,
+    TrimConstructed = 12,
     BPresent = 20,
     BExtremes = 21,
     BCheckLoop = 22,
@@ -304,6 +322,12 @@ fn curve(rd: &mut Reader<'_>) -> Result<(), FfiError> {
             ];
             let nx: f64 = x.iter().map(|c| c * c).sum();
             let ny: f64 = y.iter().map(|c| c * c).sum();
+            // an axis whose squared length overflows unitizes to a zero vector (WR-159):
+            // SmEllipse then builds no NURB, which SmBSplineCurve::EvaluatePoint
+            // dereferences (UB-46; SIGSEGV)
+            if !nx.is_finite() || !ny.is_finite() {
+                return Err(bad("ellipse: axis length overflows"));
+            }
             let nc: f64 = cross.iter().map(|c| c * c).sum();
             if nc < 1e-6 * nx * ny || d0 >= d1 || d1 - d0 > 720.0 || rx <= 1e-9 || ry <= 1e-9 {
                 return Err(bad("ellipse: bad axes, domain or radii"));
@@ -421,6 +445,9 @@ fn loops(rd: &mut Reader<'_>) -> Result<(), FfiError> {
 
 fn geometry_args(op: Op, rd: &mut Reader<'_>) -> Result<(), FfiError> {
     match op {
+        Op::TrimConstructed => {
+            rd.index(1)?;
+        }
         Op::Order => {
             let k = rd.index(MAX_CURVES)?;
             for _ in 0..k {
@@ -511,6 +538,20 @@ fn brep_args(op: Op, rd: &mut Reader<'_>, c: [usize; 10]) -> Result<(), FfiError
             rd.finite()?;
             rd.flag()?;
             mirror(rd)?;
+            if rd.flag()? {
+                rd.index(1_000_000_000)?;
+                rd.finite()?;
+            }
+            if rd.flag()? {
+                for _ in 0..2 {
+                    if rd.finite()? < 0.0 {
+                        return Err(bad("negative model tolerance"));
+                    }
+                }
+            }
+            if rd.flag()? {
+                rd.index(1_000_000_000)?;
+            }
         }
         Op::BCheckFace => {
             rd.below(n_f)?;
@@ -624,4 +665,35 @@ pub fn eval(op: Op, path: &str, input: &[f64]) -> Result<Vec<f64>, FfiError> {
     brep_args(op, &mut rd, c)?;
     rd.done()?;
     raw(op, path, input)
+}
+
+#[cfg(test)]
+mod constructed_tests {
+    use super::*;
+
+    fn validate(input: &[f64]) -> Result<(), FfiError> {
+        let mut rd = Reader { input, at: 0 };
+        geometry_args(Op::TrimConstructed, &mut rd)?;
+        rd.done()
+    }
+
+    #[test]
+    fn constructed_trim_accepts_exactly_one_known_kind() {
+        assert!(validate(&[0.0]).is_ok());
+        assert!(validate(&[1.0]).is_ok());
+        for input in [
+            vec![],
+            vec![-1.0],
+            vec![0.5],
+            vec![2.0],
+            vec![f64::NAN],
+            vec![f64::INFINITY],
+            vec![0.0, 1.0],
+        ] {
+            assert!(validate(&input).is_err(), "{input:?}");
+        }
+        assert!(!Op::TrimConstructed.is_brep());
+        assert_eq!(Op::TrimNull.code(), 11);
+        assert_eq!(Op::BPresent.code(), 20);
+    }
 }

@@ -25,10 +25,12 @@
 //! 3D B-spline generators (`1 <= p <= n`, degrees at most [`MAX_DEGREE`], finite data,
 //! positive weights or all non-rational, non-decreasing knots with end multiplicity
 //! `p + 1` and interior multiplicity at most `p`), non-degenerate lines, circles and
-//! ellipses with positive radii, independent axes and an angular domain inside `[-360,
+//! ellipses with positive radii and (ellipses, HANG-23: a far centre with a tiny radius
+//! spins the polar set-up) centres within ±1e8, independent axes and an angular domain inside `[-360,
 //! 360]` at most 360 long, hyperbolas (STEP domain inside `[-10, 10]`) and parabolas
-//! (inside `[-1000, 1000]`) with positive semi axes / focal distance, independent axes and
-//! an ordered domain, finite vectors and points, constructor domains with `u0 <
+//! (inside `[-1000, 1000]`) with positive semi axes / focal distance at most
+//! [`MAX_CONIC`] and a centre inside `[-MAX_CONIC, MAX_CONIC]`, independent axes (whose
+//! squared lengths do not overflow) and an ordered domain, finite vectors and points, constructor domains with `u0 <
 //! u1` and `v0 < v1` (`MakeNurb` builds the V knots `{v0, v0, v1, v1}`), edit domains
 //! ordered with positive extents, independent placement axes, finite parameters and
 //! tolerances, derivative orders up to [`MAX_ORDER`] (above 5 upstream fails before
@@ -79,6 +81,13 @@ pub enum Gen {
     BSpline(BSplineData),
     /// `SmLine(a, b, 3)` with its NURB made.
     Line {
+        /// Start point.
+        a: [f64; 3],
+        /// End point.
+        b: [f64; 3],
+    },
+    /// `SmLine(a, b, 3)` with its NURB left lazy.
+    LazyLine {
         /// Start point.
         a: [f64; 3],
         /// End point.
@@ -330,11 +339,17 @@ fn cross(a: [f64; 3], b: [f64; 3]) -> [f64; 3] {
     [ay * bz - az * by, az * bx - ax * bz, ax * by - ay * bx]
 }
 
-/// Checks two axes are long enough and far from parallel.
+/// Checks two axes are long enough, far from parallel, and of a length whose square
+/// does not overflow: unitizing an axis of infinite length gives a zero axis, so a conic
+/// generator on it gets no NURB, which `SmSurfOfExtrusion`'s constructor then evaluates
+/// (`EvaluatePoint` dereferences the NULL NURB).
 pub(crate) fn axes(x: [f64; 3], y: [f64; 3], what: &str) -> Result<(), FfiError> {
     finite(&x, what)?;
     finite(&y, what)?;
     let (lx, ly) = (len(x), len(y));
+    if !lx.is_finite() || !ly.is_finite() {
+        return Err(bad(format!("{what}: axis length overflows")));
+    }
     if lx < 1e-6 || ly < 1e-6 || len(cross(x, y)) < 1e-3 * lx * ly {
         return Err(bad(format!("{what}: degenerate or parallel axes")));
     }
@@ -437,6 +452,21 @@ fn check_bspline(c: &BSplineData) -> Result<(), FfiError> {
     check_knots(&c.knots, c.p, "curve")
 }
 
+/// Largest centre coordinate and size of a hyperbola or parabola generator.
+pub const MAX_CONIC: f64 = 1e12;
+
+/// `SmHyperbola::MakeNurb` / `SmParabola::MakeNurb` place the middle control point at
+/// the intersection of the end tangents (`smgu_LineLineClosestPoint`); with a centre or
+/// size near the top of the double range the points collapse or the products overflow,
+/// that fails, and the extrusion constructor then evaluates the generator's NULL NURB.
+/// Bounds the centre and sizes by [`MAX_CONIC`].
+fn conic_size(c: &[f64; 3], sizes: &[f64], what: &str) -> Result<(), FfiError> {
+    if c.iter().chain(sizes).any(|v| v.abs() > MAX_CONIC) {
+        return Err(bad(format!("{what}: centre or size above MAX_CONIC")));
+    }
+    Ok(())
+}
+
 fn flag(b: bool) -> f64 {
     f64::from(u8::from(b))
 }
@@ -453,7 +483,7 @@ fn push_gen(o: &mut Vec<f64>, g: &Gen) -> Result<(), FfiError> {
             }
             o.extend_from_slice(&c.knots);
         }
-        Gen::Line { a, b } => {
+        Gen::Line { a, b } | Gen::LazyLine { a, b } => {
             finite(a, "line")?;
             finite(b, "line")?;
             let [ax, ay, az] = *a;
@@ -461,7 +491,11 @@ fn push_gen(o: &mut Vec<f64>, g: &Gen) -> Result<(), FfiError> {
             if len([bx - ax, by - ay, bz - az]) <= 0.0 {
                 return Err(bad("line: degenerate"));
             }
-            o.push(1.0);
+            o.push(if matches!(g, Gen::LazyLine { .. }) {
+                6.0
+            } else {
+                1.0
+            });
             o.extend_from_slice(a);
             o.extend_from_slice(b);
         }
@@ -487,6 +521,19 @@ fn push_gen(o: &mut Vec<f64>, g: &Gen) -> Result<(), FfiError> {
             if !(rx.is_finite() && *rx > 0.0 && ry.is_finite() && *ry > 0.0) {
                 return Err(bad("ellipse: radii"));
             }
+            // HANG-23 (fuzz01428): an ellipse extrusion whose minor radius is so
+            // small that `rx / ry` overflows (ry below 1/f64::MAX, the radius whose
+            // reciprocal exceeds DBL_MAX) hangs the C++ adjust: the STEP evaluation
+            // collapses onto the centre and the point-inversion solve (SM_CP_POINT
+            // _INVERSION inside the polar converter's ConvertToNURBSParameter) never
+            // converges. Probing the C++: every such centre but exactly [0, 0, 0]
+            // spins (1-3 ms bite marks at the subnormal edge), while at the origin
+            // the folded conic takes the degenerate branch and returns (review6 keeps
+            // ry = 5e-324 there); normal-scale minor radii pass at any centre, and
+            // circles with denormal radii never hang.
+            if (rx / ry).is_infinite() && c.iter().any(|v| *v != 0.0) {
+                return Err(bad("ellipse: minor radius below double resolution"));
+            }
             o.push(3.0);
             o.extend_from_slice(c);
             o.extend_from_slice(x);
@@ -504,6 +551,7 @@ fn push_gen(o: &mut Vec<f64>, g: &Gen) -> Result<(), FfiError> {
             if !(a.is_finite() && *a > 1e-6 && b.is_finite() && *b > 1e-6) {
                 return Err(bad("hyperbola: semi axes"));
             }
+            conic_size(c, &[*a, *b], "hyperbola")?;
             o.push(4.0);
             o.extend_from_slice(c);
             o.extend_from_slice(x);
@@ -521,6 +569,7 @@ fn push_gen(o: &mut Vec<f64>, g: &Gen) -> Result<(), FfiError> {
             if !(f.is_finite() && *f > 1e-6) {
                 return Err(bad("parabola: focal distance"));
             }
+            conic_size(c, &[*f], "parabola")?;
             o.push(5.0);
             o.extend_from_slice(c);
             o.extend_from_slice(x);
@@ -700,8 +749,117 @@ pub fn surface_op(s: &Surf, op: &Op) -> Result<Vec<f64>, FfiError> {
             "eval: order 5 of a B-spline generator overruns NL_MAXDER",
         ));
     }
+    // `AdjustSTEPUVDomain` of an ellipse/circle extrusion to an angular u end
+    // outside [-360, 360] hangs in C++ (HANG-23): the polar set-up shifts one
+    // turn per iteration. Bound the STEP u domain like the generator's angular
+    // domain.
+    if let Op::Adjust { dom } = op {
+        if matches!(s.gen, Gen::Circle { .. } | Gen::Ellipse { .. }) {
+            angular(dom[0], dom[2], "adjust domain")?;
+        }
+    }
     let mut input = Vec::new();
     push_surf(&mut input, s)?;
     push_op(&mut input, op)?;
     call(op.code(), &input)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Builds `AdjustSTEPUVDomain` on an ellipse extrusion with centre [0, c, 0].
+    fn adjust(c: f64, ry: f64) -> Result<Vec<f64>, FfiError> {
+        surface_op(
+            &Surf {
+                gen: Gen::Ellipse {
+                    c: [0.0, c, 0.0],
+                    x: [1.0, 0.0, 0.0],
+                    y: [0.0, 1.0, 0.0],
+                    d: [0.0, 180.0],
+                    rx: 1.0,
+                    ry,
+                },
+                build: Build::Infinite { vec: [-1.0, 0.0, 0.0] },
+                oob: false,
+                swap: true,
+            },
+            &Op::Adjust { dom: [0.1, 0.1, 0.5, 0.5] },
+        )
+    }
+
+    /// HANG-23: `rx / ry` overflowing (fuzz01428: centre 2^32, ry 5e-324; probes
+    /// pinned the onset at a razor near `1 / f64::MAX * rx`: the same centre hangs
+    /// just below the razor and passes just above it) spins C++ on any centre
+    /// but exactly [0, 0, 0].
+    #[test]
+    fn overflow_aspect_is_rejected_on_adjust() {
+        for (c, ry) in [
+            (4294967296.0, 5e-324),
+            (0.25, 5e-324),
+            (1.0, 5e-324),
+            (1e300, 5e-324),
+            (1.0, 5e-309),
+            (1.0, 1e-309),
+            (1e300, 1e-309),
+        ] {
+            match adjust(c, ry) {
+                Err(FfiError::InvalidArgument(m)) => {
+                    assert!(
+                        m.contains("minor radius below double resolution"),
+                        "{m}",
+                    );
+                }
+                Err(other) => panic!("expected argument rejection for ({c}, {ry}), got {other}"),
+                Ok(_) => panic!("C++ hangs for ({c}, {ry}): the guard must reject it"),
+            }
+        }
+    }
+
+    /// Neighbours of the hanging class that C++ handles must stay covered: a
+    /// denormal minor radius at the origin, a finite rx/ry ratio at any centre
+    /// magnitude, denormal major radii, and denormal circles.
+    #[test]
+    fn finite_aspect_still_runs_on_adjust() {
+        // the razor: 5.5e-309 hangs, 5.6e-309 passes (repeatable in C++).
+        adjust(0.0, 5e-324).expect("origin: the degenerate branch returns");
+        for (c, ry) in [
+            (1.0, 5.6e-309),
+            (1e300, 5.9e-309),
+            (1.0, 1e-16),
+            (1e300, 0.7),
+            (1.0, 1.0),
+        ] {
+            adjust(c, ry).expect("finite rx/ry stays covered");
+        }
+    }
+
+    /// HANG-23: far adjusted STEP u ends hang C++ (fuzz00222 / fuzz01418).
+    #[test]
+    fn adjust_u_end_beyond_the_anglar_domain_is_rejected() {
+        for u in [9223372036854775807.0, 1e300, 361.0] {
+            match surface_op(
+                &Surf {
+                    gen: Gen::Ellipse {
+                        c: [1.0, 2.0, -0.5],
+                        x: [1.0, 0.0, 0.0],
+                        y: [0.0, 1.0, 0.0],
+                        d: [45.0, 135.0],
+                        rx: 3.0,
+                        ry: 0.7,
+                    },
+                    build: Build::Canonical { vec: [0.0, 0.0, 1.0] },
+                    oob: false,
+                    swap: false,
+                },
+                &Op::Adjust { dom: [90.0, 0.0, u, 1.0] },
+            ) {
+                Err(FfiError::InvalidArgument(m)) => assert!(
+                    m.contains("adjust domain: bad angular domain"),
+                    "{m}"
+                ),
+                other => panic!("expected rejection for u={u}, got {:?}", other.map(|_| ())),
+            }
+        }
+    }
 }

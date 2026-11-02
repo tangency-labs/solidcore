@@ -14,26 +14,34 @@
 //! - `tcv`: a script of nested `SmTemporaryChangeValue` guards on one variable of
 //!   type double (`ty` 0), `SmBoolean` (1) or `ULONG` (2); output is the variable
 //!   after every step and after each remaining guard is destroyed.
-//! - `shape`: `SmShape` from a B-rep (none, `SmApiCreateBox`, or a `.smb` file) and a
-//!   selection of the whole B-rep / faces / edges / vertices. Non-empty shapes need
-//!   unported topology units and are deferred on the Rust side.
+//! - `shape`: `SmShape` from a B-rep (none, the `SmApiCreateBox` solid, or an ASCII
+//!   `.smb` file, both built by the shared topology fixture; the Rust side builds the box
+//!   with the Rust kernel and reads the file with the Rust reader, renumbered into the
+//!   fixture walk's order, `query_face_p1::own_model`, its face, edge and vertex lists
+//!   the build's own) and a selection of the whole B-rep / faces / edges / vertices, by
+//!   index into the fixture walk's lists (the Rust B-rep's arena order). No C++ state
+//!   reaches the Rust side.
 
 use std::sync::{Arc, Mutex};
 
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
+use serde_json::{json, Value};
 
 use solidcore::geom::attribute::ObjectKey;
 use solidcore::geom::context::{Context, NotifyCallback};
 use solidcore::geom::object::{
-    self as obj, NotifyOperation, ObjectRef, Shape, ShapeMember, TemporaryChangeValue,
+    self as obj, BrepStore, NoBreps, NotifyOperation, ObjectRef, Shape, ShapeMember, TemporaryChangeValue,
 };
 use solidcore::geom::tree::Tree;
+use solidcore::kernel::Kernel;
+use solidcore::topology::Brep;
 use solidcore::{BrepId, EdgeId, FaceId, SolidError, VertexId};
 use solidcore_ffi::units::geom_object::{
     self as ffi, tcv_op, NotifyStep, ShapeSelection, ShapeSource, MAX_NOTIFY_OP, NUM_OBJECTS,
 };
 
+use super::query_face_p1::own_model;
+use super::topology_edgeuse_p1::fixture_input;
 use crate::case::CaseContext;
 use crate::json::num;
 use crate::runner::default_cases;
@@ -130,6 +138,20 @@ fn rust_err(e: &SolidError) -> Output {
     Output::unported(e).unwrap_or_else(|| Output::err(format!("rust_error: {e}")))
 }
 
+/// The shared topology fixture of a shape's B-rep (`None` without one).
+fn fixture_brep(source: &SourceIn) -> Result<Option<Value>, HarnessError> {
+    Ok(match source {
+        SourceIn::None => None,
+        SourceIn::Box([x, y, z, l, w, h]) => Some(json!({
+            "kind": "box",
+            "origin": [x, y, z],
+            "size": [l, w, h],
+        })),
+        SourceIn::File(path, true) => Some(json!({"kind": "file", "file": path, "rebuild": false})),
+        SourceIn::File(_, false) => return Err(harness("the shared fixture reads ASCII files only")),
+    })
+}
+
 // ---- C++ side ----------------------------------------------------------------------
 
 fn cpp(i: &Inputs) -> Result<Output, HarnessError> {
@@ -160,10 +182,12 @@ fn cpp(i: &Inputs) -> Result<Output, HarnessError> {
             edges,
             vertices,
         } => {
-            let src = match source {
-                SourceIn::None => ShapeSource::None,
-                SourceIn::Box(b) => ShapeSource::Box(*b),
-                SourceIn::File(p, a) => ShapeSource::File(p.clone(), *a),
+            let src = match fixture_brep(source)? {
+                None => ShapeSource::None,
+                Some(brep) => {
+                    let (path, block) = fixture_input(brep)?;
+                    ShapeSource::Fixture { path, block }
+                }
             };
             let sel = ShapeSelection {
                 whole_brep: *whole_brep,
@@ -184,7 +208,7 @@ fn type_string_codes(out: &mut Vec<i64>, s: &str) {
 }
 
 fn rust_types(ts: &[i64]) -> Result<Vec<i64>, SolidError> {
-    let shape = Shape::new(&[], &[], &[], &[])?;
+    let shape = Shape::new(&mut Kernel::default(), &NoBreps, &[], &[], &[], &[])?;
     let mut o = Vec::new();
     for &t in ts {
         o.push(i64::from(obj::is_kind_of(t)));
@@ -433,12 +457,21 @@ fn put_tree<O: Copy + PartialEq>(o: &mut Vec<f64>, t: &Tree<O>) -> Result<(), So
 }
 
 fn rust_shape(
+    brep: Option<&Brep>,
     whole_brep: bool,
     faces: &[i64],
     edges: &[i64],
     vertices: &[i64],
 ) -> Result<Vec<f64>, SolidError> {
     let b = BrepId::from_index(0);
+    let pair;
+    let store: &dyn BrepStore = match brep {
+        Some(brep) => {
+            pair = (b, brep);
+            &pair
+        }
+        None => &NoBreps,
+    };
     let breps: Vec<BrepId> = if whole_brep { vec![b] } else { Vec::new() };
     let f: Vec<_> = faces
         .iter()
@@ -452,21 +485,26 @@ fn rust_shape(
         .iter()
         .map(|&i| (b, VertexId::from_index(i as u32)))
         .collect();
-    let shape = Shape::new(&breps, &f, &e, &v)?;
+    let shape = Shape::new(&mut Kernel::default(), store, &breps, &f, &e, &v)?;
     let mut o = vec![
         shape.faces().len() as f64,
         shape.edges().len() as f64,
         shape.vertices().len() as f64,
     ];
-    // B-rep list indices of the members (all B-reps are empty here)
+    // walk indices of the members (the Rust B-rep's arena ids)
     o.extend(shape.faces().iter().map(|k| f64::from(k.1.index())));
     o.extend(shape.edges().iter().map(|k| f64::from(k.1.index())));
     o.extend(shape.vertices().iter().map(|k| f64::from(k.1.index())));
     put_tree(&mut o, shape.vertex_tree())?;
     put_tree(&mut o, shape.curve_tree())?;
     put_tree(&mut o, shape.surface_tree())?;
-    // IsInShape of every B-rep entity: there is no B-rep without topology support
-    let _ = shape.is_in_shape(ShapeMember::Other);
+    // IsInShape of every face, edge and vertex of the B-rep
+    let flag = |member| if shape.is_in_shape(member) { 1.0 } else { 0.0 };
+    if let Some(brep) = brep {
+        o.extend(brep.faces().ids().map(|f| flag(ShapeMember::Face((b, f)))));
+        o.extend(brep.edges().ids().map(|e| flag(ShapeMember::Edge((b, e)))));
+        o.extend(brep.vertices().ids().map(|v| flag(ShapeMember::Vertex((b, v)))));
+    }
     Ok(o)
 }
 
@@ -489,10 +527,16 @@ fn rust(i: &Inputs) -> Result<Output, HarnessError> {
             vertices,
         } => {
             let empty = !*whole_brep && faces.is_empty() && edges.is_empty() && vertices.is_empty();
-            if matches!(source, SourceIn::None) && !empty {
-                return Err(harness("selection without B-rep"));
-            }
-            Ok(match rust_shape(*whole_brep, faces, edges, vertices) {
+            let model = match fixture_brep(source)? {
+                None if !empty => return Err(harness("selection without B-rep")),
+                None => None,
+                Some(brep) => match own_model(&brep)? {
+                    Ok(m) => Some(m),
+                    Err(o) => return Ok(o),
+                },
+            };
+            let brep = model.as_ref().map(|m| &m.brep);
+            Ok(match rust_shape(brep, *whole_brep, faces, edges, vertices) {
                 Ok(v) => Output::new().values("v", v),
                 Err(e) => rust_err(&e),
             })

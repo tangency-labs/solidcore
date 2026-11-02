@@ -19,8 +19,11 @@
 //!   with [`arc_cpts_function`] and passes it in. The `NL_INDEX` result is `i64`
 //!   (`(NL_INDEX)ceil(dd)`; a value outside `i64` saturates).
 //! - Out-params become return values (the fitted curves). The `NL_STACKS` arguments
-//!   and the memory error paths have no counterpart. Errors are
-//!   [`SolidError::Nlib`] values with the upstream `NL_*_ERR` number.
+//!   have no counterpart; a work array that cannot be reserved returns `NL_MEM_ERR`
+//!   as upstream's failed `N_Malloc` does. Errors are [`SolidError::Nlib`] values
+//!   with the upstream `NL_*_ERR` number. An `nc` so large that `nc + p + 1` or
+//!   `4 nc` overflows `NL_INDEX` (undefined behaviour upstream) returns
+//!   [`SolidError::InvalidInput`].
 //! - `N_ApproxCircArcWithCrvData`, degree 2: with fewer than four control points it
 //!   intersects the end tangent lines and, when they are parallel, returns success
 //!   with the middle control point uninitialised; the port fails with
@@ -33,7 +36,13 @@
 //! - `N_ApproxNurbsWithNonRatCrv` takes the parametrisation flag `par`
 //!   (`NL_UNIFORM`, `NL_CHORDLENGTH`, `NL_CENTRIPETAL`, `NL_INHERITED`) as a
 //!   [`ParamSource`]. Every array access is bounds checked; where upstream would
-//!   index outside its arrays the port returns [`SolidError::InvalidInput`].
+//!   index outside its arrays the port returns [`SolidError::InvalidInput`]. More
+//!   than [`MAX_APPROX_SAMPLES`] sampling points (from the second derivatives of the
+//!   Bezier segments) are [`SolidError::InvalidInput`] too: upstream interpolates
+//!   them all and its knot removal then takes time quadratic in their number (a
+//!   weight of `-1` asked for ten million and ran for minutes, fuzz `nlib.crv_approx`
+//!   fuzz05147; upstream fixtures and the committed difftest cases need at most
+//!   11,104).
 
 use crate::error::{NlibCode, Result, SolidError};
 use crate::math::{max2, Vec3};
@@ -46,7 +55,7 @@ use crate::nurbs::crv_fit::p1::{
 use crate::nurbs::crv_fit::p2::{approx_lst_sq, weighted_lst_sq_knots, WeightedData};
 use crate::nurbs::crv_fit::p3::{interp_end_derivs, ParamSource};
 use crate::nurbs::crv_geom::ToleranceKind;
-use crate::nurbs::fit_arrays::{alloc, at, idx, invalid, out_of_range, put, sg};
+use crate::nurbs::fit_arrays::{add, alloc, at, idx, invalid, mul, out_of_range, put, sg};
 use crate::nurbs::funcs_basic::SurfaceFunction;
 use crate::nurbs::geom::{
     isect_line_line, normalize, project_pt_line, Interval, LinePlaneIsect, LineSeg, PI,
@@ -59,6 +68,11 @@ const OP_NUM: &str = "nurbs::crv_approx::calc_num_cpts_to_approx_arc";
 const OP_TABLE: &str = "nurbs::crv_approx::arc_cpts_function";
 const OP_ARC: &str = "nurbs::crv_approx::approx_circ_arc_with_crv_data";
 const OP_NONRAT: &str = "nurbs::crv_approx::approx_nurbs_with_non_rat_crv";
+
+/// Most sampling points [`approx_nurbs_with_non_rat_crv`] interpolates (not upstream;
+/// see the module deviations): `2^17`, 11 times the most any upstream fixture or
+/// committed difftest case needs (11,104).
+pub const MAX_APPROX_SAMPLES: i64 = 1 << 17;
 
 // ---- number of control points for a circle --------------------------------------------
 
@@ -237,8 +251,8 @@ fn lst_sq_data(
     p: i64,
 ) -> Result<LstSqData> {
     let op = OP_ARC;
-    let nk = nc + p + 1;
-    let np = 4 * nc;
+    let nk = add(add(nc, p, op)?, 1, op)?;
+    let np = mul(4, nc, op)?;
 
     let mut uk = alloc(nk, 0.0, op)?;
     for ii in 0..=p {
@@ -460,7 +474,7 @@ pub fn approx_circ_arc_with_crv_data(arc: &CircArcData, deg: usize, nc: usize) -
 /// decomposition, the second derivative bound, evaluation, parametrisation, knot
 /// vectors, interpolation, arc length, normalisation, knot removal and
 /// reparametrisation; `InvalidInput` where upstream would index outside its
-/// arrays.
+/// arrays and for more than [`MAX_APPROX_SAMPLES`] sampling points.
 pub fn approx_nurbs_with_non_rat_crv(
     cur: &Curve,
     tol: f64,
@@ -505,6 +519,11 @@ pub fn approx_nurbs_with_non_rat_crv(
         mu = mu
             .checked_add(n)
             .ok_or_else(|| invalid(op, "sample count overflow"))?;
+    }
+
+    // (not upstream) bound the interpolation and knot removal: see MAX_APPROX_SAMPLES
+    if mu > MAX_APPROX_SAMPLES {
+        return Err(invalid(op, "more than MAX_APPROX_SAMPLES sampling points"));
     }
 
     // Compute parameters.
@@ -714,5 +733,14 @@ mod tests {
             }
         }
         assert!(approx_nurbs_with_non_rat_crv(&c, 0.0, 3, ParamSource::Inherited, false).is_err());
+    }
+
+    /// Fuzz regression: a control point count whose `nc + p + 1` / `4 nc` overflows
+    /// is an error, not a panic.
+    #[test]
+    fn absurd_cpt_count_is_an_error() {
+        let arc = circle_arc(10.0, 100.0);
+        assert!(approx_circ_arc_with_crv_data(&arc, 3, i64::MAX as usize).is_err());
+        assert!(approx_circ_arc_with_crv_data(&arc, 4, 1 << 62).is_err());
     }
 }

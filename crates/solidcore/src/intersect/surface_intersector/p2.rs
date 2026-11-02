@@ -10,7 +10,7 @@
 //! | [`SurfaceIntersector::do_boundary_plane_test`], [`BoundaryPlaneTestResult`] | `DoBoundaryPlaneTest`, `SmBoundaryPlaneTestResult` |
 //! | [`SurfaceIntersector::compute_point_values`]                   | `ComputePointValues`                                  |
 //! | [`SurfaceIntersector::flush_curve`], [`TsectCurves`]           | `FlushCurve` and its output arrays                    |
-//! | [`SurfaceIntersector::compute_law_point_values`], [`LawPointOptions`] | `ComputeLawPointValues`                        |
+//! | [`SurfaceIntersector::compute_law_point_values`], [`compute_law_point_values_with`], [`LawPointOptions`] | `ComputeLawPointValues`                        |
 //! | [`SurfaceIntersector::classify_boundary_start_point_intersection`] | `ClassifyBoundaryStartPointIntersection`          |
 //! | [`is_point_unique`]                                            | `sm_IsPointUnique` (static)                           |
 //!
@@ -22,11 +22,14 @@
 //!   `SmSurfaceCache.h`, no functions) is defined here.
 //! - **Points.** `ComputePointValues` and `ClassifyBoundaryStartPointIntersection`
 //!   take the point (and the optional previous point) by reference, as upstream,
-//!   instead of an arena [`TsectId`]. The previous point is only read
+//!   instead of an arena [`TsectId`](super::p1::TsectId). The previous point is only read
 //!   (`StepBackFromSingularity` steps off the current point).
 //! - **Virtuals.** `ComputePointValues`, `FlushCurve`, `ComputeSingularityPoint` and
 //!   `ComputePointValuesDelta` are virtual upstream; the `SmSurfaceIntersector` bodies
-//!   are ported (the derived intersectors are other units). The recursive call of
+//!   are ported (the derived intersectors are other units), except that
+//!   `ComputePointValues` calls the `SmAdvSurfaceIntersector` override of
+//!   `ComputeSingularityPoint` on an intersector made by
+//!   `AdvSurfaceIntersector::new` (its `advanced` flag). The recursive call of
 //!   `ComputePointValues` passes no previous point, so it recurses at most once.
 //! - **Loop bound.** The gap-function walk of
 //!   `ClassifyBoundaryStartPointIntersection` grows its step by 5 per sample and
@@ -36,22 +39,32 @@
 //!   `ContainsPoint2d` treats a NaN point as inside, so upstream never ends. It stops
 //!   with `SM_ERR` after [`MAX_GAP_SAMPLES`] samples (upstream classifies a side in a
 //!   handful).
-//! - **Fillet laws.** `SmFilletLaw` is not ported: the law is an opaque argument
-//!   passed to [`SurfaceIntersector::evaluate_law_point`]. The curve parameter
-//!   `EvaluateLawPoint` never sets (an uninitialised `double` upstream) is stored as
-//!   `SM_UNDEF_DOUBLE`.
+//! - **Fillet laws.** The law is passed separately from [`LawPointOptions`] as
+//!   `&mut FilletLaw` (its evaluation caches a B-spline law's extension, through a
+//!   `const` cast upstream). `ComputeLawPointValues` is the driver
+//!   [`compute_law_point_values_with`]: its `EvaluateLawPoint` and
+//!   `ComputePointValuesDelta` calls are virtual (`IntersectorVirtuals`, part 4). The
+//!   curve parameter the basic `EvaluateLawPoint` never sets (an uninitialised
+//!   `double` upstream) is stored as `SM_UNDEF_DOUBLE`. A failing
+//!   `ComputePointValuesDelta` retries, except `Unported`, which propagates.
 //! - **Unported callees.** `SmSurface::IsSingularity` of a surface that is not a
 //!   plane and `SmSurface::LocalPointSolve` (`surface.surface_p5`) return
 //!   [`SolidError::Unported`], which always propagates (also where upstream ignores
 //!   the status).
+//! - **Short last span (opt-in, solidcore-native).** With `fixes.fillet_blend_corner`
+//!   (WR-697 addendum, end-rib flush merge), `FlushCurve` merges a last span shorter
+//!   than a tenth of the one before only when the merged span passes the trace's span
+//!   test (`SurfaceIntersector::span_keeps_accuracy`); the fork (18e96f1) merges it
+//!   untested, as pinned SMLib does.
 //! - **Not ported here.** The `SM_DEBUG_CODE` blocks (graphics, dumps) and the
 //!   `SM_ASSERT`s (no-ops in release builds).
 
 use core::cmp::Ordering;
 
+use crate::blend::fillet_standard_solver::p1::FilletLaw;
 use crate::curve::curve::p8::CurveIntersectOptions;
 use crate::curve::curve::Curve;
-use crate::error::{Result, SolidError};
+use crate::error::{passed_on, Result, SolidError};
 use crate::geom::extent1d::Extent1d;
 use crate::geom::extent2d::Extent2d;
 use crate::geom::extent3d::Extent3d;
@@ -68,11 +81,12 @@ use crate::nurbs::b_spline_curve_n_lib::TrimMode;
 use crate::nurbs::b_spline_surface::SurfParamType;
 use crate::nurbs::b_spline_surface_n_lib::p2::EvaluateFlags;
 use crate::nurbs::knots::Side;
-use crate::surface::surface::p2::{drop_vectors, TsectCurveType};
+use crate::surface::surface::p2::{drop_vectors, TsectCurveType, B_SPLINE_SURFACE_TYPE};
 use crate::surface::surface::{Surface, SurfaceKind};
 use crate::surface::surface_cache::PatchBoundaryBoundingPlanes;
 
 use super::p1::{flush_crv, IntersectionPointType, SrfIndex, SurfaceIntersector, TsectPnt};
+use super::p4::IntersectorVirtuals;
 
 const OP_CPV: &str = "intersect::surface_intersector::p2::SurfaceIntersector::compute_point_values";
 const OP_SING: &str =
@@ -101,7 +115,7 @@ fn deg2rad(deg: f64) -> f64 {
 fn ignored<T>(r: Result<T>) -> Result<Option<T>> {
     match r {
         Ok(v) => Ok(Some(v)),
-        Err(e) if e.is_unported() => Err(e),
+        Err(e) if e.is_unported_or_cancelled() => Err(e),
         Err(_) => Ok(None),
     }
 }
@@ -134,11 +148,22 @@ pub struct TsectCurves {
     pub deviations: Vec<f64>,
 }
 
-/// The fillet-law inputs of [`SurfaceIntersector::compute_law_point_values`].
+/// The guess UV points `crUV0`, `crUV1` of [`compute_law_point_values_with`].
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum LawGuess {
+    /// Points of their own (`SplitSpan`, a caller's values).
+    Given([Point2; 2]),
+    /// `rTsectPnt.UVPos(0)`, `rTsectPnt.UVPos(1)` of the point being computed, as
+    /// `DoLawIntersection` passes them: references upstream, so a try whose
+    /// `ComputePointValuesDelta` fails after writing the point's UV points (the
+    /// fillet intersector's does) changes the guesses of the next try.
+    PointUvs,
+}
+
+/// The fillet-law inputs of [`SurfaceIntersector::compute_law_point_values`] (the
+/// law itself, `crLawCurve`, is passed separately as `&mut FilletLaw`).
 #[derive(Debug, Clone, Copy)]
-pub struct LawPointOptions<'a, L: ?Sized> {
-    /// `crLawCurve`: the fillet radius law (opaque; `SmFilletLaw` is not ported).
-    pub law: &'a L,
+pub struct LawPointOptions<'a> {
     /// `bLawOrient`: the parameters run from the interval end to its start.
     pub law_orient: bool,
     /// `crPointCurve`: the fillet edge curve (arc length parameterised).
@@ -248,11 +273,11 @@ impl SurfaceIntersector<'_> {
         let surf2 = self.surface(SrfIndex::Second);
 
         // Control polygons are not available for general surfaces: bail out if not
-        // a BSplineSurface (SM_CAST_PTR(SmBSplineSurface, ..): B-splines and planes;
-        // curve-bounded and STEP surfaces derive from SmSurface only)
-        let is_bss =
-            |s: &Surface| matches!(s.kind(), SurfaceKind::BSpline(_) | SurfaceKind::Plane(_));
-        if !is_bss(surf1) || !is_bss(surf2) {
+        // a BSplineSurface (SM_CAST_PTR(SmBSplineSurface, ..): every kind derived from
+        // it, planes, cones, spheres, tori and surfaces of revolution and extrusion;
+        // curve-bounded, STEP, offset and volume surfaces derive from SmSurface only)
+        let is_bss = |s: &Surface| s.is_kind_of(B_SPLINE_SURFACE_TYPE);
+        if !is_bss(surf1)? || !is_bss(surf2)? {
             return Ok(BoundaryPlaneTestResult::Unknown);
         }
 
@@ -324,8 +349,8 @@ impl SurfaceIntersector<'_> {
                 // Intersect Curves
                 let ivl1 = bsc1.natural_interval();
                 let ivl2 = bsc2.natural_interval();
-                let crv1 = Curve::from(bsc1.clone());
-                let crv2 = Curve::from(bsc2);
+                let crv1 = bsc1.clone();
+                let crv2 = bsc2;
                 let opts = CurveIntersectOptions {
                     skip_global_coincidence_check: false,
                     handles: [
@@ -347,7 +372,7 @@ impl SurfaceIntersector<'_> {
                     let start0 = sol.start.parameters.first().copied().unwrap_or(0.0);
                     if sol.solution_type == SolutionType::SingleValue {
                         // single point intersection - output a degenerate curve
-                        let solution_point = bsc1.evaluate_point(start0)?;
+                        let solution_point = bsc1.evaluate_point(k, start0)?;
                         let degenerate = BSplineCurve::create_degenerate_curve(3, solution_point)?;
                         out.curves_3d.push(Curve::from(degenerate));
                         out.curve_types.push(TsectCurveType::Touching);
@@ -368,8 +393,15 @@ impl SurfaceIntersector<'_> {
                         if trim_ivl1.length() > EFF_ZERO {
                             // copy and trim the Surf1->NaturalBoundaryCurve (status
                             // ignored; may snap the interval to knots)
-                            let mut bsc = bsc1.clone();
-                            ignored(bsc.trim(k, &mut trim_ivl1, TrimMode::Notify))?;
+                            // (`new SmBSplineCurve(*pBSC1)`: a plain B-spline copy)
+                            let mut bsc =
+                                crate::surface::surface_cache::p1::copy_as_bspline(&bsc1)?;
+                            // (passed on with `ssi_proto_topology_statuses_pass_on`,
+                            // fork bcc6f01)
+                            ignored(passed_on(
+                                bsc.trim(k, &mut trim_ivl1, TrimMode::Notify),
+                                k.fixes.ssi_proto_topology_statuses_pass_on,
+                            )?)?;
 
                             // get SurfacePoints for each interval endPoint
                             let (s0, e0) = if are_same(min1.x, max1p.x) {
@@ -398,20 +430,14 @@ impl SurfaceIntersector<'_> {
                             // get endPoint SurfaceValues (statuses ignored)
                             let mut start_pnt = TsectPnt::new();
                             let mut end_pnt = TsectPnt::new();
-                            ignored(self.compute_point_values(
-                                k,
-                                [s0, s1],
-                                &mut start_pnt,
-                                None,
-                                None,
-                            ))?;
-                            ignored(self.compute_point_values(
-                                k,
-                                [e0, e1],
-                                &mut end_pnt,
-                                None,
-                                None,
-                            ))?;
+                            ignored(passed_on(
+                                self.compute_point_values(k, [s0, s1], &mut start_pnt, None, None),
+                                k.fixes.ssi_proto_topology_statuses_pass_on,
+                            )?)?;
+                            ignored(passed_on(
+                                self.compute_point_values(k, [e0, e1], &mut end_pnt, None, None),
+                                k.fixes.ssi_proto_topology_statuses_pass_on,
+                            )?)?;
 
                             // classify IntersectionCurve from its endPoint classifications
                             let ty = if start_pnt.point_type == IntersectionPointType::Coincidence
@@ -427,7 +453,7 @@ impl SurfaceIntersector<'_> {
                             };
 
                             // output the curve
-                            out.curves_3d.push(Curve::from(bsc));
+                            out.curves_3d.push(bsc);
                             out.curve_types.push(ty);
                             out.deviations
                                 .push(max2(sol.start.solution_value, sol.end.solution_value));
@@ -484,13 +510,13 @@ impl SurfaceIntersector<'_> {
             *point.uv_pos_mut(s) = uv;
 
             // load Surface eval matrix into the point
-            let m = match self.surface(s).evaluate(uv, 2, 2, LEFT_UPPER) {
+            let m = match self.surface(s).evaluate(k, uv, 2, 2, LEFT_UPPER) {
                 Ok(m) => m,
-                Err(e) if e.is_unported() => return Err(e),
+                Err(e) if e.is_unported_or_cancelled() => return Err(e),
                 Err(e) => {
                     // upstream evaluates into the point's matrix before the zero
                     // tangent replacement fails: those exact derivatives stay
-                    if let Ok(raw) = self.surface(s).evaluate(uv, 2, 2, LEFT_UPPER_EXACT) {
+                    if let Ok(raw) = self.surface(s).evaluate(k, uv, 2, 2, LEFT_UPPER_EXACT) {
                         copy_upper_half(point.srf_eval_matrix_mut(s), &raw, 2);
                     }
                     return Err(e);
@@ -502,7 +528,7 @@ impl SurfaceIntersector<'_> {
             let mut norm = point.srf_du(s).cross(point.srf_dv(s));
             if norm.length_squared() < EFF_ZERO_SQ {
                 // try to evaluate a normal for pole and singularity points
-                norm = surface_evaluate_normal(self.surface(s), uv)?;
+                norm = surface_evaluate_normal(k, self.surface(s), uv)?;
 
                 // error case - surface point has no normal
                 if norm.length_squared() < EFF_ZERO_SQ {
@@ -601,7 +627,22 @@ impl SurfaceIntersector<'_> {
                 } else {
                     // probably on an intersection singularity: its type and curve
                     // direction (tangent and coincident points are not traced)
-                    compute_singularity_point_base(uv_values, point, previous)?;
+                    // (virtual: the SmAdvSurfaceIntersector override on an advanced
+                    // intersector; any failure is SM_ERR)
+                    if self.advanced {
+                        match self.adv_compute_singularity_point(
+                            uv_values,
+                            point,
+                            previous.map(TsectPnt::crv_deriv),
+                            k.fixes.dupin_bottom_hyperbola_axis,
+                        ) {
+                            Ok(()) => {}
+                            Err(e) if e.is_unported_or_cancelled() => return Err(e),
+                            Err(_) => return Err(SolidError::sm_err(OP_SING)),
+                        }
+                    } else {
+                        compute_singularity_point_base(uv_values, point, previous)?;
+                    }
                     if point.point_type == IntersectionPointType::TangentPoint
                         || point.point_type == IntersectionPointType::Coincidence
                     {
@@ -676,6 +717,7 @@ impl SurfaceIntersector<'_> {
 
                     // seek a point where the surfaces are parallel
                     found = surface_local_surface_solve_normalize(
+                        k,
                         self.surface(SrfIndex::First),
                         &uv_domain1,
                         self.surface(SrfIndex::Second),
@@ -721,14 +763,15 @@ impl SurfaceIntersector<'_> {
     /// point or unique ([`is_point_unique`] against the start points and the 3D
     /// curves' ends). A curve whose consecutive points are all within
     /// `this_approx_tol_3d` is dropped. A last span shorter than a tenth of the one
-    /// before is merged into it. A crossing curve with more than one span whose
-    /// normals stay within 5 degrees is near tangent.
+    /// before is merged into it (with `fixes.fillet_blend_corner`, only when the merged
+    /// span passes `SurfaceIntersector::span_keeps_accuracy`). A crossing curve with
+    /// more than one span whose normals stay within 5 degrees is near tangent.
     ///
     /// # Errors
     ///
     /// Those of the degenerate curves and of [`flush_crv`]; [`SolidError::Unported`]
     /// from the curve evaluations of [`is_point_unique`].
-    pub fn flush_curve(&mut self, out: &mut TsectCurves) -> Result<()> {
+    pub fn flush_curve(&mut self, k: &Kernel, out: &mut TsectCurves) -> Result<()> {
         // take (and clear) the curve points
         let ids = core::mem::take(&mut self.curve_points);
         let pnts = ids
@@ -750,6 +793,7 @@ impl SurfaceIntersector<'_> {
                     .map(|&id| self.point(id))
                     .collect::<Result<Vec<_>>>()?;
                 is_point_unique(
+                    k,
                     first.crv_pos(),
                     &starts,
                     &out.curves_3d,
@@ -818,7 +862,13 @@ impl SurfaceIntersector<'_> {
                 let fin = at(i + 1)?;
                 let t_delta = curr.curve_parameter - prev.curve_parameter;
                 let t_delta_final = fin.curve_parameter - curr.curve_parameter;
-                if t_delta_final / t_delta < 0.1 {
+                // With `fixes.fillet_blend_corner` (WR-697 addendum, solidcore-native):
+                // only when the merged span keeps the trace's accuracy. The trace tested
+                // the two spans it made, not the one the merge makes, which can leave
+                // the 3D curve and a UV curve further apart than the tolerance
+                if t_delta_final / t_delta < 0.1
+                    && (!k.fixes.fillet_blend_corner || self.span_keeps_accuracy(k, prev, fin)?)
+                {
                     // skip next to last xsect point
                     i += 1;
                     curr = at(i)?;
@@ -897,100 +947,30 @@ impl SurfaceIntersector<'_> {
     /// `InvalidInput` for a zero plane normal; those of
     /// [`SurfaceIntersector::evaluate_law_point`]; `SM_ERR` when no try succeeds;
     /// [`SolidError::Unported`] from unported callees.
-    pub fn compute_law_point_values<L: ?Sized>(
-        &self,
+    #[allow(clippy::too_many_arguments)]
+    pub fn compute_law_point_values(
+        &mut self,
+        k: &Kernel,
         parameter: f64,
         uv0: Point2,
         uv1: Point2,
         delta_step: f64,
-        law: &LawPointOptions<'_, L>,
+        law: &LawPointOptions<'_>,
+        law_curve: &mut FilletLaw,
         skip_computing_uvs: bool,
         point: &mut TsectPnt,
     ) -> Result<()> {
-        let mut delta_step = delta_step;
-        let ivl = &law.point_curve_interval;
-
-        // for 6 iterations
-        for _ in 0..6 {
-            // the plane and delta plane to intersect (statuses ignored)
-            let delta_param = parameter + delta_step;
-            let mut pv = [Vec3::UNDEF; 2];
-            let mut pv_delta = [Vec3::UNDEF; 2];
-            if let Some(v) = ignored(law.point_curve.evaluate(parameter, 1, true, true))? {
-                for (d, s) in pv.iter_mut().zip(v) {
-                    *d = s;
-                }
-            }
-            if let Some(v) = ignored(law.point_curve.evaluate(delta_param, 1, true, true))? {
-                for (d, s) in pv_delta.iter_mut().zip(v) {
-                    *d = s;
-                }
-            }
-
-            if law.average_normals {
-                let [n0, n1] = law.normals;
-                let t = ivl.inversion(parameter).parameter.unwrap_or(UNDEF_DOUBLE);
-                pv[1] = n0 * (1.0 - t) + n1 * t;
-                let t = ivl.inversion(delta_param).parameter.unwrap_or(UNDEF_DOUBLE);
-                pv_delta[1] = n0 * (1.0 - t) + n1 * t;
-            }
-
-            // unitize the plane normals
-            pv[1] = pv[1].unitize()?;
-            pv_delta[1] = pv_delta[1].unitize()?;
-
-            // the surface/surface/plane intersections
-            let uvs = if skip_computing_uvs {
-                [
-                    point.uv_pos(SrfIndex::First),
-                    point.uv_pos(SrfIndex::Second),
-                ]
-            } else {
-                let uvs = self.evaluate_law_point(
-                    parameter,
-                    uv0,
-                    uv1,
-                    law.law,
-                    law.law_orient,
-                    ivl,
-                    law.surface_orientations,
-                    pv[0],
-                    pv[1],
-                )?;
-                // the curve parameter EvaluateLawPoint never sets
-                if let Some(u) = point.user_doubles.get_mut(0) {
-                    *u = UNDEF_DOUBLE;
-                }
-                uvs
-            };
-            let _uv_deltas = self.evaluate_law_point(
-                delta_param,
-                uv0,
-                uv1,
-                law.law,
-                law.law_orient,
-                ivl,
-                law.surface_orientations,
-                pv_delta[0],
-                pv_delta[1],
-            )?;
-            let _ = uvs;
-
-            // the delta point (its values are only used by ComputePointValuesDelta)
-            let mut delta_pnt = TsectPnt::new();
-            delta_pnt.curve_parameter = point.curve_parameter + delta_step;
-            delta_pnt.user_doubles[0] = UNDEF_DOUBLE;
-            delta_pnt.user_doubles[1] = delta_param;
-
-            // surface and curve values for both parameters
-            if self.compute_point_values_delta().is_ok() {
-                return Ok(());
-            }
-
-            // next iteration with a bigger delta step
-            delta_step *= 10.0;
-        }
-        Err(SolidError::sm_err(OP_LAW))
+        compute_law_point_values_with(
+            self,
+            k,
+            parameter,
+            LawGuess::Given([uv0, uv1]),
+            delta_step,
+            law,
+            law_curve,
+            skip_computing_uvs,
+            point,
+        )
     }
 
     /// Whether the boundary start point `point` is degenerate: not part of an
@@ -1208,8 +1188,11 @@ impl SurfaceIntersector<'_> {
             if self.domain(s).contains_point(uv0, 10.0 * EFF_ZERO)
                 && self.domain(o).contains_point(uv1, 10.0 * EFF_ZERO)
             {
-                // this surface's natural boundary point (status ignored)
-                if let Some(p) = ignored(self.surface(s).evaluate_point(uv0))? {
+                // this surface's natural boundary point (status ignored, passed on with
+                // `ssi_proto_topology_statuses_pass_on`, fork bcc6f01)
+                let pass = k.fixes.ssi_proto_topology_statuses_pass_on;
+                if let Some(p) = ignored(passed_on(self.surface(s).evaluate_point(k, uv0), pass)?)?
+                {
                     set3(&mut w.curve_point, tgt, p);
                 }
                 let cp = get3(&w.curve_point, tgt);
@@ -1227,8 +1210,11 @@ impl SurfaceIntersector<'_> {
                 )?;
                 if let Some([du, dv]) = found {
                     uv_drop = Point2::new(du, dv);
-                    // status ignored: the old values stay
-                    if let Some(m) = ignored(self.surface(o).evaluate(uv_drop, 1, 1, LEFT_UPPER))? {
+                    // status ignored: the old values stay (passed on with the flag)
+                    if let Some(m) = ignored(passed_on(
+                        self.surface(o).evaluate(k, uv_drop, 1, 1, LEFT_UPPER),
+                        pass,
+                    )?)? {
                         copy_upper_half(o_surf_pv, &m, 1);
                     }
 
@@ -1354,7 +1340,7 @@ impl SurfaceIntersector<'_> {
                 let pc_dot_bi_norm = pc.dot(bi_norm);
                 Ok(!self.domain(o).contains_point(p_uv, EFF_ZERO) || pc_dot_bi_norm < -EFF_ZERO)
             }
-            Err(e) if e.is_unported() => Err(e),
+            Err(e) if e.is_unported_or_cancelled() => Err(e),
             _ => Ok(true), // open for nonzero gaps
         }
     }
@@ -1445,6 +1431,7 @@ fn compute_singularity_point_base(
 ///
 /// [`SolidError::Unported`] from the curve evaluations.
 pub fn is_point_unique(
+    k: &Kernel,
     point: Point3,
     start_points: &[&TsectPnt],
     curves_3d: &[Curve],
@@ -1461,13 +1448,13 @@ pub fn is_point_unique(
     for curve in curves_3d {
         let ivl = curve.natural_interval();
         let mut p = Vec3::UNDEF;
-        if let Some(v) = ignored(curve.evaluate_point(ivl.min()))? {
+        if let Some(v) = ignored(curve.evaluate_point(k, ivl.min()))? {
             p = v;
         }
         if point.distance(p) < tol_3d {
             return Ok(false);
         }
-        if let Some(v) = ignored(curve.evaluate_point(ivl.max()))? {
+        if let Some(v) = ignored(curve.evaluate_point(k, ivl.max()))? {
             p = v;
         }
         if point.distance(p) < tol_3d {
@@ -1520,8 +1507,8 @@ impl SolutionObject for BoundaryCurve {
 
 /// `crSurface.EvaluateNormal(uv, TRUE, TRUE, ..)` (virtual: the plane override, the
 /// curve-bounded surface's basis surface, `SmSurface::EvaluateNormal` otherwise).
-fn surface_evaluate_normal(surface: &Surface, uv: Point2) -> Result<Vec3> {
-    surface.evaluate_normal(uv, Side::Left, Side::Left)
+fn surface_evaluate_normal(k: &Kernel, surface: &Surface, uv: Point2) -> Result<Vec3> {
+    surface.evaluate_normal(k, uv, Side::Left, Side::Left)
 }
 
 /// `crSurface.IsSingularity(uv, eSingDir)`: the plane override (none); other kinds
@@ -1529,9 +1516,16 @@ fn surface_evaluate_normal(surface: &Surface, uv: Point2) -> Result<Vec3> {
 fn is_singularity(k: &Kernel, surface: &Surface, uv: Point2) -> Result<(bool, SurfParamType)> {
     match surface.kind() {
         SurfaceKind::Plane(p) => Ok(p.is_singularity()),
-        SurfaceKind::BSpline(_)
+
+        SurfaceKind::Cone(_)
+        | SurfaceKind::Sphere(_)
+        | SurfaceKind::Torus(_)
+        | SurfaceKind::BSpline(_)
+        | SurfaceKind::ProceduralBlend(_)
+        | SurfaceKind::BallPatch(_)
         | SurfaceKind::CurveBounded(_)
         | SurfaceKind::SurfOfRevolution(_)
+        | SurfaceKind::SurfOfExtrusion(_)
         | SurfaceKind::Step(_)
         | SurfaceKind::OffsetSurface(_)
         | SurfaceKind::SrfInVolume(_) => {
@@ -1571,6 +1565,7 @@ fn surface_local_point_solve_normalize(
 /// NULL, guess, other_guess, found, sol)`: the solution's start parameters `[u0, v0,
 /// u1, v1]` when found.
 fn surface_local_surface_solve_normalize(
+    k: &Kernel,
     surface: &Surface,
     domain: &Extent2d,
     other: &Surface,
@@ -1581,6 +1576,7 @@ fn surface_local_surface_solve_normalize(
 ) -> Result<Option<[f64; 4]>> {
     Ok(surface
         .local_surface_solve(
+            k,
             domain,
             other,
             other_domain,
@@ -1590,6 +1586,145 @@ fn surface_local_surface_solve_normalize(
             other_guess,
         )?
         .map(|s| [s.uv.x, s.uv.y, s.other_uv.x, s.other_uv.y]))
+}
+
+/// [`SurfaceIntersector::compute_law_point_values`] on the intersector of `v`, its
+/// virtual calls (`EvaluateLawPoint`, `ComputePointValuesDelta`) dispatched to `v`,
+/// with the guess UV points `guess`.
+///
+/// # Errors
+///
+/// As [`SurfaceIntersector::compute_law_point_values`], with the errors of `v`'s
+/// overrides.
+#[allow(clippy::too_many_arguments)]
+pub fn compute_law_point_values_with<'s, V: IntersectorVirtuals<'s> + ?Sized>(
+    v: &mut V,
+    k: &Kernel,
+    parameter: f64,
+    guess: LawGuess,
+    delta_step: f64,
+    law: &LawPointOptions<'_>,
+    law_curve: &mut FilletLaw,
+    skip_computing_uvs: bool,
+    point: &mut TsectPnt,
+) -> Result<()> {
+    let mut delta_step = delta_step;
+    let ivl = &law.point_curve_interval;
+
+    // for 6 iterations
+    for _ in 0..6 {
+        // the guesses (read through the references on every try)
+        let [uv0, uv1] = match guess {
+            LawGuess::Given(uvs) => uvs,
+            LawGuess::PointUvs => [
+                point.uv_pos(SrfIndex::First),
+                point.uv_pos(SrfIndex::Second),
+            ],
+        };
+
+        // the plane and delta plane to intersect (statuses ignored; passed on with
+        // `ssi_proto_topology_statuses_pass_on`, fork bcc6f01)
+        let pass = k.fixes.ssi_proto_topology_statuses_pass_on;
+        let delta_param = parameter + delta_step;
+        let mut pv = [Vec3::UNDEF; 2];
+        let mut pv_delta = [Vec3::UNDEF; 2];
+        if let Some(r) = ignored(passed_on(
+            law.point_curve.evaluate(k, parameter, 1, true, true),
+            pass,
+        )?)? {
+            for (d, s) in pv.iter_mut().zip(r) {
+                *d = s;
+            }
+        }
+        if let Some(r) = ignored(passed_on(
+            law.point_curve.evaluate(k, delta_param, 1, true, true),
+            pass,
+        )?)? {
+            for (d, s) in pv_delta.iter_mut().zip(r) {
+                *d = s;
+            }
+        }
+
+        if law.average_normals {
+            let [n0, n1] = law.normals;
+            let inv = ivl.inversion(parameter);
+            // `SER( Inversion(dParameter, ..) )`: SM_ERR outside the interval or for a
+            // zero-length one
+            if pass && !inv.is_success() {
+                return Err(SolidError::sm_err(OP_LAW));
+            }
+            let t = inv.parameter.unwrap_or(UNDEF_DOUBLE);
+            pv[1] = n0 * (1.0 - t) + n1 * t;
+            let inv = ivl.inversion(delta_param);
+            // the step may end just past the interval, where the unclamped parameter
+            // is set and extrapolates as wanted: only an undefined one is passed on
+            if pass && inv.parameter.is_none() {
+                return Err(SolidError::sm_err(OP_LAW));
+            }
+            let t = inv.parameter.unwrap_or(UNDEF_DOUBLE);
+            pv_delta[1] = n0 * (1.0 - t) + n1 * t;
+        }
+
+        // unitize the plane normals
+        pv[1] = pv[1].unitize()?;
+        pv_delta[1] = pv_delta[1].unitize()?;
+
+        // the surface/surface/plane intersections
+        let uvs = if skip_computing_uvs {
+            [
+                point.uv_pos(SrfIndex::First),
+                point.uv_pos(SrfIndex::Second),
+            ]
+        } else {
+            let (curve_param, uvs) = v.evaluate_law_point(
+                k,
+                parameter,
+                uv0,
+                uv1,
+                law_curve,
+                law.law_orient,
+                ivl,
+                law.surface_orientations,
+                pv[0],
+                pv[1],
+            )?;
+            // (an override that leaves the curve parameter unset: undefined)
+            if let Some(u) = point.user_doubles.get_mut(0) {
+                *u = curve_param.unwrap_or(UNDEF_DOUBLE);
+            }
+            uvs
+        };
+        let (curve_delta_param, uv_deltas) = v.evaluate_law_point(
+            k,
+            delta_param,
+            uv0,
+            uv1,
+            law_curve,
+            law.law_orient,
+            ivl,
+            law.surface_orientations,
+            pv_delta[0],
+            pv_delta[1],
+        )?;
+
+        // build the delta point
+        let mut delta_pnt = TsectPnt::new();
+        delta_pnt.curve_parameter = point.curve_parameter + delta_step;
+        delta_pnt.user_doubles[0] = curve_delta_param.unwrap_or(UNDEF_DOUBLE);
+        delta_pnt.user_doubles[1] = delta_param;
+
+        // surface and curve values for both parameters (any failure retries;
+        // `Unported` propagates)
+        match v.compute_point_values_delta(k, uvs, uv_deltas, point, &mut delta_pnt) {
+            Ok(()) => return Ok(()),
+            Err(e @ (SolidError::Unported { .. } | SolidError::Cancelled { .. })) => return Err(e),
+            Err(_) => {}
+        }
+
+        // next iteration with a bigger delta step
+        delta_step *= 10.0;
+    }
+    Err(SolidError::sm_err(OP_LAW))
 }
 
 #[cfg(test)]
@@ -1616,9 +1751,10 @@ mod tests {
 
     #[test]
     fn crossing_point_of_two_planes() {
+        let k = &Kernel::default();
         let (a, b) = two_planes();
         let d = Extent2d::from_bounds(0.0, 0.0, 1.0, 1.0);
-        let si = SurfaceIntersector::new(&a, &d, &b, &d, false).unwrap();
+        let si = SurfaceIntersector::new(k, &a, &d, &b, &d, false).unwrap();
         let mut p = TsectPnt::new();
         si.compute_point_values(
             &Kernel::default(),
@@ -1640,10 +1776,11 @@ mod tests {
 
     #[test]
     fn parallel_planes_make_a_tangent_point() {
+        let k = &Kernel::default();
         let a = plane([0.0; 3], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0]);
         let b = plane([0.0, 0.0, 1.0], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0]);
         let d = Extent2d::from_bounds(0.0, 0.0, 1.0, 1.0);
-        let si = SurfaceIntersector::new(&a, &d, &b, &d, false).unwrap();
+        let si = SurfaceIntersector::new(k, &a, &d, &b, &d, false).unwrap();
         let mut p = TsectPnt::new();
         // no previous point: the singularity handling is SM_ERR
         assert!(si
@@ -1663,11 +1800,12 @@ mod tests {
 
     #[test]
     fn flush_single_and_traced_points() {
+        let k = &Kernel::default();
         let (a, b) = two_planes();
         let d = Extent2d::from_bounds(0.0, 0.0, 1.0, 1.0);
-        let mut si = SurfaceIntersector::new(&a, &d, &b, &d, false).unwrap();
+        let mut si = SurfaceIntersector::new(k, &a, &d, &b, &d, false).unwrap();
         let mut out = TsectCurves::default();
-        si.flush_curve(&mut out).unwrap();
+        si.flush_curve(k, &mut out).unwrap();
         assert!(out.curves_3d.is_empty());
 
         let mut ids = Vec::new();
@@ -1687,7 +1825,7 @@ mod tests {
         }
         let first = ids[0];
         si.add_point_to_curve(first).unwrap();
-        si.flush_curve(&mut out).unwrap();
+        si.flush_curve(k, &mut out).unwrap();
         assert_eq!(out.curves_3d.len(), 1);
         assert_eq!(out.curve_types, vec![TsectCurveType::Touching]);
         assert!(si.curve_points().is_empty());
@@ -1695,37 +1833,41 @@ mod tests {
         for &id in &ids {
             si.add_point_to_curve(id).unwrap();
         }
-        si.flush_curve(&mut out).unwrap();
+        si.flush_curve(k, &mut out).unwrap();
         assert_eq!(out.curves_3d.len(), 2);
         assert_eq!(out.uv_curves[0].len(), 2);
         assert_eq!(out.curve_types[1], TsectCurveType::Crossing);
 
         // the single point is no longer unique
         si.add_point_to_curve(first).unwrap();
-        si.flush_curve(&mut out).unwrap();
+        si.flush_curve(k, &mut out).unwrap();
         assert_eq!(out.curves_3d.len(), 2);
     }
 
     #[test]
     fn unique_points() {
+        let k = &Kernel::default();
         let p = TsectPnt::new();
-        assert!(is_point_unique(Vec3::new(0.0, 0.0, 0.0), &[], &[], 1e-3).unwrap());
+        assert!(is_point_unique(k, Vec3::new(0.0, 0.0, 0.0), &[], &[], 1e-3).unwrap());
         let mut q = p.clone();
         q.curve_pv[0] = Vec3::new(0.0, 0.0, 1e-4);
-        assert!(!is_point_unique(Vec3::new(0.0, 0.0, 0.0), &[&q], &[], 1e-3).unwrap());
+        assert!(!is_point_unique(k, Vec3::new(0.0, 0.0, 0.0), &[&q], &[], 1e-3).unwrap());
     }
 
     #[test]
-    fn plane_boundary_test_needs_plane_iso_curves() {
+    fn plane_boundary_test_of_perpendicular_planes_is_unknown() {
+        let k = &Kernel::default();
         let (a, b) = two_planes();
         let d = Extent2d::from_bounds(0.0, 0.0, 1.0, 1.0);
-        let si = SurfaceIntersector::new(&a, &d, &b, &d, false).unwrap();
+        let si = SurfaceIntersector::new(k, &a, &d, &b, &d, false).unwrap();
         let k = Kernel::default();
         let mut p1 = PatchBoundaryBoundingPlanes::new(d);
         let mut p2 = PatchBoundaryBoundingPlanes::new(d);
         let mut out = TsectCurves::default();
         let bbox = Extent3d::from_bounds(0.0, 0.0, 0.0, 1.0, 1.0, 1.0);
         let r = si.do_boundary_plane_test(&k, &mut p1, &mut p2, 1e-3, &bbox, &mut out);
-        assert!(matches!(r, Err(e) if e.is_unported()));
+        // (the bounding planes of a plane go through `SmPlane::CreateIsoParametricCurve`,
+        // surface.plane_p1, ported): no pair of boundary planes has opposite normals
+        assert_eq!(r.unwrap(), BoundaryPlaneTestResult::Unknown);
     }
 }

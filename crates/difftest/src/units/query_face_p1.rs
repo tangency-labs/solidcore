@@ -9,17 +9,17 @@
 //! on a B-spline surface or a real `SmPlane`, a wire edge, the wire network, isolated
 //! vertices, or faces and networks mixed) and runs `SmFace` / `SmShell` /
 //! `SmRegion::CalculateBoundingBox` (explicit `bTight` or the default argument),
-//! `SmFace::Point3DClassify` or `SmFace::EdgeCurveOnClassify` on it. The Rust side
-//! imports that unit's export (traversal order) and patches in each face's primary face
-//! use `m_pFU`, which the export lacks (the shim's `FaceFu` op). Entity selectors are
-//! taken modulo the entity count (`-2` on both sides when there is none).
+//! `SmFace::Point3DClassify` or `SmFace::EdgeCurveOnClassify` on it. The Rust side builds
+//! the same B-rep with the Rust kernel ([`own_model`]: [`crate::own_builder`] for the
+//! shim-built sources, the Rust `.smb` reader for files) in the shim's traversal order,
+//! so no C++ state reaches it; the C++ side resolves its arguments on an import of its
+//! export with each face's primary face use patched in ([`model`], shared with the
+//! `query.brep` runner). Entity selectors are taken modulo the entity count (`-2` on
+//! both sides when there is none).
 //!
-//! The classified 3D point is computed from the imported B-rep, identically for both
-//! sides: the face surface at a fraction of the face's UV domain plus an offset. A case
-//! touching a face surface or edge curve the import holds only as its B-spline part
-//! (cones, spheres, tori, extrusions, revolutions, circles, ...) is deferred: to the
-//! surface unit whose Rust kind is missing, otherwise as the shared export's harness
-//! limitation (`harness:analytic-geometry-export`, as in `topology.brep_p1`).
+//! The classified 3D point is computed by each side from its own B-rep: the face
+//! surface at a fraction of the face's UV domain plus an offset. The Rust geometry is
+//! native (every surface and curve kind), so no case is deferred on a lossy import.
 //!
 //! **Outputs.** Boxes: status and the box (seeded with a sentinel box, so what a failing
 //! call leaves is compared). `Point3DClassify`: status and the classification (class,
@@ -32,7 +32,6 @@ use crate::runner::default_cases;
 use crate::{Case, HarnessError, Output, Rng, UnitDiff};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use solidcore::curve::curve::p2::{BSPLINE_CURVE_TYPE, CRV_ON_SURF_TYPE, LINE_TYPE};
 use solidcore::curve::curve::Curve;
 use solidcore::curve::hermite_curve::HermiteCurve;
 use solidcore::curve::line::Line;
@@ -50,15 +49,13 @@ use solidcore::nurbs::b_spline_curve::BSplineCurve;
 use solidcore::nurbs::b_spline_surface_n_lib::p2::OrientType;
 use solidcore::query::face::p1;
 use solidcore::topology::{
-    topology_traverser, Brep, EdgeId, FaceId, FaceuseId, LoopId, RegionId, ShellId,
+    Brep, EdgeId, FaceId, FaceuseId, LoopId, RegionId, ShellId,
 };
 use solidcore::{EntityRef, SolidError};
 use solidcore_ffi::units::query_face_p1::{self as ffi, Op};
 use solidcore_ffi::units::topology_edgeuse_p1 as graph;
 
-use super::topology_edgeuse_p1::{
-    domain, fixture_input, gen_brep, gen_surface, import_with_types, BrepIn, ImportTypes,
-};
+use super::topology_edgeuse_p1::{domain, fixture_input, gen_brep, gen_surface, import, BrepIn};
 
 /// Generated cases per run, whatever `--seeds` says (it can only raise this).
 pub const MIN_GENERATED: usize = 1200;
@@ -181,19 +178,19 @@ enum Input {
 
 // ---- the imported B-rep -----------------------------------------------------------------
 
-/// The case's B-rep imported from the C++ export, with each face's primary face use.
-struct Model {
-    path: String,
-    block: Vec<f64>,
-    brep: Brep,
-    types: ImportTypes,
+/// The case's B-rep imported from the C++ export, with each face's primary face use
+/// (shared with the `query.brep` runner).
+pub(crate) struct Model {
+    pub(crate) path: String,
+    pub(crate) block: Vec<f64>,
+    pub(crate) brep: Brep,
 }
 
-fn model(brep: &Value) -> Result<Model, HarnessError> {
+pub(crate) fn model(brep: &Value) -> Result<Model, HarnessError> {
     let (path, block) = fixture_input(brep.clone())?;
     let export = graph::eval(graph::Op::Export, &path, &block)
         .map_err(|e| harness(format!("c++ export: {e}")))?;
-    let (mut b, types) = import_with_types(&export)?;
+    let mut b = import(&export)?;
     let fus = ffi::eval(Op::FaceFu, &path, &block, &[])
         .map_err(|e| harness(format!("c++ face uses: {e}")))?;
     if fus.len() != b.faces().len() {
@@ -223,83 +220,65 @@ fn model(brep: &Value) -> Result<Model, HarnessError> {
                 key: ObjectKey(i as u64),
             }));
         }
+        // the face's tolerance, as the face upstream answers GetTolerance with
+        b.sync_face_surface_tolerance(f)
+            .map_err(|e| harness(e.to_string()))?;
     }
     Ok(Model {
         path,
         block,
         brep: b,
-        types,
     })
+}
+
+/// The Rust side's model: the case's B-rep built by the Rust kernel as the shim's
+/// `sc_topology_fixture::apply` builds it (unit `topology.edgeuse_p1`'s `build` and
+/// `walk`: [`crate::own_builder`] for shim-built sources, the Rust `.smb` reader for
+/// files), in that traversal order, its geometry owned under the arena identities. No
+/// C++ state reaches it (its face uses are the built ones, so no `FaceFu` patch).
+/// Shared with the `query.brep` runner's Rust side.
+pub(crate) fn own_model(brep: &Value) -> Result<Result<Model, Output>, HarnessError> {
+    use crate::own_builder::{build, failed_output, read_as, Built, Conventions};
+    let (path, block) = fixture_input(brep.clone())?;
+    let src: BrepIn = serde_json::from_value(brep.clone())
+        .map_err(|e| harness(format!("topology fixture: {e}")))?;
+    let mut k = Kernel::default();
+    let built = match &src {
+        BrepIn::File { rebuild, .. } => {
+            read_as(&mut k, &path, *rebuild, false, false, &Conventions::EDGEUSE_GRAPH)?
+        }
+        other => build(&mut k, other, false, false)?
+            .ok_or_else(|| harness("B-rep source not built"))?,
+    };
+    let mut b = match built {
+        Built::Brep(b) => *b,
+        Built::Failed(e) => return Ok(Err(failed_output(&e))),
+    };
+    let faces: Vec<FaceId> = b.faces().ids().collect();
+    for f in faces {
+        // the face's tolerance, as the face upstream answers GetTolerance with
+        b.sync_face_surface_tolerance(f)
+            .map_err(|e| harness(e.to_string()))?;
+    }
+    Ok(Ok(Model {
+        path,
+        block,
+        brep: b,
+    }))
+}
+
+/// The model a side runs on: the C++ side's import of its export ([`model`]), or the
+/// Rust-built one ([`own_model`]).
+fn side_model(brep: &Value, cpp: bool) -> Result<Result<Model, Output>, HarnessError> {
+    if cpp {
+        model(brep).map(Ok)
+    } else {
+        own_model(brep)
+    }
 }
 
 fn pick(sel: usize, n: usize) -> Option<u32> {
     (n > 0).then(|| (sel % n) as u32)
-}
-
-const EXACT_SURFACES: [i64; 2] = [15002, 15011];
-
-/// The deferral label of geometry the shared B-rep export flattens to its B-spline part
-/// (a harness limitation, as in `topology.brep_p1`).
-const HARNESS_ANALYTIC_IMPORT: &str = "harness:analytic-geometry-export";
-
-/// The deferral of a case that reads a face surface or edge curve the import holds only
-/// as its B-spline part (see the module docs).
-fn inexact(m: &Model, faces: &[FaceId], edges: &[EdgeId]) -> Option<Output> {
-    for f in faces {
-        let st = m
-            .types
-            .face_surface_types
-            .get(f.index() as usize)
-            .copied()
-            .unwrap_or(-1);
-        if st >= 0 && !EXACT_SURFACES.contains(&st) {
-            let (unit, symbol) = match st {
-                15012 | 15013 => ("surface.cone_p1", "SmCone (no SurfaceKind)"),
-                15014 => ("surface.sphere", "SmSphere"),
-                15015 => ("surface.torus", "SmTorus (no SurfaceKind)"),
-                15030 => (
-                    "surface.surf_of_extrusion_p2",
-                    "SurfaceKind::SurfOfExtrusion",
-                ),
-                _ => (
-                    HARNESS_ANALYTIC_IMPORT,
-                    "analytic face surface in the B-rep export",
-                ),
-            };
-            return Some(Output::deferred(unit, symbol));
-        }
-    }
-    for e in edges {
-        let ct = m
-            .types
-            .edge_curve_types
-            .get(e.index() as usize)
-            .copied()
-            .unwrap_or(-1);
-        if ct >= 0 && ![BSPLINE_CURVE_TYPE, LINE_TYPE, CRV_ON_SURF_TYPE].contains(&ct) {
-            return Some(Output::deferred(
-                HARNESS_ANALYTIC_IMPORT,
-                "analytic edge curve in the B-rep export",
-            ));
-        }
-    }
-    None
-}
-
-/// The face and its edges.
-fn face_and_edges(b: &Brep, f: FaceId) -> (Vec<FaceId>, Vec<EdgeId>) {
-    (
-        vec![f],
-        topology_traverser::face_edges(b, f).unwrap_or_default(),
-    )
-}
-
-/// Every face and edge of the B-rep.
-fn everything(b: &Brep) -> (Vec<FaceId>, Vec<EdgeId>) {
-    (
-        b.faces().iter().map(|(id, _)| id).collect(),
-        b.edges().iter().map(|(id, _)| id).collect(),
-    )
 }
 
 fn none_output() -> Output {
@@ -332,7 +311,10 @@ fn box_output(status: i64, values: &[f64]) -> Output {
 }
 
 fn run_box(input: &BoxInput, cpp: bool) -> Result<Output, HarnessError> {
-    let m = model(&input.brep)?;
+    let m = match side_model(&input.brep, cpp)? {
+        Ok(m) => m,
+        Err(o) => return Ok(o),
+    };
     let b = &m.brep;
     if cpp {
         let args = [
@@ -360,14 +342,6 @@ fn run_box(input: &BoxInput, cpp: bool) -> Result<Output, HarnessError> {
     let Some(id) = pick(input.index, n) else {
         return Ok(none_output());
     };
-    let (faces, edges) = if input.target == 0 {
-        face_and_edges(b, FaceId::from_index(id))
-    } else {
-        everything(b)
-    };
-    if let Some(o) = inexact(&m, &faces, &edges) {
-        return Ok(o);
-    }
     let mut k = Kernel::default();
     let tight = input.tight && !input.use_default;
     let mut bx = Extent3d::from_points(
@@ -408,7 +382,7 @@ struct PointArgs {
     loops: Vec<LoopId>,
 }
 
-fn point_args(m: &Model, i: &PointInput) -> Result<Option<PointArgs>, HarnessError> {
+fn point_args(k: &Kernel, m: &Model, i: &PointInput) -> Result<Option<PointArgs>, HarnessError> {
     let b = &m.brep;
     let Some(f) = pick(i.face, b.faces().len()) else {
         return Ok(None);
@@ -423,7 +397,7 @@ fn point_args(m: &Model, i: &PointInput) -> Result<Option<PointArgs>, HarnessErr
     let size = dom.size();
     let uv = Point2::new(dom.min().x + i.u * size.x, dom.min().y + i.v * size.y);
     let s = surface
-        .evaluate_point(uv)
+        .evaluate_point(k, uv)
         .map_err(|e| harness(format!("surface point: {e}")))?;
     let point = Vec3::new(s.x + i.offset[0], s.y + i.offset[1], s.z + i.offset[2]);
     let guess = i
@@ -471,8 +445,9 @@ fn pc_block(pc: &PointClassification<EntityRef>) -> Vec<f64> {
     ]
 }
 
-/// No geometry behind the B-rep handles (only the stored gap is read).
-struct NoGeometry;
+/// No geometry behind the B-rep handles (only the stored gap is read; shared with the
+/// `query.brep` runner).
+pub(crate) struct NoGeometry;
 
 impl solidcore::intersect::point_class::ClassGeometry<EntityRef> for NoGeometry {
     fn curve(&self, _o: EntityRef) -> Option<&Curve> {
@@ -489,9 +464,31 @@ impl solidcore::intersect::point_class::ClassGeometry<EntityRef> for NoGeometry 
     }
 }
 
-fn run_point(i: &PointInput, cpp: bool) -> Result<Output, HarnessError> {
-    let m = model(&i.brep)?;
-    let Some(a) = point_args(&m, i)? else {
+/// The shim's `drop_trim_cache(f)` (`harness/cpp/shim/query_face_p1.cpp`, before
+/// `Point3DClassify`): `SmCacheMgr::DeleteObjectsCache(SM_OC_TRIMSRF, srf)`. The cache's
+/// tree state lives in the deleted object upstream, so the slot goes back to
+/// [`CacheTreeState::NoCache`]: the next lookup makes a cache whose tree is built, as
+/// upstream's does. (A Rust `.smb` read can leave a kept cache whose state is `Unbuilt`.)
+pub(crate) fn drop_trim_cache(b: &Brep, f: FaceId) -> Result<(), HarnessError> {
+    use solidcore::surface::surface::CacheTreeState;
+    if let Some(surface) = b
+        .face(f)
+        .map_err(|e| harness(e.to_string()))?
+        .surface
+        .as_ref()
+    {
+        surface.delete_trim_cache();
+        surface.set_cache_tree_state(CacheTreeState::NoCache);
+    }
+    Ok(())
+}
+
+fn run_point(k: &Kernel, i: &PointInput, cpp: bool) -> Result<Output, HarnessError> {
+    let m = match side_model(&i.brep, cpp)? {
+        Ok(m) => m,
+        Err(o) => return Ok(o),
+    };
+    let Some(a) = point_args(k, &m, i)? else {
         return Ok(none_output());
     };
     if cpp {
@@ -520,12 +517,9 @@ fn run_point(i: &PointInput, cpp: bool) -> Result<Output, HarnessError> {
             .int("status", *status as i64)
             .values("pc", rest.to_vec()));
     }
-    let (faces, edges) = face_and_edges(&m.brep, a.face);
-    if let Some(o) = inexact(&m, &faces, &edges) {
-        return Ok(o);
-    }
     let k = Kernel::default();
     let mut b = m.brep;
+    drop_trim_cache(&b, a.face)?;
     let mut pc = PointClassification::new(zone_tol3d(&k, i.pc_tol));
     let opts = p1::Point3dClassifyOptions {
         guess_uv: a.guess,
@@ -560,7 +554,10 @@ fn edge_on_output(status: i64, inside: bool, problem: bool, why: i64) -> Output 
 }
 
 fn run_edge_on(i: &EdgeOnInput, cpp: bool) -> Result<Output, HarnessError> {
-    let m = model(&i.brep)?;
+    let m = match side_model(&i.brep, cpp)? {
+        Ok(m) => m,
+        Err(o) => return Ok(o),
+    };
     let b = &m.brep;
     let n_edges = b.edges().len();
     let Some(f) = pick(i.face, b.faces().len()) else {
@@ -599,10 +596,6 @@ fn run_edge_on(i: &EdgeOnInput, cpp: bool) -> Result<Output, HarnessError> {
             }
             _ => return Err(harness("malformed c++ output")),
         });
-    }
-    let (faces, edges) = face_and_edges(b, face);
-    if let Some(o) = inexact(&m, &faces, &edges) {
-        return Ok(o);
     }
     let k = Kernel::default();
     let [px, py, pz] = i.p;
@@ -652,7 +645,7 @@ fn curve_output(status: i32, values: [f64; 9]) -> Output {
         .values("out", values.to_vec())
 }
 
-fn run_curve(input: &CurveInput, cpp: bool) -> Result<Output, HarnessError> {
+fn run_curve(k: &Kernel, input: &CurveInput, cpp: bool) -> Result<Output, HarnessError> {
     // Inputs the FFI refuses before any C++ runs: nothing runs on either side.
     if !(0..=2).contains(&input.kind)
         || !(0..=7).contains(&input.mask)
@@ -688,7 +681,7 @@ fn run_curve(input: &CurveInput, cpp: bool) -> Result<Output, HarnessError> {
         _ => return Err(harness("unknown curve kind")),
     };
     let mut values = [11., 13., 17., 19., 23., 29., 31., 37., 41.];
-    match p1::evaluate_curve(curve.as_ref(), input.parameter.value()?) {
+    match p1::evaluate_curve(k, curve.as_ref(), input.parameter.value()?) {
         Ok(result) => {
             for ((i, vector), destination) in
                 result.iter().enumerate().zip(values.as_chunks_mut::<3>().0)
@@ -699,19 +692,19 @@ fn run_curve(input: &CurveInput, cpp: bool) -> Result<Output, HarnessError> {
             }
             Ok(curve_output(0, values))
         }
-        Err(SolidError::InvalidInput { .. }) => Ok(curve_output(1007, values)),
+        Err(SolidError::InvalidInput { .. } | SolidError::PortInvariant { .. }) => Ok(curve_output(1007, values)),
         Err(SolidError::Upstream { code, .. }) => Ok(curve_output(code, values)),
         Err(e) => Ok(rust_err(&e)),
     }
 }
 
-fn run(case: &Case, cpp: bool) -> Result<Output, HarnessError> {
+fn run(k: &Kernel, case: &Case, cpp: bool) -> Result<Output, HarnessError> {
     let input = case.parse::<Input>()?;
     match input {
         Input::Box(i) => run_box(&i, cpp),
-        Input::Point(i) => run_point(&i, cpp),
+        Input::Point(i) => run_point(k, &i, cpp),
         Input::EdgeOn(i) => run_edge_on(&i, cpp),
-        Input::Curve(i) => run_curve(&i, cpp),
+        Input::Curve(i) => run_curve(k, &i, cpp),
     }
 }
 
@@ -729,7 +722,7 @@ const EXACT_FILES: [&str; 7] = [
     "plane_square.smb",
 ];
 
-fn gen_face_brep(rng: &mut Rng) -> BrepIn {
+pub(crate) fn gen_face_brep(rng: &mut Rng) -> BrepIn {
     if rng.chance(0.7) {
         BrepIn::File {
             file: (*rng.choose(&EXACT_FILES).unwrap_or(&"plane_square.smb")).to_string(),
@@ -900,11 +893,13 @@ impl UnitDiff for Runner {
     }
 
     fn run_cpp(&self, case: &Case) -> Result<Output, HarnessError> {
-        run(case, true)
+        let k = &Kernel::default();
+        run(k, case, true)
     }
 
     fn run_rust(&self, case: &Case) -> Result<Output, HarnessError> {
-        run(case, false)
+        let k = &Kernel::default();
+        run(k, case, false)
     }
 
     fn generate(&self, rng: &mut Rng) -> Option<Value> {

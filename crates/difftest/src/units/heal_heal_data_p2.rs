@@ -13,13 +13,21 @@
 //!   op's result, the array and every object's linked members.
 //! - `heal`: an `SmHealData` built on a B-rep (an upstream `.smb` file, a wire edge, a
 //!   one-face B-rep, the `my_test_topology` wire network, an `SmPrimitiveCreation`
-//!   box or a full sphere face) with target lists, then a script of heal steps;
+//!   box, a full sphere face, a one-vertex-loop face on a sphere, plane or torus, or
+//!   `prog_test` `my_test_move_seam_refreshes_face_props`' seam-crossing cone patch) with
+//!   target lists, then a script of heal steps;
 //!   outputs each step's status and results and, at the end, the whole healer state
 //!   (targets, every props record ever allocated, every problem array with its labels,
-//!   histograms, statistics and the vertex voxel model). The C++ side replaces analytic
-//!   geometry by plain B-splines first (what the Rust import rebuilds); the Rust side
-//!   imports the C++ export (the `topology.vertexuse` importer) and restores each
-//!   vertex's vertex use order from the shim.
+//!   histograms, statistics and the vertex voxel model). Both sides build the B-rep
+//!   themselves with its native geometry: the C++ side with the upstream constructors,
+//!   the Rust side with the Rust kernel ([`own_brep`]: the Rust `.smb` reader, the Rust
+//!   constructors, the single-vertex sphere record by record as `SmBrepConstructor`
+//!   writes it), renumbered into the shim's traversal order, so no C++ output or state
+//!   reaches the Rust side.
+//!   A repair step that edits the B-rep (a nonempty queue) ends the script; when it
+//!   succeeds, a summary read from the live B-rep and the healer follows it (target,
+//!   new-object and repair problem list sizes, face/edge/vertex counts, per-face loop
+//!   and edge counts, sorted vertex points), since the fixture graph may be stale.
 //!
 //! Deferred: `Fix_TolSizes` (`SmBrep::GetThisModelSizeEstimate`, `topology.brep_p1`),
 //! `Cache_DegenFaces` with a face (`SmFace::IsDegenerate` classifies its edges with
@@ -30,11 +38,9 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use solidcore::geom::context::{MarkLock, ALL_MARKS};
-use solidcore::geom::vector2d::Point2;
 use solidcore::heal::face_props::{
     FaceProps, HealerOpType, LoopObject, MixedLinkType, Tri, TriedLinkType,
 };
-use solidcore::heal::gap::{EdgeEdgeGap, EdgeFaceGap, VertexEdgeGap, VertexFaceGap};
 use solidcore::heal::heal_data::p1::HealBrepTargets;
 use solidcore::heal::heal_data::p2::{
     EdgeProps, EdgePropsId, FaceFlag, FaceFlagOf, FaceMixed, FaceMixedOf, FacePropsEntry,
@@ -44,15 +50,42 @@ use solidcore::heal::heal_data::p2::{
 use solidcore::intersect::point_class::{ClassObject, ClassObjectKind};
 use solidcore::kernel::Kernel;
 use solidcore::topology::topology_traverser::Marks;
-use solidcore::topology::{
-    Brep, EdgeId, EdgeuseId, FaceId, LoopId, RegionId, VertexId, VertexuseId,
-};
+use solidcore::topology::{Brep, EdgeId, EdgeuseId, FaceId, LoopId, VertexId, VertexuseId};
 use solidcore::{EntityRef, SolidError};
 use solidcore_ffi::units::heal_heal_data_p2 as ffi;
-use solidcore_ffi::units::topology_vertexuse::counts;
 
-use super::topology_vertexuse::{gen_brep, import, path_of, push_curve, push_surface, BrepIn};
+use solidcore::geom::axis2_placement::Axis2Placement;
+use solidcore::geom::extent2d::Extent2d;
+use solidcore::geom::object::ObjectRef;
+use solidcore::geom::vector2d::Point2;
+use solidcore::geom::vector3d::Vec3;
+use solidcore::heal::stitch::p1::{DefaultStitchCallback, Stitch};
+use solidcore::heal::stitch::p2::MinGapRequest;
+use solidcore::nurbs::b_spline_curve::p1::NurbCircleParam;
+use solidcore::nurbs::b_spline_surface::p1::BSplineSurface;
+use solidcore::nurbs::b_spline_surface_n_lib::p2::OrientType;
+use solidcore::primitive::primitive_creation::p1::PrimitiveCreation;
+use solidcore::surface::plane::Plane;
+use solidcore::surface::sphere::Sphere;
+use solidcore::surface::surface::Surface;
+use solidcore::surface::torus::{Torus, TorusOptions};
+use solidcore::topology::brep::p2::{replace_surface, set_tolerance, ArenaNotifyState, OldSurface};
+use solidcore::topology::brep::p8::{create_face_in_region_from_surface, FaceBuildEnv};
+use solidcore::topology::brep_cache::{arena_identity, CacheObject};
+use solidcore::topology::face::p4 as face_p4;
+use solidcore::topology::shell::{post_insert_faceuse, ShellType};
+use solidcore::topology::{
+    Face, Faceuse, Loop, Loopuse, LoopuseStart, NamingScheme, Region, Shell, Vertex, Vertexuse,
+    VertexuseOwner,
+};
+
+use super::topology_edgeuse_p1::BrepIn as EdgeuseBrepIn;
+use super::topology_vertexuse::{gen_brep, path_of, push_curve, push_surface, BrepIn};
 use crate::case::CaseContext;
+use crate::own_builder::{
+    build_any, build_status, counts as own_counts, create_face, finish, in_new_brep, init_gap_walk,
+    resolve_owner, Built, Conventions,
+};
 use crate::runner::default_cases;
 use crate::{Case, HarnessError, Output, Rng, UnitDiff};
 
@@ -71,6 +104,8 @@ enum H {
     Curve(bool),
     EdgeCurve(EdgeId),
     Trim(EdgeuseId),
+    /// A temporary curve (the seam curves of `SmFace::HasSeamProblem`).
+    Temp(usize),
 }
 
 impl ClassObject for H {
@@ -78,8 +113,14 @@ impl ClassObject for H {
         match self {
             Self::Topo(e) => e.class_kind(),
             Self::Surface(_) => ClassObjectKind::Surface,
-            Self::Curve(_) | Self::EdgeCurve(_) | Self::Trim(_) => ClassObjectKind::Curve,
+            Self::Curve(_) | Self::EdgeCurve(_) | Self::Trim(_) | Self::Temp(_) => {
+                ClassObjectKind::Curve
+            }
         }
+    }
+
+    fn temporary(index: usize, kind: ClassObjectKind) -> Option<Self> {
+        (kind == ClassObjectKind::Curve).then_some(Self::Temp(index))
     }
 }
 
@@ -164,11 +205,27 @@ const STATE: f64 = -100.0;
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub(crate) enum Prim {
-    /// The single-vertex sphere regression of `smTopoTest.cpp`.
+    /// The single-vertex sphere regression of `smHealTest.cpp`.
     SingleVertexSphere {
         radius: f64,
         #[serde(default)]
         swap: bool,
+        /// The face's surface: 0 the sphere, 1 a plane over `[-radius, radius]^2`, 2 a
+        /// torus (major `radius`, minor `radius / 4`); the vertex lies on it.
+        #[serde(default)]
+        surface: u8,
+    },
+    /// `prog_test` `my_test_move_seam_refreshes_face_props`: a
+    /// `SmBSplineSurface::CreateConePatch` face over `angles` (degrees) whose surface
+    /// is replaced by the full 0..360 patch with its seam turned by `seam` degrees, so
+    /// the seam crosses the face.
+    SeamCone {
+        radii: [f64; 2],
+        height: f64,
+        angles: [f64; 2],
+        seam: f64,
+        #[serde(default)]
+        quintic: bool,
     },
     /// `SmPrimitiveCreation::CreateBox(dx, dy, dz, SmAxis2Placement())`.
     Box { size: [f64; 3] },
@@ -177,6 +234,19 @@ pub(crate) enum Prim {
         radius: f64,
         #[serde(default)]
         swap: bool,
+    },
+    /// The shared native planar ellipse/circle fixture (`sc_topology_fixture::ellipse_face`,
+    /// block kind 9): one analytic edge curve plus its B-spline UV trim and, for an arc,
+    /// a line closing chord.
+    EllipseFace {
+        circle: bool,
+        origin: [f64; 3],
+        axis: u8,
+        radii: [f64; 2],
+        angles: [f64; 2],
+        natural: [f64; 2],
+        inside_out: bool,
+        oob: bool,
     },
 }
 
@@ -355,12 +425,48 @@ fn block_of(
             v.extend(size);
             String::new()
         }
-        BIn::Prim(Prim::SingleVertexSphere { radius, swap }) => {
-            v.extend([6.0, *radius, flag(*swap)]);
+        BIn::Prim(Prim::SingleVertexSphere {
+            radius,
+            swap,
+            surface,
+        }) => {
+            v.extend([6.0, *radius, flag(*swap), f64::from(*surface)]);
+            String::new()
+        }
+        BIn::Prim(Prim::SeamCone {
+            radii,
+            height,
+            angles,
+            seam,
+            quintic,
+        }) => {
+            v.extend([
+                7.0, radii[0], radii[1], *height, angles[0], angles[1], *seam,
+            ]);
+            v.push(flag(*quintic));
             String::new()
         }
         BIn::Prim(Prim::Sphere { radius, swap }) => {
             v.extend([5.0, *radius, flag(*swap)]);
+            String::new()
+        }
+        BIn::Prim(Prim::EllipseFace {
+            circle,
+            origin,
+            axis,
+            radii,
+            angles,
+            natural,
+            inside_out,
+            oob,
+        }) => {
+            v.extend([9.0, flag(*circle)]);
+            v.extend(origin);
+            v.push(f64::from(*axis));
+            v.extend(radii);
+            v.extend(angles);
+            v.extend(natural);
+            v.extend([flag(*inside_out), flag(*oob)]);
             String::new()
         }
         BIn::Std(s) => {
@@ -518,6 +624,13 @@ fn prob_input(kind: u8, n: u64, ops: &[[i64; 4]]) -> Vec<f64> {
 
 fn ffi_out(r: Result<Vec<f64>, solidcore_ffi::FfiError>) -> Result<Output, HarnessError> {
     match r {
+        // the shim refused an input whose upstream path is undefined (`-999 id`)
+        Ok(v) if v.first() == Some(&-999.0) => Ok(Output::rejected(match v.get(1) {
+            Some(&265.0) => {
+                "UB-265: Fix_SplitEdgesAtSeam reads the mark of a null target face".to_string()
+            }
+            id => format!("shim refusal {id:?}"),
+        })),
         Ok(v) => Ok(Output::new().values("out", v)),
         Err(solidcore_ffi::FfiError::Status(s)) => Ok(Output::err(format!("status_{s}"))),
         Err(e) => Err(harness(format!("c++: {e}"))),
@@ -527,8 +640,11 @@ fn ffi_out(r: Result<Vec<f64>, solidcore_ffi::FfiError>) -> Result<Output, Harne
 /// The export of a heal case's B-rep and its `[n_v, n_e, n_f]` (`None` when it could
 /// not be built).
 fn export_of(path: &str, block: &[f64]) -> Result<(Vec<f64>, Option<[usize; 3]>), HarnessError> {
-    let ex = ffi::export(path, block).map_err(|e| harness(format!("c++ export: {e}")))?;
-    let n = counts(&ex).map(vef);
+    let ex = crate::export_memo::export("heal_heal_data_p2", &[path], block, || {
+        ffi::export(path, block)
+    })
+    .map_err(|e| harness(format!("c++ export: {e}")))?;
+    let n = solidcore_ffi::units::topology_vertexuse::counts(&ex).map(vef);
     Ok((ex, n))
 }
 
@@ -708,7 +824,7 @@ fn rust_prob(kind: u8, n: u64, ops: &[[i64; 4]]) -> Result<Output, HarnessError>
                 let r = match kind {
                     1 => match pair.remove(&arena, p) {
                         Ok(r) => r,
-                        Err(SolidError::InvalidInput { .. }) => {
+                        Err(SolidError::InvalidInput { .. } | SolidError::PortInvariant { .. }) => {
                             o.push(NULL_DEREF);
                             stop = true;
                             continue;
@@ -850,7 +966,7 @@ fn classify(e: SolidError) -> Fail {
         return Fail::Deferred(o);
     }
     match e {
-        SolidError::InvalidInput { .. } => Fail::NullDeref,
+        SolidError::InvalidInput { .. } | SolidError::PortInvariant { .. } => Fail::NullDeref,
         SolidError::Upstream { code, .. } => Fail::Status(code),
         e => Fail::Other(e.to_string()),
     }
@@ -866,6 +982,15 @@ fn pick<I: Copy>(alive: &[I], sel: u64) -> Option<I> {
     } else {
         alive.get((sel % alive.len() as u64) as usize).copied()
     }
+}
+
+/// Whether a seed step would queue a face props record a second time (the shim's
+/// `degen_face_seeded`: upstream queues each once, and the repair works on a record
+/// queued twice twice).
+fn degen_face_seeded(h: &HealData<H>) -> bool {
+    h.tgt_face_props
+        .iter()
+        .any(|id| h.bad_face_props_degen_faces.prob_array.contains(id))
 }
 
 fn target_count_after_removals<T: Copy + PartialEq>(
@@ -927,6 +1052,134 @@ fn entity(kind: u64, index: u64, c: [usize; 10]) -> Option<EntityRef> {
 
 /// The healer state, as the shim's `dump`.
 #[allow(clippy::too_many_lines)]
+/// The shim's `put_repair_summary`: after a successful repair step (which may have
+/// edited the fixture topology), `-101`, the target and new-object list sizes, the
+/// repair problem list sizes, the B-rep's face, edge and vertex counts, per face
+/// (sorted) its loop and edge counts, and the vertex points in lexicographic order.
+fn put_repair_summary(h: &HealData<H>, b: &Brep, o: &mut Vec<f64>) -> Result<(), SolidError> {
+    use solidcore::topology::brep::p1 as bp1;
+    use solidcore::topology::face::{p2 as fp2, p4 as fp4};
+    o.push(-101.0);
+    for n in [
+        h.tgt_vertices.len(),
+        h.tgt_edges.len(),
+        h.tgt_faces.len(),
+        h.new_faces_from_fix_degen_faces.len(),
+        h.new_edges_from_split_edges_at_seams.len(),
+        h.new_vertices_from_split_edges_at_seams.len(),
+        h.new_faces_from_split_face_at_seams.len(),
+        h.new_edges_on_seams_from_split_face_at_seams.len(),
+        h.new_vertices_from_split_face_at_seams.len(),
+        h.bad_face_props_degen_faces.len(),
+        h.bad_face_props_crossed_seam.len(),
+        h.bad_face_props_missing_seam.len(),
+        h.bad_face_props_near_miss_seam.len(),
+        h.ran_face_props_move_seam.base.len(),
+        h.ran_face_props_split_edges_at_seam.base.len(),
+    ] {
+        o.push(n as f64);
+    }
+    let faces = bp1::faces(b, None)?;
+    let edges = bp1::edges(b, None)?;
+    let vertices = bp1::vertices(b, None)?;
+    o.extend([
+        faces.len() as f64,
+        edges.len() as f64,
+        vertices.len() as f64,
+    ]);
+    let mut per_face = Vec::new();
+    for &f in &faces {
+        let loops = fp2::loops(b, f, false, None)?.len();
+        let face_edges = fp4::edges(b, f, None, false, None)?.len();
+        per_face.push((loops, face_edges));
+    }
+    per_face.sort_unstable();
+    for (loops, face_edges) in per_face {
+        o.extend([loops as f64, face_edges as f64]);
+    }
+    let mut pts = Vec::new();
+    for &v in &vertices {
+        let p = b.vertex(v)?.point;
+        pts.push([p.x, p.y, p.z]);
+    }
+    pts.sort_by(|a, b| {
+        a[0].total_cmp(&b[0])
+            .then(a[1].total_cmp(&b[1]))
+            .then(a[2].total_cmp(&b[2]))
+    });
+    for p in pts {
+        o.extend(p);
+    }
+    Ok(())
+}
+
+/// The shim's `put_owner_block`: the geometry owners of the B-rep, after its build and
+/// after a successful repair step, order-free as [`put_repair_summary`]: `-102`, then
+/// the face count and per face (sorted) its surface's owner class and loop count, the
+/// edge count and per edge (sorted) its curve's owner class and edge use count, and the
+/// edge use count and the sorted owner classes of each edge use's own UV trim curve.
+/// Owner classes: `1` the holding object itself, `2` another object of its kind in the
+/// B-rep, `-1` no owner, `-2` no geometry, `-3` any other owner. A surface (curve)
+/// `GetSurfaces` (`GetCurves`) lists is owned by its face (edge); any other owner is
+/// resolved under the harness's identities and the kernel identities of the B-rep's
+/// notify serial ([`resolve_owner`]): a kernel-named edit (`kernel_named_edit`, the heal
+/// repairs' `tracked_edit`) owns the geometry it makes by those (e.g. the seam edge's UV
+/// trim curves of `MakeEdgeInFaceWithVU`).
+fn put_owner_block(b: &Brep, o: &mut Vec<f64>) -> Result<(), SolidError> {
+    use solidcore::topology::brep::{p1 as bp1, p2 as bp2};
+    use solidcore::topology::edge::edgeuses as edge_uses;
+    use solidcore::topology::face::p2 as fp2;
+    let serial = b.notify_serial();
+    let class = |owner: Option<ObjectRef>, own: EntityRef| match owner {
+        None => -1.0,
+        Some(r) => match resolve_owner(b, r, serial, own) {
+            Some(e) if e == own => 1.0,
+            Some(e) if std::mem::discriminant(&e) == std::mem::discriminant(&own) => 2.0,
+            _ => -3.0,
+        },
+    };
+    let by_pair = |x: &[f64; 2], y: &[f64; 2]| x[0].total_cmp(&y[0]).then(x[1].total_cmp(&y[1]));
+    o.push(-102.0);
+    // (a face without surface makes GetSurfaces fail; the resolution still applies)
+    let listed_surfaces = bp1::surfaces(b, None).unwrap_or_default();
+    let mut per_face = Vec::new();
+    for f in bp1::faces(b, None)? {
+        let c = match b.face(f)?.surface.as_ref() {
+            None => -2.0,
+            Some(s) if listed_surfaces.iter().any(|x| std::ptr::eq(*x, s)) => 1.0,
+            Some(s) => class(s.owner(), EntityRef::Face(f)),
+        };
+        per_face.push([c, fp2::loops(b, f, false, None)?.len() as f64]);
+    }
+    let listed_curves = bp1::curves(b, None).unwrap_or_default();
+    let mut per_edge = Vec::new();
+    for e in bp1::edges(b, None)? {
+        let c = match b.edge(e)?.curve.as_ref() {
+            None => -2.0,
+            Some(cv) if listed_curves.iter().any(|x| std::ptr::eq(*x, cv)) => 1.0,
+            Some(cv) => class(cv.owner(), EntityRef::Edge(e)),
+        };
+        per_edge.push([c, edge_uses(b, e, None, None)?.len() as f64]);
+    }
+    let mut per_use = Vec::new();
+    for eu in bp2::edgeuses(b, None)? {
+        per_use.push(match b.edgeuse(eu)?.uv_trim_curve.as_ref() {
+            None => -2.0,
+            Some(uv) => class(uv.owner(), EntityRef::Edgeuse(eu)),
+        });
+    }
+    per_face.sort_by(by_pair);
+    per_edge.sort_by(by_pair);
+    per_use.sort_by(f64::total_cmp);
+    for list in [per_face, per_edge] {
+        o.push(list.len() as f64);
+        o.extend(list.into_iter().flatten());
+    }
+    o.push(per_use.len() as f64);
+    o.extend(per_use);
+    Ok(())
+}
+
 fn dump(h: &HealData<H>, b: &Brep, o: &mut Vec<f64>) -> Result<(), SolidError> {
     o.push(STATE);
     o.push(h.tgt_vertices.len() as f64);
@@ -1061,6 +1314,7 @@ fn dump(h: &HealData<H>, b: &Brep, o: &mut Vec<f64>) -> Result<(), SolidError> {
     put_base(o, &h.face_props_no_vertex_pole.base, fi);
     put_base(o, &h.bad_face_props_flat_corner, fi);
     put_base(o, &h.bad_face_props_missing_seam, fi);
+    put_base(o, &h.bad_face_props_crossed_pole, fi);
     put_base(o, &h.bad_face_props_crossed_seam, fi);
     put_base(o, &h.bad_face_props_near_miss_seam, fi);
     put_base(o, &h.ran_face_props_move_seam.base, fi);
@@ -1109,94 +1363,413 @@ fn dump(h: &HealData<H>, b: &Brep, o: &mut Vec<f64>) -> Result<(), SolidError> {
     Ok(())
 }
 
-/// Restores what the import cannot carry: each vertex's vertex use order and the
-/// cached gap records of every edge use and vertex use (see the shim's
-/// `put_cached_gaps`).
-fn restore(b: &mut Brep, extra: &[f64], c: [usize; 10]) -> Result<(), HarnessError> {
-    let mut at = 1usize;
-    let mut next = || -> Result<f64, HarnessError> {
-        let x = *extra.get(at).ok_or_else(|| harness("extras too short"))?;
-        at += 1;
-        Ok(x)
-    };
-    let he = |e: SolidError| harness(e.to_string());
-    for v in 0..c[9] {
-        let len = next()? as usize;
-        let mut l = Vec::new();
-        for _ in 0..len {
-            let x = next()?;
-            if x < 0.0 {
-                return Err(harness("unregistered vertex use in a vertex list"));
+// ---- Rust: the B-rep ------------------------------------------------------------------
+
+fn arena_face_owner(f: FaceId) -> ObjectRef {
+    arena_identity(CacheObject::Face(f))
+}
+
+fn arena_edge_owner(e: EdgeId) -> (ObjectRef, ObjectRef) {
+    (
+        arena_identity(CacheObject::Edge(e)),
+        arena_identity(CacheObject::Brep),
+    )
+}
+
+/// The shim's conventions: the `sc_topology_fixture.h` walk with the vertex lists
+/// (`walk(brep, g, true)`), `GetVertexEdgeGap` in the gap walk, and the geometry owned
+/// under the kernel's arena identities, which the library's own queries of an
+/// `Unknown`-named B-rep resolve (`BrepQuery::of_brep`, e.g. `FindInfiniteRegion`'s
+/// ray fires).
+const CONV: Conventions<'static> = Conventions {
+    prefix_lists: false,
+    vertex_edge_gaps: true,
+    vertex_lists_last: false,
+    skip_edge_list: false,
+    face_owner: &arena_face_owner,
+    edge_owner: &arena_edge_owner,
+    edgeuse_owner: &crate::own_builder::notify_edgeuse_owner,
+    naming: NamingScheme::Arena,
+};
+
+/// `new (ctx) SmBrep()`, then `SmPrimitiveCreation(brep->GetInfiniteRegion())
+/// .CreateBox(dx, dy, dz, SmAxis2Placement())` (block kind 4).
+fn box_brep(k: &mut Kernel, size: [f64; 3]) -> Result<Result<Brep, SolidError>, HarnessError> {
+    in_new_brep(k, |k, b| {
+        let mut pc = PrimitiveCreation::new(b.infinite_region(), 0, true);
+        pc.create_box(k, b, size[0], size[1], size[2], &Axis2Placement::default())
+    })
+}
+
+/// `SmSphere::CreateCanonical(ctx, SmAxis2Placement(), r)`, then `SwapUV()` with `swap`.
+fn canonical_sphere(k: &Kernel, radius: f64, swap: bool) -> Result<Surface, SolidError> {
+    let mut s = Surface::from(Sphere::create_canonical(
+        k,
+        &Axis2Placement::default(),
+        radius,
+    )?);
+    if swap {
+        s.swap_uv(k)?;
+    }
+    Ok(s)
+}
+
+/// Block kind 5: `CreateFaceInRegionFromSurface(infinite region, sphere,
+/// sphere->GetNaturalUVDomain())` into `new (ctx) SmBrep()`.
+fn sphere_brep(
+    k: &mut Kernel,
+    radius: f64,
+    swap: bool,
+) -> Result<Result<Brep, SolidError>, HarnessError> {
+    in_new_brep(k, |k, b| {
+        let s = canonical_sphere(k, radius, swap)?;
+        let dom = s.natural_uv_domain_with_nurb(k)?;
+        let mut state = ArenaNotifyState::new(b);
+        let mut env = state.env(None);
+        let mut marks = Marks::default();
+        let this_face = |face| arena_identity(CacheObject::Face(face));
+        let mut fenv = FaceBuildEnv {
+            env: &mut env,
+            marks: &mut marks,
+            this_face: &this_face,
+        };
+        let region = b.infinite_region();
+        create_face_in_region_from_surface(k, b, region, Some(s), &dom, &mut fenv).map(|_| ())
+    })
+}
+
+/// Block kind 6, the one-vertex-loop face of `smHealTest.cpp` on a sphere (`surface`
+/// 0: `SmSphere::CreateCanonical`, `SwapUV` with `swap`), a plane (1:
+/// `SmPlane::CreateCanonical`, domain `[-r, r]^2`, vertex at the origin) or a torus (2:
+/// `SmTorus::CreateCanonical(major r, minor r / 4, bSwapUV = swap)`, vertex
+/// `(1.25 r, 0, 0)`), built as the shim's
+/// `SmBrepConstructor` calls build it (`SmBrepData.cpp`; the constructor writes the
+/// records directly, as here): `StartBrep` (`new SmBrep`), `SetTolerance(1e-7, FALSE)`,
+/// `StartRegion(TRUE, NULL)` (a region on the B-rep's region list), `StartShell` (an
+/// outer face-use shell on the infinite region, an inner one on the new region),
+/// `StartFace(surface == 0 && swap ? OPPOSITE : SAME)` (the face at the B-rep tolerance with its up
+/// face use `SAME` and its down one `OPPOSITE`; the outside one in the outer shell, the
+/// other in the inner), `SetFaceSurface(surface, domain)` (the face owns the
+/// surface), `StartAndEndSingleVertexLoop(vertex)` (a loop with a vertex loop use on
+/// each face use, both `SAME`, and one vertex at the B-rep tolerance holding both vertex
+/// uses), then `EndShell(TRUE)`: `SmStitch(cb, tol, FALSE, TRUE).DoStitching` over the
+/// face's vertices and edges. `EndShell`'s `ValidatePointers()` is `const` and its
+/// status is ignored, so it is not run.
+fn single_vertex_sphere_brep(
+    k: &mut Kernel,
+    radius: f64,
+    swap: bool,
+    surface: u8,
+) -> Result<Result<Brep, SolidError>, HarnessError> {
+    in_new_brep(k, |k, b| {
+        // 0 sphere, 1 plane (domain [-r, r]^2), 2 torus (major r, minor r/4)
+        let (s, vertex, dom) = match surface {
+            1 => {
+                let s = Surface::from(Plane::create_canonical(&Axis2Placement::default())?);
+                let dom = Extent2d::from_points(
+                    Point2::new(-radius, -radius),
+                    Point2::new(radius, radius),
+                );
+                (s, Vec3::new(0.0, 0.0, 0.0), dom)
             }
-            l.push(VertexuseId::from_index(x as u32));
+            2 => {
+                let s = Surface::from(Torus::create_canonical(
+                    k,
+                    &Axis2Placement::default(),
+                    radius,
+                    0.25 * radius,
+                    TorusOptions {
+                        swap_uv: swap,
+                        ..TorusOptions::default()
+                    },
+                    None,
+                )?);
+                let dom = s.natural_uv_domain_with_nurb(k)?;
+                (s, Vec3::new(1.25 * radius, 0.0, 0.0), dom)
+            }
+            _ => {
+                let s = canonical_sphere(k, radius, swap)?;
+                let dom = s.natural_uv_domain_with_nurb(k)?;
+                (s, Vec3::new(0.0, 0.0, radius), dom)
+            }
+        };
+        // StartFace(OPPOSITE) only for the swapped sphere
+        let swap = surface == 0 && swap;
+        // (the records below name the surface under arena identities)
+        b.set_naming(NamingScheme::Arena);
+        set_tolerance(k, b, 1e-7, false, true)?;
+        let tol = b.tolerance();
+        let inf = b
+            .infinite_region()
+            .ok_or_else(|| SolidError::sm_err(OP_SVS))?;
+        // StartRegion
+        let region = b.add_region_record(Region {
+            in_brep: true,
+            ..Region::default()
+        })?;
+        // StartShell
+        let outer = b.add_shell_record(Shell {
+            region: Some(inf),
+            shell_type: ShellType::Faceuse,
+            ..Shell::default()
+        })?;
+        b.region_mut(inf)?.shells.push(outer);
+        let inner = b.add_shell_record(Shell {
+            region: Some(region),
+            shell_type: ShellType::Faceuse,
+            ..Shell::default()
+        })?;
+        b.region_mut(region)?.shells.push(inner);
+        // StartFace
+        let face = b.add_face_record(Face {
+            tolerance: tol,
+            ..Face::new(outer)
+        })?;
+        let fu1 = b.add_faceuse_record(Faceuse {
+            face: Some(face),
+            orientation: OrientType::Same,
+            ..Faceuse::default()
+        })?;
+        let fu2 = b.add_faceuse_record(Faceuse {
+            face: Some(face),
+            mate: Some(fu1),
+            orientation: OrientType::Opposite,
+            ..Faceuse::default()
+        })?;
+        b.faceuse_mut(fu1)?.mate = Some(fu2);
+        b.face_mut(face)?.faceuse = Some(fu1);
+        if swap {
+            post_insert_faceuse(b, inner, fu1)?;
+            post_insert_faceuse(b, outer, fu2)?;
+        } else {
+            post_insert_faceuse(b, outer, fu1)?;
+            post_insert_faceuse(b, inner, fu2)?;
         }
-        b.vertex_mut(VertexId::from_index(v as u32))
-            .map_err(he)?
-            .vertexuses = l;
-    }
-    let eu_of = |x: f64| -> Result<Option<EdgeuseId>, HarnessError> {
-        match x {
-            -1.0 => Ok(None),
-            x if x >= 0.0 => Ok(Some(EdgeuseId::from_index(x as u32))),
-            _ => Err(harness("unregistered edge use in a gap")),
+        // SetFaceSurface: the surface has no owner, so the face takes it itself
+        let mut s = s;
+        let _ = s.set_owner(Some(arena_identity(CacheObject::Face(face))));
+        {
+            let f = b.face_mut(face)?;
+            f.surface = Some(s);
+            f.uv_domain = dom;
+        }
+        b.sync_face_surface_tolerance(face)?;
+        // StartAndEndSingleVertexLoop: StartLoop(SM_OT_SAME), the first (outer) loop
+        let lp = LoopId::from_index(
+            u32::try_from(b.loops().len()).map_err(|_| SolidError::sm_err(OP_SVS))?,
+        );
+        let lu1 = b.add_loopuse_record(Loopuse {
+            faceuse: Some(fu1),
+            loop_: Some(lp),
+            orientation: OrientType::Same,
+            ..Loopuse::default()
+        })?;
+        let lu2 = b.add_loopuse_record(Loopuse {
+            faceuse: Some(fu2),
+            loop_: Some(lp),
+            mate: Some(lu1),
+            orientation: OrientType::Same,
+            ..Loopuse::default()
+        })?;
+        b.loopuse_mut(lu1)?.mate = Some(lu2);
+        b.faceuse_mut(fu1)?.loopuses.push(lu1);
+        b.faceuse_mut(fu2)?.loopuses.push(lu2);
+        let l = b.add_loop_record(Loop {
+            face,
+            edges: Vec::new(),
+            loopuse: Some(lu1),
+        })?;
+        if l != lp {
+            return Err(SolidError::sm_err(OP_SVS));
+        }
+        b.face_mut(face)?.loops.push(l);
+        let vu1 = b.add_vertexuse_record(Vertexuse {
+            owner: VertexuseOwner::Loopuse(Some(lu1)),
+            ..Vertexuse::default()
+        })?;
+        let vu2 = b.add_vertexuse_record(Vertexuse {
+            owner: VertexuseOwner::Loopuse(Some(lu2)),
+            ..Vertexuse::default()
+        })?;
+        let v = b.add_vertex_record(Vertex {
+            point: vertex,
+            tolerance: tol,
+            vertexuses: vec![vu1, vu2],
+            ..Vertex::default()
+        })?;
+        b.vertexuse_mut(vu1)?.vertex = Some(v);
+        b.vertexuse_mut(vu2)?.vertex = Some(v);
+        b.loopuse_mut(lu1)?.start = LoopuseStart::Vertexuse(Some(vu1));
+        b.loopuse_mut(lu2)?.start = LoopuseStart::Vertexuse(Some(vu2));
+        b.refresh_cached_topology();
+        // EndShell(TRUE): stitch the shell's faces' vertices and edges
+        let mut vertices = Vec::new();
+        let mut edges = Vec::new();
+        for fu in b.shell(outer)?.get_faceuses()? {
+            let f = b
+                .faceuse(fu)?
+                .face
+                .ok_or_else(|| SolidError::sm_err(OP_SVS))?;
+            edges.extend(face_p4::edges(b, f, None, false, None)?);
+            vertices.extend(face_p4::vertices(b, f, None, false, None)?);
+        }
+        let tol = b.tolerance();
+        let mut cb = DefaultStitchCallback;
+        let mut st = Stitch::new(&mut cb, tol, false, true);
+        st.do_stitching(
+            k,
+            b,
+            Some(&vertices),
+            Some(&edges),
+            MinGapRequest::default(),
+        )
+        .map(|_| ())
+    })
+}
+
+const OP_SVS: &str = "heal_heal_data_p2::single_vertex_sphere";
+
+/// Block kind 7, `prog_test` `my_test_move_seam_refreshes_face_props`, as the shim
+/// builds it: `SmBSplineSurface::CreateConePatch(SmAxis2Placement(), r0, r1, a0, a1,
+/// height)`, `CreateFaceFromSurface(patch, natural domain)`, then the full 0..360 patch
+/// on the frame turned by `seam` degrees about Z replaces the face's surface
+/// (`ReplaceSurface(face, full, FALSE, NULL, FALSE)`) and `SetIsRectangularTrim(FALSE)`.
+fn seam_cone_brep(
+    k: &mut Kernel,
+    radii: [f64; 2],
+    height: f64,
+    angles: [f64; 2],
+    seam: f64,
+    quintic: bool,
+) -> Result<Result<Brep, SolidError>, HarnessError> {
+    in_new_brep(k, |k, b| {
+        let param = if quintic {
+            NurbCircleParam::Quintic
+        } else {
+            NurbCircleParam::Quadratic
+        };
+        let patch = Surface::from(BSplineSurface::create_cone_patch(
+            &Axis2Placement::default(),
+            radii[0],
+            radii[1],
+            angles[0],
+            angles[1],
+            height,
+            param,
+        )?);
+        let d = patch.natural_uv_domain_with_nurb(k)?;
+        let face = create_face(k, b, patch, [d.min().x, d.min().y, d.max().x, d.max().y])?;
+        let t = seam * std::f64::consts::PI / 180.0;
+        let mut frame = Axis2Placement::default();
+        frame.set_canonical(
+            Vec3::new(0.0, 0.0, 0.0),
+            Vec3::new(t.cos(), t.sin(), 0.0),
+            Vec3::new(-t.sin(), t.cos(), 0.0),
+        )?;
+        let full = Surface::from(BSplineSurface::create_cone_patch(
+            &frame, radii[0], radii[1], 0.0, 360.0, height, param,
+        )?);
+        let mut state = ArenaNotifyState::new(b);
+        let mut env = state.env(None);
+        replace_surface(
+            k,
+            b,
+            &mut env,
+            face,
+            full,
+            arena_identity(CacheObject::Face(face)),
+            OldSurface::Delete,
+            false,
+        )?;
+        b.face_mut(face)?.rectangular_trim = 0;
+        Ok(())
+    })
+}
+
+/// The Rust B-rep of a heal case's block, built by the Rust kernel as the shim's
+/// `prepare` builds it (no C++ export reaches the Rust side): kinds 0..3 and 9 as the
+/// fixture's `build` ([`build_any`]: an `.smb` file read by the Rust reader, the rest
+/// by the Rust constructors, with its gap walk under `init_gaps`), kinds 4..7 above;
+/// `m_bValidateOnly`, then with `init_gaps` `init_cached_gaps` (the same gap walk
+/// again: cached gaps stay as they are). Renumbered into the shim's traversal order.
+///
+/// # Errors
+///
+/// A harness error for a source the shim would not accept either.
+fn own_brep(
+    k: &mut Kernel,
+    b: &BIn,
+    validate_only: bool,
+    init_gaps: bool,
+) -> Result<Built, HarnessError> {
+    let prim = match b {
+        BIn::Prim(Prim::Box { size }) => Some(box_brep(k, *size)?),
+        BIn::Prim(Prim::Sphere { radius, swap }) => Some(sphere_brep(k, *radius, *swap)?),
+        BIn::Prim(Prim::SingleVertexSphere {
+            radius,
+            swap,
+            surface,
+        }) => Some(single_vertex_sphere_brep(k, *radius, *swap, *surface)?),
+        BIn::Prim(Prim::SeamCone {
+            radii,
+            height,
+            angles,
+            seam,
+            quintic,
+        }) => Some(seam_cone_brep(
+            k, *radii, *height, *angles, *seam, *quintic,
+        )?),
+        _ => None,
+    };
+    let (built, fixture) = match b {
+        BIn::Prim(
+            Prim::Box { .. }
+            | Prim::Sphere { .. }
+            | Prim::SingleVertexSphere { .. }
+            | Prim::SeamCone { .. },
+        ) => {
+            let raw = prim.ok_or_else(|| harness("primitive source not built"))?;
+            (finish(k, raw, validate_only, init_gaps, &CONV)?, false)
+        }
+        BIn::Prim(Prim::EllipseFace {
+            circle,
+            origin,
+            axis,
+            radii,
+            angles,
+            natural,
+            inside_out,
+            oob,
+        }) => {
+            let src = EdgeuseBrepIn::EllipseFace {
+                circle: *circle,
+                origin: *origin,
+                axis: *axis,
+                radii: *radii,
+                angles: *angles,
+                natural: *natural,
+                inside_out: *inside_out,
+                oob: *oob,
+            };
+            (build_any(k, &src, validate_only, init_gaps, &CONV)?, true)
+        }
+        BIn::Std(s) => {
+            let src: EdgeuseBrepIn = serde_json::to_value(s)
+                .and_then(serde_json::from_value)
+                .map_err(|e| harness(format!("B-rep source: {e}")))?;
+            (build_any(k, &src, validate_only, init_gaps, &CONV)?, true)
         }
     };
-    let vu_of = |x: f64| -> Result<Option<VertexuseId>, HarnessError> {
-        match x {
-            -1.0 => Ok(None),
-            x if x >= 0.0 => Ok(Some(VertexuseId::from_index(x as u32))),
-            _ => Err(harness("unregistered vertex use in a gap")),
+    // `prepare`'s `init_cached_gaps`, after the fixture's own gap walk for its kinds
+    match built {
+        Built::Brep(mut brep) if init_gaps && fixture => {
+            match init_gap_walk(k, &mut brep, CONV.vertex_edge_gaps) {
+                Ok(()) => Ok(Built::Brep(brep)),
+                Err(e) => Ok(Built::Failed(e)),
+            }
         }
-    };
-    for e in 0..c[6] {
-        let _init = next()?;
-        let ccw = EdgeEdgeGap {
-            gap_3d: next()?,
-            edgeuse0: eu_of(next()?)?,
-            edgeuse1: eu_of(next()?)?,
-            edge_t0: next()?,
-            edge_t1: next()?,
-        };
-        let _init = next()?;
-        let face = EdgeFaceGap {
-            gap_3d: next()?,
-            edgeuse: eu_of(next()?)?,
-            edge_t: next()?,
-            face_uv: Point2::new(next()?, next()?),
-        };
-        let r = b.edgeuse_mut(EdgeuseId::from_index(e as u32)).map_err(he)?;
-        r.edge_ccw_edge_gap = ccw;
-        r.max_edge_face_gap = face;
+        other => Ok(other),
     }
-    for u in 0..c[8] {
-        let _init = next()?;
-        let eg = VertexEdgeGap {
-            gap_3d: next()?,
-            vertexuse: vu_of(next()?)?,
-            edge_t: next()?,
-        };
-        let _init = next()?;
-        let fg = VertexFaceGap {
-            gap_3d: next()?,
-            vertexuse: vu_of(next()?)?,
-            face_uv: Point2::new(next()?, next()?),
-        };
-        let r = b
-            .vertexuse_mut(VertexuseId::from_index(u as u32))
-            .map_err(he)?;
-        r.vertex_edge_gap = eg;
-        r.vertex_face_gap = fg;
-    }
-    // the infinite region (`SmBrep::m_pInfiniteRegion`; `Fix_InfiniteRegion` walks the
-    // region list from it)
-    let inf = next()?;
-    if inf >= 0.0 {
-        b.set_infinite_region(Some(RegionId::from_index(inf as u32)));
-    }
-    if at != extra.len() {
-        return Err(harness("extras: trailing data"));
-    }
-    Ok(())
 }
 
 /// The stage 2/3 values of a face props record, as the shim's `put_face_snapshot`.
@@ -1242,24 +1815,23 @@ fn rust_heal(
     steps: &[Step],
 ) -> Result<Output, HarnessError> {
     let (path, block) = block_of(brep, validate_only, init_gaps)?;
-    let (ex, n) = export_of(&path, &block)?;
-    let Some(n) = n else {
-        // the B-rep could not be built: the shim reports the same `-1 status`
-        return Ok(Output::new().values("out", ex));
+    // the shim's input guards, without its build (HANG-29, the size ranges)
+    ffi::check_source(&path, &block).map_err(|e| harness(format!("B-rep block: {e}")))?;
+    let mut k = Kernel::default();
+    let mut b = match own_brep(&mut k, brep, validate_only, init_gaps)? {
+        Built::Brep(b) => *b,
+        // the B-rep could not be built: the shim reports `-1 status`
+        Built::Failed(e) => {
+            return Ok(Output::unported(&e)
+                .unwrap_or_else(|| Output::new().values("out", vec![-1.0, build_status(&e)])))
+        }
     };
+    let c = own_counts(&b);
+    let n = vef(c);
     // Run only on scripts the C++ guard accepts: the voxel counts size the voxel model.
     ffi::check_heal(&args_of(targets, voxels, steps, n))
         .map_err(|e| harness(format!("heal script: {e}")))?;
-    let c = counts(&ex).ok_or_else(|| harness("export counts"))?;
-    let (mut b, exact) = import(&ex)?;
-    if exact.iter().any(|x| !x) {
-        return Err(harness("a face surface was not imported exactly"));
-    }
-    // each vertex's vertex use order and the cached gaps, as upstream has them
-    let extra = ffi::vertex_lists(&path, &block).map_err(|e| harness(format!("c++ lists: {e}")))?;
-    restore(&mut b, &extra, c)?;
 
-    let mut k = Kernel::default();
     let mut marks = Marks::default();
     let (vs, es, fs) = targets_of(targets, n);
     let mut h: HealData<H> = HealData::with_targets(&vs, &es, &fs);
@@ -1268,6 +1840,7 @@ fn rust_heal(
     h.z_cnt = voxels[2] as usize;
 
     let mut o = vec![0.0];
+    put_owner_block(&b, &mut o).map_err(|e| harness(e.to_string()))?;
     let mut stop = false;
     for s in steps {
         let code = match s {
@@ -1331,10 +1904,23 @@ fn rust_heal(
                         || !h.bad_face_props_crossed_seam.is_empty()
                         || !h.bad_face_props_near_miss_seam.is_empty()
                 }
-                Step::FixSplitEdgesAtSeam => !h.bad_face_props_crossed_seam.is_empty(),
+                Step::FixSplitEdgesAtSeam => {
+                    !h.bad_face_props_crossed_seam.is_empty()
+                        || !h.bad_face_props_crossed_pole.is_empty()
+                }
                 Step::FixSplitFaceAtSeams => !h.bad_face_props_missing_seam.is_empty(),
                 _ => false,
             };
+        let repair = last_without_state
+            && matches!(
+                s,
+                Step::FixCoinVertices
+                    | Step::FixDegenFaces
+                    | Step::FixDegenEdges
+                    | Step::FixMoveSeam
+                    | Step::FixSplitEdgesAtSeam
+                    | Step::FixSplitFaceAtSeams
+            );
         o.push(f64::from(code));
         let r: Result<bool, SolidError> = match s {
             Step::CacheEdgeProps => h.cache_edge_props(&k, &mut b, HealerOpType::CacheEdgeprops),
@@ -1493,10 +2079,10 @@ fn rust_heal(
                 }
             }
             Step::CacheFacePropsStage2 => {
-                h.cache_face_props_stage2(&k, &b, HealerOpType::CacheFaceprops2)
+                h.cache_face_props_stage2(&k, &mut b, HealerOpType::CacheFaceprops2)
             }
             Step::CacheFacePropsStage3 => {
-                h.cache_face_props_stage3(&k, &b, HealerOpType::CacheFaceprops3)
+                h.cache_face_props_stage3(&k, &mut b, HealerOpType::CacheFaceprops3)
             }
             Step::FixBadSheets => {
                 let mut lock = MarkLock::new(std::slice::from_mut(&mut k.context), 0, ALL_MARKS)
@@ -1520,7 +2106,7 @@ fn rust_heal(
                 .make_uv_trim_curves(&k, &mut b, *make, HealerOpType::MakeUvtrimcurves)
                 .map(|()| false),
             Step::FixInfiniteRegion => h
-                .fix_infinite_region(&mut b, HealerOpType::FixInfiniteRegions)
+                .fix_infinite_region(&mut k, &mut b, HealerOpType::FixInfiniteRegions)
                 .map(|()| false),
             Step::HealBrep {
                 mode,
@@ -1581,6 +2167,28 @@ fn rust_heal(
                     stop = true;
                     break;
                 }
+                // (the shim's guard: re-adding a live target this step does not remove
+                // gives it a second props record, which a catch-up that deletes topology
+                // frees through one record and dereferences through the other)
+                let readds = add.iter().flatten().any(|e| {
+                    !rm.contains(e)
+                        && match *e {
+                            EntityRef::Face(f) => b.face(f).is_ok() && h.tgt_faces.contains(&f),
+                            EntityRef::Edge(x) => b.edge(x).is_ok() && h.tgt_edges.contains(&x),
+                            EntityRef::Vertex(v) => {
+                                b.vertex(v).is_ok() && h.tgt_vertices.contains(&v)
+                            }
+                            _ => false,
+                        }
+                });
+                if readds
+                    && i64::from(*op).min(h.done_heal_op.code())
+                        >= HealerOpType::FixCoinVertices.code()
+                {
+                    o.push(NULL_DEREF);
+                    stop = true;
+                    break;
+                }
                 let rf = h.face_props_for_tgts(&rm, true);
                 let re = h.edge_props_for_tgts(&rm, true);
                 let rv = h.vertex_props_for_tgts(&rm, true);
@@ -1621,6 +2229,11 @@ fn rust_heal(
                     h.update_target_lists(&mut k, &mut b, &rm, &add, op_of(i64::from(*op)))
                         .map(|()| false)
                 }
+            }
+            Step::SeedFaceProblems { .. } | Step::SeedDegenFaces if degen_face_seeded(&h) => {
+                o.push(NULL_DEREF);
+                stop = true;
+                break;
             }
             Step::SeedFaceProblems { null_face } => {
                 for (i, &id) in h.tgt_face_props.iter().enumerate() {
@@ -1743,6 +2356,10 @@ fn rust_heal(
         }
         match r {
             Ok(new_probs) if last_without_state => {
+                if repair {
+                    put_repair_summary(&h, &b, &mut o).map_err(|e| harness(e.to_string()))?;
+                    put_owner_block(&b, &mut o).map_err(|e| harness(e.to_string()))?;
+                }
                 o.extend([0.0, flag(new_probs)]);
                 stop = true;
                 break;
@@ -1972,6 +2589,10 @@ fn gen_prob(rng: &mut Rng) -> Inputs {
 }
 
 impl UnitDiff for Runner {
+    fn reference_platform(&self) -> Option<crate::platform::ReferencePlatform> {
+        Some(crate::platform::X86_64_HASH_CASTS)
+    }
+
     fn id(&self) -> &'static str {
         "heal.heal_data_p2"
     }
@@ -2005,6 +2626,170 @@ impl UnitDiff for Runner {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// HANG-29: `--fuzz 30000` fuzz22334, a surface control point of `-1e300` in the
+    /// B-rep block; the healer's caching did not return. Both sides refuse the block
+    /// through the `topology.vertexuse` block's HANG-29 bound (`1e150`; the Rust side
+    /// applies the same pure check, `check_source`, before its own build).
+    #[test]
+    fn both_sides_refuse_a_block_in_the_overflow_range() {
+        let recorded: Value = serde_json::from_str(include_str!(
+            "../../tests/fuzz_regressions/heal.heal_data_p2.json"
+        ))
+        .unwrap();
+        for recorded in recorded["cases"].as_array().unwrap() {
+            let i: Inputs = serde_json::from_value(recorded["inputs"].clone()).unwrap();
+            for error in [run_cpp(&i), run_rust(&i)] {
+                let error = error.unwrap_err().to_string();
+                assert!(error.contains("HANG-29"), "{}: {error}", recorded["name"]);
+            }
+        }
+    }
+
+    fn built(input: &BIn) -> Brep {
+        let mut k = Kernel::default();
+        match own_brep(&mut k, input, false, false).unwrap() {
+            Built::Brep(b) => *b,
+            Built::Failed(e) => panic!("build failed: {e}"),
+        }
+    }
+
+    /// The Rust build heals the native sphere, not a plain B-spline copy (which has the
+    /// same control net but different UV evaluation), and has the C++ build's counts.
+    #[test]
+    fn own_sphere_keeps_the_analytic_surface() {
+        use solidcore::surface::surface::SurfaceKind;
+
+        for swap in [false, true] {
+            for input in [
+                BIn::Prim(Prim::Sphere { radius: 3.0, swap }),
+                BIn::Prim(Prim::SingleVertexSphere {
+                    radius: 3.0,
+                    swap,
+                    surface: 0,
+                }),
+            ] {
+                let brep = built(&input);
+                let (_, face) = brep.faces().iter().next().unwrap();
+                let surface = face.surface.as_ref().unwrap();
+                assert!(matches!(surface.kind(), SurfaceKind::Sphere(_)));
+                let (path, block) = block_of(&input, false, false).unwrap();
+                let (export, _) = export_of(&path, &block).unwrap();
+                let cpp = solidcore_ffi::units::topology_vertexuse::counts(&export).unwrap();
+                assert_eq!(own_counts(&brep), cpp, "{input:?}");
+            }
+        }
+    }
+
+    /// The single-vertex sphere is one face with one vertex loop on each face use and
+    /// one vertex holding both vertex uses, in a region of its own.
+    #[test]
+    fn own_single_vertex_sphere_records() {
+        for swap in [false, true] {
+            let brep = built(&BIn::Prim(Prim::SingleVertexSphere {
+                radius: 2.0,
+                swap,
+                surface: 0,
+            }));
+            assert_eq!(own_counts(&brep), [2, 2, 2, 1, 2, 1, 0, 0, 2, 1]);
+            let (_, v) = brep.vertices().iter().next().unwrap();
+            assert_eq!(v.point, Vec3::new(0.0, 0.0, 2.0));
+            assert_eq!(v.vertexuses.len(), 2);
+            assert!(brep.edges().is_empty());
+        }
+    }
+
+    /// A native circle/ellipse edge curve reaches healing as its analytic kind (with the
+    /// polar mapping and flags), not as a plain B-spline copy. The closing chord stays a
+    /// line.
+    #[test]
+    fn own_ellipse_face_keeps_the_native_edge_curve() {
+        use solidcore::curve::curve::p2::{CurveKind, CIRCLE_TYPE, ELLIPSE_TYPE};
+        use solidcore::geom::extent1d::Extent1d;
+
+        for circle in [false, true] {
+            let (angles, radii) = if circle {
+                ([-90.0, 90.0], [0.03, 0.03])
+            } else {
+                ([-90.0, 90.0], [0.03, 0.01])
+            };
+            let brep = built(&BIn::Prim(Prim::EllipseFace {
+                circle,
+                origin: [0.02, -0.03, 0.01],
+                axis: 0,
+                radii,
+                angles,
+                natural: [-4.0, 3.0],
+                inside_out: false,
+                oob: false,
+            }));
+            let ty = if circle { CIRCLE_TYPE } else { ELLIPSE_TYPE };
+            let mut found = 0;
+            let mut plain = 0;
+            for (_, edge) in brep.edges().iter() {
+                let Some(curve) = edge.curve.as_ref() else {
+                    continue;
+                };
+                if curve.type_code() != ty {
+                    plain += 1;
+                    continue;
+                }
+                found += 1;
+                let CurveKind::Ellipse(ellipse) = curve.kind() else {
+                    panic!("analytic edge curve changed kind");
+                };
+                assert_eq!(ellipse.is_circle_class(), circle);
+                assert_eq!(ellipse.x_radius(), radii[0]);
+                assert_eq!(ellipse.y_radius(), radii[1]);
+                assert_eq!(
+                    ellipse.step_interval(),
+                    Extent1d::from_raw(angles[0], angles[1])
+                );
+                assert_eq!(
+                    ellipse.base().natural_interval(),
+                    Extent1d::from_raw(-4.0, 3.0)
+                );
+                assert!(!ellipse.inside_out());
+                assert!(!ellipse.base().is_out_of_bounds_enabled());
+                assert!(ellipse.base().gw_nurb().is_some());
+            }
+            assert_eq!(found, 1, "circle={circle}: analytic edge curve missing");
+            assert!(plain >= 1, "circle={circle}: the closing chord disappeared");
+        }
+    }
+
+    /// Cache steps on the analytic edge still compare real edge/vertex props values.
+    #[test]
+    fn ellipse_face_heal_cache_compares_values() {
+        let input = Inputs::Heal {
+            brep: Box::new(BIn::Prim(Prim::EllipseFace {
+                circle: false,
+                origin: [0.02, -0.03, 0.01],
+                axis: 0,
+                radii: [0.03, 0.01],
+                angles: [-90.0, 270.0],
+                natural: [-4.0, 3.0],
+                inside_out: false,
+                oob: false,
+            })),
+            validate_only: false,
+            init_gaps: false,
+            targets: Targets {
+                v: Sel::All,
+                e: Sel::All,
+                f: Sel::All,
+            },
+            voxels: default_voxels(),
+            steps: vec![Step::CacheEdgeProps, Step::CacheVertexProps],
+        };
+        let cpp = run_cpp(&input).unwrap();
+        let rust = run_rust(&input).unwrap();
+        assert!(cpp.error.is_none(), "C++ failed: {cpp:?}");
+        assert!(rust.error.is_none(), "Rust failed: {rust:?}");
+        assert!(rust.deferred.is_none(), "Rust deferred: {rust:?}");
+        let diff = crate::compare(&cpp, &rust, Runner.abs_floors());
+        assert!(diff.pass() && diff.values_compared > 0, "{diff:?}");
+    }
 
     /// Object counts the C++ guard refuses are a harness error on the Rust side too,
     /// not a capacity-overflow panic or a 32 GiB object list (issue #181).

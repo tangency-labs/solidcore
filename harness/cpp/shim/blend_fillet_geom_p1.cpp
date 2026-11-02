@@ -46,6 +46,7 @@
 #include <SmExtent1d.h>
 #include <SmExtent2d.h>
 #include <SmFace.h>
+#include <SmFaceuse.h>
 #include <SmFilletCorner.h>
 #include <SmFilletGeom.h>
 #include <SmFilletIntersector.h>
@@ -474,9 +475,18 @@ struct Model
     SmFilletEdgeuse* edgeuse(int64_t e, int64_t which) const { return eu_of(edge(e), which); }
 
     // The classification object (kind, index, sub): 1 = target vertex (wire edge index, 0
-    // start / 1 end), 2 = target edge use (wire edge index, primary), 3 = target face.
+    // start / 1 end), 2 = target edge use (wire edge index, primary), 3 = target face,
+    // 4 = target edge (the SmEdge itself). Upstream pairs the classes with their objects:
+    // SM_PC_VERTEX with a vertex, SM_PC_EDGE with an SmEdge (SmFilletSolver.cpp:7605-7619,
+    // read back as SmEdge* by FindEdgeTangentAtPoint and SmFilletSolver.cpp:7665),
+    // SM_PC_EDGEUSE with an SmEdgeuse (SM_FV_CLIFF_RAIL_X_EDGE, SmFilletSolver.cpp:7041-7042,
+    // read back as SmEdgeuse* by CalcCliffRailIntEdge), SM_PC_FACE with a face; the class
+    // is read independently of the kind, so a mismatched pair is a type confusion the ops
+    // that read the object as another type must refuse.
     SmObject* pc_object(int64_t kind, int64_t index, int64_t sub) const
     {
+        if (kind == 4 && index >= 0 && (size_t)index < targetEdges.size())
+            return targetEdges[(size_t)index];
         if (kind == 1 && index >= 0 && (size_t)index < targetEdges.size())
         {
             SmVertex* vs = NULL;
@@ -488,6 +498,17 @@ struct Model
             return targetEdges[(size_t)index]->GetPrimaryEdgeuse();
         if (kind == 3 && index >= 0 && (size_t)index < targetFaces.size())
             return targetFaces[(size_t)index];
+        if (kind == 5 && index >= 0 && (size_t)index < targetFaces.size())
+        {
+            // edge use `sub` of the first loop of target face `index`: an edge use with a face
+            SmTArray<SmLoop*> loops;
+            targetFaces[(size_t)index]->GetLoops(loops);
+            SmTArray<SmEdgeuse*> eus;
+            if (loops.GetSize() > 0)
+                loops[0]->GetEdgeuses(eus);
+            if (sub >= 0 && (ULONG)sub < eus.GetSize())
+                return eus[(ULONG)sub];
+        }
         return NULL;
     }
 
@@ -505,6 +526,13 @@ struct Model
                     o.push_back(1.0);
                     o.push_back((double)i);
                     o.push_back(obj == vs ? 0.0 : 1.0);
+                    return;
+                }
+                if (obj == targetEdges[i])
+                {
+                    o.push_back(4.0);
+                    o.push_back((double)i);
+                    o.push_back(0.0);
                     return;
                 }
                 if (obj == targetEdges[i]->GetPrimaryEdgeuse())
@@ -705,7 +733,13 @@ struct Model
             e->SetFilletEdgeType((SmFilletEdgeType)etype);
             e->SetStatus((SmFilStatus)status);
             if (rd.flag())
-                e->SetCurve(read_curve(rd, ctx), TRUE);
+            {
+                // as upstream's producers: SetCurve, then the curve's owner is the edge
+                SmCurve* c = read_curve(rd, ctx);
+                e->SetCurve(c, TRUE);
+                if (c != NULL)
+                    c->SetOwner(e);
+            }
             if (rd.flag())
             {
                 double t0 = rd.num();
@@ -1665,3 +1699,16 @@ SC_EXPORT int32_t sc_blend_fillet_geom_p1_eval(int32_t op, const double* in, int
 
 // The difftest shim of unit blend.fillet_corner_p3, corner operations (it needs this file's Model).
 #include "blend_fillet_corner_p3_static.inc"
+
+// The difftest shim of unit blend.fillet_corner_p1, the SmFilletCorner methods (it needs this
+// file's Model and the p3 shim's corner builder).
+#include "blend_fillet_corner_p1_corner.inc"
+
+// The difftest shim of unit blend.fillet_geom_p5 (this file's Model, p4's base solvers).
+#include "blend_fillet_geom_p5_static.inc"
+// Wrappers of SmFilletGeom.cpp file-statics for the shim of unit blend.fillet_geom_p6.
+#include "blend_fillet_geom_p6_static.inc"
+
+// The difftest shim of unit blend.fillet_standard_solver_p2, ReCalcFilletGeom (it needs this
+// file's Model).
+#include "blend_fillet_standard_solver_p2_static.inc"

@@ -18,11 +18,14 @@
 //! error upstream cannot produce), the op's values, and for the pseudo-B-rep queries that
 //! change the model its export (`v_*`, `e_*`, `g_*` keys).
 //!
+//! Faces (the model's target faces, `classify_face_point`'s, `evaluate_mate`'s) are built
+//! on both sides as the shim's `face_of` builds them (`natural_face`).
+//!
 //! Deferred on the Rust side (unported callees): `two_pnts` past its point drops
 //! (`intersect.surface_intersector_p4`), `classify_face_point` and `fb` `split_face` of
-//! a vertex classified to the split face (`SmFace::CreateUVTrimCurves` of
-//! `topology.face_p3`, inside the wired `CalculateUVDomainFromUVTrimCurves` of
-//! `topology.face_p1`), and `fb` `cliff`
+//! a vertex classified to the split face (`SmSurface::DropCurve` of
+//! `intersect.surface_drop_lib_p3`, making the faces' UV trim curves in
+//! `CalculateUVDomainFromUVTrimCurves`), and `fb` `cliff`
 //! (`intersect.surface_drop_lib_p1`'s own unwired `SmSurfaceDropCurve::DoTrace`, whose
 //! stub prints `intersect.surface_drop_curve`). `fb` `examine` past its pre-checks is
 //! refused by the shim (no `SmFilletSolver`; see the FFI module). Fixtures flagged
@@ -30,6 +33,7 @@
 //! crashes or hangs: HANG-29, UB-166, the examine path); every other refusal is a
 //! harness error; HANG-20 bounds the four global-solver ops at `MAX_SOLVER_MAGNITUDE`).
 //! Every run has at least [`MIN_GENERATED`] generated cases.
+
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -44,7 +48,8 @@ use solidcore::curve::curve::{Curve, CurveKind};
 use solidcore::curve::line::Line;
 use solidcore::geom::extent1d::Extent1d;
 use solidcore::geom::extent2d::Extent2d;
-use solidcore::geom::tol::ZONE_TOL_3D;
+use solidcore::geom::attribute::AttributeStore;
+use solidcore::geom::tol::{USE_DEFAULT, ZONE_TOL_3D};
 use solidcore::geom::vector2d::Point2;
 use solidcore::geom::vector2d::Vec2;
 use solidcore::intersect::point_class::PointClassType;
@@ -60,8 +65,10 @@ use solidcore::nurbs::math::{CPoint, NOW};
 use solidcore::nurbs::srf_basic::Surface as NurbSurface;
 use solidcore::surface::plane::Plane;
 use solidcore::surface::surf_of_revolution::SurfOfRevolution;
-use solidcore::surface::surface::p4::NoObject;
 use solidcore::surface::surface::{Surface, SurfaceKind};
+use solidcore::topology::brep::p8::{create_face_from_surface, FaceBuildEnv};
+use solidcore::topology::edge::NotifyEnv;
+use solidcore::topology::topology_traverser::Marks;
 use solidcore::topology::{
     Brep, EdgeId, Edgeuse, EdgeuseId, FaceId, VertexId, Vertexuse, VertexuseId, VertexuseOwner,
 };
@@ -73,7 +80,9 @@ use crate::runner::default_cases;
 use crate::{Case, HarnessError, Output, Rng, UnitDiff};
 
 /// Generated cases per run, whatever `--seeds` says (it can only raise this).
-pub const MIN_GENERATED: usize = 300;
+// Keep the larger corpus canonical: it covers additional failed center trims,
+// disjoint rail intervals and unset edge intervals from #483.
+pub const MIN_GENERATED: usize = 2000;
 
 /// `blend.fillet_geom_p1` runner.
 pub struct Runner;
@@ -120,7 +129,9 @@ pub(crate) struct VertexIn {
     #[serde(default = "pc_unknown")]
     pub(crate) pc_class: i64,
     /// `0` none, `1` the start/end (`pc_sub`) vertex of target wire edge `pc_index`, `2`
-    /// its primary edge use, `3` target face `pc_index`.
+    /// its primary edge use, `3` target face `pc_index`, `4` the target wire edge itself
+    /// (an `SmEdge`, what `SM_PC_EDGE` classifies to upstream), `5` edge use `pc_sub` of
+    /// the first loop of target face `pc_index` (an edge use with a face).
     #[serde(default)]
     pub(crate) pc_kind: i64,
     #[serde(default = "minus_one")]
@@ -896,14 +907,14 @@ fn cpp(i: &Inputs, expected_rejection: bool) -> Result<Output, HarnessError> {
 
 // ---- output splitting ---------------------------------------------------------------
 
-struct Split<'a> {
-    flat: &'a [f64],
-    at: usize,
-    out: Output,
+pub(crate) struct Split<'a> {
+    pub(crate) flat: &'a [f64],
+    pub(crate) at: usize,
+    pub(crate) out: Output,
 }
 
 impl Split<'_> {
-    fn take(&mut self, k: usize) -> Result<Vec<f64>, HarnessError> {
+    pub(crate) fn take(&mut self, k: usize) -> Result<Vec<f64>, HarnessError> {
         let part = self
             .at
             .checked_add(k)
@@ -925,19 +936,19 @@ impl Split<'_> {
         Ok(x as usize)
     }
 
-    fn put(&mut self, key: &str, v: Vec<f64>) {
+    pub(crate) fn put(&mut self, key: &str, v: Vec<f64>) {
         let out = std::mem::take(&mut self.out);
         self.out = out.values(key, v);
     }
 
-    fn vals(&mut self, key: &str, k: usize) -> Result<(), HarnessError> {
+    pub(crate) fn vals(&mut self, key: &str, k: usize) -> Result<(), HarnessError> {
         let v = self.take(k)?;
         self.put(key, v);
         Ok(())
     }
 
     /// A curve record `has [dim n p m cpts knots]` under `pfx`.
-    fn curve(&mut self, pfx: &str) -> Result<(), HarnessError> {
+    pub(crate) fn curve(&mut self, pfx: &str) -> Result<(), HarnessError> {
         let has = self.take(1)?;
         let set = has.first().copied() == Some(1.0);
         self.put(&format!("{pfx}has"), has);
@@ -980,7 +991,7 @@ impl Split<'_> {
     }
 
     /// The pseudo-B-rep export.
-    fn export(&mut self) -> Result<(), HarnessError> {
+    pub(crate) fn export(&mut self) -> Result<(), HarnessError> {
         let nv = self.count()?;
         self.put("v_count", vec![nv as f64]);
         for i in 0..nv {
@@ -1172,7 +1183,7 @@ fn uv(p: [f64; 2]) -> Point2 {
 /// The `SmStatus` of a Rust error; `-1` for one upstream cannot return.
 pub(crate) fn status(e: &SolidError) -> f64 {
     match e {
-        SolidError::InvalidInput { .. } => 1007.0,
+        SolidError::InvalidInput { .. } | SolidError::PortInvariant { .. } => 1007.0,
         SolidError::Upstream { code, .. } => f64::from(*code),
         _ => -1.0,
     }
@@ -1205,6 +1216,18 @@ pub(crate) fn dump_curve(o: &mut Vec<f64>, c: Option<&Curve>) {
     o.extend_from_slice(cur.knots());
 }
 
+/// The B-spline part of a curve of a kind derived from `SmBSplineCurve`.
+pub(crate) const fn b_spline_part(c: &Curve) -> Option<&BSplineCurve> {
+    match c.kind() {
+        CurveKind::BSpline(b) => Some(b),
+        CurveKind::Line(l) => Some(l.base()),
+        CurveKind::Ellipse(e) => Some(e.base()),
+        CurveKind::Hyperbola(h) => Some(h.base()),
+        CurveKind::Parabola(p) => Some(p.base()),
+        _ => None,
+    }
+}
+
 pub(crate) fn dump_bcurve(o: &mut Vec<f64>, c: Option<&BSplineCurve>) {
     let Some(cur) = c.and_then(BSplineCurve::gw_nurb) else {
         o.push(0.0);
@@ -1228,6 +1251,14 @@ fn dump_surface(o: &mut Vec<f64>, s: Option<&Surface>) -> Result<(), HarnessErro
         Some(SurfaceKind::BSpline(bs)) => Some(bs),
         _ => None,
     };
+    dump_bspline_surface(o, bs)
+}
+
+/// The shim's `put_surface` record of a B-spline surface (`0` for none).
+pub(crate) fn dump_bspline_surface(
+    o: &mut Vec<f64>,
+    bs: Option<&BSplineSurface>,
+) -> Result<(), HarnessError> {
     let Some(sur) = bs.and_then(BSplineSurface::gw_nurb) else {
         o.push(0.0);
         return Ok(());
@@ -1316,30 +1347,64 @@ pub(crate) fn analytic_surface(k: &Kernel, s: &AnalyticSrf) -> solidcore::Result
     })
 }
 
+/// `new (ctx) SmBrep()`: an empty B-rep with the kernel's default tolerances and its
+/// infinite region.
+pub(crate) fn new_brep(k: &mut Kernel) -> Result<Brep, HarnessError> {
+    solidcore::topology::brep::p3::new_brep(k, USE_DEFAULT, USE_DEFAULT)
+        .map_err(|e| harness(e.to_string()))
+}
+
+/// The shim's `face_of`: `CreateFaceFromSurface` over the surface's natural domain, a
+/// face in its own shell of the infinite region bounded by edges on the natural trim
+/// curves (no UV trim curves yet: upstream makes them on demand with
+/// `SmSurface::DropCurve`, `intersect.surface_drop_lib_p3`), with the tolerances that
+/// sets. The shim refuses the case when upstream fails, so a Rust failure is a harness
+/// error.
+pub(crate) fn natural_face(
+    k: &mut Kernel,
+    b: &mut Brep,
+    surface: Surface,
+) -> Result<FaceId, HarnessError> {
+    let domain = surface.natural_uv_domain_with_nurb(k).map_err(|e| HarnessError::new(e.to_string()))?;
+    let mut records = solidcore::topology::topology::NotifyRecords::new();
+    let mut attributes = AttributeStore::default();
+    let key_of = super::topology_brep_p8::key_of;
+    let mut env = NotifyEnv {
+        records: &mut records,
+        attributes: &mut attributes,
+        context: None,
+        key_of: &key_of,
+    };
+    let mut marks = Marks::default();
+    let this_face = |f: FaceId| key_of(EntityRef::Face(f));
+    let mut fenv = FaceBuildEnv {
+        env: &mut env,
+        marks: &mut marks,
+        this_face: &this_face,
+    };
+    create_face_from_surface(k, b, Some(surface), &domain, &mut fenv)
+        .map_err(|e| harness(format!("CreateFaceFromSurface: {e}")))
+}
+
 /// A single face on `surface` in a fresh B-rep (`CreateFaceFromSurface` over the natural
 /// domain).
-fn face_brep(surface: Surface) -> Result<(Brep, FaceId), HarnessError> {
-    let mut b = Brep::new();
-    let domain = surface.natural_uv_domain();
-    let shell = b.add_shell().map_err(|e| harness(e.to_string()))?;
-    let f = b.add_face(shell).map_err(|e| harness(e.to_string()))?;
-    let face = b.face_mut(f).map_err(|e| harness(e.to_string()))?;
-    face.surface = Some(surface);
-    face.uv_domain = domain;
+fn face_brep(k: &mut Kernel, surface: Surface) -> Result<(Brep, FaceId), HarnessError> {
+    let mut b = new_brep(k)?;
+    let f = natural_face(k, &mut b, surface)?;
     Ok((b, f))
 }
 
 /// A wire edge on `curve` over its natural interval (`CreateWireEdgeFromCurve`): start and
 /// end vertices at the curve ends (glued into the start vertex when closer than the
 /// B-rep tolerance), the edge with two edge uses and vertex uses.
-fn wire_edge(b: &mut Brep, curve: BSplineCurve, tol: Option<f64>) -> Result<EdgeId, HarnessError> {
+fn wire_edge(k: &Kernel, b: &mut Brep, curve: BSplineCurve, tol: Option<f64>) -> Result<EdgeId, HarnessError> {
     let c = Curve::from(curve);
     let ivl = c.natural_interval();
     let ps = c
-        .evaluate_point(ivl.min())
+        .evaluate_point(k, ivl.min())
         .map_err(|e| harness(e.to_string()))?;
     let pe = c
-        .evaluate_point(ivl.max())
+        .evaluate_point(k, ivl.max())
         .map_err(|e| harness(e.to_string()))?;
     let vs = b.add_vertex(ps).map_err(|e| harness(e.to_string()))?;
     let ve = if ps.distance(pe) < ZONE_TOL_3D {
@@ -1399,32 +1464,30 @@ pub(crate) struct RustModel {
     pub(crate) fillet: Brep,
     pub(crate) fillet_edges: Vec<EdgeId>,
     pub(crate) fb: FilletBrep,
+    /// The Model's own geometries (the first `geom_count` of the arena; the shim's
+    /// `geoms` vector). Geometries the library adds later (a temporary solver's, which
+    /// upstream deletes with the solver) are not the Model's: the shim neither exports
+    /// nor addresses them.
+    pub(crate) geom_count: usize,
 }
 
 impl RustModel {
     pub(crate) fn build(m: &Model) -> Result<Self, HarnessError> {
         let h = |e: SolidError| harness(e.to_string());
-        let k = Kernel::default();
-        let mut target = Brep::new();
+        let mut k = Kernel::default();
+        let mut target = new_brep(&mut k)?;
         let mut target_edges = Vec::new();
         for c in &m.targets {
-            target_edges.push(wire_edge(&mut target, curve_of(c)?, None)?);
+            target_edges.push(wire_edge(&k, &mut target, curve_of(c)?, None)?);
         }
         let mut target_faces = Vec::new();
         for s in &m.faces {
-            let surface = surface_of(s)?;
-            let domain = surface.natural_uv_domain();
-            let shell = target.add_shell().map_err(h)?;
-            let f = target.add_face(shell).map_err(h)?;
-            let face = target.face_mut(f).map_err(h)?;
-            face.surface = Some(surface);
-            face.uv_domain = domain;
-            target_faces.push(f);
+            target_faces.push(natural_face(&mut k, &mut target, surface_of(s)?)?);
         }
         let mut fillet = Brep::new();
         let mut fillet_edges = Vec::new();
         for e in &m.fillet_brep {
-            fillet_edges.push(wire_edge(&mut fillet, curve_of(&e.curve)?, Some(e.tol))?);
+            fillet_edges.push(wire_edge(&k, &mut fillet, curve_of(&e.curve)?, Some(e.tol))?);
         }
 
         let mut fb = FilletBrep::new();
@@ -1461,6 +1524,22 @@ impl RustModel {
                 (3, Ok(i)) => Some(EntityRef::Face(
                     *target_faces.get(i).ok_or_else(|| harness("pc face"))?,
                 )),
+                (5, Ok(i)) => {
+                    // edge use `pc_sub` of the first loop of target face `i`
+                    let f = *target_faces.get(i).ok_or_else(|| harness("pc face"))?;
+                    let loops = solidcore::topology::face::p2::loops(&target, f, false, None)
+                        .map_err(h)?;
+                    let l = *loops.first().ok_or_else(|| harness("pc loop"))?;
+                    let eus = solidcore::topology::loopuse::loop_edgeuses(&target, l).map_err(h)?;
+                    let eu = usize::try_from(v.pc_sub)
+                        .ok()
+                        .and_then(|s| eus.get(s).copied())
+                        .ok_or_else(|| harness("pc loop edge use"))?;
+                    Some(EntityRef::Edgeuse(eu))
+                }
+                (4, Ok(i)) => Some(EntityRef::Edge(
+                    *target_edges.get(i).ok_or_else(|| harness("pc index"))?,
+                )),
                 _ => None,
             };
             fv.set_point_class(class, object);
@@ -1482,7 +1561,7 @@ impl RustModel {
             let mut geom = FilletGeom::new(&k, None, gtype).map_err(h)?;
             geom.status = FilStatus::from_code(g.status).ok_or_else(|| harness("bad status"))?;
             if let Some(c) = &g.center {
-                geom.center_line_curve = Some(curve_of(c)?);
+                geom.center_line_curve = Some(Curve::from(curve_of(c)?));
             }
             if let Some(s) = &g.surface {
                 geom.set_fillet_surface(Some(surface_of(s)?));
@@ -1597,6 +1676,7 @@ impl RustModel {
             fillet,
             fillet_edges,
             fb,
+            geom_count: gids.len(),
         })
     }
 
@@ -1633,7 +1713,7 @@ impl RustModel {
     }
 
     pub(crate) fn geom(&self, i: usize) -> Result<FilletGeomId, HarnessError> {
-        if i < self.fb.geoms().len() {
+        if i < self.geom_count.min(self.fb.geoms().len()) {
             Ok(FilletGeomId(i as u32))
         } else {
             Err(harness("geometry index"))
@@ -1718,6 +1798,14 @@ impl RustModel {
                 }
                 o.extend([-1.0, -1.0, 0.0]);
             }
+            Some(EntityRef::Edge(e)) => {
+                let i = self.target_edges.iter().position(|&x| x == e);
+                o.extend([
+                    if i.is_some() { 4.0 } else { -1.0 },
+                    i.map_or(-1.0, |i| i as f64),
+                    0.0,
+                ]);
+            }
             Some(EntityRef::Face(f)) => {
                 let i = self.target_faces.iter().position(|&x| x == f);
                 o.extend([
@@ -1782,8 +1870,15 @@ impl RustModel {
         for &e in es {
             let fe = self.fb.fillet_edge(e).map_err(h)?;
             let edge = b.edge(e).map_err(h)?;
-            o.push(self.vertex_index(Some(edge.vertices[0])));
-            o.push(self.vertex_index(Some(edge.vertices[1])));
+            // the shim's SmEdge::GetVertices(vs, ve): through the primary edge use and its
+            // mate, swapped unless the primary use is SM_OT_SAME (a new rail edge's uses are
+            // SM_OT_UNKNOWN); the stored pair where the uses cannot give it
+            let (vs0, ve0) = solidcore::topology::vertex::edge_vertex_pair(b, e)
+                .ok()
+                .and_then(|(s, t)| s.zip(t))
+                .unwrap_or((edge.vertices[0], edge.vertices[1]));
+            o.push(self.vertex_index(Some(vs0)));
+            o.push(self.vertex_index(Some(ve0)));
             o.push(fe.fillet_edge_type() as i64 as f64);
             o.push(fe.status() as i64 as f64);
             o.push(Self::corner_index(fe.fillet_corner()));
@@ -1801,11 +1896,17 @@ impl RustModel {
                 o.push(self.vertex_index(v));
                 dump_curve(o, r.uv_trim_curve.as_ref());
                 let g = self.fb.fillet_edgeuse(eu).map_err(h)?.fillet_geom();
-                o.push(g.map_or(-1.0, |g| f64::from(g.0)));
+                // index_of(geoms, ..): -1 for a geometry that is not the Model's
+                o.push(
+                    g.filter(|g| (g.0 as usize) < self.geom_count)
+                        .map_or(-1.0, |g| f64::from(g.0)),
+                );
             }
         }
 
+        // the shim's `geoms` (the Model's own geometries)
         let gs = self.fb.geoms();
+        let gs = gs.get(..self.geom_count).unwrap_or(gs);
         o.push(gs.len() as f64);
         for g in gs {
             o.push(g.fillet_geom_type() as i64 as f64);
@@ -1822,7 +1923,7 @@ impl RustModel {
                 o.push(self.edge_index(Some(e)));
             }
             dump_bcurve(o, g.center_line_curve());
-            dump_surface(o, g.fillet_surface())?;
+            dump_surface(o, g.fillet_surface(None).map_err(h)?)?;
             o.push(g.ref_eus.len() as f64);
             for &eu in &g.ref_eus {
                 self.put_eu(o, Some(eu));
@@ -1869,7 +1970,7 @@ macro_rules! try_status {
 }
 
 fn rust_geometry(i: &Inputs) -> Result<Rec, HarnessError> {
-    let k = Kernel::default();
+    let mut k = Kernel::default();
     let mut o = Vec::new();
     match i {
         Inputs::CleanupNoise { uv: p } => {
@@ -1901,7 +2002,7 @@ fn rust_geometry(i: &Inputs) -> Result<Rec, HarnessError> {
         Inputs::SurfaceClosure { surface, domain } => {
             let s = surface_of(surface)?;
             let dom = Extent2d::from_bounds(domain[0][0], domain[0][1], domain[1][0], domain[1][1]);
-            match try_status!(fg::set_surface_closure(&s, &dom)) {
+            match try_status!(fg::set_surface_closure(&k, &s, &dom)) {
                 Ok(c) => o.extend([0.0, c as u64 as f64]),
                 Err(st) => o.push(st),
             }
@@ -1929,7 +2030,7 @@ fn rust_geometry(i: &Inputs) -> Result<Rec, HarnessError> {
             let s = surface_of(surface)?;
             let mut q = uv(*p);
             let r =
-                fg::adjust_uv_on_seam(&s, Vec3::new(ref_dir[0], ref_dir[1], ref_dir[2]), &mut q);
+                fg::adjust_uv_on_seam(&k, &s, Vec3::new(ref_dir[0], ref_dir[1], ref_dir[2]), &mut q);
             match try_status!(r) {
                 Ok(()) => o.push(0.0),
                 Err(st) => o.push(st),
@@ -1962,10 +2063,11 @@ fn rust_geometry(i: &Inputs) -> Result<Rec, HarnessError> {
         }
         Inputs::SurfaceDropPoint { surface, pnt, tol } => {
             let s = surface_of(surface)?;
-            match try_status!(fg::surface_drop_point::<NoObject>(
+            // the solutions name the surface, as `sm_SurfaceDropPoint`'s do
+            match try_status!(fg::surface_drop_point(
                 &k,
                 &s,
-                Some(NoObject),
+                Some(fg::SurfaceHandle(&s)),
                 v3(*pnt),
                 *tol
             )) {
@@ -2009,17 +2111,18 @@ fn rust_geometry(i: &Inputs) -> Result<Rec, HarnessError> {
             match try_status!(r) {
                 Ok(x) => {
                     o.push(0.0);
-                    dump_bcurve(&mut o, x.curve_3d.as_ref());
-                    dump_bcurve(&mut o, x.surface1_uv_curve.as_ref());
-                    dump_bcurve(&mut o, x.surface2_uv_curve.as_ref());
+                    // (the C++ dumps the SmBSplineCurve outputs' NURBs)
+                    dump_bcurve(&mut o, x.curve_3d.as_ref().and_then(b_spline_part));
+                    dump_bcurve(&mut o, x.surface1_uv_curve.as_ref().and_then(b_spline_part));
+                    dump_bcurve(&mut o, x.surface2_uv_curve.as_ref().and_then(b_spline_part));
                 }
                 Err(st) => o.extend([st, 0.0, 0.0, 0.0]),
             }
             o.extend([d.x, d.y, d.z]);
         }
         Inputs::EvaluateMate { surface, uv: p } => {
-            let (b, f) = face_brep(surface_of(surface)?)?;
-            match try_status!(fg::evaluate_mate(&b, f, uv(*p))) {
+            let (b, f) = face_brep(&mut k, surface_of(surface)?)?;
+            match try_status!(fg::evaluate_mate(&k, &b, f, uv(*p))) {
                 Ok(q) => o.extend([0.0, q.x, q.y, q.z]),
                 Err(st) => o.extend([st, 0.0, 0.0, 0.0]),
             }
@@ -2028,9 +2131,9 @@ fn rust_geometry(i: &Inputs) -> Result<Rec, HarnessError> {
             match try_status!(analytic_surface(&k, surface)) {
                 Err(st) => o.extend([st, 0.0, 0.0, 0.0, 0.0]),
                 Ok(srf) => {
-                    let (b, f) = face_brep(srf)?;
+                    let (b, f) = face_brep(&mut k, srf)?;
                     o.push(0.0);
-                    match try_status!(fg::evaluate_mate(&b, f, uv(*p))) {
+                    match try_status!(fg::evaluate_mate(&k, &b, f, uv(*p))) {
                         Ok(q) => o.extend([0.0, q.x, q.y, q.z]),
                         Err(st) => o.extend([st, 0.0, 0.0, 0.0]),
                     }
@@ -2079,18 +2182,10 @@ fn rust_geometry(i: &Inputs) -> Result<Rec, HarnessError> {
             surface2,
             pos,
         } => {
-            let h = |e: SolidError| harness(e.to_string());
-            let mut b = Brep::new();
+            let mut b = new_brep(&mut k)?;
             let mut faces = Vec::new();
             for s in [surface1, surface2] {
-                let surface = surface_of(s)?;
-                let domain = surface.natural_uv_domain();
-                let shell = b.add_shell().map_err(h)?;
-                let f = b.add_face(shell).map_err(h)?;
-                let face = b.face_mut(f).map_err(h)?;
-                face.surface = Some(surface);
-                face.uv_domain = domain;
-                faces.push(f);
+                faces.push(natural_face(&mut k, &mut b, surface_of(s)?)?);
             }
             let (f1, f2) = (
                 *faces.first().ok_or_else(|| harness("face"))?,
@@ -3229,6 +3324,7 @@ impl UnitDiff for Runner {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::collections::BTreeMap;
 
     /// Mutates generated and fixture programs and feeds them to the FFI: every program
     /// the guards accept must run without crashing (a crash kills the test process) or
@@ -3486,7 +3582,7 @@ mod tests {
         };
         let cases = Runner.cases(&ctx).unwrap();
         if env("CASE_CENSUS").is_some() {
-            let mut tally = std::collections::BTreeMap::<(i32, &str), usize>::new();
+            let mut tally = BTreeMap::<(i32, &str), usize>::new();
             for case in &cases {
                 // flagged regression inputs are rejected, never passes (and the HANG-20
                 // ones loop on the Rust side too)
@@ -3533,7 +3629,7 @@ mod tests {
             let ops = env("CASE_OPS").map_or_else(|| (20..40).collect(), list);
             let per_op = env("CASE_PER_OP").map_or(usize::MAX, |s| s.parse().unwrap());
             let skip = env("CASE_SKIP").map_or_else(Vec::new, list);
-            let mut taken = std::collections::BTreeMap::<i64, usize>::new();
+            let mut taken = BTreeMap::<i64, usize>::new();
             (0..cases.len())
                 .filter(|&i| {
                     let Ok(inp) = cases[i].parse::<Inputs>() else {

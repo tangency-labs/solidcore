@@ -19,7 +19,13 @@
 //!   `has [rebuild_status] state`; `Rebuild`: the state (also after a failure);
 //!   `Transform`: the state (also after a failure); `Eq`: the other torus's
 //!   construction status, then on success `this == other`, `other == this`; `Copy`:
-//!   `state copy == this`.
+//!   `state copy == this`; `TrimDomain`: the domain after the call (`TrimWithDomain`
+//!   writes it back), then the state (also after a failure); `IsectPlane`, `Global`:
+//!   status, then on success `more ncurves curves ntypes types ndevs devs nuv1 nuv2
+//!   nnull1 nnull2` (`more` is `0` for `Global`); `IsNurb`: `found has [state]`
+//!   (`found` is the `SmBoolean`, or the status a failed `SER` returns, in the status
+//!   slot). The plane and the intersection
+//!   arguments are those of [`super::surface_sphere`] ([`Plane`], [`IsectArgs`]).
 //!
 //! The wrappers accept only what upstream handles without undefined behaviour: finite
 //! values, unit and independent placement axes (the base constructor passes the Y axis
@@ -27,6 +33,8 @@
 //! inside `[-360, 360]` at most 360 long, generator circles with independent axes and a
 //! positive radius, derivative orders up to 3.
 
+pub use super::surface_sphere::{Dom, IsectArgs, Perturb, Plane};
+use super::surface_sphere::{push_args, push_plane};
 use crate::validate::bad;
 use crate::{call_with_buffer, FfiError};
 
@@ -151,6 +159,36 @@ pub enum Op {
     },
     /// `Copy`.
     Copy,
+    /// `IntersectWithPlane` (inherited from `SmSurfOfRevolution`).
+    IsectPlane {
+        /// The plane.
+        plane: Plane,
+        /// Domains and tolerance.
+        args: IsectArgs,
+    },
+    /// `GlobalSurfaceIntersect` with a plane (inherited from `SmSurfOfRevolution`).
+    Global {
+        /// The plane.
+        plane: Plane,
+        /// Domains and tolerance.
+        args: IsectArgs,
+    },
+    /// `TrimWithDomain(SmExtent2d(u0, v0, u1, v1))` (inherited from
+    /// `SmSurfOfRevolution`).
+    TrimDomain {
+        /// The new NURB domain `[u0, v0, u1, v1]`.
+        dom: [f64; 4],
+    },
+    /// `IsNurbSurfaceTorus` on a copy of the torus's NURB, edited, as a plain B-spline
+    /// surface (`SmBSplineSurface(g, FALSE, NULL)`).
+    IsNurb {
+        /// Tolerance scale.
+        scale: f64,
+        /// Scale of the homogeneous `x`, `y`, `z`.
+        net_scale: [f64; 3],
+        /// Control point changes.
+        perturb: Vec<Perturb>,
+    },
 }
 
 impl Op {
@@ -166,6 +204,10 @@ impl Op {
             Op::Transform { .. } => 7,
             Op::Eq { .. } => 8,
             Op::Copy => 9,
+            Op::TrimDomain { .. } => 10,
+            Op::IsectPlane { .. } => 11,
+            Op::Global { .. } => 12,
+            Op::IsNurb { .. } => 13,
         }
     }
 }
@@ -189,11 +231,17 @@ fn cross(a: [f64; 3], b: [f64; 3]) -> [f64; 3] {
     [ay * bz - az * by, az * bx - ax * bz, ax * by - ay * bx]
 }
 
-/// Checks two axes are long enough and far from parallel.
+/// Checks two axes are long enough, far from parallel, and of a length whose square
+/// does not overflow: unitizing an axis of infinite length gives a zero axis, so a
+/// generator circle on it gets no NURB, which `SmSurfOfRevolution`'s constructor then
+/// evaluates (`EvaluatePoint` dereferences the NULL NURB).
 fn axes(x: [f64; 3], y: [f64; 3], what: &str) -> Result<(), FfiError> {
     finite(&x, what)?;
     finite(&y, what)?;
     let (lx, ly) = (len(x), len(y));
+    if !lx.is_finite() || !ly.is_finite() {
+        return Err(bad(format!("{what}: axis length overflows")));
+    }
     if lx < 1e-6 || ly < 1e-6 || len(cross(x, y)) < 1e-3 * lx * ly {
         return Err(bad(format!("{what}: degenerate or parallel axes")));
     }
@@ -315,6 +363,36 @@ fn push_op(o: &mut Vec<f64>, op: &Op) -> Result<(), FfiError> {
             o.extend_from_slice(&s);
         }
         Op::Eq { other } => push_torus(o, other)?,
+        Op::IsectPlane { plane, args } | Op::Global { plane, args } => {
+            push_plane(o, plane)?;
+            push_args(o, args)?;
+        }
+        Op::TrimDomain { dom } => {
+            domain(*dom, "trim domain")?;
+            o.extend_from_slice(dom);
+        }
+        Op::IsNurb {
+            scale,
+            net_scale,
+            perturb,
+        } => {
+            finite(&[*scale], "scale")?;
+            if *scale <= 0.0 {
+                return Err(bad("scale"));
+            }
+            finite(net_scale, "net scale")?;
+            if perturb.len() > 8 {
+                return Err(bad("too many control point changes"));
+            }
+            o.push(*scale);
+            o.extend_from_slice(net_scale);
+            o.push(perturb.len() as f64);
+            for p in perturb {
+                finite(&p.d, "control point change")?;
+                o.extend([p.i as f64, p.j as f64]);
+                o.extend_from_slice(&p.d);
+            }
+        }
     }
     Ok(())
 }
@@ -340,6 +418,41 @@ pub fn torus_op(t: &TorusIn, op: &Op) -> Result<Vec<f64>, FfiError> {
         unsafe {
             sys::sc_surface_torus_eval(
                 code,
+                input.as_ptr(),
+                input.len() as i64,
+                buf.as_mut_ptr(),
+                buf.len() as i64,
+                &raw mut *len,
+            )
+        }
+    })
+}
+
+/// The torus as its constructor leaves it (no `MakeNurb`; radii above `SM_EFF_ZERO`, the
+/// constructor asserts on others, a minor radius at or above the major one is allowed),
+/// then the shim's `sc::put_const_make` sequence: has-NURB, the `const`
+/// `GetNaturalUVDomain` (which makes the NURB and keeps it), has-NURB, the NURB,
+/// `HavePolarConversion`, `EvaluatePoint` at the domain's `(0.3, 0.6)`, `Copy` (status,
+/// the copy's has-NURB and NURB, `*copy == *this`, its `EvaluatePoint` at `(0.7, 0.2)`) and
+/// `Transform` by a fixed rotation and move (status, has-NURB, NURB, the natural domain,
+/// `EvaluatePoint`). The record starts with the construction status.
+///
+/// # Errors
+///
+/// Exactly the constructor guards of [`torus_op`], and radii not above `SM_EFF_ZERO`.
+pub fn const_make(t: &TorusIn) -> Result<Vec<f64>, FfiError> {
+    if !(t.major > 1e-12 && t.minor > 1e-12) {
+        return Err(bad("const_make: radii not positive"));
+    }
+    let mut input = Vec::new();
+    push_torus(&mut input, t)?;
+    call_with_buffer(16384, |buf, len| {
+        // SAFETY: input holds exactly the torus block the shim reads for op 20 (built and
+        // validated by `push_torus`); buf is valid for buf.len() writes and the shim
+        // honours the capacity; len is valid.
+        unsafe {
+            sys::sc_surface_torus_eval(
+                20,
                 input.as_ptr(),
                 input.len() as i64,
                 buf.as_mut_ptr(),

@@ -13,7 +13,8 @@
 //! |---------------|----------------------------------------------|-------------------------------|
 //! | `New`         | constructor, `GetType`, `IsKindOf`, state    | `S ch ang ar max min ratio k type..` |
 //! | `PointTest`   | `PointTest` without face (testing off or face modified) | `S enabled modified u v has_tol tol` |
-//! | `ImplantEu`   | `ImplantEdgeuse` on a hand-built tree        | `S D factor T init D k` then `k` x `C subdiv node` |
+//! | `ImplantEu`   | `ImplantEdgeuse` on a hand-built tree        | `S D factor T init D k` then `k` x `C subdiv node has_owner owner_tol` |
+//! | `ImplantPoly` | `ImplantPolyEdge`, then `ImplantEdgeuse` / `SubdivideNode` | `S D factor T S k` then `k` x `start(x y z) end(x y z) tolerance node`, `remap m` then `m` x `C subdiv node` |
 //! | `Face`        | `BuildTree`, `PointTest`, `PointClassify` on a face's cache | `S build k` then `k` x `u v has_tol tol` |
 //!
 //! Outputs (first entry the status `0` / `SmStatus`):
@@ -23,7 +24,10 @@
 //! tree (the input nodes, then the children subdivisions made, in allocation order) `marked
 //! class k eu..` (edge use indices = call indices). `Face`: (with `build`) `build_status boundary point_test have_t
 //! containment D node_count`, then per point `test_status ok object_type classify_status class
-//! object_type`.
+//! object_type`. `ImplantPoly`: polygon-call statuses, edge-use-call statuses, face extent,
+//! node count, then per node `parent c1 c2 D split marked class eu_count eu.. poly_count poly..`.
+//! Polygon handles are input indices; parent polygon lists and mixed edge-use lists are retained
+//! as upstream. `remap` exercises Rust handle mapping without changing native input handles.
 //!
 //! [`eval`] accepts only what upstream handles without undefined behaviour: well-formed clamped
 //! surfaces and curves, domains inside the surface domain, valid enumerators, bounded counts,
@@ -38,8 +42,11 @@ use crate::{call_with_buffer, FfiError};
 pub const MAX_INDEX: usize = 24;
 /// Largest NURB degree accepted by [`eval`].
 pub const MAX_DEGREE: usize = 5;
-/// Largest coordinate magnitude accepted by [`eval`].
+/// Largest ordinary coordinate magnitude accepted by [`eval`].
 pub const MAX_COORD: f64 = 1.0e6;
+// ImplantEu alone admits large finite UV data to expose Bezier-decomposition
+// roundoff. This is a fixture envelope, not a native defined-behavior threshold.
+const MAX_IMPLANT_UV_COORD: f64 = 1.0e11;
 /// Largest number of subdivision tree nodes.
 pub const MAX_NODES: usize = 256;
 /// The upstream routine run by the shim.
@@ -51,6 +58,8 @@ pub enum Op {
     PointTest,
     /// `ImplantEdgeuse`.
     ImplantEu,
+    /// Polygon edges followed by edge-use-driven subdivision, with full node lists.
+    ImplantPoly,
     /// The cache of a face: `BuildTree`, `PointTest`, `PointClassify`.
     Face,
 }
@@ -64,6 +73,7 @@ impl Op {
             Op::PointTest => 1,
             Op::ImplantEu => 2,
             Op::Face => 3,
+            Op::ImplantPoly => 4,
         }
     }
 }
@@ -86,14 +96,18 @@ crate::reader::unit_reader!(MAX_COORD);
 impl Reader<'_> {
     fn finite(&mut self) -> Result<f64, FfiError> {
         let v = self.num()?;
-        if !v.is_finite() || v.abs() > MAX_COORD {
+        if !v.is_finite() || v.abs() > 1.0e6 {
             return Err(bad("non-finite or huge value"));
         }
         Ok(v)
     }
 
+    fn coordinate(&mut self) -> Result<f64, FfiError> {
+        self.0.finite()
+    }
+
     fn finites(&mut self, k: usize) -> Result<Vec<f64>, FfiError> {
-        (0..k).map(|_| self.finite()).collect()
+        (0..k).map(|_| self.coordinate()).collect()
     }
 
     fn index(&mut self, max: usize) -> Result<usize, FfiError> {
@@ -119,10 +133,10 @@ impl Reader<'_> {
 
     fn domain(&mut self) -> Result<[f64; 4], FfiError> {
         let d = [
-            self.finite()?,
-            self.finite()?,
-            self.finite()?,
-            self.finite()?,
+            self.coordinate()?,
+            self.coordinate()?,
+            self.coordinate()?,
+            self.coordinate()?,
         ];
         if d[0] > d[2] || d[1] > d[3] {
             return Err(bad("domain not ordered"));
@@ -148,8 +162,8 @@ impl Reader<'_> {
 fn check_points(rd: &mut Reader<'_>, k: usize, two_d: bool, what: &str) -> Result<(), FfiError> {
     let mut w0 = None;
     for _ in 0..k {
-        let x = rd.num()?;
-        let y = rd.num()?;
+        rd.coordinate()?;
+        rd.coordinate()?;
         let z = rd.num()?;
         let w = rd.num()?;
         if two_d != (z == NOZ) {
@@ -165,10 +179,7 @@ fn check_points(rd: &mut Reader<'_>, k: usize, two_d: bool, what: &str) -> Resul
             return Err(bad(format!("{what}: weight out of range")));
         }
         let zz = if two_d { 0.0 } else { z };
-        if [x, y, zz]
-            .iter()
-            .any(|c| !c.is_finite() || c.abs() > MAX_COORD)
-        {
+        if !zz.is_finite() || zz.abs() > MAX_COORD {
             return Err(bad(format!("{what}: point out of range")));
         }
     }
@@ -313,6 +324,33 @@ fn validate_op(op: Op, rd: &mut Reader<'_>) -> Result<(), FfiError> {
                 curve_2d(rd)?;
                 rd.flag()?;
                 rd.opt_index(n as i64)?;
+                rd.flag()?;
+                if rd.finite()? < 0.0 {
+                    return Err(bad("negative edge owner tolerance"));
+                }
+            }
+        }
+        Op::ImplantPoly => {
+            rd.domain_in(&srf, true)?;
+            let factor = rd.finite()?;
+            if !(1.0..=32.0).contains(&factor) {
+                return Err(bad("polygon subdivision factor outside 1..=32"));
+            }
+            let n = tree(rd, &srf)?;
+            bspline_block(rd)?;
+            let count = rd.index(8)?;
+            for _ in 0..count {
+                rd.finites(6)?;
+                // SmZoneTol3d accepts zero and stores abs(value) for negatives.
+                rd.finite()?;
+                rd.index(n - 1)?;
+            }
+            rd.flag()?;
+            let count = rd.index(8)?;
+            for _ in 0..count {
+                curve_2d(rd)?;
+                rd.flag()?;
+                rd.opt_index(n as i64)?;
             }
         }
         Op::Face => {
@@ -339,6 +377,9 @@ fn validate_op(op: Op, rd: &mut Reader<'_>) -> Result<(), FfiError> {
 /// [`FfiError::InvalidArgument`] for input the shim must not see.
 pub fn validate(op: Op, input: &[f64]) -> Result<(), FfiError> {
     let mut rd = Reader::new(input);
+    if op == Op::ImplantEu {
+        rd.0 = crate::reader::Coords::new(input, MAX_IMPLANT_UV_COORD);
+    }
     validate_op(op, &mut rd)?;
     rd.done()
 }
@@ -415,5 +456,33 @@ mod tests {
         }
         input[8] = f64::NAN;
         assert!(validate(Op::New, &input).is_err());
+    }
+
+    #[test]
+    fn validates_polygon_context_and_rejects_truncation_before_cpp() {
+        let mut input = surface();
+        input.extend([0.0, 0.0, 1.0, 1.0, 4.0]); // domain and factor
+        input.extend([1.0, -1.0, -1.0, -1.0, 3.0, 2.0, 0.0, 0.0]);
+        input.extend([0.0, 0.0, 1.0, 1.0]); // root domain
+        input.extend(surface()); // polygon's original face surface
+        input.extend([1.0, 0.1, 0.2, 0.0, 0.9, 0.8, 0.0, 0.001, 0.0]);
+        input.extend([0.0, 0.0]); // no mapping, no edge-use calls
+        assert!(validate(Op::ImplantPoly, &input).is_ok());
+        for end in 0..input.len() {
+            assert!(
+                validate(Op::ImplantPoly, &input[..end]).is_err(),
+                "prefix {end}"
+            );
+        }
+        let node = input.len() - 3;
+        input[node] = 1.0; // one past the final node
+        assert!(validate(Op::ImplantPoly, &input).is_err());
+        input[node] = 0.0;
+        input[node - 1] = 0.0;
+        assert!(validate(Op::ImplantPoly, &input).is_ok());
+        input[node - 1] = -0.001;
+        assert!(validate(Op::ImplantPoly, &input).is_ok());
+        input[node - 1] = f64::NAN;
+        assert!(validate(Op::ImplantPoly, &input).is_err());
     }
 }

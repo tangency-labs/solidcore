@@ -22,6 +22,7 @@
 #include <SmEllipse.h>
 #include <SmExtent1d.h>
 #include <SmGeomUtility.h>
+#include <SmNurbsCrv.h>
 #include <SmSolutionArray.h>
 #include <SmTArray.h>
 #include <SmVector3d.h>
@@ -62,7 +63,8 @@ enum : int32_t
     OP_EDIT_PARAM = 18,
     OP_NOTIFY = 19,
     OP_IS_ARC = 20,
-    OP_LAST = 20,
+    OP_IS_NURB_CIRCLE = 21,
+    OP_LAST = 21,
 };
 
 // Constructions.
@@ -556,6 +558,56 @@ void run_op(int32_t op, Rd& rd, const SmContext& ctx, SmEllipse* a, std::vector<
         o.push_back(s1);
         break;
     }
+    case OP_IS_NURB_CIRCLE:
+    {
+        // the tested curve: A itself (virtual dispatch: a circle is copied), a plain
+        // SmBSplineCurve with A's NURB, or a raw 3D NURB `n p m cpts(x y z w) knots`
+        // (bounds and validity checked by the FFI)
+        int64_t src = rd.idx(0, 2);
+        const SmBSplineCurve* test = a;
+        SmBSplineCurve* owned = NULL;
+        if (src == 1)
+            owned = new (ctx) SmBSplineCurve(3, a->GetGwNurbPointer());
+        else if (src == 2)
+        {
+            gw_INDEX n = (gw_INDEX)rd.idx(1, 64);
+            gw_DEGREE p = (gw_DEGREE)rd.idx(1, 8);
+            gw_INDEX m = (gw_INDEX)rd.idx(2, 73);
+            if (m != n + p + 1)
+                throw Bad();
+            gw_CURVE* cur = sm_AllocateNurbCurve(n, p, m);
+            for (gw_INDEX i = 0; i <= n; i++)
+            {
+                cur->pol->Pw[i].x = rd.num();
+                cur->pol->Pw[i].y = rd.num();
+                cur->pol->Pw[i].z = rd.num();
+                cur->pol->Pw[i].w = rd.num();
+            }
+            for (gw_INDEX i = 0; i <= m; i++)
+                cur->knt->U[i] = rd.num();
+            owned = new (ctx) SmBSplineCurve(cur, 3, FALSE);
+        }
+        if (owned != NULL)
+            test = owned;
+        bool has_scale = rd.flag();
+        double scale = rd.num();
+        SmCircle* circle = NULL;
+        SmBoolean ok = has_scale ? SmCircle::IsNurbCurveCircle(ctx, test, circle, scale)
+                                 : SmCircle::IsNurbCurveCircle(ctx, test, circle);
+        o.push_back(0.0);
+        o.push_back(flg(ok));
+        if (ok)
+        {
+            if (circle == NULL)
+                throw Bad();
+            o.push_back(flg(circle->IsKindOf(SmCircle_TYPE)));
+            o.push_back(circle->GetRadius());
+            put_state(o, circle);
+        }
+        delete circle;
+        delete owned;
+        break;
+    }
     default: throw Bad();
     }
 }
@@ -659,6 +711,7 @@ SC_EXPORT int32_t sc_curve_ellipse_p1_run(const double* in, int64_t n_in, double
         return SC_ERR_ARG;
     try
     {
+        SC_NATIVE_LOCK;
         SmContext ctx;
         std::vector<double> o;
         Rd rd{in, n_in, 0};

@@ -134,7 +134,7 @@ fn key_int(k: Option<ObjectKey>) -> i64 {
 
 fn normalise(e: &SolidError) -> String {
     match e {
-        SolidError::InvalidInput { .. } => "invalid_input".into(),
+        SolidError::InvalidInput { .. } | SolidError::PortInvariant { .. } => "invalid_input".into(),
         SolidError::Upstream { code, .. } => format!("status_{code}"),
         other => format!("rust_error: {other}"),
     }
@@ -199,6 +199,7 @@ fn cpp(i: &Inputs) -> Result<Output, HarnessError> {
                 .collect();
             let r = ffi::sequence(&ops).map_err(herr)?;
             Ok(Output::new()
+                .int("n_results", r.results.len() as i64)
                 .ints("results", r.results)
                 .ints("last_add", r.last_add)
                 .ints("elems", r.elems))
@@ -297,8 +298,14 @@ fn rust(i: &Inputs) -> Result<Output, HarnessError> {
             for op in ops {
                 let res = match op {
                     SeqIn::Add(s) | SeqIn::Contains(s) => {
-                        let mut spec = rust_spec(s)?;
-                        // the sequence shim passes NULL strings
+                        // the sequence shim passes NULL strings (so the type
+                        // string indices are not looked up either)
+                        let mut spec = rust_spec(&SpecIn {
+                            owner_ts: None,
+                            other_ts: None,
+                            message: None,
+                            ..s.clone()
+                        })?;
                         spec.owner_type_string = None;
                         spec.other_type_string = None;
                         spec.message = None;
@@ -325,6 +332,7 @@ fn rust(i: &Inputs) -> Result<Output, HarnessError> {
             }
             let elems: Vec<i64> = arr.reports().iter().flat_map(report_ints).collect();
             Ok(Output::new()
+                .int("n_results", results.len() as i64)
                 .ints("results", results)
                 .ints("last_add", last_add)
                 .ints("elems", elems))

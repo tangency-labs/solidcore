@@ -3,22 +3,14 @@
 //! * `cpp`: upstream SMLib through `solidcore_ffi::units::ssi_corpus` (shim
 //!   `harness/cpp/shim/ssi_corpus.cpp`, which mirrors the corpus runner's `gsi` mode);
 //! * `rust`: the same surfaces built with solidcore's own types and
-//!   [`Surface::global_surface_intersect`], sampled the same way. Surface kinds that are
-//!   not a [`solidcore::surface::surface::SurfaceKind`] yet, and every
-//!   [`SolidError::Unported`] on the way, make the case deferred for Rust.
+//!   [`Surface::global_surface_intersect`], sampled the same way. Every
+//!   [`SolidError::Unported`] on the way makes the case deferred for Rust.
 
 use std::time::Instant;
 
-use solidcore::curve::curve::Curve;
 use solidcore::geom::extent2d::Extent2d;
 use solidcore::geom::tol::approx_tol3d;
-use solidcore::geom::vector2d::{Point2, Vec2};
-use solidcore::geom::vector3d::Vec3;
 use solidcore::kernel::Kernel;
-use solidcore::nurbs::b_spline_surface::BSplineSurface;
-use solidcore::nurbs::math::CPoint;
-use solidcore::nurbs::srf_basic::Surface as NurbSurface;
-use solidcore::surface::plane::Plane;
 use solidcore::surface::surface::Surface;
 use solidcore::SolidError;
 use solidcore_ffi::units::ssi_corpus::{self as ffi, SsiSurface, SsiSurfaceIn};
@@ -26,22 +18,15 @@ use solidcore_ffi::FfiError;
 
 use super::case::{SsiCase, SurfaceSpec};
 use super::geom::P3;
+use super::kernel::{deferred_output, rust_surface, write_intersection};
 use super::raw::{type_name, RawCurve, RawOutput, N_SAMPLES, SM_SUCCESS};
-use crate::Deferred;
 
 /// `SM_ERR`.
 const SM_ERR: i64 = 1001;
 /// `SM_ERR_INVALID_INPUT`.
 const SM_ERR_INVALID_INPUT: i64 = 1007;
 
-/// Why an engine produced no [`RawOutput`].
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum EngineFailure {
-    /// A surface could not be built (the corpus runner's exit code 3).
-    Build(String),
-    /// Anything else (bad input, C++ exception): a crash for scoring.
-    Other(String),
-}
+pub use super::EngineFailure;
 
 fn ffi_surface(spec: &SurfaceSpec, domain: Option<[f64; 4]>) -> SsiSurfaceIn {
     let surface = match spec.clone() {
@@ -253,144 +238,10 @@ fn decode(
     })
 }
 
-fn v3(p: P3) -> Vec3 {
-    Vec3::new(p[0], p[1], p[2])
-}
-
-fn deferred_output(case: &SsiCase, tol: Option<f64>, unit: &str, symbol: &str) -> RawOutput {
-    RawOutput {
-        case: case.id.clone(),
-        engine: "rust".into(),
-        status: 0,
-        approx_tol: tol,
-        deferred: Some(Deferred {
-            unit: unit.into(),
-            symbol: symbol.into(),
-        }),
-        ..RawOutput::default()
-    }
-}
-
-/// Builds a corpus surface with solidcore's types, or names the unit that must land first.
-fn rust_surface(spec: &SurfaceSpec) -> Result<Result<Surface, Deferred>, String> {
-    let deferred = |unit: &str, symbol: &str| {
-        Ok(Err(Deferred {
-            unit: unit.into(),
-            symbol: symbol.into(),
-        }))
-    };
-    match spec {
-        SurfaceSpec::Plane {
-            origin,
-            xaxis,
-            yaxis,
-            u,
-            v,
-        } => {
-            let dom = Extent2d::from_bounds(u[0], v[0], u[1], v[1]);
-            let mut plane = Plane::new(
-                v3(*origin),
-                v3(*xaxis),
-                v3(*yaxis),
-                Vec2::new(1.0, 1.0),
-                &dom,
-            );
-            // The C++ runner's `GetNaturalUVDomain()` makes the plane's NURB in place
-            // (`GetOrCreateGwNurbPointer` through a const cast); the port's query works on a
-            // copy, so make it here to start GlobalSurfaceIntersect from the same state
-            // (`IntersectWithPlane`'s parallel branch tests for the NURB).
-            match plane.make_nurb() {
-                Ok(()) => {}
-                Err(SolidError::Unported { upstream, unit }) => {
-                    return Ok(Err(Deferred {
-                        unit: unit.into(),
-                        symbol: upstream.into(),
-                    }))
-                }
-                Err(e) => return Err(format!("plane: {e}")),
-            }
-            Ok(Ok(Surface::from(plane)))
-        }
-        SurfaceSpec::Nurbs {
-            degree,
-            knots_u,
-            knots_v,
-            nu,
-            nv,
-            points,
-            weights,
-        } => {
-            if *nu == 0 || *nv == 0 || points.len() != nu * nv || weights.len() != nu * nv {
-                return Err("nurbs: bad sizes".into());
-            }
-            if knots_u.len() != nu + degree[0] + 1 || knots_v.len() != nv + degree[1] + 1 {
-                return Err("nurbs: bad knots".into());
-            }
-            // NLib control points are homogeneous: Cartesian = (x/w, y/w, z/w)
-            let net: Vec<Vec<CPoint>> = points
-                .chunks(*nv)
-                .zip(weights.chunks(*nv))
-                .map(|(row, w)| {
-                    row.iter()
-                        .zip(w)
-                        .map(|(p, &w)| CPoint::new(p[0] * w, p[1] * w, p[2] * w, w))
-                        .collect()
-                })
-                .collect();
-            let sur = NurbSurface::new(net, degree[0], degree[1], knots_u.clone(), knots_v.clone())
-                .map_err(|e| format!("nurbs: {e}"))?;
-            Ok(Ok(Surface::from(BSplineSurface::from_nurb(sur, false))))
-        }
-        // UNPORTED(surface.surface_p2): SmCylinder / SmCone need SurfaceKind variants
-        // retaining their analytic dispatch with the caller's Kernel.
-        SurfaceSpec::Cylinder { .. } => deferred(
-            "surface.surface_p2",
-            "SurfaceKind::Cylinder (SmCone dispatch through SmSurface)",
-        ),
-        SurfaceSpec::Cone { .. } => deferred(
-            "surface.surface_p2",
-            "SurfaceKind::Cone (SmCone dispatch through SmSurface)",
-        ),
-        // SmSphere is ported (surface.sphere) but has no SurfaceKind variant (the
-        // "DISPATCH GAP" in its plan notes); the enum is surface.surface_p2's
-        SurfaceSpec::Sphere { .. } => deferred(
-            "surface.surface_p2",
-            "SurfaceKind::Sphere (SmSphere dispatch through SmSurface)",
-        ),
-        // SmTorus is ported (surface.torus, green) but has no SurfaceKind variant (the
-        // "DISPATCH GAP" in its plan notes); the enum is surface.surface_p2's
-        SurfaceSpec::Torus { .. } => deferred(
-            "surface.surface_p2",
-            "SurfaceKind::Torus (SmTorus dispatch through SmSurface)",
-        ),
-    }
-}
-
-/// Samples a curve as the runner's `sample_curve` (failed evaluations skipped); an
-/// unported evaluation defers the case.
-fn sample(c: &Curve, n: i32) -> Result<(Vec<Vec3>, [f64; 2]), SolidError> {
-    let ivl = c.natural_interval();
-    let (lo, hi) = (ivl.min(), ivl.max());
-    let mut out = Vec::new();
-    for i in 0..n {
-        let t = lo + (hi - lo) * (f64::from(i) / f64::from(n - 1));
-        match c.evaluate_point(t) {
-            Ok(p) => out.push(p),
-            Err(e @ SolidError::Unported { .. }) => return Err(e),
-            Err(_) => {}
-        }
-    }
-    Ok((out, [lo, hi]))
-}
-
-fn to_p3(v: Vec3) -> P3 {
-    [v.x, v.y, v.z]
-}
-
 fn rust_status(e: &SolidError) -> (i64, Option<String>) {
     match e {
         SolidError::Upstream { code, .. } => (i64::from(*code), None),
-        SolidError::InvalidInput { .. } => (
+        SolidError::InvalidInput { .. } | SolidError::PortInvariant { .. } => (
             SM_ERR_INVALID_INPUT,
             Some(format!("SM_ERR_INVALID_INPUT ({e})")),
         ),
@@ -408,15 +259,17 @@ pub fn run_rust(case: &SsiCase, tol: Option<f64>) -> Result<RawOutput, EngineFai
         ffi_surface(spec, *dom)
             .encode()
             .map_err(|e| EngineFailure::Build(e.to_string()))?;
-        match rust_surface(spec).map_err(EngineFailure::Build)? {
+        match rust_surface(&k, spec).map_err(EngineFailure::Build)? {
             Ok(s) => {
                 let d = match dom {
                     Some(d) => Extent2d::from_bounds(d[0], d[2], d[1], d[3]),
-                    None => s.natural_uv_domain(),
+                    None => s
+                        .natural_uv_domain_with_nurb(&k)
+                        .map_err(|e| EngineFailure::Build(e.to_string()))?,
                 };
                 built.push((s, d));
             }
-            Err(d) => return Ok(deferred_output(case, tol, &d.unit, &d.symbol)),
+            Err(d) => return Ok(deferred_output(case, tol, "rust", &d.unit, &d.symbol)),
         }
     }
     let [(s1, d1), (s2, d2)] = <[(Surface, Extent2d); 2]>::try_from(built)
@@ -439,7 +292,7 @@ pub fn run_rust(case: &SsiCase, tol: Option<f64>) -> Result<RawOutput, EngineFai
     let x = match res {
         Ok(x) => x,
         Err(SolidError::Unported { upstream, unit }) => {
-            return Ok(deferred_output(case, tol, unit, upstream))
+            return Ok(deferred_output(case, tol, "rust", unit, upstream))
         }
         Err(e) => {
             let (status, name) = rust_status(&e);
@@ -448,57 +301,8 @@ pub fn run_rust(case: &SsiCase, tol: Option<f64>) -> Result<RawOutput, EngineFai
             return Ok(out);
         }
     };
-    let surfaces = [&s1, &s2];
-    for (i, c3) in x.curves_3d.iter().enumerate() {
-        let ty = x.curve_types.get(i).map_or(-1, |t| *t as i64);
-        let deviation = x.deviations.get(i).copied().unwrap_or(f64::NAN);
-        let (pts, ivl) = match sample(c3, N_SAMPLES) {
-            Ok(r) => r,
-            Err(SolidError::Unported { upstream, unit }) => {
-                return Ok(deferred_output(case, tol, unit, upstream))
-            }
-            Err(e) => return Err(EngineFailure::Other(e.to_string())),
-        };
-        let mut curve = RawCurve {
-            ty: type_name(ty).to_string(),
-            deviation,
-            interval: Some(ivl),
-            class_type: Some(c3.type_code()),
-            xyz: pts.into_iter().map(to_p3).collect(),
-            ..RawCurve::default()
-        };
-        let uvs = [&x.surface1_uv_curves, &x.surface2_uv_curves];
-        for (kk, (uvlist, surf)) in uvs.iter().zip(surfaces).enumerate() {
-            let Some(Some(uvc)) = uvlist.get(i) else {
-                continue;
-            };
-            let (uv, _) = match sample(uvc, N_SAMPLES) {
-                Ok(r) => r,
-                Err(SolidError::Unported { upstream, unit }) => {
-                    return Ok(deferred_output(case, tol, unit, upstream))
-                }
-                Err(e) => return Err(EngineFailure::Other(e.to_string())),
-            };
-            let mut at = Vec::with_capacity(uv.len());
-            for p in &uv {
-                match surf.evaluate_point(Point2::new(p.x, p.y)) {
-                    Ok(q) => at.push(to_p3(q)),
-                    Err(SolidError::Unported { upstream, unit }) => {
-                        return Ok(deferred_output(case, tol, unit, upstream))
-                    }
-                    Err(_) => at.push([f64::NAN; 3]),
-                }
-            }
-            let uv2: Vec<[f64; 2]> = uv.iter().map(|p| [p.x, p.y]).collect();
-            if kk == 0 {
-                curve.uv1 = uv2;
-                curve.s1_at_uv = at;
-            } else {
-                curve.uv2 = uv2;
-                curve.s2_at_uv = at;
-            }
-        }
-        out.curves.push(curve);
+    match write_intersection(&k, &x, [&s1, &s2], &mut out)? {
+        Ok(()) => Ok(out),
+        Err(d) => Ok(deferred_output(case, tol, "rust", &d.unit, &d.symbol)),
     }
-    Ok(out)
 }

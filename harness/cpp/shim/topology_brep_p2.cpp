@@ -13,10 +13,12 @@
 // the vertex lists) of the B-rep before the op. Ops that may change the topology (Make,
 // Merge, Mate, Replace, RayFire, Notify) output only statuses and counts after the call
 // (Make: its topology summary, read through fresh list queries)
-// (Stale: whether each face's seeded trimmed-surface cache survived);
+// (Stale: whether each face's seeded trimmed-surface cache survived; Swap: its status,
+// then the topology change tracker of the swap, sc_tracked.h, by identity only);
 // SetTol / Rebuild only read the entities they cannot delete (tolerances, UV curve
 // presence), so no pointer captured before a mutation is followed after it.
 #include "sc_topology_fixture.h"
+#include "sc_tracked.h"
 
 #include <SmCacheMgr.h>
 #include <SmPointClass.h>
@@ -41,6 +43,7 @@ enum P2Op : int32_t
     P2_REPLACE = 12,
     P2_RAYFIRE = 13,
     P2_MATE_PROBE = 14,
+    P2_MERGE_SSI = 15,
 };
 
 // The B-rep's topology after a Make op, read through fresh list queries: per region
@@ -122,55 +125,16 @@ void topology_summary(SmBrep* brep, std::vector<double>& o)
     }
 }
 
-struct EdgePeek : SmEdge
+// `n` points of `c` spread evenly over [t0, t1] (EvaluatePoint; an undefined point for a
+// failed evaluation).
+void put_curve_points(std::vector<double>& o, const SmCurve* c, double t0, double t1, int n)
 {
-    static SmCurve* SmEdge::*curve() { return &EdgePeek::m_pCurve; }
-};
-
-// A plain SmBSplineCurve of `c`'s NURB, or nullptr when `c` already is one (or a line)
-// or has no NURB (as the heal.heal_data_p2 shim).
-SmBSplineCurve* plain_curve(SmCurve* c)
-{
-    if (c == nullptr || !c->IsKindOf(SmBSplineCurve_TYPE) || c->GetType() == SmBSplineCurve_TYPE ||
-        c->GetType() == SmLine_TYPE)
-        return nullptr;
-    SmBSplineCurve* b = (SmBSplineCurve*)c;
-    gw_CURVE* nurb = b->GetGwNurbPointer();
-    if (nurb == nullptr)
-        return nullptr;
-    return new (the_context()) SmBSplineCurve(sm_AllocateAndCopyNurbCurve(nurb), b->GetDim(), FALSE);
-}
-
-// Gives every analytic face and edge a plain B-spline copy owned by it (the originals
-// are leaked), so that the Rust import of the export is exact.
-void normalise(Graph& g)
-{
-    for (SmFace* f : g.faces)
+    for (int i = 0; i < n; i++)
     {
-        SmSurface* s = f->*FPeek::srf();
-        if (s == nullptr || !s->IsKindOf(SmBSplineSurface_TYPE) || s->GetType() == SmBSplineSurface_TYPE ||
-            s->GetType() == SmPlane_TYPE)
-            continue;
-        SmBSplineSurface* b = (SmBSplineSurface*)s;
-        gw_SURFACE* nurb = b->GetGwNurbPointer();
-        if (nurb == nullptr)
-            continue;
-        SmBSplineSurface* nb = new (the_context()) SmBSplineSurface(sm_AllocateAndCopyNurbSurface(nurb), FALSE, NULL);
-        nb->GetOutOfBoundsEnabled() = b->GetOutOfBoundsEnabled();
-        nb->SetBSplineSurfaceForm(b->GetBSplineSurfaceForm());
-        if (s->GetOwner() == (SmObject*)f)
-            nb->SetOwner(f);
-        f->*FPeek::srf() = nb;
-    }
-    for (SmEdge* e : g.edges)
-    {
-        SmCurve* c = e->*EdgePeek::curve();
-        SmBSplineCurve* nc = plain_curve(c);
-        if (nc == nullptr)
-            continue;
-        if (c->GetOwner() == (SmObject*)e)
-            nc->SetOwner(e);
-        e->*EdgePeek::curve() = nc;
+        double t = t0 + (t1 - t0) * (double)i / (double)(n - 1);
+        SmPoint3d p(SM_UNDEF_DOUBLE, SM_UNDEF_DOUBLE, SM_UNDEF_DOUBLE);
+        c->EvaluatePoint(t, p);
+        put_vec(o, p);
     }
 }
 
@@ -228,7 +192,6 @@ void run(int32_t op, Rd& rd, const char* path, std::vector<double>& o)
             g.vertex(vs[i]);
     }
     walk(brep, g, true);
-    normalise(g);
     switch (op)
     {
     case P2_EXPORT: export_graph(brep, g, o); break;
@@ -379,6 +342,77 @@ void run(int32_t op, Rd& rd, const char* path, std::vector<double>& o)
             delete c;
         break;
     }
+    case P2_MERGE_SSI:
+    {
+        // MergeCurvesOnSurface with optional UV curves and intersection surface (the
+        // surface/surface/surface refinement of sm_RefineCCIToSurfaces), then the
+        // curves and the B-rep read back through fresh list queries.
+        SmFace* f = at(g.faces, rd.idx());
+        double tol = rd.num();
+        int64_t n = rd.idx();
+        SmTArray<SmCurve*> curves;
+        std::vector<SmBSplineCurve*> own;
+        for (int64_t i = 0; i < n; i++)
+        {
+            own.push_back(read_curve(rd, ctx));
+            curves.Add(own.back());
+        }
+        bool has_uv = rd.flag();
+        SmTArray<SmCurve*> uv;
+        std::vector<SmBSplineCurve*> own_uv;
+        if (has_uv)
+            for (int64_t i = 0; i < n; i++)
+            {
+                own_uv.push_back(read_curve(rd, ctx));
+                uv.Add(own_uv.back());
+            }
+        SmSurface* plane = rd.flag() ? read_surface(rd, ctx) : nullptr;
+        SmTArray<SmFace*> nf;
+        SmTArray<SmEdge*> ne;
+        SmStatus s = brep->MergeCurvesOnSurface(*f->GetSurface(), tol, curves, has_uv ? &uv : NULL, nf, ne,
+                                                FALSE, plane);
+        o.push_back(st(s));
+        o.push_back((double)nf.GetSize());
+        o.push_back((double)ne.GetSize());
+        for (SmBSplineCurve* c : own)
+        {
+            SmExtent1d ivl = c->GetNaturalInterval();
+            o.push_back((double)c->GetNumberControlPoints());
+            put_curve_points(o, c, ivl.GetMin(), ivl.GetMax(), 9);
+        }
+        SmTArray<SmEdge*> es;
+        SmTArray<SmVertex*> vs;
+        brep->GetEdges(es);
+        brep->GetVertices(vs);
+        o.push_back((double)es.GetSize());
+        for (ULONG i = 0; i < es.GetSize(); i++)
+        {
+            SmEdge* e = es[i];
+            o.push_back((double)e->GetTolerance());
+            const SmCurve* c = e->GetCurve();
+            if (c == nullptr)
+            {
+                o.push_back(-1.0);
+                continue;
+            }
+            SmExtent1d ivl = e->GetInterval();
+            o.push_back(ivl.GetMin());
+            o.push_back(ivl.GetMax());
+            put_curve_points(o, c, ivl.GetMin(), ivl.GetMax(), 3);
+        }
+        o.push_back((double)vs.GetSize());
+        for (ULONG i = 0; i < vs.GetSize(); i++)
+        {
+            put_vec(o, vs[i]->GetPoint());
+            o.push_back((double)vs[i]->GetTolerance());
+        }
+        delete plane;
+        for (SmBSplineCurve* c : own)
+            delete c;
+        for (SmBSplineCurve* c : own_uv)
+            delete c;
+        break;
+    }
     case P2_MATE:
     {
         SmEdge* e = at(g.edges, rd.idx());
@@ -496,7 +530,17 @@ void run(int32_t op, Rd& rd, const char* path, std::vector<double>& o)
         }
         break;
     }
-    case P2_SWAP: o.push_back(st(brep->SwapUV())); break;
+    case P2_SWAP:
+    {
+        // under a topology change tracker (sc_tracked.h, as topology.brep_p3's Orient):
+        // the status, the tracker's lists and events, then where those start
+        TrackedEdit te; // (after b: goes before it)
+        te.begin(brep, g);
+        o.push_back(st(brep->SwapUV()));
+        const size_t at = te.finish(o);
+        o.push_back((double)at);
+        break;
+    }
     case P2_REPLACE:
     {
         SmFace* f = at(g.faces, rd.idx());

@@ -2,26 +2,29 @@
 //! Rust: `solidcore::topology::brep::p1`.
 //!
 //! As the `topology.edgeuse_p1` runner, the C++ side builds a real `SmBrep` per call
-//! (an upstream `.smb` file, a wire edge, a face, or the `prog_test` wire network) and
-//! the Rust side imports the graph the shim exports in traversal order into a [`Brep`]
-//! (the shared import of `topology.edgeuse_p1`, plus this unit's extras: the infinite
-//! region, the editing flag, the size estimates and each vertex's vertex use list in
-//! its native order). Every op's C++ output after the build status is compared with the
-//! Rust side's as one float array (`out`): statuses (`0`, an `SmStatus` code, `-2`
-//! where upstream dereferences null), traversal indices, flags and values.
+//! (an upstream `.smb` file, a wire edge, a face, or the `prog_test` wire network). The
+//! Rust side builds every non-file source itself with the Rust kernel
+//! ([`crate::own_builder`], renumbered into the shim's traversal order) and reads an
+//! `.smb` file with the Rust reader ([`crate::own_reader::brep_in_order`], renumbered
+//! the same way): the infinite region, the editing flag, the size estimates and each
+//! vertex's vertex use list are the Rust read's own, and no C++ export reaches the Rust
+//! side. Every op's C++ output after the build status is compared with the Rust side's
+//! as one float array (`out`): statuses (`0`, an `SmStatus` code, `-2` where upstream
+//! dereferences null), traversal indices, flags and values.
 //!
 //! Selectors are taken modulo the entity count (`-1` selecting null where allowed); an
 //! op needing an entity the B-rep lacks is rejected (nothing runs on either side).
 //!
 //! **Inexact geometry.** The export carries plain B-spline curves and `SmLine`s and
-//! B-spline surfaces and `SmPlane`s exactly; other analytic kinds arrive as their
-//! B-spline part. The ops evaluating curves and surfaces (`topological` lists,
+//! B-spline surfaces, planes and supported analytic surface records exactly.
+//! Ellipse/circle edges retain their native kind, stored NURB and trim parameters.
+//! Unsupported or lossy records retain their B-spline part. The ops evaluating curves and surfaces (`topological` lists,
 //! `check_uv`) defer when the geometry they touch is inexact (as `topology.edgeuse_p1`).
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeSet;
 
 use solidcore::curve::curve::Curve;
 use solidcore::geom::attribute::{Attribute, AttributeStore, Behavior, ObjectKey};
@@ -50,9 +53,10 @@ use solidcore::topology::{
 use solidcore::{EntityRef, SolidError};
 use solidcore_ffi::units::topology_brep_p1::{self as ffi, Op, N_EXTRA_SCALARS, TARGET_TYPES};
 
+use crate::util::trim_curve::put_trim_curve;
 use super::topology_edgeuse_p1::{
-    brep_block_of, bspline_of, flag, gen_brep, gen_curve, import_with_types, path_of, push_curve,
-    sel, BrepIn, CrvIn, ImportTypes, FILES,
+    brep_block_of, bspline_of, flag, gen_brep, gen_curve, import_raw_with_types, path_of,
+    push_curve, sel, surface_of, BrepIn, CrvIn, ImportTypes, FILES,
 };
 use crate::{Case, HarnessError, Output, Rng, UnitDiff};
 
@@ -207,6 +211,13 @@ enum OpIn {
         for_tess: bool,
     },
     BrepIntersect {
+        tol: f64,
+        ang: f64,
+        want_points: bool,
+    },
+    /// Two independently constructed finite faces; no C++ graph import.
+    BrepIntersect2 {
+        other: BrepIn,
         tol: f64,
         ang: f64,
         want_points: bool,
@@ -473,6 +484,7 @@ fn resolve(op: &OpIn, c: [usize; 10]) -> Option<OpIn> {
         | OpIn::LockBox
         | OpIn::FindSide { .. }
         | OpIn::BrepIntersect { .. }
+        | OpIn::BrepIntersect2 { .. }
         | OpIn::ParallelProj { .. }
         | OpIn::Heal { .. }) => other,
     })
@@ -516,6 +528,11 @@ fn list_of(v: &[i64]) -> Vec<f64> {
 fn op_args(op: &OpIn) -> Result<(Op, Vec<f64>), HarnessError> {
     let mut a = Vec::new();
     let code = match op {
+        OpIn::BrepIntersect2 { .. } => {
+            return Err(harness(
+                "cross-body observation bypasses legacy graph import",
+            ));
+        }
         OpIn::Lists {
             which,
             attr,
@@ -740,7 +757,11 @@ fn brep_block(i: &Inputs) -> Result<Vec<f64>, HarnessError> {
 /// The C++ export of the case's B-rep (extras, then the graph).
 fn export(i: &Inputs) -> Result<Vec<f64>, HarnessError> {
     let path = path_of(i.brep.as_ref())?;
-    ffi::eval(Op::Export, &path, &brep_block(i)?).map_err(|e| harness(format!("c++ export: {e}")))
+    let block = brep_block(i)?;
+    crate::export_memo::export("topology_brep_p1", &[&path], &block, || {
+        ffi::eval(Op::Export, &path, &block)
+    })
+    .map_err(|e| harness(format!("c++ export: {e}")))
 }
 
 fn build_failure(export: &[f64]) -> Output {
@@ -750,28 +771,14 @@ fn build_failure(export: &[f64]) -> Output {
     ))
 }
 
-/// The Rust B-rep of an upstream `.smb` file at `path`, imported through this unit's
-/// export (list orders, vertex use lists and face back-links applied), for the
-/// runners of other units whose Rust side needs the file's B-rep.
-pub(crate) fn import_file(path: &str, rebuild: bool) -> Result<Brep, HarnessError> {
-    // the file block: kind 0, rebuild, validate_only, init_gaps
-    let ex = ffi::eval(Op::Export, path, &[0.0, flag(rebuild), 0.0, 0.0])
-        .map_err(|e| harness(format!("c++ export: {e}")))?;
-    let Some((_, graph_at)) = ffi::counts(&ex) else {
-        return Err(harness(format!(
-            "brep_build_status_{}",
-            ex.get(1).copied().unwrap_or(0.0)
-        )));
-    };
-    Ok(import(&ex, graph_at)?.0)
-}
-
-/// The Rust B-rep of an export with this unit's extras applied, and the geometry
-/// types of the import.
-pub(crate) fn import(ex: &[f64], graph_at: usize) -> Result<(Brep, ImportTypes), HarnessError> {
+/// The B-rep of an export with this unit's extras applied, and the geometry types of
+/// the import, its cached gaps not refilled (they stay marked as set with
+/// `SM_UNDEF_DOUBLE` placeholder values): for C++ sides that only resolve selectors on
+/// the import (the `heal.stitch_p1` / `heal.stitch_p2` runners).
+pub(crate) fn import_raw(ex: &[f64], graph_at: usize) -> Result<(Brep, ImportTypes), HarnessError> {
     let mut graph = vec![0.0];
     graph.extend_from_slice(ex.get(graph_at..).ok_or_else(|| harness("short export"))?);
-    let (mut b, types) = import_with_types(&graph)?;
+    let (mut b, types) = import_raw_with_types(&graph)?;
     let x = ex
         .get(1..1 + N_EXTRA_SCALARS)
         .ok_or_else(|| harness("short extras"))?;
@@ -854,6 +861,9 @@ pub(crate) fn import(ex: &[f64], graph_at: usize) -> Result<(Brep, ImportTypes),
         {
             let _ = surface.set_owner(Some(arena_identity(CacheObject::Face(id))));
         }
+        // the face's tolerance, as the face upstream answers GetTolerance with
+        b.sync_face_surface_tolerance(id)
+            .map_err(|e| harness(e.to_string()))?;
     }
     // the shared import leaves `m_pFU` unset: the face's upward (SAME) face use
     let ups: Vec<(FaceId, FaceuseId)> = b
@@ -869,12 +879,30 @@ pub(crate) fn import(ex: &[f64], graph_at: usize) -> Result<(Brep, ImportTypes),
             }
         }
     }
+    // the import names every geometry owner by arena identity (above); record that
+    // naming (and each owner) on the B-rep, so library queries that name geometry under
+    // another scheme's identities (a glue's notification identities, overridden by
+    // recorded owners) resolve the owners instead of failing internally
+    b.use_arena_naming().map_err(|e| harness(e.to_string()))?;
     Ok((b, types))
 }
 
 // ---- C++ side ---------------------------------------------------------------------------
 
 fn run_cpp(i: &Inputs) -> Result<Output, HarnessError> {
+    if let OpIn::BrepIntersect2 {
+        other,
+        tol,
+        ang,
+        want_points,
+    } = &i.op
+    {
+        let mut input = cross_body_input(i, other)?;
+        input.extend([*tol, *ang, flag(*want_points)]);
+        let out = ffi::eval(Op::BrepIntersect2, "", &input)
+            .map_err(|e| harness(format!("c++ cross-body: {e}")))?;
+        return intersection_output(&out);
+    }
     let ex = export(i)?;
     let Some((c, _)) = ffi::counts(&ex) else {
         return Ok(build_failure(&ex));
@@ -1008,10 +1036,10 @@ const SM_ERR_INVALID_INPUT: f64 = 1007.0;
 fn status_of(e: &SolidError) -> f64 {
     match e {
         SolidError::Upstream { code, .. } => f64::from(*code),
-        SolidError::InvalidInput { operation, .. } if *operation == "topology::brep::p1" => {
+        SolidError::InvalidInput { operation, .. } | SolidError::PortInvariant { operation, .. } if *operation == "topology::brep::p1" => {
             NULL_DEREF
         }
-        SolidError::InvalidInput { .. } => SM_ERR_INVALID_INPUT,
+        SolidError::InvalidInput { .. } | SolidError::PortInvariant { .. } => SM_ERR_INVALID_INPUT,
         _ => -9.0,
     }
 }
@@ -1076,14 +1104,16 @@ fn inexact(
     edges: Option<&[EdgeId]>,
 ) -> Option<Output> {
     let surface_types: Vec<i64> = match faces {
-        None => types.face_surface_types.clone(),
+        None => (0..types.face_surface_types.len())
+            .filter_map(|f| types.inexact_surface(f))
+            .collect(),
         Some(fs) => fs
             .iter()
-            .filter_map(|f| types.face_surface_types.get(f.index() as usize).copied())
+            .filter_map(|f| types.inexact_surface(f.index() as usize))
             .collect(),
     };
     for st in surface_types {
-        if st >= 0 && !EXACT_SURFACES.contains(&st) {
+        if !EXACT_SURFACES.contains(&st) {
             // a harness limitation, not an unported unit: the shared export of
             // `topology.edgeuse_p1` hands these surfaces over as their B-spline part
             let symbol = match st {
@@ -1091,17 +1121,19 @@ fn inexact(
                 15014 => "SmSphere face surface exported as its B-spline part",
                 15015 => "SmTorus face surface exported as its B-spline part",
                 15030 => "SmSurfOfExtrusion face surface exported as its B-spline part",
-                15031 => "SmSurfOfRevolution face surface exported as its B-spline part",
+                15020 => "SmSurfOfRevolution face surface exported as its B-spline part",
                 _ => "face surface of a kind the shared export flattens to a B-spline",
             };
             return Some(Output::deferred(HARNESS_ANALYTIC_IMPORT, symbol));
         }
     }
     let curve_types: Vec<i64> = match edges {
-        None => types.edge_curve_types.clone(),
+        None => (0..types.edge_curve_types.len())
+            .filter_map(|e| types.inexact_curve(e))
+            .collect(),
         Some(es) => es
             .iter()
-            .filter_map(|e| types.edge_curve_types.get(e.index() as usize).copied())
+            .filter_map(|e| types.inexact_curve(e.index() as usize))
             .collect(),
     };
     for t in curve_types {
@@ -1123,7 +1155,7 @@ fn ids<I: solidcore::topology::ArenaId>(v: &[I]) -> Vec<f64> {
 
 /// A curve's fingerprint, as the shim's `put_curve_id`: `-1` (none), else `1 t0 t1
 /// P(t0) P(mid) P(t1)`.
-fn curve_id(c: Option<&Curve>, out: &mut Vec<f64>) {
+fn curve_id(k: &Kernel, c: Option<&Curve>, out: &mut Vec<f64>) {
     let Some(c) = c else {
         out.push(-1.0);
         return;
@@ -1132,21 +1164,18 @@ fn curve_id(c: Option<&Curve>, out: &mut Vec<f64>) {
     let ivl = c.natural_interval();
     out.extend([ivl.min(), ivl.max()]);
     for t in [ivl.min(), ivl.mid(), ivl.max()] {
-        let p = c.evaluate_point(t).unwrap_or(Vec3::UNDEF);
+        let p = c.evaluate_point(k, t).unwrap_or(Vec3::UNDEF);
         out.extend([p.x, p.y, p.z]);
     }
 }
 
 /// The state of an edge use, as the shim's `put_eu_state`.
-fn eu_state(b: &Brep, eu: EdgeuseId, out: &mut Vec<f64>) -> Result<(), SolidError> {
+fn eu_state(k: &Kernel, b: &Brep, eu: EdgeuseId, out: &mut Vec<f64>) -> Result<(), SolidError> {
     out.push(1.0);
     let r = b.edgeuse(eu)?;
-    curve_id(r.uv_trim_curve.as_ref(), out);
-    out.push(if r.uv_trim_curve.is_some() {
-        f64::from(eu.index())
-    } else {
-        -1.0
-    });
+    put_trim_curve(k, out, r.uv_trim_curve.as_ref())?;
+    // the curve's owner, as the shim's `g.find(6, uv->GetOwner())`
+    out.push(crate::own_builder::uv_owner_index(b, eu, None));
     match r.drop_curve_fail.as_deref() {
         Some(f) => out.extend([1.0, f64::from(f.fail_status), flag(f.brep.is_some())]),
         None => out.extend([0.0, 0.0, 0.0]),
@@ -1158,10 +1187,20 @@ fn eu_state(b: &Brep, eu: EdgeuseId, out: &mut Vec<f64>) -> Result<(), SolidErro
     Ok(())
 }
 
-/// A surface block, as the shim's `put_surface` (B-spline surfaces and planes).
+/// A surface block, as the shim's `put_surface` (B-spline surfaces and planes; an
+/// `SmSurfOfRevolution` is an `SmBSplineSurface`, written as its B-spline part).
 fn put_surface(o: &mut Vec<f64>, s: &Surface) -> Result<(), HarnessError> {
-    match s.kind() {
-        SurfaceKind::Plane(p) => {
+    let base = match s.kind() {
+        SurfaceKind::BSpline(bs) => Some(bs),
+        SurfaceKind::SurfOfRevolution(r) => Some(r.base()),
+        SurfaceKind::Sphere(r) => Some(r.base().base()),
+        SurfaceKind::Torus(r) => Some(r.base().base()),
+        SurfaceKind::SurfOfExtrusion(r) => Some(r.base()),
+        SurfaceKind::Cone(r) => Some(r.rev().base()),
+        _ => None,
+    };
+    match (s.kind(), base) {
+        (SurfaceKind::Plane(p), _) => {
             o.push(1.0);
             let pos = p.position();
             for v in [pos.origin(), pos.x_axis(), pos.y_axis()] {
@@ -1172,7 +1211,7 @@ fn put_surface(o: &mut Vec<f64>, s: &Surface) -> Result<(), HarnessError> {
             let d = p.step_uv_domain();
             o.extend([d.min().x, d.min().y, d.max().x, d.max().y]);
         }
-        SurfaceKind::BSpline(bs) => {
+        (_, Some(bs)) => {
             let nurb = bs
                 .gw_nurb()
                 .ok_or_else(|| harness("blend surface without NURBS data"))?;
@@ -1222,7 +1261,7 @@ fn idx<I: solidcore::topology::ArenaId>(id: Option<I>) -> f64 {
 /// shim's graph order, and the shim re-walks the healed B-rep, so the two agree while
 /// the heal leaves the topology lists as they are; a step that reorders or adds records
 /// shows up as a disagreement, never as a silent pass.
-fn put_healed(k: &Kernel, b: &Brep, types: &ImportTypes, o: &mut Vec<f64>) -> Result<(), Fail> {
+fn put_healed(k: &Kernel, b: &Brep, o: &mut Vec<f64>) -> Result<(), Fail> {
     o.push(idx(b.infinite_region()));
     o.push(flag(b.editing_enabled()));
     o.push(b.this_model_size_estimate(k, false));
@@ -1264,19 +1303,15 @@ fn put_healed(k: &Kernel, b: &Brep, types: &ImportTypes, o: &mut Vec<f64>) -> Re
         ]);
         o.extend(ids(&fu.loopuses));
     }
-    for (id, f) in b.faces().iter() {
+    for (_, f) in b.faces().iter() {
         match f.surface.as_ref() {
             Some(s) => put_surface(o, s)?,
             None => o.push(-1.0),
         }
         let d = &f.uv_domain;
         o.extend([d.min().x, d.min().y, d.max().x, d.max().y, f.tolerance]);
-        o.push(
-            types
-                .face_surface_types
-                .get(id.index() as usize)
-                .map_or(-1.0, |&t| t as f64),
-        );
+        // `GetSurface()->GetType()` of the Rust surface itself (the shim's value)
+        o.push(f.surface.as_ref().map_or(-1.0, |s| s.type_code() as f64));
     }
     for (_, lu) in b.loopuses().iter() {
         o.extend([idx(lu.faceuse), idx(lu.loop_), idx(lu.mate)]);
@@ -1303,7 +1338,7 @@ fn put_healed(k: &Kernel, b: &Brep, types: &ImportTypes, o: &mut Vec<f64>) -> Re
             idx(eu.vertexuse),
             orient_code(eu.orientation),
         ]);
-        curve_id(eu.uv_trim_curve.as_ref(), o);
+        curve_id(k, eu.uv_trim_curve.as_ref(), o);
         match eu.drop_curve_fail.as_deref() {
             Some(f) => o.extend([1.0, f64::from(f.fail_status), flag(f.brep.is_some())]),
             None => o.extend([0.0, 0.0, 0.0]),
@@ -1313,16 +1348,12 @@ fn put_healed(k: &Kernel, b: &Brep, types: &ImportTypes, o: &mut Vec<f64>) -> Re
             flag(eu.edge_ccw_edge_gap.is_init()),
         ]);
     }
-    for (id, e) in b.edges().iter() {
+    for (_, e) in b.edges().iter() {
         o.extend([e.tolerance, e.interval.min(), e.interval.max()]);
         o.extend(ids(&e.edgeuses));
-        o.push(
-            types
-                .edge_curve_types
-                .get(id.index() as usize)
-                .map_or(-1.0, |&t| t as f64),
-        );
-        curve_id(e.curve.as_ref(), o);
+        // `GetCurve()->GetType()` of the Rust curve itself (the shim's value)
+        o.push(e.curve.as_ref().map_or(-1.0, |c| c.type_code() as f64));
+        curve_id(k, e.curve.as_ref(), o);
     }
     for (_, vu) in b.vertexuses().iter() {
         o.push(idx(vu.vertex));
@@ -1349,6 +1380,9 @@ fn run_rust_op(
 ) -> Result<Result<Vec<f64>, Output>, Fail> {
     let mut o: Vec<f64> = Vec::new();
     match op {
+        OpIn::BrepIntersect2 { .. } => {
+            return Err(harness("cross-body observation bypasses legacy graph import").into());
+        }
         OpIn::Lists {
             which,
             attr,
@@ -1481,7 +1515,7 @@ fn run_rust_op(
                 other => {
                     return Err(Fail::Harness(harness(format!(
                         "unknown SmSetRegionVoidType code {other}"
-                    ))))
+                    ))));
                 }
             };
             let r = match mode {
@@ -1660,6 +1694,18 @@ fn run_rust_op(
                         })
                         .collect();
                     o.extend(list_of(&counts));
+                    for (_, shell) in b.shells().iter() {
+                        let members = shell.get_faceuses()?;
+                        o.extend(ids(&members));
+                        for member in members {
+                            let (next, previous) =
+                                solidcore::topology::shell::faceuse_sibling_links(b, member)?;
+                            o.extend(
+                                [next, previous]
+                                    .map(|id| id.map_or(-1.0, |id| f64::from(id.index()))),
+                            );
+                        }
+                    }
                 }
                 Err(e) => o.push(status_of(&e)),
             }
@@ -1721,7 +1767,15 @@ fn run_rust_op(
                 marks.mark(k, Entity::Face(f), mark);
             }
             let swaps = !marks.is_marked(k, Entity::Face(f), mark);
-            match bp1::swap_face_uv(k, b, &mut marks, f, mark) {
+            let mut records = solidcore::topology::topology::NotifyRecords::new();
+            let mut attrs = AttributeStore::default();
+            let mut env = solidcore::topology::edge::NotifyEnv {
+                records: &mut records,
+                attributes: &mut attrs,
+                context: None,
+                key_of: &key_of,
+            };
+            match bp1::swap_face_uv(k, b, &mut marks, f, mark, &mut env) {
                 Err(e) if !e.is_unported() => return Ok(Ok(vec![status_of(&e)])),
                 r => r?,
             }
@@ -1737,7 +1791,7 @@ fn run_rust_op(
             let d = b.face(f)?.uv_domain;
             o.extend([d.min().x, d.min().y, d.max().x, d.max().y]);
             if swaps {
-                put_healed(k, b, types, &mut o)?;
+                put_healed(k, b, &mut o)?;
             }
         }
         OpIn::CheckUv { eu } => {
@@ -1808,7 +1862,7 @@ fn run_rust_op(
             if let Some(d) = inexact(types, Some(&[]), Some(&edges)) {
                 return Ok(Err(d));
             }
-            let mut records = BTreeMap::new();
+            let mut records = solidcore::topology::topology::NotifyRecords::new();
             let mut attrs = AttributeStore::default();
             let mut env = solidcore::topology::edge::NotifyEnv {
                 records: &mut records,
@@ -1877,7 +1931,7 @@ fn run_rust_op(
                 other => {
                     return Err(Fail::Harness(harness(format!(
                         "unknown orientation code {other}"
-                    ))))
+                    ))));
                 }
             };
             let r = bp1::make_vertex_split_uv_trim_curve(
@@ -1896,8 +1950,8 @@ fn run_rust_op(
                 Err(e) if e.is_unported() => return Err(e.into()),
                 Err(e) => o.push(status_of(&e)),
             }
-            eu_state(b, eo, &mut o)?;
-            eu_state(b, en, &mut o)?;
+            eu_state(k, b, eo, &mut o)?;
+            eu_state(k, b, en, &mut o)?;
             for eu in [eo, en] {
                 o.push(match b.edgeuse(eu)?.edge {
                     Some(e) => b.edge(e)?.tolerance,
@@ -1910,8 +1964,8 @@ fn run_rust_op(
             ang,
             want_points,
         } => {
-            let other = b.clone();
-            let (curves, points) = bp1::brep_intersect(k, b, &other, *tol, *ang, *want_points)?;
+            // the B-rep against itself, as the shim's `brep->BrepIntersect(ctx, brep, ..)`
+            let (curves, points) = bp1::brep_intersect_self(k, b, *tol, *ang, *want_points)?;
             o.extend([
                 0.0,
                 curves.len() as f64,
@@ -1953,6 +2007,21 @@ fn run_rust_op(
             dir,
         } => {
             let id = |i: i64| (i >= 0).then(|| EdgeuseId::from_index(i as u32));
+            // a blend (flag != 0) samples both edge uses' face surfaces (DropPoint,
+            // normals, directional derivatives): an analytic surface the export hands
+            // over as its B-spline part takes other paths in C++ (e.g.
+            // SmSurfOfRevolution::DropPointFast), so those cases are not comparable
+            if *f != 0 {
+                if let (Some(e1), Some(e2)) = (id(*eu1), id(*eu2)) {
+                    let face = solidcore::topology::edgeuse::p1::face;
+                    let has_edges = b.edgeuse(e1)?.edge.is_some() && b.edgeuse(e2)?.edge.is_some();
+                    if let (true, Some(f1), Some(f2)) = (has_edges, face(b, e1)?, face(b, e2)?) {
+                        if let Some(d) = inexact(types, Some(&[f1, f2]), Some(&[])) {
+                            return Ok(Err(d));
+                        }
+                    }
+                }
+            }
             match bp1::create_edge_edge_blend(
                 k,
                 u64::from(*f),
@@ -1977,13 +2046,29 @@ fn run_rust_op(
             eu2,
             dir,
         } => {
-            // the second B-rep in its own arena, imported from its own C++ export
-            let block2 = brep_block_of(Some(other), false, false)?;
-            let ex2 = ffi::eval(Op::Export, "", &block2)
-                .map_err(|e| harness(format!("c++ export of the second B-rep: {e}")))?;
-            let (_, graph_at2) =
-                ffi::counts(&ex2).ok_or_else(|| harness("the second B-rep does not build"))?;
-            let (mut b2, _) = import(&ex2, graph_at2)?;
+            // the second B-rep in its own arena, built by the Rust kernel
+            let mut b2 = match crate::own_builder::build(k, other, false, false)? {
+                Some(crate::own_builder::Built::Brep(b2)) => *b2,
+                Some(crate::own_builder::Built::Failed(e)) if e.is_unported() => {
+                    return Err(e.into());
+                }
+                Some(crate::own_builder::Built::Failed(_)) => {
+                    return Err(harness("the second B-rep does not build").into());
+                }
+                None => {
+                    // an `.smb` file: read by the Rust reader
+                    let conv = &crate::own_builder::Conventions::EDGEUSE_GRAPH;
+                    match crate::own_reader::brep_in_order(k, other, false, false, conv)? {
+                        crate::own_builder::Built::Brep(b2) => *b2,
+                        crate::own_builder::Built::Failed(e) if e.is_unported() => {
+                            return Err(e.into());
+                        }
+                        crate::own_builder::Built::Failed(_) => {
+                            return Err(harness("the second B-rep does not build").into());
+                        }
+                    }
+                }
+            };
             let id = |i: i64| (i >= 0).then(|| EdgeuseId::from_index(i as u32));
             match bp1::create_edge_edge_blend(
                 k,
@@ -2019,7 +2104,7 @@ fn run_rust_op(
             if let Some(d) = inexact(types, None, Some(&[])) {
                 return Ok(Err(d));
             }
-            let c = bspline_of(curve)?;
+            let c = Curve::from(bspline_of(curve)?);
             let opts = bp1::ParallelProjectionOptions {
                 projection_distance: *dist,
                 approx_tol_3d: *tol,
@@ -2037,7 +2122,7 @@ fn run_rust_op(
                         Some(cs) => {
                             o.push(cs.len() as f64);
                             for c in &cs {
-                                curve_id(Some(c), &mut o);
+                                curve_id(k, Some(c), &mut o);
                             }
                         }
                     }
@@ -2046,7 +2131,7 @@ fn run_rust_op(
                         Some(cs) => {
                             o.push(cs.len() as f64);
                             for c in &cs {
-                                curve_id(c.as_ref(), &mut o);
+                                curve_id(k, c.as_ref(), &mut o);
                             }
                         }
                     }
@@ -2074,25 +2159,33 @@ fn run_rust_op(
                 return Ok(Err(d));
             }
             o.push(0.0);
-            put_healed(k, b, types, &mut o)?;
+            put_healed(k, b, &mut o)?;
         }
     }
     Ok(Ok(o))
 }
 
 fn run_rust(i: &Inputs) -> Result<Output, HarnessError> {
-    let ex = export(i)?;
-    let Some((c, graph_at)) = ffi::counts(&ex) else {
-        return Ok(build_failure(&ex));
+    if let OpIn::BrepIntersect2 {
+        other,
+        tol,
+        ang,
+        want_points,
+    } = &i.op
+    {
+        return run_rust_intersection(i, other, *tol, *ang, *want_points);
+    }
+    let mut k = Kernel::default();
+    let (mut b, types, c) = match rust_brep(&mut k, i)? {
+        Ok(x) => x,
+        Err(o) => return Ok(o),
     };
-    let (mut b, types) = import(&ex, graph_at)?;
     let Some(op) = resolve(&i.op, c) else {
         return Ok(no_entity());
     };
     if let Some(refused) = refused_input(&op) {
         return Ok(refused);
     }
-    let mut k = Kernel::default();
     match run_rust_op(&mut k, &mut b, &types, &op) {
         Ok(Ok(o)) => Ok(guarded_output(o)),
         Ok(Err(o)) => Ok(o),
@@ -2102,6 +2195,320 @@ fn run_rust(i: &Inputs) -> Result<Output, HarnessError> {
         },
         Err(Fail::Harness(h)) => Err(h),
     }
+}
+
+/// The Rust B-rep of the case, its geometry types and entity counts, or the output of
+/// a failed build: shim-built sources are built by the Rust kernel
+/// ([`crate::own_builder`]); `.smb` file sources are read by the Rust reader
+/// ([`crate::own_reader::brep_in_order`]).
+fn rust_brep(
+    k: &mut Kernel,
+    i: &Inputs,
+) -> Result<crate::own_builder::RustBrep<(Brep, ImportTypes, [usize; 10])>, HarnessError> {
+    use crate::own_builder::{build, build_status, counts, Built};
+    let src = i
+        .brep
+        .as_ref()
+        .ok_or_else(|| harness("B-rep op without brep"))?;
+    match build(k, src, i.validate_only, i.init_gaps)? {
+        Some(Built::Brep(b)) => {
+            let b = *b;
+            // geometry owners are arena identities with the naming left `Unknown`, as
+            // this unit's `.smb` import leaves it on main
+            let c = counts(&b);
+            Ok(Ok((b, ImportTypes::default(), c)))
+        }
+        Some(Built::Failed(e)) => match Output::unported(&e) {
+            Some(o) => Ok(Err(o)),
+            None => Ok(Err(Output::err(format!(
+                "brep_build_status_{}",
+                build_status(&e)
+            )))),
+        },
+        None => {
+            // an `.smb` file: the Rust reader's B-rep in the shim's traversal order, its
+            // geometry owned as the Rust reader owns it (no C++ export reaches the Rust
+            // side)
+            let conv = &crate::own_builder::Conventions::EDGEUSE_GRAPH;
+            match crate::own_reader::brep_in_order(k, src, i.validate_only, i.init_gaps, conv)? {
+                Built::Brep(b) => {
+                    let b = *b;
+                    let c = counts(&b);
+                    Ok(Ok((b, ImportTypes::default(), c)))
+                }
+                Built::Failed(e) => match Output::unported(&e) {
+                    Some(o) => Ok(Err(o)),
+                    None => Ok(Err(Output::err(format!(
+                        "brep_build_status_{}",
+                        build_status(&e)
+                    )))),
+                },
+            }
+        }
+    }
+}
+
+// ---- independent cross-body observation -------------------------------------------------
+
+const INTERSECTION_SAMPLES: [f64; 6] = [0.0, 0.17, 0.37, 0.5, 0.83, 1.0];
+
+fn cross_body_input(i: &Inputs, other: &BrepIn) -> Result<Vec<f64>, HarnessError> {
+    if !matches!(i.brep, Some(BrepIn::Face { .. })) || !matches!(other, BrepIn::Face { .. }) {
+        return Err(harness(
+            "cross-body intersection needs two real face blocks",
+        ));
+    }
+    let mut input = brep_block(i)?;
+    input.extend(brep_block_of(Some(other), false, false)?);
+    Ok(input)
+}
+
+fn independent_face(k: &mut Kernel, input: &BrepIn) -> Result<(Brep, f64), Fail> {
+    let BrepIn::Face { surface, dom } = input else {
+        return Err(harness("cross-body intersection needs a face").into());
+    };
+    // Match native `new (ctx) SmBrep()` and the executed kernel fixtures:
+    // a bare arena lacks the infinite region and constructor naming/tolerances.
+    let mut b = solidcore::topology::brep::p3::new_brep(k, tol::USE_DEFAULT, tol::USE_DEFAULT)?;
+    let surface = surface_of(surface)?;
+    let mut state = solidcore::topology::brep::p2::ArenaNotifyState::new(&b);
+    let mut env = state.env(None);
+    let mut marks = Marks::default();
+    let this_face = |face| arena_identity(CacheObject::Face(face));
+    let mut fenv = solidcore::topology::brep::p8::FaceBuildEnv {
+        env: &mut env,
+        marks: &mut marks,
+        this_face: &this_face,
+    };
+    let domain = Extent2d::from_bounds(dom[0], dom[1], dom[2], dom[3]);
+    let status = match solidcore::topology::brep::p8::create_face_from_surface(
+        k,
+        &mut b,
+        Some(surface),
+        &domain,
+        &mut fenv,
+    ) {
+        Ok(_) => 0.0,
+        Err(e) if e.is_unported() => return Err(e.into()),
+        Err(e) => {
+            eprintln!("cross-body face construction failed: {e:?}; {e}; domain={domain:?}");
+            status_of(&e)
+        }
+    };
+    Ok((b, status))
+}
+
+fn put_intersection_curve(k: &Kernel, curve: &Curve, out: &mut Vec<f64>) -> Result<(), Fail> {
+    use solidcore::curve::curve::CurveKind;
+    let domain = curve.natural_interval();
+    out.extend([curve.type_code() as f64, domain.min(), domain.max()]);
+    for fraction in INTERSECTION_SAMPLES {
+        match curve.evaluate_point(k, domain.evaluate(fraction)) {
+            Ok(point) => {
+                out.push(0.0);
+                out.extend(point.to_array());
+            }
+            Err(e) if e.is_unported() => return Err(e.into()),
+            Err(e) => out.push(status_of(&e)),
+        }
+    }
+    // Preserve dynamic type while observing the inherited native B-spline net.
+    // Other concrete kinds still retain every sample and their actual type.
+    let spline = match curve.kind() {
+        CurveKind::BSpline(c) => Some(c),
+        CurveKind::Line(c) => Some(c.base()),
+        CurveKind::Ellipse(c) => Some(c.base()),
+        CurveKind::Hyperbola(c) => Some(c.base()),
+        CurveKind::Parabola(c) => Some(c.base()),
+        _ => None,
+    };
+    out.push(flag(spline.is_some()));
+    if let Some(spline) = spline {
+        out.extend([spline.dim() as f64, flag(spline.gw_nurb().is_some())]);
+        if let Some(net) = spline.gw_nurb() {
+            out.extend([net.n() as f64, net.degree() as f64, net.m() as f64]);
+            for p in net.cpts() {
+                out.extend([p.x, p.y, p.z, p.w]);
+            }
+            out.extend_from_slice(net.knots());
+        }
+    }
+    Ok(())
+}
+
+fn run_rust_intersection(
+    i: &Inputs,
+    other: &BrepIn,
+    tol: f64,
+    ang: f64,
+    want_points: bool,
+) -> Result<Output, HarnessError> {
+    cross_body_input(i, other)?; // same input-kind check, no native construction/import
+    let run = || -> Result<Output, Fail> {
+        let mut k = Kernel::default();
+        let first = i
+            .brep
+            .as_ref()
+            .ok_or_else(|| harness("missing first face"))?;
+        let (mut b, first_status) = independent_face(&mut k, first)?;
+        let (mut second, second_status) = independent_face(&mut k, other)?;
+        b.set_validate_only(i.validate_only);
+        if i.init_gaps && first_status == 0.0 {
+            let vertexuses: Vec<_> = b.vertexuses().iter().map(|(id, _)| id).collect();
+            for vu in vertexuses {
+                solidcore::topology::vertexuse::vertex_face_gap(&k, &mut b, vu, false)?;
+            }
+            let edgeuses: Vec<_> = b.edgeuses().iter().map(|(id, _)| id).collect();
+            for eu in edgeuses {
+                solidcore::topology::edgeuse::p1::max_edge_face_gap(&k, &mut b, eu, false)?;
+                solidcore::topology::edgeuse::p1::edge_ccw_edge_gap(&k, &mut b, eu, false)?;
+            }
+        }
+        let ran = first_status == 0.0 && second_status == 0.0;
+        let mut out = vec![first_status, second_status, flag(ran)];
+        if ran {
+            let (curves, points) =
+                bp1::brep_intersect_mut(&k, &mut b, &mut second, tol, ang, want_points)?;
+            out.extend([
+                0.0,
+                curves.len() as f64,
+                points.as_ref().map_or(-1.0, |p| p.len() as f64),
+            ]);
+            for curve in &curves {
+                put_intersection_curve(&k, curve, &mut out)?;
+            }
+            if let Some(points) = points {
+                for point in points {
+                    out.extend(point.to_array());
+                }
+            }
+        }
+        Ok(intersection_output(&out)?)
+    };
+    match run() {
+        Ok(out) => Ok(out),
+        Err(Fail::Solid(e)) => {
+            Output::unported(&e).ok_or_else(|| harness(format!("rust cross-body: {e}")))
+        }
+        Err(Fail::Harness(e)) => Err(e),
+    }
+}
+
+/// Checked native-output cursor: counts are bounded by remaining scalars before
+/// iteration/copying. No capacity is allocated from an unchecked declared count.
+struct IntersectionReader<'a> {
+    input: &'a [f64],
+    at: usize,
+}
+
+impl IntersectionReader<'_> {
+    fn take(&mut self, n: usize) -> Result<&[f64], HarnessError> {
+        let end = self
+            .at
+            .checked_add(n)
+            .ok_or_else(|| harness("intersection output overflow"))?;
+        let values = self
+            .input
+            .get(self.at..end)
+            .ok_or_else(|| harness("short intersection output"))?;
+        self.at = end;
+        Ok(values)
+    }
+    fn integer(&mut self) -> Result<i64, HarnessError> {
+        let value = self
+            .take(1)?
+            .first()
+            .copied()
+            .ok_or_else(|| harness("short intersection output"))?;
+        if !value.is_finite() || value.fract() != 0.0 || value.abs() > (1_u64 << 53) as f64 {
+            return Err(harness("invalid intersection integer"));
+        }
+        Ok(value as i64)
+    }
+    fn count(&mut self, minimum: usize) -> Result<usize, HarnessError> {
+        let count =
+            usize::try_from(self.integer()?).map_err(|_| harness("negative intersection count"))?;
+        if count > self.input.len().saturating_sub(self.at) / minimum {
+            return Err(harness("intersection count exceeds available output"));
+        }
+        Ok(count)
+    }
+    fn flag(&mut self) -> Result<i64, HarnessError> {
+        let value = self.integer()?;
+        if !(0..=1).contains(&value) {
+            return Err(harness("invalid intersection flag"));
+        }
+        Ok(value)
+    }
+}
+
+fn intersection_output(raw: &[f64]) -> Result<Output, HarnessError> {
+    let mut rd = IntersectionReader { input: raw, at: 0 };
+    let first = rd.integer()?;
+    let second = rd.integer()?;
+    let ran = rd.flag()?;
+    let mut out = Output::new()
+        .ints("intersection.build_status", vec![first, second])
+        .int("intersection.ran", ran);
+    if ran == 1 {
+        out = out.int("intersection.status", rd.integer()?);
+        let curves = rd.count(10)?;
+        let points = rd.integer()?;
+        if points < -1 {
+            return Err(harness("invalid optional point count"));
+        }
+        out = out.ints("intersection.counts", vec![curves as i64, points]);
+        for i in 0..curves {
+            let prefix = format!("intersection.curve.{i}");
+            out = out
+                .int(&format!("{prefix}.kind"), rd.integer()?)
+                .values(&format!("{prefix}.domain"), rd.take(2)?.to_vec());
+            for j in 0..INTERSECTION_SAMPLES.len() {
+                let status = rd.integer()?;
+                out = out.int(&format!("{prefix}.sample.{j}.status"), status);
+                if status == 0 {
+                    out = out.values(&format!("{prefix}.sample.{j}.xyz"), rd.take(3)?.to_vec());
+                }
+            }
+            let spline = rd.flag()?;
+            out = out.int(&format!("{prefix}.is_bspline"), spline);
+            if spline == 1 {
+                let dim = rd.integer()?;
+                let has_nurb = rd.flag()?;
+                out = out.ints(&format!("{prefix}.spline"), vec![dim, has_nurb]);
+                if has_nurb == 1 {
+                    let n = rd.count(4)?;
+                    let degree = rd.integer()?;
+                    let m = rd.count(1)?;
+                    let controls = n
+                        .checked_add(1)
+                        .and_then(|n| n.checked_mul(4))
+                        .ok_or_else(|| harness("intersection net size overflow"))?;
+                    let knots = m
+                        .checked_add(1)
+                        .ok_or_else(|| harness("intersection knot count overflow"))?;
+                    out = out
+                        .ints(&format!("{prefix}.shape"), vec![n as i64, degree, m as i64])
+                        .values(
+                            &format!("{prefix}.weighted_controls"),
+                            rd.take(controls)?.to_vec(),
+                        )
+                        .values(&format!("{prefix}.knots"), rd.take(knots)?.to_vec());
+                }
+            }
+        }
+        if points >= 0 {
+            let count = usize::try_from(points)
+                .ok()
+                .and_then(|n| n.checked_mul(3))
+                .ok_or_else(|| harness("intersection points overflow"))?;
+            out = out.values("intersection.points", rd.take(count)?.to_vec());
+        }
+    }
+    if rd.at != raw.len() {
+        return Err(harness("trailing intersection output"));
+    }
+    Ok(out)
 }
 
 // ---- generated cases --------------------------------------------------------------------
@@ -2346,5 +2753,99 @@ impl UnitDiff for Runner {
             op,
         };
         serde_json::to_value(i).ok()
+    }
+}
+
+#[cfg(test)]
+mod cross_body_tests {
+    use super::*;
+    use crate::compare::compare;
+
+    fn transverse() -> Inputs {
+        let fixture: Value = serde_json::from_str(include_str!(
+            "../../../../fixtures/topology.brep_p1/cross_body.json"
+        ))
+        .unwrap();
+        let case = fixture["cases"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|case| case["name"] == "cross_body_transverse")
+            .unwrap();
+        serde_json::from_value(case["inputs"].clone()).unwrap()
+    }
+
+    #[test]
+    fn cross_body_actual_geometry_and_targeted_sensitivity() {
+        let i = transverse();
+        let cpp = run_cpp(&i).unwrap();
+        let rust = run_rust(&i).unwrap();
+        let diff = compare(&cpp, &rust, &[]);
+        assert!(diff.pass(), "{diff:?}");
+        assert_eq!(cpp.ints["intersection.counts"], vec![1, 0]);
+        assert_eq!(cpp.ints["intersection.curve.0.kind"], vec![14033]);
+        assert!(cpp.values["intersection.curve.0.weighted_controls"].len() >= 12);
+        for key in [
+            "intersection.curve.0.domain",
+            "intersection.curve.0.sample.1.xyz",
+            "intersection.curve.0.weighted_controls",
+            "intersection.curve.0.knots",
+        ] {
+            let mut changed = rust.clone();
+            changed.values.get_mut(key).unwrap()[0] += 0.125;
+            assert!(
+                !compare(&cpp, &changed, &[]).pass(),
+                "missed perturbation: {key}"
+            );
+        }
+        let mut changed = rust.clone();
+        changed.ints.get_mut("intersection.curve.0.kind").unwrap()[0] += 1;
+        assert!(
+            !compare(&cpp, &changed, &[]).pass(),
+            "missed dynamic curve kind"
+        );
+        let mut changed = rust;
+        changed.ints.get_mut("intersection.counts").unwrap()[1] = -1;
+        changed.values.remove("intersection.points");
+        assert!(
+            !compare(&cpp, &changed, &[]).pass(),
+            "missed optional point presence"
+        );
+    }
+
+    #[test]
+    fn cross_body_decoder_bounds_and_optional_points() {
+        let enabled = intersection_output(&[0., 0., 1., 0., 0., 0.]).unwrap();
+        let disabled = intersection_output(&[0., 0., 1., 0., 0., -1.]).unwrap();
+        assert!(enabled.values.contains_key("intersection.points"));
+        assert!(!disabled.values.contains_key("intersection.points"));
+        assert!(!compare(&enabled, &disabled, &[]).pass());
+        for raw in [
+            vec![],
+            vec![0., 0., 1., 0., 1e15, -1.],
+            vec![0., 0., 1., 0., 0., 1e15],
+            vec![0., 0., 1., 0., 0., -2.],
+            vec![0., 0., 0., 42.],
+        ] {
+            assert!(intersection_output(&raw).is_err());
+        }
+        let failure = intersection_output(&[1007., 0., 0.]).unwrap();
+        assert_eq!(failure.ints["intersection.build_status"], vec![1007, 0]);
+        assert!(!failure.ints.contains_key("intersection.status"));
+        // Unknown non-B-spline types are observed, not skipped or flattened.
+        let mut raw = vec![0., 0., 1., 0., 1., -1., 19999., 0., 1.];
+        for _ in INTERSECTION_SAMPLES {
+            raw.extend([0., 1., 2., 3.]);
+        }
+        raw.push(0.);
+        let unknown = intersection_output(&raw).unwrap();
+        assert_eq!(unknown.ints["intersection.curve.0.kind"], vec![19999]);
+        assert_eq!(
+            unknown.values["intersection.curve.0.sample.5.xyz"],
+            vec![1., 2., 3.]
+        );
+        for end in 0..raw.len() {
+            assert!(intersection_output(&raw[..end]).is_err());
+        }
     }
 }

@@ -7,6 +7,7 @@
 //! | Rust                                         | Upstream               |
 //! |----------------------------------------------|------------------------|
 //! | [`create_sweep_scale`], [`SweepScaleOptions`] | `N_CreateSweepScale`   |
+//! | [`create_sweep_scale_with_placements`]       | `N_CreateSweepScale` with the fork's `placed` |
 //! | [`fill_n_sided_hole`], [`NSidedFill`]        | `N_FillNSidedHole`     |
 //!
 //! Deviations:
@@ -30,6 +31,9 @@
 //!   arrays (`k` beyond the given derivative curves, a frame parameter past the
 //!   sampled ones, a polyline without segments) the functions return
 //!   [`SolidError::InvalidInput`].
+//! - `N_CreateSweepScale`: a trajectory, cross section or sweep degree above `32767`
+//!   (upstream's `NL_DEGREE` is a `short`, so it cannot be expressed there) is
+//!   `InvalidInput`.
 
 use crate::error::{NlibCode, Result, SolidError};
 use crate::math::Vec3;
@@ -169,7 +173,7 @@ fn weight_section(c: &mut Curve, wt: f64, rat_c: bool) {
 ///
 /// The trajectory is split into its linear and curved pieces (a degree-1 trajectory
 /// must be a line); each piece (degree elevated to `deg` when interpolating it) is
-/// sampled by a polyline within `E / 2` (at most [`MAXPTS`] segments, the tolerance
+/// sampled by a polyline within `E / 2` (at most `MAXPTS` segments, the tolerance
 /// growing tenfold until then), refined to enough samples for the degree or the
 /// scaling curve. At every sample the (scaled) cross section is placed in the frame
 /// `x = T'/|T'|`, `z` from `curZ` or the projection normal method from `z0`, `y = z x
@@ -191,6 +195,41 @@ pub fn create_sweep_scale(
     z0: Vec3,
     opt: &SweepScaleOptions<'_>,
 ) -> Result<Surface> {
+    sweep_scale(cur_t, cur_c, z0, opt, None)
+}
+
+/// The local systems a sweep placed its cross section on (the SolidCraft fork's
+/// `placed` output of `N_CreateSweepScale`, tangency-labs/smlib 5d3939e): the frames
+/// `(OL, XL, YL, ZL)` of the first, the middle (of all placed, in order: index
+/// `n / 2` of `n`) and the last section.
+pub type SweepPlacements = [Frame; 3];
+
+/// [`create_sweep_scale`] that also reports where it placed the cross section
+/// ([`SweepPlacements`]; the SolidCraft fork's `placed` output, tangency-labs/smlib
+/// 5d3939e, #1450). The surface is the same as [`create_sweep_scale`]'s.
+///
+/// # Errors
+///
+/// Those of [`create_sweep_scale`].
+pub fn create_sweep_scale_with_placements(
+    cur_t: &Curve,
+    cur_c: &Curve,
+    z0: Vec3,
+    opt: &SweepScaleOptions<'_>,
+) -> Result<(Surface, SweepPlacements)> {
+    let mut placed = [Frame::default(); 3];
+    let surface = sweep_scale(cur_t, cur_c, z0, opt, Some(&mut placed))?;
+    Ok((surface, placed))
+}
+
+/// `N_CreateSweepScale` with the fork's optional `placed` output.
+fn sweep_scale(
+    cur_t: &Curve,
+    cur_c: &Curve,
+    z0: Vec3,
+    opt: &SweepScaleOptions<'_>,
+    mut placed: Option<&mut SweepPlacements>,
+) -> Result<Surface> {
     const OP: &str = OP_SWEEP;
     let SweepScaleOptions {
         cur_z,
@@ -202,8 +241,12 @@ pub fn create_sweep_scale(
         e,
     } = *opt;
 
+    // Degrees upstream cannot express (`NL_DEGREE` is a `short`).
+    super::degree(deg, OP)?;
+    super::degree(cur_c.degree(), OP)?;
+
     // Get local notation.
-    let pt = cur_t.degree();
+    let pt = super::degree(cur_t.degree(), OP)?;
     let mut ruled = false;
 
     // Decompose trajectory into linear and curved pieces.
@@ -373,6 +416,10 @@ pub fn create_sweep_scale(
 
     let mut result: Option<Surface> = None;
 
+    // SolidCraft fork (5d3939e): the sections placed so far, and in all (see `placed`).
+    let mut placed_at = 0usize;
+    let n_placed: usize = seg_pars.iter().map(Vec::len).sum();
+
     // The big loop over the trajectory segments.
     for (ii, seg) in segs.iter().enumerate() {
         let sp = rf(&seg_pars, ii, OP)?;
@@ -414,6 +461,18 @@ pub fn create_sweep_scale(
 
             let yl = zl.cross(xl);
             let rma = transform_matrix_from_axes(world, Frame::new(ol, xl, yl, zl))?;
+
+            // SolidCraft fork (5d3939e): the local systems of the first, middle and last
+            // sections.
+            if let Some(placed) = placed.as_deref_mut() {
+                let slots = [0, n_placed / 2, n_placed.saturating_sub(1)];
+                for (slot, frame) in slots.iter().zip(placed.iter_mut()) {
+                    if placed_at == *slot {
+                        *frame = Frame::new(ol, xl, yl, zl);
+                    }
+                }
+            }
+            placed_at += 1;
 
             if jj == 0 || jj == np {
                 let zsrc = match cur_z {
@@ -738,6 +797,107 @@ fn computed_derivative(
     Ok(der_a)
 }
 
+/// WR-461 (#1170): shortens the cross-boundary derivative `top_deriv` across the
+/// inner curve `top` where the bicubic blend from `bottom` would leave the tangent
+/// plane of `bottom` (spanned by its tangent and `bottom_deriv`) to the side away from
+/// `top`. Along `v` the blend's height above that plane is a cubic Bezier with control
+/// heights `0, 0, D - dv m / 3, D` (`D` the height of `top`, `m` the derivative's
+/// normal component, `dv` the parameter length); with all four on `top`'s side the
+/// curve is too, so a control height on the other side is what has to be removed. At
+/// every inner control point of `top` where that happens the factor that brings it to
+/// zero is found, and the smallest factor scales the derivative's control points
+/// `2..=n-3` together: a single factor keeps the direction, so G1 across `top`, and the
+/// four end control points (the corner values and the twists that the neighbouring
+/// curves share) are untouched. The condition is sufficient, not necessary: it also
+/// acts, slightly, where the blend dips below the plane by less than the neighbour's
+/// own curvature leaves room for (a round's surface lies below its tangent plane).
+/// A quadrilateral whose curves are not compatible (one control point per index) or
+/// whose parameter length is not positive is left alone. The plane is the tangent
+/// plane at the Greville points, so "inside the neighbour" is exact for a planar
+/// neighbour only.
+fn limit_cross_deriv(
+    bottom: &Curve,
+    bottom_deriv: &Curve,
+    top: &Curve,
+    top_deriv: &mut Curve,
+    dv: f64,
+) -> Result<()> {
+    const OP: &str = OP_FILL;
+    let n = top.cpts().len();
+    let p = top.degree();
+    if bottom.cpts().len() != n
+        || bottom_deriv.cpts().len() != n
+        || top_deriv.cpts().len() != n
+        || dv <= 0.0
+    {
+        return Ok(());
+    }
+    let knots = top.knots().to_vec();
+    let mut scale = 1.0_f64;
+    // the factor is found at every inner control point, but applied only to 2..=n-3:
+    // control points 0, 1, n-2 and n-1 are the corner values and twists that the
+    // neighbouring curves share
+    for j in 1..n.saturating_sub(1) {
+        // Greville abscissa of control point j.
+        let xi = match knots.get(j + 1..j + 1 + p) {
+            Some(s) if p > 0 => s.iter().sum::<f64>() / p as f64,
+            _ => continue,
+        };
+        let b = bottom.eval(xi, Side::Left)?;
+        let t = top.eval(xi, Side::Left)?;
+        let normal = deriv1(bottom, xi, OP)?.cross(bottom_deriv.eval(xi, Side::Left)?);
+        let l = normal.length();
+        if l <= 0.0 {
+            continue;
+        }
+        let normal = normal / l;
+        let height = (t - b).dot(normal);
+        let cp = at(top_deriv.cpts(), j, OP)?;
+        let m = Vec3::new(cp.x, cp.y, cp.z).dot(normal);
+        // `height` and `m` are nonzero here: `inner` is on the other side of zero.
+        if height * (height - dv / 3.0 * m) < 0.0 {
+            scale = scale.min(3.0 * height / (dv * m));
+        }
+    }
+    if scale < 1.0 {
+        for c in top_deriv
+            .cpts_mut()
+            .iter_mut()
+            .take(n.saturating_sub(2))
+            .skip(2)
+        {
+            c.x *= scale;
+            c.y *= scale;
+            c.z *= scale;
+        }
+    }
+    Ok(())
+}
+
+/// [`limit_cross_deriv`] on both inner-curve derivatives of every quadrilateral.
+fn limit_inner_cross_derivs(net: &mut Net, k: usize) -> Result<()> {
+    const OP: &str = OP_FILL;
+    for i in 0..=k {
+        let a = prev(i, k);
+        let (u0, ur) = rf(&net.cur_l, i, OP)?.param_bounds();
+        let (v0, vs) = rf(&net.cur_r, a, OP)?.param_bounds();
+        let (du, dv) = (ur - u0, vs - v0);
+        let (bottom, bottom_deriv, top) = (
+            rf(&net.cur_l, i, OP)?.clone(),
+            rf(&net.der_l, i, OP)?.clone(),
+            rf(&net.cur_i, a, OP)?.clone(),
+        );
+        limit_cross_deriv(&bottom, &bottom_deriv, &top, mt(&mut net.bdr_l, a, OP)?, dv)?;
+        let (left, left_deriv, right) = (
+            rf(&net.cur_r, a, OP)?.clone(),
+            rf(&net.der_r, a, OP)?.clone(),
+            rf(&net.cur_i, i, OP)?.clone(),
+        );
+        limit_cross_deriv(&left, &left_deriv, &right, mt(&mut net.bdr_r, i, OP)?, du)?;
+    }
+    Ok(())
+}
+
 /// Fills an n-sided hole with `k + 1` patches (upstream `N_FillNSidedHole`).
 ///
 /// Given `k + 1 >= 3` non-rational boundary curves `cur` (the end of `cur[i]` is the
@@ -761,9 +921,27 @@ fn computed_derivative(
 /// the module notes.
 pub fn fill_n_sided_hole(
     cur: &mut [Curve],
+    der: Option<&mut [Option<Curve>]>,
+    eps: f64,
+    center: Option<(Vec3, Vec3)>,
+) -> Result<NSidedFill> {
+    fill_n_sided_hole_with(cur, der, eps, center, false)
+}
+
+/// [`fill_n_sided_hole`] with the opt-in fix of WR-461 (#1170): with `stay_inside`,
+/// the cross-boundary derivatives across the inner curves are shortened where their
+/// cubic blend from the opposite boundary would cross that boundary's tangent
+/// plane (see `limit_inner_cross_derivs`).
+///
+/// # Errors
+///
+/// As [`fill_n_sided_hole`].
+pub fn fill_n_sided_hole_with(
+    cur: &mut [Curve],
     mut der: Option<&mut [Option<Curve>]>,
     eps: f64,
     center: Option<(Vec3, Vec3)>,
+    stay_inside: bool,
 ) -> Result<NSidedFill> {
     const OP: &str = OP_FILL;
 
@@ -1188,6 +1366,10 @@ pub fn fill_n_sided_hole(
         net.make_compatible(i, k)?;
     }
 
+    if stay_inside {
+        limit_inner_cross_derivs(&mut net, k)?;
+    }
+
     // Fit bicubically blended Coons patches into each rectangular hole.
     let mut sur_a: Vec<Surface> = Vec::with_capacity(k + 1);
     for i in 0..=k {
@@ -1410,5 +1592,26 @@ mod tests {
                 ..
             })
         ));
+    }
+
+    #[test]
+    fn absurd_degrees_are_errors() {
+        // fuzz (nlib.srf_adv_p6 fuzz00016, fuzz00101): degrees of i64::MAX reached the
+        // curve tools and the cross tangent sampling.
+        let t = arc_traj();
+        let c = section();
+        let opts = SweepScaleOptions {
+            e: 1e-2,
+            deg: i64::MAX as usize,
+            ..SweepScaleOptions::default()
+        };
+        assert!(create_sweep_scale(&t, &c, Vec3::Z, &opts).is_err());
+        let bad = Curve::new(c.cpts().to_vec(), i64::MAX as usize, c.knots().to_vec()).unwrap();
+        let opts = SweepScaleOptions {
+            e: 1e-2,
+            ..SweepScaleOptions::default()
+        };
+        assert!(create_sweep_scale(&t, &bad, Vec3::Z, &opts).is_err());
+        assert!(create_sweep_scale(&bad, &c, Vec3::Z, &opts).is_err());
     }
 }

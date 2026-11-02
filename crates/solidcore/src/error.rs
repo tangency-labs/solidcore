@@ -8,12 +8,20 @@
 //! | [`SolidError`]              | non-`SM_SUCCESS` `SmStatus` values               |
 //! | [`SolidError::InvalidInput`]| `SM_ERR_INVALID_INPUT`                           |
 //! | [`SolidError::Upstream`]    | any other `SM_ERR_*` code, carried numerically   |
+//! | [`SolidError::PortInvariant`] | none: a port-side invariant or adapter failure  |
+//! | [`SolidError::sm_status`]   | the `SmStatus` an error stands for, when exact    |
 //! | [`SM_ERR`], [`SM_ERR_WARNING`], [`SolidError::sm_err`] | `SM_ERR`, `SM_ERR_WARNING`, `SE(SM_ERR)` |
+//! | [`SM_SUCCESS`] .. [`SM_ERR_TESS_FAIL_FACE`] | every `SmStatus` number in `SmMessages.h` (the one definition; other modules re-export these) |
+//! | [`SM_ERR_OFFSET_WALLS_TOUCH`], [`SM_ERR_OFFSET_EDGE_VANISHES`], [`SolidError::is_offset_edge_vanishes`] | the fork's `SmMessages.h` statuses 1042, 1043 |
+//! | [`SM_TRUE`], [`SM_FALSE`], [`SM_UNSURE`] | `TRUE`, `FALSE`, `UNSURE` of an `SmBoolean` (`SmTypes.h`) |
 //! | [`SM_ERR_NULL_POINTER`], [`SolidError::null_pointer`] | `SM_ERR_NULL_POINTER`, `NER(...)` on `NULL` |
 //! | [`SolidError::Nlib`], [`SolidError::nlib`] | NLib error flag + `NL_ERROR.eno` (`N_ErrSet`) |
 //! | [`SolidError::Unported`], [`SolidError::unported`], [`SolidError::is_unported`] | (none: call into a unit not ported yet) |
+//! | [`SolidError::Cancelled`], [`SolidError::cancelled`], [`SolidError::is_cancelled`] | (none: cooperative cancellation on [`crate::Kernel`]) |
 //! | [`SolidError::invalid_input`] | (none: out-of-range reads / null dereferences upstream) |
 //! | `ignored`, `ignore_status` (crate) | a call whose `SmStatus` upstream ignores    |
+//! | `checked_or_ignored` (crate) | per-call opt-in status policy (#483); legacy helpers unchanged |
+//! | `native_failure` (crate)  | a call whose failing `SmStatus` upstream handles (internal errors propagate) |
 //! | [`NlibCode`]                | `NL_*_ERR` numbers (`source/SMLib/inc/NL_DataStruct.h`) |
 //! | `?` operator                | `SER(...)` / `NER(...)` (return on error)        |
 //!
@@ -34,19 +42,91 @@ use crate::topology::{
 pub type Result<T, E = SolidError> = core::result::Result<T, E>;
 
 /// The value of a call whose failing status upstream ignores: `Some` on success,
-/// `None` on failure; [`SolidError::Unported`] still propagates.
+/// `None` on failure; unported dependencies, cooperative cancellations, and preparation
+/// requests still propagate.
 pub(crate) fn ignored<T>(r: Result<T>) -> Result<Option<T>> {
     match r {
         Ok(v) => Ok(Some(v)),
-        Err(e) if e.is_unported() => Err(e),
+        Err(e)
+            if e.is_unported_or_cancelled()
+                || matches!(e, SolidError::PreparationRequired { .. }) =>
+        {
+            Err(e)
+        }
+        Err(_) => Ok(None),
+    }
+}
+
+/// The value of a call whose failing status upstream handles as an ordinary failure
+/// (e.g. a missed ray it retries): `Some` on success, `None` on an error that may stand
+/// for an upstream status. Errors with no upstream status propagate, so a port defect
+/// cannot pass for that failure: [`SolidError::Unported`], [`SolidError::Cancelled`],
+/// [`SolidError::PreparationRequired`], [`SolidError::PortInvariant`] (an owner, handle
+/// or identity the port could not resolve) and [`SolidError::NotFound`] (a stale typed
+/// id, where upstream follows a pointer).
+pub(crate) fn native_failure<T>(r: Result<T>) -> Result<Option<T>> {
+    match r {
+        Ok(v) => Ok(Some(v)),
+        Err(
+            e @ (SolidError::Unported { .. }
+            | SolidError::Cancelled { .. }
+            | SolidError::PreparationRequired { .. }
+            | SolidError::PortInvariant { .. }
+            | SolidError::NotFound { .. }),
+        ) => Err(e),
         Err(_) => Ok(None),
     }
 }
 
 /// The status of a call upstream ignores: `Ok` for any result but
-/// [`SolidError::Unported`].
+/// [`SolidError::Unported`], [`SolidError::Cancelled`], or
+/// [`SolidError::PreparationRequired`].
 pub(crate) fn ignore_status<T>(r: Result<T>) -> Result<()> {
     ignored(r).map(|_| ())
+}
+
+/// Select the status policy of one audited call. Checked mode returns the original
+/// error before its output is read; legacy mode preserves `ignored` unchanged.
+pub(crate) fn checked_or_ignored<T>(r: Result<T>, checked: bool) -> Result<Option<T>> {
+    if checked {
+        r.map(Some)
+    } else {
+        ignored(r)
+    }
+}
+
+/// One call whose status SMLib drops and the fork passes on (`SER(...)`): with `pass_on`
+/// its error is returned to the caller (through the outer `?`); without it the result
+/// is handed back unchanged for the site's own ignore policy, so
+/// `ignore_status(passed_on(r, false)?)` is `ignore_status(r)`.
+pub(crate) fn passed_on<T>(r: Result<T>, pass_on: bool) -> Result<Result<T>> {
+    match r {
+        Err(e) if pass_on || e.is_unported_or_cancelled() => Err(e),
+        r => Ok(r),
+    }
+}
+
+/// [`ignore_status`] of a call whose status SMLib drops and the fork passes on: with
+/// `pass_on` its error is returned, without it the status is ignored as upstream.
+pub(crate) fn ignore_or_pass_on<T>(r: Result<T>, pass_on: bool) -> Result<()> {
+    ignore_status(passed_on(r, pass_on)?)
+}
+
+/// [`ignored`] of a call whose status SMLib drops and the fork passes on: with
+/// `pass_on` its error is returned, without it the value is `None` as upstream.
+pub(crate) fn ignored_or_pass_on<T>(r: Result<T>, pass_on: bool) -> Result<Option<T>> {
+    ignored(passed_on(r, pass_on)?)
+}
+
+/// A status a port helper hands back in its value (`None` for `SM_SUCCESS`) where SMLib
+/// drops it and the fork passes it on (`SER(...)`): returned as the error with
+/// `pass_on`, dropped without (except [`SolidError::Unported`] and
+/// [`SolidError::Cancelled`], which always propagate).
+pub(crate) fn status_passed_on(status: Option<SolidError>, pass_on: bool) -> Result<()> {
+    match status {
+        Some(e) if pass_on || e.is_unported_or_cancelled() => Err(e),
+        _ => Ok(()),
+    }
 }
 
 /// A reference to one topological entity, used as error context.
@@ -168,6 +248,78 @@ pub enum SolidError {
         code: NlibCode,
     },
 
+    /// A port-side invariant or adapter failure with no upstream `SmStatus`: an owner,
+    /// handle or identity the port could not resolve where upstream follows a pointer
+    /// (e.g. a B-rep cache owner that is not in the source B-rep under the caller's
+    /// identities). It signals a caller error or a solidcore defect, never a status an
+    /// upstream caller handles, so [`SolidError::sm_status`] is `None`. Code that
+    /// treated these as [`SolidError::InvalidInput`] before the variant existed matches
+    /// both, so results and difftest statuses are unchanged.
+    #[error("{operation}: port invariant: {reason}")]
+    PortInvariant {
+        /// Operation whose invariant failed.
+        operation: &'static str,
+        /// What did not hold.
+        reason: &'static str,
+    },
+
+    /// An operation-local read-only solve needs its mutable caller to prepare geometry.
+    /// This control signal is not an unported dependency or a native status.
+    #[error("{operation}: geometry preparation required")]
+    PreparationRequired {
+        /// The read-only operation that must be resumed after preparation.
+        operation: &'static str,
+    },
+
+    /// The caller's cooperative cancellation check on [`crate::Kernel`] fired.
+    ///
+    /// Propagates past status-ignoring fallbacks alongside [`SolidError::Unported`], so a
+    /// cancelled call never returns a partial or different geometric result.
+    #[error("operation cancelled in {operation}")]
+    Cancelled {
+        /// Operation `path::to::fn` that observed cancellation.
+        operation: &'static str,
+    },
+
+    /// A fillet refused as too large, with the largest size that builds it (opt-in
+    /// `fixes.fillet_gn_section_generator`; the fork's `GetFitRadius`, `GetFitEdge` and
+    /// `GetFitKind`, which its capi's `smlib_blend_fit_size` reads, tangency-labs/smlib#79,
+    /// WR-696). Returned in place of [`SolidError::Upstream`] with the same `code` (so
+    /// [`SolidError::sm_status`] is unchanged) only when the refusal's cause has a size; a
+    /// radius law has none. The fillet session's error info holds the reason and comment.
+    #[error("{operation}: upstream status {code}: refused; the largest size that builds is {}", .fit.size)]
+    FilletRefused {
+        /// Operation that failed.
+        operation: &'static str,
+        /// Upstream `SmStatus` value (`SM_ERR`).
+        code: i32,
+        /// Entity involved, when known (the [`SolidError::Upstream`]'s).
+        entity: Option<EntityRef>,
+        /// Why there is no room, when the refusal names it.
+        reason: Option<crate::blend::fillet_executive::NoRoomReason>,
+        /// The largest size that builds: a radius, a factor on two offsets, or a chord
+        /// width ([`crate::blend::fillet_executive::FitKind`]), for the blend of `fit.edge`.
+        fit: crate::blend::fillet_executive::FitSize<EdgeId>,
+    },
+
+    /// A shell, offset or thicken refused by the one construction (opt-in
+    /// `fixes.shell_one_construction`, WR-718, tangency-labs/solidcore#2350), naming the
+    /// largest size that works when there is one. `code` is the status (`SM_ERR`) so
+    /// [`SolidError::sm_status`] reads as an ordinary failure.
+    #[error("{operation}: upstream status {code}: refused ({refusal:?}){}", fmt_size(*.size))]
+    ShellRefused {
+        /// Operation that refused.
+        operation: &'static str,
+        /// Upstream `SmStatus` value (`SM_ERR`).
+        code: i32,
+        /// The entity refused (a face of the input), when known.
+        entity: Option<EntityRef>,
+        /// Why.
+        refusal: crate::offset::construction::ShellRefusal,
+        /// The largest size (a wall thickness) that works, when there is one.
+        size: Option<f64>,
+    },
+
     /// The operation needs an upstream routine whose unit is not ported yet (a
     /// plan back-edge). Returned instead of panicking or faking a result; every
     /// site carries a `// UNPORTED(<unit id>): <C++ symbol>` comment so the
@@ -244,24 +396,122 @@ impl NlibCode {
     }
 }
 
-/// Upstream `SmStatus` value `SM_ERR` (generic failure), as carried by
-/// [`SolidError::Upstream`].
+// ---- SmStatus codes -------------------------------------------------------------------
+//
+// The one definition of every `SmStatus` number; other modules re-export or `use` these.
+// The values are pinned against `SmMessages.h` by `tests::status_codes_match_upstream`.
+
+/// Upstream `SmStatus` value `SM_SUCCESS` (`1000L`, `SmMessages.h`): success: the status every `SE`/`SER` macro tests against. No [`SolidError`] carries it; it is the value of status fields such as `BrepCheck::pointers_status` on success.
+pub const SM_SUCCESS: i32 = 1000;
+
+/// Upstream `SmStatus` value `SM_ERR` (`1001L`, `SmMessages.h`): generic failure.
 pub const SM_ERR: i32 = 1001;
 
-/// Upstream `SmStatus` value `SM_ERR_NULL_POINTER`, as carried by
-/// [`SolidError::Upstream`].
+/// Upstream `SmStatus` value `SM_ERR_OUT_OF_MEMORY` (`1002L`, `SmMessages.h`): an allocation failed (where an `SM_API` wrapper returns it for an output array that cannot grow).
+pub const SM_ERR_OUT_OF_MEMORY: i32 = 1002;
+
+/// Upstream `SmStatus` value `SM_ERR_UNKNOWN` (`1003L`, `SmMessages.h`): unknown error (`ERR_MSG`).
+pub const SM_ERR_UNKNOWN: i32 = 1003;
+
+/// Upstream `SmStatus` value `SM_ERR_FATAL` (`1004L`, `SmMessages.h`): fatal error.
+pub const SM_ERR_FATAL: i32 = 1004;
+
+/// Upstream `SmStatus` value `SM_ERR_ASSERT_FAILURE` (`1005L`, `SmMessages.h`): an assertion failed (`AE`/`AER`/`AERN`).
+pub const SM_ERR_ASSERT_FAILURE: i32 = 1005;
+
+/// Upstream `SmStatus` value `SM_ERR_NULL_POINTER` (`1006L`, `SmMessages.h`): a `NULL` pointer (`NER`).
 pub const SM_ERR_NULL_POINTER: i32 = 1006;
 
-/// Upstream `SmStatus` value `SM_ERR_WARNING`, as carried by [`SolidError::Upstream`].
+/// Upstream `SmStatus` value `SM_ERR_INVALID_INPUT` (`1007L`, `SmMessages.h`): invalid input. Its usual mapping is [`SolidError::InvalidInput`]; it is carried by [`SolidError::Upstream`] where a function returns it as a status that callers ignore.
+pub const SM_ERR_INVALID_INPUT: i32 = 1007;
+
+/// Upstream `SmStatus` value `SM_ERR_NON_NULL_OUTPUT_POINTER` (`1008L`, `SmMessages.h`): an output pointer that should be `NULL` is not.
+pub const SM_ERR_NON_NULL_OUTPUT_POINTER: i32 = 1008;
+
+/// Upstream `SmStatus` value `SM_ERR_ASSERTVALID_FAILURE` (`1010L`, `SmMessages.h`): an `AssertValid` check failed.
+pub const SM_ERR_ASSERTVALID_FAILURE: i32 = 1010;
+
+/// Upstream `SmStatus` value `SM_ERR_OUTSIDE_OF_DOMAIN` (`1020L`, `SmMessages.h`): a parameter outside the domain.
+pub const SM_ERR_OUTSIDE_OF_DOMAIN: i32 = 1020;
+
+/// Upstream `SmStatus` value `SM_ERR_NOT_WITHIN_TOLERANCE` (`1021L`, `SmMessages.h`): a result not within tolerance.
+pub const SM_ERR_NOT_WITHIN_TOLERANCE: i32 = 1021;
+
+/// Upstream `SmStatus` value `SM_ERR_NOT_CONVERGING` (`1022L`, `SmMessages.h`): an iteration did not converge.
+pub const SM_ERR_NOT_CONVERGING: i32 = 1022;
+
+/// Upstream `SmStatus` value `SM_ERR_WARNING` (`1023L`, `SmMessages.h`): a warning (`WARN`).
 pub const SM_ERR_WARNING: i32 = 1023;
 
-/// Upstream `SmStatus` value `SM_ERR_INVALID_INPUT` (`SmMessages.h`), as carried by
-/// [`SolidError::Upstream`] where a function returns it as a status that callers
-/// ignore (its usual mapping is [`SolidError::InvalidInput`]).
-pub const SM_ERR_INVALID_INPUT: i32 = 1007;
+/// Upstream `SmStatus` value `SM_ERR_MESSAGE` (`1024L`, `SmMessages.h`): a message (`MSG`).
+pub const SM_ERR_MESSAGE: i32 = 1024;
+
+/// Upstream `SmStatus` value `SM_ERR_AXIS_INSIDE_FACE` (`1025L`, `SmMessages.h`): a revolution axis inside the face.
+pub const SM_ERR_AXIS_INSIDE_FACE: i32 = 1025;
+
+/// Upstream `SmStatus` value `SM_ERR_LICENSE_EXPIRED` (`1026L`, `SmMessages.h`): the licence expired.
+pub const SM_ERR_LICENSE_EXPIRED: i32 = 1026;
+
+/// Upstream `SmStatus` value `SM_ERR_BAD_INTERSECTIONS` (`1027L`, `SmMessages.h`): bad intersections.
+pub const SM_ERR_BAD_INTERSECTIONS: i32 = 1027;
+
+/// Upstream `SmStatus` value `SM_ERR_BAD_COINCIDENT_VERTICES` (`1028L`, `SmMessages.h`): bad coincident vertices.
+pub const SM_ERR_BAD_COINCIDENT_VERTICES: i32 = 1028;
+
+/// Upstream `SmStatus` value `SM_ERR_BAD_SURFACE_POINT` (`1030L`, `SmMessages.h`): a bad surface point.
+pub const SM_ERR_BAD_SURFACE_POINT: i32 = 1030;
+
+/// Upstream `SmStatus` value `SM_ERR_BAD_TANGENT_DROP` (`1032L`, `SmMessages.h`): a bad tangent drop.
+pub const SM_ERR_BAD_TANGENT_DROP: i32 = 1032;
+
+/// Upstream `SmStatus` value `SM_ERR_DEGENERATE_SURFACE` (`1034L`, `SmMessages.h`): a degenerate surface.
+pub const SM_ERR_DEGENERATE_SURFACE: i32 = 1034;
+
+/// Upstream `SmStatus` value `SM_ERR_BAD_FIND_DEGEN_PARAM` (`1036L`, `SmMessages.h`): a degenerate parameter could not be found.
+pub const SM_ERR_BAD_FIND_DEGEN_PARAM: i32 = 1036;
+
+/// Upstream `SmStatus` value `SM_ERR_METHOD_FAILURE_QUITING` (`1038L`, `SmMessages.h`): a method failed; quitting.
+pub const SM_ERR_METHOD_FAILURE_QUITING: i32 = 1038;
+
+/// Upstream `SmStatus` value `SM_ERR_NOTYET_HEAL_FACE` (`1040L`, `SmMessages.h`): a face not healed yet.
+pub const SM_ERR_NOTYET_HEAL_FACE: i32 = 1040;
+
+/// Upstream `SmStatus` value `SM_ERR_TESS_FAIL_FACE` (`1041L`, `SmMessages.h`): face tessellation failed.
+pub const SM_ERR_TESS_FAIL_FACE: i32 = 1041;
+
+/// SMLib fork status `SM_ERR_OFFSET_WALLS_TOUCH` (tangency-labs/smlib a759622,
+/// `SmMessages.h`; not in the pinned upstream), as carried by [`SolidError::Upstream`]:
+/// an offset (a shell, a solid offset) whose walls would meet, because loops of an offset
+/// face touch without crossing. Returned only with the opt-in
+/// `Kernel::fixes.offset_walls_touch_refused`.
+pub const SM_ERR_OFFSET_WALLS_TOUCH: i32 = 1042;
+
+/// SMLib fork status `SM_ERR_OFFSET_EDGE_VANISHES` (tangency-labs/smlib 34318f4,
+/// `SmMessages.h`; not in the pinned upstream), as carried by [`SolidError::Upstream`]:
+/// an offset moves a vertex along an edge to or past the edge's other end, a change of
+/// topology it does not make, so the operation is refused. Test for it with
+/// [`SolidError::is_offset_edge_vanishes`].
+pub const SM_ERR_OFFSET_EDGE_VANISHES: i32 = 1043;
+
+// ---- SmBoolean values (`SmTypes.h`) ---------------------------------------------------
+
+/// `TRUE` (`1`, `SmTypes.h`) of an `SmBoolean`, such as `SmShell::IsInnerShellOf` returns.
+pub const SM_TRUE: i32 = 1;
+
+/// `FALSE` (`0`, `SmTypes.h`) of an `SmBoolean`. Not a valid `SmStatus`.
+pub const SM_FALSE: i32 = 0;
+
+/// `UNSURE` (`2`, `SmTypes.h`) of an `SmBoolean`: undecided.
+pub const SM_UNSURE: i32 = 2;
 
 fn fmt_entity(entity: Option<EntityRef>) -> String {
     entity.map_or_else(String::new, |e| format!(" at {e}"))
+}
+
+fn fmt_size(size: Option<f64>) -> String {
+    size.map_or_else(String::new, |s| {
+        format!("; the largest size that works is {s}")
+    })
 }
 
 impl SolidError {
@@ -288,11 +538,12 @@ impl SolidError {
     }
 
     /// Maps the error of a failed NLib call inside an `Sm*` method to `SM_ERR` (upstream
-    /// `if (NL_YES == N_...) SER(SM_ERR)`), letting [`SolidError::Unported`] through.
+    /// `if (NL_YES == N_...) SER(SM_ERR)`), letting [`SolidError::Unported`] and
+    /// [`SolidError::Cancelled`] through.
     /// Use as `.map_err(SolidError::nl_ser(OP))`.
     pub(crate) fn nl_ser(operation: &'static str) -> impl Fn(Self) -> Self {
         move |e| match e {
-            Self::Unported { .. } => e,
+            Self::Unported { .. } | Self::Cancelled { .. } | Self::PreparationRequired { .. } => e,
             _ => Self::sm_err(operation),
         }
     }
@@ -304,6 +555,64 @@ impl SolidError {
         Self::InvalidInput { operation, reason }
     }
 
+    /// [`SolidError::PortInvariant`]: a port-side invariant or adapter failure with no
+    /// upstream status.
+    #[must_use]
+    pub const fn port_invariant(operation: &'static str, reason: &'static str) -> Self {
+        Self::PortInvariant { operation, reason }
+    }
+
+    /// The upstream `SmStatus` this error stands for, when it stands for one exactly:
+    ///
+    /// - [`SolidError::Upstream`]: its `code`.
+    /// - [`SolidError::Nlib`]: [`SM_ERR`]. The `Sm*` callers of an NLib routine
+    ///   surface its failure as `SER(SM_ERR)` (`if (NL_YES == N_...) SER(SM_ERR)`;
+    ///   `nl_ser`), never as the `NL_*_ERR` number.
+    /// - Every other variant: `None`. [`SolidError::InvalidInput`],
+    ///   [`SolidError::NotFound`], [`SolidError::Degenerate`],
+    ///   [`SolidError::NotConverged`] and [`SolidError::Unsupported`] are used both for
+    ///   mapped upstream statuses and for port-side checks, so they are not exact; a
+    ///   port that must surface a status exactly returns [`SolidError::Upstream`] with
+    ///   it. [`SolidError::PortInvariant`], [`SolidError::Unported`] and
+    ///   [`SolidError::PreparationRequired`] never stand for one.
+    #[must_use]
+    pub const fn sm_status(&self) -> Option<i32> {
+        match self {
+            Self::Upstream { code, .. }
+            | Self::FilletRefused { code, .. }
+            | Self::ShellRefused { code, .. } => Some(*code),
+            Self::Nlib { .. } => Some(SM_ERR),
+            Self::InvalidInput { .. }
+            | Self::NotFound { .. }
+            | Self::Degenerate { .. }
+            | Self::NotConverged { .. }
+            | Self::Unsupported { .. }
+            | Self::PortInvariant { .. }
+            | Self::PreparationRequired { .. }
+            | Self::Cancelled { .. }
+            | Self::Unported { .. } => None,
+        }
+    }
+
+    /// [`SolidError::Cancelled`]: cooperative cancellation observed in `operation`.
+    #[must_use]
+    pub const fn cancelled(operation: &'static str) -> Self {
+        Self::Cancelled { operation }
+    }
+
+    /// True when this error is [`SolidError::Cancelled`].
+    #[must_use]
+    pub const fn is_cancelled(&self) -> bool {
+        matches!(self, Self::Cancelled { .. })
+    }
+
+    /// True when this error must never be swallowed or remapped by an upstream
+    /// status-ignoring fallback ([`SolidError::Unported`] or [`SolidError::Cancelled`]).
+    #[must_use]
+    pub(crate) const fn is_unported_or_cancelled(&self) -> bool {
+        matches!(self, Self::Unported { .. } | Self::Cancelled { .. })
+    }
+
     /// [`SolidError::Unported`]: a call into `upstream` (a C++ symbol) of `unit`,
     /// which is not ported yet. Every site carries `// UNPORTED(<unit>): <symbol>`.
     #[must_use]
@@ -311,11 +620,24 @@ impl SolidError {
         Self::Unported { upstream, unit }
     }
 
-    /// True for [`SolidError::Unported`], the one error a status upstream ignores
-    /// still propagates.
+    /// True only for a genuinely unported dependency; preparation requests return false.
     #[must_use]
     pub const fn is_unported(&self) -> bool {
         matches!(self, Self::Unported { .. })
+    }
+
+    /// True for the refusal [`SolidError::Upstream`] with code
+    /// [`SM_ERR_OFFSET_EDGE_VANISHES`]: an offset that would move a vertex past the
+    /// other end of its edge.
+    #[must_use]
+    pub const fn is_offset_edge_vanishes(&self) -> bool {
+        matches!(
+            self,
+            Self::Upstream {
+                code: SM_ERR_OFFSET_EDGE_VANISHES,
+                ..
+            }
+        )
     }
 
     /// [`SolidError::Nlib`] with the upstream error number `code` (NLib's
@@ -335,8 +657,13 @@ impl SolidError {
             | Self::Degenerate { operation, .. }
             | Self::NotConverged { operation, .. }
             | Self::Unsupported { operation, .. }
+            | Self::PortInvariant { operation, .. }
             | Self::Upstream { operation, .. }
-            | Self::Nlib { operation, .. } => operation,
+            | Self::FilletRefused { operation, .. }
+            | Self::ShellRefused { operation, .. }
+            | Self::Nlib { operation, .. }
+            | Self::PreparationRequired { operation }
+            | Self::Cancelled { operation } => operation,
             Self::Unported { upstream, .. } => upstream,
         }
     }
@@ -346,12 +673,18 @@ impl SolidError {
     pub fn entity(&self) -> Option<EntityRef> {
         match self {
             Self::NotFound { entity, .. } => Some(*entity),
-            Self::Degenerate { entity, .. } | Self::Upstream { entity, .. } => *entity,
+            Self::Degenerate { entity, .. }
+            | Self::Upstream { entity, .. }
+            | Self::FilletRefused { entity, .. }
+            | Self::ShellRefused { entity, .. } => *entity,
             Self::InvalidInput { .. }
             | Self::NotConverged { .. }
             | Self::Unsupported { .. }
+            | Self::PortInvariant { .. }
             | Self::Nlib { .. }
-            | Self::Unported { .. } => None,
+            | Self::Unported { .. }
+            | Self::Cancelled { .. }
+            | Self::PreparationRequired { .. } => None,
         }
     }
 }
@@ -359,6 +692,129 @@ impl SolidError {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn native_failures_keep_upstream_statuses_and_propagate_port_errors() {
+        assert_eq!(native_failure(Ok(3)), Ok(Some(3)));
+        let native = [
+            SolidError::sm_err("ray"),
+            SolidError::invalid_input("ray", "native"),
+            SolidError::Degenerate {
+                operation: "ray",
+                entity: None,
+            },
+            SolidError::nlib("ray", NlibCode::Numerical),
+        ];
+        for e in native {
+            assert_eq!(native_failure::<()>(Err(e)), Ok(None));
+        }
+        let internal = [
+            SolidError::unported("SmBrep::RayFire", "topology.brep_p2"),
+            SolidError::PreparationRequired { operation: "ray" },
+            SolidError::port_invariant("topology::brep_cache", "owner not in source B-rep"),
+            SolidError::NotFound {
+                operation: "ray",
+                entity: EntityRef::Face(FaceId::from_index(4)),
+            },
+        ];
+        for e in internal {
+            // `ignored` hid the last two as an ordinary failed call.
+            assert_eq!(native_failure::<()>(Err(e.clone())), Err(e));
+        }
+    }
+
+    #[test]
+    fn preparation_requests_are_never_ignored_or_reported_as_unported() {
+        let request = SolidError::PreparationRequired { operation: "ray" };
+        assert!(!request.is_unported());
+        assert_eq!(ignored::<()>(Err(request.clone())), Err(request.clone()));
+        assert_eq!(
+            ignore_status::<()>(Err(request.clone())),
+            Err(request.clone())
+        );
+        assert_eq!(SolidError::nl_ser("native")(request.clone()), request);
+    }
+
+    #[test]
+    fn sm_status_is_some_only_for_exact_upstream_statuses() {
+        let f = FaceId::from_index(1);
+        let cases = [
+            (SolidError::sm_err("op"), Some(SM_ERR)),
+            (SolidError::null_pointer("op"), Some(SM_ERR_NULL_POINTER)),
+            (
+                SolidError::Upstream {
+                    operation: "op",
+                    code: SM_ERR_INVALID_INPUT,
+                    entity: Some(EntityRef::Face(f)),
+                },
+                Some(1007),
+            ),
+            (
+                SolidError::Upstream {
+                    operation: "op",
+                    code: SM_ERR_WARNING,
+                    entity: None,
+                },
+                Some(1023),
+            ),
+            (SolidError::nlib("op", NlibCode::Knot), Some(SM_ERR)),
+            (SolidError::nlib("op", NlibCode::Convergence), Some(SM_ERR)),
+            (SolidError::invalid_input("op", "bad"), None),
+            (
+                SolidError::NotFound {
+                    operation: "op",
+                    entity: EntityRef::Face(f),
+                },
+                None,
+            ),
+            (
+                SolidError::Degenerate {
+                    operation: "op",
+                    entity: None,
+                },
+                None,
+            ),
+            (
+                SolidError::NotConverged {
+                    operation: "op",
+                    iterations: 3,
+                },
+                None,
+            ),
+            (
+                SolidError::Unsupported {
+                    operation: "op",
+                    reason: "r",
+                },
+                None,
+            ),
+            (SolidError::port_invariant("op", "owner"), None),
+            (SolidError::PreparationRequired { operation: "op" }, None),
+            (SolidError::unported("SmX::Y", "geom.x"), None),
+        ];
+        for (e, status) in cases {
+            assert_eq!(e.sm_status(), status, "{e:?}");
+        }
+    }
+
+    #[test]
+    fn port_invariant_display_and_accessors() {
+        let e =
+            SolidError::port_invariant("topology::brep_cache", "edge owner is not in source B-rep");
+        assert_eq!(
+            e.to_string(),
+            "topology::brep_cache: port invariant: edge owner is not in source B-rep"
+        );
+        assert_eq!(e.operation(), "topology::brep_cache");
+        assert_eq!(e.entity(), None);
+        assert!(!e.is_unported());
+        // an ignored upstream status swallows it as it did the `InvalidInput` it was
+        assert_eq!(ignored::<()>(Err(e.clone())), Ok(None));
+        assert_eq!(
+            SolidError::nl_ser("native")(e),
+            SolidError::sm_err("native")
+        );
+    }
 
     #[test]
     fn display_includes_operation_and_entity() {
@@ -386,5 +842,21 @@ mod tests {
         );
         assert_eq!(u.operation(), "SmCurve::Evaluate");
         assert_eq!(u.entity(), None);
+
+        let c = SolidError::cancelled("boolean::merge::p4::manifold_boolean");
+        assert!(c.is_cancelled());
+        assert!(!c.is_unported());
+        assert!(c.is_unported_or_cancelled());
+        assert_eq!(c.sm_status(), None);
+        assert_eq!(c.operation(), "boolean::merge::p4::manifold_boolean");
+        assert_eq!(c.entity(), None);
+        assert_eq!(
+            c.to_string(),
+            "operation cancelled in boolean::merge::p4::manifold_boolean"
+        );
+        assert_eq!(ignored::<()>(Err(c.clone())), Err(c.clone()));
+        assert_eq!(ignore_status::<()>(Err(c.clone())), Err(c.clone()));
+        assert_eq!(native_failure::<()>(Err(c.clone())), Err(c.clone()));
+        assert_eq!(SolidError::nl_ser("native")(c.clone()), c);
     }
 }

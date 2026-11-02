@@ -13,6 +13,7 @@
 //! | [`ObjectRef`]                                | an `SmObject*` argument of `Notify` / `Execute`   |
 //! | [`NotifyOperation`]                          | `SmNotifyOperation`                               |
 //! | [`notify`]                                   | `SmObject::Notify`                                |
+//! | [`report_owner_link`]                        | (none: the `GetOwner()` a callback reads)         |
 //! | [`assert_valid`]                             | `SmObject::AssertValid`                           |
 //! | [`TemporaryChangeValue`]                     | `SmTemporaryChangeValue<TYPE>`                    |
 //! | [`TemporaryChangeValue::empty`]              | `SmTemporaryChangeValue()`                        |
@@ -53,19 +54,38 @@
 //! - `Notify`'s debug echo (`SM_ECHO_NOTIFY`), `SmObject::Dump`, `SmShape::Draw`
 //!   and `GetObjectColor` print or draw only and are not ported. Callback status
 //!   values are ignored, as upstream.
-//! - The shape's topology members are `(BrepId, id)` pairs over a caller-owned
-//!   B-rep slice. Building a non-empty shape needs the topology and geometry
-//!   queries of units not ported yet and returns [`SolidError::Unported`]; the
-//!   empty shape (upstream's `SE_MSG` "no Topology Objects" case, whose message is
-//!   not ported) is built exactly as upstream.
+//! - **Shape members.** They are `(BrepId, id)` keys resolved in a caller's
+//!   [`BrepStore`] (upstream's are pointers into their B-reps). The curve and surface
+//!   trees hold the edge and face keys (upstream: the `SmCurve` / `SmSurface`), and
+//!   a curve's box uses its edge's interval: a port edge or face owns its own
+//!   geometry, so upstream's `GetOwner()` is the entity itself (no composite
+//!   topology). The empty shape's `SE_MSG` "no Topology Objects" message is not
+//!   ported. A B-rep without infinite region listed last has no context to build
+//!   the trees in (upstream dereferences it): [`SolidError::InvalidInput`], as for a
+//!   missing face surface, edge curve or edge vertex.
+//! - **Marks.** `SmNewMarkAndLock`'s mark is a set of loaded keys per kind: a shape
+//!   may span B-reps, and the mark is released before the constructor returns. The
+//!   constructor still claims and releases a mark of the kernel's context (its
+//!   counter advances, as upstream's). `AddUnique` keeps a set next to each member list.
 
-use crate::error::{Result, SolidError};
+use std::collections::BTreeSet;
+
+use crate::error::{ignore_status, ignored, Result, SolidError};
 use crate::geom::attribute::ObjectKey;
-use crate::geom::context::Context;
+use crate::geom::context::{with_mark_lock, Context, ALL_MARKS};
 use crate::geom::extent3d::Extent3d;
-use crate::geom::tree::Tree;
+use crate::geom::tree::{NodeGeomType, Tree};
+use crate::kernel::Kernel;
 use crate::math::Vec3;
-use crate::topology::{BrepId, EdgeId, FaceId, VertexId};
+use crate::nurbs::b_spline_curve::BoundingBoxRequest;
+use crate::query;
+use crate::query::brep::BoundingBoxOptions;
+use crate::query::edge as qe;
+use crate::query::face::p1 as qf1;
+use crate::query::face::p2::face_vertices;
+use crate::topology::brep::p1 as bp1;
+use crate::topology::topology_traverser as traverser;
+use crate::topology::{edge, vertex, Brep, BrepId, EdgeId, FaceId, VertexId};
 
 /// `SmObject_TYPE` (`OS_BASE_TYPE + 1`).
 pub const OBJECT_TYPE: i64 = 11001;
@@ -211,6 +231,27 @@ pub fn notify(
     // Call system callback if present.
     if let Some(scb) = context.sys_notify_callback_mut() {
         let _status = scb.execute(operation, caller, data1, data2, data3);
+    }
+}
+
+/// Reports to the context's user and system notify callbacks (each only if set) that
+/// `object` is owned by `owner` ([`crate::geom::context::NotifyCallback::owner_link`]):
+/// upstream callbacks read an object's owner through its pointer, the port's
+/// [`ObjectRef`] carries no links. Notifies nothing; an object with a null context
+/// reports to nobody.
+pub fn report_owner_link(
+    context: Option<&mut Context>,
+    object: ObjectKey,
+    owner: Option<ObjectRef>,
+) {
+    let Some(context) = context else {
+        return;
+    };
+    if let Some(ucb) = context.user_notify_callback_mut() {
+        ucb.owner_link(object, owner);
+    }
+    if let Some(scb) = context.sys_notify_callback_mut() {
+        scb.owner_link(object, owner);
     }
 }
 
@@ -372,74 +413,230 @@ impl Shape {
     pub const TYPE: i64 = 16500;
 
     /// Builds a shape from whole B-reps, faces, edges and vertices
-    /// (`SmShape::SmShape`). The lower-level members of a listed entity need not be
-    /// listed again.
+    /// (`SmShape::SmShape`), their B-reps resolved in `store`. The lower-level members
+    /// of a listed entity need not be listed again.
+    ///
+    /// The trees cover the union of the listed B-reps' boxes, the listed faces' boxes
+    /// and those of their edges, the listed edges' boxes and the listed vertices; the
+    /// statuses of these boxes and of the tree insertions are ignored, as upstream (a
+    /// failed box is the empty one). Each face, edge and vertex is loaded into its tree
+    /// once: B-reps first, then faces (with their edges and vertices), edges (with
+    /// their vertices) and vertices.
     ///
     /// With every list empty the shape is empty and its three trees cover the box
     /// `(0,0,0)-(1,1,1)` (upstream also reports an `SE_MSG` error and continues).
     ///
     /// # Errors
     ///
-    /// [`SolidError::Unported`] for a non-empty shape: its bounding boxes, marks and
-    /// tree loading need the B-rep, face, edge, vertex and geometry queries of
-    /// units not ported yet.
+    /// [`SolidError::InvalidInput`] for a key whose B-rep `store` does not hold or a
+    /// missing face surface, edge curve or edge vertex (upstream dereferences them), and
+    /// when the last listed object is a B-rep without infinite region (upstream builds
+    /// the trees in its null context); those of the topology lists; [`SolidError::Unported`]
+    /// from the box computations.
     pub fn new(
+        k: &mut Kernel,
+        store: &dyn BrepStore,
         breps: &[BrepId],
         faces: &[FaceKey],
         edges: &[EdgeKey],
         vertices: &[VertexKey],
     ) -> Result<Self> {
-        // Compute the union of all of the extents of the input objects; the first
-        // upstream call of each list needs an unported topology query.
-        if !breps.is_empty() {
-            // UNPORTED(query.brep): SmBrep::CalculateBoundingBox (the B-rep keys here
-            // name no Brep; SmBrep::GetInfiniteRegion / GetVertices / GetEdges / GetFaces
-            // are ported in topology::brep::p1)
-            return Err(SolidError::Unported {
-                upstream: "SmBrep::CalculateBoundingBox",
-                unit: "query.brep",
-            });
-        }
-        if !faces.is_empty() {
-            // DISPATCH GAP: SmFace::CalculateBoundingBox (then SmFace::GetEdges /
-            // GetVertices) is ported (`query::face::p1::calculate_bounding_box`,
-            // query.face_p1 partial; no UNPORTED marker), but it takes the face's `Brep`,
-            // which this object handle does not name. GetSurface/GetFace are ported.
-            return Err(SolidError::Unported {
-                upstream: "SmFace::CalculateBoundingBox",
-                unit: "query.face_p1",
-            });
-        }
-        if !edges.is_empty() {
-            // UNPORTED(topology.edge): SmEdge::GetCurve (then SmCurve::GetOwner,
-            // SmEdge::CalculateBoundingBox, SmEdge::GetVertices)
-            return Err(SolidError::Unported {
-                upstream: "SmEdge::GetCurve",
-                unit: "topology.edge",
-            });
-        }
-        if !vertices.is_empty() {
-            // UNPORTED(topology.vertex): SmVertex::GetPoint (then
-            // SmTopology::IsMarked / Mark)
-            return Err(SolidError::Unported {
-                upstream: "SmVertex::GetPoint",
-                unit: "topology.vertex",
-            });
-        }
-
-        // signal an error for empty shapes: specify BBox to be anything reasonable
+        let brep_of = |id: BrepId| {
+            store
+                .brep(id)
+                .ok_or_else(|| SolidError::invalid_input(OP_NEW, "B-rep not in the store"))
+        };
+        let mut members = ShapeMembers::default();
         let mut bbox_union = Extent3d::new();
-        bbox_union.set_min_max(Vec3::new(0.0, 0.0, 0.0), Vec3::new(1.0, 1.0, 1.0))?;
+        // `pTopo != NULL` for the last listed object (it carries the trees' context)
+        let mut has_context = false;
 
-        // init trees for each topology item to be stored; nothing to load
+        // Compute the union of all of the extents of the input objects
+        for &id in breps {
+            let b = brep_of(id)?;
+            has_context = b.infinite_region().is_some();
+            // (status not checked upstream; the box is written only on success)
+            let bbox = ignored(query::brep::calculate_bounding_box(
+                k,
+                b,
+                BoundingBoxOptions::default(),
+            ))?
+            .unwrap_or_default();
+            bbox_union = bbox_union.union(&bbox);
+        }
+
+        // union in face bounding boxes
+        for &(id, f) in faces {
+            let b = brep_of(id)?;
+            has_context = true;
+            members.faces.add_unique((id, f));
+            // (`GetSurface()->GetFace()` is the face itself)
+            face_surface(b, f)?;
+            let bbox = ignored(qf1::calculate_bounding_box(k, b, f, false))?.unwrap_or_default();
+            bbox_union = bbox_union.union(&bbox);
+
+            // Load edge->curves of the face
+            for e in traverser::face_edges(b, f)? {
+                let bbox = edge_box(k, b, e)?;
+                bbox_union = bbox_union.union(&bbox);
+            }
+        }
+
+        // union in edge bounding boxes
+        for &(id, e) in edges {
+            let b = brep_of(id)?;
+            has_context = true;
+            members.edges.add_unique((id, e));
+            let bbox = edge_box(k, b, e)?;
+            bbox_union = bbox_union.union(&bbox);
+        }
+
+        // union in vertex bounding boxes
+        for &(id, v) in vertices {
+            let b = brep_of(id)?;
+            has_context = true;
+            members.vertices.add_unique((id, v));
+            let bbox = Extent3d::from_point(vertex::point(b, v)?);
+            bbox_union = bbox_union.union(&bbox);
+        }
+
+        // signal an error for empty shapes
+        let empty = breps.is_empty() && faces.is_empty() && edges.is_empty() && vertices.is_empty();
+        if !has_context {
+            if !empty {
+                // `new (*cpContext) SmTree` with a null context
+                return Err(SolidError::invalid_input(
+                    OP_NEW,
+                    "no context: the last object is a B-rep without infinite region",
+                ));
+            }
+            // specify BBox to be anything reasonable
+            bbox_union.set_min_max(Vec3::new(0.0, 0.0, 0.0), Vec3::new(1.0, 1.0, 1.0))?;
+        }
+
+        // init trees for each topology item to be stored
+        let mut trees = ShapeTrees {
+            vertices: Tree::new_spatial(&bbox_union),
+            curves: Tree::new_spatial(&bbox_union),
+            surfaces: Tree::new_spatial(&bbox_union),
+        };
+
+        // Now add topology item->shapes in a unique way to the appropriate trees
+        // (`SmNewMarkAndLock` claims a context mark; the sets of loaded keys mark)
+        if !empty {
+            with_mark_lock(k, ALL_MARKS, |k, _| {
+                Self::load_trees(
+                    k,
+                    &brep_of,
+                    breps,
+                    faces,
+                    edges,
+                    vertices,
+                    &mut members,
+                    &mut trees,
+                )
+            })??;
+        }
+
         Ok(Self {
-            vertex_tree: Tree::new_spatial(&bbox_union),
-            curve_tree: Tree::new_spatial(&bbox_union),
-            surface_tree: Tree::new_spatial(&bbox_union),
-            faces: Vec::new(),
-            edges: Vec::new(),
-            vertices: Vec::new(),
+            vertex_tree: trees.vertices,
+            curve_tree: trees.curves,
+            surface_tree: trees.surfaces,
+            faces: members.faces.list,
+            edges: members.edges.list,
+            vertices: members.vertices.list,
         })
+    }
+
+    /// The tree loads of [`Shape::new`] under its mark: B-reps, then faces, edges and
+    /// vertices, each object once.
+    #[allow(clippy::too_many_arguments)] // the constructor's lists and outputs
+    fn load_trees<'s>(
+        k: &Kernel,
+        brep_of: &dyn Fn(BrepId) -> Result<&'s Brep>,
+        breps: &[BrepId],
+        faces: &[FaceKey],
+        edges: &[EdgeKey],
+        vertices: &[VertexKey],
+        members: &mut ShapeMembers,
+        trees: &mut ShapeTrees,
+    ) -> Result<()> {
+        let mut marked = ShapeMarks::default();
+
+        for &id in breps {
+            let b = brep_of(id)?;
+            // Load Brep vertices into vertex tree
+            for v in bp1::vertices(b, None)? {
+                if marked.vertices.insert((id, v)) {
+                    members.vertices.add_unique((id, v));
+                    trees.add_vertex(b, (id, v))?;
+                }
+            }
+            // Now load brep edges into the Edge Tree
+            for e in bp1::edges(b, None)? {
+                if marked.edges.insert((id, e)) {
+                    members.edges.add_unique((id, e));
+                    trees.add_curve(k, b, (id, e))?;
+                }
+            }
+            // Now load the brep faces into the Face Tree
+            for f in bp1::faces(b, None)? {
+                if marked.faces.insert((id, f)) {
+                    members.faces.add_unique((id, f));
+                    trees.add_surface(k, b, (id, f))?;
+                }
+            }
+        } // end iter every Brep loading its vertices, edge->curves, and face->surfaces to trees
+
+        // Load individual face->Surfaces
+        for &(id, f) in faces {
+            if !marked.faces.insert((id, f)) {
+                continue;
+            }
+            let b = brep_of(id)?;
+            trees.add_surface(k, b, (id, f))?;
+            // Load edge->curves of the face
+            for e in traverser::face_edges(b, f)? {
+                if marked.edges.insert((id, e)) {
+                    members.edges.add_unique((id, e));
+                    trees.add_curve(k, b, (id, e))?;
+                }
+            }
+            // Load vertices of the face
+            for v in face_vertices(b, f, false, None)? {
+                if marked.vertices.insert((id, v)) {
+                    members.vertices.add_unique((id, v));
+                    trees.add_vertex(b, (id, v))?;
+                }
+            }
+        } // end iter every face loading their vertices, edge->curves, and face->surfaces to trees
+
+        // Now load edge objects and adjacent vertices
+        for &(id, e) in edges {
+            if !marked.edges.insert((id, e)) {
+                continue;
+            }
+            let b = brep_of(id)?;
+            trees.add_curve(k, b, (id, e))?;
+            // Load vertices of the edge
+            for v in edge::vertices(b, e, None)? {
+                let v = v.ok_or_else(|| {
+                    SolidError::invalid_input(OP_NEW, "edge vertex use without vertex")
+                })?;
+                if marked.vertices.insert((id, v)) {
+                    members.vertices.add_unique((id, v));
+                    trees.add_vertex(b, (id, v))?;
+                }
+            }
+        } // end iter every edge loading their vertices and edge->curves to trees
+
+        // Now load vertex objects
+        for &(id, v) in vertices {
+            if marked.vertices.insert((id, v)) {
+                trees.add_vertex(brep_of(id)?, (id, v))?;
+            }
+        }
+        Ok(())
     }
 
     /// The spatial tree of the shape's vertices (`GetVertexTree`).
@@ -508,6 +705,151 @@ impl Shape {
     pub const fn is_kind_of(&self, t: i64) -> bool {
         t == Self::TYPE || is_kind_of(t)
     }
+}
+
+/// The B-reps behind a shape's `(BrepId, id)` keys (upstream's members are pointers
+/// into their B-reps).
+pub trait BrepStore {
+    /// The B-rep `id` names, if any.
+    fn brep(&self, id: BrepId) -> Option<&Brep>;
+}
+
+/// The store of a shape with no members (it resolves nothing).
+#[derive(Debug, Clone, Copy, Default)]
+pub struct NoBreps;
+
+impl BrepStore for NoBreps {
+    fn brep(&self, _id: BrepId) -> Option<&Brep> {
+        None
+    }
+}
+
+/// One B-rep under its id.
+impl BrepStore for (BrepId, &Brep) {
+    fn brep(&self, id: BrepId) -> Option<&Brep> {
+        (id == self.0).then_some(self.1)
+    }
+}
+
+const OP_NEW: &str = "geom::object::Shape::new";
+
+/// The axis-aligned box only.
+const NORMAL_BOX: BoundingBoxRequest = BoundingBoxRequest {
+    normal: true,
+    pseudo: false,
+    polar: false,
+};
+
+/// A member list with `AddUnique` (`list` in insertion order, `set` for lookups).
+struct UniqueList<K> {
+    list: Vec<K>,
+    set: BTreeSet<K>,
+}
+
+impl<K> Default for UniqueList<K> {
+    fn default() -> Self {
+        Self {
+            list: Vec::new(),
+            set: BTreeSet::new(),
+        }
+    }
+}
+
+impl<K: Copy + Ord> UniqueList<K> {
+    /// `SmTArray::AddUnique`.
+    fn add_unique(&mut self, key: K) {
+        if self.set.insert(key) {
+            self.list.push(key);
+        }
+    }
+}
+
+/// `m_vFaces`, `m_vEdges` and `m_vVertices` while the shape is built.
+#[derive(Default)]
+struct ShapeMembers {
+    faces: UniqueList<FaceKey>,
+    edges: UniqueList<EdgeKey>,
+    vertices: UniqueList<VertexKey>,
+}
+
+/// The entities the constructor's `SmNewMarkAndLock` mark has marked.
+#[derive(Default)]
+struct ShapeMarks {
+    faces: BTreeSet<FaceKey>,
+    edges: BTreeSet<EdgeKey>,
+    vertices: BTreeSet<VertexKey>,
+}
+
+/// The shape's trees while they are loaded.
+struct ShapeTrees {
+    vertices: Tree<VertexKey>,
+    curves: Tree<EdgeKey>,
+    surfaces: Tree<FaceKey>,
+}
+
+impl ShapeTrees {
+    /// `SE(m_pVertexTree->AddToSpatialTree(SmExtent3d(pV->GetPoint()), pV))`.
+    fn add_vertex(&mut self, b: &Brep, key: VertexKey) -> Result<()> {
+        let bbox = Extent3d::from_point(vertex::point(b, key.1)?);
+        ignore_status(
+            self.vertices
+                .add_to_spatial_tree(&bbox, Some(key), NodeGeomType::Default),
+        )
+    }
+
+    /// `SE(pCurve->CalculateBoundingBox(pEdge->GetInterval(), &sEBBox))`, then
+    /// `SE(m_pCurveTree->AddToSpatialTree(sEBBox, pCurve))` (the curve keyed by its
+    /// edge).
+    fn add_curve(&mut self, k: &Kernel, b: &Brep, key: EdgeKey) -> Result<()> {
+        let e = b.edge(key.1)?;
+        let curve = e
+            .curve
+            .as_ref()
+            .ok_or_else(|| SolidError::invalid_input(OP_NEW, "edge without curve"))?;
+        let bbox = ignored(curve.calculate_bounding_box(k, &e.interval, NORMAL_BOX, true))?
+            .and_then(|boxes| boxes.normal)
+            .unwrap_or_default();
+        ignore_status(
+            self.curves
+                .add_to_spatial_tree(&bbox, Some(key), NodeGeomType::Default),
+        )
+    }
+
+    /// `SE(pFace->CalculateBoundingBox(sFBBox))`, then
+    /// `SE(m_pSurfaceTree->AddToSpatialTree(sFBBox, pSurface))` (the surface keyed by its
+    /// face).
+    fn add_surface(&mut self, k: &Kernel, b: &Brep, key: FaceKey) -> Result<()> {
+        face_surface(b, key.1)?;
+        let bbox = ignored(qf1::calculate_bounding_box(k, b, key.1, false))?.unwrap_or_default();
+        ignore_status(
+            self.surfaces
+                .add_to_spatial_tree(&bbox, Some(key), NodeGeomType::Default),
+        )
+    }
+}
+
+/// The surface of face `f` (upstream dereferences a missing one).
+fn face_surface(b: &Brep, f: FaceId) -> Result<()> {
+    b.face(f)?
+        .surface
+        .as_ref()
+        .map(|_| ())
+        .ok_or_else(|| SolidError::invalid_input(OP_NEW, "face without surface"))
+}
+
+/// `SE(((SmEdge*)pE->GetCurve()->GetOwner())->CalculateBoundingBox(&sBBox))`: the
+/// edge's loose box (initialised first, so a failure leaves the empty box); upstream
+/// dereferences a missing curve.
+fn edge_box(k: &Kernel, b: &Brep, e: EdgeId) -> Result<Extent3d> {
+    b.edge(e)?
+        .curve
+        .as_ref()
+        .ok_or_else(|| SolidError::invalid_input(OP_NEW, "edge without curve"))?;
+    Ok(
+        ignored(qe::calculate_bounding_box(k, b, e, NORMAL_BOX, false))?
+            .and_then(|boxes| boxes.normal)
+            .unwrap_or_default(),
+    )
 }
 
 #[cfg(test)]
@@ -641,7 +983,7 @@ mod tests {
 
     #[test]
     fn empty_shape() {
-        let s = Shape::new(&[], &[], &[], &[]).unwrap();
+        let s = Shape::new(&mut Kernel::default(), &NoBreps, &[], &[], &[], &[]).unwrap();
         let top = s.vertex_tree().node(NodeId(0)).unwrap();
         assert_eq!(top.bbox.min(), Vec3::new(0.0, 0.0, 0.0));
         assert_eq!(top.bbox.max(), Vec3::new(1.0, 1.0, 1.0));
@@ -656,27 +998,75 @@ mod tests {
     }
 
     #[test]
-    fn non_empty_shape_is_unported() {
+    fn shape_of_vertices_loads_each_once() {
+        let mut k = Kernel::default();
+        let mut brep = Brep::new_with_infinite_region().unwrap();
+        let v0 = brep.add_vertex(Vec3::new(0.0, 0.0, 0.0)).unwrap();
+        let v1 = brep.add_vertex(Vec3::new(2.0, 3.0, 4.0)).unwrap();
         let b = BrepId::from_index(0);
-        let unit = |r: Result<Shape>| match r {
-            Err(SolidError::Unported { unit, .. }) => unit,
-            _ => "",
-        };
-        assert_eq!(
-            unit(Shape::new(&[b], &[(b, FaceId::from_index(0))], &[], &[])),
-            "query.brep"
-        );
-        assert_eq!(
-            unit(Shape::new(&[], &[(b, FaceId::from_index(0))], &[], &[])),
-            "query.face_p1"
-        );
-        assert_eq!(
-            unit(Shape::new(&[], &[], &[(b, EdgeId::from_index(0))], &[])),
-            "topology.edge"
-        );
-        assert_eq!(
-            unit(Shape::new(&[], &[], &[], &[(b, VertexId::from_index(0))])),
-            "topology.vertex"
-        );
+        let store = (b, &brep);
+        // a listed vertex comes first, then the B-rep's; each is in the tree once
+        let s = Shape::new(&mut k, &store, &[b], &[], &[], &[(b, v1)]).unwrap();
+        assert_eq!(s.vertices(), &[(b, v1), (b, v0)]);
+        assert_eq!(s.vertex_tree().object_list().unwrap().len(), 2);
+        assert!(s.faces().is_empty() && s.edges().is_empty());
+        let top = s.vertex_tree().top_node().unwrap();
+        let bbox = s.vertex_tree().node(top).unwrap().bbox;
+        assert!(Extent3d::from_point(Vec3::new(2.0, 3.0, 4.0)).is_contained_by(&bbox, 0.0));
+        assert!(s.is_in_shape(ShapeMember::Vertex((b, v0))));
+    }
+
+    #[test]
+    fn a_shape_with_members_claims_and_releases_a_context_mark() {
+        // SmShape::SmShape's SmNewMarkAndLock: NewMark adds 2 to the first unlocked
+        // mark, which is unlocked again when the constructor returns; an empty shape
+        // takes no mark
+        use crate::geom::context::MarkType;
+        let mut k = Kernel::default();
+        let before = k.context.current_mark(MarkType::Mark);
+        Shape::new(&mut k, &NoBreps, &[], &[], &[], &[]).unwrap();
+        assert_eq!(k.context.current_mark(MarkType::Mark), before);
+        let brep = Brep::new_with_infinite_region().unwrap();
+        let b = BrepId::from_index(0);
+        Shape::new(&mut k, &(b, &brep), &[b], &[], &[], &[]).unwrap();
+        assert_eq!(k.context.current_mark(MarkType::Mark), before + 2);
+        assert!(!k.context.is_mark_locked(MarkType::Mark));
+    }
+
+    #[test]
+    fn shape_keys_must_resolve() {
+        let mut k = Kernel::default();
+        let brep = Brep::new();
+        let b = BrepId::from_index(0);
+        let invalid = |r: Result<Shape>| matches!(r, Err(SolidError::InvalidInput { .. }));
+        // a key whose B-rep the store does not hold
+        let other = BrepId::from_index(1);
+        assert!(invalid(Shape::new(
+            &mut k,
+            &(b, &brep),
+            &[other],
+            &[],
+            &[],
+            &[]
+        )));
+        // the last object a B-rep without infinite region: upstream's null context
+        assert!(invalid(Shape::new(
+            &mut k,
+            &(b, &brep),
+            &[b],
+            &[],
+            &[],
+            &[]
+        )));
+        // a face that does not exist
+        assert!(Shape::new(
+            &mut k,
+            &(b, &brep),
+            &[],
+            &[(b, FaceId::from_index(0))],
+            &[],
+            &[]
+        )
+        .is_err());
     }
 }

@@ -23,7 +23,7 @@
 //! | `Extrude`        | 1  | curve `V[3]`                                 | [surface] curve `has [n cpts]`     |
 //! | `Sweep`          | 2  | curve curve                                  | [surface]                          |
 //! | `Ruled`          | 3  | curve curve                                  | [surface]                          |
-//! | `Revolution`     | 4  | curve `O[3] A[3] angle`                      | [`has`]                            |
+//! | `Revolution`     | 4  | curve `O[3] A[3] angle`                      | [`has`, owned-result geometry]     |
 //! | `Skin`           | 5  | `k`, `k` curves                              | [surface]                          |
 //! | `SkinPrimitive`  | 6  | `np`, `np` counts, `nc`, `nc` curves, `degree cap` | [`has start side end` counts] |
 //! | `SkinFromFaces`  | 7  | `nf`, `nf` x `C[3] r` planar circles, `degree` | [`has new_faces` count]          |
@@ -32,16 +32,23 @@
 //! bracketed parts follow only on success. A surface is `has` then (when the result is
 //! an `SmBSplineSurface`) `has_nurb oob borrowed knot_type form [n m p q r s cpts u v]`.
 //!
+//! A present revolution result retains `has`, followed by an owner-clear flag, its
+//! natural UV domain (`min.x min.y max.x max.y`), then 25 virtual point evaluations
+//! in u-major order on a 5 by 5 grid. Each evaluation is its normalized status,
+//! followed by `x y z` only on success. No B-spline substitute is constructed.
+//!
 //! [`run`] accepts only what upstream handles without undefined behaviour: finite data;
 //! well-formed clamped NURB curves (`m = n+p+1`, `1 <= p <= n`, degree at most 17,
 //! consistent dimension and rationality markers, non-decreasing knots with end
 //! multiplicity exactly `degree + 1` and interior multiplicity at most the degree);
 //! NURB data of any dimension, 2D data (`z = NL_NOZ`) included, since upstream handles
 //! it; positive weights except for `Extrude` (as `CreateLinearSweep`, any weights);
-//! B-spline curves where upstream takes `SmBSplineCurve*` and no `NULL` curve where upstream dereferences it unchecked (all but
+//! B-spline curves (including real `SmLine` / `SmCircle` subclasses for `Extrude`)
+//! where upstream takes `SmBSplineCurve*` and no `NULL` curve where upstream dereferences it unchecked (all but
 //! `Revolution` and `SkinPrimitive`); `SmApiCreateCurve` with at least 4 points and
 //! positive arc / circle radii (a failing constructor is `SC_ERR_ARG`); at most 12
-//! skin profiles; a skin-from-faces degree of 1 to 3 with 1 to 4 positive-radius
+//! skin profiles; a skin-from-faces degree of 0 to 3 or 18 to 2^20 (outside 1 to 17 the
+//! API returns `SM_ERR_INVALID_INPUT` first) with 1 to 4 positive-radius
 //! circles (no faces crash upstream, `plan/upstream-issues.md` UB-78).
 
 use crate::validate::{bad, NOW, NOZ};
@@ -51,6 +58,26 @@ use crate::{call_with_buffer, FfiError};
 pub const MAX_INDEX: usize = 512;
 /// Largest NURB degree accepted by [`run`].
 pub const MAX_DEGREE: usize = 17;
+/// Minimum sweep tolerance as a fraction of the trajectory's control polygon
+/// length (HANG-5): `SmApiCreateSweep` uses a fixed `dTol = 1e-5`, so a
+/// trajectory whose control polygon is longer than `1e-5 / 1e-6 = 10` makes
+/// the tolerance fall below floating-point resolution and hangs.
+pub const MIN_SWEEP_TOL_FRACTION: f64 = 1e-6;
+/// Longest `Sweep` trajectory of any kind, by control-polygon length (HANG-5): a path
+/// control point at `±1e300` never returns upstream.
+pub const MAX_TRAJECTORY_LENGTH: f64 = 1.0e12;
+/// Longest curved `Sweep` trajectory (any path but a degree-1 NURB), by
+/// control-polygon length; `sweep.api_brep` bounds its curve sweeps the same way.
+///
+/// HANG-5: `SmApiCreateSweep` -> `SmBSplineSurface::CreateSweepSurface` (fixed
+/// `dTol = 1e-5`) -> `N_CreateSweepScale` approximates the path by a polyline within
+/// `dTol / 2` (`N_ApproxCrvWithPolyline`, growing its arrays by 150 points per
+/// reallocation) and relaxes the tolerance only after that pass returns. On a
+/// quarter-arc path the C++ takes 0.4 s at radius `1e5`, 4.8 s at `1e6`, 26 s at `3e6`
+/// and gives no result in 30 s at `1e7`, `1e8` and `1e9`. A straight path returns at
+/// once at any length (a degree-1 NURB or four collinear points at `1e12`). The bound
+/// keeps every fixture and generated path.
+pub const MAX_PATH_EXTENT: f64 = 1.0e8;
 mod sys {
     extern "C" {
         pub fn sc_sweep_api_surfaces_run(
@@ -224,7 +251,9 @@ fn check_knots(knots: &[f64], p: usize) -> Result<(), FfiError> {
 enum Need {
     /// An `SmBSplineCurve` of any dimension with positive weights.
     BSplinePosWeights,
-    /// An `SmBSplineCurve` of any dimension (`CreateLinearSweep`).
+    /// An `SmBSplineCurve` of any dimension, including `SmLine` / `SmCircle`
+    /// subclasses (`SmLine.h:49`, `SmCircle.h:59`, `SmEllipse.h:243`).
+    /// `SmBSplineSurface.cpp:1588-1629` (`CreateLinearSweep`) uses their NURB.
     BSplineAnyDim,
     /// Any `SmCurve`.
     AnyCurve,
@@ -293,7 +322,7 @@ fn check_curve(c: &CurveSpec, need: Need, nullable: bool) -> Result<(), FfiError
             if *radius <= 0.0 {
                 return Err(bad("circle: radius must be positive"));
             }
-            if matches!(c, CurveSpec::AnalyticCircle { .. }) && need != Need::AnyCurve {
+            if matches!(c, CurveSpec::AnalyticCircle { .. }) && need == Need::BSplinePosWeights {
                 return Err(bad(
                     "analytic circle where upstream takes an SmBSplineCurve",
                 ));
@@ -302,7 +331,7 @@ fn check_curve(c: &CurveSpec, need: Need, nullable: bool) -> Result<(), FfiError
         CurveSpec::LineSegment { start, end } => {
             finite(start, "line")?;
             finite(end, "line")?;
-            if need != Need::AnyCurve {
+            if need == Need::BSplinePosWeights {
                 return Err(bad("line where upstream takes an SmBSplineCurve"));
             }
         }
@@ -356,6 +385,93 @@ fn push_curve(o: &mut Vec<f64>, c: &CurveSpec) {
     }
 }
 
+/// Control-polygon length of a sweep trajectory, for the HANG-5 tolerance guard.
+fn path_poly_len(c: &CurveSpec) -> f64 {
+    match c {
+        CurveSpec::Nurb { cpts, .. } => {
+            let mut len = 0.0;
+            let mut prev: Option<[f64; 4]> = None;
+            for cp in cpts {
+                if let Some(a) = prev {
+                    let b = *cp;
+                    let dx = b[0] - a[0];
+                    let dy = b[1] - a[1];
+                    let dz = if a[2] == NOZ || b[2] == NOZ {
+                        0.0
+                    } else {
+                        b[2] - a[2]
+                    };
+                    len += (dx * dx + dy * dy + dz * dz).sqrt();
+                }
+                prev = Some(*cp);
+            }
+            len
+        }
+        CurveSpec::ApiCurve { points } => {
+            let mut len = 0.0;
+            let mut prev: Option<[f64; 3]> = None;
+            for pt in points {
+                if let Some(a) = prev {
+                    let b = *pt;
+                    let dx = b[0] - a[0];
+                    let dy = b[1] - a[1];
+                    let dz = b[2] - a[2];
+                    len += (dx * dx + dy * dy + dz * dz).sqrt();
+                }
+                prev = Some(*pt);
+            }
+            len
+        }
+        CurveSpec::ApiArc {
+            center: _,
+            radius,
+            start_deg,
+            end_deg,
+        } => {
+            let rad = (end_deg - start_deg).abs() * std::f64::consts::PI / 180.0;
+            radius.abs() * rad
+        }
+        CurveSpec::ApiCircle { radius, .. } | CurveSpec::AnalyticCircle { radius, .. } => {
+            2.0 * std::f64::consts::PI * radius.abs()
+        }
+        CurveSpec::LineSegment { start, end } => {
+            let dx = end[0] - start[0];
+            let dy = end[1] - start[1];
+            let dz = end[2] - start[2];
+            (dx * dx + dy * dy + dz * dz).sqrt()
+        }
+        CurveSpec::Null => 0.0,
+    }
+}
+
+/// Rejects a `Sweep` trajectory too long for upstream's fixed tolerance (HANG-5): one
+/// whose control-polygon length is not finite or exceeds [`MAX_TRAJECTORY_LENGTH`], or
+/// a curved one (any path but a degree-1 NURB or a line segment) above
+/// [`MAX_PATH_EXTENT`]. [`run`] applies it to every `Sweep`; the difftest runner's
+/// Rust side applies it too.
+///
+/// # Errors
+///
+/// [`FfiError::InvalidArgument`] for such a path.
+pub fn check_path_extent(path: &CurveSpec) -> Result<(), FfiError> {
+    let traj_len = path_poly_len(path);
+    // a line segment is refused as a path before this check (upstream takes an
+    // SmBSplineCurve); a degree-1 NURB is its own polyline
+    let straight = matches!(
+        path,
+        CurveSpec::LineSegment { .. } | CurveSpec::Nurb { p: 1, .. }
+    );
+    if !traj_len.is_finite()
+        || traj_len > MAX_TRAJECTORY_LENGTH
+        || (!straight && traj_len > MAX_PATH_EXTENT)
+    {
+        return Err(bad(
+            "sweep: trajectory too long for the fixed tolerance (HANG-5)",
+        ));
+    }
+    Ok(())
+}
+
 /// Validates `call` and encodes it as the shim's program.
 fn encode(call: &Call) -> Result<Vec<f64>, FfiError> {
     let mut o = Vec::new();
@@ -370,6 +486,7 @@ fn encode(call: &Call) -> Result<Vec<f64>, FfiError> {
         Call::Sweep { curve, path } => {
             check_curve(curve, Need::BSplinePosWeights, false)?;
             check_curve(path, Need::BSplinePosWeights, false)?;
+            check_path_extent(path)?;
             o.push(2.0);
             push_curve(&mut o, curve);
             push_curve(&mut o, path);
@@ -437,8 +554,9 @@ fn encode(call: &Call) -> Result<Vec<f64>, FfiError> {
             if circles.is_empty() || circles.len() > 4 {
                 return Err(bad("skin from faces: need 1 to 4 faces"));
             }
-            if !(1..=3).contains(degree) {
-                return Err(bad("skin from faces: degree must be 1 to 3"));
+            // 0 and above NL_MAXDEG are refused by the API before any work
+            if (4..=MAX_DEGREE as u64).contains(degree) || *degree > 1 << 20 {
+                return Err(bad("skin from faces: degree must be 0 to 3 or above 17"));
             }
             o.extend([7.0, circles.len() as f64]);
             for (center, radius) in circles {
@@ -478,4 +596,46 @@ pub fn run(call: &Call) -> Result<Vec<f64>, FfiError> {
             )
         }
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// HANG-5: a curved `Sweep` trajectory above [`MAX_PATH_EXTENT`] (control-polygon
+    /// length) is refused before the kernel; a degree-1 NURB path up to
+    /// [`MAX_TRAJECTORY_LENGTH`] and a curved path inside the bound are not. Only
+    /// `encode` runs: no native call.
+    #[test]
+    fn huge_curved_path_is_refused() {
+        let call = |path: CurveSpec| Call::Sweep {
+            curve: CurveSpec::ApiCircle {
+                center: [0.0; 3],
+                radius: 1.0,
+            },
+            path,
+        };
+        let arc = |radius: f64| CurveSpec::ApiArc {
+            center: [0.0; 3],
+            radius,
+            start_deg: 0.0,
+            end_deg: 90.0,
+        };
+        let spike = |y: f64| CurveSpec::ApiCurve {
+            points: vec![[0.0; 3], [0.2, 0.3, 0.8], [0.5, y, 1.6], [0.1, 0.0, 2.4]],
+        };
+        let line = |z: f64| CurveSpec::Nurb {
+            dim: 3,
+            p: 1,
+            cpts: vec![[0.0, 0.0, 0.0, NOW], [0.0, 0.0, z, NOW]],
+            knots: vec![0.0, 0.0, 1.0, 1.0],
+        };
+        let msg = "invalid argument: sweep: trajectory too long for the fixed tolerance (HANG-5)";
+        for path in [arc(1e8), arc(1e9), spike(1e300), spike(6e7), line(2e12)] {
+            assert_eq!(encode(&call(path)).unwrap_err().to_string(), msg);
+        }
+        for path in [arc(6e7), spike(4.9e7), line(1e12)] {
+            assert!(encode(&call(path)).is_ok());
+        }
+    }
 }

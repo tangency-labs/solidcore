@@ -31,7 +31,8 @@
 //! B-rep wire-edge curves (3D) each followed by the edge tolerance `tol`; `nv` vertices `x y z type status corner pc_class pc_kind
 //! pc_index pc_sub pc_face t_param u v` (`pc_kind` 0 none, 1 the start/end (`pc_sub`)
 //! vertex of target wire edge `pc_index`, 2 its primary edge use, 3 target face
-//! `pc_index`; `pc_face` a target face or -1; `corner` an opaque tag or -1); `ng`
+//! `pc_index`, 4 the target wire edge `pc_index` itself (an `SmEdge`, what `SM_PC_EDGE` classifies
+//! to upstream, 5 edge use `pc_sub` of the first loop of target face `pc_index`); `pc_face` a target face or -1; `corner` an opaque tag or -1); `ng`
 //! geometries `type status has_center [curve] has_surface [surface]`; `ne` edges `vs ve
 //! type status corner has_curve [curve] has_ivl t0 t1 fbe1 fbe2`, then per edge use
 //! (primary, mate) `has_uv [uvcurve] geom`, then per edge use its vertex use's `u v`;
@@ -403,7 +404,7 @@ fn points(rd: &mut Reader<'_>, k: usize) -> Result<Vec<[f64; 4]>, FfiError> {
 }
 
 /// Reads and validates a curve `dim n p m cpts knots` of dimension `want_dim`.
-fn curve(rd: &mut Reader<'_>, want_dim: usize, what: &str) -> Result<(), FfiError> {
+pub(crate) fn curve(rd: &mut Reader<'_>, want_dim: usize, what: &str) -> Result<(), FfiError> {
     let dim = rd.index(3)?;
     if dim != want_dim {
         return Err(bad(format!("{what}: need a {want_dim}D curve")));
@@ -535,6 +536,10 @@ pub(crate) struct Block {
     pub(crate) nfb: usize,
     /// Per vertex: the classification object kind (`pc_kind`).
     pub(crate) pc_kinds: Vec<usize>,
+    /// Per vertex: whether its status is `SM_FIL_PROCESSED`.
+    pub(crate) vertex_processed: Vec<bool>,
+    /// Per vertex: its two mates (model vertices).
+    pub(crate) vertex_mates: Vec<[Option<usize>; 2]>,
     /// Per edge: whether it has a curve.
     pub(crate) edge_curves: Vec<bool>,
     /// Per edge: its two vertices.
@@ -576,23 +581,26 @@ pub(crate) fn validate_block(rd: &mut Reader<'_>) -> Result<Block, FfiError> {
 
     let nv = rd.index(MAX_LIST)?;
     let mut pc_kinds = Vec::with_capacity(nv);
+    let mut vertex_processed = Vec::with_capacity(nv);
     for _ in 0..nv {
         rd.finites(3)?;
         rd.index(13)?; // SmFilletVertexType
-        rd.index(12)?; // SmFilStatus
+        vertex_processed.push(rd.index(12)? == 1); // SmFilStatus (SM_FIL_PROCESSED = 1)
         rd.opt_index(MAX_LIST)?; // corner tag
                                  // SmPointClassificationType: SM_PC_UNKNOWN (100) ..= SM_PC_NOTHING (110)
         let pc_class = rd.index(110)?;
         if pc_class < 100 {
             return Err(bad("vertex: point class below SM_PC_UNKNOWN"));
         }
-        let pc_kind = rd.index(3)?;
+        let pc_kind = rd.index(5)?;
         let pc_index = rd.opt_index(MAX_LIST)?;
-        let pc_sub = rd.index(1)?;
+        let pc_sub = rd.index(3)?;
         match (pc_kind, pc_index) {
             (0, _) => {}
-            (1 | 2, Some(i)) if i < nt => {}
+            (1 | 2 | 4, Some(i)) if i < nt && pc_sub <= 1 => {}
             (3, Some(i)) if i < nf && pc_sub == 0 => {}
+            // an edge use of the first loop of target face `i` (the shim checks the index)
+            (5, Some(i)) if i < nf => {}
             _ => return Err(bad("vertex: classification object out of range")),
         }
         rd.opt_index(nf)?; // pc_face
@@ -667,9 +675,9 @@ pub(crate) fn validate_block(rd: &mut Reader<'_>) -> Result<Block, FfiError> {
         }
     }
 
+    let mut vertex_mates = Vec::with_capacity(nv);
     for _ in 0..nv {
-        rd.opt_index(nv)?;
-        rd.opt_index(nv)?;
+        vertex_mates.push([rd.opt_index(nv)?, rd.opt_index(nv)?]);
     }
 
     Ok(Block {
@@ -677,6 +685,8 @@ pub(crate) fn validate_block(rd: &mut Reader<'_>) -> Result<Block, FfiError> {
         nf,
         nfb,
         pc_kinds,
+        vertex_processed,
+        vertex_mates,
         edge_curves,
         edge_vertices,
         geom_surfaces,

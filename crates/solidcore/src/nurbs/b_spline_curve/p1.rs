@@ -24,6 +24,7 @@
 //! | [`BSplineCurve::create_arc_from_points`]     | `CreateArcFromPoints`                             |
 //! | [`BSplineCurve::create_canonical`], [`CanonicalData`] | `CreateCanonical`                        |
 //! | [`BSplineCurve::create_circle_segment`]      | `CreateCircleSegment`                             |
+//! | [`BSplineCurve::create_circle_segment_min_arcs`] | not upstream (WR-711)                         |
 //! | [`BSplineCurve::create_degenerate_curve`]    | `CreateDegenerateCurve`                           |
 //! | [`BSplineCurve::create_line_segment`]        | `CreateLineSegment`                               |
 //! | [`BSplineCurve::create_mirror_curve`]        | `CreateMirrorCurve`                               |
@@ -63,6 +64,8 @@
 //! | [`KnotType`], [`BSplineCurveForm`], [`NurbCircleParam`], [`ProjectionType`] | `SmKnotType`, `SmBSplineCurveForm`, `SmNurbCircleParam`, `SmProjectionType` |
 //!
 //! Deviations:
+//! - [`BSplineCurve::create_circle_segment_min_arcs`] (not upstream, WR-711) is
+//!   `CreateCircleSegment` with a floor on the quadratic form's arc count.
 //! - **Curve base.** `SmBSplineCurve` derives from `SmCurve` (units `curve.curve_*`).
 //!   The base state it uses is the image-space dimension (`m_lDim`), kept here as
 //!   [`BSplineCurve::dim`] (`SmCurve::GetDim`). `SmCurve::operator==` (same type,
@@ -97,6 +100,13 @@
 //!   [`SolidError::InvalidInput`]. Where upstream would index outside its arrays
 //!   (fewer multiplicities than knots in `CreateCanonical`, too few control points
 //!   or knots for the constructor) the port returns `InvalidInput`.
+//! - **Canonical knots.** `CreateCanonical` expands the knots by the caller's
+//!   multiplicities with `SmTArray::Add`, whose failed growth is ignored (the array is
+//!   memory-dependent then). The port keeps the expansion implicit and materialises
+//!   only the knots `N_Iges126Crv` reads (`0..=n + p + 1`) plus the interval knots
+//!   it looks up, so an absurd multiplicity gives the same result (or the same "too
+//!   few knots" error) without allocating; a total count above `usize::MAX` is
+//!   `InvalidInput`.
 //! - **Enums.** `SmNurbCircleParam` and `SmProjectionType` are Rust enums, so
 //!   upstream's "not one of the values" branches only exist for
 //!   [`ProjectionType::Rotation`] and [`ProjectionType::Unknown`].
@@ -124,15 +134,15 @@ use crate::geom::vector3d::{Point3, Vec3};
 use crate::math::{min2, EFF_ZERO, EFF_ZERO_SQ, EFF_ZERO_SQRT, PI};
 use crate::nurbs::basis_basic::reparam;
 use crate::nurbs::crv_basic::{ConicType, Curve};
-use crate::nurbs::crv_common::{circ_arc, Arc};
+use crate::nurbs::crv_common::{circ_arc, quadratic_arc_min_arcs, Arc, DEFAULT_ANGLE_TOL};
 use crate::nurbs::crv_nurb::{line_from_pt_and_vector, Projection};
 use crate::nurbs::geom::Interval;
 use crate::nurbs::iges::{iges_126_curve, Entity126};
 use crate::nurbs::knots::Side;
 use crate::nurbs::math::{CPoint, MatrixType, RealMatrix, NOW, NOZ};
 use crate::nurbs::nurbs_crv::{
-    allocate_nurb_curve, copy_nurb_curve, crv_derivs, crv_eval, crv_remove_knots, extract_frame,
-    fixup_knot_vector, get_knots, to_euclid,
+    allocate_nurb_curve, copy_nurb_curve, crv_derivs, crv_derivs_into, crv_eval, crv_remove_knots,
+    extract_frame, fixup_knot_vector, get_knots, to_euclid, MAX_DERIV,
 };
 
 const OP_DATA: &str = "nurbs::b_spline_curve::p1::BSplineCurve::from_data";
@@ -363,6 +373,7 @@ pub fn split_cubic_bezier(cp1: CPoint, cp2: CPoint, cp3: CPoint, cp4: CPoint) ->
 /// `SmCurve::EvaluateContinuity` of `this` at `this_param` against `other` at
 /// `other_param`.
 fn evaluate_continuity(
+    k: &crate::kernel::Kernel,
     this: &BSplineCurve,
     this_param: f64,
     this_from_left: bool,
@@ -372,6 +383,7 @@ fn evaluate_continuity(
     angle_tol: f64,
 ) -> Result<ContinuityType> {
     Ok(crate::curve::curve::p2::evaluate_continuity(
+        k,
         this,
         this_param,
         this_from_left,
@@ -384,13 +396,19 @@ fn evaluate_continuity(
 }
 
 /// `SmCurve::ApproximateLength` of `curve` over `interval` with `samples` samples.
-fn approximate_length(curve: &BSplineCurve, interval: &Extent1d, samples: usize) -> Result<f64> {
-    Ok(crate::curve::curve::p2::approximate_length(curve, interval, samples, false)?.0)
+fn approximate_length(
+    k: &crate::kernel::Kernel,
+    curve: &BSplineCurve,
+    interval: &Extent1d,
+    samples: usize,
+) -> Result<f64> {
+    Ok(crate::curve::curve::p2::approximate_length(k, curve, interval, samples, false)?.0)
 }
 
 /// `SmCurve::TessellateByBisection` of `curve` (through the [`crate::curve::curve::Curve`]
 /// dispatch of its virtual queries, all B-spline overrides).
 fn tessellate_by_bisection(
+    k: &crate::kernel::Kernel,
     curve: &BSplineCurve,
     interval: &Extent1d,
     chord_height_tol: f64,
@@ -398,6 +416,7 @@ fn tessellate_by_bisection(
     max_length: f64,
 ) -> Result<Tessellation> {
     crate::curve::curve::Curve::from(curve.clone()).tessellate_by_bisection(
+        k,
         interval,
         chord_height_tol,
         angle_tol_deg,
@@ -860,21 +879,22 @@ impl BSplineCurve {
     /// `SM_ERR` without a NURB; those of `SmCurve::EvaluateContinuity`.
     pub fn calculate_continuities(
         &self,
+        k: &crate::kernel::Kernel,
         angle_tol: f64,
     ) -> Result<(ContinuityType, Vec<ContinuityType>)> {
         let (knots, _) = self.knots(None)?;
-        let k = knots.len();
-        if k == 0 {
+        let knot_count = knots.len();
+        if knot_count == 0 {
             return Err(invalid(OP_CONT, "no knots"));
         }
 
         // init output - 1 continuity for each knot, end continuity values discontinuous
-        let mut continuities = vec![ContinuityType::Discontinuous; k];
+        let mut continuities = vec![ContinuityType::Discontinuous; knot_count];
         let mut min_continuity = ContinuityType::CInfinity;
 
         // for every internal knot
-        for (i, &knot_val) in knots.iter().enumerate().take(k - 1).skip(1) {
-            let c = evaluate_continuity(self, knot_val, true, self, knot_val, false, angle_tol)?;
+        for (i, &knot_val) in knots.iter().enumerate().take(knot_count - 1).skip(1) {
+            let c = evaluate_continuity(k, self, knot_val, true, self, knot_val, false, angle_tol)?;
             if let Some(slot) = continuities.get_mut(i) {
                 *slot = c;
             }
@@ -936,7 +956,7 @@ impl BSplineCurve {
     /// # Errors
     ///
     /// `SM_ERR` without a NURB or when the NLib evaluation fails (including
-    /// `num_derivs >= GW_MAX_DERIV`).
+    /// `num_derivs > GW_MAX_DERIV`).
     pub fn evaluate(
         &self,
         t: f64,
@@ -947,6 +967,43 @@ impl BSplineCurve {
         // pass simple calls along to EvaluatePoint
         if num_derivs == 0 {
             return Ok(vec![self.evaluate_point(t)?]);
+        }
+        if num_derivs > MAX_DERIV {
+            // (NLib's order error, after the NURB check, without allocating an output
+            // of that size)
+            let cur = self.nurb_ref()?;
+            let side = if from_left { Side::Left } else { Side::Right };
+            return crv_derivs(cur, t, side, num_derivs).map_err(SolidError::nl_ser(OP_EVAL));
+        }
+        let mut pv = vec![Vec3::ZERO; num_derivs + 1];
+        self.evaluate_into(t, from_left, non_zero_tangents, &mut pv)?;
+        Ok(pv)
+    }
+
+    /// [`BSplineCurve::evaluate`] into the caller's slice: `out[k]` is derivative `k`,
+    /// `num_derivs = out.len() - 1` (up to `GW_MAX_DERIV`), without a heap allocation
+    /// (except for the rare zero-tangent re-evaluation).
+    ///
+    /// # Errors
+    ///
+    /// As [`BSplineCurve::evaluate`]; `SM_ERR` for an empty `out`.
+    pub fn evaluate_into(
+        &self,
+        t: f64,
+        from_left: bool,
+        non_zero_tangents: bool,
+        out: &mut [Vec3],
+    ) -> Result<()> {
+        let num_derivs = out
+            .len()
+            .checked_sub(1)
+            .ok_or_else(|| SolidError::sm_err(OP_EVAL))?;
+        // pass simple calls along to EvaluatePoint
+        if num_derivs == 0 {
+            if let Some(slot) = out.first_mut() {
+                *slot = self.evaluate_point(t)?;
+            }
+            return Ok(());
         }
 
         // natural extent
@@ -961,19 +1018,16 @@ impl BSplineCurve {
         }
 
         let side = if from_left { Side::Left } else { Side::Right };
-        let mut pv = crv_derivs(cur, t, side, num_derivs).map_err(SolidError::nl_ser(OP_EVAL))?;
-        if pv.len() != num_derivs + 1 {
-            return Err(SolidError::sm_err(OP_EVAL));
-        }
+        crv_derivs_into(cur, t, side, out).map_err(SolidError::nl_ser(OP_EVAL))?;
 
         // When asked, find a direction for zero-length first derivatives from the
         // 2nd derivative value.
         if non_zero_tangents {
-            let p0 = pv.first().copied().unwrap_or(Vec3::UNDEF);
+            let p0 = out.first().copied().unwrap_or(Vec3::UNDEF);
             let scaled_zero = EFF_ZERO * (1.0 + p0.max_dimension());
             let new_len = 1.1 * scaled_zero;
 
-            let d1 = pv.get(1).copied().unwrap_or(Vec3::UNDEF);
+            let d1 = out.get(1).copied().unwrap_or(Vec3::UNDEF);
             if num_derivs >= 1 && d1.length_squared() < new_len * new_len {
                 if num_derivs < 2 {
                     // recurse so the next section sets the 1st derivative; the call
@@ -982,11 +1036,11 @@ impl BSplineCurve {
                     let vals = self
                         .evaluate(t, 2, from_left, false)
                         .unwrap_or_else(|_| vec![Vec3::UNDEF; 3]);
-                    if let (Some(slot), Some(&v)) = (pv.get_mut(1), vals.get(1)) {
+                    if let (Some(slot), Some(&v)) = (out.get_mut(1), vals.get(1)) {
                         *slot = v;
                     }
                 } else {
-                    let d2 = pv.get(2).copied().unwrap_or(Vec3::UNDEF);
+                    let d2 = out.get(2).copied().unwrap_or(Vec3::UNDEF);
                     let len = d2.length();
                     if len > new_len {
                         let mut d1 = (new_len / len) * d2;
@@ -995,14 +1049,14 @@ impl BSplineCurve {
                         if t > self.natural_interval().mid() {
                             d1 *= -1.0;
                         }
-                        if let Some(slot) = pv.get_mut(1) {
+                        if let Some(slot) = out.get_mut(1) {
                             *slot = d1;
                         }
                     }
                 }
             }
         }
-        Ok(pv)
+        Ok(())
     }
 
     /// Tessellates the curve over `interval` (`Tessellate`): bisection with the chord
@@ -1015,6 +1069,7 @@ impl BSplineCurve {
     /// ([`crate::curve::curve::Curve::tessellate_by_bisection`]).
     pub fn tessellate(
         &self,
+        k: &crate::kernel::Kernel,
         interval: &Extent1d,
         chord_height_tol: f64,
         angle_tol_deg: f64,
@@ -1022,13 +1077,20 @@ impl BSplineCurve {
     ) -> Result<Tessellation> {
         // init MaxLength control parameter
         let max_length = if min_segments > 1 {
-            approximate_length(self, interval, 5)? / (min_segments as f64)
+            approximate_length(k, self, interval, 5)? / (min_segments as f64)
         } else {
             0.0
         };
 
         // pass the call along
-        tessellate_by_bisection(self, interval, chord_height_tol, angle_tol_deg, max_length)
+        tessellate_by_bisection(
+            k,
+            self,
+            interval,
+            chord_height_tol,
+            angle_tol_deg,
+            max_length,
+        )
     }
 
     // ---- editing ----------------------------------------------------------------------
@@ -1350,16 +1412,9 @@ impl BSplineCurve {
             }
         }
 
-        // Make compatible knots array
-        let mut new_knots = Vec::new();
-        for (i, &knot) in knots.iter().enumerate() {
-            let mult = *knot_multiplicities
-                .get(i)
-                .ok_or_else(|| invalid(OP_CANON, "fewer multiplicities than knots"))?;
-            for _ in 0..mult {
-                new_knots.push(knot);
-            }
-        }
+        // Make compatible knots array (only the part `N_Iges126Crv` and the interval
+        // read is materialised; its full length comes from the multiplicities)
+        let expanded = ExpandedKnots::new(knots, knot_multiplicities, OP_CANON)?;
 
         // Make compatible weight array
         let tmp_weights;
@@ -1381,12 +1436,15 @@ impl BSplineCurve {
             [t.min(), t.max()]
         } else {
             let short = || invalid(OP_CANON, "too few knots");
-            let last = new_knots.len().checked_sub(p + 1).ok_or_else(short)?;
+            let last = expanded.len().checked_sub(p + 1).ok_or_else(short)?;
             [
-                new_knots.get(p).copied().ok_or_else(short)?,
-                new_knots.get(last).copied().ok_or_else(short)?,
+                expanded.get(p).ok_or_else(short)?,
+                expanded.get(last).ok_or_else(short)?,
             ]
         };
+
+        // `N_Iges126Crv` reads knots `0..=n + p + 1` only
+        let new_knots = expanded.prefix(n.saturating_add(p).saturating_add(2), OP_CANON)?;
 
         // NLIB curve construction
         let mut cur = iges_126_curve(&Entity126 {
@@ -1427,6 +1485,26 @@ impl BSplineCurve {
         end_deg: f64,
         param: NurbCircleParam,
     ) -> Result<Self> {
+        Self::create_circle_segment_min_arcs(dim, frame, radius, start_deg, end_deg, param, 0)
+    }
+
+    /// [`BSplineCurve::create_circle_segment`] whose quadratic form is split into at
+    /// least `min_arcs` equal arcs (at most four; `0` is upstream's count from the
+    /// sweep). Not upstream: an exact circular fillet's sections take one arc count
+    /// along the rails (`fixes.fillet_exact_arc_spans`, WR-711).
+    ///
+    /// # Errors
+    ///
+    /// As [`BSplineCurve::create_circle_segment`].
+    pub fn create_circle_segment_min_arcs(
+        dim: u64,
+        frame: &Axis2Placement,
+        radius: f64,
+        start_deg: f64,
+        end_deg: f64,
+        param: NurbCircleParam,
+        min_arcs: usize,
+    ) -> Result<Self> {
         // check input
         check(radius >= EFF_ZERO, OP_CIRCLE, "radius below SM_EFF_ZERO")?;
         if !(2..=3).contains(&dim) {
@@ -1458,7 +1536,12 @@ impl BSplineCurve {
             start: start_deg,
             end: end_deg,
         };
-        let mut cur = circ_arc(&arc, ctp).map_err(SolidError::nl_ser(OP_CIRCLE))?;
+        let made = if min_arcs > 0 && ctp == ConicType::Quadratic {
+            quadratic_arc_min_arcs(&arc, DEFAULT_ANGLE_TOL, min_arcs)
+        } else {
+            circ_arc(&arc, ctp)
+        };
+        let mut cur = made.map_err(SolidError::nl_ser(OP_CIRCLE))?;
         if dim == 2 {
             cur.to_2d();
         }
@@ -1724,9 +1807,72 @@ fn matrix_of(m: &[[f64; 4]; 4]) -> Result<RealMatrix> {
     Ok(rma)
 }
 
+/// Upstream's expanded knot array of `CreateCanonical` (`sNewKnots`): `knots[i]`
+/// repeated `mults[i]` times, kept implicit because the multiplicities come from the
+/// caller (an absurd multiplicity must not allocate).
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct ExpandedKnots<'a> {
+    knots: &'a [f64],
+    mults: &'a [usize],
+    len: usize,
+}
+
+impl<'a> ExpandedKnots<'a> {
+    /// The expansion of `knots` by `mults`; `InvalidInput` for fewer multiplicities
+    /// than knots (upstream reads past the array) or a total count above `usize::MAX`.
+    pub(crate) fn new(knots: &'a [f64], mults: &'a [usize], op: &'static str) -> Result<Self> {
+        let mut len = 0usize;
+        for i in 0..knots.len() {
+            let mult = *mults
+                .get(i)
+                .ok_or_else(|| invalid(op, "fewer multiplicities than knots"))?;
+            len = len
+                .checked_add(mult)
+                .ok_or_else(|| invalid(op, "knot count overflow"))?;
+        }
+        Ok(Self { knots, mults, len })
+    }
+
+    /// Number of expanded knots (`sNewKnots.GetSize()`).
+    pub(crate) fn len(&self) -> usize {
+        self.len
+    }
+
+    /// Expanded knot `idx` (`sNewKnots[idx]`), `None` past the end.
+    pub(crate) fn get(&self, idx: usize) -> Option<f64> {
+        let mut start = 0usize;
+        for (&knot, &mult) in self.knots.iter().zip(self.mults) {
+            let end = start.saturating_add(mult);
+            if idx < end {
+                return Some(knot);
+            }
+            start = end;
+        }
+        None
+    }
+
+    /// The first `min(count, len)` expanded knots, allocated fallibly
+    /// (`InvalidInput` when they do not fit in memory).
+    pub(crate) fn prefix(&self, count: usize, op: &'static str) -> Result<Vec<f64>> {
+        let count = count.min(self.len);
+        let mut out = Vec::new();
+        out.try_reserve_exact(count)
+            .map_err(|_| invalid(op, "knot array too large"))?;
+        for (&knot, &mult) in self.knots.iter().zip(self.mults) {
+            let room = count.saturating_sub(out.len());
+            if room == 0 {
+                break;
+            }
+            out.extend(core::iter::repeat_n(knot, mult.min(room)));
+        }
+        Ok(out)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::Kernel;
 
     fn cubic() -> BSplineCurve {
         let pw = vec![
@@ -1738,6 +1884,45 @@ mod tests {
         ];
         let u = vec![0.0, 0.0, 0.0, 0.0, 0.5, 1.0, 1.0, 1.0, 1.0];
         BSplineCurve::from_nurb(Curve::new(pw, 3, u).unwrap(), 3, false)
+    }
+
+    #[test]
+    fn evaluate_into_matches_evaluate_bit_for_bit() {
+        let bits = |v: &[Vec3]| -> Vec<[u64; 3]> {
+            v.iter()
+                .map(|p| [p.x.to_bits(), p.y.to_bits(), p.z.to_bits()])
+                .collect()
+        };
+        // the second curve has a zero first derivative at t = 0 (repeated point)
+        let pw = vec![
+            CPoint::new(0.0, 0.0, 0.0, NOW),
+            CPoint::new(0.0, 0.0, 0.0, NOW),
+            CPoint::new(3.0, 2.0, 1.0, NOW),
+            CPoint::new(4.0, 0.0, 0.0, NOW),
+        ];
+        let u = vec![0.0, 0.0, 0.0, 0.0, 1.0, 1.0, 1.0, 1.0];
+        let cusp = BSplineCurve::from_nurb(Curve::new(pw, 3, u).unwrap(), 3, false);
+        for c in [cubic(), cusp] {
+            for t in [-0.25, 0.0, 0.3, 0.5, 0.75, 1.0, 1.5] {
+                for from_left in [true, false] {
+                    for nzt in [true, false] {
+                        for nd in 0..MAX_DERIV + 2 {
+                            let full = c.evaluate(t, nd, from_left, nzt);
+                            let mut out = vec![Vec3::new(7.0, 7.0, 7.0); nd + 1];
+                            let r = c.evaluate_into(t, from_left, nzt, &mut out);
+                            match full {
+                                Ok(full) => {
+                                    assert!(r.is_ok());
+                                    assert_eq!(bits(&full), bits(&out));
+                                }
+                                Err(e) => assert_eq!(r.err(), Some(e)),
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        assert!(cubic().evaluate_into(0.5, true, false, &mut []).is_err());
     }
 
     #[test]
@@ -1821,11 +2006,13 @@ mod tests {
         let (k, m) = c.knots(None).unwrap();
         assert_eq!(k, vec![0.0, 0.5, 1.0]);
         assert_eq!(m, vec![4, 1, 4]);
-        let (min_c, conts) = c.calculate_continuities(1.0).unwrap();
+        let (min_c, conts) = c.calculate_continuities(&Kernel::default(), 1.0).unwrap();
         assert_eq!(conts.len(), 3);
         assert_eq!(conts[0], ContinuityType::Discontinuous);
         assert_eq!(conts[1], min_c);
-        let t = c.tessellate(&c.natural_interval(), 0.1, 10.0, 0).unwrap();
+        let t = c
+            .tessellate(&Kernel::default(), &c.natural_interval(), 0.1, 10.0, 0)
+            .unwrap();
         assert_eq!(t.parameters.first().copied(), Some(0.0));
         assert_eq!(t.parameters.last().copied(), Some(1.0));
     }
@@ -1921,5 +2108,47 @@ mod tests {
         let k = split_cubic_bezier(a, b, c, d);
         assert_eq!(k[3], CPoint::new(3.0, 1.0, NOZ, NOW));
         assert_eq!(k[6], d);
+    }
+
+    fn canonical(mults: &[usize]) -> Result<BSplineCurve> {
+        let pts = [Point3::new(0.0, 0.0, 0.0), Point3::new(1.0, 2.0, 0.0)];
+        BSplineCurve::create_canonical(&CanonicalData {
+            dim: 3,
+            degree: 1,
+            control_points: &pts,
+            form: BSplineCurveForm::Unspecified,
+            knot_multiplicities: mults,
+            knots: &[0.0, 1.0],
+            knot_type: KnotType::Unspecified,
+            weights: None,
+            trim: None,
+        })
+    }
+
+    #[test]
+    fn canonical_huge_multiplicity_does_not_allocate() {
+        // fuzz regression (nurbs.b_spline_curve_p1 fuzz00528): a 2^31 multiplicity
+        // aborted the knot expansion; only the knots N_Iges126Crv reads are built now
+        let plain = canonical(&[2, 2]).unwrap();
+        let huge = canonical(&[2, 1 << 31]).unwrap();
+        assert_eq!(plain.knots(None).unwrap(), huge.knots(None).unwrap());
+        assert!(canonical(&[2, usize::MAX - 2]).is_ok());
+        // total above usize::MAX, and a huge leading run (knots [0, 0, 0, 0] invalid)
+        assert!(canonical(&[2, usize::MAX]).is_err());
+        assert!(canonical(&[1 << 62, 2]).is_err());
+        assert!(canonical(&[2]).is_err());
+    }
+
+    #[test]
+    fn expanded_knots_lookup() {
+        let e = ExpandedKnots::new(&[0.0, 0.5, 1.0], &[2, 1, 3], "test").unwrap();
+        assert_eq!(e.len(), 6);
+        assert_eq!(e.get(1), Some(0.0));
+        assert_eq!(e.get(2), Some(0.5));
+        assert_eq!(e.get(5), Some(1.0));
+        assert_eq!(e.get(6), None);
+        assert_eq!(e.prefix(4, "test").unwrap(), vec![0.0, 0.0, 0.5, 1.0]);
+        assert_eq!(e.prefix(99, "test").unwrap().len(), 6);
+        assert!(ExpandedKnots::new(&[0.0, 1.0], &[usize::MAX, 1], "test").is_err());
     }
 }

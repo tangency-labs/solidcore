@@ -10,6 +10,7 @@
 // `topology.vertexuse` export of the same block); the other ops output `-1 status` when
 // the B-rep could not be built, else `0` and the op's results.
 #include "sc_topology_fixture.h"
+#include "sc_trim_curve_record.h"
 
 #include <SmCompositeCurve.h>
 
@@ -246,6 +247,15 @@ void run(int32_t op, Graph& g, const double* a, std::vector<double>& o)
             o.push_back(x);
         put_tols(o, g);
         put_eu_state(o, g);
+        for (SmEdgeuse* eu : g.edgeuses)
+            sc_trim_curve::put_trim_curve(o, eu->*EuPeek::uv());
+        // each UV trim curve's owner (the curves handed back are matched to edge uses
+        // again): the edge use it names, -1 for none, -3 for an owner that is no edge use
+        for (SmEdgeuse* eu : g.edgeuses)
+        {
+            SmBSplineCurve* c = eu->*EuPeek::uv();
+            o.push_back(c ? (double)g.find(6, c->GetOwner()) : -1.0);
+        }
         break;
     }
     case P3_INTERSECT:

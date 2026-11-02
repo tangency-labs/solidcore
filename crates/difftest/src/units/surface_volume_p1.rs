@@ -528,7 +528,10 @@ fn build(v: &Vol) -> Result<Volume, HarnessError> {
             3 => VolumeKind::Unbend(UnbendVolume::new()),
             k => return Err(harness(format!("bad map kind {k}"))),
         };
-        next = Some(Volume::with_maps(kind, m.orient.map(transform_of), next));
+        next = Some(
+            Volume::with_maps(kind, m.orient.map(transform_of), next)
+                .map_err(|e| harness(e.to_string()))?,
+        );
     }
     next.ok_or_else(|| harness("volume without maps"))
 }
@@ -602,7 +605,7 @@ fn str_codes(o: &mut Vec<f64>, s: &str) {
 /// cannot return.
 fn status(e: &SolidError) -> f64 {
     match e {
-        SolidError::InvalidInput { .. } => 1007.0,
+        SolidError::InvalidInput { .. } | SolidError::PortInvariant { .. } => 1007.0,
         SolidError::Upstream { code, .. } => f64::from(*code),
         _ => -1.0,
     }
@@ -700,11 +703,12 @@ fn opts(left: [bool; 3], nz: bool, comp: bool) -> EvalOptions {
         non_zero_tangents: nz,
         do_zero_sampling: true,
         with_compounding: comp,
+        ..EvalOptions::default()
     }
 }
 
 #[allow(clippy::too_many_lines)]
-fn rust(i: &Inputs) -> Result<Output, HarnessError> {
+fn rust(k: &Kernel, i: &Inputs) -> Result<Output, HarnessError> {
     let mut o: Vec<f64> = Vec::new();
     match i {
         Inputs::Lift { form, order, vecs } => {
@@ -830,7 +834,7 @@ fn rust(i: &Inputs) -> Result<Output, HarnessError> {
         }
         Inputs::SimplePreds { p, a, b: e, .. } => {
             let pt = tri!(o, v.is_point_in_param_domain_simple(v3(*p)));
-            let ln = tri!(o, v.is_line_in_param_domain_simple(v3(*a), v3(*e)));
+            let ln = tri!(o, v.is_line_in_param_domain_simple(k, v3(*a), v3(*e)));
             let cv = tri!(o, v.is_curve_in_param_domain_simple(&Kernel::default(), &line(*a, *e)));
             o.extend([0.0, b(pt), b(ln), b(cv)]);
         }
@@ -923,7 +927,7 @@ fn rust(i: &Inputs) -> Result<Output, HarnessError> {
         Inputs::HasDisc { .. } => {
             let mut d = Discontinuities3d::new();
             d.set_unaligned();
-            let r = tri!(o, v.has_discontinuities_simple(Some(&mut d), true));
+            let r = tri!(o, v.has_discontinuities_simple(k, Some(&mut d), true));
             o.extend([0.0, b(r)]);
             put_disc(&mut o, &d);
         }
@@ -1254,6 +1258,7 @@ impl UnitDiff for Runner {
     }
 
     fn run_rust(&self, case: &Case) -> Result<Output, HarnessError> {
-        rust(&case.parse()?)
+        let k = &Kernel::default();
+        rust(k, &case.parse()?)
     }
 }

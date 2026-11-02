@@ -136,6 +136,19 @@ struct Inputs {
     ang: Option<f64>,
     /// Tree of A and (unless B is A) of B; `None`: the caches build their own.
     trees: Option<(Vec<NodeIn>, Option<Vec<NodeIn>>)>,
+    /// Per surface (A, B): keep the B-spline knots exactly as given (see
+    /// [`ffi::Case::raw_knots`]); Rust builds that surface over a borrowed NURB, whose
+    /// knots `SmBSplineSurface(gw_SURFACE*, TRUE, ..)` leaves as they are.
+    #[serde(default, skip_serializing_if = "no_raw_knots")]
+    raw_knots: [bool; 2],
+}
+
+#[expect(
+    clippy::trivially_copy_pass_by_ref,
+    reason = "serde's skip_serializing_if passes the field by reference"
+)]
+fn no_raw_knots(r: &[bool; 2]) -> bool {
+    !r[0] && !r[1]
 }
 
 fn cpt4(c: &[Option<f64>; 4]) -> [f64; 4] {
@@ -197,6 +210,7 @@ fn ffi_case(i: &Inputs) -> ffi::Case {
         edges: i.edges,
         tol: i.tol,
         ang: i.ang,
+        raw_knots: i.raw_knots,
         trees: i.trees.as_ref().map(|(ta, tb)| {
             (
                 ta.iter().map(ffi_node).collect(),
@@ -219,7 +233,7 @@ fn cpp(i: &Inputs) -> Result<Output, HarnessError> {
 /// cannot return.
 fn status(e: &SolidError) -> f64 {
     match e {
-        SolidError::InvalidInput { .. } => 1007.0,
+        SolidError::InvalidInput { .. } | SolidError::PortInvariant { .. } => 1007.0,
         SolidError::Upstream { code, .. } => f64::from(*code),
         _ => -1.0,
     }
@@ -234,6 +248,10 @@ fn ext(d: [f64; 4]) -> Extent2d {
 }
 
 fn rust_surface(s: &SurfaceIn) -> Result<Surface, HarnessError> {
+    rust_surface_with(s, false)
+}
+
+fn rust_surface_with(s: &SurfaceIn, raw_knots: bool) -> Result<Surface, HarnessError> {
     match s {
         SurfaceIn::Plane {
             o,
@@ -262,14 +280,14 @@ fn rust_surface(s: &SurfaceIn) -> Result<Surface, HarnessError> {
                 .collect();
             let sur = NurbSurface::new(net, *p, *q, u.clone(), v.clone())
                 .map_err(|e| harness(format!("surface: {e}")))?;
-            Ok(Surface::from(BSplineSurface::from_nurb(sur, false)))
+            Ok(Surface::from(BSplineSurface::from_nurb(sur, raw_knots)))
         }
         SurfaceIn::CurveBounded { basis } => Ok(Surface::from(CurveBoundedSurface::new(
-            rust_surface(basis)?,
+            rust_surface_with(basis, raw_knots)?,
             Vec::new(),
             Vec::new(),
             true,
-        ))),
+        ).map_err(|e| HarnessError::new(e.to_string()))?)),
     }
 }
 
@@ -279,7 +297,8 @@ fn link(i: i64) -> Option<NodeId> {
 
 /// The cache of `surface` over its natural domain with the hand-built tree `t`.
 fn rust_cache(surface: Surface, t: &[NodeIn], handle: H) -> Result<SurfaceCache<H>, HarnessError> {
-    let d = surface.natural_uv_domain();
+    // (runner helper without a kernel in scope)
+    let d = surface.natural_uv_domain_if_built();
     let mut cache = SurfaceCache::new(surface, d, SurfaceCacheOptions::default());
     cache.set_surface_handle(Some(handle));
     let mut tree: Tree<H> = Tree::new(Some(TreeOwner::SurfaceCache));
@@ -341,8 +360,13 @@ fn rust_cache(surface: Surface, t: &[NodeIn], handle: H) -> Result<SurfaceCache<
 /// `type dim knot_type form has [n p m cpts(x y z w) knots] ivl[2]`.
 fn put_bspline(o: &mut Vec<f64>, c: &Curve) -> Result<(), HarnessError> {
     o.extend([c.type_code() as f64, c.dim() as f64]);
-    let CurveKind::BSpline(bs) = c.kind() else {
-        return Err(harness("output curve is not a B-spline"));
+    // the shim casts to `SmBSplineCurve`: the B-spline part of the line of a plane's iso
+    // curve or of the circle of a sweep's
+    let bs = match c.kind() {
+        CurveKind::BSpline(bs) => bs,
+        CurveKind::Line(l) => l.base(),
+        CurveKind::Ellipse(e) => e.base(),
+        _ => return Err(harness("output curve is not a B-spline kind")),
     };
     o.extend([
         f64::from(bs.knot_type() as i32),
@@ -446,9 +470,9 @@ fn record(
 }
 
 fn rust(i: &Inputs) -> Result<Output, HarnessError> {
-    let a = rust_surface(&i.a)?;
+    let a = rust_surface_with(&i.a, i.raw_knots[0])?;
     let b_owned = match &i.b {
-        Some(b) => Some(rust_surface(b)?),
+        Some(b) => Some(rust_surface_with(b, i.raw_knots[1])?),
         None => None,
     };
     let b = b_owned.as_ref().unwrap_or(&a);
@@ -467,7 +491,7 @@ fn rust(i: &Inputs) -> Result<Output, HarnessError> {
         _ => return Err(harness("one tree per distinct surface")),
     }
     let mut ssi: AdvSurfaceIntersector<'_, '_, H> =
-        match AdvSurfaceIntersector::new(&a, &dom1, b, &dom2, false) {
+        match AdvSurfaceIntersector::new(&k, &a, &dom1, b, &dom2, false) {
             Ok(s) => s,
             Err(e) => return record(Err(e), &[]),
         };
@@ -636,7 +660,7 @@ fn gen_domain(rng: &mut Rng, nat: [f64; 4]) -> [f64; 4] {
 }
 
 /// Samples `s` on a 3 x 3 grid of `d`.
-fn samples(s: &Surface, d: [f64; 4]) -> Vec<V> {
+fn samples(k: &Kernel, s: &Surface, d: [f64; 4]) -> Vec<V> {
     let mut v = Vec::new();
     for i in 0..3 {
         for j in 0..3 {
@@ -644,7 +668,7 @@ fn samples(s: &Surface, d: [f64; 4]) -> Vec<V> {
                 d[0] + (d[2] - d[0]) * f64::from(i) / 2.0,
                 d[1] + (d[3] - d[1]) * f64::from(j) / 2.0,
             );
-            if let Ok(p) = s.evaluate_point(uv) {
+            if let Ok(p) = s.evaluate_point(k, uv) {
                 v.push([p.x, p.y, p.z]);
             }
         }
@@ -660,7 +684,7 @@ fn normals(s: &Surface, d: [f64; 4], count: usize) -> Vec<V> {
         let t = (k as f64 + 0.5) / count as f64;
         let u = d[0] + (d[2] - d[0]) * t;
         let v = d[1] + (d[3] - d[1]) * (1.0 - t);
-        let ev = |u: f64, v: f64| s.evaluate_point(Point2::new(u, v)).ok();
+        let ev = |u: f64, v: f64| s.evaluate_point(&Kernel::default(), Point2::new(u, v)).ok();
         if let (Some(p), Some(pu), Some(pv)) = (ev(u, v), ev(u + h, v), ev(u, v + h)) {
             let n = cross(
                 [pu.x - p.x, pu.y - p.y, pu.z - p.z],
@@ -708,7 +732,7 @@ impl TreeGen<'_> {
     /// Adds the node of domain `d` under `parent` and its subtree; returns its index.
     fn add(&mut self, rng: &mut Rng, parent: i64, d: [f64; 4], depth: u32, aux: u8) -> i64 {
         let k = self.nodes.len();
-        let pts = samples(self.s, d);
+        let pts = samples(&Kernel::default(), self.s, d);
         let ident = [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]];
         let size = pts.iter().map(|p| dot(*p, *p).sqrt()).fold(0.0, f64::max);
         let grow = self.grow * (1e-3 + size);
@@ -990,6 +1014,7 @@ fn gen_case(rng: &mut Rng) -> Option<Inputs> {
         tol,
         ang,
         trees,
+        raw_knots: [false; 2],
     })
 }
 
@@ -1048,6 +1073,7 @@ fn edge_cases() -> Vec<(String, Value)> {
                     tol: None,
                     ang: None,
                     trees: trees.then_some((ta, Some(tb))),
+                    raw_knots: [false; 2],
                 };
                 if let Ok(v) = serde_json::to_value(&i) {
                     out.push((format!("edge_{name}_{form}_{tag}"), v));
@@ -1072,6 +1098,7 @@ fn edge_cases() -> Vec<(String, Value)> {
         tol: Some(1e-3),
         ang: Some(0.2),
         trees: Some((ta, None)),
+        raw_knots: [false; 2],
     };
     if let Ok(v) = serde_json::to_value(&i) {
         out.push(("edge_self_plane".into(), v));
@@ -1117,5 +1144,128 @@ impl UnitDiff for Runner {
 
     fn run_rust(&self, case: &Case) -> Result<Output, HarnessError> {
         rust(&case.parse()?)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use solidcore::curve::curve_cache::{BezierAux1d, BezierSpan};
+    use solidcore::geom::polar_box::PolarBoxState;
+    use solidcore::geom::tree::CurveSpanRef;
+    use solidcore::surface::surface::p2::cs_are_perpen_disjoint_in;
+
+    #[test]
+    fn csi_polar_cones_keep_and_reject_with_stored_and_lazy_boxes() {
+        let k = Kernel::default();
+        let surface =
+            rust_surface(&plane_at([0.0; 3], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0], 1.0)).unwrap();
+        let node = NodeIn {
+            parent: -1,
+            c1: -1,
+            c2: -1,
+            aux: 3,
+            bbox: [0.0, 0.0, 0.0, 1.0, 1.0, 0.0],
+            dom: [0.0, 0.0, 1.0, 1.0],
+            polar: vec![],
+            pseudo: Some((
+                [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]],
+                [[0.0, 1.0], [0.0, 1.0], [0.0, 0.0]],
+            )),
+        };
+        // The lazy path must evaluate the real owning surface, not substitute an
+        // empty cone. The read-only helper must leave that cache uninitialised.
+        for stored in [false, true] {
+            let mut node = node.clone();
+            if stored {
+                node.polar.push([0.0, 0.0, 1.0]);
+            }
+            let cache = rust_cache(surface.clone(), &[node], H(0)).unwrap();
+            let id = NodeId(0);
+            let before = cache.aux(id).unwrap().polar_box;
+            assert_eq!(before.state() == PolarBoxState::Uninitialized, !stored);
+            let mut normal = PolarBox::new();
+            normal.add_vector(Vec3::new(0.0, 0.0, 1.0), None);
+            assert_eq!(cache.polar_box_unstored(&k, id).unwrap(), normal);
+
+            for (name, ends, rejected) in [
+                // Displacement is outside the surface-normal cone. The chord
+                // is perpendicular to it, so the chord test cannot mask this.
+                ("polar_reject", [[10.0, 0.0, 0.0], [10.0, 1.0, 0.0]], true),
+                // Normal cone overlaps, but no chord direction is perpendicular
+                // to the displacement cone (ConesAreDisjointPerpen).
+                ("chord_reject", [[0.5, 0.5, 10.0], [0.5, 0.5, 11.0]], true),
+                // Normal cone overlaps and the chord can be perpendicular to
+                // the displacement: the cone tests cannot reject this branch.
+                ("keep", [[0.0, 0.5, 10.0], [1.0, 0.5, 10.0]], false),
+                // Overlapping boxes give a wide cone and must not reject.
+                ("wide_keep", [[0.5, 0.5, -1.0], [0.5, 0.5, 1.0]], false),
+            ] {
+                let ends = ends.map(v3);
+                let [start, end] = ends;
+                let mut curve_tree = Tree::<H>::new(Some(TreeOwner::CurveCache));
+                curve_tree.set_curve_data(
+                    vec![BezierSpan {
+                        aux: BezierAux1d {
+                            ends,
+                            ..BezierAux1d::default()
+                        },
+                        ..BezierSpan::default()
+                    }],
+                    vec![],
+                    None,
+                );
+                let curve_node = TreeNode {
+                    bbox: Extent3d::from_points(start, end),
+                    aux_type: AuxDataType::BezierCurve,
+                    data: NodeData::Curve(CurveSpanRef::Span(0)),
+                    ..TreeNode::new()
+                };
+                let surface_node = cache.tree().unwrap().node(id).unwrap();
+                assert_eq!(
+                    cs_are_perpen_disjoint_in(
+                        &k,
+                        &curve_tree,
+                        &curve_node,
+                        surface_node,
+                        &cache,
+                        id,
+                    )
+                    .unwrap(),
+                    rejected,
+                    "{name}, stored={stored}"
+                );
+                assert_eq!(cache.aux(id).unwrap().polar_box, before);
+            }
+        }
+    }
+
+    #[cfg(feature = "cpp")]
+    #[test]
+    fn csi_former_polar_deferrals_compare_native_values() {
+        // Exact original seeds from main CI 39940775733; no generator changes or
+        // replacement inputs. Reverting the CSI call must restore the deferrals.
+        for index in [393, 1277] {
+            let seed = CaseContext::seed_for(Runner.id(), index);
+            let inputs = Runner.generate(&mut Rng::new(seed)).unwrap();
+            let case = Case {
+                unit: Runner.id().into(),
+                name: format!("gen{index:04}"),
+                source: CaseSource::Generated { seed },
+                inputs,
+            };
+            let cpp = Runner.run_cpp(&case).unwrap();
+            let rust = Runner.run_rust(&case).unwrap();
+            assert!(
+                cpp.deferred.is_none() && rust.deferred.is_none(),
+                "{case:?}"
+            );
+            assert!(cpp.error.is_none() && rust.error.is_none(), "{case:?}");
+            assert_eq!(cpp.values.get("rec").and_then(|v| v.first()), Some(&0.0));
+            let diff = crate::compare::compare(&cpp, &rust, &[]);
+            assert!(diff.pass(), "{}: {diff:?}", case.name);
+            assert!(diff.values_compared > 15, "{}: {diff:?}", case.name);
+            assert!(diff.nonzero_compared > 0, "{}: {diff:?}", case.name);
+        }
     }
 }

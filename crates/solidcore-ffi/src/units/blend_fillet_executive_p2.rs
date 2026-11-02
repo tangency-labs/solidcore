@@ -7,7 +7,9 @@
 //! A box block is `P[3] l w h` (`SmApiCreateBox`); its edges are `SmBrep::GetEdges`
 //! order, which is the order of unit `heal.stitch_p2`'s export of the same box. Every
 //! output starts with the status (`0` = `SM_SUCCESS`, else the `SmStatus`; `-2` =
-//! upstream would dereference null, refused before the call).
+//! upstream would dereference null, refused before the call; `-4 n_edges` = the box has
+//! fewer than [`BOX_EDGES`] edges, which `SmApiCreateBox` gives where the sides
+//! collapse at the origin's scale, and no op runs).
 //!
 //! | [`Op`]        | parameters | outputs |
 //! |---------------|------------|---------|
@@ -23,6 +25,11 @@
 //! kinds `0` (null) and `1` (linear), lists of at most [`MAX_LIST`] entries, and the
 //! edge map only without solvers (their fillet geometry, which `CalcFilletGeom` builds,
 //! has null rails before that).
+
+//! Direct p1 loader records (`LoadSolver`) contain `scale g1 n (edge mask radial
+//! geometry_surfaces)*n m (reserved_zero solver)*m clear_after`. Edge12 has no rails;
+//! edge13 is a real closed circular wire. The shim checks the actual rail/vertex
+//! state before the native uninitialized `pVerts` branch; defined early errors run.
 
 use crate::{call_with_buffer, FfiError};
 
@@ -46,6 +53,7 @@ pub enum Op {
     SetParams = 2,
     Exec = 3,
     TempRadius = 4,
+    LoadSolver = 5,
 }
 
 mod sys {
@@ -148,7 +156,7 @@ fn validate_op(op: Op, rd: &mut Reader<'_>) -> Result<(), FfiError> {
             rd.value()?;
         }
         Op::Exec => {
-            let sub = rd.index(2)?;
+            let sub = rd.index(5)?;
             let k = rd.index(BOX_EDGES)?;
             // SetFilletBrepEdgeMap reads the rails of each solver's fillet geometry,
             // which only CalcFilletGeom builds: with solvers fresh from
@@ -158,7 +166,37 @@ fn validate_op(op: Op, rd: &mut Reader<'_>) -> Result<(), FfiError> {
                     "edge map with solvers whose geometry was not calculated",
                 ));
             }
+            if sub >= 3 && k < 2 {
+                return Err(bad("split-edge smooth sequence requires at least 2 solvers"));
+            }
             rd.box_block()?;
+        }
+        Op::LoadSolver => {
+            let scale=rd.value()?;
+            if [scale, 2.0 * scale, 3.0 * scale]
+                .iter()
+                .any(|dimension| !(1e-3..=1e6).contains(dimension))
+            {
+                return Err(bad("loader box dimension out of range"));
+            }
+            rd.flag()?;
+            let count=rd.index(6)?;
+            let mut specs=Vec::new();
+            for _ in 0..count {
+                let edge=rd.index(BOX_EDGES+1)?;
+                let mask=rd.index(3)?;
+                rd.flag()?;
+                rd.flag()?;
+                specs.push((edge,mask));
+            }
+            let loads=rd.index(16)?;
+            for _ in 0..loads {
+                let executive=rd.index(0)?;
+                let solver=rd.index(count)?;
+                specs.get(solver).ok_or_else(||bad("loader solver index outside pool"))?;
+                let _=executive;
+            }
+            rd.index(loads)?;
         }
         Op::TempRadius => {
             rd.flag()?;
@@ -205,4 +243,19 @@ pub fn eval(op: Op, input: &[f64]) -> Result<Vec<f64>, FfiError> {
             )
         }
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{validate, Op};
+
+    #[test]
+    fn loader_dimensions_match_the_shared_box_exporter() {
+        for scale in [1e-3, 1.0, 1e6 / 3.0] {
+            assert!(validate(Op::LoadSolver, &[scale, 0.0, 0.0, 0.0, 0.0]).is_ok());
+        }
+        for scale in [0.0, 1e-4, 1e6 / 2.0, 1e6, f64::INFINITY, f64::NAN] {
+            assert!(validate(Op::LoadSolver, &[scale, 0.0, 0.0, 0.0, 0.0]).is_err());
+        }
+    }
 }

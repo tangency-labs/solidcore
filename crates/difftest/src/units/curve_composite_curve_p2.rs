@@ -371,8 +371,12 @@ fn comp_block(v: &mut Vec<f64>, c: &CompIn) -> Result<(), HarnessError> {
     v.push(c.dim as f64);
     curve_list(v, &c.curves)?;
     v.push(b(c.closed));
+    // The shim reads one sense and one gap per curve: upstream ignores entries past
+    // the curve count and reads past a shorter array (undefined).
+    let n = c.curves.len();
     match &c.senses {
         Some(s) => {
+            let s = s.get(..n).ok_or_else(|| harness("fewer senses than curves"))?;
             v.push(1.0);
             v.extend(s.iter().map(|x| b(*x)));
         }
@@ -380,6 +384,7 @@ fn comp_block(v: &mut Vec<f64>, c: &CompIn) -> Result<(), HarnessError> {
     }
     match &c.gaps {
         Some(g) => {
+            let g = g.get(..n).ok_or_else(|| harness("fewer gaps than curves"))?;
             v.push(1.0);
             v.extend_from_slice(g);
         }
@@ -611,7 +616,7 @@ fn build(c: &CurveIn) -> Result<Curve, HarnessError> {
                 v3(o.n),
                 o.dist,
                 false,
-            )))
+            ).map_err(|e| HarnessError::new(e.to_string()))?))
         }
         CurveIn::Circle(_) | CurveIn::Segment(_) | CurveIn::Canon(_) => {
             Err(harness("unresolved curve"))
@@ -631,7 +636,7 @@ fn pv(o: &mut Vec<f64>, v: Vec3) {
 /// cannot return.
 fn status(e: &SolidError) -> f64 {
     match e {
-        SolidError::InvalidInput { .. } => 1007.0,
+        SolidError::InvalidInput { .. } | SolidError::PortInvariant { .. } => 1007.0,
         SolidError::Upstream { code, .. } => f64::from(*code),
         _ => -1.0,
     }
@@ -657,12 +662,12 @@ fn ftry<T>(r: solidcore::Result<T>) -> Result<T, Fail> {
 }
 
 /// The curve record (see the ffi module docs).
-fn put_curve(o: &mut Vec<f64>, c: &Curve) -> Result<(), Fail> {
+fn put_curve(k: &Kernel, o: &mut Vec<f64>, c: &Curve) -> Result<(), Fail> {
     o.push(c.type_code() as f64);
     let ivl = c.natural_interval();
     o.extend([ivl.min(), ivl.max()]);
     for i in 0..=6 {
-        let p = match c.evaluate_point(ivl.evaluate(f64::from(i) / 6.0)) {
+        let p = match c.evaluate_point(k, ivl.evaluate(f64::from(i) / 6.0)) {
             Ok(p) => p,
             Err(e) if e.is_unported() => return Err(e.into()),
             Err(_) => Vec3::new(UNDEF, UNDEF, UNDEF),
@@ -670,7 +675,7 @@ fn put_curve(o: &mut Vec<f64>, c: &Curve) -> Result<(), Fail> {
         pv(o, p);
     }
     if let CurveKind::BSpline(bs) = c.kind() {
-        let nurb = bs.gw_nurb().ok_or(Fail::Status(-1.0))?;
+        let nurb = bs.gw_nurb().ok_or_else(|| Fail::Status(-1.0))?;
         o.push(nurb.cpts().len() as f64);
         for p in nurb.cpts() {
             o.extend([p.x, p.y, p.z, p.w]);
@@ -681,7 +686,7 @@ fn put_curve(o: &mut Vec<f64>, c: &Curve) -> Result<(), Fail> {
     Ok(())
 }
 
-fn put_composite(o: &mut Vec<f64>, c: &CompositeCurve) -> Result<(), Fail> {
+fn put_composite(k: &Kernel, o: &mut Vec<f64>, c: &CompositeCurve) -> Result<(), Fail> {
     o.extend([c.dim() as f64, c.num_segments() as f64, b(c.is_closed())]);
     for s in c.segments() {
         o.extend([
@@ -691,13 +696,13 @@ fn put_composite(o: &mut Vec<f64>, c: &CompositeCurve) -> Result<(), Fail> {
             s.gap_end,
             b(s.owns_curve),
         ]);
-        put_curve(o, &s.curve)?;
+        put_curve(k, o, &s.curve)?;
     }
     Ok(())
 }
 
 /// A piece record; `indexed`: the originator as its index (else `0` for "not null").
-fn put_piece(o: &mut Vec<f64>, p: &OffsetPiece, indexed: bool) -> Result<(), Fail> {
+fn put_piece(k: &Kernel, o: &mut Vec<f64>, p: &OffsetPiece, indexed: bool) -> Result<(), Fail> {
     o.push(b(p.attribute.is_some()));
     if let Some(a) = &p.attribute {
         o.extend([
@@ -714,7 +719,7 @@ fn put_piece(o: &mut Vec<f64>, p: &OffsetPiece, indexed: bool) -> Result<(), Fai
         });
         o.push(a.approx_err);
     }
-    put_curve(o, &p.curve)
+    put_curve(k, o, &p.curve)
 }
 
 fn composite(c: &CompIn) -> Result<solidcore::Result<CompositeCurve>, HarnessError> {
@@ -785,7 +790,7 @@ fn rust(op: &OpIn) -> Result<Output, HarnessError> {
                 let r = ftry(CompositeCurve::create_offsets_of_many_curves(&k, &refs, dirs, &p))?;
                 o.extend([0.0, r.offsets.len() as f64]);
                 for piece in &r.offsets {
-                    put_piece(o, piece, false)?;
+                    put_piece(&k, o, piece, false)?;
                 }
                 o.push(r.max_gaps.len() as f64);
                 o.extend_from_slice(&r.max_gaps);
@@ -810,7 +815,7 @@ fn rust(op: &OpIn) -> Result<Output, HarnessError> {
                 let r = ftry(c.create_trimmed_offsets(&k, dir, &p))?;
                 o.extend([0.0, r.len() as f64]);
                 for piece in &r {
-                    put_piece(o, piece, false)?;
+                    put_piece(&k, o, piece, false)?;
                 }
                 Ok(())
             })
@@ -863,11 +868,11 @@ fn rust(op: &OpIn) -> Result<Output, HarnessError> {
                 ))?;
                 o.extend([0.0, out.len() as f64]);
                 for piece in &out {
-                    put_piece(o, piece, true)?;
+                    put_piece(&k, o, piece, true)?;
                 }
                 o.push(pieces.len() as f64);
                 for piece in &pieces {
-                    put_curve(o, &piece.curve)?;
+                    put_curve(&k, o, &piece.curve)?;
                 }
                 Ok(())
             })
@@ -916,8 +921,8 @@ fn rust(op: &OpIn) -> Result<Output, HarnessError> {
                 let mut c = ftry(c)?;
                 let j = ftry(c.make_composite_nurb())?;
                 o.push(0.0);
-                put_curve(o, &Curve::from(j))?;
-                put_composite(o, &c)
+                put_curve(&k, o, &Curve::from(j))?;
+                put_composite(&k, o, &c)
             })
         }
         OpIn::ReadDb {
@@ -939,7 +944,7 @@ fn rust(op: &OpIn) -> Result<Output, HarnessError> {
                 db.open_for_read(data, ft);
                 let c = ftry(CompositeCurve::read_from_db(&k, &mut db, *dim, *version))?;
                 o.push(0.0);
-                put_composite(o, &c)
+                put_composite(&k, o, &c)
             })
         }
         OpIn::Misc {
@@ -979,7 +984,7 @@ fn rust(op: &OpIn) -> Result<Output, HarnessError> {
                     s.gap_end,
                     b(s.owns_curve),
                 ]);
-                put_curve(o, &s.curve)
+                put_curve(&k, o, &s.curve)
             })
         }
     })
@@ -1525,7 +1530,12 @@ impl UnitDiff for Runner {
     }
 
     fn run_rust(&self, case: &Case) -> Result<Output, HarnessError> {
-        rust(&case.parse()?)
+        let op = case.parse()?;
+        // Run only what the FFI accepts, as the C++ side: its guards refuse inputs
+        // upstream (and the faithful port) never finish on (fuzz Rust-side hangs).
+        let (code, input) = cpp_input(&op)?;
+        ffi::validate(code, &input).map_err(|e| HarnessError::new(e.to_string()))?;
+        rust(&op)
     }
 }
 

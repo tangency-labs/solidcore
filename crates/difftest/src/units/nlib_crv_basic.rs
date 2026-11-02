@@ -191,43 +191,12 @@ fn harness(msg: impl Into<String>) -> HarnessError {
 
 // ---- inputs -----------------------------------------------------------------------
 
-/// Whitespace-separated numbers of an upstream text file.
-fn numbers(path: &str) -> Result<Vec<f64>, HarnessError> {
-    let text = std::fs::read_to_string(path).map_err(|e| harness(format!("{path}: {e}")))?;
-    text.split_whitespace()
-        .map(|t| {
-            t.parse::<f64>()
-                .map_err(|e| harness(format!("{path}: {e}")))
-        })
-        .collect()
-}
-
-fn int(path: &str, v: f64) -> Result<usize, HarnessError> {
-    if v.fract() != 0.0 || v < 0.0 {
-        return Err(harness(format!("{path}: bad count {v}")));
-    }
-    Ok(v as usize)
-}
-
 /// Reads an upstream `.smc` text file (as `N_CrvReadFromFilePtr`, without its
 /// validity check and pruning): `n`, `p`, rational flag, dimension, `n+1` points
 /// (`x y [z]`, or `wx wy [wz] w` when rational), `n+p+2` knots.
 fn read_smc(path: &str) -> Result<InlineCrv, HarnessError> {
-    let v = numbers(path)?;
-    let mut it = v.into_iter();
-    let mut num = || it.next().ok_or_else(|| harness(format!("{path}: truncated")));
-    let n = int(path, num()?)?;
-    let p = int(path, num()?)?;
-    let rat = num()? != 0.0;
-    let dim = int(path, num()?)?;
-    let mut cpts = Vec::with_capacity(n + 1);
-    for _ in 0..=n {
-        let (x, y) = (num()?, num()?);
-        let z = if dim == 3 { num()? } else { NOZ };
-        let w = if rat { num()? } else { NOW };
-        cpts.push([x, y, z, w]);
-    }
-    let u = (0..n + p + 2).map(|_| num()).collect::<Result<Vec<_>, _>>()?;
+    let text = std::fs::read_to_string(path).map_err(|e| harness(format!("{path}: {e}")))?;
+    let smc::SmcCurve { cpts, p, u } = smc::decode(&text, path)?;
     Ok(InlineCrv {
         cpts,
         p,
@@ -236,30 +205,15 @@ fn read_smc(path: &str) -> Result<InlineCrv, HarnessError> {
     })
 }
 
+#[path = "fixtures/nlib_crv_basic_smc.rs"]
+mod smc;
+
 /// Reads an upstream `.sms` text file: `n m`, `p q`, rational flag, `(n+1)(m+1)`
 /// points (`x y z`, or `wx wy wz w` when rational, v index fastest), `n+p+2` u knots,
 /// `m+q+2` v knots.
 fn read_sms(path: &str) -> Result<InlineSrf, HarnessError> {
-    let v = numbers(path)?;
-    let mut it = v.into_iter();
-    let mut num = || it.next().ok_or_else(|| harness(format!("{path}: truncated")));
-    let n = int(path, num()?)?;
-    let m = int(path, num()?)?;
-    let p = int(path, num()?)?;
-    let q = int(path, num()?)?;
-    let rat = num()? != 0.0;
-    let mut net = Vec::with_capacity(n + 1);
-    for _ in 0..=n {
-        let mut row = Vec::with_capacity(m + 1);
-        for _ in 0..=m {
-            let (x, y, z) = (num()?, num()?, num()?);
-            let w = if rat { num()? } else { NOW };
-            row.push([x, y, z, w]);
-        }
-        net.push(row);
-    }
-    let u = (0..n + p + 2).map(|_| num()).collect::<Result<Vec<_>, _>>()?;
-    let v = (0..m + q + 2).map(|_| num()).collect::<Result<Vec<_>, _>>()?;
+    let text = std::fs::read_to_string(path).map_err(|e| harness(format!("{path}: {e}")))?;
+    let sms::SmsSurface { net, p, q, u, v } = sms::decode(&text, path)?;
     Ok(InlineSrf {
         net,
         p,
@@ -269,6 +223,9 @@ fn read_sms(path: &str) -> Result<InlineSrf, HarnessError> {
         used: None,
     })
 }
+
+#[path = "fixtures/nlib_crv_basic_sms.rs"]
+mod sms;
 
 fn resolve(c: &CrvIn) -> Result<InlineCrv, HarnessError> {
     match c {

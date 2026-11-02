@@ -16,14 +16,15 @@
 //! |----------|----------------------------|---------|
 //! | `Export` |                            | the `Export` of unit `topology.brep_p1` (its extras, then the graph) |
 //! | `Do`     | `tol nesting ignore fast squeeze split manifold slivers want_vgap want_egap has_cv n v*n has_ce n e*n` | `status [stitched lamina max_vgap max_egap [min_vgap] [min_egap] digest]` (`DoStitching`; a candidate list is passed only with its `has_` flag) |
-//! | `Solid`  |                            | `status [solid stitched max_vgap max_egap digest]` (`StitchIntoSolid`; `-3` when the tolerance doubling cannot end: a tenth of the B-rep tolerance at or below zero and below `1/200` of the box diagonal; a NaN diagonal skips the loop, an infinite one ends it once the tolerance doubles to infinity) |
+//! | `Solid`  |                            | `status [solid stitched max_vgap max_egap digest regions]` (`StitchIntoSolid`; `regions` is the region count and the sorted `IsVoid` flags of `GetRegions`; `-3` when the tolerance doubling cannot end: a tenth of the B-rep tolerance at or below zero and below `1/200` of the box diagonal; a NaN diagonal skips the loop, an infinite one ends it once the tolerance doubles to infinity) |
 //! | `Shell`  | `well_formed max_tol`      | `status [stitched max_vgap max_egap digest]` (`StitchIntoShell`; `-3` when `max_tol / 100` underflows to zero) |
 //! | `VList`  | `tol manifold squeeze n v*n` | `status [max_gap min_gap surviving deleted deleted_edges list [digest]]` (one-list `StitchVertexPairs`; the digest when a vertex was deleted) |
-//! | `Split`  | `tol manifold ignore n v*n n e*n` | `status [max_gap min_gap processed split new verts edges [digest]]` (`SplitEdgesWithVertices`; the digest when it processed a vertex or made an edge) |
+//! | `Split`  | `tol manifold ignore n v*n n e*n editing` | `status [max_gap min_gap processed split new verts edges [digest]]` (`SplitEdgesWithVertices`, on the B-rep with `m_bEditingEnabled` set when `editing`; the digest when it processed a vertex or made an edge) |
 //!
 //! Output lists are `n idx*n` with `-1` for null and `-3` for an entity the op created.
-//! A digest is the B-rep after the op: `n_faces n_edges n_vertices` then each vertex's
-//! point and tolerance in list order.
+//! A digest is the B-rep after the op: `n_faces n_edges n_vertices`, each vertex's
+//! point and tolerance in list order, then the topology of
+//! `harness/cpp/shim/sc_stitch_digest.h` (as `heal.stitch_p1`).
 //!
 //! [`eval`] accepts only what upstream handles without undefined behaviour: the B-rep
 //! block rules of `heal.stitch_p1`, indices inside the B-rep's export, finite values
@@ -40,8 +41,9 @@ use crate::units::topology_brep_p1::counts;
 use crate::units::topology_edgeuse_p1::{bad, brep_block, face_block, Reader, MAX_LIST};
 use crate::{call_with_buffer, FfiError};
 
-/// Most faces of an unstitched-sheets block.
-pub const MAX_FACES: usize = 8;
+/// Most faces of an unstitched-sheets block (the generated grids use at most six; the
+/// shim's build has no bound of its own).
+pub const MAX_FACES: usize = 16;
 
 /// Shim operations.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -156,6 +158,7 @@ fn op_args(op: Op, rd: &mut Reader<'_>, c: [usize; 10]) -> Result<(), FfiError> 
             rd.flag()?;
             list(rd, nv)?;
             list(rd, ne)?;
+            rd.flag()?;
         }
     }
     Ok(())

@@ -19,8 +19,8 @@
 //! `NULL` entry). Curves are written as `type dim knot_type form has [n p m cpts(x y z
 //! w) knots] ivl[2]`.
 //!
-//! [`run`] accepts only finite inputs of magnitude at most [`MAX_COORD`], well-formed
-//! clamped B-splines and trees of the shape of the `intersect.adv_surface_intersector`
+//! [`run`] accepts only finite inputs of magnitude at most [`MAX_COORD`], planes whose
+//! domain has positive extent (UB-68), well-formed clamped B-splines and trees of the shape of the `intersect.adv_surface_intersector`
 //! wrapper (at most [`MAX_NODES`] nodes, [`MAX_POLAR`] polar box vectors per node, the
 //! top node first, children after their parent, leaves are patches with a pseudo box of
 //! independent basis vectors, patches and heads have a polar box of non-zero vectors).
@@ -73,6 +73,11 @@ pub struct Case {
     pub ang: Option<f64>,
     /// Hand-built trees of A and (unless B is A) B, replacing the cache trees.
     pub trees: Option<(Vec<NodeIn>, Option<Vec<NodeIn>>)>,
+    /// Per surface (A, B): a B-spline (or a curve-bounded surface's B-spline basis)
+    /// keeps its knots exactly as given: the shim writes them back over the NURB after
+    /// `SmBSplineSurface(gw_SURFACE*, FALSE, ctx)` has fixed them up
+    /// (`sm_FixupKnotVector`), so near-coincident knots reach the intersector.
+    pub raw_knots: [bool; 2],
 }
 
 fn finite(x: f64) -> Result<f64, FfiError> {
@@ -222,7 +227,7 @@ impl Enc {
         Ok(())
     }
 
-    fn surface(&mut self, s: &SurfaceIn) -> Result<(), FfiError> {
+    fn surface(&mut self, s: &SurfaceIn, raw_knots: bool) -> Result<(), FfiError> {
         match s {
             SurfaceIn::Plane {
                 o,
@@ -231,6 +236,12 @@ impl Enc {
                 scale,
                 domain,
             } => {
+                // UB-68: a plane with a degenerate or inverted domain has no NURB, and
+                // its surface cache hands the NULL NURB to `sm_CreateBezierPatchBlock`
+                // (`SmSurfaceCache.cpp:4800`, SIGSEGV)
+                if !(domain[2] > domain[0] && domain[3] > domain[1]) {
+                    return Err(bad("plane domain must have positive extent"));
+                }
                 self.int(0);
                 self.nums(o)?;
                 self.nums(x)?;
@@ -253,7 +264,7 @@ impl Enc {
                 check_knots(u, nu, *p)?;
                 check_knots(v, nv, *q)?;
                 check_weights(net.iter().flatten())?;
-                self.int(1);
+                self.int(if raw_knots { 4 } else { 1 });
                 self.int(*p);
                 self.int(*q);
                 self.int(nu);
@@ -269,7 +280,7 @@ impl Enc {
                     return Err(bad("nested curve-bounded surface"));
                 }
                 self.int(3);
-                self.surface(basis)
+                self.surface(basis, raw_knots)
             }
         }
     }
@@ -308,10 +319,10 @@ impl Enc {
 /// [`FfiError::InvalidArgument`] for a rejected case.
 pub fn encode(case: &Case) -> Result<Vec<f64>, FfiError> {
     let mut e = Enc { v: Vec::new() };
-    e.surface(&case.a)?;
+    e.surface(&case.a, case.raw_knots[0])?;
     match &case.b {
         None => e.int(2),
-        Some(b) => e.surface(b)?,
+        Some(b) => e.surface(b, case.raw_knots[1])?,
     }
     e.nums(&case.dom1)?;
     e.nums(&case.dom2)?;

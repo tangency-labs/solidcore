@@ -117,52 +117,23 @@ pub(crate) enum SrfIn {
     },
 }
 
-fn numbers(path: &str) -> Result<Vec<f64>, HarnessError> {
-    let text = std::fs::read_to_string(path).map_err(|e| harness(format!("{path}: {e}")))?;
-    text.split_whitespace()
-        .map(|t| t.parse::<f64>().map_err(|e| harness(format!("{path}: {e}"))))
-        .collect()
-}
-
-fn int(path: &str, v: f64) -> Result<usize, HarnessError> {
-    if v.fract() != 0.0 || v < 0.0 {
-        return Err(harness(format!("{path}: bad count {v}")));
-    }
-    Ok(v as usize)
-}
+#[path = "fixtures/surface_surface_p7_sms.rs"]
+mod sms;
 
 /// Reads an upstream `.sms` text file (as unit `surface.surface_p2`): `n m`, `p q`,
 /// rational flag, `(n+1)(m+1)` points (`x y z`, or `wx wy wz w` when rational, v index
 /// fastest), `n+p+2` u knots, `m+q+2` v knots.
 fn read_sms(path: &str) -> Result<BssIn, HarnessError> {
-    let v = numbers(path)?;
-    let mut it = v.into_iter();
-    let mut num = || it.next().ok_or_else(|| harness(format!("{path}: truncated")));
-    let n = int(path, num()?)?;
-    let m = int(path, num()?)?;
-    let p = int(path, num()?)?;
-    let q = int(path, num()?)?;
-    let rat = num()? != 0.0;
-    let mut net = Vec::new();
-    for _ in 0..=n {
-        let mut row = Vec::new();
-        for _ in 0..=m {
-            let (x, y, z) = (num()?, num()?, num()?);
-            let w = if rat { num()? } else { NOW };
-            row.push([x, y, z, w]);
-        }
-        net.push(row);
-    }
-    let u = (0..n + p + 2).map(|_| num()).collect::<Result<Vec<_>, _>>()?;
-    let v = (0..m + q + 2).map(|_| num()).collect::<Result<Vec<_>, _>>()?;
+    let text = std::fs::read_to_string(path).map_err(|e| harness(format!("{path}: {e}")))?;
+    let parsed = sms::parse(path, &text, NOW).map_err(harness)?;
     Ok(BssIn {
         oob: false,
         form: default_form(),
-        net,
-        p,
-        q,
-        u,
-        v,
+        net: parsed.net,
+        p: parsed.p,
+        q: parsed.q,
+        u: parsed.u,
+        v: parsed.v,
     })
 }
 
@@ -620,7 +591,7 @@ pub(crate) fn surface_of(s: &SrfIn) -> Result<Surface, HarnessError> {
             Vec::new(),
             Vec::new(),
             *implicit,
-        ))),
+        ).map_err(|e| HarnessError::new(e.to_string()))?)),
         SrfIn::Plane { o, n } => Ok(Surface::from(Plane::from_normal(v3(*o), v3(*n)))),
         SrfIn::Revolution { a, b, p, axis, swap, oob } => {
             let k = Kernel::default();
@@ -697,7 +668,7 @@ pub(crate) fn req_of(v: u8) -> Result<SolutionRequested, HarnessError> {
 /// cannot return.
 pub(crate) fn status(e: &SolidError) -> f64 {
     match e {
-        SolidError::InvalidInput { .. } => 1007.0,
+        SolidError::InvalidInput { .. } | SolidError::PortInvariant { .. } => 1007.0,
         SolidError::Upstream { code, .. } => f64::from(*code),
         _ => -1.0,
     }
@@ -774,7 +745,8 @@ fn surface_handle(id: u8, s: &Surface) -> Handle {
     Handle {
         id,
         interval: None,
-        domain: Some(s.natural_uv_domain()),
+        // (runner helper without a kernel in scope)
+        domain: Some(s.natural_uv_domain_if_built()),
     }
 }
 
@@ -799,12 +771,12 @@ fn put_sols(o: &mut Vec<f64>, sols: &SolutionArray<Handle>) -> Result<(), Fail> 
     Ok(())
 }
 
-fn rust_run(i: &Inputs) -> Result<Vec<f64>, Fail> {
+fn rust_run(k: &Kernel, i: &Inputs) -> Result<Vec<f64>, Fail> {
     let s = surface_of(&i.surface)?;
     let mut o = Vec::new();
     match &i.op {
         OpIn::Eval1 { uv, ul, vl } => {
-            match st(evaluate_1st_derivatives(&s, p2(*uv), side(*ul), side(*vl)))? {
+            match st(evaluate_1st_derivatives(k, &s, p2(*uv), side(*ul), side(*vl)))? {
                 Ok((p, du, dv)) => {
                     o.push(0.0);
                     for x in [p, du, dv] {
@@ -815,7 +787,7 @@ fn rust_run(i: &Inputs) -> Result<Vec<f64>, Fail> {
             }
         }
         OpIn::Eval2 { uv, ul, vl } => {
-            match st(evaluate_2nd_derivatives(&s, p2(*uv), side(*ul), side(*vl)))? {
+            match st(evaluate_2nd_derivatives(k, &s, p2(*uv), side(*ul), side(*vl)))? {
                 Ok(d) => {
                     o.push(0.0);
                     for x in [d.point, d.du, d.dv, d.duv, d.duu, d.dvv] {
@@ -827,7 +799,7 @@ fn rust_run(i: &Inputs) -> Result<Vec<f64>, Fail> {
         }
         OpIn::DirDeriv { uv, dir, h, ul, vl } => {
             match st(evaluate_directional_derivs(
-                &s,
+                k, &s,
                 p2(*uv),
                 p2(*dir),
                 *h,
@@ -845,9 +817,9 @@ fn rust_run(i: &Inputs) -> Result<Vec<f64>, Fail> {
         }
         OpIn::Normal { uv, ul, vl, base } => {
             let r = if *base {
-                base_evaluate_normal(&s, p2(*uv), side(*ul), side(*vl))
+                base_evaluate_normal(k, &s, p2(*uv), side(*ul), side(*vl))
             } else {
-                s.evaluate_normal(p2(*uv), side(*ul), side(*vl))
+                s.evaluate_normal(k, p2(*uv), side(*ul), side(*vl))
             };
             match st(r)? {
                 Ok(n) => {
@@ -867,9 +839,9 @@ fn rust_run(i: &Inputs) -> Result<Vec<f64>, Fail> {
             let d = dom_of(*dom);
             let prm = param_of(*param)?;
             let r = if *base {
-                base_is_closed(&s, &d, prm, *tol, *want)
+                base_is_closed(k, &s, &d, prm, *tol, *want)
             } else {
-                s.is_closed(&d, prm, *tol, *want)
+                s.is_closed(k, &d, prm, *tol, *want)
             };
             let (closed, cont) = st(r)?.map_err(|c| harness(format!("IsClosed failed: {c}")))?;
             o.extend([0.0, b(closed), cont.map_or(-1.0, |c| f64::from(c as i32))]);
@@ -878,14 +850,14 @@ fn rust_run(i: &Inputs) -> Result<Vec<f64>, Fail> {
             if *base && matches!(i.surface, SrfIn::Plane { .. }) {
                 return Err(harness("base IsPlanar of a plane is not compared").into());
             }
-            let pl = st(s.is_planar(&Kernel::default(), *tol))?.map_err(|c| harness(format!("IsPlanar failed: {c}")))?;
+            let pl = st(s.is_planar(k, *tol))?.map_err(|c| harness(format!("IsPlanar failed: {c}")))?;
             o.extend([0.0, b(pl.is_planar)]);
             pv(&mut o, pl.point);
             pv(&mut o, pl.normal);
             o.push(pl.deviation);
         }
         OpIn::ApproxLen { dom } => {
-            let l = st(approx_derivative_lengths(&s, &dom_of(*dom)))?
+            let l = st(approx_derivative_lengths(k, &s, &dom_of(*dom)))?
                 .map_err(|c| harness(format!("ApproxDerivativeLengths failed: {c}")))?;
             o.push(0.0);
             puv(&mut o, l);
@@ -895,7 +867,7 @@ fn rust_run(i: &Inputs) -> Result<Vec<f64>, Fail> {
             g1,
             want3,
             want4,
-        } => match st(compute_higher_order_derivs(&s, p2(*uv), p2(*g1), *want3, *want4))? {
+        } => match st(compute_higher_order_derivs(k, &s, p2(*uv), p2(*g1), *want3, *want4))? {
             Ok(h) => {
                 o.push(0.0);
                 pv(&mut o, h.g2);
@@ -908,7 +880,7 @@ fn rust_run(i: &Inputs) -> Result<Vec<f64>, Fail> {
             }
             Err(c) => o.push(c),
         },
-        OpIn::Inward { uv } => match st(compute_inward_vector(&s, p2(*uv)))? {
+        OpIn::Inward { uv } => match st(compute_inward_vector(k, &s, p2(*uv)))? {
             Ok(v) => {
                 o.push(0.0);
                 pv(&mut o, v);
@@ -917,7 +889,7 @@ fn rust_run(i: &Inputs) -> Result<Vec<f64>, Fail> {
         },
         OpIn::DropPts { uv, ul, vl, pts } => {
             let pts: Vec<Vec3> = pts.iter().map(|p| v3(*p)).collect();
-            match st(drop_points_to_tangent_plane(&s, p2(*uv), side(*ul), side(*vl), &pts))? {
+            match st(drop_points_to_tangent_plane(k, &s, p2(*uv), side(*ul), side(*vl), &pts))? {
                 Ok(r) => {
                     o.push(0.0);
                     for x in r {
@@ -929,7 +901,7 @@ fn rust_run(i: &Inputs) -> Result<Vec<f64>, Fail> {
         }
         OpIn::DropVecs { uv, ul, vl, vecs } => {
             let vecs: Vec<Vec3> = vecs.iter().map(|p| v3(*p)).collect();
-            match st(drop_vectors_at(&s, p2(*uv), side(*ul), side(*vl), &vecs))? {
+            match st(drop_vectors_at(k, &s, p2(*uv), side(*ul), side(*vl), &vecs))? {
                 Ok(r) => {
                     o.push(0.0);
                     for x in r {
@@ -947,7 +919,7 @@ fn rust_run(i: &Inputs) -> Result<Vec<f64>, Fail> {
             tol,
         } => {
             let r = s.find_degen_param_for_direction(
-                p2(*uv),
+                k, p2(*uv),
                 v3(*dir),
                 *from_pole,
                 param_of(*sdir)?,
@@ -1096,7 +1068,7 @@ fn rust_run(i: &Inputs) -> Result<Vec<f64>, Fail> {
             let c = curve_of(curve)?;
             let vecs: Vec<Vec3> = vecs.iter().map(|p| v3(*p)).collect();
             let r = s.local_curve_solve(
-                &dom_of(*dom),
+                k, &dom_of(*dom),
                 &c,
                 &Extent1d::from_min_max(ivl[0], ivl[1]),
                 sop_of(*sop)?,
@@ -1124,7 +1096,7 @@ fn rust_run(i: &Inputs) -> Result<Vec<f64>, Fail> {
                 .collect();
             let cur = Curve::new(pw, curve.p, curve.u.clone())
                 .map_err(|e| harness(format!("curve input: {e}")))?;
-            let bc = BSplineCurve::from_nurb(cur, curve.dim, false);
+            let bc = SmCurve::from(BSplineCurve::from_nurb(cur, curve.dim, false));
             let k = Kernel::default();
             match st(s.create_parallel_projection_curves(&k, &dom_of(*dom), &bc, v3(*vec), *dist, None, None))? {
                 Ok((c3d, _)) => o.extend([0.0, c3d.len() as f64]),
@@ -1132,7 +1104,7 @@ fn rust_run(i: &Inputs) -> Result<Vec<f64>, Fail> {
             }
         }
         OpIn::LoadGuesses { dom, p, sop } => {
-            match st(load_guesses(&s, &dom_of(*dom), v3(*p), sop_of(*sop)?))? {
+            match st(load_guesses(k, &s, &dom_of(*dom), v3(*p), sop_of(*sop)?))? {
                 Ok(g) => {
                     o.push(0.0);
                     puv(&mut o, g);
@@ -1142,13 +1114,13 @@ fn rust_run(i: &Inputs) -> Result<Vec<f64>, Fail> {
         }
         OpIn::PassSc { uv, curve, t } => {
             let c = curve_of(curve)?;
-            let r = st(pass_sc_convergence_test(&s, p2(*uv), &c, *t))?
+            let r = st(pass_sc_convergence_test(k, &s, p2(*uv), &c, *t))?
                 .map_err(|c| harness(format!("pass failed: {c}")))?;
             o.extend([0.0, b(r)]);
         }
         OpIn::PassSs { uv, other, uv2 } => {
             let s2 = surface_of(other)?;
-            let r = st(pass_ss_convergence_test(&s, p2(*uv), &s2, p2(*uv2)))?
+            let r = st(pass_ss_convergence_test(k, &s, p2(*uv), &s2, p2(*uv2)))?
                 .map_err(|c| harness(format!("pass failed: {c}")))?;
             o.extend([0.0, b(r)]);
         }
@@ -1167,7 +1139,7 @@ fn rust_run(i: &Inputs) -> Result<Vec<f64>, Fail> {
             if let Some(a) = end.parameters.get_mut(1) {
                 *a = sol[1];
             }
-            let r = st(good_drop_result(&s, &dom_of(*dom), v3(*p), p2(*guess), &end))?
+            let r = st(good_drop_result(k, &s, &dom_of(*dom), v3(*p), p2(*guess), &end))?
                 .map_err(|c| harness(format!("good drop failed: {c}")))?;
             o.extend([0.0, b(r)]);
         }
@@ -1181,7 +1153,7 @@ fn rust_run(i: &Inputs) -> Result<Vec<f64>, Fail> {
         } => {
             let s2 = surface_of(other)?;
             match st(check_seam_drop(
-                &s,
+                k, &s,
                 p2(*uv),
                 &dom_of(*dom),
                 &s2,
@@ -1200,8 +1172,8 @@ fn rust_run(i: &Inputs) -> Result<Vec<f64>, Fail> {
     Ok(o)
 }
 
-fn rust(i: &Inputs) -> Result<Output, HarnessError> {
-    match rust_run(i) {
+fn rust(k: &Kernel, i: &Inputs) -> Result<Output, HarnessError> {
+    match rust_run(k, i) {
         Ok(v) => Ok(Output::new().values("out", v)),
         Err(Fail::Deferred(o)) => Ok(*o),
         Err(Fail::Harness(e)) => Err(e),
@@ -1395,7 +1367,8 @@ pub(crate) fn natural(s: &SrfIn) -> [f64; 4] {
         SrfIn::Plane { .. } | SrfIn::Revolution { .. } => {
             let d = surface_of(s).map_or_else(
                 |_| Extent2d::from_points(Point2::new(0.0, 0.0), Point2::new(1.0, 1.0)),
-                |x| x.natural_uv_domain(),
+                // (runner helper without a kernel in scope)
+                |x| x.natural_uv_domain_if_built(),
             );
             [d.min().x, d.min().y, d.max().x, d.max().y]
         }
@@ -1476,10 +1449,10 @@ pub(crate) fn gen_curve(rng: &mut Rng) -> CrvIn {
     }
 }
 
-pub(crate) fn gen_point_near(rng: &mut Rng, s: &SrfIn) -> [f64; 3] {
+pub(crate) fn gen_point_near(k: &Kernel, rng: &mut Rng, s: &SrfIn) -> [f64; 3] {
     if let Ok(srf) = surface_of(s) {
         let uv = gen_uv(rng, s);
-        if let Ok(p) = srf.evaluate_point(p2(uv)) {
+        if let Ok(p) = srf.evaluate_point(k, p2(uv)) {
             let d = *rng.choose(&[0.0, 1e-9, 1e-4, 0.1, 1.0, 5.0]).unwrap_or(&0.1);
             let e = rng.point3(-d, d);
             return [p.x + e[0], p.y + e[1], p.z + e[2]];
@@ -1527,7 +1500,7 @@ fn lift_above(other: &mut BssIn, below: &BssIn, gap: f64) {
     }
 }
 
-fn gen_op(rng: &mut Rng, s: &SrfIn) -> OpIn {
+fn gen_op(k: &Kernel, rng: &mut Rng, s: &SrfIn) -> OpIn {
     // planes and curve-bounded surfaces: not for the B-spline-only ops
     let is_plane = !matches!(s, SrfIn::Bspline(_) | SrfIn::Sms(_));
     let flag = |rng: &mut Rng| rng.chance(0.5);
@@ -1586,7 +1559,7 @@ fn gen_op(rng: &mut Rng, s: &SrfIn) -> OpIn {
             uv: gen_uv(rng, s),
             ul: flag(rng),
             vl: flag(rng),
-            pts: (0..rng.below(4) as usize).map(|_| gen_point_near(rng, s)).collect(),
+            pts: (0..rng.below(4) as usize).map(|_| gen_point_near(k, rng, s)).collect(),
         },
         25 => {
             let n = rng.below(4) as usize;
@@ -1623,7 +1596,7 @@ fn gen_op(rng: &mut Rng, s: &SrfIn) -> OpIn {
         31 if !is_plane => OpIn::Gps0 {
             dom: gen_dom(rng, s),
             sop: *rng.choose(&[0u8, 3, 4, 5]).unwrap_or(&3),
-            p: gen_point_near(rng, s),
+            p: gen_point_near(k, rng, s),
             tol: 1e-6,
             target: None,
             req: rng.below(2) as u8,
@@ -1700,7 +1673,7 @@ fn gen_op(rng: &mut Rng, s: &SrfIn) -> OpIn {
         },
         36 => OpIn::LoadGuesses {
             dom: gen_dom(rng, s),
-            p: gen_point_near(rng, s),
+            p: gen_point_near(k, rng, s),
             sop: *rng.choose(&[0u8, 3, 4, 5]).unwrap_or(&3),
         },
         37 => {
@@ -1727,7 +1700,7 @@ fn gen_op(rng: &mut Rng, s: &SrfIn) -> OpIn {
                 let sol = if rng.chance(0.5) { guess } else { gen_uv(rng, s) };
                 OpIn::GoodDrop {
                     dom,
-                    p: gen_point_near(rng, s),
+                    p: gen_point_near(k, rng, s),
                     guess,
                     value: *rng.choose(&[0.0, 1e-13, 1e-3, 0.5]).unwrap_or(&0.5),
                     sol,
@@ -1774,9 +1747,9 @@ pub(crate) fn unit_scale(s: &SrfIn) -> bool {
     }
 }
 
-fn gen_case(rng: &mut Rng) -> Inputs {
+fn gen_case(k: &Kernel, rng: &mut Rng) -> Inputs {
     let surface = gen_surface(rng);
-    let op = gen_op(rng, &surface);
+    let op = gen_op(k, rng, &surface);
     Inputs { surface, op }
 }
 
@@ -1786,8 +1759,9 @@ impl UnitDiff for Runner {
     }
 
     fn generate(&self, rng: &mut Rng) -> Option<Value> {
+        let k = &Kernel::default();
         for _ in 0..64 {
-            let i = gen_case(rng);
+            let i = gen_case(k, rng);
             let Ok((op, input)) = cpp_input(&i) else {
                 continue;
             };
@@ -1805,7 +1779,7 @@ impl UnitDiff for Runner {
                     continue;
                 }
             }
-            if let Err(Fail::Harness(_)) = rust_run(&i) {
+            if let Err(Fail::Harness(_)) = rust_run(k, &i) {
                 continue;
             }
             return serde_json::to_value(i).ok();
@@ -1826,7 +1800,8 @@ impl UnitDiff for Runner {
     }
 
     fn run_rust(&self, case: &Case) -> Result<Output, HarnessError> {
-        rust(&case.parse()?)
+        let k = &Kernel::default();
+        rust(k, &case.parse()?)
     }
 }
 
@@ -1849,6 +1824,7 @@ mod tests {
     /// Generated cases cover every op, most of the comparable ones not deferred.
     #[test]
     fn generated_cases_are_diverse() {
+        let k = &Kernel::default();
         let mut rng = Rng::new(7);
         let mut stats: BTreeMap<String, [usize; 3]> = BTreeMap::new();
         for _ in 0..1500 {
@@ -1859,7 +1835,7 @@ mod tests {
             let name = serde_json::to_value(&i.op).unwrap()["op"].as_str().unwrap().to_string();
             let e = stats.entry(name).or_default();
             e[0] += 1;
-            match rust_run(&i) {
+            match rust_run(k, &i) {
                 Ok(_) => e[1] += 1,
                 Err(_) => e[2] += 1,
             }
@@ -1870,5 +1846,4 @@ mod tests {
         assert!(stats.len() >= 22, "{}", stats.len());
     }
 }
-
 

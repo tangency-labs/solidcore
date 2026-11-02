@@ -1,13 +1,22 @@
 //! Native shell/region operations on shared native B-rep fixtures: queries, wire edges,
 //! `TransferChildrenTo` (incl. face-use and wire shells in one B-rep), shell type members,
-//! `RayFire` (empty-shape branch only), degeneracy, region ordering and filtering.
-//! Native fixtures and raw graph imports reuse the edge-use fixture protocol.
+//! `RayFire` (through the B-rep's own `query::brep::BrepQuery` world), degeneracy,
+//! region ordering and filtering.
+//! Native fixtures reuse the edge-use fixture protocol: the Rust side builds a
+//! shim-built source itself ([`crate::own_builder`]) and reads an `.smb` file with the
+//! Rust reader, both in the shim's traversal order ([`crate::own_reader::brep_in_order`]);
+//! no C++ export reaches the Rust side.
 //! Setup failures fail the harness; topology and native integer flags compare exactly.
 
-use super::topology_edgeuse_p1::{fixture_input, import};
+use super::topology_edgeuse_p1::{fixture_input, BrepIn};
+
+#[path = "topology_shell/inner.rs"]
+mod inner;
 use crate::{Case, HarnessError, Output, Rng, UnitDiff};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
+use solidcore::query::brep::BrepQuery;
+use solidcore::topology::brep_cache::CacheObject;
 use solidcore::topology::shell::{shell_brep, shell_region, wire_edges};
 use solidcore::topology::{FaceuseId, Region, Shell, ShellId};
 use solidcore_ffi::units::{topology_edgeuse_p1 as graph, topology_shell as ffi};
@@ -136,107 +145,21 @@ mod ray_num3 {
     }
 }
 
-// This adapter supports exactly empty shape trees (harness-limited, see below). There are no geometry
-// handles to invent: every object-dependent accessor has an uninhabited input.
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub(crate) enum NoRayObject {}
-pub(crate) struct EmptyRayWorld;
-impl solidcore::geom::solution_array::SolutionObject for NoRayObject {
-    fn kind(&self) -> solidcore::geom::solution_array::ObjectKind {
-        match *self {}
+/// `GetGap3d()` without a surface reads only the stored gap, so the ray records need no
+/// classification geometry.
+struct NoClassGeometry;
+impl solidcore::intersect::point_class::ClassGeometry<CacheObject> for NoClassGeometry {
+    fn curve(&self, _: CacheObject) -> Option<&solidcore::curve::curve::Curve> {
+        None
     }
-}
-impl solidcore::intersect::point_class::ClassObject for NoRayObject {
-    fn class_kind(&self) -> solidcore::intersect::point_class::ClassObjectKind {
-        match *self {}
+    fn surface(&self, _: CacheObject) -> Option<&solidcore::surface::surface::Surface> {
+        None
     }
-}
-impl solidcore::topology::shell::ShellRayWorld<NoRayObject> for EmptyRayWorld {
-    // Harness-limited: a non-empty boundary-face shape needs the B-rep's cached
-    // geometry (`topology::brep_cache::BrepObjects` over a built `BrepCache`, which
-    // is `query.brep`) plus a world overriding `shell_ray_sector` with `topology::brep::p2::local_curve_sector`. The
-    // cases whose C++ run reaches that stage are deferred, never compared here;
-    // swap this world for `BrepObjects` when those units are ported.
-    fn shell_ray_shape(
-        &self,
-        faces: &[solidcore::geom::object::FaceKey],
-    ) -> solidcore::Result<solidcore::geom::object::Shape> {
-        if faces.is_empty() {
-            return solidcore::geom::object::Shape::new(&[], &[], &[], &[]);
-        }
-        // UNPORTED(query.brep): SmBrep cache for SmShape/ShapePointSolve on faces
-        // (harness-limited: this adapter has no B-rep geometry; see the note above)
-        Err(solidcore::SolidError::unported(
-            "SmShape::SmShape / SmTopologySolver::ShapePointSolve on boundary faces",
-            "query.brep",
-        ))
+    fn volume(&self, _: CacheObject) -> Option<&solidcore::surface::volume::Volume> {
+        None
     }
-}
-impl solidcore::intersect::topology_solver::p1::TopologyObjects<NoRayObject> for EmptyRayWorld {
-    fn curve(&self, object: NoRayObject) -> solidcore::Result<&solidcore::curve::curve::Curve> {
-        match object {}
-    }
-    fn analytic_curve_handle(&self, object: NoRayObject) -> Option<NoRayObject> {
-        match object {}
-    }
-    fn vertex_point(&self, object: NoRayObject) -> solidcore::Result<solidcore::math::Point3> {
-        match object {}
-    }
-    fn vertex_tolerance(&self, object: NoRayObject) -> solidcore::Result<f64> {
-        match object {}
-    }
-    fn curve_edge(&self, object: NoRayObject) -> solidcore::Result<Option<NoRayObject>> {
-        match object {}
-    }
-    fn edge_curve(&self, object: NoRayObject) -> solidcore::Result<Option<NoRayObject>> {
-        match object {}
-    }
-    fn edge_interval(
-        &self,
-        object: NoRayObject,
-    ) -> solidcore::Result<solidcore::geom::extent1d::Extent1d> {
-        match object {}
-    }
-    fn surface_face(&self, object: NoRayObject) -> solidcore::Result<Option<NoRayObject>> {
-        match object {}
-    }
-    fn face_surface(&self, object: NoRayObject) -> solidcore::Result<NoRayObject> {
-        match object {}
-    }
-    fn surface(
-        &self,
-        object: NoRayObject,
-    ) -> solidcore::Result<&solidcore::surface::surface::Surface> {
-        match object {}
-    }
-    fn face_uv_domain(
-        &self,
-        object: NoRayObject,
-    ) -> solidcore::Result<solidcore::geom::extent2d::Extent2d> {
-        match object {}
-    }
-    fn face_tolerance(&self, object: NoRayObject) -> solidcore::Result<f64> {
-        match object {}
-    }
-    fn surface_owner(&self, object: NoRayObject) -> solidcore::Result<Option<NoRayObject>> {
-        match object {}
-    }
-    fn shape_member(&self, object: NoRayObject) -> solidcore::geom::object::ShapeMember {
-        match object {}
-    }
-}
-impl solidcore::intersect::point_class::ClassGeometry<NoRayObject> for EmptyRayWorld {
-    fn curve(&self, object: NoRayObject) -> Option<&solidcore::curve::curve::Curve> {
-        match object {}
-    }
-    fn surface(&self, object: NoRayObject) -> Option<&solidcore::surface::surface::Surface> {
-        match object {}
-    }
-    fn volume(&self, object: NoRayObject) -> Option<&solidcore::surface::volume::Volume> {
-        match object {}
-    }
-    fn point(&self, object: NoRayObject) -> Option<solidcore::math::Point3> {
-        match object {}
+    fn point(&self, _: CacheObject) -> Option<solidcore::math::Point3> {
+        None
     }
 }
 
@@ -286,9 +209,33 @@ fn ray_output(values: &[f64]) -> Result<Output, HarnessError> {
         .values("classification", floats))
 }
 
+/// Upstream's file B-reps own their geometry (`SmSurface::GetFace`, `SmCurve::GetEdge`
+/// name the face and edge). The ray's shape
+/// solve maps a hit surface or curve back to its face or edge through that owner, so
+/// the copy gets the arena identities the ray world ([`BrepQuery::default`]) resolves.
+fn own_geometry(b: &mut solidcore::topology::Brep) -> Result<(), HarnessError> {
+    use solidcore::topology::brep_cache::arena_identity;
+    let faces: Vec<_> = b.faces().ids().collect();
+    for f in faces {
+        if let Some(surface) = b.face_mut(f).map_err(failure)?.surface.as_mut() {
+            let _ = surface.set_owner(Some(arena_identity(CacheObject::Face(f))));
+        }
+    }
+    let edges: Vec<_> = b.edges().ids().collect();
+    for e in edges {
+        if let Some(curve) = b.edge_mut(e).map_err(failure)?.curve.as_mut() {
+            let _ = curve.set_owner(Some(arena_identity(CacheObject::Edge(e))), None);
+        }
+    }
+    Ok(())
+}
+
 fn rust_ray(brep: &solidcore::topology::Brep, input: &RayInput) -> Result<Output, HarnessError> {
     use solidcore::intersect::point_class::{PointClassType, PointClassification};
     use solidcore::topology::shell::{ray_fire, ShellRayInput, ShellRayState};
+    // The ray fires may add UV trim curves (as the native B-rep's): one copy per case.
+    let mut scratch = brep.clone();
+    own_geometry(&mut scratch)?;
     let mut kernel = solidcore::kernel::Kernel::default();
     let mut out = Vec::new();
     // The shim's guard: non-finite ray values would reach the intersection solver
@@ -319,16 +266,16 @@ fn rust_ray(brep: &solidcore::topology::Brep, input: &RayInput) -> Result<Output
     }
     for id in brep.shells().ids() {
         let counters = mark_counters(&kernel);
-        let mut classification = PointClassification::<NoRayObject>::new(0.125);
+        let mut classification = PointClassification::<CacheObject>::new(0.125);
         classification.set_class_object(PointClassType::Point, None);
         classification.set_gap_3d(123.0);
         classification.set_pre_snap_param(456.0);
         let attempt = ray_fire(
             &mut kernel,
-            brep,
+            &mut scratch,
             solidcore::topology::BrepId::from_index(0),
             id,
-            &EmptyRayWorld,
+            &BrepQuery::default(),
             ShellRayInput {
                 start: solidcore::math::Point3::new(input.start[0], input.start[1], input.start[2]),
                 direction: solidcore::math::Vec3::new(
@@ -363,7 +310,7 @@ fn rust_ray(brep: &solidcore::topology::Brep, input: &RayInput) -> Result<Output
             f64::from(pc.point_class().code()),
             f64::from(pc.object().is_none()),
             pc.src_zone_tol_3d(),
-            pc.gap_3d(&kernel, &EmptyRayWorld, None).map_err(failure)?,
+            pc.gap_3d(&kernel, &NoClassGeometry, None).map_err(failure)?,
             pc.pre_snap_param(),
         ]);
         out.extend(mark_delta(&kernel, counters).map(|v| v as f64));
@@ -615,7 +562,9 @@ fn rust_transfer_records(
         let extra = ShellId::from_index(u32::try_from(extra_index).map_err(failure)?);
         let members = match &mut brep.shell_mut(original).map_err(failure)?.members {
             ShellMembers::Faceuses(members) if members.len() >= 2 => members,
-            _ => return Err(failure("split fixture needs a face-use cycle")),
+            // the shim refuses this fixture (`SC_ERR_ARG`), which the C++ side reports
+            // as `rejected_input`
+            _ => return Ok(Output::err("rejected_input")),
         };
         let moved = members.remove(0);
         let target = brep.shell_mut(extra).map_err(failure)?;
@@ -814,12 +763,33 @@ fn rust_transfer_records(
     Ok(Output::new().ints("records", out))
 }
 
+/// The Rust B-rep of the case's fixture: a shim-built source built by the Rust kernel
+/// ([`crate::own_builder`], as `topology.edgeuse_p1` builds it) or an `.smb` file read
+/// by the Rust reader, both in the shim's traversal order
+/// ([`crate::own_reader::brep_in_order`]); or the deferral of an unported callee of the
+/// build.
+fn own_brep(value: &Value) -> Result<Result<solidcore::topology::Brep, Output>, HarnessError> {
+    use crate::own_builder::{Built, Conventions};
+    let src: BrepIn = serde_json::from_value(value.clone()).map_err(failure)?;
+    let mut kernel = solidcore::kernel::Kernel::default();
+    let conv = &Conventions::EDGEUSE_GRAPH;
+    match crate::own_reader::brep_in_order(&mut kernel, &src, false, false, conv)? {
+        Built::Brep(b) => Ok(Ok(*b)),
+        Built::Failed(e) => Output::unported(&e)
+            .map(Err)
+            .ok_or_else(|| failure(format!("native fixture build failed: {e}"))),
+    }
+}
+
 impl UnitDiff for Runner {
     fn id(&self) -> &'static str {
         "topology.shell"
     }
 
     fn run_cpp(&self, case: &Case) -> Result<Output, HarnessError> {
+        if inner::is_inner(case) {
+            return inner::run_cpp(case);
+        }
         let inputs: Inputs = case.parse()?;
         let (path, block) = fixture_input(inputs.brep)?;
         if let Some(filter) = inputs.region_filter {
@@ -915,7 +885,11 @@ impl UnitDiff for Runner {
                     "type probe cannot be combined with another operation",
                 ));
             }
-            let export = graph::eval(graph::Op::Export, &path, &block).map_err(failure)?;
+            let export =
+                crate::export_memo::export("topology_edgeuse_p1", &[&path], &block, || {
+                    graph::eval(graph::Op::Export, &path, &block)
+                })
+                .map_err(failure)?;
             let counts = graph::counts(&export)
                 .ok_or_else(|| failure("native type fixture build failed"))?;
             let values =
@@ -924,7 +898,11 @@ impl UnitDiff for Runner {
             return Ok(Output::new().ints("records", values.to_vec()));
         }
         let native = if let Some(transfer) = inputs.transfer {
-            let export = graph::eval(graph::Op::Export, &path, &block).map_err(failure)?;
+            let export =
+                crate::export_memo::export("topology_edgeuse_p1", &[&path], &block, || {
+                    graph::eval(graph::Op::Export, &path, &block)
+                })
+                .map_err(failure)?;
             let counts = graph::counts(&export)
                 .ok_or_else(|| failure("native transfer fixture build failed"))?;
             let options = resolve_transfer(&transfer, counts)?;
@@ -962,11 +940,31 @@ impl UnitDiff for Runner {
         ))
     }
 
+    fn cases(&self, ctx: &crate::CaseContext) -> Result<Vec<Case>, HarnessError> {
+        let mut v = crate::runner::default_cases(self, ctx)?;
+        v.extend(inner::cases(self.id()));
+        Ok(v)
+    }
+
     fn run_rust(&self, case: &Case) -> Result<Output, HarnessError> {
+        if inner::is_inner(case) {
+            return inner::run_rust(case);
+        }
         let inputs: Inputs = case.parse()?;
-        let (path, block) = fixture_input(inputs.brep)?;
-        let export = graph::eval(graph::Op::Export, &path, &block).map_err(failure)?;
-        let mut brep = import(&export)?;
+        // an input the FFI refuses is a harness error on both sides (PR #502's
+        // convention): the shim never builds it, so the Rust side must not either. Fuzz
+        // case fuzz00180 (`--fuzz 300 --seeds 5`) mutated a mixed fixture's `networks` to
+        // 2^32: every FFI entry point exports the block first and refuses more than 3
+        // networks, while this side's builder wired networks for minutes. The check sees
+        // the same block as `run_cpp`.
+        let (path, block) = fixture_input(inputs.brep.clone())?;
+        graph::validate_export(&path, &block).map_err(failure)?;
+        let mut brep = match own_brep(&inputs.brep)? {
+            Ok(b) => b,
+            Err(o) => return Ok(o),
+        };
+        // the entity counts of the B-rep as built (the export header's)
+        let built_counts = crate::own_builder::counts(&brep);
         if let Some(filter) = inputs.region_filter {
             if filter.pattern > 2
                 || inputs.region_order.is_some()
@@ -1052,14 +1050,10 @@ impl UnitDiff for Runner {
                     "type probe cannot be combined with another operation",
                 ));
             }
-            let counts = graph::counts(&export)
-                .ok_or_else(|| failure("native type fixture build failed"))?;
-            return rust_type_members(&mut brep, &probe, type_probe_index(&probe, counts)?);
+            return rust_type_members(&mut brep, &probe, type_probe_index(&probe, built_counts)?);
         }
         if let Some(transfer) = inputs.transfer {
-            let counts = graph::counts(&export)
-                .ok_or_else(|| failure("native transfer fixture build failed"))?;
-            return rust_transfer_records(&mut brep, &resolve_transfer(&transfer, counts)?);
+            return rust_transfer_records(&mut brep, &resolve_transfer(&transfer, built_counts)?);
         }
         if inputs.wires {
             let mut out = vec![brep.shells().len() as i64];
@@ -1454,4 +1448,39 @@ fn rust_region_filter(
         list(&mut out, shells.into_iter().map(ShellId::index));
     }
     Ok(Output::new().ints("records", out))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn wires_case(networks: u64) -> Case {
+        Case {
+            unit: "topology.shell".into(),
+            name: "t".into(),
+            source: crate::CaseSource::Inline,
+            inputs: json!({"brep": {"kind": "mixed", "networks": networks}, "wires": true}),
+        }
+    }
+
+    /// Fuzz case `topology.shell/fuzz00180` (`--fuzz 300 --seeds 5`): a mixed fixture of
+    /// 2^32 wire networks. The FFI refuses more than 3 for the C++ side, and the Rust side
+    /// must be refused the same way instead of wiring networks for minutes.
+    #[test]
+    fn huge_network_count_is_refused_on_both_sides() {
+        let case = wires_case(4_294_967_296);
+        let cpp = Runner.run_cpp(&case).unwrap_err().to_string();
+        let rust = Runner.run_rust(&case).unwrap_err().to_string();
+        assert_eq!(cpp, "invalid argument: bad index/count 4294967296 (max 3)");
+        assert_eq!(rust, cpp);
+    }
+
+    /// The largest network count the FFI accepts still runs on both sides.
+    #[test]
+    fn max_network_count_runs_on_both_sides() {
+        let case = wires_case(3);
+        let cpp = Runner.run_cpp(&case).unwrap();
+        let rust = Runner.run_rust(&case).unwrap();
+        assert!(crate::compare(&cpp, &rust, &[]).mismatches.is_empty());
+    }
 }

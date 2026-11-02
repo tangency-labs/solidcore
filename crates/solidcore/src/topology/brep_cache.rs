@@ -19,11 +19,12 @@
 //! drops trees automatically. Exact B-rep lists remain explicit
 //! `topology.brep_p1` back-edges; arena allocation order is not list order.
 //! Rebuilding an initialized cache and resizing an
-//! uninitialized cache return `InvalidInput` (upstream asserts). Ignored statuses
+//! uninitialized cache return `PortInvariant` (upstream asserts; as do
+//! the adapter's handle and owner checks, which upstream follows by pointer). Ignored statuses
 //! propagate Unported; an ordinary ignored box failure keeps the previous box,
 //! as upstream. No new recursion; spatial-tree traversal uses geom.tree's bounds.
-//! B-rep box calculation (`query.brep`) and face queries (`topology.face_p4`) remain
-//! explicit back-edges; face boxes call `query::face::p1`; the polygon path is ported.
+//! Face queries (`topology.face_p4`) remain explicit back-edges; the B-rep box calls
+//! `query::brep`, face boxes `query::face::p1`; the polygon path is ported.
 
 use crate::error::{Result, SolidError};
 use crate::geom::a_object::{BREP_TYPE, POLY_BREP_TYPE};
@@ -33,10 +34,12 @@ use crate::geom::tree::{NodeGeomType, Tree, TreeOwner};
 use crate::kernel::Kernel;
 use crate::math::EFF_ZERO;
 use crate::nurbs::b_spline_curve::BoundingBoxRequest;
+use crate::query::brep::{self as qbrep, BoundingBoxOptions};
 use crate::query::poly::{PolyBrep, PolyEdgeId, PolyFaceId, PolyVertexId};
 use crate::topology::{edge, Brep, EdgeId, FaceId, VertexId};
 
 const OP: &str = "topology::brep_cache";
+
 /// `SmBrepCache_TYPE`.
 pub const TYPE: i64 = 16400;
 /// `SmBrepCache::GetTypeString`.
@@ -159,14 +162,14 @@ impl<O: Copy + PartialEq> BrepCache<O> {
             || self.surfaces.is_some()
             || self.target_type != source.type_code()
         {
-            return Err(SolidError::invalid_input(
+            return Err(SolidError::port_invariant(
                 OP,
                 "cache already built or source type mismatch",
             ));
         }
         let mut bbox = match source {
             CacheSource::Brep(b) => {
-                let mut bbox = brep_bounding_box(b)?;
+                let mut bbox = qbrep::calculate_bounding_box(k, b, BoundingBoxOptions::default())?;
                 bbox.expand_absolute(b.tolerance() * 100.0);
                 let size = bbox.size();
                 bbox.add_point(bbox.max() + 0.15 * size);
@@ -298,7 +301,7 @@ impl<O: Copy + PartialEq> BrepCache<O> {
         owner_of: &dyn Fn(object::ObjectRef) -> Option<object::ObjectRef>,
     ) -> Result<()> {
         if self.vertices.is_none() || self.curves.is_none() || self.surfaces.is_none() {
-            return Err(SolidError::invalid_input(OP, "cache has not been built"));
+            return Err(SolidError::port_invariant(OP, "cache has not been built"));
         }
         let mut surface_union = Extent3d::new();
         let mut curve_union = Extent3d::new();
@@ -318,7 +321,7 @@ impl<O: Copy + PartialEq> BrepCache<O> {
             let owner = face_id(b, owner, keys)?;
             match face_bounding_box(k, b, owner) {
                 Ok(bbox) => surface_box = bbox,
-                Err(e) if e.is_unported() => return Err(e),
+                Err(e) if e.is_unported_or_cancelled() => return Err(e),
                 Err(_) => {}
             }
             surface_union = surface_union.union(&surface_box);
@@ -419,7 +422,7 @@ fn resize_edge(
                 *curve_box = bbox;
             }
         }
-        Err(e) if e.is_unported() => return Err(e),
+        Err(e) if e.is_unported_or_cancelled() => return Err(e),
         Err(_) => {}
     }
     *curve_union = curve_union.union(curve_box);
@@ -435,17 +438,7 @@ fn resize_edge(
     Ok(())
 }
 
-fn brep_bounding_box(_b: &Brep) -> Result<Extent3d> {
-    // UNPORTED(query.brep): SmBrep::CalculateBoundingBox
-    Err(SolidError::unported(
-        "SmBrep::CalculateBoundingBox",
-        "query.brep",
-    ))
-}
-
-// (SmBrep::GetVertices / GetEdges / GetFaces are wired to topology::brep::p1; the
-// B-rep tree build calls brep_bounding_box first, so they are not reached until
-// query.brep lands and the unit's report cannot show them yet)
+// (SmBrep::GetVertices / GetEdges / GetFaces are wired to topology::brep::p1)
 fn brep_vertices(b: &Brep) -> Result<Vec<VertexId>> {
     crate::topology::brep::p1::vertices(b, None)
 }
@@ -463,9 +456,7 @@ fn face_bounding_box(k: &Kernel, b: &Brep, f: FaceId) -> Result<Extent3d> {
 }
 
 fn face_edges(b: &Brep, f: FaceId) -> Result<Vec<EdgeId>> {
-    b.face(f)?;
-    // UNPORTED(topology.face_p4): SmFace::GetEdges
-    Err(SolidError::unported("SmFace::GetEdges", "topology.face_p4"))
+    crate::topology::face::p4::edges(b, f, None, false, None)
 }
 
 /// Builds a new cache for `SmSAGObject::CacheMakeOrValidate`. The source geometry
@@ -500,12 +491,15 @@ impl crate::geom::solution_array::SolutionObject for CacheObject {
 /// Exact B-rep geometry and its cache as seen by the topology solver. Cache
 /// invalidation is the caller's responsibility; both borrows must name one B-rep.
 pub struct BrepObjects<'a> {
+    /// A mutable caller may resolve trim requests after the read-only solve stops.
+    pub preparation: Option<&'a crate::query::brep::RayPreparation>,
     /// Source arenas.
     pub brep: &'a Brep,
     /// Identity of the source B-rep in the caller's shape store.
     pub brep_id: crate::topology::BrepId,
-    /// Cache built from these arenas with identity handles.
-    pub cache: &'a BrepCache,
+    /// Cache built from these arenas with identity handles. Shape solves read the
+    /// shape's own trees, so a view for them needs none (`None`).
+    pub cache: Option<&'a BrepCache>,
     /// Identity of each edge/face record (independent of its arena index).
     pub keys: &'a dyn Fn(CacheObject) -> object::ObjectRef,
     /// Owners of intermediate generated curves and edge uses, as for `Curve::edge`.
@@ -513,15 +507,29 @@ pub struct BrepObjects<'a> {
 }
 
 impl crate::intersect::topology_solver::p1::TopologyObjects<CacheObject> for BrepObjects<'_> {
+    fn surface_solve_context(
+        &self,
+    ) -> Option<Box<dyn crate::surface::surface::p1::SurfaceSolveContext<CacheObject> + '_>> {
+        self.preparation.map(|preparation| {
+            Box::new(crate::query::brep::RaySurfaceContext {
+                brep: self.brep,
+                preparation,
+            }) as Box<dyn crate::surface::surface::p1::SurfaceSolveContext<CacheObject>>
+        })
+    }
+
+    fn uv_trim_preparation(&self) -> Option<&crate::query::brep::RayPreparation> {
+        self.preparation
+    }
     fn brep_cache(&self, object: CacheObject) -> Result<&BrepCache> {
         if object != CacheObject::Brep {
-            return Err(SolidError::invalid_input(OP, "expected B-rep handle"));
+            return Err(SolidError::port_invariant(OP, "expected B-rep handle"));
         }
-        Ok(self.cache)
+        self.cache.ok_or(SolidError::null_pointer(OP))
     }
     fn curve(&self, object: CacheObject) -> Result<&crate::curve::curve::Curve> {
         let CacheObject::Curve(e) = object else {
-            return Err(SolidError::invalid_input(OP, "expected curve handle"));
+            return Err(SolidError::port_invariant(OP, "expected curve handle"));
         };
         self.brep
             .edge(e)?
@@ -534,17 +542,23 @@ impl crate::intersect::topology_solver::p1::TopologyObjects<CacheObject> for Bre
     }
     fn vertex_point(&self, object: CacheObject) -> Result<crate::math::Point3> {
         let CacheObject::Vertex(v) = object else {
-            return Err(SolidError::invalid_input(OP, "expected vertex handle"));
+            return Err(SolidError::port_invariant(OP, "expected vertex handle"));
         };
         Ok(self.brep.vertex(v)?.point)
     }
     fn vertex_tolerance(&self, object: CacheObject) -> Result<f64> {
         let CacheObject::Vertex(v) = object else {
-            return Err(SolidError::invalid_input(OP, "expected vertex handle"));
+            return Err(SolidError::port_invariant(OP, "expected vertex handle"));
         };
         Ok(self.brep.vertex(v)?.tolerance)
     }
     fn curve_edge(&self, object: CacheObject) -> Result<Option<CacheObject>> {
+        // a solve's own curve outside the B-rep's records (e.g. the line a caller
+        // intersects the B-rep with): no edge of the B-rep owns it, so its
+        // `GetEdge()` is null
+        if let CacheObject::Other(_) = object {
+            return Ok(None);
+        }
         let owner = self.curve(object)?.edge(self.owner_of)?;
         owner
             .map(|o| edge_id(self.brep, o, self.keys).map(CacheObject::Edge))
@@ -552,7 +566,7 @@ impl crate::intersect::topology_solver::p1::TopologyObjects<CacheObject> for Bre
     }
     fn edge_curve(&self, object: CacheObject) -> Result<Option<CacheObject>> {
         let CacheObject::Edge(e) = object else {
-            return Err(SolidError::invalid_input(OP, "expected edge handle"));
+            return Err(SolidError::port_invariant(OP, "expected edge handle"));
         };
         Ok(self
             .brep
@@ -563,9 +577,15 @@ impl crate::intersect::topology_solver::p1::TopologyObjects<CacheObject> for Bre
     }
     fn edge_interval(&self, object: CacheObject) -> Result<crate::geom::extent1d::Extent1d> {
         let CacheObject::Edge(e) = object else {
-            return Err(SolidError::invalid_input(OP, "expected edge handle"));
+            return Err(SolidError::port_invariant(OP, "expected edge handle"));
         };
         Ok(self.brep.edge(e)?.interval)
+    }
+    fn edge_tolerance(&self, object: CacheObject) -> Result<f64> {
+        let CacheObject::Edge(e) = object else {
+            return Err(SolidError::port_invariant(OP, "expected edge handle"));
+        };
+        Ok(self.brep.edge(e)?.tolerance)
     }
     fn surface_face(&self, object: CacheObject) -> Result<Option<CacheObject>> {
         let owner = self.surface(object)?.face()?;
@@ -575,7 +595,7 @@ impl crate::intersect::topology_solver::p1::TopologyObjects<CacheObject> for Bre
     }
     fn face_surface(&self, object: CacheObject) -> Result<CacheObject> {
         let CacheObject::Face(f) = object else {
-            return Err(SolidError::invalid_input(OP, "expected face handle"));
+            return Err(SolidError::port_invariant(OP, "expected face handle"));
         };
         self.brep
             .face(f)?
@@ -586,7 +606,7 @@ impl crate::intersect::topology_solver::p1::TopologyObjects<CacheObject> for Bre
     }
     fn surface(&self, object: CacheObject) -> Result<&crate::surface::surface::Surface> {
         let CacheObject::Surface(f) = object else {
-            return Err(SolidError::invalid_input(OP, "expected surface handle"));
+            return Err(SolidError::port_invariant(OP, "expected surface handle"));
         };
         self.brep
             .face(f)?
@@ -596,15 +616,21 @@ impl crate::intersect::topology_solver::p1::TopologyObjects<CacheObject> for Bre
     }
     fn face_uv_domain(&self, object: CacheObject) -> Result<crate::geom::extent2d::Extent2d> {
         let CacheObject::Face(f) = object else {
-            return Err(SolidError::invalid_input(OP, "expected face handle"));
+            return Err(SolidError::port_invariant(OP, "expected face handle"));
         };
         Ok(self.brep.face(f)?.uv_domain)
     }
     fn face_tolerance(&self, object: CacheObject) -> Result<f64> {
         let CacheObject::Face(f) = object else {
-            return Err(SolidError::invalid_input(OP, "expected face handle"));
+            return Err(SolidError::port_invariant(OP, "expected face handle"));
         };
         Ok(self.brep.face(f)?.tolerance)
+    }
+    fn face_entity(&self, object: CacheObject) -> Option<(&Brep, FaceId)> {
+        match object {
+            CacheObject::Face(f) => Some((self.brep, f)),
+            _ => None,
+        }
     }
     fn surface_owner(&self, object: CacheObject) -> Result<Option<CacheObject>> {
         self.surface(object)?
@@ -618,6 +644,49 @@ impl crate::intersect::topology_solver::p1::TopologyObjects<CacheObject> for Bre
             })
             .transpose()
     }
+    fn object_zone_tol_3d(&self, k: &Kernel, object: CacheObject) -> Result<f64> {
+        use crate::geom::tol::{zone_tol_3d, SmallTopoType};
+        let system = zone_tol_3d(k, SmallTopoType::NormalSize);
+        match object {
+            // topology: GetTolerance (SM_USE_OLDTOL)
+            CacheObject::Vertex(v) => crate::topology::vertex::tolerance(self.brep, v),
+            CacheObject::Edge(e) => edge::tolerance(self.brep, e),
+            CacheObject::Face(f) => crate::topology::face::p2::tolerance(self.brep, f),
+            // geometry: the tolerance of its edge or face, else the system's
+            CacheObject::Curve(_) => match self.curve_edge(object)? {
+                Some(CacheObject::Edge(e)) => edge::tolerance(self.brep, e),
+                Some(_) => Err(SolidError::port_invariant(OP, "curve edge is not an edge")),
+                None => Ok(system),
+            },
+            CacheObject::Surface(_) => match self.surface_face(object)? {
+                Some(CacheObject::Face(f)) => crate::topology::face::p2::tolerance(self.brep, f),
+                Some(_) => Err(SolidError::port_invariant(OP, "surface face is not a face")),
+                None => Ok(system),
+            },
+            // SmBrep: GetZoneTol3d(const SmBrep*)
+            CacheObject::Brep => Ok(crate::geom::tol::brep_zone_tol_3d(
+                k,
+                self.brep,
+                SmallTopoType::NormalSize,
+            )),
+            // UNPORTED(query.poly): SmPolyVertex/SmPolyEdge/SmPolyFace::GetTolerance (the
+            // poly B-rep is not in this view)
+            CacheObject::PolyVertex(_) | CacheObject::PolyEdge(_) | CacheObject::PolyFace(_) => {
+                Err(SolidError::unported(
+                    "SmPolyVertex::GetTolerance",
+                    "query.poly",
+                ))
+            }
+            // UNPORTED(geom.tol): SmTol::GetZoneTol3d(const SmObject*) on an owner outside
+            // this view's topology records
+            // Proof (unreachable): an owner outside this view's topology records has no library
+            // path; 0 hits in the green difftest sweep.
+            CacheObject::Other(_) => Err(SolidError::unported(
+                "SmTol::GetZoneTol3d(const SmObject*)",
+                "geom.tol",
+            )),
+        }
+    }
     fn shape_member(&self, object: CacheObject) -> object::ShapeMember {
         use crate::geom::object::ShapeMember;
         let b = self.brep_id;
@@ -626,6 +695,42 @@ impl crate::intersect::topology_solver::p1::TopologyObjects<CacheObject> for Bre
             CacheObject::Edge(e) => ShapeMember::Edge((b, e)),
             CacheObject::Face(f) => ShapeMember::Face((b, f)),
             _ => ShapeMember::Other,
+        }
+    }
+    fn shape_member_object(&self, member: object::ShapeMember) -> Result<CacheObject> {
+        use crate::geom::object::ShapeMember;
+        let (brep, object) = match member {
+            ShapeMember::Vertex((b, v)) => (b, CacheObject::Vertex(v)),
+            ShapeMember::Edge((b, e)) => (b, CacheObject::Edge(e)),
+            ShapeMember::Face((b, f)) => (b, CacheObject::Face(f)),
+            ShapeMember::Other => {
+                return Err(SolidError::port_invariant(OP, "not a shape member"));
+            }
+        };
+        if brep != self.brep_id {
+            return Err(SolidError::port_invariant(
+                OP,
+                "shape member of another B-rep",
+            ));
+        }
+        Ok(object)
+    }
+}
+
+impl crate::intersect::point_class::ClassObject for CacheObject {
+    fn class_kind(&self) -> crate::intersect::point_class::ClassObjectKind {
+        use crate::intersect::point_class::ClassObjectKind;
+        match self {
+            Self::Vertex(_) => ClassObjectKind::Vertex,
+            Self::Curve(_) => ClassObjectKind::Curve,
+            Self::Surface(_) => ClassObjectKind::Surface,
+            Self::Edge(_) => ClassObjectKind::Edge,
+            Self::Face(_) => ClassObjectKind::Face,
+            Self::Brep
+            | Self::Other(_)
+            | Self::PolyVertex(_)
+            | Self::PolyEdge(_)
+            | Self::PolyFace(_) => ClassObjectKind::Other,
         }
     }
 }
@@ -657,7 +762,7 @@ fn edge_id(
         .iter()
         .find(|(id, _)| keys(CacheObject::Edge(*id)) == owner)
         .map(|(id, _)| id)
-        .ok_or_else(|| SolidError::invalid_input(OP, "edge owner is not in source B-rep"))
+        .ok_or_else(|| SolidError::port_invariant(OP, "edge owner is not in source B-rep"))
 }
 fn face_id(
     b: &Brep,
@@ -668,7 +773,7 @@ fn face_id(
         .iter()
         .find(|(id, _)| keys(CacheObject::Face(*id)) == owner)
         .map(|(id, _)| id)
-        .ok_or_else(|| SolidError::invalid_input(OP, "face owner is not in source B-rep"))
+        .ok_or_else(|| SolidError::port_invariant(OP, "face owner is not in source B-rep"))
 }
 
 #[cfg(test)]
@@ -718,9 +823,10 @@ mod tests {
         let cache = BrepCache::new(BREP_TYPE).unwrap();
         let brep_id = BrepId::from_index(7);
         let mut objects = BrepObjects {
+            preparation: None,
             brep: &b,
             brep_id,
-            cache: &cache,
+            cache: Some(&cache),
             keys: &keys,
             owner_of: &owner_of,
         };
@@ -735,7 +841,7 @@ mod tests {
         objects.keys = &arena_identity;
         assert!(matches!(
             objects.curve_edge(CacheObject::Curve(e)),
-            Err(SolidError::InvalidInput { .. })
+            Err(SolidError::PortInvariant { .. })
         ));
     }
 
@@ -751,24 +857,34 @@ mod tests {
         let b = Brep::new();
         assert!(matches!(
             cache.resize_trees(&k, &b, &[], &[], &[], &arena_identity, &|_| None),
-            Err(SolidError::InvalidInput { .. })
+            Err(SolidError::PortInvariant { .. })
         ));
+        // an edge without curve fails the build after the B-rep box, leaving no tree
+        let mut open = Brep::new();
+        let v0 = open.add_vertex(crate::math::Point3::ZERO).unwrap();
+        let v1 = open
+            .add_vertex(crate::math::Point3::new(1.0, 0.0, 0.0))
+            .unwrap();
+        open.add_edge(v0, v1).unwrap();
         assert!(matches!(
-            cache.build_trees(&k, CacheSource::Brep(&b), |o| o, &arena_identity),
-            Err(SolidError::Unported {
-                unit: "query.brep",
-                ..
-            })
+            cache.build_trees(&k, CacheSource::Brep(&open), |o| o, &arena_identity),
+            Err(SolidError::Upstream { code: 1006, .. })
         ));
         assert!(
             cache.vertex_tree().is_none()
                 && cache.curve_tree().is_none()
                 && cache.surface_tree().is_none()
         );
+        // an empty B-rep builds (its box is the inside-out empty box)
+        let mut empty = BrepCache::new(BREP_TYPE).unwrap();
+        empty
+            .build_trees(&k, CacheSource::Brep(&b), |o| o, &arena_identity)
+            .unwrap();
+        assert!(empty.vertex_tree().is_some());
         let p = PolyBrep::new(&k, 1e-6);
         assert!(matches!(
             cache.build_trees(&k, CacheSource::PolyBrep(&p), |o| o, &arena_identity),
-            Err(SolidError::InvalidInput { .. })
+            Err(SolidError::PortInvariant { .. })
         ));
     }
 
@@ -780,7 +896,7 @@ mod tests {
         let mut cache = make_brep_cache(&k, CacheSource::PolyBrep(&p), &arena_identity).unwrap();
         assert!(matches!(
             cache.build_trees(&k, CacheSource::PolyBrep(&p), |o| o, &arena_identity),
-            Err(SolidError::InvalidInput { .. })
+            Err(SolidError::PortInvariant { .. })
         ));
         let mut b = Brep::new();
         let extra = b

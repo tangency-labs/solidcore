@@ -7,6 +7,8 @@
 //! each lives in its own submodule and adds methods to [`Surface`] (or free
 //! functions).
 
+pub mod approximate;
+pub mod assert_valid;
 pub mod p1;
 pub mod p10;
 pub mod p11;
@@ -20,4 +22,6 @@ pub mod p8;
 pub mod p9;
 
 pub use p1::StepSurface;
-pub use p2::{Surface, SurfaceKind};
+pub use p2::{
+    CacheTreeState, Surface, SurfaceIntersection, SurfaceKind, TrimCacheSlot, TsectCurveType,
+};

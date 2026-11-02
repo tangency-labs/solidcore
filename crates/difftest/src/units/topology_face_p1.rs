@@ -3,43 +3,53 @@
 //!
 //! Every op runs on a B-rep of unit `topology.vertexuse` (upstream `.smb` files, faces of
 //! B-spline surfaces or real `SmPlane`s, wire edges, the `my_test_topology` network): the
-//! C++ side builds a real `SmBrep`, gives its faces and edges the plain B-spline copies of
-//! analytic geometry (what the Rust import rebuilds, keeping the owners) and runs the
-//! `SmFace` member on the selected face; the Rust side imports the graph that unit's shim
-//! exports (with each edge curve owned by its edge, as upstream) and runs the port. Face
-//! and loop selectors are taken modulo their counts. Both sides produce one flat record
+//! C++ side builds a real `SmBrep` and runs the `SmFace` member on the selected face of its
+//! native geometry; the Rust side builds the same B-rep itself ([`own_brep`]: the Rust
+//! kernel's builders, or the Rust `.smb` reader, renumbered into the shim's traversal
+//! order), gives each edge curve its edge as owner (as upstream) and runs the port. No
+//! C++ state reaches the Rust side: each side resolves the face and loop selectors
+//! (modulo their counts) on its own B-rep. Both sides produce one flat record
 //! (`out`, laid out as in the ffi module): statuses, domains, gaps, curve samples and
 //! the orientation / UV trim curve state after the mutating ops.
 //!
-//! `MoveSeam` / `SplitAtSeam` take `HasSeamProblem`'s classifications and enums
-//! (`topology.face_p4`, unported): the C++ side computes them before the call, the Rust
-//! side asks the shim for them (`Probe`) and rebuilds classifications of the same shape
-//! (target-loop flag, interval count, middle point classes), which is all the port reads
-//! before its first unported callee. With `props` both sides also pass face properties
-//! with the given seam verdicts and closed flags.
+//! `MoveSeam` / `SplitAtSeam` take `HasSeamProblem`'s classifications and enums. Each
+//! side computes its own: the C++ side calls `SmFace::HasSeamProblem` before the call,
+//! the Rust side `topology::face::p4::has_seam_problem_in_brep_mut` (default arguments)
+//! on its own B-rep, and both record what it found (`has crossed missing near_miss`,
+//! then per direction the target-loop flag, interval count and middle point classes),
+//! so the seam problem is compared as a value and no C++ result reaches the Rust call.
+//! With `props` both sides also pass face properties
+//! with the given seam verdicts and closed flags. The classification handles name the
+//! B-rep's own entities, surface, curves and seam temporaries (as upstream's `SmObject`
+//! pointers do), so the seam problem a `MoveSeam` with split recomputes after the move
+//! (`HasSeamProblem` over the face's own objects) runs as upstream's does. The split
+//! that follows defers: the caller's classification geometry here cannot borrow the
+//! B-rep the call mutates, so its merges resolve no topology (`plan/findings.md`).
 //!
-//! Deferred: every mutating op (`SmFace::Notify`, `topology.face_p3`; `SwapUV`'s
-//! `GetBrep`, `topology.face_p4`), `CalculateUVDomainFromUVTrimCurves` of a face with a
-//! surface (`CreateUVTrimCurves`, `topology.face_p3`), `CreateOrientedTrimBoundary` of a
-//! face with edge loops (`NormalizedEvaluate`, `topology.edgeuse_p3`; or
-//! `CreateUVTrimCurves`), `FindIfRectangularTrim` of a one-loop face with two to four
-//! edges, `ShrinkGeometry` of a face with an owned surface, and the seam ops past their
-//! early returns (`GetUpwardLoopuses`, `HasSeamProblem`, `topology.face_p4`;
-//! `IsCrossedByEdge`, `intersect.curve_class_p7`; the callees `MergeIntervals` of unit
-//! `intersect.curve_class_p5` still defers to).
+//! After a seam op both sides also count the B-rep's geometry owners (`owners`, the ffi
+//! module): how many faces' surfaces, edges' curves and edge uses' UV trim curves are owned
+//! by their own entity, by nothing or by another object. Counted, so the two sides'
+//! numbering of the faces and edges the op made does not matter; each side reads its own
+//! B-rep (the Rust side resolves an owner key with `own_builder::resolve_owner`, or as
+//! this runner's own [`key_of`] names the entity).
 //!
-//! **C++ crash guard.** Upstream `SplitAtSeam`'s U-then-V branch recurses on the wrong
-//! face and crashes (`plan/upstream-issues.md` UB-137). The shim skips (`-3`) every seam
-//! call that can reach it: a `SplitAtSeam` merging in both directions on a face periodic
-//! in either (by the face properties' closed flags or by the surface itself), and every
-//! `MoveSeam` with split past its early return (it recomputes the seam problem before
-//! splitting). The Rust side defers all of these before anything is compared. The Rust side
-//! reports those cases as deferred to `cpp-crash-guard:UB-137`; they never become
-//! comparable.
+//! Deferred: the cone `TrimWithDomain` callbacks of `ShrinkGeometry`
+//! (`surface.surface_p2`), and the `MoveSeam` splits past the recomputed seam problem
+//! (merges whose handles the geometry cannot resolve). Rejected: the seam calls the C++ crash trap (below) catches.
 //!
-//! **Not compared.** The normalisation to plain B-splines means `MoveSeam`'s analytic
-//! branch (`CopyAndAddAnalytics` of the joined surface) and the conic UV trim curve and
-//! edge curve paths (`SwapUV`'s conic mirrors) are never compared with the C++.
+//! **C++ crash trap.** Upstream `SplitAtSeam`'s U-then-V branch recurses on the wrong
+//! face and crashes (`plan/upstream-issues.md` UB-137). The shim runs every seam call
+//! that can reach it in a forked child: a `SplitAtSeam` merging in both directions on a
+//! face periodic in either (by the face properties' closed flags or by the surface
+//! itself), and every `MoveSeam` with split past its early return (it recomputes the seam
+//! problem before splitting). A child that crashes answers `-4`; where the shim cannot
+//! fork (Windows) it skips the call (`-3`) as before. Both are inputs undefined in C++
+//! (AGENTS.md section 5.6), so the C++ side reports them as `rejected` with a reason
+//! naming UB-137 and the trap: the harness then skips the Rust side and compares
+//! nothing. Seam calls the trap runs to completion compare as usual.
+//!
+//! Both sides hold the B-rep's native geometry (analytic surfaces, conic edge curves),
+//! so the conic and analytic branches (`SwapUV`'s conic mirrors) are compared.
 
 use std::cell::RefCell;
 use std::rc::Rc;
@@ -53,19 +63,15 @@ use solidcore::geom::extent2d::Extent2d;
 use solidcore::geom::object::ObjectRef;
 use solidcore::heal::face_props::{FaceProps, LoopObject, Tri};
 use solidcore::intersect::curve_class::p1::CurveClassification;
-use solidcore::intersect::point_class::{
-    ClassGeometry, ClassObject, ClassObjectKind, PointClassType,
-};
+use solidcore::intersect::point_class::{ClassObject, ClassObjectKind};
 use solidcore::kernel::Kernel;
-use solidcore::math::Point3;
 use solidcore::nurbs::b_spline_surface::p1::SurfParamType;
 use solidcore::nurbs::b_spline_surface_n_lib::p2::OrientType;
-use solidcore::surface::surface::Surface;
-use solidcore::surface::volume::Volume;
 use solidcore::topology::edgeuse::p1 as eu1;
 use solidcore::topology::face::p1 as fp1;
 use solidcore::topology::face::p2 as fp2;
-use solidcore::topology::{Brep, EdgeId, FaceId, LoopId};
+use solidcore::topology::face::p4 as fp4;
+use solidcore::topology::{Brep, EdgeId, EdgeuseId, FaceId, LoopId, VertexId};
 use solidcore::{EntityRef, SolidError};
 use solidcore_ffi::units::topology_face_p1::{self as ffi, Op};
 use solidcore_ffi::units::topology_vertexuse as fixture;
@@ -84,6 +90,10 @@ fn harness(msg: impl Into<String>) -> HarnessError {
 
 /// "Upstream would dereference null" in an output slot.
 const NULL_DEREF: f64 = -2.0;
+/// A seam call the shim skipped: it could not run it in a child process (UB-137).
+const NOT_RUN: f64 = -3.0;
+/// A seam call whose child process crashed, hung or sent no whole record (UB-137).
+const CRASHED: f64 = -4.0;
 /// `SM_ERR_INVALID_INPUT`.
 const SM_ERR_INVALID_INPUT: f64 = 1007.0;
 
@@ -126,6 +136,13 @@ enum OpIn {
         want_max: bool,
         want_2nd: bool,
     },
+    UvDomainAfterTrimShift {
+        limit: bool,
+        want_max: bool,
+        want_2nd: bool,
+        domain: [f64; 4],
+        shift: [f64; 2],
+    },
     Oriented {
         param: bool,
         fill: bool,
@@ -154,6 +171,12 @@ enum OpIn {
     SplitAtSeam {
         #[serde(default)]
         props: Option<PropsIn>,
+    },
+    /// `DeleteInnerLoop` of each loop in turn (1 to 4 distinct loop selectors).
+    DeleteInnerLoop {
+        loops: Vec<i64>,
+        #[serde(default)]
+        attributed: bool,
     },
 }
 
@@ -219,6 +242,18 @@ fn op_args(op: &OpIn) -> (Op, Vec<f64>) {
             Op::UvDomain,
             vec![flag(*limit), flag(*want_max), flag(*want_2nd)],
         ),
+        OpIn::UvDomainAfterTrimShift {
+            limit,
+            want_max,
+            want_2nd,
+            domain,
+            shift,
+        } => {
+            let mut args = vec![flag(*limit), flag(*want_max), flag(*want_2nd)];
+            args.extend(domain);
+            args.extend(shift);
+            (Op::UvDomainAfterTrimShift, args)
+        }
         OpIn::Oriented { param, fill, loop_ } => {
             (Op::Oriented, vec![flag(*param), flag(*fill), *loop_ as f64])
         }
@@ -243,7 +278,30 @@ fn op_args(op: &OpIn) -> (Op, Vec<f64>) {
             v.extend([0.0, 0.0]);
             (Op::SplitAtSeam, v)
         }
+        OpIn::DeleteInnerLoop { loops, attributed } => {
+            let mut v = vec![flag(*attributed), loops.len() as f64];
+            v.extend((0..4).map(|i| loops.get(i).map_or(-1.0, |&l| l as f64)));
+            (Op::DeleteInnerLoop, v)
+        }
     }
+}
+
+/// The file of a B-rep: under `TestFiles/pt_TestFiles`, or with the prefix `fixture:`
+/// one of this unit's hand-built files in `fixtures/topology.face_p1` (planar plates with
+/// holes for `DeleteInnerLoop`).
+fn path_of(brep: &BrepIn) -> Result<String, HarnessError> {
+    if let BrepIn::File { file, .. } = brep {
+        if let Some(name) = file.strip_prefix("fixture:") {
+            if name.contains(['/', '\\']) {
+                return Err(harness("fixture file names have no directories"));
+            }
+            let p = crate::case::repo_root()
+                .join("fixtures/topology.face_p1")
+                .join(name);
+            return Ok(p.to_string_lossy().into_owned());
+        }
+    }
+    shared::path_of(brep)
 }
 
 /// A cached export with its key (the `.smb` path and the block's bits).
@@ -256,7 +314,7 @@ thread_local! {
 
 /// The export of a B-rep.
 fn export_of(brep: &BrepIn) -> Result<Rc<Vec<f64>>, HarnessError> {
-    let path = shared::path_of(brep)?;
+    let path = path_of(brep)?;
     let block = brep_block(brep)?;
     let bits: Vec<u64> = block.iter().map(|x| x.to_bits()).collect();
     if let Some(e) = EXPORTS.with(|c| {
@@ -292,9 +350,15 @@ fn resolve(i: &Inputs) -> Result<Resolved, HarnessError> {
     let Some(c) = fixture::counts(&ex) else {
         return Ok(Err(Output::new().values("out", ex.to_vec())));
     };
+    Ok(resolve_with(i, c).map(|r| (r, ex)).map_err(|o| *o))
+}
+
+/// The inputs with the selectors resolved against entity counts `c`, or the output of
+/// a case without a face (or loop).
+fn resolve_with(i: &Inputs, c: [usize; 10]) -> Result<Inputs, Box<Output>> {
     let [_, _, _, n_f, _, n_l, ..] = c;
     if n_f == 0 {
-        return Ok(Err(Output::err("no_face")));
+        return Err(Box::new(Output::err("no_face")));
     }
     let mut r = i.clone();
     r.face = shared::sel(i.face.max(0), n_f);
@@ -308,13 +372,27 @@ fn resolve(i: &Inputs) -> Result<Resolved, HarnessError> {
         }
         OpIn::LoopRoundTrip { loop_ } => {
             if n_l == 0 {
-                return Ok(Err(Output::err("no_loop")));
+                return Err(Box::new(Output::err("no_loop")));
             }
             *loop_ = shared::sel((*loop_).max(0), n_l);
         }
+        OpIn::DeleteInnerLoop { loops, .. } => {
+            if n_l == 0 || loops.is_empty() {
+                return Err(Box::new(Output::err("no_loop")));
+            }
+            // distinct selectors, at most four (a deleted loop cannot be named again)
+            let mut kept: Vec<i64> = Vec::new();
+            for l in loops.iter() {
+                let l = shared::sel((*l).max(0), n_l);
+                if !kept.contains(&l) && kept.len() < 4 {
+                    kept.push(l);
+                }
+            }
+            *loops = kept;
+        }
         _ => {}
     }
-    Ok(Ok((r, ex)))
+    Ok(r)
 }
 
 fn input_of(i: &Inputs) -> Result<(Op, String, Vec<f64>), HarnessError> {
@@ -322,7 +400,7 @@ fn input_of(i: &Inputs) -> Result<(Op, String, Vec<f64>), HarnessError> {
     let mut v = vec![i.face as f64];
     v.extend(args);
     v.extend(brep_block(&i.brep)?);
-    Ok((op, shared::path_of(&i.brep)?, v))
+    Ok((op, path_of(&i.brep)?, v))
 }
 
 // ---- C++ side ---------------------------------------------------------------------------
@@ -334,7 +412,26 @@ fn run_cpp(i: &Inputs) -> Result<Output, HarnessError> {
     };
     let (op, path, input) = input_of(&r)?;
     let out = ffi::eval(op, &path, &input).map_err(|e| harness(format!("c++: {e}")))?;
+    if let Some(reason) = trapped(&out) {
+        return Ok(Output::rejected(reason));
+    }
     Ok(Output::new().values("out", out))
+}
+
+/// The rejection of a seam call the shim's crash trap did not get a record from: the
+/// input is undefined in C++ (`plan/upstream-issues.md` UB-137, AGENTS.md section 5.6).
+/// The child crashed (`-4`, confirmed at runtime), or the shim could not fork and
+/// skipped the call (`-3`). The harness then runs neither the Rust side nor a compare.
+fn trapped(out: &[f64]) -> Option<&'static str> {
+    match out {
+        [b, x] if *b == 0.0 && *x == CRASHED => {
+            Some("UB-137: SmFace::SplitAtSeam crashed in the shim's fork crash trap")
+        }
+        [b, x] if *b == 0.0 && *x == NOT_RUN => {
+            Some("UB-137: SmFace::SplitAtSeam can crash; no fork for the crash trap, call skipped")
+        }
+        _ => None,
+    }
 }
 
 // ---- Rust side --------------------------------------------------------------------------
@@ -364,7 +461,7 @@ fn status<T>(r: &Result<T, SolidError>) -> Result<f64, Fail> {
     match r {
         Ok(_) => Ok(0.0),
         Err(SolidError::Upstream { code, .. }) => Ok(f64::from(*code)),
-        Err(SolidError::InvalidInput { .. }) => Ok(SM_ERR_INVALID_INPUT),
+        Err(SolidError::InvalidInput { .. } | SolidError::PortInvariant { .. }) => Ok(SM_ERR_INVALID_INPUT),
         Err(e) => Err(fail(e)),
     }
 }
@@ -387,37 +484,98 @@ fn key_of(e: EntityRef) -> ObjectRef {
     }
 }
 
-/// A classification object (always null here).
+/// A classification object. The classifications `HasSeamProblem` makes name the B-rep's
+/// entities, its surface, edge and trim curves and the seam temporaries, as upstream's
+/// `SmObject` pointers do (`topology::face::p4::BrepSeamObjects` requires all of them).
 #[derive(Debug, Clone, Copy, PartialEq)]
-struct H(LoopId);
+enum H {
+    Topo(EntityRef),
+    Surface(FaceId),
+    Curve(bool),
+    EdgeCurve(EdgeId),
+    Trim(EdgeuseId),
+    /// A temporary curve (the seam curves of `SmFace::HasSeamProblem`).
+    Temp(usize),
+}
 
 impl ClassObject for H {
     fn class_kind(&self) -> ClassObjectKind {
-        ClassObjectKind::Loop
+        match self {
+            Self::Topo(e) => e.class_kind(),
+            Self::Surface(_) => ClassObjectKind::Surface,
+            Self::Curve(_) | Self::EdgeCurve(_) | Self::Trim(_) | Self::Temp(_) => {
+                ClassObjectKind::Curve
+            }
+        }
+    }
+
+    fn temporary(index: usize, kind: ClassObjectKind) -> Option<Self> {
+        (kind == ClassObjectKind::Curve).then_some(Self::Temp(index))
     }
 }
 
 impl LoopObject for H {
     fn from_loop(l: LoopId) -> Self {
-        Self(l)
+        Self::Topo(EntityRef::Loop(l))
     }
-}
 
-/// Classification geometry for the null handles here: resolves nothing.
-struct NoGeometry;
+    fn as_loop(&self) -> Option<LoopId> {
+        match self {
+            Self::Topo(e) => e.as_loop(),
+            _ => None,
+        }
+    }
 
-impl ClassGeometry<H> for NoGeometry {
-    fn curve(&self, _: H) -> Option<&Curve> {
-        None
+    fn as_vertex(&self) -> Option<VertexId> {
+        match self {
+            Self::Topo(e) => e.as_vertex(),
+            _ => None,
+        }
     }
-    fn surface(&self, _: H) -> Option<&Surface> {
-        None
+
+    fn from_face(f: FaceId) -> Option<Self> {
+        Some(Self::Topo(EntityRef::Face(f)))
     }
-    fn volume(&self, _: H) -> Option<&Volume> {
-        None
+
+    fn from_face_surface(f: FaceId) -> Option<Self> {
+        Some(Self::Surface(f))
     }
-    fn point(&self, _: H) -> Option<Point3> {
-        None
+
+    fn from_classify_curve(uv: bool) -> Option<Self> {
+        Some(Self::Curve(uv))
+    }
+
+    fn from_topology(t: EntityRef) -> Option<Self> {
+        Some(Self::Topo(t))
+    }
+
+    fn as_topology(&self) -> Option<EntityRef> {
+        match self {
+            Self::Topo(t) => Some(*t),
+            _ => None,
+        }
+    }
+
+    fn from_edge_curve(e: EdgeId) -> Option<Self> {
+        Some(Self::EdgeCurve(e))
+    }
+
+    fn as_edge_curve(&self) -> Option<EdgeId> {
+        match self {
+            Self::EdgeCurve(e) => Some(*e),
+            _ => None,
+        }
+    }
+
+    fn from_trim_curve(eu: EdgeuseId) -> Option<Self> {
+        Some(Self::Trim(eu))
+    }
+
+    fn as_trim_curve(&self) -> Option<EdgeuseId> {
+        match self {
+            Self::Trim(eu) => Some(*eu),
+            _ => None,
+        }
     }
 }
 
@@ -426,7 +584,7 @@ fn put_domain(o: &mut Vec<f64>, d: &Extent2d) {
 }
 
 /// A curve as samples (the shim's `fp1_put_curve`).
-fn put_curve(o: &mut Vec<f64>, c: Option<&Curve>) {
+fn put_curve(k: &Kernel, o: &mut Vec<f64>, c: Option<&Curve>) {
     let Some(c) = c else {
         o.push(-1.0);
         return;
@@ -440,7 +598,7 @@ fn put_curve(o: &mut Vec<f64>, c: Option<&Curve>) {
         } else {
             ivl.min() + f64::from(i) / 4.0 * (ivl.max() - ivl.min())
         };
-        let p = c.evaluate_point(t).unwrap_or_default();
+        let p = c.evaluate_point(k, t).unwrap_or_default();
         o.extend([p.x, p.y, p.z]);
     }
 }
@@ -472,9 +630,9 @@ fn put_orientation(o: &mut Vec<f64>, b: &Brep) {
     }
 }
 
-fn put_uv_curves(o: &mut Vec<f64>, b: &Brep) {
+fn put_uv_curves(k: &Kernel, o: &mut Vec<f64>, b: &Brep) {
     for (_, eu) in b.edgeuses().iter() {
-        put_curve(o, eu.uv_trim_curve.as_ref());
+        put_curve(k, o, eu.uv_trim_curve.as_ref());
     }
 }
 
@@ -506,130 +664,45 @@ fn face_props(p: Option<PropsIn>) -> Result<Option<FaceProps<H>>, Fail> {
     Ok(Some(fp))
 }
 
-/// Reads one classification of the probe (`tgt_only n mid_class*n`).
-fn read_class(k: &Kernel, v: &[f64], at: &mut usize) -> Result<CurveClassification<H>, Fail> {
-    let mut next = || -> Result<f64, Fail> {
-        let x = v
-            .get(*at)
-            .copied()
-            .ok_or_else(|| Fail::Harness(harness("probe too short")))?;
-        *at += 1;
-        Ok(x)
-    };
-    let mut c = CurveClassification::<H>::new(k);
-    c.set_tgt_loops_only(next()? != 0.0);
-    let n = next()? as usize;
-    c.set_size(k, n).map_err(|e| fail(&e))?;
-    for i in 0..n {
-        let pc = PointClassType::from_code(next()? as i32)
-            .ok_or_else(|| Fail::Harness(harness("probe point class")))?;
-        c.at_mut(i)
-            .map_err(|e| fail(&e))?
-            .mid
-            .set_class_object(pc, None);
+/// Puts one classification (`tgt_only n mid_class*n`, as the shim's `fp1_put_class`).
+fn put_class(o: &mut Vec<f64>, c: &CurveClassification<H>) -> Result<(), Fail> {
+    o.push(flag(c.tgt_loops_only()));
+    o.push(c.size() as f64);
+    for i in 0..c.size() {
+        let pc = c.at(i).map_err(|e| fail(&e))?.mid.point_class();
+        o.push(f64::from(pc as i32));
     }
-    Ok(c)
+    Ok(())
 }
 
-/// The seam inputs `HasSeamProblem` gives the C++ side: `None` when the shim refuses the
-/// face (`-2`).
-#[allow(clippy::type_complexity)]
-fn probe(
+/// The seam ops' own `HasSeamProblem` (default arguments) on the face, recorded
+/// (`has crossed missing near_miss class_u class_v`) as the shim records the C++ one;
+/// returns its classifications and enums for the seam call.
+fn seam_problem(
     k: &Kernel,
-    i: &Inputs,
+    b: &mut Brep,
+    f: FaceId,
+    o: &mut Vec<f64>,
 ) -> Result<
-    Option<(
+    (
         fp1::SeamProblem,
         CurveClassification<H>,
         CurveClassification<H>,
-    )>,
+    ),
     Fail,
 > {
-    let mut v = vec![i.face as f64];
-    let path = shared::path_of(&i.brep)?;
-    v.extend(brep_block(&i.brep)?);
-    let out = ffi::eval(Op::Probe, &path, &v).map_err(|e| harness(format!("c++ probe: {e}")))?;
-    if out.get(1) == Some(&NULL_DEREF) {
-        return Ok(None);
-    }
-    let code = |j: usize| -> Result<u8, Fail> {
-        out.get(j)
-            .map(|x| *x as u8)
-            .ok_or_else(|| Fail::Harness(harness("probe too short")))
-    };
-    let problem = fp1::SeamProblem {
-        crossed: surf_param(code(2)?)?,
-        missing: surf_param(code(3)?)?,
-        near_miss: surf_param(code(4)?)?,
-    };
-    let mut at = 5;
-    let cu = read_class(k, &out, &mut at)?;
-    let cv = read_class(k, &out, &mut at)?;
-    Ok(Some((problem, cu, cv)))
-}
-
-/// The shim's guard of the seam ops (upstream's `SplitAtSeam` recursion crashes in
-/// `MergeInterval`, see `plan/upstream-issues.md`): a seam problem in both directions on
-/// a face periodic in either direction, and `MoveSeam` with split past its early return.
-/// Such cases are deferred to `cpp-crash-guard:UB-137`.
-#[allow(clippy::too_many_arguments)]
-fn seam_guard(
-    b: &Brep,
-    f: FaceId,
-    props: Option<PropsIn>,
-    problem: fp1::SeamProblem,
-    cu: &CurveClassification<H>,
-    cv: &CurveClassification<H>,
-    split_op: bool,
-    split: bool,
-) -> Result<bool, Fail> {
-    use SurfParamType as Sp;
-    let s = b
-        .face(f)
-        .map_err(|e| fail(&e))?
-        .surface
-        .as_ref()
-        .ok_or_else(|| Fail::Harness(harness("face without surface")))?;
-    let nat = s.natural_uv_domain();
-    // (as the shim: the face properties' closed flag or the real surface)
-    let real_u = s.is_periodic(&nat, Sp::U).map_err(|e| fail(&e))?;
-    let real_v = s.is_periodic(&nat, Sp::V).map_err(|e| fail(&e))?;
-    let (per_u, per_v) = match props {
-        Some(p) => (p.closed_u != 0 || real_u, p.closed_v != 0 || real_v),
-        None => (real_u, real_v),
-    };
-    let quiet_dir = |c: u8| c == Sp::Neither as u8 || c == Sp::Unknown as u8;
-    if split_op {
-        let has = |p: Sp, d: Sp| p == d || p == Sp::Both;
-        let merge_u = has(problem.crossed, Sp::U) || has(problem.missing, Sp::U);
-        let merge_v = has(problem.crossed, Sp::V) || has(problem.missing, Sp::V);
-        let no_missing = props.is_some_and(|p| quiet_dir(p.missing));
-        return Ok(!no_missing && (per_u || per_v) && merge_u && merge_v);
-    }
-    if !split {
-        return Ok(false);
-    }
-    let quiet = if let Some(p) = props {
-        quiet_dir(p.crossed) && quiet_dir(p.missing)
-    } else {
-        let q = |c: &CurveClassification<H>| match c.intervals() {
-            [] => true,
-            [one] => one.mid.point_class() != PointClassType::Face,
-            _ => false,
-        };
-        q(cu) && q(cv)
-    };
-    let _ = (per_u, per_v);
-    Ok(!quiet)
-}
-
-/// The cases the shim keeps away from upstream's `SplitAtSeam` crash (UB-137): not a
-/// deferral to a unit, they never become comparable.
-fn merge_deferred() -> Fail {
-    Fail::Deferred(Box::new(Output::deferred(
-        "cpp-crash-guard:UB-137",
-        "SmFace::SplitAtSeam",
-    )))
+    let check =
+        fp4::has_seam_problem_in_brep_mut::<H>(k, b, f, fp4::HasSeamProblemOptions::default())
+            .map_err(|e| fail(&e))?;
+    o.push(flag(check.has_problem));
+    o.extend([
+        f64::from(check.problem.crossed as u8),
+        f64::from(check.problem.missing as u8),
+        f64::from(check.problem.near_miss as u8),
+    ]);
+    put_class(o, &check.class_u)?;
+    put_class(o, &check.class_v)?;
+    Ok((check.problem, check.class_u, check.class_v))
 }
 
 /// The C++ shim's null guards for loop `l` of face `f` (`LoopRoundTrip`).
@@ -648,6 +721,59 @@ fn ok_round_trip(b: &Brep, f: FaceId, l: LoopId) -> Result<bool, SolidError> {
     Ok(true)
 }
 
+/// The shim's `fp1_put_owners`: for the faces' surfaces, the edges' curves and the edge
+/// uses' UV trim curves of `b` (reached from its faces and edges; an entity without one
+/// skipped), `n own none other`. An owner is the entity's own when it is the entity's
+/// [`key_of`] or names it under the harness identities (`own_builder::resolve_owner`,
+/// with `b`'s notify serial `serial`).
+fn put_owners(o: &mut Vec<f64>, b: &Brep, serial: u64) -> Result<(), SolidError> {
+    let class = |owner: Option<ObjectRef>, own: EntityRef| match owner {
+        None => 1,
+        Some(r) if r == key_of(own) => 0,
+        Some(r) => {
+            if crate::own_builder::resolve_owner(b, r, Some(serial), own) == Some(own) {
+                0
+            } else {
+                2
+            }
+        }
+    };
+    let mut put = |classes: Vec<usize>| {
+        let mut counts = [0.0; 3];
+        for c in &classes {
+            if let Some(n) = counts.get_mut(*c) {
+                *n += 1.0;
+            }
+        }
+        o.push(classes.len() as f64);
+        o.extend(counts);
+    };
+    let faces = solidcore::topology::brep::p1::faces(b, None)?;
+    let edges = solidcore::topology::brep::p1::edges(b, None)?;
+    let mut surfaces = Vec::new();
+    for &f in &faces {
+        if let Some(srf) = b.face(f)?.surface.as_ref() {
+            surfaces.push(class(srf.owner(), EntityRef::Face(f)));
+        }
+    }
+    let mut curves = Vec::new();
+    let mut uvs = Vec::new();
+    for &x in &edges {
+        if let Some(c) = b.edge(x)?.curve.as_ref() {
+            curves.push(class(c.owner(), EntityRef::Edge(x)));
+        }
+        for eu in solidcore::topology::edge::edgeuses(b, x, None, None)? {
+            if let Some(uv) = b.edgeuse(eu)?.uv_trim_curve.as_ref() {
+                uvs.push(class(uv.owner(), EntityRef::Edgeuse(eu)));
+            }
+        }
+    }
+    put(surfaces);
+    put(curves);
+    put(uvs);
+    Ok(())
+}
+
 /// `GetBrep() != NULL` as the shim checks it: the upward face use's shell reaches a B-rep.
 fn reaches_brep(b: &Brep, f: FaceId) -> Result<bool, SolidError> {
     let Some(fu) = b.face(f)?.faceuse else {
@@ -660,9 +786,8 @@ fn reaches_brep(b: &Brep, f: FaceId) -> Result<bool, SolidError> {
 }
 
 #[allow(clippy::too_many_lines)] // one record per op
-fn rust_record(i: &Inputs, ex: &[f64]) -> Result<Vec<f64>, Fail> {
-    let k = Kernel::default();
-    let (mut b, _) = shared::import(ex)?;
+fn rust_record(i: &Inputs, mut b: Brep) -> Result<Vec<f64>, Fail> {
+    let mut k = Kernel::default();
     // upstream edge curves are owned by their edges
     let edges: Vec<EdgeId> = b.edges().ids().collect();
     for e in edges {
@@ -679,18 +804,52 @@ fn rust_record(i: &Inputs, ex: &[f64]) -> Result<Vec<f64>, Fail> {
             limit,
             want_max,
             want_2nd,
+        }
+        | OpIn::UvDomainAfterTrimShift {
+            limit,
+            want_max,
+            want_2nd,
+            ..
         } => {
-            let r = fp1::calculate_uv_domain_from_uv_trim_curves(
-                &k, &mut b, f, *limit, *want_max, *want_2nd,
+            if let OpIn::UvDomainAfterTrimShift { domain, shift, .. } = &i.op {
+                if fp2::surface(&b, f).map_err(e)?.is_none() {
+                    o.push(NULL_DEREF);
+                    return Ok(o);
+                }
+                solidcore::topology::face::p3::create_uv_trim_curves(&k, &mut b, f, false, None)
+                    .map_err(e)?;
+                b.face_mut(f).map_err(e)?.uv_domain =
+                    Extent2d::from_bounds(domain[0], domain[1], domain[2], domain[3]);
+                let mut transform = solidcore::geom::axis2_placement::Axis2Placement::default();
+                transform.translate(solidcore::math::Vec3::new(shift[0], shift[1], 0.0));
+                for lu in
+                    solidcore::topology::face::p4::upward_loopuses(&b, f, false, None).map_err(e)?
+                {
+                    for eu in eu1::loopuse_edgeuses(&b, lu).map_err(e)? {
+                        let (_, owner) = eu1::uv_trim_curve(&b, eu).map_err(e)?;
+                        if let Some(owner) = owner {
+                            if let Some(curve) =
+                                b.edgeuse_mut(owner).map_err(e)?.uv_trim_curve.as_mut()
+                            {
+                                curve.transform(&k, &transform, None).map_err(e)?;
+                            }
+                        }
+                    }
+                }
+            }
+            let mut d = fp1::UvDomainFromTrim {
+                domain: Extent2d::new(),
+                max_uv_loop_gap: 0.0,
+                second_max_uv_loop_gap: 0.0,
+            };
+            let r = fp1::calculate_uv_domain_from_uv_trim_curves_into(
+                &k, &mut b, f, *limit, *want_max, *want_2nd, &mut d,
             );
             o.push(status(&r)?);
-            if let Ok(d) = r {
-                put_domain(&mut o, &d.domain);
+            put_domain(&mut o, &d.domain);
+            if r.is_ok() {
                 o.extend([d.max_uv_loop_gap, d.second_max_uv_loop_gap]);
             } else {
-                // upstream leaves the face domain in the output (the gaps are not
-                // reported for a failed call)
-                put_domain(&mut o, &b.face(f).map_err(e)?.uv_domain);
                 o.extend([0.0, 0.0]);
             }
         }
@@ -713,7 +872,7 @@ fn rust_record(i: &Inputs, ex: &[f64]) -> Result<Vec<f64>, Fail> {
                     o.extend(t.loops.iter().map(|&n| n as f64));
                     o.push(t.curves.len() as f64);
                     for c in &t.curves {
-                        put_curve(&mut o, Some(c));
+                        put_curve(&k, &mut o, Some(c));
                     }
                 }
                 Err(_) => o.extend([0.0, 0.0]),
@@ -740,7 +899,7 @@ fn rust_record(i: &Inputs, ex: &[f64]) -> Result<Vec<f64>, Fail> {
                 o.push(NULL_DEREF);
                 return Ok(o);
             };
-            let r = fp1::set_surface(&mut b, f, key_of(EntityRef::Face(f)), s, *delete);
+            let r = fp1::set_surface(&k, &mut b, f, key_of(EntityRef::Face(f)), s, *delete);
             status(&r)?;
             o.push(0.0);
             let face = b.face(f).map_err(e)?;
@@ -768,7 +927,7 @@ fn rust_record(i: &Inputs, ex: &[f64]) -> Result<Vec<f64>, Fail> {
             }
             let r = fp1::remove_uv_trim_curves(&mut b, f);
             o.push(status(&r)?);
-            put_uv_curves(&mut o, &b);
+            put_uv_curves(&k, &mut o, &b);
         }
         OpIn::SwapUv => {
             let face = b.face(f).map_err(e)?;
@@ -783,7 +942,7 @@ fn rust_record(i: &Inputs, ex: &[f64]) -> Result<Vec<f64>, Fail> {
             o.push(status(&r)?);
             put_domain(&mut o, &b.face(f).map_err(e)?.uv_domain);
             put_orientation(&mut o, &b);
-            put_uv_curves(&mut o, &b);
+            put_uv_curves(&k, &mut o, &b);
         }
         OpIn::Shrink => {
             let r = fp1::shrink_geometry(&k, &mut b, f, ko);
@@ -791,7 +950,11 @@ fn rust_record(i: &Inputs, ex: &[f64]) -> Result<Vec<f64>, Fail> {
             let face = b.face(f).map_err(e)?;
             put_domain(&mut o, &face.uv_domain);
             match face.surface.as_ref() {
-                Some(s) => put_domain(&mut o, &s.natural_uv_domain()),
+                Some(s) => put_domain(
+                    &mut o,
+                    &s.natural_uv_domain_with_nurb(&k)
+                        .map_err(|e| HarnessError::new(e.to_string()))?,
+                ),
                 None => o.push(-1.0),
             }
         }
@@ -805,19 +968,14 @@ fn rust_record(i: &Inputs, ex: &[f64]) -> Result<Vec<f64>, Fail> {
                 o.push(NULL_DEREF);
                 return Ok(o);
             }
-            let Some((problem, mut cu, mut cv)) = probe(&k, i)? else {
-                return Err(Fail::Harness(harness("probe refused a face with surface")));
-            };
-            if seam_guard(&b, f, *props, problem, &cu, &cv, false, *split)? {
-                return Err(merge_deferred());
-            }
+            let (problem, mut cu, mut cv) = seam_problem(&k, &mut b, f, &mut o)?;
             let fp = face_props(*props)?;
             let opts = fp1::MoveSeamOptions {
                 ok_to_move_to_center: *center,
                 ok_to_split: *split,
             };
             let r = fp1::move_seam(
-                &k,
+                &mut k,
                 &mut b,
                 f,
                 key_of(EntityRef::Face(f)),
@@ -826,7 +984,6 @@ fn rust_record(i: &Inputs, ex: &[f64]) -> Result<Vec<f64>, Fail> {
                 problem,
                 opts,
                 fp.as_ref(),
-                &NoGeometry,
                 &|_| None,
             );
             o.push(status(&r)?);
@@ -838,6 +995,9 @@ fn rust_record(i: &Inputs, ex: &[f64]) -> Result<Vec<f64>, Fail> {
                 r.split.edges.len() as f64,
                 r.split.vertices.len() as f64,
             ]);
+            let serial =
+                solidcore::topology::brep::p3::notify_serial(&mut k.context, &mut b).map_err(e)?;
+            put_owners(&mut o, &b, serial).map_err(e)?;
         }
         OpIn::SplitAtSeam { props } => {
             let face = b.face(f).map_err(e)?;
@@ -845,22 +1005,16 @@ fn rust_record(i: &Inputs, ex: &[f64]) -> Result<Vec<f64>, Fail> {
                 o.push(NULL_DEREF);
                 return Ok(o);
             }
-            let Some((problem, mut cu, mut cv)) = probe(&k, i)? else {
-                return Err(Fail::Harness(harness("probe refused a face with surface")));
-            };
-            if seam_guard(&b, f, *props, problem, &cu, &cv, true, false)? {
-                return Err(merge_deferred());
-            }
+            let (problem, mut cu, mut cv) = seam_problem(&k, &mut b, f, &mut o)?;
             let fp = face_props(*props)?;
             let r = fp1::split_at_seam(
-                &k,
+                &mut k,
                 &mut b,
                 f,
                 &mut cu,
                 &mut cv,
                 problem,
                 fp.as_ref(),
-                &NoGeometry,
                 &|_| None,
             );
             o.push(status(&r)?);
@@ -870,17 +1024,276 @@ fn rust_record(i: &Inputs, ex: &[f64]) -> Result<Vec<f64>, Fail> {
                 r.edges.len() as f64,
                 r.vertices.len() as f64,
             ]);
+            let serial =
+                solidcore::topology::brep::p3::notify_serial(&mut k.context, &mut b).map_err(e)?;
+            put_owners(&mut o, &b, serial).map_err(e)?;
+        }
+        OpIn::DeleteInnerLoop { loops, attributed } => {
+            delete_inner_loop_record(&mut k, &mut b, f, loops, *attributed, &mut o)?;
         }
     }
     Ok(o)
 }
 
+/// The identity of every topology entity for `DeleteInnerLoop` ([`key_of`]'s for faces,
+/// edges, edge uses and loops, so the edge curves' owners agree).
+fn delete_key_of(e: EntityRef) -> ObjectRef {
+    let (type_code, key) = match e {
+        EntityRef::Vertex(x) => (16021, 5 << 40 | u64::from(x.index())),
+        EntityRef::Vertexuse(x) => (16006, 6 << 40 | u64::from(x.index())),
+        EntityRef::Loopuse(x) => (16004, 7 << 40 | u64::from(x.index())),
+        EntityRef::Faceuse(x) => (16002, 8 << 40 | u64::from(x.index())),
+        EntityRef::Shell(x) => (16008, 9 << 40 | u64::from(x.index())),
+        EntityRef::Region(x) => (16009, 10 << 40 | u64::from(x.index())),
+        e => return key_of(e),
+    };
+    ObjectRef {
+        type_code,
+        key: ObjectKey(key),
+    }
+}
+
+/// `DeleteInnerLoop`'s attributes, as the shim gives them (see the ffi module docs).
+const ATTR_BASE: u64 = 20000;
+const ATTR_STRIDE: u64 = 100_000;
+const ATTR_REF: u64 = 10001;
+const ATTR_STANDALONE: u64 = 10002;
+
+/// The `DeleteInnerLoop` record (the ffi module's layout): the shim's guards, the
+/// attributes, a status per loop, then the B-rep after.
+fn delete_inner_loop_record(
+    k: &mut Kernel,
+    b: &mut Brep,
+    f: FaceId,
+    loops: &[i64],
+    attributed: bool,
+    o: &mut Vec<f64>,
+) -> Result<(), Fail> {
+    use solidcore::geom::attribute::{Attribute, AttributeHandle, AttributeStore, Behavior};
+    let e = |e: SolidError| fail(&e);
+    let ls: Vec<LoopId> = loops.iter().map(|&l| LoopId::from_index(l as u32)).collect();
+    // the shim's guards: upstream reads the face's first loop and both loop uses
+    let mut guard = fp2::loops(b, f, false, None).map_err(e)?.is_empty();
+    for &l in &ls {
+        let lu = b.loop_(l).map_err(e)?.loopuse;
+        let mate = match lu {
+            Some(lu) => b.loopuse(lu).map_err(e)?.mate,
+            None => None,
+        };
+        guard |= mate.is_none();
+    }
+    if guard {
+        o.push(NULL_DEREF);
+        return Ok(());
+    }
+    let mut store = AttributeStore::default();
+    let mut shared: Option<(AttributeHandle, AttributeHandle)> = None;
+    if attributed {
+        let r = store
+            .insert(Attribute::new(ATTR_REF, Behavior::Reference))
+            .map_err(e)?;
+        let st = store
+            .insert(Attribute::new(ATTR_STANDALONE, Behavior::StandaloneReference))
+            .map_err(e)?;
+        shared = Some((r, st));
+        let give = |store: &mut AttributeStore,
+                        kind: u64,
+                        all: Vec<(u32, EntityRef)>,
+                        with_ref: bool,
+                        with_standalone: bool|
+         -> Result<(), SolidError> {
+            for (i, ent) in all {
+                let key = delete_key_of(ent).key;
+                let own = store.insert(Attribute::new(
+                    ATTR_BASE + kind * ATTR_STRIDE + u64::from(i),
+                    Behavior::Copy,
+                ))?;
+                store.add_attribute(key, own)?;
+                if with_ref {
+                    store.add_attribute(key, r)?;
+                }
+                if with_standalone {
+                    store.add_attribute(key, st)?;
+                }
+            }
+            Ok(())
+        };
+        let fus = b.faceuses().ids().map(|x| (x.index(), EntityRef::Faceuse(x))).collect();
+        give(&mut store, 2, fus, false, false).map_err(e)?;
+        let fs = b.faces().ids().map(|x| (x.index(), EntityRef::Face(x))).collect();
+        give(&mut store, 3, fs, false, false).map_err(e)?;
+        store
+            .add_attribute(delete_key_of(EntityRef::Face(f)).key, r)
+            .map_err(e)?;
+        let lus = b.loopuses().ids().map(|x| (x.index(), EntityRef::Loopuse(x))).collect();
+        give(&mut store, 4, lus, true, false).map_err(e)?;
+        let lps = b.loops().ids().map(|x| (x.index(), EntityRef::Loop(x))).collect();
+        give(&mut store, 5, lps, true, false).map_err(e)?;
+        let eus = b.edgeuses().ids().map(|x| (x.index(), EntityRef::Edgeuse(x))).collect();
+        give(&mut store, 6, eus, true, false).map_err(e)?;
+        let es = b.edges().ids().map(|x| (x.index(), EntityRef::Edge(x))).collect();
+        give(&mut store, 7, es, true, true).map_err(e)?;
+        let vus = b.vertexuses().ids().map(|x| (x.index(), EntityRef::Vertexuse(x))).collect();
+        give(&mut store, 8, vus, true, false).map_err(e)?;
+        let vs = b.vertices().ids().map(|x| (x.index(), EntityRef::Vertex(x))).collect();
+        give(&mut store, 9, vs, true, true).map_err(e)?;
+    }
+    let mut records = solidcore::topology::topology::NotifyRecords::new();
+    {
+        let mut env = solidcore::topology::edge::NotifyEnv {
+            records: &mut records,
+            attributes: &mut store,
+            context: None,
+            key_of: &delete_key_of,
+        };
+        for &l in &ls {
+            let r = fp1::delete_inner_loop(k, b, &mut env, f, l);
+            o.push(status(&r)?);
+        }
+    }
+    // the B-rep after
+    o.extend(crate::own_builder::counts(b).iter().map(|&n| n as f64));
+    let face_loops = fp2::loops(b, f, false, None).map_err(e)?;
+    o.push(face_loops.len() as f64);
+    for &l in &face_loops {
+        o.push(f64::from(l.index()));
+        let n = match b.loop_(l).map_err(e)?.loopuse {
+            Some(lu) => solidcore::topology::loopuse::edgeuses(b, lu, None, None)
+                .map_err(e)?
+                .len(),
+            None => 0,
+        };
+        o.push(n as f64);
+    }
+    let mut es: Vec<EdgeId> = b.edges().ids().collect();
+    es.sort_by_key(|x| x.index());
+    o.push(es.len() as f64);
+    o.extend(es.iter().map(|x| f64::from(x.index())));
+    let mut vs: Vec<VertexId> = b.vertices().ids().collect();
+    vs.sort_by_key(|x| x.index());
+    o.push(vs.len() as f64);
+    o.extend(vs.iter().map(|x| f64::from(x.index())));
+    let Some((r, st)) = shared else {
+        return Ok(());
+    };
+    let put_ids = |o: &mut Vec<f64>, ent: EntityRef| {
+        let key = delete_key_of(ent).key;
+        let mut ids: Vec<f64> = store
+            .attributes(key)
+            .into_iter()
+            .filter_map(|h| store.get(h).map(|a| a.attribute_id() as f64))
+            .collect();
+        ids.sort_by(f64::total_cmp);
+        o.push(ids.len() as f64);
+        o.extend(ids);
+    };
+    put_ids(o, EntityRef::Face(f));
+    for &l in &face_loops {
+        put_ids(o, EntityRef::Loop(l));
+    }
+    for &x in &es {
+        put_ids(o, EntityRef::Edge(x));
+    }
+    for &x in &vs {
+        put_ids(o, EntityRef::Vertex(x));
+    }
+    o.push(store.users(r).map_err(e)?.len() as f64);
+    o.push(store.users(st).map_err(e)?.len() as f64);
+    Ok(())
+}
+
+/// The Rust B-rep of a `topology.vertexuse` B-rep block, built by the Rust kernel as
+/// that unit's shim (`sc_topology_fixture.h`) builds it: a shim-built source by
+/// [`crate::own_builder`], an `.smb` file by the Rust reader, both renumbered into the
+/// shim's traversal order under its conventions, or the build's error. No C++ state
+/// reaches it.
+///
+/// # Errors
+///
+/// A harness error for a source the shim would not accept either.
+pub(super) fn own_built(
+    src: &BrepIn,
+    validate_only: bool,
+    init_gaps: bool,
+) -> Result<crate::own_builder::Built, HarnessError> {
+    use crate::own_builder::{build_as, read_as, renumber_with, Built, Conventions};
+    let mut k = Kernel::default();
+    let conv = &Conventions::TOPOLOGY_FIXTURE;
+    let BrepIn::File { rebuild, .. } = src else {
+        return build_as(&mut k, src, validate_only, init_gaps, conv)?
+            .ok_or_else(|| harness("own builder: no build for a shim-built source"));
+    };
+    let path = path_of(src)?;
+    if init_gaps {
+        // the gap walk may leave size estimates a copy does not carry: read afresh
+        return read_as(&mut k, &path, *rebuild, validate_only, init_gaps, conv);
+    }
+    let key = (path, *rebuild, validate_only);
+    // a copy of the same file's earlier Rust read (the reader is deterministic): the
+    // renumbering of a B-rep already in traversal order is a plain copy
+    let hit = OWN_READS.with(|c| {
+        c.borrow()
+            .iter()
+            .find(|(k, _)| *k == key)
+            .map(|(_, b)| renumber_with(b, conv))
+    });
+    if let Some(b) = hit {
+        return Ok(Built::Brep(Box::new(b?)));
+    }
+    let built = read_as(&mut k, &key.0, key.1, validate_only, false, conv)?;
+    if let Built::Brep(b) = &built {
+        let copy = renumber_with(b, conv)?;
+        OWN_READS.with(|c| {
+            let mut c = c.borrow_mut();
+            if c.len() >= 4 {
+                c.remove(0);
+            }
+            c.push((key, copy));
+        });
+    }
+    Ok(built)
+}
+
+/// A file source's key (path, rebuild, `validate_only`) and its Rust read.
+type OwnRead = ((String, bool, bool), Brep);
+
+thread_local! {
+    /// The last few Rust `.smb` reads, by key.
+    static OWN_READS: RefCell<Vec<OwnRead>> = const { RefCell::new(Vec::new()) };
+}
+
+/// [`own_built`] with its entity counts; a failed build is the record the shim gives
+/// one (`-1 status`), or the deferral of an unported callee.
+///
+/// # Errors
+///
+/// As [`own_built`].
+pub(super) fn own_brep(
+    src: &BrepIn,
+    validate_only: bool,
+    init_gaps: bool,
+) -> Result<crate::own_builder::RustBrep<(Brep, [usize; 10])>, HarnessError> {
+    use crate::own_builder::{build_status, counts, Built};
+    match own_built(src, validate_only, init_gaps)? {
+        Built::Brep(b) => {
+            let c = counts(&b);
+            Ok(Ok((*b, c)))
+        }
+        Built::Failed(e) => Ok(Err(Output::unported(&e)
+            .unwrap_or_else(|| Output::new().values("out", vec![-1.0, build_status(&e)])))),
+    }
+}
+
 fn run_rust(i: &Inputs) -> Result<Output, HarnessError> {
-    let (r, ex) = match resolve(i)? {
+    let (b, c) = match own_brep(&i.brep, false, false)? {
         Ok(x) => x,
         Err(o) => return Ok(o),
     };
-    match rust_record(&r, &ex) {
+    let r = match resolve_with(i, c) {
+        Ok(r) => r,
+        Err(o) => return Ok(*o),
+    };
+    match rust_record(&r, b) {
         Ok(v) => Ok(Output::new().values("out", v)),
         Err(Fail::Deferred(o)) => Ok(*o),
         Err(Fail::Harness(h)) => Err(h),
@@ -943,6 +1356,10 @@ fn ops_for(s: i64, v: usize) -> Vec<OpIn> {
         },
         OpIn::SplitAtSeam {
             props: props_of(PROPS.get((v + 3) % PROPS.len()).copied().flatten()),
+        },
+        OpIn::DeleteInnerLoop {
+            loops: vec![s, s + 1 + (v as i64 & 3)],
+            attributed: bit(3),
         },
     ]
 }
@@ -1063,9 +1480,98 @@ impl UnitDiff for Runner {
                 }
             }
         }
+        // DeleteInnerLoop: the plates of fixtures/topology.face_p1 (one face, 1 to 3
+        // square holes; a hole touching the outer loop at a vertex; a vertex loop; two
+        // holes sharing an edge, not lamina) and upstream files (ellips_ts2: a face with
+        // two holes; box_with_large_fillet: faces of a solid, a loop of another face),
+        // each loop alone and the inner loops in turn, with and without attributes
+        let plate = |name: &str| format!("fixture:{name}");
+        let mut delete_cases: Vec<(String, i64, Vec<Vec<i64>>)> = vec![
+            (plate("plate_1hole.smb"), 0, vec![vec![0], vec![1], vec![1, 0]]),
+            (
+                plate("plate_2holes.smb"),
+                0,
+                vec![vec![0], vec![1], vec![2], vec![1, 2], vec![2, 1], vec![0, 2, 1]],
+            ),
+            (
+                plate("plate_3holes.smb"),
+                0,
+                vec![
+                    vec![1],
+                    vec![2],
+                    vec![3],
+                    vec![1, 2, 3],
+                    vec![3, 2, 1],
+                    vec![2, 3, 1, 0],
+                ],
+            ),
+            (
+                plate("plate_touching_hole.smb"),
+                0,
+                vec![vec![1], vec![2], vec![1, 2], vec![2, 1]],
+            ),
+            (plate("plate_vertex_loop.smb"), 0, vec![vec![1], vec![2], vec![2, 1]]),
+            (
+                plate("two_holes_shared_edge.smb"),
+                0,
+                vec![vec![1], vec![2], vec![0, 1, 2]],
+            ),
+            (
+                "ellips_ts2.smb".to_string(),
+                0,
+                vec![vec![0], vec![1], vec![2], vec![1, 2], vec![2, 1]],
+            ),
+            (
+                "box_with_large_fillet.smb".to_string(),
+                0,
+                vec![vec![0], vec![1], vec![3]],
+            ),
+            // A solid with a through hole: each cap's inner loop shares its edge
+            // with the hole wall (face 8), so DeleteInnerLoop must refuse it.
+            ("Fillet/ext_w_hole.smb".to_string(), 0, vec![vec![1]]),
+            ("Fillet/ext_w_hole.smb".to_string(), 1, vec![vec![3]]),
+        ];
+        delete_cases.push(("Mouse.smb".to_string(), 1, vec![vec![0], vec![2]]));
+        for (file, face, sequences) in delete_cases {
+            for attributed in [false, true] {
+                for loops in &sequences {
+                    let inputs = Inputs {
+                        brep: BrepIn::File {
+                            file: file.clone(),
+                            rebuild: false,
+                        },
+                        face,
+                        op: OpIn::DeleteInnerLoop {
+                            loops: loops.clone(),
+                            attributed,
+                        },
+                    };
+                    let seq: Vec<String> = loops.iter().map(i64::to_string).collect();
+                    v.push(Case {
+                        unit: self.id().to_string(),
+                        name: format!(
+                            "delete_inner_loop_{}_f{face}_l{}_{}",
+                            file.trim_start_matches("fixture:"),
+                            seq.join("-"),
+                            u8::from(attributed)
+                        ),
+                        source: crate::CaseSource::Fixture {
+                            path: "built-in: DeleteInnerLoop cases".to_string(),
+                            index: v.len(),
+                            upstream_ref: Some(
+                                "source/SMLib/src/SmFace.cpp (SmFace::DeleteInnerLoop)"
+                                    .to_string(),
+                            ),
+                        },
+                        inputs: serde_json::to_value(inputs)
+                            .map_err(|e| harness(e.to_string()))?,
+                    });
+                }
+            }
+        }
         // the reviews' crash reproducers (vase_rev.smb face 0, face properties claiming a
         // crossed seam in both directions and a missing seam, closed in U, V or both, with
-        // split): the guard must keep them away from upstream's UB-137
+        // split): the crash trap must catch upstream's UB-137 there
         for missing in [0u8, 1, 3] {
             for (cu, cv) in [(1u8, 0u8), (0, 1), (1, 1)] {
                 for center in [false, true] {

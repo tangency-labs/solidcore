@@ -108,8 +108,8 @@ bool convex_safe(SmEdgeuse* p)
 
 // What Create would do before it calls anything: the walk around the start edge use's vertex
 // (upstream's loop, repeated), with its null dereferences. Returns -2 for a dereference, -3 when
-// the Rust side stops at a stub, 0 when Create can run.
-double precheck(Graph& g, const std::vector<SmEdgeuse*>& solver, size_t limit)
+// the Rust side stops at a stub, 0 when Create can run. `out_all` receives Create's pAllEUs.
+double precheck(Graph& g, const std::vector<SmEdgeuse*>& solver, size_t limit, std::vector<SmEdgeuse*>& out_all)
 {
     SmEdgeuse* start = solver[0];
     std::vector<SmEdgeuse*> all;
@@ -155,6 +155,7 @@ double precheck(Graph& g, const std::vector<SmEdgeuse*>& solver, size_t limit)
         all.push_back(s ? s : eu);
     }
     (void)open_end;
+    out_all = all;
     size_t total = all.size();
     size_t ns = solver.size();
     if (start->GetEdge() == nullptr)
@@ -163,11 +164,27 @@ double precheck(Graph& g, const std::vector<SmEdgeuse*>& solver, size_t limit)
     {
     case 1:
         if (start->GetEdge()->IsClosed())
-            return total == 1 ? P3_NOT_RUN : 0.0; // sm_TestG1Continuity
-        return P3_NOT_RUN;                        // CheckNx1Degeneracy
+            // sm_TestG1Continuity (blend.fillet_corner_p1): pCrv->Evaluate on the edge curve
+            return (total == 1 && start->GetEdge()->GetCurve() == nullptr) ? P3_NULL_DEREF : 0.0;
+        // CheckNx1Degeneracy (blend.fillet_corner_p1): the clockwise neighbour, the radial's
+        // counter-clockwise neighbour (its mate when they coincide), their vertex uses and
+        // edges
+        {
+            SmEdgeuse* side1 = start->GetCWEdgeuse();
+            SmEdgeuse* side2 = start->GetRadial() ? start->GetRadial()->GetCCWEdgeuse() : nullptr;
+            if (side1 != nullptr && side1 == side2)
+                side2 = side1->GetMate();
+            bool ok = side1 != nullptr && side2 != nullptr && side1->GetVertexuse() != nullptr &&
+                      side2->GetVertexuse() != nullptr && side1->GetEdge() != nullptr && side2->GetEdge() != nullptr;
+            return ok ? 0.0 : P3_NULL_DEREF;
+        }
     case 2:
         if (total == 2)
-            return P3_NOT_RUN; // sm_TestG1Continuity
+            // sm_TestG1Continuity (blend.fillet_corner_p1) on both filleted edges' curves
+            return (solver[0]->GetEdge() == nullptr || solver[0]->GetEdge()->GetCurve() == nullptr ||
+                    solver[1]->GetEdge() == nullptr || solver[1]->GetEdge()->GetCurve() == nullptr)
+                       ? P3_NULL_DEREF
+                       : 0.0;
         if (total == 3)
             return (convex_safe(solver[0]) && convex_safe(solver[1])) ? 0.0 : P3_NULL_DEREF;
         return 0.0;
@@ -204,18 +221,32 @@ void run_create(Rd& rd, const char* path, std::vector<double>& o)
         kinds.push_back(rd.idx());
     }
 
-    double pre = precheck(g, solverEUs, g.edgeuses.size());
+    std::vector<SmEdgeuse*> allEUs;
+    double pre = precheck(g, solverEUs, g.edgeuses.size(), allEUs);
     if (pre == 0.0 && ns >= 3)
     {
-        // NxN without chamfer reaches sm_FindConcaveEdgeuses (a stub on the Rust side)
+        // An NxN corner (the walk's count equals the solver count, not 4x3) without chamfer
+        // runs sm_FindConcaveEdgeuses over pAllEUs, whose concavity test dereferences both
+        // edge uses of a pair, their radials, vertex uses and edges. It stops at the first
+        // concave pair; this shim cannot call that file-static test (SmFilletCorner.cpp is
+        // compiled in blend_fillet_corner_p1.cpp), so every cyclic pair must be usable.
         bool chamfer = true;
         for (int64_t k : kinds)
             if (k != 1)
                 chamfer = false;
-        // total EUs are recomputed by Create; the 4x3 case and a count mismatch never test
-        // concavity, so only defer when the corner could be NxN
-        if (!chamfer)
-            pre = -4.0; // decided after Create's own classification below
+        size_t total = allEUs.size();
+        bool nxn = !(ns == 3 && total == 4) && total == (size_t)ns;
+        auto usable = [](SmEdgeuse* p) {
+            return p != nullptr && p->GetVertexuse() != nullptr && p->GetEdge() != nullptr;
+        };
+        if (!chamfer && nxn)
+            for (size_t i = 0; i < total; ++i)
+            {
+                SmEdgeuse* a = allEUs[(i + total - 1) % total];
+                SmEdgeuse* b = allEUs[i];
+                if (!usable(a) || !usable(b) || !usable(a->GetRadial()) || !usable(b->GetRadial()))
+                    pre = P3_NULL_DEREF;
+            }
     }
     if (pre == P3_NULL_DEREF || pre == P3_NOT_RUN)
     {
@@ -236,43 +267,6 @@ void run_create(Rd& rd, const char* path, std::vector<double>& o)
         (exec->*ExecPeek::map()).Insert(solverEUs[(size_t)i], s);
     }
 
-    // The walk's edge-use count decides between 4x3, NxN and "not implemented"; only NxN
-    // (count == ns) without chamfer tests concavity.
-    bool defer = false;
-    if (pre == -4.0)
-    {
-        // repeat the walk count (precheck already validated it)
-        SmEdgeuse* start = solverEUs[0];
-        std::vector<SmEdgeuse*> all;
-        all.push_back(start);
-        SmEdgeuse* eu = start;
-        while (true)
-        {
-            SmEdgeuse* eu0 = eu;
-            SmEdgeuse* eu1 = eu0->GetCWEdgeuse();
-            eu = eu1->GetRadial();
-            if (eu == start)
-                break;
-            if (eu0->GetEdge() == eu1->GetEdge())
-                continue;
-            bool found = false;
-            for (SmEdgeuse* p : all)
-                if (eu->GetEdge() == p->GetEdge())
-                    found = true;
-            if (found)
-                continue;
-            all.push_back(eu);
-        }
-        size_t total = all.size();
-        bool is4x3 = ns == 3 && total == 4;
-        defer = !is4x3 && total == (size_t)ns;
-    }
-
-    if (defer)
-    {
-        o.push_back(P3_NOT_RUN);
-    }
-    else
     {
         SmTArray<SmEdgeuse*>* pSolverEUs = new (ctx) SmTArray<SmEdgeuse*>(ctx);
         for (SmEdgeuse* p : solverEUs)

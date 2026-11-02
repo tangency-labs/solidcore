@@ -271,13 +271,14 @@ fn build(v: &VolIn) -> Result<Volume, HarnessError> {
             VolumeKind::Transform(transform_of(*t)),
             None,
             next,
-        ));
+        ).map_err(|e| HarnessError::new(e.to_string()))?);
     }
-    Ok(Volume::with_maps(
+    Volume::with_maps(
         VolumeKind::BSpline(BSplineVolume::new(rec)),
         v.orient.map(transform_of),
         next,
-    ))
+    )
+    .map_err(|e| HarnessError::new(e.to_string()))
 }
 
 fn build_curve(k: &Kernel, c: &CurveIn) -> Result<Curve, HarnessError> {
@@ -332,7 +333,7 @@ fn build_curve(k: &Kernel, c: &CurveIn) -> Result<Curve, HarnessError> {
 /// cannot return.
 fn status(e: &SolidError) -> f64 {
     match e {
-        SolidError::InvalidInput { .. } => 1007.0,
+        SolidError::InvalidInput { .. } | SolidError::PortInvariant { .. } => 1007.0,
         SolidError::Upstream { code, .. } => f64::from(*code),
         _ => -1.0,
     }
@@ -351,7 +352,7 @@ fn put_dir(o: &mut Vec<f64>, d: &DirectionDiscontinuities) {
     o.extend(d.conts.iter().map(|&c| cont(c)));
 }
 
-fn rust(i: &Inputs) -> Result<Output, HarnessError> {
+fn rust(k: &Kernel, i: &Inputs) -> Result<Output, HarnessError> {
     let mut o: Vec<f64> = Vec::new();
     match i {
         Inputs::Conts { vol, e, geom } => {
@@ -363,7 +364,7 @@ fn rust(i: &Inputs) -> Result<Output, HarnessError> {
                 params: vec![-7.0, 9.0],
                 conts: vec![ContinuityType::C0],
             };
-            match v.calculate_continuities_simple(param, &mut d, *geom) {
+            match v.calculate_continuities_simple(k, param, &mut d, *geom) {
                 Ok(()) => o.push(0.0),
                 Err(e) => {
                     if let Some(d) = Output::unported(&e) {
@@ -378,7 +379,7 @@ fn rust(i: &Inputs) -> Result<Output, HarnessError> {
             let v = build(vol)?;
             let mut d = Discontinuities3d::new();
             d.set_unaligned();
-            let r = match v.has_discontinuities_simple(given.then_some(&mut d), *geom) {
+            let r = match v.has_discontinuities_simple(k, given.then_some(&mut d), *geom) {
                 Ok(r) => r,
                 Err(e) => {
                     return Output::unported(&e)
@@ -753,7 +754,8 @@ impl UnitDiff for Runner {
     }
 
     fn run_rust(&self, case: &Case) -> Result<Output, HarnessError> {
-        rust(&case.parse()?)
+        let k = &Kernel::default();
+        rust(k, &case.parse()?)
     }
 }
 

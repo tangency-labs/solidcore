@@ -13,6 +13,14 @@
 //! runner reports its first entry as the `status` int (`0` = `SM_SUCCESS`, else the
 //! `SmStatus`; `1007` for a Rust `InvalidInput`, `-1` for a Rust error upstream cannot
 //! produce) and the rest as the `out` values.
+//!
+//! `clone_ctor` is upstream's copy constructor, not the virtual `Copy`: the original is
+//! built, moved into a [`Curve`] and cloned. Its output is `this==copy copy==this`
+//! before the state and probes, so a borrowed base (shared upstream) and an owned one
+//! (copied) are compared directly. The constructor is undefined for an owned Hermite
+//! base (upstream's base `Copy` fails, then both objects delete it); such cases are
+//! rejected before either side runs. The empty object (no base, `UNSURE` ownership) is
+//! undefined too but the protocol cannot express it.
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -20,6 +28,7 @@ use serde_json::Value;
 use solidcore::curve::curve::p2::Curve;
 use solidcore::curve::hermite_curve::HermiteCurve;
 use solidcore::curve::offset_curve::OffsetCurve;
+use solidcore::geom::assert_array::{AssertArray, ObjectKey};
 use solidcore::geom::extent1d::Extent1d;
 use solidcore::geom::vector3d::Vec3;
 use solidcore::kernel::Kernel;
@@ -27,12 +36,14 @@ use solidcore::nurbs::b_spline_curve::BSplineCurve;
 use solidcore::nurbs::b_spline_curve_n_lib::TrimMode;
 use solidcore::nurbs::math::NOW;
 use solidcore::nurbs::nurbs_crv::allocate_nurb_curve;
+use solidcore::topology::brep::validation::curve_assert_valid;
 use solidcore::topology::database_io::{DatabaseReader, FileType};
 use solidcore::SolidError;
 use solidcore_ffi::units::curve_offset_curve::{self as ffi, Op};
 
 use crate::case::CaseContext;
 use crate::runner::default_cases;
+use crate::util::assert_reports::put_assert_reports;
 use crate::{Case, HarnessError, Output, Rng, UnitDiff};
 
 /// Generated cases per run, whatever `--seeds` says (it can only raise this).
@@ -55,6 +66,11 @@ struct BSplineIn {
     cpts: Vec<[f64; 4]>,
     p: usize,
     u: Vec<f64>,
+    /// Knots written back over the curve's own NURB after construction, undoing the
+    /// constructor's knot fix-up (base block kind `2`). Omitted when false, so
+    /// existing case identities are unchanged.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    raw_knots: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -133,9 +149,19 @@ enum OpIn {
     Copy {
         probes: Vec<f64>,
     },
+    /// The copy constructor (`new (ctx) SmOffsetCurve(*original)`), not `Copy`.
+    CloneCtor {
+        probes: Vec<f64>,
+    },
     IsKindOf {
         #[serde(rename = "type")]
         type_code: i64,
+    },
+    /// `AssertValid` at `level` (0..2, 4 = `SM_LEVEL_GIVEN`), with or without a
+    /// report list; the reports as `crate::util::assert_reports` writes them.
+    AssertValid {
+        level: u8,
+        list: bool,
     },
     ReadDb {
         binary: bool,
@@ -175,9 +201,24 @@ fn push3(v: &mut Vec<f64>, p: [f64; 3]) {
 fn base_block(v: &mut Vec<f64>, c: &BaseIn) -> Result<(), HarnessError> {
     match c {
         BaseIn::Bspline(bs) => {
-            let n = bs.cpts.len().checked_sub(1).ok_or_else(|| harness("no points"))?;
-            let m = bs.u.len().checked_sub(1).ok_or_else(|| harness("no knots"))?;
-            v.extend([0.0, bs.dim as f64, b(bs.oob), n as f64, bs.p as f64, m as f64]);
+            let n = bs
+                .cpts
+                .len()
+                .checked_sub(1)
+                .ok_or_else(|| harness("no points"))?;
+            let m =
+                bs.u.len()
+                    .checked_sub(1)
+                    .ok_or_else(|| harness("no knots"))?;
+            let kind = if bs.raw_knots { 2.0 } else { 0.0 };
+            v.extend([
+                kind,
+                bs.dim as f64,
+                b(bs.oob),
+                n as f64,
+                bs.p as f64,
+                m as f64,
+            ]);
             for p in &bs.cpts {
                 v.extend(p);
             }
@@ -223,15 +264,23 @@ fn op_of(op: &OpIn) -> Op {
         OpIn::Trim { .. } => Op::Trim,
         OpIn::Eq { .. } => Op::Eq,
         OpIn::Copy { .. } => Op::Copy,
+        OpIn::CloneCtor { .. } => Op::CloneCtor,
         OpIn::IsKindOf { .. } => Op::IsKindOf,
+        OpIn::AssertValid { .. } => Op::AssertValid,
         OpIn::ReadDb { .. } => Op::ReadDb,
     }
 }
 
 /// The curve blocks of a curve op.
 fn curve_blocks(v: &mut Vec<f64>, i: &Inputs) -> Result<(), HarnessError> {
-    let base = i.base.as_ref().ok_or_else(|| harness("curve op without base"))?;
-    let spec = i.spec.as_ref().ok_or_else(|| harness("curve op without spec"))?;
+    let base = i
+        .base
+        .as_ref()
+        .ok_or_else(|| harness("curve op without base"))?;
+    let spec = i
+        .spec
+        .as_ref()
+        .ok_or_else(|| harness("curve op without spec"))?;
     base_block(v, base)?;
     spec_block(v, spec);
     match &i.outer {
@@ -264,7 +313,12 @@ fn cpp_input(i: &Inputs) -> Result<(Op, Vec<f64>), HarnessError> {
     curve_blocks(&mut v, i)?;
     match &i.op {
         OpIn::State | OpIn::ReadDb { .. } => {}
-        OpIn::Eval { t, n, left, nonzero } => {
+        OpIn::Eval {
+            t,
+            n,
+            left,
+            nonzero,
+        } => {
             v.extend([*t, *n as f64, b(*left), b(*nonzero)]);
         }
         OpIn::EvalPoint { t } => v.push(*t),
@@ -293,8 +347,9 @@ fn cpp_input(i: &Inputs) -> Result<(Op, Vec<f64>), HarnessError> {
                 spec_block(&mut v, o);
             }
         }
-        OpIn::Copy { probes } => probe_block(&mut v, probes),
+        OpIn::Copy { probes } | OpIn::CloneCtor { probes } => probe_block(&mut v, probes),
         OpIn::IsKindOf { type_code } => v.push(*type_code as f64),
+        OpIn::AssertValid { level, list } => v.extend([f64::from(*level), b(*list)]),
     }
     Ok((op, v))
 }
@@ -324,8 +379,15 @@ fn v3(p: [f64; 3]) -> Vec3 {
 fn build_base(c: &BaseIn) -> Result<Curve, HarnessError> {
     match c {
         BaseIn::Bspline(bs) => {
-            let n = bs.cpts.len().checked_sub(1).ok_or_else(|| harness("no points"))?;
-            let m = bs.u.len().checked_sub(1).ok_or_else(|| harness("no knots"))?;
+            let n = bs
+                .cpts
+                .len()
+                .checked_sub(1)
+                .ok_or_else(|| harness("no points"))?;
+            let m =
+                bs.u.len()
+                    .checked_sub(1)
+                    .ok_or_else(|| harness("no knots"))?;
             let mut cur =
                 allocate_nurb_curve(n, bs.p, m).map_err(|e| harness(format!("curve: {e}")))?;
             for (d, s) in cur.cpts_mut().iter_mut().zip(&bs.cpts) {
@@ -336,6 +398,13 @@ fn build_base(c: &BaseIn) -> Result<Curve, HarnessError> {
             }
             cur.knots_mut().copy_from_slice(&bs.u);
             let mut c = BSplineCurve::from_nurb(cur, bs.dim, false);
+            if bs.raw_knots {
+                // undo the constructor's fix-up, as the shim does
+                c.get_or_create_gw_nurb()
+                    .map_err(|e| harness(format!("curve: {e}")))?
+                    .knots_mut()
+                    .copy_from_slice(&bs.u);
+            }
             c.set_out_of_bounds_enabled(bs.oob);
             Ok(Curve::from(c))
         }
@@ -349,7 +418,7 @@ fn build_base(c: &BaseIn) -> Result<Curve, HarnessError> {
     }
 }
 
-fn build_offset(base: Curve, s: &SpecIn) -> Curve {
+fn build_offset(base: Curve, s: &SpecIn) -> solidcore::Result<Curve> {
     let mut c = Curve::from(OffsetCurve::new(
         s.dim,
         base,
@@ -357,31 +426,64 @@ fn build_offset(base: Curve, s: &SpecIn) -> Curve {
         v3(s.normal),
         s.dist,
         s.owns,
-    ));
+    )?);
     for _ in 0..s.nrev {
         let ivl = c.natural_interval();
         // (status ignored by the shim; the offset reversal cannot fail)
         let _ = c.reverse_parameterization(&Kernel::default(), &ivl);
     }
-    c
+    Ok(c)
 }
+
+/// Most reversals the runner applies (`ffi::MAX_REVERSALS`, the guard's bound): the
+/// `nrev` loop is runner code, so a fuzzed count must not make it run for hours.
+const MAX_RUNNER_REVERSALS: usize = 4;
 
 /// The base curve and the op's curve.
 fn build(i: &Inputs) -> Result<(Curve, Curve), HarnessError> {
-    let base = build_base(i.base.as_ref().ok_or_else(|| harness("no base"))?)?;
+    let other = match &i.op {
+        OpIn::Eq { other, .. } => other.as_ref(),
+        _ => None,
+    };
+    for s in [i.spec.as_ref(), i.outer.as_ref(), other]
+        .into_iter()
+        .flatten()
+    {
+        if s.nrev > MAX_RUNNER_REVERSALS {
+            return Err(harness("nrev above the runner's reversal bound"));
+        }
+    }
+    // the curves are built again rather than cloned: a Rust clone would fix the base
+    // curve's knots up, while upstream offsets the curve itself
+    let base_in = i.base.as_ref().ok_or_else(|| harness("no base"))?;
     let spec = i.spec.as_ref().ok_or_else(|| harness("no spec"))?;
-    let inner = build_offset(base.clone(), spec);
+    let built =
+        |base: Curve, spec: &SpecIn| build_offset(base, spec).map_err(|e| harness(e.to_string()));
+    let inner = built(build_base(base_in)?, spec)?;
     Ok(match &i.outer {
-        None => (base, inner),
-        Some(o) => (inner.clone(), build_offset(inner, o)),
+        None => (build_base(base_in)?, inner),
+        Some(o) => (built(build_base(base_in)?, spec)?, built(inner, o)?),
     })
+}
+
+/// The copy constructor's undefined domain (also rejected by the ffi wrapper): it copies
+/// the base curve when the original owns it (the protocol's `owns` flag), and upstream's
+/// `Copy` fails for a Hermite curve, leaving the copy sharing a base both objects then
+/// delete. Without an outer offset the original owns the base itself; with one the outer
+/// offset must own the inner offset it copies (a borrowed inner offset is shared, so a
+/// borrowed Hermite chain stays defined).
+fn clone_ctor_unsafe(i: &Inputs) -> bool {
+    let hermite = matches!(&i.base, Some(BaseIn::Hermite(_)));
+    let inner_owns = i.spec.as_ref().is_some_and(|s| s.owns);
+    let outer_copies = i.outer.as_ref().is_none_or(|s| s.owns);
+    hermite && inner_owns && outer_copies
 }
 
 /// The `SmStatus` of a Rust error; `1007` for `InvalidInput`, `-1` for one upstream
 /// cannot return.
 fn status(e: &SolidError) -> f64 {
     match e {
-        SolidError::InvalidInput { .. } => 1007.0,
+        SolidError::InvalidInput { .. } | SolidError::PortInvariant { .. } => 1007.0,
         SolidError::Upstream { code, .. } => f64::from(*code),
         _ => -1.0,
     }
@@ -391,7 +493,7 @@ fn pv(o: &mut Vec<f64>, v: Vec3) {
     o.extend([v.x, v.y, v.z]);
 }
 
-fn state(o: &mut Vec<f64>, c: &Curve) -> Result<(), SolidError> {
+fn state(k: &Kernel, o: &mut Vec<f64>, c: &Curve) -> Result<(), SolidError> {
     o.extend([c.type_code() as f64, c.dim() as f64]);
     let solidcore::curve::curve::p2::CurveKind::Offset(off) = c.kind() else {
         o.push(-1.0);
@@ -409,15 +511,15 @@ fn state(o: &mut Vec<f64>, c: &Curve) -> Result<(), SolidError> {
         None => o.extend([-1.0, -1.0]),
         Some(bc) => {
             o.push(bc.type_code() as f64);
-            o.push(off.number_natural_knots()? as f64);
+            o.push(off.number_natural_knots(k)? as f64);
         }
     }
     Ok(())
 }
 
-fn probes(o: &mut Vec<f64>, c: &Curve, ts: &[f64]) -> Result<(), SolidError> {
+fn probes(k: &Kernel, o: &mut Vec<f64>, c: &Curve, ts: &[f64]) -> Result<(), SolidError> {
     for &t in ts {
-        match c.evaluate_point(t) {
+        match c.evaluate_point(k, t) {
             Ok(p) => {
                 o.push(0.0);
                 pv(o, p);
@@ -425,7 +527,7 @@ fn probes(o: &mut Vec<f64>, c: &Curve, ts: &[f64]) -> Result<(), SolidError> {
             Err(e @ SolidError::Unported { .. }) => return Err(e),
             Err(e) => o.push(status(&e)),
         }
-        match c.evaluate(t, 3, true, true) {
+        match c.evaluate(k, t, 3, true, true) {
             Ok(v) => {
                 o.push(0.0);
                 for x in v {
@@ -440,7 +542,7 @@ fn probes(o: &mut Vec<f64>, c: &Curve, ts: &[f64]) -> Result<(), SolidError> {
 }
 
 /// Runs the op; `Err` is a Rust failure of the op itself (reported as its status).
-fn rust_op(i: &Inputs, o: &mut Vec<f64>) -> Result<(), SolidError> {
+fn rust_op(k: &Kernel, i: &Inputs, o: &mut Vec<f64>) -> Result<(), SolidError> {
     if let OpIn::ReadDb {
         binary,
         version,
@@ -449,10 +551,11 @@ fn rust_op(i: &Inputs, o: &mut Vec<f64>) -> Result<(), SolidError> {
         probes: ts,
     } = &i.op
     {
-        let data = db_bytes(text.as_ref(), bytes.as_ref()).map_err(|_| SolidError::InvalidInput {
-            operation: "difftest",
-            reason: "bad read_db input",
-        })?;
+        let data =
+            db_bytes(text.as_ref(), bytes.as_ref()).map_err(|_| SolidError::InvalidInput {
+                operation: "difftest",
+                reason: "bad read_db input",
+            })?;
         let mut db = DatabaseReader::new();
         db.open_for_read(
             data,
@@ -462,10 +565,20 @@ fn rust_op(i: &Inputs, o: &mut Vec<f64>) -> Result<(), SolidError> {
                 FileType::Ascii
             },
         );
-        let c = Curve::from(OffsetCurve::read_from_db(&Kernel::default(), &mut db, *version)?);
+        let c = Curve::from(OffsetCurve::read_from_db(
+            &Kernel::default(),
+            &mut db,
+            *version,
+        )?);
         o.push(0.0);
-        state(o, &c)?;
-        return probes(o, &c, ts);
+        state(k, o, &c)?;
+        return probes(k, o, &c, ts);
+    }
+    if matches!(&i.op, OpIn::CloneCtor { .. }) && clone_ctor_unsafe(i) {
+        return Err(SolidError::InvalidInput {
+            operation: "difftest",
+            reason: "the native copy constructor is undefined for an owned Hermite base",
+        });
     }
     let (under, mut c) = build(i).map_err(|_| SolidError::InvalidInput {
         operation: "difftest",
@@ -474,7 +587,7 @@ fn rust_op(i: &Inputs, o: &mut Vec<f64>) -> Result<(), SolidError> {
     match &i.op {
         OpIn::State => {
             o.push(0.0);
-            state(o, &c)?;
+            state(k, o, &c)?;
         }
         OpIn::Eval {
             t,
@@ -482,20 +595,20 @@ fn rust_op(i: &Inputs, o: &mut Vec<f64>) -> Result<(), SolidError> {
             left,
             nonzero,
         } => {
-            let v = c.evaluate(*t, *n, *left, *nonzero)?;
+            let v = c.evaluate(k, *t, *n, *left, *nonzero)?;
             o.push(0.0);
             for x in v {
                 pv(o, x);
             }
         }
         OpIn::EvalPoint { t } => {
-            let p = c.evaluate_point(*t)?;
+            let p = c.evaluate_point(k, *t)?;
             o.push(0.0);
             pv(o, p);
         }
         OpIn::Knots { ivl, mults } => {
             let ivl = ivl.map(|[a, bb]| Extent1d::from_min_max(a, bb));
-            let (k, m) = c.knots(ivl.as_ref())?;
+            let (k, m) = c.knots(k, ivl.as_ref())?;
             o.push(0.0);
             o.push(k.len() as f64);
             o.extend(&k);
@@ -507,17 +620,22 @@ fn rust_op(i: &Inputs, o: &mut Vec<f64>) -> Result<(), SolidError> {
             }
         }
         OpIn::Continuities { angle } => {
-            let (min, all) = c.calculate_continuities(*angle)?;
+            let (min, all) = c.calculate_continuities(k, *angle)?;
             o.push(0.0);
             o.push(f64::from(min as i32));
             o.push(all.len() as f64);
             o.extend(all.iter().map(|&x| f64::from(x as i32)));
         }
-        OpIn::Reverse { a, b: bb, probes: ts } => {
-            let ivl = c.reverse_parameterization(&Kernel::default(), &Extent1d::from_min_max(*a, *bb))?;
+        OpIn::Reverse {
+            a,
+            b: bb,
+            probes: ts,
+        } => {
+            let ivl =
+                c.reverse_parameterization(&Kernel::default(), &Extent1d::from_min_max(*a, *bb))?;
             o.extend([0.0, ivl.min(), ivl.max()]);
-            state(o, &c)?;
-            probes(o, &c, ts)?;
+            state(k, o, &c)?;
+            probes(k, o, &c, ts)?;
         }
         OpIn::Trim {
             a,
@@ -538,17 +656,17 @@ fn rust_op(i: &Inputs, o: &mut Vec<f64>) -> Result<(), SolidError> {
                 Err(e) => status(&e),
             };
             o.extend([s, ivl.min(), ivl.max()]);
-            state(o, &c)?;
-            probes(o, &c, ts)?;
+            state(&k, o, &c)?;
+            probes(&k, o, &c, ts)?;
         }
         OpIn::Eq { this, copy, other } => {
             o.push(0.0);
             if *this {
-                o.push(b(c.approx_eq(&c)?));
+                o.push(b(c.approx_eq(k, &c)?));
             } else if *copy {
                 let cp = c.copy(&Kernel::default())?;
-                o.push(b(c.approx_eq(&cp)?));
-                o.push(b(cp.approx_eq(&c)?));
+                o.push(b(c.approx_eq(k, &cp)?));
+                o.push(b(cp.approx_eq(k, &c)?));
             } else {
                 let s = other.as_ref().ok_or(SolidError::InvalidInput {
                     operation: "difftest",
@@ -556,29 +674,45 @@ fn rust_op(i: &Inputs, o: &mut Vec<f64>) -> Result<(), SolidError> {
                 })?;
                 let mut s = s.clone();
                 s.owns = false;
-                let c2 = build_offset(under, &s);
-                o.push(b(c.approx_eq(&c2)?));
-                o.push(b(c2.approx_eq(&c)?));
+                let c2 = build_offset(under, &s)?;
+                o.push(b(c.approx_eq(k, &c2)?));
+                o.push(b(c2.approx_eq(k, &c)?));
             }
         }
         OpIn::Copy { probes: ts } => {
             let cp = c.copy(&Kernel::default())?;
             o.push(0.0);
-            state(o, &cp)?;
-            probes(o, &cp, ts)?;
+            state(k, o, &cp)?;
+            probes(k, o, &cp, ts)?;
+        }
+        OpIn::CloneCtor { probes: ts } => {
+            // upstream's copy constructor: the original is moved into `Curve` and cloned
+            let cp = c.clone();
+            o.push(0.0);
+            o.push(b(c.approx_eq(k, &cp)?));
+            o.push(b(cp.approx_eq(k, &c)?));
+            state(k, o, &cp)?;
+            probes(k, o, &cp, ts)?;
         }
         OpIn::IsKindOf { type_code } => {
             o.push(0.0);
             o.push(b(c.is_kind_of(*type_code)));
+        }
+        OpIn::AssertValid { level, list } => {
+            let mut reports = AssertArray::new();
+            let key = ObjectKey(1);
+            let ok = curve_assert_valid(k, &mut c, list.then_some(&mut reports), *level, key)?;
+            o.push(0.0);
+            put_assert_reports(o, ok, &reports, key);
         }
         OpIn::ReadDb { .. } => {}
     }
     Ok(())
 }
 
-fn rust(i: &Inputs) -> Result<Output, HarnessError> {
+fn rust(k: &Kernel, i: &Inputs) -> Result<Output, HarnessError> {
     let mut o = Vec::new();
-    let Err(e) = rust_op(i, &mut o) else {
+    let Err(e) = rust_op(k, i, &mut o) else {
         return Ok(to_output(&o));
     };
     if let Some(d) = Output::unported(&e) {
@@ -673,6 +807,7 @@ fn gen_bspline(rng: &mut Rng, planar: bool) -> BSplineIn {
         cpts,
         p,
         u,
+        raw_knots: false,
     }
 }
 
@@ -893,6 +1028,20 @@ fn finish(mut i: Inputs) -> Option<Inputs> {
     Some(i)
 }
 
+/// Generated `assert_valid` cases (their own seed stream, `<unit>:assert_valid`).
+pub const ASSERT_VALID_CASES: usize = 300;
+
+/// An `assert_valid` case: a generated offset (owned or borrowed base, maybe an
+/// offset of an offset), any test level, with or without a report list.
+fn gen_assert_valid(rng: &mut Rng) -> Inputs {
+    let mut i = gen_case(rng);
+    i.op = OpIn::AssertValid {
+        level: *rng.choose(&[0u8, 1, 2, 4]).unwrap_or(&0),
+        list: rng.chance(0.8),
+    };
+    i
+}
+
 impl UnitDiff for Runner {
     fn id(&self) -> &'static str {
         "curve.offset_curve"
@@ -922,11 +1071,25 @@ impl UnitDiff for Runner {
     }
 
     fn cases(&self, ctx: &CaseContext) -> Result<Vec<Case>, HarnessError> {
-        let ctx = CaseContext {
+        let main = CaseContext {
             seeds: ctx.seeds.max(MIN_GENERATED),
             ..ctx.clone()
         };
-        default_cases(self, &ctx)
+        let mut v = default_cases(self, &main)?;
+        // AssertValid with native report comparison: their own seed stream (the other
+        // generated cases are unchanged); named `avNNNN`
+        let av = CaseContext {
+            seeds: ctx.seeds.max(ASSERT_VALID_CASES),
+            ..ctx.clone()
+        };
+        for mut c in av.generated_cases("curve.offset_curve:assert_valid", |rng| {
+            serde_json::to_value(gen_assert_valid(rng)).ok()
+        }) {
+            c.name = c.name.replacen("gen", "av", 1);
+            c.unit = self.id().to_string();
+            v.push(c);
+        }
+        Ok(v)
     }
 
     fn run_cpp(&self, case: &Case) -> Result<Output, HarnessError> {
@@ -934,6 +1097,7 @@ impl UnitDiff for Runner {
     }
 
     fn run_rust(&self, case: &Case) -> Result<Output, HarnessError> {
-        rust(&case.parse()?)
+        let k = &Kernel::default();
+        rust(k, &case.parse()?)
     }
 }

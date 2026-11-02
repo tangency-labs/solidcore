@@ -34,6 +34,8 @@
 //!   statuses ([`SolidError::Upstream`], [`SolidError::Nlib`]) are ignored here too;
 //!   [`SolidError::Unported`], [`SolidError::InvalidInput`] (a null pointer upstream
 //!   dereferences) and [`SolidError::NotFound`] (a dangling id) propagate.
+//!   Stage two takes `&mut Brep` to retain the gap-cache writes of its seam queries,
+//!   including sibling invalidations made before an ignored error.
 //! - **Props without a face.** `Cache_FaceProps_Stage2/3` call `SetProps` with the
 //!   props' `m_pFace`, which is null only when `Cache_FaceProps_Gaps` has not run on
 //!   them (never in the upstream heal sequence). Upstream then runs `SetProps_Gaps`
@@ -49,7 +51,8 @@
 //! - **Unported callees** (`UNPORTED` stubs): `SmFace::CreateUVTrimCurves`
 //!   (`topology.face_p3`), so `Make_UVTrimCurves` stops at a stub when asked to make
 //!   curves. `SmBrep::FindAndSetInfiniteRegion` (`topology.brep_p5`) is wired with its
-//!   declared default `SM_VS_INFINITEREGION_SWAP` and defers at part 5's own barriers.
+//!   declared default `SM_VS_INFINITEREGION_SWAP`, on a fresh
+//!   [`crate::query::brep::BrepQuery`] of the B-rep.
 //!   `Fix_BadSheets` calls `brep_p6` when it finds a sheet face between two closed
 //!   shells; `HealBrep` and `SmApiHealBrep` run the heal sequence of [`super::p3`].
 //! - No recursion; no allocation from caller counts beyond the target lists given.
@@ -118,9 +121,15 @@ fn brep_regions_from_infinite(b: &Brep) -> Result<Vec<RegionId>> {
 
 /// `pBrep->FindAndSetInfiniteRegion()`: ray casts for the infinite region and moves
 /// it to the head of the region list.
-fn brep_find_and_set_infinite_region(b: &mut Brep) -> Result<()> {
+fn brep_find_and_set_infinite_region(k: &mut Kernel, b: &mut Brep) -> Result<()> {
+    let query = crate::query::brep::BrepQuery::of_brep(b);
     crate::topology::brep::p5::find_and_set_infinite_region(
-        b, None, 2, // SM_VS_INFINITEREGION_SWAP: SmBrep.h's native default.
+        k,
+        b,
+        &query,
+        None,
+        // SM_VS_INFINITEREGION_SWAP: SmBrep.h's native default.
+        crate::topology::brep::p1::SetRegionVoidType::InfiniteRegionSwap,
         None,
     )
 }
@@ -174,7 +183,10 @@ pub fn api_heal_brep(k: &mut Kernel, b: Option<&mut Brep>) -> Result<()> {
             "no B-rep",
         ));
     };
-    brep_heal_brep(k, b, HealerOpType::All)
+    brep_heal_brep(k, b, HealerOpType::All)?;
+    // (not upstream: the port's cached topology fields, true for the caller)
+    b.refresh_cached_topology();
+    Ok(())
 }
 
 impl<O: LoopObject> HealData<O> {
@@ -326,6 +338,8 @@ impl<O: LoopObject> HealData<O> {
     /// poles, flat corners, seams) of the (new) target faces that lack them and lists
     /// the sheets, the faces with poles and the flat corner and seam problems.
     /// Returns whether new problems were found.
+    /// Lazy seam-query gap writes and invalidations are retained in `b`, including
+    /// those made before an ignored stage-two error.
     ///
     /// # Errors
     ///
@@ -335,7 +349,7 @@ impl<O: LoopObject> HealData<O> {
     pub fn cache_face_props_stage2(
         &mut self,
         k: &Kernel,
-        b: &Brep,
+        b: &mut Brep,
         _this_healer_op: HealerOpType,
     ) -> Result<bool> {
         // init output
@@ -359,15 +373,23 @@ impl<O: LoopObject> HealData<O> {
                 let Some(face) = p.face else {
                     return Err(no_face());
                 };
-                ignore_status(p.set_props(k, b, PropStage::Stage2, face, ii as u64, done_heal_op))?;
+                ignore_status(p.set_props_with_query_gaps(
+                    k,
+                    b,
+                    PropStage::Stage2,
+                    face,
+                    ii as u64,
+                    done_heal_op,
+                ))?;
             }
 
             // count the kinds of faces that force healing checks later on
-            let (sheet, poles_link, flat, missing, crossed, near_miss) = (
+            let (sheet, poles_link, flat, missing, crossed_pole, crossed, near_miss) = (
                 p.sheet,
                 p.poles_link,
                 p.bad_flat_corners,
                 p.bad_missing_seam,
+                p.bad_crossed_pole,
                 p.bad_crossed_seam,
                 p.bad_near_miss_seam,
             );
@@ -395,6 +417,13 @@ impl<O: LoopObject> HealData<O> {
             // Missing Seam List
             if missing.code() != 0 {
                 self.bad_face_props_missing_seam
+                    .add(&mut self.face_props, id, true)?;
+                new_probs = true;
+            }
+
+            // Crossed Pole List
+            if crossed_pole.code() != 0 {
+                self.bad_face_props_crossed_pole
                     .add(&mut self.face_props, id, true)?;
                 new_probs = true;
             }
@@ -562,9 +591,11 @@ impl<O: LoopObject> HealData<O> {
     }
 
     /// `Cache_FaceProps_Stage3`: sets the stage 3 (loop) props of the (new) target
-    /// faces that lack them, last face first, moves the faces with a not-yet supported
-    /// problem to the not-yet list and lists the loop problems. Returns whether new
-    /// problems were found (always `false`, as upstream).
+    /// faces that lack them, last face first (skipping a face missing a seam whose
+    /// closed surface has only vertex loops: it stays active for seam insertion),
+    /// moves the faces with a not-yet supported problem to the not-yet list and lists
+    /// the loop problems. Returns whether new problems were found (always `false`, as
+    /// upstream).
     ///
     /// # Errors
     ///
@@ -574,7 +605,7 @@ impl<O: LoopObject> HealData<O> {
     pub fn cache_face_props_stage3(
         &mut self,
         k: &Kernel,
-        b: &Brep,
+        b: &mut Brep,
         _this_healer_op: HealerOpType,
     ) -> Result<bool> {
         // init output
@@ -595,6 +626,22 @@ impl<O: LoopObject> HealData<O> {
             let done_heal_op = self.done_heal_op;
             let p = &mut self.face_props.props_mut(id)?.props;
 
+            // Vertex loops alone cannot form a loop tree. Keep this face active for
+            // seam insertion; its completed edge boundary can then be classified.
+            if p.bad_missing_seam.is_true() {
+                let Some(face) = p.face else {
+                    return Err(no_face());
+                };
+                if crate::topology::face::p3::is_closed_surface_with_vertex_loops(
+                    k,
+                    b,
+                    face,
+                    Some(&*p),
+                )? {
+                    continue;
+                }
+            }
+
             // when needed - compute FaceProps After Fix_SplitEdgesAtSeam() -
             // SM_PROPSTAGE_3
             if !p.has_props(PropStage::Stage3, p.face) {
@@ -602,7 +649,14 @@ impl<O: LoopObject> HealData<O> {
                     return Err(no_face());
                 };
                 let face_index = p.face_index;
-                let rtn = p.set_props(k, b, PropStage::Stage3, face, face_index, done_heal_op);
+                let rtn = p.set_props_with_query_gaps(
+                    k,
+                    b,
+                    PropStage::Stage3,
+                    face,
+                    face_index,
+                    done_heal_op,
+                );
 
                 match rtn {
                     // When Face has NotYet supported problems
@@ -738,18 +792,21 @@ impl<O: LoopObject> HealData<O> {
     }
 
     /// `Fix_InfiniteRegion`: a B-rep with one region (a sheet model) gets a void
-    /// region; with two, an infinite region that is not void or a second region that
-    /// is not solid is fixed by ray casting for the infinite region; with more, a
-    /// non-void infinite region is fixed the same way (the other regions are left).
+    /// region; with two, ray casting finds the infinite region, which is set void and
+    /// the other solid; with more, a non-void infinite region is fixed by ray casting
+    /// (the other regions are left).
     ///
     /// # Errors
     ///
-    /// [`SolidError::Unported`] for
-    /// `SmRegion::IsVoid` / `SetIsVoid` (`topology.shell`) and
-    /// `SmBrep::FindInfiniteRegion` (`topology.brep_p9`, through part 5);
+    /// Those of `SmBrep::FindAndSetInfiniteRegion` (`topology.brep_p5`);
     /// [`SolidError::InvalidInput`] for a B-rep without regions (upstream dereferences
     /// null).
-    pub fn fix_infinite_region(&self, b: &mut Brep, _this_healer_op: HealerOpType) -> Result<()> {
+    pub fn fix_infinite_region(
+        &self,
+        k: &mut Kernel,
+        b: &mut Brep,
+        _this_healer_op: HealerOpType,
+    ) -> Result<()> {
         // locals
         let regions = brep_regions_from_infinite(b)?;
         let Some(&infinite_region) = regions.first() else {
@@ -762,22 +819,16 @@ impl<O: LoopObject> HealData<O> {
 
             // case: 2 regions - 1 Void InfiniteRegion, 1 solid Region
             2 => {
+                // Plausible void flags do not establish which region is geometrically
+                // infinite.
+                brep_find_and_set_infinite_region(k, b)?;
+
+                // Refresh region pointers after classification, then set Void/Solid data.
+                let regions = brep_regions_from_infinite(b)?;
+                let infinite_region = tgt(&regions, 0)?;
                 let next_region = tgt(&regions, 1)?;
-
-                // only check obviously broken Regions
-                if !region_is_void(b, infinite_region)? || region_is_void(b, next_region)? {
-                    // use ray casting to find and set the InfiniteRegion
-                    brep_find_and_set_infinite_region(b)?;
-
-                    // refresh Region ptrs
-                    let regions = brep_regions_from_infinite(b)?;
-                    let infinite_region = tgt(&regions, 0)?;
-                    let next_region = tgt(&regions, 1)?;
-
-                    // Set region Void/Solid data
-                    set_region_is_void(b, infinite_region, true)?;
-                    set_region_is_void(b, next_region, false)?;
-                }
+                set_region_is_void(b, infinite_region, true)?;
+                set_region_is_void(b, next_region, false)?;
             }
 
             // case: more than 2 regions
@@ -785,7 +836,7 @@ impl<O: LoopObject> HealData<O> {
                 // only check obviously broken Regions
                 if !region_is_void(b, infinite_region)? {
                     // use ray casting to find and set the InfiniteRegion
-                    brep_find_and_set_infinite_region(b)?;
+                    brep_find_and_set_infinite_region(k, b)?;
 
                     // Set infinite region Void/Solid data (on the region found before
                     // the ray casting, as upstream)
@@ -913,14 +964,14 @@ mod tests {
     fn stage_steps_without_new_faces_do_nothing() {
         let (v, e, f) = ids();
         let k = Kernel::default();
-        let b = Brep::default();
+        let mut b = Brep::default();
         let mut h: HealData<H> = HealData::with_targets(&v, &e, &f);
         h.old_face_cnt = 4;
         assert!(!h
-            .cache_face_props_stage2(&k, &b, HealerOpType::CacheFaceprops2)
+            .cache_face_props_stage2(&k, &mut b, HealerOpType::CacheFaceprops2)
             .unwrap());
         assert!(!h
-            .cache_face_props_stage3(&k, &b, HealerOpType::CacheFaceprops3)
+            .cache_face_props_stage3(&k, &mut b, HealerOpType::CacheFaceprops3)
             .unwrap());
         let mut b = Brep::default();
         h.make_uv_trim_curves(&k, &mut b, true, HealerOpType::MakeUvtrimcurves)
@@ -931,11 +982,11 @@ mod tests {
     fn stage2_needs_the_face_set_by_the_gap_step() {
         let (v, e, f) = ids();
         let k = Kernel::default();
-        let b = Brep::default();
+        let mut b = Brep::default();
         let mut h: HealData<H> = HealData::with_targets(&v, &e, &f);
-        let r = h.cache_face_props_stage2(&k, &b, HealerOpType::CacheFaceprops2);
+        let r = h.cache_face_props_stage2(&k, &mut b, HealerOpType::CacheFaceprops2);
         assert!(matches!(r, Err(SolidError::InvalidInput { .. })));
-        let r = h.cache_face_props_stage3(&k, &b, HealerOpType::CacheFaceprops3);
+        let r = h.cache_face_props_stage3(&k, &mut b, HealerOpType::CacheFaceprops3);
         assert!(matches!(r, Err(SolidError::InvalidInput { .. })));
     }
 
@@ -974,21 +1025,15 @@ mod tests {
         ));
         // on a B-rep the whole-B-rep target lists are gathered (its one face) and the
         // heal sequence of heal_data_p3 runs past Fix_TolSizes (SmBrep::SetTolerance
-        // raises the face's tolerance through SmFace::SetTolerance) up to
-        // Cache_DegenFaces' SmFace::GetEdges (unit topology.face_p4; SmBrep::HealBrep
-        // passes Unported through, ignoring every other status)
+        // raises the face's tolerance through SmFace::SetTolerance) past
+        // Cache_DegenFaces (SmFace::GetEdges, topology.face_p4) and the SmLockBrepBox
+        // (query.brep) up to the SmStitch of heal.stitch_p1 (SmBrep::HealBrep passes
+        // Unported through, ignoring every other status)
         let mut b = Brep::default();
         let face = b
             .add_face_record(Face::new(ShellId::from_index(0)))
             .unwrap();
-        assert!(matches!(
-            api_heal_brep(&mut k, Some(&mut b)),
-            Err(SolidError::Unported {
-                upstream: "SmFace::GetEdges",
-                unit: "topology.face_p4",
-                ..
-            })
-        ));
+        assert!(api_heal_brep(&mut k, Some(&mut b)).is_ok());
         let r = h.heal_brep(
             &mut k,
             Some(&mut b),
@@ -996,14 +1041,7 @@ mod tests {
             HealBrepTargets::default(),
             false,
         );
-        assert!(matches!(
-            r,
-            Err(SolidError::Unported {
-                upstream: "SmFace::GetEdges",
-                unit: "topology.face_p4",
-                ..
-            })
-        ));
+        assert!(matches!(r, Err(SolidError::InvalidInput { .. })));
         assert_eq!(b.face(face).unwrap().tolerance, 1e-5);
         assert_eq!(h.tgt_faces, vec![face]);
         let (v, e, f) = ids();
@@ -1040,7 +1078,7 @@ mod tests {
         .unwrap();
         lock.release(std::slice::from_mut(&mut k.context)).unwrap();
         // a B-rep without regions: upstream dereferences the null infinite region
-        let r = h.fix_infinite_region(&mut b, HealerOpType::FixInfiniteRegions);
+        let r = h.fix_infinite_region(&mut k, &mut b, HealerOpType::FixInfiniteRegions);
         assert!(matches!(r, Err(SolidError::InvalidInput { .. })));
     }
 }

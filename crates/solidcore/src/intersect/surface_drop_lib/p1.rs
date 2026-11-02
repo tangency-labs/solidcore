@@ -21,7 +21,7 @@
 //! | [`stack_look`]                               | `sm_StackLook` (static)                          |
 //! | [`fix_boundary_curves`]                      | `sm_FixBoundaryCurves` (static)                  |
 //! | [`remove_duplicate_drop_point_solutions`]    | `sm_RemoveDuplicateDropPointSolutions` (static)  |
-//! | [`Surface::drop_and_trim_curve`], [`DropAndTrim`], [`DropFailRecord`] | `SmSurface::DropAndTrimCurve` |
+//! | [`Surface::drop_and_trim_curve`], [`Surface::drop_and_trim_curve_in`], [`DropAndTrim`], [`DropFailRecord`] | `SmSurface::DropAndTrimCurve` |
 //! | [`Surface::drop_iso_curve`], [`IsoDrop`]     | `SmSurface::DropIsoCurve`                        |
 //!
 //! Deviations:
@@ -52,22 +52,31 @@
 //! - **`DropAndTrimCurve`.** The record's `pUVCurvesArg` (the caller's output array)
 //!   has no handle; it stays `None`. The surface and curve handles the record keeps
 //!   come with the record ([`DropFailRecord`]).
-//! - **Unported callees.** `SmSurfaceDropCurve` (`SetCurveIsOnSurface`, `DoTrace`;
-//!   `intersect.surface_drop_curve`) return [`SolidError::Unported`].
+//! - **`DropAndTrimCurve` UV curves.** `rUVCurves` (`SmBSplineCurve*`) holds each
+//!   traced UV curve as the object `DoTrace` made (an `SmLine` stays a line, keeping
+//!   its overrides), so [`DropAndTrim::uv_curves`] are [`Curve`]s of the B-spline
+//!   kinds; a traced curve of another kind (a null `SM_CAST_PTR(SmBSplineCurve, ...)`
+//!   upstream, added to `rUVCurves` as a null pointer) is `SM_ERR_NULL_POINTER`.
+//!   The surface cache `DoTrace` checks out is the caller's when it passes one
+//!   ([`Surface::drop_and_trim_curve_in`]), else built fresh
+//!   ([`tracer_surface_cache`]).
 //! - **Not ported here.** The `SM_DEBUG_CODE` blocks, `Dump`, `Draw`,
 //!   `my_AssertAndDrawDropCurve` (graphics) and the `SM_ASSERT`s.
 
-use crate::curve::curve::Curve;
+use crate::curve::curve::{Curve, CurveKind};
 use crate::curve::hermite_curve::HermiteCurve;
 use crate::error::{Result, SolidError};
 use crate::geom::extent1d::Extent1d;
 use crate::geom::extent2d::Extent2d;
 use crate::geom::geom_utility::p1::line_point_distance;
 use crate::geom::point_set::PointContainment;
-use crate::geom::solution_array::{SolutionArray, SolutionObject};
+use crate::geom::solution_array::{ObjectKind, SolutionArray, SolutionObject};
 use crate::geom::tol::{are_same, are_same_to_tol};
 use crate::geom::vector2d::{Point2, Vec2};
 use crate::geom::vector3d::{Point3, Vec3};
+use crate::intersect::surface_drop_curve::SurfaceDropCurve;
+use crate::intersect::surface_drop_lib::p3::DropSolveContext;
+use crate::intersect::surface_tracer::tracer_surface_cache;
 use crate::kernel::Kernel;
 use crate::math::{max2, rad_to_deg, EFF_ZERO, EFF_ZERO_SQ, EFF_ZERO_SQRT, PI, UNDEF_DOUBLE};
 use crate::nurbs::b_spline_curve::BSplineCurve;
@@ -78,16 +87,17 @@ use crate::surface::surface::p2::{
 };
 use crate::surface::surface::p4::is_point_on_normal as is_point_on_normal_p4;
 use crate::surface::surface::Surface;
+use crate::surface::surface_cache::p1::SurfaceCache;
 
 /// `SM_BIG_ULONG` (`SmMath.h`): the unset `m_eDropDerivRtn`.
 pub const BIG_ULONG: i32 = 99_999_999;
 
 /// `SM_SUCCESS` (`SmMessages.h`).
-pub const SM_SUCCESS: i32 = 1000;
+pub use crate::error::SM_SUCCESS;
 
 /// `SM_ERR_OUTSIDE_OF_DOMAIN` (`SmMessages.h`): `CheckSeamJump` cannot snap a seam
 /// jump within tolerance.
-pub const SM_ERR_OUTSIDE_OF_DOMAIN: i32 = 1020;
+pub use crate::error::SM_ERR_OUTSIDE_OF_DOMAIN;
 
 /// `IsMovingAlongBoundary`'s default angle limit (`dAngLimitDeg`, degrees).
 pub const DEFAULT_ALONG_ANGLE_DEG: f64 = 5.0;
@@ -96,6 +106,7 @@ const OP_SEAM: &str = "intersect::surface_drop_lib::DropPt::check_seam_jump";
 const OP_POP: &str = "intersect::surface_drop_lib::pop_stack";
 const OP_LOOK: &str = "intersect::surface_drop_lib::stack_look";
 const OP_FIX_CURVES: &str = "intersect::surface_drop_lib::fix_boundary_curves";
+const OP_TRIM: &str = "intersect::surface_drop_lib::drop_and_trim_curve";
 
 /// `SM_DEG2RAD(a)` = `a * (SM_PI / 180.0)`.
 fn deg_to_rad(a: f64) -> f64 {
@@ -183,6 +194,7 @@ struct PointOnNormal {
 
 /// `smsurf_IsPointOnNormal(surface, &domain, uv, point, &tangent, ...)`.
 fn is_point_on_normal(
+    k: &Kernel,
     surface: &Surface,
     domain: &Extent2d,
     uv: Point2,
@@ -191,6 +203,7 @@ fn is_point_on_normal(
     approx_tol_3d: f64,
 ) -> Result<PointOnNormal> {
     let r = is_point_on_normal_p4(
+        k,
         surface,
         Some(domain),
         uv,
@@ -319,6 +332,7 @@ impl DropPt {
     /// Those of the surface evaluations (ignored upstream, see the module notes).
     pub fn is_moving_along_boundary(
         &self,
+        k: &Kernel,
         surface: &Surface,
         uv_domain: &Extent2d,
         uv_tol_x: f64,
@@ -345,8 +359,8 @@ impl DropPt {
         {
             // which surface bdry, Sv 1stDeriv, and m_SrfNorm
             let low = uv0.x < u_range.mid();
-            let (_, _, sv) = surface.evaluate_1st_derivatives(uv0, low, false)?;
-            let srf_norm = surface.evaluate_normal(uv0, side(low), side(false))?;
+            let (_, _, sv) = surface.evaluate_1st_derivatives(k, uv0, low, false)?;
+            let srf_norm = surface.evaluate_normal(k, uv0, side(low), side(false))?;
 
             // when either Crv or SrfBdry is zero length - then not moving along boundary
             if sv.length_squared() < EFF_ZERO_SQ || crv_tan.length_squared() < EFF_ZERO_SQ {
@@ -361,8 +375,9 @@ impl DropPt {
             // CurveTangent as Inside)
             if poc == PointContainment::Inside {
                 let other_uv = Point2::new(if low { u_range.max() } else { u_range.min() }, uv0.y);
-                let (_, _, other_sv) = surface.evaluate_1st_derivatives(other_uv, !low, false)?;
-                let other_norm = surface.evaluate_normal(other_uv, side(!low), side(false))?;
+                let (_, _, other_sv) =
+                    surface.evaluate_1st_derivatives(k, other_uv, !low, false)?;
+                let other_norm = surface.evaluate_normal(k, other_uv, side(!low), side(false))?;
                 let other_ang = other_norm.ccw_angle_between(other_sv, crv_tan)?;
                 if sector(other_ang, ang_limit_rad, !low) == PointContainment::Inside {
                     // upstream ignores AngleBetween's status (angle 0 on failure)
@@ -385,8 +400,8 @@ impl DropPt {
         {
             // which surface bdry, Su 1stDeriv, and m_SrfNorm
             let low = uv0.y < v_range.mid();
-            let (_, su, _) = surface.evaluate_1st_derivatives(uv0, false, low)?;
-            let srf_norm = surface.evaluate_normal(uv0, side(false), side(low))?;
+            let (_, su, _) = surface.evaluate_1st_derivatives(k, uv0, false, low)?;
+            let srf_norm = surface.evaluate_normal(k, uv0, side(false), side(low))?;
 
             // curveTangent to Surface Su angle - [-Pi to Pi]
             let ang = srf_norm.ccw_angle_between(su, crv_tan)?;
@@ -395,8 +410,9 @@ impl DropPt {
             if poc == PointContainment::Inside {
                 // (upstream evaluates the other side with the u flag set to !low)
                 let other_uv = Point2::new(uv0.x, if low { v_range.max() } else { v_range.min() });
-                let (_, other_su, _) = surface.evaluate_1st_derivatives(other_uv, !low, false)?;
-                let other_norm = surface.evaluate_normal(other_uv, side(!low), side(false))?;
+                let (_, other_su, _) =
+                    surface.evaluate_1st_derivatives(k, other_uv, !low, false)?;
+                let other_norm = surface.evaluate_normal(k, other_uv, side(!low), side(false))?;
                 let other_ang = other_norm.ccw_angle_between(other_su, crv_tan)?;
                 if sector(other_ang, ang_limit_rad, low) == PointContainment::Inside {
                     let other_normal_to_crv = other_norm.angle_between(crv_tan).unwrap_or(0.0);
@@ -428,6 +444,7 @@ impl DropPt {
     /// Those of the curve and surface evaluations.
     pub fn test_span_accuracy(
         &self,
+        k: &Kernel,
         surface: &Surface,
         uv_domain: &Extent2d,
         curve: &Curve,
@@ -476,8 +493,8 @@ impl DropPt {
             // If the UVPoint is not in the domain - check 3DDist moved when UVPoint is clamped
             if !uv_domain.contains_point(uv, EFF_ZERO) {
                 let clamp_uv = uv_domain.clamp_point(uv);
-                let pt_from_uv = surface.evaluate_point(uv)?;
-                let pt_from_clamp_uv = surface.evaluate_point(clamp_uv)?;
+                let pt_from_uv = surface.evaluate_point(k, uv)?;
+                let pt_from_clamp_uv = surface.evaluate_point(k, clamp_uv)?;
 
                 if pt_from_uv.distance(pt_from_clamp_uv) > approx_tol_3d {
                     out.passes = false;
@@ -489,7 +506,7 @@ impl DropPt {
             }
 
             // get SpanSmp[CrvPt]
-            let crv = curve.evaluate(start.t + normalized_t * delta_t, 1, true, true)?;
+            let crv = curve.evaluate(k, start.t + normalized_t * delta_t, 1, true, true)?;
             let (crv_pnt, crv_tan) = match (crv.first(), crv.get(1)) {
                 (Some(p), Some(d)) => (*p, *d),
                 _ => {
@@ -500,13 +517,20 @@ impl DropPt {
             };
 
             // test SpanSmp[CrvPnt/SurfaceNormal dist] against sApproxTol3d
-            let (is_good, drop_to_surf, approx_dev) =
-                match is_point_on_normal(surface, uv_domain, uv, crv_pnt, crv_tan, approx_tol_3d) {
-                    Ok(r) => (r.is_good, r.drop_to_surf, r.approx_dev),
-                    Err(e) if e.is_unported() => return Err(e),
-                    // when smsurf_IsPointOnNormal fails - it's not a good point
-                    Err(_) => (false, 0.0, 0.0),
-                };
+            let (is_good, drop_to_surf, approx_dev) = match is_point_on_normal(
+                k,
+                surface,
+                uv_domain,
+                uv,
+                crv_pnt,
+                crv_tan,
+                approx_tol_3d,
+            ) {
+                Ok(r) => (r.is_good, r.drop_to_surf, r.approx_dev),
+                Err(e) if e.is_unported_or_cancelled() => return Err(e),
+                // when smsurf_IsPointOnNormal fails - it's not a good point
+                Err(_) => (false, 0.0, 0.0),
+            };
 
             // When any point is bad - whole span fails check
             if !is_good {
@@ -536,6 +560,7 @@ impl DropPt {
     /// evaluations.
     pub fn check_seam_jump(
         &self,
+        k: &Kernel,
         surface: &Surface,
         srf_closure: SurfParamType,
         approx_tol_3d: f64,
@@ -547,7 +572,7 @@ impl DropPt {
         }
 
         let start = self;
-        let uv_domain = surface.natural_uv_domain();
+        let uv_domain = surface.natural_uv_domain_with_nurb(k)?;
         let outside = || SolidError::Upstream {
             operation: OP_SEAM,
             code: SM_ERR_OUTSIDE_OF_DOMAIN,
@@ -560,11 +585,12 @@ impl DropPt {
             && (end.uv_pd[0].x - start.uv_pd[0].x).abs() > u_domain.length() / 2.0
         {
             let (start_3d, start_su, start_sv) = surface.evaluate_1st_derivatives(
+                k,
                 start.uv_pd[0],
                 start.from_left_u != Some(false),
                 start.from_left_v != Some(false),
             )?;
-            let end_3d = surface.evaluate_point(end.uv_pd[0])?;
+            let end_3d = surface.evaluate_point(k, end.uv_pd[0])?;
             let step_3d = end_3d - start_3d;
 
             // Compare the steps perpendicular to the U seam
@@ -582,7 +608,7 @@ impl DropPt {
                 } else {
                     u_domain.max()
                 };
-                let snapped_point = surface.evaluate_point(snapped_uv)?;
+                let snapped_point = surface.evaluate_point(k, snapped_uv)?;
                 if snapped_point.distance(end_3d) <= approx_tol_3d {
                     end.uv_pd[0] = snapped_uv;
                 } else {
@@ -597,11 +623,12 @@ impl DropPt {
             && (end.uv_pd[0].y - start.uv_pd[0].y).abs() > v_domain.length() / 2.0
         {
             let (start_3d, start_su, start_sv) = surface.evaluate_1st_derivatives(
+                k,
                 start.uv_pd[0],
                 start.from_left_u != Some(false),
                 start.from_left_v != Some(false),
             )?;
-            let end_3d = surface.evaluate_point(end.uv_pd[0])?;
+            let end_3d = surface.evaluate_point(k, end.uv_pd[0])?;
             let step_3d = end_3d - start_3d;
 
             // Compare only motion across the V seam, removing the Su direction.
@@ -618,7 +645,7 @@ impl DropPt {
                 } else {
                     v_domain.max()
                 };
-                let snapped_point = surface.evaluate_point(snapped_uv)?;
+                let snapped_point = surface.evaluate_point(k, snapped_uv)?;
                 if snapped_point.distance(end_3d) <= approx_tol_3d {
                     end.uv_pd[0] = snapped_uv;
                 } else {
@@ -904,33 +931,85 @@ pub struct DropAndTrim {
     pub max_drop_to_surf: f64,
     /// `rdMaxApproxDev`: the largest deviation from a surface normal line.
     pub max_approx_dev: f64,
-    /// `rUVCurves`: one UV trim curve per piece of the curve over the surface.
-    pub uv_curves: Vec<BSplineCurve>,
+    /// `rUVCurves`: one UV trim curve per piece of the curve over the surface, each
+    /// of a B-spline kind (`SmBSplineCurve` or a subclass such as `SmLine`).
+    pub uv_curves: Vec<Curve>,
+}
+
+/// The object handle of the surface cache `DoTrace` runs on (its solves keep no
+/// objects).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct TraceCacheObj;
+
+impl SolutionObject for TraceCacheObj {
+    fn kind(&self) -> ObjectKind {
+        ObjectKind::Surface
+    }
 }
 
 /// The outputs of `SmSurfaceDropCurve::DoTrace` used by `DropAndTrimCurve`.
 struct Trace {
-    uv_curves: Vec<BSplineCurve>,
+    uv_curves: Vec<Curve>,
     max_drop_dists: Vec<f64>,
     deviations: Vec<f64>,
 }
 
 /// `SmSurfaceDropCurve sDrop(this, domain, curve, interval);
-/// sDrop.SetCurveIsOnSurface(on_surface); sDrop.DoTrace(ctx, tol, NULL, NULL, ...)`.
-fn drop_curve_trace(
-    _k: &Kernel,
-    _surface: &Surface,
-    _uv_domain: &Extent2d,
-    _curve: &Curve,
-    _interval: &Extent1d,
-    _curve_is_on_surface: bool,
-    _approx_tol_3d: Option<f64>,
+/// sDrop.SetCurveIsOnSurface(on_surface); sDrop.DoTrace(ctx, tol, NULL, NULL, ...)`
+/// on the surface's cache (`smsurf_GetSurfaceCache` inside `DoTrace`).
+///
+/// `cache` is the surface's cache when the caller holds it (upstream's
+/// `smsurf_GetSurfaceCache` hands every caller the one cache of the surface); `None`
+/// builds one.
+#[allow(clippy::too_many_arguments)]
+fn drop_curve_trace<C: SolutionObject>(
+    k: &Kernel,
+    surface: &Surface,
+    cache: Option<&mut SurfaceCache<C>>,
+    uv_domain: &Extent2d,
+    curve: &Curve,
+    interval: &Extent1d,
+    curve_is_on_surface: bool,
+    approx_tol_3d: Option<f64>,
+    context: Option<DropSolveContext<'_, C>>,
 ) -> Result<Trace> {
-    // UNPORTED(intersect.surface_drop_curve): SmSurfaceDropCurve::DoTrace
-    Err(SolidError::unported(
-        "SmSurfaceDropCurve::DoTrace",
-        "intersect.surface_drop_curve",
-    ))
+    // prepare the SurfaceDropCurve operation object
+    let mut drop = SurfaceDropCurve::new(k, surface, uv_domain, curve, interval)?;
+    drop.set_curve_is_on_surface(curve_is_on_surface);
+
+    // get and checkout surface cache (NER)
+    let out = if let Some(cache) = cache {
+        drop.drop_trace(k, cache, approx_tol_3d, None, context)?
+    } else {
+        let mut cache = tracer_surface_cache::<TraceCacheObj>(k, &drop.base)?;
+        drop.drop_trace(k, &mut cache, approx_tol_3d, None, None)?
+    };
+    Ok(Trace {
+        uv_curves: out.uv_curves,
+        max_drop_dists: out.max_drop_dists,
+        deviations: out.deviations,
+    })
+}
+
+/// `SM_CAST_PTR(SmBSplineCurve, pCurve) != NULL`: the curve is of a B-spline kind
+/// (`SmBSplineCurve` or a subclass: line, ellipse, hyperbola, parabola).
+const fn is_bspline_kind(curve: &Curve) -> bool {
+    match curve.kind() {
+        CurveKind::BSpline(_)
+        | CurveKind::Line(_)
+        | CurveKind::Ellipse(_)
+        | CurveKind::Hyperbola(_)
+        | CurveKind::Parabola(_) => true,
+        CurveKind::Hermite(_)
+        | CurveKind::Conic(_)
+        | CurveKind::Projected(_)
+        | CurveKind::Iso(_)
+        | CurveKind::Offset(_)
+        | CurveKind::CrvInVolume(_)
+        | CurveKind::CrvOnSurf(_)
+        | CurveKind::TangentField(_)
+        | CurveKind::Composite(_) => false,
+    }
 }
 
 /// The outputs of [`Surface::drop_iso_curve`].
@@ -966,8 +1045,9 @@ impl Surface {
     ///
     /// # Errors
     ///
-    /// Those of the trace ([`SolidError::Unported`] until
-    /// `intersect.surface_drop_curve` is ported).
+    /// Those of the drop curve trace (`SmSurfaceDropCurve::DoTrace`, which defers
+    /// non-plane `SmSurface::DropCurve` to `intersect.surface_drop_lib_p3`);
+    /// `SM_ERR_NULL_POINTER` for a traced UV curve that is not a B-spline kind.
     pub fn drop_and_trim_curve<O: SolutionObject>(
         &self,
         k: &Kernel,
@@ -977,7 +1057,76 @@ impl Surface {
         approx_tol_3d: f64,
         keep_all_drop_curves: bool,
         curve_is_on_surface: bool,
+        record: Option<DropFailRecord<'_, O>>,
+    ) -> Result<DropAndTrim> {
+        self.drop_and_trim_curve_in::<O, TraceCacheObj>(
+            k,
+            None,
+            uv_domain,
+            curve,
+            interval,
+            approx_tol_3d,
+            keep_all_drop_curves,
+            curve_is_on_surface,
+            record,
+        )
+    }
+
+    /// [`Surface::drop_and_trim_curve`] with the trace on `cache`, this surface's
+    /// cache when the caller holds it (upstream's `smsurf_GetSurfaceCache` inside
+    /// `DoTrace` hands every caller the one cache of the surface, with whatever tree
+    /// its holder set); `None` builds one.
+    ///
+    /// # Errors
+    ///
+    /// Those of [`Surface::drop_and_trim_curve`].
+    #[allow(clippy::too_many_arguments)]
+    pub fn drop_and_trim_curve_in<O: SolutionObject, C: SolutionObject>(
+        &self,
+        k: &Kernel,
+        cache: Option<&mut SurfaceCache<C>>,
+        uv_domain: &Extent2d,
+        curve: &Curve,
+        interval: &Extent1d,
+        approx_tol_3d: f64,
+        keep_all_drop_curves: bool,
+        curve_is_on_surface: bool,
+        record: Option<DropFailRecord<'_, O>>,
+    ) -> Result<DropAndTrim> {
+        self.drop_and_trim_curve_in_context::<O, C>(
+            k,
+            cache,
+            uv_domain,
+            curve,
+            interval,
+            approx_tol_3d,
+            keep_all_drop_curves,
+            curve_is_on_surface,
+            record,
+            None,
+        )
+    }
+
+    /// [`Surface::drop_and_trim_curve_in`] whose trace drops under the caller's face
+    /// solve `context` (`smsurf_GetSurfaceCache` inside each `DropCurve` of the trace
+    /// hands back the face's cache of a face-owned surface); used with a held `cache`.
+    ///
+    /// # Errors
+    ///
+    /// Those of [`Surface::drop_and_trim_curve_in`] and the context.
+    #[allow(clippy::too_many_arguments)]
+    pub fn drop_and_trim_curve_in_context<O: SolutionObject, C: SolutionObject>(
+        &self,
+        k: &Kernel,
+        cache: Option<&mut SurfaceCache<C>>,
+        uv_domain: &Extent2d,
+        curve: &Curve,
+        interval: &Extent1d,
+        approx_tol_3d: f64,
+        keep_all_drop_curves: bool,
+        curve_is_on_surface: bool,
         mut record: Option<DropFailRecord<'_, O>>,
+        context: Option<DropSolveContext<'_, C>>,
     ) -> Result<DropAndTrim> {
         // init outputs
         let mut out = DropAndTrim {
@@ -993,6 +1142,7 @@ impl Surface {
         let trace = drop_curve_trace(
             k,
             self,
+            cache,
             uv_domain,
             curve,
             interval,
@@ -1002,9 +1152,10 @@ impl Surface {
             } else {
                 Some(approx_tol_3d)
             },
+            context,
         )?;
 
-        for ((bsc, &max_drop), &dev) in trace
+        for ((uv, &max_drop), &dev) in trace
             .uv_curves
             .into_iter()
             .zip(&trace.max_drop_dists)
@@ -1014,7 +1165,11 @@ impl Surface {
             if !keep_all_drop_curves && max_drop > approx_tol_3d {
                 continue;
             }
-            out.uv_curves.push(bsc);
+            // SM_CAST_PTR(SmBSplineCurve, sUVCurves[ii]): a null cast is not usable
+            if !is_bspline_kind(&uv) {
+                return Err(SolidError::null_pointer(OP_TRIM));
+            }
+            out.uv_curves.push(uv);
             out.max_drop_to_surf = max2(out.max_drop_to_surf, max_drop);
             out.max_approx_dev = max2(out.max_approx_dev, dev);
         }
@@ -1027,7 +1182,7 @@ impl Surface {
                 from_call: 2,
                 create_path_type: path,
                 has_context: true,
-                uv_domain: self.natural_uv_domain(),
+                uv_domain: self.natural_uv_domain_with_nurb(k)?,
                 surface: r.surface,
                 curve: r.curve,
                 interval: *interval,
@@ -1066,6 +1221,7 @@ impl Surface {
     /// normal to the surface) and `CreateLineSegment`.
     pub fn drop_iso_curve(
         &self,
+        k: &Kernel,
         uv_domain: &Extent2d,
         curve: &Curve,
         interval: &Extent1d,
@@ -1076,14 +1232,14 @@ impl Surface {
 
         // Check Curve Tangent == one of Surface 1st parametric derivatives
         let left_t = interval.t_left_eval(interval.min());
-        let mut pv = curve.evaluate(interval.min(), 1, left_t, true)?;
+        let mut pv = curve.evaluate(k, interval.min(), 1, left_t, true)?;
         let tan = |pv: &[Vec3]| pv.get(1).copied().unwrap_or(Vec3::ZERO);
 
         // when curve StartTangent == 0.0 look for nonDegenerate tangent near StartPoint
         if tan(&pv).length_squared() < EFF_ZERO_SQ {
-            pv = curve.evaluate(interval.evaluate(EFF_ZERO_SQRT), 1, left_t, true)?;
+            pv = curve.evaluate(k, interval.evaluate(EFF_ZERO_SQRT), 1, left_t, true)?;
             if tan(&pv).length_squared() < EFF_ZERO_SQ {
-                pv = curve.evaluate(interval.evaluate(1.0e-3), 1, left_t, true)?;
+                pv = curve.evaluate(k, interval.evaluate(1.0e-3), 1, left_t, true)?;
                 if tan(&pv).length_squared() < EFF_ZERO_SQ {
                     // could not find a nonZero tangent near startPoint - quit
                     return Ok(IsoDrop::none());
@@ -1104,7 +1260,7 @@ impl Surface {
             let left_v = !(kk == 1 || kk == 2);
 
             // evaluate the Surface 1st derivatives
-            let (_, su, sv) = self.evaluate_1st_derivatives(start_uv, left_u, left_v)?;
+            let (_, su, sv) = self.evaluate_1st_derivatives(k, start_uv, left_u, left_v)?;
             du = su;
             dv = sv;
 
@@ -1114,7 +1270,7 @@ impl Surface {
             if norm_len > EFF_ZERO {
                 norm /= norm_len;
             } else {
-                norm = self.evaluate_normal(start_uv, side(left_u), side(left_v))?;
+                norm = self.evaluate_normal(k, start_uv, side(left_u), side(left_v))?;
             }
             let crv_tan_proj = crv_tan.project_to_plane(norm);
 
@@ -1130,25 +1286,25 @@ impl Surface {
 
             // Note following effectively checks for derivatives being in the same direction.
             if ang_u < one_deg {
-                (_, du, dv) = self.evaluate_1st_derivatives(start_uv, true, true)?;
+                (_, du, dv) = self.evaluate_1st_derivatives(k, start_uv, true, true)?;
                 scale = du.length() / crv_tan.length();
                 dir_vec = Vec2::new(1.0, 0.0);
                 found = true;
                 break;
             } else if ang_u > PI - one_deg {
-                (_, du, dv) = self.evaluate_1st_derivatives(start_uv, false, false)?;
+                (_, du, dv) = self.evaluate_1st_derivatives(k, start_uv, false, false)?;
                 scale = du.length() / crv_tan.length();
                 dir_vec = Vec2::new(-1.0, 0.0);
                 found = true;
                 break;
             } else if ang_v < one_deg {
-                (_, du, dv) = self.evaluate_1st_derivatives(start_uv, true, true)?;
+                (_, du, dv) = self.evaluate_1st_derivatives(k, start_uv, true, true)?;
                 scale = dv.length() / crv_tan.length();
                 dir_vec = Vec2::new(0.0, 1.0);
                 found = true;
                 break;
             } else if ang_v > PI - one_deg {
-                (_, du, dv) = self.evaluate_1st_derivatives(start_uv, false, false)?;
+                (_, du, dv) = self.evaluate_1st_derivatives(k, start_uv, false, false)?;
                 scale = dv.length() / crv_tan.length();
                 dir_vec = Vec2::new(0.0, -1.0);
                 found = true;
@@ -1162,7 +1318,7 @@ impl Surface {
         }
 
         // get Curve knots - trim them to the input interval range
-        let (mut knots, _) = curve.knots(None)?;
+        let (mut knots, _) = curve.knots(k, None)?;
         while knots
             .first()
             .is_some_and(|&k| k < interval.min() - EFF_ZERO_SQRT)
@@ -1203,9 +1359,9 @@ impl Surface {
             let param = interval.clamp_value(interval.min() + step);
 
             // get curve/surfaceNormal gap for parameter points
-            let c_pnt = curve.evaluate_point(param)?;
-            let s_pnt = self.evaluate_point(uv_test)?;
-            let s_nrm = self.evaluate_normal(uv_test, Side::Left, Side::Left)?;
+            let c_pnt = curve.evaluate_point(k, param)?;
+            let s_pnt = self.evaluate_point(k, uv_test)?;
+            let s_nrm = self.evaluate_normal(k, uv_test, Side::Left, Side::Left)?;
             let (drop_line_dist, mut line_param) = line_point_distance(s_pnt, s_nrm, c_pnt);
 
             // when gap is too large - quit
@@ -1335,6 +1491,7 @@ mod tests {
 
     #[test]
     fn moving_along_plane_boundary() {
+        let k = &Kernel::default();
         let s = plane();
         let d = Extent2d::from_bounds(0.0, 0.0, 1.0, 1.0);
         let mut p = DropPt::new(0.0, None);
@@ -1342,18 +1499,19 @@ mod tests {
         p.crv_pd[1] = Vec3::new(0.0, 1.0, 0.0);
         p.normal_to_crv_ang_deg = 90.0;
         let r = p
-            .is_moving_along_boundary(&s, &d, 1e-9, 1e-9, 5.0, SurfParamType::Both)
+            .is_moving_along_boundary(k, &s, &d, 1e-9, 1e-9, 5.0, SurfParamType::Both)
             .expect("along");
         assert_eq!(r, PointContainment::OnBoundary);
         p.uv_pd[0] = Point2::new(0.5, 0.5);
         let r = p
-            .is_moving_along_boundary(&s, &d, 1e-9, 1e-9, 5.0, SurfParamType::Both)
+            .is_moving_along_boundary(k, &s, &d, 1e-9, 1e-9, 5.0, SurfParamType::Both)
             .expect("interior");
         assert_eq!(r, PointContainment::Unknown);
     }
 
     #[test]
     fn iso_drop_on_plane() {
+        let k = &Kernel::default();
         let s = plane();
         let d = Extent2d::from_bounds(0.0, 0.0, 1.0, 1.0);
         let c = Curve::from(crate::curve::line::Line::from_points(
@@ -1363,6 +1521,7 @@ mod tests {
         ));
         let r = s
             .drop_iso_curve(
+                k,
                 &d,
                 &c,
                 &Extent1d::from_min_max(0.0, 1.0),
@@ -1375,11 +1534,22 @@ mod tests {
     }
 
     #[test]
-    fn drop_and_trim_is_unported() {
-        let s = plane();
+    fn drop_and_trim_iso_line() {
+        // the flat bilinear patch P(u, v) = (u, v, 0) and the u-iso line v = 0.3
+        let w =
+            |x: f64, y: f64| crate::nurbs::math::CPoint::new(x, y, 0.0, crate::nurbs::math::NOW);
+        let net = vec![
+            vec![w(0.0, 0.0), w(0.0, 1.0)],
+            vec![w(1.0, 0.0), w(1.0, 1.0)],
+        ];
+        let kn = vec![0.0, 0.0, 1.0, 1.0];
+        let n = crate::nurbs::srf_basic::Surface::new(net, 1, 1, kn.clone(), kn).unwrap();
+        let s = Surface::from(crate::nurbs::b_spline_surface::BSplineSurface::from_nurb(
+            n, false,
+        ));
         let c = Curve::from(crate::curve::line::Line::from_points(
-            Vec3::new(0.0, 0.5, 0.0),
-            Vec3::new(1.0, 0.5, 0.0),
+            Vec3::new(0.0, 0.3, 0.0),
+            Vec3::new(1.0, 0.3, 0.0),
             3,
         ));
         let r = s.drop_and_trim_curve::<crate::topology::ObjectHandle>(
@@ -1389,9 +1559,28 @@ mod tests {
             &Extent1d::from_min_max(0.0, 1.0),
             1e-6,
             true,
-            false,
+            true,
             None,
         );
-        assert!(matches!(r, Err(SolidError::Unported { .. })));
+        let r = r.expect("drop and trim");
+        assert_eq!(r.uv_curves.len(), 1);
+        assert!(r.max_drop_to_surf < 1e-9);
+        assert!(r.max_approx_dev < 1e-9);
+        let uv = &r.uv_curves[0];
+        let ivl = uv.natural_interval();
+        let a = uv
+            .evaluate_point(&Kernel::default(), ivl.min())
+            .expect("start");
+        let b = uv
+            .evaluate_point(&Kernel::default(), ivl.max())
+            .expect("end");
+        assert!(
+            (a.x - 0.0).abs() < 1e-9 && (a.y - 0.3).abs() < 1e-9,
+            "{a:?}"
+        );
+        assert!(
+            (b.x - 1.0).abs() < 1e-9 && (b.y - 0.3).abs() < 1e-9,
+            "{b:?}"
+        );
     }
 }

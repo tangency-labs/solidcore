@@ -2,13 +2,13 @@
 //! its own child process, at most N at a time.
 //!
 //! The C++ kernel keeps global state, so units never share a process (no threads). The
-//! parent hands out units dynamically from one queue, longest first (by the case count
-//! of each unit's previous report in the report directory), and spawns the next one as
-//! soon as a child exits. A child is the same binary run as `--unit <id>` with the
-//! caller's other options and [`WORKER_ENV`] set; it prints and writes its report
-//! exactly as a serial run does. The parent prints each child's output in the serial
-//! order (as soon as every earlier unit is done) and the usual final summary, so stdout
-//! and the reports are identical to a serial run's.
+//! parent hands out units dynamically from one queue, longest first (by each unit's
+//! wall time in the previous run's [`TIMES_FILE`], else the case count of its previous
+//! report in the report directory, else an estimate from its fixture size), and spawns the next one as soon as a child exits. A child is the same
+//! binary run as `--unit <id>` with the caller's other options and [`WORKER_ENV`] set;
+//! it prints and writes its report exactly as a serial run does. The parent prints each
+//! child's output in the serial order (as soon as every earlier unit is done) and the
+//! usual final summary, so stdout and the reports are identical to a serial run's.
 //!
 //! A child that crashes (signal, unexpected exit, no summary line) fails only its own
 //! unit, with the tail of its stderr. Children are killed when the parent returns;
@@ -32,9 +32,14 @@ const ORPHANED_EXIT: i32 = 3;
 /// Lines of a crashed child's stderr quoted under its `FAIL` line.
 const CRASH_STDERR_LINES: usize = 20;
 
+/// Per-unit wall times of the last `--jobs` run (`<unit>\t<milliseconds>` lines), written
+/// next to the reports. Only orders the queue; never part of any result.
+pub const TIMES_FILE: &str = "times.tsv";
+
 /// Command-line flags that take a value (forwarded to children with it).
 const VALUE_FLAGS: &[&str] = &[
     "--seeds",
+    "--heap-pads",
     "--filter",
     "--report-dir",
     "--status-of",
@@ -42,6 +47,7 @@ const VALUE_FLAGS: &[&str] = &[
     "--fuzz",
     "--fuzz-out",
     "--baseline",
+    "--digest-dir",
 ];
 
 /// In a `--jobs` child: exits the process once the parent closes our stdin (the parent
@@ -93,20 +99,57 @@ pub fn forwarded_args(raw: &[String]) -> Vec<String> {
     out
 }
 
-/// Case count of the first `<dir>/<id>.json` found in `dirs` (0 when there is none):
-/// the scheduling weight.
-fn previous_cases(dirs: &[&Path], id: &str) -> u64 {
+/// Case count of the first `<dir>/<id>.json` found in `dirs`.
+fn previous_cases(dirs: &[&Path], id: &str) -> Option<u64> {
     dirs.iter()
         .find_map(|d| std::fs::read_to_string(d.join(format!("{id}.json"))).ok())
         .and_then(|t| serde_json::from_str::<serde_json::Value>(&t).ok())
         .and_then(|v| v.get("cases_total").and_then(serde_json::Value::as_u64))
-        .unwrap_or(0)
 }
 
-/// Queue order: heaviest previous report (looked up in `dirs`, in order) first, ties
-/// (and units without a report) in the serial order.
-pub fn schedule(units: &[String], dirs: &[&Path]) -> Vec<usize> {
-    let weights: Vec<u64> = units.iter().map(|u| previous_cases(dirs, u)).collect();
+/// Wall milliseconds of `id` in the first `<dir>/`[`TIMES_FILE`] that lists it.
+fn previous_millis(dirs: &[&Path], id: &str) -> Option<u64> {
+    dirs.iter().find_map(|d| {
+        let text = std::fs::read_to_string(d.join(TIMES_FILE)).ok()?;
+        text.lines().find_map(|l| {
+            let (unit, ms) = l.split_once('\t')?;
+            (unit == id).then(|| ms.trim().parse().ok()).flatten()
+        })
+    })
+}
+
+/// Fixture bytes per case, roughly, for [`fixture_weight`].
+const FIXTURE_BYTES_PER_CASE: u64 = 512;
+
+/// Estimated case count of a unit with no previous report: total size of
+/// `<fixtures>/<id>/*.json` at about [`FIXTURE_BYTES_PER_CASE`] bytes a case (reports
+/// are CI artifacts, not committed, so a fresh checkout has none).
+fn fixture_weight(fixtures: &Path, id: &str) -> u64 {
+    let Ok(rd) = std::fs::read_dir(fixtures.join(id)) else {
+        return 0;
+    };
+    rd.filter_map(Result::ok)
+        .filter(|e| e.path().extension().and_then(|x| x.to_str()) == Some("json"))
+        .filter_map(|e| e.metadata().ok())
+        .map(|m| m.len())
+        .sum::<u64>()
+        / FIXTURE_BYTES_PER_CASE
+}
+
+/// Queue order: heaviest first, ties in the serial order. The weight is the unit's wall
+/// time in milliseconds from a previous run's [`TIMES_FILE`], else the case count of its
+/// previous report (both looked up in `dirs`, in order), else its fixture estimate
+/// under `fixtures` (see `fixture_weight`). A unit's time beats its case count: one
+/// slow case can outweigh thousands of fast ones.
+pub fn schedule(units: &[String], dirs: &[&Path], fixtures: &Path) -> Vec<usize> {
+    let weights: Vec<u64> = units
+        .iter()
+        .map(|u| {
+            previous_millis(dirs, u)
+                .or_else(|| previous_cases(dirs, u))
+                .unwrap_or_else(|| fixture_weight(fixtures, u))
+        })
+        .collect();
     let mut order: Vec<usize> = (0..units.len()).collect();
     order.sort_by_key(|&i| (std::cmp::Reverse(weights.get(i).copied().unwrap_or(0)), i));
     order
@@ -119,10 +162,8 @@ pub struct UnitRun {
     pub stdout: String,
     /// The child's stderr, forwarded as is.
     pub stderr: String,
-    /// The unit counts as failed.
-    pub failed: bool,
-    /// The unit counts as partial.
-    pub partial: bool,
+    /// Comparison outcome, including unsupported native references.
+    pub status: crate::UnitStatus,
     /// The child hit a setup error (exit status 2), e.g. an unwritable report.
     pub setup_error: bool,
 }
@@ -139,14 +180,20 @@ fn exit_detail(status: ExitStatus) -> String {
     format!("exit code {}", status.code().unwrap_or(-1))
 }
 
-/// Parses `difftest: 1 unit(s), P passed, Q partial, F failed[...]` into `(Q, F)`.
-fn parse_summary(line: &str) -> Option<(usize, usize)> {
+/// Parses the aggregate counts `(partial, failed, skipped)` of one child.
+fn parse_summary(line: &str) -> Option<(usize, usize, usize)> {
     let rest = line.strip_prefix("difftest: 1 unit(s), ")?;
     let mut parts = rest.split(", ");
     let _passed = parts.next()?.strip_suffix(" passed")?;
     let partial = parts.next()?.strip_suffix(" partial")?.parse().ok()?;
     let failed = parts.next()?.split(' ').next()?.parse().ok()?;
-    Some((partial, failed))
+    let skipped = parts
+        .find_map(|p| p.strip_suffix(" skipped(platform)"))
+        .map(str::parse)
+        .transpose()
+        .ok()?
+        .unwrap_or(0);
+    Some((partial, failed, skipped))
 }
 
 /// Turns a finished child's output into what the parent prints and counts. A child that
@@ -155,7 +202,7 @@ pub fn interpret(id: &str, status: Option<ExitStatus>, stdout: &str, stderr: &st
     let code = status.and_then(|s| s.code());
     let body = stdout.trim_end_matches('\n');
     let (block, last) = body.rsplit_once('\n').unwrap_or(("", body));
-    if let (Some(c @ 0..=2), Some((partial, failed))) = (code, parse_summary(last)) {
+    if let (Some(c @ 0..=2), Some((partial, failed, skipped))) = (code, parse_summary(last)) {
         let mut out = block.to_string();
         if !out.is_empty() {
             out.push('\n');
@@ -163,8 +210,15 @@ pub fn interpret(id: &str, status: Option<ExitStatus>, stdout: &str, stderr: &st
         return UnitRun {
             stdout: out,
             stderr: stderr.to_string(),
-            failed: failed > 0,
-            partial: partial > 0,
+            status: if failed > 0 {
+                crate::UnitStatus::Fail
+            } else if partial > 0 {
+                crate::UnitStatus::Partial
+            } else if skipped > 0 {
+                crate::UnitStatus::SkippedPlatform
+            } else {
+                crate::UnitStatus::Green
+            },
             setup_error: c == 2,
         };
     }
@@ -184,8 +238,7 @@ pub fn interpret(id: &str, status: Option<ExitStatus>, stdout: &str, stderr: &st
     UnitRun {
         stdout: out,
         stderr: String::new(),
-        failed: true,
-        partial: false,
+        status: crate::UnitStatus::Fail,
         setup_error: false,
     }
 }
@@ -250,8 +303,17 @@ fn spawn(exe: &Path, args: &[String], id: &str, unit: usize) -> std::io::Result<
 
 /// Runs `units` in up to `jobs` child processes and prints like the serial loop in
 /// `main.rs`: each unit's lines in `units` order, then the summary line. `weights` are
-/// the report directories whose previous reports order the queue (see [`schedule`]).
-pub fn run_parallel(units: &[String], args: &[String], jobs: usize, weights: &[&Path]) -> ExitCode {
+/// the report directories whose previous reports order the queue, `fixtures` the
+/// fixture root for units without one (see [`schedule`]). With `times_out`, each unit's
+/// wall time is written there (a [`TIMES_FILE`]) for the next run's queue order.
+pub fn run_parallel(
+    units: &[String],
+    args: &[String],
+    jobs: usize,
+    weights: &[&Path],
+    fixtures: &Path,
+    times_out: Option<&Path>,
+) -> ExitCode {
     let exe = match std::env::current_exe() {
         Ok(e) => e,
         Err(e) => {
@@ -260,12 +322,13 @@ pub fn run_parallel(units: &[String], args: &[String], jobs: usize, weights: &[&
         }
     };
     let wall = Instant::now();
-    let mut queue: VecDeque<usize> = schedule(units, weights).into();
+    let mut queue: VecDeque<usize> = schedule(units, weights, fixtures).into();
     let mut results: Vec<Option<UnitRun>> = vec![None; units.len()];
     let mut times: Vec<Duration> = vec![Duration::ZERO; units.len()];
     let mut printed = 0usize;
     let mut pool = Pool(Vec::new());
     let (mut failed, mut partial, mut setup_error) = (0usize, 0usize, false);
+    let mut skipped = 0usize;
     let stdout = std::io::stdout();
     while printed < units.len() {
         while pool.0.len() < jobs.max(1) {
@@ -310,8 +373,9 @@ pub fn run_parallel(units: &[String], args: &[String], jobs: usize, weights: &[&
             let _ = so.flush();
             drop(so);
             let _ = std::io::stderr().write_all(r.stderr.as_bytes());
-            failed += usize::from(r.failed);
-            partial += usize::from(r.partial && !r.failed);
+            failed += usize::from(r.status == crate::UnitStatus::Fail);
+            partial += usize::from(r.status == crate::UnitStatus::Partial);
+            skipped += usize::from(r.status == crate::UnitStatus::SkippedPlatform);
             setup_error |= r.setup_error;
             printed += 1;
         }
@@ -320,9 +384,8 @@ pub fn run_parallel(units: &[String], args: &[String], jobs: usize, weights: &[&
         }
     }
     println!(
-        "difftest: {} unit(s), {} passed, {partial} partial, {failed} failed",
-        units.len(),
-        units.len() - failed - partial
+        "{}",
+        crate::report::run_summary(units.len(), partial, failed, skipped)
     );
     // Timing goes to stderr so stdout stays identical to a serial run.
     let sum: Duration = times.iter().sum();
@@ -339,6 +402,15 @@ pub fn run_parallel(units: &[String], args: &[String], jobs: usize, weights: &[&
         sum.as_secs_f64(),
         slowest.as_secs_f64()
     );
+    if let Some(path) = times_out {
+        let mut tsv = String::new();
+        for (id, t) in units.iter().zip(&times) {
+            let _ = writeln!(tsv, "{id}\t{}", t.as_millis());
+        }
+        if let Err(e) = std::fs::write(path, tsv) {
+            eprintln!("difftest: write {}: {e}", path.display());
+        }
+    }
     if setup_error {
         ExitCode::from(2)
     } else if failed > 0 {
@@ -382,16 +454,65 @@ mod tests {
     }
 
     #[test]
+    fn forwards_baseline_and_seeds_to_each_child() {
+        let raw = s(&[
+            "--green",
+            "--jobs",
+            "2",
+            "--baseline",
+            "base dir/reports",
+            "--seeds",
+            "16",
+            "--no-report",
+        ]);
+        assert_eq!(
+            forwarded_args(&raw),
+            s(&[
+                "--baseline",
+                "base dir/reports",
+                "--seeds",
+                "16",
+                "--no-report"
+            ])
+        );
+    }
+
+    #[test]
     fn summary_lines() {
         assert_eq!(
+            parse_summary(
+                "difftest: 1 unit(s), 0 passed, 0 partial, 0 failed, 1 skipped(platform)"
+            ),
+            Some((0, 0, 1))
+        );
+        assert_eq!(
             parse_summary("difftest: 1 unit(s), 0 passed, 1 partial, 0 failed"),
-            Some((1, 0))
+            Some((1, 0, 0))
         );
         assert_eq!(
             parse_summary("difftest: 1 unit(s), 0 passed, 0 partial, 1 failed, 1 dropped"),
-            Some((0, 1))
+            Some((0, 1, 0))
         );
         assert_eq!(parse_summary("PASS a cases=1"), None);
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn skipped_child_is_neither_a_pass_nor_a_failure() {
+        use std::os::unix::process::ExitStatusExt;
+        let summary = crate::report::run_summary(1, 0, 0, 1);
+        let stdout = format!("SKIP u skipped(platform): unsupported reference\n{summary}\n");
+        let r = interpret("u", Some(ExitStatus::from_raw(0)), &stdout, "");
+        assert_eq!(r.status, crate::UnitStatus::SkippedPlatform);
+        assert!(!r.setup_error);
+        assert_eq!(
+            r.stdout,
+            "SKIP u skipped(platform): unsupported reference\n"
+        );
+        assert_eq!(
+            crate::report::run_summary(3, 1, 0, 1),
+            "difftest: 3 unit(s), 1 passed, 1 partial, 0 failed, 1 skipped(platform)"
+        );
     }
 
     #[cfg(unix)]
@@ -406,31 +527,32 @@ mod tests {
             "",
         );
         assert_eq!(r.stdout, "PASS u cases=1\n  report: r/u.json\n");
-        assert!(!r.failed && !r.partial && !r.setup_error);
+        assert_eq!(r.status, crate::UnitStatus::Green);
+        assert!(!r.setup_error);
         let partial = interpret(
             "u",
             Some(ok),
             "PARTIAL u\ndifftest: 1 unit(s), 0 passed, 1 partial, 0 failed\n",
             "",
         );
-        assert!(partial.partial && !partial.failed);
+        assert_eq!(partial.status, crate::UnitStatus::Partial);
         let fail = interpret(
             "u",
             Some(ExitStatus::from_raw(1 << 8)),
             "FAIL u\ndifftest: 1 unit(s), 0 passed, 0 partial, 1 failed\n",
             "",
         );
-        assert!(fail.failed);
+        assert_eq!(fail.status, crate::UnitStatus::Fail);
         // SIGSEGV
         let crash = interpret("u", Some(ExitStatus::from_raw(11)), "", "a\nboom\n");
-        assert!(crash.failed);
+        assert_eq!(crash.status, crate::UnitStatus::Fail);
         assert_eq!(
             crash.stdout,
             "FAIL u (worker process killed by signal 11)\n  stderr: a\n  stderr: boom\n"
         );
         // A clean exit without the summary line is a crash too.
         let cut = interpret("u", Some(ok), "PASS u\n", "");
-        assert!(cut.failed);
+        assert_eq!(cut.status, crate::UnitStatus::Fail);
         assert!(cut
             .stdout
             .starts_with("PASS u\nFAIL u (worker process exit code 0)"));
@@ -444,11 +566,33 @@ mod tests {
         std::fs::create_dir_all(&dir).unwrap();
         std::fs::write(dir.join("b.json"), r#"{"cases_total": 5}"#).unwrap();
         std::fs::write(dir.join("c.json"), r#"{"cases_total": 50}"#).unwrap();
+        let fixtures = dir.join("fixtures");
+        let none = dir.join("none");
         let order = schedule(
             &s(&["a", "b", "c", "d"]),
-            &[dir.join("none").as_path(), &dir],
+            &[none.as_path(), &dir],
+            &fixtures,
+        );
+        assert_eq!(order, vec![2, 1, 0, 3]);
+        // Without a report, fixture size estimates the weight (b's report still wins).
+        std::fs::create_dir_all(fixtures.join("a")).unwrap();
+        std::fs::create_dir_all(fixtures.join("b")).unwrap();
+        std::fs::write(fixtures.join("a").join("x.json"), vec![b' '; 10 * 512]).unwrap();
+        std::fs::write(fixtures.join("b").join("x.json"), vec![b' '; 100 * 512]).unwrap();
+        let order = schedule(
+            &s(&["a", "b", "c", "d"]),
+            &[none.as_path(), &dir],
+            &fixtures,
+        );
+        assert_eq!(order, vec![2, 0, 1, 3]);
+        // A previous run's wall times beat case counts and fixture sizes.
+        std::fs::write(dir.join(TIMES_FILE), "b\t900000\nd\t7\nbad line\n").unwrap();
+        let order = schedule(
+            &s(&["a", "b", "c", "d"]),
+            &[none.as_path(), &dir],
+            &fixtures,
         );
         let _ = std::fs::remove_dir_all(&dir);
-        assert_eq!(order, vec![2, 1, 0, 3]);
+        assert_eq!(order, vec![1, 2, 0, 3]);
     }
 }

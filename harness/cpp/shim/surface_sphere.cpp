@@ -38,6 +38,7 @@
 
 #include <vector>
 
+#include "sc_const_make.h"
 #include "sc_sm.h"
 
 using sc::flg;
@@ -68,6 +69,8 @@ enum : int32_t
     OP_ISECT_CONE = 16,
     OP_GLOBAL = 17,
     OP_IS_NURB = 18,
+    OP_TRIM_DOMAIN = 19,
+    OP_CONST_MAKE = 20, // the constructor with no MakeNurb, then sc::put_const_make
 };
 
 // Reads the protected members through pointers to members named in a derived class.
@@ -105,7 +108,7 @@ struct Rd
 // [c[3] x[3] y[3] d0 d1 r]`: mode 0 is SmSphere::CreateCanonical(SmAxis2Placement(O, X, Y),
 // radius) (the other fields are skipped), mode 1 the constructor with those arguments and
 // MakeNurb (as CreateCanonical does). Writes the status; NULL on failure.
-SmSphere* read_sphere(Rd& rd, const SmContext& ctx, std::vector<double>& o)
+SmSphere* read_sphere(Rd& rd, const SmContext& ctx, std::vector<double>& o, bool lazy = false)
 {
     int64_t mode = rd.idx();
     SmPoint3d org = rd.vec();
@@ -144,9 +147,12 @@ SmSphere* read_sphere(Rd& rd, const SmContext& ctx, std::vector<double>& o)
         SmExtent2d d = has_dom ? dom : SmExtent2d(0.0, -90.0, 360.0, 90.0);
         s = new (ctx) SmSphere(org, x, y, d, radius, swap ? TRUE : FALSE, inside ? TRUE : FALSE,
                                circle);
-        stt = s->MakeNurb();
-        if (stt == SM_SUCCESS && s->GetGwNurbPointer() == NULL)
-            stt = SM_ERR;
+        if (!lazy)
+        {
+            stt = s->MakeNurb();
+            if (stt == SM_SUCCESS && s->GetGwNurbPointer() == NULL)
+                stt = SM_ERR;
+        }
     }
     o.push_back(st(stt));
     if (stt != SM_SUCCESS || s == NULL)
@@ -634,6 +640,18 @@ void sphere_op(int32_t op, Rd& rd, const SmContext& ctx, SmSphere* s, std::vecto
         delete test;
         break;
     }
+    case OP_TRIM_DOMAIN:
+    {
+        SmExtent2d dom = rd.domain();
+        SmStatus stt = s->TrimWithDomain(dom);
+        o.push_back(st(stt));
+        o.push_back(dom.GetMin().x);
+        o.push_back(dom.GetMin().y);
+        o.push_back(dom.GetMax().x);
+        o.push_back(dom.GetMax().y);
+        put_state(o, s);
+        break;
+    }
     default: o.push_back((double)SC_ERR_ARG); break;
     }
 }
@@ -648,10 +666,13 @@ SC_EXPORT int32_t sc_surface_sphere_eval(int32_t op, const double* in, int64_t n
     SmContext ctx;
     std::vector<double> o;
     Rd rd{in, 0};
-    SmSphere* s = read_sphere(rd, ctx, o);
+    SmSphere* s = read_sphere(rd, ctx, o, op == OP_CONST_MAKE);
     if (s)
     {
-        sphere_op(op, rd, ctx, s, o);
+        if (op == OP_CONST_MAKE)
+            sc::put_const_make(ctx, s, o);
+        else
+            sphere_op(op, rd, ctx, s, o);
         delete s;
     }
     return sc_copy_out(o.data(), (int64_t)o.size(), out, cap, out_len);

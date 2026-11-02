@@ -11,8 +11,9 @@ use solidcore::curve::ellipse::Ellipse;
 use solidcore::curve::hermite_curve::HermiteCurve;
 use solidcore::geom::axis2_placement::Axis2Placement;
 use solidcore::geom::extent1d::Extent1d;
+use solidcore::geom::attribute::AttributeStore;
 use solidcore::geom::extent2d::Extent2d;
-use solidcore::geom::tol::zone_tol3d;
+use solidcore::geom::tol::{zone_tol3d, USE_DEFAULT};
 use solidcore::kernel::Kernel;
 use solidcore::math::{Vec2, Vec3};
 use solidcore::nurbs::b_spline_curve::BSplineCurve;
@@ -25,8 +26,12 @@ use solidcore::surface::plane::Plane;
 use solidcore::surface::surface::Surface;
 use solidcore::sweep::topology_sweep::SweepGeometryCreation;
 use solidcore::sweep::trans_sweep_geometry::TranslationalSweepGeometry;
-use solidcore::topology::{Brep, Edgeuse, EdgeuseOwner, Vertexuse, VertexuseOwner};
-use solidcore::{Result, SolidError};
+use solidcore::topology::brep::p3::new_brep;
+use solidcore::topology::brep::p8::{create_face_from_surface, FaceBuildEnv};
+use solidcore::topology::edge::NotifyEnv;
+use solidcore::topology::topology_traverser::Marks;
+use solidcore::topology::{Brep, Edgeuse, EdgeuseOwner, FaceId, Vertexuse, VertexuseOwner};
+use solidcore::{EntityRef, Result, SolidError};
 use solidcore_ffi::units::sweep_trans_sweep_geometry as ffi;
 
 /// Translational sweep differential runner.
@@ -75,7 +80,7 @@ fn v(p: [f64; 3]) -> Vec3 {
 fn status(e: &SolidError) -> f64 {
     match e {
         SolidError::Upstream { code, .. } => f64::from(*code),
-        SolidError::InvalidInput { .. } => 1007.,
+        SolidError::InvalidInput { .. } | SolidError::PortInvariant { .. } => 1007.,
         SolidError::Nlib { .. } => 1001.,
         _ => -1.,
     }
@@ -163,12 +168,12 @@ fn build(k: &Kernel, i: &Input) -> Result<Curve> {
 fn put(o: &mut Vec<f64>, p: Vec3) {
     o.extend([p.x, p.y, p.z]);
 }
-fn curve(o: &mut Vec<f64>, c: &Curve) -> Result<()> {
+fn curve(k: &Kernel, o: &mut Vec<f64>, c: &Curve) -> Result<()> {
     o.push(c.type_code() as f64);
     let iv = c.natural_interval();
     o.extend([iv.min(), iv.max()]);
     for j in 0..=8 {
-        match c.evaluate(iv.evaluate(f64::from(j) / 8.), 1, true, true) {
+        match c.evaluate(k, iv.evaluate(f64::from(j) / 8.), 1, true, true) {
             Ok(p) => {
                 o.push(0.);
                 for x in p {
@@ -181,16 +186,16 @@ fn curve(o: &mut Vec<f64>, c: &Curve) -> Result<()> {
     }
     Ok(())
 }
-fn surface(o: &mut Vec<f64>, s: &Surface) -> Result<()> {
+fn surface(k: &Kernel, o: &mut Vec<f64>, s: &Surface) -> Result<()> {
     o.push(s.type_code() as f64);
-    let d = s.natural_uv_domain();
+    let d = s.natural_uv_domain_with_nurb(k)?;
     o.extend([d.min().x, d.min().y, d.max().x, d.max().y]);
     for u in 0..=4 {
         for z in 0..=4 {
             let uv = d.evaluate(f64::from(u) / 4., f64::from(z) / 4.);
             for r in [
-                s.evaluate_point(uv),
-                s.evaluate_normal(uv, Side::Left, Side::Left),
+                s.evaluate_point(k, uv),
+                s.evaluate_normal(k, uv, Side::Left, Side::Left),
             ] {
                 match r {
                     Ok(p) => {
@@ -205,13 +210,39 @@ fn surface(o: &mut Vec<f64>, s: &Surface) -> Result<()> {
     }
     Ok(())
 }
+/// `SmBrep::CreateFaceFromSurface(surface, domain, face)` in the infinite region.
+pub(crate) fn create_face(
+    k: &mut Kernel,
+    b: &mut Brep,
+    s: Surface,
+    domain: &Extent2d,
+) -> Result<FaceId> {
+    let mut records = solidcore::topology::topology::NotifyRecords::new();
+    let mut attributes = AttributeStore::default();
+    let key_of = super::topology_brep_p8::key_of;
+    let mut env = NotifyEnv {
+        records: &mut records,
+        attributes: &mut attributes,
+        context: None,
+        key_of: &key_of,
+    };
+    let mut marks = Marks::default();
+    let this_face = |f: FaceId| key_of(EntityRef::Face(f));
+    let mut fenv = FaceBuildEnv {
+        env: &mut env,
+        marks: &mut marks,
+        this_face: &this_face,
+    };
+    create_face_from_surface(k, b, Some(s), domain, &mut fenv)
+}
 fn rust(i: &Input) -> Result<Vec<f64>> {
-    let k = Kernel::default();
+    let mut k = Kernel::default();
     let sweep = TranslationalSweepGeometry {
         sweep_vector: v(i.sweep),
         base: SweepGeometryCreation {
             eps: i.epsilon,
             make_analytics: i.analytics,
+            statuses_pass_on: false,
         },
     };
     let mut o = vec![0.];
@@ -237,7 +268,7 @@ fn rust(i: &Input) -> Result<Vec<f64>> {
             } else {
                 let (c, t) = sweep.vertex_sweep_higher(&b, id)?;
                 o.push(t);
-                curve(&mut o, &Curve::from(c))?;
+                curve(&k, &mut o, &Curve::from(c))?;
             }
         }
         5 => {
@@ -254,8 +285,8 @@ fn rust(i: &Input) -> Result<Vec<f64>> {
         6 | 7 => {
             let c = build(&k, i)?;
             let iv = Extent1d::from_min_max(i.interval[0], i.interval[1]);
-            let mut a = c.evaluate_point(iv.min())?;
-            let mut z = c.evaluate_point(iv.max())?;
+            let mut a = c.evaluate_point(&k, iv.min())?;
+            let mut z = c.evaluate_point(&k, iv.max())?;
             if i.swap {
                 core::mem::swap(&mut a, &mut z);
             }
@@ -295,7 +326,7 @@ fn rust(i: &Input) -> Result<Vec<f64>> {
             if i.op == 6 {
                 let (c, t) = sweep.edge_sweep_same(&k, &b, eid)?;
                 o.push(t);
-                curve(&mut o, &c)?;
+                curve(&k, &mut o, &c)?;
             } else {
                 let r = sweep.edge_sweep_higher(&k, &b, eid)?;
                 o.extend([
@@ -306,7 +337,7 @@ fn rust(i: &Input) -> Result<Vec<f64>> {
                     r.end_vertex_curve.map_or(0., |j| r.curve_tolerances[j]),
                 ]);
                 put(&mut o, r.start_normal);
-                surface(&mut o, &r.surface)?;
+                surface(&k, &mut o, &r.surface)?;
                 o.push(4.);
                 for j in 0..4 {
                     o.extend([
@@ -318,8 +349,8 @@ fn rust(i: &Input) -> Result<Vec<f64>> {
                         f64::from(j == r.start_vertex_curve),
                         f64::from(Some(j) == r.end_vertex_curve),
                     ]);
-                    curve(&mut o, &r.curves[j])?;
-                    curve(&mut o, &Curve::from(r.uv_curves[j].clone()))?;
+                    curve(&k, &mut o, &r.curves[j])?;
+                    curve(&k, &mut o, &Curve::from(r.uv_curves[j].clone()))?;
                 }
             }
         }
@@ -345,17 +376,16 @@ fn rust(i: &Input) -> Result<Vec<f64>> {
                     Vec3::new(0., 0., 2.),
                 )?)
             };
-            let sh = b.add_shell()?;
-            let f = b.add_face(sh)?;
-            {
-                let f = b.face_mut(f)?;
-                f.uv_domain = s.natural_uv_domain();
-                f.surface = Some(s);
-                f.tolerance = zone_tol3d(&k, i.tolerances[3]);
-            }
+            // The native fixture makes the face with `SmBrep::CreateFaceFromSurface`
+            // over the natural domain in a `new SmBrep()` (with its infinite region);
+            // a failed call's status is the outcome.
+            let mut b = new_brep(&mut k, USE_DEFAULT, USE_DEFAULT)?;
+            let domain = s.natural_uv_domain_with_nurb(&k)?;
+            let f = create_face(&mut k, &mut b, s, &domain)?;
+            b.face_mut(f)?.tolerance = zone_tol3d(&k, i.tolerances[3]);
             let (s, t) = sweep.face_sweep_same(&k, &b, f)?;
             o.push(t);
-            surface(&mut o, &s)?;
+            surface(&k, &mut o, &s)?;
         }
     }
     Ok(o)

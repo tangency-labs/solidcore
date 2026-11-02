@@ -8,7 +8,8 @@
 //! `1 dim P1[3] D1[3] P2[3] D2[3]` (an `SmHermiteCurve`), `2 3 P[3] V[3] d0 d1 scale io`
 //! (a bounded `SmLine(P, V, [d0, d1], scale, 3, ctx, NULL, io)`), `3 3 C[3] X[3] Y[3] d0 d1
 //! rx ry io` (an `SmEllipse` without source NURB) or `4 3 C[3] X[3] Y[3] d0 d1 r io` (an
-//! `SmCircle`). Every output starts with the status (`0` = `SM_SUCCESS`, else the
+//! `SmCircle`). Kind `5` is kind `0` with the given knots written back over the curve's
+//! own NURB after construction (undoing `sm_FixupKnotVector`). Every output starts with the status (`0` = `SM_SUCCESS`, else the
 //! `SmStatus`); the rest:
 //!
 //! | [`Op`]         | upstream                                       | parameters                          | outputs |
@@ -29,9 +30,13 @@
 //! | `Cci`          | `SmCCIntersectENFO::Evaluate`                  | curve curve `x0 x1 jac`             | `f[2] J[4] found size zero` (always) |
 //! | `CcTan`        | `SmCCTangentIntENFO::Evaluate`                 | curve curve `x0 x1 jac`             | `f[2] J[4] found` (always) |
 //! | `Normal`       | `SmFindCCNormalENFO::Evaluate`, repeated       | curve curve `sqtol sqdist sop nv V*nv k (x0 x1 jac)*k` | `(status f[2] J[4] found)*k` |
+//! | `EdgeCache`    | `CacheMakeOrValidate` on a wire edge's curve   | curve `tol` (3D)                    | `nspans (a b)*` |
 //!
 //! `with_old` first builds the curve's cache and passes it as the old cache. `this_first`
-//! puts the first curve in the solution's first object slot. The `Normal` op keeps one
+//! puts the first curve in the solution's first object slot. `EdgeCache` makes the curve
+//! a wire edge's (`SmBrep::CreateWireEdgeFromCurve` over its natural interval), sets the
+//! edge's tolerance to `tol` (`SetTolerance(tol, FALSE, FALSE)`) and builds the curve's
+//! `SM_OC_CURVE` cache. The `Normal` op keeps one
 //! evaluator across its calls (its iteration count and step-back state carry over).
 //!
 //! [`eval`] accepts only what upstream handles without undefined behaviour or runaway
@@ -60,6 +65,8 @@ pub const MAX_CURVES: usize = 16;
 pub const MAX_SAMPLES: usize = 401;
 /// Most evaluations of `Normal`.
 pub const MAX_CALLS: usize = 16;
+/// Largest edge tolerance of `EdgeCache`.
+pub const MAX_EDGE_TOL: f64 = 1e6;
 
 /// Shim operations.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -81,6 +88,7 @@ pub enum Op {
     Cci,
     CcTan,
     Normal,
+    EdgeCache,
 }
 
 impl Op {
@@ -104,6 +112,7 @@ impl Op {
             Op::Cci => 13,
             Op::CcTan => 14,
             Op::Normal => 15,
+            Op::EdgeCache => 16,
         }
     }
 }
@@ -208,6 +217,7 @@ fn line(rd: &mut Reader<'_>) -> Result<(f64, f64), FfiError> {
 #[derive(Debug, Clone, Copy)]
 struct CurveInfo {
     kind: usize,
+    dim: usize,
     a: f64,
     b: f64,
 }
@@ -246,7 +256,7 @@ fn radius(rd: &mut Reader<'_>) -> Result<(), FfiError> {
 
 /// A curve block (see the module docs).
 fn curve_block(rd: &mut Reader<'_>) -> Result<CurveInfo, FfiError> {
-    let kind = rd.index(4)?;
+    let kind = rd.index(5)?;
     let dim = rd.index(3)?;
     if dim < 2 {
         return Err(bad("curve block: dimension must be 2 or 3"));
@@ -254,14 +264,21 @@ fn curve_block(rd: &mut Reader<'_>) -> Result<CurveInfo, FfiError> {
     // analytic curves evaluate anywhere: only bound their parameters
     let wide = CurveInfo {
         kind,
+        dim,
         a: -MAX_COORD / 8.0,
         b: MAX_COORD / 8.0,
     };
     match kind {
-        0 => {
+        // 5: a B-spline whose raw knots are written back after construction
+        0 | 5 => {
             rd.flag()?;
             let (a, b) = bspline(rd)?;
-            Ok(CurveInfo { kind, a, b })
+            Ok(CurveInfo {
+                kind: 0,
+                dim,
+                a,
+                b,
+            })
         }
         1 => {
             for _ in 0..4 {
@@ -269,6 +286,7 @@ fn curve_block(rd: &mut Reader<'_>) -> Result<CurveInfo, FfiError> {
             }
             Ok(CurveInfo {
                 kind,
+                dim,
                 a: 0.0,
                 b: 1.0,
             })
@@ -292,6 +310,7 @@ fn curve_block(rd: &mut Reader<'_>) -> Result<CurveInfo, FfiError> {
             rd.flag()?;
             Ok(CurveInfo {
                 kind,
+                dim,
                 a: -1e3,
                 b: 1e3,
             })
@@ -458,6 +477,16 @@ fn validate_op(op: Op, rd: &mut Reader<'_>) -> Result<(), FfiError> {
                 param(rd, &c1)?;
                 param(rd, &c2)?;
                 rd.flag()?;
+            }
+        }
+        Op::EdgeCache => {
+            // an edge's curve is 3D
+            if curve_block(rd)?.dim != 3 {
+                return Err(bad("edge cache: the curve must be 3D"));
+            }
+            let tol = rd.finite()?;
+            if !(0.0..=MAX_EDGE_TOL).contains(&tol) {
+                return Err(bad("edge cache: tolerance outside [0, MAX_EDGE_TOL]"));
             }
         }
     }

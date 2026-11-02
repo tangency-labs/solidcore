@@ -16,10 +16,21 @@
 //! Rust error upstream cannot produce) and the rest as the `out` values. Solution nodes
 //! are compared as pre-order indices in their trees.
 //!
+//! `{"o", "x", "y", "scale"?, "repeat"?}` transforms (`property` `xf`) are applied on both sides
+//! (`SmAxis2Placement::SetCanonical` + `SmCurve::Transform` / `Curve::transform`) before
+//! the op; a circle with `quintic` is `SM_CO_QUINTIC`.
+//! `{"ellipse": {}}` instead constructs a genuine fixed `Ellipse` / `SmEllipse`:
+//! origin, canonical X/Y, semiaxes 3/2, angular degrees 0..180, natural NURBS 0..1.
+//!
 //! Deferred cases (unit `curve.curve_p5`): the leaf pairs that reach a Newton
 //! intersection (`LocalCurveIntersect`, through `SmCCIntersectENFO::Evaluate`) and the
 //! property solves that reach `SmCurve::LocalPropertyAnalysis` (every span the property
 //! solver does not cull).
+//!
+//! Generated circle-derived curvature-extrema cases use noncircular ellipses: a
+//! circle's constant curvature otherwise makes the number of noise-selected extrema
+//! machine-dependent. The original flat-circle case remains a full native regression
+//! outside the canonical report corpus; no solver or comparison rule is changed.
 
 use std::collections::BTreeMap;
 
@@ -30,6 +41,7 @@ use solidcore::curve::curve::p2::{CciGlobalSolver, Curve, CurvePropertyType};
 use solidcore::curve::curve::p5::make_curve_cache;
 use solidcore::curve::curve::p7::PropertyAnalysisOptions;
 use solidcore::curve::curve_cache::{CurveCache, CurveCacheOptions};
+use solidcore::curve::ellipse::{Ellipse, EllipseOptions};
 use solidcore::curve::hermite_curve::HermiteCurve;
 use solidcore::geom::axis2_placement::Axis2Placement;
 use solidcore::geom::extent1d::Extent1d;
@@ -91,6 +103,32 @@ struct CircleIn {
     radius: f64,
     a0: f64,
     a1: f64,
+    /// `SM_CO_QUINTIC` (degree 5) instead of `SM_CO_QUADRATIC`.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    quintic: bool,
+}
+
+/// Fixed genuine ellipse: origin, canonical X/Y, semiaxes 3/2, STEP degrees 0..180.
+/// Its natural NURBS interval is 0..1; there is deliberately no geometry payload.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct EllipseIn {}
+
+/// A transform applied to a curve before the op, `repeat` times
+/// (`SmAxis2Placement::SetCanonical(o, x, y)`, then `SmCurve::Transform` with `scale`).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct XformIn {
+    o: [f64; 3],
+    x: [f64; 3],
+    y: [f64; 3],
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    scale: Option<[f64; 3]>,
+    #[serde(default = "one_u64")]
+    repeat: u64,
+}
+
+fn one_u64() -> u64 {
+    1
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -99,6 +137,7 @@ enum CurveIn {
     Bspline(BSplineIn),
     Hermite(HermiteIn),
     Circle(CircleIn),
+    Ellipse(EllipseIn),
 }
 
 /// `SmCurveCache` constructor arguments.
@@ -162,6 +201,9 @@ enum OpIn {
     },
     Property {
         curve: CurveIn,
+        /// Transforms applied to `curve` first.
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        xf: Vec<XformIn>,
         ivl: [f64; 2],
         prop: i32,
         val: f64,
@@ -185,7 +227,11 @@ fn resolve(c: &CurveIn) -> Result<CurveIn, HarnessError> {
         ci.radius,
         ci.a0,
         ci.a1,
-        solidcore::nurbs::b_spline_curve::NurbCircleParam::Quadratic,
+        if ci.quintic {
+            solidcore::nurbs::b_spline_curve::NurbCircleParam::Quintic
+        } else {
+            solidcore::nurbs::b_spline_curve::NurbCircleParam::Quadratic
+        },
     )
     .map_err(|e| harness(format!("circle: {e}")))?;
     let cur = arc.gw_nurb().ok_or_else(|| harness("circle without NURB"))?;
@@ -221,6 +267,7 @@ fn curve_block(v: &mut Vec<f64>, c: &CurveIn) -> Result<(), HarnessError> {
             }
         }
         CurveIn::Circle(_) => return Err(harness("unresolved circle")),
+        CurveIn::Ellipse(_) => v.extend([3.0, 3.0]),
     }
     Ok(())
 }
@@ -270,6 +317,7 @@ fn cpp_input(op: &OpIn) -> Result<(Op, Vec<f64>), HarnessError> {
         }
         OpIn::Property {
             curve,
+            xf,
             ivl,
             prop,
             val,
@@ -278,6 +326,7 @@ fn cpp_input(op: &OpIn) -> Result<(Op, Vec<f64>), HarnessError> {
             comb,
         } => {
             curve_block(&mut v, curve)?;
+            push_xf(&mut v, xf);
             v.extend_from_slice(ivl);
             v.extend([f64::from(*prop), 1.0, *val]);
             push_vecs(&mut v, vecs);
@@ -286,6 +335,20 @@ fn cpp_input(op: &OpIn) -> Result<(Op, Vec<f64>), HarnessError> {
         }
     };
     Ok((code, v))
+}
+
+/// The transforms block `nt (O X Y has_s S)*nt` (see the ffi module docs).
+fn push_xf(v: &mut Vec<f64>, xf: &[XformIn]) {
+    v.push(xf.iter().map(|t| t.repeat).sum::<u64>() as f64);
+    for t in xf {
+        for _ in 0..t.repeat {
+            v.extend_from_slice(&t.o);
+            v.extend_from_slice(&t.x);
+            v.extend_from_slice(&t.y);
+            v.push(b(t.scale.is_some()));
+            v.extend_from_slice(&t.scale.unwrap_or([1.0; 3]));
+        }
+    }
 }
 
 fn to_output(flat: &[f64]) -> Output {
@@ -308,6 +371,18 @@ fn cpp(op: &OpIn) -> Result<Output, HarnessError> {
 
 fn v3(p: [f64; 3]) -> Vec3 {
     Vec3::from_array(p)
+}
+
+/// `c` transformed by `xf` in order (`Curve::transform`).
+fn apply_xf(k: &Kernel, c: &mut Curve, xf: &[XformIn]) -> Result<(), HarnessError> {
+    for t in xf {
+        let a2p = Axis2Placement::new(v3(t.o), v3(t.x), v3(t.y));
+        for _ in 0..t.repeat {
+            c.transform(k, &a2p, t.scale.map(v3))
+                .map_err(|e| harness(format!("transform: {e}")))?;
+        }
+    }
+    Ok(())
 }
 
 fn build(c: &CurveIn) -> Result<Curve, HarnessError> {
@@ -340,6 +415,18 @@ fn build(c: &CurveIn) -> Result<Curve, HarnessError> {
             h.dim,
         ))),
         CurveIn::Circle(_) => Err(harness("unresolved circle")),
+        CurveIn::Ellipse(_) => Ellipse::new(
+            &Kernel::default(),
+            Vec3::new(0.0, 0.0, 0.0),
+            Vec3::new(1.0, 0.0, 0.0),
+            Vec3::new(0.0, 1.0, 0.0),
+            Extent1d::from_min_max(0.0, 180.0),
+            3.0,
+            2.0,
+            &EllipseOptions::default(),
+        )
+        .map(Curve::from)
+        .map_err(|e| harness(format!("ellipse: {e}"))),
     }
 }
 
@@ -347,7 +434,7 @@ fn build(c: &CurveIn) -> Result<Curve, HarnessError> {
 /// cannot return.
 fn status(e: &SolidError) -> f64 {
     match e {
-        SolidError::InvalidInput { .. } => 1007.0,
+        SolidError::InvalidInput { .. } | SolidError::PortInvariant { .. } => 1007.0,
         SolidError::Upstream { code, .. } => f64::from(*code),
         _ => -1.0,
     }
@@ -615,6 +702,7 @@ fn rust(op: &OpIn) -> Result<Output, HarnessError> {
         OpIn::CciLocal { cci, leaf1, leaf2 } => rust_cci(cci, Some((*leaf1, *leaf2))),
         OpIn::Property {
             curve,
+            xf,
             ivl,
             prop,
             val,
@@ -623,7 +711,8 @@ fn rust(op: &OpIn) -> Result<Output, HarnessError> {
             comb,
         } => {
             let k = Kernel::default();
-            let c = build(curve)?;
+            let mut c = build(curve)?;
+            apply_xf(&k, &mut c, xf)?;
             let prop = CurvePropertyType::from_code(*prop).ok_or_else(|| harness("property"))?;
             let vs: Vec<Vec3> = vecs.iter().map(|&x| v3(x)).collect();
             let opts = PropertyAnalysisOptions {
@@ -779,17 +868,32 @@ fn gen_circle(rng: &mut Rng, closed: bool) -> CurveIn {
         } else {
             a0 + rng.uniform(30.0, 330.0)
         },
+        quintic: false,
     });
     resolve(&c).unwrap_or(c)
 }
 
 fn gen_curve(rng: &mut Rng) -> CurveIn {
+    gen_curve_with_circle_origin(rng).0
+}
+
+fn gen_curve_with_circle_origin(rng: &mut Rng) -> (CurveIn, bool) {
     let s = if rng.chance(0.7) { 3.0 } else { 30.0 };
     match rng.below(10) {
-        0 => gen_circle(rng, false),
-        1 => gen_circle(rng, true),
-        2..=6 => CurveIn::Bspline(gen_bspline(rng, s)),
-        _ => CurveIn::Hermite(gen_hermite(rng, s)),
+        0 => (gen_circle(rng, false), true),
+        1 => (gen_circle(rng, true), true),
+        2..=6 => (CurveIn::Bspline(gen_bspline(rng, s)), false),
+        _ => (CurveIn::Hermite(gen_hermite(rng, s)), false),
+    }
+}
+
+// Generated circles have their X axis along global X. Stretching homogeneous X
+// by exactly two gives a noncircular rational ellipse without new random draws.
+fn stretch_circle_x(curve: &mut CurveIn) {
+    if let CurveIn::Bspline(bs) = curve {
+        for point in &mut bs.cpts {
+            point[0] *= 2.0;
+        }
     }
 }
 
@@ -801,21 +905,21 @@ fn range_of(c: &CurveIn) -> (f64, f64) {
             bs.u.first().copied().unwrap_or(0.0),
             bs.u.last().copied().unwrap_or(1.0),
         ),
-        CurveIn::Hermite(_) => (0.0, 1.0),
+        CurveIn::Hermite(_) | CurveIn::Ellipse(_) => (0.0, 1.0),
     }
 }
 
-fn point_at(c: &CurveIn, t: f64) -> [f64; 3] {
+fn point_at(k: &Kernel, c: &CurveIn, t: f64) -> [f64; 3] {
     build(c)
         .ok()
-        .and_then(|cv| cv.evaluate_point(t).ok())
+        .and_then(|cv| cv.evaluate_point(k, t).ok())
         .map_or([0.0; 3], |p| [p.x, p.y, p.z])
 }
 
-fn tangent_at(c: &CurveIn, t: f64) -> [f64; 3] {
+fn tangent_at(k: &Kernel, c: &CurveIn, t: f64) -> [f64; 3] {
     build(c)
         .ok()
-        .and_then(|cv| cv.evaluate(t, 1, true, true).ok())
+        .and_then(|cv| cv.evaluate(k, t, 1, true, true).ok())
         .and_then(|v| v.get(1).copied())
         .map_or([1.0, 0.0, 0.0], |p| [p.x, p.y, p.z])
 }
@@ -833,11 +937,11 @@ fn gen_ivl(rng: &mut Rng, c: &CurveIn) -> [f64; 2] {
 
 /// A second curve related to `c1`: crossing it at a curve point, touching it, a copy
 /// (coincident), a nearby copy, or unrelated.
-fn gen_partner(rng: &mut Rng, c1: &CurveIn) -> CurveIn {
+fn gen_partner(k: &Kernel, rng: &mut Rng, c1: &CurveIn) -> CurveIn {
     let (a, bb) = range_of(c1);
     let t = a + (bb - a) * rng.unit();
-    let p = point_at(c1, t);
-    let tan = tangent_at(c1, t);
+    let p = point_at(k, c1, t);
+    let tan = tangent_at(k, c1, t);
     match rng.below(10) {
         // a segment crossing the curve at p (sometimes ending exactly on it)
         0..=3 => {
@@ -909,7 +1013,7 @@ fn gen_partner(rng: &mut Rng, c1: &CurveIn) -> CurveIn {
                     h.p2 = add(h.p2, off);
                     CurveIn::Hermite(h)
                 }
-                other @ CurveIn::Circle(_) => other,
+                other @ (CurveIn::Circle(_) | CurveIn::Ellipse(_)) => other,
             }
         }
         // a curve starting at a point of the first one
@@ -985,7 +1089,7 @@ fn gen_loop(rng: &mut Rng) -> CurveIn {
     })
 }
 
-fn gen_cci(rng: &mut Rng) -> CciIn {
+fn gen_cci(k: &Kernel, rng: &mut Rng) -> CciIn {
     let self_int = rng.chance(0.15);
     let c1 = if self_int && rng.chance(0.6) {
         gen_loop(rng)
@@ -995,7 +1099,7 @@ fn gen_cci(rng: &mut Rng) -> CciIn {
     let c2 = if self_int {
         None
     } else {
-        Some(gen_partner(rng, &c1))
+        Some(gen_partner(k, rng, &c1))
     };
     let cache1 = gen_cache(rng, &c1);
     let cache2 = c2.as_ref().and_then(|c| gen_cache(rng, c));
@@ -1042,12 +1146,15 @@ fn gen_cci(rng: &mut Rng) -> CciIn {
     }
 }
 
-fn gen_property(rng: &mut Rng) -> OpIn {
-    let curve = gen_curve(rng);
+fn gen_property(k: &Kernel, rng: &mut Rng) -> OpIn {
+    let (mut curve, from_circle) = gen_curve_with_circle_origin(rng);
     let prop = rng.below(29) as i32;
+    if from_circle && matches!(prop, 13 | 14) {
+        stretch_circle_x(&mut curve);
+    }
     let (a, bb) = range_of(&curve);
     let t = a + (bb - a) * rng.unit();
-    let p = point_at(&curve, t);
+    let p = point_at(k, &curve, t);
     let (val, vecs) = match prop {
         // planes: through a curve point, or far away (no span reaches it)
         15 | 16 => {
@@ -1068,6 +1175,7 @@ fn gen_property(rng: &mut Rng) -> OpIn {
     OpIn::Property {
         ivl: gen_ivl(rng, &curve),
         curve,
+        xf: Vec::new(),
         prop,
         val,
         vecs,
@@ -1108,19 +1216,22 @@ fn overlapping_leaves(rng: &mut Rng, cci: &CciIn) -> Option<(u64, u64)> {
     rng.choose(&pairs).copied()
 }
 
-fn gen_case(rng: &mut Rng) -> OpIn {
+fn gen_case(k: &Kernel, rng: &mut Rng) -> OpIn {
     match rng.below(10) {
-        0..=2 => OpIn::CciSolve { cci: gen_cci(rng) },
+        0..=2 => OpIn::CciSolve { cci: gen_cci(k, rng) },
         3..=7 => {
-            let cci = gen_cci(rng);
+            let cci = gen_cci(k, rng);
             let (leaf1, leaf2) = if rng.chance(0.8) {
-                overlapping_leaves(rng, &cci).unwrap_or((rng.below(64), rng.below(64)))
+                // (the fallback draws stay eager: they advance rng in this order)
+                let found = overlapping_leaves(rng, &cci);
+                let fallback = (rng.below(64), rng.below(64));
+                found.unwrap_or(fallback)
             } else {
                 (rng.below(64), rng.below(64))
             };
             OpIn::CciLocal { cci, leaf1, leaf2 }
         }
-        _ => gen_property(rng),
+        _ => gen_property(k, rng),
     }
 }
 
@@ -1130,8 +1241,9 @@ impl UnitDiff for Runner {
     }
 
     fn generate(&self, rng: &mut Rng) -> Option<Value> {
+        let k = &Kernel::default();
         for _ in 0..64 {
-            let op = gen_case(rng);
+            let op = gen_case(k, rng);
             let Ok((code, input)) = cpp_input(&op) else {
                 continue;
             };
@@ -1164,14 +1276,248 @@ impl UnitDiff for Runner {
 mod tests {
     use super::*;
 
+    fn real_ellipse_fixture() -> (Case, OpIn) {
+        let ctx = CaseContext { root: crate::case::repo_root(), seeds: 0 };
+        let cases = ctx.fixture_cases(Runner.id()).unwrap();
+        let mut named = cases.into_iter().filter(|c| c.name == "real_ellipse_plane_classify_upper_arc_with_comb");
+        let case = named.next().unwrap();
+        assert!(named.next().is_none());
+        assert!(matches!(&case.source, crate::case::CaseSource::Fixture { path, index: 0, .. }
+            if path == "fixtures/curve.curve_p7/analytic-plane-classification.json"));
+        let op = case.parse().unwrap();
+        (case, op)
+    }
+
+    #[test]
+    fn real_ellipse_fixture_discovery_wire_and_concrete_geometry() {
+        let (case, op) = real_ellipse_fixture();
+        let file: Value = serde_json::from_str(include_str!("../../../../fixtures/curve.curve_p7/analytic-plane-classification.json")).unwrap();
+        assert_eq!(file["cases"].as_array().unwrap().len(), 1);
+        assert_eq!(case.inputs, file["cases"][0]["inputs"]);
+        assert_eq!(case.inputs, serde_json::json!({
+            "op": "property", "curve": {"ellipse": {}}, "xf": [], "ivl": [0.0, 1.0],
+            "prop": 15, "val": -1.0, "vecs": [[0.0, 1.0, 0.0], [0.0, 0.0, 0.0], [0.0, 0.0, 0.0]],
+            "tol": 1e-6, "comb": true
+        }));
+        let (code, input) = cpp_input(&op).unwrap();
+        assert_eq!(code, Op::Property);
+        assert_eq!(input, vec![3.0, 3.0, 0.0, 0.0, 1.0, 15.0, 1.0, -1.0, 3.0,
+            0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1e-6, 1.0]);
+        ffi::validate(code, &input).unwrap();
+        assert!(serde_json::from_value::<CurveIn>(serde_json::json!({"ellipse": {"radius": 3}})).is_err());
+        let OpIn::Property { curve: leaf, .. } = op else { panic!("property fixture") };
+        assert!(matches!(resolve(&leaf).unwrap(), CurveIn::Ellipse(_)));
+        assert_eq!(range_of(&leaf), (0.0, 1.0));
+        let curve = build(&leaf).unwrap();
+        assert_eq!(curve.type_string(), "SmEllipse_TYPE");
+        let solidcore::curve::curve::CurveKind::Ellipse(e) = curve.kind() else { panic!("not a real ellipse") };
+        assert!(!e.is_circle());
+        assert_eq!((e.x_radius(), e.y_radius()), (3.0, 2.0));
+        assert!(!e.inside_out());
+        assert_eq!((e.step_interval().min(), e.step_interval().max()), (0.0, 180.0));
+        assert_eq!((curve.natural_interval().min(), curve.natural_interval().max()), (0.0, 1.0));
+        let nurb = e.base().gw_nurb().unwrap();
+        assert!(!nurb.cpts().is_empty());
+        assert!(nurb.cpts().iter().all(|p| [p.x, p.y, p.z, p.w].iter().all(|x| x.is_finite())));
+        assert!(nurb.knots().iter().all(|x| x.is_finite()));
+        for (t, expected) in [(0.0, [3.0, 0.0, 0.0]), (0.5, [0.0, 2.0, 0.0]), (1.0, [-3.0, 0.0, 0.0])] {
+            let p = curve.evaluate_point(&Kernel::default(), t).unwrap();
+            for (actual, want) in [p.x, p.y, p.z].into_iter().zip(expected) {
+                assert!((actual - want).abs() <= 1e-9);
+            }
+        }
+    }
+
+    #[test]
+    fn real_ellipse_protocol_admission_and_old_restrictions() {
+        // Validation only: these are not native CCI or transformed-ellipse witnesses.
+        let (_, op) = real_ellipse_fixture();
+        let (code, input) = cpp_input(&op).unwrap();
+        for end in 0..input.len() {
+            assert!(ffi::validate(code, &input[..end]).is_err(), "prefix {end}");
+        }
+        for (at, value) in [(0, 3.5), (0, 4.0), (0, -1.0), (0, f64::NAN), (1, 0.0), (1, 2.0), (1, 4.0), (1, 2.5)] {
+            let mut invalid = input.clone(); invalid[at] = value;
+            assert!(ffi::validate(code, &invalid).is_err());
+        }
+        let mut extra = input.clone(); extra.push(0.0);
+        assert!(ffi::validate(code, &extra).is_err());
+        let mut one_vector = input.clone();
+        one_vector[8] = 1.0; one_vector.drain(12..18);
+        assert!(ffi::validate(code, &one_vector).unwrap_err().to_string().contains("more option vectors"));
+        // Kind 2 is refused BEFORE reading its missing/invalid dimension, as before.
+        assert!(ffi::validate(Op::Property, &[2.0]).unwrap_err().to_string().contains("B-splines and Hermite"));
+        let hermite = CurveIn::Hermite(HermiteIn { dim: 3, p1: [0.0; 3], d1: [1.0, 0.0, 0.0], p2: [1.0; 3], d2: [1.0, 0.0, 0.0] });
+        let ellipse = CurveIn::Ellipse(EllipseIn {});
+        for (c1, c2) in [(ellipse.clone(), hermite.clone()), (hermite.clone(), ellipse.clone())] {
+            let cci = CciIn { c1, c2: Some(c2), cache1: None, cache2: None, ivl1: [0.0, 1.0], ivl2: [0.0, 1.0], sop: 0, tol: 1e-6, proj: false, ptype: 0, vecs: vec![] };
+            for candidate in [OpIn::CciSolve { cci: cci.clone() }, OpIn::CciLocal { cci, leaf1: 0, leaf2: 0 }] {
+                let (code, input) = cpp_input(&candidate).unwrap(); ffi::validate(code, &input).unwrap();
+            }
+        }
+        let mut transformed = op.clone();
+        let OpIn::Property { xf, .. } = &mut transformed else { panic!("property") };
+        xf.push(XformIn { o: [0.0; 3], x: [1.0, 0.0, 0.0], y: [0.0, 1.0, 0.0], scale: Some([1.0; 3]), repeat: 1 });
+        let (code, input) = cpp_input(&transformed).unwrap(); ffi::validate(code, &input).unwrap();
+        for (at, value) in [(2, 17.0), (3, ffi::MAX_COORD), (13, 0.0), (13, 2.0)] {
+            let mut invalid = input.clone(); invalid[at] = value;
+            assert!(ffi::validate(code, &invalid).is_err());
+        }
+        let OpIn::Property { curve, xf, .. } = &transformed else { panic!("property") };
+        apply_xf(&Kernel::default(), &mut build(curve).unwrap(), xf).unwrap();
+        let mut excessive = transformed.clone();
+        let OpIn::Property { xf, .. } = &mut excessive else { panic!("property") }; xf[0].repeat = 17;
+        let (code, input) = cpp_input(&excessive).unwrap(); assert!(ffi::validate(code, &input).is_err());
+        let OpIn::Property { curve, .. } = &mut transformed else { panic!("property") }; *curve = hermite;
+        let (code, input) = cpp_input(&transformed).unwrap();
+        assert!(ffi::validate(code, &input).unwrap_err().to_string().contains("transforms apply to B-splines only"));
+    }
+
+    #[cfg(feature = "cpp")]
+    fn assert_real_ellipse_output(out: &Output, curve: &Curve) {
+        assert!(out.error.is_none() && out.rejected.is_none() && out.deferred.is_none(), "{out:?}");
+        assert_eq!(out.ints["status"], [0]);
+        let v = &out.values["out"];
+        assert_eq!(v.len(), 916);
+        assert!(v.iter().all(|x| x.is_finite()));
+        assert_eq!(&v[..9], &[1.0, 2.0, 0.0, 0.0, -1.0, -1.0, -1.0, -1.0, 0.0]);
+        assert_eq!((v[10], v[11], v[13]), (0.0, 0.0, 0.0));
+        assert_eq!((v[14], v[465]), (150.0, 150.0));
+        assert!(0.0 < v[9] && v[9] < v[12] && v[12] < 1.0);
+        let k = Kernel::default();
+        for (t, expected_t, sign) in [(v[9], 0.1705406887010544, 1.0), (v[12], 0.8294593112989456, -1.0)] {
+            assert!((t - expected_t).abs() <= 1e-9 * expected_t);
+            let p = curve.evaluate_point(&k, t).unwrap();
+            assert!((p.y - 1.0).abs() <= 1e-6); // Fixture solver residual, NOT a comparator floor.
+            let expected_x = sign * 3.0 * 3.0_f64.sqrt() / 2.0;
+            assert!((p.x - expected_x).abs() <= 1e-9 * expected_x.abs());
+            assert_eq!(p.z, 0.0);
+        }
+        let middle = curve.evaluate_point(&k, (v[9] + v[12]) / 2.0).unwrap();
+        assert!(middle.x.abs() <= 1e-9 && (middle.y - 2.0).abs() <= 2e-9);
+        assert_eq!(middle.z, 0.0);
+        let mut positive = false; let mut negative = false;
+        for i in 0..150 {
+            let p = &v[15 + 3*i..18 + 3*i];
+            let tine = &v[466 + 3*i..469 + 3*i];
+            let expected = curve.evaluate_point(&k, i as f64 / 150.0).unwrap();
+            for (actual, want) in p.iter().zip([expected.x, expected.y, expected.z]) {
+                assert!((actual - want).abs() <= 1e-9);
+            }
+            assert_eq!(p[2], 0.0);
+            assert!(p[1] >= 0.0);
+            assert!((p[0]*p[0]/9.0 + p[1]*p[1]/4.0 - 1.0).abs() <= 1e-9);
+            assert!(((p[0]*p[0]/9.0 + p[1]*p[1]/4.0).sqrt() - 1.0).abs() <= 1e-9);
+            assert_eq!((tine[0], tine[2]), (0.0, 0.0));
+            assert!((tine[1] - (1.0 - p[1])).abs() <= 1e-9);
+            positive |= tine[1] > 0.0; negative |= tine[1] < 0.0;
+        }
+        assert!(positive && negative);
+        assert!(v[240].abs() <= 1e-9 && (v[241] - 2.0).abs() <= 2e-9);
+        assert!((v[692] + 1.0).abs() <= 1e-9);
+    }
+
+    #[test]
+    #[cfg(feature = "cpp")]
+    fn real_ellipse_plane_classify_full_native_geometry_and_comb_sensitivity() {
+        let (case, op) = real_ellipse_fixture();
+        let native = Runner.run_cpp(&case).unwrap();
+        let port = Runner.run_rust(&case).unwrap();
+        let OpIn::Property { curve, .. } = op else { panic!("property") };
+        let curve = build(&curve).unwrap();
+        for out in [&native, &port] { assert_real_ellipse_output(out, &curve); }
+        assert!(Runner.abs_floors().is_empty());
+        let comparison = crate::compare(&native, &port, Runner.abs_floors());
+        assert!(comparison.pass(), "{comparison:?}");
+        assert_eq!(comparison.values_compared, 916);
+        let mut perturbed = port.clone();
+        perturbed.values.get_mut("out").unwrap()[692] += 1e-3;
+        for (i, (before, after)) in port.values["out"].iter().zip(&perturbed.values["out"]).enumerate() {
+            if i != 692 { assert_eq!(before, after); }
+        }
+        assert_eq!(perturbed.ints, port.ints);
+        assert!(!crate::compare(&native, &perturbed, Runner.abs_floors()).pass());
+    }
+
+    // Compare the complete ordered native result, including its solution count.
+    // Constant-curvature circles intentionally have no frozen extrema count.
+    fn assert_native_parity(op: &OpIn) -> (usize, f64) {
+        let native = cpp(op).unwrap();
+        let port = rust(op).unwrap();
+        for out in [&native, &port] {
+            assert!(out.error.is_none(), "{out:?}");
+            assert!(out.deferred.is_none(), "{out:?}");
+            assert!(out.rejected.is_none(), "{out:?}");
+            assert_eq!(out.ints.get("status"), Some(&vec![0]));
+            assert!(!out.values["out"].is_empty());
+        }
+        let comparison = crate::compare(&native, &port, &[]);
+        assert!(comparison.pass(), "{comparison:?}");
+        assert!(comparison.values_compared > 0);
+        (comparison.values_compared, native.values["out"][0])
+    }
+
+    #[test]
+    fn flat_circle_original_gen1409_retains_full_native_parity() {
+        let op: OpIn = serde_json::from_str(include_str!("../../tests/data/curve_p7_flat_circle.json")).unwrap();
+        assert!(assert_native_parity(&op).1 > 0.0);
+    }
+
+    #[test]
+    fn generated_ellipse_extrema_have_stable_report_shapes() {
+        // Frozen after replacing the seven circle-derived extrema inputs. CI on
+        // Linux must reproduce these macOS shapes AND compare every native value.
+        // No case may become rejected, deferred or error-only.
+        for (index, prop, expected_values) in [
+            (191, 14, 942), (510, 14, 981), (1409, 13, 929),
+            (1526, 13, 16), (1682, 13, 955), (2276, 14, 916), (2526, 14, 16),
+        ] {
+            let seed = CaseContext::seed_for("curve.curve_p7", index);
+            let input = Runner.generate(&mut Rng::new(seed)).unwrap();
+            let op: OpIn = serde_json::from_value(input).unwrap();
+            assert!(matches!(&op, OpIn::Property { prop: actual, .. } if *actual == prop));
+            assert_eq!(assert_native_parity(&op).0, expected_values, "gen{index:04}, seed {seed}");
+        }
+    }
+
+    #[test]
+    fn stretched_circle_has_known_nonconstant_curvature_and_native_extrema() {
+        // Semiaxes 4 and 2: rho_min = b*b/a = 1, rho_max = a*a/b = 8.
+        let circle = CurveIn::Circle(CircleIn {
+            center: [0.0; 3], x: [1.0, 0.0, 0.0], y: [0.0, 1.0, 0.0],
+            radius: 2.0, a0: 0.0, a1: 360.0, quintic: false,
+        });
+        let mut ellipse = resolve(&circle).unwrap();
+        stretch_circle_x(&mut ellipse);
+        let curve = build(&ellipse).unwrap();
+        let (a, b) = range_of(&ellipse);
+        for (fraction, expected) in [(0.0, 1.0), (0.25, 8.0), (0.5, 1.0), (0.75, 8.0)] {
+            let derivatives = curve.evaluate(&Kernel::default(), a + fraction * (b - a), 2, true, false).unwrap();
+            let speed = derivatives[1].length();
+            let radius = speed * speed * speed / derivatives[1].cross(derivatives[2]).length();
+            assert!((radius - expected).abs() <= 1e-9 * expected, "{radius} != {expected}");
+        }
+        for prop in [13, 14] {
+            let (_, solutions) = assert_native_parity(&OpIn::Property {
+                curve: ellipse.clone(), xf: Vec::new(), ivl: [a, b], prop, val: 0.0,
+                vecs: vec![[0.0; 3]; 3], tol: 1e-6, comb: true,
+            });
+            assert!(solutions > 0.0);
+        }
+    }
+
     /// Generated cases cover every op, with passing (not deferred) cases.
     #[test]
     fn generated_cases_are_diverse() {
+        let k = &Kernel::default();
         let mut rng = Rng::new(7);
         let mut stats: BTreeMap<String, [usize; 4]> = BTreeMap::new();
         for _ in 0..600 {
-            let op = gen_case(&mut rng);
-            let name = serde_json::to_value(&op).unwrap()["op"].as_str().unwrap().to_string();
+            let op = gen_case(k, &mut rng);
+            let name = serde_json::to_value(&op).unwrap()["op"]
+                .as_str()
+                .unwrap()
+                .to_string();
             let out = rust(&op);
             let e = stats.entry(name).or_default();
             e[0] += 1;
@@ -1183,9 +1529,11 @@ mod tests {
             }
         }
         for (k, v) in &stats {
-            eprintln!("{k}: total {} ok {} err {} deferred/harness {}", v[0], v[1], v[2], v[3]);
+            eprintln!(
+                "{k}: total {} ok {} err {} deferred/harness {}",
+                v[0], v[1], v[2], v[3]
+            );
         }
         assert_eq!(stats.len(), 3);
     }
 }
-

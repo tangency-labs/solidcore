@@ -415,6 +415,14 @@ pub fn run_child(args: &[String]) -> ExitCode {
             .location()
             .map(|l| format!(" at {}:{}", l.file(), l.line()))
             .unwrap_or_default();
+        // `DIFFTEST_FUZZ_BACKTRACE=1`: also print the panic's backtrace to stderr, to
+        // locate a panic inside the library (e.g. `capacity overflow` in `alloc`).
+        if std::env::var_os("DIFFTEST_FUZZ_BACKTRACE").is_some() {
+            eprintln!(
+                "panic: {msg}{at}\n{}",
+                std::backtrace::Backtrace::force_capture()
+            );
+        }
         *LAST_PANIC.lock().unwrap_or_else(PoisonError::into_inner) = format!("{msg}{at}");
     }));
     for (i, c) in cases.iter().enumerate() {
@@ -430,6 +438,17 @@ pub fn run_child(args: &[String]) -> ExitCode {
         };
         println!("{MARK}start {i} cpp");
         let cpp = call(|| unit.run_cpp(&case));
+        // `DIFFTEST_FUZZ_TRACE=1`: report the C++ side's outcome before the Rust side runs,
+        // so a Rust hang or abort can be told apart from a guard-rejected input.
+        if std::env::var_os("DIFFTEST_FUZZ_TRACE").is_some() {
+            let what = match &cpp {
+                Side::Done(o) if o.rejected.is_some() => "rejected-fixture".to_string(),
+                Side::Done(_) => "done".to_string(),
+                Side::Harness(m) => format!("harness-error {}", one_line(m)),
+                Side::Panic(m) => format!("panic {}", one_line(m)),
+            };
+            eprintln!("@cpp {i} {what}");
+        }
         let rust = if matches!(&cpp, Side::Done(c) if c.rejected.is_some()) {
             // Rust never runs on a fixture the C++ constructor refused.
             Side::Harness(String::new())
@@ -616,6 +635,8 @@ pub struct FuzzResult {
     pub notes: Vec<Failure>,
     /// Failure to build or run the cases.
     pub harness_error: Option<String>,
+    /// Reason the native reference is unsupported; no mutations or workers ran.
+    pub skipped_platform: Option<String>,
 }
 
 impl FuzzResult {
@@ -624,15 +645,21 @@ impl FuzzResult {
         self.verdicts.iter().filter(|&&x| x == v).count()
     }
 
-    /// No failure and no harness error.
+    /// At least one verdict, no failure, no harness error and no platform skip.
     pub fn pass(&self) -> bool {
-        self.harness_error.is_none() && self.failures.is_empty() && !self.verdicts.is_empty()
+        self.skipped_platform.is_none()
+            && self.harness_error.is_none()
+            && self.failures.is_empty()
+            && !self.verdicts.is_empty()
     }
 }
 
 /// One-line summary, e.g. `FUZZ-PASS harness.selftest cases=300 rejected=81 malformed=40
 /// ran=179 differs=2 crashes=0 panics=0 timeouts=0` (`ran` includes `differs`).
 pub fn summary_line(r: &FuzzResult) -> String {
+    if let Some(reason) = &r.skipped_platform {
+        return format!("FUZZ-SKIP {} skipped(platform): {reason}", r.unit);
+    }
     let mut s = format!(
         "{} {} cases={} rejected={} malformed={} ran={} differs={} crashes={} panics={} timeouts={}",
         if r.pass() { "FUZZ-PASS" } else { "FUZZ-FAIL" },
@@ -713,8 +740,15 @@ fn clear_old(dir: &Path) {
 pub fn run_fuzz(unit: &dyn UnitDiff, ctx: &CaseContext, opts: &FuzzOptions) -> FuzzResult {
     let mut res = FuzzResult {
         unit: unit.id().to_string(),
+        skipped_platform: unit
+            .reference_platform()
+            .and_then(|p| p.skip_reason(std::env::consts::ARCH))
+            .map(str::to_string),
         ..FuzzResult::default()
     };
+    if res.skipped_platform.is_some() {
+        return res;
+    }
     if let Err(e) = fuzz_unit(unit, ctx, opts, &mut res) {
         res.harness_error = Some(e.0);
     }

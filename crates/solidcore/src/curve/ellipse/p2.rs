@@ -37,6 +37,7 @@
 //! | [`Ellipse::step_interval`], [`Ellipse::set_step_interval`], [`Ellipse::degree`] | `GetSTEPInterval`, `SetSTEPInterval`, `GetDegree` (inline) |
 //! | [`Ellipse::start_angle_deg`], [`Ellipse::end_angle_deg`], [`Ellipse::position`] | `GetStartAngleDeg`, `GetEndAngleDeg`, `GetPosition` (inline) |
 //! | [`Ellipse::x_radius`], [`Ellipse::y_radius`], [`Ellipse::inside_out`] | `GetXRadius`, `GetYRadius`, `GetInsideOut` (inline) |
+//! | [`Ellipse::set_out_of_bounds_enabled`]             | inherited `SmBSplineCurve::SetOutOfBoundsEnabled` |
 //! | [`Ellipse::is_analytic`], [`Ellipse::is_domain_boundary`] | `IsAnalytic`, `IsDomainBoundary` (inline)  |
 //! | [`MAX_PERIOD_SHIFTS`]                             | no counterpart (loop bound)                      |
 //!
@@ -65,7 +66,11 @@
 //!   STEP interval are bounded: where upstream would loop forever (a shift that no
 //!   longer changes the midpoint, from STEP angles beyond about 2^61 (~2.3e18) degrees) or for more
 //!   than [`MAX_PERIOD_SHIFTS`] shifts, the set-up returns
-//!   [`SolidError::NotConverged`] with the converter left impossible.
+//!   [`SolidError::NotConverged`] with the converter left impossible and the saved
+//!   STEP interval restored, so the temporary full-circle domain does not leak.
+//!   With the opt-in `Kernel::fixes.ellipse_open_arc_keeps_end_angle` (WR-719, the
+//!   fork's cbeb14b) an open arc's end angles are its ends' own polar angles rather than
+//!   `STEPInversion`'s, whose seam rule turns an end just short of 360 into 0.
 //! - **Notifications.** `SmBSplineCurve::SetFromGwNurb` and `Transform` send
 //!   `SM_NO_POST_EDIT`, whose `SmEllipse::Notify` override rebuilds the polar
 //!   converter (status ignored); the port calls [`Ellipse::set_up_polar_conversion`]
@@ -99,6 +104,7 @@
 use crate::curve::curve::p1::GlobalPointSolveOptions;
 use crate::curve::curve::p2::{self as curve_base, CIRCLE_TYPE, ELLIPSE_TYPE};
 use crate::curve::curve::p3::local_curve_solve;
+use crate::curve::curve::p4::is_closed_base;
 use crate::curve::line::{CurveLocationType, Line};
 use crate::error::{ignore_status, Result, SolidError};
 use crate::geom::assert_array::labels::POLAR_CONVERSION_TYPE;
@@ -117,7 +123,8 @@ use crate::geom::tol::{
 use crate::geom::vector3d::{Point3, Vec3};
 use crate::kernel::Kernel;
 use crate::math::{
-    max2, min2, BIG_DOUBLE, EFF_ZERO, EFF_ZERO_DEG, EFF_ZERO_SQ, EFF_ZERO_SQRT, PI, TWO_PI,
+    max2, min2, rad_to_deg, BIG_DOUBLE, EFF_ZERO, EFF_ZERO_DEG, EFF_ZERO_SQ, EFF_ZERO_SQRT, PI,
+    TWO_PI,
 };
 use crate::nurbs::b_spline_curve::{BSplineCurve, BSplineCurveForm};
 use crate::nurbs::b_spline_surface::p1::SurfParamType;
@@ -139,10 +146,12 @@ const SINE_10DEG: f64 = 0.173_648_177_666_930_35;
 
 /// An index into a table that upstream reads unchecked.
 fn table(v: &[f64], i: usize, operation: &'static str) -> Result<f64> {
-    v.get(i).copied().ok_or(SolidError::invalid_input(
-        operation,
-        "polar conversion table is shorter than its knot list",
-    ))
+    v.get(i).copied().ok_or_else(|| {
+        SolidError::invalid_input(
+            operation,
+            "polar conversion table is shorter than its knot list",
+        )
+    })
 }
 
 // ---- back-edges -----------------------------------------------------------------------
@@ -151,6 +160,7 @@ fn table(v: &[f64], i: usize, operation: &'static str) -> Result<f64> {
 /// &Point, bFoundAnswer, sSolution)` of `curve`: whether an answer was found and its
 /// parameter.
 fn local_point_inversion(
+    k: &Kernel,
     curve: &Ellipse,
     interval: &Extent1d,
     guess: f64,
@@ -159,6 +169,7 @@ fn local_point_inversion(
     // (the ellipse evaluates through its NURB)
     let mut solution: Solution<()> = Solution::new();
     let found = crate::curve::curve::p5::local_property_analysis(
+        k,
         curve.base(),
         interval,
         curve_base::CurvePropertyType::PointInversion,
@@ -243,6 +254,7 @@ fn line_global_point_solve<O: Copy>(
 /// &dDist, NULL, dGuess0, dGuess1, bFoundAnswer, sSol)` of `curve` with the ellipse
 /// `other`: whether an answer was found and the solution.
 fn local_curve_solve_ellipse<O: Copy>(
+    k: &Kernel,
     curve: &Ellipse,
     interval: &Extent1d,
     other: &Ellipse,
@@ -253,6 +265,7 @@ fn local_curve_solve_ellipse<O: Copy>(
 ) -> Result<(bool, Solution<O>)> {
     // (the ellipses evaluate through their B-spline base)
     local_curve_solve(
+        k,
         &curve.base,
         interval,
         &other.base,
@@ -268,6 +281,7 @@ fn local_curve_solve_ellipse<O: Copy>(
 
 /// [`local_curve_solve_ellipse`] with the line `other`.
 fn local_curve_solve_line<O: Copy>(
+    k: &Kernel,
     curve: &Ellipse,
     interval: &Extent1d,
     other: &Line,
@@ -279,6 +293,7 @@ fn local_curve_solve_line<O: Copy>(
     // (the line evaluates through the curve dispatch, as its virtual Evaluate)
     let other = curve_base::Curve::from(other.clone());
     local_curve_solve(
+        k,
         &curve.base,
         interval,
         &other,
@@ -561,12 +576,13 @@ impl PolarConversion {
     /// evaluations and of the point inversion (`SmCurve::LocalPropertyAnalysis`).
     pub fn convert_to_nurbs_parameter(
         &self,
+        k: &Kernel,
         curve: &Ellipse,
         polar_param_deg: f64,
         zone_tol: f64,
     ) -> Result<(f64, bool)> {
         let mut written = None;
-        self.convert_to_nurbs_parameter_into(curve, polar_param_deg, zone_tol, &mut written)
+        self.convert_to_nurbs_parameter_into(k, curve, polar_param_deg, zone_tol, &mut written)
     }
 
     /// [`Self::convert_to_nurbs_parameter`] for a caller that ignores its status: the
@@ -579,14 +595,21 @@ impl PolarConversion {
     /// [`SolidError::Unported`] only.
     pub fn convert_to_nurbs_parameter_or_written(
         &self,
+        k: &Kernel,
         curve: &Ellipse,
         polar_param_deg: f64,
         zone_tol: f64,
     ) -> Result<Option<f64>> {
         let mut written = None;
-        match self.convert_to_nurbs_parameter_into(curve, polar_param_deg, zone_tol, &mut written) {
+        match self.convert_to_nurbs_parameter_into(
+            k,
+            curve,
+            polar_param_deg,
+            zone_tol,
+            &mut written,
+        ) {
             Ok((t, _)) => Ok(Some(t)),
-            Err(e) if e.is_unported() => Err(e),
+            Err(e) if e.is_unported_or_cancelled() => Err(e),
             Err(_) => Ok(written),
         }
     }
@@ -595,6 +618,7 @@ impl PolarConversion {
     /// writes to the out-parameter `rdNurbsParameter`.
     fn convert_to_nurbs_parameter_into(
         &self,
+        k: &Kernel,
         curve: &Ellipse,
         polar_param_deg: f64,
         _zone_tol: f64,
@@ -695,6 +719,7 @@ impl PolarConversion {
         } else {
             // Find closest point on Curve to GuessPoint
             let (found, param) = local_point_inversion(
+                k,
                 curve,
                 &curve.base.natural_interval(),
                 nurbs_guess,
@@ -803,6 +828,20 @@ pub struct Ellipse {
 }
 
 impl Ellipse {
+    /// Exact evaluation copy without the B-spline copy constructor's knot fix-up.
+    pub(crate) fn clone_exact_bounded(&self) -> Self {
+        Self {
+            base: self.base.clone_exact(),
+            position: self.position,
+            anal_domain: self.anal_domain,
+            radius_x: self.radius_x,
+            radius_y: self.radius_y,
+            polar: self.polar.clone(),
+            inside_out: self.inside_out,
+            circle: self.circle,
+        }
+    }
+
     /// `SmEllipse_TYPE` (`CURV_BASE_TYPE + 22`).
     pub const TYPE: i64 = ELLIPSE_TYPE;
 
@@ -901,6 +940,12 @@ impl Ellipse {
     #[must_use]
     pub const fn base(&self) -> &BSplineCurve {
         &self.base
+    }
+
+    /// Enables evaluation beyond the natural interval, without changing the NURB
+    /// or STEP domain (inherited `SmBSplineCurve::SetOutOfBoundsEnabled`).
+    pub fn set_out_of_bounds_enabled(&mut self, enabled: bool) {
+        self.base.set_out_of_bounds_enabled(enabled);
     }
 
     /// The `SmBSplineCurve` base object, mutable (for the base-class edits).
@@ -1141,10 +1186,10 @@ impl Ellipse {
     /// # Errors
     ///
     /// As [`PolarConversion::convert_to_nurbs_parameter`].
-    pub fn convert_t_from_step_to_nurbs(&self, step_param: f64) -> Result<f64> {
+    pub fn convert_t_from_step_to_nurbs(&self, k: &Kernel, step_param: f64) -> Result<f64> {
         Ok(self
             .polar
-            .convert_to_nurbs_parameter(self, step_param, 0.0)?
+            .convert_to_nurbs_parameter(k, self, step_param, 0.0)?
             .0)
     }
 
@@ -1379,6 +1424,7 @@ impl Ellipse {
     /// errors of the conversions and evaluations.
     pub fn drop_point_fast<O: Copy>(
         &self,
+        k: &Kernel,
         interval: &Extent1d,
         operation: SolverOperation,
         test_point: Point3,
@@ -1463,9 +1509,9 @@ impl Ellipse {
             };
 
             // convert angle to curve parameter value
-            let (mut t, exact) = self
-                .polar
-                .convert_to_nurbs_parameter(self, clamped_angle, tol)?;
+            let (mut t, exact) =
+                self.polar
+                    .convert_to_nurbs_parameter(k, self, clamped_angle, tol)?;
 
             // clamp parameter to given Nurb interval - which may be a subset of the full curve interval
             t = interval.clamp_value(t);
@@ -1475,7 +1521,7 @@ impl Ellipse {
                 let pnt = self.step_point(clamped_angle);
 
                 // refine parameter value with NewtonRaphson iteration
-                let (found, refined) = local_point_inversion(self, interval, t, pnt)?;
+                let (found, refined) = local_point_inversion(k, self, interval, t, pnt)?;
                 if found {
                     t = refined;
                 }
@@ -1697,6 +1743,7 @@ impl Ellipse {
                     // far enough to need refinement
                     {
                         let (_found, sol2): (bool, Solution<O>) = local_curve_solve_ellipse(
+                            k,
                             self,
                             interval,
                             other,
@@ -1844,7 +1891,9 @@ impl Ellipse {
             let solutions2: Vec<Solution<O>> =
                 match line_global_point_solve(line, other_interval, *ip, tol * 10.0) {
                     Ok(s) => s,
-                    Err(e @ SolidError::Unported { .. }) => return Err(e),
+                    Err(e @ (SolidError::Unported { .. } | SolidError::Cancelled { .. })) => {
+                        return Err(e)
+                    }
                     Err(_) => return Ok(out),
                 };
 
@@ -1855,7 +1904,9 @@ impl Ellipse {
             let solutions1: Vec<Solution<O>> =
                 match ellipse_global_point_solve(k, self, interval, *ip, tol * 10.0) {
                     Ok(s) => s,
-                    Err(e @ SolidError::Unported { .. }) => return Err(e),
+                    Err(e @ (SolidError::Unported { .. } | SolidError::Cancelled { .. })) => {
+                        return Err(e)
+                    }
                     Err(_) => return Ok(out),
                 };
 
@@ -1878,6 +1929,7 @@ impl Ellipse {
                     // far enough to need refinement
                     {
                         let (found, sol2): (bool, Solution<O>) = local_curve_solve_line(
+                            k,
                             self,
                             interval,
                             line,
@@ -2044,10 +2096,34 @@ pub(crate) fn set_up_polar_conversion(
 
         // Get Polar angle about ZAxis from XAxis in degrees.
         let pnt1 = e.base.evaluate_point(lowest_angle_param)?;
-        let (mut lowest_deg, _) = e.step_inversion(k, pnt1, false, 0.0);
-
         let pnt2 = e.base.evaluate_point(highest_angle_param)?;
-        let (mut highest_deg, _) = e.step_inversion(k, pnt2, false, 0.0);
+
+        // With the opt-in fix (WR-719, the fork's cbeb14b): STEPInversion() on the full
+        // circle set above takes a point at its seam's end (360, to its zone tolerance /
+        // 100 and 1e-4 deg) as the seam's start (0): right for a closed curve, whose end
+        // is its start, but an open arc ending that near the seam (an ellipse trimmed
+        // 1.2e-6 deg short of 360) had its end angle made 360, its analytic domain then
+        // disagreeing with its NURB by the gap. An open arc's ends are their own polar
+        // angles, as STEPInversion() computes them before that rule.
+        let (mut lowest_deg, mut highest_deg);
+        if !k.fixes.ellipse_open_arc_keeps_end_angle
+            || is_closed_base(k, &e.base, &e.base.natural_interval(), 0.0)?
+        {
+            lowest_deg = e.step_inversion(k, pnt1, false, 0.0).0;
+            highest_deg = e.step_inversion(k, pnt2, false, 0.0).0;
+        } else {
+            let own_angle = |pnt: Point3| {
+                let vec = pnt - e.position.origin();
+                let mut angle = (e.radius_x / e.radius_y * vec.dot(e.position.y_axis()))
+                    .atan2(vec.dot(e.position.x_axis()));
+                if angle < 0.0 {
+                    angle += TWO_PI;
+                }
+                rad_to_deg(angle)
+            };
+            lowest_deg = own_angle(pnt1);
+            highest_deg = own_angle(pnt2);
+        }
 
         // STEPInversion will snap dHighestDeg to Min param according to tolerance.
         // Only account for noise here. [B630]
@@ -2070,6 +2146,7 @@ pub(crate) fn set_up_polar_conversion(
             let next_mid = this_mid - 360.0;
             shifts += 1;
             if next_mid == this_mid || shifts > MAX_PERIOD_SHIFTS {
+                e.set_step_interval(anal_ivl);
                 return Err(stuck());
             }
             lowest_deg -= 360.0;
@@ -2080,6 +2157,7 @@ pub(crate) fn set_up_polar_conversion(
             let next_mid = this_mid + 360.0;
             shifts += 1;
             if next_mid == this_mid || shifts > MAX_PERIOD_SHIFTS {
+                e.set_step_interval(anal_ivl);
                 return Err(stuck());
             }
             lowest_deg += 360.0;
@@ -2258,7 +2336,7 @@ mod tests {
         for io in [false, true] {
             let c = circle(&k, -30.0, 200.0, 1.5, io);
             for a in [-30.0, 0.0, 45.0, 90.0, 133.3, 200.0] {
-                let t = c.convert_t_from_step_to_nurbs(a).expect("convert");
+                let t = c.convert_t_from_step_to_nurbs(&k, a).expect("convert");
                 let p = c.base().evaluate_point(t).expect("eval");
                 let q = c.evaluate_step_point(a).expect("step");
                 assert!(p.distance(q) < 1e-9, "{a} {io}: {p:?} {q:?}");
@@ -2300,13 +2378,23 @@ mod tests {
             assert!(e.polar.is_polar_conversion_possible());
         }
         // Upstream never ends: adding a turn no longer changes the midpoint.
-        let mut e = arc(9.223_372_036_854_776e18);
-        let err = e.set_up_polar_conversion(&k).unwrap_err();
-        assert!(matches!(err, SolidError::NotConverged { .. }), "{err:?}");
-        assert!(!e.polar.is_polar_conversion_possible());
         // Representable shifts beyond the bound stop as well.
-        let mut e = arc(1e12);
-        assert!(e.set_up_polar_conversion(&k).is_err());
+        for start in [
+            9.223_372_036_854_776e18,
+            -9.223_372_036_854_776e18,
+            1e12,
+            -1e12,
+        ] {
+            let mut e = arc(start);
+            let original = e.step_interval();
+            for _ in 0..2 {
+                let err = e.set_up_polar_conversion(&k).unwrap_err();
+                assert!(matches!(err, SolidError::NotConverged { .. }), "{err:?}");
+                assert!(!e.polar.is_polar_conversion_possible());
+                assert_eq!(e.step_interval().min(), original.min());
+                assert_eq!(e.step_interval().max(), original.max());
+            }
+        }
     }
 
     #[test]
@@ -2360,6 +2448,7 @@ mod tests {
         let p = Vec3::new(1.0, 2.0, 3.0) + Vec3::new(0.0, 5.0, 1.0);
         let sols = c
             .drop_point_fast::<i64>(
+                &k,
                 &ivl,
                 SolverOperation::Minimize,
                 p,
@@ -2379,6 +2468,7 @@ mod tests {
         // a point on the axis gives both ends
         let sols = c
             .drop_point_fast::<i64>(
+                &k,
                 &ivl,
                 SolverOperation::Minimize,
                 Vec3::new(1.0, 2.0, 9.0),
@@ -2405,6 +2495,7 @@ mod tests {
         .expect("ellipse");
         assert!(e
             .drop_point_fast::<i64>(
+                &k,
                 &ivl,
                 SolverOperation::Minimize,
                 p,
@@ -2502,5 +2593,21 @@ mod tests {
         assert_eq!(c.class_string(), "SmEllipse");
         assert_eq!(c.is_domain_boundary(), SurfParamType::Neither);
         assert!(c.approx_eq(&c.clone()));
+    }
+
+    #[test]
+    fn out_of_bounds_flag_controls_evaluation_without_editing_geometry() {
+        let k = kernel();
+        let mut c = circle(&k, 15.0, 225.0, 2.0, false);
+        let nurb = c.base().gw_nurb().unwrap().clone();
+        let interval = c.step_interval();
+        let clamped = c.base().evaluate_point(-0.1).unwrap();
+        c.set_out_of_bounds_enabled(true);
+        let extended = c.base().evaluate_point(-0.1).unwrap();
+        assert_ne!(clamped, extended);
+        assert_eq!(c.base().gw_nurb(), Some(&nurb));
+        assert_eq!(c.step_interval(), interval);
+        c.set_out_of_bounds_enabled(false);
+        assert_eq!(c.base().evaluate_point(-0.1).unwrap(), clamped);
     }
 }

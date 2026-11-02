@@ -3,7 +3,8 @@
 //! STEP/NURB conversions, STEP evaluation, the normal, iso curves,
 //! `RebuildSTEPFromNURBParameters`, `Transform`, `IsClosed*`, `STEPInversion`,
 //! `CreateTrimmedCircleSegments`, the intersections with planes, spheres and cones,
-//! `GlobalSurfaceIntersect` and `IsNurbSurfaceSphere`).
+//! `GlobalSurfaceIntersect`, `IsNurbSurfaceSphere`, and the inherited
+//! `SmSurfOfRevolution::TrimWithDomain`).
 //!
 //! C++: `solidcore_ffi::units::surface_sphere` (upstream `source/SMLib/src/SmSphere.cpp`).
 //! Rust: `solidcore::surface::sphere`.
@@ -222,6 +223,9 @@ enum OpIn {
         #[serde(default)]
         perturb: Vec<PerturbIn>,
     },
+    TrimDomain {
+        dom: [f64; 4],
+    },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -393,6 +397,7 @@ fn cpp(i: &Inputs) -> Result<Output, HarnessError> {
                 })
                 .collect(),
         },
+        OpIn::TrimDomain { dom } => ffi::Op::TrimDomain { dom: *dom },
     };
     let flat = ffi::sphere_op(&ffi_sphere(&i.sphere), &op).map_err(|e| harness(e.to_string()))?;
     to_output(i, &flat)
@@ -445,7 +450,7 @@ fn push_v(o: &mut Vec<f64>, v: Vec3) {
 fn status(e: &SolidError) -> f64 {
     match e {
         SolidError::Upstream { code, .. } => f64::from(*code),
-        SolidError::InvalidInput { .. } => 1007.0,
+        SolidError::InvalidInput { .. } | SolidError::PortInvariant { .. } => 1007.0,
         _ => -1.0,
     }
 }
@@ -455,6 +460,11 @@ const SC_ERR_ARG: f64 = -1002.0;
 
 /// Builds a sphere; `Ok(Err(e))` when the construction fails.
 fn rust_sphere(k: &Kernel, s: &SphereIn) -> Result<solidcore::Result<Sphere>, HarnessError> {
+    rust_sphere_made(k, s, true)
+}
+
+/// [`rust_sphere`]; `make` false leaves the constructor-mode sphere without its NURB.
+fn rust_sphere_made(k: &Kernel, s: &SphereIn, make: bool) -> Result<solidcore::Result<Sphere>, HarnessError> {
     let frame = Axis2Placement::new(v3(s.origin), v3(s.x), v3(s.y));
     if s.mode == 0 {
         return Ok(Sphere::create_canonical(k, &frame, s.radius));
@@ -495,6 +505,9 @@ fn rust_sphere(k: &Kernel, s: &SphereIn) -> Result<solidcore::Result<Sphere>, Ha
         },
     );
     Ok(built.and_then(|mut sp| {
+        if !make {
+            return Ok(sp);
+        }
         sp.make_nurb(k)?;
         if sp.base().base().gw_nurb().is_none() {
             return Err(SolidError::sm_err("difftest::surface_sphere"));
@@ -710,7 +723,7 @@ fn rust_op(
             .convert_uv_from_nurbs_to_step(k, Point2::new(*u, *v))
             .map(|p| o.extend([0.0, p.x, p.y])),
         OpIn::ToNurbs { u, v } => t
-            .convert_uv_from_step_to_nurbs(Point2::new(*u, *v))
+            .convert_uv_from_step_to_nurbs(k, Point2::new(*u, *v))
             .map(|p| o.extend([0.0, p.x, p.y])),
         OpIn::Normal { u, v } => t.evaluate_normal(Point2::new(*u, *v)).map(|n| {
             o.push(0.0);
@@ -735,7 +748,7 @@ fn rust_op(
                     Ok(())
                 }
                 Ok(_) => t
-                    .create_iso_parametric_curve(k, param_of(*param), *iso, dom.as_ref())
+                    .create_iso_parametric_curve(k, param_of(*param), *iso, dom.as_ref(), false)
                     .map(|c| {
                         o.extend([0.0, c.max_gap_3d]);
                         put_curve(o, Some(&c.curve));
@@ -980,6 +993,18 @@ fn rust_op(
                 Ok(Some(found)) => {
                     o.extend([1.0, 1.0]);
                     put_state(o, &found)
+                }
+            }
+        }
+        OpIn::TrimDomain { dom } => {
+            let [a, b, c, d] = *dom;
+            // (upstream writes the domain back; the inherited body never changes it)
+            match t.trim_with_domain(k, &Extent2d::from_bounds(a, b, c, d)) {
+                Err(e) if e.is_unported() => Err(e),
+                r => {
+                    o.push(r.map_or_else(|e| status(&e), |()| 0.0));
+                    o.extend_from_slice(dom);
+                    put_state(o, t)
                 }
             }
         }
@@ -1266,7 +1291,16 @@ fn gen_case(rng: &mut Rng) -> Option<Inputs> {
             }
             OpIn::Eq { other }
         }
-        13 => OpIn::Copy {},
+        // (a sub-draw keeps the other ops' generated cases unchanged)
+        13 => {
+            if rng.below(4) == 0 {
+                OpIn::Copy {}
+            } else {
+                OpIn::TrimDomain {
+                    dom: gen_trim_domain(rng, nd)?,
+                }
+            }
+        }
         14 => OpIn::Closed {
             param: rng.below(3) as u8,
             dom: some_dom(rng, nd),
@@ -1471,6 +1505,45 @@ fn gen_case(rng: &mut Rng) -> Option<Inputs> {
     Some(Inputs { sphere, op })
 }
 
+/// A `TrimWithDomain` domain for the NURB domain `nd`: the whole domain, one sticking
+/// out of it, one direction trimmed, a thin strip, one within `SM_EFF_ZERO_PARAM` of
+/// the edge, or a sub-domain.
+fn gen_trim_domain(rng: &mut Rng, nd: Extent2d) -> Option<[f64; 4]> {
+    let (lo, hi) = (nd.min(), nd.max());
+    let (du, dv) = (hi.x - lo.x, hi.y - lo.y);
+    Some(match rng.below(8) {
+        0 => [lo.x, lo.y, hi.x, hi.y],
+        1 => {
+            let e = rng.uniform(1e-6, 0.3);
+            if rng.chance(0.5) {
+                [lo.x - e * du, lo.y, hi.x, hi.y]
+            } else {
+                [lo.x, lo.y, hi.x, hi.y + e * dv]
+            }
+        }
+        2 => {
+            let a = rng.uniform(0.0, 0.45);
+            let b = rng.uniform(0.55, 1.0);
+            if rng.chance(0.5) {
+                [lo.x + a * du, lo.y, lo.x + b * du, hi.y]
+            } else {
+                [lo.x, lo.y + a * dv, hi.x, lo.y + b * dv]
+            }
+        }
+        3 => {
+            let a = rng.uniform(0.0, 0.9);
+            let w = *rng.choose(&[1e-3, 1e-2, 0.05])?;
+            [lo.x + a * du, lo.y, lo.x + (a + w) * du, hi.y]
+        }
+        4 => [lo.x - 1e-13, lo.y, hi.x, hi.y - 0.25 * dv],
+        _ => {
+            let a = nd.evaluate(rng.uniform(0.0, 0.45), rng.uniform(0.0, 0.45));
+            let b = nd.evaluate(rng.uniform(0.55, 1.0), rng.uniform(0.55, 1.0));
+            [a.x, a.y, b.x, b.y]
+        }
+    })
+}
+
 impl UnitDiff for Runner {
     fn id(&self) -> &'static str {
         "surface.sphere"
@@ -1502,6 +1575,67 @@ impl UnitDiff for Runner {
     }
 }
 
+// ---- lazy NURB (`surface.surface_p2` `common_const_make` cases) ------------------------
+
+/// A constructor-mode sphere of a `common_const_make` case.
+fn const_make_input(value: Value) -> Result<SphereIn, HarnessError> {
+    let s: SphereIn = serde_json::from_value(value).map_err(|e| harness(e.to_string()))?;
+    if s.mode == 0 {
+        return Err(harness("const_make: constructor mode required"));
+    }
+    Ok(s)
+}
+
+/// The native side of a sphere `common_const_make` case.
+pub(super) fn const_make_cpp(value: Value) -> Result<Output, HarnessError> {
+    let s = const_make_input(value)?;
+    let flat = ffi::const_make(&ffi_sphere(&s)).map_err(|e| harness(e.to_string()))?;
+    super::surface_cone_p1::const_make_nurb_cpp(&flat)
+}
+
+/// The Rust side: the sphere as its constructor leaves it (no NURB), then the shared
+/// const-query, `Copy`, `==` and `Transform` sequence.
+pub(super) fn const_make_rust(value: Value) -> Result<Output, HarnessError> {
+    let s = const_make_input(value)?;
+    let k = Kernel::default();
+    let built = rust_sphere_made(&k, &s, false)?.map(Surface::from);
+    super::surface_cone_p1::const_make_nurb_rust(&k, built)
+}
+
+/// `common_const_make` cases for the sphere: the constructor's sphere with no NURB, in
+/// the swap and inside-out flags, partial domains, caps ending at a pole and an explicit
+/// generator.
+pub(super) fn const_make_cases() -> Vec<Case> {
+    type Shape = (&'static str, Option<[f64; 4]>, Option<CircleIn>);
+    let mut cases = Vec::new();
+    let frame = |origin: [f64; 3]| (origin, [0.0, 0.0, 1.0], [1.0, 0.0, 0.0]);
+    let shapes: [Shape; 7] = [
+        ("full", None, None),
+        ("part", Some([30.0, -60.0, 200.0, 45.0]), None),
+        ("north_cap", Some([0.0, 60.0, 360.0, 90.0]), None),
+        ("south_cap", Some([0.0, -90.0, 360.0, -60.0]), None),
+        ("hemi", Some([-90.0, 0.0, 90.0, 90.0]), None),
+        ("wrap", Some([-180.0, -90.0, 180.0, 90.0]), None),
+        ("gen", None, Some(CircleIn { c: [0.5, -1.0, 2.0], x: [0.0, 0.0, 1.0], y: [0.0, 1.0, 0.0], d: [-90.0, 90.0], r: 2.0 })),
+    ];
+    for swap in [false, true] {
+        for inside_out in [false, true] {
+            for (name, dom, circle) in &shapes {
+                let (origin, x, y) = frame([0.5, -1.0, 2.0]);
+                let sphere = SphereIn { mode: 1, origin, x, y, radius: 2.0, swap, inside_out, dom: *dom, circle: circle.clone() };
+                let Ok(sphere) = serde_json::to_value(&sphere) else { continue };
+                cases.push(Case {
+                    unit: "surface.surface_p2".into(),
+                    name: format!("common_const_make_sphere_{name}_{swap}_{inside_out}"),
+                    source: crate::case::CaseSource::Generated { seed: 76 },
+                    inputs: serde_json::json!({"common_const_make": true, "common_sphere": sphere}),
+                });
+            }
+        }
+    }
+    cases
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1528,6 +1662,7 @@ mod tests {
             OpIn::IsectCone { .. } => "isect_cone",
             OpIn::Global { .. } => "global",
             OpIn::IsNurb { .. } => "is_nurb",
+            OpIn::TrimDomain { .. } => "trim_domain",
         }
     }
 
@@ -1591,6 +1726,7 @@ mod tests {
             "isect_sphere",
             "isect_cone",
             "is_nurb",
+            "trim_domain",
         ] {
             let ok = tally.iter().any(|((o, k), _)| {
                 o == op

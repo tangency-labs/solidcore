@@ -408,7 +408,7 @@ fn run_cpp(i: &Inputs) -> Result<Output, HarnessError> {
 /// cannot return.
 fn status(e: &SolidError) -> f64 {
     match e {
-        SolidError::InvalidInput { .. } => SM_ERR_INVALID_INPUT,
+        SolidError::InvalidInput { .. } | SolidError::PortInvariant { .. } => SM_ERR_INVALID_INPUT,
         SolidError::Upstream { code, .. } => f64::from(*code),
         _ => -1.0,
     }
@@ -585,8 +585,8 @@ fn rust_edge(
     let curve = rust_curve(k, &e.curve)?;
     let [t0, t1] = e.t;
     let (ta, tb) = if e.opposite { (t1, t0) } else { (t0, t1) };
-    let pa = curve.evaluate_point(ta).map_err(hb)? + v3(e.off0);
-    let pb = curve.evaluate_point(tb).map_err(hb)? + v3(e.off1);
+    let pa = curve.evaluate_point(k, ta).map_err(hb)? + v3(e.off0);
+    let pb = curve.evaluate_point(k, tb).map_err(hb)? + v3(e.off1);
     let v0 = b
         .add_vertex_record(Vertex {
             point: pa,
@@ -654,7 +654,7 @@ fn ivl_eval(a: f64, b: f64, f: f64) -> f64 {
 }
 
 /// As the shim's `put_curve`.
-fn put_curve(o: &mut Vec<f64>, c: &Curve, uv: bool) -> Result<(), Fail> {
+fn put_curve(k: &Kernel, o: &mut Vec<f64>, c: &Curve, uv: bool) -> Result<(), Fail> {
     o.push(c.type_code() as f64);
     let nat = c.natural_interval();
     o.push(nat.min());
@@ -665,7 +665,7 @@ fn put_curve(o: &mut Vec<f64>, c: &Curve, uv: bool) -> Result<(), Fail> {
             nat.max(),
             i as f64 / (N_CURVE_SAMPLES - 1) as f64,
         );
-        let (st, p) = match c.evaluate_point(t) {
+        let (st, p) = match c.evaluate_point(k, t) {
             Ok(p) => (0.0, p),
             Err(e) => {
                 defer(&e)?;
@@ -681,9 +681,9 @@ fn put_curve(o: &mut Vec<f64>, c: &Curve, uv: bool) -> Result<(), Fail> {
 }
 
 /// As the shim's `put_surface`.
-fn put_surface(o: &mut Vec<f64>, s: &Surface) -> Result<(), Fail> {
+fn put_surface(k: &Kernel, o: &mut Vec<f64>, s: &Surface) -> Result<(), Fail> {
     o.push(s.type_code() as f64);
-    let d = s.natural_uv_domain();
+    let d = s.natural_uv_domain_with_nurb(k).map_err(|e| HarnessError::new(e.to_string()))?;
     let (mn, mx) = (d.min(), d.max());
     o.extend([mn.x, mn.y, mx.x, mx.y]);
     for i in 0..N_SURF_SAMPLES {
@@ -691,7 +691,7 @@ fn put_surface(o: &mut Vec<f64>, s: &Surface) -> Result<(), Fail> {
             let fu = i as f64 / (N_SURF_SAMPLES - 1) as f64;
             let fv = j as f64 / (N_SURF_SAMPLES - 1) as f64;
             let uv = Point2::new(mn.x + fu * (mx.x - mn.x), mn.y + fv * (mx.y - mn.y));
-            let (st, p) = match s.evaluate_point(uv) {
+            let (st, p) = match s.evaluate_point(k, uv) {
                 Ok(p) => (0.0, p),
                 Err(e) => {
                     defer(&e)?;
@@ -824,7 +824,7 @@ fn run_rust_op(i: &Inputs, o: &mut Vec<f64>) -> Result<(), Fail> {
                         o.push(flag(r.is_some()));
                         if let Some((c, tol)) = r {
                             o.push(tol);
-                            put_curve(o, &c, false)?;
+                            put_curve(&k, o, &c, false)?;
                         }
                     }
                     Err(e) => {
@@ -853,7 +853,7 @@ fn run_rust_op(i: &Inputs, o: &mut Vec<f64>) -> Result<(), Fail> {
             match g.edge_sweep_same(&k, &b, e) {
                 Ok((c, tol)) => {
                     o.extend([0.0, 1.0, tol]);
-                    put_curve(o, &c, false)?;
+                    put_curve(&k, o, &c, false)?;
                 }
                 Err(err) => {
                     defer(&err)?;
@@ -870,7 +870,7 @@ fn run_rust_op(i: &Inputs, o: &mut Vec<f64>) -> Result<(), Fail> {
                     o.push(0.0);
                     o.push(flag(r.surface.is_some()));
                     if let Some(srf) = &r.surface {
-                        put_surface(o, srf)?;
+                        put_surface(&k, o, srf)?;
                     }
                     o.extend([
                         r.face_tol,
@@ -888,11 +888,11 @@ fn run_rust_op(i: &Inputs, o: &mut Vec<f64>) -> Result<(), Fail> {
                     ]);
                     o.push(r.trim_curves.len() as f64);
                     for c in &r.trim_curves {
-                        put_curve(o, c, false)?;
+                        put_curve(&k, o, c, false)?;
                     }
                     o.push(r.uv_trim_curves.len() as f64);
                     for c in &r.uv_trim_curves {
-                        put_curve(o, &Curve::from(c.clone()), true)?;
+                        put_curve(&k, o, &Curve::from(c.clone()), true)?;
                     }
                     o.push(r.orients.len() as f64);
                     o.extend(r.orients.iter().map(|x| orient_code(*x)));
@@ -906,7 +906,7 @@ fn run_rust_op(i: &Inputs, o: &mut Vec<f64>) -> Result<(), Fail> {
         OpIn::FaceSame { surface, ftol } => {
             let (mut b, shell) = new_brep(&k, s)?;
             let srf = rust_surface(surface)?;
-            let dom = srf.natural_uv_domain();
+            let dom = srf.natural_uv_domain_with_nurb(&k).map_err(|e| HarnessError::new(e.to_string()))?;
             let mut face = Face::new(shell);
             face.surface = Some(srf);
             face.uv_domain = dom;
@@ -921,7 +921,7 @@ fn run_rust_op(i: &Inputs, o: &mut Vec<f64>) -> Result<(), Fail> {
                     o.push(flag(r.is_some()));
                     if let Some((srf, tol)) = r {
                         o.push(tol);
-                        put_surface(o, &srf)?;
+                        put_surface(&k, o, &srf)?;
                     }
                 }
                 Err(e) => {

@@ -7,17 +7,31 @@
 // validates every input. The input is a face selector (index into the traversal-order face
 // list, checked by the wrapper), the op's fixed-size arguments, then the B-rep block of
 // unit topology.vertexuse (built by the shared sc_topology_fixture.h), whose graph that
-// unit's Export op exports for the Rust import. As the topology.trimming_tools shim, the
-// faces and edges get the plain B-spline copies of analytic geometry (what the Rust import
-// rebuilds), keeping the surface owner, before the op.
+// unit's Export op exports for the C++ side's selector resolution. The op runs on the
+// B-rep's own native geometry; the Rust side builds and reads the same B-rep natively.
 //
 // Output: `0` (or `-1 status` when the B-rep build failed), then the op record. A slot of
-// `-2` marks a call the shim skips because upstream would dereference null, `-3` one it
-// skips because upstream crashes there and the Rust side defers it (see the seam ops).
+// `-2` marks a call the shim skips because upstream would dereference null; a seam call
+// that can reach upstream's crash runs in a forked child, and `-4` marks one whose child
+// crashed, `-3` one the shim skipped because it cannot fork (see fp1_trapped).
 #include "sc_topology_fixture.h"
 
+#include <SmAttribute.h>
 #include <SmCurveClass.h>
 #include <SmFaceProps.h>
+
+#include <algorithm>
+
+#ifndef _WIN32
+#ifdef __linux__
+#include <sys/prctl.h>
+#endif
+#include <sys/wait.h>
+#include <unistd.h>
+
+#include <cerrno>
+#include <cstdio>
+#endif
 
 namespace
 {
@@ -32,70 +46,129 @@ enum : int32_t
     OP_REMOVE_UV = 7,
     OP_SWAP_UV = 8,
     OP_SHRINK = 9,
-    OP_PROBE = 10,
     OP_MOVE_SEAM = 11,
     OP_SPLIT_AT_SEAM = 12,
+    OP_UV_DOMAIN_AFTER_TRIM_SHIFT = 13,
+    OP_DELETE_INNER_LOOP = 14,
 };
 
 const double FP1_NULL_DEREF = -2.0;
-// A call the shim skips because upstream crashes there and the Rust side defers it.
+// A seam call the shim skips because upstream may crash there and it cannot fork.
 const double FP1_NOT_RUN = -3.0;
+// A seam call whose child process crashed, hung or sent no whole record (UB-137).
+const double FP1_CRASHED = -4.0;
 
-struct Fp1EdgePeek : SmEdge
+#ifndef _WIN32
+
+bool fp1_write_all(int fd, const void* p, size_t n)
 {
-    static SmCurve* SmEdge::*curve() { return &Fp1EdgePeek::m_pCurve; }
-};
+    const char* c = (const char*)p;
+    while (n > 0)
+    {
+        ssize_t w = write(fd, c, n);
+        if (w <= 0)
+            return false;
+        c += w;
+        n -= (size_t)w;
+    }
+    return true;
+}
+
+bool fp1_read_all(int fd, void* p, size_t n)
+{
+    char* c = (char*)p;
+    while (n > 0)
+    {
+        ssize_t r = read(fd, c, n);
+        if (r <= 0)
+            return false;
+        c += r;
+        n -= (size_t)r;
+    }
+    return true;
+}
+
+#endif
+
+// Runs `fn` (appending its record to `o`) in place, or, when `trap`, in a forked child so
+// that upstream's SplitAtSeam crash (plan/upstream-issues.md UB-137) ends the child, not
+// the run. The parent appends the child's record, or FP1_CRASHED when the child died on a
+// signal, timed out or did not send a whole record. Without fork (Windows), and when the
+// pipe or the fork fails, a trapped call is skipped (FP1_NOT_RUN).
+template <class F> void fp1_trapped(bool trap, std::vector<double>& o, F fn)
+{
+    if (!trap)
+    {
+        fn(o);
+        return;
+    }
+#ifdef _WIN32
+    o.push_back(FP1_NOT_RUN);
+#else
+    int fd[2];
+    if (pipe(fd) != 0)
+    {
+        o.push_back(FP1_NOT_RUN);
+        return;
+    }
+    fflush(stdout);
+    fflush(stderr);
+    pid_t pid = fork();
+    if (pid < 0)
+    {
+        close(fd[0]);
+        close(fd[1]);
+        o.push_back(FP1_NOT_RUN);
+        return;
+    }
+    if (pid == 0)
+    {
+        close(fd[0]);
+#ifdef __linux__
+        // (no core dump of an expected crash: a piped core_pattern ignores RLIMIT_CORE)
+        prctl(PR_SET_DUMPABLE, 0);
+#endif
+        alarm(60);
+        int code = 1;
+        try
+        {
+            std::vector<double> c;
+            fn(c);
+            int64_t n = (int64_t)c.size();
+            if (fp1_write_all(fd[1], &n, sizeof n) && fp1_write_all(fd[1], c.data(), c.size() * sizeof(double)))
+                code = 0;
+        }
+        catch (...)
+        {
+        }
+        _exit(code);
+    }
+    close(fd[1]);
+    std::vector<double> c;
+    int64_t n = -1;
+    bool got = fp1_read_all(fd[0], &n, sizeof n) && n >= 0 && n < (1 << 20);
+    if (got)
+    {
+        c.resize((size_t)n);
+        got = fp1_read_all(fd[0], c.data(), c.size() * sizeof(double));
+    }
+    close(fd[0]);
+    int ws = 0;
+    pid_t w;
+    do
+        w = waitpid(pid, &ws, 0);
+    while (w < 0 && errno == EINTR);
+    if (got && w == pid && WIFEXITED(ws) && WEXITSTATUS(ws) == 0)
+        o.insert(o.end(), c.begin(), c.end());
+    else
+        o.push_back(FP1_CRASHED);
+#endif
+}
+
 struct Fp1LoopPeek : SmLoop
 {
     static SmLoopuse* SmLoop::*lu() { return &Fp1LoopPeek::m_pLU; }
 };
-
-// The Rust import rebuilds NURBs as plain B-splines (and lines, planes): give the C++
-// faces and edges the same geometry. The analytic originals are leaked (they may still be
-// referenced as owners' geometry elsewhere).
-void fp1_normalise(Graph& g)
-{
-    for (SmFace* f : g.faces)
-    {
-        SmSurface* s = f->*FPeek::srf();
-        if (s == nullptr || !s->IsKindOf(SmBSplineSurface_TYPE) || s->GetType() == SmBSplineSurface_TYPE ||
-            s->GetType() == SmPlane_TYPE)
-            continue;
-        SmBSplineSurface* b = (SmBSplineSurface*)s;
-        gw_SURFACE* nurb = b->GetGwNurbPointer();
-        if (nurb == nullptr)
-            continue;
-        SmBSplineSurface* nb = new (the_context()) SmBSplineSurface(sm_AllocateAndCopyNurbSurface(nurb), FALSE, NULL);
-        nb->GetOutOfBoundsEnabled() = b->GetOutOfBoundsEnabled();
-        nb->SetBSplineSurfaceForm(b->GetBSplineSurfaceForm());
-        bool owned = s->GetOwner() == f;
-        f->*FPeek::srf() = nb;
-        if (owned)
-        {
-            s->SetOwner(NULL);
-            nb->SetOwner(f);
-        }
-    }
-    for (SmEdge* e : g.edges)
-    {
-        SmCurve* c = e->*Fp1EdgePeek::curve();
-        if (c == nullptr || !c->IsKindOf(SmBSplineCurve_TYPE) || c->GetType() == SmBSplineCurve_TYPE ||
-            c->GetType() == SmLine_TYPE)
-            continue;
-        SmBSplineCurve* b = (SmBSplineCurve*)c;
-        gw_CURVE* nurb = b->GetGwNurbPointer();
-        if (nurb == nullptr)
-            continue;
-        SmBSplineCurve* nc = new (the_context()) SmBSplineCurve(sm_AllocateAndCopyNurbCurve(nurb), b->GetDim(), FALSE);
-        bool owned = c->GetOwner() == e;
-        e->*Fp1EdgePeek::curve() = nc;
-        if (owned)
-        {
-            c->SetOwner(NULL);
-            nc->SetOwner(e);
-        }
-    }
-}
 
 // A curve as samples: `dim t0 t1 (x y z)*5` at t0 + i/4 (t1 - t0); `-1` for none.
 void fp1_put_curve(std::vector<double>& o, const SmCurve* c)
@@ -190,17 +263,152 @@ void fp1_put_split(std::vector<double>& o, SmTArray<SmFace*>& fs, SmTArray<SmEdg
     o.push_back((double)vs.GetSize());
 }
 
+// The geometry owners of brep b after a seam op, counted so that the two sides' numbering
+// of the entities the op made does not matter: for the faces' surfaces, the edges' curves
+// and the edge uses' UV trim curves (in that order; an entity without one is skipped),
+// `n own none other`: how many there are, owned by their face (edge, edge use), owned by
+// nothing, owned by another object.
+void fp1_put_owners(std::vector<double>& o, SmBrep* b)
+{
+    Graph g;
+    walk(b, g);
+    auto put = [&](const std::vector<std::pair<const SmObject*, const SmObject*>>& geom) {
+        double own = 0, none = 0, other = 0;
+        for (const auto& p : geom)
+        {
+            if (p.second == p.first)
+                own++;
+            else if (p.second == nullptr)
+                none++;
+            else
+                other++;
+        }
+        o.insert(o.end(), {(double)geom.size(), own, none, other});
+    };
+    std::vector<std::pair<const SmObject*, const SmObject*>> faces, edges, uvs;
+    for (SmFace* f : g.faces)
+        if (f->GetSurface() != nullptr)
+            faces.push_back({f, f->GetSurface()->GetOwner()});
+    for (SmEdge* e : g.edges)
+        if (e->GetCurve() != nullptr)
+            edges.push_back({e, e->GetCurve()->GetOwner()});
+    for (SmEdgeuse* p : g.edgeuses)
+        if (SmBSplineCurve* uv = p->*EuPeek::uv())
+            uvs.push_back({p, uv->GetOwner()});
+    put(faces);
+    put(edges);
+    put(uvs);
+}
+
 // The number of op arguments after the face selector.
+// DeleteInnerLoop's attributes (`attributed`): every face, loop, edge, vertex and use gets
+// its own SM_AB_COPY attribute (FP1_ATTR_BASE + kind * FP1_ATTR_STRIDE + traversal
+// index, kinds in Graph order), one SM_AB_REFERENCE attribute (FP1_ATTR_REF) is shared by
+// the face and every loop, edge, vertex and use, and one SM_AB_STANDALONE_REFERENCE
+// attribute (FP1_ATTR_STANDALONE) by every edge and vertex.
+const ULONG FP1_ATTR_BASE = 20000;
+const ULONG FP1_ATTR_STRIDE = 100000;
+const ULONG FP1_ATTR_REF = 10001;
+const ULONG FP1_ATTR_STANDALONE = 10002;
+
+template <class T> void fp1_attr_each(std::vector<T*>& v, int kind, SmAttribute* ref, SmAttribute* standalone)
+{
+    for (size_t i = 0; i < v.size(); i++)
+    {
+        v[i]->AddAttribute(
+            new (the_context()) SmAttribute(FP1_ATTR_BASE + (ULONG)kind * FP1_ATTR_STRIDE + (ULONG)i, SM_AB_COPY));
+        if (ref)
+            v[i]->AddAttribute(ref);
+        if (standalone)
+            v[i]->AddAttribute(standalone);
+    }
+}
+
+// The sorted attribute ids of an object.
+void fp1_put_attr_ids(std::vector<double>& o, const SmAObject* p)
+{
+    SmTArray<SmAttribute*> as;
+    p->GetAttributes(as);
+    std::vector<double> ids;
+    for (ULONG i = 0; i < as.GetSize(); i++)
+        ids.push_back((double)as[i]->GetAttributeID());
+    std::sort(ids.begin(), ids.end());
+    o.push_back((double)ids.size());
+    o.insert(o.end(), ids.begin(), ids.end());
+}
+
+// The B-rep after DeleteInnerLoop: the ten record counts of a fresh walk; the face's
+// loops (pre-op traversal index, edge use count of the primary loop use); the sorted
+// pre-op indices of the B-rep's edges and vertices; with `attributed` the attribute ids
+// of the face, its loops, the edges and the vertices (in that order) and the user counts
+// of the shared attributes.
+void fp1_put_after_delete(std::vector<double>& o, SmBrep* brep, SmFace* f, Graph& g, bool attributed,
+                          SmAttribute* ref, SmAttribute* standalone)
+{
+    Graph after;
+    walk(brep, after);
+    for (size_t n : {after.regions.size(), after.shells.size(), after.faceuses.size(), after.faces.size(),
+                     after.loopuses.size(), after.loops.size(), after.edgeuses.size(), after.edges.size(),
+                     after.vertexuses.size(), after.vertices.size()})
+        o.push_back((double)n);
+    SmTArray<SmLoop*> ls;
+    f->GetLoops(ls);
+    o.push_back((double)ls.GetSize());
+    for (ULONG i = 0; i < ls.GetSize(); i++)
+    {
+        o.push_back((double)g.find(5, ls[i]));
+        SmTArray<SmEdgeuse*> eus;
+        SmLoopuse* lu = ls[i]->GetLoopuse();
+        if (lu)
+            lu->GetEdgeuses(eus);
+        o.push_back((double)eus.GetSize());
+    }
+    SmTArray<SmEdge*> es;
+    brep->GetEdges(es);
+    std::vector<SmEdge*> ev;
+    for (ULONG i = 0; i < es.GetSize(); i++)
+        ev.push_back(es[i]);
+    std::sort(ev.begin(), ev.end(), [&](SmEdge* a, SmEdge* b) { return g.find(7, a) < g.find(7, b); });
+    o.push_back((double)ev.size());
+    for (SmEdge* e : ev)
+        o.push_back((double)g.find(7, e));
+    SmTArray<SmVertex*> vs;
+    brep->GetVertices(vs);
+    std::vector<SmVertex*> vv;
+    for (ULONG i = 0; i < vs.GetSize(); i++)
+        vv.push_back(vs[i]);
+    std::sort(vv.begin(), vv.end(), [&](SmVertex* a, SmVertex* b) { return g.find(9, a) < g.find(9, b); });
+    o.push_back((double)vv.size());
+    for (SmVertex* v : vv)
+        o.push_back((double)g.find(9, v));
+    if (!attributed)
+        return;
+    fp1_put_attr_ids(o, f);
+    for (ULONG i = 0; i < ls.GetSize(); i++)
+        fp1_put_attr_ids(o, ls[i]);
+    for (SmEdge* e : ev)
+        fp1_put_attr_ids(o, e);
+    for (SmVertex* v : vv)
+        fp1_put_attr_ids(o, v);
+    SmTArray<SmAObject*> users;
+    ref->GetUsers(users);
+    o.push_back((double)users.GetSize());
+    standalone->GetUsers(users);
+    o.push_back((double)users.GetSize());
+}
+
 int64_t fp1_nargs(int32_t op)
 {
     switch (op)
     {
+    case OP_UV_DOMAIN_AFTER_TRIM_SHIFT: return 9;
     case OP_UV_DOMAIN:
     case OP_ORIENTED: return 3;
     case OP_SET_SURFACE:
     case OP_LOOP_ROUND_TRIP: return 1;
     case OP_MOVE_SEAM:
     case OP_SPLIT_AT_SEAM: return 8;
+    case OP_DELETE_INNER_LOOP: return 6;
     default: return 0;
     }
 }
@@ -224,7 +432,6 @@ void fp1_brep_op(int32_t op, Rd& rd, const char* path, std::vector<double>& o)
     o.push_back(0.0);
     Graph g;
     walk(built.brep, g);
-    fp1_normalise(g);
     const SmContext& ctx = the_context();
     if (fi < 0 || fi >= (int64_t)g.faces.size())
     {
@@ -235,10 +442,51 @@ void fp1_brep_op(int32_t op, Rd& rd, const char* path, std::vector<double>& o)
     switch (op)
     {
     case OP_UV_DOMAIN:
+    case OP_UV_DOMAIN_AFTER_TRIM_SHIFT:
     {
         SmBoolean limit = ad.bflag();
         bool want_max = ad.flag();
         bool want_2nd = ad.flag();
+        if (op == OP_UV_DOMAIN_AFTER_TRIM_SHIFT)
+        {
+            if (f->GetSurface() == NULL)
+            {
+                o.push_back(FP1_NULL_DEREF);
+                break;
+            }
+            double tmp;
+            SmStatus prep = f->CreateUVTrimCurves(FALSE, NULL, NULL, tmp, tmp, tmp, tmp, tmp, tmp);
+            if (prep != SM_SUCCESS)
+            {
+                o.push_back(st(prep));
+                return;
+            }
+            SmPoint2d lo = ad.uv(), hi = ad.uv();
+            f->SetUVDomain(SmExtent2d(lo, hi));
+            SmPoint2d delta = ad.uv();
+            SmAxis2Placement transform;
+            transform.Translate(SmVector3d(delta[0], delta[1], 0.0));
+            SmTArray<SmLoopuse*> loops;
+            f->GetUpwardLoopuses(loops);
+            for (int64_t li = 0; li < loops.GetSize(); ++li)
+            {
+                SmTArray<SmEdgeuse*> edges;
+                loops[li]->GetEdgeuses(edges);
+                for (int64_t ei = 0; ei < edges.GetSize(); ++ei)
+                {
+                    SmCurve* curve = edges[ei]->GetUVTrimCurve();
+                    if (curve != NULL)
+                    {
+                        prep = curve->Transform(transform, NULL);
+                        if (prep != SM_SUCCESS)
+                        {
+                            o.push_back(st(prep));
+                            return;
+                        }
+                    }
+                }
+            }
+        }
         SmExtent2d dom;
         double gap = -7.0, gap2 = -7.0;
         SmStatus r = f->CalculateUVDomainFromUVTrimCurves(dom, limit, want_max ? &gap : NULL,
@@ -370,24 +618,6 @@ void fp1_brep_op(int32_t op, Rd& rd, const char* path, std::vector<double>& o)
             o.push_back(-1.0);
         break;
     }
-    case OP_PROBE:
-    {
-        if (f->GetSurface() == nullptr || f->GetUpwardFaceuse() == nullptr)
-        {
-            o.push_back(FP1_NULL_DEREF);
-            break;
-        }
-        SmCurveClassification cu, cv;
-        SmSurfParamType c = SM_SP_UNKNOWN, m = SM_SP_UNKNOWN, n = SM_SP_UNKNOWN;
-        SmBoolean has = f->HasSeamProblem(cu, cv, c, m, n);
-        o.push_back(flg(has));
-        o.push_back((double)c);
-        o.push_back((double)m);
-        o.push_back((double)n);
-        fp1_put_class(o, cu);
-        fp1_put_class(o, cv);
-        break;
-    }
     case OP_MOVE_SEAM:
     case OP_SPLIT_AT_SEAM:
     {
@@ -401,7 +631,7 @@ void fp1_brep_op(int32_t op, Rd& rd, const char* path, std::vector<double>& o)
         }
         SmCurveClassification cu, cv;
         SmSurfParamType c = SM_SP_UNKNOWN, m = SM_SP_UNKNOWN, n = SM_SP_UNKNOWN;
-        f->HasSeamProblem(cu, cv, c, m, n);
+        SmBoolean has = f->HasSeamProblem(cu, cv, c, m, n);
         SmFaceProps props(&ctx);
         if (si.props)
         {
@@ -412,14 +642,16 @@ void fp1_brep_op(int32_t op, Rd& rd, const char* path, std::vector<double>& o)
             props.m_bClosedV = si.closed_v;
         }
         SmFaceProps* pp = si.props ? &props : NULL;
+        bool trap = false;
 
         // Upstream SplitAtSeam, after a U merge that made new faces, recurses on `this`
         // with the classifications of each new face (not on that face), and
         // SmCurveClassification::MergeInterval then crashes (plan/upstream-issues.md).
-        // Skip (FP1_NOT_RUN) every call that can reach that branch: a SplitAtSeam asked
+        // Trap (fp1_trapped) every call that can reach that branch: a SplitAtSeam asked
         // to merge in both directions on a face periodic in either, and every MoveSeam
-        // with split that gets past its early return. The runner defers these cases under
-        // the crash-guard label `cpp-crash-guard:UB-137`: they never become comparable.
+        // with split that gets past its early return. No input predicate separates the
+        // calls that crash, so the trap runs them all; the runner rejects those whose child
+        // crashed (inputs undefined in C++, UB-137), so neither side is compared.
         SmSurface* srf = f->GetSurface();
         SmExtent2d nat = srf->GetNaturalUVDomain();
         // (the face properties' closed flags decide SplitAtSeam's own periodicity test,
@@ -434,10 +666,7 @@ void fp1_brep_op(int32_t op, Rd& rd, const char* path, std::vector<double>& o)
             bool no_missing = si.props && (si.missing == SM_SP_NEITHER || si.missing == SM_SP_UNKNOWN);
             // (the U-then-V branch needs both merges and either direction periodic)
             if (!no_missing && (per_u || per_v) && merge_u && merge_v)
-            {
-                o.push_back(FP1_NOT_RUN);
-                break;
-            }
+                trap = true;
         }
         else if (split)
         {
@@ -457,28 +686,80 @@ void fp1_brep_op(int32_t op, Rd& rd, const char* path, std::vector<double>& o)
             // (MoveSeam recomputes the seam problem before splitting, so any split it
             // makes can reach the U-then-V branch)
             if (!quiet)
+                trap = true;
+        }
+        fp1_trapped(trap, o, [&](std::vector<double>& to) {
+            // the seam problem HasSeamProblem found (compared: the Rust side computes
+            // its own)
+            to.push_back(flg(has));
+            to.push_back((double)c);
+            to.push_back((double)m);
+            to.push_back((double)n);
+            fp1_put_class(to, cu);
+            fp1_put_class(to, cv);
+            SmTArray<SmFace*> fs;
+            SmTArray<SmEdge*> es;
+            SmTArray<SmVertex*> vs;
+            if (op == OP_MOVE_SEAM)
             {
-                o.push_back(FP1_NOT_RUN);
-                break;
+                SmFixSeamPlanType ru = SmFixSeamPlanType::SM_FSP_UNKNOWN;
+                SmFixSeamPlanType rv = SmFixSeamPlanType::SM_FSP_UNKNOWN;
+                SmStatus r = f->MoveSeam(ru, rv, cu, cv, c, m, n, center, split, &fs, &es, &vs, pp);
+                to.push_back(st(r));
+                to.push_back((double)(int)ru);
+                to.push_back((double)(int)rv);
             }
-        }
-        SmTArray<SmFace*> fs;
-        SmTArray<SmEdge*> es;
-        SmTArray<SmVertex*> vs;
-        if (op == OP_MOVE_SEAM)
+            else
+            {
+                to.push_back(st(f->SplitAtSeam(cu, cv, c, m, n, &fs, &es, &vs, pp)));
+            }
+            fp1_put_split(to, fs, es, vs);
+            fp1_put_owners(to, built.brep);
+        });
+        break;
+    }
+    case OP_DELETE_INNER_LOOP:
+    {
+        bool attributed = ad.flag();
+        int64_t n = ad.idx();
+        std::vector<SmLoop*> ls;
+        for (int64_t i = 0; i < 4; i++)
         {
-            SmFixSeamPlanType ru = SmFixSeamPlanType::SM_FSP_UNKNOWN;
-            SmFixSeamPlanType rv = SmFixSeamPlanType::SM_FSP_UNKNOWN;
-            SmStatus r = f->MoveSeam(ru, rv, cu, cv, c, m, n, center, split, &fs, &es, &vs, pp);
-            o.push_back(st(r));
-            o.push_back((double)(int)ru);
-            o.push_back((double)(int)rv);
+            int64_t li = ad.idx();
+            if (i < n)
+                ls.push_back((li >= 0 && li < (int64_t)g.loops.size()) ? g.loops[(size_t)li] : nullptr);
         }
-        else
+        // upstream reads sFaceLoops[0] of the face's loops and the loop's two loop uses
+        SmTArray<SmLoop*> fl;
+        f->GetLoops(fl);
+        bool guard = fl.GetSize() == 0;
+        for (SmLoop* l : ls)
+            if (l == nullptr || l->GetLoopuse() == nullptr || l->GetLoopuse()->GetOtherLoopuse() == nullptr)
+                guard = true;
+        if (guard)
         {
-            o.push_back(st(f->SplitAtSeam(cu, cv, c, m, n, &fs, &es, &vs, pp)));
+            o.push_back(FP1_NULL_DEREF);
+            break;
         }
-        fp1_put_split(o, fs, es, vs);
+        SmAttribute* ref = nullptr;
+        SmAttribute* standalone = nullptr;
+        if (attributed)
+        {
+            ref = new (ctx) SmAttribute(FP1_ATTR_REF, SM_AB_REFERENCE);
+            standalone = new (ctx) SmAttribute(FP1_ATTR_STANDALONE, SM_AB_STANDALONE_REFERENCE);
+            fp1_attr_each(g.faceuses, 2, nullptr, nullptr);
+            fp1_attr_each(g.faces, 3, nullptr, nullptr);
+            f->AddAttribute(ref);
+            fp1_attr_each(g.loopuses, 4, ref, nullptr);
+            fp1_attr_each(g.loops, 5, ref, nullptr);
+            fp1_attr_each(g.edgeuses, 6, ref, nullptr);
+            fp1_attr_each(g.edges, 7, ref, standalone);
+            fp1_attr_each(g.vertexuses, 8, ref, nullptr);
+            fp1_attr_each(g.vertices, 9, ref, standalone);
+        }
+        for (SmLoop* l : ls)
+            o.push_back(st(f->DeleteInnerLoop(l)));
+        fp1_put_after_delete(o, built.brep, f, g, attributed, ref, standalone);
         break;
     }
     default: o.push_back((double)SC_ERR_ARG); break;

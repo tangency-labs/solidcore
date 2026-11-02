@@ -13,9 +13,19 @@
 //! error maps to its `SmStatus` (`-1` for one upstream cannot return); an `Unported`
 //! error anywhere defers the case.
 //!
-//! Deferred cases: every op that reaches topology (`SmVertex`, `SmEdge`, `SmFace`, ...
-//! members: `IsConnectedTo`, `GetBrep`, `GetTolerance`, `GetPoint` / `SetPoint`,
-//! `MergeIntoObject` on a vertex), the surface and volume point solves of
+//! The vertex, edge and face objects are B-rep records (see unit `intersect.curve_class_p1`,
+//! [`BareTopology`]): their zone tolerances and the curve / surface of
+//! `ComputePointParameters` come from the ported topology members.
+//!
+//! `MergeIntoObject` and `Combine` on a vertex run on the pool's B-rep
+//! (`merge_into_brep`, `combine_in_brep`): the merge compares its status, new-topology
+//! counts and repointed classification, and combine writes the propagated surf/surf/surf
+//! point to the vertex. A trace appended after the existing records reads every
+//! pool vertex after each Combine: `op_index n_vertices (pool_index x y z)*`.
+//!
+//! Deferred cases: every op that reaches the other topology members (`SmVertex`, `SmEdge`,
+//! `SmFace`, ...: `IsConnectedTo`, `GetBrep`, `GetPoint` / `SetPoint` of `FindObjPoint3d`,
+//! `GetCurve`), the surface and volume point solves of
 //! `ComputePointParameters` and `GetGap3d` (units `surface.surface_p4`,
 //! `surface.volume_p2`), and stand-in regions and edgeuses whose
 //! tolerance upstream takes from the system (the port asks their topology units).
@@ -36,8 +46,8 @@ use solidcore::geom::solution_array::SolutionEnd;
 use solidcore::geom::tol::zone_tol3d;
 use solidcore::geom::vector3d::Vec3;
 use solidcore::intersect::point_class::{
-    space_bend_type, space_unbend_type, ClassGeometry, ClassObject, ClassObjectKind,
-    PointClassType, PointClassification, Precedence, SPACE_BEND_TYPE_STRING,
+    space_bend_type, space_unbend_type, BrepMerge, ClassGeometry, ClassObject, ClassObjectKind,
+    CombineBrep, PointClassType, PointClassification, Precedence, SPACE_BEND_TYPE_STRING,
     SPACE_UNBEND_TYPE_STRING,
 };
 use solidcore::kernel::Kernel;
@@ -48,9 +58,11 @@ use solidcore::nurbs::nurbs_crv::allocate_nurb_curve;
 use solidcore::surface::plane::Plane;
 use solidcore::surface::surface::Surface;
 use solidcore::surface::volume::Volume;
-use solidcore::SolidError;
+use solidcore::topology::{Brep, EdgeId};
+use solidcore::{EntityRef, SolidError};
 use solidcore_ffi::units::intersect_point_class::{self as ffi, kind, op};
 
+use super::intersect_curve_class_p1::BareTopology;
 use crate::case::CaseContext;
 use crate::runner::default_cases;
 use crate::{Case, HarnessError, Output, Rng, UnitDiff};
@@ -161,25 +173,79 @@ enum ObjIn {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "op", rename_all = "snake_case")]
 enum OpIn {
-    Reset { t: usize, tol: Option<f64> },
-    SetClassObject { t: usize, class: i32, obj: Option<usize> },
-    SetT { t: usize, v: f64, snap: bool },
-    SetUv { t: usize, u: f64, v: f64 },
-    SetUvw { t: usize, p: [f64; 3] },
-    Unset { t: usize },
-    SetGap { t: usize, g: f64 },
-    SetDeviation { t: usize, g: f64 },
-    SetPresnap { t: usize, v: f64 },
-    SetSss { t: usize, p: [f64; 3] },
-    SetSrcTol { t: usize, tol: f64 },
-    SetFace { t: usize, obj: Option<usize> },
-    Assign { t: usize },
-    CopyClassOnly { t: usize },
-    CopySss { t: usize },
-    Combine { t: usize },
-    Compute { t: usize, p: [f64; 3] },
-    Find { t: usize },
-    Gap { t: usize, s: Option<usize> },
+    Reset {
+        t: usize,
+        tol: Option<f64>,
+    },
+    SetClassObject {
+        t: usize,
+        class: i32,
+        obj: Option<usize>,
+    },
+    SetT {
+        t: usize,
+        v: f64,
+        snap: bool,
+    },
+    SetUv {
+        t: usize,
+        u: f64,
+        v: f64,
+    },
+    SetUvw {
+        t: usize,
+        p: [f64; 3],
+    },
+    Unset {
+        t: usize,
+    },
+    SetGap {
+        t: usize,
+        g: f64,
+    },
+    SetDeviation {
+        t: usize,
+        g: f64,
+    },
+    SetPresnap {
+        t: usize,
+        v: f64,
+    },
+    SetSss {
+        t: usize,
+        p: [f64; 3],
+    },
+    SetSrcTol {
+        t: usize,
+        tol: f64,
+    },
+    SetFace {
+        t: usize,
+        obj: Option<usize>,
+    },
+    Assign {
+        t: usize,
+    },
+    CopyClassOnly {
+        t: usize,
+    },
+    CopySss {
+        t: usize,
+    },
+    Combine {
+        t: usize,
+    },
+    Compute {
+        t: usize,
+        p: [f64; 3],
+    },
+    Find {
+        t: usize,
+    },
+    Gap {
+        t: usize,
+        s: Option<usize>,
+    },
     Load {
         t: usize,
         tol: f64,
@@ -190,15 +256,36 @@ enum OpIn {
         offset: usize,
         pre: f64,
     },
-    Merge { t: usize, p: [f64; 3] },
-    Brep { t: usize },
-    Connected { t: usize, j: usize },
-    ConnectedAny { t: usize, js: Vec<usize> },
-    CurveObject { t: usize },
-    ObjTol { t: usize },
-    XsectTol { t: usize },
-    SrcTol { t: usize },
-    BendTypes { t: usize },
+    Merge {
+        t: usize,
+        p: [f64; 3],
+    },
+    Brep {
+        t: usize,
+    },
+    Connected {
+        t: usize,
+        j: usize,
+    },
+    ConnectedAny {
+        t: usize,
+        js: Vec<usize>,
+    },
+    CurveObject {
+        t: usize,
+    },
+    ObjTol {
+        t: usize,
+    },
+    XsectTol {
+        t: usize,
+    },
+    SrcTol {
+        t: usize,
+    },
+    BendTypes {
+        t: usize,
+    },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -229,7 +316,9 @@ fn resolve(c: &CurveIn) -> Result<CurveIn, HarnessError> {
         solidcore::nurbs::b_spline_curve::NurbCircleParam::Quadratic,
     )
     .map_err(|e| harness(format!("circle: {e}")))?;
-    let cur = arc.gw_nurb().ok_or_else(|| harness("circle without NURB"))?;
+    let cur = arc
+        .gw_nurb()
+        .ok_or_else(|| harness("circle without NURB"))?;
     Ok(CurveIn::Bspline(BSplineIn {
         dim: 3,
         oob: false,
@@ -306,7 +395,10 @@ fn build_curve(c: &CurveIn) -> Result<Curve, HarnessError> {
                 .len()
                 .checked_sub(1)
                 .ok_or_else(|| harness("no points"))?;
-            let m = bs.u.len().checked_sub(1).ok_or_else(|| harness("no knots"))?;
+            let m =
+                bs.u.len()
+                    .checked_sub(1)
+                    .ok_or_else(|| harness("no knots"))?;
             let mut cur =
                 allocate_nurb_curve(n, bs.p, m).map_err(|e| harness(format!("curve: {e}")))?;
             for (d, s) in cur.cpts_mut().iter_mut().zip(&bs.cpts) {
@@ -337,8 +429,12 @@ fn build_curve(c: &CurveIn) -> Result<Curve, HarnessError> {
             };
             let domain = Extent1d::from_min_max(c.domain[0], c.domain[1]);
             let e = match c.ry {
-                Some(ry) => Ellipse::new(&k, v3(c.center), v3(c.x), v3(c.y), domain, c.rx, ry, &opts),
-                None => Ellipse::new_circle(&k, v3(c.center), v3(c.x), v3(c.y), domain, c.rx, &opts),
+                Some(ry) => {
+                    Ellipse::new(&k, v3(c.center), v3(c.x), v3(c.y), domain, c.rx, ry, &opts)
+                }
+                None => {
+                    Ellipse::new_circle(&k, v3(c.center), v3(c.x), v3(c.y), domain, c.rx, &opts)
+                }
             }
             .map_err(|e| harness(format!("conic: {e}")))?;
             Ok(Curve::from(e))
@@ -485,6 +581,8 @@ struct Pool {
     objs: Vec<PoolObj>,
     handles: Vec<H>,
     kinds: Vec<usize>,
+    /// The vertex, edge and face objects as B-rep records ([`BareTopology`]).
+    topo: BareTopology,
 }
 
 impl ClassGeometry<H> for Pool {
@@ -509,6 +607,24 @@ impl ClassGeometry<H> for Pool {
             _ => None,
         }
     }
+    fn classification_vertex_point(&self, o: H) -> Option<Vec3> {
+        self.topo.vertex_point(o.0)
+    }
+    fn topology_zone_tol_3d(&self, o: H) -> Option<f64> {
+        self.topo.zone_tol_3d(o.0).or_else(|| {
+            if o.1 == ClassObjectKind::Edgeuse {
+                Some(solidcore::geom::tol::ZONE_TOL_3D)
+            } else {
+                None
+            }
+        })
+    }
+    fn topology_entity(&self, o: H) -> Option<(&Brep, EntityRef)> {
+        self.topo.entity(o.0)
+    }
+    fn topology_handle(&self, e: EntityRef) -> Option<H> {
+        self.handles.get(self.topo.index_of(e)?).copied()
+    }
 }
 
 impl Pool {
@@ -526,10 +642,24 @@ impl Pool {
         o.and_then(|h| self.kinds.get(h.0).copied())
     }
 
+    /// Each B-rep entity's pool handle (the inverse of
+    /// [`ClassGeometry::topology_entity`]).
+    fn entity_handles(&self) -> Vec<(EntityRef, H)> {
+        self.topo
+            .ents
+            .iter()
+            .enumerate()
+            .filter_map(|(i, e)| e.and_then(|e| self.handles.get(i).map(|h| (e, *h))))
+            .collect()
+    }
+
+    /// The pool id of curve `c` (by address; an edge's curve is the pool curve the shim's
+    /// edge shares), `-2` for one outside the pool.
     fn id_of_curve(&self, c: &Curve) -> f64 {
         self.objs
             .iter()
             .position(|o| matches!(o, PoolObj::Curve(x) if core::ptr::eq(x, c)))
+            .or_else(|| self.topo.pool_curve_of(c))
             .map_or(-2.0, |i| i as f64)
     }
 }
@@ -554,8 +684,25 @@ fn build_pool(objects: &[ObjIn]) -> Result<Pool, HarnessError> {
         objs: Vec::new(),
         handles: Vec::new(),
         kinds: Vec::new(),
+        topo: BareTopology::default(),
     };
     for (i, o) in objects.iter().enumerate() {
+        // the curve of an edge object, the surface of a face object (earlier pool objects;
+        // the shim rejects any other)
+        let curve = match o {
+            ObjIn::Edge(Some(c)) => match pool.objs.get(*c) {
+                Some(PoolObj::Curve(x)) => Some((*c, x)),
+                _ => None,
+            },
+            _ => None,
+        };
+        let surface = match o {
+            ObjIn::Face(Some(sf)) => match pool.objs.get(*sf) {
+                Some(PoolObj::Surface(x)) => Some(x),
+                _ => None,
+            },
+            _ => None,
+        };
         let (k, obj) = match o {
             ObjIn::Curve(c) => (kind::CURVE, PoolObj::Curve(build_curve(c)?)),
             ObjIn::Plane { o, n } => (
@@ -571,6 +718,7 @@ fn build_pool(objects: &[ObjIn]) -> Result<Pool, HarnessError> {
             ObjIn::Edgeuse => (kind::EDGEUSE, PoolObj::Bare),
             ObjIn::Other => (kind::OTHER, PoolObj::Bare),
         };
+        pool.topo.push(class_kind_of(k), curve, surface)?;
         pool.objs.push(obj);
         pool.handles.push(H(i, class_kind_of(k)));
         pool.kinds.push(k);
@@ -648,8 +796,8 @@ fn push_str(o: &mut Vec<f64>, s: &str) {
 }
 
 fn rust_run(s: &Script) -> Result<Vec<f64>, Fail> {
-    let k = Kernel::default();
-    let pool = build_pool(&s.objects)?;
+    let mut k = Kernel::default();
+    let mut pool = build_pool(&s.objects)?;
     let mut pcs: [PointClassification<H>; 2] = [
         // SmPointClassification(SmZoneTol3d(tol)): the conversion happens once, in the
         // argument
@@ -657,10 +805,11 @@ fn rust_run(s: &Script) -> Result<Vec<f64>, Fail> {
         PointClassification::new(zone_tol3d(&k, s.tol[1])),
     ];
     let mut o: Vec<f64> = Vec::new();
+    let mut vertices = Vec::new();
     // after a deferred op the remaining ops still run (their state may differ from
     // upstream's) so that every op sees the run-time rejections of the shim
     let mut deferred: Option<Box<Output>> = None;
-    for x in &s.ops {
+    for (op_index, x) in s.ops.iter().enumerate() {
         let mut step = || -> Result<(), Fail> {
             let (code, t) = op_code(x);
             if t > 1 {
@@ -680,7 +829,8 @@ fn rust_run(s: &Script) -> Result<Vec<f64>, Fail> {
                     o.push(0.0);
                 }
                 OpIn::SetClassObject { class, obj, .. } => {
-                    let c = PointClassType::from_code(*class).ok_or_else(|| harness("bad class"))?;
+                    let c =
+                        PointClassType::from_code(*class).ok_or_else(|| harness("bad class"))?;
                     pc.set_class_object(c, pool.handle(*obj)?);
                     o.push(0.0);
                 }
@@ -740,21 +890,68 @@ fn rust_run(s: &Script) -> Result<Vec<f64>, Fail> {
                     if class == PointClassType::Vertex && ok != Some(kind::VERTEX) {
                         return Err(rejected());
                     }
-                    let which = st(pc.combine(&other))?.map_err(|_| harness("combine failed"))?;
+                    // A vertex classification writes a propagated surf/surf/surf point
+                    // to its vertex: run Combine on the pool's B-rep, as upstream does
+                    // through the object pointer.
+                    let object = pc.object();
+                    let target = object.and_then(|h| pool.topo.ents.get(h.0).copied().flatten());
+                    let combined = match (object, target) {
+                        (Some(object), Some(t @ EntityRef::Vertex(_))) => {
+                            let mapping = pool.entity_handles();
+                            let handle = move |e: EntityRef| {
+                                mapping
+                                    .iter()
+                                    .find(|(m, _)| *m == e)
+                                    .map_or(object, |(_, h)| *h)
+                            };
+                            let key_of = |e: EntityRef| {
+                                super::boolean_topology_intersector_p1::p9_entity_ref(e)
+                            };
+                            let mut records = solidcore::topology::topology::NotifyRecords::new();
+                            let mut attributes =
+                                solidcore::geom::attribute::AttributeStore::default();
+                            let mut env = solidcore::topology::edge::NotifyEnv {
+                                records: &mut records,
+                                attributes: &mut attributes,
+                                context: None,
+                                key_of: &key_of,
+                            };
+                            pc.combine_in_brep(
+                                &other,
+                                CombineBrep {
+                                    brep: &mut pool.topo.brep,
+                                    target: t,
+                                    handle: &handle,
+                                    notifications: &mut env,
+                                },
+                            )
+                        }
+                        _ => pc.combine(&other),
+                    };
+                    let which = st(combined)?.map_err(|_| harness("combine failed"))?;
                     o.push(0.0);
                     o.push(if which == Precedence::This { 0.0 } else { 1.0 });
+                    vertices.push(op_index as f64);
+                    put_vertices(&mut vertices, &pool)?;
                 }
                 OpIn::Compute { p, .. } => {
-                    if ok == Some(kind::POINT) || is_stand_in(ok) || class == PointClassType::Edgeuse {
+                    if ok == Some(kind::POINT)
+                        || is_stand_in(ok)
+                        || class == PointClassType::Edgeuse
+                    {
                         return Err(rejected());
                     }
-                    o.push(st(pc.compute_point_parameters(&k, &pool, v3(*p)))?.err().unwrap_or(0.0));
+                    o.push(
+                        st(pc.compute_point_parameters(&k, &pool, v3(*p)))?
+                            .err()
+                            .unwrap_or(0.0),
+                    );
                 }
                 OpIn::Find { .. } => {
                     if matches!(class, PointClassType::Edgeuse | PointClassType::Volume) {
                         return Err(rejected());
                     }
-                    match st(pc.find_obj_point_3d(&pool))? {
+                    match st(pc.find_obj_point_3d(&k, &pool))? {
                         Ok(p) => o.extend([0.0, p.x, p.y, p.z]),
                         Err(c) => o.push(c),
                     }
@@ -767,7 +964,10 @@ fn rust_run(s: &Script) -> Result<Vec<f64>, Fail> {
                         return Err(rejected());
                     }
                     let surf = match pool.handle(*s)? {
-                        Some(h) => Some(pool.surface(h).ok_or_else(|| harness("gap: not a surface"))?),
+                        Some(h) => Some(
+                            pool.surface(h)
+                                .ok_or_else(|| harness("gap: not a surface"))?,
+                        ),
                         None => None,
                     };
                     let g = st(pc.gap_3d(&k, &pool, surf))?.map_err(|_| harness("gap failed"))?;
@@ -803,8 +1003,62 @@ fn rust_run(s: &Script) -> Result<Vec<f64>, Fail> {
                     ) {
                         return Err(rejected());
                     }
-                    match st(pc.merge_into_object(&k, v3(*p)))? {
-                        Ok(m) => o.extend([0.0, m.new_edges.len() as f64, m.new_vertices.len() as f64]),
+                    // A vertex classification merges into the pool's real B-rep vertex:
+                    // upstream mutates that vertex and repoints the classification, so
+                    // run the merge on the arena the classification handles name. Other
+                    // classification objects (stand-ins, curves, ...) have no entity
+                    // here; the opaque path reports upstream's SM_ERR for them.
+                    let object = pc.object();
+                    let target = object.and_then(|h| pool.topo.ents.get(h.0).copied().flatten());
+                    let merged = match (object, target) {
+                        (Some(object), Some(t @ EntityRef::Vertex(_))) => {
+                            // `ClassGeometry` cannot hand out the arena mutably: map the
+                            // entity back to its pool handle here, where the B-rep is
+                            // borrowed mutably and the handles are a local copy.
+                            let mapping = pool.entity_handles();
+                            let handle = move |e: EntityRef| {
+                                mapping
+                                    .iter()
+                                    .find(|(m, _)| *m == e)
+                                    .map_or(object, |(_, h)| *h)
+                            };
+                            let key_of = |e: EntityRef| {
+                                super::boolean_topology_intersector_p1::p9_entity_ref(e)
+                            };
+                            let curve_ref =
+                                |e: EdgeId, type_code: i64| solidcore::geom::object::ObjectRef {
+                                    key: solidcore::geom::attribute::ObjectKey(
+                                        ((type_code as u64) << 32) | u64::from(e.index()),
+                                    ),
+                                    type_code,
+                                };
+                            let mut records = solidcore::topology::topology::NotifyRecords::new();
+                            let mut attributes =
+                                solidcore::geom::attribute::AttributeStore::default();
+                            let mut env = solidcore::topology::edge::NotifyEnv {
+                                records: &mut records,
+                                attributes: &mut attributes,
+                                context: None,
+                                key_of: &key_of,
+                            };
+                            pc.merge_into_brep(
+                                &mut k,
+                                v3(*p),
+                                BrepMerge {
+                                    brep: &mut pool.topo.brep,
+                                    target: t,
+                                    handle: &handle,
+                                    notifications: &mut env,
+                                    curve_ref: &curve_ref,
+                                },
+                            )
+                        }
+                        _ => pc.merge_into_object(&k, v3(*p)),
+                    };
+                    match st(merged)? {
+                        Ok(m) => {
+                            o.extend([0.0, m.new_edges.len() as f64, m.new_vertices.len() as f64]);
+                        }
                         Err(c) => o.extend([c, 0.0, 0.0]),
                     }
                 }
@@ -820,7 +1074,8 @@ fn rust_run(s: &Script) -> Result<Vec<f64>, Fail> {
                     if matches!(ok, Some(kind::POINT | kind::EDGEUSE)) {
                         return Err(rejected());
                     }
-                    let r = st(pc.is_connected_to(tgt))?.map_err(|_| harness("connected failed"))?;
+                    let r = st(pc.is_connected_to(&pool, tgt))?
+                        .map_err(|_| harness("connected failed"))?;
                     o.extend([0.0, b(r)]);
                 }
                 OpIn::ConnectedAny { js, .. } => {
@@ -831,7 +1086,7 @@ fn rust_run(s: &Script) -> Result<Vec<f64>, Fail> {
                     if matches!(ok, Some(kind::POINT | kind::EDGEUSE)) {
                         return Err(rejected());
                     }
-                    let r = st(pc.is_connected_to_any(&tgts))?
+                    let r = st(pc.is_connected_to_any(&pool, &tgts))?
                         .map_err(|_| harness("connected failed"))?;
                     o.extend([0.0, b(r.is_some()), r.map_or(-1.0, |i| i as f64)]);
                 }
@@ -839,7 +1094,8 @@ fn rust_run(s: &Script) -> Result<Vec<f64>, Fail> {
                     if class == PointClassType::Edgeuse {
                         return Err(rejected());
                     }
-                    let r = st(pc.curve_object(&pool))?.map_err(|_| harness("curve object failed"))?;
+                    let r =
+                        st(pc.curve_object(&pool))?.map_err(|_| harness("curve object failed"))?;
                     o.extend([0.0, r.map_or(-1.0, |c| pool.id_of_curve(c))]);
                 }
                 OpIn::ObjTol { .. } | OpIn::XsectTol { .. } => {
@@ -874,10 +1130,36 @@ fn rust_run(s: &Script) -> Result<Vec<f64>, Fail> {
             Err(e) => return Err(e),
         }
     }
-    match deferred {
-        Some(d) => Err(Fail::Deferred(d)),
-        None => Ok(o),
+    if let Some(d) = deferred {
+        Err(Fail::Deferred(d))
+    } else {
+        o.extend(vertices);
+        Ok(o)
     }
+}
+
+/// Read the arena, rather than the classification's copy of the SSS point.
+fn put_vertices(out: &mut Vec<f64>, pool: &Pool) -> Result<(), HarnessError> {
+    let vertices: Vec<_> = pool
+        .topo
+        .ents
+        .iter()
+        .enumerate()
+        .filter_map(|(index, e)| {
+            if let Some(EntityRef::Vertex(v)) = e {
+                Some((index, *v))
+            } else {
+                None
+            }
+        })
+        .collect();
+    out.push(vertices.len() as f64);
+    for (index, v) in vertices {
+        let p = solidcore::topology::vertex::point(&pool.topo.brep, v)
+            .map_err(|e| harness(e.to_string()))?;
+        out.extend([index as f64, p.x, p.y, p.z]);
+    }
+    Ok(())
 }
 
 /// A topology target of `IsConnectedTo`.
@@ -1013,18 +1295,13 @@ fn gen_objects(rng: &mut Rng) -> Vec<ObjIn> {
     if n.iter().map(|c| c * c).sum::<f64>() < 1e-3 {
         n = [0.0, 0.0, 1.0];
     }
-    objs.push(ObjIn::Plane {
-        o: rp(rng, 5.0),
-        n,
-    });
+    objs.push(ObjIn::Plane { o: rp(rng, 5.0), n });
     objs.push(ObjIn::Point(rp(rng, 10.0)));
     objs.push(ObjIn::Point(rp(rng, 10.0)));
     objs.push(ObjIn::Vertex);
     objs.push(ObjIn::Vertex);
     objs.push(ObjIn::Edge(Some(0)));
-    let plane = objs
-        .iter()
-        .position(|o| matches!(o, ObjIn::Plane { .. }));
+    let plane = objs.iter().position(|o| matches!(o, ObjIn::Plane { .. }));
     objs.push(ObjIn::Face(plane));
     objs.push(ObjIn::Volume);
     objs.push(ObjIn::Region);
@@ -1073,7 +1350,7 @@ fn class_object_kind(class: i32) -> Option<usize> {
 }
 
 /// A point near the pool's first curve or plane, or anywhere.
-fn gen_point(rng: &mut Rng, objs: &[ObjIn]) -> [f64; 3] {
+fn gen_point(k: &Kernel, rng: &mut Rng, objs: &[ObjIn]) -> [f64; 3] {
     let near = |rng: &mut Rng, p: [f64; 3], d: f64| {
         let e = rp(rng, d);
         [p[0] + e[0], p[1] + e[1], p[2] + e[2]]
@@ -1083,8 +1360,10 @@ fn gen_point(rng: &mut Rng, objs: &[ObjIn]) -> [f64; 3] {
             if let Ok(curve) = build_curve(c) {
                 let ivl = curve.natural_interval();
                 let t = ivl.min() + (ivl.max() - ivl.min()) * rng.uniform(-0.1, 1.1);
-                if let Ok(p) = curve.evaluate_point(t) {
-                    let d = *rng.choose(&[0.0, 1e-9, 1e-6, 1e-4, 0.1, 2.0]).unwrap_or(&0.0);
+                if let Ok(p) = curve.evaluate_point(k, t) {
+                    let d = *rng
+                        .choose(&[0.0, 1e-9, 1e-6, 1e-4, 0.1, 2.0])
+                        .unwrap_or(&0.0);
                     return near(rng, [p.x, p.y, p.z], d);
                 }
             }
@@ -1115,12 +1394,11 @@ fn gen_class_object(rng: &mut Rng, objs: &[ObjIn], geometric: bool) -> (i32, Opt
 }
 
 fn gen_tol(rng: &mut Rng) -> f64 {
-    *rng
-        .choose(&[1e-5, 1e-5, 1e-3, 0.1, 2e-5, USE_DEFAULT, 0.0])
+    *rng.choose(&[1e-5, 1e-5, 1e-3, 0.1, 2e-5, USE_DEFAULT, 0.0])
         .unwrap_or(&1e-5)
 }
 
-fn gen_op(rng: &mut Rng, objs: &[ObjIn], geometric: bool) -> OpIn {
+fn gen_op(k: &Kernel, rng: &mut Rng, objs: &[ObjIn], geometric: bool) -> OpIn {
     let t = rng.below(2) as usize;
     let topo: Vec<usize> = objs
         .iter()
@@ -1134,7 +1412,11 @@ fn gen_op(rng: &mut Rng, objs: &[ObjIn], geometric: bool) -> OpIn {
         .filter(|(_, o)| !matches!(o, ObjIn::Point(_)))
         .map(|(i, _)| i)
         .filter(|&i| {
-            !geometric || matches!(objs.get(i), Some(ObjIn::Curve(_) | ObjIn::Plane { .. } | ObjIn::Volume))
+            !geometric
+                || matches!(
+                    objs.get(i),
+                    Some(ObjIn::Curve(_) | ObjIn::Plane { .. } | ObjIn::Volume)
+                )
         })
         .collect();
     loop {
@@ -1170,10 +1452,17 @@ fn gen_op(rng: &mut Rng, objs: &[ObjIn], geometric: bool) -> OpIn {
             },
             10 => OpIn::SetPresnap {
                 t,
-                v: if rng.chance(0.3) { BIG } else { rng.uniform(-3.0, 3.0) },
+                v: if rng.chance(0.3) {
+                    BIG
+                } else {
+                    rng.uniform(-3.0, 3.0)
+                },
             },
             11 => OpIn::SetSss { t, p: rp(rng, 5.0) },
-            12 => OpIn::SetSrcTol { t, tol: gen_tol(rng) },
+            12 => OpIn::SetSrcTol {
+                t,
+                tol: gen_tol(rng),
+            },
             13 => {
                 let faces = of_kind(objs, kind::FACE);
                 OpIn::SetFace {
@@ -1191,7 +1480,7 @@ fn gen_op(rng: &mut Rng, objs: &[ObjIn], geometric: bool) -> OpIn {
             17..=19 => OpIn::Combine { t },
             20..=22 => OpIn::Compute {
                 t,
-                p: gen_point(rng, objs),
+                p: gen_point(k, rng, objs),
             },
             23 => OpIn::Find { t },
             24 => {
@@ -1217,12 +1506,16 @@ fn gen_op(rng: &mut Rng, objs: &[ObjIn], geometric: bool) -> OpIn {
                     value: rng.uniform(0.0, 0.5),
                     params,
                     offset: rng.below(10) as usize,
-                    pre: if rng.chance(0.5) { BIG } else { rng.uniform(0.0, 1.0) },
+                    pre: if rng.chance(0.5) {
+                        BIG
+                    } else {
+                        rng.uniform(0.0, 1.0)
+                    },
                 }
             }
             26 => OpIn::Merge {
                 t,
-                p: gen_point(rng, objs),
+                p: gen_point(k, rng, objs),
             },
             27 => OpIn::Brep { t },
             28 => {
@@ -1249,7 +1542,7 @@ fn gen_op(rng: &mut Rng, objs: &[ObjIn], geometric: bool) -> OpIn {
     }
 }
 
-fn gen_script(rng: &mut Rng) -> Script {
+fn gen_script(k: &Kernel, rng: &mut Rng) -> Script {
     let objects = gen_objects(rng);
     // most scripts stay on curves, surfaces and volumes (comparable now); some
     // exercise topology (deferred on the Rust side)
@@ -1264,7 +1557,7 @@ fn gen_script(rng: &mut Rng) -> Script {
         }
     }
     for _ in 0..n_ops {
-        ops.push(gen_op(rng, &objects, geometric));
+        ops.push(gen_op(k, rng, &objects, geometric));
     }
     Script {
         objects,
@@ -1279,8 +1572,9 @@ impl UnitDiff for Runner {
     }
 
     fn generate(&self, rng: &mut Rng) -> Option<Value> {
+        let k = &Kernel::default();
         for _ in 0..64 {
-            let s = gen_script(rng);
+            let s = gen_script(k, rng);
             let Ok(input) = cpp_input(&s) else {
                 continue;
             };
@@ -1318,6 +1612,33 @@ impl UnitDiff for Runner {
 mod tests {
     use super::*;
 
+    #[test]
+    fn combine_observes_vertex_mutation_and_bystanders() {
+        let script: Script = serde_json::from_value(serde_json::json!({
+            "objects": ["vertex", "vertex", "vertex"], "tol": [1e-5, 1e-5],
+            "ops": [
+                {"op": "set_class_object", "t": 0, "class": 104, "obj": 0},
+                {"op": "set_class_object", "t": 1, "class": 104, "obj": 1},
+                {"op": "set_gap", "t": 0, "g": 0.1},
+                {"op": "set_gap", "t": 1, "g": 0.2},
+                {"op": "set_sss", "t": 1, "p": [2, -3, 5]},
+                {"op": "combine", "t": 0}
+            ]
+        }))
+        .unwrap();
+        let native = cpp(&script).unwrap();
+        let mut actual = rust(&script).unwrap();
+        assert!(crate::compare::compare(&native, &actual, &[]).pass());
+        let out = actual.values.get_mut("out").unwrap();
+        let start = out.len() - 14;
+        assert_eq!(
+            &out[start..],
+            &[5., 3., 0., 2., -3., 5., 1., 0., 0., 0., 2., 0., 0., 0.]
+        );
+        out[start + 3] = 0.0; // losing the SetPoint side effect must be detected
+        assert!(!crate::compare::compare(&native, &actual, &[]).pass());
+    }
+
     /// Generated scripts are accepted by the ffi checks, and most of them are
     /// comparable now (not deferred).
     #[test]
@@ -1354,4 +1675,3 @@ mod dump {
         println!("{}", serde_json::to_string(&v).unwrap());
     }
 }
-

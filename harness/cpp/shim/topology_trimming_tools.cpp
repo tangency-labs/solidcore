@@ -21,6 +21,11 @@
 #include <SmEllipse.h>
 #include <SmTrimmingTools.h>
 
+#include <memory>
+
+// Reuses the existing p10 read-only observer, not its operations or input model.
+void sc_topology_brep_p10_append_snapshot(SmBrep*, const SmTArray<SmFace*>*, std::vector<double>&);
+
 namespace
 {
 enum : int32_t
@@ -36,6 +41,7 @@ enum : int32_t
     OP_MIN = 9,
     OP_LOOPS = 10,
     OP_TRIM_NULL = 11,
+    OP_TRIM_CONSTRUCTED = 12,
 
     OP_B_PRESENT = 20,
     OP_B_EXTREMES = 21,
@@ -51,6 +57,78 @@ enum : int32_t
 
 const double TT_NULL_DEREF = -2.0;
 const double TT_NOT_RUN = -3.0;
+
+// Two fixed, valid ORIGINAL-trim controls. No caller-supplied geometry, dimensions
+// or flags are admitted; the original surface is never read after the consuming call.
+int32_t tt_trim_constructed(int kind, std::vector<double>& output)
+{
+    SmContext context;
+    std::unique_ptr<SmBrep> body(new (context) SmBrep());
+    std::unique_ptr<SmSurface> original;
+    if (kind == 0)
+        original.reset(new (context) SmPlane(SmPoint3d(0, 0, 0), SmVector3d(0, 0, 1), &context));
+    else
+    {
+        gw_SURFACE* nurb = sm_AllocateNurbSurface(2, 1, 1, 1, 4, 3);
+        const double uk[5] = {0, 0, 0.5, 1, 1};
+        const double vk[4] = {0, 0, 1, 1};
+        for (int i = 0; i < 3; ++i)
+            for (int j = 0; j < 2; ++j)
+            {
+                nurb->net->Pw[i][j].x = 0.5 * i;
+                nurb->net->Pw[i][j].y = j;
+                nurb->net->Pw[i][j].z = i == 1 ? 0.25 : 0;
+                nurb->net->Pw[i][j].w = 1;
+            }
+        for (int i = 0; i < 5; ++i)
+            nurb->knu->U[i] = uk[i];
+        for (int i = 0; i < 4; ++i)
+            nurb->knv->U[i] = vk[i];
+        original.reset(new (context) SmBSplineSurface(nurb, FALSE, &context));
+    }
+    SmBoolean g1 = FALSE;
+    SmStatus continuity = SmTrimmingTools::SurfaceContinuityCheck(original.get(), g1);
+    if (continuity != SM_SUCCESS)
+        return SC_ERR_ARG; // construction/continuity failed before the operation
+    const SmPoint2d plane_uv[4] = {SmPoint2d(0, 0), SmPoint2d(1, 0), SmPoint2d(1, 1), SmPoint2d(0, 1)};
+    const SmPoint2d creased_uv[6] = {SmPoint2d(0, 0), SmPoint2d(0.5, 0), SmPoint2d(1, 0),
+                                    SmPoint2d(1, 1), SmPoint2d(0.5, 1), SmPoint2d(0, 1)};
+    const int count = kind == 0 ? 4 : 6;
+    SmPoint3d points[6];
+    for (int i = 0; i < count; ++i)
+        if (original->EvaluatePoint(kind == 0 ? plane_uv[i] : creased_uv[i], points[i]) != SM_SUCCESS)
+            return SC_ERR_ARG;
+    std::vector<std::unique_ptr<SmCurve>> owned_curves;
+    SmTArray<SmCurve*> curves;
+    SmTArray<SmOrientType> orientations;
+    for (int i = 0; i < count; ++i)
+    {
+        SmLine* line = nullptr;
+        SmExtent1d interval(0, 1);
+        if (SmLine::CreateLineSegment(context, 3, points[i], points[(i + 1) % count], line, &interval) != SM_SUCCESS)
+            return SC_ERR_ARG;
+        owned_curves.emplace_back(line);
+        curves.Add(line);
+        orientations.Add(SM_OT_SAME);
+    }
+    SmTArray<ULONG> counts;
+    counts.Add((ULONG)count);
+    SmTArray<SmPoint3d> loop_points;
+    SmTArray<SmFace*> returned;
+    for (auto& curve : owned_curves)
+        curve.release();
+    SmSurface* consumed = original.release();
+    SmStatus status = SmTrimmingTools::TrimSurfaceWithModelSpaceCurves(
+        context, body->GetInfiniteRegion(), 1e-5, counts, curves, orientations, loop_points, consumed,
+        SmExtent2d(SmPoint2d(0, 0), SmPoint2d(1, 1)), SM_OT_SAME, TRUE, kind == 0 ? FALSE : TRUE, FALSE, &returned);
+    // Neither consumed nor curves are inspected after the call, on any status.
+    output.push_back(st(continuity));
+    output.push_back(flg(g1));
+    output.push_back(st(status));
+    output.push_back(status == SM_SUCCESS ? 1.0 : 0.0);
+    sc_topology_brep_p10_append_snapshot(body.get(), status == SM_SUCCESS ? &returned : nullptr, output);
+    return SC_OK;
+}
 
 // ---- geometry blocks ------------------------------------------------------------------
 
@@ -767,8 +845,9 @@ SmBSplineCurve* tt_plain_curve(SmCurve* c)
 }
 
 // The Rust side imports the export's NURBs as plain B-splines (and lines), and SmPlanes
-// as planes: give every other face and edge of the C++ B-rep the same geometry (the
-// analytic originals are left unowned and leaked), as the heal.gap shim does.
+// as planes, and exact analytic surfaces as their own kind: give every other face and
+// edge of the C++ B-rep the same geometry, as the heal.gap shim does. Replaced
+// originals are left unowned and leaked.
 void tt_normalise(Graph& g)
 {
     for (SmFace* f : g.faces)
@@ -776,6 +855,10 @@ void tt_normalise(Graph& g)
         SmSurface* s = f->*TtFacePeek::surface();
         if (s == nullptr || !s->IsKindOf(SmBSplineSurface_TYPE) || s->GetType() == SmBSplineSurface_TYPE ||
             s->GetType() == SmPlane_TYPE)
+            continue;
+        // Preserve every surface the shared export imports as its exact analytic kind.
+        std::vector<double> head;
+        if (sc_analytic_export::put_exact_head(head, s, the_context()))
             continue;
         SmBSplineSurface* b = (SmBSplineSurface*)s;
         gw_SURFACE* nurb = b->GetGwNurbPointer();
@@ -794,7 +877,8 @@ void tt_normalise(Graph& g)
     }
 }
 
-// Every edge use's own UV trim curve, in order.
+// Every edge use's own UV trim curve, in order, then each one's owner (the index of the
+// edge use it names, -1 for no curve or no owner, -3 for an owner that is no edge use).
 void tt_put_uv_curves(std::vector<double>& o, Graph& g)
 {
     o.push_back((double)g.edgeuses.size());
@@ -808,6 +892,11 @@ void tt_put_uv_curves(std::vector<double>& o, Graph& g)
             o.push_back((double)c->GetDim());
             tt_put_nurb(o, c);
         }
+    }
+    for (SmEdgeuse* p : g.edgeuses)
+    {
+        SmBSplineCurve* c = p->*EuPeek::uv();
+        o.push_back(c ? (double)g.find(6, c->GetOwner()) : -1.0);
     }
 }
 
@@ -843,6 +932,20 @@ bool tt_ok_loop_extremes(SmLoop* l)
         if (!tt_ok_extremes(eus[i]))
             return false;
     return true;
+}
+
+// Whether the loop walks of FixTrimLoopOrientation / FixTrimLoopOrder dereference
+// nothing null: every loop has its loop use, and a face with loops has a surface and UV
+// trim curves on every edge use (SmFace::ComputeLoopOrientation and the UV boxes of
+// FixTrimLoopOrder read them).
+bool tt_ok_face_loops(SmFace* f)
+{
+    SmTArray<SmLoop*> ls;
+    f->GetLoops(ls);
+    for (ULONG i = 0; i < ls.GetSize(); i++)
+        if (!tt_ok_loop(ls[i]))
+            return false;
+    return ls.GetSize() == 0 || (f->GetSurface() != nullptr && SmTrimmingTools::AreUVCurvesPresent(f));
 }
 
 // The pre-step of the repair and check ops: `k side` (k = -1: none) mirrors the UV trim
@@ -967,6 +1070,46 @@ void tt_brep_op(int32_t op, Rd& rd, const char* path, std::vector<double>& o)
         double tol = rd.num();
         bool want_list = rd.flag();
         tt_mirror_pre(rd, l, o);
+        if (rd.flag())
+        {
+            size_t selector = (size_t)rd.idx();
+            double displacement = rd.num();
+            SmLoopuse *lu, *mate;
+            l->GetLoopuses(lu, mate);
+            SmTArray<SmEdgeuse*> eus;
+            if (lu != nullptr)
+                lu->GetEdgeuses(eus);
+            SmBSplineCurve* curve = eus.GetSize() ? eus[(ULONG)(selector % eus.GetSize())]->GetUVTrimCurve() : nullptr;
+            if (curve == nullptr || (curve->GetType() != SmBSplineCurve_TYPE && curve->GetType() != SmLine_TYPE))
+                o.push_back(-1.0);
+            else
+            {
+                SmPoint3d point;
+                SmStatus r = curve->EvaluatePoint(curve->GetNaturalInterval().GetMin(), point);
+                if (r == SM_SUCCESS)
+                {
+                    point.x += displacement;
+                    r = curve->EditEndPoint(point, TRUE, NULL);
+                }
+                o.push_back(st(r));
+            }
+        }
+        if (rd.flag())
+        {
+            double edge_tol = rd.num(), vertex_tol = rd.num();
+            for (SmEdge* e : g.edges)
+                e->SetTolerance(SmZoneTol3d(edge_tol), FALSE, FALSE);
+            for (SmVertex* v : g.vertices)
+                v->SetTolerance(SmZoneTol3d(vertex_tol), FALSE, FALSE);
+        }
+        if (rd.flag())
+        {
+            const size_t selector = (size_t)rd.idx();
+            SmLoopuse* lu = l->GetLoopuse();
+            SmTArray<SmEdgeuse*> eus;
+            if (lu != nullptr) lu->GetEdgeuses(eus);
+            if (eus.GetSize()) eus[(ULONG)(selector % eus.GetSize())]->DeleteUVTrimCurve();
+        }
         SmFace* f = tt_ok_loop(l) ? tt_loop_face(l) : nullptr;
         SmSurface* s = f ? f->GetSurface() : nullptr;
         if (s == nullptr || !tt_ok_loop_extremes(l))
@@ -999,30 +1142,25 @@ void tt_brep_op(int32_t op, Rd& rd, const char* path, std::vector<double>& o)
             o.push_back(TT_NULL_DEREF);
             break;
         }
-        // with UV curves on every loop, the Rust side reaches ComputeLoopOrientation
-        // (unported) unless CheckLoop fails first: run only CheckLoop's part then
+        // With UV curves on every loop CheckFace reaches CheckLoop of every loop (which
+        // reads each loop's UV extremes) and SmFace::ComputeLoopOrientation: guarded
+        // (TT_NULL_DEREF) where upstream would dereference a missing surface or extreme.
         bool all_uv = ls.GetSize() > 0 && SmTrimmingTools::AreUVCurvesPresent(f);
         SmAssertArray a;
-        if (ls.GetSize() == 0 || !all_uv)
+        if (all_uv)
         {
-            o.push_back(st(SmTrimmingTools::CheckFace(f, tol, want_list ? &a : NULL, SM_LEVEL_0, NULL,
-                                                      skip ? TRUE : FALSE)));
-            tt_put_reports(o, g, a);
-            break;
+            if (f->GetSurface() == nullptr)
+                ok = false;
+            for (ULONG i = 0; ok && !skip && i < ls.GetSize(); i++)
+                ok = tt_ok_loop_extremes(ls[i]);
+            if (!ok)
+            {
+                o.push_back(TT_NULL_DEREF);
+                break;
+            }
         }
-        if (skip || f->GetSurface() == nullptr || !tt_ok_loop_extremes(ls[0]))
-        {
-            o.push_back(TT_NOT_RUN);
-            break;
-        }
-        ULONG closure = 99;
-        SmStatus r = SmTrimmingTools::CheckLoop(f->GetSurface(), ls[0], tol, closure, want_list ? &a : NULL);
-        if (r == SM_SUCCESS)
-        {
-            o.push_back(TT_NOT_RUN);
-            break;
-        }
-        o.push_back(st(r));
+        o.push_back(st(SmTrimmingTools::CheckFace(f, tol, want_list ? &a : NULL, SM_LEVEL_0, NULL,
+                                                  skip ? TRUE : FALSE)));
         tt_put_reports(o, g, a);
         break;
     }
@@ -1154,14 +1292,12 @@ void tt_brep_op(int32_t op, Rd& rd, const char* path, std::vector<double>& o)
     }
     case OP_B_ORIENT:
     {
-        // FixTrimLoopOrientation of the face: SmFace::ComputeLoopOrientation is
-        // unported, so only a face without loops is run
+        // FixTrimLoopOrientation of the face (SmFace::ComputeLoopOrientation of every
+        // loop): guarded like CheckFace's ComputeLoopOrientation
         SmFace* f = g.faces.at((size_t)rd.idx());
-        SmTArray<SmLoop*> ls;
-        f->GetLoops(ls);
-        if (ls.GetSize() != 0)
+        if (!tt_ok_face_loops(f))
         {
-            o.push_back(TT_NOT_RUN);
+            o.push_back(TT_NULL_DEREF);
             break;
         }
         ULONG n = 99;
@@ -1172,14 +1308,12 @@ void tt_brep_op(int32_t op, Rd& rd, const char* path, std::vector<double>& o)
     }
     case OP_B_ORDER:
     {
-        // FixTrimLoopOrder: only its error for a face without loops is reached before
-        // the unported SmFace::ComputeLoopOrientation
+        // FixTrimLoopOrder (UV boxes of every loop's trim curves, then
+        // SmFace::ComputeLoopOrientation): guarded like FixTrimLoopOrientation
         SmFace* f = g.faces.at((size_t)rd.idx());
-        SmTArray<SmLoop*> ls;
-        f->GetLoops(ls);
-        if (ls.GetSize() != 0)
+        if (!tt_ok_face_loops(f))
         {
-            o.push_back(TT_NOT_RUN);
+            o.push_back(TT_NULL_DEREF);
             break;
         }
         SmBoolean made = UNSURE;
@@ -1188,10 +1322,23 @@ void tt_brep_op(int32_t op, Rd& rd, const char* path, std::vector<double>& o)
     }
     case OP_B_DEFERRED:
     {
-        // SplitAtSeams, ClearUVTrimCurves, CreateUVTrimCurves: always deferred in Rust
-        rd.idx();
-        rd.idx();
-        o.push_back(TT_NOT_RUN);
+        // SplitAtSeams: always deferred in Rust. ClearUVTrimCurves (void): `0`, and
+        // CreateUVTrimCurves: its status; then every edge use's UV trim curve.
+        int64_t kind = rd.idx();
+        SmFace* f = g.faces.at((size_t)rd.idx());
+        if (kind == 0)
+        {
+            SmTArray<SmFace*> new_faces;
+            o.push_back(st(SmTrimmingTools::SplitAtSeams(the_context(), f, new_faces)));
+        }
+        else if (kind == 1)
+        {
+            SmTrimmingTools::ClearUVTrimCurves(f);
+            o.push_back(0.0);
+        }
+        else
+            o.push_back(st(SmTrimmingTools::CreateUVTrimCurves(f)));
+        tt_put_uv_curves(o, g);
         break;
     }
     default: o.push_back((double)SC_ERR_ARG); break;
@@ -1204,7 +1351,17 @@ SC_EXPORT int32_t sc_topology_trimming_tools_eval(int32_t op, const char* path, 
 {
     if (in == NULL || n_in < 1 || out_len == NULL || path == NULL)
         return SC_ERR_ARG;
+    if (op == OP_TRIM_CONSTRUCTED && (n_in != 1 || (in[0] != 0.0 && in[0] != 1.0)))
+        return SC_ERR_ARG;
     SC_TRY
+    if (op == OP_TRIM_CONSTRUCTED)
+    {
+        std::vector<double> result;
+        int32_t status = tt_trim_constructed((int)in[0], result);
+        if (status != SC_OK)
+            return status;
+        return sc_copy_out(result.data(), (int64_t)result.size(), out, cap, out_len);
+    }
     Rd rd{in, 0};
     std::vector<double> o;
     if (op == OP_LOOPS)

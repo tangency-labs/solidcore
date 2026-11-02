@@ -51,7 +51,7 @@
 //!   private handle.
 //! - **Recursion.** The next-map chain is walked recursively as upstream (one level
 //!   per map; chains are built by the caller). `ReadFromDB` recursion is input
-//!   driven and bounded by [`DatabaseReader::enter_nested`] (64 levels); past the
+//!   driven and bounded by [`DatabaseReader::enter_nested`] (32 levels); past the
 //!   bound the read fails with [`SolidError::InvalidInput`], which the nested reads
 //!   whose statuses upstream ignores propagate rather than drop.
 //! - **Contexts** and `bCalcGeometric` (unused by the ported simple maps) are dropped.
@@ -338,6 +338,7 @@ impl Volume {
             if let Some(orient) = &self.orient_map {
                 // project ParamDomain boxes to InSpace boxes through OrientMap()
                 simple(orient).evaluate_bounding_box_simple(
+                    k,
                     param_box,
                     param_pseudo_box,
                     in_box,
@@ -364,6 +365,7 @@ impl Volume {
                 let mut proj_pseudo_box = PseudoBox::new();
                 // map from Param to Proj space
                 self.evaluate_bounding_box_simple(
+                    k,
                     param_box,
                     param_pseudo_box,
                     Some(&mut proj_box),
@@ -371,6 +373,7 @@ impl Volume {
                 )?;
                 // map from Proj to Out space
                 simple(orient).evaluate_bounding_box_simple(
+                    k,
                     &proj_box,
                     Some(&proj_pseudo_box),
                     out_box.as_deref_mut(),
@@ -379,6 +382,7 @@ impl Volume {
             } else {
                 // projSpace == OutSpace, map from Param to Out space
                 self.evaluate_bounding_box_simple(
+                    k,
                     param_box,
                     param_pseudo_box,
                     out_box.as_deref_mut(),
@@ -526,6 +530,7 @@ impl Volume {
             let mut proj_box = Extent3d::new();
             let mut proj_pseudo_box = PseudoBox::new();
             ignore_defined(self.evaluate_bounding_box_simple(
+                k,
                 &param_box,
                 has_this.then_some(&param_pseudo_box),
                 Some(&mut proj_box),
@@ -534,6 +539,7 @@ impl Volume {
 
             // map ProjBox to OutSpace
             ignore_defined(simple(orient).evaluate_bounding_box_simple(
+                k,
                 &proj_box,
                 Some(&proj_pseudo_box),
                 out_box.as_deref_mut(),
@@ -548,6 +554,7 @@ impl Volume {
             ))?;
             // map trimmed InBoxes to OutBoxes directly
             ignore_defined(self.evaluate_bounding_box_simple(
+                k,
                 &param_box,
                 None,
                 out_box.as_deref_mut(),
@@ -600,6 +607,7 @@ impl Volume {
     /// fail), including [`SolidError::Unported`] from an unbend's edge boxes.
     pub fn evaluate_bounding_box_simple(
         &self,
+        k: &Kernel,
         param_box: &Extent3d,
         param_pseudo_box: Option<&PseudoBox>,
         proj_box: Option<&mut Extent3d>,
@@ -624,7 +632,8 @@ impl Volume {
             _ => {}
         }
         match &self.kind {
-            VolumeKind::Transform(t) => t.evaluate_bounding_box_simple(
+            VolumeKind::Transform(t) => t.evaluate_bounding_box_simple_with_kernel(
+                k,
                 param_box,
                 param_pseudo_box,
                 proj_box,
@@ -644,7 +653,7 @@ impl Volume {
                 t.evaluate_bounding_box_simple(param_box, proj_box, proj_pseudo_box)
             }
             VolumeKind::Unbend(u) => {
-                u.evaluate_bounding_box_simple(self, param_box, proj_box, proj_pseudo_box)
+                u.evaluate_bounding_box_simple(k, self, param_box, proj_box, proj_pseudo_box)
             }
             VolumeKind::Bend(b) => {
                 b.evaluate_bounding_box_simple(param_box, proj_box, proj_pseudo_box);
@@ -843,7 +852,7 @@ impl Volume {
     ) -> Result<Option<Point3>> {
         match self.evaluate_point(param_point, with_compounding) {
             Ok(q) => Ok(Some(q)),
-            Err(e) if e.is_unported() => Err(e),
+            Err(e) if e.is_unported_or_cancelled() => Err(e),
             Err(_) => match self.kind {
                 VolumeKind::Twist(_) | VolumeKind::Unbend(_) | VolumeKind::Bend(_)
                     if with_compounding && self.next_map.is_some() =>
@@ -873,6 +882,7 @@ impl Volume {
             non_zero_tangents,
             do_zero_sampling: true,
             with_compounding,
+            ..EvalOptions::default()
         };
         // sMat[2][2][2]
         let m = self.evaluate(param_point, 1, &opts)?;
@@ -897,18 +907,19 @@ impl Volume {
     /// [`SolidError::Unported`] from an unported kind.
     pub fn has_discontinuities(
         &self,
+        k: &Kernel,
         mut disconts: Option<&mut Discontinuities3d>,
         calc_geometric: bool,
     ) -> Result<bool> {
         // Pass the call along to the simple map
         let mut this_has =
-            self.has_discontinuities_simple(disconts.as_deref_mut(), calc_geometric)?;
+            self.has_discontinuities_simple(k, disconts.as_deref_mut(), calc_geometric)?;
 
         if let Some(next) = self.next_map.as_deref() {
             if let Some(d) = disconts {
                 let mut next_disconts = Discontinuities3d::new();
                 let next_has =
-                    next.has_discontinuities(Some(&mut next_disconts), calc_geometric)?;
+                    next.has_discontinuities(k, Some(&mut next_disconts), calc_geometric)?;
                 // when NextMap has discontinuities - assume unaligned discontinuities
                 if next_has {
                     let a = d.min_continuity;
@@ -922,7 +933,7 @@ impl Volume {
                 this_has |= next_has;
                 d.has_discontinuities = this_has;
             } else {
-                this_has |= next.has_discontinuities(None, false)?;
+                this_has |= next.has_discontinuities(k, None, false)?;
             }
         }
         Ok(this_has)
@@ -1230,7 +1241,7 @@ impl Volume {
             if let Some(sol) = solutions.get_mut(0) {
                 match self.local_point_solve_simple(proj_point, g, sol, param_domain, NoHandle) {
                     Ok(f) => success = f,
-                    Err(e) if e.is_unported() => return Err(e),
+                    Err(e) if e.is_unported_or_cancelled() => return Err(e),
                     Err(_) => {
                         status_ok = false;
                         success = false;
@@ -1524,10 +1535,15 @@ const fn unsupported(reason: &'static str) -> SolidError {
 pub(crate) fn ignore_read<T>(r: Result<T>) -> Result<Option<T>> {
     match r {
         Ok(v) => Ok(Some(v)),
-        Err(e @ (SolidError::Unported { .. } | SolidError::Unsupported { .. })) => Err(e),
-        Err(e @ SolidError::InvalidInput { reason, .. }) if reason == NESTING_LIMIT_REASON => {
-            Err(e)
-        }
+        Err(
+            e @ (SolidError::Unported { .. }
+            | SolidError::Cancelled { .. }
+            | SolidError::Unsupported { .. }),
+        ) => Err(e),
+        Err(
+            e
+            @ (SolidError::InvalidInput { reason, .. } | SolidError::PortInvariant { reason, .. }),
+        ) if reason == NESTING_LIMIT_REASON => Err(e),
         Err(_) => Ok(None),
     }
 }
@@ -1569,7 +1585,7 @@ fn read_map_type(db: &mut DatabaseReader) -> Result<i64> {
         Ok(h) => h
             .type_code
             .ok_or_else(|| unsupported("map type not read (uninitialised type upstream)")),
-        Err(e) if e.is_unported() => Err(e),
+        Err(e) if e.is_unported_or_cancelled() => Err(e),
         Err(_) => Err(unsupported(
             "map type not read (uninitialised type upstream)",
         )),
@@ -1628,7 +1644,8 @@ mod tests {
             VolumeKind::Transform(scaled()),
             Some(shift(v(10.0, 0.0, 0.0))),
             Some(tv(shift(v(0.0, 0.0, 5.0)))),
-        );
+        )
+        .unwrap();
         let p = vol.evaluate_point(v(1.0, 1.0, 1.0), true).unwrap();
         let q = vol.evaluate_point(v(1.0, 1.0, 1.0), false).unwrap();
         assert!(close(p - q, v(0.0, 0.0, 5.0)));
@@ -1664,7 +1681,7 @@ mod tests {
 
     #[test]
     fn bounding_boxes_of_a_transform() {
-        let vol = Volume::with_maps(VolumeKind::Transform(scaled()), None, None);
+        let vol = Volume::with_maps(VolumeKind::Transform(scaled()), None, None).unwrap();
         let ppb = PseudoBox::new();
         let mut out = Extent3d::new();
         let mut in_box = Extent3d::new();
@@ -1702,18 +1719,19 @@ mod tests {
 
     #[test]
     fn base_sampler_samples_the_compound_map() {
+        let k = &Kernel::default();
         // a plain volume with a transform next map: the sampler's evaluations fail
         // (the plain simple map), so every sample is the undefined point
-        let vol = Volume::with_maps(VolumeKind::Base, None, Some(tv(scaled())));
+        let vol = Volume::with_maps(VolumeKind::Base, None, Some(tv(scaled()))).unwrap();
         let mut b = Extent3d::new();
         let mut pb = PseudoBox::new();
-        vol.evaluate_bounding_box_simple(&unit_box(), None, Some(&mut b), Some(&mut pb))
+        vol.evaluate_bounding_box_simple(k, &unit_box(), None, Some(&mut b), Some(&mut pb))
             .unwrap();
         assert_eq!(b.min(), Vec3::UNDEF);
         // unbounded input boxes give unbounded output boxes
         let mut unb = Extent3d::new();
         unb.set_unbounded();
-        vol.evaluate_bounding_box_simple(&unb, None, Some(&mut b), None)
+        vol.evaluate_bounding_box_simple(k, &unb, None, Some(&mut b), None)
             .unwrap();
         assert!(!b.is_bounded());
         // the pseudo-box sampler of a transform volume maps exactly at the corners
@@ -1735,7 +1753,8 @@ mod tests {
             VolumeKind::Transform(scaled()),
             Some(shift(v(10.0, 0.0, 0.0))),
             Some(tv(shift(v(0.0, 0.0, 5.0)))),
-        );
+        )
+        .unwrap();
         let target = vol.evaluate_point(v(0.25, 0.5, 0.75), true).unwrap();
         let k = Kernel::default();
         let r = vol
@@ -1776,12 +1795,14 @@ mod tests {
 
     #[test]
     fn discontinuities_of_chains() {
-        let vol = Volume::with_maps(VolumeKind::Transform(scaled()), None, Some(tv(scaled())));
+        let k = &Kernel::default();
+        let vol =
+            Volume::with_maps(VolumeKind::Transform(scaled()), None, Some(tv(scaled()))).unwrap();
         let mut d = Discontinuities3d::new();
         d.set_unaligned();
-        assert!(!vol.has_discontinuities(Some(&mut d), true).unwrap());
+        assert!(!vol.has_discontinuities(k, Some(&mut d), true).unwrap());
         assert_eq!(d, Discontinuities3d::new());
-        assert!(!vol.has_discontinuities(None, true).unwrap());
+        assert!(!vol.has_discontinuities(k, None, true).unwrap());
     }
 
     fn ascii(s: &str) -> DatabaseReader {
@@ -1835,6 +1856,7 @@ mod tests {
 
     #[test]
     fn unbend_overrides_are_dispatched() {
+        let k = &Kernel::default();
         let vol = UnbendVolume::create(
             v(0.0, 0.0, 0.0),
             v(0.0, 0.0, 1.0),
@@ -1852,13 +1874,13 @@ mod tests {
         assert!(close(v(p[0], p[1], p[2]), v(1.5, 0.5, 0.25)));
         // its box covers the mapped corners
         let mut b = Extent3d::new();
-        vol.evaluate_bounding_box_simple(&unit_box(), None, Some(&mut b), None)
+        vol.evaluate_bounding_box_simple(k, &unit_box(), None, Some(&mut b), None)
             .unwrap();
         assert!(b.contains_point(vol.evaluate_point(v(1.0, 1.0, 1.0), true).unwrap(), 1e-9));
         // a zero-length box edge is refused (upstream reads a null line)
         let flat = Extent3d::from_points(v(0.5, 0.5, 0.5), v(0.5, 1.0, 1.0));
         assert!(vol
-            .evaluate_bounding_box_simple(&flat, None, Some(&mut b), None)
+            .evaluate_bounding_box_simple(k, &flat, None, Some(&mut b), None)
             .is_err());
     }
 
@@ -1880,21 +1902,23 @@ mod tests {
 
     #[test]
     fn nesting_bound_is_not_an_ignored_status() {
-        // 65 twists chained by next maps, one past the bound; the twist data and
-        // base flags are zeros, so a swallowed bound error would leave a stream that
-        // still reads as a shorter (64-map) chain
+        // MAX_READ_NESTING + 1 (33) twists chained by next maps, one past the bound;
+        // the twist data and base flags are zeros, so a swallowed bound error would
+        // leave a stream that still reads as a shorter (32-map) chain
+        let max = crate::topology::database_io::MAX_READ_NESTING as usize;
+        assert_eq!(max, 32);
         let twist = format!("0\n0\n1\nObject Type {TWIST_VOLUME_TYPE}\n");
-        let mut text = twist.repeat(64);
+        let mut text = twist.repeat(max);
         text.push_str("0\n0\n0\n0\n");
-        text.push_str(&"0\n".repeat(64));
+        text.push_str(&"0\n".repeat(max));
         assert!(matches!(
             Volume::read_from_db(TWIST_VOLUME_TYPE, &mut ascii(&text), 30),
             Err(SolidError::InvalidInput { reason, .. }) if reason == NESTING_LIMIT_REASON
         ));
-        // 64 maps read
-        let mut text = twist.repeat(63);
+        // MAX_READ_NESTING (32) maps read
+        let mut text = twist.repeat(max - 1);
         text.push_str("0\n0\n0\n0\n");
-        text.push_str(&"0\n".repeat(63));
+        text.push_str(&"0\n".repeat(max - 1));
         let vol = Volume::read_from_db(TWIST_VOLUME_TYPE, &mut ascii(&text), 30).unwrap();
         let mut n = 0;
         let mut p = Some(&vol);
@@ -1902,7 +1926,7 @@ mod tests {
             n += 1;
             p = q.next_map();
         }
-        assert_eq!(n, 64);
+        assert_eq!(n, max);
     }
 
     #[test]

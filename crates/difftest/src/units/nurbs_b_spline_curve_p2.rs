@@ -294,40 +294,13 @@ impl OpIn {
     }
 }
 
-/// Whitespace-separated numbers of an upstream text file.
-fn numbers(path: &str) -> Result<Vec<f64>, HarnessError> {
-    let text = std::fs::read_to_string(path).map_err(|e| harness(format!("{path}: {e}")))?;
-    text.split_whitespace()
-        .map(|t| t.parse::<f64>().map_err(|e| harness(format!("{path}: {e}"))))
-        .collect()
-}
-
-fn int(path: &str, v: f64) -> Result<usize, HarnessError> {
-    if v.fract() != 0.0 || v < 0.0 {
-        return Err(harness(format!("{path}: bad count {v}")));
-    }
-    Ok(v as usize)
-}
-
-/// Reads an upstream `.smc` text file: `n`, `p`, rational flag, dimension, `n+1`
-/// points (`x y [z]`, or `wx wy [wz] w` when rational), `n+p+2` knots.
 fn read_smc(path: &str) -> Result<InlineCrv, HarnessError> {
-    let v = numbers(path)?;
-    let mut it = v.into_iter();
-    let mut num = || it.next().ok_or_else(|| harness(format!("{path}: truncated")));
-    let n = int(path, num()?)?;
-    let p = int(path, num()?)?;
-    let rat = num()? != 0.0;
-    let dim = int(path, num()?)?;
-    let mut cpts = Vec::with_capacity(n + 1);
-    for _ in 0..=n {
-        let (x, y) = (num()?, num()?);
-        let z = if dim == 3 { num()? } else { NOZ };
-        let w = if rat { num()? } else { NOW };
-        cpts.push([x, y, z, w]);
-    }
-    let u = (0..n + p + 2).map(|_| num()).collect::<Result<Vec<_>, _>>()?;
-    Ok(InlineCrv { cpts, p, u })
+    let c = crate::fixtures::text_curve::read(path)?;
+    Ok(InlineCrv {
+        cpts: c.cpts,
+        p: c.p,
+        u: c.u,
+    })
 }
 
 fn v3(a: [f64; 3]) -> Vec3 {
@@ -483,6 +456,10 @@ fn cpp_input(i: &Inputs) -> Result<Vec<f64>, HarnessError> {
         | OpIn::Reverse { a, b }
         | OpIn::Adjust { a, b } => o.extend([*a, *b]),
         OpIn::Join { segs, senses } => {
+            // upstream reads `(*cpOptSenses)[ii]` past a shorter array (UB)
+            if senses.as_ref().is_some_and(|v| v.len() < segs.len()) {
+                return Err(HarnessError::new("join: fewer senses than segments"));
+            }
             o.push(segs.len() as f64);
             for s in segs {
                 encode_this(s, &mut o)?;
@@ -754,7 +731,7 @@ fn dump_state(o: &mut Vec<f64>, c: &BSplineCurve) {
 /// The `SmStatus` of a Rust error; `-1` for one upstream cannot return.
 fn status(e: &SolidError) -> f64 {
     match e {
-        SolidError::InvalidInput { .. } => 1007.0,
+        SolidError::InvalidInput { .. } | SolidError::PortInvariant { .. } => 1007.0,
         SolidError::Upstream { code, .. } => f64::from(*code),
         _ => -1.0,
     }
@@ -843,7 +820,7 @@ fn rust_static(op: &OpIn, o: &mut Vec<f64>) -> Result<(), Fail> {
 }
 
 /// Runs a curve op on `c`; pushes its outputs (after the status) on success.
-fn rust_curve(op: &OpIn, c: &mut BSplineCurve, o: &mut Vec<f64>) -> Result<(), Fail> {
+fn rust_curve(k: &Kernel, op: &OpIn, c: &mut BSplineCurve, o: &mut Vec<f64>) -> Result<(), Fail> {
     let ivl = |a: f64, b: f64| Extent1d::from_min_max(a, b);
     match op {
         OpIn::Intersector => push_flag(o, c.is_intersector_approx()?),
@@ -887,7 +864,7 @@ fn rust_curve(op: &OpIn, c: &mut BSplineCurve, o: &mut Vec<f64>) -> Result<(), F
             o.push(gap);
             push_new(o, Some(&r));
         }
-        OpIn::Repeated { tol } => push_flag(o, c.has_repeated_end_control_points(*tol)?),
+        OpIn::Repeated { tol } => push_flag(o, c.has_repeated_end_control_points(k, *tol)?),
         OpIn::Canonical => {
             let k = c.canonical()?;
             o.extend([
@@ -917,7 +894,7 @@ fn rust_curve(op: &OpIn, c: &mut BSplineCurve, o: &mut Vec<f64>) -> Result<(), F
         OpIn::C0 => push_flag(o, c.is_piecewise_c0()?),
         OpIn::Degenerate { tol, ivl: iv } => {
             let e = iv.map(|[a, b]| ivl(a, b));
-            push_flag(o, c.is_degenerate(*tol, e.as_ref())?);
+            push_flag(o, c.is_degenerate(k, *tol, e.as_ref())?);
         }
         OpIn::Expert {
             form,
@@ -930,7 +907,7 @@ fn rust_curve(op: &OpIn, c: &mut BSplineCurve, o: &mut Vec<f64>) -> Result<(), F
             o.extend_from_slice(&v);
         }
         OpIn::MaxDomain => {
-            let d = c.max_analytic_domain()?;
+            let d = c.max_analytic_domain(k)?;
             o.extend([d.min(), d.max()]);
         }
         OpIn::Unique => o.push(c.number_of_unique_knots()? as f64),
@@ -976,7 +953,7 @@ fn rust_curve(op: &OpIn, c: &mut BSplineCurve, o: &mut Vec<f64>) -> Result<(), F
     Ok(())
 }
 
-fn rust(i: &Inputs) -> Result<Output, HarnessError> {
+fn rust(k: &Kernel, i: &Inputs) -> Result<Output, HarnessError> {
     // joins: status, new curve, then every segment
     if let OpIn::Join { segs, senses } = &i.op {
         let mut set = segs.iter().map(build_this).collect::<Result<Vec<_>, _>>()?;
@@ -1002,7 +979,7 @@ fn rust(i: &Inputs) -> Result<Output, HarnessError> {
     let mut this = i.this.as_ref().map(build_this).transpose()?;
     let mut o = vec![0.0];
     let res = match this.as_mut() {
-        Some(c) => rust_curve(&i.op, c, &mut o),
+        Some(c) => rust_curve(k, &i.op, c, &mut o),
         None => rust_static(&i.op, &mut o),
     };
     match res {
@@ -1481,6 +1458,11 @@ impl UnitDiff for Runner {
     }
 
     fn run_rust(&self, case: &Case) -> Result<Output, HarnessError> {
-        rust(&case.parse()?)
+        let k = &Kernel::default();
+        let i: Inputs = case.parse()?;
+        // Run only what the FFI accepts, as the C++ side: the Rust side honours sizes
+        // the FFI refuses (fuzz00841: a 2^31 stride, a 16 GiB output array).
+        ffi::validate(i.op.ffi(), &cpp_input(&i)?).map_err(|e| harness(e.to_string()))?;
+        rust(k, &i)
     }
 }

@@ -5,21 +5,21 @@
 //! `SmBrep` per call: read from an upstream `.smb` test file (optionally rebuilding its
 //! UV trim curves), a wire edge from a B-spline curve (`CreateWireEdgeFromCurve`), a face
 //! from a B-spline surface or a real `SmPlane` (`CreateFaceFromSurface`), or the wire
-//! network of `prog_test` `my_test_topology`. There is no Rust B-rep reader or builder
-//! yet (units `topology.brep_*`), so the Rust side imports the graph the shim exports in
-//! traversal order (raw members, including each face's face use, UV domain,
-//! rectangular-trim flag, tolerance and surface owner, `SmPlane`s as planes, and each
-//! vertex use's cached vertex/face gap) into a [`Brep`] and runs the ported functions on
-//! it; results are compared as traversal indices, flags, statuses, values and curve
-//! blocks (the shim's `put_curve` layout). Selectors are taken modulo the entity count
-//! (`-1` selecting null where allowed).
+//! network of `prog_test` `my_test_topology`. The Rust side makes the same B-rep with
+//! the Rust kernel ([`own_brep`]: an `.smb` file read by the Rust reader, any other kind
+//! built by [`crate::own_builder`], in the shim's call order) and renumbers it into the
+//! shim's traversal order ([`CONVENTIONS`]), so no C++ state reaches it, and runs the
+//! ported functions on it; results are compared as traversal indices, flags, statuses,
+//! values and curve blocks (the shim's `put_curve` layout). Selectors are taken modulo
+//! the entity count (`-1` selecting null where allowed). The C++ side resolves its
+//! selectors and reports a failed build from its own export.
 //!
-//! **Inexact geometry.** The export carries plain B-spline surfaces, `SmPlane`s,
-//! B-spline curves and `SmLine`s exactly; another `SmBSplineSurface` subclass (the
-//! revolution, extrusion, cone, sphere and torus surfaces of several upstream files) or
-//! `SmBSplineCurve` subclass (an edge's ellipse) arrives as its B-spline part only. Ops
-//! that evaluate such a face surface (`Points`, `FixUv`, `BestUv`, `Connected`) or, for
-//! `BestUv`, such an edge curve are not compared: both sides report `inexact_geometry`.
+//! **Export importer.** [`import`] still decodes the shim's export (used by the C++
+//! side here to resolve its selectors): plain B-spline surfaces, `SmPlane`s,
+//! B-spline curves and `SmLine`s as regular blocks, eligible analytic surfaces and
+//! ellipse/circle edge curves from their exact records (`sc_analytic_export.h`,
+//! `sc_exact_curve_export.h`), other subclasses as their B-spline part.
+//! Since the Rust B-rep is native, no operation is skipped as `inexact_geometry` here.
 //!
 //! **`GetPointsInFace` with more than one point** draws its V dither from
 //! `srand(time(NULL))` / `rand()` upstream and from `kernel.rng` in the port
@@ -88,6 +88,10 @@ const NULL_DEREF: f64 = -2.0;
 
 /// Generated cases beyond the default `--seeds` (the B-rep ops are cheap).
 const EXTRA_GENERATED: usize = 1500;
+
+/// Times a generated case's B-rep is drawn again, at most, when it lacks the entity kind its
+/// op selects (a wire or an edge network for a face op).
+const BREP_DRAWS: usize = 8;
 
 // ---- inputs -----------------------------------------------------------------------------
 
@@ -303,8 +307,8 @@ fn push_surface(v: &mut Vec<f64>, s: &SrfIn) -> Result<(), HarnessError> {
                 m as f64,
                 b.p as f64,
                 b.q as f64,
-                (b.u.len() - 1) as f64,
-                (b.v.len() - 1) as f64,
+                b.u.len().checked_sub(1).ok_or_else(|| harness("empty u knots"))? as f64,
+                b.v.len().checked_sub(1).ok_or_else(|| harness("empty v knots"))? as f64,
             ]);
             for row in &b.net {
                 for p in row {
@@ -371,7 +375,11 @@ fn sel(s: i64, n: usize) -> i64 {
 /// The C++ export of the case's B-rep.
 fn export(i: &Inputs) -> Result<Vec<f64>, HarnessError> {
     let path = path_of(i)?;
-    ffi::eval(Op::Export, &path, &brep_block(i)?).map_err(|e| harness(format!("c++ export: {e}")))
+    let block = brep_block(i)?;
+    crate::export_memo::export("topology_face_p2", &[&path], &block, || {
+        ffi::eval(Op::Export, &path, &block)
+    })
+    .map_err(|e| harness(format!("c++ export: {e}")))
 }
 
 /// A build failure as an operation error.
@@ -428,7 +436,7 @@ fn orient_of(code: i64) -> Result<OrientType, HarnessError> {
 
 /// An exported curve block (`None` for `-1`). A B-spline or line is rebuilt exactly;
 /// another `SmBSplineCurve` kind is an error for a UV trim curve (`uv`) and its B-spline
-/// part for an edge curve (edge curves are only evaluated on deferred paths).
+/// part for an edge curve (an exact head, when present, is read by `read_edge_curve`).
 fn read_curve(rd: &mut Rd<'_>, uv: bool) -> Result<Option<SmCurve>, HarnessError> {
     let ty = rd.num()?;
     if ty == -1.0 {
@@ -473,6 +481,46 @@ fn read_curve(rd: &mut Rd<'_>, uv: bool) -> Result<Option<SmCurve>, HarnessError
         return Err(harness(format!("export: UV trim curve of type {ty}")));
     }
     Ok(Some(SmCurve::from(base)))
+}
+
+/// An edge curve block: an exact ellipse or circle head (`-3 ...`,
+/// [`crate::util::exact_curve::read_head`]) and the regular block after it, or the
+/// regular block alone. Returns the curve and whether it was imported exactly.
+fn read_edge_curve(rd: &mut Rd<'_>) -> Result<(Option<SmCurve>, bool), HarnessError> {
+    if rd.v.get(rd.at) != Some(&-3.0) {
+        let exact = matches!(rd.v.get(rd.at).copied(), Some(t) if t == -1.0 || t == BSPLINE_CURVE_TYPE as f64 || t == LINE_TYPE as f64);
+        return Ok((read_curve(rd, false)?, exact));
+    }
+    rd.at += 1;
+    let remaining = rd.v.len().saturating_sub(rd.at);
+    let exact = crate::util::exact_curve::read_head(&mut || rd.num(), remaining)?;
+    if rd.v.get(rd.at) != Some(&(exact.type_code() as f64)) {
+        return Err(harness(
+            "export: exact curve without its matching B-spline part",
+        ));
+    }
+    let fallback = read_curve(rd, false)?;
+    crate::util::exact_curve::check_base(&exact, fallback.as_ref())?;
+    Ok((Some(exact), true))
+}
+
+/// A face's surface block: an exact analytic head (`2 ...`,
+/// [`crate::util::read_exact_surface`]) and the regular block after it, or the regular
+/// block alone. Returns the surface and whether it was imported exactly.
+fn read_face_surface(rd: &mut Rd<'_>) -> Result<(Option<Surface>, bool), HarnessError> {
+    if rd.v.get(rd.at) != Some(&2.0) {
+        return read_surface(rd);
+    }
+    rd.at += 1;
+    let exact = crate::util::read_exact_surface(&mut || rd.num())?;
+    let (fallback, _) = read_surface(rd)?;
+    match exact {
+        Some(s) => {
+            crate::util::check_exact_base(&s, fallback.as_ref())?;
+            Ok((Some(s), true))
+        }
+        None => Ok((fallback, false)),
+    }
 }
 
 fn read_surface(rd: &mut Rd<'_>) -> Result<(Option<Surface>, bool), HarnessError> {
@@ -521,17 +569,8 @@ fn read_surface(rd: &mut Rd<'_>) -> Result<(Option<Surface>, bool), HarnessError
     Ok((Some(Surface::from(b)), exact))
 }
 
-/// Whether each face's surface and each edge's curve was imported exactly (an
-/// `SmBSplineSurface` subclass other than `SmPlane`, or an `SmBSplineCurve` subclass
-/// other than `SmLine`, is imported as its B-spline part).
-pub(crate) struct Exact {
-    pub(crate) faces: Vec<bool>,
-    pub(crate) edges: Vec<bool>,
-}
-
-/// Builds the Rust B-rep from the shim's export (see the module docs; shared with unit
-/// `query.face_p2`, whose shim exports the same layout).
-pub(crate) fn import(ex: &[f64]) -> Result<(Brep, Exact), HarnessError> {
+/// Builds the Rust B-rep from the shim's export (see the module docs).
+pub(crate) fn import(ex: &[f64]) -> Result<Brep, HarnessError> {
     let c = ffi::counts(ex).ok_or_else(|| harness("import of a failed build"))?;
     let [n_r, n_s, n_fu, n_f, n_lu, n_l, n_eu, n_e, n_vu, n_v] = c;
     let mut rd = Rd { v: ex, at: 1 };
@@ -583,10 +622,8 @@ pub(crate) fn import(ex: &[f64]) -> Result<(Brep, Exact), HarnessError> {
         });
     }
     let mut surfaces = Vec::new();
-    let mut exact_faces = Vec::new();
     for f in 0..n_f {
-        let (mut surface, exact) = read_surface(&mut rd)?;
-        exact_faces.push(exact);
+        let (mut surface, _) = read_face_surface(&mut rd)?;
         let faceuse = opt(rd.idx()?, FaceuseId::from_index)?;
         let dom = Extent2d::from_bounds(rd.num()?, rd.num()?, rd.num()?, rd.num()?);
         let rect = rd.idx()?;
@@ -681,7 +718,6 @@ pub(crate) fn import(ex: &[f64]) -> Result<(Brep, Exact), HarnessError> {
         edgeuses.push(r);
     }
     let mut edges = Vec::new();
-    let mut exact_edges = Vec::new();
     for _ in 0..n_e {
         let tolerance = rd.num()?;
         let a = rd.num()?;
@@ -691,9 +727,7 @@ pub(crate) fn import(ex: &[f64]) -> Result<(Brep, Exact), HarnessError> {
             .into_iter()
             .map(|x| opt(x, EdgeuseId::from_index)?.ok_or_else(|| harness("null edge use")))
             .collect::<Result<Vec<_>, _>>()?;
-        let exact_curve = matches!(rd.v.get(rd.at).copied(), Some(t) if t == -1.0 || t == BSPLINE_CURVE_TYPE as f64 || t == LINE_TYPE as f64);
-        exact_edges.push(exact_curve);
-        let curve = read_curve(&mut rd, false)?;
+        let (curve, _) = read_edge_curve(&mut rd)?;
         let interval = Extent1d::from_raw(a, b);
         edges.push((tolerance, interval, list, curve));
     }
@@ -836,19 +870,13 @@ pub(crate) fn import(ex: &[f64]) -> Result<(Brep, Exact), HarnessError> {
     for vu in vertexuses {
         b.add_vertexuse_record(vu).map_err(|e| harness(e.to_string()))?;
     }
-    Ok((
-        b,
-        Exact {
-            faces: exact_faces,
-            edges: exact_edges,
-        },
-    ))
+    Ok(b)
 }
 
 // ---- generation -------------------------------------------------------------------------
 
 /// The upstream `.smb` files used (all B-spline geometry).
-/// (`SmallBox.smb` and `Platform.smb` crash upstream's `SmBrep::ReadFromFile`; see
+/// (`SmallBox.smp` and `Platform.smp` crash upstream's `SmBrep::ReadFromFile`; see
 /// `plan/findings.md`.)
 const FILES: [&str; 15] = [
     "Mouse.smb",
@@ -952,7 +980,7 @@ fn domain(s: &SrfIn) -> [f64; 4] {
 fn gen_brep(rng: &mut Rng) -> BrepIn {
     match rng.below(10) {
         0..=5 => BrepIn::File {
-            file: (*rng.choose(&FILES).unwrap_or(&"SmallBox.smb")).to_string(),
+            file: (*rng.choose(&FILES).unwrap_or(&"SmallBox.smp")).to_string(),
             rebuild: rng.chance(0.25),
         },
         6 => {
@@ -1334,29 +1362,90 @@ fn project_points(body: &[f64], count: u64, face: &Face, dom: Option<[f64; 4]>) 
     out
 }
 
-/// Whether the op evaluates geometry that was not imported exactly ([`Exact`]): a
-/// face's surface (`Points`, and the edge use ops through the edge use's face) or,
-/// for `BestUv`, the edge's curve. Such cases are not compared (both sides report
-/// `inexact_geometry`).
-fn inexact(op: &OpIn, b: &Brep, exact: &Exact) -> bool {
-    use solidcore::topology::edgeuse::p1 as eu1;
-    let face_inexact = |f: Option<FaceId>| {
-        f.is_some_and(|f| !exact.faces.get(f.index() as usize).copied().unwrap_or(true))
+// ---- the Rust B-rep ---------------------------------------------------------------------
+
+/// The shim's build conventions (its own `build` and `walk`): the vertex use lists
+/// followed after the loops' loop uses, `GetVertexEdgeGap` in the `init_gaps` walk; a
+/// face's surface owned under the identity [`import`] gives it (`(SmFace_TYPE, 1 +
+/// index)`), an edge's curve under the `sc_topology_fixture.h` identity. Shared with the
+/// runners whose shims build and walk B-reps the same way (`query.face_p3`,
+/// `query.face_p4`, `surface.trim_srf_cache`).
+pub(crate) const CONVENTIONS: crate::own_builder::Conventions<'static> =
+    crate::own_builder::Conventions {
+        prefix_lists: false,
+        vertex_edge_gaps: true,
+        vertex_lists_last: true,
+        skip_edge_list: false,
+        face_owner: &face_owner,
+        edge_owner: &edge_owner,
+        edgeuse_owner: &crate::own_builder::notify_edgeuse_owner,
+        // the geometry is owned under this runner's own identities
+        naming: solidcore::topology::NamingScheme::Unknown,
     };
-    let eu_face = |e: i64| eu1::face(b, EdgeuseId::from_index(e as u32)).ok().flatten();
-    let edge_inexact = |e: i64| {
-        eu1::edge(b, EdgeuseId::from_index(e as u32))
-            .ok()
-            .flatten()
-            .is_some_and(|e| !exact.edges.get(e.index() as usize).copied().unwrap_or(true))
-    };
-    match op {
-        OpIn::Points { f, .. } => face_inexact(Some(FaceId::from_index(*f as u32))),
-        OpIn::FixUv { eu, .. } => face_inexact(eu_face(*eu)),
-        OpIn::BestUv { eu, .. } => face_inexact(eu_face(*eu)) || edge_inexact(*eu),
-        OpIn::Connected { eu1: a, eu2: c, .. } => face_inexact(eu_face(*a)) || face_inexact(eu_face(*c)),
-        _ => false,
+
+fn face_owner(f: FaceId) -> ObjectRef {
+    ObjectRef {
+        type_code: fp2::TYPE,
+        key: ObjectKey(1 + u64::from(f.index())),
     }
+}
+
+fn edge_owner(e: EdgeId) -> (ObjectRef, ObjectRef) {
+    use crate::own_builder::fixture_key;
+    (
+        fixture_key(solidcore::topology::edge::TYPE, e.index()),
+        fixture_key(16999, 0),
+    )
+}
+
+/// A Rust B-rep with its entity counts, or the output of its failed build.
+pub(crate) type OwnBrep = crate::own_builder::RustBrep<(Brep, [usize; 10])>;
+
+/// A built (or failed) source as the runners consume it.
+#[allow(clippy::result_large_err)] // the failed build's output is the case's result
+pub(crate) fn own_output(built: crate::own_builder::Built) -> OwnBrep {
+    use crate::own_builder::{counts, failed_output, Built};
+    match built {
+        Built::Brep(b) => {
+            let c = counts(&b);
+            Ok((*b, c))
+        }
+        Built::Failed(e) => Err(failed_output(&e)),
+    }
+}
+
+/// The Rust B-rep of a shim B-rep source, made by the Rust kernel as the shim's `build`
+/// makes it, in its traversal order ([`CONVENTIONS`]): an `.smb` file (`path`) read by
+/// the Rust reader, any other kind built by [`crate::own_builder`]. `src` is any
+/// `kind`-tagged source whose JSON has a [`BrepIn`]'s shape. No C++ state reaches it.
+///
+/// # Errors
+///
+/// A harness error for a source the builders do not know or a file that cannot be
+/// opened.
+pub(crate) fn own_brep<T: Serialize>(
+    k: &mut Kernel,
+    src: &T,
+    path: &str,
+    validate_only: bool,
+    init_gaps: bool,
+) -> Result<OwnBrep, HarnessError> {
+    let v = serde_json::to_value(src).map_err(|e| harness(format!("B-rep source: {e}")))?;
+    if v.get("kind").and_then(Value::as_str) == Some("file") {
+        let rebuild = v.get("rebuild").and_then(Value::as_bool).unwrap_or(false);
+        let built = crate::own_builder::read_as(
+            k,
+            path,
+            rebuild,
+            validate_only,
+            init_gaps,
+            &CONVENTIONS,
+        )?;
+        return Ok(own_output(built));
+    }
+    let built = crate::own_builder::build_as(k, &v, validate_only, init_gaps, &CONVENTIONS)?
+        .ok_or_else(|| harness("own builder: no file path"))?;
+    Ok(own_output(built))
 }
 
 // ---- C++ side ---------------------------------------------------------------------------
@@ -1380,10 +1469,7 @@ fn run_cpp(i: &Inputs) -> Result<Output, HarnessError> {
         Ok(op) => op,
         Err(name) => return Ok(Output::err(name)),
     };
-    let (b, exact) = import(&ex)?;
-    if inexact(&op, &b, &exact) {
-        return Ok(Output::err("inexact_geometry"));
-    }
+    let b = import(&ex)?;
     let (code, args) = op_args(&op)?;
     let mut input = brep_block(i)?;
     input.extend(args);
@@ -1493,6 +1579,7 @@ fn put_curve(o: &mut Vec<f64>, c: Option<&SmCurve>) -> Result<(), Fail> {
     let (base, line) = match c.kind() {
         CurveKind::BSpline(b) => (std::borrow::Cow::Borrowed(b), None),
         CurveKind::Line(l) => (l.base_with_nurb()?, Some(l)),
+        CurveKind::Ellipse(e) => (std::borrow::Cow::Borrowed(e.base()), None),
         _ => {
             o.push(-2.0);
             return Ok(());
@@ -1552,25 +1639,40 @@ impl ClassObject for H {
 }
 
 fn run_rust(i: &Inputs) -> Result<Output, HarnessError> {
+    // an input the FFI refuses is a harness error on both sides (PR #502's convention):
+    // the shim never runs it, so the Rust side must not either. Nightly fuzz case
+    // fuzz00020 (run 41040730716) made one control point of a non-rational face surface
+    // rational (weight 1, the others the non-rational marker -f64::MAX): the FFI refuses
+    // the mixed rationality for the C++ side, while this side built the face on those
+    // weights and ran `best_uv` past the fuzz time limit. The checks see the same input
+    // vectors as `run_cpp`: a geometry op's arguments; a B-rep op's B-rep block before
+    // the build, then its arguments against this side's own B-rep counts.
     if !i.op.is_brep() {
+        let (code, args) = op_args(&i.op)?;
+        ffi::validate(code, "", &args, None).map_err(|e| harness(e.to_string()))?;
         return match run_rust_geom(&i.op) {
             Ok(o) => Ok(geom_output(&i.op, o)),
             Err(Fail::Solid(e)) => rust_err(&e),
             Err(Fail::Harness(h)) => Err(h),
         };
     }
-    let ex = export(i)?;
-    let Some(c) = ffi::counts(&ex) else {
-        return Ok(build_failure(&ex));
+    let brep = i.brep.as_ref().ok_or_else(|| harness("B-rep op without B-rep"))?;
+    let path = path_of(i)?;
+    let block = brep_block(i)?;
+    ffi::validate(Op::Export, &path, &block, None).map_err(|e| harness(format!("export: {e}")))?;
+    let mut k = Kernel::default();
+    let (mut b, c) = match own_brep(&mut k, brep, &path, i.validate_only, i.init_gaps)? {
+        Ok(x) => x,
+        Err(o) => return Ok(o),
     };
-    let (mut b, exact) = import(&ex)?;
     let op = match resolve(&i.op, &counts_of(c)) {
         Ok(op) => op,
         Err(name) => return Ok(Output::err(name)),
     };
-    if inexact(&op, &b, &exact) {
-        return Ok(Output::err("inexact_geometry"));
-    }
+    let (code, args) = op_args(&op)?;
+    let mut input = block;
+    input.extend(args);
+    ffi::validate(code, &path, &input, Some(c)).map_err(|e| harness(e.to_string()))?;
     match run_rust_op(&mut b, &op) {
         Ok(body) => {
             let body = match &op {
@@ -1653,14 +1755,19 @@ fn run_rust_op(b: &mut Brep, op: &OpIn) -> Result<Vec<f64>, Fail> {
                     o.extend([p.x, p.y, p.z]);
                 }
             }
-            Err(SolidError::InvalidInput { .. }) => o.push(NULL_DEREF),
+            Err(SolidError::InvalidInput { .. } | SolidError::PortInvariant { .. }) => o.push(NULL_DEREF),
             Err(e) => o.extend([status_of(e)?, 0.0]),
             }
         }
-        OpIn::Internal { f } => match fp2::calculate_an_internal_point(&k, b, fid(*f)) {
+        OpIn::Internal { f } => {
+            // the shim's `DeleteObjectsCache(SM_OC_TRIMSRF, srf)` before
+            // `CalculateAnInternalPoint` (`harness/cpp/shim/topology_face_p2.cpp`, OP_INTERNAL)
+            super::query_face_p1::drop_trim_cache(b, fid(*f))?;
+            match fp2::calculate_an_internal_point(&k, b, fid(*f)) {
             Ok(p) => o.extend([0.0, p.x, p.y, p.z]),
-            Err(e) => o.extend([status_of(e)?, 0.0, 0.0, 0.0]),
-        },
+                Err(e) => o.extend([status_of(e)?, 0.0, 0.0, 0.0]),
+            }
+        }
         OpIn::FromFace {
             f,
             orient: or,
@@ -1685,7 +1792,7 @@ fn run_rust_op(b: &mut Brep, op: &OpIn) -> Result<Vec<f64>, Fail> {
                     }
                 }
             }
-            Err(SolidError::InvalidInput { .. }) => o.push(NULL_DEREF),
+            Err(SolidError::InvalidInput { .. } | SolidError::PortInvariant { .. }) => o.push(NULL_DEREF),
             Err(e) => o.extend([status_of(e)?, 0.0, 0.0, 0.0, 0.0, 0.0]),
         },
         OpIn::Trim {
@@ -1734,7 +1841,7 @@ fn run_rust_op(b: &mut Brep, op: &OpIn) -> Result<Vec<f64>, Fail> {
                         None => o.push(-1.0),
                     }
                 }
-                Err(SolidError::InvalidInput { .. }) => o.push(NULL_DEREF),
+                Err(SolidError::InvalidInput { .. } | SolidError::PortInvariant { .. }) => o.push(NULL_DEREF),
                 Err(e) => o.extend([
                     status_of(e)?,
                     if *want_3d { 0.0 } else { -1.0 },
@@ -1791,7 +1898,7 @@ fn run_rust_op(b: &mut Brep, op: &OpIn) -> Result<Vec<f64>, Fail> {
             };
             match fp2::fix_uv_trim_curves(&k, b, cur, p, v, *tol, *dist, &dom) {
                 Ok(fixed) => o.extend([0.0, flag(fixed)]),
-                Err(SolidError::InvalidInput { .. }) => return Ok(vec![NULL_DEREF]),
+                Err(SolidError::InvalidInput { .. } | SolidError::PortInvariant { .. }) => return Ok(vec![NULL_DEREF]),
                 Err(e) => o.extend([status_of(e)?, 0.0]),
             }
             put_curve(&mut o, uv_of(b, Some(cur))?.as_ref())?;
@@ -1829,7 +1936,7 @@ fn run_rust_op(b: &mut Brep, op: &OpIn) -> Result<Vec<f64>, Fail> {
                     o.push(which.map_or(-1.0, |w| w as f64));
                     put_curve(&mut o, found.as_ref())?;
                 }
-                Err(SolidError::InvalidInput { .. }) => return Ok(vec![NULL_DEREF]),
+                Err(SolidError::InvalidInput { .. } | SolidError::PortInvariant { .. }) => return Ok(vec![NULL_DEREF]),
                 Err(e) => o.extend([status_of(e)?, -1.0, -1.0]),
             }
             o.extend(slots.iter().map(|s| flag(s.is_some())));
@@ -1845,7 +1952,7 @@ fn run_rust_op(b: &mut Brep, op: &OpIn) -> Result<Vec<f64>, Fail> {
                 flag(r.on_singularity),
                 flag(r.crosses_missing_seam),
             ]),
-            Err(SolidError::InvalidInput { .. }) => o.push(NULL_DEREF),
+            Err(SolidError::InvalidInput { .. } | SolidError::PortInvariant { .. }) => o.push(NULL_DEREF),
             Err(e) => return Err(e.into()),
         },
         OpIn::Rescue { f, to_null } => {
@@ -1907,7 +2014,9 @@ fn run_rust_geom(op: &OpIn) -> Result<Vec<f64>, Fail> {
         } => {
             let mut a = Point2::new(uv1[0], uv1[1]);
             let mut s = Vec2::new(shift[0], shift[1]);
+            let k = Kernel::default();
             let r = fp2::check_seam_crossing(
+                &k,
                 &mut a,
                 Point2::new(uv2[0], uv2[1]),
                 &Extent2d::from_bounds(dom[0], dom[1], dom[2], dom[3]),
@@ -1931,6 +2040,11 @@ fn run_rust_geom(op: &OpIn) -> Result<Vec<f64>, Fail> {
             flags,
             n,
         } => {
+            // The FFI bounds the derivative array (`MAX_DYDX`); mirror it so a
+            // fuzzed count cannot make the runner allocate without bound.
+            if *n > ffi::MAX_DYDX {
+                return Err(harness(format!("bad index/count {n} (max {})", ffi::MAX_DYDX)).into());
+            }
             let s = rust_surface(surface)?;
             let l = fp2::PrecisePropertyLayout::new(*flags);
             let k = Kernel::default();
@@ -1972,7 +2086,7 @@ fn run_rust_geom(op: &OpIn) -> Result<Vec<f64>, Fail> {
                 layout: &l,
             };
             let mut d = dydx.clone();
-            match e.evaluate(*t, &mut d) {
+            match e.evaluate(&k, *t, &mut d) {
                 Ok(()) => o.push(0.0),
                 Err(e) if e.is_unported() => return Err(e.into()),
                 Err(_) => o.push(1.0),
@@ -2205,12 +2319,31 @@ fn gen_op(rng: &mut Rng) -> OpIn {
 fn gen_inputs(rng: &mut Rng) -> Inputs {
     let op = gen_op(rng);
     let brep = op.is_brep().then(|| gen_brep(rng));
-    Inputs {
+    let mut i = Inputs {
         brep,
         validate_only: rng.chance(0.1),
         init_gaps: rng.chance(0.7),
         op,
+    };
+    // A B-rep without the entity kind the op selects compares only the same refusal on
+    // both sides: draw another. One that doesn't build, or no draw with the kind, keeps
+    // the case as it is, so its error stays visible.
+    for _ in 0..BREP_DRAWS {
+        if !lacks_kind(&i) {
+            break;
+        }
+        i.brep = Some(gen_brep(rng));
     }
+    i
+}
+
+/// Whether `i`'s B-rep builds but has none of the entity kind its op selects.
+fn lacks_kind(i: &Inputs) -> bool {
+    i.brep.is_some()
+        && export(i)
+            .ok()
+            .and_then(|ex| ffi::counts(&ex))
+            .is_some_and(|c| resolve(&i.op, &counts_of(c)).is_err())
 }
 
 impl UnitDiff for Runner {
@@ -2247,4 +2380,23 @@ impl UnitDiff for Runner {
     }
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
 
+    /// Nightly fuzz case `topology.face_p2/fuzz00020` (run 41040730716): a non-rational face
+    /// surface (weights the marker `-f64::MAX`) with one weight set to 1, under a `best_uv`
+    /// op. The FFI refuses the mixed rationality for the C++ side, and the Rust side must
+    /// be refused the same way instead of building the face on those weights.
+    #[test]
+    fn mixed_rationality_is_refused_on_both_sides() {
+        let i: Inputs = serde_json::from_str(FUZZ00020).unwrap();
+        let cpp = run_cpp(&i).unwrap_err().to_string();
+        let rust = run_rust(&i).unwrap_err().to_string();
+        assert_eq!(cpp, "c++ export: invalid argument: surface: mixed rationality");
+        assert_eq!(rust, cpp.trim_start_matches("c++ "));
+    }
+
+    /// The inputs of nightly fuzz case `topology.face_p2/fuzz00020`.
+    const FUZZ00020: &str = r#"{"brep":{"dom":[0.0,0.0,1.0,1.0],"kind":"face","surface":{"bspline":{"form":0,"net":[[[0.0,0.0,0.48290885450886867,1.0],[0.0,1.0,0.026558355163892045,-1.7976931348623157e+308],[0.0,2.0,0.3236024010000994,-1.7976931348623157e+308]],[[1.0,0.0,0.16008492196929902,-1.7976931348623157e+308],[1.0,1.0,-0.3818595663202652,-1.7976931348623157e+308],[1.0,2.0,0.42438880397299017,-1.7976931348623157e+308]],[[2.0,0.0,-0.39686080956013436,-1.7976931348623157e+308],[2.0,1.0,0.05611566788706901,-1.7976931348623157e+308],[2.0,2.0,0.3283143419234992,-1.7976931348623157e+308]],[[3.0,0.0,0.363745333750945,-1.7976931348623157e+308],[3.0,1.0,0.36228231985820736,-1.7976931348623157e+308],[3.0,2.0,0.027268171389889018,-1.7976931348623157e+308]],[[4.0,0.0,-0.345322603754885,-1.7976931348623157e+308],[4.0,1.0,-0.32212985152181606,-1.7976931348623157e+308],[4.0,2.0,-0.4060463095725655,-1.7976931348623157e+308]]],"oob":false,"p":3,"q":1,"u":[0.0,0.0,0.0,0.0,0.5811054631449626,1.0,1.0,1.0,1.0],"v":[0.0,0.0,0.8672390488922626,1.0,1.0]}}},"cands":[{"curve":{"cpts":[[0.7895661339805444,-0.17171284016679556,1.7976931348623157e+308,-1.7976931348623157e+308],[0.8055199936793002,0.08681972422832687,1.7976931348623157e+308,-1.7976931348623157e+308],[0.7898024725911749,0.32205588150363834,1.7976931348623157e+308,-1.7976931348623157e+308]],"dim":2,"p":1,"u":[-1.5099557060603712,-1.5099557060603712,3.4113170103733608,5.537417838142818,5.537417838142818]},"kind":1,"orient":1},{"curve":{"cpts":[[0.41791217040037293,0.6071607649021995,-1e+300,1.846060688685256],[0.44522646681436484,0.38625390666912246,1.7976931348623157e+308,1.2398708818883835],[0.7494185757767893,0.6328648305934458,1.7976931348623157e+308,1.8680767293062457],[0.7900457641165108,0.4428112016048782,1.7976931348623157e+308,1.7317769440249347],[0.8780064788048215,0.3577346108988606,1.7976931348623157e+308,1.8293958767881109]],"dim":2,"p":3,"u":[0.0,0.0,0.0,0.0,0.6994601289283375,1.0,1.0,1.0,1.0]},"kind":1,"orient":1},{"curve":null,"kind":2,"orient":1}],"eu":870782,"init_gaps":true,"op":"best_uv","validate_only":false}"#;
+}

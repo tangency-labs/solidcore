@@ -15,7 +15,7 @@
 //! | `State`      | constructor, getters, `SetSurface`, `SetSurfacesToZeroOffset`, `ReloadSurfaceOffsets`, `GetOffsetsData`, `SetOffsetsData`, `SetExtensionFactor`, `SetReverseTrim`, `SetStatus` | `tol ang tang surfA surfB has0 off0 has1 off1 o0 o1 k`, then `k` x `cmd a b` |
 //! | `Extension`  | `SetupOffsetExtension` | `ext surf u0 v0 u1 v1` |
 //! | `Sphere`     | `SmFilletSphereSolveENFO::Evaluate` | `c[3] r adjusts load found surfs arrays` |
-//! | `RailUv`     | `SmRailUVCurveIntersectENFO::Evaluate` | `rail load found curve t0 t1 arrays` (`load`: the shim solver's deterministic `LoadJacobian`, answering `found`) |
+//! | `RailUv`     | `SmRailUVCurveIntersectENFO::Evaluate` | `rail load found has_line [start end dim] curve t0 t1 arrays` (`has_line`: an `SmLine` UV curve replaces `curve`; `load`:the shim solver's deterministic `LoadJacobian`, answering `found`) |
 //! | `SurfValues` | `ComputeSurfaceValues` | `setup surfs uv0[2] uv1[2]` (`setup`: the shim solver's `SetupOffsetValues` succeeds) |
 //! | `UvVectors`  | `ComputeUVVectors` | `du0 dv0 du1 dv1 crv_deriv` (each `[3]`), `uvd0[2] uvd1[2]` |
 //! | `Split`      | `SplitFilletGeom` with empty interval arrays | `index` |
@@ -38,7 +38,9 @@
 //! and the domain; `Sphere`, `RailUv` `status found f[nf]` and the Jacobian; others the
 //! status (`Split` plus the geometry count, `UvVectors` plus both UV derivatives); `Fsg`
 //! `type approximate tolerance% mirror complement scale continuity create_status` (`-1`
-//! without a `CreateSurface` call); `Misc` the tolerance, or `status do2 idx2
+//! without a `CreateSurface` call; the linear kind given two rails (kind `1` is followed
+//! by `n_rails`, 0 or 2, and the rails as for `RailUv`) calls the virtual `CreateSurface`
+//! and appends the ruled surface `has_nurb [n m p q r s cpts knots_u knots_v]`); `Misc` the tolerance, or `status do2 idx2
 //! surface2_null n_periodic n_guess`.
 //!
 //! [`eval_static`] runs [`StaticOp`]s on the copy of `SmFilletSolver.cpp` compiled by
@@ -229,6 +231,13 @@ fn validate(op: Op, input: &[f64]) -> Result<(), FfiError> {
             rd.index(1)?;
             rd.flag()?;
             rd.flag()?;
+            // an SmLine UV curve: start, end (finite) and its dimension, 2 or 3
+            if rd.flag()? {
+                rd.finites(6)?;
+                if rd.index(3)? < 2 {
+                    return Err(bad("rail-uv: line dimension must be 2 or 3"));
+                }
+            }
             curve(&mut rd)?;
             rd.finites(2)?;
             let (nx, nf, j) = arrays(&mut rd)?;
@@ -272,6 +281,18 @@ fn validate(op: Op, input: &[f64]) -> Result<(), FfiError> {
                 rd.finite()?;
             }
             rd.finites(2)?;
+            if kind == 1 {
+                // the linear kind: no rails, or the two rails of its CreateSurface
+                // (`CreateRuledSurface` reads their poles and knots, so well-formed
+                // curve blocks as for `RailUv`)
+                let rails = rd.index(2)?;
+                if rails == 1 {
+                    return Err(bad("fsg: the linear kind takes 0 or 2 rails"));
+                }
+                for _ in 0..rails {
+                    curve(&mut rd)?;
+                }
+            }
         }
         Op::Misc => {
             if rd.index(1)? == 0 {
@@ -347,6 +368,8 @@ pub enum StaticOp {
     AnalyticRev,
     /// `sm_TestManifoldTangentRollover`.
     Rollover,
+    /// Direct actual `sm_SplitRail` notification/identity component.
+    SplitRail,
 }
 
 impl StaticOp {
@@ -362,6 +385,7 @@ impl StaticOp {
             StaticOp::Queries => 7,
             StaticOp::AnalyticRev => 8,
             StaticOp::Rollover => 9,
+            StaticOp::SplitRail => 10,
         }
     }
 
@@ -390,6 +414,7 @@ fn validate_static_args(
 ) -> Result<(), FfiError> {
     let [_, _, _, n_f, _, _, n_eu, n_e, _, _] = counts;
     match op {
+        StaticOp::SplitRail => {}
         StaticOp::FindNext => {
             let n = rd.index(MAX_ARRAY)?;
             rd.index(MAX_ARRAY)?;

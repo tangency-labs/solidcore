@@ -16,12 +16,15 @@
 //! | [`ObjsInVoxels::map_point_to_voxel`]        | `SmObjsInVoxels::MapPointToVoxel`                |
 //! | [`ObjsInVoxels::map_voxel_index_to_bbox`]   | `SmObjsInVoxels::MapVoxelIndexToBBox`            |
 //! | [`ObjsInVoxels::find_point_items`]          | `SmObjsInVoxels::FindPointItems`                 |
-//! | [`ObjsInVoxels::add`]                       | `SmObjsInVoxels::Add`                            |
+//! | [`ObjsInVoxels::add`], [`ObjsInVoxels::add_with_fixes`] | `SmObjsInVoxels::Add`                |
 //! | [`ObjsInVoxels::remove`]                    | `SmObjsInVoxels::Remove`                         |
 //! | [`ObjsInVoxels::find_coincident_pairs`]     | `SmObjsInVoxels::FindCoincidentPairs`            |
 //! | [`ObjsInVoxels::point_items`], [`ObjsInVoxels::hash_table`], ... | `GetPointItems`, `m_sHashTable`, ... |
 //! | [`PointItem`]                               | `SmPointItem<TYPE>`                              |
 //! | [`HashTable`]                               | `SmHashTable<TYPE>` (template bodies this unit needs) |
+//! | [`HashTable::inc_max_item_count`], [`HashTable::inc_max_item_count_with_fixes`] | `SmHashTable::IncMaxItemCount` |
+//! | [`HashTable::add`], [`HashTable::add_with_fixes`] | `SmHashTable::Add`                         |
+//! | [`HashTable::remove`]                       | `SmHashTable::Remove`                            |
 //! | [`BucketItem`]                              | `SmBucketItem<TYPE>`                             |
 //! | [`gap_histogram_index`]                     | `SM_HISTOGRAM_GAPSIZE_INDEX`                     |
 //! | `ulong_from_f64` (private)                  | the `(ULONG)double` conversions of `MapPointToVoxel` (x86-64 g++) |
@@ -30,22 +33,21 @@
 //! * Pointers become indices: a bucket item's `m_sItem` (a `SmPointItem*` into
 //!   `m_sPointItems`) is the point-item index, the bucket / used-bucket links are
 //!   bucket-item indices, `SM_UNDEF_ULONG` bucket indices and voxel indices are
-//!   `None`. Growing the arrays therefore never invalidates anything.
-//!   Upstream `SmObjsInVoxels::IncMaxItemCount` re-points the bucket items at the
-//!   *old* point-item array right before freeing it (a use-after-free once a
-//!   non-empty model grows); the port keeps the intended contents (see
-//!   `plan/findings.md`, `geom.hash_table`). Capacities (`GetDataSize`) are still
-//!   tracked so growth happens at the same moments, and the all-removed growth
-//!   path that zeroes the bucket-item records upstream is reproduced.
+//!   `None`. Growing the arrays therefore never invalidates anything. Capacities
+//!   (`GetDataSize`) are still tracked so growth happens at the same moments, and the
+//!   all-removed growth path that zeroes the bucket-item records upstream (WR-13) is
+//!   reproduced by default unless
+//!   [`UpstreamFixes::hash_table_grow_preserves_removed_records`] is enabled via
+//!   [`HashTable::inc_max_item_count_with_fixes`], [`HashTable::add_with_fixes`], or
+//!   [`ObjsInVoxels::add_with_fixes`].
 //! * Upstream undefined behaviour (a bucket index past the table, a voxel model
 //!   with a box but zero voxels in `Add`, an empty explicit bucket list, a zero
 //!   divisor in `MapVoxelIndexToIndices`) returns [`SolidError::InvalidInput`]
 //!   (or, for an empty bucket list, checks no bucket).
-//! * Faithfully kept upstream quirks of `FindCoincidentPairs`: every bucket item
-//!   is compared against the bucket's *first* item (`pBegPointItem` is never
-//!   advanced), and `rEndPoint` is a reference, so each comparison overwrites the
-//!   point of the item following the current begin item with the current end
-//!   item's point (the stored points change).
+//! * Voxel dimension products are checked before changing the model; overflow
+//!   returns `InvalidInput` instead of silently wrapping as upstream does.
+//! * `FindCoincidentPairs` on a bucket item without a point item skips it (upstream
+//!   dereferences `NULL`).
 //! * Debug-only code (`SM_DEBUG_CODE`, asserts, `pOptBrep` drawing), `Dump`,
 //!   `Draw`, `AssertValid`, `operator=` / `operator==` are not ported (`Clone`
 //!   covers assignment).
@@ -53,7 +55,7 @@
 use crate::error::{Result, SolidError};
 use crate::geom::extent3d::Extent3d;
 use crate::geom::tol::xsect_tol3d;
-use crate::kernel::Kernel;
+use crate::kernel::{Kernel, UpstreamFixes};
 use crate::math::{Point3, UNDEF_DOUBLE};
 
 /// Number of gap-size histogram buckets (`SM_HISTOGRAM_GAPSIZE_BUCKETCNT`).
@@ -199,14 +201,31 @@ impl HashTable {
     }
 
     /// Grows the item capacity to `max(1.5 * capacity, capacity + 64)`
-    /// (`IncMaxItemCount`).
+    /// (`IncMaxItemCount`) with default [`UpstreamFixes`].
     ///
     /// Upstream copies the item records into the new array only while some item
-    /// is still in a bucket; otherwise the records come back zero-filled
-    /// (bucket `0`, no item, id `0`, no links), which is reproduced here.
+    /// is still in a bucket (`GetUsedBucketItemCount() > 0`); otherwise the
+    /// records come back zero-filled (bucket `0`, no item, id `0`, no links;
+    /// WR-13), which is reproduced here. Use
+    /// [`Self::inc_max_item_count_with_fixes`] to honour
+    /// [`UpstreamFixes::hash_table_grow_preserves_removed_records`].
     pub fn inc_max_item_count(&mut self) {
+        self.inc_max_item_count_with_fixes(&UpstreamFixes::default());
+    }
+
+    /// Grows the item capacity to `max(1.5 * capacity, capacity + 64)`
+    /// (`IncMaxItemCount`), honouring
+    /// [`UpstreamFixes::hash_table_grow_preserves_removed_records`].
+    ///
+    /// When `fixes.hash_table_grow_preserves_removed_records` is `false`
+    /// (default), reproduces upstream WR-13 by overwriting existing records with
+    /// zero-filled entries (`bucket_index: Some(0)`, `item: None`, `item_id: 0`,
+    /// no links) whenever `used_bucket_item_count() == 0`. When `true`, existing
+    /// removed records (`bucket_index: None`, `item`, `item_id`) are preserved
+    /// across growth even when all items have been removed.
+    pub fn inc_max_item_count_with_fixes(&mut self, fixes: &UpstreamFixes) {
         self.capacity = grown_capacity(self.capacity);
-        if self.used_bucket_item_count() == 0 {
+        if !fixes.hash_table_grow_preserves_removed_records && self.used_bucket_item_count() == 0 {
             self.bucket_items.fill(BucketItem {
                 next_used_bucket: None,
                 next_bucket_item: None,
@@ -274,15 +293,33 @@ impl HashTable {
         self.removed_bucket_item_count
     }
 
-    /// Adds `item` to bucket `bucket_index` with id `item_id` (`Add`): the first
-    /// item of an empty bucket is pushed on the used-bucket list, later items go
-    /// second in their bucket.
+    /// Adds `item` to bucket `bucket_index` with id `item_id` (`Add`) using
+    /// default [`UpstreamFixes`]: the first item of an empty bucket is pushed on
+    /// the used-bucket list, later items go second in their bucket.
     ///
     /// # Errors
     ///
     /// [`SolidError::InvalidInput`] when `bucket_index` is not a bucket (undefined
     /// behaviour upstream).
     pub fn add(&mut self, item: usize, bucket_index: usize, item_id: usize) -> Result<()> {
+        self.add_with_fixes(item, bucket_index, item_id, &UpstreamFixes::default())
+    }
+
+    /// Adds `item` to bucket `bucket_index` with id `item_id` (`Add`),
+    /// forwarding `fixes` to [`Self::inc_max_item_count_with_fixes`] when the
+    /// item array grows.
+    ///
+    /// # Errors
+    ///
+    /// [`SolidError::InvalidInput`] when `bucket_index` is not a bucket (undefined
+    /// behaviour upstream).
+    pub fn add_with_fixes(
+        &mut self,
+        item: usize,
+        bucket_index: usize,
+        item_id: usize,
+        fixes: &UpstreamFixes,
+    ) -> Result<()> {
         let Some(&head) = self.buckets.get(bucket_index) else {
             return Err(SolidError::InvalidInput {
                 operation: "geom::hash_table::HashTable::add",
@@ -290,7 +327,7 @@ impl HashTable {
             });
         };
         if self.bucket_items.len() == self.capacity {
-            self.inc_max_item_count();
+            self.inc_max_item_count_with_fixes(fixes);
         }
         let new = self.bucket_items.len();
         let mut rec = BucketItem {
@@ -439,8 +476,8 @@ pub struct VoxelHit {
 /// Options of [`ObjsInVoxels::find_coincident_pairs`].
 #[derive(Debug, Default)]
 pub struct FindPairsOptions<'a> {
-    /// Only begin items whose id (point-item index) is at least this
-    /// (`pOptLimitIndx`); `None` checks all.
+    /// Skip pairs whose two items both have an id (point-item index) below this
+    /// (`pOptLimitIndx`; checked on a previous call); `None` checks all pairs.
     pub limit_index: Option<usize>,
     /// Buckets to check (`pOptBucketIndices`); `None` walks every used bucket.
     pub buckets: Option<&'a [usize]>,
@@ -503,7 +540,7 @@ impl<T: Copy + PartialEq> ObjsInVoxels<T> {
     ///
     /// # Errors
     ///
-    /// As [`HashTable::init_size`] (one bucket per voxel).
+    /// As [`ObjsInVoxels::set_size`] (one bucket per voxel).
     pub fn new(
         x_cnt: usize,
         y_cnt: usize,
@@ -533,7 +570,9 @@ impl<T: Copy + PartialEq> ObjsInVoxels<T> {
     ///
     /// # Errors
     ///
-    /// As [`HashTable::init_size`] (one bucket per voxel).
+    /// [`SolidError::InvalidInput`] when the voxel dimensions overflow, leaving
+    /// the model unchanged. Otherwise, as [`HashTable::init_size`] (one bucket
+    /// per voxel).
     pub fn set_size(
         &mut self,
         x_cnt: usize,
@@ -542,11 +581,25 @@ impl<T: Copy + PartialEq> ObjsInVoxels<T> {
         bbox: Option<&Extent3d>,
         item_estimate: usize,
     ) -> Result<()> {
+        // A zero factor makes the mathematical voxel product zero; preserve the
+        // pre-existing behaviour (upstream's wrapped product is also zero) instead of
+        // letting an intermediate overflow reject it.
+        let voxel_count = if x_cnt == 0 || y_cnt == 0 || z_cnt == 0 {
+            0
+        } else {
+            x_cnt
+                .checked_mul(y_cnt)
+                .and_then(|xy| xy.checked_mul(z_cnt))
+                .ok_or(SolidError::InvalidInput {
+                    operation: "geom::hash_table::ObjsInVoxels::set_size",
+                    reason: "voxel dimensions overflow",
+                })?
+        };
         self.x_cnt = x_cnt;
         self.y_cnt = y_cnt;
         self.z_cnt = z_cnt;
         self.bbox = bbox.copied().unwrap_or_default();
-        self.hash.init_size(item_estimate, self.voxel_count())?;
+        self.hash.init_size(item_estimate, voxel_count)?;
         self.point_items.clear();
         self.point_capacity = 0;
         if item_estimate > 0 {
@@ -557,8 +610,8 @@ impl<T: Copy + PartialEq> ObjsInVoxels<T> {
 
     /// Grows the point-item and bucket-item capacities together
     /// (`IncMaxItemCount`).
-    fn inc_max_item_count(&mut self) {
-        self.hash.inc_max_item_count();
+    fn inc_max_item_count(&mut self, fixes: &UpstreamFixes) {
+        self.hash.inc_max_item_count_with_fixes(fixes);
         self.point_capacity = self.hash.capacity();
     }
 
@@ -716,8 +769,9 @@ impl<T: Copy + PartialEq> ObjsInVoxels<T> {
 
     /// Places `item` at `point` with zone tolerance `zone_tol` into its voxel,
     /// and into each neighbouring voxel whose shared side is within `zone_tol`
-    /// (`Add`). Returns the voxel index, or `None` when the model has no box.
-    /// The voxels used are added (once) to `updated`.
+    /// (`Add`), using default [`UpstreamFixes`]. Returns the voxel index, or
+    /// `None` when the model has no box. The voxels used are added (once) to
+    /// `updated`.
     ///
     /// # Errors
     ///
@@ -728,7 +782,29 @@ impl<T: Copy + PartialEq> ObjsInVoxels<T> {
         item: T,
         point: Point3,
         zone_tol: f64,
+        updated: Option<&mut Vec<usize>>,
+    ) -> Result<Option<usize>> {
+        self.add_with_fixes(item, point, zone_tol, updated, &UpstreamFixes::default())
+    }
+
+    /// Places `item` at `point` with zone tolerance `zone_tol` into its voxel,
+    /// and into each neighbouring voxel whose shared side is within `zone_tol`
+    /// (`Add`), forwarding `fixes` when growing the item arrays (see
+    /// [`UpstreamFixes::hash_table_grow_preserves_removed_records`]). Returns
+    /// the voxel index, or `None` when the model has no box. The voxels used are
+    /// added (once) to `updated`.
+    ///
+    /// # Errors
+    ///
+    /// [`SolidError::InvalidInput`] when the model has a box but no voxels
+    /// (undefined behaviour upstream).
+    pub fn add_with_fixes(
+        &mut self,
+        item: T,
+        point: Point3,
+        zone_tol: f64,
         mut updated: Option<&mut Vec<usize>>,
+        fixes: &UpstreamFixes,
     ) -> Result<Option<usize>> {
         if self.bbox.is_init() {
             return Ok(None);
@@ -740,7 +816,7 @@ impl<T: Copy + PartialEq> ObjsInVoxels<T> {
             });
         };
         while self.point_items.len() + MAX_ITEMS_PER_ADD > self.point_capacity {
-            self.inc_max_item_count();
+            self.inc_max_item_count(fixes);
         }
         let v = hit.index;
         let pi = PointItem {
@@ -748,27 +824,27 @@ impl<T: Copy + PartialEq> ObjsInVoxels<T> {
             point,
             zone_tol,
         };
-        self.place(pi, v, &mut updated)?;
+        self.place(pi, v, &mut updated, fixes)?;
         let (on_boundary, inward) = hit.extent.is_point_on_boundary(point, zone_tol);
         if on_boundary {
             let xy = self.x_cnt.wrapping_mul(self.y_cnt);
             if inward.x == -1.0 && hit.ix < self.x_cnt.wrapping_sub(1) {
-                self.place(pi, v.wrapping_add(1), &mut updated)?;
+                self.place(pi, v.wrapping_add(1), &mut updated, fixes)?;
             }
             if inward.x == 1.0 && hit.ix > 0 {
-                self.place(pi, v.wrapping_sub(1), &mut updated)?;
+                self.place(pi, v.wrapping_sub(1), &mut updated, fixes)?;
             }
             if inward.y == -1.0 && hit.iy < self.y_cnt.wrapping_sub(1) {
-                self.place(pi, v.wrapping_add(self.x_cnt), &mut updated)?;
+                self.place(pi, v.wrapping_add(self.x_cnt), &mut updated, fixes)?;
             }
             if inward.y == 1.0 && hit.iy > 0 {
-                self.place(pi, v.wrapping_sub(self.x_cnt), &mut updated)?;
+                self.place(pi, v.wrapping_sub(self.x_cnt), &mut updated, fixes)?;
             }
             if inward.z == -1.0 && hit.iz < self.z_cnt.wrapping_sub(1) {
-                self.place(pi, v.wrapping_add(xy), &mut updated)?;
+                self.place(pi, v.wrapping_add(xy), &mut updated, fixes)?;
             }
             if inward.z == 1.0 && hit.iz > 0 {
-                self.place(pi, v.wrapping_sub(xy), &mut updated)?;
+                self.place(pi, v.wrapping_sub(xy), &mut updated, fixes)?;
             }
         }
         Ok(Some(v))
@@ -780,10 +856,11 @@ impl<T: Copy + PartialEq> ObjsInVoxels<T> {
         pi: PointItem<T>,
         voxel: usize,
         updated: &mut Option<&mut Vec<usize>>,
+        fixes: &UpstreamFixes,
     ) -> Result<()> {
         self.point_items.push(pi);
         let idx = self.point_items.len() - 1;
-        self.hash.add(idx, voxel, idx)?;
+        self.hash.add_with_fixes(idx, voxel, idx, fixes)?;
         if let Some(u) = updated.as_deref_mut() {
             add_unique(u, voxel);
         }
@@ -811,9 +888,9 @@ impl<T: Copy + PartialEq> ObjsInVoxels<T> {
     /// intersection tolerance `SmXSectTol3d(tolA + tolB)` (compared squared),
     /// each pair of items listed once (`FindCoincidentPairs`).
     ///
-    /// As upstream, each item is compared with its bucket's first item only, and
-    /// the comparisons overwrite stored points (see the module docs). The
-    /// histogram, when given, accumulates every gap compared.
+    /// Every pair of items within a bucket is compared, except, with
+    /// `opts.limit_index`, a pair whose two items are both below it. The histogram,
+    /// when given, accumulates every gap compared.
     ///
     /// # Errors
     ///
@@ -853,44 +930,39 @@ impl<T: Copy + PartialEq> ObjsInVoxels<T> {
             }
         }
         for head in heads {
-            let Some(head_rec) = head.and_then(|h| self.hash.bucket_items.get(h).copied()) else {
-                continue;
-            };
-            let Some(head_pi) = head_rec.item else {
-                continue;
-            };
-            let mut beg = Some(head_rec);
+            let mut beg = head.and_then(|h| self.hash.bucket_items.get(h).copied());
             while let Some(b) = beg {
                 beg = b
                     .next_bucket_item
                     .and_then(|n| self.hash.bucket_items.get(n).copied());
-                if limit_index.is_some_and(|lim| b.item_id < lim) {
+                // this beg entry's point item
+                let Some(beg_pi) = b.item else {
                     continue;
-                }
+                };
                 let mut end = b
                     .next_bucket_item
                     .and_then(|n| self.hash.bucket_items.get(n).copied());
-                // `rEndPoint` refers to the point of the first end item
-                let first_end_pi = end.and_then(|e| e.item);
                 while let Some(e) = end {
                     end = e
                         .next_bucket_item
                         .and_then(|n| self.hash.bucket_items.get(n).copied());
-                    let (Some(end_pi), Some(alias)) = (e.item, first_end_pi) else {
+                    // when asked - skip pairs with both point items below the limit index
+                    // (presumably checked for coincidence on a previous call)
+                    if limit_index.is_some_and(|lim| b.item_id < lim && e.item_id < lim) {
+                        continue;
+                    }
+                    let Some(end_pi) = e.item else {
                         continue;
                     };
-                    let (Some(end_item), Some(head_item)) = (
+                    let (Some(end_item), Some(beg_item)) = (
                         self.point_items.get(end_pi).copied(),
-                        self.point_items.get(head_pi).copied(),
+                        self.point_items.get(beg_pi).copied(),
                     ) else {
                         continue;
                     };
-                    if let Some(a) = self.point_items.get_mut(alias) {
-                        a.point = end_item.point;
-                    }
-                    let xs = xsect_tol3d(k, head_item.zone_tol + end_item.zone_tol);
+                    let xs = xsect_tol3d(k, beg_item.zone_tol + end_item.zone_tol);
                     let xs_sq = xsect_tol3d(k, xs * xs);
-                    let gap_sq = (head_item.point - end_item.point).length_squared();
+                    let gap_sq = (beg_item.point - end_item.point).length_squared();
                     if let Some(h) = histogram.as_deref_mut() {
                         if let Some(c) = h.get_mut(gap_histogram_index(gap_sq.sqrt())) {
                             *c = c.wrapping_add(1);
@@ -905,18 +977,18 @@ impl<T: Copy + PartialEq> ObjsInVoxels<T> {
                             ) else {
                                 continue;
                             };
-                            if i1 != head_item.item && i1 != end_item.item {
+                            if i1 != beg_item.item && i1 != end_item.item {
                                 continue;
                             }
-                            if (i1 == head_item.item && i2 == end_item.item)
-                                || (i2 == head_item.item && i1 == end_item.item)
+                            if (i1 == beg_item.item && i2 == end_item.item)
+                                || (i2 == beg_item.item && i1 == end_item.item)
                             {
                                 known = true;
                                 break;
                             }
                         }
                         if !known {
-                            out.first.push(head_pi);
+                            out.first.push(beg_pi);
                             out.second.push(end_pi);
                         }
                     }
@@ -935,6 +1007,102 @@ mod tests {
 
     fn unit_box() -> Extent3d {
         Extent3d::from_bounds(0.0, 0.0, 0.0, 1.0, 1.0, 1.0)
+    }
+
+    fn sorted_item_pairs(v: &ObjsInVoxels<u32>, p: &CoincidentPairs) -> Vec<(u32, u32)> {
+        assert_eq!(p.first.len(), p.second.len());
+        let items = v.point_items();
+        let mut pairs = Vec::new();
+        for (&i, &j) in p.first.iter().zip(&p.second) {
+            let a = items[i].item;
+            let b = items[j].item;
+            pairs.push((a.min(b), a.max(b)));
+        }
+        pairs.sort_unstable();
+        pairs
+    }
+
+    fn point_item_bits(v: &ObjsInVoxels<u32>) -> Vec<[u64; 4]> {
+        let mut out = Vec::new();
+        for pi in v.point_items() {
+            let x = pi.point.x.to_bits();
+            let y = pi.point.y.to_bits();
+            let z = pi.point.z.to_bits();
+            let t = pi.zone_tol.to_bits();
+            out.push([x, y, z, t]);
+        }
+        out
+    }
+
+    #[test]
+    fn new_rejects_voxel_dimension_overflow() {
+        assert!(matches!(
+            ObjsInVoxels::<usize>::new(usize::MAX, usize::MAX, 1, None, 0),
+            Err(SolidError::InvalidInput {
+                operation: "geom::hash_table::ObjsInVoxels::set_size",
+                reason: "voxel dimensions overflow",
+            })
+        ));
+    }
+
+    #[test]
+    fn new_keeps_zero_dimension_success_despite_intermediate_overflow() {
+        // pre-existing behaviour: a zero factor makes the product zero, so even
+        // MAX x MAX x 0 succeeds with zero buckets instead of rejecting
+        let v = ObjsInVoxels::<usize>::new(usize::MAX, usize::MAX, 0, None, 0).unwrap();
+        assert_eq!(v.counts(), (usize::MAX, usize::MAX, 0));
+        assert_eq!(v.hash_table().bucket_count(), 0);
+    }
+
+    #[test]
+    fn new_rejects_third_voxel_factor_overflow() {
+        assert!(matches!(
+            ObjsInVoxels::<usize>::new(1, usize::MAX, 2, None, 0),
+            Err(SolidError::InvalidInput {
+                operation: "geom::hash_table::ObjsInVoxels::set_size",
+                reason: "voxel dimensions overflow",
+            })
+        ));
+    }
+
+    #[test]
+    fn overflowing_set_size_preserves_model() {
+        let mut v = ObjsInVoxels::<usize>::new(2, 3, 4, Some(&unit_box()), 0).unwrap();
+        v.add(7, Vec3::new(0.2, 0.2, 0.2), 0.0, None).unwrap();
+        let before = v.clone();
+
+        assert!(matches!(
+            v.set_size(usize::MAX, usize::MAX, 1, None, 10),
+            Err(SolidError::InvalidInput {
+                operation: "geom::hash_table::ObjsInVoxels::set_size",
+                reason: "voxel dimensions overflow",
+            })
+        ));
+        assert_eq!(v.counts(), before.counts());
+        assert_eq!(v.bbox(), before.bbox());
+        assert_eq!(v.hash.bucket_count(), before.hash.bucket_count());
+        assert_eq!(v.hash.buckets, before.hash.buckets);
+        assert_eq!(v.hash.bucket_items, before.hash.bucket_items);
+        assert_eq!(v.hash.capacity, before.hash.capacity);
+        assert_eq!(v.hash.used_buckets, before.hash.used_buckets);
+        assert_eq!(v.hash.used_bucket_count, before.hash.used_bucket_count);
+        assert_eq!(
+            v.hash.removed_bucket_item_count,
+            before.hash.removed_bucket_item_count
+        );
+        assert_eq!(v.point_items(), before.point_items());
+        assert_eq!(v.point_capacity(), before.point_capacity());
+        assert_eq!(
+            v.removed_point_item_count(),
+            before.removed_point_item_count()
+        );
+    }
+
+    #[test]
+    fn voxel_dimensions_match_bucket_count() {
+        let v = ObjsInVoxels::<usize>::new(2, 3, 4, None, 0).unwrap();
+        assert_eq!(v.counts(), (2, 3, 4));
+        assert_eq!(v.hash_table().bucket_count(), 24);
     }
 
     #[test]
@@ -995,8 +1163,9 @@ mod tests {
         let p = v
             .find_coincident_pairs(&k, FindPairsOptions::default())
             .unwrap();
-        // bucket 0 holds [item1, item3, item2]: head item1 is compared with both
-        assert!(p.first.is_empty());
+        // bucket 0 holds [item1, item3, item2]: every pair is compared, item3 and
+        // item2 coincide
+        assert_eq!(p.first.len(), 1);
         assert_eq!(v.hash_table().used_bucket_count(), 2);
         assert_eq!(v.remove(1), 2);
         assert_eq!(v.removed_point_item_count(), 2);
@@ -1024,5 +1193,427 @@ mod tests {
         assert_eq!(v.point_capacity(), 69);
         let mut w: ObjsInVoxels<u32> = ObjsInVoxels::new(0, 1, 1, Some(&unit_box()), 0).unwrap();
         assert!(w.add(1, Vec3::ZERO, 0.1, None).is_err());
+    }
+
+    #[test]
+    fn wr12_single_voxel_clusters_report_all_unique_pairs_without_mutation() {
+        let k = Kernel::new(&KernelOptions::default());
+
+        // 3 coincident items in a single voxel: bucket 0 holds [10, 30, 20], so
+        // (20, 30) does not involve the bucket head 10.
+        let mut v3: ObjsInVoxels<u32> = ObjsInVoxels::new(1, 1, 1, Some(&unit_box()), 0).unwrap();
+        let pts3 = [
+            (10, Vec3::new(0.25, 0.25, 0.25)),
+            (20, Vec3::new(0.2504, 0.25, 0.25)),
+            (30, Vec3::new(0.2508, 0.25, 0.25)),
+        ];
+        for (id, pt) in pts3 {
+            v3.add(id, pt, 1e-3, None).unwrap();
+        }
+        assert_eq!(v3.len(), 3);
+        let before3_items = v3.point_items().to_vec();
+        let before3_bits = point_item_bits(&v3);
+        let p3 = v3
+            .find_coincident_pairs(&k, FindPairsOptions::default())
+            .unwrap();
+        assert_eq!(p3.first, vec![0, 0, 2]);
+        assert_eq!(p3.second, vec![2, 1, 1]);
+        assert_eq!(sorted_item_pairs(&v3, &p3), [(10, 20), (10, 30), (20, 30)]);
+        assert_eq!(v3.point_items(), before3_items.as_slice());
+        assert_eq!(point_item_bits(&v3), before3_bits);
+
+        // 4 coincident items in one voxel -> all 4 * 3 / 2 = 6 unique pairs, and a
+        // 5-item voxel whose head (item 1) is far away still reports all 6 pairs.
+        let cluster4 = [
+            (4, Vec3::new(0.75, 0.75, 0.75)),
+            (5, Vec3::new(0.7503, 0.75, 0.75)),
+            (6, Vec3::new(0.75, 0.7504, 0.75)),
+            (7, Vec3::new(0.75, 0.75, 0.7505)),
+        ];
+        let exp4 = [(4, 5), (4, 6), (4, 7), (5, 6), (5, 7), (6, 7)];
+
+        let mut v4: ObjsInVoxels<u32> = ObjsInVoxels::new(1, 1, 1, Some(&unit_box()), 0).unwrap();
+        for (id, pt) in cluster4 {
+            v4.add(id, pt, 1e-3, None).unwrap();
+        }
+        let before4_items = v4.point_items().to_vec();
+        let before4_bits = point_item_bits(&v4);
+        let p4 = v4
+            .find_coincident_pairs(&k, FindPairsOptions::default())
+            .unwrap();
+        assert_eq!(sorted_item_pairs(&v4, &p4), exp4);
+        assert_eq!(v4.point_items(), before4_items.as_slice());
+        assert_eq!(point_item_bits(&v4), before4_bits);
+
+        let mut v5: ObjsInVoxels<u32> = ObjsInVoxels::new(1, 1, 1, Some(&unit_box()), 0).unwrap();
+        v5.add(1, Vec3::new(0.1, 0.1, 0.1), 1e-3, None).unwrap();
+        for (id, pt) in cluster4 {
+            v5.add(id, pt, 1e-3, None).unwrap();
+        }
+        let before5_items = v5.point_items().to_vec();
+        let before5_bits = point_item_bits(&v5);
+        let p5 = v5
+            .find_coincident_pairs(&k, FindPairsOptions::default())
+            .unwrap();
+        assert_eq!(sorted_item_pairs(&v5, &p5), exp4);
+        assert_eq!(v5.point_items(), before5_items.as_slice());
+        assert_eq!(point_item_bits(&v5), before5_bits);
+    }
+
+    #[test]
+    fn wr12_voxel_boundary_deduplication_and_limit_index_and_histogram() {
+        let k = Kernel::new(&KernelOptions::default());
+
+        // 3 coincident items straddling x = 0.5 and y = 0.5 on a 2x2x1 grid: each
+        // item is placed into 3 buckets, and every pair shares 2 buckets, yet each
+        // coincident item pair is reported once while the histogram counts all 6
+        // bucket-level comparisons (and accumulates across calls).
+        let mut v: ObjsInVoxels<u32> = ObjsInVoxels::new(2, 2, 1, Some(&unit_box()), 0).unwrap();
+        let mut upd1 = Vec::new();
+        let mut upd2 = Vec::new();
+        let mut upd3 = Vec::new();
+        let p1 = Vec3::new(0.4998, 0.4998, 0.5);
+        let p2 = Vec3::new(0.5002, 0.4998, 0.5);
+        let p3 = Vec3::new(0.4998, 0.5002, 0.5);
+        assert_eq!(v.add(1, p1, 1e-3, Some(&mut upd1)).unwrap(), Some(0));
+        assert_eq!(v.add(2, p2, 1e-3, Some(&mut upd2)).unwrap(), Some(1));
+        assert_eq!(v.add(3, p3, 1e-3, Some(&mut upd3)).unwrap(), Some(2));
+        assert_eq!(upd1, vec![0, 1, 2]);
+        assert_eq!(upd2, vec![1, 0, 3]);
+        assert_eq!(upd3, vec![2, 3, 0]);
+        assert_eq!(v.len(), 9);
+        assert_eq!(v.hash_table().used_bucket_count(), 4);
+
+        let mut hist = [0u64; GAP_HISTOGRAM_BUCKETS];
+        let all = v
+            .find_coincident_pairs(
+                &k,
+                FindPairsOptions {
+                    histogram: Some(&mut hist),
+                    ..FindPairsOptions::default()
+                },
+            )
+            .unwrap();
+        assert_eq!(sorted_item_pairs(&v, &all), [(1, 2), (1, 3), (2, 3)]);
+        assert_eq!(hist, [0, 0, 0, 0, 0, 6, 0, 0, 0, 0, 0]);
+
+        let subset_buckets = [1, 3];
+        let sub = v
+            .find_coincident_pairs(
+                &k,
+                FindPairsOptions {
+                    buckets: Some(&subset_buckets),
+                    histogram: Some(&mut hist),
+                    ..FindPairsOptions::default()
+                },
+            )
+            .unwrap();
+        assert_eq!(sorted_item_pairs(&v, &sub), [(1, 2), (2, 3)]);
+        assert_eq!(hist, [0, 0, 0, 0, 0, 8, 0, 0, 0, 0, 0]);
+
+        let empty = v
+            .find_coincident_pairs(
+                &k,
+                FindPairsOptions {
+                    buckets: Some(&[]),
+                    histogram: Some(&mut hist),
+                    ..FindPairsOptions::default()
+                },
+            )
+            .unwrap();
+        assert!(empty.first.is_empty());
+        assert_eq!(hist, [0, 0, 0, 0, 0, 8, 0, 0, 0, 0, 0]);
+        assert!(matches!(
+            v.find_coincident_pairs(
+                &k,
+                FindPairsOptions {
+                    buckets: Some(&[4]),
+                    ..FindPairsOptions::default()
+                },
+            ),
+            Err(SolidError::InvalidInput {
+                operation: "geom::hash_table::ObjsInVoxels::find_coincident_pairs",
+                reason: "bucket index out of range",
+            })
+        ));
+
+        // limit_index: items 1 (id 0) and 2 (id 1) are below lim = 2; items 3
+        // (id 2), 4 (id 3) and non-coincident 5 (id 4) are >= lim. Bucket 0 order
+        // is [0, 4, 3, 2, 1], exercising <lim vs >=lim, >=lim vs <lim, >=lim vs
+        // >=lim, and skipping only (0, 1).
+        let mut w: ObjsInVoxels<u32> = ObjsInVoxels::new(1, 1, 1, Some(&unit_box()), 0).unwrap();
+        w.add(1, Vec3::new(0.5, 0.5, 0.5), 1e-3, None).unwrap();
+        w.add(2, Vec3::new(0.5, 0.5, 0.5), 1e-3, None).unwrap();
+        let lim = w.len();
+        assert_eq!(lim, 2);
+        let q3 = Vec3::new(0.5 + 5e-7, 0.5, 0.5);
+        let q4 = Vec3::new(0.5 + 5e-5, 0.5, 0.5);
+        let q5 = Vec3::new(0.9, 0.5, 0.5);
+        w.add(3, q3, 1e-3, None).unwrap();
+        w.add(4, q4, 1e-3, None).unwrap();
+        w.add(5, q5, 1e-3, None).unwrap();
+
+        let mut lim_hist = [0u64; GAP_HISTOGRAM_BUCKETS];
+        let inc = w
+            .find_coincident_pairs(
+                &k,
+                FindPairsOptions {
+                    limit_index: Some(lim),
+                    histogram: Some(&mut lim_hist),
+                    ..FindPairsOptions::default()
+                },
+            )
+            .unwrap();
+        let exp_inc = [(1, 3), (1, 4), (2, 3), (2, 4), (3, 4)];
+        assert_eq!(sorted_item_pairs(&w, &inc), exp_inc);
+        assert_eq!(lim_hist, [0, 0, 2, 0, 3, 0, 0, 0, 4, 0, 0]);
+
+        let mut full_hist = [0u64; GAP_HISTOGRAM_BUCKETS];
+        let full = w
+            .find_coincident_pairs(
+                &k,
+                FindPairsOptions {
+                    histogram: Some(&mut full_hist),
+                    ..FindPairsOptions::default()
+                },
+            )
+            .unwrap();
+        let exp_full = [(1, 2), (1, 3), (1, 4), (2, 3), (2, 4), (3, 4)];
+        assert_eq!(sorted_item_pairs(&w, &full), exp_full);
+        assert_eq!(full_hist, [1, 0, 2, 0, 3, 0, 0, 0, 4, 0, 0]);
+    }
+
+    #[test]
+    fn wr13_default_grow_after_removing_all_zeroes_records_and_corrupts_remove() {
+        let mut ht = HashTable::new(1, 4).unwrap();
+        assert_eq!(ht.capacity(), 65);
+        ht.add(101, 2, 11).unwrap();
+        ht.add(202, 3, 22).unwrap();
+        ht.add(303, 2, 33).unwrap();
+        assert_eq!(ht.remove(&[0, 1, 2]), 3);
+
+        assert_eq!(ht.total_bucket_item_count(), 3);
+        assert_eq!(ht.removed_bucket_item_count(), 3);
+        assert_eq!(ht.used_bucket_item_count(), 0);
+        assert_eq!(ht.used_bucket_count(), 0);
+        assert_eq!(ht.first_used_bucket(), None);
+        assert!(ht.bucket_items().iter().all(BucketItem::is_removed));
+        assert_eq!(ht.bucket_items()[1].item, Some(202));
+        assert_eq!(ht.bucket_items()[1].item_id, 22);
+
+        let mut via_default_fixes = ht.clone();
+        ht.inc_max_item_count();
+        via_default_fixes.inc_max_item_count_with_fixes(&UpstreamFixes::default());
+        assert_eq!(ht.capacity(), 129);
+        assert_eq!(ht.bucket_items(), via_default_fixes.bucket_items());
+
+        let zeroed = BucketItem {
+            next_used_bucket: None,
+            next_bucket_item: None,
+            bucket_index: Some(0),
+            item: None,
+            item_id: 0,
+        };
+        assert_eq!(ht.bucket_items(), &[zeroed, zeroed, zeroed]);
+        assert!(ht.bucket_items().iter().all(|b| !b.is_removed()));
+        assert_eq!(ht.buckets(), &[None, None, None, None]);
+
+        // Re-removing already-removed handle 1 walks bucket 0 and increments
+        // removed_bucket_item_count past total_bucket_item_count (wrapping used count).
+        assert_eq!(ht.remove(&[1]), 1);
+        assert_eq!(ht.removed_bucket_item_count(), 4);
+        assert_eq!(ht.total_bucket_item_count(), 3);
+        assert_eq!(ht.used_bucket_item_count(), usize::MAX);
+        assert!(ht.bucket_items()[1].is_removed());
+        assert!(!ht.bucket_items()[0].is_removed());
+        assert!(!ht.bucket_items()[2].is_removed());
+    }
+
+    #[test]
+    fn wr13_opt_in_grow_after_removing_all_preserves_removed_records_and_invariants() {
+        let mut k = Kernel::default();
+        assert!(!k.fixes.hash_table_grow_preserves_removed_records);
+        let flag = k
+            .fixes
+            .flag_mut("hash_table_grow_preserves_removed_records")
+            .unwrap();
+        assert!(!*flag);
+        *flag = true;
+        assert!(k.fixes.hash_table_grow_preserves_removed_records);
+
+        let mut ht = HashTable::new(1, 4).unwrap();
+        ht.add_with_fixes(101, 2, 11, &k.fixes).unwrap();
+        ht.add_with_fixes(202, 3, 22, &k.fixes).unwrap();
+        ht.add_with_fixes(303, 2, 33, &k.fixes).unwrap();
+        assert_eq!(ht.remove(&[0, 1, 2]), 3);
+        let before_grow = ht.bucket_items().to_vec();
+
+        ht.inc_max_item_count_with_fixes(&k.fixes);
+        assert_eq!(ht.capacity(), 129);
+        assert_eq!(ht.bucket_items(), before_grow.as_slice());
+        assert!(ht.bucket_items().iter().all(BucketItem::is_removed));
+        assert_eq!(ht.buckets(), &[None, None, None, None]);
+
+        // Re-removing already-removed handles skips them without walking bucket 0 or
+        // perturbing counters.
+        assert_eq!(ht.remove(&[1]), 0);
+        assert_eq!(ht.remove(&[0, 1, 2]), 0);
+        assert_eq!(ht.total_bucket_item_count(), 3);
+        assert_eq!(ht.removed_bucket_item_count(), 3);
+        assert_eq!(ht.used_bucket_item_count(), 0);
+        assert_eq!(ht.used_bucket_count(), 0);
+
+        // Subsequent additions (including into bucket 0) and removals keep exact counts.
+        ht.add_with_fixes(404, 0, 44, &k.fixes).unwrap();
+        ht.add_with_fixes(505, 0, 55, &k.fixes).unwrap();
+        ht.add_with_fixes(606, 2, 66, &k.fixes).unwrap();
+        assert_eq!(ht.remove(&[0, 1, 2]), 0);
+        assert_eq!(ht.total_bucket_item_count(), 6);
+        assert_eq!(ht.removed_bucket_item_count(), 3);
+        assert_eq!(ht.used_bucket_item_count(), 3);
+        assert_eq!(ht.used_bucket_count(), 2);
+        assert_eq!(ht.buckets(), &[Some(3), None, Some(5), None]);
+
+        assert_eq!(ht.remove(&[3, 4, 5]), 3);
+        assert_eq!(ht.total_bucket_item_count(), 6);
+        assert_eq!(ht.removed_bucket_item_count(), 6);
+        assert_eq!(ht.used_bucket_item_count(), 0);
+        assert_eq!(ht.used_bucket_count(), 0);
+        assert_eq!(ht.first_used_bucket(), None);
+        assert!(ht.bucket_items().iter().all(BucketItem::is_removed));
+    }
+
+    #[test]
+    fn wr13_auto_grow_via_add_with_fixes_and_objs_in_voxels() {
+        let mut k = Kernel::default();
+        k.fixes.hash_table_grow_preserves_removed_records = true;
+
+        // 1. HashTable::add vs HashTable::add_with_fixes auto-growing at full capacity
+        // after all 64 initial slots were removed.
+        let mut ht_def = HashTable::new(0, 4).unwrap();
+        let mut ht_fix = HashTable::new(0, 4).unwrap();
+        for i in 0..64usize {
+            let bucket = (i % 3) + 1;
+            ht_def.add(1000 + i, bucket, i).unwrap();
+            ht_fix
+                .add_with_fixes(1000 + i, bucket, i, &k.fixes)
+                .unwrap();
+        }
+        let all_64: Vec<usize> = (0..64).collect();
+        assert_eq!(ht_def.remove(&all_64), 64);
+        assert_eq!(ht_fix.remove(&all_64), 64);
+        assert_eq!(ht_def.capacity(), 64);
+        assert_eq!(ht_def.used_bucket_item_count(), 0);
+
+        // 65th add triggers inc_max_item_count while used_bucket_item_count == 0.
+        ht_def.add(9999, 0, 999).unwrap();
+        ht_fix.add_with_fixes(9999, 0, 999, &k.fixes).unwrap();
+        assert_eq!(ht_def.capacity(), 128);
+        assert_eq!(ht_fix.capacity(), 128);
+        assert_eq!(ht_def.bucket_items()[0].bucket_index, Some(0));
+        assert_eq!(ht_def.bucket_items()[0].item, None);
+        assert_eq!(ht_fix.bucket_items()[0].bucket_index, None);
+        assert_eq!(ht_fix.bucket_items()[0].item, Some(1000));
+
+        // Re-removing slot 0 under default walks live bucket 0, double-counts removal,
+        // and drops used_bucket_item_count to 0 while slot 64 is still in bucket 0
+        // (causing a second grow to zero live slot 64 as well).
+        assert_eq!(ht_def.remove(&[0]), 1);
+        assert_eq!(ht_def.used_bucket_item_count(), 0);
+        assert_eq!(ht_def.buckets()[0], Some(64));
+        ht_def.inc_max_item_count();
+        assert_eq!(ht_def.bucket_items()[64].item, None);
+
+        // Under opt-in, slot 0 is skipped, live slot 64 stays intact across further
+        // growth, and removing slot 64 cleanly empties bucket 0.
+        assert_eq!(ht_fix.remove(&[0]), 0);
+        assert_eq!(ht_fix.used_bucket_item_count(), 1);
+        ht_fix.inc_max_item_count_with_fixes(&k.fixes);
+        assert_eq!(ht_fix.bucket_items()[64].item, Some(9999));
+        assert_eq!(ht_fix.bucket_items()[64].item_id, 999);
+        assert_eq!(ht_fix.remove(&[64]), 1);
+        assert_eq!(ht_fix.used_bucket_item_count(), 0);
+        assert_eq!(ht_fix.buckets()[0], None);
+
+        // 2. ObjsInVoxels::add vs ObjsInVoxels::add_with_fixes auto-growing when
+        // point_items.len() + MAX_ITEMS_PER_ADD > point_capacity after removing all.
+        let mut v_def = ObjsInVoxels::<u32>::new(2, 2, 1, Some(&unit_box()), 0).unwrap();
+        let mut v_fix = ObjsInVoxels::<u32>::new(2, 2, 1, Some(&unit_box()), 0).unwrap();
+        for id in 0..58u32 {
+            let p = Vec3::new(0.2, 0.2, 0.5);
+            v_def.add(id, p, 0.0, None).unwrap();
+            v_fix.add_with_fixes(id, p, 0.0, None, &k.fixes).unwrap();
+        }
+        for id in 0..58u32 {
+            assert_eq!(v_def.remove(id), 1);
+            assert_eq!(v_fix.remove(id), 1);
+        }
+        assert_eq!(v_def.point_capacity(), 64);
+        assert_eq!(v_def.hash_table().used_bucket_item_count(), 0);
+
+        let p_a = Vec3::new(0.75, 0.75, 0.5);
+        let p_b = Vec3::new(0.7502, 0.75, 0.5);
+        v_def.add(0, p_a, 1e-3, None).unwrap();
+        v_def.add(100, p_b, 1e-3, None).unwrap();
+        v_fix.add_with_fixes(0, p_a, 1e-3, None, &k.fixes).unwrap();
+        v_fix
+            .add_with_fixes(100, p_b, 1e-3, None, &k.fixes)
+            .unwrap();
+        assert_eq!(v_def.point_capacity(), 128);
+        assert_eq!(v_fix.point_capacity(), 128);
+
+        let pairs_fix = v_fix
+            .find_coincident_pairs(&k, FindPairsOptions::default())
+            .unwrap();
+        assert_eq!(sorted_item_pairs(&v_fix, &pairs_fix), [(0, 100)]);
+        assert_eq!(v_fix.find_point_items(0), vec![0, 58]);
+
+        // Removing item 0 visits historical slot 0 and live slot 58: default double-counts
+        // zeroed slot 0, whereas opt-in skips slot 0 and removes only live slot 58.
+        assert_eq!(v_def.remove(0), 2);
+        assert_eq!(v_def.hash_table().used_bucket_item_count(), 0);
+        assert_eq!(v_fix.remove(0), 1);
+        assert_eq!(v_fix.removed_point_item_count(), 59);
+        assert_eq!(v_fix.hash_table().used_bucket_item_count(), 1);
+    }
+
+    #[test]
+    fn wr13_non_empty_and_fresh_empty_grow_parity() {
+        let fixes = UpstreamFixes {
+            hash_table_grow_preserves_removed_records: true,
+            ..Default::default()
+        };
+
+        // Fresh empty table (total == 0, used == 0) grows identically under both modes.
+        let mut empty_def = HashTable::new(0, 4).unwrap();
+        let mut empty_fix = HashTable::new(0, 4).unwrap();
+        empty_def.inc_max_item_count();
+        empty_fix.inc_max_item_count_with_fixes(&fixes);
+        assert_eq!(empty_def.capacity(), 64);
+        assert_eq!(empty_fix.capacity(), 64);
+        assert_eq!(empty_def.bucket_items(), empty_fix.bucket_items());
+
+        // Non-empty table with both active and removed records grows identically under
+        // both modes, preserving both active and removed records.
+        let mut mixed_def = HashTable::new(1, 4).unwrap();
+        for (item, bucket, id) in [(10, 1, 1), (20, 2, 2), (30, 1, 3), (40, 3, 4)] {
+            mixed_def.add(item, bucket, id).unwrap();
+        }
+        assert_eq!(mixed_def.remove(&[0, 3]), 2);
+        assert_eq!(mixed_def.used_bucket_item_count(), 2);
+        assert_eq!(mixed_def.removed_bucket_item_count(), 2);
+        let mut mixed_fix = mixed_def.clone();
+
+        mixed_def.inc_max_item_count();
+        mixed_fix.inc_max_item_count_with_fixes(&fixes);
+        assert_eq!(mixed_def.capacity(), mixed_fix.capacity());
+        assert_eq!(mixed_def.buckets(), mixed_fix.buckets());
+        assert_eq!(mixed_def.bucket_items(), mixed_fix.bucket_items());
+        assert_eq!(mixed_def.first_used_bucket(), mixed_fix.first_used_bucket());
+        assert_eq!(mixed_def.used_bucket_count(), mixed_fix.used_bucket_count());
+        assert_eq!(
+            mixed_def.removed_bucket_item_count(),
+            mixed_fix.removed_bucket_item_count()
+        );
     }
 }

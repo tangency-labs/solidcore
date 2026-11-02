@@ -13,6 +13,19 @@
 //! (`0` = `SM_SUCCESS`, else the `SmStatus`; `1007` for a Rust `InvalidInput`, `-1` for a
 //! Rust error upstream cannot produce) and the rest as the `out` values.
 //!
+//! `Sil` runs `CreateSilhouetteCurves` on an unwrapped B-spline or plane (translated first
+//! by `Transform` when asked) and records every 3D and UV curve in full; the
+//! `upstream_sil_adv.json` fixtures are the `prog_test` `my_test_sil_adv` faces
+//! (`harness/fixturegen/sil_adv.py`), and `silNNNN` cases come from their own seed stream.
+//!
+//! `DomCont` makes the surface's cache first (UB-83: upstream reads a null cache) and
+//! then calls `GetDomainWithContinuity`; `history` says what happened to that cache before
+//! the call (made during a Boolean operation, so without tree and with empty continuity
+//! arrays; then its tree built; or reused during a Boolean operation). The `domhistNNNN`
+//! cases (their own seed stream) cover those histories, half of them at points off the
+//! surface domain, where the end-knot discontinuities clamp the domain only once the
+//! cache's tree has been built (`plan/findings.md`, "surface cache history").
+//!
 //! Deferred cases: the paths into unported units (every surface cache build needs
 //! `SmSurface::CalculateContinuities`, `surface.surface_p6`: `Cache`, `BBox` of
 //! curve-bounded and STEP surfaces, `DomCont` of every kind but STEP surfaces; the
@@ -21,7 +34,8 @@
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-use solidcore::curve::curve::Curve as SmCurve;
+use solidcore::curve::curve::{Curve as SmCurve, CurveKind};
+use solidcore::geom::axis2_placement::Axis2Placement;
 use solidcore::geom::extent1d::Extent1d;
 use solidcore::geom::geom_utility::p2::ContinuityType;
 use solidcore::geom::vector2d::{Point2, Vec2};
@@ -32,12 +46,13 @@ use solidcore::nurbs::b_spline_surface_n_lib::p2::EvaluateFlags;
 use solidcore::nurbs::knots::Side;
 use solidcore::surface::surface::p1::{
     base_is_degenerate_curve, base_is_degenerate_point, crossed_seam_or_pole,
-    evaluate_normal_section, find_uv_curve_ivl_in_domain, make_surface_cache,
+    evaluate_normal_section, find_uv_curve_ivl_in_domain, get_surface_cache, make_surface_cache,
     make_trim_srf_cache, FindSingularParamWithGivenTangentDir, StepSurface,
 };
 use solidcore::surface::surface::p2::IsoCurveLengthIntegrand;
-use solidcore::surface::surface::Surface;
+use solidcore::surface::surface::{Surface, SurfaceKind};
 use solidcore::surface::surface_cache::p1::SurfaceCache;
+use solidcore::error::SM_ERR;
 use solidcore::SolidError;
 use solidcore_ffi::units::surface_surface_p1::{self as ffi, Op, MAX_DIR_DERIV};
 
@@ -169,6 +184,23 @@ enum OpIn {
         cont: u8,
         uv: [f64; 2],
         vec: [f64; 2],
+        /// What happened to the surface's cache before the call (the shim's
+        /// `op_dom_cont`): `0` made outside a Boolean operation, `1` made while doing
+        /// one (no tree), `2` as `1` then its tree built, `3` as `0` with the call made
+        /// while doing a Boolean operation.
+        #[serde(default)]
+        history: u8,
+    },
+    /// `CreateSilhouetteCurves` on the (unwrapped) surface, translated first by
+    /// `translate` (`Transform`) when given.
+    Sil {
+        dom: [f64; 4],
+        eye: [f64; 3],
+        perspective: bool,
+        tol: Option<f64>,
+        ang: Option<f64>,
+        #[serde(default)]
+        translate: Option<[f64; 3]>,
     },
 }
 
@@ -197,6 +229,7 @@ impl OpIn {
             OpIn::Cache { .. } => Op::Cache,
             OpIn::BBox { .. } => Op::BBox,
             OpIn::DomCont { .. } => Op::DomCont,
+            OpIn::Sil { .. } => Op::Sil,
         }
     }
 }
@@ -234,6 +267,12 @@ fn cpp_input(i: &Inputs) -> Result<(Op, Vec<f64>), HarnessError> {
     let op = i.op.ffi();
     match &i.op {
         OpIn::NSect { .. } | OpIn::FindIvl { .. } | OpIn::Step { .. } => {}
+        OpIn::Sil { .. } => {
+            if i.wrap {
+                return Err(harness("sil: the surface is not wrapped"));
+            }
+            push_surf(&mut o, &i.surf)?;
+        }
         _ => push_wrapped(&mut o, i.wrap, &i.surf)?,
     }
     match &i.op {
@@ -328,10 +367,32 @@ fn cpp_input(i: &Inputs) -> Result<(Op, Vec<f64>), HarnessError> {
             o.extend(dom);
             o.extend([flag(*normal), flag(*pseudo), flag(*expand), flag(*polar)]);
         }
-        OpIn::DomCont { cont, uv, vec } => {
+        OpIn::DomCont {
+            cont,
+            uv,
+            vec,
+            history,
+        } => {
             o.push(f64::from(*cont));
             o.extend(uv);
             o.extend(vec);
+            o.push(f64::from(*history));
+        }
+        OpIn::Sil {
+            dom,
+            eye,
+            perspective,
+            tol,
+            ang,
+            translate,
+        } => {
+            o.extend(dom);
+            o.push(flag(*perspective));
+            o.extend(eye);
+            push_opt_tol(&mut o, *tol);
+            push_opt_tol(&mut o, *ang);
+            o.push(flag(translate.is_some()));
+            o.extend(translate.unwrap_or([0.0; 3]));
         }
     }
     Ok((op, o))
@@ -357,7 +418,7 @@ fn cpp(i: &Inputs) -> Result<Output, HarnessError> {
 fn wrapped_of(wrap: bool, s: &SurfIn) -> Result<Surface, HarnessError> {
     let s = surface_in(s)?;
     Ok(if wrap {
-        Surface::from(StepSurface::new(s, true))
+        Surface::from(StepSurface::new(s, true).map_err(|e| HarnessError::new(e.to_string()))?)
     } else {
         s
     })
@@ -481,33 +542,33 @@ fn rust_op(i: &Inputs) -> Result<Run, HarnessError> {
             };
             let mut o = Vec::new();
             let r = (|| -> Result<(), SolidError> {
-                sub(&mut o, s.evaluate_1st_derivatives(uv, *ul, *vl), |o, (p, du, dv)| {
+                sub(&mut o, s.evaluate_1st_derivatives(&k, uv, *ul, *vl), |o, (p, du, dv)| {
                     push3(o, p);
                     push3(o, du);
                     push3(o, dv);
                 })?;
-                sub(&mut o, s.evaluate_2nd_derivatives(uv, *ul, *vl), |o, d| {
+                sub(&mut o, s.evaluate_2nd_derivatives(&k, uv, *ul, *vl), |o, d| {
                     for v in d {
                         push3(o, v);
                     }
                 })?;
-                sub(&mut o, s.evaluate_step(uv, 2, 2, fl), |o, m| push_upper(o, &m))?;
-                sub(&mut o, s.evaluate_step_point(uv), push3)?;
-                sub(&mut o, s.evaluate_simple(uv, 2, 2, fl), |o, m| push_upper(o, &m))
+                sub(&mut o, s.evaluate_step(&k, uv, 2, 2, fl), |o, m| push_upper(o, &m))?;
+                sub(&mut o, s.evaluate_step_point(&k, uv), push3)?;
+                sub(&mut o, s.evaluate_simple(&k, uv, 2, 2, fl), |o, m| push_upper(o, &m))
             })();
             r.map(|()| o)
         }
         OpIn::Periodic { dom, v } => {
             let s = run()?;
-            flags(s.is_periodic(&dom_of(*dom), dir_of(*v)).map(|b| vec![b]))
+            flags(s.is_periodic(&k, &dom_of(*dom), dir_of(*v)).map(|b| vec![b]))
         }
         OpIn::DegenPoint { tol, dom } => {
             let s = run()?;
             let d = dom.map(dom_of);
             flags((|| {
                 Ok(vec![
-                    base_is_degenerate_point(&s, *tol, d.as_ref())?,
-                    s.is_degenerate_point(*tol, d.as_ref())?,
+                    base_is_degenerate_point(&k, &s, *tol, d.as_ref())?,
+                    s.is_degenerate_point(&k, *tol, d.as_ref())?,
                 ])
             })())
         }
@@ -516,8 +577,8 @@ fn rust_op(i: &Inputs) -> Result<Run, HarnessError> {
             let d = dom.map(dom_of);
             flags((|| {
                 Ok(vec![
-                    base_is_degenerate_curve(&s, *ang, d.as_ref(), *tol)?,
-                    s.is_degenerate_curve(*ang, d.as_ref(), *tol)?,
+                    base_is_degenerate_curve(&k, &s, *ang, d.as_ref(), *tol)?,
+                    s.is_degenerate_curve(&k, *ang, d.as_ref(), *tol)?,
                 ])
             })())
         }
@@ -546,7 +607,7 @@ fn rust_op(i: &Inputs) -> Result<Run, HarnessError> {
         OpIn::Misc { other_wrap, other } => {
             let a = run()?;
             let b = wrapped_of(*other_wrap, other)?;
-            match (a.approx_eq(&b), a.is_analytic(), a.face()) {
+            match (a.approx_eq(&k, &b), a.is_analytic(), a.face()) {
                 (Ok(eq), Ok(an), Ok(face)) => Ok(vec![
                     0.0,
                     flag(eq),
@@ -567,7 +628,7 @@ fn rust_op(i: &Inputs) -> Result<Run, HarnessError> {
         OpIn::Snap { uv, tol } => {
             let s = run()?;
             let mut o = Vec::new();
-            sub(&mut o, s.snap_to_knots(p2(*uv), *tol), |o, p| {
+            sub(&mut o, s.snap_to_knots(&k, p2(*uv), *tol), |o, p| {
                 o.extend([p.x, p.y]);
             })
             .map(|()| o)
@@ -598,7 +659,7 @@ fn rust_op(i: &Inputs) -> Result<Run, HarnessError> {
         OpIn::ParamDir { uv, vec } => {
             let s = run()?;
             let mut o = Vec::new();
-            sub(&mut o, s.compute_param_direction(p2(*uv), v3(*vec)), |o, d| {
+            sub(&mut o, s.compute_param_direction(&k, p2(*uv), v3(*vec)), |o, d| {
                 o.extend([d.x, d.y]);
             })
             .map(|()| o)
@@ -610,7 +671,7 @@ fn rust_op(i: &Inputs) -> Result<Run, HarnessError> {
             let s = run()?;
             let mut o = Vec::new();
             let r = s.evaluate_directional_derivs(
-                p2(*uv),
+                &k, p2(*uv),
                 Vec2::new(dir[0], dir[1]),
                 *h,
                 *ul,
@@ -642,7 +703,7 @@ fn rust_op(i: &Inputs) -> Result<Run, HarnessError> {
             let s = run()?;
             let d = dom.map(dom_of);
             let mut o = Vec::new();
-            sub(&mut o, s.approximate_size(d.as_ref()), |o, v| {
+            sub(&mut o, s.approximate_size(&k, d.as_ref()), |o, v| {
                 o.extend([v.x, v.y]);
             })
             .map(|()| o)
@@ -666,7 +727,7 @@ fn rust_op(i: &Inputs) -> Result<Run, HarnessError> {
         }
         OpIn::Sing { uv, dir, v, tol, s: t } => {
             let s = run()?;
-            let f = FindSingularParamWithGivenTangentDir::new(&s, p2(*uv), v3(*dir), dir_of(*v), *tol);
+            let f = FindSingularParamWithGivenTangentDir::new(&k, &s, p2(*uv), v3(*dir), dir_of(*v), *tol);
             let mut o = Vec::new();
             sub(&mut o, f.evaluate(*t), |o, (a, b, found)| {
                 o.extend([a, b, flag(found)]);
@@ -675,21 +736,19 @@ fn rust_op(i: &Inputs) -> Result<Run, HarnessError> {
         }
         OpIn::Seam { prev, curr, dom } => {
             let s = run()?;
-            Ok(vec![
-                0.0,
-                flag(crossed_seam_or_pole(&s, p2(*prev), p2(*curr), &dom_of(*dom))),
-            ])
+            crossed_seam_or_pole(&k, &s, p2(*prev), p2(*curr), &dom_of(*dom))
+                .map(|crossed| vec![0.0, flag(crossed)])
         }
         OpIn::IsoLen { u, t } => {
             let s = run()?;
             let mut o = Vec::new();
-            sub(&mut o, IsoCurveLengthIntegrand::new(&s, *u).evaluate(*t), |o, v| {
+            sub(&mut o, IsoCurveLengthIntegrand::new(&s, *u).evaluate(&k, *t), |o, v| {
                 o.push(v);
             })
             .map(|()| o)
         }
         OpIn::Step { v, ivl } => {
-            let s = StepSurface::new(surface_in(&i.surf)?, true);
+            let s = StepSurface::new(surface_in(&i.surf)?, true).map_err(|e| HarnessError::new(e.to_string()))?;
             let mut o = vec![0.0];
             push_dom(&mut o, &s.natural_uv_domain());
             match s.domain_with_continuity() {
@@ -752,9 +811,64 @@ fn rust_op(i: &Inputs) -> Result<Run, HarnessError> {
             })
             .map(|()| o)
         }
-        OpIn::DomCont { cont, uv, vec } => {
+        OpIn::Sil {
+            dom,
+            eye,
+            perspective,
+            tol,
+            ang,
+            translate,
+        } => {
+            let mut s = surface_in(&i.surf)?;
+            if let Some(t) = translate {
+                let mut ax = Axis2Placement::default();
+                ax.translate(v3(*t));
+                match s.transform(&k, &ax, None) {
+                    Ok(()) => {}
+                    Err(e) if e.is_unported() => return Ok(Err(e)),
+                    Err(e) => return Ok(Ok(vec![status(&e)])),
+                }
+            }
+            match s.create_silhouette_curves(&k, &dom_of(*dom), v3(*eye), *perspective, *tol, *ang) {
+                Ok((c3, cuv)) => {
+                    let mut o = vec![0.0, c3.len() as f64, cuv.len() as f64];
+                    for c in c3.iter().chain(&cuv) {
+                        push_sil_curve(&mut o, c);
+                    }
+                    Ok(o)
+                }
+                Err(e) if e.is_unported() => Err(e),
+                Err(e) => Ok(vec![status(&e)]),
+            }
+        }
+        OpIn::DomCont {
+            cont,
+            uv,
+            vec,
+            history,
+        } => {
             let s = run()?;
             let c = continuity(*cont)?;
+            let mut k = Kernel::default();
+            if *history != 0 && !matches!(s.kind(), SurfaceKind::Step(_)) {
+                // the shim's cache history: the surface's cache, made while doing a
+                // Boolean operation for 1 and 2 (no tree), its tree then built for 2
+                k.context.set_doing_boolean(matches!(history, 1 | 2));
+                let made = get_surface_cache::<()>(&k, &s, None);
+                k.context.set_doing_boolean(false);
+                let built = made.and_then(|mut cache| {
+                    if *history == 2 {
+                        cache.get_tree(&k)?;
+                    }
+                    Ok(())
+                });
+                match built {
+                    Ok(()) => {}
+                    Err(e) if e.is_unported() => return Ok(Err(e)),
+                    Err(_) => return Ok(Ok(vec![f64::from(SM_ERR)])),
+                }
+            }
+            k.context.set_doing_boolean(*history == 3);
             match s.domain_with_continuity(&k, c, p2(*uv), Vec2::new(vec[0], vec[1])) {
                 Ok(d) => {
                     let mut o = vec![0.0];
@@ -766,6 +880,24 @@ fn rust_op(i: &Inputs) -> Result<Run, HarnessError> {
             }
         }
     })
+}
+
+/// A silhouette curve as the shim's `put_sil_curve`: its type code, then for a B-spline
+/// `dim hasNurb [n p m cpts(x y z w) knots]`.
+fn push_sil_curve(o: &mut Vec<f64>, c: &SmCurve) {
+    o.push(c.type_code() as f64);
+    let CurveKind::BSpline(b) = c.kind() else {
+        return;
+    };
+    o.push(b.dim() as f64);
+    o.push(flag(b.gw_nurb().is_some()));
+    if let Some(cur) = b.gw_nurb() {
+        o.extend([cur.n() as f64, cur.degree() as f64, cur.m() as f64]);
+        for p in cur.cpts() {
+            o.extend([p.x, p.y, p.z, p.w]);
+        }
+        o.extend_from_slice(cur.knots());
+    }
 }
 
 fn rust(i: &Inputs) -> Result<Output, HarnessError> {
@@ -1021,9 +1153,155 @@ fn gen_case(rng: &mut Rng) -> Result<Inputs, HarnessError> {
             cont: rng.below(14) as u8,
             uv: gen_uv(rng, d),
             vec: [rng.uniform(-1.0, 1.0), rng.uniform(-1.0, 1.0)],
+            history: 0,
         },
     };
     Ok(Inputs { wrap, surf, op })
+}
+
+/// Generated `Sil` cases (their own seed stream, `surface.surface_p1:sil`).
+pub const SIL_CASES: usize = 64;
+
+/// A `Sil` case: a B-spline or plane over its domain or a sub-domain; a parallel view
+/// (axis-aligned or random) or an eye point near or far from the surface; default, fine,
+/// coarse or near-limit tolerances; sometimes translated.
+fn gen_sil(rng: &mut Rng) -> Result<Inputs, HarnessError> {
+    let surf = gen_surf(rng);
+    if matches!(surf, SurfIn::CurveBounded(_)) {
+        return Err(harness("sil: a B-spline or a plane"));
+    }
+    let d = surf_domain(&surf)?;
+    let size = surf_size(&surf)?;
+    // tiny surfaces split their surface cache past MAX_SUBDIVISION_NODES on the Rust side
+    // (an InvalidInput where upstream subdivides on; plan/findings.md, surface.surface_cache_p3)
+    if size < 1e-2 {
+        return Err(harness("sil: surface too small for the Rust subdivision bound"));
+    }
+    let dom = if rng.chance(0.5) { d } else { gen_sub_dom(rng, d) };
+    let perspective = rng.chance(0.4);
+    let eye = if perspective {
+        let r = size * if rng.chance(0.7) { rng.uniform(2.0, 10.0) } else { rng.uniform(1.05, 1.5) };
+        let v = gvec(rng, 1.0);
+        let n = (v[0] * v[0] + v[1] * v[1] + v[2] * v[2]).sqrt().max(1e-3);
+        [v[0] / n * r, v[1] / n * r, v[2] / n * r]
+    } else {
+        match rng.below(6) {
+            0 => [1.0, 0.0, 0.0],
+            1 => [0.0, 1.0, 0.0],
+            2 => [0.0, 0.0, 1.0],
+            3 => [1.0, 0.0, 1e-7],
+            _ => gvec(rng, 1.0),
+        }
+    };
+    let tol = match rng.below(5) {
+        0 => None,
+        1 => Some(size * 2e-6),
+        2 => Some(size * rng.uniform(1e-4, 1e-2)),
+        3 => Some(size * rng.uniform(0.05, 0.5)),
+        _ => Some(1e-3),
+    };
+    let ang = match rng.below(5) {
+        0 => None,
+        1 => Some(20f64.to_radians()),
+        2 => Some(rng.uniform(1e-3, 0.1)),
+        3 => Some(core::f64::consts::PI),
+        _ => Some(rng.uniform(0.1, 1.0)),
+    };
+    let translate = rng.chance(0.3).then(|| gvec(rng, size * 10.0));
+    Ok(Inputs {
+        wrap: false,
+        surf,
+        op: OpIn::Sil {
+            dom,
+            eye,
+            perspective,
+            tol,
+            ang,
+            translate,
+        },
+    })
+}
+
+/// Generated `DomCont` cases with a cache history (their own seed stream,
+/// `surface.surface_p1:domhist`).
+pub const DOM_HIST_CASES: usize = 96;
+
+/// A `DomCont` case after a cache history (`1` to `3`, see [`OpIn::DomCont`]): half the
+/// points in the domain, half off it (up to 90 % of a side out in u, v or both), where
+/// the end-knot discontinuities clamp the domain only when the cache's continuity
+/// arrays are filled.
+fn gen_dom_hist(rng: &mut Rng) -> Result<Inputs, HarnessError> {
+    let surf = gen_surf(rng);
+    // tiny surfaces split their surface cache past MAX_SUBDIVISION_NODES on the Rust side
+    // (an InvalidInput where upstream subdivides on; plan/findings.md, surface.surface_cache_p3)
+    if surf_size(&surf)? < 1e-2 {
+        return Err(harness("domhist: surface too small for the Rust subdivision bound"));
+    }
+    let wrap = rng.chance(0.1);
+    let d = surf_domain(&surf)?;
+    let [u, v] = gen_uv(rng, d);
+    let out = |rng: &mut Rng, lo: f64, hi: f64| -> f64 {
+        let w = (hi - lo) * rng.uniform(1e-3, 0.9);
+        if rng.chance(0.5) {
+            lo - w
+        } else {
+            hi + w
+        }
+    };
+    let uv = match rng.below(6) {
+        0..=2 => [u, v],
+        3 => [out(rng, d[0], d[2]), v],
+        4 => [u, out(rng, d[1], d[3])],
+        _ => [out(rng, d[0], d[2]), out(rng, d[1], d[3])],
+    };
+    let component = |rng: &mut Rng| {
+        if rng.chance(0.15) {
+            0.0
+        } else {
+            rng.uniform(-1.0, 1.0)
+        }
+    };
+    let vec = [component(rng), component(rng)];
+    Ok(Inputs {
+        wrap,
+        surf,
+        op: OpIn::DomCont {
+            cont: rng.below(14) as u8,
+            uv,
+            vec,
+            history: 1 + rng.below(3) as u8,
+        },
+    })
+}
+
+fn generate_dom_hist(rng: &mut Rng) -> Option<Value> {
+    for _ in 0..64 {
+        let Ok(i) = gen_dom_hist(rng) else {
+            continue;
+        };
+        let Ok((op, input)) = cpp_input(&i) else {
+            continue;
+        };
+        if ffi::validate(op, &input).is_ok() {
+            return serde_json::to_value(i).ok();
+        }
+    }
+    None
+}
+
+fn generate_sil(rng: &mut Rng) -> Option<Value> {
+    for _ in 0..64 {
+        let Ok(i) = gen_sil(rng) else {
+            continue;
+        };
+        let Ok((op, input)) = cpp_input(&i) else {
+            continue;
+        };
+        if ffi::validate(op, &input).is_ok() {
+            return serde_json::to_value(i).ok();
+        }
+    }
+    None
 }
 
 impl UnitDiff for Runner {
@@ -1047,11 +1325,34 @@ impl UnitDiff for Runner {
     }
 
     fn cases(&self, ctx: &CaseContext) -> Result<Vec<Case>, HarnessError> {
-        let ctx = CaseContext {
+        let main = CaseContext {
             seeds: ctx.seeds.max(MIN_GENERATED),
             ..ctx.clone()
         };
-        default_cases(self, &ctx)
+        let mut v = default_cases(self, &main)?;
+        // CreateSilhouetteCurves cases: their own seed stream (`<unit>:sil`), so the other
+        // ops' generated cases are unchanged; named `silNNNN`.
+        let sil = CaseContext {
+            seeds: ctx.seeds.max(SIL_CASES),
+            ..ctx.clone()
+        };
+        for mut c in sil.generated_cases("surface.surface_p1:sil", generate_sil) {
+            c.name = c.name.replacen("gen", "sil", 1);
+            c.unit = self.id().to_string();
+            v.push(c);
+        }
+        // GetDomainWithContinuity after a cache history: their own seed stream
+        // (`<unit>:domhist`); named `domhistNNNN`.
+        let hist = CaseContext {
+            seeds: ctx.seeds.max(DOM_HIST_CASES),
+            ..ctx.clone()
+        };
+        for mut c in hist.generated_cases("surface.surface_p1:domhist", generate_dom_hist) {
+            c.name = c.name.replacen("gen", "domhist", 1);
+            c.unit = self.id().to_string();
+            v.push(c);
+        }
+        Ok(v)
     }
 
     fn run_cpp(&self, case: &Case) -> Result<Output, HarnessError> {

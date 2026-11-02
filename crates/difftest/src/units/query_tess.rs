@@ -222,55 +222,22 @@ struct Inputs {
 
 // ---- file readers -------------------------------------------------------------------
 
-fn numbers(path: &str) -> Result<Vec<f64>, HarnessError> {
-    let text = std::fs::read_to_string(path).map_err(|e| harness(format!("{path}: {e}")))?;
-    text.split_whitespace()
-        .map(|t| {
-            t.parse::<f64>()
-                .map_err(|e| harness(format!("{path}: {e}")))
-        })
-        .collect()
-}
-
-fn int(path: &str, v: f64) -> Result<usize, HarnessError> {
-    if v.fract() != 0.0 || v < 0.0 {
-        return Err(harness(format!("{path}: bad count {v}")));
-    }
-    Ok(v as usize)
-}
+#[path = "fixtures/query_tess_sms.rs"]
+mod query_tess_sms;
 
 /// Reads an upstream `.sms` text file: `n m`, `p q`, rational flag, `(n+1)(m+1)`
 /// points (`x y z`, or `wx wy wz w` when rational, v index fastest), `n+p+2` u knots,
 /// `m+q+2` v knots.
 fn read_sms(path: &str) -> Result<InlineSrf, HarnessError> {
-    let v = numbers(path)?;
-    let mut it = v.into_iter();
-    let mut num = || {
-        it.next()
-            .ok_or_else(|| harness(format!("{path}: truncated")))
-    };
-    let n = int(path, num()?)?;
-    let m = int(path, num()?)?;
-    let p = int(path, num()?)?;
-    let q = int(path, num()?)?;
-    let rat = num()? != 0.0;
-    let mut net = Vec::new();
-    for _ in 0..=n {
-        let mut row = Vec::new();
-        for _ in 0..=m {
-            let (x, y, z) = (num()?, num()?, num()?);
-            let w = if rat { num()? } else { NOW };
-            row.push([x, y, z, w]);
-        }
-        net.push(row);
-    }
-    let u = (0..n + p + 2)
-        .map(|_| num())
-        .collect::<Result<Vec<_>, _>>()?;
-    let v = (0..m + q + 2)
-        .map(|_| num())
-        .collect::<Result<Vec<_>, _>>()?;
-    Ok(InlineSrf { net, p, q, u, v })
+    let text = std::fs::read_to_string(path).map_err(|e| harness(format!("{path}: {e}")))?;
+    let parsed = query_tess_sms::parse(&text).map_err(|e| harness(format!("{path}: {e}")))?;
+    Ok(InlineSrf {
+        net: parsed.net,
+        p: parsed.p,
+        q: parsed.q,
+        u: parsed.u,
+        v: parsed.v,
+    })
 }
 
 fn srf(s: &SrfIn) -> Result<InlineSrf, HarnessError> {
@@ -304,7 +271,9 @@ fn push_srf(o: &mut Vec<f64>, b: &BssIn) -> Result<(), HarnessError> {
     let s = srf(&b.srf)?;
     let (n, m) = shape(&s)?;
     o.extend([n as f64, m as f64, s.p as f64, s.q as f64]);
-    o.extend([(s.u.len() - 1) as f64, (s.v.len() - 1) as f64]);
+    let ku = s.u.len().checked_sub(1).ok_or_else(|| harness("empty u knots"))?;
+    let kv = s.v.len().checked_sub(1).ok_or_else(|| harness("empty v knots"))?;
+    o.extend([ku as f64, kv as f64]);
     for row in &s.net {
         for p in row {
             o.extend(p);
@@ -503,7 +472,7 @@ fn link(i: i64) -> Option<NodeId> {
 /// The `SmStatus` of a Rust error; `-1` for one upstream cannot return.
 fn status(e: &SolidError) -> i64 {
     match e {
-        SolidError::InvalidInput { .. } => 1007,
+        SolidError::InvalidInput { .. } | SolidError::PortInvariant { .. } => 1007,
         SolidError::Upstream { code, .. } => i64::from(*code),
         _ => -1,
     }
@@ -559,7 +528,7 @@ fn poly_of(k: &Kernel, p: &PolyIn) -> Result<(PolyBrep, Vec<PolyEdgeId>), Harnes
     let sh = b.add_shell(r).map_err(|e| hs(&e))?;
     let f = b.add_face(k, sh, p.face_tol, None).map_err(|e| hs(&e))?;
     let label = (p.label > 0).then_some(ObjectKey(p.label));
-    b.face_set_original_face(f, label, false).map_err(|e| hs(&e))?;
+    b.face_set_original_face(f, label, false, None).map_err(|e| hs(&e))?;
     let mut edges = Vec::new();
     for l in &p.loops {
         let mut vs = Vec::new();
@@ -1438,7 +1407,12 @@ impl UnitDiff for Runner {
     }
 
     fn run_rust(&self, case: &Case) -> Result<Output, HarnessError> {
-        rust(&case.parse()?)
+        let i = case.parse()?;
+        // Run only what the FFI accepts, as the C++ side: its guards refuse inputs
+        // upstream (and the faithful port) never finish on (fuzz Rust-side hangs).
+        let (code, input) = cpp_input(&i)?;
+        ffi::validate(code, &input).map_err(|e| HarnessError::new(e.to_string()))?;
+        rust(&i)
     }
 }
 
@@ -1446,6 +1420,29 @@ impl UnitDiff for Runner {
 mod tests {
     use super::*;
     use std::collections::BTreeMap;
+
+    #[test]
+    fn cyclic_trees_fail_softly() {
+        // fuzz00241 / fuzz00353 (`tests/fuzz_corpus/query.tess.json`): a tree node
+        // whose child is itself. The FFI refuses the tree, so the runner never hands it
+        // to the port; run directly, `mark_face_containment` used to descend the cycle
+        // forever and now returns an error status.
+        let corpus: Value = serde_json::from_str(include_str!(
+            "../../tests/fuzz_corpus/query.tess.json"
+        ))
+        .unwrap();
+        for name in ["fuzz00241_rust_hang", "fuzz00353_rust_hang"] {
+            let case = corpus["cases"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .find(|c| c["name"] == name)
+                .unwrap();
+            let input: Inputs = serde_json::from_value(case["inputs"].clone()).unwrap();
+            let out = rust(&input).unwrap();
+            assert_ne!(out.ints["status"], vec![0], "{name}: {out:?}");
+        }
+    }
 
     /// The generators reach every op with successful outcomes on the Rust side, real
     /// subdivision (split subdivision surfaces), silhouette nodes and classified nodes.

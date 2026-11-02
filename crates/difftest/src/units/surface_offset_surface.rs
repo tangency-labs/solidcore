@@ -8,6 +8,8 @@
 //! storing `*_extending` evaluators; an op marked `via` runs the `&self` evaluators through
 //! the `Surface` interface instead and is only generated where no extension can be
 //! stored). A `read_db` case reads the C++ `WriteToDB` record of an offset on both sides.
+//! The `avNNNN` cases (their own seed stream, so the `genNNNN` inputs are unchanged) run
+//! `AssertValid` on an offset after an optional edit and compare every report.
 //!
 //! Output `out`: the construction status, then each op's status and outputs (see the
 //! FFI module); a failure is the upstream `SmStatus` (`InvalidInput` is
@@ -17,6 +19,7 @@
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
+use solidcore::geom::assert_array::{AssertArray, ObjectKey};
 use solidcore::geom::axis2_placement::Axis2Placement;
 use solidcore::geom::extent1d::Extent1d;
 use solidcore::geom::extent2d::Extent2d;
@@ -42,6 +45,9 @@ use super::surface_surf_of_revolution_p1 as rev;
 use crate::case::CaseContext;
 use crate::runner::default_cases;
 use crate::{Case, HarnessError, Output, Rng, UnitDiff};
+
+#[path = "fixtures/surface_offset_surface_sms.rs"]
+mod surface_offset_surface_sms;
 
 /// Generated cases per run, whatever `--seeds` says (it can only raise this).
 pub const MIN_GENERATED: usize = 3000;
@@ -229,6 +235,9 @@ enum StepIn {
         d: f64,
         tol: f64,
     },
+    AssertValid {
+        level: u8,
+    },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -248,62 +257,20 @@ enum Inputs {
     },
 }
 
-fn numbers(path: &str) -> Result<Vec<f64>, HarnessError> {
-    let text = std::fs::read_to_string(path).map_err(|e| harness(format!("{path}: {e}")))?;
-    text.split_whitespace()
-        .map(|t| {
-            t.parse::<f64>()
-                .map_err(|e| harness(format!("{path}: {e}")))
-        })
-        .collect()
-}
-
-fn count(path: &str, v: f64) -> Result<usize, HarnessError> {
-    if v.fract() != 0.0 || v < 0.0 {
-        return Err(harness(format!("{path}: bad count {v}")));
-    }
-    Ok(v as usize)
-}
-
 /// Reads an upstream `.sms` text file: `n m`, `p q`, rational flag, `(n+1)(m+1)` points
 /// (`x y z`, or `wx wy wz w` when rational, v index fastest), `n+p+2` u knots, `m+q+2` v
 /// knots.
 fn read_sms(path: &str) -> Result<BssIn, HarnessError> {
-    let v = numbers(path)?;
-    let mut it = v.into_iter();
-    let mut num = || {
-        it.next()
-            .ok_or_else(|| harness(format!("{path}: truncated")))
-    };
-    let n = count(path, num()?)?;
-    let m = count(path, num()?)?;
-    let p = count(path, num()?)?;
-    let q = count(path, num()?)?;
-    let rat = num()? != 0.0;
-    let mut net = Vec::new();
-    for _ in 0..=n {
-        let mut row = Vec::new();
-        for _ in 0..=m {
-            let (x, y, z) = (num()?, num()?, num()?);
-            let w = if rat { num()? } else { NOW };
-            row.push([x, y, z, w]);
-        }
-        net.push(row);
-    }
-    let u = (0..n + p + 2)
-        .map(|_| num())
-        .collect::<Result<Vec<_>, _>>()?;
-    let v = (0..m + q + 2)
-        .map(|_| num())
-        .collect::<Result<Vec<_>, _>>()?;
+    let text = std::fs::read_to_string(path).map_err(|e| harness(format!("{path}: {e}")))?;
+    let parsed = surface_offset_surface_sms::parse_sms(&text, path)?;
     Ok(BssIn {
         oob: false,
         form: default_form(),
-        net,
-        p,
-        q,
-        u,
-        v,
+        net: parsed.net,
+        p: parsed.p,
+        q: parsed.q,
+        u: parsed.u,
+        v: parsed.v,
     })
 }
 
@@ -445,6 +412,7 @@ fn ffi_step(s: &StepIn) -> Result<ffi::Step, HarnessError> {
         StepIn::IsPlanar { tol } => F::IsPlanar { tol: *tol },
         StepIn::IsKindOf { t } => F::IsKindOf { t: *t },
         StepIn::BaseOffset { d, tol } => F::BaseOffset { d: *d, tol: *tol },
+        StepIn::AssertValid { level } => F::AssertValid { level: *level },
     })
 }
 
@@ -525,7 +493,7 @@ fn status(e: &SolidError) -> f64 {
     match e {
         SolidError::Upstream { code, .. } => f64::from(*code),
         // SM_ERR_INVALID_INPUT (the zero-vector status of Unitize)
-        SolidError::InvalidInput { .. } => 1007.0,
+        SolidError::InvalidInput { .. } | SolidError::PortInvariant { .. } => 1007.0,
         _ => -1.0,
     }
 }
@@ -602,16 +570,11 @@ fn rust_srf(k: &Kernel, s: &SrfIn) -> Result<solidcore::Result<Surface>, Harness
         SrfIn::Bspline(b) => Ok(Surface::from(bss_of(b)?)),
         SrfIn::Sms(path) => Ok(Surface::from(bss_of(&read_sms(path)?)?)),
         SrfIn::Plane { o, n } => Ok(Surface::from(Plane::from_normal(v3(*o), v3(*n)))),
-        SrfIn::Bounded { basis, implicit } => rust_srf(k, basis)?.map(|b| {
-            Surface::from(CurveBoundedSurface::new(
-                b,
-                Vec::new(),
-                Vec::new(),
-                *implicit,
-            ))
+        SrfIn::Bounded { basis, implicit } => rust_srf(k, basis)?.and_then(|b| {
+            CurveBoundedSurface::new(b, Vec::new(), Vec::new(), *implicit).map(Surface::from)
         }),
         SrfIn::Step { base } => {
-            rust_srf(k, base)?.map(|b| Surface::from(StepSurface::new(b, true)))
+            rust_srf(k, base)?.and_then(|b| StepSurface::new(b, true).map(Surface::from))
         }
         SrfIn::Revolution(r) => rev::rust_surf(k, r)?.map(Surface::from),
         SrfIn::Offset(o) => rust_off(k, o)?.map(Surface::from),
@@ -630,12 +593,12 @@ fn rust_off(k: &Kernel, o: &OffIn) -> Result<solidcore::Result<OffsetSurface>, H
 }
 
 /// The 3x3 `EvaluatePoint` grid over the natural domain.
-fn put_grid(o: &mut Vec<f64>, s: &Surface) -> Result<(), Fail> {
-    let d = s.natural_uv_domain();
+fn put_grid(k: &Kernel, o: &mut Vec<f64>, s: &Surface) -> Result<(), Fail> {
+    let d = s.natural_uv_domain_with_nurb(k).map_err(|e| HarnessError::new(e.to_string()))?;
     for i in 0..3 {
         for j in 0..3 {
             let uv = d.evaluate(f64::from(i) / 2.0, f64::from(j) / 2.0);
-            push_res(o, s.evaluate_point(uv), |o, p| {
+            push_res(o, s.evaluate_point(k, uv), |o, p| {
                 pv(o, p);
                 Ok(())
             })?;
@@ -644,7 +607,7 @@ fn put_grid(o: &mut Vec<f64>, s: &Surface) -> Result<(), Fail> {
     Ok(())
 }
 
-fn put_state(o: &mut Vec<f64>, s: &OffsetSurface) -> Result<(), Fail> {
+fn put_state(k: &Kernel, o: &mut Vec<f64>, s: &OffsetSurface) -> Result<(), Fail> {
     put_dom(o, &s.natural_uv_domain());
     o.push(s.offset_distance());
     o.push(flag(s.allow_extension()));
@@ -653,28 +616,30 @@ fn put_state(o: &mut Vec<f64>, s: &OffsetSurface) -> Result<(), Fail> {
     o.push(f64::from(pu));
     o.push(f64::from(pv_));
     o.push(f64::from(s.singularities()));
-    match s.extended_base_surface() {
+    // GetExtendedBaseSurface (with an extension a `&self` evaluator made)
+    s.with_extended_base_surface(|e| match e {
         Some(e) => {
             o.push(1.0);
-            put_dom(o, &e.natural_uv_domain());
+            // (an extension is a B-spline surface: never lazy)
+            put_dom(o, &e.natural_uv_domain_if_built());
             o.push(e.type_code() as f64);
         }
         None => o.push(0.0),
-    }
+    });
     let b = s.base_surface();
     o.push(b.type_code() as f64);
-    put_dom(o, &b.natural_uv_domain());
+    put_dom(o, &b.natural_uv_domain_with_nurb(k).map_err(|e| HarnessError::new(e.to_string()))?);
     o.push(s.type_code() as f64);
-    put_grid(o, &Surface::from(s.clone()))
+    put_grid(k, o, &Surface::from(s.clone()))
 }
 
-fn put_result(o: &mut Vec<f64>, r: &Surface) -> Result<(), Fail> {
+fn put_result(k: &Kernel, o: &mut Vec<f64>, r: &Surface) -> Result<(), Fail> {
     o.push(r.type_code() as f64);
     if let SurfaceKind::OffsetSurface(off) = r.kind() {
-        put_state(o, off)
+        put_state(k, o, off)
     } else {
-        put_dom(o, &r.natural_uv_domain());
-        put_grid(o, r)
+        put_dom(o, &r.natural_uv_domain_with_nurb(k).map_err(|e| HarnessError::new(e.to_string()))?);
+        put_grid(k, o, r)
     }
 }
 
@@ -720,7 +685,7 @@ fn run_step(
     match step {
         StepIn::State => {
             o.push(0.0);
-            put_state(o, s)
+            put_state(k, o, s)
         }
         StepIn::Eval {
             uv,
@@ -734,9 +699,9 @@ fn run_step(
         } => {
             let f = flags([*ul, *vl, *upper, *nzt]);
             let r = if *via {
-                Surface::from(s.clone()).evaluate(p2(*uv), *hu, *hv, f)
+                Surface::from(s.clone()).evaluate(k, p2(*uv), *hu, *hv, f)
             } else {
-                s.evaluate_extending(p2(*uv), *hu, *hv, f)
+                s.evaluate_extending(k, p2(*uv), *hu, *hv, f)
             };
             push_res(o, r, |o, m| put_matrix(o, &m, *hu, *hv, *upper))
         }
@@ -751,17 +716,17 @@ fn run_step(
         } => {
             let f = flags([*ul, *vl, *upper, false]);
             let r = if *via {
-                Surface::from(s.clone()).evaluate_simple(p2(*uv), *hu, *hv, f)
+                Surface::from(s.clone()).evaluate_simple(k, p2(*uv), *hu, *hv, f)
             } else {
-                s.evaluate_simple_extending(p2(*uv), *hu, *hv, f)
+                s.evaluate_simple_extending(k, p2(*uv), *hu, *hv, f)
             };
             push_res(o, r, |o, m| put_matrix(o, &m, *hu, *hv, *upper))
         }
         StepIn::EvalPt { uv, via } => {
             let r = if *via {
-                Surface::from(s.clone()).evaluate_point(p2(*uv))
+                Surface::from(s.clone()).evaluate_point(k, p2(*uv))
             } else {
-                s.evaluate_point_extending(p2(*uv))
+                s.evaluate_point_extending(k, p2(*uv))
             };
             push_res(o, r, |o, p| {
                 pv(o, p);
@@ -770,9 +735,9 @@ fn run_step(
         }
         StepIn::Normal { uv, ul, vl, via } => {
             let r = if *via {
-                Surface::from(s.clone()).evaluate_normal(p2(*uv), side(*ul), side(*vl))
+                Surface::from(s.clone()).evaluate_normal(k, p2(*uv), side(*ul), side(*vl))
             } else {
-                s.evaluate_normal_extending(p2(*uv), side(*ul), side(*vl))
+                s.evaluate_normal_extending(k, p2(*uv), side(*ul), side(*vl))
             };
             push_res(o, r, |o, n| {
                 pv(o, n);
@@ -793,7 +758,7 @@ fn run_step(
                 },
             )
         }
-        StepIn::MaxAnal => push_res(o, s.max_analytic_domain(), |o, d| {
+        StepIn::MaxAnal => push_res(o, s.max_analytic_domain(k), |o, d| {
             put_dom(o, &d);
             Ok(())
         }),
@@ -862,32 +827,32 @@ fn run_step(
         StepIn::Split { t, param } => {
             let p = param_of(*param)?;
             push_res(o, s.split_at(k, *t, p), |o, (l, r)| {
-                put_result(o, &l)?;
-                put_result(o, &r)
+                put_result(k, o, &l)?;
+                put_result(k, o, &r)
             })
         }
         StepIn::CreateOffset { d } => {
-            push_res(o, s.create_offset_surface(k, *d), |o, r| put_result(o, &r))
+            push_res(o, s.create_offset_surface(k, *d), |o, r| put_result(k, o, &r))
         }
         StepIn::Extend { dist, cont } => {
             let c = continuity_of(*cont)?;
             push_res(o, s.create_extended_surface(k, *dist, c), |o, r| {
-                put_result(o, &r)
+                put_result(k, o, &r)
             })
         }
         StepIn::ExtendDir { param, dist, cont } => {
             let (p, c) = (param_of(*param)?, continuity_of(*cont)?);
             push_res(o, s.create_extended_surface_dir(k, p, *dist, c), |o, r| {
-                put_result(o, &r)
+                put_result(k, o, &r)
             })
         }
-        StepIn::Copy => push_res(o, s.copy(k), |o, c| put_result(o, &Surface::from(c))),
+        StepIn::Copy => push_res(o, s.copy(k), |o, c| put_result(k, o, &Surface::from(c))),
         StepIn::Eq { other } => match rust_off(k, other)? {
             Ok(other) => {
                 o.push(0.0);
-                let eq = s.approx_eq(&Surface::from(other));
+                let eq = s.approx_eq(k, &Surface::from(other));
                 let w = Surface::from(s.clone());
-                let self_eq = w.approx_eq(&w);
+                let self_eq = w.approx_eq(k, &w);
                 for r in [eq, self_eq] {
                     match r {
                         Ok(b) => o.push(flag(b)),
@@ -940,9 +905,68 @@ fn run_step(
         StepIn::BaseOffset { d, tol } => push_res(
             o,
             s.base_surface().create_offset_surface(k, *d, *tol),
-            |o, r| put_result(o, &r),
+            // (a NULL result writes only the status, as the shim)
+            |o, r| r.as_ref().map_or(Ok(()), |r| put_result(k, o, r)),
         ),
+        StepIn::AssertValid { level } => put_assert_valid(k, s, *level, o),
     }
+}
+
+fn av_text(o: &mut Vec<f64>, s: Option<&str>) {
+    o.push(s.map_or(0, str::len) as f64);
+    if let Some(s) = s {
+        o.extend(s.bytes().map(f64::from));
+    }
+}
+
+/// A report object as the shim writes it: `0` null, `1` the checked offset, `9` another.
+fn av_id(key: Option<ObjectKey>) -> f64 {
+    match key {
+        None => 0.0,
+        Some(ObjectKey(1)) => 1.0,
+        Some(_) => 9.0,
+    }
+}
+
+/// `AssertValid` through `SmSurface*` on the offset (key `1`): `0 ok n reports last_add`.
+fn put_assert_valid(
+    k: &Kernel,
+    s: &OffsetSurface,
+    level: u8,
+    o: &mut Vec<f64>,
+) -> Result<(), Fail> {
+    let w = Surface::from(s.clone());
+    let mut list = AssertArray::new();
+    let ok = w
+        .assert_valid(k, Some(&mut list), level, ObjectKey(1))
+        .map_err(|e| {
+            defer(&e).unwrap_or_else(|| Fail::Harness(harness(format!("AssertValid failed: {e}"))))
+        })?;
+    o.extend([0.0, flag(ok), list.len() as f64]);
+    for r in list.reports() {
+        o.extend([
+            r.reporting_type as f64,
+            r.list_index as f64,
+            r.test_index as f64,
+            f64::from(r.assert_type.code()),
+            flag(r.ok),
+            av_id(r.reporter),
+            av_id(r.owner),
+            av_id(r.other),
+            r.owner_type as f64,
+            r.other_type as f64,
+            r.tol3d,
+            r.value,
+            r.dist3d,
+        ]);
+        av_text(o, Some(r.name));
+        av_text(o, r.message.as_deref());
+        av_text(o, r.message_for_file);
+        av_text(o, r.owner_type_string);
+        av_text(o, r.other_type_string);
+    }
+    o.push(flag(list.last_add()));
+    Ok(())
 }
 
 fn rust_script(off: &OffIn, steps: &[StepIn]) -> Result<Vec<f64>, Fail> {
@@ -977,7 +1001,7 @@ fn rust_read(binary: bool, version: u32, bytes: &[u8]) -> Result<Vec<f64>, Fail>
     push_res(
         &mut o,
         OffsetSurface::read_from_db(&k, &mut db, u64::from(version)),
-        |o, s| put_state(o, &s),
+        |o, s| put_state(&k, o, &s),
     )?;
     Ok(o)
 }
@@ -1209,7 +1233,7 @@ fn tiny_revolution(rng: &mut Rng) -> rev::SurfIn {
                 *bi = *ai + (*bi - *ai) * f;
             }
         }
-        rev::GenIn::BSpline(_) => {}
+        rev::GenIn::BSpline(_) | rev::GenIn::Hyperbola { .. } => {}
     }
     s
 }
@@ -1264,12 +1288,13 @@ fn gen_off(rng: &mut Rng, scale: f64, depth: usize) -> OffIn {
 /// points, at least `1e-9`), built on the Rust side.
 fn base_info(k: &Kernel, off: &OffIn) -> Option<([f64; 4], f64)> {
     let s = rust_srf(k, &off.base).ok()?.ok()?;
-    let d = s.natural_uv_domain();
+    // (runner helper that does not return Result)
+    let d = s.natural_uv_domain_if_built();
     let r = [d.min().x, d.min().y, d.max().x, d.max().y];
     if !(r.iter().all(|c| c.is_finite() && c.abs() < 1e5) && r[0] < r[2] && r[1] < r[3]) {
         return None;
     }
-    let size = match (s.evaluate_point(d.min()), s.evaluate_point(d.max())) {
+    let size = match (s.evaluate_point(k, d.min()), s.evaluate_point(k, d.max())) {
         (Ok(a), Ok(b)) => a.distance(b),
         _ => 0.0,
     };
@@ -1595,6 +1620,79 @@ fn gen_case(rng: &mut Rng) -> Option<Inputs> {
     Some(Inputs::Script { off, steps })
 }
 
+/// Generated `AssertValid` cases.
+const ASSERT_VALID_GENERATED: usize = 100;
+
+/// A base for an `AssertValid` case. The self-intersection test runs a full
+/// surface/surface intersection of the offset with itself, which takes seconds to
+/// minutes in C++ for the curved, tiny-scale and huge-scale bases of `gen_base`
+/// (one 1e150-scale check took 148 s), so these bases are planes, flat and low-degree
+/// curved B-splines (some with a pole) and offsets of them.
+fn gen_av_base(rng: &mut Rng, scale: f64, depth: usize) -> SrfIn {
+    match rng.below(10) {
+        0..=2 => SrfIn::Plane {
+            o: rng.point3(-2.0 * scale, 2.0 * scale),
+            n: rev::unit_vec(rng),
+        },
+        3..=5 => SrfIn::Bspline(gen_bss(rng, Shape::Flat, scale)),
+        6 => SrfIn::Bspline(gen_bss(rng, Shape::Smooth, scale)),
+        7 => SrfIn::Bspline(gen_bss(rng, Shape::PoleU, scale)),
+        _ if depth < 1 => SrfIn::Offset(Box::new(gen_av_off(rng, scale, depth + 1))),
+        _ => SrfIn::Bspline(gen_bss(rng, Shape::Flat, scale)),
+    }
+}
+
+/// An offset for an `AssertValid` case: owning or shared base, no extension.
+fn gen_av_off(rng: &mut Rng, scale: f64, depth: usize) -> OffIn {
+    let base = gen_av_base(rng, scale, depth);
+    let d = match rng.below(10) {
+        0 => 0.0,
+        1 => rng.uniform(2.0, 5.0) * scale,
+        _ => rng.uniform(-0.5, 0.5) * scale,
+    };
+    OffIn {
+        d,
+        owns: rng.chance(0.75),
+        sing: if rng.chance(0.2) { SS_UNKNOWN } else { 0 },
+        allow: false,
+        base,
+    }
+}
+
+/// An `AssertValid` script: an offset, an optional edit (distance, reversal, swap), then
+/// the check at `SM_LEVEL_GIVEN` (mostly) or a level running the inherited base checks.
+fn gen_assert_valid_case(rng: &mut Rng) -> Option<Inputs> {
+    let scale = *rng.choose(&[1.0, 1.0, 1.0, 10.0, 1e-3, 1e3, 1e6])?;
+    let off = gen_av_off(rng, scale, 0);
+    let mut steps = Vec::new();
+    match rng.below(8) {
+        0 => steps.push(StepIn::SetDist {
+            d: rng.uniform(-0.5, 0.5) * scale,
+        }),
+        1 => steps.push(StepIn::Reverse {
+            param: *rng.choose(&[0, 1])?,
+        }),
+        2 => steps.push(StepIn::Swap),
+        _ => {}
+    }
+    let level = if rng.chance(0.75) { 4 } else { rng.below(3) as u8 };
+    steps.push(StepIn::AssertValid { level });
+    let foff = ffi_off(&off).ok()?;
+    let fsteps = ffi_steps(&steps).ok()?;
+    ffi::check(&foff, &fsteps).ok()?;
+    // below SM_LEVEL_GIVEN the shim refuses some bases only on the actual surfaces
+    // (inherited checks reading unwritten outputs): drop those
+    if level != 4
+        && matches!(
+            ffi::script(&foff, &fsteps),
+            Err(solidcore_ffi::FfiError::InvalidArgument(_))
+        )
+    {
+        return None;
+    }
+    Some(Inputs::Script { off, steps })
+}
+
 /// Which directions (`[u, v]`) of the B-spline NLib extends for this offset (its base,
 /// looking through nested offsets, curve-bounded and STEP wrappers) have degree 1;
 /// `None` when neither does.
@@ -1608,7 +1706,15 @@ fn degree_1_directions(k: &Kernel, off: &OffIn) -> Option<[bool; 2]> {
             SurfaceKind::OffsetSurface(o) => o.base_surface(),
             SurfaceKind::CurveBounded(c) => c.basis(),
             SurfaceKind::Step(st) => st.surface()?,
-            SurfaceKind::BSpline(_) | SurfaceKind::Plane(_) | SurfaceKind::SurfOfRevolution(_) => {
+            SurfaceKind::BSpline(_)
+            | SurfaceKind::ProceduralBlend(_)
+            | SurfaceKind::BallPatch(_)
+            | SurfaceKind::Plane(_)
+            | SurfaceKind::Cone(_)
+            | SurfaceKind::Sphere(_)
+            | SurfaceKind::Torus(_)
+            | SurfaceKind::SurfOfRevolution(_)
+            | SurfaceKind::SurfOfExtrusion(_) => {
                 let d = [
                     s.degree(SurfParamType::U) == 1,
                     s.degree(SurfParamType::V) == 1,
@@ -1681,7 +1787,7 @@ fn fill_placeholders(case: &mut Case) -> Result<(), HarnessError> {
     .map_err(|e| bad(&e.to_string()))?;
     let k = Kernel::default();
     let base = rust_srf(&k, &off.base)?.map_err(|e| bad(&format!("base: {e}")))?;
-    let d = base.natural_uv_domain();
+    let d = base.natural_uv_domain_with_nurb(&k).map_err(|e| HarnessError::new(e.to_string()))?;
     let (u0, v0, u1, v1) = (d.min().x, d.min().y, d.max().x, d.max().y);
     let (lu, lv) = (u1 - u0, v1 - v0);
     let on = || -> Result<[f64; 3], HarnessError> {
@@ -1691,7 +1797,7 @@ fn fill_placeholders(case: &mut Case) -> Result<(), HarnessError> {
         };
         let s = rust_off(&k, &plain)?.map_err(|e| bad(&format!("offset: {e}")))?;
         let p = s
-            .evaluate_point(Point2::new(u0 + 0.4 * lu, v0 + 0.6 * lv))
+            .evaluate_point(&k, Point2::new(u0 + 0.4 * lu, v0 + 0.6 * lv))
             .map_err(|e| bad(&format!("point: {e}")))?;
         Ok([p.x, p.y, p.z])
     };
@@ -1771,11 +1877,24 @@ impl UnitDiff for Runner {
     }
 
     fn cases(&self, ctx: &CaseContext) -> Result<Vec<Case>, HarnessError> {
+        let av = CaseContext {
+            seeds: ctx.seeds.max(ASSERT_VALID_GENERATED),
+            ..ctx.clone()
+        };
         let ctx = CaseContext {
             seeds: ctx.seeds.max(MIN_GENERATED),
             ..ctx.clone()
         };
         let mut cases = default_cases(self, &ctx)?;
+        for mut c in av.generated_cases("surface.offset_surface:assert-valid", |rng| {
+            (0..16)
+                .find_map(|_| gen_assert_valid_case(rng))
+                .and_then(|i| serde_json::to_value(i).ok())
+        }) {
+            c.name = c.name.replacen("gen", "av", 1);
+            c.unit = self.id().to_string();
+            cases.push(c);
+        }
         for case in &mut cases {
             fill_placeholders(case)?;
             fill_read_bytes(case)?;

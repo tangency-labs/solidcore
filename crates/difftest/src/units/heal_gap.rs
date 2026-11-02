@@ -17,11 +17,26 @@
 //! * `gap_array`: `SmGapArray::Add` / `Append` / `ReSet` and the gap comparisons.
 //! * `topo`: a gap record (`SmVertexEdgeGap` ... `SmEdgeFaceGap`) set on a real
 //!   `SmBrep` built as the `topology.vertexuse` runner builds it (an upstream `.smb`
-//!   file, a wire edge, a face from a surface, the `my_test_topology` network), whose
-//!   export the Rust side imports with that runner's importer; compares the gap, its
+//!   file, a wire edge, a face from a surface, the `my_test_topology` network). The Rust
+//!   side reads an `.smb` file itself (`crate::own_builder::read_with`: the Rust reader,
+//!   renumbered into the shim's walk order, so selectors name the same entities and no
+//!   C++ export reaches the Rust side); other sources are still imported from the shim's
+//!   export with that runner's importer. Compares the gap, its
 //!   accessors, `GetGapEndPoints` and `CacheGap`. Parameters are given as fractions of
 //!   the selected edge's interval or face's surface domain (or `SM_UNDEF_DOUBLE`), so
 //!   both sides read them from the same graph.
+//! * `raw_trim_gap`: vertex/face-trim and edge/face-trim gaps on a planar face
+//!   independently constructed by each engine, without a native graph import. The
+//!   caller supplies the UV NURB and parameter; comparisons are the constructor's
+//!   length, `GetFaceUV`, actual `GetGapEndPoints`, and `CacheGap`.
+//!
+//! Raw trim inputs bypass constructor knot normalization: Rust uses
+//! `BSplineCurve::from_nurb(..., true)`; C++ restores the input knot vector after its
+//! owned constructor. Both validate the stored raw knots against the caller's input
+//! before invoking the gap. These checks are harness assertions, not comparison
+//! values. Ordinary controls use the normal constructors. Positive knot spans must
+//! exceed native `EFF_ZERO` to avoid UB266; the close spans remain below the scaled
+//! copy-constructor fixup threshold and distinguish evaluation in place from copying.
 //!
 //! Deferred cases: the surface drops of the curve/surface and surface/surface gap
 //! functions (`SmSurface::DropPoint`, unit `surface.surface_p5`) and the creation of a
@@ -62,10 +77,12 @@ use solidcore::SolidError;
 use solidcore_ffi::units::heal_gap::{self as ffi, Op, UNDEF};
 use solidcore_ffi::units::topology_vertexuse::counts;
 
-use super::topology_vertexuse::{gen_brep, import, path_of, push_curve, push_surface, sel, BrepIn};
+use super::topology_vertexuse::{
+    gen_brep, import, import_raw, path_of, push_curve, push_surface, sel, BrepIn,
+};
 use crate::case::CaseContext;
 use crate::runner::default_cases;
-use crate::{Case, HarnessError, Output, Rng, UnitDiff};
+use crate::{Case, CaseSource, HarnessError, Output, Rng, UnitDiff};
 
 /// Generated cases per run, whatever `--seeds` says (it can only raise this).
 pub const MIN_GENERATED: usize = 400;
@@ -213,6 +230,28 @@ fn twenty() -> usize {
     20
 }
 
+/// A native planar face with an exact `SmCircle`/`SmEllipse` edge and exact rational UV
+/// trims (the shared B-rep block kind 9, as `topology.edgeuse_p1` builds it). The graph
+/// export carries the edge curve losslessly (`sc_exact_curve_export`), so it is the case
+/// that distinguishes an exact healing import from the old B-spline stand-in.
+/// `angles` is the STEP interval in degrees and `natural` the NURB parameter interval.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct EllipseFaceIn {
+    /// `SmCircle` instead of `SmEllipse` (the radii must then be equal).
+    #[serde(default)]
+    circle: bool,
+    origin: [f64; 3],
+    /// 0: `x = +y, y = +z`; 1: `x = +x, y = +z`; 2: `x = +x, y = +y`.
+    axis: u8,
+    radii: [f64; 2],
+    angles: [f64; 2],
+    natural: [f64; 2],
+    #[serde(default)]
+    inside_out: bool,
+    #[serde(default)]
+    oob: bool,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "op", rename_all = "snake_case")]
 enum Inputs {
@@ -256,8 +295,27 @@ enum Inputs {
         a: Vec<f64>,
         b: Vec<f64>,
     },
+    /// Independently constructed planar topology, with caller-supplied UV knots.
+    RawTrimGap {
+        trim: NurbIn,
+        t: f64,
+        #[serde(default)]
+        edge_gap: bool,
+        #[serde(default)]
+        mate: bool,
+        /// Retain exact input knots rather than applying constructor fixup.
+        #[serde(default)]
+        raw_knots: bool,
+    },
     Topo {
-        brep: BrepIn,
+        /// The shared B-rep block (a `.smb` file, a wire edge, a face, the wire
+        /// network); `None` only with `ellipse_face`.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        brep: Option<BrepIn>,
+        /// A native circle/ellipse face (the shared block's kind 9); `None` only with
+        /// `brep`.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        ellipse_face: Option<EllipseFaceIn>,
         /// 0 vertex/edge, 1 vertex/face trim curve, 2 vertex/face, 3 edge/edge, 4
         /// edge/face trim curve, 5 edge/face.
         kind: u8,
@@ -566,7 +624,7 @@ fn curve_of(k: &Kernel, c: &CurveIn) -> Result<Curve, HarnessError> {
         CurveIn::CrvOnSurf { uv, surface } => {
             let c = Curve::from(BSplineCurve::from_nurb(nl_curve(uv)?, 2, false));
             Curve::from(
-                CrvOnSurf::new(k, c, bss_of(surface)?, None, 3)
+                CrvOnSurf::new(k, c, Surface::from(bss_of(surface)?), None, 3)
                     .map_err(|e| harness(format!("crv on surf: {e}")))?,
             )
         }
@@ -592,7 +650,7 @@ fn surface_of(s: &SurfIn) -> Result<Surface, HarnessError> {
             Vec::new(),
             Vec::new(),
             true,
-        )),
+        ).map_err(|e| HarnessError::new(e.to_string()))?),
     })
 }
 
@@ -753,7 +811,8 @@ fn topo_args(
     };
     let dom = match face {
         Some(f) => match &b.face(f).map_err(err)?.surface {
-            Some(s) => s.natural_uv_domain(),
+            // (runner helper without a kernel in scope)
+            Some(s) => s.natural_uv_domain_if_built(),
             None => dom_of([0.0, 0.0, 1.0, 1.0]),
         },
         None => dom_of([0.0, 0.0, 1.0, 1.0]),
@@ -802,10 +861,46 @@ fn brep_block(brep: &BrepIn) -> Result<Vec<f64>, HarnessError> {
     Ok(v)
 }
 
-/// The graph of a topology case: its path, block, export, counts and import.
-fn topo_graph(brep: &BrepIn) -> Result<(String, Vec<f64>, Vec<f64>), HarnessError> {
-    let path = path_of(brep)?;
-    let block = brep_block(brep)?;
+/// The shared B-rep block kind 9 (a native circle/ellipse face); the layout
+/// `topology.edgeuse_p1`'s `ellipse_face_block` validates and
+/// `sc_topology_fixture::ellipse_face` builds.
+fn ellipse_face_block(e: &EllipseFaceIn) -> Vec<f64> {
+    let mut v = vec![9.0, flag(e.circle)];
+    v.extend(e.origin);
+    v.push(f64::from(e.axis));
+    v.extend(e.radii);
+    v.extend(e.angles);
+    v.extend(e.natural);
+    v.extend([flag(e.inside_out), flag(e.oob)]);
+    // validate_only, init_gaps
+    v.extend([0.0, 0.0]);
+    v
+}
+
+/// The B-rep of a topology case: the shared block or an analytic face.
+#[derive(Clone, Copy)]
+enum TopoBrep<'a> {
+    Shared(&'a BrepIn),
+    EllipseFace(&'a EllipseFaceIn),
+}
+
+fn topo_brep<'a>(
+    brep: Option<&'a BrepIn>,
+    ellipse_face: Option<&'a EllipseFaceIn>,
+) -> Result<TopoBrep<'a>, HarnessError> {
+    match (brep, ellipse_face) {
+        (Some(b), None) => Ok(TopoBrep::Shared(b)),
+        (None, Some(e)) => Ok(TopoBrep::EllipseFace(e)),
+        _ => Err(harness("topo: exactly one of brep/ellipse_face")),
+    }
+}
+
+/// The graph of a topology case: its path, block, export and import.
+fn topo_graph(brep: TopoBrep<'_>) -> Result<(String, Vec<f64>, Vec<f64>), HarnessError> {
+    let (path, block) = match brep {
+        TopoBrep::Shared(b) => (path_of(b)?, brep_block(b)?),
+        TopoBrep::EllipseFace(e) => (String::new(), ellipse_face_block(e)),
+    };
     let ex = ffi::export(&path, &block).map_err(|e| harness(format!("c++ export: {e}")))?;
     Ok((path, block, ex))
 }
@@ -841,7 +936,7 @@ fn topo_rust(k: &Kernel, b: &mut Brep, args: &[f64]) -> Result<Vec<f64>, SolidEr
         gap.edge_t(1),
         gap.uv_trim_curve_t(),
     ];
-    let fuv = gap.face_uv(b)?;
+    let fuv = gap.face_uv(k, b)?;
     o.extend([fuv.x, fuv.y]);
     o.push(idx(gap.vertex(b)?.map(VertexId::index)));
     o.push(idx(gap.vertexuse().map(VertexuseId::index)));
@@ -859,7 +954,115 @@ fn topo_rust(k: &Kernel, b: &mut Brep, args: &[f64]) -> Result<Vec<f64>, SolidEr
     let mut c = gap;
     c.cache_gap(k, b)?;
     o.push(c.length());
+    // The concrete kind of the first edge's curve after import: the healing graph export
+    // carries native circles/ellipses, so a B-spline stand-in here is a disagreement.
+    let kind = match gap.edge(b, 0)? {
+        Some(edge) => b
+            .edge(edge)?
+            .curve
+            .as_ref()
+            .map_or(-1.0, |curve| curve.type_code() as f64),
+        None => -1.0,
+    };
+    o.push(kind);
     Ok(o)
+}
+
+/// Unlike `topo`, this path never imports a native graph or computed geometry.
+fn raw_trim_gap_rust(
+    trim: &NurbIn,
+    t: f64,
+    edge_gap: bool,
+    mate: bool,
+    raw_knots: bool,
+) -> Result<Vec<f64>, HarnessError> {
+    use solidcore::geom::attribute::AttributeStore;
+    use solidcore::topology::brep::p8::{create_face_from_surface, FaceBuildEnv};
+    use solidcore::topology::edge::NotifyEnv;
+    use solidcore::topology::topology_traverser::Marks;
+    let err = |e: SolidError| harness(format!("raw trim gap: {e}"));
+    let mut k = Kernel::default();
+    let mut b = solidcore::topology::brep::p3::new_brep(
+        &mut k,
+        solidcore::geom::tol::USE_DEFAULT,
+        solidcore::geom::tol::USE_DEFAULT,
+    ).map_err(err)?;
+    let mut records = solidcore::topology::topology::NotifyRecords::new();
+    let mut attributes = AttributeStore::default();
+    let key_of = super::topology_brep_p8::key_of;
+    let this_face = |f| key_of(solidcore::EntityRef::Face(f));
+    let mut env = NotifyEnv {
+        records: &mut records,
+        attributes: &mut attributes,
+        context: None,
+        key_of: &key_of,
+    };
+    let mut marks = Marks::default();
+    let mut fenv = FaceBuildEnv { env: &mut env, marks: &mut marks, this_face: &this_face };
+    let domain = dom_of([0.0, 0.0, 1.0, 1.0]);
+    let plane = Plane::new(Vec3::ZERO, Vec3::X, Vec3::Y, Vec2::new(1.0, 1.0), &domain);
+    let face = create_face_from_surface(
+        &mut k, &mut b, Some(Surface::from(plane)), &domain, &mut fenv,
+    ).map_err(err)?;
+    let eu = solidcore::topology::face::p4::upward_edgeuses(&b, face, true, None)
+        .map_err(err)?.first().copied().ok_or_else(|| harness("face has no edgeuse"))?;
+    let vu = eu1::vertexuse(&b, eu).map_err(err)?
+        .ok_or_else(|| harness("edgeuse has no vertexuse"))?;
+    let vertex = b.vertexuse(vu).map_err(err)?.vertex
+        .ok_or_else(|| harness("vertexuse has no vertex"))?;
+    let edge = eu1::edge(&b, eu).map_err(err)?
+        .ok_or_else(|| harness("edgeuse has no edge"))?;
+    // Fix both first endpoints independently, regardless of constructor traversal order.
+    b.vertex_mut(vertex).map_err(err)?.point = Vec3::new(0.0, 0.0, 1.0);
+    b.edge_mut(edge).map_err(err)?.curve = Some(Curve::from(Line::from_points(
+        Vec3::new(0.0, 0.0, 1.0), Vec3::new(1.0, 0.0, 1.0), 3,
+    )));
+    let attached = if mate {
+        eu1::mate(&b, eu).map_err(err)?.ok_or_else(|| harness("edgeuse has no mate"))?
+    } else { eu };
+    // The raw transport bypasses constructor fixup, not evaluation or gap computation.
+    let curve = BSplineCurve::from_nurb(nl_curve(trim)?, 2, raw_knots);
+    b.edgeuse_mut(eu).map_err(err)?.uv_trim_curve = None;
+    let other = eu1::mate(&b, eu).map_err(err)?;
+    if let Some(other) = other {
+        b.edgeuse_mut(other).map_err(err)?.uv_trim_curve = None;
+    }
+    b.edgeuse_mut(attached).map_err(err)?.uv_trim_curve = Some(Curve::from(curve));
+    let mut out = Vec::new();
+    let stored = eu1::uv_trim_curve(&b, eu).map_err(err)?.0
+        .ok_or_else(|| harness("missing raw trim"))?;
+    if raw_knots && raw_trim_knots(stored)? != trim.u {
+        return Err(harness("raw trim input transport changed knots"));
+    }
+    let mut gap: Gap = if edge_gap {
+        EdgeFaceTrimCurveGap::with(&k, &mut b, Some(eu), 0.25, t).map_err(err)?.into()
+    } else {
+        VertexFaceTrimCurveGap::with(&k, &mut b, Some(vu), t).map_err(err)?.into()
+    };
+    out.push(gap.length());
+    let uv = gap.face_uv(&k, &b).map_err(err)?;
+    out.extend([uv.x, uv.y]);
+    let ends = gap.end_points(&k, &mut b).map_err(err)?;
+    out.push(ends.count as f64);
+    push3(&mut out, ends.point1);
+    push3(&mut out, ends.point2);
+    gap.cache_gap(&k, &mut b).map_err(err)?;
+    out.push(gap.length());
+    Ok(out)
+}
+
+fn raw_trim_gap_block(trim: &NurbIn, t: f64, edge_gap: bool, mate: bool, raw: bool) -> Result<Vec<f64>, HarnessError> {
+    let mut out = vec![flag(edge_gap), flag(mate), flag(raw), t];
+    push_nurb(&mut out, trim)?;
+    Ok(out)
+}
+
+fn raw_trim_knots(curve: &Curve) -> Result<&[f64], HarnessError> {
+    match curve.kind() {
+        solidcore::curve::curve::CurveKind::BSpline(c) => c.gw_nurb()
+            .map(NlCurve::knots).ok_or_else(|| harness("trim has no NURB")),
+        _ => Err(harness("trim is not a B-spline")),
+    }
 }
 
 // ---- run ---------------------------------------------------------------------------------
@@ -870,6 +1073,10 @@ fn run_cpp(i: &Inputs) -> Result<Output, HarnessError> {
     };
     let mut o = Vec::new();
     match i {
+        Inputs::RawTrimGap { trim, t, edge_gap, mate, raw_knots } => {
+            call(Op::RawTrimGap, &raw_trim_gap_block(trim, *t, *edge_gap, *mate, *raw_knots)?)
+                .map(state)
+        }
         Inputs::Gf {
             gf,
             set_cnt,
@@ -922,6 +1129,7 @@ fn run_cpp(i: &Inputs) -> Result<Output, HarnessError> {
         }
         Inputs::Topo {
             brep,
+            ellipse_face,
             kind,
             sel0,
             sel1,
@@ -929,11 +1137,12 @@ fn run_cpp(i: &Inputs) -> Result<Output, HarnessError> {
             f1,
             uv,
         } => {
-            let (path, block, ex) = topo_graph(brep)?;
+            let spec = topo_brep(brep.as_ref(), ellipse_face.as_ref())?;
+            let (path, block, ex) = topo_graph(spec)?;
             let Some(c) = counts(&ex) else {
                 return Ok(state(vec![-1.0, ex.get(1).copied().unwrap_or(0.0)]));
             };
-            let (b, _) = import(&ex)?;
+            let (b, _) = import_raw(&ex)?;
             let args = topo_args(&b, c, *kind, *sel0, *sel1, *f0, *f1, *uv)?;
             let out = ffi::topo(&path, &block, &args).map_err(|e| harness(format!("c++: {e}")))?;
             Ok(state(out))
@@ -942,9 +1151,12 @@ fn run_cpp(i: &Inputs) -> Result<Output, HarnessError> {
 }
 
 fn run_rust(i: &Inputs) -> Result<Output, HarnessError> {
-    let k = Kernel::default();
+    let mut k = Kernel::default();
     let mut o = Vec::new();
     match i {
+        Inputs::RawTrimGap { trim, t, edge_gap, mate, raw_knots } => {
+            return raw_trim_gap_rust(trim, *t, *edge_gap, *mate, *raw_knots).map(state);
+        }
         Inputs::Gf {
             gf,
             set_cnt,
@@ -1058,6 +1270,7 @@ fn run_rust(i: &Inputs) -> Result<Output, HarnessError> {
         }
         Inputs::Topo {
             brep,
+            ellipse_face,
             kind,
             sel0,
             sel1,
@@ -1065,15 +1278,31 @@ fn run_rust(i: &Inputs) -> Result<Output, HarnessError> {
             f1,
             uv,
         } => {
-            let (_, _, ex) = topo_graph(brep)?;
-            let Some(c) = counts(&ex) else {
-                return Ok(state(vec![-1.0, ex.get(1).copied().unwrap_or(0.0)]));
+            let spec = topo_brep(brep.as_ref(), ellipse_face.as_ref())?;
+            let (mut b, c) = if let TopoBrep::Shared(src @ BrepIn::File { rebuild, .. }) = spec {
+                // an `.smb` file: read by the Rust reader and renumbered into the
+                // shim's walk order (no C++ export reaches the Rust side)
+                use crate::own_builder::{build_status, counts as own_counts, read_with, Built};
+                let conv = &crate::own_builder::Conventions::EDGEUSE_GRAPH;
+                match read_with(&mut k, &path_of(src)?, *rebuild, false, false, conv)? {
+                    Built::Brep(b) => {
+                        let c = own_counts(&b);
+                        (*b, c)
+                    }
+                    Built::Failed(e) if e.is_unported() => return rust_fail(&e),
+                    Built::Failed(e) => return Ok(state(vec![-1.0, build_status(&e)])),
+                }
+            } else {
+                let (_, _, ex) = topo_graph(spec)?;
+                let Some(c) = counts(&ex) else {
+                    return Ok(state(vec![-1.0, ex.get(1).copied().unwrap_or(0.0)]));
+                };
+                (import(&ex)?.0, c)
             };
-            let (mut b, _) = import(&ex)?;
             let args = topo_args(&b, c, *kind, *sel0, *sel1, *f0, *f1, *uv)?;
             match topo_rust(&k, &mut b, &args) {
                 Ok(v) => o = v,
-                Err(SolidError::InvalidInput { .. }) => o.push(NULL_DEREF),
+                Err(SolidError::InvalidInput { .. } | SolidError::PortInvariant { .. }) => o.push(NULL_DEREF),
                 Err(e) => return rust_fail(&e),
             }
         }
@@ -1284,7 +1513,8 @@ fn natural_ivl(c: &CurveIn) -> Option<[f64; 2]> {
 
 fn surface_dom(s: &SurfIn) -> Option<[f64; 4]> {
     let s = surface_of(s).ok()?;
-    let d = s.natural_uv_domain();
+    // (runner helper without a kernel in scope)
+    let d = s.natural_uv_domain_if_built();
     let (u, v) = (d.u_interval(), d.v_interval());
     Some([u.min(), v.min(), u.max(), v.max()])
 }
@@ -1420,7 +1650,8 @@ fn gen_inputs(rng: &mut Rng) -> Inputs {
                 }
             };
             Inputs::Topo {
-                brep: gen_brep(rng),
+                brep: Some(gen_brep(rng)),
+                ellipse_face: None,
                 kind,
                 sel0: if rng.chance(0.05) {
                     -1
@@ -1436,6 +1667,138 @@ fn gen_inputs(rng: &mut Rng) -> Inputs {
     }
 }
 
+/// The native circle/ellipse faces of the exact-transport cases. Angles are the STEP
+/// interval in degrees, `natural` the NURB parameter interval; the radii stay inside
+/// the shared builder's `1e-3..=1e4` and the angular interval inside its
+/// `1..=360` range. `arc_*` faces also carry the closing chord (a second, line edge);
+/// `full` is a closed ellipse with a single edge.
+fn analytic_face_specs() -> Vec<(&'static str, EllipseFaceIn)> {
+    let face = |circle: bool,
+                radii: [f64; 2],
+                angles: [f64; 2],
+                natural: [f64; 2],
+                inside_out: bool,
+                oob: bool| EllipseFaceIn {
+        circle,
+        origin: [0.02, -0.03, 0.01],
+        axis: 0,
+        radii,
+        angles,
+        natural,
+        inside_out,
+        oob,
+    };
+    vec![
+        (
+            "arc_small",
+            face(false, [3.0e-3, 1.0e-3], [-90.0, 180.0], [-4.0, 3.0], false, false),
+        ),
+        (
+            "arc_unit",
+            face(false, [3.0, 1.0], [-90.0, 180.0], [-4.0, 3.0], false, false),
+        ),
+        (
+            "arc_large",
+            face(false, [3.0e3, 1.0e3], [-90.0, 180.0], [-4.0, 3.0], false, false),
+        ),
+        (
+            "circle",
+            face(true, [1.0, 1.0], [0.0, 270.0], [0.0, 4.71238898038469], false, false),
+        ),
+        (
+            "oob",
+            face(false, [2.0, 0.5], [10.0, 250.0], [1.0, 2.0], false, true),
+        ),
+        (
+            "inside_out",
+            face(false, [2.0, 0.5], [10.0, 250.0], [1.0, 2.0], true, false),
+        ),
+        (
+            "full",
+            face(false, [2.0, 0.5], [0.0, 360.0], [0.0, std::f64::consts::TAU], false, false),
+        ),
+    ]
+}
+
+/// The exact-transport cases: every gap record kind over the native circle/ellipse
+/// faces. The edge use/vertex use selectors follow the builder's topology: edge use 0
+/// is the analytic edge and edge use 1 its closing chord (on arcs); vertex use 0 is an
+/// end point of the analytic edge (vertex use 1 belongs to the chord on arcs and to the
+/// mate edge use on the closed ellipse).
+fn analytic_topo_cases() -> Result<Vec<Case>, HarnessError> {
+    let mut out = Vec::new();
+    for (label, face) in analytic_face_specs() {
+        let arc = face.angles[1] - face.angles[0] < 360.0;
+        for kind in 0u8..=5 {
+            // A closed ellipse has one edge (self edge/edge is not a gap).
+            if !arc && kind == 3 {
+                continue;
+            }
+            let (sel0, sel1) = if kind == 3 { (0, 1) } else { (0, -1) };
+            let inputs = Inputs::Topo {
+                brep: None,
+                ellipse_face: Some(face.clone()),
+                kind,
+                sel0,
+                sel1,
+                f0: Some(0.25),
+                f1: Some(0.75),
+                uv: Some([0.5, 0.5]),
+            };
+            let value = serde_json::to_value(&inputs)
+                .map_err(|e| harness(format!("analytic case {label}: {e}")))?;
+            out.push(Case {
+                unit: "heal.gap".into(),
+                name: format!("analytic_{label}_kind{kind}"),
+                source: CaseSource::Inline,
+                inputs: value,
+            });
+        }
+    }
+    Ok(out)
+}
+
+fn raw_trim_gap_cases() -> Result<Vec<Case>, HarnessError> {
+    let mut cases = Vec::new();
+    for (label, spacing, raw_knots) in [
+        ("close15", 1.5e-12, true),
+        ("close19", 1.9e-12, true),
+        ("ordinary", 0.1, false),
+    ] {
+        let a = 0.5;
+        let b = a + spacing;
+        for (position, fraction) in [("quarter", 0.25), ("threequarter", 0.75)] {
+            for edge_gap in [false, true] {
+                for mate in [false, true] {
+                    let input = Inputs::RawTrimGap {
+                        trim: NurbIn {
+                            cpts: vec![
+                                [0.0, 0.0, NOZ, NOW],
+                                [0.2, 0.1, NOZ, NOW],
+                                [0.8, 0.9, NOZ, NOW],
+                                [1.0, 1.0, NOZ, NOW],
+                            ],
+                            p: 1,
+                            u: vec![0.0, 0.0, a, b, 1.0, 1.0],
+                        },
+                        t: a + (b - a) * fraction,
+                        edge_gap,
+                        mate,
+                        raw_knots,
+                    };
+                    cases.push(Case {
+                        unit: "heal.gap".into(),
+                        name: format!("raw_trim_{label}_{position}_edge{edge_gap}_mate{mate}"),
+                        source: CaseSource::Inline,
+                        inputs: serde_json::to_value(input).map_err(|e| harness(e.to_string()))?,
+                    });
+                }
+            }
+        }
+    }
+    Ok(cases)
+}
+
 impl UnitDiff for Runner {
     fn id(&self) -> &'static str {
         "heal.gap"
@@ -1446,7 +1809,10 @@ impl UnitDiff for Runner {
             seeds: ctx.seeds.max(MIN_GENERATED),
             ..ctx.clone()
         };
-        default_cases(self, &ctx)
+        let mut v = default_cases(self, &ctx)?;
+        v.extend(analytic_topo_cases()?);
+        v.extend(raw_trim_gap_cases()?);
+        Ok(v)
     }
 
     fn run_cpp(&self, case: &Case) -> Result<Output, HarnessError> {
@@ -1459,5 +1825,150 @@ impl UnitDiff for Runner {
 
     fn generate(&self, rng: &mut Rng) -> Option<Value> {
         serde_json::to_value(gen_inputs(rng)).ok()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// HANG-29: fuzz14876, a topology op on a face whose B-spline surface has a control
+    /// point of `-1e300` (no native result in 60 s). Both sides refuse its block through
+    /// the `topology.vertexuse` export's HANG-29 bound (`1e150`), which both run. It
+    /// cannot be a fixture (a harness error always fails a case).
+    #[test]
+    fn both_sides_refuse_a_topo_block_in_the_overflow_range() {
+        let recorded: Value = serde_json::from_str(include_str!(
+            "../../tests/fuzz_regressions/heal.gap.json"
+        ))
+        .unwrap();
+        for recorded in recorded["cases"].as_array().unwrap() {
+            let i: Inputs = serde_json::from_value(recorded["inputs"].clone()).unwrap();
+            for error in [run_rust(&i), run_cpp(&i)] {
+                let error = error.unwrap_err().to_string();
+                assert!(error.contains("HANG-29"), "{}: {error}", recorded["name"]);
+            }
+        }
+    }
+    use solidcore::curve::curve::p2::{CIRCLE_TYPE, ELLIPSE_TYPE};
+    use solidcore::curve::curve::CurveKind;
+
+    /// The exported graph keeps the native circle/ellipse identity and state, and the
+    /// exact head is what preserves it: the same export without the head imports the
+    /// curve as its B-spline part (the old stand-in).
+    #[test]
+    fn exact_transport_preserves_native_circle_and_ellipse() {
+        for (label, face) in analytic_face_specs() {
+            let block = ellipse_face_block(&face);
+            let ex = ffi::export("", &block).expect("export");
+            let (b, _) = import_raw(&ex).expect("import");
+            let ty = if face.circle { CIRCLE_TYPE } else { ELLIPSE_TYPE };
+            let found = b.edges().iter().find_map(|(id, edge)| {
+                let curve = edge.curve.as_ref()?;
+                (curve.type_code() == ty).then_some((id, curve))
+            });
+            let (id, curve) = found.unwrap_or_else(|| panic!("{label}: no analytic edge"));
+            let CurveKind::Ellipse(ellipse) = curve.kind() else {
+                panic!("{label}: not an ellipse/circle")
+            };
+            assert_eq!(ellipse.type_code(), ty, "{label}");
+            assert_eq!(ellipse.is_circle_class(), face.circle, "{label}");
+            assert_eq!(
+                [ellipse.x_radius(), ellipse.y_radius()],
+                face.radii,
+                "{label}"
+            );
+            assert_eq!(
+                ellipse.step_interval(),
+                Extent1d::from_raw(face.angles[0], face.angles[1]),
+                "{label}"
+            );
+            assert_eq!(
+                ellipse.base().natural_interval(),
+                Extent1d::from_raw(face.natural[0], face.natural[1]),
+                "{label}"
+            );
+            assert_eq!(ellipse.inside_out(), face.inside_out, "{label}");
+            assert_eq!(
+                ellipse.base().is_out_of_bounds_enabled(),
+                face.oob,
+                "{label}"
+            );
+
+            let head = ex
+                .windows(2)
+                .position(|w| w == [-3.0, ty as f64])
+                .unwrap_or_else(|| panic!("{label}: no exact head"));
+            assert_eq!(ex[head + 3], 3.0, "{label}: not 3D");
+            assert_eq!(ex[head + 4], f64::from(u8::from(face.oob)), "{label}");
+            let regular = 6 + ex[head + 5] as usize;
+            let mut old = ex.clone();
+            old.drain(head..head + regular);
+            let (old_b, _) = import_raw(&old).expect("old import");
+            let old_curve = old_b.edge(id).expect("edge").curve.as_ref().expect("curve");
+            assert!(
+                matches!(old_curve.kind(), CurveKind::BSpline(_)),
+                "{label}: old block must import as a B-spline stand-in"
+            );
+        }
+    }
+
+    /// Every gap record on a native circle/ellipse face matches the C++ after healing,
+    /// and the selected edge curve stays the analytic kind (not a B-spline stand-in).
+    #[test]
+    fn analytic_gap_records_match_native() {
+        let cases = analytic_topo_cases().expect("cases");
+        for case in &cases {
+            let inputs: Inputs = case.parse().expect("inputs");
+            let Inputs::Topo {
+                kind,
+                ellipse_face: Some(face),
+                ..
+            } = &inputs
+            else {
+                panic!("{}: not an analytic case", case.name);
+            };
+            let cpp = run_cpp(&inputs).expect("cpp");
+            let rust = run_rust(&inputs).expect("rust");
+            assert!(
+                cpp.rejected.is_none() && cpp.error.is_none() && cpp.deferred.is_none(),
+                "{}: {cpp:?}",
+                case.name
+            );
+            assert!(
+                rust.rejected.is_none() && rust.error.is_none() && rust.deferred.is_none(),
+                "{}: {rust:?}",
+                case.name
+            );
+            let diff = crate::compare(&cpp, &rust, Runner.abs_floors());
+            assert!(diff.pass(), "{}: {diff:?}", case.name);
+            let ty = if face.circle { CIRCLE_TYPE } else { ELLIPSE_TYPE };
+            let expected = if *kind <= 2 && *kind != 0 {
+                -1.0
+            } else {
+                ty as f64
+            };
+            let state = rust.values.get("state").expect("state");
+            assert_eq!(state.last(), Some(&expected), "{}", case.name);
+        }
+    }
+    #[test]
+    fn raw_trim_gap_records_match_native_at_close_knot_parameters() {
+        let cases = raw_trim_gap_cases().expect("cases");
+        for case in cases {
+            let inputs: Inputs = case.parse().expect("inputs");
+            let cpp = run_cpp(&inputs).expect("native independent face");
+            let rust = run_rust(&inputs).expect("Rust independent face");
+            let diff = crate::compare(&cpp, &rust, Runner.abs_floors());
+            assert!(diff.pass(), "{}: {diff:?}", case.name);
+            for output in [&cpp, &rust] {
+                let state = output.values.get("state").expect("state");
+                assert_eq!(state[3], 2.0, "{}: endpoints", case.name);
+                assert_eq!(state[7], state[1], "{}: endpoint U", case.name);
+                assert_eq!(state[8], state[2], "{}: endpoint V", case.name);
+                assert_eq!(state[9], 0.0, "{}: plane Z", case.name);
+                assert_eq!(state[10], state[0], "{}: recached length", case.name);
+            }
+        }
     }
 }

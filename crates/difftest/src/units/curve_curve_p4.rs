@@ -18,9 +18,7 @@
 //!
 //! Deferred cases: `HasPlaneCrossings` with planes (`SmSurface::GlobalCurveIntersect`,
 //! `surface.surface_p8`) and ellipse intersections that reach the general curve solvers
-//! (`curve.curve_p1`, `curve.curve_p3`, `curve.curve_p6`). `FixChainCurvesList` cases
-//! that would delete a duplicate are not generated (a use after free upstream, see
-//! `plan/findings.md`).
+//! (`curve.curve_p1`, `curve.curve_p3`, `curve.curve_p6`).
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -125,6 +123,7 @@ enum CurveIn {
     Hermite(HermiteIn),
     Circle(CircleIn),
     Line(LineIn),
+    Ellipse(EllipseIn),
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -304,6 +303,13 @@ fn curve_block(v: &mut Vec<f64>, c: &CurveIn) -> Result<(), HarnessError> {
             push_line(v, l);
         }
         CurveIn::Circle(_) => return Err(harness("unresolved circle")),
+        CurveIn::Ellipse(e) => {
+            v.extend([3.0, 3.0]);
+            v.extend_from_slice(&e.c);
+            v.extend_from_slice(&e.x);
+            v.extend_from_slice(&e.y);
+            v.extend([e.domain[0], e.domain[1], e.radii[0], e.radii[1], b(e.inside_out)]);
+        }
     }
     Ok(())
 }
@@ -571,6 +577,9 @@ fn build(c: &CurveIn) -> Result<Curve, HarnessError> {
         ))),
         CurveIn::Line(l) => Ok(Curve::from(build_line(l))),
         CurveIn::Circle(_) => Err(harness("unresolved circle")),
+        CurveIn::Ellipse(e) => build_ellipse(&Kernel::default(), e)
+            .map(Curve::from)
+            .map_err(|e| harness(format!("ellipse: {e}"))),
     }
 }
 
@@ -600,7 +609,7 @@ fn pv(o: &mut Vec<f64>, v: Vec3) {
 /// cannot return.
 fn status(e: &SolidError) -> f64 {
     match e {
-        SolidError::InvalidInput { .. } => 1007.0,
+        SolidError::InvalidInput { .. } | SolidError::PortInvariant { .. } => 1007.0,
         SolidError::Upstream { code, .. } => f64::from(*code),
         _ => -1.0,
     }
@@ -735,7 +744,7 @@ fn sub_ivl(nat: Extent1d, f: [f64; 2]) -> Extent1d {
 }
 
 #[allow(clippy::too_many_lines)]
-fn rust(op: &OpIn) -> Result<Output, HarnessError> {
+fn rust(k: &Kernel, op: &OpIn) -> Result<Output, HarnessError> {
     let mut o: Vec<f64> = Vec::new();
     match op {
         OpIn::IsClosed {
@@ -747,9 +756,9 @@ fn rust(op: &OpIn) -> Result<Output, HarnessError> {
             let c = build(curve)?;
             let i = Extent1d::from_min_max(ivl[0], ivl[1]);
             let r = if *base {
-                is_closed_base(&c, &i, *tol)
+                is_closed_base(k, &c, &i, *tol)
             } else {
-                c.is_closed(&i, *tol)
+                c.is_closed(k, &i, *tol)
             };
             let r = tri!(o, r);
             o.extend([0.0, b(r)]);
@@ -763,18 +772,23 @@ fn rust(op: &OpIn) -> Result<Output, HarnessError> {
             let c = build(curve)?;
             let i = ivl.map(|v| Extent1d::from_min_max(v[0], v[1]));
             let r = if *base {
-                is_degenerate_base(&c, *tol, i.as_ref())
+                is_degenerate_base(k, &c, *tol, i.as_ref())
             } else {
-                c.is_degenerate(*tol, i.as_ref())
+                c.is_degenerate(k, *tol, i.as_ref())
             };
             let r = tri!(o, r);
             o.extend([0.0, b(r)]);
         }
         OpIn::PolarBox { curve, ivl, count } => {
+            // the FFI rejects more than `ffi::MAX_SAMPLES` samples; upstream (and the port)
+            // would loop that many times, so a larger count is not a case for Rust either
+            if *count > ffi::MAX_SAMPLES as u64 {
+                return Err(HarnessError::new(format!("{count} samples")));
+            }
             let c = build(curve)?;
             let bx = tri!(
                 o,
-                approximate_polar_box(&c, &Extent1d::from_min_max(ivl[0], ivl[1]), *count)
+                approximate_polar_box(k, &c, &Extent1d::from_min_max(ivl[0], ivl[1]), *count)
             );
             o.push(0.0);
             o.push(f64::from(bx.state().code()));
@@ -786,7 +800,7 @@ fn rust(op: &OpIn) -> Result<Output, HarnessError> {
         }
         OpIn::Snap { curve, t, tol } => {
             let c = build(curve)?;
-            let r = tri!(o, c.snap_to_knots(*t, *tol));
+            let r = tri!(o, c.snap_to_knots(k, *t, *tol));
             o.extend([0.0, r]);
         }
         OpIn::Assert {
@@ -831,9 +845,6 @@ fn rust(op: &OpIn) -> Result<Output, HarnessError> {
                 });
             }
             let r = tri!(o, fix_chain_curves_list(&Kernel::default(), list, *tol, *del));
-            if r.deleted > 0 {
-                return Err(harness("a duplicate was deleted (use after free upstream)"));
-            }
             o.extend([
                 0.0,
                 r.chain_starts.len() as f64,
@@ -846,7 +857,7 @@ fn rust(op: &OpIn) -> Result<Output, HarnessError> {
                 let nat = c.natural_interval();
                 o.extend([nat.min(), nat.max()]);
                 for t in [nat.min(), nat.max()] {
-                    let p = match c.evaluate_point(t) {
+                    let p = match c.evaluate_point(k, t) {
                         Ok(p) => p,
                         Err(e) => match Fail::from(e) {
                             Fail::Deferred(d) => return Ok(*d),
@@ -875,7 +886,7 @@ fn rust(op: &OpIn) -> Result<Output, HarnessError> {
             sol.start.parameters[1] = s[1];
             sol.start.solution_value = *value;
             let r = filter_solution(
-                &a,
+                k, &a,
                 &Extent1d::from_min_max(ivl1[0], ivl1[1]),
                 &bb,
                 &Extent1d::from_min_max(ivl2[0], ivl2[1]),
@@ -898,7 +909,7 @@ fn rust(op: &OpIn) -> Result<Output, HarnessError> {
         } => {
             let c = build(curve)?;
             let sop = SolverOperation::from_code(*sop).ok_or_else(|| harness("sop"))?;
-            let r = proj_dist(&c, *t, v3(*p), v3(*n), *rev, v3(*d), sop);
+            let r = proj_dist(k, &c, *t, v3(*p), v3(*n), *rev, v3(*d), sop);
             // upstream returns a failing status as the distance
             let value = match r {
                 Ok(v) => v,
@@ -922,7 +933,7 @@ fn rust(op: &OpIn) -> Result<Output, HarnessError> {
             let prop = CurvePropertyType::from_code(*prop).ok_or_else(|| harness("prop"))?;
             let vs: Vec<Vec3> = vecs.iter().map(|x| v3(*x)).collect();
             let mut efo = CurvePropertyEfo::new(
-                &c,
+                k, &c,
                 prop,
                 *val,
                 if vs.is_empty() { None } else { Some(&vs) },
@@ -942,7 +953,7 @@ fn rust(op: &OpIn) -> Result<Output, HarnessError> {
             let mut f = [0.0; 2];
             let mut m = Matrix::new(2, 2);
             let r = CcTangentIntEnfo::static_evaluate(
-                &a,
+                k, &a,
                 &bb,
                 x,
                 &mut f,
@@ -966,7 +977,7 @@ fn rust(op: &OpIn) -> Result<Output, HarnessError> {
             jac,
         } => {
             let c = build(curve)?;
-            let mut e = CpDistAtEnfo::new(&c, v3(*p), *dsq, *sqtol);
+            let mut e = CpDistAtEnfo::new(k, &c, v3(*p), *dsq, *sqtol);
             let mut f = [0.0; 4];
             let mut m = Matrix::new(4, 4);
             let r = e.evaluate(x, &mut f, if *jac { Some(&mut m) } else { None });
@@ -989,7 +1000,7 @@ fn rust(op: &OpIn) -> Result<Output, HarnessError> {
             let a = build(c1)?;
             let bb = build(c2)?;
             let mut efo = FindCurveDistanceExtrema::new(
-                &a,
+                k, &a,
                 &bb,
                 Extent1d::from_min_max(dom[0], dom[1]),
                 *tol,
@@ -1210,7 +1221,9 @@ fn range_of(c: &CurveIn) -> (f64, f64) {
             bs.u.first().copied().unwrap_or(0.0),
             bs.u.last().copied().unwrap_or(1.0),
         ),
-        CurveIn::Hermite(_) => (0.0, 1.0),
+        // Like Hermite curves, ownerless quadratic ellipses use a normalized interval,
+        // not their angular domain (NL_CrvCommon.cpp circle construction).
+        CurveIn::Hermite(_) | CurveIn::Ellipse(_) => (0.0, 1.0),
         CurveIn::Line(l) => {
             let nat = build_line(l).natural_interval();
             (nat.min(), nat.max())
@@ -1623,28 +1636,6 @@ fn gen_case(rng: &mut Rng) -> OpIn {
     }
 }
 
-/// Whether the Rust side would delete a duplicate in `op` (upstream then uses the
-/// deleted curve).
-fn deletes_duplicates(op: &OpIn) -> bool {
-    let OpIn::FixChain { curves, tol, del } = op else {
-        return false;
-    };
-    if !*del {
-        return false;
-    }
-    let mut list = Vec::new();
-    for c in curves {
-        match c {
-            Some(c) => match build(c) {
-                Ok(c) => list.push(Some(c)),
-                Err(_) => return true,
-            },
-            None => list.push(None),
-        }
-    }
-    fix_chain_curves_list(&Kernel::default(), list, *tol, true).map_or(true, |r| r.deleted > 0)
-}
-
 impl UnitDiff for Runner {
     fn id(&self) -> &'static str {
         "curve.curve_p4"
@@ -1656,7 +1647,7 @@ impl UnitDiff for Runner {
             let Ok((code, input)) = cpp_input(&op) else {
                 continue;
             };
-            if ffi::validate(code, &input).is_err() || deletes_duplicates(&op) {
+            if ffi::validate(code, &input).is_err() {
                 continue;
             }
             return serde_json::to_value(op).ok();
@@ -1677,7 +1668,8 @@ impl UnitDiff for Runner {
     }
 
     fn run_rust(&self, case: &Case) -> Result<Output, HarnessError> {
-        rust(&case.parse()?)
+        let k = &Kernel::default();
+        rust(k, &case.parse()?)
     }
 }
 
@@ -1687,16 +1679,111 @@ mod tests {
     use super::*;
     use std::collections::BTreeMap;
 
+    fn ellipse_distance_fixture() -> Case {
+        let ctx = CaseContext {
+            root: std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../.."),
+            seeds: 0,
+        };
+        let cases = ctx.fixture_cases("curve.curve_p4").unwrap();
+        let matching: Vec<_> = cases.into_iter().filter(|c| {
+            matches!(&c.source, crate::case::CaseSource::Fixture { path, .. }
+                if path == "fixtures/curve.curve_p4/analytic-distance.json")
+        }).collect();
+        assert_eq!(matching.len(), 1);
+        assert_eq!(matching[0].name, "ellipse_cp_dist_at_interior_full_jacobian");
+        matching.into_iter().next().unwrap()
+    }
+
+    fn ellipse_distance_relative(a: f64, b: f64) {
+        assert!(a.is_finite() && b.is_finite());
+        assert!((a - b).abs() <= 1e-9 * a.abs().max(b.abs()), "{a:?} != {b:?}");
+    }
+
+    #[test]
+    fn ellipse_distance_fixture_encoding_and_source_controls() {
+        use solidcore::curve::curve::p2::CurveKind;
+        let case = ellipse_distance_fixture();
+        let op: OpIn = case.parse().unwrap();
+        assert_eq!(serde_json::to_value(&op).unwrap(), case.inputs);
+        let (code, input) = cpp_input(&op).unwrap();
+        assert_eq!(code, Op::CpDistAt);
+        assert_eq!(input, vec![3.,3.,0.,0.,0.,1.,0.,0.,0.,1.,0.,0.,180.,2.,1.,0.,
+            0.25,-0.5,0.25,1.,0.,0.5,0.1,0.2,0.3,1.]);
+        ffi::validate(code, &input).unwrap();
+        let OpIn::CpDistAt { curve, p, dsq, sqtol, x, jac } = &op else { panic!("wrong op") };
+        assert!(*jac);
+        let CurveIn::Ellipse(e) = curve else { panic!("not ellipse") };
+        assert_eq!(e.domain, [0.,180.]);
+        assert_eq!(range_of(curve), (0.,1.));
+        let k = Kernel::default();
+        let c = build(curve).unwrap();
+        let CurveKind::Ellipse(actual) = c.kind() else { panic!("lost analytic kind") };
+        assert!(!actual.is_circle());
+        let ivl = c.natural_interval();
+        assert_eq!((ivl.min(),ivl.max()), (0.,1.));
+        assert!(ivl.min() < x[0] && x[0] < ivl.max());
+        let pv = c.evaluate(&k, x[0], 1, true, true).unwrap();
+        let pos = [pv[0].x,pv[0].y,pv[0].z];
+        let tangent = [pv[1].x,pv[1].y,pv[1].z];
+        assert!(pos.iter().chain(&tangent).all(|v| v.is_finite()));
+        assert!(pv[1].length_squared() > 0.);
+        let gap = [pos[0]-p[0],pos[1]-p[1],pos[2]-p[2]];
+        let expected_f = [gap[0]*gap[0]-x[1],gap[1]*gap[1]-x[2],gap[2]*gap[2]-x[3],x[1]+x[2]+x[3]-dsq];
+        let expected_j = [2.*tangent[0]*gap[0],-1.,0.,0.,
+            2.*tangent[1]*gap[1],0.,-1.,0.,2.*tangent[2]*gap[2],0.,0.,-1.,0.,1.,1.,1.];
+        assert_ne!(expected_j[0], 0.);
+        let mut f = [f64::NAN;4];
+        let mut j = Matrix::new(4,4);
+        let found = CpDistAtEnfo::new(&k,&c,v3(*p),*dsq,*sqtol)
+            .evaluate(x,&mut f,Some(&mut j)).unwrap();
+        assert!(!found);
+        for (a,b) in f.into_iter().zip(expected_f) { ellipse_distance_relative(a,b); }
+        for (i,b) in expected_j.into_iter().enumerate() {
+            ellipse_distance_relative(j.at(i/4,i%4).unwrap(),b);
+        }
+        let out = rust(&k,&op).unwrap();
+        assert!(out.deferred.is_none());
+        assert_eq!(out.ints["status"], vec![0]);
+        assert_eq!(out.values["out"].len(),21);
+        for (a,b) in out.values["out"].iter().copied().zip(
+            expected_f.into_iter().chain(expected_j).chain([0.])) {
+            ellipse_distance_relative(a,b);
+        }
+    }
+
+    #[cfg(feature = "cpp")]
+    #[test]
+    fn ellipse_distance_cpp_full_record_and_geometric_perturbation() {
+        let case = ellipse_distance_fixture();
+        let op: OpIn = case.parse().unwrap();
+        let native = cpp(&op).unwrap();
+        let actual = rust(&Kernel::default(),&op).unwrap();
+        for out in [&native,&actual] {
+            assert!(out.deferred.is_none());
+            assert_eq!(out.ints["status"], vec![0]);
+            assert_eq!(out.values["out"].len(),21);
+            assert!(out.values["out"].iter().all(|v| v.is_finite()));
+            assert_ne!(out.values["out"][4],0.);
+            assert_eq!(out.values["out"][20],0.);
+        }
+        assert!(crate::compare::compare(&native,&actual,&[]).pass());
+        let mut changed = native.clone();
+        changed.values.get_mut("out").unwrap()[4] *= 1.01;
+        assert!(!crate::compare::compare(&changed,&actual,&[]).pass());
+        eprintln!("ellipse_distance_native={native:?}; ellipse_distance_rust={actual:?}");
+    }
+
     /// Generated cases cover every op with both successful and failing statuses.
     #[test]
     fn generated_cases_are_diverse() {
+        let k = &Kernel::default();
         let mut rng = Rng::new(7);
         let mut stats: BTreeMap<String, [usize; 4]> = BTreeMap::new();
         let mut trues: BTreeMap<String, usize> = BTreeMap::new();
         for _ in 0..3000 {
             let op = gen_case(&mut rng);
             let name = serde_json::to_value(&op).unwrap()["op"].as_str().unwrap().to_string();
-            let out = rust(&op);
+            let out = rust(k, &op);
             let e = stats.entry(name.clone()).or_default();
             e[0] += 1;
             match out {

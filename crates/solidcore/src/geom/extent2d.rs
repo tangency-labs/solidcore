@@ -20,10 +20,12 @@
 //! | [`Extent2d::set_min_max`]              | `SetMinMax(const SmPoint2d&, const SmPoint2d&)` |
 //! | [`Extent2d::set_min_max_coords`]       | `SetMinMax(double x4)`                         |
 //! | [`Extent2d::set_u_interval`], [`Extent2d::set_v_interval`] | `SetUInterval`, `SetVInterval` |
+//! | [`Extent2d::set_u_min`], [`Extent2d::set_u_max`], [`Extent2d::set_v_min`], [`Extent2d::set_v_max`] | `SetUMin`, `SetUMax`, `SetVMin`, `SetVMax` |
 //! | [`Extent2d::transpose`]                | `Transpose`                                    |
 //! | [`Extent2d::expand_absolute`]          | `ExpandAbsolute(double)`                       |
 //! | [`Extent2d::expand_absolute_vec`]      | `ExpandAbsolute(const SmVector2d)`             |
 //! | [`Extent2d::expand_relative`]          | `ExpandRelative`                               |
+//! | [`Extent2d::scale`]                    | `Scale` (public for export, #1765)             |
 //! | [`Extent2d::min`], [`Extent2d::mid`], [`Extent2d::max`] | `GetMin`, `GetMid`, `GetMax`  |
 //! | [`Extent2d::u_min`] .. [`Extent2d::v_max`] | `GetUMin`, `GetUMax`, `GetVMin`, `GetVMax` |
 //! | [`Extent2d::u_interval`], [`Extent2d::v_interval`] | `GetUInterval`, `GetVInterval`     |
@@ -55,10 +57,11 @@
 //! | [`SS_NONE`], [`SS_UMIN`], [`SS_VMIN`], [`SS_UMAX`], [`SS_VMAX`] | `SM_SS_*` (`SmTypes.h`) |
 //!
 //! Methods of `SmExtent2d` that no in-scope upstream code reaches
-//! (`harness/callgraph/unused_functions.txt`: `Set`, `SetUMin`..`SetVMax`, `Scale`,
-//! the distance methods, `IsPoint`, `IsLine`, `AnyBounds`, `ClassifyPointDir2d`,
-//! the periodic disjoint/intersect methods, `ApproximateUnbounded`, ...) are not
-//! ported.
+//! (`harness/callgraph/unused_functions.txt`: `Set`, `SetUMin`..`SetVMax`, the
+//! distance methods, `IsPoint`, `IsLine`, `AnyBounds`, `ClassifyPointDir2d`, the
+//! periodic disjoint/intersect methods, `ApproximateUnbounded`, ...) are not ported.
+//! `Scale` is listed there too but is ported for callers outside the closure: an
+//! exporter scaling a plane's parameter domain (#1765).
 //!
 //! Deviations:
 //! - Out-params become return values (tuples, `Option`, `Result`). Optional
@@ -87,8 +90,8 @@ use crate::geom::vector2d::{Point2, Vec2};
 use crate::geom::vector3d::sqrt;
 use crate::math::{is_infinite_param, max2, min2, BIG_DOUBLE, EFF_ZERO, EFF_ZERO_SQRT};
 
-/// Upstream status `SM_ERR`.
-const SM_ERR: i32 = 1001;
+// Upstream status `SM_ERR`.
+use crate::error::SM_ERR;
 
 /// `SM_SS_NONE`: the point is on no boundary ([`Extent2d::point_boundaries`]).
 pub const SS_NONE: u32 = 0;
@@ -284,6 +287,54 @@ impl Extent2d {
         self.max.y = ivl.max();
     }
 
+    /// Sets the u minimum; [`SolidError::InvalidInput`] (extent unchanged) when it
+    /// exceeds the u maximum (`SetUMin`).
+    pub fn set_u_min(&mut self, value: f64) -> Result<()> {
+        if value > self.max.x {
+            return Err(Self::bad_bound("geom::extent2d::Extent2d::set_u_min"));
+        }
+        self.min.x = value;
+        Ok(())
+    }
+
+    /// Sets the u maximum; [`SolidError::InvalidInput`] (extent unchanged) when it
+    /// is below the u minimum (`SetUMax`).
+    pub fn set_u_max(&mut self, value: f64) -> Result<()> {
+        if value < self.min.x {
+            return Err(Self::bad_bound("geom::extent2d::Extent2d::set_u_max"));
+        }
+        self.max.x = value;
+        Ok(())
+    }
+
+    /// Sets the v minimum; [`SolidError::InvalidInput`] (extent unchanged) when it
+    /// exceeds the v maximum (`SetVMin`).
+    pub fn set_v_min(&mut self, value: f64) -> Result<()> {
+        if value > self.max.y {
+            return Err(Self::bad_bound("geom::extent2d::Extent2d::set_v_min"));
+        }
+        self.min.y = value;
+        Ok(())
+    }
+
+    /// Sets the v maximum; [`SolidError::InvalidInput`] (extent unchanged) when it
+    /// is below the v minimum (`SetVMax`).
+    pub fn set_v_max(&mut self, value: f64) -> Result<()> {
+        if value < self.min.y {
+            return Err(Self::bad_bound("geom::extent2d::Extent2d::set_v_max"));
+        }
+        self.max.y = value;
+        Ok(())
+    }
+
+    /// The `SM_ERR_INVALID_INPUT` of the single-bound setters.
+    const fn bad_bound(operation: &'static str) -> SolidError {
+        SolidError::InvalidInput {
+            operation,
+            reason: "bound crosses the opposite bound",
+        }
+    }
+
     /// Swaps the u and v intervals (`Transpose`).
     pub fn transpose(&mut self) {
         core::mem::swap(&mut self.min.x, &mut self.min.y);
@@ -311,6 +362,39 @@ impl Extent2d {
     pub fn expand_relative(&mut self, factor: f64) -> &mut Self {
         let d = (self.max - self.min) * factor;
         self.expand_absolute_vec(d)
+    }
+
+    /// Scales every bounded end by `scale` in x and by `scale_v` in y (`scale` when
+    /// `None`); unbounded ends stay (`Scale`, its `pOptScaleV`).
+    ///
+    /// The ends are not reordered: a negative factor leaves the extent inverted
+    /// (`min > max` on that axis), as upstream does.
+    pub fn scale(&mut self, scale: f64, scale_v: Option<f64>) -> &mut Self {
+        let scale_v = scale_v.unwrap_or(scale);
+
+        self.min.x *= if is_infinite_param(self.min.x) {
+            1.0
+        } else {
+            scale
+        };
+        self.max.x *= if is_infinite_param(self.max.x) {
+            1.0
+        } else {
+            scale
+        };
+
+        self.min.y *= if is_infinite_param(self.min.y) {
+            1.0
+        } else {
+            scale_v
+        };
+        self.max.y *= if is_infinite_param(self.max.y) {
+            1.0
+        } else {
+            scale_v
+        };
+
+        self
     }
 
     /// Minimum corner (`GetMin`).
@@ -812,6 +896,23 @@ mod tests {
 
     fn p(x: f64, y: f64) -> Point2 {
         Vec2::new(x, y)
+    }
+
+    /// `Scale` (#1765): bounded ends scale, by the V factor in y when given; an unbounded
+    /// end stays, and the call chains.
+    #[test]
+    fn scale_scales_the_bounded_ends() {
+        let mut e = Extent2d::from_points(p(-1.0, 2.0), p(3.0, 4.0));
+        e.scale(2.0, None);
+        assert_eq!((e.min(), e.max()), (p(-2.0, 4.0), p(6.0, 8.0)));
+        e.scale(0.5, Some(-1.0)).scale(1.0, None);
+        assert_eq!((e.min(), e.max()), (p(-1.0, -4.0), p(3.0, -8.0)));
+        let mut u = Extent2d::from_bounds(-2.0, 1.0, INFINITE_PARAMETER, INFINITE_PARAMETER);
+        u.scale(3.0, Some(2.0));
+        assert_eq!(
+            (u.min(), u.max()),
+            (p(-6.0, 2.0), p(INFINITE_PARAMETER, INFINITE_PARAMETER))
+        );
     }
 
     /// `my_test_extent2d` (`tests/prog_test/src/smCurveTest.cpp:2688`), owned parts.

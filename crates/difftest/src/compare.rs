@@ -55,6 +55,11 @@ pub struct CaseDiff {
     pub values_compared: usize,
     /// Number of integers, topology ids and adjacency entries compared.
     pub exact_compared: usize,
+    /// Compared items where at least one side is not zero: floats or integers other
+    /// than `0`, and every topology id or adjacency entry. A passing case with
+    /// `nonzero_compared == 0` agreed only on zeros (e.g. `count = 0`), which a Rust
+    /// error swallowed into a default would also produce; reported, never gated.
+    pub nonzero_compared: usize,
 }
 
 impl CaseDiff {
@@ -87,7 +92,15 @@ pub fn rel_err(a: f64, b: f64) -> f64 {
     if a.is_infinite() || b.is_infinite() {
         return f64::INFINITY;
     }
-    (a - b).abs() / a.abs().max(b.abs())
+    let diff = (a - b).abs();
+    let scale = a.abs().max(b.abs());
+    if diff.is_infinite() {
+        // Both inputs are finite here. Scale before subtracting only when their
+        // difference overflows; retain the usual operation order otherwise.
+        (a / scale - b / scale).abs()
+    } else {
+        diff / scale
+    }
 }
 
 /// Whether `a` and `b` agree under the rule above (`floor` = documented abs floor).
@@ -146,6 +159,9 @@ pub fn compare(cpp: &Output, rust: &Output, floors: &[AbsFloor]) -> CaseDiff {
         let floor = floors.iter().find(|f| f.key == key).map(|f| f.abs);
         for (i, (&x, &y)) in a.iter().zip(b.iter()).enumerate() {
             d.values_compared += 1;
+            if x != 0.0 || y != 0.0 {
+                d.nonzero_compared += 1;
+            }
             let r = rel_err(x, y);
             if r > d.max_rel_err || r.is_nan() {
                 d.max_rel_err = r;
@@ -173,7 +189,12 @@ pub fn compare(cpp: &Output, rust: &Output, floors: &[AbsFloor]) -> CaseDiff {
     // Topology.
     match (&cpp.topology, &rust.topology) {
         (None, None) => {}
-        (Some(a), Some(b)) => compare_topology(&mut d, a, b),
+        (Some(a), Some(b)) => {
+            let (exact, nonzero) = (d.exact_compared, d.nonzero_compared);
+            compare_topology(&mut d, a, b);
+            // topology ids are indices: every compared entry is a real result
+            d.nonzero_compared = nonzero + (d.exact_compared - exact);
+        }
         (a, _) => d.push(missing("topology", a.is_some())),
     }
     d
@@ -229,6 +250,9 @@ fn exact_list(d: &mut CaseDiff, field: &str, a: &[i64], b: &[i64]) {
     }
     for (i, (x, y)) in a.iter().zip(b.iter()).enumerate() {
         d.exact_compared += 1;
+        if *x != 0 || *y != 0 {
+            d.nonzero_compared += 1;
+        }
         if x != y {
             d.push(Mismatch {
                 field: format!("{field}[{i}]"),
@@ -267,6 +291,65 @@ fn union_keys<'a>(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn finite_relative_error_does_not_overflow() {
+        for (a, b, expected) in [
+            (f64::MAX, -f64::MAX, 2.0),
+            (-f64::MAX, f64::MAX, 2.0),
+            (f64::MAX, -f64::MAX / 2.0, 1.5),
+            (-f64::MAX / 2.0, f64::MAX, 1.5),
+            (-f64::MAX, f64::MAX / 2.0, 1.5),
+            (f64::MAX / 2.0, -f64::MAX, 1.5),
+        ] {
+            assert_eq!(rel_err(a, b), expected, "a={a}, b={b}");
+            let d = compare(
+                &Output::new().scalar("v", a),
+                &Output::new().scalar("v", b),
+                &[],
+            );
+            assert!(!d.pass());
+            assert_eq!(d.mismatch_count, 1);
+            assert_eq!(d.values_compared, 1);
+            assert_eq!(d.max_rel_err, expected);
+            assert_eq!(d.mismatches[0].rel_err, Some(expected));
+            assert_eq!(crate::json::num(d.max_rel_err).as_f64(), Some(expected));
+        }
+    }
+
+    #[test]
+    fn relative_error_preserves_ordinary_and_nonfinite_cases() {
+        for (a, b) in [
+            (1.0, 1.0 + 1e-8),
+            (f64::MAX, f64::MAX / 2.0),
+            (f64::MAX / 4.0, -f64::MAX / 4.0),
+            (0.0, f64::from_bits(1)),
+            (f64::from_bits(1), -f64::from_bits(1)),
+        ] {
+            assert_eq!(
+                rel_err(a, b).to_bits(),
+                ((a - b).abs() / a.abs().max(b.abs())).to_bits()
+            );
+        }
+        for (a, b) in [
+            (0.0, -0.0),
+            (f64::MAX, f64::MAX),
+            (f64::NAN, f64::NAN),
+            (f64::INFINITY, f64::INFINITY),
+            (f64::NEG_INFINITY, f64::NEG_INFINITY),
+        ] {
+            assert_eq!(rel_err(a, b), 0.0);
+        }
+        for (a, b) in [
+            (f64::NAN, 1.0),
+            (1.0, f64::NAN),
+            (f64::INFINITY, f64::MAX),
+            (f64::MAX, f64::NEG_INFINITY),
+            (f64::INFINITY, f64::NEG_INFINITY),
+        ] {
+            assert_eq!(rel_err(a, b), f64::INFINITY);
+        }
+    }
 
     #[test]
     fn rule() {
@@ -309,5 +392,31 @@ mod tests {
         assert_eq!((e.values_compared, e.exact_compared), (0, 0));
         assert!(!e.pass());
         assert!(compare(&Output::err("x"), &Output::err("x"), &[]).pass());
+    }
+
+    #[test]
+    fn status_is_compared_even_with_empty_outputs() {
+        // C++ genuinely found nothing; Rust failed and produced nothing.
+        let cpp = Output::new().values("points", Vec::<f64>::new());
+        let rust = Output::from_result(
+            Err::<Vec<f64>, _>(solidcore::SolidError::sm_err("test")),
+            |_| "status_3".into(),
+            |v| Output::new().values("points", v),
+        );
+        let d = compare(&cpp, &rust, &[]);
+        assert!(!d.pass());
+        assert_eq!(d.mismatches[0].field, "error");
+        let ok = Output::from_result(
+            Ok::<Vec<f64>, solidcore::SolidError>(Vec::new()),
+            |_| "status_3".into(),
+            |v| Output::new().values("points", v),
+        );
+        let d = compare(&cpp, &ok, &[]);
+        assert!(d.pass());
+        assert_eq!((d.values_compared, d.nonzero_compared), (0, 0));
+        let zero = Output::new().int("n", 0).scalar("t", 0.0);
+        assert_eq!(compare(&zero, &zero, &[]).nonzero_compared, 0);
+        let topo = Output::new().topology(Topology::new().count("faces", 1));
+        assert_eq!(compare(&topo, &topo, &[]).nonzero_compared, 1);
     }
 }

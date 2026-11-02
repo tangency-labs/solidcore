@@ -128,6 +128,21 @@ fn record(flat: &[f64]) -> Output {
         .values("out", rest.to_vec())
 }
 
+/// The FFI's own validation of `i` (what [`cpp`] runs), applied to the Rust side too:
+/// its guards refuse inputs upstream (and the faithful port) never finish on. A
+/// surface of revolution is not checked here (its check builds the surface in C++).
+fn validate(i: &Inputs) -> Result<(), HarnessError> {
+    match &i.surf {
+        Geometry::Base(surface) => {
+            let mut input = vec![flag(i.wrap)];
+            push_surf(&mut input, surface)?;
+            input.extend(tail(i));
+            ffi::validate(i.op.code(), &input).map_err(|e| harness(e.to_string()))
+        }
+        Geometry::Rev { .. } => Ok(()),
+    }
+}
+
 fn cpp(i: &Inputs) -> Result<Output, HarnessError> {
     let rest = tail(i);
     let result = match &i.surf {
@@ -161,7 +176,7 @@ fn geometry(k: &Kernel, i: &Inputs) -> Result<Surface, HarnessError> {
         Geometry::Rev { rev } => {
             let surface = Surface::from(rev_rust(k, rev)?.map_err(|e| harness(e.to_string()))?);
             Ok(if i.wrap {
-                Surface::from(StepSurface::new(surface, true))
+                Surface::from(StepSurface::new(surface, true).map_err(|e| HarnessError::new(e.to_string()))?)
             } else {
                 surface
             })
@@ -203,7 +218,9 @@ fn rust(i: &Inputs) -> Result<Output, HarnessError> {
     let surface = geometry(&k, i)?;
     let domain = dom_of(i.dom);
     let operation = solver_op(i.solver)?;
-    let object = Object(surface.natural_uv_domain());
+    // the object key is read from a second build of the geometry: a query on the
+    // solved surface would make and keep a lazy plane's NURB, which C++ does not
+    let object = Object(geometry(&k, i)?.natural_uv_domain_with_nurb(&k).map_err(|e| HarnessError::new(e.to_string()))?);
     let oob = |s: &Surface| match s.kind() {
         SurfaceKind::BSpline(b) => Some(b.is_out_of_bounds_enabled()),
         SurfaceKind::Plane(p) => Some(p.base().is_out_of_bounds_enabled()),
@@ -291,12 +308,12 @@ fn rust(i: &Inputs) -> Result<Output, HarnessError> {
                         previous.hit_bound(which, hits.signum());
                     }
                 }
-                let mut stepper = SurfPtSolveStepper::copy_of(&previous);
+                let mut stepper = SurfPtSolveStepper::copy_of(&k, &previous);
                 stepper.set_uv(p2(next));
                 match mode {
-                    0 => out.push(flag(stepper.find_boundary_solution()?)),
+                    0 => out.push(flag(stepper.find_boundary_solution(&k)?)),
                     1 => {
-                        let result = stepper.find_next_step(&Kernel::default(), &mut previous)?;
+                        let result = stepper.find_next_step(&k, &mut previous)?;
                         if let Some(status) = out.first_mut() {
                             *status = f64::from(result.status);
                         }
@@ -325,7 +342,8 @@ fn candidate(rng: &mut Rng) -> Option<Inputs> {
     let (surf, natural, size) = if rng.chance(0.15) {
         let rev = gen_rev(rng);
         let surface = Surface::from(rev_rust(&k, &rev).ok()?.ok()?);
-        let domain = surface.natural_uv_domain();
+        // (runner helper that does not return Result)
+        let domain = surface.natural_uv_domain_if_built();
         (
             Geometry::Rev { rev },
             [
@@ -355,7 +373,8 @@ fn candidate(rng: &mut Rng) -> Option<Inputs> {
         },
     };
     let surface = geometry(&k, &case).ok()?;
-    let d = surface.natural_uv_domain();
+    // (runner helper that does not return Result)
+    let d = surface.natural_uv_domain_if_built();
     let natural = [d.min().x, d.min().y, d.max().x, d.max().y];
     let domain = if rng.chance(0.4) {
         gen_sub_dom(rng, natural)
@@ -363,7 +382,7 @@ fn candidate(rng: &mut Rng) -> Option<Inputs> {
         natural
     };
     case.dom = domain;
-    case.test = gen_test(rng, &surface, domain, size);
+    case.test = gen_test(&k, rng, &surface, domain, size);
     case.op = match rng.below(12) {
         0..=2 => Operation::Global {
             target: if rng.chance(0.5) {
@@ -433,7 +452,9 @@ impl UnitDiff for Runner {
         cpp(&case.parse()?)
     }
     fn run_rust(&self, case: &Case) -> Result<Output, HarnessError> {
-        rust(&case.parse()?)
+        let i = case.parse()?;
+        validate(&i)?;
+        rust(&i)
     }
     fn generate(&self, rng: &mut Rng) -> Option<Value> {
         serde_json::to_value(generated(rng)?).ok()
@@ -475,7 +496,8 @@ impl UnitDiff for Runner {
             },
         };
         let surface = geometry(&Kernel::default(), &input)?;
-        let domain = surface.natural_uv_domain();
+        // (runner helper without a kernel in scope)
+        let domain = surface.natural_uv_domain_if_built();
         for (index, point) in SURFACE_SMS_POINTS.into_iter().enumerate() {
             let mut input = input.clone();
             input.dom = [

@@ -24,10 +24,18 @@
 //! A Rust error maps to its `SmStatus` (`-1` for one upstream cannot return, e.g. a
 //! dereference the shim should have refused); an `Unported` error anywhere defers the case.
 //! The B-rep walks (`ProtoTopology`) of the bare stand-ins answer as upstream's do: no
-//! uses, no B-rep, vertices at the origin. Deferred: point classifications on topology
-//! objects (their `SmVertex::GetPoint`, `SmEdge::GetCurve`, `SmFace::GetSurface`, ...
-//! in `intersect.point_class`), `SmBrep::Transform`, and the manager's fallback
-//! tolerance.
+//! uses, no B-rep, vertices at the origin. The vertex, edge and face stand-ins are also
+//! records of one B-rep ([`TopoRecords`]), so point classifications on them reach the
+//! ported topology members (`SmVertex::GetPoint`, `SmEdge::GetCurve`,
+//! `SmFace::GetSurface`, the zone tolerances) through the [`ClassGeometry`] hooks.
+//! The manager retains the same two default B-reps as the shim, including their
+//! infinite regions. Point classifications query those bodies; objects outside the
+//! script pool serialize as `-2`, matching the native pool's unknown-object marker.
+//! Deferred: `SmBrep::Transform`, the manager's fallback tolerance, `SmBrep::GetVertices`
+//! and UV domains from trim curves.
+//! `ProtoBrep::brep_squeeze_edge` (`SmBrep::SqueezeEdge`) defers under
+//! `harness:proto-pool-brep-edit`: the pool has no B-rep it can edit, so that is a gap
+//! of this harness, not of a plan unit (no case reaches it).
 
 use std::collections::BTreeMap;
 
@@ -63,6 +71,8 @@ use solidcore::query::poly::{PolyBrep, PolyNotifyEnv, PolyObjectKind};
 use solidcore::surface::plane::Plane;
 use solidcore::surface::surface::Surface;
 use solidcore::surface::volume::Volume;
+use solidcore::topology::edge as topo_edge;
+use solidcore::topology::face::p2 as topo_face;
 use solidcore::topology::proto_topology::p1::api_transform::{
     self as api, PolyBrepTarget, PolyBrepTransform, TransformObject,
 };
@@ -78,8 +88,9 @@ use solidcore::topology::proto_topology::p1::{
 };
 use solidcore::topology::proto_topology::p2::ProtoBrep;
 use solidcore::topology::topology::{Topology, TopologyRecords};
-use solidcore::topology::Brep;
-use solidcore::SolidError;
+use solidcore::topology::vertex as topo_vertex;
+use solidcore::topology::{Brep, Edge, Face, FaceId, Vertex, VertexId};
+use solidcore::{EntityRef, SolidError};
 use solidcore_ffi::units::topology_proto_topology_p1::{
     self as ffi, kind, list_op as lop, pool as pk, proto_op as p, proto_op_p2 as q, slot, tobj,
     PROBE_TYPES,
@@ -200,6 +211,15 @@ pub(super) enum ObjIn {
     Edge(usize),
     /// A bare face on pool surface `s`.
     Face(usize),
+    /// A real rectangular trimmed face consuming its distinct pool surface.
+    TrimmedFace {
+        operand: u8,
+        surface: usize,
+        domain: [f64; 4],
+        initial_domain: [f64; 4],
+        #[serde(default)]
+        trim_shift: [f64; 2],
+    },
     Region,
     Loop,
     /// A bare edge on pool curve `c` with interval `[a, b]` and zone tolerance `tol`.
@@ -231,6 +251,15 @@ pub(super) enum TObjIn {
         s: SurfIn,
     },
     Brep,
+    PrimitiveBox { origin: [f64; 3], size: [f64; 3] },
+    PrimitiveSphere { origin: [f64; 3], radius: f64 },
+    PrimitiveCylinder { origin: [f64; 3], radius: f64, height: f64 },
+    PrimitiveCone { origin: [f64; 3], radii: [f64; 2], height: f64 },
+    PrimitiveTorus { origin: [f64; 3], radii: [f64; 2] },
+    CallerFace { origin: [f64; 3], size: [f64; 2] },
+    ExtrusionFace { origin: [f64; 3], size: [f64; 2] },
+    CopiedBox { origin: [f64; 3], size: [f64; 3] },
+    CopiedSphere { origin: [f64; 3], radius: f64 },
     /// An empty `SmPolyBrep`.
     Poly,
     /// An `SmPolyBrep` with poly vertices `x y z tol` (1 to 4).
@@ -294,6 +323,10 @@ pub(super) enum Script {
     },
     /// One object and one API call.
     Transform { obj: TObjIn, op: TOpIn },
+    /// One constructed-body transform with runtime types and directed topology.
+    ScaleProbe { obj: TObjIn, op: TOpIn },
+    /// One constructed body retained across every API call and geometry snapshot.
+    TransformSequence { obj: TObjIn, ops: Vec<TOpIn> },
 }
 
 // ---- encoding for the C++ side ------------------------------------------------------------
@@ -404,6 +437,22 @@ pub(super) fn cpp_input(s: &Script) -> Vec<f64> {
                     }
                     ObjIn::Edge(c) => v.extend([pk::EDGE as f64, *c as f64]),
                     ObjIn::Face(sf) => v.extend([pk::FACE as f64, *sf as f64]),
+                    ObjIn::TrimmedFace {
+                        operand,
+                        surface,
+                        domain,
+                        initial_domain,
+                        trim_shift,
+                    } => {
+                        v.extend([
+                            pk::TRIMMED_FACE as f64,
+                            f64::from(*operand),
+                            *surface as f64,
+                        ]);
+                        v.extend(domain);
+                        v.extend(initial_domain);
+                        v.extend(trim_shift);
+                    }
                     ObjIn::Region => v.push(pk::REGION as f64),
                     ObjIn::Loop => v.push(pk::LOOP as f64),
                     ObjIn::EdgeIvl { c, a, b: bb, tol } => {
@@ -417,74 +466,121 @@ pub(super) fn cpp_input(s: &Script) -> Vec<f64> {
                 v.extend_from_slice(o);
             }
         }
-        Script::Transform { obj, op } => {
-            v.push(kind::TRANSFORM as f64);
-            match obj {
-                TObjIn::Curve { owned, c } => {
-                    v.extend([tobj::CURVE as f64, b(*owned)]);
-                    curve_block(&mut v, c);
-                }
-                TObjIn::Plane { owned, o, n } => {
-                    v.extend([tobj::PLANE as f64, b(*owned)]);
-                    v.extend_from_slice(o);
-                    v.extend_from_slice(n);
-                }
-                TObjIn::Bsurf { owned, s } => {
-                    v.extend([tobj::BSURF as f64, b(*owned)]);
-                    surface_block(&mut v, s);
-                }
-                TObjIn::Brep => v.push(tobj::BREP as f64),
-                TObjIn::Poly => v.push(tobj::POLY as f64),
-                TObjIn::PolyPts { pts } => {
-                    v.extend([tobj::POLY_PTS as f64, pts.len() as f64]);
-                    for q in pts {
-                        v.extend_from_slice(q);
-                    }
-                }
-                TObjIn::Other => v.push(tobj::OTHER as f64),
-                TObjIn::Null => v.push(tobj::NULL as f64),
-                TObjIn::Composite { owned, cs } => {
-                    v.extend([tobj::COMPOSITE as f64, b(*owned), cs.len() as f64]);
-                    for c in cs {
-                        curve_block(&mut v, c);
-                    }
-                }
-                TObjIn::CrvOnSurf { owned, s, a, b: bb } => {
-                    v.extend([tobj::CRV_ON_SURF as f64, b(*owned)]);
-                    surface_block(&mut v, s);
-                    v.extend([a[0], a[1], bb[0], bb[1]]);
-                }
-            }
-            match op {
-                TOpIn::Transform { o, x, y } => {
-                    v.push(0.0);
-                    for q in [o, x, y] {
-                        v.extend_from_slice(q);
-                    }
-                }
-                TOpIn::Scale { s } => {
-                    v.push(1.0);
-                    v.extend_from_slice(s);
-                }
-                TOpIn::ScaleByPt { r, s } => {
-                    v.push(2.0);
-                    v.extend_from_slice(r);
-                    v.extend_from_slice(s);
-                }
-                TOpIn::Translate { v: t } => {
-                    v.push(3.0);
-                    v.extend_from_slice(t);
-                }
-                TOpIn::Rotate { r, a, deg } => {
-                    v.push(4.0);
-                    v.extend_from_slice(r);
-                    v.extend_from_slice(a);
-                    v.push(*deg);
-                }
-            }
+        Script::TransformSequence { obj, ops } => {
+            v.push(kind::TRANSFORM_SEQUENCE as f64);
+            transform_object_block(&mut v, obj);
+            v.push(ops.len() as f64);
+            for op in ops { transform_op_block(&mut v, op); }
+        }
+        Script::Transform { obj, op } | Script::ScaleProbe { obj, op } => {
+            v.push(if matches!(s, Script::ScaleProbe { .. }) { kind::SCALE_PROBE } else { kind::TRANSFORM } as f64);
+            transform_object_block(&mut v, obj);
+            transform_op_block(&mut v, op);
         }
     }
     v
+}
+
+fn transform_object_block(v: &mut Vec<f64>, obj: &TObjIn) {
+    match obj {
+        TObjIn::Curve { owned, c } => {
+            v.extend([tobj::CURVE as f64, b(*owned)]);
+            curve_block(v, c);
+        }
+        TObjIn::Plane { owned, o, n } => {
+            v.extend([tobj::PLANE as f64, b(*owned)]);
+            v.extend_from_slice(o);
+            v.extend_from_slice(n);
+        }
+        TObjIn::Bsurf { owned, s } => {
+            v.extend([tobj::BSURF as f64, b(*owned)]);
+            surface_block(v, s);
+        }
+        TObjIn::Brep => v.push(tobj::BREP as f64),
+        TObjIn::PrimitiveBox { origin, size } => {
+            v.push(tobj::PRIMITIVE_BOX as f64);
+            v.extend_from_slice(origin);
+            v.extend_from_slice(size);
+        }
+        TObjIn::PrimitiveSphere { origin, radius } => {
+            v.push(tobj::PRIMITIVE_SPHERE as f64);
+            v.extend_from_slice(origin);
+            v.push(*radius);
+        }
+        TObjIn::CopiedBox { origin, size } => {
+            v.push(tobj::COPIED_BOX as f64);
+            v.extend_from_slice(origin);
+            v.extend_from_slice(size);
+        }
+        TObjIn::CopiedSphere { origin, radius } => {
+            v.push(tobj::COPIED_SPHERE as f64);
+            v.extend_from_slice(origin);
+            v.push(*radius);
+        }
+                TObjIn::PrimitiveCylinder { origin, radius, height } => { v.push(tobj::PRIMITIVE_CYLINDER as f64); v.extend_from_slice(origin); v.extend([*radius, *height]); }
+                TObjIn::PrimitiveCone { origin, radii, height } => { v.push(tobj::PRIMITIVE_CONE as f64); v.extend_from_slice(origin); v.extend_from_slice(radii); v.push(*height); }
+                TObjIn::PrimitiveTorus { origin, radii } => { v.push(tobj::PRIMITIVE_TORUS as f64); v.extend_from_slice(origin); v.extend_from_slice(radii); }
+                TObjIn::ExtrusionFace { origin, size } => {
+                    v.push(tobj::EXTRUSION_FACE as f64);
+                    v.extend(origin);
+                    v.extend(size);
+                }
+        TObjIn::CallerFace { origin, size } => {
+            v.push(tobj::CALLER_FACE as f64);
+            v.extend_from_slice(origin);
+            v.extend_from_slice(size);
+        }
+        TObjIn::Poly => v.push(tobj::POLY as f64),
+        TObjIn::PolyPts { pts } => {
+            v.extend([tobj::POLY_PTS as f64, pts.len() as f64]);
+            for q in pts {
+                v.extend_from_slice(q);
+            }
+        }
+        TObjIn::Other => v.push(tobj::OTHER as f64),
+        TObjIn::Null => v.push(tobj::NULL as f64),
+        TObjIn::Composite { owned, cs } => {
+            v.extend([tobj::COMPOSITE as f64, b(*owned), cs.len() as f64]);
+            for c in cs {
+                curve_block(v, c);
+            }
+        }
+        TObjIn::CrvOnSurf { owned, s, a, b: bb } => {
+            v.extend([tobj::CRV_ON_SURF as f64, b(*owned)]);
+            surface_block(v, s);
+            v.extend([a[0], a[1], bb[0], bb[1]]);
+        }
+    }
+}
+
+fn transform_op_block(v: &mut Vec<f64>, op: &TOpIn) {
+    match op {
+        TOpIn::Transform { o, x, y } => {
+            v.push(0.0);
+            for q in [o, x, y] {
+                v.extend_from_slice(q);
+            }
+        }
+        TOpIn::Scale { s } => {
+            v.push(1.0);
+            v.extend_from_slice(s);
+        }
+        TOpIn::ScaleByPt { r, s } => {
+            v.push(2.0);
+            v.extend_from_slice(r);
+            v.extend_from_slice(s);
+        }
+        TOpIn::Translate { v: t } => {
+            v.push(3.0);
+            v.extend_from_slice(t);
+        }
+        TOpIn::Rotate { r, a, deg } => {
+            v.push(4.0);
+            v.extend_from_slice(r);
+            v.extend_from_slice(a);
+            v.push(*deg);
+        }
+    }
 }
 
 pub(super) fn cpp(s: &Script) -> Result<Output, HarnessError> {
@@ -621,7 +717,7 @@ const REFUSED: f64 = f64::MIN;
 /// refusal, as the shim refuses those inputs.
 fn st3<T>(r: solidcore::Result<T>) -> Result<Result<T, f64>, Fail> {
     match r {
-        Err(SolidError::InvalidInput { .. }) => Ok(Err(REFUSED)),
+        Err(SolidError::InvalidInput { .. } | SolidError::PortInvariant { .. }) => Ok(Err(REFUSED)),
         r => st(r),
     }
 }
@@ -638,11 +734,11 @@ pub(super) fn put_vec(o: &mut Vec<f64>, v: Vec3) {
     o.extend([v.x, v.y, v.z]);
 }
 
-pub(super) fn put_curve(o: &mut Vec<f64>, c: &Curve) {
+pub(super) fn put_curve(k: &Kernel, o: &mut Vec<f64>, c: &Curve) {
     let ivl = c.natural_interval();
     o.extend([ivl.min(), ivl.max()]);
     for i in 0..=4 {
-        match c.evaluate_point(ivl.evaluate(f64::from(i) / 4.0)) {
+        match c.evaluate_point(k, ivl.evaluate(f64::from(i) / 4.0)) {
             Ok(p) => {
                 o.push(0.0);
                 put_vec(o, p);
@@ -652,8 +748,9 @@ pub(super) fn put_curve(o: &mut Vec<f64>, c: &Curve) {
     }
 }
 
-fn put_surface(o: &mut Vec<f64>, s: &Surface) {
-    let d = s.natural_uv_domain();
+fn put_surface(k: &Kernel, o: &mut Vec<f64>, s: &Surface) {
+    // (runner helper that does not return Result)
+    let d = s.natural_uv_domain_if_built();
     o.extend([d.u_min(), d.u_max(), d.v_min(), d.v_max()]);
     for i in 0..=2 {
         for j in 0..=2 {
@@ -661,7 +758,7 @@ fn put_surface(o: &mut Vec<f64>, s: &Surface) {
                 d.u_min() + (d.u_max() - d.u_min()) * (f64::from(i) / 2.0),
                 d.v_min() + (d.v_max() - d.v_min()) * (f64::from(j) / 2.0),
             );
-            match s.evaluate_point(uv) {
+            match s.evaluate_point(k, uv) {
                 Ok(p) => {
                     o.push(0.0);
                     put_vec(o, p);
@@ -1209,6 +1306,7 @@ impl ClassObject for H {
 pub(super) enum PObj {
     Curve(Curve),
     Surface(Surface),
+    OwnedSurface(H),
     /// A bare edge: its curve's pool index, interval and zone tolerance.
     Edge {
         curve: usize,
@@ -1222,10 +1320,107 @@ pub(super) enum PObj {
     Bare,
 }
 
+struct OwnedFace {
+    handle: H,
+    body: usize,
+    face: FaceId,
+    surface: usize,
+    initial_domain: Extent2d,
+    trim_shift: [f64; 2],
+    trim_probe: Option<(f64, Extent2d)>,
+}
+
 pub(super) struct Pool {
     pub(super) objs: Vec<PObj>,
     pub(super) kinds: Vec<i64>,
     pub(super) alive: Vec<bool>,
+    /// The vertex, edge and face stand-ins as records of one B-rep ([`TopoRecords`]).
+    pub(super) topo: TopoRecords,
+    /// The actual default-constructed B-reps supplied to the native manager.
+    breps: Vec<(H, Brep)>,
+    /// Query results outside the script pool, with their actual owning body.
+    external_topology: Vec<(H, usize, EntityRef)>,
+    owned_faces: Vec<OwnedFace>,
+}
+
+/// The shim's vertex, edge and face stand-ins as records of one B-rep, so that topology
+/// handles resolve through the [`ClassGeometry`] hooks to the ported topology members
+/// (as `intersect.curve_class_p1`'s `BareTopology`). The shim builds default-constructed
+/// `SmVertex` / `SmEdge` / `SmFace` objects with only the point, interval, tolerance,
+/// `m_pCurve` / `m_pSurface` set, never joined to a B-rep; the records are in that state:
+/// no uses, an edge sharing its pool curve (kept in step by [`Pool::sync_topo`]), a face
+/// with its surface and nothing else (its shell is a placeholder no list names).
+#[derive(Default)]
+pub(super) struct TopoRecords {
+    brep: Brep,
+    /// Per pool object: its entity (vertex, edge and face stand-ins).
+    ents: Vec<Option<EntityRef>>,
+    /// Per pool object: for an edge, the pool index of its curve.
+    edge_curve: Vec<Option<usize>>,
+}
+
+impl TopoRecords {
+    /// Appends the record of pool object `obj` (kind `kind`; `surface`: a face's surface).
+    fn push(
+        &mut self,
+        obj: &PObj,
+        kind: i64,
+        curve: Option<&Curve>,
+        surface: Option<&Surface>,
+    ) -> Result<(), HarnessError> {
+        let e = |e: SolidError| harness(e.to_string());
+        let mut edge_curve = None;
+        let ent = match (kind, obj) {
+            (pk::VERTEX, PObj::Tol(tol)) => Some(EntityRef::Vertex(
+                self.brep
+                    .add_vertex_record(Vertex {
+                        tolerance: *tol,
+                        ..Vertex::default()
+                    })
+                    .map_err(e)?,
+            )),
+            (pk::VERTEX, PObj::VertexPt(p, tol)) => Some(EntityRef::Vertex(
+                self.brep
+                    .add_vertex_record(Vertex {
+                        point: *p,
+                        tolerance: *tol,
+                        ..Vertex::default()
+                    })
+                    .map_err(e)?,
+            )),
+            (pk::EDGE, PObj::Edge { curve: c, ivl, tol }) => {
+                edge_curve = Some(*c);
+                Some(EntityRef::Edge(
+                    self.brep
+                        .add_edge_record(Edge {
+                            // never read: an edge's vertices are those of its (absent)
+                            // edge uses
+                            vertices: [VertexId::from_index(u32::MAX); 2],
+                            edgeuses: Vec::new(),
+                            interval: *ivl,
+                            tolerance: *tol,
+                            curve: curve.cloned(),
+                        })
+                        .map_err(e)?,
+                ))
+            }
+            (pk::FACE, PObj::Tol(tol)) => {
+                let shell = self.brep.add_shell().map_err(e)?;
+                let mut face = Face::new(shell);
+                face.surface = surface.cloned();
+                face.tolerance = *tol;
+                Some(EntityRef::Face(self.brep.add_face_record(face).map_err(e)?))
+            }
+            _ => None,
+        };
+        self.ents.push(ent);
+        self.edge_curve.push(edge_curve);
+        Ok(())
+    }
+
+    fn ent(&self, i: usize) -> Option<EntityRef> {
+        self.ents.get(i).copied().flatten()
+    }
 }
 
 /// The pool holds proto-topology objects, not a B-rep arena: it cannot glue. The glue
@@ -1245,6 +1440,12 @@ impl solidcore::topology::proto_topology::p3::BrepGlue<H> for Pool {
             "the pool has no B-rep arena to glue in",
         ))
     }
+    fn delete_edge(&mut self, _k: &mut Kernel, _brep: H, _edge: H) -> solidcore::Result<()> {
+        Err(SolidError::invalid_input(
+            "difftest::topology_proto_topology_p1::Pool",
+            "the pool has no B-rep arena to delete in",
+        ))
+    }
 }
 
 impl ClassGeometry<H> for Pool {
@@ -1260,6 +1461,16 @@ impl ClassGeometry<H> for Pool {
     fn surface(&self, o: H) -> Option<&Surface> {
         match self.objs.get(o.0) {
             Some(PObj::Surface(s)) => Some(s),
+            Some(PObj::OwnedSurface(face)) => {
+                let owned = self.owned_face(*face)?;
+                self.breps
+                    .get(owned.body)?
+                    .1
+                    .face(owned.face)
+                    .ok()?
+                    .surface
+                    .as_ref()
+            }
             _ => None,
         }
     }
@@ -1268,6 +1479,125 @@ impl ClassGeometry<H> for Pool {
     }
     fn point(&self, _o: H) -> Option<Vec3> {
         None
+    }
+    fn classification_vertex_point(&self, o: H) -> Option<Vec3> {
+        match self.topo_entity(o)? {
+            EntityRef::Vertex(v) => topo_vertex::point(&self.topo.brep, v).ok(),
+            _ => None,
+        }
+    }
+    fn topology_zone_tol_3d(&self, o: H) -> Option<f64> {
+        if let Some(owned) = self.owned_face(o) {
+            return Some(
+                self.breps
+                    .get(owned.body)?
+                    .1
+                    .face(owned.face)
+                    .ok()?
+                    .tolerance,
+            );
+        }
+        let b = &self.topo.brep;
+        match self.topo_entity(o)? {
+            EntityRef::Vertex(v) => topo_vertex::tolerance(b, v).ok(),
+            EntityRef::Edge(e) => topo_edge::tolerance(b, e).ok(),
+            EntityRef::Face(f) => topo_face::tolerance(b, f).ok(),
+            _ => None,
+        }
+    }
+    fn topology_entity(&self, o: H) -> Option<(&Brep, EntityRef)> {
+        if let Some(owned) = self.owned_face(o) {
+            return Some((&self.breps.get(owned.body)?.1, EntityRef::Face(owned.face)));
+        }
+        self.topo_entity(o).map(|e| (&self.topo.brep, e))
+    }
+    fn topology_handle(&self, e: EntityRef) -> Option<H> {
+        let i = self.topo.ents.iter().position(|t| *t == Some(e))?;
+        let h = H(i, class_kind_of(self.kinds.get(i).copied().unwrap_or(-1)));
+        self.live_h(h).then_some(h)
+    }
+}
+
+impl Pool {
+    fn owned_face(&self, face: H) -> Option<&OwnedFace> {
+        self.live_h(face).then_some(())?;
+        self.owned_faces.iter().find(|owned| owned.handle == face)
+    }
+    pub(super) fn is_owned_face(&self, face: H, operand: i64) -> bool {
+        self.owned_face(face)
+            .is_some_and(|owned| owned.body as i64 + 1 == operand)
+    }
+    pub(super) fn put_owned_face(&self, face: H, out: &mut Vec<f64>) -> Result<(), HarnessError> {
+        let owned = self
+            .owned_face(face)
+            .ok_or_else(|| harness("missing owned face"))?;
+        let body = &self
+            .breps
+            .get(owned.body)
+            .ok_or_else(|| harness("missing face body"))?
+            .1;
+        let f = body.face(owned.face).map_err(|e| harness(e.to_string()))?;
+        let d = f.uv_domain;
+        out.extend([d.min().x, d.min().y, d.max().x, d.max().y]);
+        let loops = solidcore::topology::face::p4::upward_loopuses(body, owned.face, false, None)
+            .map_err(|e| harness(e.to_string()))?;
+        out.push(loops.len() as f64);
+        let mut edge_count = 0;
+        let mut trim_count = 0;
+        for lu in loops {
+            for eu in solidcore::topology::edgeuse::p1::loopuse_edgeuses(body, lu)
+                .map_err(|e| harness(e.to_string()))?
+            {
+                edge_count += 1;
+                if solidcore::topology::edgeuse::p1::uv_trim_curve(body, eu)
+                    .map_err(|e| harness(e.to_string()))?
+                    .0
+                    .is_some()
+                {
+                    trim_count += 1;
+                }
+            }
+        }
+        out.extend([f64::from(edge_count), f64::from(trim_count), f.tolerance]);
+        if let Some((status, domain)) = owned.trim_probe {
+            out.extend([
+                1.0,
+                status,
+                domain.min().x,
+                domain.min().y,
+                domain.max().x,
+                domain.max().y,
+            ]);
+        } else {
+            out.push(0.0);
+        }
+        Ok(())
+    }
+    /// The entity of live topology stand-in `o`.
+    fn topo_entity(&self, o: H) -> Option<EntityRef> {
+        if !self.live_h(o) {
+            return None;
+        }
+        self.topo.ent(o.0)
+    }
+
+    /// Brings the edge records' curves in step with the pool curves they share (an op
+    /// may have edited a pool curve).
+    pub(super) fn sync_topo(&mut self) {
+        for j in 0..self.topo.ents.len() {
+            let (Some(Some(EntityRef::Edge(e))), Some(Some(c))) =
+                (self.topo.ents.get(j), self.topo.edge_curve.get(j))
+            else {
+                continue;
+            };
+            let curve = match self.objs.get(*c) {
+                Some(PObj::Curve(x)) => Some(x.clone()),
+                _ => None,
+            };
+            if let Ok(r) = self.topo.brep.edge_mut(*e) {
+                r.curve = curve;
+            }
+        }
     }
 }
 
@@ -1329,6 +1659,97 @@ impl ProtoTopology<H> for Pool {
 /// The bare stand-ins' members (upstream `SmEdge::GetInterval`, `GetCurve`, `GetTolerance`
 /// of the stand-in objects the shim makes), and new curves appended to the pool.
 impl ProtoBrep<H> for Pool {
+    /// A vertex stand-in merges in its record (upstream's default-constructed
+    /// `SmVertex`: the `SetPoint` / `SetExact` / `SetTolerance` of `MergeIntoObject`
+    /// need no B-rep); an edge, face or region stand-in is joined to no B-rep, so its
+    /// edit keeps the default deferral.
+    fn merge_point_class_into_brep(
+        &mut self,
+        k: &mut Kernel,
+        pc: &mut PointClassification<H>,
+        src_point: Point3,
+    ) -> solidcore::Result<solidcore::intersect::point_class::MergeOutputs<H>> {
+        let target = pc
+            .object()
+            .filter(|o| o.1 == ClassObjectKind::Vertex)
+            .and_then(|o| self.topo_entity(o));
+        let Some(target @ EntityRef::Vertex(_)) = target else {
+            return pc.merge_into_object(k, src_point);
+        };
+        let ents = self.topo.ents.clone();
+        let kinds = self.kinds.clone();
+        let handle = move |e: EntityRef| {
+            let i = ents.iter().position(|t| *t == Some(e)).unwrap_or(usize::MAX);
+            H(i, class_kind_of(kinds.get(i).copied().unwrap_or(-1)))
+        };
+        let mut records = solidcore::topology::topology::NotifyRecords::new();
+        let mut attributes = AttributeStore::default();
+        let mut env = solidcore::topology::edge::NotifyEnv {
+            records: &mut records,
+            attributes: &mut attributes,
+            context: None,
+            key_of: &super::boolean_topology_intersector_p1::p9_entity_ref,
+        };
+        let curve_ref = |e: solidcore::topology::EdgeId, kind: i64| ObjectRef {
+            key: ObjectKey(((kind as u64) << 32) | u64::from(e.index())),
+            type_code: kind,
+        };
+        pc.merge_into_brep(
+            k,
+            src_point,
+            solidcore::intersect::point_class::BrepMerge {
+                brep: &mut self.topo.brep,
+                target,
+                handle: &handle,
+                notifications: &mut env,
+                curve_ref: &curve_ref,
+            },
+        )
+    }
+    fn edgeuse_evaluate_binormal(
+        &mut self,
+        _k: &Kernel,
+        _edgeuse: H,
+        _param: f64,
+    ) -> solidcore::Result<Vec3> {
+        // the pool's bare stand-ins have no B-rep to evaluate on
+        Err(SolidError::unported(
+            "SmEdgeuse::EvaluateBinormal (bare stand-ins without a B-rep)",
+            "harness:proto-pool-brep-edit",
+        ))
+    }
+    fn brep_make_edge_in_face(
+        &mut self,
+        _k: &Kernel,
+        _brep: H,
+        _face: H,
+        _start: H,
+        _end: H,
+        _curve: Curve,
+        _uv_curve: Option<Curve>,
+        _interval: Extent1d,
+        _orientation: solidcore::nurbs::b_spline_surface_n_lib::p2::OrientType,
+        _tolerance: f64,
+    ) -> solidcore::Result<(Option<H>, Option<H>, Option<H>)> {
+        // the pool's bare stand-ins have no B-rep to edit
+        Err(SolidError::unported(
+            "SmBrep::MakeEdgeInFace (bare stand-ins without a B-rep)",
+            "harness:proto-pool-brep-edit",
+        ))
+    }
+    fn brep_squeeze_edge(
+        &mut self,
+        _k: &mut Kernel,
+        _brep: H,
+        _edge: H,
+        _survivor: H,
+    ) -> solidcore::Result<()> {
+        // the pool's bare stand-ins have no B-rep to edit
+        Err(SolidError::unported(
+            "SmBrep::SqueezeEdge (bare stand-ins without a B-rep)",
+            "harness:proto-pool-brep-edit",
+        ))
+    }
     fn edge_interval(&self, edge: H) -> Option<Extent1d> {
         match self.objs.get(edge.0) {
             Some(PObj::Edge { ivl, .. }) if self.live_h(edge) => Some(*ivl),
@@ -1344,6 +1765,16 @@ impl ProtoBrep<H> for Pool {
         }
     }
     fn topology_tolerance(&self, topo: H) -> Option<f64> {
+        if let Some(owned) = self.owned_face(topo) {
+            return Some(
+                self.breps
+                    .get(owned.body)?
+                    .1
+                    .face(owned.face)
+                    .ok()?
+                    .tolerance,
+            );
+        }
         match self.objs.get(topo.0) {
             Some(PObj::Edge { tol, .. } | PObj::Tol(tol) | PObj::VertexPt(_, tol))
                 if self.live_h(topo) =>
@@ -1353,16 +1784,119 @@ impl ProtoBrep<H> for Pool {
             _ => None,
         }
     }
-    // The bare faces have no UV domain the port reads: `UpdateFaces` defers before
-    // (`SmFace::CalculateUVDomainFromUVTrimCurves`, unit topology.face_p1).
-    fn face_uv_domain(&self, _face: H) -> Option<Extent2d> {
-        None
+    fn face_uv_domain(&self, face: H) -> Option<Extent2d> {
+        let owned = self.owned_face(face)?;
+        Some(
+            self.breps
+                .get(owned.body)?
+                .1
+                .face(owned.face)
+                .ok()?
+                .uv_domain,
+        )
     }
-    fn set_face_uv_domain(&mut self, _face: H, _domain: Extent2d) -> Option<()> {
-        None
+    fn set_face_uv_domain(&mut self, face: H, domain: Extent2d) -> Option<()> {
+        let owned = self.owned_faces.iter().find(|owned| owned.handle == face)?;
+        self.breps
+            .get_mut(owned.body)?
+            .1
+            .face_mut(owned.face)
+            .ok()?
+            .uv_domain = domain;
+        Some(())
     }
-    fn face_surface(&self, _face: H) -> Option<Option<H>> {
-        None
+    fn face_surface(&self, face: H) -> Option<Option<H>> {
+        Some(Some(self.h(self.owned_face(face)?.surface as i64)))
+    }
+    fn face_trim_uv_domain(&mut self, k: &Kernel, face: H) -> solidcore::Result<Extent2d> {
+        if !self.live_h(face) {
+            return Err(SolidError::invalid_input(
+                "difftest::proto::face_trim_uv_domain",
+                "stale face handle",
+            ));
+        }
+        let owned = self
+            .owned_faces
+            .iter()
+            .find(|owned| owned.handle == face)
+            .ok_or_else(|| {
+                SolidError::invalid_input(
+                    "difftest::proto::face_trim_uv_domain",
+                    "handle has no owning face",
+                )
+            })?;
+        let mut output = solidcore::topology::face::p1::UvDomainFromTrim {
+            domain: Extent2d::new(),
+            max_uv_loop_gap: 0.0,
+            second_max_uv_loop_gap: 0.0,
+        };
+        let result = solidcore::topology::face::p1::calculate_uv_domain_from_uv_trim_curves_into(
+            k,
+            &mut self
+                .breps
+                .get_mut(owned.body)
+                .ok_or_else(|| SolidError::invalid_input("difftest::proto", "missing face body"))?
+                .1,
+            owned.face,
+            true,
+            false,
+            false,
+            &mut output,
+        );
+        if let Err(error) = result {
+            if error.is_unported() {
+                return Err(error);
+            }
+        }
+        Ok(output.domain)
+    }
+    fn face_point_classify_uv(
+        &mut self,
+        k: &Kernel,
+        face: H,
+        uv: Point2,
+        source_tolerance: f64,
+    ) -> solidcore::Result<PointClassType> {
+        if !self.live_h(face) {
+            return Err(SolidError::invalid_input(
+                "difftest::proto::face_point_classify_uv",
+                "stale face handle",
+            ));
+        }
+        let owned = self
+            .owned_faces
+            .iter()
+            .find(|owned| owned.handle == face)
+            .ok_or_else(|| {
+                SolidError::invalid_input(
+                    "difftest::proto::face_point_classify_uv",
+                    "handle has no owning face",
+                )
+            })?;
+        let mut output = PointClassification::new(source_tolerance);
+        let result = solidcore::query::face::p2::point_classify(
+            k,
+            &mut self
+                .breps
+                .get_mut(owned.body)
+                .ok_or_else(|| SolidError::invalid_input("difftest::proto", "missing face body"))?
+                .1,
+            owned.face,
+            uv,
+            &mut output,
+            solidcore::query::face::p2::PointClassifyOptions {
+                src_zone_tol_3d: source_tolerance,
+                do_boundary_intersections: true,
+                use_uv_classification: true,
+                ..solidcore::query::face::p2::PointClassifyOptions::default()
+            },
+        );
+        if let Err(error) = result {
+            if error.is_unported() {
+                return Err(error);
+            }
+        }
+        Ok(output.point_class())
     }
     // The bare stand-ins have no edge uses.
     fn edge_edgeuse_of_face(&self, _edge: H, _face: H) -> solidcore::Result<Option<H>> {
@@ -1375,6 +1909,8 @@ impl ProtoBrep<H> for Pool {
         self.objs.push(PObj::Curve(curve));
         self.kinds.push(pk::CURVE);
         self.alive.push(true);
+        self.topo.ents.push(None);
+        self.topo.edge_curve.push(None);
         Some(H(self.objs.len() - 1, ClassObjectKind::Curve))
     }
     fn vertex_common_edges(&self, v1: H, v2: H) -> solidcore::Result<Vec<H>> {
@@ -1401,6 +1937,54 @@ impl ProtoBrep<H> for Pool {
             "SmFace::CurveOnClassify",
             "query.face_p2",
         ))
+    }
+
+    fn brep_point_3d_classify(
+        &mut self,
+        k: &Kernel,
+        brep: H,
+        point: Point3,
+        tolerance: f64,
+        boundary_intersections: bool,
+    ) -> solidcore::Result<PointClassification<H>> {
+        let op = "difftest::proto_topology::brep_point_3d_classify";
+        let body = self
+            .breps
+            .iter()
+            .position(|(handle, _)| *handle == brep)
+            .ok_or_else(|| SolidError::invalid_input(op, "unknown manager B-rep"))?;
+        let (_, b) = self
+            .breps
+            .get_mut(body)
+            .ok_or_else(|| SolidError::invalid_input(op, "missing manager B-rep"))?;
+        let result = solidcore::query::brep::BrepQuery::default().point_3d_classify(
+            k,
+            b,
+            point,
+            tolerance,
+            boundary_intersections,
+        )?;
+        result.map_objects(&mut |entity| {
+            if let Some((handle, _, _)) = self
+                .external_topology
+                .iter()
+                .find(|(_, owner, stored)| *owner == body && *stored == entity)
+            {
+                return Ok(*handle);
+            }
+            let kind = match entity {
+                EntityRef::Region(_) => ClassObjectKind::Region,
+                EntityRef::Face(_) => ClassObjectKind::Face,
+                EntityRef::Edge(_) => ClassObjectKind::Edge,
+                EntityRef::Vertex(_) => ClassObjectKind::Vertex,
+                _ => return Err(SolidError::invalid_input(op, "unexpected query object")),
+            };
+            // Registered query-only handles cannot collide with script objects or
+            // the manager's reserved handles. The body remains part of identity.
+            let handle = H(usize::MAX - self.external_topology.len(), kind);
+            self.external_topology.push((handle, body, entity));
+            Ok(handle)
+        })
     }
 }
 
@@ -1444,6 +2028,15 @@ impl Pool {
         match h {
             None => -1.0,
             Some(h) => {
+                if self
+                    .external_topology
+                    .iter()
+                    .any(|(handle, _, _)| *handle == h)
+                {
+                    // The shim's pool.id returns -2 for an actual object that is
+                    // not registered among script input objects.
+                    return -2.0;
+                }
                 if self.alive.get(h.0).copied().unwrap_or(false) {
                     h.0 as f64
                 } else {
@@ -1515,6 +2108,7 @@ pub(super) struct ProtoRun {
     pub(super) n_pv: u32,
     pub(super) n_pe: u32,
     pub(super) n_pf: u32,
+    pub(super) first_ed_final_initialized: u8,
 }
 
 /// The ids of proto objects (`-1` null, `-3` deleted).
@@ -1950,7 +2544,7 @@ impl ProtoRun {
             o.push(b(alive));
             if alive {
                 if let PObj::Curve(c) = obj {
-                    put_curve(o, c);
+                    put_curve(k, o, c);
                 }
             }
         }
@@ -1999,11 +2593,26 @@ fn run_proto(
     override_tol: f64,
     ops: &[Vec<f64>],
 ) -> Result<Vec<f64>, Fail> {
-    let k = Kernel::default();
+    let mut k = Kernel::default();
+    let brep1 = H(100_000, ClassObjectKind::Other);
+    let brep2 = H(100_001, ClassObjectKind::Other);
     let mut pool = Pool {
         objs: Vec::new(),
         kinds: Vec::new(),
         alive: Vec::new(),
+        topo: TopoRecords::default(),
+        breps: vec![
+            (
+                brep1,
+                Brep::new_with_infinite_region().map_err(|e| harness(e.to_string()))?,
+            ),
+            (
+                brep2,
+                Brep::new_with_infinite_region().map_err(|e| harness(e.to_string()))?,
+            ),
+        ],
+        external_topology: Vec::new(),
+        owned_faces: Vec::new(),
     };
     for ob in objects {
         let (obj, kd) = match ob {
@@ -2044,6 +2653,70 @@ fn run_proto(
                     pk::EDGE,
                 )
             }
+            ObjIn::TrimmedFace {
+                operand,
+                surface,
+                domain,
+                initial_domain,
+                trim_shift,
+            } => {
+                let source = pool
+                    .objs
+                    .get_mut(*surface)
+                    .ok_or_else(|| harness("trimmed face surface"))?;
+                let PObj::Surface(surface_value) = std::mem::replace(source, PObj::Bare) else {
+                    return Err(harness("trimmed face needs a distinct live surface").into());
+                };
+                let body_index = usize::from(*operand)
+                    .checked_sub(1)
+                    .filter(|index| *index < 2)
+                    .ok_or_else(|| harness("face operand"))?;
+                let body = &mut pool
+                    .breps
+                    .get_mut(body_index)
+                    .ok_or_else(|| harness("missing face operand"))?
+                    .1;
+                let mut state = solidcore::topology::brep::p2::ArenaNotifyState::new(body);
+                let mut env = state.env(None);
+                let key_of = env.key_of;
+                let this_face = |face: FaceId| key_of(EntityRef::Face(face));
+                let mut marks = solidcore::topology::topology_traverser::Marks::default();
+                let mut fenv = solidcore::topology::brep::p8::FaceBuildEnv {
+                    env: &mut env,
+                    marks: &mut marks,
+                    this_face: &this_face,
+                };
+                let domain = Extent2d::from_bounds(domain[0], domain[1], domain[2], domain[3]);
+                let face = st(solidcore::topology::brep::p8::create_face_from_surface(
+                    &mut k,
+                    body,
+                    Some(surface_value),
+                    &domain,
+                    &mut fenv,
+                ))?
+                .map_err(|e| harness(e.to_string()))?;
+                let handle = H(pool.objs.len(), ClassObjectKind::Face);
+                *pool
+                    .objs
+                    .get_mut(*surface)
+                    .ok_or_else(|| harness("missing consumed surface slot"))? =
+                    PObj::OwnedSurface(handle);
+                pool.owned_faces.push(OwnedFace {
+                    handle,
+                    body: body_index,
+                    face,
+                    surface: *surface,
+                    trim_shift: *trim_shift,
+                    trim_probe: None,
+                    initial_domain: Extent2d::from_bounds(
+                        initial_domain[0],
+                        initial_domain[1],
+                        initial_domain[2],
+                        initial_domain[3],
+                    ),
+                });
+                (PObj::Bare, pk::FACE)
+            }
             ObjIn::Face(s) => {
                 if !pool.is(*s as i64, pk::PLANE) && !pool.is(*s as i64, pk::BSURF) {
                     return Err(harness("face surface").into());
@@ -2053,20 +2726,116 @@ fn run_proto(
             ObjIn::Region => (PObj::Bare, pk::REGION),
             ObjIn::Loop => (PObj::Bare, pk::LOOP),
         };
+        // the curve of an edge, the surface of a face (earlier pool objects)
+        let curve = match ob {
+            ObjIn::Edge(c) | ObjIn::EdgeIvl { c, .. } => match pool.objs.get(*c) {
+                Some(PObj::Curve(x)) => Some(x),
+                _ => None,
+            },
+            _ => None,
+        };
+        let surface = match ob {
+            ObjIn::Face(sf) => match pool.objs.get(*sf) {
+                Some(PObj::Surface(x)) => Some(x),
+                _ => None,
+            },
+            _ => None,
+        };
+        pool.topo.push(&obj, kd, curve, surface)?;
         pool.objs.push(obj);
         pool.kinds.push(kd);
         pool.alive.push(true);
     }
-    let brep1 = H(100_000, ClassObjectKind::Other);
-    let brep2 = H(100_001, ClassObjectKind::Other);
+    for owned in &mut pool.owned_faces {
+        let body = &mut pool
+            .breps
+            .get_mut(owned.body)
+            .ok_or_else(|| harness("missing face operand"))?
+            .1;
+        body.face_mut(owned.face)
+            .map_err(|e| harness(e.to_string()))?
+            .uv_domain = owned.initial_domain;
+        if owned.trim_shift != [0.0, 0.0] {
+            st(solidcore::topology::face::p3::create_uv_trim_curves(
+                &k, body, owned.face, false, None,
+            ))?
+            .map_err(|code| harness(format!("trim preparation status {code}")))?;
+            let mut transformed = 0;
+            let mut transform = Axis2Placement::default();
+            transform.translate(Vec3::new(owned.trim_shift[0], owned.trim_shift[1], 0.0));
+            for lu in solidcore::topology::face::p4::upward_loopuses(body, owned.face, false, None)
+                .map_err(|e| harness(e.to_string()))?
+            {
+                for eu in solidcore::topology::edgeuse::p1::loopuse_edgeuses(body, lu)
+                    .map_err(|e| harness(e.to_string()))?
+                {
+                    let (_, owner) = solidcore::topology::edgeuse::p1::uv_trim_curve(body, eu)
+                        .map_err(|e| harness(e.to_string()))?;
+                    if let Some(owner) = owner {
+                        if let Some(curve) = body
+                            .edgeuse_mut(owner)
+                            .map_err(|e| harness(e.to_string()))?
+                            .uv_trim_curve
+                            .as_mut()
+                        {
+                            curve
+                                .transform(&k, &transform, None)
+                                .map_err(|e| harness(e.to_string()))?;
+                            transformed += 1;
+                        }
+                    }
+                }
+            }
+            if transformed == 0 {
+                return Err(harness("trim shift had no actual UV curves").into());
+            }
+            let mut output = solidcore::topology::face::p1::UvDomainFromTrim {
+                domain: Extent2d::new(),
+                max_uv_loop_gap: 0.0,
+                second_max_uv_loop_gap: 0.0,
+            };
+            let result = st(
+                solidcore::topology::face::p1::calculate_uv_domain_from_uv_trim_curves_into(
+                    &k,
+                    body,
+                    owned.face,
+                    true,
+                    false,
+                    false,
+                    &mut output,
+                )
+                .map_err(|error| match error {
+                    SolidError::InvalidInput { operation, .. } | SolidError::PortInvariant { operation, .. } => SolidError::Upstream {
+                        operation,
+                        code: solidcore::error::SM_ERR_INVALID_INPUT,
+                        entity: None,
+                    },
+                    other => other,
+                }),
+            )?;
+            owned.trim_probe = Some((result.err().unwrap_or(0.0), output.domain));
+        }
+    }
     let ti = H(100_002, ClassObjectKind::Other);
     let ti_tol = approx_tol;
-    // two empty B-reps, as the shim's
-    let (b1, b2) = (Brep::new(), Brep::new());
     let mgr = match st(ProtoTopologyManager::new(
         &k,
-        (brep1, &b1),
-        (brep2, &b2),
+        (
+            brep1,
+            &pool
+                .breps
+                .first()
+                .ok_or_else(|| harness("missing first operand body"))?
+                .1,
+        ),
+        (
+            brep2,
+            &pool
+                .breps
+                .get(1)
+                .ok_or_else(|| harness("missing second operand body"))?
+                .1,
+        ),
         ti,
         ti_tol,
         capture,
@@ -2085,10 +2854,12 @@ fn run_proto(
         n_pv: 0,
         n_pe: 0,
         n_pf: 0,
+        first_ed_final_initialized: 0,
     };
     let mut o = Vec::new();
 
     for opv in ops {
+        r.pool.sync_topo();
         let mut rd = Rd {
             v: opv,
             at: 0,
@@ -2641,6 +3412,9 @@ fn run_proto(
                         let h = (j != -1).then(|| r.pool.h(j));
                         if let Some(x) = r.mgr.edge_def_mut(d) {
                             x.set_final_edge(if w == 1 { 1 } else { 2 }, h);
+                            if d.index() == 0 {
+                                r.first_ed_final_initialized |= if w == 1 { 1 } else { 2 };
+                            }
                         }
                     }
                     _ => skip = true,
@@ -2674,7 +3448,7 @@ fn run_proto(
                             }
                         }
                         if !skip {
-                            status = st0(r.mgr.remove_vertex_definition(d, flag))?;
+                            status = st0(r.mgr.remove_vertex_definition(&r.k, d, flag))?;
                         }
                     }
                     _ => skip = true,
@@ -2685,7 +3459,7 @@ fn run_proto(
                 _ => skip = true,
             },
             p::MGR_REMOVE_PE => match r.pe(rd.idx()) {
-                Some(e) if !skip => status = st0(r.mgr.remove_proto_edge(e))?,
+                Some(e) if !skip => status = st0(r.mgr.remove_proto_edge(&r.k, e))?,
                 _ => skip = true,
             },
             p::MGR_SET_TOL => {
@@ -2940,9 +3714,9 @@ fn run_proto(
                             && (mode == 0 || e.xsect_curve_3d().is_some()) =>
                     {
                         let res = if op == p::ED_EVAL {
-                            e.evaluate(&r.pool, t, mode & 1 != 0, mode & 2 != 0)
+                            e.evaluate(k, &r.pool, t, mode & 1 != 0, mode & 2 != 0)
                         } else {
-                            e.evaluate_mid(&r.pool, mode & 1 != 0, mode & 2 != 0)
+                            e.evaluate_mid(k, &r.pool, mode & 1 != 0, mode & 2 != 0)
                         };
                         put_eval(&mut out, st(res)?, mode);
                     }
@@ -2955,7 +3729,7 @@ fn run_proto(
                 let e = d.and_then(|d| r.mgr.edge_def(d));
                 match e {
                     Some(e) if !skip && e.xsect_curve_3d().is_some() => {
-                        match st(e.end_position(&r.pool, at_start))? {
+                        match st(e.end_position(k, &r.pool, at_start))? {
                             Ok(pt) => put_vec(&mut out, pt),
                             Err(s) => {
                                 status = s;
@@ -2980,7 +3754,7 @@ fn run_proto(
                         {
                             skip = true;
                         } else {
-                            match st(r.mgr.edge_def_end_position_at(&r.pool, d, v))? {
+                            match st(r.mgr.edge_def_end_position_at(k, &r.pool, d, v))? {
                                 Ok(pt) => put_vec(&mut out, pt),
                                 Err(s) => status = s,
                             }
@@ -3198,9 +3972,9 @@ fn run_proto(
                         }
                         if !skip {
                             let res = if op == p::PE_END_POS {
-                                r.mgr.proto_edge_end_position(&r.pool, eid, at_start)
+                                r.mgr.proto_edge_end_position(k, &r.pool, eid, at_start)
                             } else {
-                                r.mgr.proto_edge_end_position_at(&r.pool, eid, v)
+                                r.mgr.proto_edge_end_position_at(k, &r.pool, eid, v)
                             };
                             match st(res)? {
                                 Ok(pt) => put_vec(&mut out, pt),
@@ -3228,6 +4002,7 @@ fn run_proto(
                         } else {
                             let res = if op == p::PE_EVAL {
                                 r.mgr.proto_edge_evaluate(
+                                    k,
                                     &r.pool,
                                     eid,
                                     t,
@@ -3236,6 +4011,7 @@ fn run_proto(
                                 )
                             } else {
                                 r.mgr.proto_edge_evaluate_mid(
+                                    k,
                                     &r.pool,
                                     eid,
                                     mode & 1 != 0,
@@ -3316,7 +4092,7 @@ fn run_proto(
                         if !skip {
                             match st(r
                                 .mgr
-                                .proto_vertex_final_vertex(&r.pool, v, w as i32, d, at_start))?
+                                .proto_vertex_final_vertex(k, &r.pool, v, w as i32, d, at_start))?
                             {
                                 Ok(x) => out.push(r.pool.id(x)),
                                 Err(s) => status = s,
@@ -3557,7 +4333,7 @@ fn run_proto(
                             }
                         }
                         if !skip {
-                            match st(r.mgr.which_pv_to_combine(&r.pool, eid, t, sv))? {
+                            match st(r.mgr.which_pv_to_combine(k, &r.pool, eid, t, sv))? {
                                 Ok(x) => out.push(r.pv_id(x)),
                                 Err(s) => status = s,
                             }
@@ -3618,6 +4394,7 @@ fn run_proto(
                 } else {
                     let dom = Extent1d::from_min_max(a, bb);
                     match st(proto_mod::is_interior(
+                        k,
                         &r.pool,
                         c,
                         &dom,
@@ -4162,7 +4939,221 @@ const ANCHOR: ObjectRef = ObjectRef {
     key: ObjectKey(1),
 };
 
-fn run_transform(obj: &TObjIn, op: &TOpIn) -> Result<Vec<f64>, Fail> {
+fn traversal_label<T: PartialEq>(items: &[T], item: Option<T>) -> f64 {
+    item.and_then(|item| items.iter().position(|entry| *entry == item)).map_or(0.0, |i| (i + 1) as f64)
+}
+
+struct ScaleProbeFrame {
+    initial_types: Vec<f64>,
+    vertices: Vec<VertexId>,
+    edges: Vec<solidcore::EdgeId>,
+    faces: Vec<FaceId>,
+    shells: Vec<solidcore::ShellId>,
+    regions: Vec<solidcore::topology::RegionId>,
+    edgeuses: Vec<solidcore::topology::EdgeuseId>,
+    faceuses: Vec<(Option<solidcore::topology::FaceuseId>, Option<solidcore::topology::FaceuseId>)>,
+}
+
+impl ScaleProbeFrame {
+    fn new(k: &mut Kernel, body: &Brep) -> solidcore::Result<Self> {
+        use solidcore::topology::brep::p1 as bp;
+        let vertices = bp::vertices(body, None)?;
+        let edges = bp::edges(body, None)?;
+        let faces = bp::faces(body, None)?;
+        let shells = bp::shells(k, body, None)?;
+        let regions = bp::regions(body, None)?;
+        let mut initial_types = Vec::new();
+        for edge in &edges { initial_types.push(body.edge(*edge)?.curve.as_ref().map_or(0, Curve::type_code) as f64); }
+        for face in &faces { initial_types.push(body.face(*face)?.surface.as_ref().map_or(0, Surface::type_code) as f64); }
+        let mut edgeuses = Vec::new();
+        for edge in &edges { edgeuses.extend(solidcore::topology::edge::edgeuses(body, *edge, None, None)?); }
+        let faceuses = faces.iter().map(|face| solidcore::topology::face::p2::faceuses(body, *face)).collect::<solidcore::Result<Vec<_>>>()?;
+        Ok(Self { initial_types, vertices, edges, faces, shells, regions, edgeuses, faceuses })
+    }
+}
+
+fn append_scale_probe(body: &Brep, frame: &ScaleProbeFrame, out: &mut Vec<f64>) -> solidcore::Result<()> {
+    use solidcore::topology::edgeuse::p1 as eu;
+    out.extend([frame.shells.len() as f64, frame.regions.len() as f64]);
+    for edge in &frame.edges {
+        let record = body.edge(*edge)?;
+        out.push(record.curve.as_ref().map_or(0, Curve::type_code) as f64);
+        let uses = solidcore::topology::edge::edgeuses(body, *edge, None, None)?;
+        out.push(uses.len() as f64);
+        for id in uses {
+            let use_ = body.edgeuse(id)?;
+            let vertex = eu::vertexuse(body, id)?.map(|v| body.vertexuse(v)).transpose()?.and_then(|v| v.vertex);
+            out.extend([traversal_label(&frame.edgeuses, Some(id)), f64::from(use_.orientation as u8),
+                traversal_label(&frame.vertices, vertex), traversal_label(&frame.edgeuses, eu::mate(body, id)?),
+                traversal_label(&frame.edgeuses, eu::radial(body, id)?), traversal_label(&frame.faces, eu::face(body, id)?)]);
+        }
+    }
+    for (face, pair) in frame.faces.iter().zip(&frame.faceuses) {
+        let record = body.face(*face)?;
+        out.push(record.surface.as_ref().map_or(0, Surface::type_code) as f64);
+        for id in [pair.0, pair.1] {
+            if let Some(id) = id {
+                let use_ = body.faceuse(id)?;
+                let region = eu::faceuse_region(body, id)?;
+                out.extend([1.0, f64::from(use_.orientation as u8), traversal_label(&frame.shells, use_.shell), traversal_label(&frame.regions, region),
+                    region.map(|r| body.region(r)).transpose()?.map_or(-1.0, |r| f64::from(r.is_void))]);
+            } else { out.extend([0.0, 0.0, 0.0, 0.0, -1.0]); }
+        }
+    }
+    Ok(())
+}
+
+fn constructed_transform_body(k: &mut Kernel, obj: &TObjIn) -> Result<Brep, Fail> {
+    Ok(match obj {
+        TObjIn::PrimitiveBox {
+            origin,
+            size: [x, y, z],
+        }
+        | TObjIn::CopiedBox {
+            origin,
+            size: [x, y, z],
+        } => st(solidcore::primitive::api_primitives::create_box(
+            k,
+            v3(*origin),
+            *x,
+            *y,
+            *z,
+        ))?
+        .map_err(|code| harness(format!("box construction status {code}")))?,
+        TObjIn::PrimitiveSphere { origin, radius } | TObjIn::CopiedSphere { origin, radius } => st(
+            solidcore::primitive::api_primitives::create_sphere(k, v3(*origin), *radius),
+        )?
+        .map_err(|code| harness(format!("sphere construction status {code}")))?,
+        TObjIn::PrimitiveCylinder { origin, radius, height } => st(solidcore::primitive::api_primitives::create_cylinder(k, v3(*origin), *radius, *height))?.map_err(|code| harness(format!("cylinder construction status {code}")))?,
+        TObjIn::PrimitiveCone { origin, radii: [base, top], height } => st(solidcore::primitive::api_primitives::create_cone(k, v3(*origin), *base, *top, *height))?.map_err(|code| harness(format!("cone construction status {code}")))?,
+        TObjIn::PrimitiveTorus { origin, radii: [major, minor] } => st(solidcore::primitive::api_primitives::create_torus(k, v3(*origin), *major, *minor))?.map_err(|code| harness(format!("torus construction status {code}")))?,
+        TObjIn::CallerFace { origin, size: [width, height] } | TObjIn::ExtrusionFace { origin, size: [width, height] } => {
+            let mut body = st(solidcore::topology::brep::p3::new_brep(k, solidcore::geom::tol::USE_DEFAULT, solidcore::geom::tol::USE_DEFAULT))?
+                .map_err(|code| harness(format!("caller body status {code}")))?;
+            let keys = |entity| {
+                let named = solidcore::topology::brep::p3::topology_ref(0, entity);
+                ObjectRef { type_code: named.type_code, key: ObjectKey(named.type_code as u64 * 1_000_000 + (named.key.0 & 0xffff_ffff)) }
+            };
+            let mut state = solidcore::topology::brep::p2::ArenaNotifyState::new(&body);
+            let mut env = state.env(None);
+            env.key_of = &keys;
+            let this_face = |face| keys(EntityRef::Face(face));
+            let mut marks = solidcore::topology::topology_traverser::Marks::default();
+            let mut fenv = solidcore::topology::brep::p8::FaceBuildEnv { env: &mut env, marks: &mut marks, this_face: &this_face };
+            let (surface, domain) = if matches!(obj, TObjIn::ExtrusionFace { .. }) {
+                let [x, y, z] = *origin;
+                let generator = build_curve(&CurveIn::Bspline(BSplineIn {
+                    dim: 3, oob: false, p: 2,
+                    cpts: vec![[x, y, z, 1.0], [x + *width / 2.0, y + 1.0, z, 1.0], [x + *width, y, z, 1.0]],
+                    u: vec![0.0, 0.0, 0.0, 1.0, 1.0, 1.0],
+                }))?;
+                let domain = Extent2d::from_bounds(0.0, 0.0, 1.0, *height);
+                let mut extrusion = st(solidcore::surface::surf_of_extrusion::p1::SurfOfExtrusion::new(
+                    k, generator, v3(*origin), Vec3::new(0.0, 0.0, 1.0), domain, false))?
+                    .map_err(|code| harness(format!("extrusion construction status {code}")))?;
+                st(extrusion.make_nurb(k))?
+                    .map_err(|code| harness(format!("extrusion NURB status {code}")))?;
+                (Surface::from(extrusion), domain)
+            } else {
+                (Surface::from(Plane::from_normal(v3(*origin), Vec3::new(0.0, 0.0, 1.0))),
+                    Extent2d::from_bounds(0.0, 0.0, *width, *height))
+            };
+            st(solidcore::topology::brep::p8::create_face_from_surface(k, &mut body,
+                Some(surface), &domain, &mut fenv))?
+                .map_err(|code| harness(format!("caller face status {code}")))?;
+            body
+        }
+        _ => return Err(harness("sequence requires constructed geometry").into()),
+    })
+}
+
+fn apply_transform_op(
+    k: &mut Kernel,
+    target: Option<TransformObject<'_>>,
+    op: &TOpIn,
+) -> solidcore::Result<()> {
+    match op {
+        TOpIn::Transform { o, x, y } => {
+            let pl = Axis2Placement::new(v3(*o), v3(*x), v3(*y));
+            api::api_transform(k, target, &pl)
+        }
+        TOpIn::Scale { s } => api::api_scale(k, target, v3(*s)),
+        TOpIn::ScaleByPt { r, s } => api::api_scale_by_pt(k, target, v3(*r), v3(*s)),
+        TOpIn::Translate { v } => api::api_translate(k, target, v3(*v)),
+        TOpIn::Rotate { r, a, deg } => api::api_rotate(k, target, v3(*r), v3(*a), *deg),
+    }
+}
+
+fn transform_status(res: solidcore::Result<()>) -> Result<f64, Fail> {
+    Ok(match res {
+        Ok(()) => SM_SUCCESS,
+        Err(e) => match Output::unported(&e) {
+            Some(d) => return Err(Fail::Deferred(Box::new(d))),
+            None => match e {
+                SolidError::InvalidInput { .. } | SolidError::PortInvariant { .. } => 1007.0,
+                e => status(&e),
+            },
+        },
+    })
+}
+
+fn append_constructed_transform_record(
+    k: &Kernel,
+    brep: &Brep,
+    o: &mut Vec<f64>,
+) -> Result<(), Fail> {
+    let vertices =
+        solidcore::topology::brep::p1::vertices(brep, None).map_err(|e| harness(e.to_string()))?;
+    let edges =
+        solidcore::topology::brep::p1::edges(brep, None).map_err(|e| harness(e.to_string()))?;
+    let faces =
+        solidcore::topology::brep::p1::faces(brep, None).map_err(|e| harness(e.to_string()))?;
+    o.extend([
+        vertices.len() as f64,
+        edges.len() as f64,
+        faces.len() as f64,
+        brep.this_model_size_estimate(k, false),
+    ]);
+    st(crate::util::primitive::append(k, brep, o))?
+        .map_err(|code| harness(format!("solid geometry status {code}")))?;
+    for face in faces {
+        o.push(f64::from(
+            brep.face(face)
+                .map_err(|e| harness(e.to_string()))?
+                .rectangular_trim,
+        ));
+    }
+    Ok(())
+}
+
+fn run_transform_sequence(obj: &TObjIn, ops: &[TOpIn]) -> Result<Vec<f64>, Fail> {
+    if !(2..=8).contains(&ops.len()) {
+        return Err(harness("transform sequence length").into());
+    }
+    if !matches!(
+        obj,
+        TObjIn::PrimitiveCylinder { .. } | TObjIn::PrimitiveCone { .. } | TObjIn::PrimitiveTorus { .. } | TObjIn::PrimitiveBox { .. } | TObjIn::PrimitiveSphere { .. } | TObjIn::CallerFace { .. } | TObjIn::ExtrusionFace { .. }
+    ) {
+        return Err(harness("sequence requires constructed geometry").into());
+    }
+    let mut k = Kernel::default();
+    let mut brep = constructed_transform_body(&mut k, obj)?;
+    let mut out = vec![ops.len() as f64];
+    for op in ops {
+        let status = transform_status(apply_transform_op(
+            &mut k,
+            Some(TransformObject::Brep(&mut brep)),
+            op,
+        ))?;
+        let mut record = Vec::new();
+        append_constructed_transform_record(&k, &brep, &mut record)?;
+        out.extend([status, record.len() as f64]);
+        out.extend(record);
+    }
+    Ok(out)
+}
+
+fn run_transform(obj: &TObjIn, op: &TOpIn, probe: bool) -> Result<Vec<f64>, Fail> {
     let mut k = Kernel::default();
     let mut curve = None;
     let mut surface = None;
@@ -4228,7 +5219,7 @@ fn run_transform(obj: &TObjIn, op: &TOpIn) -> Result<Vec<f64>, Fail> {
                 &k,
                 Point2::new(a[0], a[1]),
                 Point2::new(bb[0], bb[1]),
-                bs,
+                Surface::from(bs),
                 None,
                 0,
             )
@@ -4258,7 +5249,35 @@ fn run_transform(obj: &TObjIn, op: &TOpIn) -> Result<Vec<f64>, Fail> {
         brep: b,
         env: &mut env,
     });
-    let mut brep = Brep::new();
+    let mut brep = if matches!(obj, TObjIn::PrimitiveCylinder { .. } | TObjIn::PrimitiveCone { .. } | TObjIn::PrimitiveTorus { .. } | TObjIn::PrimitiveBox { .. } | TObjIn::PrimitiveSphere { .. } | TObjIn::CallerFace { .. } | TObjIn::ExtrusionFace { .. } | TObjIn::CopiedBox { .. } | TObjIn::CopiedSphere { .. }) {
+        constructed_transform_body(&mut k, obj)?
+    } else { Brep::new() };
+    let copied = matches!(obj, TObjIn::CopiedBox { .. } | TObjIn::CopiedSphere { .. });
+    let mut source = None;
+    let mut source_before = Vec::new();
+    if copied {
+        st(crate::util::primitive::append(&k, &brep, &mut source_before))?
+            .map_err(|code| harness(format!("source geometry status {code}")))?;
+        let source_key = |entity| {
+            let named = solidcore::topology::brep::p3::topology_ref(0, entity);
+            ObjectRef { type_code: named.type_code, key: ObjectKey(named.type_code as u64 * 1_000_000 + (named.key.0 & 0xffff_ffff)) }
+        };
+        let target_key = |entity| {
+            let named = source_key(entity);
+            ObjectRef { type_code: named.type_code, key: ObjectKey(named.key.0 + 100_000_000) }
+        };
+        let mut state = solidcore::topology::brep::p2::ArenaNotifyState::new(&Brep::new());
+        let mut copy_env = state.env(None);
+        copy_env.key_of = &target_key;
+        let copy = st(solidcore::topology::brep::p3::api_brep_copy(&mut k, &mut copy_env, Some(&brep), &source_key))?
+            .map_err(|code| harness(format!("copy status {code}")))?;
+        source = Some(brep);
+        brep = copy;
+    }
+    let probe_frame = if probe {
+        Some(st(ScaleProbeFrame::new(&mut k, &brep))?
+            .map_err(|code| harness(format!("scale frame status {code}")))?)
+    } else { None };
     let target = match obj {
         TObjIn::Composite { .. } | TObjIn::CrvOnSurf { .. } => {
             special.as_mut().map(TransformObject::Curve)
@@ -4267,39 +5286,36 @@ fn run_transform(obj: &TObjIn, op: &TOpIn) -> Result<Vec<f64>, Fail> {
         TObjIn::Plane { .. } | TObjIn::Bsurf { .. } => {
             surface.as_mut().map(TransformObject::Surface)
         }
-        TObjIn::Brep => Some(TransformObject::Brep(&mut brep)),
+        TObjIn::Brep | TObjIn::PrimitiveCylinder { .. } | TObjIn::PrimitiveCone { .. } | TObjIn::PrimitiveTorus { .. } | TObjIn::PrimitiveBox { .. } | TObjIn::PrimitiveSphere { .. } | TObjIn::CallerFace { .. } | TObjIn::ExtrusionFace { .. } | TObjIn::CopiedBox { .. } | TObjIn::CopiedSphere { .. } => Some(TransformObject::Brep(&mut brep)),
         TObjIn::Poly | TObjIn::PolyPts { .. } => poly_target
             .as_mut()
             .map(|t| TransformObject::PolyBrep(t as &mut dyn PolyBrepTransform)),
         TObjIn::Other => Some(TransformObject::Other),
         TObjIn::Null => None,
     };
-    let res = match op {
-        TOpIn::Transform { o, x, y } => {
-            let pl = Axis2Placement::new(v3(*o), v3(*x), v3(*y));
-            api::api_transform(&mut k, target, &pl)
-        }
-        TOpIn::Scale { s } => api::api_scale(&mut k, target, v3(*s)),
-        TOpIn::ScaleByPt { r, s } => api::api_scale_by_pt(&mut k, target, v3(*r), v3(*s)),
-        TOpIn::Translate { v } => api::api_translate(&mut k, target, v3(*v)),
-        TOpIn::Rotate { r, a, deg } => api::api_rotate(&mut k, target, v3(*r), v3(*a), *deg),
-    };
-    let s = match res {
-        Ok(()) => SM_SUCCESS,
-        Err(e) => match Output::unported(&e) {
-            Some(d) => return Err(Fail::Deferred(Box::new(d))),
-            None => match e {
-                SolidError::InvalidInput { .. } => 1007.0,
-                e => status(&e),
-            },
-        },
-    };
+    let s = transform_status(apply_transform_op(&mut k, target, op))?;
     let mut o = vec![s];
+    if let Some(frame) = &probe_frame {
+        o.push(frame.initial_types.len() as f64);
+        o.extend_from_slice(&frame.initial_types);
+    }
+    if matches!(obj, TObjIn::PrimitiveCylinder { .. } | TObjIn::PrimitiveCone { .. } | TObjIn::PrimitiveTorus { .. } | TObjIn::PrimitiveBox { .. } | TObjIn::PrimitiveSphere { .. } | TObjIn::CallerFace { .. } | TObjIn::ExtrusionFace { .. } | TObjIn::CopiedBox { .. } | TObjIn::CopiedSphere { .. }) {
+        append_constructed_transform_record(&k, &brep, &mut o)?;
+    }
+    if let Some(frame) = probe_frame {
+        st(append_scale_probe(&brep, &frame, &mut o))?
+            .map_err(|code| harness(format!("scale probe status {code}")))?;
+    }
+    if let Some(source) = source {
+        o.extend(source_before);
+        st(crate::util::primitive::append(&k, &source, &mut o))?
+            .map_err(|code| harness(format!("source geometry status {code}")))?;
+    }
     if let Some(c) = &curve {
-        put_curve(&mut o, c);
+        put_curve(&k, &mut o, c);
     }
     if let Some(sf) = &surface {
-        put_surface(&mut o, sf);
+        put_surface(&k, &mut o, sf);
     }
     if let Some(b) = &poly {
         // the poly B-rep's tolerance, then each vertex's point and tolerance
@@ -4329,7 +5345,9 @@ pub(super) fn rust_run(s: &Script) -> Result<Vec<f64>, Fail> {
             override_tol,
             ops,
         } => run_proto(objects, *approx_tol, *capture, *override_tol, ops),
-        Script::Transform { obj, op } => run_transform(obj, op),
+        Script::Transform { obj, op } => run_transform(obj, op, false),
+        Script::ScaleProbe { obj, op } => run_transform(obj, op, true),
+        Script::TransformSequence { obj, ops } => run_transform_sequence(obj, ops),
     }
 }
 
@@ -6416,6 +7434,47 @@ impl UnitDiff for Runner {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn manager_classifications_keep_the_actual_body_in_region_identity() {
+        let k = Kernel::default();
+        let first = H(100_000, ClassObjectKind::Other);
+        let second = H(100_001, ClassObjectKind::Other);
+        let mut pool = Pool {
+            objs: Vec::new(),
+            kinds: Vec::new(),
+            alive: Vec::new(),
+            topo: TopoRecords::default(),
+            breps: vec![
+                (first, Brep::new_with_infinite_region().unwrap()),
+                (second, Brep::new_with_infinite_region().unwrap()),
+            ],
+            external_topology: Vec::new(),
+            owned_faces: Vec::new(),
+        };
+        let classify = |pool: &mut Pool, body| {
+            pool.brep_point_3d_classify(&k, body, Vec3::new(2.0, -3.0, 7.0), 1e-5, true)
+                .unwrap()
+        };
+        let a = classify(&mut pool, first);
+        let b = classify(&mut pool, second);
+        assert_eq!(a.point_class(), PointClassType::Region);
+        assert_eq!(b.point_class(), PointClassType::Region);
+        assert_ne!(a.object(), b.object());
+        assert_eq!(a.object(), classify(&mut pool, first).object());
+        assert_eq!(pool.id(a.object()), -2.0);
+        assert_eq!(pool.id(b.object()), -2.0);
+        assert!(matches!(
+            pool.brep_point_3d_classify(
+                &k,
+                H(100_002, ClassObjectKind::Other),
+                Vec3::ZERO,
+                1e-5,
+                true,
+            ),
+            Err(SolidError::InvalidInput { .. })
+        ));
+    }
 
     /// Generated scripts are accepted by the ffi checks, and most of them are comparable
     /// (not deferred) and get past their first few ops.

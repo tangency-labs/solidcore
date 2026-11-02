@@ -9,14 +9,23 @@ use solidcore::SolidError;
 /// * `values`: floating-point arrays, compared with the 1e-9 relative rule.
 /// * `ints`: integer arrays (indices, counts, flags), compared exactly.
 /// * `topology`: compared exactly (same counts and order).
-/// * `error`: a normalised error string; if either side errors, both must
-///   report the same string (values are then not compared).
+/// * `error`: the operation's status: `None` is success, otherwise a normalised
+///   error string (upstream `SmStatus` on the C++ side, `SolidError` mapped the
+///   same way on the Rust side). It is always compared: if either side errors,
+///   both must report the same string (values are then not compared). A runner
+///   must never turn a Rust `Err` into an empty or default output (see
+///   [`Output::from_result`]); a pass that compared nothing but this status is
+///   counted as *vacuous* in the summary line.
 /// * `deferred`: set only by the Rust side (via [`Output::deferred`] or
 ///   [`Output::unported`]) when the port reached code that is not ported yet
 ///   ([`SolidError::Unported`]). The case is then *deferred*: neither pass nor
 ///   fail, and nothing is compared (AGENTS.md section 4a).
 /// * `rejected`: set by the C++ side only when fixture construction failed before
-///   the operation ran. No Rust call or parity comparison is made.
+///   the operation ran, or an FFI guard or crash trap refused an input that is
+///   undefined in C++ (AGENTS.md section 4, step 5.6). No Rust call or parity
+///   comparison is made. (A `deferred` from the C++ side is a harness error.)
+/// * `diagnostics`: named counts the Rust side reports for the record (e.g. arena
+///   records no walk reaches); written to the report, never compared.
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct Output {
     /// Named float arrays.
@@ -31,6 +40,9 @@ pub struct Output {
     pub deferred: Option<Deferred>,
     /// The native fixture constructor rejected the input before the operation ran.
     pub rejected: Option<String>,
+    /// Rust-side diagnostics for the report (never compared); boxed, as most outputs
+    /// have none.
+    pub diagnostics: Option<Box<BTreeMap<String, i64>>>,
 }
 
 /// Why a case is deferred: the unported upstream callee and the unit that will port it.
@@ -43,6 +55,20 @@ pub struct Deferred {
 }
 
 impl Output {
+    /// Adds a Rust-side diagnostic count (written to the report, never compared).
+    #[must_use]
+    pub fn diagnostic(mut self, key: &str, v: i64) -> Self {
+        self.diagnostics
+            .get_or_insert_with(Box::default)
+            .insert(key.to_string(), v);
+        self
+    }
+
+    /// The diagnostic `key`, if the Rust side reported one.
+    pub fn diagnostic_value(&self, key: &str) -> Option<i64> {
+        self.diagnostics.as_ref().and_then(|d| d.get(key).copied())
+    }
+
     /// Empty output.
     pub fn new() -> Self {
         Self::default()
@@ -84,6 +110,23 @@ impl Output {
         match e {
             SolidError::Unported { upstream, unit } => Some(Self::deferred(*unit, *upstream)),
             _ => None,
+        }
+    }
+
+    /// Maps a Rust-side result to an output so that the operation's status is always
+    /// compared: `Ok(v)` becomes `ok(v)`; `Unported` defers the case; any other error
+    /// becomes [`Output::err`]`(normalise(&e))`, which the C++ side must match with the
+    /// same normalised status (a C++ success against a Rust error fails, even when both
+    /// outputs would otherwise be empty). Never map an `Err` to an empty or default
+    /// output instead: that turns a Rust failure into a vacuous pass.
+    pub fn from_result<T>(
+        r: solidcore::Result<T>,
+        normalise: impl FnOnce(&SolidError) -> String,
+        ok: impl FnOnce(T) -> Self,
+    ) -> Self {
+        match r {
+            Ok(v) => ok(v),
+            Err(e) => Self::unported(&e).unwrap_or_else(|| Self::err(normalise(&e))),
         }
     }
 

@@ -22,7 +22,7 @@
 //! | [`Curve::scale_cpts`]                   | `N_CrvScaleCPts`                |
 //! | [`Curve::translate`]                    | `N_CrvTranslate`                |
 //! | [`Curve::project_onto_plane`], [`Projection`] | `N_CrvProjectOntoPlane` (`NL_PARALLEL` / `NL_PERSPECTIVE`) |
-//! | [`Curve::reverse`] / [`Curve::reversed`] | `N_CrvReverse` (in place / into a new curve) |
+//! | [`Curve::reverse`] / [`Curve::reversed`] | `N_CrvReverse` (in place / into a new curve; knots by `NI_ReverseKnots`) |
 //! | [`Curve::bbox_max_diag_dist`]           | `N_CrvGetBBoxMaxDiagDist`       |
 //! | [`Curve::max_pos_vector`]               | `N_CrvGetMaxPosVector`          |
 //! | [`Curve::linear_segs`], [`LinearSeg`]   | `N_CrvGetLinearSegs`            |
@@ -61,6 +61,10 @@
 //!   as upstream; missing tolerances (upstream reads past `tols`) are `InvalidInput`.
 //! - The `NL_CAL_ERR` paths of unknown `NL_PARALLEL` / `NL_PERSPECTIVE` and
 //!   `NL_LEFT` / `NL_RIGHT` flags cannot be expressed with [`Projection`] / [`Side`].
+//! - A degree above [`MAX_SHORT_DEGREE`](crate::nurbs::bezier::MAX_SHORT_DEGREE)
+//!   (impossible upstream, where `NL_DEGREE` is a `short`) is
+//!   [`SolidError::InvalidInput`], so index arithmetic and allocations sized from the
+//!   degree cannot overflow.
 
 // Branches keep upstream's `if( x NEQ NL_NOZ ) ... else ...` order for traceability.
 #![allow(clippy::if_not_else)]
@@ -68,6 +72,7 @@
 use crate::error::{NlibCode, Result, SolidError};
 use crate::math::Vec3;
 use crate::nurbs::basis_basic::PTOL;
+use crate::nurbs::bezier::check_short_degree;
 use crate::nurbs::crv_basic::Curve;
 use crate::nurbs::crv_geom::ToleranceKind;
 use crate::nurbs::geom::{
@@ -273,6 +278,7 @@ impl Curve {
         const OP: &str = "nurbs::crv_nurb::Curve::eval";
         let knt = self.knot_vector()?;
         let pw = self.cpts();
+        check_short_degree(self.degree(), OP)?;
         let p = sx(self.degree(), OP)?;
 
         // Check parameter.
@@ -280,15 +286,15 @@ impl Curve {
             return Err(SolidError::nlib(OP, NlibCode::Parameter));
         }
 
-        // Compute non-vanishing B-splines.
-        let basis = knt.basis_eval(self.degree(), u, side)?;
-        let spn = sx(basis.span, OP)?;
+        // Compute non-vanishing B-splines (on the stack, as upstream's `N`).
+        let mut n = [0.0_f64; MAX_DEGREE + 2];
+        let spn = sx(knt.basis_eval_into(self.degree(), u, side, &mut n)?, OP)?;
 
         // Compute the point on the curve.
         let mut cw = CPoint::new(0.0, 0.0, 0.0, 0.0);
         let j = spn - p;
         for i in j..=spn {
-            let alpha = get(&basis.values, i - j, OP)?;
+            let alpha = get(&n, i - j, OP)?;
             let q = get(pw, i, OP)?;
             cw.x += alpha * q.x;
             cw.y += alpha * q.y;
@@ -324,6 +330,7 @@ impl Curve {
         const OP: &str = "nurbs::crv_nurb::Curve::derivs";
         const NP: usize = MAX_DEGREE + 1;
         let pu = self.degree();
+        check_short_degree(pu, OP)?;
         let p = sx(pu, OP)?;
         let knt = self.knot_vector()?;
         let uk = self.knots();
@@ -687,20 +694,16 @@ impl Curve {
     }
 
     /// Reverses the curve in place (`N_CrvReverse` with `curQ == curP`): control
-    /// points swapped end for end, interior knots `U[p+i]` and `U[m-p-i]` exchanged
-    /// as `c - U`, `c = U[0] + U[m]`; the `p + 1` end knots are kept.
+    /// points swapped end for end and the knots reversed by
+    /// [`reverse_knots`](crate::geom::a_object::reverse_knots) (`NI_ReverseKnots`).
     ///
     /// Errors with `InvalidInput` (the curve may then be partly reversed) only for
     /// knot vectors shorter than upstream indexes.
     pub fn reverse(&mut self) -> Result<()> {
         const OP: &str = "nurbs::crv_nurb::Curve::reverse";
-        let p = sx(self.degree(), OP)?;
+        check_short_degree(self.degree(), OP)?;
         let n = sx(self.n(), OP)?;
-        let m = sx(self.m(), OP)?;
-
-        // Prepare for reversal.
-        let up = self.knots();
-        let c = get(up, 0, OP)? + get(up, m, OP)?;
+        let m = self.m();
 
         // Reverse curve.
         let pw = self.cpts_mut();
@@ -711,48 +714,32 @@ impl Curve {
             set(pw, i, b, OP)?;
             set(pw, n - i, a, OP)?;
         }
-        let up = self.knots_mut();
-        let k = m / 2 - p;
-        for i in 1..=k {
-            let a = get(up, m - p - i, OP)?;
-            let v = c - get(up, p + i, OP)?;
-            set(up, m - p - i, v, OP)?;
-            set(up, p + i, c - a, OP)?;
-        }
-        Ok(())
+        // (each pair of the in-place knot reversal is read before it is written, so
+        // reversing from a copy gives the same knots)
+        let up = self.knots().to_vec();
+        crate::geom::a_object::reverse_knots(&up, m, self.knots_mut())
     }
 
     /// The reversed curve (`N_CrvReverse` into a new curve): control points in reverse
-    /// order, the first and last `p + 1` knots copied, interior knots
-    /// `UQ[m-p-i] = c - U[p+i]`, `c = U[0] + U[m]`.
+    /// order and the knots reversed by
+    /// [`reverse_knots`](crate::geom::a_object::reverse_knots) (`NI_ReverseKnots`).
     ///
     /// Errors with `InvalidInput` when the knots do not match the control points as
-    /// upstream indexes them (`n + p + 1 > m`).
+    /// upstream indexes them.
     pub fn reversed(&self) -> Result<Curve> {
         const OP: &str = "nurbs::crv_nurb::Curve::reversed";
-        let p = sx(self.degree(), OP)?;
+        check_short_degree(self.degree(), OP)?;
         let n = sx(self.n(), OP)?;
-        let m = sx(self.m(), OP)?;
         let pw = self.cpts();
         let up = self.knots();
         let mut qw = vec![CPoint::default(); self.n() + 1];
         let mut uq = vec![0.0; self.m() + 1];
 
-        // Prepare for reversal.
-        let c = get(up, 0, OP)? + get(up, m, OP)?;
-        for i in 0..=p {
-            set(&mut uq, i, get(up, i, OP)?, OP)?;
-            set(&mut uq, n + i + 1, get(up, n + i + 1, OP)?, OP)?;
-        }
-
         // Reverse curve.
         for i in 0..=n {
             set(&mut qw, i, get(pw, n - i, OP)?, OP)?;
         }
-        let k = m - 2 * p - 1;
-        for i in 1..=k {
-            set(&mut uq, m - p - i, c - get(up, p + i, OP)?, OP)?;
-        }
+        crate::geom::a_object::reverse_knots(up, self.m(), &mut uq)?;
         Curve::new(qw, self.degree(), uq).map_err(|_| oob(OP))
     }
 
@@ -794,6 +781,7 @@ impl Curve {
         const OP: &str = "nurbs::crv_nurb::Curve::linear_segs";
         let pw = self.cpts();
         let uk = self.knots();
+        check_short_degree(self.degree(), OP)?;
         let p = sx(self.degree(), OP)?;
         let m = sx(self.m(), OP)?;
 
@@ -909,6 +897,7 @@ impl Curve {
     /// Errors with the errors of [`Curve::eval`] and [`Curve::arc_length`].
     pub fn degen_segs(&self, tol: f64) -> Result<Vec<(f64, f64)>> {
         const OP: &str = "nurbs::crv_nurb::Curve::degen_segs";
+        check_short_degree(self.degree(), OP)?;
         let p = sx(self.degree(), OP)?;
         let uk = self.knots();
         let m = sx(self.m(), OP)?;
@@ -990,6 +979,7 @@ impl Curve {
         const OP: &str = "nurbs::crv_nurb::Curve::get_type";
         let pw = self.cpts();
         let uk = self.knots();
+        check_short_degree(self.degree(), OP)?;
         let p = sx(self.degree(), OP)?;
         let n = sx(self.n(), OP)?;
         let m = sx(self.m(), OP)?;
@@ -1540,5 +1530,19 @@ mod tests {
         let mut r = quarter();
         r.reparam(2.0, 4.0).unwrap();
         assert_eq!(r.knots(), &[2.0, 2.0, 2.0, 4.0, 4.0, 4.0]);
+    }
+
+    /// Fuzz regression: a huge degree overflowed the index arithmetic of
+    /// `get_type` and `linear_segs`.
+    #[test]
+    fn huge_degree_is_an_error() {
+        let c = quarter();
+        for p in [1usize << 31, i64::MAX as usize, usize::MAX] {
+            let h = Curve::new(c.cpts().to_vec(), p, c.knots().to_vec()).unwrap();
+            let r = h.get_type(1e-6);
+            assert!(matches!(r, Err(SolidError::InvalidInput { .. })), "{r:?}");
+            let r = h.linear_segs(1e-6);
+            assert!(matches!(r, Err(SolidError::InvalidInput { .. })), "{r:?}");
+        }
     }
 }

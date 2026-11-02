@@ -70,15 +70,15 @@
 //!   from a UV point to the x and y of the last 3D sample point when picking the
 //!   seam-side solution, as upstream does.
 //! - **Unported callees** return [`SolidError::Unported`] (see the `UNPORTED`
-//!   markers): `SmSurface::DropCurve` (`intersect.surface_drop_lib_p3`) except the
-//!   plane override. The surface point solves defer inside their own units
-//!   (`LocalPointSolve_1`, `GlobalPointSolve_1`). An
-//!   `SmCrvOnSurf` over a surface that is not a B-spline surface is a dispatch gap
-//!   of `curve.crv_on_surf` (the ported curve holds an `SmBSplineSurface`).
+//!   markers). `SmSurface::DropCurve` is the plane override for planes and the base
+//!   body ([`Surface::drop_curve_base`]) otherwise. The surface point solves defer
+//!   inside their own units
+//!   (`LocalPointSolve_1`, `GlobalPointSolve_1`).
 //! - The `SM_DEBUG_CODE` drawing blocks and `Dump` are not ported. No recursion
 //!   depends on input; the seam search loop is bounded (19 steps) as upstream.
 
 use crate::curve::crv_on_surf::CrvOnSurf;
+use crate::curve::curve::knots_ignoring_status;
 use crate::curve::curve::p5::make_curve_cache;
 use crate::curve::curve::p8::CurveIntersectOptions;
 use crate::curve::curve::p9::CurveSolveOptions;
@@ -95,6 +95,7 @@ use crate::geom::solution_array::{ObjectKind, Solution, SolutionObject, Solution
 use crate::geom::tol::is_zero;
 use crate::geom::vector2d::{Point2, Vec2};
 use crate::geom::vector3d::{Point3, Vec3};
+use crate::intersect::surface_drop_lib::p3::DropSolveContext;
 use crate::intersect::surface_tracer::{
     flush_curve, trace_curve_base, NextPoint, SurfaceTrace, SurfaceTracer, TraceOutput, TracePoint,
     TracePointId, TracePointType,
@@ -181,9 +182,16 @@ impl SolutionObject for NoObject {
 fn is_singularity(k: &Kernel, surface: &Surface, uv: Point2) -> Result<(bool, SurfParamType)> {
     match surface.kind() {
         SurfaceKind::Plane(p) => Ok(p.is_singularity()),
-        SurfaceKind::BSpline(_)
+
+        SurfaceKind::Cone(_)
+        | SurfaceKind::Sphere(_)
+        | SurfaceKind::Torus(_)
+        | SurfaceKind::BSpline(_)
+        | SurfaceKind::ProceduralBlend(_)
+        | SurfaceKind::BallPatch(_)
         | SurfaceKind::CurveBounded(_)
         | SurfaceKind::SurfOfRevolution(_)
+        | SurfaceKind::SurfOfExtrusion(_)
         | SurfaceKind::Step(_)
         | SurfaceKind::OffsetSurface(_)
         | SurfaceKind::SrfInVolume(_) => {
@@ -221,7 +229,9 @@ fn start_uv(s: &Solution<NoObject>) -> Point2 {
 }
 
 /// `GlobalPointSolve(domain, op, point, tol, pdMaxDropDist, requested, sols)`: the
-/// start parameters of the solutions in order.
+/// start parameters of the solutions in order. `DoTrace` runs with the surface
+/// cache's point testing off (`SmSurfaceDropCurve.cpp:1629`), so the solve must not
+/// build (or classify against) a face-owned surface's trimmed cache.
 #[allow(clippy::too_many_arguments)] // upstream's argument list
 fn surface_global_point_solve(
     k: &Kernel,
@@ -233,7 +243,7 @@ fn surface_global_point_solve(
     max_drop_dist: Option<f64>,
     requested: SolutionRequested,
 ) -> Result<Vec<Point2>> {
-    let sols = surface.global_point_solve::<NoObject>(
+    let sols = surface.global_point_solve_point_test_off::<NoObject>(
         k,
         Some(NoObject),
         uv_domain,
@@ -255,9 +265,16 @@ fn is_on_seam(k: &Kernel, surface: &Surface, uv: Point2) -> Result<Option<Vec<Po
         } else {
             None
         }),
-        SurfaceKind::BSpline(_)
+
+        SurfaceKind::Cone(_)
+        | SurfaceKind::Sphere(_)
+        | SurfaceKind::Torus(_)
+        | SurfaceKind::BSpline(_)
+        | SurfaceKind::ProceduralBlend(_)
+        | SurfaceKind::BallPatch(_)
         | SurfaceKind::CurveBounded(_)
         | SurfaceKind::SurfOfRevolution(_)
+        | SurfaceKind::SurfOfExtrusion(_)
         | SurfaceKind::Step(_)
         | SurfaceKind::OffsetSurface(_)
         | SurfaceKind::SrfInVolume(_) => {
@@ -277,18 +294,47 @@ fn create_iso_parametric_curve(
     value: f64,
     approx_tol: f64,
 ) -> Result<Curve> {
-    match surface.kind() {
+    match surface.kind_with_nurb(k)? {
         SurfaceKind::BSpline(b) => Ok(Curve::from(
             b.create_iso_parametric_curve(k, param, value, IsoCurveOptions::default())?
+                .curve,
+        )),
+        SurfaceKind::ProceduralBlend(pb) => {
+            let b = pb.net();
+            Ok(Curve::from(
+                b.create_iso_parametric_curve(k, param, value, IsoCurveOptions::default())?
+                    .curve,
+            ))
+        }
+        SurfaceKind::BallPatch(bp) => {
+            let b = bp.net();
+            Ok(Curve::from(
+                b.create_iso_parametric_curve(k, param, value, IsoCurveOptions::default())?
+                    .curve,
+            ))
+        }
+        // (SmSurfOfExtrusion inherits the B-spline CreateIsoParametricCurve)
+        SurfaceKind::SurfOfExtrusion(s) => Ok(Curve::from(
+            s.base()
+                .create_iso_parametric_curve(k, param, value, IsoCurveOptions::default())?
                 .curve,
         )),
         SurfaceKind::Plane(p) => Ok(Curve::from(
             p.create_iso_parametric_curve(param, value, None, false)?
                 .curve,
         )),
+        SurfaceKind::Cone(s) => Ok(s
+            .create_iso_parametric_curve(k, param, value, None, false)?
+            .curve),
+        SurfaceKind::Sphere(s) => Ok(s
+            .create_iso_parametric_curve(k, param, value, None, false)?
+            .curve),
         SurfaceKind::SurfOfRevolution(s) => {
             Ok(s.create_iso_parametric_curve(k, param, value, None)?.curve)
         }
+        SurfaceKind::Torus(s) => Ok(s
+            .create_iso_parametric_curve(k, param, value, None, false)?
+            .curve),
         SurfaceKind::CurveBounded(_)
         | SurfaceKind::Step(_)
         | SurfaceKind::OffsetSurface(_)
@@ -316,6 +362,7 @@ struct IsoDrop {
 
 /// `DropIsoCurve(ctx, domain, curve, interval, start_uv, tol, ..)`.
 fn drop_iso_curve(
+    k: &Kernel,
     surface: &Surface,
     uv_domain: &Extent2d,
     curve: &Curve,
@@ -323,7 +370,7 @@ fn drop_iso_curve(
     start_uv: Point2,
     approx_tol: f64,
 ) -> Result<IsoDrop> {
-    let r = surface.drop_iso_curve(uv_domain, curve, interval, start_uv, approx_tol)?;
+    let r = surface.drop_iso_curve(k, uv_domain, curve, interval, start_uv, approx_tol)?;
     Ok(IsoDrop {
         success: r.successful,
         max_dist: r.max_drop_to_surf,
@@ -332,12 +379,23 @@ fn drop_iso_curve(
     })
 }
 
+/// A shorter-lived copy of the face solve context, for one drop.
+fn reborrow<'b, O: SolutionObject>(c: &'b mut DropSolveContext<'_, O>) -> DropSolveContext<'b, O> {
+    DropSolveContext {
+        solver: &mut *c.solver,
+        handle: c.handle,
+    }
+}
+
 /// `DropCurve(ctx, domain, curve, interval, tol, maxDist, maxDev, uvCurves,
 /// bKeepAllDropCurves, NULL, bCreatingUVTrimCurve)` (virtual): the plane override;
 /// other kinds run `SmSurface::DropCurve`. Returns the largest drop distance, the
-/// deviation and the UV curves.
+/// deviation and the UV curves. With the caller's face solve `context` the drop runs
+/// under it; without one, as for [`surface_global_point_solve`] (`DoTrace` runs with
+/// the surface cache's point testing off), the start point drop's `GlobalPointSolve`
+/// keeps its fast-drop solutions unclassified (no face test).
 #[allow(clippy::too_many_arguments)] // upstream's argument list
-fn surface_drop_curve(
+fn surface_drop_curve<O: SolutionObject>(
     k: &Kernel,
     surface: &Surface,
     uv_domain: &Extent2d,
@@ -346,38 +404,47 @@ fn surface_drop_curve(
     approx_tol: f64,
     keep_all: bool,
     creating_uv_trim_curve: bool,
+    context: Option<DropSolveContext<'_, O>>,
 ) -> Result<(f64, f64, Vec<Curve>)> {
-    match surface.kind() {
-        SurfaceKind::Plane(p) => {
-            let r = p.drop_curve(
-                k,
-                uv_domain,
-                curve,
-                interval,
-                approx_tol,
-                keep_all,
-                creating_uv_trim_curve,
-            )?;
-            Ok((r.max_drop_to_surf, r.max_approx_dev, r.uv_curves))
-        }
-        SurfaceKind::BSpline(_)
-        | SurfaceKind::CurveBounded(_)
-        | SurfaceKind::SurfOfRevolution(_)
-        | SurfaceKind::Step(_)
-        | SurfaceKind::OffsetSurface(_)
-        | SurfaceKind::SrfInVolume(_) => {
-            // UNPORTED(intersect.surface_drop_lib_p3): SmSurface::DropCurve
-            Err(SolidError::unported(
-                "SmSurface::DropCurve",
-                "intersect.surface_drop_lib_p3",
-            ))
-        }
-    }
+    // `smsurf_GetSurfaceCache` inside the drop hands back the face's cache of a
+    // face-owned surface: the caller's solve context builds it
+    let r = match context {
+        Some(context) => surface.drop_curve_with_context::<O>(
+            k,
+            uv_domain,
+            curve,
+            interval,
+            approx_tol,
+            keep_all,
+            None,
+            creating_uv_trim_curve,
+            context,
+        )?,
+        // (without one, the start drop keeps its fast-drop solutions unclassified:
+        // `DoTrace` leaves the cache's point testing off)
+        None => surface.drop_curve_face_tested::<O>(
+            k,
+            uv_domain,
+            curve,
+            interval,
+            approx_tol,
+            keep_all,
+            None,
+            creating_uv_trim_curve,
+            None,
+        )?,
+    };
+    Ok((r.max_drop_to_surf, r.max_approx_dev, r.uv_curves))
 }
 
 /// `IsClosed(domain, param)` (default arguments); a failure answers `false`.
-fn is_closed(surface: &Surface, uv_domain: &Extent2d, param: SurfParamType) -> Result<bool> {
-    Ok(ignored(surface.is_closed(uv_domain, param, None, false))?.is_some_and(|r| r.0))
+fn is_closed(
+    k: &Kernel,
+    surface: &Surface,
+    uv_domain: &Extent2d,
+    param: SurfParamType,
+) -> Result<bool> {
+    Ok(ignored(surface.is_closed(k, uv_domain, param, None, false))?.is_some_and(|r| r.0))
 }
 
 // ---- static helpers -----------------------------------------------------------------------
@@ -403,6 +470,7 @@ pub struct PointTest {
 ///
 /// Those of the surface evaluations.
 pub fn test_point(
+    k: &Kernel,
     surface: &Surface,
     uv_domain: &Extent2d,
     uv: Point2,
@@ -411,11 +479,11 @@ pub fn test_point(
 ) -> Result<PointTest> {
     // get Srf[pos normal]
     let clamped = uv_domain.clamp_point(uv);
-    let (surf_pnt, du, dv) = surface.evaluate_1st_derivatives(clamped, true, true)?;
+    let (surf_pnt, du, dv) = surface.evaluate_1st_derivatives(k, clamped, true, true)?;
     let mut norm = du.cross(dv);
     let norm_length_sq = norm.length_squared();
     if norm_length_sq < EFF_ZERO_SQ {
-        norm = surface.evaluate_normal(clamped, Side::Left, Side::Left)?;
+        norm = surface.evaluate_normal(k, clamped, Side::Left, Side::Left)?;
     } else {
         norm /= norm_length_sq.sqrt();
     }
@@ -470,6 +538,7 @@ pub fn add_break(breaks: &mut Vec<f64>, new_break: f64) {
 ///
 /// [`SolidError::Unported`] from the evaluations.
 pub fn is_grazing_intersection(
+    k: &Kernel,
     curve1: &Curve,
     param1: f64,
     curve2: &Curve,
@@ -477,7 +546,7 @@ pub fn is_grazing_intersection(
 ) -> Result<bool> {
     // Method: check tangents.  If parallel, then it's a graze.
     let tangent = |c: &Curve, t: f64| -> Result<Vec3> {
-        Ok(ignored(c.evaluate(t, 1, false, true))?
+        Ok(ignored(c.evaluate(k, t, 1, false, true))?
             .and_then(|pv| pv.get(1).copied())
             .unwrap_or(Vec3::ZERO))
     };
@@ -519,13 +588,14 @@ impl<'s> SurfaceDropCurve<'s> {
     ///
     /// Those of [`SurfaceTracer::new`].
     pub fn new(
+        k: &Kernel,
         surface: &'s Surface,
         uv_domain: &Extent2d,
         curve: &'s Curve,
         interval: &Extent1d,
     ) -> Result<Self> {
         Ok(Self {
-            base: SurfaceTracer::new(surface, uv_domain)?,
+            base: SurfaceTracer::new(k, surface, uv_domain)?,
             curve,
             interval: *interval,
             // currently leaving the following uninitialized (SmExtent1d()/SmExtent2d())
@@ -591,7 +661,7 @@ impl<'s> SurfaceDropCurve<'s> {
 
         // get Curve(crCurrPnt.CurveParam) position and tangent
         let left = self.working_interval.t_left_eval(pnt.curve_parameter);
-        let mut pv = self.curve.evaluate(pnt.curve_parameter, 1, left, true)?;
+        let mut pv = self.curve.evaluate(k, pnt.curve_parameter, 1, left, true)?;
 
         // when curveToDrop tangent is degenerate
         if at(&pv, 1).length_squared() < EFF_ZERO_SQ {
@@ -603,7 +673,7 @@ impl<'s> SurfaceDropCurve<'s> {
             };
 
             // get Curve position and tangent for the moved param value
-            pv = self.curve.evaluate(param, 1, left, true)?;
+            pv = self.curve.evaluate(k, param, 1, left, true)?;
         }
         let (pv0, pv1) = (at(&pv, 0), at(&pv, 1));
 
@@ -614,7 +684,7 @@ impl<'s> SurfaceDropCurve<'s> {
             only_upper_half: true,
             non_zero_tangents: true,
         };
-        let eval = surface.evaluate(uv, 1, 1, flags)?;
+        let eval = surface.evaluate(k, uv, 1, 1, flags)?;
         let ev = |i: usize, j: usize| {
             eval.get(i)
                 .and_then(|r| r.get(j))
@@ -630,7 +700,7 @@ impl<'s> SurfaceDropCurve<'s> {
         // get surfaceNormal
         let mut norm = pnt.surface[1][0].cross(pnt.surface[0][1]);
         if norm.length_squared() < EFF_ZERO_SQ {
-            norm = surface.evaluate_normal(uv, Side::Left, Side::Left)?;
+            norm = surface.evaluate_normal(k, uv, Side::Left, Side::Left)?;
 
             // signal error when unable to get a surfaceNormal
             if norm.length_squared() < EFF_ZERO_SQ {
@@ -670,7 +740,7 @@ impl<'s> SurfaceDropCurve<'s> {
             pnt.curve_uv[1] = p.curve_uv[1];
         } else {
             // get isoParam vector pointing into surf from singular boundary
-            let domain = surface.natural_uv_domain();
+            let domain = surface.natural_uv_domain_with_nurb(k)?;
             let (on_boundary, uv_tang) = domain.is_point_on_boundary(uv, EFF_ZERO_SQRT);
             if !on_boundary {
                 // error - singular surface point not on boundary
@@ -813,6 +883,17 @@ impl<'s> SurfaceDropCurve<'s> {
     ///
     /// Those of the drop.
     pub fn interior_curves(&mut self, k: &Kernel, out: &mut TraceOutput) -> Result<()> {
+        self.interior_curves_in::<NoObject>(k, out, None)
+    }
+
+    /// [`SurfaceDropCurve::interior_curves`] whose drop runs under the caller's face
+    /// solve context.
+    fn interior_curves_in<O: SolutionObject>(
+        &mut self,
+        k: &Kernel,
+        out: &mut TraceOutput,
+        context: Option<DropSolveContext<'_, O>>,
+    ) -> Result<()> {
         if !out.uv_curves.is_empty() {
             return Ok(());
         }
@@ -829,6 +910,7 @@ impl<'s> SurfaceDropCurve<'s> {
             self.base.approx_tol_3d,
             true,
             false,
+            context,
         )?;
 
         for c in uv_curves {
@@ -859,7 +941,7 @@ impl<'s> SurfaceDropCurve<'s> {
         let domain = self.working_uv_domain;
 
         // 3d Pnt to drop = CurveToDrop(NextPnt.CurveParam)
-        let curr_pnt = self.curve.evaluate_point(next.curve_parameter)?;
+        let curr_pnt = self.curve.evaluate_point(k, next.curve_parameter)?;
 
         // Pass the Drop 3dPnt to Surface call along
         let (found_answer, mut solution) =
@@ -897,19 +979,22 @@ impl<'s> SurfaceDropCurve<'s> {
         next.curve_uv[0] = found_pt;
 
         // if SolPoint skipped across surface seam in U dir - report no good sol found
-        if fabs(diff.x) > domain.x_length() / 4.0 && is_closed(surface, &domain, SurfParamType::U)?
+        if fabs(diff.x) > domain.x_length() / 4.0
+            && is_closed(k, surface, &domain, SurfParamType::U)?
         {
             return Ok(None);
         }
 
         // if SolPoint skipped across surface seam in V dir - report no good sol found
-        if fabs(diff.y) > domain.y_length() / 4.0 && is_closed(surface, &domain, SurfParamType::V)?
+        if fabs(diff.y) > domain.y_length() / 4.0
+            && is_closed(k, surface, &domain, SurfParamType::V)?
         {
             return Ok(None);
         }
 
         // Found Point is good when dist between test pt and SurfNormal line starting at SurfPnt is less than ApproxTol
         let t = test_point(
+            k,
             surface,
             &domain,
             found_pt,
@@ -956,11 +1041,7 @@ impl<'s> SurfaceDropCurve<'s> {
         let max_drop_dist = self.curve_is_on_surface.then_some(approx_tol);
 
         // Copy TargetCurve knots into m_pCurveKnotVector
-        self.curve_knot_vector = Some(
-            ignored(curve.knots(None))?
-                .map(|(knots, _)| knots)
-                .unwrap_or_default(),
-        );
+        self.curve_knot_vector = Some(knots_ignoring_status(curve.knots_with_status(k, None))?.0);
 
         // Place targetCurve interval start/end points into m_pCurveBreaks
         let mut breaks = Vec::new();
@@ -971,12 +1052,12 @@ impl<'s> SurfaceDropCurve<'s> {
         // get Curve and Surface Caches
         let curve_cache = match make_curve_cache::<()>(k, curve, None) {
             Ok(c) => c,
-            Err(e) if e.is_unported() => return Err(e),
+            Err(e) if e.is_unported_or_cancelled() => return Err(e),
             Err(_) => return Err(SolidError::null_pointer(OP_BOUNDARY)),
         };
 
         // select tolerance - from curve length or as given when Curve is on Surface
-        let size = curve.approximate_length(&interval, 5, false)?.0;
+        let size = curve.approximate_length(k, &interval, 5, false)?.0;
         let cci_tol = if self.curve_is_on_surface {
             approx_tol
         } else {
@@ -985,11 +1066,11 @@ impl<'s> SurfaceDropCurve<'s> {
 
         // Add TargetSurface natural boundary curves to sIsoCurves array
         let iso = cache.iso_boundary_curves(k, &uv_domain, cci_tol / 3.0)?;
-        let mut iso_curves: Vec<Curve> = iso.curves.iter().cloned().map(Curve::from).collect();
+        let mut iso_curves: Vec<Curve> = iso.curves.to_vec();
 
         // add every Surface U internal continuity boundary to sIsoCurves array
         let u_conts: Vec<ContinuityType> = cache.u_continuities().to_vec();
-        let (u_knots, _) = surface.knots(SurfParamType::U, None)?;
+        let (u_knots, _) = surface.knots_with_nurb(k, SurfParamType::U, None)?;
         for ii in 1..u_conts.len().saturating_sub(1) {
             if is_c0(&u_conts, ii)? {
                 let value = index(&u_knots, ii)?;
@@ -1004,7 +1085,7 @@ impl<'s> SurfaceDropCurve<'s> {
         }
 
         // add every surface V internal continuity boundary to sIsoCurves array
-        let (v_knots, _) = surface.knots(SurfParamType::V, None)?;
+        let (v_knots, _) = surface.knots_with_nurb(k, SurfParamType::V, None)?;
         let v_conts: Vec<ContinuityType> = cache.v_continuities().to_vec();
         for ii in 1..v_conts.len().saturating_sub(1) {
             if is_c0(&v_conts, ii)? {
@@ -1022,9 +1103,10 @@ impl<'s> SurfaceDropCurve<'s> {
         // Add every SurfaceIsoBoundary/TargetCurve intersection into m_pCurveBreaks array
         for (ii, iso_curve) in iso_curves.iter().enumerate() {
             // when boundary curve is degenerate - intersect with point
-            if ignored(iso_curve.is_degenerate(EFF_ZERO, None))? == Some(true) {
-                let pole = ignored(iso_curve.evaluate_point(iso_curve.natural_interval().min()))?
-                    .unwrap_or(Vec3::ZERO);
+            if ignored(iso_curve.is_degenerate(k, EFF_ZERO, None))? == Some(true) {
+                let pole =
+                    ignored(iso_curve.evaluate_point(k, iso_curve.natural_interval().min()))?
+                        .unwrap_or(Vec3::ZERO);
 
                 // DropPoint with SM_SO_INTERSECT avoids an actual drop from off the curve.
                 let dropped = curve.drop_point(
@@ -1087,23 +1169,14 @@ impl<'s> SurfaceDropCurve<'s> {
                     None,
                 ) {
                     Ok(l) => l,
-                    Err(e) if e.is_unported() => return Err(e),
+                    Err(e) if e.is_unported_or_cancelled() => return Err(e),
                     Err(_) => continue,
                 };
 
-                let SurfaceKind::BSpline(bs) = surface.kind() else {
-                    // DISPATCH GAP: SmCrvOnSurf over a non-B-spline SmSurface
-                    // (curve.crv_on_surf, partial; no UNPORTED marker, as in
-                    // intersect::curve_class::p1)
-                    return Err(SolidError::unported(
-                        "SmSurface (non-B-spline) in SmCrvOnSurf",
-                        "curve.crv_on_surf",
-                    ));
-                };
                 let srf_crv = Curve::from(CrvOnSurf::new(
                     k,
                     Curve::from(uv_line),
-                    bs.clone(),
+                    surface.clone_for_evaluation()?,
                     Some(uv_domain),
                     0,
                 )?);
@@ -1152,7 +1225,8 @@ impl<'s> SurfaceDropCurve<'s> {
                 }
 
                 // Skip grazing intersections.  [Reg_091216_S]
-                if !skip && is_grazing_intersection(curve, start0, iso_curve, sol.start.param(1)?)?
+                if !skip
+                    && is_grazing_intersection(k, curve, start0, iso_curve, sol.start.param(1)?)?
                 {
                     skip = true;
                 }
@@ -1166,7 +1240,7 @@ impl<'s> SurfaceDropCurve<'s> {
         }
 
         // Add every curve discontinuity point to breakpoints array
-        let (c_knots, _) = curve.knots(None)?;
+        let (c_knots, _) = curve.knots(k, None)?;
         let conts = curve_cache.continuities();
         for jj in 1..conts.len().saturating_sub(1) {
             if is_c0(conts, jj)? {
@@ -1182,8 +1256,8 @@ impl<'s> SurfaceDropCurve<'s> {
         let mut ii = 1usize;
         while ii < breaks.len() {
             // snap this and last breakpoint parameters to nearby curve knot values
-            let t0 = curve.snap_to_knots(index(&breaks, ii - 1)?, EFF_ZERO_SQRT / 100.0)?;
-            let t1 = curve.snap_to_knots(index(&breaks, ii)?, EFF_ZERO_SQRT / 100.0)?;
+            let t0 = curve.snap_to_knots(k, index(&breaks, ii - 1)?, EFF_ZERO_SQRT / 100.0)?;
+            let t1 = curve.snap_to_knots(k, index(&breaks, ii)?, EFF_ZERO_SQRT / 100.0)?;
 
             // Copy the snapped values back into the array:
             set_index(&mut breaks, ii - 1, t0)?;
@@ -1201,7 +1275,7 @@ impl<'s> SurfaceDropCurve<'s> {
             let ivl = Extent1d::from_min_max(t0, t1);
 
             // Find interval midPoint projection to Surface
-            let mid = curve.evaluate_point(ivl.evaluate(0.5))?;
+            let mid = curve.evaluate_point(k, ivl.evaluate(0.5))?;
             let mid_sols = surface_global_point_solve(
                 k,
                 surface,
@@ -1221,7 +1295,7 @@ impl<'s> SurfaceDropCurve<'s> {
 
             // drop Interval StartPoint to Surface along surface normals
             self.working_interval = ivl;
-            let mut start = curve.evaluate_point(ivl.min())?;
+            let mut start = curve.evaluate_point(k, ivl.min())?;
             let mut solutions = surface_global_point_solve(
                 k,
                 surface,
@@ -1239,8 +1313,8 @@ impl<'s> SurfaceDropCurve<'s> {
 
             // when StartPoint drops to exactly two surface points it may be on a seam
             if solutions.len() == 2 {
-                surf_u_closed = is_closed(surface, &uv_domain, SurfParamType::U)?;
-                surf_v_closed = is_closed(surface, &uv_domain, SurfParamType::V)?;
+                surf_u_closed = is_closed(k, surface, &uv_domain, SurfParamType::U)?;
+                surf_v_closed = is_closed(k, surface, &uv_domain, SurfParamType::V)?;
                 if surf_u_closed || surf_v_closed {
                     at_seam = true;
                 }
@@ -1248,7 +1322,7 @@ impl<'s> SurfaceDropCurve<'s> {
 
             // when StartPoint dropped to more than 1 surface points and not a seam - we are probably on a surface singularity
             if solutions.len() > 1 && !at_seam {
-                start = curve.evaluate_point(ivl.evaluate(0.001))?;
+                start = curve.evaluate_point(k, ivl.evaluate(0.001))?;
                 solutions = surface_global_point_solve(
                     k,
                     surface,
@@ -1297,7 +1371,7 @@ impl<'s> SurfaceDropCurve<'s> {
                 // off a little and try again.
                 let (singular, singular_dir) = is_singularity(k, surface, uv)?;
                 if singular {
-                    start = curve.evaluate_point(ivl.evaluate(0.001))?;
+                    start = curve.evaluate_point(k, ivl.evaluate(0.001))?;
                     let tmp = surface_global_point_solve(
                         k,
                         surface,
@@ -1326,10 +1400,11 @@ impl<'s> SurfaceDropCurve<'s> {
                 }
 
                 // see if working curve interval drops to Surface isoParameterCurve with the same parameterization
-                uv = surface.snap_to_knots(uv, EFF_ZERO_SQRT / 100.0)?;
-                let drop = match drop_iso_curve(surface, &uv_domain, curve, &ivl, uv, approx_tol) {
+                uv = surface.snap_to_knots(k, uv, EFF_ZERO_SQRT / 100.0)?;
+                let drop = match drop_iso_curve(k, surface, &uv_domain, curve, &ivl, uv, approx_tol)
+                {
                     Ok(d) => d,
-                    Err(e) if e.is_unported() => return Err(e),
+                    Err(e) if e.is_unported_or_cancelled() => return Err(e),
                     Err(_) => {
                         jj += 1;
                         continue;
@@ -1351,7 +1426,7 @@ impl<'s> SurfaceDropCurve<'s> {
 
                         // see if extended interval drops to Surface isoParameterCurve
                         let drop2 =
-                            drop_iso_curve(surface, &uv_domain, curve, &ivl2, uv, approx_tol)?;
+                            drop_iso_curve(k, surface, &uv_domain, curve, &ivl2, uv, approx_tol)?;
                         // if it does replace old line with new and continue
                         if drop2.success {
                             iso_curve = drop2.iso_curve;
@@ -1371,10 +1446,10 @@ impl<'s> SurfaceDropCurve<'s> {
                     // If there are more solutions to check, see if they're contained in this iso curve
                     if solutions.len() > jj + 1 {
                         let iso_ivl = iso_curve.natural_interval();
-                        let curve_start =
-                            ignored(iso_curve.evaluate_point(iso_ivl.min()))?.unwrap_or(Vec3::ZERO);
-                        let curve_end =
-                            ignored(iso_curve.evaluate_point(iso_ivl.max()))?.unwrap_or(Vec3::ZERO);
+                        let curve_start = ignored(iso_curve.evaluate_point(k, iso_ivl.min()))?
+                            .unwrap_or(Vec3::ZERO);
+                        let curve_end = ignored(iso_curve.evaluate_point(k, iso_ivl.max()))?
+                            .unwrap_or(Vec3::ZERO);
 
                         let iso_u_ivl = Extent1d::from_min_max(
                             min2(curve_start.x, curve_end.x),
@@ -1417,7 +1492,7 @@ impl<'s> SurfaceDropCurve<'s> {
                 // surface - skip points when the curve is running out of the surface.
 
                 // drop point nearby interval startPoint to Surface
-                let mut near_start = curve.evaluate_point(ivl.evaluate(0.001))?;
+                let mut near_start = curve.evaluate_point(k, ivl.evaluate(0.001))?;
                 let near_start_solutions = surface_global_point_solve(
                     k,
                     surface,
@@ -1459,7 +1534,7 @@ impl<'s> SurfaceDropCurve<'s> {
                             let mut iters = 1.0;
                             while iters < 20.0 {
                                 // Big jumps should be fine, just trying to find which side of the seam this interval runs on
-                                near_start = curve.evaluate_point(ivl.evaluate(0.05 * iters))?;
+                                near_start = curve.evaluate_point(k, ivl.evaluate(0.05 * iters))?;
                                 next_start_solutions = surface_global_point_solve(
                                     k,
                                     surface,
@@ -1580,6 +1655,7 @@ impl<'s> SurfaceDropCurve<'s> {
         cache: &mut SurfaceCache<O>,
         approx_tol_3d: Option<f64>,
         ang_tol_rad: Option<f64>,
+        context: Option<DropSolveContext<'_, O>>,
     ) -> Result<TraceOutput> {
         // set object values from input
         if let Some(tol) = approx_tol_3d {
@@ -1594,7 +1670,7 @@ impl<'s> SurfaceDropCurve<'s> {
         let saved_boundary = cache.process_boundary_curves;
         cache.point_test_enabled = false;
         cache.process_boundary_curves = true;
-        let r = self.drop_trace_body(k, cache);
+        let r = self.drop_trace_body(k, cache, context);
         cache.point_test_enabled = saved_point_test;
         cache.process_boundary_curves = saved_boundary;
         r
@@ -1605,6 +1681,7 @@ impl<'s> SurfaceDropCurve<'s> {
         &mut self,
         k: &Kernel,
         cache: &mut SurfaceCache<O>,
+        mut context: Option<DropSolveContext<'_, O>>,
     ) -> Result<TraceOutput> {
         let mut out = TraceOutput::default();
 
@@ -1616,11 +1693,17 @@ impl<'s> SurfaceDropCurve<'s> {
         let active = self.base.start_points.clone();
         for tsp in active {
             self.base.curve_trace_direction = 1.0;
-            self.trace_curve_2(k, tsp, &mut out)?;
+            self.trace_curve_2_in(
+                k,
+                tsp,
+                &mut out,
+                Some(cache),
+                context.as_mut().map(reborrow),
+            )?;
         }
 
         // trace dropCurve segments that don't start on a BreakPoint
-        self.interior_curves(k, &mut out)?;
+        self.interior_curves_in(k, &mut out, context)?;
         Ok(out)
     }
 
@@ -1640,6 +1723,20 @@ impl<'s> SurfaceDropCurve<'s> {
         start: TracePointId,
         out: &mut TraceOutput,
     ) -> Result<()> {
+        self.trace_curve_2_in::<NoObject>(k, start, out, None, None)
+    }
+
+    /// [`SurfaceDropCurve::trace_curve_2`] with the cache `DoTrace` checked out
+    /// (`TraceCurve2` reads `GetDomainWithContinuity` through
+    /// `smsurf_GetSurfaceCache`, the same cache the drop holds); `None` builds one.
+    fn trace_curve_2_in<O: SolutionObject>(
+        &mut self,
+        k: &Kernel,
+        start: TracePointId,
+        out: &mut TraceOutput,
+        cache: Option<&SurfaceCache<O>>,
+        mut context: Option<DropSolveContext<'_, O>>,
+    ) -> Result<()> {
         self.base.curve_points.push(start);
         let breaks = self
             .curve_breaks
@@ -1658,12 +1755,21 @@ impl<'s> SurfaceDropCurve<'s> {
             }
 
             // let WorkingDomain = Surface G1 continuous SubDomain that contains the StartPoint
-            self.working_uv_domain = surface.domain_with_continuity(
-                k,
-                ContinuityType::G1,
-                start_pnt.curve_uv[0],
-                start_pnt.curve_uv[1],
-            )?;
+            self.working_uv_domain = match cache {
+                Some(cache) => surface.domain_with_continuity_from_cache(
+                    k,
+                    ContinuityType::G1,
+                    start_pnt.curve_uv[0],
+                    start_pnt.curve_uv[1],
+                    cache,
+                )?,
+                None => surface.domain_with_continuity(
+                    k,
+                    ContinuityType::G1,
+                    start_pnt.curve_uv[0],
+                    start_pnt.curve_uv[1],
+                )?,
+            };
 
             // exit case - working domain does not overlap the domain of interest
             if self
@@ -1690,9 +1796,10 @@ impl<'s> SurfaceDropCurve<'s> {
                 self.base.approx_tol_3d,
                 !self.curve_is_on_surface, // Maybe reject off-surface curves.
                 true,
+                context.as_mut().map(reborrow),
             ) {
                 Ok(d) => Some(d),
-                Err(e) if e.is_unported() => return Err(e),
+                Err(e) if e.is_unported_or_cancelled() => return Err(e),
                 Err(_) => None,
             };
 
@@ -1702,7 +1809,7 @@ impl<'s> SurfaceDropCurve<'s> {
                 if uv_curves.len() == 2 {
                     // Seam case let's find the one that starts closest to rStartPoint.
                     let start_of = |c: &Curve| -> Result<Point3> {
-                        Ok(ignored(c.evaluate_point(c.natural_interval().min()))?
+                        Ok(ignored(c.evaluate_point(k, c.natural_interval().min()))?
                             .unwrap_or(Vec3::ZERO))
                     };
                     let pnt1 = start_of(index_curve(&uv_curves, 0)?)?;
@@ -1730,9 +1837,16 @@ impl<'s> SurfaceDropCurve<'s> {
             } else {
                 // more than one solution - probably walking in/out of a boundary:
                 // the SmSurfaceTracer algorithm
+                //
+                // First suspect for a later disagreement (WR-182, plan/findings.md "The
+                // start list after `DoTrace` shares nodes with the curve list"): upstream
+                // TraceCurve2 appends `start` to the intrusive curve ring without taking it
+                // off m_vStartPoints, and this base `TraceCurve` walks the start list too
+                // (end test, AddStartPoint). The port's id `Vec`s do not model that
+                // aliasing; the harness reports such a start list as -3 on both sides.
                 match trace_curve_base(self, k, start, &out.curves_3d) {
-                    Ok(()) => flush_curve(&mut self.base, out, Some(self.curve))?,
-                    Err(e) if e.is_unported() => return Err(e),
+                    Ok(()) => flush_curve(k, &mut self.base, out, Some(self.curve))?,
+                    Err(e) if e.is_unported_or_cancelled() => return Err(e),
                     Err(_) => {}
                 }
             }
@@ -1952,7 +2066,7 @@ impl<'s> SurfaceDropCurve<'s> {
             let herm_pnt = hermite_uv.evaluate_point(param);
             let mut uv = Vec2::new(herm_pnt.x, herm_pnt.y);
             uv = self.base.uv_domain.clamp_point(uv);
-            let crv_pnt = surface.evaluate_point(uv)?;
+            let crv_pnt = surface.evaluate_point(k, uv)?;
 
             let mut dummy = TracePoint::new();
             dummy.curve_parameter = curr.curve_parameter + param * step_size;
@@ -1960,7 +2074,7 @@ impl<'s> SurfaceDropCurve<'s> {
                 return Ok((None, false));
             };
 
-            let crv_pnt2 = surface.evaluate_point(uv_found)?;
+            let crv_pnt2 = surface.evaluate_point(k, uv_found)?;
             let crv_pnt3 = crv_pnt2; // Temp cludge
             let mut dist_sq = crv_pnt3.distance_squared(crv_pnt2);
             dist_sq = max2(dist_sq, crv_pnt.distance_squared(crv_pnt2));
@@ -2113,7 +2227,7 @@ impl<'s> SurfaceTrace<'s> for SurfaceDropCurve<'s> {
         approx_tol_3d: Option<f64>,
         ang_tol_rad: Option<f64>,
     ) -> Result<TraceOutput> {
-        self.drop_trace(k, cache, approx_tol_3d, ang_tol_rad)
+        self.drop_trace(k, cache, approx_tol_3d, ang_tol_rad, None)
     }
 }
 
@@ -2158,31 +2272,51 @@ mod tests {
 
     #[test]
     fn grazing() {
+        let k = &Kernel::default();
         let a = segment(Vec3::new(0.0, 0.0, 0.0), Vec3::new(1.0, 0.0, 0.0));
         let b = segment(Vec3::new(0.0, 1.0, 0.0), Vec3::new(2.0, 1.0, 0.0));
         let c = segment(Vec3::new(0.0, 0.0, 0.0), Vec3::new(0.0, 1.0, 0.0));
-        assert!(is_grazing_intersection(&a, 0.5, &b, 0.5).unwrap());
-        assert!(!is_grazing_intersection(&a, 0.5, &c, 0.5).unwrap());
+        assert!(is_grazing_intersection(k, &a, 0.5, &b, 0.5).unwrap());
+        assert!(!is_grazing_intersection(k, &a, 0.5, &c, 0.5).unwrap());
     }
 
     #[test]
     fn test_point_on_plane() {
+        let k = &Kernel::default();
         let s = plane();
         let d = Extent2d::from_bounds(0.0, 0.0, 10.0, 10.0);
-        let t = test_point(&s, &d, Vec2::new(1.0, 2.0), Vec3::new(1.0, 2.0, 3.0), 0.1).unwrap();
+        let t = test_point(
+            k,
+            &s,
+            &d,
+            Vec2::new(1.0, 2.0),
+            Vec3::new(1.0, 2.0, 3.0),
+            0.1,
+        )
+        .unwrap();
         assert!(t.good_point);
         assert!((t.surf_drop_dist - 3.0).abs() < 1e-12);
-        let t = test_point(&s, &d, Vec2::new(1.0, 2.0), Vec3::new(2.0, 2.0, 3.0), 0.1).unwrap();
+        let t = test_point(
+            k,
+            &s,
+            &d,
+            Vec2::new(1.0, 2.0),
+            Vec3::new(2.0, 2.0, 3.0),
+            0.1,
+        )
+        .unwrap();
         assert!(!t.good_point);
         assert_eq!(t.surf_drop_dist, 0.0);
     }
 
     #[test]
     fn point_values_on_plane() {
+        let k = &Kernel::default();
         let s = plane();
         let c = segment(Vec3::new(0.0, 0.0, 1.0), Vec3::new(4.0, 3.0, 1.0));
         let d = Extent2d::from_bounds(0.0, 0.0, 10.0, 10.0);
-        let mut t = SurfaceDropCurve::new(&s, &d, &c, &Extent1d::from_min_max(0.0, 1.0)).unwrap();
+        let mut t =
+            SurfaceDropCurve::new(k, &s, &d, &c, &Extent1d::from_min_max(0.0, 1.0)).unwrap();
         t.working_interval = Extent1d::from_min_max(0.0, 1.0);
         t.working_uv_domain = d;
         let mut p = TracePoint::new();
@@ -2197,6 +2331,7 @@ mod tests {
 
     #[test]
     fn step_size_spans() {
+        let k = &Kernel::default();
         let s = plane();
         let c = Curve::from(
             BSplineCurve::create_line_segment(
@@ -2207,7 +2342,8 @@ mod tests {
             .unwrap(),
         );
         let d = Extent2d::from_bounds(0.0, 0.0, 10.0, 10.0);
-        let mut t = SurfaceDropCurve::new(&s, &d, &c, &Extent1d::from_min_max(0.0, 1.0)).unwrap();
+        let mut t =
+            SurfaceDropCurve::new(k, &s, &d, &c, &Extent1d::from_min_max(0.0, 1.0)).unwrap();
         assert!(t.step_size(0.5, 0.1).is_err());
         t.working_interval = Extent1d::from_min_max(0.0, 1.0);
         t.curve_knot_vector = Some(vec![0.0, 0.5, 1.0]);
@@ -2221,10 +2357,12 @@ mod tests {
 
     #[test]
     fn hooks() {
+        let k = &Kernel::default();
         let s = plane();
         let c = segment(Vec3::new(0.0, 0.0, 1.0), Vec3::new(4.0, 3.0, 1.0));
         let d = Extent2d::from_bounds(0.0, 0.0, 10.0, 10.0);
-        let mut t = SurfaceDropCurve::new(&s, &d, &c, &Extent1d::from_min_max(0.0, 1.0)).unwrap();
+        let mut t =
+            SurfaceDropCurve::new(k, &s, &d, &c, &Extent1d::from_min_max(0.0, 1.0)).unwrap();
         let k = Kernel::default();
         assert!(!t.is_point_on_curve(&k, Vec3::ZERO, &[]).unwrap());
         assert!(!SurfaceTrace::test_point(&mut t, &k, &mut TracePoint::new()).unwrap());
@@ -2240,10 +2378,12 @@ mod tests {
 
     #[test]
     fn interior_drop_on_plane() {
+        let k = &Kernel::default();
         let s = plane();
         let c = segment(Vec3::new(1.0, 1.0, 0.5), Vec3::new(4.0, 3.0, 0.5));
         let d = Extent2d::from_bounds(0.0, 0.0, 10.0, 10.0);
-        let mut t = SurfaceDropCurve::new(&s, &d, &c, &Extent1d::from_min_max(0.0, 1.0)).unwrap();
+        let mut t =
+            SurfaceDropCurve::new(k, &s, &d, &c, &Extent1d::from_min_max(0.0, 1.0)).unwrap();
         let mut out = TraceOutput::default();
         t.interior_curves(&Kernel::default(), &mut out).unwrap();
         assert_eq!(out.uv_curves.len(), 1);

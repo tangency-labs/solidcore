@@ -58,6 +58,12 @@
 //!   [`SolidError::NotConverged`] with `iterations = RECURSE_LIMIT + 1`. On any error
 //!   the partly accumulated length is not returned (upstream leaves it in `*len`).
 //! - The `NL_STACKS` arguments have no counterpart (Rust owns memory).
+//! - Upstream's `NL_DEGREE` is a C `short`. [`eval_one_basis`] and
+//!   [`degree_reduce_coefs`], which allocate (and for [`eval_one_basis`] loop
+//!   `O(p^2)`) from the degree alone, return [`SolidError::InvalidInput`] for a degree
+//!   above [`MAX_SHORT_DEGREE`] instead of attempting a huge allocation;
+//!   [`degree_reduce_coefs`] therefore returns a `Result`. [`reduce_degree`] checks
+//!   that `Pw[0]` and `Pw[p]` exist before allocating its `p` output points.
 
 use crate::error::{NlibCode, Result, SolidError};
 use crate::nurbs::geom::{dist_cpolygon, dist_cpt_cpt, dist_cpt_cpt_homo};
@@ -87,6 +93,9 @@ pub const PASCAL_TRI: [[i64; 18]; 18] = [
     [1, 17, 136, 680, 2380, 6188, 12376, 19448, 24310, 24310, 19448, 12376, 6188, 2380, 680, 136, 17, 1],
 ];
 
+/// Largest degree upstream's `NL_DEGREE` (a C `short`) can hold.
+pub const MAX_SHORT_DEGREE: usize = 32_767;
+
 /// `NL_RECURSELIM`: maximum recursion depth of [`calc_arc_length`].
 pub const RECURSE_LIMIT: usize = 20;
 
@@ -100,6 +109,7 @@ const OP_FUNC_CRV_4D: &str = "nurbs::bezier::func_multiply_crv_4d";
 const OP_SRF_ELEVATE: &str = "nurbs::bezier::srf_elevate_degree";
 const OP_ONE_BASIS: &str = "nurbs::bezier::eval_one_basis";
 const OP_REDUCE: &str = "nurbs::bezier::reduce_degree";
+const OP_REDUCE_COEFS: &str = "nurbs::bezier::degree_reduce_coefs";
 const OP_SPLIT: &str = "nurbs::bezier::split";
 const OP_ARC_LENGTH: &str = "nurbs::bezier::calc_arc_length";
 const OP_CRV_EXTEND: &str = "nurbs::bezier::crv_extend";
@@ -107,6 +117,19 @@ const OP_SRF_EXTEND: &str = "nurbs::bezier::srf_extend_4d";
 
 fn nlib(operation: &'static str, code: NlibCode) -> SolidError {
     SolidError::Nlib { operation, code }
+}
+
+/// `InvalidInput` for a degree upstream's `short` `NL_DEGREE` cannot hold
+/// (above [`MAX_SHORT_DEGREE`]). Routines that do index arithmetic with a caller's
+/// degree call this first, so that arithmetic cannot overflow.
+pub(crate) fn check_short_degree(p: usize, operation: &'static str) -> Result<()> {
+    if p > MAX_SHORT_DEGREE {
+        return Err(SolidError::InvalidInput {
+            operation,
+            reason: "degree exceeds upstream's NL_DEGREE (short) range",
+        });
+    }
+    Ok(())
 }
 
 fn out_of_range(operation: &'static str) -> SolidError {
@@ -418,9 +441,11 @@ pub fn srf_elevate_degree(
 
 /// The Bernstein polynomial `B[i,p](u)` by its recursive definition
 /// (`N_BezEvalOneBasis`). `NL_IND_ERR` for `i > p`, `NL_PAR_ERR` for `u` outside
-/// `[0, 1]` (a NaN `u` passes both checks, as upstream).
+/// `[0, 1]` (a NaN `u` passes both checks, as upstream). `InvalidInput` for
+/// `p > MAX_SHORT_DEGREE`.
 pub fn eval_one_basis(p: usize, i: usize, u: f64) -> Result<f64> {
     let op = OP_ONE_BASIS;
+    check_short_degree(p, op)?;
     if i > p {
         return Err(nlib(op, NlibCode::Index));
     }
@@ -470,8 +495,12 @@ fn reduce_mid(p: usize) -> usize {
 }
 
 /// Degree reduction coefficients for degree `p` (`N_BezDegreeReduceCoefs`).
-#[must_use]
-pub fn degree_reduce_coefs(p: usize) -> ReduceCoefs {
+///
+/// # Errors
+///
+/// `InvalidInput` for `p > MAX_SHORT_DEGREE`.
+pub fn degree_reduce_coefs(p: usize) -> Result<ReduceCoefs> {
+    check_short_degree(p, OP_REDUCE_COEFS)?;
     let r = reduce_mid(p);
     let len = p.saturating_sub(1).max(r + 1);
     let mut c = ReduceCoefs {
@@ -497,7 +526,7 @@ pub fn degree_reduce_coefs(p: usize) -> ReduceCoefs {
             }
         }
     }
-    c
+    Ok(c)
 }
 
 /// Result of [`reduce_degree`].
@@ -520,9 +549,10 @@ pub fn reduce_degree(pw: &[CPoint], p: usize, c: &ReduceCoefs) -> Result<Reduced
             reason: "degree must be at least 2",
         });
     }
+    let (first, last) = (at(pw, 0, op)?, at(pw, p, op)?);
     let mut qw = vec![CPoint::ZERO; p];
-    *at_mut(&mut qw, 0, op)? = at(pw, 0, op)?;
-    *at_mut(&mut qw, p - 1, op)? = at(pw, p, op)?;
+    *at_mut(&mut qw, 0, op)? = first;
+    *at_mut(&mut qw, p - 1, op)? = last;
 
     let r = reduce_mid(p);
     let odd = p % 2 == 1;
@@ -720,9 +750,12 @@ impl ExtendAt {
 /// The degree-`p` Bezier curve that continues `Pw[0..=p]` beyond `whr` with the same
 /// homogeneous derivatives there (`N_BezCrvExtend`); `rev` reverses the extension's
 /// parametrization. Returns `Qw[0..=p]`.
+/// Returns `InvalidInput` if `p + 1` overflows or `pw` has fewer than `p + 1`
+/// points; additional input points are ignored.
 pub fn crv_extend(pw: &[CPoint], p: usize, whr: ExtendAt, rev: bool) -> Result<Vec<CPoint>> {
     let op = OP_CRV_EXTEND;
     let n = p.checked_add(1).ok_or_else(|| out_of_range(op))?;
+    let pw = pw.get(..n).ok_or_else(|| out_of_range(op))?;
     let mut qw = vec![CPoint::ZERO; n];
 
     match whr {
@@ -954,7 +987,7 @@ mod tests {
             elevate_degree(&pw, 3, t, &RealMatrix::null(), 0, 3 + t, &mut qw).unwrap();
             let mut cur = qw;
             for p in (4..=3 + t).rev() {
-                let red = reduce_degree(&cur, p, &degree_reduce_coefs(p)).unwrap();
+                let red = reduce_degree(&cur, p, &degree_reduce_coefs(p).unwrap()).unwrap();
                 assert!(red.err < 1e-12);
                 cur = red.qw;
             }
@@ -962,7 +995,7 @@ mod tests {
                 assert!((a.x - b.x).abs() < 1e-12 && (a.y - b.y).abs() < 1e-12);
             }
         }
-        assert!(reduce_degree(&pw, 1, &degree_reduce_coefs(1)).is_err());
+        assert!(reduce_degree(&pw, 1, &degree_reduce_coefs(1).unwrap()).is_err());
     }
 
     #[test]
@@ -974,6 +1007,104 @@ mod tests {
         let q = crv_extend(&pw, 1, ExtendAt::Start, false).unwrap();
         assert_eq!(q[1], pw[0]);
         assert_eq!(q[0].x, -1.0);
+    }
+
+    #[test]
+    fn crv_extend_huge_degree_rejects_short_input() {
+        let pw = [cp(1.0, 2.0, 3.0)];
+        for input in [&pw[..0], &pw[..]] {
+            for p in [usize::MAX - 1, usize::MAX] {
+                for whr in [ExtendAt::Start, ExtendAt::End] {
+                    for rev in [false, true] {
+                        assert!(matches!(
+                            crv_extend(input, p, whr, rev),
+                            Err(SolidError::InvalidInput { .. })
+                        ));
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn crv_extend_requires_complete_prefix() {
+        let pw = [cp(0.0, 0.0, 0.0), cp(1.0, 2.0, 3.0)];
+        for input in [&pw[..0], &pw[..1], &pw[..]] {
+            for whr in [ExtendAt::Start, ExtendAt::End] {
+                for rev in [false, true] {
+                    assert!(matches!(
+                        crv_extend(input, 2, whr, rev),
+                        Err(SolidError::InvalidInput { .. })
+                    ));
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn crv_extend_degree_zero_preserves_point() {
+        let pw = [cp(1.0, 2.0, 3.0)];
+        for whr in [ExtendAt::Start, ExtendAt::End] {
+            for rev in [false, true] {
+                assert_eq!(crv_extend(&pw, 0, whr, rev).unwrap(), pw);
+                assert!(matches!(
+                    crv_extend(&[], 0, whr, rev),
+                    Err(SolidError::InvalidInput { .. })
+                ));
+            }
+        }
+    }
+
+    #[test]
+    fn crv_extend_degree_seventeen_reverses_and_ignores_extra_points() {
+        let mut pw: Vec<_> = (0..18)
+            .map(|i| cp(f64::from(i), f64::from(i % 3), f64::from(i % 5)))
+            .collect();
+        pw.push(cp(999.0, -999.0, 123.0));
+        for whr in [ExtendAt::Start, ExtendAt::End] {
+            // NL_Bezier.cpp:5417-5558 seeds the chosen endpoint and builds
+            // outward from it. Without rev, the point at distance i from the
+            // seed is sum_j C(i,j) * 2^(i-j) * (-1)^j * P[j] (Start), or
+            // the same sum using P[17-j] (End). Check the seed, the first
+            // point that differs from rev for this fixture, and the far end.
+            // These integer-valued sums are exactly representable in f64.
+            let forward = crv_extend(&pw[..18], 17, whr, false).unwrap();
+            assert_eq!(forward.len(), 18);
+            match whr {
+                ExtendAt::Start => {
+                    assert_eq!(forward[17], pw[0]);
+                    assert_eq!(forward[13], cp(-4.0, 17.0, -4.0));
+                    assert_eq!(forward[0], cp(-17.0, -17_539_616.0, 49_838_048.0));
+                }
+                ExtendAt::End => {
+                    assert_eq!(forward[0], pw[17]);
+                    assert_eq!(forward[4], cp(21.0, -15.0, -29.0));
+                    assert_eq!(forward[17], cp(34.0, 17_539_618.0, 22_894_754.0));
+                }
+            }
+            let reversed = crv_extend(&pw[..18], 17, whr, true).unwrap();
+            assert_eq!(reversed.len(), 18);
+            // The rev branches instead scale Dw by -1 (Start) or by
+            // alternating +1/-1 (End). Substitution in the binomial recurrence
+            // gives Q[j] = 2 * endpoint - P[j], NOT forward[17-j] or -P[j].
+            // Check every coordinate, including the unchanged unit weight.
+            for (j, point) in reversed.iter().enumerate() {
+                let j = i32::try_from(j).unwrap();
+                let (x, y, z) = match whr {
+                    ExtendAt::Start => (-j, -(j % 3), -(j % 5)),
+                    ExtendAt::End => (34 - j, 4 - j % 3, 4 - j % 5),
+                };
+                assert_eq!(*point, cp(f64::from(x), f64::from(y), f64::from(z)));
+            }
+            // Only P[0..=17] participates: P[18] is dropped, not clamped
+            // into the endpoint or included in either recurrence.
+            for rev in [false, true] {
+                assert_eq!(
+                    crv_extend(&pw, 17, whr, rev).unwrap(),
+                    crv_extend(&pw[..18], 17, whr, rev).unwrap()
+                );
+            }
+        }
     }
 
     #[test]
@@ -1014,5 +1145,34 @@ mod tests {
         let e = srf_extend_4d(&sur, Direction::V, ExtendAt::End, false).unwrap();
         assert_eq!(e.cpt(0, 1).unwrap().y, 2.0);
         assert!(srf_extend_4d(&sur, Direction::UV, ExtendAt::End, false).is_err());
+    }
+
+    /// Fuzz regression: degrees beyond upstream's `short` `NL_DEGREE` used to size
+    /// allocations (capacity overflow / out-of-memory abort).
+    #[test]
+    fn huge_degree_is_an_error_not_an_allocation() {
+        for p in [
+            MAX_SHORT_DEGREE + 1,
+            1 << 31,
+            1 << 32,
+            i64::MAX as usize,
+            usize::MAX,
+        ] {
+            assert!(matches!(
+                eval_one_basis(p, 0, 0.5),
+                Err(SolidError::InvalidInput { .. })
+            ));
+            assert!(matches!(
+                degree_reduce_coefs(p),
+                Err(SolidError::InvalidInput { .. })
+            ));
+            let pw = [CPoint::ZERO; 3];
+            let c = degree_reduce_coefs(2).unwrap();
+            assert!(matches!(
+                reduce_degree(&pw, p, &c),
+                Err(SolidError::InvalidInput { .. })
+            ));
+        }
+        assert!(degree_reduce_coefs(MAX_SHORT_DEGREE).is_ok());
     }
 }

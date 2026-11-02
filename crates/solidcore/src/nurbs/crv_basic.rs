@@ -62,6 +62,9 @@
 //! - The NULL curve of `N_CrvInitArrays` (null pointers, degree `-1`) is `None` in an
 //!   `Option<Curve>`; partly NULL curves cannot be expressed. Storage that upstream
 //!   allocates uninitialised (`malloc`) is zero-filled.
+//! - [`size_arrays`] rejects index overflow, failed reservations and arrays above
+//!   [`crate::limits::MAX_ALLOC_BYTES`] with [`NlibCode::Memory`], leaving a `None`
+//!   slot unchanged even where upstream's allocator might accept the request.
 //! - The `NL_STACKS` arguments have no counterpart and allocation cannot fail, so
 //!   [`Curve::compress`] and [`Curve::epolygon`] have no memory error path.
 //! - Out-params become return values; errors are [`SolidError::Nlib`] values with the
@@ -96,7 +99,10 @@
 // Branches keep upstream's `if( x NEQ NL_NOZ ) ... else ...` order for traceability.
 #![allow(clippy::if_not_else)]
 
+use std::sync::Arc;
+
 use crate::error::{NlibCode, Result, SolidError};
+use crate::limits;
 use crate::math::Vec3;
 use crate::nurbs::basis_basic::PTOL;
 use crate::nurbs::crv_tool::p2::make_compatible;
@@ -126,14 +132,17 @@ fn invalid(operation: &'static str, reason: &'static str) -> SolidError {
 ///
 /// The indices in use are kept apart from the storage (which may be larger), as
 /// upstream; the constructors guarantee that the storage holds them.
+///
+/// The control point and knot storage are shared copy-on-write (`Arc`, written
+/// through [`Arc::make_mut`]): a clone shares them until one side writes.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Curve {
     /// Control point storage, at least `n + 1` entries.
-    pw: Vec<CPoint>,
+    pw: Arc<Vec<CPoint>>,
     n: usize,
     p: usize,
     /// Knot storage, at least `m + 1` entries.
-    u: Vec<f64>,
+    u: Arc<Vec<f64>>,
     m: usize,
 }
 
@@ -153,7 +162,13 @@ impl Curve {
             .len()
             .checked_sub(1)
             .ok_or_else(|| invalid("nurbs::crv_basic::Curve::new", "empty knot vector"))?;
-        Ok(Self { pw, n, p, u, m })
+        Ok(Self {
+            pw: Arc::new(pw),
+            n,
+            p,
+            u: Arc::new(u),
+            m,
+        })
     }
 
     /// Curve over the first `n + 1` control points of `pw` and the first `m + 1`
@@ -176,18 +191,27 @@ impl Curve {
                 "storage smaller than (n, m)",
             ));
         }
-        Ok(Self { pw, n, p, u, m })
+        Ok(Self {
+            pw: Arc::new(pw),
+            n,
+            p,
+            u: Arc::new(u),
+            m,
+        })
     }
 
     /// A zero-filled curve with indices `(n, m)` and degree `p`.
-    fn zeroed(n: usize, p: usize, m: usize) -> Self {
-        Self {
-            pw: vec![CPoint::default(); n.saturating_add(1)],
+    fn zeroed(n: usize, p: usize, m: usize) -> Result<Self> {
+        let mem = || nlib("nurbs::crv_basic::size_arrays", NlibCode::Memory);
+        let np = n.checked_add(1).ok_or_else(mem)?;
+        let nk = m.checked_add(1).ok_or_else(mem)?;
+        Ok(Self {
+            pw: Arc::new(limits::try_filled(np, CPoint::default()).ok_or_else(mem)?),
             n,
             p,
-            u: vec![0.0; m.saturating_add(1)],
+            u: Arc::new(limits::try_filled(nk, 0.0).ok_or_else(mem)?),
             m,
-        }
+        })
     }
 
     /// Highest index of the control points in use.
@@ -222,7 +246,9 @@ impl Curve {
 
     /// Mutable control points in use, `Pw[0..=n]`.
     pub fn cpts_mut(&mut self) -> &mut [CPoint] {
-        self.pw.get_mut(..=self.n).unwrap_or(&mut [])
+        Arc::make_mut(&mut self.pw)
+            .get_mut(..=self.n)
+            .unwrap_or(&mut [])
     }
 
     /// The knots in use, `U[0..=m]` (`N_CrvGetKnots`).
@@ -233,7 +259,9 @@ impl Curve {
 
     /// Mutable knots in use, `U[0..=m]`.
     pub fn knots_mut(&mut self) -> &mut [f64] {
-        self.u.get_mut(..=self.m).unwrap_or(&mut [])
+        Arc::make_mut(&mut self.u)
+            .get_mut(..=self.m)
+            .unwrap_or(&mut [])
     }
 
     /// Sizes of the control point and knot storage (highest storable indices plus
@@ -267,8 +295,8 @@ impl Curve {
                 "storage smaller than the indices",
             ));
         }
-        self.pw = pw;
-        self.u = u;
+        self.pw = Arc::new(pw);
+        self.u = Arc::new(u);
         Ok(())
     }
 
@@ -303,10 +331,15 @@ impl Curve {
 
     /// Shrinks the storage to exactly the indices in use (`N_CrvCompress`).
     pub fn compress(&mut self) {
+        if self.pw.len() == self.n.saturating_add(1) && self.u.len() == self.m.saturating_add(1) {
+            // (already exactly the indices in use: the same storage values, kept
+            // shared)
+            return;
+        }
         let pw = self.cpts().to_vec();
         let u = self.knots().to_vec();
-        self.pw = pw;
-        self.u = u;
+        self.pw = Arc::new(pw);
+        self.u = Arc::new(u);
     }
 
     /// Copies this curve into `dst` (`N_CrvCopy`): a NULL (`None`) destination is
@@ -861,7 +894,9 @@ pub struct Planarity {
 /// # Errors
 ///
 /// [`NlibCode::Storage`] (leaving the slot unchanged) when the existing
-/// curve is too small.
+/// curve is too small. [`NlibCode::Memory`] (also leaving the slot unchanged)
+/// when new storage overflows, exceeds [`limits::MAX_ALLOC_BYTES`] per array,
+/// or cannot be allocated.
 pub fn size_arrays(slot: &mut Option<Curve>, n: usize, p: usize, m: usize) -> Result<&mut Curve> {
     match slot {
         Some(cur) => {
@@ -869,7 +904,7 @@ pub fn size_arrays(slot: &mut Option<Curve>, n: usize, p: usize, m: usize) -> Re
             cur.set_size_indices(n, p, m)?;
             Ok(cur)
         }
-        None => Ok(slot.insert(Curve::zeroed(n, p, m))),
+        None => Ok(slot.insert(Curve::zeroed(n, p, m)?)),
     }
 }
 
@@ -1269,6 +1304,21 @@ pub fn cross_bound_deriv_crv_non_rat_srf(
 mod tests {
     use super::*;
 
+    #[test]
+    fn clones_share_storage_until_written() {
+        let a = line2();
+        let mut b = a.clone();
+        assert!(Arc::ptr_eq(&a.pw, &b.pw) && Arc::ptr_eq(&a.u, &b.u));
+        b.compress();
+        assert!(Arc::ptr_eq(&a.pw, &b.pw));
+        b.knots_mut()[0] = -1.0;
+        assert!(!Arc::ptr_eq(&a.u, &b.u) && Arc::ptr_eq(&a.pw, &b.pw));
+        b.cpts_mut()[0] = CPoint::ZERO;
+        assert!(!Arc::ptr_eq(&a.pw, &b.pw));
+        assert_eq!(a, line2());
+        assert_ne!(a, b);
+    }
+
     fn line2() -> Curve {
         Curve::new(
             vec![
@@ -1294,6 +1344,70 @@ mod tests {
             vec![0.0, 0.0, 0.0, 1.0, 1.0, 1.0],
         )
         .unwrap()
+    }
+
+    #[test]
+    fn size_arrays_allocates_zeroed_exact_storage() {
+        for (n, p, m) in [(0, 0, 0), (2, 2, 5), (1, usize::MAX, 3)] {
+            let mut slot = None;
+            let curve = size_arrays(&mut slot, n, p, m).unwrap();
+            assert_eq!(curve.array_sizes(), (n, m));
+            assert_eq!(curve.degree(), p);
+            assert_eq!(curve.storage(), (n + 1, m + 1));
+            assert_eq!(curve.cpts(), vec![CPoint::ZERO; n + 1]);
+            assert_eq!(curve.knots(), vec![0.0; m + 1]);
+            assert!(slot.is_some());
+        }
+    }
+
+    #[test]
+    fn size_arrays_rejects_overflow_and_over_budget_without_inserting() {
+        let oversized_n = limits::MAX_ALLOC_BYTES / size_of::<CPoint>();
+        let oversized_m = limits::MAX_ALLOC_BYTES / size_of::<f64>();
+        for (n, m) in [
+            (usize::MAX, 0),
+            (0, usize::MAX),
+            (oversized_n, 0),
+            (0, oversized_m),
+        ] {
+            let mut slot = None;
+            assert!(matches!(
+                size_arrays(&mut slot, n, 2, m),
+                Err(SolidError::Nlib {
+                    operation: "nurbs::crv_basic::size_arrays",
+                    code: NlibCode::Memory,
+                })
+            ));
+            assert!(slot.is_none());
+        }
+    }
+
+    #[test]
+    fn size_arrays_reuses_existing_storage_and_preserves_storage_errors() {
+        let original = line2();
+        let mut slot = Some(original.clone());
+        let pw = slot.as_ref().unwrap().pw.as_ptr();
+        let u = slot.as_ref().unwrap().u.as_ptr();
+        let curve = size_arrays(&mut slot, 1, usize::MAX, 3).unwrap();
+        assert_eq!(curve.array_sizes(), (1, 3));
+        assert_eq!(curve.degree(), usize::MAX);
+        assert_eq!(curve.storage(), original.storage());
+        assert_eq!(curve.pw, original.pw);
+        assert_eq!(curve.u, original.u);
+        assert_eq!(curve.pw.as_ptr(), pw);
+        assert_eq!(curve.u.as_ptr(), u);
+
+        let unchanged = slot.clone();
+        for (n, m) in [(2, 3), (1, 4), (usize::MAX, 3), (1, usize::MAX)] {
+            assert!(matches!(
+                size_arrays(&mut slot, n, 0, m),
+                Err(SolidError::Nlib {
+                    code: NlibCode::Storage,
+                    ..
+                })
+            ));
+            assert_eq!(slot, unchanged);
+        }
     }
 
     #[test]

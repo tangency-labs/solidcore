@@ -22,6 +22,7 @@
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
+use solidcore::curve::curve::Curve;
 use solidcore::geom::extent1d::Extent1d;
 use solidcore::geom::extent2d::Extent2d;
 use solidcore::geom::global_solver::{Branch, GlobalSolver};
@@ -345,7 +346,7 @@ fn rust_curve(d: &CurveData) -> Result<BSplineCurve, HarnessError> {
 /// cannot return.
 fn status(e: &SolidError) -> f64 {
     match e {
-        SolidError::InvalidInput { .. } => 1007.0,
+        SolidError::InvalidInput { .. } | SolidError::PortInvariant { .. } => 1007.0,
         SolidError::Upstream { code, .. } => f64::from(*code),
         _ => -1.0,
     }
@@ -392,7 +393,9 @@ fn put_point(o: &mut Vec<f64>, p: &TracePoint) {
     put_uv(o, p.curve_uv[0]);
     put_uv(o, p.curve_uv[1]);
     let s = &p.surface;
-    for v in [s[0][0], s[1][0], s[0][1], s[1][1], s[2][0], s[0][2], s[2][2]] {
+    for v in [
+        s[0][0], s[1][0], s[0][1], s[1][1], s[2][0], s[0][2], s[2][2],
+    ] {
         put_vec(o, v);
     }
 }
@@ -424,7 +427,8 @@ fn build_cache(
     let handle = BoundaryCurve::default();
     let mut cache = SurfaceCache::new(
         surface.clone(),
-        surface.natural_uv_domain(),
+        // (runner helper without a kernel in scope)
+        surface.natural_uv_domain_if_built(),
         SurfaceCacheOptions::default(),
     );
     cache.set_surface_handle(Some(handle));
@@ -511,7 +515,7 @@ fn run_op(
             p.curve_3d[1] = v3(*t);
             sil.base.curve_trace_direction = *dir;
             let prev = if *use_prev { *last } else { None };
-            match st(sil.compute_point_values(p2(*uv), &mut p, prev.as_ref()))? {
+            match st(sil.compute_point_values(k, p2(*uv), &mut p, prev.as_ref()))? {
                 Ok(()) => {
                     o.push(0.0);
                     put_point(o, &p);
@@ -544,7 +548,7 @@ fn run_op(
         OpIn::Boundary { curve, interval } => {
             let c = rust_curve(curve)?;
             let ivl = Extent1d::from_min_max(interval[0], interval[1]);
-            match st(sil.find_solutions_on_boundary_curve(k, &c, &ivl))? {
+            match st(sil.find_solutions_on_boundary_curve(k, &Curve::from(c), &ivl))? {
                 Ok(sols) => {
                     o.push(0.0);
                     o.push(sols.as_slice().len() as f64);
@@ -565,7 +569,7 @@ fn run_op(
                 if let Some(slot) = branch.first_mut() {
                     *slot = Some(NodeId(q));
                 }
-                match st(sil.branch_may_contain_answers(&solver, &cache, &branch))? {
+                match st(sil.branch_may_contain_answers(k, &solver, &cache, &branch))? {
                     Ok(f) => o.push(b(f)),
                     Err(s) => o.push(s),
                 }
@@ -588,7 +592,7 @@ fn op_code(op: &OpIn) -> f64 {
 fn rust(i: &Inputs) -> Result<Output, HarnessError> {
     let k = Kernel::default();
     let surface = rust_surface(&i.surface)?;
-    let mut sil = match SurfaceSilhouette::new(&surface, &ext(i.domain), i.perspective, v3(i.eye))
+    let mut sil = match SurfaceSilhouette::new(&k, &surface, &ext(i.domain), i.perspective, v3(i.eye))
     {
         Ok(s) => s,
         Err(e) => {
@@ -687,7 +691,14 @@ fn gen_random_bspline(rng: &mut Rng, scale: f64) -> SurfData {
 
 /// A surface given by a height function `z(x, y)` sampled on a `n1 x m1` net of degree
 /// `p x q` over `[-1, 1]^2`, times `scale`.
-fn height_surface(n1: usize, m1: usize, p: usize, q: usize, scale: f64, z: impl Fn(f64, f64) -> f64) -> SurfData {
+fn height_surface(
+    n1: usize,
+    m1: usize,
+    p: usize,
+    q: usize,
+    scale: f64,
+    z: impl Fn(f64, f64) -> f64,
+) -> SurfData {
     let net = (0..n1)
         .map(|i| {
             (0..m1)
@@ -744,7 +755,9 @@ fn gen_bspline(rng: &mut Rng, scale: f64) -> SurfData {
         // parabolic cylinder: zero Gaussian curvature
         2 => height_surface(4, 3, 2, 2, scale, |x, _| 0.5 * x * x),
         // monkey-saddle-like wave: curvature sign changes
-        3 => height_surface(6, 6, 3, 3, scale, |x, y| 0.3 * (x * x * x - 3.0 * x * y * y)),
+        3 => height_surface(6, 6, 3, 3, scale, |x, y| {
+            0.3 * (x * x * x - 3.0 * x * y * y)
+        }),
         4 => quarter_cylinder(scale),
         _ => gen_random_bspline(rng, scale),
     }

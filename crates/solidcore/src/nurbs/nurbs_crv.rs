@@ -20,7 +20,7 @@
 //! | [`crv_get_epolygon`]               | `sm_CrvGetEPolygon`                         |
 //! | [`basis_derivs`], [`BasisDerivs`]  | `sm_BasisDerivs`                            |
 //! | [`crv_rational_basis_derivs`]      | `sm_CrvRationalBasisDerivs`                 |
-//! | [`crv_derivs`]                     | `sm_CrvDerivs`                              |
+//! | [`crv_derivs`], [`crv_derivs_into`] | `sm_CrvDerivs`                            |
 //! | [`basis_eval`]                     | `sm_BasisEval`                              |
 //! | [`crv_eval`]                       | `sm_CrvEval`                                |
 //! | `to_euclid` (crate)                | `TO_EUCLID` (`SmNurbsCrv.h`)                |
@@ -52,9 +52,21 @@
 //!   `NL_INP_ERR` (14) for `ur <= ul`: [`NlibCode::Input`]. `sm_BasisEval` returns
 //!   its flag at the domain ends after filling `N` (so `sm_CrvEval` fails there):
 //!   [`SolidError::Unsupported`].
-//! - `sm_CrvDerivs` accepts `der == GW_MAX_DERIV`, then writes past its row arrays;
-//!   [`crv_derivs`] rejects `der >= MAX_DERIV` with [`NlibCode::MaxDerivative`]
-//!   (upstream's own `der > GW_MAX_DERIV` check returns the plain flag).
+//! - `sm_CrvEval` reads `Pw[spn - p + i]` unchecked. At a NaN parameter on a curve
+//!   with fewer than `p + 1` control points (an edge whose limits were never set)
+//!   `N_BasisFindSpan` returns a span below `p` and upstream reads before `Pw`
+//!   (UB-288): [`crv_eval`] returns [`SolidError::Upstream`] `SM_ERR` there, and past
+//!   the end of `Pw`, instead of reading.
+//! - Arrays sized by a caller count (the rows of [`basis_derivs`],
+//!   [`crv_rational_basis_derivs`] and [`basis_i_derivs`] for `der`, the storage of
+//!   [`allocate_nurb_curve`]) are allocated fallibly: `InvalidInput` when they do not
+//!   fit in memory or take more than [`crate::limits::MAX_ALLOC_BYTES`] (upstream: the
+//!   caller's arrays, or `smos_Calloc` returning `NULL`).
+//! - `sm_CrvDerivs` accepts `der == GW_MAX_DERIV` but its row arrays hold only
+//!   `GW_MAX_DERIV` rows (UB-33: the last row is written past them). The port holds
+//!   `MAX_DERIV + 1` rows (as the fork, smlib#79 2391302) and so evaluates `der ==
+//!   MAX_DERIV`; [`crv_derivs`] rejects `der > MAX_DERIV` with
+//!   [`NlibCode::MaxDerivative`] (upstream's own check returns the plain flag).
 //! - Every array access is bounds checked. Where upstream would index outside its
 //!   arrays (degrees of `GW_MAX_DEGREE` or more, malformed curves, indices the
 //!   routines do not check) the port returns [`SolidError::InvalidInput`]; for every
@@ -83,6 +95,7 @@ use crate::geom::axis2_placement::Axis2Placement;
 use crate::geom::extent1d::Extent1d;
 use crate::geom::extent3d::Extent3d;
 use crate::geom::tol::{in_tol, scaled_zero, scaled_zero2};
+use crate::limits;
 use crate::math::{max2, Vec3, EFF_ZERO, EFF_ZERO_SQ};
 use crate::nurbs::basis_basic::SpanMaxima;
 use crate::nurbs::crv_basic::Curve;
@@ -127,6 +140,7 @@ const OP_IEVAL: &str = "nurbs::nurbs_crv::basis_i_eval";
 const OP_MAXERR: &str = "nurbs::nurbs_crv::crv_remove_knot_max_err";
 const OP_IDERIVS: &str = "nurbs::nurbs_crv::basis_i_derivs";
 const OP_GMAX: &str = "nurbs::nurbs_crv::basis_find_global_max";
+const OP_ALLOC: &str = "nurbs::nurbs_crv::allocate_nurb_curve";
 
 fn nlib(operation: &'static str, code: NlibCode) -> SolidError {
     SolidError::Nlib { operation, code }
@@ -266,17 +280,32 @@ pub fn get_knots(knt: &KnotVector<'_>, ivl: Option<&Extent1d>) -> (Vec<f64>, Vec
     (knots, mults)
 }
 
+/// `len` copies of `value`, allocated fallibly: `InvalidInput` instead of an
+/// allocation abort when a caller-given count (derivative order, array size) makes
+/// the array too large for memory or larger than [`limits::MAX_ALLOC_BYTES`].
+fn filled<T: Clone>(len: usize, value: T, op: &'static str) -> Result<Vec<T>> {
+    limits::try_filled(len, value).ok_or(SolidError::InvalidInput {
+        operation: op,
+        reason: "array too large for memory",
+    })
+}
+
 /// A zero-filled curve with highest control point index `n`, degree `p` and highest
 /// knot index `m` (`sm_AllocateNurbCurve`, memory from `smos_Calloc`).
 ///
 /// Errors with `InvalidInput` when `n` or `m` is `usize::MAX` (no storage size).
 pub fn allocate_nurb_curve(n: usize, p: usize, m: usize) -> Result<Curve> {
     let too_big = || SolidError::InvalidInput {
-        operation: "nurbs::nurbs_crv::allocate_nurb_curve",
+        operation: OP_ALLOC,
         reason: "index too large",
     };
-    let pw = vec![CPoint::default(); n.checked_add(1).ok_or_else(too_big)?];
-    let u = vec![0.0; m.checked_add(1).ok_or_else(too_big)?];
+    // smos_Calloc failing makes upstream return NULL (NERN): allocate fallibly
+    let pw = filled(
+        n.checked_add(1).ok_or_else(too_big)?,
+        CPoint::default(),
+        OP_ALLOC,
+    )?;
+    let u = filled(m.checked_add(1).ok_or_else(too_big)?, 0.0, OP_ALLOC)?;
     Curve::new(pw, p, u)
 }
 
@@ -851,7 +880,7 @@ pub fn basis_derivs(
     side: Side,
     der: usize,
 ) -> Result<BasisDerivs> {
-    let mut nd = vec![[0.0_f64; MAX_DEGREE]; der.saturating_add(1)];
+    let mut nd = filled(der.saturating_add(1), [0.0_f64; MAX_DEGREE], OP_BDERIVS)?;
     let span = basis_derivs_into(knt, p, u, side, der, &mut nd)?;
     Ok(BasisDerivs {
         span,
@@ -873,13 +902,13 @@ fn rational_basis_derivs_into<const N: usize>(
     let pu = cur.degree();
     let p = sx(pu, OP)?;
     let knt = cur.knot_vector()?;
-    // `der + 1` rows: on the stack for the usual `der < MAX_DERIV`.
-    let mut nd_stack = [[0.0_f64; N]; MAX_DERIV];
+    // `der + 1` rows: on the stack for the usual `der <= MAX_DERIV`.
+    let mut nd_stack = [[0.0_f64; N]; MAX_DERIV + 1];
     let mut nd_heap: Vec<[f64; N]>;
     let nd: &mut [[f64; N]] = if let Some(rows) = nd_stack.get_mut(..=der) {
         rows
     } else {
-        nd_heap = vec![[0.0_f64; N]; der.saturating_add(1)];
+        nd_heap = filled(der.saturating_add(1), [0.0_f64; N], OP)?;
         &mut nd_heap
     };
     let mut d = [0.0_f64; MAX_DEGREE];
@@ -941,7 +970,7 @@ pub fn crv_rational_basis_derivs(
     side: Side,
     der: usize,
 ) -> Result<BasisDerivs> {
-    let mut rd = vec![[0.0_f64; MAX_DEGREE]; der.saturating_add(1)];
+    let mut rd = filled(der.saturating_add(1), [0.0_f64; MAX_DEGREE], OP_RBDERIVS)?;
     let span = rational_basis_derivs_into(cur, u, side, der, &mut rd)?;
     Ok(BasisDerivs {
         span,
@@ -953,26 +982,47 @@ pub fn crv_rational_basis_derivs(
 /// (`sm_CrvDerivs`): the (rational) basis derivatives times the Euclidean control
 /// points.
 ///
-/// Errors with [`NlibCode::MaxDerivative`] when `der >= MAX_DERIV`, with the errors of
+/// Errors with [`NlibCode::MaxDerivative`] when `der > MAX_DERIV`, with the errors of
 /// [`basis_derivs`] and with [`NlibCode::Index`] when the span's control points are
 /// missing.
 pub fn crv_derivs(cur: &Curve, u: f64, side: Side, der: usize) -> Result<Vec<Vec3>> {
-    const OP: &str = OP_CDERIVS;
-    if der >= MAX_DERIV {
-        return Err(nlib(OP, NlibCode::MaxDerivative));
+    if der > MAX_DERIV {
+        return Err(nlib(OP_CDERIVS, NlibCode::MaxDerivative));
     }
+    let mut cd = vec![Vec3::ZERO; der + 1];
+    crv_derivs_into(cur, u, side, &mut cd)?;
+    Ok(cd)
+}
+
+/// [`crv_derivs`] into the caller's slice: `out[k] = C^(k)(u)` for `k < out.len()`
+/// (`der = out.len() - 1`), without a heap allocation.
+///
+/// Errors as [`crv_derivs`]; an empty `out` is [`NlibCode::MaxDerivative`] as well.
+pub fn crv_derivs_into(cur: &Curve, u: f64, side: Side, out: &mut [Vec3]) -> Result<()> {
+    const OP: &str = OP_CDERIVS;
+    let der = match out.len().checked_sub(1) {
+        Some(der) if der <= MAX_DERIV => der,
+        _ => return Err(nlib(OP, NlibCode::MaxDerivative)),
+    };
     if cur.degree() < SMALL_DEGREE {
-        crv_derivs_n::<SMALL_DEGREE>(cur, u, side, der)
+        crv_derivs_n::<SMALL_DEGREE>(cur, u, side, der, out)
     } else {
-        crv_derivs_n::<MAX_DEGREE>(cur, u, side, der)
+        crv_derivs_n::<MAX_DEGREE>(cur, u, side, der, out)
     }
 }
 
-/// [`crv_derivs`] with scratch width `N` (see [`basis_derivs_into`]); `der < MAX_DERIV`.
-fn crv_derivs_n<const N: usize>(cur: &Curve, u: f64, side: Side, der: usize) -> Result<Vec<Vec3>> {
+/// [`crv_derivs_into`] with scratch width `N` (see [`basis_derivs_into`]);
+/// `der <= MAX_DERIV`, `out.len() == der + 1`.
+fn crv_derivs_n<const N: usize>(
+    cur: &Curve,
+    u: f64,
+    side: Side,
+    der: usize,
+    out: &mut [Vec3],
+) -> Result<()> {
     const OP: &str = OP_CDERIVS;
     let pu = cur.degree();
-    let mut bd = [[0.0_f64; N]; MAX_DERIV];
+    let mut bd = [[0.0_f64; N]; MAX_DERIV + 1];
     let rows_bd = bd.get_mut(..=der).ok_or_else(|| oob(OP))?;
 
     // Compute basis function derivatives.
@@ -995,8 +1045,7 @@ fn crv_derivs_n<const N: usize>(cur: &Curve, u: f64, side: Side, der: usize) -> 
     let pts = pts.get(..npts).ok_or_else(|| oob(OP))?;
 
     // C^(k) = Sum_i(BasisVal[k][i] * P[i]).
-    let mut cd = Vec::with_capacity(der + 1);
-    for row in bd.get(..=der).ok_or_else(|| oob(OP))? {
+    for (row, slot) in bd.get(..=der).ok_or_else(|| oob(OP))?.iter().zip(out) {
         let mut c = Vec3::new(0.0, 0.0, 0.0);
         for (i, q) in pts.iter().enumerate().take(pu + 1) {
             let b = row.get(i).copied().ok_or_else(|| oob(OP))?;
@@ -1004,9 +1053,9 @@ fn crv_derivs_n<const N: usize>(cur: &Curve, u: f64, side: Side, der: usize) -> 
             c.y += b * q.y;
             c.z += b * q.z;
         }
-        cd.push(c);
+        *slot = c;
     }
-    Ok(cd)
+    Ok(())
 }
 
 /// All non-vanishing basis functions of degree `p` at `u` (`sm_BasisEval`):
@@ -1016,15 +1065,34 @@ fn crv_derivs_n<const N: usize>(cur: &Curve, u: f64, side: Side, der: usize) -> 
 /// (upstream fills `N` with `[1, 0, .., 0]` / `[0, .., 0, 1]` there but returns its
 /// error flag) and with [`SolidError::Degenerate`] when a knot difference is below
 /// `SM_EFF_ZERO_SQ`.
-#[allow(clippy::range_plus_one)] // exclusive ranges: `RangeInclusive` is measurably slower here
 pub fn basis_eval(knt: &KnotVector<'_>, p: usize, u: f64, side: Side) -> Result<Basis> {
+    check_degree(p, OP_BEVAL)?;
+    let mut n = vec![0.0_f64; p + 1];
+    let span = basis_eval_into(knt, p, u, side, &mut n)?;
+    Ok(Basis { span, values: n })
+}
+
+/// [`basis_eval`] into the caller's buffer `n` (at least `p + 1` long; the evaluation
+/// hot paths pass a stack array of [`MAX_DEGREE`]): fills `n[..=p]` and returns the
+/// knot span. The same operations in the same order, so the values are bit-identical.
+///
+/// # Errors
+///
+/// Those of [`basis_eval`]; an index error when `n` is shorter than `p + 1`.
+#[allow(clippy::range_plus_one)] // exclusive ranges: `RangeInclusive` is measurably slower here
+pub fn basis_eval_into(
+    knt: &KnotVector<'_>,
+    p: usize,
+    u: f64,
+    side: Side,
+    n: &mut [f64],
+) -> Result<usize> {
     const OP: &str = OP_BEVAL;
     check_degree(p, OP)?;
     let knot_tol = EFF_ZERO_SQ;
     let uk = knt.knots();
     let pi = sx(p, OP)?;
     let m = sx(knt.last_index(), OP)?;
-    let mut n = vec![0.0_f64; p + 1];
 
     // Special cases for end values: upstream fills N there but returns its error flag
     // (initialised to NL_YES for early exits).
@@ -1039,7 +1107,7 @@ pub fn basis_eval(knt: &KnotVector<'_>, p: usize, u: f64, side: Side) -> Result<
     // Compute the non-vanishing B-splines.
     let mut left = [0.0_f64; MAX_DEGREE];
     let mut right = [0.0_f64; MAX_DEGREE];
-    set(&mut n, 0, 1.0, OP)?;
+    set(n, 0, 1.0, OP)?;
     for k in 1..pi + 1 {
         set(&mut left, k, u - get(uk, i + 1 - k, OP)?, OP)?;
         set(&mut right, k, get(uk, i + k, OP)? - u, OP)?;
@@ -1051,13 +1119,13 @@ pub fn basis_eval(knt: &KnotVector<'_>, p: usize, u: f64, side: Side) -> Result<
             if delta < knot_tol {
                 return Err(degenerate(OP));
             }
-            let temp = get(&n, l, OP)?;
-            set(&mut n, l, saved + temp * (rr / delta), OP)?;
+            let temp = get(n, l, OP)?;
+            set(n, l, saved + temp * (rr / delta), OP)?;
             saved = temp * (ll / delta);
         }
-        set(&mut n, k, saved, OP)?;
+        set(n, k, saved, OP)?;
     }
-    Ok(Basis { span, values: n })
+    Ok(span)
 }
 
 /// `TO_EUCLID`: homogeneous to Euclidean by dividing by `w` (no reciprocal, unlike
@@ -1084,14 +1152,22 @@ pub fn crv_eval(cur: &Curve, u: f64, side: Side) -> Result<Vec3> {
     let p = cur.degree();
     let knt = cur.knot_vector()?;
 
-    // Non-zero basis values of the span containing u.
-    let basis = basis_eval(&knt, p, u, side)?;
+    // Non-zero basis values of the span containing u (into a stack array: `p` is
+    // below MAX_DEGREE, which basis_eval_into checks first).
+    let mut values = [0.0_f64; MAX_DEGREE];
+    let span = basis_eval_into(&knt, p, u, side, &mut values)?;
+    let values = values.get(..=p).ok_or_else(|| oob(OP))?;
 
     // Compute the point on the curve.
     let mut cw = CPoint::new(0.0, 0.0, 0.0, 0.0);
-    let spn_p = basis.span.checked_sub(p).ok_or_else(|| oob(OP))?;
-    for (i, &alpha) in basis.values.iter().enumerate().take(p + 1) {
-        let aw = pw.get(spn_p + i).copied().ok_or_else(|| oob(OP))?;
+    // Upstream reads Pw[spn - p + i] unchecked; a span below p (a NaN u on a curve
+    // with fewer than p + 1 control points) reads before Pw (UB-288): SM_ERR instead.
+    let spn_p = span.checked_sub(p).ok_or_else(|| SolidError::sm_err(OP))?;
+    for (i, &alpha) in values.iter().enumerate().take(p + 1) {
+        let aw = pw
+            .get(spn_p + i)
+            .copied()
+            .ok_or_else(|| SolidError::sm_err(OP))?;
         // MAC_A_updcpt: skip zero weights, add without multiplying for one.
         if alpha == 1.0 {
             cw.x += aw.x;
@@ -1530,7 +1606,12 @@ pub fn crv_remove_knots(cur: &mut Curve, tol: f64) -> Result<bool> {
 fn span_maxima_result(r: Result<SpanMaxima>) -> Result<Option<SpanMaxima>> {
     match r {
         Ok(sm) => Ok(Some(sm)),
-        Err(e @ (SolidError::InvalidInput { .. } | SolidError::Unported { .. })) => Err(e),
+        Err(
+            e @ (SolidError::InvalidInput { .. }
+            | SolidError::PortInvariant { .. }
+            | SolidError::Unported { .. }
+            | SolidError::Cancelled { .. }),
+        ) => Err(e),
         Err(_) => Ok(None),
     }
 }
@@ -1745,7 +1826,7 @@ pub fn basis_i_derivs(
     let n = m - pi - 1;
     let ii = sx(i, OP)?;
     let deri = sx(der, OP)?;
-    let mut nd_out = vec![0.0_f64; der.saturating_add(1)];
+    let mut nd_out = filled(der.saturating_add(1), 0.0_f64, OP)?;
 
     // Check index.
     if ii > n {
@@ -2049,6 +2130,58 @@ mod tests {
         assert_eq!(k[6], 1.0);
     }
 
+    /// Regression (UB-33, smlib#79 2391302, solidcore#2273): `der == MAX_DERIV` is
+    /// accepted by upstream and fits `MAX_DERIV + 1` rows. The Bezier curve with
+    /// control points `(0,0,0,0,0,1)` is `x(t) = t^5`, so `C^(k)(0.5) = 5!/(5-k)! t^(5-k)`.
+    #[test]
+    fn derivs_up_to_max_deriv_fit_their_rows() {
+        // Homogeneous points `(w X, w)`: a constant weight 2 is rational, the same curve.
+        let mk = |w: f64| {
+            let pw: Vec<CPoint> = (0..6)
+                .map(|i| CPoint::new(if i == 5 { w.max(1.0) } else { 0.0 }, 0.0, 0.0, w))
+                .collect();
+            let knots = vec![0.0; 6].into_iter().chain(vec![1.0; 6]).collect();
+            Curve::new(pw, 5, knots).unwrap()
+        };
+        let want = [0.03125, 0.3125, 2.5, 15.0, 60.0, 120.0];
+        for w in [NOW, 2.0] {
+            let c = mk(w);
+            let d = crv_derivs(&c, 0.5, Side::Left, MAX_DERIV).unwrap();
+            assert_eq!(d.len(), MAX_DERIV + 1);
+            for (k, w) in want.iter().enumerate() {
+                assert!((d[k].x - w).abs() <= 1e-12 * w, "k = {k}: {}", d[k].x);
+            }
+            assert!(crv_derivs(&c, 0.5, Side::Left, MAX_DERIV + 1).is_err());
+        }
+    }
+
+    #[test]
+    fn eval_at_nan_below_p_plus_one_control_points_is_sm_err() {
+        // An edge whose limits were never set: degree 3, 2 control points, every
+        // knot 1e20. At u = NaN the span search stops at span 2 < p, where upstream
+        // reads Pw[-1].
+        let pw = vec![
+            CPoint::new(0.0, 0.0, 0.0, NOW),
+            CPoint::new(1.0, 0.0, 0.0, NOW),
+        ];
+        let c = Curve::new(pw, 3, vec![1e20; 6]).unwrap();
+        let knt = c.knot_vector().unwrap();
+        assert_eq!(basis_eval(&knt, 3, f64::NAN, Side::Left).unwrap().span, 2);
+        for side in [Side::Left, Side::Right] {
+            match crv_eval(&c, f64::NAN, side) {
+                Err(SolidError::Upstream {
+                    operation,
+                    code,
+                    entity: None,
+                }) => {
+                    assert_eq!(operation, OP_CEVAL);
+                    assert_eq!(code, crate::error::SM_ERR);
+                }
+                other => panic!("{other:?}"),
+            }
+        }
+    }
+
     #[test]
     fn eval_matches_derivs() {
         let c = cubic();
@@ -2059,7 +2192,7 @@ mod tests {
             let d = crv_derivs(&c, u, Side::Left, 2).unwrap();
             assert!((p - d[0]).length() < 1e-12, "u = {u}");
         }
-        assert!(crv_derivs(&c, 0.5, Side::Left, 5).is_err());
+        assert!(crv_derivs(&c, 0.5, Side::Left, MAX_DERIV + 1).is_err());
     }
 
     #[test]
@@ -2117,6 +2250,160 @@ mod tests {
         assert_eq!(c.n(), 2);
     }
 
+    /// The heap-allocating `basis_eval` / `crv_eval` as they were before
+    /// `basis_eval_into` (the reference for the bit-identity test).
+    fn old_basis_eval(knt: &KnotVector<'_>, p: usize, u: f64, side: Side) -> Result<Basis> {
+        const OP: &str = OP_BEVAL;
+        check_degree(p, OP)?;
+        let knot_tol = EFF_ZERO_SQ;
+        let uk = knt.knots();
+        let pi = sx(p, OP)?;
+        let m = sx(knt.last_index(), OP)?;
+        let mut n = vec![0.0_f64; p + 1];
+        if u == get(uk, pi, OP)? || u == get(uk, m - pi, OP)? {
+            return Err(at_domain_end(OP));
+        }
+        let span = knt.find_span(p, u, side)?;
+        let i = sx(span, OP)?;
+        let mut left = [0.0_f64; MAX_DEGREE];
+        let mut right = [0.0_f64; MAX_DEGREE];
+        set(&mut n, 0, 1.0, OP)?;
+        for k in 1..=pi {
+            set(&mut left, k, u - get(uk, i + 1 - k, OP)?, OP)?;
+            set(&mut right, k, get(uk, i + k, OP)? - u, OP)?;
+            let mut saved = 0.0;
+            for l in 0..k {
+                let rr = get(&right, l + 1, OP)?;
+                let ll = get(&left, k - l, OP)?;
+                let delta = rr + ll;
+                if delta < knot_tol {
+                    return Err(degenerate(OP));
+                }
+                let temp = get(&n, l, OP)?;
+                set(&mut n, l, saved + temp * (rr / delta), OP)?;
+                saved = temp * (ll / delta);
+            }
+            set(&mut n, k, saved, OP)?;
+        }
+        Ok(Basis { span, values: n })
+    }
+
+    fn old_crv_eval(cur: &Curve, u: f64, side: Side) -> Result<Vec3> {
+        let pw = cur.cpts();
+        let p = cur.degree();
+        let knt = cur.knot_vector()?;
+        let basis = old_basis_eval(&knt, p, u, side)?;
+        let mut cw = CPoint::new(0.0, 0.0, 0.0, 0.0);
+        let spn_p = basis.span - p;
+        for (i, &alpha) in basis.values.iter().enumerate().take(p + 1) {
+            let aw = pw[spn_p + i];
+            if alpha == 1.0 {
+                cw.x += aw.x;
+                cw.y += aw.y;
+                if aw.z != NOZ {
+                    cw.z += aw.z;
+                } else {
+                    cw.z = NOZ;
+                }
+                if aw.w != NOW {
+                    cw.w += aw.w;
+                } else {
+                    cw.w = NOW;
+                }
+            } else if alpha != 0.0 {
+                cw.x += alpha * aw.x;
+                cw.y += alpha * aw.y;
+                if aw.z != NOZ {
+                    cw.z += alpha * aw.z;
+                } else {
+                    cw.z = NOZ;
+                }
+                if aw.w != NOW {
+                    cw.w += alpha * aw.w;
+                } else {
+                    cw.w = NOW;
+                }
+            }
+        }
+        Ok(to_euclid(cw))
+    }
+
+    #[test]
+    fn stack_basis_eval_is_bit_identical_to_the_heap_path() {
+        // a fixed-seed LCG: deterministic control points, weights and knots
+        let mut state = 0x2545_f491_4f6c_dd1d_u64;
+        let mut rnd = move || {
+            state = state
+                .wrapping_mul(6_364_136_223_846_793_005)
+                .wrapping_add(1_442_695_040_888_963_407);
+            (state >> 11) as f64 / (1u64 << 53) as f64
+        };
+        let mut compared = 0;
+        for p in 1..=7usize {
+            for rational in [false, true] {
+                let n_cpts = p + 1 + 4;
+                let pw: Vec<CPoint> = (0..n_cpts)
+                    .map(|_| {
+                        let w = if rational { 0.25 + 2.0 * rnd() } else { NOW };
+                        let (x, y, z) = (rnd() * 10.0 - 5.0, rnd() * 10.0 - 5.0, rnd() * 3.0);
+                        if rational {
+                            CPoint::new(x * w, y * w, z * w, w)
+                        } else {
+                            CPoint::new(x, y, z, w)
+                        }
+                    })
+                    .collect();
+                // clamped knots with non-uniform interior knots (a double knot from
+                // degree 2 on)
+                let mut u = vec![0.0; p + 1];
+                let mut t = 0.0;
+                for k in 0..n_cpts - p - 1 {
+                    if k != 2 || p < 2 {
+                        t += 0.1 + rnd();
+                    }
+                    u.push(t);
+                }
+                let end = t + 0.1 + rnd();
+                u.extend(vec![end; p + 1]);
+                let c = Curve::new(pw, p, u.clone()).unwrap();
+                let knt = c.knot_vector().unwrap();
+                let mut params: Vec<f64> = (1..64).map(|j| end * f64::from(j) / 64.0).collect();
+                params.extend(u.iter().copied()); // knots themselves, domain ends included
+                for &x in &params {
+                    for side in [Side::Left, Side::Right] {
+                        let old = old_basis_eval(&knt, p, x, side);
+                        let new = basis_eval(&knt, p, x, side);
+                        match (&old, &new) {
+                            (Ok(a), Ok(b)) => {
+                                assert_eq!(a.span, b.span);
+                                let ab: Vec<u64> = a.values.iter().map(|v| v.to_bits()).collect();
+                                let bb: Vec<u64> = b.values.iter().map(|v| v.to_bits()).collect();
+                                assert_eq!(ab, bb, "p {p} u {x}");
+                            }
+                            (Err(a), Err(b)) => assert_eq!(format!("{a:?}"), format!("{b:?}")),
+                            _ => panic!("p {p} u {x}: {old:?} vs {new:?}"),
+                        }
+                        let old = old_crv_eval(&c, x, side);
+                        let new = crv_eval(&c, x, side);
+                        match (&old, &new) {
+                            (Ok(a), Ok(b)) => {
+                                assert_eq!(
+                                    [a.x.to_bits(), a.y.to_bits(), a.z.to_bits()],
+                                    [b.x.to_bits(), b.y.to_bits(), b.z.to_bits()],
+                                    "p {p} rational {rational} u {x}"
+                                );
+                                compared += 1;
+                            }
+                            (Err(a), Err(b)) => assert_eq!(format!("{a:?}"), format!("{b:?}")),
+                            _ => panic!("p {p} u {x}: {old:?} vs {new:?}"),
+                        }
+                    }
+                }
+            }
+        }
+        assert!(compared > 1000, "{compared}");
+    }
+
     #[test]
     fn basis_partition_of_unity() {
         let c = cubic();
@@ -2147,5 +2434,22 @@ mod tests {
         let pw = vec![CPoint::new(1.0, 1.0, 1.0, NOW); 2];
         let d = Curve::new(pw, 1, vec![0.0, 0.0, 1.0, 1.0]).unwrap();
         assert!(is_ncrv_degenerate(&d, EFF_ZERO).unwrap());
+    }
+
+    #[test]
+    fn absurd_derivative_orders_are_errors() {
+        // fuzz regressions (nurbs.nurbs_crv fuzz00220, fuzz00094, fuzz00112): the
+        // derivative rows were allocated with an aborting `vec!`
+        let c = line(3);
+        let knt = c.knot_vector().unwrap();
+        // (sizes beyond the 47-bit address space, so no test machine can grant them)
+        for der in [1usize << 44, 1 << 62, usize::MAX] {
+            assert!(basis_derivs(&knt, 3, 0.5, Side::Left, der).is_err());
+            assert!(crv_rational_basis_derivs(&c, 0.5, Side::Left, der).is_err());
+            assert!(basis_i_derivs(&knt, 1, 3, 0.5, Side::Left, der).is_err());
+        }
+        assert!(allocate_nurb_curve(1 << 47, 3, 3).is_err());
+        assert!(allocate_nurb_curve(3, 3, 1 << 48).is_err());
+        assert!(allocate_nurb_curve(3, 3, 7).is_ok());
     }
 }

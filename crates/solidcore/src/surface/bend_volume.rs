@@ -25,8 +25,8 @@
 //! | [`BendVolume::bend_neutral_dist`], [`BendVolume::singularity_tol`] | `GetBendNeutralDist`, `GetSingularityTol` |
 //! | [`BendVolume::evaluate`]                          | `Evaluate`                                     |
 //! | [`BendVolume::evaluate_simple`]                   | `EvaluateSimple`                               |
-//! | [`BendVolume::evaluate_bounding_box_simple`]      | `EvaluateBoundingBoxSimple`                    |
-//! | [`BendVolume::trim_param_bounding_box_simple`]    | `TrimParamBoundingBoxSimple`                   |
+//! | [`BendVolume::evaluate_bounding_box_simple`], [`BendVolume::evaluate_bounding_box_simple_with_kernel`], [`BendVolume::evaluate_bounding_box_simple_with_fixes`] | `EvaluateBoundingBoxSimple` |
+//! | [`BendVolume::trim_param_bounding_box_simple`], [`BendVolume::trim_param_bounding_box_simple_with_kernel`], [`BendVolume::trim_param_bounding_box_simple_with_fixes`] | `TrimParamBoundingBoxSimple` |
 //! | [`BendVolume::inv_evaluate_guess_point_simple`]   | `InvEvaluateGuessPointSimple`                  |
 //! | [`BendVolume::global_point_solve_simple`]         | `GlobalPointSolveSimple`                       |
 //! | [`BendVolume::local_point_solve_simple`]          | `LocalPointSolveSimple`                        |
@@ -35,6 +35,8 @@
 //! | [`BendVolume::is_line_in_param_domain_simple`]    | `IsLineInParamDomainSimple`                    |
 //! | [`BendVolume::is_curve_in_param_domain_simple`]   | `IsCurveInParamDomainSimple`                   |
 //! | [`BendVolume::read_from_db`]                      | `ReadFromDB`                                   |
+//! | [`BendVolume::make_exact_b_spline_1st_out_surface`] | `MakeExactBSpline1stOutSurface` (in no unit in units.json; called by `SrfInVolume::make_exact_b_spline_if_possible_with`) |
+//! | [`BendVolume::make_exact_b_spline_1st_out_curve`] | `MakeExactBSpline1stOutCurve` (in no unit in units.json; called by `CrvInVolume::make_exact_b_spline_if_possible_with`) |
 //! | [`BEND_VOLUME_TYPE`], [`is_kind_of`], [`Volume::type_code`] and friends | `GetType`, `GetTypeString`, `GetClassString` (`SM_COMMON`), `IsKindOf` |
 //!
 //! Deviations:
@@ -54,15 +56,32 @@
 //!   (the empty constructor's initializer) and singularity tolerance
 //!   `SM_UNDEF_DOUBLE` (the member initializer) ([`BendVolume::new`]).
 //! - **Bounding boxes.** `EvaluateBoundingBoxSimple` is analytic, in projection
-//!   space. Ported as written, including its slips: the unbounded-`u` branch takes
-//!   the bounded `y` maximum from cosines, tests `dThetaMin < 0 || dThetaMax <= 0`
-//!   for the `y` minimum, and the containment tests compare angles that are not
-//!   reduced to one period. `SetMinMax` fails (status ignored upstream, output box
-//!   left as it was) when a minimum exceeds its maximum. The unused parameter
-//!   pseudo box is dropped.
-//! - **Trim.** `TrimParamBoundingBoxSimple` ignores the status of its final
-//!   `SetMinMax`, which leaves `trim_box` unchanged when the trimmed box is
-//!   inverted (for instance after the period clamp); kept.
+//!   space. By default ([`BendVolume::evaluate_bounding_box_simple`]), ported as
+//!   written, including its slips: the mid-angle pseudo box uses `sin(theta_end)`
+//!   and compares the half-angle against `SM_PI` instead of `SM_PI / 2`, the
+//!   unbounded-`u` branch takes the bounded `y` maximum from cosines, tests
+//!   `dThetaMin < 0 || dThetaMax <= 0` for the `y` minimum, and the containment
+//!   tests compare angles that are not reduced to one period. `SetMinMax` fails
+//!   (status ignored upstream, output box left as it was) when a minimum exceeds its
+//!   maximum. The unused parameter pseudo box is dropped.
+//!   [`BendVolume::evaluate_bounding_box_simple_with_kernel`] and
+//!   [`BendVolume::evaluate_bounding_box_simple_with_fixes`] compute tight
+//!   containing mid-angle pseudo-box intervals (propagating
+//!   `±SM_INFINITE_PARAMETER` along unbounded `u` rays) and use sines for the
+//!   unbounded-`u` `y` maximum when
+//!   [`UpstreamFixes::bend_volume_bbox_contains_wide_angle_and_inf_u`] is enabled
+//!   (`WR-59`;
+//!   `plan/upstream-issues/WR-59--addendum-2026-11-01-bend-volume-pseudo-box-bounds.md`).
+//! - **Trim.** By default ([`BendVolume::trim_param_bounding_box_simple`]),
+//!   `TrimParamBoundingBoxSimple` ignores the status of its final `SetMinMax`, which
+//!   leaves `trim_box` unchanged when the trimmed box is inverted (for instance
+//!   after the independent `SM_CLAMP_TO_PERIOD` endpoint clamps across `v = ±pi * d`).
+//!   [`BendVolume::trim_param_bounding_box_simple_with_kernel`] and
+//!   [`BendVolume::trim_param_bounding_box_simple_with_fixes`] shift non-seam-crossing
+//!   periodic intervals into `[-pi * |d|, pi * |d|]` and expand seam-crossing or
+//!   full-period/unbounded intervals to `[-pi * |d|, pi * |d|]` when
+//!   [`UpstreamFixes::bend_volume_trim_param_box_across_period`] is enabled (`WR-60`;
+//!   `plan/upstream-issues/WR-60--addendum-2026-11-01-bend-volume-trim-across-period.md`).
 //! - **Inverse guess.** `InvEvaluateGuessPointSimple` writes its guesses and returns
 //!   `SM_ERR` near the axis: [`BendVolume::inv_evaluate_guess_point_simple`]
 //!   returns both; the [`Volume`] dispatch turns the failure into `SM_ERR` (its
@@ -79,27 +98,62 @@
 //! - **Unused arguments** upstream ignores (the from-left flags, zero-tangent and
 //!   zero-sampling options of the evaluations) are dropped where the call is local
 //!   to this module.
+//! - **`MakeExactBSpline1stOutCurve`** takes the input space as a flag, as the surface
+//!   variant, and returns the new curve (`None` for upstream's `NULL`). The statuses
+//!   upstream ignores (the sample `EvaluatePoint`s, the end-point `MapPoint` /
+//!   `EvaluatePoint`, `Evaluate`, `CCWAngleBetween`) leave the previous value
+//!   ([`Vec3::UNDEF`] for points, `0` for angles; upstream's angles are then
+//!   uninitialised). The unused plane-distance sums and the debug drawing are dropped.
+//!   When all three frame planes are constant (a degenerate curve) the line is built
+//!   and then replaced by the circle, as upstream (which leaks the line).
+//! - **`MakeExactBSpline1stOutSurface`** takes the input space as a flag
+//!   (`in_space`: `SM_VS_IN_SPACE`; otherwise `SM_VS_PARAM_SPACE`, so the invalid-space
+//!   `SM_ERR` has no counterpart) and returns the new surface (`None` for upstream's
+//!   `NULL`). The statuses upstream ignores (the sample `EvaluatePoint`s, the corner
+//!   `MapPoint` / `EvaluatePoint`, `EvaluateNormal`, the `SetUMin`-style setters)
+//!   leave the previous value, as upstream's out-params do (the defaults are
+//!   [`Vec3::UNDEF`]); [`SolidError::Unported`] still propagates. When more than one
+//!   frame plane is constant (a degenerate input), each matching branch builds its
+//!   surface and the last one wins (upstream leaks the earlier ones). The unused
+//!   `sCylinderOrigin` and the debug drawing are dropped.
 //! - **Recursion:** none here; the next-map compounding recurses through
 //!   [`Volume::map`] as in `surface::volume::p1`.
 
 use crate::curve::curve::p2::Curve;
-use crate::error::{Result, SolidError};
+use crate::curve::ellipse::{Ellipse, EllipseOptions};
+use crate::curve::line::Line;
+use crate::error::{ignored, Result, SolidError};
 use crate::geom::extent1d::Extent1d;
+use crate::geom::extent2d::Extent2d;
 use crate::geom::extent3d::Extent3d;
 use crate::geom::pseudo_box::PseudoBox;
 use crate::geom::solution_array::{Solution, SolutionArray, SolutionObject, SolutionType};
-use crate::geom::tol::{is_zero, scaled_zero2, ZONE_TOL_3D};
+use crate::geom::tol::{approx_tol_3d, is_zero, scaled_zero2, SmallTopoType, ZONE_TOL_3D};
 use crate::geom::transform::Transform;
+use crate::geom::vector2d::{Point2, Vec2};
 use crate::geom::vector3d::{Point3, Vec3};
-use crate::kernel::Kernel;
+use crate::kernel::{Kernel, UpstreamFixes};
 use crate::math::{
-    max2, max4, min2, min4, EFF_ZERO, EFF_ZERO_DEG, INFINITE_PARAMETER, PI, UNDEF_DOUBLE,
+    is_infinite_param, max2, max4, min2, min4, rad_to_deg, EFF_ZERO, EFF_ZERO_DEG,
+    INFINITE_PARAMETER, PI, UNDEF_DOUBLE,
 };
+use crate::nurbs::knots::Side;
+use crate::surface::cone::Cone;
+use crate::surface::plane::p1::Plane;
+use crate::surface::surface::p2::Surface;
 use crate::surface::volume::p1::{
-    concat_evals, is_kind_of as volume_is_kind_of, EvalOptions, Volume, VolumeKind,
+    concat_evals_opt_in, is_kind_of as volume_is_kind_of, EvalOptions, Volume, VolumeKind,
 };
 use crate::surface::volume::p2::ignore_read;
 use crate::topology::database_io::{DatabaseReader, FileType};
+
+/// `lSmpSize` of `MakeExactBSpline1stOutSurface`: the sample grid is
+/// `(SMP_SIZE + 1) x (SMP_SIZE + 1)`.
+const SMP_SIZE: u32 = 5;
+
+/// `lSmpSize` of `MakeExactBSpline1stOutCurve`: the curve is sampled at
+/// `CRV_SMP_SIZE + 1` points.
+const CRV_SMP_SIZE: u32 = 11;
 
 pub use crate::surface::volume::p1::BEND_VOLUME_TYPE;
 
@@ -254,7 +308,7 @@ impl BendVolume {
 
         // build BendCoordinates into m_pOrientMap
         let orient = Transform::new(center, bend_mid_dir, bend_binormal, Some(bend_axis));
-        Volume::with_maps(VolumeKind::Bend(bend), Some(orient), None)
+        Volume::oriented(VolumeKind::Bend(bend), Some(orient))
     }
 
     /// `m_dBendNeutralDist` (`GetBendNeutralDist`).
@@ -397,7 +451,12 @@ impl BendVolume {
                 };
                 let next_derivs = next.map(position, n, &map_opts)?;
                 // Concatenate Evaluate(ParamPoint) = Next(Mid(ParamPoint))
-                concat_evals(n, &d, &next_derivs)
+                concat_evals_opt_in(
+                    n,
+                    &d,
+                    &next_derivs,
+                    opts.fixes.volume_lift_third_derivative_terms,
+                )
             }
             _ => Ok(d),
         }
@@ -472,17 +531,64 @@ impl BendVolume {
     /// unbounded sides when `param_box` reaches `u = SM_INFINITE_PARAMETER`), and a
     /// pseudo box oriented on the mapped mid-angle direction. `proj_box` is left
     /// unchanged when its computed minimum exceeds its maximum on an axis.
+    ///
+    /// Uses [`UpstreamFixes::default`] for pinned C++ parity; see
+    /// [`Self::evaluate_bounding_box_simple_with_kernel`] and
+    /// [`Self::evaluate_bounding_box_simple_with_fixes`] for the opt-in `WR-59` fix.
     pub fn evaluate_bounding_box_simple(
         &self,
         param_box: &Extent3d,
         proj_box: Option<&mut Extent3d>,
         proj_pseudo_box: Option<&mut PseudoBox>,
     ) {
+        self.evaluate_bounding_box_simple_with_fixes(
+            param_box,
+            proj_box,
+            proj_pseudo_box,
+            &UpstreamFixes::default(),
+        );
+    }
+
+    /// [`Self::evaluate_bounding_box_simple`] forwarding `&k.fixes`
+    /// ([`UpstreamFixes::bend_volume_bbox_contains_wide_angle_and_inf_u`], `WR-59`).
+    pub fn evaluate_bounding_box_simple_with_kernel(
+        &self,
+        k: &Kernel,
+        param_box: &Extent3d,
+        proj_box: Option<&mut Extent3d>,
+        proj_pseudo_box: Option<&mut PseudoBox>,
+    ) {
+        self.evaluate_bounding_box_simple_with_fixes(
+            param_box,
+            proj_box,
+            proj_pseudo_box,
+            &k.fixes,
+        );
+    }
+
+    /// [`Self::evaluate_bounding_box_simple`] parameterised by [`UpstreamFixes`].
+    ///
+    /// When [`UpstreamFixes::bend_volume_bbox_contains_wide_angle_and_inf_u`] is
+    /// `false`, behaves identically to [`Self::evaluate_bounding_box_simple`]. When
+    /// `true` (`WR-59`), builds `proj_pseudo_box` from the exact radial/angular
+    /// cosine and sine extrema over `[u_min, u_max] × [-half_angle, half_angle]`
+    /// (propagating `±SM_INFINITE_PARAMETER` along unbounded `u` rays) and uses
+    /// `max(sin(theta_min), sin(theta_max)) * u_min` instead of cosines for
+    /// `proj_box`'s `y_max` when `u_max == SM_INFINITE_PARAMETER` and both end angles
+    /// are `<= 0`.
+    pub fn evaluate_bounding_box_simple_with_fixes(
+        &self,
+        param_box: &Extent3d,
+        proj_box: Option<&mut Extent3d>,
+        proj_pseudo_box: Option<&mut PseudoBox>,
+        fixes: &UpstreamFixes,
+    ) {
         // no work - no output
         if proj_box.is_none() && proj_pseudo_box.is_none() {
             return;
         }
         // (a box reaching u < GetLegalMinU() is only reported upstream)
+        let fix_bbox = fixes.bend_volume_bbox_contains_wide_angle_and_inf_u;
 
         // locals
         let v_min = param_box.v_min();
@@ -527,6 +633,9 @@ impl BendVolume {
                 // dYMax - infinite when Param Box maps above the Y = 0 plane
                 y_max = if theta_min >= 0.0 || theta_max > 0.0 {
                     INFINITE_PARAMETER
+                } else if fix_bbox {
+                    // WR-59: use sines of the end angles at minimum radius
+                    max2(sin_theta_min, sin_theta_max) * u_min
                 } else {
                     // dYMax is taken from the min radius corner points (upstream
                     // uses the cosines here)
@@ -599,39 +708,125 @@ impl BendVolume {
         // when asked - build a ProjPseudoBox oriented about the center of the mapped
         // ParamBox
         if let Some(pb) = proj_pseudo_box {
-            let v_mid = (v_min + v_max) / 2.0;
-            let v_end = v_max - v_mid;
-            let theta_mid = v_mid / self.bend_neutral_dist;
-            let theta_end = v_end / self.bend_neutral_dist;
-            let cos_theta_mid = theta_mid.cos();
-            let sin_theta_mid = theta_mid.sin();
-            let sin_theta_end = theta_end.sin();
-            let x_max = u_max;
-            let x_min = if theta_end < PI {
-                sin_theta_end * u_min
+            if fix_bbox {
+                if !param_box.has_negative_volume()
+                    && self.bend_neutral_dist != 0.0
+                    && self.bend_neutral_dist.is_finite()
+                {
+                    let v_unbounded = is_infinite_param(v_min) || is_infinite_param(v_max);
+                    let v_mid = if v_unbounded {
+                        0.0
+                    } else {
+                        v_min + (v_max - v_min) / 2.0
+                    };
+                    let raw_theta_mid = v_mid / self.bend_neutral_dist;
+                    let theta_mid = if raw_theta_mid.is_finite() {
+                        raw_theta_mid
+                    } else {
+                        0.0
+                    };
+                    let cos_theta_mid = theta_mid.cos();
+                    let sin_theta_mid = theta_mid.sin();
+
+                    let (cos_min, sin_max) = if v_unbounded {
+                        (-1.0, 1.0)
+                    } else {
+                        let half_angle =
+                            max2((theta_min - theta_mid).abs(), (theta_max - theta_mid).abs());
+                        let c_min = if half_angle < PI {
+                            half_angle.cos()
+                        } else {
+                            -1.0
+                        };
+                        let s_max = if half_angle < half_pi {
+                            half_angle.sin()
+                        } else {
+                            1.0
+                        };
+                        (c_min, s_max)
+                    };
+
+                    let u_min_neg_inf = is_infinite_param(u_min) && u_min < 0.0;
+                    let u_max_pos_inf = is_infinite_param(u_max) && u_max > 0.0;
+                    let unbounded_y_max = if sin_max > 0.0 {
+                        INFINITE_PARAMETER
+                    } else {
+                        0.0
+                    };
+                    let (x_min, x_max, y_max) = match (u_min_neg_inf, u_max_pos_inf) {
+                        (false, false) => (
+                            min4(cos_min * u_min, cos_min * u_max, u_min, u_max),
+                            max4(cos_min * u_min, cos_min * u_max, u_min, u_max),
+                            sin_max * max2(u_min.abs(), u_max.abs()),
+                        ),
+                        (false, true) => (
+                            if cos_min < 0.0 {
+                                -INFINITE_PARAMETER
+                            } else {
+                                min2(cos_min * u_min, u_min)
+                            },
+                            INFINITE_PARAMETER,
+                            unbounded_y_max,
+                        ),
+                        (true, false) => (
+                            -INFINITE_PARAMETER,
+                            if cos_min < 0.0 {
+                                INFINITE_PARAMETER
+                            } else {
+                                max2(cos_min * u_max, u_max)
+                            },
+                            unbounded_y_max,
+                        ),
+                        (true, true) => (-INFINITE_PARAMETER, INFINITE_PARAMETER, unbounded_y_max),
+                    };
+                    let y_min = -y_max;
+
+                    let pseudo_x = Vec3::new(cos_theta_mid, sin_theta_mid, 0.0);
+                    let pseudo_y = Vec3::new(-sin_theta_mid, cos_theta_mid, 0.0);
+                    let pseudo_z = Vec3::new(0.0, 0.0, 1.0);
+
+                    let ivl_x = Extent1d::from_min_max(x_min, x_max);
+                    let ivl_y = Extent1d::from_min_max(y_min, y_max);
+                    let ivl_z = Extent1d::from_min_max(param_box.w_min(), param_box.w_max());
+
+                    let _ = pb.set_basis(pseudo_x, pseudo_y, pseudo_z);
+                    pb.set_intervals(ivl_x, ivl_y, ivl_z);
+                }
             } else {
-                sin_theta_end * u_max
-            };
-            let y_max = if theta_end < PI {
-                sin_theta_end * u_max
-            } else {
-                u_max
-            };
-            let y_min = -y_max;
+                let v_mid = (v_min + v_max) / 2.0;
+                let v_end = v_max - v_mid;
+                let theta_mid = v_mid / self.bend_neutral_dist;
+                let theta_end = v_end / self.bend_neutral_dist;
+                let cos_theta_mid = theta_mid.cos();
+                let sin_theta_mid = theta_mid.sin();
+                let sin_theta_end = theta_end.sin();
+                let x_max = u_max;
+                let x_min = if theta_end < PI {
+                    sin_theta_end * u_min
+                } else {
+                    sin_theta_end * u_max
+                };
+                let y_max = if theta_end < PI {
+                    sin_theta_end * u_max
+                } else {
+                    u_max
+                };
+                let y_min = -y_max;
 
-            // bases
-            let pseudo_x = Vec3::new(cos_theta_mid, sin_theta_mid, 0.0);
-            let pseudo_y = Vec3::new(-sin_theta_mid, cos_theta_mid, 0.0);
-            let pseudo_z = Vec3::new(0.0, 0.0, 1.0);
+                // bases
+                let pseudo_x = Vec3::new(cos_theta_mid, sin_theta_mid, 0.0);
+                let pseudo_y = Vec3::new(-sin_theta_mid, cos_theta_mid, 0.0);
+                let pseudo_z = Vec3::new(0.0, 0.0, 1.0);
 
-            // intervals
-            let ivl_x = Extent1d::from_min_max(x_min, x_max);
-            let ivl_y = Extent1d::from_min_max(y_min, y_max);
-            let ivl_z = Extent1d::from_min_max(param_box.w_min(), param_box.w_max());
+                // intervals
+                let ivl_x = Extent1d::from_min_max(x_min, x_max);
+                let ivl_y = Extent1d::from_min_max(y_min, y_max);
+                let ivl_z = Extent1d::from_min_max(param_box.w_min(), param_box.w_max());
 
-            // set output (status ignored upstream)
-            let _ = pb.set_basis(pseudo_x, pseudo_y, pseudo_z);
-            pb.set_intervals(ivl_x, ivl_y, ivl_z);
+                // set output (status ignored upstream)
+                let _ = pb.set_basis(pseudo_x, pseudo_y, pseudo_z);
+                pb.set_intervals(ivl_x, ivl_y, ivl_z);
+            }
         }
     }
 
@@ -639,6 +834,11 @@ impl BendVolume {
     /// (`TrimParamBoundingBoxSimple`): `u` to `u >= singularity_tol` and `v` to the
     /// primary period (each end reduced to the period separately). `trim_box` is
     /// left unchanged when the trimmed box is inverted.
+    ///
+    /// Uses [`UpstreamFixes::default`] for pinned C++ parity; see
+    /// [`Self::trim_param_bounding_box_simple_with_kernel`] and
+    /// [`Self::trim_param_bounding_box_simple_with_fixes`] for the opt-in `WR-60`
+    /// fix.
     ///
     /// # Errors
     ///
@@ -650,6 +850,43 @@ impl BendVolume {
         param_box: &Extent3d,
         trim_box: &mut Extent3d,
     ) -> Result<()> {
+        self.trim_param_bounding_box_simple_with_fixes(
+            param_box,
+            trim_box,
+            &UpstreamFixes::default(),
+        )
+    }
+
+    /// [`Self::trim_param_bounding_box_simple`] forwarding `&k.fixes`
+    /// ([`UpstreamFixes::bend_volume_trim_param_box_across_period`], `WR-60`).
+    pub fn trim_param_bounding_box_simple_with_kernel(
+        &self,
+        k: &Kernel,
+        param_box: &Extent3d,
+        trim_box: &mut Extent3d,
+    ) -> Result<()> {
+        self.trim_param_bounding_box_simple_with_fixes(param_box, trim_box, &k.fixes)
+    }
+
+    /// [`Self::trim_param_bounding_box_simple`] parameterised by [`UpstreamFixes`].
+    ///
+    /// When [`UpstreamFixes::bend_volume_trim_param_box_across_period`] is `false`,
+    /// behaves identically to [`Self::trim_param_bounding_box_simple`]. When `true`
+    /// (`WR-60`), shifts periodic `v` intervals of length `< 2 * pi * |d|` into the
+    /// primary period `[-pi * |d|, pi * |d|]` when they do not straddle the seam
+    /// `±pi * |d|` (within `SM_EFF_ZERO`), expands seam-crossing or
+    /// full-period/unbounded intervals to `[-pi * |d|, pi * |d|]`, and always writes
+    /// a non-inverted `trim_box` on `Ok(())`.
+    pub fn trim_param_bounding_box_simple_with_fixes(
+        &self,
+        param_box: &Extent3d,
+        trim_box: &mut Extent3d,
+        fixes: &UpstreamFixes,
+    ) -> Result<()> {
+        if fixes.bend_volume_trim_param_box_across_period {
+            return self.trim_param_bounding_box_simple_periodic(param_box, trim_box);
+        }
+
         // locals
         let mut u_min = param_box.u_min();
         let mut v_min = param_box.v_min();
@@ -683,6 +920,86 @@ impl BendVolume {
         v_max = clamp_to_period(v_max, period_min, period_max);
 
         // set output (status ignored upstream)
+        let _ = trim_box.set_min_max_coords(u_min, v_min, w_min, u_max, v_max, w_max);
+        Ok(())
+    }
+
+    /// Opt-in `WR-60` periodic parameter-box trim to `u >= singularity_tol` and the
+    /// primary period `[-pi * |d|, pi * |d|]`.
+    fn trim_param_bounding_box_simple_periodic(
+        &self,
+        param_box: &Extent3d,
+        trim_box: &mut Extent3d,
+    ) -> Result<()> {
+        let mut u_min = param_box.u_min();
+        let mut v_min = param_box.v_min();
+        let w_min = param_box.w_min();
+        let u_max = param_box.u_max();
+        let mut v_max = param_box.v_max();
+        let w_max = param_box.w_max();
+
+        let has_nan = u_min.is_nan()
+            || u_max.is_nan()
+            || v_min.is_nan()
+            || v_max.is_nan()
+            || w_min.is_nan()
+            || w_max.is_nan()
+            || self.bend_neutral_dist.is_nan()
+            || self.singularity_tol.is_nan();
+        let degenerate_inf_v = v_min == v_max && !v_min.is_finite();
+        if has_nan
+            || degenerate_inf_v
+            || param_box.has_negative_volume()
+            || u_max < self.singularity_tol
+        {
+            trim_box.init();
+            return Err(SolidError::sm_err(OP_TRIM));
+        }
+        if u_min < self.singularity_tol {
+            u_min = self.singularity_tol;
+        }
+
+        let half_period = (self.bend_neutral_dist * PI).abs();
+        if half_period == 0.0 {
+            if v_max < -EFF_ZERO || v_min > EFF_ZERO {
+                trim_box.init();
+                return Err(SolidError::sm_err(OP_TRIM));
+            }
+            v_min = 0.0;
+            v_max = 0.0;
+        } else {
+            let period_min = -half_period;
+            let period_max = half_period;
+            let period = 2.0 * half_period;
+            if period.is_finite() {
+                if is_infinite_param(v_min)
+                    || is_infinite_param(v_max)
+                    || !v_min.is_finite()
+                    || !v_max.is_finite()
+                    || (v_max - v_min) >= period
+                {
+                    v_min = period_min;
+                    v_max = period_max;
+                } else if v_min < period_min || v_max > period_max {
+                    let half_span = (v_max - v_min) / 2.0;
+                    let wrapped_mid = clamp_to_period(v_min + half_span, period_min, period_max);
+                    let shifted_min = wrapped_mid - half_span;
+                    let shifted_max = wrapped_mid + half_span;
+                    if shifted_min >= period_min - EFF_ZERO && shifted_max <= period_max + EFF_ZERO
+                    {
+                        v_min = max2(shifted_min, period_min);
+                        v_max = min2(shifted_max, period_max);
+                        if v_min > v_max {
+                            v_min = v_max;
+                        }
+                    } else {
+                        v_min = period_min;
+                        v_max = period_max;
+                    }
+                }
+            }
+        }
+
         let _ = trim_box.set_min_max_coords(u_min, v_min, w_min, u_max, v_max, w_max);
         Ok(())
     }
@@ -849,6 +1166,455 @@ impl BendVolume {
         ];
         // is curve coincident, touching, or on positive side of all bounding planes
         param_curve.is_on_positive_side_of_planes(k, &plane_points, &plane_normals)
+    }
+
+    /// `MakeExactBSpline1stOutSurface`: the exact first out-space image of `input`
+    /// (from in-space when `in_space`, else from parameter space) through the bend
+    /// `volume` (whose kind is `self`), or `None` when it is not one of the analytic
+    /// cases. A surface parallel to the plane normal to the bend axis maps to a plane
+    /// normal to the axis, one parallel to the neutral plane (normal to the mid
+    /// direction) to a cylinder about the bend axis, and one normal to the binormal to
+    /// a plane through the bend axis. The test samples a 6 x 6 grid of the natural
+    /// domain; any sample outside the bend's domain gives `None`.
+    ///
+    /// # Errors
+    ///
+    /// [`SolidError::Unported`] from the surface or volume services.
+    pub fn make_exact_b_spline_1st_out_surface(
+        &self,
+        k: &Kernel,
+        volume: &Volume,
+        in_space: bool,
+        input: &Surface,
+    ) -> Result<Option<Surface>> {
+        // locals: ParamSpace and InSpace Bend orientations - Bend's Neutral plane is perp
+        // to the Bend's MidDirection
+        let (param_origin, bend_origin) = (Vec3::ZERO, volume.bend_origin());
+        let (param_mid_dir, bend_mid_dir) = (Vec3::X, volume.bend_mid_dir());
+        let (param_axis, bend_axis) = (Vec3::Z, volume.bend_axis());
+        let (param_binormal, bend_binormal) = (Vec3::Y, volume.bend_binormal());
+        let bend_neutral_dist = self.bend_neutral_dist();
+
+        // locals: making InputSpace either ParamSpace or InSpace
+        let (input_origin, input_mid_dir, input_axis) = if in_space {
+            (bend_origin, bend_mid_dir, bend_axis)
+        } else {
+            (param_origin, param_mid_dir, param_axis)
+        };
+        let _ = param_binormal;
+
+        // locals
+        let mut input_pt = Vec3::UNDEF;
+        let mut out_space_pt = Vec3::UNDEF;
+
+        let approx_tol = approx_tol_3d(k, SmallTopoType::NormalSize);
+        let domain = input.natural_uv_domain_with_nurb(k)?;
+        let ivl_u = domain.u_interval();
+        let ivl_v = domain.v_interval();
+
+        // note: for Bend mapping Bend principle axes happen to be the same in InSpace and
+        // OutSpace
+        let mut axis_plane_sum = 0.0;
+        let mut mid_plane_sum = 0.0;
+        let mut binormal_plane_sum = 0.0;
+        let mut axis_plane_range = Extent1d::new();
+        let mut mid_dir_plane_range = Extent1d::new();
+        let mut binormal_plane_range = Extent1d::new();
+        let mut const_axis_plane = false;
+        let mut const_mid_dir_plane = false;
+        let mut const_binormal_plane = false;
+        let mut out_space_bbox = PseudoBox::from_basis_intervals(
+            [bend_mid_dir, bend_binormal, bend_axis],
+            [mid_dir_plane_range, binormal_plane_range, axis_plane_range],
+        );
+
+        // See if the InputSurface is perpendicular to any of the Bend principle axes
+        // (parallel to any Bend principle planes)
+        for ii in 0..=SMP_SIZE {
+            let u = ivl_u.evaluate(f64::from(ii) / f64::from(SMP_SIZE));
+            for jj in 0..=SMP_SIZE {
+                let uv = Point2::new(u, ivl_v.evaluate(f64::from(jj) / f64::from(SMP_SIZE)));
+
+                // Surface sample (status ignored)
+                if let Some(p) = ignored(input.evaluate_point(k, uv))? {
+                    input_pt = p;
+                }
+                let input_vec = input_pt - input_origin;
+
+                // save OutSpace Extents of the corner points
+                if (ii == 0 || ii == SMP_SIZE) && (jj == 0 || jj == SMP_SIZE) {
+                    // without compounding (status ignored)
+                    let mapped = if in_space {
+                        volume.map_point(input_pt, false)
+                    } else {
+                        volume.evaluate_point(input_pt, false)
+                    };
+                    if let Some(p) = ignored(mapped)? {
+                        out_space_pt = p;
+                    }
+                    out_space_bbox.add_point(out_space_pt - bend_origin);
+                }
+
+                // no work - sample point not within bend domain
+                let is_in = if in_space {
+                    volume.is_point_in_in_space_domain(input_pt, true)?.0
+                } else {
+                    volume.is_point_in_param_domain(input_pt, true)?
+                };
+                if !is_in {
+                    return Ok(None);
+                }
+
+                // distances to the planes through the origin perpendicular to the axes
+                let mid_plane = bend_mid_dir.dot(input_vec);
+                let binormal_plane = bend_binormal.dot(input_vec);
+                let axis_plane = bend_axis.dot(input_vec);
+
+                // accumulate the ranges
+                mid_dir_plane_range.add_value(mid_plane);
+                axis_plane_range.add_value(axis_plane);
+                binormal_plane_range.add_value(binormal_plane);
+
+                // accumulate the sums of plane distances
+                axis_plane_sum += axis_plane;
+                mid_plane_sum += mid_plane;
+                binormal_plane_sum += binormal_plane;
+
+                // remember when the surface is a constant distance from a bend plane
+                const_axis_plane = axis_plane_range.length() < approx_tol;
+                const_mid_dir_plane = mid_dir_plane_range.length() < approx_tol;
+                const_binormal_plane = binormal_plane_range.length() < approx_tol;
+
+                // no work - Surface not const distance from at least one plane
+                if u8::from(const_axis_plane)
+                    + u8::from(const_mid_dir_plane)
+                    + u8::from(const_binormal_plane)
+                    < 1
+                {
+                    return Ok(None);
+                }
+            }
+        }
+
+        // find the current input surface normal - it's a plane so sample it once anywhere
+        // (status ignored)
+        let mid_uv = Point2::new(ivl_u.evaluate(0.5), ivl_v.evaluate(0.5));
+        let input_surface_normal =
+            ignored(input.evaluate_normal(k, mid_uv, Side::Left, Side::Left))?
+                .unwrap_or(Vec3::UNDEF);
+        let samples = f64::from(SMP_SIZE) + 1.0;
+        let mut new_surface = None;
+
+        // surfaces perpendicular to the BendAxis map to planes with the same orientation
+        // perpendicular to the BendAxis
+        if const_axis_plane {
+            let origin = bend_origin + axis_plane_sum / samples / samples * bend_axis;
+            let uv_scale = Vec2::new(1.0, 1.0);
+
+            // check orientation of surface against the Input BendAxis axis
+            let positive = input_surface_normal.dot(input_axis) > 0.0;
+
+            // UVDomain = BBox3d U (BendMidDir) and V (BendBiNormal) extents
+            let [box_u, box_v, _] = *out_space_bbox.intervals();
+            let mut uv_domain =
+                Extent2d::from_bounds(box_u.min(), box_v.min(), box_u.max(), box_v.max());
+
+            // bump BBox for maximums not in the corners (statuses ignored)
+            let ang_range_rad = Extent1d::from_min_max(
+                binormal_plane_range.min() / bend_neutral_dist,
+                binormal_plane_range.max() / bend_neutral_dist,
+            );
+            let mid_max = mid_dir_plane_range.max();
+            if ang_range_rad.contains_value(-PI, EFF_ZERO_DEG) {
+                let _ = uv_domain.set_u_min(-mid_max);
+            }
+            if ang_range_rad.contains_value(-PI / 2.0, EFF_ZERO_DEG) {
+                let _ = uv_domain.set_v_min(-mid_max);
+            }
+            if ang_range_rad.contains_value(0.0, EFF_ZERO_DEG) {
+                let _ = uv_domain.set_u_max(mid_max);
+            }
+            if ang_range_rad.contains_value(PI / 2.0, EFF_ZERO_DEG) {
+                let _ = uv_domain.set_v_max(mid_max);
+            }
+            if ang_range_rad.contains_value(PI, EFF_ZERO_DEG) {
+                let _ = uv_domain.set_u_min(-mid_max);
+            }
+
+            // Create Plane with SrfNormal = input surface normal
+            let (x_vector, y_vector) = if positive {
+                (bend_mid_dir, bend_binormal)
+            } else {
+                uv_domain.transpose();
+                (bend_binormal, bend_mid_dir)
+            };
+
+            // create new plane - positive orientation:[SrfNormal = BendMidDir X BendBinormal]
+            new_surface = Some(Surface::from(Plane::new(
+                origin, x_vector, y_vector, uv_scale, &uv_domain,
+            )));
+        }
+
+        // surfaces perpendicular to the MidDir plane map to BendAxis centered cylinders
+        if const_mid_dir_plane {
+            let radius = mid_plane_sum / samples / samples;
+            let axis_length = axis_plane_range.length();
+            let start_angle_deg = rad_to_deg(binormal_plane_range.min() / bend_neutral_dist);
+            let stop_angle_deg = rad_to_deg(binormal_plane_range.max() / bend_neutral_dist);
+
+            // check orientation of surface against the Input BendMidDir axis
+            let positive = input_surface_normal.dot(input_mid_dir) > 0.0;
+
+            // FALSE = outward pointing SrfNormals, TRUE = inward pointing SrfNormals
+            let inside_out = !positive;
+
+            new_surface = Some(Surface::from(Cone::new_cylinder_bounded(
+                bend_origin,
+                bend_mid_dir,
+                bend_binormal,
+                radius,
+                start_angle_deg,
+                stop_angle_deg,
+                axis_length,
+                false,
+                inside_out,
+                false,
+            )));
+        }
+
+        // surfaces perpendicular to the Binormal Axis map to planes containing the
+        // BendAxis (radiating out)
+        if const_binormal_plane {
+            let ang_rad = (binormal_plane_sum / samples / samples) / bend_neutral_dist;
+            let mut x_vector = bend_axis;
+            let mut y_vector = ang_rad.cos() * bend_mid_dir + ang_rad.sin() * bend_binormal;
+
+            let uv_scale = Vec2::new(1.0, 1.0);
+            let mut uv_domain = Extent2d::from_bounds(
+                axis_plane_range.min(),
+                mid_dir_plane_range.min(),
+                axis_plane_range.max(),
+                mid_dir_plane_range.max(),
+            );
+
+            // check orientation of surface against the Input BendBinormal axis
+            let positive = input_surface_normal.dot(bend_binormal) > 0.0;
+
+            // Create Plane with SrfNormal = input surface normal
+            if !positive {
+                x_vector = y_vector;
+                y_vector = bend_axis;
+                uv_domain.transpose();
+            }
+
+            // create new plane - positive orientation:[SrfNormal = sBendAxis X sYVector]
+            new_surface = Some(Surface::from(Plane::new(
+                bend_origin,
+                x_vector,
+                y_vector,
+                uv_scale,
+                &uv_domain,
+            )));
+        }
+
+        // all done
+        Ok(new_surface)
+    }
+
+    /// `MakeExactBSpline1stOutCurve`: the exact first out-space image of `input` (from
+    /// in-space when `in_space`, else from parameter space) through the bend `volume`
+    /// (whose kind is `self`), or `None` when it is not one of the analytic cases. A
+    /// line parallel to the bend axis or to the mid direction maps to a line, one
+    /// parallel to the binormal to a circular arc about the bend axis. The test samples
+    /// 12 points of the natural interval; any sample outside the bend's domain gives
+    /// `None`.
+    ///
+    /// # Errors
+    ///
+    /// [`SolidError::Unported`] from the curve or volume services.
+    pub fn make_exact_b_spline_1st_out_curve(
+        &self,
+        k: &Kernel,
+        volume: &Volume,
+        in_space: bool,
+        input: &Curve,
+    ) -> Result<Option<Curve>> {
+        // locals: ParamSpace and InSpace Bend orientations - Bend's Neutral plane is perp
+        // to the Bend's MidDirection
+        let (param_origin, bend_origin) = (Vec3::ZERO, volume.bend_origin());
+        let (param_mid_dir, bend_mid_dir) = (Vec3::X, volume.bend_mid_dir());
+        let (param_axis, bend_axis) = (Vec3::Z, volume.bend_axis());
+        let (param_binormal, bend_binormal) = (Vec3::Y, volume.bend_binormal());
+
+        // locals: making InputSpace either ParamSpace or InSpace
+        let (input_origin, input_mid_dir, input_axis, input_binormal) = if in_space {
+            (bend_origin, bend_mid_dir, bend_axis, bend_binormal)
+        } else {
+            (param_origin, param_mid_dir, param_axis, param_binormal)
+        };
+
+        // locals
+        let mut input_first = Vec3::UNDEF;
+        let mut input_last = Vec3::UNDEF;
+        let mut out_space_first = Vec3::UNDEF;
+        let mut out_space_last = Vec3::UNDEF;
+
+        let approx_tol = approx_tol_3d(k, SmallTopoType::NormalSize);
+        let ivl = input.natural_interval();
+        let mut input_pt = Vec3::UNDEF;
+        let mut on_axis_pt = Vec3::UNDEF;
+
+        let mut axis_plane_range = Extent1d::new();
+        let mut mid_dir_plane_range = Extent1d::new();
+        let mut binormal_plane_range = Extent1d::new();
+        let mut const_axis_plane = false;
+        let mut const_mid_dir_plane = false;
+        let mut const_binormal_plane = false;
+
+        // See if the InputCurve is linear and parallel to one of the BendAxes (parallel
+        // to two BendPlanes)
+        for ii in 0..=CRV_SMP_SIZE {
+            let smp_u = ivl.evaluate(f64::from(ii) / f64::from(CRV_SMP_SIZE));
+
+            // Curve sample (status ignored)
+            if let Some(p) = ignored(input.evaluate_point(k, smp_u))? {
+                input_pt = p;
+            }
+
+            // no work - sample point not within bend domain
+            let is_in = if in_space {
+                volume.is_point_in_in_space_domain(input_pt, true)?.0
+            } else {
+                volume.is_point_in_param_domain(input_pt, true)?
+            };
+            if !is_in {
+                return Ok(None);
+            }
+
+            // save 1st and last sample pts and pick a point on Axis near line to keep
+            // vector sizes small
+            if ii == 0 {
+                input_first = input_pt;
+                let to_orig_vec = input_pt - input_origin;
+                on_axis_pt = input_origin + input_axis.dot(to_orig_vec) * input_axis;
+            } else if ii == CRV_SMP_SIZE {
+                input_last = input_pt;
+            }
+
+            // Input vec from SamplePt to OnAxisPt
+            let on_axis_vec = input_pt - on_axis_pt;
+
+            // InputSpace distances to planes perp to Bend axes
+            let axis_plane = input_axis.dot(on_axis_vec);
+            let mid_dir_plane = input_mid_dir.dot(on_axis_vec);
+            let binormal_plane = input_binormal.dot(on_axis_vec);
+
+            // accumulate the range of Plane distances
+            axis_plane_range.add_value(axis_plane);
+            mid_dir_plane_range.add_value(mid_dir_plane);
+            binormal_plane_range.add_value(binormal_plane);
+
+            // remember when curve is const dist from bend plane
+            const_axis_plane = axis_plane_range.length() < approx_tol;
+            const_mid_dir_plane = mid_dir_plane_range.length() < approx_tol;
+            const_binormal_plane = binormal_plane_range.length() < approx_tol;
+
+            // no work - curve not const distance from at least two planes
+            if u8::from(const_axis_plane)
+                + u8::from(const_mid_dir_plane)
+                + u8::from(const_binormal_plane)
+                < 2
+            {
+                return Ok(None);
+            }
+        }
+
+        // OutSpace 1st and Last points, without compounding (statuses ignored)
+        let out_point = |p: Point3| {
+            if in_space {
+                volume.map_point(p, false)
+            } else {
+                volume.evaluate_point(p, false)
+            }
+        };
+        if let Some(p) = ignored(out_point(input_first))? {
+            out_space_first = p;
+        }
+        if let Some(p) = ignored(out_point(input_last))? {
+            out_space_last = p;
+        }
+
+        let mut new_curve = None;
+
+        // lines parallel to BendAxis => map to OutSpace lines
+        // lines parallel to MidBendAxis => map to OutSpace lines
+        let parallel_to_axis = const_mid_dir_plane && const_binormal_plane;
+        let parallel_to_mid_dir = const_axis_plane && const_binormal_plane;
+        if parallel_to_axis || parallel_to_mid_dir {
+            // create the OutSpace Line
+            new_curve = Some(Curve::from(Line::from_points(
+                out_space_first,
+                out_space_last,
+                3,
+            )));
+        }
+
+        // lines parallel to BinormalAxis => map to OutSpace circles
+        if const_mid_dir_plane && const_axis_plane {
+            // OutSpace bend parameters
+            let out_space_mid_dir = volume.bend_mid_dir();
+            let out_space_axis = volume.bend_axis();
+            let out_space_binormal = volume.bend_binormal();
+
+            // find the current rInputCurve curve tangent - it's a line so sample it once
+            // anywhere (status ignored)
+            let input_tangent = ignored(input.evaluate(k, ivl.evaluate(0.5), 1, true, true))?
+                .and_then(|pn| pn.get(1).copied())
+                .unwrap_or(Vec3::UNDEF);
+
+            // check orientation of curve against the Input BinormalAxis axis and select
+            // appropriate coordinate system
+            let positive = input_tangent.dot(input_binormal) > 0.0;
+            let (x_axis, y_axis, z_axis) = if positive {
+                (out_space_mid_dir, out_space_binormal, out_space_axis)
+            } else {
+                (out_space_binormal, out_space_mid_dir, -out_space_axis)
+            };
+
+            // OutSpace circle circ center and radius (status ignored)
+            let out_space_on_axis = ignored(out_point(on_axis_pt))?.unwrap_or(Vec3::UNDEF);
+
+            let radius1 = (out_space_first - out_space_on_axis).length();
+            let radius2 = (out_space_last - out_space_on_axis).length();
+            let radius = (radius1 + radius2) / 2.0;
+
+            // Start and End AngDeg
+            // (statuses ignored: a failure leaves 0)
+            let start_ang_rad =
+                ignored(z_axis.ccw_angle_between(x_axis, out_space_first - out_space_on_axis))?
+                    .unwrap_or(0.0);
+            let end_ang_rad =
+                ignored(z_axis.ccw_angle_between(x_axis, out_space_last - out_space_on_axis))?
+                    .unwrap_or(0.0);
+
+            let mut ang_domain_deg = Extent1d::new();
+            ang_domain_deg.add_value(rad_to_deg(start_ang_rad));
+            ang_domain_deg.add_value(rad_to_deg(end_ang_rad));
+
+            // create the OutSpace Circular Arc
+            new_curve = Some(Curve::from(Ellipse::new_circle(
+                k,
+                out_space_on_axis,
+                x_axis,
+                y_axis,
+                ang_domain_deg,
+                radius,
+                &EllipseOptions::default(),
+            )?));
+        }
+
+        // all done
+        Ok(new_curve)
     }
 
     /// Reads a bend volume from a database stream: the neutral distance and the
@@ -1026,7 +1792,7 @@ mod tests {
         assert!(b.is_line_in_param_domain_simple(v(1.0, -3.0, 0.0), v(2.0, 3.0, 1.0)));
         assert!(!b.is_line_in_param_domain_simple(v(1.0, -3.0, 0.0), v(-2.0, 3.0, 1.0)));
         let k = Kernel::default();
-        let seg = |a, c| Curve::from(crate::curve::line::Line::from_points(a, c, 3));
+        let seg = |a, c| Curve::from(Line::from_points(a, c, 3));
         assert!(b
             .is_curve_in_param_domain_simple(&k, &seg(v(1.0, 1.0, 0.0), v(2.0, 1.0, 0.0)))
             .unwrap());
@@ -1128,5 +1894,296 @@ mod tests {
         let next = vol.next_map().unwrap();
         assert!(matches!(next.kind(), VolumeKind::Transform(_)));
         assert!(next.next_map().is_none());
+    }
+
+    #[test]
+    fn wr59_wide_angle_pseudo_box_contains_image() {
+        fn assert_grid_contained(b: &BendVolume, pb: &Extent3d, pseudo: &PseudoBox) {
+            for iu in 0..=8 {
+                let tu = f64::from(iu) / 8.0;
+                let u = pb.u_min() + (pb.u_max() - pb.u_min()) * tu;
+                for iv in 0..=24 {
+                    let tv = f64::from(iv) / 24.0;
+                    let vv = pb.v_min() + (pb.v_max() - pb.v_min()) * tv;
+                    for iw in 0..=2 {
+                        let tw = f64::from(iw) / 2.0;
+                        let w = pb.w_min() + (pb.w_max() - pb.w_min()) * tw;
+                        let p = b.evaluate_simple(v(u, vv, w), 0).unwrap()[0];
+                        assert!(pseudo.contains_point(p, EFF_ZERO));
+                    }
+                }
+            }
+        }
+
+        let b = bend(1.0);
+        // WR-59 trigger (`b_box_unit_both_poles`): d = 1, u in [0.5, 1.5], v in [-2, 2].
+        let pb = Extent3d::from_bounds(0.5, -2.0, -1.0, 1.5, 2.0, 1.0);
+        let mut bx_def = Extent3d::new();
+        let mut pseudo_def = PseudoBox::new();
+        b.evaluate_bounding_box_simple(&pb, Some(&mut bx_def), Some(&mut pseudo_def));
+
+        let corner = b.evaluate_simple(v(1.5, 2.0, 0.0), 0).unwrap()[0];
+        let pole = b.evaluate_simple(v(1.5, PI / 2.0, 0.0), 0).unwrap()[0];
+        assert!((pseudo_def.intervals()[0].min() - 0.5 * 2.0_f64.sin()).abs() < 1e-12);
+        assert!((pseudo_def.intervals()[1].max() - 1.5 * 2.0_f64.sin()).abs() < 1e-12);
+        assert!(!pseudo_def.contains_point(corner, EFF_ZERO));
+        assert!(!pseudo_def.contains_point(pole, EFF_ZERO));
+
+        let fixes = UpstreamFixes {
+            bend_volume_bbox_contains_wide_angle_and_inf_u: true,
+            ..Default::default()
+        };
+        let mut bx_fix = Extent3d::new();
+        let mut pseudo_fix = PseudoBox::new();
+        b.evaluate_bounding_box_simple_with_fixes(
+            &pb,
+            Some(&mut bx_fix),
+            Some(&mut pseudo_fix),
+            &fixes,
+        );
+        assert_eq!(bx_fix, bx_def);
+        assert!((pseudo_fix.intervals()[0].min() - 1.5 * 2.0_f64.cos()).abs() < 1e-12);
+        assert_eq!(pseudo_fix.intervals()[0].max(), 1.5);
+        assert_eq!(pseudo_fix.intervals()[1].min(), -1.5);
+        assert_eq!(pseudo_fix.intervals()[1].max(), 1.5);
+        assert_eq!(pseudo_fix.intervals()[2].min(), -1.0);
+        assert_eq!(pseudo_fix.intervals()[2].max(), 1.0);
+        assert!(pseudo_fix.contains_point(corner, EFF_ZERO));
+        assert!(pseudo_fix.contains_point(pole, EFF_ZERO));
+        assert_grid_contained(&b, &pb, &pseudo_fix);
+
+        // Narrow angle (half_angle = 0.4 <= pi / 2) with off-center theta_mid = 0.6.
+        let b_narrow = bend(2.5);
+        let pb_narrow = Extent3d::from_bounds(0.8, 0.5, -0.5, 2.2, 2.5, 0.5);
+        let mut pseudo_narrow = PseudoBox::new();
+        b_narrow.evaluate_bounding_box_simple_with_fixes(
+            &pb_narrow,
+            None,
+            Some(&mut pseudo_narrow),
+            &fixes,
+        );
+        assert!((pseudo_narrow.intervals()[0].min() - 0.8 * 0.4_f64.cos()).abs() < 1e-12);
+        assert!((pseudo_narrow.intervals()[0].max() - 2.2).abs() < 1e-12);
+        assert!((pseudo_narrow.intervals()[1].max() - 2.2 * 0.4_f64.sin()).abs() < 1e-12);
+        assert_grid_contained(&b_narrow, &pb_narrow, &pseudo_narrow);
+
+        // Off-center wide angle (half_angle = 1.8 in (pi / 2, pi)).
+        let b_wide = bend(1.5);
+        let pb_wide = Extent3d::from_bounds(0.6, -0.9, 0.0, 1.8, 4.5, 2.0);
+        let mut pseudo_wide_def = PseudoBox::new();
+        let mut pseudo_wide_fix = PseudoBox::new();
+        b_wide.evaluate_bounding_box_simple(&pb_wide, None, Some(&mut pseudo_wide_def));
+        b_wide.evaluate_bounding_box_simple_with_fixes(
+            &pb_wide,
+            None,
+            Some(&mut pseudo_wide_fix),
+            &fixes,
+        );
+        let wide_corner = b_wide.evaluate_simple(v(1.8, 4.5, 1.0), 0).unwrap()[0];
+        assert!(!pseudo_wide_def.contains_point(wide_corner, EFF_ZERO));
+        assert!(pseudo_wide_fix.contains_point(wide_corner, EFF_ZERO));
+        assert_grid_contained(&b_wide, &pb_wide, &pseudo_wide_fix);
+
+        // Full primary period (half_angle == pi) and super-period (half_angle > pi).
+        for half_span in [PI, 4.0] {
+            let pb_full = Extent3d::from_bounds(0.5, -half_span, 0.0, 1.5, half_span, 1.0);
+            let mut pseudo_full_def = PseudoBox::new();
+            let mut pseudo_full_fix = PseudoBox::new();
+            b.evaluate_bounding_box_simple(&pb_full, None, Some(&mut pseudo_full_def));
+            b.evaluate_bounding_box_simple_with_fixes(
+                &pb_full,
+                None,
+                Some(&mut pseudo_full_fix),
+                &fixes,
+            );
+            let seam_pt = b.evaluate_simple(v(1.5, PI, 0.5), 0).unwrap()[0];
+            assert!(!pseudo_full_def.contains_point(seam_pt, EFF_ZERO));
+            assert_eq!(pseudo_full_fix.intervals()[0].min(), -1.5);
+            assert_eq!(pseudo_full_fix.intervals()[0].max(), 1.5);
+            assert_eq!(pseudo_full_fix.intervals()[1].min(), -1.5);
+            assert_eq!(pseudo_full_fix.intervals()[1].max(), 1.5);
+            assert_grid_contained(&b, &pb_full, &pseudo_full_fix);
+        }
+
+        // Inside-out parameter box leaves pseudo box untouched under opt-in.
+        let empty = Extent3d::new();
+        let mut untouched = PseudoBox::new();
+        b.evaluate_bounding_box_simple_with_fixes(&empty, None, Some(&mut untouched), &fixes);
+        assert!(untouched.has_negative_volume());
+    }
+
+    #[test]
+    fn wr59_unbounded_u_downward_angles_and_flag_lookup() {
+        let b = bend(1.0);
+        // WR-59 unbounded-u trigger (`b_box_unit_inf_u_down`): u in [1, inf), v in [-1, -0.2].
+        let inf_down = Extent3d::from_bounds(1.0, -1.0, 0.0, INFINITE_PARAMETER, -0.2, 1.0);
+        let mut bx_def = Extent3d::new();
+        let mut pseudo_def = PseudoBox::new();
+        b.evaluate_bounding_box_simple(&inf_down, Some(&mut bx_def), Some(&mut pseudo_def));
+        assert!((bx_def.v_max() - (-0.2_f64).cos()).abs() < 1e-12);
+        assert!(bx_def.v_max() > 0.0);
+        assert!(pseudo_def.intervals()[1].max() < INFINITE_PARAMETER);
+
+        let mut k = Kernel::default();
+        assert_eq!(
+            k.fixes
+                .flag_mut("bend_volume_bbox_contains_wide_angle_and_inf_u")
+                .copied(),
+            Some(false)
+        );
+        let mut bx_k_def = Extent3d::new();
+        let mut pseudo_k_def = PseudoBox::new();
+        b.evaluate_bounding_box_simple_with_kernel(
+            &k,
+            &inf_down,
+            Some(&mut bx_k_def),
+            Some(&mut pseudo_k_def),
+        );
+        assert_eq!(bx_k_def, bx_def);
+        assert_eq!(pseudo_k_def, pseudo_def);
+
+        *k.fixes
+            .flag_mut("bend_volume_bbox_contains_wide_angle_and_inf_u")
+            .unwrap() = true;
+        let mut bx_fix = Extent3d::new();
+        let mut pseudo_fix = PseudoBox::new();
+        b.evaluate_bounding_box_simple_with_kernel(
+            &k,
+            &inf_down,
+            Some(&mut bx_fix),
+            Some(&mut pseudo_fix),
+        );
+        assert!((bx_fix.v_max() - (-0.2_f64).sin()).abs() < 1e-12);
+        assert!(bx_fix.v_max() < 0.0);
+        assert_eq!(bx_fix.v_min(), -INFINITE_PARAMETER);
+        assert!((pseudo_fix.intervals()[0].min() - 0.4_f64.cos()).abs() < 1e-12);
+        assert_eq!(pseudo_fix.intervals()[0].max(), INFINITE_PARAMETER);
+        assert_eq!(pseudo_fix.intervals()[1].min(), -INFINITE_PARAMETER);
+        assert_eq!(pseudo_fix.intervals()[1].max(), INFINITE_PARAMETER);
+
+        for u in [1.0, 2.5, 100.0, 1.0e5] {
+            for iv in 0..=16 {
+                let vv = -1.0 + 0.8 * (f64::from(iv) / 16.0);
+                let p = b.evaluate_simple(v(u, vv, 0.5), 0).unwrap()[0];
+                assert!(bx_fix.contains_point(p, EFF_ZERO));
+                assert!(pseudo_fix.contains_point(p, EFF_ZERO));
+            }
+        }
+
+        // Third-quadrant downward angles: sin(-3) > sin(-2), while cos(-2) > cos(-3).
+        let inf_q3 = Extent3d::from_bounds(2.0, -3.0, 0.0, INFINITE_PARAMETER, -2.0, 1.0);
+        let mut bx_q3_def = Extent3d::new();
+        let mut bx_q3_fix = Extent3d::new();
+        b.evaluate_bounding_box_simple(&inf_q3, Some(&mut bx_q3_def), None);
+        b.evaluate_bounding_box_simple_with_kernel(&k, &inf_q3, Some(&mut bx_q3_fix), None);
+        assert!((bx_q3_def.v_max() - 2.0 * (-2.0_f64).cos()).abs() < 1e-12);
+        assert!((bx_q3_fix.v_max() - 2.0 * (-3.0_f64).sin()).abs() < 1e-12);
+
+        // Wide-angle unbounded u propagates +-INFINITE_PARAMETER on both pseudo-box axes.
+        let inf_wide = Extent3d::from_bounds(0.5, -2.0, 0.0, INFINITE_PARAMETER, 2.0, 1.0);
+        let mut pseudo_inf_wide = PseudoBox::new();
+        b.evaluate_bounding_box_simple_with_kernel(&k, &inf_wide, None, Some(&mut pseudo_inf_wide));
+        assert_eq!(pseudo_inf_wide.intervals()[0].min(), -INFINITE_PARAMETER);
+        assert_eq!(pseudo_inf_wide.intervals()[0].max(), INFINITE_PARAMETER);
+        assert_eq!(pseudo_inf_wide.intervals()[1].min(), -INFINITE_PARAMETER);
+        assert_eq!(pseudo_inf_wide.intervals()[1].max(), INFINITE_PARAMETER);
+    }
+
+    #[test]
+    fn wr60_across_period_and_shifted_period_trim() {
+        let b = bend(1.0);
+        let stale = Extent3d::from_bounds(9.0, 8.0, 7.0, 19.0, 18.0, 17.0);
+
+        // WR-60 trigger (`trim_unit_across_period`): d = 1, v in [2.0, 4.5] crosses pi.
+        let across = Extent3d::from_bounds(1.0, 2.0, 0.0, 2.0, 4.5, 1.0);
+        let mut t_def = stale;
+        b.trim_param_bounding_box_simple(&across, &mut t_def)
+            .unwrap();
+        assert_eq!(t_def, stale);
+
+        let mut k = Kernel::default();
+        assert_eq!(
+            k.fixes
+                .flag_mut("bend_volume_trim_param_box_across_period")
+                .copied(),
+            Some(false)
+        );
+        let mut t_k_def = stale;
+        b.trim_param_bounding_box_simple_with_kernel(&k, &across, &mut t_k_def)
+            .unwrap();
+        assert_eq!(t_k_def, stale);
+
+        *k.fixes
+            .flag_mut("bend_volume_trim_param_box_across_period")
+            .unwrap() = true;
+        let mut t_fix = stale;
+        b.trim_param_bounding_box_simple_with_kernel(&k, &across, &mut t_fix)
+            .unwrap();
+        assert!(!t_fix.has_negative_volume());
+        assert_eq!(t_fix, Extent3d::from_bounds(1.0, -PI, 0.0, 2.0, PI, 1.0));
+        for iv in 0..=20 {
+            let vv = 2.0 + 2.5 * (f64::from(iv) / 20.0);
+            let wrapped = clamp_to_period(vv, -PI, PI);
+            assert!(t_fix.contains_point(v(1.5, wrapped, 0.5), EFF_ZERO));
+        }
+
+        // Shifted periodic intervals that do not cross +-pi shift cleanly into [-pi, pi].
+        let shifted_pos =
+            Extent3d::from_bounds(-0.5, 2.0 * PI - 0.5, -1.0, 2.0, 2.0 * PI + 0.5, 3.0);
+        let mut t_shift_def = stale;
+        assert!(b
+            .trim_param_bounding_box_simple(&shifted_pos, &mut t_shift_def)
+            .is_err());
+        assert!(t_shift_def.has_negative_volume());
+
+        let mut t_shift_fix = stale;
+        b.trim_param_bounding_box_simple_with_kernel(&k, &shifted_pos, &mut t_shift_fix)
+            .unwrap();
+        assert!((t_shift_fix.u_min() - 0.01).abs() < 1e-12);
+        assert!((t_shift_fix.u_max() - 2.0).abs() < 1e-12);
+        assert!((t_shift_fix.v_min() - (-0.5)).abs() < 1e-12);
+        assert!((t_shift_fix.v_max() - 0.5).abs() < 1e-12);
+        assert_eq!((t_shift_fix.w_min(), t_shift_fix.w_max()), (-1.0, 3.0));
+
+        let shifted_neg =
+            Extent3d::from_bounds(0.5, -2.0 * PI - 0.4, 0.0, 1.5, -2.0 * PI + 0.6, 1.0);
+        let mut t_neg_fix = stale;
+        b.trim_param_bounding_box_simple_with_kernel(&k, &shifted_neg, &mut t_neg_fix)
+            .unwrap();
+        assert!((t_neg_fix.v_min() - (-0.4)).abs() < 1e-12);
+        assert!((t_neg_fix.v_max() - 0.6).abs() < 1e-12);
+
+        // Boundary graze within EFF_ZERO snaps to pi instead of expanding to [-pi, pi].
+        let graze = Extent3d::from_bounds(0.5, PI - 0.2, 0.0, 1.5, PI + 0.5 * EFF_ZERO, 1.0);
+        let mut t_graze = stale;
+        b.trim_param_bounding_box_simple_with_kernel(&k, &graze, &mut t_graze)
+            .unwrap();
+        assert!((t_graze.v_min() - (PI - 0.2)).abs() < 1e-12);
+        assert!((t_graze.v_max() - PI).abs() <= EFF_ZERO);
+
+        // Full-period / wide (`trim_unit_wide_period`) and unbounded v expand to [-pi, pi].
+        for wide in [
+            Extent3d::from_bounds(1.0, -8.0, 0.0, 2.0, 8.0, 1.0),
+            Extent3d::from_bounds(1.0, -INFINITE_PARAMETER, 0.0, 2.0, INFINITE_PARAMETER, 1.0),
+        ] {
+            let mut t_wide = stale;
+            b.trim_param_bounding_box_simple_with_kernel(&k, &wide, &mut t_wide)
+                .unwrap();
+            assert_eq!(t_wide, Extent3d::from_bounds(1.0, -PI, 0.0, 2.0, PI, 1.0));
+        }
+
+        // Boxes wholly below singularity_tol or inside-out fail and reset trim_box.
+        let below = Extent3d::from_bounds(-2.0, -1.0, 0.0, 0.005, 1.0, 1.0);
+        let mut t_err = stale;
+        assert!(b
+            .trim_param_bounding_box_simple_with_kernel(&k, &below, &mut t_err)
+            .is_err());
+        assert!(t_err.has_negative_volume());
+
+        let mut t_empty = stale;
+        assert!(b
+            .trim_param_bounding_box_simple_with_kernel(&k, &Extent3d::new(), &mut t_empty)
+            .is_err());
+        assert!(t_empty.has_negative_volume());
     }
 }

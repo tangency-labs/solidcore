@@ -112,41 +112,15 @@ fn harness(msg: impl Into<String>) -> HarnessError {
 
 // ---- surface inputs ---------------------------------------------------------------
 
+#[path = "fixtures/nlib_srf_basic_sms.rs"]
+mod sms;
+
 /// Reads an upstream `.sms` text file: `n m`, `p q`, rational flag, `(n+1)(m+1)`
 /// points (`x y z`, or `wx wy wz w` when rational, v index fastest), `n+p+2` u knots,
 /// `m+q+2` v knots.
 fn read_sms(path: &str) -> Result<InlineSrf, HarnessError> {
     let text = std::fs::read_to_string(path).map_err(|e| harness(format!("{path}: {e}")))?;
-    let mut it = text.split_whitespace();
-    let mut num = || -> Result<f64, HarnessError> {
-        it.next()
-            .ok_or_else(|| harness(format!("{path}: truncated")))?
-            .parse::<f64>()
-            .map_err(|e| harness(format!("{path}: {e}")))
-    };
-    let int = |v: f64| -> Result<usize, HarnessError> {
-        if v.fract() != 0.0 || v < 0.0 {
-            return Err(harness(format!("{path}: bad count {v}")));
-        }
-        Ok(v as usize)
-    };
-    let n = int(num()?)?;
-    let m = int(num()?)?;
-    let p = int(num()?)?;
-    let q = int(num()?)?;
-    let rat = num()? != 0.0;
-    let mut net = Vec::with_capacity(n + 1);
-    for _ in 0..=n {
-        let mut row = Vec::with_capacity(m + 1);
-        for _ in 0..=m {
-            let (x, y, z) = (num()?, num()?, num()?);
-            let w = if rat { num()? } else { NOW };
-            row.push([x, y, z, w]);
-        }
-        net.push(row);
-    }
-    let u = (0..n + p + 2).map(|_| num()).collect::<Result<Vec<_>, _>>()?;
-    let v = (0..m + q + 2).map(|_| num()).collect::<Result<Vec<_>, _>>()?;
+    let sms::SmsSurface { net, p, q, u, v } = sms::parse_sms(&text, path)?;
     Ok(InlineSrf {
         net,
         p,
@@ -296,6 +270,9 @@ fn to_output(i: &Inputs, flat: &[f64]) -> Result<Output, HarnessError> {
             out = out.values("equal", take(flat, &mut at, 1)?.to_vec());
         }
         Inputs::RatCompatible { surfaces } => {
+            // The record length is each side's own output; it keeps an empty
+            // surface list (no dumps at all) from being a vacuous comparison.
+            out = out.int("record_len", flat.len() as i64);
             for k in 0..surfaces.len() {
                 out = split_dump(flat, &mut at, &format!("s{k}_"), out)?;
             }
@@ -474,7 +451,14 @@ fn rust_flat(i: &Inputs) -> Result<Vec<f64>, HarnessError> {
                 }
                 Kind::SizeArrays { idx } => {
                     let mut slot = Some(s);
-                    let sized = size_arrays(&mut slot, indices(idx));
+                    let sized = match size_arrays(&mut slot, indices(idx)) {
+                        Ok(sized) => sized,
+                        Err(e) => {
+                            // only an allocation failure (the FFI rejects such sizes)
+                            o.push(status(&Err::<(), _>(e)));
+                            return Ok(o);
+                        }
+                    };
                     let (n, m, r, ss) = sized.array_sizes();
                     let (p, q) = sized.degrees();
                     o.push(0.0);

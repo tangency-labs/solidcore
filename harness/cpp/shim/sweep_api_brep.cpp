@@ -19,6 +19,10 @@
 #include <SmApiCurves.h>
 #include <SmApiGeneral.h>
 #include <SmApiPrimitives.h>
+#include <SmApiQueries.h>
+#include <SmAttribute.h>
+#include <SmTopology.h>
+#include <SmVertex.h>
 #include <SmBSplineCurve.h>
 #include <SmBrep.h>
 #include <SmCircle.h>
@@ -32,7 +36,9 @@
 #include <SmTArray.h>
 #include <SmVector3d.h>
 
+#include <algorithm>
 #include <stdexcept>
+#include <memory>
 #include <vector>
 
 #include "sc_sm.h"
@@ -55,6 +61,9 @@ enum : int32_t
     OP_TAPER = 9,
     OP_LINEAR_REPS = 10,
     OP_ROTATIONAL_REPS = 11,
+    OP_FROM_FACES_ATTRIBUTED = 12, // `behavior`, then OP_FROM_FACES's program
+    OP_FROM_EDGES_ATTRIBUTED = 13, // `behavior`, then OP_FROM_EDGES's program
+    OP_FROM_BOX_FACE = 14,
 };
 
 // Curve kinds of a curve block.
@@ -251,8 +260,51 @@ struct Owned
     }
 };
 
+// Opt-in only: read the actual result before put_brep destroys it. No mutation,
+// healing or additional stitching; geometry precedes manifold and volume queries.
+void observe_linear(std::vector<double>& o, SmBrep* result, bool fine = false)
+{
+    SmTArray<SmVertex*> vertices; result->GetVertices(vertices);
+    SmTArray<SmEdge*> edges; result->GetEdges(edges);
+    if (vertices.GetSize() > 4096 || edges.GetSize() > 4096) throw Bad();
+    for (ULONG i = 0; i < vertices.GetSize(); ++i) {
+        const auto p = vertices[i]->GetPoint(); o.insert(o.end(), {p.x,p.y,p.z});
+    }
+    for (ULONG i = 0; i < edges.GetSize(); ++i) {
+        const auto interval = edges[i]->GetInterval();
+        o.insert(o.end(), {interval.GetMin(), interval.GetMax()});
+    }
+    for (ULONG i = 0; i < edges.GetSize(); ++i) {
+        const auto interval = edges[i]->GetInterval();
+        SmCurve* curve = edges[i]->GetCurve();
+        for (double fraction : {0.17,0.37,0.83}) {
+            SmPoint3d p(0,0,0);
+            const SmStatus status = curve ? curve->EvaluatePoint(interval.Evaluate(fraction),p) : SM_ERR;
+            o.push_back(st(status));
+            if (status == SM_SUCCESS) o.insert(o.end(), {p.x,p.y,p.z});
+            else o.insert(o.end(), {0.0,0.0,0.0});
+        }
+    }
+    SmBoolean manifold = FALSE;
+    const SmStatus manifold_status = SmApiBrepIsManifoldSolid(result, manifold);
+    o.push_back(st(manifold_status));
+    o.push_back(manifold_status == SM_SUCCESS && manifold ? 1.0 : 0.0);
+    double volume = 0.0;
+    const SmStatus volume_status = SmApiBrepComputeVolume(result, 1e-6, volume);
+    o.push_back(st(volume_status));
+    o.push_back(volume_status == SM_SUCCESS ? volume : 0.0);
+    // rotational observations only: the volume again at accuracy 1e-8
+    if (fine) {
+        double fine_volume = 0.0;
+        const SmStatus fine_status = SmApiBrepComputeVolume(result, 1e-8, fine_volume);
+        o.push_back(st(fine_status));
+        o.push_back(fine_status == SM_SUCCESS ? fine_volume : 0.0);
+    }
+}
+
 // The status then, on success, `has [faces edges vertices]`.
-void put_brep(std::vector<double>& o, SmApiStatus stat, SmBrep* res)
+void put_brep(std::vector<double>& o, SmApiStatus stat, SmBrep* res, bool observe = false,
+              bool fine = false)
 {
     o.push_back(st(stat));
     if (stat == SM_SUCCESS)
@@ -265,7 +317,92 @@ void put_brep(std::vector<double>& o, SmApiStatus stat, SmBrep* res)
             o.push_back((double)res->GetNumVertices());
         }
     }
-    delete res;
+    // Retain owning cleanup even if observing throws.
+    std::unique_ptr<SmBrep> cleanup(res);
+    if (observe && stat == SM_SUCCESS && res) observe_linear(o, res, fine);
+}
+
+// The attributed ops' first attribute id (as boolean.api_brep's OP_ATTRIBUTED).
+const ULONG ATTRIBUTE_BASE = 10007;
+
+// Gives every face (GetFaces order) and edge (GetEdges order) of disc B-rep `disc` its own
+// SmLongAttribute: id ATTRIBUTE_BASE + 1000 disc + 500 kind + index (kind 0 face, 1 edge),
+// value the id, behaviour `behavior`.
+void tag_disc(SmBrep* b, ULONG disc, SmAttributeBehaviorType behavior)
+{
+    const SmContext& ctx = *SmApiGetOrCreateContext();
+    SmTArray<SmFace*> faces;
+    b->GetFaces(faces);
+    for (ULONG i = 0; i < faces.GetSize(); i++)
+    {
+        ULONG id = ATTRIBUTE_BASE + 1000 * disc + i;
+        faces[i]->AddAttribute(new (ctx) SmLongAttribute(id, (long)id, behavior));
+    }
+    SmTArray<SmEdge*> edges;
+    b->GetEdges(edges);
+    for (ULONG i = 0; i < edges.GetSize(); i++)
+    {
+        ULONG id = ATTRIBUTE_BASE + 1000 * disc + 500 + i;
+        edges[i]->AddAttribute(new (ctx) SmLongAttribute(id, (long)id, behavior));
+    }
+}
+
+// One object's row: `n` then per attribute `id behavior value users` (value: an
+// SmLongAttribute's GetValue, else 0), the attributes in ascending order.
+std::vector<double> attribute_row(const SmAObject* obj)
+{
+    SmTArray<SmAttribute*> attrs;
+    obj->GetAttributes(attrs);
+    std::vector<std::vector<double>> entries;
+    for (ULONG i = 0; i < attrs.GetSize(); i++)
+    {
+        SmAttribute* a = attrs[i];
+        SmLongAttribute* l = dynamic_cast<SmLongAttribute*>(a);
+        SmTArray<SmAObject*> users;
+        a->GetUsers(users);
+        std::vector<double> e;
+        e.push_back((double)a->GetAttributeID());
+        e.push_back((double)a->GetBehavior());
+        e.push_back(l != NULL ? (double)l->GetValue() : 0.0);
+        // the topology users: the port keeps no attributes on geometry, whose
+        // objects (an edge's curve) also use an edge's reference attribute here
+        ULONG topology_users = 0;
+        for (ULONG u = 0; u < users.GetSize(); u++)
+            if (users[u] != NULL && users[u]->IsKindOf(SmTopology_TYPE))
+                topology_users++;
+        e.push_back((double)topology_users);
+        entries.push_back(e);
+    }
+    std::sort(entries.begin(), entries.end());
+    std::vector<double> row;
+    row.push_back((double)entries.size());
+    for (size_t i = 0; i < entries.size(); i++)
+        row.insert(row.end(), entries[i].begin(), entries[i].end());
+    return row;
+}
+
+// `faces rows... edges rows...` of `b`, the rows of each list sorted (the attribute sets
+// are compared, not the lists' order).
+void put_attribute_rows(std::vector<double>& o, SmBrep* b)
+{
+    std::vector<std::vector<double>> rows;
+    SmTArray<SmFace*> faces;
+    b->GetFaces(faces);
+    for (ULONG i = 0; i < faces.GetSize(); i++)
+        rows.push_back(attribute_row(faces[i]));
+    std::sort(rows.begin(), rows.end());
+    o.push_back((double)rows.size());
+    for (size_t i = 0; i < rows.size(); i++)
+        o.insert(o.end(), rows[i].begin(), rows[i].end());
+    rows.clear();
+    SmTArray<SmEdge*> edges;
+    b->GetEdges(edges);
+    for (ULONG i = 0; i < edges.GetSize(); i++)
+        rows.push_back(attribute_row(edges[i]));
+    std::sort(rows.begin(), rows.end());
+    o.push_back((double)rows.size());
+    for (size_t i = 0; i < rows.size(); i++)
+        o.insert(o.end(), rows[i].begin(), rows[i].end());
 }
 
 // put_brep, then on success the start, side and end face counts.
@@ -312,9 +449,17 @@ SmSweepOptions options_of(const SweepArgs& a)
     return o;
 }
 
-void run(Rd& rd, std::vector<double>& o)
+void run(Rd& rd, std::vector<double>& o, bool observe = false)
 {
-    int32_t op = (int32_t)rd.idx(1, 11);
+    int32_t op = (int32_t)rd.idx(1, 14);
+    if (observe && op != OP_LINEAR && op != OP_ROTATIONAL) throw Bad();
+    // the attributed curve sweeps: the behaviour of the inputs' tags, then the plain op
+    int64_t behavior = -1;
+    if (op == OP_FROM_FACES_ATTRIBUTED || op == OP_FROM_EDGES_ATTRIBUTED)
+    {
+        behavior = rd.idx(0, 4);
+        op -= 5;
+    }
     switch (op)
     {
     case OP_LINEAR:
@@ -334,7 +479,7 @@ void run(Rd& rd, std::vector<double>& o)
                 ? SmApiCreateLinearSweep(curves, v3(dir.data()), dir[3], cap ? TRUE : FALSE, res)
                 : SmApiCreateLinearSweepWithRepetitions(curves, v3(dir.data()), dir[3], reps,
                                                         cap ? TRUE : FALSE, res);
-        put_brep(o, stat, res);
+        put_brep(o, stat, res, observe);
         break;
     }
     case OP_ROTATIONAL:
@@ -356,7 +501,7 @@ void run(Rd& rd, std::vector<double>& o)
                 : SmApiCreateRotationalSweepWithRepetitions(curves, v3(ax.data()),
                                                             v3(ax.data() + 3), ax[6], reps,
                                                             cap ? TRUE : FALSE, res);
-        put_brep(o, stat, res);
+        put_brep(o, stat, res, observe && op == OP_ROTATIONAL, true);
         break;
     }
     case OP_DRAFT:
@@ -437,6 +582,9 @@ void run(Rd& rd, std::vector<double>& o)
             throw Bad();
         Owned own;
         SmTArray<SmFace*> faces = own.discs(circles);
+        if (behavior >= 0)
+            for (size_t i = 0; i < own.breps.size(); i++)
+                tag_disc(own.breps[i], (ULONG)i, (SmAttributeBehaviorType)behavior);
         SmBSplineCurve* path = own.add_bspline(a.path);
         SmBSplineCurve* sref = own.add_bspline(a.scale_ref);
         SmBSplineCurve* scl = own.add_bspline(a.scale);
@@ -460,7 +608,57 @@ void run(Rd& rd, std::vector<double>& o)
             stat = SmApiCreateCurveSweepFromEdges(edges, path, sref, scl,
                                                   a.has_options ? &opts : NULL, res, &s, &sd, &e);
         }
+        // attributed: the result's rows on success, then each disc's (the borrowed
+        // inputs), read before put_sweep deletes the result
+        std::vector<double> rows;
+        if (behavior >= 0)
+        {
+            if (stat == SM_SUCCESS && res != NULL)
+                put_attribute_rows(rows, res);
+            for (size_t i = 0; i < own.breps.size(); i++)
+                put_attribute_rows(rows, own.breps[i]);
+        }
         put_sweep(o, stat, res, s, sd, e);
+        o.insert(o.end(), rows.begin(), rows.end());
+        break;
+    }
+    case OP_FROM_BOX_FACE:
+    {
+        std::vector<double> box = rd.nums(6);
+        int64_t fi = rd.idx(0, 5);
+        SweepArgs a = read_sweep_args(rd);
+        if (rd.at != rd.n)
+            throw Bad();
+        Owned own;
+        SmBrep* b = NULL;
+        if (SmApiCreateBox(v3(box.data()), box[3], box[4], box[5], b) != SM_SUCCESS || b == NULL)
+            throw Bad();
+        own.breps.push_back(b);
+        SmTArray<SmFace*> all;
+        b->GetFaces(all);
+        if ((ULONG)fi >= all.GetSize())
+            throw Bad();
+        SmTArray<SmFace*> faces;
+        faces.Add(all[(ULONG)fi]);
+        SmBSplineCurve* path = own.add_bspline(a.path);
+        SmBSplineCurve* sref = own.add_bspline(a.scale_ref);
+        SmBSplineCurve* scl = own.add_bspline(a.scale);
+        SmSweepOptions opts = options_of(a);
+        SmBrep* res = NULL;
+        SmTArray<SmFace*> s, sd, e;
+        SmApiStatus stat = SmApiCreateCurveSweepFromFaces(faces, path, sref, scl,
+                                                          a.has_options ? &opts : NULL, res, &s, &sd, &e);
+        // The volume first: put_sweep deletes the result.
+        double volume = 0.0;
+        SmApiStatus volume_status = SM_SUCCESS;
+        if (stat == SM_SUCCESS && res)
+            volume_status = SmApiBrepComputeVolume(res, 1e-6, volume);
+        put_sweep(o, stat, res, s, sd, e);
+        if (stat == SM_SUCCESS && res)
+        {
+            o.push_back(st(volume_status));
+            o.push_back(volume_status == SM_SUCCESS ? volume : 0.0);
+        }
         break;
     }
     default: throw Bad();
@@ -483,6 +681,21 @@ SC_EXPORT int32_t sc_sweep_api_brep_run(const double* in, int64_t n_in, double* 
     {
         return SC_ERR_ARG;
     }
+    return sc_copy_out(o.data(), (int64_t)o.size(), out, cap, out_len);
+    SC_CATCH
+}
+
+// Additive entry (linear and rotational sweeps): the legacy entry and its wire format
+// remain unchanged.
+SC_EXPORT int32_t sc_sweep_api_brep_observe_linear(const double* in, int64_t n_in,
+    double* out, int64_t cap, int64_t* out_len)
+{
+    SC_TRY
+    SmApiGetOrCreateContext();
+    Rd rd{in, n_in, 0};
+    std::vector<double> o;
+    try { run(rd, o, true); }
+    catch (const Bad&) { return SC_ERR_ARG; }
     return sc_copy_out(o.data(), (int64_t)o.size(), out, cap, out_len);
     SC_CATCH
 }

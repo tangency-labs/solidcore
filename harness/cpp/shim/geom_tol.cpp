@@ -3,6 +3,23 @@
 // Wraps upstream SmTol (source/SMLib/inc/SmTol.h, source/SMLib/src/SmTol.cpp) and
 // SmRelation (source/SMLib/inc/SmRelation.h).
 #include "sc_shim.h"
+#include "support/topology_fixture.h"
+
+#include "StdAfx.h"
+#include <SmBSplineCurve.h>
+#include <SmBSplineVolume.h>
+#include <SmBrep.h>
+#include <SmCacheMgr.h>
+#include <SmFace.h>
+#include <SmSurface.h>
+#include <SmCircle.h>
+#include <SmCurve.h>
+#include <SmLine.h>
+#include <SmMemory.h>
+#include <SmNurbsCrv.h>
+#include <SmNurbsVol.h>
+#include <SmVolume.h>
+#include <nurbs.h>
 
 #include <SmContext.h>
 #include <SmExtent1d.h>
@@ -14,6 +31,9 @@
 #include <SmVector3d.h>
 
 #include <algorithm>
+#include <cmath>
+#include <memory>
+#include <stdexcept>
 #include <vector>
 
 // Operation codes (keep in sync with crates/solidcore-ffi/src/units/geom_tol.rs).
@@ -296,10 +316,12 @@ SC_EXPORT int32_t sc_geom_tol_op(int32_t op, double model_size, double ratio, co
 
 // Runs a script of SmRelation<int, int> operations on objects first[0..n1) and
 // second[0..n2) (identified by index) with cardinality `card`.
-//   script: [0, f, s] = RelatePair, [1, f, k, s1..sk] = RelateToMany, [2] = RemoveAll
+//   script: [0, f, s] = RelatePair, [1, f, k, s1..sk] = RelateToMany, [2] = RemoveAll,
+//           [3, f, s] = RemovePair
 // Output (int64): per script op its status; then for every first f:
 //   GetSecond(f) index (-1 = NULL), count, sorted GetSeconds(f);
-// then count + sorted GetAllFirsts, count + sorted GetAllSeconds.
+// then per second s count + sorted GetFirsts(s), then count + sorted GetAllFirsts,
+// count + sorted GetAllSeconds.
 // (upstream returns these in hash order, which is unspecified; they are sorted here.)
 SC_EXPORT int32_t sc_geom_tol_relation(int32_t card, int64_t n1, int64_t n2, const int64_t* script,
                                        int64_t n_script, int64_t* out, int64_t cap,
@@ -318,12 +340,13 @@ SC_EXPORT int32_t sc_geom_tol_relation(int32_t card, int64_t n1, int64_t n2, con
     while (i < n_script)
     {
         int64_t kind = script[i];
-        if (kind == 0)
+        if (kind == 0 || kind == 3)
         {
             if (i + 3 > n_script) return SC_ERR_ARG;
             int64_t f = script[i + 1], s = script[i + 2];
             if (f < 0 || f >= n1 || s < 0 || s >= n2) return SC_ERR_ARG;
-            res.push_back(sRel.RelatePair(&vFirsts[f], &vSeconds[s]));
+            res.push_back(kind == 0 ? sRel.RelatePair(&vFirsts[f], &vSeconds[s])
+                                    : sRel.RemovePair(&vFirsts[f], &vSeconds[s]));
             i += 3;
         }
         else if (kind == 1)
@@ -364,6 +387,14 @@ SC_EXPORT int32_t sc_geom_tol_relation(int32_t card, int64_t n1, int64_t n2, con
         for (ULONG j = 0; j < sSeconds.GetSize(); ++j) v.push_back(s_idx(sSeconds[j]));
         push_sorted(v);
     }
+    for (int64_t s = 0; s < n2; ++s)
+    {
+        SmTArray<int*> sFirsts;
+        sRel.GetFirsts(&vSeconds[s], sFirsts);
+        std::vector<int64_t> v;
+        for (ULONG j = 0; j < sFirsts.GetSize(); ++j) v.push_back(f_idx(sFirsts[j]));
+        push_sorted(v);
+    }
     {
         SmTArray<int*> sAll;
         sRel.GetAllFirsts(sAll);
@@ -379,5 +410,251 @@ SC_EXPORT int32_t sc_geom_tol_relation(int32_t card, int64_t n1, int64_t n2, con
         push_sorted(v);
     }
     return sc_copy_out(res.data(), (int64_t)res.size(), out, cap, out_len);
+    SC_CATCH
+}
+
+// ---- tolerances of a curve ---------------------------------------------------------
+//
+// sc_geom_tol_curve(in, n_in, out, cap, out_len): one real SmLine / SmCircle /
+// SmBSplineCurve and, on it, GetScaledZero(const SmCurve&), MapTo1d(SmTol3d, dParam,
+// const SmCurve&) and IsDegenerate(const SmCurve*, SmExtent1d, [&xsect]). Input:
+//   curve block: `0 a[3] b[3]` SmLine | `1 c[3] x[3] y[3] d0 d1 r` SmCircle |
+//                `2 p ncp cpts(x y z w) knots` SmBSplineCurve (dim 3)
+//   then: param tol ivl0 ivl1 has_xsect xsect_tol
+// Output: scaled_zero map_to_1d is_degenerate (1 or 0).
+namespace
+{
+struct ScBad : std::runtime_error
+{
+    ScBad() : std::runtime_error("bad program") {}
+};
+
+struct ScRd
+{
+    const double* in;
+    int64_t n;
+    int64_t at;
+    double num()
+    {
+        if (at >= n)
+            throw ScBad();
+        return in[at++];
+    }
+    int64_t idx(int64_t lo, int64_t hi)
+    {
+        double d = num();
+        if (!(d >= (double)lo && d <= (double)hi) || d != (double)(int64_t)d)
+            throw ScBad();
+        return (int64_t)d;
+    }
+    SmVector3d vec()
+    {
+        double x = num();
+        double y = num();
+        double z = num();
+        return SmVector3d(x, y, z);
+    }
+};
+
+SmCurve* sc_read_curve(ScRd& rd, const SmContext& ctx)
+{
+    int64_t kind = rd.idx(0, 2);
+    if (kind == 0)
+    {
+        SmPoint3d a = rd.vec();
+        SmPoint3d b = rd.vec();
+        SmLine* l = new (ctx) SmLine(a, b, 3, &ctx);
+        l->GetOrCreateGwNurbPointer();
+        return l;
+    }
+    if (kind == 1)
+    {
+        SmPoint3d c = rd.vec();
+        SmVector3d x = rd.vec();
+        SmVector3d y = rd.vec();
+        double d0 = rd.num();
+        double d1 = rd.num();
+        double r = rd.num();
+        return new (ctx) SmCircle(c, x, y, SmExtent1d(d0, d1), r, 3, &ctx);
+    }
+    int64_t p = rd.idx(1, 8);
+    int64_t ncp = rd.idx(2, 64);
+    if (p >= ncp)
+        throw ScBad();
+    int64_t n = ncp - 1;
+    int64_t m = n + p + 1;
+    std::vector<double> v;
+    for (int64_t i = 0; i < 4 * ncp + m + 1; i++)
+        v.push_back(rd.num());
+    gw_CURVE* cur = sm_AllocateNurbCurve((gw_INDEX)n, (gw_DEGREE)p, (gw_INDEX)m);
+    for (int64_t i = 0; i <= n; i++)
+    {
+        cur->pol->Pw[i].x = v[4 * i];
+        cur->pol->Pw[i].y = v[4 * i + 1];
+        cur->pol->Pw[i].z = v[4 * i + 2];
+        cur->pol->Pw[i].w = v[4 * i + 3];
+    }
+    for (int64_t i = 0; i <= m; i++)
+        cur->knt->U[i] = v[4 * ncp + i];
+    return new (ctx) SmBSplineCurve(cur, 3, FALSE);
+}
+} // namespace
+
+// Fixed B-spline volume (degree 1, 2x2x2 control points, unit weights, knots 0/0/1/1)
+// followed by SmTol::GetScaledZero(*volume). 24 doubles = 8 poles x 3 coords.
+SC_EXPORT int32_t sc_geom_tol_volume(const double* in, int64_t n_in, double* out, int64_t cap, int64_t* out_len)
+{
+    if (in == nullptr || n_in != 24 || out_len == nullptr || (out == nullptr && cap > 0))
+        return SC_ERR_ARG;
+    for (int64_t i = 0; i < 24; ++i)
+        if (!std::isfinite(in[i]))
+            return SC_ERR_ARG;
+    SC_TRY
+    SmContext ctx;
+    gw_VOLUME* rec = sm_AllocateNurbVolume(1, 1, 1, 1, 1, 1, 3, 3, 3);
+    if (rec == NULL)
+        return SC_ERR_ARG;
+    SmMemDelete cleanup(rec);
+    for (int i = 0; i <= 3; ++i)
+    {
+        rec->knu->U[i] = (i < 2) ? 0.0 : 1.0;
+        rec->knv->U[i] = (i < 2) ? 0.0 : 1.0;
+        rec->knw->U[i] = (i < 2) ? 0.0 : 1.0;
+    }
+    for (int i = 0; i <= 1; ++i)
+        for (int j = 0; j <= 1; ++j)
+            for (int k = 0; k <= 1; ++k)
+            {
+                NL_CPOINT& c = rec->mesh->Pw[i][j][k];
+                const int base = (i * 4 + j * 2 + k) * 3;
+                c.x = in[base];
+                c.y = in[base + 1];
+                c.z = in[base + 2];
+                c.w = 1.0;
+            }
+    // This constructor copies the record, as in surface_b_spline_volume.cpp.
+    // Both allocations are guarded through native exceptions, before ctx dies.
+    std::unique_ptr<SmVolume> v(new (ctx) SmBSplineVolume(&ctx, rec));
+    smos_Free(rec);
+    cleanup.Clear();
+    const double scaled_zero = (double)SmTol::GetScaledZero(*v);
+    return sc_copy_out(&scaled_zero, 1, out, cap, out_len);
+    SC_CATCH
+}
+SC_EXPORT int32_t sc_geom_tol_curve(const double* in, int64_t n_in, double* out, int64_t cap, int64_t* out_len)
+{
+    if (in == nullptr || n_in < 1 || out_len == nullptr || (out == nullptr && cap > 0))
+        return SC_ERR_ARG;
+    SC_TRY
+    SmContext ctx;
+    ScRd rd{in, n_in, 0};
+    std::vector<double> o;
+    SmCurve* c = NULL;
+    try
+    {
+        c = sc_read_curve(rd, ctx);
+        double param = rd.num();
+        double tol = rd.num();
+        double i0 = rd.num();
+        double i1 = rd.num();
+        int64_t has_x = rd.idx(0, 1);
+        double xs = rd.num();
+        if (rd.at != n_in)
+        {
+            delete c;
+            return SC_ERR_ARG;
+        }
+        SmScaledZero sz = SmTol::GetScaledZero(*c);
+        SmTol3d t3(tol);
+        SmTol1d t1 = SmTol::MapTo1d(t3, param, *c);
+        SmXSectTol3d xt(xs);
+        SmBoolean deg = SmTol::IsDegenerate(c, SmExtent1d(i0, i1), has_x ? &xt : NULL);
+        o.push_back((double)sz);
+        o.push_back((double)t1);
+        o.push_back(deg ? 1.0 : 0.0);
+    }
+    catch (const ScBad&)
+    {
+        delete c;
+        return SC_ERR_ARG;
+    }
+    delete c;
+    return sc_copy_out(o.data(), (int64_t)o.size(), out, cap, out_len);
+    SC_CATCH
+}
+
+namespace
+{
+// Points a B-rep at `ctx` for the scope (the fixture B-rep lives in the shared fixture
+// context, which SmTol::SetModelSizeEstimate(SmBrep&, ..) would change for later cases).
+struct ScBrepContext
+{
+    SmBrep& brep;
+    const SmContext* orig;
+    ScBrepContext(SmBrep& b, const SmContext* ctx) : brep(b), orig(b.GetContext()) { brep.SetContext(ctx); }
+    ~ScBrepContext() { brep.SetContext(orig); }
+};
+} // namespace
+
+// The SmBrep overloads of SmTol on the B-rep of `path` / `block`, with the system
+// tolerances set from (model_size, ratio) and the B-rep moved into a fresh SmContext.
+//   args: set_est est set_ratio ratio small gap1 gap2 has_max max  (9 doubles)
+//   out : SetModelSizeEstimate (0 when not set), GetModelSizeEstimate,
+//         GetLargeSmallSizeRatio, GetZoneTol3d, GetApproxTol3d, GetXSectTol3d,
+//         CalcFaceZoneTol3d, CalcEdgeZoneTol3d, CalcVertexZoneTol3d, GetScaledZero (10)
+SC_EXPORT int32_t sc_geom_tol_brep(const char* path, const double* block, int64_t n_block,
+                                   double model_size, double ratio, const double* args, int64_t n_args,
+                                   double* out, int64_t cap, int64_t* out_len)
+{
+    if (path == nullptr || block == nullptr || n_block < 1 || args == nullptr || n_args != 9 ||
+        out_len == nullptr || (out == nullptr && cap > 0))
+        return SC_ERR_ARG;
+    for (int64_t i = 0; i < n_args; ++i)
+        if (!std::isfinite(args[i]))
+            return SC_ERR_ARG;
+    int64_t small = (int64_t)args[4];
+    if (small < 0 || small > 4)
+        return SC_ERR_ARG;
+    SC_TRY
+    std::vector<double> o;
+    int32_t rc = sc_topology_fixture::apply(path, block, n_block, [&](const sc_topology_fixture::View& g) -> int32_t {
+        // the trimmed surface caches a file read leaves on face surfaces (the port has
+        // no object caches)
+        for (SmFace* f : g.faces)
+        {
+            SmSurface* srf = f->GetSurface();
+            if (srf == nullptr)
+                return SC_ERR_ARG; // SmFace::CalculateBoundingBox dereferences it unchecked
+            if (SmCacheMgr::GetObjectCache(SM_OC_TRIMSRF, srf) != nullptr)
+                SmCacheMgr::DeleteObjectsCache(SM_OC_TRIMSRF, srf);
+        }
+        ScSystemTol sSys(model_size, ratio);
+        SmContext ctx;
+        ScBrepContext sCtx(g.brep, &ctx);
+        SmBrep& b = g.brep;
+        const SmBrep* cb = &b;
+        SmSmallTopoType eSmall = (SmSmallTopoType)small;
+        double z = 0.0;
+        if (args[0] != 0.0)
+            z = (double)SmTol::SetModelSizeEstimate(b, args[1]);
+        if (args[2] != 0.0)
+            SmTol::SetLargeSmallSizeRatio(b, args[3]);
+        SmZoneTol3d sMax(args[8]);
+        SmZoneTol3d* pMax = args[7] != 0.0 ? &sMax : NULL;
+        o.push_back(z);
+        o.push_back(SmTol::GetModelSizeEstimate(*cb));
+        o.push_back(SmTol::GetLargeSmallSizeRatio(*cb));
+        o.push_back((double)SmTol::GetZoneTol3d(cb, eSmall));
+        o.push_back((double)SmTol::GetApproxTol3d(cb, eSmall));
+        o.push_back((double)SmTol::GetXSectTol3d(cb, eSmall));
+        o.push_back((double)SmTol::CalcFaceZoneTol3d(&b));
+        o.push_back((double)SmTol::CalcEdgeZoneTol3d(args[5], args[6], &b, pMax));
+        o.push_back((double)SmTol::CalcVertexZoneTol3d(args[5], args[6], &b, pMax));
+        o.push_back((double)SmTol::GetScaledZero(*cb));
+        return 0;
+    });
+    if (rc != 0)
+        return rc;
+    return sc_copy_out(o.data(), (int64_t)o.size(), out, cap, out_len);
     SC_CATCH
 }

@@ -30,12 +30,13 @@
 //! (`SmSurface::LocalSurfaceSolve`), `FindBoundaryStartPoints` with a boundary box
 //! meeting the intersection box (`SmSurface::GlobalCurveIntersect`), on a plane
 //! (`SmPlane::CreateIsoParametricCurve`) or with a curve-bounded surface (the cache
-//! build's `CalculateContinuities`), and `SplitSpan` with a valid plane
-//! (`SmFilletLaw::Evaluate`).
+//! build's `CalculateContinuities`). `SplitSpan` with a valid plane evaluates the
+//! shim's default-constructed base `SmFilletLaw` (`SM_ERR`, compared).
 
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 
+use solidcore::blend::fillet_standard_solver::p1::{FilletLaw, FilletLawKind};
 use solidcore::curve::curve::{Curve, CurveKind};
 use solidcore::curve::line::Line;
 use solidcore::geom::extent1d::{Extent1d, ExtentPointType};
@@ -294,7 +295,7 @@ impl From<HarnessError> for Fail {
 /// cannot return.
 fn status(e: &SolidError) -> f64 {
     match e {
-        SolidError::InvalidInput { .. } => 1007.0,
+        SolidError::InvalidInput { .. } | SolidError::PortInvariant { .. } => 1007.0,
         SolidError::Upstream { code, .. } => f64::from(*code),
         _ => -1.0,
     }
@@ -373,7 +374,7 @@ fn rust_surface(s: &SurfaceIn) -> Result<Surface, Fail> {
             Vec::new(),
             Vec::new(),
             true,
-        ))),
+        ).map_err(|e| HarnessError::new(e.to_string()))?)),
     }
 }
 
@@ -1072,7 +1073,7 @@ impl Run<'_> {
 }
 
 #[allow(clippy::too_many_lines)]
-fn run_op(run: &mut Run<'_>, si: &mut SurfaceIntersector<'_>, op: &OpIn, o: &mut Vec<f64>) -> Result<(), Fail> {
+fn run_op(k: &Kernel, run: &mut Run<'_>, si: &mut SurfaceIntersector<'_>, op: &OpIn, o: &mut Vec<f64>) -> Result<(), Fail> {
     let nprog = run.nprog;
     match op {
         OpIn::State => {
@@ -1091,7 +1092,7 @@ fn run_op(run: &mut Run<'_>, si: &mut SurfaceIntersector<'_>, op: &OpIn, o: &mut
             } else {
                 let r = match op {
                     OpIn::AddCurve { .. } => si.add_point_to_curve(id(*i)),
-                    OpIn::AddStart { .. } => si.add_start_point(id(*i)),
+                    OpIn::AddStart { .. } => si.add_start_point(k, id(*i)),
                     _ => si.add_through_point(id(*i)),
                 };
                 st(o, r)?;
@@ -1182,7 +1183,6 @@ fn run_op(run: &mut Run<'_>, si: &mut SurfaceIntersector<'_>, op: &OpIn, o: &mut
                 .get(s.curve)
                 .ok_or_else(|| harness("curve index"))?;
             let opts = LawPointOptions {
-                law: &(),
                 law_orient: s.orient,
                 point_curve: curve,
                 point_curve_interval: Extent1d::from_min_max(s.interval[0], s.interval[1]),
@@ -1192,7 +1192,9 @@ fn run_op(run: &mut Run<'_>, si: &mut SurfaceIntersector<'_>, op: &OpIn, o: &mut
             };
             pt_of(si, s.curr)?;
             pt_of(si, s.next)?;
-            let r = si.split_span(id(s.curr), id(s.next), s.delta, &opts);
+            // the shim's default-constructed base `SmFilletLaw`
+            let mut law = FilletLaw::new(FilletLawKind::Base);
+            let r = si.split_span(k, id(s.curr), id(s.next), s.delta, &opts, &mut law);
             if let Some(new_id) = st(o, r)? {
                 let p = pt_of(si, new_id.index())?;
                 put_point(o, &p);
@@ -1235,7 +1237,7 @@ fn op_code(op: &OpIn) -> f64 {
     })
 }
 
-fn rust_run(i: &Inputs) -> Result<Vec<f64>, Fail> {
+fn rust_run(k: &Kernel, i: &Inputs) -> Result<Vec<f64>, Fail> {
     let a = rust_surface(&i.a)?;
     let b_srf = match &i.b {
         Some(s) => Some(rust_surface(s)?),
@@ -1248,7 +1250,7 @@ fn rust_run(i: &Inputs) -> Result<Vec<f64>, Fail> {
         .map(rust_curve)
         .collect::<Result<Vec<_>, _>>()?;
     let mut o = Vec::new();
-    let mut si = match SurfaceIntersector::new(&a, &ext(i.dom1), b_ref, &ext(i.dom2), i.fillet) {
+    let mut si = match SurfaceIntersector::new(k, &a, &ext(i.dom1), b_ref, &ext(i.dom2), i.fillet) {
         Ok(si) => si,
         Err(e) => {
             if let Some(d) = Output::unported(&e) {
@@ -1273,16 +1275,16 @@ fn rust_run(i: &Inputs) -> Result<Vec<f64>, Fail> {
     };
     for op in &i.ops {
         o.push(op_code(op));
-        run_op(&mut run, &mut si, op, &mut o)?;
+        run_op(k, &mut run, &mut si, op, &mut o)?;
     }
     put_state(&mut o, &si, run.nprog)?;
     Ok(o)
 }
 
-fn rust(i: &Inputs) -> Result<Output, HarnessError> {
+fn rust(k: &Kernel, i: &Inputs) -> Result<Output, HarnessError> {
     // reject what the C++ side rejects
     ffi::encode(&ffi_program(i)).map_err(|e| harness(format!("rejected input: {e}")))?;
-    match rust_run(i) {
+    match rust_run(k, i) {
         Ok(rec) => Ok(Output::new().values("rec", rec)),
         Err(Fail::Deferred(d)) => Ok(*d),
         Err(Fail::Harness(h)) => Err(h),
@@ -2000,6 +2002,7 @@ impl UnitDiff for Runner {
     }
 
     fn run_rust(&self, case: &Case) -> Result<Output, HarnessError> {
-        rust(&case.parse()?)
+        let k = &Kernel::default();
+        rust(k, &case.parse()?)
     }
 }

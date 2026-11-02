@@ -44,6 +44,9 @@ use crate::case::CaseContext;
 use crate::runner::default_cases;
 use crate::{Case, HarnessError, Output, Rng, UnitDiff};
 
+#[path = "fixtures/nlib_srf_adv_p2_sms.rs"]
+mod sms;
+
 /// Generated cases per run, whatever `--seeds` says (it can only raise this).
 pub const MIN_GENERATED: usize = 1500;
 
@@ -112,41 +115,14 @@ fn harness(msg: impl Into<String>) -> HarnessError {
 /// `m+q+2` v knots.
 fn read_sms(path: &str) -> Result<InlineSrf, HarnessError> {
     let text = std::fs::read_to_string(path).map_err(|e| harness(format!("{path}: {e}")))?;
-    let mut it = text.split_whitespace();
-    let mut num = || -> Result<f64, HarnessError> {
-        it.next()
-            .ok_or_else(|| harness(format!("{path}: truncated")))?
-            .parse::<f64>()
-            .map_err(|e| harness(format!("{path}: {e}")))
-    };
-    let int = |v: f64| -> Result<usize, HarnessError> {
-        if v.fract() != 0.0 || v < 0.0 {
-            return Err(harness(format!("{path}: bad count {v}")));
-        }
-        Ok(v as usize)
-    };
-    let n = int(num()?)?;
-    let m = int(num()?)?;
-    let p = int(num()?)?;
-    let q = int(num()?)?;
-    let rat = num()? != 0.0;
-    let mut net = Vec::with_capacity(n + 1);
-    for _ in 0..=n {
-        let mut row = Vec::with_capacity(m + 1);
-        for _ in 0..=m {
-            let (x, y, z) = (num()?, num()?, num()?);
-            let w = if rat { num()? } else { NOW };
-            row.push([x, y, z, w]);
-        }
-        net.push(row);
-    }
-    let u = (0..n + p + 2)
-        .map(|_| num())
-        .collect::<Result<Vec<_>, _>>()?;
-    let v = (0..m + q + 2)
-        .map(|_| num())
-        .collect::<Result<Vec<_>, _>>()?;
-    Ok(InlineSrf { net, p, q, u, v })
+    let s = sms::parse_sms(&text, path)?;
+    Ok(InlineSrf {
+        net: s.net,
+        p: s.p,
+        q: s.q,
+        u: s.u,
+        v: s.v,
+    })
 }
 
 fn resolve(s: &SrfIn) -> Result<InlineSrf, HarnessError> {
@@ -726,28 +702,43 @@ mod tests {
 
     /// The generator reaches successful and failing extensions of every continuity
     /// and both normal-derivative outcomes.
+    ///
+    /// Deep-but-bounded extension recursion (`ST_curxcdr` fails only past 50 levels,
+    /// nested in `ST_surxsdr`'s 10) must fit the thread stack: generated cases reach
+    /// the recursion limits, and a debug build's frames are much larger than
+    /// upstream's, so the loop runs on a dedicated thread with a raised stack (same
+    /// pattern as the reader fuzz `run_guarded`); the release difftest profile needs
+    /// the default stack.
     #[test]
     fn generated_cases_cover_outcomes() {
-        let mut stats = [0usize; 6];
-        for seed in 0..1500u64 {
-            let mut rng = Rng::new(seed);
-            let i = gen_case(&mut rng);
-            let flat = rust_flat(&i).unwrap();
-            let ok = flat.first() == Some(&0.0);
-            match (&i, ok) {
-                (Inputs::Extend { cont, .. }, true) => {
-                    stats[match cont {
-                        2 => 0,
-                        3 => 1,
-                        4 => 2,
-                        _ => 3,
-                    }] += 1;
+        const STACK: usize = 64 * 1024 * 1024;
+        let h = std::thread::Builder::new()
+            .stack_size(STACK)
+            .spawn(|| {
+                let mut stats = [0usize; 6];
+                for seed in 0..1500u64 {
+                    let mut rng = Rng::new(seed);
+                    let i = gen_case(&mut rng);
+                    let flat = rust_flat(&i).unwrap();
+                    let ok = flat.first() == Some(&0.0);
+                    match (&i, ok) {
+                        (Inputs::Extend { cont, .. }, true) => {
+                            stats[match cont {
+                                2 => 0,
+                                3 => 1,
+                                4 => 2,
+                                _ => 3,
+                            }] += 1;
+                        }
+                        (Inputs::Extend { .. }, false) => stats[4] += 1,
+                        (Inputs::NormalDeriv { .. }, true) => stats[5] += 1,
+                        (Inputs::NormalDeriv { .. }, false) => {}
+                    }
                 }
-                (Inputs::Extend { .. }, false) => stats[4] += 1,
-                (Inputs::NormalDeriv { .. }, true) => stats[5] += 1,
-                (Inputs::NormalDeriv { .. }, false) => {}
-            }
-        }
+                stats
+            })
+            .expect("spawn");
+        let stats = h.join().unwrap();
         eprintln!("{stats:?}");
         assert!(stats.iter().all(|&k| k >= 10), "{stats:?}");
     }

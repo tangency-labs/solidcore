@@ -24,6 +24,7 @@
 //! | [`CurveLoops::insert_into_loops`]            | `InsertIntoLoops`                                         |
 //! | [`CurveLoops::insert_iso_xsect_segment`]     | `InsertIsoXSectSegment`                                   |
 //! | [`CurveLoops::update_solution_objects`]      | `UpdateSolutionObjects`                                   |
+//! | [`StoreDomains`]                             | the `SmCurve*` dereference of `SmSolution::GetParameterInterval` |
 //!
 //! Deviations:
 //! - **Curves.** Upstream keeps `SmCurve*`s it does not own; here a curve is a
@@ -35,7 +36,8 @@
 //!   `m_apObjects[1]`).
 //! - **Indices** are `usize` with upstream's `ULONG` wrap-around arithmetic.
 //!   `GetLoopStartEnd` sets the start of a later loop to the previous loop's last index,
-//!   as upstream does (`plan/upstream-issues.md` WR-96). An index past the curve list, which
+//!   as upstream does (WR-96), unless `Kernel::fixes.curve_loop_start_after_previous_end`
+//!   is enabled. An index past the curve list, which
 //!   upstream reads out of bounds, is [`SolidError::InvalidInput`].
 //! - **Ignored statuses.** `SampleNearbyPoints` ignores `FindAdjacentLoopCurve`'s status
 //!   (index `0` when the curve is not in the loops) and `FindAdjacentLoopCurve` ignores
@@ -47,7 +49,7 @@ use crate::error::{Result, SolidError};
 use crate::geom::extent1d::Extent1d;
 use crate::geom::extent2d::Extent2d;
 use crate::geom::global_solver::{SolutionRequested, SolverOperation};
-use crate::geom::solution_array::{ObjectKind, SolutionArray, SolutionObject};
+use crate::geom::solution_array::{ObjectKind, ParameterDomains, SolutionArray, SolutionObject};
 use crate::geom::tol;
 use crate::kernel::Kernel;
 use crate::math::Point3;
@@ -80,6 +82,21 @@ impl SolutionObject for LoopObject {
         match self {
             Self::Curve(_) => ObjectKind::Curve,
             Self::Other(k) => *k,
+        }
+    }
+}
+
+/// The parameter domains of [`LoopObject`]s read from the caller's curve store
+/// (upstream dereferences the `SmCurve*`: `SmCurve::GetNaturalInterval`), for
+/// [`SolutionArray::add_sorted_solution_in`]. Other kinds ask the handle itself.
+#[derive(Debug, Clone, Copy)]
+pub struct StoreDomains<'a>(pub &'a [Curve]);
+
+impl ParameterDomains<LoopObject> for StoreDomains<'_> {
+    fn natural_interval(&self, curve: &LoopObject) -> Option<Extent1d> {
+        match curve {
+            LoopObject::Curve(key) => self.0.get(key.0).map(Curve::natural_interval),
+            LoopObject::Other(_) => curve.natural_interval(),
         }
     }
 }
@@ -265,7 +282,7 @@ impl CurveLoops {
 
     /// `GetLoopStartEnd` with its outputs as left on failure: the status, `rlStart` and
     /// `rlEnd`.
-    fn loop_start_end_raw(&self, curve_index: usize) -> (bool, usize, usize) {
+    fn loop_start_end_raw(&self, k: &Kernel, curve_index: usize) -> (bool, usize, usize) {
         let mut start = 0usize;
         let mut end = 0usize;
         for (ii, &c) in self.loop_counts.iter().enumerate() {
@@ -276,20 +293,24 @@ impl CurveLoops {
             if curve_index <= end {
                 return (true, start, end);
             }
-            start = end;
+            start = if k.fixes.curve_loop_start_after_previous_end {
+                end.wrapping_add(1)
+            } else {
+                end
+            };
         }
         (false, start, end)
     }
 
     /// `GetLoopStartEnd`: the first and last curve index of the loop holding
-    /// `curve_index` (a later loop's start is the previous loop's last index, as
-    /// upstream).
+    /// `curve_index`. With `k.fixes.curve_loop_start_after_previous_end`, a later
+    /// loop starts after the previous loop's end; the default reproduces WR-96.
     ///
     /// # Errors
     ///
     /// `SM_ERR` when the index is past every loop.
-    pub fn loop_start_end(&self, curve_index: usize) -> Result<(usize, usize)> {
-        match self.loop_start_end_raw(curve_index) {
+    pub fn loop_start_end(&self, k: &Kernel, curve_index: usize) -> Result<(usize, usize)> {
+        match self.loop_start_end_raw(k, curve_index) {
             (true, s, e) => Ok((s, e)),
             _ => Err(SolidError::sm_err(OP)),
         }
@@ -297,7 +318,7 @@ impl CurveLoops {
 
     /// `FindAdjacentLoopCurve`: the index of the loop curve before `key` (when `param`
     /// lies in the first half of its natural interval) or after it, cyclically in its
-    /// loop.
+    /// loop. Honors `k.fixes.curve_loop_start_after_previous_end` (WR-96).
     ///
     /// # Errors
     ///
@@ -305,6 +326,7 @@ impl CurveLoops {
     /// in `store`.
     pub fn find_adjacent_loop_curve(
         &self,
+        k: &Kernel,
         store: &[Curve],
         key: CurveKey,
         param: f64,
@@ -313,7 +335,7 @@ impl CurveLoops {
             return Err(SolidError::sm_err(OP));
         };
         // status ignored upstream
-        let (_, start, end) = self.loop_start_end_raw(idx);
+        let (_, start, end) = self.loop_start_end_raw(k, idx);
         let mid = curve_of(store, key)?.natural_interval().mid();
         Ok(if param < mid {
             if idx == start {
@@ -390,6 +412,7 @@ impl CurveLoops {
     /// evaluations.
     pub fn sample_nearby_points(
         &self,
+        k: &Kernel,
         store: &[Curve],
         key: CurveKey,
         param: f64,
@@ -401,16 +424,16 @@ impl CurveLoops {
         // when dParam is in the interior by more than tol
         if domain.contains_value(param, -tol) {
             let t = 0.8 * param + 0.2 * domain.min();
-            let p1 = crv.evaluate_point(t)?;
+            let p1 = crv.evaluate_point(k, t)?;
             let t = 0.8 * param + 0.2 * domain.max();
-            let p2 = crv.evaluate_point(t)?;
+            let p2 = crv.evaluate_point(k, t)?;
             return Ok((p1, p2));
         }
 
         // find adjacent loop curve (status ignored, index 0 on failure)
-        let adj = match self.find_adjacent_loop_curve(store, key, param) {
+        let adj = match self.find_adjacent_loop_curve(k, store, key, param) {
             Ok(a) => a,
-            Err(e) if e.is_unported() => return Err(e),
+            Err(e) if e.is_unported_or_cancelled() => return Err(e),
             Err(_) => 0,
         };
         let adj_crv = curve_of(store, get(&self.curves, adj)?)?;
@@ -418,21 +441,21 @@ impl CurveLoops {
         let adj_orient = get(&self.orients, adj)?;
 
         if param < domain.mid() {
-            let p1 = crv.evaluate_point(domain.evaluate(0.2))?;
+            let p1 = crv.evaluate_point(k, domain.evaluate(0.2))?;
             let t = if adj_orient == OrientType::Same {
                 adj_domain.evaluate(0.8)
             } else {
                 adj_domain.evaluate(0.2)
             };
-            Ok((p1, adj_crv.evaluate_point(t)?))
+            Ok((p1, adj_crv.evaluate_point(k, t)?))
         } else {
-            let p1 = crv.evaluate_point(domain.evaluate(0.8))?;
+            let p1 = crv.evaluate_point(k, domain.evaluate(0.8))?;
             let t = if adj_orient == OrientType::Same {
                 adj_domain.evaluate(0.2)
             } else {
                 adj_domain.evaluate(0.8)
             };
-            Ok((p1, adj_crv.evaluate_point(t)?))
+            Ok((p1, adj_crv.evaluate_point(k, t)?))
         }
     }
 
@@ -457,7 +480,7 @@ impl CurveLoops {
         domain: &Extent2d,
         zone_tol_3d: f64,
     ) -> Result<bool> {
-        let (p1, p2) = self.sample_nearby_points(store, key, param)?;
+        let (p1, p2) = self.sample_nearby_points(k, store, key, param)?;
         let mut uv1 = p1;
         let mut uv2 = p2;
 
@@ -475,7 +498,7 @@ impl CurveLoops {
                     SolutionRequested::Single,
                 ) {
                     Ok(s) => s,
-                    Err(e) if e.is_unported() => return Err(e),
+                    Err(e) if e.is_unported_or_cancelled() => return Err(e),
                     Err(_) => return Ok(false),
                 };
                 if sols.len() != 1 {
@@ -698,6 +721,7 @@ impl CurveLoops {
     /// [`SolidError::InvalidInput`] for keys not in `store`; those of the evaluation.
     pub fn update_solution_objects(
         &self,
+        k: &Kernel,
         store: &[Curve],
         ints: &mut [CurveIntersections],
         orig: CurveKey,
@@ -719,7 +743,7 @@ impl CurveLoops {
                 }
                 let param = sol.start.parameters[1];
                 let deriv = orig_crv
-                    .evaluate(param, 1, true, true)?
+                    .evaluate(k, param, 1, true, true)?
                     .get(1)
                     .copied()
                     .ok_or(SolidError::invalid_input(OP, "derivative"))?;
@@ -752,10 +776,10 @@ mod tests {
         let l = loops(&[3, 4]);
         assert_eq!(l.loop_start_index(1).unwrap(), 3);
         assert!(l.loop_start_index(2).is_err());
-        assert_eq!(l.loop_start_end(1).unwrap(), (0, 2));
+        assert_eq!(l.loop_start_end(&Kernel::default(), 1).unwrap(), (0, 2));
         // upstream's start of a later loop is the previous loop's last index
-        assert_eq!(l.loop_start_end(4).unwrap(), (2, 6));
-        assert!(l.loop_start_end(7).is_err());
+        assert_eq!(l.loop_start_end(&Kernel::default(), 4).unwrap(), (2, 6));
+        assert!(l.loop_start_end(&Kernel::default(), 7).is_err());
     }
 
     #[test]

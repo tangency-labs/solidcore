@@ -6,19 +6,20 @@
 //! (`CreateFaceFromSurface`) or a wire edge from a curve of any kind the edge code
 //! branches on (`CreateWireEdgeFromCurve` over a real `SmBSplineCurve`, `SmHermiteCurve`,
 //! `SmLine`, `SmEllipse` or `SmCircle`), then optionally edits one edge (tolerance,
-//! start / end vertex point, curve removed). There is no Rust B-rep reader or builder
-//! yet, so the Rust side imports the edited graph the shim exports (with unit
-//! `topology.edgeuse_p1`'s importer: list owners, list order, orientations, tolerances,
-//! vertex points, B-spline and line curves); a wire edge's curve is the case's curve,
-//! built the same way on both sides. The ported function then runs on the imported
-//! B-rep.
+//! start / end vertex point, curve removed). The Rust side builds the same B-rep with the
+//! Rust kernel ([`own_scene`]: the Rust `.smb` reader, `CreateFaceFromSurface`, or
+//! `CreateWireEdgeFromCurve` on the case's curve), renumbered into the shim's traversal
+//! order ([`crate::own_builder`]; this shim's walk registers no edge list first), and
+//! applies the same edit with the ported setters; no C++ state reaches it. The C++ side
+//! resolves its selectors and derived inputs on an import of its own export ([`scene`]).
+//! The ported function then runs on the Rust B-rep.
 //!
 //! Selectors are taken modulo the entity count (the radial ops' edge uses modulo the
 //! loop edge uses), so generated cases need no counts. The closest point is the edge
 //! curve's point at the normalised edge parameter `nt` plus `offset` (the offset alone
 //! without curve); the curve classified by `radial_curve` is the line from the edge's
-//! point at `nt` along `dir` over `[0, len]`. Both sides compute these inputs from the
-//! imported B-rep, identically.
+//! point at `nt` along `dir` over `[0, len]`. Each side computes these inputs from its own
+//! B-rep.
 //!
 //! Outputs: `failed` (`0` success, `1` a failing status, `-2` where upstream would
 //! dereference null; the shim does not call it, the port returns `InvalidInput`), then
@@ -465,7 +466,8 @@ fn build_curve(k: &Kernel, c: &CurveIn) -> Result<Curve, HarnessError> {
     }
 }
 
-/// The case's B-rep: the edited C++ export imported into a Rust [`Brep`].
+/// The case's B-rep: on the C++ side the edited C++ export imported into a Rust [`Brep`]
+/// ([`scene`]), on the Rust side the Rust-built one ([`own_scene`]).
 struct Scene {
     brep: Brep,
     /// The B-rep block and the resolved edit block.
@@ -475,14 +477,17 @@ struct Scene {
     loop_eus: Vec<EdgeuseId>,
 }
 
-/// Builds the scene, or the build failure's output.
+/// The C++ side's scene (its export imported, for its selectors and derived inputs), or
+/// the build failure's output.
 fn scene(k: &Kernel, i: &Inputs) -> Result<Result<Scene, Output>, HarnessError> {
     let path = path_of(&i.brep)?;
     let block = brep_block(&i.brep)?;
     let mut plain = block.clone();
     plain.extend(edit_block(None, 0));
-    let first =
-        ffi::eval(Op::Export, &path, &plain).map_err(|e| harness(format!("c++ export: {e}")))?;
+    let first = crate::export_memo::export("query_edge", &[&path], &plain, || {
+        ffi::eval(Op::Export, &path, &plain)
+    })
+    .map_err(|e| harness(format!("c++ export: {e}")))?;
     let Some(c) = ffi::counts(&first) else {
         let st = first.get(1).copied().unwrap_or(0.0);
         return Ok(Err(Output::err(format!("brep_build_status_{st}"))));
@@ -490,15 +495,18 @@ fn scene(k: &Kernel, i: &Inputs) -> Result<Result<Scene, Output>, HarnessError> 
     let n_edges = c[7];
     let mut prefix = block;
     prefix.extend(edit_block(i.edits.as_ref(), n_edges));
-    let ex =
-        ffi::eval(Op::Export, &path, &prefix).map_err(|e| harness(format!("c++ export: {e}")))?;
+    let ex = crate::export_memo::export("query_edge", &[&path], &prefix, || {
+        ffi::eval(Op::Export, &path, &prefix)
+    })
+    .map_err(|e| harness(format!("c++ export: {e}")))?;
     // the edge curve kinds follow the graph
     let split = ex
         .len()
         .checked_sub(n_edges)
         .ok_or_else(|| harness("export without curve kinds"))?;
     let (graph, kinds) = ex.split_at(split);
-    let mut brep = crate::units::topology_edgeuse_p1::import(graph)?;
+    // raw: the wire edge curves are set below, so the cached gaps are refilled after
+    let (mut brep, _) = crate::units::topology_edgeuse_p1::import_raw_with_types(graph)?;
     for (e, &kind) in kinds.iter().enumerate() {
         let kind = kind as i64;
         let id = EdgeId::from_index(e as u32);
@@ -518,6 +526,7 @@ fn scene(k: &Kernel, i: &Inputs) -> Result<Result<Scene, Output>, HarnessError> 
             }
         }
     }
+    crate::units::topology_vertexuse::refill_gaps(&mut brep);
     let loop_eus = brep
         .edgeuses()
         .ids()
@@ -529,6 +538,127 @@ fn scene(k: &Kernel, i: &Inputs) -> Result<Result<Scene, Output>, HarnessError> 
         path,
         loop_eus,
     }))
+}
+
+/// The `query.edge` shim's conventions: its own `walk` registers no edge list ahead of
+/// the traversal; no `init_gaps` walk; geometry owned under the arena identities (the
+/// `topology.edgeuse_p1` import's naming).
+const CONVENTIONS: crate::own_builder::Conventions<'static> = crate::own_builder::Conventions {
+    skip_edge_list: true,
+    ..crate::own_builder::Conventions::EDGEUSE_GRAPH
+};
+
+/// The Rust side's scene: the shim's `build` made by the Rust kernel (the `.smb` reader,
+/// `CreateFaceFromSurface` or `CreateWireEdgeFromCurve` on the case's curve), renumbered
+/// into the shim's traversal order, then the shim's `edit` applied by the ported setters.
+/// No C++ state reaches it.
+fn own_scene(k: &mut Kernel, i: &Inputs) -> Result<Result<Scene, Output>, HarnessError> {
+    use crate::own_builder::{build_with, failed_output, finish, in_new_brep, read_as, Built};
+    use crate::units::topology_edgeuse_p1 as eu;
+    let path = path_of(&i.brep)?;
+    let built = match &i.brep {
+        BrepIn::File { rebuild, .. } => read_as(k, &path, *rebuild, false, false, &CONVENTIONS)?,
+        BrepIn::Face { surface, dom } => {
+            // the face block always writes form 0 (`push_surface`)
+            let src = eu::BrepIn::Face {
+                surface: eu::SrfIn::Bspline(eu::BssIn {
+                    oob: surface.oob,
+                    form: 0,
+                    net: surface.net.clone(),
+                    p: surface.p,
+                    q: surface.q,
+                    u: surface.u.clone(),
+                    v: surface.v.clone(),
+                }),
+                dom: *dom,
+            };
+            build_with(k, &src, false, false, &CONVENTIONS)?
+                .ok_or_else(|| harness("face source not built"))?
+        }
+        BrepIn::Wire { curve, t0, t1 } => {
+            let c = build_curve(k, curve)?;
+            let ivl = Extent1d::from_min_max(*t0, *t1);
+            let raw = in_new_brep(k, |k, b| {
+                solidcore::topology::brep::p5::create_wire_edge_from_curve(k, b, c, ivl)
+                    .map(|_| ())
+            })?;
+            finish(k, raw, false, false, &CONVENTIONS)?
+        }
+    };
+    let mut brep = match built {
+        Built::Brep(b) => *b,
+        Built::Failed(e) => return Ok(Err(failed_output(&e))),
+    };
+    if let Err(e) = edit(k, &mut brep, i.edits.as_ref()) {
+        return Ok(Err(rust_err(&e)));
+    }
+    let loop_eus = brep
+        .edgeuses()
+        .ids()
+        .filter(|&eu| eu1::is_loop_edgeuse(&brep, eu).unwrap_or(false))
+        .collect();
+    Ok(Ok(Scene {
+        brep,
+        prefix: Vec::new(),
+        path,
+        loop_eus,
+    }))
+}
+
+/// The shim's `edit` on the Rust B-rep: on edge `edge` (modulo the edge count),
+/// `SetTolerance(tol, FALSE, FALSE)` when `tol >= 0`, `SetPoint` of the start / end
+/// vertex (`GetVertices`), `SetCurve(NULL, TRUE, FALSE, FALSE)` when `drop`.
+fn edit(k: &mut Kernel, b: &mut Brep, e: Option<&EditsIn>) -> Result<(), SolidError> {
+    use solidcore::topology::brep::p2::ArenaNotifyState;
+    use solidcore::topology::edge as ed;
+    let Some(e) = e else {
+        return Ok(());
+    };
+    let Some(idx) = sel(e.edge, b.edges().len()) else {
+        return Ok(());
+    };
+    let id = EdgeId::from_index(u32::try_from(idx).unwrap_or(u32::MAX));
+    if e.tol >= 0.0 {
+        ed::set_tolerance(b, id, e.tol, false, false)?;
+    }
+    if e.p0.is_some() || e.p1.is_some() {
+        let (start, end) = ed::start_end_vertices(b, id)?;
+        for (v, p) in [(start, e.p0), (end, e.p1)] {
+            let (Some(v), Some(p)) = (v, p) else {
+                continue;
+            };
+            let mut state = ArenaNotifyState::new(b);
+            let env = state.env(None);
+            let key_of = env.key_of;
+            solidcore::topology::vertex::set_point(
+                b,
+                v,
+                v3(p),
+                env.records,
+                env.attributes,
+                Some(&mut k.context),
+                key_of(solidcore::EntityRef::Vertex(v)),
+                &|vu| key_of(solidcore::EntityRef::Vertexuse(vu)),
+            )?;
+        }
+    }
+    if e.drop {
+        let mut state = ArenaNotifyState::new(b);
+        let mut env = state.env(None);
+        ed::set_curve(
+            b,
+            id,
+            None,
+            ed::SetCurveOptions {
+                delete_old_curve: true,
+                dbg_warn_leaks: false,
+                call_notify: false,
+            },
+            &mut env,
+            [None, None],
+        )?;
+    }
+    Ok(())
 }
 
 /// An op with its selectors resolved and derived inputs computed.
@@ -562,14 +692,14 @@ enum Resolved {
 
 /// The edge curve's point at normalised edge parameter `nt` (`None` without curve or
 /// when it cannot be evaluated) and the parameter.
-fn edge_point(br: &Brep, e: EdgeId, nt: f64) -> Option<(f64, Vec3)> {
+fn edge_point(k: &Kernel, br: &Brep, e: EdgeId, nt: f64) -> Option<(f64, Vec3)> {
     let edge = br.edge(e).ok()?;
     let t = edge.interval.evaluate(nt);
-    let p = edge.curve.as_ref()?.evaluate_point(t).ok()?;
+    let p = edge.curve.as_ref()?.evaluate_point(k, t).ok()?;
     Some((t, p))
 }
 
-fn resolve(s: &Scene, op: &OpIn) -> Option<Resolved> {
+fn resolve(k: &Kernel, s: &Scene, op: &OpIn) -> Option<Resolved> {
     let n_e = s.brep.edges().len();
     let n_l = s.loop_eus.len();
     let eid = |i: usize| EdgeId::from_index(i as u32);
@@ -594,7 +724,7 @@ fn resolve(s: &Scene, op: &OpIn) -> Option<Resolved> {
         },
         OpIn::Closest { edge, nt, offset } => {
             let e = sel(edge, n_e)?;
-            let base = edge_point(&s.brep, eid(e), nt).map_or(Vec3::ZERO, |(_, p)| p);
+            let base = edge_point(k, &s.brep, eid(e), nt).map_or(Vec3::ZERO, |(_, p)| p);
             Resolved::Closest {
                 edge: e,
                 point: base + v3(offset),
@@ -619,7 +749,7 @@ fn resolve(s: &Scene, op: &OpIn) -> Option<Resolved> {
         } => {
             let id = *s.loop_eus.get(sel(eu, n_l)?)?;
             let e = s.brep.edgeuse(id).ok()?.edge?;
-            let (t, p) = edge_point(&s.brep, e, nt)?;
+            let (t, p) = edge_point(k, &s.brep, e, nt)?;
             Resolved::RadialCurve {
                 eu: id.index() as usize,
                 t,
@@ -701,7 +831,7 @@ fn cpp(i: &Inputs) -> Result<Output, HarnessError> {
         Ok(s) => s,
         Err(o) => return Ok(o),
     };
-    let Some(r) = resolve(&s, &i.op) else {
+    let Some(r) = resolve(&k, &s, &i.op) else {
         return Ok(no_entity());
     };
     let (op, args) = op_args(&r);
@@ -796,7 +926,7 @@ fn rust_err(e: &SolidError) -> Output {
     if let Some(o) = Output::unported(e) {
         return o;
     }
-    let failed = if matches!(e, SolidError::InvalidInput { .. }) {
+    let failed = if matches!(e, SolidError::InvalidInput { .. } | SolidError::PortInvariant { .. }) {
         NULL_DEREF
     } else {
         1
@@ -813,12 +943,12 @@ fn orient_of(code: u8) -> OrientType {
 }
 
 fn rust(i: &Inputs) -> Result<Output, HarnessError> {
-    let k = Kernel::default();
-    let mut s = match scene(&k, i)? {
+    let mut k = Kernel::default();
+    let mut s = match own_scene(&mut k, i)? {
         Ok(s) => s,
         Err(o) => return Ok(o),
     };
-    let Some(r) = resolve(&s, &i.op) else {
+    let Some(r) = resolve(&k, &s, &i.op) else {
         return Ok(no_entity());
     };
     let br = &mut s.brep;

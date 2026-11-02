@@ -189,6 +189,7 @@ fn surface_local_point_solve<O: Copy>(
 /// bFoundAnswer, sSol)`: whether an answer was found and the solution (the solution as
 /// left by a failure, as upstream reads it then too).
 fn iso_point_inversion(
+    k: &Kernel,
     iso: &IsoCurve,
     interval: &Extent1d,
     guess: f64,
@@ -196,6 +197,7 @@ fn iso_point_inversion(
 ) -> Result<(Result<bool>, Solution<()>)> {
     let mut sol: Solution<()> = Solution::new();
     let r = local_property_analysis(
+        k,
         iso,
         interval,
         CurvePropertyType::PointInversion,
@@ -205,7 +207,7 @@ fn iso_point_inversion(
         &mut sol,
     );
     if let Err(e) = &r {
-        if e.is_unported() {
+        if e.is_unported_or_cancelled() {
             return Err(e.clone());
         }
     }
@@ -317,7 +319,17 @@ impl SurfOfRevolution {
         rotate_n_move: &Axis2Placement,
         scale: Option<Vec3>,
     ) -> Result<()> {
-        self.transform_using(k, rotate_n_move, scale, &Self::own_sweep_iso)
+        self.transform_at_depth(k, rotate_n_move, scale, 0)
+    }
+
+    pub(crate) fn transform_at_depth(
+        &mut self,
+        k: &Kernel,
+        rotate_n_move: &Axis2Placement,
+        scale: Option<Vec3>,
+        depth: usize,
+    ) -> Result<()> {
+        self.transform_using_at_depth(k, rotate_n_move, scale, &Self::own_sweep_iso, depth)
     }
 
     /// [`Self::transform`] with the polar converter rebuilt from the sweep iso curves
@@ -329,6 +341,17 @@ impl SurfOfRevolution {
         rotate_n_move: &Axis2Placement,
         scale: Option<Vec3>,
         iso: SweepIsoFn<'_>,
+    ) -> Result<()> {
+        self.transform_using_at_depth(k, rotate_n_move, scale, iso, 0)
+    }
+
+    fn transform_using_at_depth(
+        &mut self,
+        k: &Kernel,
+        rotate_n_move: &Axis2Placement,
+        scale: Option<Vec3>,
+        iso: SweepIsoFn<'_>,
+        depth: usize,
     ) -> Result<()> {
         let identity_scale = Vec3::new(1.0, 1.0, 1.0);
 
@@ -363,7 +386,7 @@ impl SurfOfRevolution {
             .gen_curve
             .as_mut()
             .ok_or(SolidError::null_pointer(OP_GEN))?;
-        ignore_status(gen.transform(k, rotate_n_move, scale))?;
+        ignore_status(gen.transform_at_depth(k, rotate_n_move, scale, depth + 1))?;
 
         // apply transformation to underlying Nurb
         if self.base.nurb.is_some() {
@@ -395,7 +418,20 @@ impl SurfOfRevolution {
             self.convert_uv_from_nurbs_to_step_or_written(k, new_nurbs_domain.min())?;
         let max_anal_uv =
             self.convert_uv_from_nurbs_to_step_or_written(k, new_nurbs_domain.max())?;
+        self.update_analytical_domain_from_step(k, new_nurbs_domain, min_anal_uv, max_anal_uv)
+    }
 
+    /// The rest of [`Self::update_analytical_domain`] once the corners of
+    /// `new_nurbs_domain` are converted to the STEP parameters `min_anal_uv` and
+    /// `max_anal_uv` (upstream's virtual `ConvertUVFromNURBSToSTEP`: a derived class
+    /// such as `SmSphere` or `SmTorus` converts with its override).
+    pub(crate) fn update_analytical_domain_from_step(
+        &mut self,
+        k: &Kernel,
+        new_nurbs_domain: &Extent2d,
+        min_anal_uv: Point2,
+        max_anal_uv: Point2,
+    ) -> Result<()> {
         // Build desired new STEP UVDomain (min might not be smaller, if swapped)
         self.anal_uv_domain.init();
         self.anal_uv_domain.add_point(min_anal_uv);
@@ -459,13 +495,12 @@ impl SurfOfRevolution {
 
         // arrive here when polar conversions are possible
         let circle = self
-            .polar_curve
-            .as_ref()
+            .polar_curve()
             .ok_or(SolidError::null_pointer(OP_TO_NURBS))?;
         let (mut x, exact_conversion) = self
             .polar
-            .convert_to_nurbs_parameter(circle, step_uv.x, 0.0)?;
-        let y = self.gen()?.convert_t_from_step_to_nurbs(step_uv.y)?;
+            .convert_to_nurbs_parameter(k, circle, step_uv.x, 0.0)?;
+        let y = self.gen()?.convert_t_from_step_to_nurbs(k, step_uv.y)?;
 
         // when the conversion was not exact
         if !exact_conversion {
@@ -479,7 +514,7 @@ impl SurfOfRevolution {
             let ivl = iso.natural_interval();
 
             // do a local point solve (status ignored; the solution is always used)
-            let (_found, sol3) = iso_point_inversion(&iso, &ivl, x, pnt)?;
+            let (_found, sol3) = iso_point_inversion(k, &iso, &ivl, x, pnt)?;
             x = sol3.start.param(0)?;
         }
 
@@ -542,6 +577,55 @@ impl SurfOfRevolution {
         requested: SolutionRequested,
         this: Option<O>,
     ) -> Result<SolutionArray<O>> {
+        self.drop_point_fast_using(
+            k,
+            uv_domain,
+            operation,
+            test_point,
+            in_pointing_vector,
+            distance_tolerance,
+            target_distance,
+            requested,
+            this,
+            &|k, uv| self.evaluate_step_point(k, uv),
+            &|_, uv| self.base.evaluate_point(uv),
+            &|k, domain, operation, point, guess| {
+                surface_local_point_solve(k, self, domain, operation, point, guess)
+            },
+        )
+    }
+
+    /// [`Self::drop_point_fast`] with upstream's virtual calls on `this` supplied by
+    /// the derived class (`SmCone`, `SmSphere`, `SmTorus`): `step_point` is its
+    /// `EvaluateSTEPPoint`, `evaluate_point` its `EvaluatePoint`, and `local_solve`
+    /// its `LocalPointSolve` (`found` and the solution).
+    ///
+    /// # Errors
+    ///
+    /// Those of [`Self::drop_point_fast`] and of the callbacks.
+    #[allow(clippy::too_many_arguments)] // upstream's argument list plus the virtuals
+    #[allow(clippy::type_complexity)]
+    pub(crate) fn drop_point_fast_using<O: SolutionObject>(
+        &self,
+        k: &Kernel,
+        uv_domain: &Extent2d,
+        operation: SolverOperation,
+        test_point: Point3,
+        in_pointing_vector: Option<Vec3>,
+        distance_tolerance: f64,
+        target_distance: Option<f64>,
+        requested: SolutionRequested,
+        this: Option<O>,
+        step_point: &dyn Fn(&Kernel, Point2) -> Result<Point3>,
+        evaluate_point: &dyn Fn(&Kernel, Point2) -> Result<Point3>,
+        local_solve: &dyn Fn(
+            &Kernel,
+            &Extent2d,
+            SolverOperation,
+            Point3,
+            Point2,
+        ) -> Result<(bool, Solution<O>)>,
+    ) -> Result<SolutionArray<O>> {
         // no work - can't convert to polar coordinates - does not have a planar generator
         if !self.have_polar_conversion() {
             return Err(SolidError::sm_err(OP_DROP));
@@ -556,7 +640,7 @@ impl SurfOfRevolution {
         let gen = tmp.as_ref().unwrap_or(gen_own);
 
         // construct and init global solver
-        let mut gs: GlobalSolver<'_, O> = GlobalSolver::new();
+        let mut gs: GlobalSolver<'_, O> = GlobalSolver::new_with_kernel(k);
         gs.set_3d_tolerance(distance_tolerance);
         gs.set_solver_operation(operation);
         gs.set_solution_requested(SolutionRequested::All);
@@ -614,6 +698,7 @@ impl SurfOfRevolution {
             opt_vectors: None,
             handle: Some(gen_handle),
             analytic_handle: Some(GenHandle(2, gen_handle.1)),
+            zone_tol_3d: None,
         };
         let gen_solutions = gen.global_point_solve(
             k,
@@ -634,16 +719,16 @@ impl SurfOfRevolution {
         sol.num_variables = 2;
 
         let circle = self
-            .polar_curve
-            .as_ref()
+            .polar_curve()
             .ok_or(SolidError::null_pointer(OP_DROP))?;
         let num_gen = gen_solutions.len();
 
         // for every rotation angle (normally 1, 2 for points on seams)
         for &angle in angles_deg.iter().take(num_angles) {
             // convert the angles (degrees) to NURBS parameters
-            let (mut u_parameter, exact_conversion) =
-                self.polar.convert_to_nurbs_parameter(circle, angle, 0.0)?;
+            let (mut u_parameter, exact_conversion) = self
+                .polar
+                .convert_to_nurbs_parameter(k, circle, angle, 0.0)?;
 
             // for every drop point to generator curve solution
             for cr_sol in gen_solutions.as_slice() {
@@ -662,14 +747,14 @@ impl SurfOfRevolution {
                     let nurb_ivl = iso.natural_interval();
 
                     // when isoCurve is degenerate - use Interval min
-                    if is_degenerate_base(&iso, EFF_ZERO, None)? {
+                    if is_degenerate_base(k, &iso, EFF_ZERO, None)? {
                         u_parameter = nurb_ivl.min();
                     } else {
                         // get the 3dDropPoint
-                        let pnt = self.evaluate_step_point(k, Point2::new(angle, t))?;
+                        let pnt = step_point(k, Point2::new(angle, t))?;
 
                         // transform the DropPoint coordinates
-                        let (r, sol3) = iso_point_inversion(&iso, &nurb_ivl, u_parameter, pnt)?;
+                        let (r, sol3) = iso_point_inversion(k, &iso, &nurb_ivl, u_parameter, pnt)?;
                         match r {
                             Ok(true) => u_parameter = sol3.start.param(0)?,
                             _ => return Err(SolidError::sm_err(OP_DROP)),
@@ -681,11 +766,11 @@ impl SurfOfRevolution {
                 // given for a periodic genCurve
                 if num_gen > 1 {
                     if let Some(v) = in_pointing_vector {
-                        if gen.is_periodic(&gen_nurb_ivl)? {
+                        if gen.is_periodic(k, &gen_nurb_ivl)? {
                             // skip solution when solution is ivl min and PointingVector
                             // opposes curve tangent
                             if are_same(t, gen_nurb_ivl.min()) {
-                                let pv = gen.evaluate(t, 1, true, true)?;
+                                let pv = gen.evaluate(k, t, 1, true, true)?;
                                 let d1 = pv.get(1).copied().unwrap_or(Vec3::UNDEF);
                                 if d1.dot(v) < -EFF_ZERO_SQRT {
                                     continue;
@@ -695,7 +780,7 @@ impl SurfOfRevolution {
                             // skip solution when solution is ivl max and PointingVector
                             // does not oppose curve tangent
                             if are_same(t, gen_nurb_ivl.max()) {
-                                let pv = gen.evaluate(t, 1, true, true)?;
+                                let pv = gen.evaluate(k, t, 1, true, true)?;
                                 let d1 = pv.get(1).copied().unwrap_or(Vec3::UNDEF);
                                 if d1.dot(v) > EFF_ZERO_SQRT {
                                     continue;
@@ -717,8 +802,7 @@ impl SurfOfRevolution {
                 // get the surface UVpoint
                 let mut uv = Point2::new(sol.start.parameters[0], sol.start.parameters[1]);
                 if !exact_conversion {
-                    let (found, s) =
-                        surface_local_point_solve(k, self, uv_domain, operation, test_point, uv)?;
+                    let (found, s) = local_solve(k, uv_domain, operation, test_point, uv)?;
                     sol = s;
                     if found {
                         uv = Point2::new(sol.start.parameters[0], sol.start.parameters[1]);
@@ -731,7 +815,7 @@ impl SurfOfRevolution {
                 }
 
                 // set SolutionValue = dropSurfacePoint to TestPoint distance
-                let surf_pnt = self.base.evaluate_point(uv)?;
+                let surf_pnt = evaluate_point(k, uv)?;
                 sol.start.solution_value = test_point.distance(surf_pnt);
 
                 // skip intersection solutions whose value exceed the DistanceTolerance
@@ -827,240 +911,52 @@ impl SurfOfRevolution {
         other_uv_domain: &Extent2d,
         approx_tol_3d: Option<f64>,
     ) -> Result<(bool, SurfaceIntersection)> {
-        // init output
-        let mut out = SurfaceIntersection::default();
-        let other_rev = other.as_surf_of_revolution();
+        intersect_revolved(self, k, uv_domain, other, other_uv_domain, approx_tol_3d)
+    }
 
-        // no work - non planar generator curves
-        if !self.planar_generator || !other_rev.planar_generator {
-            return Ok((true, out));
+    /// [`Self::intersect_with_cone`] into `out` (reset first). On an error `out` keeps
+    /// what was appended before it, as upstream leaves its output arrays.
+    pub(crate) fn intersect_with_cone_into<R: Revolved + ?Sized>(
+        &self,
+        k: &Kernel,
+        uv_domain: &Extent2d,
+        cone: &R,
+        cone_uv_domain: &Extent2d,
+        approx_tol_3d: Option<f64>,
+        out: &mut SurfaceIntersection,
+    ) -> Result<bool> {
+        if !self.planar_generator {
+            *out = SurfaceIntersection::default();
+            return Ok(true);
         }
+        intersect_revolved_into(self, k, uv_domain, cone, cone_uv_domain, approx_tol_3d, out)
+    }
 
-        // no work - Self Intersection is best done by NURBS to get UV curves.
-        if core::ptr::eq(self, other_rev) {
-            return Ok((true, out));
+    /// [`Self::intersect_with_sphere`] into `out` (reset first). On an error `out` keeps
+    /// what was appended before it, as upstream leaves its output arrays.
+    pub(crate) fn intersect_with_sphere_into<R: Revolved + ?Sized>(
+        &self,
+        k: &Kernel,
+        uv_domain: &Extent2d,
+        sphere: &R,
+        sphere_uv_domain: &Extent2d,
+        approx_tol_3d: Option<f64>,
+        out: &mut SurfaceIntersection,
+    ) -> Result<bool> {
+        // Can not intersect things with non planar generator curves here
+        if !self.planar_generator {
+            *out = SurfaceIntersection::default();
+            return Ok(true);
         }
-
-        // locals
-        let angular_tolerance = EFF_ZERO_DEG;
-        let other_position = &other_rev.position;
-        let other_origin = other_position.origin();
-        let other_x_axis = other_position.x_axis();
-        let other_z_axis = other_position.z_axis();
-        let origin = self.position.origin();
-        let x_axis = self.position.x_axis();
-        let y_axis = self.position.y_axis();
-        let z_axis = self.position.z_axis();
-
-        // no work - coordinate systems are not parallel
-        if !z_axis.is_parallel_to(other_z_axis, angular_tolerance) {
-            return Ok((true, out));
-        }
-
-        // arrive here when both rotation axes are parallel to one another
-
-        // select tolerance
-        let tol = match approx_tol_3d {
-            None => {
-                let req = BoundingBoxRequest {
-                    normal: true,
-                    expand_by_zone_tol: true,
-                    ..BoundingBoxRequest::default()
-                };
-                let boxes = self.base.calculate_bounding_box(uv_domain, &req)?;
-                let bbox = boxes.normal.ok_or(SolidError::null_pointer(OP_ISECT))?;
-                let size = bbox.size().length();
-                EFF_ZERO_SQRT * (1.0 + size)
-            }
-            Some(t) => t,
-        };
-
-        // no work = rotation axes are not coincident
-        let (distance, _) = line_point_distance(origin, z_axis, other_origin);
-        if distance > tol / 100.0 {
-            return Ok((true, out));
-        }
-
-        // map input NurbDomains to StepDomains
-        let this_anal_domain = self.convert_domain_from_nurbs_to_step(k, uv_domain)?;
-        let other_anal_domain = other.convert_domain_from_nurbs_to_step(k, other_uv_domain)?;
-
-        // get input sweep domains for both surfaces in thisCurves coordinate system
-        let this_sweep_ivl = this_anal_domain.u_interval();
-        let other_sweep_ivl = other_anal_domain.u_interval();
-        // (CCWAngleBetween's status is ignored upstream: a failed angle is 0)
-        let other_x_angle_rad =
-            ignored(z_axis.ccw_angle_between(x_axis, other_x_axis))?.unwrap_or(0.0);
-        let other_x_angle_deg = other_x_angle_rad * 180.0 / PI;
-        let same = z_axis.dot(other_z_axis) > 0.0; // should be +/-1.0
-        let (other_start_ang_deg, other_end_ang_deg) = if same {
-            (
-                other_x_angle_deg + other_sweep_ivl.min(),
-                other_x_angle_deg + other_sweep_ivl.max(),
-            )
-        } else {
-            let mut s = other_x_angle_deg - other_sweep_ivl.max();
-            let e = other_x_angle_deg - other_sweep_ivl.min();
-            if s > e {
-                s -= 360.0;
-            }
-            (s, e)
-        };
-        let other_mapped_ivl = Extent1d::from_min_max(other_start_ang_deg, other_end_ang_deg);
-
-        // intersect the AnalDomains (split result at this sweep interval's boundaries;
-        // status ignored)
-        let ivls = ignored(this_sweep_ivl.intersect_periodic(&other_mapped_ivl, 360.0, true))?
-            .unwrap_or_default();
-
-        // no work - no sweep intersections
-        if ivls.is_empty() {
-            return Ok((false, out));
-        }
-
-        // get temp genCurves in the same plane
-        let other_param = if same {
-            -other_x_angle_deg
-        } else {
-            other_x_angle_deg
-        };
-        let this_gen = self.create_generator_from_angle(k, 0.0)?;
-        let other_gen = other_rev.create_generator_from_angle(k, other_param)?;
-
-        // intersect the genCurves together
-        let this_ivl = this_gen.natural_interval();
-        let other_ivl = other_gen.natural_interval();
-        let opts = CurveIntersectOptions {
-            skip_global_coincidence_check: false,
-            handles: [Some(GenHandle(0, this_ivl)), Some(GenHandle(1, other_ivl))],
-            analytic_handles: [Some(GenHandle(2, this_ivl)), Some(GenHandle(3, other_ivl))],
-        };
-        let solutions =
-            this_gen.global_curve_intersect(k, &this_ivl, &other_gen, &other_ivl, tol, &opts)?;
-
-        // for every genCurve/genCurve solution
-        for solution in solutions.as_slice() {
-            // get Solution Start Points (statuses ignored upstream; the points are read)
-            let start_point = this_gen.evaluate(solution.start.param(0)?, 1, true, true)?;
-            let other_point = other_gen.evaluate(solution.start.param(1)?, 1, true, true)?;
-            let sp0 = start_point.first().copied().unwrap_or(Vec3::UNDEF);
-            let sp1 = start_point.get(1).copied().unwrap_or(Vec3::UNDEF);
-            let op0 = other_point.first().copied().unwrap_or(Vec3::UNDEF);
-            let op1 = other_point.get(1).copied().unwrap_or(Vec3::UNDEF);
-
-            // get intersection circle CenterPoint and type
-            let circle_center = origin + z_axis.dot(sp0 - origin) * z_axis;
-            let circle_radius = circle_center.distance(sp0);
-            let gen_curve_type = if sp1.is_parallel_to(op1, 2.0) {
-                TsectCurveType::Tangent
-            } else {
-                TsectCurveType::Crossing
-            };
-            let deviation = sp0.distance(op0);
-
-            // for every intersecting sweep interval
-            for ivl in &ivls {
-                let degenerate_ivl = (ivl.length() / 180.0 * PI * min2(circle_radius, 1.0)) < tol;
-
-                // build an intersection curve for every intersection point
-                if solution.solution_type == SolutionType::SingleValue {
-                    // the solution is either a degenerate point or a circular arc
-                    let (crv, curve_type) = if degenerate_ivl {
-                        // get point position
-                        let sweep_point = circle_center
-                            + circle_radius * (ivl.min() * PI / 180.0).cos() * x_axis
-                            + circle_radius * (ivl.min() * PI / 180.0).sin() * y_axis;
-
-                        // A Single value solution + degenerate interval means this
-                        // srf-srf XSect is a point [B661]
-                        (
-                            Curve::from(BSplineCurve::create_degenerate_curve(3, sweep_point)?),
-                            TsectCurveType::Touching,
-                        )
-                    } else {
-                        // The SS XSect curve type matches the GenCurve XSect [B661]
-                        (
-                            Curve::from(Ellipse::new_circle(
-                                k,
-                                circle_center,
-                                x_axis,
-                                y_axis,
-                                *ivl,
-                                circle_radius,
-                                &EllipseOptions::default(),
-                            )?),
-                            gen_curve_type,
-                        )
-                    };
-
-                    // add curve to output
-                    out.curves_3d.push(crv);
-                    out.curve_types.push(curve_type);
-                    out.deviations.push(deviation);
-                } else {
-                    // A solution raised by a coincident generator segment is either a
-                    // surface region (its boundaries) or a generator segment
-
-                    // get GenCurve intersection interval
-                    let mut gen_curve_ivl =
-                        Extent1d::from_min_max(solution.start.param(0)?, solution.end.param(0)?);
-
-                    // Trim a genCurve at the interval start angle to the intersection
-                    // interval (may snap the interval to existing knots; status ignored)
-                    let mut min_angle_gen = self.create_generator_from_angle(k, ivl.min())?;
-                    ignore_status(min_angle_gen.trim(k, &mut gen_curve_ivl, TrimMode::Notify))?;
-
-                    if degenerate_ivl {
-                        // add Trimmed GenCurve to output
-                        out.curves_3d.push(min_angle_gen);
-                        out.curve_types.push(TsectCurveType::Coincident);
-                        out.deviations.push(0.0);
-                    } else {
-                        // add 4 boundary curves to output
-
-                        // Trim a genCurve at the interval end angle
-                        let mut max_angle_gen = self.create_generator_from_angle(k, ivl.max())?;
-                        ignore_status(max_angle_gen.trim(k, &mut gen_curve_ivl, TrimMode::Notify))?;
-
-                        // bottom Circle
-                        let bot_sweep_arc =
-                            sweep_arc(k, circle_center, x_axis, y_axis, *ivl, circle_radius)?;
-
-                        // get Top Circle Center and Radius from Solution EndPoint (status
-                        // ignored upstream; the point is read)
-                        let end_point = this_gen.evaluate_point(solution.end.param(0)?)?;
-                        let top_circle_center = origin + z_axis.dot(end_point - origin) * z_axis;
-                        let top_circle_radius = top_circle_center.distance(end_point);
-                        let top_sweep_arc = sweep_arc(
-                            k,
-                            top_circle_center,
-                            x_axis,
-                            y_axis,
-                            *ivl,
-                            top_circle_radius,
-                        )?;
-
-                        // add all 4 curves to the output
-                        out.curves_3d.push(min_angle_gen);
-                        out.curves_3d.push(max_angle_gen);
-                        out.curves_3d.push(bot_sweep_arc);
-                        out.curves_3d.push(top_sweep_arc);
-                        for _ in 0..4 {
-                            out.curve_types.push(TsectCurveType::RegionBoundary);
-                            out.deviations.push(0.0);
-                        }
-                    }
-                }
-            }
-        }
-
-        for _ in 0..out.curves_3d.len() {
-            out.surface1_uv_curves.push(None);
-            out.surface2_uv_curves.push(None);
-        }
-
-        // all done
-        Ok((false, out))
+        intersect_revolved_into(
+            self,
+            k,
+            uv_domain,
+            sphere,
+            sphere_uv_domain,
+            approx_tol_3d,
+            out,
+        )
     }
 
     // ---- analytic data from the NURB ------------------------------------------------
@@ -1162,14 +1058,14 @@ impl SurfOfRevolution {
         let interval = iso_crv.natural_interval();
 
         // no work - GenCurve is degenerate
-        if iso_crv.is_degenerate(scaled_zero, None)? {
+        if iso_crv.is_degenerate(k, scaled_zero, None)? {
             return Err(SolidError::sm_err(OP_REBUILD));
         }
 
         // verify GenCurve is planar and coplanar with refFrame ZAxis
         let iso_curve = Curve::from(iso_crv);
         let planar = iso_curve.is_planar(k, scaled_zero)?;
-        let linear = iso_curve.is_linear(EFF_ZERO, false)?;
+        let linear = iso_curve.is_linear(k, EFF_ZERO, false)?;
         let is_planar = planar.is_planar;
         let is_linear = linear.linear;
         if !is_planar {
@@ -1330,7 +1226,7 @@ impl SurfOfRevolution {
         if is_ascii {
             db.go_to_next_line();
         }
-        let (polar, polar_curve) = PolarConversion::read_from_db_with_curve(k, db, version)?;
+        let (polar, polar_curve) = PolarConversion::read_from_db_with_curve_object(k, db, version)?;
         surf.polar = polar;
         surf.polar_curve = polar_curve;
 
@@ -1375,6 +1271,281 @@ fn sweep_arc(
             3, center,
         )?))
     }
+}
+
+/// [`SurfOfRevolution::intersect_with_surf_of_revolution`] of the surface of revolution
+/// part of `this`, whose virtual `ConvertDomainFromNURBSToSTEP` converts this side's
+/// domain (an `SmTorus` calling the inherited `IntersectWithSurfOfRevolution`).
+///
+/// # Errors
+///
+/// Those of [`SurfOfRevolution::intersect_with_surf_of_revolution`].
+pub(crate) fn intersect_revolved<T: Revolved + ?Sized, R: Revolved + ?Sized>(
+    this: &T,
+    k: &Kernel,
+    uv_domain: &Extent2d,
+    other: &R,
+    other_uv_domain: &Extent2d,
+    approx_tol_3d: Option<f64>,
+) -> Result<(bool, SurfaceIntersection)> {
+    let mut out = SurfaceIntersection::default();
+    let more = intersect_revolved_into(
+        this,
+        k,
+        uv_domain,
+        other,
+        other_uv_domain,
+        approx_tol_3d,
+        &mut out,
+    )?;
+    Ok((more, out))
+}
+
+/// [`intersect_revolved`] into `out` (reset first). On an error `out` keeps what was appended
+/// before it, as upstream leaves its output arrays.
+pub(crate) fn intersect_revolved_into<T: Revolved + ?Sized, R: Revolved + ?Sized>(
+    this: &T,
+    k: &Kernel,
+    uv_domain: &Extent2d,
+    other: &R,
+    other_uv_domain: &Extent2d,
+    approx_tol_3d: Option<f64>,
+    out: &mut SurfaceIntersection,
+) -> Result<bool> {
+    // init output
+    let me = this.as_surf_of_revolution();
+    *out = SurfaceIntersection::default();
+    let other_rev = other.as_surf_of_revolution();
+
+    // no work - non planar generator curves
+    if !me.planar_generator || !other_rev.planar_generator {
+        return Ok(true);
+    }
+
+    // no work - Self Intersection is best done by NURBS to get UV curves.
+    if core::ptr::eq(me, other_rev) {
+        return Ok(true);
+    }
+
+    // locals
+    let angular_tolerance = EFF_ZERO_DEG;
+    let other_position = &other_rev.position;
+    let other_origin = other_position.origin();
+    let other_x_axis = other_position.x_axis();
+    let other_z_axis = other_position.z_axis();
+    let origin = me.position.origin();
+    let x_axis = me.position.x_axis();
+    let y_axis = me.position.y_axis();
+    let z_axis = me.position.z_axis();
+
+    // no work - coordinate systems are not parallel
+    if !z_axis.is_parallel_to(other_z_axis, angular_tolerance) {
+        return Ok(true);
+    }
+
+    // arrive here when both rotation axes are parallel to one another
+
+    // select tolerance
+    let tol = match approx_tol_3d {
+        None => {
+            let req = BoundingBoxRequest {
+                normal: true,
+                expand_by_zone_tol: true,
+                ..BoundingBoxRequest::default()
+            };
+            let boxes = me.base.calculate_bounding_box(k, uv_domain, &req)?;
+            let bbox = boxes.normal.ok_or(SolidError::null_pointer(OP_ISECT))?;
+            let size = bbox.size().length();
+            EFF_ZERO_SQRT * (1.0 + size)
+        }
+        Some(t) => t,
+    };
+
+    // no work = rotation axes are not coincident
+    let (distance, _) = line_point_distance(origin, z_axis, other_origin);
+    if distance > tol / 100.0 {
+        return Ok(true);
+    }
+
+    // map input NurbDomains to StepDomains
+    let this_anal_domain = this.convert_domain_from_nurbs_to_step(k, uv_domain)?;
+    let other_anal_domain = other.convert_domain_from_nurbs_to_step(k, other_uv_domain)?;
+
+    // get input sweep domains for both surfaces in thisCurves coordinate system
+    let this_sweep_ivl = this_anal_domain.u_interval();
+    let other_sweep_ivl = other_anal_domain.u_interval();
+    // (CCWAngleBetween's status is ignored upstream: a failed angle is 0)
+    let other_x_angle_rad = ignored(z_axis.ccw_angle_between(x_axis, other_x_axis))?.unwrap_or(0.0);
+    let other_x_angle_deg = other_x_angle_rad * 180.0 / PI;
+    let same = z_axis.dot(other_z_axis) > 0.0; // should be +/-1.0
+    let (other_start_ang_deg, other_end_ang_deg) = if same {
+        (
+            other_x_angle_deg + other_sweep_ivl.min(),
+            other_x_angle_deg + other_sweep_ivl.max(),
+        )
+    } else {
+        let mut s = other_x_angle_deg - other_sweep_ivl.max();
+        let e = other_x_angle_deg - other_sweep_ivl.min();
+        if s > e {
+            s -= 360.0;
+        }
+        (s, e)
+    };
+    let other_mapped_ivl = Extent1d::from_min_max(other_start_ang_deg, other_end_ang_deg);
+
+    // intersect the AnalDomains (split result at this sweep interval's boundaries;
+    // status ignored)
+    let ivls = ignored(this_sweep_ivl.intersect_periodic(&other_mapped_ivl, 360.0, true))?
+        .unwrap_or_default();
+
+    // no work - no sweep intersections
+    if ivls.is_empty() {
+        return Ok(false);
+    }
+
+    // get temp genCurves in the same plane
+    let other_param = if same {
+        -other_x_angle_deg
+    } else {
+        other_x_angle_deg
+    };
+    let this_gen = me.create_generator_from_angle(k, 0.0)?;
+    let other_gen = other_rev.create_generator_from_angle(k, other_param)?;
+
+    // intersect the genCurves together
+    let this_ivl = this_gen.natural_interval();
+    let other_ivl = other_gen.natural_interval();
+    let opts = CurveIntersectOptions {
+        skip_global_coincidence_check: false,
+        handles: [Some(GenHandle(0, this_ivl)), Some(GenHandle(1, other_ivl))],
+        analytic_handles: [Some(GenHandle(2, this_ivl)), Some(GenHandle(3, other_ivl))],
+    };
+    let solutions =
+        this_gen.global_curve_intersect(k, &this_ivl, &other_gen, &other_ivl, tol, &opts)?;
+
+    // for every genCurve/genCurve solution
+    for solution in solutions.as_slice() {
+        // get Solution Start Points (statuses ignored upstream; the points are read)
+        let start_point = this_gen.evaluate(k, solution.start.param(0)?, 1, true, true)?;
+        let other_point = other_gen.evaluate(k, solution.start.param(1)?, 1, true, true)?;
+        let sp0 = start_point.first().copied().unwrap_or(Vec3::UNDEF);
+        let sp1 = start_point.get(1).copied().unwrap_or(Vec3::UNDEF);
+        let op0 = other_point.first().copied().unwrap_or(Vec3::UNDEF);
+        let op1 = other_point.get(1).copied().unwrap_or(Vec3::UNDEF);
+
+        // get intersection circle CenterPoint and type
+        let circle_center = origin + z_axis.dot(sp0 - origin) * z_axis;
+        let circle_radius = circle_center.distance(sp0);
+        let gen_curve_type = if sp1.is_parallel_to(op1, 2.0) {
+            TsectCurveType::Tangent
+        } else {
+            TsectCurveType::Crossing
+        };
+        let deviation = sp0.distance(op0);
+
+        // for every intersecting sweep interval
+        for ivl in &ivls {
+            let degenerate_ivl = (ivl.length() / 180.0 * PI * min2(circle_radius, 1.0)) < tol;
+
+            // build an intersection curve for every intersection point
+            if solution.solution_type == SolutionType::SingleValue {
+                // the solution is either a degenerate point or a circular arc
+                let (crv, curve_type) = if degenerate_ivl {
+                    // get point position
+                    let sweep_point = circle_center
+                        + circle_radius * (ivl.min() * PI / 180.0).cos() * x_axis
+                        + circle_radius * (ivl.min() * PI / 180.0).sin() * y_axis;
+
+                    // A Single value solution + degenerate interval means this
+                    // srf-srf XSect is a point [B661]
+                    (
+                        Curve::from(BSplineCurve::create_degenerate_curve(3, sweep_point)?),
+                        TsectCurveType::Touching,
+                    )
+                } else {
+                    // The SS XSect curve type matches the GenCurve XSect [B661]
+                    (
+                        Curve::from(Ellipse::new_circle(
+                            k,
+                            circle_center,
+                            x_axis,
+                            y_axis,
+                            *ivl,
+                            circle_radius,
+                            &EllipseOptions::default(),
+                        )?),
+                        gen_curve_type,
+                    )
+                };
+
+                // add curve to output
+                out.curves_3d.push(crv);
+                out.curve_types.push(curve_type);
+                out.deviations.push(deviation);
+            } else {
+                // A solution raised by a coincident generator segment is either a
+                // surface region (its boundaries) or a generator segment
+
+                // get GenCurve intersection interval
+                let mut gen_curve_ivl =
+                    Extent1d::from_min_max(solution.start.param(0)?, solution.end.param(0)?);
+
+                // Trim a genCurve at the interval start angle to the intersection
+                // interval (may snap the interval to existing knots; status ignored)
+                let mut min_angle_gen = me.create_generator_from_angle(k, ivl.min())?;
+                ignore_status(min_angle_gen.trim(k, &mut gen_curve_ivl, TrimMode::Notify))?;
+
+                if degenerate_ivl {
+                    // add Trimmed GenCurve to output
+                    out.curves_3d.push(min_angle_gen);
+                    out.curve_types.push(TsectCurveType::Coincident);
+                    out.deviations.push(0.0);
+                } else {
+                    // add 4 boundary curves to output
+
+                    // Trim a genCurve at the interval end angle
+                    let mut max_angle_gen = me.create_generator_from_angle(k, ivl.max())?;
+                    ignore_status(max_angle_gen.trim(k, &mut gen_curve_ivl, TrimMode::Notify))?;
+
+                    // bottom Circle
+                    let bot_sweep_arc =
+                        sweep_arc(k, circle_center, x_axis, y_axis, *ivl, circle_radius)?;
+
+                    // get Top Circle Center and Radius from Solution EndPoint (status
+                    // ignored upstream; the point is read)
+                    let end_point = this_gen.evaluate_point(k, solution.end.param(0)?)?;
+                    let top_circle_center = origin + z_axis.dot(end_point - origin) * z_axis;
+                    let top_circle_radius = top_circle_center.distance(end_point);
+                    let top_sweep_arc = sweep_arc(
+                        k,
+                        top_circle_center,
+                        x_axis,
+                        y_axis,
+                        *ivl,
+                        top_circle_radius,
+                    )?;
+
+                    // add all 4 curves to the output
+                    out.curves_3d.push(min_angle_gen);
+                    out.curves_3d.push(max_angle_gen);
+                    out.curves_3d.push(bot_sweep_arc);
+                    out.curves_3d.push(top_sweep_arc);
+                    for _ in 0..4 {
+                        out.curve_types.push(TsectCurveType::RegionBoundary);
+                        out.deviations.push(0.0);
+                    }
+                }
+            }
+        }
+    }
+
+    for _ in 0..out.curves_3d.len() {
+        out.surface1_uv_curves.push(None);
+        out.surface2_uv_curves.push(None);
+    }
+
+    // all done
+    Ok(false)
 }
 
 #[cfg(test)]

@@ -53,6 +53,9 @@
 //! - Every array access is bounds checked; where upstream would index outside its
 //!   arrays (curves with fewer control points than read, empty parameter lists) the
 //!   functions return [`SolidError::InvalidInput`].
+//! - `N_SweepCrossTangentCrv`: a cross section degree above `32767` (upstream's
+//!   `NL_DEGREE` is a `short`) is `InvalidInput`; sample arrays that cannot be
+//!   allocated are `NL_MEM_ERR`.
 
 use crate::error::{NlibCode, Result, SolidError};
 use crate::math::Vec3;
@@ -348,7 +351,8 @@ pub fn create_skin_srf_boundary_derivs(
 /// # Errors
 ///
 /// [`NlibCode::Input`] when the end knots differ; `InvalidInput` with reason
-/// [`BARE_FLAG_REASON`] for upstream's sanity exit (an index past the knots);
+/// [`BARE_FLAG_REASON`] for upstream's sanity exit (an index past the knots) or
+/// overflow of the starting index `p + 1`;
 /// `InvalidInput` for knots that compare unordered.
 pub fn merge_knot_vectors(
     knr: &KnotVector<'_>,
@@ -370,8 +374,9 @@ pub fn merge_knot_vectors(
     let tol = PTOL * (r(mr)? - r(0)?);
     let mut xr = Vec::new();
     let mut xs = Vec::new();
-    let mut ii = p + 1;
-    let mut jj = p + 1;
+    let first = p.checked_add(1).ok_or_else(|| bare(OP))?;
+    let mut ii = first;
+    let mut jj = first;
     // `ii < mr - p` with upstream's signed arithmetic.
     let lt = |i: usize, mx: usize| i.checked_add(p).is_some_and(|ip| ip < mx);
 
@@ -555,7 +560,7 @@ pub fn sweep_cross_tangent_crv(
     cross_section: &Curve,
 ) -> Result<Curve> {
     const OP: &str = OP_SWEEP_CT;
-    let pc = cross_section.degree();
+    let pc = super::degree(cross_section.degree(), OP)?;
     let (nc, mc) = cross_section.array_sizes();
     let knt = cross_section.knot_vector()?;
     let uk = cross_section.knots();
@@ -579,9 +584,12 @@ pub fn sweep_cross_tangent_crv(
             reason: "cross section without a knot span",
         });
     }
-    let sample_count = pc * segment_count + 1;
-    let mut cross_tangents = vec![Vec3::ZERO; sample_count];
-    let mut params = vec![0.0; sample_count];
+    let sample_count = pc
+        .checked_mul(segment_count)
+        .and_then(|x| x.checked_add(1))
+        .ok_or_else(|| oob(OP))?;
+    let mut cross_tangents = super::filled(sample_count, Vec3::ZERO, OP)?;
+    let mut params = super::filled(sample_count, 0.0, OP)?;
 
     let mut sample: Option<Vec3> = None;
     let mut i_smp = 0usize;
@@ -1300,6 +1308,35 @@ mod tests {
     }
 
     #[test]
+    fn merge_knot_vectors_start_index_overflow() {
+        let knots = [0.0, 0.0, 1.0, 1.0];
+        let kr = KnotVector::from_slice(&knots).unwrap();
+        let ks = KnotVector::from_slice(&knots).unwrap();
+        assert_eq!(
+            merge_knot_vectors(&kr, &ks, usize::MAX),
+            Err(SolidError::InvalidInput {
+                operation: "nurbs::srf_adv::p4::merge_knot_vectors",
+                reason: BARE_FLAG_REASON,
+            })
+        );
+    }
+
+    #[test]
+    fn merge_knot_vectors_endpoint_mismatch_precedes_start_index_overflow() {
+        let r = [0.0, 0.0, 1.0, 1.0];
+        let s = [0.0, 0.0, 2.0, 2.0];
+        let kr = KnotVector::from_slice(&r).unwrap();
+        let ks = KnotVector::from_slice(&s).unwrap();
+        assert_eq!(
+            merge_knot_vectors(&kr, &ks, usize::MAX),
+            Err(SolidError::nlib(
+                "nurbs::srf_adv::p4::merge_knot_vectors",
+                NlibCode::Input,
+            ))
+        );
+    }
+
+    #[test]
     fn coons_of_unit_square_is_bilinear() {
         let (a, b, c, d) = (
             Vec3::new(0.0, 0.0, 0.0),
@@ -1365,5 +1402,25 @@ mod tests {
         assert_eq!(q, s);
         let q = adjust_deriv_srf(&s, Direction::U, Boundary::Left, Boundary::Bottom).unwrap();
         assert_eq!(q.degrees(), (s.degrees().1, s.degrees().0));
+    }
+
+    #[test]
+    fn absurd_cross_section_degree_is_an_error() {
+        // fuzz (nlib.srf_adv_p4 fuzz00189, fuzz00067): `p * segments + 1` overflowed or
+        // sized the samples.
+        let c = line(Vec3::new(0.0, 0.0, 0.0), Vec3::new(1.0, 0.0, 0.0));
+        let id = [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]];
+        for p in [i64::MAX as usize, 1 << 40] {
+            let bad = Curve::new(c.cpts().to_vec(), p, c.knots().to_vec()).unwrap();
+            let r = sweep_cross_tangent_crv(
+                Vec3::X,
+                Vec3::new(1.0, 1.0, 1.0),
+                Vec3::ZERO,
+                &id,
+                &id,
+                &bad,
+            );
+            assert!(r.is_err());
+        }
     }
 }

@@ -595,35 +595,33 @@ fn bspline(r: &BsIn) -> Result<BSplineVolume, HarnessError> {
 fn build_map(m: &MapIn) -> Result<Volume, HarnessError> {
     let orient = m.orient.as_ref().map(transform_of);
     Ok(match m.kind {
-        1 => Volume::with_maps(
+        1 => Volume::oriented(
             VolumeKind::Transform(transform_of(
                 m.t.as_ref().ok_or_else(|| harness("transform map without t"))?,
             )),
             orient,
-            None,
         ),
         2 => {
             let t = m.tw.as_ref().ok_or_else(|| harness("twist map without tw"))?;
             TwistVolume::create(v3(t.o), v3(t.axis), v3(t.mid), t.period, t.min)
         }
-        3 => Volume::with_maps(
+        3 => Volume::oriented(
             VolumeKind::BSpline(bspline(
                 m.bs.as_ref().ok_or_else(|| harness("B-spline map without bs"))?,
             )?),
             orient,
-            None,
         ),
-        4 => Volume::with_maps(VolumeKind::Unbend(UnbendVolume::new()), orient, None),
+        4 => Volume::oriented(VolumeKind::Unbend(UnbendVolume::new()), orient),
         5 => {
             let u = m.ub.as_ref().ok_or_else(|| harness("unbend map without ub"))?;
             UnbendVolume::create(v3(u.c), v3(u.axis), v3(u.mid), u.d, u.tol)
         }
-        6 => Volume::with_maps(VolumeKind::Bend(BendVolume::new()), orient, None),
+        6 => Volume::oriented(VolumeKind::Bend(BendVolume::new()), orient),
         7 => {
             let u = m.ub.as_ref().ok_or_else(|| harness("bend map without ub"))?;
             BendVolume::create(v3(u.c), v3(u.axis), v3(u.mid), u.d, u.tol)
         }
-        _ => Volume::with_maps(VolumeKind::Base, orient, None),
+        _ => Volume::oriented(VolumeKind::Base, orient),
     })
 }
 
@@ -732,7 +730,7 @@ fn put_solutions(o: &mut Vec<f64>, found: bool, sols: &SolutionArray<Me>) {
 /// cannot return.
 fn status(e: &SolidError) -> f64 {
     match e {
-        SolidError::InvalidInput { .. } => 1007.0,
+        SolidError::InvalidInput { .. } | SolidError::PortInvariant { .. } => 1007.0,
         SolidError::Upstream { code, .. } => f64::from(*code),
         _ => -1.0,
     }
@@ -911,7 +909,7 @@ fn rust(i: &Inputs) -> Result<Output, HarnessError> {
         } => {
             let mut d = Discontinuities3d::new();
             d.set_unaligned();
-            let r = tri!(o, v.has_discontinuities(want.then_some(&mut d), *geometric));
+            let r = tri!(o, v.has_discontinuities(&k, want.then_some(&mut d), *geometric));
             o.extend([0.0, b(r)]);
             put_disc(&mut o, &d);
         }
@@ -922,7 +920,7 @@ fn rust(i: &Inputs) -> Result<Output, HarnessError> {
             let [w0, w1] = *want;
             tri!(
                 o,
-                v.evaluate_bounding_box_simple(
+                v.evaluate_bounding_box_simple(&k, 
                     &ext(bx),
                     ppb.as_ref(),
                     w0.then_some(&mut ob),

@@ -48,7 +48,7 @@
 use crate::curve::curve::p1::GlobalPointSolveOptions;
 use crate::curve::curve::p2::euclidian_step_off;
 use crate::curve::curve::Curve;
-use crate::error::{ignored, Result, SolidError};
+use crate::error::{ignored, Result, SolidError, SM_ERR_INVALID_INPUT};
 use crate::geom::extent1d::Extent1d;
 use crate::geom::extent3d::Extent3d;
 use crate::geom::global_solver::{SolutionRequested, SolverOperation};
@@ -215,7 +215,7 @@ pub fn calculate_bounding_box(
             match calculate_tight_bounding_box(k, brep, edge) {
                 Ok(Some(b)) => out.normal = Some(b),
                 Ok(None) => {}
-                Err(err) if err.is_unported() => return Err(err),
+                Err(err) if err.is_unported_or_cancelled() => return Err(err),
                 Err(_) => ok1 = false,
             }
         }
@@ -231,7 +231,7 @@ pub fn calculate_bounding_box(
                     out.pseudo = b.pseudo;
                     out.polar = b.polar;
                 }
-                Err(err) if err.is_unported() => return Err(err),
+                Err(err) if err.is_unported_or_cancelled() => return Err(err),
                 Err(_) => ok2 = false,
             }
         }
@@ -478,11 +478,17 @@ fn evaluate_binormal_step_off(
 }
 
 /// The status of a vector operation upstream checks with `SER` (`Unitize`,
-/// `AngleBetween` of a zero-length vector): a failing status (`SM_ERR`), not a null
-/// dereference.
+/// `AngleBetween` of a zero-length vector): both return `SM_ERR_INVALID_INPUT` as a
+/// status (not a null dereference), which `SER` passes on unchanged.
 fn vec_status<T>(r: Result<T>, operation: &'static str) -> Result<T> {
     r.map_err(|e| match e {
-        SolidError::InvalidInput { .. } => SolidError::sm_err(operation),
+        SolidError::InvalidInput { .. } | SolidError::PortInvariant { .. } => {
+            SolidError::Upstream {
+                operation,
+                code: SM_ERR_INVALID_INPUT,
+                entity: None,
+            }
+        }
         e => e,
     })
 }
@@ -492,7 +498,7 @@ fn vec_status<T>(r: Result<T>, operation: &'static str) -> Result<T> {
 fn stepped_off(r: Result<()>) -> Result<bool> {
     match r {
         Ok(()) => Ok(false),
-        Err(e) if e.is_unported() => Err(e),
+        Err(e) if e.is_unported_or_cancelled() => Err(e),
         Err(_) => Ok(true),
     }
 }
@@ -524,7 +530,10 @@ fn on_plane(brep: &Brep, eu: EdgeuseId) -> Result<bool> {
 /// # Errors
 ///
 /// `SM_ERR` when the point cannot be dropped onto the other edge or the first step-off
-/// leaves a face; [`SolidError::InvalidInput`] where upstream dereferences a null
+/// leaves a face; `SM_ERR_INVALID_INPUT` (as [`SolidError::Upstream`]) when the first
+/// step-off's tangent or a binormal to measure is zero-length (a failed first step-off
+/// leaves the tangent uninitialised, which `Unitize` rejects before the step-off
+/// failure is looked at); [`SolidError::InvalidInput`] where upstream dereferences a null
 /// pointer; `SM_ERR_NULL_POINTER` for an edge use without edge or an edge without
 /// curve to classify; those of the evaluations; [`SolidError::Unported`] for the
 /// step-offs' deferred callees (see [`crate::topology::edgeuse::p3`]).
@@ -572,7 +581,7 @@ pub fn radial_sector_classify_between(
 
     // get edge's position for given param
     let this_param = this.interval.evaluate(normalized_param);
-    let start_point = curve_of(brep, edge, OP_RADIAL)?.evaluate_point(this_param)?;
+    let start_point = curve_of(brep, edge, OP_RADIAL)?.evaluate_point(k, this_param)?;
 
     // classify edge locals
     let same_brep = other_brep.is_none();
@@ -905,7 +914,9 @@ pub fn radial_sector_classify_between(
 ///
 /// # Errors
 ///
-/// `SM_ERR` when the curve's projected direction vanishes; [`SolidError::InvalidInput`]
+/// `SM_ERR` when the curve's projected direction vanishes; `SM_ERR_INVALID_INPUT` (as
+/// [`SolidError::Upstream`]) for a zero-length vector to unitize or measure;
+/// [`SolidError::InvalidInput`]
 /// for a sector edge use without radial partner; those of the step-offs and
 /// evaluations; [`SolidError::Unported`] for the step-offs
 /// (see [`crate::topology::edgeuse::p3`]).
@@ -965,6 +976,7 @@ pub fn radial_sector_of_curve_classify(
         // calculate ClassificationCurve stepOff point and tangent (status ignored: a
         // failure leaves the start parameter)
         let step_param = ignored(euclid_step_off(
+            k,
             curve,
             interval,
             start_param,
@@ -972,7 +984,7 @@ pub fn radial_sector_of_curve_classify(
             step_off_distance,
         ))?
         .unwrap_or(start_param);
-        let pv = curve.evaluate(step_param, 1, true, true)?;
+        let pv = curve.evaluate(k, step_param, 1, true, true)?;
         let mut tan = *pv
             .get(1)
             .ok_or_else(|| SolidError::sm_err(OP_RADIAL_CURVE))?;
@@ -1073,6 +1085,7 @@ pub fn radial_sector_of_curve_classify(
 /// `crCurve.EuclidianStepOff(crInterval, dStartParam, eOrientation, dist, dist/100,
 /// bClampped, dStepParam)`: the step parameter.
 fn euclid_step_off(
+    k: &Kernel,
     curve: &Curve,
     interval: &Extent1d,
     start_param: f64,
@@ -1080,6 +1093,7 @@ fn euclid_step_off(
     step_off_distance: f64,
 ) -> Result<f64> {
     Ok(euclidian_step_off(
+        k,
         curve,
         interval,
         start_param,
@@ -1224,7 +1238,7 @@ mod tests {
             .curve
             .as_ref()
             .unwrap()
-            .evaluate_point(cp.parameter)
+            .evaluate_point(&k, cp.parameter)
             .unwrap();
         assert!(at.distance(Vec3::X) < 1e-12);
         assert!((cp.distance - 1.0).abs() < 1e-12);

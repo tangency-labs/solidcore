@@ -141,43 +141,13 @@ fn harness(msg: impl Into<String>) -> HarnessError {
 
 // ---- inputs -----------------------------------------------------------------------
 
-fn numbers(path: &str) -> Result<Vec<f64>, HarnessError> {
-    let text = std::fs::read_to_string(path).map_err(|e| harness(format!("{path}: {e}")))?;
-    text.split_whitespace()
-        .map(|t| {
-            t.parse::<f64>()
-                .map_err(|e| harness(format!("{path}: {e}")))
-        })
-        .collect()
-}
-
-fn int(path: &str, v: f64) -> Result<usize, HarnessError> {
-    if v.fract() != 0.0 || v < 0.0 {
-        return Err(harness(format!("{path}: bad count {v}")));
-    }
-    Ok(v as usize)
-}
-
-/// Reads an upstream `.smc` text file (as `N_CrvReadFromFilePtr`, without its
-/// validity check and pruning): `n`, `p`, rational flag, dimension, `n+1` points
-/// (`x y [z]`, or `wx wy [wz] w` when rational), `n+p+2` knots.
 fn read_smc(path: &str) -> Result<InlineCrv, HarnessError> {
-    let v = numbers(path)?;
-    let mut it = v.into_iter();
-    let mut num = || it.next().ok_or_else(|| harness(format!("{path}: truncated")));
-    let n = int(path, num()?)?;
-    let p = int(path, num()?)?;
-    let rat = num()? != 0.0;
-    let dim = int(path, num()?)?;
-    let mut cpts = Vec::with_capacity(n + 1);
-    for _ in 0..=n {
-        let (x, y) = (num()?, num()?);
-        let z = if dim == 3 { num()? } else { NOZ };
-        let w = if rat { num()? } else { NOW };
-        cpts.push([x, y, z, w]);
-    }
-    let u = (0..n + p + 2).map(|_| num()).collect::<Result<Vec<_>, _>>()?;
-    Ok(InlineCrv { cpts, p, u })
+    let c = crate::fixtures::text_curve::read(path)?;
+    Ok(InlineCrv {
+        cpts: c.cpts,
+        p: c.p,
+        u: c.u,
+    })
 }
 
 fn resolve(c: &CrvIn) -> Result<InlineCrv, HarnessError> {
@@ -367,7 +337,7 @@ fn status(e: &SolidError) -> f64 {
         SolidError::NotConverged { operation, .. } if operation.starts_with("nurbs::bezier") => {
             1000.0
         }
-        SolidError::InvalidInput { reason, .. } if *reason == BARE_FLAG_REASON => 1000.0,
+        SolidError::InvalidInput { reason, .. } | SolidError::PortInvariant { reason, .. } if *reason == BARE_FLAG_REASON => 1000.0,
         _ => -1.0,
     }
 }
@@ -705,7 +675,12 @@ impl UnitDiff for Runner {
     }
 
     fn run_rust(&self, case: &Case) -> Result<Output, HarnessError> {
-        rust(&case.parse()?)
+        let i = case.parse()?;
+        // Run only what the FFI accepts, as the C++ side: its guards refuse inputs
+        // upstream (and the faithful port) never finish on (fuzz Rust-side hangs).
+        let (code, input) = cpp_input(&i)?;
+        ffi::validate(code, &input).map_err(|e| HarnessError::new(e.to_string()))?;
+        rust(&i)
     }
 }
 
@@ -713,6 +688,28 @@ impl UnitDiff for Runner {
 mod tests {
     use super::*;
     use std::collections::BTreeMap;
+
+    #[test]
+    fn oversampled_approximation_fails_softly() {
+        // fuzz05147 (`tests/fuzz_corpus/nlib.crv_approx.json`): the FFI refuses its
+        // mixed-sign weights, so the runner never hands it to the port; run directly,
+        // the approximation sampled ten million points and its knot removal ran for
+        // minutes (issue #504). It now fails past `MAX_APPROX_SAMPLES`.
+        let corpus: Value = serde_json::from_str(include_str!(
+            "../../tests/fuzz_corpus/nlib.crv_approx.json"
+        ))
+        .unwrap();
+        let case = corpus["cases"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|c| c["name"] == "fuzz05147_rust_hang")
+            .unwrap();
+        let input: Inputs = serde_json::from_value(case["inputs"].clone()).unwrap();
+        let out = rust(&input).unwrap();
+        assert_eq!(out.values["status"], vec![-1.0], "{out:?}");
+    }
+
 
     /// The generator reaches success of every routine and no Rust-only error.
     #[test]

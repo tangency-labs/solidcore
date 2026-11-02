@@ -15,6 +15,10 @@
 //! as the `out` values. Solution objects are `0` (this curve), `1` (the other curve), `2`
 //! (an analytic replacement made by a curve cache).
 //!
+//! `{"o", "x", "y", "scale"?, "repeat"?}` transforms (`gci` `xf1`, `xf2`) are applied on both sides
+//! (`SmAxis2Placement::SetCanonical` + `SmCurve::Transform` / `Curve::transform`) before
+//! the op; a circle with `quintic` is `SM_CO_QUINTIC`.
+//!
 //! Deferred cases (unit `curve.curve_p5`): the Newton curve/curve intersections of the
 //! leaf pair solves and of `sm_RefineCCSolutions` (`SmCCIntersectENFO::Evaluate`), the
 //! gap refinement and closed-curve recombination of the coincidence check, and the
@@ -83,6 +87,26 @@ struct CircleIn {
     radius: f64,
     a0: f64,
     a1: f64,
+    /// `SM_CO_QUINTIC` (degree 5) instead of `SM_CO_QUADRATIC`.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    quintic: bool,
+}
+
+/// A transform applied to a curve before the op, `repeat` times
+/// (`SmAxis2Placement::SetCanonical(o, x, y)`, then `SmCurve::Transform` with `scale`).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct XformIn {
+    o: [f64; 3],
+    x: [f64; 3],
+    y: [f64; 3],
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    scale: Option<[f64; 3]>,
+    #[serde(default = "one_u64")]
+    repeat: u64,
+}
+
+fn one_u64() -> u64 {
+    1
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -109,7 +133,6 @@ enum CurveIn {
     Line(LineIn),
 }
 
-
 // ---- C++ input --------------------------------------------------------------------
 
 /// `c` with a circle replaced by its inline B-spline.
@@ -124,7 +147,11 @@ fn resolve(c: &CurveIn) -> Result<CurveIn, HarnessError> {
         ci.radius,
         ci.a0,
         ci.a1,
-        solidcore::nurbs::b_spline_curve::NurbCircleParam::Quadratic,
+        if ci.quintic {
+            solidcore::nurbs::b_spline_curve::NurbCircleParam::Quintic
+        } else {
+            solidcore::nurbs::b_spline_curve::NurbCircleParam::Quadratic
+        },
     )
     .map_err(|e| harness(format!("circle: {e}")))?;
     let cur = arc.gw_nurb().ok_or_else(|| harness("circle without NURB"))?;
@@ -175,6 +202,20 @@ fn curve_block(v: &mut Vec<f64>, c: &CurveIn) -> Result<(), HarnessError> {
 }
 
 
+/// The transforms block `nt (O X Y has_s S)*nt` (see the ffi module docs).
+fn push_xf(v: &mut Vec<f64>, xf: &[XformIn]) {
+    v.push(xf.iter().map(|t| t.repeat).sum::<u64>() as f64);
+    for t in xf {
+        for _ in 0..t.repeat {
+            v.extend_from_slice(&t.o);
+            v.extend_from_slice(&t.x);
+            v.extend_from_slice(&t.y);
+            v.push(b(t.scale.is_some()));
+            v.extend_from_slice(&t.scale.unwrap_or([1.0; 3]));
+        }
+    }
+}
+
 fn to_output(flat: &[f64]) -> Output {
     let status = flat.first().copied().unwrap_or(f64::NAN);
     let rest = flat.get(1..).unwrap_or(&[]).to_vec();
@@ -182,7 +223,6 @@ fn to_output(flat: &[f64]) -> Output {
         .ints("status", vec![status as i64])
         .values("out", rest)
 }
-
 
 // ---- Rust side --------------------------------------------------------------------
 
@@ -202,6 +242,18 @@ fn build_line(l: &LineIn) -> Line {
         &Extent1d::from_min_max(l.domain[0], l.domain[1]),
         &opts,
     )
+}
+
+/// `c` transformed by `xf` in order (`Curve::transform`).
+fn apply_xf(k: &Kernel, c: &mut Curve, xf: &[XformIn]) -> Result<(), HarnessError> {
+    for t in xf {
+        let a2p = Axis2Placement::new(v3(t.o), v3(t.x), v3(t.y));
+        for _ in 0..t.repeat {
+            c.transform(k, &a2p, t.scale.map(v3))
+                .map_err(|e| harness(format!("transform: {e}")))?;
+        }
+    }
+    Ok(())
 }
 
 fn build(c: &CurveIn) -> Result<Curve, HarnessError> {
@@ -238,12 +290,11 @@ fn build(c: &CurveIn) -> Result<Curve, HarnessError> {
     }
 }
 
-
 /// The `SmStatus` of a Rust error; `1007` for `InvalidInput`, `-1` for one upstream
 /// cannot return.
 fn status(e: &SolidError) -> f64 {
     match e {
-        SolidError::InvalidInput { .. } => 1007.0,
+        SolidError::InvalidInput { .. } | SolidError::PortInvariant { .. } => 1007.0,
         SolidError::Upstream { code, .. } => f64::from(*code),
         _ => -1.0,
     }
@@ -330,12 +381,9 @@ fn put_sol<O: Copy>(o: &mut Vec<f64>, s: &Solution<O>, id: impl Fn(Option<O>) ->
     }
 }
 
-
-
 fn ivl_of(i: [f64; 2]) -> Extent1d {
     Extent1d::from_min_max(i[0], i[1])
 }
-
 
 // ---- generation -------------------------------------------------------------------
 
@@ -444,6 +492,7 @@ fn gen_circle(rng: &mut Rng) -> CurveIn {
         radius: rng.uniform(0.5, 10.0),
         a0,
         a1: a0 + rng.uniform(20.0, 360.0),
+        quintic: false,
     })
 }
 
@@ -457,7 +506,6 @@ fn gen_curve(rng: &mut Rng) -> CurveIn {
     resolve(&c).unwrap_or(c)
 }
 
-
 /// A curve that is closed (or nearly) over its natural interval.
 fn gen_closed_curve(rng: &mut Rng) -> CurveIn {
     match rng.below(3) {
@@ -470,6 +518,7 @@ fn gen_closed_curve(rng: &mut Rng) -> CurveIn {
                 radius: rng.uniform(0.5, 10.0),
                 a0,
                 a1: a0 + 360.0,
+                quintic: false,
             });
             resolve(&c).unwrap_or(c)
         }
@@ -506,7 +555,6 @@ fn range_of(c: &CurveIn) -> (f64, f64) {
     }
 }
 
-
 /// An increasing interval of `c`: mostly its natural one or a sub-interval.
 fn gen_ivl(rng: &mut Rng, c: &CurveIn) -> [f64; 2] {
     let (a, bb) = range_of(c);
@@ -542,10 +590,10 @@ fn scale3(a: [f64; 3], s: f64) -> [f64; 3] {
 }
 
 /// The point of `c` at `t` (Rust evaluation, used only to place test points).
-fn point_at(c: &CurveIn, t: f64) -> [f64; 3] {
+fn point_at(k: &Kernel, c: &CurveIn, t: f64) -> [f64; 3] {
     build(c)
         .ok()
-        .and_then(|cc| cc.evaluate_point(t).ok())
+        .and_then(|cc| cc.evaluate_point(k, t).ok())
         .map_or([0.0; 3], |p| [p.x, p.y, p.z])
 }
 
@@ -589,7 +637,7 @@ fn translated(c: &CurveIn, d: [f64; 3]) -> CurveIn {
 
 /// A second curve near `c`: an identical copy, a slightly moved copy, the same line
 /// reparameterised, or an unrelated curve.
-fn gen_partner(rng: &mut Rng, c: &CurveIn) -> CurveIn {
+fn gen_partner(k: &Kernel, rng: &mut Rng, c: &CurveIn) -> CurveIn {
     match rng.below(8) {
         0..=2 => c.clone(),
         3 | 4 => {
@@ -599,8 +647,8 @@ fn gen_partner(rng: &mut Rng, c: &CurveIn) -> CurveIn {
         5 => {
             // a line on the same carrier with another parameterisation
             let (a, bb) = range_of(c);
-            let p = point_at(c, a);
-            let q = point_at(c, bb);
+            let p = point_at(k, c, a);
+            let q = point_at(k, c, bb);
             let d = [q[0] - p[0], q[1] - p[1], q[2] - p[2]];
             if rng.chance(0.5) {
                 CurveIn::Line(LineIn {
@@ -639,7 +687,6 @@ fn gen_tol(rng: &mut Rng) -> f64 {
         .unwrap_or(&1e-5)
 }
 
-
 // ---- the op -----------------------------------------------------------------------
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -647,9 +694,15 @@ fn gen_tol(rng: &mut Rng) -> f64 {
 enum OpIn {
     Gci {
         c1: CurveIn,
+        /// Transforms applied to `c1` first.
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        xf1: Vec<XformIn>,
         ivl1: [f64; 2],
         /// `None`: the other curve is `c1` itself (a self intersection).
         c2: Option<CurveIn>,
+        /// Transforms applied to `c2` first (none for a self intersection).
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        xf2: Vec<XformIn>,
         ivl2: [f64; 2],
         tol: f64,
         #[serde(default)]
@@ -662,17 +715,21 @@ fn cpp_input(op: &OpIn) -> Result<(Op, Vec<f64>), HarnessError> {
     match op {
         OpIn::Gci {
             c1,
+            xf1,
             ivl1,
             c2,
+            xf2,
             ivl2,
             tol,
             skip,
         } => {
             curve_block(&mut v, c1)?;
+            push_xf(&mut v, xf1);
             v.extend_from_slice(ivl1);
             v.push(b(c2.is_none()));
             if let Some(c2) = c2 {
                 curve_block(&mut v, c2)?;
+                push_xf(&mut v, xf2);
             }
             v.extend_from_slice(ivl2);
             v.extend([*tol, b(*skip)]);
@@ -695,20 +752,37 @@ fn shim_id(x: Option<Obj>) -> f64 {
 }
 
 fn rust(op: &OpIn) -> Result<Output, HarnessError> {
-    let k = Kernel::default();
+    rust_with_fixes(op, &solidcore::kernel::UpstreamFixes::default())
+}
+
+fn rust_with_fixes(
+    op: &OpIn,
+    fixes: &solidcore::kernel::UpstreamFixes,
+) -> Result<Output, HarnessError> {
+    let k = Kernel {
+        fixes: *fixes,
+        ..Kernel::default()
+    };
     let mut o: Vec<f64> = Vec::new();
     match op {
         OpIn::Gci {
             c1,
+            xf1,
             ivl1,
             c2,
+            xf2,
             ivl2,
             tol,
             skip,
         } => {
-            let a = build(c1)?;
+            let mut a = build(c1)?;
+            apply_xf(&k, &mut a, xf1)?;
             let other = match c2 {
-                Some(c) => Some(build(c)?),
+                Some(c) => {
+                    let mut o = build(c)?;
+                    apply_xf(&k, &mut o, xf2)?;
+                    Some(o)
+                }
                 None => None,
             };
             let bb = other.as_ref().unwrap_or(&a);
@@ -741,24 +815,24 @@ fn rust(op: &OpIn) -> Result<Output, HarnessError> {
 
 /// A curve through the point of `c` at `t` (a random curve moved so that one of its
 /// points lands there, optionally a little off).
-fn gen_crossing(rng: &mut Rng, c: &CurveIn, t: f64) -> CurveIn {
+fn gen_crossing(k: &Kernel, rng: &mut Rng, c: &CurveIn, t: f64) -> CurveIn {
     let other = gen_curve(rng);
     let (a, bb) = range_of(&other);
     let s = a + (bb - a) * rng.uniform(0.05, 0.95);
-    let p = point_at(c, t);
-    let q = point_at(&other, s);
+    let p = point_at(k, c, t);
+    let q = point_at(k, &other, s);
     let off = *rng.choose(&[0.0, 0.0, 1e-9, 1e-7, 1e-5]).unwrap_or(&0.0);
     let d = add([p[0] - q[0], p[1] - q[1], p[2] - q[2]], scale3(gen_dir(rng), off));
     translated(&other, d)
 }
 
 /// A line tangent to `c` at `t` (along the chord to a nearby point), possibly offset.
-fn gen_tangent_line(rng: &mut Rng, c: &CurveIn, t: f64) -> CurveIn {
+fn gen_tangent_line(k: &Kernel, rng: &mut Rng, c: &CurveIn, t: f64) -> CurveIn {
     let (a, bb) = range_of(c);
     let h = 1e-4 * (bb - a);
-    let p0 = point_at(c, t - h);
-    let p1 = point_at(c, t + h);
-    let p = point_at(c, t);
+    let p0 = point_at(k, c, t - h);
+    let p1 = point_at(k, c, t + h);
+    let p = point_at(k, c, t);
     let dir = [p1[0] - p0[0], p1[1] - p0[1], p1[2] - p0[2]];
     let off = *rng.choose(&[0.0, 1e-8, 1e-6, 1e-3]).unwrap_or(&0.0);
     let p = add(p, scale3(gen_dir(rng), off));
@@ -806,7 +880,7 @@ fn gen_looping(rng: &mut Rng) -> CurveIn {
     }
 }
 
-fn gen_case(rng: &mut Rng) -> OpIn {
+fn gen_case(k: &Kernel, rng: &mut Rng) -> OpIn {
     let c1 = match rng.below(10) {
         0 => gen_closed_curve(rng),
         1 => gen_looping(rng),
@@ -817,9 +891,9 @@ fn gen_case(rng: &mut Rng) -> OpIn {
     let t = a + (bb - a) * rng.uniform(0.0, 1.0);
     let c2 = match rng.below(20) {
         0 | 1 => None,
-        2..=6 => Some(gen_crossing(rng, &c1, t)),
-        7 | 8 => Some(gen_tangent_line(rng, &c1, t)),
-        9..=13 => Some(gen_partner(rng, &c1)),
+        2..=6 => Some(gen_crossing(k, rng, &c1, t)),
+        7 | 8 => Some(gen_tangent_line(k, rng, &c1, t)),
+        9..=13 => Some(gen_partner(k, rng, &c1)),
         14 => Some(translated(&gen_curve(rng), [300.0, -200.0, 50.0])),
         15 => Some(CurveIn::Line(gen_line(rng))),
         _ => Some(gen_curve(rng)),
@@ -840,8 +914,10 @@ fn gen_case(rng: &mut Rng) -> OpIn {
     };
     OpIn::Gci {
         c1,
+        xf1: Vec::new(),
         ivl1,
         c2,
+        xf2: Vec::new(),
         ivl2,
         tol: gen_tol(rng),
         skip: rng.chance(0.15),
@@ -854,8 +930,9 @@ impl UnitDiff for Runner {
     }
 
     fn generate(&self, rng: &mut Rng) -> Option<Value> {
+        let k = &Kernel::default();
         for _ in 0..64 {
-            let op = gen_case(rng);
+            let op = gen_case(k, rng);
             let Ok((code, input)) = cpp_input(&op) else {
                 continue;
             };
@@ -880,7 +957,12 @@ impl UnitDiff for Runner {
     }
 
     fn run_rust(&self, case: &Case) -> Result<Output, HarnessError> {
-        rust(&case.parse()?)
+        let op = case.parse()?;
+        // Run only what the FFI accepts, as the C++ side: its guards refuse inputs
+        // upstream (and the faithful port) never finish on (fuzz Rust-side hangs).
+        let (code, input) = cpp_input(&op)?;
+        ffi::validate(code, &input).map_err(|e| HarnessError::new(e.to_string()))?;
+        rust(&op)
     }
 }
 
@@ -888,13 +970,80 @@ impl UnitDiff for Runner {
 mod tests {
     use super::*;
 
+    #[test]
+    fn coincidence_splits_stop_at_the_call_bound() {
+        // fuzz01456 (`tests/fuzz_corpus/curve.curve_p8.json`): the FFI refuses its
+        // `1e300` control points, so the runner never hands it to the port; run
+        // directly, `GlobalCoincidenceChecker` split in three about 17 levels deep and
+        // ran for minutes (issue #504). It now fails past `MAX_COINCIDENCE_CALLS`.
+        let corpus: Value = serde_json::from_str(include_str!(
+            "../../tests/fuzz_corpus/curve.curve_p8.json"
+        ))
+        .unwrap();
+        let case = corpus["cases"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|c| c["name"] == "fuzz01456_rust_hang")
+            .unwrap();
+        let op: OpIn = serde_json::from_value(case["inputs"].clone()).unwrap();
+        let out = rust(&op).unwrap();
+        assert_eq!(out.ints["status"], vec![1007], "{out:?}");
+    }
+
+
+    #[test]
+    fn range_end_refinement_keeps_the_noncollapsed_tail() {
+        let fixtures: Value = serde_json::from_str(include_str!(
+            "../../../../fixtures/curve.curve_p8/edge.json"
+        ))
+        .unwrap();
+        let case = fixtures["cases"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|c| c["name"] == "range_end_preserves_noncollapsed_tail")
+            .unwrap();
+        let op: OpIn = serde_json::from_value(case["inputs"].clone()).unwrap();
+        let original = rust(&op).unwrap();
+        assert_eq!(original.values["out"][0], 2.0);
+        let mut fixes = solidcore::kernel::UpstreamFixes::default();
+        fixes.refine_cc_range_ends = true;
+        let out = rust_with_fixes(&op, &fixes).unwrap();
+        assert_eq!(out.ints["status"], vec![0]);
+        let values = &out.values["out"];
+        assert_eq!(values[0], 3.0);
+        let tail = &values[20..];
+        assert_eq!(tail.len(), 11);
+        assert_eq!(tail[0], f64::from(SolutionType::RangeOfValues as i32));
+        assert!(tail[9] - tail[6] > 0.2);
+        assert!(tail[10] - tail[7] > 0.07);
+        let OpIn::Gci { c1, c2, tol, .. } = &op;
+        let a = build(c1).unwrap();
+        let b = build(c2.as_ref().unwrap()).unwrap();
+        let k = Kernel::default();
+        // This tail is a legitimate approximate range at the requested tolerance.
+        // The faulty end check collapsed it onto its start and discarded it.
+        for i in 0..=10 {
+            let fraction = f64::from(i) / 10.0;
+            let t = tail[6] + fraction * (tail[9] - tail[6]);
+            let u = tail[7] + fraction * (tail[10] - tail[7]);
+            let deviation = a
+                .evaluate_point(&k, t)
+                .unwrap()
+                .distance(b.evaluate_point(&k, u).unwrap());
+            assert!(deviation <= *tol, "{deviation}");
+        }
+    }
+
     /// Generated cases mostly run (pass or defer), not harness errors.
     #[test]
     fn generated_cases_run() {
+        let k = &Kernel::default();
         let mut rng = Rng::new(7);
         let mut stats = [0usize; 4];
         for _ in 0..300 {
-            let op = gen_case(&mut rng);
+            let op = gen_case(k, &mut rng);
             stats[0] += 1;
             match rust(&op) {
                 Err(_) => stats[3] += 1,
@@ -902,7 +1051,10 @@ mod tests {
                 Ok(_) => stats[1] += 1,
             }
         }
-        eprintln!("total {} ran {} deferred {} harness {}", stats[0], stats[1], stats[2], stats[3]);
+        eprintln!(
+            "total {} ran {} deferred {} harness {}",
+            stats[0], stats[1], stats[2], stats[3]
+        );
         assert!(stats[1] > 0);
     }
 }

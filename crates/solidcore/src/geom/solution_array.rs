@@ -25,15 +25,17 @@
 //! | [`Solution::point_of`]                        | `SmSolution::GetPoint(const SmObject*, ...)`               |
 //! | [`Solution::object_index_for_parameter_index`] | `SmSolution::GetObjectIndexForParameterIndex`             |
 //! | [`Solution::parameter_interval`]              | `SmSolution::GetParameterInterval`                         |
+//! | [`Solution::parameter_interval_in`], [`ParameterDomains`] | `SmSolution::GetParameterInterval` (object domains read through a caller's resolver) |
 //! | [`Solution::object_tolerance`]                | `SmSolution::GetObjectTolerance`                           |
-//! | [`Solution::is_equal`]                        | `SmSolution::IsEqual`                                      |
+//! | [`Solution::object_tolerance_with`]           | `SmSolution::GetObjectTolerance` (caller-resolved handle)   |
+//! | [`Solution::is_equal`], [`Solution::is_equal_in`] | `SmSolution::IsEqual`                                  |
 //! | `are_sequential` (private)                    | `sm_AreSequential`                                         |
 //! | [`SolutionObject`], [`ObjectKind`]            | the `SmObject*` of `m_apObjects` and its `IsKindOf` tests  |
 //! | [`SolutionArray`], [`SolutionArray::new`]     | `SmSolutionArray`, `SmSolutionArray()`                     |
-//! | [`SolutionArray::with_capacity`]              | `SmSolutionArray(ULONG, SmSolution* = NULL)`               |
+//! | [`SolutionArray::with_capacity`], [`SolutionArray::try_with_capacity`] | `SmSolutionArray(ULONG, SmSolution* = NULL)`               |
 //! | `Drop` (implicit)                             | `~SmSolutionArray`                                         |
 //! | [`SolutionArray::len`]                        | `SmSolutionArray::GetSize`                                 |
-//! | [`SolutionArray::set_size`]                   | `SmSolutionArray::SetSize`                                 |
+//! | [`SolutionArray::set_size`], [`SolutionArray::try_set_size`] | `SmSolutionArray::SetSize`                                 |
 //! | [`SolutionArray::reset`]                      | `SmSolutionArray::ReSet`                                   |
 //! | [`SolutionArray::as_slice`]                   | `SmSolutionArray::GetDataArray`                            |
 //! | [`SolutionArray::get`], [`SolutionArray::get_mut`] | `SmSolutionArray::operator[]`                         |
@@ -41,9 +43,10 @@
 //! | [`SolutionArray::add`]                        | `SmSolutionArray::Add`                                     |
 //! | `set_at_grow` (private)                       | `SmSolutionArray::SetAtGrow`                               |
 //! | [`SolutionArray::append`]                     | `SmSolutionArray::Append`                                  |
-//! | [`SolutionArray::add_sorted_solution`]        | `SmSolutionArray::AddSortedSolution`                       |
-//! | [`SolutionArray::insert_at`]                  | `SmSolutionArray::InsertAt(ULONG, const SmSolution&, ULONG)` |
+//! | [`SolutionArray::add_sorted_solution`], [`SolutionArray::add_sorted_solution_in`] | `SmSolutionArray::AddSortedSolution` |
+//! | [`SolutionArray::insert_at`], [`SolutionArray::try_insert_at`] | `SmSolutionArray::InsertAt(ULONG, const SmSolution&, ULONG)` |
 //! | [`SolutionArray::remove_at`]                  | `SmSolutionArray::RemoveAt`                                |
+//! | `OperandObject`, `SolutionArray::without_objects` (crate) | the non-null `this` / operand objects of upstream's solves |
 //! | [`SolutionArray::swap`]                       | `SmSolutionArray::Swap`                                    |
 //! | [`SolutionArray::TYPE`], [`SolutionArray::type_code`], [`SolutionArray::type_string`], [`SolutionArray::is_kind_of`] | `SmSolutionArray::GetType`, `GetTypeString`, `IsKindOf` |
 //!
@@ -52,14 +55,21 @@
 //!   implementing [`SolutionObject`] (upstream `SmObject*`; a null pointer is
 //!   `None`, pointer equality is `O: PartialEq`). The handle reports its
 //!   [`ObjectKind`], which answers the `IsKindOf` tests made here, and, when it
-//!   can reach its curve, the curve's natural interval
-//!   ([`SolutionObject::natural_interval`], `SmCurve::GetNaturalInterval`). Tree
-//!   nodes (`m_apNodes`) are opaque [`NodeId`]s.
-//! - **Unported geometry.** Evaluating a curve, surface, edge, face, vertex or
-//!   poly vertex, the parameter domains of surfaces, edges, faces and volumes
-//!   (and of curves whose handle does not report it), and
-//!   `SmTol::GetZoneTol3d(const SmObject*)` belong to units not ported yet or
-//!   need the object model; those paths return [`SolidError::Unported`] (see the
+//!   can reach its object, the geometry read here (natural intervals and domains,
+//!   points, an edge's curve and interval, a face's surface and UV domain: the
+//!   [`SolutionObject`] hooks). A caller holding the geometry behind opaque handles
+//!   reads parameter domains through its own [`ParameterDomains`] instead
+//!   ([`Solution::parameter_interval_in`], [`Solution::is_equal_in`],
+//!   [`SolutionArray::add_sorted_solution_in`]). Tree nodes (`m_apNodes`) are opaque
+//!   [`NodeId`]s.
+//!   Solves whose caller gives no handle name `OperandObject` stand-ins internally
+//!   (upstream's solutions always name the solve's curves and surfaces, whose
+//!   natural intervals and domains `IdenticalSolutions` / `IsEqual` read) and hand
+//!   the solutions back without objects (`SolutionArray::without_objects`).
+//! - **Unresolved handles.** The geometry of a handle that cannot reach its object
+//!   (a hook answering `None`; also a failed curve or surface evaluation, whose
+//!   status upstream ignores), the parameter domain of a volume and
+//!   `SmTol::GetZoneTol3d(const SmObject*)` return [`SolidError::Unported`] (see the
 //!   `UNPORTED` markers).
 //! - **Status out-params.** `GetIndex`, `GetPoint`,
 //!   `GetObjectIndexForParameterIndex` and `GetParameterInterval` return
@@ -78,7 +88,12 @@
 //! - **Storage.** The array is a `Vec`; slots past the size are never visible
 //!   upstream (every growth path zeroes them), so the allocation size
 //!   (`m_lMaxSize`) and borrowed arrays (`m_bIsBorrowed`) have no counterpart.
-//!   [`SolutionArray::with_capacity`] only reserves. New slots made by growth
+//!   [`SolutionArray::with_capacity`] only reserves. The `try_` variants
+//!   ([`SolutionArray::try_set_size`], [`SolutionArray::try_insert_at`],
+//!   [`SolutionArray::try_with_capacity`]) take caller-chosen sizes and return
+//!   [`SolidError::InvalidInput`] when the slots cannot be allocated or would take
+//!   more than [`crate::limits::MAX_ALLOC_BYTES`] (upstream writes through the
+//!   `NULL` of a failed `smos_Calloc`). New slots made by growth
 //!   are [`Solution::zeroed`] (type [`SolutionType::NodesOnly`], as calloc'd
 //!   memory reads upstream).
 //! - `SmSolution::Dump` and `SmSolutionArray::Dump` print diagnostics only and are
@@ -89,6 +104,7 @@ use crate::error::{Result, SolidError};
 use crate::geom::extent1d::Extent1d;
 use crate::geom::object;
 use crate::geom::tree::NodeId;
+use crate::limits::try_reserve_total;
 use crate::math::{max3, Point3, Vec3, BIG_DOUBLE, EFF_ZERO, EFF_ZERO_SQRT};
 
 /// `SM_SA_MAX_TREES`: most objects (and tree nodes) a solution refers to.
@@ -292,6 +308,125 @@ pub trait SolutionObject: Copy + PartialEq {
     fn poly_vertex_point(&self) -> Option<Point3> {
         None
     }
+
+    /// For a vertex object, its point (`SmVertex::GetPoint`) when the handle can reach
+    /// the vertex; `None` (the default) when it cannot.
+    fn vertex_point(&self) -> Option<Point3> {
+        None
+    }
+
+    /// For an edge object, the handle of its curve (`SmEdge::GetCurve`) when the
+    /// handle can reach the edge and the edge has a curve; `None` (the default)
+    /// otherwise.
+    fn edge_curve(&self) -> Option<Self> {
+        None
+    }
+
+    /// For an edge object, its parameter interval (`SmEdge::GetInterval`) when the
+    /// handle can reach the edge; `None` (the default) when it cannot.
+    fn edge_interval(&self) -> Option<Extent1d> {
+        None
+    }
+
+    /// For a curve object, its point at `t` (`SmCurve::EvaluatePoint`) when the handle
+    /// can reach the curve and the evaluation succeeds; `None` (the default)
+    /// otherwise.
+    fn curve_point(&self, t: f64) -> Option<Point3> {
+        let _ = t;
+        None
+    }
+
+    /// For a face object, the handle of its surface (`SmFace::GetSurface`) when the
+    /// handle can reach the face and the face has a surface; `None` (the default)
+    /// otherwise.
+    fn face_surface(&self) -> Option<Self> {
+        None
+    }
+
+    /// For a face object, its UV domain (`SmFace::GetUVDomain`) when the handle can
+    /// reach the face; `None` (the default) when it cannot.
+    fn face_uv_domain(&self) -> Option<crate::geom::extent2d::Extent2d> {
+        None
+    }
+
+    /// For a surface object, its point at `(u, v)` (`SmSurface::EvaluatePoint`) when
+    /// the handle can reach the surface and the evaluation succeeds; `None` (the
+    /// default) otherwise.
+    fn surface_point(&self, u: f64, v: f64) -> Option<Point3> {
+        let _ = (u, v);
+        None
+    }
+}
+
+/// Where `GetParameterInterval` reads the parameter domain of a solution object
+/// ([`Solution::parameter_interval_in`]). Upstream dereferences the `SmObject*`
+/// (`SmEdge::GetInterval`, `SmCurve::GetNaturalInterval`, `SmFace::GetUVDomain`,
+/// `SmSurface::GetNaturalUVDomain`); each method answers for one kind, `None` when
+/// the handle cannot be resolved. The defaults ask the handle itself
+/// ([`SolutionObject::edge_interval`], ...); a caller holding the geometry behind
+/// opaque handles (a topology solver's objects) answers from that geometry instead.
+pub trait ParameterDomains<O: SolutionObject> {
+    /// `SmEdge::GetInterval` of edge handle `edge`.
+    fn edge_interval(&self, edge: &O) -> Option<Extent1d> {
+        edge.edge_interval()
+    }
+    /// `SmCurve::GetNaturalInterval` of curve handle `curve`.
+    fn natural_interval(&self, curve: &O) -> Option<Extent1d> {
+        curve.natural_interval()
+    }
+    /// `SmFace::GetUVDomain` of face handle `face`.
+    fn face_uv_domain(&self, face: &O) -> Option<crate::geom::extent2d::Extent2d> {
+        face.face_uv_domain()
+    }
+    /// `SmSurface::GetNaturalUVDomain` of surface handle `surface`.
+    fn natural_uv_domain(&self, surface: &O) -> Option<crate::geom::extent2d::Extent2d> {
+        surface.natural_uv_domain()
+    }
+}
+
+/// [`ParameterDomains`] that asks each handle itself (the trait's defaults).
+#[derive(Debug, Clone, Copy, Default)]
+pub struct OwnDomains;
+
+impl<O: SolutionObject> ParameterDomains<O> for OwnDomains {}
+
+/// The solution object a solve names internally when its caller gives no handle
+/// (`None`): upstream's solutions always name the solve's operands (`this` curve or
+/// surface, the other curve, ...), and `IdenticalSolutions` / `IsEqual` merge
+/// solutions within 1/10000th of their natural interval or domain, so the stand-in
+/// reports the operand's natural interval ([`OperandObject::Curve`]) or natural UV
+/// domain ([`OperandObject::Surface`]). The `u8` tells the operands apart. The
+/// caller gets the solutions back without objects
+/// ([`SolutionArray::without_objects`]).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub(crate) enum OperandObject {
+    /// A curve operand and its natural interval.
+    Curve(u8, Extent1d),
+    /// A surface operand and its natural UV domain.
+    Surface(u8, crate::geom::extent2d::Extent2d),
+}
+
+impl SolutionObject for OperandObject {
+    fn kind(&self) -> ObjectKind {
+        match self {
+            Self::Curve(..) => ObjectKind::Curve,
+            Self::Surface(..) => ObjectKind::Surface,
+        }
+    }
+
+    fn natural_interval(&self) -> Option<Extent1d> {
+        match self {
+            Self::Curve(_, ivl) => Some(*ivl),
+            Self::Surface(..) => None,
+        }
+    }
+
+    fn natural_uv_domain(&self) -> Option<crate::geom::extent2d::Extent2d> {
+        match self {
+            Self::Curve(..) => None,
+            Self::Surface(_, domain) => Some(*domain),
+        }
+    }
 }
 
 /// One point of a solution space (`SmSolutionEnd`): a solution value (typically
@@ -330,7 +465,7 @@ impl SolutionEnd {
         self.parameters
             .get(index)
             .copied()
-            .ok_or(bad_param("geom::solution_array::SolutionEnd::param"))
+            .ok_or_else(|| bad_param("geom::solution_array::SolutionEnd::param"))
     }
 
     /// Mutable parameter `index` (`operator[]`).
@@ -341,7 +476,7 @@ impl SolutionEnd {
     pub fn param_mut(&mut self, index: usize) -> Result<&mut f64> {
         self.parameters
             .get_mut(index)
-            .ok_or(bad_param("geom::solution_array::SolutionEnd::param_mut"))
+            .ok_or_else(|| bad_param("geom::solution_array::SolutionEnd::param_mut"))
     }
 }
 
@@ -651,7 +786,7 @@ impl<O: SolutionObject> Solution<O> {
             }
             // This is not the index we want, move down to the next start
             // parameter based on the type of the object.
-            let kind = object.ok_or(null_object(OP))?.kind();
+            let kind = object.ok_or_else(|| null_object(OP))?.kind();
             if kind.is_kind_of(ObjectKind::Curve) || kind.is_kind_of(ObjectKind::Edge) {
                 param_index += 1;
             } else if kind.is_kind_of(ObjectKind::Face) || kind.is_kind_of(ObjectKind::Surface) {
@@ -701,7 +836,7 @@ impl<O: SolutionObject> Solution<O> {
 
         // for every object in this solution
         for i in 0..=index {
-            let object = self.object(i, OP)?.ok_or(null_object(OP))?;
+            let object = self.object(i, OP)?.ok_or_else(|| null_object(OP))?;
             let kind = object.kind();
 
             // convert object index into parameter index
@@ -876,6 +1011,20 @@ impl<O: SolutionObject> Solution<O> {
     /// fixed arrays;
     /// [`SolidError::Unported`] for the parameter domain of the object.
     pub fn parameter_interval(&self, param_index: usize) -> Result<Option<Extent1d>> {
+        self.parameter_interval_in(param_index, &OwnDomains)
+    }
+
+    /// [`Solution::parameter_interval`] reading the objects' parameter domains through
+    /// `domains`.
+    ///
+    /// # Errors
+    ///
+    /// As [`Solution::parameter_interval`].
+    pub fn parameter_interval_in(
+        &self,
+        param_index: usize,
+        domains: &dyn ParameterDomains<O>,
+    ) -> Result<Option<Extent1d>> {
         const OP: &str = "geom::solution_array::Solution::parameter_interval";
 
         // get the object and associated domain dir
@@ -884,23 +1033,25 @@ impl<O: SolutionObject> Solution<O> {
         else {
             return Ok(None);
         };
-        let object = self.object(object_index, OP)?.ok_or(null_object(OP))?;
+        let object = self
+            .object(object_index, OP)?
+            .ok_or_else(|| null_object(OP))?;
         let kind = object.kind();
 
         // Get the parameter interval from pObject
         let ivl = if kind.is_kind_of(ObjectKind::Edge) {
-            edge_interval(&object)?
+            edge_interval(domains, &object)?
         } else if kind.is_kind_of(ObjectKind::Curve) {
-            curve_natural_interval(&object)?
+            curve_natural_interval(domains, &object)?
         } else if kind.is_kind_of(ObjectKind::Face) {
-            let domain = face_uv_domain(&object)?;
+            let domain = face_uv_domain(domains, &object)?;
             if domain_dir == 0 {
                 domain.u_interval()
             } else {
                 domain.v_interval()
             }
         } else if kind.is_kind_of(ObjectKind::Surface) {
-            let domain = surface_natural_uv_domain(&object)?;
+            let domain = surface_natural_uv_domain(domains, &object)?;
             if domain_dir == 0 {
                 domain.u_interval()
             } else {
@@ -925,7 +1076,8 @@ impl<O: SolutionObject> Solution<O> {
     }
 
     /// The zone tolerance of object `index`, `0.0` for an index outside the
-    /// objects or a null object (`GetObjectTolerance`).
+    /// objects or a null object (`GetObjectTolerance`), for handles nothing can
+    /// resolve: see [`Solution::object_tolerance_with`].
     ///
     /// # Errors
     ///
@@ -933,6 +1085,32 @@ impl<O: SolutionObject> Solution<O> {
     /// fixed arrays;
     /// [`SolidError::Unported`] for a non-null object (zone tolerances).
     pub fn object_tolerance(&self, index: usize) -> Result<f64> {
+        self.object_tolerance_with(index, |_| {
+            // UNPORTED(geom.tol): SmTol::GetZoneTol3d(const SmObject*) on an opaque handle
+            // (callers that can resolve it use `object_tolerance_with`)
+            // Proof (unreachable): no library caller (object_tolerance is used by tests and
+            // difftest); the library uses object_tolerance_with
+            // (GlobalSolve::object_zone_tol_3d); 0 hits in the green difftest sweep.
+            Err(SolidError::Unported {
+                upstream: "SmTol::GetZoneTol3d(const SmObject*)",
+                unit: "geom.tol",
+            })
+        })
+    }
+
+    /// The zone tolerance of object `index` (`GetObjectTolerance`): `0.0` for an index
+    /// outside the objects or a null object, else `zone_tol_3d` of the object (the
+    /// caller's `SmTol::GetZoneTol3d(const SmObject*)`).
+    ///
+    /// # Errors
+    ///
+    /// [`SolidError::InvalidInput`] when a variable or object count exceeds the
+    /// fixed arrays; those of `zone_tol_3d`.
+    pub fn object_tolerance_with(
+        &self,
+        index: usize,
+        zone_tol_3d: impl FnOnce(O) -> Result<f64>,
+    ) -> Result<f64> {
         const OP: &str = "geom::solution_array::Solution::object_tolerance";
         self.check(OP)?;
 
@@ -943,16 +1121,7 @@ impl<O: SolutionObject> Solution<O> {
 
         // pass the call along
         match self.object(index, OP)? {
-            Some(_) => {
-                // UNPORTED(geom.tol): SmTol::GetZoneTol3d(const SmObject*) on an opaque handle. Every
-                // arm it dispatches to is ported (topology::{vertex, edge, face::p2, edgeuse::p1}::tolerance,
-                // Brep::tolerance) but each takes `&Brep` and none is in scope here; wire once this code
-                // receives the owning B-rep
-                Err(SolidError::Unported {
-                    upstream: "SmTol::GetZoneTol3d(const SmObject*)",
-                    unit: "geom.tol",
-                })
-            }
+            Some(o) => zone_tol_3d(o),
             None => Ok(0.0),
         }
     }
@@ -967,6 +1136,16 @@ impl<O: SolutionObject> Solution<O> {
     ///
     /// As [`Solution::parameter_interval`].
     pub fn is_equal(&self, other: &Self) -> Result<bool> {
+        self.is_equal_in(other, &OwnDomains)
+    }
+
+    /// [`Solution::is_equal`] reading the objects' parameter domains through
+    /// `domains` ([`Solution::parameter_interval_in`]).
+    ///
+    /// # Errors
+    ///
+    /// As [`Solution::parameter_interval_in`].
+    pub fn is_equal_in(&self, other: &Self, domains: &dyn ParameterDomains<O>) -> Result<bool> {
         const OP: &str = "geom::solution_array::Solution::is_equal";
         self.check(OP)?;
         other.check(OP)?;
@@ -990,8 +1169,8 @@ impl<O: SolutionObject> Solution<O> {
 
         // ParameterValues off by more than ScaledZero or more than 1/10000th of the parameter length
         for i in 0..s1.num_variables {
-            let ivl1 = s1.parameter_interval(i)?;
-            let ivl2 = s2.parameter_interval(i)?;
+            let ivl1 = s1.parameter_interval_in(i, domains)?;
+            let ivl2 = s2.parameter_interval_in(i, domains)?;
             let length1 = ivl1.map_or(0.0, |ivl| 0.0001 * ivl.length());
             let length2 = ivl2.map_or(0.0, |ivl| 0.0001 * ivl.length());
 
@@ -1016,92 +1195,168 @@ impl<O: SolutionObject> Solution<O> {
 // Each takes the object and the values upstream passes so that wiring the real
 // call is a local change.
 
-/// `SmVertex::GetPoint`.
-fn vertex_point<O>(_vertex: &O) -> Result<Point3> {
-    // UNPORTED(topology.vertex): SmVertex::GetPoint
+/// `SmVertex::GetPoint`: the handle's [`SolutionObject::vertex_point`].
+fn vertex_point<O: SolutionObject>(vertex: &O) -> Result<Point3> {
+    if let Some(p) = vertex.vertex_point() {
+        return Ok(p);
+    }
+    // UNPORTED(topology.vertex): SmVertex::GetPoint (a handle that cannot reach its
+    // vertex)
+    // Proof (unreachable): no library caller (Solution::point/point_of are used by tests
+    // and difftest); the library resolves through query::api_queries::solution_point; 0
+    // hits in the green difftest sweep.
     Err(SolidError::Unported {
         upstream: "SmVertex::GetPoint",
         unit: "topology.vertex",
     })
 }
 
-/// `SmEdge::GetCurve`.
-fn edge_curve<O: Copy>(_edge: &O) -> Result<O> {
-    // UNPORTED(topology.edge): SmEdge::GetCurve
+/// `SmEdge::GetCurve`: the handle's [`SolutionObject::edge_curve`].
+fn edge_curve<O: SolutionObject>(edge: &O) -> Result<O> {
+    if let Some(c) = edge.edge_curve() {
+        return Ok(c);
+    }
+    // UNPORTED(topology.edge): SmEdge::GetCurve (a handle that cannot reach its edge)
+    // Proof (unreachable): no library caller (Solution::point/point_of are used by tests
+    // and difftest); the library resolves through query::api_queries::solution_point; 0
+    // hits in the green difftest sweep.
     Err(SolidError::Unported {
         upstream: "SmEdge::GetCurve",
         unit: "topology.edge",
     })
 }
 
-/// `SmEdge::GetInterval`.
-fn edge_interval<O>(_edge: &O) -> Result<Extent1d> {
-    // UNPORTED(topology.edge): SmEdge::GetInterval
+/// `SmEdge::GetInterval`: [`ParameterDomains::edge_interval`].
+fn edge_interval<O: SolutionObject>(
+    domains: &dyn ParameterDomains<O>,
+    edge: &O,
+) -> Result<Extent1d> {
+    if let Some(ivl) = domains.edge_interval(edge) {
+        return Ok(ivl);
+    }
+    // UNPORTED(topology.edge): SmEdge::GetInterval (a handle that cannot reach its edge)
     Err(SolidError::Unported {
         upstream: "SmEdge::GetInterval",
         unit: "topology.edge",
     })
 }
 
-/// `SmCurve::EvaluatePoint` at `t` (its status is ignored upstream: `SE`).
-fn evaluate_curve<O>(_curve: &O, _t: f64) -> Result<Point3> {
-    // UNPORTED(curve.curve_p2): SmCurve::EvaluatePoint
+/// `SmCurve::EvaluatePoint` at `t` (its status is ignored upstream: `SE`): the
+/// handle's [`SolutionObject::curve_point`].
+fn evaluate_curve<O: SolutionObject>(curve: &O, t: f64) -> Result<Point3> {
+    if let Some(p) = curve.curve_point(t) {
+        return Ok(p);
+    }
+    // UNPORTED(curve.curve_p2): SmCurve::EvaluatePoint (a handle that cannot reach its
+    // curve, or a failed evaluation, whose point upstream leaves as it was)
+    // Proof (unreachable): no library caller (Solution::point/point_of are used by tests
+    // and difftest); the library resolves through query::api_queries::solution_point; 0
+    // hits in the green difftest sweep.
     Err(SolidError::Unported {
         upstream: "SmCurve::EvaluatePoint",
         unit: "curve.curve_p2",
     })
 }
 
-/// `SmCurve::GetNaturalInterval`: the handle's [`SolutionObject::natural_interval`].
-fn curve_natural_interval<O: SolutionObject>(curve: &O) -> Result<Extent1d> {
-    if let Some(ivl) = curve.natural_interval() {
+/// `SmCurve::GetNaturalInterval`: [`ParameterDomains::natural_interval`].
+fn curve_natural_interval<O: SolutionObject>(
+    domains: &dyn ParameterDomains<O>,
+    curve: &O,
+) -> Result<Extent1d> {
+    if let Some(ivl) = domains.natural_interval(curve) {
         return Ok(ivl);
     }
-    // UNPORTED(curve.curve_p2): SmCurve::GetNaturalInterval (a handle that cannot
-    // reach its curve)
-    Err(SolidError::Unported {
-        upstream: "SmCurve::GetNaturalInterval",
-        unit: "curve.curve_p2",
-    })
+    // Upstream reads the SmCurve the handle points to; every library path resolves it
+    // (the 1.0.1 audit of every IdenticalSolutions and IsEqual reader):
+    // - the curve solvers' IdenticalSolutions resolve a curve handle to the curve its
+    //   tree decomposes (TreeCurves: CcGlobalSolver, CpGlobalSolver, CciGlobalSolver,
+    //   CurvePropertyGs), the curve/surface and surface solvers to their operands
+    //   (SolveOperands, LsiGlobalSolver, CsGlobalSolver, SpGlobalSolver, SsGlobalSolver,
+    //   CsiGlobalSolver, TopologySolver); trimming-tool loops read their curve store
+    //   (StoreDomains);
+    // - GlobalCoincidenceChecker's merge of its split parts resolves the two curves'
+    //   handles to their curves (curve::curve::p6 MergeSolver, CurvePair);
+    // - the solvers that keep GlobalSolver's default IdenticalSolutions
+    //   (InteriorSolver, AdvSurfaceIntersector, GlobalSolver itself) never reach it from
+    //   their own solves: their LocalSolve is GlobalSolver::local_solve (no SurfaceTrace
+    //   overrides it) or AdvSurfaceIntersector's SolveBranch, which store NodesOnly or
+    //   leaf solutions with SolutionArray::add; the GlobalSolver instances that call
+    //   AddSortedSolution name an interval-carrying CurveHandle (surface::plane::p2) or a
+    //   surface (SurfOfRevolution::drop_point_fast_using's OperandObject::Surface);
+    // - SolutionArray::add_sorted_solution over OwnDomains is called only by
+    //   SmSurfPtGlobalSolver's seam solutions (surface::surface_point_solve::p2), which
+    //   name the OperandObject::Surface stand-in of Surface::global_point_solve_in;
+    //   Solution::is_equal, Solution::parameter_interval and
+    //   GlobalSolver::identical_solutions over OwnDomains have test callers only.
+    // A handle reaching here names no curve the caller can resolve: invalid input.
+    Err(SolidError::invalid_input(
+        "geom::solution_array::Solution::parameter_interval",
+        "curve handle without a natural interval",
+    ))
 }
 
-/// `SmFace::GetSurface`.
-fn face_surface<O: Copy>(_face: &O) -> Result<O> {
-    // UNPORTED(topology.face_p2): SmFace::GetSurface
+/// `SmFace::GetSurface`: the handle's [`SolutionObject::face_surface`].
+fn face_surface<O: SolutionObject>(face: &O) -> Result<O> {
+    if let Some(sf) = face.face_surface() {
+        return Ok(sf);
+    }
+    // UNPORTED(topology.face_p2): SmFace::GetSurface (a handle that cannot reach its
+    // face)
+    // Proof (unreachable): no library caller (Solution::point/point_of are used by tests
+    // and difftest); the library resolves through query::api_queries::solution_point; 0
+    // hits in the green difftest sweep.
     Err(SolidError::Unported {
         upstream: "SmFace::GetSurface",
         unit: "topology.face_p2",
     })
 }
 
-/// `SmFace::GetUVDomain`.
-fn face_uv_domain<O>(_face: &O) -> Result<crate::geom::extent2d::Extent2d> {
-    // UNPORTED(topology.face_p2): SmFace::GetUVDomain
+/// `SmFace::GetUVDomain`: [`ParameterDomains::face_uv_domain`].
+fn face_uv_domain<O: SolutionObject>(
+    domains: &dyn ParameterDomains<O>,
+    face: &O,
+) -> Result<crate::geom::extent2d::Extent2d> {
+    if let Some(d) = domains.face_uv_domain(face) {
+        return Ok(d);
+    }
+    // UNPORTED(topology.face_p2): SmFace::GetUVDomain (a handle that cannot reach its
+    // face)
+    // Proof (unreachable): only the topology solver's solves name faces (SmTLS* with UV
+    // parameters), and its IdenticalSolutions reads them through TopologyDomains, which
+    // falls back to the required TopologyObjects::face_uv_domain of the faces it named;
+    // the other domains (OwnDomains, TreeCurves, CurvePair, SolveOperands, StoreDomains)
+    // serve solutions naming curves, surfaces, operand stand-ins or loop curves. 0 hits
+    // in the green difftest sweep (intersect.topology_solver_p2 2575/2575 since #1668,
+    // whose silhouette solves stopped naming the face for their temporary curves).
     Err(SolidError::Unported {
         upstream: "SmFace::GetUVDomain",
         unit: "topology.face_p2",
     })
 }
 
-/// `SmSurface::EvaluatePoint` at `(u, v)` (its status is ignored upstream: `SE`).
-/// The surface is ported (`surface::surface::p2::Surface::evaluate_point`), but a
-/// solution object is an opaque handle `O` with no way to reach it yet.
-fn evaluate_surface<O>(_surface: &O, _u: f64, _v: f64) -> Result<Point3> {
-    // UNPORTED(surface.surface_p2): SmSurface::EvaluatePoint (needs a handle-to-surface
-    // lookup on SolutionObject)
+/// `SmSurface::EvaluatePoint` at `(u, v)` (its status is ignored upstream: `SE`): the
+/// handle's [`SolutionObject::surface_point`].
+fn evaluate_surface<O: SolutionObject>(surface: &O, u: f64, v: f64) -> Result<Point3> {
+    if let Some(p) = surface.surface_point(u, v) {
+        return Ok(p);
+    }
+    // UNPORTED(surface.surface_p2): SmSurface::EvaluatePoint (a handle that cannot
+    // reach its surface, or a failed evaluation, whose point upstream leaves as it was)
+    // Proof (unreachable): no library caller (Solution::point/point_of are used by tests
+    // and difftest); the library resolves through query::api_queries::solution_point; 0
+    // hits in the green difftest sweep.
     Err(SolidError::Unported {
         upstream: "SmSurface::EvaluatePoint",
         unit: "surface.surface_p2",
     })
 }
 
-/// `SmSurface::GetNaturalUVDomain`. The surface is ported
-/// (`surface::surface::p2::Surface::natural_uv_domain`), but a solution object is an
-/// opaque handle `O` with no way to reach it yet.
+/// `SmSurface::GetNaturalUVDomain`: [`ParameterDomains::natural_uv_domain`].
 fn surface_natural_uv_domain<O: SolutionObject>(
+    domains: &dyn ParameterDomains<O>,
     surface: &O,
 ) -> Result<crate::geom::extent2d::Extent2d> {
-    if let Some(domain) = surface.natural_uv_domain() {
+    if let Some(domain) = domains.natural_uv_domain(surface) {
         return Ok(domain);
     }
     // UNPORTED(surface.surface_p2): SmSurface::GetNaturalUVDomain (a handle that
@@ -1164,11 +1419,29 @@ impl<O: SolutionObject> SolutionArray<O> {
 
     /// An empty array with room for `capacity` solutions
     /// (`SmSolutionArray(nDataSize, NULL)`).
+    ///
+    /// For small capacities; use [`SolutionArray::try_with_capacity`] for
+    /// capacities that come from caller input.
     #[must_use]
     pub fn with_capacity(capacity: usize) -> Self {
         Self {
             data: Vec::with_capacity(capacity),
         }
+    }
+
+    /// [`SolutionArray::with_capacity`] for capacities that come from caller input.
+    ///
+    /// # Errors
+    ///
+    /// [`SolidError::InvalidInput`] when the room cannot be allocated (upstream's
+    /// `smos_Calloc` returns `NULL`).
+    pub fn try_with_capacity(capacity: usize) -> Result<Self> {
+        let mut a = Self::new();
+        a.reserve_to(
+            capacity,
+            "geom::solution_array::SolutionArray::try_with_capacity",
+        )?;
+        Ok(a)
     }
 
     /// `SmSolutionArray_TYPE` (`GetType`).
@@ -1203,8 +1476,35 @@ impl<O: SolutionObject> SolutionArray<O> {
 
     /// Sets the size, zero-filling new slots ([`Solution::zeroed`]) and dropping
     /// solutions past `size` (`SetSize`).
+    ///
+    /// For sizes bounded by data already held. Like any `Vec`, it aborts when the
+    /// slots cannot be allocated; use [`SolutionArray::try_set_size`] for sizes that
+    /// come from caller input.
     pub fn set_size(&mut self, size: usize) {
         self.data.resize(size, Solution::zeroed());
+    }
+
+    /// [`SolutionArray::set_size`] for sizes that come from caller input.
+    ///
+    /// # Errors
+    ///
+    /// [`SolidError::InvalidInput`] when the slots cannot be allocated (upstream's
+    /// `smos_Calloc` returns `NULL` and is written through); the array is then
+    /// unchanged.
+    pub fn try_set_size(&mut self, size: usize) -> Result<()> {
+        self.reserve_to(size, "geom::solution_array::SolutionArray::try_set_size")?;
+        self.set_size(size);
+        Ok(())
+    }
+
+    /// Makes room for a total of `size` solutions, `InvalidInput` when that cannot
+    /// be allocated or would take more than [`crate::limits::MAX_ALLOC_BYTES`].
+    fn reserve_to(&mut self, size: usize, operation: &'static str) -> Result<()> {
+        if try_reserve_total(&mut self.data, size) {
+            Ok(())
+        } else {
+            Err(too_large(operation))
+        }
     }
 
     /// Removes every solution (`ReSet`).
@@ -1238,7 +1538,7 @@ impl<O: SolutionObject> SolutionArray<O> {
         self.data
             .get(index)
             .copied()
-            .ok_or(bad_index("geom::solution_array::SolutionArray::get_at"))
+            .ok_or_else(|| bad_index("geom::solution_array::SolutionArray::get_at"))
     }
 
     /// Replaces solution `index` (`SetAt`).
@@ -1250,7 +1550,7 @@ impl<O: SolutionObject> SolutionArray<O> {
         let slot = self
             .data
             .get_mut(index)
-            .ok_or(bad_index("geom::solution_array::SolutionArray::set_at"))?;
+            .ok_or_else(|| bad_index("geom::solution_array::SolutionArray::set_at"))?;
         *slot = *solution;
         Ok(())
     }
@@ -1264,6 +1564,26 @@ impl<O: SolutionObject> SolutionArray<O> {
         if let Some(slot) = self.data.get_mut(index) {
             *slot = *solution;
         }
+    }
+
+    /// The solutions with every object cleared (null pointers), in another handle
+    /// type: what a caller that named no objects gets back from a solve that named
+    /// [`OperandObject`]s internally.
+    #[must_use]
+    pub(crate) fn without_objects<P: SolutionObject>(&self) -> SolutionArray<P> {
+        let mut out = SolutionArray::new();
+        for s in &self.data {
+            out.data.push(Solution {
+                solution_type: s.solution_type,
+                num_variables: s.num_variables,
+                start: s.start,
+                end: s.end,
+                num_objects: s.num_objects,
+                objects: [None; MAX_TREES],
+                nodes: s.nodes,
+            });
+        }
+        out
     }
 
     /// Appends `solution`; returns its index (`Add`).
@@ -1298,6 +1618,32 @@ impl<O: SolutionObject> SolutionArray<O> {
         for slot in self.data.iter_mut().skip(index).take(count) {
             *slot = *solution;
         }
+    }
+
+    /// [`SolutionArray::insert_at`] for an index and count that come from caller
+    /// input.
+    ///
+    /// # Errors
+    ///
+    /// [`SolidError::InvalidInput`] when the grown size overflows or cannot be
+    /// allocated (upstream's `smos_Calloc` returns `NULL` and is written through);
+    /// the array is then unchanged.
+    pub fn try_insert_at(
+        &mut self,
+        index: usize,
+        solution: &Solution<O>,
+        count: usize,
+    ) -> Result<()> {
+        const OP: &str = "geom::solution_array::SolutionArray::try_insert_at";
+        let base = if index >= self.data.len() {
+            index
+        } else {
+            self.data.len()
+        };
+        let size = base.checked_add(count).ok_or_else(|| too_large(OP))?;
+        self.reserve_to(size, OP)?;
+        self.insert_at(index, solution, count);
+        Ok(())
     }
 
     /// Removes `count` solutions at `index` (`RemoveAt`). As upstream, when
@@ -1348,6 +1694,22 @@ impl<O: SolutionObject> SolutionArray<O> {
         new: &Solution<O>,
         key: SortKey,
     ) -> Result<Option<usize>> {
+        self.add_sorted_solution_in(new, key, &OwnDomains)
+    }
+
+    /// [`SolutionArray::add_sorted_solution`] comparing solutions with
+    /// [`Solution::is_equal_in`] over `domains` (the parameter domains of the
+    /// solutions' objects).
+    ///
+    /// # Errors
+    ///
+    /// Errors of [`Solution::is_equal_in`] and of the parameter reads.
+    pub fn add_sorted_solution_in(
+        &mut self,
+        new: &Solution<O>,
+        key: SortKey,
+        domains: &dyn ParameterDomains<O>,
+    ) -> Result<Option<usize>> {
         // skip BigSolutions - unitialized values
         if new.start.solution_value == BIG_DOUBLE {
             return Ok(None);
@@ -1360,7 +1722,7 @@ impl<O: SolutionObject> SolutionArray<O> {
         // for every current solution
         for (ii, old) in self.data.iter_mut().enumerate() {
             // don't add duplicate solutions (SolValues within ZeroSqrt and ParamValues within ScaledZero)
-            if old.is_equal(new)? {
+            if old.is_equal_in(new, domains)? {
                 // save the better solution - improve tolerances
                 if new.start.solution_value.abs() < old.start.solution_value.abs() {
                     *old = *new;
@@ -1448,6 +1810,13 @@ impl<O: SolutionObject> SolutionArray<O> {
 
         // all done
         Ok(Some(insertion_index))
+    }
+}
+
+fn too_large(operation: &'static str) -> SolidError {
+    SolidError::InvalidInput {
+        operation,
+        reason: "solution array too large to allocate",
     }
 }
 
@@ -1686,6 +2055,19 @@ mod tests {
     }
 
     #[test]
+    fn a_curve_handle_without_its_interval_is_invalid_input() {
+        // every library path resolves a curve handle's interval (see
+        // `curve_natural_interval`): one that cannot is a caller error, not a deferral
+        let mut s = single(0.0, &[0.5]);
+        s.num_objects = 1;
+        s.objects[0] = Some(Obj(1, ObjectKind::Curve));
+        assert!(matches!(
+            s.parameter_interval(0),
+            Err(SolidError::InvalidInput { .. })
+        ));
+    }
+
+    #[test]
     fn array_editing() {
         let mut a: SolutionArray<Obj> = SolutionArray::with_capacity(8);
         assert!(a.is_empty());
@@ -1723,6 +2105,33 @@ mod tests {
         assert!(a.is_empty() && a.get(0).is_none());
         a.remove_at(0, 3);
         assert!(a.is_empty());
+    }
+
+    /// Fuzz regression: caller-chosen sizes, indices and counts that cannot be
+    /// allocated return `InvalidInput` instead of aborting, leaving the array as is.
+    #[test]
+    fn huge_sizes_fail_softly() {
+        let mut a: SolutionArray<Obj> = SolutionArray::new();
+        a.add(&single(1.0, &[]));
+        a.add(&single(2.0, &[]));
+        let keep = a.clone();
+        // Byte counts past isize::MAX, so the reservation fails on every target; sizes
+        // the OS merely cannot back (2^33 solutions, ~2.5 TB) are granted lazily on
+        // macOS and the fill then commits them.
+        assert!(a.try_set_size(1 << 58).is_err());
+        assert!(a.try_set_size(usize::MAX).is_err());
+        assert!(a
+            .try_insert_at(1 << 57, &single(3.0, &[]), 1 << 57)
+            .is_err());
+        assert!(a.try_insert_at(usize::MAX, &single(3.0, &[]), 1).is_err());
+        assert!(a.try_insert_at(1, &single(3.0, &[]), usize::MAX).is_err());
+        assert!(SolutionArray::<Obj>::try_with_capacity(usize::MAX).is_err());
+        assert_eq!(a, keep);
+        a.try_set_size(3).unwrap();
+        a.try_insert_at(1, &single(9.0, &[]), 2).unwrap();
+        assert_eq!(a.len(), 5);
+        assert_eq!(a.get(1).unwrap().start.solution_value, 9.0);
+        assert_eq!(a.get(4).unwrap().solution_type, SolutionType::NodesOnly);
     }
 
     #[test]
@@ -1784,7 +2193,8 @@ mod tests {
             Some(4)
         );
 
-        // curves as first objects need their parameter intervals: unported
+        // curves as first objects need their parameter intervals: a handle that reports
+        // none is invalid input (no library path names one, see `curve_natural_interval`)
         let mut d = single(0.0, &[0.5]);
         d.num_objects = 1;
         d.objects[0] = Some(Obj(1, ObjectKind::Curve));
@@ -1792,7 +2202,7 @@ mod tests {
         e.add_sorted_solution(&d, SortKey::BySolutionValue).unwrap();
         assert!(matches!(
             e.add_sorted_solution(&d, SortKey::BySolutionValue),
-            Err(SolidError::Unported { .. })
+            Err(SolidError::InvalidInput { .. })
         ));
     }
 

@@ -32,6 +32,7 @@ use solidcore::geom::tree::{
 };
 use solidcore::geom::vector2d::Vec2;
 use solidcore::kernel::Kernel;
+use solidcore::nurbs::b_spline_surface::{BSplineSurface, BSplineSurfaceForm};
 use solidcore::nurbs::math::NOW;
 use solidcore::surface::curve_bounded_surface::CurveBoundedSurface;
 use solidcore::surface::plane::p1::Plane;
@@ -82,6 +83,12 @@ enum SurfIn {
     Bspline(BssIn),
     Plane(PlaneIn),
     CurveBounded(BssIn),
+    /// [`SurfIn::Bspline`] with its knots kept exactly as given: the shim writes them back
+    /// over the NURB after `SmBSplineSurface(gw_SURFACE*, FALSE, ..)` has fixed them up
+    /// (`sm_FixupKnotVector`); Rust builds it over a borrowed NURB, whose knots stay.
+    RawBspline(BssIn),
+    /// [`SurfIn::CurveBounded`] over a [`SurfIn::RawBspline`] basis.
+    RawCurveBounded(BssIn),
 }
 
 /// The cache options.
@@ -214,6 +221,14 @@ fn push_surf(o: &mut Vec<f64>, s: &SurfIn) -> Result<(), HarnessError> {
             o.push(2.0);
             push_bss(o, b)
         }
+        SurfIn::RawBspline(b) => {
+            o.push(3.0);
+            push_bss(o, b)
+        }
+        SurfIn::RawCurveBounded(b) => {
+            o.push(4.0);
+            push_bss(o, b)
+        }
     }
 }
 
@@ -330,8 +345,25 @@ fn surface_in(s: &SurfIn) -> Result<Surface, HarnessError> {
             Vec::new(),
             Vec::new(),
             true,
-        )),
+        ).map_err(|e| HarnessError::new(e.to_string()))?),
+        SurfIn::RawBspline(b) => Surface::from(raw_bss_of(b)?),
+        SurfIn::RawCurveBounded(b) => Surface::from(CurveBoundedSurface::new(
+            Surface::from(raw_bss_of(b)?),
+            Vec::new(),
+            Vec::new(),
+            true,
+        ).map_err(|e| HarnessError::new(e.to_string()))?),
     })
+}
+
+/// [`bss_of`] over a borrowed NURB: the knots stay exactly as given.
+fn raw_bss_of(b: &BssIn) -> Result<BSplineSurface, HarnessError> {
+    let mut s = BSplineSurface::from_nurb(surface_of(&srf(&b.srf)?)?, true);
+    *s.out_of_bounds_enabled_mut() = b.oob;
+    let form = BSplineSurfaceForm::from_code(u64::from(b.form))
+        .ok_or_else(|| harness(format!("bad form {}", b.form)))?;
+    s.set_b_spline_surface_form(form);
+    Ok(s)
 }
 
 fn options_of(p: &OptsIn) -> SurfaceCacheOptions {
@@ -464,7 +496,7 @@ fn rust_op(i: &Inputs) -> Result<Run, HarnessError> {
             Ok(Ok(o))
         }
         OpIn::Add { adds, queries } => {
-            let d = surface.natural_uv_domain();
+            let d = surface.natural_uv_domain_with_nurb(&k).map_err(|e| HarnessError::new(e.to_string()))?;
             let mut cache = SurfaceCache::<i64>::new(surface, d, SurfaceCacheOptions::default());
             let mut o = vec![0.0];
             for a in adds {
@@ -530,7 +562,7 @@ fn rust_op(i: &Inputs) -> Result<Run, HarnessError> {
                 Err(e) => Ok(Err(e)),
             }
         }
-        OpIn::ApproxBlock => match sc::create_approximate_bezier_patch_block(&surface) {
+        OpIn::ApproxBlock => match sc::create_approximate_bezier_patch_block(&k, &surface) {
             Ok(r) => {
                 let mut o = vec![0.0, r.num_u_spans as f64, r.num_v_spans as f64];
                 o.push(r.u_splits.len() as f64);
@@ -627,7 +659,7 @@ fn rust_op(i: &Inputs) -> Result<Run, HarnessError> {
             Ok(Ok(o))
         }
         OpIn::SubdivBlock { opts, dom, nosurf } => {
-            let d = surface.natural_uv_domain();
+            let d = surface.natural_uv_domain_with_nurb(&k).map_err(|e| HarnessError::new(e.to_string()))?;
             let mut cache = cache_of(surface, d, opts);
             let mut tree: Tree<i64> = Tree::new(Some(TreeOwner::SurfaceCache));
             let handle = (!nosurf).then_some(SURFACE_HANDLE);
@@ -715,7 +747,10 @@ fn gen_surf(rng: &mut Rng) -> SurfIn {
 
 fn surf_domain(s: &SurfIn) -> Result<[f64; 4], HarnessError> {
     Ok(match s {
-        SurfIn::Bspline(b) | SurfIn::CurveBounded(b) => domain_of_srf(&srf(&b.srf)?),
+        SurfIn::Bspline(b)
+        | SurfIn::CurveBounded(b)
+        | SurfIn::RawBspline(b)
+        | SurfIn::RawCurveBounded(b) => domain_of_srf(&srf(&b.srf)?),
         SurfIn::Plane(p) => p.dom,
     })
 }
@@ -735,7 +770,10 @@ fn gen_tol(rng: &mut Rng, size: f64) -> f64 {
 /// The largest coordinate magnitude of a surface (for tolerance scaling).
 fn surf_size(s: &SurfIn) -> Result<f64, HarnessError> {
     Ok(match s {
-        SurfIn::Bspline(b) | SurfIn::CurveBounded(b) => srf(&b.srf)?
+        SurfIn::Bspline(b)
+        | SurfIn::CurveBounded(b)
+        | SurfIn::RawBspline(b)
+        | SurfIn::RawCurveBounded(b) => srf(&b.srf)?
             .net
             .iter()
             .flatten()

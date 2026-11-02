@@ -12,10 +12,12 @@
 // One entry point, sc_curve_curve_p7_eval(op, in, n_in, out, cap, out_len). Layouts are
 // documented in crates/solidcore-ffi/src/units/curve_curve_p7.rs, which validates every
 // input. A curve block is `kind dim ...` (0: SmBSplineCurve `oob n p m cpts(x y z w) knots`;
-// 1: SmHermiteCurve `P1 D1 P2 D2`; 2: bounded SmLine `P V d0 d1 scale io`).
+// 1: SmHermiteCurve `P1 D1 P2 D2`; 2: bounded SmLine `P V d0 d1 scale io`;
+// 3: fixed real SmEllipse, dim 3, no further payload).
 #include "sc_shim.h"
 
 #include "StdAfx.h"
+#include <SmAxis2Placement.h>
 #include <SmBSplineCurve.h>
 #include <SmCacheMgr.h>
 #include <SmContext.h>
@@ -27,6 +29,7 @@
 #include <SmGeomUtility.h>
 #include <SmGlobalSolver.h>
 #include <SmHermiteCurve.h>
+#include <SmEllipse.h>
 #include <SmLine.h>
 #include <SmNurbsCrv.h>
 #include <SmProjectedCurve.h>
@@ -1834,6 +1837,13 @@ SmCurve* read_curve(Rd& rd, const SmContext& ctx)
         c->SetOutOfBoundsEnabled(oob ? TRUE : FALSE);
         return c;
     }
+    if (kind == 3)
+    {
+        // Fixed genuine ellipse; angular degrees differ from its natural [0,1] domain.
+        return new (ctx) SmEllipse(SmPoint3d(0., 0., 0.), SmVector3d(1., 0., 0.),
+                                  SmVector3d(0., 1., 0.), SmExtent1d(0., 180.),
+                                  3., 2., 3, &ctx, NULL, FALSE);
+    }
     if (kind == 2)
     {
         SmPoint3d p = rd.vec();
@@ -1849,6 +1859,23 @@ SmCurve* read_curve(Rd& rd, const SmContext& ctx)
     SmVector3d p2 = rd.vec();
     SmVector3d d2 = rd.vec();
     return new (ctx) SmHermiteCurve(p1, d1, p2, d2, dim);
+}
+
+// The transforms `nt (O X Y has_s S)*nt` after a curve block, applied to `c` in order.
+void read_transforms(Rd& rd, SmCurve* c)
+{
+    int64_t nt = rd.idx();
+    for (int64_t i = 0; i < nt; i++)
+    {
+        SmPoint3d o = rd.vec();
+        SmVector3d x = rd.vec();
+        SmVector3d y = rd.vec();
+        bool has_s = rd.flag();
+        SmVector3d s = rd.vec();
+        SmAxis2Placement a2p;
+        a2p.SetCanonical(o, x, y);
+        c->Transform(a2p, has_s ? &s : NULL);
+    }
 }
 
 // `nv V[nv]` into `vecs`; returns NULL for nv == 0.
@@ -2036,6 +2063,7 @@ void run(int32_t op, Rd& rd, const SmContext& ctx, std::vector<double>& o)
     case OP_PROPERTY:
     {
         SmCurve* c = read_curve(rd, ctx);
+        read_transforms(rd, c);
         double a = rd.num();
         double b = rd.num();
         SmCurvePropertyType prop = (SmCurvePropertyType)rd.idx();

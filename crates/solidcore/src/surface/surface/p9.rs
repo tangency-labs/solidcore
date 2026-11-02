@@ -12,8 +12,15 @@
 //! recurses once with maximum length zero; an explicit depth limit of two guards
 //! that invariant. Split arrays are limited to 1,000,000 entries before allocation
 //! or concatenation. Unsupported surface virtuals return `Unported`, never an
-//! approximate replacement. Iso extraction is exact for B-splines, so the public
-//! approximation tolerance has no numerical effect for that supported kind.
+//! approximate replacement. The diagonal curves of a cone, sphere or torus are
+//! `SmCrvOnSurf` over the analytic surface itself ([`CrvOnSurf`] holds any
+//! [`Surface`]). Iso curves come from the
+//! kind's own `CreateIsoParametricCurve`, and implicit iso curves evaluate the plane,
+//! cone, sphere and torus through their own evaluation, as upstream's virtuals;
+//! curve-bounded, STEP, offset and in-volume surfaces build both kinds of iso curve
+//! over the surface itself (the `SmSurface` body, with the caller's approximation
+//! tolerance). Iso extraction is exact for B-splines, so the tolerance has no
+//! numerical effect for that kind.
 //! Failed tessellations retain the empty parameter array;
 //! unported errors are propagated even where upstream ignores a status.
 
@@ -23,9 +30,9 @@ use super::p1::CsiGlobalSolver;
 use super::p2::{merge_double_arrays, Surface, SurfaceKind};
 use crate::curve::crv_on_surf::CrvOnSurf;
 use crate::curve::curve::p3::{local_curve_intersect, PointSolveOptions};
-use crate::curve::curve::Curve;
+use crate::curve::curve::{Curve, CurveKind};
 use crate::curve::iso_curve::IsoCurve;
-use crate::error::{ignored, Result, SolidError};
+use crate::error::{ignored, ignored_or_pass_on, Result, SolidError};
 use crate::geom::extent1d::Extent1d;
 use crate::geom::extent2d::Extent2d;
 use crate::geom::geom_utility::p2::ContinuityType;
@@ -47,75 +54,111 @@ use crate::surface::surface_cache::BezierPatch;
 const OP: &str = "surface::surface::p9::find_tessellation_splits";
 const MAX_SPLITS: usize = 1_000_000;
 
-fn bss(surface: &Surface) -> Result<Cow<'_, BSplineSurface>> {
+fn bss<'a>(k: &Kernel, surface: &'a Surface) -> Result<Cow<'a, BSplineSurface>> {
     match surface.kind() {
         SurfaceKind::BSpline(s) => Ok(Cow::Borrowed(s)),
+        SurfaceKind::ProceduralBlend(pb) => {
+            let s = pb.net();
+            Ok(Cow::Borrowed(s))
+        }
+        SurfaceKind::BallPatch(bp) => {
+            let s = bp.net();
+            Ok(Cow::Borrowed(s))
+        }
         SurfaceKind::Plane(p) => Ok(p.base_for_query()),
+        SurfaceKind::Cone(_) | SurfaceKind::Sphere(_) | SurfaceKind::Torus(_) => {
+            // (unreachable: iso curves of these kinds dispatch to the kinds' own
+            // overrides, and the diagonal `SmCrvOnSurf` of `FindTessellationSplits`
+            // holds the analytic surface itself, as upstream, not a B-spline view)
+            Err(SolidError::invalid_input(
+                OP,
+                "surface has no B-spline view",
+            ))
+        }
         SurfaceKind::SurfOfRevolution(s) => Ok(Cow::Borrowed(s.base())),
+        // (the B-spline evaluation makes a missing NURB: GetOrCreateGwNurbPointer)
+        SurfaceKind::SurfOfExtrusion(s) => s.base_with_nurb(k),
         SurfaceKind::CurveBounded(_)
         | SurfaceKind::Step(_)
         | SurfaceKind::OffsetSurface(_)
         | SurfaceKind::SrfInVolume(_) => {
-            // `SmIsoCurve` holds B-spline surfaces only (plan/findings.md, surface.surface_p5)
-            // UNPORTED(curve.iso_curve): SmIsoCurve over a non-B-spline surface
-            Err(SolidError::unported(
-                "SmIsoCurve::SmIsoCurve(non-B-spline surface)",
-                "curve.iso_curve",
+            // (unreachable: the iso curves of these kinds are built over the surface
+            // itself, as upstream's `SmIsoCurve` and `SmSurface::CreateIsoParametricCurve`)
+            Err(SolidError::invalid_input(
+                OP,
+                "surface has no B-spline view",
             ))
         }
     }
 }
 
+/// The `SmBSplineCurve` part of an iso curve as upstream types it: the B-spline
+/// itself, a circle's B-spline or a line's NURB.
+fn iso_base(curve: &Curve) -> Result<BSplineCurve> {
+    match curve.kind() {
+        CurveKind::BSpline(c) => Ok(c.copy()),
+        CurveKind::Ellipse(c) => Ok(c.base().copy()),
+        CurveKind::Line(c) => Ok(c.base_with_nurb()?.into_owned()),
+        _ => Err(SolidError::invalid_input(OP, "unexpected iso curve kind")),
+    }
+}
+
 /// `CreateIsoParametricCurve` through the surface virtual: the B-spline view
 /// used for lengths and point spacing, and the curve as upstream types it
-/// (`SmLine` for planes, `SmCircle` for revolution sweeps), whose own
-/// `IsDegenerate` override upstream calls.
+/// (`SmLine` for planes and cone rulings, `SmCircle` for revolution sweeps), whose
+/// own `IsDegenerate` and `ApproximateLength` overrides upstream calls.
 fn typed_iso_curve(
     k: &Kernel,
     surface: &Surface,
     direction: SurfParamType,
     value: f64,
+    approx_tol: f64,
 ) -> Result<(BSplineCurve, Curve)> {
-    if let SurfaceKind::Plane(p) = surface.kind() {
-        let line = p
-            .create_iso_parametric_curve(direction, value, None, false)?
-            .curve;
-        let base = line.base_with_nurb()?.into_owned();
-        return Ok((base, Curve::from(line)));
-    }
-    if let SurfaceKind::SurfOfRevolution(s) = surface.kind() {
-        let iso = s.create_iso_parametric_curve(k, direction, value, None)?;
-        let base = match iso.curve.kind() {
-            crate::curve::curve::CurveKind::BSpline(c) => c.copy(),
-            crate::curve::curve::CurveKind::Ellipse(c) => c.base().copy(),
-            _ => {
-                return Err(SolidError::invalid_input(
-                    OP,
-                    "unexpected revolution iso curve kind",
-                ))
-            }
-        };
-        return Ok((base, iso.curve));
-    }
-    let base = bss(surface)?
-        .create_iso_parametric_curve(k, direction, value, IsoCurveOptions::default())?
-        .curve;
-    let typed = Curve::from(base.clone());
-    Ok((base, typed))
-}
-
-fn iso_curve(
-    k: &Kernel,
-    surface: &Surface,
-    direction: SurfParamType,
-    value: f64,
-) -> Result<BSplineCurve> {
-    Ok(typed_iso_curve(k, surface, direction, value)?.0)
+    let typed = match surface.kind_with_nurb(k)? {
+        // (no override: the `SmSurface` body, whose approximation uses the tolerance)
+        SurfaceKind::CurveBounded(_)
+        | SurfaceKind::Step(_)
+        | SurfaceKind::OffsetSurface(_)
+        | SurfaceKind::SrfInVolume(_) => {
+            surface
+                .create_iso_parametric_curve(k, direction, value, approx_tol, None, false)?
+                .curve
+        }
+        SurfaceKind::Plane(p) => Curve::from(
+            p.create_iso_parametric_curve(direction, value, None, false)?
+                .curve,
+        ),
+        SurfaceKind::SurfOfRevolution(s) => {
+            s.create_iso_parametric_curve(k, direction, value, None)?
+                .curve
+        }
+        SurfaceKind::Cone(s) => {
+            s.create_iso_parametric_curve(k, direction, value, None, false)?
+                .curve
+        }
+        SurfaceKind::Sphere(s) => {
+            s.create_iso_parametric_curve(k, direction, value, None, false)?
+                .curve
+        }
+        SurfaceKind::Torus(s) => {
+            s.create_iso_parametric_curve(k, direction, value, None, false)?
+                .curve
+        }
+        _ => {
+            let base = bss(k, surface)?
+                .create_iso_parametric_curve(k, direction, value, IsoCurveOptions::default())?
+                .curve;
+            let typed = Curve::from(base.clone());
+            return Ok((base, typed));
+        }
+    };
+    Ok((iso_base(&typed)?, typed))
 }
 
 /// `SmIsoCurve(surface, direction, value, left)` (clamped input): over the B-spline
-/// view of `surface`, or over the plane itself for a plane.
+/// view of `surface`, or over the surface itself for a plane, cone, sphere or torus.
 pub(super) fn implicit_iso(
+    k: &Kernel,
     surface: &Surface,
     direction: SurfParamType,
     value: f64,
@@ -123,9 +166,20 @@ pub(super) fn implicit_iso(
 ) -> Result<Curve> {
     // upstream's SmIsoCurve evaluates through the surface's virtual Evaluate: for an
     // SmPlane that is the analytic evaluation, not the NURB (whose bilinear
-    // interpolation over the plane's +-1234567 analytic domain differs in the last bits)
-    if let SurfaceKind::Plane(_) = surface.kind() {
+    // interpolation over the plane's +-1234567 analytic domain differs in the last bits),
+    // likewise SmCone's; the sphere and torus dispatch to their inherited evaluation
+    if let SurfaceKind::Plane(_)
+    | SurfaceKind::Cone(_)
+    | SurfaceKind::Sphere(_)
+    | SurfaceKind::Torus(_)
+    | SurfaceKind::ProceduralBlend(_)
+    | SurfaceKind::CurveBounded(_)
+    | SurfaceKind::Step(_)
+    | SurfaceKind::OffsetSurface(_)
+    | SurfaceKind::SrfInVolume(_) = surface.kind()
+    {
         return Ok(Curve::from(IsoCurve::from_surface(
+            k,
             surface.clone_for_evaluation()?,
             direction,
             value,
@@ -133,8 +187,10 @@ pub(super) fn implicit_iso(
             true,
         )?));
     }
+    // (`SmIsoCurve(*this, ..)` refers to the surface itself: an exact copy, not the copy
+    // constructor, whose knot fix-up can move near-coincident knots)
     Ok(Curve::from(IsoCurve::new(
-        bss(surface)?.copy(),
+        bss(k, surface)?.clone_exact(),
         direction,
         value,
         left,
@@ -143,17 +199,20 @@ pub(super) fn implicit_iso(
 }
 
 fn tessellate(
+    k: &Kernel,
     curve: &Curve,
     interval: &Extent1d,
     chord: f64,
     angle: f64,
     max_side: f64,
 ) -> Result<Vec<f64>> {
-    Ok(
-        ignored(curve.tessellate_by_bisection(interval, chord, angle, max_side))?
-            .map(|t| t.parameters)
-            .unwrap_or_default(),
-    )
+    // (passed on with the opt-in fix, WR-663, tangency-labs/smlib 21dcf69)
+    Ok(ignored_or_pass_on(
+        curve.tessellate_by_bisection(k, interval, chord, angle, max_side),
+        k.fixes.query_statuses_pass_on,
+    )?
+    .map(|t| t.parameters)
+    .unwrap_or_default())
 }
 
 fn check_count(n: usize) -> Result<()> {
@@ -169,6 +228,9 @@ fn check_count(n: usize) -> Result<()> {
 impl Surface {
     /// Creates the curves at the minimum and maximum natural-domain boundary in
     /// `direction`. Other enumerators leave both outputs unset, as upstream.
+    /// The curves keep the kind the surface's `CreateIsoParametricCurve` override
+    /// builds (`SmLine` for plane lines and cone rulings, `SmCircle` for revolution
+    /// sweeps): upstream's `SmBSplineCurve*` outputs dispatch on it.
     ///
     /// # Errors
     /// Those of iso-curve construction; `Unported` for unsupported surface kinds.
@@ -176,16 +238,16 @@ impl Surface {
         &self,
         k: &Kernel,
         direction: SurfParamType,
-        _tolerance: f64,
-    ) -> Result<Option<(BSplineCurve, BSplineCurve)>> {
-        let domain = self.natural_uv_domain();
+        tolerance: f64,
+    ) -> Result<Option<(Curve, Curve)>> {
+        let domain = self.natural_uv_domain_with_nurb(k)?;
         let (min, max) = match direction {
             SurfParamType::U => (domain.min().x, domain.max().x),
             SurfParamType::V => (domain.min().y, domain.max().y),
             _ => return Ok(None),
         };
-        let first = iso_curve(k, self, direction, min)?;
-        let second = iso_curve(k, self, direction, max)?;
+        let first = typed_iso_curve(k, self, direction, min, tolerance)?.1;
+        let second = typed_iso_curve(k, self, direction, max, tolerance)?.1;
         Ok(Some((first, second)))
     }
 
@@ -251,15 +313,22 @@ impl Surface {
                 } else {
                     uv.x
                 };
-                let (curve, typed) = typed_iso_curve(k, self, direction, iso)?;
+                let (curve, typed) = typed_iso_curve(k, self, direction, iso, max_side / 100.0)?;
                 // `pBSC->IsDegenerate()` is virtual: a revolution circle uses
                 // `SmEllipse::IsDegenerate` (radius < tol/2 or arc < tol) and a
                 // plane line `SmLine::IsDegenerate`, not the B-spline test.
-                if typed.is_degenerate(EFF_ZERO, None)? {
+                if typed.is_degenerate(k, EFF_ZERO, None)? {
                     continue;
                 }
-                let generic = Curve::from(curve.clone());
-                length = generic.approximate_length(&interval, 30, false)?.0;
+                // (`ApproximateLength` is virtual: `SmLine` overrides it, the other
+                // iso curve kinds run the B-spline's)
+                length = if let CurveKind::Line(_) = typed.kind() {
+                    typed.approximate_length(k, &interval, 30, false)?.0
+                } else {
+                    Curve::from(curve.clone())
+                        .approximate_length(k, &interval, 30, false)?
+                        .0
+                };
                 if length > max_length {
                     max_length = length;
                     longest = Some(curve);
@@ -335,15 +404,15 @@ impl Surface {
             } else {
                 boundary.x
             };
-            let curve = implicit_iso(self, direction, value, true)?;
-            let degenerate = curve.is_degenerate(EFF_ZERO, None)?;
-            let is_linear = curve.is_linear(linear_tol, true)?.linear;
+            let curve = implicit_iso(k, self, direction, value, true)?;
+            let degenerate = curve.is_degenerate(k, EFF_ZERO, None)?;
+            let is_linear = curve.is_linear(k, linear_tol, true)?.linear;
             let mut splits = Vec::new();
             let mut fallback_needed = degenerate || is_linear;
             if !fallback_needed {
-                match curve.tessellate_by_bisection(&interval, chord, angle, max_side) {
+                match curve.tessellate_by_bisection(k, &interval, chord, angle, max_side) {
                     Ok(result) => splits = result.parameters,
-                    Err(e) if e.is_unported() => return Err(e),
+                    Err(e) if e.is_unported_or_cancelled() => return Err(e),
                     Err(_) => fallback_needed = true,
                 }
             }
@@ -355,12 +424,12 @@ impl Surface {
                 } else {
                     uv.x
                 };
-                let curve = implicit_iso(self, direction, value, true)?;
-                final_linear = curve.is_linear(linear_tol, true)?.linear;
+                let curve = implicit_iso(k, self, direction, value, true)?;
+                final_linear = curve.is_linear(k, linear_tol, true)?.linear;
                 if !final_linear {
-                    match curve.tessellate_by_bisection(&interval, chord, angle, max_side) {
+                    match curve.tessellate_by_bisection(k, &interval, chord, angle, max_side) {
                         Ok(result) => splits = result.parameters,
-                        Err(e) if e.is_unported() => return Err(e),
+                        Err(e) if e.is_unported_or_cancelled() => return Err(e),
                         Err(_) => failures += 1,
                     }
                 }
@@ -398,12 +467,13 @@ impl Surface {
                 ));
                 let curve = Curve::from(CrvOnSurf::new(
                     k,
-                    uv_curve.clone(),
-                    bss(self)?.copy(),
+                    uv_curve.clone_for_evaluation()?,
+                    self.clone_for_evaluation()?,
                     Some(*domain),
                     0,
                 )?);
                 let mut p = tessellate(
+                    k,
                     &curve,
                     &Extent1d::from_min_max(0.0, 1.0),
                     chord,
@@ -414,7 +484,7 @@ impl Surface {
                     p.reverse();
                 }
                 for t in &mut p {
-                    let uv = uv_curve.evaluate_point(*t)?;
+                    let uv = uv_curve.evaluate_point(k, *t)?;
                     *t = if direction == SurfParamType::V {
                         uv.x
                     } else {
@@ -446,15 +516,17 @@ struct CsiIntersection {
 }
 
 fn surface_closed(
+    k: &Kernel,
     surface: &Surface,
     domain: &Extent2d,
     direction: SurfParamType,
 ) -> Result<(bool, ContinuityType)> {
-    let (closed, continuity) = surface.is_closed(domain, direction, None, true)?;
+    let (closed, continuity) = surface.is_closed(k, domain, direction, None, true)?;
     Ok((closed, continuity.ok_or(SolidError::sm_err(OP))?))
 }
-fn tangent_drop(surface: &Surface, uv: Point2, point: Point3) -> Result<Point2> {
+fn tangent_drop(k: &Kernel, surface: &Surface, uv: Point2, point: Point3) -> Result<Point2> {
     super::p7::drop_points_to_tangent_plane(
+        k,
         surface,
         uv,
         crate::nurbs::knots::Side::Left,
@@ -467,6 +539,7 @@ fn tangent_drop(surface: &Surface, uv: Point2, point: Point3) -> Result<Point2> 
 }
 /// `SmSurface::LocalCurveIntersect` (virtual; no kind overrides it).
 fn intersect_surface_curve(
+    k: &Kernel,
     surface: &Surface,
     domain: &Extent2d,
     curve: &Curve,
@@ -476,7 +549,7 @@ fn intersect_surface_curve(
     t: f64,
 ) -> Result<Option<CsiIntersection>> {
     Ok(surface
-        .local_curve_intersect(domain, curve, interval, tol, uv, t)?
+        .local_curve_intersect(k, domain, curve, interval, tol, uv, t)?
         .map(|x| CsiIntersection {
             uv: x.uv,
             parameter: x.t,
@@ -484,6 +557,7 @@ fn intersect_surface_curve(
         }))
 }
 fn filter_solution<O: SolutionObject>(
+    k: &Kernel,
     surface: &Surface,
     domain: &Extent2d,
     curve: &Curve,
@@ -494,18 +568,56 @@ fn filter_solution<O: SolutionObject>(
     // conts: the surface u and v continuities, then the curve's
     let [u_conts, v_conts, t_conts] = conts;
     super::p5::filter_solution(
-        surface, domain, curve, interval, u_conts, v_conts, t_conts, solution,
+        k, surface, domain, curve, interval, u_conts, v_conts, t_conts, solution,
     )
 }
+/// The tolerance of the edge owning `curve` (`pCurveOwner->GetTolerance()` in
+/// `sm_ClassifyCurveSurfaceXSectPoint`), through a face-aware caller's `queries` and
+/// the curve's `handle`, or else the edge's tolerance recorded on the curve
+/// (`topology::edge::evaluation_curve`'s copy carries it); `None` for a curve no edge
+/// owns, or when neither resolves it.
+///
+/// # Errors
+///
+/// Those of the caller's edge resolution.
+pub(super) fn curve_edge_tolerance<O>(
+    curve: &Curve,
+    handle: Option<O>,
+    queries: Option<&dyn crate::surface::surface_cache::face_context::FaceQueries<O>>,
+) -> Result<Option<f64>> {
+    if curve
+        .owner()
+        .is_none_or(|o| o.type_code != crate::geom::assert_array::labels::EDGE_TYPE)
+    {
+        return Ok(None);
+    }
+    match (queries, handle) {
+        (Some(queries), Some(handle)) => queries.curve_edge_tolerance(handle).transpose(),
+        _ => Ok(curve.owner_zone_tol_3d()),
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
 fn nearby_intersection(
+    k: &Kernel,
     surface: &Surface,
     domain: &Extent2d,
     curve: &Curve,
     interval: &Extent1d,
     uv: Point2,
     t: f64,
+    edge_tolerance: Option<f64>,
 ) -> Result<Option<(Point2, f64)>> {
-    let c = super::p4::classify_curve_surface_xsect_point(surface, domain, curve, interval, uv, t)?;
+    let c = super::p4::classify_curve_surface_xsect_point_with(
+        k,
+        surface,
+        domain,
+        curve,
+        interval,
+        uv,
+        t,
+        edge_tolerance,
+    )?;
     Ok(c.found_guess.then_some((c.new_uv_guess, c.new_t_guess)))
 }
 fn surface_point_solve<O: Copy>(
@@ -527,18 +639,52 @@ impl<'a, O: SolutionObject + 'a> GlobalSolve<'a, O> for CsiGlobalSolver<'a, '_, 
         &mut self.base
     }
     fn local_solve(&mut self, branch: &Branch) -> Result<bool> {
-        self.local_solve_branch(branch)
+        let k = self.kernel;
+        self.local_solve_branch(k, branch)
     }
     fn identical_solutions(
         &self,
         first: &Solution<O>,
         second: &Solution<O>,
     ) -> Result<(SolutionPairType, Option<PreferredSolution>)> {
-        super::p5::csi_identical_solutions(&self.base, self.surface, first, second)
+        let k = self.kernel;
+        // the solutions name the solve's curve and surface (the trees' owners)
+        if let Some(operands) = &self.operands {
+            super::p5::csi_identical_solutions_in(
+                k,
+                &self.base,
+                self.surface,
+                first,
+                second,
+                operands,
+            )
+        } else {
+            let domains = super::p1::SolveOperands {
+                operands: [
+                    super::p5::curve_operand(&self.base, 0, self.curve),
+                    super::p5::surface_operand(&self.base, 1, self.surface_cache, self.surface),
+                ],
+            };
+            super::p5::csi_identical_solutions_in(
+                k,
+                &self.base,
+                self.surface,
+                first,
+                second,
+                &domains,
+            )
+        }
     }
 }
 
 impl<'a, O: SolutionObject + 'a> CsiGlobalSolver<'a, '_, O> {
+    /// The tolerance of the edge owning `curve` ([`curve_edge_tolerance`]) through
+    /// this solve's face services and curve operand.
+    fn curve_edge_tolerance(&self, curve: &Curve) -> Result<Option<f64>> {
+        let handle = self.operands.and_then(|o| o.operands[0]).map(|(h, _)| h);
+        curve_edge_tolerance(curve, handle, self.face_queries)
+    }
+
     fn solution(&self, branch: &Branch, t: f64, uv: Point2, deviation: f64) -> Result<Solution<O>> {
         let mut solution = Solution::new();
         solution.num_variables = 3;
@@ -565,6 +711,7 @@ impl<'a, O: SolutionObject + 'a> CsiGlobalSolver<'a, '_, O> {
 
     fn keep(
         &mut self,
+        k: &Kernel,
         _branch: &Branch,
         surface: &Surface,
         domain: &Extent2d,
@@ -573,6 +720,7 @@ impl<'a, O: SolutionObject + 'a> CsiGlobalSolver<'a, '_, O> {
         solution: &Solution<O>,
     ) -> Result<()> {
         if filter_solution(
+            k,
             surface,
             domain,
             self.curve.ok_or(SolidError::null_pointer(OP))?,
@@ -581,11 +729,14 @@ impl<'a, O: SolutionObject + 'a> CsiGlobalSolver<'a, '_, O> {
             solution,
         )? {
             let uv = Point2::new(solution.start.param(1)?, solution.start.param(2)?);
-            if super::p1::is_point_valid(
+            if super::p1::is_point_valid_with(
+                k,
                 self.base.tree(1)?.owner(),
                 self.surface_cache.ok_or(SolidError::null_pointer(OP))?,
                 uv,
-            ) {
+                None,
+                self.face_queries,
+            )? {
                 self.add_sorted_solution(solution, SortKey::ByAllParameters, true)?;
             }
         }
@@ -600,7 +751,7 @@ impl<'a, O: SolutionObject + 'a> CsiGlobalSolver<'a, '_, O> {
     /// Invalid branch/patch data and explicit unported surface operations. No
     /// missing solver operation is replaced with a synthetic intersection.
     #[allow(clippy::too_many_lines)]
-    pub fn local_solve_branch(&mut self, branch: &Branch) -> Result<bool> {
+    pub fn local_solve_branch(&mut self, k: &Kernel, branch: &Branch) -> Result<bool> {
         let curve_node = *self.base.branch_node(branch, 0)?;
         let surface_node = *self.base.branch_node(branch, 1)?;
         let curve_tree = self.base.tree(0)?;
@@ -684,8 +835,15 @@ impl<'a, O: SolutionObject + 'a> CsiGlobalSolver<'a, '_, O> {
         if self.uv_domain.max().y <= domain.max().y {
             v_conts[1] = ContinuityType::Discontinuous;
         }
+        // with the opt-in fix a branch outside the domain or interval of interest has no
+        // answers (WR-663, tangency-labs/smlib 21dcf69)
+        let pass = k.fixes.query_statuses_pass_on;
         if !domain.is_contained_by(&self.uv_domain, EFF_ZERO) {
-            domain = domain.intersect(&self.uv_domain)?;
+            domain = match domain.intersect(&self.uv_domain) {
+                Ok(d) => d,
+                Err(e) if pass && !e.is_unported_or_cancelled() => return Ok(false),
+                Err(e) => return Err(e),
+            };
             if crate::geom::tol::are_same(domain.max().x, domain.min().x)
                 || crate::geom::tol::are_same(domain.max().y, domain.min().y)
             {
@@ -699,7 +857,11 @@ impl<'a, O: SolutionObject + 'a> CsiGlobalSolver<'a, '_, O> {
             t_conts[1] = ContinuityType::Discontinuous;
         }
         if !interval.is_contained_by(&self.interval, EFF_ZERO) {
-            interval = interval.intersect(&self.interval)?;
+            interval = match interval.intersect(&self.interval) {
+                Ok(i) => i,
+                Err(e) if pass && !e.is_unported_or_cancelled() => return Ok(false),
+                Err(e) => return Err(e),
+            };
             if crate::geom::tol::are_same(interval.max(), interval.min()) {
                 return Ok(false);
             }
@@ -715,17 +877,21 @@ impl<'a, O: SolutionObject + 'a> CsiGlobalSolver<'a, '_, O> {
             && self
                 .curve
                 .ok_or(SolidError::null_pointer(OP))?
-                .is_closed(&natural, 0.0)?
+                .is_closed(k, &natural, 0.0)?
         {
-            let continuity = ignored(crate::curve::curve::p2::evaluate_continuity(
-                self.curve.ok_or(SolidError::null_pointer(OP))?,
-                natural.min(),
-                false,
-                self.curve.ok_or(SolidError::null_pointer(OP))?,
-                natural.max(),
-                true,
-                0.5,
-            ))?
+            let continuity = ignored_or_pass_on(
+                crate::curve::curve::p2::evaluate_continuity(
+                    k,
+                    self.curve.ok_or(SolidError::null_pointer(OP))?,
+                    natural.min(),
+                    false,
+                    self.curve.ok_or(SolidError::null_pointer(OP))?,
+                    natural.max(),
+                    true,
+                    0.5,
+                ),
+                pass,
+            )?
             .map_or(ContinuityType::Discontinuous, |c| c.continuity);
             if crate::geom::tol::is_zero(interval.min() - natural.min()) {
                 t_conts[0] = continuity;
@@ -734,7 +900,7 @@ impl<'a, O: SolutionObject + 'a> CsiGlobalSolver<'a, '_, O> {
                 t_conts[1] = continuity;
             }
         }
-        let natural_domain = parent_surface.natural_uv_domain();
+        let natural_domain = parent_surface.natural_uv_domain_with_nurb(k)?;
         for (dir, leaf, parent, work, conts) in [
             (
                 SurfParamType::U,
@@ -756,7 +922,7 @@ impl<'a, O: SolutionObject + 'a> CsiGlobalSolver<'a, '_, O> {
                 && crate::geom::tol::is_zero(work.min() - parent.min())
                 && crate::geom::tol::is_zero(work.max() - parent.max())
             {
-                let (closed, continuity) = surface_closed(parent_surface, &natural_domain, dir)?;
+                let (closed, continuity) = surface_closed(k, parent_surface, &natural_domain, dir)?;
                 if closed {
                     if crate::geom::tol::is_zero(leaf.min() - parent.min()) {
                         conts[0] = continuity;
@@ -772,11 +938,12 @@ impl<'a, O: SolutionObject + 'a> CsiGlobalSolver<'a, '_, O> {
         let mut uv = domain.evaluate(0.5, 0.5);
         let mut t = interval.evaluate(0.5);
         if bigger {
-            let point = eval_surface.evaluate_point(uv)?;
+            let point = eval_surface.evaluate_point(k, uv)?;
             let (found, solution) = self
                 .curve
                 .ok_or(SolidError::null_pointer(OP))?
                 .local_point_solve::<O>(
+                    k,
                     &interval,
                     SolverOperation::Minimize,
                     point,
@@ -788,11 +955,12 @@ impl<'a, O: SolutionObject + 'a> CsiGlobalSolver<'a, '_, O> {
             }
         }
         uv = tangent_drop(
+            k,
             eval_surface,
             uv,
             self.curve
                 .ok_or(SolidError::null_pointer(OP))?
-                .evaluate_point(t)?,
+                .evaluate_point(k, t)?,
         )?;
         if !domain.contains_point(uv, 0.0) {
             if bigger {
@@ -801,20 +969,22 @@ impl<'a, O: SolutionObject + 'a> CsiGlobalSolver<'a, '_, O> {
                     .curve
                     .ok_or(SolidError::null_pointer(OP))?
                     .local_point_solve::<O>(
+                        k,
                         &interval,
                         SolverOperation::Minimize,
-                        eval_surface.evaluate_point(uv)?,
+                        eval_surface.evaluate_point(k, uv)?,
                         &PointSolveOptions::default(),
                         interval.evaluate(0.5),
                     )?;
                 if found {
                     let t2 = solution.start.param(0)?;
                     let uv2 = domain.clamp_point(tangent_drop(
+                        k,
                         eval_surface,
                         uv,
                         self.curve
                             .ok_or(SolidError::null_pointer(OP))?
-                            .evaluate_point(t2)?,
+                            .evaluate_point(k, t2)?,
                     )?);
                     guesses.push((uv2, t2));
                 }
@@ -822,31 +992,34 @@ impl<'a, O: SolutionObject + 'a> CsiGlobalSolver<'a, '_, O> {
                 uv = domain.evaluate(0.5, 0.5);
                 t = interval.min();
                 uv = tangent_drop(
+                    k,
                     eval_surface,
                     uv,
                     self.curve
                         .ok_or(SolidError::null_pointer(OP))?
-                        .evaluate_point(t)?,
+                        .evaluate_point(k, t)?,
                 )?;
                 if !domain.contains_point(uv, 0.0) {
                     uv = domain.evaluate(0.5, 0.5);
                     t = interval.max();
                     uv = tangent_drop(
+                        k,
                         eval_surface,
                         uv,
                         self.curve
                             .ok_or(SolidError::null_pointer(OP))?
-                            .evaluate_point(t)?,
+                            .evaluate_point(k, t)?,
                     )?;
                     if !domain.contains_point(uv, 0.0) {
                         t = interval.evaluate(0.5);
                         uv = domain.evaluate(0.5, 0.5);
                         uv = domain.clamp_point(tangent_drop(
+                            k,
                             eval_surface,
                             uv,
                             self.curve
                                 .ok_or(SolidError::null_pointer(OP))?
-                                .evaluate_point(t)?,
+                                .evaluate_point(k, t)?,
                         )?);
                         for fraction in [0.5, 0.0, 1.0] {
                             guesses.push((domain.evaluate(0.5, 0.5), interval.evaluate(fraction)));
@@ -866,6 +1039,7 @@ impl<'a, O: SolutionObject + 'a> CsiGlobalSolver<'a, '_, O> {
         let mut index = 0;
         while let Some(&(guess_uv, guess_t)) = guesses.get(index) {
             let result = intersect_surface_curve(
+                k,
                 eval_surface,
                 &domain,
                 self.curve.ok_or(SolidError::null_pointer(OP))?,
@@ -879,6 +1053,7 @@ impl<'a, O: SolutionObject + 'a> CsiGlobalSolver<'a, '_, O> {
                 deviation = hit.deviation;
                 let solution = self.solution(branch, hit.parameter, hit.uv, hit.deviation)?;
                 if !filter_solution(
+                    k,
                     eval_surface,
                     &domain,
                     self.curve.ok_or(SolidError::null_pointer(OP))?,
@@ -889,24 +1064,37 @@ impl<'a, O: SolutionObject + 'a> CsiGlobalSolver<'a, '_, O> {
                     index += 1;
                     continue;
                 }
-                if super::p1::is_point_valid(
+                if super::p1::is_point_valid_with(
+                    k,
                     self.base.tree(1)?.owner(),
                     self.surface_cache.ok_or(SolidError::null_pointer(OP))?,
                     hit.uv,
-                ) {
+                    None,
+                    self.face_queries,
+                )? {
                     self.add_sorted_solution(&solution, SortKey::ByAllParameters, true)?;
                 }
-                if super::p2::cs_are_perpen_disjoint(curve_tree, &curve_node, &surface_node)? {
+                if super::p2::cs_are_perpen_disjoint_in(
+                    k,
+                    curve_tree,
+                    &curve_node,
+                    &surface_node,
+                    self.surface_cache.ok_or(SolidError::null_pointer(OP))?,
+                    surface_id,
+                )? {
                     return Ok(false);
                 }
                 if index < 1 {
+                    let curve = self.curve.ok_or(SolidError::null_pointer(OP))?;
                     if let Some(new_guess) = ignored(nearby_intersection(
+                        k,
                         eval_surface,
                         &domain,
-                        self.curve.ok_or(SolidError::null_pointer(OP))?,
+                        curve,
                         &interval,
                         hit.uv,
                         hit.parameter,
+                        self.curve_edge_tolerance(curve)?,
                     ))?
                     .flatten()
                     {
@@ -933,10 +1121,10 @@ impl<'a, O: SolutionObject + 'a> CsiGlobalSolver<'a, '_, O> {
                 let point = self
                     .curve
                     .ok_or(SolidError::null_pointer(OP))?
-                    .evaluate_point(t)?;
+                    .evaluate_point(k, t)?;
                 if pseudo_box.distance_to_point(point) < EFF_ZERO {
                     let (found, mut solution) = surface_point_solve::<O>(
-                        self.kernel.ok_or(SolidError::null_pointer(OP))?,
+                        self.kernel,
                         parent_surface,
                         &natural_domain,
                         point,
@@ -947,6 +1135,7 @@ impl<'a, O: SolutionObject + 'a> CsiGlobalSolver<'a, '_, O> {
                         let value = solution.start.solution_value;
                         solution = self.solution(branch, t, uv, value)?;
                         self.keep(
+                            k,
                             branch,
                             parent_surface,
                             &natural_domain,
@@ -989,15 +1178,15 @@ impl<'a, O: SolutionObject + 'a> CsiGlobalSolver<'a, '_, O> {
                 if cont.is_none_or(|c| (*c as i32) > ContinuityType::C0 as i32) {
                     continue;
                 }
-                let iso = implicit_iso(eval_surface, dir, constant, j == 0)?;
-                if iso.is_degenerate(EFF_ZERO, None)? {
+                let iso = implicit_iso(k, eval_surface, dir, constant, j == 0)?;
+                if iso.is_degenerate(k, EFF_ZERO, None)? {
                     continue;
                 }
                 let coincident = self
                     .curve
                     .ok_or(SolidError::null_pointer(OP))?
                     .simple_coincidence_checker::<O>(
-                        self.kernel.ok_or(SolidError::null_pointer(OP))?,
+                        self.kernel,
                         &interval,
                         &iso,
                         &iso_interval,
@@ -1051,7 +1240,7 @@ impl<'a, O: SolutionObject + 'a> CsiGlobalSolver<'a, '_, O> {
                         adapted.end = solution.end;
                         self.add_sorted_solution(&adapted, SortKey::ByAllParameters, true)?;
                     } else {
-                        self.keep(branch, eval_surface, &domain, &interval, conts, &adapted)?;
+                        self.keep(k, branch, eval_surface, &domain, &interval, conts, &adapted)?;
                     }
                 }
                 if found_coincidence {
@@ -1064,6 +1253,7 @@ impl<'a, O: SolutionObject + 'a> CsiGlobalSolver<'a, '_, O> {
                 };
                 if max_error > zero || count == 0 {
                     if let Some(hit) = local_curve_intersect(
+                        k,
                         &iso,
                         &iso_interval,
                         self.curve.ok_or(SolidError::null_pointer(OP))?,
@@ -1078,7 +1268,15 @@ impl<'a, O: SolutionObject + 'a> CsiGlobalSolver<'a, '_, O> {
                             Point2::new(hit.my_param, constant)
                         };
                         let solution = self.solution(branch, hit.other_param, uv, hit.deviation)?;
-                        self.keep(branch, eval_surface, &domain, &interval, conts, &solution)?;
+                        self.keep(
+                            k,
+                            branch,
+                            eval_surface,
+                            &domain,
+                            &interval,
+                            conts,
+                            &solution,
+                        )?;
                     }
                 }
             }
@@ -1106,7 +1304,7 @@ mod tests {
     fn plane_splits_and_natural_boundaries() {
         let s = plane();
         let k = Kernel::default();
-        let domain = s.natural_uv_domain();
+        let domain = s.natural_uv_domain_if_built();
         for direction in [SurfParamType::U, SurfParamType::V] {
             assert_eq!(
                 s.find_tessellation_splits(&k, direction, &domain, 0.01, 10.0, 0.0, false)
@@ -1117,8 +1315,8 @@ mod tests {
                 .create_iso_boundaries(&k, direction, 0.01)
                 .unwrap()
                 .unwrap();
-            let a = a.evaluate_point(0.5).unwrap();
-            let b = b.evaluate_point(0.5).unwrap();
+            let a = a.evaluate_point(&k, 0.5).unwrap();
+            let b = b.evaluate_point(&k, 0.5).unwrap();
             if direction == SurfParamType::U {
                 assert_eq!((a.x, b.x), (0.0, 1.0));
             } else {
@@ -1138,7 +1336,7 @@ mod tests {
             .find_tessellation_splits(
                 &k,
                 SurfParamType::U,
-                &s.natural_uv_domain(),
+                &s.natural_uv_domain_if_built(),
                 0.01,
                 0.0,
                 1e-100,

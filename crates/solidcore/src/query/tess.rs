@@ -62,7 +62,14 @@
 //!   [`SolidError::Unported`], which is always propagated.
 //! - **Loops.** The parent walks of `MarkFaceContainment` stop with
 //!   [`SolidError::InvalidInput`] after as many steps as the tree has nodes (a cyclic
-//!   parent chain, which upstream follows forever).
+//!   parent chain, which upstream follows forever); so does its descent from the top
+//!   node after as many visits (a shared or cyclic child link, whose parent does not
+//!   point back; fuzz `query.tess` fuzz00241, fuzz00353).
+//! - **Recursion.** `BuildTree` implants the boundary through `GetTree`, which builds
+//!   again when there is no tree. When the (ignored) base-class build left no tree,
+//!   upstream recurses forever; here `GetTree` returns [`SolidError::InvalidInput`]
+//!   when it finds no tree while a build is under way. Every other `GetTree` inside a
+//!   build finds the tree, so the nesting is at most 1.
 //! - **Undefined behaviour.** Where upstream dereferences a null tree, top node,
 //!   poly B-rep, poly face or tessellation driver, or a node without
 //!   `SmBezierAux2d` data, the port returns `SM_ERR_NULL_POINTER` or
@@ -128,7 +135,7 @@ fn invalid(operation: &'static str, reason: &'static str) -> SolidError {
 fn ignore<T>(r: Result<T>) -> Result<Option<T>> {
     match r {
         Ok(v) => Ok(Some(v)),
-        Err(e) if e.is_unported() => Err(e),
+        Err(e) if e.is_unported_or_cancelled() => Err(e),
         Err(_) => Ok(None),
     }
 }
@@ -527,6 +534,7 @@ impl TessSrfCache {
             .new_subdivision_handle()
             .ok_or_else(|| invalid(OP_SUB, "cache cannot name subdivision surfaces"))?;
         let bbox = ignore(copy.calculate_bounding_box(
+            k,
             &domain,
             &BoundingBoxRequest {
                 normal: true,
@@ -590,6 +598,7 @@ impl TessSrfCache {
     /// `BuildTree` inside the face containment guard; `true` when the guard was
     /// cleared (containment done).
     fn build_tree_body(&mut self, k: &Kernel) -> Result<bool> {
+        k.check_cancelled("query::tess::TessSrfCache::build_tree")?;
         // Build the m_pTree subdivision tree of the surface
         if self.base().tree().is_none() {
             // (`GetNaturalUVDomain` and the copy constructor read the NURB through
@@ -597,11 +606,26 @@ impl TessSrfCache {
             // revolution's missing NURB first)
             let bss: Option<BSplineSurface> = match self.base().surface().kind() {
                 SurfaceKind::BSpline(b) => Some(b.clone()),
+                SurfaceKind::ProceduralBlend(pb) => {
+                    let b = pb.net();
+                    Some(b.clone())
+                }
+                SurfaceKind::BallPatch(bp) => {
+                    let b = bp.net();
+                    Some(b.clone())
+                }
                 SurfaceKind::Plane(p) => Some(match ignore(p.base_with_nurb())? {
                     Some(b) => b.into_owned(),
                     None => p.base().clone(),
                 }),
-                SurfaceKind::SurfOfRevolution(s) => Some(if s.base().gw_nurb().is_some() {
+                // (kept on the surface: `Surface::kind_with_nurb`, status ignored)
+                SurfaceKind::Cone(_)
+                | SurfaceKind::Sphere(_)
+                | SurfaceKind::Torus(_)
+                | SurfaceKind::SurfOfRevolution(_) => {
+                    self.base().surface().revolution_base_with_nurb(k)?.cloned()
+                }
+                SurfaceKind::SurfOfExtrusion(s) => Some(if s.base().gw_nurb().is_some() {
                     s.base().clone()
                 } else {
                     let mut c = s.as_ref().clone();
@@ -696,6 +720,13 @@ impl TessSrfCache {
             .owner()
             .is_some_and(|o| o.type_code == FACE_TYPE);
         let b = self.base();
+        let building = b.face_containment_done
+            == crate::surface::surface_cache::p1::FaceContainment::UnderConstruction;
+        // (port) a missing tree mid-build means the build in progress already failed
+        // (softly); building again would repeat it and recurse without end
+        if b.tree().is_none() && building {
+            return Err(invalid(OP_GET_TREE, "tree build re-entered without a tree"));
+        }
         if b.tree().is_none()
             || (!b.have_t_surface_cache
                 && face_owned
@@ -740,12 +771,12 @@ impl TessSrfCache {
             let uv_domain = base.uv_domain();
             let mid_uv = (start + end) / 2.0;
             let tol_u = min2(
-                map_to_2d(tol_3d, mid_uv, Vec2::new(1.0, 0.0), surface)?,
+                map_to_2d(k, tol_3d, mid_uv, Vec2::new(1.0, 0.0), surface)?,
                 uv_domain.x_length() / 100.0,
             )
             .abs();
             let tol_v = min2(
-                map_to_2d(tol_3d, mid_uv, Vec2::new(0.0, 1.0), surface)?,
+                map_to_2d(k, tol_3d, mid_uv, Vec2::new(0.0, 1.0), surface)?,
                 uv_domain.y_length() / 100.0,
             )
             .abs();
@@ -834,7 +865,15 @@ impl TessSrfCache {
 
         // Propagate up ON_BOUNDARY flag and a mark when all subnodes are classified
         let mut stack = vec![top];
+        let mut visits = 0;
         while let Some(node) = stack.pop() {
+            // (not upstream) a tree whose children point back to their parents visits
+            // each node once: more visits mean a shared or cyclic child link (upstream
+            // follows a cycle forever)
+            visits += 1;
+            if visits > limit {
+                return Err(invalid(OP_MARK, "cyclic child links"));
+            }
             let base = self.trim.base_mut();
             let (c1, c2, parent) = links(base, node)?;
             let own = fields(base, node, OP_MARK)?;
@@ -914,7 +953,9 @@ impl TessSrfCache {
                     pb.face_point_in_polygon(k, pf, Point3::new(mid.x, mid.y, 0.0), false)?;
                 if inside {
                     found_class = NodeClass::Inside;
-                    pb.face_set_original_face(pf, original, true)?;
+                    // The source key was read from this same face above: native
+                    // SetOriginalFace takes its unchanged branch, with no notify.
+                    pb.face_set_original_face(pf, original, true, None)?;
                 } else {
                     found_class = NodeClass::Outside;
                 }
@@ -1011,7 +1052,7 @@ fn tess_test_against_tolerances(
     for uv in uvs {
         let norm = cache
             .surface()
-            .evaluate_normal(uv, Side::Left, Side::Left)?;
+            .evaluate_normal(k, uv, Side::Left, Side::Left)?;
         let dot = norm.dot(view.view_vector);
         if dot * direction < 0.0 {
             silhouette = true;
@@ -1049,8 +1090,8 @@ fn tess_test_against_tolerances(
 }
 
 /// `SmTol::MapTo2d(tol, uv, dir, surface)`.
-fn map_to_2d(tol_3d: f64, uv: Point2, dir: Vec2, surface: &Surface) -> Result<f64> {
-    crate::surface::surface::p1::map_to_2d_dir(tol_3d, uv, dir, surface)
+fn map_to_2d(k: &Kernel, tol_3d: f64, uv: Point2, dir: Vec2, surface: &Surface) -> Result<f64> {
+    crate::surface::surface::p1::map_to_2d_dir(k, tol_3d, uv, dir, surface)
 }
 
 fn no_child() -> SolidError {

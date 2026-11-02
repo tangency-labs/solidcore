@@ -11,7 +11,7 @@
 //! | [`Hcr::from_scene`]                          | `ConstructorInit` after the scene B-rep is built |
 //! | `Drop` (implicit)                            | `SmHCR::~SmHCR`                           |
 //! | [`Hcr::set_hcr_for_silhouettes`]             | `SetHCRForSilhouettes`                    |
-//! | [`Hcr::scene_brep`]                          | `GetSceneBrep`                            |
+//! | [`Hcr::scene_brep`], [`Hcr::scene_brep_mut`] | `GetSceneBrep`                            |
 //! | [`Hcr::silhouette_edges`]                    | `GetSilhouetteEdges`                      |
 //! | [`Hcr::compute_curve_visibility`]            | `ComputeCurveVisibility`                  |
 //! | [`Hcr::compute_global_visibility`]           | `ComputeGlobalVisibility`                 |
@@ -25,14 +25,24 @@
 //! | [`HcrObject`], `Geometry` (private)          | the `SmObject*` of the classifications    |
 //!
 //! Deviations:
-//! - The scene B-rep copy and its transformation (`SmBrep` copy constructor,
-//!   `Transform`) and its bounding box
-//!   (`SmBrep::CalculateBoundingBox`) belong to unported units, so [`Hcr::with_transform`]
-//!   stops there; [`Hcr::from_scene`] is the rest of `ConstructorInit` for a caller that
+//! - The scene B-rep copy (`SmBrep`'s copy constructor,
+//!   `topology::brep::p3::copy_brep`) notifies through the caller's notification
+//!   environment, naming the copy's objects by its `key_of` and `brep`'s by `source_key`
+//!   (upstream objects are known by address), so [`Hcr::new`] and [`Hcr::with_transform`]
+//!   take the kernel mutably with both. The scene's transformation (`SmBrep::Transform`,
+//!   `topology::brep::p5::transform_with_notifications`) notifies through the same
+//!   environment. [`Hcr::from_scene`] is the rest of `ConstructorInit` for a caller that
 //!   already holds the transformed scene and its box.
 //! - The pointer maps `m_pSilVertices`, `m_pSilEdges` and `m_pBackFacingEdges` are id
-//!   sets; [`Hcr::silhouette_edges`] returns the ids in ascending order (upstream
-//!   `GetAllKeys` iterates the pointer hash, whose order is not reproducible).
+//!   sets. [`Hcr::silhouette_edges`] returns the silhouette edges newest first (the
+//!   reverse of the order `ComputeSilhouettes` found them in). Upstream `GetAllKeys`
+//!   iterates the pointer hash (`std::unordered_map`, ND-2), whose order is not
+//!   reproducible; libstdc++ links a key whose bucket is empty at the front, so without
+//!   bucket collisions it yields exactly this order. The order decides which swept edge a
+//!   whole-B-rep `DoSweep` maps a silhouette vertex to (`SetHigher` keeps the first),
+//!   and with it the stitch's keep choices: ascending ids made the stitch of a box with a
+//!   wire edge fail where upstream succeeds (`sweep.topology_sweep`
+//!   `nm_box_linear_z_stitch`).
 //! - The traversal mark of `ComputeGlobalVisibility` (`SmNewMarkAndLock`, `Mark`,
 //!   `IsMarked`) is a set of marked edges owned by the call: a freshly advanced mark
 //!   marks nothing. [`Hcr::compute_edge_visibility`] takes that set.
@@ -42,9 +52,10 @@
 //!   `SmBoolean` function, which callers read as `TRUE`; the port returns `true`.
 //! - Upstream defects: UB-169 (a zero view vector leaves the transform axes
 //!   uninitialised: `InvalidInput`), UB-170 (the silhouette-edge loop of
-//!   `IntersectCurveWithSilhouettes` is bounded by the vertex count: indexes past the
-//!   edge list return `InvalidInput`; fewer vertices than edges skips edges, as
-//!   upstream). Outputs that a failed callee leaves uninitialised upstream return
+//!   `IntersectCurveWithSilhouettes` is bounded by the vertex count: the port
+//!   stops at the edge list's end instead of reading past it; fewer vertices than
+//!   edges still skips edges, as upstream). Outputs that a failed callee leaves
+//!   uninitialised upstream return
 //!   `InvalidInput` instead of being read.
 //! - `ComputeGlobalVisibility`'s copy of edge and face attributes onto the edge curves
 //!   (display colours) is not ported: curves carry no attribute list here.
@@ -60,11 +71,20 @@
 //!   [`Hcr::compute_silhouettes`] and [`Hcr::compute_global_visibility`] take the
 //!   kernel mutably.
 //! - `IsPointVisible` keeps the ray tracer's surface set and grid and rebuilds the
-//!   tracer (which borrows the surfaces) for each ray.
+//!   tracer (which borrows the surfaces) for each ray. The surfaces' caches and the
+//!   grid elements made from them are built for the first ray, as upstream builds
+//!   `m_pRayTracer` once; each later ray's tracer gets a copy of that grid and the same
+//!   surfaces in the same order (rebuilding the caches and grid per ray took most of
+//!   `topology.api_projection`'s time). A face-owned surface's cache
+//!   (`smsurf_GetSurfaceCache`, then the `GetTree` calls of `AddSurfaceToGrid` and
+//!   `ExpandHierarchy`, in that order) runs through its face before the tracer borrows
+//!   the surfaces: the trimmed cache's `BuildTree` reads the face and may change its
+//!   B-rep. The tracer then reads that tree as is
+//!   (`RayTracer::add_surface_with_fetched_cache`).
 //! - `DrawVisibleCurves`, `IsConcaveSilhouette` and `IsFrontFacingFace` are not owned by
 //!   this unit (no caller, graphics only).
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 
 use crate::curve::curve::Curve;
 use crate::error::{ignore_status, ignored, Result, SolidError};
@@ -84,17 +104,25 @@ use crate::intersect::curve_class::p1::IntervalPosition;
 use crate::intersect::point_class::{
     ClassGeometry, ClassObject, ClassObjectKind, PointClassType, PointClassification,
 };
-use crate::intersect::ray_tracer::RayTracer;
+use crate::intersect::ray_tracer::{RayFaceClassifier, RayObject, RayTracer};
 use crate::kernel::Kernel;
-use crate::math::{Point3, Vec3, BIG_DOUBLE, EFF_ZERO, EFF_ZERO_SQ, EFF_ZERO_SQRT, PI};
+use crate::math::{Point2, Point3, Vec3, BIG_DOUBLE, EFF_ZERO, EFF_ZERO_SQ, EFF_ZERO_SQRT, PI};
 use crate::nurbs::b_spline_curve::p2::BoundingBoxRequest;
 use crate::nurbs::b_spline_curve_n_lib::TrimMode;
 use crate::nurbs::b_spline_surface::BSplineSurface;
 use crate::nurbs::b_spline_surface_n_lib::p2::OrientType;
+use crate::query::brep::{self as qbrep, BoundingBoxOptions};
+use crate::query::face::p2::BrepCacheFace;
+use crate::query::face::p2::{point_classify_prepared, PointClassifyOptions};
+use crate::surface::surface::p1::get_surface_cache_with_face;
+use crate::surface::surface::p2::surface_cache;
 use crate::surface::surface::{Surface, SurfaceKind};
+use crate::surface::surface_cache::face_context::MappedCacheFace;
+use crate::surface::surface_cache::p1::FaceContainment;
+use crate::surface::surface_cache::SurfaceCache;
 use crate::surface::volume::Volume;
 use crate::topology::{edge, edgeuse, vertex, vertexuse};
-use crate::topology::{Brep, EdgeId, EdgeuseId, FaceId, RegionId, VertexId};
+use crate::topology::{Brep, BrepId, EdgeId, EdgeuseId, FaceId, RegionId, VertexId};
 use crate::EntityRef;
 
 const OP: &str = "blend::hcr";
@@ -171,6 +199,31 @@ impl ClassGeometry<HcrObject> for Geometry<'_> {
             HcrObject::Region(_) => None,
         }
     }
+    /// The vertex, edge and region handles name entities of the scene B-rep, so the
+    /// classification reaches their members (`SmEdge::GetVertex`, ...) as upstream's
+    /// pointers do; a curve handle names no topology.
+    fn topology_entity(&self, o: HcrObject) -> Option<(&Brep, EntityRef)> {
+        let t = match o {
+            HcrObject::Vertex(v) => EntityRef::Vertex(v),
+            HcrObject::Edge(e) => EntityRef::Edge(e),
+            HcrObject::Region(r) => EntityRef::Region(r),
+            HcrObject::Curve(_) => return None,
+        };
+        Some((self.brep, t))
+    }
+    fn topology_handle(&self, entity: EntityRef) -> Option<HcrObject> {
+        match entity {
+            EntityRef::Vertex(v) => Some(HcrObject::Vertex(v)),
+            EntityRef::Edge(e) => Some(HcrObject::Edge(e)),
+            EntityRef::Region(r) => Some(HcrObject::Region(r)),
+            _ => None,
+        }
+    }
+    /// The scene is the only B-rep the handles reach, so its `GetBrep` identity is a
+    /// constant id (the first); any other B-rep has none.
+    fn brep_id(&self, brep: &Brep) -> Option<BrepId> {
+        core::ptr::eq(brep, self.brep).then_some(BrepId::from_index(0))
+    }
 }
 
 /// The solution handle of the unit's curve solves.
@@ -186,48 +239,49 @@ impl SolutionObject for CurveHandle {
     }
 }
 
-// ---- unported callees ---------------------------------------------------------------------
+// ---- callees -------------------------------------------------------------------------------
 
-/// `SmBrep::SmBrep(const SmBrep&)` (unit `topology.brep_p3`).
-fn copy_brep(brep: &Brep) -> Result<Brep> {
-    let _ = brep;
-    // UNPORTED(topology.brep_p3): SmBrep::SmBrep(const SmBrep&)
-    Err(SolidError::unported(
-        "SmBrep::SmBrep(const SmBrep&)",
-        "topology.brep_p3",
-    ))
+/// `new SmBrep(*pBrep)`: the copy constructor with its defaults (no maps,
+/// `bCopyAttributes` and `bAddAnalytics` `TRUE`), [`crate::topology::brep::p3::copy_brep`].
+fn copy_brep(
+    k: &mut Kernel,
+    env: &mut edge::NotifyEnv<'_>,
+    brep: &Brep,
+    source_key: &dyn Fn(EntityRef) -> ObjectRef,
+) -> Result<Brep> {
+    crate::topology::brep::p3::copy_brep(k, env, brep, source_key, None, None, true, true)
 }
 
-/// `SmBrep::Transform` (unit `topology.brep_p5`).
-fn transform_brep(brep: &mut Brep, transform: &Axis2Placement) -> Result<()> {
-    let _ = (brep, transform);
-    // UNPORTED(topology.brep_p5): SmBrep::Transform
-    Err(SolidError::unported(
-        "SmBrep::Transform",
-        "topology.brep_p5",
-    ))
+/// `SmBrep::Transform(crRotateNMove)` with its defaults (no scale, `bScaleTol` `TRUE`),
+/// notifying through the scene copy's environment `env`.
+fn transform_brep(
+    k: &mut Kernel,
+    env: &mut edge::NotifyEnv<'_>,
+    brep: &mut Brep,
+    transform: &Axis2Placement,
+) -> Result<()> {
+    crate::topology::brep::p5::transform_with_notifications(
+        k,
+        brep,
+        transform,
+        None,
+        true,
+        Some(env),
+    )
 }
 
 /// `SmBrep::FindAndSetInfiniteRegion()` with upstream's default arguments (no shell to
 /// test, `SM_VS_INFINITEREGION_SWAP`, no bounding box).
-fn find_and_set_infinite_region(brep: &mut Brep) -> Result<()> {
-    const SM_VS_INFINITEREGION_SWAP: i32 = 2;
+fn find_and_set_infinite_region(k: &mut Kernel, brep: &mut Brep) -> Result<()> {
+    let query = qbrep::BrepQuery::of_brep(brep);
     crate::topology::brep::p5::find_and_set_infinite_region(
+        k,
         brep,
+        &query,
         None,
-        SM_VS_INFINITEREGION_SWAP,
+        crate::topology::brep::p1::SetRegionVoidType::InfiniteRegionSwap,
         None,
     )
-}
-
-/// `SmBrep::CalculateBoundingBox` (unit `query.brep`).
-fn brep_bounding_box(brep: &Brep) -> Result<Extent3d> {
-    let _ = brep;
-    // UNPORTED(query.brep): SmBrep::CalculateBoundingBox
-    Err(SolidError::unported(
-        "SmBrep::CalculateBoundingBox",
-        "query.brep",
-    ))
 }
 
 /// `SmBrep::GetInfiniteRegion` (unit `topology.brep_p1`).
@@ -260,11 +314,7 @@ fn brep_surfaces(brep: &Brep) -> Result<Vec<FaceId>> {
             .as_ref()
             .ok_or_else(|| SolidError::null_pointer(OP))?;
         // add all standalone face->Surfaces to the list
-        if surface.owner()
-            == Some(crate::topology::brep_cache::arena_identity(
-                crate::topology::brep_cache::CacheObject::Face(f),
-            ))
-        {
+        if surface.owner() == Some(crate::topology::brep::p1::default_face_owner(brep, f)) {
             out.push(f);
         }
     }
@@ -279,7 +329,9 @@ fn add_deleted_surface(brep: &mut Brep, surface: &Surface) {
 
 /// `MergeCurvesOnSurface(*pSurface, m_dThisApproxTol3d, s3DCurves, &sUVBSCurves,
 /// sNewFaces, sEdges, TRUE)` (`SmHCR.cpp:1229`): the edges of the curves, through the
-/// B-rep cache's classification world (`query.brep`) as in `topology.brep_p10`.
+/// scene's own objects as in `topology.brep_p10`. `ComputeSilhouettes` holds no
+/// notification stores, so the scene's edits notify default records under its arena
+/// identities ([`crate::topology::brep::p2::ArenaNotifyState`]).
 fn merge_curves_on_surface(
     k: &mut Kernel,
     brep: &mut Brep,
@@ -288,13 +340,19 @@ fn merge_curves_on_surface(
     curves: &[Curve],
     uv_curves: &[Curve],
 ) -> Result<Vec<EdgeId>> {
+    let mut state = crate::topology::brep::p2::ArenaNotifyState::new(brep);
+    let mut env = state.env(None);
+    let curve_ref =
+        |e: EdgeId, _type_code: i64| crate::topology::loopuse::notify_ref(EntityRef::Edge(e));
     let (_, edges) = crate::topology::brep::p10::merge_curves_on_surface(
         k,
         brep,
+        &mut env,
+        &curve_ref,
         face,
         approx_tol_3d,
         curves,
-        uv_curves,
+        Some(uv_curves),
         true,
     )?;
     Ok(edges)
@@ -366,12 +424,22 @@ pub fn new_curve_classification(
     cc
 }
 
-/// `SM_CAST_PTR(SmBSplineSurface, pSurface)`: the surface as an `SmBSplineSurface`.
+/// `SM_CAST_PTR(SmBSplineSurface, pSurface)`: the surface as an `SmBSplineSurface`,
+/// for every class derived from it (plane, surface of revolution or extrusion, cone and
+/// cylinder, sphere, torus).
 fn b_spline_part(surface: &Surface) -> Option<&BSplineSurface> {
     match surface.kind() {
         SurfaceKind::BSpline(b) => Some(b),
         SurfaceKind::Plane(p) => Some(p.base()),
         SurfaceKind::SurfOfRevolution(s) => Some(s.base()),
+        SurfaceKind::SurfOfExtrusion(s) => Some(s.base()),
+        SurfaceKind::Cone(c) => Some(c.rev().base()),
+        SurfaceKind::Sphere(s) => Some(s.base().base()),
+        SurfaceKind::Torus(t) => Some(t.base().base()),
+        // (the fork's SmProceduralBlend is an SmBSplineSurface: its net)
+        SurfaceKind::ProceduralBlend(pb) => Some(pb.net()),
+        // (the fork's SmBallPatch is an SmBSplineSurface too: its net)
+        SurfaceKind::BallPatch(pb) => Some(pb.net()),
         _ => None,
     }
 }
@@ -450,6 +518,281 @@ enum RaySurface {
     Owned(Box<Surface>),
 }
 
+/// The surface a ray surface stands for: the scene face's, or the tracer's own copy.
+fn ray_surface<'a>(scene: &'a Brep, s: &'a RaySurface) -> Result<&'a Surface> {
+    match s {
+        RaySurface::Face(f) => scene
+            .face(*f)?
+            .surface
+            .as_ref()
+            .ok_or(undefined("face without surface")),
+        RaySurface::Owned(s) => Ok(&**s),
+    }
+}
+
+/// First cache handle of a scene entity: below it are the tracer's surface indices.
+const ENTITY_HANDLE_BASE: usize = usize::MAX / 2;
+
+/// A surface cache the tracer lists: one whose `GetTree` calls the tracer runs itself
+/// (`Lazy`), or a face-owned one whose `GetTree` calls already ran through its face
+/// (`Fetched`, see [`face_surface_cache`]).
+enum ListedCache {
+    Lazy(SurfaceCache<usize>),
+    Fetched(SurfaceCache<usize>),
+}
+
+/// The caches the visibility tracer lists, one per ray surface (`None` where the cache
+/// or its tree fails), and the scene face of each listed surface (`None` for one the
+/// tracer owns).
+type RayCaches = (Vec<Option<ListedCache>>, Vec<Option<FaceId>>);
+
+/// The first ray's tracer, kept for the later rays as upstream keeps `m_pRayTracer`:
+/// its grid holding every listed surface's elements, the index into
+/// [`RaySetup`]'s surfaces of each surface it registered (in its order), and the scene
+/// face of each listed surface.
+#[derive(Debug, Clone)]
+struct PrebuiltTracer {
+    grid: Grid<usize>,
+    registered: Vec<usize>,
+    faces: Vec<Option<FaceId>>,
+}
+
+/// `smsurf_GetSurfaceCache` of a surface without face and `AddSurfaceToGrid`'s
+/// `GetTree() == NULL` check: the cache, `None` when the cache or its tree fails (the
+/// surface is not listed; the status is ignored upstream) or the tree has no top node.
+///
+/// # Errors
+///
+/// [`SolidError::Unported`] from the cache build.
+fn standalone_surface_cache(
+    k: &Kernel,
+    surface: &Surface,
+    handle: usize,
+) -> Result<Option<ListedCache>> {
+    let mut cache = match surface_cache::<usize>(k, surface, Some(handle)) {
+        Ok(cache) => cache,
+        Err(e) if e.is_unported_or_cancelled() => return Err(e),
+        Err(_) => return Ok(None),
+    };
+    // `AddSurfaceToGrid` lists the surface only once its tree has a top node
+    let has_top = match cache.get_tree(k) {
+        Ok(tree) => tree.top_node().is_some(),
+        Err(e) if e.is_unported_or_cancelled() => return Err(e),
+        Err(_) => false,
+    };
+    Ok(has_top.then_some(ListedCache::Lazy(cache)))
+}
+
+/// `smsurf_GetSurfaceCache` of the surface of face `f` of `scene` (built through the
+/// face, which may create its UV trim curves), then the three `GetTree` calls the
+/// tracer makes on it (`AddSurfaceToGrid`'s `GetTree() == NULL` check and
+/// `GetTree()->GetTopNode()`, then `ExpandHierarchy`'s `GetTree()`), each with the
+/// face: a face-owned trimmed cache whose face has no trim curves, or whose B-rep is
+/// being edited, rebuilds on every call (`SmTrimSrfCache::BuildTree`). `None` when a
+/// step fails (the surface is not listed) or the tree has no top node.
+///
+/// # Errors
+///
+/// [`SolidError::Unported`] from the cache build; those of the face lookups.
+fn face_surface_cache(
+    k: &Kernel,
+    scene: &mut Brep,
+    f: FaceId,
+    handle: usize,
+    handle_of: &dyn Fn(EntityRef) -> Result<usize>,
+    entity_of: &dyn Fn(usize) -> Result<EntityRef>,
+) -> Result<Option<ListedCache>> {
+    // the cache refers to the face's surface (an exact evaluation copy: the face's
+    // B-rep is changed through the face while the cache is built)
+    let surface = scene
+        .face(f)?
+        .surface
+        .as_ref()
+        .ok_or(undefined("face without surface"))?
+        .clone_for_evaluation()?;
+    let mut mapped = match MappedCacheFace::new(BrepCacheFace { b: scene, f }, handle_of, entity_of)
+    {
+        Ok(mapped) => mapped,
+        Err(e) if e.is_unported_or_cancelled() => return Err(e),
+        Err(_) => return Ok(None),
+    };
+    let mut cache = match get_surface_cache_with_face(k, &surface, Some(handle), &mut mapped) {
+        Ok(cache) => cache,
+        Err(e) if e.is_unported_or_cancelled() => return Err(e),
+        Err(_) => return Ok(None),
+    };
+    // AddSurfaceToGrid: GetTree() == NULL, GetTree()->GetTopNode(); ExpandHierarchy:
+    // GetTree()
+    for check_top in [true, true, false] {
+        match cache.get_tree_with_face(k, &mut mapped) {
+            Ok(tree) if check_top && tree.top_node().is_none() => return Ok(None),
+            Ok(_) => {}
+            Err(e) if e.is_unported_or_cancelled() => return Err(e),
+            Err(_) => return Ok(None),
+        }
+    }
+    Ok(Some(ListedCache::Fetched(cache.into_base())))
+}
+
+/// The handle a silhouette trace's surface cache names the scene's entities by (the
+/// [`entity_handles`] index); its solves keep no objects.
+#[derive(Debug, Clone, Copy, PartialEq)]
+struct SilhouetteHandle(usize);
+
+impl SolutionObject for SilhouetteHandle {
+    fn kind(&self) -> ObjectKind {
+        ObjectKind::Surface
+    }
+}
+
+/// `smsurf_GetSurfaceCache` of `surface`, the surface of scene face `f` (an evaluation
+/// copy), built through that face with its tree (`GetTree`, through the face), for
+/// `CreateSilhouetteCurves`; `None` when the cache or its tree fails (upstream's call
+/// then fails, and `ComputeSilhouettes` ignores its status). The returned cache keeps
+/// its built tree for the trace's face-less `GetTree` calls (see the body).
+///
+/// # Errors
+///
+/// [`SolidError::Unported`] from the cache build; those of the face lookups.
+fn silhouette_cache(
+    k: &Kernel,
+    scene: &mut Brep,
+    f: FaceId,
+    surface: &Surface,
+) -> Result<Option<SurfaceCache<SilhouetteHandle>>> {
+    let (to_handle, to_entity) = entity_handles(scene);
+    let handle_of = |e| {
+        to_handle
+            .get(&e)
+            .copied()
+            .map(SilhouetteHandle)
+            .ok_or(undefined("cache entity"))
+    };
+    let entity_of = |h: SilhouetteHandle| {
+        h.0.checked_sub(ENTITY_HANDLE_BASE)
+            .and_then(|i| to_entity.get(i))
+            .copied()
+            .ok_or(undefined("cache handle"))
+    };
+    let handle = handle_of(EntityRef::Face(f))?;
+    let mut mapped =
+        match MappedCacheFace::new(BrepCacheFace { b: scene, f }, &handle_of, &entity_of) {
+            Ok(mapped) => mapped,
+            Err(e) if e.is_unported_or_cancelled() => return Err(e),
+            Err(_) => return Ok(None),
+        };
+    let mut cache = match get_surface_cache_with_face(k, surface, Some(handle), &mut mapped) {
+        Ok(cache) => cache,
+        Err(e) if e.is_unported_or_cancelled() => return Err(e),
+        Err(_) => return Ok(None),
+    };
+    match cache.get_tree_with_face(k, &mut mapped) {
+        Ok(_) => {}
+        Err(e) if e.is_unported_or_cancelled() => return Err(e),
+        Err(_) => return Ok(None),
+    }
+    let mut cache = cache.into_base();
+    // The trace's own `GetTree` calls (the tracer constructor's and
+    // `FindInteriorCurves`') have no face here. Upstream's `GetTree` rebuilds through
+    // the face while the trims are not in the tree (`m_bHaveTSurfaceCache` FALSE).
+    // With the tree built and the scene's editing enabled (as during
+    // `ComputeSilhouettes`), `SmTrimSrfCache::BuildTree` then only sets
+    // `m_bProcessBoundaryCurves = TRUE`, `m_bPointTestEnabled = FALSE` and
+    // `m_bHaveTSurfaceCache = FALSE`, and restores `m_bFaceContainmentDone`. The build
+    // above left those values; they are set again here, and the trace keeps them (its
+    // `DoTrace` sets the same two flags and restores them), so each rebuild it would make
+    // is that reset. The containment guard keeps the built tree instead of rebuilding; no
+    // trace path reads the guard (only `GetTree` and the trimmed point classifications,
+    // which the trace runs with point testing off). The cache is dropped after the trace.
+    if !cache.have_t_surface_cache {
+        cache.process_boundary_curves = true;
+        cache.point_test_enabled = false;
+        cache.face_containment_done = FaceContainment::UnderConstruction;
+    }
+    Ok(Some(cache))
+}
+
+/// The handles [`face_surface_cache`] addresses the scene's entities by, in the
+/// tracer's usize handle space above [`ENTITY_HANDLE_BASE`], and the inverse table.
+fn entity_handles(b: &Brep) -> (BTreeMap<EntityRef, usize>, Vec<EntityRef>) {
+    let all: Vec<EntityRef> = b
+        .faces()
+        .iter()
+        .map(|(id, _)| EntityRef::Face(id))
+        .chain(b.edges().iter().map(|(id, _)| EntityRef::Edge(id)))
+        .chain(b.vertices().iter().map(|(id, _)| EntityRef::Vertex(id)))
+        .chain(b.loopuses().iter().map(|(id, _)| EntityRef::Loopuse(id)))
+        .chain(b.edgeuses().iter().map(|(id, _)| EntityRef::Edgeuse(id)))
+        .chain(
+            b.vertexuses()
+                .iter()
+                .map(|(id, _)| EntityRef::Vertexuse(id)),
+        )
+        .collect();
+    let map = all
+        .iter()
+        .enumerate()
+        .map(|(i, e)| (*e, ENTITY_HANDLE_BASE + i))
+        .collect();
+    (map, all)
+}
+
+/// `sm_IsPointValid` over the scene: classifies a point of a ray surface against the
+/// scene face owning it, by tracer surface index.
+#[derive(Debug)]
+struct SceneFaceClassifier<'a> {
+    scene: &'a Brep,
+    faces: Vec<Option<FaceId>>,
+}
+
+impl RayFaceClassifier for SceneFaceClassifier<'_> {
+    fn is_point_valid(
+        &self,
+        k: &Kernel,
+        surface: usize,
+        uv: Point2,
+        src_zone_tol: f64,
+    ) -> Result<(bool, Option<RayObject>)> {
+        let face = self
+            .faces
+            .get(surface)
+            .copied()
+            .flatten()
+            .ok_or(undefined("ray surface face"))?;
+        let mut pc = PointClassification::new(src_zone_tol);
+        let classified = point_classify_prepared(
+            k,
+            self.scene,
+            face,
+            uv,
+            &mut pc,
+            PointClassifyOptions {
+                src_zone_tol_3d: src_zone_tol,
+                do_boundary_intersections: false,
+                use_uv_classification: true,
+                ..PointClassifyOptions::default()
+            },
+        );
+        match classified {
+            Ok(()) => {}
+            Err(e) if e.is_unported_or_cancelled() => return Err(e),
+            // signal an error and keep the point just in case
+            Err(_) => return Ok((true, None)),
+        }
+        let valid = matches!(
+            pc.point_class(),
+            PointClassType::Face | PointClassType::Edge | PointClassType::Vertex
+        );
+        let object = match pc.object() {
+            Some(EntityRef::Face(f)) => Some(RayObject::Face(f)),
+            Some(EntityRef::Edge(e)) => Some(RayObject::Edge(e)),
+            Some(EntityRef::Vertex(v)) => Some(RayObject::Vertex(v)),
+            _ => None,
+        };
+        Ok((valid, object))
+    }
+}
+
 /// The ray tracer state of [`Hcr::is_point_visible`] (`m_pRayTracer`, its grid).
 #[derive(Debug, Clone)]
 struct RaySetup {
@@ -457,6 +800,8 @@ struct RaySetup {
     size: [usize; 3],
     approx_tol: f64,
     surfaces: Vec<RaySurface>,
+    /// The tracer built for the first ray, kept for the later rays.
+    prebuilt: Option<PrebuiltTracer>,
 }
 
 /// A hidden curve removal object (`SmHCR`).
@@ -472,6 +817,8 @@ pub struct Hcr {
     sil_edge_tree: Tree<EdgeId>,
     sil_vertices: BTreeSet<VertexId>,
     sil_edges: BTreeSet<EdgeId>,
+    /// `sil_edges` in the order they were found (first insertion of each).
+    sil_edge_order: Vec<EdgeId>,
     back_facing_edges: BTreeSet<EdgeId>,
     visible_curves: Vec<Curve>,
     invisible_curves: Vec<Curve>,
@@ -490,34 +837,50 @@ impl Hcr {
     /// # Errors
     ///
     /// Those of [`view_transform_for_vector`] and [`Hcr::with_transform`].
-    pub fn new(k: &Kernel, brep: &Brep, view_vector: Vec3, opts: HcrOptions) -> Result<Self> {
+    pub fn new(
+        k: &mut Kernel,
+        env: &mut edge::NotifyEnv<'_>,
+        brep: &Brep,
+        source_key: &dyn Fn(EntityRef) -> ObjectRef,
+        view_vector: Vec3,
+        opts: HcrOptions,
+    ) -> Result<Self> {
         let transform = view_transform_for_vector(view_vector)?;
-        Self::with_transform(k, brep, &transform, opts)
+        Self::with_transform(k, env, brep, source_key, &transform, opts)
     }
 
     /// An HCR object whose scene is `brep` transformed by `view_transform`
     /// (translation ignored) so that the eye looks along +Z (`SmHCR(crContext, pBrep,
-    /// crViewTransformation, ..)`, `ConstructorInit`).
+    /// crViewTransformation, ..)`, `ConstructorInit`). `env` notifies the scene copy's
+    /// objects; `source_key` is the identity of `brep`'s (see the module docs).
     ///
     /// # Errors
     ///
-    /// [`SolidError::Unported`] from the scene copy, transform and box (units
-    /// `topology.brep_p3`, `topology.brep_p5`, `query.brep`).
+    /// Those of the scene copy (`topology::brep::p3::copy_brep`); the transform's and
+    /// `FindAndSetInfiniteRegion`'s failures are ignored as upstream, apart from
+    /// [`SolidError::Unported`] from their callees.
     pub fn with_transform(
-        k: &Kernel,
+        k: &mut Kernel,
+        env: &mut edge::NotifyEnv<'_>,
         brep: &Brep,
+        source_key: &dyn Fn(EntityRef) -> ObjectRef,
         view_transform: &Axis2Placement,
         opts: HcrOptions,
     ) -> Result<Self> {
         let (vt, _) = prepare_transform(view_transform);
         // copy the original Brep
-        let mut scene = copy_brep(brep)?;
+        let mut scene = copy_brep(k, env, brep, source_key)?;
         scene.set_editing_enabled(true);
         // transform the copied Brep to place the eye looking up the Z axis
-        ignore_status(transform_brep(&mut scene, &vt))?;
-        ignore_status(find_and_set_infinite_region(&mut scene))?; // [B23]
-                                                                  // its status is ignored upstream (the box then stays empty)
-        let scene_box = ignored(brep_bounding_box(&scene))?.unwrap_or_else(Extent3d::new);
+        ignore_status(transform_brep(k, env, &mut scene, &vt))?;
+        ignore_status(find_and_set_infinite_region(k, &mut scene))?; // [B23]
+                                                                     // its status is ignored upstream (the box then stays empty)
+        let scene_box = ignored(qbrep::calculate_bounding_box(
+            k,
+            &scene,
+            BoundingBoxOptions::default(),
+        ))?
+        .unwrap_or_else(Extent3d::new);
         Ok(Self::from_scene(k, scene, view_transform, scene_box, opts))
     }
 
@@ -554,6 +917,7 @@ impl Hcr {
             sil_edge_tree: Tree::new_spatial(&proj_bbox),
             sil_vertices: BTreeSet::new(),
             sil_edges: BTreeSet::new(),
+            sil_edge_order: Vec::new(),
             back_facing_edges: BTreeSet::new(),
             visible_curves: Vec::new(),
             invisible_curves: Vec::new(),
@@ -572,6 +936,11 @@ impl Hcr {
     #[must_use]
     pub const fn scene_brep(&self) -> &Brep {
         &self.scene
+    }
+    /// The owned scene, for topology services that require a mutable source borrow.
+    /// Edits must preserve the identities referenced by this HCR session.
+    pub const fn scene_brep_mut(&mut self) -> &mut Brep {
+        &mut self.scene
     }
     /// The view vector in the scene (`m_vViewVector`, always `(0, 0, 1)`).
     #[must_use]
@@ -657,10 +1026,18 @@ impl Hcr {
         self.sil_vertices.iter().copied().collect()
     }
 
-    /// The silhouette edges found so far, in ascending id order (`GetSilhouetteEdges`).
+    /// The silhouette edges found so far, newest first (`GetSilhouetteEdges`; see the
+    /// module deviations for the order).
     #[must_use]
     pub fn silhouette_edges(&self) -> Vec<EdgeId> {
-        self.sil_edges.iter().copied().collect()
+        self.sil_edge_order.iter().rev().copied().collect()
+    }
+
+    /// Adds `e` to `m_pSilEdges` (a key already present keeps its place).
+    fn insert_silhouette_edge(&mut self, e: EdgeId) {
+        if self.sil_edges.insert(e) {
+            self.sil_edge_order.push(e);
+        }
     }
 
     // ---- visibility -------------------------------------------------------------------
@@ -714,7 +1091,7 @@ impl Hcr {
                 let mid = Geometry { brep: &self.scene }
                     .curve(curve)
                     .ok_or(undefined("classification curve not resolved"))?
-                    .evaluate_point(t_mid)?;
+                    .evaluate_point(k, t_mid)?;
                 visibility = self.is_point_visible(k, mid)?;
             }
 
@@ -763,7 +1140,7 @@ impl Hcr {
                 .as_ref()
                 .ok_or(undefined("face without surface"))?;
             // skip faces not parallel to viewing direction
-            if !surface.is_parallel_to_vector(z_vector)? {
+            if !surface.is_parallel_to_vector(k, z_vector)? {
                 continue;
             }
             // This face is parallel to the view vector.
@@ -780,7 +1157,7 @@ impl Hcr {
                         marked.insert(e);
                     } else if let Some(curve) = edge::curve(&self.scene, e)? {
                         let tol = self.scene.tolerance() / 100.0;
-                        if curve.is_line(10, tol)?.is_some() {
+                        if curve.is_line(k, 10, tol)?.is_some() {
                             let t = edge::interval(&self.scene, e)?.evaluate(0.5);
                             let (bin, _, _) = evaluate_binormal(k, &mut self.scene, eu, t)?;
                             if bin.z > -EFF_ZERO {
@@ -949,7 +1326,7 @@ impl Hcr {
         let e_box = self.edge_box(k, e)?;
 
         // add edge to m_pSilEdges and m_pSilEdgeTree
-        self.sil_edges.insert(e);
+        self.insert_silhouette_edge(e);
         ignore_status(self.sil_edge_tree.add_to_spatial_tree(
             &e_box,
             Some(e),
@@ -1008,12 +1385,19 @@ impl Hcr {
             if matches!(surface.kind(), SurfaceKind::Plane(_)) {
                 continue;
             }
-            // pick tol to limit segment sizes in DoTrace (the partial callee does not
-            // take the tolerances yet)
+            // pick tol to limit segment sizes in DoTrace
             let sil_tol = self.approx_tol_3d.min(self.ray_offset_tolerance / 100.0);
             let uv_domain = face.uv_domain;
-            let Some((curves, uv_curves)) = ignored(surface.create_silhouette_curves(
+            // CreateSilhouetteCurves' smsurf_GetSurfaceCache(this): the face-owned
+            // surface's trimmed cache, built through its scene face (a failed cache is a
+            // failed call, whose status is ignored)
+            let surface = surface.clone_for_evaluation()?;
+            let Some(mut cache) = silhouette_cache(k, &mut self.scene, f, &surface)? else {
+                continue;
+            };
+            let Some((curves, uv_curves)) = ignored(surface.create_silhouette_curves_with_cache(
                 k,
+                &mut cache,
                 &uv_domain,
                 self.view_vector,
                 false,
@@ -1052,7 +1436,7 @@ impl Hcr {
                 let p1 = self.scene.vertex(v1)?.point;
                 let p2 = self.scene.vertex(v2)?.point;
                 let e_box = self.edge_box(k, e)?;
-                self.sil_edges.insert(e);
+                self.insert_silhouette_edge(e);
                 ignore_status(self.sil_edge_tree.add_to_spatial_tree(
                     &e_box,
                     Some(e),
@@ -1170,7 +1554,7 @@ impl Hcr {
                     }
                 }
                 // SER in a SmBoolean function: the status reads as TRUE
-                Err(err) if err.is_unported() => return Err(err),
+                Err(err) if err.is_unported_or_cancelled() => return Err(err),
                 Err(_) => return Ok(true),
             }
         }
@@ -1273,6 +1657,7 @@ impl Hcr {
                 size,
                 approx_tol: self.approx_tol_3d,
                 surfaces: Vec::new(),
+                prebuilt: None,
             };
             let z_vector = Vec3::new(0.0, 0.0, -1.0);
             for f in surfaces {
@@ -1283,7 +1668,7 @@ impl Hcr {
                     .surface
                     .as_ref()
                     .ok_or(undefined("face without surface"))?
-                    .is_parallel_to_vector(z_vector)?
+                    .is_parallel_to_vector(k, z_vector)?
                 {
                     continue;
                 }
@@ -1306,8 +1691,10 @@ impl Hcr {
                             self.ray = Some(setup);
                             return Ok(false);
                         }
-                    } else if let Some(bss) = b_spline_part(surface) {
-                        let mut trimmed = bss.clone();
+                    } else if let Some(bss) = crate::topology::brep::p3::with_nurb(k, surface)? {
+                        // `new SmBSplineSurface(*pBSS)`: the copy constructor reads the
+                        // NURB through `GetOrCreateGwNurbPointer` (made first when missing)
+                        let mut trimmed = bss.into_owned();
                         let mut domain = domain;
                         let _ = ignored(trimmed.trim_with_domain(&mut domain))?;
                         if let Some(copy) = ignored(trimmed.copy_and_add_analytics(k))? {
@@ -1324,25 +1711,31 @@ impl Hcr {
             self.ray = Some(setup);
         }
 
+        // The tracer is built for the first ray and kept, as upstream keeps
+        // `m_pRayTracer`. It borrows the surfaces, so each ray gets a new one over a copy
+        // of the first one's grid, with the same surfaces registered in the same order;
+        // FireRay re-marks the grid per call (Setup3DDDA).
+        if self.ray.as_ref().is_some_and(|s| s.prebuilt.is_none()) {
+            let prebuilt = self.prebuild_tracer(k)?;
+            if let Some(setup) = self.ray.as_mut() {
+                setup.prebuilt = Some(prebuilt);
+            }
+        }
         let setup = self.ray.as_ref().ok_or(undefined("ray tracer"))?;
-        // The tracer borrows the surfaces, so it is rebuilt per ray: FireRay re-marks the
-        // grid per call (Setup3DDDA), at O(surfaces) extra cost per ray. `Grid::new`
-        // fails only for a zero voxel count, which the sizes above exclude (upstream
-        // `new SmGrid` cannot fail).
-        let grid = Grid::new(&setup.bbox, setup.size)?;
-        let mut tracer = RayTracer::new(grid, setup.approx_tol, 1.0e-10);
+        let prebuilt = setup.prebuilt.as_ref().ok_or(undefined("ray tracer"))?;
+        let mut tracer = RayTracer::new(prebuilt.grid.clone(), setup.approx_tol, 1.0e-10);
         tracer.set_solver_tolerance(setup.approx_tol); // [B387]
-        for s in &setup.surfaces {
-            let surface = match *s {
-                RaySurface::Face(f) => self
-                    .scene
-                    .face(f)?
-                    .surface
-                    .as_ref()
-                    .ok_or(undefined("face without surface"))?,
-                RaySurface::Owned(ref s) => &**s,
-            };
-            ignore_status(tracer.add_surface_to_grid(k, surface))?;
+        let classifier = SceneFaceClassifier {
+            scene: &self.scene,
+            faces: prebuilt.faces.clone(),
+        };
+        tracer.set_face_classifier(&classifier);
+        for &i in &prebuilt.registered {
+            let s = setup
+                .surfaces
+                .get(i)
+                .ok_or(undefined("ray tracer surface"))?;
+            tracer.register_surface(ray_surface(&self.scene, s)?);
         }
 
         // create a ray segment [rayEnd RayStart], and rayVec = [0 0 -1]
@@ -1353,12 +1746,127 @@ impl Hcr {
         let mut ray_start = ray_end;
         ray_start.z += max_distance;
 
-        match tracer.fire_ray(ray_start, ray_vec, max_distance) {
+        match tracer.fire_ray(k, ray_start, ray_vec, max_distance) {
             Ok(hit) => Ok(!hit.hits_something),
-            Err(err) if err.is_unported() => Err(err),
+            Err(err) if err.is_unported_or_cancelled() => Err(err),
             // signal an error and guess that the point is visible
             Err(_) => Ok(true),
         }
+    }
+
+    /// The caches [`Hcr::is_point_visible`]'s tracer lists, one per ray surface (`None`
+    /// for one whose cache or tree fails), and the scene face of each listed one, built
+    /// once from the scene as it is on the first ray (`AddSurfaceToGrid` of each surface
+    /// of `m_pRayTracer`).
+    ///
+    /// # Errors
+    ///
+    /// Those of the scene surfaces and the cache builds.
+    fn build_ray_caches(&mut self, k: &Kernel) -> Result<RayCaches> {
+        let setup = self.ray.as_ref().ok_or(undefined("ray tracer"))?;
+        // Each surface's cache is built before the tracer borrows the surfaces: a
+        // face-owned surface builds its trimmed cache through its face, which may
+        // create the face's UV trim curves on the scene (`smsurf_GetSurfaceCache`).
+        // The handle is the index the tracer lists the surface under; a surface whose
+        // cache fails is not listed (the status is ignored upstream).
+        let mut caches = Vec::new();
+        let mut listed_faces: Vec<Option<FaceId>> = Vec::new();
+        let mut entities: Option<(BTreeMap<EntityRef, usize>, Vec<EntityRef>)> = None;
+        for s in &setup.surfaces {
+            let face_owned = match *s {
+                RaySurface::Face(f) => {
+                    let surface = self
+                        .scene
+                        .face(f)?
+                        .surface
+                        .as_ref()
+                        .ok_or(undefined("face without surface"))?;
+                    match s {
+                        RaySurface::Face(_) if surface.face()?.is_some() => Some(f),
+                        _ => None,
+                    }
+                }
+                RaySurface::Owned(_) => None,
+            };
+            let handle = listed_faces.len();
+            let fetched = match (face_owned, s) {
+                (Some(f), _) => {
+                    let (to_handle, to_entity) =
+                        entities.get_or_insert_with(|| entity_handles(&self.scene));
+                    let handle_of = |e| to_handle.get(&e).copied().ok_or(undefined("cache entity"));
+                    let entity_of = |h: usize| {
+                        h.checked_sub(ENTITY_HANDLE_BASE)
+                            .and_then(|i| to_entity.get(i))
+                            .copied()
+                            .ok_or(undefined("cache handle"))
+                    };
+                    face_surface_cache(k, &mut self.scene, f, handle, &handle_of, &entity_of)?
+                }
+                (None, RaySurface::Face(f)) => {
+                    let surface = self
+                        .scene
+                        .face(*f)?
+                        .surface
+                        .as_ref()
+                        .ok_or(undefined("face without surface"))?;
+                    standalone_surface_cache(k, surface, handle)?
+                }
+                (None, RaySurface::Owned(surface)) => standalone_surface_cache(k, surface, handle)?,
+            };
+            match fetched {
+                Some(cache) => {
+                    listed_faces.push(face_owned);
+                    caches.push(Some(cache));
+                }
+                None => caches.push(None),
+            }
+        }
+
+        Ok((caches, listed_faces))
+    }
+
+    /// [`Hcr::is_point_visible`]'s tracer as the first ray builds it (`m_pRayTracer`):
+    /// the grid over the ray box, each listed surface added with its cache
+    /// ([`Hcr::build_ray_caches`]; `AddSurfaceToGrid`, its status ignored), and which
+    /// surfaces it registered.
+    ///
+    /// # Errors
+    ///
+    /// Those of the cache builds; `Grid::new` fails only for a zero voxel count, which
+    /// the sizes exclude (upstream `new SmGrid` cannot fail).
+    fn prebuild_tracer(&mut self, k: &Kernel) -> Result<PrebuiltTracer> {
+        let (caches, listed_faces) = self.build_ray_caches(k)?;
+        let setup = self.ray.as_ref().ok_or(undefined("ray tracer"))?;
+        let grid = Grid::new(&setup.bbox, setup.size)?;
+        let mut tracer = RayTracer::new(grid, setup.approx_tol, 1.0e-10);
+        tracer.set_solver_tolerance(setup.approx_tol); // [B387]
+        let classifier = SceneFaceClassifier {
+            scene: &self.scene,
+            faces: listed_faces.clone(),
+        };
+        tracer.set_face_classifier(&classifier);
+        let mut registered = Vec::new();
+        for (i, (s, cache)) in setup.surfaces.iter().zip(caches).enumerate() {
+            let surface = ray_surface(&self.scene, s)?;
+            let before = tracer.surfaces().len();
+            match cache {
+                Some(ListedCache::Fetched(cache)) => {
+                    ignore_status(tracer.add_surface_with_fetched_cache(k, surface, cache))?;
+                }
+                Some(ListedCache::Lazy(cache)) => {
+                    ignore_status(tracer.add_surface_with_cache(k, surface, cache))?;
+                }
+                None => {}
+            }
+            if tracer.surfaces().len() > before {
+                registered.push(i);
+            }
+        }
+        Ok(PrebuiltTracer {
+            grid: tracer.grid().clone(),
+            registered,
+            faces: listed_faces,
+        })
     }
 
     /// Splits `cc` at the projections along the view vector of the silhouette vertices
@@ -1412,6 +1920,7 @@ impl Hcr {
                 opt_vectors: Some(&view),
                 handle: Some(handle),
                 analytic_handle: None,
+                zone_tol_3d: None,
             };
             // Find projection of vertex on the curve along view vector.
             let sols = curve.global_point_solve(
@@ -1430,7 +1939,7 @@ impl Hcr {
                     continue;
                 }
                 // skip solutions behind this curve
-                let crv_pnt = curve.evaluate_point(param)?;
+                let crv_pnt = curve.evaluate_point(k, param)?;
                 if crv_pnt.z > vert_pnt.z + self.ray_offset_tolerance {
                     continue;
                 }
@@ -1449,7 +1958,7 @@ impl Hcr {
                         .point_class_by_index(index)
                         .map_err(|_| undefined("null point class"))?;
                     if pc.point_class() == PointClassType::Vertex {
-                        let existing = ignored(pc.find_obj_point_3d(&geom))?
+                        let existing = ignored(pc.find_obj_point_3d(k, &geom))?
                             .ok_or(undefined("uninitialised vertex point"))?;
                         if existing.z >= vert_pnt.z {
                             continue; // Just ignore this one.
@@ -1470,16 +1979,10 @@ impl Hcr {
             }
         }
 
-        // Now do Edges: the loop runs over the vertex count (UB-170).
+        // UB-170: upstream indexes the edge query by the vertex count. Preserve
+        // that limit when it is in bounds, but stop at the end of the edge query.
         let edge_objects = self.sil_edge_tree.objects_in_box(&e_box)?;
-        let mut sil_edges = Vec::new();
-        for ii in 0..vertices.len() {
-            let e = edge_objects.get(ii).copied().ok_or(undefined(
-                "UB-170: silhouette edge index past the edges in the box",
-            ))?;
-            sil_edges.push(e);
-        }
-        for pe in sil_edges {
+        for pe in edge_objects.into_iter().take(vertices.len()) {
             let Some(pe) = pe else {
                 continue;
             };
@@ -1514,8 +2017,8 @@ impl Hcr {
                     [Some(&sol.start), None]
                 };
                 for end in ends.into_iter().flatten() {
-                    let p1 = curve.evaluate_point(end.parameters[0])?;
-                    let p2 = other.evaluate_point(end.parameters[1])?;
+                    let p1 = curve.evaluate_point(k, end.parameters[0])?;
+                    let p2 = other.evaluate_point(k, end.parameters[1])?;
                     // Don't use this intersection if it is behind the curve
                     if p1.z < p2.z + self.ray_offset_tolerance {
                         let mut pc = PointClassification::new(curve_zone);
@@ -1547,12 +2050,129 @@ mod tests {
     use super::*;
 
     #[test]
+    fn scene_geometry_names_its_brep() {
+        // `PointClassification::GetBrep` of a vertex and an edge point reaches the
+        // scene's (constant) B-rep id; the skipped B-rep gives none
+        let mut k = Kernel::default();
+        let scene = crate::primitive::api_primitives::create_box(
+            &mut k,
+            Vec3::new(0.0, 0.0, 0.0),
+            1.0,
+            1.0,
+            1.0,
+        )
+        .unwrap();
+        let geometry = Geometry { brep: &scene };
+        let v = crate::topology::brep::p1::vertices(&scene, None).unwrap()[0];
+        let e = crate::topology::brep::p1::edges(&scene, None).unwrap()[0];
+        let mut pc = PointClassification::<HcrObject>::new(1e-6);
+        pc.set_class_object(PointClassType::Vertex, Some(HcrObject::Vertex(v)));
+        assert_eq!(
+            pc.brep(&geometry, None).unwrap(),
+            Some(BrepId::from_index(0))
+        );
+        assert_eq!(
+            pc.brep(&geometry, Some(BrepId::from_index(0))).unwrap(),
+            None
+        );
+        pc.set_class_object(PointClassType::Edge, Some(HcrObject::Edge(e)));
+        assert_eq!(
+            pc.brep(&geometry, None).unwrap(),
+            Some(BrepId::from_index(0))
+        );
+        // another B-rep has no id here
+        let other = scene.clone();
+        assert_eq!(geometry.brep_id(&other), None);
+    }
+
+    #[test]
     fn view_transform_maps_view_to_z() {
         let t = view_transform_for_vector(Vec3::new(1.0, 2.0, 3.0)).unwrap();
         let v = Vec3::new(1.0, 2.0, 3.0).unitize().unwrap();
         let z = t.transform_vector(v);
         assert!((z.z - 1.0).abs() < 1e-12);
         assert!(view_transform_for_vector(Vec3::new(0.0, 0.0, 0.0)).is_err());
+    }
+
+    #[test]
+    fn silhouette_query_with_two_vertices_and_one_edge_completes() {
+        let mut k = Kernel::default();
+        let scene = crate::primitive::api_primitives::create_box(
+            &mut k,
+            Vec3::new(0.0, 0.0, 0.0),
+            1.0,
+            1.0,
+            1.0,
+        )
+        .unwrap();
+        let e = crate::topology::brep::p1::edges(&scene, None).unwrap()[0];
+        let ivl = edge::interval(&scene, e).unwrap();
+        let tol = edge::tolerance(&scene, e).unwrap();
+        let bbox = Extent3d::from_points(Vec3::new(0.0, 0.0, 0.0), Vec3::new(1.0, 1.0, 1.0));
+        let opts = HcrOptions {
+            approx_tol_3d: 1e-3,
+            ang_tol_rad: 0.1,
+            display_seams: true,
+            display_smooth_edges: true,
+        };
+        let mut h = Hcr::from_scene(&k, scene, &Axis2Placement::default(), bbox, opts);
+        h.add_silhouette_edge(&k, e).unwrap();
+        assert_eq!(h.sil_vertex_tree.objects_in_box(&bbox).unwrap().len(), 2);
+        assert_eq!(h.sil_edge_tree.objects_in_box(&bbox).unwrap().len(), 1);
+        let mut cc = new_curve_classification(&k, HcrObject::Curve(e), ivl, tol);
+        h.intersect_curve_with_silhouettes(&k, &mut cc).unwrap();
+    }
+
+    #[test]
+    fn silhouette_query_with_more_vertices_splits_at_the_available_edge() {
+        use crate::primitive::api_curves::create_line_segment;
+        use crate::topology::brep::p5::create_wire_edge_from_curve;
+
+        let mut k = Kernel::default();
+        let mut scene = Brep::new();
+        let region = scene
+            .add_region_record(crate::topology::Region::default())
+            .unwrap();
+        scene.set_infinite_region(Some(region));
+        let target = Curve::from(
+            create_line_segment(Vec3::new(-1.0, -1.0, 0.0), Vec3::new(1.0, 1.0, 0.0)).unwrap(),
+        );
+        let ivl = target.natural_interval();
+        let e = create_wire_edge_from_curve(&mut k, &mut scene, target, ivl).unwrap();
+        let silhouette = Curve::from(
+            create_line_segment(Vec3::new(-1.0, 0.0, 1.0), Vec3::new(1.0, 0.0, 1.0)).unwrap(),
+        );
+        let sil_ivl = silhouette.natural_interval();
+        let sil = create_wire_edge_from_curve(&mut k, &mut scene, silhouette, sil_ivl).unwrap();
+        let tol = edge::tolerance(&scene, e).unwrap();
+        let bbox = Extent3d::from_points(Vec3::new(-1.0, -1.0, 0.0), Vec3::new(1.0, 1.0, 1.0));
+        let mut h = Hcr::from_scene(
+            &k,
+            scene,
+            &Axis2Placement::default(),
+            bbox,
+            HcrOptions {
+                approx_tol_3d: 1e-3,
+                ang_tol_rad: 0.1,
+                display_seams: true,
+                display_smooth_edges: true,
+            },
+        );
+        h.add_silhouette_edge(&k, sil).unwrap();
+        assert_eq!(h.sil_vertex_tree.objects_in_box(&bbox).unwrap().len(), 2);
+        assert_eq!(h.sil_edge_tree.objects_in_box(&bbox).unwrap().len(), 1);
+        let mut cc = new_curve_classification(&k, HcrObject::Curve(e), ivl, tol);
+        h.intersect_curve_with_silhouettes(&k, &mut cc).unwrap();
+
+        // Only the edge crosses the target in projection. The two silhouette
+        // endpoints do not, so skipping the available edge would leave one interval.
+        assert_eq!(cc.size(), 2);
+        let crossing = &cc.at(0).unwrap().end;
+        assert_eq!(crossing.point_class(), PointClassType::Edge);
+        assert_eq!(crossing.object(), Some(HcrObject::Edge(sil)));
+        let midpoint = (ivl.min() + ivl.max()) / 2.0;
+        assert!((crossing.t_param() - midpoint).abs() < 1e-12);
+        assert_eq!(cc.at(1).unwrap().start.object(), crossing.object());
     }
 
     #[test]

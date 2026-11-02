@@ -1,6 +1,8 @@
 //! Differential runner for `surface.surface_p9`. Reference: SmSurface.cpp:11644,
 //! 13887, 14877. A quadratic Bezier patch is used on both sides. CSI fixtures use
 //! one planar patch and one line span, so both subdivision trees have one leaf.
+//! Cylinder and cone cases (`analytic_cone` 1 and 2) take the domain as fractions
+//! of the surface's natural domain.
 use crate::{Case, CaseContext, HarnessError, Output, Rng, UnitDiff};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -30,8 +32,11 @@ use solidcore_ffi::units::surface_surface_p9 as ffi;
 
 use solidcore::geom::solution_array::{ObjectKind, SolutionObject};
 
+/// A solution object: `0` the curve, `1` the surface, which carries the natural UV
+/// domain of the real surface (`SmSurface::GetNaturalUVDomain`, as the shim's
+/// surface pointer reaches it).
 #[derive(Debug, Clone, Copy, PartialEq)]
-struct Handle(u8);
+struct Handle(u8, Option<Extent2d>);
 impl SolutionObject for Handle {
     fn kind(&self) -> ObjectKind {
         if self.0 == 0 {
@@ -43,6 +48,9 @@ impl SolutionObject for Handle {
     fn natural_interval(&self) -> Option<Extent1d> {
         (self.0 == 0).then(|| Extent1d::from_min_max(0.0, 1.0))
     }
+    fn natural_uv_domain(&self) -> Option<Extent2d> {
+        self.1
+    }
 }
 /// Differential runner for the three owned surface operations.
 pub struct Runner;
@@ -53,6 +61,10 @@ struct Inputs {
     analytic_plane: bool,
     #[serde(default)]
     analytic_revolution: bool,
+    /// 1: the corpus cylinder, 2: a canonical cone, 3: a canonical sphere, 4: a
+    /// canonical torus (shim kinds 3 to 6).
+    #[serde(default)]
+    analytic_cone: u8,
     net: [[f64; 3]; 9],
     #[serde(default = "domain")]
     domain: [f64; 4],
@@ -73,6 +85,61 @@ fn harness(e: impl std::fmt::Display) -> HarnessError {
     HarnessError::new(e.to_string())
 }
 fn surface(k: &Kernel, i: &Inputs) -> Result<Surface, HarnessError> {
+    if i.analytic_cone == 1 {
+        let mut cylinder = solidcore::surface::cone::Cone::new_cylinder_bounded(
+            Vec3::new(0.0, 0.0, 0.0),
+            Vec3::new(1.0, 0.0, 0.0),
+            Vec3::new(0.0, 1.0, 0.0),
+            1.0,
+            0.0,
+            360.0,
+            2.0,
+            false,
+            false,
+            false,
+        );
+        cylinder.make_nurb(k).map_err(harness)?;
+        return Ok(Surface::from(cylinder));
+    }
+    if i.analytic_cone == 2 {
+        let placement = solidcore::geom::axis2_placement::Axis2Placement::new(
+            Vec3::new(0.0, 0.0, 0.0),
+            Vec3::new(1.0, 0.0, 0.0),
+            Vec3::new(0.0, 1.0, 0.0),
+        );
+        let cone = solidcore::surface::cone::Cone::create_canonical(
+            k, &placement, 0.5, 1.5, 2.0, false, false,
+        )
+        .map_err(harness)?;
+        return Ok(Surface::from(cone));
+    }
+    if i.analytic_cone == 3 {
+        let placement = solidcore::geom::axis2_placement::Axis2Placement::new(
+            Vec3::new(0.0, 0.0, 0.0),
+            Vec3::new(1.0, 0.0, 0.0),
+            Vec3::new(0.0, 1.0, 0.0),
+        );
+        let sphere = solidcore::surface::sphere::Sphere::create_canonical(k, &placement, 1.5)
+            .map_err(harness)?;
+        return Ok(Surface::from(sphere));
+    }
+    if i.analytic_cone == 4 {
+        let placement = solidcore::geom::axis2_placement::Axis2Placement::new(
+            Vec3::new(0.0, 0.0, 0.0),
+            Vec3::new(1.0, 0.0, 0.0),
+            Vec3::new(0.0, 1.0, 0.0),
+        );
+        let torus = solidcore::surface::torus::Torus::create_canonical(
+            k,
+            &placement,
+            2.0,
+            0.5,
+            solidcore::surface::torus::TorusOptions::default(),
+            None,
+        )
+        .map_err(harness)?;
+        return Ok(Surface::from(torus));
+    }
     if i.analytic_revolution {
         let generator = Curve::from(BSplineCurve::from_nurb(
             NlCurve::new(
@@ -134,7 +201,14 @@ fn run_rust(i: &Inputs) -> Result<Output, HarnessError> {
     let surface = surface(&k, i)?;
     let direction =
         SurfParamType::from_code(i.direction as u64).ok_or_else(|| harness("direction"))?;
-    let domain = Extent2d::from_bounds(i.domain[0], i.domain[1], i.domain[2], i.domain[3]);
+    let mut domain = Extent2d::from_bounds(i.domain[0], i.domain[1], i.domain[2], i.domain[3]);
+    if i.analytic_cone != 0 {
+        let natural = surface.natural_uv_domain_with_nurb(&k).map_err(|e| HarnessError::new(e.to_string()))?;
+        domain = Extent2d::from_points(
+            natural.evaluate(i.domain[0], i.domain[1]),
+            natural.evaluate(i.domain[2], i.domain[3]),
+        );
+    }
     let result = match i.op {
         0 => surface
             .find_tessellation_splits(
@@ -158,7 +232,9 @@ fn run_rust(i: &Inputs) -> Result<Output, HarnessError> {
                 if let Some((a, b)) = curves {
                     for curve in [a, b] {
                         for n in 0..=4 {
+                            // (virtual EvaluatePoint of the iso curve's own kind)
                             let p = curve.evaluate_point(
+                                &k,
                                 curve.natural_interval().evaluate(f64::from(n) / 4.0),
                             )?;
                             out.extend([p.x, p.y, p.z]);
@@ -188,16 +264,17 @@ fn run_rust(i: &Inputs) -> Result<Output, HarnessError> {
                     ..CurveCacheOptions::default()
                 },
             );
-            cc.set_curve_handle(Some(Handle(0)));
+            cc.set_curve_handle(Some(Handle(0, None)));
             cc.tessellate(&k)
                 .map_err(|e| harness(format!("CSI fixture cache setup: {e}")))?;
             {
+                let surface_handle = Handle(1, Some(surface.natural_uv_domain_with_nurb(&k).map_err(|e| HarnessError::new(e.to_string()))?));
                 let mut cache = SurfaceCache::<Handle>::new(
                     surface,
                     Extent2d::from_bounds(0.0, 0.0, 1.0, 1.0),
                     SurfaceCacheOptions::default(),
                 );
-                cache.set_surface_handle(Some(Handle(1)));
+                cache.set_surface_handle(Some(surface_handle));
                 let uv = cache.uv_domain();
                 let mut bbox = Extent3d::new();
                 for p in i.net {
@@ -224,7 +301,7 @@ fn run_rust(i: &Inputs) -> Result<Output, HarnessError> {
                         is_marked: false,
                         node_class: NodeClass::Unknown,
                         face: None,
-                        surface: Some(Handle(1)),
+                        surface: Some(surface_handle),
                         slot: Some(0),
                     }),
                     ..TreeNode::new()
@@ -237,7 +314,7 @@ fn run_rust(i: &Inputs) -> Result<Output, HarnessError> {
                 base.operation = SolverOperation::Intersect;
                 base.tolerance_3d = 1e-6;
                 let mut solver = CsiGlobalSolver::new(
-                    curve_tree,
+                    &k, curve_tree,
                     tree,
                     Some(cache.surface()),
                     false,
@@ -247,9 +324,9 @@ fn run_rust(i: &Inputs) -> Result<Output, HarnessError> {
                 solver.base = base;
                 solver.curve = Some(&curve);
                 solver.surface_cache = Some(&cache);
-                solver.kernel = Some(&k);
+                solver.kernel = &k;
                 solver
-                    .local_solve_branch(&[Some(NodeId(0)), Some(NodeId(0)), None])
+                    .local_solve_branch(&k, &[Some(NodeId(0)), Some(NodeId(0)), None])
                     .map(|more| {
                         let mut out = vec![
                             0.0,
@@ -313,7 +390,9 @@ impl UnitDiff for Runner {
         let i: Inputs = case.parse()?;
         ffi::eval_surface_kind(
             i.op,
-            if i.analytic_revolution {
+            if i.analytic_cone != 0 {
+                2 + i32::from(i.analytic_cone)
+            } else if i.analytic_revolution {
                 2
             } else {
                 i32::from(i.analytic_plane)
@@ -398,17 +477,179 @@ impl UnitDiff for Runner {
                 rng.chance(0.5),
             )
         };
+        let analytic_plane = rng.chance(0.1);
+        // (drawn last: the earlier draws, and so the other cases, are unchanged)
+        let analytic_cone = if rng.chance(0.3) {
+            1 + rng.below(2) as u8
+        } else {
+            0
+        };
         serde_json::to_value(Inputs {
             op,
-            analytic_plane: rng.chance(0.1),
+            analytic_plane,
             analytic_revolution: false,
+            analytic_cone,
             net,
             direction,
             domain,
             controls,
-            diagonals,
+            // Preserve historical generated inputs; real cylinder/cone diagonals
+            // are covered by the named analytic-diagonal regression fixtures.
+            diagonals: diagonals && analytic_cone == 0,
             line: line(),
         })
         .ok()
+    }
+}
+
+#[cfg(all(test, feature = "cpp"))]
+mod tests {
+    use super::*;
+
+    const NAMES: [&str; 4] = [
+        "analytic_diagonal_cylinder_u_disabled",
+        "analytic_diagonal_cylinder_u_enabled",
+        "analytic_diagonal_cone_u_disabled",
+        "analytic_diagonal_cone_u_enabled",
+    ];
+
+    fn context() -> CaseContext {
+        CaseContext {
+            root: crate::case::repo_root(),
+            seeds: 0,
+        }
+    }
+
+    fn fixtures() -> Result<Vec<Case>, HarnessError> {
+        let cases = context().fixture_cases(Runner.id())?;
+        let selected: Vec<_> = cases
+            .iter()
+            .filter(|case| {
+                matches!(&case.source, crate::case::CaseSource::Fixture { path, .. }
+                    if path == "fixtures/surface.surface_p9/analytic-diagonals.json")
+            })
+            .collect();
+        assert_eq!(selected.len(), NAMES.len());
+        NAMES
+            .iter()
+            .map(|name| {
+                let matching: Vec<_> = cases.iter().filter(|case| case.name == *name).collect();
+                assert_eq!(matching.len(), 1, "{name}");
+                let case = matching.first().ok_or_else(|| harness(name))?;
+                assert!(selected.contains(case), "{name}");
+                Ok((*case).clone())
+            })
+            .collect()
+    }
+
+    fn assert_close(actual: f64, expected: f64) {
+        assert!(
+            (actual - expected).abs() <= crate::REL_TOL * actual.abs().max(expected.abs()),
+            "{actual} != {expected}"
+        );
+    }
+
+    fn assert_splits(case: &Case, output: &Output) -> Result<(), HarnessError> {
+        assert!(output.error.is_none(), "{}: {output:?}", case.name);
+        assert!(output.deferred.is_none(), "{}: {output:?}", case.name);
+        assert!(output.rejected.is_none(), "{}: {output:?}", case.name);
+        assert_eq!(
+            output.values.get("status"),
+            Some(&vec![0.0]),
+            "{}",
+            case.name
+        );
+        let inputs: Inputs = case.parse()?;
+        let splits = output.values.get("out").ok_or_else(|| harness("out"))?;
+        assert_eq!(splits.len(), if inputs.diagonals { 9 } else { 2 });
+        assert!(splits
+            .iter()
+            .all(|v| v.is_finite() && (0.4..=1.6).contains(v)));
+        assert!(splits
+            .windows(2)
+            .all(|pair| matches!(pair, [a, b] if a < b)));
+        assert_close(*splits.first().ok_or_else(|| harness("first split"))?, 0.4);
+        assert_close(*splits.last().ok_or_else(|| harness("last split"))?, 1.6);
+        // Shape expectations for these regressions, not a replacement native oracle.
+        if inputs.diagonals {
+            for (actual, expected) in splits
+                .iter()
+                .zip([0.4, 0.55, 0.7, 0.85, 1.0, 1.15, 1.3, 1.45, 1.6])
+            {
+                assert_close(*actual, expected);
+            }
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn analytic_diagonal_fixtures_are_discovered_and_paired() {
+        let cases = fixtures().unwrap();
+        let discovered = Runner.cases(&context()).unwrap();
+        for (index, case) in cases.iter().enumerate() {
+            assert_eq!(discovered.iter().filter(|c| c.name == case.name).count(), 1);
+            let inputs: Inputs = case.parse().unwrap();
+            assert_eq!(inputs.op, 0);
+            assert!(!inputs.analytic_plane && !inputs.analytic_revolution);
+            assert_eq!(inputs.analytic_cone, if index < 2 { 1 } else { 2 });
+            assert_eq!(inputs.direction, 0);
+            assert_eq!(inputs.domain, [0.125, 0.2, 0.375, 0.8]);
+            assert_eq!(inputs.controls, [0.05, 15.0, 0.0]);
+            assert_eq!(inputs.diagonals, index % 2 == 1);
+            assert_eq!(inputs.line, line());
+            for (index, point) in inputs.net.iter().enumerate() {
+                assert_eq!(
+                    *point,
+                    [(index / 3) as f64 * 0.5, (index % 3) as f64 * 0.5, 0.0]
+                );
+            }
+        }
+        for pair in cases.as_chunks::<2>().0 {
+            let mut disabled = pair[0].inputs.clone();
+            let mut enabled = pair[1].inputs.clone();
+            disabled.as_object_mut().unwrap().remove("diagonals");
+            enabled.as_object_mut().unwrap().remove("diagonals");
+            assert_eq!(disabled, enabled);
+        }
+    }
+
+    #[test]
+    fn analytic_diagonal_controls_have_meaningful_splits() {
+        for pair in fixtures().unwrap().as_chunks::<2>().0 {
+            let disabled = Runner.run_rust(&pair[0]).unwrap();
+            let enabled = Runner.run_rust(&pair[1]).unwrap();
+            assert_splits(&pair[0], &disabled).unwrap();
+            assert_splits(&pair[1], &enabled).unwrap();
+            assert_ne!(disabled.values["out"], enabled.values["out"]);
+        }
+    }
+
+    #[test]
+    fn analytic_diagonal_native_outputs_match_complete_arrays() {
+        assert!(Runner.abs_floors().is_empty());
+        for pair in fixtures().unwrap().as_chunks::<2>().0 {
+            let mut native = Vec::new();
+            let mut rust = Vec::new();
+            for case in pair {
+                let cpp = Runner.run_cpp(case).unwrap();
+                let rs = Runner.run_rust(case).unwrap();
+                assert_splits(case, &cpp).unwrap();
+                assert_splits(case, &rs).unwrap();
+                let diff = crate::compare(&cpp, &rs, Runner.abs_floors());
+                assert!(diff.pass(), "{}: {diff:?}", case.name);
+                assert_eq!(diff.values_compared, cpp.values["out"].len() + 1);
+                if case.parse::<Inputs>().unwrap().diagonals {
+                    let mut perturbed = rs.clone();
+                    perturbed.values.get_mut("out").unwrap()[1] *= 1.01;
+                    let negative = crate::compare(&cpp, &perturbed, Runner.abs_floors());
+                    assert!(!negative.pass(), "{}: interior change missed", case.name);
+                    assert_eq!(negative.mismatch_count, 1);
+                }
+                native.push(cpp);
+                rust.push(rs);
+            }
+            assert_ne!(native[0].values["out"], native[1].values["out"]);
+            assert_ne!(rust[0].values["out"], rust[1].values["out"]);
+        }
     }
 }

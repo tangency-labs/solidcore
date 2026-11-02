@@ -12,7 +12,15 @@
 //! the flat record documented in the ffi module; the runner reports its first entry as the
 //! `status` (`0` = `SM_SUCCESS`, else the `SmStatus`; `1007` for a Rust `InvalidInput`,
 //! `-1` for a Rust error upstream cannot produce) and the rest as the `out` values. The
-//! Rust side runs the base-class defaults (`base_*`) for `this.base`.
+//! Rust side runs the base-class defaults (`base_*`) for `this.base`. Both sides take
+//! `base` over `rev`, and `rev` over the B-spline surface.
+//!
+//! `this.rev` is a revolution record: a canonical torus or cone that each side builds,
+//! writes with `WriteToDB` to an ASCII record, optionally clears the planar generator flag
+//! in that record, and reads back with `SmSurface::ReadFromDB` (no C++ bytes reach the
+//! Rust side). With the flag cleared, `STEPInversion` takes `SmSurfOfRevolution`'s general
+//! solver branch with the torus's or cone's own parameter conversions
+//! ([`revolution_cases`]).
 //!
 //! Deferred cases: the paths into unported units (`CopyAndAddAnalytics` and
 //! `GetMaxAnalyticDomain` of B-splines, `GlobalSurfaceIntersect`, `CreatePlaneWith3DCurves`,
@@ -22,7 +30,7 @@
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-use solidcore::curve::curve::Curve as SmCurve;
+use solidcore::curve::curve::{Curve as SmCurve, CurveKind};
 use solidcore::curve::line::{BoundedLineOptions, Line};
 use solidcore::geom::a_object;
 use solidcore::geom::assert_array::{AssertArray, ObjectKey};
@@ -51,8 +59,8 @@ use solidcore::surface::surface::p2::{
     cc_local_solve, compute_surface_point_type, convert_to_parameter_delta, cs_are_perpen_disjoint,
     derivative_limit, drop_vectors, evaluate_geometric, intersect_and_split,
     intersect_curve_and_split, is_even, lift_second_derivative, lift_third_derivative, map_uv,
-    merge_double_arrays, normal_limit, scale_step_angular_derivatives, set_up_breaks,
-    BlendEndType, CreateUvTrimCurvePathType, CrossSectionValues, CurvatureType, DerivSurfDefinition,
+    merge_double_arrays, normal_limit, scale_step_angular_derivatives, set_up_breaks, BlendEndType,
+    CreateUvTrimCurvePathType, CrossSectionValues, CurvatureType, DerivSurfDefinition,
     DropCurveFail, DropCurveFailArgs, LsiGlobalSolver, Surface, SurfaceEval, SurfaceSideType,
     TangencyType,
 };
@@ -81,6 +89,21 @@ pub(crate) struct Handle;
 impl SolutionObject for Handle {
     fn kind(&self) -> ObjectKind {
         ObjectKind::Curve
+    }
+}
+
+/// The handle of the curve `sm_IntersectAndSplit` intersects: upstream its solutions
+/// name the curve, whose natural interval `IdenticalSolutions` reads.
+#[derive(Debug, Clone, Copy, PartialEq)]
+struct CurveHandle(Extent1d);
+
+impl SolutionObject for CurveHandle {
+    fn kind(&self) -> ObjectKind {
+        ObjectKind::Curve
+    }
+
+    fn natural_interval(&self) -> Option<Extent1d> {
+        Some(self.0)
     }
 }
 
@@ -129,6 +152,26 @@ struct This {
     base: bool,
     #[serde(default, flatten, skip_serializing_if = "Option::is_none")]
     bss: Option<BssIn>,
+    /// A revolution record read back from the database.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    rev: Option<RevIn>,
+}
+
+/// A canonical torus (`r = [major, minor, -]`) or cone (`r = [bot, top, height]`) written
+/// to an ASCII database record and read back, with the record's planar generator flag
+/// cleared when `non_planar` is set (the way `SmTorus` / `SmCone::ReadFromDB` produce a
+/// non-planar generator; both constructors set the flag).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[allow(clippy::struct_excessive_bools)]
+struct RevIn {
+    cone: bool,
+    origin: [f64; 3],
+    x: [f64; 3],
+    y: [f64; 3],
+    r: [f64; 3],
+    swap: bool,
+    inside: bool,
+    non_planar: bool,
 }
 
 /// An inline curve: dimension, control points as stored, degree, knots.
@@ -222,6 +265,12 @@ enum OpIn {
         dom: [f64; 4],
         other: BssIn,
         other_dom: [f64; 4],
+        /// `pOptApproxTol3d` (`None`: upstream's default).
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        tol: Option<f64>,
+        /// Translates both surfaces first (`prog_test` `my_test_one_ssi`).
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        translate: Option<[f64; 3]>,
     },
     Lift2 {
         v: Vec<[f64; 3]>,
@@ -450,44 +499,15 @@ struct Inputs {
 
 // ---- file readers -------------------------------------------------------------------
 
-fn numbers(path: &str) -> Result<Vec<f64>, HarnessError> {
-    let text = std::fs::read_to_string(path).map_err(|e| harness(format!("{path}: {e}")))?;
-    text.split_whitespace()
-        .map(|t| t.parse::<f64>().map_err(|e| harness(format!("{path}: {e}"))))
-        .collect()
-}
-
-fn int(path: &str, v: f64) -> Result<usize, HarnessError> {
-    if v.fract() != 0.0 || v < 0.0 {
-        return Err(harness(format!("{path}: bad count {v}")));
-    }
-    Ok(v as usize)
-}
+#[path = "fixtures/surface_surface_p2_sms.rs"]
+mod sms;
 
 /// Reads an upstream `.sms` text file: `n m`, `p q`, rational flag, `(n+1)(m+1)`
 /// points (`x y z`, or `wx wy wz w` when rational, v index fastest), `n+p+2` u knots,
 /// `m+q+2` v knots.
 fn read_sms(path: &str) -> Result<InlineSrf, HarnessError> {
-    let v = numbers(path)?;
-    let mut it = v.into_iter();
-    let mut num = || it.next().ok_or_else(|| harness(format!("{path}: truncated")));
-    let n = int(path, num()?)?;
-    let m = int(path, num()?)?;
-    let p = int(path, num()?)?;
-    let q = int(path, num()?)?;
-    let rat = num()? != 0.0;
-    let mut net = Vec::with_capacity(n + 1);
-    for _ in 0..=n {
-        let mut row = Vec::with_capacity(m + 1);
-        for _ in 0..=m {
-            let (x, y, z) = (num()?, num()?, num()?);
-            let w = if rat { num()? } else { NOW };
-            row.push([x, y, z, w]);
-        }
-        net.push(row);
-    }
-    let u = (0..n + p + 2).map(|_| num()).collect::<Result<Vec<_>, _>>()?;
-    let v = (0..m + q + 2).map(|_| num()).collect::<Result<Vec<_>, _>>()?;
+    let text = std::fs::read_to_string(path).map_err(|e| harness(format!("{path}: {e}")))?;
+    let sms::ParsedSurface { net, p, q, u, v } = sms::parse_sms(&text, path)?;
     Ok(InlineSrf { net, p, q, u, v })
 }
 
@@ -506,9 +526,15 @@ fn db_bytes(db: &DbIn) -> Result<Vec<u8>, HarnessError> {
 }
 
 fn shape(s: &InlineSrf) -> Result<(usize, usize), HarnessError> {
-    let n = s.net.len().checked_sub(1).ok_or_else(|| harness("empty net"))?;
+    let n = s
+        .net
+        .len()
+        .checked_sub(1)
+        .ok_or_else(|| harness("empty net"))?;
     let cols = s.net.first().map_or(0, Vec::len);
-    let m = cols.checked_sub(1).ok_or_else(|| harness("empty net row"))?;
+    let m = cols
+        .checked_sub(1)
+        .ok_or_else(|| harness("empty net row"))?;
     if s.net.iter().any(|r| r.len() != cols) {
         return Err(harness("net rows differ in length"));
     }
@@ -535,7 +561,12 @@ fn extension_retries_in_place(i: &Inputs) -> bool {
         },
         _ => return false,
     };
-    let Some(b) = i.this.as_ref().filter(|t| !t.base).and_then(|t| t.bss.as_ref()) else {
+    let Some(b) = i
+        .this
+        .as_ref()
+        .filter(|t| !t.base)
+        .and_then(|t| t.bss.as_ref())
+    else {
         return false;
     };
     let Ok(bs) = bss_of(b) else {
@@ -595,11 +626,17 @@ fn extension_needs_no_retry(
     }
     let mut cur = nurb.clone();
     let mut sides = Vec::new();
-    if !v_dir && !s.is_closed(&dom, P::U, None, false)?.0 {
-        sides.extend([(Direction::U, CurveEnd::Start, skip_umin), (Direction::U, CurveEnd::End, skip_umax)]);
+    if !v_dir && !s.is_closed(&k, &dom, P::U, None, false)?.0 {
+        sides.extend([
+            (Direction::U, CurveEnd::Start, skip_umin),
+            (Direction::U, CurveEnd::End, skip_umax),
+        ]);
     }
-    if !u_dir && !s.is_closed(&dom, P::V, None, false)?.0 {
-        sides.extend([(Direction::V, CurveEnd::Start, skip_vmin), (Direction::V, CurveEnd::End, skip_vmax)]);
+    if !u_dir && !s.is_closed(&k, &dom, P::V, None, false)?.0 {
+        sides.extend([
+            (Direction::V, CurveEnd::Start, skip_vmin),
+            (Direction::V, CurveEnd::End, skip_vmax),
+        ]);
     }
     for (d, e, skipped) in sides {
         if skipped {
@@ -618,8 +655,15 @@ fn extension_needs_no_retry(
 fn push_srf(o: &mut Vec<f64>, s: &InlineSrf) -> Result<(), HarnessError> {
     let (n, m) = shape(s)?;
     o.extend(
-        [n, m, s.p, s.q, s.u.len().saturating_sub(1), s.v.len().saturating_sub(1)]
-            .map(|x| x as f64),
+        [
+            n,
+            m,
+            s.p,
+            s.q,
+            s.u.len().saturating_sub(1),
+            s.v.len().saturating_sub(1),
+        ]
+        .map(|x| x as f64),
     );
     for row in &s.net {
         for p in row {
@@ -686,9 +730,21 @@ fn cpp_input(i: &Inputs) -> Result<(Op, Vec<f64>), HarnessError> {
     match &i.this {
         None => o.push(0.0),
         Some(t) if t.base => o.push(1.0),
+        Some(This { rev: Some(r), .. }) => {
+            o.push(3.0);
+            o.push(flag(r.cone));
+            o.extend_from_slice(&r.origin);
+            o.extend_from_slice(&r.x);
+            o.extend_from_slice(&r.y);
+            o.extend_from_slice(&r.r);
+            o.extend([flag(r.swap), flag(r.inside), flag(r.non_planar)]);
+        }
         Some(t) => {
             o.push(2.0);
-            let b = t.bss.as_ref().ok_or_else(|| harness("this: missing surface"))?;
+            let b = t
+                .bss
+                .as_ref()
+                .ok_or_else(|| harness("this: missing surface"))?;
             push_bss(&mut o, b)?;
         }
     }
@@ -770,10 +826,15 @@ fn cpp_input(i: &Inputs) -> Result<(Op, Vec<f64>), HarnessError> {
             dom,
             other,
             other_dom,
+            tol,
+            translate,
         } => {
             o.extend_from_slice(dom);
             push_bss(&mut o, other)?;
             o.extend_from_slice(other_dom);
+            o.extend([flag(tol.is_some()), tol.unwrap_or(0.0)]);
+            o.push(flag(translate.is_some()));
+            o.extend_from_slice(&translate.unwrap_or([0.0; 3]));
         }
         OpIn::Lift2 { v } | OpIn::Lift3 { v } | OpIn::Geom { e: v } => {
             for x in v {
@@ -890,7 +951,12 @@ fn cpp_input(i: &Inputs) -> Result<(Op, Vec<f64>), HarnessError> {
             knots,
             curves,
         } => {
-            o.extend([f64::from(*status), *from as f64, f64::from(*path), flag(*ctx)]);
+            o.extend([
+                f64::from(*status),
+                *from as f64,
+                f64::from(*path),
+                flag(*ctx),
+            ]);
             o.extend_from_slice(dom);
             o.extend_from_slice(ivl);
             o.extend_from_slice(tols);
@@ -993,7 +1059,12 @@ fn cpp_input(i: &Inputs) -> Result<(Op, Vec<f64>), HarnessError> {
             db,
         } => {
             let bytes = db_bytes(db)?;
-            o.extend([*ty as f64, flag(*binary), *version as f64, bytes.len() as f64]);
+            o.extend([
+                *ty as f64,
+                flag(*binary),
+                *version as f64,
+                bytes.len() as f64,
+            ]);
             o.extend(bytes.iter().map(|&b| f64::from(b)));
         }
     }
@@ -1001,8 +1072,12 @@ fn cpp_input(i: &Inputs) -> Result<(Op, Vec<f64>), HarnessError> {
 }
 
 fn to_output(flat: &[f64]) -> Output {
-    let (status, rest) = flat.split_first().map_or((f64::NAN, &[][..]), |(s, r)| (*s, r));
-    Output::new().values("status", vec![status]).values("out", rest.to_vec())
+    let (status, rest) = flat
+        .split_first()
+        .map_or((f64::NAN, &[][..]), |(s, r)| (*s, r));
+    Output::new()
+        .values("status", vec![status])
+        .values("out", rest.to_vec())
 }
 
 fn cpp(i: &Inputs) -> Result<Output, HarnessError> {
@@ -1017,7 +1092,11 @@ fn surface_of(s: &InlineSrf) -> Result<NlSurface, HarnessError> {
     let net = s
         .net
         .iter()
-        .map(|r| r.iter().map(|&[x, y, z, w]| CPoint::new(x, y, z, w)).collect())
+        .map(|r| {
+            r.iter()
+                .map(|&[x, y, z, w]| CPoint::new(x, y, z, w))
+                .collect()
+        })
         .collect();
     NlSurface::new(net, s.p, s.q, s.u.clone(), s.v.clone())
         .map_err(|e| harness(format!("surface input: {e}")))
@@ -1121,7 +1200,7 @@ fn side(left: bool) -> Side {
 /// The `SmStatus` of a Rust error; `-1` for one upstream cannot return.
 fn status(e: &SolidError) -> f64 {
     match e {
-        SolidError::InvalidInput { .. } => 1007.0,
+        SolidError::InvalidInput { .. } | SolidError::PortInvariant { .. } => 1007.0,
         SolidError::Upstream { code, .. } => f64::from(*code),
         _ => -1.0,
     }
@@ -1171,10 +1250,17 @@ fn dump_bss(o: &mut Vec<f64>, s: &BSplineSurface) {
 fn dump_state(o: &mut Vec<f64>, s: Option<&Surface>) {
     match s.map(Surface::kind) {
         Some(sp2::SurfaceKind::BSpline(b)) => dump_bss(o, b),
+        // an SmProceduralBlend is an SmBSplineSurface: its net
+        Some(sp2::SurfaceKind::ProceduralBlend(pb)) => dump_bss(o, pb.net()),
+        Some(sp2::SurfaceKind::BallPatch(bp)) => dump_bss(o, bp.net()),
         // an SmPlane is an SmBSplineSurface: its B-spline part
         Some(sp2::SurfaceKind::Plane(p)) => dump_bss(o, p.base()),
         // an SmSurfOfRevolution is an SmBSplineSurface: its NURB
         Some(sp2::SurfaceKind::SurfOfRevolution(r)) => dump_bss(o, r.base()),
+        Some(sp2::SurfaceKind::SurfOfExtrusion(r)) => dump_bss(o, r.base()),
+        Some(sp2::SurfaceKind::Cone(c)) => dump_bss(o, c.rev().base()),
+        Some(sp2::SurfaceKind::Sphere(s)) => dump_bss(o, s.base().base()),
+        Some(sp2::SurfaceKind::Torus(s)) => dump_bss(o, s.base().base()),
         // `put_state` of a surface that is not a B-spline
         Some(
             sp2::SurfaceKind::CurveBounded(_)
@@ -1183,6 +1269,44 @@ fn dump_state(o: &mut Vec<f64>, s: Option<&Surface>) {
             | sp2::SurfaceKind::SrfInVolume(_),
         )
         | None => o.push(0.0),
+    }
+}
+
+/// `GlobalSurfaceIntersect`'s outputs: `n`, `same` (the arrays agree in length) and per
+/// curve the 3D curve and the two UV curves (each its type code, `0` for none, then
+/// [`dump_curve`] for a B-spline), the curve type and the deviation.
+fn put_intersection(o: &mut Vec<f64>, r: &sp2::SurfaceIntersection) {
+    let n = r.curves_3d.len();
+    o.push(n as f64);
+    let same = r.surface1_uv_curves.len() == n
+        && r.surface2_uv_curves.len() == n
+        && r.curve_types.len() == n
+        && r.deviations.len() == n;
+    o.push(flag(same));
+    if !same {
+        return;
+    }
+    let put = |o: &mut Vec<f64>, c: Option<&SmCurve>| match c {
+        None => o.push(0.0),
+        Some(c) => {
+            o.push(c.type_code() as f64);
+            if let CurveKind::BSpline(b) = c.kind() {
+                dump_curve(o, b);
+            }
+        }
+    };
+    for (((c3, (u1, u2)), t), d) in r
+        .curves_3d
+        .iter()
+        .zip(r.surface1_uv_curves.iter().zip(&r.surface2_uv_curves))
+        .zip(&r.curve_types)
+        .zip(&r.deviations)
+    {
+        put(o, Some(c3));
+        put(o, u1.as_ref());
+        put(o, u2.as_ref());
+        o.push(f64::from(*t as i32));
+        o.push(*d);
     }
 }
 
@@ -1213,8 +1337,63 @@ fn this_surface(t: &This) -> Result<Option<Surface>, HarnessError> {
     if t.base {
         return Ok(None);
     }
-    let b = t.bss.as_ref().ok_or_else(|| harness("this: missing surface"))?;
+    let b = t
+        .bss
+        .as_ref()
+        .ok_or_else(|| harness("this: missing surface"))?;
     Ok(Some(Surface::from(bss_of(b)?)))
+}
+
+/// The planar generator flag line of an ASCII `SmSurfOfRevolution` record (value first).
+const PLANAR_LINE: &[u8] = b"1 SmSurfOfRevolution Planar Generator Curve";
+
+/// The canonical surface of `r` (not yet written).
+fn revolution_made(k: &Kernel, r: &RevIn) -> solidcore::Result<(Surface, i64)> {
+    use solidcore::surface::cone::Cone;
+    use solidcore::surface::torus::{Torus, TorusOptions};
+    let frame = Axis2Placement::new(v3(r.origin), v3(r.x), v3(r.y));
+    let [a, b, c] = r.r;
+    Ok(if r.cone {
+        let cone = Cone::create_canonical(k, &frame, a, b, c, r.swap, r.inside)?;
+        (Surface::from(cone), sp2::CONE_TYPE)
+    } else {
+        let opts = TorusOptions {
+            swap_uv: r.swap,
+            inside_out: r.inside,
+            circle_nurb: None,
+        };
+        let torus = Torus::create_canonical(k, &frame, a, b, opts, None)?;
+        (Surface::from(torus), sp2::TORUS_TYPE)
+    })
+}
+
+/// [`RevIn`]'s surface: the canonical surface written to an ASCII record
+/// (`WriteToDB`), the record's planar flag cleared when asked, then
+/// `SmSurface::ReadFromDB` of the record. The inner error is the status the case records.
+fn revolution_surface(k: &Kernel, r: &RevIn) -> Result<solidcore::Result<Surface>, HarnessError> {
+    use solidcore::topology::database_io::DatabaseWriter;
+    use solidcore::topology::geometry_write::write_surface;
+    let (made, ty) = match revolution_made(k, r) {
+        Ok(m) => m,
+        Err(e) => return Ok(Err(e)),
+    };
+    let mut w = DatabaseWriter::open_for_write(FileType::Ascii);
+    if let Err(e) = write_surface(&made, &mut w, 30) {
+        return Ok(Err(e));
+    }
+    let mut text = w.into_bytes();
+    if r.non_planar {
+        let at = text
+            .windows(PLANAR_LINE.len())
+            .position(|w| w == PLANAR_LINE)
+            .ok_or_else(|| harness("revolution record: no planar generator flag line"))?;
+        if let Some(b) = text.get_mut(at) {
+            *b = b'0';
+        }
+    }
+    let mut rd = DatabaseReader::new();
+    rd.open_for_read(text, FileType::Ascii);
+    Ok(Surface::read_from_db(k, ty, &mut rd, 30))
 }
 
 fn base_err() -> SolidError {
@@ -1236,8 +1415,15 @@ fn edit(s: &mut Option<Surface>, f: impl FnOnce(&mut Surface) -> solidcore::Resu
     Ok(o)
 }
 
-fn rust_surface_op(op: &OpIn, t: &This) -> Result<Run, HarnessError> {
-    let mut s = this_surface(t)?;
+fn rust_surface_op(k: &Kernel, op: &OpIn, t: &This) -> Result<Run, HarnessError> {
+    // `base` first, then `rev`, then the B-spline surface, as `cpp_input` encodes `this`
+    let mut s = match t.rev.as_ref().filter(|_| !t.base) {
+        Some(r) => match revolution_surface(k, r)? {
+            Ok(s) => Some(s),
+            Err(e) => return Ok(Err(e)),
+        },
+        None => this_surface(t)?,
+    };
     let base = s.is_none();
     let run = match op {
         OpIn::Eval {
@@ -1256,7 +1442,7 @@ fn rust_surface_op(op: &OpIn, t: &This) -> Result<Run, HarnessError> {
                 non_zero_tangents: *nzt,
             };
             let d = match &s {
-                Some(x) => x.evaluate(p2(*uv), *hu, *hv, flags)?,
+                Some(x) => x.evaluate(k, p2(*uv), *hu, *hv, flags)?,
                 None => sp2::base_evaluate()?,
             };
             for i in 0..=*hu {
@@ -1275,7 +1461,7 @@ fn rust_surface_op(op: &OpIn, t: &This) -> Result<Run, HarnessError> {
         }),
         OpIn::EvalPt { uv } => record(|o| {
             let p = match &s {
-                Some(x) => x.evaluate_point(p2(*uv))?,
+                Some(x) => x.evaluate_point(k, p2(*uv))?,
                 None => sp2::base_evaluate_point()?,
             };
             push3(o, p);
@@ -1294,14 +1480,14 @@ fn rust_surface_op(op: &OpIn, t: &This) -> Result<Run, HarnessError> {
             ];
             if let Some(x) = &s {
                 {
-                    push_dom(o, &x.natural_uv_domain());
+                    push_dom(o, &x.natural_uv_domain_with_nurb(k)?);
                     push_dom(o, &x.step_uv_domain());
                     o.extend([
                         x.degree(SurfParamType::U) as f64,
                         x.degree(SurfParamType::V) as f64,
-                        x.number_control_points(SurfParamType::U) as f64,
-                        x.number_control_points(SurfParamType::V) as f64,
-                        flag(x.is_bilinear()),
+                        x.number_control_points(k, SurfParamType::U) as f64,
+                        x.number_control_points(k, SurfParamType::V) as f64,
+                        flag(x.is_bilinear(k)),
                         x.type_code() as f64,
                     ]);
                     push_str(o, x.type_string());
@@ -1348,7 +1534,7 @@ fn rust_surface_op(op: &OpIn, t: &This) -> Result<Run, HarnessError> {
         }
         OpIn::Parallel { v } => record(|o| {
             let r = match &s {
-                Some(x) => x.is_parallel_to_vector(v3(*v))?,
+                Some(x) => x.is_parallel_to_vector(k, v3(*v))?,
                 None => sp2::base_is_parallel_to_vector(),
             };
             o.push(flag(r));
@@ -1403,7 +1589,13 @@ fn rust_surface_op(op: &OpIn, t: &This) -> Result<Run, HarnessError> {
         }
         OpIn::StepInv { dom, p, tol, guess } => record(|o| {
             let (uv, loc) = match &s {
-                Some(x) => x.step_inversion(&Kernel::default(), &dom_of(*dom), v3(*p), *tol, guess.map(p2))?,
+                Some(x) => x.step_inversion(
+                    &Kernel::default(),
+                    &dom_of(*dom),
+                    v3(*p),
+                    *tol,
+                    guess.map(p2),
+                )?,
                 None => sp2::base_step_inversion()?,
             };
             push2(o, uv);
@@ -1414,7 +1606,7 @@ fn rust_surface_op(op: &OpIn, t: &This) -> Result<Run, HarnessError> {
             let cont = continuity_of(*cont)?;
             record(|o| {
                 let e = match &s {
-                    Some(x) => x.create_extended_surface(&Kernel::default(), *dist, cont)?,
+                    Some(x) => x.create_extended_surface(k, *dist, cont)?,
                     None => sp2::base_create_extended_surface()?,
                 };
                 dump_state(o, Some(&e));
@@ -1426,19 +1618,19 @@ fn rust_surface_op(op: &OpIn, t: &This) -> Result<Run, HarnessError> {
             let dir = param_of(*dir)?;
             record(|o| {
                 let e = match &s {
-                    Some(x) => {
-                        x.create_extended_surface_dir(&Kernel::default(), dir, *dist, cont)?
-                    }
+                    Some(x) => x.create_extended_surface_dir(k, dir, *dist, cont)?,
                     None => sp2::base_create_extended_surface()?,
                 };
                 dump_state(o, Some(&e));
                 Ok(())
             })
         }
-        OpIn::AdjustStep { dom } => edit(&mut s, |x| x.adjust_step_uv_domain(&Kernel::default(), &dom_of(*dom))),
+        OpIn::AdjustStep { dom } => edit(&mut s, |x| {
+            x.adjust_step_uv_domain(&Kernel::default(), &dom_of(*dom))
+        }),
         OpIn::MaxAnal => record(|o| {
             let d = match &s {
-                Some(x) => x.max_analytic_domain()?,
+                Some(x) => x.max_analytic_domain(k)?,
                 None => sp2::base_max_analytic_domain(),
             };
             push_dom(o, &d);
@@ -1448,8 +1640,8 @@ fn rust_surface_op(op: &OpIn, t: &This) -> Result<Run, HarnessError> {
             let anal = matches!(op, OpIn::CopyAnal);
             record(|o| {
                 let c = match &s {
-                    Some(x) if anal => x.copy_and_add_analytics(&Kernel::default())?,
-                    Some(x) => x.copy(&Kernel::default())?,
+                    Some(x) if anal => x.copy_and_add_analytics(k)?,
+                    Some(x) => x.copy(k)?,
                     None if anal => sp2::base_copy_and_add_analytics()?,
                     None => sp2::base_copy()?,
                 };
@@ -1499,9 +1691,9 @@ fn rust_surface_op(op: &OpIn, t: &This) -> Result<Run, HarnessError> {
             record(|o| {
                 let srf = s.as_ref();
                 let mut e = match ctor {
-                    0 => SurfaceEval::new(srf),
-                    1 => SurfaceEval::with_uv(srf, uv[0], uv[1]),
-                    _ => SurfaceEval::with_uv_and_sect_dir(srf, uv[0], uv[1], v3(*dir)),
+                    0 => SurfaceEval::new(k, srf),
+                    1 => SurfaceEval::with_uv(k, srf, uv[0], uv[1]),
+                    _ => SurfaceEval::with_uv_and_sect_dir(k, srf, uv[0], uv[1], v3(*dir)),
                 };
                 let put = |o: &mut Vec<f64>, e: &SurfaceEval<'_>| {
                     o.extend(e.flags().map(flag));
@@ -1538,20 +1730,30 @@ fn rust_surface_op(op: &OpIn, t: &This) -> Result<Run, HarnessError> {
             dom,
             other,
             other_dom,
+            tol,
+            translate,
         } => {
-            let other = Surface::from(bss_of(other)?);
+            let mut other = Surface::from(bss_of(other)?);
+            let mut this = s.clone();
             record(|o| {
-                let x = s.as_ref().ok_or_else(base_err)?;
+                let k = Kernel::default();
+                let x = this.as_mut().ok_or_else(base_err)?;
+                if let Some(t) = translate {
+                    let mut ax = Axis2Placement::default();
+                    ax.translate(v3(*t));
+                    x.transform(&k, &ax, None)?;
+                    other.transform(&k, &ax, None)?;
+                }
                 let r = x.global_surface_intersect(
-                    &Kernel::default(),
+                    &k,
                     &dom_of(*dom),
                     &other,
                     &dom_of(*other_dom),
                     [true, true],
-                    None,
+                    *tol,
                     None,
                 )?;
-                o.push(r.curves_3d.len() as f64);
+                put_intersection(o, &r);
                 Ok(())
             })
         }
@@ -1580,7 +1782,11 @@ fn rust_static_op(op: &OpIn) -> Result<Run, HarnessError> {
         }
         OpIn::Lift3 { v } => {
             let a: Vec<Vec3> = v.iter().copied().map(v3).collect();
-            let g = |i: usize| a.get(i).copied().ok_or_else(|| harness("lift3: 12 vectors"));
+            let g = |i: usize| {
+                a.get(i)
+                    .copied()
+                    .ok_or_else(|| harness("lift3: 12 vectors"))
+            };
             let r = lift_third_derivative(
                 g(0)?,
                 g(1)?,
@@ -1789,7 +1995,7 @@ fn rust_static_op(op: &OpIn) -> Result<Run, HarnessError> {
                 Err(e) if e.is_unported() => Err(e),
                 Err(e) => Ok(vec![status(&e)]),
                 Ok(secs) => {
-                    match d.skin_deriv_surface(&secs, params, &mut r1, r2.as_mut(), *tol) {
+                    match d.skin_deriv_surface(&k, &secs, params, &mut r1, r2.as_mut(), *tol) {
                         Err(e) if e.is_unported() => Err(e),
                         Err(e) => Ok(vec![0.0, status(&e)]),
                         Ok(skin) => {
@@ -1934,6 +2140,7 @@ fn rust_static_op(op: &OpIn) -> Result<Run, HarnessError> {
             let kb = [continuity_of(k2[0])?, continuity_of(k2[1])?];
             record(|o| {
                 let sols: SolutionArray<Handle> = cc_local_solve(
+                    &k,
                     &a,
                     &Extent1d::from_min_max(i1[0], i1[1]),
                     ka,
@@ -1960,12 +2167,13 @@ fn rust_static_op(op: &OpIn) -> Result<Run, HarnessError> {
             let c = SmCurve::from(curve_of(c)?);
             record(|o| {
                 let mut s = s.clone();
-                intersect_and_split::<Handle>(
+                intersect_and_split(
                     &k,
                     &c,
                     &Extent1d::from_min_max(ivl[0], ivl[1]),
                     v3(*pp),
                     v3(*pn),
+                    Some(CurveHandle(c.natural_interval())),
                     &mut s,
                 )?;
                 o.push(s.len() as f64);
@@ -2034,7 +2242,9 @@ fn rust_static_op(op: &OpIn) -> Result<Run, HarnessError> {
                 ray_fire: *ray,
                 distance_tolerance: *tol,
                 surface_cache: None,
-                kernel: None,
+                face_queries: None,
+                face_cache: None,
+                kernel: &k,
             };
             let mut branch: Branch = Default::default();
             if let Some(slot) = branch.first_mut() {
@@ -2074,7 +2284,7 @@ fn rust_static_op(op: &OpIn) -> Result<Run, HarnessError> {
                 .map(|c| curve_of(c).map(SmCurve::from))
                 .collect::<Result<Vec<_>, _>>()?;
             record(|_| {
-                Surface::create_plane_with_3d_curves(&Kernel::default(), &cs, *tol)?;
+                Surface::create_plane_with_3d_curves(&k, &cs, *tol)?;
                 Ok(())
             })
         }
@@ -2086,7 +2296,14 @@ fn rust_static_op(op: &OpIn) -> Result<Run, HarnessError> {
         } => {
             let bytes = db_bytes(db)?;
             let mut r = DatabaseReader::new();
-            r.open_for_read(bytes, if *binary { FileType::Binary } else { FileType::Ascii });
+            r.open_for_read(
+                bytes,
+                if *binary {
+                    FileType::Binary
+                } else {
+                    FileType::Ascii
+                },
+            );
             record(|o| {
                 let s = Surface::read_from_db(&Kernel::default(), *ty, &mut r, *version)?;
                 dump_state(o, Some(&s));
@@ -2098,9 +2315,9 @@ fn rust_static_op(op: &OpIn) -> Result<Run, HarnessError> {
     Ok(run)
 }
 
-fn rust(i: &Inputs) -> Result<Output, HarnessError> {
+fn rust(k: &Kernel, i: &Inputs) -> Result<Output, HarnessError> {
     let run = match &i.this {
-        Some(t) => rust_surface_op(&i.op, t)?,
+        Some(t) => rust_surface_op(k, &i.op, t)?,
         None => rust_static_op(&i.op)?,
     };
     Ok(match run {
@@ -2170,7 +2387,11 @@ fn gen_srf(rng: &mut Rng, max_deg: usize) -> InlineSrf {
 fn gen_bss(rng: &mut Rng) -> BssIn {
     BssIn {
         oob: rng.chance(0.1),
-        form: if rng.chance(0.85) { 11 } else { rng.below(10) as u8 },
+        form: if rng.chance(0.85) {
+            11
+        } else {
+            rng.below(10) as u8
+        },
         srf: SrfIn::Inline(gen_srf(rng, 3)),
     }
 }
@@ -2183,7 +2404,11 @@ fn gen_curve(rng: &mut Rng, dim: u64) -> CrvIn {
         .map(|i| {
             let x = i as f64 + rng.uniform(-0.3, 0.3);
             let y = rng.uniform(-1.0, 1.0);
-            let z = if dim == 2 { 0.0 } else { rng.uniform(-1.0, 1.0) };
+            let z = if dim == 2 {
+                0.0
+            } else {
+                rng.uniform(-1.0, 1.0)
+            };
             if rational {
                 let w = rng.uniform(0.5, 2.0);
                 [x * w, y * w, z * w, w]
@@ -2268,6 +2493,7 @@ fn gen_surface_case(rng: &mut Rng) -> Inputs {
     let this = This {
         base,
         bss: (!base).then_some(bss),
+        rev: None,
     };
     let op = match rng.below(22) {
         0 | 1 => {
@@ -2283,9 +2509,7 @@ fn gen_surface_case(rng: &mut Rng) -> Inputs {
                 nzt: rng.chance(0.7),
             }
         }
-        2 => OpIn::EvalPt {
-            uv: gen_uv(rng, d),
-        },
+        2 => OpIn::EvalPt { uv: gen_uv(rng, d) },
         4 => OpIn::Knots {
             dir: rng.below(2) as u8,
             ivl: rng.chance(0.3).then(|| {
@@ -2355,9 +2579,7 @@ fn gen_surface_case(rng: &mut Rng) -> Inputs {
             dom: d,
             p: rng.point3(-1.0, 2.0),
         },
-        19 => OpIn::ConvertUv {
-            uv: gen_uv(rng, d),
-        },
+        19 => OpIn::ConvertUv { uv: gen_uv(rng, d) },
         20 if !base => {
             let k = 1 + rng.below(5) as usize;
             let uv0 = gen_uv(rng, d);
@@ -2513,7 +2735,11 @@ fn gen_static_case(rng: &mut Rng) -> Inputs {
                 }
             };
             OpIn::DerivAssert {
-                samples: if rng.chance(0.1) { 0 } else { 1 + rng.below(200) },
+                samples: if rng.chance(0.1) {
+                    0
+                } else {
+                    1 + rng.below(200)
+                },
                 tt: rng.below(9) as u8,
                 dir_angles: [ang(rng), ang(rng)],
                 tref: rng.chance(0.3),
@@ -2558,19 +2784,31 @@ fn gen_static_case(rng: &mut Rng) -> Inputs {
             if bad {
                 let b = rng.below(6) as usize;
                 if let Some(slot) = opt.get_mut(b) {
-                    *slot = if slot.is_some() { None } else { Some(vs(rng, n)) };
+                    *slot = if slot.is_some() {
+                        None
+                    } else {
+                        Some(vs(rng, n))
+                    };
                 }
             }
             let pos: Vec<[f64; 3]> = (0..n)
                 .map(|i| [i as f64, rng.uniform(-0.2, 0.2), rng.uniform(-0.2, 0.2)])
                 .collect();
-            let d1 = if rng.chance(0.05) { vs(rng, n + 1) } else { vs(rng, n) };
+            let d1 = if rng.chance(0.05) {
+                vs(rng, n + 1)
+            } else {
+                vs(rng, n)
+            };
             let sets = CrossSets { pos, d1, opt };
             if rng.chance(0.5) {
                 OpIn::Cross { sets }
             } else {
                 // rail through the start points
-                let cpts = sets.pos.iter().map(|p| [p[0], p[1], p[2], NOW]).collect::<Vec<_>>();
+                let cpts = sets
+                    .pos
+                    .iter()
+                    .map(|p| [p[0], p[1], p[2], NOW])
+                    .collect::<Vec<_>>();
                 let rp = (sets.pos.len().saturating_sub(1)).clamp(1, 3);
                 let (rail1, params) = if sets.pos.len() >= 2 {
                     let rail = CrvIn {
@@ -2664,7 +2902,11 @@ fn gen_static_case(rng: &mut Rng) -> Inputs {
             let s0 = rng.point3(-1.0, 1.0);
             let s1 = rng.point3(-1.0, 1.0);
             let near = rng.chance(0.6);
-            let c0 = if near { rng.point3(-1.0, 1.0) } else { rng.point3(3.0, 5.0) };
+            let c0 = if near {
+                rng.point3(-1.0, 1.0)
+            } else {
+                rng.point3(3.0, 5.0)
+            };
             let c1 = [c0[0] + 0.5, c0[1] + 0.5, c0[2] + 0.5];
             OpIn::CsPerpen {
                 caux: rng.below(9) as u8,
@@ -2704,6 +2946,126 @@ fn gen_static_case(rng: &mut Rng) -> Inputs {
     Inputs { this: None, op }
 }
 
+/// `STEPInversion` on revolution records ([`RevIn`]), with and without the planar
+/// generator flag: tori and cones (one through the apex), both placements, every swap /
+/// inside-out combination. The points are STEP points of the canonical surface (interior,
+/// on the seams, at the cone's apex), points moved off it (outside and inside the
+/// tolerance) and one far away; the domain is the STEP domain or a sub-domain of it.
+fn revolution_cases() -> Result<Vec<Case>, HarnessError> {
+    type StepOp = (String, [f64; 4], [f64; 3], f64, Option<[f64; 2]>);
+    let k = Kernel::default();
+    let placements = [
+        ([0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0]),
+        ([1.0, -2.0, 0.5], [0.6, 0.8, 0.0], [0.0, 0.0, 1.0]),
+    ];
+    let shapes: [(&str, bool, [f64; 3]); 3] = [
+        ("torus", false, [3.0, 1.0, 0.0]),
+        ("cone", true, [1.0, 2.0, 3.0]),
+        ("apex_cone", true, [0.0, 2.0, 3.0]),
+    ];
+    let fractions: [(f64, f64); 9] = [
+        (0.3, 0.4),
+        (0.7, 0.15),
+        (0.55, 0.8),
+        (0.0, 0.5),
+        (1.0, 0.5),
+        (0.5, 0.0),
+        (0.5, 1.0),
+        (0.0, 0.0),
+        (1.0, 1.0),
+    ];
+    let mut cases = Vec::new();
+    for (name, cone, r) in shapes {
+        for (pi, (origin, x, y)) in placements.iter().enumerate() {
+            for swap in [false, true] {
+                for inside in [false, true] {
+                    let mut rev = RevIn {
+                        cone,
+                        origin: *origin,
+                        x: *x,
+                        y: *y,
+                        r,
+                        swap,
+                        inside,
+                        non_planar: false,
+                    };
+                    let (made, _) = revolution_made(&k, &rev)
+                        .map_err(|e| harness(format!("revolution {name}: {e}")))?;
+                    let d = made.step_uv_domain();
+                    let full = [d.min().x, d.min().y, d.max().x, d.max().y];
+                    let at = |fu: f64, fv: f64| {
+                        let uv = d.evaluate(fu, fv);
+                        made.evaluate_step_point(&k, uv).map_err(|e| {
+                            harness(format!("revolution {name} point ({fu}, {fv}): {e}"))
+                        })
+                    };
+                    let mut ops: Vec<StepOp> = Vec::new();
+                    for (fi, (fu, fv)) in fractions.iter().enumerate() {
+                        let p = at(*fu, *fv)?;
+                        ops.push((format!("on{fi}"), full, [p.x, p.y, p.z], 1e-7, None));
+                    }
+                    // a guess (upstream hands it on unconverted in the non-planar branch)
+                    for (fi, (fu, fv, gu, gv)) in
+                        [(0.3, 0.4, 0.32, 0.38), (0.0, 0.5, 0.02, 0.5)].iter().enumerate()
+                    {
+                        let p = at(*fu, *fv)?;
+                        let g = d.evaluate(*gu, *gv);
+                        ops.push((format!("guess{fi}"), full, [p.x, p.y, p.z], 1e-7, Some([g.x, g.y])));
+                    }
+                    let p = at(0.3, 0.4)?;
+                    let c = v3(*origin);
+                    let dir = (p - c).unitize_or_z();
+                    for (tag, off, tol) in [("off", 1e-3, 1e-7), ("near", 1e-6, 1e-4)] {
+                        let q = p + dir * off;
+                        ops.push((tag.into(), full, [q.x, q.y, q.z], tol, None));
+                    }
+                    let far = c + v3(*x) * 40.0;
+                    ops.push(("far".into(), full, [far.x, far.y, far.z], 1e-7, None));
+                    let sub = d.evaluate(0.2, 0.2);
+                    let sub_hi = d.evaluate(0.8, 0.8);
+                    let sub = [sub.x, sub.y, sub_hi.x, sub_hi.y];
+                    for (fi, (fu, fv)) in [(0.3, 0.4), (0.9, 0.5)].iter().enumerate() {
+                        let p = at(*fu, *fv)?;
+                        ops.push((format!("sub{fi}"), sub, [p.x, p.y, p.z], 1e-7, None));
+                    }
+                    for non_planar in [false, true] {
+                        rev.non_planar = non_planar;
+                        for (tag, dom, p, tol, guess) in &ops {
+                            let inputs = Inputs {
+                                this: Some(This {
+                                    base: false,
+                                    bss: None,
+                                    rev: Some(rev.clone()),
+                                }),
+                                op: OpIn::StepInv {
+                                    dom: *dom,
+                                    p: *p,
+                                    tol: *tol,
+                                    guess: *guess,
+                                },
+                            };
+                            let value = serde_json::to_value(inputs)
+                                .map_err(|e| harness(e.to_string()))?;
+                            cases.push(Case {
+                                unit: "surface.surface_p2".into(),
+                                name: format!(
+                                    "rev_step_inv_{name}_p{pi}_s{}_i{}_{}_{tag}",
+                                    u8::from(swap),
+                                    u8::from(inside),
+                                    if non_planar { "nonplanar" } else { "planar" },
+                                ),
+                                source: crate::case::CaseSource::Inline,
+                                inputs: value,
+                            });
+                        }
+                    }
+                }
+            }
+        }
+    }
+    Ok(cases)
+}
+
 fn gen_case(rng: &mut Rng) -> Inputs {
     if rng.chance(0.5) {
         gen_surface_case(rng)
@@ -2738,15 +3100,76 @@ impl UnitDiff for Runner {
             seeds: ctx.seeds.max(MIN_GENERATED),
             ..ctx.clone()
         };
-        default_cases(self, &ctx)
+        let mut cases = default_cases(self, &ctx)?;
+        cases.extend(super::surface_cone_p1::common_cases(&ctx)?);
+        cases.extend(revolution_cases()?);
+        cases.extend(super::surface_sphere::const_make_cases());
+        cases.extend(super::surface_torus::const_make_cases());
+        cases.extend(super::surface_surf_of_revolution_p1::const_make_cases());
+        Ok(cases)
     }
 
     fn run_cpp(&self, case: &Case) -> Result<Output, HarnessError> {
+        if case.inputs.get("common_const_make").is_some() {
+            if let Some(v) = case.inputs.get("common_sphere") { return super::surface_sphere::const_make_cpp(v.clone()); }
+            if let Some(v) = case.inputs.get("common_torus") { return super::surface_torus::const_make_cpp(v.clone()); }
+            if let Some(v) = case.inputs.get("common_revolution") { return super::surface_surf_of_revolution_p1::const_make_cpp(v.clone()); }
+        }
+        if case.inputs.get("common_const_make").is_some() {
+            let value = case.inputs.get("common_cone").ok_or_else(|| HarnessError::new("missing common_cone"))?;
+            return super::surface_cone_p1::const_make_cpp(value.clone());
+        }
+        if let Some(value) = case.inputs.get("common_cone") {
+            return super::surface_cone_p1::common_cpp(
+                value.clone(),
+                case.inputs.get("common_db"),
+                case.inputs
+                    .get("common_lazy")
+                    .and_then(Value::as_bool)
+                    .unwrap_or(false),
+                case.inputs
+                    .get("common_subdomain")
+                    .and_then(Value::as_bool)
+                    .unwrap_or(false),
+                case.inputs
+                    .get("common_queries")
+                    .and_then(Value::as_bool)
+                    .unwrap_or(false),
+            );
+        }
         cpp(&case.parse()?)
     }
 
     fn run_rust(&self, case: &Case) -> Result<Output, HarnessError> {
-        rust(&case.parse()?)
+        let k = &Kernel::default();
+        if case.inputs.get("common_const_make").is_some() {
+            if let Some(v) = case.inputs.get("common_sphere") { return super::surface_sphere::const_make_rust(v.clone()); }
+            if let Some(v) = case.inputs.get("common_torus") { return super::surface_torus::const_make_rust(v.clone()); }
+            if let Some(v) = case.inputs.get("common_revolution") { return super::surface_surf_of_revolution_p1::const_make_rust(v.clone()); }
+        }
+        if case.inputs.get("common_const_make").is_some() {
+            let value = case.inputs.get("common_cone").ok_or_else(|| HarnessError::new("missing common_cone"))?;
+            return super::surface_cone_p1::const_make_rust(value.clone());
+        }
+        if let Some(value) = case.inputs.get("common_cone") {
+            return super::surface_cone_p1::common_rust(
+                value.clone(),
+                case.inputs.get("common_db"),
+                case.inputs
+                    .get("common_lazy")
+                    .and_then(Value::as_bool)
+                    .unwrap_or(false),
+                case.inputs
+                    .get("common_subdomain")
+                    .and_then(Value::as_bool)
+                    .unwrap_or(false),
+                case.inputs
+                    .get("common_queries")
+                    .and_then(Value::as_bool)
+                    .unwrap_or(false),
+            );
+        }
+        rust(k, &case.parse()?)
     }
 }
 
@@ -2758,6 +3181,7 @@ mod tests {
     /// The generators reach the ops with successful outcomes on the Rust side.
     #[test]
     fn generated_cases_cover_ops() {
+        let k = &Kernel::default();
         let mut tally: BTreeMap<(String, String), usize> = BTreeMap::new();
         for seed in 0..2000u64 {
             let mut rng = Rng::new(0x5eed_0000 + seed);
@@ -2770,7 +3194,7 @@ mod tests {
             }
             let base = i.this.as_ref().is_some_and(|t| t.base);
             let name = format!("{op:?}{}", if base { " base" } else { "" });
-            let out = rust(&i).expect("harness");
+            let out = rust(k, &i).expect("harness");
             let kind = if let Some(d) = &out.deferred {
                 format!("deferred:{}", d.unit)
             } else {
@@ -2783,9 +3207,29 @@ mod tests {
             println!("{k:?}: {v}");
         }
         for op in [
-            "Eval", "EvalPt", "Queries", "Knots", "Reverse", "Swap", "Transform", "Trim", "Split",
-            "Copy", "SEval", "Geom", "DropVecs", "Merge", "Breaks", "DerivAssert",
-            "Cross", "CrossSkin", "Dcf", "Lsi", "CsPerpen", "PointType", "ScaleStep",
+            "Eval",
+            "EvalPt",
+            "Queries",
+            "Knots",
+            "Reverse",
+            "Swap",
+            "Transform",
+            "Trim",
+            "Split",
+            "Copy",
+            "SEval",
+            "Geom",
+            "DropVecs",
+            "Merge",
+            "Breaks",
+            "DerivAssert",
+            "Cross",
+            "CrossSkin",
+            "Dcf",
+            "Lsi",
+            "CsPerpen",
+            "PointType",
+            "ScaleStep",
         ] {
             assert!(
                 tally.keys().any(|(n, k)| n == op && k == "status:0"),

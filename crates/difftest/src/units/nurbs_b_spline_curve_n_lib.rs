@@ -26,6 +26,16 @@
 //! `SmCurve::ApproximateLength` (unit `curve.curve_p2`). Every run has at least
 //! [`MIN_GENERATED`] generated cases; generated inputs the ffi wrapper rejects are
 //! redrawn.
+//!
+//! An `interp_crv` case with `given_params` (fixture cases only, never generated) runs
+//! the SolidCraft fork's `CreateInterpolatingCurve(..., cpOptParams)` (tangency-labs/
+//! smlib#76 68f6913, ported as `create_interpolating_curve_with_params`) on the Rust
+//! side, with the parameters `par` gives as `cpOptParams`, computed by the Rust side
+//! itself (`param_values`, upstream `N_FitCalcCrvParamValues`). The pinned C++ has no
+//! such argument; its side runs `CreateInterpolatingCurve` with `par`, which the fork
+//! routes through `N_FitCrvHighDerivs`, that computation followed by
+//! `N_FitCrvHighDerivsParams`. Only the end-derivative branches take parameters, so
+//! such cases have no vector per point and are not the degree-1 two-point line.
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -39,8 +49,11 @@ use solidcore::nurbs::b_spline_curve::{BSplineCurve, NurbCircleParam};
 use solidcore::nurbs::b_spline_curve_n_lib::{HelixSpec, InValueType, TrimMode};
 use solidcore::nurbs::crv_adv::p1::CurveEnd;
 use solidcore::nurbs::crv_basic::Curve;
-use solidcore::nurbs::crv_fit::p1::ParamMethod;
-use solidcore::nurbs::math::{NOW, NOZ};
+use solidcore::nurbs::crv_fit::p1::{param_values, ParamMethod};
+use solidcore::geom::vector2d::Vec2;
+use solidcore::nurbs::b_spline_surface::BSplineSurface;
+use solidcore::nurbs::math::{CPoint, NOW, NOZ};
+use solidcore::nurbs::srf_basic::Surface;
 use solidcore::nurbs::nurbs_crv::allocate_nurb_curve;
 use solidcore::SolidError;
 use solidcore_ffi::units::nurbs_b_spline_curve_n_lib::{self as ffi, Op};
@@ -107,6 +120,27 @@ struct This {
     crv: CrvIn,
 }
 
+/// An inline B-spline surface: control net as stored (`[x, y, z, w]`, rows in u),
+/// degrees, knots (`SmBSplineSurface(gw_SURFACE*, FALSE, NULL)`).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct InlineSrf {
+    net: Vec<Vec<[f64; 4]>>,
+    p: usize,
+    q: usize,
+    u: Vec<f64>,
+    v: Vec<f64>,
+}
+
+/// A UV trim curve of the through-point edit: the 2D curve (sharing the knots of
+/// `this`), its surface and the optional UV point of the through point on it.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct UvIn {
+    crv: InlineCrv,
+    srf: InlineSrf,
+    #[serde(default)]
+    uvp: Option<[f64; 2]>,
+}
+
 /// A frame `[origin, x axis, y axis]` (`SetCanonical`).
 type Frame = [[f64; 3]; 3];
 
@@ -155,6 +189,10 @@ enum OpIn {
         #[serde(default)]
         more: Option<Vec<[f64; 3]>>,
         ignore: bool,
+        /// The Rust side passes the parameters `par` gives as the fork's
+        /// `cpOptParams` (see the module docs); the C++ side ignores it.
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        given_params: bool,
     },
     Dampen {
         factor: f64,
@@ -174,6 +212,8 @@ enum OpIn {
         #[serde(default)]
         tan: Option<[f64; 3]>,
         pct: f64,
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        uv: Vec<UvIn>,
     },
     Even {
         t0: f64,
@@ -280,41 +320,13 @@ impl OpIn {
     }
 }
 
-/// Whitespace-separated numbers of an upstream text file.
-fn numbers(path: &str) -> Result<Vec<f64>, HarnessError> {
-    let text = std::fs::read_to_string(path).map_err(|e| harness(format!("{path}: {e}")))?;
-    text.split_whitespace()
-        .map(|t| t.parse::<f64>().map_err(|e| harness(format!("{path}: {e}"))))
-        .collect()
-}
-
-fn int(path: &str, v: f64) -> Result<usize, HarnessError> {
-    if v.fract() != 0.0 || v < 0.0 {
-        return Err(harness(format!("{path}: bad count {v}")));
-    }
-    Ok(v as usize)
-}
-
-/// Reads an upstream `.smc` text file (as `N_CrvReadFromFilePtr`, without its validity
-/// check and pruning): `n`, `p`, rational flag, dimension, `n+1` points (`x y [z]`, or
-/// `wx wy [wz] w` when rational), `n+p+2` knots.
 fn read_smc(path: &str) -> Result<InlineCrv, HarnessError> {
-    let v = numbers(path)?;
-    let mut it = v.into_iter();
-    let mut num = || it.next().ok_or_else(|| harness(format!("{path}: truncated")));
-    let n = int(path, num()?)?;
-    let p = int(path, num()?)?;
-    let rat = num()? != 0.0;
-    let dim = int(path, num()?)?;
-    let mut cpts = Vec::with_capacity(n + 1);
-    for _ in 0..=n {
-        let (x, y) = (num()?, num()?);
-        let z = if dim == 3 { num()? } else { NOZ };
-        let w = if rat { num()? } else { NOW };
-        cpts.push([x, y, z, w]);
-    }
-    let u = (0..n + p + 2).map(|_| num()).collect::<Result<Vec<_>, _>>()?;
-    Ok(InlineCrv { cpts, p, u })
+    let c = crate::fixtures::text_curve::read(path)?;
+    Ok(InlineCrv {
+        cpts: c.cpts,
+        p: c.p,
+        u: c.u,
+    })
 }
 
 fn of_curve(c: &Curve) -> InlineCrv {
@@ -374,6 +386,26 @@ fn encode_crv(c: &InlineCrv, o: &mut Vec<f64>) {
         o.extend_from_slice(p);
     }
     o.extend_from_slice(&c.u);
+}
+
+fn encode_srf(s: &InlineSrf, o: &mut Vec<f64>) {
+    let n = s.net.len().saturating_sub(1);
+    let m = s.net.first().map_or(0, Vec::len).saturating_sub(1);
+    o.extend([
+        n as f64,
+        m as f64,
+        s.p as f64,
+        s.q as f64,
+        s.u.len().saturating_sub(1) as f64,
+        s.v.len().saturating_sub(1) as f64,
+    ]);
+    for row in &s.net {
+        for c in row {
+            o.extend_from_slice(c);
+        }
+    }
+    o.extend_from_slice(&s.u);
+    o.extend_from_slice(&s.v);
 }
 
 fn encode_this(t: &This, o: &mut Vec<f64>) -> Result<(), HarnessError> {
@@ -442,6 +474,7 @@ fn cpp_input(i: &Inputs) -> Result<Vec<f64>, HarnessError> {
             vecs,
             more,
             ignore,
+            ..
         } => {
             o.extend([f64::from(*par), *dim as f64, *deg as f64]);
             encode_pts(pts, &mut o);
@@ -453,11 +486,25 @@ fn cpp_input(i: &Inputs) -> Result<Vec<f64>, HarnessError> {
         OpIn::Dampen { factor, mult } => o.extend([*factor, *mult as f64]),
         OpIn::DegRed { tol, max } => o.extend([*tol, flag(*max)]),
         OpIn::InsOne { knot, times } => o.extend([*knot, *times as f64]),
-        OpIn::Through { knot, p, tan, pct } => {
+        OpIn::Through {
+            knot,
+            p,
+            tan,
+            pct,
+            uv,
+        } => {
             o.push(*knot);
             o.extend_from_slice(p);
             encode_opt3(*tan, &mut o);
             o.push(*pct);
+            o.push(uv.len() as f64);
+            for e in uv {
+                o.extend([2.0, 0.0]);
+                encode_crv(&e.crv, &mut o);
+                encode_srf(&e.srf, &mut o);
+                o.push(flag(e.uvp.is_some()));
+                o.extend_from_slice(&e.uvp.unwrap_or([0.0; 2]));
+            }
         }
         OpIn::Even { t0, t1, n, tol } => o.extend([*t0, *t1, *n as f64, *tol]),
         OpIn::InsKnots { knots } => {
@@ -617,6 +664,11 @@ fn to_output(i: &Inputs, flat: &[f64]) -> Result<Output, HarnessError> {
                 s.state(&format!("c{k}_"))?;
             }
         }
+        OpIn::Through { uv, .. } => {
+            for k in 0..uv.len() {
+                s.state(&format!("uv{k}_"))?;
+            }
+        }
         _ => {}
     }
     if i.this.is_some() {
@@ -645,6 +697,17 @@ fn to_curve(c: &InlineCrv) -> Result<Curve, HarnessError> {
     }
     cur.knots_mut().copy_from_slice(&c.u);
     Ok(cur)
+}
+
+fn to_surface(s: &InlineSrf) -> Result<BSplineSurface, HarnessError> {
+    let net = s
+        .net
+        .iter()
+        .map(|row| row.iter().map(|c| CPoint::new(c[0], c[1], c[2], c[3])).collect())
+        .collect();
+    let sur = Surface::new(net, s.p, s.q, s.u.clone(), s.v.clone())
+        .map_err(|e| harness(format!("surface: {e}")))?;
+    Ok(BSplineSurface::from_nurb(sur, false))
 }
 
 fn build_this(t: &This) -> Result<BSplineCurve, HarnessError> {
@@ -678,7 +741,7 @@ fn dump_state(o: &mut Vec<f64>, c: &BSplineCurve) {
 /// The `SmStatus` of a Rust error; `-1` for one upstream cannot return.
 fn status(e: &SolidError) -> f64 {
     match e {
-        SolidError::InvalidInput { .. } => 1007.0,
+        SolidError::InvalidInput { .. } | SolidError::PortInvariant { .. } => 1007.0,
         SolidError::Upstream { code, .. } => f64::from(*code),
         _ => -1.0,
     }
@@ -806,16 +869,26 @@ fn rust_static(op: &OpIn, o: &mut Vec<f64>) -> Result<(), Fail> {
             vecs,
             more,
             ignore,
+            given_params,
         } => {
             let more = more.as_ref().map(|m| pts_of(m));
-            let c = BSplineCurve::create_interpolating_curve(
-                param_of(*par, false),
+            let pts = pts_of(pts);
+            let par = param_of(*par, false);
+            // the fork's cpOptParams: the parameters of `par` (N_FitCalcCrvParamValues)
+            let params = if *given_params {
+                Some(param_values(&pts, par).map_err(|e| harness(format!("parameters: {e}")))?)
+            } else {
+                None
+            };
+            let c = BSplineCurve::create_interpolating_curve_with_params(
+                par,
                 *dim,
                 *deg,
-                &pts_of(pts),
+                &pts,
                 &pts_of(vecs),
                 more.as_deref(),
                 *ignore,
+                params.as_deref(),
             )?;
             push_new(o, Some(&c));
         }
@@ -887,19 +960,7 @@ fn rust_curve(op: &OpIn, c: &mut BSplineCurve, o: &mut Vec<f64>) -> Result<(), F
         OpIn::Dampen { factor, mult } => c.dampen_knot_spacing(*factor, *mult)?,
         OpIn::DegRed { tol, max } => c.degree_reduction(*tol, *max)?,
         OpIn::InsOne { knot, times } => c.insert_one_knot(*knot, *times)?,
-        OpIn::Through { knot, p, tan, pct } => {
-            let mut k = *knot;
-            let modified = c.set_intersection_curve_through_point::<solidcore::nurbs::b_spline_surface::BSplineSurface>(&Kernel::default(),
-                &mut k,
-                v3(*p),
-                tan.map(v3),
-                &mut [],
-                &[],
-                &[],
-                *pct,
-            )?;
-            o.extend([flag(modified), k]);
-        }
+        OpIn::Through { .. } => return Err(harness("through: handled by rust_through").into()),
         OpIn::Even { t0, t1, n, tol } => {
             let (pts, prm) = c.equally_spaced_points(*t0, *t1, *n, *tol)?;
             o.push(pts.len() as f64);
@@ -973,6 +1034,56 @@ fn rust(i: &Inputs) -> Result<Output, HarnessError> {
             }
         };
         let mut o = vec![st, ivl.min(), ivl.max()];
+        dump_state(&mut o, c);
+        return to_output(i, &o);
+    }
+
+    // through point: the UV curves are output whatever the status
+    if let (
+        OpIn::Through {
+            knot,
+            p,
+            tan,
+            pct,
+            uv,
+        },
+        Some(c),
+    ) = (&i.op, this.as_mut())
+    {
+        let mut uv_curves = uv
+            .iter()
+            .map(|e| Ok(BSplineCurve::from_nurb(to_curve(&e.crv)?, 2, false)))
+            .collect::<Result<Vec<_>, HarnessError>>()?;
+        let surfaces = uv
+            .iter()
+            .map(|e| to_surface(&e.srf))
+            .collect::<Result<Vec<_>, _>>()?;
+        let uv_points: Vec<Option<Vec2>> = uv
+            .iter()
+            .map(|e| e.uvp.map(|[a, b]| Vec2::new(a, b)))
+            .collect();
+        let mut k = *knot;
+        let mut o = match c.set_intersection_curve_through_point(
+            &Kernel::default(),
+            &mut k,
+            v3(*p),
+            tan.map(v3),
+            &mut uv_curves,
+            &surfaces,
+            &uv_points,
+            *pct,
+        ) {
+            Ok(modified) => vec![0.0, flag(modified), k],
+            Err(e) => {
+                if let Some(d) = Output::unported(&e) {
+                    return Ok(d);
+                }
+                vec![status(&e)]
+            }
+        };
+        for u in &uv_curves {
+            dump_state(&mut o, u);
+        }
         dump_state(&mut o, c);
         return to_output(i, &o);
     }
@@ -1219,6 +1330,7 @@ fn gen_curve_op(rng: &mut Rng) -> Inputs {
                     None
                 },
                 pct: *rng.choose(&[0.001, 0.1, 0.3]).unwrap_or(&0.001),
+                uv: Vec::new(),
             }
         }
         10 => OpIn::Scale {
@@ -1333,6 +1445,7 @@ fn gen_static_op(rng: &mut Rng) -> Inputs {
                 vecs,
                 more,
                 ignore: rng.chance(0.5),
+                given_params: false,
             }
         }
         6..=8 => {
@@ -1416,6 +1529,23 @@ impl UnitDiff for Runner {
         "nurbs.b_spline_curve_n_lib"
     }
 
+    fn skipped_platform(&self, case: &Case) -> Option<String> {
+        if cfg!(all(target_os = "macos", target_arch = "aarch64"))
+            && matches!(
+                case.name.as_str(),
+                "gen0695" | "gen0720" | "gen0880" | "gen0932" | "gen1279" | "gen1374" | "gen1482"
+            )
+            && case.inputs.get("op").and_then(Value::as_str) == Some("deform")
+        {
+            Some(
+                "upstream use-after-free in SmBSplineCurveNLib.cpp:3127-3149 (issue #449); Rust matches the Linux reference"
+                    .into(),
+            )
+        } else {
+            None
+        }
+    }
+
     fn generate(&self, rng: &mut Rng) -> Option<Value> {
         serde_json::to_value(gen_valid(rng)?).ok()
     }
@@ -1433,7 +1563,52 @@ impl UnitDiff for Runner {
     }
 
     fn run_rust(&self, case: &Case) -> Result<Output, HarnessError> {
-        rust(&case.parse()?)
+        let i: Inputs = case.parse()?;
+        // Run only what the FFI accepts, as the C++ side: the Rust side honours sizes
+        // the FFI refuses (fuzz00880: a 2^31 count, 16 GiB knot arrays).
+        ffi::validate(i.op.ffi(), &cpp_input(&i)?).map_err(|e| harness(e.to_string()))?;
+        rust(&i)
     }
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// `CreateInterpolatingCurve` with the parameters of `par` given as the fork's
+    /// `cpOptParams` (tangency-labs/smlib#76 68f6913) is the pinned routine with `par`,
+    /// bit for bit, on every `given_params` fixture, so its C++ comparison (against
+    /// the pinned routine) holds the fork's argument to the C++ wherever the plain
+    /// case passes. The fixtures reach every end-derivative branch, a zero start
+    /// speed with a given second derivative among them, and the refusals.
+    #[test]
+    fn given_params_fixtures_are_the_pinned_interpolation() {
+        let fixtures: Value = serde_json::from_str(include_str!(
+            "../../../../fixtures/nurbs.b_spline_curve_n_lib/interp_given_params.json"
+        ))
+        .unwrap();
+        let (mut built, mut refused) = (0, 0);
+        for case in fixtures["cases"].as_array().unwrap() {
+            let name = case["name"].as_str().unwrap();
+            let given: Inputs = serde_json::from_value(case["inputs"].clone()).unwrap();
+            let mut pinned = given.clone();
+            let OpIn::InterpCrv { given_params, .. } = &mut pinned.op else {
+                panic!("{name}: not interp_crv");
+            };
+            assert!(*given_params, "{name}");
+            *given_params = false;
+            let (a, b) = (rust(&given).unwrap(), rust(&pinned).unwrap());
+            // (`Debug` prints each value exactly, so equal text is equal bits)
+            assert_eq!(format!("{a:?}"), format!("{b:?}"), "{name}");
+            if a.values["status"] == [0.0] {
+                built += 1;
+            } else {
+                refused += 1;
+            }
+        }
+        assert!(
+            built >= 80 && refused >= 4,
+            "{built} built, {refused} refused"
+        );
+    }
+}

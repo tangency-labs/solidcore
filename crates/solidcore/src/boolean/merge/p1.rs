@@ -9,13 +9,13 @@
 //! | [`MergeOptions::default`]    | `SmMergeOptions()` (all default arguments)       |
 //! | `Clone`                      | `SmMergeOptions(const SmMergeOptions&)`          |
 //! | [`MergeState`] | `SmMerge(context)`, `SetMergeOptions`, setters, `GetTopologyIntersector` |
-//! | [`fix_found_face_coincidence`] | `SmMerge::FixFoundFaceCoincidence` |
+//! | [`check_face_coincidence`], [`finish_face_coincidence`] | `SmMerge::FixFoundFaceCoincidence` (the checks before and after `MergeCoincidentSurfaces`, which the caller runs between them) |
 //! | [`find_brep_region_of_other_face`] | `sm_FindBrepRegionOfOtherFace` |
 //! | [`edge_borders_solid`] | `sm_EdgeBordersSolid` |
 //! | [`merge_vertex`] | `SmMerge::MergeVertex` |
 //! | [`boolean_post_process`] | `SmMerge::BooleanPostProcess` |
 //! | [`propagate_other_src_region_attribs`] | `SmMerge::PropagateOtherSrcRegionAttribs` |
-//! | [`temporary_brep_transform`], [`TemporaryBrepTransform`] | `SmTemporaryBrepTransform` (constructor/destructor) |
+//! | [`temporary_brep_transform`], [`TemporaryBrepShift`], [`TemporaryBrepTransform`] | `SmTemporaryBrepTransform` (constructor/destructor) |
 //!
 //! Deviations: option accessors are public fields; the context-only constructor's
 //! already-created intersector is supplied by its owner (its type belongs to
@@ -32,22 +32,49 @@
 //! bounding boxes before any mutation; no translation is faked. Destruction is
 //! Rust ownership; the temporary-transform token is restored explicitly after the
 //! caller's complete scope, including error exits. There is no input-dependent recursion.
+//! `BooleanPostProcess`'s `DeleteTopologicalVertex` runs without the caller's
+//! notification identities, so the survivor edge's joined curve comes back owned under
+//! a kernel-issued identity of that edge; the owner identity the curve of each
+//! surviving edge had before the call is put back (upstream the owner is the same
+//! `SmEdge*`), so the caller's identity-keyed walks (the temporary transform's inverse
+//! `Transform`) still find the curve.
+//! Opt-in `Kernel::fixes.boolean_cleanup_removes_slits` (WR-304, #1120): after each
+//! edge removal `boolean_post_process` also checks the merged face's edges that have
+//! it on both sides (slits), skipping any a later removal deleted.
+//! Opt-in `Kernel::fixes.fillet_cleanup_keeps_target_faces` (WR-459, #423): the edges in
+//! `CleanupRelations::kept_edges`, and those whose faces are all in `kept_faces`, stay.
+//! Opt-in `Kernel::fixes.fillet_cleanup_removes_input_slits` (WR-602, the fork's
+//! tangency-labs/smlib@cac11ea): of those, an edge with one face on both sides (a slit)
+//! is checked all the same, and the kept-faces test needs two faces.
+//! Opt-in `Kernel::fixes.cover_wraps_across_closed_seam` (WR-599, the fork's
+//! tangency-labs/smlib@16bf1cb): after each face merge `boolean_post_process` runs
+//! `HasSeamProblem` on the merged face and `SplitAtSeam` when a seam is crossed or missing.
+//! Opt-in `Kernel::fixes.boolean_temporary_transform_statuses` (WR-586, #483):
+//! failed temporary translations propagate, a failed second translation restores
+//! the first operand, and inverse transforms attempt all surviving operands before
+//! returning their first error. A callback that fails may already have mutated its
+//! operand; this does not promise transactionality within a transform.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use crate::boolean::topology_intersector::p1::Relations;
-use crate::error::{Result, SolidError};
+use crate::error::{EntityRef, Result, SolidError};
 use crate::geom::a_object::{self, BooleanOperation};
-use crate::geom::attribute::{ids, AttributeStore, ObjectKey};
+#[cfg(test)]
+use crate::geom::attribute::ObjectKey;
+use crate::geom::attribute::{ids, AttributeStore};
 use crate::geom::axis2_placement::Axis2Placement;
 use crate::geom::context::Context;
 use crate::geom::object::{NotifyOperation, ObjectRef};
+use crate::intersect::point_class::{PointClassType, PointClassification};
 use crate::kernel::Kernel;
-use crate::math::Vec3;
+use crate::math::{Point3, Vec3};
 use crate::nurbs::b_spline_surface_n_lib::p2::OrientType;
+use crate::query::brep::{self as qbrep, BoundingBoxOptions, BrepQuery};
+use crate::topology::brep::p4;
 use crate::topology::edgeuse::p1 as eu;
 use crate::topology::shell;
-use crate::topology::topology::{self as topo, Topology};
+use crate::topology::topology::{self as topo};
 use crate::topology::topology_traverser::face_edges;
 use crate::topology::{edge, vertex, Brep, EdgeId, FaceId, FaceuseId, RegionId, ShellId, VertexId};
 
@@ -112,6 +139,13 @@ pub struct MergeState<T> {
     pub options: MergeOptions,
     /// `m_lTagID`, initially zero.
     pub tag_id: i64,
+    /// `m_bManifoldBoolean` (try fixing non-manifold cases): `TRUE` from the B-rep
+    /// constructor; `None` from the context-only one, which leaves it uninitialised
+    /// (a reader must treat `None` as upstream's indeterminate value).
+    pub manifold_boolean: Option<bool>,
+    /// `m_bIntersectionLoopClosed` (output status: `FALSE` when the result has an
+    /// open intersection loop): as [`MergeState::manifold_boolean`].
+    pub intersection_loop_closed: Option<bool>,
     /// `m_vTI`; its construction is the intersector owner's responsibility.
     pub intersector: T,
 }
@@ -125,6 +159,9 @@ impl<T> MergeState<T> {
         Self {
             options: MergeOptions::default(),
             tag_id: 0,
+            // not in the context-only constructor's initialiser list
+            manifold_boolean: None,
+            intersection_loop_closed: None,
             intersector,
         }
     }
@@ -137,10 +174,6 @@ impl<T> MergeState<T> {
     }
 }
 
-fn unavailable<T>(symbol: &'static str, unit: &'static str) -> Result<T> {
-    Err(SolidError::unported(symbol, unit))
-}
-
 fn ignore_failure<T>(r: Result<T>) -> Result<Option<T>> {
     match r {
         Ok(v) => Ok(Some(v)),
@@ -149,18 +182,43 @@ fn ignore_failure<T>(r: Result<T>) -> Result<Option<T>> {
     }
 }
 
-/// Return matched coincident face lists and whether topology was modified.
-/// The fast path tests existence of mates, as upstream; it deliberately does not
-/// require the mates to belong to the supplied opposite face's boundary.
-/// A mismatch reaches the unported coincident-surface merger.
-pub fn fix_found_face_coincidence(
-    brep: &mut Brep,
-    other: &mut Brep,
+/// What `SmMerge::FixFoundFaceCoincidence` does before it merges coincident surfaces.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FaceCoincidenceCheck {
+    /// Every edge around both faces has a mate: the faces are taken as coincident
+    /// and `FixFoundFaceCoincidence` returns them without merging anything.
+    Matched,
+    /// A mismatch: the caller merges the coincident surfaces
+    /// (`SmTopologyIntersector::MergeCoincidentSurfaces`, unit
+    /// `boolean.topology_intersector_p3`) and finishes with
+    /// [`finish_face_coincidence`], passing these edge counts of the B-reps (the
+    /// primary's, then the other's) from before the merge.
+    NeedsMerge {
+        /// `pBrep->GetEdges` and `pOther->GetEdges` sizes before the merge.
+        edge_counts: (usize, usize),
+    },
+}
+
+/// The first half of `SmMerge::FixFoundFaceCoincidence`: whether all edges around
+/// `face` and `other_face` are mated (`other_mates`: the primary's edges to their
+/// other mates, `brep_mates`: the reverse). The test is the existence of mates, as
+/// upstream; it deliberately does not require the mates to belong to the supplied
+/// opposite face's boundary.
+///
+/// The split exists because the merge between the halves edits the mate store
+/// the maps belong to; [`FaceCoincidenceCheck::NeedsMerge`] hands that step back.
+///
+/// # Errors
+///
+/// Those of the face and B-rep edge walks.
+pub fn check_face_coincidence(
+    brep: &Brep,
+    other: &Brep,
     face: FaceId,
     other_face: FaceId,
     other_mates: &BTreeMap<EdgeId, EdgeId>,
     brep_mates: &BTreeMap<EdgeId, EdgeId>,
-) -> Result<(Vec<FaceId>, Vec<FaceId>, bool)> {
+) -> Result<FaceCoincidenceCheck> {
     let edges = face_edges(brep, face)?;
     let other_edges = face_edges(other, other_face)?;
     if edges.len() == other_edges.len()
@@ -169,25 +227,27 @@ pub fn fix_found_face_coincidence(
             .zip(&other_edges)
             .all(|(a, b)| other_mates.contains_key(a) && brep_mates.contains_key(b))
     {
-        return Ok((vec![face], vec![other_face], false));
+        return Ok(FaceCoincidenceCheck::Matched);
     }
-    let counts = (brep_edges(brep)?.len(), brep_edges(other)?.len());
-    let (faces, other_faces) = merge_coincident_surfaces(brep, other, face, other_face)?;
-    let changed = brep_edges(brep)?.len() != counts.0 || brep_edges(other)?.len() != counts.1;
-    Ok((faces, other_faces, changed))
+    Ok(FaceCoincidenceCheck::NeedsMerge {
+        edge_counts: (brep_edges(brep)?.len(), brep_edges(other)?.len()),
+    })
 }
 
-fn merge_coincident_surfaces(
-    _brep: &mut Brep,
-    _other: &mut Brep,
-    _face: FaceId,
-    _other_face: FaceId,
-) -> Result<(Vec<FaceId>, Vec<FaceId>)> {
-    // UNPORTED(boolean.topology_intersector_p3): SmTopologyIntersector::MergeCoincidentSurfaces
-    unavailable(
-        "SmTopologyIntersector::MergeCoincidentSurfaces",
-        "boolean.topology_intersector_p3",
-    )
+/// The second half of `SmMerge::FixFoundFaceCoincidence`, after
+/// `MergeCoincidentSurfaces` returned `faces` / `other_faces`: whether either B-rep's
+/// edge count differs from `edge_counts` ([`FaceCoincidenceCheck::NeedsMerge`]), that
+/// is `rbModifiedTopology`.
+///
+/// # Errors
+///
+/// Those of the B-rep edge walks.
+pub fn finish_face_coincidence(
+    brep: &Brep,
+    other: &Brep,
+    edge_counts: (usize, usize),
+) -> Result<bool> {
+    Ok(brep_edges(brep)?.len() != edge_counts.0 || brep_edges(other)?.len() != edge_counts.1)
 }
 
 /// Classify an other-operand face use into a primary region. A single primary
@@ -200,8 +260,13 @@ pub fn find_brep_region_of_other_face(
     other_faceuse: FaceuseId,
     brep_mates: &BTreeMap<EdgeId, EdgeId>,
 ) -> Result<Option<RegionId>> {
-    if brep.regions().len() == 1 {
-        return Ok(brep.regions().ids().next());
+    // `GetSize() == 1` and `GetList()`: the B-rep's region list, not its region records
+    // (a region `DeleteFace` merged away keeps its record off the list)
+    let listed = crate::topology::brep::p1::regions(brep, None)?;
+    if listed.len() == 1 {
+        if let Some(&region) = listed.first() {
+            return Ok(Some(region));
+        }
     }
     let edges = eu::faceuse_edgeuses(other, other_faceuse, false, None)?;
     for &other_eu in &edges {
@@ -245,16 +310,59 @@ pub fn find_brep_region_of_other_face(
             .curve
             .as_ref()
             .ok_or_else(|| SolidError::null_pointer(OP))?;
-        let Some(_point) = ignore_failure(curve.evaluate_point(edge.interval.evaluate(0.456789)))?
+        let Some(point) =
+            ignore_failure(curve.evaluate_point(k, edge.interval.evaluate(0.456789)))?
         else {
             continue;
         };
-        // Point classification uses tolerance 0.0, boundary intersections FALSE,
-        // a classification initialised with edge.tolerance and editing disabled.
-        // UNPORTED(query.brep): SmBrep::Point3DClassify
-        return unavailable("SmBrep::Point3DClassify", "query.brep");
+        // (the classification's construction tolerance, the edge's, is not read)
+        let Some(pc) = ignore_failure(classify_point_editing_disabled(
+            k,
+            &BrepQuery::of_brep(brep),
+            brep,
+            point,
+            0.0,
+            false,
+        ))?
+        else {
+            continue;
+        };
+        // skip points that don't classify to a region
+        if pc.point_class() != PointClassType::Region {
+            continue;
+        }
+        // use the point's classified region as the input face's Brep region
+        return match pc.object() {
+            Some(EntityRef::Region(r)) => Ok(Some(r)),
+            _ => Err(SolidError::null_pointer(OP)),
+        };
     }
     Ok(None)
+}
+
+/// `pBrep->Point3DClassify(point, tolerance, boundary, sPC)` (unit `query.brep`) with
+/// `pBrep->m_bEditingEnabled` set to `FALSE` around it (`SmTemporaryChangeValue`), through
+/// `query`: the caller keeps one while `b` is not edited, and makes a fresh one after
+/// an edit (upstream's `CacheMakeOrValidate` rebuilds an invalidated cache). The
+/// operands' geometry is owned by their arena identities
+/// ([`crate::query::brep::BrepIdentity::default`]).
+///
+/// # Errors
+///
+/// Those of [`BrepQuery::point_3d_classify`].
+pub(crate) fn classify_point_editing_disabled(
+    k: &Kernel,
+    query: &BrepQuery<'_>,
+    b: &mut Brep,
+    point: Point3,
+    tolerance: f64,
+    boundary: bool,
+) -> Result<PointClassification<EntityRef>> {
+    let editing = b.editing_enabled();
+    b.set_editing_enabled(false);
+    let result = query.point_3d_classify(k, b, point, tolerance, boundary);
+    b.set_editing_enabled(editing);
+    result
 }
 
 /// `pRegion->IsVoid()` as a C++ condition (`UNSURE` is non-zero, so true).
@@ -280,13 +388,13 @@ pub fn edge_borders_solid(b: &Brep, e: EdgeId) -> Result<Option<ShellId>> {
 /// Keys must be distinct across operands even when their arena ids coincide.
 pub struct VertexCopy<'a> {
     /// Topology base-class records of both operands.
-    pub records: &'a mut BTreeMap<ObjectKey, Topology>,
+    pub records: &'a mut crate::topology::topology::NotifyRecords,
     /// Attributes of both operands.
     pub attributes: &'a mut AttributeStore,
     /// Notification identity of each other-operand vertex.
     pub source_key: &'a dyn Fn(VertexId) -> ObjectRef,
     /// Notification identity of each primary topology entity, including newly created vertices and vertex uses.
-    pub destination_key: &'a dyn Fn(crate::EntityRef) -> ObjectRef,
+    pub destination_key: &'a dyn Fn(EntityRef) -> ObjectRef,
 }
 
 /// Reuse a mated primary vertex or create a shell vertex, relate it and notify
@@ -329,13 +437,19 @@ pub fn merge_vertex(
     if tolerance > vertex::tolerance(brep, dest)? {
         vertex::set_tolerance(brep, dest, tolerance, true, true)?;
     }
+    // Both vertices are SmTopology objects upstream; a record this crate has not made
+    // yet (a vertex the merge did not create) is the default one.
+    let source_ref = (copy.source_key)(source);
+    let dest_ref = (copy.destination_key)(EntityRef::Vertex(dest));
+    copy.records.or_default(source_ref.key);
+    copy.records.or_default(dest_ref.key);
     topo::notify(
         copy.records,
         copy.attributes,
         context,
         NotifyOperation::Copy,
-        (copy.source_key)(source),
-        Some((copy.destination_key)(crate::EntityRef::Vertex(dest))),
+        source_ref,
+        Some(dest_ref),
         None, // SM_NO_GET_BREP(pBrepVertex) is NULL in pinned SmTypes.h.
         None, // SM_NO_GET_BREP(pVertexInOther) is NULL as well.
     )?;
@@ -351,6 +465,12 @@ pub struct CleanupRelations {
     pub vertices: Vec<VertexId>,
     /// Shared live mates; deleted entities must be removed by the intersector.
     pub mates: Relations,
+    /// WR-459 (`Kernel::fixes.fillet_cleanup_keeps_target_faces`): the edges and faces
+    /// the clean-up leaves alone (the fork's `m_sPostProcessKeptEdges`/`Faces`: a
+    /// fillet's target), and any edge between two kept faces. Empty otherwise.
+    pub kept_edges: BTreeSet<EdgeId>,
+    /// See [`CleanupRelations::kept_edges`].
+    pub kept_faces: BTreeSet<FaceId>,
 }
 
 fn brep_edges(brep: &Brep) -> Result<Vec<EdgeId>> {
@@ -373,6 +493,45 @@ fn set_face_tolerance(brep: &mut Brep, face: FaceId, tolerance: f64) -> Result<(
     crate::topology::face::p3::set_tolerance(brep, face, tolerance, true, true)
 }
 
+/// WR-599 (`Kernel::fixes.cover_wraps_across_closed_seam`): `pMerged->HasSeamProblem(..)`
+/// (its classification status propagated, as the fork's `SER`), then, when a seam is
+/// crossed or missing (the fork's static `SmFace::HasSeamProblem(eCrossed, eMissing)`),
+/// `pMerged->SplitAtSeam(..)` with its optional arguments left out, notifying through
+/// the merge's `notifications` when it has them.
+fn split_merged_face_at_seam(
+    k: &mut Kernel,
+    brep: &mut Brep,
+    notifications: Option<&mut edge::NotifyEnv<'_>>,
+    face: FaceId,
+) -> Result<()> {
+    use crate::heal::face_props::LoopObject;
+    use crate::nurbs::b_spline_surface::SurfParamType;
+    use crate::topology::brep::p1::HealLoopHandle;
+    let check = crate::topology::face::p4::has_seam_problem_in_brep_mut::<HealLoopHandle>(
+        k,
+        brep,
+        face,
+        crate::topology::face::p4::HasSeamProblemOptions::default(),
+    )?;
+    let problem = check.problem;
+    if problem.crossed == SurfParamType::Neither && problem.missing == SurfParamType::Neither {
+        return Ok(());
+    }
+    let (mut class_u, mut class_v) = (check.class_u, check.class_v);
+    crate::topology::face::p1::split_at_seam_notified(
+        k,
+        brep,
+        notifications,
+        face,
+        &mut class_u,
+        &mut class_v,
+        problem,
+        None,
+        &|o: HealLoopHandle| o.as_topology(),
+    )?;
+    Ok(())
+}
+
 /// Remove topological intersection edges and redundant vertices. `check_all_edges`
 /// defaults to true upstream; false checks only the intersection lists with live
 /// mates. In both modes the vertex list is the intersection list plus the deleted
@@ -383,15 +542,67 @@ pub fn boolean_post_process(
     relations: &CleanupRelations,
     check_all_edges: bool,
 ) -> Result<()> {
-    let edges: Vec<_> = if check_all_edges {
+    boolean_post_process_with_notifications(k, brep, relations, check_all_edges, None)
+}
+
+/// [`boolean_post_process`] with the merge's notification state: `DeleteEdge`'s face
+/// merges, `DeleteVertex` and `DeleteTopologicalVertex`'s edge merges notify through
+/// `notifications` (its records, attributes and identities), so the merged faces and
+/// edges keep the attributes of the objects merged into them (`SM_NO_MERGE_IN_BREP`).
+/// Without it each deletion notifies through a store of its own, as for a caller
+/// holding no notification state.
+///
+/// # Errors
+/// As [`boolean_post_process`].
+pub(crate) fn boolean_post_process_with_notifications(
+    k: &mut Kernel,
+    brep: &mut Brep,
+    relations: &CleanupRelations,
+    check_all_edges: bool,
+    mut notifications: Option<&mut edge::NotifyEnv<'_>>,
+) -> Result<()> {
+    let mut edges: Vec<_> = if check_all_edges {
         brep_edges(brep)?
     } else {
         relations.edges.clone()
     };
     let mut endpoints = Vec::new();
-    for e in edges {
-        if !check_all_edges && relations.mates.edges.other(e).is_none() {
+    // WR-304: the edges checked so far, and those the merging below left with one face
+    // on both sides (checked too, though they are no intersection edges).
+    let slits = k.fixes.boolean_cleanup_removes_slits;
+    let mut queued: BTreeSet<EdgeId> = if slits {
+        edges.iter().copied().collect()
+    } else {
+        BTreeSet::new()
+    };
+    let mut left_inside_face: BTreeSet<EdgeId> = BTreeSet::new();
+    let mut next = 0;
+    while let Some(&e) = edges.get(next) {
+        next += 1;
+        if left_inside_face.contains(&e) {
+            // A later removal may have deleted it
+            if !brep.edge_list().contains(&e) {
+                continue;
+            }
+        } else if !check_all_edges && relations.mates.edges.other(e).is_none() {
             continue;
+        }
+        // WR-602 (`Kernel::fixes.fillet_cleanup_removes_input_slits`, the fork's
+        // tangency-labs/smlib@cac11ea): an edge of the fillet's input, or one between two
+        // of its faces, stays, unless one face lies on both its sides: removing that slit
+        // merges no faces.
+        let input_slits = k.fixes.fillet_cleanup_removes_input_slits;
+        if relations.kept_edges.contains(&e)
+            && !(input_slits && edge::faces(brep, e, None)?.len() == 1)
+        {
+            continue;
+        }
+        if !relations.kept_faces.is_empty() {
+            let faces = edge::faces(brep, e, None)?;
+            let least = if input_slits { 2 } else { 1 };
+            if faces.len() >= least && faces.iter().all(|f| relations.kept_faces.contains(f)) {
+                continue;
+            }
         }
         let topological = edge::is_topological(k, brep, e, 10.0)?;
         if !topological.is_topological {
@@ -418,7 +629,7 @@ pub fn boolean_post_process(
                 .surface
                 .as_ref()
                 .ok_or_else(|| SolidError::null_pointer(OP))?
-                .natural_uv_domain();
+                .natural_uv_domain_with_nurb(k)?;
             crate::topology::face::p2::set_uv_domain(brep, keep, &domain)?;
             let tolerance = crate::topology::face::p2::tolerance(brep, keep)?;
             if topological.dist_between > tolerance / 10.0 {
@@ -432,12 +643,44 @@ pub fn boolean_post_process(
                 endpoints.push(v);
             }
         }
-        // UNPORTED(topology.brep_p4): SmBrep::DeleteEdge
-        let (): () = unavailable("SmBrep::DeleteEdge", "topology.brep_p4")?;
+        // SER(DeleteEdge(pEdge, pSurfToKeep))
+        match notifications.as_deref_mut() {
+            Some(env) => {
+                p4::delete_edge(k, brep, &mut p4::DeleteEnv::from_notify(env), e, Some(keep))?;
+            }
+            None => p4::with_local_env(|env| p4::delete_edge(k, brep, env, e, Some(keep)))?,
+        }
+        // `pSurfToKeep->GetFace()`: when the face holding the kept surface is the one
+        // merged away, DeleteEdge swaps that surface onto the surviving face first
+        let keep = if brep.face(keep).is_ok() {
+            keep
+        } else if keep == f0 {
+            f1
+        } else {
+            f0
+        };
         // The native output starts as a default SmExtent2d and is written back
         // unconditionally, even if IsTopological left it untouched.
         let domain = topological.merged_face_domain.unwrap_or_default();
         crate::topology::face::p2::set_uv_domain(brep, keep, &domain)?;
+        if k.fixes.cover_wraps_across_closed_seam {
+            // WR-599 (the fork's tangency-labs/smlib@16bf1cb): a face that wraps its
+            // surface's period may have taken in a face straddling the seam
+            // (`CoverCoincidentSurface`): the merged face is the periodic face whose seam
+            // runs on through that part. Add the missing piece of the seam, splitting the
+            // edges that cross it, as a face on a periodic surface has it.
+            split_merged_face_at_seam(k, brep, notifications.as_deref_mut(), keep)?;
+        }
+        if slits {
+            // WR-304: an operand edge between two faces that are now one bounds the
+            // merged face on both sides (a slit); check it by the same test.
+            for face_edge in face_edges(brep, keep)? {
+                if edge::faces(brep, face_edge, None)?.len() == 1 && queued.insert(face_edge) {
+                    edges.push(face_edge);
+                    left_inside_face.insert(face_edge);
+                }
+            }
+        }
     }
     let mut vertices = relations.vertices.clone();
     for v in endpoints {
@@ -454,19 +697,55 @@ pub fn boolean_post_process(
             continue;
         }
         if vertex::is_loop_vertex(brep, v)? {
-            // UNPORTED(topology.brep_p4): SmBrep::DeleteVertex
-            let (): () = unavailable("SmBrep::DeleteVertex", "topology.brep_p4")?;
+            // SER(DeleteVertex(pVertex))
+            match notifications.as_deref_mut() {
+                Some(env) => {
+                    p4::delete_vertex(k, brep, &mut p4::DeleteEnv::from_notify(env), v)?;
+                }
+                None => p4::with_local_env(|env| p4::delete_vertex(k, brep, env, v))?,
+            }
             continue;
         }
         if vertex::is_topological_vertex(k, brep, v)? {
             let editing = brep.editing_enabled();
-            ignore_failure(crate::topology::brep::p5::delete_topological_vertex(
-                k,
-                brep,
-                editing,
-                Some(v),
-                None,
-            ))?;
+            // The owners of the two edges' curves: the survivor's joined curve is owned
+            // by the same edge (`SetCurve`), under the caller's identity of that edge.
+            let mut owners = Vec::new();
+            for e in vertex::edges(brep, v, None)? {
+                owners.push((
+                    e,
+                    brep.edge(e)?
+                        .curve
+                        .as_ref()
+                        .and_then(crate::curve::curve::p2::Curve::owner),
+                    brep.geometry_owner_key(EntityRef::Edge(e)),
+                ));
+            }
+            ignore_failure(
+                crate::topology::brep::p5::delete_topological_vertex_with_notifications(
+                    k,
+                    brep,
+                    editing,
+                    Some(v),
+                    None,
+                    notifications.as_deref_mut(),
+                ),
+            )?;
+            for (e, owner, proven) in owners {
+                if !brep.edge_list().contains(&e) {
+                    continue;
+                }
+                let restored = brep.edge_mut(e)?.curve.as_mut().is_some_and(|curve| {
+                    let changed = curve.owner() != owner;
+                    if changed {
+                        curve.set_owner(owner, None);
+                    }
+                    changed
+                });
+                if restored {
+                    brep.set_geometry_owner_key(EntityRef::Edge(e), proven);
+                }
+            }
         }
     }
     // Combine a wire shell with a faceuse shell when the B-rep has just those two
@@ -504,11 +783,16 @@ pub fn boolean_post_process(
                     .region
                     .ok_or_else(|| SolidError::null_pointer(OP))?;
                 // `pWShell->TransferChildrenTo(pFShell, NULL)` and
-                // `pWR->Remove(pWShell)`: both statuses are ignored upstream.
-                ignore_failure(shell::transfer_children(
-                    k, brep, wire_shell, face_shell, None,
-                ))?;
-                ignore_failure(shell::region_remove_shell(brep, wire_region, wire_shell))?;
+                // `pWR->Remove(pWShell)`: both statuses are ignored upstream (fork e7ebc8d
+                // passes them on: `SER`).
+                ignore_failure(crate::error::passed_on(
+                    shell::transfer_children(k, brep, wire_shell, face_shell, None),
+                    k.fixes.brep_edit_statuses_pass_on,
+                )?)?;
+                ignore_failure(crate::error::passed_on(
+                    shell::region_remove_shell(brep, wire_region, wire_shell),
+                    k.fixes.brep_edit_statuses_pass_on,
+                )?)?;
             }
         }
     }
@@ -595,6 +879,7 @@ pub fn propagate_other_src_region_attribs(
 #[must_use = "restore surviving operands after the complete Boolean scope"]
 pub struct TemporaryBrepTransform {
     inverse: Option<Axis2Placement>,
+    propagate_statuses: bool,
 }
 
 impl TemporaryBrepTransform {
@@ -602,27 +887,40 @@ impl TemporaryBrepTransform {
     /// identifies the primary operand and `true` the other; the callback applies
     /// the placement with its live context and notification/attribute state.
     /// The Boolean entry point uses [`Self::run`] to guarantee this on every exit.
+    /// With [`crate::kernel::UpstreamFixes::boolean_temporary_transform_statuses`],
+    /// attempts both surviving operands even after an error, then returns the first
+    /// failed transform's error. Otherwise ordinary upstream statuses are ignored.
     pub fn restore(
         self,
         primary: Option<&mut Brep>,
         other: Option<&mut Brep>,
         mut transform: impl FnMut(&mut Brep, bool, &Axis2Placement, Option<Vec3>, bool) -> Result<()>,
     ) -> Result<()> {
+        let mut result = Ok(());
         if let Some(inverse) = self.inverse {
             for (brep, is_other) in [(primary, false), (other, true)] {
                 if let Some(brep) = brep {
                     // Transform(sXfm) uses cpOptScale=NULL and bScaleTol=TRUE.
-                    crate::error::ignore_status(transform(brep, is_other, &inverse, None, true))?;
+                    let status = transform(brep, is_other, &inverse, None, true);
+                    if self.propagate_statuses {
+                        if result.is_ok() {
+                            result = status;
+                        }
+                    } else {
+                        crate::error::ignore_status(status)?;
+                    }
                 }
             }
         }
-        Ok(())
+        result
     }
 
     /// Run the complete Boolean scope, then `~SmTemporaryBrepTransform`.
     /// Cleanup follows editing/mark cleanup, extraction and operand deletion on
     /// every Result exit, including errors and imprint. Restore surviving primary
-    /// then other operands; ordinary transform statuses are ignored. Both closures
+    /// then other operands; failed restoration takes precedence over the action's
+    /// result. Ordinary statuses are ignored unless the primary kernel enabled
+    /// `boolean_temporary_transform_statuses` when creating the shift. Both closures
     /// borrow one environment so cleanup uses the same live kernels, adapter and
     /// attribute/notification state without retaining a competing mutable borrow.
     pub fn run<T, E>(
@@ -652,21 +950,350 @@ impl TemporaryBrepTransform {
     }
 }
 
-/// Begin the scoped origin shift used by manifold Booleans. Bounding boxes are
-/// not yet available on arena B-reps; fail before translating either operand.
-/// Once wired, the returned token must retain the inverse placement (or `None`
-/// when the center's squared length is at most 1e6) until the caller restores it.
+/// The squared distance from the origin past which [`temporary_brep_transform`] moves the
+/// operands' box center to the origin (upstream: "Arbitrary: > 1000").
+const MIN_SHIFT_CENTER_LENGTH_SQ: f64 = 1.0e6;
+
+/// The first half of `SmTemporaryBrepTransform(pTI)`, the scoped origin shift of
+/// manifold Booleans: the union of the operands' boxes (`brep` boxed in
+/// `primary_kernel`'s context, `other` in `other_kernel`'s; statuses ignored, a failure
+/// leaves the box initialised) gives a center; when its squared length exceeds `MIN_SHIFT_CENTER_LENGTH_SQ`
+/// the operands need the translation by `-center`. [`TemporaryBrepShift::apply`] is the
+/// second half (the boxes are computed before either operand moves, as upstream).
+///
+/// # Errors
+///
+/// Box errors with `boolean_temporary_transform_statuses`; otherwise only
+/// [`SolidError::Unported`] from the boxes.
 pub fn temporary_brep_transform(
-    _brep: &mut Brep,
-    _other: &mut Brep,
-) -> Result<TemporaryBrepTransform> {
-    // UNPORTED(query.brep): SmBrep::CalculateBoundingBox
-    unavailable("SmBrep::CalculateBoundingBox", "query.brep")
+    primary_kernel: &Kernel,
+    other_kernel: &Kernel,
+    brep: &Brep,
+    other: &Brep,
+) -> Result<TemporaryBrepShift> {
+    // A failed box must not select a shift from an unwritten extent.
+    let checked = primary_kernel.fixes.boolean_temporary_transform_statuses;
+    let first = qbrep::calculate_bounding_box(primary_kernel, brep, BoundingBoxOptions::default());
+    let bbox1 = if checked {
+        first?
+    } else {
+        ignore_failure(first)?.unwrap_or_default()
+    };
+    let second = qbrep::calculate_bounding_box(other_kernel, other, BoundingBoxOptions::default());
+    let bbox2 = if checked {
+        second?
+    } else {
+        ignore_failure(second)?.unwrap_or_default()
+    };
+    let bbox = bbox1.union(&bbox2);
+
+    // when bbox is very large - translate its center to the origin
+    let center = bbox.evaluate(0.5, 0.5, 0.5);
+    let shift = (center.length_squared() > MIN_SHIFT_CENTER_LENGTH_SQ).then(|| -center);
+    Ok(TemporaryBrepShift {
+        shift,
+        propagate_statuses: primary_kernel.fixes.boolean_temporary_transform_statuses,
+    })
+}
+
+/// The translation [`temporary_brep_transform`] decided on (`m_bNeedsTranslation`,
+/// `-m_sCenter`).
+#[derive(Debug)]
+#[must_use = "apply the shift to the operands"]
+pub struct TemporaryBrepShift {
+    shift: Option<Vec3>,
+    propagate_statuses: bool,
+}
+
+impl TemporaryBrepShift {
+    /// The rest of `SmTemporaryBrepTransform(pTI)`: when a shift is needed, translates
+    /// the primary operand (`false`) then the other (`true`) through `transform`
+    /// (`Transform(sXfm)`: no scale, scaled tolerances; statuses ignored). The token
+    /// keeps the inverse translation for [`TemporaryBrepTransform::restore`].
+    /// With [`crate::kernel::UpstreamFixes::boolean_temporary_transform_statuses`]
+    /// enabled on the primary kernel, a failed transform stops the operation. If
+    /// the second fails, first undo the successful primary translation. A failed
+    /// undo takes precedence over that second transform's error. A transform's
+    /// own partial mutations are not rolled back.
+    ///
+    /// # Errors
+    ///
+    /// [`SolidError::Unported`] or [`SolidError::PreparationRequired`] from the
+    /// transforms; with the fix enabled, any transform error.
+    pub fn apply(
+        self,
+        brep: &mut Brep,
+        other: &mut Brep,
+        mut transform: impl FnMut(&mut Brep, bool, &Axis2Placement, Option<Vec3>, bool) -> Result<()>,
+    ) -> Result<TemporaryBrepTransform> {
+        let Some(shift) = self.shift else {
+            return Ok(TemporaryBrepTransform {
+                inverse: None,
+                propagate_statuses: self.propagate_statuses,
+            });
+        };
+        let mut xfm = Axis2Placement::IDENTITY;
+        xfm.translate(shift);
+        // (the destructor negates the shift again)
+        let mut inverse = Axis2Placement::IDENTITY;
+        inverse.translate(-shift);
+        if self.propagate_statuses {
+            transform(brep, false, &xfm, None, true)?;
+            if let Err(error) = transform(other, true, &xfm, None, true) {
+                transform(brep, false, &inverse, None, true)?;
+                return Err(error);
+            }
+        } else {
+            crate::error::ignore_status(transform(brep, false, &xfm, None, true))?;
+            crate::error::ignore_status(transform(other, true, &xfm, None, true))?;
+        }
+        Ok(TemporaryBrepTransform {
+            inverse: Some(inverse),
+            propagate_statuses: self.propagate_statuses,
+        })
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn audit_483_boxes_fail_before_temporary_translation() {
+        let mut k = Kernel::default();
+        let mut bad =
+            crate::primitive::api_primitives::create_box(&mut k, Vec3::ZERO, 1.0, 1.0, 1.0)
+                .unwrap();
+        let edge = bad.edges().ids().next().unwrap();
+        bad.edge_mut(edge).unwrap().curve = Some(crate::curve::curve::Curve::from(
+            crate::nurbs::b_spline_curve::BSplineCurve::default(),
+        ));
+        let mut good = Brep::new();
+        good.set_locked_bounding_box(Some(crate::geom::extent3d::Extent3d::from_point(
+            Vec3::new(2000.0, 0.0, 0.0),
+        )));
+        assert!(temporary_brep_transform(&k, &k, &bad, &good).is_ok());
+        k.fixes.boolean_temporary_transform_statuses = true;
+        let expected =
+            qbrep::calculate_bounding_box(&k, &bad, BoundingBoxOptions::default()).unwrap_err();
+        for (first, second) in [(&bad, &good), (&good, &bad)] {
+            assert_eq!(
+                temporary_brep_transform(&k, &k, first, second).unwrap_err(),
+                expected
+            );
+        }
+    }
+
+    #[test]
+    fn temporary_translation_reports_restore_failure() {
+        let token = TemporaryBrepTransform {
+            inverse: Some(Axis2Placement::IDENTITY),
+            propagate_statuses: true,
+        };
+        let error = SolidError::sm_err("failed-inverse-transform");
+        let mut restored = Vec::new();
+        let result = token.restore(
+            Some(&mut Brep::new()),
+            Some(&mut Brep::new()),
+            |_, is_other, _, _, _| {
+                restored.push(is_other);
+                if is_other {
+                    Ok(())
+                } else {
+                    Err(error.clone())
+                }
+            },
+        );
+        assert_eq!(restored, [false, true]);
+        assert_eq!(result, Err(error));
+    }
+
+    #[test]
+    fn checked_temporary_translation_stops_on_failure_and_undoes_the_first_operand() {
+        for failed_operand in [false, true] {
+            let mut k = Kernel::default();
+            k.fixes.boolean_temporary_transform_statuses = true;
+            let mut a = Brep::new();
+            let mut b = Brep::new();
+            let vertex = a
+                .add_vertex_record(crate::topology::Vertex {
+                    point: Vec3::new(2001.0, 2.0, 3.0),
+                    ..crate::topology::Vertex::default()
+                })
+                .unwrap();
+            let original = a.vertex(vertex).unwrap().point;
+            // The locked boxes isolate the scope from the topology walk while
+            // using the public helper that latches the primary kernel's opt-in.
+            let bounds =
+                crate::geom::extent3d::Extent3d::from_bounds(2000.0, 0.0, 0.0, 2010.0, 10.0, 10.0);
+            a.set_locked_bounding_box(Some(bounds));
+            b.set_locked_bounding_box(Some(bounds));
+            let shift = temporary_brep_transform(&k, &k, &a, &b).unwrap();
+            let error = SolidError::Upstream {
+                operation: "failed-forward-transform",
+                code: 1027,
+                entity: None,
+            };
+            let mut calls = Vec::new();
+            let result = shift.apply(&mut a, &mut b, |brep, is_other, xfm, scale, scale_tol| {
+                assert_eq!(scale, None);
+                assert!(scale_tol);
+                calls.push(is_other);
+                if is_other == failed_operand {
+                    return Err(error.clone());
+                }
+                if !is_other {
+                    let old = brep.vertex(vertex)?.point;
+                    brep.vertex_mut(vertex)?.point = xfm.transform_point(old);
+                }
+                Ok(())
+            });
+            assert_eq!(result.unwrap_err(), error);
+            assert_eq!(
+                calls,
+                if failed_operand {
+                    vec![false, true, false]
+                } else {
+                    vec![false]
+                }
+            );
+            assert_eq!(a.vertex(vertex).unwrap().point, original);
+        }
+    }
+
+    #[test]
+    fn checked_temporary_translation_reports_a_failed_undo() {
+        let shift = TemporaryBrepShift {
+            shift: Some(Vec3::X),
+            propagate_statuses: true,
+        };
+        let mut calls = 0;
+        let error = SolidError::sm_err("failed-undo");
+        let result = shift.apply(&mut Brep::new(), &mut Brep::new(), |_, _, _, _, _| {
+            calls += 1;
+            match calls {
+                1 => Ok(()),
+                2 => Err(SolidError::sm_err("failed-other-translation")),
+                _ => Err(error.clone()),
+            }
+        });
+        assert_eq!(calls, 3);
+        assert_eq!(result.unwrap_err(), error);
+    }
+
+    #[test]
+    fn checked_temporary_cleanup_attempts_every_survivor_and_returns_the_first_error() {
+        for deleted in [(false, false), (false, true), (true, false), (true, true)] {
+            for body_result in [Ok(7), Err(SolidError::sm_err("failed-boolean"))] {
+                let token = TemporaryBrepTransform {
+                    inverse: Some(Axis2Placement::IDENTITY),
+                    propagate_statuses: true,
+                };
+                let mut a = Some(Brep::new());
+                let mut b = Some(Brep::new());
+                let mut restored = Vec::new();
+                let first_error = SolidError::sm_err("primary-inverse");
+                let second_error = SolidError::sm_err("other-inverse");
+                let result = token.run(
+                    &mut a,
+                    &mut b,
+                    &mut (),
+                    |(), a, b| {
+                        if deleted.0 {
+                            *a = None;
+                        }
+                        if deleted.1 {
+                            *b = None;
+                        }
+                        body_result.clone()
+                    },
+                    |(), _, is_other, _, _, _| {
+                        restored.push(is_other);
+                        Err(if is_other {
+                            second_error.clone()
+                        } else {
+                            first_error.clone()
+                        })
+                    },
+                );
+                let expected: Vec<_> =
+                    [(!deleted.0).then_some(false), (!deleted.1).then_some(true)]
+                        .into_iter()
+                        .flatten()
+                        .collect();
+                assert_eq!(restored, expected);
+                assert_eq!(
+                    result,
+                    if !deleted.0 {
+                        Err(first_error)
+                    } else if !deleted.1 {
+                        Err(second_error)
+                    } else {
+                        body_result
+                    }
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn temporary_translation_default_still_ignores_forward_statuses() {
+        let shift = TemporaryBrepShift {
+            shift: Some(Vec3::X),
+            propagate_statuses: false,
+        };
+        let mut calls = Vec::new();
+        let result = shift.apply(
+            &mut Brep::new(),
+            &mut Brep::new(),
+            |_, is_other, _, _, _| {
+                calls.push(is_other);
+                Err(SolidError::sm_err("ignored-forward-transform"))
+            },
+        );
+        assert!(result.is_ok());
+        assert_eq!(calls, [false, true]);
+    }
+
+    #[test]
+    fn checked_temporary_translation_round_trips_real_boxes() {
+        use crate::primitive::api_primitives::create_box;
+        use crate::topology::brep::p5::transform;
+
+        let mut k = Kernel::default();
+        k.fixes.boolean_temporary_transform_statuses = true;
+        let mut a = create_box(&mut k, Vec3::new(4000.0, 2000.0, 1000.0), 10.0, 8.0, 6.0).unwrap();
+        let mut b = create_box(&mut k, Vec3::new(4004.0, 2002.0, 1000.0), 10.0, 8.0, 6.0).unwrap();
+        let points = |brep: &Brep| {
+            brep.vertices()
+                .iter()
+                .map(|(_, v)| v.point)
+                .collect::<Vec<_>>()
+        };
+        let original_a = points(&a);
+        let original_b = points(&b);
+        let box_of = |k: &Kernel, b: &Brep| {
+            qbrep::calculate_bounding_box(k, b, BoundingBoxOptions::default()).unwrap()
+        };
+        let bounds_a = box_of(&k, &a);
+        let bounds_b = box_of(&k, &b);
+        let token = temporary_brep_transform(&k, &k, &a, &b)
+            .unwrap()
+            .apply(&mut a, &mut b, |b, _, xfm, scale, scale_tol| {
+                transform(&mut k, b, xfm, scale, scale_tol)
+            })
+            .unwrap();
+        assert!(box_of(&k, &a).union(&box_of(&k, &b)).mid().length_squared() < 1.0);
+        token
+            .restore(Some(&mut a), Some(&mut b), |b, _, xfm, scale, scale_tol| {
+                transform(&mut k, b, xfm, scale, scale_tol)
+            })
+            .unwrap();
+        assert_eq!(points(&a), original_a);
+        assert_eq!(points(&b), original_b);
+        assert_eq!(box_of(&k, &a), bounds_a);
+        assert_eq!(box_of(&k, &b), bounds_b);
+    }
 
     #[test]
     fn temporary_translation_restores_survivors_after_every_result_exit() {
@@ -676,6 +1303,7 @@ mod tests {
                 inverse.translate(Vec3::new(2001.0, -3002.0, 4003.0));
                 let token = TemporaryBrepTransform {
                     inverse: Some(inverse),
+                    propagate_statuses: false,
                 };
                 let mut a = Brep::new();
                 let va = a
@@ -755,15 +1383,18 @@ mod tests {
                 }
             }
         }
-        TemporaryBrepTransform { inverse: None }
-            .run(
-                &mut Some(Brep::new()),
-                &mut Some(Brep::new()),
-                &mut (),
-                |(), _, _| Ok(()),
-                |(), _, _, _, _, _| panic!("identity scope must not transform"),
-            )
-            .unwrap();
+        TemporaryBrepTransform {
+            inverse: None,
+            propagate_statuses: false,
+        }
+        .run(
+            &mut Some(Brep::new()),
+            &mut Some(Brep::new()),
+            &mut (),
+            |(), _, _| Ok(()),
+            |(), _, _, _, _, _| panic!("identity scope must not transform"),
+        )
+        .unwrap();
     }
 
     #[test]

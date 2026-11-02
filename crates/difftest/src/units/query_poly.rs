@@ -12,26 +12,43 @@
 //! sections are compared exactly, float sections to `1e-9` relative. Statuses are `0`
 //! (`SM_SUCCESS`) or the `SmStatus`.
 //!
-//! Deferred cases: `IsDegenerate` of an edge whose face has an original face while the
-//! back pointers are valid (`SmFace::GetSurface`, `topology.face_p2`).
+//! Rejected cases: `IsDegenerate` of an edge whose face has a label for an original
+//! face while the back pointers are valid. Upstream then calls `SmFace::GetSurface`
+//! on that face (to map UV points), and a label is not an `SmFace`: the call is
+//! undefined in C++ (AGENTS.md section 4, step 5.6). The shim decides this from the
+//! built model (label plus back pointers), before any call, and returns
+//! `STATUS_UNDEFINED_INPUT`; `run_cpp` maps that status to `rejected`, no C++ result is
+//! inspected, and the Rust side, which would defer it at `SmFace::GetSurface`
+//! (`topology.face_p2`) for lack of the face, is not run.
+//! `owner_degenerate` is a separate opt-in operation that does compare these calls:
+//! explicit face records resolve only their own labels, and it compares real native
+//! `IsDegenerate` calls and independent surface samples.
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-use solidcore::geom::attribute::{AttributeStore, ObjectKey};
 use solidcore::geom::a_object::CacheStore;
+use solidcore::geom::attribute::{Attribute, AttributeStore, Behavior, ObjectKey};
 use solidcore::geom::axis2_placement::Axis2Placement;
+use solidcore::geom::context::{Context, MarkType};
+use solidcore::geom::extent2d::Extent2d;
 use solidcore::geom::extent3d::Extent3d;
 use solidcore::geom::object::ObjectRef;
 use solidcore::geom::tol;
 use solidcore::geom::vector2d::Vec2;
 use solidcore::geom::vector3d::Vec3;
 use solidcore::kernel::Kernel;
+use solidcore::nurbs::b_spline_surface::BSplineSurface;
+use solidcore::nurbs::math::{CPoint, NOW};
+use solidcore::nurbs::srf_basic::Surface as NurbSurface;
 use solidcore::query::poly::{
-    PolyAuxId, PolyBrep, PolyEdgeId, PolyFaceId, PolyLoopId, PolyNotifyEnv,
+    PolyAuxId, PolyBrep, PolyEdgeId, PolyFaceCopyEnv, PolyFaceId, PolyLoopId, PolyNotifyEnv,
     PolyObjectKind, PolyRegionId, PolyShellId, PolyVertexId,
 };
+use solidcore::surface::plane::Plane;
+use solidcore::surface::surface::Surface;
 use solidcore::topology::topology::Topology;
+use solidcore::topology::{Brep, Face, FaceId, Shell};
 use solidcore::SolidError;
 use solidcore_ffi::units::query_poly as ffi;
 
@@ -119,6 +136,11 @@ enum MutIn {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 enum OpIn {
+    OriginalCopy {
+        steps: Vec<(u8, bool)>,
+        #[serde(default)]
+        composite: bool,
+    },
     Dump,
     Bbox {
         pseudo: bool,
@@ -136,6 +158,10 @@ enum OpIn {
         queries: Vec<ContainsIn>,
     },
     Degenerate {
+        calls: Vec<(usize, Option<f64>)>,
+    },
+    OwnerDegenerate {
+        owners: Vec<OwnerIn>,
         calls: Vec<(usize, Option<f64>)>,
     },
     Transform {
@@ -156,6 +182,49 @@ enum OpIn {
 struct Inputs {
     brep: BrepIn,
     op: OpIn,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct OwnerIn {
+    label: i64,
+    surface: Option<OwnerSurfaceIn>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+enum OwnerSurfaceIn {
+    Plane {
+        origin: [f64; 3],
+        x: [f64; 3],
+        y: [f64; 3],
+        scale: [f64; 2],
+        domain: [f64; 4],
+    },
+    Bezier {
+        net: Vec<Vec<[f64; 3]>>,
+    },
+}
+
+fn owner_to_ffi(owner: &OwnerIn) -> ffi::OwnerFace {
+    ffi::OwnerFace {
+        label: owner.label,
+        surface: owner.surface.as_ref().map(|s| match s {
+            OwnerSurfaceIn::Plane {
+                origin,
+                x,
+                y,
+                scale,
+                domain,
+            } => ffi::OwnerSurface::Plane {
+                origin: *origin,
+                x: *x,
+                y: *y,
+                scale: *scale,
+                domain: *domain,
+            },
+            OwnerSurfaceIn::Bezier { net } => ffi::OwnerSurface::Bezier { net: net.clone() },
+        }),
+    }
 }
 
 fn to_ffi(b: &BrepIn) -> ffi::PolyDesc {
@@ -194,7 +263,8 @@ fn to_ffi(b: &BrepIn) -> ffi::PolyDesc {
 
 fn op_to_ffi(op: &OpIn) -> ffi::Op {
     match op {
-        OpIn::Dump => ffi::Op::Dump,
+        // OriginalCopy uses an isolated entry point, never the legacy labels.
+        OpIn::OriginalCopy { .. } | OpIn::Dump => ffi::Op::Dump,
         OpIn::Bbox {
             pseudo,
             points,
@@ -221,6 +291,10 @@ fn op_to_ffi(op: &OpIn) -> ffi::Op {
                 .collect(),
         ),
         OpIn::Degenerate { calls } => ffi::Op::Degenerate(calls.clone()),
+        OpIn::OwnerDegenerate { owners, calls } => ffi::Op::OwnerDegenerate {
+            owners: owners.iter().map(owner_to_ffi).collect(),
+            calls: calls.clone(),
+        },
         OpIn::Transform {
             origin,
             x,
@@ -243,9 +317,7 @@ fn op_to_ffi(op: &OpIn) -> ffi::Op {
                     MutIn::SetNormalUninit { f } => ffi::Mutation::SetNormalUninit(f),
                     MutIn::SetEdgeTolerance { e, t } => ffi::Mutation::SetEdgeTolerance(e, t),
                     MutIn::SetFaceTolerance { f, t } => ffi::Mutation::SetFaceTolerance(f, t),
-                    MutIn::SetOriginalFace { f, label } => {
-                        ffi::Mutation::SetOriginalFace(f, label)
-                    }
+                    MutIn::SetOriginalFace { f, label } => ffi::Mutation::SetOriginalFace(f, label),
                     MutIn::ClearAux { e } => ffi::Mutation::ClearAux(e),
                 })
                 .collect(),
@@ -281,6 +353,8 @@ const K_OBJ_BOXES: i32 = 22;
 const K_NORMALS: i32 = 23;
 const K_SPHERES: i32 = 25;
 const K_RESULTS: i32 = 26;
+const K_OWNER_POINTS: i32 = 27;
+const K_OWNER_TOPO: i32 = 28;
 
 fn key_name(key: i32) -> &'static str {
     match key {
@@ -309,6 +383,8 @@ fn key_name(key: i32) -> &'static str {
         K_NORMALS => "normals",
         K_SPHERES => "spheres",
         K_RESULTS => "results",
+        K_OWNER_POINTS => "owner_points",
+        K_OWNER_TOPO => "owner_topo",
         _ => "unknown",
     }
 }
@@ -321,7 +397,10 @@ fn to_output(secs: &[ffi::Section]) -> Result<Output, HarnessError> {
             return Err(harness(format!("unknown section {}", s.key)));
         }
         out = if s.ints {
-            out.ints(name, s.values.iter().map(|&x| x as i64).collect::<Vec<i64>>())
+            out.ints(
+                name,
+                s.values.iter().map(|&x| x as i64).collect::<Vec<i64>>(),
+            )
         } else {
             out.values(name, s.values.clone())
         };
@@ -403,6 +482,11 @@ fn build(k: &Kernel, b: &BrepIn) -> Result<Built, Fail> {
     }
     let mut shells: Vec<PolyShellId> = Vec::new();
     for (r, &n) in regions.iter().zip(&b.regions) {
+        // The FFI rejects larger counts; mirror it so a fuzzed count cannot make the
+        // runner build billions of shells.
+        if n > ffi::MAX_SHELLS_PER_REGION {
+            return Err(Fail::Harness(harness("too many shells in a region")));
+        }
         for _ in 0..n {
             shells.push(rs(p.add_shell(*r))?);
         }
@@ -417,21 +501,29 @@ fn build(k: &Kernel, b: &BrepIn) -> Result<Built, Fail> {
         verts
             .get(i)
             .copied()
-            .ok_or(Fail::Harness(harness("vertex index")))
+            .ok_or_else(|| Fail::Harness(harness("vertex index")))
     };
     for f in &b.faces {
         let shell = *shells
             .get(f.shell)
-            .ok_or(Fail::Harness(harness("shell index")))?;
+            .ok_or_else(|| Fail::Harness(harness("shell index")))?;
         let face = rs(p.add_face(k, shell, f.tol, f.normal.map(v3)))?;
         for l in &f.loops {
             let lp = rs(p.start_poly_edge_loop(face))?;
             n_loops += 1;
             let kk = l.verts.len();
+            // the FFI's loop check ("loop vertex count / mode")
+            if kk == 0 || (l.mode == 2 && kk < 2) || l.mode > 2 {
+                return Err(Fail::Harness(harness("loop vertex count / mode")));
+            }
             let ne = if l.mode == 2 { kk - 1 } else { kk };
             for j in 0..ne {
-                let v0 = pick(*l.verts.get(j).ok_or(Fail::Harness(harness("loop")))?)?;
-                let v1 = pick(*l.verts.get((j + 1) % kk).ok_or(Fail::Harness(harness("loop")))?)?;
+                let v0 = pick(*l.verts.get(j).ok_or_else(|| Fail::Harness(harness("loop")))?)?;
+                let v1 = pick(
+                    *l.verts
+                        .get((j + 1) % kk)
+                        .ok_or_else(|| Fail::Harness(harness("loop")))?,
+                )?;
                 let p0 = rs(p.vertex_point(v0))?;
                 let p1 = rs(p.vertex_point(v1))?;
                 edges.push(rs(p.add_poly_edge(k, lp, l.edge_tol, p0, p1, v0))?);
@@ -440,7 +532,7 @@ fn build(k: &Kernel, b: &BrepIn) -> Result<Built, Fail> {
                 // the status is ignored by the shim
                 let _ = p.finish_poly_edge_loop(lp);
             } else if l.mode == 2 {
-                let last = pick(*l.verts.last().ok_or(Fail::Harness(harness("loop")))?)?;
+                let last = pick(*l.verts.last().ok_or_else(|| Fail::Harness(harness("loop")))?)?;
                 rs(p.set_last_end_poly_vertex(lp, Some(last)))?;
             }
         }
@@ -449,7 +541,7 @@ fn build(k: &Kernel, b: &BrepIn) -> Result<Built, Fail> {
         edges
             .get(i)
             .copied()
-            .ok_or(Fail::Harness(harness("edge index")))
+            .ok_or_else(|| Fail::Harness(harness("edge index")))
     };
     for g in &b.radials {
         let ring = g.iter().map(|&i| edge(i)).collect::<Result<Vec<_>, _>>()?;
@@ -457,10 +549,13 @@ fn build(k: &Kernel, b: &BrepIn) -> Result<Built, Fail> {
     }
     let mut aux = Vec::new();
     for a in &b.aux {
-        aux.push(rs(p.add_aux_data(Vec3::new(a[0], a[1], a[2]), Vec2::new(a[3], a[4])))?);
+        aux.push(rs(p.add_aux_data(
+            Vec3::new(a[0], a[1], a[2]),
+            Vec2::new(a[3], a[4]),
+        ))?);
     }
     for &(e, a) in &b.edge_aux {
-        let a = *aux.get(a).ok_or(Fail::Harness(harness("aux index")))?;
+        let a = *aux.get(a).ok_or_else(|| Fail::Harness(harness("aux index")))?;
         rs(p.edge_set_aux_data(edge(e)?, Some(a)))?;
     }
     for &(v, n) in &b.vertex_normals {
@@ -478,7 +573,12 @@ fn build(k: &Kernel, b: &BrepIn) -> Result<Built, Fail> {
         }
     }
     for &(f, l) in &b.orig_faces {
-        rs(p.face_set_original_face(PolyFaceId::from_index(f as u32), Some(ObjectKey(l as u64)), false))?;
+        rs(p.face_set_original_face(
+            PolyFaceId::from_index(f as u32),
+            Some(ObjectKey(l as u64)),
+            false,
+            None,
+        ))?;
     }
     for &(e, l) in &b.orig_edgeuses {
         rs(p.edge_set_original_edgeuse(edge(e)?, Some(ObjectKey(l as u64))))?;
@@ -509,6 +609,136 @@ fn lid(i: usize) -> PolyLoopId {
 
 fn vid(i: usize) -> PolyVertexId {
     PolyVertexId::from_index(i as u32)
+}
+
+/// Real owner faces in their own arena, independent of the poly B-rep's labels.
+struct OwnerWorld {
+    brep: Brep,
+    faces: std::collections::BTreeMap<ObjectKey, FaceId>,
+}
+
+fn build_owners(owners: &[OwnerIn]) -> Result<OwnerWorld, Fail> {
+    let descs: Vec<_> = owners.iter().map(owner_to_ffi).collect();
+    ffi::check_owner_faces(&descs).map_err(|e| Fail::Harness(harness(e.to_string())))?;
+    let mut brep = Brep::new();
+    let shell = rs(brep.add_shell_record(Shell::default()))?;
+    let mut faces = std::collections::BTreeMap::new();
+    for owner in owners {
+        let mut face = Face::new(shell);
+        face.surface = match &owner.surface {
+            None => None,
+            Some(OwnerSurfaceIn::Plane {
+                origin,
+                x,
+                y,
+                scale,
+                domain,
+            }) => Some(Surface::from(Plane::new(
+                v3(*origin),
+                v3(*x),
+                v3(*y),
+                Vec2::from(*scale),
+                &Extent2d::from_bounds(domain[0], domain[1], domain[2], domain[3]),
+            ))),
+            Some(OwnerSurfaceIn::Bezier { net }) => {
+                // Dimensions were checked above; each knot vector is at most 8 entries.
+                let nu = net.len();
+                let nv = net
+                    .first()
+                    .ok_or_else(|| Fail::Harness(harness("empty owner Bezier net")))?
+                    .len();
+                let mut u = vec![0.0; nu];
+                u.extend(vec![1.0; nu]);
+                let mut v = vec![0.0; nv];
+                v.extend(vec![1.0; nv]);
+                let net = net
+                    .iter()
+                    .map(|row| {
+                        row.iter()
+                            .map(|p| CPoint::new(p[0], p[1], p[2], NOW))
+                            .collect()
+                    })
+                    .collect();
+                Some(Surface::from(BSplineSurface::from_nurb(
+                    rs(NurbSurface::new(net, nu - 1, nv - 1, u, v))?,
+                    false,
+                )))
+            }
+        };
+        if let Some(s) = &face.surface {
+            // (runner helper without a kernel in scope)
+            face.uv_domain = s.natural_uv_domain_if_built();
+        }
+        let id = rs(brep.add_face_record(face))?;
+        rs(brep.shell_mut(shell))?.faces.push(id);
+        if let Some(surface) = rs(brep.face_mut(id))?.surface.as_mut() {
+            surface.set_owner(Some(ObjectRef {
+                type_code: solidcore::topology::face::p2::TYPE,
+                key: ObjectKey(owner.label as u64),
+            }));
+            surface.set_owner_zone_tol_3d(Some(0.0)); // SmFace() default
+        }
+        faces.insert(ObjectKey(owner.label as u64), id);
+    }
+    Ok(OwnerWorld { brep, faces })
+}
+
+/// Independent native-visible samples, not a substitute for `IsDegenerate`.
+/// Per call: 10 integers (edge, label, resolved, surface, back-pointers, mapping,
+/// four classifications); raw endpoints, then domain and three mapped samples
+/// only when mapping applies. The midpoint is sampled even if the native
+/// degeneracy implementation's seam branch would not need it.
+fn owner_samples(
+    k: &Kernel,
+    p: &PolyBrep,
+    e: PolyEdgeId,
+    world: &OwnerWorld,
+    ints: &mut Vec<f64>,
+    points: &mut Vec<f64>,
+) -> Result<(), Fail> {
+    let label = match rs(p.edge_poly_face(e))? {
+        Some(f) => rs(p.face_original_face(f))?,
+        None => None,
+    };
+    let face = label.and_then(|key| world.faces.get(&key).copied());
+    let surface = match face {
+        Some(f) => rs(solidcore::topology::face::p2::surface(&world.brep, f))?,
+        None => None,
+    };
+    let back = rs(p.edge_ok_back_ptrs(e))?;
+    let mapping = back && surface.is_some() && rs(p.edge_is_2d_or_zero(e))?;
+    ints.extend([
+        f64::from(e.index()),
+        label.map_or(0.0, |key| key.0 as f64),
+        f64::from(u8::from(face.is_some())),
+        f64::from(u8::from(surface.is_some())),
+        f64::from(u8::from(back)),
+        f64::from(u8::from(mapping)),
+    ]);
+    let start = rs(p.edge_start_point(e))?;
+    let end = rs(p.edge_end_point(e))?;
+    put(points, start);
+    put(points, end);
+    if let Some(surface) = surface.filter(|_| mapping) {
+        let domain = rs(surface.natural_uv_domain_with_nurb(k))?;
+        let a = Vec2::new(start.x, start.y);
+        let b = Vec2::new(end.x, end.y);
+        let (su, sv) = domain.classify_point(a, solidcore::math::EFF_ZERO_PARAM, None);
+        let (eu, ev) = domain.classify_point(b, solidcore::math::EFF_ZERO_PARAM, None);
+        ints.extend([su, sv, eu, ev].map(|pos| f64::from(pos.code())));
+        points.extend([
+            domain.min().x,
+            domain.min().y,
+            domain.max().x,
+            domain.max().y,
+        ]);
+        for uv in [a, b, (a + b) / 2.0] {
+            put(points, rs(surface.evaluate_point(k, uv))?);
+        }
+    } else {
+        ints.extend([-1.0; 4]);
+    }
+    Ok(())
 }
 
 fn dump(b: &mut Built, out: &mut Secs) -> Result<(), Fail> {
@@ -560,7 +790,11 @@ fn dump(b: &mut Built, out: &mut Secs) -> Result<(), Fail> {
         } else {
             opt(rs(p.face_poly_shell(f))?, PolyShellId::index)
         });
-        o.push(if rs(p.face_ok_back_ptrs(f))? { 1.0 } else { 0.0 });
+        o.push(if rs(p.face_ok_back_ptrs(f))? {
+            1.0
+        } else {
+            0.0
+        });
         o.push(rs(p.face_original_face(f))?.map_or(0.0, |k| k.0 as f64));
         o.push(opt(rs(p.face_outer_poly_loop(f))?, PolyLoopId::index));
         o.push(ls.len() as f64);
@@ -613,8 +847,16 @@ fn dump(b: &mut Built, out: &mut Secs) -> Result<(), Fail> {
         o.push(rads.len() as f64);
         o.extend(rads.iter().map(|r| f64::from(r.index())));
         o.push(opt(rs(p.edge_aux_data(e))?, PolyAuxId::index));
-        o.push(if rs(p.edge_is_2d_or_zero(e))? { 1.0 } else { 0.0 });
-        o.push(if rs(p.edge_ok_back_ptrs(e))? { 1.0 } else { 0.0 });
+        o.push(if rs(p.edge_is_2d_or_zero(e))? {
+            1.0
+        } else {
+            0.0
+        });
+        o.push(if rs(p.edge_ok_back_ptrs(e))? {
+            1.0
+        } else {
+            0.0
+        });
         o.push(rs(p.edge_original_edgeuse(e))?.map_or(0.0, |k| k.0 as f64));
         g.push(rs(p.edge_tolerance(e))?);
         put(&mut g, rs(p.edge_start_point(e))?);
@@ -637,7 +879,11 @@ fn dump(b: &mut Built, out: &mut Secs) -> Result<(), Fail> {
         o.extend(pe.iter().map(|e| f64::from(e.index())));
         o.push(pf.len() as f64);
         o.extend(pf.iter().map(|f| opt(*f, PolyFaceId::index)));
-        o.push(if rs(p.vertex_is_2d_or_zero(v))? { 1.0 } else { 0.0 });
+        o.push(if rs(p.vertex_is_2d_or_zero(v))? {
+            1.0
+        } else {
+            0.0
+        });
         put(&mut g, rs(p.vertex_point(v))?);
         g.push(rs(p.vertex_tolerance(v))?);
         let ns = rs(p.vertex_normals(v))?;
@@ -690,6 +936,9 @@ fn dump(b: &mut Built, out: &mut Secs) -> Result<(), Fail> {
 fn run_op(k: &Kernel, b: &mut Built, op: &OpIn, out: &mut Secs) -> Result<(), Fail> {
     let p = &mut b.brep;
     match op {
+        OpIn::OriginalCopy { .. } => {
+            return Err(Fail::Harness(harness("original_copy uses its isolated route")));
+        }
         OpIn::Dump => {}
         OpIn::Bbox {
             pseudo,
@@ -697,7 +946,8 @@ fn run_op(k: &Kernel, b: &mut Built, op: &OpIn, out: &mut Secs) -> Result<(), Fa
             centroid,
             normal,
         } => {
-            let mut pts: Option<Vec<Vec3>> = points.as_ref().map(|v| v.iter().map(|&q| v3(q)).collect());
+            let mut pts: Option<Vec<Vec3>> =
+                points.as_ref().map(|v| v.iter().map(|&q| v3(q)).collect());
             let mut nrm = normal.map(v3);
             let r = rs(p.calculate_bounding_box(*pseudo, pts.as_mut(), *centroid, nrm.as_mut()))?;
             out.ints(K_STATUS, vec![0.0]);
@@ -793,6 +1043,24 @@ fn run_op(k: &Kernel, b: &mut Built, op: &OpIn, out: &mut Secs) -> Result<(), Fa
             }
             out.ints(K_RESULTS, o);
         }
+        OpIn::OwnerDegenerate { owners, calls } => {
+            let world = build_owners(owners)?;
+            let (mut results, mut topo, mut points) = (Vec::new(), Vec::new(), Vec::new());
+            for &(e, t) in calls {
+                let e = eid(e);
+                let d = rs(p.edge_is_degenerate_with_owner(
+                    k,
+                    e,
+                    t.map(|t| tol::xsect_tol3d(k, t)),
+                    |key| world.faces.get(&key).map(|&f| (&world.brep, f)),
+                ))?;
+                results.push(f64::from(u8::from(d)));
+                owner_samples(k, p, e, &world, &mut topo, &mut points)?;
+            }
+            out.ints(K_RESULTS, results);
+            out.ints(K_OWNER_TOPO, topo);
+            out.floats(K_OWNER_POINTS, points);
+        }
         OpIn::Transform {
             origin,
             x,
@@ -846,11 +1114,9 @@ fn run_op(k: &Kernel, b: &mut Built, op: &OpIn, out: &mut Secs) -> Result<(), Fa
                     MutIn::SetFaceTolerance { f, t } => {
                         rs(p.face_set_tolerance(fid(f), tol::zone_tol3d(k, t)))?;
                     }
-                    MutIn::SetOriginalFace { f, label } => rs(p.face_set_original_face(
-                        fid(f),
-                        Some(ObjectKey(label as u64)),
-                        false,
-                    ))?,
+                    MutIn::SetOriginalFace { f, label } => {
+                        rs(p.face_set_original_face(fid(f), Some(ObjectKey(label as u64)), false, None))?;
+                    }
                     MutIn::ClearAux { e } => rs(p.edge_set_aux_data(eid(e), None))?,
                 }
             }
@@ -893,6 +1159,127 @@ fn run_op(k: &Kernel, b: &mut Built, op: &OpIn, out: &mut Secs) -> Result<(), Fa
     Ok(())
 }
 
+fn copy_snapshot(
+    poly: &PolyBrep,
+    face: PolyFaceId,
+    records: &std::collections::BTreeMap<ObjectKey, Topology>,
+    attributes: &AttributeStore,
+    values: &mut Vec<f64>,
+) -> Result<(), Fail> {
+    values.push(rs(poly.face_original_face(face))?.map_or(0.0, |key| key.0 as f64));
+    let record = records.get(&ObjectKey(3)).ok_or_else(|| Fail::Harness(harness("target record")))?;
+    values.push(record.all_flags() as f64);
+    for mark in [MarkType::Mark, MarkType::Mark2, MarkType::Mark3, MarkType::MarkIo, MarkType::MarkAssert] {
+        values.push(record.get_mark(mark) as f64);
+    }
+    for id in [501, 502, 503, 504] {
+        let handle = attributes.find_attribute(ObjectKey(3), id);
+        values.push(f64::from(handle.is_some()));
+        let Some(handle) = handle else { continue };
+        let a = attributes.get(handle).ok_or_else(|| Fail::Harness(harness("live attribute")))?;
+        values.extend([
+            f64::from(a.behavior().code()), a.users().len() as f64,
+            f64::from(attributes.find_attribute(ObjectKey(1), id) == Some(handle)),
+            f64::from(attributes.find_attribute(ObjectKey(2), id) == Some(handle)),
+        ]);
+        if id == 502 {
+            put(values, a.vector3d_value().ok_or_else(|| Fail::Harness(harness("color payload")))?);
+        } else {
+            values.push(a.long_value().ok_or_else(|| Fail::Harness(harness("long payload")))? as f64);
+        }
+    }
+    Ok(())
+}
+
+fn original_copy_rust(k: &Kernel, steps: &[(u8, bool)], composite: bool) -> Result<Vec<f64>, Fail> {
+    // Validation is shared input validation only; no native output/state is used.
+    if steps.is_empty() || steps.len() > 16 || steps.iter().any(|(s, _)| *s > 2) {
+        return Err(Fail::Harness(harness("invalid original_copy steps")));
+    }
+    let mut source = Brep::new();
+    let source_shell = rs(source.add_shell_record(Shell::default()))?;
+    let mut faces = Vec::new();
+    let mut context = Context::default();
+    let mut records = solidcore::topology::topology::NotifyRecords::new();
+    let mut attributes = AttributeStore::new();
+    for i in 0..2 {
+        faces.push(rs(source.add_face_record(Face::new(source_shell)))?);
+        let key = ObjectKey(i + 1);
+        let mut record = Topology::new();
+        record.set_all_flags(16 + i);
+        record.mark(Some(&context), MarkType::Mark);
+        record.mark(Some(&context), MarkType::MarkIo);
+        records.insert(key, record);
+        for a in [
+            Attribute::long(501, 41 + i as i64, Behavior::Copy),
+            Attribute::color(502, Vec3::new(0.2 + i as f64, 0.4, 0.6), Behavior::Reference),
+            Attribute::long(503, 81 + i as i64, Behavior::Temp),
+        ] {
+            let h = rs(attributes.insert(a))?;
+            rs(attributes.add_attribute(key, h))?;
+        }
+    }
+    let mut record = Topology::new();
+    record.set_all_flags(2);
+    record.mark(Some(&context), MarkType::Mark);
+    record.mark(Some(&context), MarkType::MarkIo);
+    records.insert(ObjectKey(3), record);
+    let h = rs(attributes.insert(Attribute::long(504, 99, Behavior::Copy)))?;
+    rs(attributes.add_attribute(ObjectKey(3), h))?;
+    let mut poly = PolyBrep::new(k, 1e-5);
+    let region = rs(poly.add_region())?;
+    let shell = rs(poly.add_shell(region))?;
+    let face = rs(poly.add_face(k, shell, 1e-5, None))?;
+    let face = if composite { rs(poly.add_cpoly_face(face))? } else { face };
+    let first_source = faces.first().copied()
+        .ok_or_else(|| Fail::Harness(harness("missing original source face")))?;
+    let key_of = |entity| ObjectRef {
+        type_code: solidcore::topology::face::p2::TYPE,
+        key: ObjectKey(if entity == solidcore::EntityRef::Face(first_source) { 1 } else { 2 }),
+    };
+    let mut values = Vec::new();
+    copy_snapshot(&poly, face, &records, &attributes, &mut values)?;
+    for &(which, propagate) in steps {
+        let original = (which != 0).then_some(ObjectKey(u64::from(which)));
+        // No context at all for legitimate no-ops and non-propagating labels.
+        if original != rs(poly.face_original_face(face))? && original.is_some() && propagate {
+            let source_face = faces.get(usize::from(which - 1)).copied()
+                .ok_or_else(|| Fail::Harness(harness("invalid original source face")))?;
+            let mut env = PolyFaceCopyEnv {
+                source_brep: &mut source,
+                source_face,
+                notify: solidcore::topology::edge::NotifyEnv {
+                    records: &mut records,
+                    attributes: &mut attributes,
+                    context: Some(&mut context),
+                    key_of: &key_of,
+                },
+                destination: ObjectRef {
+                    type_code: if composite { PolyObjectKind::CPolyFace } else { PolyObjectKind::Face }.type_code(),
+                    key: ObjectKey(3),
+                },
+            };
+            rs(poly.face_set_original_face(face, original, propagate, Some(&mut env)))?;
+        } else {
+            rs(poly.face_set_original_face(face, original, propagate, None))?;
+        }
+        copy_snapshot(&poly, face, &records, &attributes, &mut values)?;
+    }
+    for key in [ObjectKey(1), ObjectKey(2)] {
+        let h = attributes.find_attribute(key, 502).ok_or_else(|| Fail::Harness(harness("source color")))?;
+        rs(attributes.get_mut(h).ok_or_else(|| Fail::Harness(harness("live source color")))?
+            .set_vector3d_value(Vec3::new(7.0, 8.0, 9.0)))?;
+    }
+    copy_snapshot(&poly, face, &records, &attributes, &mut values)?;
+    for key in [ObjectKey(1), ObjectKey(2)] {
+        rs(attributes.clear_attributes(key))?;
+    }
+    copy_snapshot(&poly, face, &records, &attributes, &mut values)?;
+    rs(attributes.clear_attributes(ObjectKey(3)))?;
+    copy_snapshot(&poly, face, &records, &attributes, &mut values)?;
+    Ok(values)
+}
+
 impl UnitDiff for Runner {
     fn id(&self) -> &'static str {
         "query.poly"
@@ -900,8 +1287,22 @@ impl UnitDiff for Runner {
 
     fn run_cpp(&self, case: &Case) -> Result<Output, HarnessError> {
         let i: Inputs = case.parse()?;
+        if let OpIn::OriginalCopy { steps, composite } = &i.op {
+            return ffi::original_copy(steps, *composite)
+                .map(|values| Output::new().values("original_copy", values))
+                .map_err(|e| harness(e.to_string()));
+        }
         match ffi::run(&to_ffi(&i.brep), &op_to_ffi(&i.op)) {
             Ok(secs) => to_output(&secs),
+            // The shim declined the input before calling anything (decided from the built
+            // model, not from a result): upstream would call `SmFace::GetSurface` on a
+            // label that is not an `SmFace`.
+            Err(solidcore_ffi::FfiError::Status(ffi::STATUS_UNDEFINED_INPUT)) => {
+                Ok(Output::rejected(
+                    "SmPolyEdge::IsDegenerate would call GetSurface on a labelled fake SmFace \
+                     (undefined in C++; real original faces: owner_degenerate)",
+                ))
+            }
             Err(solidcore_ffi::FfiError::Status(s)) => Ok(Output::err(format!("status_{s}"))),
             Err(e) => Err(harness(e.to_string())),
         }
@@ -910,6 +1311,13 @@ impl UnitDiff for Runner {
     fn run_rust(&self, case: &Case) -> Result<Output, HarnessError> {
         let i: Inputs = case.parse()?;
         let k = Kernel::default();
+        if let OpIn::OriginalCopy { steps, composite } = &i.op {
+            return match original_copy_rust(&k, steps, *composite) {
+                Ok(values) => Ok(Output::new().values("original_copy", values)),
+                Err(Fail::Deferred(o)) => Ok(*o),
+                Err(Fail::Harness(h)) => Err(h),
+            };
+        }
         let res = (|| -> Result<Secs, Fail> {
             let mut b = build(&k, &i.brep)?;
             let mut out = Secs::default();
@@ -932,6 +1340,107 @@ impl UnitDiff for Runner {
         let mut c = ctx.clone();
         c.seeds = c.seeds.max(MIN_GENERATED);
         default_cases(self, &c)
+    }
+}
+
+#[cfg(test)]
+mod owner_tests {
+    use super::*;
+    use crate::case::{repo_root, CaseSource};
+
+    fn owner_cases() -> Vec<Case> {
+        let file: Value = serde_json::from_str(include_str!(
+            "../../../../fixtures/query.poly/real_owners.json"
+        ))
+        .unwrap();
+        file["cases"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|c| Case {
+                unit: "query.poly".into(),
+                name: c["name"].as_str().unwrap().into(),
+                source: CaseSource::Inline,
+                inputs: c["inputs"].clone(),
+            })
+            .collect()
+    }
+
+    #[test]
+    fn opaque_original_faces_are_rejected_before_native_dereference() {
+        let cases = Runner
+            .cases(&CaseContext {
+                root: repo_root(),
+                seeds: 16,
+            })
+            .unwrap();
+        for name in ["gen0378", "gen0496"] {
+            let case = cases.iter().find(|c| c.name == name).unwrap();
+            let rust = Runner.run_rust(case).unwrap();
+            let deferred = rust.deferred.unwrap();
+            assert_eq!(deferred.unit, "topology.face_p2");
+            assert_eq!(deferred.symbol, "SmFace::GetSurface");
+            // The labelled original face is not an `SmFace`: upstream would dereference
+            // it, so the C++ side rejects the case and nothing is compared.
+            let cpp = Runner.run_cpp(case).unwrap();
+            assert!(cpp.error.is_none());
+            assert!(cpp.rejected.is_some());
+            assert!(cpp.ints.is_empty() && cpp.values.is_empty());
+        }
+    }
+
+    #[test]
+    fn real_owner_native_mapping_poles_seams_and_controls() {
+        for case in owner_cases() {
+            let cpp = Runner.run_cpp(&case).unwrap();
+            let rust = Runner.run_rust(&case).unwrap();
+            assert!(cpp.error.is_none() && cpp.rejected.is_none() && cpp.deferred.is_none());
+            assert!(rust.error.is_none() && rust.rejected.is_none() && rust.deferred.is_none());
+            let diff = crate::compare::compare(&cpp, &rust, &[]);
+            assert!(diff.pass(), "{}: {diff:?}", case.name);
+            assert!(diff.values_compared > 0);
+            assert!(cpp.values["owner_points"]
+                .iter()
+                .any(|v| v.is_finite() && *v != 0.0));
+            let expected: &[i64] = match case.name.as_str() {
+                "owner_plane_stretch" => &[0, 0],
+                "owner_plane_compress" | "owner_face_without_surface" => &[0, 1, 0],
+                "owner_u_pole" | "owner_shared_face_identity" => &[1, 1],
+                "owner_u_seam_midpoint" => &[0, 0, 1],
+                "owner_partial_pole" | "owner_v_pole" => &[1],
+                "owner_v_seam_midpoint" => &[0, 1],
+                "owner_distinct_face_identity" => &[1, 0],
+                _ => &[0],
+            };
+            assert_eq!(cpp.ints["results"], expected, "{}", case.name);
+            if case.name == "owner_u_seam_midpoint" {
+                assert_eq!(
+                    &cpp.values["owner_points"][10..19],
+                    &[1.0, 0.0, 3.0, 1.0, 0.0, 3.0, 0.0, 0.0, 3.0]
+                );
+            }
+            if case.name == "owner_plane_compress" {
+                assert_eq!(
+                    &cpp.values["owner_points"][10..19],
+                    &[8.0625, -1.0, 1.0, 8.125, -1.0, 1.0, 8.09375, -1.0, 1.0]
+                );
+            }
+            if case.name == "owner_face_without_surface" {
+                assert_eq!(&cpp.ints["owner_topo"][1..6], &[3, 1, 0, 1, 0]);
+                // The same valid original face label, without its explicit record,
+                // must defer instead of becoming another surface-less face.
+                let mut unresolved = case.clone();
+                unresolved.inputs["op"]["owners"] = serde_json::json!([]);
+                assert!(Runner.run_rust(&unresolved).unwrap().deferred.is_some());
+                assert!(Runner
+                    .run_cpp(&unresolved)
+                    .unwrap()
+                    .rejected
+                    .as_deref()
+                    .unwrap()
+                    .contains("fake SmFace"));
+            }
+        }
     }
 }
 

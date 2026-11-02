@@ -23,6 +23,7 @@
 #include <SmEllipse.h>
 #include <SmExtent1d.h>
 #include <SmExtent2d.h>
+#include <SmHyperbola.h>
 #include <SmLine.h>
 #include <SmNurbsCrv.h>
 #include <SmNurbsSrf.h>
@@ -35,8 +36,10 @@
 #include <nurbs.h>
 
 #include <cmath>
+#include <stdexcept>
 #include <vector>
 
+#include "sc_const_make.h"
 #include "sc_sm.h"
 
 using sc::flg;
@@ -58,6 +61,7 @@ enum : int32_t
     OP_EQ = 7,
     OP_PLANE = 8,
     OP_ISO_CIRCLES = 20,
+    OP_CONST_MAKE = 21, // the BM_CTOR constructor with no MakeNurb, then sc::put_const_make
 };
 
 // Generator kinds.
@@ -66,6 +70,7 @@ enum : int32_t
     GK_BSPLINE = 0,
     GK_LINE = 1,
     GK_CIRCLE = 2,
+    GK_HYPERBOLA = 3,
 };
 
 // Construction modes.
@@ -131,8 +136,29 @@ SmBSplineCurve* read_bspline(Rd& rd, const SmContext& ctx)
     return new (ctx) SmBSplineCurve(cur, 3, FALSE);
 }
 
-// A generator block `kind ...`: a B-spline curve, a line `a[3] b[3]` (its NURB made) or a
-// circle `c[3] x[3] y[3] d0 d1 r`.
+// An `SmHyperbola` whose constructor made a finite NURB. The constructor ignores a
+// failing `MakeNurb` (`SE`), leaving `m_pNurb` NULL or NaN for semi axes too large or too
+// small next to the centre's coordinates, which every later use dereferences (the FFI
+// cannot predict the rounding): such an input is refused as a harness error.
+SmBSplineCurve* checked_hyperbola(SmHyperbola* h)
+{
+    const gw_CURVE* cur = h->GetGwNurbPointer();
+    bool ok = cur != NULL && cur->pol != NULL;
+    for (gw_INDEX i = 0; ok && i <= cur->pol->n; i++)
+    {
+        const gw_CPOINT& p = cur->pol->Pw[i];
+        ok = std::isfinite(p.x) && std::isfinite(p.y) && std::isfinite(p.z) && std::isfinite(p.w);
+    }
+    if (!ok)
+    {
+        delete h;
+        throw std::invalid_argument("hyperbola generator: no finite NURB");
+    }
+    return h;
+}
+
+// A generator block `kind ...`: a B-spline curve, a line `a[3] b[3]` (its NURB made), a
+// circle `c[3] x[3] y[3] d0 d1 r` or a hyperbola `c[3] x[3] y[3] d0 d1 a b`.
 SmBSplineCurve* read_gen(Rd& rd, const SmContext& ctx)
 {
     int64_t kind = rd.idx();
@@ -157,13 +183,25 @@ SmBSplineCurve* read_gen(Rd& rd, const SmContext& ctx)
         double r = rd.num();
         return new (ctx) SmCircle(c, x, y, SmExtent1d(d0, d1), r, 3, &ctx);
     }
+    case GK_HYPERBOLA:
+    {
+        SmPoint3d c = rd.vec();
+        SmVector3d x = rd.vec();
+        SmVector3d y = rd.vec();
+        double d0 = rd.num();
+        double d1 = rd.num();
+        double a = rd.num();
+        double b = rd.num();
+        return checked_hyperbola(new (ctx) SmHyperbola(c, x, y, SmExtent1d(d0, d1), a, b, 3, &ctx));
+    }
     default: return NULL;
     }
 }
 
 // A surface block `mode gen oob swap` then for BM_CANONICAL `P[3] A[3]`, for BM_CTOR
 // `O[3] X[3] Y[3] D[4]`. Writes the construction status; NULL on failure.
-SmSurfOfRevolution* read_surface(Rd& rd, const SmContext& ctx, std::vector<double>& o)
+SmSurfOfRevolution* read_surface(Rd& rd, const SmContext& ctx, std::vector<double>& o,
+                                 bool lazy = false)
 {
     int64_t mode = rd.idx();
     SmBSplineCurve* gen = read_gen(rd, ctx);
@@ -184,7 +222,8 @@ SmSurfOfRevolution* read_surface(Rd& rd, const SmContext& ctx, std::vector<doubl
         SmVector3d y = rd.vec();
         SmExtent2d d = rd.domain();
         s = new (ctx) Peek(gen, org, x, y, d, swap ? TRUE : FALSE);
-        stt = s->MakeNurb();
+        if (!lazy)
+            stt = s->MakeNurb();
     }
     o.push_back(st(stt));
     if (stt != SM_SUCCESS)
@@ -539,10 +578,13 @@ SC_EXPORT int32_t sc_surface_surf_of_revolution_p1_eval(int32_t op, const double
     }
     else
     {
-        SmSurfOfRevolution* s = read_surface(rd, ctx, o);
+        SmSurfOfRevolution* s = read_surface(rd, ctx, o, op == OP_CONST_MAKE);
         if (s)
         {
-            surface_op(op, rd, ctx, s, o);
+            if (op == OP_CONST_MAKE)
+                sc::put_const_make(ctx, s, o);
+            else
+                surface_op(op, rd, ctx, s, o);
             delete s;
         }
     }

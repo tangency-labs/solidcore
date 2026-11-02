@@ -24,14 +24,29 @@
 //! | [`DatabaseReader::read_booleans`]     | `SmDatabaseIO::ReadBooleans`                     |
 //! | [`DatabaseReader::read_short`]        | `SmDatabaseIO::ReadShort`                        |
 //! | [`DatabaseReader::read_char`]         | `SmDatabaseIO::ReadChar`                         |
+//! | [`DatabaseReader::read_characters`]   | `SmDatabaseIO::ReadCharacters`                   |
 //! | [`DatabaseReader::read_type`]         | `SmDatabaseIO::ReadType`                         |
 //! | [`DatabaseReader::go_to_next_line`]   | `SmDatabaseIO::GoToNextLine`                     |
+//! | [`DatabaseReader::read_failed`]       | `SmDatabaseIO::ReadFailed`                       |
+//! | [`DatabaseReader::with_fixes`], [`DatabaseReader::set_fixes`], [`DatabaseReader::byte_swap_read_boolean`] | (not upstream: `WR-47`'s opt-in, `ReadBoolean` honours `m_bByteSwap`) |
+//! | [`DatabaseWriter`]                    | `SmDatabaseIO` / `SmDatabaseIOFile` (write side) |
+//! | [`DatabaseWriter::open_for_write`]    | `SmDatabaseIOFile::OpenFileForWrite` (new file)  |
+//! | [`DatabaseWriter::write_long`] / [`DatabaseWriter::write_longs`] | `WriteLong` / `WriteLongs` |
+//! | [`DatabaseWriter::write_double`] / [`DatabaseWriter::write_doubles`] | `WriteDouble` / `WriteDoubles` |
+//! | [`DatabaseWriter::write_boolean`] / [`DatabaseWriter::write_booleans`] | `WriteBoolean` / `WriteBooleans` |
+//! | [`DatabaseWriter::write_short`] / [`DatabaseWriter::write_char`] | `WriteShort` / `WriteChar` |
+//! | [`DatabaseWriter::write_characters`]  | `SmDatabaseIO::WriteCharacters`                  |
+//! | [`DatabaseWriter::write_type`]        | `SmDatabaseIO::WriteType`                        |
+//! | [`DatabaseWriter::out_str`] ... [`fixed16`] | `*GetOutStreamPtr() << value` (`fixed`, precision 16) |
+//! | [`DatabaseWriter::with_round_trip_doubles`], [`round_trip`] | (not upstream: WR-655's opt-in, doubles that read back unchanged) |
 //! | [`is_big_endian`]                     | `SmDatabaseIO::IsBigEndian`                      |
 //! | [`byte_swap_f64`]                     | `ByteSwap64(double)`, `ByteSwap128(double)`      |
 //! | [`byte_swap_u64`]                     | `ByteSwap64(unsigned long)`, `ByteSwap64(unsigned long long)` |
 //! | [`byte_swap_u32`]                     | `ByteSwap32(unsigned long)`, `ByteSwap32(uint32_t)` |
+//! | [`byte_swap_32_u16`], [`byte_swap_32_u16_with_fixes`] | `ByteSwap32(unsigned short)` (`WR-47` opt-in swaps the two bytes) |
 //! | [`byte_swap_u16`]                     | `ByteSwap16(unsigned short)`                     |
 //! | [`InputStream`]                       | the `std::istream` behind `m_pStreamIn` (libstdc++ semantics) |
+//! | [`InputStream::getline`]              | `std::istream::getline(char*, std::streamsize)`  |
 //! | [`FileType`]                          | `SmFileType`                                     |
 //!
 //! Deviations:
@@ -56,12 +71,47 @@
 //!   `char sBuff[SM_MAXSIZE]` words are capped at 255 bytes
 //!   ([`InputStream::extract_word_limited`]): libstdc++ 11+ bounds `>> char*` by
 //!   `__builtin_object_size` when the caller is optimised, as the upstream build is.
-//! - `ByteSwap32(unsigned short)` is not ported: it is only reached when
-//!   `sizeof(short) != 2` and always returns 0 (its shifts are truncated to 16 bits).
-//! - `ReadCharacters` and the write side (`Write*`, `OpenFileForWrite`) belong to
-//!   other units and are not here.
+//! - **Foreign-endian `ReadBoolean` and `ByteSwap32(unsigned short)` (opt-in, `WR-47`).**
+//!   Pinned v1.0.1 `SmDatabaseIO::ReadBoolean` (`SmDatabaseIO.cpp:634`) never checks
+//!   `m_bByteSwap` (unlike `ReadBooleans` at `:547`), and `ByteSwap32(unsigned short)`
+//!   (`:113-118`, only reached by `ReadShort`/`WriteShort` if `sizeof(short) != 2`)
+//!   shifts both bytes into bits `16..31` of a 32-bit intermediate and truncates back to
+//!   `0`. By default [`DatabaseReader::read_boolean`] and [`byte_swap_32_u16`] keep
+//!   pinned behaviour; under
+//!   [`UpstreamFixes::database_io_byte_swaps_read_boolean_and_u16`] a reader configured
+//!   via [`DatabaseReader::with_fixes`] or [`DatabaseReader::set_fixes`] byte-swaps
+//!   `read_boolean` when `byte_swap` is active, and [`byte_swap_32_u16_with_fixes`]
+//!   returns [`byte_swap_u16`].
+//! - **Write side.** [`DatabaseWriter`] keeps the stream in memory (no filesystem on
+//!   wasm32): only a new file (`bNewFile = TRUE`) is supported and appending is the
+//!   caller's. Upstream's byte-swapped `WriteLong`/`WriteLongs` swap the variable's
+//!   address instead of its value (`ByteSwap64((unsigned long long) &llLong)`) and so
+//!   write garbage on big-endian machines or with `SM_BYTESWAP`; the port swaps the
+//!   value. On the little-endian reference build with `SM_ASCII` or `SM_BINARY` no
+//!   swap happens and the output agrees.
+//! - **ASCII doubles (opt-in).** By default an ASCII double is written as upstream's
+//!   `fixed`, precision 16 stream writes it ([`fixed16`]), which does not read back
+//!   unchanged below 1 (WR-655). A writer made
+//!   [`DatabaseWriter::with_round_trip_doubles`] writes [`round_trip`] text instead;
+//!   the B-rep writers do so under
+//!   [`UpstreamFixes::ascii_doubles_round_trip`].
+//! - **Nesting bound.** Upstream recurses through nested polymorphic reads (a curve
+//!   holding a curve holding ...) without limit. The port stops at
+//!   [`MAX_READ_NESTING`] = 32 levels ([`DatabaseReader::enter_nested`]); upstream
+//!   fixtures nest at most 3. Past the bound the read is [`SolidError::InvalidInput`]
+//!   with [`NESTING_LIMIT_REASON`].
+//! - **Stack use (wasm32).** Measured on x86-64 (reader fuzz driver, smallest thread
+//!   stack that reads the file): at the old 64-level bound a file of 64 chained offset
+//!   surfaces needed about 2 MiB in an unoptimised (debug) build and 384 KiB at
+//!   `opt-level = 1`. At 32 levels it needs about 1 MiB (debug) and 210 KiB
+//!   (`opt-level = 1`); 16 pairs of a surface of revolution over an iso curve on the
+//!   next one need 770 KiB and 180 KiB. `wasm32-unknown-unknown` has a 1 MiB default
+//!   stack and no guard page, so an overflow there corrupts memory silently: wasm
+//!   consumers must build the kernel optimised (`opt-level >= 1`) or raise the stack
+//!   (`-C link-arg=-zstack-size=<bytes>`, at least 2 MiB for an unoptimised build).
 
 use crate::error::{Result, SolidError};
+use crate::kernel::UpstreamFixes;
 
 /// `SM_MAXSIZE`: characters `GoToNextLine` skips at most before the newline, and
 /// the size of `ReadType`'s word buffer.
@@ -145,6 +195,35 @@ pub const fn byte_swap_u32(x: u32) -> u32 {
 #[must_use]
 pub const fn byte_swap_u16(x: u16) -> u16 {
     x.swap_bytes()
+}
+
+/// Upstream `SmDatabaseIO::ByteSwap32(unsigned short)` (`SmDatabaseIO.cpp:113-118`).
+///
+/// Pinned v1.0.1 promotes `x` to 32 bits, shifts its two bytes into bits `16..31`, and
+/// truncates back to `u16`, returning `0` for every input (`WR-47`). See
+/// [`byte_swap_32_u16_with_fixes`] for the opt-in
+/// [`UpstreamFixes::database_io_byte_swaps_read_boolean_and_u16`] path.
+#[must_use]
+pub const fn byte_swap_32_u16(x: u16) -> u16 {
+    let [b0, b1] = x.to_le_bytes();
+    let n = u32::from_le_bytes([b0, b1, 0, 0]);
+    (((n & 0x0000_00FF) << 24)
+        .wrapping_add((n & 0x0000_FF00) << 8)
+        .wrapping_add((n & 0x00FF_0000) >> 8)
+        .wrapping_add((n & 0xFF00_0000) >> 24)) as u16
+}
+
+/// Swaps a 16-bit integer through `SmDatabaseIO::ByteSwap32(unsigned short)`
+/// (`SmDatabaseIO.cpp:113-118`): returns [`byte_swap_32_u16`] (`0`) by default for
+/// pinned v1.0.1 parity, or [`byte_swap_u16`] (`x.swap_bytes()`) when
+/// [`UpstreamFixes::database_io_byte_swaps_read_boolean_and_u16`] is enabled (`WR-47`).
+#[must_use]
+pub const fn byte_swap_32_u16_with_fixes(x: u16, fixes: &UpstreamFixes) -> u16 {
+    if fixes.database_io_byte_swaps_read_boolean_and_u16 {
+        byte_swap_u16(x)
+    } else {
+        byte_swap_32_u16(x)
+    }
 }
 
 /// `std::ios_base::iostate` bits of an [`InputStream`] (libstdc++ values).
@@ -326,6 +405,42 @@ impl InputStream {
                 break;
             }
         }
+    }
+
+    /// `istream::getline(buf, n)` (delimiter `'\n'`): the bytes stored in the
+    /// `n`-byte buffer (without the terminating NUL). Stores at most `n - 1` bytes,
+    /// stopping before the end of the data (`eofbit`) or at a newline (consumed, not
+    /// stored); when the buffer fills before a newline, `failbit` is set and the next
+    /// byte is left in the stream. Nothing extracted sets `failbit`, as does a stream
+    /// that was not good (nothing is read; the buffer is empty).
+    pub fn getline(&mut self, n: usize) -> Vec<u8> {
+        let mut out = Vec::new();
+        if !self.sentry(false) {
+            return out;
+        }
+        let mut gcount = 0usize;
+        while gcount + 1 < n {
+            match self.peek_byte() {
+                Some(c) if c != b'\n' => {
+                    out.push(c);
+                    self.pos += 1;
+                    gcount += 1;
+                }
+                _ => break,
+            }
+        }
+        match self.peek_byte() {
+            None => self.set_state(IoState::EOF),
+            Some(b'\n') => {
+                gcount += 1;
+                self.pos += 1;
+            }
+            Some(_) => self.set_state(IoState::FAIL),
+        }
+        if gcount == 0 {
+            self.set_state(IoState::FAIL);
+        }
+        out
     }
 
     /// `istream::get()`: the next byte, or `None` (`eofbit|failbit`) at the end
@@ -625,12 +740,16 @@ pub struct DatabaseReader {
     version: u64,
     /// Current depth of nested polymorphic reads (not upstream; see `enter_nested`).
     nesting: u32,
+    /// Whether [`Self::read_boolean`] honours `byte_swap` (`WR-47`; not upstream).
+    byte_swap_read_boolean: bool,
 }
 
 /// Deepest nesting of polymorphic reads (a curve holding a curve holding ...) a
 /// reader accepts. Not upstream: upstream recurses without bound, so a crafted file
-/// overflows the stack. Real models nest a handful of levels.
-pub const MAX_READ_NESTING: u32 = 64;
+/// overflows the stack. Real models nest a handful of levels (upstream fixtures at
+/// most 3). 32 (64 before) halves the stack a crafted file can use; see the module
+/// docs, "Stack use", for what wasm32 builds still need.
+pub const MAX_READ_NESTING: u32 = 32;
 
 /// The `reason` of the [`SolidError::InvalidInput`] that
 /// [`DatabaseReader::enter_nested`] returns past [`MAX_READ_NESTING`]. Readers that
@@ -662,6 +781,7 @@ impl DatabaseReader {
             byte_swap: is_big_endian(),
             version: DEFAULT_VERSION,
             nesting: 0,
+            byte_swap_read_boolean: false,
         }
     }
 
@@ -674,6 +794,7 @@ impl DatabaseReader {
             byte_swap: file_type.default_byte_swap(),
             version: DEFAULT_VERSION,
             nesting: 0,
+            byte_swap_read_boolean: false,
         }
     }
 
@@ -686,9 +807,19 @@ impl DatabaseReader {
         }
     }
 
+    /// Configures this reader with `fixes` (not upstream: enables [`Self::read_boolean`]
+    /// byte-swapping when [`UpstreamFixes::database_io_byte_swaps_read_boolean_and_u16`]
+    /// is set; `WR-47`). Preserved across [`Self::open_for_read`].
+    #[must_use]
+    pub const fn with_fixes(mut self, fixes: &UpstreamFixes) -> Self {
+        self.byte_swap_read_boolean = fixes.database_io_byte_swaps_read_boolean_and_u16;
+        self
+    }
+
     /// Starts reading `data` (the contents of a file) as `file_type`
     /// (`SmDatabaseIOFile::OpenFileForRead`): replaces any stream and resets the
-    /// byte-swap flag for `file_type`. The version is kept.
+    /// byte-swap flag for `file_type`. The version and opt-in fixes ([`Self::with_fixes`])
+    /// are kept.
     pub fn open_for_read(&mut self, data: Vec<u8>, file_type: FileType) {
         self.stream = Some(InputStream::new(data));
         self.file_type = file_type;
@@ -775,6 +906,20 @@ impl DatabaseReader {
         self.byte_swap = byte_swap;
     }
 
+    /// Updates this reader's opt-in fix configuration from `fixes` (not upstream;
+    /// `WR-47`, [`UpstreamFixes::database_io_byte_swaps_read_boolean_and_u16`]).
+    pub fn set_fixes(&mut self, fixes: &UpstreamFixes) {
+        self.byte_swap_read_boolean = fixes.database_io_byte_swaps_read_boolean_and_u16;
+    }
+
+    /// Whether [`Self::read_boolean`] byte-swaps when [`Self::byte_swap`] is active
+    /// (not upstream; `WR-47`,
+    /// [`UpstreamFixes::database_io_byte_swaps_read_boolean_and_u16`]).
+    #[must_use]
+    pub const fn byte_swap_read_boolean(&self) -> bool {
+        self.byte_swap_read_boolean
+    }
+
     /// Database version (`GetVersionNum`).
     #[must_use]
     pub fn version(&self) -> u64 {
@@ -793,11 +938,23 @@ impl DatabaseReader {
     pub fn end_reading(&mut self) {}
 
     /// Skips to the start of the next line, at most [`MAX_LINE`] bytes
-    /// (`GoToNextLine`: `ignore(SM_MAXSIZE, '\n')`).
+    /// (`GoToNextLine`: `ignore(SM_MAXSIZE, '\n')`). At the end of the input there is no
+    /// next line: skipping there would mark the stream failed, as if the last value read
+    /// had not been a number, so nothing is done.
     pub fn go_to_next_line(&mut self) {
         if let Some(s) = self.stream.as_mut() {
-            s.ignore(MAX_LINE, b'\n');
+            if !s.eof() {
+                s.ignore(MAX_LINE, b'\n');
+            }
         }
+    }
+
+    /// Whether a read has run past the end of the input or met text that is not a number
+    /// (`ReadFailed`: the stream's `fail()`); `false` without a stream. The `read_*` and
+    /// `extract_*` reads do not report either, so callers check this.
+    #[must_use]
+    pub fn read_failed(&self) -> bool {
+        self.stream.as_ref().is_some_and(InputStream::fail)
     }
 
     /// Reads exactly `N` raw bytes.
@@ -907,12 +1064,22 @@ impl DatabaseReader {
             .collect())
     }
 
-    /// Reads a 4-byte `SmBoolean` (`ReadBoolean`). Upstream never byte-swaps here
-    /// (unlike [`Self::read_booleans`]); the port keeps that.
+    /// Reads a 4-byte `SmBoolean` (`ReadBoolean`).
+    ///
+    /// Pinned v1.0.1 never byte-swaps here (`SmDatabaseIO.cpp:634`, unlike
+    /// [`Self::read_booleans`] at `:547`); the port keeps that by default (`WR-47`), and
+    /// byte-swaps when [`Self::byte_swap`] and
+    /// [`UpstreamFixes::database_io_byte_swaps_read_boolean_and_u16`] (via
+    /// [`Self::with_fixes`] or [`Self::set_fixes`]) are both active.
     pub fn read_boolean(&mut self) -> Result<i32> {
-        Ok(i32::from_ne_bytes(self.read_raw::<4>(
-            "topology::database_io::DatabaseReader::read_boolean",
-        )?))
+        let raw = u32::from_ne_bytes(
+            self.read_raw::<4>("topology::database_io::DatabaseReader::read_boolean")?,
+        );
+        Ok(if self.byte_swap && self.byte_swap_read_boolean {
+            byte_swap_u32(raw) as i32
+        } else {
+            raw as i32
+        })
     }
 
     /// Reads `n` 4-byte `SmBoolean`s (`ReadBooleans`), byte-swapped when enabled.
@@ -949,6 +1116,13 @@ impl DatabaseReader {
     pub fn read_char(&mut self) -> Result<u8> {
         let [c] = self.read_raw::<1>("topology::database_io::DatabaseReader::read_char")?;
         Ok(c)
+    }
+
+    /// Reads `n` bytes (`ReadCharacters`; never swapped: `char` is one byte).
+    pub fn read_characters(&mut self, n: usize) -> Result<Vec<u8>> {
+        let items =
+            self.read_raw_items::<1>(n, "topology::database_io::DatabaseReader::read_characters")?;
+        Ok(items.into_iter().map(|[c]| c).collect())
     }
 
     /// Reads an object type header (`ReadType`): in ASCII the line
@@ -989,8 +1163,260 @@ impl DatabaseReader {
     }
 }
 
+// ---- write side -----------------------------------------------------------------------
+
+/// `std::ostream << double` with `fixed` and `precision(16)` (glibc `%.16f`): `inf`,
+/// `-inf`, `nan` and `-nan` for the special values.
+#[must_use]
+pub fn fixed16(x: f64) -> String {
+    if x.is_nan() {
+        if x.is_sign_negative() {
+            "-nan".to_string()
+        } else {
+            "nan".to_string()
+        }
+    } else if x.is_infinite() {
+        if x < 0.0 {
+            "-inf".to_string()
+        } else {
+            "inf".to_string()
+        }
+    } else {
+        format!("{x:.16}")
+    }
+}
+
+/// A double as the shortest text that reads back as the same double, in exponent
+/// notation (`3.0000000000000004e-1`, `1e0`, `-0e0`), with [`fixed16`]'s `inf`, `-inf`,
+/// `nan` and `-nan` (not upstream: WR-655's opt-in,
+/// [`crate::kernel::UpstreamFixes::ascii_doubles_round_trip`]). Every ASCII reader
+/// accepts it: `>>` reads the exponent.
+#[must_use]
+pub fn round_trip(x: f64) -> String {
+    if x.is_finite() {
+        format!("{x:e}")
+    } else {
+        fixed16(x)
+    }
+}
+
+/// Writes values to an SMLib database stream (upstream `SmDatabaseIO` write side over
+/// the stream `SmDatabaseIOFile::OpenFileForWrite` opens), kept in memory.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DatabaseWriter {
+    file_type: FileType,
+    byte_swap: bool,
+    out: Vec<u8>,
+    round_trip_doubles: bool,
+}
+
+impl DatabaseWriter {
+    /// `SmDatabaseIOFile::OpenFileForWrite(name, eType, TRUE)`: an empty stream of
+    /// `file_type`, byte-swapped for [`FileType::ByteSwap`] or on a big-endian machine.
+    /// An ASCII stream writes doubles `fixed` with precision 16 ([`fixed16`]).
+    #[must_use]
+    pub fn open_for_write(file_type: FileType) -> Self {
+        Self {
+            file_type,
+            byte_swap: file_type.default_byte_swap(),
+            out: Vec::new(),
+            round_trip_doubles: false,
+        }
+    }
+
+    /// This writer, writing ASCII doubles with [`round_trip`] instead of [`fixed16`]
+    /// when `on` (not upstream: WR-655's opt-in,
+    /// [`crate::kernel::UpstreamFixes::ascii_doubles_round_trip`]). Binary doubles are
+    /// written as they are either way.
+    #[must_use]
+    pub fn with_round_trip_doubles(mut self, on: bool) -> Self {
+        self.round_trip_doubles = on;
+        self
+    }
+
+    /// The text `*GetOutStreamPtr() << value` writes for a double: [`fixed16`], or
+    /// [`round_trip`] for a writer [`Self::with_round_trip_doubles`].
+    #[must_use]
+    pub fn f64_text(&self, v: f64) -> String {
+        if self.round_trip_doubles {
+            round_trip(v)
+        } else {
+            fixed16(v)
+        }
+    }
+
+    /// The file type (`GetFileType`).
+    #[must_use]
+    pub fn file_type(&self) -> FileType {
+        self.file_type
+    }
+
+    /// Whether binary values are byte-swapped (`m_bByteSwap`).
+    #[must_use]
+    pub fn byte_swap(&self) -> bool {
+        self.byte_swap
+    }
+
+    /// The bytes written so far (the file's contents).
+    #[must_use]
+    pub fn bytes(&self) -> &[u8] {
+        &self.out
+    }
+
+    /// The bytes written (the file's contents).
+    #[must_use]
+    pub fn into_bytes(self) -> Vec<u8> {
+        self.out
+    }
+
+    /// Hook before writing (`BeginWriting`); does nothing in the base writer.
+    pub fn begin_writing(&mut self) {}
+
+    /// Hook after writing (`EndWriting`); does nothing in the base writer.
+    pub fn end_writing(&mut self) {}
+
+    /// `*GetOutStreamPtr() << "text"`.
+    pub fn out_str(&mut self, s: &str) -> &mut Self {
+        self.out.extend_from_slice(s.as_bytes());
+        self
+    }
+
+    /// `*GetOutStreamPtr() << value` for a signed integer (`long`, `int`, `short`).
+    pub fn out_i64(&mut self, v: i64) -> &mut Self {
+        self.out.extend_from_slice(v.to_string().as_bytes());
+        self
+    }
+
+    /// `*GetOutStreamPtr() << value` for an unsigned integer (`ULONG`).
+    pub fn out_u64(&mut self, v: u64) -> &mut Self {
+        self.out.extend_from_slice(v.to_string().as_bytes());
+        self
+    }
+
+    /// `*GetOutStreamPtr() << value` for a double ([`Self::f64_text`]: [`fixed16`]
+    /// unless the writer round-trips its doubles).
+    pub fn out_f64(&mut self, v: f64) -> &mut Self {
+        let text = self.f64_text(v);
+        self.out.extend_from_slice(text.as_bytes());
+        self
+    }
+
+    /// `v0 << " " << v1 << ...`: doubles separated by single spaces (not an upstream
+    /// function).
+    pub fn out_reals(&mut self, values: &[f64]) -> &mut Self {
+        for (i, &v) in values.iter().enumerate() {
+            if i > 0 {
+                self.out_str(" ");
+            }
+            self.out_f64(v);
+        }
+        self
+    }
+
+    /// One line of doubles, the common shape of the geometry writers (not an upstream
+    /// function): `v0 << " " << v1 ... << "\n"` in ASCII, `WriteDouble` of each in
+    /// binary.
+    pub fn reals(&mut self, values: &[f64]) {
+        if self.file_type == FileType::Ascii {
+            self.out_reals(values).out_str("\n");
+        } else {
+            self.write_doubles(values);
+        }
+    }
+
+    fn put(&mut self, bytes: &[u8]) {
+        self.out.extend_from_slice(bytes);
+    }
+
+    /// Writes a signed 8-byte integer (`WriteLong`).
+    pub fn write_long(&mut self, v: i64) {
+        let v = if self.byte_swap {
+            byte_swap_u64(v as u64) as i64
+        } else {
+            v
+        };
+        self.put(&v.to_ne_bytes());
+    }
+
+    /// Writes unsigned 8-byte integers (`WriteLongs`).
+    pub fn write_longs(&mut self, values: &[u64]) {
+        for &v in values {
+            let v = if self.byte_swap { byte_swap_u64(v) } else { v };
+            self.put(&v.to_ne_bytes());
+        }
+    }
+
+    /// Writes a double (`WriteDouble`).
+    pub fn write_double(&mut self, v: f64) {
+        let v = if self.byte_swap { byte_swap_f64(v) } else { v };
+        self.put(&v.to_ne_bytes());
+    }
+
+    /// Writes doubles (`WriteDoubles`).
+    pub fn write_doubles(&mut self, values: &[f64]) {
+        for &v in values {
+            self.write_double(v);
+        }
+    }
+
+    /// Writes bytes (`WriteCharacters`; never swapped: `char` is one byte).
+    pub fn write_characters(&mut self, chars: &[u8]) {
+        self.put(chars);
+    }
+
+    /// Writes a 4-byte `SmBoolean` (`WriteBoolean`; never swapped, as upstream).
+    pub fn write_boolean(&mut self, v: i32) {
+        self.put(&v.to_ne_bytes());
+    }
+
+    /// Writes 4-byte `SmBoolean`s (`WriteBooleans`), byte-swapped when enabled.
+    pub fn write_booleans(&mut self, values: &[i32]) {
+        for &v in values {
+            if self.byte_swap {
+                self.put(&byte_swap_u32(v as u32).to_ne_bytes());
+            } else {
+                self.put(&v.to_ne_bytes());
+            }
+        }
+    }
+
+    /// Writes a 2-byte `short` (`WriteShort`).
+    pub fn write_short(&mut self, v: i16) {
+        let v = if self.byte_swap {
+            byte_swap_u16(v as u16) as i16
+        } else {
+            v
+        };
+        self.put(&v.to_ne_bytes());
+    }
+
+    /// Writes one byte (`WriteChar`; never swapped).
+    pub fn write_char(&mut self, c: u8) {
+        self.put(&[c]);
+    }
+
+    /// Writes an object type header (`WriteType`): in ASCII the line
+    /// `Object Type <code>` and, with `dim`, `Curve Dim <dim>`; in binary a long and
+    /// optionally a second long.
+    pub fn write_type(&mut self, type_code: i64, dim: Option<u64>) {
+        if self.file_type == FileType::Ascii {
+            self.out_str("Object Type ").out_i64(type_code);
+            self.out_str("\n");
+            if let Some(d) = dim {
+                self.out_str("Curve Dim ").out_u64(d).out_str("\n");
+            }
+        } else {
+            self.write_long(type_code);
+            if let Some(d) = dim {
+                self.write_long(d as i64);
+            }
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
+    use super::*;
 
     #[test]
     fn nesting_is_bounded() {
@@ -1002,7 +1428,91 @@ mod tests {
         db.leave_nested();
         assert!(db.enter_nested("test").is_ok());
     }
-    use super::*;
+
+    /// Bilinear B-spline surface record (version 30), the innermost surface of the
+    /// nesting chains below; it does not count a nesting level.
+    const BSPLINE_SURFACE: &str =
+        "Object Type 15002\n1 1\n1 1\n0\n0 0 0\n0 3 0\n2 0 0\n2 3 1\n0\n0\n1\n1\n0\n0\n1\n1\n";
+    /// One offset surface wrapper (one nesting level), as the reader fuzz builds it.
+    const OFFSET_WRAPPER: &str = "Object Type 15400\n0.1\n0\n0\n0\n0\n//base\n";
+    /// A surface of revolution whose generator is an iso curve on the next surface
+    /// (two nesting levels), as the reader fuzz builds it.
+    const REV_ISO_PAIR: &str = "Object Type 15020\n0\n0\n0 0 0\n1 0 0\n0 1 0\n0 0 1 1\n0\n//gen\n\
+                                Object Type 14045\nCurve Dim 3\n0\n0.5\n1\n//surf\n";
+
+    /// Reads the surface (type header and record) at the start of `text`.
+    fn read_surface(text: &str) -> Result<crate::surface::surface::Surface> {
+        let k = crate::kernel::Kernel::default();
+        let mut db = DatabaseReader::new();
+        db.open_for_read(text.as_bytes().to_vec(), FileType::Ascii);
+        let ty = db.read_type(false)?.type_code.unwrap_or_default();
+        crate::surface::surface::Surface::read_from_db(&k, ty, &mut db, 30)
+    }
+
+    fn is_nesting_error(r: &Result<crate::surface::surface::Surface>) -> bool {
+        matches!(r, Err(SolidError::InvalidInput { reason, .. }) if *reason == NESTING_LIMIT_REASON)
+    }
+
+    /// `offsets` offset surfaces chained over a B-spline surface.
+    fn offset_chain(offsets: usize) -> String {
+        let mut text = OFFSET_WRAPPER.repeat(offsets);
+        text.push_str(BSPLINE_SURFACE);
+        // the line break each offset skips after its base record
+        text.push_str(&"\n".repeat(offsets));
+        text
+    }
+
+    /// `offsets` offset surfaces over `pairs` revolution/iso pairs over a B-spline
+    /// surface: `offsets + 2 * pairs` nesting levels.
+    fn rev_iso_chain(offsets: usize, pairs: usize) -> String {
+        let mut text = OFFSET_WRAPPER.repeat(offsets);
+        text.push_str(&REV_ISO_PAIR.repeat(pairs));
+        text.push_str(BSPLINE_SURFACE);
+        text
+    }
+
+    #[test]
+    fn offset_surface_chain_reads_to_the_bound() {
+        assert_eq!(MAX_READ_NESTING, 32);
+        // Each offset wrapper takes two nesting levels (the `Surface::read_from_db`
+        // dispatcher and `OffsetSurface::read_from_db` both enter one), so 15 wrappers
+        // over the B-spline fit in the bound and 16 do not.
+        for depth in [1, 14, 15] {
+            let s = read_surface(&offset_chain(depth));
+            assert!(s.is_ok(), "depth {depth}: {s:?}");
+        }
+        for depth in [16, 64, 1000] {
+            let s = read_surface(&offset_chain(depth));
+            assert!(is_nesting_error(&s), "depth {depth}: {s:?}");
+        }
+    }
+
+    #[test]
+    fn revolution_iso_chain_is_bounded() {
+        // An iso curve is not derived from `SmBSplineCurve`, so the innermost surface
+        // of revolution rejects its generator once every level has been read: up to
+        // the bound the chain fails with that error, past it with the nesting error.
+        let not_b_spline = crate::surface::surf_of_revolution::p1::not_b_spline();
+        // A revolution/iso pair takes three nesting levels on main's readers, so 10
+        // pairs fit in the bound and 11 do not.
+        for (offsets, pairs) in [(0, 1), (0, 9), (0, 10)] {
+            let s = read_surface(&rev_iso_chain(offsets, pairs));
+            assert_eq!(
+                s.as_ref().err(),
+                Some(&not_b_spline),
+                "{} levels",
+                offsets + 2 * pairs
+            );
+        }
+        for (offsets, pairs) in [(0, 11), (0, 17), (0, 32), (0, 500)] {
+            let s = read_surface(&rev_iso_chain(offsets, pairs));
+            assert!(
+                is_nesting_error(&s),
+                "{} levels: {s:?}",
+                offsets + 2 * pairs
+            );
+        }
+    }
 
     fn ascii(s: &str) -> InputStream {
         InputStream::new(s.as_bytes().to_vec())
@@ -1130,5 +1640,204 @@ mod tests {
         let mut t = ascii("z");
         t.unget();
         assert!(t.state().contains(IoState::BAD));
+    }
+
+    #[test]
+    fn wr47_flag_lookup_and_reader_configuration() {
+        let mut k = crate::kernel::Kernel::default();
+        assert!(!k.fixes.database_io_byte_swaps_read_boolean_and_u16);
+        let slot = k
+            .fixes
+            .flag_mut("database_io_byte_swaps_read_boolean_and_u16")
+            .expect("flag exists in UpstreamFixes");
+        assert!(!*slot);
+        *slot = true;
+        assert!(k.fixes.database_io_byte_swaps_read_boolean_and_u16);
+
+        let r_default = DatabaseReader::new();
+        assert!(!r_default.byte_swap_read_boolean());
+
+        let mut r_opt_in = DatabaseReader::new().with_fixes(&k.fixes);
+        assert!(r_opt_in.byte_swap_read_boolean());
+        r_opt_in.open_for_read(1i32.to_be_bytes().to_vec(), FileType::ByteSwap);
+        assert!(r_opt_in.byte_swap_read_boolean());
+        assert_eq!(r_opt_in.read_boolean(), Ok(1));
+
+        r_opt_in.set_fixes(&UpstreamFixes::default());
+        assert!(!r_opt_in.byte_swap_read_boolean());
+    }
+
+    #[test]
+    fn wr47_foreign_endian_read_boolean_vs_read_booleans() {
+        assert!(!is_big_endian());
+        let values = [1i32, 0i32, 2i32, -1i32, 0x1234_5678i32];
+        let mut be_bytes = Vec::new();
+        let mut le_bytes = Vec::new();
+        for v in values {
+            be_bytes.extend_from_slice(&v.to_be_bytes());
+            le_bytes.extend_from_slice(&v.to_le_bytes());
+        }
+        assert_eq!(&be_bytes[..4], &[0, 0, 0, 1]);
+
+        let default_fixes = UpstreamFixes::default();
+        let opt_in_fixes = UpstreamFixes {
+            database_io_byte_swaps_read_boolean_and_u16: true,
+            ..Default::default()
+        };
+
+        // Foreign-endian binary stream (`FileType::ByteSwap`):
+        // Default (`false`): `read_boolean` leaves bytes unswapped (`0x0100_0000` for `1`),
+        // while `read_booleans` byte-swaps to `1`.
+        let mut r_default_single =
+            DatabaseReader::with_stream(FileType::ByteSwap, InputStream::new(be_bytes.clone()))
+                .with_fixes(&default_fixes);
+        assert!(r_default_single.byte_swap());
+        let single_default = [
+            r_default_single.read_boolean().unwrap(),
+            r_default_single.read_boolean().unwrap(),
+            r_default_single.read_boolean().unwrap(),
+            r_default_single.read_boolean().unwrap(),
+            r_default_single.read_boolean().unwrap(),
+        ];
+        assert_eq!(
+            single_default,
+            [0x0100_0000, 0, 0x0200_0000, -1, 0x7856_3412]
+        );
+
+        let mut r_default_batch =
+            DatabaseReader::with_stream(FileType::ByteSwap, InputStream::new(be_bytes.clone()))
+                .with_fixes(&default_fixes);
+        assert_eq!(
+            r_default_batch.read_booleans(values.len()),
+            Ok(values.to_vec())
+        );
+
+        // Opt-in (`true`): `read_boolean` byte-swaps when `byte_swap` is active, matching
+        // `read_booleans`.
+        let mut r_opt_in_single =
+            DatabaseReader::with_stream(FileType::ByteSwap, InputStream::new(be_bytes.clone()))
+                .with_fixes(&opt_in_fixes);
+        let single_opt_in = [
+            r_opt_in_single.read_boolean().unwrap(),
+            r_opt_in_single.read_boolean().unwrap(),
+            r_opt_in_single.read_boolean().unwrap(),
+            r_opt_in_single.read_boolean().unwrap(),
+            r_opt_in_single.read_boolean().unwrap(),
+        ];
+        assert_eq!(single_opt_in, values);
+
+        let mut r_opt_in_batch =
+            DatabaseReader::with_stream(FileType::ByteSwap, InputStream::new(be_bytes))
+                .with_fixes(&opt_in_fixes);
+        assert_eq!(
+            r_opt_in_batch.read_booleans(values.len()),
+            Ok(values.to_vec())
+        );
+
+        // Native-endian binary stream (`FileType::Binary`, `byte_swap == false`):
+        // Unaffected in both modes.
+        for fixes in [&default_fixes, &opt_in_fixes] {
+            let mut r_native =
+                DatabaseReader::with_stream(FileType::Binary, InputStream::new(le_bytes.clone()))
+                    .with_fixes(fixes);
+            assert!(!r_native.byte_swap());
+            let got = [
+                r_native.read_boolean().unwrap(),
+                r_native.read_boolean().unwrap(),
+                r_native.read_boolean().unwrap(),
+                r_native.read_boolean().unwrap(),
+                r_native.read_boolean().unwrap(),
+            ];
+            assert_eq!(got, values);
+        }
+
+        // ASCII mode (`FileType::Ascii`): unaffected in both modes, even if `set_byte_swap`
+        // is toggled on the reader.
+        for fixes in [&default_fixes, &opt_in_fixes] {
+            let mut r_ascii =
+                DatabaseReader::with_stream(FileType::Ascii, ascii("Object Type 15002\n1\n0\n2\n"))
+                    .with_fixes(fixes);
+            r_ascii.set_byte_swap(true);
+            assert_eq!(
+                r_ascii.read_type(false),
+                Ok(TypeHeader {
+                    type_code: Some(15002),
+                    dim: None,
+                })
+            );
+            assert_eq!(r_ascii.in_stream_mut().unwrap().extract_int(), Some(1));
+            assert_eq!(r_ascii.in_stream_mut().unwrap().extract_int(), Some(0));
+            assert_eq!(r_ascii.in_stream_mut().unwrap().extract_int(), Some(2));
+        }
+
+        // Downstream record reader (`RegionData::read_from_db`, version 30) reading a
+        // big-endian binary record (`num_shells = 1`, `start_shell = 0`, `is_void = 1`):
+        let mut region_bytes = Vec::new();
+        region_bytes.extend_from_slice(&1u64.to_be_bytes());
+        region_bytes.extend_from_slice(&0u64.to_be_bytes());
+        region_bytes.extend_from_slice(&1i32.to_be_bytes());
+
+        let mut store = crate::geom::attribute::AttributeStore::new();
+        let mut all = Vec::new();
+        let mut attrs = crate::topology::brep_data::AttributeSink::new(&mut store, &mut all, 0);
+
+        let mut reg_default = crate::topology::brep_data::RegionData::zeroed();
+        let mut db_reg_default = DatabaseReader::new();
+        db_reg_default.open_for_read(region_bytes.clone(), FileType::ByteSwap);
+        reg_default
+            .read_from_db(30, &mut attrs, &mut db_reg_default, false)
+            .unwrap();
+        assert_eq!(reg_default.num_shells, 1);
+        assert_eq!(reg_default.start_shell, 0);
+        assert_eq!(reg_default.is_void, 0x0100_0000);
+
+        let mut reg_opt_in = crate::topology::brep_data::RegionData::zeroed();
+        let mut db_reg_opt_in = DatabaseReader::new();
+        db_reg_opt_in.open_for_read(region_bytes, FileType::ByteSwap);
+        db_reg_opt_in.set_fixes(&opt_in_fixes);
+        reg_opt_in
+            .read_from_db(30, &mut attrs, &mut db_reg_opt_in, false)
+            .unwrap();
+        assert_eq!(reg_opt_in.num_shells, 1);
+        assert_eq!(reg_opt_in.start_shell, 0);
+        assert_eq!(reg_opt_in.is_void, 1);
+    }
+
+    #[test]
+    fn wr47_byte_swap_32_u16_default_zero_vs_opt_in_swap() {
+        let default_fixes = UpstreamFixes::default();
+        let opt_in_fixes = UpstreamFixes {
+            database_io_byte_swaps_read_boolean_and_u16: true,
+            ..Default::default()
+        };
+
+        assert_eq!(byte_swap_32_u16(0x1234), 0);
+        assert_eq!(byte_swap_32_u16_with_fixes(0x1234, &default_fixes), 0);
+        assert_eq!(byte_swap_32_u16_with_fixes(0x1234, &opt_in_fixes), 0x3412);
+
+        for (input, swapped) in [
+            (0x0000u16, 0x0000u16),
+            (0x0001u16, 0x0100u16),
+            (0x0100u16, 0x0001u16),
+            (0x1234u16, 0x3412u16),
+            (0xABCDu16, 0xCDABu16),
+            (0xFF00u16, 0x00FFu16),
+            (0xFFFFu16, 0xFFFFu16),
+        ] {
+            assert_eq!(byte_swap_32_u16(input), 0);
+            assert_eq!(byte_swap_32_u16_with_fixes(input, &default_fixes), 0);
+            assert_eq!(byte_swap_32_u16_with_fixes(input, &opt_in_fixes), swapped);
+            assert_eq!(
+                byte_swap_32_u16_with_fixes(input, &opt_in_fixes),
+                byte_swap_u16(input)
+            );
+            assert_eq!(
+                byte_swap_32_u16_with_fixes(
+                    byte_swap_32_u16_with_fixes(input, &opt_in_fixes),
+                    &opt_in_fixes,
+                ),
+                input
+            );
+        }
     }
 }

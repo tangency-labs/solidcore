@@ -1,24 +1,39 @@
-//! Executive p3 parity for explicit states over empty native B-reps. All passing
-//! cases exercise precondition failures and compare status/state values. Actual
-//! fillet construction defers at executive p2 `ProcessSmoothEdgeSequences` (or p1
-//! `CreateFilletCorners`), so no geometry-success coverage is claimed. Seven real
-//! upstream API box examples are also run natively and explicitly deferred at
-//! their unported executive-p1 API/setup entrypoints on Rust.
+//! Executive p3 state/error parity and real-solid fillet session checkpoints.
+//! Setup, corner creation and direct first-Nx1 topology use actual bodies and
+//! owned production solvers. Full fillet construction remains deferred at the
+//! missing public API; native result records do not claim Rust geometry success.
+//! `fillet_preview` cases run `SmApiFilletPreview` (module `preview`) on their own seed
+//! stream (`preview0000`, ...), so each `gen` case stays the one the baseline has.
 
 use crate::{Case, HarnessError, Output, Rng, UnitDiff};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use solidcore::blend::fillet_executive::p1::ExecutiveObjects;
 use solidcore::blend::fillet_executive::p3::{
     ContextMark, CornerView, ErrorInfo, ExecutionOptions, ExecutiveAccess, FilletExecutive,
     StitchAttempt, StitchSettings, TopoEdgeView,
 };
+use solidcore::blend::fillet_geom::p1::{FilStatus, FilletEdgeType};
 use solidcore::boolean::topology_intersector::p1::TopologyIntersector;
 use solidcore::geom::solution_array::{ObjectKind, SolutionObject};
 use solidcore::intersect::point_class::{ClassObject, ClassObjectKind};
 use solidcore::kernel::Kernel;
 use solidcore::math::Point3;
+use solidcore::topology::proto_topology::p1::CopyBrepMap;
 use solidcore::{Result as SolidResult, SolidError};
 use solidcore_ffi::units::blend_fillet_executive_p3 as ffi;
+use std::collections::BTreeMap;
+
+#[path = "blend_fillet_executive_p3/attributed.rs"]
+mod attributed;
+#[path = "blend_fillet_executive_p3/end_to_end.rs"]
+mod end_to_end;
+#[path = "blend_fillet_executive_p3/preview.rs"]
+mod preview;
+#[path = "blend_fillet_executive_p3/surface_bodies.rs"]
+mod surface_bodies;
+#[path = "blend_fillet_executive_p3/two_offset_chamfer.rs"]
+mod two_offset_chamfer;
 
 /// Parity runner for the three executive orchestration methods.
 pub struct Runner;
@@ -29,6 +44,47 @@ struct Inputs {
     record: Vec<f64>,
     #[serde(default)]
     upstream_case: Option<usize>,
+    #[serde(default)]
+    real_solid: Option<end_to_end::RealSolid>,
+    #[serde(default)]
+    surface_surface: Option<end_to_end::SurfaceSurface>,
+    #[serde(default)]
+    surface_surface_bodies: Option<surface_bodies::SurfaceSurfaceBodies>,
+    /// Issue #1462: a public fillet API on a body whose faces and edges carry caller
+    /// attributes.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    attributed: Option<attributed::AttributedFillet>,
+    #[serde(default)]
+    fillet_preview: Option<preview::FilletPreview>,
+    /// tangency-labs/solidcore#880's unequal chamfer (module `two_offset_chamfer`).
+    #[serde(default)]
+    two_offset_chamfer: Option<two_offset_chamfer::TwoOffsetChamfer>,
+}
+
+impl Inputs {
+    /// Whether any form but `attributed` is present.
+    fn has_other_form(&self) -> bool {
+        self.fillet_preview.is_some()
+            || self.two_offset_chamfer.is_some()
+            || self.has_record_form()
+    }
+    /// Whether any form but `attributed` and `fillet_preview` is present.
+    fn has_record_form(&self) -> bool {
+        self.surface_surface_bodies.is_some()
+            || self.surface_surface.is_some()
+            || self.real_solid.is_some()
+            || self.upstream_case.is_some()
+            || !self.record.is_empty()
+    }
+    /// Whether any other fixture form accompanies a `fillet_preview` case.
+    fn mixed_with_preview(&self) -> bool {
+        self.attributed.is_some() || self.has_record_form()
+    }
+
+    /// Whether any other fixture form accompanies a `two_offset_chamfer` case.
+    fn mixed_with_chamfer(&self) -> bool {
+        self.fillet_preview.is_some() || self.mixed_with_preview()
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
@@ -59,11 +115,143 @@ fn missing_error() -> SolidError {
 fn missing<T>() -> SolidResult<T> {
     Err(missing_error())
 }
+/// `target->MergeBrep(other, NULL, NULL, bAddAnalytics)` for this fixture, which keeps no
+/// notification state: `topology::brep::p3::merge_brep` under the kernel's identities
+/// (`with_kernel_callbacks`), `other` enrolled in the same identity domain first so its
+/// objects never share a key with `target`'s.
+fn merge_breps(
+    k: &mut Kernel,
+    target: &mut solidcore::topology::Brep,
+    other: &mut solidcore::topology::Brep,
+    add_analytics: bool,
+) -> SolidResult<()> {
+    use solidcore::topology::brep::p3 as bp3;
+    let serial = bp3::notify_serial(&mut k.context, other)?;
+    let source_key = move |e| bp3::topology_ref(serial, e);
+    let other = &*other;
+    bp3::with_kernel_callbacks(k, target, |k, b, env| {
+        bp3::merge_brep(k, env, b, other, &source_key, None, None, add_analytics)
+    })
+}
+
+/// `brep->OrientTrimmedSurfaces(..)` for this fixture: `topology::brep::p3`'s under the
+/// kernel's identities. The fixture has no face handles, so only an empty
+/// `pOptFacesToSwapUV` list is accepted.
+fn orient_brep(
+    k: &mut Kernel,
+    b: &mut solidcore::topology::Brep,
+    outward: bool,
+    maybe_not_solid: &mut bool,
+    just_unify: bool,
+    faces_to_swap_uv: Option<&mut Vec<Handle>>,
+) -> SolidResult<()> {
+    use solidcore::topology::brep::p3 as bp3;
+    if faces_to_swap_uv.as_ref().is_some_and(|f| !f.is_empty()) {
+        return missing();
+    }
+    let swap: Option<&[solidcore::topology::FaceId]> = faces_to_swap_uv.map(|_| &[][..]);
+    let r = bp3::with_kernel_callbacks(k, b, |k, b, env| {
+        let mut marks = solidcore::topology::topology_traverser::Marks::default();
+        bp3::orient_trimmed_surfaces(k, b, env, &mut marks, outward, just_unify, swap)
+    })?;
+    *maybe_not_solid = r.maybe_not_closed_solid;
+    Ok(())
+}
+
 impl ExecutiveAccess<Handle> for Access {
+    fn solver_base(
+        &self,
+        _: Handle,
+    ) -> SolidResult<&solidcore::blend::fillet_solver::p1::FilletSolver> {
+        missing()
+    }
+    fn solver_base_mut(
+        &mut self,
+        _: Handle,
+    ) -> SolidResult<&mut solidcore::blend::fillet_solver::p1::FilletSolver> {
+        missing()
+    }
+    fn solver_has_surface(&self, _: Handle, _: usize) -> SolidResult<bool> {
+        missing()
+    }
+    fn edge_g1_knots(&mut self, _: &Kernel, _: Handle) -> SolidResult<Vec<f64>> {
+        missing()
+    }
+    fn edgeuse_vertex(&self, _: Handle) -> SolidResult<Option<Handle>> {
+        missing()
+    }
+    // (the fixture's handles name no corners)
+    fn corner_solvers(&self, _: Handle, _: &FilletExecutive<Handle>) -> SolidResult<Vec<Handle>> {
+        missing()
+    }
+    fn calc_corner_vertices(
+        &mut self,
+        _: &mut Kernel,
+        _: Handle,
+        _: &mut FilletExecutive<Handle>,
+    ) -> SolidResult<()> {
+        missing()
+    }
+    fn check_degeneracy(
+        &mut self,
+        _: &mut Kernel,
+        _: Handle,
+        _: &mut FilletExecutive<Handle>,
+    ) -> SolidResult<bool> {
+        missing()
+    }
+    fn calc_corner_edges(
+        &mut self,
+        _: &mut Kernel,
+        _: Handle,
+        _: &mut FilletExecutive<Handle>,
+    ) -> SolidResult<()> {
+        missing()
+    }
+    fn reinitialize_corner_edges(
+        &mut self,
+        _: &mut Kernel,
+        _: Handle,
+        _: &mut FilletExecutive<Handle>,
+    ) -> SolidResult<()> {
+        missing()
+    }
+    fn insert_corner_topology(
+        &mut self,
+        _: &mut Kernel,
+        _: Handle,
+        _: &mut FilletExecutive<Handle>,
+    ) -> SolidResult<()> {
+        missing()
+    }
+    fn corner_tangent_solver(&self, _: Handle, _: Handle) -> SolidResult<Option<Handle>> {
+        missing()
+    }
+    /// `SmFilletExecutive::CreateFilletCorners`, the ported
+    /// `FilletExecutive::create_fillet_corners`. The fixture names no vertices, so
+    /// its corner factory (`SmFilletCorner::Create`) rejects any it is asked for.
+    fn create_corners(
+        &mut self,
+        k: &mut Kernel,
+        executive: &mut FilletExecutive<Handle>,
+        error: Option<&mut ErrorInfo<Handle>>,
+    ) -> SolidResult<()> {
+        executive.create_fillet_corners(k, |_, _, _, _| missing(), error)
+    }
+    /// `SmFilletExecutive::DoPiecewiseMerge`: this empty-B-rep fixture never builds a
+    /// fillet B-rep, so there is nothing to merge piecewise.
+    fn piecewise_merge(
+        &mut self,
+        _: &mut Kernel,
+        _: &mut FilletExecutive<Handle>,
+    ) -> SolidResult<()> {
+        missing()
+    }
     // This empty-B-rep fixture has no face handles or intersector world. These
     // required adapters reject nonexistent objects; they are not UNPORTED calls
-    // to the now-ported face p3, topology intersector p2, stitch p2, fillet geom p4,
-    // fillet corner p3 or fillet solver p1 implementations.
+    // to the now-ported face p3, topology intersector p2, stitch p2, fillet geom p4
+    // and p6, fillet corner p3 or fillet solver p1 implementations.
+    // `set_brep_tolerance` runs the brep p2 port for real.
     fn notify_face(
         &mut self,
         _: &mut Kernel,
@@ -90,6 +278,62 @@ impl ExecutiveAccess<Handle> for Access {
         _: Option<&[Handle]>,
     ) -> SolidResult<()> {
         missing()
+    }
+    fn merge_brep(
+        &mut self,
+        k: &mut Kernel,
+        target: Handle,
+        other: Handle,
+        copy_map: Option<&mut CopyBrepMap<Handle>>,
+        reverse_map: Option<&mut CopyBrepMap<Handle>>,
+        add_analytics: bool,
+    ) -> SolidResult<()> {
+        // (the fixture's handles name B-reps only: no copy maps of their objects)
+        if copy_map.is_some() || reverse_map.is_some() {
+            return missing();
+        }
+        let mut src = self
+            .breps
+            .get_mut(other.0)
+            .and_then(Option::take)
+            .ok_or_else(missing_error)?;
+        let r = match self.breps.get_mut(target.0).and_then(Option::as_mut) {
+            Some(dst) => merge_breps(k, dst, &mut src, add_analytics),
+            None => missing(),
+        };
+        if let Some(slot) = self.breps.get_mut(other.0) {
+            *slot = Some(src);
+        }
+        r
+    }
+    /// The fixture's B-reps carry no edge objects, so only an empty topo-edge list
+    /// (`remove_topo_edges` over no edges, a no-op) can run.
+    fn remove_topo_edges(
+        &mut self,
+        _: &mut Kernel,
+        executive: &mut FilletExecutive<Handle>,
+    ) -> SolidResult<()> {
+        if executive.topo_edges.is_empty() {
+            Ok(())
+        } else {
+            missing()
+        }
+    }
+    fn orient_trimmed_surfaces(
+        &mut self,
+        k: &mut Kernel,
+        brep: Handle,
+        outward: bool,
+        maybe_not_solid: &mut bool,
+        just_unify: bool,
+        faces_to_swap_uv: Option<&mut Vec<Handle>>,
+    ) -> SolidResult<()> {
+        let b = self
+            .breps
+            .get_mut(brep.0)
+            .and_then(Option::as_mut)
+            .ok_or_else(missing_error)?;
+        orient_brep(k, b, outward, maybe_not_solid, just_unify, faces_to_swap_uv)
     }
     fn do_stitching(
         &mut self,
@@ -121,10 +365,30 @@ impl ExecutiveAccess<Handle> for Access {
     ) -> SolidResult<()> {
         missing()
     }
+    fn trim_original_surfaces(
+        &mut self,
+        _: &mut Kernel,
+        _: Handle,
+        _: &mut Vec<Handle>,
+        _: &mut Vec<Handle>,
+        _: &[ContextMark],
+        _: &mut FilletExecutive<Handle>,
+    ) -> SolidResult<()> {
+        missing()
+    }
     fn calc_corner_geom(
         &mut self,
         _: &mut Kernel,
         _: Handle,
+        _: &mut FilletExecutive<Handle>,
+    ) -> SolidResult<()> {
+        missing()
+    }
+    fn test_rollover(
+        &mut self,
+        _: &mut Kernel,
+        _: Handle,
+        _: &mut Vec<Handle>,
         _: &mut FilletExecutive<Handle>,
     ) -> SolidResult<()> {
         missing()
@@ -151,13 +415,9 @@ impl ExecutiveAccess<Handle> for Access {
         _: Handle,
         _: &mut FilletExecutive<Handle>,
     ) -> SolidResult<()> {
-        // No concrete object is constructed here. Future fixtures must dispatch
-        // derived types to their owners, as documented on ExecutiveAccess.
-        // UNPORTED(blend.fillet_corner_p1): SmFilletCorner::AdjustTopology
-        Err(SolidError::unported(
-            "SmFilletCorner::AdjustTopology",
-            "blend.fillet_corner_p1",
-        ))
+        // This fixture owns no corners, so no handle resolves to one. The virtual
+        // dispatch is `blend::fillet_corner::p3::FilletCorner::adjust_topology`.
+        missing()
     }
     fn adjust_tangent_corner(
         &mut self,
@@ -165,13 +425,9 @@ impl ExecutiveAccess<Handle> for Access {
         _: Handle,
         _: &mut FilletExecutive<Handle>,
     ) -> SolidResult<()> {
-        // No concrete object is constructed here. Future fixtures must dispatch
-        // derived types to their owners, as documented on ExecutiveAccess.
-        // UNPORTED(blend.fillet_corner_p1): SmFilletCorner::AdjustTangentCorner
-        Err(SolidError::unported(
-            "SmFilletCorner::AdjustTangentCorner",
-            "blend.fillet_corner_p1",
-        ))
+        // This fixture owns no corners, so no handle resolves to one. The virtual
+        // dispatch is `blend::fillet_corner::p3::FilletCorner::adjust_tangent_corner`.
+        missing()
     }
     fn calc_fillet_geom(
         &mut self,
@@ -179,13 +435,10 @@ impl ExecutiveAccess<Handle> for Access {
         _: Handle,
         _: &mut FilletExecutive<Handle>,
     ) -> SolidResult<()> {
-        // No concrete object is constructed here. Future fixtures must dispatch
-        // derived types to their owners, as documented on ExecutiveAccess.
-        // UNPORTED(blend.fillet_solver_p4): SmFilletSolver::CalcFilletGeom
-        Err(SolidError::unported(
-            "SmFilletSolver::CalcFilletGeom",
-            "blend.fillet_solver_p4",
-        ))
+        // This fixture builds no solver, so there is nothing to dispatch to: the
+        // base `CalcFilletGeom` is ported (`blend::fillet_solver::p4`) and
+        // `SmSurfaceSurfaceFS`'s override is blend.fillet_standard_solver_p2's.
+        missing()
     }
     fn corner_error_info(
         &self,
@@ -261,6 +514,52 @@ impl ExecutiveAccess<Handle> for Access {
             tolerance
         })
     }
+    fn set_brep_tolerance(
+        &mut self,
+        k: &mut Kernel,
+        brep: Handle,
+        tolerance: f64,
+        update_only_if_larger: bool,
+        cascade_to_boundaries: bool,
+    ) -> SolidResult<()> {
+        let b = self
+            .breps
+            .get_mut(brep.0)
+            .and_then(Option::as_mut)
+            .ok_or_else(missing_error)?;
+        solidcore::topology::brep::p2::set_tolerance(
+            k,
+            b,
+            tolerance,
+            update_only_if_larger,
+            cascade_to_boundaries,
+        )
+    }
+    fn stitch_faces(
+        &mut self,
+        k: &mut Kernel,
+        brep: Handle,
+        tolerance: f64,
+        faces: Option<&[Handle]>,
+        allow_spine_edges: bool,
+    ) -> SolidResult<StitchAttempt> {
+        // the fixture has no face handles; both executive call sites stitch every face
+        if faces.is_some() {
+            return missing();
+        }
+        let b = self
+            .breps
+            .get_mut(brep.0)
+            .and_then(Option::as_mut)
+            .ok_or_else(missing_error)?;
+        StitchAttempt::from_stitch(solidcore::topology::brep::p4::stitch_faces(
+            k,
+            b,
+            tolerance,
+            None,
+            allow_spine_edges,
+        ))
+    }
     fn editing_enabled(&self, brep: Handle) -> SolidResult<bool> {
         self.breps
             .get(brep.0)
@@ -287,6 +586,9 @@ impl ExecutiveAccess<Handle> for Access {
             return missing();
         }
         Ok(Vec::new())
+    }
+    fn edge_is_manifold(&self, _: Handle) -> SolidResult<bool> {
+        missing()
     }
     fn vertices(&self, handle: Handle) -> SolidResult<Vec<Handle>> {
         let brep = self
@@ -352,6 +654,18 @@ impl ExecutiveAccess<Handle> for Access {
     fn geom_side_edgeuses(&self, _: Handle) -> SolidResult<Vec<Handle>> {
         missing()
     }
+    fn edge_edgeuses(&self, _: Handle) -> SolidResult<Vec<Handle>> {
+        missing()
+    }
+    fn fillet_edge_note(
+        &self,
+        _: Handle,
+    ) -> SolidResult<(Option<&'static str>, FilletEdgeType, FilStatus)> {
+        missing()
+    }
+    fn new_executive_objects(&mut self, _: &mut Kernel) -> SolidResult<ExecutiveObjects<Handle>> {
+        missing()
+    }
     fn edgeuse_edge(&self, _: Handle) -> SolidResult<Option<Handle>> {
         missing()
     }
@@ -398,6 +712,12 @@ impl ExecutiveAccess<Handle> for Access {
     fn solver_edgeuse(&self, _: Handle, _: usize) -> SolidResult<Option<Handle>> {
         missing()
     }
+    fn solver_corner(&self, _: Handle, _: usize) -> SolidResult<Option<Handle>> {
+        missing()
+    }
+    fn solver_other_corner(&self, _: Handle, _: Handle) -> SolidResult<Option<Handle>> {
+        missing()
+    }
     fn corner_setback_distance(&self, _: Handle) -> SolidResult<f64> {
         missing()
     }
@@ -420,6 +740,13 @@ impl ExecutiveAccess<Handle> for Access {
         missing()
     }
     fn set_surface_generator(&mut self, _: Handle, _: Handle) -> SolidResult<()> {
+        missing()
+    }
+    fn new_fillet_solver(
+        &mut self,
+        _: &mut Kernel,
+        _: &solidcore::blend::fillet_executive::p2::SolverSpec<'_, Handle>,
+    ) -> SolidResult<Handle> {
         missing()
     }
 }
@@ -485,24 +812,8 @@ fn rust(input: &Inputs) -> Result<Output, HarnessError> {
         if !input.record.is_empty() {
             return Err(HarnessError::new("mixed fixture forms"));
         }
-        // These fixture constructors are the actual missing API entrypoints, not
-        // geometric passes or a replacement for direct p3 parity.
-        let symbol = match example {
-            // UNPORTED(blend.fillet_executive_p1): SmApiCircularFillet
-            0 => "SmApiCircularFillet",
-            // UNPORTED(blend.fillet_executive_p1): SmApiChamferFillet
-            1 => "SmApiChamferFillet",
-            // UNPORTED(blend.fillet_executive_p1): SmApiFilletEdges
-            2 => "SmApiFilletEdges",
-            // UNPORTED(blend.fillet_executive_p1): SmApiFilletEdgesPerEdge
-            3 => "SmApiFilletEdgesPerEdge",
-            // UNPORTED(blend.fillet_executive_p1): SmApiVariableRadiusFillet
-            4 => "SmApiVariableRadiusFillet",
-            // UNPORTED(blend.fillet_executive_p1): SmApiSetBevelCorners
-            5 | 6 => "SmApiSetBevelCorners",
-            _ => return Err(HarnessError::new("unknown upstream fixture")),
-        };
-        return Ok(Output::deferred("blend.fillet_executive_p1", symbol));
+        return end_to_end::upstream_example(example)?
+            .ok_or_else(|| HarnessError::new("unknown upstream fixture"));
     }
     ffi::validate(&input.record).map_err(|e| HarnessError::new(e.to_string()))?;
     let [op, has_target, initialized, prior_boolean, editing, want_error, seed_code, tolerance, piecewise, insertion, global, trimming, classification] =
@@ -549,6 +860,25 @@ fn rust(input: &Inputs) -> Result<Output, HarnessError> {
         intersection_edges: vec![],
         intersection_vertices: vec![],
         law_sequence_edges: vec![],
+        pseudo_brep: None,
+        surface_generators: vec![],
+        filleted_vertices: Vec::new(),
+        vertex_corner_map: BTreeMap::new(),
+        edgeuse_solver_map: BTreeMap::new(),
+        self_intersection_handler: None,
+        blend_curve_at_thirds: false,
+        mark_corner_patches: false,
+        cliff_overflow: false,
+        open_ends: Vec::new(),
+        overflow_first: false,
+        classify_only: false,
+        overflow_edges: Vec::new(),
+        mitred_edges: Vec::new(),
+        fan_split_points: Vec::new(),
+        // the fork's refusal fit (WR-696): none noted, as `FilletExecutive::new` leaves it
+        fit_radius: -1.0,
+        fit_edge: None,
+        fit_kind: solidcore::blend::fillet_executive::FitKind::Radius,
     };
     // The executive constructor sets this after constructing its SmMerge base.
     executive.intersector.ignore_tangency = true;
@@ -571,7 +901,7 @@ fn rust(input: &Inputs) -> Result<Output, HarnessError> {
                 return Ok(deferred);
             }
             match error {
-                SolidError::InvalidInput { .. } => 1007,
+                SolidError::InvalidInput { .. } | SolidError::PortInvariant { .. } => 1007,
                 SolidError::Upstream { code, .. } => code,
                 other => return Err(HarnessError::new(other.to_string())),
             }
@@ -626,7 +956,7 @@ fn rust(input: &Inputs) -> Result<Output, HarnessError> {
             .chain(error_out.comment.bytes())
             .map(f64::from),
     );
-    output(&values)
+    Ok(with_point_step(output(&values)?, rust_point_step(&k)))
 }
 
 impl UnitDiff for Runner {
@@ -634,31 +964,144 @@ impl UnitDiff for Runner {
         "blend.fillet_executive_p3"
     }
     fn cases(&self, ctx: &crate::case::CaseContext) -> Result<Vec<Case>, HarnessError> {
-        let ctx = crate::case::CaseContext {
+        let gen_ctx = crate::case::CaseContext {
             seeds: ctx.seeds.max(256),
             ..ctx.clone()
         };
-        crate::runner::default_cases(self, &ctx)
+        let mut v = crate::runner::default_cases(self, &gen_ctx)?;
+        // the SmApiFilletPreview cases under their own names and seeds, so that each
+        // `gen` case stays the one the baseline has
+        let preview_ctx = crate::case::CaseContext {
+            seeds: ctx.seeds.max(preview::MIN_GENERATED),
+            ..ctx.clone()
+        };
+        for mut c in preview_ctx.generated_cases("blend.fillet_executive_p3:preview", |rng| {
+            Some(serde_json::json!({ "fillet_preview": preview::generate(rng) }))
+        }) {
+            c.unit = self.id().to_string();
+            c.name = c.name.replacen("gen", "preview", 1);
+            v.push(c);
+        }
+        Ok(v)
+    }
+    // ND-3: every C++ case runs in a fresh child, which inherits this process's
+    // `sdStaticStep`; it must still be unlatched before the unit's cases and after them.
+    fn before_cases(&self) -> Result<(), HarnessError> {
+        solidcore_ffi::units::blend_fillet_solver_p4::check_parent_static_step("before the cases")
+            .map_err(|e| HarnessError::new(format!("C++: {e}")))
+    }
+    fn after_cases(&self) -> Result<(), HarnessError> {
+        solidcore_ffi::units::blend_fillet_solver_p4::check_parent_static_step("after the cases")
+            .map_err(|e| HarnessError::new(format!("C++: {e}")))
     }
     fn run_cpp(&self, case: &Case) -> Result<Output, HarnessError> {
         let input = case.parse::<Inputs>()?;
+        if let Some(attributed) = &input.attributed {
+            if input.has_other_form() {
+                return Err(HarnessError::new("mixed fixture forms"));
+            }
+            return attributed::cpp(attributed);
+        }
+        if let Some(chamfer) = &input.two_offset_chamfer {
+            if input.mixed_with_chamfer() {
+                return Err(HarnessError::new("mixed fixture forms"));
+            }
+            return two_offset_chamfer::cpp(chamfer);
+        }
+        if let Some(preview) = &input.fillet_preview {
+            if input.mixed_with_preview() {
+                return Err(HarnessError::new("mixed fixture forms"));
+            }
+            return preview::cpp(preview);
+        }
+        if let Some(pair) = &input.surface_surface_bodies {
+            if input.surface_surface.is_some()
+                || input.real_solid.is_some()
+                || input.upstream_case.is_some()
+                || !input.record.is_empty()
+            {
+                return Err(HarnessError::new("mixed fixture forms"));
+            }
+            return surface_bodies::cpp(pair);
+        }
+        if let Some(pair) = &input.surface_surface {
+            if input.real_solid.is_some()
+                || input.upstream_case.is_some()
+                || !input.record.is_empty()
+            {
+                return Err(HarnessError::new("mixed fixture forms"));
+            }
+            return end_to_end::surface_surface_cpp(pair);
+        }
+        if let Some(real) = &input.real_solid {
+            if input.upstream_case.is_some() || !input.record.is_empty() {
+                return Err(HarnessError::new("mixed fixture forms"));
+            }
+            return end_to_end::cpp(real);
+        }
         if let Some(example) = input.upstream_case {
             if !input.record.is_empty() {
                 return Err(HarnessError::new("mixed fixture forms"));
             }
-            let values =
-                ffi::upstream_fixture(example).map_err(|e| HarnessError::new(e.to_string()))?;
+            let (values, step) = fresh_cpp(|| ffi::upstream_fixture(example))
+                .map_err(|e| HarnessError::new(e.to_string()))?;
             let mut out = Output::new();
             out.ints.insert(
                 "api_status_counts".into(),
                 values.into_iter().map(|v| v as i64).collect(),
             );
-            return Ok(out);
+            return Ok(with_point_step(out, step));
         }
-        output(&ffi::eval(&input.record).map_err(|e| HarnessError::new(e.to_string()))?)
+        let (values, step) =
+            fresh_cpp(|| ffi::eval(&input.record)).map_err(|e| HarnessError::new(e.to_string()))?;
+        Ok(with_point_step(output(&values)?, step))
     }
     fn run_rust(&self, case: &Case) -> Result<Output, HarnessError> {
-        rust(&case.parse::<Inputs>()?)
+        let input = case.parse::<Inputs>()?;
+        if let Some(attributed) = &input.attributed {
+            if input.has_other_form() {
+                return Err(HarnessError::new("mixed fixture forms"));
+            }
+            return attributed::rust(attributed);
+        }
+        if let Some(chamfer) = &input.two_offset_chamfer {
+            if input.mixed_with_chamfer() {
+                return Err(HarnessError::new("mixed fixture forms"));
+            }
+            return two_offset_chamfer::rust(chamfer);
+        }
+        if let Some(preview) = &input.fillet_preview {
+            if input.mixed_with_preview() {
+                return Err(HarnessError::new("mixed fixture forms"));
+            }
+            return preview::rust(preview);
+        }
+        if let Some(pair) = &input.surface_surface_bodies {
+            if input.surface_surface.is_some()
+                || input.real_solid.is_some()
+                || input.upstream_case.is_some()
+                || !input.record.is_empty()
+            {
+                return Err(HarnessError::new("mixed fixture forms"));
+            }
+            return surface_bodies::rust(pair);
+        }
+        if let Some(pair) = &input.surface_surface {
+            if input.real_solid.is_some()
+                || input.upstream_case.is_some()
+                || !input.record.is_empty()
+            {
+                return Err(HarnessError::new("mixed fixture forms"));
+            }
+            return end_to_end::surface_surface_rust(pair);
+        }
+        if let Some(real) = &input.real_solid {
+            if input.upstream_case.is_some() || !input.record.is_empty() {
+                return Err(HarnessError::new("mixed fixture forms"));
+            }
+            return end_to_end::rust(real);
+        }
+        rust(&input)
     }
     fn generate(&self, rng: &mut Rng) -> Option<Value> {
         let tolerance = *rng.choose(&[0.0, 1e-300, 1e-9, 1e-5, 1.0, 1e100])?;
@@ -668,4 +1111,34 @@ impl UnitDiff for Runner {
             flag(rng.chance(0.5)), flag(rng.chance(0.5)), flag(rng.chance(0.5)),
             flag(rng.chance(0.5)), flag(rng.chance(0.5))]}))
     }
+}
+
+/// Compared key: the `sdStaticStep` latch (ND-3: `SmFilletSolver::ComputePointValues`'
+/// function static, fixed by the first call in a process) after the case.
+pub(super) const POINT_STEP: &str = "fillet_point_step";
+
+/// Runs a case's C++ calls in a fresh child process, so `sdStaticStep` starts unlatched
+/// as on a first call whatever ran before, and returns the record with the step the case
+/// left latched there (`1e-5` when it latched nothing). The step is a compared output
+/// only ([`POINT_STEP`]); the Rust side never sees it.
+pub(super) fn fresh_cpp(
+    case: impl FnOnce() -> Result<Vec<f64>, solidcore_ffi::FfiError>,
+) -> Result<(Vec<f64>, f64), solidcore_ffi::FfiError> {
+    solidcore_ffi::units::blend_fillet_solver_p4::with_fresh_static_step(case)
+}
+
+/// The Rust side's [`Kernel::fillet_point_step`] after a case run on a fresh kernel,
+/// read as the C++ probe reads `sdStaticStep`: the probe's finite-difference crossing
+/// point latches `1e-5` when nothing has.
+pub(super) fn rust_point_step(k: &Kernel) -> f64 {
+    k.fillet_point_step.get().unwrap_or(1.0e-5)
+}
+
+/// `out` with the case's latched step ([`POINT_STEP`]); a deferred or rejected output is
+/// returned unchanged.
+pub(super) fn with_point_step(mut out: Output, step: f64) -> Output {
+    if out.deferred.is_none() && out.rejected.is_none() {
+        out.values.insert(POINT_STEP.into(), vec![step]);
+    }
+    out
 }

@@ -18,6 +18,27 @@
 //   `1 curve t0 t1 validate_only init_gaps`     CreateWireEdgeFromCurve(curve, [t0, t1])
 //   `2 surface u0 v0 u1 v1 validate_only init_gaps` CreateFaceFromSurface(surface, dom)
 //   `3 validate_only init_gaps`                 the wire network of prog_test my_test_topology
+//   `5 np (x y z)*np ne (a b has_curve [curve])*ne validate_only init_gaps`
+//                                               shell vertices joined by MakeEdgeTopology edges
+//   `10 nf (face)*nf validate_only init_gaps`   nf CreateFaceFromSurface faces of one B-rep,
+//                                               each `surface u0 v0 u1 v1` as kind 2, or
+//                                               `kind scale a b c ox oy oz axis f0u f0v f1u f1v`
+//                                               with kind 10 SmCylinder(radius scale*a), 11
+//                                               SmSphere(radius scale*a), 12 SmTorus(major
+//                                               scale*a, minor scale*b), 13 SmCone(bottom
+//                                               radius scale*a, semi-angle b degrees) made by
+//                                               CreateCanonical at origin (ox, oy, oz), Z axis
+//                                               along z, x or y (`axis` 0, 1, 2), over the
+//                                               fractions (f0, f1) of the natural domain (an
+//                                               unbounded direction clamped to [0, scale*c])
+//   `14 origin[3] normal[3] u0 v0 u1 v1 face_tol n_edges (curve t0 t1 tol)*n_edges
+//    validate_only init_gaps`                    one SmPlane face whose one edge loop is
+//                                               the given curves in order, each edge with
+//                                               its own tolerance (`SmBrepConstructor`;
+//                                               see support/edge_loop_face_fixture.h; a
+//                                               curve is `1 a[3] b[3]` SmLine or
+//                                               `3 p1[3] d1[3] p2[3] d2[3]`
+//                                               SmHermiteCurve)
 // `init_gaps` computes the cached vertex/face, vertex/edge, edge/face and edge/CCW-edge
 // gaps (C++ only) before the op, so their reset is observable.
 //
@@ -26,7 +47,12 @@
 // pointer-to-member access), never the functions under test. Ops whose upstream path
 // would dereference null output -2 instead of calling it.
 #include "sc_shim.h"
+#include "sc_analytic_export.h"
+#include "sc_exact_curve_export.h"
 #include "support/topology_fixture.h"
+#include "support/ellipse_face_fixture.h"
+#include "support/edge_loop_face_fixture.h"
+#include "support/hermite_sheet_fixture.h"
 
 
 #include "StdAfx.h"
@@ -34,8 +60,10 @@
 #include <SmBSplineCurve.h>
 #include <SmBSplineSurface.h>
 #include <SmBrep.h>
+#include <SmCone.h>
 #include <SmContext.h>
 #include <SmCurve.h>
+#include <SmCylinder.h>
 #include <SmEdge.h>
 #include <SmEdgeuse.h>
 #include <SmExtent1d.h>
@@ -590,6 +618,9 @@ void export_graph(SmBrep* brep, Graph& g, std::vector<double>& o)
     for (SmFace* p : g.faces)
     {
         SmSurface* s = p->*FPeek::srf();
+        // an exactly exportable analytic surface first (sc_analytic_export.h), then the
+        // regular block, which the importer falls back to
+        sc_analytic_export::put_exact_head(o, s, the_context());
         put_surface(o, s);
         o.push_back((double)g.find(2, p->*FPeek::fu()));
         SmExtent2d d = p->*FPeek::dom();
@@ -645,7 +676,9 @@ void export_graph(SmBrep* brep, Graph& g, std::vector<double>& o)
         for (SmTopology* t : list_of(p->GetList()))
             v.push_back(g.find(6, t));
         put_list(o, v);
-        put_curve(o, p->GetCurve());
+        sc_exact_curve_export::put_export_curve(o, p->GetCurve(), the_context(), put_curve);
+        // the curve's owner: the export index of the owning edge (-1 none, -3 any other object)
+        o.push_back(p->GetCurve() ? (double)g.find(7, p->GetCurve()->GetOwner()) : -1.0);
     }
     for (SmVertexuse* p : g.vertexuses)
     {
@@ -676,6 +709,75 @@ void export_graph(SmBrep* brep, Graph& g, std::vector<double>& o)
         o);
 }
 
+// One face of a kind-10 block (layout in the header) added to `brep`.
+SmStatus analytic_or_surface_face(Rd& rd, const SmContext& ctx, SmBrep* brep)
+{
+    int64_t kind = (int64_t)rd.in[rd.at];
+    SmFace* pFace = nullptr;
+    if (kind < 10)
+    {
+        SmSurface* s = read_surface(rd, ctx);
+        SmPoint2d a = rd.uv(), b = rd.uv();
+        return brep->CreateFaceFromSurface(s, SmExtent2d(a, b), pFace);
+    }
+    rd.at++;
+    double scale = rd.num(), a = rd.num(), b = rd.num(), c = rd.num();
+    SmPoint3d o = rd.vec();
+    int64_t axis = rd.idx();
+    SmPoint2d f0 = rd.uv(), f1 = rd.uv();
+    const SmVector3d x = axis == 1 ? SmVector3d(0, 1, 0) : SmVector3d(1, 0, 0);
+    const SmVector3d y = axis == 0 ? SmVector3d(0, 1, 0) : axis == 1 ? SmVector3d(0, 0, 1) : SmVector3d(0, 0, -1);
+    SmAxis2Placement origin(o, x, y);
+    SmBSplineSurface* s = nullptr;
+    SmStatus st = SM_ERR;
+    if (kind == 10)
+    {
+        SmCylinder* p = nullptr;
+        st = SmCylinder::CreateCanonical(ctx, origin, scale * a, p);
+        s = p;
+    }
+    else if (kind == 11)
+    {
+        SmSphere* p = nullptr;
+        st = SmSphere::CreateCanonical(ctx, origin, scale * a, p);
+        s = p;
+    }
+    else if (kind == 12)
+    {
+        SmTorus* p = nullptr;
+        st = SmTorus::CreateCanonical(ctx, origin, scale * a, scale * b, p);
+        s = p;
+    }
+    else
+    {
+        SmCone* p = nullptr;
+        st = SmCone::CreateCanonical(ctx, origin, scale * a, b, p);
+        s = p;
+    }
+    if (st != SM_SUCCESS)
+    {
+        delete s;
+        return st;
+    }
+    if (s == nullptr)
+        return SM_ERR;
+    SmExtent2d dom = s->GetNaturalUVDomain();
+    SmPoint2d lo = dom.GetMin(), hi = dom.GetMax();
+    if (hi.x - lo.x > 1e5)
+    {
+        lo.x = 0.0;
+        hi.x = scale * c;
+    }
+    if (hi.y - lo.y > 1e5)
+    {
+        lo.y = 0.0;
+        hi.y = scale * c;
+    }
+    SmPoint2d d0(lo.x + f0.x * (hi.x - lo.x), lo.y + f0.y * (hi.y - lo.y));
+    SmPoint2d d1(lo.x + f1.x * (hi.x - lo.x), lo.y + f1.y * (hi.y - lo.y));
+    return brep->CreateFaceFromSurface(s, SmExtent2d(d0, d1), pFace);
+}
+
 // Builds the B-rep of a B-rep block; nullptr (status in `st`) when construction fails.
 SmBrep* build(Rd& rd, const char* path, SmStatus& status)
 {
@@ -687,6 +789,14 @@ SmBrep* build(Rd& rd, const char* path, SmStatus& status)
     {
         bool rebuild = rd.flag();
         status = brep->ReadFromFile(ctx, path, SM_ASCII, rebuild ? TRUE : FALSE);
+    }
+    else if (kind == 9)
+    {
+        status = sc_topology_fixture::ellipse_face(brep, rd, ctx);
+    }
+    else if (kind == 15)
+    {
+        status = sc_topology_fixture::hermite_sheet_face(brep, rd, ctx);
     }
     else if (kind == 1)
     {
@@ -718,10 +828,69 @@ SmBrep* build(Rd& rd, const char* path, SmStatus& status)
             }
         }
     }
+    else if (kind == 5)
+    {
+        // kind 5: shell vertices at the given points, then edges between them
+        // (MakeEdgeTopology with a straight line or the given curve, as the wire network)
+        int64_t np = rd.idx();
+        std::vector<SmVertex*> vs;
+        for (int64_t i = 0; i < np; i++)
+        {
+            SmPoint3d p = rd.vec();
+            SmShell* pShell = nullptr;
+            SmVertex* pVertex = nullptr;
+            if (status == SM_SUCCESS)
+                status = brep->MakeShellVertex(brep->GetInfiniteRegion(), p, pShell, pVertex);
+            vs.push_back(pVertex);
+        }
+        int64_t ne = rd.idx();
+        for (int64_t i = 0; i < ne; i++)
+        {
+            int64_t a = rd.idx(), b = rd.idx();
+            SmBSplineCurve* c = rd.flag() ? read_curve(rd, ctx) : nullptr;
+            if (status != SM_SUCCESS)
+            {
+                delete c;
+                continue;
+            }
+            if (c == nullptr)
+                status = SmBSplineCurve::CreateLineSegment(ctx, 3, vs[(size_t)a]->GetPoint(), vs[(size_t)b]->GetPoint(), c);
+            SmEdge* pEdge = nullptr;
+            if (status == SM_SUCCESS)
+                status = brep->MakeEdgeTopology(brep->GetInfiniteRegion(), vs[(size_t)a], vs[(size_t)b], pEdge);
+            if (status != SM_SUCCESS || pEdge == nullptr)
+            {
+                delete c;
+                if (status == SM_SUCCESS)
+                    status = SM_ERR;
+                continue;
+            }
+            pEdge->SetCurve(c, TRUE);
+            c->SetOwner(pEdge);
+            pEdge->SetInterval(c->GetNaturalInterval());
+            pEdge->SetOrientation(SM_OT_SAME);
+        }
+    }
+    else if (kind == 10)
+    {
+        int64_t nf = rd.idx();
+        for (int64_t i = 0; i < nf && status == SM_SUCCESS; i++)
+            status = analytic_or_surface_face(rd, ctx, brep);
+    }
+    else if (kind == 14)
+    {
+        // one plane face with an edge loop of explicit curves and per-edge tolerances;
+        // the constructor makes the B-rep it builds into
+        delete brep;
+        brep = nullptr;
+        status = sc_topology_fixture::edge_loop_face(rd, ctx, brep);
+    }
     else
     {
         status = build_wire_network(ctx, brep);
     }
+    if (brep == nullptr)
+        return nullptr;
     brep->m_bValidateOnly = rd.bflag();
     bool init_gaps = rd.flag();
     if (status != SM_SUCCESS)

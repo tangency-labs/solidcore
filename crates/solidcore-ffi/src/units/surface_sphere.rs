@@ -22,7 +22,9 @@
 //!   (also after a failure). `Eq`: the other sphere's construction status, then
 //!   `this == other`, `other == this`. `Copy`: status, `state copy == this`. `Closed`:
 //!   `closed continuity closed_u closed_v`. `StepInv`: status (also `SM_ERR` for a point
-//!   off the surface), `u v location`. `Trim`: status, `n curves`.
+//!   off the surface), `u v location`. `Trim`: status, `n curves`. `TrimDomain`:
+//!   status, the domain after the call (`TrimWithDomain` writes it back), the state
+//!   (also after a failure).
 //! * the intersections: the other surface's construction status, then (on success) the
 //!   status and `more ncurves curves ntypes types ndevs devs nuv1 nuv2 nnull1 nnull2`.
 //! * `IsNurb`: `found has_sphere [state]` (the sphere's NURB as a plain B-spline surface,
@@ -318,6 +320,12 @@ pub enum Op {
         /// Control point changes.
         perturb: Vec<Perturb>,
     },
+    /// `TrimWithDomain(SmExtent2d(u0, v0, u1, v1))` (inherited from
+    /// `SmSurfOfRevolution`).
+    TrimDomain {
+        /// The new NURB domain `[u0, v0, u1, v1]`.
+        dom: [f64; 4],
+    },
 }
 
 impl Op {
@@ -342,6 +350,7 @@ impl Op {
             Op::IsectCone { .. } => 16,
             Op::Global { .. } => 17,
             Op::IsNurb { .. } => 18,
+            Op::TrimDomain { .. } => 19,
         }
     }
 }
@@ -365,11 +374,17 @@ fn cross(a: [f64; 3], b: [f64; 3]) -> [f64; 3] {
     [ay * bz - az * by, az * bx - ax * bz, ax * by - ay * bx]
 }
 
-/// Checks two axes are long enough and far from parallel.
+/// Checks two axes are long enough, far from parallel, and of a length whose square
+/// does not overflow: unitizing an axis of infinite length gives a zero axis, so a
+/// generator circle on it gets no NURB, which `SmSurfOfRevolution`'s constructor then
+/// evaluates (`EvaluatePoint` dereferences the NULL NURB).
 fn axes(x: [f64; 3], y: [f64; 3], what: &str) -> Result<(), FfiError> {
     finite(&x, what)?;
     finite(&y, what)?;
     let (lx, ly) = (len(x), len(y));
+    if !lx.is_finite() || !ly.is_finite() {
+        return Err(bad(format!("{what}: axis length overflows")));
+    }
     if lx < 1e-6 || ly < 1e-6 || len(cross(x, y)) < 1e-3 * lx * ly {
         return Err(bad(format!("{what}: degenerate or parallel axes")));
     }
@@ -470,7 +485,8 @@ fn push_sphere(o: &mut Vec<f64>, s: &SphereIn) -> Result<(), FfiError> {
     Ok(())
 }
 
-fn push_plane(o: &mut Vec<f64>, p: &Plane) -> Result<(), FfiError> {
+/// Validates and encodes the plane block (also the torus shim's).
+pub(crate) fn push_plane(o: &mut Vec<f64>, p: &Plane) -> Result<(), FfiError> {
     match p {
         Plane::Bounded {
             origin,
@@ -507,7 +523,8 @@ fn push_plane(o: &mut Vec<f64>, p: &Plane) -> Result<(), FfiError> {
     Ok(())
 }
 
-fn push_args(o: &mut Vec<f64>, a: &IsectArgs) -> Result<(), FfiError> {
+/// Validates and encodes the domain and tolerance arguments (also the torus shim's).
+pub(crate) fn push_args(o: &mut Vec<f64>, a: &IsectArgs) -> Result<(), FfiError> {
     push_dom(o, a.dom, "domain")?;
     push_dom(o, a.other_dom, "other domain")?;
     let tol = a.tol.unwrap_or(0.0);
@@ -647,6 +664,10 @@ fn push_op(o: &mut Vec<f64>, op: &Op) -> Result<(), FfiError> {
                 o.extend_from_slice(&p.d);
             }
         }
+        Op::TrimDomain { dom } => {
+            domain(*dom, "trim domain")?;
+            o.extend_from_slice(dom);
+        }
     }
     Ok(())
 }
@@ -672,6 +693,41 @@ pub fn sphere_op(s: &SphereIn, op: &Op) -> Result<Vec<f64>, FfiError> {
         unsafe {
             sys::sc_surface_sphere_eval(
                 code,
+                input.as_ptr(),
+                input.len() as i64,
+                buf.as_mut_ptr(),
+                buf.len() as i64,
+                &raw mut *len,
+            )
+        }
+    })
+}
+
+/// The sphere as its constructor leaves it (no `MakeNurb`; `mode` must be
+/// [`Mode::Ctor`]),
+/// then the shim's `sc::put_const_make` sequence: has-NURB, the `const`
+/// `GetNaturalUVDomain` (which makes the NURB and keeps it), has-NURB, the NURB,
+/// `HavePolarConversion`, `EvaluatePoint` at the domain's `(0.3, 0.6)`, `Copy` (status,
+/// the copy's has-NURB and NURB, `*copy == *this`, its `EvaluatePoint` at `(0.7, 0.2)`) and
+/// `Transform` by a fixed rotation and move (status, has-NURB, NURB, the natural domain,
+/// `EvaluatePoint`). The record starts with the construction status.
+///
+/// # Errors
+///
+/// Exactly the constructor guards of [`sphere_op`], and a canonical `mode`.
+pub fn const_make(s: &SphereIn) -> Result<Vec<f64>, FfiError> {
+    if s.mode != Mode::Ctor {
+        return Err(bad("const_make: constructor mode required"));
+    }
+    let mut input = Vec::new();
+    push_sphere(&mut input, s)?;
+    call_with_buffer(16384, |buf, len| {
+        // SAFETY: input holds exactly the sphere block the shim reads for op 20 (built and
+        // validated by `push_sphere`); buf is valid for buf.len() writes and the shim
+        // honours the capacity; len is valid.
+        unsafe {
+            sys::sc_surface_sphere_eval(
+                20,
                 input.as_ptr(),
                 input.len() as i64,
                 buf.as_mut_ptr(),

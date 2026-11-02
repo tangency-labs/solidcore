@@ -37,8 +37,7 @@ use crate::{Case, HarnessError, Output, Rng, UnitDiff};
 /// Generated cases per run, whatever `--seeds` says (it can only raise this).
 pub const MIN_GENERATED: usize = 3000;
 
-/// Upstream `SM_ERR`.
-const SM_ERR: i32 = 1001;
+use solidcore::error::SM_ERR;
 /// Trace flag: a Jacobian was requested.
 const TRACE_JACOBIAN: i64 = 1;
 /// Trace flag: the call failed.
@@ -599,7 +598,7 @@ fn rust(p: &Parsed) -> Result<Output, HarnessError> {
         Err(e) => Ok(Output::unported(&e).unwrap_or_else(|| {
             Output::err(match e {
                 SolidError::Upstream { code, .. } => format!("status_{code}"),
-                SolidError::InvalidInput { .. } => "status_1007".into(),
+                SolidError::InvalidInput { .. } | SolidError::PortInvariant { .. } => "status_1007".into(),
                 other => format!("rust_error: {other}"),
             })
         })),

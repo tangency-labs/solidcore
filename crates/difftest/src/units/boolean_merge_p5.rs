@@ -1,10 +1,20 @@
-//! Wire/shell-vertex boolean stage on identical raw input topology. Construction
-//! uses the shared real-B-rep fixture builder; no C++ merge results enter Rust.
+//! Wire/shell-vertex boolean stage on identical raw input topology. The C++ side builds
+//! each operand with the shared real-B-rep fixture builder (`sc_merge_fixture.h`
+//! `operand`). The Rust side builds the same operand itself ([`own_operand`]): an
+//! `.smb` file read by the Rust reader, a wire, face or network built by the Rust
+//! kernel ([`crate::own_builder`]), an isolated shell vertex (`make_shell_vertex`) or
+//! an empty B-rep. Each is renumbered into the shim's `native_graph` order
+//! ([`crate::own_builder::renumber_native`]: the edge and vertex lists, then the walk),
+//! so the mark and mate selectors name the same edges and vertices. Nothing of the shim's
+//! export reaches the Rust side: its record counts, vertex use lists and geometry are
+//! its own.
+use super::boolean_merge_p1::Canon;
 use super::topology_vertexuse::{self as shared, BrepIn};
 use crate::{Case, HarnessError, Output, Rng, UnitDiff};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use solidcore::boolean::merge::p1::VertexCopy;
+use solidcore::boolean::merge::p2::TopologyCopy;
 use solidcore::boolean::merge::p5::process_wires_and_shell_vertices;
 use solidcore::boolean::topology_intersector::p1::Relations;
 use solidcore::geom::a_object::BooleanOperation;
@@ -12,17 +22,17 @@ use solidcore::geom::attribute::{AttributeStore, ObjectKey};
 use solidcore::geom::context::MarkLock;
 use solidcore::geom::object::ObjectRef;
 use solidcore::kernel::Kernel;
+use solidcore::topology::topology::Topology;
 use solidcore::topology::topology_traverser::{Entity, Marks};
-use solidcore::topology::{edge, vertex, vertexuse, ArenaId, Brep, EdgeId, VertexId, VertexuseId};
+use solidcore::topology::{edge, vertex, vertexuse, Brep, EdgeId};
 use solidcore_ffi::units::boolean_merge_p5::{self as ffi, Operand, Request};
-use std::collections::BTreeMap;
 
 /// Differential runner for `SmMerge::ProcessWiresAndShellVertices`.
 pub struct Runner;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
-enum Spec {
+pub(crate) enum Spec {
     Empty,
     Vertex { point: [f64; 3] },
     Graph { brep: BrepIn },
@@ -61,7 +71,7 @@ fn err(e: &(impl ToString + ?Sized)) -> HarnessError {
     HarnessError::new(e.to_string())
 }
 
-fn program(s: &Spec) -> Result<(String, Vec<f64>), HarnessError> {
+pub(crate) fn program(s: &Spec) -> Result<(String, Vec<f64>), HarnessError> {
     let mut block = Vec::new();
     let path = match s {
         Spec::Empty => {
@@ -94,7 +104,7 @@ fn program(s: &Spec) -> Result<(String, Vec<f64>), HarnessError> {
     };
     Ok((path, block))
 }
-fn operand(p: &(String, Vec<f64>)) -> Operand<'_> {
+pub(crate) fn operand(p: &(String, Vec<f64>)) -> Operand<'_> {
     Operand {
         path: &p.0,
         block: &p.1,
@@ -112,17 +122,86 @@ fn mapping(i: &Inputs, a: [usize; 10], b: [usize; 10]) -> Vec<i64> {
             .collect()
     })
 }
-fn import(
-    f: &solidcore_ffi::units::topology_topology_traverser::Fixture,
-) -> Result<Brep, HarnessError> {
-    let (mut b, _) = shared::import(&f.graph)?;
-    for (i, list) in f.vertexuses.iter().enumerate() {
-        b.vertex_mut(VertexId::from_index(i as u32))
-            .map_err(|e| err(&e))?
-            .vertexuses = list.iter().map(|&j| VertexuseId::from_index(j)).collect();
-    }
-    Ok(b)
+/// The conventions of the operands' build and of their renumbering into the shim's
+/// `native_graph` order ([`crate::own_builder::renumber_native`]): geometry the build
+/// owned keeps its owner, renamed to the arena identities; nothing gains an owner.
+const NATIVE_GRAPH: crate::own_builder::Conventions<'static> =
+    crate::own_builder::Conventions::EDGEUSE_GRAPH;
+
+/// The Rust side's own B-rep of operand `s`, as the shim's `operand`
+/// (`sc_merge_fixture.h`) builds it: `[5]` an empty `SmBrep`, `[4, x, y, z]`
+/// `MakeShellVertex` on its infinite region, otherwise the shared `build` (an `.smb`
+/// file read by the Rust reader, a wire, face or network built by the Rust kernel; no
+/// `m_bValidateOnly`, no gap walk), renumbered into the shim's `native_graph` order
+/// (`GetEdges`, `GetVertices`, then `walk`: [`crate::own_builder::renumber_native`]).
+/// The owners are the Rust build's own (geometry it left unowned stays unowned), named
+/// and recorded under the arena scheme
+/// (`Brep::use_arena_naming`), which the B-rep cache of `Point3DClassify`'s boundary
+/// solve reads. No C++ state is read.
+///
+/// The error is the Rust build's failure (the shim's `operand` returns NULL or a
+/// non-success status, which its caller rejects).
+///
+/// # Errors
+///
+/// A harness error when the file cannot be opened, a non-file source is not built, or
+/// the renumbering finds a dangling reference.
+pub(crate) fn own_operand(
+    k: &mut Kernel,
+    s: &Spec,
+) -> Result<Result<Brep, solidcore::SolidError>, HarnessError> {
+    use crate::own_builder::{build_as, finish, in_new_brep, read_as, Built};
+    let built = match s {
+        Spec::Empty => {
+            let raw = in_new_brep(k, |_, _| Ok(()))?;
+            finish(k, raw, false, false, &NATIVE_GRAPH)?
+        }
+        Spec::Vertex { point } => {
+            let p = solidcore::geom::vector3d::Vec3::new(point[0], point[1], point[2]);
+            let raw = in_new_brep(k, |_, b| {
+                let region = b.infinite_region();
+                let mut state = solidcore::topology::brep::p2::ArenaNotifyState::new(b);
+                let mut env = state.env(None);
+                solidcore::topology::brep::p9::make_shell_vertex(b, region, p, &mut env)
+                    .map(|_| ())
+            })?;
+            finish(k, raw, false, false, &NATIVE_GRAPH)?
+        }
+        Spec::Graph { brep } => match brep {
+            BrepIn::File { rebuild, .. } => {
+                read_as(k, &shared::path_of(brep)?, *rebuild, false, false, &NATIVE_GRAPH)?
+            }
+            _ => build_as(k, brep, false, false, &NATIVE_GRAPH)?
+                .ok_or_else(|| err("own builder: a non-file source was not built"))?,
+        },
+    };
+    Ok(match built {
+        Built::Brep(b) => {
+            // the shim's `native_graph` numbering (the edge and vertex lists first)
+            let mut b = crate::own_builder::renumber_native(&b, &NATIVE_GRAPH)?;
+            // record the arena naming of the owners the build gave (no owner is added)
+            b.use_arena_naming().map_err(|e| err(&e))?;
+            Ok(b)
+        }
+        Built::Failed(e) => Err(e),
+    })
 }
+
+/// [`own_operand`] for the runner: a failed build defers on an unported callee, any
+/// other failure is a harness error (the shim's caller rejects the operand).
+pub(crate) fn own_operand_or_output(
+    k: &mut Kernel,
+    s: &Spec,
+) -> Result<Result<Brep, Output>, HarnessError> {
+    match own_operand(k, s)? {
+        Ok(b) => Ok(Ok(b)),
+        Err(e) => match Output::unported(&e) {
+            Some(o) => Ok(Err(o)),
+            None => Err(err(&format!("Rust operand build failed: {e}"))),
+        },
+    }
+}
+
 fn seed(
     k: &Kernel,
     b: &Brep,
@@ -141,10 +220,9 @@ fn seed(
         }
     }
 }
-fn id<I: ArenaId>(value: Option<I>) -> i64 {
-    value.map_or(-1, |i| i64::from(i.index()))
-}
-fn snapshot(
+/// Live native topology: excludes detached records retained by append-only arenas
+/// after `MakeEdgeTopology` deletes shells and vertex uses in C++.
+pub(crate) fn snapshot(
     k: &Kernel,
     b: &Brep,
     marks: &Marks,
@@ -152,50 +230,67 @@ fn snapshot(
     ids: &mut Vec<i64>,
     values: &mut Vec<f64>,
 ) -> Result<(), HarnessError> {
-    ids.extend(
-        [
-            b.regions().len(),
-            b.shells().len(),
-            b.faceuses().len(),
-            b.faces().len(),
-            b.loopuses().len(),
-            b.loops().len(),
-            b.edgeuses().len(),
-            b.edges().len(),
-            b.vertexuses().len(),
-            b.vertices().len(),
-        ]
-        .map(|n| n as i64),
-    );
-    for (e, r) in b.edges().iter() {
+    let c = Canon::native_reachable(b);
+    let counts = [
+        c.regions.items.len(),
+        c.shells.items.len(),
+        c.faceuses.items.len(),
+        c.faces.items.len(),
+        c.loopuses.items.len(),
+        c.loops.items.len(),
+        c.edgeuses.items.len(),
+        c.edges.items.len(),
+        c.vertexuses.items.len(),
+        c.vertices.items.len(),
+    ];
+    snapshot_ordered(k, b, marks, mt, &c, counts, ids, values)
+}
+
+fn snapshot_ordered(
+    k: &Kernel,
+    b: &Brep,
+    marks: &Marks,
+    mt: solidcore::geom::context::MarkType,
+    c: &Canon,
+    counts: [usize; 10],
+    ids: &mut Vec<i64>,
+    values: &mut Vec<f64>,
+) -> Result<(), HarnessError> {
+    use solidcore::topology::{EdgeuseOwner, LoopuseStart, VertexuseOwner};
+    ids.extend(counts.map(|n| n as i64));
+    for &e in &c.edges.items {
+        let r = b.edge(e).map_err(|e| err(&e))?;
         let v = edge::vertex(b, e).map_err(|e| err(&e))?;
         ids.extend([
-            id(v),
-            id(edge::other_vertex(b, e, v).map_err(|e| err(&e))?),
+            c.vertices.of(v),
+            c.vertices
+                .of(edge::other_vertex(b, e, v).map_err(|e| err(&e))?),
             i64::from(vertexuse::edge_is_wire(b, e).map_err(|e| err(&e))?),
             i64::from(marks.is_marked(k, Entity::Edge(e), mt)),
             r.edgeuses.len() as i64,
         ]);
-        ids.extend(r.edgeuses.iter().map(|e| i64::from(e.index())));
+        ids.extend(r.edgeuses.iter().map(|&x| c.edgeuses.of(Some(x))));
         values.extend([r.interval.min(), r.interval.max(), r.tolerance]);
     }
-    for (v, r) in b.vertices().iter() {
+    for &v in &c.vertices.items {
+        let r = b.vertex(v).map_err(|e| err(&e))?;
         ids.extend([
             i64::from(vertex::is_shell_vertex(b, v).map_err(|e| err(&e))?),
             i64::from(marks.is_marked(k, Entity::Vertex(v), mt)),
             r.vertexuses.len() as i64,
         ]);
-        ids.extend(r.vertexuses.iter().map(|v| i64::from(v.index())));
+        ids.extend(r.vertexuses.iter().map(|&x| c.vertexuses.of(Some(x))));
         values.extend([r.point.x, r.point.y, r.point.z, r.tolerance]);
     }
-    for (_, r) in b.regions().iter() {
-        ids.push(i64::from(r.in_brep));
+    for &x in &c.regions.items {
+        ids.push(i64::from(b.region(x).map_err(|e| err(&e))?.in_brep));
     }
-    for (_, sh) in b.shells().iter() {
-        ids.push(id(sh.region));
+    for &x in &c.shells.items {
+        ids.push(c.regions.of(b.shell(x).map_err(|e| err(&e))?.region));
     }
-    for (_, f) in b.faces().iter() {
-        ids.push(id(f.faceuse));
+    for &x in &c.faces.items {
+        let f = b.face(x).map_err(|e| err(&e))?;
+        ids.push(c.faceuses.of(f.faceuse));
         values.extend([
             f.tolerance,
             f.uv_domain.min().x,
@@ -204,48 +299,57 @@ fn snapshot(
             f.uv_domain.max().y,
         ]);
     }
-    for (_, fu) in b.faceuses().iter() {
+    for &x in &c.faceuses.items {
+        let fu = b.faceuse(x).map_err(|e| err(&e))?;
         ids.extend([
-            id(fu.shell),
-            id(fu.face),
-            id(fu.mate),
+            c.shells.of(fu.shell),
+            c.faces.of(fu.face),
+            c.faceuses.of(fu.mate),
             i64::from(fu.orientation as i32),
             fu.loopuses.len() as i64,
         ]);
-        ids.extend(fu.loopuses.iter().map(|l| i64::from(l.index())));
+        ids.extend(fu.loopuses.iter().map(|&l| c.loopuses.of(Some(l))));
     }
-    for (_, l) in b.loops().iter() {
-        ids.push(id(l.loopuse));
+    for &x in &c.loops.items {
+        ids.push(c.loopuses.of(b.loop_(x).map_err(|e| err(&e))?.loopuse));
     }
-    for (_, lu) in b.loopuses().iter() {
+    for &x in &c.loopuses.items {
+        let lu = b.loopuse(x).map_err(|e| err(&e))?;
         ids.extend([
-            id(lu.faceuse),
-            id(lu.loop_),
-            id(lu.mate),
+            c.faceuses.of(lu.faceuse),
+            c.loops.of(lu.loop_),
+            c.loopuses.of(lu.mate),
             i64::from(lu.orientation as i32),
         ]);
         ids.extend(match lu.start {
-            solidcore::topology::LoopuseStart::Unknown => [0, -1],
-            solidcore::topology::LoopuseStart::Edgeuse(e) => [1, id(e)],
-            solidcore::topology::LoopuseStart::Vertexuse(v) => [2, id(v)],
+            LoopuseStart::Unknown => [0, -1],
+            LoopuseStart::Edgeuse(e) => [1, c.edgeuses.of(e)],
+            LoopuseStart::Vertexuse(v) => [2, c.vertexuses.of(v)],
         });
     }
-    for (_, eu) in b.edgeuses().iter() {
-        ids.extend([id(eu.edge), id(eu.vertexuse), id(eu.cw), id(eu.ccw)]);
+    for &x in &c.edgeuses.items {
+        let eu = b.edgeuse(x).map_err(|e| err(&e))?;
+        ids.extend([
+            c.edges.of(eu.edge),
+            c.vertexuses.of(eu.vertexuse),
+            c.edgeuses.of(eu.cw),
+            c.edgeuses.of(eu.ccw),
+        ]);
         ids.extend(match eu.owner {
-            solidcore::topology::EdgeuseOwner::Unknown => [0, -1],
-            solidcore::topology::EdgeuseOwner::Loopuse(l) => [1, id(l)],
-            solidcore::topology::EdgeuseOwner::Shell(sh) => [2, id(sh)],
+            EdgeuseOwner::Unknown => [0, -1],
+            EdgeuseOwner::Loopuse(l) => [1, c.loopuses.of(l)],
+            EdgeuseOwner::Shell(sh) => [2, c.shells.of(sh)],
         });
         ids.push(i64::from(eu.orientation as i32));
     }
-    for (_, vu) in b.vertexuses().iter() {
-        ids.push(id(vu.vertex));
+    for &x in &c.vertexuses.items {
+        let vu = b.vertexuse(x).map_err(|e| err(&e))?;
+        ids.push(c.vertices.of(vu.vertex));
         ids.extend(match vu.owner {
-            solidcore::topology::VertexuseOwner::Unknown => [0, -1],
-            solidcore::topology::VertexuseOwner::Edgeuse(e) => [1, id(e)],
-            solidcore::topology::VertexuseOwner::Loopuse(l) => [2, id(l)],
-            solidcore::topology::VertexuseOwner::Shell(sh) => [3, id(sh)],
+            VertexuseOwner::Unknown => [0, -1],
+            VertexuseOwner::Edgeuse(e) => [1, c.edgeuses.of(e)],
+            VertexuseOwner::Loopuse(l) => [2, c.loopuses.of(l)],
+            VertexuseOwner::Shell(sh) => [3, c.shells.of(sh)],
         });
     }
     Ok(())
@@ -299,19 +403,23 @@ impl UnitDiff for Runner {
     }
     fn run_rust(&self, case: &Case) -> Result<Output, HarnessError> {
         let i: Inputs = case.parse()?;
-        let a = program(&i.primary)?;
-        let b = program(&i.other)?;
-        let aa = ffi::export(operand(&a)).map_err(|e| err(&e))?;
-        let bb = ffi::export(operand(&b)).map_err(|e| err(&e))?;
-        let ac = solidcore_ffi::units::topology_vertexuse::counts(&aa.graph)
-            .ok_or_else(|| err("primary graph"))?;
-        let bc = solidcore_ffi::units::topology_vertexuse::counts(&bb.graph)
-            .ok_or_else(|| err("other graph"))?;
+        // both operands built by the Rust side itself, in the shim's order
+        let mut k = Kernel::default();
+        let mut a = match own_operand_or_output(&mut k, &i.primary)? {
+            Ok(b) => b,
+            Err(o) => return Ok(o),
+        };
+        let mut b = match own_operand_or_output(&mut k, &i.other)? {
+            Ok(b) => b,
+            Err(o) => return Ok(o),
+        };
+        let ac = crate::own_builder::counts(&a);
+        let bc = crate::own_builder::counts(&b);
         let edge_mates = mapping(&i, ac, bc);
         ffi::validate_mates(&edge_mates, ac[7], bc[7]).map_err(|e| err(&e))?;
-        let mut a = import(&aa)?;
-        let mut b = import(&bb)?;
-        let mut k = Kernel::default();
+        // the shim's caller state: editing on for both B-reps (SmMerge.cpp:2645-2646)
+        a.set_editing_enabled(true);
+        b.set_editing_enabled(true);
         let la = MarkLock::new(std::slice::from_mut(&mut k.context), 0, i.marks[0])
             .map_err(|e| err(&e))?;
         let lb = if i.marks[0] == i.marks[1] {
@@ -359,28 +467,60 @@ impl UnitDiff for Runner {
             }
             relations.edges.record(e, oe).map_err(|e| err(&e))?;
         }
-        let mut records = BTreeMap::new();
+        // A fresh SmTopology record per vertex and edge of both operands, under the
+        // identities the copies are notified with (a copy propagates its flags).
+        let mut records = solidcore::topology::topology::NotifyRecords::new();
+        for (base, brep) in [(0, &a), (1_000_000, &b)] {
+            for v in brep.vertices().ids() {
+                records.insert(ObjectKey(base + u64::from(v.index())), Topology::new());
+            }
+            for e in brep.edges().ids() {
+                records.insert(
+                    ObjectKey(2_000_000 + base + u64::from(e.index())),
+                    Topology::new(),
+                );
+            }
+        }
         let mut attributes = AttributeStore::new();
-        let mut copy = VertexCopy {
-            records: &mut records,
-            attributes: &mut attributes,
-            source_key: &|v| ObjectRef {
-                key: ObjectKey(1_000_000 + u64::from(v.index())),
-                type_code: 16021,
-            },
-            destination_key: &|e| match e {
-                solidcore::EntityRef::Vertex(v) => ObjectRef {
-                    key: ObjectKey(u64::from(v.index())),
+        let mut copy = TopologyCopy {
+            vertices: VertexCopy {
+                records: &mut records,
+                attributes: &mut attributes,
+                source_key: &|v| ObjectRef {
+                    key: ObjectKey(1_000_000 + u64::from(v.index())),
                     type_code: 16021,
                 },
-                solidcore::EntityRef::Vertexuse(v) => ObjectRef {
-                    key: ObjectKey(2_000_000 + u64::from(v.index())),
-                    type_code: 16006,
+                destination_key: &|e| match e {
+                    solidcore::EntityRef::Vertex(v) => ObjectRef {
+                        key: ObjectKey(u64::from(v.index())),
+                        type_code: 16021,
+                    },
+                    solidcore::EntityRef::Vertexuse(v) => ObjectRef {
+                        key: ObjectKey(8_000_000 + u64::from(v.index())),
+                        type_code: 16006,
+                    },
+                    _ => ObjectRef {
+                        key: ObjectKey(9_000_000),
+                        type_code: 16001,
+                    },
                 },
-                _ => ObjectRef {
-                    key: ObjectKey(3_000_000),
-                    type_code: 16001,
-                },
+            },
+            edge_source_key: &|e| ObjectRef {
+                key: ObjectKey(3_000_000 + u64::from(e.index())),
+                type_code: 16016,
+            },
+            edge_destination_key: &|e| ObjectRef {
+                key: ObjectKey(2_000_000 + u64::from(e.index())),
+                type_code: 16016,
+            },
+            face_source_key: &|f| ObjectRef {
+                key: ObjectKey(5_000_000 + u64::from(f.index())),
+                type_code: 16002,
+            },
+            surface_attributes: true,
+            face_destination_key: &|f| ObjectRef {
+                key: ObjectKey(4_000_000 + u64::from(f.index())),
+                type_code: 16002,
             },
         };
         let operation =
@@ -392,7 +532,7 @@ impl UnitDiff for Runner {
                 keep.push(EdgeId::from_index(0));
             }
             match process_wires_and_shell_vertices(
-                &k,
+                &mut k,
                 &mut a,
                 &mut b,
                 &mut am,
@@ -465,7 +605,7 @@ impl UnitDiff for Runner {
     }
 }
 
-fn generated_operand(rng: &mut Rng, scale: f64) -> (Value, bool) {
+pub(crate) fn generated_operand(rng: &mut Rng, scale: f64) -> (Value, bool) {
     match rng.below(5) {
         0 => (json!({"kind":"empty"}), false),
         1 => (

@@ -16,18 +16,21 @@
 // documented in crates/solidcore-ffi/src/units/curve_curve_p5.rs, which validates every
 // input. A curve block is `kind dim ...` (0: SmBSplineCurve `oob n p m cpts(x y z w)
 // knots`; 1: SmHermiteCurve `P1 D1 P2 D2`; 2: bounded SmLine `P V d0 d1 scale io`;
-// 3: SmEllipse `C X Y d0 d1 rx ry io`; 4: SmCircle `C X Y d0 d1 r io`). `out` receives the
+// 3: SmEllipse `C X Y d0 d1 rx ry io`; 4: SmCircle `C X Y d0 d1 r io`; 5: kind 0 with the
+// given knots written back over the curve's own NURB after construction). `out` receives the
 // op status (0 = SM_SUCCESS, else the SmStatus value) and the op's outputs.
 #include "sc_shim.h"
 
 #include "StdAfx.h"
 #include <SmBSplineCurve.h>
+#include <SmBrep.h>
 #include <SmCircle.h>
 #include <SmContext.h>
 #include <SmCrvOnSurf.h>
 #include <SmCurve.h>
 #include <SmCurveCache.h>
 #include <SmCurveTypes.h>
+#include <SmEdge.h>
 #include <SmEllipse.h>
 #include <SmExtent1d.h>
 #include <SmExtent2d.h>
@@ -45,6 +48,7 @@
 #include <nurbs.h>
 
 #include <map>
+#include <stdexcept>
 #include <vector>
 
 #include "sc_sm.h"
@@ -1697,6 +1701,7 @@ enum : int32_t
     OP_CCI = 13,
     OP_CC_TAN = 14,
     OP_NORMAL = 15,
+    OP_EDGE_CACHE = 16,
 };
 
 double st(SmStatus s) { return s == SM_SUCCESS ? 0.0 : (double)s; }
@@ -1707,10 +1712,18 @@ SmCurve* read_curve(Rd& rd, const SmContext& ctx)
 {
     int64_t kind = rd.idx();
     ULONG dim = (ULONG)rd.idx();
-    if (kind == 0)
+    if (kind == 0 || kind == 5)
     {
         bool oob = rd.flag();
         SmBSplineCurve* c = new (ctx) SmBSplineCurve(read_nurb(rd), dim, FALSE);
+        if (kind == 5)
+        {
+            // write the given knots back over the fixed-up NURB
+            gw_CURVE* own = c->GetGwNurbPointer();
+            gw_INDEX m = own->knt->m;
+            for (gw_INDEX i = 0; i <= m; i++)
+                own->knt->U[i] = rd.in[rd.at - (int64_t)(m + 1) + (int64_t)i];
+        }
         c->SetOutOfBoundsEnabled(oob ? TRUE : FALSE);
         return c;
     }
@@ -1899,6 +1912,42 @@ void run(int32_t op, Rd& rd, const SmContext& ctx, std::vector<double>& o)
             }
         }
         delete c;
+        break;
+    }
+    case OP_EDGE_CACHE:
+    {
+        // the cache of a curve that defines a wire edge's shape, the edge's tolerance set
+        // (SmTol::GetApproxTol3d(&m_crCurve) in Tessellate reads it through GetEdge)
+        SmCurve* c = read_curve(rd, ctx);
+        double tol = rd.num();
+        SmBrep* brep = new (ctx) SmBrep();
+        SmEdge* edge = NULL;
+        SmStatus s = brep->CreateWireEdgeFromCurve(c, c->GetNaturalInterval(), edge);
+        if (s == SM_SUCCESS && (edge == NULL || edge->GetCurve() != c))
+            throw std::runtime_error("CreateWireEdgeFromCurve did not keep the curve");
+        SmCacheObj* made = NULL;
+        if (s == SM_SUCCESS)
+        {
+            edge->SetTolerance(tol, FALSE, FALSE);
+            s = c->CacheMakeOrValidate(SM_OC_CURVE, c, NULL, made);
+        }
+        o.push_back(st(s));
+        if (s == SM_SUCCESS)
+        {
+            SmCurveCache* cache = (SmCurveCache*)made;
+            o.push_back((double)cache->GetSpanCount());
+            for (ULONG i = 0; i < cache->GetSpanCount(); i++)
+            {
+                SmExtent1d& ivl = cache->GetAt(i)->GetInterval();
+                o.push_back(ivl.GetMin());
+                o.push_back(ivl.GetMax());
+            }
+        }
+        // the B-rep owns the curve once the edge holds it (CreateWireEdgeFromCurve
+        // consumes it on success)
+        if (s != SM_SUCCESS && c->GetOwner() == NULL)
+            delete c;
+        delete brep;
         break;
     }
     case OP_CP_GUESS:

@@ -27,9 +27,10 @@
 //! - **Offset surface.** `DropCurve`'s `SmOffsetSurface` always offsets the drop
 //!   surface itself, so it is a [`DropOffset`] (its offset distance and the
 //!   singularities it was built with) next to that surface. `DropVectors` and
-//!   `EvaluateDirectionalDerivs` build the ported
-//!   [`OffsetSurface`] over a copy of that surface (upstream shares it) and run the
-//!   `SmSurface` bodies on it.
+//!   `EvaluateDirectionalDerivs` run the `SmSurface` bodies on the ported
+//!   [`OffsetSurface`] over an exact copy of that surface (upstream shares it), built
+//!   at the first of them and kept with the [`DropOffset`], as upstream builds it
+//!   once per `DropCurve`; [`DropOffset::set_offset_distance`] sets its distance.
 //! - **Ignored statuses.** `GetNextPoint` ignores the status of its start
 //!   `Evaluate2ndDerivatives` (upstream then goes on with what the failed evaluator
 //!   left in its outputs): that failure path is not ported, the error propagates
@@ -46,7 +47,9 @@
 //! - **Kernel.** `SmSurface::IsSingularity` and `SmSurface::LocalPointSolve` take the
 //!   caller's [`Kernel`]; `sm_AddToCurve` takes it (for `IsSingularity`) in place of
 //!   its unused `crContext`. `EvaluateGeometric`'s status is ignored, as upstream: a
-//!   failed evaluation leaves the principal curvatures at their initial `0.0`.
+//!   failed evaluation leaves the principal curvatures at their initial `0.0`. So is
+//!   `SetProperties`' offset `EvaluateDirectionalDerivs` (it fails at a pole): the
+//!   derivatives then stay `SM_UNDEF_DOUBLE` and the tangent drop tests bad.
 //! - **Unported callees.** The offset surface evaluations (`surface.offset_surface`)
 //!   return [`SolidError::Unported`].
 //! - **Not ported here.** The `SM_DEBUG_CODE` blocks, the `SM_ASSERT`s and the
@@ -78,18 +81,18 @@ use crate::topology::ObjectHandle;
 use super::p1::{fix_boundary_curves, DropPt, SM_ERR_OUTSIDE_OF_DOMAIN, SM_SUCCESS};
 
 /// `SM_ERR_INVALID_INPUT` (`SmMessages.h`).
-pub const SM_ERR_INVALID_INPUT: i32 = 1007;
+pub use crate::error::SM_ERR_INVALID_INPUT;
 
 /// `SM_ERR_NOT_WITHIN_TOLERANCE` (`SmMessages.h`): the curve point is not on the
 /// surface normal line at its drop point.
-pub const SM_ERR_NOT_WITHIN_TOLERANCE: i32 = 1021;
+pub use crate::error::SM_ERR_NOT_WITHIN_TOLERANCE;
 
 /// `SM_ERR_BAD_SURFACE_POINT` (`SmMessages.h`): the span start is outside the domain.
-pub const SM_ERR_BAD_SURFACE_POINT: i32 = 1030;
+pub use crate::error::SM_ERR_BAD_SURFACE_POINT;
 
 /// `SM_ERR_BAD_TANGENT_DROP` (`SmMessages.h`): the curve tangent dropped to a surface
 /// tangent that is not parallel to it.
-pub const SM_ERR_BAD_TANGENT_DROP: i32 = 1032;
+pub use crate::error::SM_ERR_BAD_TANGENT_DROP;
 
 /// `SM_SS_NONE`: the surface has no singularities.
 pub const SS_NONE: u32 = 0;
@@ -113,14 +116,18 @@ const OP_ADD: &str = "intersect::surface_drop_lib::add_to_curve";
 
 /// The offset of the drop surface `DropCurve` hands to these steps (its
 /// `SmOffsetSurface(1.0, *this, FALSE, lSingularities)`): the base is always the drop
-/// surface itself, so only the offset distance (which [`DropPt::set_properties`]
-/// sets) and the singularities it was built with are kept.
-#[derive(Debug, Clone, Copy, PartialEq)]
+/// surface itself, so the offset distance (which [`DropPt::set_properties`] sets), the
+/// singularities it was built with and, once a step evaluates it, the offset surface
+/// are kept. One `DropOffset` serves one drop surface, as upstream's serves its
+/// `DropCurve`.
+#[derive(Debug)]
 pub struct DropOffset {
     /// `m_dOffsetDistance`.
     pub offset_distance: f64,
     /// The `lSingularities` the offset was built with.
     pub singularities: u32,
+    /// The offset surface, built at its first evaluation (see [`DropOffset::offset_of`]).
+    surface: Option<Surface>,
 }
 
 impl DropOffset {
@@ -130,34 +137,48 @@ impl DropOffset {
         Self {
             offset_distance,
             singularities,
+            surface: None,
         }
     }
 
     /// `SetOffsetDistance`.
     pub fn set_offset_distance(&mut self, offset_distance: f64) {
+        // (the kept offset surface takes it at its next evaluation)
         self.offset_distance = offset_distance;
     }
 
     /// The `SmOffsetSurface` this stands for over `surface` (not owning it, with the
-    /// stored singularities; the copy keeps `surface`'s owner, as upstream's shared base
-    /// does): its constructor's `IsPeriodic` (and, for [`SS_UNKNOWN`],
-    /// `GetSingularities`) depend only on `surface`, so building it per call gives the
-    /// object upstream builds once.
-    fn offset_of(&self, k: &Kernel, surface: &Surface) -> Result<Surface> {
-        Ok(Surface::from(OffsetSurface::new(
-            k,
-            self.offset_distance,
-            surface.clone_keeping_owner(),
-            false,
-            self.singularities,
-        )?))
+    /// stored singularities and offset distance), built at the first call and kept: its
+    /// constructor's `IsPeriodic` (and, for [`SS_UNKNOWN`], `GetSingularities`) depend
+    /// only on `surface`, which is the same drop surface at every call.
+    ///
+    /// Upstream's base is `surface` itself (`m_pSurface(&rSurface)`), so the stand-in is
+    /// an exact evaluation copy that keeps its owner: [`Clone`] runs the copy
+    /// constructor's knot fix-up, which moves near-coincident knots and changes the
+    /// base's derivatives (bottle edge 29 at r=0.1: `DropVectors` at a 7e-10 first knot
+    /// span).
+    fn offset_of(&mut self, k: &Kernel, surface: &Surface) -> Result<&Surface> {
+        let built = match self.surface.take() {
+            Some(built) => built,
+            None => Surface::from(OffsetSurface::new(
+                k,
+                self.offset_distance,
+                surface.clone_for_evaluation()?,
+                false,
+                self.singularities,
+            )?),
+        };
+        if let SurfaceKind::OffsetSurface(off) = built.kind() {
+            off.set_offset_distance(self.offset_distance);
+        }
+        Ok(self.surface.insert(built))
     }
 
     /// `rOffset.DropVectors(uv, bFromLeftU, bFromLeftV, 1, &vector, &duv)` on the
     /// offset of `surface` (the `SmSurface` body: `SmOffsetSurface` does not override
     /// it).
     fn drop_vectors(
-        offset: &Self,
+        offset: &mut Self,
         k: &Kernel,
         surface: &Surface,
         uv: Point2,
@@ -166,7 +187,7 @@ impl DropOffset {
         vector: Vec3,
     ) -> Result<Vec2> {
         let off = offset.offset_of(k, surface)?;
-        drop_vectors_at(&off, uv, side(from_left_u), side(from_left_v), &[vector])?
+        drop_vectors_at(k, off, uv, side(from_left_u), side(from_left_v), &[vector])?
             .first()
             .copied()
             .ok_or_else(|| SolidError::sm_err(OP_SET))
@@ -176,7 +197,7 @@ impl DropOffset {
     /// on the offset of `surface`: the point and first directional derivative (the
     /// `SmSurface` body: `SmOffsetSurface` does not override it).
     fn evaluate_directional_derivs(
-        offset: &Self,
+        offset: &mut Self,
         k: &Kernel,
         surface: &Surface,
         uv: Point2,
@@ -185,7 +206,7 @@ impl DropOffset {
         from_left_v: bool,
     ) -> Result<[Point3; 2]> {
         let off = offset.offset_of(k, surface)?;
-        let d = off.evaluate_directional_derivs(uv, uv_dir, 1, from_left_u, from_left_v)?;
+        let d = off.evaluate_directional_derivs(k, uv, uv_dir, 1, from_left_u, from_left_v)?;
         match d.as_slice() {
             [p, d1, ..] => Ok([*p, *d1]),
             _ => Err(SolidError::sm_err(OP_SET)),
@@ -286,13 +307,14 @@ fn local_point_solve(
 /// curvatures. Upstream ignores the status; the caller's locals start at `0.0`, so a
 /// failed evaluation gives `(0.0, 0.0)`.
 fn evaluate_principal_curvatures(
+    k: &Kernel,
     surface: &Surface,
     uv: Point2,
     from_left_u: bool,
     from_left_v: bool,
 ) -> Result<(f64, f64)> {
     Ok(
-        ignored(surface.evaluate_geometric(uv, side(from_left_u), side(from_left_v)))?
+        ignored(surface.evaluate_geometric(k, uv, side(from_left_u), side(from_left_v)))?
             .map_or((0.0, 0.0), |g| {
                 (g.principle_curvature1, g.principle_curvature2)
             }),
@@ -302,15 +324,16 @@ fn evaluate_principal_curvatures(
 /// `crSurface.FindDegenParamForDirection(uv, dir, bDirFromPole, eDir, 0.0001)` with
 /// its status ignored: the moved point, or `uv` when the call fails before moving it.
 fn find_degen_param(
+    k: &Kernel,
     surface: &Surface,
     uv: Point2,
     dir: Vec3,
     dir_from_pole: bool,
     singular_dir: SurfParamType,
 ) -> Result<Point2> {
-    match surface.find_degen_param_for_direction(uv, dir, dir_from_pole, singular_dir, 0.0001) {
+    match surface.find_degen_param_for_direction(k, uv, dir, dir_from_pole, singular_dir, 0.0001) {
         Ok(d) => Ok(d.uv),
-        Err(e) if e.is_unported() => Err(e),
+        Err(e) if e.is_unported_or_cancelled() => Err(e),
         Err(_) => Ok(uv),
     }
 }
@@ -319,7 +342,7 @@ fn find_degen_param(
 fn status_of(e: &SolidError) -> i32 {
     match e {
         SolidError::Upstream { code, .. } => *code,
-        SolidError::InvalidInput { .. } => SM_ERR_INVALID_INPUT,
+        SolidError::InvalidInput { .. } | SolidError::PortInvariant { .. } => SM_ERR_INVALID_INPUT,
         _ => SM_ERR,
     }
 }
@@ -364,6 +387,7 @@ impl DropPt {
             // find degenParam value at a singularity that matches the dropCurve UV
             // direction
             self.uv_pd[0] = find_degen_param(
+                k,
                 surface,
                 self.uv_pd[0],
                 self.crv_pd[1],
@@ -374,7 +398,7 @@ impl DropPt {
 
         // Surface pos and Srf U and V Derivs
         let (mut p3d, mut srf_du, mut srf_dv) =
-            surface.evaluate_1st_derivatives(self.uv_pd[0], true, true)?;
+            surface.evaluate_1st_derivatives(k, self.uv_pd[0], true, true)?;
 
         // set m_bFromLeftU and m_bFromLeftV
         let from_left_u = srf_du.dot(self.crv_pd[1]) >= 0.0;
@@ -386,21 +410,23 @@ impl DropPt {
         // reevaluate when on knot boundaries as needed
         if !from_left_u || !from_left_v {
             (p3d, srf_du, srf_dv) =
-                surface.evaluate_1st_derivatives(self.uv_pd[0], from_left_u, from_left_v)?;
+                surface.evaluate_1st_derivatives(k, self.uv_pd[0], from_left_u, from_left_v)?;
             self.pd_3d[0] = p3d;
         }
 
         // SurfaceNormal at DropPoint
         self.srf_normal =
-            surface.evaluate_normal(self.uv_pd[0], side(from_left_u), side(from_left_v))?;
+            surface.evaluate_normal(k, self.uv_pd[0], side(from_left_u), side(from_left_v))?;
         let start_gap = self.crv_pd[0] - self.pd_3d[0];
 
         // UDir tolerance
         let interval_u = uv_domain.u_interval();
         let interval_v = uv_domain.v_interval();
         let zone_tol = zone_tol_3d(k, surface)?;
-        let zone_tol_2d_u = map_to_2d_dir(zone_tol, self.uv_pd[0], Vec2::new(1.0, 0.0), surface)?;
-        let zone_tol_2d_v = map_to_2d_dir(zone_tol, self.uv_pd[0], Vec2::new(0.0, 1.0), surface)?;
+        let zone_tol_2d_u =
+            map_to_2d_dir(k, zone_tol, self.uv_pd[0], Vec2::new(1.0, 0.0), surface)?;
+        let zone_tol_2d_v =
+            map_to_2d_dir(k, zone_tol, self.uv_pd[0], Vec2::new(0.0, 1.0), surface)?;
         let limit_rad = deg_to_rad(30.0);
 
         // Classify DropPoint against UVDomain
@@ -505,6 +531,7 @@ impl DropPt {
             if self.approx_dev < 1000.0 * scaled_tol {
                 // get the surface principle curvatures (status ignored upstream)
                 let (curv1, curv2) = evaluate_principal_curvatures(
+                    k,
                     surface,
                     self.uv_pd[0],
                     from_left_u,
@@ -582,7 +609,9 @@ impl DropPt {
         // the curve tangent
         if self.degen_curve != Some(true) {
             if !self.uv_pd[1].is_zero(EFF_ZERO) {
-                let [_, mut offset_d1] = DropOffset::evaluate_directional_derivs(
+                // (status ignored upstream: a failed evaluation, e.g. the offset at a
+                // pole, leaves `sOffsetPD` at its default `SM_UNDEF_DOUBLE` values)
+                let [_, mut offset_d1] = ignored(DropOffset::evaluate_directional_derivs(
                     offset,
                     k,
                     surface,
@@ -590,7 +619,8 @@ impl DropPt {
                     self.uv_pd[1],
                     from_left_u,
                     from_left_v,
-                )?;
+                ))?
+                .unwrap_or([Point3::UNDEF; 2]);
                 let uv_speed = self.uv_pd[1].length();
                 offset_d1 = uv_speed * offset_d1;
 
@@ -695,6 +725,7 @@ impl DropPt {
 
         // get StartPoint Surf DU, DV, DUU, DVV, DUV values (status ignored upstream)
         let [_, srf_u, srf_v, srf_uv, srf_uu, srf_vv] = surface.evaluate_2nd_derivatives(
+            k,
             start.uv_pd[0],
             start.from_left_u != Some(false),
             start.from_left_v != Some(false),
@@ -726,7 +757,7 @@ impl DropPt {
         end.uv_pd[0] = uv_domain.clamp_point(end.uv_pd[0]);
 
         // get SpanEnd[CrvPt Crv1stDeriv]
-        let crv = curve.evaluate(end.t, 2, false, true)?;
+        let crv = curve.evaluate(k, end.t, 2, false, true)?;
         for (dst, src) in end.crv_pd.iter_mut().zip(crv.iter()) {
             *dst = *src;
         }
@@ -750,7 +781,10 @@ impl DropPt {
             // if iter 2: try again with GlobalPointSolve DropPoint
             if ii == 1 {
                 // temporarily set owner to null to prevent solver from seeing Face edges.
-                let unowned = surface.clone();
+                // (upstream nulls the owner of the surface itself: an exact evaluation
+                // copy, since `Clone` runs the copy constructor's knot fix-up)
+                let mut unowned = surface.clone_for_evaluation()?;
+                let _ = unowned.set_owner(None);
 
                 // drop sCrvSpanEndPt to surface with GlobalPointSolve
                 let solutions: SolutionArray<NoObject> = unowned.global_point_solve(
@@ -805,6 +839,7 @@ impl DropPt {
             };
             if singular {
                 end.uv_pd[0] = find_degen_param(
+                    k,
                     surface,
                     end.uv_pd[0],
                     end.crv_pd[1],
@@ -815,7 +850,7 @@ impl DropPt {
 
             // Correct an ambiguous seam-side choice only within the 3D tolerance.
             // A larger correction rejects this candidate without moving the endpoint.
-            match start.check_seam_jump(surface, srf_closure, approx_tol_3d, end) {
+            match start.check_seam_jump(k, surface, srf_closure, approx_tol_3d, end) {
                 Ok(()) => {}
                 Err(SolidError::Upstream {
                     code: SM_ERR_OUTSIDE_OF_DOMAIN,
@@ -836,7 +871,7 @@ impl DropPt {
                 false,
             ) {
                 Ok(code) => code,
-                Err(e) if e.is_unported() => return Err(e),
+                Err(e) if e.is_unported_or_cancelled() => return Err(e),
                 Err(e) => status_of(&e),
             };
 

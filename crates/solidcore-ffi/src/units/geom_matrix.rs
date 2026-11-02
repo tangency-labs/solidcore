@@ -66,6 +66,22 @@ pub enum Op {
     /// `Compute3x3EigenVectors`: values = 3 eigenvalues, 3 vectors (xyz each),
     /// matrix after. `SM_ERR` for a non-symmetric matrix (upstream output undefined).
     Eigen3 = 10,
+    /// `SVDecompose(W, V)`: values = `W` (`cols`), `V` (`cols x cols`, row-major),
+    /// matrix after (`U`). Every element must be zero or of magnitude in
+    /// [`SVD_MIN_ABS`, `SVD_MAX_ABS`]: a NaN or infinite norm makes upstream's
+    /// splitting test read `rW[-1]`.
+    Svd = 11,
+}
+
+/// Smallest non-zero element magnitude [`Op::Svd`] accepts.
+pub const SVD_MIN_ABS: f64 = 1e-100;
+/// Largest element magnitude [`Op::Svd`] accepts.
+pub const SVD_MAX_ABS: f64 = 1e100;
+
+/// True when `x` is zero or a finite magnitude in [`SVD_MIN_ABS`, `SVD_MAX_ABS`].
+#[must_use]
+pub fn svd_element_ok(x: f64) -> bool {
+    x == 0.0 || (SVD_MIN_ABS..=SVD_MAX_ABS).contains(&x.abs())
 }
 
 /// Output of [`op`].
@@ -106,6 +122,7 @@ pub fn op(
         Op::Resize => (1..=MAX_DIM as i64).contains(&i) && (1..=MAX_DIM as i64).contains(&j),
         Op::SolveLu => rows == cols && v.len() == rows,
         Op::Eigen3 => rows == 3 && cols == 3,
+        Op::Svd => m.iter().all(|&x| svd_element_ok(x)),
         _ => true,
     };
     if !ok {
@@ -114,7 +131,16 @@ pub fn op(
             v.len()
         )));
     }
-    let max_out = rows.max(i.unsigned_abs() as usize) * cols.max(j.unsigned_abs() as usize);
+    // `i`, `j` only size the output for `Resize`, where they were checked above
+    // (other ops leave them unchecked, so they must not size an allocation).
+    let (out_rows, out_cols) = match op {
+        Op::Resize => (
+            rows.max(i.unsigned_abs() as usize),
+            cols.max(j.unsigned_abs() as usize),
+        ),
+        _ => (rows, cols),
+    };
+    let max_out = out_rows * out_cols;
     let mut out = vec![0.0f64; 3 * max_out + rows + 8];
     let mut ints = vec![0i64; rows + 8];
     let (mut out_len, mut ints_len, mut status) = (0i64, 0i64, 0i32);

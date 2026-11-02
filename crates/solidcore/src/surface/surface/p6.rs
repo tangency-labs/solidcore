@@ -27,15 +27,15 @@
 //!   intersection", `SimpleCoincidenceChecker` `None` for "no coincidence" (the
 //!   solution is only written upstream when one is found), and
 //!   `ClassifyIntersectingRangeSolution` the degenerate flag with the tangent point it
-//!   writes (`None` when `rSolPoint` is left unmodified). `SmContext` arguments only
-//!   choose where upstream allocates and are dropped. `ClassifyIntersectingRangeSolution`'s
+//!   writes (`None` when `rSolPoint` is left unmodified). Allocation-only `SmContext` arguments are omitted; evaluation paths retain
+//!   the caller's Kernel, including boundary iso curves. `ClassifyIntersectingRangeSolution`'s
 //!   `dTol3d` and `sm_SCLocalSolve`'s `rdBestAnswerSoFarSq` are `NotUsed` upstream and
 //!   dropped.
 //! - **`sm_SCLocalSolve`** takes the data it reads from its tree nodes and Bezier patch
 //!   instead of the nodes ([`ScLocalSolveNodes`]): the original surface of the surface
 //!   node's cache (`sm_GetSurfaceToEvaluate`), the patch surface (`mBA_pSurface`) and
 //!   the nodes' boxes. Its boundary iso curves (`SmIsoCurve` over the evaluated
-//!   surface) exist for B-spline surfaces only.
+//!   surface) retain the concrete Surface kind.
 //! - **`SmSSGlobalSolver::IdenticalSolutions`** is the inherent
 //!   [`SsGlobalSolver::solutions_identical`] (the trait method of
 //!   [`GlobalSolve`](crate::geom::global_solver::GlobalSolve) calls it); a missing
@@ -45,8 +45,8 @@
 //!   `SmVector2d`/`SmVector3d` outputs it clears first, [`Vec3::UNDEF`] for default
 //!   constructed points); [`SolidError::Unported`] is still propagated.
 //! - **Iso curves.** `CreateIsoParametricCurve` is the B-spline, plane and surface of
-//!   revolution override (units `nurbs.b_spline_surface_p2`, `surface.plane_p1`,
-//!   `surface.surf_of_revolution_p1`); the base body (other kinds) belongs to
+//!   revolution and cone overrides (units `nurbs.b_spline_surface_p2`, `surface.plane_p1`,
+//!   `surface.surf_of_revolution_p1`, `surface.cone_p1`); the base body (other kinds) belongs to
 //!   `surface.surface_p5`. The plane's iso curve is its `SmLine`, the revolution's sweep
 //!   iso curve its `SmCircle`, so their own `IsDegenerate`, `GetKnots` and
 //!   `CalculateContinuities` overrides run.
@@ -56,15 +56,18 @@
 //!   `SmCSIntersectENFO` call `surface.surface_p4`. Their missing downstream callees
 //!   propagate [`SolidError::Unported`]. Callers retain the kernel; [`SsGlobalSolver`]
 //!   holds it. Virtual plane overrides preserve its nonsingular, seam-free geometry.
-//! - **Bounds.** `GetSampleValues` grows its outputs as samples are computed instead
-//!   of sizing them from `m_lNumSamples` first (an input-declared count). No function
-//!   here recurses.
+//! - **Partial samples and bounds.** The status-aware boundary sampler retains
+//!   written values and pads unwritten slots with zeros, matching `SmTArray::SetSize`
+//!   (`calloc`/`memset`, not the vector default constructor). This lets the blend
+//!   builder honor upstream's ignored sampling status without inventing values.
+//!   Counts are checked and capped at [`MAX_BOUNDARY_SAMPLES`] before any allocation;
+//!   outputs otherwise grow as samples are computed. No function here recurses.
 
 use crate::curve::curve::p3::PointSolveOptions;
 use crate::curve::curve::Curve;
 use crate::curve::iso_curve::IsoCurve;
 use crate::curve::line::Line;
-use crate::error::{ignored, Result, SolidError};
+use crate::error::{ignored, ignored_or_pass_on, passed_on, Result, SolidError};
 use crate::geom::assert_array::ObjectKey;
 use crate::geom::axis2_placement::Axis2Placement;
 use crate::geom::extent1d::{Extent1d, ExtentNd};
@@ -97,6 +100,10 @@ use super::{Surface, SurfaceKind};
 
 const OP_CONT: &str = "surface::surface::p6::Surface::calculate_continuities";
 const OP_SAMPLE: &str = "surface::surface::p6::DerivSurfDefinition::sample_values";
+/// Maximum boundary-derivative sample count (plus one endpoint), bounding the
+/// zero-filled partial arrays retained after a sampling failure. Upstream fixtures
+/// use at most hundreds of samples; this allows 65,536 intervals.
+pub const MAX_BOUNDARY_SAMPLES: u64 = 65_536;
 const OP_SS: &str = "surface::surface::p6::SsGlobalSolver::solutions_identical";
 const OP_CS_INTERSECT: &str = "surface::surface::p6::cs_intersect_local_solve";
 const OP_SC: &str = "surface::surface::p6::sc_local_solve";
@@ -217,8 +224,25 @@ impl Surface {
         k: &Kernel,
         surf_param: SurfParamType,
     ) -> Result<(ContinuityType, Vec<ContinuityType>)> {
+        self.calculate_continuities_reached(k, surf_param, &mut None)
+    }
+
+    /// [`Surface::calculate_continuities`], also storing in `reached` the minimum
+    /// continuity output (`reMinContinuityInSurfaceKnot`) as it stands whenever upstream
+    /// writes it, so that a caller ignoring a failed status reads what upstream leaves
+    /// there (`None`: never written, upstream's uninitialised value).
+    ///
+    /// # Errors
+    ///
+    /// Those of [`Surface::calculate_continuities`].
+    pub(crate) fn calculate_continuities_reached(
+        &self,
+        k: &Kernel,
+        surf_param: SurfParamType,
+        reached: &mut Option<ContinuityType>,
+    ) -> Result<(ContinuityType, Vec<ContinuityType>)> {
         // Get unique knot values for eSurfParam direction
-        let (other_knots, _) = self.knots(surf_param, None)?;
+        let (other_knots, _) = self.knots_with_nurb(k, surf_param, None)?;
 
         // check state
         if other_knots.len() <= 1 {
@@ -228,6 +252,7 @@ impl Surface {
         // init output continuities to [Discontinuous, G1, ... G1, Discontinuous]
         let mut conts_at_knots = vec![ContinuityType::G1; other_knots.len()];
         let mut min_continuity = ContinuityType::G1;
+        *reached = Some(min_continuity);
         if let Some(c) = conts_at_knots.first_mut() {
             *c = ContinuityType::Discontinuous;
         }
@@ -242,7 +267,7 @@ impl Surface {
         } else {
             SurfParamType::U
         };
-        let (mut knots, _) = self.knots(get_sp, None)?;
+        let (mut knots, _) = self.knots_with_nurb(k, get_sp, None)?;
 
         // single span surfaces get checked in the middle in case the iso curves at both
         // end knots are degenerate.
@@ -270,10 +295,10 @@ impl Surface {
             // make temp isoParameter curve for this knot sample value
             let mut iso = create_iso_parametric_curve(k, self, get_sp, parameter, None)?.0;
             // (status ignored)
-            let iso_knots = iso_knots_of(&iso)?;
+            let iso_knots = iso_knots_of(k, &iso)?;
 
             // When curve is degenerate - try another knot sample value
-            if iso.is_degenerate(EFF_ZERO, None)? {
+            if iso.is_degenerate(k, EFF_ZERO, None)? {
                 // If we have not been able to compute a continuity and we are past the
                 // first knot.  Then take a middle value between the knots and try it.
                 if ii > 0 && first_curve {
@@ -281,13 +306,13 @@ impl Surface {
                     iso = create_iso_parametric_curve(k, self, get_sp, parameter, None)?.0;
                     // (upstream keeps the knots of the replaced curve)
                 }
-                if iso.is_degenerate(EFF_ZERO, None)? {
+                if iso.is_degenerate(k, EFF_ZERO, None)? {
                     continue;
                 }
             }
 
             // calculate the iso-curve continuities
-            let (_, mut tmp_conts) = iso.calculate_continuities(CONTINUITY_ANGLE)?;
+            let (_, mut tmp_conts) = iso.calculate_continuities(k, CONTINUITY_ANGLE)?;
 
             // Check the herringbone case: an iso-curve can change direction within the
             // surface, without causing a crease in the surface. The true check is the
@@ -310,8 +335,8 @@ impl Surface {
                     } else {
                         Point2::new(parameter, iso_knot)
                     };
-                    let norm1 = ignored(self.evaluate_normal(uv, Side::Right, Side::Right))?;
-                    let norm2 = ignored(self.evaluate_normal(uv, Side::Left, Side::Left))?;
+                    let norm1 = ignored(self.evaluate_normal(k, uv, Side::Right, Side::Right))?;
+                    let norm2 = ignored(self.evaluate_normal(k, uv, Side::Left, Side::Left))?;
                     if let (Some(norm1), Some(norm2)) = (norm1, norm2) {
                         let dot = norm1.dot(norm2);
                         if dot > 0.9998476951563913 {
@@ -356,10 +381,12 @@ impl Surface {
                     }
                 }
                 min_continuity = tmp_min;
+                *reached = Some(min_continuity);
             } else {
                 // save minimum continuity values
                 if code(tmp_min) < code(min_continuity) {
                     min_continuity = tmp_min;
+                    *reached = Some(min_continuity);
                 }
 
                 // for every knot
@@ -459,7 +486,7 @@ impl Surface {
                 create_iso_parametric_curve(k, self, param, iso, Some(&surf_domain))?;
 
             // cull degenerate curves when asked
-            if remove_degenerate_curves && curve.is_degenerate(EFF_ZERO, None)? {
+            if remove_degenerate_curves && curve.is_degenerate(k, EFF_ZERO, None)? {
                 continue;
             }
 
@@ -490,6 +517,7 @@ impl Surface {
     /// Those of the evaluations, the Newton solve and the closest point solve.
     pub fn local_curve_intersect(
         &self,
+        k: &Kernel,
         uv_domain: &Extent2d,
         curve: &Curve,
         interval: &Extent1d,
@@ -508,6 +536,7 @@ impl Surface {
 
         // Solve it
         let solution = cs_intersect_local_solve(
+            k,
             self,
             curve,
             EFF_ZERO * EFF_ZERO,
@@ -521,18 +550,19 @@ impl Surface {
         };
 
         // get 3D solution Points and gap vector (nonZeroTangent values)
-        let pv1 = curve.evaluate(t, 1, true, true)?;
+        let pv1 = curve.evaluate(k, t, 1, true, true)?;
         let pv1_0 = vec_at(&pv1, 0)?;
         let pv1_1 = vec_at(&pv1, 1)?;
-        let p2 = self.evaluate_point(uv)?;
+        let p2 = self.evaluate_point(k, uv)?;
         let mut dist = pv1_0.distance(p2);
 
         // When curve is near Surface tangentPlane (5 deg) -
-        let normal = self.evaluate_normal(uv, Side::Left, Side::Left)?;
+        let normal = self.evaluate_normal(k, uv, Side::Left, Side::Left)?;
         let scaled_zero = EFF_ZERO * (1.0 + p2.max_dimension());
         if normal.is_perpendicular_to(pv1_1, 5.0) {
             // Find Curve/Surface closest point pair
             let found = self.local_curve_solve(
+                k,
                 uv_domain,
                 curve,
                 interval,
@@ -557,12 +587,11 @@ impl Surface {
         // If we're at a singularity, any value of the degenerate parameter will be a
         // solution: return a parameter value on one end of the degenerate domain,
         // whichever end is closer to the guess point.
-        let (singular, sing_dir) =
-            is_singularity(&Kernel::default(), self, uv, distance_tolerance)?;
+        let (singular, sing_dir) = is_singularity(k, self, uv, distance_tolerance)?;
         if singular {
             // If one end of the subdomain coincides with an end of the whole domain,
             // use that.
-            let all_domain = self.natural_uv_domain();
+            let all_domain = self.natural_uv_domain_with_nurb(k)?;
 
             if sing_dir == SurfParamType::U || sing_dir == SurfParamType::Both {
                 uv.x = singular_end(&uv_domain.u_interval(), &all_domain.u_interval(), uv.x);
@@ -609,19 +638,81 @@ impl Surface {
         partial_coincidence_ok: bool,
         objects: [Option<O>; 2],
     ) -> Result<Option<Solution<O>>> {
-        // First try boxing (statuses ignored).
-        let this_box =
-            ignored(self.calculate_bounding_box(k, uv_domain, [true, false, false], true))?
-                .and_then(|b| b.normal_box)
-                .unwrap_or_default();
+        self.simple_coincidence_checker_from(
+            k,
+            uv_domain,
+            curve,
+            interval,
+            tol_3d,
+            partial_coincidence_ok,
+            objects,
+            None,
+            None,
+        )
+    }
+
+    /// [`Surface::simple_coincidence_checker`] with lazy cache preparation for
+    /// its initial global point solve. All boxing and sample tests are shared.
+    ///
+    /// # Errors
+    /// Those of the coincidence check and prepared trimmed point classification.
+    #[allow(clippy::too_many_arguments)]
+    pub fn simple_coincidence_checker_with_context<O: SolutionObject>(
+        &self,
+        k: &Kernel,
+        uv_domain: &Extent2d,
+        curve: &Curve,
+        interval: &Extent1d,
+        tol_3d: f64,
+        partial_coincidence_ok: bool,
+        objects: [Option<O>; 2],
+        cache: Option<&crate::surface::surface_cache::SurfaceCache<O>>,
+        context: &mut dyn super::p1::SurfaceSolveContext<O>,
+    ) -> Result<Option<Solution<O>>> {
+        self.simple_coincidence_checker_from(
+            k,
+            uv_domain,
+            curve,
+            interval,
+            tol_3d,
+            partial_coincidence_ok,
+            objects,
+            cache,
+            Some(context),
+        )
+    }
+
+    #[allow(clippy::too_many_arguments, clippy::too_many_lines)]
+    fn simple_coincidence_checker_from<O: SolutionObject>(
+        &self,
+        k: &Kernel,
+        uv_domain: &Extent2d,
+        curve: &Curve,
+        interval: &Extent1d,
+        tol_3d: f64,
+        partial_coincidence_ok: bool,
+        objects: [Option<O>; 2],
+        cache: Option<&crate::surface::surface_cache::SurfaceCache<O>>,
+        context: Option<&mut dyn super::p1::SurfaceSolveContext<O>>,
+    ) -> Result<Option<Solution<O>>> {
+        // First try boxing (statuses ignored; passed on with the opt-in fix, WR-663,
+        // tangency-labs/smlib 21dcf69).
+        let pass = k.fixes.query_statuses_pass_on;
+        let this_box = ignored_or_pass_on(
+            self.calculate_bounding_box(k, uv_domain, [true, false, false], true),
+            pass,
+        )?
+        .and_then(|b| b.normal_box)
+        .unwrap_or_default();
         let req = CurveBoxRequest {
             normal: true,
             pseudo: false,
             polar: false,
         };
-        let curv_box = ignored(curve.calculate_bounding_box(k, interval, req, true))?
-            .and_then(|b| b.normal)
-            .unwrap_or_default();
+        let curv_box =
+            ignored_or_pass_on(curve.calculate_bounding_box(k, interval, req, true), pass)?
+                .and_then(|b| b.normal)
+                .unwrap_or_default();
         if this_box.are_disjoint(&curv_box, tol_3d) {
             return Ok(None);
         }
@@ -636,10 +727,28 @@ impl Surface {
         // First drop the Curve MidPoint to Surface. Use a Global point solve, because
         // we have no guess uv.
         let mid_param = interval.evaluate(0.5);
-        let mid_pt = curve.evaluate(mid_param, 1, true, true)?;
+        let mid_pt = curve.evaluate(k, mid_param, 1, true, true)?;
         let mid_pt0 = vec_at(&mid_pt, 0)?;
         let mut mid_pt1 = vec_at(&mid_pt, 1)?;
-        let solutions = global_point_solve_single(k, self, uv_domain, mid_pt0, tol_3d)?;
+        let solutions = if let Some(context) = context {
+            let mut found = SolutionArray::<O>::new();
+            self.global_point_solve_into_with_context(
+                k,
+                objects[1],
+                cache,
+                context,
+                uv_domain,
+                SolverOperation::Minimize,
+                mid_pt0,
+                tol_3d,
+                None,
+                SolutionRequested::Single,
+                &mut found,
+            )?;
+            found.as_slice().iter().map(|s| s.start).collect()
+        } else {
+            global_point_solve_single(k, self, uv_domain, mid_pt0, tol_3d)?
+        };
 
         // If GlobalSolve, using Minimize, couldn't find any solutions, we're not likely
         // to have much success in finding coincidence.
@@ -661,7 +770,7 @@ impl Surface {
             if mag > EFF_ZERO {
                 mid_pt1 /= mag;
             }
-            norm = normal_ignored(self, mid_uv, norm)?;
+            norm = normal_ignored(k, self, mid_uv, norm)?;
             let dot = mid_pt1.dot(norm);
 
             found = dot.abs() < 0.017; // about 1 degree
@@ -703,7 +812,7 @@ impl Surface {
 
             // 1. Drop current StartPoint to Surface and check for coincidence
             let st_t = interval.evaluate(st_frac);
-            let st_pnt = curve.evaluate(st_t, 1, true, true)?;
+            let st_pnt = curve.evaluate(k, st_t, 1, true, true)?;
             let st_pnt0 = vec_at(&st_pnt, 0)?;
             let mut st_pnt1 = vec_at(&st_pnt, 1)?;
             let (mut found_start, sol) = local_point_solve::<O>(
@@ -727,7 +836,7 @@ impl Surface {
                     st_pnt1 /= mag;
                 }
                 let uv = Point2::new(sol.start.param(0)?, sol.start.param(1)?);
-                norm = normal_ignored(self, uv, norm)?;
+                norm = normal_ignored(k, self, uv, norm)?;
                 let dot = st_pnt1.dot(norm);
 
                 found_start = dot.abs() < 0.017; // about 1 degree
@@ -758,7 +867,7 @@ impl Surface {
 
             // 2. Drop current EndPoint to Surface and check for coincidence
             let en_t = interval.evaluate(en_frac);
-            let en_pnt = curve.evaluate(en_t, 1, false, true)?;
+            let en_pnt = curve.evaluate(k, en_t, 1, false, true)?;
             let en_pnt0 = vec_at(&en_pnt, 0)?;
             let mut en_pnt1 = vec_at(&en_pnt, 1)?;
             let (mut found_end, sol) = local_point_solve::<O>(
@@ -782,7 +891,7 @@ impl Surface {
                     en_pnt1 /= mag;
                 }
                 let uv = Point2::new(sol.start.param(0)?, sol.start.param(1)?);
-                norm = normal_ignored(self, uv, norm)?;
+                norm = normal_ignored(k, self, uv, norm)?;
                 let dot = en_pnt1.dot(norm);
 
                 found_end = dot.abs() < 0.017; // about 1 degree
@@ -890,7 +999,7 @@ impl Surface {
 
         // locals to run from best solution end to other end
         let ivl = curve.natural_interval();
-        let reg = self.natural_uv_domain();
+        let reg = self.natural_uv_domain_with_nurb(k)?;
         let (start_dev, start_par, delta_par) = if sol.start.solution_value < sol.end.solution_value
         {
             let s = sol.start.parameters;
@@ -921,8 +1030,8 @@ impl Surface {
         let [dp0, dp1, dp2] = delta_par;
 
         // get Solution segment start points and gapVector (statuses ignored)
-        let point0 = curve_point_ignored(curve, sp0, Vec3::UNDEF)?;
-        let point1 = point_ignored(self, Point2::new(sp1, sp2), Vec3::UNDEF)?;
+        let point0 = curve_point_ignored(k, curve, sp0, Vec3::UNDEF)?;
+        let point1 = point_ignored(k, self, Point2::new(sp1, sp2), Vec3::UNDEF)?;
         let xsect_gap = point1 - point0;
 
         // scale zero to current intersection point location
@@ -965,17 +1074,25 @@ impl Surface {
 
             // get Curve sample point (status ignored)
             let prev = slot(&curve_point, tgt)?;
-            set_slot(&mut curve_point, tgt, curve_point_ignored(curve, t1, prev)?)?;
+            set_slot(
+                &mut curve_point,
+                tgt,
+                curve_point_ignored(k, curve, t1, prev)?,
+            )?;
 
-            // Find the surface point nearest the curve point (status ignored)
-            let (found, solution) = ignored(local_point_solve::<O>(
-                k,
-                self,
-                &reg,
-                SolverOperation::Normalize,
-                slot(&curve_point, tgt)?,
-                Point2::new(t2, t3),
-            ))?
+            // Find the surface point nearest the curve point (status ignored; passed on
+            // with the opt-in fix, WR-663, tangency-labs/smlib 21dcf69)
+            let (found, solution) = ignored_or_pass_on(
+                local_point_solve::<O>(
+                    k,
+                    self,
+                    &reg,
+                    SolverOperation::Normalize,
+                    slot(&curve_point, tgt)?,
+                    Point2::new(t2, t3),
+                ),
+                k.fixes.query_statuses_pass_on,
+            )?
             .unwrap_or_default();
 
             if found {
@@ -985,7 +1102,7 @@ impl Surface {
                 set_slot(
                     &mut surface_point,
                     tgt,
-                    point_ignored(self, drop_point, prev)?,
+                    point_ignored(k, self, drop_point, prev)?,
                 )?;
 
                 // get the Curve/Surface gapVector: subtract the StartPoint gap from
@@ -1094,6 +1211,7 @@ impl DerivSurfDefinition<'_> {
     /// tangent, a curve point that does not drop, a degenerate surface normal or
     /// tangent, a curve perpendicular to the surface, a reference curve touching the
     /// boundary or a failed UV direction; those of the evaluations;
+    /// `InvalidInput` above [`MAX_BOUNDARY_SAMPLES`] intervals;
     /// [`SolidError::Unported`]: `SmSurface::DropPoint` (`surface.surface_p5`).
     pub fn sample_values(
         &self,
@@ -1103,246 +1221,305 @@ impl DerivSurfDefinition<'_> {
         boundary_interval: &Extent1d,
         options: SampleOptions,
     ) -> Result<DerivSampleValues> {
-        type T = TangencyType;
-        let SampleOptions {
-            off_to_the_right,
-            start_at_boundary,
-            want_higher: [want_2nd, want_3rd],
-        } = options;
-        let tt = self.tangency_type;
+        let (values, status) =
+            self.sample_values_with_status(k, surface, boundary_curve, boundary_interval, options)?;
+        status?;
+        Ok(values)
+    }
 
-        // no work - Tangency types for function SmEdgeuse::CreateDerivativeSurface
-        if !(tt == T::NoTangency
-            || tt == T::TanToEdges
-            || tt == T::MatchNeighbors
-            || tt == T::DirToReferenceCurve)
-        {
-            return Err(SolidError::sm_err(OP_SAMPLE));
+    /// The same sampler with its native partial outputs and status kept separately.
+    /// The outer error is a count-safety failure; an ordinary sample
+    /// failure is the inner status. `CreateBlendSurface` ignores that status upstream.
+    pub(super) fn sample_values_with_status(
+        &self,
+        k: &Kernel,
+        surface: &Surface,
+        boundary_curve: &Curve,
+        boundary_interval: &Extent1d,
+        options: SampleOptions,
+    ) -> Result<(DerivSampleValues, Result<()>)> {
+        if self.num_samples > MAX_BOUNDARY_SAMPLES {
+            return Err(SolidError::invalid_input(
+                OP_SAMPLE,
+                "too many boundary samples",
+            ));
         }
+        let count = usize::try_from(self.num_samples)
+            .ok()
+            .and_then(|n| n.checked_add(1))
+            .ok_or_else(|| {
+                SolidError::invalid_input(OP_SAMPLE, "boundary sample count overflow")
+            })?;
+        let mut out = DerivSampleValues::default();
+        let mut initialized = false;
+        let status = (|| {
+            type T = TangencyType;
+            let SampleOptions {
+                off_to_the_right,
+                start_at_boundary,
+                want_higher: [want_2nd, want_3rd],
+            } = options;
+            let tt = self.tangency_type;
 
-        // check state
-        if !self.assert_valid(None, ObjectKey(0))? {
-            return Err(SolidError::sm_err(OP_SAMPLE));
-        }
+            // no work - Tangency types for function SmEdgeuse::CreateDerivativeSurface
+            if !(tt == T::NoTangency
+                || tt == T::TanToEdges
+                || tt == T::MatchNeighbors
+                || tt == T::DirToReferenceCurve)
+            {
+                return Err(SolidError::sm_err(OP_SAMPLE));
+            }
 
-        // the outputs grow sample by sample (upstream sizes them first)
-        let mut out = DerivSampleValues {
-            second_derivs: want_2nd.then(Vec::new),
-            third_derivs: want_3rd.then(Vec::new),
-            ..DerivSampleValues::default()
-        };
+            // check state
+            if !self.assert_valid(None, ObjectKey(0))? {
+                return Err(SolidError::sm_err(OP_SAMPLE));
+            }
 
-        // locals
-        let mut uv_guess = Vec2::UNDEF;
-        let mut reference_gap_len = 0.0;
-
-        // get number of cross-derivatives to compute
-        let num_derivatives: usize = if want_3rd {
-            3
-        } else if want_2nd {
-            2
-        } else {
-            1
-        };
-
-        // for every sample point (+ 1 for the ends)
-        let num_samples = self.num_samples;
-        let mut ii: u64 = 0;
-        while ii <= num_samples {
-            let param = if ii < num_samples {
-                ii as f64 / num_samples as f64
-            } else {
-                1.0
+            // the outputs grow sample by sample (upstream sizes them first)
+            out = DerivSampleValues {
+                second_derivs: want_2nd.then(Vec::new),
+                third_derivs: want_3rd.then(Vec::new),
+                ..DerivSampleValues::default()
             };
-            let crv_param = boundary_interval.evaluate(param);
-            out.params.push(crv_param);
+            initialized = true;
 
-            // BoundaryCurve pos and tan (exact tangent values)
-            let crv_pv = boundary_curve.evaluate(crv_param, 1, true, false)?;
-            let crv_pos = vec_at(&crv_pv, 0)?;
-            let mut crv_tan = vec_at(&crv_pv, 1)?;
+            // locals
+            let mut uv_guess = Vec2::UNDEF;
+            let mut reference_gap_len = 0.0;
 
-            // insist on non-degenerate curves
-            let scaled_zero = EFF_ZERO * (1.0 + boundary_interval.length());
-            if crv_tan.length_squared() <= scaled_zero {
-                return Err(SolidError::sm_err(OP_SAMPLE));
-            }
-
-            // project CurvePoint to Surface
-            let guess = (ii != 0).then_some(uv_guess);
-            let (success, surface_uv0) =
-                drop_point(k, surface, crv_pos, &surface.natural_uv_domain(), guess)?;
-            if !success {
-                return Err(SolidError::sm_err(OP_SAMPLE));
-            }
-            uv_guess = surface_uv0;
-
-            // Surface Normal
-            let mut normal = surface.evaluate_normal(surface_uv0, Side::Left, Side::Left)?;
-            if normal.length_squared() <= EFF_ZERO {
-                return Err(SolidError::sm_err(OP_SAMPLE));
-            }
-            normal = normal.unitize_or_z();
-
-            // Surface Boundary Binormal
-            let mut binormal = if off_to_the_right {
-                crv_tan.cross(normal)
+            // get number of cross-derivatives to compute
+            let num_derivatives: usize = if want_3rd {
+                3
+            } else if want_2nd {
+                2
             } else {
-                normal.cross(crv_tan)
+                1
             };
-            let bi_length = binormal.length();
-            let scaled_zero = EFF_ZERO * (1.0 + crv_tan.max_dimension());
-            if bi_length <= scaled_zero {
-                return Err(SolidError::sm_err(OP_SAMPLE));
-            }
-            binormal /= bi_length;
 
-            // switch on the tangency type to pick the directional derivative direction
-            let surface_uv1 = match tt {
-                T::NoTangency => {
-                    // 2d dir = projection of 3d binormal into surface UV space (status
-                    // ignored)
-                    let dir = param_direction_ignored(surface, surface_uv0, binormal)?;
-                    dir.unitize().unwrap_or(dir)
+            // for every sample point (+ 1 for the ends)
+            let num_samples = self.num_samples;
+            let mut ii: u64 = 0;
+            while ii <= num_samples {
+                let param = if ii < num_samples {
+                    ii as f64 / num_samples as f64
+                } else {
+                    1.0
+                };
+                let crv_param = boundary_interval.evaluate(param);
+                out.params.push(crv_param);
+
+                // BoundaryCurve pos and tan (exact tangent values)
+                let crv_pv = boundary_curve.evaluate(k, crv_param, 1, true, false)?;
+                let crv_pos = vec_at(&crv_pv, 0)?;
+                let mut crv_tan = vec_at(&crv_pv, 1)?;
+
+                // insist on non-degenerate curves
+                let scaled_zero = EFF_ZERO * (1.0 + boundary_interval.length());
+                if crv_tan.length_squared() <= scaled_zero {
+                    return Err(SolidError::sm_err(OP_SAMPLE));
                 }
-                T::TanToEdges | T::MatchNeighbors => {
-                    // dir = linear interp between the start and end angles
-                    if off_to_the_right {
-                        binormal = -binormal;
-                    }
 
-                    // Project BoundaryBinormal to SurfaceUV
-                    let uv_binormal = surface
-                        .compute_param_direction(surface_uv0, binormal)
-                        .map_err(|e| {
-                            if e.is_unported() {
-                                e
-                            } else {
-                                SolidError::sm_err(OP_SAMPLE)
+                // project CurvePoint to Surface
+                let guess = (ii != 0).then_some(uv_guess);
+                let (success, surface_uv0) = drop_point(
+                    k,
+                    surface,
+                    crv_pos,
+                    &surface.natural_uv_domain_with_nurb(k)?,
+                    guess,
+                )?;
+                if !success {
+                    return Err(SolidError::sm_err(OP_SAMPLE));
+                }
+                uv_guess = surface_uv0;
+
+                // Surface Normal
+                let mut normal = surface.evaluate_normal(k, surface_uv0, Side::Left, Side::Left)?;
+                if normal.length_squared() <= EFF_ZERO {
+                    return Err(SolidError::sm_err(OP_SAMPLE));
+                }
+                normal = normal.unitize_or_z();
+
+                // Surface Boundary Binormal
+                let mut binormal = if off_to_the_right {
+                    crv_tan.cross(normal)
+                } else {
+                    normal.cross(crv_tan)
+                };
+                let bi_length = binormal.length();
+                let scaled_zero = EFF_ZERO * (1.0 + crv_tan.max_dimension());
+                if bi_length <= scaled_zero {
+                    return Err(SolidError::sm_err(OP_SAMPLE));
+                }
+                binormal /= bi_length;
+
+                // switch on the tangency type to pick the directional derivative direction
+                let surface_uv1 = match tt {
+                    T::NoTangency => {
+                        // 2d dir = projection of 3d binormal into surface UV space (status
+                        // ignored)
+                        let dir = param_direction_ignored(k, surface, surface_uv0, binormal)?;
+                        unitize_2d_ignored(k, dir)?
+                    }
+                    T::TanToEdges | T::MatchNeighbors => {
+                        // dir = linear interp between the start and end angles
+                        if off_to_the_right {
+                            binormal = -binormal;
+                        }
+
+                        // Project BoundaryBinormal to SurfaceUV
+                        let uv_binormal = surface
+                            .compute_param_direction(k, surface_uv0, binormal)
+                            .map_err(|e| {
+                                if e.is_unported_or_cancelled() {
+                                    e
+                                } else {
+                                    SolidError::sm_err(OP_SAMPLE)
+                                }
+                            })?;
+                        let uv_binormal = unitize_2d_ignored(k, uv_binormal)?;
+
+                        // linearly interp the dir rotation angle
+                        let ang_rad = deg2rad(
+                            (1.0 - param) * self.start_deriv_dir_angle_deg
+                                + param * self.end_deriv_dir_angle_deg,
+                        );
+
+                        // set directional derivative direction
+                        uv_binormal.rotate(ang_rad)
+                    }
+                    T::DirToReferenceCurve => {
+                        // reference point
+                        let reference = self
+                            .tangent_reference
+                            .ok_or_else(|| SolidError::null_pointer(OP_SAMPLE))?;
+                        let mut reference_pnt = reference.evaluate_point(k, crv_param)?;
+                        let mut reference_gap = reference_pnt - crv_pos;
+                        reference_gap_len = reference_gap.length();
+                        let scaled_zero = EFF_ZERO * (1.0 + reference_pnt.max_dimension());
+                        if reference_gap_len <= scaled_zero {
+                            return Err(SolidError::sm_err(OP_SAMPLE));
+                        }
+
+                        // Positive Dist = reference gap in same direction as 1st cross-deriv
+                        let dist = reference_gap.dot(binormal);
+
+                        if start_at_boundary {
+                            // reference pnt behind the curve: mirror it about the plane
+                            // perpendicular to the binormal
+                            if dist < 0.0 {
+                                reference_pnt += binormal * (2.0 * -dist);
                             }
-                        })?;
-                    let uv_binormal = uv_binormal.unitize().unwrap_or(uv_binormal);
-
-                    // linearly interp the dir rotation angle
-                    let ang_rad = deg2rad(
-                        (1.0 - param) * self.start_deriv_dir_angle_deg
-                            + param * self.end_deriv_dir_angle_deg,
-                    );
-
-                    // set directional derivative direction
-                    uv_binormal.rotate(ang_rad)
-                }
-                T::DirToReferenceCurve => {
-                    // reference point
-                    let reference = self
-                        .tangent_reference
-                        .ok_or_else(|| SolidError::null_pointer(OP_SAMPLE))?;
-                    let mut reference_pnt = reference.evaluate_point(crv_param)?;
-                    let mut reference_gap = reference_pnt - crv_pos;
-                    reference_gap_len = reference_gap.length();
-                    let scaled_zero = EFF_ZERO * (1.0 + reference_pnt.max_dimension());
-                    if reference_gap_len <= scaled_zero {
-                        return Err(SolidError::sm_err(OP_SAMPLE));
-                    }
-
-                    // Positive Dist = reference gap in same direction as 1st cross-deriv
-                    let dist = reference_gap.dot(binormal);
-
-                    if start_at_boundary {
-                        // reference pnt behind the curve: mirror it about the plane
-                        // perpendicular to the binormal
-                        if dist < 0.0 {
-                            reference_pnt += binormal * (2.0 * -dist);
+                            reference_gap = reference_pnt - crv_pos;
+                        } else {
+                            // reference pnt in front of the curve: move in the
+                            // (Mirror(RefPnt)-BoundaryCrv) direction
+                            if dist > 0.0 {
+                                reference_pnt += binormal * (2.0 * -dist);
+                            }
+                            reference_gap = crv_pos - reference_pnt;
                         }
-                        reference_gap = reference_pnt - crv_pos;
-                    } else {
-                        // reference pnt in front of the curve: move in the
-                        // (Mirror(RefPnt)-BoundaryCrv) direction
-                        if dist > 0.0 {
-                            reference_pnt += binormal * (2.0 * -dist);
-                        }
-                        reference_gap = crv_pos - reference_pnt;
+
+                        // Project sGap into Surface UV plane (status ignored)
+                        let dir = param_direction_ignored(k, surface, surface_uv0, reference_gap)?;
+                        unitize_2d_ignored(k, dir)?
                     }
+                    _ => return Err(SolidError::sm_err(OP_SAMPLE)),
+                };
 
-                    // Project sGap into Surface UV plane (status ignored)
-                    let dir = param_direction_ignored(surface, surface_uv0, reference_gap)?;
-                    dir.unitize().unwrap_or(dir)
+                // Surface directional derivatives up to the num of derivs being stored
+                // (status ignored: the outputs stay zero; passed on with the opt-in fix,
+                // WR-663, tangency-labs/smlib 21dcf69)
+                let mut tgt_values = [Vec3::new(0.0, 0.0, 0.0); 4];
+                if let Some(d) = ignored_or_pass_on(
+                    surface.evaluate_directional_derivs(
+                        k,
+                        surface_uv0,
+                        surface_uv1,
+                        num_derivatives,
+                        true,
+                        true,
+                    ),
+                    k.fixes.query_statuses_pass_on,
+                )? {
+                    for (dst, src) in tgt_values.iter_mut().zip(d) {
+                        *dst = src;
+                    }
                 }
-                _ => return Err(SolidError::sm_err(OP_SAMPLE)),
-            };
+                let [tgt0, mut tgt1, tgt2, tgt3] = tgt_values;
 
-            // Surface directional derivatives up to the num of derivs being stored
-            // (status ignored: the outputs stay zero)
-            let mut tgt_values = [Vec3::new(0.0, 0.0, 0.0); 4];
-            if let Some(d) = ignored(surface.evaluate_directional_derivs(
-                surface_uv0,
-                surface_uv1,
-                num_derivatives,
-                true,
-                true,
-            ))? {
-                for (dst, src) in tgt_values.iter_mut().zip(d) {
-                    *dst = src;
+                // Do not support degenerate surfaces (upstream scales by 1.0 * max)
+                let tgt_1st_len = tgt1.length();
+                let scaled_zero = EFF_ZERO * (1.0 * tgt0.max_dimension());
+                if tgt_1st_len <= scaled_zero {
+                    return Err(SolidError::sm_err(OP_SAMPLE));
                 }
-            }
-            let [tgt0, mut tgt1, tgt2, tgt3] = tgt_values;
 
-            // Do not support degenerate surfaces (upstream scales by 1.0 * max)
-            let tgt_1st_len = tgt1.length();
-            let scaled_zero = EFF_ZERO * (1.0 * tgt0.max_dimension());
-            if tgt_1st_len <= scaled_zero {
-                return Err(SolidError::sm_err(OP_SAMPLE));
+                // let positions = Curve Positions
+                let position = crv_pos;
+
+                // tangent length - 1. default = mag(Directional 1st-Derivativate)
+                //                  2. when asked, linearly interp two given end lengths
+                //                  3. when asked, scale by dist(BoundaryCurve, TangentReference)
+                let mut tan_length = -1.0;
+                if self.start_tan_length > 0.0 {
+                    tan_length = (1.0 - param) * self.start_tan_length
+                        + param * self.end_tan_scale * self.start_tan_length;
+                }
+                if self.tangent_reference.is_some() {
+                    tan_length *= reference_gap_len;
+                }
+
+                // Change tangent length when not using the current length
+                if tan_length > 0.0 {
+                    tgt1 = tgt1 * tan_length / tgt_1st_len;
+                }
+
+                // When asked Rotate Tangent about BaseCurve by Ang
+                let rot_angle_deg =
+                    self.start_angle_deg + param * (self.end_angle_deg - self.start_angle_deg);
+                let unitized = if let Ok(v) = crv_tan.unitize() {
+                    crv_tan = v;
+                    true
+                } else {
+                    crv_tan = crv_tan.unitize_or_z();
+                    false
+                };
+                if unitized && rot_angle_deg.abs() > EFF_ZERO {
+                    let mut rot = Axis2Placement::default();
+                    rot.rotate_about_axis(deg2rad(rot_angle_deg), crv_tan);
+                    tgt1 = rot.transform_point(tgt1);
+                }
+
+                // set outputs
+                out.positions.push(position);
+                out.first_derivs.push(tgt1);
+                if let Some(v) = out.second_derivs.as_mut() {
+                    v.push(tgt2);
+                }
+                if let Some(v) = out.third_derivs.as_mut() {
+                    v.push(tgt3);
+                }
+                ii += 1;
             }
 
-            // let positions = Curve Positions
-            let position = crv_pos;
-
-            // tangent length - 1. default = mag(Directional 1st-Derivativate)
-            //                  2. when asked, linearly interp two given end lengths
-            //                  3. when asked, scale by dist(BoundaryCurve, TangentReference)
-            let mut tan_length = -1.0;
-            if self.start_tan_length > 0.0 {
-                tan_length = (1.0 - param) * self.start_tan_length
-                    + param * self.end_tan_scale * self.start_tan_length;
-            }
-            if self.tangent_reference.is_some() {
-                tan_length *= reference_gap_len;
-            }
-
-            // Change tangent length when not using the current length
-            if tan_length > 0.0 {
-                tgt1 = tgt1 * tan_length / tgt_1st_len;
-            }
-
-            // When asked Rotate Tangent about BaseCurve by Ang
-            let rot_angle_deg =
-                self.start_angle_deg + param * (self.end_angle_deg - self.start_angle_deg);
-            let unitized = if let Ok(v) = crv_tan.unitize() {
-                crv_tan = v;
-                true
-            } else {
-                crv_tan = crv_tan.unitize_or_z();
-                false
-            };
-            if unitized && rot_angle_deg.abs() > EFF_ZERO {
-                let mut rot = Axis2Placement::default();
-                rot.rotate_about_axis(deg2rad(rot_angle_deg), crv_tan);
-                tgt1 = rot.transform_point(tgt1);
-            }
-
-            // set outputs
-            out.positions.push(position);
-            out.first_derivs.push(tgt1);
+            Ok(())
+        })();
+        if initialized {
+            // GetSampleValues calls ReSet before SetSize: even the shared blend
+            // parameter buffer is zeroed, not inherited from the first sampler.
+            // Each unwritten vector slot also remains zero after a sample fails.
+            out.params.resize(count, 0.0);
+            out.positions.resize(count, Vec3::ZERO);
+            out.first_derivs.resize(count, Vec3::ZERO);
             if let Some(v) = out.second_derivs.as_mut() {
-                v.push(tgt2);
+                v.resize(count, Vec3::ZERO);
             }
             if let Some(v) = out.third_derivs.as_mut() {
-                v.push(tgt3);
+                v.resize(count, Vec3::ZERO);
             }
-            ii += 1;
         }
-
-        Ok(out)
+        Ok((out, status))
     }
 }
 
@@ -1363,11 +1540,23 @@ impl<O: SolutionObject> SsGlobalSolver<'_, '_, O> {
     /// kinds without an override; those of `IsOnSeam`.
     pub fn solutions_identical(
         &self,
+        k: &Kernel,
         sol1: &Solution<O>,
         sol2: &Solution<O>,
     ) -> Result<(SolutionPairType, Option<PreferredSolution>)> {
         // If the parent thinks they're identical, then they are.
-        let (sp_type, preferred) = self.base.identical_solutions(sol1, sol2)?;
+        // (the solutions name the two surfaces, `this` and `&crOtherSurface`)
+        let (sp_type, preferred) = if let Some(operands) = &self.operands {
+            self.base.identical_solutions_in(sol1, sol2, operands)?
+        } else {
+            let domains = super::p1::SolveOperands {
+                operands: [
+                    super::p5::surface_operand(&self.base, 0, self.caches[0], self.surface1),
+                    super::p5::surface_operand(&self.base, 1, self.caches[1], self.surface2),
+                ],
+            };
+            self.base.identical_solutions_in(sol1, sol2, &domains)?
+        };
         if sp_type == SolutionPairType::Identical {
             return Ok((SolutionPairType::Identical, preferred));
         }
@@ -1389,11 +1578,20 @@ impl<O: SolutionObject> SsGlobalSolver<'_, '_, O> {
             let uv2a = Point2::new(sol1.start.param(3)?, sol1.start.param(4)?);
             let uv2b = Point2::new(sol2.start.param(3)?, sol2.start.param(4)?);
 
-            // Check positions (statuses ignored).
-            let pt1a = point_ignored(surf1, uv1a, Vec3::UNDEF)?;
-            let pt1b = point_ignored(surf1, uv1b, Vec3::UNDEF)?;
-            let pt2a = point_ignored(surf2, uv2a, Vec3::UNDEF)?;
-            let pt2b = point_ignored(surf2, uv2b, Vec3::UNDEF)?;
+            // Check positions (statuses ignored; with the opt-in fix points that cannot be
+            // evaluated are not shown the same, WR-663, tangency-labs/smlib 21dcf69).
+            let undef = (!k.fixes.query_statuses_pass_on).then_some(Vec3::UNDEF);
+            let mut pts = [Vec3::UNDEF; 4];
+            for (slot, (surf, uv)) in
+                pts.iter_mut()
+                    .zip([(surf1, uv1a), (surf1, uv1b), (surf2, uv2a), (surf2, uv2b)])
+            {
+                let Some(p) = ignored(surf.evaluate_point(k, uv))?.or(undef) else {
+                    return Ok((SolutionPairType::DiffParameters, None));
+                };
+                *slot = p;
+            }
+            let [pt1a, pt1b, pt2a, pt2b] = pts;
 
             let tol = self.base.tolerance_3d;
 
@@ -1522,7 +1720,7 @@ pub fn sc_local_solve<O: SolutionObject>(
                 interval.max()
             };
 
-            let pnt = curve.evaluate_point(t)?;
+            let pnt = curve.evaluate_point(k, t)?;
             let point_sols = sp_local_solve::<O>(
                 k,
                 nodes,
@@ -1566,14 +1764,14 @@ pub fn sc_local_solve<O: SolutionObject>(
             } else {
                 (uv_domain.min().x, true)
             };
-            let ic = boundary_iso_curve(srf_eval, SurfParamType::U, u, from_left)?;
+            let ic = boundary_iso_curve(k, srf_eval, SurfParamType::U, u, from_left)?;
 
-            if !ic.is_degenerate(EFF_ZERO, None)? {
+            if !ic.is_degenerate(k, EFF_ZERO, None)? {
                 let v_ivl = Extent1d::from_min_max(uv_domain.min().y, uv_domain.max().y);
                 // point/surface is already taken care of in above section.
                 let tmp_conts = [ContinuityType::C1C2, ContinuityType::C1C2];
                 let cc = super::p2::cc_local_solve::<O>(
-                    curve, interval, tmp_conts, &ic, &v_ivl, v_conts, op, tol_3d,
+                    k, curve, interval, tmp_conts, &ic, &v_ivl, v_conts, op, tol_3d,
                 )?;
                 for sol in cc.as_slice() {
                     let mut sol = *sol;
@@ -1599,14 +1797,14 @@ pub fn sc_local_solve<O: SolutionObject>(
             } else {
                 (uv_domain.min().y, true)
             };
-            let ic = boundary_iso_curve(srf_eval, SurfParamType::V, v, from_left)?;
+            let ic = boundary_iso_curve(k, srf_eval, SurfParamType::V, v, from_left)?;
 
-            if !ic.is_degenerate(EFF_ZERO, None)? {
+            if !ic.is_degenerate(k, EFF_ZERO, None)? {
                 let u_ivl = Extent1d::from_min_max(uv_domain.min().x, uv_domain.max().x);
                 // point/surface is already taken care of in above section.
                 let tmp_conts = [ContinuityType::C1C2, ContinuityType::C1C2];
                 let cc = super::p2::cc_local_solve::<O>(
-                    curve, interval, tmp_conts, &ic, &u_ivl, u_conts, op, tol_3d,
+                    k, curve, interval, tmp_conts, &ic, &u_ivl, u_conts, op, tol_3d,
                 )?;
                 for sol in cc.as_slice() {
                     let mut sol = *sol;
@@ -1641,16 +1839,17 @@ pub fn sc_local_solve<O: SolutionObject>(
         // better start/guess point when one bounding box is much larger than the other
         if surf_box_size > 3.0 * curve_box_size {
             // Drop point from center of curve to surface
-            let curve_pnt = curve.evaluate_point(interval.evaluate(0.5))?;
+            let curve_pnt = curve.evaluate_point(k, interval.evaluate(0.5))?;
             let (found, sol) =
                 local_point_solve::<O>(k, bss, uv_domain, S::Minimize, curve_pnt, uv_guesses[0])?;
 
             if found {
                 // Drop point back to curve & replace the first guesses
                 uv_guesses[0] = Point2::new(sol.start.param(0)?, sol.start.param(1)?);
-                let surf_pnt = bss.evaluate_point(uv_guesses[0])?;
+                let surf_pnt = bss.evaluate_point(k, uv_guesses[0])?;
 
                 let (found, sol) = curve.local_point_solve::<O>(
+                    k,
                     interval,
                     S::Minimize,
                     surf_pnt,
@@ -1666,8 +1865,9 @@ pub fn sc_local_solve<O: SolutionObject>(
 
         if curve_box_size > 3.0 * surf_box_size {
             // Drop point from center of surface to curve
-            let surf_pnt = bss.evaluate_point(uv_domain.evaluate(0.5, 0.5))?;
+            let surf_pnt = bss.evaluate_point(k, uv_domain.evaluate(0.5, 0.5))?;
             let (found, sol) = curve.local_point_solve::<O>(
+                k,
                 interval,
                 S::Minimize,
                 surf_pnt,
@@ -1678,7 +1878,7 @@ pub fn sc_local_solve<O: SolutionObject>(
             if found {
                 // Drop point back to surface
                 t_guesses[0] = sol.start.param(0)?;
-                let curve_pnt = curve.evaluate_point(t_guesses[0])?;
+                let curve_pnt = curve.evaluate_point(k, t_guesses[0])?;
                 let (found, sol) = local_point_solve::<O>(
                     k,
                     bss,
@@ -1696,6 +1896,7 @@ pub fn sc_local_solve<O: SolutionObject>(
 
     for (uv_guess, t_guess) in uv_guesses.into_iter().zip(t_guesses) {
         let found = srf_eval.local_curve_solve(
+            k,
             uv_domain,
             curve,
             interval,
@@ -1710,7 +1911,7 @@ pub fn sc_local_solve<O: SolutionObject>(
             continue;
         };
         if op != S::Signed3dDirectedMinimize
-            && !super::p7::pass_sc_convergence_test(srf_eval, found.uv, curve, found.t)?
+            && !super::p7::pass_sc_convergence_test(k, srf_eval, found.uv, curve, found.t)?
         {
             continue;
         }
@@ -1764,11 +1965,15 @@ fn find_element(values: &[f64], target: f64) -> Option<usize> {
     values.iter().position(|&v| v == target)
 }
 
-/// `pIsoCrv->GetKnots(sIsoKnots)` with its status ignored (no knots on failure).
-fn iso_knots_of(curve: &Curve) -> Result<Vec<f64>> {
-    Ok(ignored(curve.knots(None))?
-        .map(|(k, _)| k)
-        .unwrap_or_default())
+/// `pIsoCrv->GetKnots(sIsoKnots)` with its status ignored (no knots on failure); passed
+/// on with the opt-in `Kernel::fixes.query_statuses_pass_on` (WR-663,
+/// tangency-labs/smlib 21dcf69).
+fn iso_knots_of(k: &Kernel, curve: &Curve) -> Result<Vec<f64>> {
+    Ok(
+        ignored_or_pass_on(curve.knots(k, None), k.fixes.query_statuses_pass_on)?
+            .map(|(k, _)| k)
+            .unwrap_or_default(),
+    )
 }
 
 /// `aeConts[j]`.
@@ -1808,58 +2013,72 @@ fn set_slot<T>(a: &mut [T; 3], i: usize, v: T) -> Result<()> {
     Ok(())
 }
 
+// The helpers below are the fork's `SER` sites (tangency-labs/smlib 21dcf69): with the
+// opt-in `Kernel::fixes.query_statuses_pass_on` (WR-663) the failure is returned.
+
 /// `EvaluatePoint(uv, pt)` with its status ignored: `prev` on failure.
-fn point_ignored(surface: &Surface, uv: Point2, prev: Point3) -> Result<Point3> {
-    Ok(ignored(surface.evaluate_point(uv))?.unwrap_or(prev))
+fn point_ignored(k: &Kernel, surface: &Surface, uv: Point2, prev: Point3) -> Result<Point3> {
+    Ok(ignored_or_pass_on(
+        surface.evaluate_point(k, uv),
+        k.fixes.query_statuses_pass_on,
+    )?
+    .unwrap_or(prev))
 }
 
 /// `crCurve.EvaluatePoint(t, pt)` with its status ignored: `prev` on failure.
-fn curve_point_ignored(curve: &Curve, t: f64, prev: Point3) -> Result<Point3> {
-    Ok(ignored(curve.evaluate_point(t))?.unwrap_or(prev))
+fn curve_point_ignored(k: &Kernel, curve: &Curve, t: f64, prev: Point3) -> Result<Point3> {
+    Ok(
+        ignored_or_pass_on(curve.evaluate_point(k, t), k.fixes.query_statuses_pass_on)?
+            .unwrap_or(prev),
+    )
 }
 
 /// `EvaluateNormal(uv, FALSE, FALSE, n)` with its status ignored: `prev` on failure.
-fn normal_ignored(surface: &Surface, uv: Point2, prev: Vec3) -> Result<Vec3> {
-    Ok(ignored(surface.evaluate_normal(uv, Side::Right, Side::Right))?.unwrap_or(prev))
+fn normal_ignored(k: &Kernel, surface: &Surface, uv: Point2, prev: Vec3) -> Result<Vec3> {
+    Ok(ignored_or_pass_on(
+        surface.evaluate_normal(k, uv, Side::Right, Side::Right),
+        k.fixes.query_statuses_pass_on,
+    )?
+    .unwrap_or(prev))
 }
 
 /// `ComputeParamDirection(uv, vec, dir)` with its status ignored: the cleared output
 /// `(0, 0)` on failure.
-fn param_direction_ignored(surface: &Surface, uv: Point2, vec: Vec3) -> Result<Vec2> {
-    Ok(ignored(surface.compute_param_direction(uv, vec))?.unwrap_or(Vec2::new(0.0, 0.0)))
+fn param_direction_ignored(k: &Kernel, surface: &Surface, uv: Point2, vec: Vec3) -> Result<Vec2> {
+    Ok(ignored_or_pass_on(
+        surface.compute_param_direction(k, uv, vec),
+        k.fixes.query_statuses_pass_on,
+    )?
+    .unwrap_or(Vec2::new(0.0, 0.0)))
+}
+
+/// `Unitize()` of a 2D direction with its status ignored (the vector is left as it was);
+/// passed on with the opt-in fix.
+fn unitize_2d_ignored(k: &Kernel, v: Vec2) -> Result<Vec2> {
+    Ok(
+        match passed_on(v.unitize(), k.fixes.query_statuses_pass_on)? {
+            Ok(u) => u,
+            Err(_) => v,
+        },
+    )
 }
 
 /// `SmIsoCurve(*pSrfEval, dir, value, bFromLeft)` (input clamped) as a curve.
 pub(super) fn boundary_iso_curve(
+    k: &Kernel,
     surface: &Surface,
     dir: SurfParamType,
     value: f64,
     from_left: bool,
 ) -> Result<Curve> {
-    match surface.kind() {
-        SurfaceKind::BSpline(b) => Ok(Curve::from(IsoCurve::new(
-            b.copy(),
-            dir,
-            value,
-            from_left,
-            true,
-        ))),
-        SurfaceKind::OffsetSurface(_)
-        | SurfaceKind::Plane(_)
-        | SurfaceKind::SurfOfRevolution(_)
-        | SurfaceKind::CurveBounded(_)
-        | SurfaceKind::SrfInVolume(_)
-        | SurfaceKind::Step(_) => {
-            // DISPATCH GAP: SmIsoCurve over a surface that is not a B-spline (the ported
-            // IsoCurve holds an SmBSplineSurface and would drop the kind's evaluation
-            // overrides). No UNPORTED marker: SmIsoCurve is ported; the error names its
-            // unit.
-            Err(SolidError::unported(
-                "SmIsoCurve::SmIsoCurve (non-B-spline surface)",
-                "curve.iso_curve",
-            ))
-        }
-    }
+    Ok(Curve::from(IsoCurve::from_surface(
+        k,
+        surface.clone_for_evaluation()?,
+        dir,
+        value,
+        from_left,
+        true,
+    )?))
 }
 
 /// `CreateIsoParametricCurve(ctx, dir, value, 0.0, pCurve, pOptDomain, &maxGap)`
@@ -1871,9 +2090,54 @@ pub(super) fn create_iso_parametric_curve(
     value: f64,
     domain: Option<&Extent2d>,
 ) -> Result<(Curve, f64)> {
-    match surface.kind() {
+    match surface.kind_with_nurb(k)? {
         SurfaceKind::BSpline(b) => {
             let iso = b.create_iso_parametric_curve(
+                k,
+                dir,
+                value,
+                IsoCurveOptions {
+                    domain: domain.copied(),
+                    uv_iso_curve: false,
+                },
+            )?;
+            Ok((Curve::from(iso.curve), iso.max_gap_3d))
+        }
+        SurfaceKind::ProceduralBlend(pb) => {
+            let b = pb.net();
+            {
+                let iso = b.create_iso_parametric_curve(
+                    k,
+                    dir,
+                    value,
+                    IsoCurveOptions {
+                        domain: domain.copied(),
+                        uv_iso_curve: false,
+                    },
+                )?;
+                Ok((Curve::from(iso.curve), iso.max_gap_3d))
+            }
+        }
+        SurfaceKind::BallPatch(bp) => {
+            let b = bp.net();
+            {
+                let iso = b.create_iso_parametric_curve(
+                    k,
+                    dir,
+                    value,
+                    IsoCurveOptions {
+                        domain: domain.copied(),
+                        uv_iso_curve: false,
+                    },
+                )?;
+                Ok((Curve::from(iso.curve), iso.max_gap_3d))
+            }
+        }
+        // (SmSurfOfExtrusion inherits the B-spline override, whose
+        // `GetOrCreateGwNurbPointer` makes a missing NURB: a recognised extrusion has
+        // none until then)
+        SurfaceKind::SurfOfExtrusion(s) => {
+            let iso = s.base_with_nurb(k)?.create_iso_parametric_curve(
                 k,
                 dir,
                 value,
@@ -1887,6 +2151,18 @@ pub(super) fn create_iso_parametric_curve(
         SurfaceKind::Plane(p) => {
             let iso = p.create_iso_parametric_curve(dir, value, domain, false)?;
             Ok((Curve::from(iso.curve), iso.max_gap_3d))
+        }
+        SurfaceKind::Cone(s) => {
+            let iso = s.create_iso_parametric_curve(k, dir, value, domain, false)?;
+            Ok((iso.curve, iso.max_gap_3d))
+        }
+        SurfaceKind::Sphere(s) => {
+            let iso = s.create_iso_parametric_curve(k, dir, value, domain, false)?;
+            Ok((iso.curve, iso.max_gap_3d))
+        }
+        SurfaceKind::Torus(s) => {
+            let iso = s.create_iso_parametric_curve(k, dir, value, domain, false)?;
+            Ok((iso.curve, iso.max_gap_3d))
         }
         SurfaceKind::SurfOfRevolution(s) => {
             let iso = s.create_iso_parametric_curve(k, dir, value, domain)?;
@@ -1913,10 +2189,17 @@ fn is_singularity(
 ) -> Result<(bool, SurfParamType)> {
     match surface.kind() {
         SurfaceKind::Plane(p) => Ok(p.is_singularity()),
-        SurfaceKind::BSpline(_)
+
+        SurfaceKind::Cone(_)
+        | SurfaceKind::Sphere(_)
+        | SurfaceKind::Torus(_)
+        | SurfaceKind::BSpline(_)
+        | SurfaceKind::ProceduralBlend(_)
+        | SurfaceKind::BallPatch(_)
         | SurfaceKind::CurveBounded(_)
         | SurfaceKind::SrfInVolume(_)
         | SurfaceKind::SurfOfRevolution(_)
+        | SurfaceKind::SurfOfExtrusion(_)
         | SurfaceKind::Step(_)
         | SurfaceKind::OffsetSurface(_) => {
             let r = surface.is_singularity(k, uv, tol, false)?;
@@ -1930,10 +2213,17 @@ fn is_singularity(
 fn is_on_seam(k: &Kernel, surface: &Surface, uv: Point2) -> Result<bool> {
     match surface.kind() {
         SurfaceKind::Plane(p) => Ok(p.is_on_seam().0),
-        SurfaceKind::BSpline(_)
+
+        SurfaceKind::Cone(_)
+        | SurfaceKind::Sphere(_)
+        | SurfaceKind::Torus(_)
+        | SurfaceKind::BSpline(_)
+        | SurfaceKind::ProceduralBlend(_)
+        | SurfaceKind::BallPatch(_)
         | SurfaceKind::CurveBounded(_)
         | SurfaceKind::SrfInVolume(_)
         | SurfaceKind::SurfOfRevolution(_)
+        | SurfaceKind::SurfOfExtrusion(_)
         | SurfaceKind::Step(_)
         | SurfaceKind::OffsetSurface(_) => Ok(surface.is_on_seam(k, uv, None)?.on_seam),
     }
@@ -2023,6 +2313,7 @@ fn sp_local_solve<O: SolutionObject>(
 /// `SM_EFF_ZERO / 10`, step cutting, 6 total boundary hits, 20 iterations): the
 /// solution `[t, u, v]`, `None` when not found.
 fn cs_intersect_local_solve(
+    k: &Kernel,
     surface: &Surface,
     curve: &Curve,
     squared_tol: f64,
@@ -2038,8 +2329,9 @@ fn cs_intersect_local_solve(
     }
     // Local solvers should not jump over seams.
     let periodicities = [false; 3];
-    let mut equations = CsIntersectEnfo::new(curve, surface, squared_tol);
+    let mut equations = CsIntersectEnfo::new(k, curve, surface, squared_tol);
     let mut solver = LocalSolveNd::new(&mut equations, Some(&bounds), Some(&periodicities));
+    solver.set_skips_failed_evaluations(k.fixes.oscillating_skips_failed_guesses);
     solver.set_desired_accuracy(EFF_ZERO / 10.0);
     solver.set_step_cutting_enabled(true);
     solver.set_boundary_handler(BoundaryHandler::TotalBoundaryHits, 6);
@@ -2180,10 +2472,12 @@ mod tests {
             base,
             surface1: Some(&s1),
             surface2: Some(&s2),
-            uv_domain1: s1.natural_uv_domain(),
-            uv_domain2: s2.natural_uv_domain(),
+            uv_domain1: s1.natural_uv_domain_if_built(),
+            uv_domain2: s2.natural_uv_domain_if_built(),
             kernel: &k,
             caches: [None, None],
+            face_queries: None,
+            operands: None,
         };
         let mk = |a: f64| {
             let mut s: Solution<Obj> = Solution::new();
@@ -2198,7 +2492,7 @@ mod tests {
             s.start.parameters[3] = a;
             s
         };
-        let (t, p) = solver.solutions_identical(&mk(0.1), &mk(0.9)).unwrap();
+        let (t, p) = solver.solutions_identical(&k, &mk(0.1), &mk(0.9)).unwrap();
         assert_eq!(t, SolutionPairType::DiffParameters);
         assert!(p.is_none());
     }
@@ -2228,6 +2522,107 @@ mod tests {
             )
             .unwrap_err();
         assert!(!e.is_unported());
+    }
+
+    #[test]
+    fn sample_status_retains_native_zero_filled_tail() {
+        let k = Kernel::default();
+        let surface = plane();
+        let boundary =
+            Curve::from(Line::create_line_segment(3, Vec3::ZERO, Vec3::X, None).unwrap());
+        let options = SampleOptions {
+            off_to_the_right: true,
+            start_at_boundary: true,
+            want_higher: [true, true],
+        };
+        // Touch the boundary at the first, an interior, or the last sample.
+        for fail_at in [0, 2, 4] {
+            let t = f64::from(fail_at) / 4.0;
+            let reference = Curve::from(
+                Line::create_line_segment(
+                    3,
+                    Vec3::new(0.0, -t, 0.0),
+                    Vec3::new(1.0, 1.0 - t, 0.0),
+                    None,
+                )
+                .unwrap(),
+            );
+            let def = DerivSurfDefinition {
+                num_samples: 4,
+                tangency_type: TangencyType::DirToReferenceCurve,
+                tangent_reference: Some(&reference),
+                ..Default::default()
+            };
+            let (values, status) = def
+                .sample_values_with_status(
+                    &k,
+                    &surface,
+                    &boundary,
+                    &boundary.natural_interval(),
+                    options,
+                )
+                .unwrap();
+            assert!(status.is_err());
+            assert!(
+                def.sample_values(
+                    &k,
+                    &surface,
+                    &boundary,
+                    &boundary.natural_interval(),
+                    options,
+                )
+                .is_err(),
+                "public sampler must still report failure"
+            );
+            assert_eq!(values.params.len(), 5);
+            assert_eq!(values.positions.len(), 5);
+            assert_eq!(values.first_derivs.len(), 5);
+            let second = values.second_derivs.as_ref().unwrap();
+            let third = values.third_derivs.as_ref().unwrap();
+            assert_eq!((second.len(), third.len()), (5, 5));
+            for i in 0..5 {
+                if i <= fail_at as usize {
+                    assert_eq!(values.params[i], i as f64 / 4.0);
+                } else {
+                    assert_eq!(values.params[i], 0.0);
+                }
+                if i < fail_at as usize {
+                    assert_eq!(values.positions[i], Vec3::new(i as f64 / 4.0, 0.0, 0.0));
+                    assert!(values.first_derivs[i].length_squared() > 0.0);
+                } else {
+                    assert_eq!(values.positions[i], Vec3::ZERO);
+                    assert_eq!(values.first_derivs[i], Vec3::ZERO);
+                }
+                assert_eq!(second[i], Vec3::ZERO);
+                assert_eq!(third[i], Vec3::ZERO);
+            }
+        }
+    }
+
+    #[test]
+    fn boundary_sample_count_is_bounded_before_padding() {
+        let surface = plane();
+        let boundary =
+            Curve::from(Line::create_line_segment(3, Vec3::ZERO, Vec3::X, None).unwrap());
+        for num_samples in [MAX_BOUNDARY_SAMPLES + 1, u64::MAX] {
+            let def = DerivSurfDefinition {
+                num_samples,
+                ..Default::default()
+            };
+            assert!(matches!(
+                def.sample_values(
+                    &Kernel::default(),
+                    &surface,
+                    &boundary,
+                    &boundary.natural_interval(),
+                    SampleOptions::default()
+                ),
+                Err(SolidError::InvalidInput {
+                    reason: "too many boundary samples",
+                    ..
+                })
+            ));
+        }
     }
 
     #[test]

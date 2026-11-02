@@ -1,8 +1,9 @@
 // SPDX-License-Identifier: Apache-2.0
 // difftest shim for unit `surface.cone_p2`.
 // Wraps the SmCone members owned by the unit (source/SMLib/src/SmCone.cpp):
-// CreateOffsetSurface, IsNurbSurfaceCone and RebuildSTEPFromNURBParameters, plus a verbatim
-// copy of the file-static sm_GetEllipseTrimIntervals.
+// CreateOffsetSurface, IsNurbSurfaceCone and RebuildSTEPFromNURBParameters (and
+// SmCylinder::IsNurbSurfaceCylinder from SmCylinder.cpp), plus a verbatim
+// copy of the file-statics sm_IsConePointInTrimDomain and sm_GetEllipseTrimIntervals.
 //
 // One entry point, sc_surface_cone_p2_eval(op, in, n_in, out, cap, out_len). Layouts are
 // documented in crates/solidcore-ffi/src/units/surface_cone_p2.rs, which validates every
@@ -11,15 +12,12 @@
 //
 // Inputs the upstream code cannot handle without undefined behaviour are answered with a
 // record `SC_ERR_ARG` (-1002) instead of a call (the Rust side tests the same condition):
-//  * GetHeight (offset, trim and the state) evaluates through the polar converter's curve
-//    and reads uninitialised points when there is none: the offset and trim ops need it,
-//    the state leaves the height out without it;
 //  * CreateOffsetSurface dereferences the result of CreateCanonical unchecked in its apex
 //    truncation branch (a NULL cone crashes, a non-finite height recurses without bound):
 //    that construction is tried first with the same formulas;
 //  * sm_GetEllipseTrimIntervals reads the parameter of a failed smgu_LinePlaneIntersect
-//    (seam line parallel to the ellipse plane, or of zero length) and the domain of a failed
-//    ConvertDomainFromNURBSToSTEP: both are computed first with the same calls.
+//    (seam line parallel to the ellipse plane, or of zero length): it is computed first
+//    with the same calls.
 #include "sc_shim.h"
 
 #include "StdAfx.h"
@@ -48,6 +46,35 @@
 #include <vector>
 
 // ---- verbatim copy of file-static upstream code (SmCone.cpp) ---------------------------
+
+/*******************************************************************//**
+PURPOSE: Test whether a point on a cone lies inside a STEP trim domain
+            of that cone.
+
+NOTES: SmCone::STEPInversion ignores its domain argument and only
+       reports whether the point is inside the whole cone, so the
+       trim domain limits are checked here.
+***********************************************************************/
+static SmBoolean sm_IsConePointInTrimDomain
+  (const SmCone      & crCone,          // in : cone the point lies on
+   const SmExtent2d  & crAnalUVDomain,  // in : STEP trim domain of the cone
+   const SmPoint3d   & crPoint,         // in : point on the cone
+   double              dTol)            // in : 3d tolerance
+{
+  SmPoint2d      sSTEPUV ;
+  SmLocationType eLoc ;
+  crCone.STEPInversion(crAnalUVDomain, crPoint, dTol, sSTEPUV, eLoc) ;
+  if(eLoc == SM_LT_EXTERIOR)
+    { return FALSE ; }
+
+  if(!crAnalUVDomain.GetVInterval().ContainsValue(sSTEPUV.y, dTol))
+    { return FALSE ; }
+
+  // the sweep angle is arbitrary at a pole
+  return(   eLoc == SM_LT_POLE
+         || crAnalUVDomain.GetUInterval().ContainsPeriodicValue(sSTEPUV.x, 360.0)) ;
+
+} // end sm_IsConePointInTrimDomain
 
 /*******************************************************************//**
 PURPOSE: Find the set of intervals on an ellipse known to be
@@ -90,18 +117,20 @@ void sm_GetEllipseTrimIntervals
                                 SmExtent1d(0.0, 360.0),
                                 dEllipseXRadius, dEllipseYRadius,
                                 3, &crContext) ;
-  // cone locals
-  double           dHeight       = crCone.GetHeight();
-  SmVector3d       sConeAxis     = crCone.GetPosition().GetZAxis();
-//cbi change:  const SmPoint3d &rCenterBot    = crCone.GetPosition().GetOriginRef();
-  SmPoint3d rCenterBot = crCone.GetPosition().GetOriginRef()
-                         + crCone.GetSTEPUVDomain().GetVMin() * sConeAxis;
-  SmPoint3d        sCenterTop    = rCenterBot + dHeight * sConeAxis;
-
   // map given NurbDomain into StepDomain - m_bInsideOut swaps Nurb GenCurve Min/Max Points
   SmExtent2d       sAnalUVDomain ;
   crCone.ConvertDomainFromNURBSToSTEP(crUVDomain, sAnalUVDomain) ;
   SmExtent1d       sSweepIvl     = sAnalUVDomain.GetUInterval() ;
+
+  // cone locals - bottom and top trim circles sit at the v limits of the trim domain,
+  //               which may be a subset of the whole cone
+  SmVector3d       sConeAxis     = crCone.GetPosition().GetZAxis();
+  double           dBotHeight    = sAnalUVDomain.GetVMin() ;
+  double           dTopHeight    = sAnalUVDomain.GetVMax() ;
+  double           dBotRadius    = crCone.GetRadius(dBotHeight) ;
+  double           dTopRadius    = crCone.GetRadius(dTopHeight) ;
+  SmPoint3d        rCenterBot    = crCone.GetPosition().GetOriginRef() + dBotHeight * sConeAxis;
+  SmPoint3d        sCenterTop    = crCone.GetPosition().GetOriginRef() + dTopHeight * sConeAxis;
   //SmBoolean        bIsClosed     = sSweepIvl.IsClosed(360.0) ;  //unused
   //double           dStartAng     = sSweepIvl.GetMin();        //unused
   //double           dEndAng       = sSweepIvl.GetMax();        //unused
@@ -122,22 +151,22 @@ static ULONG lDebugCount = 0 ;
   if (bDebugMe || lCount == lDebugCount) 
     {
       SmBSplineCurve *pCirc1 = NULL ; 
-      if(SM_IS_ZERO(crCone.GetTopRadius()))
+      if(SM_IS_ZERO(dTopRadius))
            { SmBSplineCurve::CreateDegenerateCurve(crContext, 3, sCenterTop, pCirc1) ; }
       else { pCirc1 = new (crContext) SmCircle(sCenterTop, 
                                                crCone.GetPosition().GetXAxisRef(), 
                                                crCone.GetPosition().GetYAxisRef(),
-                                               sSweepIvl, crCone.GetTopRadius(), 3, &crContext) ;
+                                               sSweepIvl, dTopRadius, 3, &crContext) ;
            }
       SmObjDelete sClean1(pCirc1) ;
 
       SmBSplineCurve *pCirc2 = NULL ; 
-      if(SM_IS_ZERO(crCone.GetBotRadius()))
+      if(SM_IS_ZERO(dBotRadius))
            { SmBSplineCurve::CreateDegenerateCurve(crContext, 3, rCenterBot, pCirc2) ; }
       else { pCirc2 = new (crContext) SmCircle(rCenterBot, 
                                                crCone.GetPosition().GetXAxisRef(), 
                                                crCone.GetPosition().GetYAxisRef(),
-                                               sSweepIvl, crCone.GetBotRadius(), 3, &crContext) ;
+                                               sSweepIvl, dBotRadius, 3, &crContext) ;
            }
       SmObjDelete sClean2(pCirc2) ;
       SmFace *pFace = (SmFace *)crCone.GetFace() ;
@@ -167,11 +196,11 @@ static ULONG lDebugCount = 0 ;
   SmPoint3d sTsectPoints[6] ;
   double dParam[2] ;
   smgu_CirclePlaneIntersect(dTol, 
-                            crCone.GetTopRadius(), sCenterTop, sConeAxis,
+                            dTopRadius, sCenterTop, sConeAxis,
                             rEllipseOrigin, sEllipseZ, 
                             lNumTsect1, sTsectPoints) ;
   smgu_CirclePlaneIntersect(dTol, 
-                            crCone.GetBotRadius(), rCenterBot, sConeAxis,
+                            dBotRadius, rCenterBot, sConeAxis,
                             rEllipseOrigin, sEllipseZ, 
                             lNumTsect2, sTsectPoints+2) ;
   smgu_LinePlaneIntersect  (sCorners[0], sStartLineVec,
@@ -221,7 +250,7 @@ static ULONG lDebugCount = 0 ;
           // when ConeUV is cone trim boundaries
           //      skip circle instersections on seams because the line intersections will catch seam intersections
           if(   eLoc == SM_LT_INTERIOR
-             && eLoc != SM_LT_U_SEAM)
+             && sSweepIvl.ContainsPeriodicValue(sConeSTEPUV.x, 360.0))
             {
               // add ellipse angleDeg for intersection to in/out angle dXSectAngle array
               sFullEllipse.STEPInversion(sTsectPoints[ii], dXSectAngle[lCnt]) ;
@@ -238,9 +267,16 @@ static ULONG lDebugCount = 0 ;
   //    This computation needs both functions to have the same behavior near corners.
   double dScaledZero = SM_EFF_ZERO * (1.0 + smos_Max(sCorners[0].GetMaxDimension(),
                                                      sCorners[3].GetMaxDimension())) ;
+
+  // circle crossings within dTol of a seam line were skipped above,
+  // so seam line crossings within dTol of the line ends must be kept here
+  double dStartLineLen    = sStartLineVec.Length() ;
+  double dEndLineLen      = sEndLineVec.Length() ;
+  double dStartParamTol   = (dStartLineLen > SM_EFF_ZERO) ? smos_Max(dScaledZero, dTol / dStartLineLen) : dScaledZero ;
+  double dEndParamTol     = (dEndLineLen   > SM_EFF_ZERO) ? smos_Max(dScaledZero, dTol / dEndLineLen)   : dScaledZero ;
   if(   (   lNumTsect1 == 3 || lNumTsect2 == 3)
-     || (   dParam[0] >= 0.0 - dScaledZero
-         && dParam[0] <= 1.0 + dScaledZero))
+     || (   dParam[0] >= 0.0 - dStartParamTol
+         && dParam[0] <= 1.0 + dStartParamTol))
     {
       sTsectPoints[4] = sCorners[0] + dParam[0] * sStartLineVec;
       sFullEllipse.STEPInversion( sTsectPoints[4], dXSectAngle[lCnt] );
@@ -249,8 +285,8 @@ static ULONG lDebugCount = 0 ;
 
   // for EndSeamLine/ellipse xsect
   if(   (   lNumTsect1 == 3 || lNumTsect2 == 3)
-     || (   dParam[1] >= 0.0 - dScaledZero
-         && dParam[1] <= 1.0 + dScaledZero))
+     || (   dParam[1] >= 0.0 - dEndParamTol
+         && dParam[1] <= 1.0 + dEndParamTol))
     {
       sTsectPoints[5] = sCorners[2] + dParam[1] * sEndLineVec;
       sFullEllipse.STEPInversion( sTsectPoints[5], dXSectAngle[lCnt] );
@@ -304,10 +340,9 @@ static ULONG lDebugCount = 0 ;
       SmPoint3d sSegmentMidPoint ;
       double sSegmentMidAngDeg = (dEndAngDeg + dStartAngDeg) / 2.0 ;
       sFullEllipse.EvaluateSTEPPoint(sSegmentMidAngDeg, sSegmentMidPoint) ;
-      crCone.STEPInversion(sAnalUVDomain, sSegmentMidPoint, dTol, sConeSTEPUV, eLoc) ;
 
       // Remember if segment MidPointUV is within cone trim boundaries
-      bInside[iThis] = (eLoc == SM_LT_EXTERIOR) ? FALSE : TRUE ;
+      bInside[iThis] = sm_IsConePointInTrimDomain(crCone, sAnalUVDomain, sSegmentMidPoint, dTol) ;
 
     } // end iter every interval to classify it
 
@@ -407,6 +442,7 @@ enum : int32_t
     OP_RECOGNIZE = 2,
     OP_REBUILD = 3,
     OP_TRIM = 4,
+    OP_RECOGNIZE_CYLINDER = 5,
 };
 
 // Construction modes (the surface.cone_p1 shim's).
@@ -429,6 +465,7 @@ enum : int32_t
     ED_SCALE_LAST = 2, // (x, y, z, w) * f on the last generator-direction row
     ED_MOVE_ALL = 3,   // R p + w t on every control point
     ED_FLATTEN = 4,    // z = 0 on every control point
+    ED_SCALE_LAST_XY = 5, // scale x/y on the last row, preserving z and weight
 };
 
 // Reaches the protected constructors and members.
@@ -595,18 +632,6 @@ void put_curve(std::vector<double>& o, const SmCurve* c)
         o.push_back(cur->knt->U[i]);
 }
 
-bool has_polar_curve(const SmCone* s)
-{
-    const SmPolarConversion& pc = s->*ConePeek::polar();
-    return pc.GetCurve() != NULL;
-}
-
-// GetHeight evaluates through the polar converter's curve: defined with one or without NURB.
-bool height_defined(const SmCone* s)
-{
-    return s->GetGwNurbPointer() == NULL || has_polar_curve(s);
-}
-
 // The cone state (the surface.cone_p1 shim's layout without the type strings).
 void put_state(std::vector<double>& o, const SmCone* s)
 {
@@ -645,10 +670,9 @@ void put_state(std::vector<double>& o, const SmCone* s)
     o.push_back(flg(cyl));
     put_vec(o, apex);
     o.push_back(apex_param);
-    bool height_ok = height_defined(s);
-    o.push_back(flg(height_ok));
-    if (height_ok)
-        o.push_back(s->GetHeight());
+    // defined without a polar curve too: the point evaluations fail (NER in
+    // ConvertToPolarParameter) and the ignored statuses leave initialised default points
+    o.push_back(s->GetHeight());
     const SmPolarConversion& pc = s->*ConePeek::polar();
     o.push_back(flg(s->HavePolarConversion()));
     ULONG cnt = pc.GetAngleCount();
@@ -723,6 +747,11 @@ void edit_nurb(Rd& rd, gw_SURFACE* sur, bool swap)
             {
                 p.z = 0.0;
             }
+            else if (kind == ED_SCALE_LAST_XY && last)
+            {
+                p.x *= f;
+                p.y *= f;
+            }
         }
 }
 
@@ -783,22 +812,15 @@ bool offset_defined(const SmContext& ctx, const SmCone* s, double dist, double t
 }
 
 // The calls of sm_GetEllipseTrimIntervals whose failures it ignores before reading their
-// outputs (ConvertDomainFromNURBSToSTEP, smgu_LinePlaneIntersect): false when one fails.
+// outputs (smgu_LinePlaneIntersect): false when one fails.
 bool trim_defined(const SmCone* s, const SmVector3d& x, const SmVector3d& y,
                   const SmPoint3d& origin, const SmExtent2d& dom)
 {
     SmVector3d sEllipseZ = x * y;
+    // status ignored as upstream (defined): a failed corner conversion leaves the default
+    // domain, a reversed result is replaced by the NURB domain
     SmExtent2d sAnalUVDomain;
-    if (s->ConvertDomainFromNURBSToSTEP(dom, sAnalUVDomain) != SM_SUCCESS)
-    {
-        // a reversed result is replaced by the NURB domain (defined); a failed conversion
-        // leaves the default domain
-        SmPoint2d a, b;
-        if (s->ConvertUVFromNURBSToSTEP(dom.GetMin(), a) != SM_SUCCESS ||
-            s->ConvertUVFromNURBSToSTEP(dom.GetMax(), b) != SM_SUCCESS)
-            return false;
-        sAnalUVDomain = dom;
-    }
+    s->ConvertDomainFromNURBSToSTEP(dom, sAnalUVDomain);
     SmPoint3d c[4];
     s->EvaluateSTEPPoint(sAnalUVDomain.Evaluate(0.0, 0.0), c[0]);
     s->EvaluateSTEPPoint(sAnalUVDomain.Evaluate(0.0, 1.0), c[1]);
@@ -817,7 +839,7 @@ void cone_op(int32_t op, Rd& rd, const SmContext& ctx, SmCone* s, std::vector<do
     {
         double dist = rd.num();
         double tol = rd.num();
-        if (!height_defined(s) || !offset_defined(ctx, s, dist, tol))
+        if (!offset_defined(ctx, s, dist, tol))
         {
             o.push_back((double)SC_ERR_ARG);
             break;
@@ -841,6 +863,23 @@ void cone_op(int32_t op, Rd& rd, const SmContext& ctx, SmCone* s, std::vector<do
         SmBSplineSurface* test = new (ctx) SmBSplineSurface(*(SmBSplineSurface*)s);
         SmCone* found = NULL;
         SmBoolean res = SmCone::IsNurbSurfaceCone(ctx, test, found, scale);
+        o.push_back((double)res);
+        o.push_back(flg(found != NULL));
+        if (found != NULL)
+        {
+            put_state(o, found);
+            delete found;
+        }
+        delete test;
+        break;
+    }
+    case OP_RECOGNIZE_CYLINDER:
+    {
+        edit_nurb(rd, s->GetGwNurbPointer(), s->GetSwapUV() != FALSE);
+        double scale = rd.num();
+        SmBSplineSurface* test = new (ctx) SmBSplineSurface(*(SmBSplineSurface*)s);
+        SmCylinder* found = NULL;
+        SmBoolean res = SmCylinder::IsNurbSurfaceCylinder(ctx, test, found, scale);
         o.push_back((double)res);
         o.push_back(flg(found != NULL));
         if (found != NULL)
@@ -876,7 +915,7 @@ void cone_op(int32_t op, Rd& rd, const SmContext& ctx, SmCone* s, std::vector<do
         SmExtent2d nat = s->GetNaturalUVDomain();
         SmExtent2d dom(nat.Evaluate(f0, f1), nat.Evaluate(f2, f3));
         double tol = rd.num();
-        if (!height_defined(s) || !trim_defined(s, x, y, origin, dom))
+        if (!trim_defined(s, x, y, origin, dom))
         {
             o.push_back((double)SC_ERR_ARG);
             break;
