@@ -411,4 +411,39 @@ mod tests {
         let d = [Vec3::new(1.0, 0.0, 0.0)];
         assert!(approx_end_derivs(&a, &d, &d, 2, 2, ParamMethod::Uniform).is_err());
     }
+
+    /// `i64::MAX` as a `usize` where `usize` is wide enough; on a 32-bit target every
+    /// `usize` fits the signed index, so the size check or the allocation rejects it
+    /// instead of the sum.
+    fn huge_count() -> usize {
+        usize::try_from(i64::MAX).unwrap_or(usize::MAX)
+    }
+
+    #[test]
+    fn huge_counts_are_rejected_without_overflow() {
+        // `k + l` and `n + p + 1` are caller counts; the checked sums must not panic.
+        assert!(knots_end_derivs(&[0.0, 1.0], 1, huge_count(), 0, 0).is_err());
+        assert!(knots_end_derivs(&[0.0, 1.0], 1, 1, huge_count(), huge_count()).is_err());
+        // `usize::MAX` itself is a safe error on every target width.
+        assert!(knots_end_derivs(&[0.0, 1.0], 1, usize::MAX, 0, 0).is_err());
+        #[cfg(target_pointer_width = "64")]
+        {
+            assert!(matches!(
+                knots_end_derivs(&[0.0, 1.0], 1, huge_count(), 0, 0),
+                Err(SolidError::InvalidInput { .. })
+            ));
+            assert!(matches!(
+                knots_end_derivs(&[0.0, 1.0], 1, 1, huge_count(), huge_count()),
+                Err(SolidError::InvalidInput { .. })
+            ));
+        }
+        // A count that fits the index but not the allocation still fails softly.
+        assert!(matches!(
+            knots_end_derivs(&[0.0, 1.0], 1, 1 << 30, 0, 0),
+            Err(SolidError::Nlib {
+                code: NlibCode::Memory,
+                ..
+            })
+        ));
+    }
 }

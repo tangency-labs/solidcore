@@ -797,6 +797,37 @@ mod tests {
         assert!(param_values::<Vec3>(&[], ParamMethod::Uniform).is_err());
     }
 
+    /// `i64::MAX` as a `usize` where `usize` is wide enough; on a 32-bit target every
+    /// `usize` fits the signed index, so the size check or the allocation rejects it
+    /// instead of the sum.
+    fn huge_count() -> usize {
+        usize::try_from(i64::MAX).unwrap_or(usize::MAX)
+    }
+
+    #[test]
+    fn huge_degrees_are_rejected_without_overflow() {
+        // `n + p + 1` / `m + q + 1` are compared before the degree check, as upstream.
+        let a = grid(0, 0, |_, _| [0.0, 0.0, 0.0]);
+        let u = [0.0, 1.0];
+        let v = [0.0, 1.0];
+        let kn = KnotVector::from_slice(&[0.0, 0.0, 1.0, 1.0]).unwrap();
+        assert!(interp_given_knots(&a, &u, &v, &kn, &kn, huge_count(), 1).is_err());
+        assert!(interp_given_knots(&a, &u, &v, &kn, &kn, 1, huge_count()).is_err());
+        // `usize::MAX` itself is a safe error on every target width.
+        assert!(interp_given_knots(&a, &u, &v, &kn, &kn, usize::MAX, usize::MAX).is_err());
+        #[cfg(target_pointer_width = "64")]
+        {
+            assert!(matches!(
+                interp_given_knots(&a, &u, &v, &kn, &kn, huge_count(), 1),
+                Err(SolidError::InvalidInput { .. })
+            ));
+            assert!(matches!(
+                interp_given_knots(&a, &u, &v, &kn, &kn, 1, huge_count()),
+                Err(SolidError::InvalidInput { .. })
+            ));
+        }
+    }
+
     #[test]
     fn interpolation_hits_points() {
         let a = grid(4, 3, |i, j| [i, j, (i * 0.7).sin() + j * j * 0.1]);
