@@ -9,6 +9,8 @@
 //! Deviations: owned copies retain the original inputs; matrices and partial
 //! outputs are explicit. Scaling sampling is bounded to 1,000,000 points; no
 //! recursion. Null/non-B-spline profiles are skipped, as the upstream cast does.
+//! The scale reference's point solve keeps upstream's stale slot-0 parameter (0 at
+//! first) when it finds no solution, as upstream reads it unchecked.
 //! **A planar path's frame starts on the plane's normal** (opt-in
 //! `Kernel::fixes.sweep_frame_on_planar_path_normal`, WR-407; SolidCraft change,
 //! tangency-labs/smlib 1b6f5fa, tangency-labs/solidcore#434; see
@@ -118,7 +120,13 @@ fn scaling(
         analytic_handle: Some(GeometryHandle(ri)),
         ..Default::default()
     };
-    let distance = |point: Vec3| -> Result<f64> {
+    // Upstream reads `sSolutions[0].m_vStart[0]` whether or not the solve found a
+    // solution: its borrowed `SmSolutionArray` (zeroed at construction) keeps slot 0
+    // across `ReSet`, so a solve without a solution (a far-away point, the fuzz cases
+    // with a 1e18-scale scale curve or reference) uses parameter 0 at first and the
+    // last found parameter afterwards. `slot` is that stale value.
+    let mut slot = 0.0;
+    let mut distance = |point: Vec3| -> Result<f64> {
         let solutions = reference.global_point_solve(
             k,
             &ri,
@@ -128,10 +136,10 @@ fn scaling(
             SolutionRequested::Single,
             &options,
         )?;
-        let solution = solutions
-            .get(0)
-            .ok_or_else(|| SolidError::null_pointer(OP))?;
-        let projected = reference.evaluate_point(k, solution.start.param(0)?)?;
+        if let Some(solution) = solutions.get(0) {
+            slot = solution.start.param(0)?;
+        }
+        let projected = reference.evaluate_point(k, slot)?;
         Ok(point.distance(projected))
     };
     let factor = 1.0 / distance(scale.evaluate_point(domain.min())?)?;
