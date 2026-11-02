@@ -267,11 +267,15 @@ fn pinned_default_fails_the_corner() {
 /// 41a39ec), not run on round the arc. The tab side's other end and the rim's ends are
 /// mixed-convexity Ends (the fork's 3e26f76). The figures are the fork's at 18e96f1 on the
 /// same plate (this test's fixes add WR-682's plane curve, among others: solidcore's are
-/// within 1.4e-12, 0 and 4.5e-11 of them).
+/// within 0 and 4.5e-11 of them for the tab's top and the rim), except the tab side's. The
+/// fork's tab side round removes 0.344196265039045 and leaves its End rib's UV curve off its
+/// 3D curve (`check_brep` `Bad Gap`). Here `FlushCurve` keeps the short last span (WR-697
+/// addendum, end-rib flush merge, solidcore's own), the body is sound and the round removes
+/// 0.344196254843155, 1.0e-8 less. Each body is checked sound (`check_brep` Level2).
 #[test]
 fn the_neighbours_keep_their_rounds() {
     for (at, removed_by_fork) in [
-        ([4.0, 28.0, 2.0], 0.344_196_265_039_045),
+        ([4.0, 28.0, 2.0], 0.344_196_254_843_155),
         ([0.0, 33.111_111_1, 2.0], 0.214_601_836_334_623),
         ([0.0, -25.0, 2.0], 7.958_672_926_831_696),
     ] {
@@ -280,6 +284,9 @@ fn the_neighbours_keep_their_rounds() {
         let before = fine_volume(&k, &mut b);
         let e = pick(&k, &b, at);
         fillet_edges(&mut k, &mut b, &[e], RADIUS, 1, 1, 1.0).unwrap();
+        b.refresh_cached_topology();
+        let check = check_brep(&mut k, &mut b, CheckLevel::Level2).unwrap();
+        assert!(check.is_valid(), "{at:?}: {:?}", check.lines());
         let removed = before - fine_volume(&k, &mut b);
         assert!(
             (removed - removed_by_fork).abs() <= 1e-10,
