@@ -753,6 +753,62 @@ fn a_corrupted_definition_is_refused() {
     assert_eq!(back.support(0).unwrap().type_code(), Plane::TYPE);
 }
 
+/// #2388: a support labelled a plane is rebuilt as the plane its form parametrises. A form
+/// of higher degree (a plane form from another writer, or a hostile record) is a plane
+/// only where its own (u, v) is the plane's affine one: the plane y = 0 as a degree-2 by
+/// degree-1 form with its middle control row half way along is taken, and the rebuilt
+/// plane evaluates as the form; with that row moved within the plane (still planar, not
+/// affine in u) it is refused.
+#[test]
+fn a_plane_label_needs_the_plane_s_parametrisation() {
+    use solidcore::nurbs::b_spline_surface_n_lib::p2::EvaluateFlags;
+    use solidcore::surface::procedural_blend::record::NurbsSurfaceRecord;
+    use solidcore::surface::surface::SurfaceKind;
+    let k = kernel();
+    let good = to_record(&k, &blend(&k, true, 1, 0.0, true)).unwrap();
+    let plane = |middle: f64| {
+        let mut r = good.clone();
+        let mut points = Vec::new();
+        for x in [0.0, middle, L] {
+            for z in [0.0, L] {
+                points.push([x, 0.0, z]);
+            }
+        }
+        r.definition.supports[0] = SupportRecord::Nurbs {
+            kind: SupportKindRecord::Plane,
+            form: NurbsSurfaceRecord {
+                u_degree: 2,
+                v_degree: 1,
+                u_count: 3,
+                v_count: 2,
+                u_knots: vec![0.0, 0.0, 0.0, 1.0, 1.0, 1.0],
+                v_knots: vec![0.0, 0.0, 1.0, 1.0],
+                points,
+                weights: None,
+            },
+        };
+        r
+    };
+    let back = from_record(&k, &plane(0.5 * L)).unwrap();
+    let support = back.support(0).unwrap();
+    assert_eq!(support.type_code(), Plane::TYPE);
+    let SurfaceKind::Plane(p) = support.kind() else {
+        unreachable!()
+    };
+    let uv = Point2::new(0.3, 0.7);
+    let analytic = Surface::from(p.clone())
+        .evaluate(&k, uv, 0, 0, EvaluateFlags::default())
+        .unwrap()[0][0];
+    assert!(
+        (analytic - Point3::new(0.3 * L, 0.0, 0.7 * L)).length() <= 1e-12,
+        "{analytic:?}"
+    );
+    assert!(
+        from_record(&k, &plane(0.2 * L)).is_err(),
+        "a plane form not affine in u was taken"
+    );
+}
+
 /// #2388: a net off its definition is refused when the record is rebuilt. These nets are
 /// the unit square z = 0, nowhere near their definitions' rounds; the bump's G^n round's
 /// supports are NURBS, so it is the certificate that refuses it.
