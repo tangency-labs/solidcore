@@ -1,7 +1,8 @@
 //! The SolidCraft fork's tangent-end blends (tangency-labs/smlib@9bebf34, the first commit
-//! of smlib#76; #2243). Its a87c502 (WR-681: a rail's end on its side edge taken as the
-//! solver's rail/edge crossing) was taken back out by 0cc48bd, and so was its flag here: at the
-//! fork's end of smlib#76 (cd47efd) `CalcRailIntExtendedEdgeuse` is the pinned routine again.
+//! of smlib#76; #2243), with the fork's marks at 9bebf34 and at the end of smlib#76 (cd47efd).
+//! Its a87c502 (WR-681: a rail's end on its side edge taken as the solver's rail/edge
+//! crossing) was taken back out by 0cc48bd, and so was its flag here: at cd47efd
+//! `CalcRailIntExtendedEdgeuse` is the pinned routine again.
 //!
 //! The part is the fork's tangent peg (capi `tangent_peg`): a bar 40 x 16 x 10 whose far end
 //! is a half disc R 8 about (40, 8), with a disc R 8 about the same centre standing 10 on its
@@ -13,24 +14,30 @@
 //! the front face runs tangent into a cone instead.
 //!
 //! [`TANGENT_END_CASES`] holds the fork's thirteen cases with its reason for each that fails
-//! at 9bebf34 (`TANGENT_END_CASES` in capi `tests/ops_kernel.cpp`), kept as they are. Each case checks, as the fork's
+//! (`TANGENT_END_CASES` in capi `tests/ops_kernel.cpp`) at 9bebf34 and at cd47efd, kept as
+//! they are. cd47efd's are 6d73e4f's: `concave_chamfer_d2`, `drafted_front_round_r2` and
+//! `front_chamfer_d2` pass, and `chamfers_together_d2` fails at the 3x2 mixed corner where the
+//! chamfers meet; 0cc48bd and b34d61b change no mark. Each case checks, as the fork's
 //! `peg_blend`/`peg_result`/`done` do, the blend's success, SMLib's check at level 2, the box
 //! (where the case has one) and the volume to 1e-6 relative of the fork's quadrature (where
 //! it has one, at volume accuracy 1e-7). Where solidcore's outcome differs from the fork's
-//! mark, the case says so ([`TangentEndCase::here`]).
+//! mark, the case says so ([`Mark::here`]).
 //!
-//! The kernel is the fork's at 9bebf34 as far as solidcore models it: every fix SolidCraft
-//! turns on (all but `geometric_g2_continuity`, as `issue_2174_cap_rim_two_edges.rs`)
-//! except WR-600's `fillet_nx1_tangent_side_edge_same_convexity`, whose tangent end of the
-//! trace is the fork's later 6d73e4f/0cc48bd/b34d61b (under it a tangent end is a rail/edge
-//! crossing of the trace and never reaches `CalcRailIntExtendedEdgeuse`).
+//! Each revision's marks run under that revision's profile, the fork's as far as solidcore
+//! models it. At cd47efd it is [`solidcraft_kernel`]: every fix SolidCraft turns on but
+//! `geometric_g2_continuity` (as `issue_2174_cap_rim_two_edges.rs`) and the two that are not
+//! the fork's at cd47efd, WR-685's G^n section (its 11ea2d9 is later) and WR-710's refusal. At
+//! 9bebf34 it is [`kernel`]: the same without WR-600's
+//! `fillet_nx1_tangent_side_edge_same_convexity`, whose tangent end of the trace is the fork's
+//! later 6d73e4f/0cc48bd/b34d61b (under it a tangent end is a rail/edge crossing of the trace
+//! and never reaches `CalcRailIntExtendedEdgeuse`).
 //!
-//! Four of the cases have tests already, under WR-600 on (the fork's later state):
-//! `fork_856b54e_tangent_end.rs` (front chamfer, concave chamfer, front round) and
-//! `fork_cd47efd_tangent_end_rib_sqrt_s.rs` (the curvature round). They stay in the table
-//! because the marks are the fork's at 9bebf34, a different profile. The fork's twins on
-//! its `smlib-tangent-ends` branch, c5ea180 and 169adea, have the same diffs as 9bebf34
-//! and a87c502.
+//! Four of the cases have tests already, under WR-600 on (cd47efd's profile):
+//! `fork_856b54e_tangent_end.rs` (front chamfer, concave chamfer, front round, against closed
+//! forms) and `fork_cd47efd_tangent_end_rib_sqrt_s.rs` (the curvature round's rib). They stay
+//! in the table for the fork's marks. The fork's twins on its `smlib-tangent-ends` branch,
+//! c5ea180 and 169adea, have the same diffs as 9bebf34 and a87c502, and on its `replay/1.0.1`
+//! 6d73e4f, 0cc48bd and b34d61b are 856b54e, 4ee7d3a and cd47efd (the same trees).
 //!
 //! Differences from the fork's capi, all in how the test drives the kernel: blends go
 //! through [`FilletSession`] per edge (constant radius; `Linear` for the chamfer, without
@@ -68,8 +75,8 @@ use solidcore::{Brep, Kernel};
 
 const PI: f64 = core::f64::consts::PI;
 
-/// The fork's profile before its tangent end of the trace (module doc): every fix SolidCraft
-/// turns on but WR-600's.
+/// The fork's profile at 9bebf34, before its tangent end of the trace (module doc):
+/// [`solidcraft_kernel`] without WR-600's fix.
 fn kernel() -> Kernel {
     let mut k = solidcraft_kernel();
     k.fixes.fillet_nx1_tangent_side_edge_same_convexity = false;
@@ -77,10 +84,10 @@ fn kernel() -> Kernel {
 }
 
 /// Every fix SolidCraft turns on: all but `geometric_g2_continuity`, and but WR-685's
-/// `fillet_gn_section_generator`, the fork's later 11ea2d9 (= 0bd3f4d), which a87c502 does
+/// `fillet_gn_section_generator`, the fork's later 11ea2d9 (= 0bd3f4d), which smlib#76 does
 /// not have (its section refuses the curvature round's thumbweight 1), and but WR-710's
 /// `fillet_refuse_mixed_corner_crossing_rails`, not the fork's (it refuses the rounds
-/// together: [`rounds_together_refused_by_wr710`]).
+/// together: [`rounds_together_refused_by_wr710`]). The fork's profile at cd47efd.
 fn solidcraft_kernel() -> Kernel {
     let mut k = Kernel::default();
     let mut f = UpstreamFixes::default();
@@ -386,16 +393,14 @@ enum Here {
     FailsOtherwise(&'static str),
 }
 
-/// A tangent-end case: the fork's name and reason it fails at 9bebf34 (`None`: it passes
-/// there), and how solidcore's outcome differs from that, if it does.
-struct TangentEndCase {
-    name: &'static str,
-    run: fn(&mut Kernel) -> Outcome,
+/// The fork's mark of a case at one revision: its reason the case fails there (`None`: it
+/// passes), and how solidcore's outcome under that revision's profile differs, if it does.
+struct Mark {
     fails_today: Option<&'static str>,
     here: Option<Here>,
 }
 
-impl TangentEndCase {
+impl Mark {
     /// Whether the case fails here.
     fn fails_here(&self) -> bool {
         match self.here {
@@ -406,96 +411,177 @@ impl TangentEndCase {
     }
 }
 
+/// The fork revision whose marks a run checks, under that revision's profile (module doc).
+#[derive(Clone, Copy, Debug)]
+enum Revision {
+    /// 9bebf34, under [`kernel`].
+    At9bebf34,
+    /// cd47efd, the end of smlib#76, under [`solidcraft_kernel`].
+    AtCd47efd,
+}
+
+impl Revision {
+    fn kernel(self) -> Kernel {
+        match self {
+            Self::At9bebf34 => kernel(),
+            Self::AtCd47efd => solidcraft_kernel(),
+        }
+    }
+
+    fn mark(self, c: &TangentEndCase) -> &Mark {
+        match self {
+            Self::At9bebf34 => &c.at_9bebf34,
+            Self::AtCd47efd => &c.at_cd47efd,
+        }
+    }
+}
+
+/// A tangent-end case: the fork's name and its marks at 9bebf34 and at cd47efd.
+struct TangentEndCase {
+    name: &'static str,
+    run: fn(&mut Kernel) -> Outcome,
+    at_9bebf34: Mark,
+    at_cd47efd: Mark,
+}
+
+/// A mark of a case that passes.
+const PASSES: Mark = Mark {
+    fails_today: None,
+    here: None,
+};
+
+const CHAMFERS_AT_9BEBF34: &str = "status 1001: SmFilletNx1Corner, Corner Edge Computation Failure (the chamfers' tangent ends, as front_chamfer_d2 and concave_chamfer_d2)";
+const CHAMFERS_AT_CD47EFD: &str = "status 1001: SmFillet3x2MixedConvexityCorner, Vertex Computation Failure, where the two chamfers meet at the tangent seam (the corner, not the tangent ends: each chamfer alone passes)";
+const DRAFTED_ROUNDS: &str = "status 1001 before any geometry: the corner where the front top edge runs tangent into the concave arc, on the cone, is of no kind SMLib's blend corners take";
+const ROUNDS_R2: &str = "the corner patch where the rounds meet stands 0.0374 out of the front face (box y min -0.0374099)";
+const ROUNDS_R5: &str = "the corner patch where the rounds meet stands 0.128 out of the front face (box y min -0.1278205)";
+const ROUNDS_R2_HERE: &str = "the rounds together build within the box and check clean";
+const ROUNDS_R5_HERE: &str =
+    "the corner patch stands 0.00156 out of the front face (box y min -0.0015609)";
+
 const TANGENT_END_CASES: [TangentEndCase; 13] = [
     TangentEndCase {
         name: "chamfers_together_d2",
         run: chamfers_together_d2,
-        fails_today: Some("status 1001: SmFilletNx1Corner, Corner Edge Computation Failure (the chamfers' tangent ends, as front_chamfer_d2 and concave_chamfer_d2)"),
-        here: None,
+        at_9bebf34: Mark {
+            fails_today: Some(CHAMFERS_AT_9BEBF34),
+            here: None,
+        },
+        at_cd47efd: Mark {
+            fails_today: Some(CHAMFERS_AT_CD47EFD),
+            here: None,
+        },
     },
     TangentEndCase {
         name: "concave_chamfer_d2",
         run: concave_chamfer_d2,
-        fails_today: Some("status 1001: SmFilletNx1Corner, Corner Edge Computation Failure, where the cone runs out over the front top edge and its end on the front face leaves its contact line tangentially"),
-        here: None,
+        at_9bebf34: Mark {
+            fails_today: Some("status 1001: SmFilletNx1Corner, Corner Edge Computation Failure, where the cone runs out over the front top edge and its end on the front face leaves its contact line tangentially"),
+            here: None,
+        },
+        at_cd47efd: PASSES,
     },
     TangentEndCase {
         name: "concave_round_r3_then_front_round_r1_5",
         run: concave_round_r3_then_front_round_r1_5,
-        fails_today: None,
-        here: None,
+        at_9bebf34: PASSES,
+        at_cd47efd: PASSES,
     },
     TangentEndCase {
         name: "concave_round_then_front_round_r2",
         run: concave_round_then_front_round_r2,
-        fails_today: None,
-        here: None,
+        at_9bebf34: PASSES,
+        at_cd47efd: PASSES,
     },
     TangentEndCase {
         name: "drafted_front_round_r2",
         run: drafted_front_round_r2,
-        fails_today: Some("SMLib's check refuses the round: Test #13 (a 2D curve with a radius of curvature of 8.6e-6) and Tests #7 and #8 (kinks at interior knots) on its end on the cone"),
-        here: Some(Here::FailsOtherwise("on the LinearExtension draft, SMLib's check refuses the round with Tests #8, #5 and #11 (a kink and zero or slow speeds at interior knots)")),
+        at_9bebf34: Mark {
+            fails_today: Some("SMLib's check refuses the round: Test #13 (a 2D curve with a radius of curvature of 8.6e-6) and Tests #7 and #8 (kinks at interior knots) on its end on the cone"),
+            here: Some(Here::FailsOtherwise("on the LinearExtension draft, SMLib's check refuses the round with Tests #8, #5, #11 and #13 (a kink, a zero and a slow speed at interior knots, and a 2D curve with a radius of curvature of 5.5e-5)")),
+        },
+        at_cd47efd: PASSES,
     },
     TangentEndCase {
         name: "drafted_rounds_together_r2",
         run: drafted_rounds_together_r2,
-        fails_today: Some("status 1001 before any geometry: the corner where the front top edge runs tangent into the concave arc, on the cone, is of no kind SMLib's blend corners take"),
-        here: None,
+        at_9bebf34: Mark {
+            fails_today: Some(DRAFTED_ROUNDS),
+            here: None,
+        },
+        at_cd47efd: Mark {
+            fails_today: Some(DRAFTED_ROUNDS),
+            here: None,
+        },
     },
     TangentEndCase {
         name: "front_chamfer_d2",
         run: front_chamfer_d2,
-        fails_today: Some("status 1001: SmFilletNx1Corner, Corner Edge Computation Failure, where the chamfer's end on the cylinder leaves its contact line on the front face tangentially"),
-        here: None,
+        at_9bebf34: Mark {
+            fails_today: Some("status 1001: SmFilletNx1Corner, Corner Edge Computation Failure, where the chamfer's end on the cylinder leaves its contact line on the front face tangentially"),
+            here: None,
+        },
+        at_cd47efd: PASSES,
     },
     TangentEndCase {
         name: "front_curvature_round_r2",
         run: front_curvature_round_r2,
-        fails_today: None,
-        here: None,
+        at_9bebf34: PASSES,
+        at_cd47efd: PASSES,
     },
     TangentEndCase {
         name: "front_round_r1_5_then_concave_round_r3",
         run: front_round_r1_5_then_concave_round_r3,
-        fails_today: None,
-        here: None,
+        at_9bebf34: PASSES,
+        at_cd47efd: PASSES,
     },
     TangentEndCase {
         name: "front_round_r2",
         run: front_round_r2,
-        fails_today: None,
-        here: None,
+        at_9bebf34: PASSES,
+        at_cd47efd: PASSES,
     },
     TangentEndCase {
         name: "front_round_then_concave_round_r2",
         run: front_round_then_concave_round_r2,
-        fails_today: None,
-        here: None,
+        at_9bebf34: PASSES,
+        at_cd47efd: PASSES,
     },
     TangentEndCase {
         name: "rounds_together_r2",
         run: rounds_together_r2,
-        fails_today: Some("the corner patch where the rounds meet stands 0.0374 out of the front face (box y min -0.0374099)"),
-        here: Some(Here::Passes("the rounds together build within the box and check clean")),
+        at_9bebf34: Mark {
+            fails_today: Some(ROUNDS_R2),
+            here: Some(Here::Passes(ROUNDS_R2_HERE)),
+        },
+        at_cd47efd: Mark {
+            fails_today: Some(ROUNDS_R2),
+            here: Some(Here::Passes(ROUNDS_R2_HERE)),
+        },
     },
     TangentEndCase {
         name: "rounds_together_r5",
         run: rounds_together_r5,
-        fails_today: Some("the corner patch where the rounds meet stands 0.128 out of the front face (box y min -0.1278205)"),
-        here: Some(Here::FailsOtherwise("the corner patch stands 0.00156 out of the front face (box y min -0.0015609)")),
+        at_9bebf34: Mark {
+            fails_today: Some(ROUNDS_R5),
+            here: Some(Here::FailsOtherwise(ROUNDS_R5_HERE)),
+        },
+        at_cd47efd: Mark {
+            fails_today: Some(ROUNDS_R5),
+            here: Some(Here::FailsOtherwise(ROUNDS_R5_HERE)),
+        },
     },
 ];
 
-/// Runs the cases that fail here (`known_failing`) or the others; the names of those whose
-/// outcome is not the one listed.
-fn tangent_end_cases(known_failing: bool) -> Vec<String> {
+/// Runs the cases that fail here at `revision` (`known_failing`) or the others; the names of
+/// those whose outcome is not the one listed.
+fn tangent_end_cases(revision: Revision, known_failing: bool) -> Vec<String> {
     let mut wrong = Vec::new();
     for c in TANGENT_END_CASES
         .iter()
-        .filter(|c| c.fails_here() == known_failing)
+        .filter(|c| revision.mark(c).fails_here() == known_failing)
     {
-        let mut k = kernel();
+        let mut k = revision.kernel();
         let out = (c.run)(&mut k);
         let failed = !out.failed.is_empty();
         if failed != known_failing {
@@ -507,13 +593,29 @@ fn tangent_end_cases(known_failing: bool) -> Vec<String> {
 
 #[test]
 fn tangent_end_cases_pass() {
-    let wrong = tangent_end_cases(false);
+    let wrong = tangent_end_cases(Revision::At9bebf34, false);
     assert!(wrong.is_empty(), "{wrong:#?}");
 }
 
 #[test]
 fn tangent_end_cases_known_failing() {
-    let wrong = tangent_end_cases(true);
+    let wrong = tangent_end_cases(Revision::At9bebf34, true);
+    assert!(
+        wrong.is_empty(),
+        "passes, though listed as failing: {wrong:#?}"
+    );
+}
+
+/// 6d73e4f's marks (cd47efd's: 0cc48bd and b34d61b change none) under SolidCraft's profile.
+#[test]
+fn tangent_end_cases_pass_at_cd47efd() {
+    let wrong = tangent_end_cases(Revision::AtCd47efd, false);
+    assert!(wrong.is_empty(), "{wrong:#?}");
+}
+
+#[test]
+fn tangent_end_cases_known_failing_at_cd47efd() {
+    let wrong = tangent_end_cases(Revision::AtCd47efd, true);
     assert!(
         wrong.is_empty(),
         "passes, though listed as failing: {wrong:#?}"
@@ -523,21 +625,23 @@ fn tangent_end_cases_known_failing() {
 /// WR-710 (`fillet_refuse_mixed_corner_crossing_rails`, #2256): the front top edge and the
 /// concave arc leave V along one tangent, so the bar's top closes to a cusp there and the
 /// rails on it cross before the corner. With the refusal on, the rounds together are refused
-/// at r 2 and r 5 instead of built with the corner patch the fork marks out of the front face
-/// (here r 2 builds within the box, its seam at (32, 2, 10) G0 by SolidCraft's continuity
-/// check, and r 5 stands 0.00156 out).
+/// at r 2 and r 5, under either profile, instead of built with the corner patch the fork marks
+/// out of the front face (here r 2 builds within the box, its seam at (32, 2, 10) G0 by
+/// SolidCraft's continuity check, and r 5 stands 0.00156 out).
 #[test]
 fn rounds_together_refused_by_wr710() {
-    for run in [rounds_together_r2, rounds_together_r5] {
-        let mut k = kernel();
-        k.fixes.fillet_refuse_mixed_corner_crossing_rails = true;
-        let out = run(&mut k);
-        assert_eq!(out.failed.len(), 1, "{:?}", out.failed);
-        assert!(
-            out.failed[0].contains(MIXED_CORNER_RAILS_CROSS),
-            "{:?}",
-            out.failed
-        );
+    for revision in [Revision::At9bebf34, Revision::AtCd47efd] {
+        for run in [rounds_together_r2, rounds_together_r5] {
+            let mut k = revision.kernel();
+            k.fixes.fillet_refuse_mixed_corner_crossing_rails = true;
+            let out = run(&mut k);
+            assert_eq!(out.failed.len(), 1, "{revision:?} {:?}", out.failed);
+            assert!(
+                out.failed[0].contains(MIXED_CORNER_RAILS_CROSS),
+                "{revision:?} {:?}",
+                out.failed
+            );
+        }
     }
 }
 
@@ -545,13 +649,19 @@ fn rounds_together_refused_by_wr710() {
 /// case says how it differs, and every passing case of the fork passes here.
 #[test]
 fn tangent_end_marks_are_the_fork_s() {
-    for c in &TANGENT_END_CASES {
-        let differs = c.fails_here() != c.fails_today.is_some();
-        match &c.here {
-            None => assert!(!differs, "{}", c.name),
-            Some(Here::Passes(why)) => assert!(c.fails_today.is_some() && !why.is_empty()),
-            Some(Here::FailsOtherwise(why)) => {
-                assert!(c.fails_today.is_some() && !why.is_empty(), "{}", c.name);
+    for revision in [Revision::At9bebf34, Revision::AtCd47efd] {
+        for c in &TANGENT_END_CASES {
+            let m = revision.mark(c);
+            let differs = m.fails_here() != m.fails_today.is_some();
+            match &m.here {
+                None => assert!(!differs, "{revision:?} {}", c.name),
+                Some(Here::Passes(why) | Here::FailsOtherwise(why)) => {
+                    assert!(
+                        m.fails_today.is_some() && !why.is_empty(),
+                        "{revision:?} {}",
+                        c.name
+                    );
+                }
             }
         }
     }
@@ -560,7 +670,7 @@ fn tangent_end_marks_are_the_fork_s() {
 /// 0cc48bd: without the tangent end of the trace the front chamfer fails with status 1001
 /// again, as at 9bebf34 (a87c502's crossing is gone); with it (SolidCraft's profile, the fork at
 /// cd47efd) it passes through the tangent end. The fork's 0cc48bd: "the tangent ends as on the
-/// previous commit (front_chamfer_d2 passes through the tangent end)".
+/// previous commit (`front_chamfer_d2` passes through the tangent end)".
 #[test]
 fn front_chamfer_passes_only_through_the_tangent_end() {
     let before = front_chamfer_d2(&mut kernel());
