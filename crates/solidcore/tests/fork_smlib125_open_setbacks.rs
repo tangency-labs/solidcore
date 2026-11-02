@@ -5,20 +5,21 @@
 //! quadratic halves at its base point `B = (P + 2 X + Q) / 4` (`OpenSetBackSprings`), and the
 //! executive trims the rounds at their creases with those curves imprinted on the faces, so
 //! the hole's `3 n` edges stay free. A concave round's sheet lies in the void it fills
-//! (ce748fa). With the flag an NxN corner the Setback does not build ignores its setback
-//! (dc757a6: the old NxN setback paths are gone). Without the flag the pinned corners.
+//! (ce748fa). With the flag an `NxN` corner the Setback does not build ignores its setback
+//! (dc757a6: the old `NxN` setback paths are gone). Without the flag the pinned corners.
 //!
 //! The bodies and expected values are those of the fork's capi tests
 //! `setback_open_g1_box_corner_hole` and `setback_open_concave_notch_hole` (cb2a478
 //! `capi/tests/ops_kernel.cpp`): the hole's edge count, the sheet's counts and the spring
 //! curves' P, X, Q. The parabolas' control points are checked in closed form. The counts,
-//! refusals and volumes were also checked by running the fork's SMLib and SM_API at 18e96f1
+//! refusals and volumes were also checked by running the fork's `SMLib` and `SM_API` at 18e96f1
 //! (`SmFilletExecutive` with `SetSetBackFill`) on the same bodies.
 #![allow(
     clippy::unwrap_used,
     clippy::expect_used,
     clippy::panic,
-    clippy::indexing_slicing
+    clippy::indexing_slicing,
+    clippy::option_option
 )] // test helpers
 
 use solidcore::blend::blend_corner::BlendCornerEvent;
@@ -311,7 +312,7 @@ fn corner_face_between_adding_and_removing_blends_is_refused() {
 
 /// The box [0, 40]^2 x [0, 20] less the cylinder r 20 about (40, 40): at (20, 40, 20) a top
 /// edge, the top arc and the vertical edge, all convex, one curved (no Setback), rounded 2
-/// and set back 4. With the flag the NxN corner has no setback path (dc757a6) and ignores
+/// and set back 4. With the flag the `NxN` corner has no setback path (dc757a6) and ignores
 /// the setback: the same body as the fork's SMLib at 18e96f1 run on it (11 faces, volume
 /// 25658.4914490411). Without the flag the pinned setback corner (16 faces).
 #[test]
