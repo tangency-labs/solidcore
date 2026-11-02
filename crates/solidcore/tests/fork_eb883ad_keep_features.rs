@@ -10,13 +10,13 @@
 use solidcore::blend::fillet_executive::api::fillet_edges;
 use solidcore::boolean::api_brep::{boolean_difference, boolean_union};
 use solidcore::geom::attribute::{AttributeStore, ObjectKey};
-use solidcore::kernel::UpstreamFixes;
-use solidcore::mass::integrator::properties::{PropertyAttributes, brep_volume};
-use solidcore::math::{PI, Point3};
+use solidcore::kernel::{KernelOptions, UpstreamFixes};
+use solidcore::mass::integrator::properties::{brep_volume, PropertyAttributes};
+use solidcore::math::{Point3, PI};
 use solidcore::primitive::api_primitives::{create_box, create_cone, create_cylinder};
 use solidcore::query::api_queries::edge_closest_point;
-use solidcore::topology::brep::validation::{CheckLevel, check_brep};
-use solidcore::topology::{EdgeId, edge};
+use solidcore::topology::brep::validation::{check_brep, CheckLevel};
+use solidcore::topology::{edge, EdgeId};
 use solidcore::{Brep, Kernel, Result};
 
 fn kernel(keep: bool) -> Kernel {
@@ -228,7 +228,7 @@ fn rounded_with(
     feature: fn(&mut Kernel) -> Result<Brep>,
     boss: bool,
 ) -> Result<(f64, usize)> {
-    let mut k = Kernel::default();
+    let mut k = Kernel::new(&KernelOptions::default());
     k.fixes = UpstreamFixes::all();
     k.fixes.fillet_keep_features = keep;
     let mut b = block_with(&mut k, feature, boss);

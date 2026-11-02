@@ -784,13 +784,7 @@ impl FilletSession<'_> {
         for e in crate::topology::brep::p1::edges(self.objects.target, None)? {
             for feature in &kept {
                 if feature.boss
-                    && edge_along(
-                        k,
-                        self.objects.target,
-                        e,
-                        &feature.rim_curves,
-                        on_tol,
-                    )?
+                    && edge_along(k, self.objects.target, e, &feature.rim_curves, on_tol)?
                 {
                     stops.insert(e);
                     break;
@@ -899,13 +893,7 @@ impl FilletSession<'_> {
             for feature in &kept {
                 if feature.boss
                     && !rim
-                    && edge_along(
-                        k,
-                        self.objects.target,
-                        e,
-                        &feature.rim_curves,
-                        on_tol,
-                    )?
+                    && edge_along(k, self.objects.target, e, &feature.rim_curves, on_tol)?
                 {
                     rim = true;
                 }
