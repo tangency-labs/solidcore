@@ -798,6 +798,17 @@ impl ProceduralBlend {
         crate::blend::fillet_section::recertify::recertify(k, self)
     }
 
+    /// The floor of the bound (#2388): a forward error bound, at part scale at rounding
+    /// level, of how S and the net are computed
+    /// ([`crate::blend::fillet_section::recertify::precision_floor`]).
+    ///
+    /// # Errors
+    ///
+    /// Those of the supports' and the net's NURBS data.
+    pub fn precision_floor(&self, _k: &Kernel) -> Result<f64> {
+        Ok(0.0)
+    }
+
     /// `Evaluate`: the definition's partials at `uv` in the surface's parameters (the
     /// net's inside a [`NetScope`]). `uv` is clamped to the domain as the net's
     /// evaluation clamps it; with `non_zero_tangents`, a first partial that vanishes

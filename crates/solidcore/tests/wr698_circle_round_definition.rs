@@ -406,3 +406,40 @@ fn a_rebuilt_round_is_certified_again_and_a_moved_net_refused() {
         assert!(got <= bound, "{name}: {got:e} over {bound:e}");
     }
 }
+
+/// #2388: the bound's floor is a forward error bound of how S and the net are computed
+/// (the stations' Newton stopping step through the supports' derivative bounds, and the
+/// rounding of the rows, the Hermite points and the net's division), at rounding level at
+/// part scale. A round's bound is its certificate, the stored net's measured rounding off
+/// its rows, and three floors (two cover re-computing the rows); the root round moved a
+/// thousand millimetres off is certified again with the floor at its new place.
+#[test]
+fn the_bound_s_floor_is_a_forward_error_bound() {
+    use solidcore::geom::axis2_placement::Axis2Placement;
+    let k = kernel(true);
+    for (name, (s, certified, _)) in [("root", root_round(&k)), ("corner", corner_round(&k))] {
+        let SurfaceKind::ProceduralBlend(pb) = s.kind() else {
+            panic!("not a blend")
+        };
+        let floor = pb.precision_floor(&k).unwrap();
+        // at part scale (10 mm): above the coordinates' rounding, below 1e-9
+        assert!(floor > 1e-13 && floor < 1e-9, "{name}: floor {floor:e}");
+        let rest = pb.bound() - certified - 3.0 * floor;
+        assert!((0.0..1e-13).contains(&rest), "{name}: {rest:e}");
+        assert!(pb.recertify(&k).unwrap() <= pb.bound(), "{name}");
+    }
+    let (s, _, _) = root_round(&k);
+    let SurfaceKind::ProceduralBlend(pb) = s.kind() else {
+        panic!("not a blend")
+    };
+    let mut moved = (**pb).clone();
+    let place = Axis2Placement::new(
+        Point3::new(1000.0, -500.0, 250.0),
+        Vec3::new(0.0, 0.0, 1.0),
+        Vec3::new(1.0, 0.0, 0.0),
+    );
+    moved.transform_at_depth(&k, &place, None, 0).unwrap();
+    let floor = moved.precision_floor(&k).unwrap();
+    assert!(floor > pb.precision_floor(&k).unwrap(), "{floor:e}");
+    assert!(moved.recertify(&k).unwrap() <= moved.bound());
+}
