@@ -140,3 +140,20 @@ STEP still needs its inconsistent lower blends repaired or reconstructed before
 this provides a valid complete-body R70 workflow. The separate 2 mm model and an
 independent Parasolid comparison remain outside the supplied evidence.
 
+
+## CI integration follow-up
+
+Run 41459223900 on a0e1a2d ran 4,805 tests: 4,804 passed, including all
+Discord/export regressions. The sole failure was the inherited exact-class
+comparison `fork_099cf96_exact_class_cases`: its all-current-fixes profile ignored
+`SurfaceKind::ProceduralBlend` and expected the fitted tee's historical
+0.00147 mm error. This integration failure is also documented on PR #2384.
+
+The grader now recognizes procedural rounds and requires that representation
+when the current profile enables `fillet_round_as_definition`. The historical
+default and exact-class-only marks are unchanged. The all-current-fixes tee must
+instead pass the same volume and Level2 checks and a 1e-9 mm rolling-ball error
+bound, with 169 surface/normal samples. The measured worst error is
+1.0658141036401503e-14 mm. The wrong-kind negative test also rejects an analytic
+round incorrectly labelled procedural. No production kernel code, enabled flags,
+reference tolerance or case coverage is removed or relaxed.
