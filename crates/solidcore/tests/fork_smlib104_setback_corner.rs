@@ -2,6 +2,9 @@
 //! as a graph over the corner's axis, certified convex (`SmBlendSetback::FillHole`), and the
 //! least scale of the setbacks that certifies (`SmBlendSetback::CertifiedScale`), on the box
 //! corner of the fork's capi `setback_g1_fill_keeps_the_body_convex` cases.
+//! #2344(a) uses 20b1c01's thousandth search. Changed flag-on volumes below are
+//! Rust regression snapshots, not new native executive parity claims. Scales and
+//! QP/attempt counts are compared to native in blend_setback::scale::tests.
 #![allow(
     clippy::unwrap_used,
     clippy::expect_used,
@@ -464,7 +467,7 @@ fn short(setback: f64) -> SetbackAsk {
 }
 
 /// A built blend: sound (no check lines), its counts and its volume to the fork's printed
-/// 15 digits; returns the body.
+/// 15 digits (or a labelled Rust snapshot after the thousandth search); returns the body.
 fn built(k: &mut Kernel, r: Blended, counts_want: (usize, usize, usize), volume_want: f64) -> Brep {
     assert_eq!(r.code, 0, "{}", r.comment);
     let mut b = r.body.expect("a body");
@@ -500,7 +503,10 @@ fn three_unequal_rounds_are_the_certified_setback_fill() {
         &[2.0, 3.0, 4.0],
         None,
     );
-    built(&mut k, r, (15, 36, 23), 23841.6143900444);
+    // Rust snapshot; the handoff's native volume 23841.674296328 agrees to 1e-9 relative.
+    let mut b = built(&mut k, r, (15, 36, 23), 23841.67429504884);
+    let v = volume(&mut k, &mut b);
+    assert!((v - 23841.674296328).abs() <= 1e-9 * v.abs().max(23841.674296328));
     let mut k = all_fixes(false);
     let r = blend_box(
         &mut k,
@@ -609,7 +615,7 @@ fn asked_setback_that_does_not_fit_is_refused() {
 
 /// Rounds r 2, 3, 4 at a corner set back 4.25 on request: past the rails' crossings but too
 /// short for a certified convex fill, so refused as no room, `GetFitSetBack` naming the
-/// setback that builds (the least certifying scale, to 1e-2); at that setback it builds.
+/// setback that builds (the certifying thousandth whose predecessor fails); at that setback it builds.
 #[test]
 fn asked_setback_too_short_names_what_builds() {
     let mut k = all_fixes(true);
@@ -622,8 +628,8 @@ fn asked_setback_too_short_names_what_builds() {
     );
     assert!(r.body.is_none());
     assert_eq!(r.code, 8);
-    assert_eq!(r.fit.to_bits(), 4.7515f64.to_bits(), "{}", r.fit);
-    assert_eq!(r.comment, "Fillet Error: a setback of 4.25 is too short for the setback corner's fill to stay convex: a setback of 4.7515 builds it");
+    assert_eq!(r.fit.to_bits(), 4.7175f64.to_bits(), "{}", r.fit);
+    assert_eq!(r.comment, "Fillet Error: a setback of 4.25 is too short for the setback corner's fill to stay convex: a setback of 4.7175 builds it");
     let r = blend_box(
         &mut k,
         [20.0; 3],
@@ -631,7 +637,8 @@ fn asked_setback_too_short_names_what_builds() {
         &[2.0, 3.0, 4.0],
         Some(&short(r.fit)),
     );
-    built(&mut k, r, (15, 36, 23), 7878.54334757591);
+    // Rust snapshot at the new fit; native executive comparison remains outstanding.
+    built(&mut k, r, (15, 36, 23), 7879.300574035242);
     // without the flag the asked setback builds the pinned corner, and no fit is named
     let mut k = all_fixes(false);
     let r = blend_box(
@@ -658,7 +665,8 @@ fn default_setback_shrinks_to_fit() {
         &[2.0, 3.0, 4.0],
         None,
     );
-    let b = built(&mut k, r, (15, 36, 23), 2128.88386364731);
+    // Rust snapshot with the upright held at its room (native scale: 1.046).
+    let b = built(&mut k, r, (15, 36, 23), 2128.9749176154523);
     // the upright round's end section at 4.5, r 4 from its edge on each face
     assert!(has_vertex(&b, [4.0, 0.0, 4.5]) && has_vertex(&b, [0.0, 4.0, 4.5]));
     let mut k = all_fixes(false);
@@ -679,7 +687,8 @@ fn concave_corner_is_the_setback_fill() {
     let mut k = all_fixes(true);
     let b = notched(&mut k, 10.0);
     let r = blend_body(&mut k, b, &CONCAVE_AT, &[1.0, 1.5, 2.0], None);
-    built(&mut k, r, (18, 45, 29), 7015.2379122164);
+    // Rust snapshot at the new scale; native executive comparison remains outstanding.
+    built(&mut k, r, (18, 45, 29), 7015.230424090796);
     let mut k = all_fixes(false);
     let b = notched(&mut k, 10.0);
     let r = blend_body(&mut k, b, &CONCAVE_AT, &[1.0, 1.5, 2.0], None);
