@@ -1,10 +1,18 @@
 # #2356 addendum: frozen station plans and uniform correction bounds
 
 Unit: blend.fillet_section (fork-only procedural construction).
-Dependency stack: #2384, #2322 at 1beec5ccc, #2274 at 941770b26.
-Main merged at 23ea17c1c; merge was automatic, with no manual conflict
-resolutions. The procedural support, sided evaluation, memo/counters and
-kernel fields from both dependency branches remain present.
+Dependency stack: #2384 and open #2322 at 1beec5ccc. #2274 subsequently
+merged into main at 4e30eb2fde303b859c48482c76cc2a1d8481a136.
+The initial main merge at 23ea17c1c was automatic. Merging 4e30eb2fd on
+this branch conflicted only in kernel.rs: main reintroduced the identical
+fillet_round_as_definition declaration earlier in UpstreamFixes. Removed
+that duplicate and retained the single existing field/documentation beside
+#2322's fillet_round_on_round_as_definition. The resulting kernel file,
+all library source, harness and FFI source are byte-identical to 75cf76102.
+The merge's effective delta is only the five-test fork_099cf96 exact-class
+regression file and the 4859 thin-ring JSON fixture. Dependency memo/counters,
+notify records, WorkCounters and all opt-in fields remain intact. No other
+author's branch was modified.
 
 ## Implemented scope
 
@@ -110,7 +118,7 @@ Subsequent Rust-source edits only add Markdown backticks to doc comments.
 - `cargo clippy --workspace --all-targets -- -D warnings`: passed (default features).
 - `cargo check -p solidcore --target wasm32-unknown-unknown`: passed.
 - `cargo fmt --all --check`: passed.
-- Native comparisons: five units passed, 3,658 accepted value-bearing cases, 21 existing rejections, zero failures/deferrals and zero reported relative error. Dev profile, --features cpp --jobs 2; clippy-driver as RUSTC_WORKSPACE_WRAPPER. Shared pinned C++ libraries reused; only FFI shims rebuilt..
+- Native comparisons: five units passed, 3,658 accepted value-bearing cases, 21 existing rejections, zero failures/deferrals and zero reported relative error. Dev profile, --features cpp --jobs 2; clippy-driver as RUSTC_WORKSPACE_WRAPPER. Shared pinned C++ libraries reused; only FFI shims rebuilt.
 
 No full suite or full --green gate was run. No unit status, mismatch marker,
 existing tolerance, production evaluator or production net was changed.
@@ -126,3 +134,31 @@ PASS blend.fillet_corner_p3 cases=1013 passed=994 failed=0 deferred=0 max_rel_er
 PASS blend.fillet_executive_p3 cases=788 passed=786 failed=0 deferred=0 max_rel_err=0e0 with_values=786 no_values=0 vacuous=0 rejected=2
 difftest: 5 unit(s), 5 passed, 0 partial, 0 failed
 ```
+
+## Latest-main integration regression
+
+At merge 657272fa209f91f5ec04a828cd6bf720366cece4, run in Ubuntu WSL:
+
+```sh
+CARGO_BUILD_JOBS=2 CARGO_TARGET_DIR=bin/checks nice -n 10 cargo test --profile difftest -p solidcore --test fork_099cf96_exact_class_cases
+```
+
+Result: 4 passed, 1 failed. The failing test is
+`with_solidcraft_s_fixes_the_cases_have_the_fork_s_marks_after_the_exact_classes`.
+Its `tee_is_fitted` case expects `OverTolerance(0.00147)` but receives
+`Built { problems: ["no round face"], off: 0.0 }`. This test enables all
+UpstreamFixes except geometric_g2_continuity, including the dependency's
+round-on-round flag. The flag-alone, default, WR77 pipe and grading tests
+pass. The production source is identical to the previously tested stack;
+this newly imported main test exposes an integration failure. The exact
+responsible flag interaction has not been isolated. Do not alter its
+expectation, infer success from older dependency checks, or claim the
+combined stack green. This is separate from the disabled smooth-interior
+correction and remains a blocker for ready status.
+
+Postmerge verification at 657272fa2: all 61 targeted tests listed above
+passed again; workspace/all-target clippy with -D warnings, fmt --check,
+and wasm32-unknown-unknown check also passed. The new main test remains
+4/5 as recorded above. Native difftests were not repeated after this merge:
+all library, harness and FFI source are identical to the five-unit tested
+75cf76102 tree. No combined-stack green or full-suite claim is made.
