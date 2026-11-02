@@ -1189,7 +1189,7 @@ const HOLDS_LAW: [f64; 5] = [2.0, 2.0, 6.0, 3.0, 0.0];
 /// rails (`x > 10 - r(s)`, `z > 30 - r(s)`) above the union of the balls' discs, by
 /// [`balls_envelope_volume`] (agrees with 64 times as many points to 2.5e-7). The fork's
 /// `5957.7178399654949` (d01d7b0, approximated arcs) is 6.6e-4 below it, 1.1e-7 relative.
-const HOLDS_VOLUME: f64 = 5957.718_502;
+const HOLDS_VOLUME: f64 = 5_957.718_502;
 
 /// The volume of `box_10_20_30` rounded along its edge `x = 10, z = 30` by the balls of
 /// radius `law(s)` centred at `(10 - r, 20 s, 30 - r)` (Gauss-Legendre, 16 points in each of
@@ -1327,7 +1327,7 @@ fn wr711_exact_circles_of_one_arc_count_keep_the_progressive_round_on_its_balls(
     // at 1e-7
     near(
         g_off.volume,
-        5957.716_621_492_882,
+        5_957.716_621_492_882,
         1e-5,
         "the fork's volume",
     );

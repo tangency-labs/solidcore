@@ -360,7 +360,7 @@ fn a_variable_blend_curve_round_takes_the_gn_default_thumbweight() {
 /// (and 11 -> 2) to 1e-5 (80 and 160 panels of 16 points along the edge agree to 9e-6),
 /// the balls continued past the edge's ends as the cone is; the same quadrature gives the
 /// cone's [`CONE_VOLUME`] to 5e-13. The approximated arcs (d01d7b0) are 1.5e-2 under it.
-const CLIFF_2_11_VOLUME: f64 = 5802.443_142;
+const CLIFF_2_11_VOLUME: f64 = 5_802.443_142;
 
 /// WR-711 (`fillet_exact_arc_spans`) with every fix: the linear round stays on its cone and
 /// the cliff overflow of 2 -> 11 on its closed form.
