@@ -1,0 +1,78 @@
+# Streamed setback rows: native preparation for #2344(b)
+
+This is a **preparatory validation contribution**, separate from the completed
+scale-search implementation in #2382. Rust still materializes its sector matrix.
+No Rust row construction, QP arithmetic, degree order, probe API or flag changes
+are made here.
+
+The allowed SMLib source at `3843ddb53e4a1a80d12691775f0b7a499a73d95f`
+is compared with the stored-row reference at `20b1c01`. This WIP combines streamed
+rows with degree-nine-first scale evaluation and removes the old probe API.
+Passing this matrix does not certify all its behavior or authorize copying those
+other changes into a row-only port.
+
+## Gates and evidence
+
+- The twelve-case executive comparison passes against both stored-row C++ and
+  the merged Rust scale branch: six bodies, 144 vertices. Status/refusal, exact
+  comments, named fits, topology counts, volumes and every coordinate agree
+  within 1e-9 relative, without an absolute floor.
+- The six-case scale matrix preserves every scale and attempt count. Exact native
+  WIP QP/row/peak/step counts are checked by `blend_setback_streamed_counts.cpp`.
+  These are counts for the **combined native WIP**, not expected Rust row-only
+  counts and not timings.
+- `blend_setback_streamed_row_order.cpp` exercises the real private native row
+  provider: stable patch/piece/coefficient/direction/pair slots, skipped slots,
+  exact equal-slack ordering, exclusion of working-set rows, cheap-bound skips
+  and agreement with an independently materialized dense QP.
+- A matrix with 2050 equal violated rows checks the 2000-row working-set block.
+  The small dense-equivalence and block cases each take three dual active-set
+  steps, including the unconstrained solve.
+
+| Case (same order as the scale gate) | Scale | Attempts | QPs | Rows built | Peak held | QP steps |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| radii 2,3,4, rule | 1.056 | 12 | 22 | 3594502 | 10000 | 6537 |
+| radii 1,1.5,2, rule | 1.056 | 12 | 26 | 4569089 | 10000 | 8089 |
+| upright held at 4.5 | 1.046 | 12 | 21 | 4542244 | 10679 | 8194 |
+| asked setback 4.25 | 1.110 | 12 | 30 | 3257414 | 11422 | 7150 |
+| radii 5, setback 8 | 1 | 1 | 3 | 7044 | 1950 | 22 |
+| every edge held at its rule | 0, refused | 2 | 2 | 33152 | 3931 | 1324 |
+
+## Reproduction
+
+First build the stored-row executive overlay as described in
+[setback-scale-search-validation.md](setback-scale-search-validation.md).
+Fetch only `source/SMLib/inc/SmBlendSetback.h` and
+`source/SMLib/src/SmBlendSetback.cpp` at `3843ddb` into a separate ignored
+overlay directory. Do not substitute `5be7489`: that earlier work-counter commit
+predates the scale/streaming changes.
+
+```sh
+bash harness/cpp/tests/build_setback_streamed.sh \
+  bin/reference-2344 bin/reference-2344-stream \
+  /home/karlvonrichter/github/smlib-fork /home/karlvonrichter/github/fork-cpp/lib
+nice -n 10 bash harness/cpp/tests/run_setback_executive.sh \
+  bin/reference-2344-stream/executive > /tmp/streamed-executive.log
+python3 harness/cpp/tests/compare_setback_executive.py \
+  /tmp/native-executive.log /tmp/streamed-executive.log --native-left
+python3 harness/cpp/tests/compare_setback_executive.py \
+  /tmp/rust-executive.log /tmp/streamed-executive.log
+```
+
+The build recompiles the caller allocating `Fill` too: its WIP counters increase
+the structure's size. It reuses the baseline's other compatible objects and
+existing libraries; the shared pinned C++ build remains unchanged. Every C++
+command is under nice, and the builder compiles serially.
+
+## Remaining implementation and coverage
+
+The production Rust streamed row provider, affine-polynomial storage, working-set
+integration and per-kernel work counters remain unimplemented and available for
+a separate claim. Preserve the existing degree order unless separately changing
+and gating it; preserve the logical slot ordering even where a row is skipped.
+Retain the existing opt-in behavior.
+
+The pocket-rim fixture, the original full monotonicity inventory and broader
+curved/degenerate/scaled streamed-fill coverage remain outstanding. This matrix
+is useful native evidence, not a claim that SMLib's WIP or a Rust streaming port
+is fully gated. No unit is promoted.

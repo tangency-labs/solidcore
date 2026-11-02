@@ -33,7 +33,8 @@ def parse(path, native):
 def close(a, b):
     return math.isfinite(a) and math.isfinite(b) and abs(a-b) <= 1e-9 * max(abs(a), abs(b))
 
-rust, native = parse(sys.argv[1], False), parse(sys.argv[2], True)
+assert sys.argv[3:] in ([], ["--native-left"]), "optional argument: --native-left"
+rust, native = parse(sys.argv[1], bool(sys.argv[3:])), parse(sys.argv[2], True)
 assert len(rust) == len(native) == 12, (len(rust), len(native))
 vertices = bodies = 0
 for case, (r, n) in enumerate(zip(rust, native)):
