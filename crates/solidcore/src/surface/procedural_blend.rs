@@ -593,7 +593,8 @@ impl ProceduralBlend {
 
     /// `EvaluateDefinition`: the definition's partials at `(s, t)`,
     /// `d[i][j] = d^(i+j) S / ds^i dt^j`, `i <= highest_s`, `j <= highest_t`
-    /// ([`crate::blend::fillet_section::definition::evaluate_definition`]).
+    /// ([`crate::blend::fillet_section::definition::evaluate_definition`]), on the side
+    /// after s where s is one of its stations (`bBefore` FALSE).
     ///
     /// # Errors
     ///
@@ -606,9 +607,36 @@ impl ProceduralBlend {
         highest_s: usize,
         highest_t: usize,
     ) -> Result<Vec<Vec<Vec3>>> {
+        self.evaluate_definition_sided(k, s, t, highest_s, highest_t, false)
+    }
+
+    /// `EvaluateDefinition` with its `bBefore` (c5b6bb7): where s is one of its stations
+    /// (a support's knot line under a foot, a knot of the leader or the law) the
+    /// definition is only as smooth as they are there, its partials on the side after s,
+    /// or with `before` on the side before it.
+    ///
+    /// # Errors
+    ///
+    /// Those of [`crate::blend::fillet_section::definition::evaluate_definition`].
+    pub fn evaluate_definition_sided(
+        &self,
+        k: &Kernel,
+        s: f64,
+        t: f64,
+        highest_s: usize,
+        highest_t: usize,
+        before: bool,
+    ) -> Result<Vec<Vec<Vec3>>> {
         crate::blend::fillet_section::definition::evaluate_definition(
-            k, self, s, t, highest_s, highest_t,
+            k, self, s, t, highest_s, highest_t, before,
         )
+    }
+
+    /// `GetDefinitionMap` (c5b6bb7): the map's terms, `(s, t) = (a[0] + b[0] p,
+    /// a[1] + b[1] q)`, `(p, q)` the surface's `(u, v)`, or `(v, u)` when swapped.
+    #[must_use]
+    pub const fn definition_map(&self) -> ([f64; 2], [f64; 2], bool) {
+        (self.def.map_a, self.def.map_b, self.def.swapped)
     }
 
     /// `ReadFromDB`: a blend's definition and net, as [`crate::topology::geometry_write`]
@@ -858,7 +886,15 @@ impl ProceduralBlend {
         } else {
             (highest_u_deriv, highest_v_deriv)
         };
-        let sd = self.evaluate_definition(k, st.x, st.y, ls, lt)?;
+        // the side of s the partials are taken on: the upper interval of the parameter
+        // driving s (FromLeft TRUE) is the side after s where s grows with it (c5b6bb7)
+        let upper = if swapped {
+            flags.v_side == Side::Left
+        } else {
+            flags.u_side == Side::Left
+        };
+        let before = upper != (self.def.map_b[0] > 0.0);
+        let sd = self.evaluate_definition_sided(k, st.x, st.y, ls, lt, before)?;
         let [b0, b1] = self.def.map_b;
         let mut out = vec![vec![Vec3::ZERO; highest_v_deriv + 1]; highest_u_deriv + 1];
         for (i, row) in out.iter_mut().enumerate() {

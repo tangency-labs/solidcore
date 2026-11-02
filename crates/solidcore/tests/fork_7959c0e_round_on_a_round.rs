@@ -1,7 +1,6 @@
 //! The SolidCraft fork's `round_on_a_definition_is_its_definition` (capi
-//! `ops_kernel.cpp`, tangency-labs/smlib@7959c0e, smlib#101, merged at 852dd8c;
-//! tangency-labs/solidcore#2298): a round on a round by its definition. The fork lists it
-//! known failing at 7959c0e, and so does this test.
+//! `ops_kernel.cpp`, tangency-labs/smlib@7959c0e and c5b6bb7, smlib#101, merged at 852dd8c;
+//! tangency-labs/solidcore#2298): a round on a round by its definition.
 //!
 //! The twisted wedge (the block 60 x 30 x 50 below the fork's `twisted_top`, a cubic
 //! spline whose slope across y turns from -tan 30 to 0 to tan 30 along x) has its front
@@ -197,13 +196,19 @@ fn circle_definitions(k: &Kernel, b: &Brep, r: f64, depth: u32) -> (usize, f64, 
         }
         graded += 1;
         spans += knots_along_s(pb).len() - 1;
+        let u_is_s = u_is_s(pb);
         let dom = pb.net().natural_uv_domain();
         let (lo, hi) = (dom.min(), dom.max());
         for a in 0..=32 {
-            let u = lo.x + (hi.x - lo.x) * f64::from(a) / 32.0;
+            // a section: s fixed, t across (u and v the other way round on a face turned
+            // over)
             let mut p = Vec::new();
             for c in 0..=8 {
-                let uv = Point2::new(u, lo.y + (hi.y - lo.y) * f64::from(c) / 8.0);
+                let (fs, ft) = (f64::from(a) / 32.0, f64::from(c) / 8.0);
+                let uv = Point2::new(
+                    lo.x + (hi.x - lo.x) * if u_is_s { fs } else { ft },
+                    lo.y + (hi.y - lo.y) * if u_is_s { ft } else { fs },
+                );
                 let x = pb.evaluate_point(k, uv).unwrap();
                 let y = pb.net().evaluate_point(uv).unwrap();
                 p.push(x);
@@ -349,15 +354,21 @@ fn round_on_a_round(k: &mut Kernel) -> Outcome {
     }
 }
 
-/// The fork's checks at 7959c0e: the round on the round is its own definition two deep,
-/// its sections the ball's circles to rounding and its net within the certified bound, and
-/// a station of it wherever its rail crosses one of the inner round's stations. The fork
-/// lists the case known failing at 7959c0e: "a round on a face that is a blend by its
-/// definition is not built as its definition: the certificate does not enclose the inner
-/// definition yet". Here too: the round on the round is not a definition, and the body
-/// checks clean. This test fails once the case passes.
+/// With WR-714 the round on the round is its own definition two deep, as the fork's: the
+/// fork's checks at 852dd8c and its figures (45 spans, the rail crossing the inner round's
+/// stations 11 times, each at a station of its own), and a count gate about 5% over the
+/// counts here, as the fork gates its own.
+///
+/// The counts are not the fork's. Fork 852dd8c, built locally (macOS, clang, `-O3
+/// -ffp-contract=off`), takes 135809 definition evaluations and 101687 station solves on
+/// this case (its test's comment quotes 137720 and 102941 from its CI); here they are
+/// 181076 and 122690. The gap is there before this change: without WR-714, solidcore takes
+/// 134718 and 71986, where fork 7959c0e takes 88937 and 54775, all of it outside the round
+/// on the round's `Build` (which evaluates no definition then). The change adds about the
+/// same work on both sides: +46358 evaluations here, +46872 in the fork; the `Build` of the
+/// round on the round takes 35488 here and 36376 in the fork.
 #[test]
-fn round_on_a_definition_is_its_definition_known_failing() {
+fn round_on_a_definition_is_its_definition() {
     let mut k = solidcraft_kernel();
     let o = round_on_a_round(&mut k);
     println!(
@@ -371,12 +382,38 @@ fn round_on_a_definition_is_its_definition_known_failing() {
         o.crossings,
         o.missed
     );
-    let passes = o.sound
-        && o.graded == 1
-        && o.circle <= 1e-11
-        && o.net <= 1.0
-        && o.crossings >= 4
-        && o.missed == 0;
-    assert!(!passes, "passes, though listed as failing: {o:?}");
-    assert!(o.sound && o.graded == 0, "{o:?}");
+    assert!(o.sound, "{o:?}");
+    assert!(
+        o.graded == 1 && o.spans == 45 && o.circle <= 1e-11 && o.net <= 1.0,
+        "{o:?}"
+    );
+    assert!(
+        o.counts.evaluations <= 190_000 && o.counts.solves <= 129_000,
+        "{o:?}"
+    );
+    assert!(o.crossings >= 4 && o.missed == 0, "{o:?}");
+}
+
+/// Without WR-714 the round on the round is built as before: not a definition (the
+/// fork's known-failing mark at 7959c0e, "a round on a face that is a blend by its
+/// definition is not built as its definition: the certificate does not enclose the inner
+/// definition yet"), and the body still checks clean.
+#[test]
+fn without_wr714_the_round_on_the_round_is_built_as_before() {
+    let mut k = solidcraft_kernel();
+    k.fixes.fillet_round_on_round_as_definition = false;
+    let o = round_on_a_round(&mut k);
+    println!(
+        "{} round(s) on a round by definition, {} spans: sections off the ball's circle by {:.3e}, the net at {:.3} of its bound; {} definition evaluations, {} station solves; the rail crosses the inner round's stations {} times, {} without a station of its own",
+        o.graded,
+        o.spans,
+        o.circle,
+        o.net,
+        o.counts.evaluations,
+        o.counts.solves,
+        o.crossings,
+        o.missed
+    );
+    assert!(o.sound, "{o:?}");
+    assert_eq!(o.graded, 0, "{o:?}");
 }
