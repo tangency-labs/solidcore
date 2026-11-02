@@ -83,6 +83,8 @@ fn cache_kernel(k: &Kernel, context: &Context) -> Kernel {
             k.blend_operation_scopes
                 .load(core::sync::atomic::Ordering::Relaxed),
         )),
+        // (building cache trees does none of the counted work)
+        work_counters: crate::kernel::WorkCounters::default(),
     }
 }
 
