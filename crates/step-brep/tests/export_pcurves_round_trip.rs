@@ -142,7 +142,7 @@ fn face_edge_bounds(model: &step_import::model::Model, face_id: u64) -> Vec<Vec<
         .iter()
         .map(|loop_| match &loop_.bound {
             Bound::Edges(edges) => edges.iter().map(|edge| edge.edge).collect(),
-            Bound::Vertex(vertex) => vec![*vertex],
+            Bound::Vertex(_) => panic!("the cylinder wall must have edge bounds"),
         })
         .collect()
 }
@@ -223,13 +223,15 @@ fn one_missing_middle_uv_trim_keeps_the_other_pcurve_keys() {
         uses.len()
     );
 
-    // A middle use holding its own trim (its mate holds none), so clearing its slot
-    // leaves the use with no trim at all and the edges on both sides of it intact.
-    let middle = uses.len() / 2;
-    let mut candidates: Vec<usize> = (0..uses.len()).collect();
-    candidates.sort_by_key(|&index| index.abs_diff(middle));
-    let own_trim = |index: usize| -> bool {
+    // Select a non-seam middle use holding its own trim (its mate holds none), so
+    // clearing its slot removes exactly one exported pcurve, not a seam mate's too.
+    let sole_trim_holder = |index: usize| -> bool {
         let use_ = uses[index];
+        let edge = eu::edge(&cylinder, use_).unwrap().unwrap();
+        let occurrences = uses
+            .iter()
+            .filter(|&&other| eu::edge(&cylinder, other).unwrap() == Some(edge))
+            .count();
         let own = eu::uv_trim_curve_pointer(&cylinder, use_)
             .unwrap()
             .is_some();
@@ -239,29 +241,11 @@ fn one_missing_middle_uv_trim_keeps_the_other_pcurve_keys() {
                 .is_none(),
             None => true,
         };
-        own && mate_clear
+        occurrences == 1 && own && mate_clear
     };
-    let cleared = candidates
-        .into_iter()
-        .find(|&index| index != 0 && index + 1 != uses.len() && own_trim(index));
-    let cleared_index = cleared.unwrap_or_else(|| {
-        let slots: Vec<_> = uses
-            .iter()
-            .map(|&use_| {
-                (
-                    eu::uv_trim_curve_pointer(&cylinder, use_)
-                        .unwrap()
-                        .is_some(),
-                    eu::mate(&cylinder, use_).unwrap().map(|mate| {
-                        eu::uv_trim_curve_pointer(&cylinder, mate)
-                            .unwrap()
-                            .is_some()
-                    }),
-                )
-            })
-            .collect();
-        panic!("no sole-holder middle edge use: {slots:?}");
-    });
+    let cleared_index = (1..uses.len() - 1)
+        .find(|&index| sole_trim_holder(index))
+        .expect("the cylinder needs a non-seam, sole-holder middle edge use");
     let cleared_key = (wall_id, 0, cleared_index);
     assert!(
         before.pcurves.contains_key(&cleared_key),
@@ -313,20 +297,12 @@ fn one_missing_middle_uv_trim_keeps_the_other_pcurve_keys() {
         "unexpected pcurves after clearing one use: {:?}",
         after.pcurves
     );
-    // The use after the missing trim still has its own pcurve, and the boundaries
-    // before and after it are unchanged.
-    if before
-        .pcurves
-        .keys()
-        .any(|&(face, loop_, use_)| face == wall_id && loop_ == 0 && use_ > cleared_index)
-    {
-        assert!(
-            after.pcurves.keys().any(|&(face, loop_, use_)| {
-                face == wall_id && loop_ == 0 && use_ > cleared_index
-            }),
-            "the use after the missing trim lost its pcurve"
-        );
-    }
+    // The map comparison above checks this later key unconditionally; require it
+    // in the fixture so the gap cannot be the last pcurve.
+    assert!(
+        before.pcurves.contains_key(&(wall_id, 0, uses.len() - 1)),
+        "the cylinder needs a pcurve after the missing middle use"
+    );
     let bounds_before = face_edge_bounds(&before, wall_id);
     let bounds_after = face_edge_bounds(&after, wall_id);
     assert_eq!(bounds_before, bounds_after);
