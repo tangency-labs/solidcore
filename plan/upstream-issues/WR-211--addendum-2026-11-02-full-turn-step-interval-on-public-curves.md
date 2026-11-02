@@ -31,7 +31,8 @@ Test `crates/solidcore/tests/wr211_ellipse_step_interval_full_turn.rs` pins both
 `a_full_turn_step_move_collapses_the_nurb_at_default_fixes` (intervals, exact knots,
 sample points, then the NaN knots and NaN interior point) and
 `a_full_turn_step_move_keeps_its_arc_with_the_turn_preserving_fix` (intervals, exact
-knots, on-circle and on-ellipse samples at 0/45/90/135/180 degrees, finite knots after
+knots, on-circle samples at 0/45/90/135/180 degrees and on-ellipse samples at 0/90/180
+before the reparameterisation, then the finite knots and the ellipse sample after
 the same reparameterisation). Mutation: forcing the production read at
 `crates/solidcore/src/curve/ellipse/p1.rs:2036` to upstream's branch fails the flag-on
 half with `[1, 1]` where `[1, 1.5]` is expected; forcing it on fails the default half
@@ -42,5 +43,5 @@ factories are covered; a partial arc's proportional branch, an inside-out ellips
 the surface-of-revolution caller (`SmSurfOfRevolution::AdjustSTEPUVDomain`, the
 SolidCraft flat-round-trip trigger) are not exercised here. The C++ reference was not
 rerun for this case; the default half is the pinned behaviour already recorded in the
-2026-10-25 addendum and by
-`step_interval_past_a_turn_collapses_as_upstream`, and the flag stays off by default.
+2026-10-25 addendum and by `step_interval_past_a_turn_is_rejected_without_changing_the_curve`
+(the collapsed interval and untouched curve that test pins), and the flag stays off by default.
