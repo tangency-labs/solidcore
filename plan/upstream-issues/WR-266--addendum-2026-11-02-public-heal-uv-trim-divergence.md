@@ -1,4 +1,4 @@
-Updates: WR-266, WR-268
+Updates: WR-266 (and WR-268)
 
 #### WR-266 (update, 2026-11-02). The opt-in flag's public effect is a UV trim loss, not the retry marker
 - **What changed:** the reachability of `Kernel::fixes.heal_stage3_failures_propagate` (both
@@ -24,10 +24,11 @@ Updates: WR-266, WR-268
   `1e-5`, three faces with a surface, region void flags `[1, 0, 0]`. In edge-use arena order the
   edge uses with a UV trim curve are `[true, false, false, true, true, false, true, false]` by
   default and `[false, false, false, false, false, false, false, false]` with the flag on: the
-  face that stays a target reaches `Fix_SplitFaceAtSeams`, which clears every UV trim curve of the
-  body (a `through = CacheFaceprops3` run is identical in both modes, `through =
-  FixSplitfaceAtseams` already differs). The heal path carries no attribute state
-  (`heal.heal_data_p3`), so no attribute is reported or changed in either mode.
+  face that stays a target reaches `Fix_SplitFaceAtSeams`, and the body's UV trim curves are
+  observed gone after it (a `through = CacheFaceprops3` run is identical in both modes, only the
+  `through = FixSplitfaceAtseams` run differs; the clearing call site is not traced further
+  here). The heal path carries no attribute state (`heal.heal_data_p3`; source reading, not
+  asserted by the test), so no attribute is reported or changed in either mode.
 - **WR-266's half is not publicly observable in one heal.** `Cache_FaceProps_Stage3` runs once per
   `HealBrep` and the `HealData` (with its `FaceProps` markers) is discarded when the entry point
   returns, so the Stage2-versus-Stage3A marker is never read again. Disabling only the marker reset

@@ -103,7 +103,11 @@ fn heal_flat_cylinder(propagate: bool) -> Healed {
         uv_trim_curves: b
             .edgeuses()
             .iter()
-            .map(|(id, _)| matches!(uv_trim_curve_pointer(&b, id), Ok(Some(_))))
+            .map(|(id, _)| match uv_trim_curve_pointer(&b, id) {
+                // a read error must not masquerade as an absent trim
+                Ok(present) => present.is_some(),
+                Err(err) => panic!("uv_trim_curve_pointer({id:?}) errored: {err:?}"),
+            })
             .collect(),
     }
 }
