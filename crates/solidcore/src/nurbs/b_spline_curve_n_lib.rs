@@ -2911,6 +2911,53 @@ mod tests {
     }
 
     #[test]
+    fn issue_2424_both_pieces_of_a_split_end_at_the_same_parameter() {
+        // #2424: an edge split `d` from the middle knot of a radius 16 half circle. Where
+        // the span between the split and the knot is a pole (#2090), the trim ends at the
+        // knot whichever side of the split it keeps, so the two pieces, and the UV trims
+        // split at the edge's end, meet at one parameter; a longer span is kept on both
+        // sides and the split stays where it was asked
+        let r = 16.0;
+        let mut fixed = Kernel::default();
+        fixed.fixes.bspline_trim_keeps_rational_end_spans = true;
+        // (d, where the pieces meet)
+        for (d, meet) in [
+            (1e-8, 0.5),
+            (-1e-8, 0.5),
+            (1e-7, 0.5 + 1e-7),
+            (-1e-7, 0.5 - 1e-7),
+        ] {
+            let split = 0.5 + d;
+            let mut before = half_circle(r);
+            let mut before_ivl = Extent1d::from_min_max(0.1, split);
+            before
+                .trim(&fixed, &mut before_ivl, TrimMode::Notify)
+                .unwrap();
+            let mut after = half_circle(r);
+            let mut after_ivl = Extent1d::from_min_max(split, 0.9);
+            after
+                .trim(&fixed, &mut after_ivl, TrimMode::Notify)
+                .unwrap();
+            assert_eq!(before_ivl, Extent1d::from_min_max(0.1, meet), "d {d}");
+            assert_eq!(after_ivl, Extent1d::from_min_max(meet, 0.9), "d {d}");
+            assert_eq!(before.natural_interval(), before_ivl, "d {d}");
+            assert_eq!(after.natural_interval(), after_ivl, "d {d}");
+            // the interval alone is the one the trim makes
+            let mut only = Extent1d::from_min_max(split, 0.9);
+            half_circle(r)
+                .trim(&fixed, &mut only, TrimMode::IntervalOnly)
+                .unwrap();
+            assert_eq!(only, after_ivl, "d {d}");
+            for c in [&before, &after] {
+                let off = off_circle(c, r);
+                assert!(off < 1e-12 * r, "d {d}: {off} off the circle");
+                let (ok, idx) = failed_checks(&fixed, c);
+                assert!(ok && !idx.contains(&15), "d {d}: {idx:?}");
+            }
+        }
+    }
+
+    #[test]
     fn wr_575_non_rational_short_end_span_is_still_removed() {
         let mut fixed = Kernel::default();
         fixed.fixes.bspline_trim_keeps_rational_end_spans = true;
