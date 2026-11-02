@@ -34,6 +34,7 @@
 
 use super::original_trim::OriginalSurfaceDeletion;
 use super::{invalid, FilletBody, FilletObject, FilletSession, SessionObjects};
+use crate::blend::fillet_cliff_overflow::Refusal;
 use crate::blend::fillet_executive::p3::{
     ErrorInfo, FilletExecutive, FilletFinishAccess, StitchAttempt, StitchSettings,
 };
@@ -633,6 +634,23 @@ impl FilletSession<'_> {
         mut error_out: Option<&mut ErrorInfo<FilletObject>>,
     ) -> Result<()> {
         self.sync_self_intersection_handler();
+        // solidcore-native (WR-697 addendum; the fork refuses this only in its capi,
+        // dc757a6): a setback set on a made corner (SetSetBackDist) that is not the Setback
+        // would be dropped silently, so it is refused, as `create_corners` refuses one asked
+        // with SetSetBackFill (the same predicate)
+        if k.fixes.fillet_blend_corner
+            && self.objects.corners.iter().any(|corner| {
+                corner.set_back_dist() > 0.0
+                    && crate::blend::blend_corner::setback::asked_setback_not_built(corner)
+            })
+        {
+            self.note_refusal(Refusal {
+                code: FilletErrorType::CornerUnsupported,
+                reason: None,
+                comment: crate::blend::blend_corner::setback::SETBACK_NOT_BUILT,
+            });
+            return Err(failure());
+        }
         // WR-459: the clean-up after filleting leaves the target's own edges and faces.
         self.objects.cleanup_kept = if k.fixes.fillet_cleanup_keeps_target_faces {
             Some((

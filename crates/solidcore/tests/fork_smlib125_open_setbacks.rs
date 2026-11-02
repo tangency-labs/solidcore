@@ -97,12 +97,28 @@ struct Blended {
 /// (circular, G1), the corner at `corner` set back `setback` and left `open` or filled.
 fn blend(
     k: &mut Kernel,
+    b: Brep,
+    at: &[[f64; 3]],
+    radius: f64,
+    corner: [f64; 3],
+    setback: f64,
+    open: bool,
+) -> Blended {
+    blend_asked(k, b, at, radius, corner, setback, open, true)
+}
+
+/// [`blend`], the setback asked with `SetSetBackFill` before the corners are made only when
+/// `fill` (else only `AddSetBackVertex` and `SetSetBackDist` on the made corner).
+#[allow(clippy::too_many_arguments)] // test helper
+fn blend_asked(
+    k: &mut Kernel,
     mut b: Brep,
     at: &[[f64; 3]],
     radius: f64,
     corner: [f64; 3],
     setback: f64,
     open: bool,
+    fill: bool,
 ) -> Blended {
     let edges: Vec<EdgeId> = at.iter().map(|&p| pick(k, &b, p)).collect();
     let radii = vec![radius; edges.len()];
@@ -113,7 +129,9 @@ fn blend(
         s.prepare_per_edge_constant_radius(k, &edges, &radii, &xs, 1, 1.0)
             .unwrap();
         s.add_set_back_vertex(v);
-        s.set_set_back_fill(v, setback, 0.0, open);
+        if fill {
+            s.set_set_back_fill(v, setback, 0.0, open);
+        }
         let mut ok = s.create_corners(k, None).is_ok();
         let mut event = None;
         if ok {
@@ -332,6 +350,43 @@ fn setback_asked_where_the_setback_is_not_built_is_refused() {
             );
         } else {
             assert_eq!(r.event, Some(None));
+            assert_eq!(r.code, 0, "{}", r.comment);
+            let mut b = r.body.expect("a body");
+            stitch_and_orient(&mut k, &mut b, &StitchAndOrientOptions::default()).unwrap();
+            assert_eq!(counts(&b), (16, 39, 25));
+        }
+    }
+}
+
+/// The same corner asked to be set back only through `AddSetBackVertex` and
+/// `SetSetBackDist` on the made corner (no `SetSetBackFill`): with the flag the corner is
+/// made (not the Setback) and `do_filleting` refuses the setback (`CornerUnsupported`), as
+/// the fill's door does; it does not come back built without it. Without the flag the pinned
+/// setback corner (16 faces).
+#[test]
+fn setback_set_on_a_corner_that_is_not_the_setback_is_refused() {
+    use solidcore::primitive::api_primitives::create_cylinder;
+    let at = [
+        [10.0, 40.0, 20.0],
+        [20.0, 40.0, 10.0],
+        [25.0, 40.0 - 175.0_f64.sqrt(), 20.0],
+    ];
+    for blend_on in [true, false] {
+        let mut k = all_fixes(blend_on);
+        let bx = create_box(&mut k, Point3::new(0.0, 0.0, 0.0), 40.0, 40.0, 20.0).unwrap();
+        let cyl = create_cylinder(&mut k, Point3::new(40.0, 40.0, -5.0), 20.0, 30.0).unwrap();
+        let b = boolean_difference(&mut k, bx, cyl).unwrap();
+        let r = blend_asked(&mut k, b, &at, 2.0, [20.0, 40.0, 20.0], 4.0, false, false);
+        assert_eq!(r.event, Some(None));
+        if blend_on {
+            assert!(r.body.is_none());
+            assert_eq!(r.code, 9, "{}", r.comment); // CornerUnsupported
+            assert!(
+                r.comment.contains("not the blend corner's Setback"),
+                "{}",
+                r.comment
+            );
+        } else {
             assert_eq!(r.code, 0, "{}", r.comment);
             let mut b = r.body.expect("a body");
             stitch_and_orient(&mut k, &mut b, &StitchAndOrientOptions::default()).unwrap();

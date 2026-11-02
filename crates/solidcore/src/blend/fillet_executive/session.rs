@@ -2171,26 +2171,22 @@ impl<'target> FilletSession<'target> {
                 }
                 // solidcore-native (WR-697 addendum; the fork refuses this only in its capi,
                 // dc757a6): a corner asked to be set back (SetSetBackFill) that is not the
-                // Setback (a Ball, an NxN corner, or a corner of another kind) would drop
-                // the setback silently, so it is refused, decided from the request and the
-                // classification alone
+                // Setback would drop the setback silently, so it is refused, decided from the
+                // request and the classification alone (the second door, SetSetBackDist on
+                // the made corner, is refused by `do_filleting` on the same predicate)
                 if k.fixes.fillet_blend_corner
                     && crate::blend::blend_corner::setback::set_back_fill_of(
                         set_back_fills,
                         vertex,
                     )
                     .is_some()
-                    && !corner
-                        .blend
-                        .is_some_and(crate::blend::blend_corner::BlendCorner::is_setback)
+                    && crate::blend::blend_corner::setback::asked_setback_not_built(&corner)
                 {
                     let location = crate::topology::vertex::point(target, vertex).ok();
                     return Ok(CornerCreation::Refused {
                         location,
                         error: crate::blend::fillet_geom::p1::FilletErrorType::CornerUnsupported,
-                        comment: "Fillet Error: a setback is asked for at a corner that is not \
-                                  the blend corner's Setback, so it would not be built"
-                            .to_owned(),
+                        comment: crate::blend::blend_corner::setback::SETBACK_NOT_BUILT.to_owned(),
                         fit_edge: None,
                     });
                 }
@@ -2664,7 +2660,10 @@ impl<'target> FilletSession<'target> {
             .collect()
     }
 
-    /// `SmFilletCorner::SetSetBackDist` on one live corner.
+    /// `SmFilletCorner::SetSetBackDist` on one live corner. With
+    /// `Kernel::fixes.fillet_blend_corner`, a setback (`distance > 0`) set on a corner that is
+    /// not the blend corner's Setback is refused by [`Self::do_filleting`]
+    /// (`CornerUnsupported`) rather than built without it.
     ///
     /// # Errors
     /// An unresolved corner identity.

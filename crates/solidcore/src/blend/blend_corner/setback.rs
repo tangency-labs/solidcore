@@ -49,7 +49,7 @@
 
 use crate::blend::blend_corner::ball::{solver_of_edgeuse_or_mate, BallSolvers};
 use crate::blend::blend_corner::swept::fmt_g;
-use crate::blend::blend_corner::BlendCornerEvent;
+use crate::blend::blend_corner::{BlendCorner, BlendCornerEvent};
 use crate::blend::blend_setback::{
     certified_scale, containment, distances, fill_hole, Edge, Face, Fill, Round,
 };
@@ -155,6 +155,22 @@ pub struct SetBackFill {
     /// `m_bOpen`: left open, for the caller to fill.
     pub open: bool,
 }
+
+/// Not the fork's (solidcore-native, WR-697 addendum `setback-asked-not-built-refused`; the
+/// fork refuses this only in its capi, dc757a6): whether a setback asked for at `corner`
+/// (`SetSetBackFill` before the corners are made, or `SetSetBackDist` on the corner after)
+/// would be dropped, because the corner is not the blend corner's Setback, the only corner
+/// that builds a setback with `Kernel::fixes.fillet_blend_corner` (the N x N corners' setback
+/// paths are deleted, dc757a6). The session refuses such a request
+/// ([`SETBACK_NOT_BUILT`], `CornerUnsupported`) instead of building the corner without it.
+#[must_use]
+pub fn asked_setback_not_built(corner: &FilletCorner) -> bool {
+    !corner.blend.is_some_and(BlendCorner::is_setback)
+}
+
+/// The refusal's comment for [`asked_setback_not_built`].
+pub const SETBACK_NOT_BUILT: &str =
+    "Fillet Error: a setback is asked for at a corner that is not the blend corner's Setback, so it would not be built";
 
 /// `SmFilletExecutive::GetSetBackFill`: the first fill asked at `vertex`.
 #[must_use]
