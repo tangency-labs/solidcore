@@ -35,8 +35,9 @@ use solidcore::{Brep, Kernel};
 /// Every fix on (SolidCraft's set), `fillet_keep_features` as given.
 fn kernel(keep: bool) -> Kernel {
     let mut k = Kernel::default();
-    k.fixes = UpstreamFixes::all();
-    k.fixes.fillet_keep_features = keep;
+    let mut fixes = UpstreamFixes::all();
+    fixes.fillet_keep_features = keep;
+    k.fixes = fixes;
     k
 }
 
