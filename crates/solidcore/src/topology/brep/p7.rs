@@ -39,6 +39,10 @@
 //!   pointer). `CopyFaces` copies from one B-rep into another one: upstream also allows
 //!   the destination to be the source B-rep, which a shared and a mutable borrow cannot
 //!   express (copy within one B-rep through a clone).
+//! - **Exact pcurves (WR-722, opt-in `keep_exact_pcurves`).** `MakeFaceWithCurves`'s keep
+//!   step flips the orientations it matches the given UV curves by on a face made with its
+//!   surface's orientation opposite, and `CopyFaces` without the merge passes the face's
+//!   own trims on to its copy (`pbOptCrvOnSurf`).
 //! - **Index checks.** Loop counts that add up to more curves, orientations or edge uses
 //!   than given, and self-intersection UV curve arrays shorter than the 3D curves, are
 //!   [`SolidError::InvalidInput`] (upstream reads past its arrays).
@@ -1711,8 +1715,28 @@ fn make_face_with_curves_transfer_impl(
         // (upstream loops over cpOptUVCurves->GetSize(): a null array is dereferenced)
         let uv: Vec<Curve> = uv_curves
             .ok_or_else(|| null("crv_on_surf without UV curves (upstream dereferences null)"))?;
-        // CreateUVTrimCurves(FALSE, &sNewUVCurves, &crCurveOrientations, ..)
-        let r = face_create_uv_trim_curves(k, b, face, false, uv, &orientations);
+        // CreateUVTrimCurves(FALSE, &sNewUVCurves, &crCurveOrientations, ..). Not upstream
+        // (WR-722, opt-in): on a face made with its surface's orientation opposite, the
+        // upward face use's edge uses run against the loop the orientations are given
+        // along, so they are flipped to match them (upstream's tangent test in
+        // sm_FindBestUVCurve refuses each exact curve there, and it is projected again)
+        let flipped: Vec<OrientType>;
+        let orients = if k.fixes.keep_exact_pcurves && orientation == OrientType::Opposite {
+            flipped = orientations
+                .iter()
+                .map(|&o| {
+                    if o == OrientType::Same {
+                        OrientType::Opposite
+                    } else {
+                        OrientType::Same
+                    }
+                })
+                .collect();
+            &flipped
+        } else {
+            &orientations
+        };
+        let r = face_create_uv_trim_curves(k, b, face, false, uv, orients);
         match r {
             Err(e) if e.is_unported_or_cancelled() => return Err(e),
             Err(SolidError::Upstream { code, .. }) if code == crate::error::SM_ERR => {
@@ -2135,6 +2159,51 @@ pub fn copy_faces_from(
     this_face: &dyn Fn(FaceId) -> ObjectRef,
     env: &mut ed::NotifyEnv<'_>,
 ) -> Result<(Vec<FaceId>, bool)> {
+    copy_faces_from_with(
+        k, src, faces, dest, use_merge, true, source_key, this_face, env,
+    )
+}
+
+/// [`copy_faces_from`] between two B-reps' own attribute stores
+/// (`crate::topology::brep::p2::CopyNotifyState`): the same copy without `MakeFaceuse`'s
+/// surface-attribute copy. (not upstream: upstream's surfaces are objects of their own.)
+/// In such a store a surface goes by its owner face's name, which there names the
+/// destination face of the same arena id, so that copy would give each new face the
+/// attributes of a destination face; the source's surfaces have no lists of their own,
+/// and the faces' own attributes reach the copies through `SM_NO_COPY`.
+///
+/// # Errors
+///
+/// As [`copy_faces_from`].
+#[allow(clippy::too_many_arguments)] // copy_faces_from's arguments
+pub fn copy_faces_between_stores(
+    k: &mut Kernel,
+    src: &mut Brep,
+    faces: &[FaceId],
+    dest: &mut Brep,
+    use_merge: bool,
+    source_key: &dyn Fn(EntityRef) -> ObjectRef,
+    this_face: &dyn Fn(FaceId) -> ObjectRef,
+    env: &mut ed::NotifyEnv<'_>,
+) -> Result<(Vec<FaceId>, bool)> {
+    copy_faces_from_with(
+        k, src, faces, dest, use_merge, false, source_key, this_face, env,
+    )
+}
+
+/// [`copy_faces_from`], with `MakeFaceuse`'s surface-attribute copy as `surface_attributes`.
+#[allow(clippy::too_many_arguments)] // copy_faces_from's arguments and the switch
+fn copy_faces_from_with(
+    k: &mut Kernel,
+    src: &mut Brep,
+    faces: &[FaceId],
+    dest: &mut Brep,
+    use_merge: bool,
+    surface_attributes: bool,
+    source_key: &dyn Fn(EntityRef) -> ObjectRef,
+    this_face: &dyn Fn(FaceId) -> ObjectRef,
+    env: &mut ed::NotifyEnv<'_>,
+) -> Result<(Vec<FaceId>, bool)> {
     // (not upstream) the copies' names (`env.key_of`, `this_face` for faces) against
     // the source's: where they coincide on the source's objects, a copy would take the
     // key of the source object of its arena id.
@@ -2146,7 +2215,17 @@ pub fn copy_faces_from(
     let live = p2::live_entities(src);
     let shift = super::p3::private_source_shift(&live, source_key, &dest_name)?;
     let Some(shift) = shift else {
-        return copy_faces_named(k, src, faces, dest, use_merge, source_key, this_face, env);
+        return copy_faces_named(
+            k,
+            src,
+            faces,
+            dest,
+            use_merge,
+            surface_attributes,
+            source_key,
+            this_face,
+            env,
+        );
     };
     // a source object's list on a key the copies' naming also gives out would be a
     // copy's list too
@@ -2188,7 +2267,17 @@ pub fn copy_faces_from(
             lent.push((key, h));
         }
     }
-    let copied = copy_faces_named(k, src, faces, dest, use_merge, &shifted, this_face, env);
+    let copied = copy_faces_named(
+        k,
+        src,
+        faces,
+        dest,
+        use_merge,
+        surface_attributes,
+        &shifted,
+        this_face,
+        env,
+    );
     for (key, h) in lent {
         env.attributes.remove_attribute(key, h, true)?;
     }
@@ -2206,6 +2295,7 @@ fn copy_faces_named(
     faces: &[FaceId],
     dest: &mut Brep,
     use_merge: bool,
+    surface_attributes: bool,
     source_key: &dyn Fn(EntityRef) -> ObjectRef,
     this_face: &dyn Fn(FaceId) -> ObjectRef,
     env: &mut ed::NotifyEnv<'_>,
@@ -2240,6 +2330,7 @@ fn copy_faces_named(
             edge_source_key: &|e| source_key(EntityRef::Edge(e)),
             edge_destination_key: &|e| destination_key(EntityRef::Edge(e)),
             face_source_key: &|f| source_key(EntityRef::Face(f)),
+            surface_attributes,
             face_destination_key: this_face,
         };
         let context = match env.context.as_deref_mut() {
@@ -2294,6 +2385,9 @@ fn copy_faces_named(
             orientations: curves.curve_orients,
             loop_points: Vec::new(),
         };
+        // Not upstream (WR-722, opt-in): the copy keeps the face's own trims
+        // (`pbOptCrvOnSurf`), not projected again later
+        let keep = (k.fixes.keep_exact_pcurves && input.uv_curves.is_some()).then_some(true);
         match make_face_with_curves(
             k,
             dest,
@@ -2302,7 +2396,7 @@ fn copy_faces_named(
             s2,
             &dom,
             OrientType::Same,
-            None,
+            keep,
             this_face,
             env,
         ) {
