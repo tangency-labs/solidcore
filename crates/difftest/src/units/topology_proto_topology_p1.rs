@@ -717,7 +717,7 @@ const REFUSED: f64 = f64::MIN;
 /// refusal, as the shim refuses those inputs.
 fn st3<T>(r: solidcore::Result<T>) -> Result<Result<T, f64>, Fail> {
     match r {
-        Err(SolidError::InvalidInput { .. }) => Ok(Err(REFUSED)),
+        Err(SolidError::InvalidInput { .. } | SolidError::PortInvariant { .. }) => Ok(Err(REFUSED)),
         r => st(r),
     }
 }
@@ -1682,7 +1682,7 @@ impl ProtoBrep<H> for Pool {
             let i = ents.iter().position(|t| *t == Some(e)).unwrap_or(usize::MAX);
             H(i, class_kind_of(kinds.get(i).copied().unwrap_or(-1)))
         };
-        let mut records = BTreeMap::new();
+        let mut records = solidcore::topology::topology::NotifyRecords::new();
         let mut attributes = AttributeStore::default();
         let mut env = solidcore::topology::edge::NotifyEnv {
             records: &mut records,
@@ -2805,7 +2805,7 @@ fn run_proto(
                     &mut output,
                 )
                 .map_err(|error| match error {
-                    SolidError::InvalidInput { operation, .. } => SolidError::Upstream {
+                    SolidError::InvalidInput { operation, .. } | SolidError::PortInvariant { operation, .. } => SolidError::Upstream {
                         operation,
                         code: solidcore::error::SM_ERR_INVALID_INPUT,
                         entity: None,
@@ -3448,7 +3448,7 @@ fn run_proto(
                             }
                         }
                         if !skip {
-                            status = st0(r.mgr.remove_vertex_definition(d, flag))?;
+                            status = st0(r.mgr.remove_vertex_definition(&r.k, d, flag))?;
                         }
                     }
                     _ => skip = true,
@@ -3459,7 +3459,7 @@ fn run_proto(
                 _ => skip = true,
             },
             p::MGR_REMOVE_PE => match r.pe(rd.idx()) {
-                Some(e) if !skip => status = st0(r.mgr.remove_proto_edge(e))?,
+                Some(e) if !skip => status = st0(r.mgr.remove_proto_edge(&r.k, e))?,
                 _ => skip = true,
             },
             p::MGR_SET_TOL => {
@@ -5090,7 +5090,7 @@ fn transform_status(res: solidcore::Result<()>) -> Result<f64, Fail> {
         Err(e) => match Output::unported(&e) {
             Some(d) => return Err(Fail::Deferred(Box::new(d))),
             None => match e {
-                SolidError::InvalidInput { .. } => 1007.0,
+                SolidError::InvalidInput { .. } | SolidError::PortInvariant { .. } => 1007.0,
                 e => status(&e),
             },
         },

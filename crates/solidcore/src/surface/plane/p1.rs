@@ -31,16 +31,20 @@
 //! | [`Plane::is_planar`], [`Plane::is_on_seam`], [`Plane::is_closed`] | `IsPlanar`, `IsOnSeam`, `IsClosed` (inline) |
 //! | [`Plane::make_nurb`]                          | `MakeNurb`                                        |
 //! | [`Plane::project_point_to_uv_domain`]         | `ProjectPointToUVDomain`                          |
-//! | [`Plane::reparameterize`]                     | `Reparameterize`                                  |
+//! | [`Plane::reparameterize`], [`Plane::reparameterize_opt_in`], [`Plane::reparameterize_with_kernel`] | `Reparameterize` |
 //! | [`Plane::toggle_swap_uv_bit`]                 | `ToggleSwapUVBit`                                 |
 //! | [`Plane::rebuild_step_from_nurb_parameters`]  | `RebuildSTEPFromNURBParameters`                   |
 //! | [`Plane::step_uv_domain`], [`Plane::position`], [`Plane::uv_scale`] | `GetSTEPUVDomain`, `GetPosition`, `GetUVScale` |
 //! | [`Plane::is_kind_of`], [`Plane::TYPE`], [`Plane::type_string`], [`Plane::class_string`] | `IsKindOf`, `GetType`, `GetTypeString`, `GetClassString` (`SM_COMMON`) |
 //! | [`Plane::base`], [`Plane::base_with_nurb`], [`Plane::natural_uv_domain`] | the `SmBSplineSurface` part, `GetOrCreateGwNurbPointer`, `GetNaturalUVDomain` (inherited) |
-//! | [`Plane::max_analytic_domain`], [`Plane::is_parallel_to_vector`], [`Plane::reverse`], [`Plane::swap_uv`] | `SmBSplineSurface::GetMaxAnalyticDomain`, `IsParallelToVector`, `Reverse`, `SwapUV` (inherited, re-dispatched) |
+//! | [`Plane::max_analytic_domain`], [`Plane::is_parallel_to_vector`], [`Plane::is_parallel_to_vector_opt_in`], [`Plane::is_parallel_to_vector_with_kernel`], [`Plane::reverse`], [`Plane::swap_uv`] | `SmBSplineSurface::GetMaxAnalyticDomain`, `IsParallelToVector`, `Reverse`, `SwapUV` (inherited, re-dispatched) |
 //! | [`Plane::create_extended_surface`], [`Plane::create_extended_surface_dir`] | `SmBSplineSurface::CreateExtendedSurface` (both overloads; inherited, re-dispatched to the `IsSingularity` / `IsClosed` overrides) |
 //!
 //! Deviations:
+//! - **`SwapUV` keeps the plane's definition (WR-701, opt-in).** With
+//!   `Kernel::fixes.swap_uv_keeps_analytic_definition` the swap keeps the axes, domain
+//!   and scales [`Plane::toggle_swap_uv_bit`] swapped (`SmPlane::SwapUVDefinition`, the
+//!   fork's tangency-labs/smlib@0c00de7) instead of rebuilding them from the net.
 //! - **Derived class.** `SmPlane` derives from `SmBSplineSurface`; a [`Plane`] holds
 //!   its B-spline part ([`Plane::base`]) next to the analytic data, and is the
 //!   [`SurfaceKind::Plane`] kind of [`Surface`]. Inherited methods whose upstream
@@ -69,12 +73,23 @@
 //!   with more `u` than `v` derivatives; the port returns `InvalidInput` there, and
 //!   for derivative orders above `MAX_DERIVATIVE` (upstream writes into a caller-sized
 //!   array; the port allocates it, as `BSplineSurface::evaluate` bounds it).
-//!   Entries upstream leaves untouched are zero.
+//!   Entries upstream leaves untouched are zero: the unwritten lower half is 0 here and
+//!   `SM_UNDEF` upstream (a fresh caller's `SmVector3d` array); unreachable today (no
+//!   caller reads it).
 //! - **`Reparameterize`** computes a new origin only in debug code: the release
 //!   build keeps the old origin while changing the scales and the domain, so the
 //!   analytic plane moves unless the new domain starts where the old one did. The
-//!   port keeps that (`plan/findings.md`). Its `Notify` calls only drop caches and
+//!   port keeps that by default (`plan/findings.md`), with an opt-in fix
+//!   [`Kernel::fixes.plane_reparameterize_moves_origin`] (WR-41) via
+//!   [`Plane::reparameterize_opt_in`] and [`Plane::reparameterize_with_kernel`] that
+//!   updates the origin to `origin_max`. Its `Notify` calls only drop caches and
 //!   inform owners and are omitted, as for B-splines.
+//! - **`IsParallelToVector`** (inherited from `SmBSplineSurface`) returns the failed
+//!   `Unitize` status (`SM_ERR_INVALID_INPUT`, nonzero) as `SmBoolean` for a zero
+//!   vector, so upstream callers see `TRUE`. The port keeps `true` by default, with an
+//!   opt-in fix `Kernel::fixes.surface_parallel_to_vector_checks` (WR-39, #2145) via
+//!   [`Plane::is_parallel_to_vector_opt_in`] and
+//!   [`Plane::is_parallel_to_vector_with_kernel`] that returns `false`.
 //! - **Co-ported callees.** `SmTol::MapTo2d(SmTol3d, SmVector2d, SmSurface)` (unit
 //!   `geom.tol`, waiting on `SmSurface::Evaluate1stDerivatives`) is ported here for a
 //!   plane (the only surface it is called with). `Evaluate1stDerivatives` /
@@ -94,7 +109,7 @@ use crate::curve::curve::p8::CurveIntersectOptions;
 use crate::curve::curve::{Curve, CurveKind};
 use crate::curve::iso_curve::IsoCurve;
 use crate::curve::line::{BoundedLineOptions, Line};
-use crate::error::{ignore_status, Result, SolidError};
+use crate::error::{ignore_status, Result, SolidError, SM_ERR_INVALID_INPUT};
 use crate::geom::axis2_placement::Axis2Placement;
 use crate::geom::extent1d::Extent1d;
 use crate::geom::extent2d::Extent2d;
@@ -297,6 +312,21 @@ impl Plane {
     /// Detaches a NURB cell shared with evaluation copies ([`Plane::clone_shared`]).
     pub(crate) fn detach_nurb(&mut self) {
         self.base.detach_nurb();
+    }
+
+    /// The `SmBSplineSurface` part, mutable (CO-PORTED by unit `blend.fillet_removal`,
+    /// whose `ExpandBoundarySpan` edits the plane's NURB).
+    pub(crate) fn base_mut(&mut self) -> &mut BSplineSurface {
+        &mut self.base
+    }
+
+    /// `UpdateAnalyticalDomain(crNewNurbsDomain)` (`SmPlane.h`, CO-PORTED by unit
+    /// `blend.fillet_removal`): the analytic domain becomes `new_nurbs_domain` and the
+    /// NURB is dropped (made again from the analytic data when next needed).
+    pub(crate) fn update_analytical_domain(&mut self, new_nurbs_domain: &Extent2d) {
+        self.anal_uv_domain = *new_nurbs_domain;
+        self.base.nurb = crate::nurbs::b_spline_surface::p1::NurbSlot::none();
+        self.base.nurb_is_borrowed = false;
     }
 
     /// A copy of every member as is (no NURB is made).
@@ -554,8 +584,22 @@ impl Plane {
     /// `true` for a zero vector (upstream returns the failed `Unitize` status).
     #[must_use]
     pub fn is_parallel_to_vector(&self, vector: Vec3) -> bool {
+        self.is_parallel_to_vector_opt_in(vector, false)
+    }
+
+    /// [`Plane::is_parallel_to_vector`] with kernel opt-in fixes applied
+    /// (`IsParallelToVector`).
+    #[must_use]
+    pub fn is_parallel_to_vector_with_kernel(&self, k: &Kernel, vector: Vec3) -> bool {
+        self.is_parallel_to_vector_opt_in(vector, k.fixes.surface_parallel_to_vector_checks)
+    }
+
+    /// [`Plane::is_parallel_to_vector`], optionally returning `false` when `vector`
+    /// cannot be unitised (`fix_checks` `true`, WR-39).
+    #[must_use]
+    pub fn is_parallel_to_vector_opt_in(&self, vector: Vec3, fix_checks: bool) -> bool {
         let Ok(test_vec) = vector.unitize() else {
-            return true;
+            return !fix_checks;
         };
         let z_axis = self.position.z_axis();
         let tol1 = EFF_ZERO * (1.0 + self.position.origin().max_dimension());
@@ -812,6 +856,59 @@ impl Plane {
         self.make_nurb()
     }
 
+    /// Maps the domain onto `trim_domain` (`Reparameterize`), optionally updating
+    /// the placement origin to `origin_max` when `move_origin` is true (WR-41).
+    ///
+    /// # Errors
+    ///
+    /// Those of [`BSplineSurface::reparameterize`] (`SM_ERR_NULL_POINTER` when no
+    /// NURB can be made).
+    pub fn reparameterize_opt_in(
+        &mut self,
+        trim_domain: &Extent2d,
+        move_origin: bool,
+    ) -> Result<()> {
+        // Get new Analytic parameters
+        let scale_x = (self.uv_scale.x * self.anal_uv_domain.x_length()) / trim_domain.x_length();
+        let scale_y = (self.uv_scale.y * self.anal_uv_domain.y_length()) / trim_domain.y_length();
+
+        let origin_max = if move_origin {
+            let point_max = self.position.origin()
+                + self.position.x_axis() * (self.uv_scale.x * self.anal_uv_domain.u_max())
+                + self.position.y_axis() * (self.uv_scale.y * self.anal_uv_domain.v_max());
+            Some(
+                point_max
+                    - self.position.x_axis() * (scale_x * trim_domain.u_max())
+                    - self.position.y_axis() * (scale_y * trim_domain.v_max()),
+            )
+        } else {
+            None
+        };
+
+        // set NURB domain parameterization - no change in shape
+        self.ensure_nurb();
+        self.base.reparameterize(trim_domain)?;
+
+        if let Some(origin) = origin_max {
+            self.position.set_origin(origin);
+        }
+
+        // Set Analytic domain parameterization - no change in shape
+        self.anal_uv_domain = *trim_domain;
+        self.uv_scale = Vec2::new(scale_x, scale_y);
+        Ok(())
+    }
+
+    /// Maps the domain onto `trim_domain` with kernel opt-in fixes applied (`Reparameterize`).
+    ///
+    /// # Errors
+    ///
+    /// Those of [`BSplineSurface::reparameterize`] (`SM_ERR_NULL_POINTER` when no
+    /// NURB can be made).
+    pub fn reparameterize_with_kernel(&mut self, k: &Kernel, trim_domain: &Extent2d) -> Result<()> {
+        self.reparameterize_opt_in(trim_domain, k.fixes.plane_reparameterize_moves_origin)
+    }
+
     /// Maps the domain onto `trim_domain` (`Reparameterize`): the NURB is
     /// re-parameterised without changing its shape; the analytic domain becomes
     /// `trim_domain` and the scales `su * |old u| / |new u|`, `sv * |old v| / |new
@@ -822,19 +919,7 @@ impl Plane {
     /// Those of [`BSplineSurface::reparameterize`] (`SM_ERR_NULL_POINTER` when no
     /// NURB can be made).
     pub fn reparameterize(&mut self, trim_domain: &Extent2d) -> Result<()> {
-        // Get new Analytic parameters
-        let scale_x = (self.uv_scale.x * self.anal_uv_domain.x_length()) / trim_domain.x_length();
-        let scale_y = (self.uv_scale.y * self.anal_uv_domain.y_length()) / trim_domain.y_length();
-        // (sPointMax, sPointMin and sOriginMax are only used by debug code)
-
-        // set NURB domain parameterization - no change in shape
-        self.ensure_nurb();
-        self.base.reparameterize(trim_domain)?;
-
-        // Set Analytic domain parameterization - no change in shape
-        self.anal_uv_domain = *trim_domain;
-        self.uv_scale = Vec2::new(scale_x, scale_y);
-        Ok(())
+        self.reparameterize_opt_in(trim_domain, false)
     }
 
     /// Transposes the STEP definition so that `Plane(u, v) = SwapPlane(v, u)`: swaps
@@ -920,6 +1005,35 @@ impl Plane {
     /// Those of [`BSplineSurface::canonical`], [`BSplineSurface::set_canonical`] (the
     /// swap bit is then restored) and [`Plane::rebuild_step_from_nurb_parameters`].
     pub fn swap_uv(&mut self) -> Result<()> {
+        self.swap_uv_notifying(&mut |_| Ok(()))
+    }
+
+    /// [`Plane::swap_uv`] with `SetCanonical`'s edit notifications sent through
+    /// `notify` ([`BSplineSurface::set_canonical_notifying`]).
+    ///
+    /// # Errors
+    ///
+    /// Those of [`Plane::swap_uv`] and of `notify`.
+    pub(crate) fn swap_uv_notifying(
+        &mut self,
+        notify: &mut crate::nurbs::b_spline_surface::p2::EditNotify<'_>,
+    ) -> Result<()> {
+        self.swap_uv_notifying_keeping(notify, false)
+    }
+
+    /// [`Plane::swap_uv_notifying`]; with `keep_definition` (not upstream, WR-701, the
+    /// fork's tangency-labs/smlib@0c00de7, `SmPlane::SwapUVDefinition`) the definition
+    /// [`Plane::toggle_swap_uv_bit`] has swapped (axes, domain, scales) is kept, not
+    /// rebuilt from the transposed net.
+    ///
+    /// # Errors
+    ///
+    /// Those of [`Plane::swap_uv`].
+    pub(crate) fn swap_uv_notifying_keeping(
+        &mut self,
+        notify: &mut crate::nurbs::b_spline_surface::p2::EditNotify<'_>,
+        keep_definition: bool,
+    ) -> Result<()> {
         // get current surface description
         self.ensure_nurb();
         let c = self.base.canonical()?;
@@ -935,22 +1049,28 @@ impl Plane {
         transpose(&mut weights, num_v_cpts);
 
         // Transpose Surface definition; on failure, restore the bit
-        let status = self.base.set_canonical(&CanonicalSurfaceData {
-            u_degree: c.v_degree,
-            v_degree: c.u_degree,
-            control_points: &cpts,
-            form: c.form,
-            u_multiplicities: &c.v_multiplicities,
-            v_multiplicities: &c.u_multiplicities,
-            u_knots: &c.v_knots,
-            v_knots: &c.u_knots,
-            knot_type: c.knot_type,
-            weights: Some(&weights),
-            uv_domain: None,
-        });
+        let status = self.base.set_canonical_notifying(
+            &CanonicalSurfaceData {
+                u_degree: c.v_degree,
+                v_degree: c.u_degree,
+                control_points: &cpts,
+                form: c.form,
+                u_multiplicities: &c.v_multiplicities,
+                v_multiplicities: &c.u_multiplicities,
+                u_knots: &c.v_knots,
+                v_knots: &c.u_knots,
+                knot_type: c.knot_type,
+                weights: Some(&weights),
+                uv_domain: None,
+            },
+            notify,
+        );
         if let Err(e) = status {
             self.toggle_swap_uv_bit();
             return Err(e);
+        }
+        if keep_definition {
+            return Ok(());
         }
         self.rebuild_step_from_nurb_parameters()
     }
@@ -1044,7 +1164,7 @@ impl Plane {
     ///
     /// # Errors
     ///
-    /// `InvalidInput` for a zero line vector; `SM_ERR` for a vanishing determinant;
+    /// `SM_ERR_INVALID_INPUT` for a zero line vector; `SM_ERR` for a vanishing determinant;
     /// [`SolidError::Unported`] from the unported callees of the general
     /// `SmSurface::GlobalLineIntersect` (a line in the plane meeting the domain in a
     /// single line parameter).
@@ -1134,8 +1254,13 @@ impl Plane {
         distance_tolerance: f64,
         base: impl FnOnce(&Extent1d) -> Result<SolutionArray<O>>,
     ) -> Result<SolutionArray<O>> {
+        // `SER(SM_ERR_INVALID_INPUT)`: the exact status, which callers may ignore
         if line_vector.length_squared() < EFF_ZERO_SQ {
-            return Err(SolidError::invalid_input(OP_LINE, "zero line vector"));
+            return Err(SolidError::Upstream {
+                operation: OP_LINE,
+                code: SM_ERR_INVALID_INPUT,
+                entity: None,
+            });
         }
 
         // init output
@@ -1232,7 +1357,7 @@ impl Plane {
                 // the interval is [tStart - 1, tEnd + 1], or the caller's interval
                 let sub_interval = line_interval
                     .copied()
-                    .unwrap_or(Extent1d::from_min_max(t_start - 1.0, t_end + 1.0));
+                    .unwrap_or_else(|| Extent1d::from_min_max(t_start - 1.0, t_end + 1.0));
                 // try global surface/curve solver (SmSurface::GlobalLineIntersect: the
                 // solutions name `surface`)
                 return base(&sub_interval);
@@ -2153,7 +2278,7 @@ impl Plane {
                     &CurveIntersectOptions::<NoObject>::default(),
                 ) {
                     Ok(s) => s,
-                    Err(e) if e.is_unported() => return Err(e),
+                    Err(e) if e.is_unported_or_cancelled() => return Err(e),
                     Err(_) => continue,
                 };
                 if sols.is_empty() {
@@ -2455,6 +2580,27 @@ mod tests {
         )
     }
 
+    /// `SER(SM_ERR_INVALID_INPUT)` for a zero line vector, the exact status.
+    #[test]
+    fn zero_line_vector_is_sm_err_invalid_input() {
+        use crate::surface::surface::p4::NoObject;
+        let p = unit_plane();
+        let r = p.global_line_intersect::<NoObject>(
+            &Kernel::default(),
+            NoObject,
+            &p.step_uv_domain(),
+            Point3::new(1.0, 2.0, 0.0),
+            Vec3::new(0.0, 1e-300, 0.0),
+            None,
+            false,
+            1e-6,
+        );
+        assert_eq!(
+            r.err().and_then(|e| e.sm_status()),
+            Some(SM_ERR_INVALID_INPUT)
+        );
+    }
+
     #[test]
     fn evaluate_and_project() {
         let p = unit_plane();
@@ -2618,5 +2764,143 @@ mod tests {
             .create_extended_surface_dir(SurfParamType::UMax, 0.5, ContinuityType::G1)
             .unwrap();
         assert!(e.gw_nurb().is_some());
+    }
+
+    #[test]
+    fn wr41_plane_reparam_default_keeps_origin() {
+        let mut p = Plane::new(
+            Point3::new(10.0, 20.0, 30.0),
+            Vec3::new(1.0, 0.0, 0.0),
+            Vec3::new(0.0, 1.0, 0.0),
+            Vec2::new(2.0, 3.0),
+            &Extent2d::from_bounds(0.0, 0.0, 1.0, 1.0),
+        );
+        let orig_origin = p.position().origin();
+        assert_eq!(orig_origin, Point3::new(10.0, 20.0, 30.0));
+
+        let new_domain = Extent2d::from_bounds(2.0, 3.0, 5.0, 7.0);
+        p.reparameterize(&new_domain).unwrap();
+
+        // Default behavior (pinned C++ parity) does not move the placement origin
+        assert_eq!(p.position().origin(), orig_origin);
+
+        // Consequently, analytic plane evaluation diverges from base NURB evaluation
+        let pt_analytic = p.evaluate_point(Point2::new(2.0, 3.0));
+        let pt_nurb = p
+            .base_with_nurb()
+            .unwrap()
+            .evaluate_point(Point2::new(2.0, 3.0))
+            .unwrap();
+        assert!(pt_analytic.distance(pt_nurb) > 1.0);
+    }
+
+    #[test]
+    fn wr41_plane_reparam_opt_in_moves_origin_matches_nurb() {
+        let mut p = Plane::new(
+            Point3::new(10.0, 20.0, 30.0),
+            Vec3::new(1.0, 0.0, 0.0),
+            Vec3::new(0.0, 1.0, 0.0),
+            Vec2::new(2.0, 3.0),
+            &Extent2d::from_bounds(0.0, 0.0, 1.0, 1.0),
+        );
+        let old_mid_pt = p.evaluate_point(Point2::new(0.5, 0.5));
+
+        let mut k = Kernel::default();
+        k.fixes.plane_reparameterize_moves_origin = true;
+
+        let new_domain = Extent2d::from_bounds(2.0, 3.0, 5.0, 7.0);
+        p.reparameterize_with_kernel(&k, &new_domain).unwrap();
+
+        // Origin moved away from initial (10, 20, 30)
+        assert_ne!(p.position().origin(), Point3::new(10.0, 20.0, 30.0));
+
+        // Midpoint of new domain [2, 5] x [3, 7] is (3.5, 5.0), which maps to the same 3D point
+        let new_mid_pt = p.evaluate_point(Point2::new(3.5, 5.0));
+        assert!(old_mid_pt.distance(new_mid_pt) < 1e-12);
+
+        // Across the entire reparameterized domain, analytic plane and base NURB evaluate identically
+        let u_steps = [2.0, 2.75, 3.5, 4.25, 5.0];
+        let v_steps = [3.0, 4.0, 5.0, 6.0, 7.0];
+        for &u in &u_steps {
+            for &v in &v_steps {
+                let uv = Point2::new(u, v);
+                let pt_analytic = p.evaluate_point(uv);
+                let pt_nurb = p.base_with_nurb().unwrap().evaluate_point(uv).unwrap();
+                assert!(
+                    pt_analytic.distance(pt_nurb) < 1e-12,
+                    "mismatch at uv=({u}, {v}): analytic={pt_analytic:?}, nurb={pt_nurb:?}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn wr41_plane_reparam_via_surface_dispatcher() {
+        let domain = Extent2d::from_bounds(2.0, 3.0, 6.0, 7.0);
+
+        // Without fix
+        let mut s_default = Surface::from(Plane::new(
+            Point3::new(5.0, 5.0, 5.0),
+            Vec3::new(1.0, 0.0, 0.0),
+            Vec3::new(0.0, 1.0, 0.0),
+            Vec2::new(1.0, 1.0),
+            &Extent2d::from_bounds(0.0, 0.0, 1.0, 1.0),
+        ));
+        let k_default = Kernel::default();
+        s_default.reparameterize(&k_default, &domain).unwrap();
+        if let SurfaceKind::Plane(plane) = s_default.kind() {
+            assert_eq!(plane.position().origin(), Point3::new(5.0, 5.0, 5.0));
+        } else {
+            panic!("expected SurfaceKind::Plane");
+        }
+
+        // With fix
+        let mut s_fixed = Surface::from(Plane::new(
+            Point3::new(5.0, 5.0, 5.0),
+            Vec3::new(1.0, 0.0, 0.0),
+            Vec3::new(0.0, 1.0, 0.0),
+            Vec2::new(1.0, 1.0),
+            &Extent2d::from_bounds(0.0, 0.0, 1.0, 1.0),
+        ));
+        let mut k_fixed = Kernel::default();
+        k_fixed.fixes.plane_reparameterize_moves_origin = true;
+        s_fixed.reparameterize(&k_fixed, &domain).unwrap();
+        if let SurfaceKind::Plane(plane) = s_fixed.kind() {
+            assert_ne!(plane.position().origin(), Point3::new(5.0, 5.0, 5.0));
+            let pt_analytic = plane.evaluate_point(Point2::new(4.0, 5.0));
+            let pt_nurb = plane
+                .base_with_nurb()
+                .unwrap()
+                .evaluate_point(Point2::new(4.0, 5.0))
+                .unwrap();
+            assert!(pt_analytic.distance(pt_nurb) < 1e-12);
+        } else {
+            panic!("expected SurfaceKind::Plane");
+        }
+    }
+
+    #[test]
+    fn wr41_plane_reparam_opt_in_arbitrary_frame_and_scale() {
+        let mut p = Plane::new(
+            Point3::new(-15.0, 4.2, 100.0),
+            Vec3::new(0.0, 1.0, 0.0),
+            Vec3::new(0.0, 0.0, 1.0),
+            Vec2::new(3.5, 7.2),
+            &Extent2d::from_bounds(-2.0, -1.0, 4.0, 5.0),
+        );
+        let new_domain = Extent2d::from_bounds(10.0, 20.0, 30.0, 60.0);
+        p.reparameterize_opt_in(&new_domain, true).unwrap();
+
+        for u in [10.0, 15.0, 20.0, 25.0, 30.0] {
+            for v in [20.0, 30.0, 40.0, 50.0, 60.0] {
+                let uv = Point2::new(u, v);
+                let pt_analytic = p.evaluate_point(uv);
+                let pt_nurb = p.base_with_nurb().unwrap().evaluate_point(uv).unwrap();
+                assert!(
+                    pt_analytic.distance(pt_nurb) < 1e-11,
+                    "mismatch at uv=({u}, {v}): analytic={pt_analytic:?}, nurb={pt_nurb:?}"
+                );
+            }
+        }
     }
 }

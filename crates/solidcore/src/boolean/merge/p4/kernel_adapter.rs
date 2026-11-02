@@ -40,6 +40,7 @@ use crate::math::Vec3;
 use crate::topology::brep::p1 as bp;
 use crate::topology::brep_cache::{arena_identity, CacheObject};
 use crate::topology::shell::{RegionLookup, RegionRef};
+#[cfg(test)]
 use crate::topology::topology::Topology;
 use crate::topology::{Brep, BrepId, EdgeId, FaceId, FaceuseId, RegionId, VertexId};
 use crate::EntityRef;
@@ -65,7 +66,19 @@ fn cache_kernel(k: &Kernel, context: &Context) -> Kernel {
         upstream_ub_passed: Vec::new(),
         memoize_curve_caches: k.memoize_curve_caches,
         fixes: k.fixes,
-        notify_records: BTreeMap::new(),
+        cancel: k.cancel.clone(),
+        notify_records: crate::topology::topology::NotifyRecords::new(),
+        blend_net_scope: core::cell::Cell::new(k.blend_net_scope.get()),
+        blend_counts: core::cell::Cell::new(k.blend_counts.get()),
+        blend_last_serial: core::cell::Cell::new(k.blend_last_serial.get()),
+        // (the memo is the kernel's own: a copy starts empty and solves afresh)
+        blend_station_memo: core::cell::RefCell::default(),
+        arena_notify_records: (
+            std::sync::Weak::new(),
+            crate::topology::topology::NotifyRecords::new(),
+        ),
+        // (building cache trees does none of the counted work)
+        work_counters: crate::kernel::WorkCounters::default(),
     }
 }
 
@@ -97,14 +110,45 @@ pub(crate) fn notification_key(namespace: u32, other: bool, entity: EntityRef) -
     }
 }
 
+/// The operand slot (`true` for the other B-rep) and entity that [`notification_key`]
+/// names `key` in `namespace`, if any (its inverse on keys).
+pub(crate) fn entity_of_notification_key(
+    namespace: u32,
+    key: ObjectKey,
+) -> Option<(bool, EntityRef)> {
+    if key.0 >> 37 != u64::from(namespace) {
+        return None;
+    }
+    let other = (key.0 >> 36) & 1 == 1;
+    let kind = (key.0 >> 32) & 0xf;
+    let index = u32::try_from(key.0 & u64::from(u32::MAX)).ok()?;
+    let entity = match kind {
+        0 => EntityRef::Brep(BrepId::from_index(index)),
+        1 => EntityRef::Region(RegionId::from_index(index)),
+        2 => EntityRef::Face(FaceId::from_index(index)),
+        3 => EntityRef::Edge(EdgeId::from_index(index)),
+        4 => EntityRef::Vertex(VertexId::from_index(index)),
+        7 => EntityRef::Shell(crate::topology::ShellId::from_index(index)),
+        8 => EntityRef::Loop(crate::topology::LoopId::from_index(index)),
+        9 => EntityRef::Faceuse(FaceuseId::from_index(index)),
+        10 => EntityRef::Loopuse(crate::topology::LoopuseId::from_index(index)),
+        11 => EntityRef::Edgeuse(crate::topology::EdgeuseId::from_index(index)),
+        12 => EntityRef::Vertexuse(crate::topology::VertexuseId::from_index(index)),
+        _ => return None,
+    };
+    Some((other, entity))
+}
+
 /// Hands the geometry a merge made under the adapter's namespace back to the B-rep's
 /// own naming: a face's surface (an edge's curve) owned under that face's (edge's)
 /// [`notification_key`] in `namespace` is the record's own geometry (upstream's owner
 /// is the record), so it takes the record's name in `b`'s recorded scheme
-/// ([`Brep::naming`](crate::topology::Brep::naming): notification or arena identity)
-/// and the face's tolerance is re-recorded on it. Called when the namespace ends with
-/// the merge (its records and attributes go with it); a B-rep of another or unknown
-/// scheme is left as it is.
+/// ([`Brep::owner_identity`]: notification or arena identity, or a caller's recorded
+/// key) and the face's tolerance is re-recorded on it. An edge use's UV trim curve
+/// owned under the edge use's key likewise takes the edge use's name (upstream's owner
+/// is the edge use; `SmEdgeuse::AssertValid` test #6). Called when the namespace ends
+/// with the merge (its records and attributes go with it); a B-rep of unknown scheme
+/// is left as it is.
 ///
 /// # Errors
 ///
@@ -113,13 +157,8 @@ pub(crate) fn adopt_namespace_owners(b: &mut Brep, namespace: u32, other: bool) 
     use crate::topology::NamingScheme;
     let name = |e: EntityRef| -> Option<ObjectRef> {
         match b.naming() {
-            NamingScheme::Notify => Some(crate::topology::loopuse::notify_ref(e)),
-            NamingScheme::Arena => Some(match e {
-                EntityRef::Face(f) => arena_identity(CacheObject::Face(f)),
-                EntityRef::Edge(x) => arena_identity(CacheObject::Edge(x)),
-                _ => return None,
-            }),
-            _ => None,
+            NamingScheme::Unknown => None,
+            _ => Some(b.owner_identity(e)),
         }
     };
     let faces: Vec<(FaceId, ObjectRef)> = bp::faces(b, None)?
@@ -158,6 +197,22 @@ pub(crate) fn adopt_namespace_owners(b: &mut Brep, namespace: u32, other: bool) 
             b.set_geometry_owner_key(EntityRef::Edge(e), Some(own));
         }
     }
+    // An edge use's UV trim curve is owned by the edge use (`SmEdgeuse` test #6); one
+    // the merge set under the namespace takes the edge use's own name
+    // ([`Brep::owner_identity`]: its notification identity under the notification and
+    // arena schemes, its recorded key or else that identity under a caller's).
+    if b.naming() != NamingScheme::Unknown {
+        let uses: Vec<_> = b.edgeuses().iter().map(|(id, _)| id).collect();
+        for eu in uses {
+            let merged = notification_key(namespace, other, EntityRef::Edgeuse(eu));
+            let own = b.owner_identity(EntityRef::Edgeuse(eu));
+            if let Some(trim) = b.edgeuse_mut(eu)?.uv_trim_curve.as_mut() {
+                if trim.owner() == Some(merged) {
+                    trim.set_owner(Some(own), None);
+                }
+            }
+        }
+    }
     Ok(())
 }
 
@@ -173,7 +228,6 @@ struct GeometryOwnerScope<'a, 'keys> {
 }
 impl<'a, 'keys> GeometryOwnerScope<'a, 'keys> {
     fn new(body: &'a mut Brep, keys: NotificationKeys<'keys>, other: bool) -> Result<Self> {
-        use crate::topology::NamingScheme;
         let naming = body.naming();
         let mut scope = Self {
             body,
@@ -184,11 +238,8 @@ impl<'a, 'keys> GeometryOwnerScope<'a, 'keys> {
         };
         if matches!(keys, NotificationKeys::Namespace(_)) {
             for edge in crate::topology::brep::p1::edges(scope.body, None)? {
-                let expected = if naming == NamingScheme::Notify {
-                    crate::topology::loopuse::notify_ref(EntityRef::Edge(edge))
-                } else {
-                    arena_identity(CacheObject::Edge(edge))
-                };
+                let expected =
+                    crate::topology::scheme_owner_identity(naming, EntityRef::Edge(edge));
                 if let Some(curve) = scope.body.edge_mut(edge)?.curve.as_mut() {
                     if curve.owner() == Some(expected) {
                         scope.edges.push((edge, expected));
@@ -197,11 +248,8 @@ impl<'a, 'keys> GeometryOwnerScope<'a, 'keys> {
                 }
             }
             for face in crate::topology::brep::p1::faces(scope.body, None)? {
-                let expected = if naming == NamingScheme::Notify {
-                    crate::topology::loopuse::notify_ref(EntityRef::Face(face))
-                } else {
-                    arena_identity(CacheObject::Face(face))
-                };
+                let expected =
+                    crate::topology::scheme_owner_identity(naming, EntityRef::Face(face));
                 let rebound = scope
                     .body
                     .face_mut(face)?
@@ -261,7 +309,7 @@ pub struct ManifoldKernelAdapter<'a> {
     /// Canonical options, tag and relationships, shared with the ported stages.
     pub merge: MergeState<Relations>,
     /// Topology notification state for both operands, under [`Self::object_key`].
-    pub records: BTreeMap<ObjectKey, Topology>,
+    pub records: crate::topology::topology::NotifyRecords,
     /// `m_bTopologyDeleted`; dependency editing stages update this same flag.
     pub topology_deleted: bool,
     intersector: TopologyIntersector<H>,
@@ -278,7 +326,7 @@ pub type KernelManifoldIntersector = ManifoldKernelAdapter<'static>;
 
 struct NotificationRecordScope<'records, 'keys> {
     adapter: ManifoldKernelAdapter<'keys>,
-    caller: &'records mut BTreeMap<ObjectKey, Topology>,
+    caller: &'records mut crate::topology::topology::NotifyRecords,
 }
 
 impl Drop for NotificationRecordScope<'_, '_> {
@@ -324,7 +372,7 @@ impl KernelManifoldIntersector {
     /// adapter methods.
     pub fn with_notifications<T>(
         keys: ManifoldNotificationKeys<'_>,
-        records: &mut BTreeMap<ObjectKey, Topology>,
+        records: &mut crate::topology::topology::NotifyRecords,
         action: impl FnOnce(&mut ManifoldKernelAdapter<'_>) -> T,
     ) -> T {
         let mut scope = NotificationRecordScope {
@@ -340,7 +388,7 @@ impl KernelManifoldIntersector {
 /// unwinds. Borrowed key callbacks never escape the operation.
 struct RetainedNotificationScope<'state, 'records, 'keys> {
     retained: &'state mut KernelManifoldIntersector,
-    caller: &'records mut BTreeMap<ObjectKey, Topology>,
+    caller: &'records mut crate::topology::topology::NotifyRecords,
     adapter: ManifoldKernelAdapter<'keys>,
 }
 impl Drop for RetainedNotificationScope<'_, '_, '_> {
@@ -357,7 +405,7 @@ impl KernelManifoldIntersector {
         &mut self,
         keys: ManifoldNotificationKeys<'_>,
         body_ids: (BrepId, BrepId),
-        records: &mut BTreeMap<ObjectKey, Topology>,
+        records: &mut crate::topology::topology::NotifyRecords,
         action: impl FnOnce(&mut ManifoldKernelAdapter<'_>) -> T,
     ) -> T {
         let mut adapter = ManifoldKernelAdapter::from_keys(NotificationKeys::Caller(keys));
@@ -388,7 +436,7 @@ impl<'keys> ManifoldKernelAdapter<'keys> {
     fn from_keys(keys: NotificationKeys<'keys>) -> Self {
         Self {
             merge: MergeState::new(Relations::default()),
-            records: BTreeMap::new(),
+            records: crate::topology::topology::NotifyRecords::new(),
             topology_deleted: false,
             keys,
             body_ids: match keys {
@@ -489,6 +537,7 @@ impl<'keys> ManifoldKernelAdapter<'keys> {
             edge_source_key: &|e| keys.object(true, EntityRef::Edge(e)),
             edge_destination_key: &|e| keys.object(false, EntityRef::Edge(e)),
             face_source_key: &|f| keys.object(true, EntityRef::Face(f)),
+            surface_attributes: true,
             face_destination_key: &|f| keys.object(false, EntityRef::Face(f)),
         };
         action(&mut self.merge.intersector, &mut copy)
@@ -539,7 +588,7 @@ impl<'keys> ManifoldKernelAdapter<'keys> {
         kernel: &mut Kernel,
         brep: &mut Brep,
         faces: &[FaceId],
-        records: &mut BTreeMap<ObjectKey, Topology>,
+        records: &mut crate::topology::topology::NotifyRecords,
         attributes: &mut AttributeStore,
         namespace: u32,
     ) -> Result<()> {
@@ -565,7 +614,7 @@ impl<'keys> ManifoldKernelAdapter<'keys> {
         kernel: &mut Kernel,
         brep: &mut Brep,
         faces: &[FaceId],
-        records: &mut BTreeMap<ObjectKey, Topology>,
+        records: &mut crate::topology::topology::NotifyRecords,
         attributes: &mut AttributeStore,
         key_of: &dyn Fn(EntityRef) -> ObjectRef,
     ) -> Result<()> {
@@ -602,7 +651,7 @@ impl<'keys> ManifoldKernelAdapter<'keys> {
         kernel: &mut Kernel,
         brep: &mut Brep,
         faces: &[FaceId],
-        records: &mut BTreeMap<ObjectKey, Topology>,
+        records: &mut crate::topology::topology::NotifyRecords,
         attributes: &mut AttributeStore,
         keys: NotificationKeys<'_>,
     ) -> Result<()> {
@@ -1098,6 +1147,7 @@ impl ManifoldIntersector for ManifoldKernelAdapter<'_> {
                 edge_source_key: &|e| source_key(EntityRef::Edge(e)),
                 edge_destination_key: &|e| destination_key(EntityRef::Edge(e)),
                 face_source_key: &|f| source_key(EntityRef::Face(f)),
+                surface_attributes: true,
                 face_destination_key: &|f| destination_key(EntityRef::Face(f)),
             };
             crate::topology::brep::p7::copy_faces_with_merge(
@@ -1266,6 +1316,7 @@ impl ManifoldIntersector for ManifoldKernelAdapter<'_> {
             edge_source_key: &edge_source,
             edge_destination_key: &edge_destination,
             face_source_key: &face_source,
+            surface_attributes: true,
             face_destination_key: &face_destination,
         };
         p5::process_wires_and_shell_vertices_with_kernels(
@@ -1310,6 +1361,7 @@ impl ManifoldIntersector for ManifoldKernelAdapter<'_> {
             edge_source_key: &edge_source,
             edge_destination_key: &edge_destination,
             face_source_key: &face_source,
+            surface_attributes: true,
             face_destination_key: &face_destination,
         };
         // New topology is made with the primary context; copies notify through the
@@ -1417,6 +1469,7 @@ impl ManifoldIntersector for ManifoldKernelAdapter<'_> {
         &mut self,
         kernels: &mut BooleanKernels<'_>,
         primary: &mut Brep,
+        attributes: &mut AttributeStore,
         state: &ManifoldState,
         check_all_edges: bool,
     ) -> Result<()> {
@@ -1428,7 +1481,27 @@ impl ManifoldIntersector for ManifoldKernelAdapter<'_> {
             mates: std::mem::take(&mut self.merge.intersector),
             ..p1::CleanupRelations::default()
         };
-        let result = p1::boolean_post_process(kernels.primary, primary, &cleanup, check_all_edges);
+        // The cleanup's deletions notify on the merge's records, attributes and names, as
+        // every other edit of the merge (upstream: the objects' own attributes).
+        let keys = self.keys;
+        let key_of = move |e: EntityRef| keys.object(false, e);
+        let records = &mut self.records;
+        let result = Context::with_notification_context(kernels.primary, |k, context| {
+            let mut env = crate::topology::edge::NotifyEnv {
+                records,
+                attributes,
+                context: Some(context),
+                key_of: &key_of,
+            };
+            p1::boolean_post_process_with_notifications(
+                k,
+                primary,
+                &cleanup,
+                check_all_edges,
+                Some(&mut env),
+            )
+        })
+        .and_then(|r| r);
         self.merge.intersector = cleanup.mates;
         result
     }
@@ -1759,11 +1832,23 @@ mod tests {
         };
         let mut state = ManifoldState::default();
         adapter
-            .post_process(&mut kernels, &mut primary, &state, false)
+            .post_process(
+                &mut kernels,
+                &mut primary,
+                &mut AttributeStore::default(),
+                &state,
+                false,
+            )
             .unwrap();
         state.intersection_vertices.push(v);
         assert!(adapter
-            .post_process(&mut kernels, &mut primary, &state, false)
+            .post_process(
+                &mut kernels,
+                &mut primary,
+                &mut AttributeStore::default(),
+                &state,
+                false,
+            )
             .is_err());
         assert_eq!(adapter.merge.intersector.vertices.other(v), Some(v));
         assert_eq!(
@@ -1961,7 +2046,7 @@ mod tests {
         let mut b = Brep::default();
         let v = a.add_vertex(Vec3::ZERO).unwrap();
         let ov = b.add_vertex(Vec3::X).unwrap();
-        let mut records = BTreeMap::new();
+        let mut records = crate::topology::topology::NotifyRecords::new();
         records.insert(
             notification_key(4, false, EntityRef::Vertex(v)).key,
             Topology::new(),
@@ -2056,7 +2141,10 @@ mod tests {
             let bv = b.add_vertex(Vec3::X).unwrap();
             let ak = primary_key(EntityRef::Vertex(av)).key;
             let bk = other_key(EntityRef::Vertex(bv)).key;
-            let mut records = BTreeMap::from([(ak, Topology::new()), (bk, Topology::new())]);
+            let mut records = crate::topology::topology::NotifyRecords::from(BTreeMap::from([
+                (ak, Topology::new()),
+                (bk, Topology::new()),
+            ]));
             let mut attributes = AttributeStore::new();
             let attr = attributes
                 .insert(Attribute::long(78, 99, Behavior::Reference))
@@ -2172,7 +2260,10 @@ mod tests {
         };
         let old = primary(EntityRef::Vertex(VertexId::from_index(0))).key;
         let added = primary(EntityRef::Vertex(VertexId::from_index(1))).key;
-        let mut records = BTreeMap::from([(old, Topology::new())]);
+        let mut records = crate::topology::topology::NotifyRecords::from(BTreeMap::from([(
+            old,
+            Topology::new(),
+        )]));
         let kernel = Kernel::default();
         let outcome = catch_unwind(AssertUnwindSafe(|| {
             KernelManifoldIntersector::with_notifications(keys, &mut records, |adapter| {

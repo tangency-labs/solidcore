@@ -46,6 +46,7 @@
 #include <string>
 #include <vector>
 
+#include "sc_assert_reports.h"
 #include "sc_sm.h"
 #include "sc_gw.h"
 
@@ -71,8 +72,10 @@ enum : int32_t
     OP_REVERSE = 10,
     OP_TRIM = 11,
     OP_TRANSFORM = 12,
+    OP_COPY_CTOR = 13,
     OP_READ_DB = 40,
     OP_EXACT = 41,
+    OP_ASSERT_VALID = 42,
 };
 
 // Map kinds of an OP_EXACT volume chain (as the surface.srf_in_volume shim).
@@ -121,15 +124,24 @@ struct Peek : public SmCrvInVolume
 
 double st(SmStatus s) { return s == SM_SUCCESS ? 0.0 : (double)s; }
 
-// A curve block `0 dim oob n p m cpts knots` or `1 dim P1 D1 P2 D2`.
+// A curve block `0 dim oob n p m cpts knots` or `1 dim P1 D1 P2 D2` (`2`: kind 0 with the
+// given knots written back over the curve's own NURB after construction).
 SmCurve* read_curve(Rd& rd, const SmContext& ctx)
 {
     int64_t kind = rd.idx();
     ULONG dim = (ULONG)rd.idx();
-    if (kind == 0)
+    if (kind == 0 || kind == 2)
     {
         bool oob = rd.flag();
         SmBSplineCurve* c = new (ctx) SmBSplineCurve(read_nurb(rd), dim, FALSE);
+        if (kind == 2)
+        {
+            // write the given knots back over the fixed-up NURB
+            gw_CURVE* own = c->GetGwNurbPointer();
+            gw_INDEX m = own->knt->m;
+            for (gw_INDEX i = 0; i <= m; i++)
+                own->knt->U[i] = rd.in[rd.at - (int64_t)(m + 1) + (int64_t)i];
+        }
         c->SetOutOfBoundsEnabled(oob ? TRUE : FALSE);
         return c;
     }
@@ -262,6 +274,24 @@ void free_civ(Built& b)
     delete b.civ;
 }
 
+// The state of a copy made by the copy constructor and whether it equals the original,
+// then frees the parts the copy does not own (never the originals when copied) and the
+// copy itself.
+void report_copy(const SmCrvInVolume& original, SmCrvInVolume* cp, std::vector<double>& o)
+{
+    put_state(o, cp);
+    o.push_back(sc::flg(*cp == original));
+    SmCurve* ccur = cp->GetCurve();
+    SmVolume* cvol = cp->GetVolume();
+    bool del_c = cp->OwnsCurve() != FALSE;
+    bool del_v = cp->OwnsVolume() != FALSE;
+    if (ccur != original.GetCurve() && !del_c)
+        delete ccur;
+    if (cvol != original.GetVolume() && !del_v)
+        delete cvol;
+    delete cp;
+}
+
 void civ_op(int32_t op, Rd& rd, const SmContext& ctx, Built& bb, std::vector<double>& o)
 {
     ScCiv* c = bb.civ;
@@ -391,23 +421,16 @@ void civ_op(int32_t op, Rd& rd, const SmContext& ctx, Built& bb, std::vector<dou
         SmStatus s = c->Copy(ctx, cp);
         o.push_back(st(s));
         if (s == SM_SUCCESS && cp != NULL)
-        {
-            SmCrvInVolume* cc = (SmCrvInVolume*)cp;
-            put_state(o, cc);
-            // the copy deletes what it owns; free the copies it does not own (they are
-            // never the originals when copied)
-            SmCurve* ccur = cc->GetCurve();
-            SmVolume* cvol = cc->GetVolume();
-            bool del_c = cc->OwnsCurve() != FALSE;
-            bool del_v = cc->OwnsVolume() != FALSE;
-            bool cur_copied = ccur != c->GetCurve();
-            bool vol_copied = cvol != c->GetVolume();
-            if (cur_copied && !del_c)
-                delete ccur;
-            if (vol_copied && !del_v)
-                delete cvol;
-            delete cc;
-        }
+            report_copy(*c, (SmCrvInVolume*)cp, o);
+        break;
+    }
+    case OP_COPY_CTOR:
+    {
+        // the copy constructor itself (Copy() only forwards to it), so the base curve
+        // and the volume are handled by the constructor, not by the virtual Copy
+        SmCrvInVolume* cc = new (ctx) SmCrvInVolume(*c);
+        o.push_back(0.0);
+        report_copy(*c, cc, o);
         break;
     }
     case OP_EDIT_PARAM:
@@ -638,6 +661,56 @@ void static_op(int32_t op, Rd& rd, const SmContext& ctx, std::vector<double>& o)
         }
         delete b;
         delete civ;
+        break;
+    }
+    case OP_ASSERT_VALID:
+    {
+        // `curve in_param copy owner has_cache [need nb B nc C] volume level with_list`:
+        // SmCrvInVolume(curve, in_param, volume chain, copy, owner) with the cache loaded,
+        // then AssertValid (output: sc_assert_reports.h)
+        Built b;
+        b.curve = read_exact_curve(rd, ctx);
+        bool in_param = rd.flag();
+        ULONG copy = (ULONG)rd.idx();
+        ULONG owner = (ULONG)rd.idx();
+        bool has_cache = rd.flag();
+        bool need = false;
+        SmTArray<double> br;
+        SmTArray<SmContinuityType> co;
+        if (has_cache)
+        {
+            need = rd.flag();
+            int64_t nb = rd.idx();
+            for (int64_t i = 0; i < nb; i++)
+                br.Add(rd.num());
+            int64_t nc = rd.idx();
+            for (int64_t i = 0; i < nc; i++)
+                co.Add((SmContinuityType)rd.idx());
+        }
+        SmVolume* head = read_volume(rd, ctx);
+        b.civ = new (ctx) ScCiv(*b.curve, in_param ? TRUE : FALSE, *head, copy, owner, &ctx);
+        if (has_cache)
+            b.civ->SetCache(need ? TRUE : FALSE, br, co);
+        SmAssertTestLevel level = (SmAssertTestLevel)rd.idx();
+        bool with_list = rd.flag();
+        SmAssertArray list;
+        SmBoolean ok = b.civ->AssertValid(with_list ? &list : NULL, level, SM_NO_WALK, NULL);
+        o.push_back(0.0);
+        sc::put_assert_reports(o, ok, list, (const SmCurve*)b.civ);
+        // free as free_civ does, with the chain head as the volume
+        SmCurve* cc = b.civ->GetCurve();
+        SmVolume* cv = b.civ->GetVolume();
+        bool civ_deletes_curve = b.civ->OwnsCurve() != FALSE;
+        bool civ_deletes_volume = b.civ->OwnsVolume() != FALSE;
+        if (cc != b.curve && !civ_deletes_curve)
+            delete cc;
+        if (!(cc == b.curve && civ_deletes_curve))
+            delete b.curve;
+        if (cv != head && !civ_deletes_volume)
+            delete cv;
+        if (!(cv == head && civ_deletes_volume))
+            delete head;
+        delete b.civ;
         break;
     }
     default: o.push_back((double)SC_ERR_ARG); break;

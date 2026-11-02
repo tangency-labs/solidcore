@@ -32,3 +32,41 @@ healing keeps the build fast and only pays for the healer where the fast path ca
 tessellate.
 
 The corpus is external to this repository. No STEP fixtures are checked in.
+
+## Topology first
+
+`build`, `build_healed` and `build_body` first build a body from the file's own
+topology: its shared edges and vertices joined as the file joins them through the
+kernel's `BrepConstructor`, without geometric stitching. A face whose construction
+fails is left out and reported (`ImportReport.face_failures`), the first failing face in
+file order each time, up to 16 faces or 1% of the body; a face whose seam fix or UV trim
+fails is kept as built and reported too. A closed solid (manifold, display-ready,
+positive volume) that needed no repair (no face left out or failing, and the seam fix
+and UV-trim pass kept its edge and vertex counts) is kept without a stitched build.
+Otherwise the stitched build runs as well. The topology build is kept when it is a
+closed solid, unless the stitched build is also closed and their volumes differ by more than 1e-4
+relative: then the topology build healed before its seam fix is kept if it agrees with
+the stitched one, else the first topology build. A topology build that is not closed
+gives way to the stitched build, and where stitching fails too the open topology build
+is kept with its left-out faces reported. `BuildMode::Strict` returns the stitched
+build's error instead, and `BuildMode::StitchOnly` builds the old way only. The gate is
+`tests/topology_first.rs` (`corpus`, `one_file`, both ignored).
+
+## File pcurves
+
+`step-import` also maps each edge's `PCURVE`s (`Model::file_pcurves`).
+`build_with_file_pcurves` with `BuildOptions::file_pcurves` (off by default) makes a
+stitched face's UV trim curves from them when every edge use's pcurve checks out (a
+body built from its topology does not use them yet): it runs along the edge, lies
+within the B-rep tolerance of the edge's 3D curve, chains around the loop (shifted by
+whole periods on a periodic surface) and stays in the face's UV domain. Other faces keep
+the kernel's projected trims, and `PcurveStats` counts why. `import_with_report_options`
+reports the counts for a file.
+
+The corpus gate, `tests/file_pcurves_corpus.rs`, builds every body of a local corpus
+both ways and fails on a topology, manifold, display-validity or Level-2 regression:
+
+```sh
+SOLIDCORE_STEP_CORPUS=/path/to/corpus cargo test --release -p step-brep \
+    --test file_pcurves_corpus -- --ignored --nocapture
+```

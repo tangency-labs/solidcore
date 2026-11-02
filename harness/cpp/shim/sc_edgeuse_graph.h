@@ -13,6 +13,7 @@
 #include "sc_exact_curve_export.h"
 #include "support/topology_fixture.h"
 #include "support/ellipse_face_fixture.h"
+#include "support/hermite_sheet_fixture.h"
 #include <algorithm>
 #include <memory>
 
@@ -51,6 +52,7 @@
 #include <nurbs.h>
 #include <map>
 #include <vector>
+#include "sc_trim_curve_record.h"
 
 namespace
 {
@@ -662,6 +664,17 @@ SmBrep* build(Rd& rd, const char* path, SmStatus& status)
     {
         status = sc_topology_fixture::ellipse_face(brep, rd, ctx);
     }
+    else if (kind == 15)
+    {
+        // `15 scale edge_tol`: a native sheet face with four real Hermite edges.
+        status = sc_topology_fixture::hermite_sheet_face(brep, rd, ctx);
+    }
+    else if (kind >= 10 && kind <= 14)
+    {
+        // Reserved for other fixtures (kind 14 in particular is not ours): reject
+        // explicitly instead of building the wire network of the wildcard branch.
+        status = SM_ERR_INVALID_INPUT;
+    }
     else if (kind == 1)
     {
         SmBSplineCurve* c = read_curve(rd, ctx);
@@ -777,6 +790,13 @@ SmBrep* build(Rd& rd, const char* path, SmStatus& status)
                 edge->SetTolerance(SmZoneTol3d(tol), FALSE, FALSE);
         }
     }
+    else if (kind == 14)
+    {
+        // kind 14 (an edge-loop face with per-edge tolerances) exists only in
+        // sc_topology_fixture.h (topology.face_p3's source): never build it as a wire
+        // network here.
+        status = SM_ERR;
+    }
     else
     {
         status = build_wire_network(ctx, brep);
@@ -846,7 +866,8 @@ void put_curve_id(std::vector<double>& o, const SmBSplineCurve* c)
     }
 }
 
-// The state of an edgeuse after SetUVTrimCurve: its uv curve (fingerprint and owner),
+// The state of an edgeuse after SetUVTrimCurve: its uv curve (full record, see
+// sc_trim_curve_record.h) and owner,
 // drop curve fail (presence, status, B-rep set) and its vertexuse's vertex/face gap.
 void put_eu_state(std::vector<double>& o, Graph& g, SmEdgeuse* p)
 {
@@ -857,7 +878,7 @@ void put_eu_state(std::vector<double>& o, Graph& g, SmEdgeuse* p)
     }
     o.push_back(1.0);
     SmBSplineCurve* uv = p->*EuPeek::uv();
-    put_curve_id(o, uv);
+    sc_trim_curve::put_trim_curve(o, uv);
     o.push_back(uv ? (double)g.find(6, uv->GetOwner()) : -1.0);
     SmDropCurveFail* fail = p->*EuPeek::fail();
     o.push_back(fail ? 1.0 : 0.0);

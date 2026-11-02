@@ -597,7 +597,7 @@ fn side(left: bool) -> Side {
 /// The `SmStatus` of a Rust error; `-1` for one upstream cannot return.
 fn status(e: &SolidError) -> f64 {
     match e {
-        SolidError::InvalidInput { .. } => 1007.0,
+        SolidError::InvalidInput { .. } | SolidError::PortInvariant { .. } => 1007.0,
         SolidError::Upstream { code, .. } => f64::from(*code),
         _ => -1.0,
     }
@@ -737,6 +737,8 @@ fn the_cbs(s: &Surface) -> solidcore::Result<&CurveBoundedSurface> {
     match s.kind() {
         SurfaceKind::CurveBounded(c) => Ok(c),
         SurfaceKind::BSpline(_)
+        | SurfaceKind::ProceduralBlend(_)
+        | SurfaceKind::BallPatch(_)
         | SurfaceKind::Plane(_)
         | SurfaceKind::Cone(_)
         | SurfaceKind::Sphere(_)

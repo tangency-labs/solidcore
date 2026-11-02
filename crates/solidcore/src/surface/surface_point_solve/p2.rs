@@ -65,7 +65,7 @@ use crate::geom::vector2d::{Point2, Vec2};
 use crate::geom::vector3d::Point3;
 use crate::kernel::Kernel;
 use crate::math::{min2, BIG_DOUBLE, EFF_ZERO, EFF_ZERO_PARAM, EFF_ZERO_SQ, EFF_ZERO_SQRT};
-use crate::nurbs::b_spline_surface::SurfParamType;
+use crate::nurbs::b_spline_surface::{BSplineSurface, SurfParamType};
 use crate::surface::surface::p2::SurfaceEval;
 use crate::surface::surface::{Surface, SurfaceKind};
 
@@ -131,7 +131,7 @@ impl SurfPtGlobalSolver<'_> {
                 suspicious = g.suspicious;
                 true
             }
-            Err(e) if e.is_unported() => return Err(e),
+            Err(e) if e.is_unported_or_cancelled() => return Err(e),
             Err(_) => false,
         };
 
@@ -299,7 +299,7 @@ impl SurfPtGlobalSolver<'_> {
                 }
                 suspicious
             }
-            Err(e) if e.is_unported() => return Err(e),
+            Err(e) if e.is_unported_or_cancelled() => return Err(e),
             // (the control net could not be read: only the rational warning is set)
             Err(_) => bspl.is_rational(),
         };
@@ -373,7 +373,7 @@ impl SurfPtGlobalSolver<'_> {
                 uv_guess_poly = g;
                 true
             }
-            Err(e) if e.is_unported() => return Err(e),
+            Err(e) if e.is_unported_or_cancelled() => return Err(e),
             Err(_) => false,
         };
 
@@ -439,7 +439,7 @@ impl SurfPtGlobalSolver<'_> {
         if let Some((tri_uv, tri_u, tri_v)) = triangle {
             let on_surface = |guess: Point2| match self.calc_func_val(k, guess) {
                 Ok(v) => Ok(Some(v)),
-                Err(e) if e.is_unported() => Err(e),
+                Err(e) if e.is_unported_or_cancelled() => Err(e),
                 Err(_) => Ok(None),
             };
             if let (Some(tri), Some(cpt)) = (on_surface(tri_uv)?, on_surface(uv)?) {
@@ -466,7 +466,7 @@ impl SurfPtGlobalSolver<'_> {
     fn leg_or_none(&self, idx_u: usize, idx_v: usize) -> Result<Option<Point2>> {
         match self.refine_guess_polygon_leg(idx_u, idx_v) {
             Ok(g) => Ok(Some(g)),
-            Err(e) if e.is_unported() => Err(e),
+            Err(e) if e.is_unported_or_cancelled() => Err(e),
             Err(_) => Ok(None),
         }
     }
@@ -631,7 +631,7 @@ impl SurfPtGlobalSolver<'_> {
     fn seams_status_ignored(&mut self, k: &Kernel, uv: Point2) -> Result<Point2> {
         match self.check_guess_for_seams(k, uv) {
             Ok(u) => Ok(u),
-            Err(e) if e.is_unported() => Err(e),
+            Err(e) if e.is_unported_or_cancelled() => Err(e),
             Err(_) => Ok(uv),
         }
     }
@@ -1019,7 +1019,7 @@ impl SurfPtGlobalSolver<'_> {
 
         let rough = match self.find_rough_guess(k) {
             Ok(r) => r,
-            Err(e) if e.is_unported() => return Err(e),
+            Err(e) if e.is_unported_or_cancelled() => return Err(e),
             Err(_) => return Err(SolidError::sm_err(OP_SOLVE)),
         };
         let (best_idx_u, best_idx_v) = (rough.best_idx_u, rough.best_idx_v);
@@ -1042,7 +1042,7 @@ impl SurfPtGlobalSolver<'_> {
             // Refine the guess (status ignored, as upstream).
             let mut uv_guess = rough.uv;
             if let Err(e) = self.refine_guess(k, &mut uv_guess) {
-                if e.is_unported() {
+                if e.is_unported_or_cancelled() {
                     return Err(e);
                 }
             }
@@ -1071,7 +1071,7 @@ impl SurfPtGlobalSolver<'_> {
                     sol = s;
                     stat_ok = true;
                 }
-                Err(e) if e.is_unported() => return Err(e),
+                Err(e) if e.is_unported_or_cancelled() => return Err(e),
                 Err(_) => stat_ok = false,
             }
 
@@ -1123,7 +1123,7 @@ impl SurfPtGlobalSolver<'_> {
                         // guess did not move and the first local solve failed.
                         stat_ok = true;
                     }
-                    Err(error) if error.is_unported() => return Err(error),
+                    Err(error) if error.is_unported_or_cancelled() => return Err(error),
                     Err(_) => stat_ok = false,
                 }
 
@@ -1147,7 +1147,7 @@ impl SurfPtGlobalSolver<'_> {
                                     .set_uv(Point2::new(sol.start.param(0)?, sol.start.param(1)?));
                             }
                         }
-                        Err(e) if e.is_unported() => return Err(e),
+                        Err(e) if e.is_unported_or_cancelled() => return Err(e),
                         Err(_) => stat_ok = false,
                     }
                 }
@@ -1221,6 +1221,14 @@ fn set_first_object<O: SolutionObject>(sol: &mut Solution<O>, surface_obj: Optio
 pub(crate) fn with_out_of_bounds_enabled(surface: &Surface) -> Result<Option<Surface>> {
     let enabled = match surface.kind() {
         SurfaceKind::BSpline(b) => b.is_out_of_bounds_enabled(),
+        SurfaceKind::ProceduralBlend(pb) => {
+            let b = pb.net();
+            b.is_out_of_bounds_enabled()
+        }
+        SurfaceKind::BallPatch(bp) => {
+            let b = bp.net();
+            b.is_out_of_bounds_enabled()
+        }
         SurfaceKind::Plane(p) => p.base().is_out_of_bounds_enabled(),
         SurfaceKind::Cone(s) => s.rev().base().is_out_of_bounds_enabled(),
         SurfaceKind::Sphere(s) => s.base().base().is_out_of_bounds_enabled(),
@@ -1240,6 +1248,14 @@ pub(crate) fn with_out_of_bounds_enabled(surface: &Surface) -> Result<Option<Sur
     let mut copy = surface.clone_for_evaluation()?;
     match copy.kind_mut() {
         SurfaceKind::BSpline(b) => *b.out_of_bounds_enabled_mut() = true,
+        SurfaceKind::ProceduralBlend(pb) => {
+            let b = pb.net_mut();
+            *b.out_of_bounds_enabled_mut() = true;
+        }
+        SurfaceKind::BallPatch(bp) => {
+            let b = bp.net_mut();
+            *b.out_of_bounds_enabled_mut() = true;
+        }
         SurfaceKind::Plane(p) => *p.out_of_bounds_enabled_mut() = true,
         SurfaceKind::Cone(s) => *s.rev.base_mut().out_of_bounds_enabled_mut() = true,
         SurfaceKind::Sphere(s) => *s.base.base_mut().out_of_bounds_enabled_mut() = true,
@@ -1267,18 +1283,8 @@ pub(crate) fn with_out_of_bounds_enabled_in_place<R>(
     surface: &Surface,
     f: impl FnOnce() -> Result<R>,
 ) -> Result<R> {
-    let base = match surface.kind() {
-        SurfaceKind::BSpline(b) => b,
-        SurfaceKind::Plane(p) => p.base(),
-        SurfaceKind::Cone(s) => s.rev().base(),
-        SurfaceKind::Sphere(s) => s.base().base(),
-        SurfaceKind::Torus(s) => s.base().base(),
-        SurfaceKind::SurfOfRevolution(s) => s.base(),
-        SurfaceKind::SurfOfExtrusion(s) => s.base(),
-        SurfaceKind::CurveBounded(_)
-        | SurfaceKind::Step(_)
-        | SurfaceKind::OffsetSurface(_)
-        | SurfaceKind::SrfInVolume(_) => return f(),
+    let Some(base) = out_of_bounds_base(surface) else {
+        return f();
     };
     if base.is_out_of_bounds_enabled() {
         return f();
@@ -1287,14 +1293,46 @@ pub(crate) fn with_out_of_bounds_enabled_in_place<R>(
     base.set_out_of_bounds_enabled_in_place(true);
     let result = f();
     base.set_out_of_bounds_enabled_in_place(false);
+    // a NURB a cone, sphere, torus or surface of revolution made inside `f` is kept as
+    // a made kind copied while the flag was set (`Surface::kind_with_nurb`); upstream
+    // restores the flag on that one object, so restore it on the made kind too
+    if let Some(made) = out_of_bounds_base(surface) {
+        made.set_out_of_bounds_enabled_in_place(false);
+    }
     result
+}
+
+/// The `SmBSplineSurface` part whose `m_bOutOfBoundsEnabled` an evaluation of `surface`
+/// reads, `None` for the kinds not derived from it.
+fn out_of_bounds_base(surface: &Surface) -> Option<&BSplineSurface> {
+    match surface.kind() {
+        SurfaceKind::BSpline(b) => Some(b),
+        SurfaceKind::ProceduralBlend(pb) => {
+            let b = pb.net();
+            Some(b)
+        }
+        SurfaceKind::BallPatch(bp) => {
+            let b = bp.net();
+            Some(b)
+        }
+        SurfaceKind::Plane(p) => Some(p.base()),
+        SurfaceKind::Cone(s) => Some(s.rev().base()),
+        SurfaceKind::Sphere(s) => Some(s.base().base()),
+        SurfaceKind::Torus(s) => Some(s.base().base()),
+        SurfaceKind::SurfOfRevolution(s) => Some(s.base()),
+        SurfaceKind::SurfOfExtrusion(s) => Some(s.base()),
+        SurfaceKind::CurveBounded(_)
+        | SurfaceKind::Step(_)
+        | SurfaceKind::OffsetSurface(_)
+        | SurfaceKind::SrfInVolume(_) => None,
+    }
 }
 
 /// `pSurf->EvaluatePoint(uv, rPt)` with its status ignored: `prev` on failure.
 fn eval_point(k: &Kernel, surface: &Surface, uv: Point2, prev: Point3) -> Result<Point3> {
     match surface.evaluate_point(k, uv) {
         Ok(p) => Ok(p),
-        Err(e) if e.is_unported() => Err(e),
+        Err(e) if e.is_unported_or_cancelled() => Err(e),
         Err(_) => Ok(prev),
     }
 }
@@ -1618,7 +1656,7 @@ impl SurfPtSolveStepper<'_> {
                     self.set_uv(inverted.uv);
                     return Ok(TerminationReason::FoundAnswerConverged); // end iteration.
                 }
-                Err(e) if e.is_unported() => return Err(e),
+                Err(e) if e.is_unported_or_cancelled() => return Err(e),
                 Err(_) => {}
             }
         }
@@ -2086,7 +2124,6 @@ mod tests {
     use super::*;
     use crate::geom::global_solver::SolutionRequested;
     use crate::geom::solution_array::ObjectKind;
-    use crate::nurbs::b_spline_surface::BSplineSurface;
 
     #[derive(Debug, Clone, Copy, PartialEq)]
     struct Srf;

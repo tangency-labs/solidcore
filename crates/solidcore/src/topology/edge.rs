@@ -12,6 +12,7 @@
 //! | [`crate::topology::Edge`] (`Drop`)      | `SmEdge::~SmEdge`                                 |
 //! | [`edgeuse_count`], [`primary_edgeuse`]  | `SmEdge::GetEdgeuseCount`, `GetPrimaryEdgeuse`    |
 //! | [`interval`], [`set_interval`], [`curve`], [`tolerance`] | `SmEdge::GetInterval`, `SetInterval`, `GetCurve`, `GetTolerance` (`SM_USE_OLDTOL`) |
+//! | [`evaluation_curve`]                    | `GetCurve()` as `SmTol::GetZoneTol3d(const SmObject*)` reads it (the curve's `GetEdge()->GetTolerance()`) |
 //! | [`OdeEdgeLength`]                       | `SmODEEdgeLengthIFEO` (constructor, `Evaluate`)   |
 //! | [`end_tangent`]                         | `SmEdge::GetEndTangent`                           |
 //! | [`uv_trim_curve_of_surface`]            | `SmEdge::GetUVTrimCurveOfSurface`                 |
@@ -29,11 +30,13 @@
 //! | [`vertices`], [`vertexuses`], [`edgeuses`], [`AttributeFilter`] | `SmEdge::GetVertices(SmTArray&, ULONG*)`, `GetVertexuses`, `GetEdgeuses` |
 //! | [`max_gap_3d`], [`max_up_dim_gap_3d`], [`max_down_dim_gap_3d`], [`EdgeGap`], [`MaxGap`] | `SmEdge::GetMaxGap3d`, `GetMaxUpDimGap3d`, `GetMaxDownDimGap3d` |
 //! | [`number_face_occurances`]              | `SmEdge::GetNumberFaceOccurances`                 |
+//! | [`edge_form`] (submodule)               | `SmEdge::IsOnFaceEdgeForm`, `sm_AssertTestEdge13` |
 //! | [`add_oriented_eu_pair`]                | `SmEdge::AddOrientedEUPair`                       |
 //! | [`vertex`], [`start_vertex`], [`end_vertex`], [`other_vertex`], [`start_end_vertices`] | `SmEdge::GetVertex`, `GetStartVertex`, `GetEndVertex`, `GetOtherVertex`, `GetVertices(SmVertex*&, SmVertex*&)` |
 //! | [`insert_manifold_edge_end`]            | `SmEdge::InsertManifoldEdgeEnd`                   |
 //! | [`is_lamina`], [`is_manifold`], [`is_spine`] | `SmEdge::IsLamina`, `IsManifold`, `IsSpine`  |
 //! | [`is_seam`], [`is_seam_of_surface`]     | the two `SmEdge::IsSeam`                          |
+//! | [`is_embedded`]                         | `SmEdge::IsEmbedded`                              |
 //! | `cover_other_coincident_face` (private) | `sm_CoverOtherCoincidentFace` (static)            |
 //! | [`is_topological`], [`Topological`]     | `SmEdge::IsTopological`                           |
 //! | [`is_tangent_edge`]                     | `SmEdge::IsTangentEdge`                           |
@@ -51,6 +54,9 @@
 //!   the next element, cyclically) and `m_lListSize` its length; `ReverseList` keeps
 //!   the head and reverses the rest. `GetPrimaryEdgeuse`, `IsLamina`, `GetBrep` and
 //!   `IsWire` were CO-PORTED by earlier units and are re-exported here.
+//! - **UB-290** (unconditional, the fork's tangency-labs/smlib@8d0fbff): [`is_topological`]
+//!   refuses an edge with one face on both sides whose primary edge use and its radial
+//!   are in two loop uses, which `SmBrep::DeleteEdge` would merge into itself.
 //! - **Surface identity.** Upstream compares `SmSurface*` pointers (the target of
 //!   `GetUVTrimCurveOfSurface`, `IsSeam(const SmSurface&)`, `IsTopological`'s two
 //!   surfaces). A port face owns its surface, so a surface is named by the face holding
@@ -101,6 +107,10 @@
 //!   port returns the error. [`SolidError::Unported`] always propagates.
 //! - **Recursion.** `sm_CoverOtherCoincidentFace` recurses once (its second call has
 //!   `bRefineDomains` set); no other recursion.
+//! - **Not upstream: a stored-domain cover stays within one period** (the fork's
+//!   tangency-labs/smlib@b518bbe, under `Kernel::fixes.cover_wraps_across_closed_seam`):
+//!   `sm_CoverOtherCoincidentFace` passes `bRefineDomains` as the cover's
+//!   `bAcrossWrappedSeams`, so only its trim-derived attempt crosses a wrapped seam.
 //! - **Unported callees** return [`SolidError::Unported`]: `SmBrep::GetInfiniteRegion`
 //!   (`topology.brep_p1`) and `SmFace::CalculateUVDomainFromUVTrimCurves`
 //!   (`topology.face_p1`). `SmSurface::CoverOtherCoincidentSurface` is wired to
@@ -108,7 +118,7 @@
 //!   two face surfaces are moved out of their faces for the call and back, so the
 //!   covering surface keeps any expansion, as upstream.
 
-use std::collections::BTreeMap;
+pub mod edge_form;
 
 use crate::curve::curve::{Curve, CurveKind};
 use crate::error::{ignore_status, EntityRef, Result, SolidError};
@@ -135,7 +145,9 @@ use crate::topology::edgeuse::p2 as eu2;
 use crate::topology::edgeuse::p3 as eu3;
 use crate::topology::face::p2 as face2;
 use crate::topology::proto_topology::p1::owning_topology;
-use crate::topology::topology::{self as topo, Topology};
+#[cfg(test)]
+use crate::topology::topology::Topology;
+use crate::topology::topology::{self as topo};
 use crate::topology::vertexuse as vu1;
 use crate::topology::{
     Brep, Edge, EdgeId, EdgeuseId, FaceId, FaceuseId, LoopuseId, RegionId, ShellId, VertexId,
@@ -158,8 +170,8 @@ pub const CLASS_STRING: &str = "SmEdge";
 
 /// `SmBrep_TYPE` (the `SM_CAST_PTR(SmBrep, ..)` of `Notify`).
 const BREP_TYPE: i64 = 16011;
-/// `SM_ERR_INVALID_INPUT`.
-const SM_ERR_INVALID_INPUT: i32 = 1007;
+// `SM_ERR_INVALID_INPUT`.
+use crate::error::SM_ERR_INVALID_INPUT;
 
 /// `SmEdge::IsKindOf`: `SmEdge_TYPE` or a base class type.
 #[must_use]
@@ -259,7 +271,7 @@ struct Cover {
 }
 
 /// `pSurf0->CoverOtherCoincidentSurface(pSurf1, dTol, rdMaxDist, rpCoveringSurf,
-/// &sDomain0, &sDomain1, &rMergedDomain)` (unit `surface.surface_p5`) on the surfaces
+/// &sDomain0, &sDomain1, &rMergedDomain, bAcrossWrappedSeams)` (unit `surface.surface_p5`) on the surfaces
 /// of `face0` and `face1` (two different faces). The covering surface may be expanded
 /// in place, as upstream. A merged domain that was not written stays the caller's
 /// default-constructed `sMergedDomain`.
@@ -281,6 +293,7 @@ fn cover_other_coincident_surface(
     tol: f64,
     domain0: &Extent2d,
     domain1: &Extent2d,
+    across_wrapped_seams: bool,
 ) -> Result<Cover> {
     use crate::query::brep::BrepFaceServices;
     use crate::surface::surface::p5::CoverSolveContext;
@@ -320,6 +333,7 @@ fn cover_other_coincident_surface(
                 Some(CacheObject::Surface(face1)),
             ],
         },
+        across_wrapped_seams,
     );
     b.face_mut(face0)?.surface = Some(this);
     b.face_mut(face1)?.surface = Some(other);
@@ -341,7 +355,12 @@ fn cover_other_coincident_surface(
                 "covered surface owned by another face",
             ));
         };
-        ignore_status(crate::topology::face::p1::remove_uv_trim_curves(b, face))?;
+        // (passed on with the opt-in fix: the fork's `SER` in CoverCoincidentSurface,
+        // WR-663, tangency-labs/smlib 21dcf69)
+        crate::error::ignore_or_pass_on(
+            crate::topology::face::p1::remove_uv_trim_curves(b, face),
+            k.fixes.query_statuses_pass_on,
+        )?;
     }
     Ok(Cover {
         max_dist: r.max_dist,
@@ -392,6 +411,37 @@ pub fn curve(b: &Brep, e: EdgeId) -> Result<Option<&Curve>> {
 /// `GetTolerance` (`SM_USE_OLDTOL`): `m_sZoneTol3d`.
 pub fn tolerance(b: &Brep, e: EdgeId) -> Result<f64> {
     Ok(b.edge(e)?.tolerance)
+}
+
+/// The edge's 3D curve as upstream's `GetCurve()` evaluates: an evaluation copy (the
+/// curve exactly, owner included) carrying, when the curve has an owner, the edge's
+/// tolerance ([`Curve::set_owner_zone_tol_3d`]): the value
+/// `SmTol::GetZoneTol3d(const SmObject*)` reads through the curve's edge
+/// (`GetEdge()->GetTolerance()`; a curve without owner has no edge there and gets the
+/// system tolerance, as `SmApiEdgeComputeLength` does). Not upstream: a port
+/// curve cannot reach its edge, so a curve borrowed from the edge record ([`curve`])
+/// builds no cache over its owner's tolerance (its length, arc-length parameter and
+/// solves return [`SolidError::Unported`] for `SmTol::GetZoneTol3d`); this copy builds
+/// them as upstream does. `None` for an edge without curve.
+///
+/// # Errors
+///
+/// [`SolidError::NotFound`] for a dead edge; those of the curve copy (geometry nested
+/// deeper than the shared bound).
+pub fn evaluation_curve(b: &Brep, e: EdgeId) -> Result<Option<Curve>> {
+    const OP_EVALUATION_CURVE: &str = "topology::edge::evaluation_curve";
+    let edge = b.edge(e).map_err(|_| SolidError::NotFound {
+        operation: OP_EVALUATION_CURVE,
+        entity: EntityRef::Edge(e),
+    })?;
+    let Some(curve) = edge.curve.as_ref() else {
+        return Ok(None);
+    };
+    let mut copy = curve.clone_for_evaluation()?;
+    if copy.owner().is_some() {
+        copy.set_owner_zone_tol_3d(Some(edge.tolerance));
+    }
+    Ok(Some(copy))
 }
 
 fn curve_deref<'b>(b: &'b Brep, e: EdgeId, what: &'static str) -> Result<&'b Curve> {
@@ -1594,6 +1644,48 @@ pub fn is_spine(b: &Brep, e: EdgeId) -> Result<bool> {
     }
 }
 
+/// `IsEmbedded(pOptFace, bFaceHasSeam)`: the edge has four edge uses on `face` (on any
+/// of its faces when `None`): an edge embedded within a single face, e.g. a crack. A
+/// seam is not embedded; with `face_has_seam` false the (expensive) seam test is
+/// skipped. An embedded edge can connect to other faces.
+///
+/// # Errors
+///
+/// Those of [`faces`], [`edgeuses`], the edge uses' faces and [`is_seam`].
+pub fn is_embedded(
+    k: &Kernel,
+    b: &mut Brep,
+    e: EdgeId,
+    face: Option<FaceId>,
+    face_has_seam: bool,
+) -> Result<bool> {
+    // search face or all faces connected to this edge when face is None
+    let tgt_faces = match face {
+        None => faces(b, e, None)?,
+        Some(f) => vec![f],
+    };
+    let uses = edgeuses(b, e, None, None)?;
+
+    // for every face
+    for tgt in tgt_faces {
+        // count the edgeuses that connect to this face
+        let mut count = 0usize;
+        for &eu in &uses {
+            if eu1::face(b, eu)? == Some(tgt) {
+                count += 1;
+            }
+        }
+
+        // when we found a face being embedded
+        if count == 4 && (!face_has_seam || !is_seam(k, b, e)?) {
+            return Ok(true);
+        }
+    }
+
+    // else - edge is not embedded
+    Ok(false)
+}
+
 /// `IsSeam()`: the edge is a seam of the surface of any of its faces
 /// ([`is_seam_of_surface`]).
 pub fn is_seam(k: &Kernel, b: &mut Brep, e: EdgeId) -> Result<bool> {
@@ -1734,7 +1826,23 @@ fn cover_other_coincident_face(
         }
     }
 
-    let cover = cover_other_coincident_surface(k, b, face0, face1, tol, &domain0, &domain1)?;
+    // SolidCraft fork (tangency-labs/smlib@b518bbe), under
+    // `Kernel::fixes.cover_wraps_across_closed_seam`: across a seam the covering surface
+    // wraps only on the trim-derived bounds. The stored domains are conservative and may
+    // be the faces' whole surfaces: across the seam they cover too, and the merged face
+    // took them as its domain (360 x 208 for half-turn faces whose trims span 180 x 3).
+    // Within one period they cover as before; a cover that must cross the seam takes the
+    // faces' trims.
+    let cover = cover_other_coincident_surface(
+        k,
+        b,
+        face0,
+        face1,
+        tol,
+        &domain0,
+        &domain1,
+        refine_domains,
+    )?;
     let covering = cover.covering.map(|c| match c {
         Covering::This => face0,
         Covering::Other => face1,
@@ -1802,6 +1910,27 @@ pub fn is_topological(
     };
     // 1st edgeuse locals
     let (face1, surf1) = face_of(eu_a)?;
+
+    // UB-290 (the fork's tangency-labs/smlib@8d0fbff), unconditional: the same face on
+    // both sides, and the edge's primary edge use and its radial partner in two loop uses
+    // (the face meeting itself along the edge from its two sides, or its radial pairing
+    // the other way round): `SmBrep::DeleteEdge`, which reads that pair, would take the two
+    // sides for two faces and merge the face into itself, deleting it. Not removable. With
+    // the pair in one loop use it is a slit, which `DeleteEdge` splits off the loop.
+    {
+        let Some(primary) = primary_edgeuse(b, e)? else {
+            return Ok(out);
+        };
+        let Some(radial) = eu1::radial(b, primary)? else {
+            return Ok(out);
+        };
+        if eu1::face(b, primary)? == eu1::face(b, radial)?
+            && eu1::loopuse(b, primary)? != eu1::loopuse(b, radial)?
+        {
+            return Ok(out);
+        }
+    }
+
     // 3rd edgeuse locals = same oriented edgeuse on different face to edgeuse[0]
     let (face2_, surf2) = face_of(eu_c)?;
     let surfs = [&surf1, &surf2];
@@ -2129,7 +2258,9 @@ pub fn set_orientation(b: &mut Brep, e: EdgeId, orientation: OrientType) -> Resu
 /// By default a failed curve reversal's status is ignored, as upstream: the edge
 /// gets the default interval and its uses are still flipped. With the opt-in
 /// [`crate::kernel::UpstreamFixes::edge_reversal_keeps_failed_edge`] (WR-260) a
-/// failed reversal returns before changing the interval or edge uses.
+/// failed reversal returns before changing the interval or edge uses, and an edge
+/// without curve keeps its interval (upstream installs the default one; fork
+/// tangency-labs/smlib 47507b6).
 ///
 /// # Errors
 ///
@@ -2148,6 +2279,9 @@ pub fn reverse_orientation(k: &Kernel, b: &mut Brep, e: EdgeId) -> Result<()> {
             Err(err) if k.fixes.edge_reversal_keeps_failed_edge => return Err(err),
             Err(err) => failed(err)?,
         }
+    } else if k.fixes.edge_reversal_keeps_failed_edge {
+        // nothing reversed the interval: the edge keeps it (WR-260 addendum)
+        new_ivl = old_ivl;
     }
     b.edge_mut(e)?.interval = new_ivl;
 
@@ -2243,7 +2377,7 @@ pub fn orient_edge_sequence(k: &Kernel, b: &mut Brep, edges: &[EdgeId]) -> Resul
 /// different B-reps, and must remain stable for newly allocated entities.
 pub struct NotificationStores<'a> {
     /// The topology records (`SmTopology` members) of the notified objects.
-    pub records: &'a mut BTreeMap<ObjectKey, Topology>,
+    pub records: &'a mut topo::NotifyRecords,
     /// The actual attribute store of the notified objects.
     pub attributes: &'a mut AttributeStore,
     /// The identity each topology entity is notified under.
@@ -2268,7 +2402,7 @@ pub struct NotifyEnv<'a> {
     /// (`geom::context`), so a store holding them belongs to one domain: not shared
     /// across two contexts, nor across a `Context::take_notify_lease` that is not given
     /// back.
-    pub records: &'a mut BTreeMap<ObjectKey, Topology>,
+    pub records: &'a mut topo::NotifyRecords,
     /// The attribute store (keyed like [`NotifyEnv::records`], and scoped the same way).
     pub attributes: &'a mut AttributeStore,
     /// The context of the objects (`GetContext`).
@@ -2295,7 +2429,7 @@ enum NotifyContext<'a> {
 /// Reborrowed notification data shared by legacy and kernel-context algorithms.
 /// The kernel variant never retains a borrow of the kernel or its context.
 pub(crate) struct NotifyState<'a> {
-    pub(crate) records: &'a mut BTreeMap<ObjectKey, Topology>,
+    pub(crate) records: &'a mut crate::topology::topology::NotifyRecords,
     pub(crate) attributes: &'a mut AttributeStore,
     pub(crate) key_of: &'a dyn Fn(EntityRef) -> ObjectRef,
     context: NotifyContext<'a>,
@@ -2622,6 +2756,38 @@ pub fn set_curve(
     set_curve_with_identity(b, e, new_curve, options, env, curve_refs, None)
 }
 
+/// `Replace3DCurve(p3DCurve)` (CO-PORTED by unit `blend.fillet_removal`; shared with
+/// `SmBrep::ReplaceCurve` in `offset::offset_geometry_creation`): `SetCurve(p3DCurve,
+/// TRUE)` (the old curve and, through the change notification, the edge uses' UV trim
+/// curves deleted), then for a new curve its owner set to the edge (`SetOwner`, under
+/// `env`'s identity of the edge) and the edge's interval to the curve's natural interval.
+///
+/// # Errors
+///
+/// Those of [`set_curve`] and [`set_interval`].
+pub(crate) fn replace_3d_curve(
+    b: &mut Brep,
+    e: EdgeId,
+    curve: Option<Curve>,
+    env: &mut NotifyEnv<'_>,
+) -> Result<()> {
+    let interval = curve.as_ref().map(Curve::natural_interval);
+    let curve = curve.map(|mut c| {
+        let owner = (env.key_of)(EntityRef::Edge(e));
+        let _ = c.set_owner(Some(owner), Some(crate::topology::brep::p2::brep_ref(b)));
+        c
+    });
+    let options = SetCurveOptions {
+        delete_old_curve: true,
+        ..SetCurveOptions::default()
+    };
+    let _ = set_curve(b, e, curve, options, env, [None, None])?;
+    if let Some(interval) = interval {
+        set_interval(b, e, &interval)?;
+    }
+    Ok(())
+}
+
 /// Replace the actual edge curve while notifying its body's issued identity.
 /// The cache, UV invalidation and curve lifecycle share [`set_curve`]'s body.
 /// Other edge APIs retain their existing identity contract.
@@ -2727,7 +2893,8 @@ fn set_curve_with_identity(
 /// `GetBlendEdgeuse`: the edge use bounding the sector to fillet (an
 /// [`OrientType::Same`] edge use of an interior region for a solid, of the concave
 /// side for a shell); `None` for a lamina edge, an edge between tangent faces (within
-/// 2 degrees) or an inconsistent edge use.
+/// 2 degrees; half a degree with `fixes.fillet_half_degree_crease`, WR-621) or an
+/// inconsistent edge use.
 ///
 /// # Errors
 ///
@@ -2806,16 +2973,27 @@ pub fn blend_edgeuse(k: &Kernel, b: &mut Brep, e: EdgeId) -> Result<Option<Edgeu
     let (fu_normal, fu_normal2) = (ev0.face_normal, ev1.face_normal);
     let (bin_vec, bin_vec2) = (ev0.binormal, ev1.binormal);
 
-    // set max nonTangent angle to 88 degrees
-    let max_dot = (88.0 * PI / 180.0).cos();
+    // set max nonTangent angle to 88 degrees. With `fillet_half_degree_crease` (WR-621,
+    // fork 2e8758b) 89.5 degrees: faces within half a degree of each other are tangent, a
+    // crease of 0.5 to 2 degrees is an edge the model means and is filleted
+    let max_angle = if k.fixes.fillet_half_degree_crease {
+        89.5
+    } else {
+        88.0
+    };
+    let max_dot = (max_angle * PI / 180.0).cos();
 
-    // the faces are tangent and can't be filleted
+    // the faces are tangent and can't be filleted. With `fillet_knife_edge_rounds`
+    // (WR-570, fork b7ec55b) only when their binormals point away from each other (the
+    // faces continue each other): binormals pointing the same way are a cusp (a knife
+    // edge), whose ball lies back from the edge, filleted like any other edge
+    let cusp = k.fixes.fillet_knife_edge_rounds && bin_vec.dot(bin_vec2) > 0.0;
     let dot1 = bin_vec2.dot(fu_normal);
-    if dot1.abs() < max_dot {
+    if !cusp && dot1.abs() < max_dot {
         return Ok(None); // Tangent: unable to fillet
     }
     let dot2 = bin_vec.dot(fu_normal2);
-    if dot2.abs() < max_dot {
+    if !cusp && dot2.abs() < max_dot {
         return Ok(None); // Tangent: unable to fillet
     }
 
@@ -2992,7 +3170,7 @@ mod tests {
             .unwrap()
             .evaluate_point(&k, interval.evaluate(0.37))
             .unwrap();
-        let mut records = BTreeMap::new();
+        let mut records = crate::topology::topology::NotifyRecords::new();
         crate::topology::brep::p3::seed_records(&mut records, &b, &key_of);
         let mut attributes = AttributeStore::default();
         let marker = attributes
@@ -3087,10 +3265,11 @@ mod tests {
             let result = result_key(EntityRef::Edge(id));
             let mut source_record = Topology::default();
             source_record.set_user_index1(71);
-            let mut records = BTreeMap::from([
-                (original.key, source_record),
-                (result.key, Topology::default()),
-            ]);
+            let mut records =
+                crate::topology::topology::NotifyRecords::from(std::collections::BTreeMap::from([
+                    (original.key, source_record),
+                    (result.key, Topology::default()),
+                ]));
             let mut attributes = AttributeStore::default();
             let mut stores = NotificationStores {
                 records: &mut records,
@@ -3166,7 +3345,7 @@ mod tests {
                 if let Some(previous) = external {
                     context.set_doing_boolean(previous);
                 }
-                let mut records = BTreeMap::new();
+                let mut records = crate::topology::topology::NotifyRecords::new();
                 let mut attributes = AttributeStore::default();
                 let key = |_| ObjectRef {
                     key: ObjectKey(123),
@@ -3431,6 +3610,26 @@ mod tests {
         for eu in eus {
             assert!(b.edgeuse(eu).unwrap().uv_trim_curve.is_none());
         }
+    }
+
+    /// WR-260 addendum (fork tangency-labs/smlib 47507b6): reversing an edge without
+    /// curve installs the default interval upstream; with
+    /// `edge_reversal_keeps_failed_edge` the edge keeps its own.
+    #[test]
+    fn reversing_an_edge_without_curve_keeps_its_interval_with_the_opt_in() {
+        let mut k = Kernel::default();
+        let (mut b, e, _, _) = wire();
+        b.edge_mut(e).unwrap().curve = None;
+        let ivl = b.edge(e).unwrap().interval;
+        assert_ne!(ivl, Extent1d::new());
+        reverse_orientation(&k, &mut b, e).unwrap();
+        assert_eq!(b.edge(e).unwrap().interval, Extent1d::new());
+
+        k.fixes.edge_reversal_keeps_failed_edge = true;
+        let (mut b, e, _, _) = wire();
+        b.edge_mut(e).unwrap().curve = None;
+        reverse_orientation(&k, &mut b, e).unwrap();
+        assert_eq!(b.edge(e).unwrap().interval, ivl);
     }
 
     #[test]

@@ -136,6 +136,7 @@ impl IntersectorOps for Observed {
         fn last_fillet_geom() -> KernelResult<FilletGeomId>;
         fn self_intersection_handler() -> KernelResult<Option<HandlingAlgorithmType>>;
         fn has_surface_generator() -> KernelResult<bool>;
+        fn offset_radii_can_change() -> KernelResult<bool>;
     }
     delegate_mut! { IntersectorOps;
         fn compute_surface_values(k: &Kernel, uv: [Vec2; 2], point: &mut TsectPnt) -> KernelResult<()>;
@@ -146,8 +147,8 @@ impl IntersectorOps for Observed {
         fn rail_surface_evaluate_1st_derivatives(k: &Kernel, rail: usize, uv: Vec2) -> KernelResult<(Vec3, Vec3, Vec3)>;
         fn set_status(value: FilStatus) -> KernelResult<()>;
         fn smooth_out_intersection(k: &Kernel, pseudo: &mut FilletBrep, geom: &FilletGeomId, curves: &mut Vec<BSplineCurve>, uv0: &mut Vec<BSplineCurve>, uv1: &mut Vec<BSplineCurve>) -> KernelResult<()>;
-        fn create_fillet_surface(k: &Kernel, center: &mut BSplineCurve, curve0: &mut BSplineCurve, curve1: &mut BSplineCurve, points: &[TsectPnt], uv0: &mut BSplineCurve, uv1: &mut BSplineCurve) -> KernelResult<Option<BSplineSurface>>;
-        fn set_fillet_surface(pseudo: &mut FilletBrep, geom: &FilletGeomId, surface: Option<BSplineSurface>) -> KernelResult<()>;
+        fn create_fillet_surface(k: &Kernel, center: &mut BSplineCurve, curve0: &mut BSplineCurve, curve1: &mut BSplineCurve, points: &[TsectPnt], uv0: &mut BSplineCurve, uv1: &mut BSplineCurve) -> KernelResult<Option<Surface>>;
+        fn set_fillet_surface(pseudo: &mut FilletBrep, geom: &FilletGeomId, surface: Option<Surface>) -> KernelResult<()>;
         fn set_center_line_curve(pseudo: &mut FilletBrep, geom: &FilletGeomId, curve: BSplineCurve) -> KernelResult<()>;
         fn set_rail_curve(pseudo: &mut FilletBrep, geom: &FilletGeomId, rail: usize, curve: BSplineCurve) -> KernelResult<()>;
         fn set_rail_mate_uv_curve(pseudo: &mut FilletBrep, geom: &FilletGeomId, rail: usize, curve: BSplineCurve) -> KernelResult<()>;

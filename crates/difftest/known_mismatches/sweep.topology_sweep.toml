@@ -56,9 +56,5 @@ why = "C++ heap-layout dependent (ND-491): 394/400 heap-varied fresh processes s
 unit = "sweep.topology_sweep"
 case = "nm_box_linear_z_stitch"
 libc = "glibc"
-why = "C++ succeeds (3 regions, 15 faces, 33 edges, 22 vertices) in 400/400 heap-varied processes; Rust returns SM_ERR in the stitch of the box part, the same B-rep as nm_box_only_linear_z_stitch whose C++ results include SM_ERR (suspected ND-491 order, not demonstrated for this body)"
-
-[[mismatch]]
-unit = "sweep.topology_sweep"
-case = "nm_test_rotation_neg_y_36"
-why = "C++ returns SM_ERR in 400/400 heap-varied processes, in the final ManifoldBoolean union with the swept wire B-rep; Rust's union succeeds (1 region, 11 shells, 15 faces, 66 edges, 63 vertices). Unexplained Rust/C++ union divergence"
+cpp_defect = "ND-491"
+why = "C++ heap-layout dependent (ND-491): 993/1000 heap-varied fresh processes succeed with 3 regions, 15 faces, 33 edges, 22 vertices (the Rust result), 7/1000 return SM_ERR; main CI run 40862396783 (881b040f9) got SM_ERR"

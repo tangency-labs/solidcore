@@ -28,6 +28,13 @@
 //! curves reaches a Newton intersection (`SmCurve::GlobalCurveIntersect` through
 //! `SmCCIntersectENFO::Evaluate`, `curve.curve_p5`) and `AssertValid` past its
 //! knot checks (`SmCurve::AssertValid`, `curve.curve_p4`; `SmTol::IsDegenerate`).
+//! `AssertNoPeriodicJump` runs on built-in cases (`jump_*`, see [`jump_cases`]).
+//! `fixtures/nurbs.b_spline_curve_p3/zero_speed_end.json` checks curves with a
+//! zero-speed end (coincident end control points, a second derivative that does not
+//! vanish: the shape the SolidCraft fork's tangency-labs/smlib#76 6ca3405 accepts at a
+//! vertex where an edge's faces touch, WR-668) and ordinary coincident-point faults,
+//! as free curves: the pinned check, and the opt-in's, which needs an edge, both
+//! refuse them.
 //! Every run has at least [`MIN_GENERATED`] generated cases; generated inputs the ffi
 //! wrapper rejects are redrawn.
 
@@ -37,9 +44,11 @@ use serde_json::Value;
 use solidcore::geom::assert_array::{AssertArray, ObjectKey};
 use solidcore::geom::axis2_placement::Axis2Placement;
 use solidcore::geom::extent1d::Extent1d;
+use solidcore::geom::extent2d::Extent2d;
+use solidcore::geom::vector2d::Point2;
 use solidcore::geom::geom_utility::p2::ContinuityType;
 use solidcore::geom::vector3d::Vec3;
-use solidcore::kernel::Kernel;
+use solidcore::kernel::{Kernel, UpstreamFixes};
 use solidcore::nurbs::b_spline_curve::{
     BSplineCurve, ControlPointForm, GapFix, NurbCircleParam,
 };
@@ -169,6 +178,12 @@ enum OpIn {
     Assert {
         given: bool,
     },
+    Jump {
+        closed_u: bool,
+        closed_v: bool,
+        /// `u0 v0 u1 v1`: `SmExtent2d(SmPoint2d(u0, v0), SmPoint2d(u1, v1))`.
+        dom: [f64; 4],
+    },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -190,6 +205,7 @@ impl OpIn {
             OpIn::Subdivide { .. } => Op::Subdivide,
             OpIn::Gap { .. } => Op::Gap,
             OpIn::Assert { .. } => Op::Assert,
+            OpIn::Jump { .. } => Op::Jump,
         }
     }
 }
@@ -315,6 +331,14 @@ fn cpp_input(i: &Inputs) -> Result<Vec<f64>, HarnessError> {
             o.extend([f64::from(*fix), *dmin]);
         }
         OpIn::Assert { given } => o.push(flag(*given)),
+        OpIn::Jump {
+            closed_u,
+            closed_v,
+            dom,
+        } => {
+            o.extend([flag(*closed_u), flag(*closed_v)]);
+            o.extend_from_slice(dom);
+        }
     }
     Ok(o)
 }
@@ -408,7 +432,7 @@ fn to_output(i: &Inputs, flat: &[f64]) -> Result<Output, HarnessError> {
                     s.state("new_")?;
                 }
             }
-            OpIn::Pole { .. } | OpIn::Gap { .. } => s.vals("flag", 1)?,
+            OpIn::Pole { .. } | OpIn::Gap { .. } | OpIn::Jump { .. } => s.vals("flag", 1)?,
             OpIn::Segment { .. } => {
                 s.vals("flag", 1)?;
                 s.vals("line", 6)?;
@@ -492,7 +516,7 @@ fn dump_state(o: &mut Vec<f64>, c: &BSplineCurve) {
 /// The `SmStatus` of a Rust error; `-1` for one upstream cannot return.
 fn status(e: &SolidError) -> f64 {
     match e {
-        SolidError::InvalidInput { .. } => 1007.0,
+        SolidError::InvalidInput { .. } | SolidError::PortInvariant { .. } => 1007.0,
         SolidError::Upstream { code, .. } => f64::from(*code),
         _ => -1.0,
     }
@@ -551,16 +575,20 @@ impl From<HarnessError> for Fail {
     }
 }
 
-/// Runs an op on `c` (and `other` for joins and gaps); pushes its outputs (after the
-/// status) on success.
+/// Runs an op on `c` (and `other` for joins and gaps) with the opt-in `fixes` (the
+/// default in the gate); pushes its outputs (after the status) on success.
 fn rust_op(
     op: &OpIn,
     c: &mut BSplineCurve,
     other: Option<&mut BSplineCurve>,
     o: &mut Vec<f64>,
+    fixes: &UpstreamFixes,
 ) -> Result<(), Fail> {
     let ivl = |a: f64, b: f64| Extent1d::from_min_max(a, b);
-    let k = Kernel::default();
+    let k = Kernel {
+        fixes: *fixes,
+        ..Kernel::default()
+    };
     match op {
         OpIn::Scale { sv, ev, deg } => {
             let r = c.create_by_scale_trans_rot(v3(*sv), v3(*ev), *deg)?;
@@ -609,6 +637,15 @@ fn rust_op(
             let other = other.ok_or_else(|| harness("gap without other curve"))?;
             o.push(flag(c.trim_gap(&k, other, fix_of(*fix)?, *dmin)?));
         }
+        OpIn::Jump {
+            closed_u,
+            closed_v,
+            dom,
+        } => {
+            let [u0, v0, u1, v1] = *dom;
+            let d = Extent2d::from_points(Point2::new(u0, v0), Point2::new(u1, v1));
+            o.push(flag(c.assert_no_periodic_jump(*closed_u, *closed_v, &d)?));
+        }
         OpIn::Assert { given } => {
             let mut list = AssertArray::new();
             let ok = c.assert_valid(&k, Some(&mut list), *given, ObjectKey(1))?;
@@ -629,13 +666,18 @@ fn rust_op(
 }
 
 fn rust(i: &Inputs) -> Result<Output, HarnessError> {
+    rust_with_fixes(i, &UpstreamFixes::default())
+}
+
+/// [`rust`] with the opt-in `fixes` (runner tests only; the gate runs the default).
+fn rust_with_fixes(i: &Inputs, fixes: &UpstreamFixes) -> Result<Output, HarnessError> {
     let mut this = build_this(&i.this)?;
     let mut other = match &i.op {
         OpIn::Join { other, .. } | OpIn::Gap { other, .. } => Some(build_this(other)?),
         _ => None,
     };
     let mut o = vec![0.0];
-    match rust_op(&i.op, &mut this, other.as_mut(), &mut o) {
+    match rust_op(&i.op, &mut this, other.as_mut(), &mut o, fixes) {
         Ok(()) => {}
         Err(Fail::Harness(e)) => return Err(e),
         Err(Fail::Solid(e)) => {
@@ -1057,6 +1099,73 @@ fn gen_case(rng: &mut Rng) -> Inputs {
     Inputs { this, op }
 }
 
+/// `AssertNoPeriodicJump` cases (systematic, fixed seed): 2D and 3D curves of degree 1
+/// to 3 against domains from a twentieth to twice the polygon's extent (so that the
+/// 0.9-period threshold falls on both sides of the control point steps, including
+/// tiny and huge scales), closed in U, V, both or neither; and 2-point lines.
+fn jump_cases(unit: &str) -> Result<Vec<Case>, HarnessError> {
+    let mut rng = Rng::new(0x1419_0002);
+    let mut out = Vec::new();
+    let mut n = 0;
+    while out.len() < 240 && n < 2000 {
+        n += 1;
+        let p = 1 + rng.below(3) as usize;
+        let three_d = rng.chance(0.15);
+        let scale = *rng.choose(&[1e-3, 1.0, 1.0, 1e3]).unwrap_or(&1.0);
+        let mut c = if rng.chance(0.1) {
+            gen_crv_full(&mut rng, 1, 0, 1, false, three_d)
+        } else {
+            let extra = rng.below(5) as usize;
+            gen_crv_full(&mut rng, p, extra, 1, false, three_d)
+        };
+        for cp in &mut c.cpts {
+            cp[0] *= scale;
+            cp[1] *= scale;
+        }
+        let (lo, hi) = c.cpts.iter().fold(
+            ([f64::MAX; 2], [f64::MIN; 2]),
+            |(l, h), cp| {
+                (
+                    [l[0].min(cp[0]), l[1].min(cp[1])],
+                    [h[0].max(cp[0]), h[1].max(cp[1])],
+                )
+            },
+        );
+        let f = *rng.choose(&[0.05, 0.3, 0.6, 1.0, 1.05, 1.11, 2.0]).unwrap_or(&1.0);
+        let ext_u = ((hi[0] - lo[0]) * f).max(1e-9 * scale);
+        let ext_v = ((hi[1] - lo[1]) * f).max(1e-9 * scale);
+        let dom = [lo[0], lo[1], lo[0] + ext_u, lo[1] + ext_v];
+        let closed = rng.below(4);
+        let i = Inputs {
+            this: This {
+                dim: if three_d { 3 } else { 2 },
+                oob: false,
+                crv: Some(CrvIn::Inline(c)),
+            },
+            op: OpIn::Jump {
+                closed_u: closed & 1 != 0,
+                closed_v: closed & 2 != 0,
+                dom,
+            },
+        };
+        let ok = cpp_input(&i).is_ok_and(|input| ffi::validate(i.op.ffi(), &input).is_ok());
+        if !ok {
+            continue;
+        }
+        out.push(Case {
+            unit: unit.to_string(),
+            name: format!("jump_{:03}", out.len()),
+            source: crate::CaseSource::Fixture {
+                path: "built-in: AssertNoPeriodicJump cases".to_string(),
+                index: out.len(),
+                upstream_ref: None,
+            },
+            inputs: serde_json::to_value(&i).map_err(|e| harness(e.to_string()))?,
+        });
+    }
+    Ok(out)
+}
+
 /// A generated case the ffi wrapper accepts (redrawn up to 64 times).
 fn gen_valid(rng: &mut Rng) -> Option<Inputs> {
     for _ in 0..64 {
@@ -1083,7 +1192,9 @@ impl UnitDiff for Runner {
             seeds: ctx.seeds.max(MIN_GENERATED),
             ..ctx.clone()
         };
-        default_cases(self, &ctx)
+        let mut v = default_cases(self, &ctx)?;
+        v.extend(jump_cases(self.id())?);
+        Ok(v)
     }
 
     fn run_cpp(&self, case: &Case) -> Result<Output, HarnessError> {
@@ -1092,5 +1203,49 @@ impl UnitDiff for Runner {
 
     fn run_rust(&self, case: &Case) -> Result<Output, HarnessError> {
         rust(&case.parse()?)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// WR-668's opt-in (`curve_check_zero_speed_tangent_end`, tangency-labs/smlib#76
+    /// 6ca3405) takes a zero-speed end only at a vertex of the curve's edge: on the
+    /// free curves of `zero_speed_end.json`, which the C++ gate compares with the
+    /// default, it reports exactly what the default reports, bit for bit, with and
+    /// without the minimum radius read (`bspline_check_min_radius`, WR-382). Coincident
+    /// first control points fail test 3. Coincident last ones pass test 4, which
+    /// reports the first pair's values, so the backwards curve fails only once the
+    /// minimum radius is read (tests 13/14).
+    #[test]
+    fn zero_speed_end_fixtures_on_no_edge_ignore_the_fix() {
+        let fixtures: Value = serde_json::from_str(include_str!(
+            "../../../../fixtures/nurbs.b_spline_curve_p3/zero_speed_end.json"
+        ))
+        .unwrap();
+        let cases = fixtures["cases"].as_array().unwrap();
+        assert!(cases.len() >= 8);
+        for min_radius in [false, true] {
+            let mut off = UpstreamFixes::default();
+            off.bspline_check_min_radius = min_radius;
+            let mut on = off;
+            on.curve_check_zero_speed_tangent_end = true;
+            for case in cases {
+                let name = case["name"].as_str().unwrap();
+                let i: Inputs = serde_json::from_value(case["inputs"].clone()).unwrap();
+                assert!(matches!(i.op, OpIn::Assert { .. }), "{name}");
+                let a = rust_with_fixes(&i, &off).unwrap();
+                let b = rust_with_fixes(&i, &on).unwrap();
+                // (`Debug` prints each value exactly, so equal text is equal bits)
+                assert_eq!(format!("{a:?}"), format!("{b:?}"), "{name}");
+                let valid = name.starts_with("zero_speed_end") && !min_radius;
+                assert_eq!(
+                    a.values["flag"],
+                    [f64::from(u8::from(valid))],
+                    "{name}: {a:?}"
+                );
+            }
+        }
     }
 }

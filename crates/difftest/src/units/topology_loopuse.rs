@@ -3,10 +3,13 @@
 //!
 //! The B-reps are those of unit `topology.edgeuse_p1` (upstream `.smb` files, wire edges,
 //! faces from B-spline surfaces and real `SmPlane`s, the wire network of `prog_test`
-//! `my_test_topology`): the C++ side builds a real `SmBrep` per call, the Rust side
-//! imports the graph the shim exports ([`super::topology_edgeuse_p1::import`], which
-//! carries each loop use's `m_eOrientation`; each face's `m_pFU`, which the export lacks,
-//! comes from the shim's `FaceFu` op), and the ported functions run on both.
+//! `my_test_topology`): the C++ side builds a real `SmBrep` per call and imports the
+//! graph the shim exports ([`super::topology_edgeuse_p1::import`], which carries each
+//! loop use's `m_eOrientation`; each face's `m_pFU`, which the export lacks, comes from
+//! the shim's `FaceFu` op). The Rust side builds every non-file source itself
+//! ([`crate::own_builder`]) and reads an `.smb` file with the Rust reader
+//! ([`crate::own_reader::brep_in_order`]), both renumbered into the shim's traversal
+//! order: no C++ export reaches the Rust side. The ported functions run on both.
 //! Loop, loop use, edge use and target arguments are selectors taken modulo the count
 //! of their kind (`-1` selects null). Results are compared as traversal indices; the
 //! mutating ops (`FlipLoopOrientation`, `CollectEdgeuses`, `SetEdgeuse`, the setters)
@@ -296,8 +299,8 @@ fn graph_of(path: &str, block: &[f64]) -> Result<Rc<Graph>, HarnessError> {
     }) {
         return Ok(g);
     }
-    let ex = ffi1::eval(ffi1::Op::Export, path, block)
-        .map_err(|e| harness(format!("c++ export: {e}")))?;
+    // refuses a block value above 1e150 before the native export (HANG-29)
+    let ex = ffi::export(path, block).map_err(|e| harness(format!("c++ export: {e}")))?;
     let fus = if ffi1::counts(&ex).is_some() {
         Some(
             ffi::eval(Op::FaceFu, path, block)
@@ -317,9 +320,67 @@ fn graph_of(path: &str, block: &[f64]) -> Result<Rc<Graph>, HarnessError> {
     Ok(g)
 }
 
-fn setup(i: &Inputs) -> Result<Result<Setup, Output>, HarnessError> {
+/// The case's B-rep and resolved op. `own` (the Rust side) builds a shim-built source
+/// with the Rust kernel ([`crate::own_builder`]) and reads an `.smb` file with the Rust
+/// reader ([`crate::own_reader::brep_in_order`]); only the C++ side imports the shim's
+/// graph export.
+fn setup(i: &Inputs, own: bool) -> Result<Result<Setup, Output>, HarnessError> {
+    use crate::own_builder::{build, counts, failed_output, Built};
     let path = path_of(Some(&i.brep))?;
     let block = brep_block_of(Some(&i.brep), i.validate_only, i.init_gaps)?;
+    if own {
+        // an input the FFI refuses is a harness error on both sides: building a face on
+        // a surface with a coordinate above 1e150 does not return upstream (HANG-29,
+        // 2026-10-20 fuzz sweep fuzz00839), so the Rust port does not build it either
+        solidcore_ffi::units::topology_edgeuse_p2::check_block_magnitudes(&block)
+            .map_err(|e| harness(e.to_string()))?;
+        let mut k = Kernel::default();
+        match build(&mut k, &i.brep, i.validate_only, i.init_gaps)? {
+            Some(Built::Brep(b)) => {
+                let brep = *b;
+                let c = counts(&brep);
+                let Some(op) = resolve(&i.op, c, &brep) else {
+                    return Ok(Err(Output::err("no_entity_of_that_kind")));
+                };
+                return Ok(Ok(Setup {
+                    path,
+                    block,
+                    brep,
+                    types: ImportTypes::default(),
+                    op,
+                }));
+            }
+            Some(Built::Failed(e)) => return Ok(Err(failed_output(&e))),
+            None => {
+                // an `.smb` file: the Rust reader's B-rep in the shim's traversal order,
+                // its geometry owned as the Rust reader owns it (no C++ export reaches
+                // the Rust side)
+                let conv = &crate::own_builder::Conventions::EDGEUSE_GRAPH;
+                let built = crate::own_reader::brep_in_order(
+                    &mut k,
+                    &i.brep,
+                    i.validate_only,
+                    i.init_gaps,
+                    conv,
+                )?;
+                let brep = match built {
+                    Built::Brep(b) => *b,
+                    Built::Failed(e) => return Ok(Err(failed_output(&e))),
+                };
+                let c = counts(&brep);
+                let Some(op) = resolve(&i.op, c, &brep) else {
+                    return Ok(Err(Output::err("no_entity_of_that_kind")));
+                };
+                return Ok(Ok(Setup {
+                    path,
+                    block,
+                    brep,
+                    types: ImportTypes::default(),
+                    op,
+                }));
+            }
+        }
+    }
     let g = graph_of(&path, &block)?;
     let (ex, fus) = (&g.0, &g.1);
     let (Some(c), Some(fus)) = (ffi1::counts(ex), fus) else {
@@ -352,7 +413,7 @@ fn setup(i: &Inputs) -> Result<Result<Setup, Output>, HarnessError> {
 // ---- C++ side ---------------------------------------------------------------------------
 
 fn run_cpp(i: &Inputs) -> Result<Output, HarnessError> {
-    let s = match setup(i)? {
+    let s = match setup(i, false)? {
         Ok(s) => s,
         Err(o) => return Ok(o),
     };
@@ -479,7 +540,7 @@ impl From<HarnessError> for Fail {
 fn slot<T>(r: Result<T, SolidError>) -> Result<Option<T>, Fail> {
     match r {
         Ok(v) => Ok(Some(v)),
-        Err(SolidError::InvalidInput { .. }) => Ok(None),
+        Err(SolidError::InvalidInput { .. } | SolidError::PortInvariant { .. }) => Ok(None),
         Err(e) => Err(fail(&e)),
     }
 }
@@ -855,7 +916,7 @@ fn inexact_geometry(s: &Setup) -> Option<Output> {
 }
 
 fn run_rust(i: &Inputs) -> Result<Output, HarnessError> {
-    let mut s = match setup(i)? {
+    let mut s = match setup(i, true)? {
         Ok(s) => s,
         Err(o) => return Ok(o),
     };
@@ -1007,10 +1068,16 @@ impl UnitDiff for Runner {
     }
 
     fn run_cpp(&self, case: &Case) -> Result<Output, HarnessError> {
+        if super::topology_face_p4::level0::is_level0(case) {
+            return super::topology_face_p4::level0::run_cpp(case);
+        }
         run_cpp(&case.parse::<Inputs>()?)
     }
 
     fn run_rust(&self, case: &Case) -> Result<Output, HarnessError> {
+        if super::topology_face_p4::level0::is_level0(case) {
+            return super::topology_face_p4::level0::run_rust(case);
+        }
         run_rust(&case.parse::<Inputs>()?)
     }
 
@@ -1031,6 +1098,15 @@ impl UnitDiff for Runner {
                 inputs,
             });
         }
+        {
+            use super::topology_face_p4::level0::Level0Op;
+            let ops: Vec<Level0Op> = vec![
+            Level0Op::LoopuseSide { periodic_u: -1, periodic_v: -1 },
+            Level0Op::LoopuseSide { periodic_u: 1, periodic_v: 0 },
+            Level0Op::LoopuseSide { periodic_u: 0, periodic_v: 1 },
+        ];
+            v.extend(super::topology_face_p4::level0::cases(self.id(), &ops, 0x1419_0102, 36)?);
+        }
         Ok(v)
     }
 }
@@ -1038,6 +1114,61 @@ impl UnitDiff for Runner {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The 2026-10-20 fuzz sweep's `fuzz00839` input (base `face30_007_collect`): a
+    /// rational (3, 1) B-spline face with control point `net[1][0]` at `y`.
+    fn huge_net_case(y: f64) -> Inputs {
+        serde_json::from_value(serde_json::json!({
+            "brep": {"dom": [0, 0, 1, 1], "kind": "face", "surface": {"bspline": {
+                "form": 0, "oob": false, "p": 3, "q": 1,
+                "u": [0.0, 0.0, 0.0, 0.0, 1.0, 1.0, 1.0, 1.0],
+                "v": [0.0, 0.0, 0.7005122861252279, 0.7733533798280249,
+                      0.8525573221342606, 1.0, 1.0],
+                "net": [
+                    [[0.0, 0.0, 0.0, 0.7774707505804863],
+                     [0.0, 0.6198957499925698, 0.0, 0.6198957499925698],
+                     [0.0, 1.0915138706736038, 0.0, 0.5457569353368019],
+                     [0.0, 2.4045273584428104, 0.0, 0.8015091194809368],
+                     [0.0, 5.768466463948802, 0.0, 1.4421166159872005]],
+                    [[1.035518961276856, y, 0.0, 1.035518961276856],
+                     [0.6749879732711839, 0.6749879732711839, 0.0, 0.6749879732711839],
+                     [0.5570242833368088, 1.1140485666736175, 0.0, 0.5570242833368088],
+                     [1.767758480218435, 5.303275440655305, 0.0, 1.767758480218435],
+                     [0.8390131234931159, 3.3560524939724634, 0.0, 0.8390131234931159]],
+                    [[3.337575234482273, 0.0, 0.0, 1.6687876172411364],
+                     [1.4544881976507322, 0.7272440988253661, 0.0, 0.7272440988253661],
+                     [1.2632511706398604, 1.2632511706398604, 0.0, 0.6316255853199302],
+                     [2.252418776247515, 3.378628164371273, 0.0, 1.1262093881237576],
+                     [2.2576856125184137, 4.515371225036827, 0.0, 1.1288428062592069]],
+                    [[2.926413483977064, 0.0, 0.0, 0.9754711613256879],
+                     [3.1378995657767907, 1.045966521925597, 0.0, 1.045966521925597],
+                     [4.413252585810463, 2.942168390540309, 0.0, 1.4710841952701545],
+                     [3.2810402043525775, 3.2810402043525775, 0.0, 1.0936800681175258],
+                     [1.9890594549815495, 2.6520792733087326, 0.0, 0.6630198183271832]]
+                ]}}},
+            "eu": 21, "init_gaps": true, "lu": 0, "op": "collect", "validate_only": true
+        }))
+        .unwrap()
+    }
+
+    /// HANG-29: the C++ graph export never returns for a control point of `-1e300`
+    /// (`-1e155` already); both sides refuse the block with the same message. The same
+    /// face at the bound (`-1e150`) still runs on both sides and agrees.
+    #[cfg(feature = "cpp")]
+    #[test]
+    fn huge_block_value_is_refused_on_both_sides() {
+        let i = huge_net_case(-1e300);
+        let c = run_cpp(&i).unwrap_err().to_string();
+        let r = run_rust(&i).unwrap_err().to_string();
+        assert!(c.contains("B-rep value above 1e150 (HANG-29)"), "{c}");
+        assert!(r.contains("B-rep value above 1e150 (HANG-29)"), "{r}");
+
+        let i = huge_net_case(-1e150);
+        let (c, r) = (run_cpp(&i).unwrap(), run_rust(&i).unwrap());
+        assert!(r.deferred.is_none(), "{:?}", r.deferred);
+        let d = crate::compare(&c, &r, Runner.abs_floors());
+        assert!(d.mismatches.is_empty(), "{:?}", d.mismatches);
+    }
 
     /// `selects_loop` names the kind `resolve` refuses an op without, for every op drawn.
     #[test]

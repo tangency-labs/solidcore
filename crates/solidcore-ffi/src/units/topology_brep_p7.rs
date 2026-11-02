@@ -15,10 +15,21 @@
 //! | `MakeFaceWithCurves`| `surface u0 v0 u1 v1 orient region_null crv_on_surf nloops count* has3d has_uv ncurves (curve3d? curveuv? orient)* npts pt[3]*` | `-2 \| status [face shell region counts]` (`-2`: `crv_on_surf` TRUE with 3D but no UV curves, where upstream dereferences the null UV array) |
 //! | `MakeFace`          | `kind side orient region_null` (`kind` 0: null surface, 1: a square wire loop on `z = 0`) | `-3 \| status [face shell region counts]` (`-3`: the square's lines cannot be made) |
 //! | `Glue`              | `e1 e2 orient gap nesting`, B-rep block | `0 (-2 \| status counts edge_tols vertex_tols)` (tolerances sorted) (`-2`: `SM_OT_SAME`, equal intervals and one edge without curve) (`-1 status` when the B-rep build fails) |
-//! | `Copy`              | `n use_merge`, B-rep block | `0 status nfaces counts` |
-//! | `MergeSelf`         | `face tol ncurves (curve3d curveuv1 curveuv2)*`, B-rep block | `0 (-2 \| status nedges counts)` (UV curves 2D) |
+//! | `Copy`              | `n use_merge repeat`, B-rep block | `0 status*repeat nfaces counts faces nedges edges` (the faces copied `repeat` times, 1 to [`MAX_COPIES`], into one B-rep; `nfaces` over all copies; then the whole destination graph after every copy) |
+//! | `MergeSelf`         | `face tol ncurves (raw curve3d raw curveuv1 raw curveuv2)*`, B-rep block | `0 (-2 \| status nedges counts edges*)` (UV curves 2D) |
 //!
 //! `counts` are the region, shell, face, loop, edge and vertex counts of the B-rep made.
+//! Each returned edge contains its used interval, optional endpoint positions, curve
+//! type (or -1), and, when present, its natural interval and five evaluated samples
+//! with statuses; its edge uses follow in list order with each UV trim's type,
+//! natural interval and five UV samples if present. For `Copy`, after `counts`, `faces`
+//! and `nedges` delimit the whole destination graph after every copy in the shim's walk
+//! order: each face is its surface type (or -1), natural UV domain `u0 v0 u1 v1` and
+//! five UV samples (natural corners and centre, each a status then `x y z` on success);
+//! each edge is the block above. These finite samples are evidence of the copied
+//! geometry, not a full equivalence claim (no knots or control points are compared).
+//! Raw flags restore supplied knots after construction; distinct raw knots must be more
+//! than `1e-12` apart (UB-266).
 //!
 //! [`eval`] accepts only what upstream handles without undefined behaviour: clamped
 //! B-splines of degree 1 to 5 with at most 33 control points, positive (or `NOW`)
@@ -43,6 +54,8 @@ pub const MAX_DEGREE: usize = 5;
 pub const MAX_COORD: f64 = 1.0e12;
 /// Largest number of curves (and loops, loop points).
 pub const MAX_CURVES: usize = 64;
+/// Largest number of copies of `Copy`.
+pub const MAX_COPIES: usize = 8;
 /// Largest file size of `Read`.
 pub const MAX_BYTES: usize = 1 << 22;
 
@@ -233,14 +246,21 @@ fn trusted(bytes: &[u8], binary: bool) -> bool {
     !binary && TRUSTED_FILES.contains(&bytes)
 }
 
-/// Runs `op` on `input` (see the module docs); `path` is the `.smb` file of a file
-/// B-rep block (ignored otherwise).
-///
-/// # Errors
-///
-/// [`FfiError::InvalidArgument`] for a malformed input or an index outside the B-rep;
-/// [`FfiError::Status`] for a shim failure.
-pub fn eval(op: Op, path: &str, input: &[f64]) -> Result<Vec<f64>, FfiError> {
+/// What the checks of [`check_input`] leave to the caller.
+enum Checked<'a> {
+    /// The shim may run on the whole input.
+    Run,
+    /// A `Read` of bytes that are not exactly a shipped test file: the read runs in a
+    /// fresh child process.
+    Isolated,
+    /// A B-rep op: its B-rep `block` (validated by the export, or by [`validate`]), then
+    /// its `args`, checked by [`check_args`] against the B-rep's counts.
+    Brep { block: &'a [f64], args: &'a [f64] },
+}
+
+/// The checks of [`eval`] that need no B-rep: every op's whole input but a B-rep op's
+/// B-rep block and arguments.
+fn check_input(op: Op, input: &[f64]) -> Result<Checked<'_>, FfiError> {
     let mut rd = Reader::new(input);
     match op {
         Op::Read => {
@@ -269,9 +289,7 @@ pub fn eval(op: Op, path: &str, input: &[f64]) -> Result<Vec<f64>, FfiError> {
                 // MakeTopologyFromData uses a modified stream's indices unchecked (UB-164):
                 // its read runs in a fresh child process, which some such indices also
                 // keep looping: one that runs past READ_SECONDS is ended as crashed
-                return crate::isolate::fresh_process_within(READ_SECONDS, || {
-                    raw(op, path, input)
-                });
+                return Ok(Checked::Isolated);
             }
         }
         Op::MakeFaceWithCurves => {
@@ -323,44 +341,101 @@ pub fn eval(op: Op, path: &str, input: &[f64]) -> Result<Vec<f64>, FfiError> {
             rd.done()?;
         }
         Op::Glue | Op::Copy | Op::MergeSelf => {
-            // the topology.vertexuse wrapper validates the block itself and exports
             let (block, args) = split_block(op, input)?;
             if op == Op::MergeSelf {
                 merge_self_curves(input)?;
             }
+            return Ok(Checked::Brep { block, args });
+        }
+    }
+    Ok(Checked::Run)
+}
+
+/// A B-rep op's arguments `args`, checked against the B-rep's entity counts `c`
+/// ([`fixture::counts`] order); nothing may be left.
+fn check_args(op: Op, args: &[f64], c: &[usize; 10]) -> Result<(), FfiError> {
+    let [_, _, _, n_f, _, _, _, n_e, ..] = *c;
+    let mut ar = Reader::new(args);
+    match op {
+        Op::Glue => {
+            for _ in 0..2 {
+                if let Some(i) = ar.signed(MAX_INDEX << 20)? {
+                    if i >= n_e {
+                        return Err(bad("edge index out of range"));
+                    }
+                }
+            }
+            ar.orient()?;
+            ar.finite()?;
+            ar.flag()?;
+        }
+        Op::Copy => {
+            ar.index(1 << 20)?;
+            ar.flag()?;
+            if ar.index(MAX_COPIES)? == 0 {
+                return Err(bad("no copy"));
+            }
+        }
+        Op::MergeSelf => {
+            if ar.index(1 << 20)? >= n_f {
+                return Err(bad("face index out of range"));
+            }
+            ar.finite()?;
+            // (the curves: merge_self_curves)
+            ar.at = args.len();
+        }
+        Op::Read | Op::MakeFaceWithCurves | Op::MakeFace => {}
+    }
+    ar.done()
+}
+
+/// The checks [`eval`] makes before calling the shim, without running it or exporting
+/// the B-rep: `counts` ([`fixture::counts`] order) describe the B-rep the caller built
+/// from the same B-rep block (the export's counts in [`eval`]; the runner's Rust side
+/// passes its own B-rep's). The runner applies them to the Rust side, so an input the
+/// FFI refuses is a harness error on both sides and the Rust side never runs what the
+/// C++ side is refused: a `Copy` with `repeat` of `2^32` (nightly fuzz case `fuzz00208`)
+/// is refused here for the C++ (more than [`MAX_COPIES`]) while the runner's Rust side
+/// copied the faces `2^32` times and ran past the fuzz time limit.
+///
+/// # Errors
+///
+/// [`FfiError::InvalidArgument`] for a malformed input or an index outside the B-rep,
+/// as [`eval`].
+pub fn validate(op: Op, path: &str, input: &[f64], counts: &[usize; 10]) -> Result<(), FfiError> {
+    match check_input(op, input)? {
+        Checked::Brep { block, args } => {
+            // the export's checks of the B-rep block (topology.vertexuse)
+            fixture::validate_block(path, block)?;
+            let mut rd = Reader::new(block);
+            rd.at = fixture::brep_block_at(block, path)?;
+            rd.done()?;
+            check_args(op, args, counts)
+        }
+        Checked::Run | Checked::Isolated => Ok(()),
+    }
+}
+
+/// Runs `op` on `input` (see the module docs); `path` is the `.smb` file of a file
+/// B-rep block (ignored otherwise).
+///
+/// # Errors
+///
+/// [`FfiError::InvalidArgument`] for a malformed input or an index outside the B-rep;
+/// [`FfiError::Status`] for a shim failure.
+pub fn eval(op: Op, path: &str, input: &[f64]) -> Result<Vec<f64>, FfiError> {
+    match check_input(op, input)? {
+        Checked::Run => {}
+        Checked::Isolated => {
+            return crate::isolate::fresh_process_within(READ_SECONDS, || raw(op, path, input));
+        }
+        Checked::Brep { block, args } => {
+            // the topology.vertexuse wrapper validates the block itself and exports
             let export = fixture::eval(fixture::Op::Export, path, block)?;
             let Some(c) = fixture::counts(&export) else {
                 return Ok(export);
             };
-            let [_, _, _, n_f, _, _, _, n_e, ..] = c;
-            let mut ar = Reader::new(args);
-            match op {
-                Op::Glue => {
-                    for _ in 0..2 {
-                        if let Some(i) = ar.signed(MAX_INDEX << 20)? {
-                            if i >= n_e {
-                                return Err(bad("edge index out of range"));
-                            }
-                        }
-                    }
-                    ar.orient()?;
-                    ar.finite()?;
-                    ar.flag()?;
-                }
-                Op::Copy => {
-                    ar.index(1 << 20)?;
-                    ar.flag()?;
-                }
-                _ => {
-                    if ar.index(1 << 20)? >= n_f {
-                        return Err(bad("face index out of range"));
-                    }
-                    ar.finite()?;
-                    // (the curves: merge_self_curves)
-                    ar.at = args.len();
-                }
-            }
-            ar.done()?;
+            check_args(op, args, &c)?;
         }
     }
     raw(op, path, input)
@@ -374,13 +449,42 @@ fn merge_self_curves(input: &[f64]) -> Result<usize, FfiError> {
     rd.num()?;
     let nc = rd.index(MAX_CURVES)?;
     for _ in 0..nc {
-        curve(&mut rd)?;
-        for _ in 0..2 {
-            if rd.num()? != 2.0 {
+        for uv in [false, true, true] {
+            let raw = rd.flag()?;
+            let start = rd.at;
+            if uv && rd.num()? != 2.0 {
                 return Err(bad("UV curve dimension must be 2"));
             }
-            rd.at -= 1;
+            rd.at = start;
             curve(&mut rd)?;
+            if raw {
+                let block = input.get(start..rd.at).ok_or_else(|| bad("curve block"))?;
+                let n = *block.get(1).ok_or_else(|| bad("curve count"))? as usize;
+                let p = *block.get(2).ok_or_else(|| bad("curve degree"))? as usize;
+                let knot_start = n
+                    .checked_add(1)
+                    .and_then(|n| n.checked_mul(4))
+                    .and_then(|n| n.checked_add(4))
+                    .ok_or_else(|| bad("curve size overflow"))?;
+                let knots = block.get(knot_start..).ok_or_else(|| bad("curve knots"))?;
+                let (&first, rest) = knots.split_first().ok_or_else(|| bad("no knots"))?;
+                let mut unique = first;
+                let mut multiplicity = 1;
+                for &knot in rest {
+                    if knot == unique {
+                        multiplicity += 1;
+                    } else {
+                        if knot - unique <= 1.0e-12 || multiplicity > p + 1 {
+                            return Err(bad("unsafe raw knot spacing or multiplicity"));
+                        }
+                        unique = knot;
+                        multiplicity = 1;
+                    }
+                }
+                if multiplicity > p + 1 {
+                    return Err(bad("unsafe raw knot multiplicity"));
+                }
+            }
         }
     }
     Ok(rd.at)
@@ -390,7 +494,7 @@ fn merge_self_curves(input: &[f64]) -> Result<usize, FfiError> {
 fn n_args(op: Op, input: &[f64]) -> Result<usize, FfiError> {
     Ok(match op {
         Op::Glue => 5,
-        Op::Copy => 2,
+        Op::Copy => 3,
         Op::MergeSelf => merge_self_curves(input)?,
         _ => 0,
     })
@@ -442,8 +546,11 @@ mod tests {
     fn merge_self_args(curves: &[(f64, f64, f64)]) -> Vec<f64> {
         let mut v = vec![0.0, 1.0e-5, curves.len() as f64];
         for &(c3, u1, u2) in curves {
+            v.push(0.0);
             v.extend(line(c3));
+            v.push(0.0);
             v.extend(line(u1));
+            v.push(0.0);
             v.extend(line(u2));
         }
         v
@@ -471,5 +578,23 @@ mod tests {
         assert!(merge_self_curves(&[0.0, 1.0e-5, (MAX_CURVES + 1) as f64]).is_err());
         // truncated: the count promises a curve that is not there
         assert!(merge_self_curves(&[0.0, 1.0e-5, 1.0]).is_err());
+    }
+
+    #[test]
+    fn merge_self_raw_knots_require_safe_spacing() {
+        let raw = |middle: f64| {
+            let mut v = vec![0.0, 1.0e-5, 1.0];
+            for dim in [3.0, 2.0, 2.0] {
+                let z = if dim == 2.0 { NOZ } else { 0.0 };
+                v.extend([1.0, dim, 3.0, 1.0, 5.0]);
+                for x in [0.0, 0.3, 0.7, 1.0] {
+                    v.extend([x, 0.0, z, NOW]);
+                }
+                v.extend([0.0, 0.0, 0.5, middle, 1.0, 1.0]);
+            }
+            v
+        };
+        assert!(merge_self_curves(&raw(0.5 + 2.0e-12)).is_ok());
+        assert!(merge_self_curves(&raw(0.5 + 0.5e-12)).is_err());
     }
 }

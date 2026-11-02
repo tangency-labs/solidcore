@@ -21,10 +21,8 @@ use crate::surface::surface::Surface;
 use crate::surface::volume::Volume;
 use crate::topology::brep::p3::topology_ref;
 use crate::topology::proto_topology::p1::{ProtoGeometry, ProtoTopology};
-use crate::topology::topology::Topology;
 use crate::topology::{Brep, BrepId, FaceId};
 use crate::{EntityRef, Result, SolidError};
-use std::collections::BTreeMap;
 
 const OP: &str = "blend::fillet_executive::insertion_geometry";
 fn invalid(reason: &'static str) -> SolidError {
@@ -146,7 +144,7 @@ impl BodyKeys<'_> {
 /// Actual retained edit stores and the already lent notification context.
 pub struct InsertionNotifications<'a> {
     /// Actual topology notification records.
-    pub records: &'a mut BTreeMap<ObjectKey, Topology>,
+    pub records: &'a mut crate::topology::topology::NotifyRecords,
     /// Actual attributes, including executive E and active face markers.
     pub attributes: &'a mut AttributeStore,
     /// Actual context lease, supplied by `with_lent_context`.
@@ -428,6 +426,54 @@ impl<'a> InsertionGeometry<'a> {
                 .collect(),
         )
     }
+    /// `SmTools::FindCoincidentEdge` over an actual face's edges (`SmFace::GetEdges`):
+    /// its first edge between the same-body vertices `start` and `end` along `curve`
+    /// within `tolerance`, with the sampled maximum deviation (WR-580, opt-in).
+    /// # Errors
+    /// Invalid/cross-body operands, topology walks and the search's evaluations.
+    #[allow(clippy::too_many_arguments)] // FindCoincidentEdge's in-params
+    pub fn face_coincident_edge(
+        &self,
+        k: &crate::Kernel,
+        face: FilletObject,
+        start: FilletObject,
+        end: FilletObject,
+        curve: &Curve,
+        interval: crate::geom::extent1d::Extent1d,
+        tolerance: f64,
+    ) -> Result<Option<(FilletObject, f64)>> {
+        let (role, EntityRef::Face(face)) =
+            Self::topology(face).ok_or_else(|| invalid("unknown Face role"))?
+        else {
+            return Err(invalid("handle is not a Face"));
+        };
+        let vertex = |object| match Self::topology(object) {
+            Some((r, EntityRef::Vertex(v))) if r == role => Ok(v),
+            _ => Err(invalid("handle is not a Vertex of the face's body")),
+        };
+        let (start, end) = (vertex(start)?, vertex(end)?);
+        let body = self.body(role);
+        let edges = crate::topology::face::p4::edges(body, face, None, false, None)?;
+        let query = crate::geom::tools::CoincidentEdgeQuery {
+            start_vertex: start,
+            end_vertex: end,
+            curve,
+            curve_owner: None,
+            interval,
+            tolerance,
+        };
+        Ok(
+            crate::geom::tools::find_coincident_edge(k, body, &query, &edges, 0)?.and_then(
+                |found| {
+                    let edge = *edges.get(found.index)?;
+                    Some((
+                        Self::handle(role, EntityRef::Edge(edge)),
+                        found.max_deviation,
+                    ))
+                },
+            ),
+        )
+    }
     /// Classify against the actual B-rep with its existing proven-owner query provider.
     /// # Errors
     /// Invalid body handle or the original point-query failure.
@@ -522,7 +568,7 @@ impl<'a> InsertionGeometry<'a> {
             &mut output,
         );
         if let Err(error) = result {
-            if error.is_unported() {
+            if error.is_unported_or_cancelled() {
                 return Err(error);
             }
         }
@@ -560,7 +606,7 @@ impl<'a> InsertionGeometry<'a> {
             },
         );
         if let Err(error) = result {
-            if error.is_unported() {
+            if error.is_unported_or_cancelled() {
                 return Err(error);
             }
         }
@@ -848,21 +894,24 @@ impl ProtoGeometry<FilletObject> for InsertionGeometry<'_> {
 
 impl ProtoTopology<FilletObject> for InsertionGeometry<'_> {
     fn vertex_use_faces(&self, vertex: FilletObject) -> Result<Vec<Option<FilletObject>>> {
-        let (role, entity) = Self::topology(vertex).ok_or(invalid("unknown topology role"))?;
+        let (role, entity) =
+            Self::topology(vertex).ok_or_else(|| invalid("unknown topology role"))?;
         Ok(ProtoTopology::vertex_use_faces(self.body(role), entity)?
             .into_iter()
             .map(|value| value.map(|entity| Self::handle(role, entity)))
             .collect())
     }
     fn edge_use_faces(&self, edge: FilletObject) -> Result<Vec<Option<FilletObject>>> {
-        let (role, entity) = Self::topology(edge).ok_or(invalid("unknown topology role"))?;
+        let (role, entity) =
+            Self::topology(edge).ok_or_else(|| invalid("unknown topology role"))?;
         Ok(ProtoTopology::edge_use_faces(self.body(role), entity)?
             .into_iter()
             .map(|value| value.map(|entity| Self::handle(role, entity)))
             .collect())
     }
     fn edge_start_vertex(&self, edge: FilletObject) -> Result<Option<FilletObject>> {
-        let (role, entity) = Self::topology(edge).ok_or(invalid("unknown topology role"))?;
+        let (role, entity) =
+            Self::topology(edge).ok_or_else(|| invalid("unknown topology role"))?;
         Ok(ProtoTopology::edge_start_vertex(self.body(role), entity)?
             .map(|entity| Self::handle(role, entity)))
     }
@@ -871,11 +920,12 @@ impl ProtoTopology<FilletObject> for InsertionGeometry<'_> {
         edge: FilletObject,
         vertex: Option<FilletObject>,
     ) -> Result<Option<FilletObject>> {
-        let (role, entity) = Self::topology(edge).ok_or(invalid("unknown topology role"))?;
+        let (role, entity) =
+            Self::topology(edge).ok_or_else(|| invalid("unknown topology role"))?;
         let vertex = vertex
             .map(|vertex| {
                 let (other_role, vertex) =
-                    Self::topology(vertex).ok_or(invalid("unknown vertex role"))?;
+                    Self::topology(vertex).ok_or_else(|| invalid("unknown vertex role"))?;
                 if role != other_role {
                     return Err(invalid("edge and vertex belong to different bodies"));
                 }
@@ -888,18 +938,21 @@ impl ProtoTopology<FilletObject> for InsertionGeometry<'_> {
         )
     }
     fn vertex_point(&self, vertex: FilletObject) -> Result<Point3> {
-        let (role, entity) = Self::topology(vertex).ok_or(invalid("unknown topology role"))?;
+        let (role, entity) =
+            Self::topology(vertex).ok_or_else(|| invalid("unknown topology role"))?;
         ProtoTopology::vertex_point(self.body(role), entity)
     }
     fn edge_brep(&self, edge: FilletObject) -> Result<Option<ObjectKey>> {
-        let (role, entity) = Self::topology(edge).ok_or(invalid("unknown topology role"))?;
+        let (role, entity) =
+            Self::topology(edge).ok_or_else(|| invalid("unknown topology role"))?;
         let actual_body = ProtoTopology::edge_brep(self.body(role), entity)?;
         actual_body
             .map(|_| self.body_identity(role).map(|identity| identity.key))
             .transpose()
     }
     fn edge_faces(&self, edge: FilletObject) -> Result<Vec<FilletObject>> {
-        let (role, entity) = Self::topology(edge).ok_or(invalid("unknown topology role"))?;
+        let (role, entity) =
+            Self::topology(edge).ok_or_else(|| invalid("unknown topology role"))?;
         Ok(ProtoTopology::edge_faces(self.body(role), entity)?
             .into_iter()
             .map(|entity| Self::handle(role, entity))
@@ -1210,7 +1263,7 @@ mod tests {
         let caller = topology_ref(serial, EntityRef::Vertex(vertex));
         let changed = Point3::new(17.0, 18.0, 19.0);
         let mut curves = InsertionCurves::default();
-        let mut records = BTreeMap::new();
+        let mut records = crate::topology::topology::NotifyRecords::new();
         let mut attributes = AttributeStore::default();
         let events = Arc::new(Mutex::new(Vec::new()));
         k.context
@@ -1288,7 +1341,7 @@ mod tests {
             intermediate.notify_serial(),
         ];
         let mut curves = InsertionCurves::default();
-        let mut records = BTreeMap::new();
+        let mut records = crate::topology::topology::NotifyRecords::new();
         let mut attributes = AttributeStore::default();
         let result = InsertionGeometry::new(&mut target, &mut pseudo, &mut intermediate)
             .unwrap()
@@ -1481,7 +1534,7 @@ mod tests {
         let mut pseudo = FilletBrep::new();
         *pseudo.brep_mut() = box_at(&mut k, 200.0);
         let mut curves = InsertionCurves::default();
-        let mut records = BTreeMap::new();
+        let mut records = crate::topology::topology::NotifyRecords::new();
         let mut attributes = AttributeStore::default();
         crate::topology::brep::p3::with_lent_context(&mut k, |k, context| -> Result<()> {
             let mut view = InsertionGeometry::new(&mut target, &mut pseudo, &mut intermediate)?
@@ -1517,6 +1570,56 @@ mod tests {
             assert_ne!(identities.first(), identities.get(1));
             let vertex = output.new_vertices.first().copied().unwrap();
             assert_eq!(view.point(vertex), Some(point));
+            Ok(())
+        })
+        .unwrap()
+        .unwrap();
+    }
+
+    #[test]
+    fn vertex_update_edge_intervals_delegates_to_brep_p1() {
+        let mut k = Kernel::default();
+        let mut target = box_at(&mut k, 0.0);
+        let mut intermediate = box_at(&mut k, 100.0);
+        let mut pseudo = FilletBrep::new();
+        *pseudo.brep_mut() = box_at(&mut k, 200.0);
+        let mut curves = InsertionCurves::default();
+        let mut records = crate::topology::topology::NotifyRecords::new();
+        let mut attributes = AttributeStore::default();
+
+        crate::topology::brep::p3::with_lent_context(&mut k, |k, context| -> Result<()> {
+            let mut view = InsertionGeometry::new(&mut target, &mut pseudo, &mut intermediate)?
+                .with_notifications(
+                    &mut curves,
+                    InsertionNotifications {
+                        records: &mut records,
+                        attributes: &mut attributes,
+                        context,
+                    },
+                )?;
+
+            // 1. Invalid handle returns error (not a vertex)
+            let edge = view.target.edges().ids().next().unwrap();
+            let edge_handle = FilletObject::Topology(FilletBody::Target, EntityRef::Edge(edge));
+            assert!(
+                crate::boolean::topology_intersector::p1::IntersectorBrep::vertex_update_edge_intervals(
+                    &mut view,
+                    k,
+                    edge_handle,
+                )
+                .is_err()
+            );
+
+            // 2. Valid vertex handle updates edge intervals successfully without UNPORTED error
+            let vertex = view.target.vertices().ids().next().unwrap();
+            let vertex_handle = FilletObject::Topology(FilletBody::Target, EntityRef::Vertex(vertex));
+            let res = crate::boolean::topology_intersector::p1::IntersectorBrep::vertex_update_edge_intervals(
+                &mut view,
+                k,
+                vertex_handle,
+            );
+            assert!(res.is_ok(), "vertex_update_edge_intervals must succeed: {:?}", res.err());
+
             Ok(())
         })
         .unwrap()

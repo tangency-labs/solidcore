@@ -907,7 +907,7 @@ pub(crate) fn face_brep(k: &Kernel, face: &FaceIn) -> Result<(Brep, FaceId), Har
 fn status(e: &SolidError) -> f64 {
     match e {
         SolidError::Upstream { code, .. } => f64::from(*code),
-        SolidError::InvalidInput { .. } => 1007.0,
+        SolidError::InvalidInput { .. } | SolidError::PortInvariant { .. } => 1007.0,
         _ => -1.0,
     }
 }
@@ -1449,6 +1449,11 @@ pub(crate) fn topology_kinds(face: &FaceIn) -> Vec<usize> {
                 for _ in l {
                     v.extend([kind::EDGE, kind::VERTEX, kind::EDGEUSE]);
                 }
+            }
+        }
+        Some(LoopsIn::Circles { circles }) => {
+            for _ in circles {
+                v.extend([kind::LOOP, kind::EDGE, kind::VERTEX, kind::EDGEUSE]);
             }
         }
     }

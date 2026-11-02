@@ -86,7 +86,7 @@ fn entity_id(e: Option<E>) -> i64 {
 fn status(e: &SolidError) -> i64 {
     match e {
         SolidError::Upstream { code, .. } => i64::from(*code),
-        SolidError::InvalidInput { .. } => 1007,
+        SolidError::InvalidInput { .. } | SolidError::PortInvariant { .. } => 1007,
         SolidError::Nlib { .. } => 1001,
         _ => -1,
     }
@@ -100,7 +100,7 @@ fn unsupported<T>() -> Result<T> {
 struct Model {
     k: Kernel,
     b: Vec<Brep>,
-    records: BTreeMap<ObjectKey, solidcore::topology::topology::Topology>,
+    records: solidcore::topology::topology::NotifyRecords,
     attributes: AttributeStore,
     keys: BTreeMap<E, ObjectKey>,
     curve_keys: BTreeMap<EdgeRef, ObjectKey>,
@@ -176,7 +176,7 @@ impl Model {
         Ok(Self {
             k: Kernel::default(),
             b,
-            records: BTreeMap::new(),
+            records: solidcore::topology::topology::NotifyRecords::new(),
             attributes,
             keys,
             curve_keys,
@@ -576,7 +576,7 @@ fn whole_rust(input: [f64; 11]) -> Result<Output> {
             solidcore::geom::tol::ZONE_TOL_3D,
         ))
     };
-    let mut records = BTreeMap::new();
+    let mut records = solidcore::topology::topology::NotifyRecords::new();
     let mut attributes = AttributeStore::new();
     let mut next = 0;
     let mut store = SweepStore::new(&WholeIdentities, &mut records, &mut attributes, &mut next);
@@ -865,7 +865,7 @@ fn body_rust(input: [f64; 16], lists: Option<[f64; 7]>) -> Result<Output> {
     let [body, kind, vx, vy, vz, angle, cx, cy, cz, eps, stitch, merge, reps, tagging, tag_id, targets] =
         input;
     let mut k = Kernel::default();
-    let mut records = BTreeMap::new();
+    let mut records = solidcore::topology::topology::NotifyRecords::new();
     let mut attributes = AttributeStore::new();
     let handle = BrepId::from_index(0);
     let key_of = |e: solidcore::error::EntityRef| WholeIdentities.topology(handle, e);
@@ -1059,11 +1059,12 @@ fn rust(i: &Input) -> Result<Output> {
                 keep = false;
                 g.is_sweep_closed(arg as u64).map(|v| keep = v)
             }
-            8 | 9 => {
-                let result = if op == 8 {
-                    g.start_coord_system(Point3::ZERO)
-                } else {
-                    g.sweep_transform()
+            // 16: `GetEndCoordSystem` at the script vector.
+            8 | 9 | 16 => {
+                let result = match op {
+                    8 => g.start_coord_system(Point3::ZERO),
+                    9 => g.sweep_transform(),
+                    _ => g.end_coord_system(Point3::new(i.vector[0], i.vector[1], i.vector[2])),
                 };
                 result.map(|placement| {
                     let v = [
@@ -1457,7 +1458,7 @@ mod tests {
             // FindVertexSector (topology.face_p4) finds no sector of a face without
             // face uses, so MakeEdgeInFace's NER(pStartVU) reports a null pointer
             Err(SolidError::Upstream {
-                operation: "topology::brep::p5",
+                operation: solidcore::topology::brep::p5::NO_VERTEX_SECTOR_OP,
                 code: 1006,
                 ..
             })

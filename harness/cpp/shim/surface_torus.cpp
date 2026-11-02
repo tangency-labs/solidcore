@@ -4,7 +4,7 @@
 // (the constructor and MakeNurb), operator==, Copy, CreateOffsetSurface,
 // ConvertUVFromSTEPToNURBS, ConvertUVFromNURBSToSTEP, EvaluateSTEP, EvaluateSTEPPoint,
 // CreateIsoParametricCurve, RebuildSTEPFromNURBParameters, Transform, GetMaxAnalyticDomain,
-// GetInsideOut and IsKindOf; and the inherited SmSurfOfRevolution::TrimWithDomain,
+// GetInsideOut, IsKindOf and IsNurbSurfaceTorus; and the inherited SmSurfOfRevolution::TrimWithDomain,
 // IntersectWithPlane and GlobalSurfaceIntersect (with a plane).
 //
 // One entry point, sc_surface_torus_eval(op, in, n_in, out, cap, out_len). Layouts are
@@ -35,6 +35,7 @@
 
 #include <vector>
 
+#include "sc_const_make.h"
 #include "sc_sm.h"
 
 using sc::flg;
@@ -59,6 +60,8 @@ enum : int32_t
     OP_TRIM_DOMAIN = 10,
     OP_ISECT_PLANE = 11,
     OP_GLOBAL = 12,
+    OP_IS_NURB = 13,
+    OP_CONST_MAKE = 20, // the constructor with no MakeNurb, then sc::put_const_make
 };
 
 // Reads the protected members through pointers to members named in a derived class.
@@ -95,7 +98,7 @@ struct Rd
 // A torus block `O[3] X[3] Y[3] major minor swap inside_out has_dom D[4] has_circle
 // [c[3] x[3] y[3] d0 d1 r]`: SmTorus::CreateCanonical(SmAxis2Placement(O, X, Y), ..).
 // Writes the status; NULL on failure.
-SmTorus* read_torus(Rd& rd, const SmContext& ctx, std::vector<double>& o)
+SmTorus* read_torus(Rd& rd, const SmContext& ctx, std::vector<double>& o, bool lazy = false)
 {
     SmPoint3d org = rd.vec();
     SmVector3d x = rd.vec();
@@ -124,9 +127,19 @@ SmTorus* read_torus(Rd& rd, const SmContext& ctx, std::vector<double>& o)
             rd.num();
     }
     SmTorus* t = NULL;
-    SmStatus stt = SmTorus::CreateCanonical(ctx, SmAxis2Placement(org, x, y), major, minor, t,
-                                            swap ? TRUE : FALSE, inside ? TRUE : FALSE, circle,
-                                            has_dom ? &dom : NULL);
+    SmStatus stt = SM_SUCCESS;
+    if (lazy)
+    {
+        // the constructor alone (CreateCanonical's MakeNurb skipped); the FFI guards the
+        // radii (the constructor asserts on a non-positive one)
+        t = new (ctx) SmTorus(org, x, y, has_dom ? dom : SmExtent2d(0.0, 0.0, 360.0, 360.0),
+                              major, minor, swap ? TRUE : FALSE, inside ? TRUE : FALSE, circle,
+                              NULL);
+    }
+    else
+        stt = SmTorus::CreateCanonical(ctx, SmAxis2Placement(org, x, y), major, minor, t,
+                                       swap ? TRUE : FALSE, inside ? TRUE : FALSE, circle,
+                                       has_dom ? &dom : NULL);
     o.push_back(st(stt));
     if (stt != SM_SUCCESS || t == NULL)
     {
@@ -397,6 +410,48 @@ void torus_op(int32_t op, Rd& rd, const SmContext& ctx, SmTorus* s, std::vector<
         delete off;
         break;
     }
+    case OP_IS_NURB:
+    {
+        double scale = rd.num();
+        double sx = rd.num();
+        double sy = rd.num();
+        double sz = rd.num();
+        int64_t npert = rd.idx();
+        const gw_SURFACE* src = s->GetGwNurbPointer();
+        gw_SURFACE* g = sm_AllocateAndCopyNurbSurface((gw_SURFACE*)src);
+        for (gw_INDEX i = 0; i <= g->net->n; i++)
+            for (gw_INDEX j = 0; j <= g->net->m; j++)
+            {
+                g->net->Pw[i][j].x *= sx;
+                g->net->Pw[i][j].y *= sy;
+                g->net->Pw[i][j].z *= sz;
+            }
+        for (int64_t k = 0; k < npert; k++)
+        {
+            int64_t i = rd.idx();
+            int64_t j = rd.idx();
+            double dx = rd.num();
+            double dy = rd.num();
+            double dz = rd.num();
+            if (i < 0 || j < 0 || i > g->net->n || j > g->net->m)
+                continue;
+            g->net->Pw[i][j].x += dx;
+            g->net->Pw[i][j].y += dy;
+            g->net->Pw[i][j].z += dz;
+        }
+        SmBSplineSurface* test = new (ctx) SmBSplineSurface(g, FALSE, NULL);
+        SmTorus* r = NULL;
+        // SmBoolean is an int: a failed `SER(..)` returns its status as a truthy "found" with
+        // no torus, so the value is recorded as is.
+        SmBoolean found = SmTorus::IsNurbSurfaceTorus(ctx, test, r, scale);
+        o.push_back((double)found);
+        o.push_back(flg(r != NULL));
+        if (r)
+            put_state(o, r);
+        delete r;
+        delete test;
+        break;
+    }
     case OP_REBUILD:
     {
         SmStatus stt = s->RebuildSTEPFromNURBParameters();
@@ -496,10 +551,13 @@ SC_EXPORT int32_t sc_surface_torus_eval(int32_t op, const double* in, int64_t n_
     SmContext ctx;
     std::vector<double> o;
     Rd rd{in, 0};
-    SmTorus* s = read_torus(rd, ctx, o);
+    SmTorus* s = read_torus(rd, ctx, o, op == OP_CONST_MAKE);
     if (s)
     {
-        torus_op(op, rd, ctx, s, o);
+        if (op == OP_CONST_MAKE)
+            sc::put_const_make(ctx, s, o);
+        else
+            torus_op(op, rd, ctx, s, o);
         delete s;
     }
     return sc_copy_out(o.data(), (int64_t)o.size(), out, cap, out_len);

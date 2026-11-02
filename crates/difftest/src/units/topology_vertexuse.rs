@@ -5,10 +5,11 @@
 //! does: read from an upstream `.smb` test file (optionally rebuilding its UV trim
 //! curves), a wire edge from a B-spline curve (`CreateWireEdgeFromCurve`), a face from a
 //! B-spline surface or a plane (`CreateFaceFromSurface`), or the wire network of
-//! `prog_test` `my_test_topology`. There is no Rust B-rep reader or builder yet (units
-//! `topology.brep_*`), so the Rust side imports the graph the shim exports in traversal
-//! order (raw members, including each vertex use's cached gap states and UV point) into a
-//! [`Brep`] and runs the ported functions on it; their results are compared as traversal
+//! `prog_test` `my_test_topology`. The Rust side builds a wire edge, face or network
+//! source itself ([`crate::own_builder`]) and reads an `.smb` file with the Rust reader
+//! ([`crate::own_reader::file_in_order`]), both renumbered into the shim's traversal
+//! order: no C++ export reaches the Rust side. It runs the ported functions on that
+//! B-rep; their results are compared as traversal
 //! indices, flags, statuses and values. `init_gaps` has the C++ side compute the cached
 //! gaps before the op, so that resets are observable.
 //!
@@ -617,6 +618,28 @@ pub(crate) fn import_raw(ex: &[f64]) -> Result<(Brep, Vec<bool>), HarnessError> 
 
 /// [`import_raw`], also with each face's exported surface subclass type code.
 pub(crate) fn import_raw_with_types(ex: &[f64]) -> Result<TypedImport, HarnessError> {
+    import_raw_owned(ex).map(|(t, _)| t)
+}
+
+/// The geometry owners a native export records, by imported index: per face whether
+/// its surface's owner is the face (`pSurface->GetOwner() == pFace`), per edge use the
+/// export index of the edge use owning its own UV trim curve, per edge the export index
+/// of the edge owning its curve (`-1`: no curve or no owner, `-3`: an owner outside the
+/// export's kind).
+#[derive(Debug, Clone, Default)]
+pub(crate) struct ImportOwners {
+    pub(crate) surface_owned: Vec<bool>,
+    pub(crate) uv_owner: Vec<f64>,
+    pub(crate) edge_owner: Vec<f64>,
+}
+
+/// [`import_raw`], also with the geometry owners the export records ([`ImportOwners`]).
+pub(crate) fn import_raw_with_owners(ex: &[f64]) -> Result<(Brep, ImportOwners), HarnessError> {
+    import_raw_owned(ex).map(|((b, _, _), owners)| (b, owners))
+}
+
+fn import_raw_owned(ex: &[f64]) -> Result<(TypedImport, ImportOwners), HarnessError> {
+    let mut owners = ImportOwners::default();
     let c = ffi::counts(ex).ok_or_else(|| harness("import of a failed build"))?;
     let [n_r, n_s, n_fu, n_f, n_lu, n_l, n_eu, n_e, n_vu, n_v] = c;
     let mut rd = Rd { v: ex, at: 1 };
@@ -679,6 +702,7 @@ pub(crate) fn import_raw_with_types(ex: &[f64]) -> Result<TypedImport, HarnessEr
         let rect = rd.idx()?;
         let tolerance = rd.num()?;
         let owned = rd.num()? != 0.0;
+        owners.surface_owned.push(owned);
         if owned {
             if let Some(s) = surface.as_mut() {
                 s.set_owner(Some(ObjectRef {
@@ -729,7 +753,8 @@ pub(crate) fn import_raw_with_types(ex: &[f64]) -> Result<TypedImport, HarnessEr
         let vertexuse = opt(rd.idx()?, VertexuseId::from_index)?;
         let orientation = orient_of(rd.idx()?)?;
         let uv_trim_curve = read_curve(&mut rd, true)?;
-        rd.idx()?; // the curve's owner: the holding edge use
+        // the curve's owner (normally the holding edge use)
+        owners.uv_owner.push(rd.num()?);
         let has_fail = rd.num()? != 0.0;
         let fail_status = rd.idx()?;
         let fail_brep = rd.num()? != 0.0;
@@ -779,6 +804,8 @@ pub(crate) fn import_raw_with_types(ex: &[f64]) -> Result<TypedImport, HarnessEr
             .map(|x| opt(x, EdgeuseId::from_index)?.ok_or_else(|| harness("null edge use")))
             .collect::<Result<Vec<_>, _>>()?;
         let curve = read_curve(&mut rd, false)?;
+        // the curve's owner (normally the edge)
+        owners.edge_owner.push(rd.num()?);
         let interval = Extent1d::from_raw(a, b);
         edges.push((tolerance, interval, list, curve));
     }
@@ -924,7 +951,7 @@ pub(crate) fn import_raw_with_types(ex: &[f64]) -> Result<TypedImport, HarnessEr
         b.add_vertexuse_record(vu)
             .map_err(|e| harness(e.to_string()))?;
     }
-    Ok((b, exact_faces, face_types))
+    Ok(((b, exact_faces, face_types), owners))
 }
 
 fn id<I: Copy>(o: Option<I>, f: impl Fn(I) -> u32) -> i64 {
@@ -1231,36 +1258,6 @@ fn output(op: &OpIn, body: &[f64]) -> Output {
     }
 }
 
-/// Whether the op's vertex use is on a face whose surface was not imported exactly (an
-/// `SmBSplineSurface` subclass other than `SmPlane`, imported as its B-spline part):
-/// the ops reaching the face's surface would evaluate a different surface, so such
-/// cases are not compared (both sides report `inexact_surface`).
-fn inexact(op: &OpIn, b: &Brep, exact: &[bool]) -> bool {
-    let vu = match op {
-        OpIn::VuQuery { vu }
-        | OpIn::Connected { vu, .. }
-        | OpIn::Gaps { vu, .. }
-        | OpIn::Notify { vu, .. }
-        | OpIn::UvPoint { vu, .. }
-        | OpIn::UvSector { vu, .. }
-        | OpIn::MissingSeam { vu, .. }
-        | OpIn::OnPole { vu } => *vu,
-    };
-    if matches!(
-        op,
-        OpIn::VuQuery { .. } | OpIn::Connected { .. } | OpIn::Notify { .. }
-    ) {
-        return false;
-    }
-    let Ok(Some(fu)) = vu1::faceuse(b, VertexuseId::from_index(vu as u32)) else {
-        return false;
-    };
-    let Ok(Some(f)) = b.faceuse(fu).map(|r| r.face) else {
-        return false;
-    };
-    !exact.get(f.index() as usize).copied().unwrap_or(true)
-}
-
 // ---- C++ side ---------------------------------------------------------------------------
 
 fn run_cpp(i: &Inputs) -> Result<Output, HarnessError> {
@@ -1271,10 +1268,6 @@ fn run_cpp(i: &Inputs) -> Result<Output, HarnessError> {
     let Some(op) = resolve(&i.op, c) else {
         return Ok(Output::err("no_vertexuse"));
     };
-    let (b, exact) = import_raw(&ex)?;
-    if inexact(&op, &b, &exact) {
-        return Ok(Output::err("inexact_surface"));
-    }
     let (code, args) = op_args(&op);
     let mut input = brep_block(i)?;
     input.extend(args);
@@ -1308,7 +1301,7 @@ impl From<HarnessError> for Fail {
 fn slot<T>(r: Result<T, SolidError>, f: impl FnOnce(T) -> i64) -> Result<i64, SolidError> {
     match r {
         Ok(v) => Ok(f(v)),
-        Err(SolidError::InvalidInput { .. }) => Ok(NULL_DEREF),
+        Err(SolidError::InvalidInput { .. } | SolidError::PortInvariant { .. }) => Ok(NULL_DEREF),
         Err(e) => Err(e),
     }
 }
@@ -1353,18 +1346,63 @@ fn notify_operation(code: u8) -> Result<NotifyOperation, HarnessError> {
     })
 }
 
-fn run_rust(i: &Inputs) -> Result<Output, HarnessError> {
-    let ex = export(i)?;
-    let Some(c) = ffi::counts(&ex) else {
-        return Ok(build_failure(&ex));
+/// A Rust B-rep and its entity counts.
+type OwnBrep = (Brep, [usize; 10]);
+
+/// The Rust B-rep of a case and its entity counts, or the output of a failed build or
+/// read, under `sc_topology_fixture.h`'s conventions: shim-built sources built by the
+/// Rust kernel ([`crate::own_builder`]), `.smb` file sources read by the Rust reader
+/// ([`crate::own_reader::file_in_order`]), both renumbered into the shim's traversal
+/// order. Every face surface is the Rust B-rep's own, exact, so no case is withheld as
+/// an inexact import (the export's analytic surfaces no longer reach the Rust side).
+fn rust_brep(
+    i: &Inputs,
+) -> Result<crate::own_builder::RustBrep<OwnBrep>, HarnessError> {
+    use crate::own_builder::{build_as, counts, failed_output, Built, Conventions};
+    let mut k = Kernel::default();
+    let conv = &Conventions::TOPOLOGY_FIXTURE;
+    let built = if let Some(built) = build_as(&mut k, &i.brep, i.validate_only, i.init_gaps, conv)?
+    {
+        built
+    } else {
+        let BrepIn::File { rebuild, .. } = &i.brep else {
+            return Err(harness("own builder: a non-file source was not built"));
+        };
+        let path = path_of(&i.brep)?;
+        crate::own_reader::file_in_order(
+            &mut k,
+            &path,
+            *rebuild,
+            i.validate_only,
+            i.init_gaps,
+            conv,
+        )?
     };
-    let (mut b, exact) = import_raw(&ex)?;
+    match built {
+        Built::Brep(b) => {
+            let c = counts(&b);
+            Ok(Ok((*b, c)))
+        }
+        Built::Failed(e) => Ok(Err(failed_output(&e))),
+    }
+}
+
+fn run_rust(i: &Inputs) -> Result<Output, HarnessError> {
+    // an input the FFI refuses is a harness error on both sides (PR #502's convention):
+    // the shim never builds it, so the Rust side must not either. Fuzz case fuzz00086
+    // (`--fuzz 300 --seeds 24`) mutated a control point to `1e300`: the export refuses a
+    // block value above `1e150` (HANG-29) for the C++ side, while this side built the
+    // face and spun in `GlobalCoincidenceChecker` for over 20 s. `validate_block` is the
+    // export's own block checks (pure Rust, no shim call), on the block `export` sends.
+    ffi::validate_block(&path_of(&i.brep)?, &brep_block(i)?)
+        .map_err(|e| harness(format!("export: {e}")))?;
+    let (mut b, c) = match rust_brep(i)? {
+        Ok(x) => x,
+        Err(o) => return Ok(o),
+    };
     let Some(op) = resolve(&i.op, c) else {
         return Ok(Output::err("no_vertexuse"));
     };
-    if inexact(&op, &b, &exact) {
-        return Ok(Output::err("inexact_surface"));
-    }
     // The ops read the cached gaps (`IsOnPole`: the vertex/face gap's face UV), so a
     // gap that cannot be refilled is reported, not left at its placeholder.
     if let Err(e) = recalc_gaps(&mut b) {
@@ -1621,7 +1659,7 @@ fn run_rust_op(b: &mut Brep, op: &OpIn) -> Result<Output, Fail> {
             };
             match r {
                 Ok(x) => out.extend(x),
-                Err(SolidError::InvalidInput { .. }) => {
+                Err(SolidError::InvalidInput { .. } | SolidError::PortInvariant { .. }) => {
                     return Ok(Output::new().values("state", vec![NULL_DEREF as f64]))
                 }
                 Err(e) => return Err(e.into()),
@@ -1635,7 +1673,7 @@ fn run_rust_op(b: &mut Brep, op: &OpIn) -> Result<Output, Fail> {
                 type_code: vu1::TYPE,
                 key: ObjectKey(1),
             };
-            let mut records = std::collections::BTreeMap::new();
+            let mut records = solidcore::topology::topology::NotifyRecords::new();
             records.insert(this.key, Topology::new());
             let mut attrs = AttributeStore::default();
             vu1::notify(
@@ -1655,7 +1693,7 @@ fn run_rust_op(b: &mut Brep, op: &OpIn) -> Result<Output, Fail> {
         OpIn::UvPoint { vu, ok_to_make } => {
             match vu1::compute_uv_point(&k, b, vid(*vu), *ok_to_make) {
                 Ok(p) => vec![0.0, p.x, p.y],
-                Err(SolidError::InvalidInput { .. }) => vec![NULL_DEREF as f64],
+                Err(SolidError::InvalidInput { .. } | SolidError::PortInvariant { .. }) => vec![NULL_DEREF as f64],
                 Err(e) => vec![
                     status_of(&e)?,
                     solidcore::math::UNDEF_DOUBLE,
@@ -1701,7 +1739,7 @@ fn run_rust_op(b: &mut Brep, op: &OpIn) -> Result<Output, Fail> {
                     );
                     out
                 }
-                Err(SolidError::InvalidInput { .. }) => vec![NULL_DEREF as f64],
+                Err(SolidError::InvalidInput { .. } | SolidError::PortInvariant { .. }) => vec![NULL_DEREF as f64],
                 Err(e) => return Err(e.into()),
             }
         }
@@ -1717,7 +1755,7 @@ fn run_rust_op(b: &mut Brep, op: &OpIn) -> Result<Output, Fail> {
                     if *want_u { i64::from(m.u) } else { -1 },
                     if *want_v { i64::from(m.v) } else { -1 },
                 ],
-                Err(SolidError::InvalidInput { .. }) => vec![NULL_DEREF],
+                Err(SolidError::InvalidInput { .. } | SolidError::PortInvariant { .. }) => vec![NULL_DEREF],
                 Err(e) => return Err(e.into()),
             };
             return Ok(Output::new().ints("q", q));
@@ -1728,7 +1766,7 @@ fn run_rust_op(b: &mut Brep, op: &OpIn) -> Result<Output, Fail> {
                 gap_states(b, &mut out);
                 out
             }
-            Err(SolidError::InvalidInput { .. }) => vec![NULL_DEREF as f64],
+            Err(SolidError::InvalidInput { .. } | SolidError::PortInvariant { .. }) => vec![NULL_DEREF as f64],
             Err(e) => return Err(e.into()),
         },
     };

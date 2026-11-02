@@ -24,6 +24,7 @@
 //! | [`BSplineCurve::create_arc_from_points`]     | `CreateArcFromPoints`                             |
 //! | [`BSplineCurve::create_canonical`], [`CanonicalData`] | `CreateCanonical`                        |
 //! | [`BSplineCurve::create_circle_segment`]      | `CreateCircleSegment`                             |
+//! | [`BSplineCurve::create_circle_segment_min_arcs`] | not upstream (WR-711)                         |
 //! | [`BSplineCurve::create_degenerate_curve`]    | `CreateDegenerateCurve`                           |
 //! | [`BSplineCurve::create_line_segment`]        | `CreateLineSegment`                               |
 //! | [`BSplineCurve::create_mirror_curve`]        | `CreateMirrorCurve`                               |
@@ -63,6 +64,8 @@
 //! | [`KnotType`], [`BSplineCurveForm`], [`NurbCircleParam`], [`ProjectionType`] | `SmKnotType`, `SmBSplineCurveForm`, `SmNurbCircleParam`, `SmProjectionType` |
 //!
 //! Deviations:
+//! - [`BSplineCurve::create_circle_segment_min_arcs`] (not upstream, WR-711) is
+//!   `CreateCircleSegment` with a floor on the quadratic form's arc count.
 //! - **Curve base.** `SmBSplineCurve` derives from `SmCurve` (units `curve.curve_*`).
 //!   The base state it uses is the image-space dimension (`m_lDim`), kept here as
 //!   [`BSplineCurve::dim`] (`SmCurve::GetDim`). `SmCurve::operator==` (same type,
@@ -131,7 +134,7 @@ use crate::geom::vector3d::{Point3, Vec3};
 use crate::math::{min2, EFF_ZERO, EFF_ZERO_SQ, EFF_ZERO_SQRT, PI};
 use crate::nurbs::basis_basic::reparam;
 use crate::nurbs::crv_basic::{ConicType, Curve};
-use crate::nurbs::crv_common::{circ_arc, Arc};
+use crate::nurbs::crv_common::{circ_arc, quadratic_arc_min_arcs, Arc, DEFAULT_ANGLE_TOL};
 use crate::nurbs::crv_nurb::{line_from_pt_and_vector, Projection};
 use crate::nurbs::geom::Interval;
 use crate::nurbs::iges::{iges_126_curve, Entity126};
@@ -953,7 +956,7 @@ impl BSplineCurve {
     /// # Errors
     ///
     /// `SM_ERR` without a NURB or when the NLib evaluation fails (including
-    /// `num_derivs >= GW_MAX_DERIV`).
+    /// `num_derivs > GW_MAX_DERIV`).
     pub fn evaluate(
         &self,
         t: f64,
@@ -965,7 +968,7 @@ impl BSplineCurve {
         if num_derivs == 0 {
             return Ok(vec![self.evaluate_point(t)?]);
         }
-        if num_derivs >= MAX_DERIV {
+        if num_derivs > MAX_DERIV {
             // (NLib's order error, after the NURB check, without allocating an output
             // of that size)
             let cur = self.nurb_ref()?;
@@ -978,7 +981,7 @@ impl BSplineCurve {
     }
 
     /// [`BSplineCurve::evaluate`] into the caller's slice: `out[k]` is derivative `k`,
-    /// `num_derivs = out.len() - 1` (below `GW_MAX_DERIV`), without a heap allocation
+    /// `num_derivs = out.len() - 1` (up to `GW_MAX_DERIV`), without a heap allocation
     /// (except for the rare zero-tangent re-evaluation).
     ///
     /// # Errors
@@ -1482,6 +1485,26 @@ impl BSplineCurve {
         end_deg: f64,
         param: NurbCircleParam,
     ) -> Result<Self> {
+        Self::create_circle_segment_min_arcs(dim, frame, radius, start_deg, end_deg, param, 0)
+    }
+
+    /// [`BSplineCurve::create_circle_segment`] whose quadratic form is split into at
+    /// least `min_arcs` equal arcs (at most four; `0` is upstream's count from the
+    /// sweep). Not upstream: an exact circular fillet's sections take one arc count
+    /// along the rails (`fixes.fillet_exact_arc_spans`, WR-711).
+    ///
+    /// # Errors
+    ///
+    /// As [`BSplineCurve::create_circle_segment`].
+    pub fn create_circle_segment_min_arcs(
+        dim: u64,
+        frame: &Axis2Placement,
+        radius: f64,
+        start_deg: f64,
+        end_deg: f64,
+        param: NurbCircleParam,
+        min_arcs: usize,
+    ) -> Result<Self> {
         // check input
         check(radius >= EFF_ZERO, OP_CIRCLE, "radius below SM_EFF_ZERO")?;
         if !(2..=3).contains(&dim) {
@@ -1513,7 +1536,12 @@ impl BSplineCurve {
             start: start_deg,
             end: end_deg,
         };
-        let mut cur = circ_arc(&arc, ctp).map_err(SolidError::nl_ser(OP_CIRCLE))?;
+        let made = if min_arcs > 0 && ctp == ConicType::Quadratic {
+            quadratic_arc_min_arcs(&arc, DEFAULT_ANGLE_TOL, min_arcs)
+        } else {
+            circ_arc(&arc, ctp)
+        };
+        let mut cur = made.map_err(SolidError::nl_ser(OP_CIRCLE))?;
         if dim == 2 {
             cur.to_2d();
         }

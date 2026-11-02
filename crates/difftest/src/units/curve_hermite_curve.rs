@@ -13,24 +13,38 @@
 //! upstream codes. `is_kind_of` of a type other than `SmHermiteCurve_TYPE` reaches
 //! the unported `SmCurve::IsKindOf` and is deferred on the Rust side.
 //! Every run uses at least [`MIN_GENERATED`] generated inputs (more with `--seeds`).
+//!
+//! `write_read` cases (their own seed stream, named `wrNNNN`, [`WRITE_READ_CASES`] per
+//! run) write curve `a` with `WriteType` + `WriteToDB` (ASCII when `binary` is false,
+//! version `n`), read each side's own bytes back through `ReadType` +
+//! `SmCurve::ReadFromDB`, and compare the bytes, the read curve's type, dimension and
+//! members, `== a`, `EvaluatePoint(t)` and the bytes of a second write. Equal bytes and
+//! each reader's result on them stand for the cross reads (C++ bytes read by Rust and
+//! the reverse) without passing C++ output to the Rust side.
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
+use solidcore::curve::curve::{Curve, CurveKind};
 use solidcore::curve::hermite_curve::HermiteCurve;
+use solidcore::geom::assert_array::{AssertArray, ObjectKey};
 use solidcore::geom::extent1d::Extent1d;
 use solidcore::geom::extent3d::Extent3d;
 use solidcore::geom::polar_box::{PolarBox, PolarBoxState};
 use solidcore::geom::pseudo_box::PseudoBox;
 use solidcore::geom::vector2d::Vec2;
 use solidcore::geom::vector3d::Vec3;
-use solidcore::topology::database_io::{DatabaseReader, FileType};
-use solidcore::SolidError;
+use solidcore::math::UNDEF_DOUBLE;
+use solidcore::topology::brep::validation::curve_assert_valid;
+use solidcore::topology::database_io::{DatabaseReader, DatabaseWriter, FileType};
+use solidcore::topology::geometry_write::write_curve;
+use solidcore::{Kernel, SolidError};
 use solidcore_ffi::units::curve_hermite_curve::{self as ffi, Built, Kind, Op, Operands};
 use solidcore_ffi::FfiError;
 
 use crate::case::CaseContext;
 use crate::runner::default_cases;
+use crate::util::assert_reports::put_assert_reports;
 use crate::util::flag;
 use crate::{Case, HarnessError, Output, Rng, UnitDiff};
 
@@ -40,8 +54,7 @@ pub const MIN_GENERATED: usize = 2000;
 /// Upstream `SM_SUCCESS`.
 const SM_SUCCESS: f64 = 1000.0;
 
-/// Upstream `SM_ERR_INVALID_INPUT`.
-const SM_ERR_INVALID_INPUT: i32 = 1007;
+use solidcore::error::SM_ERR_INVALID_INPUT;
 
 /// `curve.hermite_curve` runner.
 pub struct Runner;
@@ -113,6 +126,23 @@ struct Inputs {
     binary: bool,
 }
 
+/// The `write_read` op (not in [`OPS`], so the main stream's op choice is unchanged).
+const WRITE_READ: (&str, Op) = ("write_read", Op::WriteRead);
+
+/// The `assert_valid` op (not in [`OPS`], so the main stream's op choice is unchanged).
+const ASSERT_VALID: (&str, Op) = ("assert_valid", Op::AssertValid);
+
+/// The op named `name`.
+fn op_of(name: &str) -> Result<Op, HarnessError> {
+    if name == WRITE_READ.0 {
+        return Ok(WRITE_READ.1);
+    }
+    if name == ASSERT_VALID.0 {
+        return Ok(ASSERT_VALID.1);
+    }
+    lookup(&OPS, name)
+}
+
 fn lookup<T: Copy>(table: &[(&str, T)], name: &str) -> Result<T, HarnessError> {
     table
         .iter()
@@ -123,7 +153,7 @@ fn lookup<T: Copy>(table: &[(&str, T)], name: &str) -> Result<T, HarnessError> {
 
 fn status_code(e: &SolidError) -> f64 {
     match e {
-        SolidError::InvalidInput { .. } => f64::from(SM_ERR_INVALID_INPUT),
+        SolidError::InvalidInput { .. } | SolidError::PortInvariant { .. } => f64::from(SM_ERR_INVALID_INPUT),
         SolidError::Upstream { code, .. } => f64::from(*code),
         _ => -1.0,
     }
@@ -154,7 +184,7 @@ fn ffi_built(c: &CurveIn) -> Result<Built, HarnessError> {
 }
 
 fn cpp(i: &Inputs) -> Result<Output, HarnessError> {
-    let op = lookup(&OPS, &i.op)?;
+    let op = op_of(&i.op)?;
     let a = ffi_built(&i.a)?;
     let b = ffi_built(&i.b)?;
     let x = Operands {
@@ -208,11 +238,92 @@ fn str_codes(out: &mut Vec<f64>, s: &str) {
     out.extend(s.bytes().map(f64::from));
 }
 
+/// `WriteType` + `WriteToDB` of `c` (as the shim's `write_record`).
+fn write_record(c: &Curve, ft: FileType, version: u64) -> solidcore::Result<Vec<u8>> {
+    let mut w = DatabaseWriter::open_for_write(ft);
+    w.write_type(c.type_code(), Some(c.dim()));
+    write_curve(c, &mut w, version)?;
+    Ok(w.into_bytes())
+}
+
+fn put_bytes(out: &mut Vec<f64>, b: &[u8]) {
+    out.push(b.len() as f64);
+    out.extend(b.iter().map(|&x| f64::from(x)));
+}
+
+/// `write_read` (see the module docs). A failed step is its status, as the shim's.
+fn rust_write_read(i: &Inputs, a: HermiteCurve, out: &mut Vec<f64>) -> solidcore::Result<()> {
+    let k = Kernel::default();
+    let ft = if i.binary {
+        FileType::Binary
+    } else {
+        FileType::Ascii
+    };
+    let version = u64::try_from(i.n).unwrap_or(0);
+    let a = Curve::from(a);
+    let bytes = write_record(&a, ft, version)?;
+    out.push(SM_SUCCESS);
+    put_bytes(out, &bytes);
+    let mut db = DatabaseReader::new();
+    db.open_for_read(bytes, ft);
+    let read = db.read_type(true).and_then(|h| {
+        let (Some(t), Some(d)) = (h.type_code, h.dim) else {
+            return Err(SolidError::invalid_input("difftest", "type header"));
+        };
+        Curve::read_from_db(&k, t, &mut db, d, version)
+    });
+    let c = match read {
+        Ok(c) => c,
+        Err(e) if e.is_unported() => return Err(e),
+        Err(e) => {
+            out.push(status_code(&e));
+            return Ok(());
+        }
+    };
+    out.push(SM_SUCCESS);
+    out.push(c.type_code() as f64);
+    out.push(c.dim() as f64);
+    let CurveKind::Hermite(h) = c.kind() else {
+        return Err(SolidError::invalid_input("difftest", "not a Hermite curve"));
+    };
+    put_members(out, h);
+    out.push(flag(c.approx_eq(&k, &a)?));
+    match c.evaluate_point(&k, i.t) {
+        Ok(p) => {
+            out.push(SM_SUCCESS);
+            put_v(out, p);
+        }
+        Err(e) if e.is_unported() => return Err(e),
+        Err(e) => out.push(status_code(&e)),
+    }
+    match write_record(&c, ft, version) {
+        Ok(again) => {
+            out.push(SM_SUCCESS);
+            put_bytes(out, &again);
+        }
+        Err(e) if e.is_unported() => return Err(e),
+        Err(e) => out.push(status_code(&e)),
+    }
+    Ok(())
+}
+
 fn rust_values(i: &Inputs) -> Result<solidcore::Result<Vec<f64>>, HarnessError> {
-    let op = lookup(&OPS, &i.op)?;
+    let op = op_of(&i.op)?;
     let a = build(&i.a)?;
     let mut out = Vec::new();
     match op {
+        Op::AssertValid => {
+            let k = Kernel::default();
+            let mut c = Curve::from(a);
+            let mut list = AssertArray::new();
+            let level = u8::try_from(i.n).map_err(|e| HarnessError::new(e.to_string()))?;
+            let with_list = i.flags & 1 != 0;
+            let key = ObjectKey(1);
+            match curve_assert_valid(&k, &mut c, with_list.then_some(&mut list), level, key) {
+                Ok(ok) => put_assert_reports(&mut out, ok, &list, key),
+                Err(e) => return Ok(Err(e)),
+            }
+        }
         Op::State => {
             out.push(a.type_code() as f64);
             out.push(a.dim() as f64);
@@ -321,6 +432,11 @@ fn rust_values(i: &Inputs) -> Result<solidcore::Result<Vec<f64>>, HarnessError> 
             str_codes(&mut out, a.type_string());
             out.push(-1.0);
             str_codes(&mut out, a.class_string());
+        }
+        Op::WriteRead => {
+            if let Err(e) = rust_write_read(i, a, &mut out) {
+                return Ok(Err(e));
+            }
         }
         Op::ReadDb => {
             let ft = if i.binary {
@@ -509,6 +625,86 @@ fn gen_case(rng: &mut Rng) -> Inputs {
     }
 }
 
+/// Generated `write_read` cases (their own seed stream, `<unit>:write_read`).
+pub const WRITE_READ_CASES: usize = 300;
+
+/// A `write_read` case: a curve of any construction and scale (with huge, tiny,
+/// negative-zero and degenerate members), either format, versions 30 and 33.
+fn gen_write_read(rng: &mut Rng) -> Inputs {
+    let mut a = gen_curve(rng);
+    match rng.below(8) {
+        0 => {
+            // huge and tiny magnitudes (the ASCII fixed format's digit counts)
+            let s = *rng.choose(&[1e12, 1e-12, 1e-300, 1e150]).unwrap_or(&1e12);
+            for v in &mut a.v {
+                *v = v.map(|x| x * s);
+            }
+        }
+        1 => {
+            // negative zeros and exact zeros
+            if let Some(v) = a.v.get_mut(rng.below(4) as usize) {
+                *v = [-0.0, 0.0, -0.0];
+            }
+        }
+        _ => {}
+    }
+    let t = match rng.below(5) {
+        0 => 0.0,
+        1 => 1.0,
+        2 => rng.uniform(-1.0, 2.0),
+        _ => rng.unit(),
+    };
+    Inputs {
+        op: WRITE_READ.0.to_string(),
+        a,
+        b: CurveIn::default(),
+        t,
+        n: if rng.chance(0.3) { 33 } else { 30 },
+        flags: 0,
+        w: [0.0; 6],
+        data: String::new(),
+        binary: rng.chance(0.5),
+    }
+}
+
+/// Generated `assert_valid` cases (their own seed stream, `<unit>:assert_valid`).
+pub const ASSERT_VALID_CASES: usize = 300;
+
+/// An `assert_valid` case: a curve of any construction (valid, or with undefined
+/// members or a dimension other than 2 and 3), any test level, with or without a
+/// report list.
+fn gen_assert_valid(rng: &mut Rng) -> Inputs {
+    let mut a = gen_curve(rng);
+    match rng.below(6) {
+        0 | 1 => {
+            // an undefined member component (SM_UNDEF_DOUBLE)
+            let vi = rng.below(4) as usize;
+            let ci = rng.below(3) as usize;
+            if let Some(c) = a.v.get_mut(vi).and_then(|v| v.get_mut(ci)) {
+                *c = UNDEF_DOUBLE;
+            }
+        }
+        2 => {
+            // a dimension neither 2 nor 3 (only the ThreeD / TwoD constructions use it)
+            a.dim = *rng.choose(&[0u32, 1, 4]).unwrap_or(&4);
+        }
+        _ => {}
+    }
+    Inputs {
+        op: ASSERT_VALID.0.to_string(),
+        b: CurveIn::default(),
+        t: 0.0,
+        n: *rng.choose(&[0i64, 1, 2, 4]).unwrap_or(&0),
+        // a report list only where test 1 stays inside the default label table (the
+        // ffi wrapper rejects the rest)
+        flags: i32::from(rng.chance(0.8) && ffi_built(&a).is_ok_and(|b| matches!(b.effective_dim(), 2 | 3))),
+        a,
+        w: [0.0; 6],
+        data: String::new(),
+        binary: false,
+    }
+}
+
 impl UnitDiff for Runner {
     fn id(&self) -> &'static str {
         "curve.hermite_curve"
@@ -519,11 +715,37 @@ impl UnitDiff for Runner {
     }
 
     fn cases(&self, ctx: &CaseContext) -> Result<Vec<Case>, HarnessError> {
-        let ctx = CaseContext {
+        let main = CaseContext {
             seeds: ctx.seeds.max(MIN_GENERATED),
             ..ctx.clone()
         };
-        default_cases(self, &ctx)
+        let mut v = default_cases(self, &main)?;
+        // write/read round trips: their own seed stream (the other generated cases are
+        // unchanged); named `wrNNNN`
+        let wr = CaseContext {
+            seeds: ctx.seeds.max(WRITE_READ_CASES),
+            ..ctx.clone()
+        };
+        for mut c in wr.generated_cases("curve.hermite_curve:write_read", |rng| {
+            serde_json::to_value(gen_write_read(rng)).ok()
+        }) {
+            c.name = c.name.replacen("gen", "wr", 1);
+            c.unit = self.id().to_string();
+            v.push(c);
+        }
+        // AssertValid with native report comparison: their own seed stream; `avNNNN`
+        let av = CaseContext {
+            seeds: ctx.seeds.max(ASSERT_VALID_CASES),
+            ..ctx.clone()
+        };
+        for mut c in av.generated_cases("curve.hermite_curve:assert_valid", |rng| {
+            serde_json::to_value(gen_assert_valid(rng)).ok()
+        }) {
+            c.name = c.name.replacen("gen", "av", 1);
+            c.unit = self.id().to_string();
+            v.push(c);
+        }
+        Ok(v)
     }
 
     fn run_cpp(&self, case: &Case) -> Result<Output, HarnessError> {

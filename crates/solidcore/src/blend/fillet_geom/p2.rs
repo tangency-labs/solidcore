@@ -15,12 +15,17 @@
 //! | [`FilletBrep::calc_rail_int_edgeuse`], [`FilletBrep::calc_rail_int_edgeuse_with_solver`] | `SmFilletVertex::CalcRailIntEdgeuse`         |
 //! | [`FilletBrep::calc_vert_on_cross_section`]        | `SmFilletVertex::CalcVertOnCrossSection`     |
 //! | [`FilletBrep::calc_set_back_vert`]                | `SmFilletVertex::CalcSetBackVert`            |
+//! | [`FilletBrep::calc_join_section`]                 | the fork's `SmFilletVertex::CalcJoinSection` (`SmBlendCornerJoin.cpp`, 543d25a; WR-697) |
 //! | [`FilletBrep::new_fillet_edge`](super::p1::FilletBrep::new_fillet_edge) (in `p1`) | `SmFilletEdge::SmFilletEdge` |
 //! | [`FilletBrep::calc_rail_rail_interpolation`]      | `SmFilletEdge::CalcRailRailInterpolation`    |
 //! | [`FilletBrep::update_edge_split_face`]            | `SmFilletEdge::UpdateSplitFace`              |
 //! | [`FilletBrep::destroy_geom`]                      | `SmFilletGeom::~SmFilletGeom`                |
 //!
 //! Deviations:
+//! - **Rail end on the continued surface (WR-630, #960).** With
+//!   `fixes.fillet_rail_end_on_continued_surface`, `CalcRailIntEdgeuse` evaluates the
+//!   rail's end on its base surface with out-of-bounds evaluation on (the fork's
+//!   tangency-labs/smlib@3f22e97).
 //! - **Object model.** As in `blend.fillet_geom_p1` and `_p4`, fillet vertices, edges
 //!   and geometries are ids of the [`FilletBrep`] (`self`). `GetFilletSolver()` is an
 //!   opaque [`FilletSolverId`] resolved in the caller's `solvers` table (index `id.0`;
@@ -54,6 +59,31 @@
 //! - **Tolerances.** `sm_SrfSrfIntersection`'s tolerance is an `SmApproxTol3d`
 //!   parameter: the double converts on entry ([`approx_tol3d`]); `DropCurve`'s too.
 //!   Face tolerances passed to `DropCurve` / `LiftCurve` convert the same way.
+//!   Arc-length walks on edge curves explicitly carry the live edge's zone
+//!   tolerance into their length caches, independently of integration accuracy.
+//!   A reversed copy has no owner and retains the ordinary system tolerance.
+//! - **Face surfaces.** `CalcRailRailInterpolation` drops onto and lifts from
+//!   `pFace->GetSurface()`. The port evaluates a copy that keeps the surface's owner and
+//!   face tolerance (`clone_for_evaluation`, not the copy constructor), through
+//!   `BrepFaceServices` with the face's handle, so the surface cache is the face's
+//!   trimmed one made on `target`, as `smsurf_GetSurfaceCache` finds it through
+//!   `GetFace()`. The drop, the lift and the re-drop share one services object, so the
+//!   cache the first one makes is the one the others use. Upstream keeps that cache in
+//!   the surface's slot (`GetCacheObj`; `SM_USE_GLOBAL_CACHE` is off), even when it is
+//!   the plain cache `smsurf_GetSurfaceCache` falls back to after a failed trimmed
+//!   build: `CacheMakeOrValidate(SM_OC_TRIMSRF, ..)` returns it as it is, and remakes
+//!   only the cache of a face marked modified while B-rep editing is off. Nothing
+//!   changes `target` between these calls. The lift of the concave `NxN` cubic
+//!   interpolant runs after `sm_CreateCubicRailRailInterpolant`, which may change
+//!   `target` (its `ComputeUVPoint` can make UV trim curves, and `RailRailIntersect`
+//!   runs on it). A `BrepFaceServices` keeps its caches only over an unchanged B-rep,
+//!   so that lift makes the face's cache again from the face as it is then; upstream
+//!   reuses the slot's cache unless the face was marked modified. The difftest does
+//!   not reach that lift (the shim's corner is `SM_FCR_UNKNOWN`). The copy keeps the
+//!   face tolerance it had when copied: a cache build whose `CreateUVTrimCurves` raises
+//!   the face's tolerance (even on failure) leaves later calls reading the old value
+//!   through the copy, where `pSurf` reads `GetFace()->GetTolerance()` live
+//!   (`calc_blending_rail` has the same limit; no case shows it).
 //! - **Statuses.** Upstream ignores the status of `IntersectWithPlane`,
 //!   `sm_TwoPntsIntersection`, `GetRailIndexOfSideEU` and `SetMinMax` here; so does the
 //!   port, except that [`SolidError::Unported`] always propagates. An intersector that
@@ -82,6 +112,13 @@
 //!   implied by the edge holding it.
 //! - **Arguments.** Out-params become return values; `iDebugLevel` and debug drawing
 //!   are dropped. No input-driven recursion.
+//! - **Eased corners (the fork's, tangency-labs/smlib `e74bbd3`, #1376).** At a corner
+//!   with an ease (`FilletCorner::ease_dist > 0`, never by default)
+//!   `calc_rail_rail_interpolation` takes at least two derivatives and the G2/G3 fairing
+//!   branch (`g2_rail_rail_curve`, private) that upstream's `TRUE` condition leaves
+//!   unreachable, with the fork's changes to it. A rail running backwards negates only
+//!   its odd derivatives (upstream negates all); only the first is read without an ease,
+//!   so the pinned results are unchanged.
 
 use std::borrow::Cow;
 
@@ -93,21 +130,27 @@ use crate::curve::curve::{Curve, CurveKind};
 use crate::error::{EntityRef, Result, SolidError};
 use crate::geom::extent1d::Extent1d;
 use crate::geom::extent2d::Extent2d;
+use crate::geom::geom_utility::p1::line_line_closest_point;
 use crate::geom::global_solver::{SolutionRequested, SolverOperation};
 use crate::geom::tol::{approx_tol3d, zone_tol3d};
 use crate::geom::vector2d::Point2;
+use crate::intersect::surface_drop_lib::p3::DropSolveContext;
 use crate::intersect::surface_intersector::p1::{SrfIndex, TsectPnt};
 use crate::kernel::Kernel;
 use crate::math::{Point3, Vec3, BIG_DOUBLE, EFF_ZERO, PI};
 use crate::nurbs::b_spline_curve::BSplineCurve;
 use crate::nurbs::b_spline_curve_n_lib::TrimMode;
-use crate::nurbs::b_spline_surface::BSplineSurface;
 use crate::nurbs::b_spline_surface_n_lib::p2::{EvaluateFlags, OrientType};
+use crate::nurbs::crv_fit::p1::ParamMethod;
 use crate::nurbs::knots::Side;
+use crate::query::brep::BrepFaceServices;
 use crate::surface::plane::Plane;
+use crate::surface::surface::p1::SurfaceSolveContext;
 use crate::surface::surface::p2::SurfaceIntersection;
 use crate::surface::surface::p4::NoObject;
 use crate::surface::surface::{Surface, SurfaceKind};
+use crate::surface::surface_point_solve::p2::with_out_of_bounds_enabled_in_place;
+use crate::topology::brep_cache::CacheObject;
 use crate::topology::edgeuse::p1::{self as eu1, primary_edgeuse};
 use crate::topology::edgeuse::p3::{
     evaluate_binormal, get_or_create_uv_trim_curve, BinormalOptions,
@@ -124,12 +167,14 @@ use super::p1::{
     FilletVertexType, SurfaceHandle,
 };
 use super::p4::{set_edge_curve, set_vertex_point};
+use super::surface_plane_curve::{ends_on_both, surface_plane_curve};
 
 const OP_SRF_SRF: &str = "blend::fillet_geom::p2::srf_srf_intersection";
 const OP_RAIL_RAIL: &str = "blend::fillet_geom::p2::FilletBrep::calc_rail_int_rail";
 const OP_RAIL_EU: &str = "blend::fillet_geom::p2::FilletBrep::calc_rail_int_edgeuse";
 const OP_CROSS: &str = "blend::fillet_geom::p2::FilletBrep::calc_vert_on_cross_section";
 const OP_SETBACK: &str = "blend::fillet_geom::p2::FilletBrep::calc_set_back_vert";
+const OP_JOIN: &str = "blend::fillet_geom::p2::FilletBrep::calc_join_section";
 const OP_INTERP: &str = "blend::fillet_geom::p2::FilletBrep::calc_rail_rail_interpolation";
 const OP_SPLIT: &str = "blend::fillet_geom::p2::FilletBrep::update_edge_split_face";
 const OP_DESTROY: &str = "blend::fillet_geom::p2::FilletBrep::destroy_geom";
@@ -142,7 +187,7 @@ const NO_CURVE: usize = 9999;
 fn ignore_status<T>(r: Result<T>) -> Result<Option<T>> {
     match r {
         Ok(v) => Ok(Some(v)),
-        Err(e) if e.is_unported() => Err(e),
+        Err(e) if e.is_unported_or_cancelled() => Err(e),
         Err(_) => Ok(None),
     }
 }
@@ -282,6 +327,7 @@ impl RailRailSolvers<'_> {
         rail_index2: usize,
         tsect1: &mut TsectPnt,
         tsect2: &mut TsectPnt,
+        hold_end_radii: bool,
         op: &'static str,
     ) -> Result<bool> {
         match self {
@@ -296,6 +342,7 @@ impl RailRailSolvers<'_> {
                 rail_index2,
                 tsect1,
                 tsect2,
+                hold_end_radii,
                 op,
             ),
             Self::Live(solvers) => {
@@ -318,6 +365,7 @@ impl RailRailSolvers<'_> {
                     rail_index2,
                     tsect1,
                     tsect2,
+                    hold_end_radii,
                 )
             }
         }
@@ -477,9 +525,11 @@ fn arc_length_param(
     curve: &Curve,
     start: f64,
     length: f64,
+    owner_zone_tol_3d: Option<f64>,
     op: &'static str,
 ) -> Result<f64> {
-    let r = curve.find_parameter_at_arc_length(k, start, length)?;
+    let r =
+        curve.find_parameter_at_arc_length_with_zone_tol(k, start, length, owner_zone_tol_3d)?;
     if r.converged {
         Ok(r.end_param)
     } else {
@@ -489,6 +539,104 @@ fn arc_length_param(
             entity: None,
         })
     }
+}
+
+/// The G2/G3 branch of `SmFilletEdge::CalcRailRailInterpolation` as the fork runs it at an
+/// eased corner (tangency-labs/smlib `e74bbd3`, #1376): each end's odd derivatives turned
+/// to run the way the curve does (the start tangent towards where the two tangent lines
+/// meet, the end tangent from there), whatever the rails' orientation flags say; the
+/// points are the vertices themselves (`start_pnt`, `end_pnt`, not the rail points
+/// dropped there); the tangents and higher derivatives faired
+/// (`FairBlendCurveDerivatives`, preventing inflection), then the uniform interpolant of
+/// degree 3, 5 or 7 for 1, 2 or 3 derivatives.
+///
+/// # Errors
+///
+/// `SM_ERR` for fewer than two entries in a derivative list; those of
+/// `FairBlendCurveDerivatives` and `CreateInterpolatingCurve`.
+fn g2_rail_rail_curve(
+    start_pnt: Point3,
+    end_pnt: Point3,
+    pnt_vec1: &mut [Vec3],
+    pnt_vec2: &mut [Vec3],
+    num_derivatives: usize,
+) -> Result<BSplineCurve> {
+    const OP: &str = OP_INTERP;
+    let tangent1 = pnt_vec1
+        .get(1)
+        .copied()
+        .ok_or_else(|| SolidError::sm_err(OP))?;
+    let tangent2 = pnt_vec2
+        .get(1)
+        .copied()
+        .ok_or_else(|| SolidError::sm_err(OP))?;
+    // smgu_LineLineClosestPoint == SM_SUCCESS (any failure skips the turn)
+    if let Ok((t1, t2)) = line_line_closest_point(start_pnt, tangent1, end_pnt, tangent2) {
+        if t1.abs() > EFF_ZERO && t2.abs() > EFF_ZERO {
+            for ii in (1..=num_derivatives).step_by(2) {
+                if t1 < 0.0 {
+                    if let Some(d) = pnt_vec1.get_mut(ii) {
+                        *d = -*d;
+                    }
+                }
+                if t2 > 0.0 {
+                    if let Some(d) = pnt_vec2.get_mut(ii) {
+                        *d = -*d;
+                    }
+                }
+            }
+        }
+    }
+    // Fair the 3d points & tangents (from the vertices themselves)
+    let points = [start_pnt, end_pnt];
+    let mut tangents = [
+        pnt_vec1
+            .get(1)
+            .copied()
+            .ok_or_else(|| SolidError::sm_err(OP))?,
+        pnt_vec2
+            .get(1)
+            .copied()
+            .ok_or_else(|| SolidError::sm_err(OP))?,
+    ];
+    let mut high_derivs = Vec::new();
+    for kk in 2..=num_derivatives {
+        high_derivs.push(
+            pnt_vec1
+                .get(kk)
+                .copied()
+                .ok_or_else(|| SolidError::sm_err(OP))?,
+        );
+        high_derivs.push(
+            pnt_vec2
+                .get(kk)
+                .copied()
+                .ok_or_else(|| SolidError::sm_err(OP))?,
+        );
+    }
+    let prevent_inflection = true;
+    BSplineCurve::fair_blend_curve_derivatives(
+        &points,
+        &mut tangents,
+        Some(&mut high_derivs),
+        prevent_inflection,
+    )?;
+    // Create 3d curve
+    let mut degree = 3;
+    if num_derivatives == 2 {
+        degree = 5;
+    } else if num_derivatives == 3 {
+        degree = 7;
+    }
+    BSplineCurve::create_interpolating_curve(
+        ParamMethod::Uniform,
+        3,
+        degree,
+        &points,
+        &tangents,
+        Some(&high_derivs),
+        true,
+    )
 }
 
 /// The point and the tangent `set_back_dist` along edge `e` from the filleted vertex
@@ -509,6 +657,7 @@ pub(crate) fn set_back_frame(
     op: &'static str,
 ) -> Result<(Point3, Point3)> {
     let curve = edge::curve(target, e)?.ok_or_else(|| SolidError::null_pointer(op))?;
+    let owner_zone_tol_3d = Some(edge::tolerance(target, e)?);
     let pv = if k.fixes.fillet_setback_from_start_vertex {
         let ivl = edge::interval(target, e)?;
         let from_start = edge::start_vertex(target, e)? == cp_vertex;
@@ -517,18 +666,20 @@ pub(crate) fn set_back_frame(
         } else {
             (ivl.max(), -set_back_dist)
         };
-        let end_param = arc_length_param(k, curve, start, length, op)?;
+        let end_param = arc_length_param(k, curve, start, length, owner_zone_tol_3d, op)?;
         curve.evaluate(k, end_param, 1, true, true)?
     } else {
         let ivl = curve.natural_interval();
         // Walk along the curve for dSetBackDist
         if edge::vertex(target, e)? == cp_vertex {
-            let end_param = arc_length_param(k, curve, ivl.min(), set_back_dist, op)?;
+            let end_param =
+                arc_length_param(k, curve, ivl.min(), set_back_dist, owner_zone_tol_3d, op)?;
             curve.evaluate(k, end_param, 1, true, true)?
         } else {
             let mut new_curve = curve.copy(k)?;
             let new_ivl = new_curve.reverse_parameterization(k, &ivl)?;
-            let end_param = arc_length_param(k, &new_curve, new_ivl.min(), set_back_dist, op)?;
+            let end_param =
+                arc_length_param(k, &new_curve, new_ivl.min(), set_back_dist, None, op)?;
             new_curve.evaluate(k, end_param, 1, true, true)?
         }
     };
@@ -550,18 +701,6 @@ const fn is_b_spline_kind(c: &Curve) -> bool {
     )
 }
 
-/// `SM_CAST_PTR(SmBSplineSurface, ..)`: the B-spline net of a B-spline surface, a
-/// plane or a surface of revolution.
-const fn b_spline_net(s: &Surface) -> Option<&BSplineSurface> {
-    match s.kind() {
-        SurfaceKind::BSpline(b) => Some(b),
-        SurfaceKind::Plane(p) => Some(p.base()),
-        SurfaceKind::SurfOfRevolution(r) => Some(r.base()),
-        SurfaceKind::SurfOfExtrusion(r) => Some(r.base()),
-        _ => None,
-    }
-}
-
 /// `pSurface->DropCurve(crContext, crDomain, cr3dCurve, crInterval, dApproxTol,
 /// rdMaxDist, rdDeviation, rUVCurves)` with the defaults (`bKeepAllDropCurves =
 /// TRUE`, no fail record, `bCreatingUVTrimCurve = TRUE`): the UV curves
@@ -578,6 +717,32 @@ pub(super) fn surface_drop_curve(
     // no failure record (`pOptDropCurveFail = NULL`)
     Ok(surface
         .drop_curve::<NoObject>(k, domain, curve, interval, approx_tol, true, None, true)?
+        .uv_curves)
+}
+
+/// [`surface_drop_curve`] onto a face's surface under the caller's face context
+/// (`context.handle` names the surface in its cache), so the drop's surface cache is
+/// the face's trimmed one, as upstream's `smsurf_GetSurfaceCache` finds it through
+/// `GetFace()`.
+///
+/// # Errors
+///
+/// As [`surface_drop_curve`], and those of the context.
+pub(super) fn surface_drop_curve_with_context(
+    k: &Kernel,
+    surface: &Surface,
+    domain: &Extent2d,
+    curve: &Curve,
+    interval: &Extent1d,
+    approx_tol: f64,
+    context: DropSolveContext<'_, CacheObject>,
+) -> Result<Vec<Curve>> {
+    let approx_tol = approx_tol3d(k, approx_tol);
+    // no failure record (`pOptDropCurveFail = NULL`)
+    Ok(surface
+        .drop_curve_with_context::<CacheObject>(
+            k, domain, curve, interval, approx_tol, true, None, true, context,
+        )?
         .uv_curves)
 }
 
@@ -638,6 +803,7 @@ fn rail_rail_intersect(
     rail_index2: usize,
     tsect1: &mut TsectPnt,
     tsect2: &mut TsectPnt,
+    hold_end_radii: bool,
     op: &'static str,
 ) -> Result<bool> {
     with_solver_pair(solvers, solver_index1, solver_index2, op, |s1, s2| {
@@ -651,6 +817,7 @@ fn rail_rail_intersect(
             rail_index2,
             tsect1,
             tsect2,
+            hold_end_radii,
         )
     })
 }
@@ -775,7 +942,7 @@ struct Candidate {
 /// not derived from `SmBSplineCurve`; those of the general intersector, the drops,
 /// trims, reversals and evaluations; [`SolidError::Unported`] from
 /// `sm_TwoPntsIntersection`.
-#[allow(clippy::too_many_arguments, clippy::too_many_lines)] // one upstream routine
+#[allow(clippy::too_many_arguments)] // one upstream routine
 pub fn srf_srf_intersection(
     k: &Kernel,
     start: Option<Point3>,
@@ -787,6 +954,50 @@ pub fn srf_srf_intersection(
     approx_tol: f64,
     angle_tol: f64,
     opts: SrfSrfOptions,
+) -> Result<SrfSrfCurves> {
+    srf_srf_intersection_with_context(
+        k,
+        start,
+        end,
+        opt_dir,
+        opt_end_dir,
+        surf1,
+        surf2,
+        approx_tol,
+        angle_tol,
+        opts,
+        None,
+    )
+}
+
+/// The face-aware surface cache context of a [`srf_srf_intersection_with_context`]: the
+/// caller's context and the two surfaces' handles in it (a face's surface is named
+/// by its face, so its trimmed surface cache is made with the face's boundary, as
+/// upstream's `smsurf_GetSurfaceCache` of a face-owned surface does).
+pub type SrfSrfContext<'a> = (
+    &'a mut dyn SurfaceSolveContext<CacheObject>,
+    [Option<CacheObject>; 2],
+);
+
+/// [`srf_srf_intersection`] whose general surface/surface intersection runs through the
+/// caller's face-aware cache `context` (`None`: as [`srf_srf_intersection`]).
+///
+/// # Errors
+///
+/// As [`srf_srf_intersection`], and those of the context's cache preparation.
+#[allow(clippy::too_many_arguments, clippy::too_many_lines)] // one upstream routine
+pub fn srf_srf_intersection_with_context(
+    k: &Kernel,
+    start: Option<Point3>,
+    end: Option<Point3>,
+    opt_dir: Option<&mut Vec3>,
+    opt_end_dir: Option<Vec3>,
+    surf1: &Surface,
+    surf2: &Surface,
+    approx_tol: f64,
+    angle_tol: f64,
+    opts: SrfSrfOptions,
+    context: Option<SrfSrfContext<'_>>,
 ) -> Result<SrfSrfCurves> {
     // SmApproxTol3d dApproxTol: the double converts at the call
     let approx_tol = approx_tol3d(k, approx_tol);
@@ -863,6 +1074,50 @@ pub fn srf_srf_intersection(
         );
     }
 
+    // The fork's sm_SurfacePlaneCurve: a surface and a plane between two given points that lie
+    // on both, where they cross: the plane goes on as itself past the face it was made for, so
+    // its domain does not end the curve. A flat surface meets the plane in a line, which the
+    // analytic intersector gives exactly. Points off a surface, and an end where the surface
+    // touches the plane, are met by the intersectors below.
+    if k.fixes.fillet_surface_plane_curve_on_plane_equation && curves_3d.is_empty() {
+        let plane_first = matches!(surf1.kind(), SurfaceKind::Plane(_));
+        if let (Some(start_pnt), Some(end_pnt), true) = (
+            start,
+            end,
+            plane_first != matches!(surf2.kind(), SurfaceKind::Plane(_)),
+        ) {
+            let (surface, plane) = if plane_first {
+                (surf2, surf1)
+            } else {
+                (surf1, surf2)
+            };
+            if !surface.is_planar(k, approx_tol)?.is_planar
+                && ends_on_both(k, [surf1, surf2], [start_pnt, end_pnt], approx_tol)?
+            {
+                let c = surface_plane_curve(
+                    k,
+                    surface,
+                    plane,
+                    start_pnt,
+                    end_pnt,
+                    opt_dir.as_deref().copied(),
+                    approx_tol,
+                    angle_tol,
+                )?;
+                let (uv1, uv2) = if plane_first {
+                    (c.uv_plane, c.uv_surface)
+                } else {
+                    (c.uv_surface, c.uv_plane)
+                };
+                return Ok(SrfSrfCurves {
+                    curve_3d: Some(c.curve_3d),
+                    uv_curve1: Some(uv1),
+                    uv_curve2: Some(uv2),
+                });
+            }
+        }
+    }
+
     // Use two-pts intersector (pOptDir is a required argument of it).
     if curves_3d.is_empty() && !opts.skip_two_pnts_intersection {
         if let (Some(start_pnt), Some(dir)) = (start, opt_dir) {
@@ -916,15 +1171,29 @@ pub fn srf_srf_intersection(
 
     // general surf/surf intersector
     if curves_3d.is_empty() {
-        let xs = surf1.global_surface_intersect(
-            k,
-            &domain1,
-            surf2,
-            &domain2,
-            [true, true],
-            Some(ssi_tol),
-            Some(angle_tol),
-        )?;
+        let xs = if let Some((context, handles)) = context {
+            surf1.global_surface_intersect_with_context(
+                k,
+                handles,
+                context,
+                &domain1,
+                surf2,
+                &domain2,
+                [true, true],
+                Some(ssi_tol),
+                Some(angle_tol),
+            )?
+        } else {
+            surf1.global_surface_intersect(
+                k,
+                &domain1,
+                surf2,
+                &domain2,
+                [true, true],
+                Some(ssi_tol),
+                Some(angle_tol),
+            )?
+        };
         curves_3d.extend(xs.curves_3d);
         surface1_uv_curves.extend(xs.surface1_uv_curves);
         surface2_uv_curves.extend(xs.surface2_uv_curves);
@@ -1279,6 +1548,7 @@ impl FilletBrep {
             let e = eu1::edge(target, eu)?.ok_or_else(|| SolidError::null_pointer(OP))?;
             let ivl = edge::interval(target, e)?;
             let curve = edge::curve(target, e)?.ok_or_else(|| SolidError::null_pointer(OP))?;
+            let owner_zone_tol_3d = Some(edge::tolerance(target, e)?);
 
             let vu = eu1::vertexuse(target, eu)?.ok_or_else(|| SolidError::null_pointer(OP))?;
             let pv = vertexuse_unit::vertex(target, vu)?;
@@ -1286,9 +1556,23 @@ impl FilletBrep {
             let offset_param = if (pv == cp_vertex && orient == OrientType::Same)
                 || (pv != cp_vertex && orient == OrientType::Opposite)
             {
-                arc_length_param(k, curve, ivl.min(), 2.0 * offset_distance, OP)?
+                arc_length_param(
+                    k,
+                    curve,
+                    ivl.min(),
+                    2.0 * offset_distance,
+                    owner_zone_tol_3d,
+                    OP,
+                )?
             } else {
-                arc_length_param(k, curve, ivl.max(), -2.0 * offset_distance, OP)?
+                arc_length_param(
+                    k,
+                    curve,
+                    ivl.max(),
+                    -2.0 * offset_distance,
+                    owner_zone_tol_3d,
+                    OP,
+                )?
             };
             let fetch = get_or_create_uv_trim_curve(k, target, eu, false, false, true)?;
             fetch.status?;
@@ -1307,6 +1591,11 @@ impl FilletBrep {
         // Get the TsectPnts and call the solver.
         let (vu1, mut tsect1) = self.rail_end_tsect(v, Some(fillet_geom1), None, OP)?;
         let (vu2, mut tsect2) = self.rail_end_tsect(v, Some(fillet_geom2), None, OP)?;
+        // Fork tangency-labs/smlib@465b62b (`fixes.fillet_retry_radius_as_first`, WR-300):
+        // the radii are held at their end values only at a corner calculated as constant
+        // radius, as the rail/side-edge search holds them; upstream holds them anywhere.
+        let hold_end_radii =
+            !k.fixes.fillet_retry_radius_as_first || corners.corner(corner)?.is_calc_as_const_rad();
         let found = solvers.rail_rail_intersect(
             k,
             target,
@@ -1317,6 +1606,7 @@ impl FilletBrep {
             rail_index2,
             &mut tsect1,
             &mut tsect2,
+            hold_end_radii,
             OP,
         );
         // the vertex uses' points are written in place, also on a failure
@@ -1556,13 +1846,12 @@ impl FilletBrep {
         // For FilletGeom1: find the rail/sideEdge intersection, place it on the
         // sideEdge curve, save it and update any mates
         if let Some(g1) = fillet_geom1 {
-            // its status is ignored upstream (lRailIndex stays 0)
-            let rail_index = ignore_status(self.rail_index_of_side_eu_resolved(
-                g1,
-                side_eu1,
-                target,
-                &|id| solvers.solver(id),
-            ))?
+            // its status is ignored upstream (lRailIndex stays 0); fork 9b7cd48 passes
+            // this on (SER)
+            let rail_index = ignore_status(crate::error::passed_on(
+                self.rail_index_of_side_eu_resolved(g1, side_eu1, target, &|id| solvers.solver(id)),
+                k.fixes.fillet_statuses_pass_on,
+            )?)?
             .unwrap_or(0);
 
             let vu1 = vu1.ok_or_else(|| SolidError::null_pointer(OP))?;
@@ -1659,11 +1948,20 @@ impl FilletBrep {
 
             // force solution to lie on SideEdge->Curve: the rail/base surface point
             let uv = tsect1.uv_pos(srf(rail_index, OP)?);
-            let pnt = solvers
+            let base = solvers
                 .offset_surface(self, g1, rail_index)?
                 .ok_or_else(|| SolidError::null_pointer(OP))?
-                .base_surface()
-                .evaluate_point(k, uv)?;
+                .base_surface();
+            // Opt-in, not upstream (`fixes.fillet_rail_end_on_continued_surface`, WR-630;
+            // the fork's tangency-labs/smlib@3f22e97): on the base surface continued, as
+            // the solve found it (over the surface's extended domain). Clamped to the
+            // surface's own domain, a rail meeting a side edge's line just past the
+            // edge's end (a cliff overflow) was placed on the edge's end vertex instead.
+            let pnt = if k.fixes.fillet_rail_end_on_continued_surface {
+                with_out_of_bounds_enabled_in_place(base, || base.evaluate_point(k, uv))?
+            } else {
+                base.evaluate_point(k, uv)?
+            };
 
             // project it onto the side edge's curve
             let side_e =
@@ -1728,13 +2026,18 @@ impl FilletBrep {
         // Process intersection for adjacent solver if presented
         if let Some(g2) = fillet_geom2 {
             let side_eu2 = eu1::radial(target, side_eu1)?;
-            // its status is ignored upstream
+            // its status is ignored upstream; fork 9b7cd48 passes this on (SER)
             let other_rail_index =
                 // upstream dereferences a NULL side edge use there
-                ignore_status(match side_eu2 {
-                    Some(eu) => self.rail_index_of_side_eu_resolved(g2, eu, target, &|id| solvers.solver(id)),
-                    None => Err(SolidError::null_pointer(OP)),
-                })?
+                ignore_status(crate::error::passed_on(
+                    match side_eu2 {
+                        Some(eu) => self.rail_index_of_side_eu_resolved(g2, eu, target, &|id| {
+                            solvers.solver(id)
+                        }),
+                        None => Err(SolidError::null_pointer(OP)),
+                    },
+                    k.fixes.fillet_statuses_pass_on,
+                )?)?
                 .unwrap_or(0);
             let side_eu2 = side_eu2.ok_or_else(|| SolidError::null_pointer(OP))?;
 
@@ -1904,6 +2207,7 @@ impl FilletBrep {
         let eu = solver_edgeuse(fs1, 0, OP)?;
         let e = eu1::edge(target, eu)?.ok_or_else(|| SolidError::null_pointer(OP))?;
         let ivl = edge::interval(target, e)?;
+        let owner_zone_tol_3d = Some(edge::tolerance(target, e)?);
         let mut vert_at_edge_start = true;
         let mut param = ivl.min();
         if let Some(p) = opt_edge_param {
@@ -1933,10 +2237,12 @@ impl FilletBrep {
                     .ok_or_else(|| SolidError::null_pointer(OP))?;
                 if target.faceuse(fu)?.face == face {
                     // its status is ignored upstream (the point is then whatever the
-                    // call left; here the previous value)
-                    if let Some(uv) =
-                        ignore_status(vertexuse_unit::compute_uv_point(k, target, vu, true))?
-                    {
+                    // call left; here the previous value); fork 9b7cd48 passes this on
+                    // (SER)
+                    if let Some(uv) = ignore_status(crate::error::passed_on(
+                        vertexuse_unit::compute_uv_point(k, target, vu, true),
+                        k.fixes.fillet_statuses_pass_on,
+                    )?)? {
                         *slot = uv;
                     }
                     break;
@@ -1980,7 +2286,14 @@ impl FilletBrep {
             if !(30.0..=150.0).contains(&deg) {
                 // May lead to potential failures, step off the boundary: along the
                 // edge first, then off the boundary edge
-                param = arc_length_param(k, &curve, param, 2.0 * curve_stepoff_dist, OP)?;
+                param = arc_length_param(
+                    k,
+                    &curve,
+                    param,
+                    2.0 * curve_stepoff_dist,
+                    owner_zone_tol_3d,
+                    OP,
+                )?;
                 uvs = find_stepoff_uv(k, target, fs1, param, stepoff_dist)?;
                 break;
             }
@@ -2011,7 +2324,7 @@ impl FilletBrep {
             }
 
             // No solution found there, step off the vertex along the edge and again
-            param = arc_length_param(k, &curve, param, curve_stepoff_dist, OP)?;
+            param = arc_length_param(k, &curve, param, curve_stepoff_dist, owner_zone_tol_3d, OP)?;
             uvs = find_stepoff_uv(k, target, solvers.solver(s1)?, param, stepoff_dist)?;
         }
         self.fillet_vertexuse_mut(vu1)?.set_tsect_pnt(&tsect);
@@ -2067,6 +2380,180 @@ impl FilletBrep {
         let uv2 = tsect.uv_pos(other_srf(rail_index, OP)?);
         let pnt2 = face_surface(target, face2, OP)?.evaluate_point(k, uv2)?;
         self.set_processed(mate, uv2, pnt2)?;
+        Ok(())
+    }
+
+    /// The fork's `SmFilletVertex::CalcJoinSection` (`SmBlendCornerJoin.cpp`, 543d25a;
+    /// WR-697): a Join's shared section (`SM_FV_JOIN_SECTION` `v` and its mate), each
+    /// blend's section in the plane through the corner's vertex square to the first
+    /// blend's edge there. Each blend's section is its ball's: `PointOnPlaneSolve` on the
+    /// blend's own faces, started from the ball's feet at the vertex (the vertex stepped
+    /// the ball's radius along each face's binormal of the edge). It sets the blend's rail
+    /// end here (and a closed blend's other one). The section's ends are the first
+    /// blend's feet, on `v`'s face and on its mate's.
+    ///
+    /// # Errors
+    ///
+    /// `SM_ERR_NULL_POINTER` without corner, mate, faces, filleted vertex, solver, edge
+    /// use, edge, curve, offset or base surface or rail-end vertex use; `SM_ERR` without a
+    /// fillet geometry and, after setting `SM_FV_SOLVER_NOT_CONVERGE`, when a blend has
+    /// no ball in the plane; those of the evaluations and solves.
+    pub fn calc_join_section(
+        &mut self,
+        k: &Kernel,
+        v: VertexId,
+        corners: CornerLookup<'_>,
+        solvers: &mut [FilletSolver],
+        target: &mut Brep,
+    ) -> Result<()> {
+        self.calc_join_section_with_solvers(
+            k,
+            v,
+            corners,
+            &mut RailSolvers::Indexed(solvers),
+            target,
+        )
+    }
+
+    /// [`Self::calc_join_section`] with the live session's concrete solvers of the
+    /// vertex's geometries (`PointOnPlaneSolve` is the concrete solver's virtual).
+    ///
+    /// # Errors
+    /// As [`Self::calc_join_section`]; an unresolved geometry solver.
+    pub fn calc_join_section_with_live_solvers(
+        &mut self,
+        k: &Kernel,
+        v: VertexId,
+        corners: CornerLookup<'_>,
+        solvers: Vec<(FilletSolverId, &mut dyn FilletSolverOps)>,
+        target: &mut Brep,
+    ) -> Result<()> {
+        self.calc_join_section_with_solvers(
+            k,
+            v,
+            corners,
+            &mut RailSolvers::LiveSet(solvers),
+            target,
+        )
+    }
+
+    #[allow(clippy::too_many_lines)] // one fork routine
+    fn calc_join_section_with_solvers(
+        &mut self,
+        k: &Kernel,
+        v: VertexId,
+        corners: CornerLookup<'_>,
+        solvers: &mut RailSolvers<'_>,
+        target: &mut Brep,
+    ) -> Result<()> {
+        const OP: &str = OP_JOIN;
+        let nul = || SolidError::null_pointer(OP);
+        let corner = self.fillet_vertex(v)?.fillet_corner().ok_or_else(nul)?;
+        let mate = self.fillet_vertex(v)?.mate(0).ok_or_else(nul)?;
+        let first_face =
+            as_face(self.fillet_vertex(v)?.point_class_object(), OP)?.ok_or_else(nul)?;
+        let other_face =
+            as_face(self.fillet_vertex(mate)?.point_class_object(), OP)?.ok_or_else(nul)?;
+        let cp_vertex = corners.corner(corner)?.filleted_vertex().ok_or_else(nul)?;
+
+        let geoms = self.vertex_fillet_geoms(v)?;
+        if geoms.is_empty() {
+            return Err(SolidError::sm_err(OP));
+        }
+
+        // the plane: through the vertex, square to the first blend's edge
+        let mut plane_orig = Point3::default();
+        let mut plane_normal = Vec3::default();
+        for (gg, &g) in geoms.iter().enumerate() {
+            let sid = self.geom_solver_id(g, OP)?;
+            let fs = solvers.solver(sid)?;
+            let eu = solver_edgeuse(fs, 0, OP)?;
+            let e = eu1::edge(target, eu)?.ok_or_else(nul)?;
+            let curve = edge::curve(target, e)?.ok_or_else(nul)?.clone();
+            let ivl = edge::interval(target, e)?;
+            let param = if edge::start_vertex(target, e)? == Some(cp_vertex) {
+                ivl.min()
+            } else {
+                ivl.max()
+            };
+            if gg == 0 {
+                let pv = curve.evaluate(k, param, 1, true, true)?;
+                plane_orig = pv.first().copied().ok_or_else(|| SolidError::sm_err(OP))?;
+                plane_normal = pv.get(1).copied().ok_or_else(|| SolidError::sm_err(OP))?;
+            }
+
+            // the ball's feet at the vertex, on each of the blend's faces
+            let mut uvs = [Point2::new(0.0, 0.0); 2];
+            for (ii, slot) in uvs.iter_mut().enumerate() {
+                let fs = solvers.solver(sid)?;
+                let side_eu = solver_edgeuse(fs, ii, OP)?;
+                let offset = solver_surface(fs, ii, OP)?;
+                let distance = offset.offset_distance().abs();
+                let base = offset.base_surface().clone();
+                let b = evaluate_binormal(
+                    k,
+                    target,
+                    side_eu,
+                    param,
+                    false,
+                    &BinormalOptions::default(),
+                )?;
+                let bin = b.binormal * distance;
+                let uv_dir = crate::surface::surface::p7::drop_vectors_at(
+                    k,
+                    &base,
+                    b.uv,
+                    Side::Left,
+                    Side::Left,
+                    &[bin],
+                )?
+                .first()
+                .copied()
+                .ok_or_else(|| SolidError::sm_err(OP))?;
+                *slot = Point2::new(b.uv.x + uv_dir.x, b.uv.y + uv_dir.y);
+            }
+
+            let (vu, tsect) = self.rail_end_tsect(v, Some(g), None, OP)?;
+            let fs = solvers.solver(sid)?;
+            let domain1 = solver_surface(fs, 0, OP)?.natural_uv_domain_with_nurb(k)?;
+            let domain2 = solver_surface(fs, 1, OP)?.natural_uv_domain_with_nurb(k)?;
+            let [uv0, uv1] = uvs;
+            let (found, tsect) = point_on_plane_solve(
+                k,
+                solvers.solver_ops_mut(sid)?,
+                plane_orig,
+                plane_normal,
+                &domain1,
+                &domain2,
+                uv0,
+                uv1,
+                &tsect,
+            )?;
+            self.fillet_vertexuse_mut(vu)?.set_tsect_pnt(&tsect);
+            if !found {
+                self.fillet_vertex_mut(v)?
+                    .set_status(FilStatus::SolverNotConverge);
+                // SER_MSG: no ball of the blend lies in the shared section's plane
+                return Err(SolidError::sm_err(OP));
+            }
+            // a closed blend's other rail end here
+            if let Some(other_vu) = self.vu_at_rail_end(v, Some(g), Some(vu), None)? {
+                self.fillet_vertexuse_mut(other_vu)?.set_tsect_pnt(&tsect);
+            }
+
+            if gg == 0 {
+                // the section's ends: the first blend's feet
+                let first = usize::from(eu1::face(target, eu)? != Some(first_face));
+                let uv_first = tsect.uv_pos(srf(first, OP)?);
+                let uv_other = tsect.uv_pos(other_srf(first, OP)?);
+                let p_first =
+                    face_surface(target, Some(first_face), OP)?.evaluate_point(k, uv_first)?;
+                let p_other =
+                    face_surface(target, Some(other_face), OP)?.evaluate_point(k, uv_other)?;
+                self.set_processed(v, uv_first, p_first)?;
+                self.set_processed(mate, uv_other, p_other)?;
+            }
+        }
         Ok(())
     }
 
@@ -2249,14 +2736,19 @@ impl FilletBrep {
     /// dropped again), else in the face's UV space (lifted to 3D). The edge gets the 3D
     /// curve, its mate edge use the UV curve. With a corner, the corner's cross-section
     /// solver picks the continuity, and a concave `NxN` corner may replace the curve by a
-    /// cubic rail/rail interpolant.
+    /// cubic rail/rail interpolant. At a corner with an ease (the fork's, `e74bbd3`) the
+    /// curve is the faired G2 (or G3) interpolant of the rails' ends instead, meeting the
+    /// rails curvature-continuously. The drops and lifts run on the original face's own
+    /// surface (`target` holds the face): its trimmed surface cache and the face
+    /// tolerance it carries.
     ///
     /// # Errors
     ///
     /// `SM_ERR_NULL_POINTER` without original face, B-spline surface, rail, edge use or
     /// curve; `SM_ERR` when a vertex does not drop onto its rail within 100 times the
     /// tolerance or a drop gives other than one UV curve; those of the evaluations,
-    /// constructions, lifts and `SmSurface::DropCurve`; those of [`CornerLookup::corner`] (`corners`
+    /// constructions, lifts and `SmSurface::DropCurve` (and of the face's surface cache
+    /// they make); those of [`CornerLookup::corner`] (`corners`
     /// resolves `opt_corner`) and of the corner's `TestRailRailInterpolationCurve`.
     pub fn calc_rail_rail_interpolation(
         &mut self,
@@ -2355,6 +2847,18 @@ impl FilletBrep {
                 };
             }
         }
+        // The fork's (tangency-labs/smlib `e74bbd3`, #1376): at a corner whose rounds ease
+        // into their curvature-continuous sections before the setback
+        // (`SmFilletCorner::m_dEaseDist`), the curve meets each rail curvature-continuously:
+        // the G2 interpolation of the rails' ends below, which meets a straight rail with
+        // zero curvature. Without an ease (the default) nothing changes.
+        let meet_rails_g2 = match opt_corner {
+            Some(corner) => corners.corner(corner)?.ease_dist() > 0.0,
+            None => false,
+        };
+        if meet_rails_g2 && num_derivatives < 2 {
+            num_derivatives = 2;
+        }
         // sPntVec[4]: at most three derivatives are read
         let num_derivatives = num_derivatives.min(3);
 
@@ -2366,21 +2870,29 @@ impl FilletBrep {
             .fillet_edge(e)?
             .original_face()
             .ok_or_else(|| SolidError::null_pointer(OP))?;
-        // a copy: the cubic interpolant below needs the target B-rep mutably
+        // the face's own surface (evaluated as a copy that keeps its owner and the face
+        // tolerance: the drops and lifts below make its trimmed surface cache on `target`
+        // through the face, as `smsurf_GetSurfaceCache` reaches `GetFace()`; the cubic
+        // interpolant needs the target B-rep mutably)
         let face_srf = face2::surface(target, face)?
             .ok_or_else(|| SolidError::null_pointer(OP))?
-            .clone();
+            .clone_for_evaluation()?;
         let face_srf = &face_srf;
-        let surf_net = b_spline_net(face_srf).ok_or_else(|| SolidError::null_pointer(OP))?;
+        let handle = Some(CacheObject::Surface(face));
+        // SM_CAST_PTR(SmBSplineSurface, ..) and NER: every kind derived from
+        // SmBSplineSurface (planes, cones and cylinders, spheres, tori, surfaces of
+        // revolution and extrusion), with the NURB its GetDegree reads
+        let surf_net = crate::topology::brep::p3::with_nurb(k, face_srf)?
+            .ok_or_else(|| SolidError::null_pointer(OP))?;
         let uv_domain = face_srf.natural_uv_domain_with_nurb(k)?;
         let tol = face2::tolerance(target, face)?;
 
         // Determine if we want to work on 2D or 3D
         let mut project_and_lift = false;
         let mut create_crv_on_3d = false;
-        let is_plane = match Plane::is_nurb_surface_plane(k, surf_net, 1.0) {
+        let is_plane = match Plane::is_nurb_surface_plane(k, &surf_net, 1.0) {
             Ok(p) => p.is_some(),
-            Err(err) if err.is_unported() => return Err(err),
+            Err(err) if err.is_unported_or_cancelled() => return Err(err),
             // an SER status inside is a TRUE return upstream
             Err(_) => true,
         };
@@ -2477,16 +2989,19 @@ impl FilletBrep {
             || (rail2_vertex == Some(end_fv) && orient2 == OrientType::Opposite);
 
         // Calc tangent (and higher derivatives) from the rail at start vertex
+        // (the fork's, `e74bbd3`: run backwards, the odd derivatives change sign, the even
+        // ones do not; upstream negates every derivative. Only the first derivative is read
+        // unless the curve meets the rails G2, so without an ease this is the pinned result.)
         let mut pnt_vec1 = curve1.evaluate(k, param1, num_derivatives, true, true)?;
         if !same_orient1 {
-            for d in pnt_vec1.iter_mut().skip(1).take(num_derivatives) {
+            for d in pnt_vec1.iter_mut().skip(1).take(num_derivatives).step_by(2) {
                 *d = -*d;
             }
         }
         // Calc tangent from the other rail
         let mut pnt_vec2 = curve2.evaluate(k, param2, num_derivatives, true, true)?;
         if !same_orient2 {
-            for d in pnt_vec2.iter_mut().skip(1).take(num_derivatives) {
+            for d in pnt_vec2.iter_mut().skip(1).take(num_derivatives).step_by(2) {
                 *d = -*d;
             }
         }
@@ -2494,13 +3009,29 @@ impl FilletBrep {
         let new_curve = if fsg_type == FilletSurfaceGeneratorType::Linear {
             // Linear cases
             BSplineCurve::create_line_segment(3, start_pnt, end_pnt)?
-        } else {
+        } else if !meet_rails_g2 {
             // In G1 cases, we create the 3d curve and then drop it onto the surface
-            // (the `TRUE` branch: upstream's G2/G3 fairing branch is unreachable)
+            // (upstream's `TRUE` branch; the fork's `!bMeetRailsG2`: without an ease the
+            // G2/G3 fairing branch below is unreachable, as upstream)
             let mut start_vec = pnt_vec1.get(1).copied().unwrap_or(Vec3::UNDEF);
             let mut end_vec = pnt_vec2.get(1).copied().unwrap_or(Vec3::UNDEF);
             interpolate_endpts_and_tangents(start_pnt, end_pnt, &mut start_vec, &mut end_vec, 3)?
+        } else {
+            // G1, G2 & G3 cases (reached only at an eased corner, the fork's `e74bbd3`)
+            g2_rail_rail_curve(
+                start_pnt,
+                end_pnt,
+                &mut pnt_vec1,
+                &mut pnt_vec2,
+                num_derivatives,
+            )?
         };
+
+        // The drop, the lift and the re-drop share the face's surface cache: upstream
+        // keeps it in the surface's cache slot, the plain cache smsurf_GetSurfaceCache
+        // falls back to when the trimmed build fails included, and nothing edits the face
+        // between these calls
+        let mut services = BrepFaceServices::new(target);
 
         // p3DCurve, an SmBSplineCurve: a B-spline, or the line / conic iso curve
         // LiftCurve's sm_ExtractIsoCurve makes
@@ -2509,8 +3040,18 @@ impl FilletBrep {
         if create_crv_on_3d {
             // Compute UV-curve by projecting 3d curve onto the surface
             let c3 = Curve::from(new_curve);
-            let uv_curves =
-                surface_drop_curve(k, face_srf, &uv_domain, &c3, &c3.natural_interval(), tol)?;
+            let uv_curves = surface_drop_curve_with_context(
+                k,
+                face_srf,
+                &uv_domain,
+                &c3,
+                &c3.natural_interval(),
+                tol,
+                DropSolveContext {
+                    solver: &mut services,
+                    handle,
+                },
+            )?;
             // Will replace the original UV-curve when we have only one result
             if uv_curves.len() != 1 {
                 return Err(SolidError::sm_err(OP));
@@ -2519,8 +3060,11 @@ impl FilletBrep {
             curve_3d = Some(c3);
         } else {
             let mut uv = new_curve;
-            // its status is ignored upstream
-            ignore_status(uv.convert_to_2d())?;
+            // its status is ignored upstream; fork 9b7cd48 passes this on (SER)
+            ignore_status(crate::error::passed_on(
+                uv.convert_to_2d(),
+                k.fixes.fillet_statuses_pass_on,
+            )?)?;
             uv_curve = Some(Curve::from(uv));
             curve_3d = None;
         }
@@ -2530,13 +3074,15 @@ impl FilletBrep {
             let uv = uv_curve
                 .as_ref()
                 .ok_or_else(|| SolidError::null_pointer(OP))?;
-            let lifted = face_srf.lift_curve(
+            let lifted = face_srf.lift_curve_with_context(
                 k,
                 &uv_domain,
                 uv,
                 &uv.natural_interval(),
                 approx_tol3d(k, tol),
                 false,
+                &mut services,
+                handle,
             )?;
             let mut c3 = lifted.curve;
 
@@ -2546,8 +3092,18 @@ impl FilletBrep {
                     .ok_or_else(|| SolidError::null_pointer(OP))?
                     .reparametrize_with_arc_length()?;
                 // Reproject the 3d curve back onto the surface
-                let uv_curves =
-                    surface_drop_curve(k, face_srf, &uv_domain, &c3, &c3.natural_interval(), tol)?;
+                let uv_curves = surface_drop_curve_with_context(
+                    k,
+                    face_srf,
+                    &uv_domain,
+                    &c3,
+                    &c3.natural_interval(),
+                    tol,
+                    DropSolveContext {
+                        solver: &mut services,
+                        handle,
+                    },
+                )?;
                 if uv_curves.len() != 1 {
                     return Err(SolidError::sm_err(OP));
                 }
@@ -2555,6 +3111,9 @@ impl FilletBrep {
             }
             curve_3d = Some(c3);
         }
+        // the services lend `target`, which the corner test reads and the cubic
+        // interpolant below changes
+        drop(services);
 
         if let Some(corner) = opt_corner {
             let the_corner = corners.corner(corner)?;
@@ -2596,6 +3155,11 @@ impl FilletBrep {
                         .corner(corner)?
                         .filleted_vertex()
                         .ok_or_else(|| SolidError::null_pointer(OP))?;
+                    // Fork tangency-labs/smlib@465b62b (`fixes.fillet_retry_radius_as_first`):
+                    // the rails' meeting point holds the radii only at a corner calculated
+                    // as constant radius.
+                    let hold_end_radii =
+                        !k.fixes.fillet_retry_radius_as_first || the_corner.is_calc_as_const_rad();
                     let new_uv = solvers.cubic(si1, si2, OP, |s1, s2| {
                         create_cubic_rail_rail_interpolant(
                             k,
@@ -2609,17 +3173,23 @@ impl FilletBrep {
                             end_uv_pnt,
                             end_uv_vec,
                             0.3,
+                            hold_end_radii,
                         )
                     })?;
                     let new_uv = Curve::from(new_uv);
-                    // Lift the UV-curve
-                    let lifted = face_srf.lift_curve(
+                    // Lift the UV-curve (on the face's surface again; the interpolant
+                    // may have changed `target`, so its cache is made again from the
+                    // face as it is now, where upstream reuses the one its surface keeps
+                    // unless the face was marked modified)
+                    let lifted = face_srf.lift_curve_with_context(
                         k,
                         &uv_domain,
                         &new_uv,
                         &new_uv.natural_interval(),
                         approx_tol3d(k, tol),
                         false,
+                        &mut BrepFaceServices::new(target),
+                        handle,
                     )?;
                     curve_3d = Some(lifted.curve);
                     uv_curve = Some(new_uv);

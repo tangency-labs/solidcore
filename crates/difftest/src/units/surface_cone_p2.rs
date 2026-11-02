@@ -1,6 +1,7 @@
 //! Runner for unit `surface.cone_p2`: `SmCone::CreateOffsetSurface`,
-//! `SmCone::IsNurbSurfaceCone`, `SmCone::RebuildSTEPFromNURBParameters` and the
-//! file-static `sm_GetEllipseTrimIntervals`.
+//! `SmCone::IsNurbSurfaceCone`, `SmCylinder::IsNurbSurfaceCylinder`,
+//! `SmCone::RebuildSTEPFromNURBParameters` and the file-static
+//! `sm_GetEllipseTrimIntervals`.
 //!
 //! C++: `solidcore_ffi::units::surface_cone_p2` (upstream `source/SMLib/src/SmCone.cpp`).
 //! Rust: `solidcore::surface::cone::p2`.
@@ -161,6 +162,10 @@ enum EditIn {
         t: [f64; 3],
     },
     Flatten,
+    /// Scale X/Y on the last generator row without changing Z or the weight.
+    ScaleLastXy {
+        f: f64,
+    },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -176,6 +181,12 @@ enum OpIn {
     },
     Rebuild {
         edit: EditIn,
+    },
+    /// `SmCylinder::IsNurbSurfaceCylinder` (fixtures only: the generator stream is
+    /// unchanged).
+    RecognizeCylinder {
+        edit: EditIn,
+        scale: f64,
     },
     Trim {
         origin: [f64; 3],
@@ -235,6 +246,7 @@ fn ffi_edit(e: &EditIn) -> ffi::Edit {
             t,
         },
         EditIn::Flatten => ffi::Edit::Flatten,
+        EditIn::ScaleLastXy { f } => ffi::Edit::ScaleLastXy { f },
     }
 }
 
@@ -353,6 +365,10 @@ fn cpp(i: &Inputs) -> Result<Output, HarnessError> {
         OpIn::Rebuild { edit } => ffi::Op::Rebuild {
             edit: ffi_edit(edit),
         },
+        OpIn::RecognizeCylinder { edit, scale } => ffi::Op::RecognizeCylinder {
+            edit: ffi_edit(edit),
+            scale: *scale,
+        },
         OpIn::Trim {
             origin,
             x,
@@ -381,9 +397,7 @@ fn cpp(i: &Inputs) -> Result<Output, HarnessError> {
 
 /// Splits a record into `build`, `status` and `out`.
 fn to_output(flat: &[f64]) -> Result<Output, HarnessError> {
-    let (b, rest) = flat
-        .split_first()
-        .ok_or_else(|| harness("empty record"))?;
+    let (b, rest) = flat.split_first().ok_or_else(|| harness("empty record"))?;
     let out = Output::new().values("build", vec![*b]);
     if *b != SUCCESS {
         if !rest.is_empty() {
@@ -417,7 +431,7 @@ fn push_v(o: &mut Vec<f64>, v: Vec3) {
 fn status(e: &SolidError) -> f64 {
     match e {
         SolidError::Upstream { code, .. } => f64::from(*code),
-        SolidError::InvalidInput { .. } => SM_ERR_INVALID_INPUT,
+        SolidError::InvalidInput { .. } | SolidError::PortInvariant { .. } => SM_ERR_INVALID_INPUT,
         _ => -1.0,
     }
 }
@@ -641,6 +655,10 @@ fn edit_nurb(sur: &mut NurbSurface, edit: &ffi::Edit, swap: bool) -> solidcore::
                     }
                 }
                 ffi::Edit::Flatten => p.z = 0.0,
+                ffi::Edit::ScaleLastXy { f } if last => {
+                    p.x *= f;
+                    p.y *= f;
+                }
                 _ => {}
             }
         }
@@ -707,14 +725,7 @@ fn trim_domain(s: &Cone, f: [f64; 4]) -> Extent2d {
 }
 
 /// The shim's `trim_defined`: the two seam line / ellipse plane intersections succeed.
-fn trim_defined(
-    k: &Kernel,
-    s: &Cone,
-    x: Vec3,
-    y: Vec3,
-    origin: Vec3,
-    dom: &Extent2d,
-) -> bool {
+fn trim_defined(k: &Kernel, s: &Cone, x: Vec3, y: Vec3, origin: Vec3, dom: &Extent2d) -> bool {
     let z = x.cross(y);
     // status ignored as upstream: a failed corner conversion leaves the default domain, a
     // reversed result is replaced by the NURB domain
@@ -781,6 +792,22 @@ fn rust_op(k: &Kernel, s: &mut Cone, op: &OpIn, o: &mut Vec<f64>) -> solidcore::
                 Err(e) => o.extend([status(&e), 0.0]),
             }
         }
+        OpIn::RecognizeCylinder { edit, scale } => {
+            let swap = s.rev().swap_uv();
+            let mut test = s.rev().base().clone();
+            edit_nurb(test.get_or_create_gw_nurb()?, &ffi_edit(edit), swap)?;
+            match Cone::is_nurb_surface_cylinder(k, &test, *scale) {
+                Ok(found) => {
+                    o.push(flag(found.is_some()));
+                    o.push(flag(found.is_some()));
+                    if let Some(found) = found {
+                        put_state(k, o, &found)?;
+                    }
+                }
+                Err(e) if e.is_unported() => return Err(e),
+                Err(e) => o.extend([status(&e), 0.0]),
+            }
+        }
         OpIn::Rebuild { edit } => {
             let swap = s.rev().swap_uv();
             edit_nurb(s.base_mut().get_or_create_gw_nurb()?, &ffi_edit(edit), swap)?;
@@ -808,8 +835,7 @@ fn rust_op(k: &Kernel, s: &mut Cone, op: &OpIn, o: &mut Vec<f64>) -> solidcore::
                 o.push(SC_ERR_ARG);
                 return Ok(());
             }
-            match ellipse_trim_intervals(k, origin, x, y, *rx, *ry, *start, *end, s, &dom, *tol)
-            {
+            match ellipse_trim_intervals(k, origin, x, y, *rx, *ry, *start, *end, s, &dom, *tol) {
                 Ok(ivls) => {
                     o.push(SUCCESS);
                     o.push(ivls.len() as f64);
@@ -895,7 +921,10 @@ fn frame(rng: &mut Rng, scale: f64, skew: bool) -> ([f64; 3], [f64; 3], [f64; 3]
     }
     if skew && rng.chance(0.1) {
         let x2 = scale3(x, rng.uniform(0.5, 2.0));
-        let y2 = add3(scale3(y, rng.uniform(0.5, 2.0)), scale3(x, rng.uniform(-0.3, 0.3)));
+        let y2 = add3(
+            scale3(y, rng.uniform(0.5, 2.0)),
+            scale3(x, rng.uniform(-0.3, 0.3)),
+        );
         return (origin, x2, y2);
     }
     (origin, x, y)
@@ -1283,6 +1312,7 @@ mod tests {
             OpIn::Offset { .. } => "offset",
             OpIn::Recognize { .. } => "recognize",
             OpIn::Rebuild { .. } => "rebuild",
+            OpIn::RecognizeCylinder { .. } => "recognize_cylinder",
             OpIn::Trim { .. } => "trim",
         }
     }
@@ -1371,7 +1401,10 @@ mod tests {
     /// Every fixture case builds its cone and compares real values.
     #[test]
     fn fixtures_compare_values() {
-        let path = concat!(env!("CARGO_MANIFEST_DIR"), "/../../fixtures/surface.cone_p2/cases.json");
+        let path = concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../fixtures/surface.cone_p2/cases.json"
+        );
         let text = std::fs::read_to_string(path).expect("fixtures");
         let v: Value = serde_json::from_str(&text).expect("json");
         let cases = v["cases"].as_array().expect("cases");
@@ -1385,6 +1418,43 @@ mod tests {
             assert!(out.deferred.is_none());
             assert_eq!(b, Some(SUCCESS));
             assert!(n > 0 && st != Some(SC_ERR_ARG), "{}", c["name"]);
+        }
+    }
+
+    /// The #713 fixtures keep pinned behavior by default and exercise the
+    /// existing opt-in independently of the unpatched C++ oracle.
+    #[test]
+    fn issue713_fixtures_exercise_both_behaviors() {
+        let fixtures: Value = serde_json::from_str(include_str!(
+            "../../../../fixtures/surface.cone_p2/issue713.json"
+        ))
+        .unwrap();
+        let cases = fixtures["cases"].as_array().unwrap();
+        assert_eq!(cases.len(), 24);
+        for enabled in [false, true] {
+            let mut k = Kernel::default();
+            k.fixes.cylinder_rebuild_mean_radius = enabled;
+            for case in cases {
+                let i: Inputs = serde_json::from_value(case["inputs"].clone()).unwrap();
+                let name = case["name"].as_str().unwrap();
+                let mut cone = rust_cone(&k, &i.cone).unwrap();
+                let before = cone.clone();
+                let mut record = Vec::new();
+                rust_op(&k, &mut cone, &i.op, &mut record).unwrap();
+                assert!(cone.is_cylinder_class(), "{name}");
+                if enabled && name.contains("taper_") {
+                    assert_eq!(record.first(), Some(&SM_ERR), "{name}");
+                    assert_eq!(cone.base_radius(), before.base_radius());
+                    assert_eq!(cone.semi_angle_deg(), before.semi_angle_deg());
+                } else {
+                    assert_eq!(record.first(), Some(&SUCCESS), "{enabled} {name}");
+                    if enabled {
+                        assert_eq!(cone.semi_angle_deg(), 0.0, "{name}");
+                    } else if !name.contains("unchanged_") {
+                        assert_ne!(cone.semi_angle_deg(), 0.0, "{name}");
+                    }
+                }
+            }
         }
     }
 

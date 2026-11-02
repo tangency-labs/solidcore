@@ -111,7 +111,7 @@ pub const UNDEF_ULONG: u64 = 123_456_789;
 
 /// `SM_ERR_NOTYET_HEAL_FACE` (`SmMessages.h`): a face with a problem the healer does
 /// not support yet.
-pub const SM_ERR_NOTYET_HEAL_FACE: i32 = 1040;
+pub use crate::error::SM_ERR_NOTYET_HEAL_FACE;
 
 /// The deepest child nesting [`Looptree::find_item`] follows.
 pub const MAX_LOOPTREE_DEPTH: usize = 1_000;
@@ -145,6 +145,19 @@ fn at<T: Copy>(v: &[T], i: usize, operation: &'static str) -> Result<T> {
     v.get(i)
         .copied()
         .ok_or_else(|| null(operation, "index out of range"))
+}
+
+/// `sClassifyLoopIOs[i]` of `SetProps_Stage3`, unchecked upstream: past the records it
+/// reads the zeroed slots of their allocation
+/// ([`crate::query::face::p4::classify_loop_io`]).
+fn classify_io_at(
+    ios: &[ClassifyLoopIo],
+    slack: &[ClassifyLoopIo],
+    i: usize,
+) -> Result<ClassifyLoopIo> {
+    crate::query::face::p4::classify_loop_io(ios, slack, i)
+        .copied()
+        .ok_or_else(|| null(OP_STAGE3, "index out of range"))
 }
 
 // ---- enumerations ---------------------------------------------------------------------
@@ -191,6 +204,23 @@ impl From<bool> for Tri {
             Self::True
         } else {
             Self::False
+        }
+    }
+}
+
+impl TryFrom<i32> for Tri {
+    type Error = SolidError;
+
+    /// Preserve all three native boolean values; reject other integers.
+    fn try_from(value: i32) -> Result<Self> {
+        match value {
+            crate::error::SM_FALSE => Ok(Self::False),
+            crate::error::SM_TRUE => Ok(Self::True),
+            crate::error::SM_UNSURE => Ok(Self::Unsure),
+            _ => Err(SolidError::invalid_input(
+                "Tri::try_from",
+                "invalid three-valued boolean",
+            )),
         }
     }
 }
@@ -1259,6 +1289,10 @@ pub struct ClassifyLoopsOut {
     pub classifiable: HealNotYetFaceType,
     /// `rClassifyLoopIOs`: one record per target loop.
     pub classify_loop_ios: Vec<ClassifyLoopIo>,
+    /// The zero-filled records `SmTArray` allocates past `rClassifyLoopIOs`' size (at
+    /// least 16, in powers of two), which upstream's unchecked `rClassifyLoopIOs[i]`
+    /// reads and writes for a touch's loop index past the target loops.
+    pub classify_loop_io_slack: Vec<ClassifyLoopIo>,
     /// `reClassifyCrv_StartType`.
     pub start_type: CrvDirOnFaceType,
     /// `reClassifyCrv_StopType`.
@@ -1276,6 +1310,7 @@ impl Default for ClassifyLoopsOut {
         Self {
             classifiable: HealNotYetFaceType::NoProbs,
             classify_loop_ios: Vec::new(),
+            classify_loop_io_slack: Vec::new(),
             start_type: CrvDirOnFaceType::Uninit,
             stop_type: CrvDirOnFaceType::Uninit,
             ordered_no_area_indices: Vec::new(),
@@ -1707,7 +1742,7 @@ impl<O: LoopObject> FaceProps<O> {
     /// queries leave it. `SetProps_Stage2`'s seam check runs on `b` in place; stage 3
     /// still runs on a copy whose edits are copied back (the temporary deviation of
     /// `query::face::p2`), even if a query fails after invalidating a sibling's cache.
-    pub(crate) fn set_props_with_query_gaps(
+    pub fn set_props_with_query_gaps(
         &mut self,
         k: &Kernel,
         b: &mut Brep,
@@ -2221,6 +2256,29 @@ impl<O: LoopObject> FaceProps<O> {
         self.set_props_stage3_cached(k, b, face, face_index, exe_heal_op, &mut cache)
     }
 
+    /// [`FaceProps::set_props_stage3`] on the face's B-rep: what `ClassifyLoops`' lazy
+    /// queries leave (the loop bisectors' UV trim curves, the tolerance growth and the gap
+    /// caches) is copied back to `b`, as upstream's `const` face queries leave it on the
+    /// B-rep (the Stage 2 props it builds first still run on a copy, as in
+    /// [`FaceProps::set_props_with_query_gaps`]).
+    ///
+    /// # Errors
+    ///
+    /// As [`FaceProps::set_props_stage3`]; the copy-back's lookup errors.
+    pub fn set_props_stage3_mut(
+        &mut self,
+        k: &Kernel,
+        b: &mut Brep,
+        face: FaceId,
+        face_index: u64,
+        exe_heal_op: HealerOpType,
+    ) -> Result<()> {
+        let mut cache = CurveOnClassifyCache::default();
+        let result = self.set_props_stage3_cached(k, b, face, face_index, exe_heal_op, &mut cache);
+        cache.apply_uv_trim_updates(b)?;
+        result
+    }
+
     /// [`FaceProps::set_props_stage3`] on the query state `cache`: what `ClassifyLoops`'
     /// loop bisectors leave on its snapshot stays there for the caller to keep
     /// ([`CurveOnClassifyCache::apply_uv_trim_updates`]).
@@ -2316,9 +2374,10 @@ impl<O: LoopObject> FaceProps<O> {
             // (the status is only reported upstream; a handle type that cannot name the
             // loop bisector's objects is a limitation of the caller, not a status)
             match classify_result {
-                Err(e @ SolidError::InvalidInput { reason, .. })
-                    if reason == crate::query::face::p3::NO_CURVE_HANDLES =>
-                {
+                Err(
+                    e @ (SolidError::InvalidInput { reason, .. }
+                    | SolidError::PortInvariant { reason, .. }),
+                ) if reason == crate::query::face::p3::NO_CURVE_HANDLES => {
                     return Err(e);
                 }
                 r => Ok(ignored(r)?),
@@ -2327,6 +2386,7 @@ impl<O: LoopObject> FaceProps<O> {
         let ClassifyLoopsOut {
             classifiable,
             classify_loop_ios,
+            classify_loop_io_slack,
             start_type: classify_crv_start_type,
             stop_type: classify_crv_stop_type,
             ordered_no_area_indices,
@@ -2363,7 +2423,7 @@ impl<O: LoopObject> FaceProps<O> {
 
             // match SmClassifyLoopIO and m_sLoopProps indices
             let p_loop = at(&loops, ii, OP_STAGE3)?;
-            let io = at(&classify_loop_ios, jj, OP_STAGE3)?;
+            let io = classify_io_at(&classify_loop_ios, &classify_loop_io_slack, jj)?;
 
             // guard against NULL m_pLooptreeRoot - can happen when ClassifyLoops cannot
             // process loops (a failed status is checked upstream by SE_MSG only)
@@ -2538,7 +2598,9 @@ impl<O: LoopObject> FaceProps<O> {
                 && closed.is_true()
             {
                 let lowest = match ordered_no_area_indices.first() {
-                    Some(&i) => Some(at(&classify_loop_ios, i, OP_STAGE3)?.containment),
+                    Some(&i) => Some(
+                        classify_io_at(&classify_loop_ios, &classify_loop_io_slack, i)?.containment,
+                    ),
                     None => None,
                 };
                 if lowest == Some(want) {
@@ -2739,7 +2801,7 @@ fn not_yet_heal_face(operation: &'static str) -> SolidError {
 /// overwrites with the next stage's otherwise).
 fn keep_unported(r: &Result<()>) -> Result<()> {
     match r {
-        Err(e) if e.is_unported() => Err(e.clone()),
+        Err(e) if e.is_unported_or_cancelled() => Err(e.clone()),
         _ => Ok(()),
     }
 }

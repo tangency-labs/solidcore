@@ -136,7 +136,7 @@ use crate::intersect::adv_surface_intersector::NoSurfaceHandle;
 use crate::intersect::surface_intersector::p1::{SrfIndex, TsectPnt};
 use crate::intersect::surface_intersector::p4::LawIntersectionOptions;
 use crate::kernel::Kernel;
-use crate::math::{Point3, Vec3, EFF_ZERO, EFF_ZERO_SQ, EFF_ZERO_SQRT, PI};
+use crate::math::{Point3, Vec3, BIG_DOUBLE, EFF_ZERO, EFF_ZERO_SQ, EFF_ZERO_SQRT, PI};
 use crate::nurbs::b_spline_curve::BSplineCurve;
 use crate::nurbs::b_spline_surface::BSplineSurface;
 use crate::nurbs::b_spline_surface_n_lib::p2::{EvaluateFlags, OrientType};
@@ -203,7 +203,10 @@ fn interval_at<'a>(ivls: &'a mut ExtentNd, i: usize, op: &'static str) -> Result
 /// out of bounds) are kept.
 fn as_sm_err(e: SolidError, op: &'static str) -> SolidError {
     match e {
-        SolidError::Unported { .. } | SolidError::InvalidInput { .. } => e,
+        SolidError::Unported { .. }
+        | SolidError::Cancelled { .. }
+        | SolidError::InvalidInput { .. }
+        | SolidError::PortInvariant { .. } => e,
         _ => SolidError::sm_err(op),
     }
 }
@@ -262,13 +265,14 @@ fn faceuse_opposite(brep: &Brep, eu: EdgeuseId, op: &'static str) -> Result<bool
 }
 
 /// `pEdgeuse->GetLoopuse()->GetFaceuse()->GetFace()->GetSurface()` as the base of an
-/// offset surface (the offset shares the face's surface: its owner is kept).
+/// offset surface (the offset shares the face's surface, `m_pSurface(&rSurface)`: an
+/// exact copy, owner kept, without the copy constructor's knot fix-up).
 fn face_base(brep: &Brep, eu: EdgeuseId, op: &'static str) -> Result<(Surface, SurfaceId)> {
     let f = edgeuse::face(brep, eu)?
         .ok_or_else(|| SolidError::invalid_input(op, "edge use without face"))?;
     let s = face::surface(brep, f)?
         .ok_or_else(|| SolidError::invalid_input(op, "face without surface"))?;
-    Ok((s.clone_keeping_owner(), SurfaceId::Face(f)))
+    Ok((s.clone_for_evaluation()?, SurfaceId::Face(f)))
 }
 
 /// The edge-use part of the `SmConstantDistanceFS` and `SmVariableRadiusFS`
@@ -365,7 +369,7 @@ pub trait ConstantRadiusOps {
     /// `SM_FG_TANGENT_ROLLOVER`) the UV position stored in a rail vertex use's
     /// intersection point (`None`: no such point, or no such geometry). The geometry
     /// for the surfaces is the solver's, set by the scope that lent its surfaces
-    /// ([`FilletSolver::tangent_rollover_guess`]); context-free callers have none.
+    /// (`FilletSolver::tangent_rollover_guess`); context-free callers have none.
     ///
     /// # Errors
     /// `SM_ERR_NULL_POINTER` without the geometry's rail; [`SolidError::InvalidInput`]
@@ -941,13 +945,15 @@ impl EvalNFunctions for GuessSphereEnfo<'_> {
 
 /// `SmLocalSolveNd(sEvalFun, &sIntervals, &sPeriodicities)` set up as both plane
 /// solves do: desired accuracy `SM_EFF_ZERO_SQ`, at most 8 total boundary hits, 30
-/// iterations.
+/// iterations; `k`'s `fixes.oscillating_skips_failed_guesses` is passed on.
 fn plane_local_solver<'a, E: EvalNFunctions + ?Sized>(
+    k: &Kernel,
     eval: &'a mut E,
     intervals: &'a ExtentNd,
     periodicities: &'a [bool],
 ) -> LocalSolveNd<'a, E> {
     let mut ls = LocalSolveNd::new(eval, Some(intervals), Some(periodicities));
+    ls.set_skips_failed_evaluations(k.fixes.oscillating_skips_failed_guesses);
     ls.set_desired_accuracy(EFF_ZERO_SQ);
     ls.set_boundary_handler(BoundaryHandler::TotalBoundaryHits, 8);
     ls.set_maximum_iterations(30);
@@ -1043,7 +1049,7 @@ impl ConstantRadiusAssistedFs {
         let plane_d = -plane_orig.dot(plane_normal);
         let approx_tol_3d = self.solver.approx_tol_3d;
         let mut eval = GuessSphereEnfo::new(k, plane_normal, plane_d, self);
-        let mut ls = plane_local_solver(&mut eval, &intervals, &periodicities);
+        let mut ls = plane_local_solver(k, &mut eval, &intervals, &periodicities);
 
         // Solve it
         let mut sol = ls.solve_it(&guess_t, approx_tol_3d)?;
@@ -1231,7 +1237,7 @@ fn fillet_sphere_solve(
     let approx_tol_3d = solver.solver().approx_tol_3d;
     // (the constructor's "sphere centre and radius" are the plane normal and D)
     let mut eval = SphereEquations(k, FilletSphereSolveEnfo::new(plane_normal, plane_d, solver));
-    let mut ls = plane_local_solver(&mut eval, intervals, periodicities);
+    let mut ls = plane_local_solver(k, &mut eval, intervals, periodicities);
 
     // Solve equations with NewtonRaphson iteration
     let mut sol = ls.solve_it(guess_t, approx_tol_3d)?;
@@ -1288,6 +1294,24 @@ impl ConstantDistanceFs {
         // Create offset surfaces of appropriate radius in appropriate
         // direction.  For now assume that the orientations at the center of the
         // edge work for the rest of the edge.
+        if k.fixes.fillet_knife_edge_rounds {
+            // (fork b7ec55b) offset each surface to the side of it the other face lies
+            // on (sm_SectorSides), a cusp's faces too
+            let mut cd = Self { solver, distance };
+            let radial = cd.solver.edgeuses[1];
+            let Some(sides) =
+                super::p1::sector_sides(k, brep, [Some(edgeuse), radial], cd.distance, OP)?
+            else {
+                // Smooth, or no sector: can't fillet this.
+                cd.solver.edgeuses = [None, None];
+                // (SE(SM_ERR): only signalled)
+                return Ok(cd);
+            };
+            cd.solver.orientations = sides;
+            let eu1 =
+                radial.ok_or_else(|| SolidError::invalid_input(OP, "edge use without radial"))?;
+            return cd.finish_offsets(k, brep, pseudo, edgeuse, eu1, OP);
+        }
         let fr = edgeuse_frame(k, brep, edgeuse, OP)?;
         let mut cd = Self { solver, distance };
 
@@ -1314,17 +1338,32 @@ impl ConstantDistanceFs {
         let eu1 = fr
             .radial
             .ok_or_else(|| SolidError::invalid_input(OP, "edge use without radial"))?;
-        let s0 = face_base(brep, edgeuse, OP)?;
-        let s1 = face_base(brep, eu1, OP)?;
-        let approx_radius = cd.distance * 2.0_f64.sqrt() / 2.0;
-        let [o0, o1] = cd.solver.orientations;
-        cd.solver.surfaces = rail_slots(
+        cd.finish_offsets(k, brep, pseudo, edgeuse, eu1, OP)
+    }
+
+    /// The tail of [`ConstantDistanceFs::from_edgeuse`] once the orientations are set:
+    /// offset surfaces of both faces by `dDistance * sqrt(2) / 2` (extension allowed),
+    /// then `FinishConstruction`.
+    fn finish_offsets(
+        mut self,
+        k: &Kernel,
+        brep: &Brep,
+        pseudo: &mut FilletBrep,
+        edgeuse: EdgeuseId,
+        eu1: EdgeuseId,
+        op: &'static str,
+    ) -> Result<Self> {
+        let s0 = face_base(brep, edgeuse, op)?;
+        let s1 = face_base(brep, eu1, op)?;
+        let approx_radius = self.distance * 2.0_f64.sqrt() / 2.0;
+        let [o0, o1] = self.solver.orientations;
+        self.solver.surfaces = rail_slots(
             extending_offset(k, approx_radius * o0, s0)?,
             extending_offset(k, approx_radius * o1, s1)?,
         );
 
-        cd.solver.finish_construction(k, pseudo)?; // Take care of other things in the base class.
-        Ok(cd)
+        self.solver.finish_construction(k, pseudo)?; // Take care of other things in the base class.
+        Ok(self)
     }
 }
 
@@ -1402,6 +1441,39 @@ impl VariableRadiusFs {
         set_law_arc_length(k, &original, &law_interval, approx_tol_3d, &mut law)?;
         curve_based.original = Some(original);
 
+        if k.fixes.fillet_knife_edge_rounds {
+            // (fork b7ec55b) the law's radius at the middle first, then each surface
+            // offset to the side of it the other face lies on (sm_SectorSides), a cusp's
+            // faces too
+            let mut vr = Self {
+                curve_based,
+                law,
+                law_orientation,
+                law_interval,
+            };
+            // (SE: a failed law evaluation leaves the radius undefined; only Unported
+            // propagates)
+            let values = ignored(vr.law.evaluate(
+                vr.law_interval.evaluate(0.5),
+                &vr.law_interval,
+                vr.law_orientation,
+            ))?
+            .ok_or_else(|| SolidError::invalid_input(OP, "undefined fillet law radius"))?;
+            let [approx_radius, _, _] = values;
+            let radial = vr.curve_based.solver.edgeuses[1];
+            let Some(sides) =
+                super::p1::sector_sides(k, brep, [Some(edgeuse), radial], approx_radius.abs(), OP)?
+            else {
+                // Smooth, or no sector: can't fillet this.
+                vr.curve_based.solver.edgeuses = [None, None];
+                // (SE(SM_ERR): only signalled)
+                return Ok(vr);
+            };
+            vr.curve_based.solver.orientations = sides;
+            let eu1 =
+                radial.ok_or_else(|| SolidError::invalid_input(OP, "edge use without radial"))?;
+            return vr.finish_offsets(k, brep, pseudo, edgeuse, eu1, approx_radius, OP);
+        }
         let fr = edgeuse_frame(k, brep, edgeuse, OP)?;
         let mut vr = Self {
             curve_based,
@@ -1441,16 +1513,33 @@ impl VariableRadiusFs {
         let eu1 = fr
             .radial
             .ok_or_else(|| SolidError::invalid_input(OP, "edge use without radial"))?;
-        let s0 = face_base(brep, edgeuse, OP)?;
-        let s1 = face_base(brep, eu1, OP)?;
-        let [o0, o1] = vr.curve_based.solver.orientations;
-        vr.curve_based.solver.surfaces = rail_slots(
+        vr.finish_offsets(k, brep, pseudo, edgeuse, eu1, approx_radius, OP)
+    }
+
+    /// The tail of [`VariableRadiusFs::from_edgeuse`] once the orientations and the
+    /// law's radius at the middle are known: offset surfaces of both faces by that radius
+    /// (extension allowed), then `FinishConstruction`.
+    #[allow(clippy::too_many_arguments)]
+    fn finish_offsets(
+        mut self,
+        k: &Kernel,
+        brep: &Brep,
+        pseudo: &mut FilletBrep,
+        edgeuse: EdgeuseId,
+        eu1: EdgeuseId,
+        approx_radius: f64,
+        op: &'static str,
+    ) -> Result<Self> {
+        let s0 = face_base(brep, edgeuse, op)?;
+        let s1 = face_base(brep, eu1, op)?;
+        let [o0, o1] = self.curve_based.solver.orientations;
+        self.curve_based.solver.surfaces = rail_slots(
             extending_offset(k, approx_radius * o0, s0)?,
             extending_offset(k, approx_radius * o1, s1)?,
         );
 
-        vr.curve_based.solver.finish_construction(k, pseudo)?; // Take care of other things in the base class.
-        Ok(vr)
+        self.curve_based.solver.finish_construction(k, pseudo)?; // Take care of other things in the base class.
+        Ok(self)
     }
 
     /// `SmVariableRadiusFS(crContext, dThisApproxTol3d, dAngleTolerance,
@@ -1990,7 +2079,8 @@ impl VariableRadiusFs {
             let solver = &self.curve_based.solver;
             let surface2 = solver.rail(other_rail)?;
             let domain = surface2.base_surface().natural_uv_domain_with_nurb(k)?;
-            let size = solver.surface_extension_factor * domain.size();
+            // fork WR-609: and the trace's reach (0 without `fillet_trace_reaches_rails`)
+            let size = solver.domain_extension(k, Some(surface2.base_surface()), &domain)?;
             let extended = Extent2d::from_points(
                 Point2::new(domain.min().x - size.x, domain.min().y - size.y),
                 Point2::new(domain.max().x + size.x, domain.max().y + size.y),
@@ -2360,7 +2450,10 @@ impl CircularCrossSectionFsg {
     /// pRail1Curve, pRail2Curve, crFilletPoints, pSurf1, pUV1, pSurf2, pUV2,
     /// rpFilletSurface)`: [`CircularCrossSectionFsg::create_surface_from_curves`] at the
     /// solver's tolerance, without `G1` continuity (upstream keeps it off for every
-    /// solver type). The fillet points and surfaces are not used.
+    /// solver type). The fillet points and surfaces are not used. With
+    /// `fixes.fillet_gn_section_generator` a variable-radius or constant-distance
+    /// solver's sections are the balls' touch circles
+    /// ([`CircularCrossSectionFsg::create_surface_from_curves_of_balls`]; WR-685).
     ///
     /// # Errors
     ///
@@ -2369,7 +2462,7 @@ impl CircularCrossSectionFsg {
         &self,
         k: &Kernel,
         approx_tol_3d: f64,
-        _solver_type: FilletSolverType,
+        solver_type: FilletSolverType,
         center_line: &mut BSplineCurve,
         rail1: &mut BSplineCurve,
         rail2: &mut BSplineCurve,
@@ -2377,16 +2470,26 @@ impl CircularCrossSectionFsg {
         let need_g1_continuity = false;
         // (SM_FS_CONST_RADIUS: "bNeedG1Continuity = TRUE; // fix it later" is commented
         // out upstream)
+        // The fork's `SmGnSectionFSG::CircleSurface` (WR-685, f2ec002): the solvers whose
+        // ball changes its radius along the round (a radius law, or a constant chord
+        // between faces whose angle changes); the others' balls touch the round along
+        // their great circles.
+        let ball_radius_varies = k.fixes.fillet_gn_section_generator
+            && matches!(
+                solver_type,
+                FilletSolverType::VariableRadius | FilletSolverType::ConstDist
+            );
         // the centre line is a plain SmBSplineCurve here, so its virtuals are the
         // B-spline ones
         let mut cl = Curve::from(core::mem::take(center_line));
-        let r = self.create_surface_from_curves(
+        let r = self.create_surface_from_curves_of_balls(
             k,
             &mut cl,
             rail1,
             rail2,
             approx_tol_3d,
             need_g1_continuity,
+            ball_radius_varies,
         );
         let CurveKind::BSpline(b) = cl.into_kind() else {
             return Err(SolidError::invalid_input(
@@ -2396,6 +2499,316 @@ impl CircularCrossSectionFsg {
         };
         *center_line = b;
         r
+    }
+}
+
+/// What the fork's circle generator reads off its solver for the round by its definition
+/// (`SmGnSectionFSG::CircleSurface`, cc08236): a constant-radius solver's radii
+/// (`static_cast<SmConstantRadiusFS *>(&rFilletSolver)->GetFilletRadius(0)`, `(1)`;
+/// `None` for another class) and its angle tolerance (`GetThisAngTolRad`, the corners').
+#[derive(Clone, Debug)]
+pub struct CircleBall {
+    /// The constant-radius solver's radii.
+    pub radii: Option<[f64; 2]>,
+    /// `GetThisAngTolRad()`.
+    pub ang_tol_rad: f64,
+    /// A variable-radius solver's round (`static_cast<SmVariableRadiusFS *>`, 0d43b4c;
+    /// `None` for another class).
+    pub law: Option<LawBall>,
+}
+
+/// What the fork's circle generator reads off a variable-radius solver (0d43b4c,
+/// b8e3594): whether it rounds an edge (`GetEdgeuse(0) != NULL`; a corner's variable
+/// ball has none), its base curve (`SM_CAST_PTR(SmBSplineCurve, GetBaseCurve())`), and
+/// its law, the law's interval and orientation.
+#[derive(Clone, Debug)]
+pub struct LawBall {
+    /// `GetEdgeuse(0) != NULL`.
+    pub has_edgeuse: bool,
+    /// `SM_CAST_PTR(SmBSplineCurve, GetBaseCurve())`.
+    pub edge: Option<BSplineCurve>,
+    /// `GetFilletLaw()`.
+    pub law: FilletLaw,
+    /// `GetFilletLawInterval()`.
+    pub interval: Extent1d,
+    /// `GetFilletLawOrientation()`.
+    pub reverse: bool,
+}
+
+/// `sm_LawInParameter` (the fork's 0d43b4c): the variable radius solver's law as a curve
+/// over the edge's parameter t, the radius its x, exactly the solver's (its law curve
+/// mapped by the law's interval, edge map and orientation, all affine in t; a linear law
+/// as a line); `None` where the law is of another kind or an interval has no length.
+///
+/// # Errors
+///
+/// Those of the law curve's canonical data, the linear law's evaluation and
+/// `CreateCanonical`.
+pub fn law_in_parameter(lb: &LawBall) -> Result<Option<BSplineCurve>> {
+    use crate::blend::fillet_standard_solver::p1::FilletLawKind;
+    use crate::nurbs::b_spline_curve::{BSplineCurveForm, CanonicalData, KnotType};
+    let ivl = lb.interval;
+    let reverse = lb.reverse;
+    let law = &lb.law;
+    let has_lengths = ivl.length() > 0.0 && law.edge_map.length() > 0.0;
+    if !has_lengths {
+        return Ok(None);
+    }
+    // the law's parameter at t: m0 + (m1 - m0) T, T = (t - t0) / (t1 - t0), or
+    // (t1 - t) / (t1 - t0) reversed
+    let (t0, t1) = (ivl.min(), ivl.max());
+    let (m0, m1) = (law.edge_map.min(), law.edge_map.max());
+    let db = (m1 - m0) / (t1 - t0) * (if reverse { -1.0 } else { 1.0 });
+    let da = if reverse {
+        m0 + (m1 - m0) * t1 / (t1 - t0)
+    } else {
+        m0 - (m1 - m0) * t0 / (t1 - t0)
+    };
+    let curve = match &law.kind {
+        FilletLawKind::BSpline { law_curve, .. } => {
+            let c = law_curve.canonical()?;
+            // the knots taken to t (t = (k - a) / b), in their order along t
+            let lk = c.knots.len();
+            let lc = c.control_points.len();
+            let mut t_knots = Vec::new();
+            let mut t_mult = Vec::new();
+            for i in 0..lk {
+                let kk = if db > 0.0 { i } else { lk - 1 - i };
+                let (Some(&kn), Some(&m)) = (c.knots.get(kk), c.knot_multiplicities.get(kk)) else {
+                    return Err(SolidError::sm_err(OP_LAW));
+                };
+                t_knots.push((kn - da) / db);
+                t_mult.push(m);
+            }
+            let mut t_cps = Vec::new();
+            let mut t_wts = Vec::new();
+            let rational = c.weights.len() == lc;
+            for i in 0..lc {
+                let kk = if db > 0.0 { i } else { lc - 1 - i };
+                let Some(&cp) = c.control_points.get(kk) else {
+                    return Err(SolidError::sm_err(OP_LAW));
+                };
+                t_cps.push(cp);
+                if rational {
+                    t_wts.push(c.weights.get(kk).copied().unwrap_or(f64::NAN));
+                }
+            }
+            Some(BSplineCurve::create_canonical(&CanonicalData {
+                dim: c.dim,
+                degree: c.degree,
+                control_points: &t_cps,
+                form: BSplineCurveForm::Unspecified,
+                knot_multiplicities: &t_mult,
+                knots: &t_knots,
+                knot_type: KnotType::Unspecified,
+                weights: if t_wts.len() == lc {
+                    Some(&t_wts)
+                } else {
+                    None
+                },
+                trim: None,
+            })?)
+        }
+        FilletLawKind::Linear { .. } => {
+            let mut l = law.clone();
+            let r0 = l.evaluate(t0, &ivl, reverse)?;
+            let r1 = l.evaluate(t1, &ivl, reverse)?;
+            let cps = [Point3::new(r0[0], 0.0, 0.0), Point3::new(r1[0], 0.0, 0.0)];
+            Some(BSplineCurve::create_canonical(&CanonicalData {
+                dim: 3,
+                degree: 1,
+                control_points: &cps,
+                form: BSplineCurveForm::Unspecified,
+                knot_multiplicities: &[2, 2],
+                knots: &[t0, t1],
+                knot_type: KnotType::Unspecified,
+                weights: None,
+                trim: None,
+            })?)
+        }
+        FilletLawKind::Base => None,
+    };
+    Ok(curve.map(|mut c| {
+        c.set_out_of_bounds_enabled(true);
+        c
+    }))
+}
+
+const OP_LAW: &str = "blend::fillet_standard_solver::p2::law_in_parameter";
+
+impl CircularCrossSectionFsg {
+    /// The fork's `SmGnSectionFSG::CircleSurface` gate (cc08236, 308cc40, c596548; with
+    /// `fixes.fillet_gn_section_generator` and `fixes.fillet_round_as_definition`,
+    /// WR-698): a ball of one radius between faces that are NURBS surfaces is the round by
+    /// its definition, the order-1 section's `Build` with the rails and uv curves
+    /// replaced ([`GnSectionFsg::build_given_ball`]), unless the rails or the centre line
+    /// turn at a knot (`sm_FilletCurveCorners`: the pieces are built as before), a face is
+    /// not an offset of a NURBS surface (or is a blend by its definition, unless the ball is
+    /// of one radius, the face a round of one radius between NURBS faces and
+    /// `fixes.fillet_round_on_round_as_definition` on: c5b6bb7, WR-714), the circle is
+    /// not exact (approximated, mirrored or the larger arc), the solver is neither a
+    /// constant-radius one with one radius above the tolerance nor (0d43b4c, b8e3594) an
+    /// edge's variable-radius one whose law is a B-spline or linear one, its base curve a
+    /// B-spline curve and its law above the tolerance over the solver's stations, the
+    /// circles sweep a cylinder or revolve a torus (which stay those exact surfaces), the
+    /// rails meet at an end (the section fades to a point there, which the definition does
+    /// not take yet), or the solver's rails are not the ball's feet on the two faces
+    /// everywhere (a rail held on a face's boundary while the ball rolls on its edge).
+    /// `None`: the round is built as before.
+    ///
+    /// # Errors
+    ///
+    /// Those of the corners, the sweep and revolve tests, the evaluations and `Build`.
+    #[allow(clippy::too_many_arguments)]
+    pub fn definition_surface(
+        &self,
+        k: &Kernel,
+        approx_tol_3d: f64,
+        solver_type: FilletSolverType,
+        center_line: &mut BSplineCurve,
+        rails: [&mut BSplineCurve; 2],
+        points: &[TsectPnt],
+        surfaces: [&Surface; 2],
+        uv: [&mut BSplineCurve; 2],
+        ball: &CircleBall,
+    ) -> Result<Option<Surface>> {
+        use crate::blend::fillet_section::certificate::{curve_derivs_over, NurbsCurve};
+        use crate::blend::fillet_section::definition_box::definition_enclosable;
+        use crate::blend::fillet_section::interval::Ivl;
+        use crate::blend::fillet_section::section::{ArcSection, GnLawRound, GnSectionFsg};
+        use crate::blend::fillet_standard_solver::touch_circle::{
+            corner_angle, fillet_curve_corners,
+        };
+        use crate::surface::surface::SurfaceKind;
+        if !(k.fixes.fillet_gn_section_generator && k.fixes.fillet_round_as_definition) {
+            return Ok(None);
+        }
+        let [rail1, rail2] = rails;
+        let corners =
+            fillet_curve_corners(center_line, rail1, rail2, corner_angle(ball.ang_tol_rad))?;
+        if !corners.is_empty() {
+            return Ok(None);
+        }
+        let arcs = ArcSection {
+            approximate_arcs: self.approximate_arcs,
+            tol_percent_radius: self.tol_percent_radius,
+            mirror: self.mirror,
+            complement: self.complement,
+        };
+        let [s1, s2] = surfaces;
+        let (SurfaceKind::OffsetSurface(o1), SurfaceKind::OffsetSurface(o2)) =
+            (s1.kind(), s2.kind())
+        else {
+            return Ok(None);
+        };
+        if !arcs.is_exact_circle() {
+            return Ok(None);
+        }
+        let bases = [o1.base_surface(), o2.base_surface()];
+        // (a face that is itself a blend by its definition takes a ball of one radius, on a
+        // round of one radius between NURBS faces: the definition its certificate encloses;
+        // c5b6bb7, WR-714)
+        let constant_ball = solver_type == FilletSolverType::ConstRadius;
+        for b in bases {
+            let nurbs = match b.kind() {
+                SurfaceKind::BSpline(_)
+                | SurfaceKind::Plane(_)
+                | SurfaceKind::SurfOfRevolution(_)
+                | SurfaceKind::SurfOfExtrusion(_)
+                | SurfaceKind::Cone(_)
+                | SurfaceKind::Sphere(_)
+                | SurfaceKind::Torus(_) => true,
+                SurfaceKind::ProceduralBlend(_) => {
+                    k.fixes.fillet_round_on_round_as_definition
+                        && constant_ball
+                        && definition_enclosable(b)
+                }
+                _ => false,
+            };
+            if !nurbs {
+                return Ok(None);
+            }
+        }
+        // the ball's radius: the constant radius solver's, the same for both faces; or the
+        // variable radius solver's law over the edge's curve (law_in_parameter, 0d43b4c)
+        let mut radius = 0.0;
+        let mut law_curves: Option<(BSplineCurve, BSplineCurve)> = None;
+        match (solver_type, ball.radii, ball.law.as_ref()) {
+            (FilletSolverType::ConstRadius, Some([r0, r1]), _) => {
+                let above_tol = r0 > approx_tol_3d;
+                if !above_tol || r1 != r0 {
+                    return Ok(None);
+                }
+                radius = r0;
+            }
+            // (an edge's round: a variable ball a corner rolls about its own curve stays
+            // the corner's, b8e3594)
+            (FilletSolverType::VariableRadius, _, Some(lb)) if lb.has_edgeuse => {
+                let Some(edge) = &lb.edge else {
+                    return Ok(None);
+                };
+                if points.len() < 2 {
+                    return Ok(None);
+                }
+                let mut leader = edge.copy();
+                leader.set_out_of_bounds_enabled(true);
+                let Some(law) = law_in_parameter(lb)? else {
+                    return Ok(None);
+                };
+                // the solver's stations run past the edge's ends, the law continued there:
+                // a ball of the law's radius exists over them only where it stays positive
+                // (an enclosure of the law over their range)
+                let mut t0 = BIG_DOUBLE;
+                let mut t1 = -BIG_DOUBLE;
+                for p in points {
+                    let t = p.user_doubles.first().copied().unwrap_or(f64::NAN);
+                    t0 = if t0 < t { t0 } else { t }; // smos_Min
+                    t1 = if t1 > t { t1 } else { t }; // smos_Max
+                }
+                let law_n = NurbsCurve::of(&law)?;
+                let has_range = t1 > t0;
+                let positive = has_range
+                    && curve_derivs_over(&law_n, Ivl::new(t0, t1), 0, None)
+                        .ok()
+                        .and_then(|r| r.first().map(|r0| r0.x.lo > approx_tol_3d))
+                        .unwrap_or(false);
+                if !positive {
+                    return Ok(None);
+                }
+                law_curves = Some((leader, law));
+            }
+            _ => return Ok(None),
+        }
+        let cl = Curve::from(center_line.clone());
+        let (sweep, revolve, _) =
+            super::p1::circle_swept_or_revolved(k, &cl, rail1, rail2, approx_tol_3d)?;
+        let ivl = rail1.natural_interval();
+        for t in [ivl.min(), ivl.max()] {
+            let end1 = rail1.evaluate_point(t)?;
+            let end2 = rail2.evaluate_point(t)?;
+            if end1.distance(end2) < approx_tol_3d {
+                return Ok(None);
+            }
+        }
+        if sweep || revolve {
+            return Ok(None);
+        }
+        let mut gn = GnSectionFsg::circle(arcs);
+        let law_round = law_curves.as_ref().map(|(leader, law)| GnLawRound {
+            leader,
+            law,
+            points,
+        });
+        gn.build_given_ball(
+            k,
+            center_line,
+            [rail1, rail2],
+            approx_tol_3d,
+            bases,
+            uv,
+            radius,
+            law_round.as_ref(),
+        )
     }
 }
 

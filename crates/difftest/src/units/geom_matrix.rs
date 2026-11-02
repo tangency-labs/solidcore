@@ -28,14 +28,13 @@ use crate::{Case, HarnessError, Output, Rng, UnitDiff};
 /// Generated cases per run, whatever `--seeds` says (it can only raise this).
 pub const MIN_GENERATED: usize = 4000;
 
-/// Upstream `SM_ERR_WARNING`.
-const SM_ERR_WARNING: i32 = 1023;
+use solidcore::error::SM_ERR_WARNING;
 
 /// `geom.matrix` runner.
 pub struct Runner;
 
 /// Operation names used in `inputs.op`.
-const OPS: [(&str, Op); 11] = [
+const OPS: [(&str, Op); 12] = [
     ("copy", Op::Copy),
     ("resize", Op::Resize),
     ("access", Op::Access),
@@ -47,7 +46,12 @@ const OPS: [(&str, Op); 11] = [
     ("solve", Op::Solve),
     ("eigen", Op::Eigen),
     ("eigen3", Op::Eigen3),
+    ("svd", Op::Svd),
 ];
+
+/// Generated `SVDecompose` cases per run (named `svd####`, seeded apart from the
+/// `gen####` stream so its cases keep their inputs).
+pub const SVD_GENERATED: usize = 600;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct Inputs {
@@ -91,7 +95,7 @@ fn floats(v: &[Value]) -> Result<Vec<f64>, HarnessError> {
 
 fn normalise(e: &SolidError) -> String {
     match e {
-        SolidError::InvalidInput { .. } => "status_1007".into(),
+        SolidError::InvalidInput { .. } | SolidError::PortInvariant { .. } => "status_1007".into(),
         SolidError::Upstream { code, .. } => format!("status_{code}"),
         other => format!("rust_error: {other}"),
     }
@@ -216,6 +220,13 @@ fn rust_run(op: Op, i: &Inputs) -> Result<solidcore::Result<Output>, HarnessErro
                 for p in vecs {
                     out.extend_from_slice(&p.to_array());
                 }
+                out.extend_from_slice(a.as_slice());
+                result(out, Vec::new(), None)
+            }
+            Op::Svd => {
+                let (w, v) = a.sv_decompose()?;
+                let mut out = w;
+                out.extend_from_slice(v.as_slice());
                 out.extend_from_slice(a.as_slice());
                 result(out, Vec::new(), None)
             }
@@ -473,6 +484,82 @@ fn gen_case(rng: &mut Rng) -> Inputs {
     }
 }
 
+/// An `SVDecompose` input: mostly `m >= n` (sometimes `m < n`, `SM_ERR`), with the
+/// shapes of [`square`], 3x3 transform blocks (rotation, shear, mirror, scale,
+/// near-singular) and huge / tiny scales. Entries the FFI guard refuses become zero.
+fn gen_svd(rng: &mut Rng) -> Inputs {
+    let (rows, cols, mut m) = if rng.chance(0.3) {
+        (3, 3, transform_block(rng))
+    } else {
+        let rows = dim(rng);
+        let cols = if rng.chance(0.05) {
+            rows + 1
+        } else if rng.chance(0.5) {
+            rows
+        } else {
+            1 + rng.below(rows as u64) as usize
+        };
+        let m = if rows == cols {
+            let symmetric = rng.chance(0.2);
+            square(rng, rows, symmetric)
+        } else {
+            (0..rows * cols).map(|_| entry(rng)).collect()
+        };
+        (rows, cols, m)
+    };
+    if rng.chance(0.1) {
+        let k = 10f64.powi(rng.range_i64(-60, 60) as i32);
+        for x in &mut m {
+            *x *= k;
+        }
+    }
+    for x in &mut m {
+        if !ffi::svd_element_ok(*x) {
+            *x = 0.0;
+        }
+    }
+    Inputs {
+        op: "svd".into(),
+        rows,
+        cols,
+        m: m.into_iter().map(num).collect(),
+        v: Vec::new(),
+        i: 0,
+        j: 0,
+        s: 0.0,
+    }
+}
+
+/// A 3x3 block of the kinds `SmBrep::Transform(double[4][4])` decomposes.
+fn transform_block(rng: &mut Rng) -> Vec<f64> {
+    let (a, b) = (rng.uniform(-3.2, 3.2), rng.uniform(-3.2, 3.2));
+    let (ca, sa, cb, sb) = (a.cos(), a.sin(), b.cos(), b.sin());
+    // a rotation about Z then X
+    let rot = [ca, sa, 0.0, -sa * cb, ca * cb, sb, sa * sb, -ca * sb, cb];
+    let mut d = [1.0, 1.0, 1.0];
+    match rng.below(6) {
+        0 => {}
+        1 => d = [2.0, 2.0, 2.0],
+        2 => d = [rng.uniform(0.1, 5.0), rng.uniform(0.1, 5.0), rng.uniform(0.1, 5.0)],
+        3 => d = [-1.0, 1.0, 1.0],
+        4 => d = [1.0, 1.0, 10f64.powi(-(rng.range_i64(3, 15) as i32))],
+        _ => d = [1.0, 1.0, 0.0],
+    }
+    let mut m: Vec<f64> = rot
+        .chunks(3)
+        .zip(d)
+        .flat_map(|(row, dk)| row.iter().map(move |x| x * dk))
+        .collect();
+    if rng.chance(0.4) {
+        // a shear term
+        let k = rng.below(9) as usize;
+        if let Some(x) = m.get_mut(k) {
+            *x += rng.uniform(-1.0, 1.0);
+        }
+    }
+    m
+}
+
 impl UnitDiff for Runner {
     fn id(&self) -> &'static str {
         "geom.matrix"
@@ -487,7 +574,19 @@ impl UnitDiff for Runner {
             seeds: ctx.seeds.max(MIN_GENERATED),
             ..ctx.clone()
         };
-        default_cases(self, &ctx)
+        let mut cases = default_cases(self, &ctx)?;
+        for i in 0..SVD_GENERATED {
+            let seed = CaseContext::seed_for("geom.matrix.svd", i);
+            let mut rng = Rng::new(seed);
+            cases.push(Case {
+                unit: self.id().to_string(),
+                name: format!("svd{i:04}"),
+                source: crate::case::CaseSource::Generated { seed },
+                inputs: serde_json::to_value(gen_svd(&mut rng))
+                    .map_err(|e| HarnessError::new(e.to_string()))?,
+            });
+        }
+        Ok(cases)
     }
 
     fn run_cpp(&self, case: &Case) -> Result<Output, HarnessError> {

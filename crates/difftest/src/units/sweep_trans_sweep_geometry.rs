@@ -32,7 +32,6 @@ use solidcore::topology::edge::NotifyEnv;
 use solidcore::topology::topology_traverser::Marks;
 use solidcore::topology::{Brep, Edgeuse, EdgeuseOwner, FaceId, Vertexuse, VertexuseOwner};
 use solidcore::{EntityRef, Result, SolidError};
-use std::collections::BTreeMap;
 use solidcore_ffi::units::sweep_trans_sweep_geometry as ffi;
 
 /// Translational sweep differential runner.
@@ -81,7 +80,7 @@ fn v(p: [f64; 3]) -> Vec3 {
 fn status(e: &SolidError) -> f64 {
     match e {
         SolidError::Upstream { code, .. } => f64::from(*code),
-        SolidError::InvalidInput { .. } => 1007.,
+        SolidError::InvalidInput { .. } | SolidError::PortInvariant { .. } => 1007.,
         SolidError::Nlib { .. } => 1001.,
         _ => -1.,
     }
@@ -218,7 +217,7 @@ pub(crate) fn create_face(
     s: Surface,
     domain: &Extent2d,
 ) -> Result<FaceId> {
-    let mut records = BTreeMap::new();
+    let mut records = solidcore::topology::topology::NotifyRecords::new();
     let mut attributes = AttributeStore::default();
     let key_of = super::topology_brep_p8::key_of;
     let mut env = NotifyEnv {
@@ -243,6 +242,7 @@ fn rust(i: &Input) -> Result<Vec<f64>> {
         base: SweepGeometryCreation {
             eps: i.epsilon,
             make_analytics: i.analytics,
+            statuses_pass_on: false,
         },
     };
     let mut o = vec![0.];

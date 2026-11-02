@@ -1,9 +1,10 @@
 //! C++ parity for merge control, topology cleanup, face coincidence, vertex copies,
 //! region attributes and file-local region/translation helpers. Topology fixtures
-//! are constructed in C++ and imported as raw arena records before either helper
-//! runs, following the topology units. Deferred paths still run the native helper.
+//! are constructed by each side's own kernel (the Rust side's by the Rust `.smb` reader
+//! and constructors, renumbered into the fixture's traversal order; no C++ export
+//! reaches it); the C++ side's post-op graph is imported to compare it. Deferred paths still run the native helper.
 use super::topology_edgeuse_p1::{self as spec, BrepIn};
-use super::topology_vertexuse::{import, import_raw};
+use super::topology_vertexuse::import_raw;
 use crate::{Case, CaseContext, HarnessError, Output, Rng, UnitDiff};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
@@ -23,7 +24,7 @@ use solidcore::topology::{
     LoopuseStart, RegionId, ShellId, VertexId, VertexuseId, VertexuseOwner,
 };
 use solidcore::SolidError;
-use solidcore_ffi::units::{boolean_merge_p1 as ffi, topology_vertexuse as fixture};
+use solidcore_ffi::units::boolean_merge_p1 as ffi;
 use std::collections::BTreeMap;
 
 /// The op of `find_brep_region_of_other_face` (`SmMerge::FindBrepRegionOfOtherFace`).
@@ -62,7 +63,10 @@ fn split_other_graph(record: &mut Vec<f64>) -> Result<Brep, HarnessError> {
     if end != record.len() {
         return Err(harness("face coincidence record has trailing values"));
     }
-    let (other, _) = import_raw(record.get(start..end).ok_or_else(short)?)?;
+    let (mut other, _) = import_raw(record.get(start..end).ok_or_else(short)?)?;
+    // the face loop lists and loop edge lists the export does not carry, derived from
+    // the exported uses as the Rust B-rep holds them (as `topology.brep_p5`)
+    other.refresh_cached_topology();
     record.truncate(len_at);
     Ok(other)
 }
@@ -162,6 +166,29 @@ fn control([a, b, c]: [u8; 3]) -> Vec<f64> {
     v.extend(flags(state.options));
     v.push(state.tag_id as f64);
     v
+}
+/// An operand's Rust B-rep, built by the Rust kernel ([`crate::own_builder::build_any`]:
+/// the Rust `.smb` reader or constructors, in the fixture's traversal order), its
+/// geometry owned by the build under arena identities (`Conventions::EDGEUSE_GRAPH`: the
+/// fixture's traversal, faces and edges named as the B-rep cache solves of op 5's point
+/// classification, `BrepQuery::default`, find them, as upstream's by pointer; no owner is
+/// added to geometry the build left without one); the output of a failed build otherwise.
+fn own_operand(k: &mut Kernel, src: &BrepIn) -> Result<Result<Brep, Output>, HarnessError> {
+    use crate::own_builder::{build_any, failed_output, Built, Conventions};
+    match build_any(k, src, false, false, &Conventions::EDGEUSE_GRAPH)? {
+        Built::Brep(b) => {
+            let mut b = *b;
+            // each face's tolerance on its surface, as the face upstream answers
+            // GetTolerance with
+            let faces: Vec<_> = b.faces().ids().collect();
+            for f in faces {
+                b.sync_face_surface_tolerance(f)
+                    .map_err(|e| harness(e.to_string()))?;
+            }
+            Ok(Ok(b))
+        }
+        Built::Failed(e) => Ok(Err(failed_output(&e))),
+    }
 }
 fn block(i: &Inputs) -> Result<(String, Vec<f64>), HarnessError> {
     if i.op == 0 {
@@ -289,9 +316,23 @@ impl Canon {
                 g.vertices.add(Some(v));
             }
         }
-        for (id, r) in b.regions().iter() {
-            if r.in_brep {
-                g.regions.add(Some(id));
+        // the regions in the B-rep's list order (the shim walk's `GetRegions`), which a
+        // Rust-built B-rep can hold apart from its arena order (an imported export holds
+        // them alike); the arena order when the list cannot be read
+        match solidcore::topology::brep::p1::regions(b, None) {
+            Ok(list) => {
+                for id in list {
+                    if b.region(id).is_ok_and(|r| r.in_brep) {
+                        g.regions.add(Some(id));
+                    }
+                }
+            }
+            Err(_) => {
+                for (id, r) in b.regions().iter() {
+                    if r.in_brep {
+                        g.regions.add(Some(id));
+                    }
+                }
             }
         }
         for &e in b.edge_list() {
@@ -496,6 +537,153 @@ impl Canon {
             + self.vertices.items.len()
     }
 }
+/// Where [`owners`] reads the geometry owners from.
+#[derive(Debug, Clone, Copy)]
+pub(crate) enum OwnerSource<'a> {
+    /// The owners a native export recorded, by imported index.
+    Native(&'a super::topology_vertexuse::ImportOwners),
+    /// The B-rep's own geometry, resolved under the identities the harness's B-reps
+    /// use; `serial` is the notify serial whose topology keys name its objects, if any.
+    Rust { serial: Option<u64> },
+}
+
+/// The geometry owners of `b` in the reachable walk's numbering ([`Canon::reachable`],
+/// the order of [`graph`]), as three value arrays:
+/// - `surface_owners`, per face: `1` when its surface is owned by the face
+///   (`pSurface->GetOwner() == pFace`), else `0` (the native export records only that);
+/// - `edge_curve_owners`, per edge: the number of the edge its curve's owner is, `-1`
+///   without curve or owner, `-3` for an owner that is no edge of the walk;
+/// - `uv_curve_owners`, per edge use: the number of the edge use its own UV trim
+///   curve's owner is, `-1` without curve or owner, `-3` for any other owner.
+///
+/// For a Rust B-rep a surface (a curve) counts as owned by its face (edge) when
+/// `topology::brep::p1::surfaces` (`curves`) lists it; otherwise its owner is resolved
+/// under every identity of [`owner_candidates`](crate::own_builder::owner_candidates).
+pub(crate) fn owners(b: &Brep, src: OwnerSource<'_>) -> Result<[Vec<f64>; 3], HarnessError> {
+    use crate::own_builder::resolve_owner;
+    use solidcore::EntityRef as E;
+    let c = Canon::reachable(b);
+    let flag = |x: bool| if x { 1.0 } else { 0.0 };
+    match src {
+        OwnerSource::Native(o) => {
+            let faces = c
+                .faces
+                .items
+                .iter()
+                .map(|f| {
+                    o.surface_owned
+                        .get(f.index() as usize)
+                        .map(|&x| flag(x))
+                        .ok_or_else(|| HarnessError::new("face owner index"))
+                })
+                .collect::<Result<Vec<_>, _>>()?;
+            let edges = c
+                .edges
+                .items
+                .iter()
+                .map(|e| {
+                    o.edge_owner
+                        .get(e.index() as usize)
+                        .map(|&x| c.edges.of_slot(x))
+                        .ok_or_else(|| HarnessError::new("edge owner index"))
+                })
+                .collect::<Result<Vec<_>, _>>()?;
+            let uses = c
+                .edgeuses
+                .items
+                .iter()
+                .map(|&eu| {
+                    // a UV trim curve the runner dropped from the import (a cache it
+                    // does not compare) has no owner to compare either
+                    if b.edgeuse(eu).ok().and_then(|x| x.uv_trim_curve.as_ref()).is_none() {
+                        return Ok(-1.0);
+                    }
+                    o.uv_owner
+                        .get(eu.index() as usize)
+                        .map(|&x| c.edgeuses.of_slot(x))
+                        .ok_or_else(|| HarnessError::new("UV owner index"))
+                })
+                .collect::<Result<Vec<_>, _>>()?;
+            Ok([faces, edges, uses])
+        }
+        OwnerSource::Rust { serial } => {
+            // (a face without surface makes GetSurfaces fail; the resolution still applies)
+            let listed = solidcore::topology::brep::p1::surfaces(b, None).unwrap_or_default();
+            let faces = c
+                .faces
+                .items
+                .iter()
+                .map(|&f| {
+                    let s = b.face(f).ok().and_then(|x| x.surface.as_ref());
+                    flag(s.is_some_and(|s| {
+                        listed.iter().any(|o| std::ptr::eq(*o, s))
+                            || s.owner().is_some_and(|r| {
+                                resolve_owner(b, r, serial, E::Face(f)) == Some(E::Face(f))
+                            })
+                    }))
+                })
+                .collect();
+            // (the default_edge_owner analog: the recorded naming scheme and proven keys)
+            let listed_curves =
+                solidcore::topology::brep::p1::curves(b, None).unwrap_or_default();
+            let edges = c
+                .edges
+                .items
+                .iter()
+                .map(|&e| {
+                    let curve = b.edge(e).ok().and_then(|x| x.curve.as_ref());
+                    let listed = |cv: &solidcore::curve::curve::Curve| {
+                        listed_curves.iter().any(|o| std::ptr::eq(*o, cv))
+                    };
+                    if curve.is_some_and(listed) {
+                        return c.edges.of(Some(e)) as f64;
+                    }
+                    let owner = curve.and_then(solidcore::curve::curve::Curve::owner);
+                    match owner {
+                        None => -1.0,
+                        Some(r) => match resolve_owner(b, r, serial, E::Edge(e)) {
+                            Some(E::Edge(x)) => c.edges.of(Some(x)) as f64,
+                            _ => -3.0,
+                        },
+                    }
+                })
+                .collect();
+            let uses = c
+                .edgeuses
+                .items
+                .iter()
+                .map(|&eu| {
+                    let owner = b
+                        .edgeuse(eu)
+                        .ok()
+                        .and_then(|x| x.uv_trim_curve.as_ref()?.owner());
+                    match owner {
+                        None => -1.0,
+                        Some(r) => match resolve_owner(b, r, serial, E::Edgeuse(eu)) {
+                            Some(E::Edgeuse(x)) => c.edgeuses.of(Some(x)) as f64,
+                            _ => -3.0,
+                        },
+                    }
+                })
+                .collect();
+            Ok([faces, edges, uses])
+        }
+    }
+}
+
+/// [`graph`] with the geometry owners of [`owners`].
+pub(crate) fn graph_owned(
+    b: &Brep,
+    record: Vec<f64>,
+    src: OwnerSource<'_>,
+) -> Result<Output, HarnessError> {
+    let [faces, edges, uses] = owners(b, src)?;
+    Ok(graph(b, record)
+        .values("surface_owners", faces)
+        .values("edge_curve_owners", edges)
+        .values("uv_curve_owners", uses))
+}
+
 /// The B-rep's records and links in [`Canon`] numbering, after `record` (which the
 /// caller has already put in that numbering, see [`Canon::of`]).
 pub(crate) fn graph(b: &Brep, record: Vec<f64>) -> Output {
@@ -876,7 +1064,7 @@ fn run_rust(i: &Inputs, b: &mut Brep, other: &mut Brep) -> Result<Vec<f64>, Soli
                 }
             }
             let mut attrs = AttributeStore::new();
-            let mut records = BTreeMap::new();
+            let mut records = solidcore::topology::topology::NotifyRecords::new();
             let mut src = Topology::new();
             src.set_all_flags(16);
             let mut dst = Topology::new();
@@ -1104,7 +1292,11 @@ impl UnitDiff for Runner {
             .checked_add(2)
             .ok_or_else(|| harness("record count overflow"))?;
         let raw = v.get(end..).ok_or_else(|| harness("short graph"))?;
-        let (b, _) = import_raw(raw)?;
+        let (mut b, _) = import_raw(raw)?;
+        // the face loop lists and loop edge lists the export does not carry, derived
+        // from the exported uses as the Rust B-rep holds them (the Rust side builds its
+        // input itself, so its faces and loops have them; as `topology.brep_p5`)
+        b.refresh_cached_topology();
         let mut record = v
             .get(2..end)
             .ok_or_else(|| harness("short record"))?
@@ -1121,43 +1313,22 @@ impl UnitDiff for Runner {
         if i.op == 0 {
             return Ok(Output::new().values("record", control(i.args)));
         }
-        let (path, block) = block(&i)?;
-        let raw = crate::export_memo::export("topology_vertexuse", &[&path], &block, || {
-            fixture::eval(fixture::Op::Export, &path, &block)
-        })
-        .map_err(|e| harness(e.to_string()))?;
-        let (mut b, exact) = import(&raw)?;
-        // the B-rep cache solves of op 5's point classification (`BrepQuery::default`)
-        // find the faces and edges by their arena identities, as upstream's by pointer
-        crate::util::own_arena_geometry(&mut b);
-        // the new owners drop the face tolerances the import cached on the surfaces
-        let faces: Vec<_> = b.faces().ids().collect();
-        for f in faces {
-            b.sync_face_surface_tolerance(f)
-                .map_err(|e| harness(e.to_string()))?;
-        }
-        // Op 5 without mates classifies points against `b` (SmBrep::Point3DClassify;
-        // with mates every edge is mated, so the radial sectors decide): a face surface
-        // the export carries only as its B-spline part would be classified against other
-        // geometry than the C++ one (the harness limitation of `query.face_p1`).
-        let [_, mates, _] = i.args;
-        let mated = mates != 0;
-        if i.op == OP_FIND_REGION && !mated && exact.iter().any(|&e| !e) {
-            return Ok(Output::deferred(
-                "harness:analytic-geometry-export",
-                "analytic face surface in the B-rep export",
-            ));
-        }
-        let (other_path, other_block) = other_block(&i)?;
-        let other_raw =
-            crate::export_memo::export("topology_vertexuse", &[&other_path], &other_block, || {
-                fixture::eval(fixture::Op::Export, &other_path, &other_block)
-            })
-            .map_err(|e| harness(e.to_string()))?;
-        let (mut other, _) = import(&other_raw)?;
+        // both B-reps built by the Rust kernel as the shim's fixture `build` makes them
+        // (no C++ export reaches the Rust side)
+        let mut k = Kernel::default();
+        let primary = i.brep.as_ref().ok_or_else(|| harness("B-rep op without brep"))?;
+        let mut b = match own_operand(&mut k, primary)? {
+            Ok(b) => b,
+            Err(o) => return Ok(o),
+        };
+        let other_src = i.other.as_ref().unwrap_or(primary);
+        let mut other = match own_operand(&mut k, other_src)? {
+            Ok(b) => b,
+            Err(o) => return Ok(o),
+        };
         // the FFI's selection guard: the selectors are taken modulo these counts
-        let counts = |raw: &[f64]| fixture::counts(raw).ok_or_else(|| harness("fixture rejected"));
-        if !ffi::selection_valid(i.op, &counts(&raw)?, &counts(&other_raw)?) {
+        let counts = crate::own_builder::counts;
+        if !ffi::selection_valid(i.op, &counts(&b), &counts(&other)) {
             return Err(harness("fixture lacks selected entity"));
         }
         match run_rust(&i, &mut b, &mut other) {

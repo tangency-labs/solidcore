@@ -28,11 +28,15 @@
 #undef SmStitchCallback
 
 #include "sc_edgeuse_graph.h"
+#include "sc_stitch_digest.h"
+#include "sc_attribute_tags.h"
 
 #include <SmApiBrep.h>
 #include <SmApiGeneral.h>
 #include <SmApiPrimitives.h>
 #include <SmContext.h>
+#include <SmCurveCache.h>
+#include <SmHermiteCurve.h>
 #include <SmRegion.h>
 #include <SmShell.h>
 
@@ -137,6 +141,39 @@ SmBrep* build_block(Rd& rd, const char* path, SmStatus& status)
     int64_t mode = rd.idx();
     if (mode == 0)
         return build(rd, path, status);
+    if (mode == 3)
+    {
+        // `3 P1[3] D1[3] P2[3] D2[3] t0 t1 edge_tol vertex_tol`: a wire edge over one
+        // SmHermiteCurve, as CreateWireEdgeFromCurve binds it (the curve takes the edge as
+        // owner), with the edge's and its vertices' tolerances set (SetTolerance, not only
+        // if larger, no cascade). The shared export carries only B-spline and line curves
+        // exactly, so the Rust runner builds the same B-rep itself.
+        const SmContext& ctx = the_context();
+        SmPoint3d p1 = rd.vec();
+        SmVector3d d1 = rd.vec();
+        SmPoint3d p2 = rd.vec();
+        SmVector3d d2 = rd.vec();
+        double t0 = rd.num(), t1 = rd.num(), etol = rd.num(), vtol = rd.num();
+        SmBrep* brep = new (ctx) SmBrep();
+        SmHermiteCurve* c = new (ctx) SmHermiteCurve(p1, d1, p2, d2, 3);
+        SmEdge* edge = NULL;
+        status = brep->CreateWireEdgeFromCurve(c, SmExtent1d(t0, t1), edge);
+        if (status != SM_SUCCESS || edge == NULL)
+        {
+            delete brep;
+            return nullptr;
+        }
+        edge->SetTolerance(SmZoneTol3d(etol), FALSE, FALSE);
+        SmVertex* v = edge->GetStartVertex();
+        if (v != NULL)
+        {
+            v->SetTolerance(SmZoneTol3d(vtol), FALSE, FALSE);
+            SmVertex* ov = edge->GetOtherVertex(v);
+            if (ov != NULL)
+                ov->SetTolerance(SmZoneTol3d(vtol), FALSE, FALSE);
+        }
+        return brep;
+    }
     if (mode == 2)
     {
         SmVector3d p = rd.vec();
@@ -214,7 +251,8 @@ template <class T> void put_indices(std::vector<double>& o, Graph& g, int kind, 
 }
 
 // The B-rep after a mutating op: face, edge and vertex counts (GetFaces / GetEdges /
-// GetVertices), then each vertex's point in list order.
+// GetVertices), each vertex's point and tolerance in list order, then the topology of
+// sc_stitch_digest.h.
 void put_digest(SmBrep* brep, std::vector<double>& o)
 {
     SmTArray<SmFace*> fs;
@@ -227,7 +265,11 @@ void put_digest(SmBrep* brep, std::vector<double>& o)
     o.push_back((double)es.GetSize());
     o.push_back((double)vs.GetSize());
     for (ULONG i = 0; i < vs.GetSize(); i++)
+    {
         put_vec(o, vs[i]->GetPoint());
+        o.push_back((double)vs[i]->GetTolerance());
+    }
+    put_topology(brep, o);
 }
 
 // DoSimpleFaceStitch's validation, read-only: a VERBATIM copy of SmStitch.cpp:625-780 (commit
@@ -394,7 +436,61 @@ bool simple_face_guard(SmBrep* brep, const SmTArray<SmFace*>& keep, const SmTArr
 
 // ---- ops ---------------------------------------------------------------------------------
 
-void run_op(int32_t op, Rd& rd, const char* path, std::vector<double>& o)
+/// `probe` of `OP_SPLIT`: the curve cache the split-point solve built on the edge's curve
+/// (`SmCurve::CacheMakeOrValidate`'s `SmCurveCache`, `GetCacheObj`), as its tessellation
+/// left it: `present [n_spans (left right c0 c1 max_length max_chord_height_squared
+/// max_turning_angle_deg interval_min interval_max)*n]`, one `SmBezierAux1d` per span (the
+/// first nine values of `curve.curve_cache`'s `put_aux`, mirrored by `push_span` in
+/// crates/difftest's `heal_stitch_p1`). A failed split notifies the edge, not its curve
+/// (`SmEdge::Notify(SM_NO_PRE_EDIT)`), so the cache survives it; a split that reaches a
+/// copy fails before any trim, and one that trims the curve notifies it, which drops the
+/// cache. A drop answered by the line or ellipse fast path builds no cache.
+void put_curve_cache(SmEdge* e, std::vector<double>& o)
+{
+    const SmCurve* c = e != NULL ? e->GetCurve() : NULL;
+    SmCacheObj* obj = c != NULL ? c->GetCacheObj() : NULL;
+    if (obj == NULL || !obj->IsKindOf(SmCurveCache_TYPE))
+    {
+        o.push_back(0.0);
+        return;
+    }
+    SmCurveCache* cc = (SmCurveCache*)obj;
+    const ULONG n = cc->GetSpanCount();
+    o.push_back(1.0);
+    o.push_back((double)n);
+    for (ULONG i = 0; i < n; ++i)
+    {
+        const SmBezierAux1d& a = *cc->GetAt(i);
+        o.push_back((double)a.m_lLeft);
+        o.push_back((double)a.m_lRight);
+        o.push_back((double)a.m_aeConts[0]);
+        o.push_back((double)a.m_aeConts[1]);
+        o.push_back(a.m_dMaxLength);
+        o.push_back(a.m_dMaxChordHeightSquared);
+        o.push_back(a.m_dMaxTurningAngleDeg);
+        SmPoint3d s, e2;
+        SmExtent1d ivl;
+        a.GetEnds(*cc, s, e2, ivl);
+        o.push_back(ivl.GetMin());
+        o.push_back(ivl.GetMax());
+    }
+}
+
+// A tagged op's tail (issue #1462): on every way out of run_op after the build, the tags
+// the B-rep's faces and edges carry (put_tags), before the B-rep is deleted.
+struct TagTail
+{
+    SmBrep* brep;
+    std::vector<double>& o;
+    bool tagged;
+    ~TagTail()
+    {
+        if (tagged)
+            put_tags(o, brep);
+    }
+};
+
+void run_op(int32_t op, Rd& rd, const char* path, std::vector<double>& o, bool tagged)
 {
     SmStatus bst;
     Built b;
@@ -410,6 +506,18 @@ void run_op(int32_t op, Rd& rd, const char* path, std::vector<double>& o)
     Graph g;
     walk(brep, g);
     walk_more(brep, g);
+    // tagged: every face and edge (traversal order) its own tag first
+    if (tagged)
+    {
+        SmTArray<SmFace*> faces;
+        SmTArray<SmEdge*> edges;
+        for (SmFace* f : g.faces)
+            faces.Add(f);
+        for (SmEdge* e : g.edges)
+            edges.Add(e);
+        tag_objects(the_context(), faces, edges);
+    }
+    TagTail tail{brep, o, tagged};
     switch (op)
     {
     case OP_EXPORT:
@@ -466,6 +574,11 @@ void run_op(int32_t op, Rd& rd, const char* path, std::vector<double>& o)
         SmEdge* e = g.edges[(size_t)rd.idx()];
         SmVector3d p = rd.vec();
         double tol = rd.num();
+        // MakeVertexSplitEdge refuses every split with m_bEditingEnabled off, as SmMerge
+        // and SmBrep::SqueezeFace enable it at their calls
+        if (rd.flag())
+            brep->m_bEditingEnabled = TRUE;
+        const bool probe = rd.flag();
         sReasonType reason = NO_REASON;
         double dist = 0.0;
         SmVertex* nv = NULL;
@@ -480,6 +593,8 @@ void run_op(int32_t op, Rd& rd, const char* path, std::vector<double>& o)
             if (nv)
                 put_digest(brep, o);
         }
+        if (probe)
+            put_curve_cache(e, o);
         break;
     }
     case OP_VPAIRS:
@@ -596,6 +711,7 @@ void run_op(int32_t op, Rd& rd, const char* path, std::vector<double>& o)
                 o.push_back(d.GetMax().x);
                 o.push_back(d.GetMax().y);
             }
+            put_digest(brep, o);
         }
         break;
     }
@@ -607,13 +723,21 @@ void run_op(int32_t op, Rd& rd, const char* path, std::vector<double>& o)
         switch (which)
         {
         case 0:
-            o.push_back(st(SmApiStitch(p)));
+        {
+            SmStatus s = SmApiStitch(p);
+            o.push_back(st(s));
+            if (s == SM_SUCCESS && p != NULL)
+                put_digest(brep, o);
             break;
+        }
         case 1:
         {
             int64_t f = rd.idx() - 1;
             SmFace* face = f < 0 ? NULL : g.faces[(size_t)f];
-            o.push_back(st(SmApiStitch(p, face)));
+            SmStatus s = SmApiStitch(p, face);
+            o.push_back(st(s));
+            if (s == SM_SUCCESS && p != NULL)
+                put_digest(brep, o);
             break;
         }
         case 2:
@@ -629,6 +753,7 @@ void run_op(int32_t op, Rd& rd, const char* path, std::vector<double>& o)
                 o.push_back((double)n);
                 o.push_back(mv);
                 o.push_back(me);
+                put_digest(brep, o);
             }
             break;
         }
@@ -645,6 +770,7 @@ void run_op(int32_t op, Rd& rd, const char* path, std::vector<double>& o)
                 o.push_back((double)n);
                 o.push_back(mv);
                 o.push_back(me);
+                put_digest(brep, o);
             }
             break;
         }
@@ -657,7 +783,10 @@ void run_op(int32_t op, Rd& rd, const char* path, std::vector<double>& o)
             SmStatus s = SmApiUnifyNormals(p, face, n, flipped);
             o.push_back(st(s));
             if (s == SM_SUCCESS)
+            {
                 put_indices(o, g, 3, flipped);
+                put_digest(brep, o);
+            }
             break;
         }
         case 5:
@@ -667,6 +796,8 @@ void run_op(int32_t op, Rd& rd, const char* path, std::vector<double>& o)
             double mv = 0.0, me = 0.0;
             SmStatus s = SmApiSimpleFaceStitch(p, keep, del, n, mv, me);
             o.push_back(st(s));
+            if (s == SM_SUCCESS)
+                put_digest(brep, o);
             break;
         }
         default:
@@ -683,6 +814,7 @@ void run_op(int32_t op, Rd& rd, const char* path, std::vector<double>& o)
                 o.push_back((double)lam);
                 o.push_back(mv);
                 o.push_back(me);
+                put_digest(brep, o);
             }
             break;
         }
@@ -702,7 +834,9 @@ SC_EXPORT int32_t sc_heal_stitch_p1_eval(int32_t op, const char* path, const dou
     SC_TRY
     Rd rd{in, 0};
     std::vector<double> o;
-    run_op(op, rd, path, o);
+    // op + 100: the op tagged (TagTail)
+    const bool tagged = op >= 100;
+    run_op(tagged ? op - 100 : op, rd, path, o, tagged);
     return sc_copy_out(o.data(), (int64_t)o.size(), out, cap, out_len);
     SC_CATCH
 }

@@ -294,7 +294,7 @@ fn builds(i: &Inputs, data: &BrepData) -> bool {
         return true;
     };
     let mut store = AttributeStore::new();
-    let mut records: BTreeMap<ObjectKey, Topology> = BTreeMap::new();
+    let mut records: solidcore::topology::topology::NotifyRecords = solidcore::topology::topology::NotifyRecords::new();
     let mut env = TopologyEnv {
         all_attributes: &[],
         attributes: &mut store,
@@ -314,7 +314,7 @@ fn builds(i: &Inputs, data: &BrepData) -> bool {
     };
     !matches!(
         make_topology_from_data(&mut k, &mut b, &mut data, &mut env, options),
-        Err(SolidError::InvalidInput { .. })
+        Err(SolidError::InvalidInput { .. } | SolidError::PortInvariant { .. })
     )
 }
 
@@ -400,7 +400,7 @@ fn cpp(i: &Inputs) -> Result<Output, HarnessError> {
 fn status(e: &SolidError) -> i64 {
     match e {
         SolidError::Upstream { code, .. } => i64::from(*code),
-        SolidError::InvalidInput { .. } => -2,
+        SolidError::InvalidInput { .. } | SolidError::PortInvariant { .. } => -2,
         _ => -1,
     }
 }
@@ -591,7 +591,7 @@ fn rust(i: &Inputs) -> Result<Dump, HarnessError> {
     let mut out = Vec::new();
     let mut b = Brep::new_with_infinite_region().map_err(|e| harness(e.to_string()))?;
     let mut store = AttributeStore::new();
-    let mut records: BTreeMap<ObjectKey, Topology> = BTreeMap::new();
+    let mut records: solidcore::topology::topology::NotifyRecords = solidcore::topology::topology::NotifyRecords::new();
     let mut env = TopologyEnv {
         all_attributes: &[],
         attributes: &mut store,
@@ -735,7 +735,7 @@ fn rust(i: &Inputs) -> Result<Dump, HarnessError> {
                 &mut b,
                 &penv,
                 &mut notify,
-                &curve,
+                &Curve::from(curve),
                 v(dir),
                 v(reference),
                 trim_type,

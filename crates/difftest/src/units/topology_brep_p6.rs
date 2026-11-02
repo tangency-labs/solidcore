@@ -1,12 +1,16 @@
-//! Native B-rep p6 operations over independently imported raw topology.
+//! Native B-rep p6 operations. The Rust side builds a wire edge, face, network or
+//! kind-5 net fixture itself ([`crate::own_builder`]) and reads an `.smb` file with the
+//! Rust reader ([`crate::own_reader::file_in_order`]), both renumbered into the shim's
+//! walk order: no C++ export reaches the Rust side.
 //! Closure passes compare actual statuses, output reset, shell ownership, context
-//! mark advancement/locks, and every face-use mark. Copy compares only empty inputs.
+//! mark advancement/locks, and every face-use mark. Copy compares the same fixed
+//! state plus the whole destination B-rep graph (its copied edges' intervals,
+//! tolerances and sampled curves, and their vertices), including empty-input controls.
 //! Op 3 runs `MakeFaceTopology` one or more times (each on the B-rep the previous
 //! call left) with real loops of edge uses, loop vertices, surfaces and UV curves,
 //! then compares every call's status and outputs, the context marks and the whole
 //! post-operation graph (the `topology.brep_p10` traversal, with edge marks).
 
-use std::collections::BTreeMap;
 
 use super::topology_brep_p10::{orient_code, Graph};
 use super::topology_vertexuse::{self as shared, BrepIn, CrvIn, SrfIn};
@@ -202,6 +206,31 @@ fn path_of(i: &Inputs) -> Result<String, HarnessError> {
     shared::path_of(brep)
 }
 
+/// Split the tagged post-operation graph tail that follows the fixed `header` prefix:
+/// integer items keep their `[0, value]` pair in `state`, doubles go to `geom` with a
+/// `1` marker in `state` (the shim's `post::Out` encoding).
+fn tagged_tail(output: &[f64], header: usize) -> Result<(Vec<i64>, Vec<f64>), HarnessError> {
+    let mut ints: Vec<i64> = output
+        .get(..header)
+        .ok_or_else(|| harness("short output"))?
+        .iter()
+        .map(|v| *v as i64)
+        .collect();
+    let mut values = Vec::new();
+    for pair in output.get(header..).unwrap_or(&[]).chunks(2) {
+        let [tag, v] = pair else {
+            return Err(harness("odd tagged output"));
+        };
+        if *tag == 0.0 {
+            ints.extend([0, *v as i64]);
+        } else {
+            ints.push(1);
+            values.push(*v);
+        }
+    }
+    Ok((ints, values))
+}
+
 fn request(i: &Inputs, c: [usize; 10]) -> Request {
     Request {
         op: i.op,
@@ -244,33 +273,22 @@ impl UnitDiff for Runner {
                 "native fixture constructor: {output:?}"
             )));
         }
-        if request.op != 0 {
+        if request.op == 2 {
             return Ok(Output::new().ints(
                 "state",
                 output.into_iter().map(|v| v as i64).collect::<Vec<_>>(),
             ));
         }
-        // op 0: the fixed state (status, outputs, marks of each face use, face-use
-        // shells, counts), then the tagged post-split graph
-        let header = 3 + MARKS.len() * (2 + c[2]) + c[2] + 7;
-        let mut ints: Vec<i64> = output
-            .get(..header)
-            .ok_or_else(|| harness("short output"))?
-            .iter()
-            .map(|v| *v as i64)
-            .collect();
-        let mut values = Vec::new();
-        for pair in output.get(header..).unwrap_or(&[]).chunks(2) {
-            let [tag, v] = pair else {
-                return Err(harness("odd tagged output"));
-            };
-            if *tag == 0.0 {
-                ints.extend([0, *v as i64]);
-            } else {
-                ints.push(1);
-                values.push(*v);
-            }
-        }
+        // op 0/1: the fixed state (status, outputs, marks of each face use, face-use
+        // shells, counts), then the tagged post-operation graph (the split B-rep for
+        // op 0, the copy destination for op 1)
+        let prefix = match request.op {
+            0 => 3,
+            1 => 1 + usize::from(i.flags & 2 != 0),
+            _ => return Err(harness("invalid operation")),
+        };
+        let header = prefix + MARKS.len() * (2 + c[2]) + c[2] + 7;
+        let (ints, values) = tagged_tail(&output, header)?;
         Ok(Output::new().ints("state", ints).values("geom", values))
     }
 
@@ -279,10 +297,9 @@ impl UnitDiff for Runner {
         if i.op == 3 {
             return make_faces_rust(&i);
         }
-        let fixture = ffi::export(&path_of(&i)?, &block(&i)?).map_err(harness)?;
-        let c = counts(&fixture.graph).ok_or_else(|| harness("fixture construction failed"))?;
+        let mut b = rust_fixture(&i)?;
+        let c = crate::own_builder::counts(&b);
         let request = request(&i, c);
-        let (mut b, _) = shared::import(&fixture.graph)?;
         // SmBrep.cpp:549-552: even an empty native B-rep owns a void
         // infinite region. Re-express that input fixture, not an empty arena.
         b.set_key(ObjectKey(0xB000_0000));
@@ -435,13 +452,15 @@ impl UnitDiff for Runner {
             lock.release(std::slice::from_mut(&mut k.context))
                 .map_err(harness)?;
         }
-        if request.op != 0 {
+        if request.op == 2 {
             return Ok(Output::new().ints("state", output));
         }
-        // op 0: the whole post-split graph
-        let g = Graph::walk(&b).map_err(harness)?;
+        // op 0/1: the whole post-operation graph of the B-rep the operation changed
+        // (the split B-rep, or the copy destination)
+        let graph_brep = if request.op == 0 { &b } else { &destination };
+        let g = Graph::walk(graph_brep).map_err(harness)?;
         let mut w = W::default();
-        export_graph(&b, &g, &mut w).map_err(harness)?;
+        export_graph(graph_brep, &g, &mut w).map_err(harness)?;
         output.extend(w.ints);
         Ok(Output::new().ints("state", output).values("geom", w.values))
     }
@@ -923,16 +942,131 @@ fn export_graph(b: &Brep, g: &Graph, w: &mut W) -> Result<(), SolidError> {
     Ok(())
 }
 
+fn own_face_owner(f: FaceId) -> ObjectRef {
+    key_of(EntityRef::Face(f))
+}
+
+fn own_edge_owner(e: EdgeId) -> (ObjectRef, ObjectRef) {
+    (
+        key_of(EntityRef::Edge(e)),
+        key_of(EntityRef::Brep(solidcore::topology::BrepId::from_index(0))),
+    )
+}
+
+/// The shim's build conventions (`sc_topology_fixture.h`), with the geometry owned
+/// under this runner's [`key_of`] identities.
+const CONVENTIONS: crate::own_builder::Conventions<'static> = crate::own_builder::Conventions {
+    face_owner: &own_face_owner,
+    edge_owner: &own_edge_owner,
+    ..crate::own_builder::Conventions::TOPOLOGY_FIXTURE
+};
+
+/// The shim's kind-5 build (`sc_topology_fixture.h`): a shell vertex
+/// (`MakeShellVertex`) at each point, then per edge `MakeEdgeTopology` between its
+/// points' vertices with its curve (the given B-spline, else a `CreateLineSegment`
+/// line), set as the wire network's (`SetCurve(c, TRUE)`, `SetOwner`, the natural
+/// interval, `SM_OT_SAME`). The first failure ends the build with its status.
+fn build_net(
+    k: &mut Kernel,
+    b: &mut Brep,
+    points: &[[f64; 3]],
+    edges: &[(usize, usize, Option<Curve>)],
+) -> Result<(), SolidError> {
+    use solidcore::topology::brep::p2::ArenaNotifyState;
+    let mut state = ArenaNotifyState::new(b);
+    let region = b.infinite_region();
+    let mut vs = Vec::new();
+    for p in points {
+        let (_, v) = {
+            let mut env = state.env(None);
+            solidcore::topology::brep::p9::make_shell_vertex(
+                b,
+                region,
+                Vec3::from_array(*p),
+                &mut env,
+            )?
+        };
+        state.seed(b);
+        vs.push(v);
+    }
+    let bad = || SolidError::invalid_input("brep_p6 net", "edge point index");
+    for (a, e, c) in edges {
+        let (va, ve) = (*vs.get(*a).ok_or_else(bad)?, *vs.get(*e).ok_or_else(bad)?);
+        let c = match c {
+            Some(c) => c.clone(),
+            None => crate::own_builder::line(b.vertex(va)?.point, b.vertex(ve)?.point)?,
+        };
+        {
+            let mut env = state.env(None);
+            crate::own_builder::edge_with_curve(k, b, &mut env, va, ve, c)?;
+        }
+        state.seed(b);
+    }
+    Ok(())
+}
+
+/// The Rust B-rep of a case's fixture, built by the Rust kernel
+/// ([`crate::own_builder`] under [`CONVENTIONS`]; a kind-5 net by [`build_net`]) or,
+/// for an `.smb` file (upstream's or a local fixture), read by the Rust reader and
+/// renumbered under [`CONVENTIONS`] ([`crate::own_reader::file_in_order`]), or the
+/// build's or read's error.
+fn own_fixture(i: &Inputs) -> Result<Option<Result<Brep, SolidError>>, HarnessError> {
+    use crate::own_builder::{build_as, finish, in_new_brep, Built};
+    let mut k = Kernel::default();
+    let built = if let Some(net) = &i.net {
+        let edges = net
+            .edges
+            .iter()
+            .map(|e| {
+                Ok((
+                    e.a,
+                    e.b,
+                    e.curve.as_ref().map(curve_of).transpose()?.map(Curve::from),
+                ))
+            })
+            .collect::<Result<Vec<_>, HarnessError>>()?;
+        let raw = in_new_brep(&mut k, |k, b| build_net(k, b, &net.points, &edges))?;
+        Some(finish(&mut k, raw, false, false, &CONVENTIONS)?)
+    } else if let Some(built) = build_as(&mut k, brep_of(i)?, false, false, &CONVENTIONS)? {
+        Some(built)
+    } else {
+        // an `.smb` file: the Rust reader's B-rep in the shim's walk order, its geometry
+        // owned under this runner's identities (no C++ export reaches the Rust side)
+        let BrepIn::File { rebuild, .. } = brep_of(i)? else {
+            return Err(harness("own builder: a non-file source was not built"));
+        };
+        let path = path_of(i)?;
+        Some(crate::own_reader::file_in_order(
+            &mut k,
+            &path,
+            *rebuild,
+            false,
+            false,
+            &CONVENTIONS,
+        )?)
+    };
+    Ok(built.map(|b| match b {
+        Built::Brep(b) => Ok(*b),
+        Built::Failed(e) => Err(e),
+    }))
+}
+
+/// The Rust fixture B-rep, built or read by [`own_fixture`].
+fn rust_fixture(i: &Inputs) -> Result<Brep, HarnessError> {
+    match own_fixture(i)? {
+        Some(Ok(b)) => Ok(b),
+        Some(Err(e)) => Err(harness(format!("fixture construction failed: {e}"))),
+        None => Err(harness("fixture construction failed: no fixture")),
+    }
+}
+
 fn make_faces_rust(i: &Inputs) -> Result<Output, HarnessError> {
-    let fixture = ffi::export(&path_of(i)?, &block(i)?).map_err(harness)?;
-    counts(&fixture.graph).ok_or_else(|| harness("fixture construction failed"))?;
-    let (mut b, _) = shared::import(&fixture.graph)?;
+    let mut b = rust_fixture(i)?;
     b.set_key(ObjectKey(0xB000_0000));
-    // The fixture's edges own their curves, as its faces own their surfaces (the import
-    // gives those the face names of `key_of`). The ray fires of the infinite-region
-    // search find an edge from its curve's owner, under the runner's names.
-    let brep = solidcore::topology::brep::p2::brep_ref(&b);
-    crate::util::own_edge_curves(&mut b, &|e| key_of(EntityRef::Edge(e)), Some(brep));
+    // The fixture's edges own their curves and its faces their surfaces under the
+    // runner's `key_of` names, as the build gives them ([`CONVENTIONS`]); the ray fires of
+    // the infinite-region search find an edge from its curve's owner. No owner is added
+    // to geometry the build left without one.
     let resolved = resolve(i, &b)?;
     let mut records = seeded_records(&b);
     let mut attributes = AttributeStore::default();
@@ -1027,7 +1161,7 @@ fn make_faces_rust(i: &Inputs) -> Result<Output, HarnessError> {
 
 /// A default `SmTopology` record for every object of `b` (and the B-rep), keyed by
 /// [`key_of`]; the port adds those of the objects it makes.
-fn seeded_records(b: &Brep) -> BTreeMap<ObjectKey, Topology> {
+fn seeded_records(b: &Brep) -> solidcore::topology::topology::NotifyRecords {
     let mut all = vec![EntityRef::Brep(solidcore::topology::BrepId::from_index(0))];
     all.extend(b.regions().ids().map(EntityRef::Region));
     all.extend(b.shells().ids().map(EntityRef::Shell));
@@ -1246,5 +1380,86 @@ fn gen_faces(rng: &mut Rng) -> Inputs {
         repeat: 1,
         lock_mask: 0,
         flags: 0,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::compare::compare;
+
+    /// The fixed op-1 prefix length (status, optional copied count, marks, face-use
+    /// shells, counts) before the tagged destination graph, from the fixture's counts.
+    fn copy_prefix_len(i: &Inputs) -> usize {
+        let path = path_of(i).unwrap();
+        let input = block(i).unwrap();
+        let fixture = ffi::export(&path, &input).unwrap();
+        let c = counts(&fixture.graph).unwrap();
+        1 + usize::from(i.flags & 2 != 0) + MARKS.len() * (2 + c[2]) + c[2] + 7
+    }
+
+    fn case(i: &Inputs) -> Case {
+        Case {
+            unit: "topology.brep_p6".into(),
+            name: "copy_geometry_sensitivity".into(),
+            source: crate::CaseSource::Inline,
+            inputs: serde_json::to_value(i).unwrap(),
+        }
+    }
+
+    /// The tagged decoder keeps the old integer prefix and partitions the appended
+    /// graph, and a truncated/odd record is a harness error, not a silent pass.
+    #[test]
+    fn tagged_tail_partitions_old_prefix_and_graph() {
+        let output = [1.0, 2.0, 0.0, 3.0, 1.0, 4.5, 0.0, 5.0, 1.0, 6.5];
+        let (ints, values) = tagged_tail(&output, 2).unwrap();
+        assert_eq!(ints, [1, 2, 0, 3, 1, 0, 5, 1]);
+        assert_eq!(values, [4.5, 6.5]);
+        assert!(tagged_tail(&output, 11).is_err());
+        assert!(tagged_tail(&[1.0, 2.0, 0.0], 2).is_err());
+    }
+
+    /// The old copy comparison only saw counts, marks and statuses. This case copies
+    /// one network edge; the destination graph now also compares its copied curve's
+    /// natural interval, its evaluations (which move with its control points) and its
+    /// end vertex.
+    #[test]
+    fn copy_destination_geometry_is_compared_not_just_counts_and_marks() {
+        let i: Inputs = serde_json::from_value(serde_json::json!({
+            "brep": { "kind": "network" },
+            "op": 1, "edges": [0], "flags": 2
+        }))
+        .unwrap();
+        let case = case(&i);
+        let cpp = Runner.run_cpp(&case).unwrap();
+        let rust = Runner.run_rust(&case).unwrap();
+        let diff = compare(&cpp, &rust, &[]);
+        assert!(diff.pass(), "{diff:?}");
+
+        // Destination graph doubles: [0] B-rep tolerance, [1..4] edge tolerance and
+        // interval, [4..6] copied curve interval, [6..21] five evaluations,
+        // [21..25] start vertex point/tolerance, [25..29] end vertex point/tolerance.
+        let geom = rust.values.get("geom").expect("destination geometry");
+        assert_eq!(geom.len(), 29);
+
+        let n = copy_prefix_len(&i);
+        let old_cpp = Output::new().ints("state", cpp.ints["state"][..n].to_vec());
+        let old_rust = Output::new().ints("state", rust.ints["state"][..n].to_vec());
+        assert!(compare(&old_cpp, &old_rust, &[]).pass());
+
+        for (what, index) in [
+            ("copied curve natural interval", 4usize),
+            ("copied curve evaluation", 6),
+            ("copied edge end vertex", geom.len() - 3),
+        ] {
+            let mut changed = rust.clone();
+            changed.values.get_mut("geom").unwrap()[index] += 1.0;
+            assert!(
+                !compare(&cpp, &changed, &[]).pass(),
+                "{what} at geom[{index}] must be compared"
+            );
+            // the old prefix is untouched, so the former comparison would still pass
+            assert!(compare(&old_cpp, &old_rust, &[]).pass());
+        }
     }
 }

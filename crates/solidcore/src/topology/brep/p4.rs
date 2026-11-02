@@ -89,12 +89,12 @@
 
 use crate::error::{ignore_status, ignored, EntityRef, Result, SolidError};
 use crate::geom::a_object::BREP_TYPE;
-use crate::geom::attribute::{AttributeStore, ObjectKey};
+use crate::geom::attribute::AttributeStore;
 use crate::geom::context::{Context, MarkLock, ALL_MARKS};
 use crate::geom::extent1d::Extent1d;
 use crate::geom::extent2d::Extent2d;
 use crate::geom::object::{NotifyOperation, ObjectRef};
-use crate::heal::stitch::p1::{DefaultStitchCallback, Stitch};
+use crate::heal::stitch::p1::{DefaultStitchCallback, Stitch, StitchCallback};
 use crate::heal::stitch::p2::MinGapRequest;
 use crate::kernel::Kernel;
 use crate::math::{Point2, Vec3, EFF_ZERO};
@@ -112,14 +112,12 @@ use crate::topology::face::p1 as face1;
 use crate::topology::face::p2 as face2;
 use crate::topology::face::p3 as face3;
 use crate::topology::shell::{self, ShellMembers, ShellType};
-use crate::topology::topology::Topology;
 use crate::topology::topology_traverser::{self, Entity, Marks};
 use crate::topology::{
     loopuse, vertex, vertexuse, Brep, EdgeId, EdgeuseId, EdgeuseOwner, FaceId, FaceuseId, Loop,
     LoopId, Loopuse, LoopuseId, LoopuseStart, RegionId, Shell, ShellId, VertexId, VertexuseId,
     VertexuseOwner,
 };
-use std::collections::BTreeMap;
 
 const OP_DELETE_EDGE: &str = "topology::brep::p4::delete_edge";
 const OP_DELETE_VERTEX: &str = "topology::brep::p4::delete_vertex";
@@ -131,7 +129,7 @@ const OP_DESTROY: &str = "topology::brep::p4::destroy";
 /// go through (as [`NotifyEnv`], with the kernel's context).
 pub struct DeleteEnv<'a> {
     /// The topology records (`SmTopology` members) of the notified objects.
-    pub records: &'a mut BTreeMap<ObjectKey, Topology>,
+    pub records: &'a mut crate::topology::topology::NotifyRecords,
     /// The attribute store.
     pub attributes: &'a mut AttributeStore,
     /// The identity each topology entity is notified under.
@@ -166,7 +164,7 @@ impl core::fmt::Debug for DeleteEnv<'_> {
 /// notification state (the B-rep keeps no attributes for its records; upstream on
 /// objects without attributes).
 pub(crate) fn with_local_env<T>(f: impl FnOnce(&mut DeleteEnv<'_>) -> Result<T>) -> Result<T> {
-    let mut records = BTreeMap::new();
+    let mut records = crate::topology::topology::NotifyRecords::new();
     let mut attributes = AttributeStore::default();
     let mut env = DeleteEnv {
         records: &mut records,
@@ -488,6 +486,7 @@ fn face_remove_loop(b: &mut Brep, f: FaceId, l: Option<LoopId>) -> Result<()> {
 /// one to `del_f`. `SetSurface` is `void` upstream; the only failure the port can
 /// raise is [`SolidError::Unported`] from its notification.
 fn swap_face_surfaces(
+    k: &Kernel,
     b: &mut Brep,
     key_of: &dyn Fn(EntityRef) -> ObjectRef,
     surv_f: FaceId,
@@ -497,11 +496,11 @@ fn swap_face_surfaces(
     deref(b.face(surv_f)?.surface.as_ref(), OP_DELETE_EDGE)?;
     let del_surface = deref(b.face_mut(del_f)?.surface.take(), OP_DELETE_EDGE)?;
     let surv_this = key_of(EntityRef::Face(surv_f));
-    let surv_old = face1::set_surface(b, surv_f, surv_this, del_surface, false)?;
+    let surv_old = face1::set_surface(k, b, surv_f, surv_this, del_surface, false)?;
     // the survivor's surface was checked above
     let surv_old = deref(surv_old, OP_DELETE_EDGE)?;
     let del_this = key_of(EntityRef::Face(del_f));
-    face1::set_surface(b, del_f, del_this, surv_old, false)?;
+    face1::set_surface(k, b, del_f, del_this, surv_old, false)?;
     Ok(())
 }
 
@@ -984,9 +983,12 @@ fn delete_manifold_edge(
                 // when DelF owns the surface to keep
                 if surface_of(b, df)? == Some(keep) {
                     // swap the surfaces between the faces
-                    swap_face_surfaces(b, env.key_of, sf, df)?;
+                    swap_face_surfaces(k, b, env.key_of, sf, df)?;
                     if flip_face {
-                        ignore_status(face1::flip_face_orientation(b, sf))?;
+                        ignore_status(crate::error::passed_on(
+                            face1::flip_face_orientation(b, sf),
+                            k.fixes.brep_edit_statuses_pass_on,
+                        )?)?;
                     }
                 }
                 // else: WARN (asked to keep a surface not used by the faces)
@@ -1067,10 +1069,16 @@ fn delete_manifold_edge(
         // Normal case: need to remove vertexuses.
         let vu = ner(eu1::vertexuse(b, eu)?, OP)?;
         let v = ner(vertexuse::vertex(b, vu)?, OP)?;
-        ignore_status(vertex_remove(b, v, vu, OP))?;
+        ignore_status(crate::error::passed_on(
+            vertex_remove(b, v, vu, OP),
+            k.fixes.brep_edit_statuses_pass_on,
+        )?)?;
         b.remove_vertexuse_record(vu)?;
         let vu_rad_mate = ner(eu1::vertexuse(b, eu_rad_mate)?, OP)?;
-        ignore_status(vertex_remove(b, v, vu_rad_mate, OP))?;
+        ignore_status(crate::error::passed_on(
+            vertex_remove(b, v, vu_rad_mate, OP),
+            k.fixes.brep_edit_statuses_pass_on,
+        )?)?;
         b.remove_vertexuse_record(vu_rad_mate)?;
     }
 
@@ -1090,15 +1098,24 @@ fn delete_manifold_edge(
         // remove pMate Vertex vertex uses
         let vu_mate = ner(eu1::vertexuse(b, eu_mate)?, OP)?;
         let v_mate = ner(vertexuse::vertex(b, vu_mate)?, OP)?;
-        ignore_status(vertex_remove(b, v_mate, vu_mate, OP))?;
+        ignore_status(crate::error::passed_on(
+            vertex_remove(b, v_mate, vu_mate, OP),
+            k.fixes.brep_edit_statuses_pass_on,
+        )?)?;
         b.remove_vertexuse_record(vu_mate)?;
         let vu_rad = ner(eu1::vertexuse(b, eu_rad)?, OP)?;
-        ignore_status(vertex_remove(b, v_mate, vu_rad, OP))?;
+        ignore_status(crate::error::passed_on(
+            vertex_remove(b, v_mate, vu_rad, OP),
+            k.fixes.brep_edit_statuses_pass_on,
+        )?)?;
         b.remove_vertexuse_record(vu_rad)?;
     }
 
     for x in [eu, eu_mate, eu_rad, eu_rad_mate] {
-        ignore_status(edge_remove(b, e, x, OP))?;
+        ignore_status(crate::error::passed_on(
+            edge_remove(b, e, x, OP),
+            k.fixes.brep_edit_statuses_pass_on,
+        )?)?;
     }
 
     for (l, x) in [
@@ -1111,7 +1128,10 @@ fn delete_manifold_edge(
             && loopuse::eu_or_vu(b, l)? == Some(EntityRef::Edgeuse(x))
         {
             let c = ccw(b, x)?;
-            ignore_status(loopuse::set_edgeuse(b, l, c))?;
+            ignore_status(crate::error::passed_on(
+                loopuse::set_edgeuse(b, l, c),
+                k.fixes.brep_edit_statuses_pass_on,
+            )?)?;
         }
     }
 
@@ -1220,9 +1240,15 @@ fn delete_manifold_edge(
     let fu_del = deref(fu_del, OP)?;
     let fu_del_mate = deref(fu_del_mate, OP)?;
     let s = deref(eu1::faceuse_shell(b, fu_del)?, OP)?;
-    ignore_status(shell_remove_faceuse(b, s, fu_del, OP))?;
+    ignore_status(crate::error::passed_on(
+        shell_remove_faceuse(b, s, fu_del, OP),
+        k.fixes.brep_edit_statuses_pass_on,
+    )?)?;
     let s = deref(eu1::faceuse_shell(b, fu_del_mate)?, OP)?;
-    ignore_status(shell_remove_faceuse(b, s, fu_del_mate, OP))?;
+    ignore_status(crate::error::passed_on(
+        shell_remove_faceuse(b, s, fu_del_mate, OP),
+        k.fixes.brep_edit_statuses_pass_on,
+    )?)?;
     b.remove_faceuse_record(fu_del)?;
     b.remove_faceuse_record(fu_del_mate)?;
     destroy_face(k, b, env, del_f)?;
@@ -1243,13 +1269,20 @@ fn edgeuse_normal(
     uv3: &mut Vec3,
     op: &'static str,
 ) -> Result<Vec3> {
-    if let Some(e) = ignored(eu3::normalized_evaluate(k, b, eu, 0.5, true, false, true))? {
+    if let Some(e) = ignored(crate::error::passed_on(
+        eu3::normalized_evaluate(k, b, eu, 0.5, true, false, true),
+        k.fixes.brep_edit_statuses_pass_on,
+    )?)? {
         *uv3 = e.point;
     }
     let uv = Point2::new(uv3.x, uv3.y);
     let f = deref(srf, op)?;
     let s = deref(b.face(f)?.surface.as_ref(), op)?;
-    Ok(ignored(s.evaluate_normal(k, uv, Side::Left, Side::Left))?.unwrap_or(Vec3::UNDEF))
+    Ok(ignored(crate::error::passed_on(
+        s.evaluate_normal(k, uv, Side::Right, Side::Right),
+        k.fixes.brep_edit_statuses_pass_on,
+    )?)?
+    .unwrap_or(Vec3::UNDEF))
 }
 
 /// The lamina branch of [`delete_edge`].
@@ -1296,24 +1329,42 @@ fn delete_lamina_edge(
         // Normal case: need to remove two vertexuses.
         let vu = ner(eu1::vertexuse(b, eu)?, OP)?;
         let v = ner(vertexuse::vertex(b, vu)?, OP)?;
-        ignore_status(vertex_remove(b, v, vu, OP))?;
+        ignore_status(crate::error::passed_on(
+            vertex_remove(b, v, vu, OP),
+            k.fixes.brep_edit_statuses_pass_on,
+        )?)?;
         b.remove_vertexuse_record(vu)?;
         let vu_mate = ner(eu1::vertexuse(b, eu_mate)?, OP)?;
         let v_mate = ner(vertexuse::vertex(b, vu_mate)?, OP)?;
-        ignore_status(vertex_remove(b, v_mate, vu_mate, OP))?;
+        ignore_status(crate::error::passed_on(
+            vertex_remove(b, v_mate, vu_mate, OP),
+            k.fixes.brep_edit_statuses_pass_on,
+        )?)?;
         b.remove_vertexuse_record(vu_mate)?;
     }
 
-    ignore_status(edge_remove(b, e, eu, OP))?;
-    ignore_status(edge_remove(b, e, eu_mate, OP))?;
+    ignore_status(crate::error::passed_on(
+        edge_remove(b, e, eu, OP),
+        k.fixes.brep_edit_statuses_pass_on,
+    )?)?;
+    ignore_status(crate::error::passed_on(
+        edge_remove(b, e, eu_mate, OP),
+        k.fixes.brep_edit_statuses_pass_on,
+    )?)?;
 
     if loopuse::eu_or_vu(b, lu)? == Some(EntityRef::Edgeuse(eu)) {
         let c = ccw(b, eu)?;
-        ignore_status(loopuse::set_edgeuse(b, lu, c))?;
+        ignore_status(crate::error::passed_on(
+            loopuse::set_edgeuse(b, lu, c),
+            k.fixes.brep_edit_statuses_pass_on,
+        )?)?;
     }
     if loopuse::eu_or_vu(b, lu_mate)? == Some(EntityRef::Edgeuse(eu_mate)) {
         let c = ccw(b, eu_mate)?;
-        ignore_status(loopuse::set_edgeuse(b, lu_mate, c))?;
+        ignore_status(crate::error::passed_on(
+            loopuse::set_edgeuse(b, lu_mate, c),
+            k.fixes.brep_edit_statuses_pass_on,
+        )?)?;
     }
 
     delete_edgeuse(k, b, env, eu)?;
@@ -1349,23 +1400,38 @@ fn delete_wire_edge(
     const OP: &str = OP_DELETE_EDGE;
     let shell = ner(eu1::shell(b, eu)?, OP)?;
 
-    ignore_status(edge_remove(b, e, eu, OP))?;
-    ignore_status(edge_remove(b, e, eu_mate, OP))?;
+    ignore_status(crate::error::passed_on(
+        edge_remove(b, e, eu, OP),
+        k.fixes.brep_edit_statuses_pass_on,
+    )?)?;
+    ignore_status(crate::error::passed_on(
+        edge_remove(b, e, eu_mate, OP),
+        k.fixes.brep_edit_statuses_pass_on,
+    )?)?;
 
     let vu1 = ner(eu1::vertexuse(b, eu)?, OP)?;
     let v1 = ner(vertexuse::vertex(b, vu1)?, OP)?;
-    ignore_status(vertex_remove(b, v1, vu1, OP))?;
+    ignore_status(crate::error::passed_on(
+        vertex_remove(b, v1, vu1, OP),
+        k.fixes.brep_edit_statuses_pass_on,
+    )?)?;
 
     let vu2 = ner(eu1::vertexuse(b, eu_mate)?, OP)?;
     let v2 = ner(vertexuse::vertex(b, vu2)?, OP)?;
-    ignore_status(vertex_remove(b, v2, vu2, OP))?;
+    ignore_status(crate::error::passed_on(
+        vertex_remove(b, v2, vu2, OP),
+        k.fixes.brep_edit_statuses_pass_on,
+    )?)?;
 
     let mut vu1 = Some(vu1);
     let mut vu2 = Some(vu2);
     for (v, slot) in [(v1, &mut vu1), (v2, &mut vu2)] {
         let Some(vu) = *slot else { continue };
         if vertex::vertexuses(b, v)?.is_empty() {
-            ignore_status(vertex_post_insert(b, v, vu))?;
+            ignore_status(crate::error::passed_on(
+                vertex_post_insert(b, v, vu),
+                k.fixes.brep_edit_statuses_pass_on,
+            )?)?;
             b.vertexuse_mut(vu)?.owner = VertexuseOwner::Shell(Some(shell));
         } else {
             // the vertex is connected to some other edges: delete the vertex use
@@ -1499,7 +1565,10 @@ fn wire_split_shell(
         }
         // transfer faceuses from the old shell to the new shell
         for &fu in &faceuses2 {
-            ignore_status(shell_remove_faceuse(b, shell, fu, OP))?;
+            ignore_status(crate::error::passed_on(
+                shell_remove_faceuse(b, shell, fu, OP),
+                k.fixes.brep_edit_statuses_pass_on,
+            )?)?;
             shell_post_insert_faceuse(b, new_shell, fu)?;
         }
     }
@@ -1616,10 +1685,16 @@ fn delete_vertex_in(
             && shell_head(b, shell)? == Some(EntityRef::Vertexuse(vu))
         {
             let region = deref(shell_region(b, shell)?, OP)?;
-            ignore_status(shell::region_remove_shell(b, region, shell))?;
+            ignore_status(crate::error::passed_on(
+                shell::region_remove_shell(b, region, shell),
+                k.fixes.brep_edit_statuses_pass_on,
+            )?)?;
             destroy_shell(k, b, env, shell)?;
         }
-        ignore_status(vertex_remove(b, v, vu, OP))?;
+        ignore_status(crate::error::passed_on(
+            vertex_remove(b, v, vu, OP),
+            k.fixes.brep_edit_statuses_pass_on,
+        )?)?;
         b.remove_vertex_record(v)?;
         b.remove_vertexuse_record(vu)?;
         return Ok(());
@@ -1647,17 +1722,29 @@ fn delete_vertex_in(
         ignore_status(face_notify(k, b, env, f, NotifyOperation::PreEdit, body))?;
 
         // remove and delete vertex to loop connections
-        ignore_status(faceuse_remove(b, fu1, lu1, OP))?;
+        ignore_status(crate::error::passed_on(
+            faceuse_remove(b, fu1, lu1, OP),
+            k.fixes.brep_edit_statuses_pass_on,
+        )?)?;
         let fu2 = deref(loopuse::faceuse(b, lu2)?, OP)?;
-        ignore_status(faceuse_remove(b, fu2, lu2, OP))?;
+        ignore_status(crate::error::passed_on(
+            faceuse_remove(b, fu2, lu2, OP),
+            k.fixes.brep_edit_statuses_pass_on,
+        )?)?;
         if let Some(l) = loopuse::loop_(b, lu1)? {
             b.remove_loop_record(l)?;
         }
         loopuse::set_loop(b, lu1, None)?;
         b.remove_loopuse_record(lu1)?;
         b.remove_loopuse_record(lu2)?;
-        ignore_status(vertex_remove(b, v, vu1, OP))?;
-        ignore_status(vertex_remove(b, v, vu2, OP))?;
+        ignore_status(crate::error::passed_on(
+            vertex_remove(b, v, vu1, OP),
+            k.fixes.brep_edit_statuses_pass_on,
+        )?)?;
+        ignore_status(crate::error::passed_on(
+            vertex_remove(b, v, vu2, OP),
+            k.fixes.brep_edit_statuses_pass_on,
+        )?)?;
         b.remove_vertexuse_record(vu1)?;
         b.remove_vertexuse_record(vu2)?;
     }
@@ -1742,16 +1829,47 @@ pub(crate) fn stitch_faces_with_context<'a>(
     faces: Option<&[Option<FaceId>]>,
     allow_spine_edges: bool,
     identity: Option<crate::query::brep::BrepIdentity<'a>>,
+    edits: Option<&'a mut dyn crate::heal::stitch::p1::StitchEditContext>,
+) -> Result<StitchOutcome> {
+    // StitchCallback has SelectTopologyToKeep(): pick KeepItem and DeleteItem
+    let mut callback = DefaultStitchCallback::new();
+    stitch_faces_with_callback(
+        k,
+        b,
+        xsect_tol_3d,
+        faces,
+        allow_spine_edges,
+        identity,
+        edits,
+        &mut callback,
+    )
+}
+
+/// [`stitch_faces_with_context`] with the caller's keep/delete choice for the glued
+/// pairs: the fork's `pOptCallback` argument of `SmBrep::StitchFaces`
+/// (tangency-labs/smlib@1072d1b), `SmStitchCallback`'s own choice when it is
+/// [`DefaultStitchCallback`].
+///
+/// # Errors
+///
+/// Those of [`stitch_faces`] and of `callback`.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn stitch_faces_with_callback<'a, C: StitchCallback>(
+    k: &mut Kernel,
+    b: &mut Brep,
+    xsect_tol_3d: f64,
+    faces: Option<&[Option<FaceId>]>,
+    allow_spine_edges: bool,
+    identity: Option<crate::query::brep::BrepIdentity<'a>>,
     mut edits: Option<&'a mut dyn crate::heal::stitch::p1::StitchEditContext>,
+    callback: &mut C,
 ) -> Result<StitchOutcome> {
     // lock brep bounding box, until goes out of scope
     let mut lockit = LockBrepBox::new(k, b)?;
     let b = lockit.brep();
 
-    // StitchCallback has SelectTopologyToKeep(): pick KeepItem and DeleteItem
-    let mut callback = DefaultStitchCallback::new();
-    // construct Stitch manager using default coincident keep/delete logic
-    let mut stitch = Stitch::new(&mut callback, xsect_tol_3d, true, true);
+    // construct Stitch manager using the caller's keep/delete logic for glue pairs
+    let mut stitch = Stitch::new(callback, xsect_tol_3d, true, true);
     stitch.query_identity = identity;
     stitch.edits = edits
         .as_mut()
@@ -1825,17 +1943,27 @@ pub fn shrink_geometry(k: &Kernel, b: &mut Brep) -> Result<()> {
         // The status of `Intersect` is dropped upstream, but on disjoint domains it has
         // `Init()`ed the result (SmExtent2d.cpp:414-418), and that undefined extent is
         // the face domain from here on (`AreEqual`, `TrimWithDomain`, `SetUVDomain`).
-        face_domain = surf_domain
-            .intersect(&face_domain)
-            .unwrap_or_else(|_| Extent2d::new());
+        // (fork 60a8a51 passes this status on, and the trim's and removal's below: `SER`)
+        let pass_on = k.fixes.brep_edit_statuses_pass_on;
+        face_domain = match surf_domain.intersect(&face_domain) {
+            Ok(d) => d,
+            Err(e) if pass_on => return Err(e),
+            Err(_) => Extent2d::new(),
+        };
         if !surf_domain.are_equal(&face_domain, EFF_ZERO) {
             // trim the surface: the domain is in/out (TrimWithDomain may snap it to
             // the trimmed surface's natural domain), and the snapped value is the one
             // `SetUVDomain` gets below
             if let Some(s) = b.face_mut(face)?.surface.as_mut() {
-                ignore_status(s.trim_with_domain(k, &mut face_domain))?;
+                ignore_status(crate::error::passed_on(
+                    s.trim_with_domain(k, &mut face_domain),
+                    pass_on,
+                )?)?;
             }
-            ignore_status(face1::remove_uv_trim_curves(b, face))?;
+            ignore_status(crate::error::passed_on(
+                face1::remove_uv_trim_curves(b, face),
+                pass_on,
+            )?)?;
         }
         face2::set_uv_domain(b, face, &face_domain)?;
     }
@@ -1966,7 +2094,7 @@ mod tests {
             assert_ne!(legacy_key, body.key);
             let edge = b.edge_list()[0];
             let vertex = b.vertex_list()[0];
-            let mut records = BTreeMap::new();
+            let mut records = crate::topology::topology::NotifyRecords::new();
             super::super::p3::seed_records(&mut records, &b, &key_of);
             let mut attributes = AttributeStore::default();
             let marker = attributes
@@ -2056,7 +2184,7 @@ mod tests {
             &crate::geom::axis2_placement::Axis2Placement::IDENTITY,
         )
         .unwrap();
-        let mut records = BTreeMap::new();
+        let mut records = crate::topology::topology::NotifyRecords::new();
         let mut attributes = AttributeStore::default();
         let face = {
             let mut marks = Marks::default();

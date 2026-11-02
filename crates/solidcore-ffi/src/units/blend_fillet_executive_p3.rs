@@ -112,6 +112,24 @@ extern "C" {
         cap: i64,
         len: *mut i64,
     ) -> i32;
+    fn sc_blend_fillet_executive_p3_real_law_solid(
+        input: *const f64,
+        n: i64,
+        law: *const f64,
+        law_n: i64,
+        out: *mut f64,
+        cap: i64,
+        len: *mut i64,
+    ) -> i32;
+    fn sc_blend_fillet_executive_p3_real_solid_setback(
+        input: *const f64,
+        n: i64,
+        setback: *const f64,
+        setback_n: i64,
+        out: *mut f64,
+        cap: i64,
+        len: *mut i64,
+    ) -> i32;
 
 }
 
@@ -196,6 +214,111 @@ pub fn real_variable_solid(input: &[f64], end_radius: f64) -> Result<Vec<f64>, F
     })
 }
 
+/// Largest degree and control-point count of a fixture radius law.
+const LAW_MAX_DEGREE: f64 = 3.0;
+const LAW_MAX_POINTS: usize = 64;
+
+/// Validate the unchanged real-box wire (default thumbweight) and a B-spline radius
+/// law block: degree, radius count, the radii (control points `(r, 0, 0)`), unique
+/// knot count, the strictly increasing knots, their multiplicities (`degree + 1` at
+/// the ends, `1..=degree` inside, summing to radii + degree + 1), then the edge map's
+/// min and max. Every value finite. These bounds define the fixture format: within
+/// them `SmBSplineCurve::CreateCanonical` builds the curve on both sides.
+pub fn validate_real_law_solid(input: &[f64], law: &[f64]) -> Result<(), FfiError> {
+    validate_real_solid(input)?;
+    let bad = |what: &str| FfiError::InvalidArgument(format!("radius law: {what}"));
+    if input.get(6) != Some(&1.0) {
+        return Err(bad("default thumbweight required"));
+    }
+    if law.iter().any(|value| !value.is_finite()) {
+        return Err(bad("non-finite value"));
+    }
+    let mut r = Cursor::new(law);
+    let degree = r.num()?;
+    if degree.fract() != 0.0 || !(1.0..=LAW_MAX_DEGREE).contains(&degree) {
+        return Err(bad("degree outside 1..=3"));
+    }
+    let degree = degree as usize;
+    let points = r.index(LAW_MAX_POINTS)?;
+    if points <= degree {
+        return Err(bad("fewer radii than degree + 1"));
+    }
+    r.slice(points)?;
+    let knots = r.index(LAW_MAX_POINTS)?;
+    if knots < 2 {
+        return Err(bad("fewer than two knots"));
+    }
+    let values = r.slice(knots)?;
+    if values.iter().zip(values.iter().skip(1)).any(|(a, b)| a >= b) {
+        return Err(bad("knots not strictly increasing"));
+    }
+    let mut total = 0;
+    for i in 0..knots {
+        let end = i == 0 || i + 1 == knots;
+        let mult = r.index(degree + 1)?;
+        if (end && mult != degree + 1) || (!end && !(1..=degree).contains(&mult)) {
+            return Err(bad("invalid knot multiplicity"));
+        }
+        total += mult;
+    }
+    if total != points + degree + 1 {
+        return Err(bad("multiplicities do not match the radius count"));
+    }
+    r.slice(2)?;
+    r.done()
+}
+
+/// `SetFilletParameters(SM_FS_VARIABLE_RADIUS)` with an `SmBSplineFilletLaw` built
+/// from the law block, then `DoFillet` and `StitchAndOrient`, as
+/// `SmApiVariableRadiusFillet` does with its linear law. Uses the same complete
+/// result record as [`real_solid`].
+pub fn real_law_solid(input: &[f64], law: &[f64]) -> Result<Vec<f64>, FfiError> {
+    validate_real_law_solid(input, law)?;
+    call_with_buffer(65536, |out, len| unsafe {
+        sc_blend_fillet_executive_p3_real_law_solid(
+            input.as_ptr(),
+            input.len() as i64,
+            law.as_ptr(),
+            law.len() as i64,
+            out.as_mut_ptr(),
+            out.len() as i64,
+            len,
+        )
+    })
+}
+
+/// Validate the unchanged box wire and the separate XYZ/distance fixture block.
+/// Finiteness defines this bridge's input format, not the native setter's policy;
+/// zero and negative finite distances remain representable.
+pub fn validate_real_solid_setback(input: &[f64], setback: [f64; 4]) -> Result<(), FfiError> {
+    validate_real_solid(input)?;
+    if setback.iter().any(|value| !value.is_finite()) {
+        return Err(FfiError::InvalidArgument(
+            "non-finite corner setback fixture".into(),
+        ));
+    }
+    Ok(())
+}
+
+/// Run the actual executive with a setback assignment after corner creation.
+/// The output is the complete [`real_solid`] record, including ordinary operation
+/// errors. A missing unique vertex or prepared corner is a malformed fixture;
+/// callers must report bridge errors as harness errors, not C++-undefined inputs.
+pub fn real_solid_setback(input: &[f64], setback: [f64; 4]) -> Result<Vec<f64>, FfiError> {
+    validate_real_solid_setback(input, setback)?;
+    call_with_buffer(65536, |out, len| unsafe {
+        sc_blend_fillet_executive_p3_real_solid_setback(
+            input.as_ptr(),
+            input.len() as i64,
+            setback.as_ptr(),
+            4,
+            out.as_mut_ptr(),
+            out.len() as i64,
+            len,
+        )
+    })
+}
+
 extern "C" {
     fn sc_blend_fillet_executive_p3_fillet_then_shell(
         input: *const f64,
@@ -246,6 +369,39 @@ extern "C" {
         cap: i64,
         len: *mut i64,
     ) -> i32;
+    fn sc_blend_fillet_executive_p3_real_prefix_file(
+        path: *const std::ffi::c_char,
+        input: *const f64,
+        n: i64,
+        checkpoint: i32,
+        out: *mut f64,
+        cap: i64,
+        len: *mut i64,
+    ) -> i32;
+}
+
+/// [`real_prefix`] on the body `SmBrep::ReadFromFile` reads from the ASCII `.smb` at
+/// `path` instead of a box (the wire's box dimensions are validated but unused).
+pub fn real_prefix_file(input: &[f64], checkpoint: u32, path: &str) -> Result<Vec<f64>, FfiError> {
+    validate_real_solid(input)?;
+    if !(1..=19).contains(&checkpoint) {
+        return Err(FfiError::InvalidArgument(
+            "unknown fillet checkpoint".into(),
+        ));
+    }
+    let cpath = std::ffi::CString::new(path)
+        .map_err(|_| FfiError::InvalidArgument("path has a NUL byte".into()))?;
+    call_with_buffer(65536, |out, len| unsafe {
+        sc_blend_fillet_executive_p3_real_prefix_file(
+            cpath.as_ptr(),
+            input.as_ptr(),
+            input.len() as i64,
+            checkpoint as i32,
+            out.as_mut_ptr(),
+            out.len() as i64,
+            len,
+        )
+    })
 }
 
 /// Execute actual setup/corner checkpoints (1–5), or the real smooth prelude
@@ -289,6 +445,15 @@ extern "C" {
         cap: i64,
         len: *mut i64,
     ) -> i32;
+    fn sc_blend_fillet_executive_p3_real_variable_source(
+        path: *const std::ffi::c_char,
+        input: *const f64,
+        n: i64,
+        end_radius: f64,
+        out: *mut f64,
+        cap: i64,
+        len: *mut i64,
+    ) -> i32;
     fn sc_blend_fillet_executive_p3_surface_surface(
         input: *const f64,
         n: i64,
@@ -313,8 +478,9 @@ pub const SOURCE_PARAMS: usize = 12;
 const MAX_SOURCE_EDGE: usize = 1 << 20;
 
 /// Validate the non-box real-solid wire: source kind (1 `.smb` file, 2 cylinder,
-/// 3 box union, 4 box difference), [`SOURCE_PARAMS`] source parameters, then radius,
-/// cross-section, continuity, thumbweight, selected-edge count (0 = every edge) and
+/// 3 box union, 4 box difference, 5 the union of a box (parameters 0..6) and a
+/// cylinder (base centre 6..9, radius 9, height 10)), [`SOURCE_PARAMS`] source
+/// parameters, then radius, cross-section, continuity, thumbweight, selected-edge count (0 = every edge) and
 /// owning-list edge indices. `has_path` says whether a file path accompanies it
 /// (exactly kind 1). Cylinder radius/height and box sizes must be positive, as
 /// `SmApiCreateCylinder` / `SmApiCreateBox` require.
@@ -323,7 +489,7 @@ pub fn validate_real_source(input: &[f64], has_path: bool) -> Result<(), FfiErro
         return Err(FfiError::InvalidArgument("non-finite source wire".into()));
     }
     let mut r = Cursor::new(input);
-    let kind = r.index(4)?;
+    let kind = r.index(5)?;
     if kind == 0 || (kind == 1) != has_path {
         return Err(FfiError::InvalidArgument("invalid solid source".into()));
     }
@@ -331,6 +497,7 @@ pub fn validate_real_source(input: &[f64], has_path: bool) -> Result<(), FfiErro
     let positive: &[usize] = match kind {
         2 => &[3, 4],
         3 | 4 => &[3, 4, 5, 9, 10, 11],
+        5 => &[3, 4, 5, 9, 10],
         _ => &[],
     };
     for &i in positive {
@@ -375,6 +542,50 @@ pub fn real_source(input: &[f64], path: Option<&str>) -> Result<Vec<f64>, FfiErr
             ptr,
             input.as_ptr(),
             input.len() as i64,
+            out.as_mut_ptr(),
+            out.len() as i64,
+            len,
+        )
+    })
+}
+
+/// Validate the non-box real-solid wire ([`validate_real_source`]) with a finite
+/// linear-law endpoint and the default thumbweight (the variable-radius public API
+/// has no thumbweight argument).
+pub fn validate_real_variable_source(
+    input: &[f64],
+    has_path: bool,
+    end_radius: f64,
+) -> Result<(), FfiError> {
+    validate_real_source(input, has_path)?;
+    if !end_radius.is_finite() || input.get(1 + SOURCE_PARAMS + 3) != Some(&1.0) {
+        return Err(FfiError::InvalidArgument(
+            "variable radius requires a finite endpoint and default thumbweight".into(),
+        ));
+    }
+    Ok(())
+}
+
+/// Execute the actual public variable-radius API with a linear radius law on a
+/// non-box source body (see [`validate_real_variable_source`]). The record is that of
+/// [`real_solid`].
+pub fn real_variable_source(
+    input: &[f64],
+    path: Option<&str>,
+    end_radius: f64,
+) -> Result<Vec<f64>, FfiError> {
+    validate_real_variable_source(input, path.is_some(), end_radius)?;
+    let cpath = path
+        .map(std::ffi::CString::new)
+        .transpose()
+        .map_err(|_| FfiError::InvalidArgument("path has a NUL byte".into()))?;
+    let ptr = cpath.as_ref().map_or(std::ptr::null(), |c| c.as_ptr());
+    call_with_buffer(65536, |out, len| unsafe {
+        sc_blend_fillet_executive_p3_real_variable_source(
+            ptr,
+            input.as_ptr(),
+            input.len() as i64,
+            end_radius,
             out.as_mut_ptr(),
             out.len() as i64,
             len,
@@ -516,13 +727,18 @@ pub fn curve_sih_source(
 /// (0/1).
 pub fn validate_surface_surface(input: &[f64]) -> Result<(), FfiError> {
     if input.len() != 30 || input.iter().any(|v| !v.is_finite()) {
-        return Err(FfiError::InvalidArgument("invalid surface-surface wire".into()));
+        return Err(FfiError::InvalidArgument(
+            "invalid surface-surface wire".into(),
+        ));
     }
     let code = input.get(27).copied().unwrap_or(-1.0);
     if code < 0.0 || code.fract() != 0.0 || code >= 18446744073709551616.0 {
         return Err(FfiError::InvalidArgument("invalid native ULONG".into()));
     }
-    if input.get(28..30).is_none_or(|f| f.iter().any(|v| *v != 0.0 && *v != 1.0)) {
+    if input
+        .get(28..30)
+        .is_none_or(|f| f.iter().any(|v| *v != 0.0 && *v != 1.0))
+    {
         return Err(FfiError::InvalidArgument("invalid flag".into()));
     }
     Ok(())
@@ -567,7 +783,10 @@ pub fn validate_surface_surface_bodies(input: &[f64]) -> Result<(), FfiError> {
     if code < 0.0 || code.fract() != 0.0 || code >= 18446744073709551616.0 {
         return Err(FfiError::InvalidArgument("invalid native ULONG".into()));
     }
-    if input.get(30..32).is_none_or(|f| f.iter().any(|v| *v != 0.0 && *v != 1.0)) {
+    if input
+        .get(30..32)
+        .is_none_or(|f| f.iter().any(|v| *v != 0.0 && *v != 1.0))
+    {
         return Err(FfiError::InvalidArgument("invalid flag".into()));
     }
     Ok(())
@@ -581,6 +800,102 @@ pub fn surface_surface_bodies(input: &[f64]) -> Result<Vec<f64>, FfiError> {
     validate_surface_surface_bodies(input)?;
     call_with_buffer(65536, |out, len| unsafe {
         sc_blend_fillet_executive_p3_surface_surface_bodies(
+            input.as_ptr(),
+            input.len() as i64,
+            out.as_mut_ptr(),
+            out.len() as i64,
+            len,
+        )
+    })
+}
+
+extern "C" {
+    fn sc_blend_fillet_executive_p3_attributed(
+        input: *const f64,
+        n: i64,
+        out: *mut f64,
+        cap: i64,
+        len: *mut i64,
+    ) -> i32;
+}
+
+/// Number of fillet parameters on the [`attributed`] wire before the edge indices:
+/// radius, end radius, cross-section, continuity, thumbweight, edge count.
+pub const ATTRIBUTED_FILLET_PARAMS: usize = 6;
+
+/// Validate the attributed-fillet wire (issue #1462): api (0 `SmApiFilletEdges`,
+/// 1 `SmApiFilletEdgesPerEdge`, 2 `SmApiVariableRadiusFillet`, 3 `SmApiCircularFillet`,
+/// 4 `SmApiChamferFillet`), attribute behaviour (`SmAttributeBehaviorType` 0..=4), body
+/// kind (0 box: origin and positive size; 2 cylinder, 3 box union, 4 box difference, 5 box
+/// and cylinder union as on the [`real_source`] wire), [`SOURCE_PARAMS`] body parameters, then
+/// [`ATTRIBUTED_FILLET_PARAMS`] and the `GetEdges` indices. The cross-section is a
+/// `ULONG` 0..=2 for apis 0 and 2 and an `SmFilletSurfaceGeneratorType` 1..=3 for api 1;
+/// continuity 1..=3. Apis 0..=2 take at least one edge, apis 3 and 4 none. The shim
+/// rejects an index past the built body's edges.
+pub fn validate_attributed(input: &[f64]) -> Result<(), FfiError> {
+    let bad = |what: &str| FfiError::InvalidArgument(format!("attributed fillet: {what}"));
+    let int_in = |v: f64, lo: f64, hi: f64| v.is_finite() && v.fract() == 0.0 && v >= lo && v <= hi;
+    if input.iter().any(|v| !v.is_finite()) {
+        return Err(bad("non-finite value"));
+    }
+    let head = 3 + SOURCE_PARAMS + ATTRIBUTED_FILLET_PARAMS;
+    let (Some(&api), Some(&behavior), Some(&kind)) = (input.first(), input.get(1), input.get(2))
+    else {
+        return Err(bad("short wire"));
+    };
+    if !int_in(api, 0.0, 4.0)
+        || !int_in(behavior, 0.0, 4.0)
+        || ![0.0, 2.0, 3.0, 4.0, 5.0].contains(&kind)
+    {
+        return Err(bad("api, behaviour or body kind"));
+    }
+    let p = input.get(3..3 + SOURCE_PARAMS).ok_or_else(|| bad("short wire"))?;
+    let positive: &[usize] = match kind as u32 {
+        0 => &[3, 4, 5],
+        2 => &[3, 4],
+        5 => &[3, 4, 5, 9, 10],
+        _ => &[3, 4, 5, 9, 10, 11],
+    };
+    if positive.iter().any(|&i| p.get(i).is_none_or(|&v| v <= 1e-12)) {
+        return Err(bad("non-positive body size"));
+    }
+    let f = input
+        .get(3 + SOURCE_PARAMS..head)
+        .ok_or_else(|| bad("short wire"))?;
+    let &[_, _, xsect, continuity, _, count] = f else {
+        return Err(bad("short wire"));
+    };
+    let xsect_ok = if api == 1.0 {
+        int_in(xsect, 1.0, 3.0)
+    } else {
+        int_in(xsect, 0.0, 2.0)
+    };
+    if !xsect_ok || !int_in(continuity, 1.0, 3.0) {
+        return Err(bad("cross-section or continuity"));
+    }
+    let indices = input.get(head..).unwrap_or_default();
+    if !int_in(count, 0.0, MAX_SOURCE_EDGE as f64) || count as usize != indices.len() {
+        return Err(bad("edge count"));
+    }
+    if (api <= 2.0) == indices.is_empty() {
+        return Err(bad("edges for apis 0..=2 only"));
+    }
+    if indices.iter().any(|&i| !int_in(i, 0.0, MAX_SOURCE_EDGE as f64)) {
+        return Err(bad("edge index"));
+    }
+    Ok(())
+}
+
+/// Tag a fresh body's faces and edges with long attributes, run the public fillet api
+/// of [`validate_attributed`]'s wire on it, and record `status V E F`, then the face
+/// rows and edge rows (each `measure n (id behavior value users)*n`, as
+/// `boolean_api_brep`'s attributed op; [`super::boolean_api_brep::sort_rows`] order).
+pub fn attributed(input: &[f64]) -> Result<Vec<f64>, FfiError> {
+    validate_attributed(input)?;
+    // Large enough that the case never runs twice in one child (the retry would see the
+    // first run's latched point step).
+    call_with_buffer(1 << 18, |out, len| unsafe {
+        sc_blend_fillet_executive_p3_attributed(
             input.as_ptr(),
             input.len() as i64,
             out.as_mut_ptr(),
@@ -604,7 +919,11 @@ mod source_tests {
     fn curve_sih_rejects_invalid_step_back() {
         for step_back in [0.0, -1.0, f64::NAN, f64::INFINITY] {
             assert!(super::curve_sih_source(step_back, &cylinder(), None).is_err());
-            assert!(super::curve_sih_solid(step_back, &[10.0, 10.0, 10.0, 1.0, 1.0, 1.0, 1.0, 1.0, 0.0]).is_err());
+            assert!(super::curve_sih_solid(
+                step_back,
+                &[10.0, 10.0, 10.0, 1.0, 1.0, 1.0, 1.0, 1.0, 0.0]
+            )
+            .is_err());
         }
     }
     #[test]
@@ -727,6 +1046,43 @@ mod real_solid_tests {
         vec![10.0, 20.0, 30.0, 0.5, 1.0, 1.0, 1.0, 1.0, 0.0]
     }
     #[test]
+    fn setback_block_keeps_the_complete_legacy_wire_and_finite_distance_domain() {
+        let mut value = record();
+        for distance in [-8.0, 0.0, 8.0] {
+            assert!(
+                super::validate_real_solid_setback(&value, [60.0, 40.0, 20.0, distance]).is_ok()
+            );
+        }
+        for index in 0..4 {
+            let mut block = [60.0, 40.0, 20.0, 8.0];
+            block[index] = f64::NAN;
+            assert!(super::validate_real_solid_setback(&value, block).is_err());
+        }
+        value[7] = 2.0;
+        assert!(super::validate_real_solid_setback(&value, [60.0, 40.0, 20.0, 8.0]).is_err());
+    }
+    #[test]
+    fn native_setback_block_count_is_checked_before_reading_it() {
+        let value = record();
+        let block = [60.0, 40.0, 20.0, 8.0];
+        let mut out = [0.0; 1];
+        let mut len = 0;
+        for count in [-1, 0, 3, 5] {
+            let status = unsafe {
+                super::sc_blend_fillet_executive_p3_real_solid_setback(
+                    value.as_ptr(),
+                    value.len() as i64,
+                    block.as_ptr(),
+                    count,
+                    out.as_mut_ptr(),
+                    1,
+                    &raw mut len,
+                )
+            };
+            assert_eq!(status, crate::SC_ERR_ARG);
+        }
+    }
+    #[test]
     fn variable_endpoint_is_separate_and_complete_wire_still_checked() {
         let mut value = record();
         for end in [-2.0, 0.0, 2.0] {
@@ -764,4 +1120,171 @@ mod real_solid_tests {
         value[8] = 0.5;
         assert!(validate_real_solid(&value).is_err());
     }
+}
+
+extern "C" {
+    fn sc_blend_fillet_executive_p3_fillet_preview(
+        path: *const std::ffi::c_char,
+        input: *const f64,
+        n: i64,
+        out: *mut f64,
+        cap: i64,
+        len: *mut i64,
+    ) -> i32;
+}
+
+/// Validate the [`fillet_preview`] wire: source kind (0 a box at the origin, its size in
+/// the first three parameters; 1 to 4 those of [`validate_real_source`]),
+/// [`SOURCE_PARAMS`] source parameters, the radius, the selected-edge count and the
+/// owning-list edge indices. Every value is finite; box, cylinder and source box sizes
+/// are positive, as the constructors require. The radius is not limited:
+/// `SmApiFilletPreview` does not check it.
+pub fn validate_fillet_preview(input: &[f64], has_path: bool) -> Result<(), FfiError> {
+    if input.iter().any(|v| !v.is_finite()) {
+        return Err(FfiError::InvalidArgument("non-finite preview wire".into()));
+    }
+    let mut r = Cursor::new(input);
+    let kind = r.index(4)?;
+    if (kind == 1) != has_path {
+        return Err(FfiError::InvalidArgument("invalid solid source".into()));
+    }
+    let params = r.slice(SOURCE_PARAMS)?;
+    let positive: &[usize] = match kind {
+        0 => &[0, 1, 2],
+        2 => &[3, 4],
+        3 | 4 => &[3, 4, 5, 9, 10, 11],
+        _ => &[],
+    };
+    for &i in positive {
+        if params.get(i).is_none_or(|v| *v <= 1e-12) {
+            return Err(FfiError::InvalidArgument("non-positive source size".into()));
+        }
+    }
+    r.slice(1)?;
+    let head = 1 + SOURCE_PARAMS + 2;
+    let remaining = input.len().saturating_sub(head);
+    let count = r.index(remaining)?;
+    if count != remaining {
+        return Err(FfiError::InvalidArgument(
+            "invalid edge selection length".into(),
+        ));
+    }
+    for _ in 0..count {
+        r.index(MAX_SOURCE_EDGE)?;
+    }
+    r.done()
+}
+
+/// `SmApiFilletPreview` on a source body (see [`validate_fillet_preview`]); `path` is the
+/// `.smb` file of a file source. The record is the API status, the body's vertex, edge
+/// and face counts after the call, the number of preview surfaces and per surface `has`
+/// then its `GetType`, natural UV domain (`umin vmin umax vmax`) and a 5 x 5 grid over
+/// it of `EvaluatePoint` `status [x y z]`.
+pub fn fillet_preview(input: &[f64], path: Option<&str>) -> Result<Vec<f64>, FfiError> {
+    validate_fillet_preview(input, path.is_some())?;
+    let cpath = path
+        .map(std::ffi::CString::new)
+        .transpose()
+        .map_err(|_| FfiError::InvalidArgument("path has a NUL byte".into()))?;
+    let ptr = cpath.as_ref().map_or(std::ptr::null(), |c| c.as_ptr());
+    call_with_buffer(65536, |out, len| unsafe {
+        sc_blend_fillet_executive_p3_fillet_preview(
+            ptr,
+            input.as_ptr(),
+            input.len() as i64,
+            out.as_mut_ptr(),
+            out.len() as i64,
+            len,
+        )
+    })
+}
+
+extern "C" {
+    fn sc_blend_fillet_executive_p3_two_offset_chamfer(
+        input: *const f64,
+        n: i64,
+        out: *mut f64,
+        cap: i64,
+        len: *mut i64,
+    ) -> i32;
+}
+
+/// Length of the [`two_offset_chamfer`] wire.
+pub const TWO_OFFSET_CHAMFER_WIRE: usize = 28;
+
+/// Validate the [`two_offset_chamfer`] wire: cylinder radius and height; placement
+/// origin, X axis and Y axis; cutting box origin and size; rim z; derive (1: `a`, `b`
+/// are setbacks, 0: they are the two offsets); `a`, `b`; up; body (0: `SmApiCreateCylinder`,
+/// 1: the capped linear sweep of two half-circle arcs); the first arc's start angle in
+/// degrees; which matching rim edge (0 or 1); all (1: every matching rim edge chamfered in
+/// one executive by the given offsets, which needs derive 0 and rim edge 0). Every value is
+/// finite; the
+/// cylinder and box sizes and `a`, `b` are positive; the axes are not parallel (a
+/// degenerate placement is not a body this case builds) and, when deriving, `up` is not
+/// zero. These are fixture contracts, not limits of the public API.
+pub fn validate_two_offset_chamfer(input: &[f64]) -> Result<(), FfiError> {
+    let bad = |what: &str| Err(FfiError::InvalidArgument(what.into()));
+    let Ok(w) = <&[f64; TWO_OFFSET_CHAMFER_WIRE]>::try_from(input) else {
+        return bad("two-offset chamfer wire length");
+    };
+    if w.iter().any(|v| !v.is_finite()) {
+        return bad("non-finite two-offset chamfer wire");
+    }
+    if [w[0], w[1], w[14], w[15], w[16], w[19], w[20]]
+        .iter()
+        .any(|v| *v <= 1e-12)
+    {
+        return bad("non-positive size or offset");
+    }
+    let (x, y) = ([w[5], w[6], w[7]], [w[8], w[9], w[10]]);
+    let cross = [
+        x[1] * y[2] - x[2] * y[1],
+        x[2] * y[0] - x[0] * y[2],
+        x[0] * y[1] - x[1] * y[0],
+    ];
+    let norm = |v: [f64; 3]| (v[0] * v[0] + v[1] * v[1] + v[2] * v[2]).sqrt();
+    if norm(cross) <= 1e-12 * norm(x) * norm(y) || norm(x) <= 1e-12 || norm(y) <= 1e-12 {
+        return bad("degenerate placement axes");
+    }
+    if w[18] != 0.0 && w[18] != 1.0 {
+        return bad("invalid derive flag");
+    }
+    if w[18] == 1.0 && norm([w[21], w[22], w[23]]) <= 1e-12 {
+        return bad("zero up direction");
+    }
+    if w[24] != 0.0 && w[24] != 1.0 {
+        return bad("invalid body kind");
+    }
+    if w[26] != 0.0 && w[26] != 1.0 {
+        return bad("invalid rim index");
+    }
+    if w[27] != 0.0 && w[27] != 1.0 {
+        return bad("invalid all-rims flag");
+    }
+    if w[27] == 1.0 && (w[18] != 0.0 || w[26] != 0.0) {
+        return bad("all rims needs given offsets and rim 0");
+    }
+    Ok(())
+}
+
+/// tangency-labs/solidcore#880: the rim a box cuts from a placed cylinder, chamfered
+/// with two offsets (`SmConstantRadiusFS` with `pdOptSecondRadius`, a linear cross
+/// section, every corner a bevel). See [`validate_two_offset_chamfer`] for the wire. The
+/// record is a setup code (0, or -1 no body, -2 no rim, -3 no blend edge use, -4 no
+/// usable offsets, then nothing else); after 0 the rim's `GetEdges` index, the two
+/// offsets, the rim's before-section, the chamfer status, the body's counts, topology,
+/// geometry and mass status and properties.
+pub fn two_offset_chamfer(input: &[f64]) -> Result<Vec<f64>, FfiError> {
+    validate_two_offset_chamfer(input)?;
+    // Large enough that the case never runs twice in one child (the retry would see
+    // the first run's latched point step).
+    call_with_buffer(1 << 18, |out, len| unsafe {
+        sc_blend_fillet_executive_p3_two_offset_chamfer(
+            input.as_ptr(),
+            input.len() as i64,
+            out.as_mut_ptr(),
+            out.len() as i64,
+            len,
+        )
+    })
 }

@@ -12,6 +12,7 @@
 // The build, walk and export are copied from heal_stitch_p1.cpp.
 #include "sc_shim.h"
 #include "sc_edgeuse_graph.h"
+#include "sc_stitch_digest.h"
 
 #include <SmApiPrimitives.h>
 #include <SmContext.h>
@@ -20,6 +21,7 @@
 #include <SmShell.h>
 #include <SmStitch.h>
 
+#include <algorithm>
 #include <cmath>
 
 namespace
@@ -190,7 +192,8 @@ template <class T> void put_indices(std::vector<double>& o, Graph& g, int kind, 
 }
 
 // The B-rep after a mutating op: face, edge and vertex counts (GetFaces / GetEdges /
-// GetVertices), then each vertex's point and tolerance in list order.
+// GetVertices), each vertex's point and tolerance in list order, then the topology of
+// sc_stitch_digest.h.
 void put_digest(SmBrep* brep, std::vector<double>& o)
 {
     SmTArray<SmFace*> fs;
@@ -207,6 +210,21 @@ void put_digest(SmBrep* brep, std::vector<double>& o)
         put_vec(o, vs[i]->GetPoint());
         o.push_back((double)vs[i]->GetTolerance());
     }
+    put_topology(brep, o);
+}
+
+// The regions after StitchIntoSolid, order-free: the count (GetRegions) and the IsVoid
+// flags, sorted.
+void put_regions(SmBrep* brep, std::vector<double>& o)
+{
+    SmTArray<SmRegion*> rs;
+    brep->GetRegions(rs);
+    std::vector<double> flags;
+    for (ULONG i = 0; i < rs.GetSize(); i++)
+        flags.push_back((double)rs[i]->IsVoid());
+    std::sort(flags.begin(), flags.end());
+    o.push_back((double)flags.size());
+    o.insert(o.end(), flags.begin(), flags.end());
 }
 
 // The stitch outputs StitchIntoSolid / StitchIntoShell share.
@@ -300,6 +318,7 @@ void run_op(int32_t op, Rd& rd, const char* path, std::vector<double>& o)
             o.push_back(flg(solid));
             put_counts(o, n, mv, me);
             put_digest(brep, o);
+            put_regions(brep, o);
         }
         break;
     }
@@ -359,6 +378,9 @@ void run_op(int32_t op, Rd& rd, const char* path, std::vector<double>& o)
         SmTArray<SmEdge*> edges, split, made;
         read_vertices(rd, g, verts);
         read_edges(rd, g, edges);
+        // the B-rep's editing flag, as SmMerge and SmBrep::SqueezeFace call it
+        if (rd.flag())
+            brep->m_bEditingEnabled = TRUE;
         SmStitchCallback cb;
         SmStitch stitch(cb, tol);
         stitch.m_bMakingManifoldSolid = manifold ? TRUE : FALSE;

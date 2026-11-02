@@ -56,8 +56,6 @@ use crate::sweep::topology_sweep::access::SweepAccess;
 use crate::sweep::topology_sweep::store::{SweepIdentities, SweepStore};
 use crate::topology::brep::p3::{seed_records, topology_ref};
 use crate::topology::brep::{p1, p2, p5};
-use crate::topology::brep_cache::{arena_identity, CacheObject};
-use crate::topology::loopuse::notify_ref;
 use crate::topology::{
     edgeuse, face, vertex, Brep, BrepId, EdgeId, FaceId, NamingScheme, RegionId,
 };
@@ -176,59 +174,28 @@ fn issue_actual_curve_identities(
     Ok(())
 }
 
-/// After the merge, the geometry the store's Boolean bound to `b`'s edges and
-/// faces under their session identity (`session`) is rebound to the same entity's
+/// After the merge, the geometry the store's Boolean bound to `b`'s edges, edge uses
+/// (their UV trim curves) and faces under their session identity (`session`) is rebound to the same entity's
 /// identity in `b`'s naming (`to`): the owner is the same edge or face, only its
 /// key's namespace changes. Geometry owned under any other identity is untouched.
-fn normalize_session_owners(
+pub(super) fn normalize_session_owners(
     b: &mut Brep,
     session: impl Fn(EntityRef) -> ObjectRef,
     to: impl Fn(EntityRef) -> ObjectRef,
 ) -> Result<()> {
-    let edges: Vec<EdgeId> = b.edges().ids().collect();
-    for edge in edges {
-        let e = EntityRef::Edge(edge);
-        let from = session(e);
-        let new_owner = to(e);
-        let rebound = b.edge_mut(edge)?.curve.as_mut().is_some_and(|curve| {
-            let matched = curve.owner() == Some(from);
-            if matched {
-                curve.set_owner(Some(new_owner), None);
-            }
-            matched
-        });
-        if rebound {
-            b.set_geometry_owner_key(e, Some(new_owner));
-        }
-    }
-    let faces: Vec<FaceId> = b.faces().ids().collect();
-    for face in faces {
-        let e = EntityRef::Face(face);
-        let from = session(e);
-        let new_owner = to(e);
-        let rebound = b.face_mut(face)?.surface.as_mut().is_some_and(|surface| {
-            let matched = surface.owner() == Some(from);
-            if matched {
-                surface.set_owner(Some(new_owner));
-            }
-            matched
-        });
-        if rebound {
-            b.set_geometry_owner_key(e, Some(new_owner));
-            b.sync_face_surface_tolerance(face)?;
-        }
-    }
-    Ok(())
+    crate::topology::brep::p3::rebind_geometry_owners(b, session, to)
 }
 
-/// The identity a B-rep of naming `naming` owns an edge's or face's geometry under,
-/// `None` for a caller's or an unknown scheme.
-fn naming_owner(naming: NamingScheme, e: EntityRef) -> Option<ObjectRef> {
-    match (naming, e) {
-        (NamingScheme::Arena, EntityRef::Edge(x)) => Some(arena_identity(CacheObject::Edge(x))),
-        (NamingScheme::Arena, EntityRef::Face(x)) => Some(arena_identity(CacheObject::Face(x))),
-        (NamingScheme::Notify, e) => Some(notify_ref(e)),
-        _ => None,
+/// The identity a B-rep of naming `naming` that records `recorded` for `e` owns `e`'s
+/// geometry under ([`Brep::owner_identity`]), `None` for an unknown scheme.
+pub(super) fn naming_owner(
+    naming: NamingScheme,
+    recorded: Option<ObjectRef>,
+    e: EntityRef,
+) -> Option<ObjectRef> {
+    match naming {
+        NamingScheme::Unknown => None,
+        naming => Some(crate::topology::owner_identity_of(naming, recorded, e)),
     }
 }
 
@@ -260,7 +227,7 @@ fn surface_of(brep: &Brep, face: FaceId) -> Result<Option<ObjectRef>> {
 /// identity with an equal raw key names a different owner and is not accepted.
 fn own_identities(b: &Brep, e: EntityRef) -> Vec<ObjectRef> {
     let mut ids = Vec::new();
-    ids.extend(naming_owner(b.naming(), e));
+    ids.extend(naming_owner(b.naming(), b.geometry_owner_key(e), e));
     ids.extend(b.geometry_owner_key(e));
     ids
 }
@@ -519,6 +486,9 @@ impl FilletSession<'_> {
         // the target's session identities, which return to its naming afterwards.
         let target_serial = self.objects.target_serial;
         let naming = target.naming();
+        // The keys a caller-named target recorded before the merge, its entities'
+        // names afterwards (a merge-made entity has none and takes the scheme's).
+        let recorded = target.geometry_owner_keys().clone();
         let session_owner = |e| topology_ref(target_serial, e);
         let issued = issue_actual_curve_identities(&mut k.context, &mut target)
             .and_then(|()| issue_actual_curve_identities(&mut k.context, &mut intermediate));
@@ -574,7 +544,7 @@ impl FilletSession<'_> {
         drop(store);
         let mut target = target.ok_or_else(|| invalid("target lost in the merge"))?;
         let restored = normalize_session_owners(&mut target, session_owner, |e| {
-            naming_owner(naming, e).unwrap_or_else(|| session_owner(e))
+            naming_owner(naming, recorded.get(&e).copied(), e).unwrap_or_else(|| session_owner(e))
         });
         target.set_naming(naming);
         *self.objects.target = target;
@@ -664,8 +634,7 @@ impl FilletSession<'_> {
             };
             let inside_fillet = is_void == 0;
             records
-                .entry(region_key(region))
-                .or_default()
+                .or_default(region_key(region))
                 .mark(Some(&k.context), mark);
             target
                 .region_mut(region)?

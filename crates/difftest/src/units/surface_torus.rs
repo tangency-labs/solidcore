@@ -2,7 +2,8 @@
 //! `operator==`, `Copy`, `CreateOffsetSurface`, the STEP/NURB conversions, STEP
 //! evaluation, iso curves, `RebuildSTEPFromNURBParameters`, `Transform`, and the
 //! inherited `SmSurfOfRevolution::TrimWithDomain`, `IntersectWithPlane` and
-//! `GlobalSurfaceIntersect` with a plane).
+//! `GlobalSurfaceIntersect` with a plane; `IsNurbSurfaceTorus` on its NURB, fixtures
+//! only).
 //!
 //! C++: `solidcore_ffi::units::surface_torus` (upstream `source/SMLib/src/SmTorus.cpp`).
 //! Rust: `solidcore::surface::torus`.
@@ -28,7 +29,7 @@ use solidcore::geom::extent2d::Extent2d;
 use solidcore::geom::vector2d::{Point2, Vec2};
 use solidcore::geom::vector3d::Vec3;
 use solidcore::kernel::Kernel;
-use solidcore::nurbs::b_spline_surface::{IsoCurveOptions, SurfParamType};
+use solidcore::nurbs::b_spline_surface::{BSplineSurface, IsoCurveOptions, SurfParamType};
 use solidcore::nurbs::crv_basic::Curve as NurbCurve;
 use solidcore::surface::surface::p2::{
     B_SPLINE_SURFACE_TYPE, SURF_OF_REVOLUTION_TYPE, TORUS_TYPE, TYPE,
@@ -167,6 +168,27 @@ enum OpIn {
     TrimDomain {
         dom: [f64; 4],
     },
+    /// `IsNurbSurfaceTorus` on the torus's NURB, scaled per axis and with control point
+    /// changes (fixtures only: the generator stream is unchanged).
+    IsNurb {
+        scale: f64,
+        #[serde(default = "unit_scale")]
+        net_scale: [f64; 3],
+        #[serde(default)]
+        perturb: Vec<PerturbIn>,
+    },
+}
+
+/// A control point change `(i, j) += d`.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+struct PerturbIn {
+    i: usize,
+    j: usize,
+    d: [f64; 3],
+}
+
+const fn unit_scale() -> [f64; 3] {
+    [1.0, 1.0, 1.0]
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -281,6 +303,22 @@ fn cpp(i: &Inputs) -> Result<Output, HarnessError> {
             args: ffi_args(args),
         },
         OpIn::TrimDomain { dom } => ffi::Op::TrimDomain { dom: *dom },
+        OpIn::IsNurb {
+            scale,
+            net_scale,
+            perturb,
+        } => ffi::Op::IsNurb {
+            scale: *scale,
+            net_scale: *net_scale,
+            perturb: perturb
+                .iter()
+                .map(|p| ffi::Perturb {
+                    i: p.i,
+                    j: p.j,
+                    d: p.d,
+                })
+                .collect(),
+        },
     };
     let flat = ffi::torus_op(&ffi_torus(&i.torus), &op).map_err(|e| harness(e.to_string()))?;
     to_output(i, &flat)
@@ -337,6 +375,11 @@ const SC_ERR_ARG: f64 = -1002.0;
 
 /// Builds the torus; `Ok(Err(e))` when the construction fails.
 fn rust_torus(k: &Kernel, t: &TorusIn) -> Result<solidcore::Result<Torus>, HarnessError> {
+    rust_torus_made(k, t, true)
+}
+
+/// [`rust_torus`]; `make` false is the constructor alone (no `MakeNurb`).
+fn rust_torus_made(k: &Kernel, t: &TorusIn, make: bool) -> Result<solidcore::Result<Torus>, HarnessError> {
     let circle = match &t.circle {
         None => None,
         Some(c) => {
@@ -356,16 +399,29 @@ fn rust_torus(k: &Kernel, t: &TorusIn) -> Result<solidcore::Result<Torus>, Harne
     };
     let frame = Axis2Placement::new(v3(t.origin), v3(t.x), v3(t.y));
     let dom = t.dom.map(|[a, b, c, d]| Extent2d::from_bounds(a, b, c, d));
+    let opts = TorusOptions {
+        swap_uv: t.swap,
+        inside_out: t.inside_out,
+        circle_nurb: circle,
+    };
+    if !make {
+        return Ok(Torus::new(
+            k,
+            v3(t.origin),
+            v3(t.x),
+            v3(t.y),
+            dom.unwrap_or(Extent2d::from_bounds(0.0, 0.0, 360.0, 360.0)),
+            t.major,
+            t.minor,
+            opts,
+        ));
+    }
     Ok(Torus::create_canonical(
         k,
         &frame,
         t.major,
         t.minor,
-        TorusOptions {
-            swap_uv: t.swap,
-            inside_out: t.inside_out,
-            circle_nurb: circle,
-        },
+        opts,
         dom.as_ref(),
     ))
 }
@@ -694,8 +750,65 @@ fn rust_op(
                 }
             }
         }
+        OpIn::IsNurb {
+            scale,
+            net_scale,
+            perturb,
+        } => match is_nurb(k, t, *scale, *net_scale, perturb) {
+            Err(e) if e.is_unported() => Err(e),
+            // upstream returns the status of a failed SER call as a truthy result
+            Err(e) => {
+                o.extend([status(&e).max(1.0), 0.0]);
+                Ok(())
+            }
+            Ok(None) => {
+                o.extend([0.0, 0.0]);
+                Ok(())
+            }
+            Ok(Some(found)) => {
+                o.extend([1.0, 1.0]);
+                put_state(o, &found)
+            }
+        },
     };
     Ok(r)
+}
+
+/// The shim's `OP_IS_NURB`: a copy of the torus's NURB, scaled and changed, as a plain
+/// B-spline surface owning it, given to `IsNurbSurfaceTorus`.
+fn is_nurb(
+    k: &Kernel,
+    t: &Torus,
+    scale: f64,
+    net_scale: [f64; 3],
+    perturb: &[PerturbIn],
+) -> solidcore::Result<Option<Torus>> {
+    let mut nurb = t
+        .base()
+        .base()
+        .gw_nurb()
+        .cloned()
+        .ok_or_else(|| SolidError::null_pointer("difftest::surface_torus::is_nurb"))?;
+    let ix = nurb.indices();
+    for i in 0..=ix.n {
+        for j in 0..=ix.m {
+            let p = nurb.cpt_mut(i, j)?;
+            p.x *= net_scale[0];
+            p.y *= net_scale[1];
+            p.z *= net_scale[2];
+        }
+    }
+    for pt in perturb {
+        if pt.i > ix.n || pt.j > ix.m {
+            continue;
+        }
+        let p = nurb.cpt_mut(pt.i, pt.j)?;
+        p.x += pt.d[0];
+        p.y += pt.d[1];
+        p.z += pt.d[2];
+    }
+    let test = BSplineSurface::from_nurb(nurb, false);
+    Torus::is_nurb_surface_torus(k, &test, scale)
 }
 
 fn rust(i: &Inputs) -> Result<Output, HarnessError> {
@@ -1165,6 +1278,57 @@ impl UnitDiff for Runner {
     }
 }
 
+// ---- lazy NURB (`surface.surface_p2` `common_const_make` cases) ------------------------
+
+/// The native side of a torus `common_const_make` case.
+pub(super) fn const_make_cpp(value: Value) -> Result<Output, HarnessError> {
+    let t: TorusIn = serde_json::from_value(value).map_err(|e| harness(e.to_string()))?;
+    let flat = ffi::const_make(&ffi_torus(&t)).map_err(|e| harness(e.to_string()))?;
+    super::surface_cone_p1::const_make_nurb_cpp(&flat)
+}
+
+/// The Rust side: the torus as its constructor leaves it (no NURB), then the shared
+/// const-query, `Copy`, `==` and `Transform` sequence.
+pub(super) fn const_make_rust(value: Value) -> Result<Output, HarnessError> {
+    let t: TorusIn = serde_json::from_value(value).map_err(|e| harness(e.to_string()))?;
+    let k = Kernel::default();
+    let built = rust_torus_made(&k, &t, false)?.map(Surface::from);
+    super::surface_cone_p1::const_make_nurb_rust(&k, built)
+}
+
+/// `common_const_make` cases for the torus: swap and inside-out flags, partial domains,
+/// a minor radius equal to and above the major radius (the inside-out, self-intersecting
+/// shapes) and an explicit generator.
+pub(super) fn const_make_cases() -> Vec<Case> {
+    type Shape = (&'static str, f64, f64, Option<[f64; 4]>, Option<CircleIn>);
+    let mut cases = Vec::new();
+    let shapes: [Shape; 8] = [
+        ("full", 3.0, 1.0, None, None),
+        ("part", 3.0, 1.0, Some([30.0, 20.0, 250.0, 300.0]), None),
+        ("minor_eq_major", 2.0, 2.0, None, None),
+        ("minor_gt_major", 1.0, 2.5, None, None),
+        ("minor_gt_major_part", 1.0, 2.5, Some([0.0, 100.0, 270.0, 260.0]), None),
+        ("tiny_minor", 3.0, 1e-3, None, None),
+        ("wide_minor_part", 0.5, 4.0, Some([0.0, 0.0, 180.0, 360.0]), None),
+        ("gen", 3.0, 1.0, None, Some(CircleIn { c: [3.5, -1.0, 2.0], x: [1.0, 0.0, 0.0], y: [0.0, 0.0, 1.0], d: [0.0, 360.0], r: 1.0 })),
+    ];
+    for swap in [false, true] {
+        for inside_out in [false, true] {
+            for (name, major, minor, dom, circle) in &shapes {
+                let torus = TorusIn { origin: [0.5, -1.0, 2.0], x: [1.0, 0.0, 0.0], y: [0.0, 1.0, 0.0], major: *major, minor: *minor, swap, inside_out, dom: *dom, circle: circle.clone() };
+                let Ok(torus) = serde_json::to_value(&torus) else { continue };
+                cases.push(Case {
+                    unit: "surface.surface_p2".into(),
+                    name: format!("common_const_make_torus_{name}_{swap}_{inside_out}"),
+                    source: crate::case::CaseSource::Generated { seed: 76 },
+                    inputs: serde_json::json!({"common_const_make": true, "common_torus": torus}),
+                });
+            }
+        }
+    }
+    cases
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1185,6 +1349,7 @@ mod tests {
             OpIn::IsectPlane { .. } => "isect_plane",
             OpIn::Global { .. } => "global",
             OpIn::TrimDomain { .. } => "trim_domain",
+            OpIn::IsNurb { .. } => "is_nurb",
         }
     }
 

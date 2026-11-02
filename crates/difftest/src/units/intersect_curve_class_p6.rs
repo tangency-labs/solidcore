@@ -6,8 +6,8 @@
 //!
 //! The topology objects are those of the shim's `SmApiCreateBox(0, 1, 1, 1)` B-rep (face,
 //! edge, vertex and region: the first of `GetFaces`, `GetEdges`, `GetVertices`,
-//! `GetRegions`). The Rust side imports the same box through unit `heal.stitch_p1`'s
-//! export (`topology.brep_p1`'s importer) and resolves the handles to it through the
+//! `GetRegions`). The Rust side builds the same box with the Rust kernel (unit
+//! `heal.stitch_p1`'s `own_unit_box`, no C++ export) and resolves the handles to it through the
 //! `ClassGeometry` hooks, so their tolerances, points and topology are the ported ones.
 //! Each case works on a fresh copy of that box (the shim builds one per case), and
 //! `MergeInterval` edits it through `MergeIntervalBrep`; a merge also reports the box
@@ -45,7 +45,6 @@ use solidcore::topology::vertex as topo_vertex;
 use solidcore::topology::Brep;
 use solidcore::{EntityRef, SolidError};
 use solidcore_ffi::units::intersect_curve_class_p6 as ffi;
-use solidcore_ffi::units::topology_brep_p1::counts;
 use std::cell::OnceCell;
 use std::rc::Rc;
 
@@ -110,10 +109,7 @@ struct Geometry {
     curve: Curve,
     brep: Brep,
     first: [EntityRef; 4],
-    records: std::collections::BTreeMap<
-        solidcore::geom::attribute::ObjectKey,
-        solidcore::topology::topology::Topology,
-    >,
+    records: solidcore::topology::topology::NotifyRecords,
     attributes: solidcore::geom::attribute::AttributeStore,
 }
 /// The box B-rep and its faces, edges, vertices and regions (in `GetFaces`, `GetEdges`,
@@ -226,12 +222,8 @@ fn box_topology() -> Result<Rc<BoxTopology>, HarnessError> {
 /// The shim's box (`SmApiCreateBox(0, 1, 1, 1)`, the same call as `heal.stitch_p1`'s box
 /// block) and its faces, edges, vertices and regions.
 fn build_box() -> Result<BoxTopology, HarnessError> {
-    let ex = super::heal_stitch_p1::export(&super::heal_stitch_p1::StitchBrep::Box {
-        p: [0.0; 3],
-        size: [1.0; 3],
-    })?;
-    let (_, graph_at) = counts(&ex).ok_or_else(|| h("box export failed"))?;
-    let (b, _) = super::topology_brep_p1::import(&ex, graph_at)?;
+    // built by the Rust kernel (no C++ export reaches the Rust side)
+    let b = super::heal_stitch_p1::own_unit_box([0.0; 3])?;
     let e = |e: SolidError| h(e.to_string());
     let faces = brep_p1::faces(&b, None).map_err(e)?;
     let edges = brep_p1::edges(&b, None).map_err(e)?;
@@ -331,7 +323,7 @@ fn geometry(k: &Kernel, kind: i32, scale: f64, pick: [i32; 4]) -> Result<Geometr
         curve: c,
         brep: b.0.clone(),
         first,
-        records: std::collections::BTreeMap::new(),
+        records: solidcore::topology::topology::NotifyRecords::new(),
         attributes: solidcore::geom::attribute::AttributeStore::default(),
     })
 }
@@ -422,7 +414,7 @@ fn put_pc(out: &mut Vec<f64>, pc: &PointClassification<Handle>, g: &Geometry) {
 fn status(e: &SolidError) -> f64 {
     match e {
         SolidError::Upstream { code, .. } => f64::from(*code),
-        SolidError::InvalidInput { .. } => 1007.0,
+        SolidError::InvalidInput { .. } | SolidError::PortInvariant { .. } => 1007.0,
         _ => -1.0,
     }
 }
