@@ -316,6 +316,23 @@ fn a_reopened_body_s_rounds_are_certified_again_and_a_bad_one_is_named() {
     b.face_mut(*f).unwrap().surface = Some(Surface::from(from_record(&k, &bad).unwrap()));
     let e = recertify_faces(&k, &b).unwrap_err();
     assert_eq!(e.entity(), Some(solidcore::EntityRef::Face(*f)), "{e}");
+    // a support's label moved off its NURBS form: refused on rebuild, naming the face
+    let (f, rec) = &rounds[0];
+    let mut bad = rec.clone();
+    let solidcore::surface::procedural_blend::record::SupportRecord::Nurbs { analytic, .. } =
+        &mut bad.definition.supports[0]
+    else {
+        panic!("the box's round's support is not a NURBS support");
+    };
+    let solidcore::surface::procedural_blend::record::AnalyticRecord::Plane { origin, .. } =
+        analytic.as_mut()
+    else {
+        panic!("the box's round's support is not a plane: {analytic:?}");
+    };
+    origin[2] += 1.0;
+    let e =
+        solidcore::surface::procedural_blend::convert::rebuild_for_face(&k, *f, &bad).unwrap_err();
+    assert_eq!(e.entity(), Some(solidcore::EntityRef::Face(*f)), "{e}");
 }
 
 // ---- #2388, contract 5: S as the operand downstream ------------------------------------

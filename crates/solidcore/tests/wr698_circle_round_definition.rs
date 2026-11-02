@@ -473,3 +473,59 @@ fn known_failing_a_moved_round_is_not_certified_again() {
         "refused otherwise: {e}"
     );
 }
+
+/// #2388: a support keeps its analytic kind through the record. The square corner's
+/// supports are planes: their record labels them planes beside their NURBS forms, the
+/// rebuilt supports are planes again, the record reads back bit for bit, and a rebuilt
+/// support's offset is a plane exactly 1 off. A label moved off its NURBS form is refused.
+#[test]
+fn an_analytic_support_stays_its_kind_through_the_record() {
+    use solidcore::surface::procedural_blend::convert::{from_record, rebuild, to_record};
+    use solidcore::surface::procedural_blend::record::{AnalyticRecord, SupportRecord};
+    let k = kernel(true);
+    let (s, _, _) = corner_round(&k);
+    let SurfaceKind::ProceduralBlend(pb) = s.kind() else {
+        panic!("not a blend")
+    };
+    let rec = to_record(&k, pb).unwrap();
+    for support in &rec.definition.supports {
+        let SupportRecord::Nurbs { analytic, .. } = support else {
+            panic!("not a NURBS support: {support:?}");
+        };
+        assert!(
+            matches!(**analytic, AnalyticRecord::Plane { .. }),
+            "{analytic:?}"
+        );
+    }
+    let back = rebuild(&k, &rec).unwrap();
+    assert_eq!(to_record(&k, &back).unwrap(), rec);
+    for i in 0..2 {
+        let support = back.support(i).unwrap();
+        let SurfaceKind::Plane(plane) = support.kind() else {
+            panic!("support {i} is not a plane: {}", support.type_code());
+        };
+        let off = plane.create_offset_surface(&k, 1.0).unwrap();
+        let uv = Point2::new(0.3, 0.7);
+        let (p, q) = (
+            support.evaluate_point(&k, uv).unwrap(),
+            Surface::from(off).evaluate_point(&k, uv).unwrap(),
+        );
+        assert!(
+            ((p - q).length() - 1.0).abs() <= 1e-14,
+            "{}",
+            (p - q).length()
+        );
+    }
+    let mut bad = rec.clone();
+    let SupportRecord::Nurbs { analytic, .. } = &mut bad.definition.supports[1] else {
+        unreachable!()
+    };
+    let AnalyticRecord::Plane { origin, .. } = analytic.as_mut() else {
+        unreachable!()
+    };
+    origin[0] += 1.0;
+    assert!(
+        from_record(&k, &bad).is_err(),
+        "a moved plane label was taken"
+    );
+}

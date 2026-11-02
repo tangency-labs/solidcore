@@ -12,13 +12,13 @@
 //! most [`BLEND_MAX_DEPTH`] deep, with an explicit depth refused past it.
 
 use super::record::{
-    BlendDefinitionRecord, NurbsCurveRecord, NurbsSurfaceRecord, ParameterMapRecord,
-    ProceduralBlendRecord, RadiusRecord, SupportRecord,
+    AnalyticRecord, BlendDefinitionRecord, NurbsCurveRecord, NurbsSurfaceRecord,
+    ParameterMapRecord, ProceduralBlendRecord, RadiusRecord, SupportRecord,
 };
 use super::{BlendDefinitionInput, ProceduralBlend, BLEND_MAX_DEPTH};
 use crate::blend::fillet_section::section::GnSectionFsg;
 use crate::blend::fillet_section::station::as_b_spline;
-use crate::error::{Result, SolidError};
+use crate::error::{EntityRef, Result, SolidError, SM_ERR_INVALID_INPUT};
 use crate::kernel::Kernel;
 use crate::nurbs::b_spline_curve::BSplineCurve;
 use crate::nurbs::b_spline_surface::BSplineSurface;
@@ -27,9 +27,11 @@ use crate::nurbs::knots::MAX_DEGREE;
 use crate::nurbs::math::{CPoint, NOW, NOZ};
 use crate::nurbs::srf_basic::Surface as NurbSurface;
 use crate::surface::surface::{Surface, SurfaceKind};
+use crate::topology::FaceId;
 
 const OP_TO: &str = "surface::procedural_blend::convert::to_record";
 const OP_FROM: &str = "surface::procedural_blend::convert::from_record";
+const OP_FACE: &str = "surface::procedural_blend::convert::rebuild_for_face";
 
 /// The record of a procedural blend: its definition (supports by value, nested blends as
 /// their own records) and its net, every number as the kernel stores it.
@@ -95,7 +97,11 @@ fn support_record(k: &Kernel, s: &Surface, depth: u32) -> Result<SupportRecord> 
             reason: "a support that is not a NURBS surface has no record",
         });
     };
-    Ok(SupportRecord::Nurbs(surface_record(&b)?))
+    let analytic = AnalyticRecord::Free;
+    Ok(SupportRecord::Nurbs {
+        analytic: Box::new(analytic),
+        form: surface_record(&b)?,
+    })
 }
 
 fn to_u32(x: usize) -> Result<u32> {
@@ -175,6 +181,25 @@ pub fn rebuild(k: &Kernel, rec: &ProceduralBlendRecord) -> Result<ProceduralBlen
     Ok(pb)
 }
 
+/// [`rebuild`] for the face `face` of a body: a refusal names the face
+/// (`SM_ERR_INVALID_INPUT` with [`EntityRef::Face`]), as a body read back from its record
+/// reports it.
+///
+/// # Errors
+///
+/// Those of [`rebuild`], naming `face`.
+pub fn rebuild_for_face(
+    k: &Kernel,
+    face: FaceId,
+    rec: &ProceduralBlendRecord,
+) -> Result<ProceduralBlend> {
+    rebuild(k, rec).map_err(|_| SolidError::Upstream {
+        operation: OP_FACE,
+        code: SM_ERR_INVALID_INPUT,
+        entity: Some(EntityRef::Face(face)),
+    })
+}
+
 fn from_record_at(k: &Kernel, rec: &ProceduralBlendRecord, depth: u32) -> Result<ProceduralBlend> {
     if depth > BLEND_MAX_DEPTH {
         return Err(SolidError::invalid_input(
@@ -186,7 +211,7 @@ fn from_record_at(k: &Kernel, rec: &ProceduralBlendRecord, depth: u32) -> Result
     let mut supports = Vec::new();
     for s in &d.supports {
         supports.push(match s {
-            SupportRecord::Nurbs(n) => Surface::from(surface_of(n)?),
+            SupportRecord::Nurbs { form, .. } => Surface::from(surface_of(form)?),
             SupportRecord::Blend(b) => Surface::from(from_record_at(k, b, depth + 1)?),
         });
     }
