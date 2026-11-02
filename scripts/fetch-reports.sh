@@ -71,6 +71,10 @@ install() {
     return 1
   fi
   if [ -e "$src/times.tsv" ] || [ -L "$src/times.tsv" ]; then
+    if [ -d "$src/times.tsv" ] && [ ! -L "$src/times.tsv" ]; then
+      warn "refusing directory named times.tsv in $src"
+      return 1
+    fi
     replaced_times=1
   fi
 
