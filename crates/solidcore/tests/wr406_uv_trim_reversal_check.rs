@@ -37,8 +37,15 @@ use solidcore::topology::{Brep, EdgeuseId, EdgeuseOwner};
 use solidcore::Kernel;
 
 /// The plate: a 60 x 10 profile swept 4 up, bored through the 4 thickness at
-/// (x, z) = (30, 2) by a radius-1 cylinder turned 35 degrees about its own axis.
+/// (x, z) = (30, 2) by a radius-1 cylinder whose frame is turned 35 degrees about
+/// its own axis (the case whose raw (u, v) check folds).
 fn bored_plate(k: &mut Kernel) -> Brep {
+    bored_plate_turn(k, 35.0_f64.to_radians())
+}
+
+/// The same plate bored by a cylinder whose frame is turned `turn` radians about
+/// the bore's own z axis (0 makes the bore axis-aligned: the control).
+fn bored_plate_turn(k: &mut Kernel, turn: f64) -> Brep {
     let corners = [(0.0, 0.0), (60.0, 0.0), (60.0, 10.0), (0.0, 10.0)];
     let profile: Vec<Curve> = (0..4)
         .map(|i| {
@@ -53,9 +60,8 @@ fn bored_plate(k: &mut Kernel) -> Brep {
     let plate = create_linear_sweep(k, &refs, Vec3::new(0.0, 0.0, 1.0), 4.0, true).unwrap();
 
     let mut bore = api::create_cylinder(k, Point3::new(0.0, 0.0, 0.0), 1.0, 12.0).unwrap();
-    // the bore's z axis onto +y (through the 4 thickness), its x axis turned 35
+    // the bore's z axis onto +y (through the 4 thickness), its x axis turned `turn`
     // degrees from the plate's u axis about that z axis
-    let turn: f64 = 35.0_f64.to_radians();
     let (c, s) = (turn.cos(), turn.sin());
     let frame = Axis2Placement::new(
         Point3::new(30.0, -1.0, 2.0),
@@ -132,9 +138,14 @@ struct Measured {
 }
 
 fn measure(flag: bool) -> Measured {
+    measure_turn(flag, 35.0_f64.to_radians())
+}
+
+/// The measurement for one flag setting and one bore turn about its own axis.
+fn measure_turn(flag: bool, turn: f64) -> Measured {
     let mut k = Kernel::default();
     k.fixes.uv_trim_reversal_on_surface = flag;
-    let mut body = bored_plate(&mut k);
+    let mut body = bored_plate_turn(&mut k, turn);
     assert_eq!(
         faces(&body, None).unwrap().len(),
         7,
@@ -216,4 +227,24 @@ fn wr406_bored_plate_check_reverses_or_keeps_the_hole_trims() {
     assert_eq!(on.before, on.after, "the flag left the trims alone");
     assert_eq!(off.before, on.before, "both runs start from the same trims");
     assert_eq!(off.before, on.after, "the flag's run is the untouched body");
+}
+
+/// The control: with an axis-aligned bore (`turn = 0`) the same plate builds, bores
+/// and checks identically with the flag off and on (the 35-degree turn is what folds
+/// the raw (u, v) reversal test).
+#[test]
+fn wr406_axis_aligned_bore_keeps_the_check_clean() {
+    let mut results = Vec::new();
+    for flag in [false, true] {
+        let m = measure_turn(flag, 0.0);
+        assert_eq!(m.pointers_status, 1000, "flag {flag}");
+        assert_eq!(m.assert_valid, Some(true), "flag {flag}");
+        assert!(m.lines.is_empty(), "flag {flag}: {:#?}", m.lines);
+        assert_eq!(m.before, m.after, "the check did not touch the trims");
+        results.push(m);
+    }
+    assert_eq!(
+        results[0].before, results[1].before,
+        "the flag did not touch the axis-aligned trims"
+    );
 }
