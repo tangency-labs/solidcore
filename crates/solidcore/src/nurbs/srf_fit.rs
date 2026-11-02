@@ -38,11 +38,12 @@
 //! - Degree `p == 0` makes `N_FitSrfToPtsKnots` / `N_FitSrfFuncInterp` request a
 //!   banded matrix of bandwidth `-1` (a negative-sized allocation);
 //!   [`interp_given_knots`] / [`func_interp`] return `InvalidInput` there.
-//! - The degree counts of `N_FitSrfToPtsKnots` are added checked (the `fit_arrays`
-//!   `add`, as everywhere else in the fitting port): a `n + p + 1` / `m + q + 1` knot
-//!   count that overflows gives `InvalidInput` where upstream's signed `NL_INDEX`
-//!   arithmetic is undefined behaviour. Every count that fits keeps the upstream sum,
-//!   the comparison order and the `NL_INP_ERR` outcomes.
+//! - An overflowing `n + p + 1` / `m + q + 1` knot count cannot equal the knot
+//!   vector's last index, so `N_FitSrfToPtsKnots` reports the same `NL_INP_ERR`
+//!   knot-count mismatch (`NlibCode::Input`) instead of upstream's undefined signed
+//!   `NL_INDEX` sum. The checked sums are compared only; they size no allocation and
+//!   index no array. Every count that fits keeps the upstream sum, comparison order
+//!   and outcome; a count that does not fit the signed index stays `InvalidInput`.
 //! - Upstream's 2D work arrays and banded matrices are single row-major blocks, and
 //!   the port indexes them the same way (a column index may leave its row). Accesses
 //!   outside a whole block return `InvalidInput` instead of undefined behaviour.
@@ -56,8 +57,8 @@ use crate::nurbs::crv_fit::p1::{
     cpts_from_srf_data, interp_knot_vector, knot_vector_approx, DataDir, FitPoint, ParamMethod,
 };
 use crate::nurbs::fit_arrays::{
-    add, alloc, alloc2, at, at2, at_mut, banded, basis, copy_knots, head, hi, idx, invalid, mget,
-    mset, put, put2, sg, Block,
+    alloc, alloc2, at, at2, at_mut, banded, basis, copy_knots, head, hi, idx, invalid, mget, mset,
+    put, put2, sg, Block,
 };
 use crate::nurbs::funcs_basic::SurfaceFunction;
 use crate::nurbs::knots::{KnotVector, Side};
@@ -263,10 +264,11 @@ fn interp_matrix(
 /// # Errors
 ///
 /// [`NlibCode::Input`] when `knu` / `knv` do not have `n + p + 2` / `m + q + 2`
-/// knots, `p > n`, `q > m`, or a basis span falls outside the matrix band;
-/// `InvalidInput` for an empty grid, a short row, too few parameters, `p == 0`, or a
-/// `n + p + 1` / `m + q + 1` knot count that overflows the signed index; errors
-/// of [`KnotVector::basis_eval`] and of the LU decomposition and solves.
+/// knots (an overflowing `n + p + 1` / `m + q + 1` sum cannot reach the last index,
+/// so it is the same mismatch), `p > n`, `q > m`, or a basis span falls outside the
+/// matrix band; `InvalidInput` for an empty grid, a short row, too few parameters,
+/// `p == 0`, or a count that does not fit the signed index; errors of
+/// [`KnotVector::basis_eval`] and of the LU decomposition and solves.
 pub fn interp_given_knots<P: FitPoint>(
     a: &[Vec<P>],
     u: &[f64],
@@ -283,9 +285,10 @@ pub fn interp_given_knots<P: FitPoint>(
     // Check for surface memory.
     let r = sg(knu.last_index(), OP)?;
     let s = sg(knv.last_index(), OP)?;
-    let rs = add(add(n, p, OP)?, 1, OP)?;
-    let ss = add(add(m, q, OP)?, 1, OP)?;
-    if r != rs || s != ss {
+    // An overflowing `n + p + 1` / `m + q + 1` cannot equal the last index.
+    let rs = n.checked_add(p).and_then(|t| t.checked_add(1));
+    let ss = m.checked_add(q).and_then(|t| t.checked_add(1));
+    if Some(r) != rs || Some(s) != ss {
         return Err(SolidError::nlib(OP, NlibCode::Input));
     }
     if p > n || q > m {

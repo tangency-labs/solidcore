@@ -20,10 +20,10 @@
 //!   have no counterpart.
 //! - `ROUND(x)` is `(NL_INDEX)(x + 0.5)`, a truncation toward zero, as upstream.
 //! - The caller counts `n`, `p`, `k` and `l`, which upstream adds as `NL_INDEX` values,
-//!   are added checked (the `fit_arrays` `add`, as everywhere else in the fitting port):
-//!   a `k + l` or `n + p + 1` sum that overflows gives [`SolidError::InvalidInput`]
-//!   where upstream's signed arithmetic is undefined behaviour. Every count that fits
-//!   keeps the upstream sum and behaviour.
+//!   are added checked with the `fit_arrays` `add` where their sums drive allocation
+//!   and subtraction: a `k + l` or `n + p + 1` sum that overflows gives
+//!   [`SolidError::InvalidInput`] where upstream's signed arithmetic is undefined
+//!   behaviour. Every count that fits keeps the upstream sum and behaviour.
 
 use crate::error::{NlibCode, Result, SolidError};
 use crate::math::Vec3;
