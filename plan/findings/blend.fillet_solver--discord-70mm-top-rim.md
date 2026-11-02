@@ -58,6 +58,10 @@ geometrically and `SmApiFilletEdges` returns 1001. Selecting only the fourth arc
 also returns 1001. This confirms the default failure on the **imported operand**;
 it does not independently validate STEP import or compare against the later
 fork's opt-in implementation. No C++ output or state is supplied to Rust.
+The same C++ driver's `ValidatePointers(SM_LEVEL_2)` produces 24 reports and
+`AssertValid(SM_LEVEL_2, SM_WALK)` returns false on that operand. Thus failed
+validation of the serialized imported operand also occurs in the pinned reference;
+this still does not establish whether the original STEP model is defective.
 
 ## Unresolved validity
 
