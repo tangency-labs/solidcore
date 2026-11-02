@@ -65,6 +65,9 @@ that edge: the third derivative can jump there. Spans crossing the station
 itself are refused; endpoint slopes use the span's one-sided jet. The bound
 is conservative O(h^2), not a claimed sixth-derivative/quintic certificate.
 It changes neither the approximation target nor an acceptance tolerance.
+This bound is for the Euclidean correction interpolant. It is not directly
+a bound for a homogeneous rational net: that integration must derive the
+corresponding numerator/weight residual and denominator lower bound.
 
 ## What is not certified or enabled
 
@@ -97,8 +100,29 @@ proves whole-face G2. #2330's arc-half seam is unchanged.
 
 ## Verification
 
-Pending final runs for this continuation; the previous #2384 checks are
-recorded in its original finding and do not validate this new source.
+Executable source tested: `ece7422cf197ddfc5a22dc17584537a08ba8c005`.
+Subsequent Rust-source edits only add Markdown backticks to doc comments.
+
+- WSL Ubuntu; CARGO_BUILD_JOBS=2; every cargo/C++ command under nice -n 10.
+- Optimized targeted tests: fillet_section 36/36, issue_2356_smooth_interior
+  8/8, procedural_blend 8/8, WorkCounters 1/1, and
+  wr698_procedural_blend_definition 8/8: all 61 passed.
+- `cargo clippy --workspace --all-targets -- -D warnings`: passed (default features).
+- `cargo check -p solidcore --target wasm32-unknown-unknown`: passed.
+- `cargo fmt --all --check`: passed.
+- Native comparisons: five units passed, 3,658 accepted value-bearing cases, 21 existing rejections, zero failures/deferrals and zero reported relative error. Dev profile, --features cpp --jobs 2; clippy-driver as RUSTC_WORKSPACE_WRAPPER. Shared pinned C++ libraries reused; only FFI shims rebuilt..
+
+No full suite or full --green gate was run. No unit status, mismatch marker,
+existing tolerance, production evaluator or production net was changed.
 GitHub run https://github.com/tangency-labs/solidcore/actions/runs/41441348154
 at 15e1702 completed with action_required and no jobs: no tests ran there.
 A maintainer must approve the fork workflow; no source workaround is used.
+
+```text
+PASS blend.fillet_solver_p4 cases=651 passed=651 failed=0 deferred=0 max_rel_err=0e0 with_values=651 no_values=0 vacuous=0
+PASS blend.fillet_standard_solver_p2 cases=525 passed=525 failed=0 deferred=0 max_rel_err=0e0 with_values=525 no_values=0 vacuous=0
+PASS nurbs.b_spline_surface_n_lib_p1 cases=702 passed=702 failed=0 deferred=0 max_rel_err=0e0 with_values=702 no_values=0 vacuous=0
+PASS blend.fillet_corner_p3 cases=1013 passed=994 failed=0 deferred=0 max_rel_err=0e0 with_values=994 no_values=0 vacuous=0 rejected=19
+PASS blend.fillet_executive_p3 cases=788 passed=786 failed=0 deferred=0 max_rel_err=0e0 with_values=786 no_values=0 vacuous=0 rejected=2
+difftest: 5 unit(s), 5 passed, 0 partial, 0 failed
+```

@@ -24,9 +24,9 @@ const OP: &str = "blend::fillet_section::smooth_interior_plan";
 /// Jumps (after minus before) of the complete section, including its thumbweight.
 #[derive(Clone, Copy, Debug)]
 pub struct JumpJet {
-    /// Jump of S_s, S_st and S_stt, respectively.
+    /// Jump of `S_s`, `S_st` and `S_stt`, respectively.
     pub first: [Vec3; 3],
-    /// Jump of S_ss, S_sst and S_sstt, respectively.
+    /// Jump of `S_ss`, `S_sst` and `S_sstt`, respectively.
     pub second: [Vec3; 3],
 }
 
@@ -282,9 +282,9 @@ impl CorrectionStation {
     /// samples, over `t`. `second` must enclose Delta2(t). No normal projection or
     /// regularity/contact guarantee follows from these componentwise bounds.
     ///
-    /// On either side of the station, |G_dd| <= 3/(4 eps), and
-    /// |G2_dd| <= 7/8. Since eps=4 lambda r, the apparent singularity cancels:
-    /// |(Delta G)_ss| <= 3 |first_over_r|/(16 lambda).
+    /// On either side of the station, `|G_dd| <= 3/(4 eps)`, and
+    /// `|G2_dd| <= 7/8`. Since eps=4 lambda r, the apparent singularity cancels:
+    /// `|(Delta G)_ss| <= 3 |first_over_r|/(16 lambda)`.
     /// A C1 function with Lipschitz derivative bounded by M has cubic Hermite
     /// error <= M h^2/4 (linear interpolation error plus endpoint slope errors).
     /// This remains valid across the C2 window edges and through eps -> 0.
