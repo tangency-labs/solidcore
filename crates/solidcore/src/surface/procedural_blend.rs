@@ -786,13 +786,16 @@ impl ProceduralBlend {
     }
 
     /// Re-certifies the net against the definition (#2388): proves the net within the
-    /// definition's bound of S, as a rebuild from a record must before the blend is used.
+    /// definition's bound of S again, as a blend rebuilt from a record must be before it
+    /// is an operand ([`crate::blend::fillet_section::recertify`]). Returns the distance
+    /// proved, at most the bound.
     ///
     /// # Errors
     ///
-    /// `SM_ERR` where the net is not proved within the bound.
-    pub fn recertify(&self, _k: &Kernel) -> Result<f64> {
-        Err(SolidError::sm_err(OP_RECERTIFY))
+    /// Those of [`crate::blend::fillet_section::recertify::recertify`]: a net not proved
+    /// within the bound, or not a net of its definition's stations, is refused.
+    pub fn recertify(&self, k: &Kernel) -> Result<f64> {
+        crate::blend::fillet_section::recertify::recertify(k, self)
     }
 
     /// `Evaluate`: the definition's partials at `uv` in the surface's parameters (the
@@ -1053,7 +1056,8 @@ impl ProceduralBlend {
     }
 
     /// `Transform`: a rigid motion with a uniform scale; the supports, the leader and
-    /// the net move alike, the radius and the bound scale.
+    /// the net move alike, the radius and the bound scale, and the bound takes in the
+    /// moved net's precision (its control points rounded where they now lie, #2388).
     ///
     /// # Errors
     ///
@@ -1086,9 +1090,12 @@ impl ProceduralBlend {
         for r in &mut self.def.offsets {
             *r *= factor;
         }
-        self.def.bound *= factor;
         self.renew();
-        self.net.transform(rotate_n_move, scale)
+        self.net.transform(rotate_n_move, scale)?;
+        // the moved net is rounded where it now lies: its precision there adds (#2388)
+        self.def.bound = self.def.bound * factor
+            + crate::blend::fillet_section::recertify::net_precision(&self.net)?;
+        Ok(())
     }
 }
 

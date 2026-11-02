@@ -411,6 +411,39 @@ pub(crate) struct StationSystem<'a> {
 }
 
 impl StationSystem<'_> {
+    /// The station at `s` from the feet `seed`, on the pieces after it along s (`sides`:
+    /// a face's side where a foot is on one of its knot lines), its equal area thumbweight
+    /// resolved.
+    pub(crate) fn solve_after(
+        &self,
+        k: &Kernel,
+        s: f64,
+        seed: [f64; 4],
+        sides: Option<[i32; 4]>,
+    ) -> Result<GnStation> {
+        let m = self.leader.evaluate_point(s)?;
+        let law_r = law_series(self.law, s, self.tr.s(), false)?;
+        let mut st = solve_top(
+            k,
+            self.faces,
+            self.leader,
+            s,
+            seed,
+            self.r,
+            self.side,
+            self.tr,
+            1.0e-9 * smax(1.0, m.length()),
+            self.n,
+            sides,
+            false,
+            law_r.as_ref(),
+        )?;
+        if self.equal_area {
+            gn_station_thumbweight(self.n, self.r[0] * self.r[1], &mut st)?;
+        }
+        Ok(st)
+    }
+
     /// The station's series on the pieces before it, for the span ending there: a Hermite
     /// span interpolates the values and s-derivatives of its own pieces, which the
     /// certificate bounds (3bc54a4).
@@ -1412,6 +1445,11 @@ impl GnSectionFsg {
         let (Some(seed0), Some(seed1)) = (seeds.first(), seeds.get(1)) else {
             return Err(SolidError::sm_err(OP));
         };
+        // its bound: the certificate's, of the Hermite rows, and how far the net stored
+        // (its control points divided out of the rows and its weights scaled, each rounded)
+        // is from them, at least the net's precision (#2388)
+        let rounding = super::recertify::stored_net_distance(&surface, &spans, ld)?
+            .max(super::recertify::net_precision(&surface)?);
         let input = BlendDefinitionInput {
             supports: faces,
             sides: side,
@@ -1421,7 +1459,7 @@ impl GnSectionFsg {
             thumbweight: self.thumbweight,
             leader,
             seeds: [seed0, seed1],
-            bound: self.certified_bound,
+            bound: self.certified_bound + rounding,
         };
         let blend = ProceduralBlend::create(k, &surface, &input, |order, w| {
             Self::is_valid(order as usize, w)
