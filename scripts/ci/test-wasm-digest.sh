@@ -6,10 +6,12 @@
 # wasmtime, C++ build or difftest compile is needed. The fakes record what the
 # script asked them to do; the wasmtime fake also checks the WASI preopens.
 #
-# The pre-fix script fails here for two independent reasons on macOS/BSD tools:
-#   * `readlink -f` is GNU-only (macOS `readlink` has no -f);
-#   * the `sh -c` runner template is longer than BSD xargs's 255-byte -S cap
-#     ("command line cannot be assembled, too long").
+# The pre-fix script fails here for two independent reasons:
+#   * `readlink -f` is missing on older BSD/macOS (the fake below simulates that;
+#     current macOS does support it);
+#   * its `sh -c` runner puts `{}` inside shell code, so BSD xargs's 255-byte
+#     substituted-argument limit rejects the whole template ("command line cannot
+#     be assembled, too long").
 set -euo pipefail
 
 here=$(cd "$(dirname "$0")" && pwd)
@@ -43,10 +45,17 @@ run_digest() {
 # make_rig NAME: a rig with the real script, a symlinked upstream/ and fake tools.
 # The rig path deliberately has no spaces unless the caller adds one.
 make_rig() {
-  local rig="$tmp/$1"
+  local rig
+  case $1 in
+    /*) rig=$1 ;;
+    *) rig=$tmp/$1 ;;
+  esac
   mkdir -p "$rig/scripts" "$rig/fakebin" "$rig/real-upstream" \
     "$rig/target/difftest" "$rig/target/wasm32-wasip1/difftest"
   cp "$script" "$rig/scripts/wasm-digest.sh"
+  if [ -f "$repo/scripts/wasm-digest-unit.sh" ]; then
+    cp "$repo/scripts/wasm-digest-unit.sh" "$rig/scripts/wasm-digest-unit.sh"
+  fi
   ln -s "$rig/real-upstream" "$rig/upstream"
   : >"$rig/target/wasm32-wasip1/difftest/difftest.wasm"
 
@@ -148,23 +157,42 @@ SH
 (cd "$2" && pwd -P)
 SH
 
-  # macOS/BSD readlink: no -f at all.
+  # Simulated older BSD/macOS readlink: no -f at all (current macOS has it).
   cat >"$rig/fakebin/readlink-bsd" <<'SH'
 #!/bin/sh
 echo "readlink: illegal option -- ${1#-}" >&2
 exit 1
 SH
 
-  # BSD xargs caps the assembled command template at 255 bytes by default.
+  # BSD xargs caps the argument(s) containing the replacement after substitution
+  # (255 bytes by default); static argv, however long, is not bounded.
   cat >"$rig/fakebin/xargs-bsd" <<'SH'
 #!/bin/sh
-n=0
-for a in "$@"; do n=$((n + ${#a} + 1)); done
-if [ "$n" -gt 255 ]; then
+in=$(mktemp "${TMPDIR:-/tmp}/fake-xargs.XXXXXX")
+cat >"$in"
+max=0
+while IFS= read -r line; do
+  n=${#line}
+  [ "$n" -gt "$max" ] && max=$n
+done <"$in"
+too_long=0
+for a in "$@"; do
+  case $a in
+    *'{}'*)
+      n=$((${#a} - 2 + max))
+      [ "$n" -gt 255 ] && too_long=1
+      ;;
+  esac
+done
+if [ "$too_long" -eq 1 ]; then
+  rm -f "$in"
   echo "xargs: command line cannot be assembled, too long" >&2
   exit 1
 fi
-exec "$FAKE_REAL_XARGS" "$@"
+"$FAKE_REAL_XARGS" "$@" <"$in"
+rc=$?
+rm -f "$in"
+exit $rc
 SH
 
   chmod +x "$rig/fakebin/"*
@@ -180,21 +208,21 @@ select_gnu_readlink() {
   cp "$1/fakebin/readlink-gnu" "$1/fakebin/readlink"
 }
 
-# select_bsd_tools RIG: macOS readlink plus the BSD xargs cap.
+# select_bsd_tools RIG: simulated older-BSD readlink plus the BSD xargs cap.
 select_bsd_tools() {
   cp "$1/fakebin/readlink-bsd" "$1/fakebin/readlink"
   cp "$1/fakebin/xargs-bsd" "$1/fakebin/xargs"
   chmod +x "$1/fakebin/readlink" "$1/fakebin/xargs"
 }
 
-# --- 1. BSD readlink (the macOS default) ------------------------------------
+# --- 1. older-BSD readlink (no -f) -----------------------------------------
 rig=$(make_rig bsd-readlink)
 select_bsd_tools "$rig"
 status=$(run_digest "$rig" "$rig/run.log" --out "$rig/out" --unit unit.one --unit unit.two)
 if [ "$status" -eq 0 ] && grep -q 'wasm-digest: 2 unit(s)' "$rig/run.log"; then
-  ok 'BSD readlink: no GNU readlink -f dependency'
+  ok 'older BSD readlink: upstream resolves without readlink -f'
 else
-  no 'BSD readlink: no GNU readlink -f dependency' \
+  no 'older BSD readlink: upstream resolves without readlink -f' \
     "exit $status: $(grep -m1 'readlink\|xargs\|error' "$rig/run.log" || tail -n 1 "$rig/run.log")"
 fi
 
@@ -211,7 +239,23 @@ else
     "exit $status: $(grep -m1 'cannot be assembled\|xargs' "$rig/run.log" || tail -n 1 "$rig/run.log")"
 fi
 
-# --- 3. paths with spaces, symlinked upstream, BSD tools -------------------
+# --- 3. long TMPDIR with the host's real xargs -----------------------------
+# Static argv may be long; only a replaced argument is capped. The real macOS
+# xargs must accept the static helper path even when it is far past 255 bytes.
+long=$tmp
+for _ in 1 2 3; do
+  long=$long/$(printf '%100s' '' | tr ' ' x)
+done
+rig=$(make_rig "$long/long-tmpdir")
+status=$(run_digest "$rig" "$rig/run.log" --out "$rig/out" --unit unit.one --unit unit.two)
+if [ "$status" -eq 0 ] && grep -q 'wasm-digest: 2 unit(s), 4 case(s), 4 compared' "$rig/run.log"; then
+  ok 'long TMPDIR: real xargs accepts a long static helper path'
+else
+  no 'long TMPDIR: real xargs accepts a long static helper path' \
+    "exit $status: $(grep -m1 'xargs\|error' "$rig/run.log" || tail -n 1 "$rig/run.log")"
+fi
+
+# --- 4. paths with spaces, symlinked upstream, BSD tools -------------------
 rig=$(make_rig 'space rig')
 select_bsd_tools "$rig"
 if [ -d "$rig/upstream" ] && [ -L "$rig/upstream" ]; then
@@ -229,7 +273,7 @@ else
   no 'paths with spaces + symlinked upstream: preopens and logs stay quoted' 'rig setup failed'
 fi
 
-# --- 4. selection, jobs and multi-unit runs --------------------------------
+# --- 5. selection, jobs and multi-unit runs --------------------------------
 rig=$(make_rig selection)
 select_gnu_readlink "$rig"
 status=$(run_digest "$rig" "$rig/run.log" --out "$rig/out" --jobs 3 \
@@ -244,7 +288,7 @@ else
     "exit $status: units='$(cat "$rig/out/selected-units.txt" 2>/dev/null || echo -)' jobs='$(cat "$rig/out/selected-jobs.txt" 2>/dev/null || echo -)' $(tail -n 1 "$rig/run.log")"
 fi
 
-# --- 5. a trapped wasm unit is reported and fails the run ------------------
+# --- 6. a trapped wasm unit is reported and fails the run ------------------
 rig=$(make_rig trap)
 select_gnu_readlink "$rig"
 export FAKE_WASM_FAIL_UNIT=unit.two
@@ -259,7 +303,34 @@ else
     "exit $status, mismatches: $(cat "$rig/out/mismatches.txt" 2>/dev/null || echo -) $(tail -n 1 "$rig/run.log")"
 fi
 
-# --- 6. a differing digest is reported and fails the run -------------------
+# --- 7. no runner file is written into the output directory -----------------
+rig=$(make_rig clobber)
+select_gnu_readlink "$rig"
+mkdir -p "$rig/out"
+printf 'keep me\n' >"$rig/victim"
+ln -s "$rig/victim" "$rig/out/run-unit.sh"
+status=$(run_digest "$rig" "$rig/run.log" --out "$rig/out" --unit unit.one --unit unit.two)
+if [ "$status" -eq 0 ] && [ "$(cat "$rig/victim")" = 'keep me' ]; then
+  ok 'output dir: runner is not written or executed (symlink not clobbered)'
+else
+  no 'output dir: runner is not written or executed (symlink not clobbered)' \
+    "exit $status, victim='$(cat "$rig/victim" 2>/dev/null || echo -)' $(tail -n 1 "$rig/run.log")"
+fi
+
+# --- 8. literal shell metacharacters in a unit id --------------------------
+rig=$(make_rig metachar)
+select_gnu_readlink "$rig"
+id="unit;touch\${IFS}PWNED"
+status=$(run_digest "$rig" "$rig/run.log" --out "$rig/out" --unit "$id")
+if [ "$status" -eq 0 ] && [ -f "$rig/out/wasm/$id.digest" ] \
+  && [ ! -e "$rig/PWNED" ] && [ ! -e "$PWD/PWNED" ]; then
+  ok 'unit ids with shell metacharacters stay literal data'
+else
+  no 'unit ids with shell metacharacters stay literal data' \
+    "exit $status, digest=$([ -f "$rig/out/wasm/$id.digest" ] && echo yes || echo no), pwned=$([ -e "$rig/PWNED" ] && echo yes || echo no) $(tail -n 1 "$rig/run.log")"
+fi
+
+# --- 9. a differing digest is reported and fails the run -------------------
 rig=$(make_rig mismatch)
 select_gnu_readlink "$rig"
 set +e
