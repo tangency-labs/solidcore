@@ -780,21 +780,10 @@ fn reseed_records(
         keys.sort_unstable();
     }
     keys.dedup();
-    // (both ascending: `retain` visits the records in key order)
-    let mut next = 0;
-    records.retain(|key, record| {
-        while keys.get(next).is_some_and(|k| k < key) {
-            next += 1;
-        }
-        let keep = keys.get(next) == Some(key);
-        *record = topo::Topology::default();
-        keep
-    });
-    if records.len() != keys.len() {
-        for key in keys {
-            records.or_default(key);
-        }
-    }
+    // (not upstream) only the records the last edits changed are reset and only the
+    // difference in keys is removed or added, so a stitch's many edits do not each
+    // rebuild the whole map
+    records.reset_to_keys(&keys);
 }
 
 /// The kinds of topology keys with their class type codes (`GetType`), by kind number:
@@ -4082,6 +4071,8 @@ pub(crate) fn with_nurb<'a>(k: &Kernel, s: &'a Surface) -> Result<Option<Cow<'a,
     }
     Ok(match s.kind() {
         SurfaceKind::BSpline(x) => Some(Cow::Borrowed(x)),
+        // (the fork's SmProceduralBlend: `new SmBSplineSurface(*pBSS)` slices it to its net)
+        SurfaceKind::ProceduralBlend(x) => Some(Cow::Borrowed(x.net())),
         SurfaceKind::Plane(x) => Some(x.base_for_query()),
         SurfaceKind::SurfOfExtrusion(x) => {
             if x.base().gw_nurb().is_some() {
@@ -4108,6 +4099,7 @@ fn as_bspline_surface(s: &Surface) -> Option<&BSplineSurface> {
         SurfaceKind::Cone(x) => Some(x.rev().base()),
         SurfaceKind::Torus(x) => Some(x.base().base()),
         SurfaceKind::Sphere(x) => Some(x.base().base()),
+        SurfaceKind::ProceduralBlend(x) => Some(x.net()),
         _ => None,
     }
 }

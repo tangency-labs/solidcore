@@ -527,6 +527,10 @@ fn bspline_curve_part_mut(c: &mut Curve) -> Option<&mut BSplineCurve> {
 pub fn bspline_surface_part(s: &Surface) -> Result<Option<Cow<'_, BSplineSurface>>> {
     Ok(match s.kind() {
         SurfaceKind::BSpline(b) => Some(Cow::Borrowed(b)),
+        SurfaceKind::ProceduralBlend(pb) => {
+            let b = pb.net();
+            Some(Cow::Borrowed(b))
+        }
         SurfaceKind::Plane(p) => Some(p.base_with_nurb()?),
         SurfaceKind::Cone(c) => Some(Cow::Borrowed(c.rev().base())),
         SurfaceKind::Sphere(sp) => Some(Cow::Borrowed(sp.base().base())),
@@ -607,7 +611,9 @@ pub fn write_surface_to_db(
         } else {
             db.write_double(distance);
         }
-        let base = off.extended_base_surface().unwrap_or(off.base_surface());
+        let base = off
+            .extended_base_surface()
+            .unwrap_or_else(|| off.base_surface());
         let b = bspline_surface_part(base)?.ok_or_else(|| SolidError::null_pointer(OP_SURFACE))?;
         b.write_to_db(db, version)?;
     } else {
