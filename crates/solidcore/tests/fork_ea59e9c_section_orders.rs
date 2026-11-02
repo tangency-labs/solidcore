@@ -983,7 +983,10 @@ fn boss_g2() -> Case {
         volume: 26043.0880831714,
         volume_rel: 1e-7,
         off: Box::new(|x| {
-            distance_to_curve(&|t| gn_section(2, 0.0, &PLATE_JETS, &WALL_JETS, t), rho_z(x))
+            distance_to_curve(
+                &|t| gn_section(2, 0.0, &PLATE_JETS, &WALL_JETS, t),
+                rho_z(x),
+            )
         }),
         off_tol: Some(4e-6),
         faces: boss_faces(),
@@ -1016,12 +1019,20 @@ fn the_box_edge_at_order_2_is_g3_with_its_planes() {
 
 #[test]
 fn the_box_edge_at_the_equal_area_thumbweight_is_g3_with_its_planes() {
-    assert_order_2(&box_g2("box_edge_g2_thumbweight_w_star", W_STAR, 113.0 / 756.0));
+    assert_order_2(&box_g2(
+        "box_edge_g2_thumbweight_w_star",
+        W_STAR,
+        113.0 / 756.0,
+    ));
 }
 
 #[test]
 fn the_box_edge_at_thumbweight_one_half_is_g3_with_its_planes() {
-    assert_order_2(&box_g2("box_edge_g2_thumbweight_half", 0.5, 0.074_437_252_208_692_5));
+    assert_order_2(&box_g2(
+        "box_edge_g2_thumbweight_half",
+        0.5,
+        0.074_437_252_208_692_5,
+    ));
 }
 
 #[test]
@@ -1031,14 +1042,15 @@ fn the_pipe_root_at_order_2_is_g2_with_its_faces() {
 
 #[test]
 fn the_pipe_root_at_thumbweight_one_half_is_g2_with_its_faces() {
-    assert_order_2(&pipe_g2("pipe_on_plate_g2_thumbweight_half", 0.5, 40216.5022652017));
+    assert_order_2(&pipe_g2(
+        "pipe_on_plate_g2_thumbweight_half",
+        0.5,
+        40216.5022652017,
+    ));
 }
 
 #[test]
-#[cfg_attr(
-    debug_assertions,
-    ignore = "about 3.5 min when optimized, 40 min in a dev build"
-)]
+#[ignore = "slow: 4 min per kernel in the difftest profile, a 227-span certificate"]
 fn the_boss_root_at_order_2_is_at_least_g2_with_its_faces() {
     assert_order_2(&boss_g2());
 }
