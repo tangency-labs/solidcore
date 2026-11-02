@@ -452,8 +452,9 @@ pub enum FilletVertexType {
     #[default]
     Unknown = 13,
     /// The fork's `SM_FV_PRECOMPUTED` (61547af; smlib#104): placed by its corner's own
-    /// build (a setback fill's base point). Not in the pinned enum, so it has no upstream
-    /// code ([`Self::from_code`]); its discriminant follows the pinned ones.
+    /// build (a setback fill's base point). Its discriminant is the fork's value (14, after
+    /// `SM_FV_JOIN_SECTION` 13 at b5bb747); not in the pinned enum, so [`Self::from_code`]
+    /// has no code for it.
     Precomputed = 14,
 }
 
