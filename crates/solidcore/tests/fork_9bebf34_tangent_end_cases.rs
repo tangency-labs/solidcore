@@ -395,6 +395,8 @@ fn rounds_together_r5(k: &mut Kernel) -> Outcome {
 enum Here {
     /// The fork marks it failing; it passes here.
     Passes(&'static str),
+    /// Both fail, for a different reason or by a different amount here.
+    FailsOtherwise(&'static str),
 }
 
 /// The fork's mark of a case at one revision: its reason the case fails there (`None`: it
@@ -409,6 +411,7 @@ impl Mark {
     fn fails_here(&self) -> bool {
         match self.here {
             Some(Here::Passes(_)) => false,
+            Some(Here::FailsOtherwise(_)) => true,
             None => self.fails_today.is_some(),
         }
     }
@@ -468,6 +471,8 @@ const ROUNDS_R2: &str = "the corner patch where the rounds meet stands 0.0374 ou
 const ROUNDS_R5: &str = "the corner patch where the rounds meet stands 0.128 out of the front face (box y min -0.1278205)";
 const ROUNDS_R2_HERE: &str = "the rounds together build within the box and check clean (with fillet_blend_corner, as the blend corner's Mixed corner, built in solidcore from smlib#82)";
 const ROUNDS_R5_HERE: &str = "the blend corner's Mixed corner (fillet_blend_corner, built in solidcore from smlib#82) builds the rounds together within the box; without it the pinned corner patch stands 0.00156 out of the front face (box y min -0.0015609)";
+const ROUNDS_R2_HERE_AT_9BEBF34: &str = "the rounds together build within the box and check clean (the pinned corner patch: this profile has no fillet_blend_corner, whose Mixed corner builds them at cd47efd)";
+const ROUNDS_R5_HERE_AT_9BEBF34: &str = "the pinned corner patch stands 0.00156 out of the front face (box y min -0.0015609): this profile has no fillet_blend_corner, whose Mixed corner builds the rounds together within the box at cd47efd";
 const CHAMFERS_HERE: &str = "the blend corner's Mixed corner (fillet_blend_corner, built in solidcore from smlib#82) builds the chamfers together at the tangent seam";
 
 const TANGENT_END_CASES: [TangentEndCase; 13] = [
@@ -563,7 +568,7 @@ const TANGENT_END_CASES: [TangentEndCase; 13] = [
         run: rounds_together_r2,
         at_9bebf34: Mark {
             fails_today: Some(ROUNDS_R2),
-            here: Some(Here::Passes(ROUNDS_R2_HERE)),
+            here: Some(Here::Passes(ROUNDS_R2_HERE_AT_9BEBF34)),
         },
         at_cd47efd: Mark {
             fails_today: Some(ROUNDS_R2),
@@ -575,7 +580,7 @@ const TANGENT_END_CASES: [TangentEndCase; 13] = [
         run: rounds_together_r5,
         at_9bebf34: Mark {
             fails_today: Some(ROUNDS_R5),
-            here: Some(Here::Passes(ROUNDS_R5_HERE)),
+            here: Some(Here::FailsOtherwise(ROUNDS_R5_HERE_AT_9BEBF34)),
         },
         at_cd47efd: Mark {
             fails_today: Some(ROUNDS_R5),
@@ -633,6 +638,23 @@ fn tangent_end_cases_known_failing_at_cd47efd() {
     );
 }
 
+/// The rounds together at r 5: without the blend corner (9bebf34's profile) the pinned corner
+/// patch stands 0.00156 out of the front face; with it (cd47efd's) the Mixed corner builds them
+/// within the box (`issue_2360_mixed_corner.rs`).
+#[test]
+fn rounds_together_r5_needs_the_mixed_corner() {
+    let before = rounds_together_r5(&mut kernel());
+    assert_eq!(before.failed.len(), 1, "{:?}", before.failed);
+    assert!(
+        before.failed[0].contains("y: -0.00156094628"),
+        "{:?}",
+        before.failed
+    );
+
+    let after = rounds_together_r5(&mut solidcraft_kernel());
+    assert!(after.failed.is_empty(), "{:?}", after.failed);
+}
+
 /// WR-710 (`fillet_refuse_mixed_corner_crossing_rails`, #2256): the front top edge and the
 /// concave arc leave V along one tangent, so the bar's top closes to a cusp there and the
 /// rails on it cross before the corner. With the refusal on, the rounds together are refused
@@ -668,7 +690,7 @@ fn tangent_end_marks_are_the_fork_s() {
             let differs = m.fails_here() != m.fails_today.is_some();
             match &m.here {
                 None => assert!(!differs, "{revision:?} {}", c.name),
-                Some(Here::Passes(why)) => {
+                Some(Here::Passes(why) | Here::FailsOtherwise(why)) => {
                     assert!(
                         m.fails_today.is_some() && !why.is_empty(),
                         "{revision:?} {}",
