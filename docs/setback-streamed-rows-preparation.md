@@ -59,8 +59,8 @@ python3 harness/cpp/tests/compare_setback_executive.py \
   /tmp/rust-executive.log /tmp/streamed-executive.log
 ```
 
-The build recompiles the caller allocating `Fill` too: its WIP counters increase
-the structure's size. It reuses the baseline's other compatible objects and
+The build recompiles callers allocating and deleting `Fill` too: its WIP counters
+increase its size, including the size used by sized delete. It reuses the other compatible objects and
 existing libraries; the shared pinned C++ build remains unchanged. Every C++
 command is under nice, and the builder compiles serially.
 

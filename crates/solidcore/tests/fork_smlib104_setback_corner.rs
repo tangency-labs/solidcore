@@ -4,7 +4,7 @@
 //! corner of the fork's capi `setback_g1_fill_keeps_the_body_convex` cases.
 //! #2344(a) uses 20b1c01's thousandth search. Changed flag-on volumes below are
 //! native executive comparisons: twelve cases, six bodies and 144 vertices. Scales and
-//! QP/attempt counts are compared to native in blend_setback::scale::tests.
+//! QP/attempt counts are compared to native in `blend_setback::scale::tests`.
 #![allow(
     clippy::unwrap_used,
     clippy::expect_used,
@@ -505,7 +505,7 @@ fn three_unequal_rounds_are_the_certified_setback_fill() {
     );
     // Local native executive: 23841.674295048841; also agrees with the handoff to 1e-9.
     let mut b = built(&mut k, r, (15, 36, 23), 23841.67429504884);
-    let v = volume(&mut k, &mut b);
+    let v = volume(&k, &mut b);
     assert!((v - 23841.674296328).abs() <= 1e-9 * v.abs().max(23841.674296328));
     let mut k = all_fixes(false);
     let r = blend_box(

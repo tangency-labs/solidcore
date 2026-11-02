@@ -106,3 +106,11 @@ Native executive result: PASS, 12 cases, 6 bodies, 144 vertices. Every status,
 comment, named fit, count, volume and coordinate agrees at 1e-9 relative with
 no absolute floor. Changed volumes are native-supported regression values.
 The focused six-case Rust scale/attempt/QP gate also passes after both merges.
+
+Final merged-branch checks: workspace clippy (`--all-targets -- -D warnings`),
+wasm and fmt pass. All six pinned C++ caller units pass (executive p1-p3 and
+corner p1-p3): 3172 cases including 45 guard rejections, zero mismatches and
+zero deferrals. The first workspace clippy run found two owned test lints;
+both were corrected and the complete workspace check was rerun successfully.
+Full `cargo test -p solidcore`, runner self-tests and `--green` were not run;
+there is no unit promotion or CI-green claim.
