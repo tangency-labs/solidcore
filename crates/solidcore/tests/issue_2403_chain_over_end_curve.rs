@@ -308,7 +308,6 @@ fn three_edges_together_end_on_the_corner_ball() {
 /// ball about C, which lies on the arc round's centre circle: the corner face is that ball's
 /// triangle, and the arc round is cut back to its section through C.
 #[test]
-#[ignore = "fails with status 1001 until the round along the end curve is the ball (#2403)"]
 fn arc_then_top_front_ends_on_the_corner_ball() {
     let mut k = kernel(true);
     let mut b = part(&mut k);
@@ -324,7 +323,6 @@ fn arc_then_top_front_ends_on_the_corner_ball() {
 /// curve; the upright's chain over it ends on the ball about C, which lies on the top front
 /// round's axis.
 #[test]
-#[ignore = "fails with status 1001 until the round along the end curve is the ball (#2403)"]
 fn top_front_then_upright_ends_on_the_corner_ball() {
     let mut k = kernel(true);
     let mut b = part(&mut k);
