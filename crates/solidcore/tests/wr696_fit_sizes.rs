@@ -271,25 +271,30 @@ fn fillet_edges_returns_the_fit_on_the_refusal() {
     );
 }
 
-/// Without the flag no fit is noted and the refusal stays a plain status.
+/// Without the flag no fit is noted and the refusal stays the plain status it was before:
+/// the L's concave round 9 is refused (`fixes.fillet_cliff_overflow`) as
+/// `SolidError::Upstream`, not `FilletRefused`.
 #[test]
 fn without_the_flag_no_fit_is_noted() {
     let mut k = kernel(false);
     let mut b = l_wall(&mut k);
-    if let Err(refusal) = blend(
+    let refusal = blend(
         &mut k,
         &mut b,
         &[Point3::new(2.0, 10.0, 2.0)],
         9.0,
         1,
         false,
-    ) {
-        assert!(refusal.fit.is_none(), "{refusal:?}");
-    }
+    )
+    .expect_err("refused");
+    assert_eq!(refusal.reason, Some(NoRoomReason::ConcaveOverflow));
+    assert!(refusal.fit.is_none(), "{refusal:?}");
     let mut k = kernel(false);
     let mut b = l_wall(&mut k);
     let e = pick(&k, &b, Point3::new(2.0, 10.0, 2.0));
-    if let Err(err) = fillet_edges(&mut k, &mut b, &[e], 9.0, 1, 2, 0.0) {
-        assert!(!matches!(err, SolidError::FilletRefused { .. }), "{err:?}");
-    }
+    let err = fillet_edges(&mut k, &mut b, &[e], 9.0, 1, 2, 0.0).expect_err("refused");
+    assert!(
+        matches!(err, SolidError::Upstream { code: 1001, .. }),
+        "{err:?}"
+    );
 }
