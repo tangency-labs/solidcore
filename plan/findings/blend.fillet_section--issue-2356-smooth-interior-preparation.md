@@ -44,6 +44,16 @@ Analytic control, rail and corrected station-jet checks already use `1e-9`.
 The normal angle uses `atan2(|N_left cross N_right|, N_left dot N_right)`;
 `acos(dot)` cannot resolve the specified near-zero angle reliably.
 
+The optimized WSL run measures a definition normal jump of
+`1.3045711394729534e-4` rad and a section-direction normal-curvature jump of
+`1.665909306281184e-3`. The actual built net has 29 spans and 28 interior
+knot lines; its maximum normal jump is `1.304571139500838e-4` rad. The
+planar control's net has two spans and a maximum measured normal jump of
+`5.157236908654451e-16` rad. All five integration regressions pass,
+including the corrected station's partials through order two at `1e-9`
+and the rail controls. These values belong to this minimal fixture, not
+the issue's twisted-wedge capi case.
+
 ## Closed-form kernels and a station derivative detail
 
 The Q=2 endpoint Hermite conditions uniquely give
