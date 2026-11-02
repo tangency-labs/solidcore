@@ -1,6 +1,6 @@
 # Setback scale search comparison (#2344a)
 
-This contribution stacks on #2369 (`6c87a7323`) and #2274. The native target for
+This contribution stacks on #2369 (`ee6e1b349`); #2274 is merged. The native target for
 the scale change is SMLib `20b1c01`, not the pinned v1.0.1 reference. Only the two
 Apache-2.0 files `source/SMLib/src/SmBlendSetback.cpp` and
 `source/SMLib/inc/SmBlendSetback.h` were fetched from that commit.
@@ -78,7 +78,7 @@ python3 harness/cpp/tests/compare_setback_executive.py \
   /tmp/rust-executive.log /tmp/native-executive.log
 ```
 
-The comparator requires twelve independently constructed executive results:
+The comparator requires thirteen independently constructed executive results:
 matching success/refusal, comments, named fits, topology counts, volumes and
 every vertex coordinate, at 1e-9 relative with no absolute floor. It documents
 only the existing unsupported-corner code-number mapping (native 10, Rust 9).
@@ -88,29 +88,74 @@ This reuses the shared library build without modifying it or creating another
 checkout. Only the allowed SMLib sources are compiled. The native overlay is
 not the pinned reference used for default-behavior difftests.
 
-## Dependency update and CI approval
+## Dependency refresh (2026-11-03)
 
-The branch merges #2369 at `7b59ad6f8` and main at `23ea17c1c`. Both merged
-automatically, with no manual conflict resolutions. The new G2 regression suite
-passes all eight cases; the setback suite passes seven (two print helpers ignored).
-The corrected G2 report concerns SolidCraft's wrapper; no refusal workaround was
-added here.
+Merged authoritative main `ebe6722e09169cce29a20c455fc6ec606b57caa0`
+and #2369 `ee6e1b349e9ebae287246cc42a787a6620ab429e` into the
+published branch, without rebasing or changing dependency branches. #2274 is
+merged. #2369 is open, ready for review and has thirteen successful checks;
+its review and merge remain dependencies of this stacked contribution.
 
-Run [41431300743](https://github.com/tangency-labs/solidcore/actions/runs/41431300743)
-at `9f5dce3` completed `action_required` with zero jobs. A repository admin
-must approve the fork workflow. The parent received HTTP 403 on its approval
-attempt because the account has pull permission only. This is not a test failure
-and this contribution does not rerun CI to work around that approval gate.
+The main merge resolved two documentation conflicts: retain `JoinSection = 16`
+and `Precomputed = 14` with main's discriminant explanation; retain the new
+Ball patch, End/Join and collapsed-offset documentation alongside the
+thousandth-grid scale guarantee. The dependency merge kept that guarantee over
+its old `to 1e-2` text and removed a blank line in the enum documentation.
+Its added `BlendCorner.end` initializer is preserved.
 
-Native executive result: PASS, 12 cases, 6 bodies, 144 vertices. Every status,
-comment, named fit, count, volume and coordinate agrees at 1e-9 relative with
-no absolute floor. Changed volumes are native-supported regression values.
-The focused six-case Rust scale/attempt/QP gate also passes after both merges.
+The executive matrix now includes #2369's unequal (2, 2, 3) rounds on a
+20 mm box at (20, 0, 20), as a thirteenth independent native/Rust input.
+Its native scale-search volume is `7927.724282512234`, replacing the dependency's
+old-search `7928.142563966`. Both states of the added Rust regression pass;
+the flag-off expected volume was preserved.
 
-Final merged-branch checks: workspace clippy (`--all-targets -- -D warnings`),
-wasm and fmt pass. All six pinned C++ caller units pass (executive p1-p3 and
-corner p1-p3): 3172 cases including 45 guard rejections, zero mismatches and
-zero deferrals. The first workspace clippy run found two owned test lints;
-both were corrected and the complete workspace check was rerun successfully.
-Full `cargo test -p solidcore`, runner self-tests and `--green` were not run;
-there is no unit promotion or CI-green claim.
+### Fresh merged-code results
+
+Workspace clippy (`--workspace --all-targets -- -D warnings`), wasm32 check
+and formatting pass under Ubuntu WSL with two Cargo jobs and low priority.
+
+The six-case scale/attempt/QP gate passes, as do all eight G2 regressions and
+all seven direct setback tests in `fork_870c970_blend_setback`.
+All six pinned C++ caller units pass on the merged code: executive p1–p3 and
+corner p1–p3, 3172 cases including 45 guard rejections, zero mismatches or
+deferrals (`difftest: 6 unit(s), 6 passed, 0 partial, 0 failed`).
+The executive dump builds seven bodies and passes Rust Level2 checks.
+Stored-versus-streamed native executive comparison passes all thirteen cases,
+seven bodies and 167 vertices.
+
+The **strict Rust/native executive comparison fails**: cases 9, 10 and 12 have
+ten unmatched vertices with coordinate differences near zero, despite matching
+volumes and topology counts. No absolute floor or tolerance was introduced.
+Details: `plan/findings/blend.fillet_corner--2344-main-refresh-relative-zero-parity.md`.
+
+The setback integration suite also has four flag-off volume-snapshot failures
+(three pass, two helpers ignored). Their flag-on checks pass. No old expected
+volume or tolerance was changed. Details and reproduction:
+`plan/findings/blend.fillet_corner--2344-main-refresh-flag-off-volumes.md`.
+These are explicit readiness blockers; historical proof below does not waive them.
+
+### Historical evidence before this refresh
+
+At `274e0a4a6`, the twelve-case native executive gate passed: six bodies,
+144 vertices, statuses, comments, named fits, topology counts, volumes and
+every coordinate at 1e-9 relative with no absolute floor. Workspace clippy,
+wasm, fmt, the focused six-case scale/count gate, setback and G2 suites and
+all six pinned C++ executive/corner caller units passed (3172 cases including
+45 guard rejections; zero mismatches or deferrals). This is historical proof,
+not evidence for the merge resolutions above.
+
+Full `cargo test -p solidcore`, runner self-tests and `--green` were not run
+for this slice; there is no unit promotion or CI-green claim. Production Rust
+streaming remains unimplemented; the native preparation is documented separately.
+
+### CI permission boundary
+
+The last published-head run before this refresh,
+[41450960214](https://github.com/tangency-labs/solidcore/actions/runs/41450960214)
+at `274e0a4a6`, completed `action_required`. Earlier run
+[41431300743](https://github.com/tangency-labs/solidcore/actions/runs/41431300743)
+at `9f5dce3` had zero jobs and requires repository-admin approval. The earlier
+approval attempt returned HTTP 403, "Must have admin rights to Repository".
+The current account still has pull permission only on the authoritative repo.
+No code edit or rerun can supply that permission; current-head workflow status
+must be assessed separately after pushing.

@@ -3,8 +3,10 @@
 //! least scale of the setbacks that certifies (`SmBlendSetback::CertifiedScale`), on the box
 //! corner of the fork's capi `setback_g1_fill_keeps_the_body_convex` cases.
 //! #2344(a) uses 20b1c01's thousandth search. Changed flag-on volumes below are
-//! native executive comparisons: twelve cases, six bodies and 144 vertices. Scales and
+//! native executive comparisons, extended to thirteen cases. Scales and
 //! QP/attempt counts are compared to native in `blend_setback::scale::tests`.
+//! Merged-head coordinate/snapshot failures are recorded in the two
+//! `plan/findings/blend.fillet_corner--2344-main-refresh-*` findings.
 #![allow(
     clippy::unwrap_used,
     clippy::expect_used,
@@ -426,6 +428,16 @@ fn dump_blends() {
     let b = notched(&mut k, 10.0);
     let r = blend_body(&mut k, b, &CONCAVE_AT, &[1.0, 1.5, 2.0], None);
     print!("{}", dump_blended(k, r));
+    println!("== unequal dependency box");
+    print!(
+        "{}",
+        dump_blend(
+            [20.0; 3],
+            &[[10.0, 0.0, 20.0], [20.0, 10.0, 20.0], [20.0, 0.0, 10.0]],
+            &[2.0, 2.0, 3.0],
+            None
+        )
+    );
 }
 
 // ---- regression cases: the fork's capi setback cases, run through the executive ----

@@ -35,7 +35,7 @@ def close(a, b):
 
 assert sys.argv[3:] in ([], ["--native-left"]), "optional argument: --native-left"
 rust, native = parse(sys.argv[1], bool(sys.argv[3:])), parse(sys.argv[2], True)
-assert len(rust) == len(native) == 12, (len(rust), len(native))
+assert len(rust) == len(native) == 13, (len(rust), len(native))
 vertices = bodies = 0
 for case, (r, n) in enumerate(zip(rust, native)):
     # The documented pre-existing SM_FILERR_CORNER_UNSUPPORTED numbering difference.
@@ -55,4 +55,4 @@ for case, (r, n) in enumerate(zip(rust, native)):
         remaining.pop(match)
         vertices += 1
     assert not remaining, (case, remaining)
-print(f"PASS native executive: 12 cases, {bodies} bodies, {vertices} vertices; statuses/comments/fit/counts/volumes/coordinates agree at 1e-9 relative")
+print(f"PASS native executive: 13 cases, {bodies} bodies, {vertices} vertices; statuses/comments/fit/counts/volumes/coordinates agree at 1e-9 relative")

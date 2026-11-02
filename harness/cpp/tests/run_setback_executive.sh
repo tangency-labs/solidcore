@@ -17,3 +17,5 @@ echo "== shrink"
 $exe 20 20 5.5 2 3 4 -1
 echo "== concave"
 $exe 20 20 20 1 1.5 2 -1 2
+echo "== unequal dependency box"
+$exe 20 20 20 2 2 3 -1 3

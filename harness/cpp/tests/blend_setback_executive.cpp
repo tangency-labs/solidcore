@@ -2,7 +2,8 @@
 // Independent native executive inputs matching fork_smlib104_setback_corner.rs.
 // Args: dx dy dz radius-x radius-y radius-z setback [mode [ease]].
 // setback=-1 uses the rule. mode=0 picks the origin, 1 the opposite corner,
-// 2 subtracts the upper octant and picks its concave corner (no requested setback).
+// 2 subtracts the upper octant and picks its concave corner (no requested setback),
+// 3 picks (dx, 0, dz), the unequal-rounds dependency regression.
 // Use the API's context throughout: topology marks belong to that context.
 #include "StdAfx.h"
 #include <SmApiPrimitives.h>
@@ -33,7 +34,7 @@ int main(int argc,char **argv) {
   for(ULONG j=0;j<all.GetSize();++j) {
    SmVector3d p; SmExtent1d iv=all[j]->GetInterval();
    all[j]->GetCurve()->Evaluate((iv.GetMin()+iv.GetMax())/2,0,FALSE,&p);
-   double dims[3]={dx,dy,dz}; double target[3]={0,0,0}; for(int a=0;a<3;++a) target[a]= mode==0 ? 0 : mode==1 ? dims[a] : dims[a]/2; target[axis]=(mode==2?0.75:0.5)*dims[axis];
+   double dims[3]={dx,dy,dz}; double target[3]={0,0,0}; for(int a=0;a<3;++a) target[a]= mode==0 ? 0 : mode==1 ? dims[a] : mode==3 ? (a==1?0:dims[a]) : dims[a]/2; target[axis]=(mode==2?0.75:0.5)*dims[axis];
    double d=(p[0]-target[0])*(p[0]-target[0])+(p[1]-target[1])*(p[1]-target[1])+(p[2]-target[2])*(p[2]-target[2]);
    if(d<best){best=d;chosen=all[j];}
   }

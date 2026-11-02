@@ -66,6 +66,14 @@ command is under nice, and the builder compiles serially.
 
 ## Remaining implementation and coverage
 
+The twelve-case result above is historical evidence at `274e0a4a6`. The shared
+executive runner/comparator now requires thirteen cases, adding #2369's unequal
+(2, 2, 3) box corner. Rebuilt native stored/streamed drivers pass the expanded
+matrix: thirteen cases, seven bodies, 167 vertices, strict relative 1e-9 with
+no absolute floor. Current merged Rust does not pass the same coordinate gate;
+see `plan/findings/blend.fillet_corner--2344-main-refresh-relative-zero-parity.md`.
+Native-to-native parity does not establish Rust parity.
+
 The production Rust streamed row provider, affine-polynomial storage, working-set
 integration and per-kernel work counters remain unimplemented and available for
 a separate claim. Preserve the existing degree order unless separately changing
