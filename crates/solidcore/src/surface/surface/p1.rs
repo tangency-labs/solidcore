@@ -1348,6 +1348,8 @@ impl Surface {
             (SurfaceKind::OffsetSurface(s), _) => s.approx_eq(k, other),
             // SmBSplineSurface::operator==: SmSurface::operator== first
             (SurfaceKind::BSpline(a), SurfaceKind::BSpline(b)) => Ok(a.approx_eq(b)),
+            // the fork's SmBallPatch::operator== (f8e6709): the net's, then the sphere
+            (SurfaceKind::BallPatch(a), SurfaceKind::BallPatch(b)) => Ok(a.approx_eq(b)),
             // SmPlane::operator==: SmBSplineSurface::operator== first
             (SurfaceKind::Plane(a), SurfaceKind::Plane(b)) => Ok(a.approx_eq(b)),
             (SurfaceKind::Cone(a), SurfaceKind::Cone(b)) => Ok(a.approx_eq(b)),
@@ -1493,6 +1495,8 @@ impl Surface {
                 .map(<[Vec3]>::to_vec)
                 .collect()),
             SurfaceKind::BSpline(_)
+            | SurfaceKind::ProceduralBlend(_)
+            | SurfaceKind::BallPatch(_)
             | SurfaceKind::Plane(_)
             | SurfaceKind::Step(_)
             | SurfaceKind::OffsetSurface(_)
@@ -1612,6 +1616,8 @@ impl Surface {
             SurfaceKind::SurfOfExtrusion(s) => s.evaluate_step_into(k, uv, hu, hv, d),
             // pass the call along (the base default, `Evaluate`)
             SurfaceKind::BSpline(_)
+            | SurfaceKind::ProceduralBlend(_)
+            | SurfaceKind::BallPatch(_)
             | SurfaceKind::Plane(_)
             | SurfaceKind::Step(_)
             | SurfaceKind::OffsetSurface(_)
@@ -1663,6 +1669,8 @@ impl Surface {
                 ignored(self.evaluate_step(k, uv, highest_u_deriv, highest_v_deriv, flags))
             }
             SurfaceKind::BSpline(_)
+            | SurfaceKind::ProceduralBlend(_)
+            | SurfaceKind::BallPatch(_)
             | SurfaceKind::Plane(_)
             | SurfaceKind::Step(_)
             | SurfaceKind::OffsetSurface(_)
@@ -1695,6 +1703,8 @@ impl Surface {
             SurfaceKind::SurfOfRevolution(s) => s.evaluate_step_point_at(k, uv),
             SurfaceKind::SurfOfExtrusion(s) => s.evaluate_step_point(k, uv),
             SurfaceKind::BSpline(_)
+            | SurfaceKind::ProceduralBlend(_)
+            | SurfaceKind::BallPatch(_)
             | SurfaceKind::Plane(_)
             | SurfaceKind::Step(_)
             | SurfaceKind::OffsetSurface(_)
@@ -1720,6 +1730,17 @@ impl Surface {
         self.check_evaluation_copy_depth(0)?;
         match self.kind() {
             SurfaceKind::BSpline(s) => s.evaluate_simple(
+                uv,
+                highest_u_deriv,
+                highest_v_deriv,
+                flags.u_side == Side::Left,
+                flags.v_side == Side::Left,
+                flags.only_upper_half,
+            ),
+            SurfaceKind::ProceduralBlend(s) => {
+                s.evaluate_simple(k, uv, highest_u_deriv, highest_v_deriv, flags)
+            }
+            SurfaceKind::BallPatch(s) => s.net().evaluate_simple(
                 uv,
                 highest_u_deriv,
                 highest_v_deriv,
@@ -1794,6 +1815,7 @@ impl Surface {
     ) -> Result<()> {
         let base = match self.kind() {
             SurfaceKind::BSpline(s) => Some(s),
+            SurfaceKind::BallPatch(s) => Some(s.net()),
             // inherited from SmBSplineSurface, which reads m_pNurb: upstream's analytic
             // surfaces always hold one (the port makes it on demand, kind_with_nurb)
             SurfaceKind::Cone(_)
@@ -1801,7 +1823,10 @@ impl Surface {
             | SurfaceKind::SurfOfExtrusion(_)
             | SurfaceKind::Sphere(_)
             | SurfaceKind::Torus(_) => Some(self.analytic_base_with_nurb(k)?),
+            // (a procedural blend: its own EvaluateSimple, the definition's or, in a
+            // net scope, the net's)
             SurfaceKind::Plane(_)
+            | SurfaceKind::ProceduralBlend(_)
             | SurfaceKind::CurveBounded(_)
             | SurfaceKind::OffsetSurface(_)
             | SurfaceKind::SrfInVolume(_)
@@ -2179,6 +2204,8 @@ impl Surface {
             | SurfaceKind::Sphere(_)
             | SurfaceKind::Torus(_)
             | SurfaceKind::BSpline(_)
+            | SurfaceKind::ProceduralBlend(_)
+            | SurfaceKind::BallPatch(_)
             | SurfaceKind::Plane(_)
             | SurfaceKind::SurfOfRevolution(_)
             | SurfaceKind::SurfOfExtrusion(_) => {
@@ -2203,6 +2230,17 @@ impl Surface {
                 let r = match self.kind() {
                     SurfaceKind::BSpline(s) => s.calculate_bounding_box(k, uv_domain, &req)?,
                     SurfaceKind::Plane(p) => plane_bounding_box(k, p, uv_domain, &req)?,
+                    // SmProceduralBlend::CalculateBoundingBox: the net's boxes grown by the
+                    // bound, so they hold the definition's points; the analytic polar box
+                    // takes the blend's own (virtual) EvaluateNormal
+                    SurfaceKind::ProceduralBlend(pb) => {
+                        pb.calculate_bounding_box(k, uv_domain, &req, self)?
+                    }
+                    // (the fork's SmBallPatch inherits SmBSplineSurface's, run for the patch)
+                    SurfaceKind::BallPatch(bp) => {
+                        bp.net()
+                            .calculate_bounding_box_of(k, uv_domain, &req, Some(self))?
+                    }
                     // (SmBSplineSurface::CalculateBoundingBox reads the NURB through
                     // GetOrCreateGwNurbPointer, which makes a missing one)
                     _ => self.analytic_base_with_nurb(k)?.calculate_bounding_box_of(
@@ -2290,6 +2328,8 @@ impl Surface {
                 nesting_depth(depth, "surface::surface::p1::step_uv_domain_with_nurb")?,
             )?,
             SurfaceKind::BSpline(_)
+            | SurfaceKind::ProceduralBlend(_)
+            | SurfaceKind::BallPatch(_)
             | SurfaceKind::CurveBounded(_)
             | SurfaceKind::Step(_)
             | SurfaceKind::OffsetSurface(_) => self.natural_uv_domain_with_nurb_at(k, depth)?,
@@ -2553,8 +2593,14 @@ impl Surface {
             SurfaceKind::Torus(s) => Ok(s
                 .create_offset_surface(k, signed_offset_distance, approx_tol_3d)?
                 .map(Self::from)),
+            // the fork's SmBallPatch::CreateOffsetSurface (f8e6709): exact, the net scaled
+            // about the sphere's centre
+            SurfaceKind::BallPatch(s) => Ok(Some(Self::from(
+                s.create_offset_surface(k, signed_offset_distance)?,
+            ))),
             // (SmSurfOfExtrusion's override is commented out upstream)
             SurfaceKind::BSpline(_)
+            | SurfaceKind::ProceduralBlend(_)
             | SurfaceKind::SurfOfExtrusion(_)
             | SurfaceKind::CurveBounded(_)
             | SurfaceKind::Step(_)
@@ -2584,6 +2630,8 @@ impl Surface {
             SurfaceKind::Cone(s) => s.offset_collapses(k, signed_offset_distance, tol),
             SurfaceKind::Sphere(s) => s.offset_collapses(signed_offset_distance, tol),
             SurfaceKind::Torus(s) => s.offset_collapses(signed_offset_distance, tol),
+            // the fork's SmBallPatch::OffsetCollapses (f8e6709)
+            SurfaceKind::BallPatch(s) => s.offset_collapses(k, signed_offset_distance, tol),
             SurfaceKind::SurfOfRevolution(s) if k.fixes.revolution_round_offset_collapses => {
                 self.revolution_offset_collapses(k, s, signed_offset_distance, tol)?
             }
@@ -2930,6 +2978,16 @@ impl Surface {
         let natural = self.natural_uv_domain_with_nurb(k)?;
         match self.kind_with_nurb(k)? {
             SurfaceKind::BSpline(s) => s.is_degenerate_point(k, tol_3d, uv_domain),
+            SurfaceKind::BallPatch(s) => s.net().is_degenerate_point(k, tol_3d, uv_domain),
+            // SmBSplineSurface's: the net's test over the natural domain, the base body
+            // (its virtual evaluations reach the definition) over another
+            SurfaceKind::ProceduralBlend(pb) => {
+                if uv_domain.is_some_and(|d| !d.are_equal(&natural, EFF_ZERO)) {
+                    base_is_degenerate_point(k, self, tol_3d, uv_domain)
+                } else {
+                    pb.net().is_degenerate_point(k, tol_3d, uv_domain)
+                }
+            }
             // inherited from SmBSplineSurface
             SurfaceKind::Cone(s) => {
                 if uv_domain.is_some_and(|d| !d.are_equal(&natural, EFF_ZERO)) {
@@ -2972,6 +3030,10 @@ impl Surface {
             SurfaceKind::BSpline(s) => {
                 s.is_degenerate_curve(k, angle_tol_deg, uv_domain, opt_3d_tol)
             }
+            SurfaceKind::BallPatch(s) => {
+                s.net()
+                    .is_degenerate_curve(k, angle_tol_deg, uv_domain, opt_3d_tol)
+            }
             // inherited from SmBSplineSurface
             SurfaceKind::SurfOfRevolution(s) => {
                 s.base()
@@ -2997,7 +3059,10 @@ impl Surface {
                 p.base_for_query()
                     .is_degenerate_curve(k, angle_tol_deg, uv_domain, opt_3d_tol)
             }
-            SurfaceKind::Cone(_)
+            // (SmBSplineSurface::IsDegenerateCurve is the base body: a blend's virtual
+            // evaluations reach its definition)
+            SurfaceKind::ProceduralBlend(_)
+            | SurfaceKind::Cone(_)
             | SurfaceKind::CurveBounded(_)
             | SurfaceKind::Step(_)
             | SurfaceKind::OffsetSurface(_)
@@ -3692,6 +3757,8 @@ pub fn crossed_seam_or_pole(
         SurfaceKind::Plane(_) => return Ok(false),
         // (SM_CAST_PTR(SmBSplineSurface): the B-spline and the kinds derived from it)
         SurfaceKind::BSpline(_)
+        | SurfaceKind::ProceduralBlend(_)
+        | SurfaceKind::BallPatch(_)
         | SurfaceKind::Cone(_)
         | SurfaceKind::SurfOfRevolution(_)
         | SurfaceKind::SurfOfExtrusion(_)

@@ -3188,6 +3188,11 @@ fn transformed_surface_base(
     use crate::surface::surface::SurfaceKind;
     Ok(match surface.kind_mut() {
         SurfaceKind::BSpline(base) => Some(base.clone()),
+        SurfaceKind::ProceduralBlend(pb) => {
+            let base = pb.net();
+            Some(base.clone())
+        }
+        SurfaceKind::BallPatch(bp) => Some(bp.net().clone()),
         SurfaceKind::Plane(plane) => {
             if plane.base().gw_nurb().is_none() {
                 crate::error::ignore_status(plane.make_nurb())?;

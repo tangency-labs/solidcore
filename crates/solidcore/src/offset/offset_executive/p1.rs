@@ -1903,6 +1903,13 @@ impl OffsetExecutive {
             SurfaceKind::BSpline(surface) => {
                 ignore_status(surface.get_or_create_gw_nurb())?;
             }
+            // (IsKindOf(SmBSplineSurface_TYPE): the fork's SmProceduralBlend, its net)
+            SurfaceKind::ProceduralBlend(surface) => {
+                ignore_status(surface.net_mut().get_or_create_gw_nurb())?;
+            }
+            SurfaceKind::BallPatch(surface) => {
+                ignore_status(surface.net_mut().get_or_create_gw_nurb())?;
+            }
             SurfaceKind::Plane(surface) if surface.base().gw_nurb().is_none() => {
                 ignore_status(surface.make_nurb())?;
             }
