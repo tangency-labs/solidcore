@@ -142,7 +142,11 @@ fn equal_rods_join_in_either_order() {
         for seam in SEAMS {
             for a_first in [true, false] {
                 if let Some(w) = rods(fixed, seam, a_first) {
-                    let order = if a_first { "(C u A) u B" } else { "(C u B) u A" };
+                    let order = if a_first {
+                        "(C u A) u B"
+                    } else {
+                        "(C u B) u A"
+                    };
                     failures.push(format!("fix {fixed} seam {seam} {order}: {w}"));
                 }
             }
