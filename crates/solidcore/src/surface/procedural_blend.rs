@@ -385,6 +385,48 @@ impl ProceduralBlend {
         self.def.bound
     }
 
+    /// `GetOrder`: the section's order n, 1 to 4.
+    #[must_use]
+    pub const fn order(&self) -> u32 {
+        self.def.order
+    }
+
+    /// `GetSupport(i)`: the surface S1 (0) or S2 (1) the ball rolls on.
+    #[must_use]
+    pub fn support(&self, i: usize) -> Option<&Surface> {
+        self.def.supports.get(i).map(AsRef::as_ref)
+    }
+
+    /// `GetSeed(i)`: the feet's uv on support `i` over s.
+    #[must_use]
+    pub fn seed(&self, i: usize) -> Option<&BSplineCurve> {
+        self.def.seeds.get(i)
+    }
+
+    /// `GetLeader`: the leader L(s).
+    #[must_use]
+    pub const fn leader(&self) -> &BSplineCurve {
+        &self.def.leader
+    }
+
+    /// `GetLaw`: the radius law r(s), or none (a ball of one radius).
+    #[must_use]
+    pub const fn law(&self) -> Option<&BSplineCurve> {
+        self.def.law.as_ref()
+    }
+
+    /// `GetOffset(i)`: the ball's offset from support `i` (0 with a law).
+    #[must_use]
+    pub fn offset(&self, i: usize) -> Option<f64> {
+        self.def.offsets.get(i).copied()
+    }
+
+    /// `GetSide(i)`: the ball's side of support `i`, +-1 along its normal.
+    #[must_use]
+    pub fn side(&self, i: usize) -> Option<f64> {
+        self.def.sides.get(i).copied()
+    }
+
     /// `DefinitionParameters`: the definition's (s, t) at the surface's (u, v).
     #[must_use]
     pub fn definition_parameters(&self, uv: Point2) -> Point2 {
