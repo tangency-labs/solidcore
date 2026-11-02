@@ -19,11 +19,15 @@ nice -n 10 cargo test --profile difftest -p solidcore --test issue_2356_smooth_i
 nice -n 10 cargo test --profile difftest -p solidcore --lib smooth_interior
 ```
 
-The minimal support is `z = 0` for `x <= 5` and
-`z = 0.008 (x - 5)^3` for `x >= 5`, represented by a cubic B-spline with
-one simple interior knot. The other support is `y = 0`. A radius-2 ball
-crosses the knot at leader parameter `s = 0.5`. A control replaces the top
-by the plane `z = 0`, retaining the same spline representation.
+The minimal support is `z = 0.2 (x - 5) + 0.3 y + 0.008 (x - 5)_+^3`,
+represented by a cubic B-spline with one simple interior knot. The other
+support is `y = 0`. A radius-2 ball crosses the knot at leader parameter
+`s = 0.533499186293079`, obtained by projecting the known crossing centre
+onto the leader. The leader joins exact ball centres at top-foot x = 1
+and x = 9. A control omits the cubic term, retaining the same spline
+representation. Inclination in both x and y keeps the contact direction
+from hiding the third-partial jump; the uninclined extrusion was checked
+and does not reproduce the normal crease.
 
 The tests check that the top is C2 and not C3, measure both sides of the
 definition at 33 section heights, and check position, tangent and normal
