@@ -1685,6 +1685,127 @@ mod tests {
         assert!(p.is_kind_of(Tree::<u32>::TYPE) && !p.is_kind_of(1));
     }
 
+    /// Nonempty, distinguishable data: empty slices could share dangling pointers.
+    fn curve_tree() -> Tree<u32> {
+        let mut tree = Tree::new(Some(TreeOwner::CurveCache));
+        let aux = |length| BezierAux1d {
+            max_length: length,
+            ..BezierAux1d::default()
+        };
+        tree.set_curve_data(
+            vec![
+                BezierSpan {
+                    aux: aux(3.0),
+                    ..BezierSpan::default()
+                },
+                BezierSpan {
+                    aux: aux(7.0),
+                    ..BezierSpan::default()
+                },
+            ],
+            vec![aux(11.0)],
+            Some(17),
+        );
+        for data in [CurveSpanRef::Parent(0), CurveSpanRef::Span(1)] {
+            tree.add_node(TreeNode {
+                data: NodeData::Curve(data),
+                ..TreeNode::new()
+            });
+        }
+        tree.set_top_node(Some(NodeId(0)));
+        tree
+    }
+
+    fn assert_shared_curve_data<P>(source: &Tree<u32>, other: &Tree<P>) {
+        assert_eq!(source.curve_spans().len(), 2);
+        assert_eq!(source.curve_parents().len(), 1);
+        assert_eq!(source.curve_spans(), other.curve_spans());
+        assert_eq!(source.curve_parents(), other.curve_parents());
+        assert!(
+            std::ptr::eq(source.curve_spans().as_ptr(), other.curve_spans().as_ptr()),
+            "immutable curve spans were copied"
+        );
+        assert!(
+            std::ptr::eq(
+                source.curve_parents().as_ptr(),
+                other.curve_parents().as_ptr()
+            ),
+            "immutable curve parents were copied"
+        );
+    }
+
+    #[test]
+    fn cloned_curve_tree_shares_completed_data() {
+        let tree = curve_tree();
+        let mut copy = tree.clone();
+        assert_eq!(copy, tree);
+        assert_shared_curve_data(&tree, &copy);
+        copy.node_mut(NodeId(1)).unwrap().data = NodeData::None;
+        assert_eq!(
+            tree.curve_span(tree.node(NodeId(1)).unwrap())
+                .unwrap()
+                .aux
+                .max_length,
+            7.0
+        );
+        copy.set_curve_data(Vec::new(), Vec::new(), Some(99));
+        assert!(copy.curve_spans().is_empty());
+        assert!(copy.curve_parents().is_empty());
+        assert_eq!(tree.owner_object().unwrap(), Some(17));
+        assert_eq!(
+            tree.curve_aux(tree.node(NodeId(0)).unwrap())
+                .unwrap()
+                .max_length,
+            11.0
+        );
+    }
+
+    #[test]
+    fn mapped_curve_tree_shares_completed_data() {
+        let tree = curve_tree();
+        let mut mapped = tree.map_objects(|o| Ok(u64::from(o) + 100)).unwrap();
+        assert_eq!(mapped.owner_object().unwrap(), Some(117));
+        assert_eq!(tree.owner_object().unwrap(), Some(17));
+        assert_eq!(mapped.top_node(), tree.top_node());
+        assert_shared_curve_data(&tree, &mapped);
+        assert_eq!(
+            mapped
+                .curve_span(mapped.node(NodeId(1)).unwrap())
+                .unwrap()
+                .aux
+                .max_length,
+            7.0
+        );
+        mapped.set_curve_data(Vec::new(), Vec::new(), None);
+        assert_eq!(tree.curve_spans().len(), 2);
+        assert_eq!(mapped.owner_object().unwrap(), None);
+    }
+
+    #[test]
+    fn retagged_curve_tree_shares_completed_data() {
+        let mut tree = curve_tree();
+        let retagged = tree.retag_curve_tree(Some(-23i64)).unwrap();
+        assert_eq!(retagged.owner_object().unwrap(), Some(-23));
+        assert_shared_curve_data(&tree, &retagged);
+        tree.set_curve_data(Vec::new(), Vec::new(), None);
+        drop(tree);
+        assert_eq!(
+            retagged
+                .curve_span(retagged.node(NodeId(1)).unwrap())
+                .unwrap()
+                .aux
+                .max_length,
+            7.0
+        );
+        assert_eq!(
+            retagged
+                .curve_aux(retagged.node(NodeId(0)).unwrap())
+                .unwrap()
+                .max_length,
+            11.0
+        );
+    }
+
     fn surf(split: SplitDir) -> NodeData<u32> {
         NodeData::Surface(SurfaceAux {
             split_dir: split,
