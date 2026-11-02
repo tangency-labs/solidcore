@@ -29,16 +29,21 @@
 
 use solidcore::blend::fillet_executive::api::fillet_edges;
 use solidcore::boolean::api_brep::boolean_union;
-use solidcore::error::SolidError;
+use solidcore::error::{EntityRef, SolidError};
 use solidcore::geom::attribute::{AttributeStore, ObjectKey};
 use solidcore::kernel::{Kernel, KernelOptions, UpstreamFixes};
 use solidcore::mass::integrator::properties::{brep_volume, PropertyAttributes};
 use solidcore::math::{Point3, Vec3};
 use solidcore::primitive::api_primitives::{create_box, create_cylinder};
+use solidcore::surface::surface::SurfaceKind;
+use solidcore::topology::brep::cutting::PlaneCutter;
+use solidcore::topology::brep::p2::ArenaNotifyState;
+use solidcore::topology::face::p2 as face;
+use solidcore::topology::loopuse::notify_ref;
 use solidcore::topology::proto_topology::p1::api_transform::{
     api_rotate, api_translate, TransformObject,
 };
-use solidcore::topology::{edge, vertex, Brep, EdgeId};
+use solidcore::topology::{edge, vertex, Brep, EdgeId, FaceId};
 
 /// Every opt-in fix on, with the blend corner as given, except the two the fork does not
 /// have that move this body's measure: the exact trims of the cylinder's sections by the
@@ -228,4 +233,77 @@ fn tilt_20_seam_over_the_rim_refused_on_the_whole_rim() {
     let (got, faces, _) = rounded_seam(true, 20.0, 170.0, 0.262_514_174).unwrap();
     assert!((got - -0.636_117_736_700).abs() <= 1e-8, "{got}");
     assert_eq!(faces, 10);
+}
+
+/// The wall of [`boss_seam`] split by the plane through its generators at 120 and 240
+/// degrees from the cap's frame x, as the capi's `smlib_split_faces` cuts a face: the
+/// wall's section by the plane over its UV domain, merged into it through the plane
+/// (`MergeCurvesOnSurface`, here [`PlaneCutter::merge_intersection`] on the wall alone).
+/// Two more faces.
+fn wall_split(k: &mut Kernel, b: &mut Brep, deg: f64) {
+    let a = deg.to_radians();
+    let axis = Vec3::new(a.sin(), 0.0, a.cos());
+    let ux = Vec3::new(a.cos(), 0.0, -a.sin());
+    let walls: Vec<FaceId> = b
+        .face_list()
+        .iter()
+        .copied()
+        .filter(|&f| {
+            matches!(
+                face::surface(b, f).unwrap().map(|s| s.kind()),
+                Some(SurfaceKind::Cone(_))
+            )
+        })
+        .collect();
+    assert_eq!(walls.len(), 1);
+    let before = b.face_list().len();
+    let origin = Point3::new(-2.0 * a.sin(), 0.0, -2.0 * a.cos()) - ux * 3.0;
+    let normal = Vec3::Y.cross(axis).unitize().unwrap();
+    let mut cutter = PlaneCutter::new(origin, normal);
+    let tol = b.tolerance();
+    let editing = b.editing_enabled();
+    b.set_editing_enabled(true);
+    let doing = k.context.doing_boolean();
+    k.context.set_doing_boolean(true);
+    {
+        let mut state = ArenaNotifyState::new(b);
+        let mut env = state.env(None);
+        let curve_ref = |e: EdgeId, _type_code: i64| notify_ref(EntityRef::Edge(e));
+        cutter
+            .merge_intersection(k, b, &mut env, &curve_ref, tol, Some(&walls))
+            .unwrap();
+    }
+    k.context.set_doing_boolean(doing);
+    b.set_editing_enabled(editing);
+    assert_eq!(b.face_list().len(), before + 2);
+}
+
+/// Tilted 40 degrees, the seam turned 125.13 degrees, the wall split by a real edge at 120
+/// and 240 degrees (the fork's capi test
+/// `scenario_junction_boss_tilt_40_wall_split_short_of_the_rail_end_refused`, ad30d68), and
+/// rounded 1.5: the rail ending past the split's vertex is not continued across it (a real
+/// edge between two faces is a corner, 63c7962), and the round is refused naming the radius
+/// whose rail ends at 120 degrees, (3 sin 40 - 2 cos 40) / (1 - sin 40 / 2) = 0.583952734,
+/// less the part's tolerance. The fork at 18e96f1, the same split
+/// (`CreatePlanarSectionCurves` and `MergeCurvesOnSurface` through the plane) and round:
+/// 1001, `SM_FILERR_NO_ROOM`, fit 0.583942733779.
+#[test]
+fn tilt_40_wall_split_short_of_the_rail_end_refused() {
+    let a = 40.0_f64.to_radians();
+    let r120 = (3.0 * a.sin() - 2.0 * a.cos()) / (1.0 - 0.5 * a.sin());
+    let mut k = kernel(true);
+    let mut b = boss_seam(&mut k, 40.0, 125.13);
+    wall_split(&mut k, &mut b, 40.0);
+    let es = root(&k, &b, 40.0);
+    let err = fillet_edges(&mut k, &mut b, &es, 1.5, 1, 2, 1.0).unwrap_err();
+    let SolidError::FilletRefused { code, fit, .. } = err else {
+        panic!("{err:?}");
+    };
+    assert_eq!(code, 1001);
+    let want = r120 - 1e-5;
+    assert!(
+        (fit.size - 0.583_942_733_779).abs() <= 1e-9,
+        "{} ({want})",
+        fit.size
+    );
 }
