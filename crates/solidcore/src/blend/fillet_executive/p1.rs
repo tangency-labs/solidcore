@@ -1068,7 +1068,7 @@ impl<O: ClassObject + SolutionObject + Ord> FilletExecutive<O> {
 /// `SmFilletCorner::Create` returns a corner pointer or null; the null case is split
 /// here so an owner that can resolve the vertex's point can feed the opt-in vertex
 /// error note without changing the existing factory signature.
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone)]
 pub enum CornerCreation<O> {
     /// The factory created a corner of this identity.
     Created(O),
@@ -1077,6 +1077,18 @@ pub enum CornerCreation<O> {
     Unsupported {
         /// The vertex's point when the owner resolved it.
         location: Option<Point3>,
+    },
+    /// The fork's (WR-697, tangency-labs/smlib e647dac): a corner the blend corner
+    /// refuses with its reason (`SmBlendCorner::Classify`: a Swept turn the ball cannot
+    /// pass, or one not built yet). The executive notes it at the vertex, keeps it over
+    /// any later "Corner case not implemented", and fails once every corner is made.
+    Refused {
+        /// The vertex's point when the owner resolved it.
+        location: Option<Point3>,
+        /// The refusal's `SmFilletErrorType`.
+        error: FilletErrorType,
+        /// Its reason.
+        comment: String,
     },
 }
 
@@ -1128,9 +1140,15 @@ impl<O: ClassObject + SolutionObject + Ord> FilletExecutive<O> {
     /// `"Corner case not implemented"` (the fork's note) and still keeps the pending
     /// entry: retaining the note does not change the operation's result or topology.
     ///
+    /// A [`CornerCreation::Refused`] corner (the fork's, only with
+    /// `Kernel::fixes.fillet_blend_corner`) is noted at its vertex with its own error and
+    /// reason, no later unsupported corner's note replaces it, and the operation fails
+    /// (`SM_ERR`) after the loop, once the error info is assigned (the fork's
+    /// `bRefused` and `bMissingCorner`).
+    ///
     /// # Errors
     ///
-    /// Those of [`Self::create_fillet_corners`].
+    /// Those of [`Self::create_fillet_corners`]; `SM_ERR` after a refused corner.
     pub fn create_fillet_corners_recording_vertex_errors(
         &mut self,
         k: &Kernel,
@@ -1140,6 +1158,7 @@ impl<O: ClassObject + SolutionObject + Ord> FilletExecutive<O> {
         use crate::blend::fillet_executive::p3::VertexEntry;
 
         const OP: &str = "blend::fillet_executive::p1::FilletExecutive::create_fillet_corners";
+        let mut refused = false;
         for &vertex in &self.filleted_vertices {
             let pending = match self.vertex_corner_map.get(&vertex) {
                 Some(VertexEntry::SolverEdgeuses(edgeuses)) => edgeuses,
@@ -1154,8 +1173,22 @@ impl<O: ClassObject + SolutionObject + Ord> FilletExecutive<O> {
                     self.vertex_corner_map
                         .insert(vertex, VertexEntry::Corner(corner));
                 }
+                CornerCreation::Refused {
+                    location,
+                    error,
+                    comment,
+                } => {
+                    self.error.note_vertex_error(
+                        vertex,
+                        location,
+                        FilStatus::Failure,
+                        error,
+                        Some(&comment),
+                    );
+                    refused = true;
+                }
                 CornerCreation::Unsupported { location } => {
-                    if k.fixes.fillet_vertex_error_diagnostics {
+                    if k.fixes.fillet_vertex_error_diagnostics && !refused {
                         self.error.note_vertex_error(
                             vertex,
                             location,
@@ -1169,6 +1202,9 @@ impl<O: ClassObject + SolutionObject + Ord> FilletExecutive<O> {
         }
         if let Some(info) = error_info {
             info.assign(&self.error);
+        }
+        if refused {
+            return Err(SolidError::sm_err(OP));
         }
         Ok(())
     }
