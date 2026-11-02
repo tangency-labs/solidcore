@@ -151,7 +151,7 @@ fn a_round_running_into_a_notch_builds() {
 /// than the block; the top back edge (y = 20, z = 10) rounded R4, whose top rail at y = 16
 /// runs over the hole. Closed form: 8000 - 90 pi - (16 - 4 pi) 40, plus the part of the
 /// round's removed section (y > 16, z > 6 + sqrt(16 - (y - 16)^2)) inside the hole,
-/// int_16^17.5 2 sqrt(9 - (y - 14.5)^2) (4 - sqrt(16 - (y - 16)^2)) dy (integrated to
+/// `int_16^17.5 2 sqrt(9 - (y - 14.5)^2) (4 - sqrt(16 - (y - 16)^2)) dy` (integrated to
 /// 1e-12 below).
 fn over_hole(k: &mut Kernel) -> (Brep, solidcore::Result<()>) {
     let block = cuboid(k, [0.0, 0.0, 0.0], [40.0, 20.0, 10.0]);
@@ -219,7 +219,7 @@ fn a_round_running_over_a_hole_builds() {
 /// A 40 x 40 x 10 plate with a hole of radius 5 through it, its top rim rounded R12: the
 /// round runs past the hole's wall below the plate and trims the bottom face round the
 /// hole. In (rho, z) the section's centre is (17, -2): the round takes
-/// pi int_2^12 ((17 - sqrt(144 - w^2))^2 - 25) dw from 16000 - 250 pi.
+/// `pi int_2^12 ((17 - sqrt(144 - w^2))^2 - 25) dw` from 16000 - 250 pi.
 #[test]
 fn a_round_of_a_hole_rim_past_the_plate_bottom_builds() {
     let s = 36.0 * PI - (140.0_f64.sqrt() + 72.0 * (1.0_f64 / 6.0).asin());
@@ -244,7 +244,7 @@ fn a_round_of_a_hole_rim_past_the_plate_bottom_builds() {
 
 /// A disc of radius 13, 2 high, its top rim rounded R2.5: the round runs past the bottom of
 /// its 2 mm wall and is cut by the bottom face. In (rho, z) the section's centre is
-/// (10.5, -0.5): the round takes pi int_0.5^2.5 (169 - (10.5 + sqrt(6.25 - w^2))^2) dw from
+/// (10.5, -0.5): the round takes `pi int_0.5^2.5 (169 - (10.5 + sqrt(6.25 - w^2))^2) dw` from
 /// 338 pi.
 #[test]
 fn a_round_of_a_disc_rim_past_its_wall_builds() {
