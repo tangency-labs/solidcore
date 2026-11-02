@@ -25,6 +25,7 @@
 //!   3e-9;
 //! - with the feet's Taylor jets before it, area 1.545983045903 and volume 40258.5435962833.
 //!   That was the d01d7b0 build's 40258.543608517233, the value this test used to expect.
+//!
 //! Both sections run from the ball's feet (31.3137, 10) to (29.4281, 12.6667) and meet
 //! the plate and the pipe G2 (end curvatures 0 and 1/R); they differ by a tangential
 //! term at order 2.
