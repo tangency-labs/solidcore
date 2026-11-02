@@ -23,6 +23,7 @@
 //! | [`FilletCorner::make_join_topology`] | `MakeJoinTopology`, `sm_JoinSides` (`SmBlendCornerJoin.cpp`, 68e039c, 543d25a) |
 //! | `FilletBrep::calc_join_section` | `SmFilletVertex::CalcJoinSection` (543d25a) |
 //! | `FilletBrep::calc_rail_int_end_surface` | `SmFilletVertex::CalcRailIntEndSurface` (`SmBlendCornerEnd.cpp`, 3e26f76) |
+//! | [`mixed`]                    | the Mixed corner (`ClassifyMixed`, `MakeMixedTopology`, `CalcMixedVertGeom`, `CalcMixedEdgeGeom`, `CreateMixedPatches`; 6fd0411, 6e79de5, e1a2153) |
 //! | [`setback`]                  | the Setback (`ClassifySetBack`, `MakeSetBackTopology`, `BuildSetBackFill`, `CreateSetBackPatches`; 61547af, 1506e2f, f1d81f4) |
 //! | [`swept`]                    | the Swept turn (`Classify`'s Swept part, `BuildSweptSurface`, `CreateSweptPatch`) |
 //!
@@ -63,6 +64,7 @@ use crate::topology::face::p2 as face2;
 use crate::topology::{edge, Brep, EdgeId, EdgeuseId, VertexId};
 
 pub mod ball;
+pub mod mixed;
 pub mod setback;
 pub mod swept;
 
@@ -88,6 +90,9 @@ pub enum BlendCornerEvent {
     /// `SM_BCE_SETBACK` (the fork's 61547af): three or more blends, every edge there
     /// blended, each set back and the hole filled by the setback split ([`setback`]).
     Setback,
+    /// `SM_BCE_MIXED` (the fork's 6fd0411, smlib#82): a convex and a concave blend
+    /// continuing each other G1 across a tangent seam ([`mixed`]).
+    Mixed,
 }
 
 /// `SmBlendEnd` (the fork's 53c47b8): how an End ends, chosen when the corner is made.
@@ -165,6 +170,12 @@ impl BlendCorner {
     #[must_use]
     pub fn is_setback(self) -> bool {
         self.event == BlendCornerEvent::Setback
+    }
+
+    /// `IsMixed`: the Mixed corner (the fork's 6fd0411).
+    #[must_use]
+    pub fn is_mixed(self) -> bool {
+        self.event == BlendCornerEvent::Mixed
     }
 
     /// `IsSwept`: a Turn, Swept.
