@@ -330,14 +330,14 @@ pub enum Step {
     /// `SmApiCreateLinearSweep` of the loops of `body`'s face through the point `face`
     /// (their edges' curves, trimmed to the edges), swept `distance` along `direction`
     /// and capped at both ends: the prism of that face, for a cut by a face's own
-    /// boundary (tangency-labs/solidcore#968). The face is the one whose surface holds
-    /// the point (within `1e-6 (1 + |point|)`) and which classifies it inside.
+    /// boundary (tangency-labs/solidcore#968). The face is the one through the point
+    /// ([`face_through`]).
     SweepFace {
         /// Body written.
         id: String,
         /// Body whose face is swept (left as it is).
         body: String,
-        /// A point inside the face.
+        /// A point inside the face (or on its own seam).
         face: P3,
         /// Sweep direction (need not be unit length).
         direction: P3,
@@ -1180,9 +1180,9 @@ fn fillet_edge_at_point(
 
 /// `body`'s face through `point`: the one whose surface holds the point within
 /// `1e-6 (1 + |point|)` and which classifies its parameter point inside
-/// (`SmFace::PointClassify`), or on its own seam (an edge whose every use lies on that
-/// face, so `SmEdge::GetFaces` lists it alone); exactly one must. A point on an edge
-/// between faces or on a vertex picks none.
+/// (`SmFace::PointClassify`), or on an edge of its boundary that borders no other face
+/// (`SmEdge::GetFaces` lists it alone: its own seam, or a sheet's free edge); exactly one
+/// must. A point on an edge between two faces or on a vertex picks none.
 fn face_through(k: &Kernel, body: &mut Brep, point: Point3) -> Result<FaceId, Run> {
     use solidcore::intersect::point_class::{PointClassType, PointClassification};
     use solidcore::query::face::p2::{point_classify, PointClassifyOptions};
@@ -1196,8 +1196,7 @@ fn face_through(k: &Kernel, body: &mut Brep, point: Point3) -> Result<FaceId, Ru
     }
     let tolerance = 1.0e-6 * (1.0 + point.length());
     let mut selected = None;
-    // (`SmApiGetFaces`: the B-rep's live faces)
-    for f in solidcore::query::api_queries::get_faces(body).map_err(|e| solid(&e))? {
+    for f in body.face_list().to_vec() {
         let Some(surface) = body.face(f).map_err(|e| solid(&e))?.surface.clone() else {
             continue;
         };
@@ -1629,7 +1628,10 @@ fn step_rust(k: &mut Kernel, bodies: &mut BTreeMap<String, Brep>, step: &Step) -
             distance,
             ..
         } => {
-            let mut moved = take(bodies, body)?;
+            // On a copy, as the other in-place edits: the executive leaves a B-rep it
+            // fails on unspecified.
+            let source = take(bodies, body)?;
+            let mut moved = copy(k, &source, bodies.len() as u64 + 1)?;
             let picked = faces
                 .iter()
                 .map(|p| face_through(k, &mut moved, p3(*p)))
@@ -2850,6 +2852,12 @@ mod tests {
         for loaded in cases {
             let run = run_rust(&loaded.case);
             assert!(!matches!(run, Run::Deferred(_)), "{}: {run:?}", loaded.id);
+            // every face point picks its face: the executive is reached
+            assert!(
+                !matches!(run, Run::Error(ref m) if m.contains("face point")),
+                "{}: {run:?}",
+                loaded.id
+            );
             if loaded.id.contains("/boss_wall_") {
                 let (v, checks) = verdict(&loaded.case.expect, &run);
                 assert_eq!(v, "PASS", "{}: {run:?} {checks:?}", loaded.id);
@@ -2997,8 +3005,9 @@ mod tests {
         let (v, c) = verdict(&case.expect, &run);
         assert_eq!(v, "PASS", "{run:?} {c:?}");
 
-        // a point on no face, and one on the box's corner (three faces' boundary)
-        for point in [[5.0, 5.0, 11.0], [10.0, 10.0, 10.0]] {
+        // a point on no face, one on the box's corner (three faces' boundary) and one on
+        // the edge between its top and a side
+        for point in [[5.0, 5.0, 11.0], [10.0, 10.0, 10.0], [5.0, 10.0, 10.0]] {
             let mut off = case.clone();
             if let Step::SweepFace { face, .. } = &mut off.steps[1] {
                 *face = point;

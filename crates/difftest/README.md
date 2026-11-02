@@ -789,8 +789,9 @@ nice -n 10 cargo run -p difftest -- --solidcraft-cases '3526-*'        # ids (<f
   edge of a body), `offset_faces` (faces by a point on each, moved by the SolidCraft fork's
   `SmOffsetFacesExecutive`, `solidcore::offset::offset_faces`, the tangent blends on them
   following), `sweep_face` (the prism of a body's face: the face through the point `face`,
-  the one whose surface holds it and which classifies it inside, has its loops' edge
-  curves, trimmed to the edges, swept `distance` along `direction` with
+  the one whose surface holds it and which classifies it inside or on an edge bordering
+  no other face, such as its own seam, has its loops' edge curves, trimmed to the edges,
+  swept `distance` along `direction` with
   `SmApiCreateLinearSweep` and capped; for a cut by a face's own boundary, #968),
   `sheet_corner` (the deferred sheet-flange recipe below). Each
   writes the body `id`; the last writes `result`.
