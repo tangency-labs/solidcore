@@ -397,8 +397,11 @@ fn equal_area_thumbweight_is_each_station_s_own() {
 }
 
 /// The fork's pipe on a plate (`wr685_gn_section.rs`): a plane and a cylinder, the jets
-/// curved, its rows certified with the varying thumbweight's terms. Fork 7102bc5 at the
-/// equal area default (orders 2 and 3) and at w = 0.
+/// curved, its rows certified with the varying thumbweight's terms. Fork 3bc54a4 at the
+/// equal area default (orders 2 and 3) and at w = 0: since 3bc54a4 the section's jets of
+/// order n are the face curves' normal parts (the cylinder's from its order-n partials),
+/// which moves these nets from 7102bc5's (planes are unchanged). The fork's volumes there
+/// integrate the round's definition (4a10ed8), within the integrator's 1e-7 of the net's.
 #[test]
 fn pipe_root_rounds_are_the_fork_s() {
     use solidcore::boolean::api_brep::boolean_union;
@@ -409,21 +412,21 @@ fn pipe_root_rounds_are_the_fork_s() {
         (
             2,
             GN_DEFAULT_THUMBWEIGHT,
-            40302.590794547119,
+            40307.885637878353,
             (
                 7,
                 8,
                 [
                     2400.014560000001,
-                    1671.0667243147507,
-                    616.70451366026305,
+                    1672.5032862093772,
+                    617.99033980872366,
                     76.340345337018292,
                 ],
-                4687.7857979750142,
+                4690.508186018099,
                 [
                     19.999999999999996,
-                    29.179233307596018,
-                    11.994143236759726,
+                    29.185391179444686,
+                    12.011560328527208,
                     0.9051790507776456,
                 ],
             ),
@@ -431,21 +434,21 @@ fn pipe_root_rounds_are_the_fork_s() {
         (
             2,
             0.0,
-            40258.543608517233,
+            40267.709270590589,
             (
                 7,
                 8,
                 [
                     2400.014560000001,
-                    1657.3760557759012,
-                    608.5679012345679,
+                    1660.151886377726,
+                    611.05246913580243,
                     74.081036709808572,
                 ],
-                4665.9585170104683,
+                4671.2189155135275,
                 [
                     19.999999999999996,
-                    28.96432439420909,
-                    11.493827160493828,
+                    28.991604748421537,
+                    11.570987654320987,
                     0.7559289460184544,
                 ],
             ),
@@ -453,17 +456,17 @@ fn pipe_root_rounds_are_the_fork_s() {
         (
             3,
             GN_DEFAULT_THUMBWEIGHT,
-            40302.144704589256,
+            40302.538375279823,
             (
                 7,
                 11,
                 [
                     3300.0200199999999,
-                    2298.8216963201703,
-                    848.74626557808551,
+                    2298.9900940535895,
+                    848.8826512459334,
                     149.41774934689863,
                 ],
-                6447.587981898253,
+                6447.8927652995208,
                 [
                     20.0,
                     29.289337727685155,

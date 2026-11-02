@@ -162,6 +162,31 @@ pub fn hermite_points(s: &[f64], v: &[Vec3], d: &[Vec3]) -> Vec<Vec3> {
     cps
 }
 
+/// `sm_HermitePoints` with each station's derivative as the span ending there takes it
+/// (`d_in`) and as the span starting there does (`d`): a station on a face's knot line has
+/// one of each (3bc54a4).
+#[must_use]
+pub fn hermite_points_sided(s: &[f64], v: &[Vec3], d: &[Vec3], d_in: &[Vec3]) -> Vec<Vec3> {
+    let mut cps = Vec::new();
+    let rows = s
+        .windows(2)
+        .zip(v.windows(2))
+        .zip(d.iter().zip(d_in.iter().skip(1)));
+    for (j, ((sw, vw), (&d0, &d1))) in rows.enumerate() {
+        let (&[s0, s1], &[v0, v1]) = (sw, vw) else {
+            continue;
+        };
+        let h = s1 - s0;
+        if j == 0 {
+            cps.push(v0);
+        }
+        cps.push(v0 + d0 * (h / 3.0));
+        cps.push(v1 - d1 * (h / 3.0));
+        cps.push(v1);
+    }
+    cps
+}
+
 /// `sm_HermiteKnots`: the knots of those curves, the stations with the end ones four times
 /// and the inner ones three times (piecewise Bezier), as (knots, multiplicities).
 #[must_use]

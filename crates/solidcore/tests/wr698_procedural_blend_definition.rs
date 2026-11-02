@@ -9,7 +9,9 @@
 //! through `SmProceduralBlend::Create`, `EvaluateDefinition`, `GetCounts`, `WriteToDB` and
 //! `ReadFromDB` on the same inputs: every partial (3564 values over 11 definitions, 12
 //! points each, to order 2 in s and t), the counts and the binary records agreed. The
-//! values quoted below are the fork's. The circle's points are also checked against the
+//! values quoted below are the fork's. Since 3bc54a4 an order-n definition's jets of
+//! order n are the face curves' normal parts: the bump's G^n definitions are fork
+//! 3bc54a4's (all 3564 values again bit for bit), the others are unchanged. The circle's points are also checked against the
 //! closed form.
 
 #![allow(clippy::unwrap_used)]
@@ -182,13 +184,13 @@ fn definitions_evaluate_as_the_fork_s() {
             ea,
             false,
             [
-                [3.7081710618578949, 1.1216620061581504, 0.29794471822651397],
+                [3.7076153013462654, 1.1247965039773156, 0.29932533840732245],
                 [
-                    -0.33027757576901201,
-                    0.16993205953095944,
-                    0.05794413006238934,
+                    -0.3431805027283312,
+                    0.15952786530177496,
+                    0.04843807232410644,
                 ],
-                [0.13167003776583264, 6.7676147994552807, -3.8411749725938713],
+                [0.18400915253383338, 7.530381731203525, -3.6365459706073375],
             ],
         ),
         (
@@ -198,17 +200,9 @@ fn definitions_evaluate_as_the_fork_s() {
             0.0,
             false,
             [
-                [3.7067830252568141, 1.0441037518960723, 0.19005330121057595],
-                [
-                    -0.30262813328989235,
-                    0.17384926344700599,
-                    0.11123189916022572,
-                ],
-                [
-                    0.098355439055517191,
-                    8.6358244659062446,
-                    -2.5725191740645639,
-                ],
+                [3.706489982768767, 1.044145558011038, 0.19006839035877368],
+                [-0.3133140632937431, 0.17260627567208248, 0.1103965265929085],
+                [0.09460235306688654, 8.697164266958284, -2.5690245545045434],
             ],
         ),
         (

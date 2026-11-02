@@ -48,8 +48,8 @@ use super::form::{binom, gn_form_normalized, GnSectionFormT};
 use super::interval::{cmax, cmin, round_up, Ivl};
 use super::series::{Ser, Trunc, VSer, MAX_E, TAYLOR, V3};
 use super::station::{
-    ders_basis, gn_evaluate, gn_evaluate_v, gn_jacobian, gn_solve_station, knot, smax, solve4,
-    span, GnStation, GnSystem, Nurbs, Partials,
+    ders_basis, gn_evaluate, gn_evaluate_vn, gn_jacobian, gn_solve_station, gn_top_jets, knot,
+    smax, solve4, span, GnStation, GnSystem, Nurbs, Partials,
 };
 use super::tay::{gn_area_sum, gn_half_angle, gn_invert, gn_target, GnAreaCells, Tay, TAY};
 use crate::error::{Result, SolidError};
@@ -681,7 +681,8 @@ pub fn gn_enclose(
         let (sg, _) = gn_try!(gn_evaluate(&sysk, &sx, tr), None);
         for i in 0..=cmin_usize(tr.s(), tot) {
             let k = tot - i;
-            if k > tr.e() {
+            // the section's jets of order n are the face curve's (gn_top_jets, 3bc54a4)
+            if k > tr.e() || k >= n {
                 continue;
             }
             let mut yr = [IZ; 4];
@@ -707,7 +708,8 @@ pub fn gn_enclose(
             }
         }
     }
-    let (_, f, v) = gn_try!(gn_evaluate_v(&sysk, &sx, tr), None);
+    let (_, mut f, v, nrm) = gn_try!(gn_evaluate_vn(&sysk, &sx, tr), None);
+    gn_top_jets(n, tr, &nrm, &mut f);
     // the faces' first partials over the box: |S_u| + |S_v| bounds |dS| per unit uv step
     // (max norm)
     let mut ds = [0.0_f64; 2];

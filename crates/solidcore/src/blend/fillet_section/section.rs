@@ -11,9 +11,11 @@
 //! 7102bc5, any thumbweight below 1 b9d6a72); see [`super`] for the table.
 
 use super::certificate::{gn_certify_span, GnVarying, NurbsCurve};
-use super::form::{gn_form, gn_form_normalized, hermite_knots, hermite_points};
-use super::series::Trunc;
-use super::station::{gn_solve_station, smax, surface_partials, vec3, GnStation, Nurbs};
+use super::form::{gn_form, gn_form_normalized, hermite_knots, hermite_points_sided};
+use super::series::{Trunc, VSer};
+use super::station::{
+    gn_solve_station_with, smax, surface_partials, vec3, GnStation, Nurbs, StationOptions,
+};
 use super::tay::{
     acos_clamped, gn_area_sum, gn_half_angle, gn_invert, gn_target, gn_wedge_cos, GnAreaCells,
     Ring, Tay,
@@ -76,6 +78,35 @@ fn base_of(s: &Surface) -> &Surface {
     }
 }
 
+/// `sm_GnSolveStation(apFace, rCenterLine, s, seed, adR, adSide, sTr, tol, rStation, NULL,
+/// n, pSides, NULL, NULL, bBefore)` as `Build` calls it since 3bc54a4: the section's jets
+/// of order n and up are the face curves' normal parts.
+#[allow(clippy::too_many_arguments)]
+fn solve_top(
+    k: &Kernel,
+    faces: [&Surface; 2],
+    center: &BSplineCurve,
+    s: f64,
+    seed: [f64; 4],
+    r: [f64; 2],
+    side: [f64; 2],
+    tr: Trunc,
+    tol: f64,
+    n: usize,
+    sides: Option<[i32; 4]>,
+    before: bool,
+) -> Result<GnStation> {
+    let opts = StationOptions {
+        law: None,
+        top: n,
+        sides,
+        before,
+    };
+    gn_solve_station_with(k, faces, center, s, seed, r, side, tr, tol, opts)
+        .0
+        .map(|(st, _)| st)
+}
+
 /// `GetNaturalInterval` as `(min, max)`.
 fn interval(c: &BSplineCurve) -> (f64, f64) {
     let i = c.natural_interval();
@@ -93,6 +124,20 @@ fn foot(st: &GnStation, f: usize, i: usize, e: usize) -> Vec3 {
     let fs = if f == 0 { a } else { b };
     let [x, y, z] = &fs.a;
     Vec3::new(x.at(i, e), y.at(i, e), z.at(i, e))
+}
+
+/// [`foot`] as the span ending at the station takes it (`sm_InF`, 3bc54a4).
+fn foot_in(st: &GnStation, f: usize, i: usize, e: usize) -> Vec3 {
+    st.in_f(f)
+        .map_or(Vec3::new(f64::NAN, f64::NAN, f64::NAN), |fs| {
+            let [x, y, z] = &fs.a;
+            Vec3::new(x.at(i, e), y.at(i, e), z.at(i, e))
+        })
+}
+
+/// [`param`] as the span ending at the station takes it (`sm_InX`, 3bc54a4).
+fn param_in(st: &GnStation, q: usize, i: usize, e: usize) -> f64 {
+    st.in_x(q).map_or(f64::NAN, |x| x.at(i, e))
 }
 
 /// A station's foot parameter q (u1, v1, u2, v2) at sigma^i eps^e.
@@ -382,7 +427,9 @@ impl GnSectionFsg {
             // a constant ball: the station's centre on the centre line at the same offsets
             let m = center.evaluate_point(s)?;
             let solve_tol = 1.0e-9 * smax(1.0, m.length());
-            let st = gn_solve_station(k, faces, center, s, seed, r, side, tr, solve_tol)?;
+            let st = solve_top(
+                k, faces, center, s, seed, r, side, tr, solve_tol, n, None, false,
+            )?;
             for (f, &rf) in r.iter().enumerate() {
                 let rho = foot(&st, f, 0, 0);
                 if (m.distance(rho) - rf).abs() > smax(tol, 1.0e-6 * rf) {
@@ -396,11 +443,40 @@ impl GnSectionFsg {
         }
 
         // the certificate
-        let (stations, bound, spans) =
+        let (mut stations, bound, spans) =
             self.certify(k, faces, center, stations, r, side, tr, tol, equal_area)?;
         self.certified_bound = bound;
         self.certified_spans = spans;
         let ss: Vec<f64> = stations.iter().map(|st| st.s).collect();
+
+        // each station's series on the pieces before it, for the span ending there: a
+        // Hermite span interpolates the values and s-derivatives of its own pieces, which
+        // the certificate bounds (3bc54a4)
+        for st in stations.iter_mut().skip(1) {
+            let on = [0, 1, 2, 3].map(|q| param(st, q, 0, 0));
+            let m = center.evaluate_point(st.s)?;
+            let mut before = solve_top(
+                k,
+                faces,
+                center,
+                st.s,
+                on,
+                r,
+                side,
+                tr,
+                1.0e-9 * smax(1.0, m.length()),
+                n,
+                Some(st.before),
+                true,
+            )?;
+            if equal_area {
+                gn_station_thumbweight(n, r[0] * r[1], &mut before)?;
+                st.wdsl = before.wds;
+            }
+            st.xl = before.x;
+            st.fl = before.f;
+            st.sided = true;
+        }
 
         let ld = 3 * n + 2; // the section's control points across
 
@@ -411,7 +487,8 @@ impl GnSectionFsg {
             for kk in 0..=n {
                 let v: Vec<Vec3> = stations.iter().map(|st| foot(st, f, 0, kk)).collect();
                 let d: Vec<Vec3> = stations.iter().map(|st| foot(st, f, 1, kk)).collect();
-                jf.push(hermite_points(&ss, &v, &d));
+                let d_in: Vec<Vec3> = stations.iter().map(|st| foot_in(st, f, 1, kk)).collect();
+                jf.push(hermite_points_sided(&ss, &v, &d, &d_in));
             }
         }
         let jet = |f: usize, kk: usize, i: usize| -> Vec3 {
@@ -434,39 +511,62 @@ impl GnSectionFsg {
             let mut hd: Vec<Vec<Vec3>> = vec![Vec::new(); ld];
             let mut wvv: Vec<Vec<Vec3>> = vec![Vec::new(); ld];
             let mut wdd: Vec<Vec<Vec3>> = vec![Vec::new(); ld];
+            let mut hd_in: Vec<Vec<Vec3>> = vec![Vec::new(); ld];
+            let mut wd_in: Vec<Vec<Vec3>> = vec![Vec::new(); ld];
             for st in &stations {
-                let sf = gn_form_normalized(n, Tay::of_terms(st.w, st.wds));
-                for j in 0..ld {
-                    let mut sv = Vec3::new(0.0, 0.0, 0.0);
-                    let mut sd = Vec3::new(0.0, 0.0, 0.0);
-                    for (f, gf) in sf.g.iter().enumerate() {
-                        for (kk, gk) in gf.iter().enumerate().take(n + 1) {
-                            let c = foot(st, f, 0, kk);
-                            let c1 = foot(st, f, 1, kk);
-                            let g = gk.get(j).copied().unwrap_or_else(|| Tay::lift(f64::NAN));
-                            sv += c * g.at(0);
-                            sd = sd + c * g.at(1) + c1 * g.at(0);
+                // the rows' s-derivatives as the span starting here takes them, then as the
+                // one ending here (3bc54a4)
+                for l_in in [false, true] {
+                    let wds = if l_in { st.in_wds() } else { st.wds };
+                    let sf = gn_form_normalized(n, Tay::of_terms(st.w, wds));
+                    for j in 0..ld {
+                        let mut sv = Vec3::new(0.0, 0.0, 0.0);
+                        let mut sd = Vec3::new(0.0, 0.0, 0.0);
+                        for (f, gf) in sf.g.iter().enumerate() {
+                            for (kk, gk) in gf.iter().enumerate().take(n + 1) {
+                                let c = foot(st, f, 0, kk);
+                                let c1 = if l_in {
+                                    foot_in(st, f, 1, kk)
+                                } else {
+                                    foot(st, f, 1, kk)
+                                };
+                                let g = gk.get(j).copied().unwrap_or_else(|| Tay::lift(f64::NAN));
+                                sv += c * g.at(0);
+                                sd = sd + c * g.at(1) + c1 * g.at(0);
+                            }
                         }
-                    }
-                    let wj = sf.w.get(j).copied().unwrap_or_else(|| Tay::lift(f64::NAN));
-                    if let (Some(a), Some(b), Some(c), Some(d)) =
-                        (hv.get_mut(j), hd.get_mut(j), wvv.get_mut(j), wdd.get_mut(j))
-                    {
-                        a.push(sv);
-                        b.push(sd);
-                        c.push(Vec3::new(wj.at(0), 0.0, 0.0));
-                        d.push(Vec3::new(wj.at(1), 0.0, 0.0));
+                        let wj = sf.w.get(j).copied().unwrap_or_else(|| Tay::lift(f64::NAN));
+                        if l_in {
+                            if let (Some(b), Some(d)) = (hd_in.get_mut(j), wd_in.get_mut(j)) {
+                                b.push(sd);
+                                d.push(Vec3::new(wj.at(1), 0.0, 0.0));
+                            }
+                            continue;
+                        }
+                        if let (Some(a), Some(b), Some(c), Some(d)) =
+                            (hv.get_mut(j), hd.get_mut(j), wvv.get_mut(j), wdd.get_mut(j))
+                        {
+                            a.push(sv);
+                            b.push(sd);
+                            c.push(Vec3::new(wj.at(0), 0.0, 0.0));
+                            d.push(Vec3::new(wj.at(1), 0.0, 0.0));
+                        }
                     }
                 }
             }
             for j in 0..ld {
-                let (Some(a), Some(b), Some(c), Some(d)) =
-                    (hv.get(j), hd.get(j), wvv.get(j), wdd.get(j))
-                else {
+                let (Some(a), Some(b), Some(c), Some(d), Some(bi), Some(di)) = (
+                    hv.get(j),
+                    hd.get(j),
+                    wvv.get(j),
+                    wdd.get(j),
+                    hd_in.get(j),
+                    wd_in.get(j),
+                ) else {
                     return Err(SolidError::sm_err(OP));
                 };
-                let hp = hermite_points(&ss, a, b);
-                let wp = hermite_points(&ss, c, d);
+                let hp = hermite_points_sided(&ss, a, b, bi);
+                let wp = hermite_points_sided(&ss, c, d, di);
                 for i in 0..lnu {
                     if let (Some(h), Some(w), Some(&p), Some(q)) = (
                         homog.get_mut(i * ld + j),
@@ -544,7 +644,17 @@ impl GnSectionFsg {
                 .iter()
                 .map(|st| Vec3::new(param(st, 2 * f, 1, 0), param(st, 2 * f + 1, 1, 0), 0.0))
                 .collect();
-            let uv_cps = hermite_points(&ss, &v, &d);
+            let d_in: Vec<Vec3> = stations
+                .iter()
+                .map(|st| {
+                    Vec3::new(
+                        param_in(st, 2 * f, 1, 0),
+                        param_in(st, 2 * f + 1, 1, 0),
+                        0.0,
+                    )
+                })
+                .collect();
+            let uv_cps = hermite_points_sided(&ss, &v, &d, &d_in);
             let dim = uv.dim;
             let uv_data = CanonicalData {
                 dim,
@@ -692,7 +802,7 @@ impl GnSectionFsg {
                             for (q2, sq) in seed.iter_mut().enumerate() {
                                 *sq = (1.0 - t) * param(a, q2, 0, 0) + t * param(b, q2, 0, 0);
                             }
-                            let st = gn_solve_station(
+                            let st = solve_top(
                                 k,
                                 faces,
                                 center,
@@ -702,6 +812,9 @@ impl GnSectionFsg {
                                 side,
                                 tr,
                                 solve_tol(ds)?,
+                                self.order,
+                                None,
+                                false,
                             )?;
                             let x = param(&st, q, 0, 0) - dk;
                             at = Some(st);
@@ -717,6 +830,35 @@ impl GnSectionFsg {
                             }
                         }
                         if let Some(st) = at {
+                            // on the knot line the face's derivatives of order n + 1
+                            // differ on its two sides, and with them the jets'
+                            // s-derivatives: the station is solved on the piece after it
+                            // (the foot moves on to xb's side) and on the piece before,
+                            // for the span ending there (3bc54a4)
+                            let after = if xb > xa { 1 } else { -1 };
+                            let mut ai_after = [0_i32; 4];
+                            let mut ai_before = [0_i32; 4];
+                            if let (Some(x), Some(y)) = (ai_after.get_mut(q), ai_before.get_mut(q))
+                            {
+                                *x = after;
+                                *y = -after;
+                            }
+                            let on = [0, 1, 2, 3].map(|q2| param(&st, q2, 0, 0));
+                            let mut st = solve_top(
+                                k,
+                                faces,
+                                center,
+                                st.s,
+                                on,
+                                r,
+                                side,
+                                tr,
+                                solve_tol(st.s)?,
+                                self.order,
+                                Some(ai_after),
+                                false,
+                            )?;
+                            st.before = ai_before;
                             next.push(st);
                         }
                     }
@@ -802,8 +944,20 @@ impl GnSectionFsg {
                 for (c, sc) in seed.iter_mut().enumerate() {
                     *sc = 0.5 * (param(a, c, 0, 0) + param(b, c, 0, 0));
                 }
-                let mut st =
-                    gn_solve_station(k, faces, center, mid, seed, r, side, tr, solve_tol(mid)?)?;
+                let mut st = solve_top(
+                    k,
+                    faces,
+                    center,
+                    mid,
+                    seed,
+                    r,
+                    side,
+                    tr,
+                    solve_tol(mid)?,
+                    n,
+                    None,
+                    false,
+                )?;
                 if equal_area {
                     gn_station_thumbweight(n, rr, &mut st)?;
                 }
@@ -870,7 +1024,13 @@ impl GnSectionFsg {
             *sf = if off.dot(nrm) >= 0.0 { 1.0 } else { -1.0 };
         }
         let tr = Trunc::new(0, n + 1)?;
-        let at = gn_solve_station(
+        let opts = StationOptions {
+            law: None,
+            top: n,
+            sides: None,
+            before: false,
+        };
+        let (at, curves) = gn_solve_station_with(
             k,
             faces,
             center,
@@ -880,7 +1040,9 @@ impl GnSectionFsg {
             side,
             tr,
             1.0e-9 * smax(1.0, m.length()),
-        )?;
+            opts,
+        )
+        .0?;
         // the thumbweight of the station's own wedge: the ball's radii to its contacts from V
         let v = Vec3::new(at.v.a[0].at(0, 0), at.v.a[1].at(0, 0), at.v.a[2].at(0, 0));
         let w = self
@@ -898,7 +1060,19 @@ impl GnSectionFsg {
         )?;
         let ni = vec3(p.at(1, 0)).cross(vec3(p.at(0, 1))).unitize()?;
         let scale = (-1.0 / (1.0 - w)).powf((n + 1) as f64);
-        let coef = ((t_o - foot(&at, i, 0, 0)) - foot(&at, i, 0, n + 1) * scale).dot(ni);
+        // the jet's n-th coefficient leaves out the face curve's tangent part tau_n: the
+        // section is off the curve by -tau_n (u - 1)^n in the tangent plane at the rail,
+        // which the face's normal, turning by N_1 (u - 1) along the curve, sees at order
+        // n + 1 (3bc54a4)
+        let at_vs =
+            |v: &VSer<f64>, e: usize| Vec3::new(v.a[0].at(0, e), v.a[1].at(0, e), v.a[2].at(0, e));
+        let ci = if i == 0 { &curves.c[0] } else { &curves.c[1] };
+        let nci = if i == 0 { &curves.n[0] } else { &curves.n[1] };
+        let cn = at_vs(ci, n);
+        let tau = cn - ni * cn.dot(ni);
+        let n1 = at_vs(nci, 1);
+        let coef = ((t_o - foot(&at, i, 0, 0)) - foot(&at, i, 0, n + 1) * scale).dot(ni)
+            - tau.dot(n1) * scale;
         let size = foot(&at, 0, 0, 0).distance(foot(&at, 1, 0, 0));
         Ok(if coef.abs() > 1.0e-9 * smax(1.0, size) {
             n + 1

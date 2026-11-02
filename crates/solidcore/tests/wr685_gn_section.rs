@@ -283,7 +283,9 @@ fn boss_root_order_2_round_adds_the_section_s_turned_area() {
 /// 60 x 40 x 10 plate, one root line rounded r 2 by the order-2 section at w = 0. Its
 /// faces are a plane and a cylinder, so the jets are not linear in tau and the
 /// certificate encloses curved faces; the fork certifies it on 3 spans. Volume
-/// 40258.5435962825, as #2252 quotes from the fork's commit (the section's area times 60).
+/// 40267.709270590589, fork 3bc54a4's (its jets of order 2 the face curves' normal parts;
+/// before it 40258.5435962825, as #2252 quotes from the fork's commit; the fork's value
+/// integrates the round's definition, within the integrator's 1e-7 of the net's).
 #[test]
 fn pipe_root_order_2_round_takes_the_fork_s_volume() {
     use solidcore::boolean::api_brep::boolean_union;
@@ -302,7 +304,7 @@ fn pipe_root_order_2_round_takes_the_fork_s_volume() {
     let e = pick(&k, &b, [30.0, 28.0, 10.0]);
     fillet_edges(&mut k, &mut b, &[e], 2.0, 2, 2, 0.0).unwrap();
     let v = volume_of(&k, &mut b);
-    let want = 40_258.543_596_282_5;
+    let want = 40_267.709_270_590_589;
     eprintln!("pipe root volume {v:.17e}");
     assert!((v - want).abs() <= 1e-7 * want, "{v} want {want}");
 }

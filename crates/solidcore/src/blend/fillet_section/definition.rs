@@ -37,7 +37,7 @@ use core::cmp::Ordering;
 use super::form::{gn_form, gn_form_t, Bern};
 use super::section::gn_equal_area_w;
 use super::series::{Ser, Trunc, VSer, MAX_E, MAX_K, MAX_S};
-use super::station::{gn_solve_station_counted, GnStation};
+use super::station::{gn_solve_station_with, GnStation, StationOptions};
 use super::tay::{gn_area_sum, gn_half_angle, gn_invert, gn_target, gn_wedge_cos, Tay, TAY};
 use crate::error::{Result, SolidError};
 use crate::geom::vector3d::Vec3;
@@ -414,10 +414,21 @@ pub fn evaluate_definition(
         // (a nested support's own evaluations use the memo meanwhile: the station is
         // kept only once solved)
         let tol = 1.0e-9 * smax(1.0, l.length());
+        // (its jets of order n and up the face curves' normal parts for n >= 2, 3bc54a4)
+        let opts = StationOptions {
+            law,
+            top: if def.order >= 2 {
+                def.order as usize
+            } else {
+                0
+            },
+            sides: None,
+            before: false,
+        };
         let (solved, steps) =
-            gn_solve_station_counted(k, faces, &def.leader, s, seed, r, def.sides, tr, tol, law);
+            gn_solve_station_with(k, faces, &def.leader, s, seed, r, def.sides, tr, tol, opts);
         count_solve(k, steps);
-        let st = solved?;
+        let st = solved?.0;
         let mut memo = k.blend_station_memo.borrow_mut();
         let m = memo.next;
         memo.next = (memo.next + 1) % STATION_MEMO;
