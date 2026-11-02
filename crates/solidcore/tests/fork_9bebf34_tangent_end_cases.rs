@@ -30,7 +30,12 @@
 //! 9bebf34 it is [`kernel`]: the same without WR-600's
 //! `fillet_nx1_tangent_side_edge_same_convexity`, whose tangent end of the trace is the fork's
 //! later 6d73e4f/0cc48bd/b34d61b (under it a tangent end is a rail/edge crossing of the trace
-//! and never reaches `CalcRailIntExtendedEdgeuse`).
+//! and never reaches `CalcRailIntExtendedEdgeuse`), and without WR-697's `fillet_blend_corner`,
+//! the fork's later smlib#79 step 4. In the fork that step always comes with the tangent
+//! end of the trace: its End (3e26f76) takes a rail's end on the end face's surface, which a
+//! tangent end reaching `CalcRailIntExtendedEdgeuse` without WR-600 does not meet (the
+//! curvature round fails with 1005 there). At 5e8c9c1, with both, the fork's marks of the
+//! thirteen cases are cd47efd's, and solidcore's under [`solidcraft_kernel`] are too.
 //!
 //! Four of the cases have tests already, under WR-600 on (cd47efd's profile):
 //! `fork_856b54e_tangent_end.rs` (front chamfer, concave chamfer, front round, against closed
@@ -76,10 +81,11 @@ use solidcore::{Brep, Kernel};
 const PI: f64 = core::f64::consts::PI;
 
 /// The fork's profile at 9bebf34, before its tangent end of the trace (module doc):
-/// [`solidcraft_kernel`] without WR-600's fix.
+/// [`solidcraft_kernel`] without WR-600's fix and without WR-697's blend corner.
 fn kernel() -> Kernel {
     let mut k = solidcraft_kernel();
     k.fixes.fillet_nx1_tangent_side_edge_same_convexity = false;
+    k.fixes.fillet_blend_corner = false;
     k
 }
 
