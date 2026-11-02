@@ -1625,6 +1625,19 @@ impl FilletCorner {
                 crate::blend::blend_corner::end::create_end_cap_patch(self, env)
             })?;
             if !built {
+                // the fork notes the cap's failure (SM_FILERR_VERTEX_PROBLEM), as the
+                // session's path does
+                env.exec.error.note_corner_error(
+                    FilletErrorType::VertexProblem,
+                    self.corner_type(),
+                    FilStatus::Failure,
+                    Some(self.kind.name()),
+                    self.filleted_vertex()
+                        .map(ExecutiveErrorObject::TargetVertex),
+                    [None, None],
+                    [None, None],
+                    Some(crate::blend::blend_corner::end::SMOOTH_END_CAP_FAILED),
+                );
                 return Err(SolidError::sm_err("SmBlendCorner::CreateEndPatchOfEnd"));
             }
             return Ok(());

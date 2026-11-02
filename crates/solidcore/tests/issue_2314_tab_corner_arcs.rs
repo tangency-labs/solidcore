@@ -13,7 +13,7 @@
 //! Expected values are closed form (#2223's file header): each arc's round removes the
 //! Pappus wedge (1 - pi/4) r^2 (pi/2) (2 - c), c = r (10 - 3 pi) / (3 (4 - pi)); the two
 //! wedges lie at opposite corners of the tab and are disjoint, so the pair removes twice it.
-//! With the R25 rim as well, the rim's 7.958672964786274 (#2176) is added: its round ends on
+//! With the R25 rim as well, the rim's 7.958672926831696 (#2176) is added: its round ends on
 //! the tab's sides at y = sqrt(609) < 280/9, clear of both wedges.
 //!
 //! With `fillet_blend_corner` (WR-697, in this test's set of fixes) the fork's End at a
@@ -50,8 +50,9 @@ const RIM: [f64; 3] = [0.0, -25.0, 2.0];
 const CORNER_L: [f64; 3] = [-3.414_213_56, 32.525_324_7, 2.0];
 /// A point on the R2 corner arc at x > 0 (#2314's `CORNER`).
 const CORNER: [f64; 3] = [3.414_213_56, 32.525_324_7, 2.0];
-/// What the rim's round removes alone (#2176's `the_neighbours_keep_their_rounds`).
-const RIM_REMOVED: f64 = 7.958_672_964_786_274;
+/// What the rim's round removes alone (#2176's `the_neighbours_keep_their_rounds`, which
+/// pins the fork's 7.958672926831696: 18e96f1 and 63c7962, `SmApiFilletEdges` r 0.5).
+const RIM_REMOVED: f64 = 7.958_672_926_831_696;
 
 /// Every opt-in fix on (as in the issue), with WR-706 and the blend corner (WR-697) as given.
 fn kernel_with(wr706: bool, blend_corner: bool) -> Kernel {
@@ -66,13 +67,14 @@ fn kernel_with(wr706: bool, blend_corner: bool) -> Kernel {
     k
 }
 
+/// The volume to the fork's comparison accuracy (1e-10, as #2176's `fine_volume`).
 fn volume(k: &Kernel, b: &mut Brep) -> f64 {
     let store = AttributeStore::default();
     let attrs = PropertyAttributes {
         store: &store,
         key_of: &|_| ObjectKey(0),
     };
-    brep_volume(k, b, 1e-8, &attrs).unwrap()
+    brep_volume(k, b, 1e-10, &attrs).unwrap()
 }
 
 /// The edge nearest `p`.
@@ -185,14 +187,23 @@ fn both_corner_arcs_picked_the_other_way_round() {
 /// The pair is the sum of each arc alone, each the Pappus wedge. With
 /// `fillet_blend_corner` (in this test's set of fixes) each arc ends at its two smooth
 /// vertices on the planes square to it (the fork's End at a smooth vertex, smlib#124
-/// 41a39ec), not at WR-674's section ends: the fork at 18e96f1 removes 0.159135839575356 for
-/// the arc at x > 0.
+/// 41a39ec), not at WR-674's section ends: the fork at 18e96f1 and 63c7962 removes
+/// 0.159135839575356 for the arc at x > 0 and 0.159135839836381 for the one at x < 0.
 #[test]
 fn the_pair_is_the_sum_of_each_alone() {
     let (a, fa) = removed(true, &[CORNER]).unwrap();
     let (b, fb) = removed(true, &[CORNER_L]).unwrap();
     assert!((a - pappus()).abs() <= 1e-7, "x > 0 alone {a}");
     assert!((b - pappus()).abs() <= 1e-7, "x < 0 alone {b}");
+    // the fork at 18e96f1 and 63c7962 (`SmApiFilletEdges`, r 0.5, section 1, continuity 1)
+    assert!(
+        (a - 0.159_135_839_575_356).abs() <= 1e-12,
+        "x > 0 alone {a}"
+    );
+    assert!(
+        (b - 0.159_135_839_836_381).abs() <= 1e-12,
+        "x < 0 alone {b}"
+    );
     assert_eq!((fa, fb), (11, 11));
     let (both, _) = removed(true, &[CORNER, CORNER_L]).unwrap();
     assert!((both - a - b).abs() <= 1e-7, "{both} vs {}", a + b);

@@ -43,6 +43,7 @@
 //! at z = 2, radius sqrt 60) takes away pi (40.5 - 2 sqrt 60 (pi - sqrt 3.75 / 4 - 2 asin
 //! 1 / 4)) = 22.492758031488, which leaves 3261.518762521043 (the case's `want`, the fork's
 //! capi figure). The fork's round and the port's take away 11.246635240 only.
+//! Tracked in tangency-labs/solidcore#2441.
 //! One difference from the fork: the two pipes' union itself fails 1001 here without
 //! `ssi_split_curves_at_singular_points` (WR-77), so the pipes get that flag wherever the
 //! fork's mark is about their round.
@@ -587,7 +588,8 @@ fn mark_after(name: &str) -> Mark {
 }
 
 /// Current procedural rounds improve on the historical fitted tee; the ball cut flat builds
-/// as the fork's does since smlib#124 (63c7962, 18e96f1), to the fork's volume.
+/// as the fork's does since smlib#124 (63c7962, 18e96f1), to the fork's volume, not the
+/// closed form (#2441).
 fn mark_current(name: &str) -> Mark {
     match name {
         "tee_is_fitted" => Mark::Passes,

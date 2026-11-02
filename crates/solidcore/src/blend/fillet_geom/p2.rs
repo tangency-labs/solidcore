@@ -111,7 +111,10 @@
 //!   pseudo B-rep has no notification environment); `SetOwner` of the new curve is
 //!   implied by the edge holding it.
 //! - **Arguments.** Out-params become return values; `iDebugLevel` and debug drawing
-//!   are dropped. No input-driven recursion.
+//!   are dropped. One input-driven recursion: `calc_rail_int_edgeuse_with_solvers`
+//!   continues a missed rail end on the next side edge across a seam's vertex (the fork's
+//!   63c7962) by calling itself, at most `SIDE_EDGE_CHAIN_STEPS` (64) deep, then `SM_ERR`
+//!   (the fork has no bound; a chain of seam vertices is a few edges long).
 //! - **Eased corners (the fork's, tangency-labs/smlib `e74bbd3`, #1376).** At a corner
 //!   with an ease (`FilletCorner::ease_dist > 0`, never by default)
 //!   `calc_rail_rail_interpolation` takes at least two derivatives and the G2/G3 fairing
