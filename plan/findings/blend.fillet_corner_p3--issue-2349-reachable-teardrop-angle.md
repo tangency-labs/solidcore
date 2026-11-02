@@ -191,18 +191,20 @@ passing coverage.
 The live #2349 brief requires an End-like self-mitre, cutting the two ends on
 their bisecting surface with exact pcurves, or a certified refusal naming the size
 that builds. #2353's deletion of the old corner's G1 paths is merged here through
-main `23ea17c1c`. #2307 still owns the End and Join event/section interfaces and
-remains unmerged; its implementation is not duplicated here. There is no new
+main `23ea17c1c`. #2307 merged as
+`379f9dafe0e64a2c9c104a50fc74b606ef8c0c1e` and is included through main
+`ebe6722e09169cce29a20c455fc6ec606b57caa0`; its implementation is not duplicated
+here. There is no new
 kernel flag, old-corner deletion, fit-size formula or claim that the old fitted intersection
 meets the exact-pcurve rule.
 
 The current `blend_corner::exact_mitre_curve` requires straight spines and equal
-cylinders; it returns `false` for this curved-spine round. Merely incorporating
-#2307's End/Join dispatch would not supply the exact/certified bisector section
+cylinders; it returns `false` for this curved-spine round. The merged
+#2307 End/Join dispatch does not supply the exact/certified bisector section
 and its two pcurves or prove a fitting radius. This preparatory contribution does
-not incorporate that draft or implement a competing End interface.
+not implement a competing End interface.
 
-After those interfaces settle, the implementation can use this operand to test
+A follow-up implementation can use this operand to test
 both ends of one blend at one vertex, distinguish its angle from a closed G1
 Join, and enable the failing contract. Exact/certified bisector intersections,
 exact pcurves on both sides, geometric fit-size derivation, and boundary-size
@@ -211,3 +213,25 @@ This fixture covers T=2 only; a T=3 seam and a revolved kinked seam are not cove
 
 
 Full kernel verification: `nice -n 10 cargo test --profile difftest -p solidcore` with `CARGO_BUILD_JOBS=2` and `RUST_TEST_THREADS=2` exited 0: 4,164 passed, 0 failed, 34 ignored across library, integration and documentation targets. The library accounts for 3,061 passes and 4 ignored tests. Ignored tests are not counted as passes.
+
+### Latest-main refresh after #2307 merged
+
+Merged main `ebe6722e09169cce29a20c455fc6ec606b57caa0` without conflicts in
+`d747975c4149984dd69e0b98c26d5d0b2f141b2d`. No production correction, checkpoint
+field or tolerance was changed. Post-merge verification exited 0:
+
+- `cargo fmt --all --check`.
+- CI-profile focused topology-split tests: 5 passed, 0 failed.
+- CI-profile issue integration target: 2 passed, 0 failed, 2 ignored future contracts.
+- Native affected units: geom_p3 318 passes/7 rejections; solver_p1 351;
+  solver_p4 651; solver_p5 100; corner_p3 994 passes/19 rejections;
+  executive_p3 796 passes/2 rejections. All six pass with zero failures,
+  zero deferred cases and `max_rel_err=0e0`.
+
+Commands used Ubuntu WSL, `CARGO_BUILD_JOBS=2`, `RUST_TEST_THREADS=2`, nice 10,
+and the unchanged shared C++ build. The earlier full green gate, full kernel
+suite, Clippy and wasm results above predate this main refresh; they are not
+claimed as rerun at this merged revision. GitHub CI still needs maintainer
+approval for the fork workflow; the inspected run 41458895332 has
+`action_required` and zero jobs. This account has no upstream push/maintain/admin
+permission. Required review is also outstanding.
