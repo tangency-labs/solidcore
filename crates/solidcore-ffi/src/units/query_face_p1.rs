@@ -225,11 +225,18 @@ fn check_args(op: Op, args: &[f64]) -> Result<(), FfiError> {
 ///
 /// # Errors
 ///
-/// [`FfiError::InvalidArgument`] for a block or arguments the wrapper rejects or a
-/// B-rep that cannot be built; the shim's status.
+/// [`FfiError::InvalidArgument`] for a block or arguments the wrapper rejects, a block
+/// value above `1e150` for an op other than [`Op::FaceFu`] (HANG-29) or a B-rep that
+/// cannot be built; the shim's status.
 pub fn eval(op: Op, path: &str, block: &[f64], args: &[f64]) -> Result<Vec<f64>, FfiError> {
     use super::topology_edgeuse_p1 as graph;
     check_args(op, args)?;
+    // The ops classify points on the faces, which creates their UV trim curves: with a
+    // coordinate above 1e150 that never returns upstream (HANG-29; nightly fuzz00201, a
+    // tight face box). `FaceFu` only reads the face uses.
+    if op != Op::FaceFu {
+        super::topology_edgeuse_p2::check_block_magnitudes(block)?;
+    }
     let export = graph::eval(graph::Op::Export, path, block)?;
     if graph::counts(&export).is_none() {
         return Err(bad("native fixture construction failed"));
