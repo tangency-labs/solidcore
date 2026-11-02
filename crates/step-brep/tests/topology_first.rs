@@ -210,19 +210,19 @@ fn volume(brep: &Brep) -> Option<f64> {
     solidcore::mass::integrator::properties::brep_volume(&kernel, &mut copy, 1e-9, &attrs).ok()
 }
 
-fn region_census(brep: &Brep) -> (usize, usize, usize) {
+fn region_census(brep: &Brep) -> solidcore::Result<(usize, usize, usize)> {
     let infinite = brep.infinite_region();
     let mut census = (0, 0, 0);
-    for id in solidcore::topology::brep::p1::regions(brep, None).unwrap() {
+    for id in solidcore::topology::brep::p1::regions(brep, None)? {
         if Some(id) != infinite {
-            match brep.region(id).unwrap().is_void() {
+            match brep.region(id)?.is_void() {
                 0 => census.0 += 1,
                 1 => census.1 += 1,
                 _ => census.2 += 1,
             }
         }
     }
-    census
+    Ok(census)
 }
 
 #[test]
@@ -261,7 +261,7 @@ fn a_solid_with_a_void_is_built_from_its_topology_with_the_void_removed() {
     assert_eq!(built.brep.vertex_list().len(), 16);
     let v = volume(&built.brep).unwrap();
     assert!((v - 875.0).abs() < 1e-6, "volume {v}");
-    assert_eq!(region_census(&built.brep), (1, 1, 0));
+    assert_eq!(region_census(&built.brep).unwrap(), (1, 1, 0));
 }
 
 #[test]
@@ -278,7 +278,7 @@ fn default_build_keeps_the_void_and_its_volume() {
         ),
         (12, 24, 16)
     );
-    assert_eq!(region_census(&built.brep), (1, 1, 0));
+    assert_eq!(region_census(&built.brep).unwrap(), (1, 1, 0));
     let v = volume(&built.brep).unwrap();
     assert!((v - 875.0).abs() < 1e-6, "volume {v}");
 }
@@ -322,7 +322,7 @@ fn two_disjoint_voids_are_both_removed() {
             ),
             (18, 36, 24)
         );
-        assert_eq!(region_census(&built.brep), (1, 2, 0));
+        assert_eq!(region_census(&built.brep).unwrap(), (1, 2, 0));
         let v = volume(&built.brep).unwrap();
         assert!((v - 965.0).abs() < 1e-6, "volume {v}");
     }
@@ -348,7 +348,7 @@ fn shell_model_and_single_solid_are_unchanged() {
             (6, 12, 8)
         );
         assert_eq!(
-            region_census(&built.brep),
+            region_census(&built.brep).unwrap(),
             if kind == BodyKind::ManifoldSolid {
                 (1, 0, 0)
             } else {
