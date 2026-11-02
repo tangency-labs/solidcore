@@ -196,8 +196,17 @@ fn sphere_patches(k: &Kernel, b: &Brep, c: Point3, r: f64) -> Vec<FaceId> {
         .into_iter()
         .filter(|&f| {
             let s = face2::surface(b, f).unwrap().unwrap();
-            let SurfaceKind::BSpline(net) = s.kind() else {
-                return false;
+            // a Ball's patch is an SmBallPatch carrying its sphere (the fork's f8e6709);
+            // a rational B-spline on the sphere is looked for too (the flag-off corner)
+            let net = match s.kind() {
+                SurfaceKind::BallPatch(patch) => {
+                    if patch.centre().distance(c) > 1e-12 || (patch.radius() - r).abs() > 1e-12 {
+                        return false;
+                    }
+                    patch.net()
+                }
+                SurfaceKind::BSpline(net) => net,
+                _ => return false,
             };
             if !net.is_rational() {
                 return false;
