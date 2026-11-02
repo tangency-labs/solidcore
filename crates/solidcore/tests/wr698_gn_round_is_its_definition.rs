@@ -565,7 +565,7 @@ fn known_failing_the_offset_of_a_round_is_the_offset_of_its_net() {
     }
 }
 
-/// #2388, contract 5, known failing: the plane x = 20 sections each reopened round's
+/// #2388, contract 5, known failing (#2451): the plane x = 20 sections each reopened round's
 /// face (the face's own section, `SmBrep::CreatePlanarSectionCurves`' per-face step, whose
 /// curves are to lie within the face's tolerance of the surface). The curves leave the
 /// round between their ends by up to 30 times the face's tolerance (4.8e-3 at 1.6e-4), and
@@ -620,7 +620,7 @@ fn known_failing_a_plane_section_of_a_round_strays_past_its_tolerance() {
     );
     assert!(
         worst > 1.0,
-        "the section is within its tolerance of S now ({worst}): update this test"
+        "the section is within its tolerance of S now ({worst}): #2451 fixed? update this test"
     );
 }
 
@@ -657,14 +657,142 @@ fn distance_and_volume_of_a_reopened_round_are_its_definition_s() {
     assert!((v0 - v1).abs() <= 1e-12 * v0, "volumes {v0} and {v1}");
 }
 
-/// #2388, contract 5, known failing: a second round whose support is a reopened round.
+/// A plate with a pipe lying on it tilted 4 degrees down along x (its axis from
+/// (0, 20, 16)), its far root edge (a curve: the plate's plane cuts the tilted cylinder
+/// in an ellipse) rounded r 2 at the equal area default. The round's section turns along
+/// it, so its certified net is a measurable distance off its definition.
+fn tilted_pipe(k: &mut Kernel) -> Brep {
+    use solidcore::boolean::api_brep::boolean_union;
+    use solidcore::geom::axis2_placement::Axis2Placement;
+    use solidcore::primitive::api_primitives::create_cylinder;
+    let plate = create_box(k, Point3::new(0.0, 0.0, 0.0), 60.0, 40.0, 10.0).unwrap();
+    let mut pipe = create_cylinder(k, Point3::new(0.0, 0.0, 0.0), 10.0, 60.0).unwrap();
+    let phi = 4.0_f64.to_radians();
+    let place = Axis2Placement::new(
+        Point3::new(0.0, 20.0, 16.0),
+        Vec3::new(-phi.sin(), 0.0, -phi.cos()),
+        Vec3::new(0.0, 1.0, 0.0),
+    );
+    solidcore::topology::brep::p5::transform(k, &mut pipe, &place, None, false).unwrap();
+    let mut b = boolean_union(k, plate, pipe).unwrap();
+    // the root edge nearest (30, 29.2, 10)
+    let q = Point3::new(30.0, 29.2, 10.0);
+    let mut best = (1.0_f64, None);
+    for &e in b.edge_list() {
+        if let Ok(c) = edge_closest_point(k, &b, e, q) {
+            if c.closest.distance <= best.0 {
+                best = (c.closest.distance, Some(e));
+            }
+        }
+    }
+    let e = best.1.expect("the root edge");
+    fillet_edges(k, &mut b, &[e], 2.0, 2, 2, GN_DEFAULT_THUMBWEIGHT).unwrap();
+    b
+}
+
+/// The largest distance between S and its net B over a 41 x 9 grid of the round.
+fn s_to_net(k: &Kernel, s: &Surface) -> f64 {
+    let SurfaceKind::ProceduralBlend(pb) = s.kind() else {
+        panic!("not a blend")
+    };
+    let d = s.natural_uv_domain_with_nurb(k).unwrap();
+    let mut gap = 0.0_f64;
+    for i in 0..=40 {
+        for j in 0..=8 {
+            let uv = d.evaluate(f64::from(i) / 40.0, f64::from(j) / 8.0);
+            let (p, q) = (
+                s.evaluate_point(k, uv).unwrap(),
+                pb.net().evaluate_point(uv).unwrap(),
+            );
+            gap = gap.max((p - q).length());
+        }
+    }
+    gap
+}
+
+/// #2388, contract 5, discriminating: the tilted pipe's round, reopened, whose certified
+/// net B stands measurably off S (at least 1e3 times the coordinates' rounding, 60 mm x
+/// 2.2e-16). A cylinder cut through it leaves edges on S within their own tolerance and
+/// measurably off B; a point 1 off S's middle is 1 from the round by the closest point
+/// query and not 1 from B; the reopened body's volume is the built one's (the volume
+/// integrates S; at its accuracy, 1e-7 of the volume, B's distance does not show).
+#[test]
+fn a_reopened_round_measurably_off_its_net_is_the_operand_on_s() {
+    use solidcore::boolean::api_brep::boolean_difference;
+    use solidcore::primitive::api_primitives::create_cylinder;
+    let rounding = 1e3 * 60.0 * f64::EPSILON;
+    let mut k = kernel(true);
+    let built = tilted_pipe(&mut k);
+    let mut open = built.clone();
+    let rounds = reopen(&k, &mut open);
+    assert_eq!(rounds.len(), 1, "the root round");
+    let (f, s) = &rounds[0];
+    let tol = open.face(*f).unwrap().tolerance;
+    let gap = s_to_net(&k, s);
+    assert!(gap > rounding && gap < tol, "S and B {gap:e} apart");
+    let net = match s.kind() {
+        SurfaceKind::ProceduralBlend(pb) => Surface::from(pb.net().clone()),
+        _ => unreachable!(),
+    };
+
+    // distance: 1 off S's middle along its normal
+    let d = s.natural_uv_domain_with_nurb(&k).unwrap();
+    let mut off_b = 0.0_f64;
+    for (a, c) in [(0.3, 0.5), (0.5, 0.5), (0.7, 0.4)] {
+        let e = s
+            .evaluate(&k, d.evaluate(a, c), 1, 1, EvaluateFlags::default())
+            .unwrap();
+        let n = e[1][0].cross(e[0][1]);
+        let p = e[0][0] + n * (1.0 / n.length());
+        let c = surface_closest_point(&k, s, p).unwrap();
+        assert!(
+            (c.closest.distance - 1.0).abs() <= tol,
+            "{}",
+            c.closest.distance
+        );
+        assert!((s.evaluate_point(&k, c.uvs[0]).unwrap() - c.closest.point).length() <= tol);
+        off_b = off_b.max((to_s(&k, &net, p) - 1.0).abs());
+    }
+
+    // boolean: a cylinder through the round
+    let tool = create_cylinder(&mut k, Point3::new(30.0, 30.5, 0.0), 1.5, 30.0).unwrap();
+    let cut = boolean_difference(&mut k, open.clone(), tool).unwrap();
+    let (n, worst) = edges_on_s(&k, &cut, &rounds);
+    assert!(n > 0, "no edge on the round");
+    assert!(worst <= 1.0, "an edge {worst} of its tolerance off S");
+    let mut edge_off_b = 0.0_f64;
+    for (cf, cs) in rounds_of(&cut) {
+        let dm = cs.natural_uv_domain_with_nurb(&k).unwrap();
+        let mid = cs.evaluate_point(&k, dm.evaluate(0.5, 0.5)).unwrap();
+        if to_s(&k, s, mid) > 1e-9 {
+            continue;
+        }
+        for e in edges_of(&cut, cf) {
+            for p in edge_points(&k, &cut, e) {
+                edge_off_b = edge_off_b.max(to_s(&k, &net, p));
+            }
+        }
+    }
+    assert!(
+        off_b > rounding && edge_off_b > rounding,
+        "B is not measurably off: distance {off_b:e}, edges {edge_off_b:e}"
+    );
+
+    // volume
+    let mut built = built;
+    let (v0, v1) = (volume_of(&k, &mut built), volume_of(&k, &mut open));
+    assert!((v0 - v1).abs() <= 1e-12 * v0, "volumes {v0} and {v1}");
+}
+
+/// #2388, contract 5, known failing (#2452): a second round whose support is a reopened
+/// round.
 /// The edge where the bottom round meets the end face x = 0 is rounded r 0.5: the fillet
 /// session refuses it at its finish (`SM_ERR`), and refuses it alike on the body as built,
 /// with the rounds by definition or as plain B-splines, so it is the fillet's, not the
 /// record's. Once it builds, its rail on the bottom round is to lie on S within the rail
 /// edge's tolerance; this test fails once the fillet builds.
 #[test]
-#[ignore = "slow (about 20 min unoptimized); known failing: the fillet session refuses a round on this round"]
+#[ignore = "slow (about 20 min unoptimized); known failing #2452: the fillet session refuses a round on this round"]
 fn known_failing_a_round_on_a_reopened_round() {
     let mut k = kernel(true);
     let mut b = chamfered_box(&mut k);
@@ -683,7 +811,7 @@ fn known_failing_a_round_on_a_reopened_round() {
         .find(|&e| edge_points(&k, &b, e).iter().all(|p| p.x.abs() < 1e-6))
         .unwrap();
     let e = fillet_edges(&mut k, &mut b, &[end], 0.5, 1, 1, 0.0)
-        .expect_err("the round on the round builds now: check its rail against S");
+        .expect_err("the round on the round builds now (#2452): check its rail against S");
     assert_eq!(
         e.operation(),
         "blend::fillet_executive::session::finish",
