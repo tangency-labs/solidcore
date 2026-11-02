@@ -589,6 +589,29 @@ mod tests {
     use solidcore::math::Point3;
     use solidcore::primitive::api_primitives as api;
 
+    /// How many times each face's boundary uses each edge, and how many sampled pcurve
+    /// curves the model gives that (face, BRep edge): `(uses, curves)`.
+    fn pcurves_by_face_edge(model: &Model) -> BTreeMap<(u64, usize), (usize, usize)> {
+        let body = &model.bodies[0];
+        let mut counts = BTreeMap::new();
+        for face in &body.faces {
+            for (loop_index, loop_) in face.loops.iter().enumerate() {
+                let Bound::Edges(edges) = &loop_.bound else {
+                    continue;
+                };
+                for (use_index, oriented) in edges.iter().enumerate() {
+                    let entry = counts.entry((face.step_id, oriented.edge)).or_insert((0, 0));
+                    entry.0 += 1;
+                    if let Some(curves) = model.pcurves.get(&(face.step_id, loop_index, use_index))
+                    {
+                        entry.1 += curves.len();
+                    }
+                }
+            }
+        }
+        counts
+    }
+
     #[test]
     fn maps_a_box_and_a_sphere_to_the_neutral_model() {
         let mut kernel = Kernel::default();
@@ -610,11 +633,47 @@ mod tests {
         let cylinder =
             api::create_cylinder(&mut kernel, Point3::new(0.0, 0.0, -2.0), 2.0, 4.0).unwrap();
         let model = brep_to_model(&cylinder).expect("cylinder to model");
-        assert!(
-            model.pcurves.values().any(|curves| curves.len() >= 2),
-            "cylinder seam edge should carry two pcurves: {:?}",
-            model.pcurves
+        // One curve per actual edge use: the wall's seam edge is used twice, each cap
+        // circle once. A closed cap circle is not a seam.
+        let grouped = pcurves_by_face_edge(&model);
+        for (&(face, edge), &(uses, curves)) in &grouped {
+            assert!(
+                curves == uses || curves == 0,
+                "face {face} edge {edge}: {uses} uses carry {curves} curves: {:?}",
+                model.pcurves
+            );
+        }
+        let seams: Vec<_> = grouped
+            .iter()
+            .filter(|(_, &(uses, _))| uses == 2)
+            .collect();
+        assert_eq!(
+            seams.len(),
+            1,
+            "the cylinder has one seam edge (its wall's): {grouped:?}"
         );
+        let (seam, &(seam_uses, seam_curves)) = seams[0];
+        assert_eq!(
+            (seam_uses, seam_curves),
+            (2, 2),
+            "seam {seam:?} must carry one curve per use: {grouped:?}"
+        );
+        let cap_trims: Vec<_> = grouped
+            .iter()
+            .filter(|(_, &(uses, curves))| uses == 1 && curves > 0)
+            .collect();
+        assert_eq!(
+            cap_trims.len(),
+            2,
+            "the wall trims two cap circles, one use each: {grouped:?}"
+        );
+        for (key, &(uses, curves)) in cap_trims {
+            assert_eq!(
+                (uses, curves),
+                (1, 1),
+                "cap trim {key:?} must carry one curve: {grouped:?}"
+            );
+        }
         for curves in model.pcurves.values() {
             for curve in curves {
                 assert!(
