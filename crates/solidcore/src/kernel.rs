@@ -1607,6 +1607,17 @@ pub struct Kernel {
         std::sync::Weak<()>,
         crate::topology::topology::NotifyRecords,
     ),
+    /// Not upstream: the fork's `thread_local` memo of equal area thumbweights
+    /// (`t_sWMemo`, b8ec238, smlib#109;
+    /// [`crate::blend::fillet_section::section::ThumbweightMemo`]). A [`RefCell`]: the
+    /// stations and the definition solve through `&Kernel`; it is never borrowed across a
+    /// solve, and a hit returns what a fresh solve of the same order and u gives.
+    pub blend_w_memo: RefCell<crate::blend::fillet_section::section::ThumbweightMemo>,
+    /// Not upstream: the fork's `thread_local` count of open blend operation scopes
+    /// (`t_lOperationScopes`; [`crate::blend::fillet_section::section::OperationScope`]).
+    /// Shared, so that a scope can outlive a borrow of the kernel (a fillet session holds
+    /// one while it takes `&mut Kernel`); an atomic keeps the kernel `Send`.
+    pub blend_operation_scopes: Arc<core::sync::atomic::AtomicU32>,
 }
 
 impl Default for Kernel {
@@ -1640,6 +1651,8 @@ impl Kernel {
                 std::sync::Weak::new(),
                 crate::topology::topology::NotifyRecords::new(),
             ),
+            blend_w_memo: RefCell::default(),
+            blend_operation_scopes: Arc::default(),
         }
     }
 
