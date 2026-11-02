@@ -8,6 +8,7 @@
 
 use solidcore::blend::fillet_section::section::{GnSectionFsg, GN_THUMBWEIGHT_EQUAL_AREA};
 use solidcore::blend::fillet_section::smooth_interior::correction_kernels;
+use solidcore::blend::fillet_section::smooth_interior_plan::SmoothInteriorPlan;
 use solidcore::kernel::Kernel;
 use solidcore::math::{Point2, Point3, Vec3};
 use solidcore::nurbs::b_spline_curve::{BSplineCurve, KnotType};
@@ -47,6 +48,10 @@ fn crossing_parameter(curved: bool) -> f64 {
 }
 
 fn fixture(curved: bool) -> (Kernel, ProceduralBlend) {
+    fixture_order(curved, 2)
+}
+
+fn fixture_order(curved: bool, order: u32) -> (Kernel, ProceduralBlend) {
     let mut k = Kernel::default();
     k.fixes.fillet_gn_section_generator = true;
     k.fixes.fillet_round_as_definition = true;
@@ -113,7 +118,7 @@ fn fixture(curved: bool) -> (Kernel, ProceduralBlend) {
             sides: [-1.0, 1.0],
             offsets: [2.0, 2.0],
             law: None,
-            order: 2,
+            order,
             thumbweight: GN_THUMBWEIGHT_EQUAL_AREA,
             leader: &leader,
             seeds: [&seed0, &seed1],
@@ -139,6 +144,73 @@ fn normal_jump(a: &[Vec<Vec3>], b: &[Vec<Vec3>]) -> f64 {
 
 fn s_curvature(d: &[Vec<Vec3>]) -> f64 {
     normal(d).dot(d[2][0]) / d[1][0].dot(d[1][0])
+}
+
+#[test]
+fn frozen_plan_keeps_original_widths_and_full_sided_jumps() {
+    let (k, pb) = fixture(true);
+    let s = crossing_parameter(true);
+    let mut initial = vec![0.0, s, 1.0];
+    let plan = SmoothInteriorPlan::prepare(&k, &pb, &initial).unwrap();
+    let st = &plan.stations()[0];
+    assert_eq!(st.parameter(), s);
+    assert!(st.lambda() <= (1.0 - s) / 2.0);
+    assert!((st.lambda() - (1.0 - s) / 2.0).abs() < 1e-14);
+    let original_width = st.lambda();
+    initial.insert(1, s / 2.0); // A later certificate refinement cannot change the plan.
+    assert_eq!(plan.stations()[0].lambda(), original_width);
+    for t in [0.0, 1e-5, 0.25, 0.5, 0.75, 1.0 - 1e-5, 1.0] {
+        let j = plan.jump_at(&k, 0, t).unwrap();
+        let a = pb.evaluate_definition_sided(&k, s, t, 2, 2, true).unwrap();
+        let b = pb.evaluate_definition_sided(&k, s, t, 2, 2, false).unwrap();
+        for (q, (&first, &second)) in j.first.iter().zip(&j.second).enumerate() {
+            assert_eq!(first, b[1][q] - a[1][q]);
+            assert_eq!(second, b[2][q] - a[2][q]);
+        }
+    }
+    for j in st.rail_jumps() {
+        assert!(j.first[0].length() < 1e-9);
+    }
+    assert!(plan.jump_at(&k, 1, 0.5).is_err());
+    assert!(plan.jump_at(&k, 0, -0.1).is_err());
+}
+
+#[test]
+fn preparation_refuses_invalid_partitions_and_missing_opt_ins() {
+    let (mut k, pb) = fixture(false);
+    for ss in [
+        vec![],
+        vec![0.0],
+        vec![0.0, 0.0, 1.0],
+        vec![1.0, 0.0],
+        vec![0.0, f64::NAN, 1.0],
+        vec![-f64::MAX, 0.0, f64::MAX],
+    ] {
+        assert!(SmoothInteriorPlan::prepare(&k, &pb, &ss).is_err());
+    }
+    let plan = SmoothInteriorPlan::prepare(&k, &pb, &[0.0, 0.25, 0.75, 1.0]).unwrap();
+    let stations = plan.stations();
+    assert!(
+        stations[0].parameter() + stations[0].lambda()
+            < stations[1].parameter() - stations[1].lambda()
+    );
+    k.fixes.fillet_round_on_round_as_definition = false;
+    assert!(plan.jump_at(&k, 0, 0.5).is_err());
+    assert!(SmoothInteriorPlan::prepare(&k, &pb, &[0.0, 0.5, 1.0]).is_err());
+}
+
+#[test]
+fn g3_on_c2_support_is_not_accepted_by_the_g2_correction_plan() {
+    let (k, pb) = fixture_order(true, 3);
+    let result = SmoothInteriorPlan::prepare(&k, &pb, &[0.0, crossing_parameter(true), 1.0]);
+    let Err(error) = result else {
+        panic!("G3 must not silently use a G2 correction")
+    };
+    let message = error.to_string();
+    assert!(message.contains("G2"));
+    assert!(message.contains("third-order face-smoothness proof"));
+    // A conservative API capability refusal, not the future production test
+    // that distinguishes G3-compatible supports from C2-only supports.
 }
 
 #[test]

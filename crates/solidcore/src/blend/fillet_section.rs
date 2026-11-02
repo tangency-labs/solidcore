@@ -94,5 +94,6 @@ pub mod interval;
 pub mod section;
 pub mod series;
 pub mod smooth_interior;
+pub mod smooth_interior_plan;
 pub mod station;
 pub mod tay;
