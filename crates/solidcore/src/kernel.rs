@@ -1407,6 +1407,21 @@ pub struct UpstreamFixes {
     /// `fillet_blend_corner` then leave off their edges (WR-708; the fork's
     /// tangency-labs/smlib@523bc25, smlib#79).
     pub fillet_exact_arc_sections: bool,
+    /// With `fillet_exact_arc_sections`, the exact circular sections of one round
+    /// (`SmCircularCrossSectionFSG::CreateSurfaceFromCurves` with `bApproximateArcs`
+    /// FALSE) all take the largest arc count among them. A section that sweeps less than
+    /// 91 degrees is one rational quadratic arc and one that sweeps more is two; the skin
+    /// made a one-arc section compatible with two-arc ones by inserting a knot, a rational
+    /// parameterisation unlike its neighbours' (middle weight `(1 + cos(a/2))/2`, not 1),
+    /// so between such stations the skin left the circles: a round whose sections sweep
+    /// across 91 degrees along it (a variable round on a square edge, where its radius law
+    /// turns) was 1.97e-3 off its balls' envelope, where approximated arcs are 1.0e-4 off.
+    /// Each circle is now built as that many equal arcs, as upstream rebuilds approximated
+    /// arcs with the most knots, and a point section where the rails meet (a point curve
+    /// of weights 1) becomes the circle nearest it collapsed onto its point, its weights
+    /// those of the circles beside it: that round is then 8.1e-5 off. Off: the fork's
+    /// 523bc25 and 5e8c9c1 (WR-711, a fix of WR-708).
+    pub fillet_exact_arc_spans: bool,
     /// With `fillet_cliff_overflow` (and its prerequisites), a blend past its faces is trimmed at its creases where it is built instead of being closed into the region it removes and subtracted (the fork's `SmFilletExecutive::TrimAtCreases`, `SmFilletOverflow.cpp`, tangency-labs/smlib#79 step 6 at 5e8c9c1, which deletes `SubtractRemovalRegion`): the open ends are cut by their end faces' planes as before; each sheet face is sectioned by every body face near it that holds none of its boundary, exactly by a plane, and split along each crease where it lies inside both faces; a piece is kept only when its inner point lies inside the body; a planar support face whose kept rail runs past its boundary into the material is carried on along its plane to the rail; the kept sheet's boundary is imprinted on the body's faces, the faces it encloses round the blended edges are deleted, the sheet is merged in and stitched, the body oriented, and the edges between faces sewn in on one surface removed. The blend keeps its radius and the sharp edge moves. Refused with `FilletErrorType::NoRoom`: a crease on a face that runs on tangentially from a face the blend rolls on (`NoRoomReason::CreaseAcrossTangentEdge`), a blend whose corners take its whole edge (`CornersTakeWholeEdge`), and a rail into the material that the support face cannot be carried on to (`RailRunsPastFaceIntoMaterial`); `BadMerge` for a sheet that does not sew into a manifold solid. Off: the subtraction, as before (WR-695, #2273).
     pub fillet_overflow_trim_at_creases: bool,
     /// With both `fillet_overflow_trim_at_creases` and `fillet_round_ends_at_tangent_continuation`, a round with a section end (WR-674: its filleted edge runs on tangentially at the vertex) is trimmed at its creases and sewn into the body as a cliff overflow is, instead of being closed into the region it removes and subtracted: each section end is cut by its plane through the vertex normal to the filleted edge and given its flat end face (the section's corner, from the section's ends to the vertex), and the sheet is trimmed and sewn in as `fillet_overflow_trim_at_creases` does it; a side of an end face that lies along an edge of the body (the seam where a corner's cylinder runs on tangentially into a flat side) is sewn to that edge's piece instead of being imprinted. So a round with a section end is built together with other rounds (an R25 rim and an R2 corner arc of a tabbed plate rounded together, which the subtraction refuses with `FilletErrorType::NoRoom`: it builds only a lone round both of whose ends are section ends). Off: the subtraction, as before (WR-706, #2223; own design, not in the fork, which at 5e8c9c1 leaves such a corner arc unrounded).

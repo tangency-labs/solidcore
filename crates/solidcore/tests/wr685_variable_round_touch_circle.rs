@@ -92,6 +92,14 @@ fn kernel_d01d7b0() -> Kernel {
     k
 }
 
+/// The fork at 5e8c9c1 (and 523bc25): every fix but WR-711's one arc count of the exact
+/// circles (`fillet_exact_arc_spans`), which comes after them.
+fn kernel_5e8c9c1() -> Kernel {
+    let mut k = kernel(true, true);
+    k.fixes.fillet_exact_arc_spans = false;
+    k
+}
+
 /// The box 20 x 30 x 20 after the law 1 to 5 from x = 0 rounds its edge y = 30, z = 20.
 fn cone_round(mut k: Kernel) -> f64 {
     let mut b = create_box(&mut k, Vec3::ZERO, 20.0, 30.0, 20.0).unwrap();
@@ -190,7 +198,7 @@ fn a_linear_round_is_the_balls_cone() {
     // the fork's 5e8c9c1 build (SmFilletExecutive as SmApiVariableRadiusFillet runs it,
     // SmApiBrepComputeVolume at 1e-8): 11956.222433581395 (523bc25: 11956.222433581312),
     // its sections the balls' exact circles; to the last digit here
-    let v = cone_round(kernel(true, true));
+    let v = cone_round(kernel_5e8c9c1());
     assert!(rel(v, 11956.222433581395) < 1e-9, "{v}");
     // the fork's d01d7b0 and 58d03ef builds, the approximated arcs: 11956.219913611159
     let v = cone_round(kernel_d01d7b0());
@@ -246,7 +254,7 @@ fn folding_balls_build_folded_without_the_fix() {
 fn a_progressive_spline_round_builds() {
     // the fork's 5e8c9c1 and 523bc25 builds, the exact circles: 5957.716621492882 (here
     // 2.2e-13 off)
-    let v = spline_round(kernel(true, true), HOLDS).expect("builds");
+    let v = spline_round(kernel_5e8c9c1(), HOLDS).expect("builds");
     eprintln!(
         "{v} vs 5957.716621492882, rel {}",
         rel(v, 5957.716621492882)
@@ -298,7 +306,7 @@ fn a_cliff_overflows_variable_round_holds_its_law_on_its_touch_circles() {
         (2.0, 30.0, 5184.0573578203966),
         (2.0, 50.0, 4693.6093103438334),
     ] {
-        let v = cliff_round(kernel(true, true), r0, r1);
+        let v = cliff_round(kernel_5e8c9c1(), r0, r1);
         eprintln!("{r0} -> {r1}: {v:?} fork {fork}");
         let v = v.expect("builds");
         assert!(rel(v, fork) < 1e-12, "{r0} -> {r1}: {v} vs {fork}");
@@ -344,4 +352,37 @@ fn a_variable_blend_curve_round_takes_the_gn_default_thumbweight() {
     let done = session.do_fillet(&mut k);
     eprintln!("{done:?}: {}", session.error_info().comment);
     assert!(done.is_err());
+}
+
+/// The cliff overflows' volumes in closed form (the box less the corner between the planes
+/// and the balls' cone, cut by the 10 wide top's far face), by Gauss-Legendre quadrature of
+/// the area each plane across the edge cuts above the union of the balls' discs: 2 -> 11
+/// (and 11 -> 2) to 1e-5 (80 and 160 panels of 16 points along the edge agree to 9e-6),
+/// the balls continued past the edge's ends as the cone is; the same quadrature gives the
+/// cone's [`CONE_VOLUME`] to 5e-13. The approximated arcs (d01d7b0) are 1.5e-2 under it.
+const CLIFF_2_11_VOLUME: f64 = 5802.443_142;
+
+/// WR-711 (`fillet_exact_arc_spans`) with every fix: the linear round stays on its cone and
+/// the cliff overflow of 2 -> 11 on its closed form.
+#[test]
+fn wr711_linear_rounds_keep_their_closed_forms() {
+    let v = cone_round(kernel(true, true));
+    eprintln!("cone {v} vs {CONE_VOLUME}, rel {}", rel(v, CONE_VOLUME));
+    assert!(rel(v, CONE_VOLUME) < 1e-9, "{v}");
+    for (r0, r1) in [
+        (2.0, 11.0),
+        (11.0, 2.0),
+        (2.0, 20.0),
+        (2.0, 30.0),
+        (2.0, 50.0),
+    ] {
+        let v = cliff_round(kernel(true, true), r0, r1).expect("builds");
+        eprintln!(
+            "cliff {r0} -> {r1}: {v:.10}, rel to 2 -> 11's {}",
+            rel(v, CLIFF_2_11_VOLUME)
+        );
+        if r1 == 11.0 || r0 == 11.0 {
+            assert!(rel(v, CLIFF_2_11_VOLUME) < 1e-7, "{r0} -> {r1}: {v}");
+        }
+    }
 }
