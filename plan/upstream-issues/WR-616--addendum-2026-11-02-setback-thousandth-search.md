@@ -28,3 +28,12 @@ This slice preserves degree order, stored sector rows, the QP algorithm and the
 public probe API. The streaming WIP `3843ddb`, degree-nine-first evaluation,
 row/peak-row/active-set-step counters and their full result-equivalence gate
 remain follow-ups. No unit is promoted by this contribution.
+
+The full native executive comparison now passes on twelve independent inputs:
+six built bodies and 144 vertices. Status/refusal, comments, named fits, topology
+counts, volumes and every vertex coordinate agree to 1e-9 relative without an
+absolute floor. The reference overlays the complete changed SMLib source set at
+20b1c01 on the existing 5e8c9c1 libraries, recompiling blend/fillet consumers of
+the changed class layouts. The reproducible driver, build script and strict
+comparator live under `harness/cpp/tests/`; commands and limitations are in
+`docs/setback-scale-search-validation.md`.

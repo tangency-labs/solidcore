@@ -3,7 +3,7 @@
 //! least scale of the setbacks that certifies (`SmBlendSetback::CertifiedScale`), on the box
 //! corner of the fork's capi `setback_g1_fill_keeps_the_body_convex` cases.
 //! #2344(a) uses 20b1c01's thousandth search. Changed flag-on volumes below are
-//! Rust regression snapshots, not new native executive parity claims. Scales and
+//! native executive comparisons: twelve cases, six bodies and 144 vertices. Scales and
 //! QP/attempt counts are compared to native in blend_setback::scale::tests.
 #![allow(
     clippy::unwrap_used,
@@ -409,7 +409,7 @@ fn dump_blends() {
             )
         );
     }
-    for sb in [4.25, 4.5, 4.6, 4.7515] {
+    for sb in [4.25, 4.5, 4.6, 4.7175] {
         println!("== short {sb}");
         print!(
             "{}",
@@ -430,7 +430,7 @@ fn dump_blends() {
 
 // ---- regression cases: the fork's capi setback cases, run through the executive ----
 //
-// Each value is the fork's own (tangency-labs/smlib b5bb747, built locally and run through
+// Each value is the fork's own (b5bb747 initially, 20b1c01 after #2344(a), run through
 // `SmFilletExecutive` as these build the body): its status and comment, `GetFitSetBack`,
 // face, edge and vertex counts, `SmApiBrepComputeVolume` at 1e-12 (printed to 15
 // digits) and every vertex, which the port matched bit for bit. The values without the
@@ -467,7 +467,7 @@ fn short(setback: f64) -> SetbackAsk {
 }
 
 /// A built blend: sound (no check lines), its counts and its volume to the fork's printed
-/// 15 digits (or a labelled Rust snapshot after the thousandth search); returns the body.
+/// 15 digits; the thousandth-search cases are compared by the native executive gate.
 fn built(k: &mut Kernel, r: Blended, counts_want: (usize, usize, usize), volume_want: f64) -> Brep {
     assert_eq!(r.code, 0, "{}", r.comment);
     let mut b = r.body.expect("a body");
@@ -503,7 +503,7 @@ fn three_unequal_rounds_are_the_certified_setback_fill() {
         &[2.0, 3.0, 4.0],
         None,
     );
-    // Rust snapshot; the handoff's native volume 23841.674296328 agrees to 1e-9 relative.
+    // Local native executive: 23841.674295048841; also agrees with the handoff to 1e-9.
     let mut b = built(&mut k, r, (15, 36, 23), 23841.67429504884);
     let v = volume(&mut k, &mut b);
     assert!((v - 23841.674296328).abs() <= 1e-9 * v.abs().max(23841.674296328));
@@ -637,7 +637,7 @@ fn asked_setback_too_short_names_what_builds() {
         &[2.0, 3.0, 4.0],
         Some(&short(r.fit)),
     );
-    // Rust snapshot at the new fit; native executive comparison remains outstanding.
+    // Native executive at the new fit: 7879.3005740352419.
     built(&mut k, r, (15, 36, 23), 7879.300574035242);
     // without the flag the asked setback builds the pinned corner, and no fit is named
     let mut k = all_fixes(false);
@@ -665,7 +665,7 @@ fn default_setback_shrinks_to_fit() {
         &[2.0, 3.0, 4.0],
         None,
     );
-    // Rust snapshot with the upright held at its room (native scale: 1.046).
+    // Native executive with the upright held at its room: 2128.9749176154519.
     let b = built(&mut k, r, (15, 36, 23), 2128.9749176154523);
     // the upright round's end section at 4.5, r 4 from its edge on each face
     assert!(has_vertex(&b, [4.0, 0.0, 4.5]) && has_vertex(&b, [0.0, 4.0, 4.5]));
@@ -687,7 +687,7 @@ fn concave_corner_is_the_setback_fill() {
     let mut k = all_fixes(true);
     let b = notched(&mut k, 10.0);
     let r = blend_body(&mut k, b, &CONCAVE_AT, &[1.0, 1.5, 2.0], None);
-    // Rust snapshot at the new scale; native executive comparison remains outstanding.
+    // Native executive at the new scale: 7015.230424090797.
     built(&mut k, r, (18, 45, 29), 7015.230424090796);
     let mut k = all_fixes(false);
     let b = notched(&mut k, 10.0);
