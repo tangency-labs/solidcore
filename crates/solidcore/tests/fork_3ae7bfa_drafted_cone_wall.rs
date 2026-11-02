@@ -19,8 +19,8 @@
 //! Volumes in closed form (the capi test's): each wall leans in by t tan 5 at height t, so
 //! the bar's section at height t is the rectangle x in [d, 40], y in [d, 16 - d] and the half
 //! disc R 8 - d, the disc's the disc R 8 - d (d = t tan 5):
-//! V_bar = int_0^10 ((40 - d)(16 - 2d) + pi (8 - d)^2 / 2) dt,
-//! V_disc = int_10^20 pi (8 - d)^2 dt. The fork at dda881f (built locally, the same inputs:
+//! `V_bar = int_0^10 ((40 - d)(16 - 2d) + pi (8 - d)^2 / 2) dt`,
+//! `V_disc = int_10^20 pi (8 - d)^2 dt`. The fork at dda881f (built locally, the same inputs:
 //! the arc an `SmCircle` over 180 degrees, `SmApiCreateTaperExtrude(.., 10, 5, 3,
 //! SM_OC_CURVE_EXTENSION, ..)`, `SmApiBooleanUnion`) gives the bar 6 faces, 12 edges, 8
 //! vertices, V 6884.533175779990; the disc 3, 3, 2, V 1407.079018122895; the peg 7 faces,
