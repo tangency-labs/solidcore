@@ -34,7 +34,8 @@ class FontSelectionTests(unittest.TestCase):
             spec.loader.exec_module(self.generator)
 
     def select(self, available, size, bold=False):
-        with patch.object(Path, "exists", lambda path: str(path) in available):
+        available_paths = {Path(candidate) for candidate in available}
+        with patch.object(Path, "exists", lambda path: path in available_paths):
             return self.generator.font(size, bold=bold)
 
     def test_linux_candidates_keep_priority_for_both_styles(self):
@@ -67,6 +68,10 @@ class FontSelectionTests(unittest.TestCase):
 
     def test_regular_font_never_substitutes_for_missing_bold(self):
         self.assertEqual(self.select({MAC_REGULAR}, 78, bold=True), ("default",))
+        self.loader.truetype.assert_not_called()
+
+    def test_bold_font_never_substitutes_for_missing_regular(self):
+        self.assertEqual(self.select({MAC_BOLD}, 33), ("default",))
         self.loader.truetype.assert_not_called()
 
     def test_no_available_font_keeps_the_default_fallback(self):
