@@ -656,6 +656,17 @@ mod tests {
     }
 
     #[test]
+    fn canonical_revolution_guard_retry_preserves_step_evaluation_order() {
+        // CreateCanonical retries through SmLine::EvaluateSTEP: t * unit * scale,
+        // not t * raw_step. Here the latter rounds to EFF_ZERO and accepts the
+        // frame, while the pinned operation order remains one ulp below it.
+        let mut s = canonical_revolution();
+        s.net[2] = [0.0, 0.0, 0.0];
+        s.net[3] = [2.222222222222222e-12, 0.0, 0.7];
+        assert!(!accepted(&s));
+    }
+
+    #[test]
     fn canonical_revolution_guard_zero_length_generator_rejected() {
         // `SmLine::CreateLineSegment` unitizes the generator vector and fails on a
         // zero-length one, so the fixture would not construct.
