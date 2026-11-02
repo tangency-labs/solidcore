@@ -20,7 +20,7 @@
 //! the wall (centres on the circle of radius 21 + r about A at z = 10 - r), its rail on the
 //! top face the circle of radius 21 + r at z = 10, and the cap's edge on the top face is
 //! the top face's line in P from that rail to V. The fork (18e96f1) refuses it,
-//! SMLIB_ERR_NO_ROOM (`CalcEndCapEdges`: "a rail rolling over into an end is not built").
+//! `SMLIB_ERR_NO_ROOM` (`CalcEndCapEdges`: "a rail rolling over into an end is not built").
 #![allow(
     clippy::unwrap_used,
     clippy::expect_used,
@@ -436,7 +436,7 @@ fn check_top_end(k: &Kernel, b: &Brep, r: f64) {
 
 /// The middle edge rounded 0.25 builds: its rail rolls over T onto the top face before the
 /// top End, and the cap's edge on the top face is the top face's line in P. The fork
-/// (18e96f1) refuses it, SMLIB_ERR_NO_ROOM with no size.
+/// (18e96f1) refuses it, `SMLIB_ERR_NO_ROOM` with no size.
 #[test]
 fn the_middle_edge_r0_25_rolls_over_onto_the_top_face_before_its_end() {
     let mut k = all_fixes(true);
