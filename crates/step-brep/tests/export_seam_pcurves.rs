@@ -2,12 +2,17 @@
 //!
 //! `brep_to_model` samples each non-planar edge use's UV trim into one pcurve. A closed
 //! edge is not a seam by itself: a cylinder's cap circle is closed but used once on the
-//! wall, while the wall's seam edge is used twice. The exporter groups pcurves by BRep
+//! wall, while the wall's seam edge is used twice. The exporter groups pcurves by `BRep`
 //! edge and writes `SEAM_CURVE` only when one edge carries two pcurves on one surface,
 //! so the count per (face, edge) must equal the number of actual uses: two for a seam,
 //! one for every other trimmed use.
 
-#![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::indexing_slicing)]
+#![allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::panic,
+    clippy::indexing_slicing
+)]
 
 use std::collections::BTreeMap;
 
@@ -18,7 +23,7 @@ use solidcore::topology::Brep;
 use step_brep::brep_to_model;
 use step_import::model::{Bound, Model, PcurveKey};
 
-/// One BRep edge as one face uses it: `(face step id, edge index in the body)`.
+/// One `BRep` edge as one face uses it: `(face step id, edge index in the body)`.
 type FaceEdge = (u64, usize);
 
 fn cylinder() -> Brep {
@@ -97,7 +102,11 @@ fn assert_one_curve_per_use(model: &Model, name: &str) {
     let uses = uses_per_face_edge(model);
     let curves = curves_per_face_edge(model);
     for (&(face, edge), &uses) in &uses {
-        if !model.pcurves.keys().any(|&(key_face, _, _)| key_face == face) {
+        if !model
+            .pcurves
+            .keys()
+            .any(|&(key_face, _, _)| key_face == face)
+        {
             // A planar face writes no pcurves.
             continue;
         }
@@ -167,14 +176,16 @@ fn torus_seam_has_two_curves() {
         .collect();
     assert_eq!(
         seams.len(),
-        1,
-        "the torus has one seam edge: {uses:?}"
+        2,
+        "a torus is periodic in u and v, so both its seam edges are used twice: {uses:?}"
     );
-    assert_eq!(
-        curves.get(&seams[0]),
-        Some(&2),
-        "torus seam has four curves: {curves:?}"
-    );
+    for seam in &seams {
+        assert_eq!(
+            curves.get(seam),
+            Some(&2),
+            "torus seam {seam:?} must carry two curves: {curves:?}"
+        );
+    }
     assert!(
         uses.values().all(|&uses| uses <= 2),
         "unexpected use count: {uses:?}"
@@ -194,13 +205,14 @@ fn written_seam_curves_match_the_actual_seams() {
             .filter(|(&(_, _), &uses)| uses == 2)
             .map(|(&key, _)| key)
             .collect();
-        assert_eq!(seams.len(), 1, "{name}: one seam: {uses:?}");
+        let expected_seams = if name == "cylinder" { 1 } else { 2 };
+        assert_eq!(seams.len(), expected_seams, "{name}: seam edges: {uses:?}");
 
         let text = step_export::write(&model).unwrap();
         assert_eq!(
             text.matches("SEAM_CURVE(").count(),
-            1,
-            "{name}: the file must mark exactly its one seam"
+            expected_seams,
+            "{name}: the file must mark exactly its {expected_seams} seam edge(s)"
         );
 
         let imported =
@@ -218,8 +230,7 @@ fn written_seam_curves_match_the_actual_seams() {
                 .file_pcurves
                 .edges
                 .get(&step_id)
-                .map(Vec::len)
-                .unwrap_or(0);
+                .map_or(0, Vec::len);
             assert_eq!(
                 file_count, uses,
                 "{name}: imported face {face} edge {edge} (#{step_id}) has {uses} uses \
@@ -229,39 +240,44 @@ fn written_seam_curves_match_the_actual_seams() {
         }
         assert_eq!(
             file_counts.iter().filter(|&&count| count == 2).count(),
-            1,
-            "{name}: the imported seam carries two pcurves: {file_counts:?}"
+            expected_seams,
+            "{name}: each imported seam edge carries two pcurves: {file_counts:?}"
         );
-        assert!(
-            file_counts.iter().any(|&count| count == 1),
-            "{name}: a non-seam trimmed use carries one pcurve: {file_counts:?}"
-        );
+        if name == "cylinder" {
+            assert!(
+                file_counts.contains(&1),
+                "{name}: a non-seam trimmed use carries one pcurve: {file_counts:?}"
+            );
+        }
         assert!(
             file_counts.iter().all(|&count| count <= 2),
             "{name}: no edge may carry more than its two uses: {file_counts:?}"
         );
 
-        // The seam's two real trims run up and down the same surface line, so their
-        // parameter space points differ by exactly one full period of u.
-        let seam = seams[0];
-        let mut means = Vec::new();
-        for key in keys_of(&model, seam) {
-            let uv = &model.pcurves[&key][0];
-            let mean_u = uv.iter().map(|p| p[0]).sum::<f64>() / uv.len() as f64;
-            means.push(mean_u);
+        // Each seam edge's two real trims are the two sides of the periodic cut: the
+        // surface line one full period apart, not a synthetic copy added to one use.
+        for &seam in &seams {
+            assert_eq!(
+                curves.get(&seam),
+                Some(&2),
+                "{name}: seam {seam:?} curves: {curves:?}"
+            );
+            let mut means = Vec::new();
+            for key in keys_of(&model, seam) {
+                let uv = &model.pcurves[&key][0];
+                let mean_u = uv.iter().map(|p| p[0]).sum::<f64>() / uv.len() as f64;
+                let mean_v = uv.iter().map(|p| p[1]).sum::<f64>() / uv.len() as f64;
+                means.push([mean_u, mean_v]);
+            }
+            assert_eq!(means.len(), 2, "{name}: seam {seam:?} keys: {means:?}");
+            let turn = std::f64::consts::TAU;
+            let du = (means[1][0] - means[0][0]).abs();
+            let dv = (means[1][1] - means[0][1]).abs();
+            assert!(
+                ((du - turn).abs() < 1e-9 && dv < 1e-9) || ((dv - turn).abs() < 1e-9 && du < 1e-9),
+                "{name}: seam {seam:?} uses must be one full period apart: {means:?}"
+            );
         }
-        means.sort_by(|a, b| a.partial_cmp(b).unwrap());
-        assert_eq!(means.len(), 2, "{name}: seam keys: {means:?}");
-        // Both surfaces' u is an angle in radians: the two uses sit one full turn apart.
-        assert!(
-            (means[1] - means[0] - std::f64::consts::TAU).abs() < 1e-9,
-            "{name}: seam trims must be one period apart: {means:?}"
-        );
-        assert_eq!(
-            curves.get(&seam),
-            Some(&2),
-            "{name}: seam curves: {curves:?}"
-        );
     }
 }
 
