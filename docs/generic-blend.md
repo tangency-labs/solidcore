@@ -768,7 +768,8 @@ Counts on SMLib 5e8c9c1: 220 pass, 17 refused as expected, 34 known failing.
 (tangency-labs/smlib) first, and solidcore ports each merged step. Where the fork's construction
 has replaced upstream SMLib's, the fork is what solidcore matches. NVIDIA's usd-brep v1.0.1 is not
 the reference for those paths. The port is **bit-identical** to the fork: the same inputs give the
-same output, bit for bit, and the difftest (`crates/difftest`) checks it unit by unit. A
+same output, bit for bit. The difftest (`crates/difftest`) shows it unit by unit when the
+maintainers run it on a port's pull request, and SolidCraft's kernel rig shows it case by case. A
 difference is a port defect to find, never a tolerance to widen. A defect in the construction is
 fixed in the fork first and then ported; since SMLib construction ended (2026-11-02), new
 construction is designed on its solidcore issue instead.
