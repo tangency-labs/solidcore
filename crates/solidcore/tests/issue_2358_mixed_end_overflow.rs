@@ -35,7 +35,7 @@ use solidcore::kernel::{Kernel, KernelOptions, UpstreamFixes};
 use solidcore::mass::integrator::properties::{brep_volume, PropertyAttributes};
 use solidcore::math::{Point3, Vec3};
 use solidcore::primitive::api_primitives::{create_box, create_cylinder};
-use solidcore::surface::surface::SurfaceKind;
+use solidcore::surface::surface::{Surface, SurfaceKind};
 use solidcore::topology::brep::cutting::PlaneCutter;
 use solidcore::topology::brep::p2::ArenaNotifyState;
 use solidcore::topology::face::p2 as face;
@@ -250,7 +250,7 @@ fn wall_split(k: &mut Kernel, b: &mut Brep, deg: f64) {
         .copied()
         .filter(|&f| {
             matches!(
-                face::surface(b, f).unwrap().map(|s| s.kind()),
+                face::surface(b, f).unwrap().map(Surface::kind),
                 Some(SurfaceKind::Cone(_))
             )
         })
