@@ -221,8 +221,8 @@ fn derivative_bounds(n: &Nurbs) -> (f64, f64) {
 /// - G, the rows' weights: a homogeneous error becomes a Euclidean one divided by the
 ///   weight, at most the net's weight ratio `w_max / w_min` times its size.
 ///
-/// At part scale (coordinates and knots of tens of millimetres) it is about 1e-11, the
-/// stations' term; the rows' is about 1e-14.
+/// It does not depend on where the round lies. At part scale (a round and knots of tens of
+/// millimetres) it is about 1e-10, the stations' term; the rows' is about 1e-14.
 ///
 /// # Errors
 ///
@@ -233,14 +233,16 @@ pub fn precision_floor(
     order: u32,
     net: &BSplineSurface,
 ) -> Result<f64> {
-    let (_, _, stored) = net.control_points()?;
-    let (mut m, mut w_lo, mut w_hi) = (0.0_f64, f64::INFINITY, 0.0_f64);
-    for c in &stored {
-        let w = if c.w == NOW { 1.0 } else { c.w };
-        m = m.max(Vec3::new(c.x, c.y, c.z).length() / w);
-        w_lo = w_lo.min(w);
-        w_hi = w_hi.max(w);
-    }
+    // (in the round's own frame: M its size about its centre)
+    let (points, weights, centre) = net_points(net)?;
+    let m = points
+        .iter()
+        .fold(0.0_f64, |a, p| a.max((*p - centre).length()));
+    let (w_lo, w_hi) = weights
+        .iter()
+        .fold((f64::INFINITY, 0.0_f64), |(lo, hi), &w| {
+            (lo.min(w), hi.max(w))
+        });
     let g = w_hi / w_lo;
     let mut d = 0.0_f64;
     for s in supports {
@@ -263,6 +265,38 @@ pub fn precision_floor(
     }
 }
 
+/// A net's Euclidean control points, their weights, and the centre of their box: the
+/// reference point of the round's own frame.
+fn net_points(net: &BSplineSurface) -> Result<(Vec<Vec3>, Vec<f64>, Vec3)> {
+    let (_, _, stored) = net.control_points()?;
+    let (mut lo, mut hi) = (
+        Vec3::new(f64::INFINITY, f64::INFINITY, f64::INFINITY),
+        Vec3::new(f64::NEG_INFINITY, f64::NEG_INFINITY, f64::NEG_INFINITY),
+    );
+    let mut points = Vec::new();
+    let mut weights = Vec::new();
+    for c in &stored {
+        let w = if c.w == NOW { 1.0 } else { c.w };
+        let p = Vec3::new(c.x, c.y, c.z) * (1.0 / w);
+        lo = Vec3::new(lo.x.min(p.x), lo.y.min(p.y), lo.z.min(p.z));
+        hi = Vec3::new(hi.x.max(p.x), hi.y.max(p.y), hi.z.max(p.z));
+        points.push(p);
+        weights.push(w);
+    }
+    Ok((points, weights, (lo + hi) * 0.5))
+}
+
+/// The reference point of a blend's own frame: the centre of its net's control points'
+/// box. Its certificate, its net's distance from its rows and its floor are taken in
+/// coordinates about it, so they follow the round's size, not where it lies.
+///
+/// # Errors
+///
+/// `SM_ERR` without NURB data.
+pub(crate) fn frame_centre(net: &BSplineSurface) -> Result<Vec3> {
+    Ok(net_points(net)?.2)
+}
+
 /// The rounding of a rigid motion with a uniform scale applied to a net: each homogeneous
 /// coordinate is a sum of three products and the weighted translation (six operations),
 /// on coordinates of at most the moved net's size, divided by the least weight.
@@ -271,15 +305,31 @@ pub fn precision_floor(
 ///
 /// `SM_ERR` without NURB data.
 pub(crate) fn transform_rounding(net: &BSplineSurface) -> Result<f64> {
-    let (_, _, stored) = net.control_points()?;
-    let (mut m, mut w_lo, mut w_hi) = (0.0_f64, f64::INFINITY, 0.0_f64);
-    for c in &stored {
-        let w = if c.w == NOW { 1.0 } else { c.w };
-        m = m.max(Vec3::new(c.x, c.y, c.z).length() / w);
-        w_lo = w_lo.min(w);
-        w_hi = w_hi.max(w);
-    }
+    let (points, weights, _) = net_points(net)?;
+    let m = points.iter().fold(0.0_f64, |a, p| a.max(p.length()));
+    let (w_lo, w_hi) = weights
+        .iter()
+        .fold((f64::INFINITY, 0.0_f64), |(lo, hi), &w| {
+            (lo.min(w), hi.max(w))
+        });
     Ok(gamma(6) * (w_hi / w_lo) * m)
+}
+
+/// The rounding of moving a blend to its own frame: subtracting the centre rounds each
+/// coordinate once, by at most `u |x - c|`, in the net and in the supports, so the net
+/// and S move by at most `gamma_1` times the net's size about the centre, divided by the
+/// least weight: twice that between them.
+fn frame_rounding(net: &BSplineSurface) -> Result<f64> {
+    let (points, weights, centre) = net_points(net)?;
+    let m = points
+        .iter()
+        .fold(0.0_f64, |a, p| a.max((*p - centre).length()));
+    let (w_lo, w_hi) = weights
+        .iter()
+        .fold((f64::INFINITY, 0.0_f64), |(lo, hi), &w| {
+            (lo.min(w), hi.max(w))
+        });
+    Ok(2.0 * gamma(1) * (w_hi / w_lo) * m)
 }
 
 /// A span's Hermite rows ([`NetForm::span`]) as a grid `[i along s][j across]`.
@@ -407,10 +457,22 @@ fn pieces(pb: &ProceduralBlend, ld: usize) -> Result<Vec<Piece>> {
 /// `SM_ERR` for a support that is not a NURBS surface or is itself a blend by its
 /// definition (its definition is not enclosed yet); those of the station solves and the
 /// certificate.
-#[allow(clippy::too_many_lines)]
+///
+/// The work is done in the round's own frame ([`frame_centre`]): the blend is moved by
+/// minus its centre (supports, leader and net), so the certificate's enclosures, the
+/// net's distance from its rows and the floor follow the round's size, not where it lies;
+/// the move's own rounding ([`frame_rounding`]) is added to the net's distance.
 pub fn recertify(k: &Kernel, pb: &ProceduralBlend) -> Result<f64> {
+    let centre = frame_centre(pb.net())?;
+    let local = pb.translated(k, centre * -1.0)?;
+    recertify_in_frame(k, &local, pb.bound(), frame_rounding(pb.net())?)
+}
+
+/// [`recertify`] of a blend already in its own frame, against `bound`, its net's
+/// distance from its rows taken as at least `shift` more.
+#[allow(clippy::too_many_lines)]
+fn recertify_in_frame(k: &Kernel, pb: &ProceduralBlend, bound: f64, shift: f64) -> Result<f64> {
     let d = pb.definition();
-    let bound = d.bound;
     let n = d.order as usize;
     let equal_area = n >= 2 && d.thumbweight == GN_THUMBWEIGHT_EQUAL_AREA;
     let net_form = NetForm {
@@ -597,6 +659,7 @@ pub fn recertify(k: &Kernel, pb: &ProceduralBlend) -> Result<f64> {
         }
         // the bound proved: the certificate's, the net's distance from these rows, and how
         // far these rows may be from the exact ones (the floor)
+        let delta = delta + shift;
         let target = bound - delta - floor;
         if target.partial_cmp(&0.0) != Some(Ordering::Greater) {
             return Err(SolidError::invalid_input(

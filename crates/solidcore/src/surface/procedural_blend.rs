@@ -1071,9 +1071,28 @@ impl ProceduralBlend {
         Ok((left, right))
     }
 
+    /// The blend moved by `by` (its supports, leader and net), its bound as it is: the
+    /// blend in another frame ([`crate::blend::fillet_section::recertify`]).
+    ///
+    /// # Errors
+    ///
+    /// Those of the supports', the leader's and the net's transforms.
+    pub(crate) fn translated(&self, k: &Kernel, by: Vec3) -> Result<Self> {
+        let place = Axis2Placement::from_stored(by, Vec3::X, Vec3::Y);
+        let mut moved = self.clone();
+        for support in &mut moved.def.supports {
+            support.transform_at_depth(k, &place, None, 1)?;
+        }
+        moved.def.leader.transform(&place, None)?;
+        moved.net.transform(&place, None)?;
+        moved.renew();
+        Ok(moved)
+    }
+
     /// `Transform`: a rigid motion with a uniform scale; the supports, the leader and
     /// the net move alike, the radius and the bound scale, and the bound takes in the
-    /// moved net's precision (its control points rounded where they now lie, #2388).
+    /// motion's rounding where the round now lies (#2388; the bound is of the round's own
+    /// frame, which moves with it).
     ///
     /// # Errors
     ///
@@ -1094,7 +1113,6 @@ impl ProceduralBlend {
             }
             factor = sc.x;
         }
-        let floor = self.precision_floor(k)?;
         for support in &mut self.def.supports {
             support.transform_at_depth(k, rotate_n_move, scale, depth + 1)?;
         }
@@ -1109,12 +1127,10 @@ impl ProceduralBlend {
         }
         self.renew();
         self.net.transform(rotate_n_move, scale)?;
-        // (#2388) the bound's certificate and rounding parts scale; its floors are those of
-        // the moved net and supports where they now lie (two for rows computed again there,
-        // one for the rows the net was made of, moved), plus the motion's own rounding
-        let moved = crate::blend::fillet_section::recertify::transform_rounding(&self.net)?;
-        let rest = (self.def.bound - 2.0 * floor).max(0.0);
-        self.def.bound = rest * factor + 3.0 * self.precision_floor(k)? + moved;
+        // (#2388) the bound is taken in the round's own frame, which moves with it: it
+        // scales, and takes in the motion's own rounding where the round now lies
+        self.def.bound = self.def.bound * factor
+            + crate::blend::fillet_section::recertify::transform_rounding(&self.net)?;
         Ok(())
     }
 }

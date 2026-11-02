@@ -185,13 +185,14 @@ E = G (D + γ_K M), γ_K = K u / (1 − K u), u = 2⁻⁵³,
   first order;
 - γ_K M, the rows: a control point of the net is a sum of at most 2(n + 1) products of the section's
   coefficients with the jets, a Hermite point (two operations), its division by its weight and the
-  weight's scale (two): K = 2(n + 1) + 6 operations on coordinates of at most M, the net's largest;
+  weight's scale (two): K = 2(n + 1) + 6 operations on coordinates of at most M, the net's size about
+  the centre of its box (the round's own frame, below);
 - G = w_max / w_min of the net: a homogeneous error divided by the weight.
 
-At part scale (coordinates and knots of tens of millimetres) E is about 10⁻¹¹, all but 10⁻¹⁴ of it
-the stations' term: exact to rounding. A transform scales the rest of the bound, takes the floors
-where the round now lies, and adds the motion's rounding (six operations per homogeneous
-coordinate). Where plain
+E does not depend on where the round lies. At part scale (a round and knots of tens of millimetres)
+it is about 10⁻¹⁰, all but 10⁻¹⁴ of it the stations' term: exact to rounding. A transform scales the
+bound and adds the motion's rounding where the round now lies (six operations per homogeneous
+coordinate, on its coordinates there). Where plain
 intervals over-estimate, the remedy is a tighter enclosure [3, 4, 31], never a sampled check.
 
 **Certified again.** A round rebuilt from its record proves its net within ε anew
@@ -202,7 +203,11 @@ certificate bounds |H − S| on the span, asked for what ε leaves; and |B − H
 over the span is bounded by the two rational Bézier patches' control nets [48]: with points P_i, Q_i
 and weights w_i, v_i, |B − H| ≤ max |P_i − Q_i| + max |Q_i − c| · max |w_i v_j − v_i w_j| / (min w ·
 min v) for any point c. A net cut or reparametrized after it was built is a piece of the same
-Hermite net, cut in homogeneous coordinates before the nets are compared. The net is refused where
+Hermite net, cut in homogeneous coordinates before the nets are compared. All of it is taken in the
+round's own frame: the round (supports, leader, net) is moved by minus the centre of its net's box,
+which rounds each coordinate once by at most u |x − c|, so the certificate's enclosures, |B − H| and
+the floor follow the round's size and not its distance from the origin; a round moved, patterned or
+mirrored is certified again within its bound. The net is refused where
 the sum with one floor passes ε, where a piece runs across a station, or where a foot crosses a support's knot line
 between two stations (the construction puts a station there).
 
