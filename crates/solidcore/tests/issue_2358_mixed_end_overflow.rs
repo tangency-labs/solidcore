@@ -38,7 +38,7 @@ use solidcore::primitive::api_primitives::{create_box, create_cylinder};
 use solidcore::topology::proto_topology::p1::api_transform::{
     api_rotate, api_translate, TransformObject,
 };
-use solidcore::topology::{edge, Brep, EdgeId};
+use solidcore::topology::{edge, vertex, Brep, EdgeId};
 
 /// Every opt-in fix on, with the blend corner as given, except the two the fork does not
 /// have that move this body's measure: the exact trims of the cylinder's sections by the
@@ -68,12 +68,23 @@ fn volume(k: &Kernel, b: &mut Brep) -> f64 {
     brep_volume(k, b, 1e-10, &attrs).unwrap()
 }
 
-/// The plate with the boss tilted `deg` about y, its foot 2 into the plate.
-fn boss(k: &mut Kernel, deg: f64) -> Brep {
+/// The plate with the boss tilted `deg` about y, its foot 2 into the plate, its cylinder
+/// first turned `seam` degrees about its axis (moving its seam; 0 leaves it).
+fn boss_seam(k: &mut Kernel, deg: f64, seam: f64) -> Brep {
     let a = deg.to_radians();
     let plate = create_box(k, Point3::new(-30.0, -30.0, -10.0), 60.0, 60.0, 10.0).unwrap();
     let mut cyl = create_cylinder(k, Point3::new(0.0, 0.0, 0.0), 6.0, 25.0).unwrap();
     let origin = Point3::new(0.0, 0.0, 0.0);
+    if seam != 0.0 {
+        api_rotate(
+            k,
+            Some(TransformObject::Brep(&mut cyl)),
+            origin,
+            Vec3::Z,
+            seam,
+        )
+        .unwrap();
+    }
     api_rotate(
         k,
         Some(TransformObject::Brep(&mut cyl)),
@@ -119,13 +130,29 @@ fn root(k: &Kernel, b: &Brep, deg: f64) -> Vec<EdgeId> {
 
 /// The root of the boss tilted `deg` rounded `r`: the volume it removes and the face count.
 fn rounded(blend_corner: bool, deg: f64, r: f64) -> Result<(f64, usize), SolidError> {
+    rounded_seam(blend_corner, deg, 0.0, r).map(|(v, n, _)| (v, n))
+}
+
+/// As [`rounded`] with the seam turned `seam`; also the body's vertices.
+fn rounded_seam(
+    blend_corner: bool,
+    deg: f64,
+    seam: f64,
+    r: f64,
+) -> Result<(f64, usize, Vec<Point3>), SolidError> {
     let mut k = kernel(blend_corner);
-    let mut b = boss(&mut k, deg);
+    let mut b = boss_seam(&mut k, deg, seam);
     let before = volume(&k, &mut b);
     let es = root(&k, &b, deg);
-    assert_eq!(es.len(), 2);
+    // as the fork's: two at tilt 20, one (the seam turned onto the chord side) at tilt 40
+    assert_eq!(es.len(), if seam == 0.0 { 2 } else { 1 });
     fillet_edges(&mut k, &mut b, &es, r, 1, 2, 1.0)?;
-    Ok((before - volume(&k, &mut b), b.face_list().len()))
+    let points = b
+        .vertex_list()
+        .iter()
+        .map(|&v| vertex::point(&b, v).unwrap())
+        .collect();
+    Ok((before - volume(&k, &mut b), b.face_list().len(), points))
 }
 
 /// The bound r*, closed form.
@@ -160,4 +187,45 @@ fn tilt_20_below_the_bound_builds() {
         assert!((got - removed).abs() <= 5e-9, "{r}: {got}");
         assert_eq!(faces, 11);
     }
+}
+
+/// Tilted 40 degrees with the cylinder's seam turned 125.13 degrees, onto the cap's chord
+/// side (the fork's capi seam of 0.6131 rad past the quarter turn), rounded 1.5: each wall
+/// rail ends on its side edge at the seam's vertex and is continued across it (63c7962).
+/// The +y End's rim edge stops at the seam's vertex short of the rail's end, which lies on
+/// the next rim edge; the End's edge on the rim joins the two (a circle's arcs: their
+/// B-splines). The fork: 10 faces, -33.432934277429 removed (here -33.432934278928), the
+/// rails' ends at (-4.176377478, +-4.664695271, 0.893582223).
+#[test]
+fn tilt_40_rail_continued_across_the_seam_vertex() {
+    let (got, faces, points) = rounded_seam(true, 40.0, 125.13, 1.5).unwrap();
+    assert!((got - -33.432_934_277_429).abs() <= 5e-9, "{got}");
+    assert_eq!(faces, 10);
+    for y in [-4.664_695_271, 4.664_695_271] {
+        let want = Point3::new(-4.176_377_478, y, 0.893_582_223);
+        assert!(
+            points.iter().any(|p| p.distance(want) <= 1e-8),
+            "{want:?} not among {points:?}"
+        );
+    }
+}
+
+/// Tilted 20 degrees with the seam turned 170 degrees, into the cap's overhang, which splits
+/// the rim arc there: still refused naming r* less the part's tolerance, the most over both
+/// edges of the split arc (`SideEdgeChainTo`, 63c7962), and that size builds (its +y End's
+/// rail ends past the seam's vertex). The fork: 1001, fit 0.262514174; at 0.262514174, 10
+/// faces and -0.636117736700 removed. Here -0.636117743787: the union measures 7.7e-9 more
+/// than the fork's (38601.117955469737 against 38601.117955462076), the result 1.5e-8 more
+/// (4e-13 relative).
+#[test]
+fn tilt_20_seam_over_the_rim_refused_on_the_whole_rim() {
+    let err = rounded_seam(true, 20.0, 170.0, 1.5).unwrap_err();
+    let SolidError::FilletRefused { code, fit, .. } = err else {
+        panic!("{err:?}");
+    };
+    assert_eq!(code, 1001);
+    assert!((fit.size - 0.262_514_174).abs() <= 1e-9, "{}", fit.size);
+    let (got, faces, _) = rounded_seam(true, 20.0, 170.0, 0.262_514_174).unwrap();
+    assert!((got - -0.636_117_736_700).abs() <= 1e-8, "{got}");
+    assert_eq!(faces, 10);
 }
