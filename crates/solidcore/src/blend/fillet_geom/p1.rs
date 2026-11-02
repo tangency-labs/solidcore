@@ -451,6 +451,10 @@ pub enum FilletVertexType {
     /// `SM_FV_UNKNOWN`.
     #[default]
     Unknown = 13,
+    /// The fork's `SM_FV_PRECOMPUTED` (61547af; smlib#104): placed by its corner's own
+    /// build (a setback fill's base point). Not in the pinned enum, so it has no upstream
+    /// code ([`Self::from_code`]); its discriminant follows the pinned ones.
+    Precomputed = 14,
 }
 
 impl FilletVertexType {
@@ -2738,6 +2742,7 @@ pub fn evaluate_mate(k: &Kernel, brep: &Brep, face: FaceId, uv: Point2) -> Resul
             | SurfaceKind::Cone(_)
             | SurfaceKind::Sphere(_)
             | SurfaceKind::Torus(_)
+            | SurfaceKind::ProceduralBlend(_)
     ) {
         return Err(SolidError::null_pointer(OP_EVALUATE_MATE));
     }
@@ -2753,6 +2758,8 @@ pub fn evaluate_mate(k: &Kernel, brep: &Brep, face: FaceId, uv: Point2) -> Resul
             SurfaceKind::Cone(c) => c.rev().base().evaluate_point_on_extended_surface(uv),
             SurfaceKind::Sphere(s) => s.base().base().evaluate_point_on_extended_surface(uv),
             SurfaceKind::Torus(s) => s.base().base().evaluate_point_on_extended_surface(uv),
+            // (the fork's SmProceduralBlend: the net's extension, NLib on its NURB)
+            SurfaceKind::ProceduralBlend(pb) => pb.net().evaluate_point_on_extended_surface(uv),
             _ => Err(SolidError::null_pointer(OP_EVALUATE_MATE)),
         }
     }
@@ -3828,6 +3835,8 @@ fn b_spline_net_mut(surface: &mut Surface) -> Option<&mut BSplineSurface> {
         SurfaceKind::BSpline(bs) => Some(bs),
         SurfaceKind::SurfOfRevolution(s) => Some(s.base_mut()),
         SurfaceKind::SurfOfExtrusion(s) => Some(s.base_mut()),
+        // (the fork's SmProceduralBlend: its net's control points)
+        SurfaceKind::ProceduralBlend(pb) => Some(pb.net_mut()),
         _ => None,
     }
 }
