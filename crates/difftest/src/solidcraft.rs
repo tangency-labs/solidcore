@@ -2802,6 +2802,24 @@ mod tests {
         assert_eq!(verdict(&e, &deferred).0, "DEFERRED");
     }
 
+    /// SolidCraft #3468: Offset Face beside a round moves the round with the face, through
+    /// the fork's `SmOffsetFacesExecutive`. No case defers; the boss's wall moved out and
+    /// in reaches its closed-form volume. (The two box cases reach the executive and stop
+    /// in its blend removal: their verdict is the kernel's, not pinned here.)
+    #[test]
+    fn offset_faces_cases_run_on_the_fork_executive() {
+        let cases = load(&cases_dir(&crate::case::repo_root()), Some("3468-*")).unwrap();
+        assert_eq!(cases.len(), 4);
+        for loaded in cases {
+            let run = run_rust(&loaded.case);
+            assert!(!matches!(run, Run::Deferred(_)), "{}: {run:?}", loaded.id);
+            if loaded.id.contains("/boss_wall_") {
+                let (v, checks) = verdict(&loaded.case.expect, &run);
+                assert_eq!(v, "PASS", "{}: {run:?} {checks:?}", loaded.id);
+            }
+        }
+    }
+
     #[test]
     fn sheet_corner_preserves_the_original_matrix_and_defers_explicitly() {
         let cases = load(&cases_dir(&crate::case::repo_root()), Some("3170-*")).unwrap();
