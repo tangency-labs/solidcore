@@ -3164,6 +3164,9 @@ pub fn test_analytic_surface(k: &Kernel, surface: AnalyticTestSurface<'_>) -> Re
             SurfaceKind::Cone(c) => c.rev().base(),
             SurfaceKind::Sphere(s) => s.base().base(),
             SurfaceKind::Torus(s) => s.base().base(),
+            // (the fork's SmProceduralBlend is an SmBSplineSurface: its net, its corner
+            // points the definition's, below)
+            SurfaceKind::ProceduralBlend(pb) => pb.net(),
             // not an SmBSplineSurface: upstream's parameter type excludes these
             _ => {
                 return Err(SolidError::InvalidInput {
@@ -3176,7 +3179,13 @@ pub fn test_analytic_surface(k: &Kernel, surface: AnalyticTestSurface<'_>) -> Re
         AnalyticTestSurface::Sphere(s) => s.base().base(),
         AnalyticTestSurface::Torus(t) => t.base().base(),
     };
-    Ok(Cone::is_nurb_surface_cone(k, bss, 1.0)?.is_some())
+    let this = match surface {
+        AnalyticTestSurface::Surface(s) if matches!(s.kind(), SurfaceKind::ProceduralBlend(_)) => {
+            Some(s)
+        }
+        _ => None,
+    };
+    Ok(Cone::is_nurb_surface_cone_on(k, bss, 1.0, this)?.is_some())
 }
 
 /// `SE(pEU->EvaluateBinormal(dParameter, FALSE, rPnt, rBinVec, NULL, &rFaceuseNormal))`

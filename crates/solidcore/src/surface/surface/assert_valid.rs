@@ -716,6 +716,8 @@ fn b_spline_part(s: &Surface) -> Option<&BSplineSurface> {
         SurfaceKind::Torus(t) => Some(t.base().base()),
         SurfaceKind::SurfOfRevolution(sr) => Some(sr.base()),
         SurfaceKind::SurfOfExtrusion(e) => Some(e.base()),
+        // (the fork's SmProceduralBlend inherits SmBSplineSurface::AssertValid: its net)
+        SurfaceKind::ProceduralBlend(pb) => Some(pb.net()),
         _ => None,
     }
 }

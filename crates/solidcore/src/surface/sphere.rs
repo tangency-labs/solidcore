@@ -2050,6 +2050,27 @@ impl Sphere {
         test: &BSplineSurface,
         tolerance_scale: f64,
     ) -> Result<Option<Self>> {
+        Self::is_nurb_surface_sphere_on(k, test, tolerance_scale, None)
+    }
+
+    /// [`Self::is_nurb_surface_sphere`] of the `SmBSplineSurface` part of `this` (not upstream: the
+    /// fork's `SmProceduralBlend`): the corner points come from its virtual
+    /// `EvaluatePoint`, so a procedural blend's are its definition's. `None` evaluates
+    /// `test` itself.
+    ///
+    /// # Errors
+    ///
+    /// As [`Self::is_nurb_surface_sphere`].
+    pub(crate) fn is_nurb_surface_sphere_on(
+        k: &Kernel,
+        test: &BSplineSurface,
+        tolerance_scale: f64,
+        this: Option<&Surface>,
+    ) -> Result<Option<Self>> {
+        let corner = |uv| match this {
+            Some(s) => s.evaluate_point(k, uv),
+            None => test.evaluate_point(uv),
+        };
         // no work - not a degree 2 rational surface in both directions
         if test.degree(SurfParamType::U) != 2
             || test.degree(SurfParamType::V) != 2
@@ -2060,8 +2081,8 @@ impl Sphere {
 
         // evaluate min/max domain points
         let nurb_uv_domain = test.natural_uv_domain();
-        let min_pnt = test.evaluate_point(nurb_uv_domain.min())?;
-        let max_pnt = test.evaluate_point(nurb_uv_domain.max())?;
+        let min_pnt = corner(nurb_uv_domain.min())?;
+        let max_pnt = corner(nurb_uv_domain.max())?;
 
         // scale zero value
         let scaled_zero = tolerance_scale

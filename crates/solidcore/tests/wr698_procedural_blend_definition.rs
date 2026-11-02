@@ -469,3 +469,72 @@ fn the_base_class_paths_take_the_blend_s_box_and_points() {
         assert!((p0 - Point3::new(-0.1, -0.1, 0.0)).length() < 1e-15);
     }
 }
+
+/// Where the fork casts an `SmProceduralBlend` to `SmBSplineSurface` it takes the net
+/// (fork 0136260 through `AssertValid`, `SplitAt`, the halves' `CalculateBoundingBox`,
+/// `JoinSurface` of the halves as `MoveSeam` joins them, and the `SmBSplineSurface`
+/// copy `TurnToNURBS` makes): the record checks out as a B-spline's, the halves are
+/// blends whose boxes are the net's grown by the zone tolerance and the bound, and the
+/// joined surface is a plain B-spline of the nets. The values are the fork's.
+#[test]
+fn a_blend_cast_to_a_b_spline_is_its_net() {
+    use solidcore::geom::assert_array::ObjectKey;
+    use solidcore::geom::tol::ZONE_TOL_3D;
+    use solidcore::nurbs::b_spline_surface::SurfParamType;
+    use solidcore::surface::surface::SurfaceKind;
+    let k = kernel();
+    for (bumpy, n, w, law) in [
+        (false, 1, 0.0, false),
+        (true, 2, GN_THUMBWEIGHT_EQUAL_AREA, false),
+        (true, 1, 0.0, true),
+    ] {
+        let s = Surface::from(blend(&k, bumpy, n, w, law));
+        // AssertValid at levels 0 and 2: SmBSplineSurface's, on the net (before, the
+        // check refused the blend as "not an SmBSplineSurface")
+        assert!(s.assert_valid(&k, None, 0, ObjectKey(1)).unwrap());
+        assert!(s.assert_valid(&k, None, 2, ObjectKey(1)).unwrap());
+        // SplitAt(0.4, U): two blends (type 15041), boxed as the fork boxes them
+        let (l, r) = s.split_at(&k, 0.4, SurfParamType::U).unwrap();
+        assert_eq!(
+            (l.type_code(), r.type_code()),
+            (PROCEDURAL_BLEND_TYPE, PROCEDURAL_BLEND_TYPE)
+        );
+        let want = [
+            (
+                [-0.00101, -0.00101, -0.00101],
+                [0.40101000000000003, 1.00101, 0.00101],
+            ),
+            (
+                [0.39899000000000001, -0.00101, -0.00101],
+                [1.00101, 1.00101, 0.00101],
+            ),
+        ];
+        for (half, (lo, hi)) in [&l, &r].into_iter().zip(want) {
+            let dom = half.natural_uv_domain_with_nurb(&k).unwrap();
+            let b = half
+                .calculate_bounding_box(&k, &dom, [true, false, false], true)
+                .unwrap()
+                .normal_box
+                .unwrap();
+            assert_vec(b.min(), lo, "half box min");
+            assert_vec(b.max(), hi, "half box max");
+        }
+        // MoveSeam's JoinSurface of the halves, as SmBSplineSurfaces: a plain B-spline
+        let net = |h: Surface| match h.into_kind() {
+            SurfaceKind::ProceduralBlend(pb) => pb.net().clone(),
+            _ => panic!("not a blend"),
+        };
+        let (mut nl, mut nr) = (net(l), net(r));
+        let j = Surface::from(
+            nr.join_surface(&mut nl, SurfParamType::U, ZONE_TOL_3D)
+                .unwrap(),
+        );
+        assert_eq!(j.type_code(), BSplineSurface::TYPE);
+        let p = j.evaluate_point(&k, Point2::new(0.3, 0.4)).unwrap();
+        assert_vec(
+            p,
+            [0.38333333333333341, 0.40000000000000008, 0.0],
+            "joined point",
+        );
+    }
+}

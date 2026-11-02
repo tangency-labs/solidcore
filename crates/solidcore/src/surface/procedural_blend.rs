@@ -1181,4 +1181,24 @@ mod tests {
         let p = b.evaluate_point(&k, uv).unwrap();
         assert!((p.z - 0.5).abs() < 1e-12);
     }
+
+    /// `TurnToNURBS`'s `new SmBSplineSurface(*pBSS)` slices a blend to its net (fork
+    /// 0136260: type 15002, the net's point), and the offset surface's NURB of a blend
+    /// base is the net's; before, a blend face was kept and an offset of one refused.
+    #[test]
+    fn turn_to_nurbs_takes_the_net() {
+        let k = Kernel::default();
+        let pb = blend(&k, 1, [1.0, -1.0], [2.0, 2.0], 1e-6).unwrap();
+        let net = pb.net().clone();
+        let s = Surface::from(pb);
+        let got = crate::topology::brep::p3::with_nurb(&k, &s)
+            .unwrap()
+            .unwrap();
+        assert!(matches!(got, std::borrow::Cow::Borrowed(_)));
+        let uv = Point2::new(0.3, 0.4);
+        assert_eq!(
+            got.evaluate_point(uv).unwrap(),
+            net.evaluate_point(uv).unwrap()
+        );
+    }
 }

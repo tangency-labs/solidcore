@@ -2507,6 +2507,18 @@ impl Surface {
                 uv_guess,
                 context,
             ),
+            // (the fork's SmProceduralBlend inherits SmBSplineSurface::STEPInversion: the
+            // net's, solving through the blend's virtual point solvers in the face's
+            // context)
+            SurfaceKind::ProceduralBlend(pb) => pb.net().step_inversion_on_with_context(
+                k,
+                self,
+                anal_domain,
+                point_on_surf,
+                tol_3d,
+                uv_guess,
+                context,
+            ),
             _ => self.step_inversion(k, anal_domain, point_on_surf, tol_3d, uv_guess),
         }
     }

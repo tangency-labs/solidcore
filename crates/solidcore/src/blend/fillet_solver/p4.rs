@@ -602,6 +602,7 @@ fn is_bspline_surface(surface: &Surface) -> bool {
             | SurfaceKind::Cone(_)
             | SurfaceKind::Sphere(_)
             | SurfaceKind::Torus(_)
+            | SurfaceKind::ProceduralBlend(_)
     )
 }
 
