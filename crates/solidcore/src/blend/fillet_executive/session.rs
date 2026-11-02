@@ -714,7 +714,9 @@ fn live_corner_vert_geom(
         | FilletVertexType::CliffRailXEdge
         | FilletVertexType::RailEnd
         | FilletVertexType::RailXVertex
-        | FilletVertexType::Unknown => Ok(()),
+        | FilletVertexType::Unknown
+        // the fork's SM_FV_PRECOMPUTED (61547af): placed by its corner's own build
+        | FilletVertexType::Precomputed => Ok(()),
     }
 }
 
@@ -772,6 +774,20 @@ fn live_corner_vertices_geom(
             executive: None,
         };
         crate::blend::blend_corner::ball::place_ball_contacts(k, target, pseudo, corner, &lookup)?;
+    }
+    // The fork's (WR-697, 6fd0411): a Mixed corner places its vertices A, P, Q and B once
+    // both blends are traced (CalcMixedVertGeom), after the base's vertex geometry
+    if corner
+        .blend
+        .is_some_and(crate::blend::blend_corner::BlendCorner::is_mixed)
+    {
+        let lookup = SweptSessionSolvers {
+            solvers: &*solvers,
+            executive: None,
+        };
+        crate::blend::blend_corner::mixed::calc_mixed_vert_geom(
+            k, target, pseudo, corner, &lookup,
+        )?;
     }
     Ok(())
 }
@@ -2022,6 +2038,7 @@ impl<'target> FilletSession<'target> {
                     let event = crate::blend::blend_corner::ball::classify_ball(
                         k,
                         target,
+                        vertex,
                         &edgeuses,
                         &all_eus,
                         set_back_vertices.contains(&vertex),
@@ -2677,6 +2694,30 @@ impl CornerEdgeAccess<FilletObject> for SessionObjects<'_> {
                 executive: None,
             };
             crate::blend::blend_corner::ball::ball_corner_edge_geom(
+                k, target, pseudo, corner, &lookup,
+            )?;
+        }
+        // The fork's (61547af, smlib#104): a Setback's fill, its base points and its spring
+        // curves (SmBlendCorner::BuildSetBackFill, CalcCornerEdgeGeom), before the edges' own
+        // kinds compute their curves
+        if corner
+            .blend
+            .is_some_and(crate::blend::blend_corner::BlendCorner::is_setback)
+        {
+            return Err(SolidError::sm_err("SmBlendCorner::BuildSetBackFill"));
+        }
+        // The fork's (WR-697, 6fd0411, 6e79de5): a Mixed corner's edges and its two faces'
+        // surfaces (SmBlendCorner::CalcMixedEdgeGeom), before the base's
+        // CalcCornerEdgeGeom; its edges are all precomputed
+        if corner
+            .blend
+            .is_some_and(crate::blend::blend_corner::BlendCorner::is_mixed)
+        {
+            let lookup = SweptSessionSolvers {
+                solvers: solvers.as_slice(),
+                executive: None,
+            };
+            crate::blend::blend_corner::mixed::calc_mixed_edge_geom(
                 k, target, pseudo, corner, &lookup,
             )?;
         }
@@ -3874,6 +3915,33 @@ impl FaceConstructionAccess<FilletObject> for SessionObjects<'_> {
                     };
                     return crate::blend::blend_corner::ball::create_ball_patch(corner, &mut env);
                 }
+                // The fork's (61547af, smlib#104): a Setback's patches are its fill's
+                // (SmBlendCorner::CreateSetBackPatches)
+                if corner
+                    .blend
+                    .is_some_and(crate::blend::blend_corner::BlendCorner::is_setback)
+                {
+                    return Err(SolidError::sm_err("SmBlendCorner::CreateSetBackPatches"));
+                }
+                // The fork's (WR-697, 6fd0411): a Mixed corner's two faces are its patches
+                // (SmBlendCorner::CreateMixedPatches)
+                if corner
+                    .blend
+                    .is_some_and(crate::blend::blend_corner::BlendCorner::is_mixed)
+                {
+                    let mut no_note = |_: &FilletCorner| {};
+                    let mut env = CornerPatchEnv {
+                        k,
+                        target,
+                        pseudo,
+                        solvers: &store,
+                        fillet: Some(&mut fillet),
+                        note_face_error: &mut no_note,
+                    };
+                    return crate::blend::blend_corner::mixed::create_mixed_patches(
+                        corner, &mut env,
+                    );
+                }
                 // The fork's (WR-697, e647dac): a Swept turn's patch is its torus
                 // (SmBlendCorner::CreateSweptPatch)
                 if corner
@@ -4265,9 +4333,7 @@ impl SolverGeometryAccess<FilletObject> for SessionObjects<'_> {
         let FilletObject::Solver(id) = solver else {
             return Err(invalid("object is not a solver"));
         };
-        let result = self.calc_solver_geometry(k, id, executive);
-        let shared = self.share_gn_thumbweight(id);
-        result.and(shared)
+        self.calc_solver_geometry(k, id, executive)
     }
     fn geometry_edge(&self, solver: FilletObject) -> Result<FilletObject> {
         let FilletObject::Solver(id) = solver else {
@@ -4820,11 +4886,6 @@ impl SessionObjects<'_> {
     fn allocate_generator(&mut self, generator: FilletSurfaceGenerator) -> Result<FilletObject> {
         let id =
             u32::try_from(self.generators.len()).map_err(|_| invalid("too many generators"))?;
-        let mut generator = generator;
-        if let FilletSurfaceGenerator::GnSection(g) = &mut generator {
-            // the solvers' copies of it share what it resolves (`share_gn_thumbweight`)
-            g.shared = Some(id);
-        }
         self.generators.push(generator);
         Ok(FilletObject::Generator(id))
     }
@@ -4949,41 +5010,6 @@ impl SessionObjects<'_> {
             Some(SolverObject::VariableRadius(Box::new(solver)));
         Ok(id)
     }
-    /// The fork's solvers share one `SmGnSectionFSG`, whose equal area thumbweight the first
-    /// blend built resolves for all of them (`ResolveThumbweight` writes its `mutable`
-    /// member): the thumbweight solver `id`'s copy resolved goes to the session's generator
-    /// and to every solver's copy of it not resolved yet. Run after each solver's
-    /// `CalcFilletGeom`, the first `Build` of each (WR-685, the fork's 6148773 = d01d7b0's
-    /// 1947a45).
-    fn share_gn_thumbweight(&mut self, id: FilletSolverId) -> Result<()> {
-        use crate::blend::fillet_section::section::GN_THUMBWEIGHT_EQUAL_AREA;
-        let Some(FilletSurfaceGenerator::GnSection(g)) = self.solver(id)?.base().fsg else {
-            return Ok(());
-        };
-        let (Some(slot), w) = (g.shared, g.thumbweight) else {
-            return Ok(());
-        };
-        if w == GN_THUMBWEIGHT_EQUAL_AREA {
-            return Ok(());
-        }
-        let unresolved = |fsg: &mut FilletSurfaceGenerator| {
-            if let FilletSurfaceGenerator::GnSection(c) = fsg {
-                if c.shared == Some(slot) && c.thumbweight == GN_THUMBWEIGHT_EQUAL_AREA {
-                    c.thumbweight = w;
-                }
-            }
-        };
-        if let Some(generator) = self.generators.get_mut(slot as usize) {
-            unresolved(generator);
-        }
-        for solver in self.solvers.iter_mut().flatten() {
-            if let Some(fsg) = solver.base_mut().fsg.as_mut() {
-                unresolved(fsg);
-            }
-        }
-        Ok(())
-    }
-
     fn assign_generator(&mut self, solver: FilletSolverId, generator: FilletObject) -> Result<()> {
         let FilletObject::Generator(id) = generator else {
             return Err(invalid("object is not a generator"));
@@ -5333,6 +5359,16 @@ impl SessionObjects<'_> {
         {
             return self.make_ball_corner_topology(k, id, executive);
         }
+        // The fork's (61547af, smlib#104): SmBlendCorner::MakeCornerTopology builds a
+        // Setback its own way (MakeSetBackTopology)
+        if self
+            .corners
+            .get(id.0 as usize)
+            .and_then(|corner| corner.blend)
+            .is_some_and(crate::blend::blend_corner::BlendCorner::is_setback)
+        {
+            return self.make_setback_corner_topology(k, id, executive);
+        }
         let edgeuses = self
             .corners
             .get(id.0 as usize)
@@ -5439,6 +5475,17 @@ impl SessionObjects<'_> {
             corner: id,
             solvers,
         })
+    }
+    /// The fork's `SmBlendCorner::MakeSetBackTopology` (61547af, smlib#104) with the solver
+    /// of each of the corner's ring edge uses, else of its mate.
+    #[allow(clippy::unused_self)]
+    fn make_setback_corner_topology(
+        &mut self,
+        _k: &Kernel,
+        _id: FilletCornerId,
+        _executive: &mut FilletExecutive<FilletObject>,
+    ) -> Result<()> {
+        Err(SolidError::sm_err("SmBlendCorner::MakeSetBackTopology"))
     }
     /// `MakeCornerTopology` of a 1x1, 2x2, 4x3, open or degenerate corner, with the
     /// solvers of its edge uses (`GetFilletSolverOfEdgeuse`) resolved first.

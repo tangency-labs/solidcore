@@ -742,6 +742,33 @@ impl FilletCorner {
         self.set_back_dist
     }
 
+    /// `GetSetBackDistAlong` (the fork's, 61547af; smlib#104): the setback along `edge`, one
+    /// of the corner's filleted edges. A Setback of the blend corner sets each edge back by
+    /// its own (`m_vSetBacks`, in `m_pAllEUs`'s order); elsewhere one setback
+    /// ([`FilletCorner::set_back_dist`]) holds for all.
+    ///
+    /// # Errors
+    ///
+    /// A ring edge use that is not live in `target`.
+    pub fn set_back_dist_along(&self, target: &Brep, edge: EdgeId) -> Result<f64> {
+        if let (Some(setback), Some(all)) = (
+            self.setback.as_ref().filter(|_| {
+                self.blend
+                    .is_some_and(crate::blend::blend_corner::BlendCorner::is_setback)
+            }),
+            self.all_eus.as_ref(),
+        ) {
+            if setback.setbacks.len() == all.len() {
+                for (eu, along) in all.iter().zip(&setback.setbacks) {
+                    if crate::topology::edgeuse::p1::edge(target, *eu)? == Some(edge) {
+                        return Ok(*along);
+                    }
+                }
+            }
+        }
+        Ok(self.set_back_dist)
+    }
+
     /// `GetEaseDist` (the fork's, tangency-labs/smlib `e74bbd3`, #1376): see
     /// [`FilletCorner::ease_dist`].
     #[must_use]
@@ -3052,6 +3079,11 @@ struct PlainConstantRadiusFs(ConstantRadiusFs);
 impl FilletSolverOps for PlainConstantRadiusFs {
     fn solver(&self) -> &FilletSolver {
         &self.0.solver
+    }
+
+    /// `SmConstantRadiusFS::GetFilletRadius(0)`, `(1)`.
+    fn constant_radii(&self) -> Option<[f64; 2]> {
+        <ConstantRadiusFs as FilletSolverOps>::constant_radii(&self.0)
     }
 
     fn solver_mut(&mut self) -> &mut FilletSolver {
