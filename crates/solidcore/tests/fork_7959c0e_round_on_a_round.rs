@@ -362,11 +362,13 @@ fn round_on_a_round(k: &mut Kernel) -> Outcome {
 /// The counts are not the fork's. Fork 852dd8c, built locally (macOS, clang, `-O3
 /// -ffp-contract=off`), takes 135809 definition evaluations and 101687 station solves on
 /// this case (its test's comment quotes 137720 and 102941 from its CI); here they are
-/// 181076 and 122690. The gap is there before this change: without WR-714, solidcore takes
-/// 134718 and 71986, where fork 7959c0e takes 88937 and 54775, all of it outside the round
+/// 227503 and 146931. The gap is there before this change: without WR-714, solidcore takes
+/// 180857 and 92825, where fork 7959c0e takes 88937 and 54775, all of it outside the round
 /// on the round's `Build` (which evaluates no definition then). The change adds about the
-/// same work on both sides: +46358 evaluations here, +46872 in the fork; the `Build` of the
-/// round on the round takes 35488 here and 36376 in the fork.
+/// same work on both sides: +46646 evaluations here, +46872 in the fork; the `Build` of the
+/// round on the round took 35488 here and 36376 in the fork when this was ported. Main
+/// after #2274 (step 7) raised both runs by the same amount, with or without WR-714: they
+/// were 181076 and 122690 with it, 134718 and 71986 without, on #2274's earlier head.
 #[test]
 fn round_on_a_definition_is_its_definition() {
     let mut k = solidcraft_kernel();
@@ -388,7 +390,7 @@ fn round_on_a_definition_is_its_definition() {
         "{o:?}"
     );
     assert!(
-        o.counts.evaluations <= 190_000 && o.counts.solves <= 129_000,
+        o.counts.evaluations <= 239_000 && o.counts.solves <= 154_000,
         "{o:?}"
     );
     assert!(o.crossings >= 4 && o.missed == 0, "{o:?}");

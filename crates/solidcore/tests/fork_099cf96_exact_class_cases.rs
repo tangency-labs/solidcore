@@ -125,7 +125,7 @@ enum RoundKind {
     /// A B-spline within the fillet's tolerance of the canal surface.
     Fitted,
     /// A procedural canal definition, with a certified approximating net.
-    Definition,
+    Procedural,
 }
 
 /// One case: the fork's body, edge points, radius, volume, surface kind and faces.
@@ -498,7 +498,7 @@ fn grade(case: &Case, k: &mut Kernel) -> Graded {
             }
             RoundKind::Revolved => revolved,
             RoundKind::Fitted => spline,
-            RoundKind::Definition => definition,
+            RoundKind::Procedural => definition,
         };
         if !kind_ok {
             problems.push(format!(
@@ -606,7 +606,7 @@ fn check_all(mark: fn(&str) -> Mark, kernel: fn() -> Kernel, fitted_kind: RoundK
     assert!(wrong.is_empty(), "{wrong:#?}");
 }
 
-/// SolidCraft's fixes: every `UpstreamFixes` field on except `geometric_g2_continuity`.
+/// All current fixes, including the later procedural representation.
 fn solidcraft_kernel() -> Kernel {
     let mut k = Kernel::new(&KernelOptions::default());
     let mut f = UpstreamFixes::default();
@@ -650,7 +650,7 @@ fn with_solidcraft_s_fixes_the_fitted_round_is_its_definition() {
     check_all(
         mark_with_section_fixes,
         solidcraft_kernel,
-        RoundKind::Definition,
+        RoundKind::Procedural,
     );
 }
 
@@ -687,7 +687,7 @@ fn the_grading_refuses_a_wrong_volume_and_a_wrong_kind() {
         graded(1.00001, RoundKind::Revolved),
         graded(1.0, RoundKind::Rational(4, 2)),
         graded(1.0, RoundKind::Fitted),
-        graded(1.0, RoundKind::Definition),
+        graded(1.0, RoundKind::Procedural),
     ] {
         assert!(!holds(Mark::Passes, &got), "{got:?}");
         assert!(!holds(Mark::Status1001, &got), "{got:?}");
@@ -709,14 +709,14 @@ fn the_grading_distinguishes_a_definition_from_a_fitted_surface() {
     };
     assert!(holds(
         Mark::Passes,
-        &graded(&mut solidcraft_kernel(), RoundKind::Definition, 1.0)
+        &graded(&mut solidcraft_kernel(), RoundKind::Procedural, 1.0)
     ));
     for got in [
         graded(&mut solidcraft_kernel(), RoundKind::Fitted, 1.0),
-        graded(&mut solidcraft_kernel(), RoundKind::Definition, 1.00001),
+        graded(&mut solidcraft_kernel(), RoundKind::Procedural, 1.00001),
         graded(
             &mut solidcraft_before_definitions(),
-            RoundKind::Definition,
+            RoundKind::Procedural,
             1.0,
         ),
     ] {

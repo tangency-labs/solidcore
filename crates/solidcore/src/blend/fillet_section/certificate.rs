@@ -1551,6 +1551,11 @@ pub fn arc_row_terms_over(
 /// a uv curve's point is off the face's true foot by at most `|S_u, S_v|` times the uv
 /// error, `h^4 / 384 |x''''|`: that bound counts too (an edge's curve against its face).
 ///
+/// Every level's bound is at least the same sum with each term's least value at the
+/// pieces' middles (every piece's enclosure holds its middle's value): once that is over
+/// the target no finer level certifies the span, and the bound so far is returned for the
+/// caller to halve the span.
+///
 /// # Errors
 ///
 /// `InvalidInput` when `n` exceeds `SM_GN_MAXE`.
@@ -1795,8 +1800,8 @@ pub fn gn_certify_span(
             break;
         }
         // the bound no finer level goes under: over the target, no level certifies the span
-        // (smlib#105 as #2317 ports it: the row terms' least values are not taken, so where
-        // the rows vary only the uv curves' term counts, a lower bound still)
+        // (the jets' least terms only where the bound takes the jets' sum, not with
+        // varying rows, whose own least terms are not ported: the fork's f916a8d)
         let k4 = h * h * h * h / 384.0;
         let mut lower = 0.0_f64;
         for (m4lf, &uvl) in m4_lo.iter().zip(&uv4_lo) {
