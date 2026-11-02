@@ -1445,11 +1445,11 @@ impl GnSectionFsg {
         let (Some(seed0), Some(seed1)) = (seeds.first(), seeds.get(1)) else {
             return Err(SolidError::sm_err(OP));
         };
-        // its bound: the certificate's, of the Hermite rows, and how far the net stored
-        // (its control points divided out of the rows and its weights scaled, each rounded)
-        // is from them, at least the net's precision (#2388)
+        // its bound: the certificate's, of the Hermite rows; how far the net stored (its
+        // control points divided out of the rows and its weights scaled, each rounded) is
+        // from them; and three floors, how far rows computed again may be (#2388)
         let rounding = super::recertify::stored_net_distance(&surface, &spans, ld)?
-            .max(super::recertify::net_precision(&surface)?);
+            + 3.0 * super::recertify::precision_floor(k, faces, n as u32, &surface)?;
         let input = BlendDefinitionInput {
             supports: faces,
             sides: side,

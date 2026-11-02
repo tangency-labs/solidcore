@@ -22,9 +22,10 @@
 //! - `|H - S|` on the span is the round's own certificate ([`gn_certify_span`]), asked for
 //!   what ε leaves after that.
 //!
-//! The bound is their sum, at most ε, or the net is refused. `|B - H|` is taken as at
-//! least the net's precision ([`net_precision`]): S is computed to it, so differences
-//! below it are not the net's, and every bound a blend stores includes it. A net cut or reparametrized
+//! The bound is their sum with the floor ([`precision_floor`]), a forward error bound of
+//! computing H, at most ε, or the net is refused. A blend stores ε as its certificate, the
+//! net's rounding off its rows and three floors: H computed again is within two floors of
+//! the H the net was made of. A net cut or reparametrized
 //! after it was built (`SplitAt`, `Reparameterize`, `Reverse`, `SwapUV`) is a piece of the
 //! same Hermite net: H is cut to the piece, in homogeneous coordinates, before the nets
 //! are compared.
@@ -39,7 +40,7 @@ use super::section::{
     GN_THUMBWEIGHT_EQUAL_AREA,
 };
 use super::series::Trunc;
-use super::station::GnStation;
+use super::station::{as_b_spline, GnStation, Nurbs, STATION_STEP};
 use crate::error::{Result, SolidError};
 use crate::kernel::Kernel;
 use crate::math::Vec3;
@@ -47,6 +48,7 @@ use crate::nurbs::b_spline_surface::BSplineSurface;
 use crate::nurbs::math::NOW;
 use crate::nurbs::srf_tool::p1::decompose_to_bez;
 use crate::surface::procedural_blend::ProceduralBlend;
+use crate::surface::surface::Surface;
 
 const OP: &str = "blend::fillet_section::recertify";
 
@@ -149,23 +151,135 @@ pub(crate) fn net_distance(b: &[Vec<Hpt>], h: &[Vec<Hpt>]) -> Result<f64> {
     }
 }
 
-/// The precision of a net and of S where it lies: 16 units in the last place of its
-/// largest coordinate. Below it two computations of S (its stations solved from other
-/// starts, its rows summed, the net divided out of them) need not agree, so no bound is
-/// certified finer: a blend's bound is at least its certificate and this, and the
-/// comparison of a net with its rows takes differences up to it as this.
+/// `u`, the unit roundoff of `f64`.
+const UNIT_ROUNDOFF: f64 = f64::EPSILON / 2.0;
+
+/// `gamma_k = k u / (1 - k u)`: the relative error bound of k floating operations in a
+/// chain (Higham, the standard model).
+fn gamma(k: usize) -> f64 {
+    #[allow(clippy::cast_precision_loss)]
+    let ku = k as f64 * UNIT_ROUNDOFF;
+    ku / (1.0 - ku)
+}
+
+/// A NURBS surface's derivative bounds `(max |S_u|, max |S_v|)`: degree times the largest
+/// control point difference over its knot span, times the square of the weights' ratio
+/// for a rational surface (the rational derivative's bound, Farin).
+fn derivative_bounds(n: &Nurbs) -> (f64, f64) {
+    let at = |i: usize, j: usize| -> (Vec3, f64) {
+        let q = 4 * (i * n.nv + j);
+        let c = |o: usize| n.pw.get(q + o).copied().unwrap_or(f64::NAN);
+        let w = c(3);
+        (Vec3::new(c(0), c(1), c(2)) * (1.0 / w), w)
+    };
+    let (mut w_lo, mut w_hi) = (f64::INFINITY, 0.0_f64);
+    for i in 0..n.nu {
+        for j in 0..n.nv {
+            let w = at(i, j).1;
+            w_lo = w_lo.min(w);
+            w_hi = w_hi.max(w);
+        }
+    }
+    let ratio = (w_hi / w_lo) * (w_hi / w_lo);
+    let knot = |kv: &[f64], i: usize| kv.get(i).copied().unwrap_or(f64::NAN);
+    #[allow(clippy::cast_precision_loss)]
+    let (p, q) = (n.p as f64, n.q as f64);
+    let (mut lu, mut lv) = (0.0_f64, 0.0_f64);
+    for i in 0..n.nu {
+        for j in 0..n.nv {
+            if i + 1 < n.nu {
+                let span = knot(&n.u, i + n.p + 1) - knot(&n.u, i + 1);
+                if span > 0.0 {
+                    lu = lu.max(p * (at(i + 1, j).0 - at(i, j).0).length() / span);
+                }
+            }
+            if j + 1 < n.nv {
+                let span = knot(&n.v, j + n.q + 1) - knot(&n.v, j + 1);
+                if span > 0.0 {
+                    lv = lv.max(q * (at(i, j + 1).0 - at(i, j).0).length() / span);
+                }
+            }
+        }
+    }
+    (lu * ratio, lv * ratio)
+}
+
+/// The floor of a blend's bound: a forward error bound of how S and its net are computed,
+/// `E = G (D + gamma_K M)`:
+///
+/// - D, the stations: Newton stops after a step of at most `STATION_STEP (1 + |x|)` in each
+///   foot parameter ([`STATION_STEP`]), which bounds the feet's error in the parameters;
+///   in space a foot is then within `L_u eta_u + L_v eta_v` of its root, `L` the support's
+///   derivative bounds and `eta = STATION_STEP (1 + max |knot|)`, the worse support; the
+///   jets and the centre are smooth functions of the feet and move with them to first
+///   order;
+/// - `gamma_K M`, the rows: each control point of the net is a sum of at most `2 (n + 1)`
+///   products of the section's coefficients with the jets (or the arc's rows), then a
+///   Hermite point (two operations), its division by its weight and the weight's scale (two
+///   more): `K = 2 (n + 1) + 6` operations on coordinates of at most M, the net's largest
+///   coordinate;
+/// - G, the rows' weights: a homogeneous error becomes a Euclidean one divided by the
+///   weight, at most the net's weight ratio `w_max / w_min` times its size.
+///
+/// At part scale (coordinates and knots of tens of millimetres) it is about 1e-11, the
+/// stations' term; the rows' is about 1e-14.
+///
+/// # Errors
+///
+/// `SM_ERR` for a support or net without NURBS data; those of [`Nurbs::of`].
+pub fn precision_floor(
+    k: &Kernel,
+    supports: [&Surface; 2],
+    order: u32,
+    net: &BSplineSurface,
+) -> Result<f64> {
+    let (_, _, stored) = net.control_points()?;
+    let (mut m, mut w_lo, mut w_hi) = (0.0_f64, f64::INFINITY, 0.0_f64);
+    for c in &stored {
+        let w = if c.w == NOW { 1.0 } else { c.w };
+        m = m.max(Vec3::new(c.x, c.y, c.z).length() / w);
+        w_lo = w_lo.min(w);
+        w_hi = w_hi.max(w);
+    }
+    let g = w_hi / w_lo;
+    let mut d = 0.0_f64;
+    for s in supports {
+        let b = as_b_spline(k, s)?.ok_or_else(|| SolidError::sm_err(OP))?;
+        let nf = Nurbs::of(&b)?;
+        let (lu, lv) = derivative_bounds(&nf);
+        let reach = |kv: &[f64]| kv.iter().fold(0.0_f64, |a, &x| a.max(x.abs()));
+        let (eu, ev) = (
+            STATION_STEP * (1.0 + reach(&nf.u)),
+            STATION_STEP * (1.0 + reach(&nf.v)),
+        );
+        d = d.max(lu * eu + lv * ev);
+    }
+    let n = order as usize;
+    let floor = g * (d + gamma(2 * (n + 1) + 6) * m);
+    if floor.is_finite() {
+        Ok(floor)
+    } else {
+        Err(SolidError::sm_err(OP))
+    }
+}
+
+/// The rounding of a rigid motion with a uniform scale applied to a net: each homogeneous
+/// coordinate is a sum of three products and the weighted translation (six operations),
+/// on coordinates of at most the moved net's size, divided by the least weight.
 ///
 /// # Errors
 ///
 /// `SM_ERR` without NURB data.
-pub(crate) fn net_precision(net: &BSplineSurface) -> Result<f64> {
+pub(crate) fn transform_rounding(net: &BSplineSurface) -> Result<f64> {
     let (_, _, stored) = net.control_points()?;
-    let mut size = 0.0_f64;
+    let (mut m, mut w_lo, mut w_hi) = (0.0_f64, f64::INFINITY, 0.0_f64);
     for c in &stored {
         let w = if c.w == NOW { 1.0 } else { c.w };
-        size = size.max(Vec3::new(c.x, c.y, c.z).length() / w);
+        m = m.max(Vec3::new(c.x, c.y, c.z).length() / w);
+        w_lo = w_lo.min(w);
+        w_hi = w_hi.max(w);
     }
-    Ok(16.0 * f64::EPSILON * size)
+    Ok(gamma(6) * (w_hi / w_lo) * m)
 }
 
 /// A span's Hermite rows ([`NetForm::span`]) as a grid `[i along s][j across]`.
@@ -351,7 +465,7 @@ pub fn recertify(k: &Kernel, pb: &ProceduralBlend) -> Result<f64> {
 
     // each piece's span
     let pieces = pieces(pb, ld)?;
-    let precision = net_precision(pb.net())?;
+    let floor = precision_floor(k, faces, d.order, pb.net())?;
     let mut span_of = Vec::new();
     let mut used = vec![false; sigma.len()];
     for piece in &pieces {
@@ -481,9 +595,9 @@ pub fn recertify(k: &Kernel, pb: &ProceduralBlend) -> Result<f64> {
             }
             delta = delta.max(net_distance(&piece.net, &cut)?);
         }
-        // (differences below the net's precision are not the net's)
-        let delta = delta.max(precision);
-        let target = bound - delta;
+        // the bound proved: the certificate's, the net's distance from these rows, and how
+        // far these rows may be from the exact ones (the floor)
+        let target = bound - delta - floor;
         if target.partial_cmp(&0.0) != Some(Ordering::Greater) {
             return Err(SolidError::invalid_input(
                 OP,
@@ -506,7 +620,7 @@ pub fn recertify(k: &Kernel, pb: &ProceduralBlend) -> Result<f64> {
             law.as_ref(),
             if any_defs { Some(&mut defs) } else { None },
         )?;
-        let total = certified + delta;
+        let total = certified + delta + floor;
         if !matches!(
             total.partial_cmp(&bound),
             Some(Ordering::Less | Ordering::Equal)

@@ -380,7 +380,7 @@ fn a_variable_round_rebuilt_from_its_record_is_its_definition() {
         serde_json::to_string(&to_record(&k, &back).unwrap()).unwrap(),
         json
     );
-    assert!(back.recertify(&k).unwrap() <= round.bound);
+    assert!(back.recertify(&k).unwrap() <= back.bound());
     let back = Surface::from(back);
     let mut off_net = 0.0_f64;
     for i in 0..=20 {

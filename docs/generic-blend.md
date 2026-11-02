@@ -171,10 +171,27 @@ enclosed rigorously, S's from interval evaluation over the span box. Existence a
 station's root over the span box are proved by Moore's interval test on the Krawczyk operator
 [32, 28, 33]: K(X) ⊆ X proves a root in X, and K(X) ⊆ X with ‖I − Y F′(X)‖ < 1 proves it unique.
 Knots are inserted until the bound reaches a tenth of the zone tolerance. The bound stored as ε is
-the achieved one plus how far the stored net is from the Hermite rows it was made of (its control
-points are divided out of the rows and rounded), and that term is at least the net's precision,
-16 units in the last place of its largest coordinate: S is computed no finer, so no bound below it
-could be checked again. A transform of the round adds the moved net's precision. Where plain
+the achieved one, plus how far the stored net is from the Hermite rows it was made of (its control
+points are divided out of the rows and rounded), plus three floors E, a forward error bound of
+computing the rows (two floors cover rows computed again, one the rows the net was made of):
+
+E = G (D + γ_K M), γ_K = K u / (1 − K u), u = 2⁻⁵³,
+
+- D, the stations: Newton stops once its last step in each foot parameter x is at most
+  10⁻¹² (1 + |x|); converging quadratically, the root is within that step, so a foot is within
+  L_u η_u + L_v η_v of it in space, η = 10⁻¹² (1 + max |knot|) of the support, L its derivative
+  bounds (the degree times the largest control point difference over its knot span, times the
+  square of the weights' ratio when rational [48]); the jets and the centre move with the feet to
+  first order;
+- γ_K M, the rows: a control point of the net is a sum of at most 2(n + 1) products of the section's
+  coefficients with the jets, a Hermite point (two operations), its division by its weight and the
+  weight's scale (two): K = 2(n + 1) + 6 operations on coordinates of at most M, the net's largest;
+- G = w_max / w_min of the net: a homogeneous error divided by the weight.
+
+At part scale (coordinates and knots of tens of millimetres) E is about 10⁻¹¹, all but 10⁻¹⁴ of it
+the stations' term: exact to rounding. A transform scales the rest of the bound, takes the floors
+where the round now lies, and adds the motion's rounding (six operations per homogeneous
+coordinate). Where plain
 intervals over-estimate, the remedy is a tighter enclosure [3, 4, 31], never a sampled check.
 
 **Certified again.** A round rebuilt from its record proves its net within ε anew
@@ -186,7 +203,7 @@ over the span is bounded by the two rational Bézier patches' control nets [48]:
 and weights w_i, v_i, |B − H| ≤ max |P_i − Q_i| + max |Q_i − c| · max |w_i v_j − v_i w_j| / (min w ·
 min v) for any point c. A net cut or reparametrized after it was built is a piece of the same
 Hermite net, cut in homogeneous coordinates before the nets are compared. The net is refused where
-the sum passes ε, where a piece runs across a station, or where a foot crosses a support's knot line
+the sum with one floor passes ε, where a piece runs across a station, or where a foot crosses a support's knot line
 between two stations (the construction puts a station there).
 
 ## 3. Events of the trace

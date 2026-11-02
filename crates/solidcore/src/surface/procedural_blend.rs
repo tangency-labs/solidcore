@@ -805,8 +805,13 @@ impl ProceduralBlend {
     /// # Errors
     ///
     /// Those of the supports' and the net's NURBS data.
-    pub fn precision_floor(&self, _k: &Kernel) -> Result<f64> {
-        Ok(0.0)
+    pub fn precision_floor(&self, k: &Kernel) -> Result<f64> {
+        crate::blend::fillet_section::recertify::precision_floor(
+            k,
+            self.supports(),
+            self.def.order,
+            &self.net,
+        )
     }
 
     /// `Evaluate`: the definition's partials at `uv` in the surface's parameters (the
@@ -1089,6 +1094,7 @@ impl ProceduralBlend {
             }
             factor = sc.x;
         }
+        let floor = self.precision_floor(k)?;
         for support in &mut self.def.supports {
             support.transform_at_depth(k, rotate_n_move, scale, depth + 1)?;
         }
@@ -1103,9 +1109,12 @@ impl ProceduralBlend {
         }
         self.renew();
         self.net.transform(rotate_n_move, scale)?;
-        // the moved net is rounded where it now lies: its precision there adds (#2388)
-        self.def.bound = self.def.bound * factor
-            + crate::blend::fillet_section::recertify::net_precision(&self.net)?;
+        // (#2388) the bound's certificate and rounding parts scale; its floors are those of
+        // the moved net and supports where they now lie (two for rows computed again there,
+        // one for the rows the net was made of, moved), plus the motion's own rounding
+        let moved = crate::blend::fillet_section::recertify::transform_rounding(&self.net)?;
+        let rest = (self.def.bound - 2.0 * floor).max(0.0);
+        self.def.bound = rest * factor + 3.0 * self.precision_floor(k)? + moved;
         Ok(())
     }
 }
