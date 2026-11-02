@@ -2004,12 +2004,7 @@ mod tests {
         // The first allocation is the split vertex; rail-use construction can
         // subsequently allocate a shell placeholder before failing.
         // SmFilletVertex() inherits SmVertex's zero tolerance, not ZoneTol3d.
-        let (split_id, split_vertex) = fb
-            .brep()
-            .vertices()
-            .iter()
-            .nth(split_vertex_index)
-            .unwrap();
+        let (split_id, split_vertex) = fb.brep().vertices().iter().nth(split_vertex_index).unwrap();
         assert_eq!(split_vertex.point, Point3::ZERO);
         assert_eq!(split_vertex.tolerance, 0.0);
         assert!(!fb.brep().vertex_list().contains(&split_id));

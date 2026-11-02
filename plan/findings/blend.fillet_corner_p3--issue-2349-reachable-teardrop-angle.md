@@ -1,11 +1,12 @@
 # blend.fillet_corner_p3: reachable closed teardrop angle (#2349, 2026-11-02)
 
-Units: `blend.fillet_corner_p3`, `blend.fillet_executive_p3`.
+Units: `blend.fillet_corner_p3`, `blend.fillet_geom_p3`, `blend.fillet_executive_p3`.
 PR: https://github.com/tangency-labs/solidcore/pull/2381.
-Initial base: `fdc55bbb4`; merged upstream main `04d51a64e` before final verification.
-This is preparatory evidence, not the
-implementation of the certified mitre event. The executive unit is marked blocked
-because the newly reachable checkpoints expose the parity differences below.
+Initial base: `fdc55bbb4`; merged upstream main `04d51a64e`, then `23ea17c1c`.
+This contribution provides preparatory evidence and a native allocation-parity
+correction, not the certified mitre event. The newly reachable checkpoint failures
+below are resolved, and the executive unit's green status is restored on native
+evidence.
 
 ## Reproducible operand
 
@@ -83,7 +84,7 @@ nice -n 10 cargo run --profile difftest -p difftest --features cpp -- \
 
 ## Implementation boundary and dependencies
 
-### Newly exposed native parity blocker
+### Native parity failure and correction
 
 At contribution `f68c1104a`, after merging main `04d51a64e`, the pinned native
 comparison on the ten new file-source fixtures gives:
@@ -106,32 +107,100 @@ the differences become visible after solver construction and corner-edge work.
 Both full-operation fixtures (radii 0.5 and 3) compare successfully. A full
 operation pass does not erase an intermediate-state mismatch.
 
-Suspected cause: a fresh or split fillet vertex retains the convenience
-`Brep::add_vertex` system tolerance rather than the native constructor's zero.
-`plan/findings/blend.fillet_solver_p5--pr-208-maintainer-review-2026-10-19.md`
-records the same constructor distinction in other rail-split sites. That is a
-lead, not a traced root cause for these two vertices. No kernel correction is
-included here. All ten cases remain in the runner; no tolerance is relaxed, no key is
-removed, and no `cpp_defect` exemption is claimed. The executive unit remains
-blocked until this separate parity issue is resolved.
-The full unit run has only those two failures. A `--green` run that omits this
-blocked unit is not parity evidence for it; its lost coverage must not be waived
-in the exact-base artifact ratchet.
+Traced cause: `FilletSolver::CalcFilletSurfaces` splits the closed fillet through
+`SmFilletGeom::TopologySplit` (`SmFilletSolver.cpp:2478`). Its new rail vertices
+are `new (pPseudoBrep) SmFilletVertex()` (`SmFilletGeom.cpp:12653`). That constructor
+calls `SmVertex()` (`SmFilletGeom.cpp:1316`), which initializes `m_sZoneTol3d` to
+zero (`SmVertex.h:118`). Rust's `FilletBrep::topology_split` instead used
+`Brep::add_vertex`, initializing tolerance to `1e-5`. It now allocates
+`Vertex::default()` through `add_unlinked_vertex_record`, preserving the native zero
+without altering later tolerance updates. `SmTopology::operator new(size, SmObject*)`
+only supplies the context (`SmTopology.cpp:571`); it does not insert the vertex
+into the B-rep's list. `AddFilletVertex` retains it in the corner instead.
+The first correction to the tolerance alone exposed this second allocation
+error: C++ lists one pseudo vertex, while Rust listed three at both checkpoints.
+The corrected allocation preserves both constructor state and list ownership.
+The focused topology-split test checks the new record's position, tolerance and
+absence from the B-rep's vertex list. It selects the first new vertex: later rail
+setup can allocate a separate shell placeholder before returning its error.
+This is a general allocation correction,
+not a tolerance reset for the teardrop.
 
-Local verification on the merged-main code: fmt check and focused Clippy with
+All ten cases remain in the runner; no tolerance is relaxed, no key is removed,
+and no `cpp_defect` exemption is claimed.
+
+At corrected source commit `4fe560ec4c2c49cad485b47deb396e73a520e574`, the focused
+native rerun gives:
+
+```text
+PASS blend.fillet_executive_p3 cases=10 passed=10 failed=0 deferred=0 max_rel_err=0e0 with_values=10 no_values=0 vacuous=0
+PASS blend.fillet_executive_p3 cases=798 passed=796 failed=0 deferred=0 max_rel_err=0e0 with_values=796 no_values=0 vacuous=0 rejected=2
+```
+
+`--status-of blend.fillet_executive_p3` prints `green`, and its plan status is
+restored on that evidence. The pre-correction full unit run had only those two
+failing cases. The restored unit participates in the all-green gate; its coverage
+must not be waived in the exact-base artifact ratchet.
+
+Initial verification before the correction: fmt check and focused Clippy with
 `-D warnings` pass; the integration test has 2 passes and 2 explicitly ignored
 future contracts. Running those contracts explicitly produces 2 failures with
-the diagnostics above. No full-workspace, wasm, or all-green pass is claimed.
+the diagnostics above. That initial run did not verify the full workspace, wasm
+or the all-green gate.
+
+The focused test's final vertex selection is corrected in
+`2e143ad0eaf9cc43cfdecb5a5bbf1866a3af8271` (production allocation unchanged).
+That regression passes. Native verification of the affected unit and callers
+at this source gives:
+
+```text
+PASS blend.fillet_geom_p3 cases=325 passed=318 failed=0 deferred=0 max_rel_err=0e0 with_values=318 no_values=0 vacuous=0 rejected=7
+PASS blend.fillet_solver_p1 cases=351 passed=351 failed=0 deferred=0 max_rel_err=0e0 with_values=351 no_values=0 vacuous=0
+PASS blend.fillet_solver_p4 cases=651 passed=651 failed=0 deferred=0 max_rel_err=0e0 with_values=651 no_values=0 vacuous=0
+PASS blend.fillet_solver_p5 cases=100 passed=100 failed=0 deferred=0 max_rel_err=0e0 with_values=100 no_values=0 vacuous=0
+PASS blend.fillet_corner_p3 cases=1013 passed=994 failed=0 deferred=0 max_rel_err=0e0 with_values=994 no_values=0 vacuous=0 rejected=19
+PASS blend.fillet_executive_p3 cases=798 passed=796 failed=0 deferred=0 max_rel_err=0e0 with_values=796 no_values=0 vacuous=0 rejected=2
+```
+
+The full native production gate also passes (the subsequent test-only selection
+correction does not change production code):
+
+```text
+difftest --green --jobs 2 --baseline bin/issue-2349-baseline-23ea17c1c
+difftest: 280 unit(s), 280 passed, 0 partial, 0 failed
+```
+
+The baseline is the exact main `23ea17c1c21a587e5bd50653e7c73c490f34bbbe`
+`difftest-reports` artifact from successful CI run `41441037947`, downloaded with
+Windows `gh`. The unfiltered run enforces the value-share floor and coverage
+ratchet; no historical committed reports or waivers are used. Final-source
+workspace Clippy (`--all-targets -- -D warnings`) and wasm32 check also pass.
+Formatting passes. The unoptimized whole-kernel attempt was interrupted while
+the existing `issue_478_full_turn_nested_shell_is_a_cavity` test was still running;
+it is not counted as a pass. The CI test profile is `difftest`
+(`.github/workflows/ci.yml`), with both overflow checks and debug assertions
+enabled (`Cargo.toml`). No test or assertion is removed when using that profile.
+
+Explicitly running both ignored future contracts at final source still gives two
+failures: no blend event, and the proposed radius `1.8749999999999993` builds with
+level-2 geometry warnings. These remain future implementation contracts, not
+passing coverage.
 
 ### Exact event work
 
 The live #2349 brief requires an End-like self-mitre, cutting the two ends on
 their bisecting surface with exact pcurves, or a certified refusal naming the size
-that builds. #2307 still owns the End and Join event/section interfaces; #2342
-and #2353 own deletion of the old corner's G1 paths. Neither implementation is
-duplicated here. There is no new kernel flag, numerical change, tolerance change,
-old-corner deletion, fit-size formula or claim that the old fitted intersection
+that builds. #2353's deletion of the old corner's G1 paths is merged here through
+main `23ea17c1c`. #2307 still owns the End and Join event/section interfaces and
+remains unmerged; its implementation is not duplicated here. There is no new
+kernel flag, old-corner deletion, fit-size formula or claim that the old fitted intersection
 meets the exact-pcurve rule.
+
+The current `blend_corner::exact_mitre_curve` requires straight spines and equal
+cylinders; it returns `false` for this curved-spine round. Merely incorporating
+#2307's End/Join dispatch would not supply the exact/certified bisector section
+and its two pcurves or prove a fitting radius. This preparatory contribution does
+not incorporate that draft or implement a competing End interface.
 
 After those interfaces settle, the implementation can use this operand to test
 both ends of one blend at one vertex, distinguish its angle from a closed G1
@@ -139,3 +208,6 @@ Join, and enable the failing contract. Exact/certified bisector intersections,
 exact pcurves on both sides, geometric fit-size derivation, and boundary-size
 tests remain work for the event. General fold handling remains independent.
 This fixture covers T=2 only; a T=3 seam and a revolved kinked seam are not covered.
+
+
+Full kernel verification: `nice -n 10 cargo test --profile difftest -p solidcore` with `CARGO_BUILD_JOBS=2` and `RUST_TEST_THREADS=2` exited 0: 4,164 passed, 0 failed, 34 ignored across library, integration and documentation targets. The library accounts for 3,061 passes and 4 ignored tests. Ignored tests are not counted as passes.
