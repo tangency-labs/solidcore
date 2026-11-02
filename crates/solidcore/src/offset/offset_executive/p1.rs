@@ -821,15 +821,28 @@ impl OffsetExecutive {
             let Some(nurb) = crate::topology::brep::p3::with_nurb(kernel, base)? else {
                 return Err(SolidError::sm_err(OP));
             };
-            // use NLIB function to build offset surface approximation
-            // (the cancel token polled inside, #2136 / #2372; none changes nothing)
-            let approximation = nurb.approximate_offset_surface_cancellable(
-                offset.offset_distance(),
-                approximation_tol_3d,
-                OffsetParamType::Inherited,
-                crate::nurbs::srf_offset::OffsetOptions::default(),
-                kernel.cancel_token(),
-            )?;
+            let approximation = if kernel.fixes.shell_one_construction {
+                // Not upstream (WR-718, #2350 S1): the offset certified within the
+                // tolerance at every parameter, in the base's parametrisation
+                let base_nurb = nurb.gw_nurb().ok_or_else(|| SolidError::null_pointer(OP))?;
+                let made = crate::offset::construction::sheets::certified_offset(
+                    kernel,
+                    base_nurb,
+                    offset.offset_distance(),
+                    approximation_tol_3d,
+                )?;
+                crate::nurbs::b_spline_surface::p1::BSplineSurface::from_nurb(made.surface, false)
+            } else {
+                // use NLIB function to build offset surface approximation
+                // (the cancel token polled inside, #2136 / #2372; none changes nothing)
+                nurb.approximate_offset_surface_cancellable(
+                    offset.offset_distance(),
+                    approximation_tol_3d,
+                    OffsetParamType::Inherited,
+                    crate::nurbs::srf_offset::OffsetOptions::default(),
+                    kernel.cancel_token(),
+                )?
+            };
             // remember face/surface pair
             fix.push((f, Surface::from(approximation)));
         }
@@ -1908,6 +1921,13 @@ impl OffsetExecutive {
         match surface.kind_mut() {
             SurfaceKind::BSpline(surface) => {
                 ignore_status(surface.get_or_create_gw_nurb())?;
+            }
+            // (IsKindOf(SmBSplineSurface_TYPE): the fork's SmProceduralBlend, its net)
+            SurfaceKind::ProceduralBlend(surface) => {
+                ignore_status(surface.net_mut().get_or_create_gw_nurb())?;
+            }
+            SurfaceKind::BallPatch(surface) => {
+                ignore_status(surface.net_mut().get_or_create_gw_nurb())?;
             }
             SurfaceKind::Plane(surface) if surface.base().gw_nurb().is_none() => {
                 ignore_status(surface.make_nurb())?;
