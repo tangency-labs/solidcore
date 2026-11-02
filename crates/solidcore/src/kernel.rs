@@ -21,6 +21,7 @@
 //! | [`Kernel::fillet_point_step`], [`Kernel::latch_fillet_point_step`] | the function-static `sdStaticStep` of `SmFilletSolver::ComputePointValues` |
 //! | [`Kernel::upstream_ub_passed`], [`Kernel::note_upstream_ub`] | (none: upstream undefined behaviour the port went past) |
 //! | [`CancelToken`], [`Kernel::cancel`], [`Kernel::set_cancel_token`], [`Kernel::check_cancelled`] | (none: cooperative cancellation for worker-thread jobs) |
+//! | [`WorkCounters`], [`Kernel::work_counters`] | the SolidCraft fork's `SmWorkCounters` (process-wide there) |
 //!
 //! Upstream seeds `rand()` from the clock in a few places; the port replaces that with
 //! [`Rng`], seeded from [`KernelOptions::seed`], so runs are reproducible. Results that
@@ -139,6 +140,57 @@ impl Caches {
     /// Drops all cached data.
     pub fn clear(&mut self) {
         *self = Self::default();
+    }
+}
+
+/// Counts of the work done by the steps of a boolean whose cost once grew with the square
+/// of the body's size, so a test can check how that work grows: the same on every
+/// machine, where a ratio of times is not (the SolidCraft fork's `SmWorkCounters`,
+/// tangency-labs/smlib@2e9e6b2 and @edf7414).
+///
+/// Each count is added where its work is done; counting changes no result. The fork's
+/// counters are process-wide atomics; these belong to their [`Kernel`] (no global state)
+/// and are [`Cell`]s, so operations that take `&Kernel` can add to them and the kernel
+/// stays `Send`. Only [`WorkCounters::reset`] zeroes them.
+#[derive(Debug, Default)]
+pub struct WorkCounters {
+    face_pairs: Cell<u64>,
+    loops_classified: Cell<u64>,
+}
+
+impl WorkCounters {
+    /// Pairs of faces of the two B-reps examined for intersection
+    /// (`SmWorkCounters::eFacePairs`): each pair the face loop of
+    /// `TopologyIntersector::intersect_topology` visits.
+    #[must_use]
+    pub fn face_pairs(&self) -> u64 {
+        self.face_pairs.get()
+    }
+
+    /// Inner loops of a face classified against the new face that a closed loop
+    /// imprinted in it makes (`SmWorkCounters::eLoopsClassified`): each inner loop
+    /// `make_edge_in_face_with_vu` goes on to classify after the box test of
+    /// [`UpstreamFixes::boolean_skips_faces_apart`] (every inner loop with that flag off).
+    #[must_use]
+    pub fn loops_classified(&self) -> u64 {
+        self.loops_classified.get()
+    }
+
+    /// Zeroes every count (`SmWorkCounters::Reset`).
+    pub fn reset(&self) {
+        self.face_pairs.set(0);
+        self.loops_classified.set(0);
+    }
+
+    /// Counts one face pair examined for intersection.
+    pub(crate) fn add_face_pair(&self) {
+        self.face_pairs.set(self.face_pairs.get().saturating_add(1));
+    }
+
+    /// Counts one inner loop classified against a new face.
+    pub(crate) fn add_loop_classified(&self) {
+        self.loops_classified
+            .set(self.loops_classified.get().saturating_add(1));
     }
 }
 
@@ -1450,6 +1502,8 @@ pub struct UpstreamFixes {
     pub fillet_overflow_trim_at_creases: bool,
     /// With both `fillet_overflow_trim_at_creases` and `fillet_round_ends_at_tangent_continuation`, a round with a section end (WR-674: its filleted edge runs on tangentially at the vertex) is trimmed at its creases and sewn into the body as a cliff overflow is, instead of being closed into the region it removes and subtracted: each section end is cut by its plane through the vertex normal to the filleted edge and given its flat end face (the section's corner, from the section's ends to the vertex), and the sheet is trimmed and sewn in as `fillet_overflow_trim_at_creases` does it; a side of an end face that lies along an edge of the body (the seam where a corner's cylinder runs on tangentially into a flat side) is sewn to that edge's piece instead of being imprinted. So a round with a section end is built together with other rounds (an R25 rim and an R2 corner arc of a tabbed plate rounded together, which the subtraction refuses with `FilletErrorType::NoRoom`: it builds only a lone round both of whose ends are section ends). Off: the subtraction, as before (WR-706, #2223; own design, not in the fork, which at 5e8c9c1 leaves such a corner arc unrounded).
     pub fillet_section_end_trim_at_creases: bool,
+    /// With `fillet_overflow_trim_at_creases`, a crease of a blend past its faces that runs along an edge of the face it crosses, within the trim's tolerance, is taken as that edge: the sheet is split along it, its piece past the face is deleted, and the body's edge stands as the imprint where the material taken off stops and the sheet is sewn (as an extension's edges along the body do). The fork's `TrimAtCreases` (tangency-labs/smlib#79 step 6 at 5e8c9c1) keeps only the crease's runs inside the face (`sm_PiecesInFace`), so such a crease is dropped, the sheet keeps its piece past the face, the face is taken off with the rest, and the sewing is refused (`SM_FILERR_BAD_MERGE`): a disc 13 in radius and 2 high rounded 2.0001 to 2.01 on its top edge (the crease runs (r - 2)^2/4 inside the bottom edge) fails where r 2 and r 2.02 build. Not the fork's (WR-717, #2385).
+    pub fillet_overflow_crease_along_edge: bool,
     /// With `fillet_gn_section_generator`, a convex blend whose section between its rails would break through the part (leave its material through a face and come back into it, where one of the faces it crosses there shares no edge with the blended faces: a hollow behind a wall, such as a round on a wall thinner than it reaches into the hollow behind, or a blind pocket or cavity under a blended face, which the pinned construction builds into a body that intersects itself or has the wrong volume) is refused with `FilletErrorType::NoRoom` (`NoRoomReason::BreaksThrough`), naming the largest size whose sections do not break through, and that size less the fit margin is the refusal's fit (`SolidError::FilletRefused`). A section that runs off its face (past a cliff, into a hole or an opening: the part beyond it reaches a rail) or through a hole in a blended face does not break through. The same 32 sections as `BandCutsThePart` are judged; the faces at the blended edge's ends, which the corners trim, are not ([`crate::blend::fillet_executive::session::band_cuts::band_breaks_through_the_part`]). Not the fork's: fork 5e8c9c1 segfaults in `DoFilleting` on #2299's case (WR-707, #2299; addendum `plan/upstream-issues/WR-707--addendum-2026-11-02-rounds-running-off-their-faces.md`).
     pub fillet_refuse_rounds_breaking_through: bool,
 }
@@ -1609,6 +1663,10 @@ pub struct Kernel {
         std::sync::Weak<()>,
         crate::topology::topology::NotifyRecords,
     ),
+    /// Not upstream (the SolidCraft fork's `SmWorkCounters`): counts of the work done by
+    /// the steps of a boolean whose cost once grew with the square of the body's size, for
+    /// tests and profiling. They change no result.
+    pub work_counters: WorkCounters,
 }
 
 impl Default for Kernel {
@@ -1642,6 +1700,7 @@ impl Kernel {
                 std::sync::Weak::new(),
                 crate::topology::topology::NotifyRecords::new(),
             ),
+            work_counters: WorkCounters::default(),
         }
     }
 
@@ -1771,6 +1830,21 @@ mod tests {
         assert_eq!(k.latch_fillet_point_step(1.0e-3), 1.0e-5);
         k.fillet_point_step.set(Some(1.0e-3));
         assert_eq!(k.latch_fillet_point_step(1.0e-5), 1.0e-3);
+    }
+
+    #[test]
+    fn work_counters_count_until_reset() {
+        let k = Kernel::default();
+        let w = &k.work_counters;
+        assert_eq!((w.face_pairs(), w.loops_classified()), (0, 0));
+        w.add_face_pair();
+        w.add_face_pair();
+        w.add_loop_classified();
+        assert_eq!((w.face_pairs(), w.loops_classified()), (2, 1));
+        // each kernel counts its own work
+        assert_eq!(Kernel::default().work_counters.face_pairs(), 0);
+        w.reset();
+        assert_eq!((w.face_pairs(), w.loops_classified()), (0, 0));
     }
 
     #[test]
