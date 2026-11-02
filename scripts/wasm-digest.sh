@@ -7,8 +7,8 @@
 #
 # Needs `rustup target add wasm32-wasip1` and `wasmtime` on PATH. Writes DIR/{native,wasm}/<unit>.digest and
 # DIR/mismatches.txt (default DIR: bin/wasm-digest); exits 1 on any mismatch.
-# Works with GNU and BSD/macOS userland: no `readlink -f`, and the per-unit wasm runner
-# is a script file so BSD xargs's command-template limit does not apply.
+# Works with GNU and BSD/macOS userland: resolves the upstream symlink with portable
+# `pwd -P`, and passes the unit as a positional argument outside the xargs template.
 set -euo pipefail
 root=$(cd "$(dirname "$0")/.." && pwd)
 target=${CARGO_TARGET_DIR:-$root/bin}
@@ -38,21 +38,15 @@ wasmtime compile "$wasm" -o "$out/goldens.cwasm"
 # one wasmtime process per unit: a trap or abort (panic = abort on wasm32) loses one unit
 ls "$out/native" | sed -n 's/\.digest$//p' >"$out/units.txt"
 # WASI does not follow a symlink out of a preopened dir: map a linked upstream/ itself.
-# (`readlink -f` is GNU-only; `pwd -P` is portable.)
+# (`readlink -f` is not available on older BSD/macOS; `pwd -P` is portable.)
 up=$(cd "$root/upstream" && pwd -P)
-export out root up
 # One unit per process: a trap or abort (panic = abort on wasm32) loses only that unit.
-# The runner is a file rather than `sh -c '<script>'` because BSD xargs caps the command
-# template (-S, 255 bytes by default), which made this fail on macOS.
-cat >"$out/run-unit.sh" <<'SH'
-#!/bin/sh
-# Runs one unit's Rust side on wasm32-wasip1; out/root/up come from the environment.
-wasmtime run --allow-precompiled --dir "$root::$root" --dir "$up::$root/upstream" \
-  --dir "$out::$out" "$out/goldens.cwasm" \
-  --unit "$1" --digest-dir "$out/wasm" >"$out/log/$1.txt" 2>&1 \
-  || echo "wasm exit $? $1" >>"$out/log/$1.txt"
-SH
-xargs -P "$jobs" -I{} sh "$out/run-unit.sh" {} <"$out/units.txt"
+# The unit is a positional argument to the static helper, never interpolated into shell
+# code: BSD xargs bounds the substituted argument (-S, 255 bytes by default), and this
+# keeps that argument to the unit id while a long static template stays static. Nothing
+# is written into or executed from the output directory.
+xargs -P "$jobs" -I{} sh "$root/scripts/wasm-digest-unit.sh" \
+  "$root" "$up" "$out" {} <"$out/units.txt"
 
 : >"$out/mismatches.txt"
 units=0 cases=0 bad=0 lost=0
