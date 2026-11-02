@@ -4745,6 +4745,26 @@ impl crate::blend::fillet_intersector::FilletSolverOps for IntersectorSolver<'_>
         let sur0 = Surface::from(offset_surface(&*self.ops, 0)?.surface.clone());
         let sur1 = Surface::from(offset_surface(&*self.ops, 1)?.surface.clone());
         let radii = self.ops.constant_radii();
+        // (a variable round between NURBS faces is its definition too, the fork's 0d43b4c;
+        // read only where the circle generator may take it)
+        let law = if k.fixes.fillet_gn_section_generator
+            && k.fixes.fillet_round_as_definition
+            && solver_type == FilletSolverType::VariableRadius
+        {
+            let has_edgeuse = matches!(self.ops.solver().edgeuse(0), Ok(Some(_)));
+            match self.ops.variable_radius_mut() {
+                Some(v) => Some(crate::blend::fillet_standard_solver::p2::LawBall {
+                    has_edgeuse,
+                    edge: v.curve_based.base_b_spline_curve()?,
+                    law: v.fillet_law().clone(),
+                    interval: v.fillet_law_interval(),
+                    reverse: v.fillet_law_orientation(),
+                }),
+                None => None,
+            }
+        } else {
+            None
+        };
         let solver = self.ops.solver_mut();
         let approx_tol_3d = solver.approx_tol_3d;
         let this_ang_tol_rad = solver.this_ang_tol_rad();
@@ -4786,6 +4806,7 @@ impl crate::blend::fillet_intersector::FilletSolverOps for IntersectorSolver<'_>
         let ball = crate::blend::fillet_standard_solver::p2::CircleBall {
             radii,
             ang_tol_rad: this_ang_tol_rad,
+            law,
         };
         generator
             .create_surface_replacing_uv(
@@ -4798,7 +4819,7 @@ impl crate::blend::fillet_intersector::FilletSolverOps for IntersectorSolver<'_>
                 points,
                 [&sur0, &sur1],
                 [uv1, uv2],
-                Some(ball),
+                Some(&ball),
             )
             .map(Some)
     }

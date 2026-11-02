@@ -465,7 +465,7 @@ impl FilletSurfaceGenerator {
         points: &[TsectPnt],
         surfaces: [&Surface; 2],
         uv: [&mut BSplineCurve; 2],
-        ball: Option<crate::blend::fillet_standard_solver::p2::CircleBall>,
+        ball: Option<&crate::blend::fillet_standard_solver::p2::CircleBall>,
     ) -> Result<Surface> {
         use crate::blend::fillet_standard_solver::p1::RailSurface;
         if let Self::GnSection(g) = self {
@@ -474,8 +474,9 @@ impl FilletSurfaceGenerator {
             return g.create_surface(k, approx_tol_3d, center, [rail1, rail2], surfaces, uv);
         }
         let [uv1, uv2] = uv;
+        let mut center_line = center_line;
         if let (Self::Circular(g), Some(ball), Some(center)) =
-            (&*self, ball, center_line.as_deref())
+            (&*self, ball, center_line.as_deref_mut())
         {
             if let Some(s) = g.definition_surface(
                 k,
@@ -483,6 +484,7 @@ impl FilletSurfaceGenerator {
                 solver_type,
                 center,
                 [&mut *rail1, &mut *rail2],
+                points,
                 surfaces,
                 [&mut *uv1, &mut *uv2],
                 ball,

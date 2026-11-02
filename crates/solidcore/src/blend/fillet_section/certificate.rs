@@ -23,6 +23,9 @@
 //! | [`curve_derivs_over`]             | `sm_CurveDerivsOver`                    |
 //! | [`nurbs_partials_over_piece`]     | `sm_NurbsPartialsOverPiece`             |
 //! | [`leader_series_over`]            | `sm_LeaderSeriesOver`                   |
+//! | [`GnLaw`]                         | `sm_GnLaw` (0d43b4c)                    |
+//! | [`law_series`]                    | `sm_LawSeries` (0d43b4c)                |
+//! | [`law_series_over`]               | `sm_LawSeriesOver` (0d43b4c)            |
 //! | [`inverse4`]                      | `sm_Inverse4`                           |
 //! | [`Enclosure`], [`gn_enclose`]     | `sm_GnEnclose` (its `rF`, `pX`, `pDS`)  |
 //! | [`gn_fourth_over`]                | `sm_GnFourthOver`                       |
@@ -46,10 +49,10 @@
 
 use super::form::{binom, gn_form_normalized, GnSectionFormT};
 use super::interval::{cmax, cmin, round_up, Ivl};
-use super::series::{GnScalar, Ser, Trunc, VSer, MAX_E, TAYLOR, V3};
+use super::series::{GnScalar, Ser, Trunc, VSer, MAX_E, MAX_S, TAYLOR, V3};
 use super::station::{
-    ders_basis, gn_evaluate, gn_evaluate_vn, gn_jacobian, gn_solve_station, gn_top_jets, knot,
-    smax, solve4, span, GnStation, GnSystem, Nurbs, Partials,
+    ders_basis, gn_evaluate, gn_evaluate_vn, gn_jacobian, gn_solve_station_counted, gn_top_jets,
+    knot, smax, solve4, span, GnStation, GnSystem, Nurbs, Partials,
 };
 use super::tay::{
     gn_area_sum, gn_half_angle, gn_invert, gn_target, tay_sqrt, GnAreaCells, Ring, Tay, TayScalar,
@@ -443,6 +446,95 @@ pub fn leader_series_over(
     Ok((l, t))
 }
 
+/// `sm_GnLaw` (0d43b4c): a ball whose radius varies, its law r(s) over the leader's
+/// parameter (the x of a B-spline curve), with the curve's NURBS data.
+#[derive(Clone, Debug)]
+pub struct GnLaw<'a> {
+    /// `pCurve`.
+    pub curve: &'a BSplineCurve,
+    /// `sN`.
+    pub n: NurbsCurve,
+}
+
+impl<'a> GnLaw<'a> {
+    /// The law of `curve` (`sLaw.pCurve = pLaw; sm_NurbsCurveOf(*pLaw, sLaw.sN)`).
+    ///
+    /// # Errors
+    ///
+    /// Those of [`NurbsCurve::of`].
+    pub fn of(curve: &'a BSplineCurve) -> Result<Self> {
+        Ok(Self {
+            curve,
+            n: NurbsCurve::of(curve)?,
+        })
+    }
+}
+
+/// `sm_LawSeries` (0d43b4c): r at `s` to order `order` in sigma (its derivatives past a
+/// polynomial law's degree zero), `None` without a law; `before`: the law's piece before
+/// `s` at one of its knots.
+///
+/// # Errors
+///
+/// Those of the law's evaluation; `SM_ERR` where the radius is not positive ("the radius
+/// law is not positive").
+pub fn law_series(
+    law: Option<&GnLaw<'_>>,
+    s: f64,
+    order: usize,
+    before: bool,
+) -> Result<Option<Ser<f64>>> {
+    let Some(law) = law else {
+        return Ok(None);
+    };
+    let mut r = Ser::constant(0.0_f64);
+    let mut derivs = order;
+    if !law.curve.is_rational()? {
+        derivs = derivs.min(law.curve.degree()?);
+    }
+    if derivs > MAX_S {
+        return Err(SolidError::sm_err(OP));
+    }
+    let d = law.curve.evaluate(s, derivs, !before, false)?;
+    let mut fact = 1.0_f64;
+    for i in 0..=derivs {
+        if i > 0 {
+            fact *= i as f64;
+        }
+        let di = d.get(i).ok_or_else(|| SolidError::sm_err(OP))?;
+        r.set(i, 0, di.x / fact);
+    }
+    let positive = r.at(0, 0) > 0.0;
+    if !positive {
+        // "SmGnSectionFSG: the radius law is not positive"
+        return Err(SolidError::sm_err(OP));
+    }
+    Ok(Some(r))
+}
+
+/// `sm_LawSeriesOver` (0d43b4c): r over the span `s` (in one piece of the law: the
+/// stations hold its knots) to order `order`, enclosed.
+///
+/// # Errors
+///
+/// Those of [`curve_derivs_over`]; `SM_ERR` where r is not proved positive.
+pub fn law_series_over(law: &GnLaw<'_>, s: Ivl, order: usize) -> Result<Ser<Ivl>> {
+    let mut r = Ser::constant(IZ);
+    let piece = span(&law.n.u, law.n.p, law.n.n, s.mid());
+    let d = curve_derivs_over(&law.n, s, order, Some(piece))?;
+    let mut fact = 1.0_f64;
+    for i in 0..=order {
+        if i > 0 {
+            fact *= i as f64;
+        }
+        r.set(i, 0, at1(&d, i, VZ).x * Ivl::from(1.0 / fact));
+    }
+    if !r.at(0, 0).is_positive() {
+        return Err(SolidError::sm_err(OP));
+    }
+    Ok(r)
+}
+
 /// `sm_Inverse4`: the inverse of a 4 x 4 matrix (the preconditioner; any approximation
 /// will do), column by column with [`solve4`].
 ///
@@ -495,6 +587,7 @@ fn system<'a>(
     tangent: &VSer<Ivl>,
     r: [f64; 2],
     side: [f64; 2],
+    law: Option<&'a Ser<Ivl>>,
 ) -> GnSystem<'a, Ivl> {
     let [p0, p1] = p;
     GnSystem {
@@ -504,7 +597,7 @@ fn system<'a>(
         r,
         side,
         hold: false,
-        law: None,
+        law,
     }
 }
 
@@ -525,9 +618,16 @@ pub fn gn_enclose(
     side: [f64; 2],
     n: usize,
     order_s: usize,
+    law: Option<&GnLaw<'_>>,
 ) -> Result<Option<Enclosure>> {
     let s = Ivl::new(a.s, b.s);
     let tr = Trunc::new(order_s, n)?;
+    // a ball whose radius varies: its law over the span (0d43b4c)
+    let law_r = match law {
+        Some(l) => Some(gn_try!(law_series_over(l, s, order_s), None)),
+        None => None,
+    };
+    let law_r = law_r.as_ref();
     let (leader, tangent) = gn_try!(leader_series_over(leader_n, s, tr), None);
     let ax = |c: usize| a.x.get(c).map_or(f64::NAN, |x| x.at(0, 0));
     let bx = |c: usize| b.x.get(c).map_or(f64::NAN, |x| x.at(0, 0));
@@ -584,14 +684,14 @@ pub fn gn_enclose(
         let pc = gn_try!(partials_over(xm, xm, 2), None);
         let sxc = xm.map(|x| Ser::constant(Ivl::from(x)));
         let (sg, _) = gn_try!(
-            gn_evaluate(&system(&pc, &leader, &tangent, r, side), &sxc, point),
+            gn_evaluate(&system(&pc, &leader, &tangent, r, side, law_r), &sxc, point),
             None
         );
         // the Jacobian over the box
         let pb = gn_try!(partials_over(bx_.map(|x| x.lo), bx_.map(|x| x.hi), 2), None);
         let sxb = bx_.map(Ser::constant);
         let jac = gn_try!(
-            gn_jacobian(&system(&pb, &leader, &tangent, r, side), &sxb),
+            gn_jacobian(&system(&pb, &leader, &tangent, r, side, law_r), &sxb),
             None
         );
         let jm = jac.map(|row| row.map(Ivl::mid));
@@ -678,7 +778,7 @@ pub fn gn_enclose(
         partials_over(bx_.map(|x| x.lo), bx_.map(|x| x.hi), lk),
         None
     );
-    let sysk = system(&pk, &leader, &tangent, r, side);
+    let sysk = system(&pk, &leader, &tangent, r, side, law_r);
     let mut sx = bx_.map(Ser::constant);
     for tot in 1..=(tr.s() + tr.e()) {
         let (sg, _) = gn_try!(gn_evaluate(&sysk, &sx, tr), None);
@@ -789,7 +889,9 @@ pub fn gn_fourth_over(
     side: [f64; 2],
     n: usize,
 ) -> Result<Fourth> {
-    let (fourth, _) = gn_fourth_over_series(k, faces_n, leader_n, faces, center, a, b, r, side, n)?;
+    let (fourth, _) = gn_fourth_over_series(
+        k, faces_n, leader_n, faces, center, a, b, r, side, n, None, 0,
+    )?;
     Ok(fourth)
 }
 
@@ -811,7 +913,9 @@ pub struct PieceSeries {
 }
 
 /// [`gn_fourth_over`] with the series of [`PieceSeries`] (`None` where they are not all
-/// proved, as the fork's out-params are then not all set).
+/// proved, as the fork's out-params are then not all set), and the fork's `pLaw` and
+/// `lExtra` (0d43b4c): a ball whose radius varies, and the orders in s the series take
+/// past `4 + SM_GN_TAYLOR` (the touch circle's m').
 ///
 /// # Errors
 ///
@@ -828,11 +932,13 @@ pub fn gn_fourth_over_series(
     r: [f64; 2],
     side: [f64; 2],
     n: usize,
+    law: Option<&GnLaw<'_>>,
+    extra: usize,
 ) -> Result<(Fourth, Option<PieceSeries>)> {
     let none: (Fourth, Option<PieceSeries>) =
         (([[f64::INFINITY; MAX_E + 1]; 2], [f64::INFINITY; 2]), None);
     let h = b.s - a.s;
-    let Some(e5) = gn_enclose(faces_n, leader_n, a, b, r, side, n, 4 + TAYLOR)? else {
+    let Some(e5) = gn_enclose(faces_n, leader_n, a, b, r, side, n, 4 + TAYLOR + extra, law)? else {
         return Ok(none);
     };
     // the middle's station, and the series there
@@ -846,11 +952,35 @@ pub fn gn_fourth_over_series(
     let sm = gn_try!(center.evaluate_point(mid), none);
     let point = Trunc::new(0, 0)?;
     let tol = 1.0e-9 * smax(1.0, sm.length());
+    let mid_r = gn_try!(law_series(law, mid, 0, false), none);
     let smid = gn_try!(
-        gn_solve_station(k, faces, center, mid, seed, r, side, point, tol),
+        gn_solve_station_counted(
+            k,
+            faces,
+            center,
+            mid,
+            seed,
+            r,
+            side,
+            point,
+            tol,
+            mid_r.as_ref()
+        )
+        .0,
         none
     );
-    let Some(e4) = gn_enclose(faces_n, leader_n, &smid, &smid, r, side, n, 4 + TAYLOR - 1)? else {
+    let Some(e4) = gn_enclose(
+        faces_n,
+        leader_n,
+        &smid,
+        &smid,
+        r,
+        side,
+        n,
+        4 + TAYLOR - 1 + extra,
+        law,
+    )?
+    else {
         return Ok(none);
     };
     let series = PieceSeries {
@@ -1141,8 +1271,11 @@ pub fn arc_rows<S: TayScalar + GnScalar>(
 /// ([`gn_row_terms_over`]'s, every row varying), folded into `rt`; `false` where they are
 /// not proved. `f`, `centre`: the rails' and the centre's series over the piece (to order
 /// `K = 4 + SM_GN_TAYLOR`); `fm`, `cm`: at its middle (to K - 1); `d`: s less the middle
-/// over the piece.
+/// over the piece. `touch` (0d43b4c): the ball's radius varies, and the circle is the one
+/// it touches the envelope along, about `m + ((rho1 - m) . m' / m' . m') m'` (`centre` and
+/// `cm` one order more, for m').
 #[must_use]
+#[allow(clippy::too_many_arguments)]
 pub fn arc_row_terms_over(
     f: &[VSer<Ivl>; 2],
     centre: &VSer<Ivl>,
@@ -1151,6 +1284,7 @@ pub fn arc_row_terms_over(
     d: Ivl,
     o: [f64; 3],
     rt: &mut GnRowTerms,
+    touch: bool,
 ) -> bool {
     const K: usize = 4 + TAYLOR;
     let mut rho = [[Tay::<Ivl>::zero(); 3]; 2];
@@ -1170,6 +1304,35 @@ pub fn arc_row_terms_over(
         }
         if let Some(x) = mc.get_mut(q) {
             *x = centred(&ac_mid, vat(centre, q, K, 0), K, d);
+        }
+    }
+    if touch {
+        // m' from the centre's coefficients one order up: (i + 1) c_(i+1)
+        let mut dm = [Tay::<Ivl>::zero(); 3];
+        for (q, dq) in dm.iter_mut().enumerate() {
+            let mut ac_mid = [IZ; K];
+            for (i, a) in ac_mid.iter_mut().enumerate() {
+                *a = vat(cm, q, i + 1, 0) * Ivl::from((i + 1) as f64);
+            }
+            *dq = centred(
+                &ac_mid,
+                vat(centre, q, K + 1, 0) * Ivl::from((K + 1) as f64),
+                K,
+                d,
+            );
+        }
+        let mut dd = Tay::<Ivl>::zero();
+        let mut bd = Tay::<Ivl>::zero();
+        for ((&dq, &mq), &r0q) in dm.iter().zip(&mc).zip(&rho[0]) {
+            dd = dd + dq * dq;
+            bd = bd + (r0q - mq) * dq;
+        }
+        if !dd.at(0).is_positive() {
+            return false;
+        }
+        let kk = bd / dd;
+        for (mq, &dq) in mc.iter_mut().zip(&dm) {
+            *mq = *mq + kk * dq;
         }
     }
     let [rho0, rho1] = &rho;
@@ -1239,6 +1402,7 @@ pub fn gn_certify_span(
     n: usize,
     target: f64,
     mut vary: Option<&mut GnVarying>,
+    law: Option<&GnLaw<'_>>,
 ) -> Result<f64> {
     // the series' orders are checked once (the fork leaves them to its callers)
     Trunc::new(4 + TAYLOR, n)?;
@@ -1290,7 +1454,21 @@ pub fn gn_certify_span(
             let sm = gn_try!(center.evaluate_point(s), bound_out);
             let point = Trunc::new(0, 0)?;
             let tol = 1.0e-9 * smax(1.0, sm.length());
-            match gn_solve_station(k, faces, center, s, seed, r, side, point, tol) {
+            let end_r = gn_try!(law_series(law, s, 0, false), bound_out);
+            match gn_solve_station_counted(
+                k,
+                faces,
+                center,
+                s,
+                seed,
+                r,
+                side,
+                point,
+                tol,
+                end_r.as_ref(),
+            )
+            .0
+            {
                 Ok(st) => ends.push(st),
                 Err(_) => solved = false,
             }
@@ -1318,7 +1496,22 @@ pub fn gn_certify_span(
                 return Err(SolidError::sm_err(OP));
             };
             let ((pm, puv), series) = gn_try!(
-                gn_fourth_over_series(k, faces_n, leader_n, faces, center, ea, eb, r, side, l_jets),
+                gn_fourth_over_series(
+                    k,
+                    faces_n,
+                    leader_n,
+                    faces,
+                    center,
+                    ea,
+                    eb,
+                    r,
+                    side,
+                    l_jets,
+                    law,
+                    // the touch circle of a varying ball takes the centre's
+                    // s-derivative: one order more
+                    usize::from(arc && law.is_some()),
+                ),
                 bound_out
             );
             for (((m4f, pmf), uvf), &puvf) in m4.iter_mut().zip(&pm).zip(uv4.iter_mut()).zip(&puv) {
@@ -1356,7 +1549,16 @@ pub fn gn_certify_span(
                 proved = match series {
                     Some(ps) => {
                         let d = Ivl::new(ea.s, eb.s) - Ivl::from(ps.mid);
-                        arc_row_terms_over(&ps.f, &ps.v, &ps.fm, &ps.vm, d, o, &mut rows)
+                        arc_row_terms_over(
+                            &ps.f,
+                            &ps.v,
+                            &ps.fm,
+                            &ps.vm,
+                            d,
+                            o,
+                            &mut rows,
+                            law.is_some(),
+                        )
                     }
                     None => false,
                 };
@@ -1457,7 +1659,8 @@ mod tests {
         side: [f64; 2],
     ) -> GnStation {
         let tr = Trunc::new(0, 0).unwrap();
-        gn_solve_station(k, faces, leader, s, seed, r, side, tr, 1e-12).unwrap()
+        super::super::station::gn_solve_station(k, faces, leader, s, seed, r, side, tr, 1e-12)
+            .unwrap()
     }
 
     fn contains(i: Ivl, x: f64) -> bool {
@@ -1489,7 +1692,7 @@ mod tests {
         let a = station(&k, faces, &leader, sa, [r, len * sa, len * sa, r], rr, side);
         let b = station(&k, faces, &leader, sb, [r, len * sb, len * sb, r], rr, side);
         let n = 2;
-        let e = gn_enclose([&n1, &n2], &ln, &a, &b, rr, side, n, 4 + TAYLOR)
+        let e = gn_enclose([&n1, &n2], &ln, &a, &b, rr, side, n, 4 + TAYLOR, None)
             .unwrap()
             .expect("proved");
         assert!(contains(e.x[0].c[0][0], r) && contains(e.x[3].c[0][0], r));
@@ -1521,6 +1724,7 @@ mod tests {
             side,
             n,
             1e-6,
+            None,
             None,
         )
         .unwrap();
@@ -1649,7 +1853,7 @@ mod tests {
         // hold the closed form's, `(4! c[4][k])`
         let sm = 0.5 * (sa + sb);
         let ms = st(sm);
-        let em = gn_enclose([&np, &nc], &ln, &ms, &ms, rr, side, n, 4 + TAYLOR - 1)
+        let em = gn_enclose([&np, &nc], &ln, &ms, &ms, rr, side, n, 4 + TAYLOR - 1, None)
             .unwrap()
             .expect("proved at a point");
         let dm = leader.evaluate(sm, 4, true, false).unwrap()[4];
@@ -1698,6 +1902,7 @@ mod tests {
             n,
             target,
             None,
+            None,
         )
         .unwrap();
         let jets = h * h * h * h / 384.0 * (want[0][0] + want[0][1]);
@@ -1724,7 +1929,7 @@ mod tests {
                 .unwrap();
             l4l = l4l.max(Vec3::new(d[4].x, d[4].y, 0.0).length());
         }
-        let one = gn_enclose([&np, &nc], &ln, &a, &lb, rr, side, n, 4 + TAYLOR).unwrap();
+        let one = gn_enclose([&np, &nc], &ln, &a, &lb, rr, side, n, 4 + TAYLOR, None).unwrap();
         assert!(one.is_none());
         let long = gn_certify_span(
             &k,
@@ -1738,6 +1943,7 @@ mod tests {
             side,
             n,
             target,
+            None,
             None,
         )
         .unwrap();

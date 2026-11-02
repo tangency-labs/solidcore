@@ -208,9 +208,10 @@ fn generator_round(
             &[],
             [&o1, &o2],
             [&mut w1, &mut w2],
-            Some(CircleBall {
+            Some(&CircleBall {
                 radii: Some(radii),
                 ang_tol_rad: 0.1,
+                law: None,
             }),
         )
         .unwrap();
@@ -224,7 +225,7 @@ fn exact() -> FilletSurfaceGenerator {
 /// `Build` as the gate calls it, with a radius: (surface, bound, spans).
 fn build(k: &Kernel, radius: f64) -> (Option<Surface>, f64, usize, BSplineCurve) {
     let [mut r1, mut r2, mut w1, mut w2] = inputs(k);
-    let c = centre();
+    let mut c = centre();
     let (a, b) = (plane_a(), bump());
     let mut g = GnSectionFsg::circle(ArcSection {
         approximate_arcs: false,
@@ -233,12 +234,13 @@ fn build(k: &Kernel, radius: f64) -> (Option<Surface>, f64, usize, BSplineCurve)
     let s = g
         .build_given_ball(
             k,
-            &c,
+            &mut c,
             [&mut r1, &mut r2],
             1e-3,
             [&a, &b],
             [&mut w1, &mut w2],
             radius,
+            None,
         )
         .unwrap();
     (s, g.certified_bound, g.certified_spans, r1)
@@ -474,9 +476,10 @@ fn a_revolved_torus_stays_the_torus() {
             &[],
             [&o1, &o2],
             [&mut w1, &mut w2],
-            Some(CircleBall {
+            Some(&CircleBall {
                 radii: Some([R, R]),
                 ang_tol_rad: 0.1,
+                law: None,
             }),
         )
         .unwrap();

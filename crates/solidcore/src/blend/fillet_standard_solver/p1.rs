@@ -1723,6 +1723,24 @@ impl CurveBasedFs {
         self.original.as_ref()
     }
 
+    /// `SM_CAST_PTR(SmBSplineCurve, GetBaseCurve())` (the fork's 0d43b4c): the curve
+    /// `EvaluateBaseCurve` evaluates, the extended one where there is one, as a B-spline
+    /// curve (`None` where it is not one). A line is its B-spline part (its NURB); the
+    /// fork's copy of an `SmLine` keeps the line's own `Evaluate`.
+    ///
+    /// # Errors
+    ///
+    /// Those of a line's NURB.
+    pub fn base_b_spline_curve(&self) -> Result<Option<BSplineCurve>> {
+        if let Some(e) = &self.extended {
+            return Ok(Some(e.clone()));
+        }
+        match &self.original {
+            Some(c) => Ok(bspline_part(c)?.map(std::borrow::Cow::into_owned)),
+            None => Ok(None),
+        }
+    }
+
     /// `SetOriginalCurve`.
     pub fn set_original_curve(&mut self, curve: Option<Curve>) {
         self.original = curve;

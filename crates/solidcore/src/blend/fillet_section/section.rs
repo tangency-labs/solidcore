@@ -8,11 +8,18 @@
 //! `GetOrder`, `GetThumbweight`, `GetCertifiedBound`, `GetCertifiedSpans`) in
 //! `source/SMLib/inc/SmFilletSolver.h` and `source/SMLib/src/SmFilletSection.cpp`
 //! (tangency-labs/smlib@11ea2d9; the equal area thumbweight resolved at every station
-//! 7102bc5, any thumbweight below 1 b9d6a72); see [`super`] for the table.
+//! 7102bc5, any thumbweight below 1 b9d6a72; a ball whose radius varies, `SmGnLawRound`
+//! = [`GnLawRound`], 0d43b4c); see [`super`] for the table.
+//!
+//! Deviations (0d43b4c): the law round's leader is the edge's curve as a B-spline curve;
+//! a line edge's is its NURB, where the fork's copy of an `SmLine` evaluates by the
+//! line's own `Evaluate` (a rounding-level difference, not compared). `std::sort` of
+//! the solver's stations by t is the stable `sort_by` with `<`'s order (they differ only
+//! for equal t).
 
-use super::certificate::{arc_rows, gn_certify_span, GnVarying, NurbsCurve};
+use super::certificate::{arc_rows, gn_certify_span, law_series, GnLaw, GnVarying, NurbsCurve};
 use super::form::{gn_form, gn_form_normalized, hermite_knots, hermite_points_sided};
-use super::series::{Trunc, VSer};
+use super::series::{Ser, Trunc, VSer};
 use super::station::{
     gn_solve_station_with, smax, surface_partials, vec3, GnStation, Nurbs, StationOptions,
 };
@@ -21,6 +28,7 @@ use super::tay::{
     Ring, Tay,
 };
 use crate::error::{Result, SolidError};
+use crate::intersect::surface_intersector::p1::TsectPnt;
 use crate::kernel::Kernel;
 use crate::math::{Point2, Point3, Vec3, BIG_DOUBLE, PI};
 use crate::nurbs::b_spline_curve::{BSplineCurve, BSplineCurveForm, CanonicalData, KnotType};
@@ -109,6 +117,25 @@ pub struct GnFaces<'a> {
     pub uv: [&'a BSplineCurve; 2],
 }
 
+/// `SmGnLawRound` (0d43b4c): a round whose ball's radius varies, as the variable radius
+/// solver rolls it: the ball's centre in the plane square to `leader` (the edge's curve)
+/// at t, at the distance `law(t)` (its x) from both faces; `points` the solver's stations
+/// (their t in `user_doubles[0]`, their feet in `curve_parameter` on the uv curves), which
+/// seed `Build`'s.
+#[derive(Clone, Copy, Debug)]
+pub struct GnLawRound<'a> {
+    /// `pLeader`.
+    pub leader: &'a BSplineCurve,
+    /// `pLaw`.
+    pub law: &'a BSplineCurve,
+    /// `pPoints`.
+    pub points: &'a [TsectPnt],
+}
+
+/// What `Build` makes: the surface, and with a law and `bReplaceRails` the centre line it
+/// sets (the balls' centres at the stations, over t; 0d43b4c).
+type Built = (Surface, Option<BSplineCurve>);
+
 /// The surface under an offset surface (`GetBaseSurface`), else the surface itself.
 fn base_of(s: &Surface) -> &Surface {
     match s.kind() {
@@ -117,9 +144,10 @@ fn base_of(s: &Surface) -> &Surface {
     }
 }
 
-/// `sm_GnSolveStation(apFace, rCenterLine, s, seed, adR, adSide, sTr, tol, rStation, NULL,
+/// `sm_GnSolveStation(apFace, rLeader, s, seed, adR, adSide, sTr, tol, rStation, pR,
 /// n, pSides, NULL, NULL, bBefore)` as `Build` calls it since 3bc54a4: the section's jets
-/// of order n and up are the face curves' normal parts.
+/// of order n and up are the face curves' normal parts (`pR`: a radius law's series,
+/// 0d43b4c).
 #[allow(clippy::too_many_arguments)]
 fn solve_top(
     k: &Kernel,
@@ -134,9 +162,10 @@ fn solve_top(
     n: usize,
     sides: Option<[i32; 4]>,
     before: bool,
+    law: Option<&Ser<f64>>,
 ) -> Result<GnStation> {
     let opts = StationOptions {
-        law: None,
+        law,
         top: n,
         sides,
         before,
@@ -374,7 +403,9 @@ impl GnSectionFsg {
             true,
             0.0,
             false,
+            None,
         )?
+        .map(|(s, _)| s)
         .ok_or_else(|| SolidError::sm_err(OP))
     }
 
@@ -405,7 +436,9 @@ impl GnSectionFsg {
             false,
             0.0,
             false,
+            None,
         )?
+        .map(|(s, _)| s)
         .ok_or_else(|| SolidError::sm_err(OP))
     }
 
@@ -440,7 +473,9 @@ impl GnSectionFsg {
             replace_rails,
             radius,
             false,
+            None,
         )?
+        .map(|(s, _)| s)
         .ok_or_else(|| SolidError::sm_err(OP))
     }
 
@@ -455,18 +490,29 @@ impl GnSectionFsg {
     /// # Errors
     ///
     /// Those of `Build`.
+    ///
+    /// `law` (0d43b4c): a ball whose radius varies, its law and leader (`radius` unused);
+    /// the stations are then the solver's own and the leader's and law's knots between,
+    /// and the centre line becomes the balls' centres over t with the rails.
     #[allow(clippy::too_many_arguments)]
     pub fn build_given_ball(
         &mut self,
         k: &Kernel,
-        center: &BSplineCurve,
+        center: &mut BSplineCurve,
         rails: [&mut BSplineCurve; 2],
         tol: f64,
         faces: [&Surface; 2],
         uvs: [&mut BSplineCurve; 2],
         radius: f64,
+        law: Option<&GnLawRound<'_>>,
     ) -> Result<Option<Surface>> {
-        self.build(k, center, rails, tol, faces, uvs, true, radius, true)
+        let built = self.build(k, center, rails, tol, faces, uvs, true, radius, true, law)?;
+        Ok(built.map(|(s, c)| {
+            if let Some(c) = c {
+                *center = c;
+            }
+            s
+        }))
     }
 
     /// `Build`: the G^n blend surface between the rails, its stations the knots of the
@@ -489,7 +535,23 @@ impl GnSectionFsg {
         replace_rails: bool,
         radius: f64,
         feet_check: bool,
-    ) -> Result<Option<Surface>> {
+        law_round: Option<&GnLawRound<'_>>,
+    ) -> Result<Option<Built>> {
+        // a ball whose radius varies (the ball's circle only): its law r(t) and the curve
+        // whose planes square to it at t hold the ball's centre (the solver's), t the
+        // stations' parameter (0d43b4c)
+        if law_round.is_some() && self.order != 1 {
+            return Err(SolidError::invalid_input(
+                OP,
+                "a radius law is for the ball's circle",
+            ));
+        }
+        let gn_law = match law_round {
+            Some(l) => Some(GnLaw::of(l.law)?),
+            None => None,
+        };
+        let gn_law = gn_law.as_ref();
+        let leader: &BSplineCurve = law_round.map_or(center, |l| l.leader);
         let n = self.order;
         let exact_circle = n == 1 && self.arcs.is_exact_circle();
         if !exact_circle && !Self::is_valid(n, self.thumbweight) {
@@ -502,13 +564,81 @@ impl GnSectionFsg {
         // (the fork's 4a10ed8, opt-in: the surface is the blend by its definition)
         let definition = k.fixes.fillet_round_as_definition;
         let (c_min, c_max) = interval(center);
-        let scale = smax(1.0, c_max - c_min);
+        // the stations: the unique knots of the rails and the centre line; with a law, the
+        // solver's own stations' t (their feet the seeds) and the leader's and the law's
+        // knots between
+        let mut ss: Vec<f64> = Vec::new();
+        let mut law_seeds: Vec<[f64; 4]> = Vec::new(); // with a law: each station's seed
+        let mut law_foot: Vec<bool> = Vec::new(); // and whether it is one of the solver's
+        let mut law_cp: Vec<f64> = Vec::new(); // and then its parameter on the rails
+        let (mut i_min, mut i_max) = (c_min, c_max);
+        if let Some(lr) = law_round {
+            // each solver's station: its t, and its feet as the solver's uv curves hold
+            // them at its curve parameter (the rails' and uv curves' own, which is not t)
+            let mut pts: Vec<(f64, [f64; 5])> = Vec::new();
+            for p in lr.points {
+                let cp = p.curve_parameter;
+                let w0 = uvs[0].evaluate_point(cp)?;
+                let w1 = uvs[1].evaluate_point(cp)?;
+                let t = p.user_doubles.first().copied().unwrap_or(f64::NAN);
+                pts.push((t, [w0.x, w0.y, w1.x, w1.y, cp]));
+            }
+            // (std::sort by `<`)
+            pts.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap_or(core::cmp::Ordering::Equal));
+            let (Some(&(t_front, _)), Some(&(t_back, _))) = (pts.first(), pts.last()) else {
+                // "the round's stations have no length"
+                return Err(SolidError::sm_err(OP));
+            };
+            let has_length = t_back > t_front;
+            if pts.len() < 2 || !has_length {
+                // "the round's stations have no length"
+                return Err(SolidError::sm_err(OP));
+            }
+            i_min = t_front;
+            i_max = t_back;
+            let law_scale = smax(1.0, i_max - i_min);
+            let mut at: Vec<f64> = pts.iter().map(|p| p.0).collect();
+            for c in [lr.leader, lr.law] {
+                for kn in c.knots(None)?.0 {
+                    if kn > i_min + 1.0e-9 * law_scale && kn < i_max - 1.0e-9 * law_scale {
+                        at.push(kn);
+                    }
+                }
+            }
+            at.sort_by(|a, b| a.partial_cmp(b).unwrap_or(core::cmp::Ordering::Equal));
+            for &aj in &at {
+                if ss.last().is_some_and(|&b| aj - b <= 1.0e-9 * law_scale) {
+                    continue;
+                }
+                // the seed: the solver's station at t, or between the two about it
+                let mut kk = 0;
+                while pts.get(kk + 1).is_some_and(|p| p.0 <= aj) {
+                    kk += 1;
+                }
+                let (Some(&(tk, xk)), next) = (pts.get(kk), pts.get(kk + 1)) else {
+                    return Err(SolidError::sm_err(OP));
+                };
+                let mut x = xk;
+                let foot = (tk - aj).abs() <= 1.0e-9 * law_scale;
+                if let (false, Some(&(tk1, xk1))) = (foot, next) {
+                    let w = (aj - tk) / (tk1 - tk);
+                    for (xq, (&a, &b)) in x.iter_mut().zip(xk.iter().zip(&xk1)) {
+                        *xq = (1.0 - w) * a + w * b;
+                    }
+                }
+                ss.push(aj);
+                law_seeds.push([x[0], x[1], x[2], x[3]]);
+                law_foot.push(foot);
+                law_cp.push(x[4]);
+            }
+        }
+        let scale = smax(1.0, i_max - i_min);
         // the equal area thumbweight is resolved per station, from its own wedge
         let equal_area = self.thumbweight == GN_THUMBWEIGHT_EQUAL_AREA;
-
-        // the stations: the unique knots of the rails and the centre line
-        let mut ss: Vec<f64> = Vec::new();
         for c in [center, &*rail1, &*rail2] {
+            if law_round.is_some() {
+                break;
+            }
             let (lo, hi) = interval(c);
             if (lo - c_min).abs() > 1.0e-9 * scale || (hi - c_max).abs() > 1.0e-9 * scale {
                 // "the rails and the centre line run over different intervals"
@@ -516,8 +646,8 @@ impl GnSectionFsg {
             }
             ss.extend(c.knots(None)?.0);
         }
-        ss.sort_by(f64::total_cmp);
-        {
+        if law_round.is_none() {
+            ss.sort_by(f64::total_cmp);
             let mut unique: Vec<f64> = Vec::new();
             for &s in &ss {
                 if unique.last().is_none_or(|&b| s - b > 1.0e-9 * scale) {
@@ -532,10 +662,12 @@ impl GnSectionFsg {
             }
             ss = unique;
         }
-        let (Some(&s_first), true) = (ss.first(), ss.len() >= 2) else {
+        if ss.len() < 2 {
             // "the rails have no length"
             return Err(SolidError::sm_err(OP));
-        };
+        }
+        // (at the curves' own start: with a law their parameter is not t)
+        let s_first = c_min;
 
         // the offsets and the sides, at the first station: the centre line there is the
         // ball's centre
@@ -543,6 +675,10 @@ impl GnSectionFsg {
         let mut side = [0.0_f64; 2];
         {
             let m = center.evaluate_point(s_first)?;
+            let law_r = match law_round {
+                Some(l) => l.law.evaluate_point(i_min)?.x,
+                None => 0.0,
+            };
             let rl: [&BSplineCurve; 2] = [&*rail1, &*rail2];
             let rows = r
                 .iter_mut()
@@ -557,7 +693,13 @@ impl GnSectionFsg {
                 let off = m - rho;
                 // the ball's radius where the solver gives it (its offsets'), else as the
                 // rails stand off
-                *rf = if radius > 0.0 { radius } else { off.length() };
+                *rf = if law_round.is_some() {
+                    law_r
+                } else if radius > 0.0 {
+                    radius
+                } else {
+                    off.length()
+                };
                 *sf = if off.dot(nrm) >= 0.0 { 1.0 } else { -1.0 };
                 let has_radius = *rf > tol;
                 if !has_radius {
@@ -568,21 +710,45 @@ impl GnSectionFsg {
         }
 
         // every station's feet and their series: values and s-derivatives (sigma order
-        // 1), jets to order n (the ball's circle takes the rails and the centre only)
-        let tr = Trunc::new(1, if n >= 2 { n } else { 0 })?;
+        // 1), jets to order n (the ball's circle takes the rails and the centre only;
+        // with a law the centre to one order more, for the touch circle's m')
+        let tr = Trunc::new(
+            if law_round.is_some() { 2 } else { 1 },
+            if n >= 2 { n } else { 0 },
+        )?;
         let mut stations: Vec<GnStation> = Vec::new();
-        for &s in &ss {
-            let w0 = uvs[0].evaluate_point(s)?;
-            let w1 = uvs[1].evaluate_point(s)?;
-            let seed = [w0.x, w0.y, w1.x, w1.y];
+        for (j, &s) in ss.iter().enumerate() {
+            let seed = if law_round.is_some() {
+                law_seeds
+                    .get(j)
+                    .copied()
+                    .ok_or_else(|| SolidError::sm_err(OP))?
+            } else {
+                let w0 = uvs[0].evaluate_point(s)?;
+                let w1 = uvs[1].evaluate_point(s)?;
+                [w0.x, w0.y, w1.x, w1.y]
+            };
             // a constant ball: the station's centre on the centre line at the same offsets
-            let m = center.evaluate_point(s)?;
+            let m = leader.evaluate_point(s)?;
             let solve_tol = 1.0e-9 * smax(1.0, m.length());
-            // with a ball of a given radius (feet_check), a station that does not solve
-            // from the solver's rails (Newton from within the tolerance of a regular root
-            // converges) says the rails are not that ball's feet there (c596548)
+            let law_r = law_series(gn_law, s, tr.s(), false)?;
+            // with a ball of a given radius or law (feet_check), a station that does not
+            // solve from the solver's rails (Newton from within the tolerance of a regular
+            // root converges) says the rails are not that ball's feet there (c596548)
             let solved = solve_top(
-                k, faces, center, s, seed, r, side, tr, solve_tol, n, None, false,
+                k,
+                faces,
+                leader,
+                s,
+                seed,
+                r,
+                side,
+                tr,
+                solve_tol,
+                n,
+                None,
+                false,
+                law_r.as_ref(),
             );
             let st = match solved {
                 Ok(st) => st,
@@ -596,8 +762,17 @@ impl GnSectionFsg {
                 // a face's boundary, the ball rolling on its edge), which the caller
                 // builds otherwise (308cc40)
                 if feet_check {
+                    // with a law, the solver's stations' feet are (0d43b4c)
+                    if law_round.is_some() && !law_foot.get(j).copied().unwrap_or(false) {
+                        continue;
+                    }
+                    let at = if law_round.is_some() {
+                        law_cp.get(j).copied().unwrap_or(f64::NAN)
+                    } else {
+                        s
+                    };
                     let rail: &BSplineCurve = if f == 0 { rail1 } else { rail2 };
-                    if rail.evaluate_point(s)?.distance(rho) > tol {
+                    if rail.evaluate_point(at)?.distance(rho) > tol {
                         return Ok(None);
                     }
                     continue;
@@ -613,8 +788,9 @@ impl GnSectionFsg {
         }
 
         // the certificate
-        let (mut stations, bound, spans) =
-            self.certify(k, faces, center, stations, r, side, tr, tol, equal_area)?;
+        let (mut stations, bound, spans) = self.certify(
+            k, faces, leader, stations, r, side, tr, tol, equal_area, gn_law,
+        )?;
         self.certified_bound = bound;
         self.certified_spans = spans;
         let ss: Vec<f64> = stations.iter().map(|st| st.s).collect();
@@ -624,11 +800,12 @@ impl GnSectionFsg {
         // the certificate bounds (3bc54a4)
         for st in stations.iter_mut().skip(1) {
             let on = [0, 1, 2, 3].map(|q| param(st, q, 0, 0));
-            let m = center.evaluate_point(st.s)?;
+            let m = leader.evaluate_point(st.s)?;
+            let law_r = law_series(gn_law, st.s, tr.s(), true)?;
             let mut before = solve_top(
                 k,
                 faces,
-                center,
+                leader,
                 st.s,
                 on,
                 r,
@@ -638,6 +815,7 @@ impl GnSectionFsg {
                 n,
                 Some(st.before),
                 true,
+                law_r.as_ref(),
             )?;
             if equal_area {
                 gn_station_thumbweight(n, r[0] * r[1], &mut before)?;
@@ -701,14 +879,43 @@ impl GnSectionFsg {
                                 *x = Tay::of_terms(vec3_at(value, q), vec3_at(d, q));
                             }
                         }
-                        // the centre's s-derivative: the incoming one is the rail's less the
-                        // ball's turn, the same as the station's where the leader and faces
-                        // are smooth
+                        // the centre's s-derivatives, as the span the rows are for takes
+                        // them
                         let cv = st.v.a.get(q).map_or(f64::NAN, |c| c.at(0, 0));
                         let from = if l_in && st.sided { &st.vl } else { &st.v };
                         let cd = from.a.get(q).map_or(f64::NAN, |c| c.at(1, 0));
                         if let Some(x) = mc.get_mut(q) {
                             *x = Tay::of_terms(cv, cd);
+                            if law_round.is_some() {
+                                x.c[2] = from.a.get(q).map_or(f64::NAN, |c| c.at(2, 0));
+                            }
+                        }
+                    }
+                    if law_round.is_some() {
+                        // a varying ball: the circle it touches the envelope along, about
+                        // m + k m', k = (rho1 - m) . m' / m' . m' (0d43b4c)
+                        let mut dm = [Tay::<f64>::zero(); 3];
+                        for (dq, mq) in dm.iter_mut().zip(mc.iter_mut()) {
+                            *dq = Tay::of_terms(mq.c[1], 2.0 * mq.c[2]);
+                            mq.c[2] = 0.0;
+                        }
+                        let mut dd = Tay::<f64>::zero();
+                        let mut bd = Tay::<f64>::zero();
+                        for ((&dq, &mq), &r0q) in dm.iter().zip(&mc).zip(&rho[0]) {
+                            dd = dd + dq * dq;
+                            bd = bd + (r0q - mq) * dq;
+                        }
+                        let moving = dd.c[0] > 0.0;
+                        if !moving {
+                            // "the balls' centres stand still"
+                            return Err(SolidError::sm_err(OP));
+                        }
+                        let kk = bd / dd;
+                        for (mq, &dq) in mc.iter_mut().zip(&dm) {
+                            *mq = *mq + kk * dq;
+                            for c in mq.c.iter_mut().skip(2) {
+                                *c = 0.0;
+                            }
                         }
                     }
                     let [rho0, rho1] = &rho;
@@ -947,8 +1154,38 @@ impl GnSectionFsg {
                 uv.set_canonical(&uv_data)?;
             }
         }
+        // with a law the rails now run over t: the centre line too, the balls' centres at
+        // the stations (0d43b4c)
+        let mut new_center: Option<BSplineCurve> = None;
+        if replace_rails && law_round.is_some() {
+            let mut v = Vec::new();
+            let mut d = Vec::new();
+            let mut d_in = Vec::new();
+            for st in &stations {
+                let vin = if st.sided { &st.vl } else { &st.v };
+                let [x, y, z] = &st.v.a;
+                let [xi, yi, zi] = &vin.a;
+                v.push(Vec3::new(x.at(0, 0), y.at(0, 0), z.at(0, 0)));
+                d.push(Vec3::new(x.at(1, 0), y.at(1, 0), z.at(1, 0)));
+                d_in.push(Vec3::new(xi.at(1, 0), yi.at(1, 0), zi.at(1, 0)));
+            }
+            let cps = hermite_points_sided(&ss, &v, &d, &d_in);
+            let mut c = center.clone();
+            c.set_canonical(&CanonicalData {
+                dim: 3,
+                degree: 3,
+                control_points: &cps,
+                form: BSplineCurveForm::Unspecified,
+                knot_multiplicities: &u_mult,
+                knots: &u_knots,
+                knot_type: KnotType::Unspecified,
+                weights: None,
+                trim: None,
+            })?;
+            new_center = Some(c);
+        }
         if !definition {
-            return Ok(Some(Surface::from(surface)));
+            return Ok(Some((Surface::from(surface), new_center)));
         }
 
         // the blend by its definition on this net (4a10ed8): the faces, the ball's offsets
@@ -961,17 +1198,17 @@ impl GnSectionFsg {
             supports: faces,
             sides: side,
             offsets: r,
-            law: None,
+            law: law_round.map(|l| l.law),
             order: u32::try_from(n).map_err(|_| SolidError::sm_err(OP))?,
             thumbweight: self.thumbweight,
-            leader: center,
+            leader,
             seeds: [seed0, seed1],
             bound: self.certified_bound,
         };
         let blend = ProceduralBlend::create(k, &surface, &input, |order, w| {
             Self::is_valid(order as usize, w)
         })?;
-        Ok(Some(Surface::from(blend)))
+        Ok(Some((Surface::from(blend), new_center)))
     }
 
     /// The certificate block of `Build`: a station wherever a foot crosses a knot line of
@@ -990,6 +1227,7 @@ impl GnSectionFsg {
         tr: Trunc,
         tol: f64,
         equal_area: bool,
+        law: Option<&GnLaw<'_>>,
     ) -> Result<(Vec<GnStation>, f64, usize)> {
         let mut nurbs = Vec::new();
         for f in faces {
@@ -1060,6 +1298,8 @@ impl GnSectionFsg {
                             for (q2, sq) in seed.iter_mut().enumerate() {
                                 *sq = (1.0 - t) * param(a, q2, 0, 0) + t * param(b, q2, 0, 0);
                             }
+                            let tol_ds = solve_tol(ds)?;
+                            let law_r = law_series(law, ds, tr.s(), false)?;
                             let st = solve_top(
                                 k,
                                 faces,
@@ -1069,10 +1309,11 @@ impl GnSectionFsg {
                                 r,
                                 side,
                                 tr,
-                                solve_tol(ds)?,
+                                tol_ds,
                                 self.order,
                                 None,
                                 false,
+                                law_r.as_ref(),
                             )?;
                             let x = param(&st, q, 0, 0) - dk;
                             at = Some(st);
@@ -1102,6 +1343,8 @@ impl GnSectionFsg {
                                 *y = -after;
                             }
                             let on = [0, 1, 2, 3].map(|q2| param(&st, q2, 0, 0));
+                            let tol_on = solve_tol(st.s)?;
+                            let law_r = law_series(law, st.s, tr.s(), false)?;
                             let mut st = solve_top(
                                 k,
                                 faces,
@@ -1111,10 +1354,11 @@ impl GnSectionFsg {
                                 r,
                                 side,
                                 tr,
-                                solve_tol(st.s)?,
+                                tol_on,
                                 self.order,
                                 Some(ai_after),
                                 false,
+                                law_r.as_ref(),
                             )?;
                             st.before = ai_before;
                             next.push(st);
@@ -1170,6 +1414,7 @@ impl GnSectionFsg {
                         self.order,
                         target,
                         if equal_area { Some(&mut vary) } else { None },
+                        law,
                     )?;
                 }
                 let within = *bj <= target;
@@ -1202,6 +1447,8 @@ impl GnSectionFsg {
                 for (c, sc) in seed.iter_mut().enumerate() {
                     *sc = 0.5 * (param(a, c, 0, 0) + param(b, c, 0, 0));
                 }
+                let tol_mid = solve_tol(mid)?;
+                let law_r = law_series(law, mid, tr.s(), false)?;
                 let mut st = solve_top(
                     k,
                     faces,
@@ -1211,10 +1458,11 @@ impl GnSectionFsg {
                     r,
                     side,
                     tr,
-                    solve_tol(mid)?,
+                    tol_mid,
                     n,
                     None,
                     false,
+                    law_r.as_ref(),
                 )?;
                 if equal_area {
                     gn_station_thumbweight(n, rr, &mut st)?;
