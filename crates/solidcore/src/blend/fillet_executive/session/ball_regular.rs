@@ -827,7 +827,7 @@ pub fn ball_is_regular(
         return Ok(first);
     };
     let edge_id = eu::edge(target, edgeuse)?.ok_or_else(|| SolidError::null_pointer(OP))?;
-    let curve = edge::curve(target, edge_id)?
+    let curve = edge::evaluation_curve(target, edge_id)?
         .ok_or_else(|| SolidError::null_pointer(OP))?
         .clone();
     let ivl = edge::interval(target, edge_id)?;

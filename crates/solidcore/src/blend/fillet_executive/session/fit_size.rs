@@ -247,7 +247,8 @@ pub fn ball_through(
             .edgeuse(0)?
             .ok_or_else(|| SolidError::null_pointer(OP))?;
         let e = eu::edge(target, edgeuse)?.ok_or_else(|| SolidError::null_pointer(OP))?;
-        let curve = edge::curve(target, e)?.ok_or_else(|| SolidError::null_pointer(OP))?;
+        let curve =
+            edge::evaluation_curve(target, e)?.ok_or_else(|| SolidError::null_pointer(OP))?;
         let ivl = edge::interval(target, e)?;
         let dropped = curve.drop_point(
             k,
@@ -328,7 +329,7 @@ pub fn largest_size_on_its_faces(
             if e == blended {
                 continue;
             }
-            let Some(curve) = edge::curve(target, e)? else {
+            let Some(curve) = edge::evaluation_curve(target, e)? else {
                 continue;
             };
             let p0 = edge::vertex(target, e)?;
@@ -439,7 +440,7 @@ pub fn bands_meet_at(
         return Ok(None); // no single size: their radii differ
     }
     let e = eu::edge(target, edgeuse)?.ok_or_else(|| SolidError::null_pointer(OP))?;
-    let curve = edge::curve(target, e)?
+    let curve = edge::evaluation_curve(target, e)?
         .ok_or_else(|| SolidError::null_pointer(OP))?
         .clone();
     let ivl = edge::interval(target, e)?;
@@ -606,7 +607,8 @@ pub fn polygon_fit(
     let mut middle = Point3::new(0.0, 0.0, 0.0);
     let mut ends: Vec<(Point3, Point3)> = Vec::new();
     for &e in &edges {
-        let curve = edge::curve(target, e)?.ok_or_else(|| SolidError::null_pointer(OP))?;
+        let curve =
+            edge::evaluation_curve(target, e)?.ok_or_else(|| SolidError::null_pointer(OP))?;
         let ivl = edge::interval(target, e)?;
         let a = curve.evaluate_point(k, ivl.min())?;
         let b = curve.evaluate_point(k, ivl.max())?;
@@ -616,7 +618,8 @@ pub fn polygon_fit(
     // t (ax x + ay y + b) is edge i's ball radius at (x, y)
     let mut lines: Vec<[f64; 4]> = Vec::new();
     for (&e, &(pa, pb)) in edges.iter().zip(&ends) {
-        let curve = edge::curve(target, e)?.ok_or_else(|| SolidError::null_pointer(OP))?;
+        let curve =
+            edge::evaluation_curve(target, e)?.ok_or_else(|| SolidError::null_pointer(OP))?;
         let half = curve.evaluate_point(k, edge::interval(target, e)?.evaluate(0.5))?;
         // straight: its middle on the chord
         let chord = pb - pa;
@@ -744,7 +747,7 @@ pub fn circle_top_fit(
     let Some(e) = eu::edge(target, eu0)? else {
         return Ok(out);
     };
-    let Some(curve) = edge::curve(target, e)? else {
+    let Some(curve) = edge::evaluation_curve(target, e)? else {
         return Ok(out);
     };
     if !edge::is_closed(target, e)? {
