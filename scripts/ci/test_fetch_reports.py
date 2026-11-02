@@ -205,6 +205,21 @@ class FetchReportsTest(unittest.TestCase):
         self.assertEqual((self.dest / "notes.txt").read_text(), "keep")
         self.assertFalse((self.dest / "new.json").exists())
 
+    def test_destination_directory_named_json_is_preserved(self):
+        self.write_files(self.dest, {"old.json": "old", "notes.txt": "keep"})
+        (self.dest / "new.json").mkdir()
+        self.write_files(self.dest / "new.json", {"keep.txt": "subdir"})
+        self.stage("101", {"new.json": "new", "next.json": "next"})
+
+        result = self.run_script(FAKE_GH_RUNS="101")
+
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("refusing to replace directory", result.stderr)
+        self.assertEqual((self.dest / "old.json").read_text(), "old")
+        self.assertEqual((self.dest / "notes.txt").read_text(), "keep")
+        self.assertEqual((self.dest / "new.json/keep.txt").read_text(), "subdir")
+        self.assertFalse((self.dest / "next.json").exists())
+
     def test_publish_failure_rolls_back_the_previous_set(self):
         self.write_files(self.dest, {"a.json": "old-a", "b.json": "old-b",
                                      "extra.txt": "keep", "times.tsv": "old\n"})
