@@ -349,3 +349,60 @@ fn only_the_exact_circle_is_built() {
         );
     }
 }
+
+/// #2388: a round rebuilt from its record is certified again within its bound (the
+/// certificate's and the net's precision): the root round, the square corner, and the
+/// root round's net cut at u = 0.4, reversed in u, swapped and reparametrized (each a piece
+/// of the same Hermite net). A net moved three bounds off its definition at one control
+/// point is refused.
+#[test]
+fn a_rebuilt_round_is_certified_again_and_a_moved_net_refused() {
+    use solidcore::geom::extent2d::Extent2d;
+    use solidcore::nurbs::b_spline_surface::SurfParamType;
+    use solidcore::surface::procedural_blend::convert::{rebuild, to_record};
+    let k = kernel(true);
+    let blend = |s: &Surface| match s.kind() {
+        SurfaceKind::ProceduralBlend(pb) => (**pb).clone(),
+        other => panic!("not a blend: {other:?}"),
+    };
+    for (name, (s, certified, _)) in [("root", root_round(&k)), ("corner", corner_round(&k))] {
+        let pb = blend(&s);
+        let bound = pb.bound();
+        // the certificate's, and the net's rounding off its rows (at least 16 ulps of it)
+        assert!(
+            bound > certified && bound - certified < 1e-13,
+            "{name}: {bound:e}"
+        );
+        let got = pb.recertify(&k).unwrap();
+        assert!(got <= bound, "{name}: {got:e} over {bound:e}");
+        let rec = to_record(&k, &pb).unwrap();
+        let back = rebuild(&k, &rec).unwrap();
+        assert!(back.recertify(&k).unwrap() <= bound, "{name}");
+        // one interior control point of the net moved off by three bounds: the net is
+        // no longer proved within its bound
+        let mut bad = rec.clone();
+        let i = bad.net.points.len() / 2;
+        let w = bad.net.weights.as_ref().map_or(1.0, |w| w[i]);
+        bad.net.points[i][2] += 3.0 * bound * w;
+        assert!(rebuild(&k, &bad).is_err(), "{name}: a moved net was taken");
+    }
+    let (s, _, _) = root_round(&k);
+    let bound = blend(&s).bound();
+    let (l, r) = s.split_at(&k, 0.4, SurfParamType::U).unwrap();
+    let mut pieces = vec![("left", blend(&l)), ("right", blend(&r))];
+    let mut reversed = blend(&s);
+    reversed.reverse(SurfParamType::U).unwrap();
+    pieces.push(("reversed", reversed));
+    let mut swapped = Surface::from(blend(&s));
+    swapped.swap_uv(&k).unwrap();
+    pieces.push(("swapped", blend(&swapped)));
+    let mut moved = blend(&s);
+    moved
+        .reparameterize(&Extent2d::from_bounds(2.0, -1.0, 5.0, 3.0))
+        .unwrap();
+    pieces.push(("reparametrized", moved));
+    for (name, pb) in pieces {
+        let got = pb.recertify(&k).unwrap();
+        assert!(got <= bound, "{name}: {got:e} over {bound:e}");
+    }
+}

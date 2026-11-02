@@ -263,3 +263,52 @@ fn a_pipe_root_round_is_its_definition() {
     fillet_edges(&mut k, &mut b, &[e], 2.0, 2, 2, GN_DEFAULT_THUMBWEIGHT).unwrap();
     check("pipe", &k, &mut b, &FORK, 60.0);
 }
+
+/// The chamfered box with its two G^n rounds by definition (`a_gn_round_is_its_definition`).
+fn chamfered_box(k: &mut Kernel) -> Brep {
+    let mut b = create_box(k, Point3::new(0.0, 0.0, 0.0), 40.0, 30.0, 20.0).unwrap();
+    let c = pick(k, &b, [20.0, 30.0, 20.0]);
+    fillet_edges(k, &mut b, &[c], 5.0, 0, 2, 0.0).unwrap();
+    let both = [
+        pick(k, &b, [20.0, 25.0, 20.0]),
+        pick(k, &b, [20.0, 0.0, 0.0]),
+    ];
+    fillet_edges(k, &mut b, &both, 2.0, 2, 2, GN_DEFAULT_THUMBWEIGHT).unwrap();
+    b
+}
+
+/// #2388: a body whose G^n rounds are rebuilt from their records (the reopened body) is
+/// certified again face by face; one whose round's net was moved off its definition is
+/// refused, naming that face.
+#[test]
+fn a_reopened_body_s_rounds_are_certified_again_and_a_bad_one_is_named() {
+    use solidcore::surface::procedural_blend::convert::{from_record, rebuild, to_record};
+    use solidcore::surface::procedural_blend::recertify_faces;
+    let mut k = kernel(true);
+    let mut b = chamfered_box(&mut k);
+    let mut rounds = Vec::new();
+    for &f in b.face_list() {
+        if let Some(SurfaceKind::ProceduralBlend(pb)) =
+            b.face(f).unwrap().surface.as_ref().map(Surface::kind)
+        {
+            rounds.push((f, to_record(&k, pb).unwrap()));
+        }
+    }
+    assert_eq!(rounds.len(), 2);
+    for (f, rec) in &rounds {
+        let back = rebuild(&k, rec).unwrap();
+        assert!(back.recertify(&k).unwrap() <= rec.definition.bound);
+        b.face_mut(*f).unwrap().surface = Some(Surface::from(back));
+    }
+    recertify_faces(&k, &b).unwrap();
+    // the second round's net moved by three bounds at one control point
+    let (f, rec) = &rounds[1];
+    let mut bad = rec.clone();
+    let i = bad.net.points.len() / 2;
+    let w = bad.net.weights.as_ref().map_or(1.0, |w| w[i]);
+    bad.net.points[i][0] += 3.0 * bad.definition.bound * w;
+    assert!(rebuild(&k, &bad).is_err());
+    b.face_mut(*f).unwrap().surface = Some(Surface::from(from_record(&k, &bad).unwrap()));
+    let e = recertify_faces(&k, &b).unwrap_err();
+    assert_eq!(e.entity(), Some(solidcore::EntityRef::Face(*f)), "{e}");
+}

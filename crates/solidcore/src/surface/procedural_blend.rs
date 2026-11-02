@@ -23,6 +23,7 @@
 //! | [`ProceduralBlend::evaluate_definition`]     | `EvaluateDefinition` ([`crate::blend::fillet_section::definition`]) |
 //! | [`PROCEDURAL_BLEND_TYPE`], [`BLEND_MAX_DEPTH`] | `SmProceduralBlend_TYPE`, `SM_BLEND_MAX_DEPTH` |
 //! | [`NetScope`], [`NetScope::is_active`]        | `SmBlendNetScope`, `IsActive`                |
+//! | [`ProceduralBlend::recertify`], [`recertify_faces`] | not in the fork (#2388; the Ball's `SmBallPatch::IsOnSphere` is its counterpart) |
 //! | [`record`], [`convert`]                      | not in the fork (#2388: the definition as plain data) |
 //! | [`BlendCounts`]                              | `SmBlendCounts` (`GetCounts`, `ResetCounts` on [`crate::kernel::Kernel`]) |
 //!
@@ -73,7 +74,7 @@ const OP_EVAL_SIMPLE: &str = "surface::procedural_blend::ProceduralBlend::evalua
 const OP_REPARAM: &str = "surface::procedural_blend::ProceduralBlend::reparameterize";
 const OP_TRANSFORM: &str = "surface::procedural_blend::ProceduralBlend::transform";
 const OP_READ: &str = "surface::procedural_blend::ProceduralBlend::read_from_db";
-const OP_RECERTIFY: &str = "surface::procedural_blend::ProceduralBlend::recertify";
+const OP_RECERTIFY: &str = "surface::procedural_blend::recertify_faces";
 
 /// `SURF_BASE_TYPE` (`SmTypes.h`).
 const SURF_BASE_TYPE: i64 = 15000;
@@ -1089,6 +1090,30 @@ impl ProceduralBlend {
         self.renew();
         self.net.transform(rotate_n_move, scale)
     }
+}
+
+/// Re-certifies every face of `b` whose surface is a blend by its definition
+/// ([`ProceduralBlend::recertify`]), as a body rebuilt from a record must be before its
+/// faces are operands.
+///
+/// # Errors
+///
+/// `SM_ERR` naming the first face whose net is not proved within its bound of its
+/// definition (or is not a net of its definition's stations); those of the face lookups.
+pub fn recertify_faces(k: &Kernel, b: &crate::topology::Brep) -> Result<()> {
+    for &f in b.face_list() {
+        let Some(surface) = b.face(f)?.surface.as_ref() else {
+            continue;
+        };
+        if let SurfaceKind::ProceduralBlend(pb) = surface.kind() {
+            pb.recertify(k).map_err(|_| SolidError::Upstream {
+                operation: OP_RECERTIFY,
+                code: crate::error::SM_ERR,
+                entity: Some(crate::error::EntityRef::Face(f)),
+            })?;
+        }
+    }
+    Ok(())
 }
 
 impl BlendDefinition {
