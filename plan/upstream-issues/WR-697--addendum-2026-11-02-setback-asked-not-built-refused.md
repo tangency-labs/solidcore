@@ -1,0 +1,12 @@
+Updates: WR-697
+
+#### WR-697 (update, 2026-11-02). A setback asked for at a corner the Setback does not build is dropped without a word
+- **Severity:** Wrong result (silent)
+- **Area:** Fillets (corners)
+- **Location:** `source/SMLib/src/SmFilletCorner.cpp`, `SmFilletCorner::Create` (the fork's, after `SmBlendCorner::ClassifyBall` and `ClassifySetBack`) and `SmFilletConvexNxNCorner::MakeCornerTopology` (its setback branches deleted at dc757a6).
+- **What happens:** with `SmFilletExecutive::SetSetBackFill` a caller asks for a corner to be set back. Where the corner is not the blend corner's Setback (curved faces or edges, blends of mixed kinds, or a regular apex of four or more equal rounds, which is the Ball unless the vertex is also an `AddSetBackVertex`), it goes to the Ball or to the N x N corner. Since dc757a6 the N x N corner has no setback path, so `m_dSetBackDist` is ignored and the corner is built as if no setback were asked for, with no error. The fork refuses this only in its capi (`round_edges`, `SMLIB_ERR_UNSUPPORTED`, dc757a6); its SMLib builds the corner without the setback.
+- **Source:** SolidCraft review of solidcore #2365 (the port of tangency-labs/smlib#125). This is solidcore-native, with no fork commit: solidcore does not port the fork's capi, so the refusal is made in the kernel.
+- **Rust port:** under the same opt-in `Kernel::fixes.fillet_blend_corner`: in `FilletSession::create_corners`, after the Ball and Setback classifications, a vertex with a `set_set_back_fill` request whose corner is not the Setback is `CornerCreation::Refused` with `FilletErrorType::CornerUnsupported` ("a setback is asked for at a corner that is not the blend corner's Setback"). It is decided from the request and the classification only. Without the flag nothing changes.
+- **Triggers:** the box [0, 40]^2 x [0, 20] less the cylinder r 20 about (40, 40); at (20, 40, 20) a top edge, the top arc and the vertical edge, all convex, rounded 2 and set back 4. The fork's SMLib at 18e96f1 builds 11 faces, volume 25658.4914490411, without the setback; solidcore now refuses it.
+- **Confirmed:** in solidcore. Without the flag the pinned setback corner is built (16 faces), as before.
+- **Tests:** `crates/solidcore/tests/fork_smlib125_open_setbacks.rs`, `setback_asked_where_the_setback_is_not_built_is_refused` (flag on: refused; flag off: the pinned corner). It fails without the change (the corner was built).

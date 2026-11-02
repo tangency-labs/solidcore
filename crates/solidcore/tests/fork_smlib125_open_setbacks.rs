@@ -5,8 +5,9 @@
 //! quadratic halves at its base point `B = (P + 2 X + Q) / 4` (`OpenSetBackSprings`), and the
 //! executive trims the rounds at their creases with those curves imprinted on the faces, so
 //! the hole's `3 n` edges stay free. A concave round's sheet lies in the void it fills
-//! (ce748fa). With the flag an `NxN` corner the Setback does not build ignores its setback
-//! (dc757a6: the old `NxN` setback paths are gone). Without the flag the pinned corners.
+//! (ce748fa). With the flag a corner asked to be set back that is not the Setback is refused
+//! (the old `NxN` setback paths are gone, dc757a6; the refusal is solidcore's, the fork's
+//! is in its capi). Without the flag the pinned corners.
 //!
 //! The bodies and expected values are those of the fork's capi tests
 //! `setback_open_g1_box_corner_hole` and `setback_open_concave_notch_hole` (cb2a478
@@ -27,10 +28,8 @@ use solidcore::blend::fillet_executive::session::FilletSession;
 use solidcore::blend::fillet_solver::p1::FilletSurfaceGeneratorType;
 use solidcore::boolean::api_brep::boolean_difference;
 use solidcore::curve::curve::p2::CurveKind;
-use solidcore::geom::attribute::{AttributeStore, ObjectKey};
 use solidcore::geom::global_solver::SolverOperation;
 use solidcore::kernel::UpstreamFixes;
-use solidcore::mass::integrator::properties::{brep_volume, PropertyAttributes};
 use solidcore::math::{Point3, BIG_DOUBLE};
 use solidcore::primitive::api_primitives::create_box;
 use solidcore::query::api_queries::{get_edges, get_faces};
@@ -135,15 +134,6 @@ fn blend(
         code,
         comment,
     }
-}
-
-fn volume(k: &Kernel, b: &mut Brep) -> f64 {
-    let store = AttributeStore::default();
-    let attrs = PropertyAttributes {
-        store: &store,
-        key_of: &|_| ObjectKey(0),
-    };
-    brep_volume(k, b, 1e-12, &attrs).unwrap()
 }
 
 /// Faces, edges and vertices of `b`.
@@ -312,11 +302,13 @@ fn corner_face_between_adding_and_removing_blends_is_refused() {
 
 /// The box [0, 40]^2 x [0, 20] less the cylinder r 20 about (40, 40): at (20, 40, 20) a top
 /// edge, the top arc and the vertical edge, all convex, one curved (no Setback), rounded 2
-/// and set back 4. With the flag the `NxN` corner has no setback path (dc757a6) and ignores
-/// the setback: the same body as the fork's SMLib at 18e96f1 run on it (11 faces, volume
-/// 25658.4914490411). Without the flag the pinned setback corner (16 faces).
+/// and set back 4. With the flag the corner is not the Setback and the `NxN` corner has no
+/// setback path (dc757a6), so the setback asked for is refused (`CornerUnsupported`;
+/// solidcore-native: the fork's SMLib at 18e96f1 builds the corner without its setback, 11
+/// faces, volume 25658.4914490411, and only its capi refuses). Without the flag the pinned
+/// setback corner (16 faces).
 #[test]
-fn setback_asked_where_the_setback_is_not_built_is_ignored() {
+fn setback_asked_where_the_setback_is_not_built_is_refused() {
     use solidcore::primitive::api_primitives::create_cylinder;
     let at = [
         [10.0, 40.0, 20.0],
@@ -329,15 +321,20 @@ fn setback_asked_where_the_setback_is_not_built_is_ignored() {
         let cyl = create_cylinder(&mut k, Point3::new(40.0, 40.0, -5.0), 20.0, 30.0).unwrap();
         let b = boolean_difference(&mut k, bx, cyl).unwrap();
         let r = blend(&mut k, b, &at, 2.0, [20.0, 40.0, 20.0], 4.0, false);
-        assert_eq!(r.event, Some(None));
-        assert_eq!(r.code, 0, "{}", r.comment);
-        let mut b = r.body.expect("a body");
-        stitch_and_orient(&mut k, &mut b, &StitchAndOrientOptions::default()).unwrap();
         if blend_on {
-            assert_eq!(counts(&b), (11, 24, 15));
-            let v = volume(&k, &mut b);
-            assert!((v - 25658.4914490411).abs() <= 1e-13 * v, "{v}");
+            assert_eq!(r.event, None);
+            assert!(r.body.is_none());
+            assert_eq!(r.code, 9, "{}", r.comment); // CornerUnsupported
+            assert!(
+                r.comment.contains("not the blend corner's Setback"),
+                "{}",
+                r.comment
+            );
         } else {
+            assert_eq!(r.event, Some(None));
+            assert_eq!(r.code, 0, "{}", r.comment);
+            let mut b = r.body.expect("a body");
+            stitch_and_orient(&mut k, &mut b, &StitchAndOrientOptions::default()).unwrap();
             assert_eq!(counts(&b), (16, 39, 25));
         }
     }

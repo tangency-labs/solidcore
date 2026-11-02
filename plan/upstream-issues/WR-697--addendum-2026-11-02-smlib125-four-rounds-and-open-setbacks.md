@@ -77,8 +77,9 @@ Updates: WR-697, WR-616
   NxN corners have no setback branch. A setback asked at a corner the Setback does not
   build (here a corner with a curved edge) is ignored by the corner's topology; SMLib at
   `18e96f1` returns no error there. The fork's capi refuses such a request
-  (`SMLIB_ERR_UNSUPPORTED`), but that check is in capi, so it is not ported. Without the
-  flag the pinned setback paths stay.
+  (`SMLIB_ERR_UNSUPPORTED`); that check is in capi, so it is not ported, and solidcore
+  refuses it in the kernel instead (`WR-697--addendum-2026-11-02-setback-asked-not-built-refused.md`).
+  Without the flag the pinned setback paths stay.
 - **Checked against the fork:** a driver built on the fork's SMLib and SM_API at `18e96f1`
   (`SmFilletExecutive` with `SetSetBackFill`, keep-features on) gives the same results as
   solidcore for the regression cases: the open box corner (sheet 9/27/19, 9 free edges, the
