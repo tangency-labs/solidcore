@@ -77,6 +77,8 @@ fn cache_kernel(k: &Kernel, context: &Context) -> Kernel {
         blend_last_serial: core::cell::Cell::new(k.blend_last_serial.get()),
         // (the memo is the kernel's own: a copy starts empty and solves afresh)
         blend_station_memo: core::cell::RefCell::default(),
+        // (building cache trees does none of the counted work)
+        work_counters: crate::kernel::WorkCounters::default(),
     }
 }
 
