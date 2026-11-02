@@ -1,16 +1,21 @@
 //! The blend corner's Ball: three constant rounds of one radius `r` and one convexity at
-//! a vertex of three planes end on great circles of the one ball touching the three
-//! planes, and the corner's face is that ball's spherical triangle between the contacts,
-//! one rational patch exactly on the sphere, G1 to every round.
+//! a vertex of three faces, each a plane or a natural quadric (a sphere, a cylinder or a
+//! cone), end on great circles of the one ball touching the three faces, and the corner's
+//! face is that ball's spherical triangle between the contacts, one rational patch exactly
+//! on the sphere, G1 to every round.
 //!
 //! Upstream: none (pinned SMLib builds such a vertex as a 3x3 corner's Coons patch). The
 //! fork's `source/SMLib/src/SmBlendCornerBall.cpp`, `source/SMLib/inc/SmBlendCorner.h`
-//! (tangency-labs/smlib 79d4763, a6243fa, f8e6709, 4241a1b, unchanged to 5e8c9c1; smlib#79
-//! step 4c). From the fork's file head: the ball of radius `r` touching the three planes
-//! `F_i` (unit normals `n_i`) is centred at `C`, `n_i . C = n_i . p_i + s_i r` on the side
-//! the rounds' balls roll; it touches `F_i` at `P_i = C - s_i r n_i`. The round between
-//! `F_i` and `F_j` ends on its section through `C`, from `P_i` to `P_j`: all three end
-//! sections are great circles of the sphere about `C`.
+//! (tangency-labs/smlib 79d4763, a6243fa, f8e6709, 4241a1b; smlib#79 step 4c; the curved
+//! faces 7048946, smlib#110; unchanged to dda881f). From the fork's file head: the ball of
+//! radius `r` touching the three faces `F_i` is centred at `C`, where the faces' offsets by
+//! `r` meet on the side the rounds' balls roll (the triple offset point); it touches `F_i`
+//! at `P_i = C - s_i r n_i`, `n_i` the offset's normal at `C`. The round between `F_i` and
+//! `F_j` ends on its section through `C`, from `P_i` to `P_j`, in the plane of `n_i` and
+//! `n_j` whatever the faces: all three end sections are great circles of the sphere about
+//! `C`. Where two faces or more are planes, `C` is in closed form (the offset planes' line
+//! meets the third offset); otherwise Newton's method, the root taken only where a
+//! Krawczyk test proves it the one root within rounding of the part's size.
 //!
 //! | Rust                         | Fork                                                  |
 //! |------------------------------|-------------------------------------------------------|
@@ -21,6 +26,8 @@
 //! | [`ball_corner_edge_geom`]    | `SmBlendCorner::BuildBallSurface` (`CalcCornerEdgeGeom`'s Ball part) |
 //! | [`create_ball_patch`]        | `SmBlendCorner::CreateBallPatch`                      |
 //! | `ball_centre` (private)      | `SmBlendCorner::BallCentre`                           |
+//! | `ball_face_quadric` (private) | `sm_BallFaceQuadric`                                 |
+//! | `BallImplicit`, `ball_inverse`, `ball_certified_root` (private) | `SmBallImplicit`, `sm_BallInverse`, `sm_BallCertifiedRoot` |
 //! | `ball_triangle_patch` (private) | `sm_BallTrianglePatch`                             |
 //! | `ring_faces` (private)       | `sm_BallRingFaces`                                    |
 //! | `BallPoly`, `choose`, `times`, `sum` (private) | `SmBallPoly`, `sm_Choose`, `sm_BallTimes`, `sm_BallSum` |
@@ -33,7 +40,8 @@
 //! refusals are checked before the face takes the net. The patch and its loop are kept in
 //! [`BallCorner`] from the edge geometry until the patch takes them. The fork's
 //! `SmFilletExecutive::IsSetBackVertex` is the caller's `set_back` argument. Opt-in:
-//! `Kernel::fixes.fillet_blend_corner` (WR-697). No recursion.
+//! `Kernel::fixes.fillet_blend_corner` (WR-697). No recursion; the certified root's Newton
+//! loop is bounded at 50 steps, as the fork's.
 
 use crate::blend::blend_corner::BlendCornerEvent;
 use crate::blend::fillet_corner::p1::face_by_two_edgeuses;
@@ -356,19 +364,20 @@ fn offset_radius(solver: &FilletSolver, rail: usize, op: &'static str) -> Result
     Ok(slot.surface.offset_distance().abs())
 }
 
-/// `SmBlendCorner::ClassifyBall` (the fork's 79d4763, a6243fa): whether a filleted
-/// vertex is a Ball. Every edge there is blended (three solver edge uses, `all_eus` the
-/// corner's ring of three), each a constant circular round of the same radius (within
-/// the rounds' least tolerance), all convex or all concave, the three faces distinct
-/// planes meeting at a point, and the vertex not set back (`set_back`, the fork's
-/// `IsSetBackVertex`). [`BlendCornerEvent::Ball`] where it is, else
+/// `SmBlendCorner::ClassifyBall` (the fork's 79d4763, a6243fa, 7048946): whether the
+/// filleted `vertex` is a Ball. Every edge there is blended (three solver edge uses,
+/// `all_eus` the corner's ring of three), each a constant circular round of the same
+/// radius (within the rounds' least tolerance), all convex or all concave, the three faces
+/// distinct, each a plane or a natural quadric (a cylinder or sphere wider than the ball),
+/// their normals at the vertex independent, and the vertex not set back (`set_back`, the
+/// fork's `IsSetBackVertex`). [`BlendCornerEvent::Ball`] where it is, else
 /// [`BlendCornerEvent::None`] (the corner hierarchy builds it).
 ///
 /// # Errors
 ///
 /// [`SolidError::null_pointer`] for a missing edge or face surface the fork
 /// dereferences (`NER`); those of the solver lookups, the convexity test and the
-/// planarity test.
+/// quadric recognition.
 pub fn classify_ball(
     k: &Kernel,
     b: &mut Brep,
@@ -457,9 +466,9 @@ pub fn classify_ball(
     Ok(BlendCornerEvent::Ball)
 }
 
-/// `SmBlendCorner::BallCentre` (the fork's 4241a1b): the ball's centre, the planes'
-/// triple offset point solved from them (Cramer's rule), its radius and the contacts
-/// `P_i` with the three faces; checked to be the ball of round 0's section at vertex 0
+/// `SmBlendCorner::BallCentre` (the fork's 4241a1b, 7048946): the ball's centre, where the
+/// faces' offsets by the radius meet (in closed form where two or three are planes, else
+/// the certified root), its radius and the contacts `P_i` with the three faces; checked to be the ball of round 0's section at vertex 0
 /// and the contacts to be the corner's vertices.
 fn ball_centre(
     k: &Kernel,
