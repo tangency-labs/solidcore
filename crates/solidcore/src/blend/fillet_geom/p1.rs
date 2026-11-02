@@ -451,10 +451,14 @@ pub enum FilletVertexType {
     /// `SM_FV_UNKNOWN`.
     #[default]
     Unknown = 13,
-    /// The fork's `SM_FV_PRECOMPUTED` (61547af; smlib#104): placed by its corner's own
-    /// build (a setback fill's base point). Its discriminant is the fork's value (14, after
-    /// `SM_FV_JOIN_SECTION` 13 at b5bb747); not in the pinned enum, so [`Self::from_code`]
-    /// has no code for it.
+    /// The fork's `SM_FV_JOIN_SECTION` (543d25a; WR-697): a Join's shared section, its end
+    /// on the first blend's side (`CalcJoinSection`). Fork `SM_FV_JOIN_SECTION` = 13;
+    /// renumbered to 16 because 13 is the pinned `SM_FV_UNKNOWN`. Not in the pinned enum,
+    /// so it has no upstream code ([`Self::from_code`]).
+    JoinSection = 16,
+    /// = fork `SM_FV_PRECOMPUTED` (61547af; smlib#104; fork value 14): placed by its
+    /// corner's own build (a setback fill's base point). Not in the pinned enum, so it has
+    /// no upstream code ([`Self::from_code`]).
     Precomputed = 14,
 }
 
@@ -2744,6 +2748,7 @@ pub fn evaluate_mate(k: &Kernel, brep: &Brep, face: FaceId, uv: Point2) -> Resul
             | SurfaceKind::Sphere(_)
             | SurfaceKind::Torus(_)
             | SurfaceKind::ProceduralBlend(_)
+            | SurfaceKind::BallPatch(_)
     ) {
         return Err(SolidError::null_pointer(OP_EVALUATE_MATE));
     }
@@ -2761,6 +2766,8 @@ pub fn evaluate_mate(k: &Kernel, brep: &Brep, face: FaceId, uv: Point2) -> Resul
             SurfaceKind::Torus(s) => s.base().base().evaluate_point_on_extended_surface(uv),
             // (the fork's SmProceduralBlend: the net's extension, NLib on its NURB)
             SurfaceKind::ProceduralBlend(pb) => pb.net().evaluate_point_on_extended_surface(uv),
+            // (the fork's SmBallPatch is an SmBSplineSurface too: its net)
+            SurfaceKind::BallPatch(pb) => pb.net().evaluate_point_on_extended_surface(uv),
             _ => Err(SolidError::null_pointer(OP_EVALUATE_MATE)),
         }
     }
@@ -3838,6 +3845,8 @@ fn b_spline_net_mut(surface: &mut Surface) -> Option<&mut BSplineSurface> {
         SurfaceKind::SurfOfExtrusion(s) => Some(s.base_mut()),
         // (the fork's SmProceduralBlend: its net's control points)
         SurfaceKind::ProceduralBlend(pb) => Some(pb.net_mut()),
+        // (the fork's SmBallPatch is an SmBSplineSurface too: its net)
+        SurfaceKind::BallPatch(pb) => Some(pb.net_mut()),
         _ => None,
     }
 }
