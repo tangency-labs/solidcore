@@ -325,10 +325,9 @@ pub(super) fn calculate_bounding_box(
 ) -> Result<BoundingBoxes> {
     match surface.kind_with_nurb(k)? {
         SurfaceKind::BSpline(b) => b.calculate_bounding_box(k, domain, req),
-        SurfaceKind::ProceduralBlend(pb) => {
-            let b = pb.net();
-            b.calculate_bounding_box(k, domain, req)
-        }
+        // SmProceduralBlend::CalculateBoundingBox (the virtual one the cache calls on its
+        // surface): the net's boxes grown by the bound
+        SurfaceKind::ProceduralBlend(pb) => pb.calculate_bounding_box(k, domain, req, surface),
         // inherited from SmBSplineSurface, run for the derived surface (its IsKindOf
         // and virtual EvaluateNormal)
         SurfaceKind::Cone(s) => {

@@ -168,6 +168,7 @@ pub(super) fn implicit_iso(
     | SurfaceKind::Cone(_)
     | SurfaceKind::Sphere(_)
     | SurfaceKind::Torus(_)
+    | SurfaceKind::ProceduralBlend(_)
     | SurfaceKind::CurveBounded(_)
     | SurfaceKind::Step(_)
     | SurfaceKind::OffsetSurface(_)

@@ -2252,9 +2252,41 @@ impl Surface {
     pub fn max_analytic_domain(&self, k: &Kernel) -> Result<Extent2d> {
         match self.kind() {
             SurfaceKind::BSpline(s) => s.max_analytic_domain(k),
+            // SmBSplineSurface::GetMaxAnalyticDomain run for the blend: its IsPlanar takes
+            // the blend's own box, its IsClosed the definition's points
             SurfaceKind::ProceduralBlend(pb) => {
-                let s = pb.net();
-                s.max_analytic_domain(k)
+                let net = pb.net();
+                let mut dom = net.natural_uv_domain();
+                if self.is_planar(k, EFF_ZERO)?.is_planar {
+                    dom.expand_relative(100.0);
+                    return Ok(dom);
+                }
+                let closed = |dir| -> Result<bool> {
+                    Ok(crate::surface::surface::p7::base_is_closed(
+                        k, self, &dom, dir, None, false,
+                    )?
+                    .0)
+                };
+                let mut u_dom = dom.u_interval();
+                if !closed(SurfParamType::U)? {
+                    crate::nurbs::b_spline_surface::p2::expand_by_degree(
+                        &mut u_dom,
+                        net.degree(SurfParamType::U),
+                    );
+                }
+                let mut v_dom = dom.v_interval();
+                if !closed(SurfParamType::V)? {
+                    crate::nurbs::b_spline_surface::p2::expand_by_degree(
+                        &mut v_dom,
+                        net.degree(SurfParamType::V),
+                    );
+                }
+                Ok(Extent2d::from_bounds(
+                    u_dom.min(),
+                    v_dom.min(),
+                    u_dom.max(),
+                    v_dom.max(),
+                ))
             }
             SurfaceKind::CurveBounded(_) | SurfaceKind::Step(_) => Ok(base_max_analytic_domain()),
             SurfaceKind::SrfInVolume(s) => s.max_analytic_domain(k),
@@ -3257,12 +3289,18 @@ impl Surface {
                 dist,
                 extension_continuity,
             )?)),
+            // SmBSplineSurface's: the net extended, its singularity and closure tests
+            // (virtual, on the blend) taking the definition's points
             SurfaceKind::ProceduralBlend(pb) => {
-                let s = pb.net();
-                Ok(Self::from(s.create_extended_surface(
-                    k,
+                Ok(Self::from(pb.net().create_extended_surface_dispatched(
+                    SurfParamType::Both,
                     dist,
                     extension_continuity,
+                    &|uv| {
+                        self.is_singularity(k, uv, EFF_ZERO, false)
+                            .map(|r| (r.singular, r.direction))
+                    },
+                    &|domain, param| self.is_closed(k, domain, param, None, false).map(|r| r.0),
                 )?))
             }
             SurfaceKind::CurveBounded(_) | SurfaceKind::Step(_) | SurfaceKind::SrfInVolume(_) => {
@@ -3343,13 +3381,18 @@ impl Surface {
                 dist,
                 extension_continuity,
             )?)),
+            // SmBSplineSurface's: the net extended, its singularity and closure tests
+            // (virtual, on the blend) taking the definition's points
             SurfaceKind::ProceduralBlend(pb) => {
-                let s = pb.net();
-                Ok(Self::from(s.create_extended_surface_dir(
-                    k,
+                Ok(Self::from(pb.net().create_extended_surface_dispatched(
                     ext_direction,
                     dist,
                     extension_continuity,
+                    &|uv| {
+                        self.is_singularity(k, uv, EFF_ZERO, false)
+                            .map(|r| (r.singular, r.direction))
+                    },
+                    &|domain, param| self.is_closed(k, domain, param, None, false).map(|r| r.0),
                 )?))
             }
             SurfaceKind::CurveBounded(_) | SurfaceKind::Step(_) | SurfaceKind::SrfInVolume(_) => {

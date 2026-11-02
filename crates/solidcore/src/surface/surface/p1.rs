@@ -2215,16 +2215,10 @@ impl Surface {
                     SurfaceKind::BSpline(s) => s.calculate_bounding_box(k, uv_domain, &req)?,
                     SurfaceKind::Plane(p) => plane_bounding_box(k, p, uv_domain, &req)?,
                     // SmProceduralBlend::CalculateBoundingBox: the net's boxes grown by the
-                    // bound, so they hold the definition's points
+                    // bound, so they hold the definition's points; the analytic polar box
+                    // takes the blend's own (virtual) EvaluateNormal
                     SurfaceKind::ProceduralBlend(pb) => {
-                        let mut r = pb.net().calculate_bounding_box(k, uv_domain, &req)?;
-                        if let Some(b) = r.normal.as_mut() {
-                            b.expand_absolute(pb.bound());
-                        }
-                        if let Some(b) = r.pseudo.as_mut() {
-                            b.expand_absolute(pb.bound());
-                        }
-                        r
+                        pb.calculate_bounding_box(k, uv_domain, &req, self)?
                     }
                     // (SmBSplineSurface::CalculateBoundingBox reads the NURB through
                     // GetOrCreateGwNurbPointer, which makes a missing one)
@@ -2955,9 +2949,14 @@ impl Surface {
         let natural = self.natural_uv_domain_with_nurb(k)?;
         match self.kind_with_nurb(k)? {
             SurfaceKind::BSpline(s) => s.is_degenerate_point(k, tol_3d, uv_domain),
+            // SmBSplineSurface's: the net's test over the natural domain, the base body
+            // (its virtual evaluations reach the definition) over another
             SurfaceKind::ProceduralBlend(pb) => {
-                let s = pb.net();
-                s.is_degenerate_point(k, tol_3d, uv_domain)
+                if uv_domain.is_some_and(|d| !d.are_equal(&natural, EFF_ZERO)) {
+                    base_is_degenerate_point(k, self, tol_3d, uv_domain)
+                } else {
+                    pb.net().is_degenerate_point(k, tol_3d, uv_domain)
+                }
             }
             // inherited from SmBSplineSurface
             SurfaceKind::Cone(s) => {
@@ -3001,12 +3000,6 @@ impl Surface {
             SurfaceKind::BSpline(s) => {
                 s.is_degenerate_curve(k, angle_tol_deg, uv_domain, opt_3d_tol)
             }
-            SurfaceKind::ProceduralBlend(pb) => {
-                let s = pb.net();
-                {
-                    s.is_degenerate_curve(k, angle_tol_deg, uv_domain, opt_3d_tol)
-                }
-            }
             // inherited from SmBSplineSurface
             SurfaceKind::SurfOfRevolution(s) => {
                 s.base()
@@ -3032,7 +3025,10 @@ impl Surface {
                 p.base_for_query()
                     .is_degenerate_curve(k, angle_tol_deg, uv_domain, opt_3d_tol)
             }
-            SurfaceKind::Cone(_)
+            // (SmBSplineSurface::IsDegenerateCurve is the base body: a blend's virtual
+            // evaluations reach its definition)
+            SurfaceKind::ProceduralBlend(_)
+            | SurfaceKind::Cone(_)
             | SurfaceKind::CurveBounded(_)
             | SurfaceKind::Step(_)
             | SurfaceKind::OffsetSurface(_)

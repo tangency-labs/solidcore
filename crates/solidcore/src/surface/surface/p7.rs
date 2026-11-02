@@ -919,11 +919,28 @@ impl Surface {
             SurfaceKind::BSpline(s) => {
                 Ok(planar_of(k, s, &self.natural_uv_domain_with_nurb(k)?)?.is_planar(tol_3d))
             }
+            // SmSurface::IsPlanar on the blend's own (virtual) CalculateBoundingBox: the
+            // net's pseudo box grown by the bound; a box that fails is not planar (the
+            // fork's IsPlanar, the only one a blend meets)
             SurfaceKind::ProceduralBlend(pb) => {
-                let s = pb.net();
-                {
-                    Ok(planar_of(k, s, &self.natural_uv_domain_with_nurb(k)?)?.is_planar(tol_3d))
+                let req = BoundingBoxRequest {
+                    normal: false,
+                    pseudo: true,
+                    polar: false,
+                    pseudo_guess: None,
+                    polar_guess: None,
+                    expand_by_zone_tol: false,
+                    expand_tolerance: None,
+                };
+                let domain = self.natural_uv_domain_with_nurb(k)?;
+                let boxed = ignored(pb.calculate_bounding_box(k, &domain, &req, self))?
+                    .and_then(|b| b.pseudo);
+                let shown = boxed.is_some();
+                let mut planar = boxed.unwrap_or_else(PseudoBox::new).is_planar(tol_3d);
+                if !shown {
+                    planar.is_planar = false;
                 }
+                Ok(planar)
             }
             // SmSurfOfRevolution (and SmCone, SmSphere, SmTorus) inherit
             // SmBSplineSurface::CalculateBoundingBox

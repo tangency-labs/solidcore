@@ -421,3 +421,51 @@ fn partials_past_the_series_are_refused() {
     assert!(ea.evaluate_definition(&k, 0.5, 0.5, 5, 0).is_err());
     assert!(ea.evaluate_definition(&k, 0.5, 0.5, 4, 3).is_ok());
 }
+
+/// The `SmSurface` and `SmBSplineSurface` paths that call the blend's virtual
+/// evaluators and box (fork 0136260's values on the same definitions, whose net is the
+/// unit square z = 0): the box is the net's grown by the bound, so the blend is not
+/// planar within 1e-6 although its net is; the degeneracy tests, the largest analytic
+/// domain and the extension follow the fork's.
+#[test]
+fn the_base_class_paths_take_the_blend_s_box_and_points() {
+    use solidcore::geom::extent2d::Extent2d;
+    use solidcore::geom::geom_utility::p2::ContinuityType;
+    use solidcore::math::EFF_ZERO_DEG;
+    let k = kernel();
+    for (bumpy, n, w, law) in [
+        (false, 1, 0.0, false),
+        (true, 2, GN_THUMBWEIGHT_EQUAL_AREA, false),
+        (true, 1, 0.0, true),
+    ] {
+        let s = Surface::from(blend(&k, bumpy, n, w, law));
+        let nat = s.natural_uv_domain_with_nurb(&k).unwrap();
+        let b = s
+            .calculate_bounding_box(&k, &nat, [true, false, false], false)
+            .unwrap()
+            .normal_box
+            .unwrap();
+        assert!((b.min() - Point3::new(-0.001, -0.001, -0.001)).length() < 1e-15);
+        assert!(
+            (b.max() - Point3::new(1.0009999999999999, 1.0009999999999999, 0.001)).length() < 1e-15
+        );
+        assert!(!s.is_planar(&k, 1e-6).unwrap().is_planar);
+        assert!(s.is_planar(&k, 0.01).unwrap().is_planar);
+        let sub = Extent2d::from_bounds(0.2, 0.2, 0.8, 0.8);
+        assert!(!s.is_degenerate_point(&k, 1e-6, None).unwrap());
+        assert!(!s.is_degenerate_point(&k, 1e-6, Some(&sub)).unwrap());
+        assert!(!s.is_degenerate_curve(&k, EFF_ZERO_DEG, None, 1e-6).unwrap());
+        let m = s.max_analytic_domain(&k).unwrap();
+        assert_eq!(
+            (m.min().x, m.min().y, m.max().x, m.max().y),
+            (-100.0, -100.0, 101.0, 101.0)
+        );
+        let ext = s
+            .create_extended_surface(&k, 0.1, ContinuityType::G1)
+            .unwrap();
+        let ed = ext.natural_uv_domain_with_nurb(&k).unwrap();
+        assert!(close(ed.min().x, -0.1) && close(ed.max().y, 1.1));
+        let p0 = ext.evaluate_point(&k, ed.min()).unwrap();
+        assert!((p0 - Point3::new(-0.1, -0.1, 0.0)).length() < 1e-15);
+    }
+}

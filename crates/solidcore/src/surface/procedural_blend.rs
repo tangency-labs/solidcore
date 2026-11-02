@@ -50,7 +50,9 @@ use crate::geom::vector3d::{Point3, Vec3};
 use crate::kernel::Kernel;
 use crate::math::{Point2, EFF_ZERO};
 use crate::nurbs::b_spline_curve::BSplineCurve;
-use crate::nurbs::b_spline_surface::{BSplineSurface, SurfParamType};
+use crate::nurbs::b_spline_surface::{
+    BSplineSurface, BoundingBoxRequest, BoundingBoxes, SurfParamType,
+};
 use crate::nurbs::b_spline_surface_n_lib::p2::EvaluateFlags;
 use crate::nurbs::knots::Side;
 use crate::surface::surface::{Surface, SurfaceKind};
@@ -840,6 +842,33 @@ impl ProceduralBlend {
         let st = self.definition_parameters(uv);
         let d = self.evaluate_definition(k, st.x, st.y, 0, 0)?;
         Ok(entry(&d, 0, 0))
+    }
+
+    /// `CalculateBoundingBox`: the net's boxes (`SmBSplineSurface::CalculateBoundingBox`
+    /// run for `this`, the surface holding the blend, whose virtual `IsKindOf` and
+    /// `EvaluateNormal` the polar box takes) grown by the bound, so the normal and pseudo
+    /// boxes hold the definition's points.
+    ///
+    /// # Errors
+    ///
+    /// Those of the net's boxes.
+    pub fn calculate_bounding_box(
+        &self,
+        k: &Kernel,
+        uv_domain: &Extent2d,
+        req: &BoundingBoxRequest<'_>,
+        this: &Surface,
+    ) -> Result<BoundingBoxes> {
+        let mut r = self
+            .net
+            .calculate_bounding_box_of(k, uv_domain, req, Some(this))?;
+        if let Some(b) = r.normal.as_mut() {
+            b.expand_absolute(self.def.bound);
+        }
+        if let Some(b) = r.pseudo.as_mut() {
+            b.expand_absolute(self.def.bound);
+        }
+        Ok(r)
     }
 
     /// `Reparameterize`: the net's, the map following it.
