@@ -325,6 +325,9 @@ struct SessionObjects<'target> {
     /// (not upstream, #2489) The marks of the faces the session made, while
     /// `Kernel::blend_face_log` is on (`blend_face_log`).
     blend_face_marks: Vec<AttributeHandle>,
+    /// The corner type of chamfers meeting at a vertex (`set_chamfer_corner`; WR-715).
+    /// Read only with `Kernel::fixes.fillet_chamfer_corner`.
+    chamfer_corner: crate::blend::blend_corner::BlendChamferCorner,
 }
 
 impl SessionObjects<'_> {
@@ -1584,6 +1587,7 @@ impl<'target> FilletSession<'target> {
                 set_back_vertices: Vec::new(),
                 set_back_fills: Vec::new(),
                 blend_face_marks: Vec::new(),
+                chamfer_corner: crate::blend::blend_corner::BlendChamferCorner::Mitre,
             },
             _gn_scope: gn_scope,
         })
@@ -2621,6 +2625,16 @@ impl<'target> FilletSession<'target> {
     /// nothing.
     pub fn set_swept_turns(&mut self, swept: bool) {
         self.objects.swept_turns = swept;
+    }
+
+    /// How chamfers meeting at a vertex where every edge is chamfered close the corner,
+    /// with `Kernel::fixes.fillet_chamfer_corner` (WR-715): the Mitre (the default; the
+    /// chamfer planes run on to meet each other) or the Facet (one plane through the
+    /// rails' crossings). It overrides the corner's bevel flag
+    /// ([`Self::set_corner_bevel`]) at such a corner. Set it before [`Self::do_fillet`]
+    /// (the corners are made there). Without the flag it changes nothing.
+    pub fn set_chamfer_corner(&mut self, corner: crate::blend::blend_corner::BlendChamferCorner) {
+        self.objects.chamfer_corner = corner;
     }
 
     /// The fork's `AddSetBackVertex` (smlib#79 step 4c; WR-697): the caller sets

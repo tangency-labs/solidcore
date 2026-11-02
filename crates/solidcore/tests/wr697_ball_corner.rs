@@ -10,28 +10,38 @@
 //! commits c3f8c80, ce9efb4, 9c58248, f8059d4), with their closed-form volumes: each round
 //! takes (convex) or adds (concave) its spandrel along its edge outside the cube of side r
 //! at the corner, and the corner the cube less the ball's octant, r^3 (1 - pi/6).
+//!
+//! WR-715 (#2345, smlib#89's brief): chamfers meeting at a vertex where every edge is
+//! chamfered are the blend corner's chamfer event (`Kernel::fixes.fillet_chamfer_corner`),
+//! closed by the chamfer planes themselves: the Mitre (the default) or the Facet
+//! (`FilletSession::set_chamfer_corner`). Those cases are below the Ball's, each with its
+//! closed form worked out in its comment.
 #![allow(
     clippy::unwrap_used,
     clippy::expect_used,
     clippy::panic,
     clippy::indexing_slicing
 )] // test helpers
+use solidcore::blend::blend_corner::BlendChamferCorner;
+use solidcore::blend::fillet_executive::api::chamfer_fillet;
 use solidcore::blend::fillet_executive::session::FilletSession;
+use solidcore::blend::fillet_executive::{FitKind, FitSize};
 use solidcore::blend::fillet_solver::p1::FilletSurfaceGeneratorType;
 use solidcore::boolean::api_brep::boolean_difference;
-use solidcore::curve::curve::Curve;
+use solidcore::curve::curve::{Curve, CurveKind};
 use solidcore::geom::attribute::{AttributeStore, ObjectKey};
 use solidcore::geom::global_solver::SolverOperation;
 use solidcore::kernel::UpstreamFixes;
 use solidcore::mass::integrator::properties::{brep_volume, PropertyAttributes};
-use solidcore::math::{Point3, Vec3, BIG_DOUBLE};
+use solidcore::math::{Point2, Point3, Vec3, BIG_DOUBLE};
 use solidcore::primitive::api_curves::create_line_segment;
-use solidcore::primitive::api_primitives::create_box;
+use solidcore::primitive::api_primitives::{create_box, create_pyramid};
 use solidcore::query::api_queries::{get_edges, get_faces};
 use solidcore::surface::surface::p2::SurfaceKind;
 use solidcore::sweep::api_brep::create_linear_sweep;
 use solidcore::topology::brep::p5::{stitch_and_orient, StitchAndOrientOptions};
 use solidcore::topology::brep::validation::{check_brep, CheckLevel};
+use solidcore::topology::edgeuse::p1 as eu1;
 use solidcore::topology::face::p2 as face2;
 use solidcore::topology::{edge, EdgeId, FaceId, VertexId};
 use solidcore::{Brep, Kernel};
@@ -515,4 +525,706 @@ fn a_set_back_vertex_is_no_ball() {
     assert_eq!(faces.len(), 1);
     let s = face2::surface(&b, faces[0]).unwrap().unwrap();
     assert!(matches!(s.kind(), SurfaceKind::Sphere(_)), "{:?}", s.kind());
+}
+
+// ---- Chamfer corners (WR-715, #2345) ------------------------------------------------
+//
+// In a corner frame (u, v, w), measured from the vertex into the blend's side (the
+// material at a convex corner, the air at a concave one), the three faces at a square
+// corner are u = 0, v = 0 and w = 0. A linear section of constant radius d on a square
+// edge sets back d on both faces (the ball touches each face d from the edge), so the
+// chamfer of the edge along u, setback a, is the plane v + w = a; along v, setback b,
+// u + w = b; along w, setback c, u + v = c.
+//
+// Mitre. The three planes meet at M, the 3x3 solve: u + v + w = (a + b + c) / 2, so
+// M = ((b + c - a) / 2, (a + c - b) / 2, (a + b - c) / 2). The rails cross on w = 0 at
+// X_w = (b, a, 0), on u = 0 at X_u = (0, c, b) and on v = 0 at X_v = (c, 0, a). The
+// mitre removes (convex) or adds (concave) the union of the three edges' prisms; by
+// inclusion and exclusion, with the prisms' own volumes a^2 / 2 times their lengths,
+//   P_u P_v = {v + w < a, u + w < b}: int_0^min(a, b) (a - w)(b - w) dw,
+//   P_u P_w = {v + w < a, u + v < c}: int_0^min(a, c) (a - v)(c - v) dv,
+//   P_v P_w = {u + w < b, u + v < c}: int_0^min(b, c) (b - u)(c - u) du,
+// and the triple overlap integrated slice by slice (worked out per case).
+//
+// Facet. The plane through X_u, X_v, X_w cuts off, beyond the mitre, the tetrahedron
+// M X_u X_v X_w: |det(X_u - M, X_v - M, X_w - M)| / 6 more.
+
+// Every fix but `geometric_g2_continuity`, with or without `fillet_chamfer_corner`.
+fn chamfer_fixes(on: bool) -> Kernel {
+    let mut k = Kernel::default();
+    let mut f = UpstreamFixes::default();
+    for &name in UpstreamFixes::NAMES {
+        if name != "geometric_g2_continuity" && (on || name != "fillet_chamfer_corner") {
+            *f.flag_mut(name).unwrap() = true;
+        }
+    }
+    k.fixes = f;
+    k
+}
+
+// A refused chamfer: the executive's error code, its reason and its noted fit.
+#[derive(Debug)]
+struct Refused {
+    code: i32,
+    comment: String,
+    fit: Option<FitSize<EdgeId>>,
+}
+
+// Chamfers `edges` together, linear sections of constant radius `d[i]`, with the
+// corners of type `corner`; stitched.
+fn chamfer(
+    k: &mut Kernel,
+    b: &mut Brep,
+    edges: &[EdgeId],
+    d: &[f64],
+    corner: BlendChamferCorner,
+) -> Result<(), Refused> {
+    let xs = vec![FilletSurfaceGeneratorType::Linear; edges.len()];
+    {
+        let mut s = FilletSession::new(k, b).unwrap();
+        s.prepare_per_edge_constant_radius(k, edges, d, &xs, 1, 1.0)
+            .unwrap();
+        s.set_chamfer_corner(corner);
+        if s.do_fillet(k).is_err() {
+            let info = s.error_info();
+            return Err(Refused {
+                code: info.code,
+                comment: info.comment.clone(),
+                fit: s.fit_size(),
+            });
+        }
+    }
+    stitch_and_orient(k, b, &StitchAndOrientOptions::default()).unwrap();
+    Ok(())
+}
+
+// A corner frame: `o` the vertex, `a` the unit directions of u, v, w.
+struct Frame {
+    o: Point3,
+    a: [Vec3; 3],
+}
+
+impl Frame {
+    fn at(&self, u: f64, v: f64, w: f64) -> Point3 {
+        self.o + self.a[0] * u + self.a[1] * v + self.a[2] * w
+    }
+    fn dir(&self, u: f64, v: f64, w: f64) -> Vec3 {
+        unit(self.a[0] * u + self.a[1] * v + self.a[2] * w)
+    }
+}
+
+// The vertices of edge `e`.
+fn ends(b: &Brep, e: EdgeId) -> (Point3, Point3) {
+    let v0 = edge::vertex(b, e).unwrap().unwrap();
+    let v1 = edge::other_vertex(b, e, Some(v0)).unwrap().unwrap();
+    (b.vertex(v0).unwrap().point, b.vertex(v1).unwrap().point)
+}
+
+// The edges of `b` from `p` to `q` (either way, to 1e-9).
+fn edges_between(b: &Brep, p: Point3, q: Point3) -> Vec<EdgeId> {
+    get_edges(b)
+        .unwrap()
+        .into_iter()
+        .filter(|&e| {
+            let (s, t) = ends(b, e);
+            (s.distance(p) <= 1e-9 && t.distance(q) <= 1e-9)
+                || (s.distance(q) <= 1e-9 && t.distance(p) <= 1e-9)
+        })
+        .collect()
+}
+
+// How far edge `e` is from the exact segment `p`-`q`: infinite unless its curve is a
+// `Line` and its faces planes; else the worst of its vertices' distances from `p` and
+// `q`, its points' from the line, and, on each of its edge uses, the distance of its own
+// UV trim curve, mapped by its face's plane, from the edge, and of that trim from the
+// straight line in UV between its ends.
+fn off_exact_line(k: &Kernel, b: &Brep, e: EdgeId, p: Point3, q: Point3) -> f64 {
+    let curve = edge::curve(b, e).unwrap().unwrap();
+    if !matches!(curve.kind(), CurveKind::Line(_)) {
+        return f64::INFINITY;
+    }
+    let (s, t) = ends(b, e);
+    let mut off = (s.distance(p) + t.distance(q)).min(s.distance(q) + t.distance(p));
+    let dir = unit(q - p);
+    let ivl = edge::interval(b, e).unwrap();
+    for i in 0..=16 {
+        let x = curve
+            .evaluate_point(k, ivl.evaluate(f64::from(i) / 16.0))
+            .unwrap();
+        off = off.max(((x - p) - dir * (x - p).dot(dir)).length());
+    }
+    for eu in edge::edgeuses(b, e, None, None).unwrap() {
+        let f = eu1::face(b, eu).unwrap().unwrap();
+        let surface = face2::surface(b, f).unwrap().unwrap();
+        if !matches!(surface.kind(), SurfaceKind::Plane(_)) {
+            return f64::INFINITY;
+        }
+        let Some(uv) = eu1::uv_trim_curve_pointer(b, eu).unwrap() else {
+            return f64::INFINITY;
+        };
+        let w = |i: i32| {
+            uv.evaluate_point(k, ivl.evaluate(f64::from(i) / 16.0))
+                .unwrap()
+        };
+        let (w0, w1) = (w(0), w(16));
+        for i in 0..=16 {
+            let at = ivl.evaluate(f64::from(i) / 16.0);
+            let wi = w(i);
+            let x = curve.evaluate_point(k, at).unwrap();
+            let y = surface.evaluate_point(k, Point2::new(wi.x, wi.y)).unwrap();
+            off = off.max(x.distance(y));
+            let line = w0 + (w1 - w0) * (f64::from(i) / 16.0);
+            off = off.max(wi.distance(line));
+        }
+    }
+    off
+}
+
+// The mitre at a corner of three: for each rail crossing X_i, one edge X_i-M; returns
+// the worst distance of those edges from the exact segments (`off_exact_line`).
+fn mitre_off(k: &Kernel, b: &Brep, m: Point3, xs: &[Point3; 3]) -> f64 {
+    let mut off = 0.0f64;
+    for &x in xs {
+        let es = edges_between(b, x, m);
+        assert_eq!(es.len(), 1, "one mitre edge from {x:?} to {m:?}");
+        off = off.max(off_exact_line(k, b, es[0], x, m));
+    }
+    off
+}
+
+// The faces of `b` whose vertices are exactly `v` (to 1e-9).
+fn faces_on(b: &Brep, v: &[Point3]) -> Vec<FaceId> {
+    let mut out = Vec::new();
+    for f in get_faces(b).unwrap() {
+        let mut pts: Vec<Point3> = Vec::new();
+        for e in solidcore::topology::topology_traverser::face_edges(b, f).unwrap() {
+            let (s, t) = ends(b, e);
+            for p in [s, t] {
+                if !pts.iter().any(|q| q.distance(p) <= 1e-9) {
+                    pts.push(p);
+                }
+            }
+        }
+        if pts.len() == v.len() && v.iter().all(|w| pts.iter().any(|p| p.distance(*w) <= 1e-9)) {
+            out.push(f);
+        }
+    }
+    out
+}
+
+// The facet on the rail crossings `xs` (in loop order): one face with those vertices, a
+// `Plane` whose unit normal is `normal` (out of the body), its edges X_i-X_(i+1) the
+// exact segments. Returns the worst of its normal's distance from `normal` and its
+// edges' from the segments.
+fn facet_off(k: &Kernel, b: &Brep, xs: &[Point3], normal: Vec3) -> f64 {
+    let faces = faces_on(b, xs);
+    assert_eq!(faces.len(), 1, "one facet on {xs:?}");
+    let s = face2::surface(b, faces[0]).unwrap().unwrap();
+    assert!(
+        matches!(s.kind(), SurfaceKind::Plane(_)),
+        "the facet is a plane, got {:?}",
+        s.kind()
+    );
+    let mid = s.natural_uv_domain_with_nurb(k).unwrap().evaluate(0.5, 0.5);
+    let n = s
+        .evaluate_normal(
+            k,
+            mid,
+            solidcore::nurbs::knots::Side::Right,
+            solidcore::nurbs::knots::Side::Right,
+        )
+        .unwrap();
+    let mut off = (unit(n) - normal).length();
+    for i in 0..xs.len() {
+        let (p, q) = (xs[i], xs[(i + 1) % xs.len()]);
+        let es = edges_between(b, p, q);
+        assert_eq!(es.len(), 1, "one facet edge from {p:?} to {q:?}");
+        off = off.max(off_exact_line(k, b, es[0], p, q));
+    }
+    off
+}
+
+// The faces, edges and vertices, the check's lines and the volume of `b`.
+fn report(k: &mut Kernel, b: &mut Brep) -> ((usize, usize, usize), Vec<String>, f64) {
+    let n = counts(b);
+    let lines = check_brep(k, b, CheckLevel::Level2).unwrap().lines();
+    let v = volume(k, b);
+    (n, lines, v)
+}
+
+// Points are exact when they are within rounding at the part's scale.
+const EXACT: f64 = 1e-13;
+
+// The 20 cube's eight corners, in their frames (u, v, w along the cube's edges inward).
+fn cube_frames() -> Vec<Frame> {
+    let mut out = Vec::new();
+    for i in 0..8_u32 {
+        let c = [i & 1, (i >> 1) & 1, (i >> 2) & 1].map(f64::from);
+        let s = c.map(|ci| 1.0 - 2.0 * ci);
+        out.push(Frame {
+            o: Point3::new(20.0 * c[0], 20.0 * c[1], 20.0 * c[2]),
+            a: [
+                Vec3::new(s[0], 0.0, 0.0),
+                Vec3::new(0.0, s[1], 0.0),
+                Vec3::new(0.0, 0.0, s[2]),
+            ],
+        });
+    }
+    out
+}
+
+// The 20 cube's twelve edges chamfered d = 1/sqrt 2 (a = b = c = d at every corner):
+// M = (d/2, d/2, d/2), X_w = (d, d, 0) and its turns. Per corner the pairs overlap by
+// int_0^d (d - w)^2 dw = d^3 / 3 each; the triple overlap, sliced by w, is the square
+// [0, d - w]^2 less, below w = d/2, its corner u + v > d, (d - 2w)^2 / 2: d^3 / 3 -
+// d^3 / 12 = d^3 / 4. So each corner gives back 3 d^3 / 3 - d^3 / 4 = 3 d^3 / 4 of the
+// prisms' 12 x 20 x d^2 / 2 = 60, and the cube keeps 8000 - 60 + 6 d^3 =
+// 7940 + (3/2) sqrt 2 (d^3 = sqrt 2 / 4). Faces 6 + 12, edges 24 rails + 24 mitres,
+// vertices 8 x (3 + 1).
+const CUBE_MITRE: f64 = 7940.0 + 1.5 * std::f64::consts::SQRT_2;
+
+fn cube_mitres_off(k: &Kernel, b: &Brep) -> f64 {
+    let d = std::f64::consts::FRAC_1_SQRT_2;
+    let mut off = 0.0f64;
+    for f in cube_frames() {
+        let m = f.at(d / 2.0, d / 2.0, d / 2.0);
+        let xs = [f.at(d, d, 0.0), f.at(0.0, d, d), f.at(d, 0.0, d)];
+        off = off.max(mitre_off(k, b, m, &xs));
+    }
+    off
+}
+
+#[test]
+#[ignore = "the chamfer corner event is not built yet (WR-715, #2345)"]
+fn cube_corners_are_exact_mitres() {
+    let mut k = chamfer_fixes(true);
+    let mut b = create_box(&mut k, Point3::new(0.0, 0.0, 0.0), 20.0, 20.0, 20.0).unwrap();
+    let edges = get_edges(&b).unwrap();
+    let d = std::f64::consts::FRAC_1_SQRT_2;
+    chamfer(&mut k, &mut b, &edges, &[d; 12], BlendChamferCorner::Mitre).unwrap();
+    let (n, lines, v) = report(&mut k, &mut b);
+    let off = cube_mitres_off(&k, &b);
+    eprintln!("cube mitre: volume {v:.12} want {CUBE_MITRE:.12}; {n:?}; off {off:.3e}; {lines:?}");
+    assert!(lines.is_empty(), "{lines:?}");
+    assert_eq!(n, (18, 48, 32));
+    assert!(off <= EXACT * 20.0, "{off}");
+    assert!((v - CUBE_MITRE).abs() <= 1e-12 * CUBE_MITRE, "{v}");
+}
+
+// The constant-distance chamfer (`SmApiChamferFillet`, chord 1, so setbacks 1/sqrt 2 on
+// the square edges; every corner a bevel): the same mitres, the same volume.
+#[test]
+#[ignore = "the chamfer corner event is not built yet (WR-715, #2345)"]
+fn cube_constant_distance_corners_are_exact_mitres() {
+    let mut k = chamfer_fixes(true);
+    let mut b = create_box(&mut k, Point3::new(0.0, 0.0, 0.0), 20.0, 20.0, 20.0).unwrap();
+    chamfer_fillet(&mut k, &mut b, 1.0).unwrap();
+    stitch_and_orient(&mut k, &mut b, &StitchAndOrientOptions::default()).unwrap();
+    let (n, lines, v) = report(&mut k, &mut b);
+    let off = cube_mitres_off(&k, &b);
+    eprintln!(
+        "cube chord mitre: volume {v:.12} want {CUBE_MITRE:.12}; {n:?}; off {off:.3e}; {lines:?}"
+    );
+    assert!(lines.is_empty(), "{lines:?}");
+    assert_eq!(n, (18, 48, 32));
+    assert!(off <= EXACT * 20.0, "{off}");
+    assert!((v - CUBE_MITRE).abs() <= 1e-12 * CUBE_MITRE, "{v}");
+}
+
+// The cube's corners as facets: each the triangle X_u X_v X_w on u + v + w = 2d, its
+// normal out of the cube towards the vertex. Beyond the mitre each removes the
+// tetrahedron M X_u X_v X_w: X - M = (d/2)(1, 1, -1) and its turns, det = -d^3 / 2, so
+// d^3 / 12; the cube keeps 7940 + (3/2) sqrt 2 - 8 sqrt 2 / 48 = 7940 + (4/3) sqrt 2.
+// Faces 6 + 12 + 8, edges 24 rails + 24 facet edges, vertices 8 x 3.
+#[test]
+#[ignore = "the chamfer corner event is not built yet (WR-715, #2345)"]
+fn cube_corners_are_exact_facets() {
+    let mut k = chamfer_fixes(true);
+    let mut b = create_box(&mut k, Point3::new(0.0, 0.0, 0.0), 20.0, 20.0, 20.0).unwrap();
+    let edges = get_edges(&b).unwrap();
+    let d = std::f64::consts::FRAC_1_SQRT_2;
+    chamfer(&mut k, &mut b, &edges, &[d; 12], BlendChamferCorner::Facet).unwrap();
+    let (n, lines, v) = report(&mut k, &mut b);
+    let want = 7940.0 + 4.0 / 3.0 * std::f64::consts::SQRT_2;
+    let mut off = 0.0f64;
+    for f in cube_frames() {
+        let xs = [f.at(d, d, 0.0), f.at(0.0, d, d), f.at(d, 0.0, d)];
+        off = off.max(facet_off(&k, &b, &xs, -f.dir(1.0, 1.0, 1.0)));
+    }
+    eprintln!("cube facet: volume {v:.12} want {want:.12}; {n:?}; off {off:.3e}; {lines:?}");
+    assert!(lines.is_empty(), "{lines:?}");
+    assert_eq!(n, (26, 48, 24));
+    assert!(off <= EXACT * 20.0, "{off}");
+    assert!((v - want).abs() <= 1e-12 * want, "{v}");
+}
+
+// The 40 x 30 x 20 box's corner (40, 30, 20): u = 40 - x, v = 30 - y, w = 20 - z.
+fn box_corner() -> Frame {
+    Frame {
+        o: Point3::new(40.0, 30.0, 20.0),
+        a: [-Vec3::X, -Vec3::Y, -Vec3::Z],
+    }
+}
+
+// The edges at the box's corner (40, 30, 20): along x (a), along y (b), along z (c).
+const BOX_CORNER_EDGES: [[f64; 3]; 3] =
+    [[20.0, 30.0, 20.0], [40.0, 15.0, 20.0], [40.0, 30.0, 10.0]];
+
+// `unequal_chamfers_at_a_corner`: the box's corner chamfered a = 2 (along x), b = 3
+// (along y), c = 4 (along z), so v + w = 2, u + w = 3, u + v = 4. M = (2.5, 1.5, 0.5),
+// inside; X_w = (3, 2, 0), X_u = (0, 4, 3), X_v = (4, 0, 2). Prisms 4/2 x 40 + 9/2 x 30
+// + 16/2 x 20 = 375; pairs int_0^2 (2 - w)(3 - w) dw = 14/3, int_0^2 (2 - v)(4 - v) dv
+// = 20/3, int_0^3 (3 - u)(4 - u) du = 27/2; the triple, sliced by w in [0, 2]: the
+// rectangle (3 - w)(2 - w) less, below w = 1/2, its corner u + v > 4, (1 - 2w)^2 / 2:
+// 14/3 - 1/12 = 55/12. The mitre removes 375 - 14/3 - 20/3 - 27/2 + 55/12 = 354.75.
+// Faces 6 + 3; edges 9 kept, 3 x (2 rails + 1 end), 3 mitres; vertices 7 + 3 ends + 3
+// crossings + M.
+#[test]
+#[ignore = "the chamfer corner event is not built yet (WR-715, #2345)"]
+fn unequal_chamfers_at_a_corner_mitre() {
+    let mut k = chamfer_fixes(true);
+    let mut b = create_box(&mut k, Point3::new(0.0, 0.0, 0.0), 40.0, 30.0, 20.0).unwrap();
+    let edges: Vec<EdgeId> = BOX_CORNER_EDGES.iter().map(|&p| pick(&k, &b, p)).collect();
+    chamfer(
+        &mut k,
+        &mut b,
+        &edges,
+        &[2.0, 3.0, 4.0],
+        BlendChamferCorner::Mitre,
+    )
+    .unwrap();
+    let (n, lines, v) = report(&mut k, &mut b);
+    let f = box_corner();
+    let m = f.at(2.5, 1.5, 0.5);
+    let xs = [
+        f.at(3.0, 2.0, 0.0),
+        f.at(0.0, 4.0, 3.0),
+        f.at(4.0, 0.0, 2.0),
+    ];
+    let off = mitre_off(&k, &b, m, &xs);
+    let want = 24000.0 - 354.75;
+    eprintln!("unequal mitre: volume {v:.12} want {want:.12}; {n:?}; off {off:.3e}; {lines:?}");
+    assert!(lines.is_empty(), "{lines:?}");
+    assert_eq!(n, (9, 21, 14));
+    assert!(off <= EXACT * 40.0, "{off}");
+    assert!((v - want).abs() <= 1e-12 * want, "{v}");
+}
+
+// The same corner as a facet: the plane through X_w, X_u, X_v is 10u + 9v + 4w = 48
+// (30 + 18, 36 + 12, 40 + 8), M (40.5) on the vertex's side, so a real face; its normal
+// out of the box is (10, 9, 4) / sqrt 197 in x, y, z. It removes the tetrahedron:
+// X - M = (-2.5, 2.5, 2.5), (1.5, -1.5, 1.5), (0.5, 0.5, -0.5), det 7.5, so 1.25 more.
+// Faces 10; edges 9 + 9 + 3 facet edges; vertices 7 + 3 + 3.
+#[test]
+#[ignore = "the chamfer corner event is not built yet (WR-715, #2345)"]
+fn unequal_chamfers_at_a_corner_facet() {
+    let mut k = chamfer_fixes(true);
+    let mut b = create_box(&mut k, Point3::new(0.0, 0.0, 0.0), 40.0, 30.0, 20.0).unwrap();
+    let edges: Vec<EdgeId> = BOX_CORNER_EDGES.iter().map(|&p| pick(&k, &b, p)).collect();
+    chamfer(
+        &mut k,
+        &mut b,
+        &edges,
+        &[2.0, 3.0, 4.0],
+        BlendChamferCorner::Facet,
+    )
+    .unwrap();
+    let (n, lines, v) = report(&mut k, &mut b);
+    let f = box_corner();
+    let xs = [
+        f.at(3.0, 2.0, 0.0),
+        f.at(0.0, 4.0, 3.0),
+        f.at(4.0, 0.0, 2.0),
+    ];
+    let off = facet_off(&k, &b, &xs, -f.dir(10.0, 9.0, 4.0));
+    let want = 24000.0 - 354.75 - 1.25;
+    eprintln!("unequal facet: volume {v:.12} want {want:.12}; {n:?}; off {off:.3e}; {lines:?}");
+    assert!(lines.is_empty(), "{lines:?}");
+    assert_eq!(n, (10, 21, 13));
+    assert!(off <= EXACT * 40.0, "{off}");
+    assert!((v - want).abs() <= 1e-12 * want, "{v}");
+}
+
+// Without the flag nothing changes: the facet asked for is the pinned 3x3 chamfer
+// corner, whose patch the pinned `AdjustTopology` stretches to four sides, a B-spline,
+// not the facet's plane, and not its volume (24000 - 356).
+#[test]
+fn without_the_flag_the_chamfer_corner_is_the_pinned_patch() {
+    let mut k = chamfer_fixes(false);
+    let mut b = create_box(&mut k, Point3::new(0.0, 0.0, 0.0), 40.0, 30.0, 20.0).unwrap();
+    let edges: Vec<EdgeId> = BOX_CORNER_EDGES.iter().map(|&p| pick(&k, &b, p)).collect();
+    chamfer(
+        &mut k,
+        &mut b,
+        &edges,
+        &[2.0, 3.0, 4.0],
+        BlendChamferCorner::Facet,
+    )
+    .unwrap();
+    let (n, lines, v) = report(&mut k, &mut b);
+    eprintln!("pinned: volume {v:.12}; {n:?}; {lines:?}");
+    assert!(lines.is_empty(), "{lines:?}");
+    assert_eq!(n, (10, 22, 14));
+    let bsplines = get_faces(&b)
+        .unwrap()
+        .into_iter()
+        .filter(|&f| {
+            matches!(
+                face2::surface(&b, f).unwrap().unwrap().kind(),
+                SurfaceKind::BSpline(_)
+            )
+        })
+        .count();
+    assert_eq!(bsplines, 1);
+    assert!((v - (24000.0 - 356.0)).abs() > 1.0, "{v}");
+}
+
+// The pocket's floor corner (10, 10, 10) of the 40 x 30 x 20 block less a 20 x 10 x 11
+// box at (10, 10, 10): u = x - 10, v = y - 10, w = z - 10, into the pocket. Its three
+// concave edges chamfered a = 3 (along x, 20 long), b = 2 (along y, 10 long), c = 2
+// (along z, 10 long) add material. M = (1/2, 3/2, 3/2), inside; X_w = (2, 3, 0),
+// X_u = (0, 2, 2), X_v = (2, 0, 3). Prisms 9/2 x 20 + 4/2 x 10 + 4/2 x 10 = 130; pairs
+// int_0^2 (3 - w)(2 - w) dw = 14/3, int_0^2 (3 - v)(2 - v) dv = 14/3,
+// int_0^2 (2 - u)^2 du = 8/3; the triple, sliced by u in [0, 2]: the square (2 - u)^2
+// less, below u = 1/2, its corner v + w > 3, (1 - 2u)^2 / 2: 8/3 - 1/12 = 31/12. The
+// mitre adds 130 - 12 + 31/12 = 1447/12 to 22000.
+fn pocket() -> (Kernel, Brep, Vec<EdgeId>) {
+    let mut k = chamfer_fixes(true);
+    let block = create_box(&mut k, Point3::new(0.0, 0.0, 0.0), 40.0, 30.0, 20.0).unwrap();
+    let cut = create_box(&mut k, Point3::new(10.0, 10.0, 10.0), 20.0, 10.0, 11.0).unwrap();
+    let b = boolean_difference(&mut k, block, cut).unwrap();
+    let edges = [[20.0, 10.0, 10.0], [10.0, 15.0, 10.0], [10.0, 10.0, 15.0]]
+        .iter()
+        .map(|&p| pick(&k, &b, p))
+        .collect();
+    (k, b, edges)
+}
+
+fn pocket_corner() -> Frame {
+    Frame {
+        o: Point3::new(10.0, 10.0, 10.0),
+        a: [Vec3::X, Vec3::Y, Vec3::Z],
+    }
+}
+
+// The concave mitre: the same event mirrored. Faces 11 + 3; vertices and edges as the
+// Ball's corner (15, 33, 21) with the ball's face and its three sections traded for M
+// and three mitres.
+#[test]
+#[ignore = "the chamfer corner event is not built yet (WR-715, #2345)"]
+fn pocket_floor_corner_concave_mitre() {
+    let (mut k, mut b, edges) = pocket();
+    chamfer(
+        &mut k,
+        &mut b,
+        &edges,
+        &[3.0, 2.0, 2.0],
+        BlendChamferCorner::Mitre,
+    )
+    .unwrap();
+    let (n, lines, v) = report(&mut k, &mut b);
+    let f = pocket_corner();
+    let m = f.at(0.5, 1.5, 1.5);
+    let xs = [
+        f.at(2.0, 3.0, 0.0),
+        f.at(0.0, 2.0, 2.0),
+        f.at(2.0, 0.0, 3.0),
+    ];
+    let off = mitre_off(&k, &b, m, &xs);
+    let want = 22000.0 + 1447.0 / 12.0;
+    eprintln!("pocket mitre: volume {v:.12} want {want:.12}; {n:?}; off {off:.3e}; {lines:?}");
+    assert!(lines.is_empty(), "{lines:?}");
+    assert_eq!(n, (14, 33, 22));
+    assert!(off <= EXACT * 40.0, "{off}");
+    assert!((v - want).abs() <= 1e-12 * want, "{v}");
+}
+
+// The concave facet: the plane through X_w, X_u, X_v is u + 2v + 2w = 8 (2 + 6, 4 + 4,
+// 2 + 6), M (6.5) on the vertex's side; its normal out of the body points into the
+// pocket, (1, 2, 2) / 3. It adds the tetrahedron M X_u X_v X_w: M is (8 - 6.5) / 3 = 1/2
+// from the plane and the triangle's area is |(3, 6, 6)| / 2 = 9/2, so 3/4 more:
+// 22000 + 1447/12 + 9/12 = 22000 + 364/3. Faces 15, as the Ball's.
+#[test]
+#[ignore = "the chamfer corner event is not built yet (WR-715, #2345)"]
+fn pocket_floor_corner_concave_facet() {
+    let (mut k, mut b, edges) = pocket();
+    chamfer(
+        &mut k,
+        &mut b,
+        &edges,
+        &[3.0, 2.0, 2.0],
+        BlendChamferCorner::Facet,
+    )
+    .unwrap();
+    let (n, lines, v) = report(&mut k, &mut b);
+    let f = pocket_corner();
+    let xs = [
+        f.at(2.0, 3.0, 0.0),
+        f.at(0.0, 2.0, 2.0),
+        f.at(2.0, 0.0, 3.0),
+    ];
+    let off = facet_off(&k, &b, &xs, f.dir(1.0, 2.0, 2.0));
+    let want = 22000.0 + 364.0 / 3.0;
+    eprintln!("pocket facet: volume {v:.12} want {want:.12}; {n:?}; off {off:.3e}; {lines:?}");
+    assert!(lines.is_empty(), "{lines:?}");
+    assert_eq!(n, (15, 33, 21));
+    assert!(off <= EXACT * 40.0, "{off}");
+    assert!((v - want).abs() <= 1e-12 * want, "{v}");
+}
+
+// The box's corner chamfered a = 1, b = 1, c = 3: M = (3/2, 3/2, -1/2) is outside the
+// corner (w < 0): chamfer c reaches past the crossing X_w = (1, 1, 0) of the other two
+// (u + v = 2 < 3 there). With c scaled by t, w_M = (2 - 3t) / 2 (and u + v - 3t at X_w)
+// is positive only for t < 2/3, so the largest c that keeps M inside is a + b = 2, an
+// open bound (at it the mitre X_w-M has no length): the fit is 2 less the fit margin,
+// 1000 edge tolerances. The facet is no remedy: through X_w, X_u = (0, 3, 1) and
+// X_v = (3, 0, 1) it is u + v - w = 2, with the vertex (0) and M (3.5) on opposite sides,
+// so it would cut the chamfers, not close them; it is refused with the same fit.
+#[test]
+#[ignore = "the chamfer corner event is not built yet (WR-715, #2345)"]
+fn a_mitre_point_outside_the_corner_is_refused_with_its_fit() {
+    for corner in [BlendChamferCorner::Mitre, BlendChamferCorner::Facet] {
+        let mut k = chamfer_fixes(true);
+        let mut b = create_box(&mut k, Point3::new(0.0, 0.0, 0.0), 40.0, 30.0, 20.0).unwrap();
+        let edges: Vec<EdgeId> = BOX_CORNER_EDGES.iter().map(|&p| pick(&k, &b, p)).collect();
+        let margin = 1000.0 * edge::tolerance(&b, edges[2]).unwrap();
+        let refused = chamfer(&mut k, &mut b, &edges, &[1.0, 1.0, 3.0], corner).unwrap_err();
+        eprintln!("{corner:?}: {refused:?}");
+        assert_eq!(refused.code, 8, "NoRoom");
+        assert!(
+            refused.comment.contains("outside the corner"),
+            "{}",
+            refused.comment
+        );
+        let fit = refused.fit.unwrap();
+        assert_eq!(fit.edge, Some(edges[2]));
+        assert_eq!(fit.kind, FitKind::Radius);
+        assert!((fit.size - (2.0 - margin)).abs() <= 1e-12, "{}", fit.size);
+
+        // and the fit builds: the union of the prisms with a = b = 1 and c, sliced as
+        // above: 20 + 15 + 10 c^2 less the pairs 1/3 and twice c/2 - 1/6, plus the
+        // triple 1/3 - (2 - c)^3 / 12
+        let mut k = chamfer_fixes(true);
+        let mut b = create_box(&mut k, Point3::new(0.0, 0.0, 0.0), 40.0, 30.0, 20.0).unwrap();
+        let edges: Vec<EdgeId> = BOX_CORNER_EDGES.iter().map(|&p| pick(&k, &b, p)).collect();
+        let c = fit.size;
+        chamfer(&mut k, &mut b, &edges, &[1.0, 1.0, c], corner).unwrap();
+        let (_, lines, v) = report(&mut k, &mut b);
+        let mitre = 24000.0 - (35.0 + 10.0 * c * c - c + 1.0 / 3.0 - (2.0 - c).powi(3) / 12.0);
+        // the facet's tetrahedron: M = (c/2, c/2, (2 - c)/2), X_w = (1, 1, 0),
+        // X_u = (0, c, 1), X_v = (c, 0, 1)
+        let m = Vec3::new(c / 2.0, c / 2.0, (2.0 - c) / 2.0);
+        let (xw, xu, xv) = (
+            Vec3::new(1.0, 1.0, 0.0) - m,
+            Vec3::new(0.0, c, 1.0) - m,
+            Vec3::new(c, 0.0, 1.0) - m,
+        );
+        let tet = xu.dot(xv.cross(xw)).abs() / 6.0;
+        let want = if corner == BlendChamferCorner::Mitre {
+            mitre
+        } else {
+            mitre - tet
+        };
+        eprintln!("{corner:?} at the fit {c}: volume {v:.12} want {want:.12}; {lines:?}");
+        assert!(lines.is_empty(), "{lines:?}");
+        assert!((v - want).abs() <= 1e-12 * want, "{v}");
+    }
+}
+
+// `SmApiCreatePyramid`'s square pyramid, base 20 about the origin, apex (0, 0, 10): its
+// faces are +-x + z = 10 and +-y + z = 10, 120 degrees apart across each apex edge
+// (normals (1, 0, 1) and (0, 1, 1) at 60 degrees). The apex edges, from (0, 0, 10) to
+// (+-10, +-10, 0), at their midpoints.
+fn pyramid() -> (Kernel, Brep, Vec<EdgeId>) {
+    let mut k = chamfer_fixes(true);
+    let b = create_pyramid(&mut k, Point3::new(0.0, 0.0, 0.0), 20.0, 10.0).unwrap();
+    let edges = [
+        [5.0, 5.0, 5.0],
+        [-5.0, 5.0, 5.0],
+        [-5.0, -5.0, 5.0],
+        [5.0, -5.0, 5.0],
+    ]
+    .iter()
+    .map(|&p| pick(&k, &b, p))
+    .collect();
+    (k, b, edges)
+}
+
+// N = 4: the pyramid's apex, its four edges chamfered radius r = 2 sqrt 2. Across a
+// 120 degree edge the ball touches each face r cot 60 = r / sqrt 3 from the edge; in a
+// horizontal section (a square of half side 10 - z) that rail cuts the square's corner
+// l = (r / sqrt 3) sqrt(3/2) = r / sqrt 2 = 2 along each side, the same at every height.
+// Two cuts on one side meet at its middle where 2 l = 2 (10 - z): the crossings
+// X = (+-2, 0, 8), (0, +-2, 8) lie in the plane z = 8 (by the pyramid's symmetry), so
+// the facet builds, its normal +z. Below it each section is the square less four
+// corners l^2 / 2: int_0^8 4 (10 - z)^2 - 2 l^2 dz = (4/3)(1000 - 8) - 8 x 8 = 3776/3.
+// Faces 5 + 4 + 1; edges 4 base, 4 x (2 rails + 1 end on the base), 4 facet edges;
+// vertices 4 x 2 on the base and 4 crossings.
+#[test]
+#[ignore = "the chamfer corner event is not built yet (WR-715, #2345)"]
+fn pyramid_apex_of_four_equal_chamfers_is_a_facet() {
+    let (mut k, mut b, edges) = pyramid();
+    let r = 2.0 * std::f64::consts::SQRT_2;
+    chamfer(&mut k, &mut b, &edges, &[r; 4], BlendChamferCorner::Facet).unwrap();
+    let (n, lines, v) = report(&mut k, &mut b);
+    let xs = [
+        Point3::new(2.0, 0.0, 8.0),
+        Point3::new(0.0, 2.0, 8.0),
+        Point3::new(-2.0, 0.0, 8.0),
+        Point3::new(0.0, -2.0, 8.0),
+    ];
+    let off = facet_off(&k, &b, &xs, Vec3::Z);
+    let want = 3776.0 / 3.0;
+    eprintln!("pyramid facet: volume {v:.12} want {want:.12}; {n:?}; off {off:.3e}; {lines:?}");
+    assert!(lines.is_empty(), "{lines:?}");
+    assert_eq!(n, (10, 20, 12));
+    assert!(off <= EXACT * 20.0, "{off}");
+    assert!((v - want).abs() <= 1e-12 * want, "{v}");
+}
+
+// The mitre of four or more chamfers is not built (the planes meet in one point only by
+// coincidence; their general meeting, a roof of mitre lines, is not designed): refused,
+// naming why, even at the regular apex where the facet builds.
+#[test]
+#[ignore = "the chamfer corner event is not built yet (WR-715, #2345)"]
+fn a_mitre_of_four_chamfers_is_refused() {
+    let (mut k, mut b, edges) = pyramid();
+    let r = 2.0 * std::f64::consts::SQRT_2;
+    let refused = chamfer(&mut k, &mut b, &edges, &[r; 4], BlendChamferCorner::Mitre).unwrap_err();
+    eprintln!("{refused:?}");
+    assert_eq!(refused.code, 9, "CornerUnsupported");
+    assert!(
+        refused.comment.contains("mitre of four or more chamfers"),
+        "{}",
+        refused.comment
+    );
+}
+
+// An irregular N = 4 apex: corner cuts l = r / sqrt 2 of 1, 3, 2, 2 on the edges towards
+// (+, +), (-, +), (-, -), (+, -). The cuts on a side meet where their sum is the side,
+// so the crossings are X(+x) = (3/2, 1/2, 17/2), X(+y) = (1, 2, 8), X(-x) =
+// (-5/2, -1/2, 15/2), X(-y) = (0, -2, 8). The plane through X(-y), X(+y), X(+x) has
+// normal (1, 4, 0) x (3/2, 5/2, 1/2) = (2, -1/2, -7/2), and X(-x) - X(-y) =
+// (-5/2, 3/2, -1/2) is off it by 4 / sqrt(33/2), about 0.98: no plane holds the four
+// crossings, so no facet; refused, naming why.
+#[test]
+#[ignore = "the chamfer corner event is not built yet (WR-715, #2345)"]
+fn an_irregular_apex_of_four_chamfers_is_refused() {
+    let (mut k, mut b, edges) = pyramid();
+    let s2 = std::f64::consts::SQRT_2;
+    let refused = chamfer(
+        &mut k,
+        &mut b,
+        &edges,
+        &[s2, 3.0 * s2, 2.0 * s2, 2.0 * s2],
+        BlendChamferCorner::Facet,
+    )
+    .unwrap_err();
+    eprintln!("{refused:?}");
+    assert_eq!(refused.code, 9, "CornerUnsupported");
+    assert!(
+        refused.comment.contains("not in one plane"),
+        "{}",
+        refused.comment
+    );
 }

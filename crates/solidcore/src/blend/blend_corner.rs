@@ -124,6 +124,18 @@ pub enum BlendTurn {
     Swept,
 }
 
+/// The two ways the blend corner closes chamfers meeting at a vertex
+/// ([`chamfer`], `Kernel::fixes.fillet_chamfer_corner`), as [`BlendTurn`] is a Turn's.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum BlendChamferCorner {
+    /// Each chamfer plane runs on until it meets the others: three meet at one point,
+    /// pairwise along lines to it, and there is no corner face (the default).
+    #[default]
+    Mitre,
+    /// One plane through the rails' crossings cuts the corner off: one new planar face.
+    Facet,
+}
+
 /// The blend corner's own members (`m_eEvent`, `m_eTurn`, `m_eEnd`) on a corner built as
 /// one.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]

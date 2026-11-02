@@ -1556,6 +1556,25 @@ pub struct UpstreamFixes {
     pub fillet_round_ends_on_outline: bool,
     /// With `fillet_blend_corner`, a vertex of three constant circular rounds of one convexity where a face is a natural quadric (a cylinder, cone or sphere; the others planes) is the blend corner's Setback too ([`crate::blend::blend_corner::setback`]; the fork's 37c9e1d, smlib#85 part C, built in solidcore). Each round is set back from the vertex, at least to where the rails cross on the faces as they are. The hole is filled by a G1 fill with spring curves exact on the faces, each patch G1 to its face by construction and certified no more concave than what it is G1 to (`II >= k G`), its control net never turning back (`check_brep`'s test #5) and contained; the fill's programme also minimises the net's own thin-plate energy. A fill not certified grows its setbacks to the least scale on the grid of thousandths that is certified by more than its own rounding bound, and an asked setback that certifies only grown is refused naming the setback that builds. With `fillet_round_as_definition` the fill's patches are its definition, the curved faces kept as their quadrics. Off: such a corner is the corner `fillet_blend_corner` builds without it (the N-by-N convex corner), unchanged (WR-697 addendum 2026-11-03, #2343; solidcore-native, no fork commit).
     pub fillet_setback_beside_curved_faces: bool,
+    /// Chamfers meeting at a vertex where every edge is chamfered, each chamfer a plane
+    /// between two planes, are closed by the chamfer planes themselves, exactly: the blend
+    /// corner's chamfer event (`blend::blend_corner::chamfer`), in place of the
+    /// pinned 3x3 corner's chamfer branch (`SmFilletConvexNxNCorner` with `SetChamfer`,
+    /// convex and concave alike). The corner type is the session's
+    /// (`FilletSession::set_chamfer_corner`): the Mitre (the default), where each chamfer
+    /// runs on to the others and three of them meet at the point M of their 3x3 solve,
+    /// pairwise along the exact lines from the rails' crossings to M, with no corner face;
+    /// or the Facet, one plane through the rails' crossings whose edges are the chamfers'
+    /// end sections, exact lines in their planes. A mitre point outside the corner (a
+    /// chamfer much wider than the others) is refused with `FilletErrorType::NoRoom`,
+    /// naming the largest size of that chamfer that keeps it inside, less the fit margin,
+    /// as the refusal's fit; the facet is refused there too, its plane leaving the
+    /// chamfers. Four or more chamfers build the facet where their crossings lie in one
+    /// plane and are refused otherwise, and refused as a mitre, naming why. The pinned
+    /// corner marches the mitre's edges as surface intersections, refuses a mitre of four
+    /// or more chamfers with no reason, and builds its corner face as a Coons patch where
+    /// the chamfers are unequal (WR-715, #2345; own design, smlib#89's brief).
+    pub fillet_chamfer_corner: bool,
 }
 }
 
