@@ -27,6 +27,7 @@
 
 use solidcore::boolean::api_brep::boolean_union;
 use solidcore::geom::attribute::{AttributeStore, ObjectKey};
+use solidcore::kernel::UpstreamFixes;
 use solidcore::mass::integrator::properties::{brep_volume, PropertyAttributes};
 use solidcore::math::{Point3, Vec3};
 use solidcore::primitive::api_primitives::create_cylinder;
@@ -124,4 +125,115 @@ fn wr579_near_coincident_tube_ends_join() {
         v > vt.max(vs) && v < vt + vs,
         "union volume {v}, tubes {vt} and {vs}"
     );
+}
+
+/// The `SmClass::Test #n` labels of the check's lines, sorted, so reports compare as
+/// multisets of failed tests.
+fn labels(lines: &[String]) -> Vec<String> {
+    let mut v: Vec<String> = lines
+        .iter()
+        .map(|l| l.splitn(3, ' ').take(2).collect::<Vec<_>>().join(" "))
+        .collect();
+    v.sort();
+    v
+}
+
+/// #1529's union (tangency-labs/solidcore#2424): the seat tube stops `gap` short of the
+/// top tube's start. The fixes are the default kernel's, or every one when `all`, with
+/// WR-575's `bspline_trim_keeps_rational_end_spans` set to `keeps`; returns the check's
+/// labels.
+fn join_with_gap(gap: f64, all: bool, keeps: bool) -> Vec<String> {
+    let mut k = Kernel::default();
+    if all {
+        k.fixes = UpstreamFixes::all();
+    }
+    k.fixes.bspline_trim_keeps_rational_end_spans = keeps;
+    let full = (150.0_f64 * 150.0 + 520.0 * 520.0).sqrt();
+    let t = top(&mut k);
+    let s = tube(
+        &mut k,
+        [0.0, 0.0, 300.0],
+        full - gap,
+        90.0,
+        -16.09081634885217,
+    );
+    let mut r = boolean_union(&mut k, t, s).unwrap();
+    assert!(
+        is_manifold_solid(&r).unwrap(),
+        "gap {gap}: not a manifold solid"
+    );
+    labels(
+        &check_brep(&mut k, &mut r, CheckLevel::Level2)
+            .unwrap()
+            .lines(),
+    )
+}
+
+/// Whether every label of `sub` is in `all`, as many times.
+fn is_sub_multiset(sub: &[String], all: &[String]) -> bool {
+    let mut rest = all.to_vec();
+    sub.iter().all(|l| match rest.iter().position(|r| r == l) {
+        Some(i) => {
+            rest.remove(i);
+            true
+        }
+        None => false,
+    })
+}
+
+/// tangency-labs/solidcore#2424: WR-575's flag keeps a conic's short end span, and where
+/// that span is a pole (#2090) it ends the trim at the interior knot. When the edge is
+/// split there, the two pieces must end at the same parameter, and the edge's UV trims
+/// with them. Expected: at every gap the flag-on check reports no test the flag-off one
+/// doesn't (no `SmEdgeuse` #25/#26, no `SmBSplineCurve` #15), and at 1e-5 it still drops
+/// the circle's `SmEllipse` #1/#2 (WR-575's case). The flag-off reports are pinned as
+/// controls.
+#[test]
+fn wr575_tube_ends_join_adds_no_check_failure_at_any_gap() {
+    let l = |s: &[&str]| s.iter().map(|x| (*x).to_string()).collect::<Vec<_>>();
+    let gaps = l(&[
+        "SmBrep::Test #0",
+        "SmBrep::Test #0",
+        "SmBrep::Test #0",
+        "SmBrep::Test #2",
+        "SmBrep::Test #2",
+        "SmBrep::Test #2",
+    ]);
+    let ellipse = l(&["SmEllipse::Test #1", "SmEllipse::Test #2"]);
+    let seam = l(&["SmFace::Test #36"]);
+    let seams = l(&["SmFace::Test #36", "SmFace::Test #36"]);
+    let sorted = |parts: &[&Vec<String>]| {
+        let mut v: Vec<String> = parts.iter().flat_map(|p| p.iter().cloned()).collect();
+        v.sort();
+        v
+    };
+    // (gap, every fix on, the flag-off report)
+    let rows = [
+        (1e-5, false, sorted(&[&gaps, &seams, &ellipse])),
+        (1e-6, false, sorted(&[&seam, &ellipse])),
+        (1e-7, false, sorted(&[&seam])),
+        (1e-5, true, sorted(&[&seams, &ellipse])),
+        (1e-6, true, sorted(&[&seam, &ellipse])),
+        (1e-7, true, sorted(&[&seam])),
+    ];
+    let mut failures = Vec::new();
+    for (gap, all, expected_off) in rows {
+        let off = join_with_gap(gap, all, false);
+        let on = join_with_gap(gap, all, true);
+        println!("gap {gap} all {all}: off {off:?}, on {on:?}");
+        if off != expected_off {
+            failures.push(format!("gap {gap} all {all}: flag off {off:?}"));
+        }
+        if !is_sub_multiset(&on, &off) {
+            failures.push(format!(
+                "gap {gap} all {all}: flag on {on:?} adds to {off:?}"
+            ));
+        }
+        if gap == 1e-5 && on.iter().any(|x| x.starts_with("SmEllipse")) {
+            failures.push(format!(
+                "gap {gap} all {all}: flag on {on:?} keeps the ellipse"
+            ));
+        }
+    }
+    assert!(failures.is_empty(), "{failures:#?}");
 }
