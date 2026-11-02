@@ -14,7 +14,7 @@
 //! 3bc54a4's (all 3564 values again bit for bit), the others are unchanged. The circle's points are also checked against the
 //! closed form.
 
-#![allow(clippy::unwrap_used)]
+#![allow(clippy::unwrap_used, clippy::indexing_slicing)]
 
 use solidcore::blend::fillet_section::section::{GnSectionFsg, GN_THUMBWEIGHT_EQUAL_AREA};
 use solidcore::geom::vector3d::{Point3, Vec3};
@@ -530,5 +530,227 @@ fn a_blend_cast_to_a_b_spline_is_its_net() {
             [0.38333333333333341, 0.40000000000000008, 0.0],
             "joined point",
         );
+    }
+}
+
+// ---- #2388: the definition as plain data ----------------------------------------------
+
+use solidcore::surface::procedural_blend::convert::{from_record, rebuild, to_record};
+use solidcore::surface::procedural_blend::record::{
+    ProceduralBlendRecord, RadiusRecord, SupportRecord,
+};
+
+/// The record through JSON (as SolidCraft's record would store it), back to the kernel
+/// and to a record again: `(json, record back, json back)`.
+fn round_trip(k: &Kernel, pb: &ProceduralBlend) -> (String, ProceduralBlend, String) {
+    let rec = to_record(k, pb).unwrap();
+    let json = serde_json::to_string(&rec).unwrap();
+    let read: ProceduralBlendRecord = serde_json::from_str(&json).unwrap();
+    let back = from_record(k, &read).unwrap();
+    let again = serde_json::to_string(&to_record(k, &back).unwrap()).unwrap();
+    (json, back, again)
+}
+
+/// The partials of S at a grid of (u, v), as bits.
+fn s_bits(k: &Kernel, pb: &ProceduralBlend) -> Vec<Result<[u64; 3], String>> {
+    let s = Surface::from(pb.clone());
+    let mut out = Vec::new();
+    for u in [0.0, 0.13, 0.37, 0.8, 1.0] {
+        for v in [0.0, 0.25, 0.6, 1.0] {
+            let d = s.evaluate(
+                k,
+                Point2::new(u, v),
+                1,
+                1,
+                solidcore::nurbs::b_spline_surface_n_lib::p2::EvaluateFlags::default(),
+            );
+            match d {
+                Ok(d) => {
+                    for row in &d {
+                        for p in row {
+                            out.push(Ok([p.x.to_bits(), p.y.to_bits(), p.z.to_bits()]));
+                        }
+                    }
+                }
+                Err(e) => out.push(Err(e.to_string())),
+            }
+        }
+    }
+    out
+}
+
+/// A round on the round between y = 0 and z = 0 (`blend(false, 1, ..)`, the quarter
+/// cylinder about (x, 2, 2) of radius 2): a ball of radius 0.5 inside it against the plane
+/// x = 5, its centre on the circle of radius 1.5 about (4.5, 2, 2).
+fn round_on_a_round(k: &Kernel) -> ProceduralBlend {
+    let inner = Surface::from(blend(k, false, 1, 0.0, false));
+    let wall = Surface::from(bilinear([
+        Point3::new(5.0, 0.0, 0.0),
+        Point3::new(5.0, L, 0.0),
+        Point3::new(5.0, 0.0, L),
+        Point3::new(5.0, L, L),
+    ]));
+    let c = Point3::new(4.5, R, R);
+    let w = 0.5_f64.sqrt();
+    let leader = BSplineCurve::create_canonical(&solidcore::nurbs::b_spline_curve::CanonicalData {
+        dim: 3,
+        degree: 2,
+        control_points: &[
+            c + Vec3::new(0.0, -1.5, 0.0),
+            c + Vec3::new(0.0, -1.5, -1.5),
+            c + Vec3::new(0.0, 0.0, -1.5),
+        ],
+        form: solidcore::nurbs::b_spline_curve::BSplineCurveForm::Unspecified,
+        knot_multiplicities: &[3, 3],
+        knots: &[0.0, 1.0],
+        knot_type: KnotType::Unspecified,
+        weights: Some(&[1.0, w, 1.0]),
+        trim: None,
+    })
+    .unwrap();
+    // the feet: on the inner round at s = 0.45 across t, on the wall at (y, z) / L
+    let seed_inner = line(Point3::new(0.45, 0.0, 0.0), Point3::new(0.45, 1.0, 0.0));
+    let seed_wall = line(Point3::new(0.05, 0.2, 0.0), Point3::new(0.2, 0.05, 0.0));
+    // the ball is inside the inner round: on the side of its normal towards the axis
+    let solidcore::surface::surface::SurfaceKind::ProceduralBlend(ip) = inner.kind() else {
+        unreachable!()
+    };
+    let d = ip.evaluate_definition(k, 0.45, 0.5, 1, 1).unwrap();
+    let n = d[1][0].cross(d[0][1]);
+    let side_inner = if (c - d[0][0]).dot(n) > 0.0 {
+        1.0
+    } else {
+        -1.0
+    };
+    let input = BlendDefinitionInput {
+        supports: [&inner, &wall],
+        sides: [side_inner, 1.0],
+        offsets: [0.5, 0.5],
+        law: None,
+        order: 1,
+        thumbweight: 0.0,
+        leader: &leader,
+        seeds: [&seed_inner, &seed_wall],
+        bound: 1e-3,
+    };
+    let net = bilinear([
+        Point3::new(0.0, 0.0, 0.0),
+        Point3::new(1.0, 0.0, 0.0),
+        Point3::new(0.0, 1.0, 0.0),
+        Point3::new(1.0, 1.0, 0.0),
+    ]);
+    ProceduralBlend::create(k, &net, &input, |n, w| {
+        GnSectionFsg::is_valid(n as usize, w)
+    })
+    .unwrap()
+}
+
+/// #2388: a constant round, a G^n round, a variable round and a round on a round go to
+/// data and back with their records equal bit for bit (the JSON text, every number
+/// written exactly), and the blend read back evaluates S as the original does, bit for
+/// bit, not its net.
+#[test]
+fn a_definition_goes_to_data_and_back_bit_for_bit() {
+    let k = kernel();
+    let cases = [
+        ("round", blend(&k, false, 1, 0.0, false)),
+        (
+            "G2 equal area",
+            blend(&k, true, 2, GN_THUMBWEIGHT_EQUAL_AREA, false),
+        ),
+        ("variable", blend(&k, true, 1, 0.0, true)),
+        ("round on a round", round_on_a_round(&k)),
+    ];
+    for (name, pb) in &cases {
+        let (json, back, again) = round_trip(&k, pb);
+        assert_eq!(json, again, "{name}: the record changed through the kernel");
+        assert_eq!(back.depth(), pb.depth(), "{name}");
+        let (want, got) = (s_bits(&k, pb), s_bits(&k, &back));
+        assert_eq!(want, got, "{name}: S read back is not S");
+        // S solved, not the net: at the middle the net (the unit square z = 0) is far
+        let uv = Point2::new(0.37, 0.6);
+        let p = Surface::from(back.clone()).evaluate_point(&k, uv).unwrap();
+        let q = back.net().evaluate_point(uv).unwrap();
+        assert!(p.distance(q) > 0.1, "{name}: evaluates its net");
+    }
+    // the nested record keeps its inner definition by value
+    let rec = to_record(&k, &cases[3].1).unwrap();
+    assert_eq!(rec.depth(), 2);
+    assert!(matches!(
+        rec.definition.supports[0],
+        SupportRecord::Blend(_)
+    ));
+    assert!(matches!(
+        rec.definition.supports[1],
+        SupportRecord::Nurbs(_)
+    ));
+    assert!(matches!(
+        to_record(&k, &cases[2].1).unwrap().definition.radius,
+        RadiusRecord::Law(_)
+    ));
+}
+
+/// #2388: a corrupted record is refused, before anything is evaluated: counts that do not
+/// agree, numbers out of range, knots that decrease, a weight that is not positive, a
+/// singular map, and supports nested past three definitions.
+#[test]
+fn a_corrupted_definition_is_refused() {
+    type Corrupt = fn(&mut ProceduralBlendRecord);
+    let k = kernel();
+    let good = to_record(&k, &blend(&k, true, 1, 0.0, true)).unwrap();
+    assert!(from_record(&k, &good).is_ok());
+    let corruptions: [(&str, Corrupt); 12] = [
+        ("a knot dropped", |r| {
+            r.definition.leader.knots.pop();
+        }),
+        ("a point dropped", |r| {
+            r.net.points.pop();
+        }),
+        ("knots that decrease", |r| {
+            r.definition.seeds[0].knots.reverse();
+        }),
+        ("a weight below 0", |r| {
+            r.net.weights = Some(vec![-1.0; r.net.points.len()]);
+        }),
+        ("a weight per point missing", |r| {
+            r.net.weights = Some(vec![1.0]);
+        }),
+        ("a side of 0.5", |r| r.definition.sides[0] = 0.5),
+        ("an order of 7", |r| r.definition.order = 7),
+        ("a bound below 0", |r| r.definition.bound = -1.0),
+        ("a bound not finite", |r| r.definition.bound = f64::INFINITY),
+        ("a singular map", |r| r.definition.map.b[1] = 0.0),
+        ("a degree of 0", |r| r.definition.leader.degree = 0),
+        ("four definitions deep", |r| {
+            let mut inner = r.clone();
+            for _ in 0..3 {
+                let mut outer = r.clone();
+                outer.definition.supports[0] = SupportRecord::Blend(Box::new(inner));
+                inner = outer;
+            }
+            *r = inner;
+        }),
+    ];
+    for (what, corrupt) in corruptions {
+        let mut bad = good.clone();
+        corrupt(&mut bad);
+        assert!(from_record(&k, &bad).is_err(), "{what} was taken");
+    }
+}
+
+/// #2388: a net off its definition is refused when the record is rebuilt. These nets are
+/// the unit square z = 0, nowhere near their definitions' rounds; the bump's G^n round's
+/// supports are NURBS, so it is the certificate that refuses it.
+#[test]
+fn a_net_off_its_definition_is_refused_on_rebuild() {
+    let k = kernel();
+    for pb in [
+        blend(&k, false, 1, 0.0, false),
+        blend(&k, true, 2, GN_THUMBWEIGHT_EQUAL_AREA, false),
+        blend(&k, true, 1, 0.0, true),
+    ] {
+        let rec = to_record(&k, &pb).unwrap();
+        assert!(from_record(&k, &rec).is_ok());
+        assert!(rebuild(&k, &rec).is_err());
     }
 }

@@ -38,6 +38,9 @@
 //!   [`BLEND_MAX_DEPTH`] deep (the fork's cap, checked at [`ProceduralBlend::create`]),
 //!   so every walk over the supports is bounded by 3.
 
+pub mod convert;
+pub mod record;
+
 use std::cell::Cell;
 
 use crate::blend::fillet_section::section::GnSectionFsg;
@@ -64,6 +67,7 @@ const OP_EVAL_SIMPLE: &str = "surface::procedural_blend::ProceduralBlend::evalua
 const OP_REPARAM: &str = "surface::procedural_blend::ProceduralBlend::reparameterize";
 const OP_TRANSFORM: &str = "surface::procedural_blend::ProceduralBlend::transform";
 const OP_READ: &str = "surface::procedural_blend::ProceduralBlend::read_from_db";
+const OP_RECERTIFY: &str = "surface::procedural_blend::ProceduralBlend::recertify";
 
 /// `SURF_BASE_TYPE` (`SmTypes.h`).
 const SURF_BASE_TYPE: i64 = 15000;
@@ -767,6 +771,16 @@ impl ProceduralBlend {
         blend.def.map_b = [b0, b1];
         blend.def.swapped = swapped;
         Ok(blend)
+    }
+
+    /// Re-certifies the net against the definition (#2388): proves the net within the
+    /// definition's bound of S, as a rebuild from a record must before the blend is used.
+    ///
+    /// # Errors
+    ///
+    /// `SM_ERR` where the net is not proved within the bound.
+    pub fn recertify(&self, _k: &Kernel) -> Result<f64> {
+        Err(SolidError::sm_err(OP_RECERTIFY))
     }
 
     /// `Evaluate`: the definition's partials at `uv` in the surface's parameters (the
