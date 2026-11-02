@@ -11,4 +11,9 @@ Updates: WR-521
 - **Rust port:** no new field. The change is reached only under the existing opt-in
   `taper_tangent_corner_planes`, so the default results stay at upstream's.
   `a_half_disc_keeps_its_cone_or_gets_tangent_planes` (`issue_1449_taper_corner_rules.rs`)
-  keeps its 6 faces and volume.
+  keeps its 6 faces and volume. On the tangent peg drafted 5 degrees under the tangent rule
+  (`fork_9bebf34_tangent_end_cases.rs`), the bar's and the disc's cone walls are now one
+  face. The front round r2 (at 9bebf34's profile) and the front and concave rounds r2
+  together (at both profiles) now build within the box and pass `check_brep`, where before
+  SMLib's check refused the round and the rounds together failed with status 1001. Those
+  cases are marked `Here::Passes`.
