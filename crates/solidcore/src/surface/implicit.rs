@@ -520,6 +520,29 @@ fn row_circle(net: &[Vec<Vec3>], along_u: bool, k: usize) -> Option<(Vec3, f64, 
     arc_circle(at(0)?, at(1)?, at(2)?)
 }
 
+/// The Greville abscissae of a NURBS surface along u (`along_u`) or v: each control
+/// point's average of its `degree` inner knots.
+fn greville(form: &BSplineSurface, along_u: bool) -> Result<Vec<f64>> {
+    use crate::nurbs::b_spline_surface::SurfParamType;
+    let dir = if along_u {
+        SurfParamType::U
+    } else {
+        SurfParamType::V
+    };
+    let p = form.degree(dir);
+    let (knots, mults) = form.knots(dir, None)?;
+    let mut full = Vec::new();
+    for (&k, &m) in knots.iter().zip(&mults) {
+        full.extend(std::iter::repeat_n(k, m));
+    }
+    let n = full.len().saturating_sub(p + 1);
+    #[allow(clippy::cast_precision_loss)]
+    let pf = p as f64;
+    Ok((0..n)
+        .map(|i| full.iter().skip(i + 1).take(p).sum::<f64>() / pf)
+        .collect())
+}
+
 /// A unit vector square to `a`.
 fn square_to(a: Vec3) -> Vec3 {
     let t = if a.x.abs() < 0.9 { Vec3::X } else { Vec3::Y };
@@ -570,6 +593,37 @@ impl AnalyticSupport {
                 && sv.is_finite();
             if !ok {
                 return Err(not_kind());
+            }
+            // the form is the plane's parametrisation: of equal weights (or none), each
+            // control point the plane's affine point at its Greville parameters, as a
+            // polynomial form is exactly where it reproduces the affine map; otherwise
+            // its (u, v) is not the plane's, and it is refused
+            let (_, _, cps) = form.control_points()?;
+            let w0 = cps.first().map_or(NOW, |c| c.w);
+            if cps.iter().any(|c| c.w != w0) {
+                return Err(not_kind());
+            }
+            let (gu, gv) = (greville(form, true)?, greville(form, false)?);
+            let size = net
+                .iter()
+                .flatten()
+                .fold(0.0_f64, |a, p| a.max(p.length()))
+                .max(origin.length());
+            let tol = gamma(8 + p + q) * size;
+            for (i, row) in net.iter().enumerate() {
+                for (j, pt) in row.iter().enumerate() {
+                    let (Some(&u), Some(&v)) = (gu.get(i), gv.get(j)) else {
+                        return Err(not_kind());
+                    };
+                    let affine = origin + x * (u * su) + y * (v * sv);
+                    let within = matches!(
+                        (*pt - affine).length().partial_cmp(&tol),
+                        Some(core::cmp::Ordering::Less | core::cmp::Ordering::Equal)
+                    );
+                    if !within {
+                        return Err(not_kind());
+                    }
+                }
             }
             return Ok(Self::Plane {
                 placement: Axis2Placement::from_stored(origin, x, y),
