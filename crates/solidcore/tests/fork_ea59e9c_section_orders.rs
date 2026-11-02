@@ -1230,8 +1230,11 @@ fn the_folded_cubic_variable_round_leaves_its_balls_union_without_fix_and_is_ref
         fitted: true,
         size: 1.0,
     };
+    // the fork before its G^n section had upstream's approximated arcs, not 523bc25's exact
+    // circle (`fillet_exact_arc_sections`, WR-708), which comes after it
     let mut k_off = solidcraft_kernel();
     k_off.fixes.fillet_gn_section_generator = false;
+    k_off.fixes.fillet_exact_arc_sections = false;
     let g_off = grade(&case, &mut k_off);
     assert!(g_off.failed.is_none(), "{g_off:?}");
     assert!(
