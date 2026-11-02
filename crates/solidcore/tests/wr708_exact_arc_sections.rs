@@ -111,8 +111,10 @@ fn round(k: &mut Kernel, b: &mut Brep, points: &[[f64; 3]], r: f64) {
 /// The peg rounded in turn; returns how far the B-spline round's trim along the joint
 /// section lies off that section's exact circle, and whether `check_brep` passes.
 fn rounds_in_turn(fixes: &UpstreamFixes) -> (f64, bool) {
-    let mut k = Kernel::default();
-    k.fixes = fixes.clone();
+    let mut k = Kernel {
+        fixes: *fixes,
+        ..Kernel::default()
+    };
     let k = &mut k;
     let mut b = tangent_peg(k);
     round(k, &mut b, &[[20.0, 0.0, 10.0]], 2.0);

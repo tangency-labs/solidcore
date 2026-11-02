@@ -16,6 +16,7 @@
 //! | [`exact_mitre_curve`]        | `SmBlendCorner::ExactMitreCurve`            |
 //! | `foot_on_surface` (private)  | `sm_FootOnSurface`                          |
 //! | `bernstein_product_21` (private) | `sm_BernsteinProduct21`                 |
+//! | [`swept`]                    | the Swept turn (`Classify`'s Swept part, `BuildSweptSurface`, `CreateSweptPatch`) |
 //!
 //! Deviations: the blend corner is not its own corner kind here. The fork's `SmBlendCorner`
 //! builds the Join, the corners of four edges and the Mitre turn with the two-blend
@@ -49,6 +50,8 @@ use crate::surface::surface::Surface;
 use crate::topology::edgeuse::p1 as eu1;
 use crate::topology::face::p2 as face2;
 use crate::topology::{edge, Brep, EdgeId, EdgeuseId, VertexId};
+
+pub mod swept;
 
 const OP_CLASSIFY: &str = "blend::blend_corner::classify";
 const OP_EXACT: &str = "blend::blend_corner::exact_mitre_curve";

@@ -692,6 +692,9 @@ pub struct FilletCorner {
     /// pinned corners. A blend corner is built by the Nx2 port (see
     /// [`crate::blend::blend_corner`]).
     pub blend: Option<crate::blend::blend_corner::BlendCorner>,
+    /// The fork's Swept turn's own members (`m_pSideEU`, `m_pTurnSurface` and its loop;
+    /// WR-697): set by its topology on a blend corner that is a Swept turn.
+    pub swept: Option<crate::blend::blend_corner::swept::SweptTurn>,
 }
 
 /// What the corner methods operate on besides the corner itself.
@@ -1022,6 +1025,7 @@ impl FilletCorner {
             // SmFilletNx2Corner: m_bMitre = FALSE (the fork's, 9ba2b12)
             mitre: false,
             blend: None,
+            swept: None,
         }
     }
 
@@ -2102,6 +2106,13 @@ impl FilletCorner {
         nx2: impl FnOnce(&mut Self, &mut C) -> Result<()>,
         nxn: impl FnOnce(&mut Self, &mut C) -> Result<()>,
     ) -> Result<()> {
+        // the fork's SmBlendCorner::AdjustTopology: a Swept turn adjusts nothing (WR-697)
+        if self
+            .blend
+            .is_some_and(crate::blend::blend_corner::BlendCorner::is_swept)
+        {
+            return Ok(());
+        }
         match self.kind {
             FilletCornerKind::NByTwo => nx2(self, context),
             FilletCornerKind::ConvexNByN | FilletCornerKind::ConcaveNByN => nxn(self, context),
@@ -2454,6 +2465,13 @@ impl FilletCorner {
         nx2: impl FnOnce(&mut Self, &mut C) -> Result<()>,
         nx1_closed: impl FnOnce(&mut Self, &mut C) -> Result<()>,
     ) -> Result<()> {
+        // the fork's SmBlendCorner::AdjustTangentCorner: nothing at a Swept turn (WR-697)
+        if self
+            .blend
+            .is_some_and(crate::blend::blend_corner::BlendCorner::is_swept)
+        {
+            return Ok(());
+        }
         match self.kind {
             FilletCornerKind::NByTwo => nx2(self, context),
             FilletCornerKind::NByOneClosed => nx1_closed(self, context),
