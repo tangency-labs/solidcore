@@ -378,8 +378,9 @@ pub fn definition_partials_naive(
     let [f0, f1] = &e.f;
     for c in 0..3 {
         for i in 0..=lk {
-            let get =
-                |v: &super::series::VSer<Ivl>| v.a.get(c).map_or(Ivl::from(0.0), |x| x.at(i, 0));
+            let get = |v: &super::series::VSer<Ivl>| {
+                v.a.get(c).map_or_else(|| Ivl::from(0.0), |x| x.at(i, 0))
+            };
             if let (Some(r1), Some(r2), Some(mc)) =
                 (rho1.a.get_mut(c), rho2.a.get_mut(c), m.a.get_mut(c))
             {
