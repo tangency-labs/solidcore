@@ -492,12 +492,12 @@ fn a_moved_round_is_certified_again() {
 
 /// #2388: a support keeps its analytic kind through the record. The square corner's
 /// supports are planes: their record labels them planes beside their NURBS forms, the
-/// rebuilt supports are planes again, the record reads back bit for bit, and a rebuilt
-/// support's offset is a plane exactly 1 off. A label moved off its NURBS form is refused.
+/// rebuilt supports are planes again (derived from their forms), the record reads back bit for bit, and a rebuilt
+/// support's offset is a plane exactly 1 off. A plane labelled a cylinder is refused.
 #[test]
 fn an_analytic_support_stays_its_kind_through_the_record() {
     use solidcore::surface::procedural_blend::convert::{from_record, rebuild, to_record};
-    use solidcore::surface::procedural_blend::record::{AnalyticRecord, SupportRecord};
+    use solidcore::surface::procedural_blend::record::{SupportKindRecord, SupportRecord};
     let k = kernel(true);
     let (s, _, _) = corner_round(&k);
     let SurfaceKind::ProceduralBlend(pb) = s.kind() else {
@@ -505,12 +505,15 @@ fn an_analytic_support_stays_its_kind_through_the_record() {
     };
     let rec = to_record(&k, pb).unwrap();
     for support in &rec.definition.supports {
-        let SupportRecord::Nurbs { analytic, .. } = support else {
-            panic!("not a NURBS support: {support:?}");
-        };
         assert!(
-            matches!(**analytic, AnalyticRecord::Plane { .. }),
-            "{analytic:?}"
+            matches!(
+                support,
+                SupportRecord::Nurbs {
+                    kind: SupportKindRecord::Plane,
+                    ..
+                }
+            ),
+            "{support:?}"
         );
     }
     let back = rebuild(&k, &rec).unwrap();
@@ -533,16 +536,13 @@ fn an_analytic_support_stays_its_kind_through_the_record() {
         );
     }
     let mut bad = rec.clone();
-    let SupportRecord::Nurbs { analytic, .. } = &mut bad.definition.supports[1] else {
+    let SupportRecord::Nurbs { kind, .. } = &mut bad.definition.supports[1] else {
         unreachable!()
     };
-    let AnalyticRecord::Plane { origin, .. } = analytic.as_mut() else {
-        unreachable!()
-    };
-    origin[0] += 1.0;
+    *kind = SupportKindRecord::Cylinder;
     assert!(
         from_record(&k, &bad).is_err(),
-        "a moved plane label was taken"
+        "a plane labelled a cylinder was taken"
     );
 }
 

@@ -448,3 +448,220 @@ impl AnalyticSupport {
         })
     }
 }
+
+const OP_DERIVE: &str = "surface::implicit::AnalyticSupport::derive";
+
+/// The analytic kind of a support, without its parameters (#2388: a record's label beside
+/// the support's NURBS form, which is the support's one geometric truth).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SupportKind {
+    /// A plane.
+    Plane,
+    /// A cylinder.
+    Cylinder,
+    /// A cone.
+    Cone,
+    /// A sphere.
+    Sphere,
+    /// A torus.
+    Torus,
+}
+
+/// A NURBS surface's control points, Euclidean, `[i along u][j along v]`, with its
+/// degrees.
+fn euclidean_net(form: &BSplineSurface) -> Result<(Vec<Vec<Vec3>>, usize, usize)> {
+    use crate::nurbs::b_spline_surface::SurfParamType;
+    let (nu, nv, cps) = form.control_points()?;
+    let mut net = vec![Vec::new(); nu];
+    for (i, row) in net.iter_mut().enumerate() {
+        for j in 0..nv {
+            let c = cps
+                .get(i * nv + j)
+                .ok_or_else(|| SolidError::sm_err(OP_DERIVE))?;
+            let w = if c.w == NOW { 1.0 } else { c.w };
+            row.push(Vec3::new(c.x, c.y, c.z) * (1.0 / w));
+        }
+    }
+    Ok((
+        net,
+        form.degree(SurfParamType::U),
+        form.degree(SurfParamType::V),
+    ))
+}
+
+/// The circle of a rational quadratic arc `p0, p1, p2` (tangent to `p0 p1` at `p0` and
+/// to `p1 p2` at `p2`): its centre, radius and unit normal; the centre solves the two
+/// tangency conditions in the arc's plane. `None` for a degenerate arc.
+fn arc_circle(p0: Vec3, p1: Vec3, p2: Vec3) -> Option<(Vec3, f64, Vec3)> {
+    let (a, b) = (p1 - p0, p1 - p2);
+    let n = a.cross(p2 - p1);
+    // rows a, b, n; right-hand side a.p0, b.p2, n.p0 (Cramer)
+    let det = a.dot(b.cross(n));
+    let scale = a.length() * b.length() * n.length();
+    // (a pick of the arcs that span a plane, not a tolerance on the result)
+    if det.abs().partial_cmp(&(1e-12 * scale)) != Some(core::cmp::Ordering::Greater) {
+        return None;
+    }
+    let (ra, rb, rn) = (a.dot(p0), b.dot(p2), n.dot(p0));
+    let centre = (b.cross(n) * ra + n.cross(a) * rb + a.cross(b) * rn) * (1.0 / det);
+    Some((centre, (p0 - centre).length(), n * (1.0 / n.length())))
+}
+
+/// The first non-degenerate arc's circle of the row `k` of the net along `u` (`along_u`)
+/// or `v`.
+fn row_circle(net: &[Vec<Vec3>], along_u: bool, k: usize) -> Option<(Vec3, f64, Vec3)> {
+    let at = |i: usize| -> Option<Vec3> {
+        if along_u {
+            net.get(i)?.get(k).copied()
+        } else {
+            net.get(k)?.get(i).copied()
+        }
+    };
+    arc_circle(at(0)?, at(1)?, at(2)?)
+}
+
+/// A unit vector square to `a`.
+fn square_to(a: Vec3) -> Vec3 {
+    let t = if a.x.abs() < 0.9 { Vec3::X } else { Vec3::Y };
+    let x = t - a * t.dot(a);
+    x * (1.0 / x.length())
+}
+
+impl AnalyticSupport {
+    /// The analytic surface of kind `kind` a NURBS form is, derived from the form: a
+    /// plane from its corners (its scales and domain from the knots); a surface of
+    /// revolution from its circles, the rational quadratic arcs of its rows. Two rows of
+    /// the revolving direction are circles about one axis (parallel normals, centres on
+    /// the axis); a cylinder's radius is theirs, a cone's grows between them, a sphere's
+    /// and a torus' centre and radii come from a generating arc. Exact to rounding: a
+    /// rational NURBS represents these surfaces exactly. [`AnalyticSupport::build`] then
+    /// checks the form against the derived surface.
+    ///
+    /// # Errors
+    ///
+    /// `InvalidInput` where the form is not of that kind (no circles about one axis, a
+    /// degenerate corner); those of the control net.
+    pub fn derive(kind: SupportKind, form: &BSplineSurface) -> Result<Self> {
+        let not_kind =
+            || SolidError::invalid_input(OP_DERIVE, "a support's NURBS form is not of its kind");
+        let (net, p, q) = euclidean_net(form)?;
+        let (nu, nv) = (net.len(), net.first().map_or(0, Vec::len));
+        let corner = |i: usize, j: usize| net.get(i).and_then(|r| r.get(j)).copied();
+        if kind == SupportKind::Plane {
+            let (Some(p00), Some(pu), Some(pv)) = (
+                corner(0, 0),
+                corner(nu.saturating_sub(1), 0),
+                corner(0, nv.saturating_sub(1)),
+            ) else {
+                return Err(not_kind());
+            };
+            let d = form.natural_uv_domain();
+            let (du, dv) = (d.max().x - d.min().x, d.max().y - d.min().y);
+            let (eu, ev) = (pu - p00, pv - p00);
+            let x = eu * (1.0 / eu.length());
+            let ey = ev - x * ev.dot(x);
+            let y = ey * (1.0 / ey.length());
+            let (su, sv) = (eu.length() / du, ev.dot(y) / dv);
+            let origin = p00 - x * (d.min().x * su) - y * (d.min().y * sv);
+            let ok = [x, y, origin]
+                .iter()
+                .all(|v| v.x.is_finite() && v.y.is_finite() && v.z.is_finite())
+                && su.is_finite()
+                && sv.is_finite();
+            if !ok {
+                return Err(not_kind());
+            }
+            return Ok(Self::Plane {
+                placement: Axis2Placement::from_stored(origin, x, y),
+                uv_scale: Vec2::new(su, sv),
+                domain: d,
+            });
+        }
+        // the revolving direction: rows of quadratic arcs about one axis
+        let mut found = None;
+        for along_u in [true, false] {
+            let (deg, rows) = if along_u { (p, nv) } else { (q, nu) };
+            if deg != 2 {
+                continue;
+            }
+            let circles: Vec<_> = (0..rows)
+                .filter_map(|k| row_circle(&net, along_u, k))
+                .collect();
+            let (Some(&(ca, ra, na)), Some(&(cb, rb, nb))) = (circles.first(), circles.last())
+            else {
+                continue;
+            };
+            let size = ra.max(rb).max((cb - ca).length());
+            // (these pick the revolving direction; the form is checked against the
+            // derived surface by `build`)
+            let parallel = na.cross(nb).length() <= 1e-9;
+            let on_axis = (cb - ca).cross(na).length() <= 1e-9 * size.max(1.0);
+            if parallel && on_axis {
+                found = Some((along_u, ca, ra, cb, rb, na));
+                break;
+            }
+        }
+        let Some((along_u, ca, ra, cb, rb, axis)) = found else {
+            return Err(not_kind());
+        };
+        let placement =
+            |o: Vec3| Axis2Placement::from_stored(o, square_to(axis), axis.cross(square_to(axis)));
+        // a generating arc: the first column across the revolving direction
+        let generator = if along_u {
+            row_circle(&net, false, 0)
+        } else {
+            row_circle(&net, true, 0)
+        };
+        Ok(match kind {
+            SupportKind::Plane => return Err(not_kind()),
+            SupportKind::Cylinder => Self::Cylinder {
+                placement: placement(ca),
+                radius: ra,
+            },
+            SupportKind::Cone => {
+                let h = (cb - ca).dot(axis);
+                if h.abs().partial_cmp(&0.0) != Some(core::cmp::Ordering::Greater) {
+                    return Err(not_kind());
+                }
+                Self::Cone {
+                    placement: placement(ca),
+                    base_radius: ra,
+                    semi_angle_deg: ((rb - ra) / h).atan() * 180.0 / PI,
+                }
+            }
+            SupportKind::Sphere => {
+                let Some((c, r, _)) = generator else {
+                    return Err(not_kind());
+                };
+                Self::Sphere {
+                    placement: placement(c),
+                    radius: r,
+                }
+            }
+            SupportKind::Torus => {
+                let Some((g, minor, _)) = generator else {
+                    return Err(not_kind());
+                };
+                let t = (g - ca).dot(axis);
+                let centre = ca + axis * t;
+                Self::Torus {
+                    placement: placement(centre),
+                    major_radius: (g - centre).length(),
+                    minor_radius: minor,
+                }
+            }
+        })
+    }
+
+    /// Its kind, without its parameters.
+    #[must_use]
+    pub const fn kind(&self) -> SupportKind {
+        match self {
+            Self::Plane { .. } => SupportKind::Plane,
+            Self::Cylinder { .. } => SupportKind::Cylinder,
+            Self::Cone { .. } => SupportKind::Cone,
+            Self::Sphere { .. } => SupportKind::Sphere,
+            Self::Torus { .. } => SupportKind::Torus,
+        }
+    }
+}

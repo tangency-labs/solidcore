@@ -150,10 +150,15 @@ follow [22, 20]. Only export flattens to B and carries ε, once.
 
 **Kept as data ([#2388](https://github.com/tangency-labs/solidcore/issues/2388)).** A round
 outlives the kernel's body as plain data, `surface::procedural_blend::record`: its supports by
-value (an analytic support as the NURBS form its stations are solved on, a round on a round as its
-own record, three deep at most), sides, radius or law, order, thumbweight, leader, seeds, ε, the
+value (a support as its NURBS form, the one its stations are solved on, labelled with its kind:
+plane, cylinder, cone, sphere, torus or free; a round on a round as its own record, three deep at
+most), sides, radius or law, order, thumbweight, leader, seeds, ε, the
 map from the net's parameters, and the net, every number as stored. The record holds no maths and
-moves into `solidcore-record` as it is (`docs/layers.md`). Rebuilding from it is exact, and the
+moves into `solidcore-record` as it is (`docs/layers.md`). The record keeps no analytic parameters:
+rebuilding derives a labelled support's analytic surface from its form (its corners for a plane,
+the circles of its rational quadratic rows for a surface of revolution: exact, as rational NURBS
+represent these surfaces exactly), refusing a form whose implicit equation does not vanish on it,
+coefficient by coefficient on each Bézier patch, naming the face. Rebuilding is exact, and the
 net is certified again (§2.4) before the round is an operand; a net not proved within ε is
 refused, naming its face. Evaluating S is a pure function of the definition: the station memo
 keys a definition by its own identity, never by a kernel's count, so kernels on other threads

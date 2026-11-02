@@ -538,7 +538,7 @@ fn a_blend_cast_to_a_b_spline_is_its_net() {
 use solidcore::surface::plane::Plane;
 use solidcore::surface::procedural_blend::convert::{from_record, rebuild, to_record};
 use solidcore::surface::procedural_blend::record::{
-    AnalyticRecord, ProceduralBlendRecord, RadiusRecord, SupportRecord,
+    ProceduralBlendRecord, RadiusRecord, SupportKindRecord, SupportRecord,
 };
 
 /// The record through JSON (as SolidCraft's record would store it), back to the kernel
@@ -722,14 +722,11 @@ fn a_corrupted_definition_is_refused() {
         ("a bound not finite", |r| r.definition.bound = f64::INFINITY),
         ("a singular map", |r| r.definition.map.b[1] = 0.0),
         ("a degree of 0", |r| r.definition.leader.degree = 0),
-        ("a support labelled a plane it is not on", |r| {
-            let SupportRecord::Nurbs { form, .. } = &r.definition.supports[0] else {
+        ("a support labelled a sphere it is not", |r| {
+            let SupportRecord::Nurbs { kind, .. } = &mut r.definition.supports[0] else {
                 unreachable!()
             };
-            r.definition.supports[0] = SupportRecord::Nurbs {
-                analytic: Box::new(plane_y(5.0)),
-                form: form.clone(),
-            };
+            *kind = SupportKindRecord::Sphere;
         }),
         ("four definitions deep", |r| {
             let mut inner = r.clone();
@@ -746,28 +743,14 @@ fn a_corrupted_definition_is_refused() {
         corrupt(&mut bad);
         assert!(from_record(&k, &bad).is_err(), "{what} was taken");
     }
-    // labelled the plane it is on (y = 0), the support is rebuilt as that plane
+    // labelled the plane it is (y = 0), the support is rebuilt as a plane derived from it
     let mut planar = good.clone();
-    let SupportRecord::Nurbs { form, .. } = &planar.definition.supports[0] else {
+    let SupportRecord::Nurbs { kind, .. } = &mut planar.definition.supports[0] else {
         unreachable!()
     };
-    planar.definition.supports[0] = SupportRecord::Nurbs {
-        analytic: Box::new(plane_y(0.0)),
-        form: form.clone(),
-    };
+    *kind = SupportKindRecord::Plane;
     let back = from_record(&k, &planar).unwrap();
     assert_eq!(back.support(0).unwrap().type_code(), Plane::TYPE);
-}
-
-/// The plane y = `y` over the support's domain (its normal -y, x along x, y along z).
-fn plane_y(y: f64) -> AnalyticRecord {
-    AnalyticRecord::Plane {
-        origin: [0.0, y, 0.0],
-        x_axis: [1.0, 0.0, 0.0],
-        y_axis: [0.0, 0.0, 1.0],
-        uv_scale: [1.0, 1.0],
-        domain: [0.0, 0.0, 1.0, 1.0],
-    }
 }
 
 /// #2388: a net off its definition is refused when the record is rebuilt. These nets are

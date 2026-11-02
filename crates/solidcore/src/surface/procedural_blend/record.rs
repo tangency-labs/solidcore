@@ -59,75 +59,22 @@ pub struct NurbsSurfaceRecord {
     pub weights: Option<Vec<f64>>,
 }
 
-/// The analytic kind of a support, with its parameters, kept beside its NURBS form (a
-/// placement is its origin and its unit x and y axes, the axis of revolution z = x × y).
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub enum AnalyticRecord {
-    /// No analytic kind: the support is its NURBS form (a B-spline surface, or a kind the
-    /// record keeps as its form only).
+/// The analytic kind of a support, a label beside its NURBS form, which is the support's
+/// one geometric truth: the kernel derives the analytic surface from the form.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum SupportKindRecord {
+    /// No analytic kind: a B-spline surface (or a kind the record keeps as its form only).
     Free,
-    /// A plane `O + u su X + v sv Y` over its domain.
-    Plane {
-        /// O.
-        origin: [f64; 3],
-        /// X.
-        x_axis: [f64; 3],
-        /// Y.
-        y_axis: [f64; 3],
-        /// `(su, sv)`.
-        uv_scale: [f64; 2],
-        /// The domain `[u_min, v_min, u_max, v_max]`.
-        domain: [f64; 4],
-    },
-    /// A cylinder about the placement's z axis.
-    Cylinder {
-        /// The placement's origin, on the axis.
-        origin: [f64; 3],
-        /// Its x axis.
-        x_axis: [f64; 3],
-        /// Its y axis.
-        y_axis: [f64; 3],
-        /// The radius.
-        radius: f64,
-    },
-    /// A cone about the placement's z axis, of radius `r0` at the origin, its radius
-    /// growing with `tan(semi_angle_deg)` along z.
-    Cone {
-        /// The placement's origin, on the axis.
-        origin: [f64; 3],
-        /// Its x axis.
-        x_axis: [f64; 3],
-        /// Its y axis.
-        y_axis: [f64; 3],
-        /// `r0`.
-        base_radius: f64,
-        /// The semi-angle, degrees.
-        semi_angle_deg: f64,
-    },
-    /// A sphere about the placement's origin.
-    Sphere {
-        /// The centre.
-        origin: [f64; 3],
-        /// The placement's x axis.
-        x_axis: [f64; 3],
-        /// Its y axis.
-        y_axis: [f64; 3],
-        /// The radius.
-        radius: f64,
-    },
-    /// A torus about the placement's z axis.
-    Torus {
-        /// The centre.
-        origin: [f64; 3],
-        /// The placement's x axis.
-        x_axis: [f64; 3],
-        /// Its y axis.
-        y_axis: [f64; 3],
-        /// The major radius.
-        major_radius: f64,
-        /// The minor radius.
-        minor_radius: f64,
-    },
+    /// A plane.
+    Plane,
+    /// A cylinder.
+    Cylinder,
+    /// A cone.
+    Cone,
+    /// A sphere.
+    Sphere,
+    /// A torus.
+    Torus,
 }
 
 /// A surface the ball rolls on: a NURBS form (what the stations are solved on) with its
@@ -136,75 +83,13 @@ pub enum AnalyticRecord {
 pub enum SupportRecord {
     /// A surface by its NURBS form, and its analytic kind.
     Nurbs {
-        /// The analytic kind and its parameters ([`AnalyticRecord::Free`]: none).
-        analytic: Box<AnalyticRecord>,
+        /// The analytic kind ([`SupportKindRecord::Free`]: none).
+        kind: SupportKindRecord,
         /// The NURBS form.
         form: NurbsSurfaceRecord,
     },
     /// A procedural blend (nested, at most [`RECORD_MAX_DEPTH`] deep in all).
     Blend(Box<ProceduralBlendRecord>),
-}
-
-impl AnalyticRecord {
-    /// Its numbers.
-    fn numbers(&self) -> Vec<f64> {
-        let mut v = Vec::new();
-        match self {
-            Self::Free => {}
-            Self::Plane {
-                origin,
-                x_axis,
-                y_axis,
-                uv_scale,
-                domain,
-            } => {
-                v.extend(
-                    origin
-                        .iter()
-                        .chain(x_axis)
-                        .chain(y_axis)
-                        .chain(uv_scale)
-                        .chain(domain),
-                );
-            }
-            Self::Cylinder {
-                origin,
-                x_axis,
-                y_axis,
-                radius,
-            }
-            | Self::Sphere {
-                origin,
-                x_axis,
-                y_axis,
-                radius,
-            } => {
-                v.extend(origin.iter().chain(x_axis).chain(y_axis));
-                v.push(*radius);
-            }
-            Self::Cone {
-                origin,
-                x_axis,
-                y_axis,
-                base_radius,
-                semi_angle_deg,
-            } => {
-                v.extend(origin.iter().chain(x_axis).chain(y_axis));
-                v.extend([*base_radius, *semi_angle_deg]);
-            }
-            Self::Torus {
-                origin,
-                x_axis,
-                y_axis,
-                major_radius,
-                minor_radius,
-            } => {
-                v.extend(origin.iter().chain(x_axis).chain(y_axis));
-                v.extend([*major_radius, *minor_radius]);
-            }
-        }
-        v
-    }
 }
 
 /// The ball's radius.
@@ -406,15 +291,7 @@ impl ProceduralBlendRecord {
         let d = &self.definition;
         for support in &d.supports {
             match support {
-                SupportRecord::Nurbs { analytic, form } => {
-                    if !all_finite(&analytic.numbers()) {
-                        return Err(refuse(
-                            "definition.supports",
-                            "a support's analytic parameters are finite",
-                        ));
-                    }
-                    form.validate("definition.supports")?;
-                }
+                SupportRecord::Nurbs { form, .. } => form.validate("definition.supports")?,
                 SupportRecord::Blend(b) => b.validate_at(depth + 1)?,
             }
         }

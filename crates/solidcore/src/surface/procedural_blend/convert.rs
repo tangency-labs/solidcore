@@ -12,24 +12,21 @@
 //! most [`BLEND_MAX_DEPTH`] deep, with an explicit depth refused past it.
 
 use super::record::{
-    AnalyticRecord, BlendDefinitionRecord, NurbsCurveRecord, NurbsSurfaceRecord,
-    ParameterMapRecord, ProceduralBlendRecord, RadiusRecord, SupportRecord,
+    BlendDefinitionRecord, NurbsCurveRecord, NurbsSurfaceRecord, ParameterMapRecord,
+    ProceduralBlendRecord, RadiusRecord, SupportKindRecord, SupportRecord,
 };
 use super::{BlendDefinitionInput, ProceduralBlend, BLEND_MAX_DEPTH};
 use crate::blend::fillet_section::section::GnSectionFsg;
 use crate::blend::fillet_section::station::as_b_spline;
 use crate::error::{EntityRef, Result, SolidError, SM_ERR_INVALID_INPUT};
-use crate::geom::axis2_placement::Axis2Placement;
-use crate::geom::extent2d::Extent2d;
 use crate::kernel::Kernel;
-use crate::math::{Vec2, Vec3};
 use crate::nurbs::b_spline_curve::BSplineCurve;
 use crate::nurbs::b_spline_surface::BSplineSurface;
 use crate::nurbs::crv_basic::Curve as NurbCurve;
 use crate::nurbs::knots::MAX_DEGREE;
 use crate::nurbs::math::{CPoint, NOW, NOZ};
 use crate::nurbs::srf_basic::Surface as NurbSurface;
-use crate::surface::implicit::AnalyticSupport;
+use crate::surface::implicit::{AnalyticSupport, SupportKind};
 use crate::surface::surface::{Surface, SurfaceKind};
 use crate::topology::FaceId;
 
@@ -101,130 +98,30 @@ fn support_record(k: &Kernel, s: &Surface, depth: u32) -> Result<SupportRecord> 
             reason: "a support that is not a NURBS surface has no record",
         });
     };
-    let v = |x: Vec3| [x.x, x.y, x.z];
-    let analytic = match AnalyticSupport::of(s) {
-        None => AnalyticRecord::Free,
-        Some(AnalyticSupport::Plane {
-            placement: p,
-            uv_scale,
-            domain,
-        }) => AnalyticRecord::Plane {
-            origin: v(p.origin()),
-            x_axis: v(p.x_axis()),
-            y_axis: v(p.y_axis()),
-            uv_scale: [uv_scale.x, uv_scale.y],
-            domain: [
-                domain.min().x,
-                domain.min().y,
-                domain.max().x,
-                domain.max().y,
-            ],
-        },
-        Some(AnalyticSupport::Cylinder {
-            placement: p,
-            radius,
-        }) => AnalyticRecord::Cylinder {
-            origin: v(p.origin()),
-            x_axis: v(p.x_axis()),
-            y_axis: v(p.y_axis()),
-            radius,
-        },
-        Some(AnalyticSupport::Cone {
-            placement: p,
-            base_radius,
-            semi_angle_deg,
-        }) => AnalyticRecord::Cone {
-            origin: v(p.origin()),
-            x_axis: v(p.x_axis()),
-            y_axis: v(p.y_axis()),
-            base_radius,
-            semi_angle_deg,
-        },
-        Some(AnalyticSupport::Sphere {
-            placement: p,
-            radius,
-        }) => AnalyticRecord::Sphere {
-            origin: v(p.origin()),
-            x_axis: v(p.x_axis()),
-            y_axis: v(p.y_axis()),
-            radius,
-        },
-        Some(AnalyticSupport::Torus {
-            placement: p,
-            major_radius,
-            minor_radius,
-        }) => AnalyticRecord::Torus {
-            origin: v(p.origin()),
-            x_axis: v(p.x_axis()),
-            y_axis: v(p.y_axis()),
-            major_radius,
-            minor_radius,
-        },
+    let kind = match AnalyticSupport::of(s).map(|a| a.kind()) {
+        None => SupportKindRecord::Free,
+        Some(SupportKind::Plane) => SupportKindRecord::Plane,
+        Some(SupportKind::Cylinder) => SupportKindRecord::Cylinder,
+        Some(SupportKind::Cone) => SupportKindRecord::Cone,
+        Some(SupportKind::Sphere) => SupportKindRecord::Sphere,
+        Some(SupportKind::Torus) => SupportKindRecord::Torus,
     };
     Ok(SupportRecord::Nurbs {
-        analytic: Box::new(analytic),
+        kind,
         form: surface_record(&b)?,
     })
 }
 
-/// The kernel's analytic kind a record's label names (its numbers copied).
-fn analytic_of(a: &AnalyticRecord) -> Option<AnalyticSupport> {
-    let v = |x: [f64; 3]| Vec3::new(x[0], x[1], x[2]);
-    let place = |o, x, y| Axis2Placement::from_stored(v(o), v(x), v(y));
-    Some(match *a {
-        AnalyticRecord::Free => return None,
-        AnalyticRecord::Plane {
-            origin,
-            x_axis,
-            y_axis,
-            uv_scale,
-            domain,
-        } => AnalyticSupport::Plane {
-            placement: place(origin, x_axis, y_axis),
-            uv_scale: Vec2::new(uv_scale[0], uv_scale[1]),
-            domain: Extent2d::from_bounds(domain[0], domain[1], domain[2], domain[3]),
-        },
-        AnalyticRecord::Cylinder {
-            origin,
-            x_axis,
-            y_axis,
-            radius,
-        } => AnalyticSupport::Cylinder {
-            placement: place(origin, x_axis, y_axis),
-            radius,
-        },
-        AnalyticRecord::Cone {
-            origin,
-            x_axis,
-            y_axis,
-            base_radius,
-            semi_angle_deg,
-        } => AnalyticSupport::Cone {
-            placement: place(origin, x_axis, y_axis),
-            base_radius,
-            semi_angle_deg,
-        },
-        AnalyticRecord::Sphere {
-            origin,
-            x_axis,
-            y_axis,
-            radius,
-        } => AnalyticSupport::Sphere {
-            placement: place(origin, x_axis, y_axis),
-            radius,
-        },
-        AnalyticRecord::Torus {
-            origin,
-            x_axis,
-            y_axis,
-            major_radius,
-            minor_radius,
-        } => AnalyticSupport::Torus {
-            placement: place(origin, x_axis, y_axis),
-            major_radius,
-            minor_radius,
-        },
-    })
+/// The kernel's kind a record's label names.
+const fn kind_of(k: SupportKindRecord) -> Option<SupportKind> {
+    match k {
+        SupportKindRecord::Free => None,
+        SupportKindRecord::Plane => Some(SupportKind::Plane),
+        SupportKindRecord::Cylinder => Some(SupportKind::Cylinder),
+        SupportKindRecord::Cone => Some(SupportKind::Cone),
+        SupportKindRecord::Sphere => Some(SupportKind::Sphere),
+        SupportKindRecord::Torus => Some(SupportKind::Torus),
+    }
 }
 
 fn to_u32(x: usize) -> Result<u32> {
@@ -334,21 +231,24 @@ fn from_record_at(k: &Kernel, rec: &ProceduralBlendRecord, depth: u32) -> Result
     let mut supports = Vec::new();
     for (i, s) in d.supports.iter().enumerate() {
         supports.push(match s {
-            SupportRecord::Nurbs { analytic, form } => {
+            SupportRecord::Nurbs { kind, form } => {
                 let form = surface_of(form)?;
-                match analytic_of(analytic) {
+                match kind_of(*kind) {
                     None => Surface::from(form),
-                    Some(a) => a.build(k, form).map_err(|e| match e {
-                        SolidError::InvalidInput { .. } => SolidError::invalid_input(
-                            OP_FROM,
-                            if i == 0 {
-                                "support 1's analytic kind disagrees with its NURBS form"
-                            } else {
-                                "support 2's analytic kind disagrees with its NURBS form"
-                            },
-                        ),
-                        other => other,
-                    })?,
+                    // the analytic surface derived from the form, the form checked on it
+                    Some(kind) => AnalyticSupport::derive(kind, &form)
+                        .and_then(|a| a.build(k, form))
+                        .map_err(|e| match e {
+                            SolidError::InvalidInput { .. } => SolidError::invalid_input(
+                                OP_FROM,
+                                if i == 0 {
+                                    "support 1's NURBS form is not of its kind"
+                                } else {
+                                    "support 2's NURBS form is not of its kind"
+                                },
+                            ),
+                            other => other,
+                        })?,
                 }
             }
             SupportRecord::Blend(b) => Surface::from(from_record_at(k, b, depth + 1)?),
