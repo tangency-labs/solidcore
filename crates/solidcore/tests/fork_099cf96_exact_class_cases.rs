@@ -31,7 +31,18 @@
 //! The left column is checked on the default kernel and the right one with
 //! `fillet_exact_round_classes` alone. With every current SolidCraft fix enabled,
 //! the exact cases keep their marks, while the tee must be a valid procedural
-//! round within 1e-9 mm of its rolling ball, rather than the old fitted surface.
+//! round within 1e-9 mm of its rolling ball, rather than the old fitted surface,
+//! and the ball cut flat (`sphere_plane`) builds, as the fork's does since smlib#124.
+//!
+//! `sphere_plane` with every fix: the fork at b785227 (before smlib#124) still returns 1001;
+//! at 63c7962 and 18e96f1 (smlib#124) the same round (`SmApiFilletEdges`, r 2, section 1,
+//! continuity 1, thumbweight 1) returns success with 5 faces and volume 3272.764885312161
+//! (`SmApiBrepComputeVolume` at 1e-7), which the port matches (its round revolved, on the
+//! ball to 1e-14, valid at level 2). That is not the closed form: the ball R 10 below z = 4
+//! is 4000 pi / 3 - 288 pi = 3284.011520552530, and the round r 2 (the ball's centre ring
+//! at z = 2, radius sqrt 60) takes away pi (40.5 - 2 sqrt 60 (pi - sqrt 3.75 / 4 - 2 asin
+//! 1 / 4)) = 22.492758031488, which leaves 3261.518762521043 (the case's `want`, the fork's
+//! capi figure). The fork's round and the port's take away 11.246635240 only.
 //! One difference from the fork: the two pipes' union itself fails 1001 here without
 //! `ssi_split_curves_at_singular_points` (WR-77), so the pipes get that flag wherever the
 //! fork's mark is about their round.
@@ -419,8 +430,12 @@ enum Graded {
     Body(String),
     /// The round returned an error.
     Round(String),
-    /// The round built: what's wrong with it, and how far it lies off the ball.
-    Built { problems: Vec<String>, off: f64 },
+    /// The round built: what's wrong with it, how far it lies off the ball, and its volume.
+    Built {
+        problems: Vec<String>,
+        off: f64,
+        volume: f64,
+    },
 }
 
 fn grade(case: &Case, k: &mut Kernel) -> Graded {
@@ -496,7 +511,11 @@ fn grade(case: &Case, k: &mut Kernel) -> Graded {
     if off > allowed {
         problems.push(format!("{off:.3e} off the ball (allowed {allowed:.3e})"));
     }
-    Graded::Built { problems, off }
+    Graded::Built {
+        problems,
+        off,
+        volume: v,
+    }
 }
 
 /// A mark of the fork's.
@@ -509,6 +528,8 @@ enum Mark {
     Traced(f64),
     /// The kind is right, but it lies this far off the ball, over the tolerance.
     OverTolerance(f64),
+    /// Built, valid and on the ball, but of this volume, not the case's (rel 1e-9).
+    WrongVolume(f64),
 }
 
 /// The fork's figures have three digits.
@@ -520,14 +541,24 @@ fn holds(mark: Mark, got: &Graded) -> bool {
     match (mark, got) {
         (Mark::Passes, Graded::Built { problems, .. }) => problems.is_empty(),
         (Mark::Status1001, Graded::Round(e)) => e.contains("code: 1001"),
-        (Mark::Traced(m), Graded::Built { problems, off }) => {
+        (Mark::Traced(m), Graded::Built { problems, off, .. }) => {
             about(*off, m)
                 && problems
                     .iter()
                     .any(|p| p.contains("degrees (3, 3), rational false"))
         }
-        (Mark::OverTolerance(m), Graded::Built { problems, off }) => {
+        (Mark::OverTolerance(m), Graded::Built { problems, off, .. }) => {
             about(*off, m) && problems.len() == 1 && problems[0].contains("off the ball")
+        }
+        (
+            Mark::WrongVolume(m),
+            Graded::Built {
+                problems, volume, ..
+            },
+        ) => {
+            (volume - m).abs() <= 1e-9 * m
+                && problems.len() == 1
+                && problems[0].starts_with("volume")
         }
         _ => false,
     }
@@ -555,12 +586,13 @@ fn mark_after(name: &str) -> Mark {
     }
 }
 
-/// Current procedural rounds improve on the historical fitted tee.
+/// Current procedural rounds improve on the historical fitted tee; the ball cut flat builds
+/// as the fork's does since smlib#124 (63c7962, 18e96f1), to the fork's volume.
 fn mark_current(name: &str) -> Mark {
-    if name == "tee_is_fitted" {
-        Mark::Passes
-    } else {
-        mark_after(name)
+    match name {
+        "tee_is_fitted" => Mark::Passes,
+        "sphere_plane" => Mark::WrongVolume(3_272.764_885_312_161),
+        _ => mark_after(name),
     }
 }
 
