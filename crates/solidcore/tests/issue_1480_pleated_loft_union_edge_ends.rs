@@ -144,10 +144,12 @@ fn issue_1480_union_without_the_imprint_fixes_is_upstream() {
     assert!(worst < 7.5e-6, "worst edge end {worst:e} off its vertex");
 }
 
-/// The union, with only `new_edge_vertex_tolerance_covers_gap` set (every other
-/// `UpstreamFixes` flag default), measured before the validity check (which may grow
-/// tolerances). `tolerances` is every vertex's `(point, tolerance)` in `vertex_list`
-/// order.
+/// The union, with `new_edge_vertex_tolerance_covers_gap` cleared, then set (every
+/// other `UpstreamFixes` flag default). `tolerances`, `worst_end_gap` and `volume` are
+/// captured before the validity check; `faces`, `edges`, `vertices` and `manifold`
+/// assert on the returned body after it. On this rig the check skips `AssertValid`
+/// (`ValidatePointers` refused first), so the report the test compares is the
+/// segmented-pointer report alone.
 struct Union {
     faces: usize,
     edges: usize,
@@ -211,9 +213,10 @@ fn union_with_only_the_new_edge_flag(fix: bool) -> Union {
 
 /// The eight vertices whose tolerance `new_edge_vertex_tolerance_covers_gap` alone
 /// changes on the #1480 union, as `(x, y, z, tolerance with the flag off, with it on)`.
-/// The "on" values are exactly the `2 * gap` the fix stores in `MakeEdgeInFaceWithVU`;
-/// later booleans move the edge ends, so the current end gaps are smaller (the fix's
-/// value only grows a tolerance).
+/// The "on" values are the branch's `2 * gap`-sized stored values: the store-time gap
+/// is not observable from the final body (the p9 routine test bounds the growth at
+/// `>= 2 * gap`), and later booleans move the edge ends, so the current end gaps are
+/// smaller (the fix's value only grows a tolerance).
 const WR469_VERTICES: [(f64, f64, f64, f64, f64); 8] = [
     (
         99.5929150054111,
@@ -291,10 +294,12 @@ fn close(got: f64, want: f64) -> bool {
 }
 
 /// WR-469, isolated: on the #1480 union the flag changes no topology, volume or
-/// validity, and grows exactly these eight vertex tolerances (to the `2 * gap` it
-/// stores). The default keeps them, as the pinned C++ does.
+/// reported check, and grows exactly these eight vertex tolerances (to the branch's
+/// `2 * gap`-sized stored values). On this rig the report is the segmented-pointer
+/// check (`AssertValid` skipped); the default keeps them, as the pinned C++ does.
 #[test]
 fn wr469_union_flag_alone_grows_eight_vertex_tolerances() {
+    assert!(!Kernel::default().fixes.new_edge_vertex_tolerance_covers_gap);
     let off = union_with_only_the_new_edge_flag(false);
     let on = union_with_only_the_new_edge_flag(true);
     for (name, u) in [("off", &off), ("on", &on)] {
