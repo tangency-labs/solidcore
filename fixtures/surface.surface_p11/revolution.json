@@ -163,7 +163,7 @@
     },
     {
       "name": "revolution_cylinder_isb_retained_circle",
-      "upstream_ref": "source/SMLib/src/SmSurface.cpp:21745 IntersectSurfaceBoundaries of the SmPlane z=0 with the canonical SmSurfOfRevolution cylinder: SmSurfOfRevolution::CreateIsoParametricCurve (source/SMLib/src/SmSurfOfRevolution.cpp:1653) builds the v-min boundary as the typed circle of radius 1 at z=0, which lies inside the plane's square, so it is retained and the returned curve values are compared.",
+      "upstream_ref": "source/SMLib/src/SmSurface.cpp:21745 IntersectSurfaceBoundaries of the SmPlane z=0 with the canonical SmSurfOfRevolution cylinder: SmSurfOfRevolution::CreateIsoParametricCurve (source/SMLib/src/SmSurfOfRevolution.cpp:1653) builds the v-min boundary as the typed circle of radius 1 at z=0, and the plane's natural [0,1]^2 iso boundary curves split it where they cross it. The retained typed arcs lie inside the plane's case domain and their deviations, intervals and points are compared; the fixture does not hardcode the retained count.",
       "inputs": {
         "op": 1,
         "a": {
@@ -203,7 +203,7 @@
     },
     {
       "name": "revolution_cylinder_isb_radius_and_subdomain_control",
-      "upstream_ref": "source/SMLib/src/SmSurface.cpp:21745 IntersectSurfaceBoundaries of the same SmPlane z=0 with a canonical SmSurfOfRevolution cylinder of radius 0.5 (line generator x=0.5) over a u sub-domain [0, 2.5], so the revolution direction is not closed there and its u-max seam boundary is also built: the retained v-min typed circle has radius 0.5, and its values differ from revolution_cylinder_isb_retained_circle's.",
+      "upstream_ref": "source/SMLib/src/SmSurface.cpp:21745 IntersectSurfaceBoundaries of the same SmPlane z=0 with a canonical SmSurfOfRevolution cylinder of radius 0.5 (line generator x=0.5) over a u sub-domain [0, 2.5], so the revolution direction is not closed there and its u-max seam boundary is also built: the plane's natural [0,1]^2 iso boundary curves split the retained v-min typed circle of radius 0.5, and its deviation, interval and point values differ from revolution_cylinder_isb_retained_circle's. The fixture does not hardcode the retained count.",
       "inputs": {
         "op": 1,
         "a": {
