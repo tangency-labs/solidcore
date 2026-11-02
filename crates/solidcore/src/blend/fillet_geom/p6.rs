@@ -2125,10 +2125,14 @@ impl FilletBrep {
             env,
             |id| solver_of(solvers, id, OP_TRIM),
         )
+        .map(|_leaked| ())
     }
 
     /// Trim original surfaces using one retained solver and body-qualified marks.
     /// The solver is checked at the same point as the indexed entrypoint's lookup.
+    /// Returns whether the trim leaked (`bBadTrim`: a collected face is the rail's
+    /// face on its other side; nothing was accumulated into `deleted` then), which
+    /// the fork (smlib d657afa) makes an error the caller notes.
     ///
     /// # Errors
     ///
@@ -2147,7 +2151,7 @@ impl FilletBrep {
         env: &TrimOriginalSurfacesEnv<'_>,
         solver_id: FilletSolverId,
         solver: &FilletSolver,
-    ) -> Result<()> {
+    ) -> Result<bool> {
         self.trim_original_surfaces_resolved(
             k,
             g,
@@ -2184,7 +2188,7 @@ impl FilletBrep {
         mark_locks: &[MarkLock],
         env: &TrimOriginalSurfacesEnv<'_>,
         solver: impl FnOnce(FilletSolverId) -> Result<&'s FilletSolver>,
-    ) -> Result<()> {
+    ) -> Result<bool> {
         // locals
         let geom = self.geom(g)?;
         let solver_id = geom
@@ -2497,7 +2501,10 @@ impl FilletBrep {
                 }
             }
         }
-        Ok(())
+        // The fork's (smlib d657afa, under `fixes.fillet_blend_corner`) leaking trim is
+        // an error noted by the caller, which holds the executive's error info; the
+        // faces are not accumulated then either (the fork returns before).
+        Ok(bad_trim)
     }
 
     /// `SmFilletGeom::RecordFilletError(eType, pFilletedEdge, pTargetFace, pRail,
