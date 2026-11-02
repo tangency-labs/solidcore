@@ -411,8 +411,9 @@ fn a_rebuilt_round_is_certified_again_and_a_moved_net_refused() {
 /// (the stations' Newton stopping step through the supports' derivative bounds, and the
 /// rounding of the rows, the Hermite points and the net's division), at rounding level at
 /// part scale. A round's bound is its certificate, the stored net's measured rounding off
-/// its rows, and three floors (two cover re-computing the rows). Moved (100, -50, 25), the
-/// root round's floor is taken where it now lies, and its bound with it.
+/// its rows, and three floors (two cover re-computing the rows). The floor is taken in the
+/// round's own frame: moved (100, -50, 25), the root round's floor is the same to
+/// rounding, and its bound grows by the motion's rounding only.
 #[test]
 fn the_bound_s_floor_is_a_forward_error_bound() {
     let k = kernel(true);
@@ -427,7 +428,7 @@ fn the_bound_s_floor_is_a_forward_error_bound() {
         assert!((0.0..1e-13).contains(&rest), "{name}: {rest:e}");
         assert!(pb.recertify(&k).unwrap() <= pb.bound(), "{name}");
     }
-    let moved = moved_root_round(&k);
+    let moved = moved_root_round(&k, Point3::new(100.0, -50.0, 25.0));
     let (s, _, _) = root_round(&k);
     let SurfaceKind::ProceduralBlend(pb) = s.kind() else {
         panic!("not a blend")
@@ -436,42 +437,57 @@ fn the_bound_s_floor_is_a_forward_error_bound() {
         pb.precision_floor(&k).unwrap(),
         moved.precision_floor(&k).unwrap(),
     );
-    assert!(f1 > f0, "{f1:e} at the new place, {f0:e} before");
-    assert!(moved.bound() > pb.bound());
+    assert!(
+        (f1 - f0).abs() <= 1e-3 * f0,
+        "{f1:e} at the new place, {f0:e} before"
+    );
+    assert!(moved.bound() > pb.bound() && moved.bound() - pb.bound() < 1e-12);
 }
 
-/// The root round moved by (100, -50, 25).
-fn moved_root_round(k: &Kernel) -> solidcore::surface::procedural_blend::ProceduralBlend {
+/// The root round moved by `by`.
+fn moved_root_round(
+    k: &Kernel,
+    by: Point3,
+) -> solidcore::surface::procedural_blend::ProceduralBlend {
     use solidcore::geom::axis2_placement::Axis2Placement;
     let (s, _, _) = root_round(k);
     let SurfaceKind::ProceduralBlend(pb) = s.kind() else {
         panic!("not a blend")
     };
     let mut moved = (**pb).clone();
-    let place = Axis2Placement::new(
-        Point3::new(100.0, -50.0, 25.0),
-        Vec3::new(1.0, 0.0, 0.0),
-        Vec3::new(0.0, 1.0, 0.0),
-    );
+    let place = Axis2Placement::new(by, Vec3::new(1.0, 0.0, 0.0), Vec3::new(0.0, 1.0, 0.0));
     moved.transform_at_depth(k, &place, None, 0).unwrap();
     moved
 }
 
-/// #2388, known failing: the root round moved by (100, -50, 25) is not certified again.
-/// The round's certificate (`gn_certify_span`) on one of its 16 spans gives 1.19e-4 where
-/// the place it was built at gives at most 9.03e-5 (its bound): its enclosures are taken in
-/// absolute coordinates and widen with the distance from the origin, and a fixed net
-/// cannot halve its spans. This test fails once the certificate is taken in coordinates of
-/// the span's own.
+/// #2388: a moved round is certified again. The round's certificate, the net's distance
+/// from its rows and the floor are taken in a frame local to the round (about the centre
+/// of its net's box), so they follow the part's size, not where it lies: the root round
+/// moved by (100, -50, 25) and by (1e4, 1e4, 1e4) is certified within its bound, which is
+/// the original one with the motion's rounding added.
 #[test]
-fn known_failing_a_moved_round_is_not_certified_again() {
+fn a_moved_round_is_certified_again() {
     let k = kernel(true);
-    let moved = moved_root_round(&k);
-    let e = moved.recertify(&k).unwrap_err();
-    assert!(
-        e.to_string().contains("not within its bound"),
-        "refused otherwise: {e}"
-    );
+    let (s, _, _) = root_round(&k);
+    let SurfaceKind::ProceduralBlend(pb) = s.kind() else {
+        panic!("not a blend")
+    };
+    let at_origin = pb.recertify(&k).unwrap();
+    for by in [Point3::new(100.0, -50.0, 25.0), Point3::new(1e4, 1e4, 1e4)] {
+        let moved = moved_root_round(&k, by);
+        let got = moved.recertify(&k).unwrap();
+        assert!(
+            got <= moved.bound(),
+            "{by:?}: {got:e} over {:e}",
+            moved.bound()
+        );
+        assert!(
+            moved.bound() <= 1.001 * pb.bound() && got <= 1.001 * at_origin,
+            "{by:?}: bound {:e} (was {:e}), certified {got:e} (was {at_origin:e})",
+            moved.bound(),
+            pb.bound()
+        );
+    }
 }
 
 /// #2388: a support keeps its analytic kind through the record. The square corner's
