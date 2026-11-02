@@ -25,9 +25,9 @@
 //! | `MakeSweptTopology`        | `FilletCorner::make_swept_topology` (`fillet_corner::topology`) |
 //!
 //! Deviations: a refusal is returned ([`TurnRefusal`]) for the executive to note
-//! (`NoteError` at the vertex) instead of noted here. The fork's `NoteFitRadius(0, edge)`
-//! at the concave side edge (5e8c9c1) is marked `FIT(#2278)`: the fit-radius record is
-//! not in this port yet. `%g` in the refusal's text is `fmt_g`. The torus and its loop
+//! (`NoteError` at the vertex) instead of noted here, and so is the fork's
+//! `NoteFitRadius(0, edge)` at the concave side edge (5e8c9c1, [`TurnRefusal::fit_edge`]).
+//! `%g` in the refusal's text is `fmt_g`. The torus and its loop
 //! are kept in [`SweptTurn`] from the edge geometry until the patch takes them. Opt-in:
 //! `Kernel::fixes.fillet_blend_corner` (WR-697) with the session's swept turns
 //! (`FilletSession::set_swept_turns`, the fork's `SetSweptTurns`). No recursion.
@@ -109,6 +109,10 @@ pub struct TurnRefusal {
     pub error: FilletErrorType,
     /// `cpWhy`.
     pub comment: String,
+    /// The edge whose blend no size builds (the fork's `NoteFitRadius(0.0, edge)` before
+    /// the refusal), for the executive to note: the first round's edge at a sharp concave
+    /// side edge.
+    pub fit_edge: Option<EdgeId>,
 }
 
 /// The executive's solvers as the Swept turn reads them.
@@ -235,6 +239,7 @@ pub fn classify_swept(
         Ok(Some(TurnRefusal {
             error,
             comment: why.to_owned(),
+            fit_edge: None,
         }))
     };
     let (Some(&eu1_), Some(&eu2_)) = (solver_eus.first(), solver_eus.get(1)) else {
@@ -273,15 +278,16 @@ pub fn classify_swept(
     let side_edge = eu1::edge(b, side)?.ok_or_else(nul)?;
     if is_concave_edge(k, b, side_edge)? {
         let radius = offset_radius(fs[0], 0, OP_CLASSIFY)?;
-        // FIT(#2278): the fork's pExec->NoteFitRadius(0.0, pEU1->GetEdge()) -- no radius
-        // builds a swept turn past a sharp concave side edge: its size is not the cause
-        return refuse(
-            FilletErrorType::NoRoom,
-            &format!(
+        // no radius builds a swept turn past a sharp concave side edge: its size is not the
+        // cause (the fork's pExec->NoteFitRadius(0.0, pEU1->GetEdge()))
+        return Ok(Some(TurnRefusal {
+            error: FilletErrorType::NoRoom,
+            comment: format!(
                 "Fillet Error: a swept turn cannot pass the sharp concave corner edge between the rounds; round that edge at a radius of at least {} first",
                 fmt_g(radius)
             ),
-        );
+            fit_edge: eu1::edge(b, eu1_)?,
+        }));
     }
 
     // what the exact torus needs
