@@ -23,6 +23,7 @@
 //! | [`FilletCorner::make_join_topology`] | `MakeJoinTopology`, `sm_JoinSides` (`SmBlendCornerJoin.cpp`, 68e039c, 543d25a) |
 //! | `FilletBrep::calc_join_section` | `SmFilletVertex::CalcJoinSection` (543d25a) |
 //! | `FilletBrep::calc_rail_int_end_surface` | `SmFilletVertex::CalcRailIntEndSurface` (`SmBlendCornerEnd.cpp`, 3e26f76) |
+//! | [`setback`]                  | the Setback (`ClassifySetBack`, `MakeSetBackTopology`, `BuildSetBackFill`, `CreateSetBackPatches`; 61547af, 1506e2f, f1d81f4) |
 //! | [`swept`]                    | the Swept turn (`Classify`'s Swept part, `BuildSweptSurface`, `CreateSweptPatch`) |
 //!
 //! Deviations: the blend corner is not its own corner kind here. The fork's `SmBlendCorner`
@@ -62,6 +63,7 @@ use crate::topology::face::p2 as face2;
 use crate::topology::{edge, Brep, EdgeId, EdgeuseId, VertexId};
 
 pub mod ball;
+pub mod setback;
 pub mod swept;
 
 const OP_CLASSIFY: &str = "blend::blend_corner::classify";
@@ -83,6 +85,9 @@ pub enum BlendCornerEvent {
     /// `SM_BCE_END` (the fork's 53c47b8): one blend ends at the vertex, its side faces there
     /// not blended ([`BlendEnd`]).
     End,
+    /// `SM_BCE_SETBACK` (the fork's 61547af): three or more blends, every edge there
+    /// blended, each set back and the hole filled by the setback split ([`setback`]).
+    Setback,
 }
 
 /// `SmBlendEnd` (the fork's 53c47b8): how an End ends, chosen when the corner is made.
@@ -154,6 +159,12 @@ impl BlendCorner {
     #[must_use]
     pub fn is_closed_join(self, solver_eus: Option<&[EdgeuseId]>) -> bool {
         self.event == BlendCornerEvent::Join && solver_eus.is_some_and(|eus| eus.len() == 1)
+    }
+
+    /// `IsSetBack`: the Setback (the fork's 61547af).
+    #[must_use]
+    pub fn is_setback(self) -> bool {
+        self.event == BlendCornerEvent::Setback
     }
 
     /// `IsSwept`: a Turn, Swept.

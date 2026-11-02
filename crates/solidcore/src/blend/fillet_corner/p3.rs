@@ -708,6 +708,10 @@ pub struct FilletCorner {
     /// The fork's Ball's own members (`m_pBallSurface` and its loop; smlib#79 step 4c,
     /// WR-697): set by its topology on a blend corner that is a Ball.
     pub ball: Option<crate::blend::blend_corner::ball::BallCorner>,
+    /// The fork's Setback's own members (`m_vSetBacks`, `m_lFillOrder`, `m_bConvexSetBack`,
+    /// `m_bSetBackOverflows`, `m_pFill`; smlib#104, WR-697): set at its creation on a blend
+    /// corner that is a Setback.
+    pub setback: Option<crate::blend::blend_corner::setback::SetbackCorner>,
 }
 
 /// What the corner methods operate on besides the corner itself.
@@ -1040,6 +1044,7 @@ impl FilletCorner {
             blend: None,
             swept: None,
             ball: None,
+            setback: None,
         }
     }
 
@@ -2250,10 +2255,14 @@ impl FilletCorner {
         nx2: impl FnOnce(&mut Self, &mut C) -> Result<()>,
         nxn: impl FnOnce(&mut Self, &mut C) -> Result<()>,
     ) -> Result<()> {
-        // the fork's SmBlendCorner::AdjustTopology: a Ball, a Join, an End or a Swept turn
-        // adjusts nothing (WR-697; 543d25a, 53c47b8)
+        // the fork's SmBlendCorner::AdjustTopology: a Ball, a Setback, a Join, an End or a
+        // Swept turn adjusts nothing (WR-697; 543d25a, 53c47b8)
         if self.blend.is_some_and(|blend| {
-            blend.is_ball() || blend.is_join() || blend.is_end() || blend.is_swept()
+            blend.is_ball()
+                || blend.is_setback()
+                || blend.is_join()
+                || blend.is_end()
+                || blend.is_swept()
         }) {
             return Ok(());
         }
@@ -2609,10 +2618,15 @@ impl FilletCorner {
         nx2: impl FnOnce(&mut Self, &mut C) -> Result<()>,
         nx1_closed: impl FnOnce(&mut Self, &mut C) -> Result<()>,
     ) -> Result<()> {
-        // the fork's SmBlendCorner::AdjustTangentCorner: nothing at a Ball, a Join, an End
-        // or a Swept turn (WR-697; 543d25a, 53c47b8; the Mitre turn's is the Nx2 port's)
+        // the fork's SmBlendCorner::AdjustTangentCorner: nothing at a Ball, a Setback, a
+        // Join, an End or a Swept turn (WR-697; 543d25a, 53c47b8; the Mitre turn's is the Nx2
+        // port's)
         if self.blend.is_some_and(|blend| {
-            blend.is_ball() || blend.is_join() || blend.is_end() || blend.is_swept()
+            blend.is_ball()
+                || blend.is_setback()
+                || blend.is_join()
+                || blend.is_end()
+                || blend.is_swept()
         }) {
             return Ok(());
         }
