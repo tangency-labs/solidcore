@@ -2504,13 +2504,21 @@ impl FilletCorner {
         nx2: impl FnOnce(&mut Self, &mut C) -> Result<()>,
         nx1_closed: impl FnOnce(&mut Self, &mut C) -> Result<()>,
     ) -> Result<()> {
-        // the fork's SmBlendCorner::AdjustTangentCorner: nothing at a Ball or a Turn
-        // (WR-697). Its smlib#113 (34288e5) took out the Mitre turn's at four edges, the Nx2
-        // adjustment, which acts only where the two edges' tangents are parallel within 2
-        // degrees: Classify made such a pair a Join. The Join's is the Nx2 port's.
-        if self.blend.is_some_and(|blend| {
-            blend.is_ball() || blend.event == crate::blend::blend_corner::BlendCornerEvent::Turn
-        }) {
+        // the fork's SmBlendCorner::AdjustTangentCorner: nothing at a Ball or a Swept turn
+        // (WR-697; the Mitre turn's is the Nx2 port's)
+        if self
+            .blend
+            .is_some_and(|blend| blend.is_ball() || blend.is_swept())
+        {
+            return Ok(());
+        }
+        // and since the fork's smlib#113 (34288e5), nothing at a Mitre turn either: the Nx2
+        // adjustment acts only at four edges whose tangents are parallel within 2 degrees,
+        // and Classify made such a pair a Join (WR-697)
+        if self
+            .blend
+            .is_some_and(|blend| blend.event == crate::blend::blend_corner::BlendCornerEvent::Turn)
+        {
             return Ok(());
         }
         match self.kind {
