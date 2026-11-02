@@ -36,9 +36,9 @@
 //! each step from the same unchanged ring. The two faces' surfaces and loops are kept in
 //! [`MixedCorner`] from the edge geometry until the patches take them. `SER_MSG` texts
 //! are in comments; their status is `SM_ERR`. Opt-in: `Kernel::fixes.fillet_blend_corner`
-//! (WR-697, its 2026-11-02 Mixed addendum;
-//! `leaving` follows the fork's b785227, its 2026-11-02 leaving-tangent addendum). No recursion here; [`algebra`]'s root
-//! search recurses at most 61 deep.
+//! (WR-697, its 2026-11-02 Mixed addendum; `leaving` follows the fork's b785227, its
+//! 2026-11-02 leaving-tangent addendum). No recursion here; [`algebra`]'s root search
+//! recurses at most 61 deep.
 
 pub mod algebra;
 
