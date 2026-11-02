@@ -360,11 +360,10 @@ Every unit is ported; most new work fixes SMLib defects in the port or ports the
 constructions. The policy (owner, 2026-11-02; supersedes the interim rule of #1018):
 
 - **The fork is the reference.** solidcore's default behaviour is the SMLib fork's
-  (tangency-labs/smlib), not upstream usd-brep v1.0.1's. The difftest still builds the pinned
-  upstream, the fork's base. Where the fork hasn't changed a path, the two agree. Where it has
-  replaced a construction (the generic blend: `docs/generic-blend.md` §9), the port matches the
-  fork bit for bit, and its divergence from upstream is recorded as the fork's change, not as
-  a port defect.
+  (tangency-labs/smlib), not upstream usd-brep v1.0.1's. Where the fork has replaced a
+  construction (the generic blend: `docs/generic-blend.md` §9), the port matches the fork. The
+  difftest is the tool that shows it, bit for bit, when a maintainer runs it; the reference it
+  builds is set in `scripts/upstream-pin.env`.
 - **Flags only while a port is in progress.** A change of result lands behind its
   `Kernel::fixes` (`UpstreamFixes`) field with a regression test of its case and an addendum in
   `plan/upstream-issues/`. Once its construction's ports are in and parity is shown, the flag
