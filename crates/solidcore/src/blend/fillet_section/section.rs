@@ -23,6 +23,8 @@ use crate::nurbs::knots::Side;
 use crate::surface::surface::{Surface, SurfaceKind};
 
 const OP: &str = "blend::fillet_section::GnSectionFsg";
+const OP_BUILD: &str = "blend::fillet_section::GnSectionFsg::build";
+const OP_CERTIFY: &str = "blend::fillet_section::GnSectionFsg::certify";
 
 /// `SM_GN_MAX_ORDER`: the highest order of a G^n section.
 pub const GN_MAX_ORDER: usize = 4;
@@ -393,6 +395,7 @@ impl GnSectionFsg {
         let tr = Trunc::new(1, n)?;
         let mut stations: Vec<GnStation> = Vec::new();
         for &s in &ss {
+            k.check_cancelled(OP_BUILD)?;
             let w0 = uvs[0].evaluate_point(s)?;
             let w1 = uvs[1].evaluate_point(s)?;
             let seed = [w0.x, w0.y, w1.x, w1.y];
@@ -455,6 +458,7 @@ impl GnSectionFsg {
         let mut cps: Vec<Point3> = Vec::new();
         let mut wts: Vec<f64> = Vec::new();
         for i in 0..lnu {
+            k.check_cancelled(OP_BUILD)?;
             for (j, &wj) in form.w.iter().enumerate() {
                 let mut p = Vec3::new(0.0, 0.0, 0.0);
                 for (f, gf) in form.g.iter().enumerate() {
@@ -571,6 +575,7 @@ impl GnSectionFsg {
                 }
                 let mut next: Vec<GnStation> = Vec::new();
                 for pair in stations.windows(2) {
+                    k.check_cancelled(OP_CERTIFY)?;
                     let [a, b] = pair else { continue };
                     next.push(*a);
                     for &dk in &inner {
@@ -588,6 +593,7 @@ impl GnSectionFsg {
                         let (mut s0, mut s1, mut x0, mut x1) = (a.s, b.s, xa - dk, xb - dk);
                         let mut at: Option<GnStation> = None;
                         for _ in 0..60 {
+                            k.check_cancelled(OP_CERTIFY)?;
                             let mut ds = s0 - x0 * (s1 - s0) / (x1 - x0);
                             let inside = ds > s0 && ds < s1;
                             if !inside {
@@ -638,6 +644,7 @@ impl GnSectionFsg {
         loop {
             let mut all = true;
             for (j, bj) in bounds.iter_mut().enumerate() {
+                k.check_cancelled(OP_CERTIFY)?;
                 if *bj < 0.0 {
                     let (Some(a), Some(b)) = (stations.get(j), stations.get(j + 1)) else {
                         return Err(SolidError::sm_err(OP));
@@ -661,6 +668,7 @@ impl GnSectionFsg {
             let mut next: Vec<GnStation> = Vec::new();
             let mut next_bounds: Vec<f64> = Vec::new();
             for (pair, &bj) in stations.windows(2).zip(&bounds) {
+                k.check_cancelled(OP_CERTIFY)?;
                 let [a, b] = pair else { continue };
                 next.push(*a);
                 if bj <= target {
