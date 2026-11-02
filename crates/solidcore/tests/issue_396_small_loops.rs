@@ -6,18 +6,28 @@
 //!
 //! With `Kernel::fixes.sphere_small_circle_not_touching` the point is returned only when
 //! the circle's own radius is within the tolerance.
+//!
+//! #2412: the boolean must then build a correct body from such a circle. A 10^3 box and
+//! a radius-3 sphere crossing its top face by a hair `gap` (a circle of radius
+//! `sqrt(6 gap)`, 7.7e-4 to 7.7e-5) gave volume 0 or an open body with the flag on.
 #![allow(
     clippy::unwrap_used,
     clippy::expect_used,
     clippy::panic,
     clippy::indexing_slicing
 )] // test helpers
+use solidcore::boolean::api_brep::{boolean_difference, boolean_union};
+use solidcore::geom::attribute::{AttributeStore, ObjectKey};
 use solidcore::geom::axis2_placement::Axis2Placement;
 use solidcore::kernel::Kernel;
-use solidcore::math::Vec3;
+use solidcore::mass::integrator::properties::{brep_volume, PropertyAttributes};
+use solidcore::math::{Point3, Vec3};
+use solidcore::primitive::api_primitives as api;
 use solidcore::surface::plane::Plane;
 use solidcore::surface::sphere::Sphere;
 use solidcore::surface::surface::p2::{SurfaceIntersection, TsectCurveType};
+use solidcore::topology::brep::validation::{check_brep, CheckLevel};
+use std::f64::consts::PI;
 
 const TOL: f64 = 1e-6;
 
@@ -148,4 +158,68 @@ fn sphere_sphere_loop_above_tolerance_is_a_circle_with_the_fix() {
 fn sphere_sphere_loop_below_tolerance_still_touches_with_the_fix() {
     let out = sphere_sphere(true, 1e-7);
     assert!(is_one_touch(&out), "{:?}", out.curve_types);
+}
+
+/// A 10^3 box at the origin and a radius-3 sphere crossing its top face by `gap`,
+/// combined with the flag set to `fix`: for the difference the sphere is inside the box
+/// at `(5, 5, 7 + gap)` and its top pokes out, for the union it is on top at
+/// `(5, 5, 13 - gap)` and its bottom dips in. Returns the face count, whether the body
+/// is a closed manifold solid, its volume and its check failures.
+fn box_and_poking_sphere(fix: bool, gap: f64, union: bool) -> (usize, bool, f64, Vec<String>) {
+    let mut k = Kernel::default();
+    k.fixes.sphere_small_circle_not_touching = fix;
+    let a = api::create_box(&mut k, Point3::new(0.0, 0.0, 0.0), 10.0, 10.0, 10.0).unwrap();
+    let b = api::create_sphere(
+        &mut k,
+        Point3::new(5.0, 5.0, if union { 13.0 - gap } else { 7.0 + gap }),
+        3.0,
+    )
+    .unwrap();
+    let mut body = if union {
+        boolean_union(&mut k, a, b)
+    } else {
+        boolean_difference(&mut k, a, b)
+    }
+    .unwrap();
+    let faces = solidcore::topology::brep::p1::faces(&body, None)
+        .unwrap()
+        .len();
+    let solid = solidcore::topology::brep::p2::is_manifold_solid(&body).unwrap();
+    let store = AttributeStore::new();
+    let key_of = |_| ObjectKey(0);
+    let attrs = PropertyAttributes {
+        store: &store,
+        key_of: &key_of,
+    };
+    let volume = brep_volume(&k, &mut body, 1e-7, &attrs).unwrap();
+    let check = check_brep(&mut k, &mut body, CheckLevel::Level2).unwrap();
+    (faces, solid, volume, check.lines())
+}
+
+/// #2412's four booleans, flag off and on: each is a closed, valid solid of seven faces
+/// (the box's six, the sphere's one) whose volume is the box's plus or minus the
+/// sphere's; the cap on the far side of the face is below 1e-12.
+#[test]
+fn box_and_sphere_poking_a_hair_through_a_face_is_a_closed_solid() {
+    let sphere = 36.0 * PI;
+    let mut failures = Vec::new();
+    for fix in [false, true] {
+        for (gap, union) in [(1e-7, false), (1e-8, false), (1e-9, false), (1e-9, true)] {
+            let want = if union {
+                1000.0 + sphere
+            } else {
+                1000.0 - sphere
+            };
+            let (faces, solid, volume, check) = box_and_poking_sphere(fix, gap, union);
+            let rel = (volume - want).abs() / want;
+            if faces != 7 || !solid || rel > 1e-7 || !check.is_empty() {
+                failures.push(format!(
+                    "fix {fix}, gap {gap}, {}: {faces} faces, solid {solid}, volume {volume} \
+                     vs {want} (rel {rel:.1e}), check {check:?}",
+                    if union { "union" } else { "difference" }
+                ));
+            }
+        }
+    }
+    assert!(failures.is_empty(), "{failures:#?}");
 }
