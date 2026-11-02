@@ -209,31 +209,28 @@ fn a_band_short_of_the_feature_leaves_it_either_way() {
     }
 }
 
-// ---- Beyond the fork's own cases: every flag on, the figures from the fork's kernel at eb883ad ----
+// ---- Against the fork's kernel at eb883ad, bit for bit ----
 
-/// The block with a feature on or in its top.
-fn block_with(k: &mut Kernel, feature: fn(&mut Kernel) -> Result<Brep>, boss: bool) -> Brep {
-    let block = create_box(k, Point3::new(0.0, 0.0, 0.0), 40.0, 30.0, 20.0).unwrap();
-    let cutter = feature(k).unwrap();
-    if boss {
-        boolean_union(k, block, cutter).unwrap()
-    } else {
-        boolean_difference(k, block, cutter).unwrap()
-    }
+/// The fork's flags: every one but `precise_properties_trim_base_v` (WR-563), which isn't in the
+/// fork and moves the volume of any face on a cylinder or a cone.
+fn fork_kernel(keep: bool) -> Kernel {
+    let mut k = Kernel::new(&KernelOptions::default());
+    let mut fixes = UpstreamFixes::all();
+    fixes.precise_properties_trim_base_v = false;
+    fixes.fillet_keep_features = keep;
+    k.fixes = fixes;
+    k
 }
 
-/// The block's edge rounded 8, picked away from the feature: its volume and faces.
-fn rounded_with(
-    keep: bool,
-    feature: fn(&mut Kernel) -> Result<Brep>,
-    boss: bool,
-) -> Result<(f64, usize)> {
-    let mut k = Kernel::new(&KernelOptions::default());
-    k.fixes = UpstreamFixes::all();
-    k.fixes.fillet_keep_features = keep;
-    let mut b = block_with(&mut k, feature, boss);
+type Feature = fn(&mut Kernel, Brep) -> Result<Brep>;
+
+/// The block with a feature, its top front edge rounded `r`: the volume and the faces.
+fn rounded_with(keep: bool, feature: Feature, r: f64) -> Result<(f64, usize)> {
+    let mut k = fork_kernel(keep);
+    let block = create_box(&mut k, Point3::new(0.0, 0.0, 0.0), 40.0, 30.0, 20.0)?;
+    let mut b = feature(&mut k, block)?;
     let e = pick(&k, &b, Point3::new(5.0, 0.0, 20.0));
-    fillet_edges(&mut k, &mut b, &[e], 8.0, 1, 1, 1.0)?;
+    fillet_edges(&mut k, &mut b, &[e], r, 1, 1, 1.0)?;
     assert!(solidcore::topology::brep::p2::is_manifold_solid(&b).unwrap());
     let lines = check_brep(&mut k, &mut b, CheckLevel::Level2)
         .unwrap()
@@ -242,78 +239,109 @@ fn rounded_with(
     Ok((volume_of(&k, &mut b), b.face_list().len()))
 }
 
-fn assert_kept_as_the_fork(
-    feature: fn(&mut Kernel) -> Result<Brep>,
-    boss: bool,
-    volume: f64,
-    faces: usize,
-) {
-    let (v, n) = rounded_with(true, feature, boss).unwrap();
-    assert!(
-        (v - volume).abs() <= 1e-9 * volume,
-        "volume {v}, the fork's {volume}"
-    );
+/// The figures are the fork's `smlib_brep_volume` at accuracy 1e-7, on Linux, printed with 17
+/// digits.
+fn assert_as_the_fork(keep: bool, feature: Feature, r: f64, volume: f64, faces: usize) {
+    let (v, n) = rounded_with(keep, feature, r).unwrap();
+    // Bit for bit where the fork's figures were taken. Elsewhere the platform's libm can move
+    // the last bit (one on Windows, the kept hole).
+    if cfg!(target_os = "linux") {
+        assert_eq!(
+            v.to_bits(),
+            volume.to_bits(),
+            "volume {v:.17}, the fork's {volume:.17}"
+        );
+    } else {
+        assert!(
+            (v - volume).abs() <= 1e-14 * volume,
+            "volume {v:.17}, the fork's {volume:.17}"
+        );
+    }
     assert_eq!(n, faces);
-    let (v, n) = rounded_with(false, feature, boss).unwrap();
-    let taken = 24000.0 - 40.0 * spandrel(8.0);
-    assert!(
-        (v - taken).abs() <= 1e-9 * taken,
-        "volume {v}, want {taken}"
-    );
-    assert_eq!(n, 7);
 }
 
-fn prism_boss(k: &mut Kernel) -> Result<Brep> {
-    create_box(k, Point3::new(18.0, 2.0, 20.0), 4.0, 4.0, 5.0)
+const TAKEN: f64 = 23450.619298757138;
+
+fn cylinder_boss(k: &mut Kernel, block: Brep) -> Result<Brep> {
+    let c = create_cylinder(k, Point3::new(20.0, 4.0, 20.0), 2.0, 5.0)?;
+    boolean_union(k, block, c)
 }
 
-fn prism_pocket(k: &mut Kernel) -> Result<Brep> {
-    create_box(k, Point3::new(18.0, 2.0, 15.0), 4.0, 4.0, 6.0)
+fn cylinder_hole(k: &mut Kernel, block: Brep) -> Result<Brep> {
+    let c = create_cylinder(k, Point3::new(20.0, 4.0, 15.0), 2.0, 6.0)?;
+    boolean_difference(k, block, c)
 }
 
-fn tapered_boss(k: &mut Kernel) -> Result<Brep> {
-    create_cone(k, Point3::new(20.0, 4.0, 20.0), 2.0, 1.0, 5.0)
+fn prism_boss(k: &mut Kernel, block: Brep) -> Result<Brep> {
+    let c = create_box(k, Point3::new(18.0, 2.0, 20.0), 4.0, 4.0, 5.0)?;
+    boolean_union(k, block, c)
 }
 
-fn tapered_pit(k: &mut Kernel) -> Result<Brep> {
-    create_cone(k, Point3::new(20.0, 4.0, 15.0), 1.0, 2.0, 5.5)
+fn prism_pocket(k: &mut Kernel, block: Brep) -> Result<Brep> {
+    let c = create_box(k, Point3::new(18.0, 2.0, 15.0), 4.0, 4.0, 6.0)?;
+    boolean_difference(k, block, c)
 }
 
-/// Planar walls: each crease is an exact section, and the volume is the fork's in 17 digits.
+fn cone_boss(k: &mut Kernel, block: Brep) -> Result<Brep> {
+    let c = create_cone(k, Point3::new(20.0, 4.0, 20.0), 2.0, 1.0, 5.0)?;
+    boolean_union(k, block, c)
+}
+
+fn cone_pit(k: &mut Kernel, block: Brep) -> Result<Brep> {
+    let c = create_cone(k, Point3::new(20.0, 4.0, 15.0), 1.0, 2.0, 5.5)?;
+    boolean_difference(k, block, c)
+}
+
 #[test]
-fn a_prism_s_planar_walls_are_kept_as_the_fork_keeps_them() {
-    assert_kept_as_the_fork(prism_boss, true, 23549.896259768986, 12);
-    assert_kept_as_the_fork(prism_pocket, false, 23389.896259952176, 12);
+fn cylinders_match_the_fork() {
+    assert_as_the_fork(true, cylinder_boss, 8.0, 23528.16552792312, 9);
+    assert_as_the_fork(true, cylinder_hole, 8.0, 23402.501835366344, 9);
+    assert_as_the_fork(false, cylinder_boss, 8.0, TAKEN, 7);
+    assert_as_the_fork(false, cylinder_hole, 8.0, TAKEN, 7);
+    for keep in [true, false] {
+        assert_as_the_fork(keep, cylinder_boss, 1.9, 24031.843348307855, 9);
+        assert_as_the_fork(keep, cylinder_hole, 1.9, 23906.179641530241, 9);
+    }
 }
 
-/// Walls that lean: as the fork, kept, with no refusal for the boss's.
+/// Planar walls: each crease is an exact section.
 #[test]
-fn a_cone_s_walls_are_kept_as_the_fork_keeps_them() {
-    assert_kept_as_the_fork(tapered_boss, true, 23501.985588925883, 11);
-    assert_kept_as_the_fork(tapered_pit, false, 23427.540889420579, 9);
+fn prisms_match_the_fork() {
+    assert_as_the_fork(true, prism_boss, 8.0, 23549.896259768986, 12);
+    assert_as_the_fork(true, prism_pocket, 8.0, 23389.896259952176, 12);
+    assert_as_the_fork(false, prism_boss, 8.0, TAKEN, 7);
+    assert_as_the_fork(false, prism_pocket, 8.0, TAKEN, 7);
+}
+
+/// Walls that lean: kept as the fork keeps them, the boss's with no refusal.
+#[test]
+fn cones_match_the_fork() {
+    assert_as_the_fork(true, cone_boss, 8.0, 23501.985588925883, 11);
+    assert_as_the_fork(true, cone_pit, 8.0, 23427.540889420579, 9);
+    assert_as_the_fork(false, cone_boss, 8.0, TAKEN, 7);
+    assert_as_the_fork(false, cone_pit, 8.0, TAKEN, 7);
 }
 
 /// A boss astride the round's contact line: refused with the flag on or off, as the fork.
 #[test]
-fn a_boss_astride_the_contact_line_is_refused_either_way() {
-    fn astride(k: &mut Kernel) -> Result<Brep> {
-        create_box(k, Point3::new(18.0, 6.0, 20.0), 4.0, 4.0, 5.0)
+fn a_boss_astride_the_contact_line_is_refused_as_the_fork() {
+    fn astride(k: &mut Kernel, block: Brep) -> Result<Brep> {
+        let c = create_box(k, Point3::new(18.0, 6.0, 20.0), 4.0, 4.0, 5.0)?;
+        boolean_union(k, block, c)
     }
     for keep in [true, false] {
-        assert!(rounded_with(keep, astride, true).is_err(), "keep {keep}");
+        assert!(rounded_with(keep, astride, 8.0).is_err(), "keep {keep}");
     }
 }
 
-/// A pocket astride the contact line stands either way: the merge keeps it, as the fork.
+/// A pocket astride the contact line stands with the flag on or off, as the fork.
 #[test]
-fn a_pocket_astride_the_contact_line_stands_either_way() {
-    fn astride(k: &mut Kernel) -> Result<Brep> {
-        create_box(k, Point3::new(18.0, 6.0, 15.0), 4.0, 4.0, 6.0)
+fn a_pocket_astride_the_contact_line_matches_the_fork() {
+    fn astride(k: &mut Kernel, block: Brep) -> Result<Brep> {
+        let c = create_box(k, Point3::new(18.0, 6.0, 15.0), 4.0, 4.0, 6.0)?;
+        boolean_difference(k, block, c)
     }
     for keep in [true, false] {
-        let (v, n) = rounded_with(keep, astride, false).unwrap();
-        let fork = 23371.292359325398;
-        assert!((v - fork).abs() <= 1e-9 * fork, "keep {keep}: volume {v}");
-        assert_eq!(n, 12);
+        assert_as_the_fork(keep, astride, 8.0, 23371.292359325398, 12);
     }
 }
