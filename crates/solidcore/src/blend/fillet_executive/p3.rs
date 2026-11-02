@@ -2033,6 +2033,22 @@ pub trait BrepCreationAccess<O: ClassObject + SolutionObject + Ord>:
     /// Topology lookups; the adapter over [`ExecutiveAccess`] has no solvers.
     fn creation_solver_fit(&self, solver: O) -> Result<Option<SolverFit<O>>>;
 
+    /// The fork's `SmBlendCorner::FitOfEndPastSideEdges` (smlib 41a39ec) on `corner`
+    /// (`executive`'s): `None` for a corner that is not a blend corner (`SM_FCR_BLEND`) or
+    /// whose rails reach their side edges' far ends; else the least radius at which a rail
+    /// reaches one, with the blended edge. Only a live session has corners to judge.
+    ///
+    /// # Errors
+    /// The judging's own errors.
+    fn creation_end_fit_past_side_edges(
+        &mut self,
+        _k: &Kernel,
+        _corner: O,
+        _executive: &FilletExecutive<O>,
+    ) -> Result<Option<(f64, O)>> {
+        Ok(None)
+    }
+
     /// The fork's `sm_BlendAddsMaterial` then `SmFilletSolver::BandCutsThePart`
     /// (tangency-labs/smlib#79 862971f, e568e45, aac4288) on this solver: `None` for a
     /// concave blend (one that adds material) or one that keeps the part whole; otherwise
@@ -3094,7 +3110,17 @@ impl<O: ClassObject + SolutionObject + Ord> FilletExecutive<O> {
                     "Fillet Corner Error: Vertex Computation Failure",
                 );
             }
+            let noted_before = self.error.code;
             if ignore(access.edges_calculate(k, corner, self))?.is_none() {
+                // SolidCraft change (the fork's, 41a39ec; `fixes.fillet_blend_corner`): a
+                // corner that noted why it refused, or one refused as one the blends cannot
+                // pass (SM_FILERR_NO_ROOM, noted by the corner), keeps that reason
+                if k.fixes.fillet_blend_corner
+                    && (self.error.code != noted_before
+                        || self.error.code == FilletErrorType::NoRoom as i32)
+                {
+                    return Err(failure());
+                }
                 return self.corner_vertex_failure(
                     access,
                     corner,
@@ -3533,6 +3559,29 @@ impl<O: ClassObject + SolutionObject + Ord> FilletExecutive<O> {
                     FitKind::Scale,
                     solver,
                 )?;
+            }
+        }
+        // An End's rail that runs past its side edge's far end is a second cause, which
+        // the corner would refuse once built (SmBlendCorner::RefuseEndPastSideEdge): the
+        // refusal names the smaller of the two radii (the fork's 41a39ec,
+        // `fixes.fillet_blend_corner`).
+        if k.fixes.fillet_blend_corner && self.fit_radius > 0.0 && self.fit_kind == FitKind::Radius
+        {
+            let corners = self.corners.clone();
+            for corner in corners {
+                if let Some((fit, edge)) =
+                    access.creation_end_fit_past_side_edges(k, corner, self)?
+                {
+                    if fit < self.fit_radius {
+                        self.error.note_error(
+                            FilletErrorType::NoRoom,
+                            Some(
+                                &crate::blend::blend_corner::end::describe_end_past_side_edge(fit),
+                            ),
+                        );
+                        self.note_fit_radius(fit, Some(edge), FitKind::Radius);
+                    }
+                }
             }
         }
         Err(failure())
