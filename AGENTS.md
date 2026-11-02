@@ -374,6 +374,9 @@ own constructions. The policy (owner, 2026-11-02; supersedes the interim rule of
 - **Cases with images.** A pull request that makes a SolidCraft rig case pass, or turns a known
   failure into a correct refusal, updates its row in `docs/generic-blend.md` §7 and its render
   (`docs/generic-blend/cases/<case>.jpg`) in the same change. No row changes without its image.
+  Choose the render's view from the case's geometry so it shows the issue (the corner, the seam,
+  the spot refused or fixed), framed close on it, with an inset of the whole part where it helps;
+  never a fixed angle.
 - **Don't extend code that is going away.** Fix an old path only when a parity gate needs it
   before its replacement lands; say so in the PR, and it is deleted with the code.
 - **Crash, UB, hang and nondeterminism fixes are unconditional**, e.g. #1160 for UB-87.

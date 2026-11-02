@@ -781,8 +781,10 @@ is on [#2243](https://github.com/tangency-labs/solidcore/issues/2243).
 **Cases are reported as they resolve, with images.** §7 shows every SolidCraft rig case with its
 state: passes, refused as expected (with the size that fits), or known failing (with its reason).
 When a pull request makes a case pass, or turns a known failure into a correct refusal, it updates
-that case's row **and its render** (`docs/generic-blend/cases/<case>.jpg`, an isometric view of the
-result framed on its bounding box, as the gallery's renders are made) in the same pull request. A row
+that case's row **and its render** (`docs/generic-blend/cases/<case>.jpg`) in the same pull request.
+The render shows the case's issue: the view is chosen for it (the corner, the seam, the edge's end,
+the spot refused or fixed), framed close on that region, with an inset of the whole part where it
+helps. Not a fixed angle on the bounding box. A row
 whose state changes without a new render is not accepted. A known failure keeps its reason until it
 passes.
 
