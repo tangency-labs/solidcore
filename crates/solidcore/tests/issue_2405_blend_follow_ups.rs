@@ -201,3 +201,92 @@ fn the_exact_rounds_cylinder_is_on_its_exact_spine() {
         "{worst:?}"
     );
 }
+
+/// The edges of `b` lying on the plane where `plane_dist` is zero (within 1e-9 at 33
+/// points): whether each is a circle (an ellipse kind) and its worst distance from the
+/// circles `circle_dist` measures.
+fn plane_section_edges(
+    k: &Kernel,
+    b: &Brep,
+    plane_dist: &dyn Fn(Vec3) -> f64,
+    circle_dist: &dyn Fn(Vec3) -> f64,
+) -> Vec<(bool, f64)> {
+    use solidcore::curve::curve::CurveKind;
+    let mut out = Vec::new();
+    for e in get_edges(b).unwrap() {
+        let c = edge::curve(b, e).unwrap().unwrap();
+        let ivl = edge::interval(b, e).unwrap();
+        let pts: Vec<Vec3> = (0..=32)
+            .map(|t| {
+                c.evaluate_point(k, ivl.min() + (ivl.max() - ivl.min()) * f64::from(t) / 32.0)
+                    .unwrap()
+            })
+            .collect();
+        if pts.iter().all(|&p| plane_dist(p).abs() <= 1e-9) {
+            let off = pts.iter().map(|&p| circle_dist(p)).fold(0.0, f64::max);
+            out.push((matches!(c.kind(), CurveKind::Ellipse(_)), off));
+        }
+    }
+    out
+}
+
+/// A torus R 10, r 3 about the z axis at the origin met by a box in either order: the box's
+/// face z = 0 (square to the axis, through the centre) in the circles of radii 7 and 13,
+/// its face x = 0 (through the axis) in the meridians about (0, +-10, 0) of radius 3.
+/// Returns the section edges on that face for each order (box first, then torus first).
+fn torus_box_sections(k: &mut Kernel, through_axis: bool) -> [Vec<(bool, f64)>; 2] {
+    use solidcore::boolean::api_brep::boolean_intersection;
+    use solidcore::primitive::api_primitives::create_torus;
+    let plane: fn(Vec3) -> f64 = if through_axis { |p| p.x } else { |p| p.z };
+    let circles: fn(Vec3) -> f64 = if through_axis {
+        |p| (((p.y.abs() - 10.0).powi(2) + p.z * p.z).sqrt() - 3.0).abs()
+    } else {
+        |p| {
+            let rho = (p.x * p.x + p.y * p.y).sqrt();
+            (rho - 7.0).abs().min((rho - 13.0).abs())
+        }
+    };
+    [true, false].map(|box_first| {
+        let t = create_torus(k, Point3::new(0.0, 0.0, 0.0), 10.0, 3.0).unwrap();
+        let bx = if through_axis {
+            create_box(k, Point3::new(0.0, -20.0, -20.0), 20.0, 40.0, 40.0)
+        } else {
+            create_box(k, Point3::new(-20.0, -20.0, -20.0), 40.0, 40.0, 20.0)
+        }
+        .unwrap();
+        let r = if box_first {
+            boolean_intersection(k, bx, t)
+        } else {
+            boolean_intersection(k, t, bx)
+        }
+        .unwrap();
+        plane_section_edges(k, &r, &plane, &circles)
+    })
+}
+
+/// Item 2 (WR-721): with `plane_first_torus_section_exact`, a plane meets a torus in its
+/// exact circles in either order, where the plane is square to the axis or through it,
+/// and each is a circle. Without it (upstream), the plane first has no torus case and the
+/// section is marched: 1.36e-6 off the circles, 3.46e-6 off the meridians.
+#[test]
+fn a_plane_meets_a_torus_in_its_exact_circles_in_either_order() {
+    let mut k = Kernel::default();
+    k.fixes.plane_first_torus_section_exact = true;
+    for through_axis in [false, true] {
+        for (order, edges) in torus_box_sections(&mut k, through_axis).iter().enumerate() {
+            eprintln!("flag on, through axis {through_axis}, order {order}: {edges:?}");
+            assert_eq!(edges.len(), 2, "two circles");
+            for &(circle, off) in edges {
+                assert!(circle && off <= 1e-14, "{edges:?}");
+            }
+        }
+    }
+
+    let mut k = Kernel::default();
+    for (through_axis, pinned) in [(false, 1.362e-6), (true, 3.457e-6)] {
+        let [box_first, _] = torus_box_sections(&mut k, through_axis);
+        eprintln!("flag off, through axis {through_axis}, box first: {box_first:?}");
+        let worst = box_first.iter().map(|e| e.1).fold(0.0, f64::max);
+        assert!((worst - pinned).abs() <= 1e-9, "{worst:e}");
+    }
+}
