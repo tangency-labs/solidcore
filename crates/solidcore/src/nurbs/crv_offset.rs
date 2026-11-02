@@ -528,6 +528,33 @@ mod tests {
         assert!(matches!(r, Err(SolidError::InvalidInput { .. })), "{r:?}");
     }
 
+    /// #2372: a fired cancel token ends the sampling and the knot removal with
+    /// `Cancelled`; an unfired one leaves the offset bit for bit as without one.
+    #[test]
+    fn a_cancel_token_ends_the_offset_and_an_unfired_one_changes_nothing() {
+        let b = Vec3::new(0.0, 0.0, 1.0);
+        let par = OffsetParam::Inherited;
+        let plain = cubic()
+            .offset_pt_sampling(b, 0.1, 3, false, par, 1e-4)
+            .unwrap();
+        let token = crate::kernel::CancelToken::new();
+        let unfired = cubic()
+            .offset_pt_sampling_cancellable(b, 0.1, 3, false, par, 1e-4, Some(&token))
+            .unwrap();
+        assert_eq!(plain, unfired);
+        token.cancel();
+        let r = cubic().offset_pt_sampling_cancellable(b, 0.1, 3, false, par, 1e-4, Some(&token));
+        assert!(matches!(r, Err(SolidError::Cancelled { .. })), "{r:?}");
+        // the knot removal on its own
+        let r = plain.remove_knots_deriv_constraints_cancellable(
+            1e-4,
+            ConstrainedEnds::Both,
+            0,
+            Some(&token),
+        );
+        assert!(matches!(r, Err(SolidError::Cancelled { .. })), "{r:?}");
+    }
+
     /// HANG-44 addendum 2026-10-29: the bound scales with the segment count and the
     /// tolerance, never drops below the former cap and never exceeds the ceiling.
     #[test]

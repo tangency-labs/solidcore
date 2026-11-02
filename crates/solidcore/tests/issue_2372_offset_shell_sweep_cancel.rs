@@ -236,12 +236,15 @@ fn every_fix_but_g2() -> solidcore::kernel::UpstreamFixes {
 
 /// The swept bar's shell, cancelled from another thread `delay` into the call:
 /// `Err(Cancelled)`: the time from the cancel to the return, and the check point's
-/// operation.
+/// operation; `None` when the shell returned before the cancel (a faster build: in a
+/// debug build the 60 s cancel lands in the bend walls' knot removals, 97 s each). The
+/// knot removal's and the sampling's own checks are also tested directly in
+/// `nurbs::crv_offset`.
 #[cfg(not(target_arch = "wasm32"))]
 fn cancel_shell_after(
     every_fix: bool,
     delay: std::time::Duration,
-) -> (std::time::Duration, &'static str) {
+) -> Option<(std::time::Duration, &'static str)> {
     use std::time::Instant;
     let token = CancelToken::new();
     let canceller_token = token.clone();
@@ -276,10 +279,14 @@ fn cancel_shell_after(
     );
     let returned = Instant::now();
     let cancelled_at = canceller.join().unwrap();
+    if made.is_ok() && cancelled_at > returned {
+        // a faster build finished the shell before the cancel: nothing to cancel
+        return None;
+    }
     let Err(SolidError::Cancelled { operation }) = made else {
         panic!("the cancelled shell returned {made:?} (after {delay:?})");
     };
-    (returned.saturating_duration_since(cancelled_at), operation)
+    Some((returned.saturating_duration_since(cancelled_at), operation))
 }
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -292,7 +299,11 @@ fn a_token_fired_from_another_thread_stops_the_shell_soon() {
         (true, 2000),
         (true, 60000),
     ] {
-        let (stop, at) = cancel_shell_after(every_fix, std::time::Duration::from_millis(ms));
+        let Some((stop, at)) = cancel_shell_after(every_fix, std::time::Duration::from_millis(ms))
+        else {
+            eprintln!("ISSUE_2372 every_fix={every_fix}: done before the cancel {ms} ms in");
+            continue;
+        };
         eprintln!(
             "ISSUE_2372 every_fix={every_fix} cancelled {ms} ms in: returned {stop:?} after \
              the cancel, at {at}"
