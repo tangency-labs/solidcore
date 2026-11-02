@@ -754,3 +754,64 @@ fn a_net_off_its_definition_is_refused_on_rebuild() {
         assert!(rebuild(&k, &rec).is_err());
     }
 }
+
+/// S's partials at a row of points at one s, as bits.
+fn row_bits(k: &Kernel, pb: &ProceduralBlend, s: f64) -> Vec<u64> {
+    let mut out = Vec::new();
+    for t in [0.0, 0.3, 0.6, 1.0] {
+        for row in pb.evaluate_definition(k, s, t, 2, 2).unwrap() {
+            for p in row {
+                out.extend([p.x.to_bits(), p.y.to_bits(), p.z.to_bits()]);
+            }
+        }
+    }
+    out
+}
+
+/// #2388, contract 4: evaluating S is a pure function of its definition. Two threads,
+/// each with its own kernel, evaluating blends that share a definition give what one
+/// kernel gives, bit for bit, also where a thread's kernel has made and evaluated
+/// definitions of its own at the same s (its station memo holds their stations).
+#[test]
+fn evaluating_on_two_threads_equals_one_bit_for_bit() {
+    let k = kernel();
+    let shared = [
+        blend(&k, true, 2, GN_THUMBWEIGHT_EQUAL_AREA, false),
+        blend(&k, true, 1, 0.0, true),
+    ];
+    let ss = [0.0, 0.37, 0.5, 1.0];
+    let serial: Vec<Vec<u64>> = shared
+        .iter()
+        .flat_map(|pb| ss.iter().map(|&s| row_bits(&k, pb, s)))
+        .collect();
+    let parallel: Vec<Vec<Vec<u64>>> = std::thread::scope(|scope| {
+        let handles: Vec<_> = (0..2)
+            .map(|thread| {
+                let shared = shared.clone();
+                scope.spawn(move || {
+                    let k = kernel();
+                    // this kernel's own definitions, of the same orders, evaluated first at
+                    // the same s
+                    let own = [
+                        blend(&k, false, 2, GN_THUMBWEIGHT_EQUAL_AREA, false),
+                        blend(&k, false, 1, 0.0, true),
+                    ];
+                    let mut out = Vec::new();
+                    for (pb, mine) in shared.iter().zip(&own) {
+                        for &s in &ss {
+                            if thread == 1 {
+                                let _ = row_bits(&k, mine, s);
+                            }
+                            out.push(row_bits(&k, pb, s));
+                        }
+                    }
+                    out
+                })
+            })
+            .collect();
+        handles.into_iter().map(|h| h.join().unwrap()).collect()
+    });
+    for (thread, got) in parallel.iter().enumerate() {
+        assert_eq!(got, &serial, "thread {thread} differs from one kernel");
+    }
+}
