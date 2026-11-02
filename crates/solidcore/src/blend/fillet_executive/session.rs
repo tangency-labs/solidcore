@@ -102,6 +102,7 @@ mod corner_marks;
 mod crossing_rails;
 mod ease;
 pub(crate) mod finish;
+mod keep_features;
 mod original_merge;
 mod original_trim;
 mod overflow_first;
