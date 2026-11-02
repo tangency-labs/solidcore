@@ -211,12 +211,19 @@ fn a_band_short_of_the_feature_leaves_it_either_way() {
 
 // ---- Against the fork's kernel at eb883ad, bit for bit ----
 
-/// The fork's flags: every one but `precise_properties_trim_base_v` (WR-563), which isn't in the
-/// fork and moves the volume of any face on a cylinder or a cone.
+/// The opt-ins these figures rest on, found by removing every flag the figures don't need, so a
+/// new flag on `main` can't move them. Not `UpstreamFixes::all()`: it holds fixes the fork doesn't
+/// have, such as `precise_properties_trim_base_v` (WR-563), which moves the volume of any face on
+/// a cylinder or a cone.
 fn fork_kernel(keep: bool) -> Kernel {
     let mut k = Kernel::new(&KernelOptions::default());
-    let mut fixes = UpstreamFixes::all();
-    fixes.precise_properties_trim_base_v = false;
+    let mut fixes = UpstreamFixes::default();
+    fixes.fillet_refuse_rails_leaving_faces = true;
+    fixes.fillet_cliff_overflow = true;
+    fixes.fillet_overflow_trim_at_creases = true;
+    fixes.linear_sweep_arc_is_cylinder = true;
+    fixes.precise_properties_body_length_scale = true;
+    fixes.precise_properties_split_at_surface_knots = true;
     fixes.fillet_keep_features = keep;
     k.fixes = fixes;
     k
