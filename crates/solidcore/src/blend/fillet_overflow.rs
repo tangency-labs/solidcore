@@ -60,15 +60,15 @@ use crate::nurbs::b_spline_curve::BSplineCurve;
 use crate::nurbs::b_spline_curve_n_lib::TrimMode;
 use crate::nurbs::b_spline_surface_n_lib::p2::OrientType;
 use crate::query::brep::{BrepFaceServices, BrepQuery, SideObject, SidedFaceServices};
-use crate::topology::brep_cache::CacheObject;
 use crate::surface::plane::Plane;
 use crate::surface::surface::p2::TsectCurveType;
 use crate::surface::surface::p4::NoObject;
 use crate::surface::surface::p5::DropPointOptions;
 use crate::surface::surface::Surface;
-use crate::topology::edge::NotifyEnv;
 use crate::topology::brep::p7::{make_face_with_curves, FaceCurvesInput};
 use crate::topology::brep::planar_section::face_planar_section_curves;
+use crate::topology::brep_cache::CacheObject;
+use crate::topology::edge::NotifyEnv;
 use crate::topology::face::p2::classify_free_curve_on_face;
 use crate::topology::{edge, face, vertex, Brep, BrepId, EdgeId, FaceId, VertexId};
 
@@ -471,7 +471,10 @@ fn edge_piece(
     tol: f64,
 ) -> Result<Option<Curve>> {
     let mut curve = edge_curve(k, b, e)?;
-    let t = [param_on(k, &curve, from, tol)?, param_on(k, &curve, to, tol)?];
+    let t = [
+        param_on(k, &curve, from, tol)?,
+        param_on(k, &curve, to, tol)?,
+    ];
     let [t0, t1] = t;
     let mut ivl = Extent1d::new();
     ivl.set_min_max(smos_min(t0, t1), smos_max(t0, t1))?;
@@ -497,7 +500,10 @@ fn edge_arcs(
 ) -> Result<Vec<Vec<Curve>>> {
     let curve = edge_curve(k, b, e)?;
     let all = curve.natural_interval();
-    let t = [param_on(k, &curve, from, tol)?, param_on(k, &curve, to, tol)?];
+    let t = [
+        param_on(k, &curve, from, tol)?,
+        param_on(k, &curve, to, tol)?,
+    ];
     let [t0, t1] = t;
     let (lo, hi) = (smos_min(t0, t1), smos_max(t0, t1));
     let piece = |a: f64, bb: f64, arc: &mut Vec<Curve>| -> Result<()> {
@@ -735,9 +741,8 @@ pub fn extend(
     let (x, y) = plane_axes(normal)?;
     let face_edges = face::p4::edges(target, f, None, false, None)?;
 
-    let run = |i: usize| -> Result<&OffRun> {
-        runs.get(i).ok_or_else(|| SolidError::null_pointer(OP))
-    };
+    let run =
+        |i: usize| -> Result<&OffRun> { runs.get(i).ok_or_else(|| SolidError::null_pointer(OP)) };
     let mut extensions = Vec::new();
     // the chains of runs, joined at the sheet's vertices; each run once
     let mut used = vec![false; runs.len()];
@@ -983,7 +988,10 @@ pub fn extend(
             chain_loop(&mut ext)?;
             // the end to the way's first vertex
             let here = ends[1];
-            let first_v = way.verts.first().ok_or_else(|| SolidError::null_pointer(OP))?;
+            let first_v = way
+                .verts
+                .first()
+                .ok_or_else(|| SolidError::null_pointer(OP))?;
             let first_p = vertex::point(target, *first_v)?;
             if here.distance(first_p) > tol {
                 let piece = match crosses[1] {
@@ -1002,7 +1010,9 @@ pub fn extend(
             for (i, &e) in way.edges.iter().enumerate() {
                 let curve = edge_curve(k, target, e)?;
                 let (va, vb) = (
-                    way.verts.get(i).ok_or_else(|| SolidError::null_pointer(OP))?,
+                    way.verts
+                        .get(i)
+                        .ok_or_else(|| SolidError::null_pointer(OP))?,
                     way.verts
                         .get(i + 1)
                         .ok_or_else(|| SolidError::null_pointer(OP))?,
@@ -1012,7 +1022,10 @@ pub fn extend(
                 ext.along.push(e);
             }
             // the way's last vertex to the start
-            let last_v = way.verts.last().ok_or_else(|| SolidError::null_pointer(OP))?;
+            let last_v = way
+                .verts
+                .last()
+                .ok_or_else(|| SolidError::null_pointer(OP))?;
             let last_p = vertex::point(target, *last_v)?;
             if last_p.distance(ends[0]) > tol {
                 let piece = match crosses[0] {
@@ -1062,7 +1075,9 @@ fn takes_off(
     let &(r, rev) = chain.first().ok_or_else(|| SolidError::null_pointer(OP))?;
     let mid_run = runs.get(r).ok_or_else(|| SolidError::null_pointer(OP))?;
     let ivl = mid_run.curve.natural_interval();
-    let d = mid_run.curve.evaluate(k, ivl.evaluate(0.5), 1, true, false)?;
+    let d = mid_run
+        .curve
+        .evaluate(k, ivl.evaluate(0.5), 1, true, false)?;
     let [p, d1, ..] = *d.as_slice() else {
         return Err(SolidError::sm_err(OP));
     };

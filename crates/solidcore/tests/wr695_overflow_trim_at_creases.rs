@@ -209,7 +209,7 @@ fn step_round_trimmed_at_its_crease() {
     let closed = 1700.0 - 20.0 * removed_area(6.0, 10.0, 5.0);
     assert_builds(
         &blend(true, stepped_bar, s, t, 6.0, false),
-        1546.044_571_206_611_9,
+        1_546.044_571_206_611_9,
         FORK_REL,
         8,
     );
@@ -223,7 +223,7 @@ fn step_round_trimmed_at_its_crease() {
 
 /// The stepped bar's inner step edge chamfered 4: the chamfer runs past both faces the
 /// step meets, its creases and rails enclose no part of the body and every face is
-/// reached: the fork refuses it, SM_FILERR_BAD_MERGE (fork 8832ead's every-face case).
+/// reached: the fork refuses it, `SM_FILERR_BAD_MERGE` (fork 8832ead's every-face case).
 /// The subtraction builds it, 1700 - 160.
 #[test]
 fn chamfer_reaching_every_face_is_refused() {

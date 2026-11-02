@@ -275,7 +275,10 @@ impl FilletSession<'_> {
 
     /// The face of the intermediate body each of `solver`'s fillet geometries' surfaces is
     /// on (`pFG->GetFilletSurface()->GetOwner()` in `m_pFilletBrep`), `None` for none.
-    pub(super) fn fillet_faces(&self, solver: FilletObject) -> Result<Vec<(FilletGeomId, Option<FaceId>)>> {
+    pub(super) fn fillet_faces(
+        &self,
+        solver: FilletObject,
+    ) -> Result<Vec<(FilletGeomId, Option<FaceId>)>> {
         let FilletObject::Solver(id) = solver else {
             return Err(invalid("object is not a solver"));
         };

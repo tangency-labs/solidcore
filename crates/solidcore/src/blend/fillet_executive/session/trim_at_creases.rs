@@ -32,18 +32,18 @@ use crate::blend::fillet_cliff_overflow::{cut_fillet_at_open_end, Refusal};
 use crate::blend::fillet_executive::p3::NoRoomReason;
 use crate::blend::fillet_geom::p1::{FilletErrorType, FilletGeomId};
 use crate::blend::fillet_overflow::{
-    creases, edge_curve, edge_on_surface, extend, in_material, make_extension_face,
-    pieces_in_face, ExtendOutcome, Extension, Rail,
+    creases, edge_curve, edge_on_surface, extend, in_material, make_extension_face, pieces_in_face,
+    ExtendOutcome, Extension, Rail,
 };
 use crate::curve::curve::Curve;
 use crate::error::{EntityRef, Result, SolidError};
 use crate::geom::attribute::ids;
 use crate::geom::global_solver::SolverOperation;
+use crate::geom::object::ObjectRef;
 use crate::kernel::Kernel;
 use crate::math::{Point3, BIG_DOUBLE};
-use crate::surface::surface::Surface;
-use crate::geom::object::ObjectRef;
 use crate::query::brep::BrepIdentity;
+use crate::surface::surface::Surface;
 use crate::topology::brep::p3::{self, delete_face, with_kernel_callbacks, DeleteFaceOptions};
 use crate::topology::brep_cache::CacheObject;
 use crate::topology::edge::NotifyEnv;
@@ -67,7 +67,10 @@ fn is_tangent_edge(k: &Kernel, b: &mut Brep, e: EdgeId, tangency_tol_rad: f64) -
     if !edge::is_manifold(b, e)? {
         return Ok(false);
     }
-    Ok(crate::blend::fillet_solver::p1::test_manifold_tangent_rollover(k, b, e, tangency_tol_rad)?.0)
+    Ok(
+        crate::blend::fillet_solver::p1::test_manifold_tangent_rollover(k, b, e, tangency_tol_rad)?
+            .0,
+    )
 }
 
 /// The key of entity `e` of `b` in a notification (its issued identity, or the default
@@ -182,7 +185,8 @@ impl FilletSession<'_> {
         let owner_of = |_: ObjectRef| None;
         let identity = BrepIdentity {
             brep_id: BrepId::from_index(
-                u32::try_from(serial).map_err(|_| invalid("target body identity exceeds query domain"))?,
+                u32::try_from(serial)
+                    .map_err(|_| invalid("target body identity exceeds query domain"))?,
             ),
             keys: &keys,
             owner_of: &owner_of,
@@ -194,7 +198,9 @@ impl FilletSession<'_> {
             ..
         } = &mut self.objects;
         if k.context.issued_brep_serial(target.notify_identity_slot()) != Some(serial) {
-            return Err(invalid("target body belongs to another notification context"));
+            return Err(invalid(
+                "target body belongs to another notification context",
+            ));
         }
         crate::geom::context::Context::with_notification_context(k, |k, context| {
             p3::seed_records(notification_records, target, &key_of);
@@ -568,8 +574,8 @@ impl FilletSession<'_> {
                 if edge_on_surface(k, &sheet, e, self.objects.target, f, on_tol)? {
                     let start = edge::start_vertex(&sheet, e)?
                         .ok_or_else(|| SolidError::null_pointer(OP))?;
-                    let end = edge::end_vertex(&sheet, e)?
-                        .ok_or_else(|| SolidError::null_pointer(OP))?;
+                    let end =
+                        edge::end_vertex(&sheet, e)?.ok_or_else(|| SolidError::null_pointer(OP))?;
                     rails.push(Rail {
                         curve: edge_curve(k, &sheet, e)?,
                         start,
@@ -771,8 +777,7 @@ impl FilletSession<'_> {
                         }
                         let curve =
                             edge::curve(&sheet, e)?.ok_or_else(|| SolidError::null_pointer(OP))?;
-                        if let Some((t, dist)) =
-                            drop_on(k, curve, &edge::interval(&sheet, e)?, p)?
+                        if let Some((t, dist)) = drop_on(k, curve, &edge::interval(&sheet, e)?, p)?
                         {
                             if dist <= 10.0 * tol {
                                 found = Some((e, t));
