@@ -667,9 +667,12 @@ impl FilletSession<'_> {
             session.objects.target.set_editing_enabled(true);
             // The fork's (WR-703, `eb883ad`): a feature standing inside a round's band is kept:
             // the round is trimmed round it in place and sewn in instead of merged.
+            // (not with an open G1 setback corner: the fork's ef57570)
+            let open_setback = session.has_open_setback();
             if k.fixes.fillet_keep_features
                 && !session.executive.cliff_overflow
                 && !session.executive.open_ends.iter().any(|end| end.section)
+                && !open_setback
             {
                 let kept = session.keep_features_in_bands(k);
                 if !matches!(kept, Ok(false)) {
@@ -689,14 +692,18 @@ impl FilletSession<'_> {
             // `fillet_overflow_trim_at_creases` a cliff overflow is trimmed at its creases in
             // place instead; a WR-674 section end is still subtracted, unless
             // `fillet_section_end_trim_at_creases` (WR-706) trims it too
+            // The fork's ef57570 (smlib#125, `fillet_blend_corner`): so is an open G1 setback
+            // corner's hole made (no patches: its spring curves are imprinted on its faces
+            // with the sheet's boundary)
             let sectioned = session.executive.open_ends.iter().any(|end| end.section);
-            let trimmed = if sectioned {
-                k.fixes.fillet_section_end_trim_at_creases
-                    && k.fixes.fillet_overflow_trim_at_creases
-                    && k.fixes.fillet_round_ends_at_tangent_continuation
-            } else {
-                session.executive.cliff_overflow && k.fixes.fillet_overflow_trim_at_creases
-            };
+            let trimmed = open_setback
+                || if sectioned {
+                    k.fixes.fillet_section_end_trim_at_creases
+                        && k.fixes.fillet_overflow_trim_at_creases
+                        && k.fixes.fillet_round_ends_at_tangent_continuation
+                } else {
+                    session.executive.cliff_overflow && k.fixes.fillet_overflow_trim_at_creases
+                };
             if trimmed {
                 let result = session.trim_at_creases(k);
                 session.objects.target.set_editing_enabled(editing);

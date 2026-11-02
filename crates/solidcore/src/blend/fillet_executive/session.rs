@@ -2761,6 +2761,7 @@ impl CornerEdgeAccess<FilletObject> for SessionObjects<'_> {
             solvers,
             corners,
             extended_surfaces,
+            set_back_fills,
             ..
         } = self;
         let corner = corners
@@ -2825,7 +2826,12 @@ impl CornerEdgeAccess<FilletObject> for SessionObjects<'_> {
                     executive: Some(&*executive),
                 };
                 crate::blend::blend_corner::setback::build_setback_fill(
-                    k, target, pseudo, corner, &lookup,
+                    k,
+                    target,
+                    pseudo,
+                    corner,
+                    &lookup,
+                    set_back_fills,
                 )?
             };
             if let Err(refusal) = refused {

@@ -51,3 +51,47 @@ Updates: WR-697, WR-616
     apex) to 1e-12 of the part's size, along its edges too. Its normal is radial, and it is
     G1 to every neighbour along its edges (1e-9 rad).
   - With the flag off, the regular apex of four is the pinned corner.
+- **Open setbacks** (`ef57570`, slice 2):
+  - `ClassifySetBack` no longer leaves a corner asked open (`SetSetBackFill(.., bOpen)`) to
+    the pinned NxN corner: it is the Setback. `MakeSetBackTopology` neither certifies nor
+    grows an open corner's setbacks.
+  - `BuildSetBackFill`: an open G1 corner gets no fill (`OpenSetBackSprings`). On each face
+    the spring curve is the parabola tangent to the two rails at their ends (P, Q; X their
+    crossing by least squares), stored as its two quadratic halves at the base point
+    `B = (P + 2 X + Q) / 4`. Each half is certified on its plane and tangent to its rail, or
+    the corner is refused. An open G2 corner builds its fill without the containment
+    check. `CreateSetBackPatches` makes no patches for an open G1 corner.
+  - `sm_SbOneWeightPolynomial`: a spring side or a patch's iso-curve whose weights are all
+    one weight is stored non-rational (`SmBSplineCurve::MakeNonRational`, ported as
+    `BSplineCurve::make_non_rational`). This applies to every Setback under the flag.
+  - The executive skips keep-features and runs `TrimAtCreases` when a corner is an open
+    setback (`HasOpenSetBack`). `TrimAtCreases` imprints the open corners' spring curves on
+    their faces with the sheet's boundary, and accepts exactly `3 n` free edges per open
+    corner (the hole) instead of a closed solid.
+- **Each round's side** (`ce748fa`): in `TrimAtCreases` a concave round's sheet lies in the
+  void it fills, so its pieces inside the body are the ones deleted. A sheet face of no
+  round (a corner's) between blends that add material and blends that take it off is refused
+  (`SM_FILERR_CORNER_UNSUPPORTED`). In solidcore the side is read only with
+  `fillet_blend_corner`; without it every round takes material off, as before.
+- **No NxN setback paths** (`dc757a6`): with `fillet_blend_corner` the convex and concave
+  NxN corners have no setback branch. A setback asked at a corner the Setback does not
+  build (here a corner with a curved edge) is ignored by the corner's topology; SMLib at
+  `18e96f1` returns no error there. The fork's capi refuses such a request
+  (`SMLIB_ERR_UNSUPPORTED`), but that check is in capi, so it is not ported. Without the
+  flag the pinned setback paths stay.
+- **Checked against the fork:** a driver built on the fork's SMLib and SM_API at `18e96f1`
+  (`SmFilletExecutive` with `SetSetBackFill`, keep-features on) gives the same results as
+  solidcore for the regression cases: the open box corner (sheet 9/27/19, 9 free edges, the
+  six halves' control points), the open concave notch (12/36/25, 9 free edges), the
+  mixed-convexity refusal, and the curved-edge corner whose setback is ignored.
+- **Rust port (slice 2):** `blend_corner/setback.rs` (`classify_setback`,
+  `make_setback_topology`, `build_setback_fill`, `open_setback_springs`,
+  `one_weight_polynomial`, `create_setback_patches`, `FilletCorner::is_setback_open`),
+  `nurbs/b_spline_curve_n_lib.rs` (`make_non_rational`), `fillet_executive/session/finish.rs`,
+  `session/trim_at_creases.rs` (`has_open_setback`, the springs, the free-edge count, each
+  round's side), `fillet_corner/topology.rs`, `topology/concave_nxn.rs` and
+  `session/concave_nxn.rs` (the NxN setback paths).
+- **Tests (slice 2):** `crates/solidcore/tests/fork_smlib125_open_setbacks.rs`, from the
+  fork's capi cases `setback_open_g1_box_corner_hole` and `setback_open_concave_notch_hole`
+  (counts, free edges, P/X/Q of each spring) plus a mixed-convexity notch and a curved-edge
+  corner, with the flag on and off.

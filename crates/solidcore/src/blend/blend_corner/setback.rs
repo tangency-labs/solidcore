@@ -5,7 +5,8 @@
 //!
 //! Upstream: none (pinned SMLib builds such a vertex as an `NxN` corner). The fork's
 //! `source/SMLib/src/SmBlendCornerSetback.cpp`, `source/SMLib/inc/SmBlendCorner.h`
-//! (tangency-labs/smlib 61547af, 1506e2f, ac8b4f8, f1d81f4; smlib#104).
+//! (tangency-labs/smlib 61547af, 1506e2f, ac8b4f8, f1d81f4; smlib#104; open corners
+//! ef57570, smlib#125).
 //!
 //! The corner's topology in the executive's pseudo B-rep, for faces `F_i` at the vertex
 //! (`F_i` between blended edges `i - 1` and `i`, `m_pAllEUs`'s order): on each face the rail
@@ -29,6 +30,9 @@
 //! | [`make_setback_topology`]    | `SmBlendCorner::MakeSetBackTopology`                  |
 //! | [`build_setback_fill`]       | `SmBlendCorner::BuildSetBackFill`                     |
 //! | [`create_setback_patches`]   | `SmBlendCorner::CreateSetBackPatches`                 |
+//! | `open_setback_springs` (private) | `SmBlendCorner::OpenSetBackSprings` (ef57570)     |
+//! | `one_weight_polynomial` (private) | `sm_SbOneWeightPolynomial` (ef57570)             |
+//! | [`FilletCorner::is_setback_open`] | `SmBlendCorner::IsSetBackOpen` (ef57570)         |
 //! | `away_from` (private)        | `sm_SbAwayFrom`                                       |
 //! | `corner_planes` (private)    | `sm_SbCornerPlanes`                                   |
 //! | `edge_blended` (private)     | `sm_SbEdgeBlended`                                    |
@@ -66,7 +70,9 @@ use crate::geom::extent2d::Extent2d;
 use crate::geom::global_solver::SolverOperation;
 use crate::intersect::point_class::PointClassType;
 use crate::kernel::Kernel;
-use crate::math::{Point2, Point3, Vec3, BIG_DOUBLE, EFF_ZERO};
+use crate::math::{Point2, Point3, Vec3, BIG_DOUBLE, EFF_ZERO, EFF_ZERO_SQRT};
+use crate::nurbs::b_spline_curve::p1::{BSplineCurveForm, CanonicalData, KnotType};
+use crate::nurbs::b_spline_curve::BSplineCurve;
 use crate::nurbs::b_spline_surface::p2::IsoCurveOptions;
 use crate::nurbs::b_spline_surface::SurfParamType;
 use crate::nurbs::b_spline_surface_n_lib::p2::OrientType;
@@ -95,11 +101,14 @@ pub struct SetbackCorner {
     pub overflows: bool,
     /// `m_pFill`: the fill, from the edge geometry until the patches take it.
     pub fill: Option<Fill>,
+    /// `m_bSetBackOpen` (the fork's ef57570, smlib#125): an open G1 corner, its spring
+    /// curves made in closed form ([`build_setback_fill`]), no fill and no patches.
+    pub open: bool,
 }
 
 impl Default for SetbackCorner {
     /// The constructor's: `m_lFillOrder(1)`, `m_bConvexSetBack(TRUE)`,
-    /// `m_bSetBackOverflows(FALSE)`, no setbacks and no fill.
+    /// `m_bSetBackOverflows(FALSE)`, `m_bSetBackOpen(FALSE)`, no setbacks and no fill.
     fn default() -> Self {
         Self {
             setbacks: Vec::new(),
@@ -107,7 +116,18 @@ impl Default for SetbackCorner {
             convex: true,
             overflows: false,
             fill: None,
+            open: false,
         }
+    }
+}
+
+impl FilletCorner {
+    /// `SmBlendCorner::IsSetBackOpen` (the fork's ef57570): an open G1 setback corner, its
+    /// hole bounded by its sections and spring curves, no patches.
+    #[must_use]
+    pub fn is_setback_open(&self) -> bool {
+        self.blend.is_some_and(super::BlendCorner::is_setback)
+            && self.setback.as_ref().is_some_and(|sb| sb.open)
     }
 }
 
@@ -533,9 +553,11 @@ pub fn classify_setback(
     }
 
     let asked = set_back_fill_of(fills, vtx);
-    if asked.is_some_and(|a| a.open) || (asked.is_none() && !one_kind) {
-        return none; // a corner left open keeps the patch its caller removes
+    if asked.is_none() && !one_kind {
+        return none;
     }
+    // a corner left open (`open`) is the Setback's hole: its fill is built uncertified and
+    // left out by the caller (the fork's ef57570)
     let g2 = one_kind && kind == FilletSurfaceGeneratorType::BlendCurve;
     // three rounds of one radius meet a common ball (the Ball): not a setback unless asked.
     // Four or more meet one only where every face's offset passes through one point
@@ -690,7 +712,9 @@ pub fn make_setback_topology(
     // quarter radius (the others growing on); refused, naming them, where none within the
     // rooms certifies. One asked for that is too short is refused, naming the setback that
     // builds (or that none does, where that one does not fit with its ease).
-    if sb.fill_order == 1 && !sb.overflows {
+    // (a corner left open is not filled: its fill is not certified, nor its setbacks grown;
+    // the fork's ef57570)
+    if sb.fill_order == 1 && !sb.overflows && !asked.is_some_and(|a| a.open) {
         let mut most = vec![0.0; n];
         for (i, m) in most.iter_mut().enumerate() {
             *m = if asked.is_some() {
@@ -864,6 +888,7 @@ pub fn build_setback_fill(
     pseudo: &mut FilletBrep,
     corner: &mut FilletCorner,
     solvers: &dyn BallSolvers,
+    fills: &[SetBackFill],
 ) -> Result<core::result::Result<(), SetbackRefusal>> {
     let nul = || SolidError::null_pointer(OP_FILL);
     let err = || SolidError::sm_err(OP_FILL);
@@ -988,6 +1013,14 @@ pub fn build_setback_fill(
         })
         .collect();
 
+    // A corner left open is the Setback's hole, not filled (the fork's ef57570). G1: its face
+    // curves are the spring curves, in closed form whatever a fill's heights: no fill is made
+    // (OpenSetBackSprings). G2: they come from the fill's least-energy interior, no closed
+    // form: the order-2 fill is made, its sides taken, and its patches handed to the caller.
+    let open = set_back_fill_of(fills, vtx).is_some_and(|a| a.open);
+    if open && order == 1 {
+        return open_setback_springs(pseudo, corner, &planes.planes, &planes.edges);
+    }
     let fill = match fill_hole(k, &planes.planes, &rounds, order, tol) {
         Ok(fill) => fill,
         Err(refusal) => {
@@ -999,12 +1032,14 @@ pub fn build_setback_fill(
     if fill.patches.len() != 2 * n || fill.face.len() != n {
         return Err(err());
     }
-    let worst = containment(&fill, &planes.planes, convex)?;
-    if worst > tol {
-        return Ok(Err(SetbackRefusal::not_built(format!(
-            "Fillet Error: the setback corner's fill stands {} past a face it meets",
-            fmt_g(worst)
-        ))));
+    if !open {
+        let worst = containment(&fill, &planes.planes, convex)?;
+        if worst > tol {
+            return Ok(Err(SetbackRefusal::not_built(format!(
+                "Fillet Error: the setback corner's fill stands {} past a face it meets",
+                fmt_g(worst)
+            ))));
+        }
     }
 
     // the base points: interior part q's corner (1, 1) on its face
@@ -1076,6 +1111,10 @@ pub fn build_setback_fill(
                 let ivl = best.natural_interval();
                 best.reverse_parameterization(&ivl)?;
             }
+            // a side whose weights are all one weight is the polynomial it is (the fill's
+            // face curves on planar faces: one polynomial span, which a caller's polynomial
+            // patch holds exactly; the fork's ef57570)
+            one_weight_polynomial(&mut best)?;
             set_edge_curve(pseudo.brep_mut(), e, Some(Curve::from(best)))?;
         }
     }
@@ -1083,6 +1122,133 @@ pub fn build_setback_fill(
         sb.fill = Some(fill);
     }
     Ok(Ok(()))
+}
+
+/// `SmBlendCorner::OpenSetBackSprings` (the fork's ef57570): an open G1 setback corner's
+/// face curves, no fill. On face `f`, `P` is the rail end of the blend before it (`M_f`),
+/// `Q` the blend after's (`S_f`), each rail a line parallel to its edge, `X` where they
+/// cross (least squares). The parabola `(P, X, Q)`, a quadratic Bezier, is tangent to the
+/// rails at `P` and `Q`; halved at `t = 1/2` it is `(P, (P + X) / 2, B)` and
+/// `(B, (X + Q) / 2, Q)`, `B = (P + 2 X + Q) / 4` the base point. Each half is certified on
+/// the face's plane (its control points) and tangent to its rail at its rail end (its first
+/// leg along the rail), else refused.
+fn open_setback_springs(
+    pseudo: &mut FilletBrep,
+    corner: &mut FilletCorner,
+    planes: &[Face],
+    edges: &[Edge],
+) -> Result<core::result::Result<(), SetbackRefusal>> {
+    let nul = || SolidError::null_pointer(OP_FILL);
+    let err = || SolidError::sm_err(OP_FILL);
+    let n = corner.all_eus.as_ref().ok_or_else(nul)?.len();
+    if corner.vertices.len() != 3 * n
+        || corner.edges.len() != 3 * n
+        || planes.len() != n
+        || edges.len() != n
+    {
+        return Err(err());
+    }
+    let tol = corner.approx_tol_3d;
+    for f in 0..n {
+        let fv_m = *corner.vertices.get(3 * f).ok_or_else(nul)?;
+        let fv_b = *corner.vertices.get(3 * f + 1).ok_or_else(nul)?;
+        let fv_s = *corner.vertices.get(3 * f + 2).ok_or_else(nul)?;
+        if !pseudo.fillet_vertex(fv_m)?.is_processed()
+            || !pseudo.fillet_vertex(fv_s)?.is_processed()
+        {
+            return Err(err());
+        }
+        let p = pseudo.vertex_point(fv_m)?;
+        let q = pseudo.vertex_point(fv_s)?;
+        let dp = edges.get((f + n - 1) % n).ok_or_else(nul)?.away;
+        let dq = edges.get(f).ok_or_else(nul)?.away;
+        // X = P + a dP = Q + b dQ, by least squares on (dP, -dQ)
+        let qp = q - p;
+        let d11 = dp.dot(dp);
+        let d12 = -dp.dot(dq);
+        let d22 = dq.dot(dq);
+        let r1 = dp.dot(qp);
+        let r2 = -dq.dot(qp);
+        let det = d11 * d22 - d12 * d12;
+        #[allow(clippy::neg_cmp_op_on_partial_ord)] // the fork's `!( |det| > zero )`: NaN fails
+        if !(det.abs() > EFF_ZERO) {
+            return Err(err()); // rails along one line: ClassifySetBack takes no two edges G1
+        }
+        let a = (r1 * d22 - r2 * d12) / det;
+        let x = p + dp * a;
+        let base = (p + x * 2.0 + q) * 0.25;
+        pseudo.set_vertex_point(fv_b, base)?;
+        pseudo
+            .fillet_vertex_mut(fv_b)?
+            .set_status(FilStatus::Processed);
+        let plane = planes.get(f).ok_or_else(nul)?;
+        for kk in 0..2 {
+            let e = *corner.edges.get(3 * f + kk).ok_or_else(nul)?;
+            // M-B: P to B; B-S: B to Q
+            let points = if kk == 0 {
+                [p, (p + x) * 0.5, base]
+            } else {
+                [base, (x + q) * 0.5, q]
+            };
+            let half = BSplineCurve::create_canonical(&CanonicalData {
+                dim: 3,
+                degree: 2,
+                control_points: &points,
+                form: BSplineCurveForm::Unspecified,
+                knot_multiplicities: &[3, 3],
+                knots: &[0.0, 1.0],
+                knot_type: KnotType::Unspecified,
+                weights: None,
+                trim: None,
+            })?;
+            // certified: on the face's plane, tangent to its rail at its rail end
+            let mut off: f64 = 0.0;
+            for &pt in &points {
+                off = smax(off, plane.normal.dot(pt - plane.point).abs());
+            }
+            let [p0, p1, p2] = points;
+            let (leg, rail) = if kk == 0 {
+                (p1 - p0, dp)
+            } else {
+                (p2 - p1, dq)
+            };
+            let leg_len = leg.length();
+            let turn = if leg_len > 0.0 {
+                leg.cross(rail).length() / (leg_len * rail.length())
+            } else {
+                1.0
+            };
+            if off > tol || turn > EFF_ZERO_SQRT {
+                return Ok(Err(SetbackRefusal::not_built(format!(
+                    "Fillet Error: an open setback corner's face curve leaves its face (by {}) or its rail's tangent (by {})",
+                    fmt_g(off),
+                    fmt_g(turn)
+                ))));
+            }
+            set_edge_curve(pseudo.brep_mut(), e, Some(Curve::from(half)))?;
+        }
+    }
+    if let Some(sb) = corner.setback.as_mut() {
+        sb.open = true;
+    }
+    Ok(Ok(()))
+}
+
+/// `sm_SbOneWeightPolynomial` (the fork's ef57570): a curve whose weights are all one
+/// weight is the polynomial it is, stored so (its points unchanged), as one polynomial span
+/// a caller's polynomial patch holds exactly.
+fn one_weight_polynomial(curve: &mut BSplineCurve) -> Result<()> {
+    if !curve.is_rational()? {
+        return Ok(());
+    }
+    let points = curve.control_points()?;
+    let Some(w0) = points.first().map(|c| c.w) else {
+        return Err(SolidError::null_pointer(OP_FILL));
+    };
+    if points.iter().skip(1).any(|c| c.w != w0) {
+        return Ok(());
+    }
+    curve.make_non_rational()
 }
 
 /// `SmBlendCorner::CreateSetBackPatches` (the fork's 61547af): the fill's patches as faces
@@ -1101,6 +1267,9 @@ pub fn create_setback_patches(
     env: &mut CornerPatchEnv<'_, '_>,
 ) -> Result<()> {
     let nul = || SolidError::null_pointer(OP_PATCHES);
+    if corner.setback.as_ref().is_some_and(|sb| sb.open) {
+        return Ok(()); // an open G1 corner: its hole is left (OpenSetBackSprings)
+    }
     let n = corner.all_eus.as_ref().ok_or_else(nul)?.len();
     let fill = corner
         .setback
@@ -1138,7 +1307,7 @@ pub fn create_setback_patches(
             } else {
                 sub.set_min_max(Point2::new(at, from), Point2::new(at, to))?;
             }
-            let curve = patch
+            let mut curve = patch
                 .create_iso_parametric_curve(
                     env.k,
                     iso,
@@ -1149,6 +1318,7 @@ pub fn create_setback_patches(
                     },
                 )?
                 .curve;
+            one_weight_polynomial(&mut curve)?;
             curves_3d.push(Some(Curve::from(curve)));
             let line = Line::create_line_segment(
                 2,
