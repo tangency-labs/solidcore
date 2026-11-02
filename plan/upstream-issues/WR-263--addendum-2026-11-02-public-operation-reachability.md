@@ -1,4 +1,4 @@
-Updates: WR-262 (and the WR-263 / WR-264 branch of the same #521 class)
+Updates: WR-263 (and the WR-262 / WR-264 branches of the same #521 class)
 
 2026-11-02 (PR #2433, audit #1954): public-operation reachability.
 
@@ -43,16 +43,20 @@ measured here, so no test was added for them:
 - **WR-262** (`GetUVCornerBoundaries`): its only public caller,
   `query::loop::contains_uv_point`, evaluates the same trim with derivatives in its main
   winding walk and returns that error before the corner walk in both flag states. With a
-  malformed trim at an inside and a boundary UV the result is identical:
+  malformed trim at an inside, a boundary and an outside UV the result is identical:
   `Err(Upstream { operation: "nurbs::b_spline_curve::p1::BSplineCurve::evaluate", code:
   1001 })`. A public face whose surface evaluation fails gives the same
   `Err(Upstream { operation: "nurbs::b_spline_surface_n_lib::p1::BSplineSurface::evaluate_point",
   code: 1001 })` in both states. The existing routine-level
   `issue_521_uv_corners_skip_an_edgeuse_whose_ends_fail` remains the WR-262 evidence.
 - **WR-264** (`sm_CalcDistAndDev`): the public caller
-  `topology::edgeuse::p3::get_or_create_uv_trim_curve` completes with the same
-  `(status Ok, dist_to_surf 0.0, deviation 0.0)` in both states when the face's surface
-  record is an evaluation-failing empty B-spline surface and the trims are removed, and
-  `calculate_uv_domain_from_uv_trim_curves` then returns the same disjoint-extents error
-  in both states. The empty surface's failed-derivative fallback is `(-1, -1)` either
-  way, so the guard's distinct outcomes are not observable through that operation.
+  `topology::edgeuse::p3::get_or_create_uv_trim_curve` and
+  `topology::face::p1::calculate_uv_domain_from_uv_trim_curves` are identical in both
+  flag states for every sequence measured on these public inputs: with the trims
+  removed, both calculate-first and fetch-then-calculate return
+  `Ok(UvDomainFromTrim { domain [0,0]-[0,0], max_uv_loop_gap 0.0, ... })`, the fetch
+  completes with `(Ok, dist_to_surf 0.0, deviation 0.0)` either way, and with the trims
+  present the same fetch outputs hold. No disjoint-extents refusal or a `-1`/
+  `-1` candidate pair is observable through the public callers, so the guard's distinct
+  outcomes are not exposed; the routine-level `issue_521_dist_and_dev_is_none...`
+  evidence stands.

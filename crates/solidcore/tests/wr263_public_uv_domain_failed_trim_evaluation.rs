@@ -111,5 +111,4 @@ fn wr263_public_uv_domain_gap_propagates_a_failed_trim_endpoint() {
     assert_eq!(off_gap, 1.030_776_406_404_415_1);
     // WR-263 with the opt-in fix: a gap that cannot be measured.
     assert_eq!(on_gap, BIG_DOUBLE);
-    assert_ne!(off_gap, on_gap);
 }
