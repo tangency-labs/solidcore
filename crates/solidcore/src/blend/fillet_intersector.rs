@@ -593,22 +593,21 @@ impl FilletSolverOps for ConstantRadiusAssistedFs {
         uv1: &mut BSplineCurve,
         uv2: &mut BSplineCurve,
     ) -> Result<Option<BSplineSurface>> {
-        use crate::blend::fillet_standard_solver::p1::RailSurface;
         // the virtual m_pFSG->CreateSurface(*this, pCenterLine, pCurve1, pCurve2,
         // sPnts, pSur[0], pUV1, pSur[1], pUV2, ..): the base's generator (SM_ERR for
         // the base class); it reads the solver's tolerance and GetSolverType()
         // (SM_FS_CONST_RADIUS_ASSISTED); pSur[i] = GetSurface(i), passed as copies
         let approx_tol_3d = self.solver.this_approx_tol_3d();
-        let generator = self
-            .solver
-            .fillet_surface_generator()
-            .ok_or(SolidError::null_pointer(
-                "blend::fillet_intersector::create_fillet_surface",
-            ))?;
         let sur0 = Surface::from(self.surface(0)?.surface.clone());
         let sur1 = Surface::from(self.surface(1)?.surface.clone());
+        let generator =
+            self.solver
+                .fillet_surface_generator_mut()
+                .ok_or(SolidError::null_pointer(
+                    "blend::fillet_intersector::create_fillet_surface",
+                ))?;
         generator
-            .create_surface(
+            .create_surface_replacing_uv(
                 k,
                 approx_tol_3d,
                 crate::blend::fillet_solver::p1::FilletSolverType::ConstRadiusAssisted,
@@ -616,14 +615,8 @@ impl FilletSolverOps for ConstantRadiusAssistedFs {
                 curve1,
                 curve2,
                 points,
-                RailSurface {
-                    surface: Some(&sur0),
-                    uv_curve: Some(uv1),
-                },
-                RailSurface {
-                    surface: Some(&sur1),
-                    uv_curve: Some(uv2),
-                },
+                [&sur0, &sur1],
+                [uv1, uv2],
             )
             .map(Some)
     }

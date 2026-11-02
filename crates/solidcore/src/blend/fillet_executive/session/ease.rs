@@ -30,6 +30,7 @@
 
 use super::{live_solver_ops, SessionObjects};
 use crate::blend::fillet_geom::p1::{FilletGeomId, FilletVertexType, SurfaceHandle};
+use crate::blend::fillet_section::section::{GnFaces, GnSectionFsg};
 use crate::blend::fillet_solver::p1::{
     FilletSolverOps, FilletSolverType, FilletSurfaceGeneratorType,
 };
@@ -872,22 +873,42 @@ impl SessionObjects<'_> {
             let (Some(surf0), Some(surf1)) = (face_surfs.first(), face_surfs.get(1)) else {
                 return Err(sm_err());
             };
-            let g2 = g2_generator.create_surface_from_curves(
-                k,
-                &mut c0,
-                &mut c1,
-                &mut c2,
-                tol,
-                need_g1,
-                RailSurface {
-                    surface: Some(surf0),
-                    uv_curve: uvs.first(),
-                },
-                RailSurface {
-                    surface: Some(surf1),
-                    uv_curve: uvs.get(1),
-                },
-            )?;
+            let g2 = if k.fixes.fillet_gn_section_generator {
+                // the fork's order-2 G^n section (WR-685, tangency-labs/smlib@11ea2d9):
+                // the faces' curvature across the rails. Its thumbweight stays 0, not the
+                // equal area default: it is the corner's transition, not the blend's own
+                // section (the fork's 22d258a = d01d7b0's adb9854)
+                let (Some(uv0), Some(uv1)) = (uvs.first(), uvs.get(1)) else {
+                    return Err(null());
+                };
+                GnSectionFsg::new(2, 0.0).create_surface_from_curves(
+                    k,
+                    &c0,
+                    [&mut c1, &mut c2],
+                    tol,
+                    GnFaces {
+                        surfaces: [surf0, surf1],
+                        uv: [uv0, uv1],
+                    },
+                )?
+            } else {
+                g2_generator.create_surface_from_curves(
+                    k,
+                    &mut c0,
+                    &mut c1,
+                    &mut c2,
+                    tol,
+                    need_g1,
+                    RailSurface {
+                        surface: Some(surf0),
+                        uv_curve: uvs.first(),
+                    },
+                    RailSurface {
+                        surface: Some(surf1),
+                        uv_curve: uvs.get(1),
+                    },
+                )?
+            };
 
             let eased = ease_surface(&own, &g2, along, geom_ramps)?;
             self.pseudo

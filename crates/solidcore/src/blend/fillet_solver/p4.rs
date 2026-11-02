@@ -4730,34 +4730,32 @@ impl crate::blend::fillet_intersector::FilletSolverOps for IntersectorSolver<'_>
         uv1: &mut BSplineCurve,
         uv2: &mut BSplineCurve,
     ) -> Result<Option<crate::nurbs::b_spline_surface::BSplineSurface>> {
-        use crate::blend::fillet_standard_solver::p1::RailSurface;
         // the virtual m_pFSG->CreateSurface(*this, pCenterLine, pCurve1, pCurve2,
         // sPnts, pSur[0], pUV1, pSur[1], pUV2, ..) with pSur[i] = GetSurface(i)
         let solver_type = self.ops.solver_type()?;
         self.pre()?;
         let sur0 = Surface::from(offset_surface(&*self.ops, 0)?.surface.clone());
         let sur1 = Surface::from(offset_surface(&*self.ops, 1)?.surface.clone());
-        let solver = self.ops.solver();
+        let solver = self.ops.solver_mut();
+        let approx_tol_3d = solver.approx_tol_3d;
         let generator = solver
-            .fillet_surface_generator()
+            .fillet_surface_generator_mut()
             .ok_or_else(|| SolidError::null_pointer(OP))?;
+        // The fork's `SmGnSectionFSG::CircleSurface` folded-balls check (`sm_BallsFold`,
+        // WR-685, d01d7b0's 2714d37) is gone since tangency-labs/smlib#79's 410dfe1: with
+        // `fixes.fillet_gn_section_generator` a round whose balls fold is refused before the
+        // corners by `BallIsRegular` (`blend::fillet_executive::session::ball_regular`).
         generator
-            .create_surface(
+            .create_surface_replacing_uv(
                 k,
-                solver.approx_tol_3d,
+                approx_tol_3d,
                 solver_type,
                 Some(center_line),
                 curve1,
                 curve2,
                 points,
-                RailSurface {
-                    surface: Some(&sur0),
-                    uv_curve: Some(uv1),
-                },
-                RailSurface {
-                    surface: Some(&sur1),
-                    uv_curve: Some(uv2),
-                },
+                [&sur0, &sur1],
+                [uv1, uv2],
             )
             .map(Some)
     }
