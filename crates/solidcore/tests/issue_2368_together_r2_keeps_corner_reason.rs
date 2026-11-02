@@ -7,12 +7,12 @@
 //!
 //! The corner at the arc's vertex refuses itself in `MakeCornerTopology`, noting
 //! `SM_FILERR_NO_ROOM`: the blends continue each other across more than one edge on a side.
-//! The fork keeps a corner's noted NO_ROOM (or a CORNER_UNSUPPORTED it noted) where
-//! `CreateFilletBrep` and `GetPreviewFilletSurfaces` call `MakeCornerTopology`
+//! The fork keeps a corner's noted `SM_FILERR_NO_ROOM` (or a `SM_FILERR_CORNER_UNSUPPORTED`
+//! it noted) where `CreateFilletBrep` and `GetPreviewFilletSurfaces` call `MakeCornerTopology`
 //! (`SmFilletExecutive.cpp` 3755-3759 and 1216-1219 at smlib#124, 63c7962), as it does after
 //! `CalculateCornerEdges`. The port kept it only there, and returned
 //! `SM_FILERR_VERTEX_PROBLEM` (3), "Unable to Make Topology". With `fillet_blend_corner` it
-//! now returns the fork's refusal: NO_ROOM (8), fit 0.
+//! now returns the fork's refusal: `SM_FILERR_NO_ROOM` (8), fit 0.
 #![allow(
     clippy::unwrap_used,
     clippy::expect_used,
@@ -96,7 +96,7 @@ fn round(blend_corner: bool) -> Result<(), (i32, String, Option<f64>)> {
         1.0,
     )
     .unwrap();
-    s.create_corners(&mut k, None).unwrap();
+    s.create_corners(&k, None).unwrap();
     s.do_filleting(&mut k, None).map_err(|_| {
         let info = s.error_info();
         (
