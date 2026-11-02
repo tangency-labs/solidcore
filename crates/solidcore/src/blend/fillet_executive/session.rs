@@ -2751,6 +2751,8 @@ impl CornerEdgeAccess<FilletObject> for SessionObjects<'_> {
         // WR-303: the Nx1 corner's end rib hands the round to the global merge; in a
         // cliff overflow (WR-631) the end is left open, noted for the subtraction.
         let cliff_overflow = executive.cliff_overflow;
+        // the rails' rollover follows the corners' edges, not in a cliff overflow (#2406)
+        let rolls_over = executive.options.classification && !cliff_overflow;
         let mut open_ends = Vec::new();
         let mut note_open_end = |eu, vertex, end_face, section| -> Result<()> {
             // GetFilletSolverOfEdgeuse(pFilEdgeuse), then NoteOpenEnd
@@ -2779,6 +2781,15 @@ impl CornerEdgeAccess<FilletObject> for SessionObjects<'_> {
                 solvers: solvers.as_slice(),
                 executive: Some(&*executive),
             };
+            // Not the fork's (#2406): an End at a smooth vertex whose rail rolls over its
+            // side face's tangent edge before the End's plane builds its edges once the
+            // rails' rollover has traced the rail on the face beyond (the adjusted
+            // corner's pass)
+            if crate::blend::blend_corner::end::end_awaits_rollover(
+                k, target, pseudo, corner, &lookup, rolls_over,
+            )? {
+                return Ok(());
+            }
             let refusal = crate::blend::blend_corner::end::calc_end_edge_geom(
                 k,
                 target,

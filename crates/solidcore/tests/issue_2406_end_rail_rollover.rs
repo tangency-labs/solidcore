@@ -296,11 +296,24 @@ fn assert_ends_at(b: &Brep, e: EdgeId, what: &str, want: Point3, tol: f64) {
     );
 }
 
-/// The fillet's geometric tolerance: the rails, end ribs and seams are traced or
-/// intersected curves within the round's approximation tolerance.
-const GEOM_TOL: f64 = 1e-5;
-/// Two faces meet G1 where their normals agree within this angle (radians).
+/// Curves with a closed form the kernel computes exactly (the rolled rail on the top face,
+/// the cap's edges, the rollover seam and the End's vertices): off it by rounding only.
+const EXACT_TOL: f64 = 1e-9;
+/// The end rib is the traced round's section by P, off the ball's circle by up to 3.7e-6.
+const SECTION_TOL: f64 = 1e-5;
+/// The rail on the R2 round is traced again from the bottom End to Q at the solver's
+/// approximation tolerance, 1.6e-4 on this part (`approx_tol_3d`, as the fork's
+/// `ReCalcFilletGeom`): it lies off the round by up to 1.5e-4, and its ball off the wall
+/// by up to 1.2e-5 (r 0.25).
+const TRACE_TOL: f64 = 1.6e-4;
+/// Two faces meet G1 where their normals agree within this angle (radians): the seam's
+/// faces are traced, 8.2e-5 apart at most.
 const G1_TOL: f64 = 1e-4;
+/// The round and the R2 round meet along the rail traced again within this angle: the
+/// re-traced rail is off the round by up to 1.5e-4 all along it, and the faces' normals
+/// there by up to 1.7e-3 (r 0.25). The trace's own angular tolerance is the solver's 20
+/// degrees.
+const TRACE_G1_TOL: f64 = 2e-3;
 
 /// Checks the middle edge rounded `r` at its top End: the rail rolls over T onto the top
 /// face, the round from there to P is the top face's and the wall's, and the cap's edges
@@ -310,23 +323,23 @@ fn check_top_end(k: &Kernel, b: &Brep, r: f64) {
 
     // the rolled rail: on the top face (z = 10) on the circle of radius 21 + r about the
     // axis, from T (at Q) to P, the top face G1 to the round on it
-    let (rail, off) = the_edge(k, b, "the rolled rail", GEOM_TOL, |p| {
-        if t.past_p(p) > GEOM_TOL || p.distance(t.q) > 4.0 * r {
+    let (rail, off) = the_edge(k, b, "the rolled rail", EXACT_TOL, |p| {
+        if t.past_p(p) > EXACT_TOL || p.distance(t.q) > 4.0 * r {
             1.0
         } else {
             (p.z - 10.0).abs().max((rho(p) - (WALL + r)).abs())
         }
     });
     eprintln!("r {r}: the rolled rail off its closed form by {off:e}");
-    assert_ends_at(b, rail, "the rolled rail at T", t.q, GEOM_TOL);
-    assert_ends_at(b, rail, "the rolled rail on P", t.rail_end, GEOM_TOL);
+    assert_ends_at(b, rail, "the rolled rail at T", t.q, EXACT_TOL);
+    assert_ends_at(b, rail, "the rolled rail on P", t.rail_end, EXACT_TOL);
     let c = crease(k, b, rail);
     eprintln!("r {r}: the rolled rail's crease {c:e}");
-    assert!(c <= G1_TOL, "the rolled rail is not G1: {c:e}");
+    assert!(c <= EXACT_TOL, "the rolled rail is not G1: {c:e}");
 
     // the cap's edge on the top face: the top face's line in P from the rail's end to V
     let seg = t.v - t.rail_end;
-    let (cap_top, off) = the_edge(k, b, "the cap's edge on the top face", GEOM_TOL, |p| {
+    let (cap_top, off) = the_edge(k, b, "the cap's edge on the top face", EXACT_TOL, |p| {
         let s = ((p - t.rail_end).dot(seg) / seg.dot(seg)).clamp(0.0, 1.0);
         p.distance(t.rail_end + seg * s)
     });
@@ -336,12 +349,12 @@ fn check_top_end(k: &Kernel, b: &Brep, r: f64) {
         cap_top,
         "the top cap edge at the rail",
         t.rail_end,
-        GEOM_TOL,
+        EXACT_TOL,
     );
-    assert_ends_at(b, cap_top, "the top cap edge at V", t.v, GEOM_TOL);
+    assert_ends_at(b, cap_top, "the top cap edge at V", t.v, EXACT_TOL);
 
     // the cap's edge on the wall: the wall's line in P (vertical) from the wall rail to V
-    let (cap_wall, _) = the_edge(k, b, "the cap's edge on the wall", GEOM_TOL, |p| {
+    let (cap_wall, _) = the_edge(k, b, "the cap's edge on the wall", EXACT_TOL, |p| {
         p.distance(Point3::new(t.v.x, t.v.y, p.z.clamp(10.0 - r, 10.0)))
     });
     assert_ends_at(
@@ -349,16 +362,16 @@ fn check_top_end(k: &Kernel, b: &Brep, r: f64) {
         cap_wall,
         "the wall cap edge at its rail",
         t.wall_end,
-        GEOM_TOL,
+        EXACT_TOL,
     );
 
     // the end rib: the ball's circle on P from the wall's rail to the top face's
-    let (rib, off) = the_edge(k, b, "the end rib", GEOM_TOL, |p| {
+    let (rib, off) = the_edge(k, b, "the end rib", SECTION_TOL, |p| {
         (p.distance(t.centre_p) - r).abs().max(t.past_p(p).abs())
     });
     eprintln!("r {r}: the end rib off its circle by {off:e}");
-    assert_ends_at(b, rib, "the end rib on the top face", t.rail_end, GEOM_TOL);
-    assert_ends_at(b, rib, "the end rib on the wall", t.wall_end, GEOM_TOL);
+    assert_ends_at(b, rib, "the end rib on the top face", t.rail_end, EXACT_TOL);
+    assert_ends_at(b, rib, "the end rib on the wall", t.wall_end, EXACT_TOL);
 
     // the seam where the rail rolls over: the ball's circle in the section plane at Q (the
     // half-plane through the axis and Q), between the round on the R2 round and the round
@@ -367,13 +380,13 @@ fn check_top_end(k: &Kernel, b: &Brep, r: f64) {
         let (dx, dy) = (t.centre_q.x - AXIS[0], t.centre_q.y - AXIS[1]);
         Vec3::new(dy, -dx, 0.0) * (1.0 / (dx * dx + dy * dy).sqrt())
     };
-    let (seam, off) = the_edge(k, b, "the rollover seam", GEOM_TOL, |p| {
+    let (seam, off) = the_edge(k, b, "the rollover seam", EXACT_TOL, |p| {
         (p.distance(t.centre_q) - r)
             .abs()
             .max((p - t.centre_q).dot(nq).abs())
     });
     eprintln!("r {r}: the rollover seam off its circle by {off:e}");
-    assert_ends_at(b, seam, "the seam at T", t.q, GEOM_TOL);
+    assert_ends_at(b, seam, "the seam at T", t.q, EXACT_TOL);
     let c = crease(k, b, seam);
     eprintln!("r {r}: the rollover seam's crease {c:e}");
     assert!(c <= G1_TOL, "the rollover seam is not G1: {c:e}");
@@ -391,27 +404,34 @@ fn check_top_end(k: &Kernel, b: &Brep, r: f64) {
             continue;
         }
         let [a, z] = ends(b, e);
-        if a.distance(t.q).min(z.distance(t.q)) > GEOM_TOL {
+        if a.distance(t.q).min(z.distance(t.q)) > EXACT_TOL {
             continue;
         }
         let pts = samples(k, b, e, 16);
-        if pts.iter().all(|&p| on_round(p) <= GEOM_TOL) && pts.iter().any(|p| p.z < 10.0 - r) {
+        if pts.iter().all(|&p| on_round(p) <= TRACE_TOL) && pts.iter().any(|p| p.z < 10.0 - r) {
             round_rail = Some(e);
         }
     }
     let round_rail = round_rail.expect("the rail on the R2 round, ending at Q");
+    let mut worst = (0.0_f64, t.q);
     for p in samples(k, b, round_rail, 32) {
         let (dy, dz) = off_front_axis(p);
         let l = (dy * dy + dz * dz).sqrt();
         let centre = Point3::new(p.x, p.y - r * dy / l, p.z - r * dz / l);
         let miss = (rho(centre) - (WALL + r)).abs();
-        assert!(
-            miss <= GEOM_TOL,
-            "the R2 round's rail at {p:?}: its ball misses the wall by {miss:e}"
-        );
+        if miss > worst.0 {
+            worst = (miss, p);
+        }
     }
+    let (miss, p) = worst;
+    eprintln!("r {r}: the R2 round's rail's ball misses the wall by {miss:e} at {p:?}");
+    assert!(
+        miss <= TRACE_TOL,
+        "the R2 round's rail at {p:?}: its ball misses the wall by {miss:e}"
+    );
     let c = crease(k, b, round_rail);
-    assert!(c <= G1_TOL, "the R2 round's rail is not G1: {c:e}");
+    eprintln!("r {r}: the R2 round's rail's crease {c:e}");
+    assert!(c <= TRACE_G1_TOL, "the R2 round's rail is not G1: {c:e}");
 }
 
 /// The middle edge rounded 0.25 builds: its rail rolls over T onto the top face before the
@@ -420,9 +440,9 @@ fn check_top_end(k: &Kernel, b: &Brep, r: f64) {
 #[test]
 fn the_middle_edge_r0_25_rolls_over_onto_the_top_face_before_its_end() {
     let mut k = all_fixes(true);
-    let front = front_rounded(&mut k);
-    let mut b = front.clone();
-    let mut before = front.clone();
+    // (built twice, not cloned: a cloned body's surfaces have no owning faces)
+    let mut b = front_rounded(&mut k);
+    let mut before = front_rounded(&mut k);
     round(&mut k, &mut b, MIDDLE, 0.25).unwrap();
     clean(&mut k, &mut b);
     let removed = volume(&k, &mut before) - volume(&k, &mut b);

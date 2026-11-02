@@ -13,6 +13,7 @@
 //! | [`FilletBrep::calc_corner_edge_geom`]    | `SmFilletEdge::CalcCornerEdgeGeom`    |
 //! | [`FilletBrep::calc_edge_fillet_int_fillet`] | `SmFilletEdge::CalcFilletIntFillet` |
 //! | [`FilletBrep::re_calc_fillet_geom`]      | `SmFilletGeom::ReCalcFilletGeom`      |
+//! | [`FilletBrep::re_calc_fillet_geom_through`] | none (#2406: `ReCalcFilletGeom` through an End's sections) |
 //! | [`FilletBrep::topology_split`]           | `SmFilletGeom::TopologySplit`         |
 //! | [`new_solver_fillet_geom`]               | `SmFilletGeom(pFilletSolver, eType)` with a base `SmFilletSolver` (CO-PORTED from `blend.fillet_geom_p5`) |
 //!
@@ -988,7 +989,52 @@ impl FilletBrep {
         opt_march_dir: Option<Vec3>,
         opt_ref_curve: Option<&Curve>,
     ) -> Result<()> {
+        self.re_calc_fillet_geom_through(
+            k,
+            g,
+            solver,
+            target,
+            is_analytic_fillet,
+            opt_march_dir,
+            opt_ref_curve,
+            [None, None],
+        )
+    }
+
+    /// [`FilletBrep::re_calc_fillet_geom`] through `ends` as well: sections the
+    /// geometry runs through before its first rail-end point (`ends[0]`) and after its
+    /// last (`ends[1]`). Not upstream (#2406, `fixes.fillet_blend_corner`): a rail end on
+    /// an End's plane (an extended-edge-use end) gives the trace no point, as upstream,
+    /// so a geometry traced again up to such an End runs through the End's section
+    /// there, as the first trace runs through the edge's end (the fork's
+    /// `CalcFilletGeom`, `fillet_through_extended_rail_end`).
+    ///
+    /// # Errors
+    /// As [`FilletBrep::re_calc_fillet_geom`].
+    #[allow(clippy::too_many_arguments, clippy::too_many_lines)] // one upstream routine
+    pub fn re_calc_fillet_geom_through(
+        &mut self,
+        k: &Kernel,
+        g: FilletGeomId,
+        solver: &mut dyn FilletSolverOps,
+        target: &Brep,
+        is_analytic_fillet: bool,
+        opt_march_dir: Option<Vec3>,
+        opt_ref_curve: Option<&Curve>,
+        ends: [Option<&TsectPnt>; 2],
+    ) -> Result<()> {
         let nul = || SolidError::null_pointer(OP_RECALC);
+        let [end_before, end_after] = ends;
+        // the rail-end points with the End's sections before and after them
+        let with_ends = |pnts: Vec<TsectPnt>| -> Vec<TsectPnt> {
+            end_before
+                .cloned()
+                .into_iter()
+                .chain(pnts)
+                .chain(end_after.cloned())
+                .collect()
+        };
+        let skip_before = usize::from(end_before.is_some());
         let geom = self.geom(g)?;
         if geom.fillet_solver().is_none() {
             return Err(invalid(OP_RECALC, "fillet geometry without solver"));
@@ -1186,10 +1232,12 @@ impl FilletBrep {
             // Not upstream (WR-669, the SolidCraft fork's tangency-labs/smlib@b5f2867 and
             // 7ac037e): rebuilt exactly by the round's class (`ClassifyExactBlend`,
             // `CalcExactFilletGeom(.., this, TRUE)`); errors are passed on
-            let tsects = tsect_pnts
-                .iter()
-                .map(|&vu| Ok(self.fillet_vertexuse(vu)?.tsect_pnt().clone()))
-                .collect::<Result<Vec<TsectPnt>>>()?;
+            let tsects = with_ends(
+                tsect_pnts
+                    .iter()
+                    .map(|&vu| Ok(self.fillet_vertexuse(vu)?.tsect_pnt().clone()))
+                    .collect::<Result<Vec<TsectPnt>>>()?,
+            );
             let first = tsects
                 .first()
                 .ok_or_else(|| invalid(OP_RECALC, "no rail-end point"))?;
@@ -1209,10 +1257,12 @@ impl FilletBrep {
             && geom_type != FilletGeomType::TangentRollover
         {
             // Create analytics (the solver reads copies of the vertex uses' points)
-            let tsects = tsect_pnts
-                .iter()
-                .map(|&vu| Ok(self.fillet_vertexuse(vu)?.tsect_pnt().clone()))
-                .collect::<Result<Vec<TsectPnt>>>()?;
+            let tsects = with_ends(
+                tsect_pnts
+                    .iter()
+                    .map(|&vu| Ok(self.fillet_vertexuse(vu)?.tsect_pnt().clone()))
+                    .collect::<Result<Vec<TsectPnt>>>()?,
+            );
             let cone =
                 FilletSolver::calc_cone_fillet_geom(solver, k, target, self, &tsects, Some(g));
             fillet_created = match ignored(cone)? {
@@ -1270,10 +1320,12 @@ impl FilletBrep {
             let mut i_try = 0;
 
             while !done_checking_seams {
-                let mut pnts = tsect_pnts
-                    .iter()
-                    .map(|&vu| self.fillet_vertexuse(vu).map(|r| r.tsect_pnt().clone()))
-                    .collect::<Result<Vec<_>>>()?;
+                let mut pnts = with_ends(
+                    tsect_pnts
+                        .iter()
+                        .map(|&vu| self.fillet_vertexuse(vu).map(|r| r.tsect_pnt().clone()))
+                        .collect::<Result<Vec<_>>>()?,
+                );
                 let traced = do_point_intersection(
                     &mut fi,
                     &mut *solver,
@@ -1291,7 +1343,7 @@ impl FilletBrep {
                 );
                 // the points are the vertex uses' SmTsectPnts upstream (written in
                 // place even when the call fails): copy them back before SER(eStat)
-                for (&vu, p) in tsect_pnts.iter().zip(&pnts) {
+                for (&vu, p) in tsect_pnts.iter().zip(pnts.iter().skip(skip_before)) {
                     self.fillet_vertexuse_mut(vu)?.set_tsect_pnt(p);
                 }
                 traced?;
