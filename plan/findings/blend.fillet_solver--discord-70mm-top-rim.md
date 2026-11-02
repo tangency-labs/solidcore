@@ -80,3 +80,62 @@ No tolerance was changed and no healing/retry was used to obtain success.
 Next work: establish input validity independently, recover the actual selected
 arcs, and compare trimmed junctions against the Parasolid result. Do not declare
 the Discord visual defect fixed from these status and surface samples alone.
+
+## Whole-body investigation and valid reconstruction
+
+A successful return with failed validation is not the acceptance criterion. Direct
+projection of the supplied lower blend boundaries onto their supporting B-spline
+surfaces finds gaps of approximately 0.0116--0.0117 mm, before any top fillet.
+For example, source face 3's edges #125 and #141 have maximum sampled distances
+0.01167218789487 and 0.01161402563689 mm. The corresponding boundaries on the other
+three lower blends behave similarly; other boundaries on these surfaces are near
+2e-13 mm. Five source circular edges also miss their shared vertices by
+2.758772e-5 mm. The file declares 1e-7 mm uncertainty. This is not cured merely by
+suppressing tolerance reports. Whether the lower surface approximation arose in
+the original construction or its SMLib export remains unconfirmed.
+
+The new regression reconstructs the intended solid using existing cylinder,
+Boolean-difference and rolling-ball fillet operations. It retains the four actual
+cutout centers from the file (including their small offsets), R89.38861960394327,
+floor z189.75418806267385, and the main cylinder's R304.8 and height. Its lower
+round radius is 241.50994792771928 minus the floor height, inferred from the
+source's tangency height. These exact lower blends replace inconsistent exported
+lower geometry; they are not a lossless healing of the original STEP.
+
+Three existing opt-in corrections are used:
+
+- `fillet_exact_round_classes` (WR-669).
+- `fillet_exact_arc_sections` (WR-708).
+- `swap_uv_keeps_analytic_definition`, so a UV swap during subsequent filleting
+  preserves the surface's analytic definition.
+
+Every Boolean cut, the lower-round operand, its STEP roundtrip, the R70 result
+built from that reimported operand, and its final STEP roundtrip must pass
+`check_brep(Level2)` with no failed reports. No healing or tolerance changes are
+used. The reconstructed operand has 17 faces (one cutout spans a seam) rather
+than the original 15; the final result has 21 faces, 56 edges and 37 vertices.
+The original fixture and its failing default behavior remain covered separately.
+
+## STEP export corrections
+
+Whole-body roundtrips exposed three orientation losses in `brep_to_model`:
+
+1. `face.faceuse` is an arbitrary side of a face. A Boolean cut may use the other
+   side in the material shell. Export now uses the material region's faceuse,
+   retaining the original selection for faces without a known material region.
+2. The ordered edgeuses already describe an oriented loop, including inner loops.
+   Exporting their loopuse orientation as a second reversal reverses holes again.
+   The STEP face bound now keeps that directed traversal (`orientation = true`).
+3. A kernel cone/cylinder may have swapped UV directions or be inside out. Each
+   reverses its normal, while the exported axis/radius describe a canonical STEP
+   surface. `ADVANCED_FACE.same_sense` now accounts for both reversals.
+
+These are bridge corrections, not changes to the pinned kernel or its numerical
+formulas. Independent smaller regressions roundtrip a blind cylindrical notch,
+a through notch, and a central through hole, requiring clean Level2 validation
+and unchanged topology counts. No new difftest parity claim is made.
+
+The test recipe is not installed as automatic import repair. The original supplied
+STEP still needs its inconsistent lower blends repaired or reconstructed before
+this provides a valid complete-body R70 workflow. The separate 2 mm model and an
+independent Parasolid comparison remain outside the supplied evidence.
