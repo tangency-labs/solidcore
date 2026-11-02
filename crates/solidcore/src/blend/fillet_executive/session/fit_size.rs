@@ -44,7 +44,7 @@ use crate::surface::surface::p4::NoObject;
 use crate::surface::surface::p5::DropPointOptions;
 use crate::surface::surface::{Surface, SurfaceKind};
 use crate::topology::edgeuse::p1 as eu;
-use crate::topology::{edge, Brep, EdgeId, FaceId};
+use crate::topology::{edge, Brep, EdgeId, FaceId, VertexId};
 
 const OP: &str = "blend::fillet_executive::session::fit_size";
 
@@ -802,4 +802,96 @@ pub fn circle_top_fit(
         }
     }
     Ok(out)
+}
+
+/// `sm_CornerTakesPerRadius(crV, crEdge, crBlended, ...)` (the fork's, a3d6d81): how far
+/// along the blended edge `e`, per unit of radius, the corner at its vertex `v` takes it.
+/// A convex corner of three planar faces whose three edges are all in `blended` (blended
+/// at one radius) ends its rounds on the plane through the corner's ball centre
+/// `c = V + r u` square to each edge, so the edge loses `r <u, e>` there; 0 at any other
+/// vertex.
+///
+/// # Errors
+///
+/// Those of the evaluations and topology lookups.
+pub fn corner_takes_per_radius(
+    k: &Kernel,
+    target: &Brep,
+    v: VertexId,
+    e: EdgeId,
+    blended: &std::collections::BTreeSet<EdgeId>,
+) -> Result<f64> {
+    let edges = crate::topology::vertex::edges(target, v, None)?;
+    if edges.len() != 3 {
+        return Ok(0.0);
+    }
+    let mut dir = [Vec3::UNDEF; 3];
+    let mut this = 3;
+    for (i, (&ei, d)) in edges.iter().zip(dir.iter_mut()).enumerate() {
+        let Some(curve) = edge::evaluation_curve(target, ei)? else {
+            return Ok(0.0);
+        };
+        if !blended.contains(&ei) {
+            return Ok(0.0);
+        }
+        if ei == e {
+            this = i;
+        }
+        // the edge's direction leaving V
+        let ivl = edge::interval(target, ei)?;
+        let at_start = edge::vertex(target, ei)? == Some(v);
+        let pv = curve.evaluate(
+            k,
+            if at_start { ivl.min() } else { ivl.max() },
+            1,
+            at_start,
+            false,
+        )?;
+        let tangent = pv
+            .get(1)
+            .copied()
+            .ok_or_else(|| SolidError::null_pointer(OP))?;
+        *d = (if at_start { tangent } else { -tangent }).unitize()?;
+    }
+    let Some(&along) = dir.get(this) else {
+        return Ok(0.0);
+    };
+    // each face between two of the edges: its plane's normal, outward (away from the third)
+    let mut n = [Vec3::UNDEF; 3];
+    for (i, ni) in n.iter_mut().enumerate() {
+        let (Some(&a), Some(&b), Some(&c)) =
+            (dir.get((i + 1) % 3), dir.get((i + 2) % 3), dir.get(i))
+        else {
+            return Ok(0.0);
+        };
+        let s = a.cross(b);
+        if !(s.length() > EFF_ZERO) {
+            return Ok(0.0);
+        }
+        let mut s = s.unitize()?;
+        if s.dot(c) > 0.0 {
+            s = -s;
+        }
+        *ni = s;
+    }
+    // the faces at V are planes: each face holding two of the edges
+    let faces = crate::topology::vertex::faces(target, v)?;
+    if faces.len() != 3 {
+        return Ok(0.0);
+    }
+    for f in faces {
+        let plane = crate::topology::face::p2::surface(target, f)?
+            .is_some_and(|s| matches!(s.kind(), SurfaceKind::Plane(_)));
+        if !plane {
+            return Ok(0.0);
+        }
+    }
+    // <n_f, u> = -1 for the three planes (Cramer's rule)
+    let [a, b, c] = n;
+    let det = a.dot(b.cross(c));
+    if !(det.abs() > EFF_ZERO) {
+        return Ok(0.0);
+    }
+    let u = (b.cross(c) + c.cross(a) + a.cross(b)) * (-1.0 / det);
+    Ok(smos_max(0.0, u.dot(along)))
 }

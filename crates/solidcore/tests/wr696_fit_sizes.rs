@@ -298,3 +298,33 @@ fn without_the_flag_no_fit_is_noted() {
         "{err:?}"
     );
 }
+
+/// The three edges at a 20 cube's corner rounded 20 (the fork's capi test
+/// `scenario_cube_corner_rounds_as_wide_as_faces_refused`): the corner takes each edge's
+/// whole length; the corner takes `r <u, e> = r` of it, so the largest radius that keeps a
+/// length is 20 / 1 (open), less the margin. The fork's build: 19.989999999999998.
+#[test]
+fn rounds_whose_corner_takes_their_edges_fit_at_the_edge_length() {
+    let mut k = kernel(true);
+    let mut b = create_box(&mut k, Point3::ZERO, 20.0, 20.0, 20.0).unwrap();
+    let refusal = blend(
+        &mut k,
+        &mut b,
+        &[
+            Point3::new(10.0, 0.0, 0.0),
+            Point3::new(0.0, 10.0, 0.0),
+            Point3::new(0.0, 0.0, 10.0),
+        ],
+        20.0,
+        1,
+        false,
+    )
+    .expect_err("refused");
+    check(
+        &refusal,
+        NoRoomReason::CornersTakeWholeEdge,
+        FitKind::Radius,
+        20.0 - 0.01,
+        19.989999999999998,
+    );
+}
