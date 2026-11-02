@@ -32,7 +32,7 @@ With both, the old G1 branches only ever saw pairs that `Classify` had already c
 
 `SmFilletEdge::AdjustCrossSection` had no caller at all.
 
-## What solidcore runs (main at b0e925d6c)
+## What solidcore runs (main at b0e925d6c, and again at fdc55bbb4)
 
 | Fork commit | What it deletes | Rust | Reached with the default flags | Reached with `fillet_blend_corner` |
 |---|---|---|---|---|
@@ -88,9 +88,14 @@ The default doesn't change.
 
 ## Checks (this PR)
 
-- **A pyramid apex (two opposite slant edges rounded) and a pyramid pocket's floor (the concave
-  pair).** These are four-edge Turns, convex and concave, at r 0.5, 1 and 2, with and without the
-  flag. Every volume (to the bit), face count and `check_brep` line is the same before and after
-  the change (`crates/solidcore/tests/wr697_four_edge_turn.rs`).
-- **Every integration test that turns `fillet_blend_corner` on** (21 files). The output is the same
-  before and after, apart from timings.
+- **A pyramid apex and a pyramid pocket's floor.** Two opposite slant edges are rounded at each,
+  which makes four-edge Turns, convex at the apex and concave at the floor. They are rounded at r
+  0.5, 1 and 2, with and without the flag. Every volume (to the bit), face count and `check_brep`
+  line is the same before and after the change
+  (`crates/solidcore/tests/wr697_four_edge_turn.rs`). A local print in the new branch (not
+  committed) showed it taken at the apex and the floor in every flag-on case. No existing test
+  builds a four-edge Turn.
+- **Every integration test that turns `fillet_blend_corner` on.** The output (`--nocapture`, one
+  thread) is the same before and after, apart from timings: 21 files on b0e925d6c, and 23 after
+  merging main at fdc55bbb4. The Setback and the Mixed corner, which main added, keep their own
+  dispatch ahead of the Turn's.
