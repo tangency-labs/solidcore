@@ -3287,6 +3287,8 @@ impl<O: Copy + PartialEq> SurfaceCache<O> {
         bezier: Option<&NurbSurface>,
         patch_domain: &Extent2d,
     ) -> Result<Corners> {
+        // the cache is built on blends' nets (the fork's 729f893; `SmBlendNetScope`)
+        let _net = crate::surface::procedural_blend::NetScope::new(k);
         if let Some(sur) = bezier {
             let (n, m) = (sur.n(), sur.m());
             let u = sur.u_knots();

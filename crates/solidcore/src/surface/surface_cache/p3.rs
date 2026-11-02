@@ -117,6 +117,7 @@ use crate::nurbs::b_spline_surface::{BSplineSurface, BoundingBoxRequest, SurfPar
 use crate::nurbs::nurbs_srf::split_srf;
 use crate::nurbs::srf_basic::Direction;
 use crate::nurbs::srf_basic::Surface as NurbSurface;
+use crate::surface::procedural_blend::NetScope;
 use crate::surface::surface::{CacheTreeState, Surface, SurfaceKind};
 
 use crate::geom::geom_utility::p2::ContinuityType;
@@ -414,6 +415,8 @@ impl<O: Copy + PartialEq> SurfaceCache<O> {
         direction: SurfParamType,
         only_aux_data: bool,
     ) -> Result<Option<(NodeId, NodeId)>> {
+        // the cache is built on blends' nets (the fork's 729f893; `SmBlendNetScope`)
+        let _net = NetScope::new(k);
         let mut only_aux_data = only_aux_data;
         // Upstream starts with GetTree(), which builds the tree when there is none or
         // rebuilds it for a face-owned plain cache outside a build (m_bHaveTSurfaceCache
@@ -755,6 +758,15 @@ impl<O: Copy + PartialEq> SurfaceCache<O> {
             if let Some(b) = bbox {
                 self.tree_mut_or(OP_NODE)?.node_mut(child)?.bbox = b;
             }
+            // (the fork's 729f893: a blend by its definition lies within its net's bound of
+            // the net)
+            let grow = definition_bound(self.surface());
+            if grow > 0.0 {
+                self.tree_mut_or(OP_NODE)?
+                    .node_mut(child)?
+                    .bbox
+                    .expand_absolute(grow);
+            }
         }
         Ok(split_param)
     }
@@ -850,6 +862,8 @@ impl<O: Copy + PartialEq> SurfaceCache<O> {
         depth: u32,
         tester: &mut ToleranceTester<'_, O>,
     ) -> Result<()> {
+        // the cache is built on blends' nets (the fork's 729f893; `SmBlendNetScope`)
+        let _net = NetScope::new(k);
         // performance only: the outermost call memoises the singularity test's pole
         // data for the splits below it (see the deviations of `surface_cache::p1`)
         let owns_memo = self.begin_pole_memo();
@@ -970,6 +984,8 @@ impl<O: Copy + PartialEq> SurfaceCache<O> {
         k: &Kernel,
         tester: &mut ToleranceTester<'_, O>,
     ) -> Result<TreeBase> {
+        // the cache is built on blends' nets (the fork's 729f893; `SmBlendNetScope`)
+        let _net = NetScope::new(k);
         // store an allocated and empty decomposition tree
         let mut tree: Tree<O> = Tree::new(Some(TreeOwner::SurfaceCache));
         tree.set_owner_surface(self.surface_handle());
@@ -1175,6 +1191,8 @@ impl<O: Copy + PartialEq> SurfaceCache<O> {
         for_derived_cache: bool,
         tester: &mut ToleranceTester<'_, O>,
     ) -> Result<()> {
+        // the cache is built on blends' nets (the fork's 729f893; `SmBlendNetScope`)
+        let _net = NetScope::new(k);
         // to prevent bad recursion back into BuildTree - turn off point testing
         let saved_point_test = self.point_test_enabled;
         let saved_containment = self.face_containment_done;
@@ -1323,6 +1341,15 @@ fn ignore<T>(r: Result<T>) -> Result<Option<T>> {
         Ok(v) => Ok(Some(v)),
         Err(e) if e.is_unported_or_cancelled() => Err(e),
         Err(_) => Ok(None),
+    }
+}
+
+/// `sm_DefinitionBound` (the fork's 729f893): how far a surface may be off its net, a blend
+/// by its definition's certified bound, 0 for any other surface (its net is it).
+fn definition_bound(surface: &Surface) -> f64 {
+    match surface.kind() {
+        SurfaceKind::ProceduralBlend(p) => p.bound(),
+        _ => 0.0,
     }
 }
 

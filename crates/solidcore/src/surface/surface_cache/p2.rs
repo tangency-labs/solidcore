@@ -835,6 +835,8 @@ impl<O: Copy + PartialEq> SurfaceCache<O> {
     /// Errors from tessellation split selection and the iso curve linearity tests.
     #[allow(clippy::too_many_lines)] // one upstream routine
     pub fn subdivide_by_block(&mut self, k: &Kernel, node: NodeId) -> Result<()> {
+        // the cache is built on blends' nets (the fork's 729f893; `SmBlendNetScope`)
+        let _net = crate::surface::procedural_blend::NetScope::new(k);
         // locals
         let fields = {
             let tree = self
