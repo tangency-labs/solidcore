@@ -115,3 +115,30 @@ The separate arc-half seam tracked by #2330/WR-711 is not modified here.
 The approved design cites Hartmann's rolling-ball contact construction;
 its abstract was read, and this contribution follows #2356's specified
 finite-smoothness correction rather than inventing another construction.
+
+## Validation of the preparatory contribution
+
+Source head tested: `e025c24a0c51c70e882080e4e8b35dcea6e7d60a`.
+WSL Ubuntu, `CARGO_BUILD_JOBS=2`, all cargo commands under `nice -n 10`.
+Shared pinned C++ libraries were reused without a kernel rebuild.
+
+- `cargo fmt --all --check`: passed.
+- `cargo clippy --workspace --all-targets -- -D warnings`: passed (default features).
+- `cargo check -p solidcore --target wasm32-unknown-unknown`: passed.
+- Optimized targeted tests: fillet_section 31, procedural_blend 8,
+  issue_2356_smooth_interior 5, wr698_procedural_blend_definition 8;
+  all 52 passed.
+- Native Rust/C++ comparisons (dev profile, `--features cpp --jobs 2`):
+
+```text
+PASS blend.fillet_solver_p4 cases=651 passed=651 failed=0 deferred=0 max_rel_err=0e0 with_values=651 no_values=0 vacuous=0
+PASS blend.fillet_standard_solver_p2 cases=525 passed=525 failed=0 deferred=0 max_rel_err=0e0 with_values=525 no_values=0 vacuous=0
+PASS nurbs.b_spline_surface_n_lib_p1 cases=702 passed=702 failed=0 deferred=0 max_rel_err=0e0 with_values=702 no_values=0 vacuous=0
+difftest: 3 unit(s), 3 passed, 0 partial, 0 failed
+```
+
+The native invocation used clippy-driver as `RUSTC_WORKSPACE_WRAPPER` to
+reuse compiler artifacts; `RUSTC_WRAPPER` was unset because sccache is absent.
+These comparisons validate selected default pinned behavior, not the new
+fork-only smoothing construction. No full test suite or full `--green`
+gate was run, and no unit status or tolerance was changed.
