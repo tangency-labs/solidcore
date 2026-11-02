@@ -359,7 +359,9 @@ fn a_boss_astride_the_contact_line_is_refused_as_the_fork() {
     }
 }
 
-/// A pocket astride the contact line stands with the flag on or off, as the fork.
+/// A pocket astride the contact line stands with the flag on or off, as the fork. This figure is
+/// the fork's at 5e8c9c1: this round is a cliff overflow, trimmed at its creases since step 6
+/// (WR-695), which runs none of keep features (23371.292359325398 at eb883ad).
 #[test]
 fn a_pocket_astride_the_contact_line_matches_the_fork() {
     fn astride(k: &mut Kernel, block: Brep) -> Result<Brep> {
@@ -367,6 +369,6 @@ fn a_pocket_astride_the_contact_line_matches_the_fork() {
         boolean_difference(k, block, c)
     }
     for keep in [true, false] {
-        assert_as_the_fork(keep, astride, 8.0, 23371.292359325398, 12);
+        assert_as_the_fork(keep, astride, 8.0, 23371.292359915951, 12);
     }
 }
