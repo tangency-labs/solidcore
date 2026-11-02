@@ -101,6 +101,8 @@ Remaining work, available independently of this preparatory slice:
   refusal for insufficient face smoothness and name the order that builds.
 - Enclose correction contributions uniformly in t, including the shrinking
   windows, and update definition evaluation, the net and its bound together.
+  Gate that result-changing integration with an opt-in `UpstreamFixes`
+  field under AGENTS.md section 4b; the default must retain pinned parity.
 - Run the twisted-wedge and net-on-definition acceptance cases, rail contact
   and near-rail curvature measures. The minimal fixture here is not the
   complete capi/rig/ladder acceptance matrix.

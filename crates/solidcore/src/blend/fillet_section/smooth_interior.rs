@@ -65,9 +65,9 @@ pub fn correction_kernels(
     };
     let q = 1.0 - v;
     let g = CorrectionJet {
-        value: -eps * q * q * q * (3.0 + v) / 16.0,
+        value: (-q * q * q * ((3.0 + v) / 16.0)) * eps,
         first: sign * q * q * (2.0 + v) / 4.0,
-        second: -3.0 * (1.0 - v * v) / (4.0 * eps),
+        second: (-0.75 * (1.0 - v * v)) / eps,
     };
     let g2 = CorrectionJet {
         value: (d / 2.0) * g.value,
@@ -168,5 +168,15 @@ mod tests {
             assert!(correction_kernels(0.0, eps, false).is_err());
         }
         assert!(correction_kernels(f64::NAN, 1.0, false).is_err());
+    }
+
+    #[test]
+    fn large_width_does_not_overflow_a_representable_station_jet() {
+        let eps = f64::MAX / 2.0;
+        let (g, g2) = correction_kernels(0.0, eps, false).unwrap();
+        assert_eq!(g.value, -eps * (3.0 / 16.0));
+        assert_eq!(g.second, -0.75 / eps);
+        assert!(g.second < 0.0);
+        assert_eq!(g2.first, -eps * (3.0 / 32.0));
     }
 }

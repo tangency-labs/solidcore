@@ -352,8 +352,8 @@ fn support_is_c2_but_not_c3_at_the_crossing() {
             .unwrap(),
         );
     }
-    for i in 0..=2 {
-        assert!((sides[0][i][0] - sides[1][i][0]).length() <= 1e-9);
+    for (a, b) in sides[0].iter().zip(&sides[1]).take(3) {
+        assert!((a[0] - b[0]).length() <= 1e-9);
     }
     assert!((sides[0][3][0].z - sides[1][3][0].z).abs() > 1.0);
 }
