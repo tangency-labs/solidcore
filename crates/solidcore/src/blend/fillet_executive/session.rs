@@ -2153,6 +2153,7 @@ impl<'target> FilletSession<'target> {
                             setback.blend = Some(crate::blend::blend_corner::BlendCorner {
                                 event: crate::blend::blend_corner::BlendCornerEvent::Setback,
                                 turn: crate::blend::blend_corner::BlendTurn::Mitre,
+                                end: crate::blend::blend_corner::BlendEnd::OnEndFace,
                             });
                             setback.setback = Some(
                                 crate::blend::blend_corner::setback::SetbackCorner::with_order(
