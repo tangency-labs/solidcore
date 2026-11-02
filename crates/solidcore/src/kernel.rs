@@ -1374,6 +1374,17 @@ pub struct UpstreamFixes {
     pub fillet_gn_section_generator: bool,
     /// The fork's blend corner (`SmBlendCorner`, smlib#79 step 4b; WR-697): two blends of one convexity among three or four edges at a vertex are classified as a Join (their edges continue each other, or meet at 5 degrees or less at a face corner of the other convexity) or a Turn, and built by the two-blend construction pinned SMLib's `SmFilletNx2Corner` has, unchanged (the fork's 74e9beb and 48a8a9f, bit for bit as before). The Mitre turn of two constant circular rounds of one radius on straight spines whose axes meet, between planes, is their exact plane section (`SmBlendCorner::ExactMitreCurve`): a rational quadratic ellipse arc in the plane of symmetry through the axes' crossing, from the rails' crossing on the common face to the side vertex (both placed exactly on the planes), with exact rational cubic UV curves on both rounds; elsewhere the rounds' marched intersection, as upstream. `SmFilletGeom::MakeFaceBrep` keeps each fillet face's own UV trim curves (`MakeFaceWithCurves` with `pbOptCrvOnSurf` TRUE) where upstream drops them and projects the edges' curves again later (the fork's 32fd80a). The boss base of a 40 x 30 x 10 plate with a 10 x 10 x 5 boss, its four base edges rounded r 1, then has its closed-form volume `12500 + 40 (1 - pi/4) + 8 (5/6 - pi/4)` where upstream's mitres are 1.4e-5 off the cylinders.
     pub fillet_blend_corner: bool,
+    /// The executive's circular rounds (`SetFilletParameters` with `SM_FSG_CIRCULAR`, and
+    /// the corners' constant rounds, `SmFilletCorner::MakeConstantRadiusFillet`) take the
+    /// ball's exact rational circle as their section, not polynomial arcs within 0.05% of
+    /// the radius; an explicit request for approximated arcs (the cross-section type of
+    /// `SmApiConstantRadiusFillet`'s options) keeps them. Upstream's approximated end
+    /// section of a round is up to 1.6e-3 (r 2) off the exact section of an analytic round
+    /// it joins (the tangent peg's concave torus and the round along the front round's end
+    /// on the cylinder), which the kept trims of `face_trim_curves_kept_where_exact` and
+    /// `fillet_blend_corner` then leave off their edges (WR-708; the fork's
+    /// tangency-labs/smlib@523bc25, smlib#79).
+    pub fillet_exact_arc_sections: bool,
 }
 }
 
