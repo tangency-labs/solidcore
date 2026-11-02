@@ -31,6 +31,15 @@
 //! it crosses a joint of the circle's segments. A plane section of the cylinder (an
 //! ellipse, circle or line) is such a curve, and so is an exact round's rail on it.
 //!
+//! A crossing within a pole (check test #15's tolerance, `SM_ZONE_TOL_3D / 10`) of a
+//! knot, an end of the interval or another crossing is no break (#2427): the piece
+//! between them would be a span the check reports. The piece next to it runs on past
+//! the joint by less than a pole, on the extension of its own segment's rational
+//! quadratic, which is the circle too; the cylinder's NURB there is the next segment,
+//! and the two agree at the joint to first order when the circle's parametrisation is
+//! continuous in speed, so the lifted curve stays
+//! on round-off. The check below measures it at that end, where it is furthest off.
+//!
 //! Deviations: not a port. The result is used only where it checks out: the curve is a
 //! B-spline kind with its NURB (B-spline, line, ellipse or circle, parabola, hyperbola)
 //! over the interval; it does not cross the cylinder's seam or leave the domain; it is
@@ -46,6 +55,7 @@ use crate::curve::curve::{Curve, CurveKind};
 use crate::error::{ignored, Result};
 use crate::geom::extent1d::Extent1d;
 use crate::geom::extent2d::Extent2d;
+use crate::geom::tol::ZONE_TOL_3D;
 use crate::geom::vector2d::Point2;
 use crate::geom::vector3d::{Point3, Vec3};
 use crate::kernel::Kernel;
@@ -77,6 +87,11 @@ const CROSSING_END: f64 = 1e-9;
 
 /// Bisection steps for a crossing (the bracket halves to round-off well before).
 const BISECTIONS: usize = 80;
+
+/// Check test #15's pole tolerance (`SM_ZONE_TOL_3D / 10`, `SmBSplineCurve::Assert`): a
+/// span of the curve whose control points all lie within it of each other is a pole the
+/// check reports, so a joint crossing that close to another break is no break (#2427).
+const POLE: f64 = ZONE_TOL_3D / 10.0;
 
 /// A homogeneous point `(w x, w y, w z, w)`.
 type H4 = [f64; 4];
@@ -527,7 +542,20 @@ struct Piece {
     ctrl: Vec<[f64; 3]>,
 }
 
-/// The UV pieces of the NURB `nurb` over `interval` on `section`.
+/// Whether the piece over `[a, b]` of the B-spline of degree `p` with control points
+/// `pw` and `knots`, inside knot span `span`, collapses to a pole as check test #15
+/// measures one (`SmBSplineCurve::HasInternalPole`): its Bezier control points all
+/// within [`POLE`] of the first.
+fn is_pole(pw: &[H4], knots: &[f64], p: usize, span: usize, a: f64, b: f64) -> Option<bool> {
+    let bez = bezier(pw, knots, p, span, a, b)?;
+    let euclid = |[x, y, z, w]: H4| Point3::new(x / w, y / w, z / w);
+    let first = euclid(*bez.first()?);
+    Some(bez.iter().all(|&q| first.closer_than(POLE, euclid(q))))
+}
+
+/// The UV pieces of the NURB `nurb` over `interval` on `section`: one per span between
+/// the curve's knots and its crossings of the circle's segment joints, a crossing
+/// within a pole of a knot, an end or another crossing left out.
 fn pieces(section: &Section, nurb: &NurbCurve, interval: &Extent1d) -> Option<Vec<Piece>> {
     let pw: Vec<H4> = nurb
         .cpts()
@@ -548,18 +576,23 @@ fn pieces(section: &Section, nurb: &NurbCurve, interval: &Extent1d) -> Option<Ve
     let (t0, t1) = (t0.max(lo), t1.min(hi));
     let near = 1e-12 * (t1 - t0);
 
-    // the curve's knots inside the interval, then the joint crossings of each span
-    let mut breaks = vec![t0];
+    // the curve's knots inside the interval
+    let mut knot_breaks = vec![t0];
     for &u in knots {
-        if u > t0 + near && u < t1 - near && breaks.last().is_some_and(|&l| u > l + near) {
-            breaks.push(u);
+        if u > t0 + near && u < t1 - near && knot_breaks.last().is_some_and(|&l| u > l + near) {
+            knot_breaks.push(u);
         }
     }
-    breaks.push(t1);
-    let mut crossings = Vec::new();
-    for w in breaks.windows(2) {
+    knot_breaks.push(t1);
+    // then the joint crossings of each span, except one within a pole of the break
+    // before or after it (#2427): that piece would be a span check test #15 reports, so
+    // its neighbour runs past the joint instead, by less than a pole, on the extension
+    // of its circle segment (the check in `exact_uv_curve` measures it at that end)
+    let mut breaks = vec![t0];
+    for w in knot_breaks.windows(2) {
         let &[a, b] = w else { return None };
-        let bez = bezier(&pw, knots, p, span_of(knots, p, n, a, b)?, a, b)?;
+        let span = span_of(knots, p, n, a, b)?;
+        let bez = bezier(&pw, knots, p, span, a, b)?;
         let xyw: Vec<[f64; 3]> = bez
             .iter()
             .map(|&q| {
@@ -567,11 +600,20 @@ fn pieces(section: &Section, nurb: &NurbCurve, interval: &Extent1d) -> Option<Ve
                 [x, y, w]
             })
             .collect();
-        crossings.extend(section.crossings(&xyw, a, b)?);
+        let mut crossings = section.crossings(&xyw, a, b)?;
+        crossings.sort_by(f64::total_cmp);
+        let mut kept = vec![a];
+        for c in crossings {
+            if !is_pole(&pw, knots, p, span, *kept.last()?, c)? {
+                kept.push(c);
+            }
+        }
+        while kept.len() > 1 && is_pole(&pw, knots, p, span, *kept.last()?, b)? {
+            kept.pop();
+        }
+        breaks.extend(kept.into_iter().skip(1));
+        breaks.push(b);
     }
-    breaks.extend(crossings);
-    breaks.sort_by(f64::total_cmp);
-    breaks.dedup_by(|a, b| (*a - *b).abs() <= near);
 
     // the pieces, halved where a weight is not positive (in order: the left half first)
     let mut todo: Vec<([f64; 2], usize)> = breaks
@@ -790,12 +832,12 @@ mod tests {
 
     use super::*;
     use crate::curve::ellipse::{Ellipse, EllipseOptions};
-    use crate::geom::tol::ZONE_TOL_3D;
+
+    /// Check test #15's pole tolerance (`SM_ZONE_TOL_3D / 10`).
+    const CHECK_POLE: f64 = ZONE_TOL_3D / 10.0;
 
     /// The cylinder's radius, as #1529's tubes.
     const R: f64 = 16.0;
-    /// Check test #15's pole tolerance (`SM_ZONE_TOL_3D / 10`).
-    const POLE: f64 = ZONE_TOL_3D / 10.0;
     /// How far the UV curve lifted onto the cylinder may be from the curve: round-off
     /// (WR-680's trims are 4e-15 to 1.1e-14 off their edges).
     const EXACT_GAP: f64 = 1e-12;
@@ -900,14 +942,14 @@ mod tests {
     fn a_joint_within_a_pole_of_a_knot_leaves_no_pole_span() {
         let k = Kernel::default();
         let turn = 1e-8;
-        assert!(R * turn < POLE);
+        assert!(R * turn < CHECK_POLE);
         let (s, c, uv) = exact(&k, turn, 0.5);
         let gap = lift_gap(&k, &s, &c, &uv);
         assert!(gap < EXACT_GAP, "{gap} off the curve");
         let shortest = shortest_span(&k, &s, &uv);
-        assert!(shortest > POLE, "a span {shortest} long");
+        assert!(shortest > CHECK_POLE, "a span {shortest} long");
         assert!(
-            !uv.has_internal_pole(&k, POLE).unwrap(),
+            !uv.has_internal_pole(&k, CHECK_POLE).unwrap(),
             "{:?}",
             uv.knots(None)
         );
