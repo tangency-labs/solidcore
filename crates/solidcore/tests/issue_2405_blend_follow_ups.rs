@@ -11,6 +11,8 @@
 //! - A face made from exact pcurves keeps them (WR-722): the draft walls and `CopyFaces`
 //!   pass them on, and `MakeFaceWithCurves`'s keep step matches them on a face of
 //!   opposite orientation.
+//! - A drop from a guess does not take a stalled local solve for the foot (WR-56's
+//!   tight tolerance, the fork's eaa998a), shown on a case that reaches it.
 #![allow(
     clippy::unwrap_used,
     clippy::expect_used,
@@ -535,4 +537,104 @@ fn an_opposite_face_keeps_the_pcurves_it_is_given() {
             assert!(pcurves.iter().any(|q| q.unwrap().0 > 0.0), "{pcurves:?}");
         }
     }
+}
+
+/// Item 6: `SmSurface::DropPoint` from a guess takes a stalled local solve for the foot
+/// without `good_drop_result_distances_in_order` (WR-56's fork eaa998a). On a wavy bicubic
+/// (an 8 x 8 net over 10 x 10, its heights alternating +-1), the point 3 below
+/// `S(0.1, 0.8)` along the normal, dropped from the guess (0.3, 0.9): `LocalPointSolve_1`
+/// stops without converging (unable to go on) 1e-8 off a stationary point that is not the
+/// foot, its gap's components along the tangents summing to 7.7e-9. That is under
+/// upstream's 1e-4, so upstream returns it, at 2.99999944 from the point. With the flag
+/// only a foot within the local solve's own tolerance `EFF_ZERO (1 + max|P|)` is taken, so
+/// the drop goes on to the global solve and returns the foot, 4.5e-5 nearer (its gap
+/// 1.4e-8 off the normal, the global solve's own convergence): no point of a 201 x 201
+/// sampling of the surface is nearer.
+#[test]
+fn a_drop_from_a_guess_does_not_take_a_stalled_local_solve() {
+    use solidcore::geom::extent2d::Extent2d;
+    use solidcore::geom::local_solve_nd::TerminationReason;
+    use solidcore::math::{Point2, EFF_ZERO};
+    use solidcore::nurbs::b_spline_surface::BSplineSurface;
+    use solidcore::nurbs::math::{CPoint, NOW};
+    use solidcore::surface::surface::p4::NoObject;
+    use solidcore::surface::surface::p5::DropPointOptions;
+    use solidcore::surface::surface::Surface;
+    let net: Vec<Vec<CPoint>> = (0..8u32)
+        .map(|i| {
+            (0..8u32)
+                .map(|j| {
+                    let z = if (i + j) % 2 == 0 { 1.0 } else { -1.0 };
+                    CPoint::new(10.0 * f64::from(i) / 7.0, 10.0 * f64::from(j) / 7.0, z, NOW)
+                })
+                .collect()
+        })
+        .collect();
+    let knots = [0.0, 0.0, 0.0, 0.0, 0.2, 0.4, 0.6, 0.8, 1.0, 1.0, 1.0, 1.0];
+    let s =
+        Surface::from(BSplineSurface::from_data(7, 7, 3, 3, 11, 11, &net, &knots, &knots).unwrap());
+    let dom = Extent2d::from_bounds(0.0, 0.0, 1.0, 1.0);
+    let k = Kernel::default();
+    let (q, su, sv) = s
+        .evaluate_1st_derivatives(&k, Point2::new(0.1, 0.8), true, true)
+        .unwrap();
+    let n = unit(su.cross(sv));
+    let p = q - 3.0 * n;
+    let guess = Point2::new(0.3, 0.9);
+    let tight = EFF_ZERO * (1.0 + p.max_dimension());
+    // |Fu| + |Fv|, the gap's components along the unit tangents at `uv`
+    let gap_along = |uv: Point2| {
+        let (sp, su, sv) = s.evaluate_1st_derivatives(&k, uv, true, true).unwrap();
+        let gap = p - sp;
+        gap.dot(unit(su)).abs() + gap.dot(unit(sv)).abs()
+    };
+
+    // the local solve stalls
+    let local = s
+        .local_point_solve_1::<NoObject>(&k, &dom, SolverOperation::Minimize, p, guess, None)
+        .unwrap();
+    assert!(local.found && local.reason == TerminationReason::UnableToConverge);
+    let stalled = Point2::new(
+        local.solution.start.parameters[0],
+        local.solution.start.parameters[1],
+    );
+    let along = gap_along(stalled);
+    eprintln!(
+        "stalled at {stalled:?} after {}, |Fu| + |Fv| {along:e}",
+        local.iterations
+    );
+    assert!(along > 100.0 * tight && along < 1e-4, "{along:e}");
+
+    let drop = |flag: bool| {
+        let mut k = Kernel::default();
+        k.fixes.good_drop_result_distances_in_order = flag;
+        let opts = DropPointOptions {
+            guess_uv: Some(guess),
+            ..DropPointOptions::default()
+        };
+        let d = s.drop_point::<NoObject>(&k, p, &dom, &opts).unwrap();
+        assert!(d.success);
+        d
+    };
+    // upstream: the stalled result is the foot
+    let up = drop(false);
+    eprintln!("upstream {:?} at {}", up.result_uv, up.gap);
+    assert_eq!(up.result_uv, stalled);
+    // with the flag: the global solve's foot, nearer
+    let fixed = drop(true);
+    eprintln!("with the flag {:?} at {}", fixed.result_uv, fixed.gap);
+    assert!(
+        gap_along(fixed.result_uv) < 1e-7,
+        "{:e}",
+        gap_along(fixed.result_uv)
+    );
+    assert!(up.gap - fixed.gap > 4e-5, "{} {}", up.gap, fixed.gap);
+    let mut nearest = f64::INFINITY;
+    for i in 0..=200 {
+        for j in 0..=200 {
+            let uv = Point2::new(f64::from(i) / 200.0, f64::from(j) / 200.0);
+            nearest = nearest.min(s.evaluate_point(&k, uv).unwrap().distance(p));
+        }
+    }
+    assert!(nearest >= fixed.gap - 1e-12, "{nearest} {}", fixed.gap);
 }
