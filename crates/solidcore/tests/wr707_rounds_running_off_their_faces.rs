@@ -349,3 +349,31 @@ fn a_round_opening_a_blind_pocket_is_refused() {
     let v = volume(&k, &mut b);
     assert!((v - want).abs() > 0.5, "{v} vs {want}");
 }
+
+/// An 80 x 5 x 5 bar, its long top edge (y = 0, z = 5) rounded R10, wider than both faces
+/// it rounds (SolidCraft `4782-fillet-bar-edge-wider-than-both-faces`; fork 5e8c9c1 does not
+/// build it yet). Both rails run off their faces and the section crosses the bar's far
+/// faces only in pieces that reach a rail. In (y, z) the section keeps the bar's square
+/// within the circle of centre (10, -5), radius 10: from y = 10 - sqrt 75, where the circle
+/// leaves z = 0, the area under z = sqrt(100 - (y - 10)^2) - 5; V = 80 area.
+#[test]
+fn a_round_wider_than_both_its_faces_builds() {
+    let area = integrate(
+        |y| (100.0 - (y - 10.0) * (y - 10.0)).sqrt() - 5.0,
+        10.0 - 75.0_f64.sqrt(),
+        5.0,
+        400,
+    );
+    let want = 80.0 * area;
+    // the rig's 630.293125 is a grid quadrature
+    assert!((want - 630.293125).abs() < 1e-3, "closed form {want}");
+    builds(
+        |k| {
+            let mut b = cuboid(k, [0.0, 0.0, 0.0], [80.0, 5.0, 5.0]);
+            let built = blend(k, &mut b, &[[40.0, 0.0, 5.0]], 10.0, 1);
+            (b, built)
+        },
+        want,
+        1e-9,
+    );
+}
