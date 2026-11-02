@@ -69,7 +69,7 @@ use crate::surface::surface::p2::PLANE_TYPE;
 use crate::surface::surface::{Surface, SurfaceKind};
 use crate::surface::torus::Torus;
 use crate::topology::edgeuse::p1 as eu;
-use crate::topology::Brep;
+use crate::topology::{Brep, EdgeId};
 
 pub mod rational;
 
@@ -1234,6 +1234,13 @@ pub fn classify_exact_blend(
 /// collapsed axis crosses that plane (or lies in it): the centre is there if that point lies
 /// on the other face's offset, within the solver's tolerance.
 ///
+/// An end at a vertex of one of `joined` (the session's other blended edges) is where the
+/// chain runs on into the next round: with `fixes.fillet_blend_corner` the Join places that
+/// round's section through the fixed centre and the piece is built as the ball's triangle
+/// between the two sections (`classify_ball_on_collapsed_offset`, #2403), so that end
+/// closes the zone whatever the plane square to the edge. The caller passes `joined` only
+/// under that flag; without it such a piece is traced and is judged by the plane alone.
+///
 /// # Errors
 ///
 /// Those of the drops, the evaluations and the topology lookups; `SM_ERR_NULL_POINTER` for
@@ -1243,6 +1250,7 @@ pub fn ball_zone_open_at_an_end(
     k: &Kernel,
     b: &Brep,
     radius: Option<f64>,
+    joined: &[EdgeId],
 ) -> Result<Option<f64>> {
     use crate::surface::surface::p4::NoObject;
     use crate::surface::surface::p5::DropPointOptions;
@@ -1316,6 +1324,9 @@ pub fn ball_zone_open_at_an_end(
         let Ok(along) = d.unitize() else {
             return Ok(None);
         };
+        if end_runs_on(b, e, v, tol, joined)? {
+            continue;
+        }
         let closes = if axis.kind == QuadricKind::Point {
             (axis.point - v).dot(along).abs() <= approx
         } else {
@@ -1333,6 +1344,27 @@ pub fn ball_zone_open_at_an_end(
         }
     }
     Ok(None)
+}
+
+/// Whether the end of `e` at `at` (within `tol`) is a vertex one of `joined` also ends at:
+/// the chain runs on there into another blended edge's round.
+fn end_runs_on(b: &Brep, e: EdgeId, at: Point3, tol: f64, joined: &[EdgeId]) -> Result<bool> {
+    use crate::topology::{edge, vertex};
+    if joined.is_empty() {
+        return Ok(false);
+    }
+    let (start, end) = edge::start_end_vertices(b, e)?;
+    for v in [start, end].into_iter().flatten() {
+        if vertex::point(b, v)?.distance(at) > tol {
+            continue;
+        }
+        for other in vertex::edges(b, v, None)? {
+            if other != e && joined.contains(&other) {
+                return Ok(true);
+            }
+        }
+    }
+    Ok(false)
 }
 
 /// `SmFilletSolver::CalcExactFilletGeom(crBlend, rTsectPnts, pFG, bRecalc, rbBuilt)`: the

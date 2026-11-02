@@ -3420,6 +3420,24 @@ impl BrepCreationAccess<FilletObject> for SessionObjects<'_> {
         let FilletObject::Solver(id) = solver else {
             return Err(invalid("object is not a solver"));
         };
+        // the other blends' edges, where a chain runs on into the next round (#2403's ball
+        // triangle, built only under `fillet_blend_corner`)
+        let mut joined = Vec::new();
+        if k.fixes.fillet_blend_corner {
+            for (index, other) in self.solvers.iter_mut().enumerate() {
+                let Some(other) = other.as_mut() else {
+                    continue;
+                };
+                if index == id.0 as usize {
+                    continue;
+                }
+                if let Some(use0) = ball_regular::ops_of(other).solver().edgeuse(0)? {
+                    if let Some(e) = crate::topology::edgeuse::p1::edge(self.target, use0)? {
+                        joined.push(e);
+                    }
+                }
+            }
+        }
         let current = self
             .solvers
             .get_mut(id.0 as usize)
@@ -3434,6 +3452,7 @@ impl BrepCreationAccess<FilletObject> for SessionObjects<'_> {
             k,
             self.target,
             radius,
+            &joined,
         )
     }
 

@@ -326,7 +326,10 @@ Each cause is decided from its own geometry, before the construction that it wou
   the edge, square to it, holds that centre. A tray's seam and a cornered block's rim hold it at
   both ends and build. The middle edge of an arc's tangent chain, rounded at its round's radius,
   does not: refused, naming that radius, open. A larger ball that does not fit that face names it
-  open the same way.
+  open the same way. An end where the chain runs on into another blended edge closes the zone
+  with `fillet_blend_corner`: the Join there places the next round's section through the centre,
+  and the piece is the ball's triangle (#2403). So the same middle edge in a chain with the
+  upright and the arc's top edge builds at that radius.
 - **An open end of an overflow.** An overflow's open end whose end face does not cut the blend,
   and a trimmed blend that keeps no length where no corner takes any, names where the blend stays
   on its faces (`LargestSizeOnItsFaces`, open).
