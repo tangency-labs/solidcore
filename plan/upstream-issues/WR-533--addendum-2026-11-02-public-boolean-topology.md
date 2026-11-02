@@ -18,7 +18,7 @@ pins the flag-off refusal, so the two tests are the off/on comparison.
 
 | | flag off (pinned upstream) | flag on (the fork) |
 |---|---|---|
-| union | refused: `boolean::merge::p2::make_faceuse`, code 1001 | succeeds |
+| union | refused: `boolean::merge::p2::make_faceuse`, code 1001 (the port refuses later than the fork's 1006, in `make_faceuse`) | succeeds |
 | faces, edges, vertices | none | 22, 50, 30 |
 | volume | none | 19951.738836965 (the block and the lip 19951.738882966) |
 | check `Level2` | none | valid, no failures, `assert_valid` true |
