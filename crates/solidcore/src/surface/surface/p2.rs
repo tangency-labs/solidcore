@@ -8647,6 +8647,8 @@ mod issue_892_tests {
             )
         }
 
+        // the flag is not part of the default kernel: pin it before either run
+        assert!(!Kernel::default().fixes.join_touching_loops);
         let (outer, loops, faces, volume, lines) = measure(false);
         assert_eq!((outer, loops), (vec![2], vec![5, 3]));
         assert_eq!(faces, 12);
