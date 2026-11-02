@@ -21,7 +21,8 @@
     clippy::expect_used,
     clippy::panic,
     clippy::indexing_slicing,
-    clippy::cast_precision_loss
+    clippy::cast_precision_loss,
+    clippy::needless_range_loop
 )] // test helpers
 
 use solidcore::blend::fillet_executive::session::FilletSession;
