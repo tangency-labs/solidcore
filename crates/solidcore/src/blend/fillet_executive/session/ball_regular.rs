@@ -146,7 +146,7 @@ pub struct BallLaw {
 }
 
 /// The solver's base (`SmFilletSolver`) of a session solver.
-fn ops_of(solver: &mut SolverObject) -> &mut dyn FilletSolverOps {
+pub(crate) fn ops_of(solver: &mut SolverObject) -> &mut dyn FilletSolverOps {
     match solver {
         SolverObject::ConstantRadius(s) => s.as_mut(),
         SolverObject::VariableRadius(s) => s.as_mut(),

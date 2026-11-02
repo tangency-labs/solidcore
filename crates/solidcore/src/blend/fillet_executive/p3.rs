@@ -2031,6 +2031,50 @@ pub trait BrepCreationAccess<O: ClassObject + SolutionObject + Ord>:
         k: &mut Kernel,
         solver: O,
     ) -> Result<Option<SolverCut<O>>>;
+
+    /// `SmFilletSolver::LargestSizeOnItsFaces(pOnly, ...)` (the fork's, 49f393d and
+    /// 5e8c9c1) on this solver: the largest size at which its rails stay on its faces
+    /// (`only`: that face's boundary only), with what it sizes; `None` where nothing bounds
+    /// it.
+    ///
+    /// # Errors
+    /// The search's own errors; the adapter over [`ExecutiveAccess`] has no solvers.
+    fn creation_largest_size_on_its_faces(
+        &mut self,
+        k: &mut Kernel,
+        solver: O,
+        only: Option<O>,
+    ) -> Result<Option<(f64, FitKind)>>;
+
+    /// `NoteFitOfPolygonsTakenWhole`'s per-face sizes (the fork's, 49f393d): for each face
+    /// the blends of `solvers` (constant balls) roll on, in face order, where it is a
+    /// polygon with every edge blended, the radius that leaves some of it and the first
+    /// solver on it.
+    ///
+    /// # Errors
+    /// The sizing's own errors; the adapter over [`ExecutiveAccess`] has no solvers.
+    fn creation_polygons_taken_whole(
+        &mut self,
+        k: &mut Kernel,
+        solvers: &[O],
+    ) -> Result<Vec<(f64, O)>>;
+
+    /// The circle-top fit of `CreateFilletBrep` (the fork's, a3d6d81 and 5e8c9c1) for
+    /// `solver`: for each planar face its closed edge bounds alone, the radius of the ball
+    /// touching it at the circle's centre less the fit margin, with the edge.
+    ///
+    /// # Errors
+    /// The sizing's own errors; the adapter over [`ExecutiveAccess`] has no solvers.
+    fn creation_circle_tops(&mut self, k: &mut Kernel, solver: O) -> Result<Vec<(f64, O)>>;
+
+    /// `SmFilletSolver::BandsMeetAt` (the fork's, a3d6d81) over the executive's pairs of
+    /// `solvers` sharing a face, in its loop order (`a`, `b`, then each's face index): the
+    /// radius where their bands meet, with the first solver's edge, for each pair that
+    /// has one.
+    ///
+    /// # Errors
+    /// The sizing's own errors; the adapter over [`ExecutiveAccess`] has no solvers.
+    fn creation_bands_meet(&mut self, k: &mut Kernel, solvers: &[O]) -> Result<Vec<(f64, O)>>;
 }
 
 /// Where a solver's convex blend would cut the part
@@ -2097,6 +2141,31 @@ where
         _solver: O,
     ) -> Result<Option<SolverCut<O>>> {
         Err(invalid("the band's cut needs a live fillet session"))
+    }
+
+    fn creation_largest_size_on_its_faces(
+        &mut self,
+        _k: &mut Kernel,
+        _solver: O,
+        _only: Option<O>,
+    ) -> Result<Option<(f64, FitKind)>> {
+        Err(invalid("a refusal's fit needs a live fillet session"))
+    }
+
+    fn creation_polygons_taken_whole(
+        &mut self,
+        _k: &mut Kernel,
+        _solvers: &[O],
+    ) -> Result<Vec<(f64, O)>> {
+        Err(invalid("a refusal's fit needs a live fillet session"))
+    }
+
+    fn creation_circle_tops(&mut self, _k: &mut Kernel, _solver: O) -> Result<Vec<(f64, O)>> {
+        Err(invalid("a refusal's fit needs a live fillet session"))
+    }
+
+    fn creation_bands_meet(&mut self, _k: &mut Kernel, _solvers: &[O]) -> Result<Vec<(f64, O)>> {
+        Err(invalid("a refusal's fit needs a live fillet session"))
     }
 }
 
@@ -2694,7 +2763,7 @@ impl<O: ClassObject + SolutionObject + Ord> FilletExecutive<O> {
     pub fn refuse_blends_larger_than_faces(
         &mut self,
         k: &mut Kernel,
-        access: &mut impl SolverGeometryAccess<O>,
+        access: &mut impl BrepCreationAccess<O>,
     ) -> Result<()> {
         if k.fixes.fillet_refuse_rails_leaving_faces && k.fixes.fillet_cliff_overflow {
             return self.choose_cliff_overflow(k, access);
@@ -2733,7 +2802,7 @@ impl<O: ClassObject + SolutionObject + Ord> FilletExecutive<O> {
     fn choose_cliff_overflow(
         &mut self,
         k: &mut Kernel,
-        access: &mut impl SolverGeometryAccess<O>,
+        access: &mut impl BrepCreationAccess<O>,
     ) -> Result<()> {
         let mut overflow = false;
         let mut concave = false;
@@ -2821,6 +2890,24 @@ impl<O: ClassObject + SolutionObject + Ord> FilletExecutive<O> {
                 None
             };
             if let Some((reason, why)) = why {
+                // the fork's 49f393d (`fixes.fillet_gn_section_generator`): the largest radius at
+                // which the overflowing blends' rails stay on their faces (where a boundary of a
+                // face first meets a rail): open, so less the fit margin (NoteOpenFit)
+                if k.fixes.fillet_gn_section_generator {
+                    for &edge in &overflowing {
+                        let mut index = 0;
+                        while let Some(solver) = self.solvers.get(index).copied() {
+                            index += 1;
+                            if access.geometry_overflow_edge(solver)? != Some(edge) {
+                                continue;
+                            }
+                            let size =
+                                access.creation_largest_size_on_its_faces(k, solver, None)?;
+                            let (limit, kind) = size.unwrap_or((0.0, FitKind::Radius));
+                            self.note_open_fit(access, size.is_some(), limit, kind, solver)?;
+                        }
+                    }
+                }
                 return self.record_no_room(reason, why);
             }
             self.cliff_overflow = true;
@@ -2843,11 +2930,28 @@ impl<O: ClassObject + SolutionObject + Ord> FilletExecutive<O> {
     pub fn refuse_face_consuming_blends(
         &mut self,
         k: &mut Kernel,
-        access: &mut impl SolverGeometryAccess<O>,
+        access: &mut impl BrepCreationAccess<O>,
     ) -> Result<()> {
         if k.fixes.fillet_refuse_face_consuming_blends
             && !access.geometry_faces_outlast(k, &self.solvers)?
         {
+            // the fork's 49f393d, a3d6d81 and 5e8c9c1 (`fixes.fillet_gn_section_generator`): the
+            // largest radius that leaves some of the face, for a polygon with every edge blended
+            // (NoteFitOfPolygonsTakenWhole) and a plane bounded by one blended circle (the ball
+            // touching it at the centre); open, so less the fit margin
+            if k.fixes.fillet_gn_section_generator {
+                let solvers = self.solvers.clone();
+                for (best, solver) in access.creation_polygons_taken_whole(k, &solvers)? {
+                    self.note_open_fit(access, true, best, FitKind::Radius, solver)?;
+                }
+                for solver in solvers {
+                    for (fit, edge) in access.creation_circle_tops(k, solver)? {
+                        if self.fit_radius < 0.0 || fit < self.fit_radius {
+                            self.note_fit_radius(fit, Some(edge), FitKind::Radius);
+                        }
+                    }
+                }
+            }
             return self.record_no_room(
                 NoRoomReason::FaceConsumed,
                 "Fillet Error: the blends take the whole of a face they roll on, some at an angle to it (the blend is larger than the faces allow)",
@@ -2866,11 +2970,21 @@ impl<O: ClassObject + SolutionObject + Ord> FilletExecutive<O> {
     pub fn refuse_overlapping_bands(
         &mut self,
         k: &mut Kernel,
-        access: &mut impl SolverGeometryAccess<O>,
+        access: &mut impl BrepCreationAccess<O>,
     ) -> Result<()> {
         if k.fixes.fillet_refuse_overlapping_bands
             && !access.geometry_bands_clear_other_rails(k, &self.solvers)?
         {
+            // the fork's a3d6d81 (`fixes.fillet_gn_section_generator`): the largest common radius
+            // at which the bands stay apart, where they meet (closed), the least over the pairs
+            if k.fixes.fillet_gn_section_generator {
+                let solvers = self.solvers.clone();
+                for (meet, edge) in access.creation_bands_meet(k, &solvers)? {
+                    if self.fit_radius < 0.0 || meet < self.fit_radius {
+                        self.note_fit_radius(meet, Some(edge), FitKind::Radius);
+                    }
+                }
+            }
             return self.record_no_room(
                 NoRoomReason::BandsOverlap,
                 "Fillet Error: a blend's rail runs inside the band another blend takes off a face they share (the blends are larger than the face allows)",
@@ -3211,6 +3325,29 @@ impl<O: ClassObject + SolutionObject + Ord> FilletExecutive<O> {
         let fit_size = smos_max(0.0, limit - fit.fit_margin / per_unit);
         if self.fit_radius < 0.0 || fit_size < self.fit_radius {
             self.note_fit_radius(fit_size, Some(fit.edge), kind);
+        }
+        Ok(())
+    }
+
+    /// `NoteFitOnFace(pFace)` (the fork's, 49f393d): for a refusal where a rail leaves
+    /// `face`, each solver's largest size at which its rails stay on that face
+    /// (`LargestSizeOnItsFaces`), noted as the refusal's fit where least
+    /// ([`FilletExecutive::note_open_fit`]).
+    ///
+    /// # Errors
+    /// Those of the sizing.
+    pub fn note_fit_on_face(
+        &mut self,
+        k: &mut Kernel,
+        access: &mut impl BrepCreationAccess<O>,
+        face: O,
+    ) -> Result<()> {
+        let mut index = 0;
+        while let Some(solver) = self.solvers.get(index).copied() {
+            index += 1;
+            let size = access.creation_largest_size_on_its_faces(k, solver, Some(face))?;
+            let (limit, kind) = size.unwrap_or((0.0, FitKind::Radius));
+            self.note_open_fit(access, size.is_some(), limit, kind, solver)?;
         }
         Ok(())
     }

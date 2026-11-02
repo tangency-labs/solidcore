@@ -36,7 +36,8 @@ use crate::error::EntityRef;
 use crate::error::{Result, SolidError};
 use crate::geom::axis2_placement::Axis2Placement;
 use crate::geom::extent1d::Extent1d;
-use crate::geom::solution_array::SolutionType;
+use crate::geom::extent2d::Extent2d;
+use crate::geom::solution_array::{ObjectKind, SolutionObject, SolutionType};
 use crate::geom::tol::{brep_zone_tol_3d, SmallTopoType};
 use crate::intersect::point_class::{PointClassType, PointClassification};
 use crate::intersect::surface_intersector::p1::{SrfIndex, TsectPnt};
@@ -44,7 +45,6 @@ use crate::kernel::Kernel;
 use crate::math::{rad_to_deg, Point2, Point3, Vec3, EFF_ZERO};
 use crate::query::brep::{BrepFaceServices, BrepQuery};
 use crate::surface::plane::p1::Plane;
-use crate::surface::surface::p4::NoObject;
 use crate::surface::surface::Surface;
 use crate::topology::brep_cache::CacheObject;
 use crate::topology::edge;
@@ -79,6 +79,39 @@ pub struct BandCut {
     pub setback: f64,
 }
 
+/// The operands of the plane's intersections: an edge's curve and the plane, named as
+/// upstream's solutions name them (the caches they build own their trees).
+#[derive(Debug, Clone, Copy, PartialEq)]
+enum Operand {
+    /// The edge's curve, with its natural interval.
+    Curve(Extent1d),
+    /// The plane, with its natural domain.
+    Plane(Extent2d),
+}
+
+impl SolutionObject for Operand {
+    fn kind(&self) -> ObjectKind {
+        match self {
+            Self::Curve(_) => ObjectKind::Curve,
+            Self::Plane(_) => ObjectKind::Surface,
+        }
+    }
+
+    fn natural_interval(&self) -> Option<Extent1d> {
+        match self {
+            Self::Curve(ivl) => Some(*ivl),
+            Self::Plane(_) => None,
+        }
+    }
+
+    fn natural_uv_domain(&self) -> Option<Extent2d> {
+        match self {
+            Self::Plane(domain) => Some(*domain),
+            Self::Curve(_) => None,
+        }
+    }
+}
+
 /// `sm_EdgesCrossingPlane`: the points where `body`'s edges cross the plane through
 /// `origin` square to the unit `normal`, each edge's curve intersected with the plane; an
 /// edge lying in the plane gives its ends there.
@@ -104,10 +137,12 @@ fn edges_crossing_plane(
             continue;
         };
         let interval = edge::interval(body, e)?;
-        let solutions = plane.global_curve_intersect_in::<NoObject>(
+        let solutions = plane.global_curve_intersect(
             k,
-            [None, None],
-            None,
+            [
+                Operand::Curve(curve.natural_interval()),
+                Operand::Plane(domain),
+            ],
             &domain,
             curve,
             &interval,
