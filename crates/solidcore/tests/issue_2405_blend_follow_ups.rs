@@ -380,7 +380,7 @@ fn a_draft_cone_wall_keeps_its_exact_seam_pcurves() {
         let arc =
             Ellipse::circle_from_3_points(&k, p(20.0, 0.0), p(0.0, 20.0), p(-20.0, 0.0), 3, false)
                 .unwrap();
-        let curves = vec![Curve::from(line), Curve::from(arc)];
+        let curves = [Curve::from(line), Curve::from(arc)];
         let refs: Vec<Option<&Curve>> = curves.iter().map(Some).collect();
         let made = create_taper_extrude_with_corner(
             &mut k,
