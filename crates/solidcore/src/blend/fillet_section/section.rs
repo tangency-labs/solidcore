@@ -10,7 +10,7 @@
 //! (tangency-labs/smlib@11ea2d9; the equal area thumbweight resolved at every station
 //! 7102bc5, any thumbweight below 1 b9d6a72); see [`super`] for the table.
 
-use super::certificate::{gn_certify_span, GnVarying, NurbsCurve};
+use super::certificate::{arc_rows, gn_certify_span, GnVarying, NurbsCurve};
 use super::form::{gn_form, gn_form_normalized, hermite_knots, hermite_points_sided};
 use super::series::{Trunc, VSer};
 use super::station::{
@@ -59,6 +59,45 @@ pub struct GnSectionFsg {
     pub certified_bound: f64,
     /// `m_lCertifiedSpans`: and its number of spans along the rails.
     pub certified_spans: usize,
+    /// `m_sArcs` (3aae1c4): order 1, how the ball's circles are built.
+    pub arcs: ArcSection,
+}
+
+/// `SmArcSection` (the fork's 3aae1c4): how the order-1 section, the ball's circle, is
+/// built: with circular arcs as far as the rails allow (`approximate_arcs`, within
+/// `tol_percent_radius` of the radius) or exactly; mirrored about the rails' chord; or the
+/// larger arc (`complement`).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct ArcSection {
+    /// `bApproximateArcs`.
+    pub approximate_arcs: bool,
+    /// `dTolPercentRadius`.
+    pub tol_percent_radius: f64,
+    /// `bMirror`.
+    pub mirror: bool,
+    /// `bComplement`.
+    pub complement: bool,
+}
+
+impl Default for ArcSection {
+    /// `SmArcSection()`: `TRUE, 0.05, FALSE, FALSE`.
+    fn default() -> Self {
+        Self {
+            approximate_arcs: true,
+            tol_percent_radius: 0.05,
+            mirror: false,
+            complement: false,
+        }
+    }
+}
+
+impl ArcSection {
+    /// The ball's exact circle: not approximated, mirrored or the larger arc, the order-1
+    /// section `Build` takes (cc08236).
+    #[must_use]
+    pub const fn is_exact_circle(&self) -> bool {
+        !self.approximate_arcs && !self.mirror && !self.complement
+    }
 }
 
 /// The faces' surfaces under a generator's rails and their uv curves.
@@ -140,6 +179,16 @@ fn param_in(st: &GnStation, q: usize, i: usize, e: usize) -> f64 {
     st.in_x(q).map_or(f64::NAN, |x| x.at(i, e))
 }
 
+/// Coordinate q (x, y, z) of a vector.
+fn vec3_at(v: Vec3, q: usize) -> f64 {
+    match q {
+        0 => v.x,
+        1 => v.y,
+        2 => v.z,
+        _ => f64::NAN,
+    }
+}
+
 /// A station's foot parameter q (u1, v1, u2, v2) at sigma^i eps^e.
 fn param(st: &GnStation, q: usize, i: usize, e: usize) -> f64 {
     st.x.get(q).map_or(f64::NAN, |x| x.at(i, e))
@@ -218,6 +267,25 @@ impl GnSectionFsg {
             thumbweight,
             certified_bound: -1.0,
             certified_spans: 0,
+            arcs: ArcSection {
+                approximate_arcs: true,
+                tol_percent_radius: 0.05,
+                mirror: false,
+                complement: false,
+            },
+        }
+    }
+
+    /// `SmGnSectionFSG(const SmArcSection & crArcs)` (3aae1c4): the order-1 section, the
+    /// ball's circle, built as `arcs` says (thumbweight 0).
+    #[must_use]
+    pub const fn circle(arcs: ArcSection) -> Self {
+        Self {
+            order: 1,
+            thumbweight: 0.0,
+            certified_bound: -1.0,
+            certified_spans: 0,
+            arcs,
         }
     }
 
@@ -296,7 +364,7 @@ impl GnSectionFsg {
     ) -> Result<Surface> {
         let [s1, s2] = surfaces;
         let faces = [base_of(s1), base_of(s2)];
-        self.build(k, center_line, rails, approx_tol_3d, faces, uvs, true)
+        self.build(k, center_line, rails, approx_tol_3d, faces, uvs, true, 0.0)
     }
 
     /// `CreateSurfaceFromCurves`: the blend surface between two rails on the faces'
@@ -324,13 +392,42 @@ impl GnSectionFsg {
             faces.surfaces,
             [&mut uv1, &mut uv2],
             false,
+            0.0,
         )
+    }
+
+    /// `Build(..., bReplaceRails, rpFilletSurface, dRadius)` (cc08236): [`Self::build`]
+    /// with the ball's radius given (`radius > 0`: the solver's offsets; 0: as the rails
+    /// stand off the centre line), on the faces themselves (not offset surfaces). The
+    /// order-1 section, the ball's exact circle, is built only here (the fork's circle
+    /// generator calls it, cc08236).
+    ///
+    /// # Errors
+    ///
+    /// Those of `Build`.
+    #[allow(clippy::too_many_arguments)]
+    pub fn build_with_radius(
+        &mut self,
+        k: &Kernel,
+        center: &BSplineCurve,
+        rails: [&mut BSplineCurve; 2],
+        tol: f64,
+        faces: [&Surface; 2],
+        uvs: [&mut BSplineCurve; 2],
+        replace_rails: bool,
+        radius: f64,
+    ) -> Result<Surface> {
+        self.build(k, center, rails, tol, faces, uvs, replace_rails, radius)
     }
 
     /// `Build`: the G^n blend surface between the rails, its stations the knots of the
     /// rails and the centre line. `replace_rails`: the rails and uv curves become the
     /// jets' own order-0 curves (the surface's boundaries). The surface's u is the rails'
     /// parameter, v the section's t, from the first rail (v = 0) to the second (v = 1).
+    /// `radius` (cc08236): the ball's radius where the solver gives it (its offsets'), 0
+    /// for as the rails stand off the centre line. Order 1, the ball's exact circle
+    /// ([`ArcSection::is_exact_circle`]), is the rational quadratic arc between the rails
+    /// (cc08236).
     #[allow(clippy::too_many_arguments)]
     fn build(
         &mut self,
@@ -341,12 +438,14 @@ impl GnSectionFsg {
         faces: [&Surface; 2],
         uvs: [&mut BSplineCurve; 2],
         replace_rails: bool,
+        radius: f64,
     ) -> Result<Surface> {
         let n = self.order;
-        if !Self::is_valid(n, self.thumbweight) {
+        let exact_circle = n == 1 && self.arcs.is_exact_circle();
+        if !exact_circle && !Self::is_valid(n, self.thumbweight) {
             return Err(SolidError::invalid_input(
                 OP,
-                "the order must be 2 to 4 and the thumbweight below 1",
+                "the order must be 1 (the ball's circle) or 2 to 4 with a thumbweight below 1",
             ));
         }
         let [rail1, rail2] = rails;
@@ -406,7 +505,9 @@ impl GnSectionFsg {
                 let w = uv.evaluate_point(s_first)?;
                 let nrm = unit_normal(k, face, Point2::new(w.x, w.y))?;
                 let off = m - rho;
-                *rf = off.length();
+                // the ball's radius where the solver gives it (its offsets'), else as the
+                // rails stand off
+                *rf = if radius > 0.0 { radius } else { off.length() };
                 *sf = if off.dot(nrm) >= 0.0 { 1.0 } else { -1.0 };
                 let has_radius = *rf > tol;
                 if !has_radius {
@@ -417,8 +518,8 @@ impl GnSectionFsg {
         }
 
         // every station's feet and their series: values and s-derivatives (sigma order
-        // 1), jets to order n
-        let tr = Trunc::new(1, n)?;
+        // 1), jets to order n (the ball's circle takes the rails and the centre only)
+        let tr = Trunc::new(1, if n >= 2 { n } else { 0 })?;
         let mut stations: Vec<GnStation> = Vec::new();
         for &s in &ss {
             let w0 = uvs[0].evaluate_point(s)?;
@@ -475,10 +576,11 @@ impl GnSectionFsg {
             }
             st.xl = before.x;
             st.fl = before.f;
+            st.vl = before.v;
             st.sided = true;
         }
 
-        let ld = 3 * n + 2; // the section's control points across
+        let ld = if n >= 2 { 3 * n + 2 } else { 3 }; // the section's control points across
 
         // the jets' Hermite curves along s, all on the stations' knots
         let (u_knots, u_mult) = hermite_knots(&ss);
@@ -503,7 +605,94 @@ impl GnSectionFsg {
         // the homogeneous control points W P and weights W, [i along s][j across]
         let mut homog = vec![Vec3::new(0.0, 0.0, 0.0); lnu * ld];
         let mut wv = vec![0.0_f64; lnu * ld];
-        if equal_area {
+        if n == 1 {
+            // the ball's circle: each station's arc rows (sm_ArcRows) and their
+            // s-derivatives, as the span starting there and the one ending there take them,
+            // each a Hermite curve along s
+            let mut hv: Vec<Vec<Vec3>> = vec![Vec::new(); ld];
+            let mut hd: Vec<Vec<Vec3>> = vec![Vec::new(); ld];
+            let mut hd_in: Vec<Vec<Vec3>> = vec![Vec::new(); ld];
+            let mut wvv: Vec<Vec<Vec3>> = vec![Vec::new(); ld];
+            let mut wdd: Vec<Vec<Vec3>> = vec![Vec::new(); ld];
+            let mut wd_in: Vec<Vec<Vec3>> = vec![Vec::new(); ld];
+            let o = [0.0_f64; 3];
+            for st in &stations {
+                for l_in in [false, true] {
+                    let mut rho = [[Tay::<f64>::zero(); 3]; 2];
+                    let mut mc = [Tay::<f64>::zero(); 3];
+                    for q in 0..3 {
+                        for (f, rf) in rho.iter_mut().enumerate() {
+                            let value = foot(st, f, 0, 0);
+                            let d = if l_in {
+                                foot_in(st, f, 1, 0)
+                            } else {
+                                foot(st, f, 1, 0)
+                            };
+                            if let Some(x) = rf.get_mut(q) {
+                                *x = Tay::of_terms(vec3_at(value, q), vec3_at(d, q));
+                            }
+                        }
+                        // the centre's s-derivative: the incoming one is the rail's less the
+                        // ball's turn, the same as the station's where the leader and faces
+                        // are smooth
+                        let cv = st.v.a.get(q).map_or(f64::NAN, |c| c.at(0, 0));
+                        let from = if l_in && st.sided { &st.vl } else { &st.v };
+                        let cd = from.a.get(q).map_or(f64::NAN, |c| c.at(1, 0));
+                        if let Some(x) = mc.get_mut(q) {
+                            *x = Tay::of_terms(cv, cd);
+                        }
+                    }
+                    let [rho0, rho1] = &rho;
+                    let Some((h, w)) = arc_rows(rho0, rho1, &mc, o) else {
+                        // "a section of the ball's circle is a half turn or more"
+                        return Err(SolidError::sm_err(OP));
+                    };
+                    for (j, (hj, wj)) in h.iter().zip(&w).enumerate().take(ld) {
+                        let sd = Vec3::new(hj[0].at(1), hj[1].at(1), hj[2].at(1));
+                        if l_in {
+                            if let (Some(b), Some(d)) = (hd_in.get_mut(j), wd_in.get_mut(j)) {
+                                b.push(sd);
+                                d.push(Vec3::new(wj.at(1), 0.0, 0.0));
+                            }
+                            continue;
+                        }
+                        if let (Some(a), Some(b), Some(c), Some(d)) =
+                            (hv.get_mut(j), hd.get_mut(j), wvv.get_mut(j), wdd.get_mut(j))
+                        {
+                            a.push(Vec3::new(hj[0].at(0), hj[1].at(0), hj[2].at(0)));
+                            b.push(sd);
+                            c.push(Vec3::new(wj.at(0), 0.0, 0.0));
+                            d.push(Vec3::new(wj.at(1), 0.0, 0.0));
+                        }
+                    }
+                }
+            }
+            for j in 0..ld {
+                let (Some(a), Some(b), Some(c), Some(d), Some(bi), Some(di)) = (
+                    hv.get(j),
+                    hd.get(j),
+                    wvv.get(j),
+                    wdd.get(j),
+                    hd_in.get(j),
+                    wd_in.get(j),
+                ) else {
+                    return Err(SolidError::sm_err(OP));
+                };
+                let hp = hermite_points_sided(&ss, a, b, bi);
+                let wp = hermite_points_sided(&ss, c, d, di);
+                for i in 0..lnu {
+                    if let (Some(h), Some(w), Some(&p), Some(q)) = (
+                        homog.get_mut(i * ld + j),
+                        wv.get_mut(i * ld + j),
+                        hp.get(i),
+                        wp.get(i),
+                    ) {
+                        *h = p;
+                        *w = q.x;
+                    }
+                }
+            }
+        } else if equal_area {
             // each station's own form (over W_0): every row W_j P_j and weight W_j a
             // Hermite curve of its values and s-derivatives there (the form's in w(s) and
             // the jets')

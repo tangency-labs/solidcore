@@ -48,6 +48,8 @@
 //! | [`section::GnSectionFsg`], [`section::GnSectionFsg::new`], [`section::GnSectionFsg::is_valid`] | `SmGnSectionFSG`, its constructor, `IsValid` (and `GetOrder`, `GetThumbweight`, `GetCertifiedBound`, `GetCertifiedSpans` as fields) |
 //! | [`section::GnSectionFsg::create_surface`], [`section::GnSectionFsg::create_surface_from_curves`], `build` and `certify` (private) | `CreateSurface`, `CreateSurfaceFromCurves`, `Build` (its certificate block in `certify`) |
 //! | [`section::GnSectionFsg::contact_order_at`] | `ContactOrderAt` |
+//! | [`section::ArcSection`], [`section::GnSectionFsg::circle`], [`section::GnSectionFsg::build_with_radius`] | `SmArcSection`, `SmGnSectionFSG(const SmArcSection &)` (3aae1c4), `Build`'s `dRadius` and its order 1 (cc08236) |
+//! | [`certificate::arc_rows`], [`certificate::arc_row_terms_over`] | `sm_ArcRows`, `sm_ArcRowTermsOver` (cc08236) |
 //!
 //! Deviations:
 //! - **The equal area thumbweight.** Resolved at every station (the fork's 7102bc5), so

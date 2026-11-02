@@ -819,6 +819,8 @@ pub struct GnStation {
     pub xl: [Ser<f64>; 4],
     /// `asFL`: the feet on the pieces before it.
     pub fl: [VSer<f64>; 2],
+    /// `sVL` (cc08236): V on the pieces before it.
+    pub vl: VSer<f64>,
     /// `dWdsL`: the equal area thumbweight's s-derivative on them.
     pub wdsl: f64,
 }
@@ -1142,6 +1144,7 @@ fn solve_station_body(
             sided: false,
             xl: [Ser::constant(0.0); 4],
             fl: [VSer::constant(zero); 2],
+            vl: VSer::constant(zero),
             wdsl: f64::NAN,
         },
         curves,

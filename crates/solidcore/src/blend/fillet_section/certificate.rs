@@ -46,12 +46,15 @@
 
 use super::form::{binom, gn_form_normalized, GnSectionFormT};
 use super::interval::{cmax, cmin, round_up, Ivl};
-use super::series::{Ser, Trunc, VSer, MAX_E, TAYLOR, V3};
+use super::series::{GnScalar, Ser, Trunc, VSer, MAX_E, TAYLOR, V3};
 use super::station::{
     ders_basis, gn_evaluate, gn_evaluate_vn, gn_jacobian, gn_solve_station, gn_top_jets, knot,
     smax, solve4, span, GnStation, GnSystem, Nurbs, Partials,
 };
-use super::tay::{gn_area_sum, gn_half_angle, gn_invert, gn_target, GnAreaCells, Tay, TAY};
+use super::tay::{
+    gn_area_sum, gn_half_angle, gn_invert, gn_target, tay_sqrt, GnAreaCells, Ring, Tay, TayScalar,
+    TAY,
+};
 use crate::error::{Result, SolidError};
 use crate::kernel::Kernel;
 use crate::nurbs::b_spline_curve::BSplineCurve;
@@ -682,7 +685,7 @@ pub fn gn_enclose(
         for i in 0..=cmin_usize(tr.s(), tot) {
             let k = tot - i;
             // the section's jets of order n are the face curve's (gn_top_jets, 3bc54a4)
-            if k > tr.e() || k >= n {
+            if k > tr.e() || (n >= 1 && k >= n) {
                 continue;
             }
             let mut yr = [IZ; 4];
@@ -1082,6 +1085,133 @@ pub fn gn_row_terms_over(
     true
 }
 
+/// The arc's homogeneous rows `H[j][q]` and weights `W[j]` ([`arc_rows`]).
+pub type ArcRows<S> = ([[Tay<S>; 3]; 3], [Tay<S>; 3]);
+
+/// `sm_ArcRows` (cc08236): the ball's circle as rows: the rational quadratic arc from the
+/// rail `rho1` to `rho2` about the ball's centre `m`, its control points `rho1, P1, rho2`
+/// and weights `1, w, 1`, `w = cos(theta / 2)` (theta the angle between the radii
+/// `b_i = rho_i - m`), `P1 = m + (mid - m) / w^2` where the rails' tangents meet; as
+/// homogeneous rows `H_j = W_j (P_j - O)` about a fixed point `o`. The series are in s,
+/// over a ring S (`f64`, or intervals). `None` where a radius is not positive or the arc
+/// is a half turn or more (no single arc).
+#[must_use]
+pub fn arc_rows<S: TayScalar + GnScalar>(
+    rho1: &[Tay<S>; 3],
+    rho2: &[Tay<S>; 3],
+    m: &[Tay<S>; 3],
+    o: [f64; 3],
+) -> Option<ArcRows<S>> {
+    let mut b11 = Tay::<S>::zero();
+    let mut b22 = Tay::<S>::zero();
+    let mut b12 = Tay::<S>::zero();
+    for ((&r1, &r2), &mq) in rho1.iter().zip(rho2).zip(m) {
+        let b1 = r1 - mq;
+        let b2 = r2 - mq;
+        b11 = b11 + b1 * b1;
+        b22 = b22 + b2 * b2;
+        b12 = b12 + b1 * b2;
+    }
+    if !b11.at(0).is_positive() || !b22.at(0).is_positive() {
+        return None;
+    }
+    // cos^2(theta / 2) = (1 + cos theta) / 2
+    let half = (Tay::<S>::lift(1.0) + b12 / tay_sqrt(&(b11 * b22))) * Tay::<S>::lift(0.5);
+    if !half.at(0).is_positive() {
+        return None; // a half turn or more: no single arc
+    }
+    let w = tay_sqrt(&half);
+    let inv = Tay::<S>::lift(1.0) / half;
+    let ws = [Tay::<S>::lift(1.0), w, Tay::<S>::lift(1.0)];
+    let mut h = [[Tay::<S>::zero(); 3]; 3];
+    for (q, (((&r1, &r2), &mq), &oq)) in rho1.iter().zip(rho2).zip(m).zip(&o).enumerate() {
+        let so = Tay::<S>::lift(oq);
+        let p1 = mq + ((r1 + r2) * Tay::<S>::lift(0.5) - mq) * inv;
+        let [h0, h1, h2] = &mut h;
+        if let (Some(a), Some(b), Some(c)) = (h0.get_mut(q), h1.get_mut(q), h2.get_mut(q)) {
+            *a = r1 - so;
+            *b = w * (p1 - so);
+            *c = r2 - so;
+        }
+    }
+    Some((h, ws))
+}
+
+/// `sm_ArcRowTermsOver` (cc08236): the arc's row terms over one piece
+/// ([`gn_row_terms_over`]'s, every row varying), folded into `rt`; `false` where they are
+/// not proved. `f`, `centre`: the rails' and the centre's series over the piece (to order
+/// `K = 4 + SM_GN_TAYLOR`); `fm`, `cm`: at its middle (to K - 1); `d`: s less the middle
+/// over the piece.
+#[must_use]
+pub fn arc_row_terms_over(
+    f: &[VSer<Ivl>; 2],
+    centre: &VSer<Ivl>,
+    fm: &[VSer<Ivl>; 2],
+    cm: &VSer<Ivl>,
+    d: Ivl,
+    o: [f64; 3],
+    rt: &mut GnRowTerms,
+) -> bool {
+    const K: usize = 4 + TAYLOR;
+    let mut rho = [[Tay::<Ivl>::zero(); 3]; 2];
+    let mut mc = [Tay::<Ivl>::zero(); 3];
+    for q in 0..3 {
+        let mut ac_mid = [IZ; K];
+        for (rf, (ff, ffm)) in rho.iter_mut().zip(f.iter().zip(fm)) {
+            for (i, a) in ac_mid.iter_mut().enumerate() {
+                *a = vat(ffm, q, i, 0);
+            }
+            if let Some(x) = rf.get_mut(q) {
+                *x = centred(&ac_mid, vat(ff, q, K, 0), K, d);
+            }
+        }
+        for (i, a) in ac_mid.iter_mut().enumerate() {
+            *a = vat(cm, q, i, 0);
+        }
+        if let Some(x) = mc.get_mut(q) {
+            *x = centred(&ac_mid, vat(centre, q, K, 0), K, d);
+        }
+    }
+    let [rho0, rho1] = &rho;
+    let Some((h, w)) = arc_rows(rho0, rho1, &mc, o) else {
+        return false;
+    };
+    // |S - O| <= |m - O| + the ball's radius over the piece
+    let mut d_mo = 0.0_f64;
+    let mut d_rad = 0.0_f64;
+    for ((mq, &oq), r0q) in mc.iter().zip(&o).zip(rho0) {
+        let dd = (mq.at(0) - Ivl::from(oq)).mag();
+        d_mo += dd * dd;
+        let b = (r0q.at(0) - mq.at(0)).mag();
+        d_rad += b * b;
+    }
+    let d_r = crate::geom::vector3d::sqrt(d_mo) + crate::geom::vector3d::sqrt(d_rad);
+    for (j, (hj, wj)) in h.iter().zip(&w).enumerate() {
+        let mut sq = 0.0_f64;
+        for hq in hj {
+            sq += hq.at(TAY).mag() * hq.at(TAY).mag();
+        }
+        let dx = 24.0 * crate::geom::vector3d::sqrt(sq);
+        let dy = 24.0 * wj.at(TAY).mag();
+        let dwlo = wj.at(0).lo;
+        if !(dx.is_finite() && dy.is_finite() && dwlo > 0.0) {
+            return false;
+        }
+        let (Some(xj), Some(yj), Some(lj)) = (rt.x.get_mut(j), rt.y.get_mut(j), rt.w_lo.get_mut(j))
+        else {
+            return false;
+        };
+        *xj = cmax(*xj, dx);
+        *yj = cmax(*yj, dy);
+        *lj = cmin(*lj, dwlo);
+    }
+    if !d_r.is_finite() {
+        return false;
+    }
+    rt.r = cmax(rt.r, d_r);
+    true
+}
+
 /// `sm_GnCertifySpan`: the certified bound on the Hermite span between two stations, or
 /// infinity where the span is not proved. The Hermite remainder is `h^4 / 384` times the
 /// jets' largest fourth s-derivative over the span, bounded on its pieces
@@ -1121,6 +1251,11 @@ pub fn gn_certify_span(
         g: [Vec::new(), Vec::new()],
     };
     let mut o = [0.0_f64; 3];
+    // the ball's circle (n = 1, cc08236): its arc's rows all vary along s, about the first
+    // station's centre
+    let arc = n == 1;
+    let rows_vary = vary.is_some() || arc;
+    let l_jets = if arc { 0 } else { n }; // the jets graded on their own: the arc's rails only
     if let Some(v) = vary.as_deref() {
         if !(a.w.is_finite() && b.w.is_finite()) {
             return Err(SolidError::sm_err(OP));
@@ -1128,6 +1263,12 @@ pub fn gn_certify_span(
         bar = gn_form_normalized(v.n, Ivl::from(a.w));
         for (q, oq) in o.iter_mut().enumerate() {
             *oq = a.f[0].a.get(q).map_or(f64::NAN, |c| c.at(0, 0));
+        }
+    }
+    if arc {
+        bar.w = vec![Ivl::from(0.0); 3];
+        for (q, oq) in o.iter_mut().enumerate() {
+            *oq = a.v.a.get(q).map_or(f64::NAN, |c| c.at(0, 0));
         }
     }
     for level in 0..=6_u32 {
@@ -1177,11 +1318,11 @@ pub fn gn_certify_span(
                 return Err(SolidError::sm_err(OP));
             };
             let ((pm, puv), series) = gn_try!(
-                gn_fourth_over_series(k, faces_n, leader_n, faces, center, ea, eb, r, side, n),
+                gn_fourth_over_series(k, faces_n, leader_n, faces, center, ea, eb, r, side, l_jets),
                 bound_out
             );
             for (((m4f, pmf), uvf), &puvf) in m4.iter_mut().zip(&pm).zip(uv4.iter_mut()).zip(&puv) {
-                for (m4fk, &pmfk) in m4f.iter_mut().zip(pmf).take(n + 1) {
+                for (m4fk, &pmfk) in m4f.iter_mut().zip(pmf).take(l_jets + 1) {
                     let finite = pmfk < f64::INFINITY;
                     if !finite {
                         proved = false;
@@ -1211,25 +1352,41 @@ pub fn gn_certify_span(
                     };
                 }
             }
+            if proved && arc {
+                proved = match series {
+                    Some(ps) => {
+                        let d = Ivl::new(ea.s, eb.s) - Ivl::from(ps.mid);
+                        arc_row_terms_over(&ps.f, &ps.v, &ps.fm, &ps.vm, d, o, &mut rows)
+                    }
+                    None => false,
+                };
+            }
         }
         if !proved {
             continue;
         }
-        let varying = vary.is_some();
         let mut bound = 0.0_f64;
         let mut da = 0.0_f64;
         for (m4f, &uvf) in m4.iter().zip(&uv4) {
             let mut sum = 0.0_f64;
-            for &m4fk in m4f.iter().take(n + 1) {
+            for &m4fk in m4f.iter().take(l_jets + 1) {
                 sum += h * h * h * h / 384.0 * m4fk;
             }
             da = cmax(da, sum);
             bound = cmax(
                 bound,
-                cmax(if varying { 0.0 } else { sum }, h * h * h * h / 384.0 * uvf),
+                cmax(
+                    if rows_vary { 0.0 } else { sum },
+                    h * h * h * h / 384.0 * uvf,
+                ),
             );
         }
-        if varying {
+        // the arc: no fixed section, every row's remainder (the varying rows' bound with
+        // A = 0)
+        if arc {
+            da = 0.0;
+        }
+        if rows_vary {
             let kh = h * h * h * h / 384.0;
             for (j, wj) in bar.w.iter().enumerate() {
                 let (Some(&lj), Some(&yj), Some(&xj)) =
