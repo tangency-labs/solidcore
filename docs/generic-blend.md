@@ -1,10 +1,14 @@
+<!-- SPDX-License-Identifier: Apache-2.0 -->
+
 # The generic rolling-ball blend
 
 This page describes the blend that is replacing SMLib's fillet code step by step: what it builds,
 how, why it is built that way, what is merged, and what is open. It is written for a reader who
 knows blending surfaces and is new to this code. Numbers in brackets are references (end of page).
-The same page lives in the SMLib fork (tangency-labs/smlib, `docs/generic-blend.md`); this copy adds
-how the work is ported to solidcore (§9).
+This is solidcore's design page for the blend. The construction began in the SolidCraft fork of
+SMLib, whose construction ended on 2026-11-02 (v1.1.0-alpha); solidcore is based on SMLib and
+carries the blend forward on its own path (§9). Every issue named here is a solidcore issue; each
+links back to where its work started.
 
 Contents:
 1. [Purpose and the one rule](#1-purpose-and-the-one-rule)
@@ -15,7 +19,7 @@ Contents:
 6. [Status](#6-status)
 7. [Case gallery](#7-case-gallery)
 8. [For contributors](#8-for-contributors)
-9. [Porting to solidcore](#9-porting-to-solidcore)
+9. [Where it comes from, and how cases are reported](#9-where-it-comes-from-and-how-cases-are-reported)
 10. [References](#10-references)
 
 ---
@@ -307,12 +311,8 @@ Every refusal (no room, fold, too large, overflow that cannot be trimmed, a setb
 returns the largest size that builds, computed from the cause's own geometry: in closed form where
 one exists, else by solving that cause's geometry, never by building again. Where the cause's bound is
 open (a size at it would leave a face or an edge of no extent), it is the bound less a thousand of the
-edge's tolerances. The C API returns it next to the reason:
-
-```c
-int32_t smlib_blend_reason(char *out, int64_t size, int64_t *out_length);
-int32_t smlib_blend_fit_size(double *out_size, int32_t *out_what); /* SMLIB_FIT_SIZE, _SETBACK or _SCALE */
-```
+edge's tolerances. The fillet session returns it next to the reason: `fit_size()` gives a `FitSize`, the size and
+its `FitKind` (a radius, a setback or a setback scale; `blend::fillet_executive`).
 
 The application shows the refusal and offers that size; it does not search by retrying builds.
 
@@ -377,45 +377,43 @@ given.
 
 The rework lands in seven steps, each behind tests committed failing first.
 
-| step | content | state |
+| step | content | issue |
 |---|---|---|
-| 1 | the tangent end as an event; the end rib built outward, order 2 in t = √s; the march into P deleted | merged, [smlib #76](https://github.com/tangency-labs/smlib/pull/76) |
-| 2 | one classification of the exact rounds, each built as its rational surface; the try-chain deleted | merged, [smlib #77](https://github.com/tangency-labs/smlib/pull/77) |
-| 3 | one Gⁿ section generator (chord, circle, curvature) certified per span; variable rounds as the union of their balls | merged, [smlib #78](https://github.com/tangency-labs/smlib/pull/78) |
-| 4 | corners: Turn (Mitre, Swept), Join, Ball, End merged; Setback with its convex fill, mixed convexity and the remaining old corner classes open | part merged, [smlib #79](https://github.com/tangency-labs/smlib/pull/79) |
-| 5 | fold and room checks, exact; refusals sized through `smlib_blend_fit_size` | merged in #79; remaining classes open |
-| 6 | overflow trimmed at the crease, in place | merged in #79 |
-| 7 | the round stored as its definition, with a certified net | merged in #79; nesting and the fading end open |
+| 1 | the tangent end as an event; the end rib built outward, order 2 in t = √s; the march into P deleted | [#2243](https://github.com/tangency-labs/solidcore/issues/2243) |
+| 2 | one classification of the exact rounds, each built as its rational surface; the try-chain deleted | [#2244](https://github.com/tangency-labs/solidcore/issues/2244) |
+| 3 | one Gⁿ section generator (chord, circle, curvature) certified per span; variable rounds as the union of their balls | [#2250](https://github.com/tangency-labs/solidcore/issues/2250), [#2312](https://github.com/tangency-labs/solidcore/issues/2312), [#2318](https://github.com/tangency-labs/solidcore/issues/2318) |
+| 4 | corners: Turn (Mitre, Swept), Join, Ball, End [#2273](https://github.com/tangency-labs/solidcore/issues/2273); Setback with its certified convex fill [#2310](https://github.com/tangency-labs/solidcore/issues/2310); the Ball on curved faces and the old corner code deleted [#2342](https://github.com/tangency-labs/solidcore/issues/2342); the End at a smooth vertex [#2358](https://github.com/tangency-labs/solidcore/issues/2358); mixed convexity [#2360](https://github.com/tangency-labs/solidcore/issues/2360); four or more rounds and open setbacks [#2359](https://github.com/tangency-labs/solidcore/issues/2359) | see each |
+| 5 | fold and room checks, exact; refusals that name the size that fits | [#2273](https://github.com/tangency-labs/solidcore/issues/2273); remaining classes [#2401](https://github.com/tangency-labs/solidcore/issues/2401) |
+| 6 | overflow trimmed at the crease, in place | [#2273](https://github.com/tangency-labs/solidcore/issues/2273) |
+| 7 | the round stored as its definition, with a certified net; a round on a round; the Ball's sphere patch kept with its definition | [#2273](https://github.com/tangency-labs/solidcore/issues/2273), [#2298](https://github.com/tangency-labs/solidcore/issues/2298), [#2357](https://github.com/tangency-labs/solidcore/issues/2357); kept through the record [#2388](https://github.com/tangency-labs/solidcore/issues/2388) |
 
-The code is in `source/SMLib/src`: `SmBlendCorner*.cpp` (classification and the corner events),
-`SmFilletSection.cpp` (`SmGnSectionFSG`, the section generator), `SmFilletSolver.cpp` (the trace
-and the §3.3 checks), `SmFilletOverflow.cpp` (the crease trim), `SmFilletExact.cpp` (the exact
-classes), `SmProceduralBlend.cpp` (the definition), `SmBallPatch.cpp` (the Ball's sphere patch) and
-`SmBlendSetback.cpp` (the setback fill); the C API is in `capi/include/smlib.h`.
+The code is in `crates/solidcore/src/blend`: `blend_corner` (classification and the corner events:
+`ball`, `mixed`, `setback`, `swept`), `fillet_section` (the Gⁿ section generator, its definition and
+certificate), `fillet_solver` (the trace and the §3.3 checks), `fillet_overflow` (the crease trim),
+`fillet_exact` (the exact classes) and `blend_setback` (the setback fill); the definition's surface is
+`crates/solidcore/src/surface/procedural_blend.rs`.
 
-**Open work**, each an issue to claim:
+**Open work**, each a solidcore issue to claim:
 
 | issue | topic |
 |---|---|
-| [#80](https://github.com/tangency-labs/smlib/issues/80) | Setback with a certified convex fill (G1) and setback growth |
-| [#81](https://github.com/tangency-labs/smlib/issues/81) | a round ending at the smooth vertex of a partly selected tangent chain |
-| [#82](https://github.com/tangency-labs/smlib/issues/82) | mixed convexity: convex and concave blends at one vertex (the test peg) |
-| [#83](https://github.com/tangency-labs/smlib/issues/83) | delete the old corner hierarchy |
-| [#84](https://github.com/tangency-labs/smlib/issues/84) | several concave rounds at one vertex, unequal or N ≥ 4 |
-| [#85](https://github.com/tangency-labs/smlib/issues/85) | a ball or setback corner with a curved face |
-| [#86](https://github.com/tangency-labs/smlib/issues/86) | four or more equal rounds at a vertex, and open setbacks |
-| [#87](https://github.com/tangency-labs/smlib/issues/87) | the G2 setback fill held convex |
-| [#88](https://github.com/tangency-labs/smlib/issues/88) | four blends over three faces |
-| [#89](https://github.com/tangency-labs/smlib/issues/89) | chamfers meeting at a vertex |
-| [#90](https://github.com/tangency-labs/smlib/issues/90) | a closed edge meeting itself at an angle |
-| [#91](https://github.com/tangency-labs/smlib/issues/91) | size the remaining refusal classes; refuse the collapsed offset |
-| [#92](https://github.com/tangency-labs/smlib/issues/92) | a round on a definition face; the fading end |
-| [#93](https://github.com/tangency-labs/smlib/issues/93) | the pipe-on-plate curvature round grades a seam G3 where G2 is wanted |
-| [#94](https://github.com/tangency-labs/smlib/issues/94) | a tangent chain over an earlier round's curved end curve fails |
-| [#95](https://github.com/tangency-labs/smlib/issues/95) | building near a refusal's size bound fails |
-| [#96](https://github.com/tangency-labs/smlib/issues/96) | performance of the order-2 section certificate and of a grown setback |
-| [#97](https://github.com/tangency-labs/smlib/issues/97) | follow-ups: refitted frames, exact plane∩cylinder/torus edges, pcurves, untested paths |
-| [#98](https://github.com/tangency-labs/smlib/issues/98) | a rail that rolls over a tangent edge before a smooth-vertex End |
+| [#2400](https://github.com/tangency-labs/solidcore/issues/2400) | delete the old corner hierarchy |
+| [#2361](https://github.com/tangency-labs/solidcore/issues/2361) | several concave rounds at one vertex; mixed corners with every edge blended |
+| [#2343](https://github.com/tangency-labs/solidcore/issues/2343) | the Setback beside curved faces |
+| [#2344](https://github.com/tangency-labs/solidcore/issues/2344) | the least certifying setback scale; streamed QP rows |
+| [#2345](https://github.com/tangency-labs/solidcore/issues/2345) | chamfers meeting at a vertex |
+| [#2346](https://github.com/tangency-labs/solidcore/issues/2346) | a G2 setback fill beside circular rounds |
+| [#2347](https://github.com/tangency-labs/solidcore/issues/2347) | the G2 setback fill held convex |
+| [#2348](https://github.com/tangency-labs/solidcore/issues/2348) | four blends over three faces |
+| [#2349](https://github.com/tangency-labs/solidcore/issues/2349) | a closed edge meeting itself at an angle |
+| [#2356](https://github.com/tangency-labs/solidcore/issues/2356) | a smooth Gⁿ interior on faces of finite smoothness |
+| [#2401](https://github.com/tangency-labs/solidcore/issues/2401) | size the remaining refusal classes; refuse the collapsed offset |
+| [#2402](https://github.com/tangency-labs/solidcore/issues/2402) | a round on a definition face; the fading end |
+| [#2403](https://github.com/tangency-labs/solidcore/issues/2403) | a tangent chain over an earlier round's curved end curve fails |
+| [#2404](https://github.com/tangency-labs/solidcore/issues/2404) | building near a refusal's size bound fails |
+| [#2405](https://github.com/tangency-labs/solidcore/issues/2405) | follow-ups: refitted frames, exact plane∩cylinder/torus edges, pcurves, untested paths |
+| [#2406](https://github.com/tangency-labs/solidcore/issues/2406) | a rail that rolls over a tangent edge before a smooth-vertex End |
+| [#2388](https://github.com/tangency-labs/solidcore/issues/2388) | the definition kept through SolidCraft's record: a reopened or split round is solved on S |
 
 ## 7. Case gallery
 
@@ -538,7 +536,7 @@ Counts on SMLib 5e8c9c1: 220 pass, 17 refused as expected, 34 known failing.
 | <img src="generic-blend/cases/cov-junction-boss-tilt-00-root-round.jpg" width="240" alt="cov-junction-boss-tilt-00-root-round"> | `cov-junction-boss-tilt-00-root-round`<br>cylinder R6 tilted 0 degrees joined into a plate, its root edge rounded 1.5 | **passes** |
 | <img src="generic-blend/cases/cov-junction-boss-tilt-20-root-round.jpg" width="240" alt="cov-junction-boss-tilt-20-root-round"> | `cov-junction-boss-tilt-20-root-round`<br>cylinder R6 tilted 20 degrees joined into a plate, its root edge rounded 1.5 | **known failing**: SMLib fillet status 1001 on a cylinder tilted 20 degrees into the plate (also before the blend rework) |
 | <img src="generic-blend/cases/cov-junction-boss-tilt-40-root-round.jpg" width="240" alt="cov-junction-boss-tilt-40-root-round"> | `cov-junction-boss-tilt-40-root-round`<br>cylinder R6 tilted 40 degrees joined into a plate, its root edge rounded 1.5 | **known failing**: SMLib fillet status 1001 on a cylinder tilted 40 degrees into the plate (also before the blend rework) |
-| <img src="generic-blend/cases/cov-junction-tee-equal-round.jpg" width="240" alt="cov-junction-tee-equal-round"> | `cov-junction-tee-equal-round`<br>equal pipes R8 tee, rounded 1 | **known failing**: equal pipes' intersection is two plane ellipses crossing: their exact conic-pair rounds meet at the crossings in a corner the old corner code cannot join (built by the traced rounds before smlib#77); the corner step |
+| <img src="generic-blend/cases/cov-junction-tee-equal-round.jpg" width="240" alt="cov-junction-tee-equal-round"> | `cov-junction-tee-equal-round`<br>equal pipes R8 tee, rounded 1 | **known failing**: equal pipes' intersection is two plane ellipses crossing: their exact conic-pair rounds meet at the crossings in a corner the old corner code cannot join (built by the traced rounds before [#2244](https://github.com/tangency-labs/solidcore/issues/2244)); the corner step |
 | <img src="generic-blend/cases/cov-junction-tee-oblique-round.jpg" width="240" alt="cov-junction-tee-oblique-round"> | `cov-junction-tee-oblique-round`<br>pipe tee oblique: main R8, branch R5 offset 0 tilted 30, intersection rounded 1 | **passes** |
 | <img src="generic-blend/cases/cov-junction-tee-oblique-unequal-round.jpg" width="240" alt="cov-junction-tee-oblique-unequal-round"> | `cov-junction-tee-oblique-unequal-round`<br>pipe tee oblique-unequal: main R8, branch R4 offset 1 tilted 45, intersection rounded 1 | **passes** |
 | <img src="generic-blend/cases/cov-junction-tee-offset-round.jpg" width="240" alt="cov-junction-tee-offset-round"> | `cov-junction-tee-offset-round`<br>pipe tee offset: main R8, branch R5 offset 2 tilted 0, intersection rounded 1 | **passes** |
@@ -739,10 +737,11 @@ Counts on SMLib 5e8c9c1: 220 pass, 17 refused as expected, 34 known failing.
 
 ## 8. For contributors
 
+- **Read first.** Read this page and [CONTRIBUTING.md](../CONTRIBUTING.md).
 - **Claim first.** Pick an open issue from §6, say on it that you are taking it, and keep one topic
   per pull request.
-- **Tests first.** Commit the failing test before the fix: a C API case in
-  `capi/tests/ops_kernel.cpp` (or the known-failing list it joins), gated on values a wrong result
+- **Tests first.** Commit the failing test before the fix, in the area's existing test file under
+  `crates/solidcore/tests` (or the known-failing list it joins), gated on values a wrong result
   would change: exact volumes, distances to the exact surface, seam angles, counts of faces and
   spans. Timings are machine-dependent and are never gates.
 - **Root causes only.** Find why the construction is wrong and fix that. No special case for the
@@ -753,28 +752,59 @@ Counts on SMLib 5e8c9c1: 220 pass, 17 refused as expected, 34 known failing.
   comments and commit messages describe what the code does, not which paper it came from.
 - **Exact or certified.** Every surface and curve you add is exact (analytic or rational) or
   certified against its definition with a stored bound. A sampled check is not a certificate.
-- **Refuse with a size.** A new refusal returns the largest size that builds through
-  `smlib_blend_fit_size`, or says why there is none.
+- **Refuse with a size.** A new refusal returns the largest size that builds (`FitSize`), or
+  says why there is none.
 - **Every commit builds**, and the tests it touches pass or are listed known-failing with a reason.
 - **Delete what the new construction replaces** in the same step, once nothing calls it.
 
-## 9. Porting to solidcore
+## 9. Where it comes from, and how cases are reported
 
-The blend is designed and landed in the SMLib fork first; solidcore ports each merged step. The port
-is **bit-identical** to the fork: the same inputs give the same output, bit for bit, and the difftest
-(`crates/difftest`, Rust and C++ run side by side on the same inputs) checks it unit by unit. A
-difference is a port defect to find, never a tolerance to widen. Fixing a defect in the construction
-happens in the fork first, then is ported.
+**Origin.** The blend was designed and first built in the SolidCraft fork of SMLib (2026-10 to
+2026-11-02, v1.1.0-alpha), where its constructions replaced SMLib's fillet code. solidcore is based on
+SMLib and continues from there on its own path: new construction is designed on its solidcore issue
+and lands here. The fork's results are the baseline the brought-over steps match, bit for bit, and
+the difftest shows it when the maintainers run it; the issues below link back to where each step
+started.
 
-| port issue | fork step |
+**The new construction replaces the old one; the old code is deleted.**
+- A step lands behind its `UpstreamFixes` flag only while it is being brought over, so its results can
+  be checked case by case.
+- Once it is in and matches, the flag becomes the default, and the old path is deleted along with
+  the flags and patches made to it. Nothing is kept as a fallback.
+- Don't extend an old path; improve the construction that replaces it. Where the old path is still
+  reached, bring over what changes behaviour now and name the pending deletion in the pull request.
+
+**Order and claims.** Bring the steps over in order: each deletes code the next assumes gone. Claim
+the issue before starting, keep the step's tests, and keep one topic per pull request. Coordination
+is on [#2243](https://github.com/tangency-labs/solidcore/issues/2243).
+
+**Cases are reported as they resolve, with images.** §7 shows every SolidCraft rig case with its
+state: passes, refused as expected (with the size that fits), or known failing (with its reason).
+When a pull request makes a case pass, or turns a known failure into a correct refusal, it updates
+that case's row **and its render** (`docs/generic-blend/cases/<case>.jpg`) in the same pull request.
+The render shows the case's issue: the view is chosen for it (the corner, the seam, the edge's end,
+the spot refused or fixed), framed close on that region, with an inset of the whole part where it
+helps. Not a fixed angle on the bounding box. A row
+whose state changes without a new render is not accepted. A known failure keeps its reason until it
+passes.
+
+| issue | step or topic |
 |---|---|
-| [solidcore #2243](https://github.com/tangency-labs/solidcore/issues/2243) | smlib #76, step 1: the tangent end as an event of the trace |
-| [solidcore #2244](https://github.com/tangency-labs/solidcore/issues/2244) | smlib #77, step 2: one classification of the exact rounds |
-| [solidcore #2250](https://github.com/tangency-labs/solidcore/issues/2250) | smlib #78, step 3: one Gⁿ section generator; variable rounds as the union of their balls |
-| [solidcore #2273](https://github.com/tangency-labs/solidcore/issues/2273) | smlib #79, steps 4 (part) to 7: corners, fold and room checks with fit sizes, overflow in place, the round as its definition |
-
-Port the steps in order: each fork step deletes code the next one assumes gone. Claim the port issue
-before starting, and keep the fork's tests as the port's tests.
+| [#2243](https://github.com/tangency-labs/solidcore/issues/2243) | step 1: the tangent end as an event of the trace |
+| [#2244](https://github.com/tangency-labs/solidcore/issues/2244) | step 2: one classification of the exact rounds; the try-chain deleted |
+| [#2250](https://github.com/tangency-labs/solidcore/issues/2250) | step 3: one Gⁿ section generator; variable rounds as the union of their balls |
+| [#2273](https://github.com/tangency-labs/solidcore/issues/2273) | steps 4 to 7: Ball and End/Join corners, fold and room checks with fit sizes, overflow in place, the round as its definition |
+| [#2298](https://github.com/tangency-labs/solidcore/issues/2298) | a round on a round built as its definition |
+| [#2310](https://github.com/tangency-labs/solidcore/issues/2310) | the Setback, certified convex and grown to fit |
+| [#2312](https://github.com/tangency-labs/solidcore/issues/2312) | a Gⁿ certificate span no level can certify is halved at once |
+| [#2318](https://github.com/tangency-labs/solidcore/issues/2318) | equal-area sums and thumbweights solved once each |
+| [#2342](https://github.com/tangency-labs/solidcore/issues/2342) | the Ball on curved faces; old corner code deleted; the seam-angle measure |
+| [#2357](https://github.com/tangency-labs/solidcore/issues/2357) | the Ball's sphere patch with its definition; a definition record for faces |
+| [#2358](https://github.com/tangency-labs/solidcore/issues/2358) | the End at a smooth vertex; the side edge across a seam's vertex |
+| [#2359](https://github.com/tangency-labs/solidcore/issues/2359) | four or more rounds at a vertex; open setbacks |
+| [#2360](https://github.com/tangency-labs/solidcore/issues/2360) | the Mixed corner |
+| [#2362](https://github.com/tangency-labs/solidcore/issues/2362) | clean under strict warnings |
+| [#2363](https://github.com/tangency-labs/solidcore/issues/2363) | tests gated on counted work, not time |
 
 ## 10. References
 
