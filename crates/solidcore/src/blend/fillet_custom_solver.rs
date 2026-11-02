@@ -2012,7 +2012,7 @@ macro_rules! fillet_intersector_ops {
                 points: &[TsectPnt],
                 uv1: &mut BSplineCurve,
                 uv2: &mut BSplineCurve,
-            ) -> Result<Option<BSplineSurface>> {
+            ) -> Result<Option<Surface>> {
                 IntersectorOps::create_fillet_surface(
                     &mut self.base,
                     k,
@@ -2029,7 +2029,7 @@ macro_rules! fillet_intersector_ops {
                 &mut self,
                 pseudo: &mut crate::blend::fillet_geom::p1::FilletBrep,
                 geom: &Self::FilletGeom,
-                surface: Option<BSplineSurface>,
+                surface: Option<Surface>,
             ) -> Result<()> {
                 IntersectorOps::set_fillet_surface(&mut self.base, pseudo, geom, surface)
             }

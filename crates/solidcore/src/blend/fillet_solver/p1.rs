@@ -384,9 +384,9 @@ impl FilletSurfaceGenerator {
         points: &[TsectPnt],
         side1: crate::blend::fillet_standard_solver::p1::RailSurface<'_>,
         side2: crate::blend::fillet_standard_solver::p1::RailSurface<'_>,
-    ) -> Result<crate::nurbs::b_spline_surface::BSplineSurface> {
+    ) -> Result<Surface> {
         let no_center = || SolidError::invalid_input(OP, "NULL centre line");
-        match self {
+        let surface = match self {
             Self::Base => Err(SolidError::sm_err(OP)),
             Self::EiffelTower => {
                 crate::blend::fillet_custom_solver::EiffelTowerCrossSectionFsg::new()
@@ -422,16 +422,18 @@ impl FilletSurfaceGenerator {
                 let mut uv1 = side1.uv_curve.ok_or_else(none)?.clone();
                 let mut uv2 = side2.uv_curve.ok_or_else(none)?.clone();
                 let mut g = *g;
-                g.create_surface(
+                // (a blend by its definition with `fillet_round_as_definition`, 4a10ed8)
+                return g.create_surface(
                     k,
                     approx_tol_3d,
                     center_line.ok_or_else(no_center)?,
                     [rail1, rail2],
                     [s1, s2],
                     [&mut uv1, &mut uv2],
-                )
+                );
             }
-        }
+        };
+        surface.map(Surface::from)
     }
 
     /// [`FilletSurfaceGenerator::create_surface`] for a caller that owns the rails' uv
@@ -458,7 +460,7 @@ impl FilletSurfaceGenerator {
         points: &[TsectPnt],
         surfaces: [&Surface; 2],
         uv: [&mut BSplineCurve; 2],
-    ) -> Result<crate::nurbs::b_spline_surface::BSplineSurface> {
+    ) -> Result<Surface> {
         use crate::blend::fillet_standard_solver::p1::RailSurface;
         if let Self::GnSection(g) = self {
             let center =

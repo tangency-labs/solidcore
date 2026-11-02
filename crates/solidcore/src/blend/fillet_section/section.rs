@@ -25,6 +25,7 @@ use crate::nurbs::b_spline_curve::{BSplineCurve, BSplineCurveForm, CanonicalData
 use crate::nurbs::b_spline_surface::p1::CanonicalSurfaceData;
 use crate::nurbs::b_spline_surface::{BSplineSurface, BSplineSurfaceForm};
 use crate::nurbs::knots::Side;
+use crate::surface::procedural_blend::{BlendDefinitionInput, ProceduralBlend};
 use crate::surface::surface::{Surface, SurfaceKind};
 
 const OP: &str = "blend::fillet_section::GnSectionFsg";
@@ -247,7 +248,7 @@ impl GnSectionFsg {
         rails: [&mut BSplineCurve; 2],
         surfaces: [&Surface; 2],
         uvs: [&mut BSplineCurve; 2],
-    ) -> Result<BSplineSurface> {
+    ) -> Result<Surface> {
         let [s1, s2] = surfaces;
         let faces = [base_of(s1), base_of(s2)];
         self.build(k, center_line, rails, approx_tol_3d, faces, uvs, true)
@@ -266,7 +267,7 @@ impl GnSectionFsg {
         rails: [&mut BSplineCurve; 2],
         approx_tol_3d: f64,
         faces: GnFaces<'_>,
-    ) -> Result<BSplineSurface> {
+    ) -> Result<Surface> {
         let [u1, u2] = faces.uv;
         let mut uv1 = u1.clone();
         let mut uv2 = u2.clone();
@@ -295,7 +296,7 @@ impl GnSectionFsg {
         faces: [&Surface; 2],
         uvs: [&mut BSplineCurve; 2],
         replace_rails: bool,
-    ) -> Result<BSplineSurface> {
+    ) -> Result<Surface> {
         let n = self.order;
         if !Self::is_valid(n, self.thumbweight) {
             return Err(SolidError::invalid_input(
@@ -304,6 +305,8 @@ impl GnSectionFsg {
             ));
         }
         let [rail1, rail2] = rails;
+        // (the fork's 4a10ed8, opt-in: the surface is the blend by its definition)
+        let definition = k.fixes.fillet_round_as_definition;
         let (c_min, c_max) = interval(center);
         let scale = smax(1.0, c_max - c_min);
         // the equal area thumbweight is resolved per station, from its own wedge
@@ -528,8 +531,39 @@ impl GnSectionFsg {
             uv_domain: None,
         })?;
 
-        if replace_rails {
-            for (f, (rail, uv)) in [rail1, rail2].into_iter().zip(uvs).enumerate() {
+        // the feet's uv curves: the Hermite interpolants of the stations' feet, the
+        // definition's seeds (4a10ed8); the rails and uv curves become them with
+        // `replace_rails`
+        let mut seeds: Vec<BSplineCurve> = Vec::new();
+        for (f, (rail, uv)) in [rail1, rail2].into_iter().zip(uvs).enumerate() {
+            let v: Vec<Vec3> = stations
+                .iter()
+                .map(|st| Vec3::new(param(st, 2 * f, 0, 0), param(st, 2 * f + 1, 0, 0), 0.0))
+                .collect();
+            let d: Vec<Vec3> = stations
+                .iter()
+                .map(|st| Vec3::new(param(st, 2 * f, 1, 0), param(st, 2 * f + 1, 1, 0), 0.0))
+                .collect();
+            let uv_cps = hermite_points(&ss, &v, &d);
+            let dim = uv.dim;
+            let uv_data = CanonicalData {
+                dim,
+                degree: 3,
+                control_points: &uv_cps,
+                form: BSplineCurveForm::Unspecified,
+                knot_multiplicities: &u_mult,
+                knots: &u_knots,
+                knot_type: KnotType::Unspecified,
+                weights: None,
+                trim: None,
+            };
+            if definition {
+                // (apUV[f]->Copy, then SetCanonical on the copy)
+                let mut seed = uv.clone();
+                seed.set_canonical(&uv_data)?;
+                seeds.push(seed);
+            }
+            if replace_rails {
                 let rail_cps: Vec<Point3> = (0..lnu).map(|i| jet(f, 0, i)).collect();
                 rail.set_canonical(&CanonicalData {
                     dim: 3,
@@ -542,30 +576,34 @@ impl GnSectionFsg {
                     weights: None,
                     trim: None,
                 })?;
-                let v: Vec<Vec3> = stations
-                    .iter()
-                    .map(|st| Vec3::new(param(st, 2 * f, 0, 0), param(st, 2 * f + 1, 0, 0), 0.0))
-                    .collect();
-                let d: Vec<Vec3> = stations
-                    .iter()
-                    .map(|st| Vec3::new(param(st, 2 * f, 1, 0), param(st, 2 * f + 1, 1, 0), 0.0))
-                    .collect();
-                let uv_cps = hermite_points(&ss, &v, &d);
-                let dim = uv.dim;
-                uv.set_canonical(&CanonicalData {
-                    dim,
-                    degree: 3,
-                    control_points: &uv_cps,
-                    form: BSplineCurveForm::Unspecified,
-                    knot_multiplicities: &u_mult,
-                    knots: &u_knots,
-                    knot_type: KnotType::Unspecified,
-                    weights: None,
-                    trim: None,
-                })?;
+                uv.set_canonical(&uv_data)?;
             }
         }
-        Ok(surface)
+        if !definition {
+            return Ok(Surface::from(surface));
+        }
+
+        // the blend by its definition on this net (4a10ed8): the faces, the ball's offsets
+        // and sides, the section, the centre line as the leader the stations were solved
+        // in, the seeds, the certified bound
+        let (Some(seed0), Some(seed1)) = (seeds.first(), seeds.get(1)) else {
+            return Err(SolidError::sm_err(OP));
+        };
+        let input = BlendDefinitionInput {
+            supports: faces,
+            sides: side,
+            offsets: r,
+            law: None,
+            order: u32::try_from(n).map_err(|_| SolidError::sm_err(OP))?,
+            thumbweight: self.thumbweight,
+            leader: center,
+            seeds: [seed0, seed1],
+            bound: self.certified_bound,
+        };
+        let blend = ProceduralBlend::create(k, &surface, &input, |order, w| {
+            Self::is_valid(order as usize, w)
+        })?;
+        Ok(Surface::from(blend))
     }
 
     /// The certificate block of `Build`: a station wherever a foot crosses a knot line of
@@ -592,6 +630,13 @@ impl GnSectionFsg {
                 // be certified"
                 return Err(SolidError::sm_err(OP));
             };
+            // a blend by its definition is enclosed only on its net, which is not the
+            // surface the feet are solved on (4a10ed8): "a face that is a blend by its
+            // definition: a blend of order 2 and up on it cannot be certified until its
+            // definition is enclosed"
+            if matches!(f.kind(), SurfaceKind::ProceduralBlend(_)) {
+                return Err(SolidError::sm_err(OP));
+            }
             nurbs.push(Nurbs::of(&bs)?);
         }
         let (Some(n0), Some(n1)) = (nurbs.first(), nurbs.get(1)) else {
