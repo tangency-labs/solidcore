@@ -126,7 +126,7 @@ impl FilletCorner {
     /// hole bounded by its sections and spring curves, no patches.
     #[must_use]
     pub fn is_setback_open(&self) -> bool {
-        self.blend.is_some_and(super::BlendCorner::is_setback)
+        self.blend.is_some_and(BlendCorner::is_setback)
             && self.setback.as_ref().is_some_and(|sb| sb.open)
     }
 }
