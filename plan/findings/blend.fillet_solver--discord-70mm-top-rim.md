@@ -113,7 +113,7 @@ Every Boolean cut, the lower-round operand, its STEP roundtrip, the R70 result
 built from that reimported operand, and its final STEP roundtrip must pass
 `check_brep(Level2)` with no failed reports. No healing or tolerance changes are
 used. The reconstructed operand has 17 faces (one cutout spans a seam) rather
-than the original 15; the final result has 21 faces, 56 edges and 37 vertices.
+than the original 15; the final result on merged main `4e30eb2fd` has 20 faces, 55 edges and 37 vertices.
 The original fixture and its failing default behavior remain covered separately.
 
 ## STEP export corrections
@@ -139,3 +139,4 @@ The test recipe is not installed as automatic import repair. The original suppli
 STEP still needs its inconsistent lower blends repaired or reconstructed before
 this provides a valid complete-body R70 workflow. The separate 2 mm model and an
 independent Parasolid comparison remain outside the supplied evidence.
+
