@@ -104,6 +104,7 @@ use crate::blend::fillet_geom::p1::{
 };
 use crate::blend::fillet_geom::p2::{srf_srf_intersection, SrfSrfOptions};
 use crate::blend::fillet_geom::p4::set_edge_curve;
+use crate::blend::fillet_section::section::{GnSectionFsg, GN_DEFAULT_THUMBWEIGHT};
 use crate::blend::fillet_solver::p1::{
     FilletExecutiveRef, FilletSolver, FilletSolverType, FilletSurfaceGenerator,
     FilletSurfaceGeneratorType,
@@ -939,7 +940,7 @@ impl FilletCorner {
                 pass_on,
             )? {
                 Ok(ev) => Ok(ev.first_deriv.unwrap_or(Vec3::UNDEF)),
-                Err(e) if e.is_unported() => Err(e),
+                Err(e) if e.is_unported_or_cancelled() => Err(e),
                 Err(_) => Ok(Vec3::UNDEF),
             }
         };
@@ -1108,7 +1109,7 @@ impl FilletCorner {
         // If failure, the whole fillet could still succeed, so don't SER.
         let new_fg = match split {
             Ok(g) => g,
-            Err(e) if e.is_unported() => return Err(e),
+            Err(e) if e.is_unported_or_cancelled() => return Err(e),
             Err(_) => return Ok(()),
         };
 
@@ -1339,6 +1340,7 @@ impl FilletCorner {
             Ok(made) => Ok(made),
             Err(
                 e @ (SolidError::Unported { .. }
+                | SolidError::Cancelled { .. }
                 | SolidError::InvalidInput { .. }
                 | SolidError::PortInvariant { .. }),
             ) => Err(e),
@@ -1679,6 +1681,10 @@ impl FilletCorner {
         let mut fsg_type = FilletSurfaceGeneratorType::Unknown;
         let mut blend_scale = 1.0; // For use in SmBlendCurveCrossSectionFSG cases only
         let mut max_continuity = 0u32;
+        // the fork's SmGnSectionFSG (WR-685, fixes.fillet_gn_section_generator): its
+        // thumbweight, and its order as the continuity
+        let mut gn = false;
+        let mut thumbweight = GN_DEFAULT_THUMBWEIGHT;
         let mut start_axis = Vec3::UNDEF;
         let mut end_axis = Vec3::UNDEF;
         let mut start_arc_center = Point3::UNDEF;
@@ -1703,7 +1709,14 @@ impl FilletCorner {
 
             if ii == 0 {
                 fsg_type = fsg.fillet_surface_generator_type();
-                if fsg_type == FilletSurfaceGeneratorType::BlendCurve {
+                gn = matches!(fsg, FilletSurfaceGenerator::GnSection(_));
+                if fsg_type == FilletSurfaceGeneratorType::BlendCurve && gn {
+                    thumbweight = fsg.thumbweight().unwrap_or(thumbweight);
+                    let continuity = fsg.continuity().unwrap_or(0);
+                    if continuity > max_continuity {
+                        max_continuity = continuity;
+                    }
+                } else if fsg_type == FilletSurfaceGeneratorType::BlendCurve {
                     blend_scale = fsg.blend_scale().unwrap_or(blend_scale);
                     let continuity = fsg.continuity().unwrap_or(0);
                     if continuity > max_continuity {
@@ -1712,6 +1725,12 @@ impl FilletCorner {
                 }
             } else if fsg_type != fsg.fillet_surface_generator_type() {
                 return Err(sm_err()); // Unable to convert - two different types
+            } else if fsg_type == FilletSurfaceGeneratorType::BlendCurve && gn {
+                if (thumbweight - fsg.thumbweight().unwrap_or(f64::NAN)).abs() > EFF_ZERO
+                    || fsg.continuity() != Some(max_continuity)
+                {
+                    return Err(sm_err()); // Unable to convert
+                }
             } else if fsg_type == FilletSurfaceGeneratorType::BlendCurve {
                 let other_scale = fsg.blend_scale().unwrap_or(blend_scale);
                 if (blend_scale - other_scale).abs() > EFF_ZERO {
@@ -1983,6 +2002,16 @@ impl FilletCorner {
                 false,
             )),
             FilletSurfaceGeneratorType::Linear => Some(FilletSurfaceGenerator::Linear),
+            FilletSurfaceGeneratorType::BlendCurve if gn => {
+                Some(FilletSurfaceGenerator::GnSection(GnSectionFsg::new(
+                    if max_continuity > 1 {
+                        max_continuity as usize
+                    } else {
+                        2
+                    },
+                    thumbweight,
+                )))
+            }
             FilletSurfaceGeneratorType::BlendCurve => Some(FilletSurfaceGenerator::blend_curve(
                 blend_scale,
                 max_continuity,
@@ -2073,7 +2102,7 @@ impl FilletCorner {
             Some(&center_curve),
         ) {
             Ok(()) => {}
-            Err(e) if e.is_unported() => return Err(e),
+            Err(e) if e.is_unported_or_cancelled() => return Err(e),
             Err(_) => return Err(sm_err()), // Unable to convert
         }
 
@@ -2271,6 +2300,7 @@ fn soft<T>(r: Result<T>) -> Result<Option<T>> {
         Ok(v) => Ok(Some(v)),
         Err(
             e @ (SolidError::Unported { .. }
+            | SolidError::Cancelled { .. }
             | SolidError::InvalidInput { .. }
             | SolidError::PortInvariant { .. }),
         ) => Err(e),
@@ -2344,7 +2374,7 @@ fn rail_on_surface(
         });
         match gap {
             Ok(drop) if drop.success && drop.gap <= tol => {}
-            Err(e) if e.is_unported() => return Err(e),
+            Err(e) if e.is_unported_or_cancelled() => return Err(e),
             _ => return Ok(false),
         }
     }

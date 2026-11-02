@@ -89,7 +89,7 @@ fn failure() -> SolidError {
 fn ignore<T>(result: Result<T>) -> Result<Option<T>> {
     match result {
         Ok(value) => Ok(Some(value)),
-        Err(error) if error.is_unported() => Err(error),
+        Err(error) if error.is_unported_or_cancelled() => Err(error),
         Err(_) => Ok(None),
     }
 }
@@ -286,7 +286,7 @@ impl FilletFinishAccess<FilletObject> for FinishAccess<'_, '_> {
                 max_vertex_gap: done.max_vertex_gap,
                 max_edge_gap: done.max_edge_gap,
             }),
-            Err(error) if error.is_unported() => Err(error),
+            Err(error) if error.is_unported_or_cancelled() => Err(error),
             Err(error) => Ok(StitchAttempt {
                 status: Some(error),
                 stitched: 0,
@@ -514,6 +514,24 @@ impl FilletSession<'_> {
                 self.executive.error = note;
             }
         }
+        // Opt-in (`fixes.fillet_gn_section_generator`, WR-696): a refusal with a size that
+        // builds carries it on the error, its status unchanged.
+        if let Err(SolidError::Upstream {
+            operation,
+            code,
+            entity,
+        }) = result
+        {
+            if let Some(fit) = self.fit_size() {
+                return Err(SolidError::FilletRefused {
+                    operation,
+                    code,
+                    entity,
+                    reason: self.executive.error.no_room,
+                    fit,
+                });
+            }
+        }
         result?;
         if !k.fixes.fillet_refuse_non_manifold_result {
             return Ok(());
@@ -647,11 +665,46 @@ impl FilletSession<'_> {
             session.mark_corner_patches()?;
             let editing = session.objects.target.editing_enabled();
             session.objects.target.set_editing_enabled(true);
+            // The fork's (WR-703, `eb883ad`): a feature standing inside a round's band is kept:
+            // the round is trimmed round it in place and sewn in instead of merged.
+            if k.fixes.fillet_keep_features
+                && !session.executive.cliff_overflow
+                && !session.executive.open_ends.iter().any(|end| end.section)
+            {
+                let kept = session.keep_features_in_bands(k);
+                if !matches!(kept, Ok(false)) {
+                    session.objects.target.set_editing_enabled(editing);
+                    if let Some(output) = error_out {
+                        output.assign(&session.executive.error);
+                    }
+                    return kept.map(drop);
+                }
+            }
             // The fork's (WR-631, WR-638): a cliff overflow closes the fillet faces into the
             // region the blends remove and subtracts it from the target, instead of merging
             // the fillet faces in; the error a failed subtraction noted stands.
             // WR-674: a round left open at its tangent-continuation ends is built the same
             // way, by subtraction
+            // WR-695 (the fork's TrimAtCreases, smlib#79 step 6): with
+            // `fillet_overflow_trim_at_creases` a cliff overflow is trimmed at its creases in
+            // place instead; a WR-674 section end is still subtracted, unless
+            // `fillet_section_end_trim_at_creases` (WR-706) trims it too
+            let sectioned = session.executive.open_ends.iter().any(|end| end.section);
+            let trimmed = if sectioned {
+                k.fixes.fillet_section_end_trim_at_creases
+                    && k.fixes.fillet_overflow_trim_at_creases
+                    && k.fixes.fillet_round_ends_at_tangent_continuation
+            } else {
+                session.executive.cliff_overflow && k.fixes.fillet_overflow_trim_at_creases
+            };
+            if trimmed {
+                let result = session.trim_at_creases(k);
+                session.objects.target.set_editing_enabled(editing);
+                if let Some(output) = error_out {
+                    output.assign(&session.executive.error);
+                }
+                return result;
+            }
             if session.executive.cliff_overflow
                 || session.executive.open_ends.iter().any(|end| end.section)
             {

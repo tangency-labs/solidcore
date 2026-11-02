@@ -229,7 +229,7 @@ fn null(reason: &'static str) -> SolidError {
 fn ignored<T>(r: Result<T>) -> Result<Option<T>> {
     match r {
         Ok(v) => Ok(Some(v)),
-        Err(e) if e.is_unported() => Err(e),
+        Err(e) if e.is_unported_or_cancelled() => Err(e),
         Err(_) => Ok(None),
     }
 }
@@ -912,7 +912,7 @@ pub(crate) fn classify_interval_on_face(
         true,
     );
     if let Err(error) = result {
-        if error.is_unported() {
+        if error.is_unported_or_cancelled() {
             return Err(error);
         }
     }
@@ -920,6 +920,79 @@ pub(crate) fn classify_interval_on_face(
         .intervals()
         .iter()
         .map(|i| i.mid.point_class())
+        .collect())
+}
+
+/// One interval of [`classify_free_curve_on_face`]: its parameter interval, the class of
+/// its interior, and the class of each end with the edge it lies on (`None` off an edge).
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct FaceCurveRun {
+    /// `m_vInterval`.
+    pub interval: Extent1d,
+    /// `m_vStart`'s class and edge.
+    pub start: (PointClassType, Option<EdgeId>),
+    /// `m_vMid`'s class.
+    pub mid: PointClassType,
+    /// `m_vEnd`'s class and edge.
+    pub end: (PointClassType, Option<EdgeId>),
+}
+
+/// `SmCurveClassification sClass(&crCurve, interval, NULL, dTol)` followed by
+/// `SER(face.CurveOnClassify(TRUE, sClass, bHasBigGaps))`, on the caller's B-rep in place
+/// ([`curve_on_classify_mut`]: the UV trim curves, gap caches and trimmed surface cache the
+/// classification makes stay on `b`, as upstream's `const` call leaves them): the
+/// intervals, each end with the edge it lies on.
+///
+/// # Errors
+///
+/// Those of [`curve_on_classify_mut`].
+pub(crate) fn classify_free_curve_on_face(
+    k: &Kernel,
+    b: &mut Brep,
+    f: FaceId,
+    curve: &Curve,
+    interval: Extent1d,
+    tol: f64,
+    has_big_gaps: bool,
+) -> Result<Vec<FaceCurveRun>> {
+    let mut objects = FaceClassify { brep: b, curve };
+    let init = ClassificationInit {
+        curve: Some(ClassHandle::Curve),
+        interval,
+        uv_curve: None,
+        src_zone_tol_3d: zone_tol3d(k, tol),
+        opt_data_size: 0,
+        is_curve_owned: false,
+        is_curve_current: true,
+        surface1: None,
+        surface2: None,
+        uv_curve2: None,
+        ti: None,
+    };
+    let mut classification = CurveClassification::with_curve(k, &init)?;
+    curve_on_classify_mut(
+        k,
+        f,
+        &mut objects,
+        true,
+        &mut classification,
+        has_big_gaps,
+        false,
+        true,
+    )?;
+    let edge_of = |o: Option<ClassHandle>| match o {
+        Some(ClassHandle::Edge(e)) => Some(e),
+        _ => None,
+    };
+    Ok(classification
+        .intervals()
+        .iter()
+        .map(|i| FaceCurveRun {
+            interval: i.interval,
+            start: (i.start.point_class(), edge_of(i.start.object())),
+            mid: i.mid.point_class(),
+            end: (i.end.point_class(), edge_of(i.end.object())),
+        })
         .collect())
 }
 
@@ -1034,6 +1107,7 @@ fn runge_kutta_ode_integrate(
     y_scale: &[f64],
 ) -> Result<()> {
     let mut scratch = vec![0.0; y.len() + 1];
+    let mut eval_calls = 0u64;
     crate::mass::integrator::OdeIntegrator::default().integrate(
         y,
         x1,
@@ -1045,6 +1119,10 @@ fn runge_kutta_ode_integrate(
             scale: Some(y_scale),
         },
         |t, _, dy| {
+            eval_calls += 1;
+            if (eval_calls & 63) == 1 {
+                eval.kernel.check_cancelled(OP)?;
+            }
             eval.evaluate(t, &mut scratch)?;
             for (d, v) in dy.iter_mut().zip(scratch.iter().skip(1)) {
                 *d = *v;
@@ -1633,7 +1711,7 @@ pub fn points_in_face(
         // domain, which CalculateUVDomainFromUVTrimCurves sets first)
         let trim_uv_domain = match pass(k, calculate_uv_domain_from_uv_trim_curves(k, b, f))? {
             Ok(d) => d,
-            Err(e) if e.is_unported() => return Err(e),
+            Err(e) if e.is_unported_or_cancelled() => return Err(e),
             Err(_) => b.face(f)?.uv_domain,
         };
         let srf_dom = surf.natural_uv_domain_with_nurb(k)?;

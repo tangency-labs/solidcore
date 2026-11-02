@@ -14,7 +14,7 @@
 //! | [`FilletCorner::new`] with [`FilletCornerKind::Open`] | `SmFilletOpenCorner::SmFilletOpenCorner`           |
 //! | [`FilletCorner::new`] with [`FilletCornerKind::Degenerate`] | `SmFilletDegenerateCorner::SmFilletDegenerateCorner` |
 //! | [`FilletCorner::corner_type`], [`FilletCornerKind::name`] | `GetCornerType`, `GetName` (per derived class)   |
-//! | [`FilletCorner::create`] | `SmFilletCorner::Create` (with `fixes.fillet_corner_per_vertex_fan`, the fork's knife-edge refusal of a two-edge corner, `e418750`, WR-665) |
+//! | [`FilletCorner::create`] | `SmFilletCorner::Create` (with `fixes.fillet_corner_per_vertex_fan`, the fork's knife-edge refusal of a two-edge corner, `e418750`, WR-665; with `fixes.fillet_refuse_mixed_corner_crossing_rails`, not upstream, the refusal of a 3x2 mixed-convexity corner whose rails cross, WR-710) |
 //! | [`FilletCorner::is_mitre`], [`FilletCorner::filleted_edgeuses`] | the fork's `SmFilletNx2Corner::IsMitre`, `GetFilletedEdgeuses` (`9ba2b12`, WR-634) |
 //! | [`FilletCorner::create_with_solver_lookup`] | `Create` with borrowed executive solvers |
 //! | [`FilletCorner::calc_corner_geom`]                 | `SmFilletCorner::CalcCornerGeom`                      |
@@ -687,6 +687,14 @@ pub struct FilletCorner {
     /// concave corner (`MakeCornerTopology`'s bevel at a corner of mixed convexity). Read
     /// by [`Self::is_mitre`].
     pub mitre: bool,
+    /// The fork's blend corner (`SmBlendCorner`, smlib#79 step 4b; WR-697): its event and
+    /// turn where the corner is one (`Kernel::fixes.fillet_blend_corner`), `None` for the
+    /// pinned corners. A blend corner is built by the Nx2 port (see
+    /// [`crate::blend::blend_corner`]).
+    pub blend: Option<crate::blend::blend_corner::BlendCorner>,
+    /// The fork's Swept turn's own members (`m_pSideEU`, `m_pTurnSurface` and its loop;
+    /// WR-697): set by its topology on a blend corner that is a Swept turn.
+    pub swept: Option<crate::blend::blend_corner::swept::SweptTurn>,
 }
 
 /// What the corner methods operate on besides the corner itself.
@@ -1016,6 +1024,8 @@ impl FilletCorner {
             g1_case: false,
             // SmFilletNx2Corner: m_bMitre = FALSE (the fork's, 9ba2b12)
             mitre: false,
+            blend: None,
+            swept: None,
         }
     }
 
@@ -1067,7 +1077,11 @@ impl FilletCorner {
     /// clockwise neighbour, radial partner or edge, a filleted edge use without a
     /// solver (or a solver id past `solvers`) or a solver without surface generator
     /// (upstream dereferences them), and a walk that does not close; those of the
-    /// sector convexity test; [`SolidError::Unported`] (module docs).
+    /// sector convexity test; [`SolidError::Unported`] (module docs). With
+    /// `fixes.fillet_refuse_mixed_corner_crossing_rails` (WR-710, not upstream),
+    /// [`SolidError::Unsupported`] with the reason [`MIXED_CORNER_RAILS_CROSS`] for a 3x2
+    /// mixed-convexity corner whose two filleted edges leave the vertex along one
+    /// tangent, so their rails cross before the corner.
     pub fn create(
         k: &Kernel,
         b: &mut Brep,
@@ -1302,7 +1316,44 @@ impl FilletCorner {
                                 && eu2::is_convex_radial_sector(k, b, eu0, 4, false, 0.0)?
                                     != eu2::is_convex_radial_sector(k, b, eu1_, 4, false, 0.0)?
                             {
+                                // Not upstream (WR-710, opt-in
+                                // `fillet_refuse_mixed_corner_crossing_rails`, #2256):
+                                // where the two edges leave the vertex along one tangent,
+                                // their common face closes to a cusp there and the rails
+                                // cross before the corner; the corner patch built across
+                                // them leaves the faces, so the corner is refused.
+                                if k.fixes.fillet_refuse_mixed_corner_crossing_rails
+                                    && mixed_corner_rails_cross(
+                                        k,
+                                        b,
+                                        vertex,
+                                        edge_of(b, eu0)?,
+                                        edge_of(b, eu1_)?,
+                                        tan_tol_deg,
+                                    )?
+                                {
+                                    return Err(SolidError::Unsupported {
+                                        operation: OP_CREATE,
+                                        reason: MIXED_CORNER_RAILS_CROSS,
+                                    });
+                                }
                                 Some(make(FilletCornerKind::ThreeByTwoMixed))
+                            } else if k.fixes.fillet_blend_corner {
+                                // The fork's (WR-697, smlib#79 step 4b, 74e9beb): two blends of
+                                // one convexity among three or four edges are the blend
+                                // corner's (SmBlendCorner::Classify: a Turn or a Join), built
+                                // by the two-blend construction moved from SmFilletNx2Corner
+                                let blend = crate::blend::blend_corner::classify(
+                                    k,
+                                    b,
+                                    Some(vertex),
+                                    solver_eus,
+                                    &all_eus,
+                                    tan_tol_deg,
+                                )?;
+                                let mut c = make(FilletCornerKind::NByTwo);
+                                c.blend = Some(blend);
+                                Some(c)
                             } else {
                                 // else continue with case 4
                                 Some(make(FilletCornerKind::NByTwo))
@@ -1381,6 +1432,8 @@ impl FilletCorner {
     ///
     /// Those of the selected implementation.
     pub fn create_corner_patch(&mut self, env: &mut CornerEnv<'_>) -> Result<()> {
+        env.k
+            .check_cancelled("blend::fillet_corner::p3::create_corner_patch")?;
         match self.kind {
             FilletCornerKind::ThreeByTwoMixed => self.create_corner_patch_3x2(env),
             FilletCornerKind::NByOne | FilletCornerKind::Open => self.create_corner_patch_nx1(env),
@@ -1644,7 +1697,7 @@ impl FilletCorner {
         // Create Face (and Edges and Verts) in m_pFilletBrep from m_vSurfaces with call m_pFilletBrep->MakeFaceWithCurves()
         match self.make_face_brep_with(env) {
             Ok(()) => {}
-            Err(e) if e.is_unported() => return Err(e),
+            Err(e) if e.is_unported_or_cancelled() => return Err(e),
             Err(
                 e @ SolidError::InvalidInput {
                     reason: p1::NULL_DEREF,
@@ -2078,6 +2131,13 @@ impl FilletCorner {
         nx2: impl FnOnce(&mut Self, &mut C) -> Result<()>,
         nxn: impl FnOnce(&mut Self, &mut C) -> Result<()>,
     ) -> Result<()> {
+        // the fork's SmBlendCorner::AdjustTopology: a Swept turn adjusts nothing (WR-697)
+        if self
+            .blend
+            .is_some_and(crate::blend::blend_corner::BlendCorner::is_swept)
+        {
+            return Ok(());
+        }
         match self.kind {
             FilletCornerKind::NByTwo => nx2(self, context),
             FilletCornerKind::ConvexNByN | FilletCornerKind::ConcaveNByN => nxn(self, context),
@@ -2430,6 +2490,13 @@ impl FilletCorner {
         nx2: impl FnOnce(&mut Self, &mut C) -> Result<()>,
         nx1_closed: impl FnOnce(&mut Self, &mut C) -> Result<()>,
     ) -> Result<()> {
+        // the fork's SmBlendCorner::AdjustTangentCorner: nothing at a Swept turn (WR-697)
+        if self
+            .blend
+            .is_some_and(crate::blend::blend_corner::BlendCorner::is_swept)
+        {
+            return Ok(());
+        }
         match self.kind {
             FilletCornerKind::NByTwo => nx2(self, context),
             FilletCornerKind::NByOneClosed => nx1_closed(self, context),
@@ -2467,7 +2534,7 @@ impl FilletCorner {
                 pass_on,
             )? {
                 Ok(ev) => Ok(ev.first_deriv.unwrap_or(Vec3::UNDEF)),
-                Err(e) if e.is_unported() => Err(e),
+                Err(e) if e.is_unported_or_cancelled() => Err(e),
                 Err(_) => Ok(Vec3::UNDEF),
             }
         };
@@ -2694,7 +2761,7 @@ impl FilletCorner {
                 // a failed drop counts as no drop point
                 let drop = match drop {
                     Ok(d) => d,
-                    Err(e) if e.is_unported() => return Err(e),
+                    Err(e) if e.is_unported_or_cancelled() => return Err(e),
                     Err(_) => continue,
                 };
                 if !drop.success {
@@ -2736,7 +2803,7 @@ impl FilletCorner {
                 // If failure, the whole fillet could still succeed, so don't SER.
                 let new_geom = match split {
                     Ok(g) => g,
-                    Err(e) if e.is_unported() => return Err(e),
+                    Err(e) if e.is_unported_or_cancelled() => return Err(e),
                     Err(_) => continue,
                 };
 
@@ -2880,7 +2947,7 @@ impl FilletCorner {
                 // (the status is ignored upstream: a failed drop counts as no drop point)
                 let drop = match drop {
                     Ok(d) => d,
-                    Err(e) if e.is_unported() => return Err(e),
+                    Err(e) if e.is_unported_or_cancelled() => return Err(e),
                     Err(_) => continue,
                 };
                 if !drop.success {
@@ -3222,7 +3289,7 @@ pub(super) fn recalc_split_geoms(
 pub(super) fn unchecked_point(r: Result<Point3>) -> Result<Point3> {
     match r {
         Ok(p) => Ok(p),
-        Err(e) if e.is_unported() => Err(e),
+        Err(e) if e.is_unported_or_cancelled() => Err(e),
         Err(_) => Ok(Point3::UNDEF),
     }
 }
@@ -3286,6 +3353,69 @@ fn bspline_part_mut(kind: &mut CurveKind) -> Option<&mut BSplineCurve> {
         CurveKind::Parabola(c) => Some(c.base_mut()),
         _ => None,
     }
+}
+
+/// The reason of the [`SolidError::Unsupported`] that [`FilletCorner::create`] returns,
+/// with `Kernel::fixes.fillet_refuse_mixed_corner_crossing_rails` (WR-710, #2256), for a
+/// corner of two filleted edges of differing convexity whose rails cross before the
+/// corner (see [`FilletCorner::create`]).
+pub const MIXED_CORNER_RAILS_CROSS: &str =
+    "a corner whose edges differ in convexity, where the rails cross, is not supported (#2256)";
+
+/// Not upstream (WR-710): whether the filleted edges `edge1` and `edge2` of a 3x2
+/// mixed-convexity corner leave `vertex` along one tangent, within `ang_tol_deg`
+/// degrees and in the same sense. Their common face then closes to a cusp at the
+/// vertex (its corner angle between them is zero), so the two rails, each set the
+/// blend's size into that face, cross each other before they reach the corner: the
+/// convex blend's rail runs past the concave edge and the concave blend's rail past the
+/// convex edge. (Two edges of one tangent leaving the vertex in opposite senses, an
+/// edge running on smoothly into the other, are not this case.) `false` for one edge
+/// given twice (two filleted uses of the same edge), a closed edge, a tangent that
+/// cannot be evaluated or one shorter than `SM_EFF_ZERO`.
+///
+/// # Errors
+///
+/// [`SolidError::InvalidInput`] for an edge without a curve.
+fn mixed_corner_rails_cross(
+    k: &Kernel,
+    b: &Brep,
+    vertex: VertexId,
+    edge1: EdgeId,
+    edge2: EdgeId,
+    ang_tol_deg: f64,
+) -> Result<bool> {
+    if edge1 == edge2 {
+        return Ok(false); // two uses of one edge, not two edges
+    }
+    // the tangent of `e` at `vertex`, pointing away from it
+    let leaving = |e: EdgeId| -> Result<Option<Vec3>> {
+        let start = edge::start_vertex(b, e)? == Some(vertex);
+        let end = edge::end_vertex(b, e)? == Some(vertex);
+        if start == end {
+            return Ok(None); // closed at the vertex, or not on it
+        }
+        let curve =
+            edge::curve(b, e)?.ok_or_else(|| invalid(OP_CREATE, "filleted edge without curve"))?;
+        let interval = edge::interval(b, e)?;
+        let t = if start {
+            interval.min()
+        } else {
+            interval.max()
+        };
+        let pv = ignored(curve.evaluate(k, t, 1, true, true))?;
+        let Some(&[_, d, ..]) = pv.as_deref() else {
+            return Ok(None);
+        };
+        if d.length_squared() <= crate::math::EFF_ZERO * crate::math::EFF_ZERO {
+            return Ok(None);
+        }
+        Ok(Some(if start { d } else { -d }))
+    };
+    let (Some(d1), Some(d2)) = (leaving(edge1)?, leaving(edge2)?) else {
+        return Ok(false);
+    };
+    let ang = ignored(d1.angle_between(d2))?;
+    Ok(ang.is_some_and(|a| rad_to_deg(a) < ang_tol_deg))
 }
 
 /// `sm_TestG1Continuity` (unit `blend.fillet_corner_p1`).

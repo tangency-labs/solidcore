@@ -297,6 +297,7 @@ fn curve_of<O: Copy>(geometry: &impl ClassGeometry<O>, o: Option<O>) -> Result<&
 fn ignore_soft<T>(r: Result<T>) -> Result<()> {
     if let Err(
         e @ (SolidError::Unported { .. }
+        | SolidError::Cancelled { .. }
         | SolidError::InvalidInput { .. }
         | SolidError::PortInvariant { .. }),
     ) = r
@@ -838,6 +839,7 @@ fn degen_face_choice(r: Result<u64>) -> Result<u64> {
         Ok(n) => Ok(n),
         Err(
             e @ (SolidError::Unported { .. }
+            | SolidError::Cancelled { .. }
             | SolidError::InvalidInput { .. }
             | SolidError::PortInvariant { .. }),
         ) => Err(e),
@@ -1688,7 +1690,7 @@ impl<O: ClassObject> EdgeDefinition<O> {
         // See whether the split point is interior to this EdgeDef (in 3d).
         let edge_pt = match self.evaluate(k, geometry, param, true, false) {
             Ok((Some(p), _)) => p,
-            Err(e) if e.is_unported() => return Err(e),
+            Err(e) if e.is_unported_or_cancelled() => return Err(e),
             // fork bcc6f01: no value, no evidence
             Err(_) if k.fixes.ssi_proto_topology_statuses_pass_on => return Ok((false, param)),
             _ => Vec3::UNDEF,
@@ -2105,6 +2107,10 @@ pub struct ProtoTopologyManager<O> {
     /// behaviour); `false` drops such a proto edge instead (tangency-labs/solidcore#480,
     /// see `topology::proto_topology::p2`).
     split_self_loops_on_vertices: bool,
+    /// Not upstream (WR-619): final vertices `(vertex, max_gap, speck_start, speck_end)`
+    /// whose collapsed speck definition `SmEdgeDefinition::Imprint` skipped, so
+    /// `ImprintIntersections` grows each vertex's tolerance to cover the speck's span.
+    skipped_speck_vertices: Vec<(O, f64, Point3, Point3)>,
 }
 
 fn push_store<T>(store: &mut Vec<Option<T>>, item: T) -> Result<u32> {
@@ -2163,6 +2169,7 @@ impl<O: ClassObject> ProtoTopologyManager<O> {
             pe_store: Vec::new(),
             pf_store: Vec::new(),
             split_self_loops_on_vertices: true,
+            skipped_speck_vertices: Vec::new(),
         })
     }
 
@@ -2180,6 +2187,26 @@ impl<O: ClassObject> ProtoTopologyManager<O> {
     /// (tangency-labs/solidcore#480, WR-214). Not upstream.
     pub fn set_split_self_loops_on_vertices(&mut self, split: bool) {
         self.split_self_loops_on_vertices = split;
+    }
+
+    /// Final vertices `(vertex, max_gap, speck_start, speck_end)` whose collapsed speck
+    /// definition `SmEdgeDefinition::Imprint` skipped under
+    /// `Kernel::fixes.imprint_skips_collapsed_definition` (WR-619). Not upstream.
+    #[must_use]
+    pub fn skipped_speck_vertices(&self) -> &[(O, f64, Point3, Point3)] {
+        &self.skipped_speck_vertices
+    }
+
+    /// Records a final vertex whose collapsed speck definition was skipped at imprint.
+    pub(crate) fn note_skipped_speck_vertex(
+        &mut self,
+        vertex: O,
+        max_gap: f64,
+        speck_start: Point3,
+        speck_end: Point3,
+    ) {
+        self.skipped_speck_vertices
+            .push((vertex, max_gap, speck_start, speck_end));
     }
 
     /// The destructor `~SmProtoTopologyManager`: first cuts the links between the
@@ -2220,6 +2247,7 @@ impl<O: ClassObject> ProtoTopologyManager<O> {
         for pv in std::mem::take(&mut self.pvs) {
             self.delete_proto_vertex(pv);
         }
+        self.skipped_speck_vertices.clear();
         deleted
     }
 
@@ -2271,6 +2299,7 @@ impl<O: ClassObject> ProtoTopologyManager<O> {
         self.pvs.clear();
         self.pes.clear();
         self.pfs.clear();
+        self.skipped_speck_vertices.clear();
     }
 
     // ---- simple access ---------------------------------------------------------------
@@ -3670,6 +3699,7 @@ impl<O: ClassObject> ProtoTopologyManager<O> {
                 Ok((Some(p), _)) => p,
                 Err(
                     e @ (SolidError::Unported { .. }
+                    | SolidError::Cancelled { .. }
                     | SolidError::InvalidInput { .. }
                     | SolidError::PortInvariant { .. }),
                 ) => return Err(e),

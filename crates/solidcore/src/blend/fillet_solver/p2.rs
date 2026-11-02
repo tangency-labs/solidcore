@@ -403,7 +403,7 @@ fn centre_line_on_axis(
             .evaluate_point(k, t.uv_pos(SrfIndex::First))
         {
             Ok(p) => p,
-            Err(e @ SolidError::Unported { .. }) => return Err(e),
+            Err(e @ (SolidError::Unported { .. } | SolidError::Cancelled { .. })) => return Err(e),
             Err(_) => return Ok(false),
         };
         let off = centre - origin;
@@ -1229,9 +1229,11 @@ impl FilletSolver {
         // blend-curve section whose centre line is a point on the arc's axis (a blend as
         // wide as the face it uses up, whose marched centre line has no length to march)
         // is revolved too; any other blend-curve section is still refused here
+        // (the G^n section of WR-685 has no section to revolve: it is marched)
         let blend_section = class.is_none()
             && k.fixes.fillet_blend_curve_revolved_on_arc
-            && section == FilletSurfaceGeneratorType::BlendCurve;
+            && section == FilletSurfaceGeneratorType::BlendCurve
+            && !matches!(s.fsg.as_ref(), Some(FilletSurfaceGenerator::GnSection(_)));
         let (ref_frame, start_ang) = if let Some(class) = class {
             // WR-669: the circular or linear cross-section turned about the faces' common
             // axis (the class's); the frame's origin: the centre of the edge's circle, where
@@ -1417,7 +1419,7 @@ impl FilletSolver {
             k.fixes.fillet_statuses_pass_on,
         )? {
             Ok(a) => a,
-            Err(e @ SolidError::Unported { .. }) => return Err(e),
+            Err(e @ (SolidError::Unported { .. } | SolidError::Cancelled { .. })) => return Err(e),
             Err(_) => 0.0,
         };
         if span_ang < ANG_TOL_RAD {
@@ -2774,6 +2776,7 @@ fn edge_zone_kernel(k: &Kernel, tol: f64) -> Kernel {
         ..crate::kernel::KernelOptions::default()
     });
     tk.rng = k.rng.clone();
+    tk.cancel.clone_from(&k.cancel);
     tk.fixes.bspline_trim_preserves_uv_spans = k.fixes.bspline_trim_preserves_uv_spans;
     tk.fixes.bspline_trim_keeps_rational_end_spans = k.fixes.bspline_trim_keeps_rational_end_spans;
     tk

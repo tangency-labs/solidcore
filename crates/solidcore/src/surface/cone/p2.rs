@@ -172,7 +172,7 @@ fn iso_curve(
 ) -> Result<Option<BSplineCurve>> {
     match s.create_iso_parametric_curve(k, sweep, knot, IsoCurveOptions::default()) {
         Ok(iso) => Ok(Some(iso.curve)),
-        Err(e @ SolidError::Unported { .. }) => Err(e),
+        Err(e @ (SolidError::Unported { .. } | SolidError::Cancelled { .. })) => Err(e),
         Err(_) => Ok(None),
     }
 }
@@ -369,7 +369,7 @@ impl Cone {
 
     /// Rebuilds the polar converter with the cone's iso curves
     /// (`RebuildPolarConverter`, which calls the virtual `CreateIsoParametricCurve`).
-    fn rebuild_cone_polar_converter(&mut self, k: &Kernel) -> Result<()> {
+    pub(crate) fn rebuild_cone_polar_converter(&mut self, k: &Kernel) -> Result<()> {
         let inside_out = self.inside_out;
         self.rev.rebuild_polar_converter(k, &|s, k, p, t| {
             Ok(super::p1::cone_iso_curve(s, inside_out, k, p, t, None, false)?.curve)
@@ -1182,7 +1182,7 @@ fn cone_inversion(
 ) -> Result<(LocationType, Point2)> {
     match cone.step_inversion(k, point, tol, None) {
         Ok(inv) => Ok((inv.location, inv.uv)),
-        Err(e) if e.is_unported() => Err(e),
+        Err(e) if e.is_unported_or_cancelled() => Err(e),
         // rotated point not on the generator: upstream sets SM_LT_EXTERIOR
         Err(SolidError::Upstream {
             operation: OP_REV_STEP_INV,

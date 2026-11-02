@@ -1000,7 +1000,7 @@ pub fn create_uv_curve_on_face(
                         out.uv_curve1 = r.uv_curve1.filter(|c| as_b_spline(c).is_some());
                         return Ok(out);
                     }
-                    Err(e) if e.is_unported() => return Err(e),
+                    Err(e) if e.is_unported_or_cancelled() => return Err(e),
                     Err(_) => {}
                 }
 
@@ -1197,7 +1197,7 @@ impl FilletBrep {
             Ok(SrfSrfCurves {
                 curve_3d: Some(c), ..
             }) => c,
-            Err(e) if e.is_unported() => return Err(e),
+            Err(e) if e.is_unported_or_cancelled() => return Err(e),
             _ => {
                 self.fillet_vertex_mut(fv)?
                     .set_status(FilStatus::SurfIntFailure);
@@ -1336,7 +1336,7 @@ impl FilletBrep {
                     uv_curve1,
                     uv_curve2,
                 }) => (c, uv_curve1, uv_curve2),
-                Err(e) if e.is_unported() => return Err(e),
+                Err(e) if e.is_unported_or_cancelled() => return Err(e),
                 _ => {
                     self.fillet_vertex_mut(v)?
                         .set_status(FilStatus::SurfIntFailure);
@@ -1592,7 +1592,7 @@ impl FilletBrep {
                 uv_curve1,
                 uv_curve2,
             }) => (c, uv_curve1, uv_curve2),
-            Err(e) if e.is_unported() => return Err(e),
+            Err(e) if e.is_unported_or_cancelled() => return Err(e),
             _ => {
                 self.fillet_vertex_mut(v)?
                     .set_status(FilStatus::SurfIntFailure);
@@ -2071,6 +2071,11 @@ impl FilletBrep {
 
         // Make Face: transfer the original surface only at the native call boundary.
         let region = brep.infinite_region();
+        // The fork's (WR-697, 32fd80a): the face's edge uses keep these trim curves, the
+        // fillet's own (each its edge's curve on this surface, made with it: a corner's
+        // exact ones exactly). Without the flag MakeFaceWithCurves drops them and each is
+        // made again later by projecting its edge's curve onto the surface.
+        let keep_uv_curves = k.fixes.fillet_blend_corner.then_some(true);
         if matches!(surface_backend, FaceSurfaceBackend::IndexedValue) {
             // Preserve the existing indexed value contract, including its cliff path.
             // This API does not provide shared source-surface/managed-face binding.
@@ -2092,7 +2097,7 @@ impl FilletBrep {
                     surface,
                     &uv_domain,
                     OrientType::Same,
-                    None,
+                    keep_uv_curves,
                     &|face| key_of(EntityRef::Face(face)),
                     env,
                 )?;
@@ -2140,7 +2145,7 @@ impl FilletBrep {
                 &mut transfer,
                 &uv_domain,
                 OrientType::Same,
-                None,
+                keep_uv_curves,
                 &face_ref,
                 env,
                 &mut NewFace::default(),
@@ -2319,7 +2324,7 @@ impl FilletBrep {
                                 .clear_fillet_brep_edges(&deleted_edges);
                             context.update_topology(self, target, marker, face)?;
                             if let Err(error) = merged {
-                                if error.is_unported() {
+                                if error.is_unported_or_cancelled() {
                                     return Err(error);
                                 }
                                 if let Some(edgeuse) = solver.edgeuse(0)? {

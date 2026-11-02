@@ -6,6 +6,8 @@
 //! `SmFilletRemoval`, `SmCurveFilletExecutive`, `SmFeatureExecutive` in `source/SMLib`, and
 //! `SM_API/SmApiFillets`.
 
+pub mod blend_corner;
+pub mod blend_setback;
 pub mod feature_executive;
 pub mod fillet_classification;
 pub mod fillet_cliff_overflow;
@@ -15,7 +17,9 @@ pub mod fillet_exact;
 pub mod fillet_executive;
 pub mod fillet_geom;
 pub mod fillet_intersector;
+pub mod fillet_overflow;
 pub mod fillet_removal;
+pub mod fillet_section;
 pub mod fillet_solver;
 pub mod fillet_standard_solver;
 pub mod hcr;

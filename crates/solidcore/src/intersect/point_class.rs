@@ -2202,7 +2202,7 @@ fn fast_drop_classify_options(
 /// class. [`SolidError::Unported`] propagates.
 fn fast_drop_good_point(status: Result<()>, pc: &PointClassification<EntityRef>) -> Result<bool> {
     match status {
-        Err(e) if e.is_unported() => Err(e),
+        Err(e) if e.is_unported_or_cancelled() => Err(e),
         Err(_) => Ok(false),
         Ok(()) => Ok(matches!(
             pc.point_class(),
@@ -2251,7 +2251,7 @@ fn one_point<O: ClassObject>(
         let uv = Point2::new(sol.param(0)?, sol.param(1)?);
         match surface.evaluate_point(k, uv) {
             Ok(p) => Ok(Some(p)),
-            Err(e) if e.is_unported() => Err(e),
+            Err(e) if e.is_unported_or_cancelled() => Err(e),
             Err(_) => Ok(None),
         }
     };
@@ -2537,7 +2537,7 @@ fn topology_of<'g, O: ClassObject>(
 ) -> Result<(&'g Brep, EntityRef)> {
     geometry
         .topology_entity(o)
-        .ok_or(SolidError::unported(upstream, unit))
+        .ok_or_else(|| SolidError::unported(upstream, unit))
 }
 
 /// The edge of an edge handle, or `GetEdge()` of an edge use handle (whose `NULL` edge
@@ -2579,10 +2579,10 @@ fn topology_face<'g, O: ClassObject>(
 fn brep_id_of<O>(geometry: &impl ClassGeometry<O>, brep: Option<&Brep>) -> Result<Option<BrepId>> {
     match brep {
         None => Ok(None),
-        Some(b) => geometry.brep_id(b).map(Some).ok_or(
+        Some(b) => geometry.brep_id(b).map(Some).ok_or_else(|| {
             // DISPATCH GAP: SmBrep identity (an adapter without B-rep ids)
-            SolidError::unported("SmBrep identity of GetBrep", "topology.brep_p1"),
-        ),
+            SolidError::unported("SmBrep identity of GetBrep", "topology.brep_p1")
+        }),
     }
 }
 

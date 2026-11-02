@@ -875,6 +875,10 @@ fn rust(input: &Inputs) -> Result<Output, HarnessError> {
         overflow_edges: Vec::new(),
         mitred_edges: Vec::new(),
         fan_split_points: Vec::new(),
+        // the fork's refusal fit (WR-696): none noted, as `FilletExecutive::new` leaves it
+        fit_radius: -1.0,
+        fit_edge: None,
+        fit_kind: solidcore::blend::fillet_executive::FitKind::Radius,
     };
     // The executive constructor sets this after constructing its SmMerge base.
     executive.intersector.ignore_tangency = true;
@@ -979,6 +983,16 @@ impl UnitDiff for Runner {
             v.push(c);
         }
         Ok(v)
+    }
+    // ND-3: every C++ case runs in a fresh child, which inherits this process's
+    // `sdStaticStep`; it must still be unlatched before the unit's cases and after them.
+    fn before_cases(&self) -> Result<(), HarnessError> {
+        solidcore_ffi::units::blend_fillet_solver_p4::check_parent_static_step("before the cases")
+            .map_err(|e| HarnessError::new(format!("C++: {e}")))
+    }
+    fn after_cases(&self) -> Result<(), HarnessError> {
+        solidcore_ffi::units::blend_fillet_solver_p4::check_parent_static_step("after the cases")
+            .map_err(|e| HarnessError::new(format!("C++: {e}")))
     }
     fn run_cpp(&self, case: &Case) -> Result<Output, HarnessError> {
         let input = case.parse::<Inputs>()?;

@@ -403,7 +403,7 @@ impl Surface {
             if !fallback_needed {
                 match curve.tessellate_by_bisection(k, &interval, chord, angle, max_side) {
                     Ok(result) => splits = result.parameters,
-                    Err(e) if e.is_unported() => return Err(e),
+                    Err(e) if e.is_unported_or_cancelled() => return Err(e),
                     Err(_) => fallback_needed = true,
                 }
             }
@@ -420,7 +420,7 @@ impl Surface {
                 if !final_linear {
                     match curve.tessellate_by_bisection(k, &interval, chord, angle, max_side) {
                         Ok(result) => splits = result.parameters,
-                        Err(e) if e.is_unported() => return Err(e),
+                        Err(e) if e.is_unported_or_cancelled() => return Err(e),
                         Err(_) => failures += 1,
                     }
                 }
@@ -564,8 +564,9 @@ fn filter_solution<O: SolutionObject>(
 }
 /// The tolerance of the edge owning `curve` (`pCurveOwner->GetTolerance()` in
 /// `sm_ClassifyCurveSurfaceXSectPoint`), through a face-aware caller's `queries` and
-/// the curve's `handle`; `None` for a curve no edge owns, or when the caller cannot
-/// resolve it.
+/// the curve's `handle`, or else the edge's tolerance recorded on the curve
+/// (`topology::edge::evaluation_curve`'s copy carries it); `None` for a curve no edge
+/// owns, or when neither resolves it.
 ///
 /// # Errors
 ///
@@ -583,7 +584,7 @@ pub(super) fn curve_edge_tolerance<O>(
     }
     match (queries, handle) {
         (Some(queries), Some(handle)) => queries.curve_edge_tolerance(handle).transpose(),
-        _ => Ok(None),
+        _ => Ok(curve.owner_zone_tol_3d()),
     }
 }
 
@@ -831,7 +832,7 @@ impl<'a, O: SolutionObject + 'a> CsiGlobalSolver<'a, '_, O> {
         if !domain.is_contained_by(&self.uv_domain, EFF_ZERO) {
             domain = match domain.intersect(&self.uv_domain) {
                 Ok(d) => d,
-                Err(e) if pass && !e.is_unported() => return Ok(false),
+                Err(e) if pass && !e.is_unported_or_cancelled() => return Ok(false),
                 Err(e) => return Err(e),
             };
             if crate::geom::tol::are_same(domain.max().x, domain.min().x)
@@ -849,7 +850,7 @@ impl<'a, O: SolutionObject + 'a> CsiGlobalSolver<'a, '_, O> {
         if !interval.is_contained_by(&self.interval, EFF_ZERO) {
             interval = match interval.intersect(&self.interval) {
                 Ok(i) => i,
-                Err(e) if pass && !e.is_unported() => return Ok(false),
+                Err(e) if pass && !e.is_unported_or_cancelled() => return Ok(false),
                 Err(e) => return Err(e),
             };
             if crate::geom::tol::are_same(interval.max(), interval.min()) {
