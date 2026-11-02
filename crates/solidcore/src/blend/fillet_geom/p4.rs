@@ -1482,7 +1482,7 @@ impl FilletBrep {
         // with the end face's surface (CalcRailIntEndSurface); the end rib is then the
         // intersection between the two rail ends (CalcFilletIntSideFace)
         if k.fixes.fillet_blend_corner && !b3x2_mixed_corner_case {
-            return self.calc_rail_int_end_surface(k, v, corners, &*context, target);
+            return self.calc_rail_int_end_surface(k, v, corners, context, target);
         }
 
         // Find adjacent fillet edge which was classified
