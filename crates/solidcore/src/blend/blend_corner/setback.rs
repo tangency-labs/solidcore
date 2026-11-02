@@ -537,9 +537,10 @@ pub fn classify_setback(
         return none; // a corner left open keeps the patch its caller removes
     }
     let g2 = one_kind && kind == FilletSurfaceGeneratorType::BlendCurve;
-    // rounds of one radius meet a common ball where three faces meet: not a setback unless
-    // asked
-    if asked.is_none() && !g2 && max_r - min_r <= tol {
+    // three rounds of one radius meet a common ball (the Ball): not a setback unless asked.
+    // Four or more meet one only where every face's offset passes through one point
+    // (ClassifyBall, first); elsewhere they are set back (smlib#125 278bf77).
+    if asked.is_none() && !g2 && max_r - min_r <= tol && n == 3 {
         return none;
     }
     // (setbacks that do not fit are the Setback's to refuse, or the overflow's:

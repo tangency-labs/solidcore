@@ -2048,15 +2048,19 @@ impl<'target> FilletSession<'target> {
                 // edge there blended, are the blend corner's Ball
                 // (SmBlendCorner::ClassifyBall, in SmFilletCorner::Create's three-solver
                 // case before the 3x3 corner); a failed classification builds no corner.
-                // A chamfer corner's rounds are not circular, so ClassifyBall finds no
-                // Ball there before any test that could fail.
+                // Since smlib#125 (278bf77) four or more rounds that one ball touches are
+                // the Ball too (ClassifyBall in the NxN case, before ClassifySetBack, where
+                // every edge use is a solver's). A chamfer corner's rounds are not
+                // circular, so ClassifyBall finds no Ball there before any test that could
+                // fail.
                 if k.fixes.fillet_blend_corner
                     && matches!(
                         corner.kind,
                         FilletCornerKind::ConvexNByN | FilletCornerKind::ConcaveNByN
                     )
-                    && corner.solver_eus.as_ref().map_or(0, Vec::len) == 3
-                    && corner.all_eus.as_ref().map_or(0, Vec::len) == 3
+                    && corner.all_eus.as_ref().map_or(0, Vec::len) >= 3
+                    && corner.solver_eus.as_ref().map_or(0, Vec::len)
+                        == corner.all_eus.as_ref().map_or(0, Vec::len)
                     && !corner.chamfer
                 {
                     let lookup = SweptSessionSolvers {
@@ -5563,8 +5567,8 @@ impl SessionObjects<'_> {
             .get(id.0 as usize)
             .and_then(|corner| corner.all_eus.clone())
             .ok_or_else(|| SolidError::null_pointer("SmBlendCorner::MakeBallTopology"))?;
-        let mut solver_ids = [FilletSolverId(0); 3];
-        for (slot, index) in solver_ids.iter_mut().zip(0..3) {
+        let mut solver_ids = vec![FilletSolverId(0); all.len()];
+        for (slot, index) in solver_ids.iter_mut().zip(0..) {
             let eu = all
                 .get(index)
                 .copied()
@@ -5597,8 +5601,10 @@ impl SessionObjects<'_> {
                 .map(SolverObject::base)
                 .ok_or_else(|| invalid("corner solver is not live"))
         };
-        let [a, b, c] = solver_ids;
-        let solvers = [live(a)?, live(b)?, live(c)?];
+        let solvers = solver_ids
+            .iter()
+            .map(|&id| live(id))
+            .collect::<Result<Vec<_>>>()?;
         let corner = corners
             .get_mut(id.0 as usize)
             .ok_or_else(|| invalid("corner is not live"))?;
