@@ -150,15 +150,52 @@ Its `tee_is_fitted` case expects `OverTolerance(0.00147)` but receives
 UpstreamFixes except geometric_g2_continuity, including the dependency's
 round-on-round flag. The flag-alone, default, WR77 pipe and grading tests
 pass. The production source is identical to the previously tested stack;
-this newly imported main test exposes an integration failure. The exact
-responsible flag interaction has not been isolated. Do not alter its
-expectation, infer success from older dependency checks, or claim the
-combined stack green. This is separate from the disabled smooth-interior
-correction and remains a blocker for ready status.
+this newly imported main test exposed an integration failure. The grader
+correction below resolves it without changing production geometry.
 
 Postmerge verification at 657272fa2: all 61 targeted tests listed above
 passed again; workspace/all-target clippy with -D warnings, fmt --check,
-and wasm32-unknown-unknown check also passed. The new main test remains
-4/5 as recorded above. Native difftests were not repeated after this merge:
+and wasm32-unknown-unknown check also passed. At that head the new main test was
+4/5 as recorded above; the later grader fix passes all seven tests. Native difftests were not repeated after this merge:
 all library, harness and FFI source are identical to the five-unit tested
 75cf76102 tree. No combined-stack green or full-suite claim is made.
+
+## Resolved exact-class grader integration
+
+Investigation after the user's follow-up isolated a test-only cause: the
+surface-kind match ignored ProceduralBlend. The round was present, but
+never counted or evaluated. A diagnostic on the unchanged production code
+measured the tee definition's ball-contact residual as
+1.0658141036401503e-14, its stored net's residual as
+1.8594022375140185e-6, and its existing certificate bound as
+3.987804832360607e-6. Turning only fillet_round_as_definition off gives
+a fitted surface with residual 2.6886067583831164e-5, already below the
+original 1e-3 tolerance. With fillet_exact_round_classes alone the old
+1.4744643375657063e-3 residual remains, as it does by default. Thus the
+historical over-tolerance mark is valid for the historical flag profile,
+not for all subsequent section fixes enabled together.
+
+The grader now explicitly requires ProceduralBlend for the current
+all-fixes fitted case. It samples the definition at the unchanged 1e-9
+ball-contact threshold, requires a finite nonnegative stored certificate
+bound no greater than the original fitted tolerance, and samples the net
+against that original fitted tolerance too. It retains the volume and
+validity gates. Default and exact-class-only historical marks remain.
+A separate all-fixes/procedural-off control requires a fitted surface
+within the original tolerance; no flag-off defect is hidden. Negative
+controls reject a definition presented as fitted, a fitted surface
+presented as a definition, a wrong volume and wrong analytic surface kinds.
+
+All seven exact-class integration tests pass. These ball-contact grids
+are measurements, not an independent proof of the stored certificate or
+whole-face continuity. No production code, fix flag or tolerance changed;
+this does not enable or certify the #2356 smooth-interior correction.
+Latest main fb8fa65e6 was merged first, adding only a findings record.
+Follow-up validation in Ubuntu WSL (CARGO_BUILD_JOBS=2, nice -n 10):
+seven exact-class integration tests pass; workspace/all-target clippy with
+-D warnings and fmt --check pass. Fresh native comparisons pass for
+blend.fillet_solver_p4 (651), blend.fillet_standard_solver_p2 (525) and
+nurbs.b_spline_surface_n_lib_p1 (702): 1,878 accepted value-bearing cases,
+zero failures/deferrals and max relative error 0. Shared C++ libraries
+reused; no reference rebuild. Full suite/full --green not run. The prior
+wasm check remains applicable to unchanged library code.

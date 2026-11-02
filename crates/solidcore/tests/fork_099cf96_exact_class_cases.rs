@@ -28,8 +28,13 @@
 //! vertex on the sphere's seam (the ball). Only the status is checked here: which step of
 //! the fillet returned it isn't visible through `fillet_edges`.
 //!
-//! The left column is checked on the default kernel and the right one with every fix
-//! SolidCraft turns on and with `fillet_exact_round_classes` alone. One difference from the
+//! The left column is checked on the default kernel and the right one with
+//! `fillet_exact_round_classes` alone. With SolidCraft's current section fixes,
+//! the fitted tee meets its original tolerance even with procedural rounds off.
+//! With `fillet_round_as_definition` enabled (#2274), a fitted round is instead a
+//! `ProceduralBlend`: check its definition's ball contact to 1e-9, and its stored net
+//! against the unchanged fitted tolerance. The historical 1.47e-3 mark describes the
+//! earlier fitted surface, not this definition. One difference from the
 //! fork: the two pipes' union itself fails 1001 here without
 //! `ssi_split_curves_at_singular_points` (WR-77), so the pipes get that flag wherever the
 //! fork's mark is about their round.
@@ -119,6 +124,8 @@ enum RoundKind {
     Revolved,
     /// A B-spline within the fillet's tolerance of the canal surface.
     Fitted,
+    /// A procedural canal definition, with a certified approximating net.
+    Definition,
 }
 
 /// One case: the fork's body, edge points, radius, volume, surface kind and faces.
@@ -456,15 +463,31 @@ fn grade(case: &Case, k: &mut Kernel) -> Graded {
         let Some(s) = face::surface(&b, f).unwrap() else {
             continue;
         };
-        let (spline, revolved, degrees, rational) = match s.kind() {
+        let (spline, revolved, definition, degrees, rational) = match s.kind() {
             SurfaceKind::BSpline(bs) => (
                 true,
+                false,
                 false,
                 (bs.degree(SurfParamType::U), bs.degree(SurfParamType::V)),
                 bs.is_rational(),
             ),
             SurfaceKind::SurfOfRevolution(_) | SurfaceKind::Torus(_) => {
-                (false, true, (0, 0), false)
+                (false, true, false, (0, 0), false)
+            }
+            SurfaceKind::ProceduralBlend(pb) => {
+                let net_off = off_ball(k, &pb.net().clone().into(), case.r, &case.faces);
+                if !pb.bound().is_finite() || pb.bound() < 0.0 || pb.bound() > fitted_tol {
+                    problems.push(format!(
+                        "definition net bound {} exceeds {fitted_tol}",
+                        pb.bound()
+                    ));
+                }
+                if !net_off.is_finite() || net_off > fitted_tol {
+                    problems.push(format!(
+                        "definition net {net_off:.3e} off the ball (allowed {fitted_tol:.3e})"
+                    ));
+                }
+                (false, false, true, (0, 0), false)
             }
             _ => continue,
         };
@@ -475,10 +498,11 @@ fn grade(case: &Case, k: &mut Kernel) -> Graded {
             }
             RoundKind::Revolved => revolved,
             RoundKind::Fitted => spline,
+            RoundKind::Definition => definition,
         };
         if !kind_ok {
             problems.push(format!(
-                "round face of the wrong kind: degrees {degrees:?}, rational {rational}"
+                "round face of the wrong kind: degrees {degrees:?}, rational {rational}, definition {definition}"
             ));
         }
         off = off.max(off_ball(k, s, case.r, &case.faces));
@@ -548,11 +572,23 @@ fn mark_after(name: &str) -> Mark {
     }
 }
 
+/// The current section construction fixes the fitted tee; the other marks are unchanged.
+fn mark_with_section_fixes(name: &str) -> Mark {
+    if name == "tee_is_fitted" {
+        Mark::Passes
+    } else {
+        mark_after(name)
+    }
+}
+
 const PIPES: &str = "cylinders_touching_at_a_point";
 
-fn check_all(mark: fn(&str) -> Mark, kernel: fn() -> Kernel) {
+fn check_all(mark: fn(&str) -> Mark, kernel: fn() -> Kernel, fitted_kind: RoundKind) {
     let mut wrong = Vec::new();
-    for case in cases() {
+    for mut case in cases() {
+        if case.kind == RoundKind::Fitted {
+            case.kind = fitted_kind;
+        }
         let mut k = kernel();
         if case.name == PIPES {
             k.fixes.ssi_split_curves_at_singular_points = true;
@@ -589,19 +625,38 @@ fn exact_kernel() -> Kernel {
     k
 }
 
-#[test]
-fn without_the_flag_the_cases_have_the_fork_s_marks_before_the_exact_classes() {
-    check_all(mark_before, Kernel::default);
+fn solidcraft_before_definitions() -> Kernel {
+    let mut k = solidcraft_kernel();
+    k.fixes.fillet_round_as_definition = false;
+    k
 }
 
 #[test]
-fn with_solidcraft_s_fixes_the_cases_have_the_fork_s_marks_after_the_exact_classes() {
-    check_all(mark_after, solidcraft_kernel);
+fn without_the_flag_the_cases_have_the_fork_s_marks_before_the_exact_classes() {
+    check_all(mark_before, Kernel::default, RoundKind::Fitted);
+}
+
+#[test]
+fn with_solidcraft_s_fixes_without_definitions_the_fitted_round_meets_tolerance() {
+    check_all(
+        mark_with_section_fixes,
+        solidcraft_before_definitions,
+        RoundKind::Fitted,
+    );
+}
+
+#[test]
+fn with_solidcraft_s_fixes_the_fitted_round_is_its_definition() {
+    check_all(
+        mark_with_section_fixes,
+        solidcraft_kernel,
+        RoundKind::Definition,
+    );
 }
 
 #[test]
 fn the_flag_alone_gives_the_fork_s_marks_after_the_exact_classes() {
-    check_all(mark_after, exact_kernel);
+    check_all(mark_after, exact_kernel, RoundKind::Fitted);
 }
 
 #[test]
@@ -632,8 +687,39 @@ fn the_grading_refuses_a_wrong_volume_and_a_wrong_kind() {
         graded(1.00001, RoundKind::Revolved),
         graded(1.0, RoundKind::Rational(4, 2)),
         graded(1.0, RoundKind::Fitted),
+        graded(1.0, RoundKind::Definition),
     ] {
         assert!(!holds(Mark::Passes, &got), "{got:?}");
         assert!(!holds(Mark::Status1001, &got), "{got:?}");
+    }
+}
+
+/// A procedural face is required explicitly: neither its net nor another surface kind
+/// can satisfy the definition check, and the existing volume gate still applies.
+#[test]
+fn the_grading_distinguishes_a_definition_from_a_fitted_surface() {
+    let graded = |kernel: &mut Kernel, kind: RoundKind, volume_factor: f64| {
+        let mut case = cases()
+            .into_iter()
+            .find(|c| c.name == "tee_is_fitted")
+            .unwrap();
+        case.kind = kind;
+        case.want *= volume_factor;
+        grade(&case, kernel)
+    };
+    assert!(holds(
+        Mark::Passes,
+        &graded(&mut solidcraft_kernel(), RoundKind::Definition, 1.0)
+    ));
+    for got in [
+        graded(&mut solidcraft_kernel(), RoundKind::Fitted, 1.0),
+        graded(&mut solidcraft_kernel(), RoundKind::Definition, 1.00001),
+        graded(
+            &mut solidcraft_before_definitions(),
+            RoundKind::Definition,
+            1.0,
+        ),
+    ] {
+        assert!(!holds(Mark::Passes, &got), "{got:?}");
     }
 }
