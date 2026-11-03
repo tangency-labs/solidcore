@@ -70,7 +70,7 @@ fn face(k: &mut Kernel, centre: f64) -> (Brep, FaceId) {
     (b, fs[0])
 }
 
-fn is_refusal(r: Result<(), SolidError>) -> bool {
+fn is_refusal(r: &Result<(), SolidError>) -> bool {
     matches!(
         r,
         Err(SolidError::InvalidInput { reason, .. }) if reason.contains("HANG-29")
@@ -79,10 +79,10 @@ fn is_refusal(r: Result<(), SolidError>) -> bool {
 
 /// Runs the three guarded queries and the tight box through `p1`; whether each refused.
 fn queries(k: &Kernel, b: &mut Brep, f: FaceId) -> [bool; 4] {
-    let tight = is_refusal(p3::calculate_tight_bounding_box(k, &*b, f).map(|_| ()));
-    let tight_p1 = is_refusal(p1::calculate_bounding_box(k, &*b, f, true).map(|_| ()));
+    let tight = is_refusal(&p3::calculate_tight_bounding_box(k, &*b, f).map(|_| ()));
+    let tight_p1 = is_refusal(&p1::calculate_bounding_box(k, &*b, f, true).map(|_| ()));
     let mut pc = PointClassification::new(1e-6);
-    let point = is_refusal(p1::point_3d_classify(
+    let point = is_refusal(&p1::point_3d_classify(
         k,
         b,
         f,
@@ -101,7 +101,7 @@ fn queries(k: &Kernel, b: &mut Brep, f: FaceId) -> [bool; 4] {
         1e-6,
     );
     let edge_on =
-        is_refusal(p1::edge_curve_on_classify(k, b, f, Some(edge), &crossing, &opts).map(|_| ()));
+        is_refusal(&p1::edge_curve_on_classify(k, b, f, Some(edge), &crossing, &opts).map(|_| ()));
     [tight, tight_p1, point, edge_on]
 }
 
