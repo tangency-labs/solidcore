@@ -336,7 +336,7 @@ fn boundary(
                 let q = map.to_eval(q);
                 let on = s
                     .derivs(q[0], q[1])
-                    .map(kernel::triple)
+                    .map(kernel::record_triple)
                     .map(|d| d.0)
                     .ok_or_else(|| fail(oe.edge, format!("node {k}: the surface does not evaluate at {q:?}")))?;
                 if !(on.dist(*p) <= accept) {
@@ -1046,7 +1046,7 @@ fn plan_face(
     let step = [h / speed[0], h / speed[1]];
     let delaunay = || {
         let seeds = cdt::lattice(bbox, step, &polys, speed);
-        let eval = |u: f64, v: f64| s.derivs(u, v).map(kernel::triple).map(|(p, su, sv)| (p, su.cross(sv).normalized()));
+        let eval = |u: f64, v: f64| s.derivs(u, v).map(kernel::record_triple).map(|(p, su, sv)| (p, su.cross(sv).normalized()));
         let sag = cdt::Sag { eval: &eval, tol, h, turn: rules.turn, scale: speed };
         let fill = cdt::Fill {
             seeds: &seeds,
@@ -1211,7 +1211,7 @@ fn plan_pieces(f: &Region) -> Option<(Vec<[f64; 2]>, Vec<[u32; 3]>)> {
     uv_all.extend_from_slice(&cut_uv);
     let mut pos: Vec<Vec3> = f.fixed.to_vec();
     for q in &cut_uv {
-        pos.push(s.derivs(q[0], q[1]).map(kernel::triple)?.0);
+        pos.push(s.derivs(q[0], q[1]).map(kernel::record_triple)?.0);
     }
     let mut extra: Vec<[f64; 2]> = cut_uv;
     let mut tris: Vec<[u32; 3]> = Vec::new();
@@ -1293,7 +1293,7 @@ fn plan_pieces(f: &Region) -> Option<(Vec<[f64; 2]>, Vec<[u32; 3]>)> {
             .or_else(|| {
                 let polys: Vec<&[[f64; 2]]> = ranges.iter().filter_map(|r| luv.get(r.clone())).collect();
                 let seeds = cdt::lattice(bbox, [f.h / f.speed[0], f.h / f.speed[1]], &polys, f.speed);
-                let eval = |u: f64, v: f64| s.derivs(u, v).map(kernel::triple).map(|(p, su, sv)| (p, su.cross(sv).normalized()));
+                let eval = |u: f64, v: f64| s.derivs(u, v).map(kernel::record_triple).map(|(p, su, sv)| (p, su.cross(sv).normalized()));
                 let sag = cdt::Sag { eval: &eval, tol: f.rules.tol, h: f.h, turn: f.rules.turn, scale: f.speed };
                 cdt::triangulate(&luv, &ranges, cdt::Fill { seeds: &seeds, refine: Some((sag, MAX_REFINE)), shape: true, lenient: false })
             })?;

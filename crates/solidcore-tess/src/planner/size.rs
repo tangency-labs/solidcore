@@ -108,13 +108,13 @@ pub(crate) fn extent(points: impl Iterator<Item = Vec3>) -> f64 {
 /// so the size is never larger than the face needs).
 pub(crate) fn face_size(s: &EvalSurface, dom: &Domain, rules: &Rules) -> (f64, [f64; 2]) {
     if let EvalSurface::Plane { du, dv, .. } = s {
-        return (rules.max_len, [kernel::vec3(*du).len(), kernel::vec3(*dv).len()]);
+        return (rules.max_len, [kernel::record_vec3(*du).len(), kernel::record_vec3(*dv).len()]);
     }
     let (Some(ru), Some(rv)) = (dom.range[0], dom.range[1]) else { return (rules.max_len, [1.0, 1.0]) };
     // A flat spline (sheet-metal walls, chamfers): no curvature to look for, only the speeds.
     let samples = if planar(s) { 3 } else { SAMPLES };
     let normal = |u: f64, v: f64| -> Option<(Vec3, Vec3, [f64; 2])> {
-        let (p, su, sv) = s.derivs(u, v).map(kernel::triple)?;
+        let (p, su, sv) = s.derivs(u, v).map(kernel::record_triple)?;
         Some((p, su.cross(sv).normalized()?, [su.len(), sv.len()]))
     };
     let step = [(ru.1 - ru.0) * 1e-3, (rv.1 - rv.0) * 1e-3];

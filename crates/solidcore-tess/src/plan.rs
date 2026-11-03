@@ -10,7 +10,7 @@
 
 use crate::{Mesh, RefusedFace};
 use solidcore::eval::EvalSurface;
-use solidcore_convert::{kvec3, vec3};
+use solidcore_convert::{record_vec3, vec3};
 use solidcore_record::Vec3;
 
 /// One face's share of a [`TessPlan`].
@@ -140,7 +140,7 @@ impl TessPlan {
             .iter()
             .map(|s| match s {
                 EvalSurface::Plane { origin, du, dv } => {
-                    EvalSurface::Plane { origin: kvec3(point(vec3(*origin))), du: kvec3(vector(vec3(*du))), dv: kvec3(vector(vec3(*dv))) }
+                    EvalSurface::Plane { origin: vec3(point(record_vec3(*origin))), du: vec3(vector(record_vec3(*du))), dv: vec3(vector(record_vec3(*dv))) }
                 }
                 // An affine map keeps a surface closed or open.
                 EvalSurface::Nurbs(n) => EvalSurface::nurbs_closed(

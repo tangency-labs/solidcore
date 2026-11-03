@@ -478,7 +478,7 @@ fn assert_faces_lie_flat(name: &str, plan: &solidcraft_geom::tess::TessPlan, tol
         let at = |i: u32| {
             fp.fixed.get(i as usize).copied().unwrap_or_else(|| {
                 let q = fp.uv[i as usize];
-                kernel::pair(s.eval(q[0], q[1])).0
+                kernel::record_pair(s.eval(q[0], q[1])).0
             })
         };
         let (mut flat, mut surface) = (0.0, 0.0);
@@ -495,7 +495,7 @@ fn assert_faces_lie_flat(name: &str, plan: &solidcraft_geom::tess::TessPlan, tol
                     for &(di, dj) in pieces {
                         let (x, y) = ((i as f64 + di) / N as f64, (j as f64 + dj) / N as f64);
                         let q = [a[0] + (b[0] - a[0]) * x + (c[0] - a[0]) * y, a[1] + (b[1] - a[1]) * x + (c[1] - a[1]) * y];
-                        if let Some((_, su, sv)) = s.derivs(q[0], q[1]).map(kernel::triple) {
+                        if let Some((_, su, sv)) = s.derivs(q[0], q[1]).map(kernel::record_triple) {
                             surface += su.cross(sv).len() * area / (N * N) as f64;
                         }
                     }
@@ -747,7 +747,7 @@ fn a_face_crossing_itself() -> (EvalSurface, seam::Loop, size::Rules) {
             uv.push([a[0] + (b[0] - a[0]) * f, a[1] + (b[1] - a[1]) * f]);
         }
     }
-    let pts: Vec<Vec3> = uv.iter().filter_map(|q| s.derivs(q[0], q[1]).map(kernel::triple).map(|(p, _, _)| p)).collect();
+    let pts: Vec<Vec3> = uv.iter().filter_map(|q| s.derivs(q[0], q[1]).map(kernel::record_triple).map(|(p, _, _)| p)).collect();
     assert_eq!(pts.len(), uv.len());
     (s, seam::Loop { uv, pts }, size::Rules::new(0.05, 40.0, None))
 }
@@ -768,7 +768,7 @@ fn a_curved_face_crossing_itself_is_filled_on_its_surface() {
     // Each point inside the face on the surface where its parameters put it.
     let mesh = TessPlan { surfaces: vec![s.clone()], faces: vec![FacePlan { surface: Some(0), ..fp.clone() }], ..TessPlan::default() }.evaluate();
     for (q, p) in fp.uv.iter().zip(&mesh.positions).skip(fp.fixed.len()) {
-        let Some((on, _, _)) = s.derivs(q[0], q[1]).map(kernel::triple) else { panic!("evaluates at {q:?}") };
+        let Some((on, _, _)) = s.derivs(q[0], q[1]).map(kernel::record_triple) else { panic!("evaluates at {q:?}") };
         assert!(on.dist(*p) < 1e-9, "{q:?}");
     }
 }
@@ -1005,7 +1005,7 @@ fn triangles_standing_across_a_curved_sheet_are_flipped_along_it() {
     let area = |tris: &[[u32; 3]]| -> f64 {
         tris.iter()
             .map(|t| {
-                let [a, b, c] = t.map(|i| kernel::pair(s.eval(uv[i as usize][0], uv[i as usize][1])).0);
+                let [a, b, c] = t.map(|i| kernel::record_pair(s.eval(uv[i as usize][0], uv[i as usize][1])).0);
                 (b - a).cross(c - a).len() / 2.0
             })
             .sum()
