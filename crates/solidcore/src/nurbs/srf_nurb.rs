@@ -26,7 +26,7 @@
 //! | [`Surface::reverse`] / [`Surface::reversed`] | `N_SrfReverse` (in place / into a new surface; knots by `NI_ReverseKnots`) |
 //! | [`Surface::surface_type`], [`SurfaceType`], [`SurfaceKind`] | `N_SrfType`            |
 //! | [`Surface::reparam`]                         | `N_SrfReparam`                        |
-//! | [`Surface::is_closed_smooth`], [`Surface::is_closed_smooth_flag`] | `N_SrfIsClosedSmooth` |
+//! | [`Surface::is_closed_smooth`], [`Surface::is_closed_smooth_flag`], `_with_fixes` forms | `N_SrfIsClosedSmooth` |
 //! | [`Surface::eval_pt_deriv_normal_pole`]       | `N_SrfEvalPtPtDerivNormalPole`        |
 //! | [`Surface::eval_pt_normal_at_pole`]          | `N_SrfEvalPtNormalAtPole`             |
 //! | [`cone_elliptic_ends`], [`EllipticCone`]     | `N_ConeEllipticEnds`                  |
@@ -66,6 +66,12 @@
 //!   `usize` (`n < 0` cannot be expressed), missing tolerances are `InvalidInput`.
 //!   `N_SrfIsClosedSmooth` returns its error flag after a failed `N_VectorsAngle`
 //!   when no later evaluation clears it; the port returns that error.
+//! - `N_SrfIsClosedSmooth` with
+//!   [`UpstreamFixes::closed_smooth_pole_tangent_limit`] (opt-in, WR-725, #2521): at a
+//!   station where the derivative across the seam vanishes (a pole on the seam) the
+//!   G1 test takes its limit, the mixed derivative, instead of the angle of two
+//!   vanishing vectors; the stations are then evaluated with the mixed derivative
+//!   (the lower orders are the same bits).
 //! - `NL_MTOL` is [`MODEL_TOL`] and `NL_LTOL` is [`LINE_TOL`]
 //!   ([`Surface::is_closed_smooth`] passes its G0 tolerance to
 //!   [`Surface::is_closed_tol`] instead of overriding the global).
@@ -1426,8 +1432,8 @@ impl Surface {
         tols: &[f64],
         dflg: Direction,
     ) -> Result<(Option<Direction>, Option<SolidError>)> {
-        let _ = fixes;
         const OP: &str = "nurbs::srf_nurb::Surface::is_closed_smooth";
+        let pole_limit = fixes.closed_smooth_pole_tangent_limit;
         let tol = |i: usize| -> Result<f64> {
             tols.get(i)
                 .copied()
@@ -1464,6 +1470,10 @@ impl Surface {
         let vk = self.v_knots();
         let (t0, t1) = (tol(0)?, tol(1)?);
         let mut pending: Option<SolidError> = None;
+        // The mixed derivative is the limit direction at a pole (WR-725): evaluate it
+        // too then (`upper` leaves it zero; the lower orders are the same either way).
+        let upper = !pole_limit;
+        let dom = self.parameter_bounds();
 
         // Loop through knot spans and check continuity.
         if do_u {
@@ -1472,20 +1482,20 @@ impl Surface {
                 let dv = (get(vk, succ(ii, OP)?, OP)? - get(vk, ii, OP)?) / q as f64;
                 let mut broke = false;
                 for jj in 0..=q {
-                    let (d1, d2) = if jj == q {
+                    let (x, d1, d2) = if jj == q {
                         let v = get(vk, ii + 1, OP)?;
                         let d1 =
-                            self.derivs(get(uk, 0, OP)?, v, Side::Left, Side::Right, true, 1, 1)?;
+                            self.derivs(get(uk, 0, OP)?, v, Side::Left, Side::Right, upper, 1, 1)?;
                         let d2 =
-                            self.derivs(get(uk, r, OP)?, v, Side::Right, Side::Right, true, 1, 1)?;
-                        (d1, d2)
+                            self.derivs(get(uk, r, OP)?, v, Side::Right, Side::Right, upper, 1, 1)?;
+                        (v, d1, d2)
                     } else {
                         let v = get(vk, ii, OP)? + jj as f64 * dv;
                         let d1 =
-                            self.derivs(get(uk, 0, OP)?, v, Side::Left, Side::Left, true, 1, 1)?;
+                            self.derivs(get(uk, 0, OP)?, v, Side::Left, Side::Left, upper, 1, 1)?;
                         let d2 =
-                            self.derivs(get(uk, r, OP)?, v, Side::Right, Side::Left, true, 1, 1)?;
-                        (d1, d2)
+                            self.derivs(get(uk, r, OP)?, v, Side::Right, Side::Left, upper, 1, 1)?;
+                        (v, d1, d2)
                     };
                     pending = None;
 
@@ -1497,7 +1507,16 @@ impl Surface {
                     }
 
                     // check G1
-                    match vectors_angle(sd_at(&d1, 1, 0, OP)?, sd_at(&d2, 1, 0, OP)?) {
+                    let (a, b) = if pole_limit {
+                        let end = x == dom.vt;
+                        (
+                            seam_tangent(&d1, Direction::U, end, OP)?,
+                            seam_tangent(&d2, Direction::U, end, OP)?,
+                        )
+                    } else {
+                        (sd_at(&d1, 1, 0, OP)?, sd_at(&d2, 1, 0, OP)?)
+                    };
+                    match vectors_angle(a, b) {
                         Err(e) => {
                             pending = Some(e);
                             broke = true;
@@ -1534,20 +1553,20 @@ impl Surface {
                 let du = (get(uk, succ(ii, OP)?, OP)? - get(uk, ii, OP)?) / p as f64;
                 let mut broke = false;
                 for jj in 0..=p {
-                    let (d1, d2) = if jj == p {
+                    let (x, d1, d2) = if jj == p {
                         let u = get(uk, ii + 1, OP)?;
                         let d1 =
-                            self.derivs(u, get(vk, 0, OP)?, Side::Right, Side::Left, true, 1, 1)?;
+                            self.derivs(u, get(vk, 0, OP)?, Side::Right, Side::Left, upper, 1, 1)?;
                         let d2 =
-                            self.derivs(u, get(vk, s, OP)?, Side::Right, Side::Right, true, 1, 1)?;
-                        (d1, d2)
+                            self.derivs(u, get(vk, s, OP)?, Side::Right, Side::Right, upper, 1, 1)?;
+                        (u, d1, d2)
                     } else {
                         let u = get(uk, ii, OP)? + jj as f64 * du;
                         let d1 =
-                            self.derivs(u, get(vk, 0, OP)?, Side::Left, Side::Left, true, 1, 1)?;
+                            self.derivs(u, get(vk, 0, OP)?, Side::Left, Side::Left, upper, 1, 1)?;
                         let d2 =
-                            self.derivs(u, get(vk, s, OP)?, Side::Left, Side::Right, true, 1, 1)?;
-                        (d1, d2)
+                            self.derivs(u, get(vk, s, OP)?, Side::Left, Side::Right, upper, 1, 1)?;
+                        (u, d1, d2)
                     };
                     pending = None;
 
@@ -1559,7 +1578,16 @@ impl Surface {
                     }
 
                     // check G1
-                    match vectors_angle(sd_at(&d1, 0, 1, OP)?, sd_at(&d2, 0, 1, OP)?) {
+                    let (a, b) = if pole_limit {
+                        let end = x == dom.ur;
+                        (
+                            seam_tangent(&d1, Direction::V, end, OP)?,
+                            seam_tangent(&d2, Direction::V, end, OP)?,
+                        )
+                    } else {
+                        (sd_at(&d1, 0, 1, OP)?, sd_at(&d2, 0, 1, OP)?)
+                    };
+                    match vectors_angle(a, b) {
                         Err(e) => {
                             pending = Some(e);
                             broke = true;
@@ -1704,6 +1732,32 @@ impl Surface {
 /// out is outside every array upstream would read).
 fn succ(i: isize, op: &'static str) -> Result<isize> {
     i.checked_add(1).ok_or_else(|| oob(op))
+}
+
+/// Shortest partial derivative that is not a pole: `N_SrfEvalPtNormalAtPole` takes a
+/// shorter one as vanishing (`0.001 * NL_MTOL`).
+const POLE_DERIV_TOL: f64 = 0.001 * MODEL_TOL;
+
+/// The direction across the seam of `seam` (`U`: the u seam, `S_u`; `V`: `S_v`) from
+/// the first derivatives `sd` (with the mixed one) at a station of
+/// [`Surface::is_closed_smooth_flag_with_fixes`]. Where it vanishes (shorter than
+/// [`POLE_DERIV_TOL`]: a row collapsed to a pole) it is its limit along the seam,
+/// the mixed derivative `S_uv`, negated at the end of the domain along the seam
+/// (`end`), where the row is approached from below (WR-725; the pole normal of
+/// [`Surface::eval_pt_normal_at_pole`] takes the same limit).
+fn seam_tangent(sd: &[Vec<Vec3>], seam: Direction, end: bool, op: &'static str) -> Result<Vec3> {
+    let across = match seam {
+        Direction::V => sd_at(sd, 0, 1, op)?,
+        _ => sd_at(sd, 1, 0, op)?,
+    };
+    if across.length() > POLE_DERIV_TOL {
+        return Ok(across);
+    }
+    let mut mixed = sd_at(sd, 1, 1, op)?;
+    if end {
+        mixed *= -1.0;
+    }
+    Ok(mixed)
 }
 
 /// `SD[k][l]`.
@@ -2543,6 +2597,8 @@ mod tests {
         assert!(s.is_closed_smooth(1, &[1e-6, 1.0], Direction::UV).is_err());
     }
     /// `nlib.srf_nurb` case `gen0652` (tols [0.001, 1.0]): rows `[wx, wy, wz, w]`.
+    // The weights are the generator's 1/sqrt(2), as the case has them.
+    #[allow(clippy::approx_constant)]
     const GEN0652: [[[f64; 4]; 5]; 9] = [
         [
             [
@@ -2834,6 +2890,8 @@ mod tests {
         ],
     ];
     /// `nlib.srf_nurb` case `gen1542` (tols [0.001, 0.5]): rows `[wx, wy, wz, w]`.
+    // The weights are the generator's 1/sqrt(2), as the case has them.
+    #[allow(clippy::approx_constant)]
     const GEN1542: [[[f64; 4]; 5]; 9] = [
         [
             [
@@ -3144,9 +3202,10 @@ mod tests {
     }
 
     fn pole_fix() -> UpstreamFixes {
-        let mut fixes = UpstreamFixes::default();
-        fixes.closed_smooth_pole_tangent_limit = true;
-        fixes
+        UpstreamFixes {
+            closed_smooth_pole_tangent_limit: true,
+            ..UpstreamFixes::default()
+        }
     }
 
     /// #2521 (WR-725): at the poles `S_u` is exactly zero on both sides of the seam,
