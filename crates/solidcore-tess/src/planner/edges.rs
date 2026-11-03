@@ -175,7 +175,7 @@ pub(crate) fn sample_edge(b: &brep::Brep, ei: usize, rules: &Rules, h: f64) -> R
             (short && straight && quarter && sag <= tol, sag)
         };
         let (ok, sag) = fine();
-        if !(deep || full) && !ok {
+        if !deep && !full && !ok {
             stack.push(Seg {
                 a: m,
                 b,
