@@ -23,10 +23,16 @@ impl Plane {
     /// unit, square `X`, `Y`. Negative where a foot lies outside. The plane reaches over the
     /// box within `tol` when the margin is at least `-tol`.
     ///
-    /// The enclosure is the margin's rounding: each term is the difference of a three-term
-    /// dot product of a rounded difference and a rounded product, at most 7 rounded
-    /// operations, so it is within `gamma_8` of the sum of its terms' magnitudes
-    /// (`|X|.(|q| + |O|) + |u0 su|`, the axes taken as stored: they are the plane).
+    /// The enclosure is the margin's rounding and the axes' defect:
+    /// - each term is the difference of a three-term dot product of a rounded difference and
+    ///   a rounded product, at most 7 rounded operations, so it is within `gamma_8` of the sum
+    ///   of its terms' magnitudes (`|X|.(|q| + |O|) + |u0 su|`);
+    /// - the stored axes are unit and square only to rounding: with `e` the largest of
+    ///   `|X.X - 1|`, `|Y.Y - 1|`, `|X.Y|` (plus their own rounding), the foot's coordinates
+    ///   `G^-1 (X.r, Y.r)` (`G` the axes' Gram matrix) differ from `(X.r, Y.r)` by at most
+    ///   `2e / (1 - 2e)` of their largest, and a parameter's length along `X` from the model
+    ///   length by `e` of it: `3e / (1 - 2e)` of the terms' largest magnitude is added. Axes
+    ///   with `e >= 1/4` bound nothing (an infinite enclosure).
     #[must_use]
     pub fn box_margin(&self, bx: &Extent3d) -> Bracket {
         let (o, x, y) = (
@@ -39,6 +45,16 @@ impl Plane {
         let (lo, hi) = (d.min(), d.max());
         let (m, mm) = (bx.min(), bx.max());
         let abs = |v: Vec3| Vec3::new(v.x.abs(), v.y.abs(), v.z.abs());
+        let defect = (x.dot(x) - 1.0)
+            .abs()
+            .max((y.dot(y) - 1.0).abs())
+            .max(x.dot(y).abs())
+            + gamma(4) * (abs(x).dot(abs(x)) + abs(y).dot(abs(y)));
+        let skew = if defect < 0.25 {
+            3.0 * defect / (1.0 - 2.0 * defect) * (1.0 + gamma(4))
+        } else {
+            f64::INFINITY
+        };
         let (mut margin, mut bound) = (f64::INFINITY, 0.0_f64);
         for c in 0..8 {
             let q = Point3::new(
@@ -55,7 +71,7 @@ impl Plane {
                     if term < margin {
                         margin = term;
                     }
-                    bound = bound.max(gamma(8) * (mag + end.abs()));
+                    bound = bound.max(gamma(8) * (mag + end.abs()) + skew * (mag + end.abs()));
                 }
             }
         }
@@ -114,7 +130,8 @@ mod tests {
         let m = p.box_margin(&bx([0.1, 0.1, 0.2], [0.3, 0.3, 0.9]));
         let want = (0.2 / r2).min(1.0 - 0.6 / r2).min(0.2).min(1.0 - 0.9);
         assert!(m.lower <= want && want <= m.upper, "{m:?} {want}");
-        assert!(m.upper - m.lower < 1e-14);
+        // the rounding and the stored axes' defect (a few ulps)
+        assert!(m.upper - m.lower < 1e-13, "{m:?}");
         // lower the box's top: the u sides come nearest
         let m = p.box_margin(&bx([0.05, 0.05, 0.4], [0.3, 0.3, 0.6]));
         let want = 0.1 / r2;
@@ -135,6 +152,26 @@ mod tests {
             [1e6 + 1.0, 1e6 + 1.0, 0.0],
         ));
         assert!(m.lower <= 9.0 && 9.0 <= m.upper);
-        assert!(m.upper - m.lower > 1e-12 && m.upper - m.lower < 1e-8);
+        assert!(m.upper - m.lower > 1e-12 && m.upper - m.lower < 1e-7, "{m:?}");
+    }
+
+    /// Axes only nearly square (REVIEW2's finding 6 case): the kernel keeps Y = (1e-13, 1, 0),
+    /// orthogonalising only past its zero tolerance. The foot of (0, 1e6, 0) is at
+    /// u = -1e-13 1e6 = -1e-7 in the axes' own coordinates, so the u-low margin is -1e-7; the
+    /// enclosure holds it (the axes' defect taken in), where one of the dot products' rounding
+    /// alone (about 1e-8) would not.
+    #[test]
+    fn nearly_square_axes_widen_the_enclosure_to_the_true_foot() {
+        let p = Plane::new(
+            Point3::ZERO,
+            Vec3::X,
+            Vec3::new(1e-13, 1.0, 0.0),
+            Vec2::new(1.0, 1.0),
+            &Extent2d::from_bounds(0.0, -1e7, 10.0, 1e7),
+        );
+        let y = p.position().y_axis();
+        assert!(y.x != 0.0, "{y:?}");
+        let m = p.box_margin(&bx([0.0, 1e6, 0.0], [0.0, 1e6, 0.0]));
+        assert!(m.lower <= -1e-7 && -1e-7 <= m.upper, "{m:?}");
     }
 }

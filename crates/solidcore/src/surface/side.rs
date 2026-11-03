@@ -1,8 +1,7 @@
 //! The sides of a face's parameter box, and the certified queries on them that extending a
 //! sheet past one side needs: whether a side collapses to a point
 //! ([`Surface::side_diameter`]), how far a surface runs across a side
-//! ([`Surface::length_across_side`]), and whether two surfaces span the same patch
-//! ([`Surface::same_patch`]).
+//! ([`Surface::length_across_side`]).
 //!
 //! Not upstream: the operations SolidCraft composed over the kernel, moved into it so the
 //! modelling layer computes no geometry (docs/layers.md §1). Each query returns its value with
@@ -25,7 +24,6 @@ use crate::surface::surface::{Surface, SurfaceKind};
 
 const OP_DIAMETER: &str = "surface::side::Surface::side_diameter";
 const OP_LENGTH: &str = "surface::side::Surface::length_across_side";
-const OP_PATCH: &str = "surface::side::Surface::same_patch";
 
 /// The most leaves [`Surface::length_across_side`] subdivides into.
 const MAX_LEAVES: usize = 1 << 20;
@@ -269,6 +267,21 @@ fn iso_pieces(
     } else {
         SurfParamType::U
     };
+    // within the form's knots, exactly: the iso extraction clamps a parameter outside them
+    // (by up to 1e-6) and the pieces would be cut to them, neither said
+    let nurb = form.gw_nurb().ok_or_else(|| SolidError::sm_err(OP_LENGTH))?;
+    let (held, along) = if along_u {
+        (nurb.v_knots(), nurb.u_knots())
+    } else {
+        (nurb.u_knots(), nurb.v_knots())
+    };
+    let inside = |x: f64, k: &[f64]| matches!((k.first(), k.last()), (Some(&a), Some(&b)) if x >= a && x <= b);
+    if !(inside(fixed, held) && inside(from, along) && inside(to, along)) {
+        return Err(SolidError::invalid_input(
+            OP_LENGTH,
+            "a parameter is outside the surface's knots",
+        ));
+    }
     let opts = IsoCurveOptions {
         domain: None,
         uv_iso_curve: false,
@@ -500,56 +513,6 @@ impl Surface {
             upper: polygons * (1.0 + g) + 2.0 * p * n * d,
         })
     }
-
-    /// How far `self` and `other` are from spanning the same patch: the largest distance
-    /// from a corner of `self`'s natural box to the nearest corner of `other`'s (in any
-    /// order), as an enclosure. The corners are the end points of the boxes' sides' iso
-    /// curves, so they carry only the rounding of making them ([`Rounding`]) and a
-    /// procedural blend's bound.
-    ///
-    /// # Errors
-    ///
-    /// `InvalidInput` for a surface without a NURBS form or with a weight not positive;
-    /// those of the iso extraction and the decomposition.
-    pub fn same_patch(&self, k: &Kernel, other: &Self) -> Result<Bracket> {
-        let corners = |s: &Self| -> Result<(Vec<Vec3>, f64)> {
-            let (form, bound) = form_of(k, s, OP_PATCH)?;
-            let b = s.natural_uv_domain_with_nurb(k)?;
-            let (lo, hi) = (b.min(), b.max());
-            let rounding = Rounding::of(&form, &[], OP_PATCH)?;
-            let mut out = Vec::new();
-            let mut levels = 0;
-            for u in [lo.x, hi.x] {
-                let (pieces, l) = iso_pieces(k, &form, false, u, lo.y, hi.y)?;
-                levels = levels.max(l);
-                let (Some(first), Some(last)) = (
-                    pieces.first().and_then(|p| p.first()),
-                    pieces.last().and_then(|p| p.last()),
-                ) else {
-                    return Err(SolidError::invalid_input(OP_PATCH, "a side has no extent"));
-                };
-                out.push(euclid(*first));
-                out.push(euclid(*last));
-            }
-            Ok((out, rounding.point(levels) + bound))
-        };
-        let (p, ep) = corners(self)?;
-        let (q, eq) = corners(other)?;
-        let (mut lower, mut upper) = (0.0_f64, 0.0_f64);
-        for x in &p {
-            let near = q
-                .iter()
-                .map(|y| x.distance(*y))
-                .fold(f64::INFINITY, f64::min);
-            lower = lower.max(near);
-            upper = upper.max(near);
-        }
-        let e = ep + eq;
-        Ok(Bracket {
-            lower: (lower * (1.0 - gamma(6)) - e).max(0.0),
-            upper: upper * (1.0 + gamma(6)) + e,
-        })
-    }
 }
 
 #[cfg(test)]
@@ -700,16 +663,16 @@ mod tests {
     }
 
     #[test]
-    fn same_patch_is_the_corners_distance() {
-        let a = Surface::from(cylinder(2.0, [0.0, 90.0], [0.0, 3.0]));
-        let b = a.same_patch(&k(), &a).unwrap();
-        assert!(b.upper < 1e-10, "{b:?}");
-        // the same cylinder half a unit higher: every corner half a unit off
-        let up = Surface::from(cylinder(2.0, [0.0, 90.0], [0.5, 3.5]));
-        holds(a.same_patch(&k(), &up).unwrap(), 0.5);
-        // a quarter turn on: the corners at 90 degrees meet, those at 0 are 2 sqrt2 off
-        let on = Surface::from(cylinder(2.0, [90.0, 180.0], [0.0, 3.0]));
-        holds(a.same_patch(&k(), &on).unwrap(), 2.0 * SQRT_2);
+    fn a_box_past_the_knots_is_refused_not_clamped() {
+        let c = cylinder(2.0, [0.0, 90.0], [0.0, 3.0]);
+        let s = Surface::from(c.clone());
+        let dom = s.natural_uv_domain_with_nurb(&k()).unwrap();
+        let (lo, hi) = (dom.min(), dom.max());
+        let past = Extent2d::from_bounds(lo.x, lo.y, hi.x + 1e-7, hi.y);
+        assert!(s.side_diameter(&k(), &past, BoxSide::UMax).is_err());
+        assert!(s.side_diameter(&k(), &past, BoxSide::VMin).is_err());
+        assert!(s.length_across_side(&k(), &past, BoxSide::UMax, 1e-8).is_err());
+        assert!(s.side_diameter(&k(), &dom, BoxSide::UMax).is_ok());
     }
 
     #[test]
@@ -723,6 +686,5 @@ mod tests {
         assert!(s
             .length_across_side(&k(), &dom, BoxSide::UMin, 1e-9)
             .is_err());
-        assert!(s.same_patch(&k(), &s).is_err());
     }
 }
