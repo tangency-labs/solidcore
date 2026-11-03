@@ -22,6 +22,8 @@ const MAX_DEPTH: u32 = 24;
 pub(crate) const QUARTER_TURN: f64 = std::f64::consts::FRAC_PI_2 * (1.0 + 1e-9);
 
 /// An edge's nodes, from its start vertex (interval min) to its end vertex (interval max).
+/// None (the default) for an edge that could not be sampled: every face it bounds is refused.
+#[derive(Default)]
 pub(crate) struct Nodes {
     pub points: Vec<Vec3>,
     /// The curve's parameter at each node (the edge's interval, ends included): where each
@@ -73,8 +75,16 @@ pub(crate) fn sample_edge(b: &brep::Brep, ei: usize, rules: &Rules, h: f64) -> R
         // points: `front + (back − front) · 1` is not `back` to the last bit, and the face that
         // runs the edge backwards starts its loop with that node, where the face running it
         // forwards takes the next edge's first node (the vertex) — a crack.
+        // A vertex not a number (or the two too far apart for a length) has no nodes between:
+        // the count below would round it to none.
+        let length = front.dist(back);
+        if !length.is_finite() {
+            return Err(fail(format!(
+                "its vertices {front:?} and {back:?} are {length} apart"
+            )));
+        }
         let n = if h > 0.0 {
-            (front.dist(back) / h)
+            (length / h)
                 .ceil()
                 // Proven: clamp bounds are constants 1.0 <= 19 999.0, neither NaN
                 .clamp(1.0, (MAX_EDGE_NODES - 1) as f64) as usize
@@ -330,6 +340,35 @@ mod tests {
             let p = b.vertices[v as usize].point;
             Vec3::new(p[0], p[1], p[2])
         })
+    }
+
+    /// A line edge whose vertex is not a number is refused, naming the edge: its length is not a
+    /// number, and the node count it gave was none (a polyline of one point).
+    #[test]
+    fn a_line_edge_with_a_vertex_not_a_number_is_refused() {
+        let mut cyl = fixture("cylinder_r10_h5");
+        let Some(line) = cyl
+            .edges
+            .iter()
+            .position(|e| matches!(e.curve, Curve::Line { .. }))
+        else {
+            panic!("a line edge")
+        };
+        let v = cyl.edges[line].vertices[0] as usize;
+        cyl.vertices[v].point[0] = f64::NAN;
+        let rules = Rules {
+            tol: 0.01,
+            max_len: f64::INFINITY,
+            turn: None,
+        };
+        match sample_edge(&cyl, line, &rules, 1.0) {
+            Err(e) => assert!(
+                e.to_string()
+                    .contains(&format!("edge {line}: its vertices")),
+                "{e}"
+            ),
+            Ok(n) => panic!("{} nodes", n.points.len()),
+        }
     }
 
     #[test]
