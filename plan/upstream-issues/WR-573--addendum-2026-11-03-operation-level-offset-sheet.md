@@ -30,5 +30,6 @@ Updates: WR-573
     patches). From its source (not run), `SmBrepData`'s writer then signals its "not
     within tolerance" warning and writes the surface.
 - **Regression evidence:** `crates/solidcore/tests/wr573_offset_wave_export.rs`
-  (`default_kernel_gets_success_without_a_surface`, `the_flag_approximates_the_offset_face`).
+  (`without_the_flag_the_writer_succeeds_with_nothing_wr573`, which pins the defect until the
+  flag becomes the default, and `the_flag_approximates_the_offset_face`).
 - **Tracking:** tangency-labs/solidcore#1954 (audit slice), #1501, #1441, #1712.

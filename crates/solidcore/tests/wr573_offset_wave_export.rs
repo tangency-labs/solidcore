@@ -81,8 +81,11 @@ fn offset_wave(k: &mut Kernel) -> Brep {
     moved
 }
 
+/// The defect WR-573 is about, pinned while the fix is opt-in: without the flag the
+/// writer's call succeeds with nothing to write. This test goes away when the flag becomes
+/// the default.
 #[test]
-fn default_kernel_gets_success_without_a_surface() {
+fn without_the_flag_the_writer_succeeds_with_nothing_wr573() {
     let mut k = Kernel::default();
     assert!(!k.fixes.approximate_surface_bezier_starter);
     let moved = offset_wave(&mut k);
