@@ -15,6 +15,7 @@
     clippy::indexing_slicing
 )]
 
+use solidcore::blend::definition_check::surface_kind_name;
 use solidcore::blend::fillet_executive::api::fillet_edges;
 use solidcore::blend::fillet_executive::NoRoomReason;
 use solidcore::boolean::api_brep::{boolean_difference, boolean_union};
@@ -85,8 +86,8 @@ fn volume(k: &Kernel, b: &mut Brep) -> f64 {
     brep_volume(k, b, 1e-8, &attrs).unwrap()
 }
 
-/// Builds with the flag, one lump, `check_brep` clean, to `want` within `rel`.
-fn builds(case: fn(&mut Kernel) -> (Brep, solidcore::Result<()>), want: f64, rel: f64) {
+/// Builds with the flag, one lump, `check_brep` clean, to `want` within `rel`; the result.
+fn builds(case: fn(&mut Kernel) -> (Brep, solidcore::Result<()>), want: f64, rel: f64) -> Brep {
     let mut k = kernel(true);
     let (mut b, built) = case(&mut k);
     built.unwrap();
@@ -101,6 +102,7 @@ fn builds(case: fn(&mut Kernel) -> (Brep, solidcore::Result<()>), want: f64, rel
     assert!(check.lines().is_empty(), "check_brep: {:?}", check.lines());
     let v = volume(&k, &mut b);
     assert!((v - want).abs() <= rel * want, "{v} vs {want}");
+    b
 }
 
 /// A 20 cube with three square openings 10 x 10 through it (x, y and z, 5 in from each
@@ -399,6 +401,9 @@ fn arc_area(u: f64) -> f64 {
 /// `scenario_round_over_a_thin_rib_not_a_cut`, tangency-labs/smlib@02b6103). Its top
 /// front edge (y = 0, z = 10) rounded r9.
 fn thin_rib(k: &mut Kernel) -> (Brep, solidcore::Result<()>) {
+    // the round past the cliff; with `fillet_round_ends_on_outline` it ends on the body's
+    // outline, as on main (`wr730_round_ends_on_outline.rs`)
+    k.fixes.fillet_round_ends_on_outline = false;
     let block = cuboid(k, [0.0, 0.0, 0.0], [20.0, 4.0, 10.0]);
     let slot = cuboid(k, [8.0, -1.0, -1.0], [4.0, 6.0, 10.0]);
     let bridged = boolean_difference(k, block, slot).unwrap();
@@ -436,22 +441,37 @@ fn a_round_past_a_thin_rib_across_its_slot_builds() {
     let lens = 2.0 * (arc_area(d + 0.025) - arc_area(d - 0.025));
     let want = 656.0 - 16.0 * area - 16.0 + 4.0 * lens;
     assert!((want - 401.198953621465).abs() < 1e-9, "closed form {want}");
-    builds(thin_rib, want, 1e-9);
+    let b = builds(thin_rib, want, 1e-9);
+    // its one round face, trimmed at the rib's faces, is its definition, an exact round
+    let rounds: Vec<_> = b
+        .faces()
+        .ids()
+        .filter_map(|f| solidcore::topology::face::p2::surface(&b, f).unwrap())
+        .filter(|s| surface_kind_name(s) != "plane")
+        .collect();
+    assert_eq!(rounds.len(), 1, "one round face");
+    let definition = rounds[0].procedural_blend().expect("a definition");
+    assert_eq!(definition.bound(), 0.0);
 }
 
 /// The hollows of #2328 that the rule above keeps refused: each void piece lies behind a
 /// wall running from a rail, which the round would cut through. Without the flag the first
 /// two fail in `trim_at_creases` and the third builds 0.6 % short with its cavity closed.
+/// Refused with `fillet_round_ends_on_outline` too.
 #[test]
 fn hollows_behind_a_wall_stay_refused() {
     // a closed cavity and a pocket open from below behind the cliff (r9), and a closed
-    // cavity under the top face (r3)
-    for (o, s, r) in [
+    // cavity under the top face (r3), each with and without the outline round
+    for ((o, s, r), outline) in [
         ([5.0, 1.0, 5.0], [10.0, 1.0, 3.0], 9.0),
         ([5.0, 1.0, -1.0], [10.0, 1.0, 9.0], 9.0),
         ([5.0, 0.3, 7.5], [10.0, 0.7, 2.0], 3.0),
-    ] {
+    ]
+    .into_iter()
+    .flat_map(|case| [(case, true), (case, false)])
+    {
         let mut k = kernel(true);
+        k.fixes.fillet_round_ends_on_outline = outline;
         let block = cuboid(&mut k, [0.0, 0.0, 0.0], [20.0, 4.0, 10.0]);
         let hollow = cuboid(&mut k, o, s);
         let mut b = boolean_difference(&mut k, block, hollow).unwrap();
@@ -459,6 +479,6 @@ fn hollows_behind_a_wall_stay_refused() {
         let SolidError::FilletRefused { reason, .. } = err else {
             panic!("{err:?}");
         };
-        assert_eq!(reason, Some(NoRoomReason::BreaksThrough), "{o:?}");
+        assert_eq!(reason, Some(NoRoomReason::BreaksThrough), "{o:?} {outline}");
     }
 }
