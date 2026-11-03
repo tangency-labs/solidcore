@@ -61,12 +61,16 @@ pub struct Bounded {
 }
 
 impl Bounded {
-    /// Whether the exact value is at most `tol`.
+    /// Whether the exact value is at most `tol`. `Yes` needs the rounded `value + bound`
+    /// strictly below `tol`: rounding is monotone and `tol` a double, so the exact sum is then
+    /// below it too (a sum that rounds down onto `tol` is `Undecided`); a bound of 0 is an
+    /// exact value, compared as it is. `No` needs `value - bound` above it, by the same
+    /// argument. A bound that is negative or not a number bounds nothing: `Undecided`.
     #[must_use]
     pub fn at_most(self, tol: f64) -> Verdict {
-        if !(self.value.is_finite() && self.bound.is_finite()) {
+        if !(self.value.is_finite() && self.bound.is_finite() && self.bound >= 0.0) {
             Verdict::Undecided
-        } else if self.value + self.bound <= tol {
+        } else if self.value + self.bound < tol || (self.bound == 0.0 && self.value <= tol) {
             Verdict::Yes
         } else if self.value - self.bound > tol {
             Verdict::No
@@ -86,15 +90,23 @@ impl Bounded {
     }
 }
 
+/// The absolute part of [`distance`]'s bound: squares below the smallest normal double
+/// round by up to half a subnormal unit each, absolutely, so the sum of three is off by at
+/// most `3 * 2^-1075` and its root by the root of that, about `2.8e-162`.
+pub const UNDERFLOW_ROOT: f64 = 1e-161;
+
 /// The distance between two given points, `|a - b|` as [`Vec3::length`] computes it:
 /// each difference rounds once, the sum of squares three times, the root once, so
-/// the computed value is within `gamma_5` of exact, relatively.
+/// the computed value is within `gamma_5` of exact, relatively, while the squares are
+/// normal doubles, and within [`UNDERFLOW_ROOT`] more, absolutely, when they underflow
+/// (points closer than about `1e-154`: two points `1e-170` apart have a computed
+/// distance of 0).
 #[must_use]
 pub fn distance(a: Point3, b: Point3) -> Bounded {
     let value = (a - b).length();
     Bounded {
         value,
-        bound: gamma(5) * value,
+        bound: gamma(5) * value + UNDERFLOW_ROOT,
     }
 }
 
@@ -181,19 +193,32 @@ pub fn cross_length(a: Vec3, b: Vec3, ea: f64, eb: f64) -> Bounded {
 }
 
 /// `x * s` for a bounded `x` and a given non-negative `s`: the bound scaled, plus
-/// the product's rounding.
+/// the product's rounding (relative, and a subnormal unit for a product that underflows).
 #[must_use]
 pub fn scaled(x: Bounded, s: f64) -> Bounded {
     let value = x.value * s;
     Bounded {
         value,
-        bound: x.bound * s * (1.0 + gamma(1)) + gamma(1) * value.abs(),
+        bound: x.bound * s * (1.0 + gamma(1)) + gamma(1) * value.abs() + f64::from_bits(1),
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A bound below half an ulp of the value: the rounded sum is the value, but the exact one
+    /// may be above it, so it is not proved at most the value (it was `Yes`).
+    #[test]
+    fn a_sum_that_rounds_down_onto_the_tolerance_is_undecided() {
+        let b = Bounded {
+            value: 1.0,
+            bound: 1e-17,
+        };
+        assert_eq!(b.at_most(1.0), Verdict::Undecided);
+        assert_eq!(b.at_most(1.0 + f64::EPSILON), Verdict::Yes);
+        assert_eq!(b.above(1.0 - f64::EPSILON), Verdict::Yes);
+    }
 
     #[test]
     fn a_bound_decides_only_what_it_proves() {
@@ -211,6 +236,34 @@ mod tests {
             bound: 0.0,
         };
         assert_eq!(nan.at_most(1.0), Verdict::Undecided);
+    }
+
+    /// A negative or NaN bound bounds nothing: it was a proved `Yes` (value + bound below the
+    /// tolerance) for a value far above it.
+    #[test]
+    fn a_negative_bound_decides_nothing() {
+        for bound in [-5.0, f64::NAN] {
+            let x = Bounded { value: 1.0, bound };
+            assert_eq!(x.at_most(0.5), Verdict::Undecided);
+            assert_eq!(x.above(0.5), Verdict::Undecided);
+        }
+    }
+
+    /// Points 1e-170 apart: the squares underflow and the computed distance is 0, which a
+    /// relative bound alone (0 here) took as exact, proving the distance not above 0. Points
+    /// 1e-160 apart: a computed distance off by about 1e-4 relatively, within the bound.
+    #[test]
+    fn an_underflowing_distance_keeps_an_absolute_bound() {
+        let d = distance(Point3::new(1e-170, 0.0, 0.0), Point3::ZERO);
+        assert_eq!(d.value, 0.0);
+        assert_eq!(d.above(0.0), Verdict::Undecided);
+        let d = distance(Point3::new(1e-160, 1e-160, 0.0), Point3::ZERO);
+        assert!((d.value - 2.0_f64.sqrt() * 1e-160).abs() <= d.bound);
+        assert_eq!(d.above(0.0), Verdict::Yes);
+        assert_eq!(
+            distance(Point3::new(1.0, 0.0, 0.0), Point3::ZERO).above(0.5),
+            Verdict::Yes
+        );
     }
 
     #[test]
