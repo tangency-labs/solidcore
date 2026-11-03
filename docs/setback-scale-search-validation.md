@@ -95,7 +95,38 @@ not the pinned reference used for default-behavior difftests.
 
 ### Resumed refresh
 
-The subsequent main refresh merges `d7319e27e` in `a2ce56e45`, also without
+The newest authoritative-main merge is `84a419512` in `627fce896`, without
+conflicts or manual resolutions. #2491/#2495 resolve the four fork-parity
+snapshot failures by excluding the solidcore-native exact-spine change from
+that test profile, keeping the assertions active and unchanged. The fork dump
+now follows that profile; the separate exact-spine diagnostic enables the
+redesigned construction explicitly. Earlier failure evidence below is historical.
+Main's updated AGENTS makes difftest a maintainer-requested tool, while retaining
+its strict parity/floor rules. This contribution still runs its native and
+C++ caller comparisons; it introduces no absolute floor.
+
+Fresh results on that newest merge plus the fork-dump profile alignment:
+all 34 tests in the six selected setback/G2/unequal/Gn-memo/#2020 integration
+suites pass (three diagnostic helpers and main's documented #2020 exclusion
+remain ignored in the regular run). The full thirteen-input fork-profile Rust
+executive dump passes Level2 BREP checks and the unchanged independent native
+comparison: **13 cases, 7 bodies, 167 vertices**, statuses/comments/fits/counts/
+volumes/every coordinate at 1e-9 relative, no absolute floor. This supersedes
+the historical fork-profile snapshot/parity blockers below. It does not claim
+that the intentionally different exact-spine profile matches that older fork.
+The focused `thousandth_scales_and_attempt_budget` gate also passes freshly:
+all six exact scale/attempt/QP tuples above, including the room-limited and
+refusal cases. The assertion is on counts and values, not runtime.
+The seven affected legacy C++ caller units pass on the newest merge: executive
+p1-p3, corner p1-p3 and geom p3, **3497 cases including 52 guard rejections**,
+zero failures or deferrals and maximum reported relative errors 0. These are
+default-path regression checks, separate from the fork-profile executive proof.
+Formatting, workspace clippy (`--workspace --all-targets -- -D warnings`) and
+the wasm32 check also pass on this newest source state. Full solidcore tests,
+runner self-tests and the complete `--green` sweep were not run for this slice;
+these targeted passes are not a claim that PR CI has run or passed.
+
+The preceding cancellation refresh merged `d7319e27e` in `a2ce56e45`, also without
 conflicts or manual resolutions. It preserves #2373/#2375 cancellation polling
 and propagation in Gn sections, offsets, shells and sweeps. Those changes do
 not alter the uncancelled numerical formulas or row/tie order. The evidence

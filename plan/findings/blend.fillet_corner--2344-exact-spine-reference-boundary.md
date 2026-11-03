@@ -1,5 +1,30 @@
 # blend.fillet_corner: the exact-spine executive reference boundary (#2382)
 
+## Authoritative resolution
+
+Main #2491/#2495 (`84a419512`, merged here in `627fce896`) independently
+bisected the same cause and made the fork-parity test profile exclude
+`fillet_exact_round_classes`. All original volume assertions are active and
+unchanged; the exact-spine production construction remains intact. `dump_blends`
+now follows that fork-parity profile. `diagnose_class_dependent_executive` now
+explicitly enables the solidcore-native exact spine, so it remains a separate
+diagnostic rather than contaminating the fork comparison. The historical
+diagnostic below used the opposite switch before this reference decision.
+No absolute floor, snapshot repin or production fallback was introduced.
+
+Fresh verification of this aligned profile passes all seven original regular
+setback tests and the strict full executive comparison: 13 inputs, 7 bodies,
+167 vertices, all statuses/comments/fits/counts/volumes/coordinates at 1e-9
+relative without an absolute floor. The exact-spine construction remains
+outside that fork-parity claim. The historical blockers below are resolved
+for the authoritative fork-test profile.
+
+The review replies and persistence coordination are recorded on
+[#2382](https://github.com/tangency-labs/solidcore/pull/2382#issuecomment-6595524107)
+and [#2488](https://github.com/tangency-labs/solidcore/issues/2488#issuecomment-6595523768).
+
+## Historical reproduction and diagnosis
+
 Updates the two `blend.fillet_corner--2344-main-refresh-*` findings. Library
 code: `8690f452867665e568138d08d731eb66196953f1`, authoritative main
 `ba69ec95d` merged without conflicts; #2369 and #2274 are both merged.

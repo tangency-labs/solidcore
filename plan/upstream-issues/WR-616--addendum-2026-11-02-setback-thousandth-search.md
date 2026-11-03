@@ -42,3 +42,11 @@ and four legacy flag-off snapshots fail. Both are recorded in the
 `plan/findings/blend.fillet_corner--2344-main-refresh-*` findings. The existing
 blend-corner flag is temporary until its complete construction is accepted; it
 must then become the default with the old path and flag deleted.
+
+Latest resolution: main #2491/#2495 excludes the explicitly solidcore-native
+exact-spine construction from these fork-parity tests, with original snapshot
+assertions active and unchanged. After merging main `84a419512`, this branch's
+aligned fork-profile executive passes all thirteen inputs, seven bodies and
+167 vertices at strict relative 1e-9 without a floor. The seven regular setback
+tests pass. This supersedes those historical profile mismatches; it does not
+revert the native construction or loosen the comparator.

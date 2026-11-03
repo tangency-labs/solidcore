@@ -412,15 +412,16 @@ fn dump_blended(mut k: Kernel, mut r: Blended) -> String {
 #[test]
 #[ignore = "prints the blends for a local comparison with the fork driver"]
 fn dump_blends() {
-    dump_blend_matrix(true);
+    // Match #2491's fork-parity profile; the exact-spine redesign is not in this fork.
+    dump_blend_matrix(false);
 }
 
 /// Isolate the class-dependent cylinder construction for the same thirteen inputs.
-/// This is a diagnostic counterfactual, not acceptance evidence for the all-fixes profile.
+/// This enables the solidcore-native exact spine, outside #2491's fork-parity profile.
 #[test]
-#[ignore = "diagnostic only: disables exact round classes; not the production acceptance profile"]
+#[ignore = "diagnostic only: exact-spine construction is outside the fork-parity profile"]
 fn diagnose_class_dependent_executive() {
-    dump_blend_matrix(false);
+    dump_blend_matrix(true);
 }
 
 fn dump_blend_matrix(exact_classes: bool) {

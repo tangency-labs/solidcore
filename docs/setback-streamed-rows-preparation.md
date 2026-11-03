@@ -1,10 +1,17 @@
 # Streamed setback rows: native preparation for #2344(b)
 
 This is a **preparatory validation contribution**, separate from the implemented
-scale-search slice in #2382, whose executive acceptance remains open. Rust still
+scale-search slice in #2382, whose latest reference-profile resolution and
+verification are recorded in `setback-scale-search-validation.md`. Rust still
 materializes its sector matrix.
 No Rust row construction, QP arithmetic, degree order, probe API or flag changes
 are made here.
+
+The [#2366 boundary reply](https://github.com/tangency-labs/solidcore/pull/2382#issuecomment-6595523415)
+leaves its curved module, stored rows and real-round growth with that PR. This
+preparation freezes no Rust API and reserves no production streaming scope.
+Any future shared provider must preserve slot/tie order, working-set exclusion
+and count gates while supporting the curved polynomials and their degree order.
 
 The allowed SMLib source at `3843ddb53e4a1a80d12691775f0b7a499a73d95f`
 is compared with the stored-row reference at `20b1c01`. This WIP combines streamed
