@@ -36,6 +36,8 @@ disallowed-methods = [
     { path = "f64::log10", reason = "the record computes no geometry (docs/layers.md §4)" },
     { path = "f64::mul_add", reason = "the record computes no geometry (docs/layers.md §4)" },
     { path = "f64::recip", reason = "the record computes no geometry (docs/layers.md §4)" },
+    { path = "f64::to_radians", reason = "the record computes no geometry (docs/layers.md §4)" },
+    { path = "f64::to_degrees", reason = "the record computes no geometry (docs/layers.md §4)" },
     { path = "f32::sqrt", reason = "the record computes no geometry (docs/layers.md §4)" },
     { path = "f32::cbrt", reason = "the record computes no geometry (docs/layers.md §4)" },
     { path = "f32::hypot", reason = "the record computes no geometry (docs/layers.md §4)" },
@@ -65,4 +67,6 @@ disallowed-methods = [
     { path = "f32::log10", reason = "the record computes no geometry (docs/layers.md §4)" },
     { path = "f32::mul_add", reason = "the record computes no geometry (docs/layers.md §4)" },
     { path = "f32::recip", reason = "the record computes no geometry (docs/layers.md §4)" },
+    { path = "f32::to_radians", reason = "the record computes no geometry (docs/layers.md §4)" },
+    { path = "f32::to_degrees", reason = "the record computes no geometry (docs/layers.md §4)" },
 ]

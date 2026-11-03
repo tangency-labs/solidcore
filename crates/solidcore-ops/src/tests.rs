@@ -81,6 +81,40 @@ fn hostile_numbers_are_refused() {
     assert_eq!(b.counts().unwrap(), [6, 12, 8]);
 }
 
+/// A zero scale and a rank-2 map (z onto the xy plane) are singular: refused before the kernel,
+/// the body bit for bit as it was.
+#[test]
+fn a_singular_transform_is_refused_and_the_body_kept() {
+    all_fixes();
+    let b = make_box([1.0, 2.0, 3.0], [4.0, 5.0, 6.0]).unwrap();
+    let before = b.to_smb(false).unwrap();
+    let mut zero = IDENTITY;
+    for (i, row) in zero.iter_mut().enumerate().take(3) {
+        row[i] = 0.0;
+    }
+    let mut rank2 = IDENTITY;
+    rank2[2] = [1.0, 1.0, 0.0, 0.0];
+    // near-singular: one direction flattened against the others (the rows' own scales apart,
+    // this was proved regular)
+    let mut flattened = IDENTITY;
+    flattened[0][0] = 1e-300;
+    for m in [zero, rank2, flattened] {
+        assert_eq!(b.transform(&m).err(), Some(Error::Argument), "{m:?}");
+    }
+    assert_eq!(b.to_smb(false).unwrap(), before);
+    // a regular stretch still moves it
+    let mut stretch = IDENTITY;
+    stretch[0][0] = 2.0;
+    b.transform(&stretch).unwrap();
+    assert!((b.volume(1e-8).unwrap() - 240.0).abs() < 240.0 * 1e-9);
+    // a uniform scale of any size is regular: it is not refused as singular
+    let mut tiny = IDENTITY;
+    for (i, row) in tiny.iter_mut().enumerate().take(3) {
+        row[i] = 1e-300;
+    }
+    assert_ne!(b.transform(&tiny).err(), Some(Error::Argument));
+}
+
 #[test]
 fn every_primitive_is_valid_at_every_level() {
     all_fixes();
