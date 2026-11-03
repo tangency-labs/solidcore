@@ -50,6 +50,8 @@
 //! Every entry point carries the source B-rep's own attributes ([`Brep::add_attribute`])
 //! through the caller's stores to the returned B-rep (`attributes`).
 //! There is no new recursion; all owned loops are bounded by existing arena/relation lengths.
+//!
+//! Cancellation: the solid, extended and shell paths poll the kernel's cancel token (#2136, #2372) per face, edge use, vertex and stitch pass; the static offset's status collapse passes `Cancelled` through, and the shell and offset APIs return `Cancelled`, not `Ok`, under a fired token.
 
 use std::collections::BTreeSet;
 
@@ -226,6 +228,38 @@ fn make_shell_edges_exact(
         key_of: notifications.result_key_of,
     };
     make_edges_on_analytics_exact(kernel, shell, &mut stores)
+}
+
+/// Opt-in (WR-718, #2350 S1): refuses the offset of `face` (whose implicit offset
+/// surface is `offset`) when it folds on the face's parameter box
+/// ([`crate::offset::construction::sheets::certify_regular`]), naming the largest wall
+/// that works.
+fn refuse_folding_offset(
+    kernel: &Kernel,
+    original: &Brep,
+    face: FaceId,
+    offset: &crate::surface::offset_surface::OffsetSurface,
+    operation: &'static str,
+) -> Result<()> {
+    use crate::offset::construction::sheets::{certify_regular, Regularity};
+    let Some(nurb) = crate::topology::brep::p3::with_nurb(kernel, offset.base_surface())? else {
+        return Ok(());
+    };
+    let Some(base) = nurb.gw_nurb() else {
+        return Ok(());
+    };
+    let domain = crate::topology::face::p2::uv_domain(original, face)?;
+    let uv_box = [domain.min.x, domain.max.x, domain.min.y, domain.max.y];
+    match certify_regular(kernel, base, offset.offset_distance(), Some(uv_box))? {
+        Regularity::Regular => Ok(()),
+        Regularity::Folds { largest } => Err(SolidError::ShellRefused {
+            operation,
+            code: crate::error::SM_ERR,
+            entity: Some(EntityRef::Face(face)),
+            refusal: crate::offset::construction::ShellRefusal::Fold,
+            size: Some(largest),
+        }),
+    }
 }
 
 /// Static offset entry point, with a non-null original and an owned result.
@@ -406,6 +440,7 @@ impl OffsetExecutive {
                 let mut stitch_tol_3d = tolerance / 10.0;
                 let mut ii = 0;
                 while ii < 4 && lamina > 0 {
+                    kernel.check_cancelled(OP_SHELL)?;
                     // pBrepShell->StitchFaces(dStitchTol3d): the glues notify the shell's
                     // own objects, whose attributes the MergeBrep above left in the
                     // caller's stores, so the stitch runs on those (#1973)
@@ -533,6 +568,7 @@ impl OffsetExecutive {
             let mut loop_points = Vec::new();
             let faces = bp1::faces(original, None)?;
             for id in faces {
+                kernel.check_cancelled(OP_SOLID)?;
                 if self.shell_faces().contains(&id) {
                     loop_points =
                         self.copy_shell_face_prefix(kernel, original, id, false, notifications)?;
@@ -564,6 +600,7 @@ impl OffsetExecutive {
             with_mark_lock(kernel, ALL_MARKS, |kernel, mark_type| {
                 let mut marked = BTreeSet::new();
                 for &edgeuse in &offset_edgeuses {
+                    kernel.check_cancelled(OP_SOLID)?;
                     marked.insert(edgeuse);
                     let mut radial = required(eu::radial(original, edgeuse)?, OP_SOLID)?;
                     if marked.contains(&radial) {
@@ -596,6 +633,7 @@ impl OffsetExecutive {
             // cpp:745–753: ruled side walls for lamina edges (SE).
             if self.create_offset_solid() {
                 for &edgeuse in &offset_edgeuses {
+                    kernel.check_cancelled(OP_SOLID)?;
                     let edge = required(eu::edge(original, edgeuse)?, OP_SOLID)?;
                     if eu::edge_is_lamina(original, edge)? {
                         let mut stores = NotificationStores {
@@ -615,6 +653,7 @@ impl OffsetExecutive {
 
             // cpp:776–846: vertex caps, in GetVertices order (SER).
             for vertex in bp1::vertices(original, None)? {
+                kernel.check_cancelled(OP_SOLID)?;
                 let cap = self.build_offset_of_vertex(kernel, original, Some(vertex))?;
                 let Some(surface) = cap.surface else {
                     continue;
@@ -681,6 +720,7 @@ impl OffsetExecutive {
         self.allocate_offset_brep(kernel, notifications)?;
         let faces = bp1::faces(original, None)?;
         for id in faces {
+            kernel.check_cancelled(OP_EXTENDED)?;
             if self.shell_faces().contains(&id) {
                 // DoExtendedOffset builds no vertex caps from these loop points.
                 let _ = self.copy_shell_face_prefix(kernel, original, id, true, notifications)?;
@@ -700,6 +740,7 @@ impl OffsetExecutive {
             let mut unbridged = 0_usize;
             if !self.collapsed_faces.is_empty() {
                 for &edgeuse in &mapped {
+                    kernel.check_cancelled(OP_EXTENDED)?;
                     let Some(radial) = eu::radial(original, edgeuse)? else {
                         continue;
                     };
@@ -756,6 +797,7 @@ impl OffsetExecutive {
             }
             if self.extend_convex_edges() {
                 for &edgeuse in &mapped {
+                    kernel.check_cancelled(OP_EXTENDED)?;
                     let radial = required(eu::radial(original, edgeuse)?, OP_EXTENDED)?;
                     // (WR-346: mated across it above)
                     if self.radial_face_collapsed(original, radial)? {
@@ -793,6 +835,7 @@ impl OffsetExecutive {
             }
 
             for &edgeuse in &mapped {
+                kernel.check_cancelled(OP_EXTENDED)?;
                 let mut radial = required(eu::radial(original, edgeuse)?, OP_EXTENDED)?;
                 // (WR-346: mated across it above)
                 if self.radial_face_collapsed(original, radial)? {
@@ -826,6 +869,7 @@ impl OffsetExecutive {
             // refuse it rather than build a body with holes.
             if !self.collapsed_faces.is_empty() {
                 for &edgeuse in &mapped {
+                    kernel.check_cancelled(OP_EXTENDED)?;
                     let Some(radial) = eu::radial(original, edgeuse)? else {
                         continue;
                     };
@@ -876,6 +920,7 @@ impl OffsetExecutive {
             // surface the merge joins to the offset face along the circle.
             if kernel.fixes.offset_point_vertex_caps {
                 for vertex in bp1::vertices(original, None)? {
+                    kernel.check_cancelled(OP_EXTENDED)?;
                     if crate::topology::vertex::edges(original, vertex, None)?.len() != 1 {
                         continue;
                     }
@@ -920,6 +965,7 @@ impl OffsetExecutive {
 
             if self.create_offset_solid() {
                 for &edgeuse in &mapped {
+                    kernel.check_cancelled(OP_EXTENDED)?;
                     let edge = required(eu::edge(original, edgeuse)?, OP_EXTENDED)?;
                     if eu::edge_is_lamina(original, edge)? {
                         // SE, not SER, upstream: propagate Unported, ignore other errors.
@@ -1282,6 +1328,18 @@ impl OffsetExecutive {
             // creator object decides upstream (virtual call), not `m_eOffsetOperation`.
             super::face::build_local(original, &self.local_faces, &self.local_surfaces, faceuse)?
         };
+        // Not upstream (WR-718, #2350 S1), opt-in `Kernel::fixes.shell_one_construction`:
+        // a face whose offset folds is refused, naming the largest wall that works
+        if kernel.fixes.shell_one_construction
+            && self.local_faces.is_empty()
+            && self.operation() != OffsetOperation::LocalOperation
+        {
+            if let Some(crate::surface::surface::SurfaceKind::OffsetSurface(offset)) =
+                surface.as_ref().map(crate::surface::surface::Surface::kind)
+            {
+                refuse_folding_offset(kernel, original, id, offset, operation)?;
+            }
+        }
         // Not upstream (WR-346, tangency-labs/solidcore#397), opt-in
         // `Kernel::fixes.offset_collapsed_rounds_mated`: an inset face whose offset collapses (a
         // convex round thinner than the wall) gets no offset face; the faces beside it are
@@ -1377,6 +1435,7 @@ impl OffsetExecutive {
         let status = (|| {
             let faces = bp1::faces(&temporary, None)?;
             for id in faces {
+                kernel.check_cancelled(OP_EXTENDED)?;
                 let key = (notifications.result_key_of)(EntityRef::Face(id));
                 let record = notifications.records.or_default(key.key);
                 if record.is_marked(&kernel.context, mark_type) {
@@ -1619,6 +1678,9 @@ pub fn api_shell_brep_full(
     // (not upstream: the port's cached topology, true again for the caller)
     result.refresh_cached_topology();
     update_result_tolerances(kernel, &mut result)?;
+    // (not upstream, #2136 / #2372: a cancel a status-ignoring helper absorbed still
+    // ends the shell as `Cancelled`, never `Ok`)
+    kernel.check_cancelled(OP_API_SHELL)?;
     Ok(result)
 }
 
@@ -1636,6 +1698,9 @@ pub fn api_offset_brep_full(
     // (not upstream: the port's cached topology, true again for the caller)
     result.refresh_cached_topology();
     update_result_tolerances(kernel, &mut result)?;
+    // (not upstream, #2136 / #2372: a cancel a status-ignoring helper absorbed still
+    // ends the offset as `Cancelled`, never `Ok`)
+    kernel.check_cancelled(OP_API_OFFSET)?;
     Ok(result)
 }
 
@@ -1961,7 +2026,8 @@ fn shell_difference_with(
 
 fn collapse_offset_status<T>(result: Result<T>) -> Result<T> {
     result.map_err(|error| {
-        if error.is_unported() {
+        // a cancel (#2136, #2372) is no offset failure: it is returned as it is
+        if error.is_unported_or_cancelled() {
             error
         } else {
             SolidError::sm_err(OP_OFFSET)

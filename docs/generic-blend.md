@@ -314,6 +314,26 @@ open (a size at it would leave a face or an edge of no extent), it is the bound 
 edge's tolerances. The fillet session returns it next to the reason: `fit_size()` gives a `FitSize`, the size and
 its `FitKind` (a radius, a setback or a setback scale; `blend::fillet_executive`).
 
+Each cause is decided from its own geometry, before the construction that it would make fail
+(#2401):
+- **A polygon face taken whole.** A plane face bounded by straight edges, every one blended, is taken
+  whole once the balls reach its deepest point (`NoteFitOfPolygonsTakenWhole`'s bound). This is
+  judged before the corners and the trace, whose rails would have no length. The refusal names
+  that depth, open.
+- **A collapsed offset.** A ball as wide as a face it rolls on (a cylinder or sphere of its radius,
+  with the ball inside) has its offset of that face collapsed onto the axis or centre, so its centre
+  is fixed. The zone it sweeps ends in a section of the ball only where the plane through an end of
+  the edge, square to it, holds that centre. A tray's seam and a cornered block's rim hold it at
+  both ends and build. The middle edge of an arc's tangent chain, rounded at its round's radius,
+  does not: refused, naming that radius, open. A larger ball that does not fit that face names it
+  open the same way. An end where the chain runs on into another blended edge closes the zone
+  with `fillet_blend_corner`: the Join there places the next round's section through the centre,
+  and the piece is the ball's triangle (#2403). So the same middle edge in a chain with the
+  upright and the arc's top edge builds at that radius.
+- **An open end of an overflow.** An overflow's open end whose end face does not cut the blend,
+  and a trimmed blend that keeps no length where no corner takes any, names where the blend stays
+  on its faces (`LargestSizeOnItsFaces`, open).
+
 The application shows the refusal and offers that size; it does not search by retrying builds.
 
 ## 4. The exact classes
@@ -330,6 +350,7 @@ classification replaced the old try-and-fall-through chain.
 | two cones with two touching points | a pair of conics | (6, 2) [9, Thms 16–18] |
 | two cones or cylinders with one touching point | a singular quartic | (12, 2) [9, Thms 19–21] |
 | cone/sphere (sphere/cylinder) with one touching point | a singular quartic | (8, 2) [9, Thm 22] |
+| a round of the ball's radius (its offset collapsed onto its spine, a line or a circle) and a face whose offset crosses that spine (solidcore #2403) | a point | the ball's triangle, (4, 2) |
 
 A rational spine with a rational radius gives a real rational canal surface [35, Thm 5.1], and a
 rolling ball on a surface with rational offsets along a rational rail is rational [35, §4]; minimal
@@ -672,7 +693,7 @@ Counts on SMLib 5e8c9c1: 220 pass, 17 refused as expected, 34 known failing.
 | <img src="generic-blend/cases/5300-fillet-tube-rim-as-wide-as-its-wall.jpg" width="240" alt="5300-fillet-tube-rim-as-wide-as-its-wall"> | `5300-fillet-tube-rim-as-wide-as-its-wall`<br>the outer top edge of a tube with a 1 mm wall (r 9..10, 20 high) filleted 1 mm: the round spans the whole wall top and meets the inner wall at its edge; truck refused it | **passes** |
 | <img src="generic-blend/cases/556-fillet-edge-ending-on-curved-boss.jpg" width="240" alt="556-fillet-edge-ending-on-curved-boss"> | `556-fillet-edge-ending-on-curved-boss`<br>an R0.5 round on a single straight bottom edge of a box whose end runs out against a cylindrical boss wall | **passes** |
 | <img src="generic-blend/cases/851-fillet-arc-and-upright.jpg" width="240" alt="851-fillet-arc-and-upright"> | `851-fillet-arc-and-upright`<br>on #851's knife-edge part (tessellation/1263): the arc's top edge and the front upright at the arc, R2 together | **passes** |
-| <img src="generic-blend/cases/851-fillet-arc-then-top-front.jpg" width="240" alt="851-fillet-arc-then-top-front"> | `851-fillet-arc-then-top-front`<br>on #851's knife-edge part (tessellation/1263): the arc's top edge R2, then the top front edge R2 as a fillet of its own | **known failing**: SMLib status 1001: the top front edge's tangent chain (the edge, the arc round's end curve on the front face, the upright under it) rounded R2; along the end curve the R2 ball sits on the arc round's own centre circle, so that piece is the ball about (39.2538, -19, 8) touching front, top and wall … |
+| <img src="generic-blend/cases/851-fillet-arc-then-top-front.jpg" width="240" alt="851-fillet-arc-then-top-front"> | `851-fillet-arc-then-top-front`<br>on #851's knife-edge part (tessellation/1263): the arc's top edge R2, then the top front edge R2 as a fillet of its own | **passes** on solidcore (solidcore #2403, with `fillet_blend_corner`): the round along the arc round's end curve is the ball about (39.2538, -19, 8) touching front, top and wall, the shape and volume of the three edges rounded together (9524.343669 here, 9524.343665 together); on SMLib 5e8c9c1 known failing, status 1001 |
 | <img src="generic-blend/cases/851-fillet-arc-top-edge-9-5.jpg" width="240" alt="851-fillet-arc-top-edge-9-5"> | `851-fillet-arc-top-edge-9-5`<br>the top edge of #851's concave R21 wall rounded R 9.5, just under its height | **passes** |
 | <img src="generic-blend/cases/851-fillet-arc-top-edge-full-wall-height.jpg" width="240" alt="851-fillet-arc-top-edge-full-wall-height"> | `851-fillet-arc-top-edge-full-wall-height`<br>the top edge of #851's concave R21 wall rounded R10, its full height: the round uses the wall up, its contact the bottom arc | **passes** |
 | <img src="generic-blend/cases/851-fillet-knife-edge-tip-r2.jpg" width="240" alt="851-fillet-knife-edge-tip-r2"> | `851-fillet-knife-edge-tip-r2`<br>the knife edge where #851's concave R21 wall runs out tangent into the back face, rounded R2: the ball that fits 2 from both faces, 13 back from the tip | **passes** |
@@ -680,7 +701,7 @@ Counts on SMLib 5e8c9c1: 220 pass, 17 refused as expected, 34 known failing.
 | <img src="generic-blend/cases/851-fillet-top-front-and-front-left-upright.jpg" width="240" alt="851-fillet-top-front-and-front-left-upright"> | `851-fillet-top-front-and-front-left-upright`<br>on #851's knife-edge part (tessellation/1263): the top front edge and the front-left upright, R2 together | **passes** |
 | <img src="generic-blend/cases/851-fillet-top-front-and-upright.jpg" width="240" alt="851-fillet-top-front-and-upright"> | `851-fillet-top-front-and-upright`<br>on #851's knife-edge part (tessellation/1263): the top front edge and the front upright at the arc, R2 together | **passes** |
 | <img src="generic-blend/cases/851-fillet-top-front-then-front-left-upright.jpg" width="240" alt="851-fillet-top-front-then-front-left-upright"> | `851-fillet-top-front-then-front-left-upright`<br>on #851's knife-edge part (tessellation/1263): the top front edge R2, then the front-left upright R2 with its tangent chain: up the first round's end arc and along the left top edge | **passes** |
-| <img src="generic-blend/cases/851-fillet-top-front-then-upright.jpg" width="240" alt="851-fillet-top-front-then-upright"> | `851-fillet-top-front-then-upright`<br>on #851's knife-edge part (tessellation/1263): the top front edge R2, then the front upright at the arc R2 as a fillet of its own | **known failing**: SMLib status 1001: the upright's tangent chain (the upright, the first round's end curve on the wall, the arc's top edge) rounded R2; along the end curve the R2 ball sits on the first round's axis, so that piece is the ball about (39.2538, -19, 8) touching front, top and wall (a torus of … |
+| <img src="generic-blend/cases/851-fillet-top-front-then-upright.jpg" width="240" alt="851-fillet-top-front-then-upright"> | `851-fillet-top-front-then-upright`<br>on #851's knife-edge part (tessellation/1263): the top front edge R2, then the front upright at the arc R2 as a fillet of its own | **passes** on solidcore (solidcore #2403, with `fillet_blend_corner`): the round along the first round's end curve is the ball about (39.2538, -19, 8) touching front, top and wall, the shape and volume of the three edges rounded together (9524.343665); on SMLib 5e8c9c1 known failing, status 1001 |
 | <img src="generic-blend/cases/854-fillet-revolved-disc-both-rims-full-round.jpg" width="240" alt="854-fillet-revolved-disc-both-rims-full-round"> | `854-fillet-revolved-disc-both-rims-full-round`<br>a disc r15 x 5 revolved from a sketch, both rims rounded R2.5 in one fillet: a full round of its 5 mm wall (robustness seed 33) | **passes** |
 | <img src="generic-blend/cases/926-fillet-top-edge-ending-on-boss-wall-above-it.jpg" width="240" alt="926-fillet-top-edge-ending-on-boss-wall-above-it"> | `926-fillet-top-edge-ending-on-boss-wall-above-it`<br>the top edge x = 40, z = 20 of #556's box (40x40x20 joined with an R12 boss 40 high on its side) rounded R 0.8: it runs into the boss's wall, which rises above the box, and ends on it | **passes** |
 | <img src="generic-blend/cases/cov-fillet-arc-edge-on-an-oblique-cut-of-a-bar.jpg" width="240" alt="cov-fillet-arc-edge-on-an-oblique-cut-of-a-bar"> | `cov-fillet-arc-edge-on-an-oblique-cut-of-a-bar`<br>a thin bar with a 3 mm concave arc in its profile, its end cut by a plane tilted 21 deg (examples/regressions/oblique_cut_of_cylinder): the edge where the arc's cylinder meets the cut (part of an ellipse) rounded R0.1 … | **passes** |
