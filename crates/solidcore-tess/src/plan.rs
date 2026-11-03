@@ -34,9 +34,40 @@ pub struct FacePlan {
 }
 
 impl FacePlan {
-    /// Triangle `t` is on this face's own nodes (the evaluated mesh keeps only those).
+    /// Triangle `t` is on this face's own nodes.
     fn has_nodes(&self, t: &[u32; 3]) -> bool {
         t.iter().all(|&i| (i as usize) < self.uv.len())
+    }
+
+    /// Why this face of a plan with `surfaces` surfaces is malformed, if it is: a triangle off
+    /// its nodes, a surface index past the plan's, or (with no surface) a vertex whose position
+    /// or normal is not given. Such a face is refused whole by [`TessPlan::evaluate`].
+    fn malformed(&self, surfaces: usize) -> Option<String> {
+        if let Some(k) = self.triangles.iter().position(|t| !self.has_nodes(t)) {
+            return Some(format!(
+                "triangle {k} has a corner past its {} nodes",
+                self.uv.len()
+            ));
+        }
+        match self.surface {
+            Some(i) if i as usize >= surfaces => {
+                Some(format!("its surface {i} is not in the plan"))
+            }
+            Some(_) => None,
+            None => {
+                let n = self.uv.len();
+                let missing = if self.fixed.len() < n {
+                    Some(("position", self.fixed.len()))
+                } else if self.normals.len() < n {
+                    Some(("normal", self.normals.len()))
+                } else {
+                    None
+                };
+                missing.map(|(what, k)| {
+                    format!("vertex {k} has no surface to evaluate and no {what} given")
+                })
+            }
+        }
     }
 }
 
@@ -65,6 +96,15 @@ impl TessPlan {
         let mut out = Mesh::default();
         let mut refused = Vec::new();
         for f in &self.faces {
+            // A malformed face is refused whole: nothing stands in for what it lacks, and no
+            // triangle of it is dropped.
+            if let Some(reason) = f.malformed(self.surfaces.len()) {
+                refused.push(RefusedFace {
+                    face: f.face as usize,
+                    reason,
+                });
+                continue;
+            }
             let surface = f.surface.and_then(|i| self.surfaces.get(i as usize));
             let (Some(mut positions), Some(mut normals)) =
                 (crate::with_room(f.uv.len()), crate::with_room(f.uv.len()))
@@ -79,15 +119,26 @@ impl TessPlan {
             for (k, uv) in f.uv.iter().enumerate() {
                 let (p, n) = match surface {
                     Some(s) => match s.eval(uv[0], uv[1]) {
-                        Ok(pn) => solidcore_convert::record_pair(pn),
+                        Ok(pn) => {
+                            let (p, n) = solidcore_convert::record_pair(pn);
+                            (f.fixed.get(k).copied().unwrap_or(p), n)
+                        }
                         Err(e) => {
                             why = Some(format!("vertex {k} at {uv:?}: {}", crate::eval_message(e)));
                             break;
                         }
                     },
-                    None => (Vec3::ZERO, f.normals.get(k).copied().unwrap_or(Vec3::Z)),
+                    // No surface: every vertex's position and normal are the plan's own (checked
+                    // by `malformed` above).
+                    None => match (f.fixed.get(k), f.normals.get(k)) {
+                        (Some(p), Some(n)) => (*p, *n),
+                        _ => {
+                            why = Some(format!("vertex {k} has no position or normal"));
+                            break;
+                        }
+                    },
                 };
-                positions.push(f.fixed.get(k).copied().unwrap_or(p));
+                positions.push(p);
                 normals.push(if f.flip { -n } else { n });
             }
             if let Some(reason) = why {
@@ -97,16 +148,29 @@ impl TessPlan {
                 });
                 continue;
             }
+            // The mesh's indices are u32: a face whose vertices would lie past them is refused.
             let base = out.positions.len();
+            let at = |i: u32| {
+                base.checked_add(i as usize)
+                    .and_then(|j| u32::try_from(j).ok())
+            };
+            let triangles: Option<Vec<[u32; 3]>> = f
+                .triangles
+                .iter()
+                .map(|t| Some([at(t[0])?, at(t[1])?, at(t[2])?]))
+                .collect();
+            let Some(triangles) = triangles else {
+                refused.push(RefusedFace {
+                    face: f.face as usize,
+                    reason: format!("its vertices lie past the mesh's {} index", u32::MAX),
+                });
+                continue;
+            };
             out.positions.extend(positions);
             out.normals.extend(normals);
-            for t in &f.triangles {
-                if f.has_nodes(t) {
-                    let at = |i: u32| u32::try_from(base + i as usize).unwrap_or(u32::MAX);
-                    out.triangles.push([at(t[0]), at(t[1]), at(t[2])]);
-                    out.tri_face.push(f.face);
-                }
-            }
+            out.tri_face
+                .extend(std::iter::repeat_n(f.face, triangles.len()));
+            out.triangles.extend(triangles);
         }
         out.edges.clone_from(&self.edges);
         out.edge_faces.clone_from(&self.edge_faces);
@@ -114,11 +178,13 @@ impl TessPlan {
     }
 
     /// Which of the body's `faces` faces have triangles in [`TessPlan::evaluate`]'s mesh,
-    /// without evaluating it.
+    /// without evaluating it: the faces with triangles that are not malformed. A face the
+    /// evaluator refuses at a vertex is only found by evaluating, so it is counted here.
     pub fn faces_with_triangles(&self, faces: usize) -> Vec<bool> {
         let mut has = vec![false; faces];
         for f in &self.faces {
-            if f.triangles.iter().any(|t| f.has_nodes(t))
+            if !f.triangles.is_empty()
+                && f.malformed(self.surfaces.len()).is_none()
                 && let Some(h) = has.get_mut(f.face as usize)
             {
                 *h = true;
@@ -313,27 +379,31 @@ mod tests {
         )
     }
 
+    /// A plane face: its fixed vertex used exactly, its normals flipped. The face with a
+    /// triangle off its nodes is refused whole, with why, and none of its triangles is kept.
     #[test]
-    fn evaluate_uses_fixed_points_and_drops_bad_indices() {
+    fn evaluate_uses_fixed_points_and_refuses_bad_indices() {
+        let face = |triangles: Vec<[u32; 3]>| FacePlan {
+            face: 3,
+            surface: Some(0),
+            uv: vec![[0.0, 0.0], [1.0, 0.0], [0.0, 1.0]],
+            fixed: vec![Vec3::new(0.0, 0.0, 1e-9)],
+            normals: vec![],
+            flip: true,
+            triangles,
+        };
         let plan = TessPlan {
             surfaces: vec![EvalSurface::Plane {
                 origin: solidcore::Vec3::ZERO,
                 du: solidcore::Vec3::X,
                 dv: solidcore::Vec3::Y,
             }],
-            faces: vec![FacePlan {
-                face: 3,
-                surface: Some(0),
-                uv: vec![[0.0, 0.0], [1.0, 0.0], [0.0, 1.0]],
-                fixed: vec![Vec3::new(0.0, 0.0, 1e-9)],
-                normals: vec![],
-                flip: true,
-                triangles: vec![[0, 1, 2], [0, 1, 7]],
-            }],
+            faces: vec![face(vec![[0, 1, 2]])],
             edges: vec![],
             edge_faces: vec![],
         };
-        let m = plan.evaluate().0;
+        let (m, refused) = plan.evaluate();
+        assert!(refused.is_empty(), "{refused:?}");
         assert_eq!(m.positions.len(), 3);
         assert_eq!(
             m.positions.first().copied(),
@@ -342,21 +412,100 @@ mod tests {
         assert_eq!(m.triangles, vec![[0, 1, 2]]);
         assert_eq!(m.tri_face, vec![3]);
         assert!(m.normals.iter().all(|n| close(*n, -Vec3::Z, 1e-12)));
-        // Faces with triangles, counted without evaluating, are the faces the mesh has: not a
-        // face whose only triangle is off its nodes, nor one with none, nor one out of range.
-        let mut plan = plan;
+        let bad = TessPlan {
+            faces: vec![face(vec![[0, 1, 2], [0, 1, 7]])],
+            ..plan.clone()
+        };
+        let (m, refused) = bad.evaluate();
+        assert!(m.triangles.is_empty() && m.positions.is_empty());
+        assert_eq!(
+            refused,
+            vec![RefusedFace {
+                face: 3,
+                reason: "triangle 1 has a corner past its 3 nodes".into()
+            }]
+        );
+    }
+
+    /// A face with no surface takes every position and normal from the plan. One missing a
+    /// position or a normal is refused with why; nothing (the origin, +z) stands in for it.
+    #[test]
+    fn a_face_without_a_surface_and_a_vertex_is_refused() {
+        let face = |face: u32, fixed: usize, normals: usize| FacePlan {
+            face,
+            surface: None,
+            uv: vec![[0.0, 0.0]; 3],
+            fixed: [Vec3::X, Vec3::Y, Vec3::Z]
+                .into_iter()
+                .take(fixed)
+                .collect(),
+            normals: vec![Vec3::Z; normals],
+            flip: false,
+            triangles: vec![[0, 1, 2]],
+        };
+        let plan = TessPlan {
+            faces: vec![
+                face(0, 3, 3),
+                face(1, 2, 3),
+                face(2, 3, 2),
+                face(3, 3, 3),
+                FacePlan {
+                    surface: Some(4),
+                    ..face(4, 3, 3)
+                },
+            ],
+            ..TessPlan::default()
+        };
+        let (m, refused) = plan.evaluate();
+        assert_eq!(m.tri_face, vec![0, 3]);
+        assert_eq!(
+            m.positions,
+            vec![Vec3::X, Vec3::Y, Vec3::Z, Vec3::X, Vec3::Y, Vec3::Z]
+        );
+        let reasons: Vec<(usize, &str)> = refused
+            .iter()
+            .map(|r| (r.face, r.reason.as_str()))
+            .collect();
+        assert_eq!(
+            reasons,
+            vec![
+                (
+                    1,
+                    "vertex 2 has no surface to evaluate and no position given"
+                ),
+                (2, "vertex 2 has no surface to evaluate and no normal given"),
+                (4, "its surface 4 is not in the plan"),
+            ]
+        );
+        // Counted without evaluating: the faces the mesh has.
+        assert_eq!(
+            plan.faces_with_triangles(5),
+            vec![true, false, false, true, false]
+        );
+    }
+
+    /// Faces with triangles, counted without evaluating, are the faces the mesh has: not a face
+    /// whose triangle is off its nodes, nor one with none, nor one out of the body's range.
+    #[test]
+    fn faces_with_triangles_are_the_faces_the_mesh_has() {
         let only = |face: u32, triangles: Vec<[u32; 3]>| FacePlan {
             face,
             uv: vec![[0.0, 0.0]; 3],
+            fixed: vec![Vec3::X, Vec3::Y, Vec3::Z],
+            normals: vec![Vec3::Z; 3],
             triangles,
             ..Default::default()
         };
-        plan.faces.extend([
-            only(0, vec![[0, 1, 9]]),
-            only(1, vec![]),
-            only(2, vec![[2, 1, 0]]),
-            only(7, vec![[0, 1, 2]]),
-        ]);
+        let plan = TessPlan {
+            faces: vec![
+                only(0, vec![[0, 1, 9]]),
+                only(1, vec![]),
+                only(2, vec![[2, 1, 0]]),
+                only(3, vec![[0, 1, 2]]),
+                only(7, vec![[0, 1, 2]]),
+            ],
+            ..TessPlan::default()
+        };
         let has = plan.faces_with_triangles(5);
         let mut evaluated = vec![false; 5];
         for f in plan.evaluate().0.tri_face {
