@@ -1447,8 +1447,9 @@ fn c2_offset_point_ignored(
 /// the trace no point, as upstream, since it is found on the surface once that is made.
 /// A blend both of whose ends are such Ends, with no G1 knot between (a chamfer of a rim
 /// running from one smooth vertex to another), so has no point at all: its trace starts
-/// from the edge's sections at those ends, each solved as above, an end past a tangent
-/// edge skipped as above.
+/// from the edge's sections at those ends on the faces themselves (a section solved on the
+/// faces' extensions, past a tangent edge the ball has rolled over, is no point of the
+/// round), an end without one skipped.
 fn c2_trace_to_edge_ends(
     ops: &mut dyn FilletSolverOps,
     cx: &mut Cx<'_>,
@@ -1472,7 +1473,7 @@ fn c2_trace_to_edge_ends(
     if st.tsect_pnts.is_empty() {
         // no point to run on from: the trace starts from the edge's end sections
         for (end, _) in extended.iter().enumerate().filter(|(_, &e)| e) {
-            if let Some(r) = c2_edge_end_section(ops, cx, st, end)? {
+            if let Some(r) = c2_edge_end_section(ops, cx, st, end, false)? {
                 st.tsect_pnts.push(r);
             }
         }
@@ -1507,7 +1508,7 @@ fn c2_trace_to_edge_ends(
         if at.distance(end_pnt) <= tol {
             continue;
         }
-        if let Some(r) = c2_edge_end_section(ops, cx, st, end)? {
+        if let Some(r) = c2_edge_end_section(ops, cx, st, end, true)? {
             if end == 0 {
                 st.tsect_pnts.insert(0, r);
             } else {
@@ -1519,9 +1520,11 @@ fn c2_trace_to_edge_ends(
 }
 
 /// The edge's section at its start (`end` 0) or end (1), as the G1 knots' through points
-/// are made, solved over the trace's extended domains ([`c2_trace_to_edge_ends`]); `None`
-/// where it is not found at an End at a smooth vertex past a tangent edge of a face of the
-/// edge ([`c2_end_past_tangent_edge`]).
+/// are made: `on_extended`, solved over the trace's extended domains for a trace run on to
+/// the edge's end ([`c2_trace_to_edge_ends`]), `None` where it is not found at an End at a
+/// smooth vertex past a tangent edge of a face of the edge ([`c2_end_past_tangent_edge`]);
+/// else on the faces' own surfaces, a seed of a trace with no point, `None` where it is not
+/// found there.
 ///
 /// # Errors
 ///
@@ -1531,19 +1534,23 @@ fn c2_edge_end_section(
     cx: &mut Cx<'_>,
     st: &mut CalcState,
     end: usize,
+    on_extended: bool,
 ) -> Result<Option<TsRef>> {
     use crate::math::BIG_DOUBLE;
 
     let end_param = if end == 0 { st.ivl.min() } else { st.ivl.max() };
     let base0 = st.base_surfaces[0].clone();
     let (pnt, tangent) = binormal_guess_point(ops, cx, &base0, end_param, true)?;
-    // solved where the trace itself runs: its base surfaces' extended domains
+    // solved where the trace itself runs (its base surfaces' extended domains), or on the
+    // faces' own surfaces
     let mut domain1 = st.base_surfaces[0].natural_uv_domain_if_built();
     let mut domain2 = st.base_surfaces[1].natural_uv_domain_if_built();
-    ops.solver()
-        .setup_offset_extension(cx.k, &st.base_surfaces[0], &mut domain1)?;
-    ops.solver()
-        .setup_offset_extension(cx.k, &st.base_surfaces[1], &mut domain2)?;
+    if on_extended {
+        ops.solver()
+            .setup_offset_extension(cx.k, &st.base_surfaces[0], &mut domain1)?;
+        ops.solver()
+            .setup_offset_extension(cx.k, &st.base_surfaces[1], &mut domain2)?;
+    }
     let mut end_tsect = TsectPnt::new();
     match super::p3::find_fillet_tsect_pnt_in(
         ops,
@@ -1554,10 +1561,14 @@ fn c2_edge_end_section(
         pnt,
         tangent,
         &mut end_tsect,
-        Some(&domain1),
-        Some(&domain2),
+        on_extended.then_some(&domain1),
+        on_extended.then_some(&domain2),
     ) {
         Ok(()) => {}
+        // A seed of a trace with no point is a section on the faces themselves: where the
+        // edge's end has none there (the ball has left a face before it), the trace starts
+        // from the other end's and is extended to it
+        Err(e) if !on_extended && !e.is_unported_or_cancelled() => return Ok(None),
         // Not the fork's (#2406): at an End at a smooth vertex past a tangent edge of
         // a face of the edge the ball may have left that face before the edge's end,
         // its section there not on these faces: the trace goes on without it, out to
