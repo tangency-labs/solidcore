@@ -783,37 +783,101 @@ fn a_reopened_round_measurably_off_its_net_is_the_operand_on_s() {
     assert!((v0 - v1).abs() <= 1e-12 * v0, "volumes {v0} and {v1}");
 }
 
-/// #2388, contract 5, known failing (#2452): a second round whose support is a reopened
-/// round.
-/// The edge where the bottom round meets the end face x = 0 is rounded r 0.5: the fillet
-/// session refuses it at its finish (`SM_ERR`), and refuses it alike on the body as built,
-/// with the rounds by definition or as plain B-splines, so it is the fillet's, not the
-/// record's. Once it builds, its rail on the bottom round is to lie on S within the rail
-/// edge's tolerance; this test fails once the fillet builds.
+/// The kernel SolidCraft runs: every fix on but `geometric_g2_continuity`, with the round
+/// as its definition or as a plain B-spline.
+fn solidcraft_kernel(definition: bool) -> Kernel {
+    let mut fixes = UpstreamFixes::default();
+    for &name in UpstreamFixes::NAMES {
+        if name != "geometric_g2_continuity" {
+            *fixes.flag_mut(name).unwrap() = true;
+        }
+    }
+    fixes.fillet_round_as_definition = definition;
+    let mut k = Kernel::new(&KernelOptions::default());
+    k.fixes = fixes;
+    k
+}
+
+/// #2388, contract 5 (#2452): a second round whose support is a round. The edge where the
+/// bottom round meets the end face x = 0 is rounded r 0.5. Both its ends run on
+/// tangentially into the sharp edges x = 0, z = 0 and x = 0, y = 0, which are not picked,
+/// so the round ends at its sections through the end vertices (WR-674, trimmed at its
+/// creases, WR-706); without those fixes the pinned corner refuses each end
+/// (`SmFilletNx1Corner`, "Corner Edge Computation Failure"), which `DoFilleting` returns as
+/// its generic status. The round rolls between the plane x = 0 and a surface swept along
+/// x, so the ball's centre is at x = 0.5 and its rail on the bottom round is the round's
+/// section at x = 0.5, from (0.5, 0, 2) to (0.5, 2, 0): it lies on S within its edge's
+/// tolerance, on the body reopened (S the definition) and as built with the rounds as
+/// plain B-splines (S the B-spline), and the round adds its face and its two end faces.
 #[test]
-#[ignore = "slow (about 20 min unoptimized); known failing #2452: the fillet session refuses a round on this round"]
-fn known_failing_a_round_on_a_reopened_round() {
-    let mut k = kernel(true);
-    let mut b = chamfered_box(&mut k);
-    let rounds = reopen(&k, &mut b);
-    // the bottom round (along x near y = z = 0) and its edge in the plane x = 0
-    let (f, _) = rounds
-        .iter()
-        .find(|(_, s)| {
-            let d = s.natural_uv_domain_with_nurb(&k).unwrap();
-            s.evaluate_point(&k, d.evaluate(0.5, 0.5)).unwrap().z < 5.0
-        })
-        .unwrap()
-        .clone();
-    let end = edges_of(&b, f)
-        .into_iter()
-        .find(|&e| edge_points(&k, &b, e).iter().all(|p| p.x.abs() < 1e-6))
-        .unwrap();
-    let e = fillet_edges(&mut k, &mut b, &[end], 0.5, 1, 1, 0.0)
-        .expect_err("the round on the round builds now (#2452): check its rail against S");
-    assert_eq!(
-        e.operation(),
-        "blend::fillet_executive::session::finish",
-        "{e}"
-    );
+#[ignore = "slow (about 20 min unoptimized, 70 s optimized): the round's trace solves the reopened round's definition at about 67 000 stations"]
+fn a_round_on_a_reopened_round_lies_on_it() {
+    for definition in [true, false] {
+        let mut k = solidcraft_kernel(definition);
+        let mut b = chamfered_box(&mut k);
+        let rounds: Vec<(FaceId, Surface)> = if definition {
+            reopen(&k, &mut b)
+        } else {
+            // the faces whose surface is the G^n section's B-spline (degree 7 in v)
+            b.face_list()
+                .iter()
+                .filter_map(|&f| {
+                    let s = b.face(f).unwrap().surface.clone()?;
+                    let SurfaceKind::BSpline(bs) = s.kind() else {
+                        return None;
+                    };
+                    (bs.degree(solidcore::nurbs::b_spline_surface::SurfParamType::V) == 7)
+                        .then_some((f, s))
+                })
+                .collect()
+        };
+        assert_eq!(rounds.len(), 2, "definition {definition}: the rounds");
+        // the bottom round (along x near y = z = 0) and its edge in the plane x = 0
+        let (f, s) = rounds
+            .iter()
+            .find(|(_, s)| {
+                let d = s.natural_uv_domain_with_nurb(&k).unwrap();
+                s.evaluate_point(&k, d.evaluate(0.5, 0.5)).unwrap().z < 5.0
+            })
+            .unwrap()
+            .clone();
+        let end = edges_of(&b, f)
+            .into_iter()
+            .find(|&e| edge_points(&k, &b, e).iter().all(|p| p.x.abs() < 1e-6))
+            .unwrap();
+        let faces = b.face_list().len();
+        fillet_edges(&mut k, &mut b, &[end], 0.5, 1, 1, 0.0)
+            .unwrap_or_else(|e| panic!("definition {definition}: {e}"));
+        assert_eq!(
+            b.face_list().len(),
+            faces + 3,
+            "definition {definition}: the round and its two end faces"
+        );
+        // the rail: the edge at x = 0.5 from (0.5, 0, 2) to (0.5, 2, 0)
+        let rail: Vec<_> = b
+            .edge_list()
+            .iter()
+            .copied()
+            .filter(|&e| {
+                let p = edge_points(&k, &b, e);
+                p.iter().all(|p| (p.x - 0.5).abs() < 1e-9)
+                    && p.iter().any(|p| p.y > 1e-3 && p.z > 1e-3)
+            })
+            .collect();
+        assert_eq!(rail.len(), 1, "definition {definition}: the rail on S");
+        let tol = b.edge(rail[0]).unwrap().tolerance;
+        let p = edge_points(&k, &b, rail[0]);
+        let ends = [p[0], p[8]];
+        for q in [Point3::new(0.5, 0.0, 2.0), Point3::new(0.5, 2.0, 0.0)] {
+            assert!(
+                ends.iter().any(|e| (*e - q).length() <= tol),
+                "definition {definition}: the rail does not end at {q:?}: {ends:?}"
+            );
+        }
+        let worst = p.iter().map(|&q| to_s(&k, &s, q)).fold(0.0_f64, f64::max);
+        assert!(
+            worst <= tol,
+            "definition {definition}: the rail {worst:e} off S, its tolerance {tol:e}"
+        );
+    }
 }
