@@ -36,6 +36,9 @@
 #include <SmDatabaseIO.h>
 #include <SmBrep.h>
 #include <SmRegion.h>
+// The fork's SmRegion.h instantiates SmOwningTopology::GetAll<SmShell> (static_cast from
+// SmTopology*), which needs SmShell complete by the end of the file.
+#include <SmShell.h>
 
 #include <cctype>
 #include <cstring>

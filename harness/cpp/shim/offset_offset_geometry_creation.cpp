@@ -653,9 +653,12 @@ void run_script(Rd& rd, Two& t, std::vector<double>& o)
             SmLocalOperationGeometryCreation local_now(dist, approx, local_faces, local_surfaces);
             SmSurface* ns = nullptr;
             SmSSIData ssi;
+            // The fork's FaceuseOffset also says whether the offset collapses the surface onto
+            // its spine (then ns is NULL, which the output records); the port has no such flag.
+            SmBoolean collapses = FALSE;
             SmStatus s = (op == S_LOCAL_FACEUSE_OFFSET)
-                             ? local_now.FaceuseOffset(ctx, fu, skip ? TRUE : FALSE, ns, ssi)
-                             : geom.FaceuseOffset(ctx, fu, skip ? TRUE : FALSE, ns, ssi);
+                             ? local_now.FaceuseOffset(ctx, fu, skip ? TRUE : FALSE, ns, ssi, collapses)
+                             : geom.FaceuseOffset(ctx, fu, skip ? TRUE : FALSE, ns, ssi, collapses);
             o.push_back(st(s));
             if (s == SM_SUCCESS) // the out-parameters: only after success
             {

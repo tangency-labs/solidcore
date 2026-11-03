@@ -49,6 +49,7 @@
 #include <climits>
 #include <cstring>
 #include <map>
+#include <type_traits>
 #include <vector>
 
 namespace
@@ -256,12 +257,13 @@ bool apply_patches(Rd& rd, SmBrepData& d, bool* set_used)
             ULONG s0 = r.m_lStartShell, ns = r.m_lNumShells;
             if (s0 > d.m_vShells.GetSize() || ns > d.m_vShells.GetSize() - s0)
                 break;
-            SmTArray<SmShellData> shells;
+            // the arrays' own types: in the fork, references to SmTObjArrays
+            std::remove_reference_t<decltype(d.m_vShells)> shells;
             for (ULONG k = 0; k < ns; k++)
                 shells.Add(d.m_vShells[s0 + k]);
             d.m_vShells = shells;
             r.m_lStartShell = 0;
-            SmTArray<SmRegionData> regions;
+            std::remove_reference_t<decltype(d.m_vRegions)> regions;
             regions.Add(r);
             d.m_vRegions = regions;
             d.m_bManifold = TRUE;

@@ -516,10 +516,13 @@ void run(Rd& rd, std::vector<double>& o, bool observe = false)
         Owned own;
         SmTArray<SmCurve*> curves = own.add_all(specs);
         SmBrep* res = NULL;
+        // The fork's taper takes the corner as an SmOffsetCornerType: the flag's two values are
+        // SM_OC_FILLET_CORNER (TRUE) and SM_OC_LINEAR_EXTENSION (FALSE).
         SmApiStatus stat =
             op == OP_DRAFT
                 ? SmApiCreateDraftSweep(curves, ha[0], ha[1], corner ? TRUE : FALSE, caps, res)
-                : SmApiCreateTaperExtrude(curves, ha[0], ha[1], caps, corner ? TRUE : FALSE, res);
+                : SmApiCreateTaperExtrude(curves, ha[0], ha[1], caps,
+                                          corner ? SM_OC_FILLET_CORNER : SM_OC_LINEAR_EXTENSION, res);
         put_brep(o, stat, res);
         break;
     }

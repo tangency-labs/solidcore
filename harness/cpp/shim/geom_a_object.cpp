@@ -24,6 +24,9 @@
 #include <SmContext.h>
 #include <SmRegion.h>
 #include <SmSAGObject.h>
+// The fork's SmRegion.h instantiates SmOwningTopology::GetAll<SmShell> (static_cast from
+// SmTopology*), which needs SmShell complete by the end of the file.
+#include <SmShell.h>
 
 #include <nurbs.h>
 #include <NL_Globals.h>
