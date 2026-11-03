@@ -33,7 +33,8 @@ pub use mesh::Mesh;
 pub use par::guarded;
 pub use plan::{FacePlan, TessPlan};
 pub use planner::{
-    Cap, MAX_ANGLE_BOUNDARY, OverTolerance, PlanStats, RefusedEdge, RefusedFace, plan,
+    Cap, CappedEdge, EdgeCap, MAX_ANGLE_BOUNDARY, OverTolerance, PlanStats, RefusedEdge,
+    RefusedFace, plan,
 };
 pub use tolerance::{DISPLAY_ANGLE, MeshTolerance};
 

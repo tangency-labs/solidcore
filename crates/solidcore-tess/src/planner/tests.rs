@@ -1908,6 +1908,7 @@ fn a_thin_loops_edge_that_cannot_be_split_is_returned_with_why() {
         points: vec![Vec3::new(3.0, 0.0, 0.0), Vec3::new(3.0, 0.0, 40.0)],
         params: vec![0.0, 1.0],
         snapped: Vec::new(),
+        capped: None,
     });
     let failed = split_thin_loops(&b, &mut nodes, &[false; 6]);
     let [(edge, why)] = failed.as_slice() else {
@@ -2023,4 +2024,72 @@ fn a_face_whose_refinement_reaches_its_bound_is_named_with_its_sag() {
         "{o:?}"
     );
     assert!(!p.faces[0].triangles.is_empty());
+}
+
+/// A crowded face's curved edge whose sampling at the coarser angle fails (a spline with no
+/// point at its middle, which its strict nodes, filled in here, never reached): the edge keeps
+/// its strict nodes, refuses no face, and is named with the coarser sampling's error.
+#[test]
+fn an_edge_whose_coarser_sampling_fails_keeps_its_nodes_and_is_named() {
+    let mut b = fixture("box_10x6x4");
+    // x = 3, z = 40 t, its weight's double root at t = 0.5 (0 / 0 there).
+    let mut bad = b.edges[2].clone();
+    bad.curve = Curve::RationalSpline {
+        knots: vec![0.0, 0.0, 0.0, 0.0, 1.0, 1.0, 1.0, 1.0],
+        homogeneous: vec![
+            [9.0, 0.0, 0.0, 3.0],
+            [-3.0, 0.0, 40.0, -1.0],
+            [-3.0, 0.0, -80.0, -1.0],
+            [9.0, 0.0, 120.0, 3.0],
+        ],
+    };
+    bad.nurbs = None;
+    bad.uses.clear();
+    let e = b.edges.len();
+    b.edges.push(bad);
+    let one = brep::OrientedEdge {
+        edge: u32::try_from(e).unwrap(),
+        forward: true,
+        pcurve: brep::Curve2::Spline {
+            knots: vec![0.0, 0.0, 1.0, 1.0],
+            points: vec![[0.0, 4.0], [1.0, 4.0]],
+        },
+    };
+    b.faces[4].loops.push(Loop::Edges { edges: vec![one] });
+    let rules = size::Rules::new(
+        0.01,
+        12.0,
+        Some(size::Turn {
+            angle: crate::DISPLAY_ANGLE,
+            floor: 1e-5,
+        }),
+    );
+    let mut nodes: Vec<edges::Nodes> = (0..e)
+        .map(|k| ok(edges::sample_edge(&b, k, &rules, rules.max_len)))
+        .collect();
+    // Strict nodes: more segments than a face may have, none at t = 0.5 (an odd count).
+    let count = MAX_ANGLE_BOUNDARY + 1;
+    let params: Vec<f64> = (0..=count).map(|k| k as f64 / count as f64).collect();
+    let points: Vec<Vec3> = params
+        .iter()
+        .map(|t| Vec3::new(3.0, 0.0, 40.0 * t))
+        .collect();
+    nodes.push(edges::Nodes {
+        points: points.clone(),
+        params: params.clone(),
+        snapped: Vec::new(),
+        capped: None,
+    });
+    let jobs: Vec<(usize, f64)> = (0..=e).map(|k| (k, rules.max_len)).collect();
+    let kept = relax_crowded_faces(&b, &jobs, &rules, &mut nodes, &[false; 6]);
+    let [RefusedEdge { edge, reason }] = kept.as_slice() else {
+        panic!("{kept:?}")
+    };
+    assert_eq!(*edge, e);
+    assert!(
+        reason.contains(&format!("edge {e}: the curve does not evaluate at t = 0.5")),
+        "{reason}"
+    );
+    assert_eq!(nodes[e].params, params);
+    assert_eq!(nodes[e].points, points);
 }
