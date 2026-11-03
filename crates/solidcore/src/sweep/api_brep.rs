@@ -1582,7 +1582,7 @@ mod tests {
                     assert!(
                         matches!(
                             result,
-                            Err(crate::SolidError::Upstream {
+                            Err(SolidError::Upstream {
                                 operation: "mass::integrator",
                                 code: crate::error::SM_ERR,
                                 ..
