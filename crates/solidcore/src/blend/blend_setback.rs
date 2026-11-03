@@ -113,6 +113,7 @@ mod certify;
 mod convexity;
 mod curved;
 mod graph;
+mod polygon;
 mod qp;
 mod scale;
 mod spring;
@@ -121,6 +122,7 @@ pub use curved::{no_more_concave, round_end_curvature};
 pub use spring::{spring_curve, SpringCurve, SpringHalf};
 
 pub(crate) use scale::bisect_thousandths;
+pub use polygon::{fill_polygon, PolygonFill};
 pub use scale::{certified_scale, CertifiedScale};
 
 const OP: &str = "blend::blend_setback";

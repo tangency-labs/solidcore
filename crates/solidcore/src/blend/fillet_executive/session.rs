@@ -6381,12 +6381,11 @@ impl SessionObjects<'_> {
     ) -> Result<()> {
         const NATIVE: &str = "SmFilletConvexNxNCorner::MakeCornerTopology";
         // WR-716: the chamfer event's Mitre is the bevel's topology (the crossings, the
-        // centre M, the edges to it), its Facet the ring's (the crossings and the sides
-        // between them), whatever the caller set
+        // centre M, the edges to it), its Facet and its corner patch the ring's (the
+        // crossings and the sides between them), whatever the caller set
         if let Some(corner) = self.corners.get_mut(id.0 as usize) {
             if let Some(event) = corner.chamfer_corner.as_ref() {
-                corner.bevel =
-                    event.definition.kind == crate::blend::blend_corner::BlendChamferCorner::Mitre;
+                corner.bevel = event.definition.is_mitre();
             }
         }
         let edgeuses = self
