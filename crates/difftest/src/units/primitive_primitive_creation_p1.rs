@@ -612,6 +612,13 @@ impl UnitDiff for Runner {
             Err(solidcore_ffi::FfiError::Status(-1010)) => Ok(Output::rejected(
                 "native fixture preflight rejected undefined construction",
             )),
+            // Ops 1 and 5: the SMLib fork changed sm_FindPivotPoint and removed
+            // sm_CreateAnalyticRotationalSweep (shim). Compared as an error, so the cases
+            // can be known mismatches (crates/difftest/known_mismatches) instead of
+            // harness errors.
+            Err(solidcore_ffi::FfiError::Status(solidcore_ffi::SC_ERR_UNLINKED)) => {
+                Ok(Output::err("cpp_unlinked"))
+            }
             Err(e) => Err(HarnessError::new(e.to_string())),
         }
     }

@@ -18,8 +18,8 @@
 // tori (SmApiCreateTorus), cones (SmApiCreateCone), an operand moved
 // by SmApiRotate / SmApiTranslate steps, a skin solid (SmApiCreateSkinPrimitive of NURB
 // curves), cylinders (SmApiCreateCylinder) or the SmApiBoolean result of two operands; a failing
-// constructor or operand Boolean is SC_ERR_ARG, except a failing SmApiCreateTorus, whose
-// status becomes the call's (record `2`) so its radius guard is compared. `out` receives the
+// constructor is SC_ERR_ARG, except a failing SmApiCreateTorus or operand SmApiBoolean, whose
+// status becomes the call's (record `2` or `3`) so it is compared. `out` receives the
 // API status (0 = SM_SUCCESS, else the SmStatus) and, on success, the op's outputs.
 //
 // Ownership follows source/SM_API/inc/SmApiBrep.h: a rejected or failed two-B-rep call leaves
@@ -142,10 +142,12 @@ struct Bad : std::runtime_error
     Bad() : std::runtime_error("bad program") {}
 };
 
-// A failed SmApiCreateTorus: its status becomes the call's, with the record `2`.
-struct TorusFailed
+// A failed SmApiCreateTorus (record `2`) or operand SmApiBoolean (record `3`): its status
+// becomes the call's.
+struct OperandFailed
 {
     double status;
+    double record;
 };
 
 struct Rd
@@ -360,6 +362,8 @@ SmBrep* build(const BrepSpec& s)
                 delete r;
             delete a;
             delete b;
+            if (stat != SM_SUCCESS)
+                throw OperandFailed{st(stat), 3.0};
             throw Bad();
         }
         break;
@@ -368,7 +372,7 @@ SmBrep* build(const BrepSpec& s)
     if (s.kind == BK_TORUS && stat != SM_SUCCESS)
     {
         delete r;
-        throw TorusFailed{st(stat)};
+        throw OperandFailed{st(stat), 2.0};
     }
     if (stat != SM_SUCCESS || r == NULL)
     {
@@ -1421,11 +1425,11 @@ SC_EXPORT int32_t sc_boolean_api_brep_run(const double* in, int64_t n_in, double
     {
         return SC_ERR_ARG;
     }
-    catch (const TorusFailed& t)
+    catch (const OperandFailed& t)
     {
         o.clear();
         o.push_back(t.status);
-        o.push_back(2.0);
+        o.push_back(t.record);
     }
     return sc_copy_out(o.data(), (int64_t)o.size(), out, cap, out_len);
     SC_CATCH

@@ -2693,31 +2693,32 @@ int32_t run_p2_op(ProtoRun& r, Rd& rd, int64_t op, std::vector<double>& out, dou
             }
             double tol = e->GetTolerance();
             double len = c->ApproximateLength(e->GetXSectInterval(), 5);
-            if (len < 2 * tol)
+            SmPoint3d p0, p1;
+            c->GetEnds(p0, p1);
+            SmProtoVertex* sv = e->GetStartProtoVertex();
+            if (sv == NULL)
+            {
+                skip = true;
+                break;
+            }
+            SmVertexDefinition* vd0 = sv->GetClosestVertexDefinition(p0);
+            SmVertexDefinition* vd1 = sv->GetClosestVertexDefinition(p1);
+            // The SMLib fork's branches (tangency-labs/smlib 03e7bf1): a curve whose ends find the
+            // same VertexDefinition is degenerate below twice the ProtoVertex's containment
+            // radius, else below twice the tolerance (v1.0.1: always twice the tolerance); ends
+            // on two VertexDefinitions split the edge there; otherwise a far end adds a
+            // VertexDefinition copied from vd0.
+            double degenerate = vd0 == vd1 ? 2 * sv->GetContainmentRadius() : 2 * tol;
+            if (len < degenerate)
             {
                 dead = v;
                 cleared = true;
             }
-            else
+            else if (vd0 == vd1 && p0.DistanceBetween(p1) > 2 * tol &&
+                     (vd0 == NULL || !position_ok(*vd0->GetBrepPointClassif(1), *vd0->GetBrepPointClassif(2))))
             {
-                SmPoint3d p0, p1;
-                c->GetEnds(p0, p1);
-                if (p0.DistanceBetween(p1) > 2 * tol)
-                {
-                    SmProtoVertex* sv = e->GetStartProtoVertex();
-                    if (sv == NULL)
-                    {
-                        skip = true;
-                        break;
-                    }
-                    SmVertexDefinition* vd0 = sv->GetClosestVertexDefinition(p0);
-                    bool add = sv->GetNumVertexDefinitions() < 2 || vd0 == sv->GetClosestVertexDefinition(p1);
-                    if (add && (vd0 == NULL || !position_ok(*vd0->GetBrepPointClassif(1), *vd0->GetBrepPointClassif(2))))
-                    {
-                        skip = true;
-                        break;
-                    }
-                }
+                skip = true;
+                break;
             }
         }
         if (!cleared && v.size() >= 2)
@@ -2773,12 +2774,26 @@ int32_t run_p2_op(ProtoRun& r, Rd& rd, int64_t op, std::vector<double>& out, dou
             skip = true;
             break;
         }
+        // The prediction above is v1.0.1's rule. The SMLib fork's Resolve deletes more (an
+        // intersection curve inside one vertex is that vertex, tangency-labs/smlib 03e7bf1), so
+        // the curves of every definition it actually removed count as deleted too.
+        std::map<const void*, std::vector<const void*>> curves_of;
+        for (const void* x : before)
+            for (const SmCurve* c : {((SmEdgeDefinition*)x)->GetXSectCurve3d(), ((SmEdgeDefinition*)x)->GetXSectUVCurve(1),
+                                     ((SmEdgeDefinition*)x)->GetXSectUVCurve(2)})
+                if (c)
+                    curves_of[x].push_back(c);
         status = st(e->Resolve());
         std::vector<const void*> after = as_vec(e->GetEdgeDefinitions());
         std::vector<double> ids;
         for (const void* x : before)
             if (std::find(after.begin(), after.end(), x) == after.end())
+            {
                 r.eds.kill(x);
+                for (const void* c : curves_of[x])
+                    if (std::find(curves.begin(), curves.end(), c) == curves.end())
+                        curves.push_back(c);
+            }
         for (const void* c : curves)
         {
             ids.push_back(r.pool.id(c));
@@ -4704,7 +4719,10 @@ int32_t run_proto(Rd& rd, std::vector<double>& o)
             ci1.m_vStart = s1;
             ci1.m_vMid = m1;
             ci1.m_vEnd = e1;
-            SmCurveInterval ci2(SmExtent1d(a, b), &ctx, NULL);
+            // Face 2's interval classifies the same intersection curve, as in a real face pair:
+            // the SMLib fork's FindOrCreateProtoEdge reads its curve (sm_CrossingSine), v1.0.1's
+            // did not.
+            SmCurveInterval ci2(SmExtent1d(a, b), &ctx, &cc);
             ci2.m_vStart = s2;
             ci2.m_vMid = m2;
             ci2.m_vEnd = e2;

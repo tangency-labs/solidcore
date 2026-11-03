@@ -1033,8 +1033,13 @@ int32_t run(const char* path, Rd& rd, Out& o)
 
     Owned own;
     SmStatus rs = SmBrepData::ReadFromFile(ctx, path, own.data, file_type == 1 ? SM_BINARY : SM_ASCII);
-    if (rs != SM_SUCCESS || own.data == nullptr)
-        return SC_ERR_ARG; // the runner only names files both sides read
+    // The runner only names files v1.0.1 read. The SMLib fork passes on the statuses its reader
+    // dropped (tangency-labs/smlib 4ea11a1) and refuses some of them: that status is returned
+    // (positive) for the runner to compare.
+    if (rs != SM_SUCCESS)
+        return (int32_t)rs;
+    if (own.data == nullptr)
+        return SC_ERR_ARG;
     bool set_used = false;
     if (!apply_patches(rd, *own.data, &set_used))
         return SC_ERR_ARG;

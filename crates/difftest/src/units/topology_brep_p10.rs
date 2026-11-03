@@ -389,6 +389,11 @@ fn cpp(i: &Inputs) -> Result<Output, HarnessError> {
                 "projecting a raw curve above NL_MAXDEG into a face overruns native surface scratch arrays",
             ));
         }
+        // An SmStatus (>= SM_SUCCESS): the SMLib fork's reader refused the file v1.0.1 read
+        // (shim). Compared as an error, so the case can be a known mismatch.
+        Err(solidcore_ffi::FfiError::Status(s)) if s >= 1000 => {
+            return Ok(Output::err(format!("the file is not read: status {s}")));
+        }
         Err(e) => return Err(harness(format!("ffi: {e}"))),
     };
     operation_output(&items, i)

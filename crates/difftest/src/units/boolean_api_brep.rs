@@ -866,9 +866,9 @@ fn areas_output(o: &[f64], has_areas: bool) -> Result<Output, HarnessError> {
 }
 
 /// A `tessellate_boundaries` record: `status ne edges.. nc counts.. np xyz..` (a failed
-/// torus operand: `status 2`).
+/// torus operand: `status 2`; a failed operand Boolean: `status 3`).
 fn tessellate_output(o: &[f64]) -> Result<Output, HarnessError> {
-    if o.len() == 2 && o.get(1) == Some(&2.0) {
+    if o.len() == 2 && matches!(o.get(1), Some(&2.0 | &3.0)) {
         return to_output(o);
     }
     let short = || harness("cpp: tessellate record too short");
@@ -913,7 +913,7 @@ fn tessellate_output(o: &[f64]) -> Result<Output, HarnessError> {
 fn ub_242(i: &Inputs) -> Result<bool, HarnessError> {
     let mut k = Kernel::default();
     match rust_call_with(&mut k, i, &|_| {}) {
-        Ok(_) | Err(Stop::Deferred(_) | Stop::Torus(_)) => {
+        Ok(_) | Err(Stop::Deferred(_) | Stop::Record(_)) => {
             Ok(k.upstream_ub_passed.contains(&"UB-242"))
         }
         Err(Stop::Harness(e)) => Err(e),
@@ -943,12 +943,13 @@ fn options(f: FlagsIn) -> MergeOptions {
     )
 }
 
-/// Why a Rust run stopped early: `Unported` defers the case; a failing torus operand is
-/// the call's record (`status 2`, as the shim's `TorusFailed`); anything else is a
-/// harness error, as the shim treats a failing operand constructor (`SC_ERR_ARG`).
+/// Why a Rust run stopped early: `Unported` defers the case; a failing torus operand or
+/// operand Boolean is the call's record (`status 2` or `status 3`, as the shim's
+/// `OperandFailed`); anything else is a harness error, as the shim treats a failing operand
+/// constructor (`SC_ERR_ARG`).
 enum Stop {
     Deferred(Box<Output>),
-    Torus(Box<Output>),
+    Record(Box<Output>),
     Harness(HarnessError),
 }
 
@@ -1001,7 +1002,7 @@ fn build_at(k: &mut Kernel, b: &BrepIn, depth: usize) -> Result<Brep, Stop> {
             return primitives::create_torus(k, p3(center), major, minor).map_err(|e| {
                 match Output::unported(&e) {
                     Some(d) => Stop::Deferred(Box::new(d)),
-                    None => Stop::Torus(Box::new(record(status(&e), vec![2]))),
+                    None => Stop::Record(Box::new(record(status(&e), vec![2]))),
                 }
             });
         }
@@ -1030,7 +1031,12 @@ fn build_at(k: &mut Kernel, b: &BrepIn, depth: usize) -> Result<Brep, Stop> {
         }
         BrepIn::Boolean { operation, a, b } => {
             let (a, b) = (build_at(k, a, depth + 1)?, build_at(k, b, depth + 1)?);
-            api::boolean(k, a, b, op(*operation)?).map(|out| out.result)
+            return api::boolean(k, a, b, op(*operation)?)
+                .map(|out| out.result)
+                .map_err(|e| match Output::unported(&e) {
+                    Some(d) => Stop::Deferred(Box::new(d)),
+                    None => Stop::Record(Box::new(record(status(&e), vec![3]))),
+                });
         }
         BrepIn::Skin {
             counts,
@@ -1600,7 +1606,7 @@ fn rust(i: &Inputs) -> Result<Output, HarnessError> {
     let mut k = Kernel::default();
     match rust_call(&mut k, i) {
         Ok(o) => Ok(o),
-        Err(Stop::Deferred(o) | Stop::Torus(o)) => Ok(*o),
+        Err(Stop::Deferred(o) | Stop::Record(o)) => Ok(*o),
         Err(Stop::Harness(e)) => Err(e),
     }
 }
