@@ -32,6 +32,7 @@ pub mod body;
 pub mod boolean;
 pub mod check;
 pub mod error;
+pub mod extend;
 pub mod file;
 pub mod measure;
 pub mod offset;
