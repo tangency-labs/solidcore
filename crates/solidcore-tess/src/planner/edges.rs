@@ -131,7 +131,6 @@ pub(crate) fn sample_edge(b: &brep::Brep, ei: usize, rules: &Rules, h: f64) -> R
         let n = wanted.clamp(1.0, (MAX_EDGE_NODES - 1) as f64) as usize;
         // More segments than an edge may have: its sides are longer than asked (a line's chords
         // lie on it, so none sags).
-        // Its chords lie on it (no sag); its sides are longer than asked.
         let capped = (wanted > (MAX_EDGE_NODES - 1) as f64)
             .then(|| (crate::EdgeCap::Nodes, 0.0, length / n as f64 / h));
         let mut pts: Vec<Vec3> = (0..=n)

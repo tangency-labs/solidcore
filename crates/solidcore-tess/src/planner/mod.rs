@@ -148,7 +148,8 @@ pub struct OverTolerance {
     /// measures them: at each triangle's middle and its sides' middles, along the surface's
     /// normal there, wherever the surface evaluates.
     pub sag: f64,
-    /// The middles `sag` could not measure: the surface has no point there.
+    /// The measurements `sag` could not make (one per middle per triangle, so a side shared by
+    /// two triangles counts twice): the surface has no point there.
     pub unmeasured: usize,
     /// The chord tolerance the face was planned to (mm).
     pub tol: f64,
