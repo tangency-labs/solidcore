@@ -8,7 +8,7 @@
   - **A mitre point outside the corner** (one chamfer much wider than the others) is not detected. Neither branch names a size that builds.
 - **Trigger:** tangency-labs/smlib#89's brief and its inventory (65 chamfer corners in the fork's suite, all N = 3 convex mitres), ported as tangency-labs/solidcore#2345.
 - **How found:** porting the generic blend's corner events (`docs/generic-blend.md` §3.2) from the fork's brief.
-- **Confirmed:** in solidcore, `crates/solidcore/tests/wr697_ball_corner.rs` (`without_the_flag_the_chamfer_corner_is_the_pinned_patch` pins today's corner with the flag off).
+- **Confirmed:** in solidcore, `crates/solidcore/tests/wr697_ball_corner.rs` (`without_the_flag_the_chamfer_corner_is_the_pinned_patch` pins today's corner with the flag off; `per_edge_linear_chamfers_at_a_corner_are_the_mitre` runs `fillet_edges_per_edge` with linear sections on the 2/3/4 corner: 10 faces, 23640.833333, a four-sided B-spline corner face whose fourth corner is off the plane of the other three, without the flag; the mitre's 9 faces and 23645.25 with it).
 - **Rust port:** `Kernel::fixes.fillet_chamfer_corner` (off by default): the blend corner's chamfer event, `crate::blend::blend_corner::chamfer`, an own design from the brief with no fork code. The corner type is the session's (`FilletSession::set_chamfer_corner`, `BlendChamferCorner`).
   - **Mitre** (the default): M from the 3x3 solve. The edges X_i-M are exact lines with exact line pcurves on both chamfers, and there is no corner face.
   - **Facet:** the plane through the X_i, oriented out of the material. Its edges are the chamfers' end sections, exact lines on both faces.
@@ -21,3 +21,8 @@
     - Chamfer planes so nearly coplanar (a very flat corner) that the points where they meet are not determined to the part's rounding are refused with `FilletErrorType::CornerUnsupported`, naming that: the 3x3 solves' first-order rounding bound, `u (s + |y|) sum_k |c_k| / |D|`, is above the gate.
 
   Tests: `crates/solidcore/tests/wr697_ball_corner.rs`, closed forms only: the 20 cube's corners as mitres and facets; `unequal_chamfers_at_a_corner` (2/3/4) as the mitre (M = (2.5, 1.5, 0.5), 24000 - 354.75) and the facet (10u + 9v + 4w = 48, 1.25 more removed); a concave pocket-floor corner both ways; a mitre point outside the corner, refused with its fit, which then builds; an N = 4 pyramid apex; the 2/3/4 corner's definition; a low three-face apex, refused at slope 1/100 and an exact mitre at 5/12.
+
+- **Retirement (the flag is for the port in progress only):**
+  - At parity the flag becomes the default and is removed, and the pinned 3x3 corner's chamfer branch is deleted with it: `SetChamfer`'s route to `SmFilletConvexNxNCorner` for chamfer corners, its bevel topology and marched mitre edges, and `MakeAnalyticCornerSurface`'s chamfer corner faces (the plane through three vertices and the bilinear patch through four).
+  - Parity here means every chamfer corner that branch builds today is either built by the event or refused, naming why. The event still declines where a chamfer edge is not straight, a face is not a plane, a chamfer is not of constant width, or the chamfers are of mixed convexity; those cases keep the pinned branch until they are covered.
+  - WR-254 (`analytic_corner_failure_is_false`) overlaps: its `SER` / `NER` exits in `MakeAnalyticCornerSurface` include the chamfer faces'. Those exits retire with the chamfer branch. The flag stays for the corners that are not chamfers (the sphere, the surface of revolution, the variable-radius corner).
