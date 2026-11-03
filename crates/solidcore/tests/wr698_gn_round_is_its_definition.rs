@@ -356,6 +356,15 @@ fn rounds_of(b: &Brep) -> Vec<(FaceId, Surface)> {
 
 /// The body reopened: each round rebuilt from its record (re-certified), as a design read
 /// back from SolidCraft's record is. Returns the rebuilt rounds.
+///
+/// Each rebuilt round goes into its face through `SmFace::SetSurface`
+/// (`face::p1::set_surface`), which makes the face the surface's owner, as every face
+/// surface is upstream. A surface written into the face slot directly has no owner, so
+/// `SmSurface::GetFace()` is null. A fillet whose rail merges onto that face
+/// (`MergeCurveOnSurfaces`) then fails with `SM_ERR_NULL_POINTER`, 1006, as upstream does.
+/// Since #2364 the smooth-vertex End merges the second round's rail onto the reopened round
+/// (#2550). The old WR-674 path never merged a rail onto that face, so it hid the fixture's
+/// missing owner.
 fn reopen(k: &Kernel, b: &mut Brep) -> Vec<(FaceId, Surface)> {
     use solidcore::surface::procedural_blend::convert::{rebuild, to_record};
     let mut out = Vec::new();
@@ -364,7 +373,15 @@ fn reopen(k: &Kernel, b: &mut Brep) -> Vec<(FaceId, Surface)> {
             unreachable!()
         };
         let back = Surface::from(rebuild(k, &to_record(k, pb).unwrap()).unwrap());
-        b.face_mut(f).unwrap().surface = Some(back.clone());
+        let this = b.owner_identity(solidcore::EntityRef::Face(f));
+        solidcore::topology::face::p1::set_surface(k, b, f, this, back, true).unwrap();
+        let owned = b.face(f).unwrap().surface.as_ref().unwrap();
+        assert_eq!(
+            owned.owner(),
+            Some(this),
+            "the reopened round is owned by its face"
+        );
+        let back = owned.clone();
         out.push((f, back));
     }
     out
