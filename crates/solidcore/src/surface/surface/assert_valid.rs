@@ -2405,6 +2405,7 @@ mod tests {
     use crate::curve::curve::Curve;
     use crate::geom::extent2d::Extent2d;
     use crate::geom::vector2d::Vec2;
+    use crate::nurbs::b_spline_curve::p2::ControlPointForm;
     use crate::nurbs::crv_basic::Curve as NlCurve;
     use crate::surface::sphere::SphereOptions;
     use crate::surface::torus::TorusOptions;
@@ -2744,6 +2745,65 @@ mod tests {
                 "Bad NonMonotonic CPts",
                 "SmBSplineSurface Control Net doubles back on itself probably making a self intersecting surface",
             )],
+        );
+    }
+
+    /// The sphere of tangency-labs/solidcore#2560: radius 2.5 centred `(0, 0, 5) + t`,
+    /// its net the net of the sphere at `(0, 0, 5)` moved through its homogeneous control
+    /// points (`[x w + w t, w]`, as a rigid move of a record does). Dividing by `w` again
+    /// rounds differently for `w = 1` and `w = sqrt(2) / 2`, so the Euclidean points of
+    /// each collapsed pole row alternate by one ulp of the coordinate.
+    fn sphere_moved_homogeneously(k: &Kernel, t: [f64; 3]) -> Surface {
+        let build = |origin: Point3| {
+            let d = Extent2d::from_bounds(0.0, -90.0, 360.0, 90.0);
+            let opts = SphereOptions {
+                swap_uv: false,
+                inside_out: false,
+                circle_nurb: None,
+            };
+            let s = Surface::from(Sphere::new(k, origin, X, Y, d, 2.5, opts).unwrap());
+            s.kind_with_nurb(k).unwrap();
+            s
+        };
+        let at_origin = build(Point3::new(0.0, 0.0, 5.0));
+        let (nu, nv, cps) = b_spline_part(&at_origin)
+            .unwrap()
+            .control_points()
+            .unwrap();
+        // the analytic sphere is built at the moved centre, so only the net carries the noise
+        let mut moved = build(Point3::new(t[0], t[1], 5.0 + t[2]));
+        let SurfaceKind::Sphere(sp) = moved.kind_mut() else {
+            unreachable!("built as a sphere")
+        };
+        let b = sp.base_mut().base_mut();
+        for i in 0..nu {
+            for j in 0..nv {
+                let p = cps[i * nv + j];
+                let w = if p.w == NOW { 1.0 } else { p.w };
+                let q = Point3::new(p.x + w * t[0], p.y + w * t[1], p.z + w * t[2]);
+                b.set_control_point(ControlPointForm::HomogeneousRational, i, j, q, w)
+                    .unwrap();
+            }
+        }
+        moved
+    }
+
+    /// tangency-labs/solidcore#2560: a sphere's net has a collapsed row of control points
+    /// at each pole, and consecutive points of a collapsed row are exactly equal, so test
+    /// #5 skips their zero-length steps. One ulp of noise along such a row is a zigzag
+    /// whose steps reverse at every point. Past about 8192 mm from the origin one ulp is
+    /// above `EFF_ZERO`, so the skip no longer takes them for coincident and the check
+    /// reads a 180-degree turn at every point of the pole column. The step is noise: the
+    /// row is collapsed to within one ulp, 1/2,750,000 of the tolerance the grid is
+    /// built with.
+    #[test]
+    fn issue_2560_one_ulp_noise_along_a_pole_row_is_not_a_reversal() {
+        let k = Kernel::default();
+        let s = sphere_moved_homogeneously(&k, [1.0e5, -7.0e4, 3.0e4]);
+        assert_eq!(
+            failed_tests(&k, &s),
+            (true, vec![]),
+            "the moved sphere's net is the sphere to rounding"
         );
     }
 
