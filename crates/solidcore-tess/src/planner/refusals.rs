@@ -538,11 +538,17 @@ fn a_step_inwards_the_surface_has_no_point_at_refuses_the_face() {
 /// The sag a capped face reaches is measured where the surface evaluates: a triangle on
 /// [`cylinder_without`]`(0.5)` whose middle lies on the circle the surface has no point on is
 /// measured at its sides' middles only, and the face is not refused for a measure it never
-/// needed. It was refused there.
+/// needed (it was refused there); the middle is counted as unmeasured (it was dropped, and a
+/// face over such a point could read as within its tolerance).
 #[test]
 fn the_worst_sag_is_measured_where_the_surface_evaluates() {
     let s = cylinder_without(0.5);
     let uv = [[0.0, 0.0], [0.75, -0.5], [0.75, 0.5]];
     let got = super::sag::worst(&s, 1e-9, &[], &uv, &[[0, 1, 2]]);
-    assert!(got.is_ok_and(|w| w.is_finite() && w > 0.0), "{got:?}");
+    // Measured at its three sides' middles; its middle, unmeasured, is counted, so the face is
+    // never taken as within its tolerance over it.
+    assert!(
+        got.is_ok_and(|(w, unmeasured)| w.is_finite() && w > 0.0 && unmeasured == 1),
+        "{got:?}"
+    );
 }

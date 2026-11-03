@@ -34,8 +34,12 @@ pub(crate) struct Nodes {
     /// the other's point of the face, a pinch, not a crossing.
     pub snapped: Vec<f64>,
     /// Where [`sample_edge`] stopped at a bound with a segment still wanting a split: which
-    /// bound, and the farthest any of its chords lies from the curve (mm).
-    pub capped: Option<(crate::EdgeCap, f64)>,
+    /// bound ([`crate::EdgeCap::Nodes`] where both were met), the farthest any of its chords lies
+    /// from the curve at their quarter points and middles (mm; a sampled lower bound, exact
+    /// where a chord's farthest point is its middle, as on a circle), and the most any chord
+    /// exceeds its rules (the largest of its sag over the tolerance, its length over the side
+    /// asked, its turn over a quarter turn and over the facet angle; 1 at the rule).
+    pub capped: Option<(crate::EdgeCap, f64, f64)>,
 }
 
 /// A segment of [`sample_edge`]'s bisection, measured: its parameters, end points, quarter
@@ -127,7 +131,9 @@ pub(crate) fn sample_edge(b: &brep::Brep, ei: usize, rules: &Rules, h: f64) -> R
         let n = wanted.clamp(1.0, (MAX_EDGE_NODES - 1) as f64) as usize;
         // More segments than an edge may have: its sides are longer than asked (a line's chords
         // lie on it, so none sags).
-        let capped = (wanted > (MAX_EDGE_NODES - 1) as f64).then_some((crate::EdgeCap::Nodes, 0.0));
+        // Its chords lie on it (no sag); its sides are longer than asked.
+        let capped = (wanted > (MAX_EDGE_NODES - 1) as f64)
+            .then(|| (crate::EdgeCap::Nodes, 0.0, length / n as f64 / h));
         let mut pts: Vec<Vec3> = (0..=n)
             .map(|i| front + (back - front) * (i as f64 / n as f64))
             .collect();
@@ -213,8 +219,9 @@ pub(crate) fn sample_edge(b: &brep::Brep, ei: usize, rules: &Rules, h: f64) -> R
     };
     // Bisection, the segment exceeding its rules most first (then the earliest): a segment is
     // halved where it fails the rules, whatever the order, so the nodes are the same as any
-    // order's; where a bound stops it (MAX_EDGE_NODES, MAX_DEPTH) the segments kept whole are
-    // those that exceed their rules least, and the error is spread along the edge.
+    // order's; where MAX_EDGE_NODES stops it the segments kept whole are those that exceed their
+    // rules least, and the error is spread along the edge. (MAX_DEPTH stops a segment on its own,
+    // usually the one exceeding its rules most: a corner no halving reaches.)
     let mut heap: std::collections::BinaryHeap<Seg> = std::collections::BinaryHeap::new();
     // Proven: the window size is the constant 2, not zero.
     for (i, w) in ends.windows(2).enumerate() {
@@ -225,13 +232,16 @@ pub(crate) fn sample_edge(b: &brep::Brep, ei: usize, rules: &Rules, h: f64) -> R
         let i = i as u32;
         heap.push(measure(t_at(i), t_at(i + 1), pa, pb, None, 0)?);
     }
-    // The segments kept: their end parameter and point, and their chord's sag.
-    let mut kept: Vec<(f64, Vec3, f64)> = Vec::new();
+    // The segments kept: their end parameter and point; the most any sags, and exceeds its rules.
+    let mut kept: Vec<(f64, Vec3)> = Vec::new();
+    let (mut most_sag, mut most_excess) = (0.0f64, 0.0f64);
     let mut capped: Option<crate::EdgeCap> = None;
     while let Some(sg) = heap.pop() {
         let deep = sg.depth >= MAX_DEPTH;
-        // The edge's nodes: its start, the ends of the segments kept and of those pending.
-        let full = 1 + kept.len() + heap.len() >= MAX_EDGE_NODES;
+        // The edge's nodes are its start and the ends of the segments kept, pending and this
+        // one (2 + kept + pending): halving this one adds a node, past the bound once they
+        // number MAX_EDGE_NODES.
+        let full = 2 + kept.len() + heap.len() >= MAX_EDGE_NODES;
         if !deep && !full && !sg.ok {
             let m = 0.5 * (sg.a + sg.b);
             heap.push(measure(sg.a, m, sg.pa, sg.pm, Some(sg.q1), sg.depth + 1)?);
@@ -246,15 +256,14 @@ pub(crate) fn sample_edge(b: &brep::Brep, ei: usize, rules: &Rules, h: f64) -> R
                     crate::EdgeCap::Depth
                 });
             }
-            kept.push((sg.b, sg.pb, sg.sag));
+            most_sag = most_sag.max(sg.sag);
+            most_excess = most_excess.max(sg.excess);
+            kept.push((sg.b, sg.pb));
         }
     }
     kept.sort_by(|x, y| x.0.total_cmp(&y.0));
-    // A capped edge's sag: the farthest any of its chords lies from the curve.
-    let capped = capped.map(|cap| (cap, kept.iter().map(|k| k.2).fold(0.0, f64::max)));
-    let mut out: Vec<(f64, Vec3)> = std::iter::once((t0, front))
-        .chain(kept.into_iter().map(|(t, p, _)| (t, p)))
-        .collect();
+    let capped = capped.map(|cap| (cap, most_sag, most_excess));
+    let mut out: Vec<(f64, Vec3)> = std::iter::once((t0, front)).chain(kept).collect();
     if let Some(p) = out.last_mut() {
         *p = (t1, back);
     }
@@ -466,8 +475,9 @@ mod tests {
             turn: None,
         };
         let n = sample(&cyl, ei, &rules, 1e-3);
-        assert!(n.points.len() >= MAX_EDGE_NODES - 1, "{}", n.points.len());
-        let Some((crate::EdgeCap::Nodes, sag)) = n.capped else {
+        // Exactly the bound: N = 19 999 sides.
+        assert_eq!(n.points.len(), MAX_EDGE_NODES);
+        let Some((crate::EdgeCap::Nodes, sag, excess)) = n.capped else {
             panic!("{:?}", n.capped)
         };
         // Each chord's sag on the circle of radius 10, from its length.
@@ -487,6 +497,8 @@ mod tests {
             (sag - most).abs() <= 1e-6 * bound,
             "recorded {sag}, the polyline's {most}"
         );
+        // Its sides are longer than the 1 µm asked: about 2πr / N / 1e-3, π.
+        assert!(excess > 2.0 && excess < 7.0, "{excess}");
         // A line asked for more sides than that too, its chords on it.
         let Some(line) = cyl
             .edges
@@ -495,10 +507,15 @@ mod tests {
         else {
             panic!("a line")
         };
-        assert_eq!(
-            sample(&cyl, line, &rules, 1e-6).capped,
-            Some((crate::EdgeCap::Nodes, 0.0))
-        );
+        let n = sample(&cyl, line, &rules, 1e-6);
+        assert_eq!(n.points.len(), MAX_EDGE_NODES);
+        // 5 mm in 19 999 sides, each 0.25 µm against the 1e-6 mm asked.
+        let side = 5.0 / (MAX_EDGE_NODES - 1) as f64;
+        let Some((crate::EdgeCap::Nodes, sag, excess)) = n.capped else {
+            panic!("{:?}", n.capped)
+        };
+        assert_eq!(sag, 0.0);
+        assert!((excess - side / 1e-6).abs() < 1e-9 * excess, "{excess}");
         // At sides it can have, neither says so.
         assert_eq!(sample(&cyl, ei, &rules, 1.0).capped, None);
         assert_eq!(sample(&cyl, line, &rules, 1.0).capped, None);
@@ -523,7 +540,7 @@ mod tests {
         };
         let n = sample(&b, 2, &rules, f64::INFINITY);
         assert!(n.points.len() < 1000, "{}", n.points.len());
-        let Some((crate::EdgeCap::Depth, sag)) = n.capped else {
+        let Some((crate::EdgeCap::Depth, sag, _)) = n.capped else {
             panic!("{:?}", n.capped)
         };
         assert!(sag > 1e-12, "{sag}");

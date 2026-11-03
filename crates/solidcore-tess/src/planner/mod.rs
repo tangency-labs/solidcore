@@ -110,19 +110,30 @@ pub struct PlanStats {
 pub struct CappedEdge {
     /// The edge's index in the record.
     pub edge: usize,
-    /// The bound.
+    /// The bound: [`EdgeCap::Nodes`] where both were met.
     pub cap: EdgeCap,
     /// The farthest any of the edge's chords lies from its curve (mm), at their quarter points
-    /// and middles: the segments exceeding their rules most are halved first, so it is spread.
+    /// and middles (a sampled lower bound: exact where a chord's farthest point is its middle,
+    /// as on a circle; below it at a corner between them). The segments exceeding their rules
+    /// most are halved first, so at the node bound it is spread along the edge. A line's
+    /// chords lie on it: 0.
     pub sag: f64,
+    /// The most any of its chords exceeds its rules: the largest of its sag over the tolerance,
+    /// its length over the side asked, its turn over a quarter turn and over the facet angle
+    /// (past 1 for a rule broken; a line's, its sides' length over the side asked).
+    pub excess: f64,
     /// The chord tolerance the edge was sampled to (mm).
     pub tol: f64,
+    /// Whether `sag` is within `tol`: the chords follow the curve, and only a side's length or
+    /// turn is past its rule (as at a corner the facet angle never settles at, or a line).
+    pub within: bool,
 }
 
 /// A bound of an edge's sampling.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum EdgeCap {
-    /// The edge has the most nodes an edge may have (`MAX_EDGE_NODES`, 20 000).
+    /// The edge has the most nodes an edge may have (`MAX_EDGE_NODES`, 20 000): for a line,
+    /// its sides are longer than the side asked.
     Nodes,
     /// A segment was halved as often as one may be (24 times).
     Depth,
@@ -137,10 +148,13 @@ pub struct OverTolerance {
     /// measures them: at each triangle's middle and its sides' middles, along the surface's
     /// normal there, wherever the surface evaluates.
     pub sag: f64,
+    /// The middles `sag` could not measure: the surface has no point there.
+    pub unmeasured: usize,
     /// The chord tolerance the face was planned to (mm).
     pub tol: f64,
-    /// Whether `sag` is within `tol` after all: the refinement made up what a thinned grid
-    /// left (never so for [`Cap::Refine`], which stops with a triangle still over).
+    /// Whether every middle was measured and `sag` is within `tol` after all: the refinement
+    /// made up what a thinned grid left (for [`Cap::Refine`], which stops with a side still
+    /// over, normally not, unless a flip after the refinement laid that side down).
     pub within: bool,
     /// The bounds that limited it, one or both.
     pub caps: Vec<Cap>,
@@ -538,11 +552,13 @@ fn plan_at(b: &brep::Brep, tol: f64, turn: Option<size::Turn>) -> Result<(TessPl
         .iter()
         .enumerate()
         .filter_map(|(edge, n)| {
-            n.capped.map(|(cap, sag)| CappedEdge {
+            n.capped.map(|(cap, sag, excess)| CappedEdge {
                 edge,
                 cap,
                 sag,
+                excess,
                 tol: rules.tol,
+                within: sag <= rules.tol,
             })
         })
         .collect();
@@ -928,7 +944,8 @@ fn boundary(
             eq.pop();
             es.pop();
             // The segment from each node on: the edge's own, counted from its start.
-            // Proven: an edge has at most MAX_EDGE_NODES (20 000) nodes: the count fits a u32.
+            // Proven: an edge has at most MAX_EDGE_NODES (20 000) nodes (sample_edge, split_segments
+            // and snap keep within it): the count fits a u32.
             let m = ep.len() as u32;
             segs.extend((0..m).map(|j| (oe.edge, if oe.forward { j } else { m - 1 - j })));
             pts.extend(ep);
@@ -1424,8 +1441,8 @@ fn split_thin_loops(
                     let Some(slot) = nodes.get_mut(e) else {
                         continue;
                     };
-                    // Proven: an edge has at most MAX_EDGE_NODES (20 000) nodes, so every
-                    // segment index fits a u32.
+                    // Proven: an edge has at most MAX_EDGE_NODES (20 000) nodes (sample_edge,
+                    // split_segments and snap keep within it), so every segment index fits a u32.
                     let segs: Vec<u32> = (0..slot.points.len().saturating_sub(1))
                         .filter_map(|k| u32::try_from(k).ok())
                         .collect();
@@ -2172,17 +2189,19 @@ fn plan_face(
         sag::flip(s, tol, reach, &fixed, &all, &mut triangles).map_err(no_value)?;
         // A face a bound limited is named with the sag its triangles reach.
         if !caps.is_empty() {
-            let sag = sag::worst(s, reach, &fixed, &all, &triangles).map_err(|k| {
-                FaceError::Refused(fail(&format!(
-                    "triangle {k} has a corner past its {} nodes",
-                    all.len()
-                )))
-            })?;
+            let (sag, unmeasured) =
+                sag::worst(s, reach, &fixed, &all, &triangles).map_err(|k| {
+                    FaceError::Refused(fail(&format!(
+                        "triangle {k} has a corner past its {} nodes",
+                        all.len()
+                    )))
+                })?;
             stats.over_tolerance.push(OverTolerance {
                 face: fi as usize,
                 sag,
+                unmeasured,
                 tol,
-                within: sag <= tol,
+                within: sag <= tol && unmeasured == 0,
                 caps: std::mem::take(&mut caps),
             });
         }

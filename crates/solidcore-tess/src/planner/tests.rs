@@ -1570,8 +1570,8 @@ fn a_free_edge_that_cannot_be_sampled_is_named_and_the_body_meshed() {
 
 /// An edge whose uses list no face but which the faces' loops still run (an unvalidated
 /// record), and which cannot be sampled (a spline without points): both faces that run it are
-/// refused, each naming it, and the other four are meshed. It was taken for a free edge, and each face's loop closed
-/// with a chord across the gap.
+/// refused, each naming it, and the other four are meshed. It was taken for a free edge, and
+/// each face's loop closed with a chord across the gap.
 #[test]
 fn an_edge_left_out_of_its_uses_but_in_its_faces_loops_refuses_them() {
     let mut b = fixture("box_10x6x4");
@@ -2116,4 +2116,25 @@ fn a_stale_use_does_not_make_a_face_an_edges() {
     assert_eq!(refused, faces, "{stats:?}");
     assert!(meshed_faces(&p).contains(&5));
     assert!(!p.edge_faces[ei].contains(&5));
+}
+
+/// An edge bent sharply at a corner no halving reaches (a polyline turning back on itself at a
+/// third of its parameter) is halved at the corner until the depth bound: there its chords follow
+/// it to a hair, but no segment across the corner turns less than a quarter turn. The plan names it
+/// with that bound, its sag within the tolerance, and how far it exceeds its rules.
+#[test]
+fn an_edge_stopped_at_its_depth_bound_is_named_within_its_tolerance() {
+    let mut b = fixture("box_10x6x4");
+    b.edges[2].curve = Curve::Spline {
+        knots: vec![0.0, 0.0, 1.0 / 3.0, 1.0, 1.0],
+        points: vec![[10.0, 0.0, 4.0], [10.0, 2.0, 20.0], [10.0, 6.0, 4.0]],
+    };
+    b.edges[2].nurbs = None;
+    let (_, stats) = ok(plan(&b, &MeshTolerance::chord(0.01), size_of("box_10x6x4")));
+    let [capped] = stats.edges_capped.as_slice() else {
+        panic!("{:?}", stats.edges_capped)
+    };
+    assert_eq!((capped.edge, capped.cap), (2, EdgeCap::Depth), "{capped:?}");
+    assert!(capped.within && capped.sag <= capped.tol, "{capped:?}");
+    assert!(capped.excess > 1.0, "{capped:?}");
 }
