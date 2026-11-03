@@ -1,4 +1,4 @@
-//! Regression test for tangency-labs/solidcore#1945: with `fillet_through_extended_rail_end` and
+//! Regression test for tangency-labs/solidcore#1945: with `fillet_blend_corner` and
 //! `fillet_trace_reaches_rails` on, the round of a bar's top front edge after a round of the
 //! bar/boss arc got a UV trim with coincident control points. Root cause (traced by tdamsma on
 //! #1945): `SmLocalSolveNd::SolveIt` kept the unscaled point's Jacobian for a clamped-and-scaled
@@ -158,7 +158,7 @@ const TOP: [Point3; 2] = [
 
 fn run(reach: bool, nd_fix: bool) -> (f64, f64, Vec<String>) {
     let mut k = Kernel::default();
-    k.fixes.fillet_through_extended_rail_end = true;
+    k.fixes.fillet_blend_corner = true;
     k.fixes.fillet_trace_reaches_rails = reach;
     k.fixes.oscillating_skips_failed_guesses = nd_fix;
     let b = base(&mut k);

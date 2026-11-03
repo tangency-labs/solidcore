@@ -121,8 +121,9 @@ fn volume(k: &Kernel, b: &mut Brep) -> f64 {
 /// The crease round's error code and, when it builds, the body's volume.
 fn crease_round(form: Form, tracer: bool) -> (i32, Option<f64>) {
     let mut k = Kernel::default();
-    // the two fillet fixes the issue's preset needs to reach the crease round
-    k.fixes.fillet_through_extended_rail_end = true;
+    // the fillet fixes the issue's preset needs to reach the crease round, with the
+    // blend corner's End at the round's ends
+    k.fixes.fillet_blend_corner = true;
     k.fixes.fillet_torus_span_from_start_section = true;
     k.fixes.ssi_tangent_curve_tracer = tracer;
     let v = Vec3::new;
