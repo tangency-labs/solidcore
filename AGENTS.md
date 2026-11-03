@@ -2,8 +2,10 @@
 
 solidcore is a B-rep kernel in idiomatic safe Rust, based on NVIDIA's SMLib (C++, Apache-2.0)
 and going its own way from there: it started as a port, and new constructions are designed and
-built here. Upstream is cloned (gitignored) at `upstream/`, pinned to v1.0.1, commit `3fd5b95`
-(`scripts/upstream-pin.env` is the single source of truth for scripts, CI and the site). Many
+built here. Upstream is cloned (gitignored) at `upstream/`, pinned to the SolidCraft fork of SMLib,
+tangency-labs/smlib `v1.1.0-alpha`, commit `a18bbe5`: usd-brep v1.0.1 (`3fd5b95`, what solidcore
+was ported from) plus the fork's changes (`scripts/upstream-pin.env` is the single source of
+truth for scripts, CI and the site). Many
 agents work here at once: read this whole file before your first change. Where a construction has been
 redesigned (the generic blend), the new design is what solidcore builds, not upstream's (§4b). People: [CONTRIBUTING.md](CONTRIBUTING.md) has the same principles in short.
 

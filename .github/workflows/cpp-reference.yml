@@ -97,7 +97,7 @@ jobs:
           if ! gh release view "$TAG" -R "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
             gh release create "$TAG" -R "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" \
               --prerelease --title "C++ reference $TAG" \
-              --notes "Prebuilt SMLib/SM_API reference libraries (Apache-2.0, upstream commit $UPSTREAM_COMMIT) for solidcore's difftest, built by harness/cpp/build.sh on Ubuntu 24.04 x86_64 from $GITHUB_SHA. Download with scripts/fetch-cpp.sh."
+              --notes "Prebuilt SMLib/SM_API reference libraries (Apache-2.0, $UPSTREAM_REPO at $UPSTREAM_COMMIT) for solidcore's difftest, built by harness/cpp/build.sh on Ubuntu 24.04 x86_64 from $GITHUB_SHA. Download with scripts/fetch-cpp.sh."
           fi
           gh release upload "$TAG" -R "$GITHUB_REPOSITORY" --clobber \
             "$RUNNER_TEMP/dist/$NAME" "$RUNNER_TEMP/dist/$NAME.sha256"

@@ -18,6 +18,7 @@ CPP="${1:?usage: package-cpp-ref.sh <cpp dir> <out dir>}"
 OUTDIR="${2:?usage: package-cpp-ref.sh <cpp dir> <out dir>}"
 KEY="$("$ROOT/scripts/cpp-ref-key.sh")"
 COMMIT="${UPSTREAM_COMMIT:-$(sed -n 's/^UPSTREAM_COMMIT=//p' "$ROOT/scripts/upstream-pin.env")}"
+REPO="${UPSTREAM_REPO:-$(sed -n 's/^UPSTREAM_REPO=//p' "$ROOT/scripts/upstream-pin.env")}"
 NAME="solidcore-cpp-ref-$KEY-linux-x86_64.tar.zst"
 
 for f in lib/libSMLib.a lib/libSM_API.a ffi.env; do
@@ -38,14 +39,15 @@ cat > "$STAGE/NOTICE" <<NOTICE
 solidcore C++ reference build of SMLib and SM_API
 
 These static libraries are compiled, unmodified, from the SMLib and SM_API
-components of USD BRep, https://github.com/NVIDIA-Omniverse/usd-brep
-(commit $COMMIT), by harness/cpp/build.sh of
+sources of $REPO (commit $COMMIT), the SolidCraft fork of SMLib from USD BRep,
+https://github.com/NVIDIA-Omniverse/usd-brep, by harness/cpp/build.sh of
 https://github.com/tangency-labs/solidcore. They exist only to run solidcore's
-difftest against the original kernel.
+difftest against its C++ reference.
 
   USD BRep is Copyright (c) 2020-2026, NVIDIA CORPORATION & AFFILIATES. All
   rights reserved. NVIDIA-authored portions of this product are licensed under
-  the Apache License, Version 2.0, except where otherwise noted.
+  the Apache License, Version 2.0, except where otherwise noted. The fork's own
+  files carry "Copyright (c) 2026 SolidCraft contributors", also Apache-2.0.
 
   SPDX-License-Identifier: Apache-2.0
 

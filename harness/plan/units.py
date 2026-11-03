@@ -59,13 +59,16 @@ def load_units(root=None):
 
 def load_pin(root=None):
     """The upstream pin from `scripts/upstream-pin.env` (the single source of truth that
-    scripts, CI and the site read): {"UPSTREAM_REPO", "UPSTREAM_VERSION", "UPSTREAM_COMMIT"}."""
+    scripts, CI and the site read): {"UPSTREAM_REPO", "UPSTREAM_VERSION", "UPSTREAM_COMMIT"},
+    the C++ reference, and {"PORTED_FROM_REPO", "PORTED_FROM_VERSION", "PORTED_FROM_COMMIT"},
+    what solidcore was ported from and `harness/callgraph/units.json` was extracted at."""
     pin = {}
     for line in (pathlib.Path(root or ROOT) / PIN_FILE).read_text().splitlines():
         key, sep, value = line.partition("=")
         if sep and not key.lstrip().startswith("#"):
             pin[key.strip()] = value.strip()
-    for key in ("UPSTREAM_REPO", "UPSTREAM_VERSION", "UPSTREAM_COMMIT"):
+    for key in ("UPSTREAM_REPO", "UPSTREAM_VERSION", "UPSTREAM_COMMIT",
+                "PORTED_FROM_REPO", "PORTED_FROM_VERSION", "PORTED_FROM_COMMIT"):
         if not pin.get(key):
             raise ValueError(f"{PIN_FILE}: missing {key}")
     return pin
@@ -73,7 +76,7 @@ def load_pin(root=None):
 
 def callgraph_lines(root=None):
     """{unit id: upstream lines} summed over the functions each unit owns in
-    `harness/callgraph/units.json` (extracted at the pinned upstream commit)."""
+    `harness/callgraph/units.json` (extracted at PORTED_FROM_COMMIT, scripts/upstream-pin.env)."""
     path = pathlib.Path(root or ROOT) / CALLGRAPH_UNITS
     if not path.exists():
         return {}

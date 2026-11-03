@@ -6,7 +6,8 @@
 
 Standard library only (Python 3.11+ for tomllib). Every number comes from the repo:
 plan/units/*.toml, plan/PROGRESS.md (claims; generated, not committed), harness/callgraph/units.json (upstream
-line counts at the pin), scripts/upstream-pin.env (upstream version and commit),
+line counts at the commit ported from), scripts/upstream-pin.env (the C++ reference and the
+commit ported from),
 reports/difftest/*.json (not committed: CI's artifact, see scripts/fetch-reports.sh),
 reports/solids/solids.json (not committed: CI's artifact, see scripts/fetch-solids.sh),
 reports/ssi-corpus.json, plan/upstream-issues/*.md, the
@@ -42,8 +43,16 @@ PIN = plan_units.load_pin(ROOT)  # scripts/upstream-pin.env: the one place the p
 UPSTREAM_URL = PIN["UPSTREAM_REPO"]
 UPSTREAM_VERSION = PIN["UPSTREAM_VERSION"]
 UPSTREAM_COMMIT = PIN["UPSTREAM_COMMIT"]
-UPSTREAM_PIN_HTML = (f'<a href="{UPSTREAM_URL}/tree/{UPSTREAM_COMMIT}">usd-brep v{html.escape(UPSTREAM_VERSION)} '
-                     f'(<code>{UPSTREAM_COMMIT[:7]}</code>)</a>')
+UPSTREAM_PIN_HTML = (f'<a href="{UPSTREAM_URL}/tree/{UPSTREAM_COMMIT}">'
+                     f'{html.escape(UPSTREAM_URL.removeprefix("https://github.com/"))} '
+                     f'v{html.escape(UPSTREAM_VERSION)} (<code>{UPSTREAM_COMMIT[:7]}</code>)</a>')
+# harness/callgraph/units.json (functions, files, lines) was extracted at the commit ported
+# from, so line counts and links to upstream functions refer to it, not to the reference.
+PORTED_URL = PIN["PORTED_FROM_REPO"]
+PORTED_VERSION = PIN["PORTED_FROM_VERSION"]
+PORTED_COMMIT = PIN["PORTED_FROM_COMMIT"]
+PORTED_HTML = (f'<a href="{PORTED_URL}/tree/{PORTED_COMMIT}">usd-brep v{html.escape(PORTED_VERSION)} '
+               f'(<code>{PORTED_COMMIT[:7]}</code>)</a>')
 STATUSES = ["green", "partial", "claimed", "blocked", "todo"]
 STATUS_TEXT = {"green": "green", "partial": "partial", "claimed": "claimed",
                "blocked": "blocked", "todo": "todo"}
@@ -889,8 +898,8 @@ def build(out):
 <section class="hero">
 <h1>solidcore</h1>
 <p class="lede">solidcore is a Rust port of NVIDIA's SMLib, the boundary-representation (B-rep) solid
-modeling kernel from <a href="{UPSTREAM_URL}">usd-brep</a> (Apache-2.0; ported from and tested against
-{UPSTREAM_PIN_HTML}), written in safe Rust: no
+modeling kernel from <a href="{PORTED_URL}">usd-brep</a> (Apache-2.0; ported from {PORTED_HTML}, tested
+against {UPSTREAM_PIN_HTML}), written in safe Rust: no
 <code>unsafe</code>, no panics on bad input, deterministic, and buildable for WebAssembly. The upstream
 code is split into {s['units']} port units. A unit only counts as <strong>green</strong> when the
 <em>difftest</em> gate runs the Rust and the upstream C++ (through FFI) on the same inputs (upstream tests,
@@ -902,7 +911,7 @@ fixtures and fixed-seed generated cases) and the topology is identical and every
 <section class="kpis">
 <div class="tile big"><div class="k">Upstream lines ported</div><div class="v">{pct:.1f}%</div>
 <div class="sub">{fmt_int(s['done_lines'])} of {fmt_int(s['total_lines'])} lines of usd-brep
-v{esc(UPSTREAM_VERSION)} in green or partial units; {gpct:.1f}% green</div></div>
+v{esc(PORTED_VERSION)} in green or partial units; {gpct:.1f}% green</div></div>
 {tiles}
 <div class="tile"><div class="k">ready to claim</div><div class="v">{ready_n}</div><div class="sub">todo with all dependencies done</div></div>
 {solids_tile}
@@ -1061,7 +1070,7 @@ counts). Click a column heading to sort.</p>
             rust = look.get(f["name"]) or look.get(short)
             frows.append(
                 f'<tr><td><code>{esc(f["name"])}</code></td>'
-                f'<td><a href="{UPSTREAM_URL}/blob/{UPSTREAM_COMMIT}/{esc(f["file"])}#L{f["line"]}">'
+                f'<td><a href="{PORTED_URL}/blob/{PORTED_COMMIT}/{esc(f["file"])}#L{f["line"]}">'
                 f'{esc(f["file"].split("/")[-1])}:{f["line"]}</a></td><td class=num>{f["lines"]}</td>'
                 f'<td>{inline(rust) if rust else ""}</td></tr>')
         ftable = (f'<div class="scroll"><table class="sortable"><thead><tr><th data-sort="text">Upstream function</th>'
@@ -1117,7 +1126,7 @@ counts). Click a column heading to sort.</p>
         srclink = (f'<a href="{REPO_URL}/blob/{head_sha}/{esc(src)}"><code>{esc(src)}</code></a>' if exists
                    else '<span class="muted">no single module (crate-wide unit)</span>' if "(" in src
                    else f'<code>{esc(src)}</code> <span class="muted">(not written yet)</span>')
-        upfiles = ", ".join(f'<a href="{UPSTREAM_URL}/blob/{UPSTREAM_COMMIT}/{esc(f)}"><code>{esc(f)}</code></a>'
+        upfiles = ", ".join(f'<a href="{PORTED_URL}/blob/{PORTED_COMMIT}/{esc(f)}"><code>{esc(f)}</code></a>'
                             for f in u.get("upstream", []))
         tests = ", ".join(f"<code>{esc(t)}</code>" for t in u.get("tests", [])) or '<span class="muted">none</span>'
         body = f"""

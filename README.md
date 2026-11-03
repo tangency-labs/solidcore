@@ -53,7 +53,7 @@ checklist is [`PROGRESS.md`](https://tangency-labs.github.io/solidcore/PROGRESS.
 | `harness/cpp`           | Builds the upstream C++ reference into `bin/cpp`; FFI shims  |
 | `plan/`                 | Unit list, port order, status, findings                      |
 | `site/`                  | Generator for the GitHub Pages progress site                 |
-| `upstream/`             | Local clone of usd-brep v1.0.1 at `3fd5b95` (gitignored)    |
+| `upstream/`             | Local clone of the C++ reference, tangency-labs/smlib at `a18bbe5` (gitignored) |
 | `bin/`                  | All build output (gitignored)                                |
 
 ## Building
@@ -103,8 +103,8 @@ in CI; shell compatibility on macOS does not establish Apple-Clang difftest pari
 Rust-only builds do not need these C++ build tools.
 
 ```sh
-git clone https://github.com/NVIDIA-Omniverse/usd-brep upstream
-git -C upstream checkout 3fd5b95   # v1.0.1; the pin is in scripts/upstream-pin.env
+git clone https://github.com/tangency-labs/smlib upstream
+git -C upstream checkout a18bbe5   # v1.1.0-alpha; the pin is in scripts/upstream-pin.env
 scripts/fetch-cpp.sh                                  # C++ reference -> bin/cpp (prebuilt, or built)
 cargo run --profile difftest -p difftest --features cpp -- --green   # all green and partial units
 cargo run --profile difftest -p difftest --features cpp -- --unit <unit id>   # one unit

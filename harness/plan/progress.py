@@ -31,9 +31,10 @@ ICON = {"green": "✅", "partial": "🟡", "claimed": "🔨", "blocked": "⛔", 
 
 def load_units():
     """Units from plan/units/*.toml (sorted by id). `est_lines` is recomputed from
-    harness/callgraph/units.json (the functions each unit owns at the pinned upstream
-    commit, scripts/upstream-pin.env) for every unit listed there, so the line counts
-    follow the pin; units the call graph does not list keep their toml value."""
+    harness/callgraph/units.json (the functions each unit owns at the commit ported
+    from, PORTED_FROM_COMMIT in scripts/upstream-pin.env) for every unit listed there, so
+    the line counts follow the call graph; units the call graph does not list keep their
+    toml value."""
     units = plan_units.load_units(ROOT)
     lines = plan_units.callgraph_lines(ROOT)
     for u in units:
