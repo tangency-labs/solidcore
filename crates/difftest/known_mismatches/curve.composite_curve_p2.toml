@@ -1,0 +1,52 @@
+# #2502: these cases move with the difftest's C++ reference, the SMLib fork
+# v1.1.0-alpha.1 (8eac63c); plan/findings/general--2502-fork-pin-curve-known-mismatches.md.
+
+[[mismatch]]
+unit = "curve.composite_curve_p2"
+case = "read_ascii_bad_type"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: ints.status[0] C++ 1001, Rust 1007 (plan/findings/general--2502-fork-pin-curve-known-mismatches.md)"
+
+[[mismatch]]
+unit = "curve.composite_curve_p2"
+case = "gen0096"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 338, Rust 370 (plan/findings/general--2502-fork-pin-curve-known-mismatches.md)"
+
+[[mismatch]]
+unit = "curve.composite_curve_p2"
+case = "gen0174"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[42] C++ 5.784542048187501e-1, Rust 5.83538547570989e-1 (+15 more) (plan/findings/general--2502-fork-pin-curve-known-mismatches.md)"
+
+[[mismatch]]
+unit = "curve.composite_curve_p2"
+case = "gen0187"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 1112, Rust 1141 (plan/findings/general--2502-fork-pin-curve-known-mismatches.md)"
+
+[[mismatch]]
+unit = "curve.composite_curve_p2"
+case = "gen0255"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 1538, Rust 1551 (plan/findings/general--2502-fork-pin-curve-known-mismatches.md)"
+
+[[mismatch]]
+unit = "curve.composite_curve_p2"
+case = "gen0329"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 475, Rust 507 (plan/findings/general--2502-fork-pin-curve-known-mismatches.md)"
+
+[[mismatch]]
+unit = "curve.composite_curve_p2"
+case = "gen0378"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 1066, Rust 1095 (plan/findings/general--2502-fork-pin-curve-known-mismatches.md)"
+
+[[mismatch]]
+unit = "curve.composite_curve_p2"
+case = "gen0393"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 1074, Rust 1192 (plan/findings/general--2502-fork-pin-curve-known-mismatches.md)"
+
+[[mismatch]]
+unit = "curve.composite_curve_p2"
+case = "gen0452"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 1051, Rust 990 (plan/findings/general--2502-fork-pin-curve-known-mismatches.md)"
+
+[[mismatch]]
+unit = "curve.composite_curve_p2"
+case = "gen0483"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 1454, Rust 1453 (plan/findings/general--2502-fork-pin-curve-known-mismatches.md)"

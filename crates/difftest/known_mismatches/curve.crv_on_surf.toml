@@ -1,0 +1,112 @@
+# #2502: these cases move with the difftest's C++ reference, the SMLib fork
+# v1.1.0-alpha.1 (8eac63c); plan/findings/general--2502-fork-pin-curve-known-mismatches.md.
+
+[[mismatch]]
+unit = "curve.crv_on_surf"
+case = "gen0344"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 2283, Rust 2268 (plan/findings/general--2502-fork-pin-curve-known-mismatches.md)"
+
+[[mismatch]]
+unit = "curve.crv_on_surf"
+case = "av0008"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 491, Rust 251 (plan/findings/general--2502-fork-pin-curve-known-mismatches.md)"
+
+[[mismatch]]
+unit = "curve.crv_on_surf"
+case = "av0010"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 244, Rust 4 (plan/findings/general--2502-fork-pin-curve-known-mismatches.md)"
+
+[[mismatch]]
+unit = "curve.crv_on_surf"
+case = "av0023"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 244, Rust 4 (plan/findings/general--2502-fork-pin-curve-known-mismatches.md)"
+
+[[mismatch]]
+unit = "curve.crv_on_surf"
+case = "av0027"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 474, Rust 234 (plan/findings/general--2502-fork-pin-curve-known-mismatches.md)"
+
+[[mismatch]]
+unit = "curve.crv_on_surf"
+case = "av0029"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 491, Rust 251 (plan/findings/general--2502-fork-pin-curve-known-mismatches.md)"
+
+[[mismatch]]
+unit = "curve.crv_on_surf"
+case = "av0036"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 586, Rust 421 (plan/findings/general--2502-fork-pin-curve-known-mismatches.md)"
+
+[[mismatch]]
+unit = "curve.crv_on_surf"
+case = "av0057"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 491, Rust 251 (plan/findings/general--2502-fork-pin-curve-known-mismatches.md)"
+
+[[mismatch]]
+unit = "curve.crv_on_surf"
+case = "av0082"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 588, Rust 348 (plan/findings/general--2502-fork-pin-curve-known-mismatches.md)"
+
+[[mismatch]]
+unit = "curve.crv_on_surf"
+case = "av0091"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 491, Rust 251 (plan/findings/general--2502-fork-pin-curve-known-mismatches.md)"
+
+[[mismatch]]
+unit = "curve.crv_on_surf"
+case = "av0098"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 491, Rust 251 (plan/findings/general--2502-fork-pin-curve-known-mismatches.md)"
+
+[[mismatch]]
+unit = "curve.crv_on_surf"
+case = "av0103"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 725, Rust 485 (plan/findings/general--2502-fork-pin-curve-known-mismatches.md)"
+
+[[mismatch]]
+unit = "curve.crv_on_surf"
+case = "av0128"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[1] C++ 0e0, Rust 1e0 (plan/findings/general--2502-fork-pin-curve-known-mismatches.md)"
+
+[[mismatch]]
+unit = "curve.crv_on_surf"
+case = "av0140"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 683, Rust 518 (plan/findings/general--2502-fork-pin-curve-known-mismatches.md)"
+
+[[mismatch]]
+unit = "curve.crv_on_surf"
+case = "av0155"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 491, Rust 251 (plan/findings/general--2502-fork-pin-curve-known-mismatches.md)"
+
+[[mismatch]]
+unit = "curve.crv_on_surf"
+case = "av0166"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 725, Rust 485 (plan/findings/general--2502-fork-pin-curve-known-mismatches.md)"
+
+[[mismatch]]
+unit = "curve.crv_on_surf"
+case = "av0176"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 628, Rust 388 (plan/findings/general--2502-fork-pin-curve-known-mismatches.md)"
+
+[[mismatch]]
+unit = "curve.crv_on_surf"
+case = "av0195"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 888, Rust 648 (plan/findings/general--2502-fork-pin-curve-known-mismatches.md)"
+
+[[mismatch]]
+unit = "curve.crv_on_surf"
+case = "av0207"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 588, Rust 348 (plan/findings/general--2502-fork-pin-curve-known-mismatches.md)"
+
+[[mismatch]]
+unit = "curve.crv_on_surf"
+case = "av0220"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 491, Rust 251 (plan/findings/general--2502-fork-pin-curve-known-mismatches.md)"
+
+[[mismatch]]
+unit = "curve.crv_on_surf"
+case = "av0236"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[1] C++ 0e0, Rust 1e0 (plan/findings/general--2502-fork-pin-curve-known-mismatches.md)"
+
+[[mismatch]]
+unit = "curve.crv_on_surf"
+case = "av0246"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 588, Rust 348 (plan/findings/general--2502-fork-pin-curve-known-mismatches.md)"

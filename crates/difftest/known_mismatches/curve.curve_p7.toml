@@ -1,0 +1,367 @@
+# #2502: these cases move with the difftest's C++ reference, the SMLib fork
+# v1.1.0-alpha.1 (8eac63c); plan/findings/general--2502-fork-pin-curve-known-mismatches.md.
+
+[[mismatch]]
+unit = "curve.curve_p7"
+case = "gen0210"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[10] C++ 5.329070518200751e-15, Rust 1.7763568394002505e-15 (plan/findings/general--2502-fork-pin-curve-known-mismatches.md)"
+
+[[mismatch]]
+unit = "curve.curve_p7"
+case = "gen0235"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 55, Rust 29 (plan/findings/general--2502-fork-pin-curve-known-mismatches.md)"
+
+[[mismatch]]
+unit = "curve.curve_p7"
+case = "gen0260"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[6] C++ 1e0, Rust 2e0 (+3 more) (plan/findings/general--2502-fork-pin-curve-known-mismatches.md)"
+
+[[mismatch]]
+unit = "curve.curve_p7"
+case = "gen0321"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 42, Rust 29 (plan/findings/general--2502-fork-pin-curve-known-mismatches.md)"
+
+[[mismatch]]
+unit = "curve.curve_p7"
+case = "gen0392"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 6, Rust 19 (plan/findings/general--2502-fork-pin-curve-known-mismatches.md)"
+
+[[mismatch]]
+unit = "curve.curve_p7"
+case = "gen0395"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 1472, Rust 16 (plan/findings/general--2502-fork-pin-curve-known-mismatches.md)"
+
+[[mismatch]]
+unit = "curve.curve_p7"
+case = "gen0398"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 146, Rust 16 (plan/findings/general--2502-fork-pin-curve-known-mismatches.md)"
+
+[[mismatch]]
+unit = "curve.curve_p7"
+case = "gen0405"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[13] C++ 6.377745716588144e-16, Rust 1.6946818973100072e-15 (+1 more) (plan/findings/general--2502-fork-pin-curve-known-mismatches.md)"
+
+[[mismatch]]
+unit = "curve.curve_p7"
+case = "gen0437"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 146, Rust 81 (plan/findings/general--2502-fork-pin-curve-known-mismatches.md)"
+
+[[mismatch]]
+unit = "curve.curve_p7"
+case = "gen0488"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 29, Rust 42 (plan/findings/general--2502-fork-pin-curve-known-mismatches.md)"
+
+[[mismatch]]
+unit = "curve.curve_p7"
+case = "gen0520"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 2, Rust 16 (plan/findings/general--2502-fork-pin-curve-known-mismatches.md)"
+
+[[mismatch]]
+unit = "curve.curve_p7"
+case = "gen0604"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 562, Rust 16 (plan/findings/general--2502-fork-pin-curve-known-mismatches.md)"
+
+[[mismatch]]
+unit = "curve.curve_p7"
+case = "gen0624"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 29, Rust 16 (plan/findings/general--2502-fork-pin-curve-known-mismatches.md)"
+
+[[mismatch]]
+unit = "curve.curve_p7"
+case = "gen0672"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 2, Rust 107 (plan/findings/general--2502-fork-pin-curve-known-mismatches.md)"
+
+[[mismatch]]
+unit = "curve.curve_p7"
+case = "gen0757"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 68, Rust 16 (plan/findings/general--2502-fork-pin-curve-known-mismatches.md)"
+
+[[mismatch]]
+unit = "curve.curve_p7"
+case = "gen0761"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 939, Rust 29 (plan/findings/general--2502-fork-pin-curve-known-mismatches.md)"
+
+[[mismatch]]
+unit = "curve.curve_p7"
+case = "gen0774"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[3] C++ 1e0, Rust 2e0 (+3 more) (plan/findings/general--2502-fork-pin-curve-known-mismatches.md)"
+
+[[mismatch]]
+unit = "curve.curve_p7"
+case = "gen0787"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 45, Rust 19 (plan/findings/general--2502-fork-pin-curve-known-mismatches.md)"
+
+[[mismatch]]
+unit = "curve.curve_p7"
+case = "gen0816"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 29, Rust 16 (plan/findings/general--2502-fork-pin-curve-known-mismatches.md)"
+
+[[mismatch]]
+unit = "curve.curve_p7"
+case = "gen0964"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[10] C++ 6.661338147750939e-16, Rust 8.005932084973442e-16 (plan/findings/general--2502-fork-pin-curve-known-mismatches.md)"
+
+[[mismatch]]
+unit = "curve.curve_p7"
+case = "gen1038"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 29, Rust 16 (plan/findings/general--2502-fork-pin-curve-known-mismatches.md)"
+
+[[mismatch]]
+unit = "curve.curve_p7"
+case = "gen1040"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 172, Rust 16 (plan/findings/general--2502-fork-pin-curve-known-mismatches.md)"
+
+[[mismatch]]
+unit = "curve.curve_p7"
+case = "gen1069"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[13] C++ 3.76822190084106e-15, Rust 1.9860273225978185e-15 (plan/findings/general--2502-fork-pin-curve-known-mismatches.md)"
+
+[[mismatch]]
+unit = "curve.curve_p7"
+case = "gen1087"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[10] C++ 2.7288911567313107e-14, Rust 2.4936311045149852e-14 (+1 more) (plan/findings/general--2502-fork-pin-curve-known-mismatches.md)"
+
+[[mismatch]]
+unit = "curve.curve_p7"
+case = "gen1121"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 380, Rust 16 (plan/findings/general--2502-fork-pin-curve-known-mismatches.md)"
+
+[[mismatch]]
+unit = "curve.curve_p7"
+case = "gen1153"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[10] C++ 1.4895204919483639e-15, Rust 1.6011864169946884e-15 (+1 more) (plan/findings/general--2502-fork-pin-curve-known-mismatches.md)"
+
+[[mismatch]]
+unit = "curve.curve_p7"
+case = "gen1154"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 107, Rust 42 (plan/findings/general--2502-fork-pin-curve-known-mismatches.md)"
+
+[[mismatch]]
+unit = "curve.curve_p7"
+case = "gen1209"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 2, Rust 29 (plan/findings/general--2502-fork-pin-curve-known-mismatches.md)"
+
+[[mismatch]]
+unit = "curve.curve_p7"
+case = "gen1212"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 445, Rust 29 (plan/findings/general--2502-fork-pin-curve-known-mismatches.md)"
+
+[[mismatch]]
+unit = "curve.curve_p7"
+case = "gen1213"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[9] C++ 1.591302455776226e-14, Rust 9.565974336450906e-15 (+1 more) (plan/findings/general--2502-fork-pin-curve-known-mismatches.md)"
+
+[[mismatch]]
+unit = "curve.curve_p7"
+case = "gen1247"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 42, Rust 16 (plan/findings/general--2502-fork-pin-curve-known-mismatches.md)"
+
+[[mismatch]]
+unit = "curve.curve_p7"
+case = "gen1256"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[23] C++ 3.1401849173675503e-16, Rust 4.965068306494546e-16 (plan/findings/general--2502-fork-pin-curve-known-mismatches.md)"
+
+[[mismatch]]
+unit = "curve.curve_p7"
+case = "gen1263"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[13] C++ 2.597987628440173e-7, Rust 2.598049255432273e-7 (+1 more) (plan/findings/general--2502-fork-pin-curve-known-mismatches.md)"
+
+[[mismatch]]
+unit = "curve.curve_p7"
+case = "gen1272"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 32, Rust 19 (plan/findings/general--2502-fork-pin-curve-known-mismatches.md)"
+
+[[mismatch]]
+unit = "curve.curve_p7"
+case = "gen1290"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 107, Rust 29 (plan/findings/general--2502-fork-pin-curve-known-mismatches.md)"
+
+[[mismatch]]
+unit = "curve.curve_p7"
+case = "gen1362"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[6] C++ 1e0, Rust 2e0 (+6 more) (plan/findings/general--2502-fork-pin-curve-known-mismatches.md)"
+
+[[mismatch]]
+unit = "curve.curve_p7"
+case = "gen1367"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[3] C++ 1e0, Rust 2e0 (+7 more) (plan/findings/general--2502-fork-pin-curve-known-mismatches.md)"
+
+[[mismatch]]
+unit = "curve.curve_p7"
+case = "gen1403"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 302, Rust 81 (plan/findings/general--2502-fork-pin-curve-known-mismatches.md)"
+
+[[mismatch]]
+unit = "curve.curve_p7"
+case = "gen1410"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 133, Rust 55 (plan/findings/general--2502-fork-pin-curve-known-mismatches.md)"
+
+[[mismatch]]
+unit = "curve.curve_p7"
+case = "gen1488"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 94, Rust 16 (plan/findings/general--2502-fork-pin-curve-known-mismatches.md)"
+
+[[mismatch]]
+unit = "curve.curve_p7"
+case = "gen1606"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 68, Rust 16 (plan/findings/general--2502-fork-pin-curve-known-mismatches.md)"
+
+[[mismatch]]
+unit = "curve.curve_p7"
+case = "gen1666"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 68, Rust 16 (plan/findings/general--2502-fork-pin-curve-known-mismatches.md)"
+
+[[mismatch]]
+unit = "curve.curve_p7"
+case = "gen1706"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 29, Rust 16 (plan/findings/general--2502-fork-pin-curve-known-mismatches.md)"
+
+[[mismatch]]
+unit = "curve.curve_p7"
+case = "gen1716"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 445, Rust 16 (plan/findings/general--2502-fork-pin-curve-known-mismatches.md)"
+
+[[mismatch]]
+unit = "curve.curve_p7"
+case = "gen1730"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 1485, Rust 16 (plan/findings/general--2502-fork-pin-curve-known-mismatches.md)"
+
+[[mismatch]]
+unit = "curve.curve_p7"
+case = "gen1746"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 315, Rust 120 (plan/findings/general--2502-fork-pin-curve-known-mismatches.md)"
+
+[[mismatch]]
+unit = "curve.curve_p7"
+case = "gen1763"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[13] C++ 4.965068306494546e-16, Rust 3.1401849173675503e-16 (+1 more) (plan/findings/general--2502-fork-pin-curve-known-mismatches.md)"
+
+[[mismatch]]
+unit = "curve.curve_p7"
+case = "gen2055"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 926, Rust 16 (plan/findings/general--2502-fork-pin-curve-known-mismatches.md)"
+
+[[mismatch]]
+unit = "curve.curve_p7"
+case = "gen2056"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 250, Rust 16 (plan/findings/general--2502-fork-pin-curve-known-mismatches.md)"
+
+[[mismatch]]
+unit = "curve.curve_p7"
+case = "gen2064"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[13] C++ 2.482534153247273e-16, Rust 2.220446049250313e-16 (plan/findings/general--2502-fork-pin-curve-known-mismatches.md)"
+
+[[mismatch]]
+unit = "curve.curve_p7"
+case = "gen2078"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 601, Rust 42 (plan/findings/general--2502-fork-pin-curve-known-mismatches.md)"
+
+[[mismatch]]
+unit = "curve.curve_p7"
+case = "gen2091"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 120, Rust 185 (plan/findings/general--2502-fork-pin-curve-known-mismatches.md)"
+
+[[mismatch]]
+unit = "curve.curve_p7"
+case = "gen2093"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 237, Rust 16 (plan/findings/general--2502-fork-pin-curve-known-mismatches.md)"
+
+[[mismatch]]
+unit = "curve.curve_p7"
+case = "gen2127"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 55, Rust 42 (plan/findings/general--2502-fork-pin-curve-known-mismatches.md)"
+
+[[mismatch]]
+unit = "curve.curve_p7"
+case = "gen2301"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 71, Rust 19 (plan/findings/general--2502-fork-pin-curve-known-mismatches.md)"
+
+[[mismatch]]
+unit = "curve.curve_p7"
+case = "gen2521"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 614, Rust 42 (plan/findings/general--2502-fork-pin-curve-known-mismatches.md)"
+
+[[mismatch]]
+unit = "curve.curve_p7"
+case = "gen2538"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 809, Rust 822 (plan/findings/general--2502-fork-pin-curve-known-mismatches.md)"
+
+[[mismatch]]
+unit = "curve.curve_p7"
+case = "gen2546"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 42, Rust 29 (plan/findings/general--2502-fork-pin-curve-known-mismatches.md)"
+
+[[mismatch]]
+unit = "curve.curve_p7"
+case = "gen2574"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 94, Rust 81 (plan/findings/general--2502-fork-pin-curve-known-mismatches.md)"
+
+[[mismatch]]
+unit = "curve.curve_p7"
+case = "gen2697"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[3] C++ 1e0, Rust 2e0 (+3 more) (plan/findings/general--2502-fork-pin-curve-known-mismatches.md)"
+
+[[mismatch]]
+unit = "curve.curve_p7"
+case = "gen2723"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 107, Rust 42 (plan/findings/general--2502-fork-pin-curve-known-mismatches.md)"
+
+[[mismatch]]
+unit = "curve.curve_p7"
+case = "gen2740"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[13] C++ 1.1783018260144473e-14, Rust 1.7404671430534633e-14 (plan/findings/general--2502-fork-pin-curve-known-mismatches.md)"
+
+[[mismatch]]
+unit = "curve.curve_p7"
+case = "gen2748"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[10] C++ 0e0, Rust 4.002966042486721e-16 (plan/findings/general--2502-fork-pin-curve-known-mismatches.md)"
+
+[[mismatch]]
+unit = "curve.curve_p7"
+case = "gen2760"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[10] C++ 1.3819372737471816e-6, Rust 7.905482050584631e-7 (+1 more) (plan/findings/general--2502-fork-pin-curve-known-mismatches.md)"
+
+[[mismatch]]
+unit = "curve.curve_p7"
+case = "gen2837"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[3] C++ 1e0, Rust 2e0 (+6 more) (plan/findings/general--2502-fork-pin-curve-known-mismatches.md)"
+
+[[mismatch]]
+unit = "curve.curve_p7"
+case = "gen2856"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 107, Rust 16 (plan/findings/general--2502-fork-pin-curve-known-mismatches.md)"
+
+[[mismatch]]
+unit = "curve.curve_p7"
+case = "gen2884"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 731, Rust 16 (plan/findings/general--2502-fork-pin-curve-known-mismatches.md)"
+
+[[mismatch]]
+unit = "curve.curve_p7"
+case = "gen2923"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[10] C++ 6.620654340948884e-14, Rust 1.1857187100668868e-16 (+1 more) (plan/findings/general--2502-fork-pin-curve-known-mismatches.md)"
+
+[[mismatch]]
+unit = "curve.curve_p7"
+case = "gen2931"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 42, Rust 16 (plan/findings/general--2502-fork-pin-curve-known-mismatches.md)"
+
+[[mismatch]]
+unit = "curve.curve_p7"
+case = "gen2953"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 718, Rust 42 (plan/findings/general--2502-fork-pin-curve-known-mismatches.md)"
+
+[[mismatch]]
+unit = "curve.curve_p7"
+case = "gen2955"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 55, Rust 16 (plan/findings/general--2502-fork-pin-curve-known-mismatches.md)"
+
+[[mismatch]]
+unit = "curve.curve_p7"
+case = "gen2976"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 224, Rust 29 (plan/findings/general--2502-fork-pin-curve-known-mismatches.md)"
+
+[[mismatch]]
+unit = "curve.curve_p7"
+case = "gen2993"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 6, Rust 19 (plan/findings/general--2502-fork-pin-curve-known-mismatches.md)"

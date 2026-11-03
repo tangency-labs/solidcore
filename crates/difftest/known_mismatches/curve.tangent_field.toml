@@ -1,0 +1,1507 @@
+# #2502: these cases move with the difftest's C++ reference, the SMLib fork
+# v1.1.0-alpha.1 (8eac63c); plan/findings/general--2502-fork-pin-curve-known-mismatches.md.
+
+[[mismatch]]
+unit = "curve.tangent_field"
+case = "wr0001"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 1100, Rust 1103 (plan/findings/general--2502-fork-pin-curve-known-mismatches.md)"
+
+[[mismatch]]
+unit = "curve.tangent_field"
+case = "wr0002"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 3322, Rust 3325 (plan/findings/general--2502-fork-pin-curve-known-mismatches.md)"
+
+[[mismatch]]
+unit = "curve.tangent_field"
+case = "wr0003"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 1244, Rust 1247 (plan/findings/general--2502-fork-pin-curve-known-mismatches.md)"
+
+[[mismatch]]
+unit = "curve.tangent_field"
+case = "wr0005"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 3626, Rust 3629 (plan/findings/general--2502-fork-pin-curve-known-mismatches.md)"
+
+[[mismatch]]
+unit = "curve.tangent_field"
+case = "wr0006"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 1132, Rust 1135 (plan/findings/general--2502-fork-pin-curve-known-mismatches.md)"
+
+[[mismatch]]
+unit = "curve.tangent_field"
+case = "wr0008"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 3561, Rust 3564 (plan/findings/general--2502-fork-pin-curve-known-mismatches.md)"
+
+[[mismatch]]
+unit = "curve.tangent_field"
+case = "wr0012"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 1012, Rust 1015 (plan/findings/general--2502-fork-pin-curve-known-mismatches.md)"
+
+[[mismatch]]
+unit = "curve.tangent_field"
+case = "wr0013"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 1084, Rust 1087 (plan/findings/general--2502-fork-pin-curve-known-mismatches.md)"
+
+[[mismatch]]
+unit = "curve.tangent_field"
+case = "wr0015"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 1172, Rust 1175 (plan/findings/general--2502-fork-pin-curve-known-mismatches.md)"
+
+[[mismatch]]
+unit = "curve.tangent_field"
+case = "wr0016"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 1188, Rust 1191 (plan/findings/general--2502-fork-pin-curve-known-mismatches.md)"
+
+[[mismatch]]
+unit = "curve.tangent_field"
+case = "wr0019"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 1245, Rust 1248 (plan/findings/general--2502-fork-pin-curve-known-mismatches.md)"
+
+[[mismatch]]
+unit = "curve.tangent_field"
+case = "wr0021"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 3543, Rust 3546 (plan/findings/general--2502-fork-pin-curve-known-mismatches.md)"
+
+[[mismatch]]
+unit = "curve.tangent_field"
+case = "wr0022"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 1092, Rust 1095 (plan/findings/general--2502-fork-pin-curve-known-mismatches.md)"
+
+[[mismatch]]
+unit = "curve.tangent_field"
+case = "wr0023"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 1210, Rust 1213 (plan/findings/general--2502-fork-pin-curve-known-mismatches.md)"
+
+[[mismatch]]
+unit = "curve.tangent_field"
+case = "wr0024"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 1332, Rust 1335 (plan/findings/general--2502-fork-pin-curve-known-mismatches.md)"
+
+[[mismatch]]
+unit = "curve.tangent_field"
+case = "wr0025"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 3249, Rust 3252 (plan/findings/general--2502-fork-pin-curve-known-mismatches.md)"
+
+[[mismatch]]
+unit = "curve.tangent_field"
+case = "wr0027"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 1020, Rust 1023 (plan/findings/general--2502-fork-pin-curve-known-mismatches.md)"
+
+[[mismatch]]
+unit = "curve.tangent_field"
+case = "wr0028"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 3700, Rust 3703 (plan/findings/general--2502-fork-pin-curve-known-mismatches.md)"
+
+[[mismatch]]
+unit = "curve.tangent_field"
+case = "wr0031"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 1375, Rust 1378 (plan/findings/general--2502-fork-pin-curve-known-mismatches.md)"
+
+[[mismatch]]
+unit = "curve.tangent_field"
+case = "wr0032"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 1060, Rust 1063 (plan/findings/general--2502-fork-pin-curve-known-mismatches.md)"
+
+[[mismatch]]
+unit = "curve.tangent_field"
+case = "wr0034"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 1188, Rust 1191 (plan/findings/general--2502-fork-pin-curve-known-mismatches.md)"
+
+[[mismatch]]
+unit = "curve.tangent_field"
+case = "wr0035"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 1156, Rust 1159 (plan/findings/general--2502-fork-pin-curve-known-mismatches.md)"
+
+[[mismatch]]
+unit = "curve.tangent_field"
+case = "wr0036"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 3062, Rust 3065 (plan/findings/general--2502-fork-pin-curve-known-mismatches.md)"
+
+[[mismatch]]
+unit = "curve.tangent_field"
+case = "wr0037"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 1236, Rust 1239 (plan/findings/general--2502-fork-pin-curve-known-mismatches.md)"
+
+[[mismatch]]
+unit = "curve.tangent_field"
+case = "wr0038"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 1036, Rust 1039 (plan/findings/general--2502-fork-pin-curve-known-mismatches.md)"
+
+[[mismatch]]
+unit = "curve.tangent_field"
+case = "wr0039"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 1260, Rust 1263 (plan/findings/general--2502-fork-pin-curve-known-mismatches.md)"
+
+[[mismatch]]
+unit = "curve.tangent_field"
+case = "wr0040"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 1278, Rust 1281 (plan/findings/general--2502-fork-pin-curve-known-mismatches.md)"
+
+[[mismatch]]
+unit = "curve.tangent_field"
+case = "wr0041"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 1195, Rust 1198 (plan/findings/general--2502-fork-pin-curve-known-mismatches.md)"
+
+[[mismatch]]
+unit = "curve.tangent_field"
+case = "wr0042"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 1108, Rust 1111 (plan/findings/general--2502-fork-pin-curve-known-mismatches.md)"
+
+[[mismatch]]
+unit = "curve.tangent_field"
+case = "wr0043"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 1082, Rust 1085 (plan/findings/general--2502-fork-pin-curve-known-mismatches.md)"
+
+[[mismatch]]
+unit = "curve.tangent_field"
+case = "wr0045"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 996, Rust 999 (plan/findings/general--2502-fork-pin-curve-known-mismatches.md)"
+
+[[mismatch]]
+unit = "curve.tangent_field"
+case = "wr0046"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 1140, Rust 1143 (plan/findings/general--2502-fork-pin-curve-known-mismatches.md)"
+
+[[mismatch]]
+unit = "curve.tangent_field"
+case = "wr0047"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 1268, Rust 1271 (plan/findings/general--2502-fork-pin-curve-known-mismatches.md)"
+
+[[mismatch]]
+unit = "curve.tangent_field"
+case = "wr0048"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 3067, Rust 3070 (plan/findings/general--2502-fork-pin-curve-known-mismatches.md)"
+
+[[mismatch]]
+unit = "curve.tangent_field"
+case = "wr0049"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 988, Rust 991 (plan/findings/general--2502-fork-pin-curve-known-mismatches.md)"
+
+[[mismatch]]
+unit = "curve.tangent_field"
+case = "wr0050"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 2796, Rust 2799 (plan/findings/general--2502-fork-pin-curve-known-mismatches.md)"
+
+[[mismatch]]
+unit = "curve.tangent_field"
+case = "wr0051"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 1229, Rust 1232 (plan/findings/general--2502-fork-pin-curve-known-mismatches.md)"
+
+[[mismatch]]
+unit = "curve.tangent_field"
+case = "wr0052"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 1164, Rust 1167 (plan/findings/general--2502-fork-pin-curve-known-mismatches.md)"
+
+[[mismatch]]
+unit = "curve.tangent_field"
+case = "wr0054"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 1262, Rust 1265 (plan/findings/general--2502-fork-pin-curve-known-mismatches.md)"
+
+[[mismatch]]
+unit = "curve.tangent_field"
+case = "wr0055"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 1044, Rust 1047 (plan/findings/general--2502-fork-pin-curve-known-mismatches.md)"
+
+[[mismatch]]
+unit = "curve.tangent_field"
+case = "wr0056"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 2778, Rust 2781 (plan/findings/general--2502-fork-pin-curve-known-mismatches.md)"
+
+[[mismatch]]
+unit = "curve.tangent_field"
+case = "wr0058"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 1156, Rust 1159 (plan/findings/general--2502-fork-pin-curve-known-mismatches.md)"
+
+[[mismatch]]
+unit = "curve.tangent_field"
+case = "wr0059"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 1076, Rust 1079 (plan/findings/general--2502-fork-pin-curve-known-mismatches.md)"
+
+[[mismatch]]
+unit = "curve.tangent_field"
+case = "wr0060"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 1212, Rust 1215 (plan/findings/general--2502-fork-pin-curve-known-mismatches.md)"
+
+[[mismatch]]
+unit = "curve.tangent_field"
+case = "wr0061"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 3269, Rust 3272 (plan/findings/general--2502-fork-pin-curve-known-mismatches.md)"
+
+[[mismatch]]
+unit = "curve.tangent_field"
+case = "wr0062"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 1148, Rust 1151 (plan/findings/general--2502-fork-pin-curve-known-mismatches.md)"
+
+[[mismatch]]
+unit = "curve.tangent_field"
+case = "wr0063"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 1188, Rust 1191 (plan/findings/general--2502-fork-pin-curve-known-mismatches.md)"
+
+[[mismatch]]
+unit = "curve.tangent_field"
+case = "wr0065"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 1284, Rust 1287 (plan/findings/general--2502-fork-pin-curve-known-mismatches.md)"
+
+[[mismatch]]
+unit = "curve.tangent_field"
+case = "wr0066"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 1068, Rust 1071 (plan/findings/general--2502-fork-pin-curve-known-mismatches.md)"
+
+[[mismatch]]
+unit = "curve.tangent_field"
+case = "wr0067"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 2968, Rust 2971 (plan/findings/general--2502-fork-pin-curve-known-mismatches.md)"
+
+[[mismatch]]
+unit = "curve.tangent_field"
+case = "wr0068"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 3386, Rust 3389 (plan/findings/general--2502-fork-pin-curve-known-mismatches.md)"
+
+[[mismatch]]
+unit = "curve.tangent_field"
+case = "wr0069"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 1116, Rust 1119 (plan/findings/general--2502-fork-pin-curve-known-mismatches.md)"
+
+[[mismatch]]
+unit = "curve.tangent_field"
+case = "wr0070"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 3079, Rust 3082 (plan/findings/general--2502-fork-pin-curve-known-mismatches.md)"
+
+[[mismatch]]
+unit = "curve.tangent_field"
+case = "wr0071"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 1244, Rust 1247 (plan/findings/general--2502-fork-pin-curve-known-mismatches.md)"
+
+[[mismatch]]
+unit = "curve.tangent_field"
+case = "wr0072"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 2765, Rust 2768 (plan/findings/general--2502-fork-pin-curve-known-mismatches.md)"
+
+[[mismatch]]
+unit = "curve.tangent_field"
+case = "wr0074"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 964, Rust 967 (plan/findings/general--2502-fork-pin-curve-known-mismatches.md)"
+
+[[mismatch]]
+unit = "curve.tangent_field"
+case = "wr0075"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 2895, Rust 2898 (plan/findings/general--2502-fork-pin-curve-known-mismatches.md)"
+
+[[mismatch]]
+unit = "curve.tangent_field"
+case = "wr0076"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 2754, Rust 2757 (plan/findings/general--2502-fork-pin-curve-known-mismatches.md)"
+
+[[mismatch]]
+unit = "curve.tangent_field"
+case = "wr0077"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 1210, Rust 1213 (plan/findings/general--2502-fork-pin-curve-known-mismatches.md)"
+
+[[mismatch]]
+unit = "curve.tangent_field"
+case = "wr0078"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 1164, Rust 1167 (plan/findings/general--2502-fork-pin-curve-known-mismatches.md)"
+
+[[mismatch]]
+unit = "curve.tangent_field"
+case = "wr0079"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 1060, Rust 1063 (plan/findings/general--2502-fork-pin-curve-known-mismatches.md)"
+
+[[mismatch]]
+unit = "curve.tangent_field"
+case = "wr0080"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 2876, Rust 2879 (plan/findings/general--2502-fork-pin-curve-known-mismatches.md)"
+
+[[mismatch]]
+unit = "curve.tangent_field"
+case = "wr0081"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 3457, Rust 3460 (plan/findings/general--2502-fork-pin-curve-known-mismatches.md)"
+
+[[mismatch]]
+unit = "curve.tangent_field"
+case = "wr0082"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 1236, Rust 1239 (plan/findings/general--2502-fork-pin-curve-known-mismatches.md)"
+
+[[mismatch]]
+unit = "curve.tangent_field"
+case = "wr0083"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 1052, Rust 1055 (plan/findings/general--2502-fork-pin-curve-known-mismatches.md)"
+
+[[mismatch]]
+unit = "curve.tangent_field"
+case = "wr0084"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 1124, Rust 1127 (plan/findings/general--2502-fork-pin-curve-known-mismatches.md)"
+
+[[mismatch]]
+unit = "curve.tangent_field"
+case = "wr0085"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 1108, Rust 1111 (plan/findings/general--2502-fork-pin-curve-known-mismatches.md)"
+
+[[mismatch]]
+unit = "curve.tangent_field"
+case = "wr0086"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 3630, Rust 3633 (plan/findings/general--2502-fork-pin-curve-known-mismatches.md)"
+
+[[mismatch]]
+unit = "curve.tangent_field"
+case = "wr0087"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 3563, Rust 3566 (plan/findings/general--2502-fork-pin-curve-known-mismatches.md)"
+
+[[mismatch]]
+unit = "curve.tangent_field"
+case = "wr0089"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 1164, Rust 1167 (plan/findings/general--2502-fork-pin-curve-known-mismatches.md)"
+
+[[mismatch]]
+unit = "curve.tangent_field"
+case = "wr0090"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 3045, Rust 3048 (plan/findings/general--2502-fork-pin-curve-known-mismatches.md)"
+
+[[mismatch]]
+unit = "curve.tangent_field"
+case = "wr0091"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 1124, Rust 1127 (plan/findings/general--2502-fork-pin-curve-known-mismatches.md)"
+
+[[mismatch]]
+unit = "curve.tangent_field"
+case = "wr0093"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 3259, Rust 3262 (plan/findings/general--2502-fork-pin-curve-known-mismatches.md)"
+
+[[mismatch]]
+unit = "curve.tangent_field"
+case = "wr0095"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 1276, Rust 1279 (plan/findings/general--2502-fork-pin-curve-known-mismatches.md)"
+
+[[mismatch]]
+unit = "curve.tangent_field"
+case = "wr0098"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 1028, Rust 1031 (plan/findings/general--2502-fork-pin-curve-known-mismatches.md)"
+
+[[mismatch]]
+unit = "curve.tangent_field"
+case = "wr0099"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 1020, Rust 1023 (plan/findings/general--2502-fork-pin-curve-known-mismatches.md)"
+
+[[mismatch]]
+unit = "curve.tangent_field"
+case = "wr0103"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 1012, Rust 1015 (plan/findings/general--2502-fork-pin-curve-known-mismatches.md)"
+
+[[mismatch]]
+unit = "curve.tangent_field"
+case = "wr0105"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 2752, Rust 2755 (plan/findings/general--2502-fork-pin-curve-known-mismatches.md)"
+
+[[mismatch]]
+unit = "curve.tangent_field"
+case = "wr0106"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 1116, Rust 1119 (plan/findings/general--2502-fork-pin-curve-known-mismatches.md)"
+
+[[mismatch]]
+unit = "curve.tangent_field"
+case = "wr0108"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 3241, Rust 3244 (plan/findings/general--2502-fork-pin-curve-known-mismatches.md)"
+
+[[mismatch]]
+unit = "curve.tangent_field"
+case = "wr0110"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 1220, Rust 1223 (plan/findings/general--2502-fork-pin-curve-known-mismatches.md)"
+
+[[mismatch]]
+unit = "curve.tangent_field"
+case = "wr0111"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 1212, Rust 1215 (plan/findings/general--2502-fork-pin-curve-known-mismatches.md)"
+
+[[mismatch]]
+unit = "curve.tangent_field"
+case = "wr0112"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 3156, Rust 3159 (plan/findings/general--2502-fork-pin-curve-known-mismatches.md)"
+
+[[mismatch]]
+unit = "curve.tangent_field"
+case = "wr0113"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 1147, Rust 1150 (plan/findings/general--2502-fork-pin-curve-known-mismatches.md)"
+
+[[mismatch]]
+unit = "curve.tangent_field"
+case = "wr0114"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 3166, Rust 3169 (plan/findings/general--2502-fork-pin-curve-known-mismatches.md)"
+
+[[mismatch]]
+unit = "curve.tangent_field"
+case = "wr0115"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 1268, Rust 1271 (plan/findings/general--2502-fork-pin-curve-known-mismatches.md)"
+
+[[mismatch]]
+unit = "curve.tangent_field"
+case = "wr0117"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 1276, Rust 1279 (plan/findings/general--2502-fork-pin-curve-known-mismatches.md)"
+
+[[mismatch]]
+unit = "curve.tangent_field"
+case = "wr0119"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 1193, Rust 1196 (plan/findings/general--2502-fork-pin-curve-known-mismatches.md)"
+
+[[mismatch]]
+unit = "curve.tangent_field"
+case = "wr0120"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 1084, Rust 1087 (plan/findings/general--2502-fork-pin-curve-known-mismatches.md)"
+
+[[mismatch]]
+unit = "curve.tangent_field"
+case = "wr0121"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 1178, Rust 1181 (plan/findings/general--2502-fork-pin-curve-known-mismatches.md)"
+
+[[mismatch]]
+unit = "curve.tangent_field"
+case = "wr0122"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 3224, Rust 3227 (plan/findings/general--2502-fork-pin-curve-known-mismatches.md)"
+
+[[mismatch]]
+unit = "curve.tangent_field"
+case = "wr0123"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 1164, Rust 1167 (plan/findings/general--2502-fork-pin-curve-known-mismatches.md)"
+
+[[mismatch]]
+unit = "curve.tangent_field"
+case = "wr0125"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 3063, Rust 3066 (plan/findings/general--2502-fork-pin-curve-known-mismatches.md)"
+
+[[mismatch]]
+unit = "curve.tangent_field"
+case = "wr0126"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 1277, Rust 1280 (plan/findings/general--2502-fork-pin-curve-known-mismatches.md)"
+
+[[mismatch]]
+unit = "curve.tangent_field"
+case = "wr0127"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 1147, Rust 1150 (plan/findings/general--2502-fork-pin-curve-known-mismatches.md)"
+
+[[mismatch]]
+unit = "curve.tangent_field"
+case = "wr0130"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 1020, Rust 1023 (plan/findings/general--2502-fork-pin-curve-known-mismatches.md)"
+
+[[mismatch]]
+unit = "curve.tangent_field"
+case = "wr0131"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 3358, Rust 3361 (plan/findings/general--2502-fork-pin-curve-known-mismatches.md)"
+
+[[mismatch]]
+unit = "curve.tangent_field"
+case = "wr0132"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 1012, Rust 1015 (plan/findings/general--2502-fork-pin-curve-known-mismatches.md)"
+
+[[mismatch]]
+unit = "curve.tangent_field"
+case = "wr0133"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 1114, Rust 1117 (plan/findings/general--2502-fork-pin-curve-known-mismatches.md)"
+
+[[mismatch]]
+unit = "curve.tangent_field"
+case = "wr0134"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 1084, Rust 1087 (plan/findings/general--2502-fork-pin-curve-known-mismatches.md)"
+
+[[mismatch]]
+unit = "curve.tangent_field"
+case = "wr0136"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 1100, Rust 1103 (plan/findings/general--2502-fork-pin-curve-known-mismatches.md)"
+
+[[mismatch]]
+unit = "curve.tangent_field"
+case = "wr0137"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 1341, Rust 1344 (plan/findings/general--2502-fork-pin-curve-known-mismatches.md)"
+
+[[mismatch]]
+unit = "curve.tangent_field"
+case = "wr0138"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 1156, Rust 1159 (plan/findings/general--2502-fork-pin-curve-known-mismatches.md)"
+
+[[mismatch]]
+unit = "curve.tangent_field"
+case = "wr0139"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 1114, Rust 1117 (plan/findings/general--2502-fork-pin-curve-known-mismatches.md)"
+
+[[mismatch]]
+unit = "curve.tangent_field"
+case = "wr0140"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 1228, Rust 1231 (plan/findings/general--2502-fork-pin-curve-known-mismatches.md)"
+
+[[mismatch]]
+unit = "curve.tangent_field"
+case = "wr0143"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 1132, Rust 1135 (plan/findings/general--2502-fork-pin-curve-known-mismatches.md)"
+
+[[mismatch]]
+unit = "curve.tangent_field"
+case = "wr0146"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 1188, Rust 1191 (plan/findings/general--2502-fork-pin-curve-known-mismatches.md)"
+
+[[mismatch]]
+unit = "curve.tangent_field"
+case = "wr0147"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 3008, Rust 3011 (plan/findings/general--2502-fork-pin-curve-known-mismatches.md)"
+
+[[mismatch]]
+unit = "curve.tangent_field"
+case = "wr0149"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 1060, Rust 1063 (plan/findings/general--2502-fork-pin-curve-known-mismatches.md)"
+
+[[mismatch]]
+unit = "curve.tangent_field"
+case = "wr0151"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 1130, Rust 1133 (plan/findings/general--2502-fork-pin-curve-known-mismatches.md)"
+
+[[mismatch]]
+unit = "curve.tangent_field"
+case = "wr0152"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 1252, Rust 1255 (plan/findings/general--2502-fork-pin-curve-known-mismatches.md)"
+
+[[mismatch]]
+unit = "curve.tangent_field"
+case = "wr0153"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 1236, Rust 1239 (plan/findings/general--2502-fork-pin-curve-known-mismatches.md)"
+
+[[mismatch]]
+unit = "curve.tangent_field"
+case = "wr0155"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 1284, Rust 1287 (plan/findings/general--2502-fork-pin-curve-known-mismatches.md)"
+
+[[mismatch]]
+unit = "curve.tangent_field"
+case = "wr0156"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 3375, Rust 3378 (plan/findings/general--2502-fork-pin-curve-known-mismatches.md)"
+
+[[mismatch]]
+unit = "curve.tangent_field"
+case = "wr0157"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 1204, Rust 1207 (plan/findings/general--2502-fork-pin-curve-known-mismatches.md)"
+
+[[mismatch]]
+unit = "curve.tangent_field"
+case = "wr0158"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 1130, Rust 1133 (plan/findings/general--2502-fork-pin-curve-known-mismatches.md)"
+
+[[mismatch]]
+unit = "curve.tangent_field"
+case = "wr0161"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 996, Rust 999 (plan/findings/general--2502-fork-pin-curve-known-mismatches.md)"
+
+[[mismatch]]
+unit = "curve.tangent_field"
+case = "wr0166"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 1100, Rust 1103 (plan/findings/general--2502-fork-pin-curve-known-mismatches.md)"
+
+[[mismatch]]
+unit = "curve.tangent_field"
+case = "wr0167"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 3573, Rust 3576 (plan/findings/general--2502-fork-pin-curve-known-mismatches.md)"
+
+[[mismatch]]
+unit = "curve.tangent_field"
+case = "wr0170"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 1162, Rust 1165 (plan/findings/general--2502-fork-pin-curve-known-mismatches.md)"
+
+[[mismatch]]
+unit = "curve.tangent_field"
+case = "wr0171"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 2899, Rust 2902 (plan/findings/general--2502-fork-pin-curve-known-mismatches.md)"
+
+[[mismatch]]
+unit = "curve.tangent_field"
+case = "wr0172"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 1196, Rust 1199 (plan/findings/general--2502-fork-pin-curve-known-mismatches.md)"
+
+[[mismatch]]
+unit = "curve.tangent_field"
+case = "wr0175"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 1124, Rust 1127 (plan/findings/general--2502-fork-pin-curve-known-mismatches.md)"
+
+[[mismatch]]
+unit = "curve.tangent_field"
+case = "wr0176"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 3003, Rust 3006 (plan/findings/general--2502-fork-pin-curve-known-mismatches.md)"
+
+[[mismatch]]
+unit = "curve.tangent_field"
+case = "wr0177"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 1212, Rust 1215 (plan/findings/general--2502-fork-pin-curve-known-mismatches.md)"
+
+[[mismatch]]
+unit = "curve.tangent_field"
+case = "wr0178"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 1279, Rust 1282 (plan/findings/general--2502-fork-pin-curve-known-mismatches.md)"
+
+[[mismatch]]
+unit = "curve.tangent_field"
+case = "wr0179"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 1324, Rust 1327 (plan/findings/general--2502-fork-pin-curve-known-mismatches.md)"
+
+[[mismatch]]
+unit = "curve.tangent_field"
+case = "wr0180"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 2960, Rust 2963 (plan/findings/general--2502-fork-pin-curve-known-mismatches.md)"
+
+[[mismatch]]
+unit = "curve.tangent_field"
+case = "wr0181"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 2957, Rust 2960 (plan/findings/general--2502-fork-pin-curve-known-mismatches.md)"
+
+[[mismatch]]
+unit = "curve.tangent_field"
+case = "wr0184"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 1036, Rust 1039 (plan/findings/general--2502-fork-pin-curve-known-mismatches.md)"
+
+[[mismatch]]
+unit = "curve.tangent_field"
+case = "wr0185"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 3238, Rust 3241 (plan/findings/general--2502-fork-pin-curve-known-mismatches.md)"
+
+[[mismatch]]
+unit = "curve.tangent_field"
+case = "wr0186"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 1172, Rust 1175 (plan/findings/general--2502-fork-pin-curve-known-mismatches.md)"
+
+[[mismatch]]
+unit = "curve.tangent_field"
+case = "wr0188"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 3087, Rust 3090 (plan/findings/general--2502-fork-pin-curve-known-mismatches.md)"
+
+[[mismatch]]
+unit = "curve.tangent_field"
+case = "wr0189"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 1172, Rust 1175 (plan/findings/general--2502-fork-pin-curve-known-mismatches.md)"
+
+[[mismatch]]
+unit = "curve.tangent_field"
+case = "wr0190"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 3366, Rust 3369 (plan/findings/general--2502-fork-pin-curve-known-mismatches.md)"
+
+[[mismatch]]
+unit = "curve.tangent_field"
+case = "wr0191"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 2676, Rust 2679 (plan/findings/general--2502-fork-pin-curve-known-mismatches.md)"
+
+[[mismatch]]
+unit = "curve.tangent_field"
+case = "wr0192"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 3078, Rust 3081 (plan/findings/general--2502-fork-pin-curve-known-mismatches.md)"
+
+[[mismatch]]
+unit = "curve.tangent_field"
+case = "wr0193"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 1180, Rust 1183 (plan/findings/general--2502-fork-pin-curve-known-mismatches.md)"
+
+[[mismatch]]
+unit = "curve.tangent_field"
+case = "wr0194"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 1204, Rust 1207 (plan/findings/general--2502-fork-pin-curve-known-mismatches.md)"
+
+[[mismatch]]
+unit = "curve.tangent_field"
+case = "wr0195"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 1066, Rust 1069 (plan/findings/general--2502-fork-pin-curve-known-mismatches.md)"
+
+[[mismatch]]
+unit = "curve.tangent_field"
+case = "wr0196"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 3250, Rust 3253 (plan/findings/general--2502-fork-pin-curve-known-mismatches.md)"
+
+[[mismatch]]
+unit = "curve.tangent_field"
+case = "wr0197"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 1204, Rust 1207 (plan/findings/general--2502-fork-pin-curve-known-mismatches.md)"
+
+[[mismatch]]
+unit = "curve.tangent_field"
+case = "wr0199"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 1292, Rust 1295 (plan/findings/general--2502-fork-pin-curve-known-mismatches.md)"
+
+[[mismatch]]
+unit = "curve.tangent_field"
+case = "wr0201"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 1068, Rust 1071 (plan/findings/general--2502-fork-pin-curve-known-mismatches.md)"
+
+[[mismatch]]
+unit = "curve.tangent_field"
+case = "wr0202"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 1020, Rust 1023 (plan/findings/general--2502-fork-pin-curve-known-mismatches.md)"
+
+[[mismatch]]
+unit = "curve.tangent_field"
+case = "wr0204"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 1108, Rust 1111 (plan/findings/general--2502-fork-pin-curve-known-mismatches.md)"
+
+[[mismatch]]
+unit = "curve.tangent_field"
+case = "wr0205"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 1076, Rust 1079 (plan/findings/general--2502-fork-pin-curve-known-mismatches.md)"
+
+[[mismatch]]
+unit = "curve.tangent_field"
+case = "wr0206"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 1172, Rust 1175 (plan/findings/general--2502-fork-pin-curve-known-mismatches.md)"
+
+[[mismatch]]
+unit = "curve.tangent_field"
+case = "wr0207"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 1244, Rust 1247 (plan/findings/general--2502-fork-pin-curve-known-mismatches.md)"
+
+[[mismatch]]
+unit = "curve.tangent_field"
+case = "wr0209"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 1076, Rust 1079 (plan/findings/general--2502-fork-pin-curve-known-mismatches.md)"
+
+[[mismatch]]
+unit = "curve.tangent_field"
+case = "wr0210"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 3470, Rust 3473 (plan/findings/general--2502-fork-pin-curve-known-mismatches.md)"
+
+[[mismatch]]
+unit = "curve.tangent_field"
+case = "wr0213"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 1228, Rust 1231 (plan/findings/general--2502-fork-pin-curve-known-mismatches.md)"
+
+[[mismatch]]
+unit = "curve.tangent_field"
+case = "wr0214"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 1164, Rust 1167 (plan/findings/general--2502-fork-pin-curve-known-mismatches.md)"
+
+[[mismatch]]
+unit = "curve.tangent_field"
+case = "wr0215"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 3320, Rust 3323 (plan/findings/general--2502-fork-pin-curve-known-mismatches.md)"
+
+[[mismatch]]
+unit = "curve.tangent_field"
+case = "wr0216"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 1276, Rust 1279 (plan/findings/general--2502-fork-pin-curve-known-mismatches.md)"
+
+[[mismatch]]
+unit = "curve.tangent_field"
+case = "wr0217"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 1001, Rust 1004 (plan/findings/general--2502-fork-pin-curve-known-mismatches.md)"
+
+[[mismatch]]
+unit = "curve.tangent_field"
+case = "wr0218"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 1100, Rust 1103 (plan/findings/general--2502-fork-pin-curve-known-mismatches.md)"
+
+[[mismatch]]
+unit = "curve.tangent_field"
+case = "wr0219"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 1012, Rust 1015 (plan/findings/general--2502-fork-pin-curve-known-mismatches.md)"
+
+[[mismatch]]
+unit = "curve.tangent_field"
+case = "wr0222"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 2772, Rust 2775 (plan/findings/general--2502-fork-pin-curve-known-mismatches.md)"
+
+[[mismatch]]
+unit = "curve.tangent_field"
+case = "wr0224"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 3159, Rust 3162 (plan/findings/general--2502-fork-pin-curve-known-mismatches.md)"
+
+[[mismatch]]
+unit = "curve.tangent_field"
+case = "wr0225"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 980, Rust 983 (plan/findings/general--2502-fork-pin-curve-known-mismatches.md)"
+
+[[mismatch]]
+unit = "curve.tangent_field"
+case = "wr0228"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 1164, Rust 1167 (plan/findings/general--2502-fork-pin-curve-known-mismatches.md)"
+
+[[mismatch]]
+unit = "curve.tangent_field"
+case = "wr0229"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 1068, Rust 1071 (plan/findings/general--2502-fork-pin-curve-known-mismatches.md)"
+
+[[mismatch]]
+unit = "curve.tangent_field"
+case = "wr0230"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 1066, Rust 1069 (plan/findings/general--2502-fork-pin-curve-known-mismatches.md)"
+
+[[mismatch]]
+unit = "curve.tangent_field"
+case = "wr0231"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 3362, Rust 3365 (plan/findings/general--2502-fork-pin-curve-known-mismatches.md)"
+
+[[mismatch]]
+unit = "curve.tangent_field"
+case = "wr0232"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 1188, Rust 1191 (plan/findings/general--2502-fork-pin-curve-known-mismatches.md)"
+
+[[mismatch]]
+unit = "curve.tangent_field"
+case = "wr0235"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 1036, Rust 1039 (plan/findings/general--2502-fork-pin-curve-known-mismatches.md)"
+
+[[mismatch]]
+unit = "curve.tangent_field"
+case = "wr0237"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 2911, Rust 2914 (plan/findings/general--2502-fork-pin-curve-known-mismatches.md)"
+
+[[mismatch]]
+unit = "curve.tangent_field"
+case = "wr0238"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 2863, Rust 2866 (plan/findings/general--2502-fork-pin-curve-known-mismatches.md)"
+
+[[mismatch]]
+unit = "curve.tangent_field"
+case = "wr0239"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 1163, Rust 1166 (plan/findings/general--2502-fork-pin-curve-known-mismatches.md)"
+
+[[mismatch]]
+unit = "curve.tangent_field"
+case = "wh0004"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 1109, Rust 1112 (plan/findings/general--2502-fork-pin-curve-known-mismatches.md)"
+
+[[mismatch]]
+unit = "curve.tangent_field"
+case = "wh0008"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 1153, Rust 1156 (plan/findings/general--2502-fork-pin-curve-known-mismatches.md)"
+
+[[mismatch]]
+unit = "curve.tangent_field"
+case = "wh0010"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 3547, Rust 3550 (plan/findings/general--2502-fork-pin-curve-known-mismatches.md)"
+
+[[mismatch]]
+unit = "curve.tangent_field"
+case = "wh0012"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 3427, Rust 3430 (plan/findings/general--2502-fork-pin-curve-known-mismatches.md)"
+
+[[mismatch]]
+unit = "curve.tangent_field"
+case = "wh0015"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 3255, Rust 3258 (plan/findings/general--2502-fork-pin-curve-known-mismatches.md)"
+
+[[mismatch]]
+unit = "curve.tangent_field"
+case = "wh0019"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 1067, Rust 1070 (plan/findings/general--2502-fork-pin-curve-known-mismatches.md)"
+
+[[mismatch]]
+unit = "curve.tangent_field"
+case = "wh0020"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 3376, Rust 3379 (plan/findings/general--2502-fork-pin-curve-known-mismatches.md)"
+
+[[mismatch]]
+unit = "curve.tangent_field"
+case = "wh0024"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 1067, Rust 1070 (plan/findings/general--2502-fork-pin-curve-known-mismatches.md)"
+
+[[mismatch]]
+unit = "curve.tangent_field"
+case = "wh0027"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 1129, Rust 1132 (plan/findings/general--2502-fork-pin-curve-known-mismatches.md)"
+
+[[mismatch]]
+unit = "curve.tangent_field"
+case = "wh0032"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 1067, Rust 1070 (plan/findings/general--2502-fork-pin-curve-known-mismatches.md)"
+
+[[mismatch]]
+unit = "curve.tangent_field"
+case = "wh0033"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 1116, Rust 1119 (plan/findings/general--2502-fork-pin-curve-known-mismatches.md)"
+
+[[mismatch]]
+unit = "curve.tangent_field"
+case = "wh0035"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 1051, Rust 1054 (plan/findings/general--2502-fork-pin-curve-known-mismatches.md)"
+
+[[mismatch]]
+unit = "curve.tangent_field"
+case = "wh0038"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 3533, Rust 3536 (plan/findings/general--2502-fork-pin-curve-known-mismatches.md)"
+
+[[mismatch]]
+unit = "curve.tangent_field"
+case = "wh0041"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 1109, Rust 1112 (plan/findings/general--2502-fork-pin-curve-known-mismatches.md)"
+
+[[mismatch]]
+unit = "curve.tangent_field"
+case = "wh0045"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 1095, Rust 1098 (plan/findings/general--2502-fork-pin-curve-known-mismatches.md)"
+
+[[mismatch]]
+unit = "curve.tangent_field"
+case = "wh0047"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 3398, Rust 3401 (plan/findings/general--2502-fork-pin-curve-known-mismatches.md)"
+
+[[mismatch]]
+unit = "curve.tangent_field"
+case = "wh0056"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 1109, Rust 1112 (plan/findings/general--2502-fork-pin-curve-known-mismatches.md)"
+
+[[mismatch]]
+unit = "curve.tangent_field"
+case = "wh0061"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 1079, Rust 1082 (plan/findings/general--2502-fork-pin-curve-known-mismatches.md)"
+
+[[mismatch]]
+unit = "curve.tangent_field"
+case = "wh0066"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 3361, Rust 3364 (plan/findings/general--2502-fork-pin-curve-known-mismatches.md)"
+
+[[mismatch]]
+unit = "curve.tangent_field"
+case = "wh0070"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 1133, Rust 1136 (plan/findings/general--2502-fork-pin-curve-known-mismatches.md)"
+
+[[mismatch]]
+unit = "curve.tangent_field"
+case = "wh0077"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 1107, Rust 1110 (plan/findings/general--2502-fork-pin-curve-known-mismatches.md)"
+
+[[mismatch]]
+unit = "curve.tangent_field"
+case = "wh0080"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 3302, Rust 3305 (plan/findings/general--2502-fork-pin-curve-known-mismatches.md)"
+
+[[mismatch]]
+unit = "curve.tangent_field"
+case = "wh0081"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 1119, Rust 1122 (plan/findings/general--2502-fork-pin-curve-known-mismatches.md)"
+
+[[mismatch]]
+unit = "curve.tangent_field"
+case = "wh0082"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 3531, Rust 3534 (plan/findings/general--2502-fork-pin-curve-known-mismatches.md)"
+
+[[mismatch]]
+unit = "curve.tangent_field"
+case = "wh0083"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 3389, Rust 3392 (plan/findings/general--2502-fork-pin-curve-known-mismatches.md)"
+
+[[mismatch]]
+unit = "curve.tangent_field"
+case = "wh0085"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 1153, Rust 1156 (plan/findings/general--2502-fork-pin-curve-known-mismatches.md)"
+
+[[mismatch]]
+unit = "curve.tangent_field"
+case = "wh0087"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 1051, Rust 1054 (plan/findings/general--2502-fork-pin-curve-known-mismatches.md)"
+
+[[mismatch]]
+unit = "curve.tangent_field"
+case = "wh0093"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 3388, Rust 3391 (plan/findings/general--2502-fork-pin-curve-known-mismatches.md)"
+
+[[mismatch]]
+unit = "curve.tangent_field"
+case = "wh0101"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 3304, Rust 3307 (plan/findings/general--2502-fork-pin-curve-known-mismatches.md)"
+
+[[mismatch]]
+unit = "curve.tangent_field"
+case = "wh0104"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 1087, Rust 1090 (plan/findings/general--2502-fork-pin-curve-known-mismatches.md)"
+
+[[mismatch]]
+unit = "curve.tangent_field"
+case = "wh0111"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 1087, Rust 1090 (plan/findings/general--2502-fork-pin-curve-known-mismatches.md)"
+
+[[mismatch]]
+unit = "curve.tangent_field"
+case = "wh0115"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 1043, Rust 1046 (plan/findings/general--2502-fork-pin-curve-known-mismatches.md)"
+
+[[mismatch]]
+unit = "curve.tangent_field"
+case = "wh0129"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 1055, Rust 1058 (plan/findings/general--2502-fork-pin-curve-known-mismatches.md)"
+
+[[mismatch]]
+unit = "curve.tangent_field"
+case = "wh0136"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 1067, Rust 1070 (plan/findings/general--2502-fork-pin-curve-known-mismatches.md)"
+
+[[mismatch]]
+unit = "curve.tangent_field"
+case = "wh0139"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 1133, Rust 1136 (plan/findings/general--2502-fork-pin-curve-known-mismatches.md)"
+
+[[mismatch]]
+unit = "curve.tangent_field"
+case = "wh0148"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 1104, Rust 1107 (plan/findings/general--2502-fork-pin-curve-known-mismatches.md)"
+
+[[mismatch]]
+unit = "curve.tangent_field"
+case = "wh0150"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 1109, Rust 1112 (plan/findings/general--2502-fork-pin-curve-known-mismatches.md)"
+
+[[mismatch]]
+unit = "curve.tangent_field"
+case = "wh0156"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 1051, Rust 1054 (plan/findings/general--2502-fork-pin-curve-known-mismatches.md)"
+
+[[mismatch]]
+unit = "curve.tangent_field"
+case = "rt0000"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: ints.status[0] C++ 1006, Rust 0 (plan/findings/general--2502-fork-pin-curve-known-mismatches.md)"
+
+[[mismatch]]
+unit = "curve.tangent_field"
+case = "rt0004"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: ints.status[0] C++ 1006, Rust 0 (plan/findings/general--2502-fork-pin-curve-known-mismatches.md)"
+
+[[mismatch]]
+unit = "curve.tangent_field"
+case = "rt0005"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: ints.status[0] C++ 1006, Rust 0 (plan/findings/general--2502-fork-pin-curve-known-mismatches.md)"
+
+[[mismatch]]
+unit = "curve.tangent_field"
+case = "rt0009"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: ints.status[0] C++ 1006, Rust 0 (plan/findings/general--2502-fork-pin-curve-known-mismatches.md)"
+
+[[mismatch]]
+unit = "curve.tangent_field"
+case = "rt0012"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: ints.status[0] C++ 1006, Rust 0 (plan/findings/general--2502-fork-pin-curve-known-mismatches.md)"
+
+[[mismatch]]
+unit = "curve.tangent_field"
+case = "rt0014"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: ints.status[0] C++ 1006, Rust 0 (plan/findings/general--2502-fork-pin-curve-known-mismatches.md)"
+
+[[mismatch]]
+unit = "curve.tangent_field"
+case = "rt0017"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: ints.status[0] C++ 1006, Rust 0 (plan/findings/general--2502-fork-pin-curve-known-mismatches.md)"
+
+[[mismatch]]
+unit = "curve.tangent_field"
+case = "rt0018"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: ints.status[0] C++ 1006, Rust 0 (plan/findings/general--2502-fork-pin-curve-known-mismatches.md)"
+
+[[mismatch]]
+unit = "curve.tangent_field"
+case = "rt0029"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: ints.status[0] C++ 1006, Rust 0 (plan/findings/general--2502-fork-pin-curve-known-mismatches.md)"
+
+[[mismatch]]
+unit = "curve.tangent_field"
+case = "rt0034"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: ints.status[0] C++ 1006, Rust 0 (plan/findings/general--2502-fork-pin-curve-known-mismatches.md)"
+
+[[mismatch]]
+unit = "curve.tangent_field"
+case = "rt0035"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: ints.status[0] C++ 1006, Rust 0 (plan/findings/general--2502-fork-pin-curve-known-mismatches.md)"
+
+[[mismatch]]
+unit = "curve.tangent_field"
+case = "rt0037"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[0] C++ 0e0, Rust 1e0 (+2 more) (plan/findings/general--2502-fork-pin-curve-known-mismatches.md)"
+
+[[mismatch]]
+unit = "curve.tangent_field"
+case = "rt0038"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: ints.status[0] C++ 1006, Rust 0 (plan/findings/general--2502-fork-pin-curve-known-mismatches.md)"
+
+[[mismatch]]
+unit = "curve.tangent_field"
+case = "rt0039"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: ints.status[0] C++ 1006, Rust 0 (plan/findings/general--2502-fork-pin-curve-known-mismatches.md)"
+
+[[mismatch]]
+unit = "curve.tangent_field"
+case = "rt0045"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: ints.status[0] C++ 1006, Rust 0 (plan/findings/general--2502-fork-pin-curve-known-mismatches.md)"
+
+[[mismatch]]
+unit = "curve.tangent_field"
+case = "rt0046"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: ints.status[0] C++ 1006, Rust 0 (plan/findings/general--2502-fork-pin-curve-known-mismatches.md)"
+
+[[mismatch]]
+unit = "curve.tangent_field"
+case = "rt0049"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: ints.status[0] C++ 1006, Rust 0 (plan/findings/general--2502-fork-pin-curve-known-mismatches.md)"
+
+[[mismatch]]
+unit = "curve.tangent_field"
+case = "rt0053"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: ints.status[0] C++ 1006, Rust 0 (plan/findings/general--2502-fork-pin-curve-known-mismatches.md)"
+
+[[mismatch]]
+unit = "curve.tangent_field"
+case = "rt0055"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: ints.status[0] C++ 1006, Rust 0 (plan/findings/general--2502-fork-pin-curve-known-mismatches.md)"
+
+[[mismatch]]
+unit = "curve.tangent_field"
+case = "rt0056"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: ints.status[0] C++ 1006, Rust 0 (plan/findings/general--2502-fork-pin-curve-known-mismatches.md)"
+
+[[mismatch]]
+unit = "curve.tangent_field"
+case = "rt0058"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: ints.status[0] C++ 1006, Rust 0 (plan/findings/general--2502-fork-pin-curve-known-mismatches.md)"
+
+[[mismatch]]
+unit = "curve.tangent_field"
+case = "rt0060"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: ints.status[0] C++ 1006, Rust 0 (plan/findings/general--2502-fork-pin-curve-known-mismatches.md)"
+
+[[mismatch]]
+unit = "curve.tangent_field"
+case = "rt0066"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: ints.status[0] C++ 1006, Rust 0 (plan/findings/general--2502-fork-pin-curve-known-mismatches.md)"
+
+[[mismatch]]
+unit = "curve.tangent_field"
+case = "rt0067"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[0] C++ 0e0, Rust 1e0 (+3 more) (plan/findings/general--2502-fork-pin-curve-known-mismatches.md)"
+
+[[mismatch]]
+unit = "curve.tangent_field"
+case = "rt0069"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: ints.status[0] C++ 1006, Rust 0 (plan/findings/general--2502-fork-pin-curve-known-mismatches.md)"
+
+[[mismatch]]
+unit = "curve.tangent_field"
+case = "rt0073"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: ints.status[0] C++ 1006, Rust 0 (plan/findings/general--2502-fork-pin-curve-known-mismatches.md)"
+
+[[mismatch]]
+unit = "curve.tangent_field"
+case = "rt0075"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: ints.status[0] C++ 1006, Rust 0 (plan/findings/general--2502-fork-pin-curve-known-mismatches.md)"
+
+[[mismatch]]
+unit = "curve.tangent_field"
+case = "rt0076"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: ints.status[0] C++ 1006, Rust 0 (plan/findings/general--2502-fork-pin-curve-known-mismatches.md)"
+
+[[mismatch]]
+unit = "curve.tangent_field"
+case = "rt0090"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: ints.status[0] C++ 1006, Rust 0 (plan/findings/general--2502-fork-pin-curve-known-mismatches.md)"
+
+[[mismatch]]
+unit = "curve.tangent_field"
+case = "rt0091"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: ints.status[0] C++ 1006, Rust 0 (plan/findings/general--2502-fork-pin-curve-known-mismatches.md)"
+
+[[mismatch]]
+unit = "curve.tangent_field"
+case = "rt0092"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: ints.status[0] C++ 1006, Rust 0 (plan/findings/general--2502-fork-pin-curve-known-mismatches.md)"
+
+[[mismatch]]
+unit = "curve.tangent_field"
+case = "rt0098"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: ints.status[0] C++ 1006, Rust 0 (plan/findings/general--2502-fork-pin-curve-known-mismatches.md)"
+
+[[mismatch]]
+unit = "curve.tangent_field"
+case = "rt0113"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: ints.status[0] C++ 1006, Rust 0 (plan/findings/general--2502-fork-pin-curve-known-mismatches.md)"
+
+[[mismatch]]
+unit = "curve.tangent_field"
+case = "rt0114"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: ints.status[0] C++ 1006, Rust 0 (plan/findings/general--2502-fork-pin-curve-known-mismatches.md)"
+
+[[mismatch]]
+unit = "curve.tangent_field"
+case = "rt0115"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: ints.status[0] C++ 1006, Rust 0 (plan/findings/general--2502-fork-pin-curve-known-mismatches.md)"
+
+[[mismatch]]
+unit = "curve.tangent_field"
+case = "rt0118"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: ints.status[0] C++ 1006, Rust 0 (plan/findings/general--2502-fork-pin-curve-known-mismatches.md)"
+
+[[mismatch]]
+unit = "curve.tangent_field"
+case = "rt0119"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: ints.status[0] C++ 1006, Rust 0 (plan/findings/general--2502-fork-pin-curve-known-mismatches.md)"
+
+[[mismatch]]
+unit = "curve.tangent_field"
+case = "rt0124"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: ints.status[0] C++ 1006, Rust 0 (plan/findings/general--2502-fork-pin-curve-known-mismatches.md)"
+
+[[mismatch]]
+unit = "curve.tangent_field"
+case = "rt0125"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: ints.status[0] C++ 1006, Rust 0 (plan/findings/general--2502-fork-pin-curve-known-mismatches.md)"
+
+[[mismatch]]
+unit = "curve.tangent_field"
+case = "rt0126"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: ints.status[0] C++ 1006, Rust 0 (plan/findings/general--2502-fork-pin-curve-known-mismatches.md)"
+
+[[mismatch]]
+unit = "curve.tangent_field"
+case = "rt0129"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: ints.status[0] C++ 1006, Rust 0 (plan/findings/general--2502-fork-pin-curve-known-mismatches.md)"
+
+[[mismatch]]
+unit = "curve.tangent_field"
+case = "rt0131"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: ints.status[0] C++ 1006, Rust 0 (plan/findings/general--2502-fork-pin-curve-known-mismatches.md)"
+
+[[mismatch]]
+unit = "curve.tangent_field"
+case = "rt0133"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: ints.status[0] C++ 1006, Rust 0 (plan/findings/general--2502-fork-pin-curve-known-mismatches.md)"
+
+[[mismatch]]
+unit = "curve.tangent_field"
+case = "rt0136"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: ints.status[0] C++ 1006, Rust 0 (plan/findings/general--2502-fork-pin-curve-known-mismatches.md)"
+
+[[mismatch]]
+unit = "curve.tangent_field"
+case = "rt0146"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: ints.status[0] C++ 1006, Rust 0 (plan/findings/general--2502-fork-pin-curve-known-mismatches.md)"
+
+[[mismatch]]
+unit = "curve.tangent_field"
+case = "rt0149"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: ints.status[0] C++ 1006, Rust 0 (plan/findings/general--2502-fork-pin-curve-known-mismatches.md)"
+
+[[mismatch]]
+unit = "curve.tangent_field"
+case = "rt0150"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: ints.status[0] C++ 1006, Rust 0 (plan/findings/general--2502-fork-pin-curve-known-mismatches.md)"
+
+[[mismatch]]
+unit = "curve.tangent_field"
+case = "rt0153"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: ints.status[0] C++ 1006, Rust 0 (plan/findings/general--2502-fork-pin-curve-known-mismatches.md)"
+
+[[mismatch]]
+unit = "curve.tangent_field"
+case = "rt0154"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: ints.status[0] C++ 1006, Rust 0 (plan/findings/general--2502-fork-pin-curve-known-mismatches.md)"
+
+[[mismatch]]
+unit = "curve.tangent_field"
+case = "rt0161"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: ints.status[0] C++ 1006, Rust 0 (plan/findings/general--2502-fork-pin-curve-known-mismatches.md)"
+
+[[mismatch]]
+unit = "curve.tangent_field"
+case = "rt0164"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[0] C++ 0e0, Rust 1e0 (+3 more) (plan/findings/general--2502-fork-pin-curve-known-mismatches.md)"
+
+[[mismatch]]
+unit = "curve.tangent_field"
+case = "rt0166"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: ints.status[0] C++ 1006, Rust 0 (plan/findings/general--2502-fork-pin-curve-known-mismatches.md)"
+
+[[mismatch]]
+unit = "curve.tangent_field"
+case = "rt0169"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: ints.status[0] C++ 1006, Rust 0 (plan/findings/general--2502-fork-pin-curve-known-mismatches.md)"
+
+[[mismatch]]
+unit = "curve.tangent_field"
+case = "rt0172"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: ints.status[0] C++ 1006, Rust 0 (plan/findings/general--2502-fork-pin-curve-known-mismatches.md)"
+
+[[mismatch]]
+unit = "curve.tangent_field"
+case = "rt0177"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: ints.status[0] C++ 1006, Rust 0 (plan/findings/general--2502-fork-pin-curve-known-mismatches.md)"
+
+[[mismatch]]
+unit = "curve.tangent_field"
+case = "rt0180"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: ints.status[0] C++ 1006, Rust 0 (plan/findings/general--2502-fork-pin-curve-known-mismatches.md)"
+
+[[mismatch]]
+unit = "curve.tangent_field"
+case = "rt0181"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: ints.status[0] C++ 1006, Rust 0 (plan/findings/general--2502-fork-pin-curve-known-mismatches.md)"
+
+[[mismatch]]
+unit = "curve.tangent_field"
+case = "rt0187"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: ints.status[0] C++ 1006, Rust 0 (plan/findings/general--2502-fork-pin-curve-known-mismatches.md)"
+
+[[mismatch]]
+unit = "curve.tangent_field"
+case = "rt0191"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: ints.status[0] C++ 1006, Rust 0 (plan/findings/general--2502-fork-pin-curve-known-mismatches.md)"
+
+[[mismatch]]
+unit = "curve.tangent_field"
+case = "rt0196"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: ints.status[0] C++ 1006, Rust 0 (plan/findings/general--2502-fork-pin-curve-known-mismatches.md)"
+
+[[mismatch]]
+unit = "curve.tangent_field"
+case = "rt0200"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: ints.status[0] C++ 1006, Rust 0 (plan/findings/general--2502-fork-pin-curve-known-mismatches.md)"
+
+[[mismatch]]
+unit = "curve.tangent_field"
+case = "rt0201"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: ints.status[0] C++ 1006, Rust 0 (plan/findings/general--2502-fork-pin-curve-known-mismatches.md)"
+
+[[mismatch]]
+unit = "curve.tangent_field"
+case = "rt0204"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: ints.status[0] C++ 1006, Rust 0 (plan/findings/general--2502-fork-pin-curve-known-mismatches.md)"
+
+[[mismatch]]
+unit = "curve.tangent_field"
+case = "rt0205"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: ints.status[0] C++ 1006, Rust 0 (plan/findings/general--2502-fork-pin-curve-known-mismatches.md)"
+
+[[mismatch]]
+unit = "curve.tangent_field"
+case = "rt0207"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: ints.status[0] C++ 1006, Rust 0 (plan/findings/general--2502-fork-pin-curve-known-mismatches.md)"
+
+[[mismatch]]
+unit = "curve.tangent_field"
+case = "rt0208"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: ints.status[0] C++ 1006, Rust 0 (plan/findings/general--2502-fork-pin-curve-known-mismatches.md)"
+
+[[mismatch]]
+unit = "curve.tangent_field"
+case = "rt0215"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: ints.status[0] C++ 1006, Rust 0 (plan/findings/general--2502-fork-pin-curve-known-mismatches.md)"
+
+[[mismatch]]
+unit = "curve.tangent_field"
+case = "rt0216"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: ints.status[0] C++ 1006, Rust 0 (plan/findings/general--2502-fork-pin-curve-known-mismatches.md)"
+
+[[mismatch]]
+unit = "curve.tangent_field"
+case = "rt0225"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: ints.status[0] C++ 1006, Rust 0 (plan/findings/general--2502-fork-pin-curve-known-mismatches.md)"
+
+[[mismatch]]
+unit = "curve.tangent_field"
+case = "rt0227"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: ints.status[0] C++ 1006, Rust 0 (plan/findings/general--2502-fork-pin-curve-known-mismatches.md)"
+
+[[mismatch]]
+unit = "curve.tangent_field"
+case = "rt0228"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: ints.status[0] C++ 1006, Rust 0 (plan/findings/general--2502-fork-pin-curve-known-mismatches.md)"
+
+[[mismatch]]
+unit = "curve.tangent_field"
+case = "rt0229"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: ints.status[0] C++ 1006, Rust 0 (plan/findings/general--2502-fork-pin-curve-known-mismatches.md)"
+
+[[mismatch]]
+unit = "curve.tangent_field"
+case = "rt0239"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: ints.status[0] C++ 1006, Rust 0 (plan/findings/general--2502-fork-pin-curve-known-mismatches.md)"
+
+[[mismatch]]
+unit = "curve.tangent_field"
+case = "rt0242"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: ints.status[0] C++ 1006, Rust 0 (plan/findings/general--2502-fork-pin-curve-known-mismatches.md)"
+
+[[mismatch]]
+unit = "curve.tangent_field"
+case = "rt0250"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: ints.status[0] C++ 1006, Rust 0 (plan/findings/general--2502-fork-pin-curve-known-mismatches.md)"
+
+[[mismatch]]
+unit = "curve.tangent_field"
+case = "rt0254"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: ints.status[0] C++ 1006, Rust 0 (plan/findings/general--2502-fork-pin-curve-known-mismatches.md)"
+
+[[mismatch]]
+unit = "curve.tangent_field"
+case = "rt0255"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: ints.status[0] C++ 1006, Rust 0 (plan/findings/general--2502-fork-pin-curve-known-mismatches.md)"
+
+[[mismatch]]
+unit = "curve.tangent_field"
+case = "rt0257"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: ints.status[0] C++ 1006, Rust 0 (plan/findings/general--2502-fork-pin-curve-known-mismatches.md)"
+
+[[mismatch]]
+unit = "curve.tangent_field"
+case = "rt0258"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: ints.status[0] C++ 1006, Rust 0 (plan/findings/general--2502-fork-pin-curve-known-mismatches.md)"
+
+[[mismatch]]
+unit = "curve.tangent_field"
+case = "rt0259"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: ints.status[0] C++ 1006, Rust 0 (plan/findings/general--2502-fork-pin-curve-known-mismatches.md)"
+
+[[mismatch]]
+unit = "curve.tangent_field"
+case = "rt0260"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[0] C++ 0e0, Rust 1e0 (+2 more) (plan/findings/general--2502-fork-pin-curve-known-mismatches.md)"
+
+[[mismatch]]
+unit = "curve.tangent_field"
+case = "rt0261"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: ints.status[0] C++ 1006, Rust 0 (plan/findings/general--2502-fork-pin-curve-known-mismatches.md)"
+
+[[mismatch]]
+unit = "curve.tangent_field"
+case = "rt0265"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: ints.status[0] C++ 1006, Rust 0 (plan/findings/general--2502-fork-pin-curve-known-mismatches.md)"
+
+[[mismatch]]
+unit = "curve.tangent_field"
+case = "rt0267"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: ints.status[0] C++ 1006, Rust 0 (plan/findings/general--2502-fork-pin-curve-known-mismatches.md)"
+
+[[mismatch]]
+unit = "curve.tangent_field"
+case = "rt0268"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: ints.status[0] C++ 1006, Rust 0 (plan/findings/general--2502-fork-pin-curve-known-mismatches.md)"
+
+[[mismatch]]
+unit = "curve.tangent_field"
+case = "rt0271"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: ints.status[0] C++ 1006, Rust 0 (plan/findings/general--2502-fork-pin-curve-known-mismatches.md)"
+
+[[mismatch]]
+unit = "curve.tangent_field"
+case = "rt0272"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: ints.status[0] C++ 1006, Rust 0 (plan/findings/general--2502-fork-pin-curve-known-mismatches.md)"
+
+[[mismatch]]
+unit = "curve.tangent_field"
+case = "rt0275"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: ints.status[0] C++ 1006, Rust 0 (plan/findings/general--2502-fork-pin-curve-known-mismatches.md)"
+
+[[mismatch]]
+unit = "curve.tangent_field"
+case = "rt0276"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: ints.status[0] C++ 1006, Rust 0 (plan/findings/general--2502-fork-pin-curve-known-mismatches.md)"
+
+[[mismatch]]
+unit = "curve.tangent_field"
+case = "rt0287"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[0] C++ 0e0, Rust 1e0 (+3 more) (plan/findings/general--2502-fork-pin-curve-known-mismatches.md)"
+
+[[mismatch]]
+unit = "curve.tangent_field"
+case = "rt0288"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: ints.status[0] C++ 1006, Rust 0 (plan/findings/general--2502-fork-pin-curve-known-mismatches.md)"
+
+[[mismatch]]
+unit = "curve.tangent_field"
+case = "rt0293"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: ints.status[0] C++ 1006, Rust 0 (plan/findings/general--2502-fork-pin-curve-known-mismatches.md)"
+
+[[mismatch]]
+unit = "curve.tangent_field"
+case = "rt0298"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: ints.status[0] C++ 1006, Rust 0 (plan/findings/general--2502-fork-pin-curve-known-mismatches.md)"

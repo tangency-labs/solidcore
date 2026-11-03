@@ -1,0 +1,267 @@
+# #2502: these cases move with the difftest's C++ reference, the SMLib fork
+# v1.1.0-alpha.1 (8eac63c); plan/findings/general--2502-fork-pin-curve-known-mismatches.md.
+
+[[mismatch]]
+unit = "curve.offset_curve"
+case = "reverse_outside"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[0] C++ 1e20, Rust -1e0 (+23 more) (plan/findings/general--2502-fork-pin-curve-known-mismatches.md)"
+
+[[mismatch]]
+unit = "curve.offset_curve"
+case = "gen0000"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[0] C++ 1e20, Rust -6.050000000000005e-2 (+18 more) (plan/findings/general--2502-fork-pin-curve-known-mismatches.md)"
+
+[[mismatch]]
+unit = "curve.offset_curve"
+case = "gen0023"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[0] C++ 1e20, Rust -2.7718350070230526e0 (+12 more) (plan/findings/general--2502-fork-pin-curve-known-mismatches.md)"
+
+[[mismatch]]
+unit = "curve.offset_curve"
+case = "gen0100"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[0] C++ 1e20, Rust -1.697836385798927e-1 (+63 more) (plan/findings/general--2502-fork-pin-curve-known-mismatches.md)"
+
+[[mismatch]]
+unit = "curve.offset_curve"
+case = "gen0105"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[0] C++ 1e20, Rust 6.499999999999997e-2 (+49 more) (plan/findings/general--2502-fork-pin-curve-known-mismatches.md)"
+
+[[mismatch]]
+unit = "curve.offset_curve"
+case = "gen0160"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[0] C++ 1e20, Rust 6.499999999999997e-2 (+33 more) (plan/findings/general--2502-fork-pin-curve-known-mismatches.md)"
+
+[[mismatch]]
+unit = "curve.offset_curve"
+case = "gen0227"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[0] C++ 1e20, Rust -2.0919574971112675e-1 (+33 more) (plan/findings/general--2502-fork-pin-curve-known-mismatches.md)"
+
+[[mismatch]]
+unit = "curve.offset_curve"
+case = "gen0247"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[0] C++ 1e20, Rust 4.754855796790973e0 (+23 more) (plan/findings/general--2502-fork-pin-curve-known-mismatches.md)"
+
+[[mismatch]]
+unit = "curve.offset_curve"
+case = "gen0257"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[0] C++ 1e20, Rust -4.2722539453506025e-1 (+18 more) (plan/findings/general--2502-fork-pin-curve-known-mismatches.md)"
+
+[[mismatch]]
+unit = "curve.offset_curve"
+case = "gen0387"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[0] C++ 1e20, Rust -1.7445610061994963e0 (+33 more) (plan/findings/general--2502-fork-pin-curve-known-mismatches.md)"
+
+[[mismatch]]
+unit = "curve.offset_curve"
+case = "gen0392"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[0] C++ 1e20, Rust -5.0000000000000044e-2 (+43 more) (plan/findings/general--2502-fork-pin-curve-known-mismatches.md)"
+
+[[mismatch]]
+unit = "curve.offset_curve"
+case = "gen0419"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[0] C++ 1e20, Rust -3.2880134493871316e-1 (+48 more) (plan/findings/general--2502-fork-pin-curve-known-mismatches.md)"
+
+[[mismatch]]
+unit = "curve.offset_curve"
+case = "gen0421"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[0] C++ 1e20, Rust 5.582814233807554e-2 (+12 more) (plan/findings/general--2502-fork-pin-curve-known-mismatches.md)"
+
+[[mismatch]]
+unit = "curve.offset_curve"
+case = "gen0474"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[0] C++ 1e20, Rust -5.0000000000000044e-2 (+33 more) (plan/findings/general--2502-fork-pin-curve-known-mismatches.md)"
+
+[[mismatch]]
+unit = "curve.offset_curve"
+case = "gen0545"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[0] C++ 1e20, Rust -5.0000000000000044e-2 (+13 more) (plan/findings/general--2502-fork-pin-curve-known-mismatches.md)"
+
+[[mismatch]]
+unit = "curve.offset_curve"
+case = "gen0735"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[0] C++ 1e20, Rust 6.499999999999997e-2 (+33 more) (plan/findings/general--2502-fork-pin-curve-known-mismatches.md)"
+
+[[mismatch]]
+unit = "curve.offset_curve"
+case = "gen0737"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[0] C++ 1e20, Rust -3.2810935888678827e-1 (+33 more) (plan/findings/general--2502-fork-pin-curve-known-mismatches.md)"
+
+[[mismatch]]
+unit = "curve.offset_curve"
+case = "gen0741"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[0] C++ 1e20, Rust -5.0000000000000044e-2 (+23 more) (plan/findings/general--2502-fork-pin-curve-known-mismatches.md)"
+
+[[mismatch]]
+unit = "curve.offset_curve"
+case = "gen0857"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[0] C++ 1e20, Rust -1.2160126920706096e0 (+13 more) (plan/findings/general--2502-fork-pin-curve-known-mismatches.md)"
+
+[[mismatch]]
+unit = "curve.offset_curve"
+case = "gen0892"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[0] C++ 1e20, Rust 3.898681706519159e-1 (+23 more) (plan/findings/general--2502-fork-pin-curve-known-mismatches.md)"
+
+[[mismatch]]
+unit = "curve.offset_curve"
+case = "gen0907"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[0] C++ 1e20, Rust -6.050000000000005e-2 (+23 more) (plan/findings/general--2502-fork-pin-curve-known-mismatches.md)"
+
+[[mismatch]]
+unit = "curve.offset_curve"
+case = "gen0912"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[0] C++ 1e20, Rust -5.0000000000000044e-2 (+33 more) (plan/findings/general--2502-fork-pin-curve-known-mismatches.md)"
+
+[[mismatch]]
+unit = "curve.offset_curve"
+case = "gen0983"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[0] C++ 1e20, Rust -5.0000000000000044e-2 (+48 more) (plan/findings/general--2502-fork-pin-curve-known-mismatches.md)"
+
+[[mismatch]]
+unit = "curve.offset_curve"
+case = "gen0995"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[0] C++ 1e20, Rust -5.0000000000000044e-2 (+33 more) (plan/findings/general--2502-fork-pin-curve-known-mismatches.md)"
+
+[[mismatch]]
+unit = "curve.offset_curve"
+case = "gen0997"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[0] C++ 1e20, Rust -9.895888405007877e-2 (+18 more) (plan/findings/general--2502-fork-pin-curve-known-mismatches.md)"
+
+[[mismatch]]
+unit = "curve.offset_curve"
+case = "gen1002"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[0] C++ 1e20, Rust 3.608251964372962e0 (+13 more) (plan/findings/general--2502-fork-pin-curve-known-mismatches.md)"
+
+[[mismatch]]
+unit = "curve.offset_curve"
+case = "gen1006"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[0] C++ 1e20, Rust -5.0000000000000044e-2 (+18 more) (plan/findings/general--2502-fork-pin-curve-known-mismatches.md)"
+
+[[mismatch]]
+unit = "curve.offset_curve"
+case = "gen1018"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[0] C++ 1e20, Rust 6.499999999999997e-2 (+48 more) (plan/findings/general--2502-fork-pin-curve-known-mismatches.md)"
+
+[[mismatch]]
+unit = "curve.offset_curve"
+case = "gen1030"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[0] C++ 1e20, Rust -5.0000000000000044e-2 (+33 more) (plan/findings/general--2502-fork-pin-curve-known-mismatches.md)"
+
+[[mismatch]]
+unit = "curve.offset_curve"
+case = "gen1048"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[0] C++ 1e20, Rust 3.158952598606927e0 (+33 more) (plan/findings/general--2502-fork-pin-curve-known-mismatches.md)"
+
+[[mismatch]]
+unit = "curve.offset_curve"
+case = "gen1090"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[0] C++ 1e20, Rust -5.0000000000000044e-2 (+33 more) (plan/findings/general--2502-fork-pin-curve-known-mismatches.md)"
+
+[[mismatch]]
+unit = "curve.offset_curve"
+case = "gen1108"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[0] C++ 1e20, Rust 6.499999999999997e-2 (+63 more) (plan/findings/general--2502-fork-pin-curve-known-mismatches.md)"
+
+[[mismatch]]
+unit = "curve.offset_curve"
+case = "gen1111"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[0] C++ 1e20, Rust -1.5925921737118362e-1 (+23 more) (plan/findings/general--2502-fork-pin-curve-known-mismatches.md)"
+
+[[mismatch]]
+unit = "curve.offset_curve"
+case = "gen1144"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[0] C++ 1e20, Rust -3.2395686471210244e-2 (+63 more) (plan/findings/general--2502-fork-pin-curve-known-mismatches.md)"
+
+[[mismatch]]
+unit = "curve.offset_curve"
+case = "gen1185"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[0] C++ 1e20, Rust 4.790286286621705e0 (+33 more) (plan/findings/general--2502-fork-pin-curve-known-mismatches.md)"
+
+[[mismatch]]
+unit = "curve.offset_curve"
+case = "gen1213"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[0] C++ 1e20, Rust -5.0000000000000044e-2 (+13 more) (plan/findings/general--2502-fork-pin-curve-known-mismatches.md)"
+
+[[mismatch]]
+unit = "curve.offset_curve"
+case = "gen1259"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[0] C++ 1e20, Rust -6.050000000000005e-2 (+33 more) (plan/findings/general--2502-fork-pin-curve-known-mismatches.md)"
+
+[[mismatch]]
+unit = "curve.offset_curve"
+case = "gen1282"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[0] C++ 1e20, Rust -4.011145273611449e0 (+63 more) (plan/findings/general--2502-fork-pin-curve-known-mismatches.md)"
+
+[[mismatch]]
+unit = "curve.offset_curve"
+case = "gen1313"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[0] C++ 1e20, Rust -3.877231895478707e0 (+33 more) (plan/findings/general--2502-fork-pin-curve-known-mismatches.md)"
+
+[[mismatch]]
+unit = "curve.offset_curve"
+case = "gen1318"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[0] C++ 1e20, Rust -4.185008709878512e0 (+48 more) (plan/findings/general--2502-fork-pin-curve-known-mismatches.md)"
+
+[[mismatch]]
+unit = "curve.offset_curve"
+case = "gen1333"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[0] C++ 1e20, Rust -6.050000000000005e-2 (+63 more) (plan/findings/general--2502-fork-pin-curve-known-mismatches.md)"
+
+[[mismatch]]
+unit = "curve.offset_curve"
+case = "gen1379"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[0] C++ 1e20, Rust -6.050000000000005e-2 (+33 more) (plan/findings/general--2502-fork-pin-curve-known-mismatches.md)"
+
+[[mismatch]]
+unit = "curve.offset_curve"
+case = "gen1427"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[0] C++ 1e20, Rust -6.050000000000005e-2 (+33 more) (plan/findings/general--2502-fork-pin-curve-known-mismatches.md)"
+
+[[mismatch]]
+unit = "curve.offset_curve"
+case = "gen1550"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[0] C++ 1e20, Rust -3.215128557685749e0 (+48 more) (plan/findings/general--2502-fork-pin-curve-known-mismatches.md)"
+
+[[mismatch]]
+unit = "curve.offset_curve"
+case = "gen1606"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[0] C++ 1e20, Rust -5.0000000000000044e-2 (+23 more) (plan/findings/general--2502-fork-pin-curve-known-mismatches.md)"
+
+[[mismatch]]
+unit = "curve.offset_curve"
+case = "gen1654"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[0] C++ 1e20, Rust -8.542157049056747e-1 (+27 more) (plan/findings/general--2502-fork-pin-curve-known-mismatches.md)"
+
+[[mismatch]]
+unit = "curve.offset_curve"
+case = "gen1691"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[0] C++ 1e20, Rust 6.499999999999997e-2 (+48 more) (plan/findings/general--2502-fork-pin-curve-known-mismatches.md)"
+
+[[mismatch]]
+unit = "curve.offset_curve"
+case = "gen1763"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[0] C++ 1e20, Rust 1.2743580805260375e0 (+33 more) (plan/findings/general--2502-fork-pin-curve-known-mismatches.md)"
+
+[[mismatch]]
+unit = "curve.offset_curve"
+case = "gen1796"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[0] C++ 1e20, Rust 1.9224734110276157e-1 (+33 more) (plan/findings/general--2502-fork-pin-curve-known-mismatches.md)"
+
+[[mismatch]]
+unit = "curve.offset_curve"
+case = "gen1924"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[0] C++ 1e20, Rust -5.0000000000000044e-2 (+43 more) (plan/findings/general--2502-fork-pin-curve-known-mismatches.md)"
+
+[[mismatch]]
+unit = "curve.offset_curve"
+case = "gen1943"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[0] C++ 1e20, Rust -5.7008043937135294e-2 (+21 more) (plan/findings/general--2502-fork-pin-curve-known-mismatches.md)"
+
+[[mismatch]]
+unit = "curve.offset_curve"
+case = "gen1975"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[0] C++ 1e20, Rust -6.050000000000005e-2 (+33 more) (plan/findings/general--2502-fork-pin-curve-known-mismatches.md)"
+
+[[mismatch]]
+unit = "curve.offset_curve"
+case = "gen1991"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[0] C++ 1e20, Rust -6.050000000000005e-2 (+12 more) (plan/findings/general--2502-fork-pin-curve-known-mismatches.md)"

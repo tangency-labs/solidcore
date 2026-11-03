@@ -1,0 +1,22 @@
+# #2502: these cases move with the difftest's C++ reference, the SMLib fork
+# v1.1.0-alpha.1 (8eac63c); plan/findings/general--2502-fork-pin-curve-known-mismatches.md.
+
+[[mismatch]]
+unit = "curve.projected_curve"
+case = "av0073"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 248, Rust 3 (plan/findings/general--2502-fork-pin-curve-known-mismatches.md)"
+
+[[mismatch]]
+unit = "curve.projected_curve"
+case = "av0102"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 343, Rust 178 (plan/findings/general--2502-fork-pin-curve-known-mismatches.md)"
+
+[[mismatch]]
+unit = "curve.projected_curve"
+case = "av0136"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 346, Rust 101 (plan/findings/general--2502-fork-pin-curve-known-mismatches.md)"
+
+[[mismatch]]
+unit = "curve.projected_curve"
+case = "av0218"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 248, Rust 3 (plan/findings/general--2502-fork-pin-curve-known-mismatches.md)"
