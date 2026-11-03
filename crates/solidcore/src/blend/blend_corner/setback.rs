@@ -1460,8 +1460,11 @@ impl Growth<'_> {
             return Ok(None);
         };
         let rounds = rounds_of(&surfaces, &sides);
+        // certified by more than its rounding, so that the setback the growth names builds
+        // when asked for (#2243)
         let mut probe = Probe {
             fill: true,
+            rounding_margin: true,
             ..Probe::default()
         };
         match fill_hole_probe(
@@ -1486,18 +1489,21 @@ impl Growth<'_> {
 /// a quarter radius) and fills the hole from the least degree up. Twice them first, then the
 /// planar search's bisection on the grid of thousandths (`certified_scale`, the fork's
 /// 20b1c01, where 37c9e1d bisected to `1e-2`): the smallest certifying scale whose neighbour
-/// below fails, in at most 11 trials. None up to twice them: refused, naming none. One asked
-/// for that certifies only grown: refused, naming the setback that builds (or none, where that
-/// one does not fit with its ease).
+/// below fails, in at most 11 trials. A trial is certified only by more than its certificate's
+/// rounding bound (`Probe::rounding_margin`, #2243), so that the corner built afresh there,
+/// as the caller builds it or a caller asking that setback would, is certified too. None up
+/// to twice them: refused, naming none. One asked for that certifies only grown: refused,
+/// naming the setback that builds (or none, where that one does not fit with its ease).
+/// Returns the blends' ends where the setbacks found put them.
 fn grow_curved<S: SetbackSolvers>(
     growth: &Growth<'_>,
     pseudo: &mut FilletBrep,
     corner: &mut FilletCorner,
     solvers: &mut S,
     asked: Option<SetBackFill>,
-) -> Result<core::result::Result<Fill, SetbackRefusal>> {
+) -> Result<core::result::Result<Ends, SetbackRefusal>> {
     let err = || SolidError::sm_err(OP_FILL);
-    let Some(mut best) = growth.trial(pseudo, corner, solvers, 2.0)? else {
+    if growth.trial(pseudo, corner, solvers, 2.0)?.is_none() {
         let why = if let Some(a) = asked {
             format!(
                 "Fillet Error: no setback up to twice {} keeps the setback corner's fill no more concave than its faces",
@@ -1510,20 +1516,15 @@ fn grow_curved<S: SetbackSolvers>(
     };
     // The planar search's (`certified_scale`, #2382, the fork's 20b1c01): the smallest
     // certifying scale on the grid of thousandths whose neighbour below fails, by bisection
-    // from 1 (the fill at the setbacks themselves, refused) and 2; each certifying trial
-    // is the new upper end, so the last one kept is the fill at it.
+    // from 1 (the fill at the setbacks themselves, refused) and 2.
     let hi = bisect_thousandths(1000, 2000, |i| {
         let at = growth.trial(pseudo, corner, solvers, f64::from(i) / 1000.0)?;
-        let certified = at.is_some();
-        if let Some(at) = at {
-            best = at;
-        }
-        Ok::<bool, SolidError>(certified)
+        Ok::<bool, SolidError>(at.is_some())
     })?;
     let hi = f64::from(hi) / 1000.0;
-    if growth.place(pseudo, corner, solvers, hi)?.is_none() {
+    let Some(ends) = growth.place(pseudo, corner, solvers, hi)? else {
         return Err(err());
-    }
+    };
     if let Some(a) = asked {
         let room = &corner.setback.as_ref().ok_or_else(err)?.room;
         let fits_room = room.iter().all(|&r| hi * a.setback + a.ease < r);
@@ -1543,7 +1544,7 @@ fn grow_curved<S: SetbackSolvers>(
         };
         return Ok(Err(SetbackRefusal::no_room(why, Some(builds))));
     }
-    Ok(Ok(best))
+    Ok(Ok(ends))
 }
 
 /// `SmBlendCorner::BuildSetBackFill` (the fork's 61547af, 1506e2f): the Setback's fill
@@ -1593,7 +1594,7 @@ pub fn build_setback_fill<S: SetbackSolvers>(
     let vpoint = vertex::point(target, vtx)?;
 
     // each blend at its end section
-    let (surfaces, sides) = match gather_ends(
+    let (mut surfaces, mut sides) = match gather_ends(
         k,
         target,
         pseudo,
@@ -1607,10 +1608,16 @@ pub fn build_setback_fill<S: SetbackSolvers>(
         Gathered::Refused(why) => return Ok(Err(SetbackRefusal::not_built(why))),
         Gathered::Unplaced => return Err(err()),
     };
-    let rounds = rounds_of(&surfaces, &sides);
-
     let mut stats = FillStats::default();
-    let fill = match fill_hole_counted(k, &planes.planes, &rounds, order, tol, &mut stats) {
+    let first = fill_hole_counted(
+        k,
+        &planes.planes,
+        &rounds_of(&surfaces, &sides),
+        order,
+        tol,
+        &mut stats,
+    );
+    let fill = match first {
         Ok(fill) => fill,
         Err(refusal) if !curved || !stats.uncertified => {
             return Ok(Err(SetbackRefusal::not_built(refusal.reason.unwrap_or(
@@ -1642,11 +1649,32 @@ pub fn build_setback_fill<S: SetbackSolvers>(
                 most,
             };
             match grow_curved(&growth, pseudo, corner, solvers, asked)? {
-                Ok(fill) => fill,
+                // the fill where the grown setbacks put the blends' ends, made as a corner
+                // asked for those setbacks would make it
+                Ok((grown_surfaces, grown_sides)) => {
+                    surfaces = grown_surfaces;
+                    sides = grown_sides;
+                    match fill_hole_counted(
+                        k,
+                        &planes.planes,
+                        &rounds_of(&surfaces, &sides),
+                        order,
+                        tol,
+                        &mut stats,
+                    ) {
+                        Ok(fill) => fill,
+                        Err(refusal) => {
+                            return Ok(Err(SetbackRefusal::not_built(refusal.reason.unwrap_or(
+                                "Fillet Error: the setback corner's hole cannot be filled",
+                            ))))
+                        }
+                    }
+                }
                 Err(refusal) => return Ok(Err(refusal)),
             }
         }
     };
+    let rounds = rounds_of(&surfaces, &sides);
 
     if fill.patches.len() != 2 * n || fill.face.len() != n {
         return Err(err());
@@ -1736,10 +1764,7 @@ pub fn build_setback_fill<S: SetbackSolvers>(
             set_edge_curve(pseudo.brep_mut(), e, Some(Curve::from(best)))?;
         }
     }
-    // Beside a curved face (#2343) no definition is kept: a definition's faces are planes
-    // (its transform moves a face's point and normal, its record keeps only those), so a
-    // quadric face would not survive either.
-    let definition = if k.fixes.fillet_round_as_definition && !curved {
+    let definition = if k.fixes.fillet_round_as_definition {
         Some(keep_definition(
             k,
             &planes.planes,
@@ -1764,7 +1789,8 @@ pub fn build_setback_fill<S: SetbackSolvers>(
 /// ([`SetbackFill`]: the faces' planes, the rounds at their end sections, the rule's order
 /// and tolerance, the corner's convexity and its containment), certified at once: the rule
 /// run again from the definition makes this fill, number for number, with its
-/// certificates ([`SetbackFill::refill`]). Kept only where every face is a plane.
+/// certificates ([`SetbackFill::refill`]). Beside a curved face (#2343) its faces are the
+/// quadrics they are, and after a growth its rounds are where the grown setbacks put them.
 ///
 /// # Errors
 ///

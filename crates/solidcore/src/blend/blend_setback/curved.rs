@@ -34,6 +34,21 @@
 //! ball's centre and its derivative across the end along the rails), not from its
 //! parametrization; its raw jets give its own curvature ([`round_row_k`]).
 //!
+//! Not in the fork (the owner's answers on #2243, solidcore-native under the same flag):
+//! - The programme also minimises the net's own thin-plate energy (`net_fairness_rows`):
+//!   the surface's energy, taken at 8 x 8 Gauss points, does not see a high-degree net that
+//!   rings between them, and the certificate's search raised the degree until such a net
+//!   certified (net test #5 failing, the net 1.5 mm past a face).
+//! - A patch is certified only with its net: never turning back (`check_brep`'s test #5,
+//!   `net_monotone`) and contained (`net_contained`).
+//! - Its rows are solved continued and violated only past their rounding
+//!   (`dual_qp_rows`'s `native`), and its slack for rounding grows with the corner's
+//!   distance from the origin (`Strict`).
+//! - With `margin` (the growth naming a setback), every test of the certificate on the
+//!   programme's solution must hold by more than its own rounding bound (`Strict`), so that
+//!   the same corner built afresh (the programme the same, strictly convex, its solution
+//!   the same to rounding) is certified too: the setback named builds when asked for.
+//!
 //! | Rust                          | Fork (37c9e1d)              |
 //! |-------------------------------|-----------------------------|
 //! | `graph_g1_curved` (crate)     | `sm_SbGraphG1Curved`        |
@@ -44,6 +59,10 @@
 //! | `normal_field` (private)      | `sm_SbNormalField`          |
 //! | [`no_more_concave`]           | `SmBlendSetback::NoMoreConcave`, `sm_SbNoMoreConcave` |
 //! | [`round_end_curvature`]       | `SmBlendSetback::RoundEndCurvature` |
+//!
+//! | `net_fairness_rows` (private) | none (#2243)                |
+//! | `net_monotone` (private)      | none (#2243)                |
+//! | `net_contained` (private)     | none (#2243)                |
 //!
 //! Deviations: the fork's process-wide work counters (`CurvedCounts`) are the fill's
 //! [`FillStats`]; its degree search is least degree first, as the fork's caller asks it
@@ -171,10 +190,198 @@ fn scaled(t: &Tensor, s: f64) -> Tensor {
     n
 }
 
-/// The sign `t` is certified to have over the whole square (1 or -1, to `1e-12` of its
-/// scale), 0 where neither.
-fn certified_sign(t: &Tensor) -> Result<f64> {
-    let eps = 1.0e-12 * t_scale(t);
+/// The thin-plate energy of a net's own control points, as rows whose squares sum to it: the
+/// functional of [`second`] with each derivative of the Bezier patch replaced by its net's
+/// degree-scaled differences (`X_uu ~ p (p - 1) D2_u P`, `X_uv ~ p q D_u D_v P`,
+/// `X_vv ~ q (q - 1) D2_v P`, the Euclidean points P), each difference standing for its
+/// share of the unit square. For a net close to its surface (a low-degree surface raised)
+/// it is close to the surface's energy; unlike the surface's at its Gauss points, it sees a
+/// net that rings between them.
+fn net_fairness_rows(net: &Net) -> Result<Vec<f64>> {
+    let (p, q) = (net.p, net.q);
+    let at = |i: usize, j: usize| -> Result<Vec3> {
+        let h = el(&net.pts, i * (q + 1) + j)?;
+        Ok(pt(&h))
+    };
+    let mut rows = Vec::new();
+    let push = |rows: &mut Vec<f64>, c: f64, v: Vec3| {
+        let w = sqrt(c);
+        rows.push(w * v.x);
+        rows.push(w * v.y);
+        rows.push(w * v.z);
+    };
+    let (pf, qf) = (p as f64, q as f64);
+    if p >= 2 {
+        let c = pf * pf * (pf - 1.0) / (qf + 1.0);
+        for i in 1..p {
+            for j in 0..=q {
+                let d = at(i + 1, j)? - at(i, j)? * 2.0 + at(i - 1, j)?;
+                push(&mut rows, c, d);
+            }
+        }
+    }
+    if p >= 1 && q >= 1 {
+        let c = 2.0 * pf * qf;
+        for i in 0..p {
+            for j in 0..q {
+                let d = at(i + 1, j + 1)? - at(i + 1, j)? - at(i, j + 1)? + at(i, j)?;
+                push(&mut rows, c, d);
+            }
+        }
+    }
+    if q >= 2 {
+        let c = qf * qf * (qf - 1.0) / (pf + 1.0);
+        for i in 0..=p {
+            for j in 1..q {
+                let d = at(i, j + 1)? - at(i, j)? * 2.0 + at(i, j - 1)?;
+                push(&mut rows, c, d);
+            }
+        }
+    }
+    Ok(rows)
+}
+
+/// How strictly the fill's certificate is taken. Its tests allow rounding a slack of `1e-12`
+/// of each quantity's scale (two orders above the coefficients' own rounding, about `1e-14`
+/// of it), times `factor`, `1 + |o| / size`: the fill's inputs were made in world
+/// coordinates, `|o|` from the origin (`world`), the corner `size` across, and carry
+/// rounding of that size (#2343: a fill made again after its corner was moved far). With
+/// `margin` (the growth naming a setback), half the slack: the certificate then holds by
+/// half its slack more than it asks, far above the rounding by which the same corner built
+/// afresh differs, so that build holds it too. (Not `a >= +eps`: a G1 patch's conditions
+/// vanish exactly along its columns on a plane, where no margin is possible.)
+#[derive(Debug, Clone, Copy)]
+struct Strict {
+    factor: f64,
+    world: f64,
+    margin: bool,
+}
+
+impl Strict {
+    /// The plain certificate of a corner at the origin ([`no_more_concave`]'s).
+    const PLAIN: Self = Self {
+        factor: 1.0,
+        world: 0.0,
+        margin: false,
+    };
+
+    /// The slack allowed below 0 for a quantity of `scale`.
+    fn eps(self, scale: f64) -> f64 {
+        let eps = 1.0e-12 * self.factor * scale;
+        if self.margin {
+            0.5 * eps
+        } else {
+            eps
+        }
+    }
+}
+
+/// Whether a net's rows and columns never turn back: `check_brep`'s `SmBSplineSurface` test
+/// #5 on its Euclidean points, the patch open both ways (a turn of more than 170 degrees
+/// between neighbouring steps). With `margin`, also every turn below 170 degrees by more than
+/// its rounding bound, `4 eps (|P| / |a| + |P| / |b|)` radians for steps a and b between
+/// points of size up to |P| (in world coordinates).
+fn net_monotone(net: &Net, strict: Strict) -> Result<bool> {
+    let points: Vec<Point3> = net.pts.iter().map(pt).collect();
+    if crate::surface::surface::assert_valid::grid_has_non_monotonic_points(
+        &points,
+        net.q + 1,
+        false,
+        false,
+    )? {
+        return Ok(false);
+    }
+    if !strict.margin {
+        return Ok(true);
+    }
+    let (p, q) = (net.p, net.q);
+    let at = |i: usize, j: usize| el(&points, i * (q + 1) + j);
+    let limit = 170.0 * PI / 180.0;
+    for (outer, inner, along_rows) in [(p + 1, q + 1, true), (q + 1, p + 1, false)] {
+        for o in 0..outer {
+            let point = |t: usize| if along_rows { at(o, t) } else { at(t, o) };
+            let mut size = strict.world;
+            for t in 0..inner {
+                size = smax(size, point(t)?.length() + strict.world);
+            }
+            for t in 2..inner {
+                let a = point(t - 1)? - point(t - 2)?;
+                let b = point(t)? - point(t - 1)?;
+                let (la, lb) = (a.length(), b.length());
+                if !(la > 0.0 && lb > 0.0) {
+                    continue;
+                }
+                let turn = b.angle_between(a).unwrap_or(0.0);
+                let bound = 4.0 * f64::EPSILON * (size / la + size / lb);
+                if turn + bound > limit {
+                    return Ok(false);
+                }
+            }
+        }
+    }
+    Ok(true)
+}
+
+/// Whether a patch's net is contained (#2343; owner on #2243): every control point on the
+/// fill's side of every face (`convex`: in the material; else out of it), past a plane by at
+/// most `tol`, past a curved face by at most `tol` plus how far that face's tangent planes
+/// leave it within the net, `kappa L^2 / 2` (kappa its largest normal curvature there, L the
+/// diagonal of the net's box): where the patch is G1 to a curved face, its next column lies on
+/// those tangent planes by construction. With `margin`, by more than the rounding of the
+/// distances, `16 eps` times the points' and faces' size in world coordinates.
+fn net_contained(
+    net: &Net,
+    faces: &[Face],
+    convex: bool,
+    tol: f64,
+    strict: Strict,
+) -> Result<bool> {
+    let side = if convex { 1.0 } else { -1.0 };
+    let points: Vec<Point3> = net.pts.iter().map(pt).collect();
+    let first = *points.first().ok_or_else(sm_err)?;
+    let (mut lo, mut hi) = (first, first);
+    for x in &points {
+        lo = Vec3::new(smin(lo.x, x.x), smin(lo.y, x.y), smin(lo.z, x.z));
+        hi = Vec3::new(smax(hi.x, x.x), smax(hi.y, x.y), smax(hi.z, x.z));
+    }
+    let diagonal = (hi - lo).length();
+    for face in faces {
+        let mut allowed = tol;
+        if face.kind != FaceKind::Plane {
+            let kappa = if face.kind == FaceKind::Cone {
+                let mut hmin = BIG_DOUBLE;
+                for x in &points {
+                    hmin = smin(hmin, (*x - face.point).dot(face.axis));
+                }
+                let rho = face.radius + face.slope * hmin;
+                if !(rho > 0.0) {
+                    return Ok(false);
+                }
+                1.0 / (rho * sqrt(1.0 + face.slope * face.slope))
+            } else {
+                1.0 / face.radius
+            };
+            allowed += 0.5 * kappa * diagonal * diagonal;
+        }
+        for x in &points {
+            let past = side * face.distance(*x).0;
+            let rounding = if strict.margin {
+                16.0 * f64::EPSILON * ((*x - face.point).length() + face.radius + strict.world)
+            } else {
+                0.0
+            };
+            if past + rounding > allowed {
+                return Ok(false);
+            }
+        }
+    }
+    Ok(true)
+}
+
+/// The sign `t` is certified to have over the whole square (1 or -1, to `strict`'s slack),
+/// 0 where neither.
+fn certified_sign(t: &Tensor, strict: Strict) -> Result<f64> {
+    let eps = strict.eps(t_scale(t));
     Ok(if t_nonneg(t, eps, GRAPH_DEPTH)? == 1 {
         1.0
     } else if t_nonneg(&negated(t), eps, GRAPH_DEPTH)? == 1 {
@@ -318,11 +525,18 @@ fn normal_field(net: &Net, a: &Face, b: &Face, e: Vec3) -> Result<([Tensor; 3], 
 /// `s [D w^3 (l, m, n) + 2 |k| ot g S J]` PSD, `D = w^2 ot^2 + g^2 S`, certified as `s C11`,
 /// `s C22`, `C11 C22 - C12^2 >= 0`. 1 certified, 0 a negative value found, -1 undecided (ot
 /// not certified one-signed counts as undecided).
-fn no_more_concave_net(net: &Net, a: &Face, b: &Face, e: Vec3, k: f64) -> Result<i32> {
+fn no_more_concave_net(
+    net: &Net,
+    a: &Face,
+    b: &Face,
+    e: Vec3,
+    k: f64,
+    strict: Strict,
+) -> Result<i32> {
     let f = fundamentals(net, e)?;
     let (v, g) = normal_field(net, a, b, e)?;
     let ot = t_det_with(net, &v)?;
-    let s = certified_sign(&ot)?;
+    let s = certified_sign(&ot, strict)?;
     if s == 0.0 {
         return Ok(-1);
     }
@@ -355,9 +569,9 @@ fn no_more_concave_net(net: &Net, a: &Face, b: &Face, e: Vec3, k: f64) -> Result
         &t_mul_fast(&cm[1], &cm[1])?,
     )?;
     let eps = [
-        1.0e-12 * term[0],
-        1.0e-12 * term[2],
-        1.0e-12 * (term[0] * term[2] + term[1] * term[1]),
+        strict.eps(term[0]),
+        strict.eps(term[2]),
+        strict.eps(term[0] * term[2] + term[1] * term[1]),
     ];
     let mut result = 1;
     for (check, &ep) in [&sl, &sn, &disc].into_iter().zip(&eps) {
@@ -409,11 +623,13 @@ pub fn no_more_concave(
         pts.push([x.x * w, x.y * w, x.z * w, w]);
     }
     let net = Net { p, q, pts };
-    Ok(match no_more_concave_net(&net, a, b, into, k)? {
-        1 => Some(true),
-        0 => Some(false),
-        _ => None,
-    })
+    Ok(
+        match no_more_concave_net(&net, a, b, into, k, Strict::PLAIN)? {
+            1 => Some(true),
+            0 => Some(false),
+            _ => None,
+        },
+    )
 }
 
 /// `sm_SbGeometricRows`: a round's end rows from its geometry (owner, section 24): `jets`
@@ -668,8 +884,8 @@ fn round_row_k(
     let f = fundamentals(&net, e)?;
     let dc = row(&t_det_with(&net, &su)?)?;
     let o = row(&f[3])?;
-    let s = certified_sign(&o)?;
-    let sigma = certified_sign(&dc)?;
+    let s = certified_sign(&o, Strict::PLAIN)?;
+    let sigma = certified_sign(&dc, Strict::PLAIN)?;
     if s == 0.0 || sigma == 0.0 {
         return Err(Refusal::invalid(
             "SmBlendSetback: a round's end section turns across the corner's axis",
@@ -804,6 +1020,9 @@ pub(super) struct CurvedInput<'a, 'r> {
     pub rev: &'a [bool],
     /// `dTol`.
     pub tol: f64,
+    /// Whether the certificate must hold by more than its own rounding bound (each test's
+    /// slack halved: the growth naming a setback, #2343).
+    pub margin: bool,
 }
 
 /// `sm_SbGraphG1Curved`: the G1 fill beside curved faces (module docs), least degree first.
@@ -821,6 +1040,7 @@ pub(super) fn graph_g1_curved(
         face: cycle_face,
         rev: cycle_rev,
         tol,
+        margin,
     } = *input;
     let n = cycle_round.len();
     let mut qs: Vec<usize> = q_in.to_vec();
@@ -838,6 +1058,25 @@ pub(super) fn graph_g1_curved(
         }
         o *= 1.0 / count as f64;
     }
+    // the inputs' rounding relative to the corner (Strict)
+    let strict = {
+        let mut size = 0.0;
+        for (r, jr) in world_jets.iter().enumerate() {
+            let j0 = el_ref(jr, 0)?;
+            for e in 0..2 {
+                let h = el(j0, if e == 0 { 0 } else { el(&qs, r)? })?;
+                size = smax(size, (pt(&h) - o).length());
+            }
+        }
+        if !(size > 0.0) {
+            return Err(sm_err().into());
+        }
+        Strict {
+            factor: 1.0 + o.length() / size,
+            world: o.length(),
+            margin,
+        }
+    };
     let mut jets: Vec<Vec<Vec<Hom>>> = world_jets.to_vec();
     for jr in &mut jets {
         for jk in jr.iter_mut() {
@@ -1571,6 +1810,7 @@ pub(super) fn graph_g1_curved(
                     }
                 }
             }
+            rows.extend(net_fairness_rows(net)?);
             Ok(rows)
         };
         let mut e0: Vec<f64> = Vec::new();
@@ -1656,7 +1896,13 @@ pub(super) fn graph_g1_curved(
         let mut signs = vec![0.0; 2 * n];
         for (p, patch) in patches.iter().enumerate() {
             let af = affine_fundamentals(patch, e)?;
-            let sp = certified_sign(&af.o)?;
+            let sp = certified_sign(
+                &af.o,
+                Strict {
+                    margin: false,
+                    ..strict
+                },
+            )?;
             *el_mut(&mut signs, p)? = sp;
             if sp == 0.0 {
                 return Err(Refusal::sm_err(
@@ -1848,7 +2094,7 @@ pub(super) fn graph_g1_curved(
                             for &rf in &row_t {
                                 cm.push(rf / dmax);
                             }
-                            bv.push((-cst + 1.0e-12 * scale) / dmax);
+                            bv.push((-cst + 1.0e-12 * strict.factor * scale) / dmax);
                         }
                     }
                 }
@@ -1857,7 +2103,7 @@ pub(super) fn graph_g1_curved(
         stats.solves += 1;
         stats.curved_degrees += 1;
         stats.curved_rows += bv.len();
-        let outcome = dual_qp_rows(&gm, &gv, &cm, &bv, free, bv.len(), 1.0e-13)?;
+        let outcome = dual_qp_rows(&gm, &gv, &cm, &bv, free, bv.len(), 1.0e-13, true)?;
         let t = match outcome {
             QpOutcome::Solved(t) => t,
             QpOutcome::Infeasible { proven: true } if d == 9 => break 'degrees,
@@ -1872,7 +2118,7 @@ pub(super) fn graph_g1_curved(
                 break;
             }
             let f = fundamentals(net, e)?;
-            let s = certified_sign(&f[3])?;
+            let s = certified_sign(&f[3], strict)?;
             if s == 0.0 {
                 certified = false;
                 break;
@@ -1882,7 +2128,7 @@ pub(super) fn graph_g1_curved(
             if p < n && kp < 0.0 {
                 let fa = face_of(p)?;
                 let fb = face_of(p + 1)?;
-                if no_more_concave_net(net, fa, fb, e, kp)? != 1 {
+                if no_more_concave_net(net, fa, fb, e, kp, strict)? != 1 {
                     certified = false;
                 }
                 continue;
@@ -1927,7 +2173,18 @@ pub(super) fn graph_g1_curved(
                 &t_mul_fast(&cmk[1], &cmk[1])?,
             )?;
             for check in [&sl, &sn, &disc] {
-                if t_nonneg(check, 1.0e-12 * t_scale(check), GRAPH_DEPTH)? != 1 {
+                if t_nonneg(check, strict.eps(t_scale(check)), GRAPH_DEPTH)? != 1 {
+                    certified = false;
+                    break;
+                }
+            }
+        }
+        // the net: never turning back (check_brep's test #5), and contained (net_contained)
+        if certified {
+            for net in &nets {
+                if !net_monotone(net, strict)?
+                    || !net_contained(net, &faces, convex > 0, tol, strict)?
+                {
                     certified = false;
                     break;
                 }

@@ -1843,6 +1843,10 @@ pub struct Probe {
     pub feasible: bool,
     /// `m_dMargin`.
     pub margin_value: f64,
+    /// Beside a curved face (#2343, not the fork): the fill certified only where its
+    /// certificate holds by more than its own rounding bound, so that the same corner built
+    /// afresh is certified too (the growth names its setback so).
+    pub rounding_margin: bool,
 }
 
 /// The fork's `Fill::m_lSolves` and `m_bUncertified` (f1d81f4), kept on refusal too, and the
@@ -2001,6 +2005,7 @@ fn fill_hole_with(
             ));
         }
         stats.curved_fills += 1;
+        let margin = probe.as_ref().is_some_and(|p| p.rounding_margin);
         return curved::graph_g1_curved(
             &curved::CurvedInput {
                 faces,
@@ -2011,6 +2016,7 @@ fn fill_hole_with(
                 face: &cycle_face,
                 rev: &cycle_rev,
                 tol,
+                margin,
             },
             stats,
         );
