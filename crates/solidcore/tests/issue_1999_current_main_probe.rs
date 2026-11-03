@@ -203,6 +203,30 @@ fn new_blend_constructs_valid_shallow_crease_rounds() {
             );
             assert!(is_manifold_solid(&b).unwrap());
             assert_eq!(b.face_list().len(), 8, "turn={turn} radius={radius}");
+            assert_eq!(b.tolerance(), tol);
+            for &edge_id in b.edge_list() {
+                let curve = edge::curve(&b, edge_id).unwrap().unwrap();
+                let interval = edge::interval(&b, edge_id).unwrap();
+                for (parameter, vertex) in [
+                    (
+                        interval.min(),
+                        edge::start_vertex(&b, edge_id).unwrap().unwrap(),
+                    ),
+                    (
+                        interval.max(),
+                        edge::end_vertex(&b, edge_id).unwrap().unwrap(),
+                    ),
+                ] {
+                    let gap = curve
+                        .evaluate_point(&k, parameter)
+                        .unwrap()
+                        .distance(b.vertex(vertex).unwrap().point);
+                    assert!(
+                        gap < 1e-9 * scale,
+                        "turn={turn} radius={radius} scale={scale} edge={edge_id:?} gap={gap}"
+                    );
+                }
+            }
         }
     }
 }
