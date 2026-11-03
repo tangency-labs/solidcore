@@ -5,7 +5,7 @@ blend.fillet_executive_p3, blend.fillet_geom_p2, blend.fillet_solver_p1,
 blend.fillet_solver_p2, blend.fillet_standard_solver_p1, primitive.primitive_creation_p1.
 
 #2502 moves the difftest's C++ reference from usd-brep v1.0.1 (`3fd5b95`) to the SMLib fork,
-tangency-labs/smlib `v1.1.0-alpha` (`a18bbe5`), in #2512. The fork replaced v1.0.1's fillet
+tangency-labs/smlib `v1.1.0-alpha.1` (`8eac63c`), in #2512. The fork replaced v1.0.1's fillet
 path with its generic blend (`docs/generic-blend.md`) and changed two primitive helpers. The
 Rust ports of these units follow v1.0.1, so some of their shims call C++ the fork no longer
 has. Those entry points and ops now return `SC_ERR_UNLINKED` (status `cpp_unlinked`,
