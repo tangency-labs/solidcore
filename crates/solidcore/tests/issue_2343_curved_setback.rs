@@ -442,14 +442,13 @@ fn graded(k: &mut Kernel, b: &mut Brep, case: &Case, n: usize) {
                 }
                 let (uv, _) = nearest(k, &s, x);
                 let np = s.evaluate_normal(k, uv, Side::Left, Side::Left).unwrap();
-                let nf = match on {
-                    // against the face's exact normal (a curved face's trim curve in its own
-                    // parameters is not exact, smlib#103)
-                    Some(cf) => cf.grad(x).unitize().unwrap(),
-                    None => {
-                        let (ouv, _) = nearest(k, &os, x);
-                        os.evaluate_normal(k, ouv, Side::Left, Side::Left).unwrap()
-                    }
+                // against the face's exact normal (a curved face's trim curve in its own
+                // parameters is not exact, smlib#103)
+                let nf = if let Some(cf) = on {
+                    cf.grad(x).unitize().unwrap()
+                } else {
+                    let (ouv, _) = nearest(k, &os, x);
+                    os.evaluate_normal(k, ouv, Side::Left, Side::Left).unwrap()
                 };
                 let a = angle(np, nf);
                 worst_seam = worst_seam.max(a.min(PI - a));
@@ -621,8 +620,8 @@ fn d_pocket_unequal_corner_is_a_concave_setback_beside_the_cylinder() {
     graded(&mut k, &mut b, &case, 3);
 }
 
-/// The 851 part's corner (41 1/6, -21, 10): the top, the front and the concave arc wall (rho
-/// >= 21 about (62 1/6, -21)); the top front edge, the arc's top edge and the upright at the
+/// The 851 part's corner (41 1/6, -21, 10): the top, the front and the concave arc wall (the
+/// material at rho 21 or more about (62 1/6, -21)); the top front edge, the arc's top edge and the upright at the
 /// arc rounded 2, 2.5 and 3: a convex Setback beside a concave face, no more concave than the
 /// wall and the arc's round (k = -1/21).
 #[test]
