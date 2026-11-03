@@ -428,8 +428,22 @@ pub struct ExactRoundRecord {
     pub leader: Option<NurbsCurveRecord>,
     /// What the class is read with beside the supports.
     pub inputs: ClassInputsRecord,
+    /// How the net's parameter runs along the leader: `a + b w`, `w` its u (or v).
+    pub leader_map: LeaderMapRecord,
     /// The net, the exact surface.
     pub net: ExactNetRecord,
+}
+
+/// How an exact round's net runs along its leader: the leader's parameter is `a + b w`,
+/// `w` the net's u, or its v when `along_v`.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+pub struct LeaderMapRecord {
+    /// The offset a.
+    pub a: f64,
+    /// The scale b.
+    pub b: f64,
+    /// Whether the leader runs along the net's v.
+    pub along_v: bool,
 }
 
 impl ExactRoundRecord {
@@ -462,9 +476,14 @@ impl ExactRoundRecord {
             i.centre[1],
             i.centre[2],
             i.tol,
+            self.leader_map.a,
+            self.leader_map.b,
         ];
         if !all_finite(&numbers) {
             return Err(refuse("inputs", "an exact round's numbers are finite"));
+        }
+        if self.leader_map.b == 0.0 {
+            return Err(refuse("leader_map", "the leader's map is singular"));
         }
         if self.radius <= 0.0 {
             return Err(refuse("radius", "the ball's radius is positive"));

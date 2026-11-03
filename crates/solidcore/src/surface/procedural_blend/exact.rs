@@ -1,23 +1,24 @@
 //! A round whose net is its definition (#2485): a round of an exact class (the cylinder on
 //! a straight spine, the section turned about a common axis, a piece of the ball, the
-//! rational surface on a conic or nodal-quartic spine) keeps its exact surface as its net, and beside it the definition it was built from: the two
-//! supports the ball rolls on, the ball's radius, the section (the ball's circle, order 1)
-//! and its leader. The net is S, so the stored bound is 0, and it is re-certified by an
-//! identity, not a distance: the supports classified again give the same class, and the
-//! net's NURBS form lies on that class's surface, derived from the supports alone, to the
-//! rounding of checking it ([`crate::surface::implicit::check_exact_net`]): an analytic
-//! surface, or for a rational spine the canal surface about the round's centre line,
-//! which lies on both supports' offsets.
+//! rational surface on a conic spine) keeps its exact surface as its net, and beside it
+//! the definition it was built from: the two supports the ball rolls on, the ball's
+//! radius, the section (the ball's circle, order 1) and its leader. The net is S, so the
+//! stored bound is 0, and it is re-certified by an identity, not a distance: the supports
+//! classified again give the same class, and the net's NURBS form lies on that class's
+//! surface, derived from the supports alone, to the rounding of checking it
+//! ([`crate::surface::implicit::check_exact_net`]): an analytic surface, or for a rational
+//! spine the canal surface about the round's centre line, which lies on both supports'
+//! offsets.
 //!
 //! The round stays its kind ([`crate::surface::surface::SurfaceKind`]: a cone, surface of
-//! revolution, sphere, ball patch, or the rational classes' B-spline), so every match on that kind still sees
-//! it; its definition rides on the surface ([`crate::surface::surface::Surface::procedural_blend`]
-//! is the one way to it, for every blend face). The definition is a set's, not a
-//! parametrization's: the net reparametrized, reversed, swapped, trimmed, split or
-//! extended is still on S, so those edits carry it unchanged; a motion moves it with the
-//! net ([`ExactRound::transform`]). A rational class's proof pairs the net's u spans with
-//! its centre line's, so a net of such a class cut or reparametrised along u is refused
-//! when re-certified, not taken.
+//! revolution, sphere, ball patch, or the rational classes' B-spline), so every match on
+//! that kind still sees it; its definition rides on the surface
+//! ([`crate::surface::surface::Surface::procedural_blend`] is the one way to it, for every
+//! blend face). The definition is a set's, not a parametrisation's: the net
+//! reparametrised, reversed, swapped, trimmed or split is still on S, so those edits carry
+//! it; a motion moves it with the net ([`ExactRound::transform`]). A rational class's
+//! proof pairs the net's spans with its centre line's through a map ([`LeaderMap`]) that
+//! the net's reversals, reparametrisations and swaps carry; a piece or a trim keeps it.
 //!
 //! Not upstream. Deviations: none (no upstream counterpart). No recursion: the supports
 //! are kept as surfaces without definitions of their own (a support that is an exact
@@ -32,7 +33,7 @@ use crate::geom::vector3d::{Point3, Vec3};
 use crate::kernel::Kernel;
 use crate::math::EFF_ZERO;
 use crate::nurbs::b_spline_curve::BSplineCurve;
-use crate::surface::implicit::{check_exact_net, ExactNetCheck};
+use crate::surface::implicit::{check_exact_net, ExactNetCheck, LeaderMap};
 use crate::surface::surface::Surface;
 
 const OP_TRANSFORM: &str = "surface::procedural_blend::exact::ExactRound::transform";
@@ -99,6 +100,9 @@ pub struct ExactRound {
     pub(crate) leader: Option<BSplineCurve>,
     /// What the class was read with beside the supports.
     pub(crate) inputs: ClassInputs,
+    /// How the net's parameter runs along the leader (the identity in u as built; the
+    /// net's reversals, reparametrisations and swaps move it).
+    pub(crate) map: LeaderMap,
 }
 
 impl ExactRound {
@@ -136,6 +140,7 @@ impl ExactRound {
             order: 1,
             leader: leader.cloned(),
             inputs,
+            map: LeaderMap::default(),
         })
     }
 
@@ -175,6 +180,23 @@ impl ExactRound {
         &self.inputs
     }
 
+    /// How the net's parameter runs along the leader.
+    #[must_use]
+    pub const fn leader_map(&self) -> &LeaderMap {
+        &self.map
+    }
+
+    /// The net's parameter in `u` (or v) became `w'` with `w = alpha + beta w'` (a
+    /// reversal or reparametrisation of the net): the leader's map follows.
+    pub(crate) fn reparametrize_map(&mut self, u: bool, alpha: f64, beta: f64) {
+        self.map.reparametrize(u, alpha, beta);
+    }
+
+    /// The net's u and v swapped: the leader's map follows.
+    pub(crate) fn swap_map(&mut self) {
+        self.map.swap();
+    }
+
     /// The net's certified distance from the definition: 0, the net is S.
     #[must_use]
     pub const fn bound(&self) -> f64 {
@@ -199,7 +221,7 @@ impl ExactRound {
             &ExactNetCheck {
                 class: self.class.name(),
                 reclassified: ExactClass::of_spine(blend.spine).map(ExactClass::name),
-                surface: class_surface(&blend, self.leader.as_ref()),
+                surface: class_surface(&blend, self.leader.as_ref(), &self.map),
             },
         )?;
         Ok(0.0)

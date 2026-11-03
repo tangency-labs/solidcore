@@ -1492,12 +1492,14 @@ fn meridians_cross(a: Meridian, b: Meridian) -> Vec<Point2> {
 /// the point, and the torus about the common axis whose centre circle is where the
 /// offsets' meridians cross, the crossing nearest the classified centre); for the conic,
 /// conic-pair and nodal-quartic classes the canal surface of the ball's radius about
-/// `leader`, the round's rational centre line, which must lie on both offsets. `None` for
+/// `leader`, the round's rational centre line (its parameter the net's through `map`),
+/// which must lie on both offsets. `None` for
 /// a traced round, a blend classified without its inputs, offsets whose meridians do not
 /// cross and a rational class without its leader.
 pub fn class_surface(
     blend: &ExactBlend,
     leader: Option<&crate::nurbs::b_spline_curve::BSplineCurve>,
+    map: &crate::surface::implicit::LeaderMap,
 ) -> Option<crate::surface::implicit::ClassSurface> {
     use crate::surface::implicit::{ClassSurface, Implicit};
     let r = blend.radius;
@@ -1532,7 +1534,8 @@ pub fn class_surface(
         }
         BlendSpine::Conic | BlendSpine::ConicPair | BlendSpine::NodalQuartic => {
             return Some(ClassSurface::Canal {
-                spine: leader?.clone(),
+                spine: Box::new(leader?.clone()),
+                map: *map,
                 offsets: [blend.offsets[0].implicit(), blend.offsets[1].implicit()],
                 radius: r,
             });
@@ -1730,8 +1733,8 @@ pub fn calc_exact_fillet_geom(
 /// faces the class was read off), the ball's radius, the ball's circle as its section and
 /// the centre line as its leader. Its net is its exact surface, re-certified at once
 /// ([`ExactRound::recertify`]: the class read again from the supports, the net on the
-/// class's surface). A round of a linear section (a chamfer), of a conic pair or of a
-/// nodal quartic (their spines on both offsets only beyond rounding) keeps none here.
+/// class's surface). A round of a linear section (a chamfer) or of a nodal quartic (its
+/// spine on its offsets only to 2e-9 of the radius) keeps none here.
 ///
 /// # Errors
 ///
@@ -1749,11 +1752,9 @@ fn keep_definition(
     let (Some(class), Some(inputs)) = (ExactClass::of_spine(blend.spine), blend.inputs) else {
         return Ok(());
     };
-    // a conic pair's spine is the plane conic of one offset, its plane from the ball both
-    // offsets touch (their inscribed radii equal within the body's tolerance); a nodal
-    // quartic's is its power-form parametrisation converted to Bernstein pieces: neither
-    // is on both offsets to the rounding a bound of 0 needs, so neither keeps a definition
-    if matches!(class, ExactClass::ConicPair | ExactClass::NodalQuartic) {
+    // a nodal quartic's spine is on its offsets only to 2e-9 of the ball's radius (its
+    // construction's; the fork's own bar is 1e-9): no bound of 0, so it keeps no definition
+    if class == ExactClass::NodalQuartic {
         return Ok(());
     }
     let s = ops.solver();

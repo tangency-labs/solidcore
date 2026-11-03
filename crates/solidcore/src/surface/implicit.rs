@@ -250,8 +250,10 @@ pub enum ClassSurface {
     Implicit(Implicit),
     /// A canal surface of a rational spine.
     Canal {
-        /// The spine, the round's centre line, on the net's own u.
-        spine: BSplineCurve,
+        /// The spine, the round's centre line.
+        spine: Box<BSplineCurve>,
+        /// How the net's parameter runs along the spine.
+        map: LeaderMap,
         /// The faces' offsets by the ball's radius, which the spine lies on.
         offsets: [QuadricEquation; 2],
         /// The ball's radius.
@@ -307,6 +309,7 @@ pub fn check_exact_net(k: &Kernel, net: &Surface, check: &ExactNetCheck) -> Resu
         ClassSurface::Implicit(a) => lies_on(&form, a)?,
         ClassSurface::Canal {
             spine,
+            map,
             offsets,
             radius,
         } => {
@@ -316,7 +319,7 @@ pub fn check_exact_net(k: &Kernel, net: &Surface, check: &ExactNetCheck) -> Resu
                     "the spine is off the faces' offsets",
                 ));
             }
-            lies_on_canal(&form, spine, *radius)?
+            lies_on_canal(&form, spine, map, *radius)?
         }
     };
     if !on {
@@ -367,7 +370,9 @@ fn curve_segments(curve: &BSplineCurve) -> Result<(Vec<CurveSegment>, Vec3)> {
 /// Whether the rational curve `spine` lies on both quadrics `offsets`: on every Bezier
 /// segment, every Bernstein coefficient of `Y.A.Y + 2 (b + A O).Y V + q(O) V^2` (the
 /// quadric about the spine's first point `O`, homogeneous `(Y, V)`) is within the
-/// rounding of computing it, `gamma_K` times the size of its terms, as [`lies_on`].
+/// rounding of computing it, `gamma_K` times the size of its terms in the spine's
+/// absolute points (the move to `O` is exact algebra; its rounding is theirs), as
+/// [`lies_on`].
 ///
 /// # Errors
 ///
@@ -382,7 +387,8 @@ fn spine_on_offsets(spine: &BSplineCurve, offsets: &[QuadricEquation; 2]) -> Res
         let b1 = [b[0] + ao[0], b[1] + ao[1], b[2] + ao[2]];
         let c1 = c + dot3(&oa, &ao) + 2.0 * dot3(&b, &oa);
         let amax = a.iter().flatten().fold(0.0_f64, |m, x| m.max(x.abs()));
-        let bmax = b1.iter().fold(0.0_f64, |m, x| m.max(x.abs()));
+        let bmax = b.iter().fold(0.0_f64, |m, x| m.max(x.abs()));
+        let omax = oa.iter().fold(0.0_f64, |m, x| m.max(x.abs()));
         for (y, v) in &segs {
             let p = v.p;
             let vv = v.mul(v);
@@ -395,7 +401,10 @@ fn spine_on_offsets(spine: &BSplineCurve, offsets: &[QuadricEquation; 2]) -> Res
             }
             let ys = y.iter().map(BPoly::max_abs).fold(0.0_f64, f64::max);
             let vs = v.max_abs();
-            let scale = amax * ys * ys + 2.0 * bmax * ys * vs + c1.abs() * vs * vs + ys * vs;
+            // the terms of the quadric in the spine's own (absolute) homogeneous points: the
+            // move to O is exact algebra, its rounding that of these terms
+            let ya = ys + omax * vs;
+            let scale = amax * ya * ya + 2.0 * bmax * ya * vs + c.abs() * vs * vs;
             let tol = gamma(8 * (p + 1) + 16) * scale;
             if !f.c.iter().all(|x| x.abs() <= tol) {
                 return Ok(false);
@@ -405,39 +414,188 @@ fn spine_on_offsets(spine: &BSplineCurve, offsets: &[QuadricEquation; 2]) -> Res
     Ok(true)
 }
 
-/// Whether `form` lies on the canal surface of `spine` of radius `radius`: on the net's
-/// Bezier patches over the spine's segments (the net's u is the spine's), every Bernstein
-/// coefficient of `|X V - W Y|^2 - r^2 W^2 V^2` (homogeneous `(X, W)` of the net and
-/// `(Y, V)` of the spine, both about the spine's first point) is within the rounding of
-/// computing it, `gamma_K` times the size of its terms, as [`lies_on`]. A net whose u
-/// spans are not the spine's is not on it.
+/// How a net's parameter runs along its spine (#2485): the spine's parameter is
+/// `a + b w`, `w` the net's u, or its v when `along_v`. Built as the identity in u; the
+/// net's reversals, reparametrisations and swaps move it as they move the net.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct LeaderMap {
+    /// The offset a.
+    pub a: f64,
+    /// The scale b.
+    pub b: f64,
+    /// Whether the spine runs along the net's v.
+    pub along_v: bool,
+}
+
+impl Default for LeaderMap {
+    fn default() -> Self {
+        Self {
+            a: 0.0,
+            b: 1.0,
+            along_v: false,
+        }
+    }
+}
+
+impl LeaderMap {
+    /// The net's parameter in `u` (or v) became `w'` with `w = alpha + beta w'`.
+    pub fn reparametrize(&mut self, u: bool, alpha: f64, beta: f64) {
+        if u != self.along_v {
+            self.a += self.b * alpha;
+            self.b *= beta;
+        }
+    }
+
+    /// The net's u and v swapped.
+    pub fn swap(&mut self) {
+        self.along_v = !self.along_v;
+    }
+}
+
+/// A homogeneous Bernstein curve `(Y, V)` cut to `[lo, hi]` of its `[0, 1]` (de
+/// Casteljau at `hi`, then the left part at `lo / hi`), reversed when `lo > hi`.
+fn sub_segment(seg: &CurveSegment, lo: f64, hi: f64) -> CurveSegment {
+    let (y, v) = seg;
+    let rows: Vec<Vec<f64>> = y
+        .iter()
+        .map(|c| c.c.clone())
+        .chain(core::iter::once(v.c.clone()))
+        .collect();
+    let split = |rows: &[Vec<f64>], tau: f64, left: bool| -> Vec<Vec<f64>> {
+        rows.iter()
+            .map(|c| {
+                let mut level = c.clone();
+                let mut l = Vec::new();
+                let mut r = Vec::new();
+                while let (Some(&f), Some(&e)) = (level.first(), level.last()) {
+                    l.push(f);
+                    r.push(e);
+                    level = level
+                        .windows(2)
+                        .map(|w| match w {
+                            [x, y] => x * (1.0 - tau) + y * tau,
+                            _ => 0.0,
+                        })
+                        .collect();
+                }
+                r.reverse();
+                if left {
+                    l
+                } else {
+                    r
+                }
+            })
+            .collect()
+    };
+    let (from, to, reversed) = if lo <= hi {
+        (lo, hi, false)
+    } else {
+        (hi, lo, true)
+    };
+    let mut cut = if to < 1.0 {
+        split(&rows, to, true)
+    } else {
+        rows
+    };
+    if from > 0.0 && to > 0.0 {
+        cut = split(&cut, from / to, false);
+    }
+    if reversed {
+        for c in &mut cut {
+            c.reverse();
+        }
+    }
+    let p = v.p;
+    let poly = |c: Vec<f64>| BPoly { p, q: 0, c };
+    let mut it = cut.into_iter();
+    let mut next = || poly(it.next().unwrap_or_default());
+    let ys = [next(), next(), next()];
+    (ys, next())
+}
+
+/// The breakpoints of a knot vector.
+fn breaks(knots: &[f64]) -> Vec<f64> {
+    let mut b: Vec<f64> = Vec::new();
+    for &x in knots {
+        if b.last().is_none_or(|l| *l < x) {
+            b.push(x);
+        }
+    }
+    b
+}
+
+/// Whether `form` lies on the canal surface of `spine` of radius `radius`: on each of the
+/// net's Bezier patches, the spine's piece over the patch's span (through `map`, within one
+/// of the spine's segments, cut from it and oriented as the net runs) gives `(Y, V)`, and
+/// every Bernstein coefficient of `|X V - W Y|^2 - r^2 W^2 V^2` (homogeneous `(X, W)` of
+/// the net, both about the spine's first point) is within the rounding of computing it,
+/// `gamma_K` times the size of its terms in the absolute points, as [`lies_on`]. A patch
+/// whose span runs over a joint of the spine's segments, or off the spine, is not on it.
 ///
 /// # Errors
 ///
 /// `SM_ERR` without NURB data; those of the Bezier decompositions.
-fn lies_on_canal(form: &BSplineSurface, spine: &BSplineCurve, radius: f64) -> Result<bool> {
+fn lies_on_canal(
+    form: &BSplineSurface,
+    spine: &BSplineCurve,
+    map: &LeaderMap,
+    radius: f64,
+) -> Result<bool> {
     let nurb = form.gw_nurb().ok_or_else(|| SolidError::sm_err(OP_EXACT))?;
     let (segs, o) = curve_segments(spine)?;
-    let patches = decompose_to_bez(nurb)?;
-    let breaks = |knots: &[f64]| {
-        let mut b: Vec<f64> = Vec::new();
-        for &x in knots {
-            if b.last() != Some(&x) {
-                b.push(x);
-            }
-        }
-        b
-    };
-    let spine_knots = spine
+    let spine_breaks = spine
         .nurb
         .as_ref()
         .map(|n| breaks(n.knots()))
         .ok_or_else(|| SolidError::sm_err(OP_EXACT))?;
-    if patches.len() != segs.len() || breaks(nurb.u_knots()) != spine_knots {
-        return Ok(false);
-    }
-    for (row, (y, v)) in patches.iter().zip(&segs) {
-        for patch in row {
+    let (ub, vb) = (breaks(nurb.u_knots()), breaks(nurb.v_knots()));
+    let along = if map.along_v { &vb } else { &ub };
+    // the rounding of placing a span on the spine: of a + b w and of the spine's knots
+    let span_tol = |s: f64| 8.0 * f64::EPSILON * (map.a.abs() + (map.b * s).abs() + s.abs());
+    let patches = decompose_to_bez(nurb)?;
+    for (i, row) in patches.iter().enumerate() {
+        for (j, patch) in row.iter().enumerate() {
+            let k_at = if map.along_v { j } else { i };
+            let (Some(&w0), Some(&w1)) = (along.get(k_at), along.get(k_at + 1)) else {
+                return Ok(false);
+            };
+            let (s0, s1) = (map.a + map.b * w0, map.a + map.b * w1);
+            let mid = 0.5 * (s0 + s1);
+            let Some(m) = spine_breaks.windows(2).position(|w| match w {
+                [ka, kb] => *ka <= mid && mid <= *kb,
+                _ => false,
+            }) else {
+                return Ok(false);
+            };
+            let (Some(&ka), Some(&kb), Some(seg)) =
+                (spine_breaks.get(m), spine_breaks.get(m + 1), segs.get(m))
+            else {
+                return Ok(false);
+            };
+            let local = |s: f64| -> Option<f64> {
+                let t = (s - ka) / (kb - ka);
+                let slack = span_tol(s) / (kb - ka);
+                (t >= -slack && t <= 1.0 + slack).then(|| t.clamp(0.0, 1.0))
+            };
+            let (Some(t0), Some(t1)) = (local(s0), local(s1)) else {
+                return Ok(false);
+            };
+            let piece = if t0 == 0.0 && t1 == 1.0 {
+                seg.clone()
+            } else {
+                sub_segment(seg, t0, t1)
+            };
+            let (y, v) = if map.along_v {
+                let turn = |c: &BPoly| BPoly {
+                    p: 0,
+                    q: c.p,
+                    c: c.c.clone(),
+                };
+                let (ys, vs) = &piece;
+                ([turn(&ys[0]), turn(&ys[1]), turn(&ys[2])], turn(vs))
+            } else {
+                piece
+            };
             let (p, q) = patch.degrees();
             let mut x = [Vec::new(), Vec::new(), Vec::new()];
             let mut w = Vec::new();
@@ -454,25 +612,29 @@ fn lies_on_canal(form: &BSplineSurface, spine: &BSplineCurve, radius: f64) -> Re
             let poly = |c: Vec<f64>| BPoly { p, q, c };
             let [x0, x1, x2] = x;
             let (xs, ws) = ([poly(x0), poly(x1), poly(x2)], poly(w));
-            // the spine's rows across v: constant, degree (p', 0) times the patch's
             let mut f: Option<BPoly> = None;
-            for (xi, yi) in xs.iter().zip(y) {
-                let d = xi.mul(v).combine(1.0, &ws.mul(yi), -1.0);
+            for (xi, yi) in xs.iter().zip(&y) {
+                let d = xi.mul(&v).combine(1.0, &ws.mul(yi), -1.0);
                 let d2 = d.mul(&d);
                 f = Some(match f {
                     None => d2,
                     Some(g) => g.combine(1.0, &d2, 1.0),
                 });
             }
-            let wv = ws.mul(v);
+            let wv = ws.mul(&v);
             let Some(f) = f else {
                 return Ok(false);
             };
             let f = f.combine(1.0, &wv.mul(&wv), -radius * radius);
-            let size = xs.iter().map(BPoly::max_abs).fold(0.0_f64, f64::max) * v.max_abs()
-                + ws.max_abs() * y.iter().map(BPoly::max_abs).fold(0.0_f64, f64::max)
-                + radius * ws.max_abs() * v.max_abs();
-            let tol = gamma(8 * (p + v.p + 1) * (q + 1) + 16) * size * size;
+            // the terms in the absolute homogeneous points (the move to O is exact algebra,
+            // its rounding that of these terms)
+            let om = o.x.abs().max(o.y.abs()).max(o.z.abs());
+            let (wm, vm) = (ws.max_abs(), v.max_abs());
+            let xa = xs.iter().map(BPoly::max_abs).fold(0.0_f64, f64::max) + om * wm;
+            let ya = y.iter().map(BPoly::max_abs).fold(0.0_f64, f64::max) + om * vm;
+            let size = xa * vm + wm * ya + radius * wm * vm;
+            let spine_degree = v.p.max(v.q);
+            let tol = gamma(8 * (p + spine_degree + 1) * (q + spine_degree + 1) + 16) * size * size;
             if !f.c.iter().all(|c| c.abs() <= tol) {
                 return Ok(false);
             }

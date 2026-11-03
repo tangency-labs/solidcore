@@ -14,7 +14,7 @@
 use super::exact::{ExactClass, ExactRound};
 use super::record::{
     BlendDefinitionRecord, ClassInputsRecord, ExactClassRecord, ExactNetKindRecord, ExactNetRecord,
-    ExactRoundRecord, NurbsCurveRecord, NurbsSurfaceRecord, ParameterMapRecord,
+    ExactRoundRecord, LeaderMapRecord, NurbsCurveRecord, NurbsSurfaceRecord, ParameterMapRecord,
     ProceduralBlendRecord, RadiusRecord, SupportKindRecord, SupportRecord,
 };
 use super::{BlendDefinitionInput, BlendRef, ProceduralBlend, BLEND_MAX_DEPTH};
@@ -32,7 +32,7 @@ use crate::nurbs::knots::MAX_DEGREE;
 use crate::nurbs::math::{CPoint, NOW, NOZ};
 use crate::nurbs::srf_basic::Surface as NurbSurface;
 use crate::surface::ball_patch::BallPatch;
-use crate::surface::implicit::{AnalyticSupport, SupportKind};
+use crate::surface::implicit::{AnalyticSupport, LeaderMap, SupportKind};
 use crate::surface::surface::{Surface, SurfaceKind};
 use crate::topology::FaceId;
 
@@ -453,6 +453,11 @@ pub fn exact_to_record(k: &Kernel, surface: &Surface) -> Result<ExactRoundRecord
             ball_on_collapsed: i.ball_on_collapsed,
             radii_can_change: i.radii_can_change,
         },
+        leader_map: LeaderMapRecord {
+            a: round.map.a,
+            b: round.map.b,
+            along_v: round.map.along_v,
+        },
         net: ExactNetRecord {
             kind,
             form: surface_record(&form)?,
@@ -545,7 +550,12 @@ pub fn exact_from_record(k: &Kernel, rec: &ExactRoundRecord) -> Result<Surface> 
         };
         net = Surface::from(BallPatch::create(form, blend.point, blend.radius)?);
     }
-    let round = ExactRound::create(k, class, [s0, s1], rec.radius, leader.as_ref(), inputs)?;
+    let mut round = ExactRound::create(k, class, [s0, s1], rec.radius, leader.as_ref(), inputs)?;
+    round.map = LeaderMap {
+        a: rec.leader_map.a,
+        b: rec.leader_map.b,
+        along_v: rec.leader_map.along_v,
+    };
     net.set_exact_round(Some(round));
     Ok(net)
 }
