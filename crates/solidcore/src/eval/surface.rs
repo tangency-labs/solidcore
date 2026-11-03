@@ -14,7 +14,7 @@ use super::spline::{
 };
 use super::uv::{self, Domain};
 use super::vec::{v3, VecExt};
-use super::{CurveEval, EvalError};
+use super::{Collapse, CurveEval, EvalError};
 use crate::math::Vec3;
 use std::f64::consts::{FRAC_PI_2, TAU};
 
@@ -463,23 +463,72 @@ impl SurfaceEval {
             .then_some(q)
     }
 
-    /// Whether moving along each direction at `uv` leaves the point where it is (a pole).
-    pub fn pole(&self, uv: [f64; 2]) -> [bool; 2] {
-        let Some((_, su, sv)) = self.derivs(uv[0], uv[1]) else {
-            return [false; 2];
+    /// Which directions are collapsed at `uv`, exactly (to rounding), or within `reach` mm
+    /// ([`super::collapse`]): a spline or revolution by its iso-lines, an analytic form by the
+    /// radius of its circle along the angle in closed form (a cone's apex, a sphere's pole, a
+    /// torus's ring or tube of radius zero). Refused with a typed error where that cannot be
+    /// decided.
+    pub fn collapse(&self, uv: [f64; 2], reach: f64) -> Result<Collapse, EvalError> {
+        let [u, v] = uv;
+        if !(u.is_finite() && v.is_finite()) {
+            return Err(EvalError::Unevaluable(format!(
+                "pole classification: parameters ({u}, {v}) not finite"
+            )));
+        }
+        if !(reach >= 0.0 && reach.is_finite()) {
+            return Err(EvalError::Invalid(format!(
+                "pole classification: reach {reach} is not a finite length"
+            )));
+        }
+        let (g, unit) = (super::collapse::gamma, super::collapse::ROUNDOFF);
+        let circle = super::collapse::circle;
+        // The circle along u of radius `r`, rounded within `err`; v moves the point along a
+        // straight line or a circle of radius `along_v` (a cylinder's and cone's generator never
+        // stands still; a torus's tube does when its radius is zero).
+        let (u_flag, v_flag) = match self {
+            SurfaceEval::Eval(e, _) => return super::collapse::collapse(e, uv, reach),
+            SurfaceEval::Cylinder { radius, .. } => (circle(*radius, 0.0, reach)?, false),
+            SurfaceEval::Cone {
+                radius_at_origin,
+                slope,
+                ..
+            } => {
+                let r = radius_at_origin + v * slope;
+                let err = g(2) * (radius_at_origin.abs() + (v * slope).abs());
+                (circle(r, err, reach)?, false)
+            }
+            SurfaceEval::Sphere { radius, .. } => {
+                // R cos v, its cosine rounded, and the pole's own latitude (π/2) not being a
+                // float: the parameter given for it is off by up to its rounding.
+                let err = radius.abs() * (g(3) + 2.0 * unit * v.abs());
+                (
+                    circle(radius * v.cos(), err, reach)?,
+                    circle(*radius, 0.0, reach)?,
+                )
+            }
+            SurfaceEval::Torus {
+                major, minor, tube, ..
+            } => {
+                let w = v + tube;
+                let ring = major + minor * w.cos();
+                let err = g(4) * (major.abs() + minor.abs()) + minor.abs() * 2.0 * unit * w.abs();
+                (circle(ring, err, reach)?, circle(*minor, 0.0, reach)?)
+            }
         };
-        let (a, b) = (su.len(), sv.len());
-        [a <= 1e-9 * b.max(1e-12), b <= 1e-9 * a.max(1e-12)]
+        Ok(Collapse::of([u_flag, v_flag]))
     }
 
-    /// [`Self::pole`], or within `reach` mm of one: moving along a direction across half its
-    /// period (or its whole range) moves the point no more than `reach` (a boundary point that
-    /// lies at a pole to within a tolerance, where its periodic parameter is free).
-    pub fn pole_within(&self, uv: [f64; 2], reach: f64) -> [bool; 2] {
-        let Some((_, su, sv)) = self.derivs(uv[0], uv[1]) else {
-            return [false; 2];
-        };
-        uv::collapsed([su.len(), sv.len()], &self.domain(), reach)
+    /// Whether moving along each direction at `uv` leaves the point where it is (a pole):
+    /// [`Self::collapse`] at no reach.
+    pub fn pole(&self, uv: [f64; 2]) -> Result<[bool; 2], EvalError> {
+        Ok(self.collapse(uv, 0.0)?.flags())
+    }
+
+    /// [`Self::pole`], or within `reach` mm of one: moving along a direction across its whole
+    /// range moves the point no more than `reach`, certified (a boundary point that lies at a
+    /// pole to within a tolerance, where its periodic parameter is free).
+    pub fn pole_within(&self, uv: [f64; 2], reach: f64) -> Result<[bool; 2], EvalError> {
+        Ok(self.collapse(uv, reach)?.flags())
     }
 }
 

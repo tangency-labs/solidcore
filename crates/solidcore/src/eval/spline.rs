@@ -74,7 +74,7 @@ const BOUNDARY_ROUNDING: f64 = 1e-9;
 /// `t` on the knot range `[knots[p], knots[n]]`: the range's end when `t` is past it by no more
 /// than rounding ([`BOUNDARY_ROUNDING`]), `None` when farther out (higher derivatives are taken
 /// on the surface, never on its extrapolation), `t` inside.
-fn onto_knots(knots: &[f64], p: usize, n: usize, t: f64) -> Option<f64> {
+pub(super) fn onto_knots(knots: &[f64], p: usize, n: usize, t: f64) -> Option<f64> {
     let (&lo, &hi) = (knots.get(p)?, knots.get(n)?);
     let slack = BOUNDARY_ROUNDING * (hi - lo).abs().max(lo.abs()).max(hi.abs()).max(1.0);
     if t < lo {

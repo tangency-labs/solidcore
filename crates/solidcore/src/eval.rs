@@ -15,6 +15,7 @@
 //! rational quadratic arcs of [`form`]); do Carmo, *Differential Geometry of Curves and
 //! Surfaces*, §3.2 (normal sections, Meusnier).
 
+pub mod collapse;
 pub mod curve;
 pub mod form;
 pub mod geometry;
@@ -24,6 +25,7 @@ pub mod surface;
 pub mod uv;
 mod vec;
 
+pub use collapse::Collapse;
 pub use curve::{CurveEval, CurveJet};
 pub use geometry::{Curve, Curve2, Frame, Surface};
 pub use spline::{

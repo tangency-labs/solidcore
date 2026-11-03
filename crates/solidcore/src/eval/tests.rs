@@ -671,8 +671,9 @@ fn hostile_surfaces_do_not_panic() {
     }
 }
 
-/// A point next to a sphere's pole is a pole to within the reach it is given: crossing half a
-/// turn of longitude there moves it about π times its distance from the axis, and no further.
+/// A point next to a sphere's pole is a pole to within the reach it is given: its circle of
+/// longitude moves it by the circle's diameter, twice its distance from the axis (4e-7 here),
+/// and no further.
 #[test]
 fn a_point_beside_a_pole_is_one_within_its_reach() {
     let sphere = SurfaceEval::new(&Surface::Sphere {
@@ -681,10 +682,14 @@ fn a_point_beside_a_pole_is_one_within_its_reach() {
     })
     .unwrap();
     let near = [0.3, FRAC_PI_2 - 1e-7];
-    assert_eq!(sphere.pole(near), [false, false]);
-    assert_eq!(sphere.pole_within(near, 1e-6), [true, false]);
-    assert_eq!(sphere.pole_within(near, 1e-7), [false, false]);
-    assert_eq!(sphere.pole_within([0.3, 0.2], 1e-3), [false, false]);
+    assert_eq!(sphere.pole(near).unwrap(), [false, false]);
+    assert_eq!(sphere.pole_within(near, 1e-6).unwrap(), [true, false]);
+    assert_eq!(sphere.pole_within(near, 1e-7).unwrap(), [false, false]);
+    assert_eq!(
+        sphere.pole_within([0.3, 0.2], 1e-3).unwrap(),
+        [false, false]
+    );
+    assert_eq!(sphere.pole([0.3, FRAC_PI_2]).unwrap(), [true, false]);
 }
 
 /// A curve's curvature vector, exactly, on every kind: a circle's is 1/R towards its centre (as

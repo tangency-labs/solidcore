@@ -11,8 +11,10 @@
 
 #![allow(clippy::neg_cmp_op_on_partial_ord)] // NaN-refusing tests
 
-use super::spline::{EvalCurve, EvalSurface, MAX_PARTIAL_ORDER};
+use super::collapse::collapse;
+use super::spline::{EvalCurve, EvalSurface};
 use super::vec::VecExt;
+use super::EvalError;
 use crate::math::Vec3;
 
 /// The parameter box of a surface and its periods.
@@ -400,76 +402,24 @@ pub fn unwrap(x: f64, near: f64, period: Option<f64>) -> f64 {
     }
 }
 
-/// Is the surface degenerate along direction `d` at `uv` (a pole: moving along `d` does not
-/// move the point)?
-pub fn degenerate(s: &EvalSurface, uv: [f64; 2], d: usize) -> bool {
-    let Some((_, su, sv)) = s.derivs(uv[0], uv[1]) else {
-        return false;
-    };
-    let (this, other) = if d == 0 { (su, sv) } else { (sv, su) };
-    this.len() <= 1e-9 * other.len().max(1e-12)
+/// Whether `s` is collapsed along direction `d` (0: u, 1: v) at `uv`: a pole, where moving
+/// along `d` does not move the point ([`super::collapse::collapse`] at no reach). Refused with
+/// a typed error where that cannot be decided, and for `d` past v.
+pub fn degenerate(s: &EvalSurface, uv: [f64; 2], d: usize) -> Result<bool, EvalError> {
+    collapse(s, uv, 0.0)?.along(d)
 }
 
-/// [`degenerate`], or within `reach` mm of a pole (see [`collapsed`]): a boundary point on a
-/// patch side collapsed to within a tolerance, not to a point, where its parameter along `d` is
-/// as free as at a pole.
-///
-/// Where both first derivatives vanish (an apex whose profile starts with zero speed, so
-/// `S_u = S_v = 0`) the speeds cannot tell the free direction: both read as collapsed. There
-/// the side is collapsed along the direction along which the point does not move to any order
-/// the partials reach: its pure derivatives `∂^k S / ∂d^k`, `k = 1..=`[`MAX_PARTIAL_ORDER`], all
-/// vanish (to 1e-9 of the other direction's).
+/// [`degenerate`], or collapsed to within `reach` mm: moving along `d` across the iso-line's
+/// whole range moves the point by no more than `reach`, certified ([`super::collapse`]): a
+/// boundary point on a patch side collapsed to within a tolerance, not to a point, where its
+/// parameter along `d` is as free as at a pole.
 pub fn degenerate_within(
     s: &EvalSurface,
-    dom: &Domain,
     uv: [f64; 2],
     d: usize,
     reach: f64,
-) -> bool {
-    let Some((_, su, sv)) = s.derivs(uv[0], uv[1]) else {
-        return false;
-    };
-    let speed = [su.len(), sv.len()];
-    let still = |a: f64, b: f64| a <= 1e-9 * b.max(1e-12);
-    let both = still(speed[0], speed[1]) && still(speed[1], speed[0]);
-    if let Some(p) = s.partials(uv[0], uv[1]).filter(|_| both) {
-        // The largest pure derivative along `e` (0: u, 1: v) up to the partials' order.
-        let pure = |e: usize| {
-            (1..=MAX_PARTIAL_ORDER)
-                .filter_map(|k| {
-                    let (i, j) = if e == 0 { (k, 0) } else { (0, k) };
-                    p.get(i).and_then(|row| row.get(j)).map(|x| x.len())
-                })
-                .fold(0.0, f64::max)
-        };
-        let (this, other) = if d == 0 {
-            (pure(0), pure(1))
-        } else {
-            (pure(1), pure(0))
-        };
-        return still(this, other);
-    }
-    collapsed(speed, dom, reach)
-        .get(d)
-        .copied()
-        .unwrap_or(false)
-}
-
-/// Along each direction, whether a point whose parameter speeds (mm per unit) are `speed` is a
-/// pole, or within `reach` mm of one: moving along the direction there not at all (to 1e-9 of
-/// the other's speed), or across half its period (or its whole range) by no more than `reach`.
-pub fn collapsed(speed: [f64; 2], dom: &Domain, reach: f64) -> [bool; 2] {
-    let [a, b] = speed;
-    let mut out = [a <= 1e-9 * b.max(1e-12), b <= 1e-9 * a.max(1e-12)];
-    for (((flag, period), range), sp) in out.iter_mut().zip(dom.period).zip(dom.range).zip(speed) {
-        let span = match (period, range) {
-            (Some(period), _) => 0.5 * period,
-            (None, Some((lo, hi))) => (hi - lo).abs(),
-            (None, None) => continue,
-        };
-        *flag |= sp * span <= reach;
-    }
-    out
+) -> Result<bool, EvalError> {
+    collapse(s, uv, reach)?.along(d)
 }
 
 #[cfg(test)]
@@ -492,46 +442,6 @@ mod tests {
             ],
             swap: false,
         }
-    }
-
-    /// The 45° cone of radius and height 10 whose profile `(10 s², 10 s²)` starts with zero
-    /// speed (a quadratic Bézier with its first two control points at the apex), turned a
-    /// quarter about z as the record holds a revolution: a rational spline of degree (2, 2), u
-    /// the profile and v the arc. At the apex `S_u = 2 L s (e_r + e_z)` and `S_v` both vanish, and
-    /// the row u = 0 is collapsed: the free parameter is v. The speeds alone read u as free too,
-    /// and the mesher then gave the apex node its neighbour's u and lost the cap round the apex
-    /// (43 161 triangles on a quarter cone that meshes to 592).
-    #[test]
-    fn an_apex_where_both_first_derivatives_vanish_is_collapsed_along_its_row() {
-        let mid = std::f64::consts::FRAC_1_SQRT_2;
-        let profile = [[0.0, 0.0], [0.0, 0.0], [10.0, 10.0]];
-        let arc = [[1.0, 0.0, 1.0], [1.0, 1.0, mid], [0.0, 1.0, 1.0]];
-        let mut ctrl = Vec::new();
-        for a in arc {
-            for [r, z] in profile {
-                ctrl.push([a[2] * r * a[0], a[2] * r * a[1], a[2] * z, a[2]]);
-            }
-        }
-        let knots = vec![0.0, 0.0, 0.0, 1.0, 1.0, 1.0];
-        let s = EvalSurface::nurbs([2, 2], [knots.clone(), knots], [3, 3], ctrl);
-        let dom = domain(&s);
-        for v in [0.0, 0.3, 1.0] {
-            let (_, su, sv) = s.derivs(0.0, v).unwrap();
-            assert!(
-                su.len() == 0.0 && sv.len() == 0.0,
-                "both first derivatives vanish at v = {v}"
-            );
-            assert!(
-                degenerate_within(&s, &dom, [0.0, v], 1, 0.0),
-                "collapsed along v at v = {v}"
-            );
-            assert!(
-                !degenerate_within(&s, &dom, [0.0, v], 0, 0.0),
-                "not along u at v = {v}"
-            );
-        }
-        // Off the apex nothing is collapsed.
-        assert!(!(0..2).any(|d| degenerate_within(&s, &dom, [0.5, 0.3], d, 0.0)));
     }
 
     #[test]

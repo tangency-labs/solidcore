@@ -891,7 +891,7 @@ pub fn extent(label: &Surface, loops: &[Vec<(&Curve, [f64; 2], bool)>]) -> Optio
                 };
                 let q = at(t, prev)?;
                 // At a pole the collapsed parameter is anything: it bounds nothing.
-                let pole = eval.pole(q);
+                let pole = eval.pole(q).ok()?;
                 if pole.iter().any(|p| *p) {
                     on_pole = first.is_some();
                 } else {
