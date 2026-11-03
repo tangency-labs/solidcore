@@ -1,0 +1,57 @@
+# #2502: these cases move with the difftest's C++ reference, the SMLib fork
+# v1.1.0-alpha.1 (8eac63c); plan/findings/general--2502-fork-pin-sweep-known-mismatches.md.
+
+[[mismatch]]
+unit = "sweep.api_surfaces"
+case = "gen0067"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.faces C++ missing, Rust present (+1 more) (plan/findings/general--2502-fork-pin-sweep-known-mismatches.md)"
+
+[[mismatch]]
+unit = "sweep.api_surfaces"
+case = "gen0089"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.faces C++ missing, Rust present (+1 more) (plan/findings/general--2502-fork-pin-sweep-known-mismatches.md)"
+
+[[mismatch]]
+unit = "sweep.api_surfaces"
+case = "gen0102"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.revolution_points[0] C++ 9.940718927577784e-5, Rust 0e0 (+69 more) (plan/findings/general--2502-fork-pin-sweep-known-mismatches.md)"
+
+[[mismatch]]
+unit = "sweep.api_surfaces"
+case = "gen0243"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.faces C++ missing, Rust present (+1 more) (plan/findings/general--2502-fork-pin-sweep-known-mismatches.md)"
+
+[[mismatch]]
+unit = "sweep.api_surfaces"
+case = "gen0321"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.faces C++ missing, Rust present (+1 more) (plan/findings/general--2502-fork-pin-sweep-known-mismatches.md)"
+
+[[mismatch]]
+unit = "sweep.api_surfaces"
+case = "gen0415"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.faces C++ missing, Rust present (+1 more) (plan/findings/general--2502-fork-pin-sweep-known-mismatches.md)"
+
+[[mismatch]]
+unit = "sweep.api_surfaces"
+case = "gen0453"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.faces C++ missing, Rust present (+1 more) (plan/findings/general--2502-fork-pin-sweep-known-mismatches.md)"
+
+[[mismatch]]
+unit = "sweep.api_surfaces"
+case = "gen0631"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.faces C++ missing, Rust present (+1 more) (plan/findings/general--2502-fork-pin-sweep-known-mismatches.md)"
+
+[[mismatch]]
+unit = "sweep.api_surfaces"
+case = "gen0671"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.faces C++ missing, Rust present (+1 more) (plan/findings/general--2502-fork-pin-sweep-known-mismatches.md)"
+
+[[mismatch]]
+unit = "sweep.api_surfaces"
+case = "gen0690"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.faces C++ missing, Rust present (+1 more) (plan/findings/general--2502-fork-pin-sweep-known-mismatches.md)"
+
+[[mismatch]]
+unit = "sweep.api_surfaces"
+case = "gen0740"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.faces C++ missing, Rust present (+1 more) (plan/findings/general--2502-fork-pin-sweep-known-mismatches.md)"

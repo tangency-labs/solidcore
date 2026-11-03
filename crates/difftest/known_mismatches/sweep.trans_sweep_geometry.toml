@@ -1,0 +1,87 @@
+# #2502: these cases move with the difftest's C++ reference, the SMLib fork
+# v1.1.0-alpha.1 (8eac63c); plan/findings/general--2502-fork-pin-sweep-known-mismatches.md.
+
+[[mismatch]]
+unit = "sweep.trans_sweep_geometry"
+case = "interval_1_6_zero"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.geometry.len C++ 1, Rust 68 (plan/findings/general--2502-fork-pin-sweep-known-mismatches.md)"
+
+[[mismatch]]
+unit = "sweep.trans_sweep_geometry"
+case = "interval_1_6_short"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.geometry.len C++ 1, Rust 68 (plan/findings/general--2502-fork-pin-sweep-known-mismatches.md)"
+
+[[mismatch]]
+unit = "sweep.trans_sweep_geometry"
+case = "interval_2_6_zero"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.geometry.len C++ 1, Rust 68 (plan/findings/general--2502-fork-pin-sweep-known-mismatches.md)"
+
+[[mismatch]]
+unit = "sweep.trans_sweep_geometry"
+case = "interval_2_6_short"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.geometry.len C++ 1, Rust 68 (plan/findings/general--2502-fork-pin-sweep-known-mismatches.md)"
+
+[[mismatch]]
+unit = "sweep.trans_sweep_geometry"
+case = "interval_4_6_zero"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.geometry.len C++ 1, Rust 68 (plan/findings/general--2502-fork-pin-sweep-known-mismatches.md)"
+
+[[mismatch]]
+unit = "sweep.trans_sweep_geometry"
+case = "interval_4_6_short"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.geometry.len C++ 1, Rust 68 (plan/findings/general--2502-fork-pin-sweep-known-mismatches.md)"
+
+[[mismatch]]
+unit = "sweep.trans_sweep_geometry"
+case = "nanoscale_fixture_0_8"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.geometry[0] C++ 1.007e3, Rust 1.001e3 (plan/findings/general--2502-fork-pin-sweep-known-mismatches.md)"
+
+[[mismatch]]
+unit = "sweep.trans_sweep_geometry"
+case = "nanoscale_fixture_1_8"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.geometry[0] C++ 1.007e3, Rust 1.001e3 (plan/findings/general--2502-fork-pin-sweep-known-mismatches.md)"
+
+[[mismatch]]
+unit = "sweep.trans_sweep_geometry"
+case = "nanoscale_fixture_2_8"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.geometry[0] C++ 1.007e3, Rust 1.001e3 (plan/findings/general--2502-fork-pin-sweep-known-mismatches.md)"
+
+[[mismatch]]
+unit = "sweep.trans_sweep_geometry"
+case = "nanoscale_fixture_4_8"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.geometry[0] C++ 1.007e3, Rust 1.001e3 (plan/findings/general--2502-fork-pin-sweep-known-mismatches.md)"
+
+[[mismatch]]
+unit = "sweep.trans_sweep_geometry"
+case = "nanoscale_fixture_5_8"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.geometry[0] C++ 1.007e3, Rust 1.001e3 (plan/findings/general--2502-fork-pin-sweep-known-mismatches.md)"
+
+[[mismatch]]
+unit = "sweep.trans_sweep_geometry"
+case = "gen0147"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.geometry[0] C++ 1.007e3, Rust 1.001e3 (plan/findings/general--2502-fork-pin-sweep-known-mismatches.md)"
+
+[[mismatch]]
+unit = "sweep.trans_sweep_geometry"
+case = "gen0256"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.geometry[0] C++ 1.007e3, Rust 1.001e3 (plan/findings/general--2502-fork-pin-sweep-known-mismatches.md)"
+
+[[mismatch]]
+unit = "sweep.trans_sweep_geometry"
+case = "gen0337"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.geometry[0] C++ 1.007e3, Rust 1.001e3 (plan/findings/general--2502-fork-pin-sweep-known-mismatches.md)"
+
+[[mismatch]]
+unit = "sweep.trans_sweep_geometry"
+case = "gen0386"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.geometry[0] C++ 1.007e3, Rust 1.001e3 (plan/findings/general--2502-fork-pin-sweep-known-mismatches.md)"
+
+[[mismatch]]
+unit = "sweep.trans_sweep_geometry"
+case = "gen0405"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.geometry[0] C++ 1.007e3, Rust 1.001e3 (plan/findings/general--2502-fork-pin-sweep-known-mismatches.md)"
+
+[[mismatch]]
+unit = "sweep.trans_sweep_geometry"
+case = "gen0471"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.geometry[0] C++ 1.007e3, Rust 1.001e3 (plan/findings/general--2502-fork-pin-sweep-known-mismatches.md)"

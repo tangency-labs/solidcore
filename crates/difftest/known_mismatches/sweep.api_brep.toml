@@ -1,0 +1,132 @@
+# #2502: these cases move with the difftest's C++ reference, the SMLib fork
+# v1.1.0-alpha.1 (8eac63c); plan/findings/general--2502-fork-pin-sweep-known-mismatches.md.
+
+[[mismatch]]
+unit = "sweep.api_brep"
+case = "box_face2_line_null_opts"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.counts C++ missing, Rust present (+5 more) (plan/findings/general--2502-fork-pin-sweep-known-mismatches.md)"
+
+[[mismatch]]
+unit = "sweep.api_brep"
+case = "box_face2_line_no_cap"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.counts C++ missing, Rust present (+5 more) (plan/findings/general--2502-fork-pin-sweep-known-mismatches.md)"
+
+[[mismatch]]
+unit = "sweep.api_brep"
+case = "box_face2_line_cap"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.status[0] C++ 1.007e3, Rust 1.001e3 (plan/findings/general--2502-fork-pin-sweep-known-mismatches.md)"
+
+[[mismatch]]
+unit = "sweep.api_brep"
+case = "box_face3_line_null_opts"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.counts C++ missing, Rust present (+5 more) (plan/findings/general--2502-fork-pin-sweep-known-mismatches.md)"
+
+[[mismatch]]
+unit = "sweep.api_brep"
+case = "box_face3_line_no_cap"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.counts C++ missing, Rust present (+5 more) (plan/findings/general--2502-fork-pin-sweep-known-mismatches.md)"
+
+[[mismatch]]
+unit = "sweep.api_brep"
+case = "box_face3_line_cap"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.status[0] C++ 1.007e3, Rust 1.001e3 (plan/findings/general--2502-fork-pin-sweep-known-mismatches.md)"
+
+[[mismatch]]
+unit = "sweep.api_brep"
+case = "box_face4_line_null_opts"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.counts C++ missing, Rust present (+5 more) (plan/findings/general--2502-fork-pin-sweep-known-mismatches.md)"
+
+[[mismatch]]
+unit = "sweep.api_brep"
+case = "box_face4_line_no_cap"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.counts C++ missing, Rust present (+5 more) (plan/findings/general--2502-fork-pin-sweep-known-mismatches.md)"
+
+[[mismatch]]
+unit = "sweep.api_brep"
+case = "box_face4_line_cap"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.status[0] C++ 1.007e3, Rust 1.001e3 (plan/findings/general--2502-fork-pin-sweep-known-mismatches.md)"
+
+[[mismatch]]
+unit = "sweep.api_brep"
+case = "box_face5_line_null_opts"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.counts C++ missing, Rust present (+5 more) (plan/findings/general--2502-fork-pin-sweep-known-mismatches.md)"
+
+[[mismatch]]
+unit = "sweep.api_brep"
+case = "box_face5_line_no_cap"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.counts C++ missing, Rust present (+5 more) (plan/findings/general--2502-fork-pin-sweep-known-mismatches.md)"
+
+[[mismatch]]
+unit = "sweep.api_brep"
+case = "box_face5_line_cap"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.status[0] C++ 1.007e3, Rust 1.001e3 (plan/findings/general--2502-fork-pin-sweep-known-mismatches.md)"
+
+[[mismatch]]
+unit = "sweep.api_brep"
+case = "box_face1_curve_path_cap"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.volume[0] C++ 3.0228259877940072e1, Rust 3.022825961551991e1 (plan/findings/general--2502-fork-pin-sweep-known-mismatches.md)"
+
+[[mismatch]]
+unit = "sweep.api_brep"
+case = "issue1463_drilled_hole_pz_120"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.counts C++ present, Rust missing (+2 more) (plan/findings/general--2502-fork-pin-sweep-known-mismatches.md)"
+
+[[mismatch]]
+unit = "sweep.api_brep"
+case = "issue1463_drilled_hole_mz_120"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.counts C++ present, Rust missing (+2 more) (plan/findings/general--2502-fork-pin-sweep-known-mismatches.md)"
+
+[[mismatch]]
+unit = "sweep.api_brep"
+case = "review_linear_empty"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.counts C++ missing, Rust present (+2 more) (plan/findings/general--2502-fork-pin-sweep-known-mismatches.md)"
+
+[[mismatch]]
+unit = "sweep.api_brep"
+case = "review_linear_circle_neg_zero"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.counts C++ missing, Rust present (+2 more) (plan/findings/general--2502-fork-pin-sweep-known-mismatches.md)"
+
+[[mismatch]]
+unit = "sweep.api_brep"
+case = "review_linear_circle_zero"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.counts C++ missing, Rust present (+2 more) (plan/findings/general--2502-fork-pin-sweep-known-mismatches.md)"
+
+[[mismatch]]
+unit = "sweep.api_brep"
+case = "review_draft_square_h0"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.counts C++ missing, Rust present (+2 more) (plan/findings/general--2502-fork-pin-sweep-known-mismatches.md)"
+
+[[mismatch]]
+unit = "sweep.api_brep"
+case = "review_draft_square_a90"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.counts C++ missing, Rust present (+2 more) (plan/findings/general--2502-fork-pin-sweep-known-mismatches.md)"
+
+[[mismatch]]
+unit = "sweep.api_brep"
+case = "review_rot_angle0"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.counts C++ missing, Rust present (+2 more) (plan/findings/general--2502-fork-pin-sweep-known-mismatches.md)"
+
+[[mismatch]]
+unit = "sweep.api_brep"
+case = "wr471_rot_half_circle_whole_sphere_off_3e-7"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.linear_edge_samples[0] C++ 2.492370968689525e0, Rust 2.999999999063777e-7 (+17 more) (plan/findings/general--2502-fork-pin-sweep-known-mismatches.md)"
+
+[[mismatch]]
+unit = "sweep.api_brep"
+case = "wr471_rot_half_circle_whole_sphere_off_0"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.linear_edge_samples[0] C++ 2.4923709686895203e0, Rust -7.01084925676792e-17 (+17 more) (plan/findings/general--2502-fork-pin-sweep-known-mismatches.md)"
+
+[[mismatch]]
+unit = "sweep.api_brep"
+case = "gen0216"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.counts[0] C++ 4e0, Rust 1.2e1 (+2 more) (plan/findings/general--2502-fork-pin-sweep-known-mismatches.md)"
+
+[[mismatch]]
+unit = "sweep.api_brep"
+case = "gen0272"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.counts[0] C++ 1e0, Rust 2e0 (+2 more) (plan/findings/general--2502-fork-pin-sweep-known-mismatches.md)"
+
+[[mismatch]]
+unit = "sweep.api_brep"
+case = "gen0284"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.counts[0] C++ 1e0, Rust 2e0 (+2 more) (plan/findings/general--2502-fork-pin-sweep-known-mismatches.md)"

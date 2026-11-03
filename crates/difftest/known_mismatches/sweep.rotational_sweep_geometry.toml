@@ -1,0 +1,522 @@
+# #2502: these cases move with the difftest's C++ reference, the SMLib fork
+# v1.1.0-alpha.1 (8eac63c); plan/findings/general--2502-fork-pin-sweep-known-mismatches.md.
+
+[[mismatch]]
+unit = "sweep.rotational_sweep_geometry"
+case = "up09_edge_higher_inner"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[15] C++ 1.5012e4, Rust 1.5002e4 (+26 more) (plan/findings/general--2502-fork-pin-sweep-known-mismatches.md)"
+
+[[mismatch]]
+unit = "sweep.rotational_sweep_geometry"
+case = "up09_edge_higher_wire"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[15] C++ 1.5012e4, Rust 1.5002e4 (+26 more) (plan/findings/general--2502-fork-pin-sweep-known-mismatches.md)"
+
+[[mismatch]]
+unit = "sweep.rotational_sweep_geometry"
+case = "up10_edge_higher_inner"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[15] C++ 1.5012e4, Rust 1.5002e4 (+26 more) (plan/findings/general--2502-fork-pin-sweep-known-mismatches.md)"
+
+[[mismatch]]
+unit = "sweep.rotational_sweep_geometry"
+case = "up10_edge_higher_wire"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[15] C++ 1.5012e4, Rust 1.5002e4 (+26 more) (plan/findings/general--2502-fork-pin-sweep-known-mismatches.md)"
+
+[[mismatch]]
+unit = "sweep.rotational_sweep_geometry"
+case = "up11_edge_higher_inner"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[15] C++ 1.5012e4, Rust 1.5002e4 (+31 more) (plan/findings/general--2502-fork-pin-sweep-known-mismatches.md)"
+
+[[mismatch]]
+unit = "sweep.rotational_sweep_geometry"
+case = "up11_edge_higher_wire"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[15] C++ 1.5012e4, Rust 1.5002e4 (+31 more) (plan/findings/general--2502-fork-pin-sweep-known-mismatches.md)"
+
+[[mismatch]]
+unit = "sweep.rotational_sweep_geometry"
+case = "up12_edge_higher_inner"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[15] C++ 1.5012e4, Rust 1.5002e4 (+157 more) (plan/findings/general--2502-fork-pin-sweep-known-mismatches.md)"
+
+[[mismatch]]
+unit = "sweep.rotational_sweep_geometry"
+case = "up12_edge_higher_wire"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[15] C++ 1.5012e4, Rust 1.5002e4 (+157 more) (plan/findings/general--2502-fork-pin-sweep-known-mismatches.md)"
+
+[[mismatch]]
+unit = "sweep.rotational_sweep_geometry"
+case = "up14_edge_higher_inner"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[15] C++ 1.5012e4, Rust 1.5002e4 (+26 more) (plan/findings/general--2502-fork-pin-sweep-known-mismatches.md)"
+
+[[mismatch]]
+unit = "sweep.rotational_sweep_geometry"
+case = "up14_edge_higher_wire"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[15] C++ 1.5012e4, Rust 1.5002e4 (+26 more) (plan/findings/general--2502-fork-pin-sweep-known-mismatches.md)"
+
+[[mismatch]]
+unit = "sweep.rotational_sweep_geometry"
+case = "up16_edge_higher_inner"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[15] C++ 1.5012e4, Rust 1.5002e4 (+147 more) (plan/findings/general--2502-fork-pin-sweep-known-mismatches.md)"
+
+[[mismatch]]
+unit = "sweep.rotational_sweep_geometry"
+case = "up16_edge_higher_wire"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[15] C++ 1.5012e4, Rust 1.5002e4 (+157 more) (plan/findings/general--2502-fork-pin-sweep-known-mismatches.md)"
+
+[[mismatch]]
+unit = "sweep.rotational_sweep_geometry"
+case = "up17_edge_higher_wire"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[15] C++ 1.5012e4, Rust 1.5002e4 (+30 more) (plan/findings/general--2502-fork-pin-sweep-known-mismatches.md)"
+
+[[mismatch]]
+unit = "sweep.rotational_sweep_geometry"
+case = "up18_edge_higher_inner"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[15] C++ 1.5012e4, Rust 1.5002e4 (+23 more) (plan/findings/general--2502-fork-pin-sweep-known-mismatches.md)"
+
+[[mismatch]]
+unit = "sweep.rotational_sweep_geometry"
+case = "up18_edge_higher_wire"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[15] C++ 1.5012e4, Rust 1.5002e4 (+26 more) (plan/findings/general--2502-fork-pin-sweep-known-mismatches.md)"
+
+[[mismatch]]
+unit = "sweep.rotational_sweep_geometry"
+case = "up19_edge_higher_wire"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[15] C++ 1.5012e4, Rust 1.5002e4 (+157 more) (plan/findings/general--2502-fork-pin-sweep-known-mismatches.md)"
+
+[[mismatch]]
+unit = "sweep.rotational_sweep_geometry"
+case = "up20_edge_higher_wire"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[15] C++ 1.5012e4, Rust 1.5002e4 (+157 more) (plan/findings/general--2502-fork-pin-sweep-known-mismatches.md)"
+
+[[mismatch]]
+unit = "sweep.rotational_sweep_geometry"
+case = "up21_edge_higher_inner"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[15] C++ 1.5012e4, Rust 1.5002e4 (+25 more) (plan/findings/general--2502-fork-pin-sweep-known-mismatches.md)"
+
+[[mismatch]]
+unit = "sweep.rotational_sweep_geometry"
+case = "up21_edge_higher_wire"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[15] C++ 1.5012e4, Rust 1.5002e4 (+26 more) (plan/findings/general--2502-fork-pin-sweep-known-mismatches.md)"
+
+[[mismatch]]
+unit = "sweep.rotational_sweep_geometry"
+case = "up22_edge_higher_wire"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[15] C++ 1.5012e4, Rust 1.5002e4 (+150 more) (plan/findings/general--2502-fork-pin-sweep-known-mismatches.md)"
+
+[[mismatch]]
+unit = "sweep.rotational_sweep_geometry"
+case = "up23_edge_higher_wire"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[15] C++ 1.5012e4, Rust 1.5002e4 (+150 more) (plan/findings/general--2502-fork-pin-sweep-known-mismatches.md)"
+
+[[mismatch]]
+unit = "sweep.rotational_sweep_geometry"
+case = "up24_edge_higher_inner"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[15] C++ 1.5012e4, Rust 1.5002e4 (+29 more) (plan/findings/general--2502-fork-pin-sweep-known-mismatches.md)"
+
+[[mismatch]]
+unit = "sweep.rotational_sweep_geometry"
+case = "up24_edge_higher_wire"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[15] C++ 1.5012e4, Rust 1.5002e4 (+31 more) (plan/findings/general--2502-fork-pin-sweep-known-mismatches.md)"
+
+[[mismatch]]
+unit = "sweep.rotational_sweep_geometry"
+case = "cylinder_bline_full"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[15] C++ 1.5013e4, Rust 1.5002e4 (+58 more) (plan/findings/general--2502-fork-pin-sweep-known-mismatches.md)"
+
+[[mismatch]]
+unit = "sweep.rotational_sweep_geometry"
+case = "cone_bline_full"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[15] C++ 1.5012e4, Rust 1.5002e4 (+29 more) (plan/findings/general--2502-fork-pin-sweep-known-mismatches.md)"
+
+[[mismatch]]
+unit = "sweep.rotational_sweep_geometry"
+case = "cylinder_bline_quarter"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[15] C++ 1.5013e4, Rust 1.5002e4 (+48 more) (plan/findings/general--2502-fork-pin-sweep-known-mismatches.md)"
+
+[[mismatch]]
+unit = "sweep.rotational_sweep_geometry"
+case = "cone_bline_quarter"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[15] C++ 1.5012e4, Rust 1.5002e4 (+25 more) (plan/findings/general--2502-fork-pin-sweep-known-mismatches.md)"
+
+[[mismatch]]
+unit = "sweep.rotational_sweep_geometry"
+case = "cylinder_line_full"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[15] C++ 1.5013e4, Rust 1.5002e4 (+36 more) (plan/findings/general--2502-fork-pin-sweep-known-mismatches.md)"
+
+[[mismatch]]
+unit = "sweep.rotational_sweep_geometry"
+case = "cone_line_full"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[15] C++ 1.5012e4, Rust 1.5002e4 (+29 more) (plan/findings/general--2502-fork-pin-sweep-known-mismatches.md)"
+
+[[mismatch]]
+unit = "sweep.rotational_sweep_geometry"
+case = "cylinder_line_quarter"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[15] C++ 1.5013e4, Rust 1.5002e4 (+26 more) (plan/findings/general--2502-fork-pin-sweep-known-mismatches.md)"
+
+[[mismatch]]
+unit = "sweep.rotational_sweep_geometry"
+case = "cone_line_quarter"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[15] C++ 1.5012e4, Rust 1.5002e4 (+25 more) (plan/findings/general--2502-fork-pin-sweep-known-mismatches.md)"
+
+[[mismatch]]
+unit = "sweep.rotational_sweep_geometry"
+case = "almost_parallel_line_0"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[15] C++ 1.5013e4, Rust 1.5002e4 (+129 more) (plan/findings/general--2502-fork-pin-sweep-known-mismatches.md)"
+
+[[mismatch]]
+unit = "sweep.rotational_sweep_geometry"
+case = "almost_parallel_line_1"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[15] C++ 1.5012e4, Rust 1.5002e4 (+26 more) (plan/findings/general--2502-fork-pin-sweep-known-mismatches.md)"
+
+[[mismatch]]
+unit = "sweep.rotational_sweep_geometry"
+case = "almost_parallel_line_2"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[15] C++ 1.5012e4, Rust 1.5002e4 (+26 more) (plan/findings/general--2502-fork-pin-sweep-known-mismatches.md)"
+
+[[mismatch]]
+unit = "sweep.rotational_sweep_geometry"
+case = "sphere_half_arc"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[15] C++ 1.5014e4, Rust 1.5002e4 (+4 more) (plan/findings/general--2502-fork-pin-sweep-known-mismatches.md)"
+
+[[mismatch]]
+unit = "sweep.rotational_sweep_geometry"
+case = "torus_full_circle"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[15] C++ 1.5015e4, Rust 1.5002e4 (+4 more) (plan/findings/general--2502-fork-pin-sweep-known-mismatches.md)"
+
+[[mismatch]]
+unit = "sweep.rotational_sweep_geometry"
+case = "torus_sub_arc"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 14, Rust 359 (plan/findings/general--2502-fork-pin-sweep-known-mismatches.md)"
+
+[[mismatch]]
+unit = "sweep.rotational_sweep_geometry"
+case = "torus_full_circle_quarter"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[15] C++ 1.5015e4, Rust 1.5002e4 (+4 more) (plan/findings/general--2502-fork-pin-sweep-known-mismatches.md)"
+
+[[mismatch]]
+unit = "sweep.rotational_sweep_geometry"
+case = "circle_touching_axis"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[15] C++ 1.5015e4, Rust 1.5002e4 (+46 more) (plan/findings/general--2502-fork-pin-sweep-known-mismatches.md)"
+
+[[mismatch]]
+unit = "sweep.rotational_sweep_geometry"
+case = "cone_scale_0.0001"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[15] C++ 1.5012e4, Rust 1.5002e4 (+26 more) (plan/findings/general--2502-fork-pin-sweep-known-mismatches.md)"
+
+[[mismatch]]
+unit = "sweep.rotational_sweep_geometry"
+case = "cone_scale_100000"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[15] C++ 1.5012e4, Rust 1.5002e4 (+26 more) (plan/findings/general--2502-fork-pin-sweep-known-mismatches.md)"
+
+[[mismatch]]
+unit = "sweep.rotational_sweep_geometry"
+case = "err_vertex_off_eps_inside"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[15] C++ 1.5013e4, Rust 1.5002e4 (+48 more) (plan/findings/general--2502-fork-pin-sweep-known-mismatches.md)"
+
+[[mismatch]]
+unit = "sweep.rotational_sweep_geometry"
+case = "swap_vertices_exact_same_bline"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[15] C++ 1.5013e4, Rust 1.5002e4 (+48 more) (plan/findings/general--2502-fork-pin-sweep-known-mismatches.md)"
+
+[[mismatch]]
+unit = "sweep.rotational_sweep_geometry"
+case = "swap_vertices_exact_opp_bline"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[15] C++ 1.5013e4, Rust 1.5002e4 (+48 more) (plan/findings/general--2502-fork-pin-sweep-known-mismatches.md)"
+
+[[mismatch]]
+unit = "sweep.rotational_sweep_geometry"
+case = "swap_vertices_exact_same_line"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[15] C++ 1.5013e4, Rust 1.5002e4 (+26 more) (plan/findings/general--2502-fork-pin-sweep-known-mismatches.md)"
+
+[[mismatch]]
+unit = "sweep.rotational_sweep_geometry"
+case = "swap_vertices_exact_opp_line"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[15] C++ 1.5013e4, Rust 1.5002e4 (+26 more) (plan/findings/general--2502-fork-pin-sweep-known-mismatches.md)"
+
+[[mismatch]]
+unit = "sweep.rotational_sweep_geometry"
+case = "gen0001"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[15] C++ 1.5015e4, Rust 1.5002e4 (+4 more) (plan/findings/general--2502-fork-pin-sweep-known-mismatches.md)"
+
+[[mismatch]]
+unit = "sweep.rotational_sweep_geometry"
+case = "gen0005"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[15] C++ 1.5013e4, Rust 1.5002e4 (+38 more) (plan/findings/general--2502-fork-pin-sweep-known-mismatches.md)"
+
+[[mismatch]]
+unit = "sweep.rotational_sweep_geometry"
+case = "gen0016"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 14, Rust 359 (plan/findings/general--2502-fork-pin-sweep-known-mismatches.md)"
+
+[[mismatch]]
+unit = "sweep.rotational_sweep_geometry"
+case = "gen0018"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 14, Rust 359 (plan/findings/general--2502-fork-pin-sweep-known-mismatches.md)"
+
+[[mismatch]]
+unit = "sweep.rotational_sweep_geometry"
+case = "gen0019"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[15] C++ 1.5012e4, Rust 1.5002e4 (+38 more) (plan/findings/general--2502-fork-pin-sweep-known-mismatches.md)"
+
+[[mismatch]]
+unit = "sweep.rotational_sweep_geometry"
+case = "gen0026"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 14, Rust 359 (plan/findings/general--2502-fork-pin-sweep-known-mismatches.md)"
+
+[[mismatch]]
+unit = "sweep.rotational_sweep_geometry"
+case = "gen0027"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 14, Rust 359 (plan/findings/general--2502-fork-pin-sweep-known-mismatches.md)"
+
+[[mismatch]]
+unit = "sweep.rotational_sweep_geometry"
+case = "gen0032"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[15] C++ 1.5013e4, Rust 1.5002e4 (+48 more) (plan/findings/general--2502-fork-pin-sweep-known-mismatches.md)"
+
+[[mismatch]]
+unit = "sweep.rotational_sweep_geometry"
+case = "gen0036"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[15] C++ 1.5012e4, Rust 1.5002e4 (+38 more) (plan/findings/general--2502-fork-pin-sweep-known-mismatches.md)"
+
+[[mismatch]]
+unit = "sweep.rotational_sweep_geometry"
+case = "gen0060"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 14, Rust 359 (plan/findings/general--2502-fork-pin-sweep-known-mismatches.md)"
+
+[[mismatch]]
+unit = "sweep.rotational_sweep_geometry"
+case = "gen0087"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[15] C++ 1.5014e4, Rust 1.5002e4 (+113 more) (plan/findings/general--2502-fork-pin-sweep-known-mismatches.md)"
+
+[[mismatch]]
+unit = "sweep.rotational_sweep_geometry"
+case = "gen0092"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[15] C++ 1.5012e4, Rust 1.5002e4 (+169 more) (plan/findings/general--2502-fork-pin-sweep-known-mismatches.md)"
+
+[[mismatch]]
+unit = "sweep.rotational_sweep_geometry"
+case = "gen0103"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[15] C++ 1.5014e4, Rust 1.5002e4 (+3 more) (plan/findings/general--2502-fork-pin-sweep-known-mismatches.md)"
+
+[[mismatch]]
+unit = "sweep.rotational_sweep_geometry"
+case = "gen0107"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 14, Rust 359 (plan/findings/general--2502-fork-pin-sweep-known-mismatches.md)"
+
+[[mismatch]]
+unit = "sweep.rotational_sweep_geometry"
+case = "gen0110"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 14, Rust 359 (plan/findings/general--2502-fork-pin-sweep-known-mismatches.md)"
+
+[[mismatch]]
+unit = "sweep.rotational_sweep_geometry"
+case = "gen0113"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 14, Rust 359 (plan/findings/general--2502-fork-pin-sweep-known-mismatches.md)"
+
+[[mismatch]]
+unit = "sweep.rotational_sweep_geometry"
+case = "gen0131"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 14, Rust 359 (plan/findings/general--2502-fork-pin-sweep-known-mismatches.md)"
+
+[[mismatch]]
+unit = "sweep.rotational_sweep_geometry"
+case = "gen0138"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[15] C++ 1.5015e4, Rust 1.5002e4 (+61 more) (plan/findings/general--2502-fork-pin-sweep-known-mismatches.md)"
+
+[[mismatch]]
+unit = "sweep.rotational_sweep_geometry"
+case = "gen0143"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[15] C++ 1.5013e4, Rust 1.5012e4 (+22 more) (plan/findings/general--2502-fork-pin-sweep-known-mismatches.md)"
+
+[[mismatch]]
+unit = "sweep.rotational_sweep_geometry"
+case = "gen0146"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 14, Rust 359 (plan/findings/general--2502-fork-pin-sweep-known-mismatches.md)"
+
+[[mismatch]]
+unit = "sweep.rotational_sweep_geometry"
+case = "gen0150"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 14, Rust 359 (plan/findings/general--2502-fork-pin-sweep-known-mismatches.md)"
+
+[[mismatch]]
+unit = "sweep.rotational_sweep_geometry"
+case = "gen0156"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 14, Rust 359 (plan/findings/general--2502-fork-pin-sweep-known-mismatches.md)"
+
+[[mismatch]]
+unit = "sweep.rotational_sweep_geometry"
+case = "gen0178"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[15] C++ 1.5015e4, Rust 1.5002e4 (+113 more) (plan/findings/general--2502-fork-pin-sweep-known-mismatches.md)"
+
+[[mismatch]]
+unit = "sweep.rotational_sweep_geometry"
+case = "gen0180"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[15] C++ 1.5013e4, Rust 1.5002e4 (+48 more) (plan/findings/general--2502-fork-pin-sweep-known-mismatches.md)"
+
+[[mismatch]]
+unit = "sweep.rotational_sweep_geometry"
+case = "gen0195"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[15] C++ 1.5012e4, Rust 1.5002e4 (+38 more) (plan/findings/general--2502-fork-pin-sweep-known-mismatches.md)"
+
+[[mismatch]]
+unit = "sweep.rotational_sweep_geometry"
+case = "gen0202"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[15] C++ 1.5012e4, Rust 1.5002e4 (+169 more) (plan/findings/general--2502-fork-pin-sweep-known-mismatches.md)"
+
+[[mismatch]]
+unit = "sweep.rotational_sweep_geometry"
+case = "gen0220"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[15] C++ 1.5012e4, Rust 1.5002e4 (+26 more) (plan/findings/general--2502-fork-pin-sweep-known-mismatches.md)"
+
+[[mismatch]]
+unit = "sweep.rotational_sweep_geometry"
+case = "gen0225"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[15] C++ 1.5013e4, Rust 1.5002e4 (+26 more) (plan/findings/general--2502-fork-pin-sweep-known-mismatches.md)"
+
+[[mismatch]]
+unit = "sweep.rotational_sweep_geometry"
+case = "gen0226"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 14, Rust 359 (plan/findings/general--2502-fork-pin-sweep-known-mismatches.md)"
+
+[[mismatch]]
+unit = "sweep.rotational_sweep_geometry"
+case = "gen0229"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 14, Rust 359 (plan/findings/general--2502-fork-pin-sweep-known-mismatches.md)"
+
+[[mismatch]]
+unit = "sweep.rotational_sweep_geometry"
+case = "gen0242"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 14, Rust 359 (plan/findings/general--2502-fork-pin-sweep-known-mismatches.md)"
+
+[[mismatch]]
+unit = "sweep.rotational_sweep_geometry"
+case = "gen0259"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 14, Rust 359 (plan/findings/general--2502-fork-pin-sweep-known-mismatches.md)"
+
+[[mismatch]]
+unit = "sweep.rotational_sweep_geometry"
+case = "gen0273"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[17] C++ 0e0, Rust 1.3457233979877645e-1 (+33 more) (plan/findings/general--2502-fork-pin-sweep-known-mismatches.md)"
+
+[[mismatch]]
+unit = "sweep.rotational_sweep_geometry"
+case = "gen0274"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[15] C++ 1.5012e4, Rust 1.5002e4 (+25 more) (plan/findings/general--2502-fork-pin-sweep-known-mismatches.md)"
+
+[[mismatch]]
+unit = "sweep.rotational_sweep_geometry"
+case = "gen0276"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[15] C++ 1.5012e4, Rust 1.5002e4 (+38 more) (plan/findings/general--2502-fork-pin-sweep-known-mismatches.md)"
+
+[[mismatch]]
+unit = "sweep.rotational_sweep_geometry"
+case = "gen0279"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 14, Rust 359 (plan/findings/general--2502-fork-pin-sweep-known-mismatches.md)"
+
+[[mismatch]]
+unit = "sweep.rotational_sweep_geometry"
+case = "gen0285"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[15] C++ 1.5015e4, Rust 1.5002e4 (+4 more) (plan/findings/general--2502-fork-pin-sweep-known-mismatches.md)"
+
+[[mismatch]]
+unit = "sweep.rotational_sweep_geometry"
+case = "gen0293"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[17] C++ 0e0, Rust -1.346519531439037e0 (+176 more) (plan/findings/general--2502-fork-pin-sweep-known-mismatches.md)"
+
+[[mismatch]]
+unit = "sweep.rotational_sweep_geometry"
+case = "gen0298"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[15] C++ 1.5015e4, Rust 1.5002e4 (+4 more) (plan/findings/general--2502-fork-pin-sweep-known-mismatches.md)"
+
+[[mismatch]]
+unit = "sweep.rotational_sweep_geometry"
+case = "gen0299"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[15] C++ 1.5013e4, Rust 1.5002e4 (+38 more) (plan/findings/general--2502-fork-pin-sweep-known-mismatches.md)"
+
+[[mismatch]]
+unit = "sweep.rotational_sweep_geometry"
+case = "gen0300"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[15] C++ 1.5012e4, Rust 1.5002e4 (+169 more) (plan/findings/general--2502-fork-pin-sweep-known-mismatches.md)"
+
+[[mismatch]]
+unit = "sweep.rotational_sweep_geometry"
+case = "gen0301"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[17] C++ 0e0, Rust 4.428212946394472e0 (+26 more) (plan/findings/general--2502-fork-pin-sweep-known-mismatches.md)"
+
+[[mismatch]]
+unit = "sweep.rotational_sweep_geometry"
+case = "gen0306"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[15] C++ 1.5015e4, Rust 1.502e4 (+2 more) (plan/findings/general--2502-fork-pin-sweep-known-mismatches.md)"
+
+[[mismatch]]
+unit = "sweep.rotational_sweep_geometry"
+case = "gen0307"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[15] C++ 1.5012e4, Rust 1.5002e4 (+26 more) (plan/findings/general--2502-fork-pin-sweep-known-mismatches.md)"
+
+[[mismatch]]
+unit = "sweep.rotational_sweep_geometry"
+case = "gen0310"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[15] C++ 1.5013e4, Rust 1.5012e4 (+44 more) (plan/findings/general--2502-fork-pin-sweep-known-mismatches.md)"
+
+[[mismatch]]
+unit = "sweep.rotational_sweep_geometry"
+case = "gen0322"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[15] C++ 1.5014e4, Rust 1.5002e4 (+4 more) (plan/findings/general--2502-fork-pin-sweep-known-mismatches.md)"
+
+[[mismatch]]
+unit = "sweep.rotational_sweep_geometry"
+case = "gen0323"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[15] C++ 1.5012e4, Rust 1.5002e4 (+26 more) (plan/findings/general--2502-fork-pin-sweep-known-mismatches.md)"
+
+[[mismatch]]
+unit = "sweep.rotational_sweep_geometry"
+case = "gen0326"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[15] C++ 1.5013e4, Rust 1.5002e4 (+60 more) (plan/findings/general--2502-fork-pin-sweep-known-mismatches.md)"
+
+[[mismatch]]
+unit = "sweep.rotational_sweep_geometry"
+case = "gen0338"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[15] C++ 1.5014e4, Rust 1.5002e4 (+147 more) (plan/findings/general--2502-fork-pin-sweep-known-mismatches.md)"
+
+[[mismatch]]
+unit = "sweep.rotational_sweep_geometry"
+case = "gen0345"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[15] C++ 1.5015e4, Rust 1.5002e4 (+147 more) (plan/findings/general--2502-fork-pin-sweep-known-mismatches.md)"
+
+[[mismatch]]
+unit = "sweep.rotational_sweep_geometry"
+case = "gen0346"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 14, Rust 359 (plan/findings/general--2502-fork-pin-sweep-known-mismatches.md)"
+
+[[mismatch]]
+unit = "sweep.rotational_sweep_geometry"
+case = "gen0349"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[15] C++ 1.5012e4, Rust 1.5002e4 (+38 more) (plan/findings/general--2502-fork-pin-sweep-known-mismatches.md)"
+
+[[mismatch]]
+unit = "sweep.rotational_sweep_geometry"
+case = "gen0353"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 14, Rust 359 (plan/findings/general--2502-fork-pin-sweep-known-mismatches.md)"
+
+[[mismatch]]
+unit = "sweep.rotational_sweep_geometry"
+case = "gen0361"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 14, Rust 359 (plan/findings/general--2502-fork-pin-sweep-known-mismatches.md)"
+
+[[mismatch]]
+unit = "sweep.rotational_sweep_geometry"
+case = "gen0362"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 14, Rust 359 (plan/findings/general--2502-fork-pin-sweep-known-mismatches.md)"
+
+[[mismatch]]
+unit = "sweep.rotational_sweep_geometry"
+case = "gen0367"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[17] C++ 0e0, Rust 2.9667295944641975e-1 (+108 more) (plan/findings/general--2502-fork-pin-sweep-known-mismatches.md)"
+
+[[mismatch]]
+unit = "sweep.rotational_sweep_geometry"
+case = "gen0384"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[17] C++ 0e0, Rust -4.965815955207582e0 (+35 more) (plan/findings/general--2502-fork-pin-sweep-known-mismatches.md)"
+
+[[mismatch]]
+unit = "sweep.rotational_sweep_geometry"
+case = "gen0391"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 14, Rust 359 (plan/findings/general--2502-fork-pin-sweep-known-mismatches.md)"

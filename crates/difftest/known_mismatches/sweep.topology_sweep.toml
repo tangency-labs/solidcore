@@ -58,3 +58,81 @@ case = "nm_box_linear_z_stitch"
 libc = "glibc"
 cpp_defect = "ND-491"
 why = "C++ heap-layout dependent (ND-491): 993/1000 heap-varied fresh processes succeed with 3 regions, 15 faces, 33 edges, 22 vertices (the Rust result), 7/1000 return SM_ERR; main CI run 40862396783 (881b040f9) got SM_ERR"
+
+# #2502: these cases move with the difftest's C++ reference, the SMLib fork
+# v1.1.0-alpha.1 (8eac63c); plan/findings/general--2502-fork-pin-sweep-known-mismatches.md.
+
+[[mismatch]]
+unit = "sweep.topology_sweep"
+case = "nl_pc21_rotate_one_face_higher_axis_through_edge"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.points[3] C++ 0e0, Rust -1.659613348211625e-15 (+88 more) (plan/findings/general--2502-fork-pin-sweep-known-mismatches.md)"
+
+[[mismatch]]
+unit = "sweep.topology_sweep"
+case = "nl_test_edges_higher_rotation"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.points[10] C++ 0e0, Rust 1.998401444325275e-15 (+73 more) (plan/findings/general--2502-fork-pin-sweep-known-mismatches.md)"
+
+[[mismatch]]
+unit = "sweep.topology_sweep"
+case = "nm_test_linear_z"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.points.len C++ 0, Rust 588 (+3 more) (plan/findings/general--2502-fork-pin-sweep-known-mismatches.md)"
+
+[[mismatch]]
+unit = "sweep.topology_sweep"
+case = "nm_box_linear_z_merge"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.points.len C++ 0, Rust 264 (+3 more) (plan/findings/general--2502-fork-pin-sweep-known-mismatches.md)"
+
+[[mismatch]]
+unit = "sweep.topology_sweep"
+case = "nm_box_rotation_y_30"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.points[178] C++ 0e0, Rust -1.1990408665951716e-13 (+29 more) (plan/findings/general--2502-fork-pin-sweep-known-mismatches.md)"
+
+[[mismatch]]
+unit = "sweep.topology_sweep"
+case = "nm_wire_rotation_y_30"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.points[1] C++ 0e0, Rust -1.1990408665951716e-13 (+11 more) (plan/findings/general--2502-fork-pin-sweep-known-mismatches.md)"
+
+[[mismatch]]
+unit = "sweep.topology_sweep"
+case = "nm_face_only_rotation_neg_y_36"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.points[107] C++ 0e0, Rust -1.9782155711502768e-15 (+50 more) (plan/findings/general--2502-fork-pin-sweep-known-mismatches.md)"
+
+[[mismatch]]
+unit = "sweep.topology_sweep"
+case = "nm_faces_higher_test_rotation_neg_y_36"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.points[4] C++ -8.881784197001252e-16, Rust 6.779961098123786e-16 (+65 more) (plan/findings/general--2502-fork-pin-sweep-known-mismatches.md)"
+
+[[mismatch]]
+unit = "sweep.topology_sweep"
+case = "nm_faces_higher_test_rotation_x_36_tagging"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.points[27] C++ 0e0, Rust 5.220581765041686e-16 (+19 more) (plan/findings/general--2502-fork-pin-sweep-known-mismatches.md)"
+
+[[mismatch]]
+unit = "sweep.topology_sweep"
+case = "nm_faces_higher_box_rotation_full_turn"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.points[0] C++ 0e0, Rust 1.7763568394002505e-15 (+46 more) (plan/findings/general--2502-fork-pin-sweep-known-mismatches.md)"
+
+[[mismatch]]
+unit = "sweep.topology_sweep"
+case = "whole_rotation_y_90"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.points[358] C++ 1e1, Rust 0e0 (+10 more) (plan/findings/general--2502-fork-pin-sweep-known-mismatches.md)"
+
+[[mismatch]]
+unit = "sweep.topology_sweep"
+case = "whole_rotation_z_45"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.points[63] C++ 8.881784197001252e-16, Rust 1.7763568394002505e-15 (+12 more) (plan/findings/general--2502-fork-pin-sweep-known-mismatches.md)"
+
+[[mismatch]]
+unit = "sweep.topology_sweep"
+case = "whole_rotation_x_30"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.points[358] C++ 1.0000000000000002e1, Rust 8.660254037844387e0 (+3 more) (plan/findings/general--2502-fork-pin-sweep-known-mismatches.md)"
+
+[[mismatch]]
+unit = "sweep.topology_sweep"
+case = "whole_merge_linear_z"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.points.len C++ 0, Rust 240 (+1 more) (plan/findings/general--2502-fork-pin-sweep-known-mismatches.md)"
+
+[[mismatch]]
+unit = "sweep.topology_sweep"
+case = "whole_stitch_merge_linear_z"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.points.len C++ 0, Rust 240 (+1 more) (plan/findings/general--2502-fork-pin-sweep-known-mismatches.md)"
