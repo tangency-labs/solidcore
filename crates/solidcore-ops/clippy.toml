@@ -393,7 +393,7 @@ disallowed-methods = [
     { path = "solidcore::geom::certified::distance", reason = "ops computes no geometry (docs/layers.md §4)" },
     { path = "solidcore::geom::certified::dot", reason = "ops computes no geometry (docs/layers.md §4)" },
     { path = "solidcore::geom::certified::dot_error", reason = "ops computes no geometry (docs/layers.md §4)" },
-    { path = "solidcore::geom::certified::made_unit", reason = "ops computes no geometry (docs/layers.md §4)" },
+    { path = "solidcore::geom::certified::unit", reason = "ops computes no geometry (docs/layers.md §4)" },
     { path = "solidcore::geom::certified::one_minus_dot", reason = "ops computes no geometry (docs/layers.md §4)" },
     { path = "solidcore::geom::certified::scaled", reason = "ops computes no geometry (docs/layers.md §4)" },
     { path = "solidcore::geom::certified::unit_error", reason = "ops computes no geometry (docs/layers.md §4)" },
