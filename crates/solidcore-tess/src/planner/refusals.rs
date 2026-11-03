@@ -473,17 +473,47 @@ fn an_interval_ending_at_a_point_outside_the_face_is_measured_from_inside_it() {
 #[test]
 fn a_division_point_too_many_periods_away_to_place_refuses_the_face_for_that() {
     let s = cylinder_without(0.5);
+    let loops = [long_strip(&s)];
+    let rules = Rules::new(0.01, 40.0, None);
+    match plan_or_fill(0, "revolution", &s, &loops, &rules, &size(1.0), 0.0, None) {
+        Err(e) => assert!(e.to_string().contains("periods, more than the 4096"), "{e}"),
+        Ok((fp, _)) => panic!("meshed with {} triangles", fp.triangles.len()),
+    }
+}
+
+/// A strip of `s` from u = 0 to 1 running 5000 turns round v, in steps of a quarter turn so it
+/// does not wind.
+fn long_strip(s: &EvalSurface) -> seam::Loop {
     let tau = std::f64::consts::TAU;
     let (turns, steps) = (5000.0, 20_000u32);
     let up = (0..steps).map(|k| [1.0, turns * tau * f64::from(k) / f64::from(steps)]);
     let down = (0..steps).map(|k| [0.0, turns * tau * f64::from(steps - k) / f64::from(steps)]);
     let uv: Vec<[f64; 2]> = std::iter::once([0.0, 0.0]).chain(up).chain(down).collect();
-    let pts = uv.iter().map(|q| point(&s, *q)).collect();
-    let loops = [seam::Loop { uv, pts }];
-    assert!(!seam::winds(&loops, 1, tau));
+    let pts = uv.iter().map(|q| point(s, *q)).collect();
+    let l = seam::Loop { uv, pts };
+    assert!(!seam::winds(std::slice::from_ref(&l), 1, tau));
+    l
+}
+
+/// The same strip, with a size sample the surface does not evaluate at: whether the sample lies
+/// in the face cannot be told past 4096 periods, and the face is refused for that, naming the
+/// sample, before any layout.
+#[test]
+fn a_size_sample_too_many_periods_away_to_place_refuses_the_face_for_that() {
+    let s = cylinder_without(0.5);
+    let loops = [long_strip(&s)];
     let rules = Rules::new(0.01, 40.0, None);
-    match plan_or_fill(0, "revolution", &s, &loops, &rules, &size(1.0), 0.0, None) {
-        Err(e) => assert!(e.to_string().contains("periods, more than the 4096"), "{e}"),
+    let size = FaceSize {
+        unevaluated: vec![[0.5, 0.3]],
+        ..size(1.0)
+    };
+    match plan_or_fill(0, "revolution", &s, &loops, &rules, &size, 0.0, None) {
+        Err(e) => assert!(
+            e.to_string().ends_with(
+                "periods, more than the 4096 a point the surface does not evaluate at ([0.5, 0.3]) is looked for in"
+            ),
+            "{e}"
+        ),
         Ok((fp, _)) => panic!("meshed with {} triangles", fp.triangles.len()),
     }
 }

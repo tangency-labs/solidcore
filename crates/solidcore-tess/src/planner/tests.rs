@@ -1751,3 +1751,233 @@ fn the_halves_of_a_split_smlib_coil_mesh_as_the_whole() {
         "halves {halves} vs {analytic}"
     );
 }
+
+/// A face past [`MAX_FACE_NODES`] (its boundary alone, or with what refinement may add) is
+/// refused with its count, where every u32 index of it would no longer be proven to fit.
+#[test]
+fn a_face_past_the_node_cap_is_refused() {
+    assert_eq!(too_many_nodes(MAX_FACE_NODES, 0), None);
+    assert_eq!(
+        too_many_nodes(MAX_FACE_NODES - MAX_REFINE, MAX_REFINE),
+        None
+    );
+    let Some(why) = too_many_nodes(MAX_FACE_NODES + 1, 0) else {
+        panic!("refused")
+    };
+    assert!(
+        why.starts_with(&format!("its {} boundary nodes", MAX_FACE_NODES + 1)),
+        "{why}"
+    );
+    let Some(why) = too_many_nodes(MAX_FACE_NODES - MAX_REFINE + 1, MAX_REFINE) else {
+        panic!("refused")
+    };
+    assert!(why.contains("with the 20000 refinement may add"), "{why}");
+    assert!(too_many_nodes(usize::MAX, MAX_REFINE).is_some());
+}
+
+/// A cylinder face without its NURBS form (a label alone, an unvalidated record): the kernel's
+/// evaluator keeps it in its closed form, which tess does not mesh, and the face is refused,
+/// naming it, through plan(); its two end discs are meshed.
+#[test]
+fn a_face_whose_surface_does_not_evaluate_is_refused_through_plan() {
+    let mut b = fixture("cylinder_r10_h5");
+    assert!(b.faces[0].nurbs.is_some());
+    b.faces[0].nurbs = None;
+    let (p, stats) = ok(plan(
+        &b,
+        &MeshTolerance::chord(0.01),
+        size_of("cylinder_r10_h5"),
+    ));
+    let reasons: Vec<(usize, &str)> = stats
+        .unmeshed
+        .iter()
+        .map(|r| (r.face, r.reason.as_str()))
+        .collect();
+    assert_eq!(reasons.len(), 1, "{stats:?}");
+    assert_eq!(reasons[0].0, 0);
+    assert!(
+        reasons[0].1.contains(
+            "face 0 (cylinder): invalid input: tessellation: a cylinder face without its NURBS form"
+        ),
+        "{}",
+        reasons[0].1
+    );
+    assert_eq!(meshed_faces(&p), vec![1, 2]);
+    assert_eq!(p.faces[0].surface, None);
+}
+
+/// A face with a loop of one edge use that leaves a single node (a second loop of one short
+/// straight edge on it, 1 µm long, a single segment): its boundary is refused, naming the loop.
+#[test]
+fn a_face_with_a_loop_of_one_node_is_refused_naming_the_loop() {
+    let mut b = fixture("box_10x6x4");
+    // Edge 2 runs (10, 0, 4) to (10, 6, 4); face 4 runs it backwards, its pcurve from (0, 4) to
+    // (6, 4). A copy 1 µm long from its start, to a vertex of its own.
+    let mut short = b.edges[2].clone();
+    let (start, end) = ([10.0, 0.0, 4.0], [10.0, 1e-3, 4.0]);
+    short.curve = Curve::Line { start, end };
+    short.uses.clear();
+    let v = u32::try_from(b.vertices.len()).unwrap();
+    let mut vertex = b.vertices[short.vertices[0] as usize].clone();
+    vertex.point = end;
+    b.vertices.push(vertex);
+    short.vertices[1] = v;
+    let e = u32::try_from(b.edges.len()).unwrap();
+    b.edges.push(short);
+    let one = brep::OrientedEdge {
+        edge: e,
+        forward: true,
+        pcurve: brep::Curve2::Spline {
+            knots: vec![0.0, 0.0, 1.0, 1.0],
+            points: vec![[0.0, 4.0], [1e-3, 4.0]],
+        },
+    };
+    b.faces[4].loops.push(Loop::Edges { edges: vec![one] });
+    // Through plan() the loop's edge is split to three segments first (split_thin_loops), so the
+    // boundary is built from the edges as sampled.
+    let rules = size::Rules::new(0.01, 12.0, None);
+    let nodes: Vec<edges::Nodes> = (0..b.edges.len())
+        .map(|e| ok(edges::sample_edge(&b, e, &rules, rules.max_len)))
+        .collect();
+    assert_eq!(nodes[e as usize].points.len(), 2);
+    let face = &b.faces[4];
+    let s = ok(surface::eval_surface(face.parameters()));
+    match boundary(&b, 4, face, &s, &nodes, &rules) {
+        Err(e) => assert!(
+            e.to_string()
+                .ends_with("face 4 (plane): loop 1 has 1 node (1 edge uses)"),
+            "{e}"
+        ),
+        Ok(fb) => panic!("{} loops", fb.loops.len()),
+    }
+}
+
+/// A loop's edge that cannot be split where split_thin_loops halves it (a spline with no point at
+/// its middle, its nodes only its ends): the edge is returned with its error, for every face of
+/// it to be refused. Through plan() the sampling meets the middle first.
+#[test]
+fn a_thin_loops_edge_that_cannot_be_split_is_returned_with_why() {
+    let mut b = fixture("box_10x6x4");
+    // x = 3, z = 40 t, its weight's double root at t = 0.5 (0 / 0 there).
+    let mut bad = b.edges[2].clone();
+    bad.curve = Curve::RationalSpline {
+        knots: vec![0.0, 0.0, 0.0, 0.0, 1.0, 1.0, 1.0, 1.0],
+        homogeneous: vec![
+            [9.0, 0.0, 0.0, 3.0],
+            [-3.0, 0.0, 40.0, -1.0],
+            [-3.0, 0.0, -80.0, -1.0],
+            [9.0, 0.0, 120.0, 3.0],
+        ],
+    };
+    bad.nurbs = None;
+    bad.uses.clear();
+    let e = b.edges.len();
+    b.edges.push(bad);
+    let one = brep::OrientedEdge {
+        edge: u32::try_from(e).unwrap(),
+        forward: true,
+        pcurve: brep::Curve2::Spline {
+            knots: vec![0.0, 0.0, 1.0, 1.0],
+            points: vec![[0.0, 4.0], [1.0, 4.0]],
+        },
+    };
+    b.faces[4].loops.push(Loop::Edges { edges: vec![one] });
+    let rules = size::Rules::new(0.01, 12.0, None);
+    let mut nodes: Vec<edges::Nodes> = (0..e)
+        .map(|k| ok(edges::sample_edge(&b, k, &rules, rules.max_len)))
+        .collect();
+    nodes.push(edges::Nodes {
+        points: vec![Vec3::new(3.0, 0.0, 0.0), Vec3::new(3.0, 0.0, 40.0)],
+        params: vec![0.0, 1.0],
+        snapped: Vec::new(),
+    });
+    let failed = split_thin_loops(&b, &mut nodes, &[false; 6]);
+    let [(edge, why)] = failed.as_slice() else {
+        panic!("{failed:?}")
+    };
+    assert_eq!(*edge, e);
+    assert!(
+        why.to_string()
+            .contains(&format!("edge {e}: the curve does not evaluate at t = 0.5")),
+        "{why}"
+    );
+}
+
+/// A face's crossing chords are halved on their edge; an edge that cannot take the new nodes
+/// (here past MAX_EDGE_NODES) refuses every face of it, each naming the edge, and untangle
+/// passes them over. (A box face's boundary made to cross itself by moving one of its nodes.)
+#[test]
+fn an_edge_untangling_cannot_split_refuses_its_faces() {
+    let b = fixture("box_10x6x4");
+    let rules = size::Rules::new(0.01, 12.0, None);
+    let evals: Vec<Option<EvalSurface>> = b
+        .faces
+        .iter()
+        .map(|f| surface::eval_surface(f.parameters()).ok())
+        .collect();
+    let mut edge_faces: Vec<Vec<usize>> = vec![Vec::new(); b.edges.len()];
+    for (fi, f) in b.faces.iter().enumerate() {
+        for oe in face_edges(f) {
+            if !edge_faces[oe.edge as usize].contains(&fi) {
+                edge_faces[oe.edge as usize].push(fi);
+            }
+        }
+    }
+    let mut nodes: Vec<edges::Nodes> = (0..b.edges.len())
+        .map(|e| ok(edges::sample_edge(&b, e, &rules, 1.0)))
+        .collect();
+    let face_boundary = |fi: usize, nodes: &[edges::Nodes]| {
+        boundary(
+            &b,
+            fi,
+            &b.faces[fi],
+            evals[fi].as_ref().unwrap(),
+            nodes,
+            &rules,
+        )
+    };
+    let mut boundaries: Vec<Boundary> = (0..b.faces.len())
+        .map(|fi| ok(face_boundary(fi, &nodes)))
+        .collect();
+    // Face 4's loop with its node 1 moved past the face's opposite side, through its middle.
+    let uv = &mut boundaries[4].loops[0].uv;
+    let m = uv.len() as f64;
+    let c = uv
+        .iter()
+        .fold([0.0, 0.0], |a, q| [a[0] + q[0] / m, a[1] + q[1] / m]);
+    uv[1] = [
+        c[0] + 1.5 * (c[0] - uv[1][0]),
+        c[1] + 1.5 * (c[1] - uv[1][1]),
+    ];
+    let fb = &boundaries[4];
+    let crossing = tangle::crossing(evals[4].as_ref().unwrap(), fb.reach, &fb.loops);
+    let Some(&(l, k)) = crossing.first() else {
+        panic!("the swapped loop crosses itself")
+    };
+    let e = fb.segments[l][k].0;
+    // The edge full: one more node is past the cap.
+    let n = &mut nodes[e as usize];
+    let (p, t) = (*n.points.last().unwrap(), *n.params.last().unwrap());
+    n.points.resize(edges::MAX_EDGE_NODES, p);
+    n.params.resize(edges::MAX_EDGE_NODES, t);
+    let mut refused = Refused::new(&b);
+    let tangled = untangle(
+        &b,
+        &evals,
+        &edge_faces,
+        rules.tol,
+        &mut nodes,
+        &mut boundaries,
+        &face_boundary,
+        &mut refused,
+    );
+    for &f in &edge_faces[e as usize] {
+        assert!(refused.is(f), "face {f}");
+        let why = refused.why[f].as_ref().unwrap().to_string();
+        assert!(
+            why.contains(&format!("edge {e}: more than 20000 nodes")),
+            "{why}"
+        );
+        assert!(tangled.iter().all(|(t, _)| *t != f), "{tangled:?}");
+    }
+}

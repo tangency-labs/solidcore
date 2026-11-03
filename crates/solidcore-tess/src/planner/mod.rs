@@ -1861,11 +1861,8 @@ fn plan_face(
     }
     // Every index of the face's nodes is a u32: its boundary, and what the layouts and the sag
     // refinement add, stay within MAX_FACE_NODES (2^28), far below u32::MAX.
-    if uvs.len() > MAX_FACE_NODES {
-        return Err(FaceError::Refused(fail(&format!(
-            "its {} boundary nodes are more than the {MAX_FACE_NODES} a face may have",
-            uvs.len()
-        ))));
+    if let Some(why) = too_many_nodes(uvs.len(), 0) {
+        return Err(FaceError::Refused(fail(&why)));
     }
     let mut bbox = [(f64::MAX, f64::MIN); 2];
     for p in &uvs {
@@ -2051,11 +2048,8 @@ fn plan_face(
     }
     let mut all = uvs;
     all.extend(extra);
-    if all.len().saturating_add(MAX_REFINE) > MAX_FACE_NODES {
-        return Err(FaceError::Refused(fail(&format!(
-            "its {} nodes, with the {MAX_REFINE} refinement may add, are more than the {MAX_FACE_NODES} a face may have",
-            all.len()
-        ))));
+    if let Some(why) = too_many_nodes(all.len(), MAX_REFINE) {
+        return Err(FaceError::Refused(fail(&why)));
     }
     // Whatever the layout, no triangle leaves the surface by more than the tolerance.
     if !planar {
@@ -2086,6 +2080,20 @@ const MAX_PERIODS: usize = 4096;
 /// The loops of a face span more periods (the count) than [`within_loops`] looks through.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub(crate) struct TooManyCopies(pub f64);
+
+/// Why a face of `nodes` nodes, and `more` its refinement may add, is refused: more than
+/// [`MAX_FACE_NODES`] in all. `None` when they fit.
+fn too_many_nodes(nodes: usize, more: usize) -> Option<String> {
+    (nodes.saturating_add(more) > MAX_FACE_NODES).then(|| {
+        if more == 0 {
+            format!("its {nodes} boundary nodes are more than the {MAX_FACE_NODES} a face may have")
+        } else {
+            format!(
+                "its {nodes} nodes, with the {more} refinement may add, are more than the {MAX_FACE_NODES} a face may have"
+            )
+        }
+    })
+}
 
 /// Whether the parameter point `q`, or a copy of it a whole number of `period`s along, lies
 /// inside the region the loops `polys` bound (even–odd, the rule [`cdt::lattice`] keeps its
