@@ -14,6 +14,7 @@ use solidcore::blend::fillet_corner::p3::FilletCornerKind;
 use solidcore::blend::fillet_executive::session::FilletSession;
 use solidcore::blend::fillet_geom::p1::{FilletEdgeType, FilletVertexType};
 use solidcore::curve::curve::Curve;
+use solidcore::kernel::UpstreamFixes;
 use solidcore::math::Point3;
 use solidcore::nurbs::b_spline_curve::p1::{BSplineCurveForm, CanonicalData, KnotType};
 use solidcore::nurbs::b_spline_curve::BSplineCurve;
@@ -21,6 +22,17 @@ use solidcore::sweep::api_brep::create_taper_extrude;
 use solidcore::topology::brep::validation::{check_brep, CheckLevel};
 use solidcore::topology::{edge, EdgeId};
 use solidcore::{Brep, Kernel};
+
+// Match #2499's generic-blend profile; its geometric-G2 experiment is separate.
+fn new_blend_kernel() -> Kernel {
+    let mut k = Kernel::default();
+    for &name in UpstreamFixes::NAMES {
+        if name != "geometric_g2_continuity" {
+            *k.fixes.flag_mut(name).unwrap() = true;
+        }
+    }
+    k
+}
 
 fn teardrop(k: &mut Kernel) -> Brep {
     let points = [
@@ -145,19 +157,56 @@ fn teardrop_reaches_the_real_closed_angle_topology() {
 
 #[test]
 fn small_closed_angle_round_builds_a_valid_body() {
-    let mut k = Kernel::default();
-    let mut b = teardrop(&mut k);
-    let rim = top_rim(&k, &b);
-    let mut s = FilletSession::new(&mut k, &mut b).unwrap();
-    s.prepare_constant_radius_edges(&mut k, &[rim], 0.5, 1, 1, 1.0)
-        .unwrap();
-    s.do_fillet(&mut k).unwrap();
-    drop(s);
-    assert_eq!(b.face_list().len(), 5);
-    assert!(check_brep(&mut k, &mut b, CheckLevel::Level2)
-        .unwrap()
-        .lines()
-        .is_empty());
+    for mut k in [Kernel::default(), new_blend_kernel()] {
+        let mut b = teardrop(&mut k);
+        let rim = top_rim(&k, &b);
+        let mut s = FilletSession::new(&mut k, &mut b).unwrap();
+        s.prepare_constant_radius_edges(&mut k, &[rim], 0.5, 1, 1, 1.0)
+            .unwrap();
+        s.do_fillet(&mut k).unwrap();
+        drop(s);
+        assert_eq!(b.face_list().len(), 5);
+        assert!(check_brep(&mut k, &mut b, CheckLevel::Level2)
+            .unwrap()
+            .lines()
+            .is_empty());
+    }
+}
+
+#[test]
+fn closed_angle_solver_still_allocates_unlinked_zero_tolerance_split_vertices() {
+    for mut k in [Kernel::default(), new_blend_kernel()] {
+        let mut b = teardrop(&mut k);
+        let rim = top_rim(&k, &b);
+        let mut s = FilletSession::new(&mut k, &mut b).unwrap();
+        s.prepare_constant_radius_edges(&mut k, &[rim], 0.5, 1, 1, 1.0)
+            .unwrap();
+        s.create_corners(&k, None).unwrap();
+        s.process_smooth_edge_sequences(&mut k).unwrap();
+        s.create_corner_vertices(&mut k).unwrap();
+        s.adjust_corner_topology(&mut k).unwrap();
+        let id = s.fillet_corners().unwrap()[0];
+        let original = s.corner(id).unwrap().vertices.clone();
+        assert!(s.pseudo_brep().geoms().iter().any(|g| g.need_split));
+        s.calculate_solver_geometry(&mut k).unwrap();
+        let split: Vec<_> = s
+            .corner(id)
+            .unwrap()
+            .vertices
+            .iter()
+            .copied()
+            .filter(|v| !original.contains(v))
+            .collect();
+        assert_eq!(split.len(), 2, "the closed round must split both rails");
+        for v in split {
+            let pseudo = s.pseudo_brep().brep();
+            assert_eq!(pseudo.vertex(v).unwrap().tolerance, 0.0);
+            assert!(!pseudo.vertex_list().contains(&v));
+        }
+        s.calculate_corner_edges(&mut k).unwrap();
+        assert!(s.corner(id).unwrap().blend.is_none());
+        assert_eq!(s.corner(id).unwrap().kind, FilletCornerKind::NByOneClosed);
+    }
 }
 
 #[test]

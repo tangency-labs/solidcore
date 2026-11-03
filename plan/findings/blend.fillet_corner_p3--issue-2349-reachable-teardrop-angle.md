@@ -235,3 +235,99 @@ claimed as rerun at this merged revision. GitHub CI still needs maintainer
 approval for the fork workflow; the inspected run 41458895332 has
 `action_required` and zero jobs. This account has no upstream push/maintain/admin
 permission. Required review is also outstanding.
+
+## Rebase and #2499 audit (2026-11-03)
+
+Rebased the owned PR branch onto `fb937dd8d991072cf5b6fa7d16cf46ea110ea238`
+with the user's explicit authorization to replace its published history using
+`--force-with-lease`. The rebase was clean. Original commit IDs above describe
+historical evidence; in the rebased history the failing fixture commit is
+`5860f15a6`, before the allocation correction `e24b4866c`.
+
+#2499 fixes the new-blend overflow judgment in `rails_fit.rs`: an untrimmed rail
+past the cutting plane at its closed corner is not an overflow off the face.
+Its corner remains the legacy closed Nx1 mitre; #2349 still owns its replacement.
+Its teardrop is a six-pole, multi-span cubic with a 90-degree tip and least profile
+curvature radius about 4.69, checked by completed bodies and independent volume
+at radii 0.5 and 1. This PR's four-pole single-span cubic has a 53.13-degree tip
+and curvature radius 1.875 at its midpoint. Its serialized operand and ten
+intermediate/full native checkpoints complement that end-to-end test rather than
+duplicate its geometry or acceptance measurement.
+
+The added post-rebase regression follows real corner creation, smooth-edge
+processing, vertex creation and adjustment, solver geometry and corner edges.
+It checks the two new rail-split vertices at the solver-geometry checkpoint for
+exactly zero tolerance and absence from the B-rep owning vertex list. It runs
+both default flags and #2499's profile (every fix except geometric G2 continuity).
+The small-radius body control now runs both profiles as well. No existing
+fixture, expected numeric value, checkpoint field or tolerance is changed.
+
+### Reference and construction policy
+
+The normative reference for the redesigned blend is the SMLib fork. Read only
+permitted fork sources at v1.1.0-alpha,
+`a18bbe523b9c7819f1a9da8c40a54c15f9936125`: `SmFilletGeom.cpp`'s `TopologySplit`
+(starts at line 13105) still allocates `new (pPseudoBrep) SmFilletVertex()` for
+both split rails and attaches them via `AddFilletVertex`. Its `SmFilletVertex`
+constructor calls `SmVertex()`, whose `SmVertex.h` constructor starts tolerance
+at zero. `SmTopology.cpp`'s placement allocator supplies context without inserting
+into an owning topology list. Thus the allocation correction agrees with the
+fork contract too. The configured difftest still uses the unchanged 1.0.1 pin;
+its results verify the shared allocation path, not fork executable parity for a
+redesigned construction or certification of the self-mitre.
+
+The correction is generic to split allocation, with no per-input branch, new
+flag, fallback/retry chain, global or thread-local state, or library thread.
+It fixes the still-reached parity path before replacement and is deleted with
+its owning old construction, not kept as a permanent fallback. The regression
+fixture was committed before the fix. No SolidCraft gallery case changes state
+in this contribution; no gallery row or render changes are claimed.
+
+### Fresh post-rebase evidence
+
+`cargo fmt --all --check` and workspace/all-target Clippy with `-D warnings`
+pass. The issue integration target has 3 passes and 2 ignored future contracts.
+Both flag profiles reach the two zero-tolerance, unlinked split vertices and
+complete corner edges through the legacy closed corner. The radius-0.5 body is
+valid at Level2 in both profiles. The landed #2499 closed-rim test also passes
+at both of its radii. No acceptance expectation changes are needed.
+
+Explicitly running the two ignored contracts still fails: the corner has no
+certified blend event, and the suggested radius `1.8749999999999993` produces
+Level2 geometry errors. They remain known failing follow-up contracts, not
+passes. The first focused library-test build failed before tests ran because
+rustc reported `Cannot allocate memory (os error 12)` reading solver `p2.rs`;
+this resource failure is separate from a test assertion failure.
+
+The fresh wasm check passes. The configured native executive runner reports:
+
+```text
+PASS blend.fillet_executive_p3 cases=10 passed=10 failed=0 deferred=0 max_rel_err=0e0 with_values=10 no_values=0 vacuous=0
+```
+
+This is the unchanged `--filter issue-2349` checkpoint set, including solver
+geometry, corner edges and completed radius-0.5/radius-3 operations. It confirms
+that #2499 did not remove the split-allocation coverage or require new expected
+numeric values.
+
+The full executive rerun using that freshly built binary also passes:
+
+```text
+PASS blend.fillet_executive_p3 cases=798 passed=796 failed=0 deferred=0 max_rel_err=0e0 with_values=796 no_values=0 vacuous=0 rejected=2
+```
+
+The redundant `cargo run` invocation was stopped while waiting on the library
+retry's build lock; the completed runner was invoked directly under nice 10.
+No native case, field, rejection, or comparison tolerance was changed.
+
+The focused library-test retry also failed during compilation, this time writing
+the incremental `query-cache.bin`: `Cannot allocate memory (os error 12)`.
+The shared machine's load had risen to 174.68. No library test assertion ran;
+the focused library check is not claimed green. A third heavy build was not
+started under that load. Re-run `cargo test --profile difftest -p solidcore
+--lib topology_split` under the documented machine budget when resources allow.
+This does not invalidate the fresh integration and native passes above, but
+leaves the focused library verification incomplete locally.
+After the query-cache error, the still-running compiler owned by this task was
+terminated by its verified PID to release resources; Cargo reports SIGTERM
+alongside the prior allocation error. No other thread's process was stopped.
