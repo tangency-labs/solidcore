@@ -1,6 +1,6 @@
 //! The planner on whole bodies, and on the faces and loops it is made of.
 //!
-//! The bodies are B-rep records SolidCraft modelled, frozen as JSON under `tests/data` (one file
+//! The bodies are B-rep records SolidCraft modelled, frozen as gzipped JSON under `tests/data` (one file
 //! per body, `sizes.json` with each body's size, the size its mesh tolerance rules take); see
 //! `tests/data/generate_fixtures.rs.txt` for how they are made.
 
@@ -9,10 +9,15 @@ use std::collections::HashMap;
 use super::*;
 use crate::{Mesh, MeshTolerance};
 
-/// The frozen record `name` (`tests/data/<name>.json`).
+/// The frozen record `name` (`tests/data/<name>.json.gz`).
 pub(crate) fn fixture(name: &str) -> brep::Brep {
-    let path = format!("{}/tests/data/{name}.json", env!("CARGO_MANIFEST_DIR"));
-    let json = std::fs::read_to_string(&path).unwrap_or_else(|e| panic!("{path}: {e}"));
+    use std::io::Read as _;
+    let path = format!("{}/tests/data/{name}.json.gz", env!("CARGO_MANIFEST_DIR"));
+    let file = std::fs::File::open(&path).unwrap_or_else(|e| panic!("{path}: {e}"));
+    let mut json = String::new();
+    flate2::read::GzDecoder::new(file)
+        .read_to_string(&mut json)
+        .unwrap_or_else(|e| panic!("{path}: {e}"));
     serde_json::from_str(&json).unwrap_or_else(|e| panic!("{path}: {e}"))
 }
 

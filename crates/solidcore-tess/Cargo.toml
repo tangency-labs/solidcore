@@ -25,6 +25,8 @@ rayon = "1.12"
 
 [dev-dependencies]
 serde_json = { version = "1", features = ["float_roundtrip"] }
+# The frozen records are gzipped JSON, read as the rig corpus reads its own.
+flate2 = "1.1"
 
 [lints]
 workspace = true
