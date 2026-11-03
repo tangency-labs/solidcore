@@ -973,30 +973,23 @@ impl Surface {
             }
             return Ok(());
         }
-        if self.is_rational() {
-            return if pu < TINY_NP && qu < TINY_NP {
-                self.first_derivs_rational_n::<TINY_NP>(u, v, ufl, vfl, upper, sd, OP, BD_OP)
-            } else if pu < SMALL_NP && qu < SMALL_NP {
-                self.first_derivs_rational_n::<SMALL_NP>(u, v, ufl, vfl, upper, sd, OP, BD_OP)
-            } else {
-                self.first_derivs_rational_n::<NP>(u, v, ufl, vfl, upper, sd, OP, BD_OP)
-            };
-        }
         if pu < TINY_NP && qu < TINY_NP {
-            self.first_derivs_n::<TINY_NP>(u, v, ufl, vfl, upper, sd, OP, BD_OP)
+            self.first_derivs_span::<TINY_NP>(u, v, ufl, vfl, upper, sd, OP, BD_OP)
         } else if pu < SMALL_NP && qu < SMALL_NP {
-            self.first_derivs_n::<SMALL_NP>(u, v, ufl, vfl, upper, sd, OP, BD_OP)
+            self.first_derivs_span::<SMALL_NP>(u, v, ufl, vfl, upper, sd, OP, BD_OP)
         } else {
-            self.first_derivs_n::<NP>(u, v, ufl, vfl, upper, sd, OP, BD_OP)
+            self.first_derivs_span::<NP>(u, v, ufl, vfl, upper, sd, OP, BD_OP)
         }
     }
 
-    /// [`Surface::first_derivs_into`] for a rational surface, scratch width `N`: the
-    /// steps of [`Surface::basis_derivs_n`] and [`Surface::derivs`] in their order, with
-    /// the basis derivatives `BD[k][l]` (`k, l <= 1`) in a stack table instead of a
-    /// heap [`BasisDerivs`], and the result written into `sd` directly.
+    /// [`Surface::first_derivs_into`] for degrees below `N`, rational or not: the
+    /// arithmetic of [`Surface::basis_derivs_n`] (its rational recurrence for orders
+    /// `k, l <= 1`, each product and sum in its order) and of `derivative_matrix`, fused
+    /// into one pass over the span's control points, so the same bits
+    /// (`first_derivs_into_matches_derivs_bit_for_bit`) without the per-entry checked
+    /// tables.
     #[allow(clippy::too_many_arguments)] // the evaluation arguments plus both names
-    fn first_derivs_rational_n<const N: usize>(
+    fn first_derivs_span<const N: usize>(
         &self,
         u: f64,
         v: f64,
@@ -1008,90 +1001,111 @@ impl Surface {
         bd_op: &'static str,
     ) -> Result<()> {
         let (pu, qu) = self.degrees();
+        if pu >= N || qu >= N {
+            return Err(oob(op));
+        }
         let (_, _, s1u, s2u) = self.array_sizes();
         let mut du: Derivatives<N> = [[0.0; N]; MAX_DERIVATIVE + 1];
         let mut dv: Derivatives<N> = [[0.0; N]; MAX_DERIVATIVE + 1];
         let ku = univariate_derivs::<N>(self.u_knots(), s1u, pu, u, ufl, 1, &mut du, bd_op)?;
         let kv = univariate_derivs::<N>(self.v_knots(), s2u, qu, v, vfl, 1, &mut dv, bd_op)?;
+        let [du0, du1, ..] = du;
+        let [dv0, dv1, ..] = dv;
+        let p00 = self.cpt(0, 0)?;
+        let no_w = p00.w == NOW;
+        let no_z = p00.z == NOZ;
+        let first_u = ux(ku - sx(pu, op)?, op)?;
+        let first_v = ux(kv - sx(qu, op)?, op)?;
 
-        // `BD[k][l][i][j]` at `[2 * k + l][i][j]`; with `upper` the `[1][1]` block stays
-        // zero, as `BasisDerivs` leaves it
-        let mut bd = [[[0.0_f64; N]; N]; 4];
-        self.rational_basis_derivs::<N>(ku, kv, &du, &dv, upper, 1, 1, |k, l, n, m, x| {
-            *bd.get_mut(2 * k + l)
-                .and_then(|b| b.get_mut(n))
-                .and_then(|r| r.get_mut(m))
-                .ok_or_else(|| oob(bd_op))? = x;
-            Ok(())
-        })?;
-        let bd = &bd;
-        // (as `BasisDerivs::row_u`: the row of `i <= p`, read for `j <= q`)
-        let alpha = |k: usize, l: usize, i: usize| {
-            let row = bd
-                .get(2 * k + l)
-                .filter(|_| k <= 1 && l <= 1 && i <= pu)
-                .and_then(|b| b.get(i))
+        // The span's (p+1) x (q+1) control points: weights and Euclidean points.
+        let mut w = [[0.0_f64; N]; N];
+        let mut pe = [[Vec3::ZERO; N]; N];
+        for (i, (w_row, p_row)) in w.iter_mut().zip(pe.iter_mut()).take(pu + 1).enumerate() {
+            let net_row = self
+                .row(first_u + i)?
+                .get(first_v..=first_v + qu)
                 .ok_or_else(|| oob(op))?;
-            Ok(move |j: usize| -> Result<f64> {
-                if j > qu {
-                    return Err(oob(op));
+            for ((wij, pij), c) in w_row.iter_mut().zip(p_row.iter_mut()).zip(net_row) {
+                *wij = c.w;
+                *pij = to_euclid_spec(no_z, no_w, *c);
+            }
+        }
+
+        let mut s = [[Vec3::ZERO; 2]; 2];
+        let mut add = |s: &mut Vec3, alpha: f64, pt: Vec3| {
+            s.x += alpha * pt.x; // upstream: alpha * P.x + sd.x
+            s.y += alpha * pt.y; // upstream: alpha * P.y + sd.y
+            if !no_z {
+                s.z += alpha * pt.z; // upstream: alpha * P.z + sd.z
+            }
+        };
+        if no_w {
+            for (i, p_row) in pe.iter().enumerate().take(pu + 1) {
+                let (a0, a1) = (du0.get(i).copied().unwrap_or(0.0), du1.get(i).copied().unwrap_or(0.0));
+                for ((pt, b0), b1) in p_row.iter().zip(&dv0).zip(&dv1).take(qu + 1) {
+                    let [[s00, s01], [s10, s11]] = &mut s;
+                    add(s00, a0 * b0, *pt);
+                    add(s01, a0 * b1, *pt);
+                    add(s10, a1 * b0, *pt);
+                    if !upper {
+                        add(s11, a1 * b1, *pt);
+                    }
                 }
-                row.get(j).copied().ok_or_else(|| oob(op))
-            })
-        };
-
-        let (p, q) = (sx(pu, op)?, sx(qu, op)?);
-        let l2 = ku - p;
-        let l3 = kv - q;
-        let p00 = self.cpt(0, 0)?;
-        let no_w = p00.w == NOW;
-        let no_z = p00.z == NOZ;
-        derivative_matrix::<N, _, _>(self, no_w, no_z, upper, p, q, 1, 1, l2, l3, alpha, sd, op)
-    }
-
-    /// [`Surface::first_derivs_into`] for a non-rational surface, scratch width `N`:
-    /// the steps of [`Surface::basis_derivs_n`] and [`Surface::derivs`] in their order.
-    #[allow(clippy::too_many_arguments)] // the evaluation arguments plus both names
-    fn first_derivs_n<const N: usize>(
-        &self,
-        u: f64,
-        v: f64,
-        ufl: Side,
-        vfl: Side,
-        upper: bool,
-        sd: &mut [[Vec3; 2]; 2],
-        op: &'static str,
-        bd_op: &'static str,
-    ) -> Result<()> {
-        let (pu, qu) = self.degrees();
-        let (_, _, s1u, s2u) = self.array_sizes();
-        let mut du: Derivatives<N> = [[0.0; N]; MAX_DERIVATIVE + 1];
-        let mut dv: Derivatives<N> = [[0.0; N]; MAX_DERIVATIVE + 1];
-        let ku = univariate_derivs::<N>(self.u_knots(), s1u, pu, u, ufl, 1, &mut du, bd_op)?;
-        let kv = univariate_derivs::<N>(self.v_knots(), s2u, qu, v, vfl, 1, &mut dv, bd_op)?;
-        let at2u = |a: &Derivatives<N>, i: usize, j: usize| -> Result<f64> {
-            a.get(i)
-                .and_then(|r| r.get(j))
-                .copied()
-                .ok_or_else(|| oob(bd_op))
-        };
-        let (du, dv, at2u) = (&du, &dv, &at2u);
-        let alpha = |k: usize, l: usize, i: usize| {
-            Ok(move |j: usize| -> Result<f64> {
-                if i > pu || j > qu {
-                    return Err(oob(op));
+            }
+        } else {
+            // Derivatives of the denominator, `d[k][l]`.
+            let mut d = [[0.0_f64; 2]; 2];
+            for (l, dvl) in [&dv0, &dv1].into_iter().enumerate() {
+                let mut tu = [0.0_f64; N];
+                for (t, w_row) in tu.iter_mut().zip(&w).take(pu + 1) {
+                    for (wij, dvlj) in w_row.iter().zip(dvl).take(qu + 1) {
+                        *t += wij * dvlj;
+                    }
                 }
-                Ok(at2u(du, k, i)? * at2u(dv, l, j)?)
-            })
-        };
-
-        let (p, q) = (sx(pu, op)?, sx(qu, op)?);
-        let l2 = ku - p;
-        let l3 = kv - q;
-        let p00 = self.cpt(0, 0)?;
-        let no_w = p00.w == NOW;
-        let no_z = p00.z == NOZ;
-        derivative_matrix::<N, _, _>(self, no_w, no_z, upper, p, q, 1, 1, l2, l3, alpha, sd, op)
+                for (duk, dk) in [&du0, &du1].into_iter().zip(d.iter_mut()) {
+                    let mut x = 0.0;
+                    for (t, duki) in tu.iter().zip(duk).take(pu + 1) {
+                        x += t * duki;
+                    }
+                    if let Some(slot) = dk.get_mut(l) {
+                        *slot = x;
+                    }
+                }
+            }
+            let [[d00, d01], [d10, d11]] = d;
+            if float_op_is_bad(1.0, d00, FloatOp::Division) {
+                return Err(SolidError::nlib(bd_op, NlibCode::Convergence));
+            }
+            let inv_w00 = 1.0 / d00;
+            let t11 = pascal_entry(1, 1).ok_or_else(|| oob(bd_op))?;
+            let (c0, c1, c2) = (t11 * d01, t11 * d10, t11 * d11);
+            for (i, (w_row, p_row)) in w.iter().zip(&pe).enumerate().take(pu + 1) {
+                let (a0, a1) = (du0.get(i).copied().unwrap_or(0.0), du1.get(i).copied().unwrap_or(0.0));
+                for (((wnm, pt), b0), b1) in w_row.iter().zip(p_row).zip(&dv0).zip(&dv1).take(qu + 1) {
+                    // The rational basis function's derivatives, upstream's recurrence.
+                    let r00 = (wnm * a0 * b0) * inv_w00;
+                    let r01 = (wnm * a0 * b1 - c0 * r00) * inv_w00;
+                    let mut v10 = wnm * a1 * b0;
+                    v10 -= c1 * r00;
+                    v10 -= t11 * 0.0;
+                    let r10 = v10 * inv_w00;
+                    let [[s00, s01], [s10, s11]] = &mut s;
+                    add(s00, r00, *pt);
+                    add(s01, r01, *pt);
+                    add(s10, r10, *pt);
+                    if !upper {
+                        let mut v11 = wnm * a1 * b1;
+                        v11 -= c0 * r10;
+                        v11 -= c1 * r01;
+                        let v2 = 0.0 + c2 * r00;
+                        v11 -= t11 * v2;
+                        add(s11, v11 * inv_w00, *pt);
+                    }
+                }
+            }
+        }
+        *sd = s;
+        Ok(())
     }
 
     /// Min-max box of the Euclidean control net (`N_SrfGetBBox`).
