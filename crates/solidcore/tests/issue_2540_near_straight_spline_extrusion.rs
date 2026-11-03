@@ -49,14 +49,20 @@ const DISTANCE: f64 = 44.0;
 /// The profile's planar area by Green's theorem, exactly
 /// `446048552350889275593 / 200000000000000000000` mm², times [`DISTANCE`].
 ///
-/// The five points lie in one plane and the extrude runs along its normal with no draft, so
+/// The five points lie in one plane and the extrude runs along its normal with no taper, so
 /// the body is a prism and `V = 44 * A`. A four-point clamped cubic B-spline (knots
 /// 0,0,0,0,1,1,1,1) is the cubic Bézier on its control points, so `A` is the sum of one
 /// term per boundary piece of `1/2 ∮ (x dy - y dx)` in the plane's own coordinates:
-/// `A = B + T(p3,p4) + T(p4,p0)`, with `T(a,b) = (ax*by - ay*bx)/2` for a straight segment
-/// and `B = (1/20) * [6(x0y1 - x1y0) + 3(x0y2 - x2y0) + (x0y3 - x3y0) + 3(x1y2 - x2y1)
-/// + 3(x1y3 - x3y1) + 6(x2y3 - x3y2)]` for the Bézier `p0..p3`. The derivation is the
-/// corpus entry's `expected.method`; `A` is 2.2302427617544462 mm².
+///
+/// ```text
+/// A      = B + T(p3,p4) + T(p4,p0)
+/// T(a,b) = (ax*by - ay*bx)/2                          for a straight segment
+/// B      = (1/20) * [6(x0y1 - x1y0) + 3(x0y2 - x2y0) + (x0y3 - x3y0)
+///                    + 3(x1y2 - x2y1) + 3(x1y3 - x3y1) + 6(x2y3 - x3y2)]
+///                                                     for the Bézier p0..p3
+/// ```
+///
+/// The derivation is the corpus entry's `expected.method`; `A` is 2.2302427617544462 mm².
 const DERIVED_VOLUME_MM3: f64 = 98.130_681_517_195_64;
 
 /// `brep_volume` integrates to its own accuracy, so the prism is checked a little above it;
@@ -196,8 +202,10 @@ fn the_swept_span_is_recognised_as_a_surface_of_extrusion_not_a_cylinder() {
     // Both ends of the fix range: the pinned C++ behaviour and every flag on. A refusal
     // from a recognised cylinder would need some setting in between to differ from both.
     for fixes in [UpstreamFixes::default(), UpstreamFixes::all()] {
-        let mut k = Kernel::default();
-        k.fixes = fixes;
+        let k = Kernel {
+            fixes,
+            ..Kernel::default()
+        };
         let recognised = swept_net()
             .copy_and_add_analytics(&k)
             .expect("the extrusion net goes through the recogniser");
