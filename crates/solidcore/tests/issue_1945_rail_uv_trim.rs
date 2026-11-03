@@ -341,16 +341,18 @@ fn bracket() -> (f64, f64) {
 #[test]
 fn top_edge_round_is_valid() {
     let (v1, v2, f, lumps, [(exact_miss, exact), (traced_miss, traced)]) = run();
+    eprintln!(
+        "VALS removed {} exact {exact} {exact_miss:e} traced {traced} {traced_miss:e}",
+        v1 - v2
+    );
     let (lo, hi) = bracket();
     assert_eq!(lumps, 1);
     assert!(f.is_empty(), "{f:#?}");
     assert!((lo..=hi).contains(&(v1 - v2)), "removed {}", v1 - v2);
-    // the straight run is its definition, exactly
-    assert_eq!(exact, 1);
+    // both runs are their definitions, exactly: the straight one between two planes, and
+    // the one over the first round's torus between the front plane and the torus, whose
+    // ball rolls on past the face onto the torus extended as itself
+    assert_eq!((exact, traced), (2, 0));
     assert!(exact_miss < 1e-9, "{exact_miss}");
-    // the run over the first round's torus, between a plane and a torus (not NURBS faces,
-    // so not built as its definition), is the trace's B-spline, within the round's
-    // tolerance (1.6e-4 here) of its definition
-    assert_eq!(traced, 1);
-    assert!(traced_miss < 1.6e-4, "{traced_miss}");
+    assert_eq!(traced_miss, 0.0);
 }
