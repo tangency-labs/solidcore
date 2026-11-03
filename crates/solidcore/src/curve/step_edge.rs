@@ -20,11 +20,13 @@
 //!
 //! Deviations: not a port. See [`edge_interval`] for the units and the rules.
 
-use crate::curve::curve::Curve;
+use crate::curve::curve::{Curve, CurveKind};
 use crate::error::{Result, SolidError};
 use crate::geom::extent1d::Extent1d;
+use crate::geom::global_solver::SolverOperation;
 use crate::kernel::Kernel;
 use crate::math::Point3;
+use crate::topology::brep_constructor::drop_limit;
 
 const OP: &str = "curve::step_edge::edge_interval";
 
@@ -70,12 +72,56 @@ impl StepEdgeInterval {
     }
 }
 
-/// The STEP interval of the edge bounded by `vertices` on `curve`, which runs with
-/// the curve when `same_sense`; `tol` is the edge's 3D tolerance.
+/// The STEP interval of the edge bounded by `vertices` on `curve` (the edge's basis
+/// curve as the kernel builds it from the file: for a `CIRCLE` or `ELLIPSE` the full
+/// conic), which runs with the curve's parameter when `same_sense`; `tol` is the
+/// edge's 3D tolerance (the file's distance uncertainty).
+///
+/// **Units.** The parameters are the kernel's STEP parameters of the curve, those of
+/// [`Curve::evaluate_step_point`]: degrees on a circle or an ellipse (the angle `t`
+/// of `C + a cos t X + b sin t Y`), `t` of `P + t * magnitude * V` on a line, the
+/// parameter of `C + F (t^2 X + 2 t Y)` on a parabola and of
+/// `C + a cosh t X + b sinh t Y` on a hyperbola, and the curve's own (natural)
+/// parameter on a B-spline and the other kinds.
+///
+/// **A vertex's parameter.** Lines, circles, ellipses, parabolas and hyperbolas
+/// invert in closed form ([`Curve::step_inversion`]); the other kinds drop the vertex
+/// on the curve's natural interval ([`Curve::drop_point`], on a closed curve the drop
+/// of [`crate::topology::brep_constructor::BrepConstructor::set_limits`]). A vertex
+/// off its curve is not refused: it takes that parameter (on a line and a circle the
+/// nearest curve point; on an ellipse, parabola or hyperbola the inversion of its
+/// coordinates in the curve's frame, the nearest point only for points on the curve;
+/// on the other kinds the nearest point), and its distance to the curve point there
+/// is [`StepEdgeInterval::start_gap`] / [`StepEdgeInterval::end_gap`], for the caller
+/// to compare with its tolerance.
+///
+/// **The rules.**
+/// - *Circles and ellipses* are periodic in the angle (period 360). The edge runs
+///   from the start vertex's angle up (`same_sense`) or down to the end vertex's,
+///   less than a full turn; one vertex, or two whose angles are equal, is a full
+///   turn. The interval is kept within the kernel's angular limits
+///   `-360 <= min <= max <= 360` ([`crate::curve::ellipse::Ellipse`]) by moving both
+///   ends one period, so an arc over the seam (300 to 60 degrees) is -60..60.
+/// - *Open curves* (lines, parabolas, hyperbolas, B-splines whose ends are farther
+///   apart than `tol`): on an open curve the only edge between two points is the
+///   parameter interval between them, so the vertices' order decides the direction;
+///   `same_sense` against that order is an inconsistent file, shown as
+///   [`StepEdgeInterval::sense_mismatch`].
+/// - *Closed curves that are not periodic* (B-splines and other kinds whose ends lie
+///   within `tol` of each other, [`Curve::is_closed`]): `same_sense` decides. The
+///   vertex at the interval's lower end is dropped towards the curve's start and the
+///   one at its upper end towards the curve's end, so a vertex on the seam takes the
+///   end the sense needs. One vertex on the seam is the whole curve.
 ///
 /// # Errors
 ///
-/// [`SolidError::InvalidInput`] for invalid input.
+/// [`SolidError::InvalidInput`] for a `tol` that is negative or not finite, a vertex
+/// that is not finite or gets no finite parameter, one vertex on an open curve, or
+/// two vertices at one parameter of an open curve. [`SolidError::Unsupported`] for an
+/// edge across the seam of a closed curve that is not periodic, or a full turn of one
+/// from a vertex off its seam (the curve would have to be restarted at the vertex).
+/// Those of [`Curve::step_inversion`], [`Curve::drop_point`], [`Curve::is_closed`]
+/// and [`Curve::evaluate_step_point`].
 pub fn edge_interval(
     k: &Kernel,
     curve: &Curve,
@@ -83,8 +129,232 @@ pub fn edge_interval(
     same_sense: bool,
     tol: f64,
 ) -> Result<StepEdgeInterval> {
-    let _ = (k, curve, vertices, same_sense, tol);
-    Err(SolidError::invalid_input(OP, "not implemented yet"))
+    if !(tol.is_finite() && tol >= 0.0) {
+        return Err(SolidError::invalid_input(
+            OP,
+            "tolerance negative or not finite",
+        ));
+    }
+    let (start_point, end_point) = match vertices {
+        EdgeVertices::Single(v) => (v, v),
+        EdgeVertices::Pair { start, end } => (start, end),
+    };
+    if !(is_finite(start_point) && is_finite(end_point)) {
+        return Err(SolidError::invalid_input(OP, "vertex not finite"));
+    }
+
+    let (start, end, sense_mismatch) = match shape(k, curve, tol)? {
+        Shape::Periodic => periodic(k, curve, vertices, same_sense)?,
+        Shape::Open => open(k, curve, vertices, same_sense, tol)?,
+        Shape::Closed => closed(k, curve, vertices, same_sense, tol)?,
+    };
+    Ok(StepEdgeInterval {
+        start,
+        end,
+        with_curve: start < end,
+        sense_mismatch,
+        start_gap: gap(k, curve, start, start_point)?,
+        end_gap: gap(k, curve, end, end_point)?,
+    })
+}
+
+/// The STEP period of circles and ellipses, in degrees.
+const PERIOD: f64 = 360.0;
+
+/// How an edge's parameters lie on its curve.
+enum Shape {
+    /// A circle or an ellipse: periodic in its STEP angle.
+    Periodic,
+    /// Every point has one parameter.
+    Open,
+    /// The ends coincide: the seam point has two parameters, the curve's ends.
+    Closed,
+}
+
+fn shape(k: &Kernel, curve: &Curve, tol: f64) -> Result<Shape> {
+    Ok(match curve.kind() {
+        CurveKind::Ellipse(_) => Shape::Periodic,
+        CurveKind::Line(_) | CurveKind::Parabola(_) | CurveKind::Hyperbola(_) => Shape::Open,
+        _ => {
+            if curve.is_closed(k, &curve.natural_interval(), tol)? {
+                Shape::Closed
+            } else {
+                Shape::Open
+            }
+        }
+    })
+}
+
+fn is_finite(p: Point3) -> bool {
+    p.x.is_finite() && p.y.is_finite() && p.z.is_finite()
+}
+
+/// A finite parameter, or [`SolidError::InvalidInput`].
+fn finite(t: f64) -> Result<f64> {
+    if t.is_finite() {
+        Ok(t)
+    } else {
+        Err(SolidError::invalid_input(
+            OP,
+            "no finite parameter for a vertex",
+        ))
+    }
+}
+
+/// The distance from `vertex` to the curve's point at the STEP parameter `t`.
+fn gap(k: &Kernel, curve: &Curve, t: f64, vertex: Point3) -> Result<f64> {
+    Ok(curve.evaluate_step_point(k, t)?.distance(vertex))
+}
+
+/// The STEP parameter of `point` on an open curve: the closed-form inversion of the
+/// analytic kinds, else the curve point nearest it.
+fn open_parameter(k: &Kernel, curve: &Curve, point: Point3, tol: f64) -> Result<f64> {
+    let t = match curve.kind() {
+        CurveKind::Line(_)
+        | CurveKind::Parabola(_)
+        | CurveKind::Hyperbola(_)
+        | CurveKind::Ellipse(_) => curve.step_inversion(k, point)?,
+        _ => {
+            let natural = curve.natural_interval();
+            let dropped = curve.drop_point(
+                k,
+                &natural,
+                point,
+                None,
+                tol,
+                None,
+                SolverOperation::Minimize,
+            )?;
+            if !dropped.success {
+                return Err(SolidError::invalid_input(OP, "no parameter for a vertex"));
+            }
+            curve.convert_t_from_nurbs_to_step(k, dropped.parameter)?
+        }
+    };
+    finite(t)
+}
+
+/// The length from `from` up to `to` along the period, in `(0, PERIOD]` (equal
+/// angles are a full turn).
+fn turn(from: f64, to: f64) -> f64 {
+    let d = (to - from).rem_euclid(PERIOD);
+    if d > 0.0 && d < PERIOD {
+        d
+    } else {
+        PERIOD
+    }
+}
+
+fn periodic(
+    k: &Kernel,
+    curve: &Curve,
+    vertices: EdgeVertices,
+    same_sense: bool,
+) -> Result<(f64, f64, bool)> {
+    let (ts, d) = match vertices {
+        EdgeVertices::Single(v) => (finite(curve.step_inversion(k, v)?)?, PERIOD),
+        EdgeVertices::Pair { start, end } => {
+            let ts = finite(curve.step_inversion(k, start)?)?;
+            let te = finite(curve.step_inversion(k, end)?)?;
+            let d = if same_sense {
+                turn(ts, te)
+            } else {
+                turn(te, ts)
+            };
+            (ts, d)
+        }
+    };
+    let te = if same_sense { ts + d } else { ts - d };
+    // the kernel's angular limits, -360 <= min <= max <= 360
+    let (lo, hi) = (ts.min(te), ts.max(te));
+    let shift = if hi > PERIOD {
+        -PERIOD
+    } else if lo < -PERIOD {
+        PERIOD
+    } else {
+        0.0
+    };
+    Ok((ts + shift, te + shift, false))
+}
+
+fn open(
+    k: &Kernel,
+    curve: &Curve,
+    vertices: EdgeVertices,
+    same_sense: bool,
+    tol: f64,
+) -> Result<(f64, f64, bool)> {
+    let EdgeVertices::Pair { start, end } = vertices else {
+        return Err(SolidError::invalid_input(OP, "one vertex on an open curve"));
+    };
+    let ts = open_parameter(k, curve, start, tol)?;
+    let te = open_parameter(k, curve, end, tol)?;
+    if ts == te {
+        return Err(SolidError::invalid_input(
+            OP,
+            "both vertices at one parameter of an open curve",
+        ));
+    }
+    Ok((ts, te, (ts < te) != same_sense))
+}
+
+/// The STEP parameter of `point` on a closed curve that is not periodic, dropped
+/// towards the curve's end when `at_max`, else towards its start.
+fn closed_parameter(
+    k: &Kernel,
+    curve: &Curve,
+    point: Point3,
+    tol: f64,
+    at_max: bool,
+) -> Result<f64> {
+    let t = drop_limit(k, curve, point, tol, tol, at_max)?;
+    finite(curve.convert_t_from_nurbs_to_step(k, t)?)
+}
+
+fn closed(
+    k: &Kernel,
+    curve: &Curve,
+    vertices: EdgeVertices,
+    same_sense: bool,
+    tol: f64,
+) -> Result<(f64, f64, bool)> {
+    let natural = curve.natural_interval();
+    let (lo, hi) = match vertices {
+        EdgeVertices::Single(v) => {
+            let t = closed_parameter(k, curve, v, tol, false)?;
+            let seam = curve.convert_t_from_nurbs_to_step(k, natural.min())?;
+            if t != seam {
+                return Err(SolidError::Unsupported {
+                    operation: OP,
+                    reason: "a full turn of a closed curve from a vertex off its seam",
+                });
+            }
+            (t, curve.convert_t_from_nurbs_to_step(k, natural.max())?)
+        }
+        EdgeVertices::Pair { start, end } => {
+            let (lo_point, hi_point) = if same_sense {
+                (start, end)
+            } else {
+                (end, start)
+            };
+            (
+                closed_parameter(k, curve, lo_point, tol, false)?,
+                closed_parameter(k, curve, hi_point, tol, true)?,
+            )
+        }
+    };
+    // both are finite (closed_parameter)
+    if lo >= hi {
+        return Err(SolidError::Unsupported {
+            operation: OP,
+            reason: "an edge across the seam of a closed curve",
+        });
+    }
+    Ok(if same_sense {
+        (lo, hi, false)
+    } else {
+        (hi, lo, false)
+    })
 }
 
 #[cfg(test)]
