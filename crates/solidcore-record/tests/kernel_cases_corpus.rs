@@ -206,6 +206,8 @@ fn regression_final_references() {
     for result in [
         serde_json::json!({"made":"made"}),
         serde_json::json!({"operand":"given"}),
+        serde_json::json!({"body":"b1", "made":"made"}),
+        serde_json::json!({"body":"b2", "operand":"given"}),
     ] {
         validate_results(
             &serde_json::json!({"result":[result]}),
@@ -221,6 +223,7 @@ fn regression_final_references() {
         serde_json::json!("made"),
         serde_json::json!({"made":"unknown"}),
         serde_json::json!({"operand":"unknown"}),
+        serde_json::json!({"made":"made", "operand":"given"}),
     ] {
         let e = serde_json::json!({"result":[result]});
         assert!(
