@@ -26,7 +26,10 @@ mod vec;
 
 pub use curve::{CurveEval, CurveJet};
 pub use geometry::{Curve, Curve2, Frame, Surface};
-pub use spline::{EvalCurve, EvalSurface, Partials, MAX_EVAL_KNOTS, MAX_EVAL_POINTS, MAX_PARTIAL_ORDER, MAX_SPLINE_DEGREE};
+pub use spline::{
+    EvalCurve, EvalSurface, Partials, MAX_EVAL_KNOTS, MAX_EVAL_POINTS, MAX_PARTIAL_ORDER,
+    MAX_SPLINE_DEGREE,
+};
 pub use surface::{face_flux, Axes, SurfaceEval};
 pub use uv::{Domain, Starts};
 

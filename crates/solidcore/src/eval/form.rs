@@ -67,7 +67,11 @@ fn quarters([a0, a1]: [f64; 2], reach: f64) -> Option<(f64, usize)> {
     }
     let on_end = |a: f64| {
         let end = (a / FRAC_PI_2).round() * FRAC_PI_2;
-        if (a - end).abs() <= reach { end } else { a }
+        if (a - end).abs() <= reach {
+            end
+        } else {
+            a
+        }
     };
     let (a0, a1) = (on_end(a0), on_end(a1));
     let q0 = quarter_of(a0);
@@ -121,7 +125,11 @@ fn arcs_between(a0: f64, a1: f64) -> Option<(Vec<f64>, Vec<([f64; 2], f64)>)> {
         pts.push(([mid[0] / w, mid[1] / w], w));
         pts.push((at(start + phi), 1.0));
         let end = (k + 1) as f64;
-        knots.extend(if k + 1 < n { vec![end; 2] } else { vec![end; 3] });
+        knots.extend(if k + 1 < n {
+            vec![end; 2]
+        } else {
+            vec![end; 3]
+        });
     }
     Some((knots, pts))
 }
@@ -129,11 +137,17 @@ fn arcs_between(a0: f64, a1: f64) -> Option<(Vec<f64>, Vec<([f64; 2], f64)>)> {
 /// The arcs of a face's angle range `a` and its domain on them: the quarter grid's
 /// ([`face_quarters`]), or with `own` and a range short of a turn, arcs of its own from its start
 /// ([`arcs_between`], the domain all of them).
-fn face_arcs(a: [f64; 2], reach: f64, own: bool) -> Option<((Vec<f64>, Vec<([f64; 2], f64)>), [f64; 2])> {
+fn face_arcs(
+    a: [f64; 2],
+    reach: f64,
+    own: bool,
+) -> Option<((Vec<f64>, Vec<([f64; 2], f64)>), [f64; 2])> {
     if own && a[1] - a[0] < TAU * (1.0 - 1e-9) {
         // Past each end by `reach` (while that stays short of a turn): the face's boundary, which
         // lies off the surface by as much, then stays on the form.
-        let pad = reach.max(0.0).min(0.25 * (TAU * (1.0 - 1e-9) - (a[1] - a[0])));
+        let pad = reach
+            .max(0.0)
+            .min(0.25 * (TAU * (1.0 - 1e-9) - (a[1] - a[0])));
         let (a0, a1) = (a[0] - pad, a[1] + pad);
         let made = arcs_between(a0, a1)?;
         let n = made.0.last().copied()?;
@@ -165,7 +179,11 @@ fn arcs(q0: f64, n: usize) -> (Vec<f64>, Vec<([f64; 2], f64)>) {
         }
         pts.push(([p[0] + r[0], p[1] + r[1]], FRAC_1_SQRT_2));
         pts.push((r, 1.0));
-        knots.extend(if k + 1 < n { vec![q + 1.0; 2] } else { vec![q + 1.0; 3] });
+        knots.extend(if k + 1 < n {
+            vec![q + 1.0; 2]
+        } else {
+            vec![q + 1.0; 3]
+        });
     }
     (knots, pts)
 }
@@ -191,7 +209,13 @@ pub fn curve(c: &Curve, [t0, t1]: [f64; 2]) -> Option<(Curve, [f64; 2])> {
         Curve::Line { start, end } => {
             let (a, d) = (v3(*start), v3(*end) - v3(*start));
             let (p0, p1) = (a + d * t0, a + d * t1);
-            Some((Curve::Spline { knots: vec![t0, t0, t1, t1], points: vec![[p0.x, p0.y, p0.z], [p1.x, p1.y, p1.z]] }, [t0, t1]))
+            Some((
+                Curve::Spline {
+                    knots: vec![t0, t0, t1, t1],
+                    points: vec![[p0.x, p0.y, p0.z], [p1.x, p1.y, p1.z]],
+                },
+                [t0, t1],
+            ))
         }
         Curve::Circle { frame, radius } => conic(frame, [*radius; 2], [t0, t1]),
         Curve::Ellipse { frame, radii } => conic(frame, *radii, [t0, t1]),
@@ -203,8 +227,14 @@ fn conic(frame: &Frame, [rx, ry]: [f64; 2], t: [f64; 2]) -> Option<(Curve, [f64;
     let (o, x, y, _) = axes(frame)?;
     let grid = quarters(t, 0.0)?;
     let (knots, pts) = arcs(grid.0, grid.1);
-    let homogeneous = pts.iter().map(|([c, s], w)| hom(o + x * (rx * c) + y * (ry * s), *w)).collect();
-    Some((Curve::RationalSpline { knots, homogeneous }, params(t, grid)))
+    let homogeneous = pts
+        .iter()
+        .map(|([c, s], w)| hom(o + x * (rx * c) + y * (ry * s), *w))
+        .collect();
+    Some((
+        Curve::RationalSpline { knots, homogeneous },
+        params(t, grid),
+    ))
 }
 
 /// The NURBS form of a cylinder, cone, sphere or torus face over `domain` (in the label's
@@ -219,15 +249,39 @@ pub fn surface(s: &Surface, domain: [[f64; 2]; 2]) -> Option<(Surface, [[f64; 2]
 /// a sphere's meridian or a torus's tube.
 fn reaches(s: &Surface, v: [f64; 2], tolerance: f64) -> (f64, f64) {
     // The angle `tolerance` makes on a circle of `radius`.
-    let reach = |radius: f64| if tolerance > 0.0 && radius > 0.0 && radius.is_finite() { tolerance / radius } else { 0.0 };
+    let reach = |radius: f64| {
+        if tolerance > 0.0 && radius > 0.0 && radius.is_finite() {
+            tolerance / radius
+        } else {
+            0.0
+        }
+    };
     match s {
         Surface::Cylinder { radius, .. } => (reach(radius.abs()), 0.0),
-        Surface::Cone { radius_at_origin, half_angle, .. } => {
+        Surface::Cone {
+            radius_at_origin,
+            half_angle,
+            ..
+        } => {
             let slope = half_angle.tan();
-            (reach(v.iter().map(|h| (radius_at_origin + h * slope).abs()).fold(0.0, f64::max)), 0.0)
+            (
+                reach(
+                    v.iter()
+                        .map(|h| (radius_at_origin + h * slope).abs())
+                        .fold(0.0, f64::max),
+                ),
+                0.0,
+            )
         }
         Surface::Sphere { radius, .. } => (reach(radius.abs()), reach(radius.abs())),
-        Surface::Torus { major_radius, minor_radius, .. } => (reach(major_radius.abs() + minor_radius.abs()), reach(minor_radius.abs())),
+        Surface::Torus {
+            major_radius,
+            minor_radius,
+            ..
+        } => (
+            reach(major_radius.abs() + minor_radius.abs()),
+            reach(minor_radius.abs()),
+        ),
         _ => (0.0, 0.0),
     }
 }
@@ -240,7 +294,13 @@ fn reaches(s: &Surface, v: [f64; 2], tolerance: f64) -> (f64, f64) {
 /// face's seam, so the seam's second use lies off the form. [`turned`] puts its start on a quarter
 /// line. `None` for another surface.
 pub fn turn_quarters(s: &Surface, [u, v]: [[f64; 2]; 2], tolerance: f64) -> Option<usize> {
-    if !matches!(s, Surface::Cylinder { .. } | Surface::Cone { .. } | Surface::Sphere { .. } | Surface::Torus { .. }) {
+    if !matches!(
+        s,
+        Surface::Cylinder { .. }
+            | Surface::Cone { .. }
+            | Surface::Sphere { .. }
+            | Surface::Torus { .. }
+    ) {
         return None;
     }
     Some(quarters(u, reaches(s, v, tolerance).0)?.1)
@@ -255,17 +315,41 @@ pub fn turned(s: &Surface, angle: f64) -> Option<Surface> {
         let (sin, cos) = angle.sin_cos();
         let nx = x * cos + z.cross(x) * sin;
         let ny = z.cross(nx);
-        Some(Frame { origin: [o.x, o.y, o.z], x_axis: [nx.x, nx.y, nx.z], y_axis: [ny.x, ny.y, ny.z] })
+        Some(Frame {
+            origin: [o.x, o.y, o.z],
+            x_axis: [nx.x, nx.y, nx.z],
+            y_axis: [ny.x, ny.y, ny.z],
+        })
     };
     Some(match s {
-        Surface::Cylinder { frame, radius } => Surface::Cylinder { frame: turn(frame)?, radius: *radius },
-        Surface::Cone { frame, radius_at_origin, half_angle } => {
-            Surface::Cone { frame: turn(frame)?, radius_at_origin: *radius_at_origin, half_angle: *half_angle }
-        }
-        Surface::Sphere { frame, radius } => Surface::Sphere { frame: turn(frame)?, radius: *radius },
-        Surface::Torus { frame, major_radius, minor_radius, tube_start } => {
-            Surface::Torus { frame: turn(frame)?, major_radius: *major_radius, minor_radius: *minor_radius, tube_start: *tube_start }
-        }
+        Surface::Cylinder { frame, radius } => Surface::Cylinder {
+            frame: turn(frame)?,
+            radius: *radius,
+        },
+        Surface::Cone {
+            frame,
+            radius_at_origin,
+            half_angle,
+        } => Surface::Cone {
+            frame: turn(frame)?,
+            radius_at_origin: *radius_at_origin,
+            half_angle: *half_angle,
+        },
+        Surface::Sphere { frame, radius } => Surface::Sphere {
+            frame: turn(frame)?,
+            radius: *radius,
+        },
+        Surface::Torus {
+            frame,
+            major_radius,
+            minor_radius,
+            tube_start,
+        } => Surface::Torus {
+            frame: turn(frame)?,
+            major_radius: *major_radius,
+            minor_radius: *minor_radius,
+            tube_start: *tube_start,
+        },
         _ => return None,
     })
 }
@@ -279,17 +363,34 @@ pub fn tube_quarters(s: &Surface, [_, v]: [[f64; 2]; 2], tolerance: f64) -> Opti
     if !matches!(s, Surface::Torus { .. }) {
         return None;
     }
-    Some(face_quarters(v, reaches(s, v, tolerance).1)?.0.1)
+    Some(face_quarters(v, reaches(s, v, tolerance).1)?.0 .1)
 }
 
 /// A torus with its tube start moved on by `angle`: the same surface, its tube angle parameter
 /// `angle` less at every point. `None` for another surface.
 pub fn tube_turned(s: &Surface, angle: f64) -> Option<Surface> {
-    let Surface::Torus { frame, major_radius, minor_radius, tube_start } = s else { return None };
+    let Surface::Torus {
+        frame,
+        major_radius,
+        minor_radius,
+        tube_start,
+    } = s
+    else {
+        return None;
+    };
     // Kept within one turn either way, as a record's tube start is.
     let start = tube_start + angle;
-    let start = if start.abs() > TAU { start % TAU } else { start };
-    Some(Surface::Torus { frame: frame.clone(), major_radius: *major_radius, minor_radius: *minor_radius, tube_start: start })
+    let start = if start.abs() > TAU {
+        start % TAU
+    } else {
+        start
+    };
+    Some(Surface::Torus {
+        frame: frame.clone(),
+        major_radius: *major_radius,
+        minor_radius: *minor_radius,
+        tube_start: start,
+    })
 }
 
 /// [`surface`] for a face whose boundary lies within `tolerance` (mm) of its surface: where the
@@ -298,7 +399,11 @@ pub fn tube_turned(s: &Surface, angle: f64) -> Option<Surface> {
 /// boundary's points ([`extent`]), which may run past a quarter's end by as much as its edges lie
 /// off the surface; the form then covers no quarter for that alone (a torus face of half a tube
 /// would otherwise go round the whole tube).
-pub fn surface_within(s: &Surface, domain: [[f64; 2]; 2], tolerance: f64) -> Option<(Surface, [[f64; 2]; 2])> {
+pub fn surface_within(
+    s: &Surface,
+    domain: [[f64; 2]; 2],
+    tolerance: f64,
+) -> Option<(Surface, [[f64; 2]; 2])> {
     surface_on(s, domain, tolerance, false)
 }
 
@@ -311,19 +416,34 @@ pub fn surface_within(s: &Surface, domain: [[f64; 2]; 2], tolerance: f64) -> Opt
 /// form. Its circles' forms then no
 /// longer share its parameter, so its pcurves are not lines: Repair Part rebuilds a refused face
 /// on it and has SMLib make them.
-pub fn surface_on_own_arcs(s: &Surface, domain: [[f64; 2]; 2], tolerance: f64) -> Option<(Surface, [[f64; 2]; 2])> {
+pub fn surface_on_own_arcs(
+    s: &Surface,
+    domain: [[f64; 2]; 2],
+    tolerance: f64,
+) -> Option<(Surface, [[f64; 2]; 2])> {
     match s {
-        Surface::Cylinder { .. } | Surface::Cone { .. } | Surface::Sphere { .. } | Surface::Torus { .. } => surface_on(s, domain, tolerance, true),
+        Surface::Cylinder { .. }
+        | Surface::Cone { .. }
+        | Surface::Sphere { .. }
+        | Surface::Torus { .. } => surface_on(s, domain, tolerance, true),
         _ => None,
     }
 }
 
-fn surface_on(s: &Surface, [u, v]: [[f64; 2]; 2], tolerance: f64, own: bool) -> Option<(Surface, [[f64; 2]; 2])> {
+fn surface_on(
+    s: &Surface,
+    [u, v]: [[f64; 2]; 2],
+    tolerance: f64,
+    own: bool,
+) -> Option<(Surface, [[f64; 2]; 2])> {
     let (reach_u, reach_v) = reaches(s, v, tolerance);
     let ((u_knots, ring), fu) = face_arcs(u, reach_u, own)?;
     // The ring of arcs times a profile `(control, weight)` mapped to (radial, axial) about the
     // frame: a rational tensor product, its weights the products.
-    let net = |f: &Frame, profile: &[([f64; 2], f64)], at: &dyn Fn([f64; 2]) -> (f64, f64)| -> Option<Vec<Vec<[f64; 4]>>> {
+    let net = |f: &Frame,
+               profile: &[([f64; 2], f64)],
+               at: &dyn Fn([f64; 2]) -> (f64, f64)|
+     -> Option<Vec<Vec<[f64; 4]>>> {
         let (o, x, y, z) = axes(f)?;
         Some(
             ring.iter()
@@ -344,27 +464,75 @@ fn surface_on(s: &Surface, [u, v]: [[f64; 2]; 2], tolerance: f64, own: bool) -> 
     match s {
         Surface::Cylinder { frame, radius } => {
             let homogeneous = net(frame, &line, &|[h, _]| (*radius, h))?;
-            Some((Surface::RationalSpline { u_knots, v_knots: vec![v[0], v[0], v[1], v[1]], homogeneous }, [fu, v]))
+            Some((
+                Surface::RationalSpline {
+                    u_knots,
+                    v_knots: vec![v[0], v[0], v[1], v[1]],
+                    homogeneous,
+                },
+                [fu, v],
+            ))
         }
-        Surface::Cone { frame, radius_at_origin, half_angle } => {
+        Surface::Cone {
+            frame,
+            radius_at_origin,
+            half_angle,
+        } => {
             let slope = half_angle.tan();
             let homogeneous = net(frame, &line, &|[h, _]| (radius_at_origin + h * slope, h))?;
-            Some((Surface::RationalSpline { u_knots, v_knots: vec![v[0], v[0], v[1], v[1]], homogeneous }, [fu, v]))
+            Some((
+                Surface::RationalSpline {
+                    u_knots,
+                    v_knots: vec![v[0], v[0], v[1], v[1]],
+                    homogeneous,
+                },
+                [fu, v],
+            ))
         }
         Surface::Sphere { frame, radius } => {
             let vgrid = quarters(v, reach_v)?;
             let (v_knots, meridian) = arcs(vgrid.0, vgrid.1);
             let homogeneous = net(frame, &meridian, &|[c, s]| (radius * c, radius * s))?;
-            Some((Surface::RationalSpline { u_knots, v_knots, homogeneous }, [fu, params(v, vgrid)]))
+            Some((
+                Surface::RationalSpline {
+                    u_knots,
+                    v_knots,
+                    homogeneous,
+                },
+                [fu, params(v, vgrid)],
+            ))
         }
-        Surface::Torus { frame, major_radius, minor_radius, tube_start } => {
+        Surface::Torus {
+            frame,
+            major_radius,
+            minor_radius,
+            tube_start,
+        } => {
             let ((v_knots, tube), fv) = face_arcs(v, reach_v, own)?;
             // The tube's arcs turned on by its start (a rotation of the control points, exact).
             let (ts, tc) = tube_start.sin_cos();
-            let homogeneous = net(frame, &tube, &|[c, s]| (major_radius + minor_radius * (c * tc - s * ts), minor_radius * (s * tc + c * ts)))?;
-            Some((Surface::RationalSpline { u_knots, v_knots, homogeneous }, [fu, fv]))
+            let homogeneous = net(frame, &tube, &|[c, s]| {
+                (
+                    major_radius + minor_radius * (c * tc - s * ts),
+                    minor_radius * (s * tc + c * ts),
+                )
+            })?;
+            Some((
+                Surface::RationalSpline {
+                    u_knots,
+                    v_knots,
+                    homogeneous,
+                },
+                [fu, fv],
+            ))
         }
-        Surface::PlacedRevolution { profile, origin, axis, matrix, forward } => {
+        Surface::PlacedRevolution {
+            profile,
+            origin,
+            axis,
+            matrix,
+            forward,
+        } => {
             // The profile's control points turned about the axis on the quarter grid from angle
             // zero (the profile): (a + ib)(c + is) for each point's radial (a, b) in the frame and
             // each arc control point (c, s), weights multiplied; then the matrix.
@@ -393,10 +561,26 @@ fn surface_on(s: &Surface, [u, v]: [[f64; 2]; 2], tolerance: f64, own: bool) -> 
             if *forward {
                 // u the profile, v the angle: the net turned over.
                 let n = net.first()?.len();
-                let t: Vec<Vec<[f64; 4]>> = (0..n).map(|j| net.iter().filter_map(|r| r.get(j).copied()).collect()).collect();
-                Some((Surface::RationalSpline { u_knots: p_knots, v_knots: a_knots, homogeneous: t }, [fp, fa]))
+                let t: Vec<Vec<[f64; 4]>> = (0..n)
+                    .map(|j| net.iter().filter_map(|r| r.get(j).copied()).collect())
+                    .collect();
+                Some((
+                    Surface::RationalSpline {
+                        u_knots: p_knots,
+                        v_knots: a_knots,
+                        homogeneous: t,
+                    },
+                    [fp, fa],
+                ))
             } else {
-                Some((Surface::RationalSpline { u_knots: a_knots, v_knots: p_knots, homogeneous: net }, [fa, fp]))
+                Some((
+                    Surface::RationalSpline {
+                        u_knots: a_knots,
+                        v_knots: p_knots,
+                        homogeneous: net,
+                    },
+                    [fa, fp],
+                ))
             }
         }
         _ => None,
@@ -407,8 +591,15 @@ fn surface_on(s: &Surface, [u, v]: [[f64; 2]; 2], tolerance: f64, own: bool) -> 
 /// measured from `frame`'s x axis (its y axis taken so the circle keeps its own direction), and
 /// its interval shifted to match, so its form lies on `frame`'s quarter grid. `None` when the
 /// circle is not about `frame`'s axis (centre on it, normal along it, within `tol`).
-pub fn on_frame(c: &Curve, [t0, t1]: [f64; 2], frame: &Frame, tol: f64) -> Option<(Curve, [f64; 2])> {
-    let Curve::Circle { frame: own, radius } = c else { return None };
+pub fn on_frame(
+    c: &Curve,
+    [t0, t1]: [f64; 2],
+    frame: &Frame,
+    tol: f64,
+) -> Option<(Curve, [f64; 2])> {
+    let Curve::Circle { frame: own, radius } = c else {
+        return None;
+    };
     let (o, x, _, z) = axes(own)?;
     let (fo, fx, _, fz) = axes(frame)?;
     let d = o - fo;
@@ -418,8 +609,18 @@ pub fn on_frame(c: &Curve, [t0, t1]: [f64; 2], frame: &Frame, tol: f64) -> Optio
     let nx = (fx - z * fx.dot(z)).normalized()?;
     let ny = z.cross(nx);
     let shift = x.dot(ny).atan2(x.dot(nx));
-    let relabel = Frame { origin: [o.x, o.y, o.z], x_axis: [nx.x, nx.y, nx.z], y_axis: [ny.x, ny.y, ny.z] };
-    Some((Curve::Circle { frame: relabel, radius: *radius }, [t0 + shift, t1 + shift]))
+    let relabel = Frame {
+        origin: [o.x, o.y, o.z],
+        x_axis: [nx.x, nx.y, nx.z],
+        y_axis: [ny.x, ny.y, ny.z],
+    };
+    Some((
+        Curve::Circle {
+            frame: relabel,
+            radius: *radius,
+        },
+        [t0 + shift, t1 + shift],
+    ))
 }
 
 /// A circle edge round a torus's tube (in a plane through the axis, centred on the ring, of the
@@ -427,8 +628,22 @@ pub fn on_frame(c: &Curve, [t0, t1]: [f64; 2], frame: &Frame, tol: f64) -> Optio
 /// at the torus's tube start (its y axis taken so the circle keeps its own direction), and its
 /// interval shifted to match, so its form lies on the torus's quarter grid along the tube. `None`
 /// for another circle or surface.
-pub fn on_tube(c: &Curve, [t0, t1]: [f64; 2], torus: &Surface, tol: f64) -> Option<(Curve, [f64; 2])> {
-    let (Curve::Circle { frame: own, radius }, Surface::Torus { frame, major_radius, minor_radius, tube_start }) = (c, torus) else {
+pub fn on_tube(
+    c: &Curve,
+    [t0, t1]: [f64; 2],
+    torus: &Surface,
+    tol: f64,
+) -> Option<(Curve, [f64; 2])> {
+    let (
+        Curve::Circle { frame: own, radius },
+        Surface::Torus {
+            frame,
+            major_radius,
+            minor_radius,
+            tube_start,
+        },
+    ) = (c, torus)
+    else {
         return None;
     };
     let (o, x, _, z) = axes(own)?;
@@ -437,24 +652,48 @@ pub fn on_tube(c: &Curve, [t0, t1]: [f64; 2], torus: &Surface, tol: f64) -> Opti
     let d = o - fo;
     let radial = (d - fz * d.dot(fz)).normalized()?;
     let on_ring = (o - (fo + radial * *major_radius)).len() <= tol;
-    if !(on_ring && (radius - minor_radius).abs() <= tol && z.dot(fz).abs() <= 1e-9 && z.dot(radial).abs() <= 1e-9) {
+    if !(on_ring
+        && (radius - minor_radius).abs() <= tol
+        && z.dot(fz).abs() <= 1e-9
+        && z.dot(radial).abs() <= 1e-9)
+    {
         return None;
     }
     let (s, cs) = tube_start.sin_cos();
     let nx = (radial * cs + fz * s).normalized()?;
     let ny = z.cross(nx);
     let shift = x.dot(ny).atan2(x.dot(nx));
-    let relabel = Frame { origin: [o.x, o.y, o.z], x_axis: [nx.x, nx.y, nx.z], y_axis: [ny.x, ny.y, ny.z] };
-    Some((Curve::Circle { frame: relabel, radius: *radius }, [t0 + shift, t1 + shift]))
+    let relabel = Frame {
+        origin: [o.x, o.y, o.z],
+        x_axis: [nx.x, nx.y, nx.z],
+        y_axis: [ny.x, ny.y, ny.z],
+    };
+    Some((
+        Curve::Circle {
+            frame: relabel,
+            radius: *radius,
+        },
+        [t0 + shift, t1 + shift],
+    ))
 }
 
 /// Whether a circle round a torus's tube that is about `frame`'s axis (within `tol`) has one
 /// quarter grid on both: its angle from `frame` ([`on_frame`]) and from the tube start
 /// ([`on_tube`]) differ by whole quarters to rounding, so its form and both faces' lie on one
 /// grid. `None` when it is not such a circle.
-pub fn tube_on_grid(c: &Curve, interval: [f64; 2], frame: &Frame, torus: &Surface, tol: f64) -> Option<bool> {
-    let (Curve::Circle { frame: a, .. }, _) = on_frame(c, interval, frame, tol)? else { return None };
-    let (Curve::Circle { frame: b, .. }, _) = on_tube(c, interval, torus, tol)? else { return None };
+pub fn tube_on_grid(
+    c: &Curve,
+    interval: [f64; 2],
+    frame: &Frame,
+    torus: &Surface,
+    tol: f64,
+) -> Option<bool> {
+    let (Curve::Circle { frame: a, .. }, _) = on_frame(c, interval, frame, tol)? else {
+        return None;
+    };
+    let (Curve::Circle { frame: b, .. }, _) = on_tube(c, interval, torus, tol)? else {
+        return None;
+    };
     let (_, ax, _, _) = axes(&a)?;
     let (_, bx, by, _) = axes(&b)?;
     let turn = ax.dot(by).atan2(ax.dot(bx));
@@ -466,15 +705,26 @@ pub fn tube_on_grid(c: &Curve, interval: [f64; 2], frame: &Frame, torus: &Surfac
 /// zero at its profile: [`revolution_frame`]); `None` for another surface.
 pub fn frame_of(s: &Surface) -> Option<Frame> {
     match s {
-        Surface::Cylinder { frame, .. } | Surface::Cone { frame, .. } | Surface::Sphere { frame, .. } | Surface::Torus { frame, .. } => {
-            Some(frame.clone())
-        }
-        Surface::PlacedRevolution { profile, origin, axis, matrix, .. } => {
+        Surface::Cylinder { frame, .. }
+        | Surface::Cone { frame, .. }
+        | Surface::Sphere { frame, .. }
+        | Surface::Torus { frame, .. } => Some(frame.clone()),
+        Surface::PlacedRevolution {
+            profile,
+            origin,
+            axis,
+            matrix,
+            ..
+        } => {
             let (_, h) = profile_nurbs(profile, None)?;
             let (o, x, y, _) = revolution_frame(&h, *origin, *axis)?;
             let m = |p: Vec3| affine(matrix, p);
             let (mo, mx, my) = (m(o), m(o + x) - m(o), m(o + y) - m(o));
-            Some(Frame { origin: [mo.x, mo.y, mo.z], x_axis: [mx.x, mx.y, mx.z], y_axis: [my.x, my.y, my.z] })
+            Some(Frame {
+                origin: [mo.x, mo.y, mo.z],
+                x_axis: [mx.x, mx.y, mx.z],
+                y_axis: [my.x, my.y, my.z],
+            })
         }
         _ => None,
     }
@@ -484,7 +734,11 @@ pub fn frame_of(s: &Surface) -> Option<Frame> {
 fn affine(matrix: &[[f64; 4]; 4], p: Vec3) -> Vec3 {
     let [c0, c1, c2, c3] = matrix;
     let row = |[a, b, c, d]: [f64; 4]| a * p.x + b * p.y + c * p.z + d;
-    Vec3::new(row([c0[0], c1[0], c2[0], c3[0]]), row([c0[1], c1[1], c2[1], c3[1]]), row([c0[2], c1[2], c2[2], c3[2]]))
+    Vec3::new(
+        row([c0[0], c1[0], c2[0], c3[0]]),
+        row([c0[1], c1[1], c2[1], c3[1]]),
+        row([c0[2], c1[2], c2[2], c3[2]]),
+    )
 }
 
 /// A revolution's profile as a NURBS: its knots and homogeneous control points (a B-spline or
@@ -499,7 +753,10 @@ fn profile_nurbs(profile: &Curve, range: Option<[f64; 2]>) -> Option<(Vec<f64>, 
         }
     };
     match c {
-        Curve::Spline { knots, points } => Some((knots.clone(), points.iter().map(|p| [p[0], p[1], p[2], 1.0]).collect())),
+        Curve::Spline { knots, points } => Some((
+            knots.clone(),
+            points.iter().map(|p| [p[0], p[1], p[2], 1.0]).collect(),
+        )),
         Curve::RationalSpline { knots, homogeneous } => Some((knots.clone(), homogeneous.clone())),
         _ => None,
     }
@@ -507,12 +764,20 @@ fn profile_nurbs(profile: &Curve, range: Option<[f64; 2]>) -> Option<(Vec<f64>, 
 
 /// A revolution's frame: the origin and unit axis, x the radial direction of the profile's
 /// first control point off the axis (angle zero), y = axis × x.
-fn revolution_frame(h: &[[f64; 4]], origin: [f64; 3], axis: [f64; 3]) -> Option<(Vec3, Vec3, Vec3, Vec3)> {
+fn revolution_frame(
+    h: &[[f64; 4]],
+    origin: [f64; 3],
+    axis: [f64; 3],
+) -> Option<(Vec3, Vec3, Vec3, Vec3)> {
     let (o, k) = (v3(origin), v3(axis).normalized()?);
     let x = h.iter().find_map(|h| {
         let d = Vec3::new(h[0] / h[3], h[1] / h[3], h[2] / h[3]) - o;
         let r = d - k * d.dot(k);
-        if r.len() > 1e-12 * (1.0 + d.len()) { r.normalized() } else { None }
+        if r.len() > 1e-12 * (1.0 + d.len()) {
+            r.normalized()
+        } else {
+            None
+        }
     })?;
     Some((o, x, k.cross(x), k))
 }
@@ -615,10 +880,15 @@ pub fn extent(label: &Surface, loops: &[Vec<(&Curve, [f64; 2], bool)>]) -> Optio
                 }
                 Some(q)
             };
-            let mut samples: Vec<(f64, [f64; 2], [bool; 2], usize)> = Vec::with_capacity(EXTENT_POINTS + 1);
+            let mut samples: Vec<(f64, [f64; 2], [bool; 2], usize)> =
+                Vec::with_capacity(EXTENT_POINTS + 1);
             for k in 0..=EXTENT_POINTS {
                 let f = k as f64 / EXTENT_POINTS as f64;
-                let t = if *forward { t0 * (1.0 - f) + t1 * f } else { t1 * (1.0 - f) + t0 * f };
+                let t = if *forward {
+                    t0 * (1.0 - f) + t1 * f
+                } else {
+                    t1 * (1.0 - f) + t0 * f
+                };
                 let q = at(t, prev)?;
                 // At a pole the collapsed parameter is anything: it bounds nothing.
                 let pole = eval.pole(q);
@@ -642,13 +912,22 @@ pub fn extent(label: &Surface, loops: &[Vec<(&Curve, [f64; 2], bool)>]) -> Optio
             // A sample is a point of the boundary, not its extreme: each sample higher (or lower)
             // than its neighbours brackets an extreme of the edge, which is found there.
             for k in 0..samples.len() {
-                let Some(&(_, q, pole, passed)) = samples.get(k) else { continue };
-                let (Some(a), Some(b)) = (samples.get(k.saturating_sub(1)), samples.get((k + 1).min(samples.len() - 1))) else { continue };
+                let Some(&(_, q, pole, passed)) = samples.get(k) else {
+                    continue;
+                };
+                let (Some(a), Some(b)) = (
+                    samples.get(k.saturating_sub(1)),
+                    samples.get((k + 1).min(samples.len() - 1)),
+                ) else {
+                    continue;
+                };
                 let (a, b) = (a.0, b.0);
                 for d in 0..2 {
                     // Next to a pole the parameter it collapses is no function of the point: a
                     // meridian's angle there is rounding, not an extreme.
-                    let near_pole = |j: Option<usize>| j.and_then(|j| samples.get(j)).is_some_and(|s| ix(&s.2, d));
+                    let near_pole = |j: Option<usize>| {
+                        j.and_then(|j| samples.get(j)).is_some_and(|s| ix(&s.2, d))
+                    };
                     if ix(&pole, d) || near_pole(k.checked_sub(1)) || near_pole(Some(k + 1)) {
                         continue;
                     }
@@ -657,12 +936,14 @@ pub fn extent(label: &Surface, loops: &[Vec<(&Curve, [f64; 2], bool)>]) -> Optio
                     for sign in [1.0, -1.0] {
                         // Not lower than either neighbour and higher than one (a level run, a
                         // seam's constant angle, has no extreme between its samples).
-                        let higher = |x: Option<f64>| x.is_none_or(|x| sign * ix(&q, d) >= sign * x);
+                        let higher =
+                            |x: Option<f64>| x.is_none_or(|x| sign * ix(&q, d) >= sign * x);
                         let above = |x: Option<f64>| x.is_some_and(|x| sign * ix(&q, d) > sign * x);
                         if !(higher(before) && higher(after) && (above(before) || above(after))) {
                             continue;
                         }
-                        let f = |t: f64| at(t, Some(q)).map_or(f64::NEG_INFINITY, |p| sign * ix(&p, d));
+                        let f =
+                            |t: f64| at(t, Some(q)).map_or(f64::NEG_INFINITY, |p| sign * ix(&p, d));
                         let x = sign * golden_max(&f, a.min(b), a.max(b));
                         bounds.push((passed, d, x));
                     }
@@ -677,7 +958,9 @@ pub fn extent(label: &Surface, loops: &[Vec<(&Curve, [f64; 2], bool)>]) -> Optio
         let last = prev;
         for d in 0..2 {
             let shift = match (period.get(d), first, last) {
-                (Some(Some(per)), Some(f), Some(e)) if crossings > 0 => -((ix(&e, d) - ix(&f, d)) / per).round() * per,
+                (Some(Some(per)), Some(f), Some(e)) if crossings > 0 => {
+                    -((ix(&e, d) - ix(&f, d)) / per).round() * per
+                }
                 _ => 0.0,
             };
             for &(passed, dd, x) in &bounds {
@@ -696,9 +979,17 @@ pub fn extent(label: &Surface, loops: &[Vec<(&Curve, [f64; 2], bool)>]) -> Optio
                 Some(Some(per)) if ix(&lo, d) <= ix(&hi, d) => {
                     // The whole periods around the ones that bring the loop's middle to the box's,
                     // the one giving the smallest box.
-                    let k = ((ix(&lo, d) + ix(&hi, d) - ix(&l_lo, d) - ix(&l_hi, d)) / (2.0 * per)).round();
-                    let span = |k: f64| ix(&hi, d).max(ix(&l_hi, d) + k * per) - ix(&lo, d).min(ix(&l_lo, d) + k * per);
-                    [k, k - 1.0, k + 1.0].into_iter().min_by(|a, b| span(*a).total_cmp(&span(*b))).unwrap_or(k) * per
+                    let k = ((ix(&lo, d) + ix(&hi, d) - ix(&l_lo, d) - ix(&l_hi, d)) / (2.0 * per))
+                        .round();
+                    let span = |k: f64| {
+                        ix(&hi, d).max(ix(&l_hi, d) + k * per)
+                            - ix(&lo, d).min(ix(&l_lo, d) + k * per)
+                    };
+                    [k, k - 1.0, k + 1.0]
+                        .into_iter()
+                        .min_by(|a, b| span(*a).total_cmp(&span(*b)))
+                        .unwrap_or(k)
+                        * per
                 }
                 _ => 0.0,
             };
@@ -710,7 +1001,11 @@ pub fn extent(label: &Surface, loops: &[Vec<(&Curve, [f64; 2], bool)>]) -> Optio
     // bounded by its seam alone) covers the whole turn from there.
     for d in 0..2 {
         if let Some(Some(per)) = period.get(d) {
-            *ixm(&mut hi, d) = if ix(&hi, d) - ix(&lo, d) <= 1e-9 * per { ix(&lo, d) + per } else { ix(&hi, d).min(ix(&lo, d) + per) };
+            *ixm(&mut hi, d) = if ix(&hi, d) - ix(&lo, d) <= 1e-9 * per {
+                ix(&lo, d) + per
+            } else {
+                ix(&hi, d).min(ix(&lo, d) + per)
+            };
         }
     }
     (lo[0] < hi[0] && lo[1] < hi[1]).then_some([[lo[0], hi[0]], [lo[1], hi[1]]])
@@ -719,11 +1014,19 @@ pub fn extent(label: &Surface, loops: &[Vec<(&Curve, [f64; 2], bool)>]) -> Optio
 /// Element `d` (0 or 1) of a pair.
 fn ix<T: Copy>(a: &[T; 2], d: usize) -> T {
     let [x, y] = *a;
-    if d == 0 { x } else { y }
+    if d == 0 {
+        x
+    } else {
+        y
+    }
 }
 
 /// Element `d` (0 or 1) of a pair, to write.
 fn ixm<T>(a: &mut [T; 2], d: usize) -> &mut T {
     let [x, y] = a;
-    if d == 0 { x } else { y }
+    if d == 0 {
+        x
+    } else {
+        y
+    }
 }

@@ -40,7 +40,11 @@ pub struct SectionJet {
 impl SectionJet {
     /// The three values in order: curvature, its change, the change's rate.
     pub fn values(&self) -> [f64; 3] {
-        [self.curvature, self.curvature_change, self.curvature_change_rate]
+        [
+            self.curvature,
+            self.curvature_change,
+            self.curvature_change_rate,
+        ]
     }
 }
 
@@ -51,7 +55,12 @@ pub fn normal_section(d: &Partials, normal: Vec3, direction: Vec3) -> Option<Sec
     let cut = direction.cross(normal);
     let (ru, rv) = (d[1][0], d[0][1]);
     // [ru·w  rv·w; ru·t  rv·t] [a; b] = rhs, solved by Cramer's rule.
-    let (m11, m12, m21, m22) = (ru.dot(direction), rv.dot(direction), ru.dot(cut), rv.dot(cut));
+    let (m11, m12, m21, m22) = (
+        ru.dot(direction),
+        rv.dot(direction),
+        ru.dot(cut),
+        rv.dot(cut),
+    );
     let det = m11 * m22 - m12 * m21;
     let scale = ru.len() * rv.len();
     if !(det.abs() > 1e-12 * scale && scale.is_finite()) {
@@ -72,7 +81,11 @@ pub fn normal_section(d: &Partials, normal: Vec3, direction: Vec3) -> Option<Sec
     let [_, _, h2, h3, h4] = height;
     let (curvature, change) = (2.0 * h2, 6.0 * h3);
     let rate = 24.0 * h4 - 3.0 * curvature.powi(3);
-    let jet = SectionJet { curvature, curvature_change: change, curvature_change_rate: rate };
+    let jet = SectionJet {
+        curvature,
+        curvature_change: change,
+        curvature_change_rate: rate,
+    };
     jet.values().iter().all(|x| x.is_finite()).then_some(jet)
 }
 
@@ -126,7 +139,11 @@ mod tests {
     use crate::eval::{Frame, Surface, SurfaceEval};
 
     fn frame() -> Frame {
-        Frame { origin: [1., 2., 3.], x_axis: [0., 1., 0.], y_axis: [0., 0., 1.] }
+        Frame {
+            origin: [1., 2., 3.],
+            x_axis: [0., 1., 0.],
+            y_axis: [0., 0., 1.],
+        }
     }
 
     fn jet(s: &Surface, uv: [f64; 2], along: impl Fn(Vec3, Vec3) -> Vec3) -> SectionJet {
@@ -145,19 +162,39 @@ mod tests {
     /// the outward normal), constant, in every direction.
     #[test]
     fn a_sphere_is_a_constant_curvature_every_way() {
-        let s = Surface::Sphere { frame: frame(), radius: 4.0 };
-        for along in [|u: Vec3, _: Vec3| u, |_: Vec3, v: Vec3| v, |u: Vec3, v: Vec3| (u + v).normalized().unwrap_or(u)] {
+        let s = Surface::Sphere {
+            frame: frame(),
+            radius: 4.0,
+        };
+        for along in [
+            |u: Vec3, _: Vec3| u,
+            |_: Vec3, v: Vec3| v,
+            |u: Vec3, v: Vec3| (u + v).normalized().unwrap_or(u),
+        ] {
             let j = jet(&s, [0.7, 0.3], along);
-            assert!(near(j.curvature, -0.25) && near(j.curvature_change, 0.0) && near(j.curvature_change_rate, 0.0), "{j:?}");
+            assert!(
+                near(j.curvature, -0.25)
+                    && near(j.curvature_change, 0.0)
+                    && near(j.curvature_change_rate, 0.0),
+                "{j:?}"
+            );
         }
     }
 
     /// A cylinder across its axis: a circle (-1/R, constant); along it: a straight line.
     #[test]
     fn a_cylinder_is_a_circle_across_and_a_line_along() {
-        let s = Surface::Cylinder { frame: frame(), radius: 5.0 };
+        let s = Surface::Cylinder {
+            frame: frame(),
+            radius: 5.0,
+        };
         let across = jet(&s, [1.1, 2.0], |u, _| u);
-        assert!(near(across.curvature, -0.2) && near(across.curvature_change, 0.0) && near(across.curvature_change_rate, 0.0), "{across:?}");
+        assert!(
+            near(across.curvature, -0.2)
+                && near(across.curvature_change, 0.0)
+                && near(across.curvature_change_rate, 0.0),
+            "{across:?}"
+        );
         let along = jet(&s, [1.1, 2.0], |_, v| v);
         assert!(along.values().iter().all(|x| x.abs() < 1e-12), "{along:?}");
     }
@@ -169,24 +206,42 @@ mod tests {
         let z = |x: f64| x.powi(3) / 6.0 + x.powi(4) / 12.0;
         // Monomial coefficients a0..a4 = [0, 0, 0, 1/6, 1/12]; Bézier b_i = Σ_k C(i,k)/C(4,k) a_k.
         let a = [0.0, 0.0, 0.0, 1.0 / 6.0, 1.0 / 12.0];
-        let c = |n: usize, k: usize| (1..=k).map(|i| (n + 1 - i) as f64 / i as f64).product::<f64>();
-        let b: Vec<f64> = (0..=4).map(|i| (0..=i).map(|k| c(i, k) / c(4, k) * a[k]).sum()).collect();
+        let c = |n: usize, k: usize| {
+            (1..=k)
+                .map(|i| (n + 1 - i) as f64 / i as f64)
+                .product::<f64>()
+        };
+        let b: Vec<f64> = (0..=4)
+            .map(|i| (0..=i).map(|k| c(i, k) / c(4, k) * a[k]).sum())
+            .collect();
         let mut points = Vec::new();
         for (i, bi) in b.iter().enumerate() {
             points.push(vec![[i as f64 / 4.0, 0.0, *bi], [i as f64 / 4.0, 1.0, *bi]]);
         }
-        let s = Surface::Spline { u_knots: vec![0., 0., 0., 0., 0., 1., 1., 1., 1., 1.], v_knots: vec![0., 0., 1., 1.], points };
+        let s = Surface::Spline {
+            u_knots: vec![0., 0., 0., 0., 0., 1., 1., 1., 1., 1.],
+            v_knots: vec![0., 0., 1., 1.],
+            points,
+        };
         let e = SurfaceEval::new(&s).unwrap();
         assert!(near(e.point([0.5, 0.5]).unwrap().z, z(0.5)));
         let d = e.partials(0.0, 0.5).unwrap();
         let j = normal_section(&d, Vec3::Z, Vec3::X).unwrap();
-        assert!(near(j.curvature, 0.0) && near(j.curvature_change, 1.0) && near(j.curvature_change_rate, 2.0), "{j:?}");
+        assert!(
+            near(j.curvature, 0.0)
+                && near(j.curvature_change, 1.0)
+                && near(j.curvature_change_rate, 2.0),
+            "{j:?}"
+        );
     }
 
     #[test]
     fn a_degenerate_point_has_no_section() {
         let mut d: Partials = [[Vec3::ZERO; 5]; 5];
         d[1][0] = Vec3::X;
-        assert!(normal_section(&d, Vec3::Z, Vec3::X).is_none(), "r_v is zero");
+        assert!(
+            normal_section(&d, Vec3::Z, Vec3::X).is_none(),
+            "r_v is zero"
+        );
     }
 }

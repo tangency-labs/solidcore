@@ -506,7 +506,9 @@ fn univariate_first<const N: usize>(
     let knt = KnotVector::new(uk, m)?;
     let ku = knt.find_span(pu, t, side)?;
     let at = |i: usize| uk.get(i).copied();
-    let g = |a: &[[f64; N]; N], i: usize, j: usize| a.get(i).and_then(|r| r.get(j)).copied().unwrap_or(0.0);
+    let g = |a: &[[f64; N]; N], i: usize, j: usize| {
+        a.get(i).and_then(|r| r.get(j)).copied().unwrap_or(0.0)
+    };
     let put = |a: &mut [[f64; N]; N], i: usize, j: usize, v: f64| {
         if let Some(x) = a.get_mut(i).and_then(|r| r.get_mut(j)) {
             *x = v;
@@ -518,7 +520,10 @@ fn univariate_first<const N: usize>(
     let mut ndu = [[0.0_f64; N]; N];
     put(&mut ndu, 0, 0, 1.0);
     for j in 1..=pu {
-        let lo = (ku + 1).checked_sub(j).and_then(at).ok_or_else(|| oob(op))?;
+        let lo = (ku + 1)
+            .checked_sub(j)
+            .and_then(at)
+            .ok_or_else(|| oob(op))?;
         let hi = at(ku + j).ok_or_else(|| oob(op))?;
         if let (Some(l), Some(r)) = (left.get_mut(j), right.get_mut(j)) {
             *l = t - lo;
@@ -1143,9 +1148,18 @@ impl Surface {
                     .points
                     .get(first_u + i)
                     .zip(net.weights.get(first_u + i))
-                    .and_then(|(p, w)| Some((p.get(first_v..=first_v + qu)?, w.get(first_v..=first_v + qu)?)))
+                    .and_then(|(p, w)| {
+                        Some((
+                            p.get(first_v..=first_v + qu)?,
+                            w.get(first_v..=first_v + qu)?,
+                        ))
+                    })
                     .ok_or_else(|| oob(op))?;
-                for ((wij, pij), (p, wt)) in w_row.iter_mut().zip(p_row.iter_mut()).zip(points.iter().zip(weights)) {
+                for ((wij, pij), (p, wt)) in w_row
+                    .iter_mut()
+                    .zip(p_row.iter_mut())
+                    .zip(points.iter().zip(weights))
+                {
                     *wij = *wt;
                     *pij = *p;
                 }
@@ -1171,7 +1185,10 @@ impl Surface {
         };
         if no_w {
             for (i, p_row) in pe.iter().enumerate().take(pu + 1) {
-                let (a0, a1) = (du0.get(i).copied().unwrap_or(0.0), du1.get(i).copied().unwrap_or(0.0));
+                let (a0, a1) = (
+                    du0.get(i).copied().unwrap_or(0.0),
+                    du1.get(i).copied().unwrap_or(0.0),
+                );
                 for ((pt, b0), b1) in p_row.iter().zip(&dv0).zip(&dv1).take(qu + 1) {
                     let [[s00, s01], [s10, s11]] = &mut s;
                     add(s00, a0 * b0, *pt);
@@ -1210,8 +1227,13 @@ impl Surface {
             let t11 = pascal_entry(1, 1).ok_or_else(|| oob(bd_op))?;
             let (c0, c1, c2) = (t11 * d01, t11 * d10, t11 * d11);
             for (i, (w_row, p_row)) in w.iter().zip(&pe).enumerate().take(pu + 1) {
-                let (a0, a1) = (du0.get(i).copied().unwrap_or(0.0), du1.get(i).copied().unwrap_or(0.0));
-                for (((wnm, pt), b0), b1) in w_row.iter().zip(p_row).zip(&dv0).zip(&dv1).take(qu + 1) {
+                let (a0, a1) = (
+                    du0.get(i).copied().unwrap_or(0.0),
+                    du1.get(i).copied().unwrap_or(0.0),
+                );
+                for (((wnm, pt), b0), b1) in
+                    w_row.iter().zip(p_row).zip(&dv0).zip(&dv1).take(qu + 1)
+                {
                     // The rational basis function's derivatives, upstream's recurrence.
                     let r00 = (wnm * a0 * b0) * inv_w00;
                     let r01 = (wnm * a0 * b1 - c0 * r00) * inv_w00;
@@ -2659,11 +2681,24 @@ mod tests {
                                 let r = s.first_derivs_into(u, v, ufl, vfl, upper, &mut block);
                                 let net = s.euclid_net().unwrap();
                                 let mut by_net = [[Vec3::new(7.0, 7.0, 7.0); 2]; 2];
-                                let rn = s.first_derivs_net_into(Some(&net), u, v, ufl, vfl, upper, &mut by_net);
+                                let rn = s.first_derivs_net_into(
+                                    Some(&net),
+                                    u,
+                                    v,
+                                    ufl,
+                                    vfl,
+                                    upper,
+                                    &mut by_net,
+                                );
                                 assert_eq!(r.is_ok(), rn.is_ok());
                                 if r.is_ok() {
-                                    for (a, b) in block.iter().flatten().zip(by_net.iter().flatten()) {
-                                        assert_eq!([a.x.to_bits(), a.y.to_bits(), a.z.to_bits()], [b.x.to_bits(), b.y.to_bits(), b.z.to_bits()]);
+                                    for (a, b) in
+                                        block.iter().flatten().zip(by_net.iter().flatten())
+                                    {
+                                        assert_eq!(
+                                            [a.x.to_bits(), a.y.to_bits(), a.z.to_bits()],
+                                            [b.x.to_bits(), b.y.to_bits(), b.z.to_bits()]
+                                        );
                                     }
                                 }
                                 match full {

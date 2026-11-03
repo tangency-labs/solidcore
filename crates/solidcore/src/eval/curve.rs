@@ -72,19 +72,38 @@ impl CurveEval {
     /// The evaluator of `c`.
     pub fn new(c: &Curve) -> Result<Self, EvalError> {
         Ok(match c {
-            Curve::Line { start, end } => CurveEval::Line { start: v3(*start), end: v3(*end) },
-            Curve::Circle { frame, radius } => CurveEval::Conic { axes: Axes::new(frame), radii: [*radius; 2] },
-            Curve::Ellipse { frame, radii } => CurveEval::Conic { axes: Axes::new(frame), radii: *radii },
-            Curve::Polyline { points } => CurveEval::Polyline(points.iter().copied().map(v3).collect()),
-            Curve::Spline { knots, points } => spline(knots, points.iter().map(|p| [p[0], p[1], p[2], 1.0]).collect())?,
+            Curve::Line { start, end } => CurveEval::Line {
+                start: v3(*start),
+                end: v3(*end),
+            },
+            Curve::Circle { frame, radius } => CurveEval::Conic {
+                axes: Axes::new(frame),
+                radii: [*radius; 2],
+            },
+            Curve::Ellipse { frame, radii } => CurveEval::Conic {
+                axes: Axes::new(frame),
+                radii: *radii,
+            },
+            Curve::Polyline { points } => {
+                CurveEval::Polyline(points.iter().copied().map(v3).collect())
+            }
+            Curve::Spline { knots, points } => spline(
+                knots,
+                points.iter().map(|p| [p[0], p[1], p[2], 1.0]).collect(),
+            )?,
             Curve::RationalSpline { knots, homogeneous } => spline(knots, homogeneous.clone())?,
-            Curve::SurfaceIntersection { surfaces, leader, .. } => {
+            Curve::SurfaceIntersection {
+                surfaces, leader, ..
+            } => {
                 let leader = CurveEval::new(leader)?;
                 if !matches!(leader, CurveEval::Polyline(_) | CurveEval::Spline(_)) {
                     return Err(EvalError::Invalid("intersection leader".into()));
                 }
                 CurveEval::Intersection(Box::new(Intersection {
-                    surfaces: [SurfaceEval::new(&surfaces[0])?, SurfaceEval::new(&surfaces[1])?],
+                    surfaces: [
+                        SurfaceEval::new(&surfaces[0])?,
+                        SurfaceEval::new(&surfaces[1])?,
+                    ],
                     leader,
                 }))
             }
@@ -119,7 +138,10 @@ impl CurveEval {
             CurveEval::Line { start, end } => Some((*start + (*end - *start) * t, *end - *start)),
             CurveEval::Conic { axes: a, radii } => {
                 let (s, c) = t.sin_cos();
-                Some((a.o + a.x * (radii[0] * c) + a.y * (radii[1] * s), a.y * (radii[1] * c) - a.x * (radii[0] * s)))
+                Some((
+                    a.o + a.x * (radii[0] * c) + a.y * (radii[1] * s),
+                    a.y * (radii[1] * c) - a.x * (radii[0] * s),
+                ))
             }
             CurveEval::Polyline(_) | CurveEval::Spline(_) => self.leader(t),
             CurveEval::Intersection(_) => None,
@@ -137,11 +159,17 @@ impl CurveEval {
             return None;
         }
         let (point, d1, d2) = match self {
-            CurveEval::Line { start, end } => (*start + (*end - *start) * t, *end - *start, Vec3::ZERO),
+            CurveEval::Line { start, end } => {
+                (*start + (*end - *start) * t, *end - *start, Vec3::ZERO)
+            }
             CurveEval::Conic { axes: a, radii } => {
                 let (s, c) = t.sin_cos();
                 let (x, y) = (a.x * (radii[0] * c), a.y * (radii[1] * s));
-                (a.o + x + y, a.y * (radii[1] * c) - a.x * (radii[0] * s), -(x + y))
+                (
+                    a.o + x + y,
+                    a.y * (radii[1] * c) - a.x * (radii[0] * s),
+                    -(x + y),
+                )
             }
             CurveEval::Polyline(_) => {
                 let (p, d) = self.leader(t)?;
@@ -160,7 +188,11 @@ impl CurveEval {
         let tangent = d1 * (1.0 / speed2.sqrt());
         // κ N = (r'' − (r''·T) T) / |r'|²: the part of the acceleration across the curve.
         let curvature = (d2 - tangent * d2.dot(tangent)) * (1.0 / speed2);
-        let jet = CurveJet { point, tangent, curvature };
+        let jet = CurveJet {
+            point,
+            tangent,
+            curvature,
+        };
         jet.is_finite().then_some(jet)
     }
 
@@ -186,11 +218,18 @@ impl CurveEval {
 }
 
 fn spline(knots: &[f64], ctrl: Vec<[f64; 4]>) -> Result<CurveEval, EvalError> {
-    let degree = knots.len().checked_sub(ctrl.len() + 1).ok_or_else(|| EvalError::Invalid("spline degree".into()))?;
+    let degree = knots
+        .len()
+        .checked_sub(ctrl.len() + 1)
+        .ok_or_else(|| EvalError::Invalid("spline degree".into()))?;
     if !(1..=MAX_SPLINE_DEGREE).contains(&degree) {
         return Err(unsupported(format!("a spline curve of degree {degree}")));
     }
-    Ok(CurveEval::Spline(EvalCurve::new(degree, knots.to_vec(), ctrl)))
+    Ok(CurveEval::Spline(EvalCurve::new(
+        degree,
+        knots.to_vec(),
+        ctrl,
+    )))
 }
 
 impl Intersection {
@@ -221,7 +260,9 @@ impl Intersection {
             let d = s.partials(q[0], q[1])?;
             *foot = (d[1][0].cross(d[0][1]).normalized()?, Some(d));
         }
-        let [(n0, Some(d0)), (n1, Some(d1))] = feet else { return None };
+        let [(n0, Some(d0)), (n1, Some(d1))] = feet else {
+            return None;
+        };
         let mut tangent = n0.cross(n1).normalized()?;
         if tangent.dot(along) < 0.0 {
             tangent = -tangent;
@@ -235,7 +276,11 @@ impl Intersection {
             return None;
         }
         let (a, b) = ((k0 - c * k1) / det, (k1 - c * k0) / det);
-        let jet = CurveJet { point, tangent, curvature: n0 * a + n1 * b };
+        let jet = CurveJet {
+            point,
+            tangent,
+            curvature: n0 * a + n1 * b,
+        };
         jet.is_finite().then_some(jet)
     }
 
@@ -279,4 +324,3 @@ fn solve3(rows: [Vec3; 3], rhs: [f64; 3]) -> Option<Vec3> {
     let x = (bc * rhs[0] + ca * rhs[1] + ab * rhs[2]) * (1.0 / det);
     x.is_finite().then_some(x)
 }
-

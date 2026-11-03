@@ -187,7 +187,6 @@ pub enum Surface {
     },
 }
 
-
 /// A pcurve: a 2D B-spline in a surface's (u, v).
 #[derive(Clone, Debug, PartialEq)]
 pub enum Curve2 {
@@ -223,7 +222,13 @@ impl Curve2 {
     #[must_use]
     pub fn eval(&self, t: f64) -> Option<[f64; 2]> {
         let c = nl_curve2(self)?;
-        if !t.is_finite() || !basis_check(c.degree(), c.knots().len().checked_sub(c.degree() + 1)?, c.knots()) {
+        if !t.is_finite()
+            || !basis_check(
+                c.degree(),
+                c.knots().len().checked_sub(c.degree() + 1)?,
+                c.knots(),
+            )
+        {
             return None;
         }
         let p = c.eval(t, Side::Left).ok()?;

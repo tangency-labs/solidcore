@@ -100,10 +100,20 @@ fn rational(ctrl: &[[f64; 4]]) -> bool {
 /// NLib's 2D curve for a pcurve (`z` = `NL_NOZ`).
 pub(crate) fn nl_curve2(c: &Curve2) -> Option<NlCurve> {
     let (knots, pw): (&[f64], Vec<CPoint>) = match c {
-        Curve2::Spline { knots, points } => (knots, points.iter().map(|&[u, v]| CPoint::new(u, v, NOZ, NOW)).collect()),
-        Curve2::RationalSpline { knots, homogeneous } => {
-            (knots, homogeneous.iter().map(|&[u, v, w]| CPoint::new(u, v, NOZ, w)).collect())
-        }
+        Curve2::Spline { knots, points } => (
+            knots,
+            points
+                .iter()
+                .map(|&[u, v]| CPoint::new(u, v, NOZ, NOW))
+                .collect(),
+        ),
+        Curve2::RationalSpline { knots, homogeneous } => (
+            knots,
+            homogeneous
+                .iter()
+                .map(|&[u, v, w]| CPoint::new(u, v, NOZ, w))
+                .collect(),
+        ),
     };
     let p = knots.len().checked_sub(pw.len() + 1)?;
     if !basis_check(p, pw.len(), knots) {
@@ -131,10 +141,20 @@ impl EvalCurve {
         let nl = basis_check(degree, ctrl.len(), &knots)
             .then(|| {
                 let r = rational(&ctrl);
-                NlCurve::new(ctrl.iter().map(|h| cpoint(*h, r)).collect(), degree, knots.clone()).ok()
+                NlCurve::new(
+                    ctrl.iter().map(|h| cpoint(*h, r)).collect(),
+                    degree,
+                    knots.clone(),
+                )
+                .ok()
             })
             .flatten();
-        EvalCurve { degree, knots, ctrl, nl }
+        EvalCurve {
+            degree,
+            knots,
+            ctrl,
+            nl,
+        }
     }
 
     /// The degree.
@@ -158,7 +178,10 @@ impl EvalCurve {
     /// The active interval `[knots[degree], knots[count]]`.
     #[must_use]
     pub fn interval(&self) -> Option<(f64, f64)> {
-        Some((*self.knots.get(self.degree)?, *self.knots.get(self.ctrl.len())?))
+        Some((
+            *self.knots.get(self.degree)?,
+            *self.knots.get(self.ctrl.len())?,
+        ))
     }
 
     /// The point and derivatives up to `order` (at most [`MAX_PARTIAL_ORDER`]) at `t` from
@@ -286,7 +309,12 @@ impl EvalSurface {
     /// The rational tensor B-spline of `degree` on `knots` over `count` control points
     /// (`ctrl[j·count[0] + i]`, homogeneous), with whether it closes on itself.
     #[must_use]
-    pub fn nurbs(degree: [usize; 2], knots: [Vec<f64>; 2], count: [usize; 2], ctrl: Vec<[f64; 4]>) -> EvalSurface {
+    pub fn nurbs(
+        degree: [usize; 2],
+        knots: [Vec<f64>; 2],
+        count: [usize; 2],
+        ctrl: Vec<[f64; 4]>,
+    ) -> EvalSurface {
         let closed = uv::closed(degree, &knots, count, &ctrl);
         Self::nurbs_closed(degree, knots, count, ctrl, closed)
     }
@@ -295,22 +323,42 @@ impl EvalSurface {
     /// [`super::uv::closed`] finds it): a net moved rigidly or by an affine map keeps that of
     /// the net it was moved from, without walking the net again.
     #[must_use]
-    pub fn nurbs_closed(degree: [usize; 2], knots: [Vec<f64>; 2], count: [usize; 2], ctrl: Vec<[f64; 4]>, closed: [bool; 2]) -> EvalSurface {
+    pub fn nurbs_closed(
+        degree: [usize; 2],
+        knots: [Vec<f64>; 2],
+        count: [usize; 2],
+        ctrl: Vec<[f64; 4]>,
+        closed: [bool; 2],
+    ) -> EvalSurface {
         let [pu, pv] = degree;
         let [nu, nv] = count;
-        let ok = basis_check(pu, nu, &knots[0]) && basis_check(pv, nv, &knots[1]) && nu.checked_mul(nv) == Some(ctrl.len());
+        let ok = basis_check(pu, nu, &knots[0])
+            && basis_check(pv, nv, &knots[1])
+            && nu.checked_mul(nv) == Some(ctrl.len());
         let nl = ok
             .then(|| {
                 let r = rational(&ctrl);
                 // NLib's net: rows along u, `net[i][j]`.
-                let net: Option<Vec<Vec<CPoint>>> =
-                    (0..nu).map(|i| (0..nv).map(|j| ctrl.get(j * nu + i).map(|h| cpoint(*h, r))).collect()).collect();
+                let net: Option<Vec<Vec<CPoint>>> = (0..nu)
+                    .map(|i| {
+                        (0..nv)
+                            .map(|j| ctrl.get(j * nu + i).map(|h| cpoint(*h, r)))
+                            .collect()
+                    })
+                    .collect();
                 let nl = NlSurface::new(net?, pu, pv, knots[0].clone(), knots[1].clone()).ok()?;
                 let euclid = nl.euclid_net().ok()?;
                 Some((nl, euclid))
             })
             .flatten();
-        EvalSurface::Nurbs(Box::new(Nurbs { degree, knots, count, ctrl, closed, nl }))
+        EvalSurface::Nurbs(Box::new(Nurbs {
+            degree,
+            knots,
+            count,
+            ctrl,
+            closed,
+            nl,
+        }))
     }
 
     /// Point and unit normal (`S_u × S_v`, oriented as the surface) at `(u, v)`. At a
@@ -322,7 +370,10 @@ impl EvalSurface {
         let unevaluable = || EvalError::Unevaluable(format!("the surface at ({u}, {v})"));
         let (p, du, dv) = self.derivs(u, v).ok_or_else(unevaluable)?;
         let n = self.oriented(du.cross(dv));
-        if let Some(n) = n.normalized().filter(|_| n.len2() > 1e-20 * (du.len2() * dv.len2()).max(1e-300)) {
+        if let Some(n) = n
+            .normalized()
+            .filter(|_| n.len2() > 1e-20 * (du.len2() * dv.len2()).max(1e-300))
+        {
             return Ok((p, n));
         }
         // The limit at the pole, by NLib's rule (N_SrfEvalPtNormalAtPole): where S_u vanishes,
@@ -336,7 +387,10 @@ impl EvalSurface {
         } else {
             (if at_end(0, u) { -du } else { du }).cross(suv)
         };
-        let n = self.oriented(m).normalized().ok_or_else(|| EvalError::Degenerate(format!("no normal at the pole ({u}, {v})")))?;
+        let n = self
+            .oriented(m)
+            .normalized()
+            .ok_or_else(|| EvalError::Degenerate(format!("no normal at the pole ({u}, {v})")))?;
         Ok((p, n))
     }
 
@@ -346,8 +400,13 @@ impl EvalSurface {
     pub fn interval(&self, d: usize) -> Option<(f64, f64)> {
         match self {
             EvalSurface::Plane { .. } => None,
-            EvalSurface::Nurbs(n) => Some((*n.knots.get(d)?.get(*n.degree.get(d)?)?, *n.knots.get(d)?.get(*n.count.get(d)?)?)),
-            EvalSurface::Revolved { profile, swap, .. } => (d == usize::from(*swap)).then(|| profile.interval()).flatten(),
+            EvalSurface::Nurbs(n) => Some((
+                *n.knots.get(d)?.get(*n.degree.get(d)?)?,
+                *n.knots.get(d)?.get(*n.count.get(d)?)?,
+            )),
+            EvalSurface::Revolved { profile, swap, .. } => (d == usize::from(*swap))
+                .then(|| profile.interval())
+                .flatten(),
         }
     }
 
@@ -375,7 +434,9 @@ impl EvalSurface {
             }
             return out;
         }
-        let EvalSurface::Nurbs(n) = self else { return uv };
+        let EvalSurface::Nurbs(n) = self else {
+            return uv;
+        };
         let mut out = uv;
         for (d, (x, shut)) in out.iter_mut().zip(n.closed).enumerate() {
             if let (true, Some(r)) = (shut, self.interval(d)) {
@@ -400,22 +461,34 @@ impl EvalSurface {
                 let [u, v] = self.wrap([u, v]);
                 let mut d = [[Vec3::ZERO; 2]; 2];
                 let (nl, euclid) = n.nl.as_ref()?;
-                nl.first_derivs_net_into(Some(euclid), u, v, Side::Left, Side::Left, true, &mut d).ok()?;
+                nl.first_derivs_net_into(Some(euclid), u, v, Side::Left, Side::Left, true, &mut d)
+                    .ok()?;
                 let [[p, sv], [su, _]] = d;
                 (p.is_finite() && su.is_finite() && sv.is_finite()).then_some((p, su, sv))
             }
-            EvalSurface::Revolved { profile, origin, axis, transform, swap } => {
+            EvalSurface::Revolved {
+                profile,
+                origin,
+                axis,
+                transform,
+                swap,
+            } => {
                 let [u, v] = self.wrap([u, v]);
                 let (s, a) = if *swap { (v, u) } else { (u, v) };
                 let (c, dc) = profile.eval(s)?;
                 let (sin, cos) = a.sin_cos();
-                let rot = |x: Vec3| x * cos + axis.cross(x) * sin + *axis * (axis.dot(x) * (1.0 - cos));
+                let rot =
+                    |x: Vec3| x * cos + axis.cross(x) * sin + *axis * (axis.dot(x) * (1.0 - cos));
                 let r = c - *origin;
                 let p = *origin + rot(r);
                 let ds = rot(dc);
                 // d/dθ of the rotated point: axis × (rotated radius).
                 let da = axis.cross(rot(r));
-                let (p, ds, da) = (affine(transform, p), linear(transform, ds), linear(transform, da));
+                let (p, ds, da) = (
+                    affine(transform, p),
+                    linear(transform, ds),
+                    linear(transform, da),
+                );
                 Some(if *swap { (p, da, ds) } else { (p, ds, da) })
             }
         }
@@ -431,8 +504,17 @@ impl EvalSurface {
             EvalSurface::Plane { .. } => Some((Vec3::ZERO, Vec3::ZERO, Vec3::ZERO)),
             EvalSurface::Nurbs(n) => {
                 let [u, v] = n.onto_knots(self.wrap([u, v]))?;
-                let d = n.nl.as_ref()?.0.derivs(u, v, Side::Left, Side::Left, true, 2, 2).ok()?;
-                let at = |i: usize, j: usize| d.get(i).and_then(|r| r.get(j)).copied().filter(|x| x.is_finite());
+                let d =
+                    n.nl.as_ref()?
+                        .0
+                        .derivs(u, v, Side::Left, Side::Left, true, 2, 2)
+                        .ok()?;
+                let at = |i: usize, j: usize| {
+                    d.get(i)
+                        .and_then(|r| r.get(j))
+                        .copied()
+                        .filter(|x| x.is_finite())
+                };
                 Some((at(2, 0)?, at(1, 1)?, at(0, 2)?))
             }
             EvalSurface::Revolved { .. } => {
@@ -461,19 +543,45 @@ impl EvalSurface {
             }),
             EvalSurface::Nurbs(n) => {
                 let [u, v] = n.onto_knots(self.wrap([u, v]))?;
-                let d = n.nl.as_ref()?.0.derivs(u, v, Side::Left, Side::Left, true, MAX_PARTIAL_ORDER, MAX_PARTIAL_ORDER).ok()?;
+                let d =
+                    n.nl.as_ref()?
+                        .0
+                        .derivs(
+                            u,
+                            v,
+                            Side::Left,
+                            Side::Left,
+                            true,
+                            MAX_PARTIAL_ORDER,
+                            MAX_PARTIAL_ORDER,
+                        )
+                        .ok()?;
                 tabulate(|i, j| d.get(i)?.get(j).copied())
             }
-            EvalSurface::Revolved { profile, origin, axis, transform, swap } => {
+            EvalSurface::Revolved {
+                profile,
+                origin,
+                axis,
+                transform,
+                swap,
+            } => {
                 let [u, v] = self.wrap([u, v]);
                 let (s, a) = if *swap { (v, u) } else { (u, v) };
                 let c = profile.derivatives(s, MAX_PARTIAL_ORDER)?;
                 let turned = |i: usize, j: usize| -> Option<Vec3> {
                     // The profile's i-th derivative (its point taken about the axis), turned by
                     // the j-th derivative of the rotation.
-                    let x = if i == 0 { *c.first()? - *origin } else { *c.get(i)? };
+                    let x = if i == 0 {
+                        *c.first()? - *origin
+                    } else {
+                        *c.get(i)?
+                    };
                     let r = rotation_derivative(*axis, x, a, j);
-                    Some(if i == 0 && j == 0 { affine(transform, *origin + r) } else { linear(transform, r) })
+                    Some(if i == 0 && j == 0 {
+                        affine(transform, *origin + r)
+                    } else {
+                        linear(transform, r)
+                    })
                 };
                 tabulate(|i, j| if *swap { turned(j, i) } else { turned(i, j) })
             }
@@ -502,6 +610,7 @@ pub(crate) fn linear(m: &[[f64; 4]; 3], v: Vec3) -> Vec3 {
 }
 
 fn det3(m: &[[f64; 4]; 3]) -> f64 {
-    m[0][0] * (m[1][1] * m[2][2] - m[1][2] * m[2][1]) - m[0][1] * (m[1][0] * m[2][2] - m[1][2] * m[2][0])
+    m[0][0] * (m[1][1] * m[2][2] - m[1][2] * m[2][1])
+        - m[0][1] * (m[1][0] * m[2][2] - m[1][2] * m[2][0])
         + m[0][2] * (m[1][0] * m[2][1] - m[1][1] * m[2][0])
 }

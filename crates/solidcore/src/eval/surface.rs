@@ -8,7 +8,10 @@
 #![allow(clippy::neg_cmp_op_on_partial_ord)] // NaN-refusing tests
 
 use super::geometry::{Curve2, Frame, Surface};
-use super::spline::{tabulate, trig_derivative, EvalCurve, EvalSurface, Partials, MAX_EVAL_KNOTS, MAX_EVAL_POINTS, MAX_SPLINE_DEGREE};
+use super::spline::{
+    tabulate, trig_derivative, EvalCurve, EvalSurface, Partials, MAX_EVAL_KNOTS, MAX_EVAL_POINTS,
+    MAX_SPLINE_DEGREE,
+};
 use super::uv::{self, Domain};
 use super::vec::{v3, VecExt};
 use super::{CurveEval, EvalError};
@@ -36,7 +39,12 @@ impl Axes {
     #[must_use]
     pub fn new(f: &Frame) -> Self {
         let (x, y) = (v3(f.x_axis), v3(f.y_axis));
-        Axes { o: v3(f.origin), x, y, z: x.cross(y) }
+        Axes {
+            o: v3(f.origin),
+            x,
+            y,
+            z: x.cross(y),
+        }
     }
     /// `p` in the frame: (x, y, z) coordinates.
     #[must_use]
@@ -57,7 +65,11 @@ fn angle(a: f64, b: f64, near: Option<f64>) -> f64 {
         return near.unwrap_or(0.0);
     }
     let u = b.atan2(a);
-    if u < 0.0 { u + TAU } else { u }
+    if u < 0.0 {
+        u + TAU
+    } else {
+        u
+    }
 }
 
 /// A surface ready to evaluate.
@@ -110,42 +122,111 @@ impl SurfaceEval {
             Ok(SurfaceEval::Eval(e, dom))
         };
         match s {
-            Surface::Plane { origin, u_axis, v_axis } => eval(EvalSurface::Plane { origin: v3(*origin), du: v3(*u_axis), dv: v3(*v_axis) }),
-            Surface::PlaneThrough { origin, u_point, v_point } => {
+            Surface::Plane {
+                origin,
+                u_axis,
+                v_axis,
+            } => eval(EvalSurface::Plane {
+                origin: v3(*origin),
+                du: v3(*u_axis),
+                dv: v3(*v_axis),
+            }),
+            Surface::PlaneThrough {
+                origin,
+                u_point,
+                v_point,
+            } => {
                 let o = v3(*origin);
-                eval(EvalSurface::Plane { origin: o, du: v3(*u_point) - o, dv: v3(*v_point) - o })
+                eval(EvalSurface::Plane {
+                    origin: o,
+                    du: v3(*u_point) - o,
+                    dv: v3(*v_point) - o,
+                })
             }
-            Surface::Cylinder { frame, radius } => Ok(SurfaceEval::Cylinder { axes: Axes::new(frame), radius: *radius }),
-            Surface::Cone { frame, radius_at_origin, half_angle } => {
-                Ok(SurfaceEval::Cone { axes: Axes::new(frame), radius_at_origin: *radius_at_origin, slope: half_angle.tan() })
-            }
-            Surface::Sphere { frame, radius } => Ok(SurfaceEval::Sphere { axes: Axes::new(frame), radius: *radius }),
-            Surface::Torus { frame, major_radius, minor_radius, tube_start } => {
-                Ok(SurfaceEval::Torus { axes: Axes::new(frame), major: *major_radius, minor: *minor_radius, tube: *tube_start })
-            }
+            Surface::Cylinder { frame, radius } => Ok(SurfaceEval::Cylinder {
+                axes: Axes::new(frame),
+                radius: *radius,
+            }),
+            Surface::Cone {
+                frame,
+                radius_at_origin,
+                half_angle,
+            } => Ok(SurfaceEval::Cone {
+                axes: Axes::new(frame),
+                radius_at_origin: *radius_at_origin,
+                slope: half_angle.tan(),
+            }),
+            Surface::Sphere { frame, radius } => Ok(SurfaceEval::Sphere {
+                axes: Axes::new(frame),
+                radius: *radius,
+            }),
+            Surface::Torus {
+                frame,
+                major_radius,
+                minor_radius,
+                tube_start,
+            } => Ok(SurfaceEval::Torus {
+                axes: Axes::new(frame),
+                major: *major_radius,
+                minor: *minor_radius,
+                tube: *tube_start,
+            }),
             // A label with no (u, v) of its own: its face evaluates its NURBS form.
-            Surface::BallPatch { .. } => Err(unsupported("a ball patch's label (evaluate its NURBS form)")),
-            Surface::Spline { u_knots, v_knots, points } => {
-                let rows: Vec<Vec<[f64; 4]>> = points.iter().map(|r| r.iter().map(|p| [p[0], p[1], p[2], 1.0]).collect()).collect();
+            Surface::BallPatch { .. } => Err(unsupported(
+                "a ball patch's label (evaluate its NURBS form)",
+            )),
+            Surface::Spline {
+                u_knots,
+                v_knots,
+                points,
+            } => {
+                let rows: Vec<Vec<[f64; 4]>> = points
+                    .iter()
+                    .map(|r| r.iter().map(|p| [p[0], p[1], p[2], 1.0]).collect())
+                    .collect();
                 eval(nurbs(u_knots, v_knots, &rows)?)
             }
-            Surface::RationalSpline { u_knots, v_knots, homogeneous } => eval(nurbs(u_knots, v_knots, homogeneous)?),
-            Surface::PlacedRevolution { profile, origin, axis, matrix, forward } => {
+            Surface::RationalSpline {
+                u_knots,
+                v_knots,
+                homogeneous,
+            } => eval(nurbs(u_knots, v_knots, homogeneous)?),
+            Surface::PlacedRevolution {
+                profile,
+                origin,
+                axis,
+                matrix,
+                forward,
+            } => {
                 let profile = match CurveEval::new(profile)? {
                     CurveEval::Spline(c) => c,
-                    CurveEval::Line { start, end } => {
-                        EvalCurve::new(1, vec![0.0, 0.0, 1.0, 1.0], vec![[start.x, start.y, start.z, 1.0], [end.x, end.y, end.z, 1.0]])
+                    CurveEval::Line { start, end } => EvalCurve::new(
+                        1,
+                        vec![0.0, 0.0, 1.0, 1.0],
+                        vec![[start.x, start.y, start.z, 1.0], [end.x, end.y, end.z, 1.0]],
+                    ),
+                    _ => {
+                        return Err(unsupported(
+                            "a revolution of a conic, polyline or intersection profile",
+                        ));
                     }
-                    _ => return Err(unsupported("a revolution of a conic, polyline or intersection profile")),
                 };
-                let axis = v3(*axis).normalized().ok_or_else(|| EvalError::Invalid("revolution axis".into()))?;
+                let axis = v3(*axis)
+                    .normalized()
+                    .ok_or_else(|| EvalError::Invalid("revolution axis".into()))?;
                 // Column-major: matrix[column][row].
                 let [c0, c1, c2, c3] = *matrix;
                 let transform = [0, 1, 2].map(|r| {
                     let at = |c: [f64; 4]| c.get(r).copied().unwrap_or(0.0);
                     [at(c0), at(c1), at(c2), at(c3)]
                 });
-                eval(EvalSurface::Revolved { profile, origin: v3(*origin), axis, transform, swap: !forward })
+                eval(EvalSurface::Revolved {
+                    profile,
+                    origin: v3(*origin),
+                    axis,
+                    transform,
+                    swap: !forward,
+                })
             }
         }
     }
@@ -160,7 +241,10 @@ impl SurfaceEval {
             SurfaceEval::Sphere { .. } => (turn, (Some((-FRAC_PI_2, FRAC_PI_2)), None)),
             SurfaceEval::Torus { .. } => (turn, turn),
         };
-        Domain { range: [ru, rv], period: [pu, pv] }
+        Domain {
+            range: [ru, rv],
+            period: [pu, pv],
+        }
     }
 
     /// Point and first partial derivatives at (u, v).
@@ -174,7 +258,11 @@ impl SurfaceEval {
                 let (r, dr) = a.radial(u);
                 (a.o + a.z * v + r * *radius, dr * *radius, a.z)
             }
-            SurfaceEval::Cone { axes: a, radius_at_origin, slope } => {
+            SurfaceEval::Cone {
+                axes: a,
+                radius_at_origin,
+                slope,
+            } => {
                 let (r, dr) = a.radial(u);
                 let rv = radius_at_origin + v * slope;
                 (a.o + a.z * v + r * rv, dr * rv, a.z + r * *slope)
@@ -182,13 +270,26 @@ impl SurfaceEval {
             SurfaceEval::Sphere { axes: a, radius } => {
                 let (r, dr) = a.radial(u);
                 let (s, c) = v.sin_cos();
-                (a.o + (r * c + a.z * s) * *radius, dr * (c * radius), (a.z * c - r * s) * *radius)
+                (
+                    a.o + (r * c + a.z * s) * *radius,
+                    dr * (c * radius),
+                    (a.z * c - r * s) * *radius,
+                )
             }
-            SurfaceEval::Torus { axes: a, major, minor, tube } => {
+            SurfaceEval::Torus {
+                axes: a,
+                major,
+                minor,
+                tube,
+            } => {
                 let (r, dr) = a.radial(u);
                 let (s, c) = (v + tube).sin_cos();
                 let ring = major + minor * c;
-                (a.o + r * ring + a.z * (minor * s), dr * ring, (a.z * c - r * s) * *minor)
+                (
+                    a.o + r * ring + a.z * (minor * s),
+                    dr * ring,
+                    (a.z * c - r * s) * *minor,
+                )
             }
         })
     }
@@ -208,20 +309,39 @@ impl SurfaceEval {
         }
         Some(match self {
             SurfaceEval::Eval(e, _) => return e.second(u, v),
-            SurfaceEval::Cylinder { axes: a, radius } => (a.radial(u).0 * -*radius, Vec3::ZERO, Vec3::ZERO),
-            SurfaceEval::Cone { axes: a, radius_at_origin, slope } => {
+            SurfaceEval::Cylinder { axes: a, radius } => {
+                (a.radial(u).0 * -*radius, Vec3::ZERO, Vec3::ZERO)
+            }
+            SurfaceEval::Cone {
+                axes: a,
+                radius_at_origin,
+                slope,
+            } => {
                 let (r, dr) = a.radial(u);
                 (r * -(radius_at_origin + v * slope), dr * *slope, Vec3::ZERO)
             }
             SurfaceEval::Sphere { axes: a, radius } => {
                 let (r, dr) = a.radial(u);
                 let (s, c) = v.sin_cos();
-                (r * (-c * radius), dr * (-s * radius), (r * c + a.z * s) * -*radius)
+                (
+                    r * (-c * radius),
+                    dr * (-s * radius),
+                    (r * c + a.z * s) * -*radius,
+                )
             }
-            SurfaceEval::Torus { axes: a, major, minor, tube } => {
+            SurfaceEval::Torus {
+                axes: a,
+                major,
+                minor,
+                tube,
+            } => {
                 let (r, dr) = a.radial(u);
                 let (s, c) = (v + tube).sin_cos();
-                (r * -(major + minor * c), dr * (-s * minor), (r * c + a.z * s) * -*minor)
+                (
+                    r * -(major + minor * c),
+                    dr * (-s * minor),
+                    (r * c + a.z * s) * -*minor,
+                )
             }
         })
     }
@@ -239,7 +359,8 @@ impl SurfaceEval {
             a.x * c + a.y * s
         };
         let at_v = |k: usize| trig_derivative(v, k);
-        let lift = |a: &Axes, i: usize, j: usize, x: Vec3| if i == 0 && j == 0 { a.o + x } else { x };
+        let lift =
+            |a: &Axes, i: usize, j: usize, x: Vec3| if i == 0 && j == 0 { a.o + x } else { x };
         match self {
             SurfaceEval::Eval(e, _) => e.partials(u, v),
             SurfaceEval::Cylinder { axes: a, radius } => tabulate(|i, j| {
@@ -248,12 +369,23 @@ impl SurfaceEval {
                     1 if i == 0 => a.z,
                     _ => Vec3::ZERO,
                 };
-                let ring = if j == 0 { radial(a, i) * *radius } else { Vec3::ZERO };
+                let ring = if j == 0 {
+                    radial(a, i) * *radius
+                } else {
+                    Vec3::ZERO
+                };
                 Some(lift(a, i, j, ring + height))
             }),
-            SurfaceEval::Cone { axes: a, radius_at_origin, slope } => tabulate(|i, j| {
+            SurfaceEval::Cone {
+                axes: a,
+                radius_at_origin,
+                slope,
+            } => tabulate(|i, j| {
                 let (height, rv) = match j {
-                    0 => (if i == 0 { a.z * v } else { Vec3::ZERO }, radius_at_origin + v * slope),
+                    0 => (
+                        if i == 0 { a.z * v } else { Vec3::ZERO },
+                        radius_at_origin + v * slope,
+                    ),
                     1 => (if i == 0 { a.z } else { Vec3::ZERO }, *slope),
                     _ => (Vec3::ZERO, 0.0),
                 };
@@ -264,10 +396,19 @@ impl SurfaceEval {
                 let pole = if i == 0 { a.z * s } else { Vec3::ZERO };
                 Some(lift(a, i, j, (radial(a, i) * c + pole) * *radius))
             }),
-            SurfaceEval::Torus { axes: a, major, minor, tube } => tabulate(|i, j| {
+            SurfaceEval::Torus {
+                axes: a,
+                major,
+                minor,
+                tube,
+            } => tabulate(|i, j| {
                 let (c, s) = trig_derivative(v + tube, j);
                 let ring = if j == 0 { major + minor * c } else { minor * c };
-                let tube = if i == 0 { a.z * (minor * s) } else { Vec3::ZERO };
+                let tube = if i == 0 {
+                    a.z * (minor * s)
+                } else {
+                    Vec3::ZERO
+                };
                 Some(lift(a, i, j, radial(a, i) * ring + tube))
             }),
         }
@@ -281,34 +422,52 @@ impl SurfaceEval {
 
     /// [`SurfaceEval::project`] with the search grid of a spline or revolution kept in `starts`
     /// ([`uv::project_with`]), which must serve this surface only.
-    pub fn project_with(&self, starts: &uv::Starts, p: Vec3, near: Option<[f64; 2]>, accept: f64) -> Option<[f64; 2]> {
+    pub fn project_with(
+        &self,
+        starts: &uv::Starts,
+        p: Vec3,
+        near: Option<[f64; 2]>,
+        accept: f64,
+    ) -> Option<[f64; 2]> {
         let q = match self {
             SurfaceEval::Eval(e, dom) => return uv::project_with(e, dom, starts, p, near, accept),
             SurfaceEval::Cylinder { axes, .. } => {
                 let [a, b, h] = axes.local(p);
                 [angle(a, b, near.map(|n| n[0])), h]
             }
-            SurfaceEval::Cone { axes, radius_at_origin, slope } => {
+            SurfaceEval::Cone {
+                axes,
+                radius_at_origin,
+                slope,
+            } => {
                 // The nearest point of the generator line through p's half-plane.
                 let [a, b, h] = axes.local(p);
-                [angle(a, b, near.map(|n| n[0])), ((a.hypot(b) - radius_at_origin) * slope + h) / (1.0 + slope * slope)]
+                [
+                    angle(a, b, near.map(|n| n[0])),
+                    ((a.hypot(b) - radius_at_origin) * slope + h) / (1.0 + slope * slope),
+                ]
             }
             SurfaceEval::Sphere { axes, .. } => {
                 let [a, b, h] = axes.local(p);
                 [angle(a, b, near.map(|n| n[0])), h.atan2(a.hypot(b))]
             }
-            SurfaceEval::Torus { axes, major, tube, .. } => {
+            SurfaceEval::Torus {
+                axes, major, tube, ..
+            } => {
                 let [a, b, h] = axes.local(p);
                 let v = (h.atan2(a.hypot(b) - major) - tube).rem_euclid(TAU);
                 [angle(a, b, near.map(|n| n[0])), v]
             }
         };
-        (q[0].is_finite() && q[1].is_finite() && self.point(q).is_some_and(|s| s.dist(p) <= accept)).then_some(q)
+        (q[0].is_finite() && q[1].is_finite() && self.point(q).is_some_and(|s| s.dist(p) <= accept))
+            .then_some(q)
     }
 
     /// Whether moving along each direction at `uv` leaves the point where it is (a pole).
     pub fn pole(&self, uv: [f64; 2]) -> [bool; 2] {
-        let Some((_, su, sv)) = self.derivs(uv[0], uv[1]) else { return [false; 2] };
+        let Some((_, su, sv)) = self.derivs(uv[0], uv[1]) else {
+            return [false; 2];
+        };
         let (a, b) = (su.len(), sv.len());
         [a <= 1e-9 * b.max(1e-12), b <= 1e-9 * a.max(1e-12)]
     }
@@ -317,29 +476,52 @@ impl SurfaceEval {
     /// period (or its whole range) moves the point no more than `reach` (a boundary point that
     /// lies at a pole to within a tolerance, where its periodic parameter is free).
     pub fn pole_within(&self, uv: [f64; 2], reach: f64) -> [bool; 2] {
-        let Some((_, su, sv)) = self.derivs(uv[0], uv[1]) else { return [false; 2] };
+        let Some((_, su, sv)) = self.derivs(uv[0], uv[1]) else {
+            return [false; 2];
+        };
         uv::collapsed([su.len(), sv.len()], &self.domain(), reach)
     }
 }
 
 /// A tensor spline's rows (`rows[i][j]`, i along u) as the evaluator's u-fastest array.
-fn nurbs(u_knots: &[f64], v_knots: &[f64], rows: &[Vec<[f64; 4]>]) -> Result<EvalSurface, EvalError> {
+fn nurbs(
+    u_knots: &[f64],
+    v_knots: &[f64],
+    rows: &[Vec<[f64; 4]>],
+) -> Result<EvalSurface, EvalError> {
     let (nu, nv) = (rows.len(), rows.first().map_or(0, Vec::len));
-    let degree = |k: &[f64], n: usize| k.len().checked_sub(n + 1).ok_or_else(|| EvalError::Invalid("spline degree".into()));
+    let degree = |k: &[f64], n: usize| {
+        k.len()
+            .checked_sub(n + 1)
+            .ok_or_else(|| EvalError::Invalid("spline degree".into()))
+    };
     let (pu, pv) = (degree(u_knots, nu)?, degree(v_knots, nv)?);
     if pu.max(pv) > MAX_SPLINE_DEGREE || pu.min(pv) == 0 {
-        return Err(unsupported(format!("a spline surface of degree ({pu}, {pv})")));
+        return Err(unsupported(format!(
+            "a spline surface of degree ({pu}, {pv})"
+        )));
     }
-    if u_knots.len().max(v_knots.len()) > MAX_EVAL_KNOTS || nu.saturating_mul(nv) > MAX_EVAL_POINTS {
-        return Err(EvalError::TooLarge(format!("a spline surface of {nu} × {nv} points")));
+    if u_knots.len().max(v_knots.len()) > MAX_EVAL_KNOTS || nu.saturating_mul(nv) > MAX_EVAL_POINTS
+    {
+        return Err(EvalError::TooLarge(format!(
+            "a spline surface of {nu} × {nv} points"
+        )));
     }
     let mut ctrl = Vec::with_capacity(nu * nv);
     for j in 0..nv {
         for row in rows {
-            ctrl.push(*row.get(j).ok_or_else(|| EvalError::Invalid("ragged surface".into()))?);
+            ctrl.push(
+                *row.get(j)
+                    .ok_or_else(|| EvalError::Invalid("ragged surface".into()))?,
+            );
         }
     }
-    Ok(EvalSurface::nurbs([pu, pv], [u_knots.to_vec(), v_knots.to_vec()], [nu, nv], ctrl))
+    Ok(EvalSurface::nurbs(
+        [pu, pv],
+        [u_knots.to_vec(), v_knots.to_vec()],
+        [nu, nv],
+        ctrl,
+    ))
 }
 
 /// Four-point Gauss–Legendre nodes and weights on `[−1, 1]`.
@@ -360,7 +542,12 @@ const FLUX_PANELS: usize = 4;
 /// shell's volume (`field = p / 3`) or a winding number, which only has to be right to well
 /// under a half: no geometry is made from it. Loops round a periodic direction need no seam
 /// edge, as a seam's two runs at constant u add nothing to `∮ G du`.
-pub fn face_flux(s: &SurfaceEval, v0: f64, loops: &[Vec<(&Curve2, bool)>], field: &dyn Fn(Vec3) -> Vec3) -> Option<f64> {
+pub fn face_flux(
+    s: &SurfaceEval,
+    v0: f64,
+    loops: &[Vec<(&Curve2, bool)>],
+    field: &dyn Fn(Vec3) -> Vec3,
+) -> Option<f64> {
     let g = |u: f64, v: f64| -> Option<f64> {
         let (mut sum, h) = (0.0, (v - v0) / FLUX_PANELS as f64);
         for panel in 0..FLUX_PANELS {
@@ -379,7 +566,11 @@ pub fn face_flux(s: &SurfaceEval, v0: f64, loops: &[Vec<(&Curve2, bool)>], field
         let at = |k: f64| {
             let f = k / FLUX_PIECES as f64;
             // Exactly the ends at f = 0 and 1, whatever the interval's rounding.
-            c.eval(if *forward { t0 * (1.0 - f) + t1 * f } else { t1 * (1.0 - f) + t0 * f })
+            c.eval(if *forward {
+                t0 * (1.0 - f) + t1 * f
+            } else {
+                t1 * (1.0 - f) + t0 * f
+            })
         };
         for k in 0..FLUX_PIECES {
             let (a, m, z) = (at(k as f64)?, at(k as f64 + 0.5)?, at(k as f64 + 1.0)?);
