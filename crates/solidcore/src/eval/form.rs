@@ -23,7 +23,7 @@
 
 use super::geometry::{Curve, Frame, Surface};
 use super::vec::VecExt;
-use super::{CurveEval, SurfaceEval};
+use super::{CurveEval, EvalError, SurfaceEval};
 use crate::math::Vec3;
 use std::f64::consts::{FRAC_1_SQRT_2, FRAC_PI_2, FRAC_PI_8, TAU};
 
@@ -851,7 +851,31 @@ fn golden_max(f: &dyn Fn(f64) -> f64, a: f64, b: f64) -> f64 {
 /// to the next, and each loop after the first a whole number of periods along where that keeps
 /// the box smallest. What the face's NURBS form ([`surface`]) is built over; no pcurve is
 /// involved.
-pub fn extent(label: &Surface, loops: &[Vec<(&Curve, [f64; 2], bool)>]) -> Option<[[f64; 2]; 2]> {
+///
+/// A boundary point is on a pole when the label is collapsed there within `reach` mm (the
+/// face's edge or vertex tolerance: a pole row an importer left coinciding only to its own
+/// tolerance is a pole too), and its collapsed parameter then bounds nothing. `Ok(None)` where
+/// the label or a boundary point has no parameters; the classifier's refusal is the error.
+pub fn extent(
+    label: &Surface,
+    loops: &[Vec<(&Curve, [f64; 2], bool)>],
+    reach: f64,
+) -> Result<Option<[[f64; 2]; 2]>, EvalError> {
+    let mut refused = None;
+    let out = extent_in(label, loops, reach, &mut refused);
+    match refused {
+        Some(e) => Err(e),
+        None => Ok(out),
+    }
+}
+
+/// [`extent`]'s body: the classifier's refusal goes to `refused`.
+fn extent_in(
+    label: &Surface,
+    loops: &[Vec<(&Curve, [f64; 2], bool)>],
+    reach: f64,
+    refused: &mut Option<EvalError>,
+) -> Option<[[f64; 2]; 2]> {
     let eval = SurfaceEval::new(label).ok()?;
     let period = eval.domain().period;
     let (mut lo, mut hi) = ([f64::INFINITY; 2], [f64::NEG_INFINITY; 2]);
@@ -891,7 +915,13 @@ pub fn extent(label: &Surface, loops: &[Vec<(&Curve, [f64; 2], bool)>]) -> Optio
                 };
                 let q = at(t, prev)?;
                 // At a pole the collapsed parameter is anything: it bounds nothing.
-                let pole = eval.pole(q).ok()?;
+                let pole = match eval.pole_within(q, reach) {
+                    Ok(p) => p,
+                    Err(e) => {
+                        *refused = Some(e);
+                        return None;
+                    }
+                };
                 if pole.iter().any(|p| *p) {
                     on_pole = first.is_some();
                 } else {

@@ -933,7 +933,9 @@ fn a_hole_beside_the_seam_lies_in_its_face_turn() {
         (&seam, [0., 1.], false),
     ];
     let inner = vec![(&hole, [0., 4.], true)];
-    let [u, v] = form::extent(&cylinder, &[outer, inner]).expect("an extent");
+    let [u, v] = form::extent(&cylinder, &[outer, inner], 1e-9)
+        .unwrap()
+        .expect("an extent");
     assert!((u[1] - u[0] - TAU).abs() < 1e-9, "one turn: {u:?}");
     assert!(
         (u[0].rem_euclid(TAU) - s.rem_euclid(TAU)).abs() < 1e-9,
@@ -981,7 +983,9 @@ fn a_loop_through_a_pole_closes_its_turn_from_the_seam() {
         (&seam, [0., FRAC_PI_2], false),
         (&rim, [FRAC_PI_2, TAU], false),
     ];
-    let [u, v] = form::extent(&sphere, &[outer]).expect("an extent");
+    let [u, v] = form::extent(&sphere, &[outer], 1e-9)
+        .unwrap()
+        .expect("an extent");
     assert!((u[1] - u[0] - TAU).abs() < 1e-9, "one turn: {u:?}");
     let from = u[0].rem_euclid(TAU);
     assert!(from.min(TAU - from) < 1e-9, "from the seam: {u:?}");
@@ -1012,8 +1016,9 @@ fn a_face_box_reaches_its_boundary_extremes() {
         },
         radii: [r * 2f64.sqrt(), r],
     };
-    let [_, v] =
-        form::extent(&cylinder, &[vec![(&cut, [0.1, 0.1 + TAU], true)]]).expect("an extent");
+    let [_, v] = form::extent(&cylinder, &[vec![(&cut, [0.1, 0.1 + TAU], true)]], 1e-9)
+        .unwrap()
+        .expect("an extent");
     assert!(
         (v[0] - 10.0).abs() < 1e-9 && (v[1] - 50.0).abs() < 1e-9,
         "{v:?}"
@@ -1085,5 +1090,133 @@ fn higher_derivatives_take_a_rounding_past_the_end_as_the_end() {
     assert!(
         s.derivs(1.0 + 1e-6, 0.5).is_some(),
         "first derivatives continue the end span"
+    );
+}
+
+/// The analytic forms' poles in closed form: a cone's apex (where its radius r0 + v tan(half
+/// angle) is zero) is collapsed along u; a horn torus (ring radius equal to the tube's) is
+/// collapsed along u where its ring radius major + minor cos(v + tube) reaches zero; neither is
+/// collapsed elsewhere.
+#[test]
+fn analytic_apexes_and_rings_of_radius_zero_are_poles() {
+    let cone = SurfaceEval::new(&Surface::Cone {
+        frame: a_frame(),
+        radius_at_origin: 2.0,
+        half_angle: -0.4,
+    })
+    .unwrap();
+    let apex = 2.0 / 0.4f64.tan();
+    assert_eq!(cone.collapse([0.7, apex], 0.0).unwrap(), Collapse::U);
+    assert_eq!(
+        cone.collapse([0.7, 0.5 * apex], 1e-6).unwrap(),
+        Collapse::Neither
+    );
+    let torus = SurfaceEval::new(&Surface::Torus {
+        frame: a_frame(),
+        major_radius: 3.0,
+        minor_radius: 3.0,
+        tube_start: 0.25,
+    })
+    .unwrap();
+    let inner = std::f64::consts::PI - 0.25;
+    assert_eq!(torus.collapse([1.1, inner], 0.0).unwrap(), Collapse::U);
+    assert_eq!(
+        torus.collapse([1.1, inner + 0.3], 1e-6).unwrap(),
+        Collapse::Neither
+    );
+}
+
+/// A hemisphere held as a rational spline (u one turn on four quarter arcs, v from the equator
+/// to the pole) whose pole row an importer left coinciding only to 1e-10 of its size, and a lune
+/// of it between the meridians at a quarter and a half turn, its loop starting at the pole. Given
+/// a reach (a tolerance) the row is a pole: the pole bounds nothing and the box is u in
+/// [¼, ½], v in [0, 1]. At no reach it is no pole, and the pole's projection (from no hint, its u
+/// anything) widens the box.
+#[test]
+fn an_imported_pole_row_is_a_pole_within_the_extents_reach() {
+    let r = 15.0f64;
+    let m = std::f64::consts::FRAC_1_SQRT_2;
+    let circle = [
+        ([1.0, 0.0], 1.0),
+        ([1.0, 1.0], m),
+        ([0.0, 1.0], 1.0),
+        ([-1.0, 1.0], m),
+        ([-1.0, 0.0], 1.0),
+        ([-1.0, -1.0], m),
+        ([0.0, -1.0], 1.0),
+        ([1.0, -1.0], m),
+        ([1.0, 0.0], 1.0),
+    ];
+    let quarter = [([1.0, 0.0], 1.0), ([1.0, 1.0], m), ([0.0, 1.0], 1.0)];
+    let homogeneous: Vec<Vec<[f64; 4]>> = circle
+        .iter()
+        .enumerate()
+        .map(|(i, ([cx, cy], wu))| {
+            quarter
+                .iter()
+                .enumerate()
+                .map(|(j, ([rho, z], wv))| {
+                    let w = wu * wv;
+                    // The pole row (j = 2) spread by ±1e-10 r in x, the seam's two ends alike.
+                    let spread = if j == 2 && i % 8 != 0 {
+                        if i % 2 == 0 {
+                            1e-10 * r
+                        } else {
+                            -1e-10 * r
+                        }
+                    } else {
+                        0.0
+                    };
+                    [
+                        w * (cx * rho * r + spread),
+                        w * (cy * rho * r),
+                        w * (z * r),
+                        w,
+                    ]
+                })
+                .collect()
+        })
+        .collect();
+    let label = Surface::RationalSpline {
+        u_knots: vec![
+            0.0, 0.0, 0.0, 0.25, 0.25, 0.5, 0.5, 0.75, 0.75, 1.0, 1.0, 1.0,
+        ],
+        v_knots: vec![0.0, 0.0, 0.0, 1.0, 1.0, 1.0],
+        homogeneous,
+    };
+    let meridian = |x: [f64; 3]| Curve::Circle {
+        frame: Frame {
+            origin: [0.; 3],
+            x_axis: x,
+            y_axis: [0., 0., 1.],
+        },
+        radius: r,
+    };
+    let (quarter_turn, half_turn) = (meridian([0., 1., 0.]), meridian([-1., 0., 0.]));
+    let rim = Curve::Circle {
+        frame: Frame {
+            origin: [0.; 3],
+            x_axis: [1., 0., 0.],
+            y_axis: [0., 1., 0.],
+        },
+        radius: r,
+    };
+    let lune = vec![
+        (&quarter_turn, [0., FRAC_PI_2], false),
+        (&rim, [FRAC_PI_2, std::f64::consts::PI], true),
+        (&half_turn, [0., FRAC_PI_2], true),
+    ];
+    let [u, v] = form::extent(&label, std::slice::from_ref(&lune), 1e-6)
+        .unwrap()
+        .expect("an extent");
+    assert!(
+        (u[0] - 0.25).abs() < 1e-9 && (u[1] - 0.5).abs() < 1e-9,
+        "a quarter turn: {u:?}"
+    );
+    assert!(v[0].abs() < 1e-9 && (v[1] - 1.0).abs() < 1e-9, "{v:?}");
+    let at_rounding = form::extent(&label, &[lune], 0.0).unwrap();
+    assert!(
+        at_rounding.is_none_or(|[u, _]| (u[0] - 0.25).abs() > 1e-6 || (u[1] - 0.5).abs() > 1e-6),
+        "at no reach the row is no pole: {at_rounding:?}"
     );
 }
