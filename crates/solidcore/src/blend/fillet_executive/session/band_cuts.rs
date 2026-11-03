@@ -568,25 +568,94 @@ fn section_breaks_through(
         }
     }
     meets.sort_by(|x, y| x.t.total_cmp(&y.t));
-    for pair in meets.windows(2) {
+    // the bounds of the section's pieces: its rails and the meets between them; piece `i`
+    // runs from `at[i]` to `at[i + 1]`, so meet `j` ends piece `j` and starts piece `j + 1`
+    let mut at = Vec::with_capacity(meets.len() + 2);
+    at.push(interval.min());
+    at.extend(meets.iter().map(|m| m.t));
+    at.push(interval.max());
+    let mut pieces = Pieces {
+        section: &section,
+        at: &at,
+        in_material: vec![None; at.len() - 1],
+        zone,
+    };
+    for (j, pair) in meets.windows(2).enumerate() {
         let [m0, m1] = pair else {
             continue;
         };
-        let (t0, t1) = (m0.t, m1.t);
         if !(m0.judged && m1.judged)
             || !(m0.inside || m1.inside)
             || (m0.reached && m1.reached)
-            || !(t1 - t0 > 0.0)
-        // one point, met on two faces
         {
             continue;
         }
-        let middle = section.evaluate_point(k, 0.5 * (t0 + t1))?;
-        if !point_in_material(k, body, middle, zone)? {
+        let piece = j + 1;
+        if pieces.in_material(k, body, piece)? != Some(false) {
+            continue; // in the material, or one point met on two faces
+        }
+        // the wall: the material beside the piece runs to a rail
+        if pieces.material_to_rail(k, body, (0..piece).rev())?
+            || pieces.material_to_rail(k, body, piece + 1..at.len() - 1)?
+        {
             return Ok(true); // a hollow behind a wall: the section breaks through
         }
     }
     Ok(false)
+}
+
+/// The pieces of a section between the points where it meets the part's boundary
+/// (`section_breaks_through`), each classified once, by its middle.
+struct Pieces<'a> {
+    /// The section.
+    section: &'a Curve,
+    /// The pieces' bounds, in the section's parameter.
+    at: &'a [f64],
+    /// Whether each piece lies in the material, once classified; `None` inside for a piece
+    /// of no length (one point, met on two faces).
+    in_material: Vec<Option<Option<bool>>>,
+    /// The body's zone tolerance.
+    zone: f64,
+}
+
+impl Pieces<'_> {
+    /// Whether piece `i` lies in the part's material; `None` for a piece of no length.
+    fn in_material(&mut self, k: &Kernel, body: &mut Brep, i: usize) -> Result<Option<bool>> {
+        if let Some(Some(known)) = self.in_material.get(i) {
+            return Ok(*known);
+        }
+        let (Some(&t0), Some(&t1)) = (self.at.get(i), self.at.get(i + 1)) else {
+            return Err(SolidError::null_pointer(OP));
+        };
+        let class = if t1 - t0 > 0.0 {
+            let middle = self.section.evaluate_point(k, 0.5 * (t0 + t1))?;
+            Some(point_in_material(k, body, middle, self.zone)?)
+        } else {
+            None
+        };
+        if let Some(slot) = self.in_material.get_mut(i) {
+            *slot = Some(class);
+        }
+        Ok(class)
+    }
+
+    /// Whether the pieces `run`, taken from a void piece out to a rail, all lie in the
+    /// material (a piece of no length does not interrupt them): the material beside the
+    /// void piece is the part the blend rounds, reaching the blended face at its rail, not
+    /// an island with void on both sides that the blend runs past and is trimmed to.
+    fn material_to_rail(
+        &mut self,
+        k: &Kernel,
+        body: &mut Brep,
+        run: impl Iterator<Item = usize>,
+    ) -> Result<bool> {
+        for i in run {
+            if self.in_material(k, body, i)? == Some(false) {
+                return Ok(false);
+            }
+        }
+        Ok(true)
+    }
 }
 
 /// Where a section meets the boundary of a face (`section_breaks_through`).
