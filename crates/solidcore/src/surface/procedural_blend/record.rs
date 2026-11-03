@@ -568,3 +568,189 @@ impl ExactRoundRecord {
         self.net.form.validate("net.form")
     }
 }
+
+/// A face of a blend corner's (#2488): its corner kind's definition and its net.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub enum CornerRecord {
+    /// A Swept turn's torus.
+    Swept(SweptCornerRecord),
+    /// An End's patch on its support face.
+    End(EndCornerRecord),
+    /// A Setback's fill patch.
+    Setback(SetbackCornerRecord),
+}
+
+/// A Swept turn (#2488): the end section of its two rounds revolved about the side edge,
+/// its net the exact torus.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct SweptCornerRecord {
+    /// The face both rounds meet, a plane.
+    pub common: SupportRecord,
+    /// A point of the side edge's line.
+    pub axis_point: [f64; 3],
+    /// The side edge's unit direction.
+    pub axis: [f64; 3],
+    /// The two rounds' balls' centres at the side vertex.
+    pub centres: [[f64; 3]; 2],
+    /// The balls' radius.
+    pub radius: f64,
+    /// The tolerance the construction decided the turn within.
+    pub tol: f64,
+    /// The net, the torus: its label and NURBS form.
+    pub net: SupportRecord,
+}
+
+/// An End's patch (#2488): its support face's surface and the patch's boundary, its net
+/// the support's surface.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct EndCornerRecord {
+    /// The support face's surface.
+    pub support: SupportRecord,
+    /// The patch's loop's curves.
+    pub boundary: Vec<NurbsCurveRecord>,
+    /// The net: its label and NURBS form.
+    pub net: SupportRecord,
+}
+
+/// A face's plane at a Setback, its normal out of the material.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+pub struct PlaneRecord {
+    /// A point of the plane.
+    pub point: [f64; 3],
+    /// Its unit normal.
+    pub normal: [f64; 3],
+}
+
+/// A round at a Setback as its fill reads it.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct SetbackRoundRecord {
+    /// Its surface: a NURBS form with its label, or a procedural blend.
+    pub surface: SupportRecord,
+    /// Whether its rails run along u (else along v).
+    pub along_u: bool,
+    /// The rail parameter of its end section.
+    pub end: f64,
+    /// Whether the corner lies at rail parameters above `end`.
+    pub corner_above: bool,
+}
+
+/// A Setback's fill patch (#2488): the fill's definition (the faces' planes, the rounds at
+/// their end sections, the rule's order and tolerance, the corner's convexity and its
+/// certified containment), the patch's index in the fill, and its net.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct SetbackCornerRecord {
+    /// The faces' planes.
+    pub faces: Vec<PlaneRecord>,
+    /// The rounds, one per face.
+    pub rounds: Vec<SetbackRoundRecord>,
+    /// The fill's order: 1 (G1) or 2 (G2).
+    pub order: u32,
+    /// The length the faces and the rounds' ends are matched to.
+    pub tol: f64,
+    /// Whether the corner's edges are convex.
+    pub convex: bool,
+    /// The most the fill stands past a face, certified (at most `tol`).
+    pub containment: f64,
+    /// The patch's index: setback patches first, then the interior parts.
+    pub patch: u32,
+    /// The net, the patch.
+    pub net: NurbsSurfaceRecord,
+}
+
+/// A support or net of a corner's: a NURBS form (corners' faces are not blends here).
+fn corner_surface(s: &SupportRecord, field: &'static str) -> Result<(), RecordError> {
+    match s {
+        SupportRecord::Nurbs { form, .. } => form.validate(field),
+        SupportRecord::Blend(_) => Err(refuse(field, "a corner's face is a NURBS form")),
+    }
+}
+
+impl CornerRecord {
+    /// The structural check: every curve and surface as their own checks, its numbers
+    /// finite, a positive radius and tolerance, a torus label on a Swept turn's net, a
+    /// bounded End.
+    ///
+    /// # Errors
+    ///
+    /// The first [`RecordError`] met.
+    pub fn validate(&self) -> Result<(), RecordError> {
+        match self {
+            Self::Swept(r) => {
+                corner_surface(&r.common, "common")?;
+                corner_surface(&r.net, "net")?;
+                if !matches!(
+                    r.net,
+                    SupportRecord::Nurbs {
+                        kind: SupportKindRecord::Torus,
+                        ..
+                    }
+                ) {
+                    return Err(refuse("net", "a swept turn's net is a torus"));
+                }
+                let [c0, c1] = r.centres;
+                if !points_finite(&[r.axis_point, r.axis, c0, c1])
+                    || !all_finite(&[r.radius, r.tol])
+                {
+                    return Err(refuse("swept", "a swept turn's numbers are finite"));
+                }
+                if !(r.radius > 0.0 && r.tol > 0.0) {
+                    return Err(refuse(
+                        "radius",
+                        "a swept turn's radius and tolerance are positive",
+                    ));
+                }
+                Ok(())
+            }
+            Self::End(r) => {
+                corner_surface(&r.support, "support")?;
+                corner_surface(&r.net, "net")?;
+                if r.boundary.is_empty() {
+                    return Err(refuse("boundary", "an end's patch is bounded"));
+                }
+                for c in &r.boundary {
+                    c.validate("boundary")?;
+                }
+                Ok(())
+            }
+            Self::Setback(r) => {
+                let n = r.rounds.len();
+                if n < 3 || r.faces.len() != n {
+                    return Err(refuse(
+                        "rounds",
+                        "a setback's fill has a round per face, three or more",
+                    ));
+                }
+                for round in &r.rounds {
+                    match &round.surface {
+                        SupportRecord::Nurbs { form, .. } => form.validate("rounds")?,
+                        SupportRecord::Blend(b) => b.validate()?,
+                    }
+                    if !round.end.is_finite() {
+                        return Err(refuse("rounds", "a round's end is finite"));
+                    }
+                }
+                for f in &r.faces {
+                    if !points_finite(&[f.point, f.normal]) {
+                        return Err(refuse("faces", "a face's plane is finite"));
+                    }
+                }
+                if !(r.order == 1 || r.order == 2) {
+                    return Err(refuse("order", "a setback's fill is G1 or G2"));
+                }
+                if !(r.tol.is_finite() && r.tol > 0.0 && r.containment.is_finite()) {
+                    return Err(refuse(
+                        "tol",
+                        "a setback's tolerance is finite and positive",
+                    ));
+                }
+                if (r.patch as usize) >= 2 * n {
+                    return Err(refuse(
+                        "patch",
+                        "a setback's fill has two patches per round",
+                    ));
+                }
+                r.net.validate("net")
+            }
+        }
+    }
+}

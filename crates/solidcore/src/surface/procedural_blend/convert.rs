@@ -12,14 +12,17 @@
 //! most [`BLEND_MAX_DEPTH`] deep, with an explicit depth refused past it.
 
 use super::chamfer::{ChamferDefinition, ChamferSize};
+use super::corner::{CornerDefinition, SetbackFill};
 use super::exact::{ExactClass, ExactRound};
 use super::record::{
-    BlendDefinitionRecord, ChamferRecord, ChamferSizeRecord, ClassInputsRecord, ExactClassRecord,
-    ExactNetKindRecord, ExactNetRecord, ExactRoundRecord, LeaderMapRecord, NurbsCurveRecord,
-    NurbsSurfaceRecord, ParameterMapRecord, ProceduralBlendRecord, RadiusRecord, SupportKindRecord,
-    SupportRecord,
+    BlendDefinitionRecord, ChamferRecord, ChamferSizeRecord, ClassInputsRecord, CornerRecord,
+    EndCornerRecord, ExactClassRecord, ExactNetKindRecord, ExactNetRecord, ExactRoundRecord,
+    LeaderMapRecord, NurbsCurveRecord, NurbsSurfaceRecord, ParameterMapRecord, PlaneRecord,
+    ProceduralBlendRecord, RadiusRecord, SetbackCornerRecord, SetbackRoundRecord,
+    SupportKindRecord, SupportRecord, SweptCornerRecord,
 };
 use super::{BlendDefinitionInput, BlendRef, ProceduralBlend, BLEND_MAX_DEPTH};
+use crate::blend::blend_setback::{Face, Round};
 use crate::blend::fillet_exact::{classify_supports, BlendSpine, ClassInputs};
 use crate::blend::fillet_section::section::GnSectionFsg;
 use crate::blend::fillet_section::station::as_b_spline;
@@ -29,6 +32,7 @@ use crate::kernel::Kernel;
 use crate::math::Point3;
 use crate::nurbs::b_spline_curve::BSplineCurve;
 use crate::nurbs::b_spline_surface::BSplineSurface;
+use crate::nurbs::b_spline_surface::SurfParamType;
 use crate::nurbs::crv_basic::Curve as NurbCurve;
 use crate::nurbs::knots::MAX_DEGREE;
 use crate::nurbs::math::{CPoint, NOW, NOZ};
@@ -614,4 +618,195 @@ fn chamfer_of(c: &ChamferRecord) -> Result<ChamferDefinition> {
         },
         c.wedge,
     )
+}
+
+const OP_CORNER_TO: &str = "surface::procedural_blend::convert::corner_to_record";
+const OP_CORNER_FROM: &str = "surface::procedural_blend::convert::corner_from_record";
+
+/// The record of a blend corner's face (#2488): its definition and its net (its analytic
+/// kind's label and its NURBS form), every number as the kernel stores it.
+///
+/// # Errors
+///
+/// `InvalidInput` for a surface that is not a corner's face; those of [`to_record`]'s
+/// supports and forms.
+pub fn corner_to_record(k: &Kernel, surface: &Surface) -> Result<CornerRecord> {
+    let Some(BlendRef::Corner { corner, net }) = surface.procedural_blend() else {
+        return Err(SolidError::invalid_input(
+            OP_CORNER_TO,
+            "the surface is not a corner's face",
+        ));
+    };
+    let xyz = |p: Point3| [p.x, p.y, p.z];
+    let face_net = || support_record(k, net, 1);
+    Ok(match corner {
+        CornerDefinition::Swept(d) => CornerRecord::Swept(SweptCornerRecord {
+            common: support_record(k, &d.common, 1)?,
+            axis_point: xyz(d.axis_point),
+            axis: xyz(d.axis),
+            centres: [xyz(d.centres[0]), xyz(d.centres[1])],
+            radius: d.radius,
+            tol: d.tol,
+            net: face_net()?,
+        }),
+        CornerDefinition::End(d) => CornerRecord::End(EndCornerRecord {
+            support: support_record(k, &d.support, 1)?,
+            boundary: d.boundary.iter().map(curve_record).collect::<Result<_>>()?,
+            net: face_net()?,
+        }),
+        CornerDefinition::Setback(d) => {
+            let fill = &*d.fill;
+            let Some(form) = as_b_spline(k, surface)? else {
+                return Err(SolidError::sm_err(OP_CORNER_TO));
+            };
+            CornerRecord::Setback(SetbackCornerRecord {
+                faces: fill
+                    .faces
+                    .iter()
+                    .map(|f| PlaneRecord {
+                        point: xyz(f.point),
+                        normal: xyz(f.normal),
+                    })
+                    .collect(),
+                rounds: fill
+                    .rounds
+                    .iter()
+                    .map(|r| {
+                        Ok(SetbackRoundRecord {
+                            surface: support_record(k, &r.surface, 1)?,
+                            along_u: r.along == SurfParamType::U,
+                            end: r.end,
+                            corner_above: r.corner_above,
+                        })
+                    })
+                    .collect::<Result<_>>()?,
+                order: to_u32(fill.order)?,
+                tol: fill.tol,
+                convex: fill.convex,
+                containment: fill.containment,
+                patch: to_u32(d.patch)?,
+                net: surface_record(&form)?,
+            })
+        }
+    })
+}
+
+/// A corner's face or support a record holds: its analytic surface derived from its NURBS
+/// form by its label (exact to rounding, the form as stored), or the form.
+fn corner_surface_of(k: &Kernel, s: &SupportRecord) -> Result<Surface> {
+    match s {
+        SupportRecord::Nurbs { kind, form } => {
+            let form = surface_of(form)?;
+            match kind_of(*kind) {
+                None => Ok(Surface::from(form)),
+                Some(kind) => {
+                    AnalyticSupport::derive(k, kind, &form).and_then(|a| a.build(k, form))
+                }
+            }
+        }
+        SupportRecord::Blend(_) => Err(SolidError::invalid_input(
+            OP_CORNER_FROM,
+            "a corner's face is a NURBS form",
+        )),
+    }
+}
+
+/// The corner's face a record holds: its net and supports derived from their forms by
+/// their labels, its definition as stored. The net is not checked against the definition:
+/// [`corner_rebuild`] does that.
+///
+/// # Errors
+///
+/// `InvalidInput` for a record its structural check refuses ([`CornerRecord::validate`])
+/// or a form not of its label's kind; those of making the supports, curves and net.
+pub fn corner_from_record(k: &Kernel, rec: &CornerRecord) -> Result<Surface> {
+    rec.validate()
+        .map_err(|e| SolidError::invalid_input(OP_CORNER_FROM, e.reason))?;
+    let p = |a: [f64; 3]| Point3::new(a[0], a[1], a[2]);
+    let (net, definition) = match rec {
+        CornerRecord::Swept(r) => (
+            &r.net,
+            CornerDefinition::swept(
+                k,
+                &corner_surface_of(k, &r.common)?,
+                p(r.axis_point),
+                p(r.axis),
+                [p(r.centres[0]), p(r.centres[1])],
+                r.radius,
+                r.tol,
+            )?,
+        ),
+        CornerRecord::End(r) => (
+            &r.net,
+            CornerDefinition::end(
+                k,
+                &corner_surface_of(k, &r.support)?,
+                r.boundary.iter().map(curve_of).collect::<Result<_>>()?,
+            )?,
+        ),
+        CornerRecord::Setback(r) => {
+            let mut surfaces = Vec::with_capacity(r.rounds.len());
+            for round in &r.rounds {
+                surfaces.push(match &round.surface {
+                    SupportRecord::Blend(b) => Surface::from(from_record_at(k, b, 1)?),
+                    other @ SupportRecord::Nurbs { .. } => corner_surface_of(k, other)?,
+                });
+            }
+            let rounds: Vec<Round<'_>> = r
+                .rounds
+                .iter()
+                .zip(&surfaces)
+                .map(|(round, surface)| Round {
+                    surface,
+                    along: if round.along_u {
+                        SurfParamType::U
+                    } else {
+                        SurfParamType::V
+                    },
+                    end: round.end,
+                    corner_above: round.corner_above,
+                })
+                .collect();
+            let faces: Vec<Face> = r
+                .faces
+                .iter()
+                .map(|f| Face {
+                    point: p(f.point),
+                    normal: p(f.normal),
+                })
+                .collect();
+            let fill = SetbackFill::create(
+                k,
+                &faces,
+                &rounds,
+                r.order as usize,
+                r.tol,
+                r.convex,
+                r.containment,
+            )?;
+            let mut net = Surface::from(surface_of(&r.net)?);
+            net.set_corner_definition(CornerDefinition::setback(
+                std::sync::Arc::new(fill),
+                r.patch as usize,
+            )?);
+            return Ok(net);
+        }
+    };
+    let mut net = corner_surface_of(k, net)?;
+    net.set_corner_definition(definition);
+    Ok(net)
+}
+
+/// [`corner_from_record`] and the net re-certified against the definition
+/// ([`CornerDefinition::recertify`]), refused unless it is.
+///
+/// # Errors
+///
+/// Those of [`corner_from_record`] and [`CornerDefinition::recertify`].
+pub fn corner_rebuild(k: &Kernel, rec: &CornerRecord) -> Result<Surface> {
+    let net = corner_from_record(k, rec)?;
+    if let Some(blend) = net.procedural_blend() {
+        blend.recertify(k)?;
+    }
+    Ok(net)
 }

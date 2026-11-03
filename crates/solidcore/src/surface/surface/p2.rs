@@ -289,9 +289,10 @@ use crate::surface::cone::Cone;
 use crate::surface::curve_bounded_surface::CurveBoundedSurface;
 use crate::surface::offset_surface::OffsetSurface;
 use crate::surface::plane::Plane;
+use crate::surface::procedural_blend::corner::CornerDefinition;
 use crate::surface::procedural_blend::exact::ExactRound;
 use crate::surface::procedural_blend::{
-    BlendRef, NetScope, ProceduralBlend, PROCEDURAL_BLEND_TYPE,
+    BlendRef, KeptDefinition, NetScope, ProceduralBlend, PROCEDURAL_BLEND_TYPE,
 };
 use crate::surface::sphere::Sphere;
 use crate::surface::srf_in_volume::SrfInVolume;
@@ -433,11 +434,12 @@ pub struct Surface {
     /// Not upstream: the memo of the natural boundary curves `CoincidenceCheck` makes
     /// (`BoundaryMemo`); a copy starts an empty one, an edit replaces it.
     boundary_memo: BoundaryMemo,
-    /// Not upstream (#2485): a round of an exact class, this surface its net, keeps its
-    /// definition here ([`Surface::procedural_blend`]). A copy, a piece, an extension and
-    /// an edit of the parametrization carry it (the definition is S, a set); a motion
-    /// moves it; an evaluation copy, which only evaluates, has none.
-    exact_round: Option<Box<ExactRound>>,
+    /// Not upstream (#2485, #2488): a round of an exact class or a blend corner's face,
+    /// this surface its net, keeps its definition here ([`Surface::procedural_blend`]). A
+    /// copy, a piece, an extension and an edit of the parametrization carry it (the
+    /// definition is a set the net is on, or within its bound of); a motion moves it; an
+    /// evaluation copy, which only evaluates, has none.
+    definition: Option<Box<KeptDefinition>>,
 }
 
 /// What a surface's cache slot (`SmAObject::m_pCacheObj`) holds, as far as a reader of
@@ -623,7 +625,7 @@ impl Clone for Surface {
             notify_identity: IdentitySlot::new(),
             made_kind: MadeKindSlot::default(),
             boundary_memo: BoundaryMemo::new(),
-            exact_round: self.exact_round.clone(),
+            definition: self.definition.clone(),
         };
         s.update_owned_bases();
         s
@@ -917,7 +919,7 @@ impl Surface {
             notify_identity: IdentitySlot::new(),
             made_kind: self.made_kind.shared(),
             boundary_memo: BoundaryMemo::new(),
-            exact_round: None,
+            definition: None,
         })
     }
 
@@ -996,7 +998,7 @@ impl Surface {
             notify_identity: IdentitySlot::new(),
             made_kind: self.made_kind.shared(),
             boundary_memo: BoundaryMemo::new(),
-            exact_round: self.exact_round.clone(),
+            definition: self.definition.clone(),
         }
     }
 }
@@ -1161,17 +1163,24 @@ impl Surface {
             notify_identity: IdentitySlot::new(),
             made_kind: MadeKindSlot::default(),
             boundary_memo: BoundaryMemo::new(),
-            exact_round: None,
+            definition: None,
         }
     }
 
-    /// The blend this surface is by its definition (#2485): a procedural blend, or a round
-    /// of an exact class whose definition this surface (its net) carries. Every blend face
-    /// is reached here, whatever its kind; `None` for a surface that is no blend's.
+    /// The blend this surface is by its definition (#2485, #2488): a procedural blend, a
+    /// round of an exact class or a blend corner's face whose definition this surface (its
+    /// net) carries. Every blend face is reached here, whatever its kind; `None` for a
+    /// surface that is no blend's.
     #[must_use]
     pub fn procedural_blend(&self) -> Option<BlendRef<'_>> {
-        if let Some(round) = self.exact_round.as_deref() {
-            return Some(BlendRef::Exact { round, net: self });
+        match self.definition.as_deref() {
+            Some(KeptDefinition::Round(round)) => {
+                return Some(BlendRef::Exact { round, net: self })
+            }
+            Some(KeptDefinition::Corner(corner)) => {
+                return Some(BlendRef::Corner { corner, net: self })
+            }
+            None => {}
         }
         match self.kind() {
             SurfaceKind::ProceduralBlend(p) => Some(BlendRef::Procedural(p)),
@@ -1179,15 +1188,21 @@ impl Surface {
         }
     }
 
-    /// Keeps `round` as the definition of this surface, its exact net (#2485).
+    /// Keeps `round` as the definition of this surface, its exact net (#2485); `None`
+    /// drops any definition kept.
     pub(crate) fn set_exact_round(&mut self, round: Option<ExactRound>) {
-        self.exact_round = round.map(Box::new);
+        self.definition = round.map(|r| Box::new(KeptDefinition::Round(r)));
     }
 
-    /// This surface's exact round's definition carried onto `piece`, a piece, extension or
-    /// copy of it (#2485).
-    fn carry_exact_round(&self, mut piece: Self) -> Self {
-        piece.exact_round.clone_from(&self.exact_round);
+    /// Keeps `corner` as the definition of this surface, a blend corner's face (#2488).
+    pub(crate) fn set_corner_definition(&mut self, corner: CornerDefinition) {
+        self.definition = Some(Box::new(KeptDefinition::Corner(corner)));
+    }
+
+    /// This surface's definition carried onto `piece`, a piece, extension or copy of it
+    /// (#2485, #2488).
+    fn carry_definition(&self, mut piece: Self) -> Self {
+        piece.definition.clone_from(&self.definition);
         piece
     }
 
@@ -1780,7 +1795,7 @@ impl Surface {
     /// [`MAX_GEOMETRY_NESTING`]; none
     /// for the other ported kinds (the base default is `SM_ERR`).
     pub fn copy(&self, k: &Kernel) -> Result<Self> {
-        self.copy_of_kind(k).map(|c| self.carry_exact_round(c))
+        self.copy_of_kind(k).map(|c| self.carry_definition(c))
     }
 
     /// [`Surface::copy`] of the kind alone.
@@ -1828,7 +1843,7 @@ impl Surface {
     /// Those of the kind's override (the base default is [`Surface::copy`]).
     pub fn copy_and_add_analytics(&self, k: &Kernel) -> Result<Self> {
         self.copy_and_add_analytics_of_kind(k)
-            .map(|c| self.carry_exact_round(c))
+            .map(|c| self.carry_definition(c))
     }
 
     /// [`Surface::copy_and_add_analytics`] of the kind alone.
@@ -3379,11 +3394,11 @@ impl Surface {
     ) -> Result<()> {
         self.take_made_kind_for_edit();
         self.boundary_memo = BoundaryMemo::new();
-        // (#2485) an exact round's definition moves with its net; one that cannot move so
-        // (a scale that is not uniform) refuses before the net moves
-        let moved = match self.exact_round.as_deref() {
-            Some(round) => {
-                let mut moved = round.clone();
+        // (#2485, #2488) a definition moves with its net; one that cannot move so (a scale
+        // that is not uniform) refuses before the net moves
+        let moved = match self.definition.as_deref() {
+            Some(kept) => {
+                let mut moved = kept.clone();
                 moved.transform(k, rotate_n_move, scale, depth)?;
                 Some(Box::new(moved))
             }
@@ -3391,7 +3406,7 @@ impl Surface {
         };
         self.transform_kind_at_depth(k, rotate_n_move, scale, depth)?;
         if moved.is_some() {
-            self.exact_round = moved;
+            self.definition = moved;
         }
         Ok(())
     }
@@ -3519,7 +3534,7 @@ impl Surface {
     ) -> Result<(Self, Self)> {
         // (#2485) each piece of an exact round is on its definition's S
         let (l, r) = self.split_kind_at(k, param, surf_param)?;
-        Ok((self.carry_exact_round(l), self.carry_exact_round(r)))
+        Ok((self.carry_definition(l), self.carry_definition(r)))
     }
 
     /// [`Surface::split_at`] of the kind alone.
