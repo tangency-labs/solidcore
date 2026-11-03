@@ -71,9 +71,33 @@ pub struct PlanStats {
     /// Faces every method refused, filled leniently in (u, v) (see [`Lenient`]) so the display
     /// has no hole: each still a defect upstream, in its pcurves or seams.
     pub lenient: Vec<RefusedFace>,
-    /// Faces even the lenient fill refused: left out of the plan (no triangles), so the rest of
-    /// the body is still meshed, each with why it could not be planned.
+    /// Faces even the lenient fill refused, and faces whose surface does not evaluate at a point
+    /// the planner needs (a node, a middle it checks, a node of a cut line): left out of the plan
+    /// whole (no triangles), so the rest of the body is still meshed, each with why it could not
+    /// be planned. Nothing is substituted for a point the surface refuses.
     pub unmeshed: Vec<RefusedFace>,
+}
+
+/// A parameter point where a face's surface does not evaluate: the kernel's evaluator refuses
+/// the face there. Nothing is substituted for the point; the face is left out of the plan whole
+/// and named in [`PlanStats::unmeshed`] with the point.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) struct NoValue(pub [f64; 2]);
+
+/// Why [`plan_face`] refused a face.
+#[derive(Debug)]
+enum FaceError {
+    /// The layout could not mesh the face: the lenient fill is tried next.
+    Layout(TessError),
+    /// The surface does not evaluate where the face needs it: no layout can mesh it, so the face
+    /// is left out without the lenient fill.
+    Refused(TessError),
+}
+
+impl From<TessError> for FaceError {
+    fn from(e: TessError) -> Self {
+        FaceError::Layout(e)
+    }
 }
 
 /// A face a method refused: its index in the record and why.
@@ -1294,7 +1318,7 @@ fn plan_or_fill(
 ) -> Result<(FacePlan, PlanStats)> {
     let mut stats = PlanStats::default();
     let strict = match refused {
-        Some(why) => Err(unsupported(why.to_string())),
+        Some(why) => Err(FaceError::Layout(unsupported(why.to_string()))),
         None => plan_face(
             fi,
             kind,
@@ -1309,7 +1333,9 @@ fn plan_or_fill(
     };
     match strict {
         Ok(fp) => Ok((fp, stats)),
-        Err(first) => {
+        // The evaluator refuses the face: no fill can mesh it.
+        Err(FaceError::Refused(e)) => Err(e),
+        Err(FaceError::Layout(first)) => {
             let mut stats = PlanStats::default();
             match plan_face(
                 fi,
@@ -1329,7 +1355,10 @@ fn plan_or_fill(
                     });
                     Ok((fp, stats))
                 }
-                Err(_) => Err(first),
+                // The lenient fill reached a point the surface does not evaluate at: that, not
+                // the layout, is why the face is left out.
+                Err(FaceError::Refused(e)) => Err(e),
+                Err(FaceError::Layout(_)) => Err(first),
             }
         }
     }
@@ -1350,11 +1379,16 @@ fn plan_face(
     reach: f64,
     stats: &mut PlanStats,
     lenient: Lenient,
-) -> Result<FacePlan> {
+) -> std::result::Result<FacePlan, FaceError> {
     let tol = rules.tol;
     let (h, speed) = size;
     let dom = solidcore::eval::uv::domain(s);
     let fail = |why: &str| unsupported(format!("face {fi} ({kind}): {why}"));
+    let no_value = |NoValue(q): NoValue| {
+        FaceError::Refused(unsupported(format!(
+            "face {fi} ({kind}): the surface does not evaluate at {q:?}"
+        )))
+    };
     let mut projected: Vec<seam::Loop> = loops.to_vec();
     // A loop that winds around a periodic direction does not close in (u, v): the face is cut
     // along a parameter line into one period (a seamless cylinder face, a helical trim).
@@ -1374,10 +1408,12 @@ fn plan_face(
         [] => {}
         [d] => {
             let per = dom.period[*d].unwrap_or(std::f64::consts::TAU);
-            projected = seam::cut(s, &projected, *d, per, rules, h)
-                .ok_or_else(|| fail("boundary winds around the surface"))?;
+            projected = seam::cut(s, &projected, *d, per, rules, h).map_err(|e| match e {
+                seam::Cut::Unclean => FaceError::Layout(fail("boundary winds around the surface")),
+                seam::Cut::NoValue(q) => no_value(q),
+            })?;
         }
-        _ => return Err(fail("boundary winds around the surface both ways")),
+        _ => return Err(fail("boundary winds around the surface both ways").into()),
     }
     // A loop from pole to pole and back along one seam (a whole sphere as one face, as another
     // kernel writes it) projects onto one parameter line: its second run is a period along.
@@ -1425,7 +1461,7 @@ fn plan_face(
         ranges.push(start..uvs.len());
     }
     if uvs.len() < 3 {
-        return Err(fail("degenerate boundary"));
+        return Err(fail("degenerate boundary").into());
     }
     let mut bbox = [(f64::MAX, f64::MIN); 2];
     for p in &uvs {
@@ -1595,14 +1631,15 @@ fn plan_face(
         .retain(|t| !(pole_pair(t[0], t[1]) || pole_pair(t[1], t[2]) || pole_pair(t[2], t[0])));
     // A lenient fill leaves out the sides that cross: the boundary is followed everywhere else.
     if lenient == Lenient::No && !closed_boundary(&ranges, &fixed, &uvs, &triangles) {
-        return Err(fail("triangulation does not follow the boundary"));
+        return Err(fail("triangulation does not follow the boundary").into());
     }
     let mut all = uvs;
     all.extend(extra);
     // Whatever the layout, no triangle leaves the surface by more than the tolerance.
     if !planar {
-        sag::refine(s, tol, reach, &fixed, &mut all, &mut triangles, MAX_REFINE);
-        sag::flip(s, tol, reach, &fixed, &all, &mut triangles);
+        sag::refine(s, tol, reach, &fixed, &mut all, &mut triangles, MAX_REFINE)
+            .map_err(no_value)?;
+        sag::flip(s, tol, reach, &fixed, &all, &mut triangles).map_err(no_value)?;
     }
     // Both evaluators take a closed spline's parameters inside its active interval.
     for q in &mut all {

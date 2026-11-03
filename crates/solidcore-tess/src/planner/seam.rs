@@ -11,7 +11,18 @@ use solidcore::eval::EvalSurface;
 use solidcore_convert as kernel;
 use solidcore_record::Vec3;
 
+use super::NoValue;
 use super::size::Rules;
+
+/// Why a face could not be cut into one period.
+#[derive(Clone, Copy, Debug)]
+pub(crate) enum Cut {
+    /// The loops cannot be cut cleanly: the face would be unbounded along the line, or the two
+    /// lines disagree.
+    Unclean,
+    /// The surface does not evaluate at a node of the cut line.
+    NoValue(NoValue),
+}
 
 /// One loop of a face: parameters (unwrapped along the loop) and the 3D node each stands for.
 #[derive(Clone, Debug, Default)]
@@ -56,8 +67,9 @@ struct Piece {
 }
 
 /// Cut a face whose loops wind around direction `d` (period `per`) into one period. The face
-/// lies left of its loops in (u, v). `None` when the loops cannot be cut cleanly (the face would
-/// be unbounded along the line, or the two lines disagree); the caller then fails as before.
+/// lies left of its loops in (u, v). [`Cut::Unclean`] when the loops cannot be cut cleanly (the
+/// face would be unbounded along the line, or the two lines disagree); [`Cut::NoValue`] when the
+/// surface does not evaluate at a node of the cut line (the evaluator refuses the face).
 pub(crate) fn cut(
     s: &EvalSurface,
     loops: &[Loop],
@@ -65,9 +77,9 @@ pub(crate) fn cut(
     per: f64,
     rules: &Rules,
     h: f64,
-) -> Option<Vec<Loop>> {
+) -> Result<Vec<Loop>, Cut> {
     if !(per > 0.0 && per.is_finite()) || loops.is_empty() {
-        return None;
+        return Err(Cut::Unclean);
     }
     // Work in (x, y) with x along the closed direction; swapping (u, v) mirrors the plane, so the
     // loops are reversed to keep the face on their left.
@@ -87,28 +99,28 @@ pub(crate) fn cut(
             Loop { uv, pts }
         })
         .collect();
-    let x0 = cut_position(&local, per)?;
+    let x0 = cut_position(&local, per).ok_or(Cut::Unclean)?;
     let x1 = x0 + per;
     let mut closed: Vec<Loop> = Vec::new();
     let mut pieces: Vec<Piece> = Vec::new();
     for l in &local {
         let n = l.uv.len();
         if n < 2 || l.pts.len() != n {
-            return None;
+            return Err(Cut::Unclean);
         }
         let w = drift(l, 0, per);
         let (lo, hi) =
             l.uv.iter()
                 .fold((f64::MAX, f64::MIN), |(a, b), q| (a.min(q[0]), b.max(q[0])));
         if !(lo.is_finite() && hi.is_finite()) {
-            return None;
+            return Err(Cut::Unclean);
         }
         if w.abs() <= per * 0.5 {
             // A closed loop: each copy along x that reaches into the strip.
             let k0 = ((x0 - hi) / per).floor() as i64;
             let k1 = ((x1 - lo) / per).ceil() as i64;
             if k1 - k0 > MAX_COPIES {
-                return None;
+                return Err(Cut::Unclean);
             }
             for k in k0..=k1 {
                 let shift = per * k as f64;
@@ -120,7 +132,10 @@ pub(crate) fn cut(
                     });
                 } else if uv.iter().any(|q| q[0] > x0 && q[0] < x1) || crosses(&uv, x0, x1) {
                     // Start at a node outside the strip, so every run inside is whole.
-                    let start = uv.iter().position(|q| !(q[0] > x0 && q[0] < x1))?;
+                    let start = uv
+                        .iter()
+                        .position(|q| !(q[0] > x0 && q[0] < x1))
+                        .ok_or(Cut::Unclean)?;
                     let idx: Vec<usize> = (0..=n).map(|i| (start + i) % n).collect();
                     let path: Vec<[f64; 2]> =
                         idx.iter().filter_map(|&i| uv.get(i).copied()).collect();
@@ -134,12 +149,12 @@ pub(crate) fn cut(
             // start and end outside the strip.
             let turns = (w / per).round();
             if turns.abs() != 1.0 {
-                return None;
+                return Err(Cut::Unclean);
             }
             let reach = (hi - lo) / per;
             let span = (reach.ceil() as i64) + 2;
             if span > MAX_COPIES {
-                return None;
+                return Err(Cut::Unclean);
             }
             // Copies j with lo + j·w ≤ x1 and hi + j·w ≥ x0, plus one each side.
             let (ja, jb) = if w > 0.0 {
@@ -154,7 +169,7 @@ pub(crate) fn cut(
                 )
             };
             if jb - ja > MAX_COPIES {
-                return None;
+                return Err(Cut::Unclean);
             }
             let mut path = Vec::new();
             let mut pts = Vec::new();
@@ -164,10 +179,10 @@ pub(crate) fn cut(
                 pts.extend(l.pts.iter().copied());
             }
             let (Some(a), Some(b)) = (path.first(), path.last()) else {
-                return None;
+                return Err(Cut::Unclean);
             };
             if (a[0] > x0 && a[0] < x1) || (b[0] > x0 && b[0] < x1) {
-                return None;
+                return Err(Cut::Unclean);
             }
             clip(&path, &pts, x0, x1, &mut pieces);
         }
@@ -179,7 +194,7 @@ pub(crate) fn cut(
         let (Some(a), Some(b), Some(pa), Some(pb)) =
             (p.uv.first(), p.uv.last(), p.pts.first(), p.pts.last())
         else {
-            return None;
+            return Err(Cut::Unclean);
         };
         // Entering through the left line (moving +x): the face is above; through the right
         // line (moving −x): below. Leaving through the left (−x): below; the right (+x): above.
@@ -207,7 +222,7 @@ pub(crate) fn cut(
     left.sort_by(|a, b| a.0.y.total_cmp(&b.0.y));
     right.sort_by(|a, b| a.0.y.total_cmp(&b.0.y));
     if left.len() != right.len() || !left.len().is_multiple_of(2) {
-        return None;
+        return Err(Cut::Unclean);
     }
     let scale = loops
         .iter()
@@ -215,7 +230,7 @@ pub(crate) fn cut(
         .fold(1.0f64, |m, q| m.max(q[0].abs()).max(q[1].abs()));
     for (a, b) in left.iter().zip(&right) {
         if a.0.above != b.0.above || (a.0.y - b.0.y).abs() > 1e-7 * scale {
-            return None;
+            return Err(Cut::Unclean);
         }
     }
     // The same crossing on both lines is one point.
@@ -224,11 +239,11 @@ pub(crate) fn cut(
         b.0.p = a.0.p;
     }
     for (c, i, start) in left.iter().chain(&right) {
-        let p = pieces.get_mut(*i)?;
+        let p = pieces.get_mut(*i).ok_or(Cut::Unclean)?;
         let k = if *start {
             0
         } else {
-            p.uv.len().checked_sub(1)?
+            p.uv.len().checked_sub(1).ok_or(Cut::Unclean)?
         };
         if let (Some(q), Some(pt)) = (p.uv.get_mut(k), p.pts.get_mut(k)) {
             q[1] = c.y;
@@ -243,24 +258,24 @@ pub(crate) fn cut(
         let (Some(la), Some(lb), Some(ra), Some(rb)) =
             (lp.first(), lp.get(1), rp.first(), rp.get(1))
         else {
-            return None;
+            return Err(Cut::Unclean);
         };
         if !(la.0.above && !lb.0.above) {
-            return None;
+            return Err(Cut::Unclean);
         }
         // Nodes strictly between, made once for both lines.
-        let inner = seam_nodes(s, swap, x0, la.0.y, lb.0.y, rules, h)?;
+        let inner = seam_nodes(s, swap, x0, la.0.y, lb.0.y, rules, h).map_err(Cut::NoValue)?;
         // Left line, downwards: from the piece leaving at the top to the one entering at the bottom.
         let (top_leave, bottom_enter) = (lb.1, la.1);
         let down_uv: Vec<[f64; 2]> = inner.iter().rev().map(|(y, _)| [x0, *y]).collect();
         let down_pts: Vec<Vec3> = inner.iter().rev().map(|(_, p)| *p).collect();
         if lb.2 || !la.2 {
-            return None;
+            return Err(Cut::Unclean);
         }
         links.push((top_leave, down_uv, down_pts, bottom_enter));
         // Right line, upwards: from the piece leaving at the bottom to the one entering at the top.
         if ra.2 || !rb.2 {
-            return None;
+            return Err(Cut::Unclean);
         }
         let up_uv: Vec<[f64; 2]> = inner.iter().map(|(y, _)| [x1, *y]).collect();
         let up_pts: Vec<Vec3> = inner.iter().map(|(_, p)| *p).collect();
@@ -271,10 +286,10 @@ pub(crate) fn cut(
     let mut via: Vec<Option<usize>> = vec![None; pieces.len()];
     for (li, (from, _, _, to)) in links.iter().enumerate() {
         if next.get(*from).copied().flatten().is_some() {
-            return None;
+            return Err(Cut::Unclean);
         }
-        *next.get_mut(*from)? = Some(*to);
-        *via.get_mut(*from)? = Some(li);
+        *next.get_mut(*from).ok_or(Cut::Unclean)? = Some(*to);
+        *via.get_mut(*from).ok_or(Cut::Unclean)? = Some(li);
     }
     let mut used = vec![false; pieces.len()];
     for start in 0..pieces.len() {
@@ -284,20 +299,25 @@ pub(crate) fn cut(
         let mut out = Loop::default();
         let mut at = start;
         for _ in 0..=pieces.len() {
-            if *used.get(at)? {
+            if *used.get(at).ok_or(Cut::Unclean)? {
                 break;
             }
-            *used.get_mut(at)? = true;
-            let p = pieces.get(at)?;
+            *used.get_mut(at).ok_or(Cut::Unclean)? = true;
+            let p = pieces.get(at).ok_or(Cut::Unclean)?;
             out.uv.extend(&p.uv);
             out.pts.extend(&p.pts);
-            let (_, luv, lpts, _) = links.get((*via.get(at)?)?)?;
+            let (_, luv, lpts, _) = via
+                .get(at)
+                .copied()
+                .flatten()
+                .and_then(|li| links.get(li))
+                .ok_or(Cut::Unclean)?;
             out.uv.extend(luv);
             out.pts.extend(lpts);
-            at = (*next.get(at)?)?;
+            at = next.get(at).copied().flatten().ok_or(Cut::Unclean)?;
         }
         if at != start {
-            return None;
+            return Err(Cut::Unclean);
         }
         closed.push(out);
     }
@@ -325,7 +345,11 @@ pub(crate) fn cut(
                 .sum::<f64>()
         })
         .sum();
-    (area > 0.0).then_some(out)
+    if area > 0.0 {
+        Ok(out)
+    } else {
+        Err(Cut::Unclean)
+    }
 }
 
 /// Where to cut: the middle of the widest gap between the loops' nodes around the period, as
@@ -404,7 +428,8 @@ fn clip(path: &[[f64; 2]], pts: &[Vec3], x0: f64, x1: f64, out: &mut Vec<Piece>)
 }
 
 /// Nodes along the cut line between two crossings (`y0` < `y1`, ends excluded): within the
-/// tolerance, the side length and the facet angle of the surface along the line.
+/// tolerance, the side length and the facet angle of the surface along the line. The parameters
+/// of a node the surface does not evaluate at are the error.
 fn seam_nodes(
     s: &EvalSurface,
     swap: bool,
@@ -413,7 +438,7 @@ fn seam_nodes(
     y1: f64,
     rules: &Rules,
     h: f64,
-) -> Option<Vec<(f64, Vec3)>> {
+) -> Result<Vec<(f64, Vec3)>, NoValue> {
     let uv = |y: f64| if swap { [y, x] } else { [x, y] };
     let mut ys = vec![y0, y1];
     let mut i = 0;
@@ -428,12 +453,55 @@ fn seam_nodes(
             i += 1;
         }
     }
-    let inner = ys.get(1..ys.len() - 1)?;
+    // `ys` starts as [y0, y1] and only grows, so its inner nodes are all but its first and last.
+    let inner = ys.iter().skip(1).take(ys.len().saturating_sub(2));
     inner
-        .iter()
         .map(|&y| {
             s.derivs(uv(y)[0], uv(y)[1])
                 .map(|d| (y, kernel::record_vec3(d.0)))
+                .ok_or(NoValue(uv(y)))
         })
         .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A seamless face on a revolution whose surface has no point on the circle u = 0.5 (see
+    /// [`super::super::sag::tests::cylinder_without_its_middle`]): its two loops, the circles
+    /// u = 0 and u = 1 a whole turn round, wind round it and are cut along a line v = const from
+    /// u = 0 to u = 1. That line's node at u = 0.5 does not evaluate: the cut names it, not drops
+    /// it from the line.
+    #[test]
+    fn the_cut_names_a_node_the_surface_does_not_evaluate_at() {
+        let s = super::super::sag::tests::cylinder_without_its_middle();
+        let tau = std::f64::consts::TAU;
+        let n = 16;
+        let circle = |u: f64, up: bool| {
+            let uv: Vec<[f64; 2]> = (0..n)
+                .map(|k| {
+                    [
+                        u,
+                        tau * f64::from(if up { k } else { n - k }) / f64::from(n),
+                    ]
+                })
+                .collect();
+            let pts: Vec<Vec3> = uv
+                .iter()
+                .filter_map(|q| s.derivs(q[0], q[1]).map(|d| kernel::record_vec3(d.0)))
+                .collect();
+            assert_eq!(pts.len(), uv.len());
+            Loop { uv, pts }
+        };
+        // The face lies left of its loops: up the circle at u = 1, down the one at u = 0.
+        let loops = [circle(1.0, true), circle(0.0, false)];
+        assert!(winds(&loops, 1, tau));
+        let rules = Rules::new(0.01, 40.0, None);
+        match cut(&s, &loops, 1, tau, &rules, 1.0) {
+            Err(Cut::NoValue(NoValue(q))) => assert_eq!(q[0], 0.5, "{q:?}"),
+            Err(Cut::Unclean) => panic!("refused as unclean"),
+            Ok(l) => panic!("cut into {} loops", l.len()),
+        }
+    }
 }
