@@ -713,8 +713,7 @@ fn the_rounds_by_their_definitions_round_trip() {
 /// At r 2, the R2 round's own radius, the ball's offset of the R2 round collapses onto its
 /// axis: the ball's centre is fixed where that axis crosses the wall's offset, and at the
 /// top End its zone has no section (#2401). Refused as such (`OffsetCollapses`), naming 2
-/// less the fit margin (a thousand of the edge's tolerances), not a bare 1001. (That size
-/// is past this round's known limit, below.)
+/// less the fit margin (a thousand of the edge's tolerances), not a bare 1001.
 #[test]
 fn the_middle_edge_at_the_front_round_s_radius_is_refused_as_a_collapsed_offset() {
     let mut k = all_fixes(true);
@@ -750,10 +749,8 @@ fn the_middle_edge_at_the_front_round_s_radius_is_refused_as_a_collapsed_offset(
 
 /// Closer to r 2 the ball's foot on the R2 round sits further past T at P: asin(2 r /
 /// (21 (2 - r))), 42 degrees at r 1.75. It still builds the same way; its rolled stretch,
-/// 0.168 long, is longer, and the rail's fitted curve lies 1.8e-9 off its circle (pinned a
-/// decade above). From r 1.8 (59
-/// degrees) the End's rail ends are not found on the R2 round run on past T, a known limit
-/// (the WR-697 addendum), so the 1.96 that r 2's refusal names does not build.
+/// 0.168 long, is longer, and the rail's fitted curve lies 1.8e-9 off its circle (pinned at
+/// 1e-8; 1.9e-9 just short of 42/23 and 4.2e-9 at 1.96).
 #[test]
 fn the_middle_edge_r1_75_rolls_over_onto_the_top_face_before_its_end() {
     let mut k = all_fixes(true);
@@ -761,4 +758,33 @@ fn the_middle_edge_r1_75_rolls_over_onto_the_top_face_before_its_end() {
     round(&mut k, &mut b, MIDDLE, 1.75).unwrap();
     clean(&mut k, &mut b);
     check_top_end(&k, &b, 1.75, 1e-8);
+}
+
+/// Just short of r 42/23 the ball's foot on the R2 round at P would be 90 degrees past T
+/// (its centre on the R2 round's offset as far from the wall's axis's plane through T as
+/// it goes), past where the R2 round runs on (45 degrees): the rails traced on it end short
+/// of P, and the End's rail ends take their traced ends until the rollover. The ball rolls
+/// over T onto the top face long before P, as at r 0.25, and on it reaches P.
+#[test]
+fn the_middle_edge_just_short_of_r_42_23_rolls_over_onto_the_top_face_before_its_end() {
+    let r = 42.0 / 23.0 - 1e-3;
+    let mut k = all_fixes(true);
+    let mut b = front_rounded(&mut k);
+    round(&mut k, &mut b, MIDDLE, r).unwrap();
+    clean(&mut k, &mut b);
+    check_top_end(&k, &b, r, 1e-8);
+}
+
+/// The size r 2's refusal names builds: past r 42/23 the ball on the R2 round never reaches
+/// P (the trace on it goes on without the edge's end's section), but it leaves the R2 round
+/// at T long before and rolls on the top face to P.
+#[test]
+fn the_size_the_collapsed_offset_names_builds() {
+    let mut k = all_fixes(true);
+    let mut b = front_rounded(&mut k);
+    let e = pick(&k, &b, MIDDLE);
+    let fit = 2.0 - 1000.0 * edge::tolerance(&b, e).unwrap();
+    round(&mut k, &mut b, MIDDLE, fit).unwrap();
+    clean(&mut k, &mut b);
+    check_top_end(&k, &b, fit, 1e-8);
 }
