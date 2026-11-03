@@ -2643,6 +2643,29 @@ pub fn law_in_parameter(lb: &LawBall) -> Result<Option<BSplineCurve>> {
 
 const OP_LAW: &str = "blend::fillet_standard_solver::p2::law_in_parameter";
 
+/// Not the fork's (#2500): the face a round's ball rolls on, for the round by its
+/// definition: the offset's base surface, or, where the offset extends it as itself (with
+/// `offset_extension_as_itself`, a cylinder, cone, sphere or torus, or a surface of
+/// revolution of a circle's arc) and holds that extension, the extension. It is the same surface at the same parameters over the base's
+/// domain, and the trace runs on it past the face (out to an End, or round a turn), so the
+/// ball's feet there are on it: on the base alone the station solve fails past the face, and
+/// the round is built as the trace's B-spline instead of its definition.
+fn rolled_on<'a>(
+    k: &Kernel,
+    offset: &'a crate::surface::offset_surface::OffsetSurface,
+) -> &'a Surface {
+    let base = offset.base_surface();
+    match offset.extended_base_surface() {
+        Some(extended)
+            if k.fixes.offset_extension_as_itself
+                && crate::surface::offset_surface::extends_as_itself(k, base) =>
+        {
+            extended
+        }
+        _ => base,
+    }
+}
+
 impl CircularCrossSectionFsg {
     /// The fork's `SmGnSectionFSG::CircleSurface` gate (cc08236, 308cc40, c596548; with
     /// `fixes.fillet_gn_section_generator` and `fixes.fillet_round_as_definition`,
@@ -2711,7 +2734,7 @@ impl CircularCrossSectionFsg {
         if !arcs.is_exact_circle() {
             return Ok(None);
         }
-        let bases = [o1.base_surface(), o2.base_surface()];
+        let bases = [rolled_on(k, o1), rolled_on(k, o2)];
         // (a face that is itself a blend by its definition takes a ball of one radius, on a
         // round of one radius between NURBS faces: the definition its certificate encloses;
         // c5b6bb7, WR-714)
@@ -2868,7 +2891,7 @@ impl super::p1::LinearCrossSectionFsg {
         else {
             return Ok(None);
         };
-        let bases = [o1.base_surface(), o2.base_surface()];
+        let bases = [rolled_on(k, o1), rolled_on(k, o2)];
         let mut planes = true;
         for b in bases {
             match b.kind() {
