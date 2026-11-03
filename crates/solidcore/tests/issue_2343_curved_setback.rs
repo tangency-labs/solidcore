@@ -38,6 +38,7 @@ use solidcore::nurbs::knots::Side;
 use solidcore::primitive::api_curves::create_line_segment;
 use solidcore::primitive::api_primitives::{create_box, create_cylinder, create_sphere};
 use solidcore::query::api_queries::{brep_bounding_box, get_edges, get_faces};
+use solidcore::surface::procedural_blend::corner::CornerKind;
 use solidcore::surface::surface::p2::SurfaceKind;
 use solidcore::surface::surface::p4::NoObject;
 use solidcore::surface::surface::Surface;
@@ -574,6 +575,33 @@ fn d_prism_unequal_corner_is_a_setback_beside_the_cylinder() {
     assert_eq!(r.event, Some(BlendCornerEvent::Setback), "{}", r.reason);
     assert!(r.ok, "{}", r.reason);
     graded(&mut k, &mut b, &case, 3);
+}
+
+/// With `fillet_round_as_definition` on (as here), a Setback's fill patches keep the fill's
+/// definition (#2488). That definition's faces are planes: its transform moves a face's point
+/// and normal, and its record keeps only those. So beside a curved face the patches keep none,
+/// and the body is still built.
+#[test]
+fn beside_a_curved_face_the_fill_keeps_no_plane_definition() {
+    let (mut k, mut b, edges, case) = d_prism_case(true);
+    assert!(k.fixes.fillet_round_as_definition);
+    let r = round_each(&mut k, &mut b, &edges, &[2.0, 2.5, 3.0], case.v);
+    assert_eq!(r.event, Some(BlendCornerEvent::Setback), "{}", r.reason);
+    assert!(r.ok, "{}", r.reason);
+    let kept = get_faces(&b)
+        .unwrap()
+        .into_iter()
+        .filter(|&f| {
+            b.face(f)
+                .unwrap()
+                .surface
+                .as_ref()
+                .and_then(|s| s.procedural_blend())
+                .and_then(|d| d.corner())
+                .is_some_and(|c| c.kind() == CornerKind::Setback)
+        })
+        .count();
+    assert_eq!(kept, 0, "patches keeping a Setback definition");
 }
 
 #[test]

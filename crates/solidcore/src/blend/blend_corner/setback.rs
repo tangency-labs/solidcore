@@ -1736,7 +1736,10 @@ pub fn build_setback_fill<S: SetbackSolvers>(
             set_edge_curve(pseudo.brep_mut(), e, Some(Curve::from(best)))?;
         }
     }
-    let definition = if k.fixes.fillet_round_as_definition {
+    // Beside a curved face (#2343) no definition is kept: a definition's faces are planes
+    // (its transform moves a face's point and normal, its record keeps only those), so a
+    // quadric face would not survive either.
+    let definition = if k.fixes.fillet_round_as_definition && !curved {
         Some(keep_definition(
             k,
             &planes.planes,
@@ -1761,7 +1764,7 @@ pub fn build_setback_fill<S: SetbackSolvers>(
 /// ([`SetbackFill`]: the faces' planes, the rounds at their end sections, the rule's order
 /// and tolerance, the corner's convexity and its containment), certified at once: the rule
 /// run again from the definition makes this fill, number for number, with its
-/// certificates ([`SetbackFill::refill`]).
+/// certificates ([`SetbackFill::refill`]). Kept only where every face is a plane.
 ///
 /// # Errors
 ///
