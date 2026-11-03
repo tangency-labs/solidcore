@@ -235,7 +235,8 @@ fn holes_and_trimmed_faces_are_watertight() {
     assert!((a - b).abs() < 0.01 * b, "cross hole volume {a} vs {b}");
 }
 
-/// Through holes in pairs whose circles touch at one point (rig booleans/307): the plate's faces
+/// Through holes in pairs whose circles touch at one point (eight holes of radius 5 through a
+/// 100 mm plate, at 15 and 25 mm from its middle along both axes): the plate's faces
 /// have one loop round each pair, through their common vertex twice. Both passes are one point of
 /// the face's (u, v), not two nodes the pcurves put 1e-14 apart, whose constraints crossed
 /// ("boundary crosses itself").
@@ -680,7 +681,7 @@ fn bounds(m: &Mesh) -> (Vec3, Vec3) {
     )
 }
 
-/// #1995: an M8x1 thread through a 7 mm hole in a 20 mm block, both ends open. An earlier mesher
+/// An M8x1 thread through a 7 mm hole in a 20 mm block, both ends open. An earlier mesher
 /// meshed the groove's winding walls with triangles reaching past both ends of the block; the
 /// body's mesh now comes from the display plan, inside the block and with the analytic volume.
 #[test]

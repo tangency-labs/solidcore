@@ -190,12 +190,12 @@ fn hostile_meshes_never_panic() {
     }));
 }
 
-/// Timing, not a check (`SOLIDCRAFT_BENCH_STL=part.stl cargo test --release -p solidcraft-geom
-/// --lib simplify_timing -- --ignored --nocapture`): the levels of a binary STL.
+/// Timing, not a check (`SOLIDCORE_TESS_BENCH_STL=part.stl cargo test --release -p
+/// solidcore-tess --lib simplify_timing -- --ignored --nocapture`): the levels of a binary STL.
 #[test]
 #[ignore = "timing, not a check"]
 fn simplify_timing() {
-    let Some(path) = std::env::var_os("SOLIDCRAFT_BENCH_STL") else {
+    let Some(path) = std::env::var_os("SOLIDCORE_TESS_BENCH_STL") else {
         return;
     };
     let bytes = std::fs::read(path).unwrap();
