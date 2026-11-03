@@ -408,7 +408,8 @@ pub struct StationMemo {
 ///
 /// One station solve: the feet by Newton from the seeds, then their series in s (and in
 /// tau for the G^n jets) order by order, as the G^n section's stations are built. The
-/// section is then exact in t: n >= 2, `sum_ik c_ik(s) phi_ik(t)`, `phi_ik` the
+/// section is then exact in t: n = 0 (a chamfer, #2486), the chord `(1 - t) rho_1 + t
+/// rho_2` between the feet; n >= 2, `sum_ik c_ik(s) phi_ik(t)`, `phi_ik` the
 /// section's rational functions over its common weight (the equal area thumbweight
 /// resolved as a series in s at this station, c6d9b9a); n = 1, the rational quadratic arc
 /// from the first rail to the second on the circle the balls' envelope touches the ball
@@ -438,7 +439,12 @@ pub fn evaluate_definition(
     let n = def.order as usize;
     // the station: the jets to order n in tau (G^n), or the rails and the centre one
     // order more in s (the circle's m')
-    let (ts, te) = if n >= 2 { (ls, n) } else { (ls + 1, 0) };
+    // (n = 0, the chord: the rails to order s, #2486)
+    let (ts, te) = match n {
+        0 => (ls, 0),
+        1 => (ls + 1, 0),
+        _ => (ls, n),
+    };
     if ls > 64 || lt > 64 || ts > MAX_S || te > MAX_E || ts + te + 1 > MAX_K {
         return Err(SolidError::invalid_input(
             OP,
@@ -700,6 +706,18 @@ pub fn evaluate_definition(
                 sum = sum.add(&tv_of(ff, kk, ls, lt).times(&phi));
             }
         }
+    } else if n == 0 {
+        // the chord (#2486): (1 - t) rho_1 + t rho_2, exact in t
+        let [f0, f1] = &at.f;
+        let rho1 = tv_of(f0, 0, ls, lt);
+        let rho2 = tv_of(f1, 0, ls, lt);
+        let mut a = T2::new(ls, lt, 1.0 - t);
+        let mut b = T2::new(ls, lt, t);
+        if lt >= 1 {
+            a.set(0, 1, -1.0);
+            b.set(0, 1, 1.0);
+        }
+        sum = rho1.times(&a).add(&rho2.times(&b));
     } else {
         // the centre to one order more, for its tangent m'
         let m1 = tv_of(&at.v, 0, ls + 1, lt);

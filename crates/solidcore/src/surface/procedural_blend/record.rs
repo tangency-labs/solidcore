@@ -104,6 +104,31 @@ pub enum RadiusRecord {
     Law(NurbsCurveRecord),
 }
 
+/// How a chamfer's size was asked for (#2486).
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+pub enum ChamferSizeRecord {
+    /// The setbacks from the edge along supports 1 and 2.
+    Distances([f64; 2]),
+    /// The setback along support 1 and the chamfer's angle (radians) to it.
+    DistanceAngle {
+        /// The setback along support 1.
+        distance: f64,
+        /// The chamfer's angle to support 1.
+        angle: f64,
+    },
+    /// The chord between the rails.
+    Chord(f64),
+}
+
+/// A chamfer's sizes and the wedge angle they were converted to offsets at (#2486).
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+pub struct ChamferRecord {
+    /// The sizes as asked.
+    pub size: ChamferSizeRecord,
+    /// The angle between the supports the sizes were converted at.
+    pub wedge: f64,
+}
+
 /// The affine map from the net's (u, v) to the definition's (s, t):
 /// `(s, t) = (a[0] + b[0] p, a[1] + b[1] q)`, `(p, q)` = `(u, v)`, or `(v, u)` when swapped.
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
@@ -125,7 +150,8 @@ pub struct BlendDefinitionRecord {
     pub sides: [f64; 2],
     /// The radius: constant offsets, or a law.
     pub radius: RadiusRecord,
-    /// The section's order n: 1 the ball's circle, 2 to 4 a G^n section.
+    /// The section's order n: 0 the chord (a chamfer), 1 the ball's circle, 2 to 4 a G^n
+    /// section.
     pub order: u32,
     /// The thumbweight w for n >= 2 (the equal area rule's marker, or a value below 1);
     /// 0 for n = 1.
@@ -138,6 +164,9 @@ pub struct BlendDefinitionRecord {
     pub bound: f64,
     /// The map from the net's parameters to the definition's.
     pub map: ParameterMapRecord,
+    /// A chamfer's sizes (order 0): what its offsets were asked as.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub chamfer: Option<ChamferRecord>,
 }
 
 /// A procedural blend: its definition S and its certified net B.
@@ -307,6 +336,19 @@ impl ProceduralBlendRecord {
         ];
         if !all_finite(&numbers) {
             return Err(refuse("definition", "a definition's numbers are finite"));
+        }
+        if let Some(c) = &d.chamfer {
+            let sizes = match c.size {
+                ChamferSizeRecord::Distances([a, b]) => [a, b, c.wedge],
+                ChamferSizeRecord::DistanceAngle { distance, angle } => [distance, angle, c.wedge],
+                ChamferSizeRecord::Chord(l) => [l, l, c.wedge],
+            };
+            if !all_finite(&sizes) {
+                return Err(refuse(
+                    "definition.chamfer",
+                    "a definition's numbers are finite",
+                ));
+            }
         }
         match &d.radius {
             RadiusRecord::Constant { offsets } => {

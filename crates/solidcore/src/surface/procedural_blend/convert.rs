@@ -11,11 +11,13 @@
 //! Deviations: none (no upstream counterpart). Recursion: nested supports are walked at
 //! most [`BLEND_MAX_DEPTH`] deep, with an explicit depth refused past it.
 
+use super::chamfer::{ChamferDefinition, ChamferSize};
 use super::exact::{ExactClass, ExactRound};
 use super::record::{
-    BlendDefinitionRecord, ClassInputsRecord, ExactClassRecord, ExactNetKindRecord, ExactNetRecord,
-    ExactRoundRecord, NurbsCurveRecord, NurbsSurfaceRecord, ParameterMapRecord,
-    ProceduralBlendRecord, RadiusRecord, SupportKindRecord, SupportRecord,
+    BlendDefinitionRecord, ChamferRecord, ChamferSizeRecord, ClassInputsRecord,
+    ExactClassRecord, ExactNetKindRecord, ExactNetRecord, ExactRoundRecord, NurbsCurveRecord,
+    NurbsSurfaceRecord, ParameterMapRecord, ProceduralBlendRecord, RadiusRecord,
+    SupportKindRecord, SupportRecord,
 };
 use super::{BlendDefinitionInput, BlendRef, ProceduralBlend, BLEND_MAX_DEPTH};
 use crate::blend::fillet_exact::{classify_supports, BlendSpine, ClassInputs};
@@ -83,6 +85,16 @@ fn to_record_at(k: &Kernel, pb: &ProceduralBlend, depth: u32) -> Result<Procedur
                 b: d.map_b,
                 swapped: d.swapped,
             },
+            chamfer: d.chamfer.map(|c| ChamferRecord {
+                size: match c.size {
+                    ChamferSize::Distances(x) => ChamferSizeRecord::Distances(x),
+                    ChamferSize::DistanceAngle { distance, angle } => {
+                        ChamferSizeRecord::DistanceAngle { distance, angle }
+                    }
+                    ChamferSize::Chord(l) => ChamferSizeRecord::Chord(l),
+                },
+                wedge: c.wedge,
+            }),
         },
         net: surface_record(pb.net())?,
     })
@@ -270,6 +282,19 @@ fn from_record_at(k: &Kernel, rec: &ProceduralBlendRecord, depth: u32) -> Result
         RadiusRecord::Constant { offsets } => (None, *offsets),
         RadiusRecord::Law(law) => (Some(curve_of(law)?), [0.0, 0.0]),
     };
+    let chamfer = match &d.chamfer {
+        Some(c) => Some(ChamferDefinition::new(
+            match c.size {
+                ChamferSizeRecord::Distances(x) => ChamferSize::Distances(x),
+                ChamferSizeRecord::DistanceAngle { distance, angle } => {
+                    ChamferSize::DistanceAngle { distance, angle }
+                }
+                ChamferSizeRecord::Chord(l) => ChamferSize::Chord(l),
+            },
+            c.wedge,
+        )?),
+        None => None,
+    };
     let leader = curve_of(&d.leader)?;
     let [seed0, seed1] = &d.seeds;
     let seeds = [curve_of(seed0)?, curve_of(seed1)?];
@@ -293,6 +318,7 @@ fn from_record_at(k: &Kernel, rec: &ProceduralBlendRecord, depth: u32) -> Result
         leader: &leader,
         seeds: [&seeds[0], &seeds[1]],
         bound: d.bound,
+        chamfer,
     };
     let mut pb = ProceduralBlend::create(k, &net, &input, |n, w| {
         GnSectionFsg::is_valid(n as usize, w)

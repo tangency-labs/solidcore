@@ -2510,6 +2510,13 @@ impl CircularCrossSectionFsg {
 pub struct CircleBall {
     /// The constant-radius solver's radii.
     pub radii: Option<[f64; 2]>,
+    /// A constant-distance solver's chord (`GetDistance`; the linear generator's, #2486).
+    pub chord: Option<f64>,
+    /// The chamfer's sizes the solver was made for ([`FilletSolver::chamfer`]; the linear
+    /// generator's, #2486).
+    ///
+    /// [`FilletSolver::chamfer`]: crate::blend::fillet_solver::p1::FilletSolver::chamfer
+    pub chamfer: Option<crate::surface::procedural_blend::chamfer::ChamferDefinition>,
     /// `GetThisAngTolRad()`.
     pub ang_tol_rad: f64,
     /// A variable-radius solver's round (`static_cast<SmVariableRadiusFS *>`, 0d43b4c;
@@ -2811,6 +2818,141 @@ impl CircularCrossSectionFsg {
         )
     }
 }
+
+impl super::p1::LinearCrossSectionFsg {
+    /// A chamfer by its definition (solidcore's, #2486; with
+    /// `fixes.fillet_gn_section_generator` and `fixes.fillet_round_as_definition`): the
+    /// section generator's chord, order 0, between the feet of the point at the solver's
+    /// offsets off the two faces ([`GnSectionFsg::build_chord`]), keeping the chamfer's
+    /// sizes: those the solver was made for, else its two offsets' setbacks at the wedge
+    /// at the rails' start, or a constant-distance solver's chord between planes. The
+    /// rails and uv curves become the stations' feet. `None` (built as before): a face
+    /// that is not an offset of a NURBS surface (or is a blend by its definition), rails
+    /// or a centre line that turn at a knot, rails that meet at an end, a
+    /// constant-distance solver on a face that is not a plane (its offsets vary along
+    /// the edge), a solver of another kind, or rails that are not those feet.
+    ///
+    /// # Errors
+    ///
+    /// Those of the corners, the evaluations, the sizes (offsets that fold) and `Build`.
+    #[allow(clippy::too_many_arguments)]
+    pub fn definition_surface(
+        &self,
+        k: &Kernel,
+        approx_tol_3d: f64,
+        solver_type: FilletSolverType,
+        center_line: &BSplineCurve,
+        rails: [&mut BSplineCurve; 2],
+        surfaces: [&Surface; 2],
+        uv: [&mut BSplineCurve; 2],
+        ball: &CircleBall,
+    ) -> Result<Option<Surface>> {
+        use crate::blend::fillet_section::section::GnSectionFsg;
+        use crate::blend::fillet_standard_solver::touch_circle::{
+            corner_angle, fillet_curve_corners,
+        };
+        use crate::surface::procedural_blend::chamfer::{ChamferDefinition, ChamferSize};
+        use crate::surface::surface::SurfaceKind;
+        if !(k.fixes.fillet_gn_section_generator && k.fixes.fillet_round_as_definition) {
+            return Ok(None);
+        }
+        let [rail1, rail2] = rails;
+        let corners =
+            fillet_curve_corners(center_line, rail1, rail2, corner_angle(ball.ang_tol_rad))?;
+        if !corners.is_empty() {
+            return Ok(None);
+        }
+        let [s1, s2] = surfaces;
+        let (SurfaceKind::OffsetSurface(o1), SurfaceKind::OffsetSurface(o2)) =
+            (s1.kind(), s2.kind())
+        else {
+            return Ok(None);
+        };
+        let bases = [o1.base_surface(), o2.base_surface()];
+        let mut planes = true;
+        for b in bases {
+            match b.kind() {
+                SurfaceKind::Plane(_) => {}
+                SurfaceKind::BSpline(_)
+                | SurfaceKind::SurfOfRevolution(_)
+                | SurfaceKind::SurfOfExtrusion(_)
+                | SurfaceKind::Cone(_)
+                | SurfaceKind::Sphere(_)
+                | SurfaceKind::Torus(_) => planes = false,
+                _ => return Ok(None),
+            }
+        }
+        // the rails' start: the wedge between the faces there, from the centre's offsets
+        // to the feet (the faces' normals towards the centre)
+        let ivl = rail1.natural_interval();
+        for t in [ivl.min(), ivl.max()] {
+            if rail1.evaluate_point(t)?.distance(rail2.evaluate_point(t)?) < approx_tol_3d {
+                return Ok(None);
+            }
+        }
+        let s0 = center_line.natural_interval().min();
+        let m = center_line.evaluate_point(s0)?;
+        // each face's unit normal at its foot, turned towards the centre
+        let mut inward = [Vec3::ZERO; 2];
+        for (((n, face), rail), w) in inward
+            .iter_mut()
+            .zip(bases)
+            .zip([&*rail1, &*rail2])
+            .zip([&*uv[0], &*uv[1]])
+        {
+            let p = w.evaluate_point(s0)?;
+            let normal = face
+                .evaluate_normal(k, Point2::new(p.x, p.y), Side::Left, Side::Left)?
+                .unitize()?;
+            let off = m - rail.evaluate_point(s0)?;
+            *n = if off.dot(normal) >= 0.0 {
+                normal
+            } else {
+                normal * -1.0
+            };
+        }
+        let [n1, n2] = inward;
+        let wedge = PI - n1.dot(n2).clamp(-1.0, 1.0).acos();
+        let (offsets, chamfer) = match (solver_type, ball.radii, ball.chord) {
+            (FilletSolverType::ConstRadius, Some(r), _) => {
+                if !(r[0] > approx_tol_3d && r[1] > approx_tol_3d) {
+                    return Ok(None);
+                }
+                let sizes = match ball.chamfer {
+                    Some(c) if c.holds(r) => c,
+                    Some(_) => {
+                        return Err(SolidError::invalid_input(
+                            OP_LINEAR_DEF,
+                            "the chamfer's sizes are not its solver's offsets",
+                        ))
+                    }
+                    None => ChamferDefinition::of_offsets(r, wedge)?,
+                };
+                (r, sizes)
+            }
+            // a chord's offsets are constant only where the wedge is: between planes
+            (FilletSolverType::ConstDist, _, Some(l)) if planes => {
+                let sizes = ChamferDefinition::new(ChamferSize::Chord(l), wedge)?;
+                (sizes.offsets()?, sizes)
+            }
+            _ => return Ok(None),
+        };
+        let mut gn = GnSectionFsg::chord();
+        gn.build_chord(
+            k,
+            center_line,
+            [rail1, rail2],
+            approx_tol_3d,
+            bases,
+            uv,
+            offsets,
+            chamfer,
+        )
+    }
+}
+
+const OP_LINEAR_DEF: &str =
+    "blend::fillet_standard_solver::p2::LinearCrossSectionFsg::definition_surface";
 
 impl BlendCurveCrossSectionFsg {
     /// `SmBlendCurveCrossSectionFSG::CreateSurface(rFilletSolver, pCenterLine,

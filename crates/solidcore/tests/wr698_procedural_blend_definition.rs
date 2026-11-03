@@ -116,6 +116,7 @@ fn blend(k: &Kernel, bumpy: bool, order: u32, thumbweight: f64, law: bool) -> Pr
         leader: &leader,
         seeds: [&seed, &seed],
         bound: 1e-3,
+        chamfer: None,
     };
     ProceduralBlend::create(k, &net, &input, |n, w| {
         GnSectionFsg::is_valid(n as usize, w)
@@ -633,6 +634,7 @@ fn round_on_a_round(k: &Kernel) -> ProceduralBlend {
         leader: &leader,
         seeds: [&seed_inner, &seed_wall],
         bound: 1e-3,
+        chamfer: None,
     };
     let net = bilinear([
         Point3::new(0.0, 0.0, 0.0),

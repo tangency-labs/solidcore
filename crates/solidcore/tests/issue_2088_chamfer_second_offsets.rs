@@ -147,3 +147,198 @@ fn issue_2088_second_radii_size_mismatch() {
         "{err:?}"
     );
 }
+
+// ---- #2486: chamfers as their definitions, the chord of order 0 -------------------------
+
+use solidcore::blend::fillet_executive::api::chamfer_fillet;
+use solidcore::math::Vec3;
+use solidcore::surface::procedural_blend::chamfer::{ChamferDefinition, ChamferSize};
+use solidcore::surface::procedural_blend::convert::{rebuild, to_record};
+use solidcore::surface::procedural_blend::{ProceduralBlend, PROCEDURAL_BLEND_TYPE};
+use solidcore::surface::surface::SurfaceKind;
+use solidcore::topology::database_io::{DatabaseReader, DatabaseWriter, FileType};
+use solidcore::topology::edgeuse::p1 as eu1;
+use solidcore::topology::geometry_write::write_surface;
+
+/// The section generator and rounds (and chamfers) as their definitions.
+fn definition_kernel() -> Kernel {
+    let mut k = Kernel::default();
+    k.fixes.fillet_gn_section_generator = true;
+    k.fixes.fillet_round_as_definition = true;
+    k
+}
+
+/// The box [0, 20] x [0, 20] x [0, 10]'s top front edge, along x at y = 0, z = 10.
+fn top_front_edge(b: &Brep) -> EdgeId {
+    b.edges()
+        .ids()
+        .find(|&e| {
+            let (s, t) = edge::start_end_vertices(b, e).unwrap();
+            let s = vertex::point(b, s.unwrap()).unwrap();
+            let t = vertex::point(b, t.unwrap()).unwrap();
+            [s, t]
+                .iter()
+                .all(|q| q.y.abs() < 1e-9 && (q.z - 10.0).abs() < 1e-9)
+        })
+        .unwrap()
+}
+
+/// The faces of `b` on a blend by its definition.
+fn definitions(b: &Brep) -> Vec<ProceduralBlend> {
+    b.face_list()
+        .iter()
+        .filter_map(|&f| match b.face(f).unwrap().surface.as_ref()?.kind() {
+            SurfaceKind::ProceduralBlend(pb) => Some((**pb).clone()),
+            _ => None,
+        })
+        .collect()
+}
+
+/// Whether support 1 of the box's top front edge's chamfer is the top face (z = 10), else
+/// the front face (y = 0): the blend edge use's face.
+fn first_support_is_top(k: &Kernel, b: &mut Brep, e: EdgeId) -> bool {
+    let u0 = edge::blend_edgeuse(k, b, e).unwrap().unwrap();
+    let f = eu1::face(b, u0).unwrap().unwrap();
+    let s = b.face(f).unwrap().surface.as_ref().unwrap();
+    let d = s.natural_uv_domain_with_nurb(k).unwrap();
+    let p = s.evaluate_point(k, d.evaluate(0.5, 0.5)).unwrap();
+    let q = s.evaluate_point(k, d.evaluate(0.2, 0.7)).unwrap();
+    (p.z - 10.0).abs() < 1e-9 && (q.z - 10.0).abs() < 1e-9
+}
+
+/// The box's top front edge chamfered by `size` through `prepare_chamfers`: the body,
+/// its kernel, and the setbacks (along the top face, along the front face).
+fn chamfered_box(size: ChamferSize) -> (Kernel, Brep, [f64; 2]) {
+    let mut k = definition_kernel();
+    let mut b = create_box(&mut k, Point3::new(0.0, 0.0, 0.0), 20.0, 20.0, 10.0).unwrap();
+    let e = top_front_edge(&b);
+    let top_first = first_support_is_top(&k, &mut b, e);
+    {
+        let mut s = FilletSession::new(&mut k, &mut b).unwrap();
+        s.prepare_chamfers(&k, &[e], &[size]).unwrap();
+        s.create_corners(&mut k, None).unwrap();
+        for id in s.fillet_corners().unwrap() {
+            s.set_corner_bevel(id, true).unwrap();
+        }
+        s.do_filleting(&mut k, None).unwrap();
+    }
+    b.refresh_cached_topology();
+    let d = ChamferDefinition::new(size, 0.5 * std::f64::consts::PI)
+        .unwrap()
+        .setbacks();
+    let setbacks = if top_first { d } else { [d[1], d[0]] };
+    (k, b, setbacks)
+}
+
+/// The largest distance of the chamfer face's points (a 9 x 9 grid of its definition,
+/// and its net's control points) from the plane through the box's top front edge's rails,
+/// `a` along the top face and `b` along the front face.
+fn off_the_chamfer_plane(k: &Kernel, pb: &ProceduralBlend, [a, bb]: [f64; 2]) -> f64 {
+    // the plane through (x, a, 10) and (x, 0, 10 - b): b y + a z = a (10)... in the
+    // y-z plane: points (a, 10) and (0, 10 - b), normal (b, a)
+    let n = Vec3::new(0.0, bb, -a).unitize().unwrap();
+    let o = Point3::new(0.0, a, 10.0);
+    let s = solidcore::surface::surface::Surface::from(pb.clone());
+    let d = s.natural_uv_domain_with_nurb(k).unwrap();
+    let mut off = 0.0f64;
+    for i in 0..=8 {
+        for j in 0..=8 {
+            let p = s
+                .evaluate_point(k, d.evaluate(f64::from(i) / 8.0, f64::from(j) / 8.0))
+                .unwrap();
+            off = off.max((p - o).dot(n).abs());
+        }
+    }
+    let (_, _, cps) = pb.net().control_points().unwrap();
+    for c in cps {
+        let w = if c.w == solidcore::nurbs::math::NOW {
+            1.0
+        } else {
+            c.w
+        };
+        let p = Point3::new(c.x / w, c.y / w, c.z / w);
+        off = off.max((p - o).dot(n).abs());
+    }
+    off
+}
+
+/// Each kind of chamfer between the box's planes is a blend by its definition, the chord
+/// (order 0), keeping its sizes; its face lies on the chamfer's plane to rounding, and the
+/// body loses the prism `a b / 2 * 20`.
+#[test]
+fn issue_2486_chamfers_between_planes_are_chords_by_their_definitions() {
+    let kinds = [
+        ChamferSize::Distances([1.5, 1.5]),
+        ChamferSize::Distances([1.0, 2.0]),
+        ChamferSize::DistanceAngle {
+            distance: 2.0,
+            angle: std::f64::consts::PI / 6.0,
+        },
+    ];
+    for size in kinds {
+        let (k, mut b, setbacks) = chamfered_box(size);
+        let defs = definitions(&b);
+        assert_eq!(defs.len(), 1, "{size:?}: one chamfer face");
+        let pb = &defs[0];
+        assert_eq!(pb.order(), 0, "{size:?}");
+        let kept = pb.chamfer().unwrap();
+        assert_eq!(kept.size, size, "{size:?}");
+        assert!((kept.wedge - 0.5 * std::f64::consts::PI).abs() < 1e-14);
+        let off = off_the_chamfer_plane(&k, pb, setbacks);
+        eprintln!("{size:?}: bound {:e}, off its plane {off:e}", pb.bound());
+        assert!(off <= 1e-13, "{size:?}: {off}");
+        let want = 4000.0 - setbacks[0] * setbacks[1] / 2.0 * 20.0;
+        assert_close(volume(&k, &mut b), want);
+        // the record round trips, and the net re-certifies
+        let rec = to_record(&k, pb).unwrap();
+        let back = rebuild(&k, &rec).unwrap();
+        assert!(back.same_definition(&k, pb).unwrap(), "{size:?}");
+        assert_eq!(back.chamfer(), pb.chamfer());
+        assert_eq!(to_record(&k, &back).unwrap(), rec);
+        // and the database, its sizes with it
+        let surface = solidcore::surface::surface::Surface::from(pb.clone());
+        for ft in [FileType::Binary, FileType::Ascii] {
+            let mut db = DatabaseWriter::open_for_write(ft);
+            write_surface(&surface, &mut db, 30).unwrap();
+            let mut r = DatabaseReader::new();
+            r.open_for_read(db.into_bytes(), ft);
+            let read = solidcore::surface::surface::Surface::read_from_db(
+                &k,
+                PROCEDURAL_BLEND_TYPE,
+                &mut r,
+                30,
+            )
+            .unwrap();
+            let SurfaceKind::ProceduralBlend(read) = read.kind() else {
+                panic!("{ft:?}: not a blend by its definition");
+            };
+            assert_eq!(read.order(), 0, "{ft:?}");
+            let c = read.chamfer().unwrap();
+            if ft == FileType::Binary {
+                assert!(read.same_definition(&k, pb).unwrap(), "{size:?}");
+                assert_eq!(c, pb.chamfer().unwrap());
+            } else {
+                assert!((c.wedge - kept.wedge).abs() <= 1e-12, "{ft:?}");
+            }
+        }
+    }
+}
+
+/// `SmApiChamferFillet`'s chord between the cube's planes: every chamfer face a chord by
+/// its definition, the chord 1 kept, and the cube's closed-form volume with bevelled
+/// corners: twelve prisms of legs 1/sqrt 2 less the corners' overlaps.
+#[test]
+fn issue_2486_chord_chamfers_of_a_cube_are_chords_by_their_definitions() {
+    let mut k = definition_kernel();
+    let mut b = create_box(&mut k, Point3::new(0.0, 0.0, 0.0), 20.0, 20.0, 20.0).unwrap();
+    chamfer_fillet(&mut k, &mut b, 1.0).unwrap();
+    b.refresh_cached_topology();
+    let defs = definitions(&b);
+    assert_eq!(defs.len(), 12);
+    for pb in &defs {
+        assert_eq!(pb.order(), 0);
+        assert_eq!(pb.chamfer().unwrap().size, ChamferSize::Chord(1.0));
+    }
+    // twelve prisms of 20 x d^2 / 2, d = 1/sqrt 2, each corner giving back 3 d^3 / 4
+    assert_close(volume(&k, &mut b), 7940.0 + 1.5 * std::f64::consts::SQRT_2);
+}
