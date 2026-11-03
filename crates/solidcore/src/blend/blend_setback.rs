@@ -102,9 +102,14 @@ use crate::nurbs::knots::Side;
 use crate::surface::surface::{Surface, SurfaceKind};
 
 mod certify;
+mod curved;
 mod graph;
 mod qp;
 mod scale;
+mod spring;
+
+pub use curved::{no_more_concave, round_end_curvature};
+pub use spring::{spring_curve, SpringCurve, SpringHalf};
 
 pub use scale::{certified_scale, CertifiedScale};
 
@@ -693,6 +698,15 @@ fn ease_nets(
 // ---- the setback distances ------------------------------------------------------------
 
 /// `smos_Max`: the larger, `b` when they compare false (NaN).
+/// `smos_Max` on sizes.
+fn smax_usize(a: usize, b: usize) -> usize {
+    if a > b {
+        a
+    } else {
+        b
+    }
+}
+
 fn smax(a: f64, b: f64) -> f64 {
     if a > b {
         a
@@ -763,14 +777,111 @@ impl Refusal {
     }
 }
 
+/// `SmBlendSetback::Kind`: what a face at the corner is.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum FaceKind {
+    /// `SM_SB_PLANE`: a plane through the face's point, its normal the face's.
+    #[default]
+    Plane,
+    /// `SM_SB_CYLINDER`: about the axis through the face's point along its unit axis, of
+    /// its radius.
+    Cylinder,
+    /// `SM_SB_CONE`: about the axis through the face's point along its unit axis, of radius
+    /// `radius + slope h` at `h` along the axis.
+    Cone,
+    /// `SM_SB_SPHERE`: about the face's point, of its radius.
+    Sphere,
+}
+
 /// `SmBlendSetback::Face`: a face at the corner, a plane through `point`, `normal` its unit
-/// normal out of the material.
+/// normal out of the material; or a natural quadric ([`FaceKind`]): a cylinder or cone about
+/// the axis through `point` along the unit `axis`, of `radius` there and `radius + slope h`
+/// at `h` along the axis (a cylinder's slope 0), or a sphere about `point` of `radius`;
+/// `side` `+1` where the material is inside it, `-1` outside. (`normal` is a curved face's
+/// normal out of the material at the corner's vertex.)
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Face {
-    /// A point of the plane (`m_sPoint`).
+    /// A point of the plane; a quadric's axis point or centre (`m_sPoint`).
     pub point: Point3,
-    /// Its unit normal out of the material (`m_sNormal`).
+    /// Its unit normal out of the material (`m_sNormal`; a quadric's at the vertex).
     pub normal: Vec3,
+    /// What it is (`m_eKind`).
+    pub kind: FaceKind,
+    /// A cylinder's or cone's unit axis (`m_sAxis`).
+    pub axis: Vec3,
+    /// A quadric's radius at `point` (`m_dRadius`).
+    pub radius: f64,
+    /// A cone's change of radius along its axis (`m_dSlope`).
+    pub slope: f64,
+    /// `+1` where the material is inside the quadric, `-1` outside (`m_dSide`).
+    pub side: f64,
+}
+
+impl Default for Face {
+    /// The fork's member initialisers: a plane, the axis `(0, 0, 1)`, radius and slope 0,
+    /// side `+1`.
+    fn default() -> Self {
+        Self {
+            point: Point3::ZERO,
+            normal: Vec3::ZERO,
+            kind: FaceKind::Plane,
+            axis: Vec3::new(0.0, 0.0, 1.0),
+            radius: 0.0,
+            slope: 0.0,
+            side: 1.0,
+        }
+    }
+}
+
+impl Face {
+    /// A plane through `point`, `normal` its unit normal out of the material.
+    #[must_use]
+    pub fn plane(point: Point3, normal: Vec3) -> Self {
+        Self {
+            point,
+            normal,
+            ..Self::default()
+        }
+    }
+
+    /// `SmBlendSetback::Distance`: the face's signed distance at `x` (negative in the
+    /// material; a cone's in the plane through its axis) and its unit normal out of the
+    /// material there (zero on a quadric's centre or axis).
+    #[must_use]
+    pub fn distance(&self, x: Point3) -> (f64, Vec3) {
+        let u = x - self.point;
+        match self.kind {
+            FaceKind::Plane => (u.dot(self.normal), self.normal),
+            FaceKind::Sphere => {
+                let len = u.length();
+                let n = if len > 0.0 {
+                    u * (self.side / len)
+                } else {
+                    Vec3::ZERO
+                };
+                (self.side * (len - self.radius), n)
+            }
+            FaceKind::Cylinder | FaceKind::Cone => {
+                let h = u.dot(self.axis);
+                let r = u - self.axis * h;
+                let rho = r.length();
+                let cos = 1.0 / sqrt(1.0 + self.slope * self.slope);
+                let sin = self.slope * cos;
+                let n = if rho > 0.0 {
+                    (r * (cos / rho) - self.axis * sin) * self.side
+                } else {
+                    Vec3::ZERO
+                };
+                (self.side * (rho - (self.radius + self.slope * h)) * cos, n)
+            }
+        }
+    }
+
+    /// Whether the face is a natural quadric, not a plane.
+    #[must_use]
+    pub fn is_curved(&self) -> bool {
+        self.kind != FaceKind::Plane
+    }
 }
 
 /// `SmBlendSetback::Edge`: a rounded edge at the corner, for the setbacks.
@@ -1700,6 +1811,22 @@ pub fn fill_hole(
     )
 }
 
+/// [`fill_hole`], with its work and whether a G1 fill was refused as uncertified
+/// (`stats`; the fork's `Fill::m_bUncertified`, which the corner reads on refusal).
+///
+/// # Errors
+/// As [`fill_hole`]'s.
+pub fn fill_hole_counted(
+    kernel: &Kernel,
+    faces: &[Face],
+    rounds: &[Round<'_>],
+    order: usize,
+    tol: f64,
+    stats: &mut FillStats,
+) -> core::result::Result<Fill, Refusal> {
+    fill_hole_with(kernel, faces, rounds, order, tol, None, stats)
+}
+
 /// `SmBlendSetback::Probe` (the fork's 250cb3f, f1d81f4): [`certified_scale`]'s probe of a
 /// G1 fill at degree 9: whether its conditions can be met (`feasible`), and the least
 /// uniform violation of its normalized sector conditions over the heights (`margin_value`:
@@ -1717,14 +1844,22 @@ pub struct Probe {
     pub margin_value: f64,
 }
 
-/// The fork's `Fill::m_lSolves` and `m_bUncertified` (f1d81f4), kept on refusal too.
+/// The fork's `Fill::m_lSolves` and `m_bUncertified` (f1d81f4), kept on refusal too, and the
+/// work of a fill beside a curved face (the fork's process-wide `CurvedCounts`, 37c9e1d, kept
+/// per fill here: counts, never timings).
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct FillStats {
     /// `m_lSolves`: the quadratic programmes a G1 fill solved (its count, not its time).
     pub solves: usize,
     /// `m_bUncertified`: the G1 fill was refused as no fill up to degree 9 is certified
-    /// convex.
+    /// convex (beside a curved face: no more concave than its faces).
     pub uncertified: bool,
+    /// `CurvedCounts[0]`: the fills made beside a curved face (0 or 1).
+    pub curved_fills: usize,
+    /// `CurvedCounts[1]`: their degrees tried, one quadratic programme each.
+    pub curved_degrees: usize,
+    /// `CurvedCounts[2]`: the sector rows built for them.
+    pub curved_rows: usize,
 }
 
 /// `SmBlendSetback::FillHoleProbe`: the G1 fill (order 1) probed as `probe` asks, or built
@@ -1767,6 +1902,8 @@ fn fill_hole_with(
     let n = rounds.len();
     let k = order;
     let big_n = 2 * k + 1; // the setback patches' degree across the hole
+                           // beside a curved face the rounds' second derivatives along too (their k)
+    let any_curved = faces.iter().any(Face::is_curved);
 
     // each round's jets at its end, and the faces its across ends lie on
     let mut jets: Vec<Vec<Vec<Hom>>> = Vec::with_capacity(n);
@@ -1778,14 +1915,14 @@ fn fill_hole_with(
             h,
             q,
             dt_ds: r_dt_ds,
-        } = round_jets(kernel, round, k)?;
+        } = round_jets(kernel, round, if any_curved { smax_usize(k, 2) } else { k })?;
         dt_ds.push(r_dt_ds);
         for (e, at_e) in face_at.iter_mut().enumerate() {
             let hp = el_ref(el_ref(&h, 0)?, if e == 0 { 0 } else { q })?;
             let p = euclid(hp);
             let slot = el_mut(at_e, r)?;
             for (f, face) in faces.iter().enumerate() {
-                if (p - face.point).dot(face.normal).abs() <= tol {
+                if face.distance(p).0.abs() <= tol {
                     if *slot != n {
                         return Err(Refusal::invalid(
                             "SmBlendSetback: a round's rail lies on two of the faces",
@@ -1855,6 +1992,27 @@ fn fill_hole_with(
             }
             *slot = true;
         }
+    }
+    if any_curved {
+        if k != 1 || probe.as_ref().is_some_and(|p| !p.fill) {
+            return Err(Refusal::invalid(
+                "SmBlendSetback: beside a curved face only a G1 fill is built, and probed only as the fill itself",
+            ));
+        }
+        stats.curved_fills += 1;
+        return curved::graph_g1_curved(
+            &curved::CurvedInput {
+                faces,
+                rounds,
+                jets: &jets,
+                qs: &qs,
+                round: &cycle_round,
+                face: &cycle_face,
+                rev: &cycle_rev,
+                tol,
+            },
+            stats,
+        );
     }
     if k == 1 {
         return graph::graph_g1(
@@ -2395,16 +2553,23 @@ fn fill_hole_with(
 /// `SmBlendSetback::Containment`: the most any patch of `fill` stands past a face out of the
 /// corner (positive: past it): out of the material for a convex corner (`convex`), into it
 /// for a concave one. A certified bound: every patch lies in the convex hull of its control
-/// points (weights positive).
+/// points (weights positive). Beside a curved face (solidcore#2343): 0 where every patch is
+/// certified on the material's side of every face, by the faces' implicit forms, else
+/// `f64::INFINITY` (the fork's `HUGE_VAL`, 37c9e1d).
 ///
 /// # Errors
-/// `SM_ERR_INVALID_INPUT` for an empty fill; `SM_ERR` for a patch with a weight not positive.
+/// `SM_ERR_INVALID_INPUT` for an empty fill; `SM_ERR` for a patch with a weight not positive
+/// (beside a curved face also: of more than one span, or of degree below 2 across a face it
+/// lies on).
 pub fn containment(fill: &Fill, faces: &[Face], convex: bool) -> Result<f64> {
     if fill.patches.is_empty() {
         return Err(SolidError::invalid_input(
             OP,
             "SmBlendSetback: an empty fill",
         ));
+    }
+    if faces.iter().any(Face::is_curved) {
+        return curved::containment_curved(fill, faces, convex);
     }
     let side = if convex { 1.0 } else { -1.0 };
     let mut worst = f64::NEG_INFINITY;

@@ -37,21 +37,21 @@ use crate::math::{Point3, Vec3, PI};
 /// `SM_SB_GRAPH_DEPTH`: the certificate's halvings.
 pub(super) const GRAPH_DEPTH: usize = 6;
 /// `SM_SB_GRAPH_LEVELS`: the sector conditions' halvings.
-const GRAPH_LEVELS: usize = 1;
+pub(super) const GRAPH_LEVELS: usize = 1;
 /// `SM_SB_GRAPH_DIRECTIONS`: their directions over a half turn.
-const GRAPH_DIRECTIONS: usize = 16;
+pub(super) const GRAPH_DIRECTIONS: usize = 16;
 /// The cubic across: rows 0, 1 the round's, 2, 3 F's.
 const NC: usize = 3;
 
 /// A 2D point or vector (`SmPoint2d`, `SmVector2d`).
 #[derive(Debug, Clone, Copy, Default)]
-struct P2 {
-    x: f64,
-    y: f64,
+pub(super) struct P2 {
+    pub x: f64,
+    pub y: f64,
 }
 
 /// `sm_SbFillFrom`: the fill's surfaces from its nets.
-fn fill_from(
+pub(super) fn fill_from(
     nets: &[Net],
     round: &[usize],
     face: &[usize],
