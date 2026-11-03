@@ -1558,7 +1558,7 @@ pub struct UpstreamFixes {
     pub fillet_setback_beside_curved_faces: bool,
     /// Chamfers meeting at a vertex where every edge is chamfered, each chamfer a plane
     /// between two planes, are closed by the chamfer planes themselves, exactly: the blend
-    /// corner's chamfer event (`blend::blend_corner::chamfer`), in place of the
+    /// corner's chamfer event ([`crate::blend::blend_corner::chamfer`]), in place of the
     /// pinned 3x3 corner's chamfer branch (`SmFilletConvexNxNCorner` with `SetChamfer`,
     /// convex and concave alike). The corner type is the session's
     /// (`FilletSession::set_chamfer_corner`): the Mitre (the default), where each chamfer
@@ -1570,11 +1570,21 @@ pub struct UpstreamFixes {
     /// naming the largest size of that chamfer that keeps it inside, less the fit margin,
     /// as the refusal's fit; the facet is refused there too, its plane leaving the
     /// chamfers. Four or more chamfers build the facet where their crossings lie in one
-    /// plane and are refused otherwise, and refused as a mitre, naming why. The pinned
+    /// plane and are refused otherwise, and refused as a mitre, naming why; chamfer planes so
+    /// nearly coplanar that the points where they meet are not determined to the part's
+    /// rounding are refused with `FilletErrorType::CornerUnsupported`, naming that. The pinned
     /// corner marches the mitre's edges as surface intersections, refuses a mitre of four
     /// or more chamfers with no reason, and builds its corner face as a Coons patch where
-    /// the chamfers are unequal (WR-715, #2345; own design, smlib#89's brief).
+    /// the chamfers are unequal (WR-716, #2345; own design, smlib#89's brief).
     pub fillet_chamfer_corner: bool,
+    /// `SmPlane::GlobalSurfaceIntersect` with a torus as the other surface takes the torus's own plane section (`SmSurfOfRevolution::IntersectWithPlane` with the torus's iso circles: the circles of a plane square to the axis, the meridians of a plane through it), the orders and UV curves swapped as for a surface of revolution, where upstream has no torus case and marches it (circles 1.4e-6 off, meridians 3.5e-6 off); a meridian keeps its generator's circle kind (WR-721, #2405; solidcore-native, no fork commit).
+    pub plane_first_torus_section_exact: bool,
+    /// A face made from exact pcurves keeps them as its edge uses' trims where upstream drops them and projects each edge's curve again later, a fit: the draft extrusion's curvature-keeping and tangent-plane walls ([`crate::primitive::primitive_creation::p2::PrimitiveCreationAccess::face_with_curves`]) pass theirs to `SmBrep::MakeFaceWithCurves` with `pbOptCrvOnSurf` set, and `SmBrep::CopyFaces` without the merge passes a face's own trims (`CreateCurvesFromFace`) on to its copy. And `MakeFaceWithCurves`'s keep step (`CreateUVTrimCurves(&uv, &orients)`) flips the orientations for a face made with its surface's orientation opposite: they are given along the loop, and `sm_FindBestUVCurve` matches them against the upward face use's edge uses, which run the other way there, so upstream's tangent test refuses every exact curve and each is projected again. A draft half disc's cone wall then keeps its seam pcurves on their edges to 1.2e-13, where upstream's are 2.4e-6 off (WR-722, #2405; solidcore-native, no fork commit).
+    pub keep_exact_pcurves: bool,
+    /// Shell, offset and thicken as one construction (tangency-labs/solidcore#2350; solidcore-native, no fork commit; WR-718). Built so far: its first stage, S1, each face's offset sheet exact or certified ([`crate::offset::construction::sheets`]), run inside today's executive. A B-spline face whose offset folds (the wall is thicker than a radius of curvature on its side: `(1 - k1 d)(1 - k2 d) > 0` not certified on the face) is refused with [`crate::SolidError::ShellRefused`] (`ShellRefusal::Fold`, status `SM_ERR`), naming the largest wall that works, instead of being built into a folded body or failing on its broken topology; and `ShellBrep`'s `ReplaceImplicitOffsets` replaces each implicit offset surface by a bicubic B-spline certified within the shell's tolerance of the exact offset at every parameter (Elber & Cohen's bound, from exact Bernstein products), instead of `N_SrfOffset`'s sampled fit. Offset faces and draft (`LocalOperation`) are not affected. Off: SMLib's behaviour.
+    pub shell_one_construction: bool,
+    /// `N_SrfIsClosedSmooth` ([`crate::nurbs::srf_basic::Surface::is_closed_smooth_with_fixes`]) takes the G1 test across the seam at a station where the derivative across the seam vanishes (a collapsed row, a pole on the seam: shorter than `0.001 * NL_MTOL`, the pole test of `N_SrfEvalPtNormalAtPole`) by its limit, the mixed derivative `S_uv` (`S_uv` for the v seam), negated at the end of the domain, where upstream takes the angle of the two vanishing vectors: their rounding then decides between `NL_GEO_ERR` (two exact zeros), not smooth (two noise vectors at any angle) and smooth, so a sphere is not reported closed and smooth in u (WR-725, #2521; solidcore-native, no fork commit).
+    pub closed_smooth_pole_tangent_limit: bool,
 }
 }
 
