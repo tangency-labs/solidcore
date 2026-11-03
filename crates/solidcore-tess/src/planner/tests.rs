@@ -1570,8 +1570,7 @@ fn a_free_edge_that_cannot_be_sampled_is_named_and_the_body_meshed() {
 
 /// An edge whose uses list no face but which the faces' loops still run (an unvalidated
 /// record), and which cannot be sampled (a spline without points): both faces that run it are
-/// refused, each naming it,
-/// and the other four are meshed. It was taken for a free edge, and each face's loop closed
+/// refused, each naming it, and the other four are meshed. It was taken for a free edge, and each face's loop closed
 /// with a chord across the gap.
 #[test]
 fn an_edge_left_out_of_its_uses_but_in_its_faces_loops_refuses_them() {
@@ -2092,4 +2091,29 @@ fn an_edge_whose_coarser_sampling_fails_keeps_its_nodes_and_is_named() {
     );
     assert_eq!(nodes[e].params, params);
     assert_eq!(nodes[e].points, points);
+}
+
+/// An edge that cannot be sampled, whose uses also list a face that does not run it (a stale
+/// use, an unvalidated record): only the two faces whose loops run it are refused; the third
+/// is meshed, and is not among the edge's faces. It was refused with them.
+#[test]
+fn a_stale_use_does_not_make_a_face_an_edges() {
+    let mut b = fixture("box_10x6x4");
+    let ei = 3;
+    let mut faces: Vec<usize> = b.edges[ei].uses.iter().map(|u| u.face as usize).collect();
+    faces.sort_unstable();
+    faces.dedup();
+    let mut stale = b.edges[ei].uses[0].clone();
+    stale.face = 5;
+    b.edges[ei].uses.push(stale);
+    b.edges[ei].curve = Curve::Spline {
+        knots: vec![0.0, 0.0, 1.0, 1.0],
+        points: Vec::new(),
+    };
+    b.edges[ei].nurbs = None;
+    let (p, stats) = ok(plan(&b, &MeshTolerance::chord(0.01), size_of("box_10x6x4")));
+    let refused: Vec<usize> = stats.unmeshed.iter().map(|r| r.face).collect();
+    assert_eq!(refused, faces, "{stats:?}");
+    assert!(meshed_faces(&p).contains(&5));
+    assert!(!p.edge_faces[ei].contains(&5));
 }

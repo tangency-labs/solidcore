@@ -325,32 +325,41 @@ fn plan_at(b: &brep::Brep, tol: f64, turn: Option<size::Turn>) -> Result<(TessPl
         )));
     }
     let forward = forward_faces(b);
-    // The faces each edge bounds, each once, in the order of the edge's uses, then any face whose
-    // loops run the edge although its uses do not list it (an unvalidated record): an edge that
-    // cannot be sampled refuses every face that runs it.
-    let mut edge_faces: Vec<Vec<usize>> = b
-        .edges
-        .iter()
-        .map(|e| {
-            // Proven: capacity of allocated `e.uses`' length, its elements (16 bytes) larger.
-            let mut fs: Vec<usize> = Vec::with_capacity(e.uses.len());
-            for u in &e.uses {
-                if !fs.contains(&(u.face as usize)) {
-                    fs.push(u.face as usize);
-                }
-            }
-            fs
-        })
-        .collect();
+    // The faces each edge bounds, each once: the faces whose loops run it, in the order of the
+    // edge's uses, then those its uses do not list (an unvalidated record). A face the uses list
+    // but whose loops do not run the edge is not its (a stale use): an edge that cannot be
+    // sampled refuses every face that runs it, and only those.
+    let mut runs: Vec<Vec<usize>> = vec![Vec::new(); b.edges.len()];
     for (fi, f) in faces.iter().enumerate() {
         for oe in face_edges(f) {
-            if let Some(fs) = edge_faces.get_mut(oe.edge as usize)
+            if let Some(fs) = runs.get_mut(oe.edge as usize)
                 && !fs.contains(&fi)
             {
                 fs.push(fi);
             }
         }
     }
+    let edge_faces: Vec<Vec<usize>> = b
+        .edges
+        .iter()
+        .zip(&runs)
+        .map(|(e, run)| {
+            // Proven: capacity of the allocated `run`'s length, the same element type.
+            let mut fs: Vec<usize> = Vec::with_capacity(run.len());
+            for u in &e.uses {
+                let f = u.face as usize;
+                if run.contains(&f) && !fs.contains(&f) {
+                    fs.push(f);
+                }
+            }
+            for &f in run {
+                if !fs.contains(&f) {
+                    fs.push(f);
+                }
+            }
+            fs
+        })
+        .collect();
     let rules = size::Rules::new(
         tol,
         size::extent(
@@ -789,7 +798,8 @@ fn boundary(
                 .get(oe.edge as usize)
                 .ok_or_else(|| fail(oe.edge, "no nodes".into()))?;
             // An edge without nodes (it could not be sampled) leaves a gap in the loop that a
-            // chord would close: the face is refused, never meshed across it.
+            // chord would close: the face is refused, never meshed across it. Defensive: such an
+            // edge has already refused every face that runs it, and sampling gives at least two.
             if n.points.len() < 2 || n.params.len() != n.points.len() {
                 return Err(fail(
                     oe.edge,
