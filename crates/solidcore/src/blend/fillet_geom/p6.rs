@@ -3265,33 +3265,34 @@ mod tests {
         assert!(matches!(err, SolidError::InvalidInput { .. }), "{err:?}");
     }
 
+    /// Body-qualified trim marks kept in one store, as the session's retained marks are.
+    #[derive(Default)]
+    struct RetainedMarks(
+        std::collections::BTreeMap<(bool, Entity), crate::topology::topology::Topology>,
+    );
+
+    impl TrimOriginalSurfacesMarks for RetainedMarks {
+        fn is_marked(
+            &self,
+            k: &Kernel,
+            body: TrimOriginalBody,
+            entity: Entity,
+            mark: MarkType,
+        ) -> bool {
+            self.0
+                .get(&(body == TrimOriginalBody::Target, entity))
+                .is_some_and(|record| record.is_marked(&k.context, mark))
+        }
+        fn mark(&mut self, k: &Kernel, body: TrimOriginalBody, entity: Entity, mark: MarkType) {
+            self.0
+                .entry((body == TrimOriginalBody::Target, entity))
+                .or_default()
+                .mark(Some(&k.context), mark);
+        }
+    }
+
     #[test]
     fn retained_trim_keeps_body_marks_and_successful_prefix_on_error() {
-        use crate::topology::topology::Topology;
-        use std::collections::BTreeMap;
-
-        #[derive(Default)]
-        struct RetainedMarks(BTreeMap<(bool, Entity), Topology>);
-        impl TrimOriginalSurfacesMarks for RetainedMarks {
-            fn is_marked(
-                &self,
-                k: &Kernel,
-                body: TrimOriginalBody,
-                entity: Entity,
-                mark: MarkType,
-            ) -> bool {
-                self.0
-                    .get(&(body == TrimOriginalBody::Target, entity))
-                    .is_some_and(|record| record.is_marked(&k.context, mark))
-            }
-            fn mark(&mut self, k: &Kernel, body: TrimOriginalBody, entity: Entity, mark: MarkType) {
-                self.0
-                    .entry((body == TrimOriginalBody::Target, entity))
-                    .or_default()
-                    .mark(Some(&k.context), mark);
-            }
-        }
-
         let mut k = Kernel::default();
         let mut fillet =
             crate::primitive::api_primitives::create_box(&mut k, Point3::ZERO, 10.0, 20.0, 30.0)
@@ -3377,5 +3378,154 @@ mod tests {
         // One body-qualified store distinguishes equal local ids. The target
         // seed does not suppress the actual fillet traversal.
         assert!(records.is_marked(&k, TrimOriginalBody::Target, Entity::Face(face), mark));
+    }
+
+    #[test]
+    fn trim_original_surfaces_with_solver_skips_rails_without_mated_edges() {
+        let mut k = Kernel::default();
+        let mut fb = FilletBrep::new();
+        let (g, rails) = two_rail_geom(&mut fb, &k);
+        let id = FilletSolverId(0);
+        let fs = solver(false);
+        let lock = MarkLock::new(core::slice::from_mut(&mut k.context), 0, ALL_MARKS).unwrap();
+        let locks = [lock];
+
+        // a fillet B-rep edge (a wire: no face) for rail 0, its curve owned by it
+        let mut fillet = Brep::new();
+        let a = fillet.add_vertex(Point3::new(0.0, 0.0, 0.0)).unwrap();
+        let b = fillet.add_vertex(Point3::new(1.0, 0.0, 0.0)).unwrap();
+        let fe = fillet.add_edge(a, b).unwrap();
+        let key = |e: EdgeId| ObjectRef {
+            type_code: 16001,
+            key: ObjectKey(u64::from(e.index())),
+        };
+        let mut c = line(
+            Point3::new(0.0, 0.0, 0.0),
+            Point3::new(1.0, 0.0, 0.0),
+            0.0,
+            1.0,
+            3,
+        );
+        let _ = c.set_owner(Some(key(fe)), None);
+        fillet.edge_mut(fe).unwrap().curve = Some(c);
+        fb.fillet_edge_mut(rails[0]).unwrap().fillet_brep_edge1 = Some(fe);
+
+        let mut target = Brep::new();
+        let mut marks = RetainedMarks::default();
+        let (mut kept, mut deleted) = (Vec::new(), Vec::new());
+        let unmated = |_: EdgeId| None;
+        let env = TrimOriginalSurfacesEnv {
+            brep_mate: &unmated,
+            fillet_edge_key: &key,
+            target_context: Some(0),
+        };
+        let leaked = fb
+            .trim_original_surfaces_with_solver(
+                &k,
+                g,
+                &mut fillet,
+                &mut target,
+                &mut marks,
+                &mut kept,
+                &mut deleted,
+                &locks,
+                &env,
+                id,
+                &fs,
+            )
+            .unwrap();
+        assert!(!leaked);
+        assert!(kept.is_empty() && deleted.is_empty());
+
+        // mated to a target edge without faces: the (empty) fillet faces are collected,
+        // the non-manifold target edge is skipped
+        let ta = target.add_vertex(Point3::new(0.0, 0.0, 0.0)).unwrap();
+        let tb = target.add_vertex(Point3::new(1.0, 0.0, 0.0)).unwrap();
+        let te = target.add_edge(ta, tb).unwrap();
+        let mated = move |_: EdgeId| Some(te);
+        let env = TrimOriginalSurfacesEnv {
+            brep_mate: &mated,
+            fillet_edge_key: &key,
+            target_context: Some(0),
+        };
+        let err = fb
+            .trim_original_surfaces_with_solver(
+                &k,
+                g,
+                &mut fillet,
+                &mut target,
+                &mut marks,
+                &mut kept,
+                &mut deleted,
+                &locks,
+                &env,
+                id,
+                &fs,
+            )
+            .unwrap_err();
+        // the fillet B-rep edge has no edge use (upstream dereferences NULL)
+        assert!(
+            matches!(
+                err,
+                SolidError::InvalidInput {
+                    reason: "fillet B-rep edge without edge use",
+                    ..
+                }
+            ),
+            "{err:?}"
+        );
+
+        // no mark locks, no solver
+        let err = fb
+            .trim_original_surfaces_with_solver(
+                &k,
+                g,
+                &mut fillet,
+                &mut target,
+                &mut marks,
+                &mut kept,
+                &mut deleted,
+                &[],
+                &env,
+                id,
+                &fs,
+            )
+            .unwrap_err();
+        assert!(
+            matches!(
+                err,
+                SolidError::InvalidInput {
+                    reason: "no mark locks",
+                    ..
+                }
+            ),
+            "{err:?}"
+        );
+        fb.geom_mut(g).unwrap().solver = None;
+        let err = fb
+            .trim_original_surfaces_with_solver(
+                &k,
+                g,
+                &mut fillet,
+                &mut target,
+                &mut marks,
+                &mut kept,
+                &mut deleted,
+                &locks,
+                &env,
+                id,
+                &fs,
+            )
+            .unwrap_err();
+        assert!(
+            matches!(
+                err,
+                SolidError::InvalidInput {
+                    reason: "fillet geometry without solver",
+                    ..
+                }
+            ),
+            "{err:?}"
+        );
     }
 }
