@@ -24,7 +24,7 @@
 )] // test helpers
 use solidcore::blend::blend_corner::chamfer::ChamferWidth;
 use solidcore::blend::blend_corner::BlendChamferCorner;
-use solidcore::blend::fillet_executive::api::chamfer_fillet;
+use solidcore::blend::fillet_executive::api::{chamfer_fillet, fillet_edges_per_edge};
 use solidcore::blend::fillet_executive::session::FilletSession;
 use solidcore::blend::fillet_executive::{FitKind, FitSize};
 use solidcore::blend::fillet_solver::p1::FilletSurfaceGeneratorType;
@@ -39,6 +39,7 @@ use solidcore::math::{Point2, Point3, Vec3, BIG_DOUBLE};
 use solidcore::primitive::api_curves::create_line_segment;
 use solidcore::primitive::api_primitives::{create_box, create_pyramid};
 use solidcore::query::api_queries::{get_edges, get_faces};
+use solidcore::query::face::p2::face_vertices;
 use solidcore::surface::surface::p2::SurfaceKind;
 use solidcore::sweep::api_brep::create_linear_sweep;
 use solidcore::topology::brep::p2::ArenaNotifyState;
@@ -1031,6 +1032,76 @@ fn without_the_flag_the_chamfer_corner_is_the_pinned_patch() {
         .count();
     assert_eq!(bsplines, 1);
     assert!((v - (24000.0 - 356.0)).abs() > 1.0, "{v}");
+}
+
+// brett19's case on #2345: `fillet_edges_per_edge` with a linear section (not the chamfer
+// API, which sets every corner to bevel) reaches the pinned 3x3 corner's non-bevel
+// `m_bChamfer` branch. On the 2/3/4 corner that branch builds 10 faces and removes
+// 24000 - 23640.833333 = 359.166667: neither the mitre's closed form (354.75, 9 faces,
+// above) nor the facet's (356, 10 faces), and its corner face is a four-sided B-spline
+// whose corners are not coplanar. With the flag, the same call builds the mitre, the
+// session's default corner type (#2345 section 6, answer 1).
+#[test]
+fn per_edge_linear_chamfers_at_a_corner_are_the_mitre() {
+    let corner_volume = |on: bool| {
+        let mut k = chamfer_fixes(on);
+        let mut b = create_box(&mut k, Point3::new(0.0, 0.0, 0.0), 40.0, 30.0, 20.0).unwrap();
+        let edges: Vec<EdgeId> = BOX_CORNER_EDGES.iter().map(|&p| pick(&k, &b, p)).collect();
+        let xs = [FilletSurfaceGeneratorType::Linear; 3];
+        fillet_edges_per_edge(&mut k, &mut b, &edges, &[2.0, 3.0, 4.0], &xs, 1, 1.0).unwrap();
+        let (n, lines, v) = report(&mut k, &mut b);
+        let bspline_faces: Vec<FaceId> = get_faces(&b)
+            .unwrap()
+            .into_iter()
+            .filter(|&f| {
+                matches!(
+                    face2::surface(&b, f).unwrap().unwrap().kind(),
+                    SurfaceKind::BSpline(_)
+                )
+            })
+            .collect();
+        (k, b, n, lines, v, bspline_faces)
+    };
+    let mitre = 24000.0 - 354.75;
+    let facet = 24000.0 - 356.0;
+
+    // without the flag: the pinned branch, off both closed forms
+    let (k, b, n, lines, v, patches) = corner_volume(false);
+    eprintln!("per edge, pinned: volume {v:.9}; {n:?}; {lines:?}");
+    assert!(lines.is_empty(), "{lines:?}");
+    assert_eq!(n, (10, 22, 14));
+    assert!((v - 23640.833333).abs() <= 1e-6, "{v}");
+    assert!((v - mitre).abs() > 4.0 && (v - facet).abs() > 3.0, "{v}");
+    assert_eq!(patches.len(), 1);
+    let corners: Vec<Point3> = face_vertices(&b, patches[0], false, None)
+        .unwrap()
+        .into_iter()
+        .map(|vx| solidcore::topology::vertex::point(&b, vx).unwrap())
+        .collect();
+    assert_eq!(corners.len(), 4, "{corners:?}");
+    // the fourth corner's distance from the plane of the other three
+    let normal = (corners[1] - corners[0]).cross(corners[2] - corners[0]);
+    let normal = normal / normal.length();
+    let out_of_plane = (corners[3] - corners[0]).dot(normal).abs();
+    eprintln!("per edge, pinned: corner face's fourth corner {out_of_plane:.6} off the plane");
+    assert!(out_of_plane > 1e-3, "{out_of_plane}");
+    drop(k);
+
+    // with the flag: the mitre, exactly
+    let (k, b, n, lines, v, patches) = corner_volume(true);
+    let f = box_corner();
+    let xs = [
+        f.at(3.0, 2.0, 0.0),
+        f.at(0.0, 4.0, 3.0),
+        f.at(4.0, 0.0, 2.0),
+    ];
+    let off = mitre_off(&k, &b, f.at(2.5, 1.5, 0.5), &xs);
+    eprintln!("per edge, event: volume {v:.12} want {mitre:.12}; {n:?}; off {off:.3e}");
+    assert!(lines.is_empty(), "{lines:?}");
+    assert_eq!(n, (9, 21, 14));
+    assert!(patches.is_empty());
+    assert!(off <= EXACT * 40.0, "{off}");
+    assert!((v - mitre).abs() <= 1e-12 * mitre, "{v}");
 }
 
 // The pocket's floor corner (10, 10, 10) of the 40 x 30 x 20 block less a 20 x 10 x 11
