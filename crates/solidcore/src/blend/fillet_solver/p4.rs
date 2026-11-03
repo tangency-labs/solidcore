@@ -2032,22 +2032,13 @@ fn c3_make_intersector<'s>(
     // If we need to trace beyond the end and we are tracing along an arc, put a stop
     // tracing criterion to avoid possible infinite looping (`IsArc` only runs when an
     // extension flag is set, as upstream's `&&`).
-    //
-    // Not upstream (#2500): with `offset_extension_as_itself` an offset extends a
-    // surface of revolution round its axis, past the closure of its turn, so the offsets'
-    // intersection can close on itself along any edge, not only an arc (a round run onto
-    // a torus's tube, whose offsets meet in a closed oval): the extensions stop there too,
-    // and the one before the start as well, or the trace runs round the oval past its own
-    // span and the fillet surface covers that span twice.
     let solver = ops.solver();
     if (solver.extend_after || solver.extend_before)
-        && (k.fixes.offset_extension_as_itself
-            || st.edge_curve.is_arc(k, 5, solver.approx_tol_3d)?.is_some())
+        && st.edge_curve.is_arc(k, 5, solver.approx_tol_3d)?.is_some()
     {
         // set max extension distance
         let offset = offset_surface(ops, 0)?.offset_distance();
         fi.base.base.set_extension_distance((5.0 * offset).abs());
-        fi.base.base.clips_extension_before_start = k.fixes.offset_extension_as_itself;
     }
     Ok(fi)
 }
@@ -2378,35 +2369,6 @@ mod tests_c3 {
         assert_eq!(extension_distance(&k, arc(&k), false, false), default);
         assert_eq!(extension_distance(&k, arc(&k), true, false), 1.25);
         assert_eq!(extension_distance(&k, arc(&k), false, true), 1.25);
-    }
-
-    /// #2500: with `offset_extension_as_itself` the offsets' intersection can close on
-    /// itself along any edge, so an extended trace along a line gets the stop distance,
-    /// and the extension before the start is clipped too; without an extension, none.
-    #[test]
-    fn extension_distance_both_ways_with_offsets_extended_as_themselves() {
-        let mut k = Kernel::default();
-        k.fixes.offset_extension_as_itself = true;
-        let clipped = |before: bool, after: bool| {
-            let (a, b) = planes();
-            let mut fs = solver(&k, &a, &b);
-            fs.solver.extend_before = before;
-            fs.solver.extend_after = after;
-            let mut st = state(line(), [a, b]);
-            with_cx(&k, |cx| {
-                let surfaces = c3_trace_setup(&mut fs, cx, &mut st).unwrap();
-                let fi = c3_make_intersector(&mut fs, cx.k, &st, &surfaces).unwrap();
-                (
-                    fi.base.base.extension_distance,
-                    fi.base.base.clips_extension_before_start,
-                )
-            })
-        };
-        assert_eq!(clipped(true, false), (1.25, true));
-        assert_eq!(clipped(false, true), (1.25, true));
-        let (distance, clips) = clipped(false, false);
-        assert_eq!(distance, extension_distance(&k, line(), false, false));
-        assert!(!clips);
     }
 
     fn traced(last: IntersectionPointType, before: bool, after: bool) -> (CalcState, Vec<TsRef>) {

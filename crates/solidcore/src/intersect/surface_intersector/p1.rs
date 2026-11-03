@@ -619,15 +619,6 @@ pub struct SurfaceIntersector<'s> {
     pub extension_distance: f64,
     /// `m_bDoingExtensionClipping`.
     pub doing_extension_clipping: bool,
-    /// Not upstream (#2500): `DoPointIntersection`'s trace back from its first point
-    /// (the extension before the start) stops past [`Self::extension_distance`] from
-    /// it, as extension clipping stops the trace after the end. Off by default (upstream
-    /// bounds only the extension after the end).
-    pub clips_extension_before_start: bool,
-    /// Not upstream (#2500): while that trace back runs with
-    /// [`Self::clips_extension_before_start`], the curve parameter past which it stops
-    /// (the start's parameter plus [`Self::extension_distance`]); `None` otherwise.
-    pub backward_extension_limit: Option<f64>,
     /// `m_bCurveIsClosed`.
     pub curve_is_closed: bool,
     /// Not upstream: the `trace_step` calls left to the start-point loop of
@@ -771,8 +762,6 @@ impl<'s> SurfaceIntersector<'s> {
             last_through_parameter: 0.0,
             extension_distance: 0.0,
             doing_extension_clipping: false,
-            clips_extension_before_start: false,
-            backward_extension_limit: None,
             curve_is_closed: false,
             trace_steps_left: u64::MAX,
             start_loop_trace_steps: super::p4::MAX_START_LOOP_TRACE_STEPS,
