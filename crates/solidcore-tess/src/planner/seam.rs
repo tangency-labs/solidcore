@@ -36,6 +36,18 @@ const MAX_COPIES: i64 = 2048;
 /// Most nodes a cut line may get between two crossings.
 const MAX_SEAM_NODES: usize = 4096;
 
+/// The copies `a..=b` of a loop (whole numbers, as `f64`), as integers: `None` where they are
+/// not finite, run backwards, or number more than [`MAX_COPIES`]. Compared in `f64` before the
+/// casts, so no cast saturates and no subtraction of the integers overflows.
+fn copies(a: f64, b: f64) -> Option<(i64, i64)> {
+    // Well inside i64, and exact in f64: every whole number up to 2^53 is.
+    const LIMIT: f64 = 9_007_199_254_740_992.0;
+    let fits = |x: f64| x.abs() <= LIMIT;
+    // Proven: both are whole numbers of magnitude at most 2^53 (checked, NaN failing every
+    // comparison), so the casts are exact.
+    (fits(a) && fits(b) && a <= b && b - a <= MAX_COPIES as f64).then(|| (a as i64, b as i64))
+}
+
 /// A run along a cut line joining two pieces: the piece it leaves, its nodes' parameters and
 /// points, and the piece it enters.
 type Link = (usize, Vec<[f64; 2]>, Vec<Vec3>, usize);
@@ -124,11 +136,8 @@ pub(crate) fn cut(
         }
         if w.abs() <= per * 0.5 {
             // A closed loop: each copy along x that reaches into the strip.
-            let k0 = ((x0 - hi) / per).floor() as i64;
-            let k1 = ((x1 - lo) / per).ceil() as i64;
-            if k1 - k0 > MAX_COPIES {
-                return Err(Cut::Unclean);
-            }
+            let (k0, k1) =
+                copies(((x0 - hi) / per).floor(), ((x1 - lo) / per).ceil()).ok_or(Cut::Unclean)?;
             for k in k0..=k1 {
                 let shift = per * k as f64;
                 let uv: Vec<[f64; 2]> = l.uv.iter().map(|q| [q[0] + shift, q[1]]).collect();
@@ -159,26 +168,18 @@ pub(crate) fn cut(
             if turns.abs() != 1.0 {
                 return Err(Cut::Unclean);
             }
-            let reach = (hi - lo) / per;
-            let span = (reach.ceil() as i64) + 2;
-            if span > MAX_COPIES {
+            // Compared in f64, before any cast: a NaN or a reach past the bound is unclean.
+            let span = ((hi - lo) / per).ceil() + 2.0;
+            if !(span <= MAX_COPIES as f64) {
                 return Err(Cut::Unclean);
             }
             // Copies j with lo + j·w ≤ x1 and hi + j·w ≥ x0, plus one each side.
             let (ja, jb) = if w > 0.0 {
-                (
-                    ((x0 - hi) / w).floor() as i64 - 1,
-                    ((x1 - lo) / w).ceil() as i64 + 1,
-                )
+                (((x0 - hi) / w).floor() - 1.0, ((x1 - lo) / w).ceil() + 1.0)
             } else {
-                (
-                    ((x1 - lo) / w).floor() as i64 - 1,
-                    ((x0 - hi) / w).ceil() as i64 + 1,
-                )
+                (((x1 - lo) / w).floor() - 1.0, ((x0 - hi) / w).ceil() + 1.0)
             };
-            if jb - ja > MAX_COPIES {
-                return Err(Cut::Unclean);
-            }
+            let (ja, jb) = copies(ja, jb).ok_or(Cut::Unclean)?;
             let mut path = Vec::new();
             let mut pts = Vec::new();
             for j in ja..=jb {
@@ -508,5 +509,25 @@ mod tests {
             Err(Cut::Unclean) => panic!("refused as unclean"),
             Ok(l) => panic!("cut into {} loops", l.len()),
         }
+    }
+
+    /// A loop whose copies along the closed direction run past what an `i64` holds (a loop
+    /// spanning ±1e25 periods, rounding to a closed one): its first and last copies saturated in
+    /// the casts and their difference overflowed. Compared in `f64` first, the cut refuses it as
+    /// unclean.
+    #[test]
+    fn a_loop_whose_copies_overflow_an_integer_is_unclean() {
+        let s = super::super::refusals::cylinder_without(0.5);
+        let far = 1e25;
+        let uv = vec![[0.25, -far], [0.25, far], [0.75, far], [0.75, -far]];
+        let pts = vec![Vec3::new(0.0, 0.0, 0.0); uv.len()];
+        let loops = [Loop { uv, pts }];
+        let tau = std::f64::consts::TAU;
+        assert!(!winds(&loops, 1, tau));
+        let rules = Rules::new(0.01, 40.0, None);
+        assert!(matches!(
+            cut(&s, &loops, 1, tau, &rules, 1.0),
+            Err(Cut::Unclean)
+        ));
     }
 }
