@@ -662,7 +662,7 @@ fn boundary(
     // Each loop's nodes that are another edge's node (see [`edges::snap`]).
     // Proven: capacity of allocated `face.loops`' length; each loop holds a Vec, as large.
     let mut snapped: Vec<Vec<bool>> = Vec::with_capacity(face.loops.len());
-    for l in &face.loops {
+    for (li, l) in face.loops.iter().enumerate() {
         let Loop::Edges { edges } = l else { continue };
         let (mut pts, mut uvs): (Vec<Vec3>, Vec<[f64; 2]>) = (Vec::new(), Vec::new());
         let mut segs: Vec<(u32, u32)> = Vec::new();
@@ -828,11 +828,20 @@ fn boundary(
             segs.rotate_left(k);
             shared.rotate_left(k);
         }
-        if pts.len() >= 2 {
-            out.loops.push(seam::Loop { uv: uvs, pts });
-            out.segments.push(segs);
-            snapped.push(shared);
+        // A loop of edges that leaves fewer than two nodes bounds nothing: the record is wrong
+        // there, and the face is refused rather than meshed without it.
+        if pts.len() < 2 {
+            return Err(unsupported(format!(
+                "face {fi} ({}): loop {li} has {} node{} ({} edge uses)",
+                kind(&face.surface),
+                pts.len(),
+                if pts.len() == 1 { "" } else { "s" },
+                edges.len()
+            )));
         }
+        out.loops.push(seam::Loop { uv: uvs, pts });
+        out.segments.push(segs);
+        snapped.push(shared);
     }
     // A node snapped from another edge is that edge's node, the same point: where the face runs
     // that edge too, the node takes the other's parameters, so the face's boundary passes one
