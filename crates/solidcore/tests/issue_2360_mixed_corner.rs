@@ -522,11 +522,17 @@ fn the_mixed_faces_are_their_rules() {
         let (k0, mut b0, res0) = blended_kept(true, false, 2.0, xsect);
         res0.unwrap();
         assert!(corner_faces(&b0, CornerKind::Mixed).is_empty());
-        assert_eq!(
-            volume(&k, &mut b, 1e-9).to_bits(),
-            volume(&k0, &mut b0, 1e-9).to_bits()
-        );
-        assert_eq!(face_bits(&k, &b), face_bits(&k0, &b0));
+        let (v, v0) = (volume(&k, &mut b, 1e-9), volume(&k0, &mut b0, 1e-9));
+        if xsect == 1 {
+            // the rounds are the same either way: the body bit for bit
+            assert_eq!(v.to_bits(), v0.to_bits());
+            assert_eq!(face_bits(&k, &b), face_bits(&k0, &b0));
+        } else {
+            // a chamfer is its definition with the flag on (#2486), its net certified
+            // within its bound of the chord, so the corner is built on other nets: the body
+            // moves within that bound (3.2e-8 of it here)
+            assert!((v - v0).abs() <= 1e-7 * v0, "{v} vs {v0}");
+        }
     }
 }
 
