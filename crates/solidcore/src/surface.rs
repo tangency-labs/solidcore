@@ -12,6 +12,7 @@ pub mod b_spline_volume_n_lib;
 pub mod ball_patch;
 pub mod bend_volume;
 pub mod cone;
+pub mod continued;
 pub mod curve_bounded_surface;
 pub mod face_surface;
 pub mod from_parameters;

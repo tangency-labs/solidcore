@@ -391,6 +391,8 @@ fn spline(u: &[f64], v: &[f64], rows: &[Vec<[f64; 4]>]) -> Result<Surface> {
 mod tests {
     use super::*;
     use crate::geom::vector2d::Point2;
+    use crate::surface::implicit::AnalyticSupport;
+    use crate::surface::side::BoxSide;
     use std::f64::consts::{FRAC_PI_2, PI, TAU};
 
     fn k() -> Kernel {
@@ -606,5 +608,52 @@ mod tests {
             half_angle: 0.0,
         };
         assert!(make(&flat, [0.0, 1.0], [0.0, 1.0]).is_err());
+    }
+
+    // TODO(#2554): once AnalyticSupport::build
+    // takes a cone made by Cone::create_canonical, also round-trip the label through it.
+    #[test]
+    fn a_continued_cone_round_trips_through_its_record() {
+        // a cone continued past a side, written as the record's numbers and made again:
+        // the same surface, proved on the record's implicit surface
+        let k = k();
+        let pl = Axis2Placement::new(Vec3::new(1.0, -2.0, 0.5), Vec3::X, Vec3::Y);
+        let mut c = Cone::create_canonical(&k, &pl, 1.0, 2.0, 3.0, false, false).unwrap();
+        c.adjust_step_uv_domain(&k, &Extent2d::from_bounds(0.0, 0.0, 90.0, 3.0))
+            .unwrap();
+        let dom = Surface::from(c.clone())
+            .natural_uv_domain_with_nurb(&k)
+            .unwrap();
+        let grown = Surface::from(c.continued(&k, &dom, BoxSide::VMax, 1.0).unwrap());
+        let Some(AnalyticSupport::Cone {
+            placement,
+            base_radius,
+            semi_angle_deg,
+        }) = AnalyticSupport::of(&grown)
+        else {
+            panic!("not a cone");
+        };
+        let b = grown.step_uv_domain_with_nurb(&k).unwrap();
+        let record = Record::Cone {
+            frame: Frame {
+                origin: a(placement.origin()),
+                x_axis: a(placement.x_axis()),
+                y_axis: a(placement.y_axis()),
+            },
+            radius_at_origin: base_radius,
+            half_angle: semi_angle_deg.to_radians(),
+        };
+        let (back, _) = from_parameters(
+            &k,
+            &record,
+            [
+                [b.min().x.to_radians(), b.max().x.to_radians()],
+                [b.min().y, b.max().y],
+            ],
+        )
+        .unwrap();
+        let want: Vec<[f64; 3]> = corners(&grown).iter().map(|p| [p.x, p.y, p.z]).collect();
+        same_set(&corners(&back), &want);
+        AnalyticSupport::check(&k, &back).unwrap();
     }
 }

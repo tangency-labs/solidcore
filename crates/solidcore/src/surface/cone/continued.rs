@@ -54,6 +54,8 @@ impl Cone {
                 "the distance is not finite and positive",
             ));
         }
+        // the source an exact class first: a form moved off its label is refused, not remade
+        AnalyticSupport::check(k, &Surface::from(self.clone()))?;
         let step = |uv| self.convert_uv_from_nurbs_to_step(k, uv);
         let (lo, hi, mid) = (
             step(dom.min())?,
