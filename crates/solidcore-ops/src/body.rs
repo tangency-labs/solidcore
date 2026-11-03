@@ -150,6 +150,11 @@ impl Expect {
     /// A result of an operation with no solid input (a primitive, a sheet's).
     #[allow(dead_code)]
     pub(crate) const FACES: Expect = Expect { solid: false };
+
+    /// A result that must be a solid whatever its input, for an operation that makes one
+    /// from a sheet (a thickened sheet): the operation states it, as its own contract.
+    #[allow(dead_code)] // the families' operations that make a solid from a sheet
+    pub(crate) const SOLID: Expect = Expect { solid: true };
 }
 
 /// The result contract: a result has faces ([`Error::Empty`] if not), and a solid input gives a

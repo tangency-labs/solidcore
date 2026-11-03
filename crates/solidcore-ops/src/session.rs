@@ -12,7 +12,7 @@
 //!   kernel keeps as upstream keeps it for the process (the fillet solver's latched step), and the
 //!   call fails with [`Error::Internal`]. A call that only reads a body never leaves it unusable:
 //!   it reads it under its own guard ([`read_body`]) or measures a copy ([`measure_body`]). A
-//!   call that edits a body and panics leaves the body refused from then on ([`with_body`]).
+//!   call that edits a body and panics puts it back as it came in ([`with_body`]).
 //! - **Failures:** an application may install a callback ([`set_failure_hook`]) that is handed a
 //!   failed call's name, why it failed and its input bodies as binary `.smb` bytes, written under
 //!   the kernel's lock from bodies no panic left half-edited. The callback runs with no lock held
@@ -44,7 +44,8 @@ pub struct Failure<'a> {
     /// Why it failed: its error, or the refusal its answer carries.
     pub why: &'a str,
     /// Its input bodies by the names the call gives them, each as a binary `.smb` (or why it
-    /// could not be written), as they are now: a call that edits a body in place leaves it edited.
+    /// could not be written), as they are after the call: a refused or failed edit has put its
+    /// body back as it came in ([`with_body`]).
     pub inputs: Vec<(&'static str, std::result::Result<Vec<u8>, String>)>,
 }
 
@@ -368,11 +369,19 @@ pub(crate) fn answer<T>(r: solidcore::Result<T>) -> solidcore::Result<Option<T>>
     }
 }
 
-/// Runs `f`, which edits `body`, on the kernel. A panic in it leaves the body half-edited: it is
-/// refused from then on.
+/// Runs `f`, which edits `body`, on the kernel. A refused, failed or panicking edit leaves the
+/// body exactly as it came in: the kernel's snapshot of it is taken first
+/// ([`Brep::with_rollback`]: its naming, key, locked box, every attribute and so its
+/// provenance, its notification identities and its geometry), `f` edits the body itself (so a
+/// kept result is the edited body, its entities where they were), and the snapshot is put back
+/// when `f` fails, answers a refusal ([`Answer::refusal`]) or panics. A
+/// panic then goes on to the session with the body put back and released, so the body stays
+/// usable; a panic while taking the snapshot leaves the body untouched and usable too.
 ///
 /// # Errors
-/// [`Error::Internal`] for a body an earlier panic left unfinished; those of [`run_on`].
+/// [`Error::Unsupported`] up front, the body untouched, for a body the kernel cannot snapshot
+/// (its refusal, [`Brep::with_rollback`]); [`Error::Internal`] for a body an earlier panic left
+/// unfinished; those of [`run_on`].
 pub(crate) fn with_body<T: Answer>(
     call: &'static str,
     body: &Body,
@@ -381,7 +390,19 @@ pub(crate) fn with_body<T: Answer>(
     if body.is_poisoned() {
         return Err(unfinished(call));
     }
-    run_on(call, &[("brep", body)], |k| f(k, &mut body.lock()))
+    run_on(call, &[("brep", body)], |k| {
+        let mut b = body.lock();
+        // the kernel puts the body back on a refusal or a panic; the panic is caught again
+        // here only to release the body before it goes on
+        let r = catch_unwind(AssertUnwindSafe(|| {
+            b.with_rollback(
+                |br| f(k, br),
+                |r| r.as_ref().is_ok_and(|v| v.refusal().is_none()),
+            )
+        }));
+        drop(b);
+        r.unwrap_or_else(|p| resume_unwind(p))
+    })
 }
 
 /// Runs `f`, which only reads `body`, on the kernel. The body is read under its guard, released
