@@ -138,7 +138,7 @@ fn min(a: f64, b: f64) -> f64 {
 }
 
 /// `GetFilletSolverOfEdgeuse(pEU)`, else of its mate.
-fn solver_of_edgeuse_or_mate(
+pub(crate) fn solver_of_edgeuse_or_mate(
     b: &Brep,
     eu: EdgeuseId,
     solvers: &dyn BallSolvers,
@@ -839,7 +839,7 @@ fn sum(da: f64, a: &BallPoly, db: f64, b: &BallPoly) -> Result<BallPoly> {
 /// arc, a rational quadratic; the sector `t c(s)` taken back by the inverse projection is
 /// the patch. With `reverse_s`, `s` runs the other way. Returns the patch and the
 /// contacts at `s = 0` and `s = 1` (`t = 1`).
-fn ball_triangle_patch(
+pub(crate) fn ball_triangle_patch(
     centre: Point3,
     radius: f64,
     dirs: &[Vec3; 3],

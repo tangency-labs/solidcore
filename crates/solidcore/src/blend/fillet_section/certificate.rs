@@ -45,6 +45,10 @@
 //!   fixed size (`n > SM_GN_MAXE`, which the fork leaves to its callers) is an `Err`.
 //! - **Bounds.** Every loop is the fork's, with its fixed counts (8 Krawczyk steps, 200
 //!   contraction steps, levels 0..=6); there is no recursion.
+//! - **Cancellation (#2136, #2371).** `gn_certify_span` polls the kernel's cancel token
+//!   once per level, per piece's end station and per piece's bound; a cancel passes through
+//!   `SM_GN_TRY` and the unsolved-piece fallback as `Cancelled` instead of proving
+//!   nothing. A token that never fires changes nothing.
 //! - **Indices.** Knots and nets are read by checked indices (a knot or a coordinate
 //!   outside reads NaN, which shows in the result); the fork's indices stay inside.
 
@@ -57,8 +61,7 @@ use super::station::{
     knot, smax, solve4, span, GnStation, GnSystem, Nurbs, Partials,
 };
 use super::tay::{
-    gn_area_sum, gn_half_angle, gn_invert, gn_target, tay_sqrt, GnAreaCells, Ring, Tay, TayScalar,
-    TAY,
+    gn_half_angle, gn_invert, gn_target, tay_sqrt, GnAreaCells, Ring, Tay, TayScalar, TAY,
 };
 use crate::error::{Result, SolidError};
 use crate::kernel::Kernel;
@@ -66,6 +69,7 @@ use crate::nurbs::b_spline_curve::BSplineCurve;
 use crate::surface::surface::Surface;
 
 const OP: &str = "blend::fillet_section::certificate";
+const OP_CERTIFY_SPAN: &str = "blend::fillet_section::certificate::gn_certify_span";
 
 /// `SM_GN_TRY(a)`: a failed evaluation proves nothing, the enclosing function returns
 /// `Ok($none)` (the fork's `return SM_SUCCESS` with its outputs as they stand).
@@ -73,6 +77,8 @@ macro_rules! gn_try {
     ($e:expr, $none:expr) => {
         match $e {
             Ok(v) => v,
+            // a cancel (#2136) is never a failed evaluation: it ends the operation
+            Err(e @ SolidError::Cancelled { .. }) => return Err(e),
             Err(_) => return Ok($none),
         }
     };
@@ -1247,6 +1253,7 @@ fn vat(v: &VSer<Ivl>, q: usize, i: usize, k: usize) -> Ivl {
 /// `cm`: at its middle (to K - 1); `d`: s less the middle over the piece.
 #[allow(clippy::too_many_arguments)]
 pub fn gn_row_terms_over(
+    k: &Kernel,
     vary: &mut GnVarying,
     f: &[VSer<Ivl>; 2],
     centre: &VSer<Ivl>,
@@ -1290,7 +1297,7 @@ pub fn gn_row_terms_over(
     x_top = x_top * inv_rr;
     let u = gn_half_angle(&centred(&x_mid, x_top, K, d));
     let tg = gn_target(&u);
-    let phi = gn_area_sum::<Ivl>(n, Ivl::from(guess)) - tg.at(0);
+    let phi = vary.cells.at(k, guess) - tg.at(0);
     let mut w0 = IZ;
     let mut root = false;
     let mut rho = 1.0e-12 * (1.0 + guess.abs());
@@ -1301,7 +1308,7 @@ pub fn gn_row_terms_over(
         if !below_one {
             break;
         }
-        let d1 = vary.cells.over(w).at(1);
+        let d1 = vary.cells.over(k, w).at(1);
         if d1.hi < 0.0 {
             let nn = Ivl::from(guess) - phi / d1;
             if nn.lo > w.lo && nn.hi < w.hi {
@@ -1315,7 +1322,7 @@ pub fn gn_row_terms_over(
     if !root {
         return false;
     }
-    let over_w0 = vary.cells.over(w0);
+    let over_w0 = vary.cells.over(k, w0);
     let sw = gn_invert(&tg, &over_w0, w0);
     let form = gn_form_normalized(n, sw);
     // the jets c'_ik as series in s over the piece
@@ -1608,6 +1615,7 @@ pub fn gn_certify_span(
         }
     }
     for level in 0..=6_u32 {
+        k.check_cancelled(OP_CERTIFY_SPAN)?;
         let pieces = 1_usize << level;
         // the pieces' end stations
         let mut ends = Vec::new();
@@ -1615,6 +1623,7 @@ pub fn gn_certify_span(
         let mut solved = true;
         let mut i = 1;
         while i < pieces && solved {
+            k.check_cancelled(OP_CERTIFY_SPAN)?;
             let t = i as f64 / pieces as f64;
             let s = a.s + t * h;
             let mut seed = [0.0_f64; 4];
@@ -1642,6 +1651,8 @@ pub fn gn_certify_span(
             .0
             {
                 Ok(st) => ends.push(st),
+                // a cancel (#2136) is not an unsolved piece: it ends the operation
+                Err(e @ SolidError::Cancelled { .. }) => return Err(e),
                 Err(_) => solved = false,
             }
             i += 1;
@@ -1666,6 +1677,7 @@ pub fn gn_certify_span(
             if !proved {
                 break;
             }
+            k.check_cancelled(OP_CERTIFY_SPAN)?;
             let [ea, eb] = pair else {
                 return Err(SolidError::sm_err(OP));
             };
@@ -1721,7 +1733,7 @@ pub fn gn_certify_span(
                             let d = Ivl::new(ea.s, eb.s) - Ivl::from(ps.mid);
                             let guess = (1.0 - t) * a.w + t * b.w;
                             gn_row_terms_over(
-                                v, &ps.f, &ps.v, &ps.fm, &ps.vm, d, guess, &bar, o, &mut rows,
+                                k, v, &ps.f, &ps.v, &ps.fm, &ps.vm, d, guess, &bar, o, &mut rows,
                             )
                         }
                         None => false,

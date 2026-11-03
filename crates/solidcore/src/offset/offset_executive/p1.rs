@@ -71,6 +71,8 @@
 //! The lamina clean-up's `DeleteFaces` runs through merge p4's arena intersector over
 //! the offset B-rep alone (both upstream operands are that B-rep); it notifies under
 //! `DELETE_FACES_NAMESPACE` rather than the caller's offset keys.
+//!
+//! Cancellation: `replace_implicit_offsets` polls the kernel's cancel token (#2136, #2372) per face and inside each surface offset.
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -802,6 +804,7 @@ impl OffsetExecutive {
         // for every face
         let mut fix = Vec::new();
         for f in bp1::faces(brep, None)? {
+            kernel.check_cancelled(OP)?;
             // skip non SmOffsetSurfaces
             let Some(SurfaceKind::OffsetSurface(offset)) =
                 brep.face(f)?.surface.as_ref().map(Surface::kind)
@@ -818,12 +821,28 @@ impl OffsetExecutive {
             let Some(nurb) = crate::topology::brep::p3::with_nurb(kernel, base)? else {
                 return Err(SolidError::sm_err(OP));
             };
-            // use NLIB function to build offset surface approximation
-            let approximation = nurb.approximate_offset_surface(
-                offset.offset_distance(),
-                approximation_tol_3d,
-                OffsetParamType::Inherited,
-            )?;
+            let approximation = if kernel.fixes.shell_one_construction {
+                // Not upstream (WR-718, #2350 S1): the offset certified within the
+                // tolerance at every parameter, in the base's parametrisation
+                let base_nurb = nurb.gw_nurb().ok_or_else(|| SolidError::null_pointer(OP))?;
+                let made = crate::offset::construction::sheets::certified_offset(
+                    kernel,
+                    base_nurb,
+                    offset.offset_distance(),
+                    approximation_tol_3d,
+                )?;
+                crate::nurbs::b_spline_surface::p1::BSplineSurface::from_nurb(made.surface, false)
+            } else {
+                // use NLIB function to build offset surface approximation
+                // (the cancel token polled inside, #2136 / #2372; none changes nothing)
+                nurb.approximate_offset_surface_cancellable(
+                    offset.offset_distance(),
+                    approximation_tol_3d,
+                    OffsetParamType::Inherited,
+                    crate::nurbs::srf_offset::OffsetOptions::default(),
+                    kernel.cancel_token(),
+                )?
+            };
             // remember face/surface pair
             fix.push((f, Surface::from(approximation)));
         }
