@@ -14,11 +14,13 @@
 
 use crate::geom::vector3d::{Point3, Vec3};
 
-/// `gamma_k = k u / (1 - k u)`, `u = f64::EPSILON / 2`.
+/// `gamma_k = k u / (1 - k u)`: the kernel's one copy, [`crate::nurbs::math::gamma`].
+pub use crate::nurbs::math::gamma;
+
+/// `a > b`, false for a NaN: a refusal written `!above(..)` refuses NaN too.
 #[must_use]
-pub fn gamma(k: u32) -> f64 {
-    let ku = f64::from(k) * f64::EPSILON / 2.0;
-    ku / (1.0 - ku)
+pub fn above(a: f64, b: f64) -> bool {
+    matches!(a.partial_cmp(&b), Some(core::cmp::Ordering::Greater))
 }
 
 /// The answer of comparing a certified quantity with a tolerance.
