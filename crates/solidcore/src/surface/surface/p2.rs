@@ -1194,6 +1194,15 @@ impl Surface {
         self.definition = round.map(|r| Box::new(KeptDefinition::Round(r)));
     }
 
+    /// The exact round this surface keeps as its definition (#2485), to carry an edit of
+    /// the net's parametrisation into its leader map; `None` for any other surface.
+    fn exact_round_mut(&mut self) -> Option<&mut ExactRound> {
+        match self.definition.as_deref_mut() {
+            Some(KeptDefinition::Round(round)) => Some(round),
+            _ => None,
+        }
+    }
+
     /// Keeps `corner` as the definition of this surface, a blend corner's face (#2488).
     pub(crate) fn set_corner_definition(&mut self, corner: CornerDefinition) {
         self.definition = Some(Box::new(KeptDefinition::Corner(corner)));
@@ -3067,7 +3076,7 @@ impl Surface {
         // (#2485) an exact round's leader map follows the net's reversal, w = lo + hi - w'
         let before = self.exact_map_domain(k)?;
         self.reverse_kind(k, param)?;
-        if let (Some(round), Some(d)) = (self.exact_round.as_mut(), before) {
+        if let (Some(round), Some(d)) = (self.exact_round_mut(), before) {
             for (u, ivl) in [(true, d.u_interval()), (false, d.v_interval())] {
                 if (param == SurfParamType::U) == u || param == SurfParamType::Both {
                     round.reparametrize_map(u, ivl.min() + ivl.max(), -1.0);
@@ -3080,7 +3089,7 @@ impl Surface {
     /// The natural domain an exact round's leader map is read against, before an edit of
     /// the parametrisation (`None` for a surface that is no exact round).
     fn exact_map_domain(&self, k: &Kernel) -> Result<Option<Extent2d>> {
-        if self.exact_round.is_none() {
+        if !matches!(self.definition.as_deref(), Some(KeptDefinition::Round(_))) {
             return Ok(None);
         }
         self.natural_uv_domain_with_nurb(k).map(Some)
@@ -3157,7 +3166,7 @@ impl Surface {
         // (#2485) an exact round's leader map follows the net's affine reparametrisation
         let before = self.exact_map_domain(k)?;
         self.reparameterize_kind(k, new_domain)?;
-        if let (Some(round), Some(d)) = (self.exact_round.as_mut(), before) {
+        if let (Some(round), Some(d)) = (self.exact_round_mut(), before) {
             for (u, old, new) in [
                 (true, d.u_interval(), new_domain.u_interval()),
                 (false, d.v_interval(), new_domain.v_interval()),
@@ -3223,7 +3232,7 @@ impl Surface {
     ) -> Result<()> {
         self.swap_uv_kind_notifying(k, notify)?;
         // (#2485) an exact round's leader map follows the swap
-        if let Some(round) = self.exact_round.as_mut() {
+        if let Some(round) = self.exact_round_mut() {
             round.swap_map();
         }
         Ok(())
