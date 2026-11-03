@@ -20,8 +20,10 @@
 //!    kept are left out, see [`Lenient`]) so the display has no hole. A face that refuses even
 //!    that (its loops do not close in (u, v), or wind round a seam or pole) is left out of the
 //!    plan with no triangles and named in [`PlanStats::unmeshed`], and the rest of the body is
-//!    meshed; there is no other mesher to fall back to. A face whose pcurves do not lie on its edges is an error naming the face and
-//!    the edge, as is a body none of whose faces can be planned.
+//!    meshed; there is no other mesher to fall back to. So is a face whose surface the kernel's
+//!    evaluator does not take, or whose pcurves do not lie on its edges (named with the edge),
+//!    and every face of an edge that cannot be sampled (each naming the edge). A body none of
+//!    whose faces can be planned is the first face's error.
 
 pub(crate) mod cdt;
 pub(crate) mod collar;
@@ -78,8 +80,10 @@ pub struct PlanStats {
     /// Faces every method refused, filled leniently in (u, v) (see [`Lenient`]) so the display
     /// has no hole: each still a defect upstream, in its pcurves or seams.
     pub lenient: Vec<RefusedFace>,
-    /// Faces even the lenient fill refused, and faces whose surface does not evaluate at a point
-    /// the planner needs (a node, a middle it checks, a node of a cut line): left out of the plan
+    /// Faces even the lenient fill refused, faces whose surface does not evaluate at a point
+    /// the planner needs (a node, a middle it checks, a node of a cut line), and faces the
+    /// planner could not read (a surface the evaluator does not take, a pcurve off its edge, a
+    /// loop too short to bound anything, an edge that cannot be sampled): left out of the plan
     /// whole (no triangles), so the rest of the body is still meshed, each with why it could not
     /// be planned. Nothing is substituted for a point the surface refuses.
     pub unmeshed: Vec<RefusedFace>,
@@ -224,6 +228,14 @@ pub fn plan(b: &brep::Brep, t: &crate::MeshTolerance, size: f64) -> Result<(Tess
 /// record's, in its order.
 fn plan_at(b: &brep::Brep, tol: f64, turn: Option<size::Turn>) -> Result<(TessPlan, PlanStats)> {
     let faces = &b.faces;
+    // The plan indexes faces and edges as u32.
+    if u32::try_from(faces.len()).is_err() || u32::try_from(b.edges.len()).is_err() {
+        return Err(unsupported(format!(
+            "{} faces and {} edges are more than a plan indexes",
+            faces.len(),
+            b.edges.len()
+        )));
+    }
     let forward = forward_faces(b);
     // The faces each edge bounds, each once, in the order of the edge's uses.
     let edge_faces: Vec<Vec<usize>> = b
@@ -249,33 +261,50 @@ fn plan_at(b: &brep::Brep, tol: f64, turn: Option<size::Turn>) -> Result<(TessPl
         ),
         turn,
     );
+    let mut refused = Refused::new(b);
     // Each face's surface and target side length, then every edge once at the smaller size of
     // its faces; faces then read their nodes. A planar face costs microseconds and a curved
     // one about a hundred, so the pool is used only where curved faces (or intersection
-    // curves) make up the work.
-    let evals: Vec<(EvalSurface, surface::Params)> = faces
-        .iter()
-        .enumerate()
-        .map(|(fi, f)| {
-            surface::eval_surface(f.parameters(), f.domain)
-                .map_err(|e| unsupported(format!("face {fi} ({}): {e}", kind(&f.surface))))
-        })
-        .collect::<Result<_>>()?;
-    let (evals, params): (Vec<EvalSurface>, Vec<surface::Params>) = evals.into_iter().unzip();
+    // curves) make up the work. A face refused at one step (its surface, an edge of it, its
+    // boundary) is passed over by the steps after, and left out of the plan, named.
+    let mut evals: Vec<Option<EvalSurface>> = Vec::new();
+    let mut params: Vec<Option<surface::Params>> = Vec::new();
+    for (fi, f) in faces.iter().enumerate() {
+        let (s, p) = match surface::eval_surface(f.parameters(), f.domain) {
+            Ok((s, p)) => (Some(s), Some(p)),
+            Err(e) => {
+                refused.face(
+                    fi,
+                    unsupported(format!("face {fi} ({}): {e}", kind(&f.surface))),
+                );
+                (None, None)
+            }
+        };
+        evals.push(s);
+        params.push(p);
+    }
     let curved = evals
         .iter()
+        .flatten()
         .filter(|e| !matches!(e, EvalSurface::Plane { .. }))
         .count();
-    let sizes: Vec<size::FaceSize> =
+    let sizes: Vec<Option<size::FaceSize>> =
         crate::par::map("face sizes", &evals, curved >= PARALLEL_SIZES, |s| {
-            Ok(size::face_size(s, &solidcore::eval::uv::domain(s), &rules))
+            Ok(s.as_ref()
+                .map(|s| size::face_size(s, &solidcore::eval::uv::domain(s), &rules)))
         })
         .into_iter()
-        .collect::<Result<_>>()?;
-    let face_h = |f: usize| sizes.get(f).map_or(rules.max_len, |s| s.h);
+        .enumerate()
+        .map(|(fi, r)| refused.take(fi, r).flatten())
+        .collect();
+    let face_h = |f: usize| sizes.get(f).and_then(Option::as_ref).map(|s| s.h);
     let edge_h: Vec<f64> = edge_faces
         .iter()
-        .map(|fs| fs.iter().map(|&f| face_h(f)).fold(rules.max_len, f64::min))
+        .map(|fs| {
+            fs.iter()
+                .filter_map(|&f| face_h(f))
+                .fold(rules.max_len, f64::min)
+        })
         .collect();
     let jobs: Vec<(usize, f64)> = edge_h.into_iter().enumerate().collect();
     let solved = b
@@ -283,32 +312,60 @@ fn plan_at(b: &brep::Brep, tol: f64, turn: Option<size::Turn>) -> Result<(TessPl
         .iter()
         .filter(|e| matches!(e.curve, Curve::SurfaceIntersection { .. }))
         .count();
-    let mut nodes: Vec<edges::Nodes> = crate::par::map(
+    // An edge that cannot be sampled refuses every face it bounds, each naming it, and has no
+    // nodes in the plan; one that bounds no face is the body's error.
+    let mut nodes: Vec<edges::Nodes> = Vec::new();
+    for (ei, r) in crate::par::map(
         "edge nodes",
         &jobs,
         solved >= PARALLEL_CURVES || jobs.len() >= PARALLEL_EDGES,
         |(e, h)| edges::sample_edge(b, *e, &rules, *h),
     )
     .into_iter()
-    .collect::<Result<_>>()?;
-    relax_crowded_faces(b, &jobs, &rules, &mut nodes)?;
-    split_thin_loops(b, &mut nodes)?;
+    .enumerate()
+    {
+        nodes.push(match r {
+            Ok(n) => n,
+            Err(e) if edge_faces.get(ei).is_none_or(Vec::is_empty) => return Err(e),
+            Err(e) => {
+                refused.edge(&edge_faces, ei, &e);
+                edges::Nodes::default()
+            }
+        });
+    }
+    for (ei, e) in relax_crowded_faces(b, &jobs, &rules, &mut nodes, &refused.flags()) {
+        refused.edge(&edge_faces, ei, &e);
+    }
+    for (ei, e) in split_thin_loops(b, &mut nodes, &refused.flags()) {
+        refused.edge(&edge_faces, ei, &e);
+    }
     let indexed: Vec<usize> = (0..faces.len()).collect();
     let face_boundary = |fi: usize, nodes: &[edges::Nodes]| {
-        let (Some(face), Some(eval), Some(map)) = (faces.get(fi), evals.get(fi), params.get(fi))
-        else {
+        let (Some(face), Some(eval), Some(map)) = (
+            faces.get(fi),
+            evals.get(fi).and_then(Option::as_ref),
+            params.get(fi).copied().flatten(),
+        ) else {
             return Err(unsupported(format!("face {fi}: missing")));
         };
-        boundary(b, fi, face, eval, map, nodes, &rules)
+        boundary(b, fi, face, eval, &map, nodes, &rules)
     };
+    let skip = refused.flags();
     let mut boundaries: Vec<Boundary> = crate::par::map(
         "face boundaries",
         &indexed,
         curved >= PARALLEL_FACES,
-        |&fi| face_boundary(fi, &nodes),
+        |&fi| {
+            if skip.get(fi).copied().unwrap_or(true) {
+                return Ok(Boundary::default());
+            }
+            face_boundary(fi, &nodes)
+        },
     )
     .into_iter()
-    .collect::<Result<_>>()?;
+    .enumerate()
+    .map(|(fi, r)| refused.take(fi, r).unwrap_or_default())
+    .collect();
     let tangled = untangle(
         b,
         &evals,
@@ -317,16 +374,21 @@ fn plan_at(b: &brep::Brep, tol: f64, turn: Option<size::Turn>) -> Result<(TessPl
         &mut nodes,
         &mut boundaries,
         &face_boundary,
-    )?;
+        &mut refused,
+    );
+    let why = refused.why;
     let planned = crate::par::map(
         "face tessellation",
         &indexed,
         curved >= PARALLEL_FACES,
         |&fi| {
+            if let Some(Some(e)) = why.get(fi) {
+                return Err(e.clone());
+            }
             let (Some(face), Some(eval), Some(size), Some(fb)) = (
                 faces.get(fi),
-                evals.get(fi),
-                sizes.get(fi),
+                evals.get(fi).and_then(Option::as_ref),
+                sizes.get(fi).and_then(Option::as_ref),
                 boundaries.get(fi),
             ) else {
                 return Err(unsupported(format!("face {fi}: missing")));
@@ -366,13 +428,26 @@ fn plan_at(b: &brep::Brep, tol: f64, turn: Option<size::Turn>) -> Result<(TessPl
     // A face no method plans is left out, named in the stats, and the rest of the body is
     // meshed; a body none of whose faces plan is the first face's error.
     let mut first_error: Option<TessError> = None;
+    let too_many = || unsupported("too many faces");
     for (fi, (r, eval)) in planned.into_iter().zip(evals).enumerate() {
-        let surface =
-            u32::try_from(plan.surfaces.len()).map_err(|_| unsupported("too many faces"))?;
-        plan.surfaces.push(eval);
+        let surface = match eval {
+            Some(eval) => {
+                let i = u32::try_from(plan.surfaces.len()).map_err(|_| too_many())?;
+                plan.surfaces.push(eval);
+                Some(i)
+            }
+            None => None,
+        };
+        let face = u32::try_from(fi).map_err(|_| too_many())?;
         let (fp, s) = match r {
             Ok(done) => done,
             Err(e) => {
+                // A refusal from before is named already; the planner's own may not be.
+                let e = if why.get(fi).is_some_and(Option::is_some) {
+                    e
+                } else {
+                    named(b, fi, e)
+                };
                 stats.unmeshed.push(RefusedFace {
                     face: fi,
                     reason: e.to_string(),
@@ -380,17 +455,14 @@ fn plan_at(b: &brep::Brep, tol: f64, turn: Option<size::Turn>) -> Result<(TessPl
                 first_error.get_or_insert(e);
                 (
                     FacePlan {
-                        face: u32::try_from(fi).unwrap_or(u32::MAX),
+                        face,
                         ..FacePlan::default()
                     },
                     PlanStats::default(),
                 )
             }
         };
-        plan.faces.push(FacePlan {
-            surface: Some(surface),
-            ..fp
-        });
+        plan.faces.push(FacePlan { surface, ..fp });
         stats.planar += s.planar;
         stats.structured += s.structured;
         stats.delaunay += s.delaunay;
@@ -406,11 +478,87 @@ fn plan_at(b: &brep::Brep, tol: f64, turn: Option<size::Turn>) -> Result<(TessPl
         .into_iter()
         .map(|fs| {
             fs.into_iter()
-                .map(|f| u32::try_from(f).unwrap_or(u32::MAX))
+                .map(|f| u32::try_from(f).map_err(|_| too_many()))
                 .collect()
         })
-        .collect();
+        .collect::<Result<_>>()?;
     Ok((plan, stats))
+}
+
+/// The first reason each face of a body is refused, as the planner meets them (its surface, an
+/// edge of it, its boundary): a face refused at one step is passed over by the steps after, and
+/// left out of the plan, named in [`PlanStats::unmeshed`].
+struct Refused<'a> {
+    b: &'a brep::Brep,
+    why: Vec<Option<TessError>>,
+}
+
+impl<'a> Refused<'a> {
+    fn new(b: &'a brep::Brep) -> Self {
+        Refused {
+            b,
+            // Proven: one slot per face of the allocated `b.faces`, each no larger than a face.
+            why: vec![None; b.faces.len()],
+        }
+    }
+
+    /// Which faces are refused, by index.
+    fn flags(&self) -> Vec<bool> {
+        self.why.iter().map(Option::is_some).collect()
+    }
+
+    /// Whether face `fi` is refused.
+    fn is(&self, fi: usize) -> bool {
+        self.why.get(fi).is_some_and(Option::is_some)
+    }
+
+    /// Refuse face `fi` with `e`, unless it is refused already.
+    fn face(&mut self, fi: usize, e: TessError) {
+        if let Some(slot @ None) = self.why.get_mut(fi) {
+            *slot = Some(named(self.b, fi, e));
+        }
+    }
+
+    /// Refuse every face edge `ei` bounds with the edge's error `e`, each naming itself.
+    fn edge(&mut self, edge_faces: &[Vec<usize>], ei: usize, e: &TessError) {
+        for &fi in edge_faces.get(ei).into_iter().flatten() {
+            let kind = self.b.faces.get(fi).map_or("?", |f| kind(&f.surface));
+            self.face(fi, on_face(fi, kind, e));
+        }
+    }
+
+    /// `r`'s value, or `None` with face `fi` refused with its error.
+    fn take<T>(&mut self, fi: usize, r: Result<T>) -> Option<T> {
+        match r {
+            Ok(v) => Some(v),
+            Err(e) => {
+                self.face(fi, e);
+                None
+            }
+        }
+    }
+}
+
+/// `e` as face `fi`'s (of kind `kind`), its message naming the face.
+fn on_face(fi: usize, kind: &str, e: &TessError) -> TessError {
+    let name = |m: &str| format!("face {fi} ({kind}): {m}");
+    match e {
+        TessError::Invalid(m) => TessError::Invalid(name(m)),
+        TessError::Failed(m) => TessError::Failed(name(m)),
+        TessError::Internal(m) => TessError::Internal(name(m)),
+    }
+}
+
+/// Face `fi`'s error `e`, naming the face where it does not already (a panic caught on the
+/// worker pool names only the step).
+fn named(b: &brep::Brep, fi: usize, e: TessError) -> TessError {
+    match e {
+        TessError::Internal(_) => {
+            let kind = b.faces.get(fi).map_or("?", |f| kind(&f.surface));
+            on_face(fi, kind, &e)
+        }
+        other => other,
+    }
 }
 
 /// Face `fi`'s boundary, loop by loop: the shared edge nodes (each edge's last node is the next
@@ -731,6 +879,7 @@ fn boundary(
 /// edge, and the segment's place along it from its start vertex. `reach`: how near a pole a
 /// point of the face is taken as one (see [`solidcore::eval::uv::degenerate_within`]): the tolerance of a vertex
 /// of it on a patch side collapsed to within that tolerance, else 0.
+#[derive(Default)]
 struct Boundary {
     loops: Vec<seam::Loop>,
     segments: Vec<Vec<(u32, u32)>>,
@@ -744,19 +893,22 @@ struct Boundary {
 /// another, see [`tangle::crossing`]) are halved at their curve parameter's middle, on the edge,
 /// so every face of the edge gets the new nodes; the faces of every edge split are checked again,
 /// until no chords cross. Boundaries that still cross after [`MAX_UNTANGLE`] rounds, or would
-/// put more than [`edges::MAX_EDGE_NODES`] on an edge, are an error naming the face and edges.
+/// put more than [`edges::MAX_EDGE_NODES`] on an edge, refuse every face of that edge (in
+/// `refused`), as does a boundary that cannot be built again; a refused face is passed over, its
+/// boundary emptied.
 #[allow(clippy::too_many_arguments)]
 fn untangle(
     b: &brep::Brep,
-    evals: &[EvalSurface],
+    evals: &[Option<EvalSurface>],
     edge_faces: &[Vec<usize>],
     tol: f64,
     nodes: &mut [edges::Nodes],
     boundaries: &mut [Boundary],
     face_boundary: &(dyn Fn(usize, &[edges::Nodes]) -> Result<Boundary> + Sync),
-) -> Result<Vec<(usize, String)>> {
+    refused: &mut Refused,
+) -> Vec<(usize, String)> {
     let crossing = |fi: usize, fb: &Boundary| -> Vec<(u32, u32)> {
-        let Some(s) = evals.get(fi) else {
+        let Some(s) = evals.get(fi).and_then(Option::as_ref) else {
             return Vec::new();
         };
         tangle::crossing(s, fb.reach, &fb.loops)
@@ -767,9 +919,10 @@ fn untangle(
     let indexed: Vec<usize> = (0..boundaries.len()).collect();
     let curved = evals
         .iter()
+        .flatten()
         .filter(|e| !matches!(e, EvalSurface::Plane { .. }))
         .count();
-    let found: Vec<Vec<(u32, u32)>> = crate::par::map(
+    let found: Vec<Option<Vec<(u32, u32)>>> = crate::par::map(
         "boundary crossings",
         &indexed,
         curved >= PARALLEL_FACES,
@@ -780,15 +933,19 @@ fn untangle(
         },
     )
     .into_iter()
-    .collect::<Result<_>>()?;
+    .enumerate()
+    .map(|(fi, r)| refused.take(fi, r))
+    .collect();
     let mut tangled: Vec<Tangled> = found
         .into_iter()
         .enumerate()
+        .filter_map(|(fi, c)| Some((fi, c?)))
         .filter(|(_, c)| !c.is_empty())
         .collect();
     for round in 0..=MAX_UNTANGLE {
+        tangled.retain(|(fi, _)| !refused.is(*fi));
         if tangled.is_empty() {
-            return Ok(Vec::new());
+            return Vec::new();
         }
         if round == MAX_UNTANGLE {
             // Halving cannot part two curves that touch or cross: where they come within the chord
@@ -802,9 +959,10 @@ fn untangle(
                 boundaries,
                 face_boundary,
                 &faces,
-            )?;
+                refused,
+            );
             // Each face still crossing, with why: planned leniently, and named (`plan_or_fill`).
-            return Ok(tangled
+            return tangled
                 .iter()
                 .map(|(fi, c)| {
                     let mut es: Vec<u32> = c.iter().map(|(e, _)| *e).collect();
@@ -813,7 +971,7 @@ fn untangle(
                     let kind = b.faces.get(*fi).map_or("?", |f| kind(&f.surface));
                     (*fi, format!("face {fi} ({kind}): boundary crosses itself: edges {es:?} run closer together than their chords can follow after {MAX_UNTANGLE} halvings"))
                 })
-                .collect());
+                .collect();
         }
         let mut split: Vec<(u32, u32)> = tangled
             .iter()
@@ -828,24 +986,57 @@ fn untangle(
             let Some(slot) = nodes.get_mut(e as usize) else {
                 continue;
             };
-            edges::split_segments(b, e as usize, slot, &segs)?;
+            if let Err(err) = edges::split_segments(b, e as usize, slot, &segs) {
+                refused.edge(edge_faces, e as usize, &err);
+            }
             redo.extend(edge_faces.get(e as usize).into_iter().flatten().copied());
         }
         redo.sort_unstable();
         redo.dedup();
         tangled.clear();
         for fi in redo {
-            let fb = face_boundary(fi, nodes)?;
-            let c = crossing(fi, &fb);
-            if let Some(slot) = boundaries.get_mut(fi) {
-                *slot = fb;
-            }
-            if !c.is_empty() {
-                tangled.push((fi, c));
+            if let Some(c) = rebuild(fi, evals, nodes, boundaries, face_boundary, refused) {
+                let c: Vec<(u32, u32)> = boundaries
+                    .get(fi)
+                    .map(|fb| {
+                        c.into_iter()
+                            .filter_map(|(l, k)| fb.segments.get(l)?.get(k).copied())
+                            .collect()
+                    })
+                    .unwrap_or_default();
+                if !c.is_empty() {
+                    tangled.push((fi, c));
+                }
             }
         }
     }
-    Ok(Vec::new())
+    Vec::new()
+}
+
+/// Face `fi`'s boundary built again from `nodes` into its slot of `boundaries`, with its
+/// crossings (loop, node), as [`tangle::crossing`] finds them; `None` for a face that is refused
+/// (in `refused`), or is refused now because its boundary cannot be built: its boundary is then
+/// emptied, so it crosses nothing.
+fn rebuild(
+    fi: usize,
+    evals: &[Option<EvalSurface>],
+    nodes: &[edges::Nodes],
+    boundaries: &mut [Boundary],
+    face_boundary: &(dyn Fn(usize, &[edges::Nodes]) -> Result<Boundary> + Sync),
+    refused: &mut Refused,
+) -> Option<Vec<(usize, usize)>> {
+    let fb = if refused.is(fi) {
+        None
+    } else {
+        refused.take(fi, face_boundary(fi, nodes))
+    };
+    let slot = boundaries.get_mut(fi)?;
+    *slot = fb.unwrap_or_default();
+    if refused.is(fi) {
+        return None;
+    }
+    let s = evals.get(fi).and_then(Option::as_ref)?;
+    Some(tangle::crossing(s, slot.reach, &slot.loops))
 }
 
 /// A face whose boundary crosses itself, by index, with its crossing edge segments (edge, segment).
@@ -866,25 +1057,30 @@ const MAX_SNAP: u32 = 8;
 /// at an angle: the boundary is wrong there, not within the tolerance). Every face of a changed
 /// edge has its boundary built again. Returns the faces whose boundaries still cross, with the
 /// crossing segments.
+/// An edge that cannot take a node, or a boundary that cannot be built again, refuses its faces
+/// (in `refused`), which are passed over from then on.
 #[allow(clippy::too_many_arguments)]
 fn snap_touches(
-    evals: &[EvalSurface],
+    evals: &[Option<EvalSurface>],
     edge_faces: &[Vec<usize>],
     tol: f64,
     nodes: &mut [edges::Nodes],
     boundaries: &mut [Boundary],
     face_boundary: &(dyn Fn(usize, &[edges::Nodes]) -> Result<Boundary> + Sync),
     faces: &[usize],
-) -> Result<Vec<Tangled>> {
+    refused: &mut Refused,
+) -> Vec<Tangled> {
     let crossing = |fi: usize, fb: &Boundary| -> Vec<(usize, usize)> {
-        let Some(s) = evals.get(fi) else {
+        let Some(s) = evals.get(fi).and_then(Option::as_ref) else {
             return Vec::new();
         };
         tangle::crossing(s, fb.reach, &fb.loops)
     };
     let mut tangled: Vec<usize> = faces.to_vec();
     for _ in 0..MAX_SNAP {
-        let mut add: HashMap<u32, Vec<(f64, Vec3)>> = HashMap::new();
+        // By edge, in order: which edge refuses a face first does not hang on hashing.
+        let mut add: std::collections::BTreeMap<u32, Vec<(f64, Vec3)>> =
+            std::collections::BTreeMap::new();
         for &fi in &tangled {
             let Some(fb) = boundaries.get(fi) else {
                 continue;
@@ -906,7 +1102,9 @@ fn snap_touches(
             let Some(slot) = nodes.get_mut(*e as usize) else {
                 continue;
             };
-            edges::snap(*e as usize, slot, points)?;
+            if let Err(err) = edges::snap(*e as usize, slot, points) {
+                refused.edge(edge_faces, *e as usize, &err);
+            }
             redo.extend(edge_faces.get(*e as usize).into_iter().flatten().copied());
         }
         redo.extend(tangled.iter().copied());
@@ -914,20 +1112,17 @@ fn snap_touches(
         redo.dedup();
         tangled.clear();
         for fi in redo {
-            let fb = face_boundary(fi, nodes)?;
-            let crosses = !crossing(fi, &fb).is_empty();
-            if let Some(slot) = boundaries.get_mut(fi) {
-                *slot = fb;
-            }
-            if crosses {
+            if rebuild(fi, evals, nodes, boundaries, face_boundary, refused)
+                .is_some_and(|c| !c.is_empty())
+            {
                 tangled.push(fi);
             }
         }
         if tangled.is_empty() {
-            return Ok(Vec::new());
+            return Vec::new();
         }
     }
-    Ok(tangled
+    tangled
         .into_iter()
         .filter_map(|fi| {
             let fb = boundaries.get(fi)?;
@@ -937,7 +1132,7 @@ fn snap_touches(
                 .collect();
             (!c.is_empty()).then_some((fi, c))
         })
-        .collect())
+        .collect()
 }
 
 /// The node of face boundary `fb` nearest the crossing chord `at` (loop, node) of its boundary,
@@ -1048,8 +1243,16 @@ const MIN_LOOP_SEGMENTS: usize = 3;
 /// until it has them: two short arcs (a lens), each within the chord tolerance and so one
 /// segment, would otherwise be two chords on one line, a boundary of no area. The new nodes are
 /// on the edges' curves and shared by every face that runs them, as all edge nodes are.
-fn split_thin_loops(b: &brep::Brep, nodes: &mut [edges::Nodes]) -> Result<()> {
-    for f in &b.faces {
+fn split_thin_loops(
+    b: &brep::Brep,
+    nodes: &mut [edges::Nodes],
+    skip: &[bool],
+) -> Vec<(usize, TessError)> {
+    let mut failed: Vec<(usize, TessError)> = Vec::new();
+    for (fi, f) in b.faces.iter().enumerate() {
+        if skip.get(fi).copied().unwrap_or(true) {
+            continue;
+        }
         for l in &f.loops {
             let Loop::Edges { edges: uses } = l else {
                 continue;
@@ -1072,18 +1275,25 @@ fn split_thin_loops(b: &brep::Brep, nodes: &mut [edges::Nodes]) -> Result<()> {
                     break;
                 }
                 for &e in &es {
+                    if failed.iter().any(|(x, _)| *x == e) {
+                        continue;
+                    }
                     let Some(slot) = nodes.get_mut(e) else {
                         continue;
                     };
+                    // Proven: an edge has at most MAX_EDGE_NODES (20 000) nodes, so every
+                    // segment index fits a u32.
                     let segs: Vec<u32> = (0..slot.points.len().saturating_sub(1))
                         .filter_map(|k| u32::try_from(k).ok())
                         .collect();
-                    edges::split_segments(b, e, slot, &segs)?;
+                    if let Err(err) = edges::split_segments(b, e, slot, &segs) {
+                        failed.push((e, err));
+                    }
                 }
             }
         }
     }
-    Ok(())
+    failed
 }
 
 /// same share whatever the order of the faces.
@@ -1092,14 +1302,18 @@ fn relax_crowded_faces(
     jobs: &[(usize, f64)],
     rules: &size::Rules,
     nodes: &mut [edges::Nodes],
-) -> Result<()> {
+    skip: &[bool],
+) -> Vec<(usize, TessError)> {
+    let mut failed: Vec<(usize, TessError)> = Vec::new();
     let Some(turn) = rules.turn else {
-        return Ok(());
+        return failed;
     };
     let boundaries: Vec<Vec<usize>> = b
         .faces
         .iter()
-        .map(|f| face_edges(f).map(|oe| oe.edge as usize).collect())
+        .enumerate()
+        .filter(|(fi, _)| !skip.get(*fi).copied().unwrap_or(true))
+        .map(|(_, f)| face_edges(f).map(|oe| oe.edge as usize).collect())
         .collect();
     let curved = |e: usize| {
         b.edges
@@ -1131,15 +1345,22 @@ fn relax_crowded_faces(
         };
         for e in crowded {
             let Some(&(_, h)) = jobs.get(e) else { continue };
-            if let Some(slot) = nodes.get_mut(e) {
-                *slot = edges::sample_edge(b, e, &relaxed, h)?;
-            }
+            // An edge that fails is not sampled again: its faces are refused.
             if let Some(slot) = level.get_mut(e) {
                 *slot = l;
             }
+            if failed.iter().any(|(x, _)| *x == e) {
+                continue;
+            }
+            if let Some(slot) = nodes.get_mut(e) {
+                match edges::sample_edge(b, e, &relaxed, h) {
+                    Ok(n) => *slot = n,
+                    Err(err) => failed.push((e, err)),
+                }
+            }
         }
     }
-    Ok(())
+    failed
 }
 
 /// Twice the signed area of a parameter polygon.

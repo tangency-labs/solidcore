@@ -1443,3 +1443,109 @@ fn a_ring_touching_itself_at_a_vertex_meshes_strictly() {
         .unwrap();
     assert!((ring.0 - 300.0 * PI).abs() < 0.05, "ring area {}", ring.0);
 }
+
+// A bad face, edge or pcurve in a body: the face (or every face of the edge) is refused, named
+// in the stats, and the rest of the body is meshed.
+
+/// The faces of `p` with triangles, by index.
+fn meshed_faces(p: &TessPlan) -> Vec<u32> {
+    p.faces
+        .iter()
+        .filter(|f| !f.triangles.is_empty())
+        .map(|f| f.face)
+        .collect()
+}
+
+/// Face `face`'s first pcurve in `b`, moved `du` along u: off its edge.
+fn move_pcurve(b: &mut brep::Brep, face: usize, du: f64) -> u32 {
+    let Loop::Edges { edges } = &mut b.faces[face].loops[0] else {
+        panic!("an edge loop")
+    };
+    let oe = &mut edges[0];
+    match &mut oe.pcurve {
+        brep::Curve2::Spline { points, .. } => points.iter_mut().for_each(|p| p[0] += du),
+        brep::Curve2::RationalSpline { homogeneous, .. } => {
+            homogeneous.iter_mut().for_each(|p| p[0] += du * p[2]);
+        }
+    }
+    oe.edge
+}
+
+/// A box one of whose faces has a pcurve 1 mm off its edge: that face is refused, naming the
+/// face and the edge, and the other five are meshed. The pcurve's error was the whole body's.
+#[test]
+fn a_face_whose_pcurve_is_off_its_edge_is_refused_and_the_rest_meshed() {
+    let mut b = fixture("box_10x6x4");
+    let edge = move_pcurve(&mut b, 2, 1.0);
+    let (p, stats) = ok(plan(&b, &MeshTolerance::chord(0.01), size_of("box_10x6x4")));
+    assert_eq!(stats.unmeshed.len(), 1, "{stats:?}");
+    let refused = &stats.unmeshed[0];
+    assert_eq!(refused.face, 2);
+    assert!(
+        refused.reason.contains(&format!(
+            "face 2 (plane): edge {edge}: node 0: its pcurve is"
+        )),
+        "{}",
+        refused.reason
+    );
+    assert_eq!(meshed_faces(&p), vec![0, 1, 3, 4, 5]);
+    assert_eq!(p.faces.len(), 6);
+    let (m, refused) = p.evaluate();
+    assert!(refused.is_empty(), "{refused:?}");
+    assert!(!m.triangles.is_empty() && !m.tri_face.contains(&2));
+}
+
+/// A box with an edge whose interval is reversed: the edge cannot be sampled, and both faces it
+/// bounds are refused, each naming itself and the edge, with no nodes for the edge. The other
+/// four faces are meshed. The edge's error was the whole body's.
+#[test]
+fn an_edge_that_cannot_be_sampled_refuses_both_its_faces_by_name() {
+    let mut b = fixture("box_10x6x4");
+    let ei = 3;
+    b.edges[ei].interval = [1.0, 0.0];
+    let mut faces: Vec<usize> = b.edges[ei].uses.iter().map(|u| u.face as usize).collect();
+    faces.sort_unstable();
+    faces.dedup();
+    assert_eq!(faces.len(), 2);
+    let (p, stats) = ok(plan(&b, &MeshTolerance::chord(0.01), size_of("box_10x6x4")));
+    let refused: Vec<usize> = stats.unmeshed.iter().map(|r| r.face).collect();
+    assert_eq!(refused, faces, "{stats:?}");
+    for r in &stats.unmeshed {
+        assert!(
+            r.reason.contains(&format!(
+                "face {} (plane): tessellation: edge {ei}: interval [1, 0]",
+                r.face
+            )),
+            "{}",
+            r.reason
+        );
+    }
+    let meshed: Vec<u32> = (0..6u32)
+        .filter(|f| !faces.contains(&(*f as usize)))
+        .collect();
+    assert_eq!(meshed_faces(&p), meshed);
+    assert!(p.edges[ei].is_empty());
+    assert!(
+        p.edges
+            .iter()
+            .enumerate()
+            .all(|(e, n)| e == ei || n.len() >= 2)
+    );
+}
+
+/// A body every face of which is refused (a sphere of one face, its pcurve off its edge) is the
+/// first face's error, not an empty plan.
+#[test]
+fn a_body_none_of_whose_faces_plan_is_the_first_faces_error() {
+    let mut b = fixture("sphere_r12");
+    assert_eq!(b.faces.len(), 1);
+    move_pcurve(&mut b, 0, 0.5);
+    match plan(&b, &MeshTolerance::chord(0.01), size_of("sphere_r12")) {
+        Err(e) => assert!(e.to_string().contains("face 0 (sphere): edge"), "{e}"),
+        Ok((p, stats)) => panic!(
+            "planned {} faces, unmeshed {:?}",
+            meshed_faces(&p).len(),
+            stats.unmeshed
+        ),
+    }
+}
