@@ -10,7 +10,8 @@
 //! 2. run `SOLIDCORE_TESS_FIXTURES=<solidcore>/crates/solidcore-tess/tests/data
 //!    cargo test -p solidcraft-kernel --lib generate_fixtures -- --ignored --nocapture`.
 //!
-//! Each body is written as `<name>.json`, its record (`crate::brep_record`, a
+//! Each body is written as `<name>.json` (gzip it after, `gzip -9 -n <name>.json`, as the
+//! tests read `<name>.json.gz`), its record (`crate::brep_record`, a
 //! `solidcore_record::brep::Brep`) as pretty JSON, and `sizes.json` maps each name to the body's
 //! size (`Body::size`, the size its mesh tolerance rules take). The construction code is the
 //! tests' own, as they were in SolidCraft's kernel (crates/kernel/src/tess) before the planner
