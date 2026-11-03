@@ -1551,6 +1551,8 @@ pub struct UpstreamFixes {
     pub face_swap_uv_transposes_trims: bool,
     /// `N_SrfIsClosedSmooth` ([`crate::nurbs::srf_basic::Surface::is_closed_smooth_with_fixes`]) takes the G1 test across the seam at a station where the derivative across the seam vanishes (a collapsed row, a pole on the seam: shorter than `0.001 * NL_MTOL`, the pole test of `N_SrfEvalPtNormalAtPole`) by its limit, the mixed derivative `S_uv` (`S_uv` for the v seam), negated at the end of the domain, where upstream takes the angle of the two vanishing vectors: their rounding then decides between `NL_GEO_ERR` (two exact zeros), not smooth (two noise vectors at any angle) and smooth, so a sphere is not reported closed and smooth in u (WR-725, #2521; solidcore-native, no fork commit).
     pub closed_smooth_pole_tangent_limit: bool,
+    /// With `fillet_cliff_overflow` (and `fillet_refuse_rails_leaving_faces` and `fillet_exact_round_classes`, which it builds on), a lone constant round bigger than the wall it rolls on ends on the body's outline instead of being built on the wall continued past its rim and cut from the body. Where the round's rail runs past a rim of its face (a convex, not tangent edge of the face that runs the filleted edge's whole length) and the ball rolling on the continued face passes inside that rim by more than the body's tolerance (so the round would take material beyond the face), the ball touches the rim instead: it stays tangent to the other face and its section passes through the rim. Where that ball would land on the other face past that face's own rim, it touches both rims, its section the arc through them. The solver rolls the ball on the surface tangent to it along each rim it touches, in place of the face: the face's plane turned about a straight rim, or the wall's cylinder leaned into the cone through a circular rim (both keep the face's parameterization along the rim), so the round is built as a round as tall as its wall, exactly (a cylinder or a torus). Decided in the round's section ([`crate::blend::fillet_outline::outline_supports`]) for a round along a straight edge between two planes, or along a circular edge between a plane square to its axis and a coaxial cylinder; any other round is left to the cliff overflow. A 100 x 100 x 10 plate rounded r 90 on a top edge keeps 86 577.030 mm³, and the round never takes the whole plate: past r = 505 its section runs from the bottom edge to the far top edge. Off: the round on the continued wall, as before (WR-730, #2541; solidcore-native, no fork commit).
+    pub fillet_round_ends_on_outline: bool,
 }
 }
 
@@ -1680,11 +1682,14 @@ pub struct Kernel {
     /// to the records of a fresh seeding, so it never carries state between edits.
     #[doc(hidden)]
     pub notify_records: crate::topology::topology::NotifyRecords,
-    /// Not upstream: the fork's `SmBlendNetScope` depth (a `thread_local` there): while it
-    /// is above 0, procedural blends evaluate as their nets
-    /// ([`crate::surface::procedural_blend::NetScope`]). A [`Cell`]: the scope is
-    /// entered and read on paths that hold `&Kernel` (every surface evaluation).
-    pub blend_net_scope: Cell<u32>,
+    /// Not upstream: the tolerance the innermost
+    /// [`crate::surface::procedural_blend::NetScope`] asks for (the fork's
+    /// `SmBlendNetScope` depth, a `thread_local` there, with the caller's tolerance,
+    /// #2510): a procedural blend whose net's certified bound is at most it evaluates as
+    /// its net. 0 outside every scope (every blend is its definition), infinite in a scope
+    /// that takes every net. A [`Cell`]: the scope is entered and read on paths that hold
+    /// `&Kernel` (every surface evaluation).
+    pub blend_net_tolerance: Cell<f64>,
     /// Not upstream: the fork's process-wide `SmBlendCounts` (diagnostics only, no
     /// result reads them). A [`Cell`]: the definition's evaluators count through `&Kernel`.
     pub blend_counts: Cell<crate::surface::procedural_blend::BlendCounts>,
@@ -1722,6 +1727,11 @@ pub struct Kernel {
     /// the steps of a boolean whose cost once grew with the square of the body's size, for
     /// tests and profiling. They change no result.
     pub work_counters: WorkCounters,
+    /// Not upstream (tangency-labs/solidcore#2489): while `Some`, each fillet session that
+    /// finishes filleting appends the faces it made in its target, each with what made it
+    /// ([`crate::blend::definition_check`]), for the check that every blend face is a
+    /// definition. `None` (the default) marks and keeps nothing; it changes no result.
+    pub blend_face_log: Option<crate::blend::definition_check::BlendFaceLog>,
 }
 
 impl Default for Kernel {
@@ -1745,7 +1755,7 @@ impl Kernel {
             fixes: UpstreamFixes::default(),
             cancel: None,
             notify_records: crate::topology::topology::NotifyRecords::new(),
-            blend_net_scope: Cell::new(0),
+            blend_net_tolerance: Cell::new(0.0),
             blend_counts: Cell::new(crate::surface::procedural_blend::BlendCounts::default()),
             blend_station_memo: RefCell::new(
                 crate::blend::fillet_section::definition::StationMemo::default(),
@@ -1757,6 +1767,7 @@ impl Kernel {
             blend_w_memo: RefCell::default(),
             blend_operation_scopes: Arc::default(),
             work_counters: WorkCounters::default(),
+            blend_face_log: None,
         }
     }
 
