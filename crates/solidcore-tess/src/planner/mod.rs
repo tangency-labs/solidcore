@@ -87,6 +87,18 @@ pub struct PlanStats {
     /// whole (no triangles), so the rest of the body is still meshed, each with why it could not
     /// be planned. Nothing is substituted for a point the surface refuses.
     pub unmeshed: Vec<RefusedFace>,
+    /// Edges that bound no face and could not be sampled: left out of the plan (an empty
+    /// polyline), so the rest of the body is still meshed, each with why.
+    pub unsampled_edges: Vec<RefusedEdge>,
+}
+
+/// An edge the planner could not sample: its index in the record and why.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct RefusedEdge {
+    /// The edge's index in the record.
+    pub edge: usize,
+    /// Why it was refused.
+    pub reason: String,
 }
 
 /// A parameter point where a face's surface does not evaluate: the kernel's evaluator refuses
@@ -314,8 +326,9 @@ fn plan_at(b: &brep::Brep, tol: f64, turn: Option<size::Turn>) -> Result<(TessPl
         .filter(|e| matches!(e.curve, Curve::SurfaceIntersection { .. }))
         .count();
     // An edge that cannot be sampled refuses every face it bounds, each naming it, and has no
-    // nodes in the plan; one that bounds no face is the body's error.
+    // nodes in the plan; one that bounds no face is named in the stats on its own.
     let mut nodes: Vec<edges::Nodes> = Vec::new();
+    let mut unsampled_edges: Vec<RefusedEdge> = Vec::new();
     for (ei, r) in crate::par::map(
         "edge nodes",
         &jobs,
@@ -327,7 +340,13 @@ fn plan_at(b: &brep::Brep, tol: f64, turn: Option<size::Turn>) -> Result<(TessPl
     {
         nodes.push(match r {
             Ok(n) => n,
-            Err(e) if edge_faces.get(ei).is_none_or(Vec::is_empty) => return Err(e),
+            Err(e) if edge_faces.get(ei).is_none_or(Vec::is_empty) => {
+                unsampled_edges.push(RefusedEdge {
+                    edge: ei,
+                    reason: e.to_string(),
+                });
+                edges::Nodes::default()
+            }
             Err(e) => {
                 refused.edge(&edge_faces, ei, &e);
                 edges::Nodes::default()
@@ -422,7 +441,10 @@ fn plan_at(b: &brep::Brep, tol: f64, turn: Option<size::Turn>) -> Result<(TessPl
         },
     );
     let mut plan = TessPlan::default();
-    let mut stats = PlanStats::default();
+    let mut stats = PlanStats {
+        unsampled_edges,
+        ..PlanStats::default()
+    };
     // A face no method plans is left out, named in the stats, and the rest of the body is
     // meshed; a body none of whose faces plan is the first face's error.
     let mut first_error: Option<TessError> = None;

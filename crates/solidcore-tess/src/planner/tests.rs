@@ -1541,6 +1541,33 @@ fn an_edge_that_cannot_be_sampled_refuses_both_its_faces_by_name() {
     );
 }
 
+/// An edge that bounds no face (a free edge beside a box) and cannot be sampled is left out of
+/// the plan and named in the stats with why; the box is meshed whole, not refused as a body.
+#[test]
+fn a_free_edge_that_cannot_be_sampled_is_named_and_the_body_meshed() {
+    let mut b = fixture("box_10x6x4");
+    let mut free = b.edges[3].clone();
+    free.uses.clear();
+    free.interval = [1.0, 0.0];
+    b.edges.push(free);
+    let ei = b.edges.len() - 1;
+    let (p, stats) = ok(plan(&b, &MeshTolerance::chord(0.01), size_of("box_10x6x4")));
+    assert!(stats.unmeshed.is_empty(), "{stats:?}");
+    assert_eq!(stats.unsampled_edges.len(), 1, "{stats:?}");
+    assert_eq!(stats.unsampled_edges[0].edge, ei);
+    assert!(
+        stats.unsampled_edges[0]
+            .reason
+            .contains(&format!("tessellation: edge {ei}: interval [1, 0]")),
+        "{}",
+        stats.unsampled_edges[0].reason
+    );
+    assert_eq!(meshed_faces(&p), (0..6u32).collect::<Vec<u32>>());
+    assert!(p.edges[ei].is_empty());
+    assert!(p.edge_faces[ei].is_empty());
+    assert!(p.edges[..ei].iter().all(|n| n.len() >= 2));
+}
+
 /// A body every face of which is refused (a sphere of one face, its pcurve off its edge) is the
 /// first face's error, not an empty plan.
 #[test]
