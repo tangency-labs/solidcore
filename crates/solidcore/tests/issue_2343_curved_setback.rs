@@ -244,6 +244,8 @@ enum Kind {
     Plane,
     Cylinder,
     Sphere,
+    /// About `axis` through `at`, of radius `radius + slope h` at `h` along the axis.
+    Cone,
 }
 
 #[derive(Clone, Copy)]
@@ -252,6 +254,7 @@ struct CurvedFace {
     at: Point3,
     axis: Vec3,
     radius: f64,
+    slope: f64,
     side: f64,
 }
 
@@ -262,7 +265,19 @@ impl CurvedFace {
             at: Point3::new(at[0], at[1], at[2]),
             axis: Vec3::new(normal[0], normal[1], normal[2]),
             radius: 0.0,
+            slope: 0.0,
             side: 1.0,
+        }
+    }
+    /// A cylinder, sphere or cone (`kind`) of `side`.
+    fn quadric(kind: Kind, at: [f64; 3], radius: f64, slope: f64, side: f64) -> Self {
+        Self {
+            kind,
+            at: Point3::new(at[0], at[1], at[2]),
+            axis: Vec3::Z,
+            radius,
+            slope,
+            side,
         }
     }
     fn g(&self, x: Point3) -> f64 {
@@ -273,6 +288,12 @@ impl CurvedFace {
                 self.side * ((d - self.axis * d.dot(self.axis)).length() - self.radius)
             }
             Kind::Sphere => self.side * (d.length() - self.radius),
+            Kind::Cone => {
+                let h = d.dot(self.axis);
+                let rho = (d - self.axis * h).length();
+                self.side * (rho - (self.radius + self.slope * h))
+                    / (1.0 + self.slope * self.slope).sqrt()
+            }
         }
     }
     /// The face's normal direction at `x` (its distance's gradient, either way round).
@@ -282,6 +303,10 @@ impl CurvedFace {
             Kind::Plane => self.axis,
             Kind::Cylinder => d - self.axis * d.dot(self.axis),
             Kind::Sphere => d,
+            Kind::Cone => {
+                let h = d.dot(self.axis);
+                (d - self.axis * h).unitize().unwrap() - self.axis * self.slope
+            }
         }
     }
 }
@@ -523,6 +548,7 @@ fn d_prism_case(blend: bool) -> (Kernel, Brep, Vec<EdgeId>, Case) {
                 at: Point3::new(0.0, 0.0, 0.0),
                 axis: Vec3::Z,
                 radius: rr,
+                slope: 0.0,
                 side: 1.0,
             },
         ],
@@ -591,6 +617,7 @@ fn d_pocket_unequal_corner_is_a_concave_setback_beside_the_cylinder() {
                 at: Point3::new(20.0, 20.0, 0.0),
                 axis: Vec3::Z,
                 radius: rr,
+                slope: 0.0,
                 side: -1.0,
             },
         ],
@@ -655,6 +682,7 @@ fn knife_edge_corner_is_a_setback_no_more_concave_than_its_wall() {
                 at: Point3::new(tip, -21.0, 0.0),
                 axis: Vec3::Z,
                 radius: 21.0,
+                slope: 0.0,
                 side: -1.0,
             },
         ],
@@ -730,6 +758,7 @@ fn sphere_corner_is_a_setback_beside_the_sphere() {
                 at: Point3::new(0.0, 0.0, 0.0),
                 axis: Vec3::Z,
                 radius: 10.0,
+                slope: 0.0,
                 side: 1.0,
             },
         ],
@@ -752,6 +781,160 @@ fn sphere_corner_is_a_setback_beside_the_sphere() {
         ],
         k: 0.0,
         faces_want: 14,
+    };
+    let r = round_each(&mut k, &mut b, &edges, &radii, case.v);
+    assert_eq!(r.event, Some(BlendCornerEvent::Setback), "{}", r.reason);
+    assert!(r.ok, "{}", r.reason);
+    graded(&mut k, &mut b, &case, 3);
+}
+
+/// The point of a round of radius `r` whose ball's centre is `c`, along the bisector of its
+/// contact normals `n1` and `n2` out of the material.
+fn middle(c: [f64; 3], n1: [f64; 3], n2: [f64; 3], r: f64) -> Point3 {
+    let d = (Vec3::new(n1[0], n1[1], n1[2]) + Vec3::new(n2[0], n2[1], n2[2]))
+        .unitize()
+        .unwrap();
+    Point3::new(c[0], c[1], c[2]) + d * r
+}
+
+/// The fork's `curved_cone_corner`: a cone's frustum (radius 10 at z = 0 narrowing at 30
+/// degrees to z = 6) less x < 0, its top corner V = (0, `rho_t`, 6), `rho_t` = 10 - 6 tan 30, where
+/// the top, the plane x = 0 and the convex cone meet: the top's diameter, the generator and the
+/// top's arc rounded 1.25, 1.5 and 2 (k = 0). Faces: the part's 5, 4 rounds, 6 patches (15).
+#[test]
+fn cone_frustum_corner_is_a_setback_beside_the_cone() {
+    let mut k = all_fixes(true);
+    let tb = (PI / 6.0).tan();
+    let (cb, sb) = ((PI / 6.0).cos(), (PI / 6.0).sin());
+    let rt = 10.0 - 6.0 * tb;
+    let rm = 10.0 - 3.0 * tb;
+    let cone = solidcore::primitive::api_primitives::create_cone(
+        &mut k,
+        Point3::new(0.0, 0.0, 0.0),
+        10.0,
+        rt,
+        6.0,
+    )
+    .unwrap();
+    let cut = create_box(&mut k, Point3::new(-20.0, -20.0, -1.0), 20.0, 40.0, 10.0).unwrap();
+    let mut b = boolean_difference(&mut k, cone, cut).unwrap();
+    let mut edges = vec![pick(&k, &b, [0.0, 0.0, 6.0]), pick(&k, &b, [0.0, rm, 3.0])];
+    let mut radii = vec![1.25, 1.5];
+    for e in edges_on(&k, &b, |p| {
+        (p.z - 6.0).abs() <= 1e-7 && (p.x.hypot(p.y) - rt).abs() <= 1e-7
+    }) {
+        edges.push(e);
+        radii.push(2.0);
+    }
+    let rg = rm - 1.5 / cb;
+    let yg = (rg * rg - 2.25).sqrt();
+    let ra = 10.0 - 4.0 * tb - 2.0 / cb;
+    let case = Case {
+        name: "cone frustum",
+        v: Point3::new(0.0, rt, 6.0),
+        reach: 6.5,
+        convex: true,
+        inside: Point3::new(3.0, 0.0, 3.0),
+        faces: vec![
+            CurvedFace::plane([0.0, 0.0, 6.0], [0.0, 0.0, 1.0]),
+            CurvedFace::plane([0.0, 0.0, 0.0], [-1.0, 0.0, 0.0]),
+            CurvedFace::quadric(Kind::Cone, [0.0, 0.0, 0.0], 10.0, -tb, 1.0),
+        ],
+        on_rounds: vec![
+            middle([1.25, 3.0, 4.75], [-1.0, 0.0, 0.0], [0.0, 0.0, 1.0], 1.25),
+            middle(
+                [1.5, yg, 3.0],
+                [-1.0, 0.0, 0.0],
+                [cb * 1.5 / rg, cb * yg / rg, sb],
+                1.5,
+            ),
+            middle(
+                [ra * 0.5, ra * 0.75f64.sqrt(), 4.0],
+                [0.0, 0.0, 1.0],
+                [cb * 0.5, cb * 0.75f64.sqrt(), sb],
+                2.0,
+            ),
+        ],
+        k: 0.0,
+        faces_want: 15,
+    };
+    let r = round_each(&mut k, &mut b, &edges, &radii, case.v);
+    assert_eq!(r.event, Some(BlendCornerEvent::Setback), "{}", r.reason);
+    assert!(r.ok, "{}", r.reason);
+    graded(&mut k, &mut b, &case, 3);
+}
+
+/// The fork's `curved_countersink_corner`: the block x in [-20, 4], y in [-20, 20], z in [0, 20]
+/// less a cone's frustum about (4, 0) widening at 45 degrees from radius 2 at z = 14, its
+/// corner V = (4, 8, 20) where the top, the side and the concave cone meet: the top-side edge,
+/// the rim and the generator rounded 1.25, 1.5 and 1: a convex corner beside a concave cone, no
+/// more concave than the cone (k = -cos 45 / 5.5). Faces: 8, 3 rounds, 6 patches (17).
+#[test]
+#[ignore = "known failing, and slow (its setbacks grow to 1.414 x the rule's): a patch's control \
+            net doubles back (check_brep's SmBSplineSurface test #5), as the fork's open item (b) \
+            (plan/findings/blend.blend_corner--curved-setback-countersink-net-doubles-back.md)"]
+fn countersink_corner_is_a_setback_no_more_concave_than_its_cone() {
+    let mut k = all_fixes(true);
+    let c45 = 0.5f64.sqrt();
+    let sink = solidcore::primitive::api_primitives::create_cone(
+        &mut k,
+        Point3::new(4.0, 0.0, 14.0),
+        2.0,
+        9.0,
+        7.0,
+    )
+    .unwrap();
+    let block = create_box(&mut k, Point3::new(-20.0, -20.0, 0.0), 24.0, 40.0, 20.0).unwrap();
+    let mut b = boolean_difference(&mut k, block, sink).unwrap();
+    let mut edges = vec![
+        pick(&k, &b, [4.0, 14.0, 20.0]),
+        pick(&k, &b, [4.0, 5.0, 17.0]),
+    ];
+    let mut radii = vec![1.25, 1.0];
+    for e in edges_on(&k, &b, |p| {
+        (p.z - 20.0).abs() <= 1e-7 && ((p.x - 4.0).hypot(p.y) - 8.0).abs() <= 1e-7
+    }) {
+        edges.push(e);
+        radii.push(1.5);
+    }
+    let zr = 18.5;
+    let rr = (zr - 14.0) + 2.0 + 1.5 / c45;
+    let a3 = 0.75 * PI;
+    let rg = 5.0 + 1.0 / c45;
+    let yg = (rg * rg - 1.0).sqrt();
+    let case = Case {
+        name: "countersink",
+        v: Point3::new(4.0, 8.0, 20.0),
+        reach: 6.0,
+        convex: true,
+        inside: Point3::new(-5.0, 10.0, 10.0),
+        faces: vec![
+            CurvedFace::plane([0.0, 0.0, 20.0], [0.0, 0.0, 1.0]),
+            CurvedFace::plane([4.0, 0.0, 0.0], [1.0, 0.0, 0.0]),
+            CurvedFace::quadric(Kind::Cone, [4.0, 0.0, 14.0], 2.0, 1.0, -1.0),
+        ],
+        on_rounds: vec![
+            middle(
+                [4.0 - 1.25, 16.0, 20.0 - 1.25],
+                [1.0, 0.0, 0.0],
+                [0.0, 0.0, 1.0],
+                1.25,
+            ),
+            middle(
+                [4.0 + rr * a3.cos(), rr * a3.sin(), zr],
+                [0.0, 0.0, 1.0],
+                [-c45 * a3.cos(), -c45 * a3.sin(), c45],
+                1.5,
+            ),
+            middle(
+                [3.0, yg, 17.0],
+                [1.0, 0.0, 0.0],
+                [c45 / rg, -c45 * yg / rg, c45],
+                1.0,
+            ),
+        ],
+        k: -c45 / 5.5,
+        faces_want: 17,
     };
     let r = round_each(&mut k, &mut b, &edges, &radii, case.v);
     assert_eq!(r.event, Some(BlendCornerEvent::Setback), "{}", r.reason);
@@ -782,7 +965,8 @@ fn d_prism_asked_too_short_names_the_setback_that_builds() {
 
 /// The setback named above, asked for, builds (`fit_setback`'s contract).
 #[test]
-#[ignore = "known failing: refused naming 3.26594, the growth's trials depend on their order \
+#[ignore = "known failing: refused naming 3.26594; the certificate's decision at the growth's \
+            threshold flips with rounding-level differences \
             (plan/findings/blend.blend_corner--curved-setback-growth-named-setback-refused.md)"]
 fn the_named_setback_builds() {
     let (mut k, mut b, edges, case) = d_prism_case(true);

@@ -7,7 +7,14 @@
     - At 1.0625 the fill certifies only at degree 9: degrees 4 to 7 are infeasible, and degree 8 solves but is not certified.
   - **Asked 3.2406249999999996:** refused in turn, naming 3.26594.
 - **Expected:** a setback the corner names as building builds when asked for (`fit_setback`'s contract).
-- **Suspected cause:** the growth's trials are not independent of their order. Each trial places the setback vertices again (`CalcSetBackVert`), starting from the previous trial's state. That state is the vertex use's `TsectPnt` and whatever the solver keeps between solves (`point_on_plane_solve` writes its rail offsets back). A fresh build at the same setbacks starts from the trace's state. At 1.0625 the certificate is marginal (degree 9 only), so a placement that differs by rounding certifies in the trial and not in the fresh build.
-  - The fork's work in progress notes the same class open at 37c9e1d: "the cone still differs grown vs scaled with identical round rows".
+- **Cause (checked 2026-11-03):** not state the trials inherit. Release probes of the growth (D prism asked 3.05) and of a fresh build asked 3.2406249999999996 were compared at the scale 1.0625:
+  - The three setback vertices the trial places are bit for bit the fresh build's, and so are the vertices of every other trial at the same scale.
+  - What differs is the rounds. The trial evaluates the rounds built at the base setbacks, at rail parameters 0.99168, 0.00481 and 0.98171. The fresh build evaluates its own rounds at 1, 0 and 1: the same geometry, parametrized over another interval.
+  - The fill's inputs agree to rounding: the geometric rows, the raw jets 0 to 2, the axis e (bit for bit) and the origin o, all within 1e-15 relative; every k is 0.
+  - From those inputs the fill certifies in the trial (at degree 9 only) and not in the fresh build. The decision at the growth's threshold is not stable under rounding-level changes of its inputs. The fresh build's own threshold lies in (3.2406, 3.2659], the trial's in (3.2168, 3.2406].
+  - The fork notes the same class open at 37c9e1d ("the cone still differs grown vs scaled with identical round rows").
+- **Ways out (a design question, not decided here):**
+  - Name a setback whose certificate holds with a margin beyond rounding.
+  - Or make the fill's inputs a function of the placed vertices alone (their points, ball centres and rail tangents, bit for bit the same in a trial and in a fresh build), not of the rounds' surfaces.
 - **Not a hang:** the growth is bounded: at most nine fills, seven degrees each, at most 200 row rounds per quadratic programme, each with at most `50 (m + n) + 1000` dual steps. Asked 3.05 takes 136 s in release, and most of an hour in a debug build. Each solve at degree 9 near the threshold takes 8 to 27 s in release, mostly the dual active-set steps over a working set of up to 12000 rows. A debug-build probe of it was first taken for a hang.
-- **State:** open. The test `d_prism_asked_too_short_names_the_setback_that_builds` checks the refusal and its named setback. `the_named_setback_builds` is ignored as known failing, with this file as its reason. Both are ignored as slow.
+- **State:** open. The test `d_prism_asked_too_short_names_the_setback_that_builds` checks the refusal and its named setback (ignored as slow). `the_named_setback_builds` is ignored as known failing, with this file as its reason.

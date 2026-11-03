@@ -26,9 +26,12 @@ Updates: WR-697
   | D pocket (concave cylinder) | 18 | 3, 4.5, 3.75 | 1.4e-11 | 9.8e-15 | 8.1e-3 (0) | 7.1e-15 |
   | Sphere (convex) | 14 | 2.25, 3, 3.75 | 5.2e-12 | 5.3e-15 | 9.0e-3 (0) | 3.6e-15 |
   | Knife edge (concave wall R 21) | 15 | 3.312, 3.75, 4.5 | 1.6e-11 | 3.2e-14 | -1.67e-2 (-1/21) | 3.2e-14 |
+  | Cone frustum (convex cone) | 15 | 1.875, 2.25, 3 | 4.3e-12 | 4.6e-15 | 4.8e-3 (0) | 1.5e-15 |
 
   Each case certifies at the rule's setbacks, which match the fork's comments for these cases (D prism 3, 3.75, 4.5; knife 3.312, 3.75, 4.5).
   - **Without the flag:** the D prism's corner is not a Setback.
-  - **Not covered yet:** the cone (the fork's countersink case; it differs there between grown and scaled setbacks, open at 37c9e1d). Also open: a G2 fill beside curved faces (#2346, #2347), and N >= 4 (#2365).
-  - **Growth:** the D prism asked 3.05 (at or past every least setback, 3 the most) is refused, naming 3.240625 (3.05 x 1.0625) as building. That one, asked for in turn, is refused naming 3.26594: the growth's trials depend on their order (`plan/findings/blend.blend_corner--curved-setback-growth-named-setback-refused.md`, open).
-- **Tests:** `crates/solidcore/tests/issue_2343_curved_setback.rs`: the four cases and the flag-off case; the asked setback's refusal and the named setback building, both ignored as slow, the latter known failing. The spring curves on a cylinder, cone, sphere and plane are checked against the faces' closed forms in `crates/solidcore/src/blend/blend_setback/spring.rs` (unit tests).
+  - **The convex cone** (the fork's `curved_cone_corner`, known failing there at 37c9e1d) passes.
+  - **Open:** the countersink (a concave cone) grows to 1.414 x the rule's setbacks and certifies, but a patch's control net fails `check_brep`'s net test #5. This is the fork's open item (b) (`plan/findings/blend.blend_corner--curved-setback-countersink-net-doubles-back.md`).
+  - **Also open:** a G2 fill beside curved faces (#2346, #2347), and N >= 4 (#2365).
+  - **Growth:** the D prism asked 3.05 (at or past every least setback, 3 the most) is refused, naming 3.240625 (3.05 x 1.0625) as building. That one, asked for in turn, is refused naming 3.26594. The trial and the fresh build place the same vertices bit for bit, and their fill inputs agree to 1e-15, but the certificate's decision at the threshold flips (`plan/findings/blend.blend_corner--curved-setback-growth-named-setback-refused.md`, open).
+- **Tests:** `crates/solidcore/tests/issue_2343_curved_setback.rs`: the five cases and the flag-off case, the countersink ignored as known failing; the asked setback's refusal and the named setback building, both ignored as slow, the latter known failing. The spring curves on a cylinder, cone, sphere and plane are checked against the faces' closed forms in `crates/solidcore/src/blend/blend_setback/spring.rs` (unit tests).
