@@ -234,6 +234,61 @@ pub fn lies_on(form: &BSplineSurface, a: &Implicit) -> Result<bool> {
     Ok(true)
 }
 
+const OP_EXACT: &str = "surface::implicit::check_exact_net";
+
+/// What an exact net is checked against (#2485): the class its definition names, the
+/// class its supports give when classified again, and the analytic surface that class
+/// lies on, derived from the supports alone (`None`: none could be).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct ExactNetCheck {
+    /// The class the definition names.
+    pub class: &'static str,
+    /// The class of the supports classified again (`None`: no class kept as a definition).
+    pub reclassified: Option<&'static str>,
+    /// The class's surface by its implicit equation.
+    pub surface: Option<Implicit>,
+}
+
+/// Whether a net is its definition (#2485), the counterpart for a blend of an exact class
+/// of the fork's `SmBallPatch::IsOnSphere` and of [`AnalyticSupport::build`]'s check: the
+/// supports classified again give the class the definition names, and the net's NURBS form
+/// lies on that class's surface ([`lies_on`], each coefficient within the rounding of
+/// computing it, no tolerance of its own). Open to more classes: a class adds its label and
+/// its implicit surface.
+///
+/// # Errors
+///
+/// `InvalidInput` naming the mismatch: the supports of another class (or of none), no
+/// surface of the class from them, a net without a NURBS form, or a net off the surface;
+/// those of making the net's NURBS form and of [`lies_on`].
+pub fn check_exact_net(k: &Kernel, net: &Surface, check: &ExactNetCheck) -> Result<()> {
+    if check.reclassified != Some(check.class) {
+        return Err(SolidError::invalid_input(
+            OP_EXACT,
+            "the supports classified again are not of the class the definition names",
+        ));
+    }
+    let Some(surface) = check.surface else {
+        return Err(SolidError::invalid_input(
+            OP_EXACT,
+            "the supports give the class no analytic surface",
+        ));
+    };
+    let Some(form) = crate::blend::fillet_section::station::as_b_spline(k, net)? else {
+        return Err(SolidError::invalid_input(
+            OP_EXACT,
+            "the net has no NURBS form to check",
+        ));
+    };
+    if !lies_on(&form, &surface)? {
+        return Err(SolidError::invalid_input(
+            OP_EXACT,
+            "the net is off the surface of its class",
+        ));
+    }
+    Ok(())
+}
+
 const OP_BUILD: &str = "surface::implicit::AnalyticSupport::build";
 
 /// A support's analytic kind and parameters, beside its NURBS form (#2388): what a
@@ -642,6 +697,38 @@ impl AnalyticSupport {
             .and_then(Self::of)
             .filter(|a| a.kind() == kind)
             .ok_or_else(not_kind)
+    }
+
+    /// Not a support's kind (#2485): the surface of revolution a NURBS form is, as the
+    /// kernel recognises it in the form (`IsNurbSurfaceSurfOfRevolution`, which
+    /// `CopyAndAddAnalytics` runs), on the form's own frame, sweep, generator and swap;
+    /// it takes `form` as its NURB and must evaluate as the form at the form's own
+    /// parameters, as [`AnalyticSupport::build`] requires of a support.
+    ///
+    /// # Errors
+    ///
+    /// `InvalidInput` where the form is no surface of revolution or is not the recognised
+    /// one's parametrisation; those of the recogniser and the evaluations.
+    pub fn derive_revolution(k: &Kernel, form: &BSplineSurface) -> Result<Surface> {
+        use crate::surface::surf_of_revolution::SurfOfRevolution;
+        let not_kind = || {
+            SolidError::invalid_input(
+                OP_DERIVE,
+                "an exact net's NURBS form is not a surface of revolution's parametrisation",
+            )
+        };
+        let test = Surface::from(form.copy());
+        let mut rev = match SurfOfRevolution::is_nurb_surface_surf_of_revolution(k, &test, 1.0) {
+            Ok(Some(rev)) => rev,
+            Err(e @ (SolidError::Unported { .. } | SolidError::Cancelled { .. })) => return Err(e),
+            Ok(None) | Err(_) => return Err(not_kind()),
+        };
+        rev.base = form.copy();
+        let surface = Surface::from(rev);
+        if !evaluates_as(k, &surface, form)? {
+            return Err(not_kind());
+        }
+        Ok(surface)
     }
 
     /// Its kind, without its parameters.
