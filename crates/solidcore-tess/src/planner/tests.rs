@@ -2103,7 +2103,7 @@ fn a_stale_use_does_not_make_a_face_an_edges() {
     let mut faces: Vec<usize> = b.edges[ei].uses.iter().map(|u| u.face as usize).collect();
     faces.sort_unstable();
     faces.dedup();
-    let mut stale = b.edges[ei].uses[0].clone();
+    let mut stale = b.edges[ei].uses[0];
     stale.face = 5;
     b.edges[ei].uses.push(stale);
     b.edges[ei].curve = Curve::Spline {
