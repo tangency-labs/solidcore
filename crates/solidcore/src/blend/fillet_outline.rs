@@ -521,7 +521,9 @@ pub fn rims_of_face(
 /// solver's signed offset of that face's surface (the ball's centre lies at the face's
 /// point plus its normal times the offset). The section is taken across the middle of a
 /// straight edge, between two planes, or through a circular edge's start, between a plane
-/// square to its axis and a coaxial cylinder.
+/// square to its axis and a coaxial cylinder. The round's ends are cut by planes: every
+/// other face at the edge's ends is planar, as the cliff overflow needs its end faces
+/// (WR-631's `CliffEndFaceNotPlanar`).
 ///
 /// A ball touching a rim rolls on the surface tangent to it along that rim: the face's plane
 /// turned about a straight rim, or the wall's cylinder leaned into the cone through a
@@ -543,7 +545,31 @@ pub fn outline_supports(
     offsets: [f64; 2],
     tangency_tol_rad: f64,
 ) -> Result<Option<[Option<Surface>; 2]>> {
+    // the outline is a solid's: its rims bound material on one side
+    if !crate::topology::brep::p2::is_manifold_solid(target)? {
+        return Ok(None);
+    }
     let tol = target.tolerance();
+    // the round's ends are cut by planes, as the cliff overflow's are (WR-631): every other
+    // face at the filleted edge's ends is planar
+    for v in [
+        edge::start_vertex(target, filleted)?,
+        edge::end_vertex(target, filleted)?,
+    ]
+    .into_iter()
+    .flatten()
+    {
+        for f in crate::topology::vertex::faces(target, v)? {
+            if faces.contains(&f) {
+                continue;
+            }
+            let surface = crate::topology::face::p2::surface(target, f)?
+                .ok_or_else(|| SolidError::sm_err(OP))?;
+            if !surface.is_planar(k, tol)?.is_planar {
+                return Ok(None);
+            }
+        }
+    }
     let Some(curve) = edge::curve(target, filleted)? else {
         return Ok(None);
     };
@@ -638,6 +664,10 @@ pub fn outline_supports(
     let Some(outline) = decide([l0, l1], c2, radius, [r0, r1], tol) else {
         return Ok(None);
     };
+    // a turned ball clear of the axis (its round a ring torus)
+    if matches!(section, Section::Turned { .. }) && !(outline.centre.x - radius > tol) {
+        return Ok(None);
+    }
     let mut supports = [None, None];
     for ((((support, touch), surface), normal), d) in supports
         .iter_mut()

@@ -9,10 +9,13 @@
 //!
 //! Deviations: none of upstream's; there is no recursion.
 
-use super::{invalid, FilletObject, FilletSession};
+use super::{invalid, FilletObject, FilletSession, SolverObject};
+use crate::blend::fillet_solver::p1::{
+    FilletSurfaceGenerator, FilletSurfaceGeneratorType, OffsetSurfaceSlot,
+};
 use crate::blend::fillet_custom_solver::OffsetSurface;
 use crate::blend::fillet_outline::outline_supports;
-use crate::blend::fillet_solver::p1::OffsetSurfaceSlot;
+use crate::blend::fillet_solver::p5::is_concave_edge;
 use crate::error::{Result, SolidError};
 use crate::kernel::Kernel;
 use crate::surface::offset_surface::SS_UNKNOWN;
@@ -22,7 +25,8 @@ const OP: &str = "blend::fillet_executive::session::outline_rims";
 
 impl FilletSession<'_> {
     /// With `fixes.fillet_round_ends_on_outline` (and the cliff overflow, the refusal of
-    /// rails leaving their faces and the exact round classes it builds on), a lone round
+    /// rails leaving their faces and the exact round classes it builds on), a lone constant
+    /// round of circular section
     /// whose ball would take material past a rim of its face rolls on the surfaces that make
     /// it end on the body's outline: each solver offset surface whose face it leaves is
     /// replaced by one of the same offset on the surface tangent to the ball along the rim
@@ -44,7 +48,14 @@ impl FilletSession<'_> {
         let Some(&FilletObject::Solver(id)) = self.executive.solvers.first() else {
             return Err(invalid("object is not a solver"));
         };
-        let base = self.objects.solver(id)?.base();
+        // a constant round of circular section: its ball is one ball all along
+        let object = self.objects.solver(id)?;
+        let base = object.base();
+        let circular = base.fsg.as_ref().map(FilletSurfaceGenerator::fillet_surface_generator_type)
+            == Some(FilletSurfaceGeneratorType::Circular);
+        if !matches!(object, SolverObject::ConstantRadius(_)) || !circular {
+            return Ok(());
+        }
         let tangency = base.tangency_tolerance;
         let uses = base.edgeuses;
         let mut offsets = [0.0; 2];
@@ -63,6 +74,10 @@ impl FilletSession<'_> {
         let Some(edge) = eu1::edge(target, u0)? else {
             return Ok(());
         };
+        // a convex round, which takes material (a concave one past its wall stays refused)
+        if !crate::topology::brep::p2::is_manifold_solid(target)? || is_concave_edge(k, target, edge)? {
+            return Ok(());
+        }
         let mut faces = Vec::with_capacity(2);
         for u in [u0, u1] {
             let face = eu1::faceuse(target, u)?
