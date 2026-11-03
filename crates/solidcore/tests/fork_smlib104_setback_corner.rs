@@ -364,10 +364,21 @@ fn counts(b: &Brep) -> (usize, usize, usize) {
     )
 }
 
-/// The fork blend driver's printout (`blend dx dy dz n x y z r ... [cx cy cz sb ease]`);
-/// `FLAGOFF` set runs it without `fillet_blend_corner`.
-fn dump_blend(dims: [f64; 3], at: &[[f64; 3]], radii: &[f64], ask: Option<&SetbackAsk>) -> String {
+/// Kernel settings for diagnostic dumps; `FLAGOFF` disables `fillet_blend_corner`.
+fn dump_kernel(exact_classes: bool) -> Kernel {
     let mut k = all_fixes(std::env::var("FLAGOFF").is_err());
+    k.fixes.fillet_exact_round_classes = exact_classes;
+    k
+}
+
+fn dump_blend(
+    dims: [f64; 3],
+    at: &[[f64; 3]],
+    radii: &[f64],
+    ask: Option<&SetbackAsk>,
+    exact_classes: bool,
+) -> String {
+    let mut k = dump_kernel(exact_classes);
     let r = blend_box(&mut k, dims, at, radii, ask);
     dump_blended(k, r)
 }
@@ -395,9 +406,27 @@ fn dump_blended(mut k: Kernel, mut r: Blended) -> String {
 #[test]
 #[ignore = "prints the blends for a local comparison with the fork driver"]
 fn dump_blends() {
+    dump_blend_matrix(true);
+}
+
+/// Isolate the class-dependent cylinder construction for the same thirteen inputs.
+/// This is a diagnostic counterfactual, not acceptance evidence for the all-fixes profile.
+#[test]
+#[ignore = "diagnostic only: disables exact round classes; not the production acceptance profile"]
+fn diagnose_class_dependent_executive() {
+    dump_blend_matrix(false);
+}
+
+fn dump_blend_matrix(exact_classes: bool) {
     print!(
         "{}",
-        dump_blend([40.0, 30.0, 20.0], &UNEQUAL_AT, &[2.0, 3.0, 4.0], None)
+        dump_blend(
+            [40.0, 30.0, 20.0],
+            &UNEQUAL_AT,
+            &[2.0, 3.0, 4.0],
+            None,
+            exact_classes
+        )
     );
     for (sb, ease) in [(8.0, 0.0), (20.0, 0.0), (0.0, 0.0), (5.0, 0.0), (8.0, 2.0)] {
         println!("== setback {sb} ease {ease}");
@@ -407,7 +436,8 @@ fn dump_blends() {
                 [60.0, 40.0, 20.0],
                 &ASKED_AT,
                 &[5.0; 3],
-                Some(&asked(sb, ease))
+                Some(&asked(sb, ease)),
+                exact_classes
             )
         );
     }
@@ -415,16 +445,28 @@ fn dump_blends() {
         println!("== short {sb}");
         print!(
             "{}",
-            dump_blend([20.0; 3], &SHORT_AT, &[2.0, 3.0, 4.0], Some(&short(sb)))
+            dump_blend(
+                [20.0; 3],
+                &SHORT_AT,
+                &[2.0, 3.0, 4.0],
+                Some(&short(sb)),
+                exact_classes
+            )
         );
     }
     println!("== shrink");
     print!(
         "{}",
-        dump_blend([20.0, 20.0, 5.5], &SHRINK_AT, &[2.0, 3.0, 4.0], None)
+        dump_blend(
+            [20.0, 20.0, 5.5],
+            &SHRINK_AT,
+            &[2.0, 3.0, 4.0],
+            None,
+            exact_classes
+        )
     );
     println!("== concave");
-    let mut k = all_fixes(std::env::var("FLAGOFF").is_err());
+    let mut k = dump_kernel(exact_classes);
     let b = notched(&mut k, 10.0);
     let r = blend_body(&mut k, b, &CONCAVE_AT, &[1.0, 1.5, 2.0], None);
     print!("{}", dump_blended(k, r));
@@ -435,7 +477,8 @@ fn dump_blends() {
             [20.0; 3],
             &[[10.0, 0.0, 20.0], [20.0, 10.0, 20.0], [20.0, 0.0, 10.0]],
             &[2.0, 2.0, 3.0],
-            None
+            None,
+            exact_classes
         )
     );
 }

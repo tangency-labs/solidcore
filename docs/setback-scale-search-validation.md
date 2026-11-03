@@ -1,6 +1,6 @@
 # Setback scale search comparison (#2344a)
 
-This contribution stacks on #2369 (`ee6e1b349`); #2274 is merged. The native target for
+Both dependencies, #2369 (`ee6e1b349`) and #2274, are merged. The native target for
 the scale change is SMLib `20b1c01`, not the pinned v1.0.1 reference. Only the two
 Apache-2.0 files `source/SMLib/src/SmBlendSetback.cpp` and
 `source/SMLib/inc/SmBlendSetback.h` were fetched from that commit.
@@ -41,10 +41,13 @@ The smallest certifying scale on the grid whose neighbour below fails; monotonic
 
 The matrix in this contribution has seventeen descriptions, including axis
 permutations. It is not the capi fixture inventory outside the source allow-list; the pocket rim
-fixture remains a validation follow-up. The full twelve-case native executive gate now passes.
+fixture remains a validation follow-up. The twelve-case executive pass is historical;
+the expanded merged-head comparison has the explicit failures recorded below.
 The pinned C++ difftests validate default behavior only. Do not treat them as
 proof of opt-in fork parity. Streamed rows and their row/step counters are outside
-this slice.
+this slice. The existing `fillet_blend_corner` flag is temporary while its complete
+construction is being validated: accepted construction parity must make it the default
+and delete the flag and superseded path, rather than retain a permanent fallback.
 
 ## Native executive reference
 
@@ -89,6 +92,43 @@ checkout. Only the allowed SMLib sources are compiled. The native overlay is
 not the pinned reference used for default-behavior difftests.
 
 ## Dependency refresh (2026-11-03)
+
+### Resumed refresh
+
+Authoritative main `ba69ec95d` is merged locally in `8690f4528` without
+conflicts or manual resolutions. Both #2369 and #2274 are now merged; their
+review/merge is no longer a dependency blocker. This preserves main's exact-spine
+cylinder construction from #2419 (`9c44f2332`, WR-669 addendum).
+
+That construction is explicitly solidcore-native: it projects the stations onto
+the exact spine and retains the cylinder's frame, whereas the native 20b1c01
+reference takes solved stations and refits the frame. A controlled test-only
+probe disabling exact round classes restores all seven original regressions
+(the normal profile is still 3 pass / 4 fail). The explicit ignored
+`diagnose_class_dependent_executive` helper now isolates that class-dependent
+construction on the same thirteen-input matrix, without an environment override
+in the regular tests. That explicit diagnostic passes the unchanged strict
+native comparator (13 inputs, 7 bodies, 167 vertices); the normal profile fails.
+This does not demonstrate a scale-search defect or accept
+the current construction against the old frame. The acceptance boundary is raised on
+the [blend hub](https://github.com/tangency-labs/solidcore/issues/2243#issuecomment-6593461835).
+The strict comparator remains unchanged and failures are not waived.
+
+The thirteen-case native driver was rerun successfully (seven bodies, 167
+vertices). The fresh Rust dump completes with Level2 checks passing, but the
+normal strict comparison still fails at case 9. The six-case scale/attempt/QP
+gate and formatting pass. No legacy snapshot expectation or tolerance changed.
+The new finding is
+`plan/findings/blend.fillet_corner--2344-exact-spine-reference-boundary.md`.
+All six affected legacy pinned C++ caller units pass freshly on this merged
+library: executive p1-p3 and corner p1-p3, 3172 cases including 45 guard
+rejections, zero mismatches or deferrals, all reported maximum relative errors 0.
+This is a default-path regression gate, not acceptance against the fork for
+the opt-in construction.
+The PR remains draft. CI run 41549430827
+at `ed7a76660` still has zero jobs and needs repository-admin approval.
+
+### Earlier refresh evidence
 
 Merged authoritative main `ebe6722e09169cce29a20c455fc6ec606b57caa0`
 and #2369 `ee6e1b349e9ebae287246cc42a787a6620ab429e` into the
@@ -150,12 +190,15 @@ streaming remains unimplemented; the native preparation is documented separately
 
 ### CI permission boundary
 
-The last published-head run before this refresh,
+At the resumed verification's pre-push head `ed7a76660`,
+[41549430827](https://github.com/tangency-labs/solidcore/actions/runs/41549430827)
+is completed `action_required` with zero jobs. This is a workflow approval
+gate, not a failed test. Historical run
 [41450960214](https://github.com/tangency-labs/solidcore/actions/runs/41450960214)
-at `274e0a4a6`, completed `action_required`. Earlier run
+at `274e0a4a6` also completed `action_required`. Earlier run
 [41431300743](https://github.com/tangency-labs/solidcore/actions/runs/41431300743)
 at `9f5dce3` had zero jobs and requires repository-admin approval. The earlier
 approval attempt returned HTTP 403, "Must have admin rights to Repository".
 The current account still has pull permission only on the authoritative repo.
-No code edit or rerun can supply that permission; current-head workflow status
-must be assessed separately after pushing.
+No code edit or rerun can supply that permission. The PR body records workflow
+status separately after each push; none of these approval-gated runs is green evidence.

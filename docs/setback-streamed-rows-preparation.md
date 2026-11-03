@@ -1,7 +1,8 @@
 # Streamed setback rows: native preparation for #2344(b)
 
-This is a **preparatory validation contribution**, separate from the completed
-scale-search implementation in #2382. Rust still materializes its sector matrix.
+This is a **preparatory validation contribution**, separate from the implemented
+scale-search slice in #2382, whose executive acceptance remains open. Rust still
+materializes its sector matrix.
 No Rust row construction, QP arithmetic, degree order, probe API or flag changes
 are made here.
 
@@ -13,7 +14,8 @@ other changes into a row-only port.
 
 ## Gates and evidence
 
-- The twelve-case executive comparison passes against both stored-row C++ and
+- Historical evidence at `274e0a4a6`: the twelve-case executive comparison passed
+  against both stored-row C++ and
   the merged Rust scale branch: six bodies, 144 vertices. Status/refusal, exact
   comments, named fits, topology counts, volumes and every coordinate agree
   within 1e-9 relative, without an absolute floor.
@@ -73,6 +75,12 @@ matrix: thirteen cases, seven bodies, 167 vertices, strict relative 1e-9 with
 no absolute floor. Current merged Rust does not pass the same coordinate gate;
 see `plan/findings/blend.fillet_corner--2344-main-refresh-relative-zero-parity.md`.
 Native-to-native parity does not establish Rust parity.
+
+Both dependencies (#2369 and #2274) are now merged. The resumed scale slice
+preserves #2419's intentional exact-spine cylinder construction and diagnoses
+its difference from the old native frame; see
+`plan/findings/blend.fillet_corner--2344-exact-spine-reference-boundary.md`.
+That diagnostic does not waive the normal Rust profile's strict comparison.
 
 The production Rust streamed row provider, affine-polynomial storage, working-set
 integration and per-kernel work counters remain unimplemented and available for

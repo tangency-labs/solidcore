@@ -29,11 +29,16 @@ public probe API. The streaming WIP `3843ddb`, degree-nine-first evaluation,
 row/peak-row/active-set-step counters and their full result-equivalence gate
 remain follow-ups. No unit is promoted by this contribution.
 
-The full native executive comparison now passes on twelve independent inputs:
+Historical evidence at `274e0a4a6`: the native executive comparison passed on twelve independent inputs:
 six built bodies and 144 vertices. Status/refusal, comments, named fits, topology
 counts, volumes and every vertex coordinate agree to 1e-9 relative without an
 absolute floor. The reference overlays the complete changed SMLib source set at
 20b1c01 on the existing 5e8c9c1 libraries, recompiling blend/fillet consumers of
 the changed class layouts. The reproducible driver, build script and strict
 comparator live under `harness/cpp/tests/`; commands and limitations are in
-`docs/setback-scale-search-validation.md`.
+`docs/setback-scale-search-validation.md`. This does not certify the later main merges:
+the expanded thirteen-case comparison has strict near-zero coordinate mismatches,
+and four legacy flag-off snapshots fail. Both are recorded in the
+`plan/findings/blend.fillet_corner--2344-main-refresh-*` findings. The existing
+blend-corner flag is temporary until its complete construction is accepted; it
+must then become the default with the old path and flag deleted.
