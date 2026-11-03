@@ -66,6 +66,26 @@ pub(crate) fn basis_check(p: usize, n: usize, knots: &[f64]) -> bool {
     (1..=MAX_SPLINE_DEGREE).contains(&p) && n > p && knots.len() == n + p + 1
 }
 
+/// How far past its knot range, relative to the range's magnitude, a parameter is still the
+/// range's end for derivatives of the second order and up: rounding (a boundary point carried
+/// off by a pcurve's evaluation), not an extrapolation.
+const BOUNDARY_ROUNDING: f64 = 1e-9;
+
+/// `t` on the knot range `[knots[p], knots[n]]`: the range's end when `t` is past it by no more
+/// than rounding ([`BOUNDARY_ROUNDING`]), `None` when farther out (higher derivatives are taken
+/// on the surface, never on its extrapolation), `t` inside.
+fn onto_knots(knots: &[f64], p: usize, n: usize, t: f64) -> Option<f64> {
+    let (&lo, &hi) = (knots.get(p)?, knots.get(n)?);
+    let slack = BOUNDARY_ROUNDING * (hi - lo).abs().max(lo.abs()).max(hi.abs()).max(1.0);
+    if t < lo {
+        (t >= lo - slack).then_some(lo)
+    } else if t > hi {
+        (t <= hi + slack).then_some(hi)
+    } else {
+        Some(t)
+    }
+}
+
 /// NLib's control point for homogeneous `h`: non-rational (weight `NL_NOW`) when `rational` is
 /// false.
 fn cpoint(h: [f64; 4], rational: bool) -> CPoint {
@@ -173,7 +193,10 @@ impl EvalCurve {
     /// The point and derivatives up to `order` at `t` (element `k` the `k`-th), exactly. `None`
     /// if the curve is malformed or its weight vanishes there.
     #[must_use]
+    /// Past the knot range by no more than rounding, `t` is the range's end; farther out,
+    /// `None`.
     pub fn derivatives(&self, t: f64, order: usize) -> Option<Vec<Vec3>> {
+        let t = onto_knots(&self.knots, self.degree, self.ctrl.len(), t)?;
         self.derivs_from(t, order, Side::Left)
     }
 }
@@ -194,6 +217,13 @@ pub struct Nurbs {
 }
 
 impl Nurbs {
+    /// `uv` on the knot ranges ([`onto_knots`]).
+    fn onto_knots(&self, [u, v]: [f64; 2]) -> Option<[f64; 2]> {
+        let [k0, k1] = &self.knots;
+        let ([p0, p1], [n0, n1]) = (self.degree, self.count);
+        Some([onto_knots(k0, p0, n0, u)?, onto_knots(k1, p1, n1, v)?])
+    }
+
     /// The degrees along u and v.
     #[must_use]
     pub fn degree(&self) -> [usize; 2] {
@@ -258,6 +288,14 @@ impl EvalSurface {
     #[must_use]
     pub fn nurbs(degree: [usize; 2], knots: [Vec<f64>; 2], count: [usize; 2], ctrl: Vec<[f64; 4]>) -> EvalSurface {
         let closed = uv::closed(degree, &knots, count, &ctrl);
+        Self::nurbs_closed(degree, knots, count, ctrl, closed)
+    }
+
+    /// [`EvalSurface::nurbs`] whose closedness along u and v is known (`closed`, as
+    /// [`super::uv::closed`] finds it): a net moved rigidly or by an affine map keeps that of
+    /// the net it was moved from, without walking the net again.
+    #[must_use]
+    pub fn nurbs_closed(degree: [usize; 2], knots: [Vec<f64>; 2], count: [usize; 2], ctrl: Vec<[f64; 4]>, closed: [bool; 2]) -> EvalSurface {
         let [pu, pv] = degree;
         let [nu, nv] = count;
         let ok = basis_check(pu, nu, &knots[0]) && basis_check(pv, nv, &knots[1]) && nu.checked_mul(nv) == Some(ctrl.len());
@@ -275,9 +313,10 @@ impl EvalSurface {
         EvalSurface::Nurbs(Box::new(Nurbs { degree, knots, count, ctrl, closed, nl }))
     }
 
-    /// Point and unit normal (`S_u × S_v`, oriented as the surface) at `(u, v)`. A degenerate
-    /// point (a cone's apex, a sphere's pole) takes its normal from a step inside; anything
-    /// that still fails gives the origin and +Z rather than a NaN.
+    /// Point and unit normal (`S_u × S_v`, oriented as the surface) at `(u, v)`. At a
+    /// degenerate point (a cone's apex, a sphere's pole) the normal is the limit there from
+    /// the second derivatives, pointing to the side a step inside gives; anything that still
+    /// fails gives the origin and +Z rather than a NaN.
     #[must_use]
     pub fn eval(&self, u: f64, v: f64) -> (Vec3, Vec3) {
         let Some((p, du, dv)) = self.derivs(u, v) else { return (Vec3::ZERO, Vec3::Z) };
@@ -285,19 +324,31 @@ impl EvalSurface {
         if let Some(n) = n.normalized().filter(|_| n.len2() > 1e-20 * (du.len2() * dv.len2()).max(1e-300)) {
             return (p, n);
         }
-        // Step into the parameter domain around the degenerate point: never past the end of an
+        // Step into the parameter domain around the degenerate point (never past the end of an
         // interval, where the extrapolated surface folds back over the pole and its normal
-        // points the other way.
+        // points the other way): the side the normal points to.
         let h = 1e-6 * (1.0 + u.abs().max(v.abs()));
         let inside = |d: usize, t: f64, s: f64| self.interval(d).is_none_or(|(lo, hi)| (lo..=hi).contains(&(t + s * h)));
+        let mut near = None;
         for (su, sv) in [(1.0, 1.0), (-1.0, 1.0), (1.0, -1.0), (-1.0, -1.0)] {
             if inside(0, u, su) && inside(1, v, sv) {
-                if let Some(n) = self.derivs(u + su * h, v + sv * h).and_then(|(_, a, b)| self.oriented(a.cross(b)).normalized()) {
-                    return (p, n);
+                near = self.derivs(u + su * h, v + sv * h).and_then(|(_, a, b)| self.oriented(a.cross(b)).normalized());
+                if near.is_some() {
+                    break;
                 }
             }
         }
-        (p, Vec3::Z)
+        // The normal itself is the limit at the pole (as NLib's N_SrfEvalPtNormalAtPole takes
+        // it): where S_u vanishes, along S_uv × S_v; where S_v does, along S_u × S_uv.
+        let limit = self.second(u, v).and_then(|(_, suv, _)| {
+            let m = if du.len2() <= dv.len2() { suv.cross(dv) } else { du.cross(suv) };
+            self.oriented(m).normalized()
+        });
+        match (limit, near) {
+            (Some(l), Some(n)) => (p, if l.dot(n) < 0.0 { -l } else { l }),
+            (_, Some(n)) => (p, n),
+            _ => (p, Vec3::Z),
+        }
     }
 
     /// The active parameter interval along `d` (0: u, 1: v) of a spline, or of a revolution's

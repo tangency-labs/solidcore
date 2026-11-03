@@ -605,3 +605,34 @@ fn a_spheres_flux_is_its_volume() {
     let volume = 4.0 / 3.0 * std::f64::consts::PI * 8.0;
     assert!((flux - volume).abs() < 1e-3 * volume, "{flux} vs {volume}");
 }
+
+/// At a sphere form's poles the normal is the limit, exactly radial, and points the way the
+/// surface does next to the pole; the same after the net is moved.
+#[test]
+fn a_pole_takes_the_limit_normal() {
+    let s = Surface::Sphere { frame: tilted(), radius: 7.0 };
+    let (form, fdom) = form::surface(&s, [[0.3, 5.9], [-FRAC_PI_2, FRAC_PI_2]]).unwrap();
+    let SurfaceEval::Eval(e, _) = SurfaceEval::new(&form).unwrap() else { panic!("a spline") };
+    let centre = Vec3::from_array(tilted().origin);
+    for v in [fdom[1][0], fdom[1][1]] {
+        for u in [fdom[0][0], 0.5 * (fdom[0][0] + fdom[0][1]), fdom[0][1]] {
+            let (p, n) = e.eval(u, v);
+            let radial = (p - centre) * (1.0 / 7.0);
+            let (_, nn) = e.eval(u, v + if v == fdom[1][0] { 1e-3 } else { -1e-3 });
+            assert!(n.cross(radial).len() < 1e-14, "{n:?} vs {radial:?}");
+            assert!(n.dot(nn) > 0.99, "{n:?} vs next to it {nn:?}");
+        }
+    }
+}
+
+/// Higher derivatives are taken on the surface: a parameter past the knot range by rounding is
+/// the range's end, one farther out has none.
+#[test]
+fn higher_derivatives_take_a_rounding_past_the_end_as_the_end() {
+    let s = quarter_cylinder();
+    let at_end = s.second(0.4, 1.0).unwrap();
+    let past = s.second(0.4, 1.0 + 1e-15).unwrap();
+    assert_eq!(at_end, past);
+    assert!(s.second(0.4, 1.0 + 1e-6).is_none() && s.partials(1.0 + 1e-6, 0.5).is_none());
+    assert!(s.derivs(1.0 + 1e-6, 0.5).is_some(), "first derivatives continue the end span");
+}
