@@ -1,4 +1,4 @@
-//! A lone round ends on the body's outline (not upstream; solidcore #2541, WR-729,
+//! A lone round ends on the body's outline (not upstream; solidcore #2541, WR-730,
 //! `fixes.fillet_round_ends_on_outline`): before its trace, a lone round's solver rolls its
 //! ball on the surfaces tangent to it along the rims it touches
 //! ([`crate::blend::fillet_outline::outline_supports`]).

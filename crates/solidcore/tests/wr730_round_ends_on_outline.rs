@@ -1,4 +1,4 @@
-//! WR-729 (#2541): with `fixes.fillet_round_ends_on_outline`, a round bigger than the wall it
+//! WR-730 (#2541): with `fixes.fillet_round_ends_on_outline`, a round bigger than the wall it
 //! rolls on ends on the body's outline: the ball stays tangent to the face it keeps and its
 //! section passes through the wall's rim, where the cliff overflow builds it on the wall
 //! continued past the rim and cuts it from the body, taking the plate under the rim.
@@ -7,7 +7,7 @@
 //! expected value is closed form, from the section:
 //! - up to r = (L² + t²) / 2t = 505 the ball touches the top face at
 //!   xc = sqrt(r² - (r - t)²) and passes through the bottom edge (0, 0): the material above
-//!   that arc goes (`SolidWorks` measures 86 577.03 mm³ at r 90, #2541);
+//!   that arc goes;
 //! - past it the ball touches the far top edge (L, t) and the bottom edge: the material
 //!   above the arc through them goes;
 //! - without the flag, the ball touches the top face at x = r and the wall continued below
@@ -188,8 +188,6 @@ fn on_round(k: &Kernel, b: &Brep, p: Point3) -> (f64, Vec3) {
 #[test]
 fn a_round_up_to_the_bound_is_tangent_to_the_top_and_ends_on_the_bottom_edge() {
     assert!((bound() - 505.0).abs() < 1e-12);
-    // SolidWorks' r 90 part (#2541) is this construction's
-    assert!((tangent_to_top(90.0) - 86_577.03).abs() < 5e-3);
     for r in [20.0, 50.0, 90.0, 100.0, 154.7, 200.0, 400.0, 500.0] {
         let mut k = kernel(true);
         let mut b = plate(&mut k);

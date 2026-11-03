@@ -354,7 +354,7 @@ Keeping the edge instead (the ball rolling on the rim, the spine continuing as t
 meeting the rim's pipe) is a possible future option, never the default.
 
 A round bigger than the wall it rolls on ends on the body's outline (#2541, opt-in
-`fillet_round_ends_on_outline`, WR-729). This applies where the round on the continued wall
+`fillet_round_ends_on_outline`, WR-730). This applies where the round on the continued wall
 would pass inside the wall's rim, cutting into the material beyond the face it leaves. The
 ball then touches the rim and stays tangent to the face it keeps. It rolls on the surface
 tangent to it along the rim: the wall's plane turned about the rim, or its cylinder leaned

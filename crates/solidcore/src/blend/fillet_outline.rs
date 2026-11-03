@@ -1,5 +1,5 @@
 //! A round bigger than the wall it rolls on ends on the body's outline (not upstream;
-//! solidcore-native, tangency-labs/solidcore#2541, WR-729, opt-in
+//! solidcore-native, tangency-labs/solidcore#2541, WR-730, opt-in
 //! [`UpstreamFixes::fillet_round_ends_on_outline`](crate::kernel::UpstreamFixes::fillet_round_ends_on_outline)).
 //!
 //! A convex round rolls a ball between two faces. Where a face beside the round is narrower
@@ -10,7 +10,7 @@
 //! a top edge loses the plate under the rim back to x = 48.77). With this construction the
 //! ball touches the rim instead: it stays tangent to the face it keeps and its section passes
 //! through the rim, so the round ends on the body's outline and only the material above that
-//! arc is taken (86 577.030 mm³ on that plate, the volume `SolidWorks` measures, #2541).
+//! arc is taken (86 577.030 mm³ on that plate, #2541).
 //!
 //! The ball touching a rim is the ball rolling on the surface tangent to it along the rim (a
 //! pipe of no radius about the rim, `docs/generic-blend.md` §3.4's "keeping the edge"): a
