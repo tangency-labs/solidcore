@@ -20,8 +20,9 @@ Updates: WR-697
     - the cap's edge on the top face lies on its line within 3.6e-15 and 1.5e-14;
     - the end rib lies on the ball's circle in P within 1.1e-14 and 1.6e-14;
     - the rollover seam lies on the ball's circle at Q within 1.2e-14 and 1.3e-14.
-  - The two definitions' sections at Q both lie on the ball's circle there, within 1.5e-14 and 2.9e-14. Their normals agree within 4.3e-14 and 2.7e-14 rad, so the seam is G1 by construction. The rolled definition's section in P lies on the ball's circle within 1.1e-14 both times.
+  - The two definitions' sections at Q both lie on the ball's circle there, within 1.5e-14 and 2.6e-14. Their normals agree within 4.3e-14 and 8.2e-15 rad, so the seam is G1 by construction. The rolled definition's section in P lies on the ball's circle within 1.1e-14 and 1.3e-14.
   - On the R2 round, the definition's feet lie on it within 4.4e-15 and 4.7e-15. Their balls touch the wall within 3.2e-14 and 2.8e-14, and the definition's normal matches the R2 round's within 1.3e-13 and 2.4e-14 rad. The rail edge lies within 1.8e-6 and 3.5e-7 of those feet, inside the definition's certified bound (1.6e-5 and 1.5e-5).
+  - At r 1.75 every one of these is within 3.2e-14, except the rolled rail's fitted curve (1.8e-9 off its circle, over a rolled stretch 0.168 long) and the R2 rail (3.4e-7 off the feet, bound 1.6e-5).
   - These replace the re-trace's figures: a seam crease of 8.2e-5 rad, the end rib 3.7e-6 off its circle and the R2 rail 1.46e-4 off the round (r 1).
   - The re-trace's 1.6e-4 is the body's tolerance, not the trace's. It is the solver's approximation tolerance, `TOL_FACTOR` (4, SMLib [B332]) times the middle edge's tolerance (4e-5), and the re-trace fitted its net to it. With the piece kept as its definition, the pinned values above are rounding error. Only the net's fit to the definition (its certified bound) depends on the solver.
 - **Limits:**

@@ -212,7 +212,7 @@ fn definition_section_in_plane(
     };
     let (a, mid, b) = (at(0.0)?, at(0.5)?, at(1.0)?);
     let forward = a.distance(start) <= tol && b.distance(finish) <= tol;
-    if !forward && !(b.distance(start) <= tol && a.distance(finish) <= tol) {
+    if !(forward || (b.distance(start) <= tol && a.distance(finish) <= tol)) {
         return Ok(None);
     }
     for t in [0.25, 0.75] {

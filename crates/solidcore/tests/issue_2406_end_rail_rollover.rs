@@ -309,13 +309,14 @@ const EXACT_TOL: f64 = 1e-9;
 
 /// Checks the middle edge rounded `r` at its top End: the rail rolls over T onto the top
 /// face, the round from there to P is the top face's and the wall's, and the cap's edges
-/// lie on the faces' sections by P.
-fn check_top_end(k: &Kernel, b: &Brep, r: f64) {
+/// lie on the faces' sections by P. The rolled rail's edge is the rail's fitted curve: off
+/// its circle within `rail_tol`.
+fn check_top_end(k: &Kernel, b: &Brep, r: f64, rail_tol: f64) {
     let t = TopEnd::new(r);
 
     // the rolled rail: on the top face (z = 10) on the circle of radius 21 + r about the
     // axis, from T (at Q) to P, the top face G1 to the round on it
-    let (rail, off) = the_edge(k, b, "the rolled rail", EXACT_TOL, |p| {
+    let (rail, off) = the_edge(k, b, "the rolled rail", rail_tol, |p| {
         if t.past_p(p) > EXACT_TOL || p.distance(t.q) > 4.0 * r {
             1.0
         } else {
@@ -629,7 +630,7 @@ fn the_middle_edge_r0_25_rolls_over_onto_the_top_face_before_its_end() {
         removed > 0.0 && removed < corner * (std::f64::consts::PI + 0.1),
         "{removed}"
     );
-    check_top_end(&k, &b, 0.25);
+    check_top_end(&k, &b, 0.25, EXACT_TOL);
 }
 
 /// At r 1 the rolled stretch is four times as long (0.096): it builds the same way.
@@ -639,7 +640,7 @@ fn the_middle_edge_r1_rolls_over_onto_the_top_face_before_its_end() {
     let mut b = front_rounded(&mut k);
     round(&mut k, &mut b, MIDDLE, 1.0).unwrap();
     clean(&mut k, &mut b);
-    check_top_end(&k, &b, 1.0);
+    check_top_end(&k, &b, 1.0, EXACT_TOL);
 }
 
 /// Without `fillet_blend_corner` the middle edge's round is the pinned one's: refused.
@@ -748,7 +749,9 @@ fn the_middle_edge_at_the_front_round_s_radius_is_refused_as_a_collapsed_offset(
 }
 
 /// Closer to r 2 the ball's foot on the R2 round sits further past T at P: asin(2 r /
-/// (21 (2 - r))), 42 degrees at r 1.75. It still builds the same way. From r 1.8 (59
+/// (21 (2 - r))), 42 degrees at r 1.75. It still builds the same way; its rolled stretch,
+/// 0.168 long, is longer, and the rail's fitted curve lies 1.8e-9 off its circle (pinned a
+/// decade above). From r 1.8 (59
 /// degrees) the End's rail ends are not found on the R2 round run on past T, a known limit
 /// (the WR-697 addendum), so the 1.96 that r 2's refusal names does not build.
 #[test]
@@ -757,5 +760,5 @@ fn the_middle_edge_r1_75_rolls_over_onto_the_top_face_before_its_end() {
     let mut b = front_rounded(&mut k);
     round(&mut k, &mut b, MIDDLE, 1.75).unwrap();
     clean(&mut k, &mut b);
-    check_top_end(&k, &b, 1.75);
+    check_top_end(&k, &b, 1.75, 1e-8);
 }
