@@ -472,166 +472,57 @@ fn trace_seeds_grade_from_one_end_to_the_other() {
     );
 }
 
-/// A face's analytic surface, as its record holds it.
-#[derive(Clone, Copy, Debug)]
-enum Analytic {
-    /// Unit normal and the plane's offset along it.
-    Plane {
-        normal: Vec3,
-        offset: f64,
-    },
-    Cylinder {
-        origin: Vec3,
-        axis: Vec3,
-        radius: f64,
-    },
-    /// Apex, axis pointing into the cone, half-angle (radians).
-    Cone {
-        apex: Vec3,
-        axis: Vec3,
-        half_angle: f64,
-    },
-    Sphere {
-        center: Vec3,
-        radius: f64,
-    },
-    /// Centre of the ring, its axis, the ring (major) and tube (minor) radii.
-    Torus {
-        center: Vec3,
-        axis: Vec3,
-        major: f64,
-        minor: f64,
-    },
-}
-
-/// The analytic surface of face `face` of `b`, if it is a plane, cylinder, cone, sphere or
-/// torus.
-fn analytic(b: &brep::Brep, face: usize) -> Option<Analytic> {
-    let v = |p: [f64; 3]| Vec3::new(p[0], p[1], p[2]);
-    // The frame's origin and its unit z (x × y).
-    let axes = |f: &brep::Frame| Some((v(f.origin), v(f.x_axis).cross(v(f.y_axis)).normalized()?));
-    Some(match &b.faces.get(face)?.surface {
-        brep::Surface::Plane {
-            origin,
-            u_axis,
-            v_axis,
-        } => {
-            let n = v(*u_axis).cross(v(*v_axis)).normalized()?;
-            Analytic::Plane {
-                normal: n,
-                offset: n.dot(v(*origin)),
-            }
-        }
-        brep::Surface::PlaneThrough {
-            origin,
-            u_point,
-            v_point,
-        } => {
-            let o = v(*origin);
-            let n = (v(*u_point) - o).cross(v(*v_point) - o).normalized()?;
-            Analytic::Plane {
-                normal: n,
-                offset: n.dot(o),
-            }
-        }
-        brep::Surface::Cylinder { frame, radius } => {
-            let (origin, axis) = axes(frame)?;
-            Analytic::Cylinder {
-                origin,
-                axis,
-                radius: *radius,
-            }
-        }
-        brep::Surface::Sphere { frame, radius } => Analytic::Sphere {
-            center: v(frame.origin),
-            radius: *radius,
-        },
-        brep::Surface::BallPatch { center, radius } => Analytic::Sphere {
-            center: v(*center),
-            radius: *radius,
-        },
-        brep::Surface::Cone {
-            frame,
-            radius_at_origin,
-            half_angle,
-        } => {
-            let (o, z) = axes(frame)?;
-            let apex = o + z * (-radius_at_origin / half_angle.tan());
-            let axis = if *half_angle > 0.0 { z } else { -z };
-            Analytic::Cone {
-                apex,
-                axis,
-                half_angle: half_angle.abs(),
-            }
-        }
-        brep::Surface::Torus {
-            frame,
-            major_radius,
-            minor_radius,
-            ..
-        } => {
-            let (center, axis) = axes(frame)?;
-            Analytic::Torus {
-                center,
-                axis,
-                major: *major_radius,
-                minor: *minor_radius,
-            }
-        }
-        brep::Surface::Spline { .. }
-        | brep::Surface::RationalSpline { .. }
-        | brep::Surface::PlacedRevolution { .. } => return None,
+/// Whether face `face` of `b` is a plane, cylinder, cone, sphere or torus in its record (the faces
+/// [`max_chord`] measures).
+fn analytic(b: &brep::Brep, face: usize) -> bool {
+    b.faces.get(face).is_some_and(|f| {
+        !matches!(
+            f.surface,
+            brep::Surface::Spline { .. }
+                | brep::Surface::RationalSpline { .. }
+                | brep::Surface::PlacedRevolution { .. }
+        )
     })
 }
 
-/// Distance of `p` from the analytic surface `fs`.
-fn off_surface(fs: &Analytic, p: Vec3) -> f64 {
-    match *fs {
-        Analytic::Plane { normal, offset } => (p - normal * offset).dot(normal).abs(),
-        Analytic::Cylinder {
-            origin,
-            axis,
-            radius,
-        } => {
-            let v = p - origin;
-            ((v - axis * v.dot(axis)).len() - radius).abs()
+/// The farthest a triangle's centroid lies from its face's surface, over the faces whose record
+/// surface is a plane, cylinder, cone, sphere or torus: the distance to the surface point the
+/// kernel's projection ([`solidcore::eval::uv::project`]) finds from the triangle's mean
+/// parameters.
+fn max_chord(body: &brep::Brep, plan: &TessPlan) -> f64 {
+    let mut worst: f64 = 0.0;
+    for f in &plan.faces {
+        if !analytic(body, f.face as usize) {
+            continue;
         }
-        Analytic::Cone {
-            apex,
-            axis,
-            half_angle,
-        } => {
-            let v = p - apex;
-            let h = v.dot(axis);
-            ((v - axis * h).len() * half_angle.cos() - h * half_angle.sin()).abs()
-        }
-        Analytic::Sphere { center, radius } => ((p - center).len() - radius).abs(),
-        Analytic::Torus {
-            center,
-            axis,
-            major,
-            minor,
-        } => {
-            let v = p - center;
-            let h = v.dot(axis);
-            (((v - axis * h).len() - major.abs()).hypot(h) - minor).abs()
+        let s = &plan.surfaces[f.surface.unwrap() as usize];
+        let dom = solidcore::eval::uv::domain(s);
+        let at = |i: u32| -> (Vec3, [f64; 2]) {
+            let q = f.uv[i as usize];
+            let p = f
+                .fixed
+                .get(i as usize)
+                .copied()
+                .unwrap_or_else(|| kernel::record_vec3(s.derivs(q[0], q[1]).unwrap().0));
+            (p, q)
+        };
+        for t in &f.triangles {
+            let [(a, qa), (b, qb), (c, qc)] = t.map(at);
+            let centroid = (a + b + c) * (1.0 / 3.0);
+            let hint = [(qa[0] + qb[0] + qc[0]) / 3.0, (qa[1] + qb[1] + qc[1]) / 3.0];
+            let on = solidcore::eval::uv::project(
+                s,
+                &dom,
+                kernel::vec3(centroid),
+                Some(hint),
+                f64::INFINITY,
+            )
+            .unwrap_or_else(|| panic!("face {}: no projection of {centroid:?}", f.face));
+            let q = kernel::record_vec3(s.derivs(on[0], on[1]).unwrap().0);
+            worst = worst.max(q.dist(centroid));
         }
     }
-}
-
-/// The farthest a triangle's centroid lies from its face's analytic surface, over the faces
-/// that have one.
-fn max_chord(b: &brep::Brep, m: &Mesh) -> f64 {
-    let surfs: Vec<Option<Analytic>> = (0..b.faces.len()).map(|f| analytic(b, f)).collect();
-    m.triangles
-        .iter()
-        .zip(&m.tri_face)
-        .filter_map(|(t, f)| {
-            let fs = surfs.get(*f as usize).copied().flatten()?;
-            let [a, b, c] = t.map(|i| m.positions[i as usize]);
-            Some(off_surface(&fs, (a + b + c) * (1.0 / 3.0)))
-        })
-        .fold(0.0, f64::max)
+    worst
 }
 
 /// The display tolerance at chord `tol`: the display angle as well.
@@ -665,8 +556,8 @@ fn closed_display_mesh(name: &str, fixture_name: &str, tol: f64) -> Mesh {
 fn a_half_sphere_from_smlib_is_closed_along_its_seam() {
     let body = fixture("smlib_half_sphere");
     for tol in [0.1, 0.01] {
-        let m = closed_display_mesh("half sphere", "smlib_half_sphere", tol);
-        let chord = max_chord(&body, &m);
+        closed_display_mesh("half sphere", "smlib_half_sphere", tol);
+        let chord = max_chord(&body, &body_plan("smlib_half_sphere", &display(tol)));
         assert!(chord <= tol * 1.05, "half sphere at {tol}: chord {chord}");
     }
 }
@@ -683,8 +574,8 @@ fn display_plans_stay_within_the_chord_tolerance() {
     ] {
         let body = fixture(fixture_name);
         for tol in [0.1, 0.01] {
-            let m = closed_display_mesh(name, fixture_name, tol);
-            let chord = max_chord(&body, &m);
+            closed_display_mesh(name, fixture_name, tol);
+            let chord = max_chord(&body, &body_plan(fixture_name, &display(tol)));
             assert!(chord <= tol * 1.05, "{name} at {tol}: chord {chord}");
         }
     }
@@ -695,8 +586,8 @@ fn display_plans_stay_within_the_chord_tolerance() {
 fn an_smlib_torus_stays_within_the_chord_tolerance() {
     let body = fixture("smlib_torus_22_4");
     for tol in [0.1, 0.01] {
-        let m = closed_display_mesh("SMLib torus", "smlib_torus_22_4", tol);
-        let chord = max_chord(&body, &m);
+        closed_display_mesh("SMLib torus", "smlib_torus_22_4", tol);
+        let chord = max_chord(&body, &body_plan("smlib_torus_22_4", &display(tol)));
         assert!(chord <= tol * 1.05, "SMLib torus at {tol}: chord {chord}");
     }
 }
@@ -809,8 +700,8 @@ fn a_modelled_thread_in_a_bore_meshes_inside_its_block() {
         "volume {volume}"
     );
     for tol in [0.1, 0.01] {
-        let m = closed_display_mesh("thread in a bore", name, tol);
-        let chord = max_chord(&body, &m);
+        closed_display_mesh("thread in a bore", name, tol);
+        let chord = max_chord(&body, &body_plan(name, &display(tol)));
         assert!(
             chord <= tol * 1.05,
             "thread in a bore at {tol}: chord {chord}"
@@ -836,7 +727,7 @@ fn a_thread_root_band_running_out_through_an_end_face_lies_on_its_surface() {
     );
     for tol in [0.1, 0.01] {
         let m = closed_display_mesh("thread run out", name, tol);
-        let chord = max_chord(&body, &m);
+        let chord = max_chord(&body, &body_plan(name, &display(tol)));
         assert!(
             chord <= tol * 1.05,
             "thread run out at {tol}: chord {chord}"
