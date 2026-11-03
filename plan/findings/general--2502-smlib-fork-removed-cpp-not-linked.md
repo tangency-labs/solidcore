@@ -65,4 +65,28 @@ The commits are tangency-labs/smlib's.
   Without that, blend.fillet_executive_p3, blend.fillet_intersector and blend.fillet_solver_p4
   stopped with a harness error before their first case.
 
+## Crashes and a hang against the fork (not investigated further)
+
+With the shims above, every unit builds and runs against the fork. Ten units then stop in
+the fork's C++, none of which do against v1.0.1. The sites, from a SIGSEGV backtrace (frames
+resolved with `addr2line`, no line information):
+
+- **surface.cone_p1, surface.cone_p3, surface.surface_p2** (the last through cone_p1's
+  cases): a null dereference in `SmSurfOfRevolution::RebuildPolarConverter`, from
+  `MakeNurbWithSweepParams(const SmCircle*)` (faulting address 0). It uses the iso curve
+  `CreateIsoParametricCurve` returns with only an `SM_ASSERT` on the status.
+- **surface.surface_assert_valid:** a null read in `N_SrfEvalPt`, from `SmSurface::IsClosed`.
+- **heal.face_props:** `SmCurveClassification::GetLoopTouches`, from
+  `SmFaceProps::SetProps_Stage3`.
+- **topology.proto_topology_p2, topology.proto_topology_p3:** in proto_topology_p1's shim
+  while their fixtures are built; p3's is `SmCurveInterval::GetCurve` on a null interval
+  (address `0x18`), from `sm_EdgeCrossingSine` in `FindOrCreateProtoEdge`.
+- **primitive.primitive_creation_p2:** a jump into libstdc++ (no usable frames).
+- **blend.fillet_solver_p2:** `SmFilletSolver::RailEdgeuseIntersect` (address `0x20`).
+- **blend.fillet_geom_p2** does not crash: case generation is still in
+  `sm_SurfacePlaneCurve`, from `sm_SrfSrfIntersection`, after 30 minutes.
+
+The last two are in units blocked above, so they are not in `--green`. The others are; they
+fail without a report in the sweep, which still ends and keeps the other reports.
+
 Measured in #2512 (WSL, the fork's libraries built with the harness flags).
