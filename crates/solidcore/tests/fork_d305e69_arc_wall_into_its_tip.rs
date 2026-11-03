@@ -127,8 +127,8 @@ fn assert_blend_builds(at: &[Point3], r: f64, xsect: u32, want: f64) {
 /// Rounded R9.5, just under the wall's height. In (rho, z) about the wall's axis the round
 /// takes the corner outside the circle about (21 + s, 10 - s), s = 9.5, swept from the front
 /// face to the back face: at radius rho the part spans the angle asin(21 / rho), so the round
-/// takes Int_21^30.5 rho asin(21 / rho) h(rho) drho, h(rho) = s - sqrt(s^2 - (rho - 21 - s)^2),
-/// = 525.584488: V = 9065.80961148609.
+/// takes the integral over rho from 21 to 30.5 of rho asin(21 / rho) h(rho), where
+/// h(rho) = s - sqrt(s^2 - (rho - 21 - s)^2): 525.584488, so V = 9065.80961148609.
 #[test]
 fn the_arc_walls_top_edge_rounded_into_its_tip_builds() {
     assert_blend_builds(&[ARC_TOP], 9.5, 1, 9065.80961148609);
