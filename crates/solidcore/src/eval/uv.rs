@@ -388,9 +388,9 @@ mod tests {
         let s = cylinder();
         let dom = domain(&s);
         for &(u, v) in &[(0.1, 0.2), (0.5, 3.0), (0.9, 6.0), (0.0, 1.0)] {
-            let (p, _) = s.eval(u, v);
+            let (p, _) = s.eval(u, v).unwrap();
             let Some(uv) = project(&s, &dom, p, None, 1e-9) else { panic!("projects") };
-            let (q, _) = s.eval(uv[0], uv[1]);
+            let (q, _) = s.eval(uv[0], uv[1]).unwrap();
             assert!(q.dist(p) < 1e-9);
             assert!((uv[0] - u).abs() < 1e-9);
         }

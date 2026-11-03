@@ -315,44 +315,27 @@ impl EvalSurface {
 
     /// Point and unit normal (`S_u × S_v`, oriented as the surface) at `(u, v)`. At a
     /// degenerate point (a cone's apex, a sphere's pole) the normal is the limit there from
-    /// the second derivatives, oriented by NLib's rule; where that has no limit either, the
-    /// normal a step inside; anything that still fails gives the origin and +Z rather than a
-    /// NaN.
+    /// the second derivatives, oriented by NLib's rule. `None` where the surface cannot be
+    /// evaluated or has no normal (the limit vanishes too).
     #[must_use]
-    pub fn eval(&self, u: f64, v: f64) -> (Vec3, Vec3) {
-        let Some((p, du, dv)) = self.derivs(u, v) else { return (Vec3::ZERO, Vec3::Z) };
+    pub fn eval(&self, u: f64, v: f64) -> Option<(Vec3, Vec3)> {
+        let (p, du, dv) = self.derivs(u, v)?;
         let n = self.oriented(du.cross(dv));
         if let Some(n) = n.normalized().filter(|_| n.len2() > 1e-20 * (du.len2() * dv.len2()).max(1e-300)) {
-            return (p, n);
+            return Some((p, n));
         }
         // The limit at the pole, by NLib's rule (N_SrfEvalPtNormalAtPole): where S_u vanishes,
         // S_uv × S_v, with S_v turned round at the end of v (S_u ≈ S_uv (v − v_end) there);
-        // where S_v vanishes, S_u × S_uv, with S_u turned round at the end of u.
+        // where S_v vanishes, S_u × S_uv, with S_u turned round at the end of u. Where that
+        // vanishes too, there is no normal (NLib's NL_GEO_ERR).
         let at_end = |d: usize, t: f64| self.interval(d).is_some_and(|(_, hi)| t >= hi);
-        let limit = self.second(u, v).and_then(|(_, suv, _)| {
-            let m = if du.len2() <= dv.len2() {
-                suv.cross(if at_end(1, v) { -dv } else { dv })
-            } else {
-                (if at_end(0, u) { -du } else { du }).cross(suv)
-            };
-            self.oriented(m).normalized()
-        });
-        if let Some(n) = limit {
-            return (p, n);
-        }
-        // No limit (a point where the second derivatives vanish too): the normal a step into
-        // the domain has, never past the end of an interval, where the extrapolated surface
-        // folds back over the pole and its normal points the other way.
-        let h = 1e-6 * (1.0 + u.abs().max(v.abs()));
-        let inside = |d: usize, t: f64, s: f64| self.interval(d).is_none_or(|(lo, hi)| (lo..=hi).contains(&(t + s * h)));
-        for (su, sv) in [(1.0, 1.0), (-1.0, 1.0), (1.0, -1.0), (-1.0, -1.0)] {
-            if inside(0, u, su) && inside(1, v, sv) {
-                if let Some(n) = self.derivs(u + su * h, v + sv * h).and_then(|(_, a, b)| self.oriented(a.cross(b)).normalized()) {
-                    return (p, n);
-                }
-            }
-        }
-        (p, Vec3::Z)
+        let (_, suv, _) = self.second(u, v)?;
+        let m = if du.len2() <= dv.len2() {
+            suv.cross(if at_end(1, v) { -dv } else { dv })
+        } else {
+            (if at_end(0, u) { -du } else { du }).cross(suv)
+        };
+        Some((p, self.oriented(m).normalized()?))
     }
 
     /// The active parameter interval along `d` (0: u, 1: v) of a spline, or of a revolution's

@@ -288,7 +288,7 @@ fn hostile_parameters_give_none() {
 #[test]
 fn plane_point_and_normal() {
     let s = EvalSurface::Plane { origin: Vec3::new(1.0, 2.0, 3.0), du: Vec3::X, dv: Vec3::Y };
-    let (p, n) = s.eval(2.0, 3.0);
+    let (p, n) = s.eval(2.0, 3.0).unwrap();
     assert!(close(p, Vec3::new(3.0, 5.0, 3.0), 1e-12));
     assert!(close(n, Vec3::Z, 1e-12));
 }
@@ -303,7 +303,7 @@ fn revolved_line_is_a_cylinder() {
         swap: false,
     };
     for &(u, v) in &[(0.0, 0.0), (0.5, 1.0), (1.0, 4.0), (0.25, 6.0)] {
-        let (p, n) = s.eval(u, v);
+        let (p, n) = s.eval(u, v).unwrap();
         assert!(close(p, Vec3::new(2.0 * v.cos(), 2.0 * v.sin(), 5.0 * u), 1e-12), "{p:?}");
         // S_u = +Z, S_v = tangential: the normal points inward (−radial) for this profile.
         assert!(close(n, Vec3::new(-v.cos(), -v.sin(), 0.0), 1e-12), "{n:?}");
@@ -319,8 +319,8 @@ fn swapped_parameters_reverse_the_normal() {
         transform: IDENTITY,
         swap,
     };
-    let (p0, n0) = mk(false).eval(0.3, 1.1);
-    let (p1, n1) = mk(true).eval(1.1, 0.3);
+    let (p0, n0) = mk(false).eval(0.3, 1.1).unwrap();
+    let (p1, n1) = mk(true).eval(1.1, 0.3).unwrap();
     assert!(close(p0, p1, 1e-12));
     assert!(close(n0, -n1, 1e-12));
 }
@@ -335,7 +335,7 @@ fn mirror_transform_keeps_the_normal_outward() {
         transform: mirror,
         swap: false,
     };
-    let (p, n) = s.eval(0.5, 0.0);
+    let (p, n) = s.eval(0.5, 0.0).unwrap();
     assert!(close(p, Vec3::new(-2.0, 0.0, 2.5), 1e-12));
     assert!(close(n, Vec3::X, 1e-12), "{n:?}");
 }
@@ -348,10 +348,10 @@ fn rational_quarter_circle_profile_is_exact() {
     for i in 0..=10 {
         for j in 0..=6 {
             let (u, v) = (i as f64 / 10.0, j as f64);
-            let (p, n) = s.eval(u, v);
+            let (p, n) = s.eval(u, v).unwrap();
             assert!((p.len() - 3.0).abs() < 1e-12, "{p:?}");
-            // S_u × S_v points into this sphere; at the pole (u = 1) from a step inside.
-            assert!(n.cross(p).len() < 3e-5 && n.dot(p) < 0.0, "normal {n:?} not inward at {p:?}");
+            // S_u × S_v points into this sphere; at the pole (u = 1) the limit, exactly.
+            assert!(n.cross(p).len() < 1e-12 && n.dot(p) < 0.0, "normal {n:?} not inward at {p:?}");
         }
     }
 }
@@ -423,8 +423,7 @@ fn hostile_surfaces_do_not_panic() {
     ];
     for s in &bad {
         for &(u, v) in &[(0.5, 0.5), (f64::NAN, 0.0), (1e300, -1e300)] {
-            let (p, n) = s.eval(u, v);
-            assert!(p.is_finite() && n.is_finite());
+            assert!(s.eval(u, v).is_none_or(|(p, n)| p.is_finite() && n.is_finite()));
         }
     }
 }
@@ -616,9 +615,9 @@ fn a_pole_takes_the_limit_normal() {
     let centre = Vec3::from_array(tilted().origin);
     for v in [fdom[1][0], fdom[1][1]] {
         for u in [fdom[0][0], 0.5 * (fdom[0][0] + fdom[0][1]), fdom[0][1]] {
-            let (p, n) = e.eval(u, v);
+            let (p, n) = e.eval(u, v).unwrap();
             let radial = (p - centre) * (1.0 / 7.0);
-            let (_, nn) = e.eval(u, v + if v == fdom[1][0] { 1e-3 } else { -1e-3 });
+            let (_, nn) = e.eval(u, v + if v == fdom[1][0] { 1e-3 } else { -1e-3 }).unwrap();
             assert!(n.cross(radial).len() < 1e-14, "{n:?} vs {radial:?}");
             assert!(n.dot(nn) > 0.99, "{n:?} vs next to it {nn:?}");
         }
