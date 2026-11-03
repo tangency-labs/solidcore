@@ -1032,7 +1032,7 @@ impl Surface {
         }
 
         let mut s = [[Vec3::ZERO; 2]; 2];
-        let mut add = |s: &mut Vec3, alpha: f64, pt: Vec3| {
+        let add = |s: &mut Vec3, alpha: f64, pt: Vec3| {
             s.x += alpha * pt.x; // upstream: alpha * P.x + sd.x
             s.y += alpha * pt.y; // upstream: alpha * P.y + sd.y
             if !no_z {
