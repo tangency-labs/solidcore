@@ -205,15 +205,16 @@ fn mean(
 /// [`refine`] measures them: at each triangle's middle and at the middles of its three sides
 /// (boundary sides too: they are the mesh's), each along the surface's normal at the mean of
 /// its parameters (the whole distance where the normal is undefined). Only where the surface
-/// evaluates: a middle it has no point at is not measured (the face's vertices and the middles
-/// [`refine`] needed all evaluated). The error: a triangle (by index) with a corner past `uv`.
+/// evaluates: a middle it has no point at is not measured, and counted (the face's vertices and
+/// the middles [`refine`] needed all evaluated). The sag and that count; the error: a triangle
+/// (by index) with a corner past `uv`.
 pub(crate) fn worst(
     s: &EvalSurface,
     reach: f64,
     fixed: &[Vec3],
     uv: &[[f64; 2]],
     tris: &[[u32; 3]],
-) -> Result<f64, usize> {
+) -> Result<(f64, usize), usize> {
     let dom = solidcore::eval::uv::domain(s);
     let pos: Vec<Option<Vec3>> = uv
         .iter()
@@ -235,7 +236,7 @@ pub(crate) fn worst(
                 .map_or_else(|| x.dist(c), |n| (x - c).dot(n).abs()),
         )
     };
-    let mut worst: f64 = 0.0;
+    let (mut worst, mut unmeasured) = (0.0f64, 0usize);
     for (k, t) in tris.iter().enumerate() {
         let corner = |i: u32| Some((*uv.get(i as usize)?, *pos.get(i as usize)?));
         let (Some((qa, pa)), Some((qb, pb)), Some((qc, pc))) =
@@ -243,22 +244,31 @@ pub(crate) fn worst(
         else {
             return Err(k);
         };
+        // The middle, then each side's: `None` where the surface has no point there (or at a
+        // corner they need).
         let mut measured: Vec<Option<f64>> = Vec::new();
-        if let (Some(a), Some(b), Some(c)) = (pa, pb, pc) {
-            measured.push(off(&[qa, qb, qc], (a + b + c) * (1.0 / 3.0)));
-        }
+        measured.push(match (pa, pb, pc) {
+            (Some(a), Some(b), Some(c)) => off(&[qa, qb, qc], (a + b + c) * (1.0 / 3.0)),
+            _ => None,
+        });
         for ((qx, px), (qy, py)) in [
             ((qa, pa), (qb, pb)),
             ((qb, pb), (qc, pc)),
             ((qc, pc), (qa, pa)),
         ] {
-            if let (Some(x), Some(y)) = (px, py) {
-                measured.push(off(&[qx, qy], (x + y) * 0.5));
+            measured.push(match (px, py) {
+                (Some(x), Some(y)) => off(&[qx, qy], (x + y) * 0.5),
+                _ => None,
+            });
+        }
+        for m in measured {
+            match m {
+                Some(x) => worst = worst.max(x),
+                None => unmeasured += 1,
             }
         }
-        worst = measured.into_iter().flatten().fold(worst, f64::max);
     }
-    Ok(worst)
+    Ok((worst, unmeasured))
 }
 
 /// The longest side of triangle `t` when the angle opposite it is past `degrees` and the side lies
@@ -632,7 +642,7 @@ mod tests {
         let side = 3.0 * (1.0 - 0.1f64.cos());
         let got = worst(&s, 0.0, &[], &uv, &[[0, 1, 2]]);
         assert!(
-            got.is_ok_and(|w| (w - side).abs() < 1e-9 * side),
+            got.is_ok_and(|(w, unmeasured)| (w - side).abs() < 1e-9 * side && unmeasured == 0),
             "{got:?} against {side}"
         );
         // A corner past the nodes is the triangle's index.
