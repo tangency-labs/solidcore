@@ -944,11 +944,11 @@ fn countersink_corner_is_a_setback_no_more_concave_than_its_cone() {
 
 /// The D prism's corner asked to be set back 3.05 along each edge: at or past every least
 /// setback (3 the most), but its fill is not certified there. The setbacks grow with the
-/// real rounds (twice first, then bisecting to 1e-2), and the corner is refused naming the
-/// setback that builds, 3.05 x 1.0625 = 3.240625. Slow (the growth's nine fills, each from
-/// degree 3 up to 9 where none certifies).
+/// real rounds (twice first, then the planar search's bisection on the grid of thousandths),
+/// and the corner is refused naming the setback that builds, 3.05 x 1.061 = 3.23605. Slow
+/// (the growth's twelve fills, each from degree 3 up to 9 where none certifies).
 #[test]
-#[ignore = "slow: about 2 minutes in release, most of an hour in a debug build (nine curved fills)"]
+#[ignore = "slow: about 3 minutes in release, most of an hour in a debug build (twelve curved fills)"]
 fn d_prism_asked_too_short_names_the_setback_that_builds() {
     let (mut k, mut b, edges, case) = d_prism_case(true);
     let r = round_asked(&mut k, &mut b, &edges, &[2.0, 2.5, 3.0], case.v, Some(3.05));
@@ -956,19 +956,24 @@ fn d_prism_asked_too_short_names_the_setback_that_builds() {
     assert!(!r.ok);
     assert!(
         r.reason.contains("a setback of 3.05 is too short")
-            && r.reason.contains("3.24062 builds it"),
+            && r.reason.contains("3.23605 builds it"),
         "{}",
         r.reason
     );
-    assert!((r.fit - 3.05 * 1.0625).abs() <= 1e-12, "{}", r.fit);
+    assert!((r.fit - 3.05 * 1.061).abs() <= 1e-12, "{}", r.fit);
 }
 
-/// The setback named above, asked for, builds (`fit_setback`'s contract).
+/// The setback the growth names for 3.05, asked for, builds (`fit_setback`'s contract, as the
+/// planar `asked_setback_too_short_names_what_builds` checks).
 #[test]
-#[ignore = "known failing: refused naming 3.26594; the certificate's decision at the growth's \
-            threshold flips with rounding-level differences \
-            (plan/findings/blend.blend_corner--curved-setback-growth-named-setback-refused.md)"]
+#[ignore = "known failing: asked, the named 3.23605 certifies and builds, but two patches' \
+            control nets fail check_brep test #5, as the countersink's \
+            (plan/findings/blend.blend_corner--curved-setback-countersink-net-doubles-back.md)"]
 fn the_named_setback_builds() {
+    let (mut k, mut b, edges, case) = d_prism_case(true);
+    let r = round_asked(&mut k, &mut b, &edges, &[2.0, 2.5, 3.0], case.v, Some(3.05));
+    assert!(!r.ok && r.fit > 3.05, "{} (fit {})", r.reason, r.fit);
+    let named = r.fit;
     let (mut k, mut b, edges, case) = d_prism_case(true);
     let r = round_asked(
         &mut k,
@@ -976,8 +981,8 @@ fn the_named_setback_builds() {
         &edges,
         &[2.0, 2.5, 3.0],
         case.v,
-        Some(3.05 * 1.0625),
+        Some(named),
     );
-    assert!(r.ok, "{}", r.reason);
+    assert!(r.ok, "asked {named}: {}", r.reason);
     graded(&mut k, &mut b, &case, 3);
 }

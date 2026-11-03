@@ -59,8 +59,8 @@ use crate::blend::blend_corner::ball::{solver_of_edgeuse_or_mate, BallSolvers};
 use crate::blend::blend_corner::swept::fmt_g;
 use crate::blend::blend_corner::BlendCornerEvent;
 use crate::blend::blend_setback::{
-    certified_scale, containment, distances, fill_hole_counted, fill_hole_probe, Edge, Face,
-    FaceKind, Fill, FillStats, Probe, Round,
+    bisect_thousandths, certified_scale, containment, distances, fill_hole_counted,
+    fill_hole_probe, Edge, Face, FaceKind, Fill, FillStats, Probe, Round,
 };
 use crate::blend::fillet_corner::p1::{face_by_two_edgeuses, test_g1_continuity};
 use crate::blend::fillet_corner::p3::{CornerPatchEnv, FilletCorner};
@@ -1473,13 +1473,15 @@ impl Growth<'_> {
 }
 
 /// The fork's growth in `BuildSetBackFill` (37c9e1d; #85 C, the owner's section 28): beside
-/// a curved face, the rule's setbacks, or the one asked for, grow to the least scale (to
-/// `1e-2`) at which the fill is certified, with the real rounds: each trial moves the setback
-/// vertices ([`SetbackSolvers::calc_set_back_vert`] at the scaled setbacks, each held at its
-/// room less a quarter radius) and fills the hole from the least degree up. Twice them first,
-/// then bisecting while the certifying end is more than `1.01` times the failing one. None up
-/// to twice them: refused, naming none. One asked for that certifies only grown: refused,
-/// naming the setback that builds (or none, where that one does not fit with its ease).
+/// a curved face, the rule's setbacks, or the one asked for, grow to the least scale at which
+/// the fill is certified, with the real rounds: each trial moves the setback vertices
+/// ([`SetbackSolvers::calc_set_back_vert`] at the scaled setbacks, each held at its room less
+/// a quarter radius) and fills the hole from the least degree up. Twice them first, then the
+/// planar search's bisection on the grid of thousandths (`certified_scale`, the fork's
+/// 20b1c01, where 37c9e1d bisected to `1e-2`): the smallest certifying scale whose neighbour
+/// below fails, in at most 11 trials. None up to twice them: refused, naming none. One asked
+/// for that certifies only grown: refused, naming the setback that builds (or none, where that
+/// one does not fit with its ease).
 fn grow_curved<S: SetbackSolvers>(
     growth: &Growth<'_>,
     pseudo: &mut FilletBrep,
@@ -1499,16 +1501,19 @@ fn grow_curved<S: SetbackSolvers>(
         };
         return Ok(Err(SetbackRefusal::no_room(why, Some(0.0))));
     };
-    let (mut lo, mut hi) = (1.0, 2.0);
-    while hi > 1.01 * lo {
-        let scale = 0.5 * (lo + hi);
-        if let Some(at) = growth.trial(pseudo, corner, solvers, scale)? {
+    // The planar search's (`certified_scale`, #2382, the fork's 20b1c01): the smallest
+    // certifying scale on the grid of thousandths whose neighbour below fails, by bisection
+    // from 1 (the fill at the setbacks themselves, refused) and 2; each certifying trial
+    // is the new upper end, so the last one kept is the fill at it.
+    let hi = bisect_thousandths(1000, 2000, |i| {
+        let at = growth.trial(pseudo, corner, solvers, f64::from(i) / 1000.0)?;
+        let certified = at.is_some();
+        if let Some(at) = at {
             best = at;
-            hi = scale;
-        } else {
-            lo = scale;
         }
-    }
+        Ok::<bool, SolidError>(certified)
+    })?;
+    let hi = f64::from(hi) / 1000.0;
     if growth.place(pseudo, corner, solvers, hi)?.is_none() {
         return Err(err());
     }
