@@ -760,7 +760,10 @@ fn live_corner_vert_geom(
 
 /// `SmFilletCorner::CalcCornerVertGeom` of the ordinary Nx1, closed Nx1, Nx2 and `NxN`
 /// corner `id` over the live session's objects (the corner sits in its slot of
-/// `corners`).
+/// `corners`). Not upstream (#2406, `fixes.fillet_blend_corner`): at an End that can wait
+/// for its rails' rollover (`rolled_end`), a rail end its rail does not reach on the End's
+/// plane takes the rail's traced end for now
+/// ([`crate::blend::blend_corner::end::place_rolled_rail_end`]).
 #[allow(clippy::too_many_arguments)] // the session's borrowed object stores
 fn live_corner_vertices_geom(
     k: &Kernel,
@@ -770,6 +773,7 @@ fn live_corner_vertices_geom(
     corners: &[FilletCorner],
     extended_surfaces: &BTreeMap<FaceId, Surface>,
     id: FilletCornerId,
+    rolled_end: bool,
 ) -> Result<()> {
     let corner = corners
         .get(id.0 as usize)
@@ -785,17 +789,26 @@ fn live_corner_vertices_geom(
     corner.calc_corner_vert_geom_with(
         &mut context,
         |(_, _, pseudo, _, _, _), fv| Ok(pseudo.fillet_vertex(fv)?.is_processed()),
-        |(k, target, pseudo, solvers, corners, extended_surfaces), fv| {
-            live_corner_vert_geom(
-                k,
-                target,
-                pseudo,
-                solvers,
-                corners,
-                extended_surfaces,
-                fv,
-                0,
-            )
+        |(k, target, pseudo, solvers, corners, extended_surfaces), fv| match live_corner_vert_geom(
+            k,
+            target,
+            pseudo,
+            solvers,
+            corners,
+            extended_surfaces,
+            fv,
+            0,
+        ) {
+            Err(e) if rolled_end && !e.is_unported_or_cancelled() => {
+                if crate::blend::blend_corner::end::place_rolled_rail_end(
+                    k, target, pseudo, corner, fv,
+                )? {
+                    Ok(())
+                } else {
+                    Err(e)
+                }
+            }
+            result => result,
         },
         |(_, target, pseudo, solvers, _, _), corner, processed| {
             corner.adjust_vertex_law_intervals(pseudo, target, &mut **solvers, processed)
@@ -964,6 +977,7 @@ impl TangentSplitOps for SessionTangentSplit<'_> {
             self.corners,
             self.extended_surfaces,
             self.id,
+            false,
         );
         if let Some(slot) = self.corners.get_mut(index) {
             std::mem::swap(slot, corner);
@@ -6206,6 +6220,16 @@ impl SessionObjects<'_> {
         )
     }
     fn calc_nx1_corner_vert_geom(&mut self, k: &Kernel, id: FilletCornerId) -> Result<()> {
+        self.calc_nx1_corner_vert_geom_rolling(k, id, false)
+    }
+
+    /// [`Self::calc_nx1_corner_vert_geom`]; `rolled_end` as [`live_corner_vertices_geom`]'s.
+    fn calc_nx1_corner_vert_geom_rolling(
+        &mut self,
+        k: &Kernel,
+        id: FilletCornerId,
+        rolled_end: bool,
+    ) -> Result<()> {
         let SessionObjects {
             target,
             pseudo,
@@ -6214,7 +6238,16 @@ impl SessionObjects<'_> {
             extended_surfaces,
             ..
         } = self;
-        live_corner_vertices_geom(k, target, pseudo, solvers, corners, extended_surfaces, id)
+        live_corner_vertices_geom(
+            k,
+            target,
+            pseudo,
+            solvers,
+            corners,
+            extended_surfaces,
+            id,
+            rolled_end,
+        )
     }
 
     fn corner_object(&self, object: FilletObject) -> Result<&FilletCorner> {
@@ -6359,12 +6392,41 @@ impl CornerVertexAccess<FilletObject> for SessionObjects<'_> {
         &mut self,
         k: &mut Kernel,
         corner: FilletObject,
-        _executive: &mut FilletExecutive<FilletObject>,
+        executive: &mut FilletExecutive<FilletObject>,
     ) -> Result<()> {
         let FilletObject::Corner(id) = corner else {
             return Err(invalid("object is not a corner"));
         };
-        self.calc_nx1_corner_vert_geom(k, id)
+        // Not the fork's (#2406): an End at a smooth vertex that can wait for its rails'
+        // rollover (the rollover follows the corners' edges, not in a cliff overflow)
+        let rolled_end = k.fixes.fillet_blend_corner && {
+            let rolls_over = executive.options.classification && !executive.cliff_overflow;
+            let SessionObjects {
+                target,
+                pseudo,
+                solvers,
+                corners,
+                ..
+            } = self;
+            let corner = corners
+                .get(id.0 as usize)
+                .ok_or_else(|| invalid("corner is not live"))?;
+            corner
+                .blend
+                .is_some_and(crate::blend::blend_corner::BlendCorner::is_end)
+                && crate::blend::blend_corner::end::end_can_await_rollover(
+                    k,
+                    target,
+                    pseudo,
+                    corner,
+                    &SweptSessionSolvers {
+                        solvers: solvers.as_slice(),
+                        executive: Some(&*executive),
+                    },
+                    rolls_over,
+                )?
+        };
+        self.calc_nx1_corner_vert_geom_rolling(k, id, rolled_end)
     }
 }
 

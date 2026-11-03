@@ -603,8 +603,8 @@ impl Recovery<'_> {
     /// smooth vertices that geometry `geom`'s rails end on, before its first point and
     /// after its last: each the section in the End's plane (square to the edge at the
     /// vertex, `FilletCorner::end_cap`), solved on the solver's offsets as they are now
-    /// (those of the face rolled onto, in a tangent rollover) from the rails' present
-    /// ends on the plane (`sm_FindFilletTsectPnt`). The End's rail ends give the trace no
+    /// (those of the face rolled onto, in a tangent rollover) from the middle of the rails'
+    /// present ends dropped on the plane (`sm_FindFilletTsectPnt`). The End's rail ends give the trace no
     /// point (they are found on the rails traced), so the geometry traced again runs
     /// through these, as the first trace runs through the edge's end there.
     ///
@@ -642,17 +642,21 @@ impl Recovery<'_> {
                 let crate::surface::surface::p2::SurfaceKind::Plane(plane) = cap.kind() else {
                     return Err(SolidError::sm_err(OP));
                 };
-                normal = Some(plane.evaluate_normal());
+                normal = Some((plane.is_planar().0, plane.evaluate_normal()));
                 ends.push(self.fillets.vertex_point(vertex)?);
             }
-            let (Some(mut normal), [a, b]) = (normal, ends.as_slice()) else {
+            let (Some((origin, mut normal)), [a, b]) = (normal, ends.as_slice()) else {
                 continue;
             };
-            // the plane through the rails' ends, its normal along the trace
+            // the End's plane, its normal along the trace
             if normal.dot(along) < 0.0 {
                 normal = -normal;
             }
-            let on_plane = *a + (*b - *a) * 0.5;
+            // the guess: the rails' ends' middle on the plane (a rail end that did not reach
+            // the plane on the side face run on holds its rail's traced end, the vertex's
+            // `place_rolled_rail_end`)
+            let middle = *a + (*b - *a) * 0.5;
+            let on_plane = middle - normal * (middle - origin).dot(normal);
             let base = |which: usize| -> Result<Surface> {
                 Ok(required(self.solver.solver().surface(which)?)?
                     .surface

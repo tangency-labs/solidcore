@@ -18,7 +18,8 @@
 //! | [`side_edge_chain_to`]            | `SmBlendCorner::SideEdgeChainTo` (63c7962) |
 //! | [`fit_of_end_past_side_edges`]    | `SmBlendCorner::FitOfEndPastSideEdges`    |
 //! | [`create_end_cap_patch`]          | `SmBlendCorner::CreateEndPatchOfEnd`'s `SM_BEND_AT_SMOOTH` branch |
-//! | [`end_awaits_rollover`], `ends_in_tangent_edge` (private) | none (#2406: the End's rail rolls over a tangent edge first) |
+//! | [`end_awaits_rollover`], [`end_can_await_rollover`], [`end_past_tangent_edge`], `end_rolls_over`, `ends_in_tangent_edge` (private) | none (#2406: the End's rail rolls over a tangent edge first) |
+//! | [`place_rolled_rail_end`]         | none (#2406: a rail end not reached on the End's plane before the rollover) |
 //! | `side_edge_in_cap` (private)      | none (#2406: a cap edge along a side edge in the cap's plane) |
 //!
 //! Deviations: the fork's `NoteError(SM_FILERR_NO_ROOM, ...)` and `NoteFitRadius` before
@@ -878,6 +879,126 @@ pub fn end_awaits_rollover(
     solvers: &dyn SweptSolvers,
     rolls_over: bool,
 ) -> Result<bool> {
+    end_rolls_over(k, target, pseudo, corner, solvers, rolls_over, true)
+}
+
+/// Not the fork's (#2406; `fixes.fillet_blend_corner`): whether an End at a smooth vertex
+/// can wait for its rails' rollover, before its rail ends are found
+/// ([`end_awaits_rollover`] without its rail end off the side face): F, a face of the
+/// blended edge that a cap edge lies on, has its other edge at the vertex tangent to the
+/// face beyond. Then a rail that does not reach the End's plane on F's surface run on
+/// past that edge is given its traced end for now ([`place_rolled_rail_end`]): the rails'
+/// rollover traces it again on the face beyond, up to the plane.
+///
+/// # Errors
+/// As [`end_awaits_rollover`].
+pub fn end_can_await_rollover(
+    k: &Kernel,
+    target: &mut Brep,
+    pseudo: &FilletBrep,
+    corner: &FilletCorner,
+    solvers: &dyn SweptSolvers,
+    rolls_over: bool,
+) -> Result<bool> {
+    end_rolls_over(k, target, pseudo, corner, solvers, rolls_over, false)
+}
+
+/// Not the fork's (#2406; `fixes.fillet_blend_corner`): whether an End at a smooth vertex
+/// has a cap edge on a face F of the blended edge (of `fil_eu`) whose other edge at the
+/// vertex is tangent to the face beyond (`sm_TestManifoldTangentRollover` within
+/// `tangency_tol_rad`): the ball can roll over that edge before the End's plane
+/// ([`end_can_await_rollover`] as the trace sees it, before the rails' classification).
+///
+/// # Errors
+/// `SM_ERR_NULL_POINTER` without the corner's vertex or a cap edge's face; those of the
+/// topology queries and the tangency test.
+pub fn end_past_tangent_edge(
+    k: &Kernel,
+    target: &mut Brep,
+    pseudo: &FilletBrep,
+    corner: &FilletCorner,
+    fil_eu: EdgeuseId,
+    tangency_tol_rad: f64,
+) -> Result<bool> {
+    if corner.blend.map(|b| b.end).unwrap_or_default() != super::BlendEnd::AtSmooth {
+        return Ok(false);
+    }
+    let vertex = corner.vertex.ok_or_else(nul)?;
+    for &fe in corner.edges.iter().skip(1) {
+        if pseudo.fillet_edge(fe)?.fillet_edge_type() != FilletEdgeType::Precomputed
+            || edge::curve(pseudo.brep(), fe)?.is_some()
+        {
+            continue;
+        }
+        let face = pseudo.fillet_edge(fe)?.original_face().ok_or_else(nul)?;
+        if ends_in_tangent_edge(k, target, fil_eu, face, vertex, tangency_tol_rad)? {
+            return Ok(true);
+        }
+    }
+    Ok(false)
+}
+
+/// Not the fork's (#2406): an End's rail end `fv` that its rail does not reach on the
+/// End's plane, at an End that can wait for the rollover ([`end_can_await_rollover`]):
+/// the rail's traced end nearer the corner's vertex, for now. The rails' rollover traces
+/// the rail again on the face beyond and finds the rail end on the plane then
+/// (`Recovery::end_vertex`). False, and nothing set, for a vertex that is not an End's rail
+/// end left by a failed crossing (`SM_FIL_SURF_INT_FAILURE`) or whose rail is not traced.
+///
+/// # Errors
+/// `SM_ERR_NULL_POINTER` without the corner's vertex; those of the topology queries and
+/// evaluations.
+pub fn place_rolled_rail_end(
+    k: &Kernel,
+    target: &Brep,
+    pseudo: &mut FilletBrep,
+    corner: &FilletCorner,
+    fv: VertexId,
+) -> Result<bool> {
+    let record = pseudo.fillet_vertex(fv)?;
+    if record.fillet_vertex_type() != FilletVertexType::RailXExtendedEdgeuse
+        || record.status() != FilStatus::SurfIntFailure
+    {
+        return Ok(false);
+    }
+    let mut rail = None;
+    for e in vertex::edges(pseudo.brep(), fv, None)? {
+        if pseudo.fillet_edge(e)?.fillet_edge_type() == FilletEdgeType::Rail {
+            rail = Some(e);
+            break;
+        }
+    }
+    let Some(rail) = rail else {
+        return Ok(false);
+    };
+    let Some(curve) = edge::curve(pseudo.brep(), rail)?.cloned() else {
+        return Ok(false);
+    };
+    let at = vertex::point(target, corner.filleted_vertex().ok_or_else(nul)?)?;
+    let interval = curve.natural_interval();
+    let first = curve.evaluate_point(k, interval.min())?;
+    let last = curve.evaluate_point(k, interval.max())?;
+    let end = if first.distance(at) <= last.distance(at) {
+        first
+    } else {
+        last
+    };
+    crate::blend::fillet_geom::p4::set_vertex_point(pseudo.brep_mut(), fv, end)?;
+    pseudo
+        .fillet_vertex_mut(fv)?
+        .set_status(FilStatus::Processed);
+    Ok(true)
+}
+
+fn end_rolls_over(
+    k: &Kernel,
+    target: &mut Brep,
+    pseudo: &FilletBrep,
+    corner: &FilletCorner,
+    solvers: &dyn SweptSolvers,
+    rolls_over: bool,
+    rail_end_off_face: bool,
+) -> Result<bool> {
     if !rolls_over || corner.blend.map(|b| b.end).unwrap_or_default() != super::BlendEnd::AtSmooth {
         return Ok(false);
     }
@@ -897,23 +1018,25 @@ pub fn end_awaits_rollover(
             } else {
                 start
             };
-        if !pseudo.fillet_vertex(rail_end)?.is_processed() {
-            continue;
-        }
-        let zone = zone_tol3d(k, target.face(face)?.tolerance);
-        let mut on = PointClassification::new(zone);
-        point_3d_classify(
-            k,
-            target,
-            face,
-            pseudo.vertex_point(rail_end)?,
-            zone,
-            true,
-            &mut on,
-            Point3dClassifyOptions::default(),
-        )?;
-        if on.point_class() != PointClassType::Unknown {
-            continue;
+        if rail_end_off_face {
+            if !pseudo.fillet_vertex(rail_end)?.is_processed() {
+                continue;
+            }
+            let zone = zone_tol3d(k, target.face(face)?.tolerance);
+            let mut on = PointClassification::new(zone);
+            point_3d_classify(
+                k,
+                target,
+                face,
+                pseudo.vertex_point(rail_end)?,
+                zone,
+                true,
+                &mut on,
+                Point3dClassifyOptions::default(),
+            )?;
+            if on.point_class() != PointClassType::Unknown {
+                continue;
+            }
         }
         let rib = *corner.edges.first().ok_or_else(nul)?;
         let geom = match eu1::primary_edgeuse(pseudo.brep(), rib)? {
