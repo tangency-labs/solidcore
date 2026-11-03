@@ -563,13 +563,15 @@ fn a_half_sphere_from_smlib_is_closed_along_its_seam() {
 
 /// Every triangle of a display plan lies within the chord tolerance of its face, whatever
 /// layout the face got: on a doubly curved grid the sags along both directions add up at a
-/// cell's middle, and a trimmed sphere face round a pocket is not a grid at all.
+/// cell's middle, and a trimmed sphere face round a pocket is not a grid at all. A drilled hole
+/// has a cylinder and a cone (the drill point), each measured on its record's exact surface.
 #[test]
 fn display_plans_stay_within_the_chord_tolerance() {
     for (name, fixture_name) in [
         ("sphere", "sphere_r12"),
         ("pocket in a sphere", "sphere_r10_with_pocket"),
         ("torus", "torus_22_4"),
+        ("drilled hole", "box_with_drill_hole_r3_depth_10"),
     ] {
         let body = fixture(fixture_name);
         for tol in [0.1, 0.01] {
