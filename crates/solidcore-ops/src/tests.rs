@@ -1,6 +1,8 @@
 //! The skeleton every family shares: primitives, copy and transform, counts and volume, `.smb`
 //! bytes, the check, the result contract and the provenance hook.
 
+use std::fmt::Write as _;
+
 use solidcore::kernel::UpstreamFixes;
 use solidcore::topology::face::p1::flip_face_orientation;
 use solidcore::{Brep, EntityRef};
@@ -475,4 +477,169 @@ fn the_result_contract() {
         out,
         Some((Some(Error::Empty), Some(Error::NotSolid), true, true))
     );
+}
+
+/// What a refused edit must give back as it came in, beyond the `.smb` bytes (which carry no
+/// attributes): the naming, the key, the locked box, and every face's and edge's attributes in
+/// order (a temporary one and the provenance among them), with the geometry and topology.
+fn as_it_is(b: &Body) -> String {
+    let b = b.lock();
+    let mut out = format!(
+        "{:?} {:?} {:?}",
+        b.naming(),
+        b.key(),
+        b.locked_bounding_box()
+    );
+    let entities = b
+        .face_list()
+        .iter()
+        .map(|&f| EntityRef::Face(f))
+        .chain(b.edge_list().iter().map(|&e| EntityRef::Edge(e)));
+    for e in entities {
+        let _ = write!(out, " {e:?}: {:?}", b.entity_attributes(e));
+    }
+    let _ = write!(out, " {:?} {:?}", b.faces(), b.vertices());
+    out
+}
+
+/// A body read from `.smb` (its naming the caller's), its faces and edges tagged with
+/// provenance, face 0 carrying a temporary and a copied attribute, its bounding box locked.
+fn kept_body() -> Body {
+    use solidcore::geom::attribute::{Attribute, Behavior};
+    let bytes = make_box([1.0, 2.0, 3.0], [4.0, 5.0, 6.0])
+        .unwrap()
+        .to_smb(false)
+        .unwrap();
+    let b = Body::from_smb(bytes, false).unwrap();
+    run("lock the box", |k| {
+        let mut br = b.lock();
+        tag(&mut br, 0);
+        let f0 = EntityRef::Face(br.face_list()[0]);
+        br.add_attribute(f0, Attribute::long(10_077, 7, Behavior::Temp))?;
+        br.add_attribute(f0, Attribute::long(10_078, 8, Behavior::Copy))?;
+        solidcore::query::brep::lock_bounding_box(k, &mut br, false)
+    })
+    .unwrap();
+    {
+        let br = b.lock();
+        assert_eq!(br.naming(), solidcore::topology::NamingScheme::Caller);
+        assert!(br.locked_bounding_box().is_some());
+    }
+    b
+}
+
+/// Changes everything [`as_it_is`] reads.
+fn scramble(br: &mut Brep) {
+    br.set_naming(solidcore::topology::NamingScheme::Notify);
+    br.set_key(solidcore::geom::attribute::ObjectKey(99));
+    br.set_locked_bounding_box(None);
+    let f0 = EntityRef::Face(br.face_list()[0]);
+    let first = br.entity_attributes(f0)[0].0;
+    br.remove_attribute(f0, first).unwrap();
+}
+
+/// A refused edit leaves the body exactly as it came in: a result with no faces
+/// ([`Error::Empty`]), a solid's result that is no solid ([`Error::NotSolid`]), and a kernel
+/// error after the body was edited. Each edit first changes what the body carries.
+#[test]
+fn a_refused_edit_leaves_the_body_as_it_was() {
+    all_fixes();
+    let b = kept_body();
+    let before = as_it_is(&b);
+    let smb = b.to_smb(false).unwrap();
+    let emptied: crate::Result<()> = with_body("empties", &b, |k, br| {
+        scramble(br);
+        // an edit that leaves no face
+        *br = Brep::default();
+        Ok(finish(k, std::mem::take(br), Expect::FACES)?.map(|r| *br = r))
+    })
+    .unwrap();
+    assert_eq!(emptied, Err(Error::Empty));
+    assert_eq!(as_it_is(&b), before);
+    let opened: crate::Result<()> = with_body("opens", &b, |k, br| {
+        let expect = Expect::of(k, br)?;
+        scramble(br);
+        let sheet =
+            solidcore::primitive::api_primitives::create_plane(k, solidcore::Vec3::ZERO, 1.0, 1.0)?;
+        Ok(finish(k, sheet, expect)?.map(|r| *br = r))
+    })
+    .unwrap();
+    assert_eq!(opened, Err(Error::NotSolid));
+    assert_eq!(as_it_is(&b), before);
+    let failed: crate::Result<()> = with_body("fails after an edit", &b, |_, br| {
+        scramble(br);
+        let v = br.vertex_list()[0];
+        br.vertex_mut(v)?.tolerance = 0.5;
+        Err(solidcore::SolidError::sm_err("test"))
+    });
+    assert_eq!(failed, Err(Error::Status(1001)));
+    assert_eq!(as_it_is(&b), before);
+    assert_eq!(b.to_smb(false).unwrap(), smb);
+    // a kept edit stays
+    with_body("keeps", &b, |_, br| {
+        let v = br.vertex_list()[0];
+        br.vertex_mut(v)?.tolerance = 0.5;
+        Ok(())
+    })
+    .unwrap();
+    assert_ne!(as_it_is(&b), before);
+}
+
+/// An edit that changes the body and then panics gives it back as it came in, usable: the
+/// panic is the session's ([`Error::Internal`]), and the body still counts and carries what it
+/// carried.
+#[test]
+fn a_panicking_edit_leaves_the_body_as_it_was_and_usable() {
+    all_fixes();
+    let b = kept_body();
+    let before = as_it_is(&b);
+    let r: crate::Result<()> = with_body("panics part way", &b, |_, br| {
+        let f0 = EntityRef::Face(br.face_list()[0]);
+        let first = br.entity_attributes(f0)[0].0;
+        br.remove_attribute(f0, first)?;
+        br.set_locked_bounding_box(None);
+        panic!("part way through an edit")
+    });
+    assert!(matches!(r, Err(Error::Internal(ref m)) if m.contains("part way")));
+    assert_eq!(b.counts().unwrap(), [6, 12, 8]);
+    assert_eq!(as_it_is(&b), before);
+    assert!(b.copy().is_ok());
+}
+
+/// A body the kernel cannot snapshot (here: inside a scope that clears a surface's owner) is
+/// refused before the edit runs, typed, and untouched.
+#[test]
+fn an_edit_without_a_snapshot_is_refused_up_front() {
+    all_fixes();
+    let b = make_box([0.0; 3], [1.0; 3]).unwrap();
+    let f0 = b.lock().face_list()[0];
+    b.lock().begin_surface_owner_cleared(f0);
+    let before = as_it_is(&b);
+    let ran = std::cell::Cell::new(false);
+    let r: crate::Result<()> = with_body("edits", &b, |_, br| {
+        ran.set(true);
+        br.set_locked_bounding_box(None);
+        Ok(())
+    });
+    assert!(matches!(r, Err(Error::Unsupported(_))), "{r:?}");
+    assert!(!ran.get());
+    assert_eq!(as_it_is(&b), before);
+    b.lock().end_surface_owner_cleared(f0);
+}
+
+/// An operation that makes a solid from a sheet states it ([`Expect::SOLID`]): a sheet's
+/// result that is no solid is `NotSolid`, the body as it came in.
+#[test]
+fn a_result_stated_solid_must_be_one() {
+    all_fixes();
+    let b = make_box([0.0; 3], [1.0; 3]).unwrap();
+    let before = b.to_smb(false).unwrap();
+    let r: crate::Result<()> = with_body("a sheet stated solid", &b, |k, br| {
+        let sheet =
+            solidcore::primitive::api_primitives::create_plane(k, solidcore::Vec3::ZERO, 1.0, 1.0)?;
+        Ok(finish(k, sheet, Expect::SOLID)?.map(|r| *br = r))
+    })
+    .unwrap();
+    assert_eq!(r, Err(Error::NotSolid));
+    assert_eq!(b.to_smb(false).unwrap(), before);
 }
