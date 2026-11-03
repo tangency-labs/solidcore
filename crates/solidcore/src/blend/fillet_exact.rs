@@ -1486,17 +1486,24 @@ fn meridians_cross(a: Meridian, b: Meridian) -> Vec<Point2> {
     }
 }
 
-/// Not the fork (#2485): the analytic surface a classified round of the line, circle or
-/// point class lies on, as its implicit equation, from its offsets alone: the cylinder of
-/// the ball's radius about the line the offsets meet in, the ball about the point, and the
-/// torus about the common axis whose centre circle is where the offsets' meridians cross
-/// (the crossing nearest the classified centre). `None` for the other classes, a blend
-/// classified without its inputs, and offsets whose meridians do not cross.
-#[must_use]
-pub fn class_implicit(blend: &ExactBlend) -> Option<crate::surface::implicit::Implicit> {
-    use crate::surface::implicit::Implicit;
+/// Not the fork (#2485): the surface a classified round lies on, from its offsets alone:
+/// for the line, circle and point classes the analytic surface by its implicit equation
+/// (the cylinder of the ball's radius about the line the offsets meet in, the ball about
+/// the point, and the torus about the common axis whose centre circle is where the
+/// offsets' meridians cross, the crossing nearest the classified centre); for the conic,
+/// conic-pair and nodal-quartic classes the canal surface of the ball's radius about
+/// `leader`, the round's rational centre line (its parameter the net's through `map`),
+/// which must lie on both offsets. `None` for
+/// a traced round, a blend classified without its inputs, offsets whose meridians do not
+/// cross and a rational class without its leader.
+pub fn class_surface(
+    blend: &ExactBlend,
+    leader: Option<&crate::nurbs::b_spline_curve::BSplineCurve>,
+    map: &crate::surface::implicit::LeaderMap,
+) -> Option<crate::surface::implicit::ClassSurface> {
+    use crate::surface::implicit::{ClassSurface, Implicit};
     let r = blend.radius;
-    match blend.spine {
+    let implicit = match blend.spine {
         BlendSpine::Line => Some(Implicit::Cone {
             origin: blend.point,
             axis: blend.dir,
@@ -1525,8 +1532,17 @@ pub fn class_implicit(blend: &ExactBlend) -> Option<crate::surface::implicit::Im
                 minor: r,
             })
         }
-        _ => None,
-    }
+        BlendSpine::Conic | BlendSpine::ConicPair | BlendSpine::NodalQuartic => {
+            return Some(ClassSurface::Canal {
+                spine: Box::new(leader?.clone()),
+                map: *map,
+                offsets: [blend.offsets[0].implicit(), blend.offsets[1].implicit()],
+                radius: r,
+            });
+        }
+        BlendSpine::Traced => None,
+    };
+    implicit.map(ClassSurface::Implicit)
 }
 
 /// Not the fork's (#2401; with `fixes.fillet_gn_section_generator`): for a constant ball of
@@ -1717,8 +1733,8 @@ pub fn calc_exact_fillet_geom(
 /// faces the class was read off), the ball's radius, the ball's circle as its section and
 /// the centre line as its leader. Its net is its exact surface, re-certified at once
 /// ([`ExactRound::recertify`]: the class read again from the supports, the net on the
-/// class's surface). A round of a linear section (a chamfer) or of the rational classes
-/// keeps none here.
+/// class's surface). A round of a linear section (a chamfer) or of a nodal quartic (its
+/// spine on its offsets only to 2e-9 of the radius) keeps none here.
 ///
 /// # Errors
 ///
@@ -1736,6 +1752,11 @@ fn keep_definition(
     let (Some(class), Some(inputs)) = (ExactClass::of_spine(blend.spine), blend.inputs) else {
         return Ok(());
     };
+    // a nodal quartic's spine is on its offsets only to 2e-9 of the ball's radius (its
+    // construction's; the fork's own bar is 1e-9): no bound of 0, so it keeps no definition
+    if class == ExactClass::NodalQuartic {
+        return Ok(());
+    }
     let s = ops.solver();
     let circular = s
         .fsg
