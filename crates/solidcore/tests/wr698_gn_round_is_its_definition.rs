@@ -564,15 +564,14 @@ fn known_failing_the_offset_of_a_round_is_the_offset_of_its_net() {
     }
 }
 
-/// #2388, contract 5, known failing (#2451): the plane x = 20 sections each reopened round's
-/// face (the face's own section, `SmBrep::CreatePlanarSectionCurves`' per-face step, whose
-/// curves are to lie within the face's tolerance of the surface). The curves leave the
-/// round between their ends by up to 30 times the face's tolerance (4.8e-3 at 1.6e-4), and
-/// leave the net B by the same, to 1e-11: the section curve's own approximation strays,
-/// on S as on B, so it is not the definition. This test fails once the section is within
-/// the tolerance.
+/// #2388, contract 5, #2451: the plane x = 20 sections each reopened round's face (the
+/// face's own section, `SmBrep::CreatePlanarSectionCurves`' per-face step, with no
+/// tolerance given). Each section curve lies within the face's tolerance of the round at
+/// 65 points along it, and off S and B alike (the net is S to rounding there). The
+/// section's march once ran to its default 1/1000 of the surface's size and left the
+/// round by up to 30 times the face's tolerance (4.8e-3 at 1.6e-4).
 #[test]
-fn known_failing_a_plane_section_of_a_round_strays_past_its_tolerance() {
+fn a_plane_section_of_a_round_is_within_its_tolerance() {
     use solidcore::topology::brep::planar_section::face_planar_section_curves;
     let mut k = kernel(true);
     let mut b = chamfered_box(&mut k);
@@ -601,9 +600,9 @@ fn known_failing_a_plane_section_of_a_round_strays_past_its_tolerance() {
         .unwrap();
         for c in &section.curves_3d {
             let ivl = c.natural_interval();
-            for i in 0..=16 {
+            for i in 0..=64 {
                 let p = c
-                    .evaluate_point(&k, ivl.min() + ivl.length() * f64::from(i) / 16.0)
+                    .evaluate_point(&k, ivl.min() + ivl.length() * f64::from(i) / 64.0)
                     .unwrap();
                 let (ds, db) = (to_s(&k, s, p), to_s(&k, &net, p));
                 on += 1;
@@ -618,8 +617,8 @@ fn known_failing_a_plane_section_of_a_round_strays_past_its_tolerance() {
         "the section is off S and B differently: {s_vs_b:e}"
     );
     assert!(
-        worst > 1.0,
-        "the section is within its tolerance of S now ({worst}): #2451 fixed? update this test"
+        worst <= 1.0,
+        "the section leaves the round by {worst} times the face's tolerance"
     );
 }
 
