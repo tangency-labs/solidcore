@@ -28,23 +28,28 @@
     clippy::indexing_slicing
 )] // test helpers
 use solidcore::blend::fillet_executive::session::FilletSession;
+use solidcore::blend::fillet_executive::{FitKind, NoRoomReason};
 use solidcore::blend::fillet_solver::p1::FilletSurfaceGeneratorType;
 use solidcore::boolean::api_brep::{boolean_difference, boolean_union};
 use solidcore::geom::attribute::{AttributeStore, ObjectKey};
 use solidcore::geom::global_solver::SolverOperation;
 use solidcore::kernel::UpstreamFixes;
 use solidcore::mass::integrator::properties::{brep_volume, PropertyAttributes};
-use solidcore::math::{Point3, Vec3, BIG_DOUBLE};
+use solidcore::math::{Point2, Point3, Vec3, BIG_DOUBLE};
 use solidcore::nurbs::knots::Side;
 use solidcore::primitive::api_primitives::{create_box, create_cylinder};
 use solidcore::query::api_queries::{get_edges, get_faces};
+use solidcore::surface::procedural_blend::{ProceduralBlend, PROCEDURAL_BLEND_TYPE};
 use solidcore::surface::surface::p4::NoObject;
 use solidcore::surface::surface::p5::DropPointOptions;
+use solidcore::surface::surface::{Surface, SurfaceKind};
 use solidcore::topology::brep::p5::{stitch_and_orient, StitchAndOrientOptions};
 use solidcore::topology::brep::validation::{check_brep, CheckLevel};
+use solidcore::topology::database_io::{DatabaseReader, DatabaseWriter, FileType};
 use solidcore::topology::face::p2 as face2;
+use solidcore::topology::geometry_write::write_surface;
 use solidcore::topology::{edge, vertex, EdgeId, FaceId};
-use solidcore::{Brep, Kernel};
+use solidcore::{Brep, Kernel, SolidError};
 
 /// Every fix but `geometric_g2_continuity`, with or without `fillet_blend_corner`.
 fn all_fixes(blend: bool) -> Kernel {
@@ -296,24 +301,11 @@ fn assert_ends_at(b: &Brep, e: EdgeId, what: &str, want: Point3, tol: f64) {
     );
 }
 
-/// Curves with a closed form the kernel computes exactly (the rolled rail on the top face,
-/// the cap's edges, the rollover seam and the End's vertices): off it by rounding only.
+/// The closed forms: the rolled rail on the top face, the cap's edges, the end rib and the
+/// rollover seam (the ball's circles in P and at Q), the End's vertices, and the rounds by
+/// their definitions (exact, a ball touching its two faces at every section) on both sides
+/// of the seam, G1 there and to the faces they roll on. Off them by rounding only.
 const EXACT_TOL: f64 = 1e-9;
-/// The end rib is the traced round's section by P, off the ball's circle by up to 3.7e-6.
-const SECTION_TOL: f64 = 1e-5;
-/// The rail on the R2 round is traced again from the bottom End to Q at the solver's
-/// approximation tolerance, 1.6e-4 on this part (`approx_tol_3d`, as the fork's
-/// `ReCalcFilletGeom`): it lies off the round by up to 1.5e-4, and its ball off the wall
-/// by up to 1.2e-5 (r 0.25).
-const TRACE_TOL: f64 = 1.6e-4;
-/// Two faces meet G1 where their normals agree within this angle (radians): the seam's
-/// faces are traced, 8.2e-5 apart at most.
-const G1_TOL: f64 = 1e-4;
-/// The round and the R2 round meet along the rail traced again within this angle: the
-/// re-traced rail is off the round by up to 1.5e-4 all along it, and the faces' normals
-/// there by up to 1.7e-3 (r 0.25). The trace's own angular tolerance is the solver's 20
-/// degrees.
-const TRACE_G1_TOL: f64 = 2e-3;
 
 /// Checks the middle edge rounded `r` at its top End: the rail rolls over T onto the top
 /// face, the round from there to P is the top face's and the wall's, and the cap's edges
@@ -366,7 +358,7 @@ fn check_top_end(k: &Kernel, b: &Brep, r: f64) {
     );
 
     // the end rib: the ball's circle on P from the wall's rail to the top face's
-    let (rib, off) = the_edge(k, b, "the end rib", SECTION_TOL, |p| {
+    let (rib, off) = the_edge(k, b, "the end rib", EXACT_TOL, |p| {
         (p.distance(t.centre_p) - r).abs().max(t.past_p(p).abs())
     });
     eprintln!("r {r}: the end rib off its circle by {off:e}");
@@ -387,18 +379,198 @@ fn check_top_end(k: &Kernel, b: &Brep, r: f64) {
     });
     eprintln!("r {r}: the rollover seam off its circle by {off:e}");
     assert_ends_at(b, seam, "the seam at T", t.q, EXACT_TOL);
-    let c = crease(k, b, seam);
-    eprintln!("r {r}: the rollover seam's crease {c:e}");
-    assert!(c <= G1_TOL, "the rollover seam is not G1: {c:e}");
 
-    // the rail on the R2 round runs up to T at Q, the ball on it touching the wall: each
-    // point is on the round, and the ball's centre there (r in from the round) is 21 + r
-    // from the wall's axis
+    // the rounds on both sides of the seam are the ball's by their definitions: the round on
+    // the R2 round (and the wall) up to Q, the round on the top face (and the wall) from Q
+    // to P. Each one's section in the seam's plane is the ball's circle at Q, and they meet
+    // there G1 (their normals the ball's radii); the rolled one's section in P is the
+    // ball's circle on P
+    let rolled_face = other_face(b, rail, |s| s == "SmPlane_TYPE");
+    let rolled = definition(b, rolled_face);
+    assert_supports(rolled, ["SmCylinder_TYPE", "SmPlane_TYPE"], r);
+    let (round_rail, round_face) = round_rail(k, b, &t, seam, r);
+    let before = definition(b, round_face);
+    assert_supports(before, ["SmCylinder_TYPE", "SmCone_TYPE"], r);
+    let at_q = |pb: &ProceduralBlend| section_in(k, pb, t.centre_q, nq);
+    let (s_before, s_rolled) = (at_q(before), at_q(rolled));
+    let mut worst = (0.0f64, 0.0f64);
+    for i in 0..=8 {
+        let f = f64::from(i) / 8.0;
+        let (p0, n0) = point_normal(k, before, s_before, from_wall(before, f));
+        let (p1, n1) = point_normal(k, rolled, s_rolled, from_wall(rolled, f));
+        let off = (p0.distance(t.centre_q) - r)
+            .abs()
+            .max((p0 - t.centre_q).dot(nq).abs())
+            .max(p0.distance(p1));
+        worst = (
+            worst.0.max(off),
+            worst.1.max(n0.dot(n1).abs().min(1.0).acos()),
+        );
+    }
+    eprintln!(
+        "r {r}: the definitions at Q off the ball's circle by {:e}, their normals by {:e}",
+        worst.0, worst.1
+    );
+    assert!(worst.0 <= EXACT_TOL, "the sections at Q: {:e}", worst.0);
+    assert!(worst.1 <= EXACT_TOL, "the seam is not G1: {:e}", worst.1);
+    let np = Vec3::new(t.phi_v.sin(), t.phi_v.cos(), 0.0);
+    let s_p = section_in(k, rolled, t.centre_p, np);
+    let mut off_p = 0.0f64;
+    for i in 0..=8 {
+        let (p, _) = point_normal(k, rolled, s_p, f64::from(i) / 8.0);
+        off_p = off_p.max((p.distance(t.centre_p) - r).abs().max(t.past_p(p).abs()));
+    }
+    eprintln!("r {r}: the rolled round's section in P off the ball's circle by {off_p:e}");
+    assert!(off_p <= EXACT_TOL, "the section in P: {off_p:e}");
+
+    // the rail on the R2 round runs up to T at Q, the ball on it touching the wall: at each
+    // point the round's foot on the R2 round is on it, and the ball's centre there (r in
+    // from it) is 21 + r from the wall's axis; the round's normal there is the R2 round's;
+    // the rail itself, the round's net's edge, lies within the net's certified bound of it
     let on_round = |p: Point3| {
         let (dy, dz) = off_front_axis(p);
         ((dy * dy + dz * dz).sqrt() - FRONT_R).abs()
     };
-    let mut round_rail = None;
+    let surface = face2::surface(b, round_face).unwrap().unwrap();
+    let dom = surface.natural_uv_domain_with_nurb(k).unwrap();
+    let round_side = support_index(before, "SmCone_TYPE");
+    let mut worst = [0.0f64; 4];
+    for p in samples(k, b, round_rail, 32) {
+        let d = surface
+            .drop_point::<NoObject>(k, p, &dom, &DropPointOptions::default())
+            .unwrap();
+        assert!(d.success, "no foot of {p:?}");
+        let st = before.definition_parameters(d.result_uv);
+        let (foot, n) = point_normal(k, before, st.x, round_side as f64);
+        let (dy, dz) = off_front_axis(foot);
+        let l = (dy * dy + dz * dz).sqrt();
+        let centre = Point3::new(foot.x, foot.y - r * dy / l, foot.z - r * dz / l);
+        let radial = Vec3::new(0.0, dy / l, dz / l);
+        worst = [
+            worst[0].max(on_round(foot)),
+            worst[1].max((rho(centre) - (WALL + r)).abs()),
+            worst[2].max(n.dot(radial).abs().min(1.0).acos()),
+            worst[3].max(p.distance(foot)),
+        ];
+    }
+    eprintln!(
+        "r {r}: the round's feet on the R2 round off it by {:e}, their balls off the wall by \
+         {:e}, its normal off the R2 round's by {:e}; the rail {:e} off them (bound {:e})",
+        worst[0],
+        worst[1],
+        worst[2],
+        worst[3],
+        before.bound()
+    );
+    assert!(
+        worst[0] <= EXACT_TOL,
+        "the feet off the R2 round: {:e}",
+        worst[0]
+    );
+    assert!(
+        worst[1] <= EXACT_TOL,
+        "the balls off the wall: {:e}",
+        worst[1]
+    );
+    assert!(
+        worst[2] <= EXACT_TOL,
+        "the round is not G1 to the R2 round: {:e}",
+        worst[2]
+    );
+    assert!(
+        worst[3] <= before.bound(),
+        "the rail {:e} off the round's feet, bound {:e}",
+        worst[3],
+        before.bound()
+    );
+}
+
+/// The face of edge `e` other than the one whose surface's type `is` takes.
+fn other_face(b: &Brep, e: EdgeId, is: impl Fn(&str) -> bool) -> FaceId {
+    let fs = edge::faces(b, e, None).unwrap();
+    assert_eq!(fs.len(), 2, "edge {e:?} is not between two faces");
+    let ty = |f: FaceId| face2::surface(b, f).unwrap().unwrap().type_string();
+    let found: Vec<FaceId> = fs.iter().copied().filter(|&f| !is(ty(f))).collect();
+    assert_eq!(
+        found.len(),
+        1,
+        "edge {e:?}: {:?}",
+        fs.iter().map(|&f| ty(f)).collect::<Vec<_>>()
+    );
+    found[0]
+}
+
+/// Face `f`'s round by its definition.
+fn definition(b: &Brep, f: FaceId) -> &ProceduralBlend {
+    let s = face2::surface(b, f).unwrap().unwrap();
+    match s.kind() {
+        SurfaceKind::ProceduralBlend(pb) => pb,
+        _ => panic!(
+            "face {f:?} is a {}, not a round by its definition",
+            s.type_string()
+        ),
+    }
+}
+
+/// The definition rolls a ball of radius `r` on supports of these types.
+fn assert_supports(pb: &ProceduralBlend, mut want: [&str; 2], r: f64) {
+    let mut got = [0, 1].map(|i| pb.support(i).unwrap().type_string());
+    got.sort_unstable();
+    want.sort_unstable();
+    assert_eq!(got, want);
+    assert_eq!([pb.offset(0), pb.offset(1)], [Some(r), Some(r)]);
+}
+
+/// The definition's t of its foot on the support of type `ty` (0 or 1).
+fn support_index(pb: &ProceduralBlend, ty: &str) -> usize {
+    (0..2)
+        .find(|&i| pb.support(i).unwrap().type_string() == ty)
+        .unwrap()
+}
+
+/// The definition's t a fraction `f` of the way from its foot on the wall.
+fn from_wall(pb: &ProceduralBlend, f: f64) -> f64 {
+    if support_index(pb, "SmCylinder_TYPE") == 0 {
+        f
+    } else {
+        1.0 - f
+    }
+}
+
+/// The definition's point and unit normal at (s, t).
+fn point_normal(k: &Kernel, pb: &ProceduralBlend, s: f64, t: f64) -> (Point3, Vec3) {
+    let d = pb.evaluate_definition(k, s, t, 1, 1).unwrap();
+    let n = d[1][0].cross(d[0][1]);
+    (d[0][0], n * (1.0 / n.length()))
+}
+
+/// The s of the definition's section whose middle lies in the plane through `o` square to
+/// `n`: bracketed among its leader's parameters, then bisected to rounding.
+fn section_in(k: &Kernel, pb: &ProceduralBlend, o: Point3, n: Vec3) -> f64 {
+    let ivl = pb.leader().natural_interval();
+    let f = |s: f64| (point_normal(k, pb, s, 0.5).0 - o).dot(n);
+    let at = |i: usize| ivl.min() + (ivl.max() - ivl.min()) * (i as f64) / 256.0;
+    let i = (0..256)
+        .find(|&i| f(at(i)) * f(at(i + 1)) <= 0.0)
+        .expect("the definition's sections cross the plane");
+    let (mut a, mut z) = (at(i), at(i + 1));
+    for _ in 0..200 {
+        let m = 0.5 * (a + z);
+        if m <= a || m >= z {
+            break;
+        }
+        if f(a) * f(m) <= 0.0 {
+            z = m;
+        } else {
+            a = m;
+        }
+    }
+    0.5 * (a + z)
+}
+
+/// The rail on the R2 round ending at Q, and the round's face beside it.
+fn round_rail(k: &Kernel, b: &Brep, t: &TopEnd, seam: EdgeId, r: f64) -> (EdgeId, FaceId) {
+    let mut found = Vec::new();
     for e in get_edges(b).unwrap() {
         if edge::curve(b, e).unwrap().is_none() || e == seam {
             continue;
@@ -407,31 +579,17 @@ fn check_top_end(k: &Kernel, b: &Brep, r: f64) {
         if a.distance(t.q).min(z.distance(t.q)) > EXACT_TOL {
             continue;
         }
-        let pts = samples(k, b, e, 16);
-        if pts.iter().all(|&p| on_round(p) <= TRACE_TOL) && pts.iter().any(|p| p.z < 10.0 - r) {
-            round_rail = Some(e);
+        let fs = edge::faces(b, e, None).unwrap();
+        let ty = |f: FaceId| face2::surface(b, f).unwrap().unwrap().type_string();
+        if fs.len() == 2
+            && fs.iter().any(|&f| ty(f) == "SmCone_TYPE")
+            && samples(k, b, e, 16).iter().any(|p| p.z < 10.0 - r)
+        {
+            found.push((e, other_face(b, e, |s| s == "SmCone_TYPE")));
         }
     }
-    let round_rail = round_rail.expect("the rail on the R2 round, ending at Q");
-    let mut worst = (0.0_f64, t.q);
-    for p in samples(k, b, round_rail, 32) {
-        let (dy, dz) = off_front_axis(p);
-        let l = (dy * dy + dz * dz).sqrt();
-        let centre = Point3::new(p.x, p.y - r * dy / l, p.z - r * dz / l);
-        let miss = (rho(centre) - (WALL + r)).abs();
-        if miss > worst.0 {
-            worst = (miss, p);
-        }
-    }
-    let (miss, p) = worst;
-    eprintln!("r {r}: the R2 round's rail's ball misses the wall by {miss:e} at {p:?}");
-    assert!(
-        miss <= TRACE_TOL,
-        "the R2 round's rail at {p:?}: its ball misses the wall by {miss:e}"
-    );
-    let c = crease(k, b, round_rail);
-    eprintln!("r {r}: the R2 round's rail's crease {c:e}");
-    assert!(c <= TRACE_G1_TOL, "the R2 round's rail is not G1: {c:e}");
+    assert_eq!(found.len(), 1, "the rail on the R2 round: {found:?}");
+    found[0]
 }
 
 /// The middle edge rounded 0.25 builds: its rail rolls over T onto the top face before the
@@ -476,4 +634,114 @@ fn without_the_blend_corner_the_middle_edge_is_refused() {
     let mut k = all_fixes(false);
     let mut b = front_rounded(&mut k);
     assert!(round(&mut k, &mut b, MIDDLE, 0.25).is_err());
+}
+
+/// With `fillet_round_as_definition` (every fix here) the round on each side of the seam is
+/// a `ProceduralBlend`, a ball of radius r by its definition: the rolled one rolls it on the
+/// wall and the top face (the face beyond T), the one before on the wall and the R2 round.
+/// Each goes to the fork's record and back unchanged: the same definition, the same points
+/// bit for bit.
+#[test]
+fn the_rounds_by_their_definitions_round_trip() {
+    let r = 0.25;
+    let mut k = all_fixes(true);
+    let mut b = front_rounded(&mut k);
+    round(&mut k, &mut b, MIDDLE, r).unwrap();
+    let mut kinds = Vec::new();
+    for f in get_faces(&b).unwrap() {
+        let s = face2::surface(&b, f).unwrap().unwrap();
+        let SurfaceKind::ProceduralBlend(pb) = s.kind() else {
+            continue;
+        };
+        let mut supports = [0, 1].map(|i| pb.support(i).unwrap().type_string());
+        supports.sort_unstable();
+        kinds.push(supports);
+        assert_eq!([pb.offset(0), pb.offset(1)], [Some(r), Some(r)]);
+        let mut db = DatabaseWriter::open_for_write(FileType::Binary);
+        write_surface(s, &mut db, 30).unwrap();
+        let mut rd = DatabaseReader::new();
+        rd.open_for_read(db.into_bytes(), FileType::Binary);
+        let back = Surface::read_from_db(&k, PROCEDURAL_BLEND_TYPE, &mut rd, 30).unwrap();
+        let SurfaceKind::ProceduralBlend(back_pb) = back.kind() else {
+            panic!("face {f:?} read back as a {}", back.type_string());
+        };
+        assert!(pb.same_definition(&k, back_pb).unwrap(), "face {f:?}");
+        let dom = s.natural_uv_domain_with_nurb(&k).unwrap();
+        for i in 0..=4 {
+            for j in 0..=4 {
+                let uv = Point2::new(
+                    dom.min().x + (dom.max().x - dom.min().x) * f64::from(i) / 4.0,
+                    dom.min().y + (dom.max().y - dom.min().y) * f64::from(j) / 4.0,
+                );
+                let (p, q) = (
+                    s.evaluate_point(&k, uv).unwrap(),
+                    back.evaluate_point(&k, uv).unwrap(),
+                );
+                assert_eq!(
+                    [p.x, p.y, p.z].map(f64::to_bits),
+                    [q.x, q.y, q.z].map(f64::to_bits),
+                    "face {f:?} at {uv:?}"
+                );
+            }
+        }
+    }
+    kinds.sort_unstable();
+    assert_eq!(
+        kinds,
+        [
+            ["SmCone_TYPE", "SmCylinder_TYPE"],
+            ["SmCylinder_TYPE", "SmPlane_TYPE"]
+        ]
+    );
+}
+
+/// At r 2, the R2 round's own radius, the ball's offset of the R2 round collapses onto its
+/// axis: the ball's centre is fixed where that axis crosses the wall's offset, and at the
+/// top End its zone has no section (#2401). Refused as such (`OffsetCollapses`), naming 2
+/// less the fit margin (a thousand of the edge's tolerances), not a bare 1001.
+#[test]
+fn the_middle_edge_at_the_front_round_s_radius_is_refused_as_a_collapsed_offset() {
+    let mut k = all_fixes(true);
+    let mut b = front_rounded(&mut k);
+    let e = pick(&k, &b, MIDDLE);
+    let fit = 2.0 - 1000.0 * edge::tolerance(&b, e).unwrap();
+    let mut s = FilletSession::new(&mut k, &mut b).unwrap();
+    s.prepare_per_edge_constant_radius(
+        &mut k,
+        &[e],
+        &[2.0],
+        &[FilletSurfaceGeneratorType::Circular],
+        1,
+        1.0,
+    )
+    .unwrap();
+    match s.do_fillet(&mut k) {
+        Err(SolidError::FilletRefused {
+            reason: Some(NoRoomReason::OffsetCollapses),
+            fit: got,
+            ..
+        }) => {
+            assert_eq!(got.kind, FitKind::Radius);
+            assert!(
+                (got.size - fit).abs() <= 1e-12,
+                "fit {}, want {fit}",
+                got.size
+            );
+        }
+        other => panic!("{other:?}"),
+    }
+}
+
+/// The size that refusal names builds: the ball of radius 2 less the margin rolls on the R2
+/// round's offset (a cylinder of radius 0.04 about its axis) and over T onto the top face,
+/// as at r 0.25 and r 1.
+#[test]
+fn the_size_the_collapsed_offset_names_builds() {
+    let mut k = all_fixes(true);
+    let mut b = front_rounded(&mut k);
+    let e = pick(&k, &b, MIDDLE);
+    let fit = 2.0 - 1000.0 * edge::tolerance(&b, e).unwrap();
+    round(&mut k, &mut b, MIDDLE, fit).unwrap();
+    clean(&mut k, &mut b);
+    check_top_end(&k, &b, fit);
 }
