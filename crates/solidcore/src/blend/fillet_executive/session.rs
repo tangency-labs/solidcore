@@ -325,7 +325,6 @@ struct SessionObjects<'target> {
     /// (not upstream, #2489) The marks of the faces the session made, while
     /// `Kernel::blend_face_log` is on (`blend_face_log`).
     blend_face_marks: Vec<AttributeHandle>,
-    /// The corner type of chamfers meeting at a vertex (`set_chamfer_corner`; WR-715).
     /// The corner type of chamfers meeting at a vertex (`set_chamfer_corner`; WR-716).
     /// Read only with `Kernel::fixes.fillet_chamfer_corner`.
     chamfer_corner: crate::blend::blend_corner::BlendChamferCorner,
