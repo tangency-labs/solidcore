@@ -300,6 +300,15 @@ impl UnitDiff for Runner {
 
     fn run_cpp(&self, case: &Case) -> Result<Output, HarnessError> {
         let i: Inputs = case.parse()?;
+        // A rotation range that runs backwards (end below start, entries 12 and 13 of a cone
+        // record; `other` is one for ops 0 and 3): the SMLib fork's MakeNurb crashes on it
+        // (tangency-labs/smlib#132, surface_cone_p1::reversed_rotation).
+        let reversed = |c: &[f64]| c.len() > 13 && c[13] < c[12];
+        if reversed(&i.cone) || (matches!(i.op, 0 | 3) && reversed(&i.other)) {
+            return Ok(Output::rejected(
+                "the SMLib fork's MakeNurb crashes on a reversed rotation range (smlib#132); not run",
+            ));
+        }
         let result = ffi::intersect(i.op, &i.cone, &i.other, &i.domains, i.tolerance, i.same);
         if case.name.starts_with("rejected_") {
             return match result {
@@ -307,7 +316,11 @@ impl UnitDiff for Runner {
                     Ok(Output::err("ffi_rejected"))
                 }
                 Err(e) => Err(HarnessError::new(format!("unexpected rejection: {e}"))),
-                Ok(_) => Err(HarnessError::new("expected native guard rejection")),
+                // The guard caught v1.0.1's missing polar curve; the SMLib fork builds one, so
+                // the input runs there and the guard has nothing to reject.
+                Ok(_) => Ok(Output::rejected(
+                    "the SMLib fork builds the polar curve this v1.0.1 guard rejected; not compared",
+                )),
             };
         }
         let out = result.map_err(|e| HarnessError::new(e.to_string()))?;

@@ -361,8 +361,16 @@ fn cpp(c: &CaseIn) -> Result<Output, HarnessError> {
             if *expect_rejected {
                 return rejection(face, ops);
             }
-            let r = ffi::run(&ffi_face(face), &ffi_ops(ops)).map_err(|e| harness(e.to_string()))?;
-            Ok(Output::new().values("v", r))
+            // In a fresh child process: the SMLib fork's ClassifyLoops can crash after a failed
+            // loop bisector (tangency-labs/smlib#134), which v1.0.1 survived.
+            let (f, o) = (ffi_face(face), ffi_ops(ops));
+            match solidcore_ffi::isolate::fresh_process(|| ffi::run(&f, &o)) {
+                Ok(r) => Ok(Output::new().values("v", r)),
+                Err(solidcore_ffi::FfiError::Status(solidcore_ffi::SC_ERR_CHILD_CRASHED)) => Ok(
+                    Output::rejected("the SMLib fork crashes in ClassifyLoops (smlib#134); not run"),
+                ),
+                Err(e) => Err(harness(e.to_string())),
+            }
         }
         CaseIn::Tree {
             items,

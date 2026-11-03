@@ -397,6 +397,15 @@ SC_EXPORT int32_t sc_surface_surface_assert_valid_eval(const double* input, int6
     // sm_AssertTestSurface6 reads uninitialised iso curves when CreateIsoBoundaries
     // fails (undefined behaviour): reject the inputs where the base check would reach it.
     bool base_runs = level != 4 && (kind <= 1 || kind == 8 || make);
+    // The SMLib fork's IsClosed evaluates the surface, and SmBSplineSurface::EvaluatePoint
+    // dereferences a NULL net (N_SrfEvalPt) when MakeNurb failed to build one: reject those
+    // inputs too (plan/findings/general--2502-smlib-fork-removed-cpp-not-linked.md).
+    SmBSplineSurface* net = SM_CAST_PTR(SmBSplineSurface, surface);
+    if (base_runs && net && net->GetGwNurbPointer() == NULL)
+    {
+        delete surface;
+        return SC_ERR_ARG;
+    }
     if (base_runs)
     {
         SmApproxTol3d tol = SmTol::GetApproxTol3d(surface);

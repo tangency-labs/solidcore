@@ -376,7 +376,26 @@ fn ffi_curve(c: &CurveIn) -> ffi::CurveIn {
 
 fn cpp(i: &Inputs) -> Result<Output, HarnessError> { cpp_with_roundtrip(i, None, false) }
 
+/// A bounded cone or cylinder whose rotation range runs backwards: the SMLib fork's `MakeNurb`
+/// crashes on it (a null iso curve in `SmSurfOfRevolution::RebuildPolarConverter`,
+/// tangency-labs/smlib#132), where v1.0.1 built it.
+pub(super) fn reversed_rotation(c: &ConeIn) -> bool {
+    match c.mode {
+        ModeIn::ConeBounded { start, end, .. } | ModeIn::CylBounded { start, end, .. } => end < start,
+        _ => false,
+    }
+}
+
 fn cpp_with_roundtrip(i: &Inputs, roundtrip: Option<bool>, subdomain: bool) -> Result<Output, HarnessError> {
+    let other = match &i.op {
+        OpIn::Eq { other } => Some(other.as_ref()),
+        _ => None,
+    };
+    if i.cone.iter().chain(other).any(reversed_rotation) {
+        return Ok(Output::rejected(
+            "the SMLib fork's MakeNurb crashes on a reversed rotation range (smlib#132); not run",
+        ));
+    }
     let flat = if let OpIn::Coincidence {
         a,
         a_dom,
@@ -1074,7 +1093,7 @@ pub(super) fn common_cases(ctx: &CaseContext) -> Result<Vec<Case>, HarnessError>
     for case in cases {
         let input: Inputs = case.parse()?;
         let native = cpp(&input)?;
-        if native.values.get("status").is_some_and(|v| v == &[SC_ERR_ARG]) { continue; }
+        if native.rejected.is_some() || native.values.get("status").is_some_and(|v| v == &[SC_ERR_ARG]) { continue; }
         numerical.push(case);
     }
     let mut cases = numerical;

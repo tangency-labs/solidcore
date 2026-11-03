@@ -164,9 +164,10 @@ SC_EXPORT int32_t sc_primitive_primitive_creation_p2_eval(int32_t op, const doub
         SmVector3d normal(data[4], data[5], data[6]);
         status = primitive.CreateTaperExtrude(curves, data[1], data[2], (int)data[3], normal,
             (SmOffsetCornerType)(int)data[7]);
-        // On failure the (possibly reordered, partly deleted) curves stay with the caller.
-        if (status != SM_SUCCESS)
-            for (ULONG i = 0; i < curves.GetSize(); ++i) delete curves[i];
+        // v1.0.1 left the (possibly reordered, partly deleted) curves with the caller on failure.
+        // After the SMLib fork's failures the B-rep's edges hold some of them while all stay in
+        // the array, and deleting even those without an owner crashes, so none is deleted here
+        // (a leak in this process; tangency-labs/smlib#133).
         put_vec(extra, normal);
     }
     pc2_record(out, status, &brep, &primitive, starts, sides, ends);
