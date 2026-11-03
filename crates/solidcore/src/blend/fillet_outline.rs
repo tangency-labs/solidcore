@@ -735,7 +735,9 @@ fn tangent_along_rim(
             let slope = along.x / along.y * cone_axis.dot(axis);
             let rim_point = origin + axis * rim.y;
             let neutral = (rim_point - frame.origin()).dot(cone_axis);
-            Ok(Some(Surface::from(cylinder.lean_cylinder(k, slope, neutral)?)))
+            Ok(Some(Surface::from(
+                cylinder.lean_cylinder(k, slope, neutral)?,
+            )))
         }
     }
 }

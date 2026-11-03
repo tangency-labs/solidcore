@@ -10,11 +10,11 @@
 //! Deviations: none of upstream's; there is no recursion.
 
 use super::{invalid, FilletObject, FilletSession, SolverObject};
+use crate::blend::fillet_custom_solver::OffsetSurface;
+use crate::blend::fillet_outline::outline_supports;
 use crate::blend::fillet_solver::p1::{
     FilletSurfaceGenerator, FilletSurfaceGeneratorType, OffsetSurfaceSlot,
 };
-use crate::blend::fillet_custom_solver::OffsetSurface;
-use crate::blend::fillet_outline::outline_supports;
 use crate::blend::fillet_solver::p5::is_concave_edge;
 use crate::error::{Result, SolidError};
 use crate::kernel::Kernel;
@@ -51,7 +51,10 @@ impl FilletSession<'_> {
         // a constant round of circular section: its ball is one ball all along
         let object = self.objects.solver(id)?;
         let base = object.base();
-        let circular = base.fsg.as_ref().map(FilletSurfaceGenerator::fillet_surface_generator_type)
+        let circular = base
+            .fsg
+            .as_ref()
+            .map(FilletSurfaceGenerator::fillet_surface_generator_type)
             == Some(FilletSurfaceGeneratorType::Circular);
         if !matches!(object, SolverObject::ConstantRadius(_)) || !circular {
             return Ok(());
@@ -75,7 +78,9 @@ impl FilletSession<'_> {
             return Ok(());
         };
         // a convex round, which takes material (a concave one past its wall stays refused)
-        if !crate::topology::brep::p2::is_manifold_solid(target)? || is_concave_edge(k, target, edge)? {
+        if !crate::topology::brep::p2::is_manifold_solid(target)?
+            || is_concave_edge(k, target, edge)?
+        {
             return Ok(());
         }
         let mut faces = Vec::with_capacity(2);

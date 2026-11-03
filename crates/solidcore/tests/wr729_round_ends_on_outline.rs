@@ -199,7 +199,10 @@ fn a_round_up_to_the_bound_is_tangent_to_the_top_and_ends_on_the_bottom_edge() {
         for y in [10.0, 50.0, 90.0] {
             // tangent to the top face where it meets it
             let (gap, n) = on_round(&k, &b, Point3::new(xc, y, T));
-            assert!(gap <= 1e-9 * r, "r {r}: tangent line off the round by {gap}");
+            assert!(
+                gap <= 1e-9 * r,
+                "r {r}: tangent line off the round by {gap}"
+            );
             let angle = n.cross(Vec3::new(0.0, 0.0, 1.0)).length().asin();
             assert!(angle <= 1e-9, "r {r}: normals {angle} rad apart");
             // through the bottom edge
@@ -252,7 +255,8 @@ fn without_the_flag_the_round_is_on_the_continued_wall() {
 fn the_disc_wall_ends_on_its_bottom_rim() {
     let (big, t, r) = (13.0_f64, 2.0_f64, 2.5_f64);
     let xc = (r * r - (r - t) * (r - t)).sqrt();
-    let lost = (big - xc) * (r * xc - quarter(xc, r)) + r * xc * xc / 2.0
+    let lost = (big - xc) * (r * xc - quarter(xc, r))
+        + r * xc * xc / 2.0
         + ((r - t).powi(3) - r.powi(3)) / 3.0;
     let want = PI * big * big * t - 2.0 * PI * lost;
     assert!((want - 965.536_758_055_394).abs() < 1e-9, "{want}");
@@ -344,7 +348,8 @@ fn a_hole_rim_ends_on_the_hole_s_bottom_rim() {
     let (r, t) = (12.0_f64, 10.0_f64);
     let xc = (r * r - (r - t) * (r - t)).sqrt();
     let rc = 5.0 + xc;
-    let lost = rc * (r * xc - quarter(xc, r)) - r * xc * xc / 2.0 - ((r - t).powi(3) - r.powi(3)) / 3.0;
+    let lost =
+        rc * (r * xc - quarter(xc, r)) - r * xc * xc / 2.0 - ((r - t).powi(3) - r.powi(3)) / 3.0;
     let want = 16000.0 - 250.0 * PI - 2.0 * PI * lost;
     assert!((want - 13_811.173_028_388_774).abs() < 1e-8, "{want}");
     let mut k = kernel(true);
