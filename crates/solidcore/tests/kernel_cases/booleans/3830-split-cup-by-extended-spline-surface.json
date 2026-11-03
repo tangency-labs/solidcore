@@ -1,6 +1,10 @@
 {
   "area": "booleans",
   "bodies": {
+    "b21": {
+      "keeping_splines": false,
+      "trusted": true
+    },
     "b24": {
       "keeping_splines": false,
       "trusted": true
@@ -11,6 +15,30 @@
     }
   },
   "calls": [
+    {
+      "inputs": [
+        "b21"
+      ],
+      "op": "tagged",
+      "outputs": [
+        "b22"
+      ],
+      "params": {
+        "operand": 0
+      }
+    },
+    {
+      "inputs": [
+        "b22"
+      ],
+      "op": "stitch",
+      "outputs": [
+        "b23"
+      ],
+      "params": {
+        "tolerance": 0.0002
+      }
+    },
     {
       "inputs": [
         "b25"
@@ -87,7 +115,7 @@
     },
     {
       "body": "Body2",
-      "operand": "b24"
+      "made": "b23"
     },
     {
       "body": "Body1 (1)",

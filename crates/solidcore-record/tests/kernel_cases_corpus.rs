@@ -98,6 +98,38 @@ fn every_operand_is_a_valid_record_and_every_input_is_given() {
                     .filter_map(Value::as_str),
             );
         }
+        // Each final body is an operation's output or a given operand.
+        for r in e["result"].as_array().unwrap() {
+            if let Some(b) = r["made"].as_str() {
+                assert!(
+                    made.contains(&b),
+                    "{}: {b} is made by no operation",
+                    f.display()
+                );
+            }
+            if let Some(b) = r["operand"].as_str() {
+                assert!(
+                    bodies.contains_key(b),
+                    "{}: operand {b} has no record",
+                    f.display()
+                );
+            }
+        }
+        if e.get("records").is_some_and(|r| !r.is_null()) {
+            assert!(
+                !bodies.is_empty(),
+                "{}: a records file with no body",
+                f.display()
+            );
+        }
+        if e["expressible"].as_bool() == Some(true) {
+            assert_eq!(
+                e["operation_expressible"].as_bool(),
+                Some(true),
+                "{}",
+                f.display()
+            );
+        }
         if e["operation_expressible"].as_bool() == Some(true) {
             assert!(
                 !e["calls"].as_array().unwrap().is_empty(),
