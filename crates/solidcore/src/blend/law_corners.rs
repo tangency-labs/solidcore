@@ -15,6 +15,7 @@
 //! |------------------------------|----------------------------------------------------------|
 //! | [`LawCornerPieces`]          | `SmLawCornerPieces` (`SmFilletSolver.h`)                 |
 //! | [`LawCornerKind`]            | `SmLawCornerPieces::SM_LC_*`                             |
+//! | [`LawCorner`]                | one entry of `m_vKinds`, `m_vCentres` and `m_vRadii`     |
 //! | [`LawCornerPieces::classify`]| `SmGnSectionFSG::CircleSurface`'s corner loop (`SmFilletSection.cpp`) |
 //! | [`find_law_corner_pieces`]   | `SmFilletSolver::FindLawCornerPieces` (58d03ef)          |
 //! | [`has_built_law_corners`]    | `SmFilletSolver::HasBuiltLawCorners` (58d03ef)           |
@@ -35,9 +36,13 @@
 //!
 //! Deviations: out-params are return values; `SmLawCornerPieces::Copy` is `Clone`, and the
 //! solver's list of kept pieces is a slice the caller owns, so
-//! [`find_law_corner_pieces`] returns an index. The fork's per-piece `SER` on a failed cast
-//! has no counterpart (the pieces are `BSplineSurface` by type). No loop depends on input
-//! beyond the pieces and knots given.
+//! [`find_law_corner_pieces`] returns an index. The fork's three per-corner arrays
+//! (`m_vKinds`, `m_vCentres`, `m_vRadii`) are one `Vec<LawCorner>`, so they cannot differ
+//! in length. [`sphere_zone`] takes the corner ball's centre and radius, which the fork's
+//! `sm_SphereZone` does not, and returns the zone as a [`BallPatch`] that keeps the
+//! sphere, where the fork returns a bare `SmBSplineSurface`; the net is the fork's bit for
+//! bit. The fork's per-piece `SER` on a failed cast has no counterpart (the pieces are
+//! `BSplineSurface` by type). No loop depends on input beyond the pieces and knots given.
 
 use crate::curve::curve::Curve;
 use crate::error::{Result, SolidError};
@@ -47,6 +52,7 @@ use crate::kernel::Kernel;
 use crate::math::{Point3, Vec3, EFF_ZERO, EFF_ZERO_SQRT};
 use crate::nurbs::b_spline_curve::{BSplineCurve, KnotType};
 use crate::nurbs::b_spline_surface::{BSplineSurface, BSplineSurfaceForm, CanonicalSurfaceData};
+use crate::surface::ball_patch::BallPatch;
 use crate::surface::surface::Surface;
 
 const OP_CLASSIFY: &str = "blend::law_corners::LawCornerPieces::classify";
@@ -65,6 +71,18 @@ pub enum LawCornerKind {
     Peak,
 }
 
+/// One corner of a radius law: how its touch circles lie, and its ball (the fork keeps the
+/// three in parallel arrays of `SmLawCornerPieces`).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct LawCorner {
+    /// `m_vKinds[i]`: how its touch circles lie.
+    pub kind: LawCornerKind,
+    /// `m_vCentres[i]`: the corner ball's centre.
+    pub centre: Point3,
+    /// `m_vRadii[i]`: the corner ball's radius.
+    pub radius: f64,
+}
+
 /// `SmLawCornerPieces`: a round whose radius law has corners, as the exact pieces between
 /// them, kept beside the surface joined from them.
 #[derive(Debug, Clone, Default)]
@@ -75,12 +93,9 @@ pub struct LawCornerPieces {
     pub pieces: Vec<BSplineSurface>,
     /// `m_vJoinedEnds`: each piece's end in the joined surface's u.
     pub joined_ends: Vec<f64>,
-    /// `m_vKinds`: per corner, how its touch circles lie.
-    pub kinds: Vec<LawCornerKind>,
-    /// `m_vCentres`: per corner, the corner ball's centre.
-    pub centres: Vec<Point3>,
-    /// `m_vRadii`: per corner, its radius.
-    pub radii: Vec<f64>,
+    /// `m_vKinds`, `m_vCentres` and `m_vRadii`: the corners in order along the round, one
+    /// between each pair of pieces.
+    pub corners: Vec<LawCorner>,
     /// `m_dTol3d`: how near the pieces' sections are to the balls' circles.
     pub tol_3d: f64,
 }
@@ -101,9 +116,9 @@ impl LawCornerPieces {
     /// m_vKinds.IsIn(SM_LC_PEAK)`): the corners the executive builds.
     #[must_use]
     pub fn has_dip_or_peak(&self) -> bool {
-        self.kinds
+        self.corners
             .iter()
-            .any(|&kind| kind == LawCornerKind::Dip || kind == LawCornerKind::Peak)
+            .any(|corner| matches!(corner.kind, LawCornerKind::Dip | LawCornerKind::Peak))
     }
 
     /// The corner loop of the fork's `SmGnSectionFSG::CircleSurface` (7babe17): `pieces`
@@ -138,6 +153,7 @@ impl LawCornerPieces {
             let (Some(&t), [before, after]) = (ends.get(i + 1), pair) else {
                 return Err(SolidError::sm_err(OP_CLASSIFY));
             };
+            // the fork's `Evaluate(dT, 1, TRUE, ...)`, `bNonZeroTangents` at its default FALSE
             let cent_pv = center_line.evaluate(t, 1, true, false)?;
             let rail_pv = rail1.evaluate(t, 1, true, false)?;
             let (Some(&centre), Some(&rail_point), Some(&along)) =
@@ -164,22 +180,25 @@ impl LawCornerPieces {
             }
             let [mid_before, mid_after] = mid;
             let ahead = (mid_after - mid_before).dot(along);
-            kept.kinds.push(if ahead > approx_tol_3d {
+            let kind = if ahead > approx_tol_3d {
                 LawCornerKind::Dip
             } else if ahead < -approx_tol_3d {
                 LawCornerKind::Peak
             } else {
                 LawCornerKind::Matching
+            };
+            kept.corners.push(LawCorner {
+                kind,
+                centre,
+                radius: (rail_point - centre).length(),
             });
-            kept.centres.push(centre);
-            kept.radii.push((rail_point - centre).length());
         }
         // the pieces' sections are the balls' circles within the skin's tolerance, and
         // within the arcs' own where they are approximated (a share of the radius)
         kept.tol_3d = approx_tol_3d;
         if arcs.approximate_arcs {
-            for &radius in &kept.radii {
-                kept.tol_3d = smos_max(kept.tol_3d, 0.01 * arcs.tol_percent_radius * radius);
+            for corner in &kept.corners {
+                kept.tol_3d = smos_max(kept.tol_3d, 0.01 * arcs.tol_percent_radius * corner.radius);
             }
         }
         Ok(kept)
@@ -211,6 +230,8 @@ pub fn find_law_corner_pieces(
     surface: &Surface,
 ) -> Result<Option<usize>> {
     let (u_knots, _) = surface.find_knots_by_max_continuity(k, ContinuityType::C0, false)?;
+    // the fork's virtual `GetNaturalUVDomain()`: for a fillet's B-spline surface, its own
+    // domain
     let domain = surface.natural_uv_domain_with_nurb(k)?;
     let tol = 1.0e-9 * (1.0 + domain.min().x.abs() + domain.max().x.abs());
     for (i, pieces) in kept.iter_mut().enumerate() {
@@ -241,9 +262,10 @@ pub fn has_built_law_corners(kept: &[LawCornerPieces]) -> bool {
 
 /// `sm_SphereZone` (7babe17): the zone of a sphere between two of its circles that cross
 /// at the same two points (a law dip's corner ball between its two sides' touch circles),
-/// as one rational biquadratic patch. u runs from the circle through `on_first` (u = 0)
-/// to the one through `on_second` (u = 1), v from `two` (v = 0) to `one` (v = 1); both v
-/// ends are poles.
+/// as one rational biquadratic patch kept with its sphere: the ball of centre `centre` and
+/// radius `radius` that the four points lie on. u runs from the circle through `on_first`
+/// (u = 0) to the one through `on_second` (u = 1), v from `two` (v = 0) to `one` (v = 1);
+/// both v ends are poles.
 ///
 /// Inverted about `one`, the sphere is a plane and the circles are lines through the
 /// image `Q` of `two`; the zone is the wedge between the rays from `Q` that hold the arcs.
@@ -258,13 +280,16 @@ pub fn has_built_law_corners(kept: &[LawCornerPieces]) -> bool {
 /// # Errors
 ///
 /// `SM_ERR` where `one` and `two` coincide, an arc point inverts onto `Q`, the wedge is a
-/// half turn or more, or a weight is not positive; those of `CreateCanonical`.
+/// half turn or more, or a weight is not positive; those of `CreateCanonical` and
+/// [`BallPatch::create`] (a centre not finite or a radius not positive).
 pub fn sphere_zone(
+    centre: Point3,
+    radius: f64,
     one: Point3,
     two: Point3,
     on_first: Point3,
     on_second: Point3,
-) -> Result<BSplineSurface> {
+) -> Result<BallPatch> {
     let k2 = (two - one).dot(two - one);
     if k2 <= EFF_ZERO {
         return Err(SolidError::sm_err(OP_ZONE));
@@ -282,6 +307,12 @@ pub fn sphere_zone(
     first = first / first.length();
     second = second / second.length();
     let cos = first.dot(second);
+    // The middle control point below divides by 1 + cos, which carries an absolute
+    // rounding error of a few ulps from the unit vectors, so its relative error is about
+    // eps / (1 + cos). At EFF_ZERO that would be about 1e-4, a net visibly off its
+    // sphere; the fork's EFF_ZERO_SQRT keeps it near 1e-10, and the middle weight
+    // sqrt((1 + cos) / 2) at least 7e-4. It refuses wedges within about 1.4e-3 rad
+    // (sqrt(2e-6)) of a half turn.
     if cos <= -1.0 + EFF_ZERO_SQRT {
         return Err(SolidError::sm_err(OP_ZONE));
     }
@@ -303,7 +334,7 @@ pub fn sphere_zone(
             weights.push(den_j);
         }
     }
-    BSplineSurface::create_canonical(&CanonicalSurfaceData {
+    let net = BSplineSurface::create_canonical(&CanonicalSurfaceData {
         u_degree: 2,
         v_degree: 2,
         control_points: &points,
@@ -315,7 +346,8 @@ pub fn sphere_zone(
         knot_type: KnotType::Unspecified,
         weights: Some(&weights),
         uv_domain: None,
-    })
+    })?;
+    BallPatch::create(&net, centre, radius)
 }
 
 /// `sm_CurveBetween` (7babe17): a copy of `curve` running from `from` to `to` (reversed

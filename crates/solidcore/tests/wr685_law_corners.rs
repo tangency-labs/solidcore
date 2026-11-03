@@ -23,7 +23,7 @@ use solidcore::blend::fillet_solver::p1::FilletSolverType;
 use solidcore::blend::fillet_standard_solver::p1::{CircularCrossSectionFsg, FilletLaw};
 use solidcore::blend::law_corners::{
     curve_between, find_law_corner_pieces, has_built_law_corners, sphere_zone, ArcApproximation,
-    LawCornerKind, LawCornerPieces,
+    LawCorner, LawCornerKind, LawCornerPieces,
 };
 use solidcore::curve::curve::Curve;
 use solidcore::geom::attribute::{AttributeStore, ObjectKey};
@@ -73,8 +73,10 @@ const FORK_NET: [(f64, f64, f64, f64); 9] = [
 
 #[test]
 fn a_dips_zone_is_the_fork_s_patch_bit_for_bit() {
-    let zone = sphere_zone(ONE, TWO, ON_FIRST, ON_SECOND).unwrap();
-    let net = zone.control_point_net().unwrap();
+    let zone = sphere_zone(CENTRE, 2.0, ONE, TWO, ON_FIRST, ON_SECOND).unwrap();
+    // the zone keeps its ball
+    assert_eq!((zone.centre(), zone.radius()), (CENTRE, 2.0));
+    let net = zone.net().control_point_net().unwrap();
     assert_eq!((net.u_count, net.v_count), (3, 3));
     for (i, &(x, y, z, w)) in FORK_NET.iter().enumerate() {
         let p = net.points[i];
@@ -94,7 +96,8 @@ fn a_dips_zone_is_the_fork_s_patch_bit_for_bit() {
 
 #[test]
 fn a_dips_zone_lies_on_the_corner_ball_between_its_touch_circles() {
-    let zone = sphere_zone(ONE, TWO, ON_FIRST, ON_SECOND).unwrap();
+    let zone = sphere_zone(CENTRE, 2.0, ONE, TWO, ON_FIRST, ON_SECOND).unwrap();
+    let zone = zone.net();
     let before = Vec3::new(1.0, 0.2, 0.2);
     let after = Vec3::new(1.0, -0.2, -0.2);
     for i in 0..=8 {
@@ -142,15 +145,17 @@ fn a_dips_zone_lies_on_the_corner_ball_between_its_touch_circles() {
 #[test]
 fn a_zone_needs_two_rail_points_and_a_wedge_under_a_half_turn() {
     // one point twice
-    assert!(sphere_zone(ONE, ONE, ON_FIRST, ON_SECOND).is_err());
+    assert!(sphere_zone(CENTRE, 2.0, ONE, ONE, ON_FIRST, ON_SECOND).is_err());
     // the two arcs of one circle between the rail points: inverted, opposite rays from the
     // image of the second point, a half turn
     let n = Vec3::new(1.0, 0.2, 0.2);
     let circle_centre = CENTRE + n * (0.4 / n.dot(n));
     let other_arc = circle_centre * 2.0 - ON_FIRST;
-    assert!(sphere_zone(ONE, TWO, ON_FIRST, other_arc).is_err());
+    assert!(sphere_zone(CENTRE, 2.0, ONE, TWO, ON_FIRST, other_arc).is_err());
     // the given pair is well inside a half turn
-    assert!(sphere_zone(ONE, TWO, ON_FIRST, ON_SECOND).is_ok());
+    assert!(sphere_zone(CENTRE, 2.0, ONE, TWO, ON_FIRST, ON_SECOND).is_ok());
+    // a ball with no radius
+    assert!(sphere_zone(CENTRE, 0.0, ONE, TWO, ON_FIRST, ON_SECOND).is_err());
 }
 
 #[test]
@@ -273,9 +278,14 @@ fn gn_kernel() -> Kernel {
 fn a_law_that_dips_has_the_corner_ball_s_zone_between_its_sides() {
     let k = gn_kernel();
     let (kept, _) = law_corner_pieces(&k, [4.0, 2.0, 4.0]);
-    assert_eq!(kept.kinds, vec![LawCornerKind::Dip]);
-    assert_eq!(kept.centres, vec![CENTRE]);
-    assert_eq!(kept.radii, vec![2.0]);
+    assert_eq!(
+        kept.corners,
+        vec![LawCorner {
+            kind: LawCornerKind::Dip,
+            centre: CENTRE,
+            radius: 2.0
+        }]
+    );
     assert_eq!(kept.tol_3d, APPROX_TOL);
     assert!(kept.has_dip_or_peak());
     // the sides end on the touch circles the zone runs between
@@ -300,16 +310,22 @@ fn a_law_that_dips_has_the_corner_ball_s_zone_between_its_sides() {
 fn a_law_that_peaks_has_sides_that_run_past_each_other() {
     let k = gn_kernel();
     let (kept, _) = law_corner_pieces(&k, [2.0, 4.0, 2.0]);
-    assert_eq!(kept.kinds, vec![LawCornerKind::Peak]);
-    assert_eq!(kept.centres, vec![Point3::new(10.0, 16.0, 16.0)]);
-    assert_eq!(kept.radii, vec![4.0]);
+    assert_eq!(
+        kept.corners,
+        vec![LawCorner {
+            kind: LawCornerKind::Peak,
+            centre: Point3::new(10.0, 16.0, 16.0),
+            radius: 4.0
+        }]
+    );
 }
 
 #[test]
 fn a_constant_radius_corner_matches() {
     let k = gn_kernel();
     let (kept, _) = law_corner_pieces(&k, [3.0, 3.0, 3.0]);
-    assert_eq!(kept.kinds, vec![LawCornerKind::Matching]);
+    let kinds: Vec<_> = kept.corners.iter().map(|corner| corner.kind).collect();
+    assert_eq!(kinds, vec![LawCornerKind::Matching]);
     assert!(!kept.has_dip_or_peak());
     assert!(!has_built_law_corners(std::slice::from_ref(&kept)));
 }
