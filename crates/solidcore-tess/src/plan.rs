@@ -84,7 +84,10 @@ impl TessPlan {
                 normals.push(if f.flip { -n } else { n });
             }
             if let Some(reason) = why {
-                refused.push(RefusedFace { face: f.face as usize, reason });
+                refused.push(RefusedFace {
+                    face: f.face as usize,
+                    reason,
+                });
                 continue;
             }
             let base = out.positions.len();
@@ -139,9 +142,11 @@ impl TessPlan {
             .surfaces
             .iter()
             .map(|s| match s {
-                EvalSurface::Plane { origin, du, dv } => {
-                    EvalSurface::Plane { origin: vec3(point(record_vec3(*origin))), du: vec3(vector(record_vec3(*du))), dv: vec3(vector(record_vec3(*dv))) }
-                }
+                EvalSurface::Plane { origin, du, dv } => EvalSurface::Plane {
+                    origin: vec3(point(record_vec3(*origin))),
+                    du: vec3(vector(record_vec3(*du))),
+                    dv: vec3(vector(record_vec3(*dv))),
+                },
                 // An affine map keeps a surface closed or open.
                 EvalSurface::Nurbs(n) => EvalSurface::nurbs_closed(
                     n.degree(),
@@ -151,13 +156,20 @@ impl TessPlan {
                     n.ctrl()
                         .iter()
                         .map(|c| {
-                            let q = vector(Vec3::new(c[0], c[1], c[2])) + Vec3::new(m[3][0], m[3][1], m[3][2]) * c[3];
+                            let q = vector(Vec3::new(c[0], c[1], c[2]))
+                                + Vec3::new(m[3][0], m[3][1], m[3][2]) * c[3];
                             [q.x, q.y, q.z, c[3]]
                         })
                         .collect(),
                     n.closed(),
                 ),
-                EvalSurface::Revolved { profile, origin, axis, transform, swap } => {
+                EvalSurface::Revolved {
+                    profile,
+                    origin,
+                    axis,
+                    transform,
+                    swap,
+                } => {
                     // `m` (as rows) after the surface's own affine map.
                     let r = |i: usize| [m[0][i], m[1][i], m[2][i], m[3][i]];
                     let rows = [r(0), r(1), r(2)];
@@ -165,11 +177,18 @@ impl TessPlan {
                     let composed = rows.map(|row| {
                         let mut out = [0.0; 4];
                         for (j, slot) in out.iter_mut().enumerate() {
-                            *slot = (0..3).map(|k| row[k] * t[k][j]).sum::<f64>() + if j == 3 { row[3] } else { 0.0 };
+                            *slot = (0..3).map(|k| row[k] * t[k][j]).sum::<f64>()
+                                + if j == 3 { row[3] } else { 0.0 };
                         }
                         out
                     });
-                    EvalSurface::Revolved { profile: profile.clone(), origin: *origin, axis: *axis, transform: composed, swap: *swap }
+                    EvalSurface::Revolved {
+                        profile: profile.clone(),
+                        origin: *origin,
+                        axis: *axis,
+                        transform: composed,
+                        swap: *swap,
+                    }
                 }
             })
             .collect();
@@ -185,7 +204,11 @@ impl TessPlan {
         TessPlan {
             surfaces,
             faces,
-            edges: self.edges.iter().map(|e| e.iter().map(|p| point(*p)).collect()).collect(),
+            edges: self
+                .edges
+                .iter()
+                .map(|e| e.iter().map(|p| point(*p)).collect())
+                .collect(),
             edge_faces: self.edge_faces.clone(),
         }
     }
@@ -207,20 +230,37 @@ mod tests {
     fn a_transformed_plan_evaluates_to_the_moved_points() {
         let (c, s) = (0.6f64.cos(), 0.6f64.sin());
         // Turned about z by 0.6 rad, then moved: by columns.
-        let m = [[c, s, 0.0, 0.0], [-s, c, 0.0, 0.0], [0.0, 0.0, 1.0, 0.0], [5.0, -2.0, 7.0, 1.0]];
-        let apply = |p: Vec3| Vec3::new(c * p.x - s * p.y + 5.0, s * p.x + c * p.y - 2.0, p.z + 7.0);
+        let m = [
+            [c, s, 0.0, 0.0],
+            [-s, c, 0.0, 0.0],
+            [0.0, 0.0, 1.0, 0.0],
+            [5.0, -2.0, 7.0, 1.0],
+        ];
+        let apply =
+            |p: Vec3| Vec3::new(c * p.x - s * p.y + 5.0, s * p.x + c * p.y - 2.0, p.z + 7.0);
         let w = std::f64::consts::FRAC_1_SQRT_2;
         let nurbs = EvalSurface::nurbs(
             [2, 1],
             [vec![0.0, 0.0, 0.0, 1.0, 1.0, 1.0], vec![0.0, 0.0, 1.0, 1.0]],
             [3, 2],
-            vec![[1.0, 0.0, 0.0, 1.0], [w, w, 0.0, w], [0.0, 1.0, 0.0, 1.0], [1.0, 0.0, 2.0, 1.0], [w, w, 2.0 * w, w], [0.0, 1.0, 2.0, 1.0]],
+            vec![
+                [1.0, 0.0, 0.0, 1.0],
+                [w, w, 0.0, w],
+                [0.0, 1.0, 0.0, 1.0],
+                [1.0, 0.0, 2.0, 1.0],
+                [w, w, 2.0 * w, w],
+                [0.0, 1.0, 2.0, 1.0],
+            ],
         );
         let revolved = EvalSurface::Revolved {
             profile: line(Vec3::new(2.0, 0.0, 0.0), Vec3::new(3.0, 0.0, 1.0)),
             origin: solidcore::Vec3::ZERO,
             axis: solidcore::Vec3::Z,
-            transform: [[1.0, 0.0, 0.0, 1.0], [0.0, 0.0, -1.0, 2.0], [0.0, 1.0, 0.0, 3.0]],
+            transform: [
+                [1.0, 0.0, 0.0, 1.0],
+                [0.0, 0.0, -1.0, 2.0],
+                [0.0, 1.0, 0.0, 3.0],
+            ],
             swap: false,
         };
         let face = |i: u32| FacePlan {
@@ -249,13 +289,21 @@ mod tests {
     }
 
     fn line(a: Vec3, b: Vec3) -> EvalCurve {
-        EvalCurve::new(1, vec![0.0, 0.0, 1.0, 1.0], vec![[a.x, a.y, a.z, 1.0], [b.x, b.y, b.z, 1.0]])
+        EvalCurve::new(
+            1,
+            vec![0.0, 0.0, 1.0, 1.0],
+            vec![[a.x, a.y, a.z, 1.0], [b.x, b.y, b.z, 1.0]],
+        )
     }
 
     #[test]
     fn evaluate_uses_fixed_points_and_drops_bad_indices() {
         let plan = TessPlan {
-            surfaces: vec![EvalSurface::Plane { origin: solidcore::Vec3::ZERO, du: solidcore::Vec3::X, dv: solidcore::Vec3::Y }],
+            surfaces: vec![EvalSurface::Plane {
+                origin: solidcore::Vec3::ZERO,
+                du: solidcore::Vec3::X,
+                dv: solidcore::Vec3::Y,
+            }],
             faces: vec![FacePlan {
                 face: 3,
                 surface: Some(0),
@@ -270,15 +318,28 @@ mod tests {
         };
         let m = plan.evaluate().0;
         assert_eq!(m.positions.len(), 3);
-        assert_eq!(m.positions.first().copied(), Some(Vec3::new(0.0, 0.0, 1e-9)));
+        assert_eq!(
+            m.positions.first().copied(),
+            Some(Vec3::new(0.0, 0.0, 1e-9))
+        );
         assert_eq!(m.triangles, vec![[0, 1, 2]]);
         assert_eq!(m.tri_face, vec![3]);
         assert!(m.normals.iter().all(|n| close(*n, -Vec3::Z, 1e-12)));
         // Faces with triangles, counted without evaluating, are the faces the mesh has: not a
         // face whose only triangle is off its nodes, nor one with none, nor one out of range.
         let mut plan = plan;
-        let only = |face: u32, triangles: Vec<[u32; 3]>| FacePlan { face, uv: vec![[0.0, 0.0]; 3], triangles, ..Default::default() };
-        plan.faces.extend([only(0, vec![[0, 1, 9]]), only(1, vec![]), only(2, vec![[2, 1, 0]]), only(7, vec![[0, 1, 2]])]);
+        let only = |face: u32, triangles: Vec<[u32; 3]>| FacePlan {
+            face,
+            uv: vec![[0.0, 0.0]; 3],
+            triangles,
+            ..Default::default()
+        };
+        plan.faces.extend([
+            only(0, vec![[0, 1, 9]]),
+            only(1, vec![]),
+            only(2, vec![[2, 1, 0]]),
+            only(7, vec![[0, 1, 2]]),
+        ]);
         let has = plan.faces_with_triangles(5);
         let mut evaluated = vec![false; 5];
         for f in plan.evaluate().0.tri_face {

@@ -22,7 +22,9 @@ struct Side {
 /// The four corners of a single boundary loop, by how sharply the loop turns there in (u, v)
 /// scaled by `scale` (one unit per tolerance cell); `None` unless there are exactly four.
 fn corners(uv: &[[f64; 2]], scale: [f64; 2]) -> Option<[usize; 4]> {
-    let [a, b, c, d] = candidates(uv, scale)?[..] else { return None };
+    let [a, b, c, d] = candidates(uv, scale)?[..] else {
+        return None;
+    };
     Some([a, b, c, d])
 }
 
@@ -44,7 +46,9 @@ fn candidates(uv: &[[f64; 2]], scale: [f64; 2]) -> Option<Vec<usize>> {
             found.push(i);
             continue;
         }
-        let turn = (d0[0] * d1[1] - d0[1] * d1[0]).atan2(d0[0] * d1[0] + d0[1] * d1[1]).abs();
+        let turn = (d0[0] * d1[1] - d0[1] * d1[0])
+            .atan2(d0[0] * d1[0] + d0[1] * d1[1])
+            .abs();
         if turn > CORNER_TURN {
             found.push(i);
         }
@@ -62,7 +66,13 @@ const MAX_CANDIDATES: usize = 8;
 /// corner cut off, the wing of a butterfly around a hole): every choice of four of its corners
 /// is blended, and the one whose smallest triangle angle (in the metric `scale`) is largest
 /// wins. Its other corners lie on sides. `None` if no choice gives a blend that does not fold.
-pub(crate) fn coons_best(uv: &[[f64; 2]], fixed: &[Vec3], scale: [f64; 2], max_points: usize, h: f64) -> Option<(Vec<[f64; 2]>, Vec<[u32; 3]>)> {
+pub(crate) fn coons_best(
+    uv: &[[f64; 2]],
+    fixed: &[Vec3],
+    scale: [f64; 2],
+    max_points: usize,
+    h: f64,
+) -> Option<(Vec<[f64; 2]>, Vec<[u32; 3]>)> {
     let c = candidates(uv, scale)?;
     if c.len() < 4 || c.len() > MAX_CANDIDATES {
         return None;
@@ -74,7 +84,9 @@ pub(crate) fn coons_best(uv: &[[f64; 2]], fixed: &[Vec3], scale: [f64; 2], max_p
             for d in b + 1..k {
                 for e in d + 1..k {
                     let pick = [*c.get(a)?, *c.get(b)?, *c.get(d)?, *c.get(e)?];
-                    let Some(r) = coons_at(uv, fixed, pick, max_points, h, None) else { continue };
+                    let Some(r) = coons_at(uv, fixed, pick, max_points, h, None) else {
+                        continue;
+                    };
                     let q = min_angle(uv, &r, scale);
                     if best.as_ref().is_none_or(|(bq, _)| q > *bq) {
                         best = Some((q, r));
@@ -90,15 +102,23 @@ pub(crate) fn coons_best(uv: &[[f64; 2]], fixed: &[Vec3], scale: [f64; 2], max_p
 fn min_angle(uv: &[[f64; 2]], r: &(Vec<[f64; 2]>, Vec<[u32; 3]>), scale: [f64; 2]) -> f64 {
     let at = |i: u32| {
         let i = i as usize;
-        let q = if i < uv.len() { uv.get(i) } else { r.0.get(i - uv.len()) };
+        let q = if i < uv.len() {
+            uv.get(i)
+        } else {
+            r.0.get(i - uv.len())
+        };
         q.map(|q| [q[0] * scale[0], q[1] * scale[1]])
     };
     let mut worst = std::f64::consts::PI;
     for t in &r.1 {
-        let (Some(a), Some(b), Some(c)) = (at(t[0]), at(t[1]), at(t[2])) else { continue };
+        let (Some(a), Some(b), Some(c)) = (at(t[0]), at(t[1]), at(t[2])) else {
+            continue;
+        };
         for (p, q, s) in [(a, b, c), (b, c, a), (c, a, b)] {
             let (u, v) = ([q[0] - p[0], q[1] - p[1]], [s[0] - p[0], s[1] - p[1]]);
-            let ang = (u[0] * v[1] - u[1] * v[0]).abs().atan2(u[0] * v[0] + u[1] * v[1]);
+            let ang = (u[0] * v[1] - u[1] * v[0])
+                .abs()
+                .atan2(u[0] * v[0] + u[1] * v[1]);
             worst = worst.min(ang);
         }
     }
@@ -120,17 +140,35 @@ fn side(fixed: &[Vec3], n: usize, from: usize, to: usize) -> Option<Side> {
     if !(total > 0.0) {
         // A pole side: evenly along it.
         let m = (nodes.len() - 1).max(1) as f64;
-        return Some(Side { at: (0..nodes.len()).map(|k| k as f64 / m).collect(), nodes, len: 0.0 });
+        return Some(Side {
+            at: (0..nodes.len()).map(|k| k as f64 / m).collect(),
+            nodes,
+            len: 0.0,
+        });
     }
-    Some(Side { nodes, at: at.into_iter().map(|x| x / total).collect(), len: total })
+    Some(Side {
+        nodes,
+        at: at.into_iter().map(|x| x / total).collect(),
+        len: total,
+    })
 }
 
 /// The point of a side at position `s` (0 to 1), linear between its nodes.
 fn along(side: &Side, uv: &[[f64; 2]], s: f64) -> Option<[f64; 2]> {
-    let k = side.at.partition_point(|x| *x < s).clamp(1, side.at.len().saturating_sub(1).max(1));
+    let k = side
+        .at
+        .partition_point(|x| *x < s)
+        .clamp(1, side.at.len().saturating_sub(1).max(1));
     let (a0, a1) = (*side.at.get(k - 1)?, *side.at.get(k)?);
-    let (p, q) = (uv.get(*side.nodes.get(k - 1)? as usize)?, uv.get(*side.nodes.get(k)? as usize)?);
-    let f = if a1 > a0 { ((s - a0) / (a1 - a0)).clamp(0.0, 1.0) } else { 0.0 };
+    let (p, q) = (
+        uv.get(*side.nodes.get(k - 1)? as usize)?,
+        uv.get(*side.nodes.get(k)? as usize)?,
+    );
+    let f = if a1 > a0 {
+        ((s - a0) / (a1 - a0)).clamp(0.0, 1.0)
+    } else {
+        0.0
+    };
     Some([p[0] + (q[0] - p[0]) * f, p[1] + (q[1] - p[1]) * f])
 }
 
@@ -140,14 +178,26 @@ fn along(side: &Side, uv: &[[f64; 2]], s: f64) -> Option<[f64; 2]> {
 /// size rules ask (the sides' mean length over the target side `h`). The denser side then meets
 /// the grid node for node and the sparser one steps down to it through its ring.
 fn lines(a: &Side, b: &Side, h: f64) -> Vec<f64> {
-    let inner = |s: &Side| s.at.get(1..s.at.len().saturating_sub(1)).map(<[f64]>::to_vec).unwrap_or_default();
+    let inner = |s: &Side| {
+        s.at.get(1..s.at.len().saturating_sub(1))
+            .map(<[f64]>::to_vec)
+            .unwrap_or_default()
+    };
     if a.at.len() == b.at.len() {
-        let l: Vec<f64> = inner(a).iter().zip(inner(b)).map(|(x, y)| 0.5 * (x + y)).collect();
+        let l: Vec<f64> = inner(a)
+            .iter()
+            .zip(inner(b))
+            .map(|(x, y)| 0.5 * (x + y))
+            .collect();
         if !l.is_empty() {
             return l;
         }
     }
-    let size = if h > 0.0 { (0.5 * (a.len + b.len) / h).ceil() } else { 1.0 };
+    let size = if h > 0.0 {
+        (0.5 * (a.len + b.len) / h).ceil()
+    } else {
+        1.0
+    };
     let size = if size.is_finite() { size as usize } else { 1 };
     let outer = a.at.len().max(b.at.len()).saturating_sub(1);
     let n = outer.max(size).clamp(2, MAX_LEVEL);
@@ -194,10 +244,18 @@ pub(crate) fn coons_at(
     let (p00, p10, p11, p01) = (corner(c0)?, corner(c1)?, corner(c2)?, corner(c3)?);
     // The blend at (s, t): the sides' points, less the corners counted twice.
     let at = |s: f64, t: f64| -> Option<[f64; 2]> {
-        let (b, tp, l, r) = (along(&bottom, uv, s)?, along(&top, uv, s)?, along(&left, uv, t)?, along(&right, uv, t)?);
+        let (b, tp, l, r) = (
+            along(&bottom, uv, s)?,
+            along(&top, uv, s)?,
+            along(&left, uv, t)?,
+            along(&right, uv, t)?,
+        );
         let blend = |d: usize| {
             (1.0 - t) * b[d] + t * tp[d] + (1.0 - s) * l[d] + s * r[d]
-                - ((1.0 - s) * (1.0 - t) * p00[d] + s * (1.0 - t) * p10[d] + (1.0 - s) * t * p01[d] + s * t * p11[d])
+                - ((1.0 - s) * (1.0 - t) * p00[d]
+                    + s * (1.0 - t) * p10[d]
+                    + (1.0 - s) * t * p01[d]
+                    + s * t * p11[d])
         };
         Some([blend(0), blend(1)])
     };
@@ -206,9 +264,10 @@ pub(crate) fn coons_at(
     // spacing than its sides.
     let (ss, ts) = (lines(&bottom, &top, h), lines(&left, &right, h));
     let (ss, ts) = match fine {
-        Some(fine) => {
-            (refine(ss, max_points, &|a, b, x| Some(fine(at(a, x)?, at(b, x)?))), refine(ts, max_points, &|a, b, x| Some(fine(at(x, a)?, at(x, b)?))))
-        }
+        Some(fine) => (
+            refine(ss, max_points, &|a, b, x| Some(fine(at(a, x)?, at(b, x)?))),
+            refine(ts, max_points, &|a, b, x| Some(fine(at(x, a)?, at(x, b)?))),
+        ),
         None => (ss, ts),
     };
     if ss.len().checked_mul(ts.len())? > max_points {
@@ -244,11 +303,46 @@ pub(crate) fn coons_at(
     // grid row; its ends lie halfway between the diagonal from the corner to the grid row's end
     // and that end, so they are strictly inside the side's own ring.
     #[allow(clippy::type_complexity)]
-    let sides: [(&Side, Vec<u32>, &[f64], bool, (f64, f64), &dyn Fn(f64) -> [f64; 2]); 4] = [
-        (&bottom, row(0), &ss, false, (0.75 * s_first, 1.0 - 0.75 * (1.0 - s_last)), &|x| [x, 0.5 * t_first]),
-        (&right, col(ns - 1), &ts, false, (0.75 * t_first, 1.0 - 0.75 * (1.0 - t_last)), &|x| [0.5 * (1.0 + s_last), x]),
-        (&top, row(nt - 1), &ss, true, (0.75 * s_first, 1.0 - 0.75 * (1.0 - s_last)), &|x| [x, 0.5 * (1.0 + t_last)]),
-        (&left, col(0), &ts, true, (0.75 * t_first, 1.0 - 0.75 * (1.0 - t_last)), &|x| [0.5 * s_first, x]),
+    let sides: [(
+        &Side,
+        Vec<u32>,
+        &[f64],
+        bool,
+        (f64, f64),
+        &dyn Fn(f64) -> [f64; 2],
+    ); 4] = [
+        (
+            &bottom,
+            row(0),
+            &ss,
+            false,
+            (0.75 * s_first, 1.0 - 0.75 * (1.0 - s_last)),
+            &|x| [x, 0.5 * t_first],
+        ),
+        (
+            &right,
+            col(ns - 1),
+            &ts,
+            false,
+            (0.75 * t_first, 1.0 - 0.75 * (1.0 - t_last)),
+            &|x| [0.5 * (1.0 + s_last), x],
+        ),
+        (
+            &top,
+            row(nt - 1),
+            &ss,
+            true,
+            (0.75 * s_first, 1.0 - 0.75 * (1.0 - s_last)),
+            &|x| [x, 0.5 * (1.0 + t_last)],
+        ),
+        (
+            &left,
+            col(0),
+            &ts,
+            true,
+            (0.75 * t_first, 1.0 - 0.75 * (1.0 - t_last)),
+            &|x| [0.5 * s_first, x],
+        ),
     ];
     for (side, inner, inner_at, flip, (x0, x1), place) in sides {
         let (outer_segs, inner_segs) = (side.nodes.len().saturating_sub(1), inner.len() + 1);
@@ -258,7 +352,15 @@ pub(crate) fn coons_at(
             continue;
         }
         let k = mean - 1;
-        let at_t: Vec<f64> = (0..k).map(|j| if k > 1 { x0 + (x1 - x0) * j as f64 / (k - 1) as f64 } else { 0.5 * (x0 + x1) }).collect();
+        let at_t: Vec<f64> = (0..k)
+            .map(|j| {
+                if k > 1 {
+                    x0 + (x1 - x0) * j as f64 / (k - 1) as f64
+                } else {
+                    0.5 * (x0 + x1)
+                }
+            })
+            .collect();
         let mut mid: Vec<u32> = Vec::with_capacity(k);
         for &x in &at_t {
             let [sx, tx] = place(x);
@@ -266,18 +368,35 @@ pub(crate) fn coons_at(
             out.push(at(sx, tx)?);
         }
         zip(side, &mid, &at_t, flip, &mut tris)?;
-        zip(&Side { nodes: mid.clone(), at: at_t.clone(), len: 0.0 }, &inner, inner_at, flip, &mut tris)?;
+        zip(
+            &Side {
+                nodes: mid.clone(),
+                at: at_t.clone(),
+                len: 0.0,
+            },
+            &inner,
+            inner_at,
+            flip,
+            &mut tris,
+        )?;
         // The two end triangles: corner, transition end, grid end, turned like the zips' (in
         // (s, t) the first runs with them and the last against). Never turned to fit the blend:
         // a blend that folds there leaves one inverted, and the patch is refused below.
-        for t in [[*side.nodes.first()?, *mid.first()?, *inner.first()?], [*side.nodes.last()?, *inner.last()?, *mid.last()?]] {
+        for t in [
+            [*side.nodes.first()?, *mid.first()?, *inner.first()?],
+            [*side.nodes.last()?, *inner.last()?, *mid.last()?],
+        ] {
             tris.push(if flip { [t[0], t[2], t[1]] } else { t });
         }
     }
     // The (s, t) square maps to (u, v) keeping or reversing orientation, with the loop: all
     // triangles must share one sign, which is then made counter-clockwise.
     let area = |t: &[u32; 3]| -> Option<f64> {
-        let (a, b, c) = (out.get(t[0] as usize)?, out.get(t[1] as usize)?, out.get(t[2] as usize)?);
+        let (a, b, c) = (
+            out.get(t[0] as usize)?,
+            out.get(t[1] as usize)?,
+            out.get(t[2] as usize)?,
+        );
         Some((b[0] - a[0]) * (c[1] - a[1]) - (c[0] - a[0]) * (b[1] - a[1]))
     };
     let first = area(tris.first()?)?;
@@ -300,11 +419,16 @@ pub(crate) fn coons_at(
 /// `fine(a, b, x)` fails at some position `x` across (or the lines reach `max`).
 fn refine(lines: Vec<f64>, max: usize, fine: &dyn Fn(f64, f64, f64) -> Option<bool>) -> Vec<f64> {
     const ACROSS: [f64; 5] = [0.0, 0.25, 0.5, 0.75, 1.0];
-    let all: Vec<f64> = std::iter::once(0.0).chain(lines).chain(std::iter::once(1.0)).collect();
+    let all: Vec<f64> = std::iter::once(0.0)
+        .chain(lines)
+        .chain(std::iter::once(1.0))
+        .collect();
     let mut out = vec![0.0];
     let mut stack: Vec<(f64, f64, u32)> = all.windows(2).rev().map(|w| (w[0], w[1], 0)).collect();
     while let Some((a, b, depth)) = stack.pop() {
-        let ok = depth >= 16 || out.len() + stack.len() >= max || ACROSS.iter().all(|x| fine(a, b, *x).unwrap_or(true));
+        let ok = depth >= 16
+            || out.len() + stack.len() >= max
+            || ACROSS.iter().all(|x| fine(a, b, *x).unwrap_or(true));
         if ok {
             out.push(b);
         } else {
@@ -317,11 +441,21 @@ fn refine(lines: Vec<f64>, max: usize, fine: &dyn Fn(f64, f64, f64) -> Option<bo
 }
 
 fn reversed(s: Side) -> Side {
-    Side { nodes: s.nodes.into_iter().rev().collect(), at: s.at.into_iter().rev().map(|x| 1.0 - x).collect(), len: s.len }
+    Side {
+        nodes: s.nodes.into_iter().rev().collect(),
+        at: s.at.into_iter().rev().map(|x| 1.0 - x).collect(),
+        len: s.len,
+    }
 }
 
 /// Join a side (its nodes at positions `side.at`) to a grid row at positions `inner_at`.
-fn zip(side: &Side, inner: &[u32], inner_at: &[f64], flip: bool, tris: &mut Vec<[u32; 3]>) -> Option<()> {
+fn zip(
+    side: &Side,
+    inner: &[u32],
+    inner_at: &[f64],
+    flip: bool,
+    tris: &mut Vec<[u32; 3]>,
+) -> Option<()> {
     let mut push = |a: u32, b: u32, c: u32| tris.push(if flip { [a, c, b] } else { [a, b, c] });
     let (outer, oat) = (&side.nodes, &side.at);
     let (mut a, mut b) = (0usize, 0usize);
@@ -380,10 +514,16 @@ mod tests {
                     b.reverse();
                 }
                 let fixed: Vec<Vec3> = b.iter().map(|p| Vec3::new(p[0], p[1], 0.0)).collect();
-                let Some((extra, tris)) = coons(&b, &fixed, [1.0, 1.0], 10_000, 1.0, None) else { panic!("meshes (k {k})") };
+                let Some((extra, tris)) = coons(&b, &fixed, [1.0, 1.0], 10_000, 1.0, None) else {
+                    panic!("meshes (k {k})")
+                };
                 let mut uv = b.clone();
                 uv.extend(extra);
-                assert!((area(&uv, &tris) - 16.0).abs() < 1e-9, "k {k} reverse {reverse}: {}", area(&uv, &tris));
+                assert!(
+                    (area(&uv, &tris) - 16.0).abs() < 1e-9,
+                    "k {k} reverse {reverse}: {}",
+                    area(&uv, &tris)
+                );
             }
         }
     }
@@ -400,7 +540,9 @@ mod tests {
         b.extend((0..4).map(|k| [4.0 - k as f64, 4.0]));
         b.extend((0..4).map(|k| [0.0, 4.0 - k as f64]));
         let fixed: Vec<Vec3> = b.iter().map(|p| Vec3::new(p[0], p[1], 0.0)).collect();
-        let Some((extra, tris)) = coons(&b, &fixed, [1.0, 1.0], 10_000, 1.0, None) else { panic!("meshes") };
+        let Some((extra, tris)) = coons(&b, &fixed, [1.0, 1.0], 10_000, 1.0, None) else {
+            panic!("meshes")
+        };
         let mut uv = b.clone();
         uv.extend(extra.iter().copied());
         assert!((area(&uv, &tris) - 16.0).abs() < 1e-9);
@@ -409,7 +551,8 @@ mod tests {
         assert_eq!(extra.len(), 19 * 3 + 8, "{}", extra.len());
         // Every inner side shared by two triangles, every boundary side used once: nothing
         // missing or doubled at the transition's ends.
-        let mut sides: std::collections::HashMap<(u32, u32), i32> = std::collections::HashMap::new();
+        let mut sides: std::collections::HashMap<(u32, u32), i32> =
+            std::collections::HashMap::new();
         for t in &tris {
             for e in 0..3 {
                 *sides.entry((t[e], t[(e + 1) % 3])).or_default() += 1;
@@ -419,7 +562,10 @@ mod tests {
         for (&(a, c), &k) in &sides {
             assert_eq!(k, 1, "side {a}-{c} once each way");
             let boundary = a < n && c < n && (c == (a + 1) % n);
-            assert!(boundary || sides.contains_key(&(c, a)), "inner side {a}-{c} shared");
+            assert!(
+                boundary || sides.contains_key(&(c, a)),
+                "inner side {a}-{c} shared"
+            );
         }
     }
 
@@ -515,19 +661,31 @@ mod tests {
         ];
         let fixed: Vec<Vec3> = b.iter().map(|p| Vec3::new(p[0], p[1], 0.0)).collect();
         let n = b.len();
-        let loop_area: f64 = (0..n).map(|k| 0.5 * (b[k][0] * b[(k + 1) % n][1] - b[(k + 1) % n][0] * b[k][1])).sum();
+        let loop_area: f64 = (0..n)
+            .map(|k| 0.5 * (b[k][0] * b[(k + 1) % n][1] - b[(k + 1) % n][0] * b[k][1]))
+            .sum();
         for h in [0.25, 0.5, 0.75, 1.0, 1.5, 2.0, 3.0, 4.0, 6.0, 8.0] {
-            let Some((extra, tris)) = coons(&b, &fixed, [1.0, 1.0], 100_000, h, None) else { continue };
+            let Some((extra, tris)) = coons(&b, &fixed, [1.0, 1.0], 100_000, h, None) else {
+                continue;
+            };
             let mut uv = b.clone();
             uv.extend(extra);
-            assert!((area(&uv, &tris) - loop_area).abs() < 1e-9 * loop_area, "h {h}: {} for {loop_area}", area(&uv, &tris));
-            let mut sides: std::collections::HashMap<(u32, u32), usize> = std::collections::HashMap::new();
+            assert!(
+                (area(&uv, &tris) - loop_area).abs() < 1e-9 * loop_area,
+                "h {h}: {} for {loop_area}",
+                area(&uv, &tris)
+            );
+            let mut sides: std::collections::HashMap<(u32, u32), usize> =
+                std::collections::HashMap::new();
             for t in &tris {
                 for k in 0..3 {
                     *sides.entry((t[k], t[(k + 1) % 3])).or_default() += 1;
                 }
             }
-            assert!(sides.values().all(|&k| k == 1), "h {h}: a side used twice the same way");
+            assert!(
+                sides.values().all(|&k| k == 1),
+                "h {h}: a side used twice the same way"
+            );
         }
     }
 }

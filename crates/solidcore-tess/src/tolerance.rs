@@ -39,7 +39,10 @@ impl MeshTolerance {
     /// small radii on a large body look round too.
     #[must_use]
     pub const fn display(chord: f64) -> Self {
-        MeshTolerance { chord, angle: Some(DISPLAY_ANGLE) }
+        MeshTolerance {
+            chord,
+            angle: Some(DISPLAY_ANGLE),
+        }
     }
 
     /// The display mesh of a body of size `size` (its box diagonal): 1/1000 of it, at least
@@ -58,15 +61,28 @@ impl MeshTolerance {
 
     /// The planner's chord tolerance and facet angle for a body of size `size`.
     pub(crate) fn rules(&self, size: f64) -> (f64, Option<Turn>) {
-        let tol = if self.chord.is_finite() && self.chord > 0.0 { self.chord } else { 0.05 };
+        let tol = if self.chord.is_finite() && self.chord > 0.0 {
+            self.chord
+        } else {
+            0.05
+        };
         let tol = tol.max(size * 1e-6);
-        let turn = self.angle.filter(|a| a.is_finite() && *a > 0.0).map(|a| Turn { angle: a.max(MIN_DISPLAY_ANGLE), floor: tol * DISPLAY_ANGLE_FLOOR });
+        let turn = self
+            .angle
+            .filter(|a| a.is_finite() && *a > 0.0)
+            .map(|a| Turn {
+                angle: a.max(MIN_DISPLAY_ANGLE),
+                floor: tol * DISPLAY_ANGLE_FLOOR,
+            });
         (tol, turn)
     }
 
     /// A key that tells tolerances apart bit for bit, for keeping meshes made at each.
     #[must_use]
     pub fn key(&self) -> (u64, u64) {
-        (self.chord.to_bits(), self.angle.map_or(u64::MAX, f64::to_bits))
+        (
+            self.chord.to_bits(),
+            self.angle.map_or(u64::MAX, f64::to_bits),
+        )
     }
 }

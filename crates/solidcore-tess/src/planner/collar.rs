@@ -14,7 +14,13 @@ use super::pieces::{End, Segment};
 /// face is a plane, whose shading does not depend on its interior: a butterfly's square sides
 /// take half the facing arc's count there (each wing steps 2:1), instead of the whole count. `None` when the face has no hole, or a hole has no room
 /// for a collar (it touches another feature).
-pub(crate) fn segments(uvs: &[[f64; 2]], loops: &[std::ops::Range<usize>], scale: [f64; 2], seed: f64, flat: bool) -> Option<Vec<Segment>> {
+pub(crate) fn segments(
+    uvs: &[[f64; 2]],
+    loops: &[std::ops::Range<usize>],
+    scale: [f64; 2],
+    seed: f64,
+    flat: bool,
+) -> Option<Vec<Segment>> {
     let snap = 0.25 * seed;
     let metric = |q: [f64; 2]| [q[0] * scale[0], q[1] * scale[1]];
     let unmetric = |q: [f64; 2]| [q[0] / scale[0], q[1] / scale[1]];
@@ -22,14 +28,26 @@ pub(crate) fn segments(uvs: &[[f64; 2]], loops: &[std::ops::Range<usize>], scale
         let m = r.len();
         (0..m)
             .filter_map(|k| {
-                let (a, b) = (metric(*uvs.get(r.start + k)?), metric(*uvs.get(r.start + (k + 1) % m)?));
+                let (a, b) = (
+                    metric(*uvs.get(r.start + k)?),
+                    metric(*uvs.get(r.start + (k + 1) % m)?),
+                );
                 Some(0.5 * (a[0] * b[1] - b[0] * a[1]))
             })
             .sum()
     };
     // The outer loop encloses the most area; the others are holes.
-    let outer = loops.iter().enumerate().max_by(|a, b| area(a.1).abs().total_cmp(&area(b.1).abs()))?.0;
-    let holes: Vec<&std::ops::Range<usize>> = loops.iter().enumerate().filter(|(i, _)| *i != outer).map(|(_, r)| r).collect();
+    let outer = loops
+        .iter()
+        .enumerate()
+        .max_by(|a, b| area(a.1).abs().total_cmp(&area(b.1).abs()))?
+        .0;
+    let holes: Vec<&std::ops::Range<usize>> = loops
+        .iter()
+        .enumerate()
+        .filter(|(i, _)| *i != outer)
+        .map(|(_, r)| r)
+        .collect();
     let outer = loops.get(outer)?;
     let bbox = |r: &std::ops::Range<usize>| -> Option<([f64; 2], [f64; 2])> {
         let (mut lo, mut hi) = ([f64::MAX; 2], [f64::MIN; 2]);
@@ -51,7 +69,10 @@ pub(crate) fn segments(uvs: &[[f64; 2]], loops: &[std::ops::Range<usize>], scale
             return None;
         }
         let mut out = [0usize; 4];
-        for (slot, dir) in out.iter_mut().zip([[-1.0, -1.0], [1.0, -1.0], [1.0, 1.0], [-1.0, 1.0]]) {
+        for (slot, dir) in out
+            .iter_mut()
+            .zip([[-1.0, -1.0], [1.0, -1.0], [1.0, 1.0], [-1.0, 1.0]])
+        {
             let reach = |i: usize| {
                 uvs.get(i).map_or(f64::MIN, |q| {
                     let q = metric(*q);
@@ -72,8 +93,15 @@ pub(crate) fn segments(uvs: &[[f64; 2]], loops: &[std::ops::Range<usize>], scale
         let m = r.len();
         let (a, b) = (*p.get(k)? - r.start, *p.get((k + 1) % 4)? - r.start);
         let fwd = (b + m - a) % m;
-        let others: Vec<usize> = (0..4).filter(|&j| j != k && j != (k + 1) % 4).filter_map(|j| p.get(j).map(|x| (x - r.start + m - a) % m)).collect();
-        Some(if others.iter().all(|&o| o > fwd) { fwd } else { m - fwd })
+        let others: Vec<usize> = (0..4)
+            .filter(|&j| j != k && j != (k + 1) % 4)
+            .filter_map(|j| p.get(j).map(|x| (x - r.start + m - a) % m))
+            .collect();
+        Some(if others.iter().all(|&o| o > fwd) {
+            fwd
+        } else {
+            m - fwd
+        })
     };
     // A face of one round loop (no hole, no concave peak; a disc, an ellipse): the butterfly.
     // A square inside it, its corners halfway from the loop's centre to the loop's four 45°
@@ -81,7 +109,17 @@ pub(crate) fn segments(uvs: &[[f64; 2]], loops: &[std::ops::Range<usize>], scale
     // it. Five four-sided patches: the square and four wings.
     if holes.is_empty() {
         let alone: Vec<[f64; 2]> = outer.clone().filter_map(|k| uvs.get(k).copied()).collect();
-        if !motorcycle::traces(&alone, &[std::ops::Range { start: 0, end: alone.len() }], scale, snap).is_empty() {
+        if !motorcycle::traces(
+            &alone,
+            &[std::ops::Range {
+                start: 0,
+                end: alone.len(),
+            }],
+            scale,
+            snap,
+        )
+        .is_empty()
+        {
             return None;
         }
         let p = supports(outer)?;
@@ -90,7 +128,10 @@ pub(crate) fn segments(uvs: &[[f64; 2]], loops: &[std::ops::Range<usize>], scale
         let mut corners = [[0.0; 2]; 4];
         for (c, &i) in corners.iter_mut().zip(&p) {
             let q = metric(*uvs.get(i)?);
-            *c = unmetric([centre[0] + 0.5 * (q[0] - centre[0]), centre[1] + 0.5 * (q[1] - centre[1])]);
+            *c = unmetric([
+                centre[0] + 0.5 * (q[0] - centre[0]),
+                centre[1] + 0.5 * (q[1] - centre[1]),
+            ]);
         }
         let mut segs = Vec::with_capacity(8);
         for k in 0..4 {
@@ -101,7 +142,11 @@ pub(crate) fn segments(uvs: &[[f64; 2]], loops: &[std::ops::Range<usize>], scale
             });
         }
         for (k, &i) in p.iter().enumerate() {
-            segs.push(Segment { a: End::Point(*corners.get(k)?), b: End::Node(u32::try_from(i).ok()?), count: None });
+            segs.push(Segment {
+                a: End::Point(*corners.get(k)?),
+                b: End::Node(u32::try_from(i).ok()?),
+                count: None,
+            });
         }
         return Some(segs);
     }
@@ -112,13 +157,24 @@ pub(crate) fn segments(uvs: &[[f64; 2]], loops: &[std::ops::Range<usize>], scale
     let (olo, ohi) = bbox(outer)?;
     for hole in &holes {
         let (lo, hi) = bbox(hole)?;
-        let gaps = [lo[0] - olo[0], lo[1] - olo[1], ohi[0] - hi[0], ohi[1] - hi[1]];
+        let gaps = [
+            lo[0] - olo[0],
+            lo[1] - olo[1],
+            ohi[0] - hi[0],
+            ohi[1] - hi[1],
+        ];
         if holes.len() == 1 && gaps.iter().any(|g| *g < 2.0 * seed) {
             let (inner, out) = (supports(hole)?, supports(outer)?);
             return inner
                 .iter()
                 .zip(out)
-                .map(|(&a, b)| Some(Segment { a: End::Node(u32::try_from(a).ok()?), b: End::Node(u32::try_from(b).ok()?), count: None }))
+                .map(|(&a, b)| {
+                    Some(Segment {
+                        a: End::Node(u32::try_from(a).ok()?),
+                        b: End::Node(u32::try_from(b).ok()?),
+                        count: None,
+                    })
+                })
                 .collect();
         }
     }
@@ -132,10 +188,21 @@ pub(crate) fn segments(uvs: &[[f64; 2]], loops: &[std::ops::Range<usize>], scale
     let to_segment = |p: [f64; 2], a: [f64; 2], b: [f64; 2]| {
         let (ab, ap) = ([b[0] - a[0], b[1] - a[1]], [p[0] - a[0], p[1] - a[1]]);
         let len2 = ab[0] * ab[0] + ab[1] * ab[1];
-        let t = if len2 > 0.0 { ((ap[0] * ab[0] + ap[1] * ab[1]) / len2).clamp(0.0, 1.0) } else { 0.0 };
+        let t = if len2 > 0.0 {
+            ((ap[0] * ab[0] + ap[1] * ab[1]) / len2).clamp(0.0, 1.0)
+        } else {
+            0.0
+        };
         (p[0] - a[0] - t * ab[0]).hypot(p[1] - a[1] - t * ab[1])
     };
-    let corners_of = |(lo, hi): ([f64; 2], [f64; 2])| [[lo[0], lo[1]], [hi[0], lo[1]], [hi[0], hi[1]], [lo[0], hi[1]]];
+    let corners_of = |(lo, hi): ([f64; 2], [f64; 2])| {
+        [
+            [lo[0], lo[1]],
+            [hi[0], lo[1]],
+            [hi[0], hi[1]],
+            [lo[0], hi[1]],
+        ]
+    };
     // Each square: the hole's box grown by half its clearance to the outer loop and a quarter of
     // its gap to another hole's box (both squares grow into that gap), so squares never touch.
     let m = outer.len();
@@ -143,7 +210,10 @@ pub(crate) fn segments(uvs: &[[f64; 2]], loops: &[std::ops::Range<usize>], scale
     for (i, &bx) in boxes.iter().enumerate() {
         let mut clear = f64::INFINITY;
         for k in 0..m {
-            let (a, b) = (metric(*uvs.get(outer.start + k)?), metric(*uvs.get(outer.start + (k + 1) % m)?));
+            let (a, b) = (
+                metric(*uvs.get(outer.start + k)?),
+                metric(*uvs.get(outer.start + (k + 1) % m)?),
+            );
             clear = clear.min(to_box(a, bx));
             for c in corners_of(bx) {
                 clear = clear.min(to_segment(c, a, b));
@@ -162,7 +232,10 @@ pub(crate) fn segments(uvs: &[[f64; 2]], loops: &[std::ops::Range<usize>], scale
         if !(margin.is_finite() && margin > 0.0) {
             return None;
         }
-        squares.push(([bx.0[0] - margin, bx.0[1] - margin], [bx.1[0] + margin, bx.1[1] + margin]));
+        squares.push((
+            [bx.0[0] - margin, bx.0[1] - margin],
+            [bx.1[0] + margin, bx.1[1] + margin],
+        ));
     }
     let mut segs: Vec<Segment> = Vec::new();
     // Each hole's four 45° points (towards its square's corners, in order).
@@ -173,19 +246,30 @@ pub(crate) fn segments(uvs: &[[f64; 2]], loops: &[std::ops::Range<usize>], scale
     for ((&sq, hole), p) in squares.iter().zip(&holes).zip(&picks) {
         let c = corners_of(sq).map(unmetric);
         for k in 0..4 {
-            segs.push(Segment { a: End::Point(*c.get(k)?), b: End::Point(*c.get((k + 1) % 4)?), count: Some(side_count(arc(hole, p, k)?)) });
+            segs.push(Segment {
+                a: End::Point(*c.get(k)?),
+                b: End::Point(*c.get((k + 1) % 4)?),
+                count: Some(side_count(arc(hole, p, k)?)),
+            });
         }
     }
     for (p, &sq) in picks.iter().zip(&squares) {
         let c = corners_of(sq).map(unmetric);
         for (k, &i) in p.iter().enumerate() {
-            segs.push(Segment { a: End::Point(*c.get(k)?), b: End::Node(u32::try_from(i).ok()?), count: None });
+            segs.push(Segment {
+                a: End::Point(*c.get(k)?),
+                b: End::Node(u32::try_from(i).ok()?),
+                count: None,
+            });
         }
     }
     // The motorcycles, with the squares as the obstacles: the outer loop, then each square as a
     // loop of its four corners.
     let mut domain: Vec<[f64; 2]> = outer.clone().filter_map(|k| uvs.get(k).copied()).collect();
-    let mut dloops = vec![std::ops::Range { start: 0, end: domain.len() }];
+    let mut dloops = vec![std::ops::Range {
+        start: 0,
+        end: domain.len(),
+    }];
     for &sq in &squares {
         let start = domain.len();
         domain.extend(corners_of(sq).map(unmetric));
@@ -195,19 +279,32 @@ pub(crate) fn segments(uvs: &[[f64; 2]], loops: &[std::ops::Range<usize>], scale
     let base = segs.len();
     let on_outer = |i: usize| i < outer.len();
     for (ti, t) in traces.iter().enumerate() {
-        let start = if on_outer(t.start) { End::Node(u32::try_from(outer.start + t.start).ok()?) } else { End::Point(*domain.get(t.start)?) };
+        let start = if on_outer(t.start) {
+            End::Node(u32::try_from(outer.start + t.start).ok()?)
+        } else {
+            End::Point(*domain.get(t.start)?)
+        };
         let end = match t.end {
             Stop::Boundary(a, b) if on_outer(a) && on_outer(b) => {
                 // The nearer end of the boundary segment it reached (a cut never adds a node to
                 // the boundary).
                 let (pa, pb) = (metric(*domain.get(a)?), metric(*domain.get(b)?));
                 let q = metric(t.b);
-                let k = if (pa[0] - q[0]).hypot(pa[1] - q[1]) <= (pb[0] - q[0]).hypot(pb[1] - q[1]) { a } else { b };
+                let k = if (pa[0] - q[0]).hypot(pa[1] - q[1]) <= (pb[0] - q[0]).hypot(pb[1] - q[1])
+                {
+                    a
+                } else {
+                    b
+                };
                 End::Node(u32::try_from(outer.start + k).ok()?)
             }
             Stop::Boundary(a, b) => {
                 // A side of a square: corners `a` and `b` of square `s`.
-                let (s, la, lb) = ((a - outer.len()) / 4, (a - outer.len()) % 4, (b - outer.len()) % 4);
+                let (s, la, lb) = (
+                    (a - outer.len()) / 4,
+                    (a - outer.len()) % 4,
+                    (b - outer.len()) % 4,
+                );
                 let k = if (la + 1) % 4 == lb { la } else { lb };
                 End::On(4 * s + k, t.b)
             }
@@ -218,7 +315,11 @@ pub(crate) fn segments(uvs: &[[f64; 2]], loops: &[std::ops::Range<usize>], scale
             }
         };
         let _ = ti;
-        segs.push(Segment { a: start, b: end, count: None });
+        segs.push(Segment {
+            a: start,
+            b: end,
+            count: None,
+        });
     }
     Some(segs)
 }

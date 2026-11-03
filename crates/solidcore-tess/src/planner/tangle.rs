@@ -35,7 +35,8 @@ impl Chord {
 /// never cross. `reach`: how near a pole a node is taken as one (see [`solidcore::eval::uv::degenerate_within`]).
 pub(crate) fn crossing(s: &EvalSurface, reach: f64, loops: &[seam::Loop]) -> Vec<(usize, usize)> {
     let dom = solidcore::eval::uv::domain(s);
-    let pole = |q: [f64; 2]| (0..2).any(|d| solidcore::eval::uv::degenerate_within(s, &dom, q, d, reach));
+    let pole =
+        |q: [f64; 2]| (0..2).any(|d| solidcore::eval::uv::degenerate_within(s, &dom, q, d, reach));
     let mut chords: Vec<Chord> = Vec::new();
     for (li, l) in loops.iter().enumerate() {
         let n = l.uv.len();
@@ -43,7 +44,9 @@ pub(crate) fn crossing(s: &EvalSurface, reach: f64, loops: &[seam::Loop]) -> Vec
             continue;
         }
         for k in 0..n {
-            let (Some(&a), Some(&b)) = (l.uv.get(k), l.uv.get((k + 1) % n)) else { continue };
+            let (Some(&a), Some(&b)) = (l.uv.get(k), l.uv.get((k + 1) % n)) else {
+                continue;
+            };
             if !(a.iter().chain(&b).all(|x| x.is_finite())) || pole(a) || pole(b) {
                 continue;
             }
@@ -138,7 +141,9 @@ fn along(a: [f64; 2], b: [f64; 2], c: [f64; 2], d: [f64; 2]) -> bool {
 
 /// Whether the segments `ab` and `cd` cross: each one's ends strictly either side of the other.
 fn cross(a: [f64; 2], b: [f64; 2], c: [f64; 2], d: [f64; 2]) -> bool {
-    let orient = |p: [f64; 2], q: [f64; 2], r: [f64; 2]| (q[0] - p[0]) * (r[1] - p[1]) - (q[1] - p[1]) * (r[0] - p[0]);
+    let orient = |p: [f64; 2], q: [f64; 2], r: [f64; 2]| {
+        (q[0] - p[0]) * (r[1] - p[1]) - (q[1] - p[1]) * (r[0] - p[0])
+    };
     let len = |p: [f64; 2], q: [f64; 2]| (q[0] - p[0]).hypot(q[1] - p[1]);
     let eps = STRADDLE * len(a, b) * len(c, d);
     let side = |o: f64| {
@@ -150,7 +155,12 @@ fn cross(a: [f64; 2], b: [f64; 2], c: [f64; 2], d: [f64; 2]) -> bool {
             0
         }
     };
-    let (s1, s2, s3, s4) = (side(orient(a, b, c)), side(orient(a, b, d)), side(orient(c, d, a)), side(orient(c, d, b)));
+    let (s1, s2, s3, s4) = (
+        side(orient(a, b, c)),
+        side(orient(a, b, d)),
+        side(orient(c, d, a)),
+        side(orient(c, d, b)),
+    );
     s1 * s2 < 0 && s3 * s4 < 0
 }
 

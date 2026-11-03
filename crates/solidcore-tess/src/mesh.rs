@@ -48,7 +48,8 @@ impl Mesh {
     /// Visibility in wireframe, including triangle-mesh outlines without B-rep identities.
     #[must_use]
     pub fn edge_visible(&self, index: usize) -> bool {
-        !self.seams.get(index).copied().unwrap_or(false) || self.sharp_edges.get(index).copied().unwrap_or(false)
+        !self.seams.get(index).copied().unwrap_or(false)
+            || self.sharp_edges.get(index).copied().unwrap_or(false)
     }
 
     /// Whether edge `index` can be picked: a visible B-rep edge, not a mesh outline.
@@ -60,13 +61,22 @@ impl Mesh {
     /// Edges bounding face `f`.
     #[must_use]
     pub fn face_edges(&self, f: u32) -> Vec<usize> {
-        self.edge_faces.iter().enumerate().filter(|(_, fs)| fs.contains(&f)).map(|(i, _)| i).collect()
+        self.edge_faces
+            .iter()
+            .enumerate()
+            .filter(|(_, fs)| fs.contains(&f))
+            .map(|(i, _)| i)
+            .collect()
     }
 
     /// The corners of triangle `t`, `None` where an index is out of range.
     #[must_use]
     pub fn tri(&self, t: &[u32; 3]) -> Option<[Vec3; 3]> {
-        Some([*self.positions.get(t[0] as usize)?, *self.positions.get(t[1] as usize)?, *self.positions.get(t[2] as usize)?])
+        Some([
+            *self.positions.get(t[0] as usize)?,
+            *self.positions.get(t[1] as usize)?,
+            *self.positions.get(t[2] as usize)?,
+        ])
     }
 
     /// Append another mesh (face ids offset by `face_offset`).
@@ -74,8 +84,15 @@ impl Mesh {
         let base = u32::try_from(self.positions.len()).unwrap_or(u32::MAX);
         self.positions.extend_from_slice(&o.positions);
         self.normals.extend_from_slice(&o.normals);
-        self.triangles.extend(o.triangles.iter().map(|t| [t[0].saturating_add(base), t[1].saturating_add(base), t[2].saturating_add(base)]));
-        self.tri_face.extend(o.tri_face.iter().map(|f| f.saturating_add(face_offset)));
+        self.triangles.extend(o.triangles.iter().map(|t| {
+            [
+                t[0].saturating_add(base),
+                t[1].saturating_add(base),
+                t[2].saturating_add(base),
+            ]
+        }));
+        self.tri_face
+            .extend(o.tri_face.iter().map(|f| f.saturating_add(face_offset)));
         self.edges.extend(o.edges.iter().cloned());
     }
 }

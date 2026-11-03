@@ -8,8 +8,8 @@
 //! on the surface, so their nodes are made once and shared: the face stays closed across it.
 
 use solidcore::eval::EvalSurface;
-use solidcore_record::Vec3;
 use solidcore_convert as kernel;
+use solidcore_record::Vec3;
 
 use super::size::Rules;
 
@@ -28,7 +28,9 @@ const MAX_SEAM_NODES: usize = 4096;
 /// How far `l` drifts along `d` going once around it (a whole number of periods for a closed
 /// loop: zero unless it winds around the surface).
 pub(crate) fn drift(l: &Loop, d: usize, per: f64) -> f64 {
-    let (Some(first), Some(last)) = (l.uv.first(), l.uv.last()) else { return 0.0 };
+    let (Some(first), Some(last)) = (l.uv.first(), l.uv.last()) else {
+        return 0.0;
+    };
     let close = solidcore::eval::uv::unwrap(first[d], last[d], Some(per)) - last[d];
     last[d] - first[d] + close
 }
@@ -56,7 +58,14 @@ struct Piece {
 /// Cut a face whose loops wind around direction `d` (period `per`) into one period. The face
 /// lies left of its loops in (u, v). `None` when the loops cannot be cut cleanly (the face would
 /// be unbounded along the line, or the two lines disagree); the caller then fails as before.
-pub(crate) fn cut(s: &EvalSurface, loops: &[Loop], d: usize, per: f64, rules: &Rules, h: f64) -> Option<Vec<Loop>> {
+pub(crate) fn cut(
+    s: &EvalSurface,
+    loops: &[Loop],
+    d: usize,
+    per: f64,
+    rules: &Rules,
+    h: f64,
+) -> Option<Vec<Loop>> {
     if !(per > 0.0 && per.is_finite()) || loops.is_empty() {
         return None;
     }
@@ -66,7 +75,10 @@ pub(crate) fn cut(s: &EvalSurface, loops: &[Loop], d: usize, per: f64, rules: &R
     let local: Vec<Loop> = loops
         .iter()
         .map(|l| {
-            let mut uv: Vec<[f64; 2]> = l.uv.iter().map(|q| if swap { [q[1], q[0]] } else { *q }).collect();
+            let mut uv: Vec<[f64; 2]> =
+                l.uv.iter()
+                    .map(|q| if swap { [q[1], q[0]] } else { *q })
+                    .collect();
             let mut pts = l.pts.clone();
             if swap {
                 uv.reverse();
@@ -85,7 +97,9 @@ pub(crate) fn cut(s: &EvalSurface, loops: &[Loop], d: usize, per: f64, rules: &R
             return None;
         }
         let w = drift(l, 0, per);
-        let (lo, hi) = l.uv.iter().fold((f64::MAX, f64::MIN), |(a, b), q| (a.min(q[0]), b.max(q[0])));
+        let (lo, hi) =
+            l.uv.iter()
+                .fold((f64::MAX, f64::MIN), |(a, b), q| (a.min(q[0]), b.max(q[0])));
         if !(lo.is_finite() && hi.is_finite()) {
             return None;
         }
@@ -100,13 +114,18 @@ pub(crate) fn cut(s: &EvalSurface, loops: &[Loop], d: usize, per: f64, rules: &R
                 let shift = per * k as f64;
                 let uv: Vec<[f64; 2]> = l.uv.iter().map(|q| [q[0] + shift, q[1]]).collect();
                 if uv.iter().all(|q| q[0] > x0 && q[0] < x1) {
-                    closed.push(Loop { uv, pts: l.pts.clone() });
+                    closed.push(Loop {
+                        uv,
+                        pts: l.pts.clone(),
+                    });
                 } else if uv.iter().any(|q| q[0] > x0 && q[0] < x1) || crosses(&uv, x0, x1) {
                     // Start at a node outside the strip, so every run inside is whole.
                     let start = uv.iter().position(|q| !(q[0] > x0 && q[0] < x1))?;
                     let idx: Vec<usize> = (0..=n).map(|i| (start + i) % n).collect();
-                    let path: Vec<[f64; 2]> = idx.iter().filter_map(|&i| uv.get(i).copied()).collect();
-                    let pts: Vec<Vec3> = idx.iter().filter_map(|&i| l.pts.get(i).copied()).collect();
+                    let path: Vec<[f64; 2]> =
+                        idx.iter().filter_map(|&i| uv.get(i).copied()).collect();
+                    let pts: Vec<Vec3> =
+                        idx.iter().filter_map(|&i| l.pts.get(i).copied()).collect();
                     clip(&path, &pts, x0, x1, &mut pieces);
                 }
             }
@@ -124,9 +143,15 @@ pub(crate) fn cut(s: &EvalSurface, loops: &[Loop], d: usize, per: f64, rules: &R
             }
             // Copies j with lo + j·w ≤ x1 and hi + j·w ≥ x0, plus one each side.
             let (ja, jb) = if w > 0.0 {
-                (((x0 - hi) / w).floor() as i64 - 1, ((x1 - lo) / w).ceil() as i64 + 1)
+                (
+                    ((x0 - hi) / w).floor() as i64 - 1,
+                    ((x1 - lo) / w).ceil() as i64 + 1,
+                )
             } else {
-                (((x1 - lo) / w).floor() as i64 - 1, ((x0 - hi) / w).ceil() as i64 + 1)
+                (
+                    ((x1 - lo) / w).floor() as i64 - 1,
+                    ((x0 - hi) / w).ceil() as i64 + 1,
+                )
             };
             if jb - ja > MAX_COPIES {
                 return None;
@@ -138,7 +163,9 @@ pub(crate) fn cut(s: &EvalSurface, loops: &[Loop], d: usize, per: f64, rules: &R
                 path.extend(l.uv.iter().map(|q| [q[0] + shift, q[1]]));
                 pts.extend(l.pts.iter().copied());
             }
-            let (Some(a), Some(b)) = (path.first(), path.last()) else { return None };
+            let (Some(a), Some(b)) = (path.first(), path.last()) else {
+                return None;
+            };
             if (a[0] > x0 && a[0] < x1) || (b[0] > x0 && b[0] < x1) {
                 return None;
             }
@@ -149,24 +176,43 @@ pub(crate) fn cut(s: &EvalSurface, loops: &[Loop], d: usize, per: f64, rules: &R
     let mut left: Vec<(Crossing, usize, bool)> = Vec::new();
     let mut right: Vec<(Crossing, usize, bool)> = Vec::new();
     for (i, p) in pieces.iter().enumerate() {
-        let (Some(a), Some(b), Some(pa), Some(pb)) = (p.uv.first(), p.uv.last(), p.pts.first(), p.pts.last()) else { return None };
+        let (Some(a), Some(b), Some(pa), Some(pb)) =
+            (p.uv.first(), p.uv.last(), p.pts.first(), p.pts.last())
+        else {
+            return None;
+        };
         // Entering through the left line (moving +x): the face is above; through the right
         // line (moving −x): below. Leaving through the left (−x): below; the right (+x): above.
-        let enter = Crossing { y: a[1], p: *pa, above: a[0] == x0 };
-        let leave = Crossing { y: b[1], p: *pb, above: b[0] == x1 };
+        let enter = Crossing {
+            y: a[1],
+            p: *pa,
+            above: a[0] == x0,
+        };
+        let leave = Crossing {
+            y: b[1],
+            p: *pb,
+            above: b[0] == x1,
+        };
         if a[0] == x0 {
             left.push((enter, i, true))
         } else {
             right.push((enter, i, true))
         }
-        if b[0] == x0 { left.push((leave, i, false)) } else { right.push((leave, i, false)) }
+        if b[0] == x0 {
+            left.push((leave, i, false))
+        } else {
+            right.push((leave, i, false))
+        }
     }
     left.sort_by(|a, b| a.0.y.total_cmp(&b.0.y));
     right.sort_by(|a, b| a.0.y.total_cmp(&b.0.y));
     if left.len() != right.len() || !left.len().is_multiple_of(2) {
         return None;
     }
-    let scale = loops.iter().flat_map(|l| l.uv.iter()).fold(1.0f64, |m, q| m.max(q[0].abs()).max(q[1].abs()));
+    let scale = loops
+        .iter()
+        .flat_map(|l| l.uv.iter())
+        .fold(1.0f64, |m, q| m.max(q[0].abs()).max(q[1].abs()));
     for (a, b) in left.iter().zip(&right) {
         if a.0.above != b.0.above || (a.0.y - b.0.y).abs() > 1e-7 * scale {
             return None;
@@ -179,7 +225,11 @@ pub(crate) fn cut(s: &EvalSurface, loops: &[Loop], d: usize, per: f64, rules: &R
     }
     for (c, i, start) in left.iter().chain(&right) {
         let p = pieces.get_mut(*i)?;
-        let k = if *start { 0 } else { p.uv.len().checked_sub(1)? };
+        let k = if *start {
+            0
+        } else {
+            p.uv.len().checked_sub(1)?
+        };
         if let (Some(q), Some(pt)) = (p.uv.get_mut(k), p.pts.get_mut(k)) {
             q[1] = c.y;
             *pt = c.p;
@@ -190,7 +240,11 @@ pub(crate) fn cut(s: &EvalSurface, loops: &[Loop], d: usize, per: f64, rules: &R
     let mut links: Vec<(usize, Vec<[f64; 2]>, Vec<Vec3>, usize)> = Vec::new();
     for pair in left.chunks(2).zip(right.chunks(2)) {
         let (lp, rp) = pair;
-        let (Some(la), Some(lb), Some(ra), Some(rb)) = (lp.first(), lp.get(1), rp.first(), rp.get(1)) else { return None };
+        let (Some(la), Some(lb), Some(ra), Some(rb)) =
+            (lp.first(), lp.get(1), rp.first(), rp.get(1))
+        else {
+            return None;
+        };
         if !(la.0.above && !lb.0.above) {
             return None;
         }
@@ -277,7 +331,10 @@ pub(crate) fn cut(s: &EvalSurface, loops: &[Loop], d: usize, per: f64, rules: &R
 /// Where to cut: the middle of the widest gap between the loops' nodes around the period, as
 /// far from any node as can be.
 fn cut_position(loops: &[Loop], per: f64) -> Option<f64> {
-    let mut xs: Vec<f64> = loops.iter().flat_map(|l| l.uv.iter().map(|q| q[0].rem_euclid(per))).collect();
+    let mut xs: Vec<f64> = loops
+        .iter()
+        .flat_map(|l| l.uv.iter().map(|q| q[0].rem_euclid(per)))
+        .collect();
     if xs.is_empty() {
         return None;
     }
@@ -294,7 +351,8 @@ fn cut_position(loops: &[Loop], per: f64) -> Option<f64> {
 
 /// Whether a path jumps over the strip in one segment.
 fn crosses(uv: &[[f64; 2]], x0: f64, x1: f64) -> bool {
-    uv.windows(2).any(|w| (w[0][0] <= x0 && w[1][0] >= x1) || (w[1][0] <= x0 && w[0][0] >= x1))
+    uv.windows(2)
+        .any(|w| (w[0][0] <= x0 && w[1][0] >= x1) || (w[1][0] <= x0 && w[0][0] >= x1))
 }
 
 /// The runs of an open path (starting and ending outside the strip) inside the strip, each
@@ -303,13 +361,20 @@ fn crosses(uv: &[[f64; 2]], x0: f64, x1: f64) -> bool {
 fn clip(path: &[[f64; 2]], pts: &[Vec3], x0: f64, x1: f64, out: &mut Vec<Piece>) {
     let inside = |q: &[f64; 2]| q[0] > x0 && q[0] < x1;
     let mut cur: Option<Piece> = None;
-    for ((a, b), (pa, pb)) in path.iter().zip(path.iter().skip(1)).zip(pts.iter().zip(pts.iter().skip(1))) {
+    for ((a, b), (pa, pb)) in path
+        .iter()
+        .zip(path.iter().skip(1))
+        .zip(pts.iter().zip(pts.iter().skip(1)))
+    {
         let at = |x: f64| {
             let t = ((x - a[0]) / (b[0] - a[0])).clamp(0.0, 1.0);
             ([x, a[1] + (b[1] - a[1]) * t], *pa + (*pb - *pa) * t)
         };
         // Lines crossed by this segment, in order along it.
-        let mut hits: Vec<f64> = [x0, x1].into_iter().filter(|x| (a[0] - x) * (b[0] - x) < 0.0).collect();
+        let mut hits: Vec<f64> = [x0, x1]
+            .into_iter()
+            .filter(|x| (a[0] - x) * (b[0] - x) < 0.0)
+            .collect();
         if b[0] < a[0] {
             hits.reverse();
         }
@@ -321,7 +386,12 @@ fn clip(path: &[[f64; 2]], pts: &[Vec3], x0: f64, x1: f64, out: &mut Vec<Piece>)
                     piece.pts.push(p);
                     out.push(piece);
                 }
-                None => cur = Some(Piece { uv: vec![q], pts: vec![p] }),
+                None => {
+                    cur = Some(Piece {
+                        uv: vec![q],
+                        pts: vec![p],
+                    })
+                }
             }
         }
         if inside(b)
@@ -335,18 +405,35 @@ fn clip(path: &[[f64; 2]], pts: &[Vec3], x0: f64, x1: f64, out: &mut Vec<Piece>)
 
 /// Nodes along the cut line between two crossings (`y0` < `y1`, ends excluded): within the
 /// tolerance, the side length and the facet angle of the surface along the line.
-fn seam_nodes(s: &EvalSurface, swap: bool, x: f64, y0: f64, y1: f64, rules: &Rules, h: f64) -> Option<Vec<(f64, Vec3)>> {
+fn seam_nodes(
+    s: &EvalSurface,
+    swap: bool,
+    x: f64,
+    y0: f64,
+    y1: f64,
+    rules: &Rules,
+    h: f64,
+) -> Option<Vec<(f64, Vec3)>> {
     let uv = |y: f64| if swap { [y, x] } else { [x, y] };
     let mut ys = vec![y0, y1];
     let mut i = 0;
     while i + 1 < ys.len() {
         let (a, b) = (ys[i], ys[i + 1]);
-        if ys.len() < MAX_SEAM_NODES && !super::uv::fine_between(s, rules, h, uv(a), uv(b)) && b - a > 1e-12 * (1.0 + a.abs()) {
+        if ys.len() < MAX_SEAM_NODES
+            && !super::uv::fine_between(s, rules, h, uv(a), uv(b))
+            && b - a > 1e-12 * (1.0 + a.abs())
+        {
             ys.insert(i + 1, 0.5 * (a + b));
         } else {
             i += 1;
         }
     }
     let inner = ys.get(1..ys.len() - 1)?;
-    inner.iter().map(|&y| s.derivs(uv(y)[0], uv(y)[1]).map(|d| (y, kernel::record_vec3(d.0)))).collect()
+    inner
+        .iter()
+        .map(|&y| {
+            s.derivs(uv(y)[0], uv(y)[1])
+                .map(|d| (y, kernel::record_vec3(d.0)))
+        })
+        .collect()
 }
