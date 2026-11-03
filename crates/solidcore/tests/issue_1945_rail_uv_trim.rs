@@ -285,7 +285,7 @@ fn bracket() -> (f64, f64) {
 /// lump, `check_brep` clean, the volume it removes within the closed-form bracket, and its
 /// faces on the rolling ball's definition.
 ///
-/// Fails today (#2500), 1001 "CalcFilletIntSideFace" at the End on the boss: the trace's
+/// Fails today (#2500), 1001 `CalcFilletIntSideFace` at the End on the boss: the trace's
 /// extension before the End's section, on the torus's offset extended round its tube
 /// (`offset_extension_as_itself`), runs round the offsets' closed oval past its own span, the
 /// fillet surface covers that span twice, and the End's rail ends drop onto the second sheet.
