@@ -477,6 +477,29 @@ pub enum TrimCacheSlot {
     CheckedOut,
 }
 
+/// The name a kept trimmed surface cache ([`TrimCacheSlot::Stored`]) gives its `n`-th
+/// subdivision surface: the halves `SmSurfaceCache::SubdivideNode` splits off a node's
+/// surface when a tree built without the face's trims is built again with them (upstream
+/// keeps them in `m_sSubdivisionSurfaces`, `bCleanUpBuildData` being `FALSE` for an
+/// existing tree). A kept cache names its objects by the face's B-rep entities, none of
+/// which is a B-rep, so `EntityRef::Brep(n)` is free there for these cache-local
+/// surfaces; it survives the renaming of a B-rep's arenas, and a solve's copy of the
+/// cache maps it like any other handle.
+#[must_use]
+pub fn subdivision_surface_name(n: u64) -> EntityRef {
+    EntityRef::Brep(crate::topology::BrepId::from_index(
+        u32::try_from(n).unwrap_or(u32::MAX),
+    ))
+}
+
+/// Lets `cache`, a face surface's kept trimmed cache, name the subdivision surfaces a
+/// later build of its tree splits off ([`subdivision_surface_name`]).
+pub fn name_subdivision_surfaces(cache: &mut TrimSrfCache<EntityRef>) {
+    cache
+        .base_mut()
+        .set_subdivision_handles(Some(subdivision_surface_name));
+}
+
 /// What a [`CacheSlot`] holds.
 #[derive(Debug, Default)]
 struct SlotState {
@@ -1258,6 +1281,7 @@ impl Surface {
     /// is applied to it. The cache's own surface copy then gets a slot of its own, so
     /// that the slot does not own itself.
     pub fn store_trim_cache(mut cache: TrimSrfCache<EntityRef>) {
+        name_subdivision_surfaces(&mut cache);
         let slot = cache.base().surface().cache_slot.share();
         cache.base_mut().surface_mut().cache_slot = CacheSlot::default();
         let tree = if cache.base().tree().is_some() {
@@ -1303,6 +1327,38 @@ impl Surface {
             TrimCacheSlot::CheckedOut => s.face_modified_while_out = true,
             TrimCacheSlot::Empty => {}
         });
+    }
+
+    /// `SmBrep::DeleteStaleCaches` on this face surface: deletes its stored trimmed
+    /// surface cache (`SmCacheMgr::DeleteObjectsCache(SM_OC_TRIMSRF, ..)`) when the
+    /// cache is marked `m_bFaceWasModified`; a cache in use stays with its caller (as
+    /// the surface's own pre-edit drop leaves it). The tree state is left as it is, as
+    /// [`Surface::delete_trim_cache`] leaves it.
+    pub fn delete_stale_trim_cache(&self) {
+        self.cache_slot.with(|s| {
+            if matches!(&s.trim, TrimCacheSlot::Stored(cache) if cache.base().face_was_modified) {
+                s.trim = TrimCacheSlot::Empty;
+                s.face_modified_while_out = false;
+            }
+        });
+    }
+
+    /// Takes the owner and the out-of-bounds flag of `other` (the same surface object
+    /// as it is now): the surface a kept trimmed cache caches is that surface upstream
+    /// (`m_cpSurface`), so its copy evaluates with the owner the surface has now and the
+    /// `m_bOutOfBoundsEnabled` its users set on it for a while (`SmTemporaryChangeValue`
+    /// of `GetOutOfBoundsEnabled()`).
+    pub(crate) fn adopt_evaluation_state_of(&mut self, other: &Self) {
+        self.adopt_owner_of(other);
+        let flags = (
+            crate::surface::surface::p3::out_of_bounds_enabled(other),
+            crate::surface::surface::p3::out_of_bounds_enabled(self),
+        );
+        if let (Some(enabled), Some(own)) = flags {
+            if enabled != own {
+                crate::surface::surface::p3::set_out_of_bounds_enabled(self, enabled);
+            }
+        }
     }
 
     /// Takes the owner of `other` (the same surface object as it is now): a cache's
@@ -1381,7 +1437,11 @@ impl Surface {
         });
         if let Some(f) = face {
             if cache.base().surface().shares_cache_slot_with(self) {
-                Self::store_trim_cache(cache.map_handles(|_| Ok(EntityRef::Face(f)))?);
+                // the kept cache names its surface (a cache made without the solve's
+                // surface handle, a tracer's, is the surface's own all the same)
+                let mut kept = cache.map_handles(|_| Ok(EntityRef::Face(f)))?;
+                kept.base_mut().name_unnamed_surface(EntityRef::Face(f))?;
+                Self::store_trim_cache(kept);
             }
         }
         Ok(())

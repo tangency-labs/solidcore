@@ -109,7 +109,6 @@ use crate::query::edge as qedge;
 use crate::query::face::p1 as qface1;
 use crate::query::face::p2::{curve_on_classify_mut, CurveOnClassifyBrep};
 use crate::surface::surface::{Surface, SurfaceKind};
-use crate::surface::trim_srf_cache::TrimSrfCache;
 use crate::topology::brep::p1;
 use crate::topology::brep_cache::{self, BrepCache, CacheObject, CacheSource};
 use crate::topology::edge::{self, AttributeFilter, NotifyEnv, SetCurveOptions};
@@ -1418,31 +1417,23 @@ fn face_box(k: &Kernel, b: &Brep, f: FaceId) -> Result<Extent3d> {
 
 // ---- caches -------------------------------------------------------------------------------
 
-/// `DeleteStaleCaches`: deletes the trimmed-surface cache (`SM_OC_TRIMSRF`, here the
-/// caller-held `caches` keyed by face) of every face with a surface whose cache is
-/// marked `m_bFaceWasModified`.
+/// `DeleteStaleCaches`: deletes the trimmed-surface cache (`SM_OC_TRIMSRF`, kept in the
+/// face surface's cache slot, [`Surface::delete_stale_trim_cache`]) of every face with a
+/// surface whose cache is marked `m_bFaceWasModified`.
 ///
 /// # Errors
 ///
 /// [`SolidError::NotFound`] for a dangling id.
-pub fn delete_stale_caches<O: Copy + PartialEq>(
-    b: &Brep,
-    caches: &mut BTreeMap<FaceId, TrimSrfCache<O>>,
-) -> Result<()> {
+pub fn delete_stale_caches(b: &Brep) -> Result<()> {
     // For every Face - delete stale Surface caches
     for f in brep_faces(b)? {
         // skip faces without surfaces or without caches
-        if b.face(f)?.surface.is_none() {
-            continue;
-        }
-        let Some(cache) = caches.get(&f) else {
+        let Some(surface) = b.face(f)?.surface.as_ref() else {
             continue;
         };
 
         // if the cache is marked as modified - delete the cache
-        if cache.base().face_was_modified {
-            caches.remove(&f);
-        }
+        surface.delete_stale_trim_cache();
     }
     Ok(())
 }
@@ -2248,9 +2239,8 @@ fn shell_region(b: &Brep, s: ShellId) -> Result<Option<RegionId>> {
 
 /// `pFace->Notify(operation, pFace, this, NULL)` ([`face3::notify`]; upstream ignores
 /// the status). `face_ref` is the face's identity. No trimmed surface cache is passed:
-/// B-rep surfaces carry no object cache (the caller-held caches of
-/// [`delete_stale_caches`] are not threaded here), so `PRE_EDIT`'s cache flag has
-/// nothing to mark.
+/// `PRE_EDIT` marks the one kept on the face's surface, if any (what
+/// [`delete_stale_caches`] later drops).
 fn face_notify(
     b: &mut Brep,
     env: &mut NotifyEnv<'_>,

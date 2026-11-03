@@ -124,9 +124,12 @@ fn cache_handle(entity: EntityRef) -> Result<CacheObject> {
         EntityRef::Face(f) => CacheObject::Face(f),
         EntityRef::Edge(e) => CacheObject::Edge(e),
         EntityRef::Vertex(v) => CacheObject::Vertex(v),
-        other @ (EntityRef::Loopuse(_) | EntityRef::Edgeuse(_) | EntityRef::Vertexuse(_)) => {
-            CacheObject::Other(notify_ref(other))
-        }
+        // (a kept cache's subdivision surfaces are named `EntityRef::Brep`:
+        // `surface::p2::subdivision_surface_name`)
+        other @ (EntityRef::Loopuse(_)
+        | EntityRef::Edgeuse(_)
+        | EntityRef::Vertexuse(_)
+        | EntityRef::Brep(_)) => CacheObject::Other(notify_ref(other)),
         _ => {
             return Err(SolidError::invalid_input(
                 OP,
