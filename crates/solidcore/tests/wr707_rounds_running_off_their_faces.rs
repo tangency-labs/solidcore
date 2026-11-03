@@ -416,9 +416,10 @@ fn thin_rib(k: &mut Kernel) -> (Brep, solidcore::Result<()>) {
 /// rib, void (its top rail past the 4 deep top). The void between the rib's two crossings
 /// lies between islands of material, not behind a wall running to a rail: the round runs
 /// past the rib and is trimmed to its faces. Closed form: the bridged block 656, less the
-/// section past the pillars A = 40 - int_0^4 z(y) dy (z the arc) on 16, less the bridge
-/// (all of its 1 x 4 section) on 4, plus the rib's section inside the ball L, a slab 0.05
-/// about the chord at 9 cos 5.625 deg from the centre, on 4.
+/// section past the pillars on 16, less the bridge (all of its 1 x 4 section) on 4, plus
+/// the rib's section inside the ball on 4. The section past the pillars is 40 less the
+/// area under the arc from y = 0 to 4; the rib's is a slab 0.05 about the chord, at
+/// 9 cos 5.625 deg from the centre.
 #[test]
 fn a_round_past_a_thin_rib_across_its_slot_builds() {
     let area = 40.0 - (4.0 + arc_area(9.0) - arc_area(5.0));

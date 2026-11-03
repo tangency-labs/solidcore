@@ -456,7 +456,11 @@ struct ThroughFaces {
 /// at an edge), neither end is on a face at the blended edge's ends (which the corners
 /// trim), and one end is on a face that shares no edge with the blended faces: an inner
 /// face of the part, bounding material behind a wall, that the blend does not reach over
-/// the blended faces' boundaries.
+/// the blended faces' boundaries; and the material beside the piece runs to a rail on one
+/// side (WR-707 addendum, 2026-11-03, #2328). That material is the wall, part of what the
+/// blend rounds. A piece between islands of material, with void on either side of each
+/// along the section (a thin rib across a slot), is not behind a wall: the blend runs past
+/// the islands and is trimmed to their faces.
 ///
 /// So a piece outside the part that reaches a rail is not a break-through: there the
 /// blend runs off its face (over a cliff, into a hole or an opening) and is trimmed to the
