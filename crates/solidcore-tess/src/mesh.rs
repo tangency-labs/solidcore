@@ -78,21 +78,4 @@ impl Mesh {
             *self.positions.get(t[2] as usize)?,
         ])
     }
-
-    /// Append another mesh (face ids offset by `face_offset`).
-    pub fn append(&mut self, o: &Mesh, face_offset: u32) {
-        let base = u32::try_from(self.positions.len()).unwrap_or(u32::MAX);
-        self.positions.extend_from_slice(&o.positions);
-        self.normals.extend_from_slice(&o.normals);
-        self.triangles.extend(o.triangles.iter().map(|t| {
-            [
-                t[0].saturating_add(base),
-                t[1].saturating_add(base),
-                t[2].saturating_add(base),
-            ]
-        }));
-        self.tri_face
-            .extend(o.tri_face.iter().map(|f| f.saturating_add(face_offset)));
-        self.edges.extend(o.edges.iter().cloned());
-    }
 }
