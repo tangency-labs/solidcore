@@ -379,7 +379,7 @@ fn cpp(i: &Inputs) -> Result<Output, HarnessError> { cpp_with_roundtrip(i, None,
 /// A bounded cone or cylinder whose rotation range runs backwards: the SMLib fork's `MakeNurb`
 /// crashes on it (a null iso curve in `SmSurfOfRevolution::RebuildPolarConverter`,
 /// tangency-labs/smlib#132), where v1.0.1 built it.
-pub(super) fn reversed_rotation(c: &ConeIn) -> bool {
+fn reversed_rotation(c: &ConeIn) -> bool {
     match c.mode {
         ModeIn::ConeBounded { start, end, .. } | ModeIn::CylBounded { start, end, .. } => end < start,
         _ => false,

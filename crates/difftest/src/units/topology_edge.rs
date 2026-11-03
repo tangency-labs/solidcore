@@ -2813,9 +2813,11 @@ mod tests {
             ("sphere_e0_seam", Some(AnalyticSurface::Sphere)),
             ("sphere_e0_seam_f", Some(AnalyticSurface::Sphere)),
             ("sphere_e0_tangent", Some(AnalyticSurface::Sphere)),
-            ("box_with_large_fillet_e11_seam", Some(AnalyticSurface::Cone)),
-            ("box_with_large_fillet_e11_seam_f", Some(AnalyticSurface::Cone)),
-            ("box_with_large_fillet_e11_tangent", Some(AnalyticSurface::Cone)),
+            // Exported by the SMLib fork, this edge's faces import as a Plane and a B-spline,
+            // where v1.0.1's export gave the Cone (#2502); the edge still compares.
+            ("box_with_large_fillet_e11_seam", None),
+            ("box_with_large_fillet_e11_seam_f", None),
+            ("box_with_large_fillet_e11_tangent", None),
             // The rebuilt-UV e0 tangent need not touch the retained Cone; compare its
             // exact faces natively without requiring a particular analytic kind.
             ("box_with_large_fillet_rb_e0_tangent", None),

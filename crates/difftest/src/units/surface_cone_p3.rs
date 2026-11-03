@@ -303,7 +303,7 @@ impl UnitDiff for Runner {
         // A rotation range that runs backwards (end below start, entries 12 and 13 of a cone
         // record; `other` is one for ops 0 and 3): the SMLib fork's MakeNurb crashes on it
         // (tangency-labs/smlib#132, surface_cone_p1::reversed_rotation).
-        let reversed = |c: &[f64]| c.len() > 13 && c[13] < c[12];
+        let reversed = |c: &[f64]| matches!((c.get(12), c.get(13)), (Some(start), Some(end)) if end < start);
         if reversed(&i.cone) || (matches!(i.op, 0 | 3) && reversed(&i.other)) {
             return Ok(Output::rejected(
                 "the SMLib fork's MakeNurb crashes on a reversed rotation range (smlib#132); not run",
