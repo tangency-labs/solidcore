@@ -146,9 +146,8 @@ fn the_flag_approximates_the_offset_face() {
 }
 
 /// #2507 (WR-726): a pass whose earlier rows of patches miss the tolerance is not accepted.
-/// With `approximate_surface_checks_every_row` the approximation either returns a surface
-/// within the requested tolerance or refuses; without it the pass above is accepted at
-/// 2.25 times the tolerance.
+/// With `approximate_surface_checks_every_row` the pass the test above pins (33 x 4 at 2.25
+/// times the tolerance) is subdivided once more, and the result is within the tolerance.
 #[test]
 fn with_every_row_checked_the_fit_is_within_the_tolerance_2507() {
     let mut k = Kernel::default();
@@ -160,17 +159,36 @@ fn with_every_row_checked_the_fit_is_within_the_tolerance_2507() {
     let tol = brep_approx_tol_3d(&k, &moved, SmallTopoType::NormalSize);
     for (subdivisions, copy) in CALLS {
         let r = surface
-            .approximate_surface_ignoring_status(&k, tol, subdivisions, copy)
+            .approximate_surface(&k, tol, subdivisions, copy)
             .unwrap();
-        if r.surface.is_some() {
-            assert!(r.failure.is_none(), "({subdivisions}, {copy})");
-            assert!(
-                (0.0..=tol).contains(&r.achieved_tol),
-                "({subdivisions}, {copy}): achieved {} > requested {tol}",
-                r.achieved_tol
-            );
-        } else {
-            assert!(r.failure.is_some(), "({subdivisions}, {copy}): no surface, no failure");
+        let nurbs = r.surface.expect("an approximating B-spline surface");
+        let SurfaceKind::BSpline(b) = nurbs.kind() else {
+            panic!("({subdivisions}, {copy}): not a B-spline");
+        };
+        assert_eq!(b.number_control_points(SurfParamType::U), 34);
+        assert_eq!(b.number_control_points(SurfParamType::V), 4);
+        assert!(
+            (0.0..=tol).contains(&r.achieved_tol),
+            "({subdivisions}, {copy}): achieved {} > requested {tol}",
+            r.achieved_tol
+        );
+        // pinned (the kernel is deterministic)
+        let want = 4.034_260_017_062_413e-6;
+        assert!(
+            (r.achieved_tol - want).abs() <= 1e-9 * want,
+            "({subdivisions}, {copy}): {}",
+            r.achieved_tol
+        );
+        let bound = 2.0 * tol;
+        let domain = face.uv_domain;
+        for i in 0..=20 {
+            for j in 0..=20 {
+                let uv = domain.evaluate(f64::from(i) / 20.0, f64::from(j) / 20.0);
+                let a = surface.evaluate_point(&k, uv).unwrap();
+                let p = nurbs.evaluate_point(&k, uv).unwrap();
+                let gap = a.distance(p);
+                assert!(gap <= bound, "({i}, {j}): gap {gap} > {bound}");
+            }
         }
     }
 }
