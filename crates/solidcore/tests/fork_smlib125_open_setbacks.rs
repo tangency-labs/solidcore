@@ -28,8 +28,10 @@ use solidcore::blend::fillet_executive::session::FilletSession;
 use solidcore::blend::fillet_solver::p1::FilletSurfaceGeneratorType;
 use solidcore::boolean::api_brep::boolean_difference;
 use solidcore::curve::curve::p2::CurveKind;
+use solidcore::geom::attribute::{AttributeStore, ObjectKey};
 use solidcore::geom::global_solver::SolverOperation;
 use solidcore::kernel::UpstreamFixes;
+use solidcore::mass::integrator::properties::{brep_volume, PropertyAttributes};
 use solidcore::math::{Point3, BIG_DOUBLE};
 use solidcore::primitive::api_primitives::create_box;
 use solidcore::query::api_queries::{get_edges, get_faces};
@@ -393,4 +395,58 @@ fn setback_set_on_a_corner_that_is_not_the_setback_is_refused() {
             assert_eq!(counts(&b), (16, 39, 25));
         }
     }
+}
+/// The bar running into the post: a 40 x 16 x 10 bar joined to an R8 x 20 cylinder about
+/// (40, 8), the bar's corner (0, 0, 10) rounded r 2 on its three edges and set back 3.
+fn bar_into_post(k: &mut Kernel, open: bool) -> Blended {
+    use solidcore::boolean::api_brep::boolean_union;
+    use solidcore::primitive::api_primitives::create_cylinder;
+    let bar = create_box(k, Point3::new(0.0, 0.0, 0.0), 40.0, 16.0, 10.0).unwrap();
+    let post = create_cylinder(k, Point3::new(40.0, 8.0, 0.0), 8.0, 20.0).unwrap();
+    let b = boolean_union(k, bar, post).unwrap();
+    let at = [[0.0, 0.0, 5.0], [20.0, 0.0, 10.0], [0.0, 8.0, 10.0]];
+    blend(k, b, &at, 2.0, [0.0, 0.0, 10.0], 3.0, open)
+}
+
+/// SolidCraft's report-fillet-g2-corner-of-bar-running-into-cylinder, as the fork capi's
+/// `setback_open_hole_on_a_body_with_a_closed_face` (7dccbae), left open: the Setback's
+/// hole of nine edges. The cylinder's face is closed; its seam, its own edge run twice by
+/// it, is no free edge (7dccbae fixed the capi's hole reader for that; the kernel counts
+/// lamina edges, which a seam is not). The fork's SMLib at alpha-1 6843885 run on this body
+/// builds the sheet of 10 faces, 30 edges and 21 vertices, 9 of them free. In solidcore
+/// the trim classified the bar's inside as outside (the B-rep ray built its face caches
+/// afresh while the target was being edited, without their trims) and refused the blend
+/// as `NoRoom`, until #2503.
+#[test]
+fn open_hole_on_a_body_with_a_closed_face_is_the_corner_nine_edges() {
+    let mut k = all_fixes(true);
+    let r = bar_into_post(&mut k, true);
+    assert_eq!(r.event, Some(Some(BlendCornerEvent::Setback)));
+    assert_eq!(r.code, 0, "{}", r.comment);
+    let mut b = r.body.expect("a sheet");
+    stitch_and_orient(&mut k, &mut b, &StitchAndOrientOptions::default()).unwrap();
+    assert_eq!(counts(&b), (10, 30, 21));
+    assert_eq!(lamina(&b).len(), 9);
+    assert!(!is_manifold_solid(&b).unwrap());
+}
+
+/// The same corner filled: the fork's SMLib at alpha-1 6843885 gives 16 faces, 39 edges and
+/// 25 vertices, volume 9362.39265676429 (an earlier note's 9362.281 was not this body's).
+#[test]
+fn bar_into_post_setback_filled_is_the_fork_s_solid() {
+    let mut k = all_fixes(true);
+    let r = bar_into_post(&mut k, false);
+    assert_eq!(r.event, Some(Some(BlendCornerEvent::Setback)));
+    assert_eq!(r.code, 0, "{}", r.comment);
+    let mut b = r.body.expect("a solid");
+    stitch_and_orient(&mut k, &mut b, &StitchAndOrientOptions::default()).unwrap();
+    assert_eq!(counts(&b), (16, 39, 25));
+    assert!(is_manifold_solid(&b).unwrap());
+    let store = AttributeStore::default();
+    let attrs = PropertyAttributes {
+        store: &store,
+        key_of: &|_| ObjectKey(0),
+    };
+    let v = brep_volume(&k, &mut b, 1e-12, &attrs).unwrap();
+    assert!((v - 9362.39265676429).abs() <= 1e-9 * v, "{v}");
 }
