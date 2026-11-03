@@ -26,6 +26,8 @@
 //! `GetOrCreateGwNurbPointer` in `EdgeSweepHigher` already made it in place.
 //! Opt-in `translation_sweep_regularize` removes degenerate swept faces and
 //! isolated slit loops after non-merged in-place whole-body translations.
+//!
+//! Cancellation: the sweep polls the cancel token (#2136, #2372) of the source's kernel per repetition, vertex, edge and face.
 
 use super::access::{
     EdgeRef, EdgeuseRef, FaceBuild, FaceInput, FaceRef, RegionRef, SweepAccess, VertexRef,
@@ -90,6 +92,15 @@ fn set_vertex_tolerance(a: &mut impl SweepAccess, vertex: VertexRef, tolerance: 
     let tolerance = crate::geom::tol::zone_tol3d(a.kernel(vertex.0)?, tolerance);
     vertex::set_tolerance(a.brep_mut(vertex.0)?, vertex.1, tolerance, true, true)
 }
+/// Polls the cancel token (#2136, #2372) of the kernel `brep` resolves to; a B-rep with
+/// no kernel is left to the operation's own lookups, which report it as before.
+fn check_cancelled(a: &impl SweepAccess, brep: crate::topology::BrepId) -> Result<()> {
+    match a.kernel(brep) {
+        Ok(k) => k.check_cancelled(OP),
+        Err(_) => Ok(()),
+    }
+}
+
 fn add_unique<T: PartialEq>(list: &mut Vec<T>, item: T) {
     if !list.contains(&item) {
         list.push(item);
@@ -273,6 +284,7 @@ impl TopologySweep {
         vertices: &[Option<VertexRef>],
     ) -> Result<()> {
         for original in vertices.iter().flatten().copied() {
+            check_cancelled(a, original.0)?;
             if self.get_to_same(Some(v(original))).is_some() {
                 continue;
             }
@@ -291,6 +303,7 @@ impl TopologySweep {
         vertices: &[Option<VertexRef>],
     ) -> Result<()> {
         for original in vertices.iter().flatten().copied() {
+            check_cancelled(a, original.0)?;
             if self.get_to_higher(Some(v(original))).is_some() {
                 continue;
             }
@@ -387,6 +400,7 @@ impl TopologySweep {
     ) -> Result<()> {
         a.brep(region.0)?.region(region.1)?;
         for original in edges.iter().flatten().copied() {
+            check_cancelled(a, original.0)?;
             if self.get_to_same(Some(e(original))).is_some() {
                 continue;
             }
@@ -531,6 +545,7 @@ impl TopologySweep {
         edges: &[Option<EdgeRef>],
     ) -> Result<()> {
         for original in edges.iter().flatten().copied() {
+            check_cancelled(a, original.0)?;
             if self.get_to_higher(Some(e(original))).is_some() {
                 continue;
             }
@@ -699,6 +714,7 @@ impl TopologySweep {
         faces: &[Option<FaceRef>],
     ) -> Result<()> {
         for face in faces {
+            check_cancelled(a, region.0)?;
             self.sweep_face_same(a, g, region, *face)?;
         }
         Ok(())
@@ -827,6 +843,7 @@ impl TopologySweep {
                         "sweep repetitions exceed 4096",
                     ));
                 }
+                check_cancelled(a, destination_brep)?;
                 if repetition > 0 {
                     targets.update(self)?;
                 }
