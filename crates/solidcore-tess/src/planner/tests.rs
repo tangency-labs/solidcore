@@ -1583,7 +1583,7 @@ fn an_edge_left_out_of_its_uses_but_in_its_faces_loops_refuses_them() {
     b.edges[ei].uses.clear();
     // A spline with no control points: its pcurves and interval are still the line's, so only
     // its sampling fails.
-    b.edges[ei].curve = brep::Curve::Spline {
+    b.edges[ei].curve = Curve::Spline {
         knots: vec![0.0, 0.0, 1.0, 1.0],
         points: Vec::new(),
     };
