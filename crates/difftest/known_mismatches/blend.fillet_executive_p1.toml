@@ -1,0 +1,27 @@
+# #2502: these cases move with the difftest's C++ reference, the SMLib fork
+# v1.1.0-alpha.1 (8eac63c); plan/findings/general--2502-fork-pin-blend-known-mismatches.md.
+
+[[mismatch]]
+unit = "blend.fillet_executive_p1"
+case = "remove_topo_edges_mouse_two_struts"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.dbls.len C++ 114, Rust 131 (+2 more) (plan/findings/general--2502-fork-pin-blend-known-mismatches.md)"
+
+[[mismatch]]
+unit = "blend.fillet_executive_p1"
+case = "topo0025"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: ints.ints[266] C++ 15002, Rust 15012 (plan/findings/general--2502-fork-pin-blend-known-mismatches.md)"
+
+[[mismatch]]
+unit = "blend.fillet_executive_p1"
+case = "topo0029"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.dbls[18] C++ -8.000000000000001e-16, Rust -6.123233995736768e-16 (plan/findings/general--2502-fork-pin-blend-known-mismatches.md)"
+
+[[mismatch]]
+unit = "blend.fillet_executive_p1"
+case = "topo0053"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.dbls[18] C++ -8.000000000000001e-16, Rust -6.123233995736768e-16 (plan/findings/general--2502-fork-pin-blend-known-mismatches.md)"
+
+[[mismatch]]
+unit = "blend.fillet_executive_p1"
+case = "topo0059"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.dbls[18] C++ -8.000000000000001e-16, Rust -6.123233995736768e-16 (plan/findings/general--2502-fork-pin-blend-known-mismatches.md)"

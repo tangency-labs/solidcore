@@ -1,0 +1,147 @@
+# #2502: these cases move with the difftest's C++ reference, the SMLib fork
+# v1.1.0-alpha.1 (8eac63c); plan/findings/general--2502-fork-pin-blend-known-mismatches.md.
+
+[[mismatch]]
+unit = "blend.fillet_geom_p1"
+case = "fb_trim_outside"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.e00_ivl[0] C++ 0e0, Rust 1e20 (+6 more) (plan/findings/general--2502-fork-pin-blend-known-mismatches.md)"
+
+[[mismatch]]
+unit = "blend.fillet_geom_p1"
+case = "fb_trim_point"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.e00_ivl[0] C++ 0e0, Rust 5e-1 (+6 more) (plan/findings/general--2502-fork-pin-blend-known-mismatches.md)"
+
+[[mismatch]]
+unit = "blend.fillet_geom_p1"
+case = "surface_drop_point_spread_v_knot_below_start"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.status[0] C++ 1.006e3, Rust 1.001e3 (plan/findings/general--2502-fork-pin-blend-known-mismatches.md)"
+
+[[mismatch]]
+unit = "blend.fillet_geom_p1"
+case = "surface_drop_point_endsnap_v_knot_control"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.n[0] C++ 0e0, Rust 1e0 (+2 more) (plan/findings/general--2502-fork-pin-blend-known-mismatches.md)"
+
+[[mismatch]]
+unit = "blend.fillet_geom_p1"
+case = "fb_cliff_hang20_boundary_1e307"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.status[0] C++ 1.006e3, Rust 1.001e3 (plan/findings/general--2502-fork-pin-blend-known-mismatches.md)"
+
+[[mismatch]]
+unit = "blend.fillet_geom_p1"
+case = "surface_drop_point_hang20_boundary_1e307"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.status[0] C++ 1.006e3, Rust 1.001e3 (plan/findings/general--2502-fork-pin-blend-known-mismatches.md)"
+
+[[mismatch]]
+unit = "blend.fillet_geom_p1"
+case = "two_pnts_hang20_boundary_1e307"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.status[0] C++ 1.006e3, Rust 1.001e3 (plan/findings/general--2502-fork-pin-blend-known-mismatches.md)"
+
+[[mismatch]]
+unit = "blend.fillet_geom_p1"
+case = "trim_failed_rail0"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.e00_ivl[0] C++ 0e0, Rust 2.5e-1 (+26 more) (plan/findings/general--2502-fork-pin-blend-known-mismatches.md)"
+
+[[mismatch]]
+unit = "blend.fillet_geom_p1"
+case = "trim_failed_rail1"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.e01_ivl[0] C++ 0e0, Rust 2.5e-1 (+18 more) (plan/findings/general--2502-fork-pin-blend-known-mismatches.md)"
+
+[[mismatch]]
+unit = "blend.fillet_geom_p1"
+case = "trim_failed_other1"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.e02_ivl[0] C++ 0e0, Rust 2.5e-1 (+10 more) (plan/findings/general--2502-fork-pin-blend-known-mismatches.md)"
+
+[[mismatch]]
+unit = "blend.fillet_geom_p1"
+case = "trim_failed_other2"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.e03_ivl[0] C++ 0e0, Rust 2.5e-1 (+2 more) (plan/findings/general--2502-fork-pin-blend-known-mismatches.md)"
+
+[[mismatch]]
+unit = "blend.fillet_geom_p1"
+case = "trim_disjoint_rail_interval"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.e00_ivl[0] C++ 2e0, Rust 1e20 (+26 more) (plan/findings/general--2502-fork-pin-blend-known-mismatches.md)"
+
+[[mismatch]]
+unit = "blend.fillet_geom_p1"
+case = "trim_failed_center_line"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.g00_surface_cpts[0] C++ 0e0, Rust 7.5e-1 (+10 more) (plan/findings/general--2502-fork-pin-blend-known-mismatches.md)"
+
+[[mismatch]]
+unit = "blend.fillet_geom_p1"
+case = "trim_disjoint_surface_domain"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.status[0] C++ 1.001e3, Rust 0e0 (plan/findings/general--2502-fork-pin-blend-known-mismatches.md)"
+
+[[mismatch]]
+unit = "blend.fillet_geom_p1"
+case = "trim_failed_surface_point"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.status[0] C++ 1.007e3, Rust 0e0 (plan/findings/general--2502-fork-pin-blend-known-mismatches.md)"
+
+[[mismatch]]
+unit = "blend.fillet_geom_p1"
+case = "gen0139"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.e00_ivl[0] C++ 1.1022450432230957e-1, Rust 4.4055692427025545e-1 (+36 more) (plan/findings/general--2502-fork-pin-blend-known-mismatches.md)"
+
+[[mismatch]]
+unit = "blend.fillet_geom_p1"
+case = "gen0185"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.e00_ivl[1] C++ 8.841923993370857e-1, Rust 7.073599220075887e-1 (+1 more) (plan/findings/general--2502-fork-pin-blend-known-mismatches.md)"
+
+[[mismatch]]
+unit = "blend.fillet_geom_p1"
+case = "gen0245"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.g00_center_cpts[0] C++ -8.767589145083375e-5, Rust 2.0524897459197634e-5 (+71 more) (plan/findings/general--2502-fork-pin-blend-known-mismatches.md)"
+
+[[mismatch]]
+unit = "blend.fillet_geom_p1"
+case = "gen0438"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.status[0] C++ 1.001e3, Rust 0e0 (plan/findings/general--2502-fork-pin-blend-known-mismatches.md)"
+
+[[mismatch]]
+unit = "blend.fillet_geom_p1"
+case = "gen0476"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.g00_surface_cpts[48] C++ 1.0841643547969489e-3, Rust 8.474012472985069e-4 (+14 more) (plan/findings/general--2502-fork-pin-blend-known-mismatches.md)"
+
+[[mismatch]]
+unit = "blend.fillet_geom_p1"
+case = "gen0829"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.g00_center_cpts.len C++ 16, Rust 12 (+8 more) (plan/findings/general--2502-fork-pin-blend-known-mismatches.md)"
+
+[[mismatch]]
+unit = "blend.fillet_geom_p1"
+case = "gen1351"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.e00_ivl[1] C++ 5.568548965985403e-1, Rust 2.4481045403262777e-1 (+3 more) (plan/findings/general--2502-fork-pin-blend-known-mismatches.md)"
+
+[[mismatch]]
+unit = "blend.fillet_geom_p1"
+case = "gen1440"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.e01_ivl[0] C++ 1.386696149358454e-1, Rust 1e20 (+2 more) (plan/findings/general--2502-fork-pin-blend-known-mismatches.md)"
+
+[[mismatch]]
+unit = "blend.fillet_geom_p1"
+case = "gen1452"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.e00_curve_cpts.len C++ 20, Rust 16 (+146 more) (plan/findings/general--2502-fork-pin-blend-known-mismatches.md)"
+
+[[mismatch]]
+unit = "blend.fillet_geom_p1"
+case = "gen1477"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.e00_ivl[0] C++ 4.710848658766282e-1, Rust 1e20 (+2 more) (plan/findings/general--2502-fork-pin-blend-known-mismatches.md)"
+
+[[mismatch]]
+unit = "blend.fillet_geom_p1"
+case = "gen1609"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.g00_center_cpts.len C++ 12, Rust 8 (+4 more) (plan/findings/general--2502-fork-pin-blend-known-mismatches.md)"
+
+[[mismatch]]
+unit = "blend.fillet_geom_p1"
+case = "gen1626"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.e01_curve_cpts.len C++ 16, Rust 12 (+13 more) (plan/findings/general--2502-fork-pin-blend-known-mismatches.md)"
+
+[[mismatch]]
+unit = "blend.fillet_geom_p1"
+case = "gen1647"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.e00_ivl[0] C++ 2.1494523120063874e-1, Rust 1e20 (+11 more) (plan/findings/general--2502-fork-pin-blend-known-mismatches.md)"
+
+[[mismatch]]
+unit = "blend.fillet_geom_p1"
+case = "gen1709"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.e00_ivl[0] C++ 8.876503700708599e-2, Rust 1e20 (+2 more) (plan/findings/general--2502-fork-pin-blend-known-mismatches.md)"

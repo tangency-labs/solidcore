@@ -1,0 +1,12 @@
+# #2502: these cases move with the difftest's C++ reference, the SMLib fork
+# v1.1.0-alpha.1 (8eac63c); plan/findings/general--2502-fork-pin-blend-known-mismatches.md.
+
+[[mismatch]]
+unit = "blend.fillet_executive_p2"
+case = "set_params_single_fsg_3"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[0] C++ 1.007e3, Rust 0e0 (+3 more) (plan/findings/general--2502-fork-pin-blend-known-mismatches.md)"
+
+[[mismatch]]
+unit = "blend.fillet_executive_p2"
+case = "set_params_short_box_regression"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: error C++ None, Rust Some(\"box_edge_count\") (plan/findings/general--2502-fork-pin-blend-known-mismatches.md)"

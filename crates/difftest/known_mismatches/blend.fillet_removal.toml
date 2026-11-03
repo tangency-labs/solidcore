@@ -1,0 +1,137 @@
+# #2502: these cases move with the difftest's C++ reference, the SMLib fork
+# v1.1.0-alpha.1 (8eac63c); plan/findings/general--2502-fork-pin-blend-known-mismatches.md.
+
+[[mismatch]]
+unit = "blend.fillet_removal"
+case = "box_with_large_fillet_face0"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.record[1329] C++ 1.5002e4, Rust 1.5012e4 (plan/findings/general--2502-fork-pin-blend-known-mismatches.md)"
+
+[[mismatch]]
+unit = "blend.fillet_removal"
+case = "box_with_large_fillet_face1"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.record[1329] C++ 1.5002e4, Rust 1.5012e4 (plan/findings/general--2502-fork-pin-blend-known-mismatches.md)"
+
+[[mismatch]]
+unit = "blend.fillet_removal"
+case = "box_with_large_fillet_face2"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.record[1329] C++ 1.5002e4, Rust 1.5012e4 (plan/findings/general--2502-fork-pin-blend-known-mismatches.md)"
+
+[[mismatch]]
+unit = "blend.fillet_removal"
+case = "box_with_large_fillet_face3"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.record[1329] C++ 1.5002e4, Rust 1.5012e4 (plan/findings/general--2502-fork-pin-blend-known-mismatches.md)"
+
+[[mismatch]]
+unit = "blend.fillet_removal"
+case = "box_with_large_fillet_face4"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.record[1329] C++ 1.5002e4, Rust 1.5012e4 (plan/findings/general--2502-fork-pin-blend-known-mismatches.md)"
+
+[[mismatch]]
+unit = "blend.fillet_removal"
+case = "box_with_large_fillet_face5"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.record[1329] C++ 1.5002e4, Rust 1.5012e4 (plan/findings/general--2502-fork-pin-blend-known-mismatches.md)"
+
+[[mismatch]]
+unit = "blend.fillet_removal"
+case = "nurb_fillet_face0"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.record.len C++ 4207, Rust 4141 (+3 more) (plan/findings/general--2502-fork-pin-blend-known-mismatches.md)"
+
+[[mismatch]]
+unit = "blend.fillet_removal"
+case = "nurb_fillet_face1"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.record.len C++ 4207, Rust 4141 (+3 more) (plan/findings/general--2502-fork-pin-blend-known-mismatches.md)"
+
+[[mismatch]]
+unit = "blend.fillet_removal"
+case = "nurb_fillet_face2"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.record.len C++ 4207, Rust 4141 (+3 more) (plan/findings/general--2502-fork-pin-blend-known-mismatches.md)"
+
+[[mismatch]]
+unit = "blend.fillet_removal"
+case = "nurb_fillet_face3"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.record.len C++ 4207, Rust 4141 (+3 more) (plan/findings/general--2502-fork-pin-blend-known-mismatches.md)"
+
+[[mismatch]]
+unit = "blend.fillet_removal"
+case = "nurb_fillet_face4"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.record.len C++ 4207, Rust 4141 (+3 more) (plan/findings/general--2502-fork-pin-blend-known-mismatches.md)"
+
+[[mismatch]]
+unit = "blend.fillet_removal"
+case = "nurb_fillet_face5"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.record.len C++ 4207, Rust 4141 (+3 more) (plan/findings/general--2502-fork-pin-blend-known-mismatches.md)"
+
+[[mismatch]]
+unit = "blend.fillet_removal"
+case = "nurb_fillet_face6"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.record.len C++ 4207, Rust 4141 (+3 more) (plan/findings/general--2502-fork-pin-blend-known-mismatches.md)"
+
+[[mismatch]]
+unit = "blend.fillet_removal"
+case = "nurb_fillet_face7"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.record.len C++ 4207, Rust 4141 (+3 more) (plan/findings/general--2502-fork-pin-blend-known-mismatches.md)"
+
+[[mismatch]]
+unit = "blend.fillet_removal"
+case = "nurb_fillet_face8"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.record.len C++ 4207, Rust 4141 (+3 more) (plan/findings/general--2502-fork-pin-blend-known-mismatches.md)"
+
+[[mismatch]]
+unit = "blend.fillet_removal"
+case = "nurb_fillet_face9"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.record.len C++ 4207, Rust 4141 (+3 more) (plan/findings/general--2502-fork-pin-blend-known-mismatches.md)"
+
+[[mismatch]]
+unit = "blend.fillet_removal"
+case = "nurb_fillet_face10"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.record.len C++ 4207, Rust 4141 (+3 more) (plan/findings/general--2502-fork-pin-blend-known-mismatches.md)"
+
+[[mismatch]]
+unit = "blend.fillet_removal"
+case = "nurb_fillet_face11"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.record.len C++ 4207, Rust 4141 (+3 more) (plan/findings/general--2502-fork-pin-blend-known-mismatches.md)"
+
+[[mismatch]]
+unit = "blend.fillet_removal"
+case = "nurb_fillet_face12"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.record.len C++ 4207, Rust 4141 (+3 more) (plan/findings/general--2502-fork-pin-blend-known-mismatches.md)"
+
+[[mismatch]]
+unit = "blend.fillet_removal"
+case = "nurb_fillet_face13"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.record.len C++ 4207, Rust 4141 (+3 more) (plan/findings/general--2502-fork-pin-blend-known-mismatches.md)"
+
+[[mismatch]]
+unit = "blend.fillet_removal"
+case = "nurb_fillet_face14"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.record.len C++ 4207, Rust 4141 (+3 more) (plan/findings/general--2502-fork-pin-blend-known-mismatches.md)"
+
+[[mismatch]]
+unit = "blend.fillet_removal"
+case = "nurb_fillet_face15"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.record.len C++ 4207, Rust 4141 (+3 more) (plan/findings/general--2502-fork-pin-blend-known-mismatches.md)"
+
+[[mismatch]]
+unit = "blend.fillet_removal"
+case = "nurb_fillet_face16"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.record.len C++ 4207, Rust 4141 (+3 more) (plan/findings/general--2502-fork-pin-blend-known-mismatches.md)"
+
+[[mismatch]]
+unit = "blend.fillet_removal"
+case = "nurb_fillet_face17"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.record.len C++ 4207, Rust 4141 (+3 more) (plan/findings/general--2502-fork-pin-blend-known-mismatches.md)"
+
+[[mismatch]]
+unit = "blend.fillet_removal"
+case = "nurb_fillet_face18"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.edge_curve_owners.len C++ 45, Rust 47 (+5 more) (plan/findings/general--2502-fork-pin-blend-known-mismatches.md)"
+
+[[mismatch]]
+unit = "blend.fillet_removal"
+case = "nurb_fillet_face19"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.record.len C++ 4207, Rust 4141 (+3 more) (plan/findings/general--2502-fork-pin-blend-known-mismatches.md)"
+
+[[mismatch]]
+unit = "blend.fillet_removal"
+case = "defillet_face8"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.edge_curve_owners.len C++ 15, Rust 17 (+5 more) (plan/findings/general--2502-fork-pin-blend-known-mismatches.md)"

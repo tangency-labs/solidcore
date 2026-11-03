@@ -1,0 +1,557 @@
+# #2502: these cases move with the difftest's C++ reference, the SMLib fork
+# v1.1.0-alpha.1 (8eac63c); plan/findings/general--2502-fork-pin-blend-known-mismatches.md.
+
+[[mismatch]]
+unit = "blend.fillet_standard_solver_p2"
+case = "fx_a"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[21] C++ -1e0, Rust -1.1e0 (+3 more) (plan/findings/general--2502-fork-pin-blend-known-mismatches.md)"
+
+[[mismatch]]
+unit = "blend.fillet_standard_solver_p2"
+case = "fx_b_ext05"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[21] C++ -1e0, Rust -1.114907313228908e0 (+3 more) (plan/findings/general--2502-fork-pin-blend-known-mismatches.md)"
+
+[[mismatch]]
+unit = "blend.fillet_standard_solver_p2"
+case = "fx_d_guess"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[21] C++ -1e0, Rust -1.1e0 (+3 more) (plan/findings/general--2502-fork-pin-blend-known-mismatches.md)"
+
+[[mismatch]]
+unit = "blend.fillet_standard_solver_p2"
+case = "fx_e_r03"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[21] C++ -1e0, Rust -1.1e0 (+3 more) (plan/findings/general--2502-fork-pin-blend-known-mismatches.md)"
+
+[[mismatch]]
+unit = "blend.fillet_standard_solver_p2"
+case = "gen0005"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[19] C++ -1e0, Rust -1.393923593253164e0 (+3 more) (plan/findings/general--2502-fork-pin-blend-known-mismatches.md)"
+
+[[mismatch]]
+unit = "blend.fillet_standard_solver_p2"
+case = "gen0009"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[6] C++ -1e0, Rust 0e0 (+7 more) (plan/findings/general--2502-fork-pin-blend-known-mismatches.md)"
+
+[[mismatch]]
+unit = "blend.fillet_standard_solver_p2"
+case = "gen0010"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[6] C++ -1e0, Rust 0e0 (+7 more) (plan/findings/general--2502-fork-pin-blend-known-mismatches.md)"
+
+[[mismatch]]
+unit = "blend.fillet_standard_solver_p2"
+case = "gen0012"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[21] C++ -1e0, Rust 0e0 (+3 more) (plan/findings/general--2502-fork-pin-blend-known-mismatches.md)"
+
+[[mismatch]]
+unit = "blend.fillet_standard_solver_p2"
+case = "gen0015"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[29] C++ -9.394778584716078e-1, Rust -1.0334256443187686e0 (+3 more) (plan/findings/general--2502-fork-pin-blend-known-mismatches.md)"
+
+[[mismatch]]
+unit = "blend.fillet_standard_solver_p2"
+case = "gen0022"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[27] C++ -1e0, Rust 0e0 (+3 more) (plan/findings/general--2502-fork-pin-blend-known-mismatches.md)"
+
+[[mismatch]]
+unit = "blend.fillet_standard_solver_p2"
+case = "gen0025"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[21] C++ -1e0, Rust 0e0 (+3 more) (plan/findings/general--2502-fork-pin-blend-known-mismatches.md)"
+
+[[mismatch]]
+unit = "blend.fillet_standard_solver_p2"
+case = "gen0033"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[24] C++ -2e1, Rust -3e1 (+3 more) (plan/findings/general--2502-fork-pin-blend-known-mismatches.md)"
+
+[[mismatch]]
+unit = "blend.fillet_standard_solver_p2"
+case = "gen0038"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[19] C++ -1e0, Rust 0e0 (+3 more) (plan/findings/general--2502-fork-pin-blend-known-mismatches.md)"
+
+[[mismatch]]
+unit = "blend.fillet_standard_solver_p2"
+case = "gen0040"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[12] C++ -1e0, Rust 0e0 (+3 more) (plan/findings/general--2502-fork-pin-blend-known-mismatches.md)"
+
+[[mismatch]]
+unit = "blend.fillet_standard_solver_p2"
+case = "gen0042"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[24] C++ -2e1, Rust -3e1 (+3 more) (plan/findings/general--2502-fork-pin-blend-known-mismatches.md)"
+
+[[mismatch]]
+unit = "blend.fillet_standard_solver_p2"
+case = "gen0043"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[29] C++ -1e0, Rust 0e0 (+3 more) (plan/findings/general--2502-fork-pin-blend-known-mismatches.md)"
+
+[[mismatch]]
+unit = "blend.fillet_standard_solver_p2"
+case = "gen0047"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[27] C++ -1e0, Rust -1.063527376750469e0 (+3 more) (plan/findings/general--2502-fork-pin-blend-known-mismatches.md)"
+
+[[mismatch]]
+unit = "blend.fillet_standard_solver_p2"
+case = "gen0049"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[19] C++ -1e0, Rust 0e0 (+3 more) (plan/findings/general--2502-fork-pin-blend-known-mismatches.md)"
+
+[[mismatch]]
+unit = "blend.fillet_standard_solver_p2"
+case = "gen0053"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[21] C++ -1e0, Rust 0e0 (+3 more) (plan/findings/general--2502-fork-pin-blend-known-mismatches.md)"
+
+[[mismatch]]
+unit = "blend.fillet_standard_solver_p2"
+case = "gen0054"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[6] C++ -1e0, Rust 0e0 (+7 more) (plan/findings/general--2502-fork-pin-blend-known-mismatches.md)"
+
+[[mismatch]]
+unit = "blend.fillet_standard_solver_p2"
+case = "gen0062"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[27] C++ -1e0, Rust 0e0 (+3 more) (plan/findings/general--2502-fork-pin-blend-known-mismatches.md)"
+
+[[mismatch]]
+unit = "blend.fillet_standard_solver_p2"
+case = "gen0064"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[6] C++ -1e0, Rust 0e0 (+7 more) (plan/findings/general--2502-fork-pin-blend-known-mismatches.md)"
+
+[[mismatch]]
+unit = "blend.fillet_standard_solver_p2"
+case = "gen0067"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[1] C++ 2.721071232928508e0, Rust 4.0175641830353187e-1 (+10 more) (plan/findings/general--2502-fork-pin-blend-known-mismatches.md)"
+
+[[mismatch]]
+unit = "blend.fillet_standard_solver_p2"
+case = "gen0068"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[27] C++ -1e0, Rust 0e0 (+3 more) (plan/findings/general--2502-fork-pin-blend-known-mismatches.md)"
+
+[[mismatch]]
+unit = "blend.fillet_standard_solver_p2"
+case = "gen0080"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[6] C++ -1e0, Rust 0e0 (+7 more) (plan/findings/general--2502-fork-pin-blend-known-mismatches.md)"
+
+[[mismatch]]
+unit = "blend.fillet_standard_solver_p2"
+case = "gen0084"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[12] C++ -1e0, Rust 0e0 (+3 more) (plan/findings/general--2502-fork-pin-blend-known-mismatches.md)"
+
+[[mismatch]]
+unit = "blend.fillet_standard_solver_p2"
+case = "gen0085"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[21] C++ -1e0, Rust 0e0 (+3 more) (plan/findings/general--2502-fork-pin-blend-known-mismatches.md)"
+
+[[mismatch]]
+unit = "blend.fillet_standard_solver_p2"
+case = "gen0088"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[21] C++ -1e0, Rust 0e0 (+3 more) (plan/findings/general--2502-fork-pin-blend-known-mismatches.md)"
+
+[[mismatch]]
+unit = "blend.fillet_standard_solver_p2"
+case = "gen0089"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[17] C++ 5.034407653913408e0, Rust 4.918729449969989e0 (+3 more) (plan/findings/general--2502-fork-pin-blend-known-mismatches.md)"
+
+[[mismatch]]
+unit = "blend.fillet_standard_solver_p2"
+case = "gen0094"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[18] C++ -1e1, Rust 0e0 (+3 more) (plan/findings/general--2502-fork-pin-blend-known-mismatches.md)"
+
+[[mismatch]]
+unit = "blend.fillet_standard_solver_p2"
+case = "gen0099"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[6] C++ -1e0, Rust 0e0 (+7 more) (plan/findings/general--2502-fork-pin-blend-known-mismatches.md)"
+
+[[mismatch]]
+unit = "blend.fillet_standard_solver_p2"
+case = "gen0104"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[7] C++ -1e0, Rust -1.3980165791116281e0 (+4 more) (plan/findings/general--2502-fork-pin-blend-known-mismatches.md)"
+
+[[mismatch]]
+unit = "blend.fillet_standard_solver_p2"
+case = "gen0105"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[12] C++ -1e0, Rust -1.1463450716162937e0 (+3 more) (plan/findings/general--2502-fork-pin-blend-known-mismatches.md)"
+
+[[mismatch]]
+unit = "blend.fillet_standard_solver_p2"
+case = "gen0107"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[15] C++ 7.433954724748216e0, Rust 7.441938977649748e0 (+1 more) (plan/findings/general--2502-fork-pin-blend-known-mismatches.md)"
+
+[[mismatch]]
+unit = "blend.fillet_standard_solver_p2"
+case = "gen0109"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[6] C++ -1e0, Rust 0e0 (+3 more) (plan/findings/general--2502-fork-pin-blend-known-mismatches.md)"
+
+[[mismatch]]
+unit = "blend.fillet_standard_solver_p2"
+case = "gen0111"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[21] C++ -1e0, Rust 0e0 (+3 more) (plan/findings/general--2502-fork-pin-blend-known-mismatches.md)"
+
+[[mismatch]]
+unit = "blend.fillet_standard_solver_p2"
+case = "gen0112"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[2] C++ -1e0, Rust -1.2167397708802727e0 (+7 more) (plan/findings/general--2502-fork-pin-blend-known-mismatches.md)"
+
+[[mismatch]]
+unit = "blend.fillet_standard_solver_p2"
+case = "gen0113"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[27] C++ -1.8655285192981887e0, Rust -1.9013659149389386e0 (+3 more) (plan/findings/general--2502-fork-pin-blend-known-mismatches.md)"
+
+[[mismatch]]
+unit = "blend.fillet_standard_solver_p2"
+case = "gen0116"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[1] C++ 5.00724172002385e-310, Rust 1e0 (+1 more) (plan/findings/general--2502-fork-pin-blend-known-mismatches.md)"
+
+[[mismatch]]
+unit = "blend.fillet_standard_solver_p2"
+case = "gen0119"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[12] C++ -1e0, Rust 0e0 (+3 more) (plan/findings/general--2502-fork-pin-blend-known-mismatches.md)"
+
+[[mismatch]]
+unit = "blend.fillet_standard_solver_p2"
+case = "gen0120"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[28] C++ 0e0, Rust -1.0255533702613807e-1 (+1 more) (plan/findings/general--2502-fork-pin-blend-known-mismatches.md)"
+
+[[mismatch]]
+unit = "blend.fillet_standard_solver_p2"
+case = "gen0123"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[12] C++ -1e0, Rust -1.3673715432972855e0 (+3 more) (plan/findings/general--2502-fork-pin-blend-known-mismatches.md)"
+
+[[mismatch]]
+unit = "blend.fillet_standard_solver_p2"
+case = "gen0131"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[4] C++ 1e0, Rust 1.1233608929452705e0 (+3 more) (plan/findings/general--2502-fork-pin-blend-known-mismatches.md)"
+
+[[mismatch]]
+unit = "blend.fillet_standard_solver_p2"
+case = "gen0133"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[24] C++ 1e0, Rust 1.1e0 (+1 more) (plan/findings/general--2502-fork-pin-blend-known-mismatches.md)"
+
+[[mismatch]]
+unit = "blend.fillet_standard_solver_p2"
+case = "gen0136"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[21] C++ -1.367708834004054e0, Rust 0e0 (+3 more) (plan/findings/general--2502-fork-pin-blend-known-mismatches.md)"
+
+[[mismatch]]
+unit = "blend.fillet_standard_solver_p2"
+case = "gen0141"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[27] C++ -1e0, Rust -1.0365434873338648e0 (+3 more) (plan/findings/general--2502-fork-pin-blend-known-mismatches.md)"
+
+[[mismatch]]
+unit = "blend.fillet_standard_solver_p2"
+case = "gen0143"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[6] C++ -1e0, Rust 0e0 (+3 more) (plan/findings/general--2502-fork-pin-blend-known-mismatches.md)"
+
+[[mismatch]]
+unit = "blend.fillet_standard_solver_p2"
+case = "gen0146"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[21] C++ -1.1866180044596277e0, Rust 0e0 (+3 more) (plan/findings/general--2502-fork-pin-blend-known-mismatches.md)"
+
+[[mismatch]]
+unit = "blend.fillet_standard_solver_p2"
+case = "gen0155"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[1] C++ 1.6870623552412292e0, Rust 1.656939301468733e0 (+11 more) (plan/findings/general--2502-fork-pin-blend-known-mismatches.md)"
+
+[[mismatch]]
+unit = "blend.fillet_standard_solver_p2"
+case = "gen0157"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[29] C++ -1e0, Rust 0e0 (+3 more) (plan/findings/general--2502-fork-pin-blend-known-mismatches.md)"
+
+[[mismatch]]
+unit = "blend.fillet_standard_solver_p2"
+case = "gen0161"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[1] C++ 5.0072413507062e-310, Rust 1e0 (+1 more) (plan/findings/general--2502-fork-pin-blend-known-mismatches.md)"
+
+[[mismatch]]
+unit = "blend.fillet_standard_solver_p2"
+case = "gen0162"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[19] C++ -1e0, Rust -1.3470018354441629e0 (+2 more) (plan/findings/general--2502-fork-pin-blend-known-mismatches.md)"
+
+[[mismatch]]
+unit = "blend.fillet_standard_solver_p2"
+case = "gen0165"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[22] C++ 0e0, Rust -1e0 (+1 more) (plan/findings/general--2502-fork-pin-blend-known-mismatches.md)"
+
+[[mismatch]]
+unit = "blend.fillet_standard_solver_p2"
+case = "gen0170"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[36] C++ -1e0, Rust 0e0 (+1 more) (plan/findings/general--2502-fork-pin-blend-known-mismatches.md)"
+
+[[mismatch]]
+unit = "blend.fillet_standard_solver_p2"
+case = "gen0173"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[10] C++ 1.5740127955196998e-15, Rust 1.4217791915866692e-15 (plan/findings/general--2502-fork-pin-blend-known-mismatches.md)"
+
+[[mismatch]]
+unit = "blend.fillet_standard_solver_p2"
+case = "gen0176"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[1] C++ -4.193288134017197e-1, Rust 2.1985233326823697e-1 (+10 more) (plan/findings/general--2502-fork-pin-blend-known-mismatches.md)"
+
+[[mismatch]]
+unit = "blend.fillet_standard_solver_p2"
+case = "gen0180"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[21] C++ -1e0, Rust -1.1e0 (+3 more) (plan/findings/general--2502-fork-pin-blend-known-mismatches.md)"
+
+[[mismatch]]
+unit = "blend.fillet_standard_solver_p2"
+case = "gen0181"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[3] C++ -2.5711911308752067e-1, Rust 4.2279123460322826e-1 (+6 more) (plan/findings/general--2502-fork-pin-blend-known-mismatches.md)"
+
+[[mismatch]]
+unit = "blend.fillet_standard_solver_p2"
+case = "gen0184"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[21] C++ -1e0, Rust 0e0 (+3 more) (plan/findings/general--2502-fork-pin-blend-known-mismatches.md)"
+
+[[mismatch]]
+unit = "blend.fillet_standard_solver_p2"
+case = "gen0187"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[1] C++ 9.976178238317498e-3, Rust 9.975587416649043e-3 (+7 more) (plan/findings/general--2502-fork-pin-blend-known-mismatches.md)"
+
+[[mismatch]]
+unit = "blend.fillet_standard_solver_p2"
+case = "gen0195"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[1] C++ 5.00724138598685e-310, Rust 1e0 (+1 more) (plan/findings/general--2502-fork-pin-blend-known-mismatches.md)"
+
+[[mismatch]]
+unit = "blend.fillet_standard_solver_p2"
+case = "gen0196"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[19] C++ -1e0, Rust 0e0 (+3 more) (plan/findings/general--2502-fork-pin-blend-known-mismatches.md)"
+
+[[mismatch]]
+unit = "blend.fillet_standard_solver_p2"
+case = "gen0208"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[18] C++ -1e1, Rust 0e0 (+3 more) (plan/findings/general--2502-fork-pin-blend-known-mismatches.md)"
+
+[[mismatch]]
+unit = "blend.fillet_standard_solver_p2"
+case = "gen0211"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[24] C++ -1e1, Rust -1.03e1 (+3 more) (plan/findings/general--2502-fork-pin-blend-known-mismatches.md)"
+
+[[mismatch]]
+unit = "blend.fillet_standard_solver_p2"
+case = "gen0212"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[28] C++ -1e0, Rust -1.1e0 (+1 more) (plan/findings/general--2502-fork-pin-blend-known-mismatches.md)"
+
+[[mismatch]]
+unit = "blend.fillet_standard_solver_p2"
+case = "gen0215"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[18] C++ -1e1, Rust -2e1 (+3 more) (plan/findings/general--2502-fork-pin-blend-known-mismatches.md)"
+
+[[mismatch]]
+unit = "blend.fillet_standard_solver_p2"
+case = "gen0216"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[18] C++ -1e1, Rust 0e0 (+3 more) (plan/findings/general--2502-fork-pin-blend-known-mismatches.md)"
+
+[[mismatch]]
+unit = "blend.fillet_standard_solver_p2"
+case = "gen0218"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[27] C++ -1e0, Rust 0e0 (+3 more) (plan/findings/general--2502-fork-pin-blend-known-mismatches.md)"
+
+[[mismatch]]
+unit = "blend.fillet_standard_solver_p2"
+case = "gen0219"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[1] C++ 5.00724137655257e-310, Rust 1e0 (+1 more) (plan/findings/general--2502-fork-pin-blend-known-mismatches.md)"
+
+[[mismatch]]
+unit = "blend.fillet_standard_solver_p2"
+case = "gen0231"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[27] C++ -1e0, Rust 0e0 (+3 more) (plan/findings/general--2502-fork-pin-blend-known-mismatches.md)"
+
+[[mismatch]]
+unit = "blend.fillet_standard_solver_p2"
+case = "gen0236"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[33] C++ -1e0, Rust -1.5857455105644749e0 (+7 more) (plan/findings/general--2502-fork-pin-blend-known-mismatches.md)"
+
+[[mismatch]]
+unit = "blend.fillet_standard_solver_p2"
+case = "gen0244"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[6] C++ -1e0, Rust -1.1902011104636019e0 (+7 more) (plan/findings/general--2502-fork-pin-blend-known-mismatches.md)"
+
+[[mismatch]]
+unit = "blend.fillet_standard_solver_p2"
+case = "gen0245"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[6] C++ -1.0793662264298134e0, Rust 0e0 (+7 more) (plan/findings/general--2502-fork-pin-blend-known-mismatches.md)"
+
+[[mismatch]]
+unit = "blend.fillet_standard_solver_p2"
+case = "gen0249"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[6] C++ -1e0, Rust 0e0 (+7 more) (plan/findings/general--2502-fork-pin-blend-known-mismatches.md)"
+
+[[mismatch]]
+unit = "blend.fillet_standard_solver_p2"
+case = "gen0253"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[27] C++ -1e0, Rust -1.1e0 (+3 more) (plan/findings/general--2502-fork-pin-blend-known-mismatches.md)"
+
+[[mismatch]]
+unit = "blend.fillet_standard_solver_p2"
+case = "gen0255"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[6] C++ -1e0, Rust -1.1617962385586513e0 (+7 more) (plan/findings/general--2502-fork-pin-blend-known-mismatches.md)"
+
+[[mismatch]]
+unit = "blend.fillet_standard_solver_p2"
+case = "gen0259"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[6] C++ -1e0, Rust -1.5641764462323826e0 (+7 more) (plan/findings/general--2502-fork-pin-blend-known-mismatches.md)"
+
+[[mismatch]]
+unit = "blend.fillet_standard_solver_p2"
+case = "gen0263"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[12] C++ -1e0, Rust 0e0 (+3 more) (plan/findings/general--2502-fork-pin-blend-known-mismatches.md)"
+
+[[mismatch]]
+unit = "blend.fillet_standard_solver_p2"
+case = "gen0265"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[27] C++ -1e0, Rust 0e0 (+2 more) (plan/findings/general--2502-fork-pin-blend-known-mismatches.md)"
+
+[[mismatch]]
+unit = "blend.fillet_standard_solver_p2"
+case = "gen0274"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[6] C++ -1e0, Rust 0e0 (+3 more) (plan/findings/general--2502-fork-pin-blend-known-mismatches.md)"
+
+[[mismatch]]
+unit = "blend.fillet_standard_solver_p2"
+case = "gen0282"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[3] C++ 1.1332082315380323e0, Rust 1.332082315380384e-1 (+6 more) (plan/findings/general--2502-fork-pin-blend-known-mismatches.md)"
+
+[[mismatch]]
+unit = "blend.fillet_standard_solver_p2"
+case = "gen0286"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[2] C++ -1e0, Rust 0e0 (+7 more) (plan/findings/general--2502-fork-pin-blend-known-mismatches.md)"
+
+[[mismatch]]
+unit = "blend.fillet_standard_solver_p2"
+case = "gen0291"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[2] C++ -1e0, Rust -1.6086803182221772e0 (+7 more) (plan/findings/general--2502-fork-pin-blend-known-mismatches.md)"
+
+[[mismatch]]
+unit = "blend.fillet_standard_solver_p2"
+case = "gen0293"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[28] C++ -1e0, Rust -1.074926686507513e0 (+1 more) (plan/findings/general--2502-fork-pin-blend-known-mismatches.md)"
+
+[[mismatch]]
+unit = "blend.fillet_standard_solver_p2"
+case = "gen0301"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[6] C++ -1e0, Rust 0e0 (+3 more) (plan/findings/general--2502-fork-pin-blend-known-mismatches.md)"
+
+[[mismatch]]
+unit = "blend.fillet_standard_solver_p2"
+case = "gen0307"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[6] C++ -9.083389746630446e-1, Rust -1.0219154284303729e0 (+7 more) (plan/findings/general--2502-fork-pin-blend-known-mismatches.md)"
+
+[[mismatch]]
+unit = "blend.fillet_standard_solver_p2"
+case = "gen0310"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[27] C++ -1.8193268215054563e0, Rust 0e0 (+3 more) (plan/findings/general--2502-fork-pin-blend-known-mismatches.md)"
+
+[[mismatch]]
+unit = "blend.fillet_standard_solver_p2"
+case = "gen0315"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[19] C++ -7.51423805546785e-1, Rust 0e0 (+7 more) (plan/findings/general--2502-fork-pin-blend-known-mismatches.md)"
+
+[[mismatch]]
+unit = "blend.fillet_standard_solver_p2"
+case = "gen0316"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[1] C++ 5.0072414150739e-310, Rust 1e0 (+3 more) (plan/findings/general--2502-fork-pin-blend-known-mismatches.md)"
+
+[[mismatch]]
+unit = "blend.fillet_standard_solver_p2"
+case = "gen0320"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[18] C++ -1e1, Rust 0e0 (+3 more) (plan/findings/general--2502-fork-pin-blend-known-mismatches.md)"
+
+[[mismatch]]
+unit = "blend.fillet_standard_solver_p2"
+case = "gen0327"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[25] C++ -8.289928377062965e-1, Rust -8.295655025669736e-1 (+3 more) (plan/findings/general--2502-fork-pin-blend-known-mismatches.md)"
+
+[[mismatch]]
+unit = "blend.fillet_standard_solver_p2"
+case = "gen0329"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[15] C++ 7.423377969161795e-1, Rust 7.324675252832298e-1 (plan/findings/general--2502-fork-pin-blend-known-mismatches.md)"
+
+[[mismatch]]
+unit = "blend.fillet_standard_solver_p2"
+case = "gen0333"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[19] C++ -1e0, Rust -1.3460856686548743e0 (+3 more) (plan/findings/general--2502-fork-pin-blend-known-mismatches.md)"
+
+[[mismatch]]
+unit = "blend.fillet_standard_solver_p2"
+case = "gen0334"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[12] C++ -1e0, Rust 0e0 (+3 more) (plan/findings/general--2502-fork-pin-blend-known-mismatches.md)"
+
+[[mismatch]]
+unit = "blend.fillet_standard_solver_p2"
+case = "gen0336"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 17, Rust 13 (plan/findings/general--2502-fork-pin-blend-known-mismatches.md)"
+
+[[mismatch]]
+unit = "blend.fillet_standard_solver_p2"
+case = "gen0340"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[20] C++ 0e0, Rust -2.1205313234182677e-1 (+1 more) (plan/findings/general--2502-fork-pin-blend-known-mismatches.md)"
+
+[[mismatch]]
+unit = "blend.fillet_standard_solver_p2"
+case = "gen0342"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[6] C++ -1e0, Rust 0e0 (+3 more) (plan/findings/general--2502-fork-pin-blend-known-mismatches.md)"
+
+[[mismatch]]
+unit = "blend.fillet_standard_solver_p2"
+case = "gen0349"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[10] C++ 0e0, Rust -4.2499663838109814e-1 (+8 more) (plan/findings/general--2502-fork-pin-blend-known-mismatches.md)"
+
+[[mismatch]]
+unit = "blend.fillet_standard_solver_p2"
+case = "gen0350"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[2] C++ -1.965158588581693e0, Rust -1.9717289243423197e0 (+3 more) (plan/findings/general--2502-fork-pin-blend-known-mismatches.md)"
+
+[[mismatch]]
+unit = "blend.fillet_standard_solver_p2"
+case = "gen0362"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[2] C++ -1e0, Rust 0e0 (+7 more) (plan/findings/general--2502-fork-pin-blend-known-mismatches.md)"
+
+[[mismatch]]
+unit = "blend.fillet_standard_solver_p2"
+case = "gen0365"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[24] C++ -1e1, Rust 0e0 (+3 more) (plan/findings/general--2502-fork-pin-blend-known-mismatches.md)"
+
+[[mismatch]]
+unit = "blend.fillet_standard_solver_p2"
+case = "gen0367"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[33] C++ -1e0, Rust 0e0 (+7 more) (plan/findings/general--2502-fork-pin-blend-known-mismatches.md)"
+
+[[mismatch]]
+unit = "blend.fillet_standard_solver_p2"
+case = "gen0368"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[21] C++ -1e0, Rust -1.0139013902784677e0 (+7 more) (plan/findings/general--2502-fork-pin-blend-known-mismatches.md)"
+
+[[mismatch]]
+unit = "blend.fillet_standard_solver_p2"
+case = "gen0369"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[19] C++ -9.632072983760889e-1, Rust 0e0 (+7 more) (plan/findings/general--2502-fork-pin-blend-known-mismatches.md)"
+
+[[mismatch]]
+unit = "blend.fillet_standard_solver_p2"
+case = "gen0376"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[12] C++ -1e0, Rust 0e0 (+3 more) (plan/findings/general--2502-fork-pin-blend-known-mismatches.md)"
+
+[[mismatch]]
+unit = "blend.fillet_standard_solver_p2"
+case = "gen0377"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[6] C++ -1e0, Rust 0e0 (+7 more) (plan/findings/general--2502-fork-pin-blend-known-mismatches.md)"
+
+[[mismatch]]
+unit = "blend.fillet_standard_solver_p2"
+case = "gen0383"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[24] C++ -2e0, Rust -2.88561808316387e0 (+3 more) (plan/findings/general--2502-fork-pin-blend-known-mismatches.md)"
+
+[[mismatch]]
+unit = "blend.fillet_standard_solver_p2"
+case = "gen0387"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[6] C++ -1.1074072194287494e0, Rust -1.7876708069112528e0 (+7 more) (plan/findings/general--2502-fork-pin-blend-known-mismatches.md)"
+
+[[mismatch]]
+unit = "blend.fillet_standard_solver_p2"
+case = "gen0393"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[35] C++ -1e0, Rust -1.4612010376812608e0 (+3 more) (plan/findings/general--2502-fork-pin-blend-known-mismatches.md)"
+
+[[mismatch]]
+unit = "blend.fillet_standard_solver_p2"
+case = "gen0395"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[27] C++ -1e0, Rust 0e0 (+3 more) (plan/findings/general--2502-fork-pin-blend-known-mismatches.md)"
+
+[[mismatch]]
+unit = "blend.fillet_standard_solver_p2"
+case = "gen0396"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[25] C++ -1.9299989886635076e0, Rust 0e0 (+3 more) (plan/findings/general--2502-fork-pin-blend-known-mismatches.md)"

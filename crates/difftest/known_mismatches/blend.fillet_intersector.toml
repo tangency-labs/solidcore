@@ -1,0 +1,37 @@
+# #2502: these cases move with the difftest's C++ reference, the SMLib fork
+# v1.1.0-alpha.1 (8eac63c); plan/findings/general--2502-fork-pin-blend-known-mismatches.md.
+
+[[mismatch]]
+unit = "blend.fillet_intersector"
+case = "gen0005"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.fillet_point_step[0] C++ 1e-5, Rust 1e-3 (plan/findings/general--2502-fork-pin-blend-known-mismatches.md)"
+
+[[mismatch]]
+unit = "blend.fillet_intersector"
+case = "gen0131"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.rec[3] C++ -1.131018459552649e0, Rust 1.23456e-61 (+3 more) (plan/findings/general--2502-fork-pin-blend-known-mismatches.md)"
+
+[[mismatch]]
+unit = "blend.fillet_intersector"
+case = "gen0311"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.fillet_point_step[0] C++ 1e-5, Rust 1e-3 (plan/findings/general--2502-fork-pin-blend-known-mismatches.md)"
+
+[[mismatch]]
+unit = "blend.fillet_intersector"
+case = "gen0314"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.fillet_point_step[0] C++ 1e-5, Rust 1e-3 (plan/findings/general--2502-fork-pin-blend-known-mismatches.md)"
+
+[[mismatch]]
+unit = "blend.fillet_intersector"
+case = "gen0482"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.fillet_point_step[0] C++ 1e-5, Rust 1e-3 (plan/findings/general--2502-fork-pin-blend-known-mismatches.md)"
+
+[[mismatch]]
+unit = "blend.fillet_intersector"
+case = "gen0846"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.fillet_point_step[0] C++ 1e-5, Rust 1e-3 (plan/findings/general--2502-fork-pin-blend-known-mismatches.md)"
+
+[[mismatch]]
+unit = "blend.fillet_intersector"
+case = "gen1001"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.rec[3] C++ -4.438047677409003e0, Rust -4.432917112726152e0 (+3 more) (plan/findings/general--2502-fork-pin-blend-known-mismatches.md)"

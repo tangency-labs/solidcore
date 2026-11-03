@@ -1,0 +1,67 @@
+# #2502: these cases move with the difftest's C++ reference, the SMLib fork
+# v1.1.0-alpha.1 (8eac63c); plan/findings/general--2502-fork-pin-blend-known-mismatches.md.
+
+[[mismatch]]
+unit = "blend.fillet_geom_p4"
+case = "rail_ext_no_surface"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.status[0] C++ 1.006e3, Rust 0e0 (plan/findings/general--2502-fork-pin-blend-known-mismatches.md)"
+
+[[mismatch]]
+unit = "blend.fillet_geom_p4"
+case = "rail_ext_unprocessed"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.status[0] C++ 1.006e3, Rust 1.001e3 (plan/findings/general--2502-fork-pin-blend-known-mismatches.md)"
+
+[[mismatch]]
+unit = "blend.fillet_geom_p4"
+case = "gen0004"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.uv1_cpts[1] C++ 8.081319927610368e-1, Rust 8.081319952369543e-1 (plan/findings/general--2502-fork-pin-blend-known-mismatches.md)"
+
+[[mismatch]]
+unit = "blend.fillet_geom_p4"
+case = "gen0015"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.status[0] C++ 1.006e3, Rust 1.001e3 (plan/findings/general--2502-fork-pin-blend-known-mismatches.md)"
+
+[[mismatch]]
+unit = "blend.fillet_geom_p4"
+case = "gen0040"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.status[0] C++ 1.006e3, Rust 0e0 (plan/findings/general--2502-fork-pin-blend-known-mismatches.md)"
+
+[[mismatch]]
+unit = "blend.fillet_geom_p4"
+case = "gen0100"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.status[0] C++ 1.006e3, Rust 0e0 (plan/findings/general--2502-fork-pin-blend-known-mismatches.md)"
+
+[[mismatch]]
+unit = "blend.fillet_geom_p4"
+case = "gen0103"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.status[0] C++ 1.006e3, Rust 1.001e3 (plan/findings/general--2502-fork-pin-blend-known-mismatches.md)"
+
+[[mismatch]]
+unit = "blend.fillet_geom_p4"
+case = "gen0130"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.status[0] C++ 1.006e3, Rust 0e0 (plan/findings/general--2502-fork-pin-blend-known-mismatches.md)"
+
+[[mismatch]]
+unit = "blend.fillet_geom_p4"
+case = "gen0217"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.status[0] C++ 1.006e3, Rust 0e0 (plan/findings/general--2502-fork-pin-blend-known-mismatches.md)"
+
+[[mismatch]]
+unit = "blend.fillet_geom_p4"
+case = "gen0257"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.status[0] C++ 1.006e3, Rust 0e0 (plan/findings/general--2502-fork-pin-blend-known-mismatches.md)"
+
+[[mismatch]]
+unit = "blend.fillet_geom_p4"
+case = "gen0273"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.status[0] C++ 1.006e3, Rust 0e0 (plan/findings/general--2502-fork-pin-blend-known-mismatches.md)"
+
+[[mismatch]]
+unit = "blend.fillet_geom_p4"
+case = "gen0280"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.status[0] C++ 1.006e3, Rust 0e0 (plan/findings/general--2502-fork-pin-blend-known-mismatches.md)"
+
+[[mismatch]]
+unit = "blend.fillet_geom_p4"
+case = "gen0297"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.status[0] C++ 1.006e3, Rust 0e0 (plan/findings/general--2502-fork-pin-blend-known-mismatches.md)"

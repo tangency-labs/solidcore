@@ -1,0 +1,52 @@
+# #2502: these cases move with the difftest's C++ reference, the SMLib fork
+# v1.1.0-alpha.1 (8eac63c); plan/findings/general--2502-fork-pin-blend-known-mismatches.md.
+
+[[mismatch]]
+unit = "blend.hcr"
+case = "global_visibility_cylinder_z"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.record.len C++ 288, Rust 244 (plan/findings/general--2502-fork-pin-blend-known-mismatches.md)"
+
+[[mismatch]]
+unit = "blend.hcr"
+case = "silhouettes_sphere_z"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.record[11] C++ 8.961831301785766e-19, Rust 1.0166642581500383e-18 (+2 more) (plan/findings/general--2502-fork-pin-blend-known-mismatches.md)"
+
+[[mismatch]]
+unit = "blend.hcr"
+case = "global_visibility_sphere_z"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.record[10] C++ 8.961831301785766e-19, Rust 1.0166642581500383e-18 (+2 more) (plan/findings/general--2502-fork-pin-blend-known-mismatches.md)"
+
+[[mismatch]]
+unit = "blend.hcr"
+case = "silhouettes_sphere_oblique"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.record[5] C++ 4.163336342344337e-16, Rust 5.273559366969494e-16 (+6 more) (plan/findings/general--2502-fork-pin-blend-known-mismatches.md)"
+
+[[mismatch]]
+unit = "blend.hcr"
+case = "global_visibility_sphere_oblique"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.record[5] C++ 2.925222254876001e-16, Rust 3.27009279911334e-16 (+2 more) (plan/findings/general--2502-fork-pin-blend-known-mismatches.md)"
+
+[[mismatch]]
+unit = "blend.hcr"
+case = "global_visibility_sphere_placement"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.record[13] C++ -1.370187166522623e-4, Rust -1.3701871643779584e-4 (+1 more) (plan/findings/general--2502-fork-pin-blend-known-mismatches.md)"
+
+[[mismatch]]
+unit = "blend.hcr"
+case = "global_visibility_cone_z"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.record.len C++ 200, Rust 156 (plan/findings/general--2502-fork-pin-blend-known-mismatches.md)"
+
+[[mismatch]]
+unit = "blend.hcr"
+case = "global_visibility_box_with_large_fillet_placement"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.record.len C++ 398, Rust 420 (plan/findings/general--2502-fork-pin-blend-known-mismatches.md)"
+
+[[mismatch]]
+unit = "blend.hcr"
+case = "gen0110"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: error C++ Some(\"brep_build_status_1007\"), Rust Some(\"brep_build_status_1001\") (plan/findings/general--2502-fork-pin-blend-known-mismatches.md)"
+
+[[mismatch]]
+unit = "blend.hcr"
+case = "gen0383"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.record.len C++ 90, Rust 112 (plan/findings/general--2502-fork-pin-blend-known-mismatches.md)"
