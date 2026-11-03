@@ -1,0 +1,7 @@
+# #2502: these cases move with the difftest's C++ reference, the SMLib fork
+# v1.1.0-alpha.1 (8eac63c); plan/findings/general--2502-fork-pin-query-known-mismatches.md.
+
+[[mismatch]]
+unit = "query.tess"
+case = "gen0159"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.node_geom.len C++ 10, Rust 30 (+6 more) (plan/findings/general--2502-fork-pin-query-known-mismatches.md)"

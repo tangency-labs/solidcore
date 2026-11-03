@@ -1,0 +1,22 @@
+# #2502: these cases move with the difftest's C++ reference, the SMLib fork
+# v1.1.0-alpha.1 (8eac63c); plan/findings/general--2502-fork-pin-query-known-mismatches.md.
+
+[[mismatch]]
+unit = "query.face_p4"
+case = "gen0141"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: error C++ None, Rust Some(\"build_failed: 1001\") (plan/findings/general--2502-fork-pin-query-known-mismatches.md)"
+
+[[mismatch]]
+unit = "query.face_p4"
+case = "gen0148"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: error C++ None, Rust Some(\"build_failed: 1001\") (plan/findings/general--2502-fork-pin-query-known-mismatches.md)"
+
+[[mismatch]]
+unit = "query.face_p4"
+case = "gen0153"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: error C++ None, Rust Some(\"build_failed: 1001\") (plan/findings/general--2502-fork-pin-query-known-mismatches.md)"
+
+[[mismatch]]
+unit = "query.face_p4"
+case = "gen0172"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: error C++ None, Rust Some(\"build_failed: 1001\") (plan/findings/general--2502-fork-pin-query-known-mismatches.md)"

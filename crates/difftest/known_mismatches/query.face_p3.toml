@@ -1,0 +1,102 @@
+# #2502: these cases move with the difftest's C++ reference, the SMLib fork
+# v1.1.0-alpha.1 (8eac63c); plan/findings/general--2502-fork-pin-query-known-mismatches.md.
+
+[[mismatch]]
+unit = "query.face_p3"
+case = "tight_Mouse_f0"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.min[0] C++ -2.213990722149702e0, Rust -3e0 (+1 more) (plan/findings/general--2502-fork-pin-query-known-mismatches.md)"
+
+[[mismatch]]
+unit = "query.face_p3"
+case = "tight_Mouse_f0_rebuild"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.min[0] C++ -2.213990722149702e0, Rust -3e0 (+1 more) (plan/findings/general--2502-fork-pin-query-known-mismatches.md)"
+
+[[mismatch]]
+unit = "query.face_p3"
+case = "tight_Mouse_f1"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.max[1] C++ 4.903552470074382e0, Rust 6e0 (plan/findings/general--2502-fork-pin-query-known-mismatches.md)"
+
+[[mismatch]]
+unit = "query.face_p3"
+case = "tight_Mouse_f1_rebuild"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.max[1] C++ 4.903552470074382e0, Rust 6e0 (plan/findings/general--2502-fork-pin-query-known-mismatches.md)"
+
+[[mismatch]]
+unit = "query.face_p3"
+case = "tight_Mouse_f3"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.max[1] C++ 5.025e0, Rust 6e0 (plan/findings/general--2502-fork-pin-query-known-mismatches.md)"
+
+[[mismatch]]
+unit = "query.face_p3"
+case = "tight_Mouse_f3_rebuild"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.max[1] C++ 5.025e0, Rust 6e0 (plan/findings/general--2502-fork-pin-query-known-mismatches.md)"
+
+[[mismatch]]
+unit = "query.face_p3"
+case = "internal_box_with_large_fillet_f6"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.point[0] C++ 7.20442547877639e0, Rust 7.169649755180594e0 (+1 more) (plan/findings/general--2502-fork-pin-query-known-mismatches.md)"
+
+[[mismatch]]
+unit = "query.face_p3"
+case = "tight_cone_f0"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.min[0] C++ 0e0, Rust -3.3306690738754686e-16 (plan/findings/general--2502-fork-pin-query-known-mismatches.md)"
+
+[[mismatch]]
+unit = "query.face_p3"
+case = "tight_cone_f0_rebuild"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.min[0] C++ 0e0, Rust -3.3306690738754686e-16 (plan/findings/general--2502-fork-pin-query-known-mismatches.md)"
+
+[[mismatch]]
+unit = "query.face_p3"
+case = "adv_tight_bs1_[0, 0, 1e-06, 1e-06]"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.max[0] C++ 1e20, Rust -1e20 (+5 more) (plan/findings/general--2502-fork-pin-query-known-mismatches.md)"
+
+[[mismatch]]
+unit = "query.face_p3"
+case = "adv_sec_b8_e2_m0_f1e-09_c2_t0.0_0.0"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: error C++ None, Rust Some(\"rejected\") (plan/findings/general--2502-fork-pin-query-known-mismatches.md)"
+
+[[mismatch]]
+unit = "query.face_p3"
+case = "gen0010"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.min[0] C++ 0e0, Rust -3.3306690738754686e-16 (plan/findings/general--2502-fork-pin-query-known-mismatches.md)"
+
+[[mismatch]]
+unit = "query.face_p3"
+case = "gen0088"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.min[0] C++ -1.4729126801314965e-3, Rust -7.577364300920337e-4 (+1 more) (plan/findings/general--2502-fork-pin-query-known-mismatches.md)"
+
+[[mismatch]]
+unit = "query.face_p3"
+case = "gen0133"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.min[2] C++ -5.099066100553252e-4, Rust -2.743217144016906e-4 (plan/findings/general--2502-fork-pin-query-known-mismatches.md)"
+
+[[mismatch]]
+unit = "query.face_p3"
+case = "gen0180"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.max[1] C++ 4.903552470074382e0, Rust 6e0 (plan/findings/general--2502-fork-pin-query-known-mismatches.md)"
+
+[[mismatch]]
+unit = "query.face_p3"
+case = "gen0292"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.min[0] C++ 0e0, Rust -3.3306690738754686e-16 (plan/findings/general--2502-fork-pin-query-known-mismatches.md)"
+
+[[mismatch]]
+unit = "query.face_p3"
+case = "gen0328"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.min[0] C++ -1.7717569853347797e0, Rust -1.4062068628948563e0 (plan/findings/general--2502-fork-pin-query-known-mismatches.md)"
+
+[[mismatch]]
+unit = "query.face_p3"
+case = "gen0381"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.max[2] C++ 2.1029973937705257e-1, Rust 2.1030001480504062e-1 (plan/findings/general--2502-fork-pin-query-known-mismatches.md)"
+
+[[mismatch]]
+unit = "query.face_p3"
+case = "gen0447"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.min[0] C++ 0e0, Rust -3.3306690738754686e-16 (plan/findings/general--2502-fork-pin-query-known-mismatches.md)"
+
+[[mismatch]]
+unit = "query.face_p3"
+case = "gen0506"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.interval_bounds[1] C++ 1.0625354954563988e-1, Rust 1.0615694282678542e-1 (+6 more) (plan/findings/general--2502-fork-pin-query-known-mismatches.md)"

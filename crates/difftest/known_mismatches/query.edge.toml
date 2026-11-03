@@ -1,0 +1,127 @@
+# #2502: these cases move with the difftest's C++ reference, the SMLib fork
+# v1.1.0-alpha.1 (8eac63c); plan/findings/general--2502-fork-pin-query-known-mismatches.md.
+
+[[mismatch]]
+unit = "query.edge"
+case = "circle_arc_bbox_tight"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.normal[1] C++ 1.1622171622298376e0, Rust 0e0 (+1 more) (plan/findings/general--2502-fork-pin-query-known-mismatches.md)"
+
+[[mismatch]]
+unit = "query.edge"
+case = "circle_arc_bbox_tight_normal"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.normal[1] C++ 1.1622171622298376e0, Rust 0e0 (+1 more) (plan/findings/general--2502-fork-pin-query-known-mismatches.md)"
+
+[[mismatch]]
+unit = "query.edge"
+case = "circle_arc_tight"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.box[1] C++ 1.1622171622298376e0, Rust 0e0 (+1 more) (plan/findings/general--2502-fork-pin-query-known-mismatches.md)"
+
+[[mismatch]]
+unit = "query.edge"
+case = "circle_arc_moved_tiny"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.box[3] C++ 1.6276520721021501e0, Rust 2e0 (plan/findings/general--2502-fork-pin-query-known-mismatches.md)"
+
+[[mismatch]]
+unit = "query.edge"
+case = "Mouse_tight2"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.box[0] C++ -2.2139692517112874e0, Rust -3e0 (+1 more) (plan/findings/general--2502-fork-pin-query-known-mismatches.md)"
+
+[[mismatch]]
+unit = "query.edge"
+case = "gen0053"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.box[0] C++ 6.655526096085201e-1, Rust -1.7058465599446793e-1 (+1 more) (plan/findings/general--2502-fork-pin-query-known-mismatches.md)"
+
+[[mismatch]]
+unit = "query.edge"
+case = "gen0058"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.box[2] C++ -6.812156970623737e-1, Rust -1.0619034021264895e0 (+1 more) (plan/findings/general--2502-fork-pin-query-known-mismatches.md)"
+
+[[mismatch]]
+unit = "query.edge"
+case = "gen0071"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.box[3] C++ 2.558289043239344e0, Rust 3.4860975987164133e0 (+1 more) (plan/findings/general--2502-fork-pin-query-known-mismatches.md)"
+
+[[mismatch]]
+unit = "query.edge"
+case = "gen0078"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.normal[1] C++ -1.570099866887151e-2, Rust -2.590527572566917e-2 (plan/findings/general--2502-fork-pin-query-known-mismatches.md)"
+
+[[mismatch]]
+unit = "query.edge"
+case = "gen0083"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.box[4] C++ 4.903552470074382e0, Rust 6e0 (plan/findings/general--2502-fork-pin-query-known-mismatches.md)"
+
+[[mismatch]]
+unit = "query.edge"
+case = "gen0097"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.box[1] C++ -1.3853223378860804e-4, Rust -2.65194595417804e-4 (+1 more) (plan/findings/general--2502-fork-pin-query-known-mismatches.md)"
+
+[[mismatch]]
+unit = "query.edge"
+case = "gen0164"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.box[4] C++ 4.903552470074382e0, Rust 6e0 (plan/findings/general--2502-fork-pin-query-known-mismatches.md)"
+
+[[mismatch]]
+unit = "query.edge"
+case = "gen0191"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.box[2] C++ 4.8931958099758035e-5, Rust -1.3811714439702914e-5 (+2 more) (plan/findings/general--2502-fork-pin-query-known-mismatches.md)"
+
+[[mismatch]]
+unit = "query.edge"
+case = "gen0221"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.box[2] C++ -5.438169402718846e-3, Rust -7.112450537733663e-3 (plan/findings/general--2502-fork-pin-query-known-mismatches.md)"
+
+[[mismatch]]
+unit = "query.edge"
+case = "gen0264"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.normal[3] C++ 1.2822312278997123e2, Rust 1.550345784695464e2 (+1 more) (plan/findings/general--2502-fork-pin-query-known-mismatches.md)"
+
+[[mismatch]]
+unit = "query.edge"
+case = "gen0296"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.box[0] C++ 1.5812869515475984e2, Rust 1.4492310683281207e2 (+5 more) (plan/findings/general--2502-fork-pin-query-known-mismatches.md)"
+
+[[mismatch]]
+unit = "query.edge"
+case = "gen0328"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.normal[0] C++ 3.2745210635162025e-1, Rust -3.27008921102196e-1 (+2 more) (plan/findings/general--2502-fork-pin-query-known-mismatches.md)"
+
+[[mismatch]]
+unit = "query.edge"
+case = "gen0377"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.box[2] C++ -5.034018775736369e-5, Rust -8.884892361732805e-5 (plan/findings/general--2502-fork-pin-query-known-mismatches.md)"
+
+[[mismatch]]
+unit = "query.edge"
+case = "gen0474"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.box[0] C++ 2.749166971084504e2, Rust 2.0263107032528924e2 (+5 more) (plan/findings/general--2502-fork-pin-query-known-mismatches.md)"
+
+[[mismatch]]
+unit = "query.edge"
+case = "gen0478"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.box[3] C++ 4.7974895734844103e-4, Rust 6.233389710468921e-4 (+1 more) (plan/findings/general--2502-fork-pin-query-known-mismatches.md)"
+
+[[mismatch]]
+unit = "query.edge"
+case = "gen0482"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.box[2] C++ -1.2305456190866328e-4, Rust -1.7778134131173897e-4 (+1 more) (plan/findings/general--2502-fork-pin-query-known-mismatches.md)"
+
+[[mismatch]]
+unit = "query.edge"
+case = "gen0496"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.normal[3] C++ 2.030428097198642e0, Rust 2.277806204588189e0 (+1 more) (plan/findings/general--2502-fork-pin-query-known-mismatches.md)"
+
+[[mismatch]]
+unit = "query.edge"
+case = "gen0499"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.box[2] C++ -2.0183887488102727e5, Rust -2.0308750047298174e5 (+2 more) (plan/findings/general--2502-fork-pin-query-known-mismatches.md)"
+
+[[mismatch]]
+unit = "query.edge"
+case = "gen0548"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.box[3] C++ 3.4864596323096034e-2, Rust 5.304374985055092e-2 (+1 more) (plan/findings/general--2502-fork-pin-query-known-mismatches.md)"
+
+[[mismatch]]
+unit = "query.edge"
+case = "gen0562"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.box[3] C++ 1.6105488192763033e0, Rust 2.437177811415782e0 (+2 more) (plan/findings/general--2502-fork-pin-query-known-mismatches.md)"

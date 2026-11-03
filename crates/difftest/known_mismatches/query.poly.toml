@@ -1,0 +1,207 @@
+# #2502: these cases move with the difftest's C++ reference, the SMLib fork
+# v1.1.0-alpha.1 (8eac63c); plan/findings/general--2502-fork-pin-query-known-mismatches.md.
+
+[[mismatch]]
+unit = "query.poly"
+case = "adv_bbox_zero_normal"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.bbox[0] C++ 1e20, Rust 0e0 (+12 more) (plan/findings/general--2502-fork-pin-query-known-mismatches.md)"
+
+[[mismatch]]
+unit = "query.poly"
+case = "adv_bbox_given_pts"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.bbox[0] C++ 1e20, Rust -1e0 (+5 more) (plan/findings/general--2502-fork-pin-query-known-mismatches.md)"
+
+[[mismatch]]
+unit = "query.poly"
+case = "adv_bbox_one_pt"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.bbox[0] C++ 1e20, Rust 1e0 (+13 more) (plan/findings/general--2502-fork-pin-query-known-mismatches.md)"
+
+[[mismatch]]
+unit = "query.poly"
+case = "cube_bbox_pseudo"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.bbox[0] C++ 1e20, Rust 0e0 (+12 more) (plan/findings/general--2502-fork-pin-query-known-mismatches.md)"
+
+[[mismatch]]
+unit = "query.poly"
+case = "gen0001"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.bbox[0] C++ 1e20, Rust -9.594065105847182e0 (+5 more) (plan/findings/general--2502-fork-pin-query-known-mismatches.md)"
+
+[[mismatch]]
+unit = "query.poly"
+case = "gen0015"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.bbox[0] C++ 1e20, Rust -7.04444587999844e0 (+20 more) (plan/findings/general--2502-fork-pin-query-known-mismatches.md)"
+
+[[mismatch]]
+unit = "query.poly"
+case = "gen0036"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.bbox[0] C++ 1e20, Rust -3.4065615938339846e0 (+19 more) (plan/findings/general--2502-fork-pin-query-known-mismatches.md)"
+
+[[mismatch]]
+unit = "query.poly"
+case = "gen0043"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.bbox[0] C++ 1e20, Rust -4.12216678712414e0 (+5 more) (plan/findings/general--2502-fork-pin-query-known-mismatches.md)"
+
+[[mismatch]]
+unit = "query.poly"
+case = "gen0055"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.bbox[0] C++ 1e20, Rust -4.949070934795313e0 (+20 more) (plan/findings/general--2502-fork-pin-query-known-mismatches.md)"
+
+[[mismatch]]
+unit = "query.poly"
+case = "gen0083"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.bbox[0] C++ 1e20, Rust 4.0784329505587436e-1 (+18 more) (plan/findings/general--2502-fork-pin-query-known-mismatches.md)"
+
+[[mismatch]]
+unit = "query.poly"
+case = "gen0106"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.bbox[0] C++ 1e20, Rust -7.300871058232465e0 (+20 more) (plan/findings/general--2502-fork-pin-query-known-mismatches.md)"
+
+[[mismatch]]
+unit = "query.poly"
+case = "gen0171"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.bbox[0] C++ 1e20, Rust 3.393518983797268e0 (+5 more) (plan/findings/general--2502-fork-pin-query-known-mismatches.md)"
+
+[[mismatch]]
+unit = "query.poly"
+case = "gen0175"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.bbox[0] C++ 1e20, Rust -1.4633512670386182e0 (+20 more) (plan/findings/general--2502-fork-pin-query-known-mismatches.md)"
+
+[[mismatch]]
+unit = "query.poly"
+case = "gen0216"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.bbox[0] C++ 1e20, Rust 5.7629484643913e0 (+5 more) (plan/findings/general--2502-fork-pin-query-known-mismatches.md)"
+
+[[mismatch]]
+unit = "query.poly"
+case = "gen0233"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.bbox[0] C++ 1e20, Rust 0e0 (+5 more) (plan/findings/general--2502-fork-pin-query-known-mismatches.md)"
+
+[[mismatch]]
+unit = "query.poly"
+case = "gen0240"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.bbox[0] C++ 1e20, Rust -3.597466235146493e0 (+5 more) (plan/findings/general--2502-fork-pin-query-known-mismatches.md)"
+
+[[mismatch]]
+unit = "query.poly"
+case = "gen0260"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.bbox[0] C++ 1e20, Rust 1.2941919618814772e0 (+5 more) (plan/findings/general--2502-fork-pin-query-known-mismatches.md)"
+
+[[mismatch]]
+unit = "query.poly"
+case = "gen0270"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.bbox[0] C++ 1e20, Rust -5.551933730929306e0 (+20 more) (plan/findings/general--2502-fork-pin-query-known-mismatches.md)"
+
+[[mismatch]]
+unit = "query.poly"
+case = "gen0271"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.bbox[0] C++ 1e20, Rust -1e-6 (+5 more) (plan/findings/general--2502-fork-pin-query-known-mismatches.md)"
+
+[[mismatch]]
+unit = "query.poly"
+case = "gen0283"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.bbox[0] C++ 1e20, Rust -6.386463453897628e0 (+5 more) (plan/findings/general--2502-fork-pin-query-known-mismatches.md)"
+
+[[mismatch]]
+unit = "query.poly"
+case = "gen0286"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.bbox[0] C++ 1e20, Rust 0e0 (+12 more) (plan/findings/general--2502-fork-pin-query-known-mismatches.md)"
+
+[[mismatch]]
+unit = "query.poly"
+case = "gen0294"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.bbox[0] C++ 1e20, Rust -2.9238338039362707e-3 (+5 more) (plan/findings/general--2502-fork-pin-query-known-mismatches.md)"
+
+[[mismatch]]
+unit = "query.poly"
+case = "gen0295"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.bbox[0] C++ 1e20, Rust 0e0 (+5 more) (plan/findings/general--2502-fork-pin-query-known-mismatches.md)"
+
+[[mismatch]]
+unit = "query.poly"
+case = "gen0330"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.bbox[0] C++ 1e20, Rust -1.5722412486820758e0 (+5 more) (plan/findings/general--2502-fork-pin-query-known-mismatches.md)"
+
+[[mismatch]]
+unit = "query.poly"
+case = "gen0340"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.bbox[0] C++ 1e20, Rust -8.73551485503584e0 (+5 more) (plan/findings/general--2502-fork-pin-query-known-mismatches.md)"
+
+[[mismatch]]
+unit = "query.poly"
+case = "gen0357"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.bbox[0] C++ 1e20, Rust 6.79159350895582e0 (+5 more) (plan/findings/general--2502-fork-pin-query-known-mismatches.md)"
+
+[[mismatch]]
+unit = "query.poly"
+case = "gen0386"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.bbox[0] C++ 1e20, Rust 0e0 (+5 more) (plan/findings/general--2502-fork-pin-query-known-mismatches.md)"
+
+[[mismatch]]
+unit = "query.poly"
+case = "gen0387"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.bbox[0] C++ 1e20, Rust 0e0 (+5 more) (plan/findings/general--2502-fork-pin-query-known-mismatches.md)"
+
+[[mismatch]]
+unit = "query.poly"
+case = "gen0390"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.bbox[0] C++ 1e20, Rust -6.2504515407779575e0 (+5 more) (plan/findings/general--2502-fork-pin-query-known-mismatches.md)"
+
+[[mismatch]]
+unit = "query.poly"
+case = "gen0399"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.bbox[0] C++ 1e20, Rust 3.8457666250762657e-1 (+5 more) (plan/findings/general--2502-fork-pin-query-known-mismatches.md)"
+
+[[mismatch]]
+unit = "query.poly"
+case = "gen0412"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.bbox[0] C++ 1e20, Rust -3.292191608146666e-1 (+5 more) (plan/findings/general--2502-fork-pin-query-known-mismatches.md)"
+
+[[mismatch]]
+unit = "query.poly"
+case = "gen0424"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.bbox[0] C++ 1e20, Rust -8.662476556163618e0 (+5 more) (plan/findings/general--2502-fork-pin-query-known-mismatches.md)"
+
+[[mismatch]]
+unit = "query.poly"
+case = "gen0426"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.bbox[0] C++ 1e20, Rust -9.396926207859085e-4 (+5 more) (plan/findings/general--2502-fork-pin-query-known-mismatches.md)"
+
+[[mismatch]]
+unit = "query.poly"
+case = "gen0437"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.bbox[0] C++ 1e20, Rust -6.037078821203035e0 (+5 more) (plan/findings/general--2502-fork-pin-query-known-mismatches.md)"
+
+[[mismatch]]
+unit = "query.poly"
+case = "gen0456"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.bbox[0] C++ 1e20, Rust -9.385815469327298e0 (+20 more) (plan/findings/general--2502-fork-pin-query-known-mismatches.md)"
+
+[[mismatch]]
+unit = "query.poly"
+case = "gen0484"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.bbox[0] C++ 1e20, Rust 2.0645302547141595e6 (+5 more) (plan/findings/general--2502-fork-pin-query-known-mismatches.md)"
+
+[[mismatch]]
+unit = "query.poly"
+case = "gen0486"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.bbox[0] C++ 1e20, Rust -6.232042066943899e0 (+5 more) (plan/findings/general--2502-fork-pin-query-known-mismatches.md)"
+
+[[mismatch]]
+unit = "query.poly"
+case = "gen0513"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.bbox[0] C++ 1e20, Rust -9.396926207859084e-1 (+17 more) (plan/findings/general--2502-fork-pin-query-known-mismatches.md)"
+
+[[mismatch]]
+unit = "query.poly"
+case = "gen0530"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.bbox[0] C++ 1e20, Rust -3.665031948876445e-4 (+5 more) (plan/findings/general--2502-fork-pin-query-known-mismatches.md)"
+
+[[mismatch]]
+unit = "query.poly"
+case = "gen0568"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.bbox[0] C++ 1e20, Rust -3.958635908864075e0 (+20 more) (plan/findings/general--2502-fork-pin-query-known-mismatches.md)"
+
+[[mismatch]]
+unit = "query.poly"
+case = "gen0592"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.bbox[0] C++ 1e20, Rust -7.203703378426467e0 (+5 more) (plan/findings/general--2502-fork-pin-query-known-mismatches.md)"

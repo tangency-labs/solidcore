@@ -1,0 +1,112 @@
+# #2502: these cases move with the difftest's C++ reference, the SMLib fork
+# v1.1.0-alpha.1 (8eac63c); plan/findings/general--2502-fork-pin-query-known-mismatches.md.
+
+[[mismatch]]
+unit = "query.brep"
+case = "mouse_tight_edges_faces"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.steps[5] C++ 5.025683366040222e0, Rust 6.00001e0 (+1 more) (plan/findings/general--2502-fork-pin-query-known-mismatches.md)"
+
+[[mismatch]]
+unit = "query.brep"
+case = "mouse_tight_box"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.steps[5] C++ 5.025003268665487e0, Rust 6e0 (plan/findings/general--2502-fork-pin-query-known-mismatches.md)"
+
+[[mismatch]]
+unit = "query.brep"
+case = "mouse_lock_then_query"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.steps[20] C++ 5.025003268665487e0, Rust 6e0 (plan/findings/general--2502-fork-pin-query-known-mismatches.md)"
+
+[[mismatch]]
+unit = "query.brep"
+case = "mouse_lock_tight_relock"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.steps[6] C++ 5.025003268665487e0, Rust 6e0 (plan/findings/general--2502-fork-pin-query-known-mismatches.md)"
+
+[[mismatch]]
+unit = "query.brep"
+case = "mouse_rebuilt_tight_edges_faces"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.steps[5] C++ 5.026266463361268e0, Rust 6.00001e0 (+1 more) (plan/findings/general--2502-fork-pin-query-known-mismatches.md)"
+
+[[mismatch]]
+unit = "query.brep"
+case = "mouse_rebuilt_tight_box"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.steps[5] C++ 5.025003268665487e0, Rust 6e0 (plan/findings/general--2502-fork-pin-query-known-mismatches.md)"
+
+[[mismatch]]
+unit = "query.brep"
+case = "mouse_rebuilt_lock_then_query"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.steps[20] C++ 5.025003268665487e0, Rust 6e0 (plan/findings/general--2502-fork-pin-query-known-mismatches.md)"
+
+[[mismatch]]
+unit = "query.brep"
+case = "mouse_rebuilt_lock_tight_relock"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.steps[6] C++ 5.025003268665487e0, Rust 6e0 (plan/findings/general--2502-fork-pin-query-known-mismatches.md)"
+
+[[mismatch]]
+unit = "query.brep"
+case = "box_with_large_fillet_rebuilt_defaults"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.steps[2] C++ -4.3675066632993835e-3, Rust -4.370565399748201e-3 (+3 more) (plan/findings/general--2502-fork-pin-query-known-mismatches.md)"
+
+[[mismatch]]
+unit = "query.brep"
+case = "box_with_large_fillet_rebuilt_plain"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.steps[2] C++ -4.357506663299384e-3, Rust -4.360565399748202e-3 (+3 more) (plan/findings/general--2502-fork-pin-query-known-mismatches.md)"
+
+[[mismatch]]
+unit = "query.brep"
+case = "box_with_large_fillet_rebuilt_approx"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.steps[2] C++ -4.357506663299384e-3, Rust -4.360565399748202e-3 (+3 more) (plan/findings/general--2502-fork-pin-query-known-mismatches.md)"
+
+[[mismatch]]
+unit = "query.brep"
+case = "box_with_large_fillet_rebuilt_tight_edges_faces"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.steps[2] C++ -4.357506663299384e-3, Rust -4.360565399748202e-3 (+3 more) (plan/findings/general--2502-fork-pin-query-known-mismatches.md)"
+
+[[mismatch]]
+unit = "query.brep"
+case = "box_with_large_fillet_rebuilt_lock_then_query"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.steps[3] C++ -4.3675066632993835e-3, Rust -4.370565399748201e-3 (+11 more) (plan/findings/general--2502-fork-pin-query-known-mismatches.md)"
+
+[[mismatch]]
+unit = "query.brep"
+case = "box_with_large_fillet_rebuilt_lock_tight_relock"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.steps[11] C++ -4.3675066632993835e-3, Rust -4.370565399748201e-3 (+7 more) (plan/findings/general--2502-fork-pin-query-known-mismatches.md)"
+
+[[mismatch]]
+unit = "query.brep"
+case = "sphere_vertex3_off_region"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.classify[3] C++ 0e0, Rust 1e0 (plan/findings/general--2502-fork-pin-query-known-mismatches.md)"
+
+[[mismatch]]
+unit = "query.brep"
+case = "gen0033"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.steps[6] C++ 5.026266463361268e0, Rust 6.00001e0 (plan/findings/general--2502-fork-pin-query-known-mismatches.md)"
+
+[[mismatch]]
+unit = "query.brep"
+case = "gen0112"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.steps[5] C++ 5.025683366040222e0, Rust 6.00001e0 (+1 more) (plan/findings/general--2502-fork-pin-query-known-mismatches.md)"
+
+[[mismatch]]
+unit = "query.brep"
+case = "gen0128"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.steps[13] C++ 4.3534436644310703e-1, Rust 4.367128343528223e-1 (plan/findings/general--2502-fork-pin-query-known-mismatches.md)"
+
+[[mismatch]]
+unit = "query.brep"
+case = "gen0165"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.steps[15] C++ 5.025003268665487e0, Rust 6e0 (plan/findings/general--2502-fork-pin-query-known-mismatches.md)"
+
+[[mismatch]]
+unit = "query.brep"
+case = "gen0187"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.steps[2] C++ -4.3675066632993835e-3, Rust -4.370565399748201e-3 (+3 more) (plan/findings/general--2502-fork-pin-query-known-mismatches.md)"
+
+[[mismatch]]
+unit = "query.brep"
+case = "gen0384"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.steps[8] C++ 0e0, Rust -3.3306690738754686e-16 (plan/findings/general--2502-fork-pin-query-known-mismatches.md)"
+
+[[mismatch]]
+unit = "query.brep"
+case = "gen0469"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.steps[14] C++ 5.025003268665487e0, Rust 6e0 (+1 more) (plan/findings/general--2502-fork-pin-query-known-mismatches.md)"

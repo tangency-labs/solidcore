@@ -1,0 +1,7 @@
+# #2502: these cases move with the difftest's C++ reference, the SMLib fork
+# v1.1.0-alpha.1 (8eac63c); plan/findings/general--2502-fork-pin-query-known-mismatches.md.
+
+[[mismatch]]
+unit = "query.api_queries"
+case = "rational_kind9_100000_seam_hi"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.geometry[2] C++ 1.5700924586837755e-11, Rust 0e0 (plan/findings/general--2502-fork-pin-query-known-mismatches.md)"

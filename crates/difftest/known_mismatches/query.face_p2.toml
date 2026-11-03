@@ -1,0 +1,72 @@
+# #2502: these cases move with the difftest's C++ reference, the SMLib fork
+# v1.1.0-alpha.1 (8eac63c); plan/findings/general--2502-fork-pin-query-known-mismatches.md.
+
+[[mismatch]]
+unit = "query.face_p2"
+case = "trim_box_with_large_fillet_e0_t0.0_0"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.pc[4] C++ 4.357506663299384e-3, Rust 4.360565399748202e-3 (plan/findings/general--2502-fork-pin-query-known-mismatches.md)"
+
+[[mismatch]]
+unit = "query.face_p2"
+case = "trim_box_with_large_fillet_e0_t0.0_1"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.pc[4] C++ 4.357506663299384e-3, Rust 4.360565399748202e-3 (plan/findings/general--2502-fork-pin-query-known-mismatches.md)"
+
+[[mismatch]]
+unit = "query.face_p2"
+case = "trim_box_with_large_fillet_e0_t0.0_2"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.pc[4] C++ 4.357506663299384e-3, Rust 4.360565399748202e-3 (plan/findings/general--2502-fork-pin-query-known-mismatches.md)"
+
+[[mismatch]]
+unit = "query.face_p2"
+case = "trim_box_with_large_fillet_e1_t0.0_0"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.pc[4] C++ 4.357506663299384e-3, Rust 4.360565399748202e-3 (plan/findings/general--2502-fork-pin-query-known-mismatches.md)"
+
+[[mismatch]]
+unit = "query.face_p2"
+case = "trim_box_with_large_fillet_e1_t0.0_1"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.pc[4] C++ 4.357506663299384e-3, Rust 4.360565399748202e-3 (plan/findings/general--2502-fork-pin-query-known-mismatches.md)"
+
+[[mismatch]]
+unit = "query.face_p2"
+case = "trim_box_with_large_fillet_e1_t0.0_2"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.pc[4] C++ 4.357506663299384e-3, Rust 4.360565399748202e-3 (plan/findings/general--2502-fork-pin-query-known-mismatches.md)"
+
+[[mismatch]]
+unit = "query.face_p2"
+case = "trim_box_with_large_fillet_e5_t0.0_0"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.pc[4] C++ 4.357506663299384e-3, Rust 4.360565399748202e-3 (plan/findings/general--2502-fork-pin-query-known-mismatches.md)"
+
+[[mismatch]]
+unit = "query.face_p2"
+case = "trim_box_with_large_fillet_e5_t0.0_1"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.pc[4] C++ 4.357506663299384e-3, Rust 4.360565399748202e-3 (plan/findings/general--2502-fork-pin-query-known-mismatches.md)"
+
+[[mismatch]]
+unit = "query.face_p2"
+case = "trim_box_with_large_fillet_e5_t0.0_2"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.pc[4] C++ 4.357506663299384e-3, Rust 4.360565399748202e-3 (plan/findings/general--2502-fork-pin-query-known-mismatches.md)"
+
+[[mismatch]]
+unit = "query.face_p2"
+case = "trim_box_with_large_fillet_e6_t0.0_0"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.pc[4] C++ 4.357506663299384e-3, Rust 4.360565399748202e-3 (plan/findings/general--2502-fork-pin-query-known-mismatches.md)"
+
+[[mismatch]]
+unit = "query.face_p2"
+case = "trim_box_with_large_fillet_e6_t0.0_1"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.pc[4] C++ 4.357506663299384e-3, Rust 4.360565399748202e-3 (plan/findings/general--2502-fork-pin-query-known-mismatches.md)"
+
+[[mismatch]]
+unit = "query.face_p2"
+case = "trim_box_with_large_fillet_e6_t0.0_2"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.pc[4] C++ 4.357506663299384e-3, Rust 4.360565399748202e-3 (plan/findings/general--2502-fork-pin-query-known-mismatches.md)"
+
+[[mismatch]]
+unit = "query.face_p2"
+case = "gen0073"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.pc[4] C++ 4.357506663299384e-3, Rust 4.360565399748202e-3 (plan/findings/general--2502-fork-pin-query-known-mismatches.md)"
+
+[[mismatch]]
+unit = "query.face_p2"
+case = "gen0101"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.pc[3] C++ 1.5761708898038907e-3, Rust 1.576157663891597e-3 (+1 more) (plan/findings/general--2502-fork-pin-query-known-mismatches.md)"
