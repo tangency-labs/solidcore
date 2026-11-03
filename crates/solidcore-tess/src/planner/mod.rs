@@ -1818,12 +1818,16 @@ fn plan_face(
     // A size sample the surface does not evaluate at refuses the face where it lies inside the
     // face's loops (as the planner meshes them, a whole number of periods along where the
     // surface is closed); outside them it was never the face's.
-    if let Some(q) = size
-        .unevaluated
-        .iter()
-        .find(|q| within_loops(&polys, bbox, dom.period, **q))
-    {
-        return Err(no_value(NoValue(*q)));
+    for q in &size.unevaluated {
+        match within_loops(&polys, bbox, dom.period, *q) {
+            Ok(false) => {}
+            Ok(true) => return Err(no_value(NoValue(*q))),
+            Err(TooManyCopies(n)) => {
+                return Err(FaceError::Refused(fail(&format!(
+                    "its loops span {n} periods, more than the {MAX_PERIODS} a point the surface does not evaluate at ({q:?}) is looked for in"
+                ))));
+            }
+        }
     }
     // Constrained Delaunay in (u, v) scaled to millimetres: equilateral seeds of side `h`,
     // refined where triangles leave the surface, are too long or bend too much, then shaped by
@@ -2008,36 +2012,65 @@ fn plan_face(
     })
 }
 
+/// Most copies of a point, a whole number of periods along, [`within_loops`] looks for inside a
+/// face's loops (in both directions together): a coil's or a thread's wall winds a few dozen
+/// turns.
+const MAX_PERIODS: usize = 4096;
+
+/// The loops of a face span more periods (the count) than [`within_loops`] looks through.
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct TooManyCopies(f64);
+
 /// Whether the parameter point `q`, or a copy of it a whole number of `period`s along, lies
 /// inside the region the loops `polys` bound (even–odd, the rule [`cdt::lattice`] keeps its
-/// seeds by), within their box `bbox`.
+/// seeds by), within their box `bbox`. Every copy inside the box is tried; a box spanning more
+/// than [`MAX_PERIODS`] copies (or one not finite) is the error, never "not inside".
 fn within_loops(
     polys: &[&[[f64; 2]]],
     bbox: [(f64, f64); 2],
     period: [Option<f64>; 2],
     q: [f64; 2],
-) -> bool {
+) -> std::result::Result<bool, TooManyCopies> {
     // The copies of the coordinate `x` of `q` along a direction (range `(lo, hi)` in the box,
     // period `period`) inside the box.
-    let copies = |(lo, hi): (f64, f64), period: Option<f64>, x: f64| -> Vec<f64> {
+    let copies = |(lo, hi): (f64, f64),
+                  period: Option<f64>,
+                  x: f64|
+     -> std::result::Result<Vec<f64>, TooManyCopies> {
         match period {
             Some(per) if per > 0.0 && per.is_finite() => {
                 let first = ((lo - x) / per).ceil();
                 let last = ((hi - x) / per).floor();
-                if !(first.is_finite() && last.is_finite()) || last - first > 64.0 {
-                    return Vec::new();
+                let count = last - first + 1.0;
+                // Compared in f64 before the casts: NaN fails it.
+                if !(count <= MAX_PERIODS as f64) {
+                    return Err(TooManyCopies(count));
                 }
-                (first as i64..=last as i64)
+                if count < 1.0 {
+                    return Ok(Vec::new());
+                }
+                // Proven: whole numbers of magnitude at most 2^53 (checked here, NaN failing
+                // it), so both casts are exact.
+                const LIMIT: f64 = 9_007_199_254_740_992.0;
+                if !(first.abs() <= LIMIT && last.abs() <= LIMIT) {
+                    return Err(TooManyCopies(count));
+                }
+                Ok((first as i64..=last as i64)
                     .map(|k| x + per * k as f64)
-                    .collect()
+                    .collect())
             }
-            _ => [x].into_iter().filter(|x| *x >= lo && *x <= hi).collect(),
+            _ => Ok([x].into_iter().filter(|x| *x >= lo && *x <= hi).collect()),
         }
     };
-    let us = copies(bbox[0], period[0], q[0]);
-    copies(bbox[1], period[1], q[1])
+    let us = copies(bbox[0], period[0], q[0])?;
+    let vs = copies(bbox[1], period[1], q[1])?;
+    if (us.len() * vs.len()) > MAX_PERIODS {
+        // Proven: each is at most MAX_PERIODS long, so the product does not overflow.
+        return Err(TooManyCopies((us.len() * vs.len()) as f64));
+    }
+    Ok(vs
         .into_iter()
-        .any(|v| us.iter().any(|&u| cdt::inside(polys, [u, v])))
+        .any(|v| us.iter().any(|&u| cdt::inside(polys, [u, v]))))
 }
 
 /// The point and unit normal (`None` at a pole) of `s` at (u, v), for the Delaunay sag check;
