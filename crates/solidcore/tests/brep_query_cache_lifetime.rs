@@ -5,8 +5,8 @@
 //! surface, and answers right only when it reuses a cache it built before the edit.
 //! The rays build their caches afresh, so once editing was on (the fillet session's
 //! trim step, #2365) points inside the bar classified as outside. With the flag the
-//! ray's tree is built against the face as it is, whatever the editing flag, and a
-//! face whose trims cannot be implanted then is an error naming it.
+//! ray's tree of a face whose loops close is built against the face as it is,
+//! whatever the editing flag; a face whose loops are open mid-edit keeps upstream's.
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)] // test helpers
 
 use solidcore::boolean::api_brep::boolean_union;
@@ -208,48 +208,51 @@ fn a_face_edited_mid_session_classifies_against_its_new_trims() {
     );
 }
 
-/// While editing, a face whose loop does not close has no trims to classify against:
-/// the classification is an error naming a face, not an answer against the untrimmed
-/// surface.
-#[test]
-fn an_open_loop_mid_edit_is_an_error_naming_the_face() {
-    let mut k = kernel();
-    // (the stitch that builds it classifies mid-glue, where an edge use can start at a
-    // vertex still being merged into its edge's: those loops close)
-    let mut b = create_cylinder(&mut k, Point3::new(0.0, 0.0, 0.0), 1.5, 10.0).unwrap();
-    // in the side face, the first edge use starts where the second does: its edge
-    // then ends away from the second's start, and the loop no longer closes
-    let mut broken = 0;
-    let faces: Vec<FaceId> = b.faces().ids().collect();
-    for f in faces {
-        let lu = solidcore::topology::face::p4::upward_loopuses(&b, f, false, None).unwrap()[0];
-        let eus = solidcore::topology::loopuse::edgeuses(&b, lu, None, None).unwrap();
-        if let [first, second, ..] = eus[..] {
-            let start = b.edgeuse(second).unwrap().vertexuse;
-            b.edgeuse_mut(first).unwrap().vertexuse = start;
-            broken += 1;
-        }
+/// The classification of `p` in `b`, its region or face and whether it failed.
+fn classified(k: &Kernel, b: &mut Brep, p: Point3, boundaries: bool) -> String {
+    match BrepQuery::of_brep(b).point_3d_classify(k, b, p, 1e-6, boundaries) {
+        Ok(pc) => format!("{:?} {:?}", pc.point_class(), pc.object()),
+        Err(e) => format!("error {e:?}"),
     }
-    assert_eq!(broken, 1, "the side face");
-    b.set_editing_enabled(true);
-    // the region's ray fires and the boundary solve
-    for boundaries in [false, true] {
-        let classified = BrepQuery::of_brep(&b).point_3d_classify(
-            &k,
-            &mut b,
-            Point3::new(0.0, 0.0, 5.0),
-            1e-6,
-            boundaries,
-        );
-        match classified {
-            Err(SolidError::FaceTrimsUnavailable {
-                entity: EntityRef::Face(_),
-                ..
-            }) => {}
-            other => {
-                panic!("boundaries {boundaries}: expected FaceTrimsUnavailable, got {other:?}")
+}
+
+/// While editing, a face whose loop does not close has no boundary to implant yet: it
+/// keeps upstream's untrimmed tree, so the classification is upstream's, not an error.
+/// (The fillet session classifies against such faces, and builds with upstream's
+/// answers.)
+#[test]
+fn an_open_loop_mid_edit_keeps_upstream_s_answer() {
+    let broken = |k: &mut Kernel| {
+        // (the stitch that builds it classifies mid-glue, where an edge use can start
+        // at a vertex still being merged into its edge's: those loops close)
+        let mut b = create_cylinder(k, Point3::new(0.0, 0.0, 0.0), 1.5, 10.0).unwrap();
+        // in the side face, the first edge use starts where the second does: its edge
+        // then ends away from the second's start, and the loop no longer closes
+        let mut opened = 0;
+        let faces: Vec<FaceId> = b.faces().ids().collect();
+        for f in faces {
+            let lu = solidcore::topology::face::p4::upward_loopuses(&b, f, false, None).unwrap()[0];
+            let eus = solidcore::topology::loopuse::edgeuses(&b, lu, None, None).unwrap();
+            if let [first, second, ..] = eus[..] {
+                let start = b.edgeuse(second).unwrap().vertexuse;
+                b.edgeuse_mut(first).unwrap().vertexuse = start;
+                opened += 1;
             }
         }
+        assert_eq!(opened, 1, "the side face");
+        b.set_editing_enabled(true);
+        b
+    };
+    let mut k = kernel();
+    let mut upstream = Kernel::default();
+    let mut b = broken(&mut k);
+    let mut c = broken(&mut upstream);
+    // the region's ray fires and the boundary solve
+    for boundaries in [false, true] {
+        let p = Point3::new(0.0, 0.0, 5.0);
+        let with_fix = classified(&k, &mut b, p, boundaries);
+        assert!(!with_fix.starts_with("error"), "{with_fix}");
+        assert_eq!(with_fix, classified(&upstream, &mut c, p, boundaries));
     }
 }
 

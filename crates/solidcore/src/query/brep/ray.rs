@@ -13,9 +13,10 @@
 //! Each request is attempted once per edge use or face. That fallback can revisit
 //! earlier candidates with raised tolerances and has quadratic worst-case work in
 //! the number of requests. Cache handles are mapped explicitly; no B-rep copy is kept.
-//! With `UpstreamFixes::brep_ray_classifies_current_trims` (WR-732), a face's tree is
-//! built with its current trims while the body is edited, or the classification is
-//! `SolidError::FaceTrimsUnavailable` (upstream skips the trims then).
+//! With `UpstreamFixes::brep_ray_classifies_current_trims` (WR-732), the tree of a
+//! face whose loops close is built with its current trims while the body is edited,
+//! or the classification is `SolidError::FaceTrimsUnavailable` (upstream skips the
+//! trims then); a face whose loops are open mid-edit keeps upstream's tree.
 
 mod live;
 pub(crate) use live::{solve_mutable_brep_point, solve_mutable_ray};
@@ -156,13 +157,14 @@ fn prepare_surface_cache(
 /// surface whose cache upstream has built is built here as well.
 ///
 /// Deviation (WR-732, #2503), only with
-/// [`crate::kernel::UpstreamFixes::brep_ray_classifies_current_trims`]: the tree is
-/// built against the face's current trims even while the B-rep is being edited
-/// ([`MappedCacheFace::implanting_while_editing`]).
+/// [`crate::kernel::UpstreamFixes::brep_ray_classifies_current_trims`]: the tree of a
+/// face whose loops close ([`loops_close`]) is built against its current trims even
+/// while the B-rep is being edited ([`MappedCacheFace::implanting_while_editing`]).
 /// Upstream builds it untrimmed then, and answers right only when it reuses a cache
-/// it built before the edit. While editing, a face whose loops do not close, or whose
-/// trims cannot be implanted, is [`SolidError::FaceTrimsUnavailable`]: there is no
-/// right answer against it, and the untrimmed surface would give a wrong one.
+/// it built before the edit. Such a face whose trims then fail to implant is
+/// [`SolidError::FaceTrimsUnavailable`]: the untrimmed surface would give a wrong
+/// answer. A face whose loops are open mid-edit keeps upstream's untrimmed tree: it
+/// has no boundary yet, and the fillet session classifies against such faces.
 fn face_surface_cache(
     k: &Kernel,
     b: &mut Brep,
@@ -202,15 +204,15 @@ fn face_surface_cache(
             "unexpected cache geometry handle",
         )),
     };
-    // WR-732: while editing, classify against the face's current trims, or refuse
-    let editing = k.fixes.brep_ray_classifies_current_trims && b.editing_enabled();
+    // WR-732: while editing, classify against the face's current trims when its loops
+    // close; a face whose loops are open mid-edit has no boundary yet, and keeps
+    // upstream's untrimmed tree (the fillet session classifies against such faces)
+    let editing =
+        k.fixes.brep_ray_classifies_current_trims && b.editing_enabled() && loops_close(b, face)?;
     let unavailable = SolidError::FaceTrimsUnavailable {
         operation: OP,
         entity: EntityRef::Face(face),
     };
-    if editing && !loops_close(b, face)? {
-        return Err(unavailable);
-    }
     let mut mapped = MappedCacheFace::new(BrepCacheFace { b, f: face }, &cache_handle, &entity_of)?;
     if editing {
         mapped = mapped.implanting_while_editing();
@@ -247,10 +249,20 @@ fn face_surface_cache(
 /// being merged into its edge's (a stitch's glue), so two vertices meet when they are
 /// one or lie within the sum of their tolerances of each other.
 ///
+/// A loop that names an entity the edit has deleted is open.
+///
 /// # Errors
 ///
-/// Those of the topology reads.
+/// Those of the topology reads, other than a deleted entity.
 fn loops_close(b: &Brep, f: FaceId) -> Result<bool> {
+    match loops_close_or_missing(b, f) {
+        Err(SolidError::NotFound { .. }) => Ok(false),
+        closes => closes,
+    }
+}
+
+/// [`loops_close`], a deleted entity an error.
+fn loops_close_or_missing(b: &Brep, f: FaceId) -> Result<bool> {
     let start = |eu: EdgeuseId| -> Result<Option<crate::topology::VertexId>> {
         match b.edgeuse(eu)?.vertexuse {
             Some(vu) => crate::topology::vertexuse::vertex(b, vu),
