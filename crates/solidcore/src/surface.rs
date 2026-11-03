@@ -14,6 +14,7 @@ pub mod bend_volume;
 pub mod cone;
 pub mod continued;
 pub mod curve_bounded_surface;
+pub mod extend;
 pub mod face_surface;
 pub mod from_parameters;
 pub mod implicit;

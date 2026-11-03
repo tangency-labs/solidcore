@@ -15,6 +15,7 @@ use crate::kernel::Kernel;
 use crate::nurbs::math::gamma;
 use crate::surface::cone::Cone;
 use crate::surface::continued::{at_most_a_turn, step_rows, widen};
+use crate::surface::extend::ExtendRefusal;
 use crate::surface::implicit::AnalyticSupport;
 use crate::surface::side::BoxSide;
 use crate::surface::surface::Surface;
@@ -63,21 +64,30 @@ impl Cone {
         let in_height = side.is_u() == swap;
         if in_height {
             let theta = self.semi_angle_deg().to_radians();
-            widen(&mut height, rows.at, distance * theta.cos());
+            let old = height;
+            let high = widen(&mut height, rows.at, distance * theta.cos());
             // not past the apex, proved: the radius at both ends above its rounding (`base +
             // tan h`: the product and sum's, gamma_8, and the tangent's own error from the
             // angle's rounding to radians, (1 + tan^2) |d theta| |h|, d theta a few ulps of it)
             let tan = theta.tan();
-            for h in height {
+            let rounding = |h: f64| {
+                gamma(8) * (self.radius(0.0).abs() + (tan * h).abs())
+                    + (1.0 + tan * tan) * gamma(4) * theta.abs() * h.abs()
+            };
+            let past = height.iter().any(|&h| {
                 let r = self.radius(h);
-                let rounding = gamma(8) * (self.radius(0.0).abs() + (tan * h).abs())
-                    + (1.0 + tan * tan) * gamma(4) * theta.abs() * h.abs();
-                if r.is_nan() || r <= rounding {
-                    return Err(SolidError::invalid_input(
-                        OP,
-                        "the height reaches the apex",
-                    ));
-                }
+                r.is_nan() || r <= rounding(h)
+            });
+            if past {
+                // the slant length from the side to where the radius meets twice its rounding,
+                // the radius shrinking by sin(theta) per unit of slant
+                let end = if high { old[1] } else { old[0] };
+                let room = (self.radius(end) - 2.0 * rounding(end)) / theta.sin();
+                return Err(SolidError::ExtendRefused {
+                    operation: OP,
+                    refusal: ExtendRefusal::PastApex,
+                    distance: (room > 0.0).then_some(room * (1.0 - gamma(8))),
+                });
             }
         } else {
             let r = self.radius(rows.mid.y);
@@ -87,8 +97,9 @@ impl Cone {
                     "the side runs along the axis at a radius not positive",
                 ));
             }
+            let old = angle;
             let high = widen(&mut angle, rows.at, (distance / r).to_degrees());
-            at_most_a_turn(&mut angle, high, OP, "the sweep is over a turn")?;
+            at_most_a_turn(&mut angle, old, high, r, OP)?;
         }
         let wider = Extent2d::from_bounds(angle[0], height[0], angle[1], height[1]);
         let mut cone = self.clone();
@@ -217,10 +228,29 @@ mod tests {
         let (c, dom) = cone(1.0, 2.0, 3.0, [0.0, 90.0], [0.0, 3.0], false);
         // the apex is 3 below the origin: a slant of 4 reaches past it
         let s = side_of(&c, &dom, true, false);
-        assert!(c.continued(&k(), &dom, s, 4.0).is_err());
+        // refused naming the slant to the apex less its rounding, which works (REVIEW2 6)
+        let named = |e: SolidError, want: ExtendRefusal| match e {
+            SolidError::ExtendRefused {
+                refusal,
+                distance: Some(d),
+                ..
+            } if refusal == want => d,
+            e => panic!("{e:?}"),
+        };
+        let d = named(
+            c.continued(&k(), &dom, s, 4.0).unwrap_err(),
+            ExtendRefusal::PastApex,
+        );
+        assert!(d < 10f64.sqrt() && d > 10f64.sqrt() * (1.0 - 1e-12), "{d}");
+        assert!(c.continued(&k(), &dom, s, d).is_ok());
         let (c, dom) = cone(1.0, 1.0, 3.0, [0.0, 270.0], [0.0, 3.0], false);
         let s = side_of(&c, &dom, false, true);
-        assert!(c.continued(&k(), &dom, s, 2.0).is_err());
+        let d = named(
+            c.continued(&k(), &dom, s, 2.0).unwrap_err(),
+            ExtendRefusal::OverATurn,
+        );
+        assert!((d - std::f64::consts::FRAC_PI_2).abs() < 1e-14, "{d}");
+        assert!(c.continued(&k(), &dom, s, d).is_ok());
         // exactly to a full turn is one
         let d = c
             .continued(&k(), &dom, s, std::f64::consts::FRAC_PI_2)
@@ -238,7 +268,9 @@ mod tests {
         let s = side_of(&c, &dom, true, false);
         assert!(c.continued(&k(), &dom, s, 10f64.sqrt()).is_err());
         // short of it by much more than the radius's rounding: built
-        let d = c.continued(&k(), &dom, s, 10f64.sqrt() * (1.0 - 1e-9)).unwrap();
+        let d = c
+            .continued(&k(), &dom, s, 10f64.sqrt() * (1.0 - 1e-9))
+            .unwrap();
         assert!(d.radius(step_box(&d).min().y) > 0.0);
     }
 

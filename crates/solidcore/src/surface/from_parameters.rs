@@ -283,7 +283,11 @@ pub fn from_parameters(
     let got = surface.step_uv_domain_with_nurb(k)?;
     let near = |x: f64, y: f64| (x - y).abs() <= gamma(8) * (x.abs() + y.abs());
     let (lo, hi) = (got.min(), got.max());
-    if !(near(lo.x, a0.min(a1)) && near(hi.x, a0.max(a1)) && near(lo.y, b0.min(b1)) && near(hi.y, b0.max(b1))) {
+    if !(near(lo.x, a0.min(a1))
+        && near(hi.x, a0.max(a1))
+        && near(lo.y, b0.min(b1))
+        && near(hi.y, b0.max(b1)))
+    {
         return Err(bad("the kernel's domain is not the record's box"));
     }
     // the parametrisation: the record's points are the kernel's at the mapped parameters,
@@ -309,25 +313,36 @@ fn evaluates_as_record(
     step_of: &dyn Fn([f64; 2]) -> [f64; 2],
 ) -> Result<()> {
     let bad = |reason: &'static str| SolidError::invalid_input(OP, reason);
-    let eval = crate::eval::SurfaceEval::new(record).map_err(|_| bad("the record does not evaluate"))?;
+    let eval =
+        crate::eval::SurfaceEval::new(record).map_err(|_| bad("the record does not evaluate"))?;
     let net = form.gw_nurb().ok_or_else(|| SolidError::sm_err(OP))?;
     let (p, q) = net.degrees();
     let size = net.rows().flatten().fold(0.0_f64, |m, c| {
-        let w = if c.w == crate::nurbs::math::NOW { 1.0 } else { c.w };
-        m.max((c.x / w).abs()).max((c.y / w).abs()).max((c.z / w).abs())
+        let w = if c.w == crate::nurbs::math::NOW {
+            1.0
+        } else {
+            c.w
+        };
+        m.max((c.x / w).abs())
+            .max((c.y / w).abs())
+            .max((c.z / w).abs())
     });
     let g = gamma(32 * (p + q + 3));
     for s in [0.0, 0.5, 1.0] {
         for t in [0.0, 0.5, 1.0] {
             let ru = u[0] + s * (u[1] - u[0]);
             let rv = v[0] + t * (v[1] - v[0]);
-            let want = eval.point([ru, rv]).ok_or_else(|| bad("the record does not evaluate"))?;
+            let want = eval
+                .point([ru, rv])
+                .ok_or_else(|| bad("the record does not evaluate"))?;
             let [a, b] = step_of([ru, rv]);
             let uv = surface.convert_uv_from_step_to_nurbs(k, Vec2::new(a, b))?;
             let got = surface.evaluate_point(k, uv)?;
             let off = (got - Point3::new(want.x, want.y, want.z)).length();
             if off.is_nan() || off > g * size.max(want.length()) {
-                return Err(bad("the kernel's surface is not the record's at its parameters"));
+                return Err(bad(
+                    "the kernel's surface is not the record's at its parameters",
+                ));
             }
         }
     }
@@ -672,7 +687,10 @@ mod tests {
         for rec in [&cone, &cyl] {
             let s = make(rec, [FRAC_PI_2, FRAC_PI_2 + TAU], [0.0, 3.0]).unwrap();
             let d = s.step_uv_domain_with_nurb(&k()).unwrap();
-            assert!((d.min().x - 90.0).abs() < 1e-12 && (d.max().x - 450.0).abs() < 1e-12, "{d:?}");
+            assert!(
+                (d.min().x - 90.0).abs() < 1e-12 && (d.max().x - 450.0).abs() < 1e-12,
+                "{d:?}"
+            );
             assert!(make(rec, [0.0, TAU + 1e-9], [0.0, 3.0]).is_err());
         }
         let sph = Record::Sphere {

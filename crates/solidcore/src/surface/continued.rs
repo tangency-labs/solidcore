@@ -15,6 +15,7 @@ use crate::geom::extent2d::Extent2d;
 use crate::geom::vector2d::Point2;
 use crate::geom::vector3d::{Point3, Vec3};
 use crate::kernel::Kernel;
+use crate::surface::extend::ExtendRefusal;
 use crate::surface::implicit::AnalyticSupport;
 use crate::surface::side::BoxSide;
 use crate::surface::surface::{Surface, SurfaceKind};
@@ -35,30 +36,56 @@ pub(super) fn widen(row: &mut [f64; 2], at: f64, by: f64) -> bool {
     high
 }
 
-/// Holds `row` within `[lo, hi]`: refused when proved past them (beyond the rounding of the
-/// sums that made it, 2 ulps of its largest term), set to them when within that rounding.
-fn within(row: &mut [f64; 2], lo: f64, hi: f64, what: &'static str) -> Result<()> {
+/// The distance across a side, at `rho` model units per radian, that `room` degrees of a row
+/// take (none for no room).
+pub(super) fn room_distance(room: f64, rho: f64) -> f64 {
+    room.max(0.0).to_radians() * rho
+}
+
+/// Holds `row`, grown from `old` at its `high` end (or low), within `[lo, hi]`: refused when
+/// proved past them (beyond the rounding of the sums that made it, 2 ulps of its largest
+/// term) naming the distance to the bound at `rho` per radian, set to them when within that
+/// rounding.
+fn within(
+    row: &mut [f64; 2],
+    old: [f64; 2],
+    high: bool,
+    [lo, hi]: [f64; 2],
+    rho: f64,
+    refusal: ExtendRefusal,
+) -> Result<()> {
     let rounding = 2.0 * f64::EPSILON * row[0].abs().max(row[1].abs()).max(hi.abs()).max(lo.abs());
     if row[0] < lo - rounding || row[1] > hi + rounding {
-        return Err(SolidError::invalid_input(OP, what));
+        let room = if high { hi - old[1] } else { old[0] - lo };
+        return Err(SolidError::ExtendRefused {
+            operation: OP,
+            refusal,
+            distance: Some(room_distance(room, rho)),
+        });
     }
     row[0] = row[0].max(lo);
     row[1] = row[1].min(hi);
     Ok(())
 }
 
-/// Holds a sweep `row` grown at its `high` end (or low) to at most a turn: refused when proved
-/// over one, set to exactly one when within the rounding of the sum.
+/// Holds a sweep `row` grown from `old` at its `high` end (or low) to at most a turn: refused
+/// when proved over one, naming the distance to a full turn at `rho` per radian; set to
+/// exactly one when within the rounding of the sum.
 pub(super) fn at_most_a_turn(
     row: &mut [f64; 2],
+    old: [f64; 2],
     high: bool,
+    rho: f64,
     op: &'static str,
-    what: &'static str,
 ) -> Result<()> {
     let span = row[1] - row[0];
     let rounding = 2.0 * f64::EPSILON * row[0].abs().max(row[1].abs()).max(TURN);
     if span - TURN > rounding {
-        return Err(SolidError::invalid_input(op, what));
+        return Err(SolidError::ExtendRefused {
+            operation: op,
+            refusal: ExtendRefusal::OverATurn,
+            distance: Some(room_distance(TURN - (old[1] - old[0]), rho)),
+        });
     }
     if span > TURN {
         if high {
@@ -107,20 +134,27 @@ impl Surface {
                 "the distance is not finite and positive",
             ));
         }
+        // a cone proves itself (Cone::continued), once
+        if let SurfaceKind::Cone(c) = self.kind() {
+            return Ok(Self::from(c.continued(k, dom, side, distance)?));
+        }
         // the source an exact class first: a form moved off its label is refused, not remade
         AnalyticSupport::check(k, self).map_err(|e| match e {
             SolidError::InvalidInput { reason, .. } => SolidError::invalid_input(OP, reason),
             other => other,
         })?;
         let grown = match self.kind() {
-            // proved by its own label and form check
-            SurfaceKind::Cone(c) => return Ok(Self::from(c.continued(k, dom, side, distance)?)),
             SurfaceKind::Plane(p) => {
                 let mut p = p.clone();
                 let s = p.uv_scale();
                 // the face box in STEP (a plane's NURBS parameters are its STEP ones), grown
                 // at the side's own end
-                let rows = step_rows(&|uv| self.convert_uv_from_nurbs_to_step(k, uv), dom, side, false)?;
+                let rows = step_rows(
+                    &|uv| self.convert_uv_from_nurbs_to_step(k, uv),
+                    dom,
+                    side,
+                    false,
+                )?;
                 let (mut u, mut v) = (rows.sweep, rows.generator);
                 if side.is_u() {
                     widen(&mut u, rows.at, distance / s.x);
@@ -145,11 +179,19 @@ impl Surface {
                 };
                 let (mut a, mut b) = (rows.sweep, rows.generator);
                 let row = if along { &mut b } else { &mut a };
+                let old = *row;
                 let high = widen(row, rows.at, rate(rho, distance)?);
                 if along {
-                    within(&mut b, -90.0, 90.0, "the latitude is past a pole")?;
+                    within(
+                        &mut b,
+                        old,
+                        high,
+                        [-90.0, 90.0],
+                        rho,
+                        ExtendRefusal::PastPole,
+                    )?;
                 } else {
-                    at_most_a_turn(&mut a, high, OP, "the sweep is over a turn")?;
+                    at_most_a_turn(&mut a, old, high, rho, OP)?;
                 }
                 sp.adjust_step_uv_domain(k, &Extent2d::from_bounds(a[0], b[0], a[1], b[1]))?;
                 Self::from(sp)
@@ -169,11 +211,12 @@ impl Surface {
                 };
                 let (mut a, mut b) = (rows.sweep, rows.generator);
                 let row = if along { &mut b } else { &mut a };
+                let old = *row;
                 let high = widen(row, rows.at, rate(rho, distance)?);
                 if along {
-                    at_most_a_turn(&mut b, high, OP, "the tube angle is over a turn")?;
+                    at_most_a_turn(&mut b, old, high, rho, OP)?;
                 } else {
-                    at_most_a_turn(&mut a, high, OP, "the sweep is over a turn")?;
+                    at_most_a_turn(&mut a, old, high, rho, OP)?;
                 }
                 t.adjust_step_uv_domain(k, &Extent2d::from_bounds(a[0], b[0], a[1], b[1]))?;
                 Self::from(t)
@@ -305,8 +348,16 @@ mod tests {
         };
         let anal = Extent2d::from_bounds(lon[0], lat[0], lon[1], lat[1]);
         Surface::from(
-            Sphere::new(&k(), Vec3::new(0.0, 0.0, 1.0), Vec3::X, Vec3::Y, anal, 2.0, opts)
-                .unwrap(),
+            Sphere::new(
+                &k(),
+                Vec3::new(0.0, 0.0, 1.0),
+                Vec3::X,
+                Vec3::Y,
+                anal,
+                2.0,
+                opts,
+            )
+            .unwrap(),
         )
     }
 
@@ -317,9 +368,7 @@ mod tests {
             inside_out,
             ..TorusOptions::default()
         };
-        Surface::from(
-            Torus::new(&k(), Vec3::ZERO, Vec3::X, Vec3::Y, anal, 5.0, 1.0, opts).unwrap(),
-        )
+        Surface::from(Torus::new(&k(), Vec3::ZERO, Vec3::X, Vec3::Y, anal, 5.0, 1.0, opts).unwrap())
     }
 
     /// Swapped and inside-out spheres and tori continue as the plain ones do: the same STEP
@@ -330,16 +379,28 @@ mod tests {
             let s = sphere_as([0.0, 90.0], [0.0, 30.0], swap, inside);
             let (dom, side) = side_at(&s, true, 30.0);
             let g = s.continued(&k(), &dom, side, 2.0 * PI / 3.0).unwrap();
-            assert!(close(steps(&g).max().y, 90.0), "{swap} {inside}: {:?}", steps(&g));
+            assert!(
+                close(steps(&g).max().y, 90.0),
+                "{swap} {inside}: {:?}",
+                steps(&g)
+            );
             assert!(matches!(g.kind(), SurfaceKind::Sphere(_)));
             let (dom, side) = side_at(&s, false, 90.0);
             let g = s.continued(&k(), &dom, side, 1.0).unwrap();
             let want = 90.0 + (1.0 / (2.0 * 15f64.to_radians().cos())).to_degrees();
-            assert!(close(steps(&g).max().x, want), "{swap} {inside}: {:?}", steps(&g));
+            assert!(
+                close(steps(&g).max().x, want),
+                "{swap} {inside}: {:?}",
+                steps(&g)
+            );
             let t = torus_as([0.0, 90.0], [0.0, 90.0], swap, inside);
             let (dom, side) = side_at(&t, true, 90.0);
             let g = t.continued(&k(), &dom, side, FRAC_PI_2).unwrap();
-            assert!(close(steps(&g).max().y, 180.0), "{swap} {inside}: {:?}", steps(&g));
+            assert!(
+                close(steps(&g).max().y, 180.0),
+                "{swap} {inside}: {:?}",
+                steps(&g)
+            );
             assert!(matches!(g.kind(), SurfaceKind::Torus(_)));
         }
     }
@@ -446,9 +507,25 @@ mod tests {
         let (dom, side) = side_at(&s, true, 30.0);
         let g = s.continued(&k(), &dom, side, 2.0 * PI / 3.0).unwrap();
         assert_eq!(steps(&g).max().y, 90.0);
-        assert!(s
+        // past it: refused naming the arc to the pole, which works (REVIEW2 finding 6)
+        let err = s
             .continued(&k(), &dom, side, 2.0 * PI / 3.0 + 1e-6)
-            .is_err());
+            .unwrap_err();
+        let SolidError::ExtendRefused {
+            refusal: ExtendRefusal::PastPole,
+            distance: Some(named),
+            ..
+        } = err
+        else {
+            panic!("{err:?}");
+        };
+        assert!(close(named, 2.0 * PI / 3.0), "{named}");
+        assert_eq!(
+            steps(&s.continued(&k(), &dom, side, named).unwrap())
+                .max()
+                .y,
+            90.0
+        );
     }
 
     #[test]
@@ -464,7 +541,20 @@ mod tests {
         let want = 90.0 + (1.0 / (5.0 + 45f64.to_radians().cos())).to_degrees();
         assert!(close(steps(&g).max().x, want), "{:?}", steps(&g));
         assert!(matches!(g.kind(), SurfaceKind::Torus(_)));
-        assert!(t.continued(&k(), &dom, side, 100.0).is_err());
+        // over a turn: refused naming the arc to a full turn at rho, which works
+        let err = t.continued(&k(), &dom, side, 100.0).unwrap_err();
+        let SolidError::ExtendRefused {
+            refusal: ExtendRefusal::OverATurn,
+            distance: Some(named),
+            ..
+        } = err
+        else {
+            panic!("{err:?}");
+        };
+        let rho = 5.0 + 45f64.to_radians().cos();
+        assert!(close(named, 1.5 * PI * rho), "{named}");
+        let g = t.continued(&k(), &dom, side, named).unwrap();
+        assert!(close(steps(&g).max().x - steps(&g).min().x, 360.0));
     }
 
     #[test]

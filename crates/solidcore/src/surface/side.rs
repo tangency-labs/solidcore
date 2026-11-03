@@ -93,6 +93,23 @@ impl BoxSide {
     }
 }
 
+/// A length across a side ([`Surface::length_across_side`]): its certified enclosure, and
+/// the enclosure's width split into its parts.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Across {
+    /// The certified enclosure of the length.
+    pub enclosure: Bracket,
+    /// The truncation part: the leaves' control polygons less their chords, at most `rel` of
+    /// the length when every leaf converged.
+    pub truncation: f64,
+    /// The rounding part: the sums' rounding and the leaves' points' (`gamma` of the chords
+    /// and polygons, `2 (1 + p) N d`).
+    pub rounding: f64,
+    /// Whether every leaf met `rel`; a leaf too short to cut again before it did leaves the
+    /// length not measured to `rel`.
+    pub converged: bool,
+}
+
 /// A certified enclosure of a computed quantity: the exact value of the quantity, for the
 /// surfaces as defined, lies in `[lower, upper]` (rounding included).
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -159,6 +176,8 @@ struct Rounding {
     level: f64,
     /// `M_H w_max / w_min^2`.
     scale: f64,
+    /// `M_H`, the net's largest homogeneous coordinate.
+    homogeneous: f64,
 }
 
 impl Rounding {
@@ -191,13 +210,23 @@ impl Rounding {
         let level = gamma(3) * (1.0 + 6.0 * kmax / smin) * 2.0;
         let scale = h * wmax / (wmin * wmin);
         if level.is_finite() && scale.is_finite() {
-            Ok(Self { level, scale })
+            Ok(Self {
+                level,
+                scale,
+                homogeneous: h.max(wmax),
+            })
         } else {
             Err(SolidError::invalid_input(
                 op,
                 "the net's rounding is not bounded",
             ))
         }
+    }
+
+    /// The error of a homogeneous coordinate after `levels` levels.
+    #[allow(clippy::cast_precision_loss)]
+    fn homogeneous(self, levels: usize) -> f64 {
+        (1.0 + 1e-12) * (2.0 * levels as f64 * self.level + f64::EPSILON) * self.homogeneous
     }
 
     /// The Euclidean error of a point after `levels` levels.
@@ -210,6 +239,69 @@ impl Rounding {
 fn euclid(h: [f64; 4]) -> Vec3 {
     let [x, y, z, w] = h;
     Vec3::new(x / w, y / w, z / w)
+}
+
+/// The rounding a rational Bezier piece's length carries, from its homogeneous points as
+/// computed, each coordinate within `made` of the exact piece's.
+///
+/// - **The leaves' cuts** (`cut`): `2 p` de Casteljau levels on the piece's points for
+///   `t` in `[0, 1]`, each a convex combination rounding by `gamma_3` of the sum of the
+///   magnitudes (at most `2 M_h`), so a leaf's homogeneous point is within
+///   `4 p gamma_4 M_h` of the computed piece's, and its Euclidean point within that times
+///   `(sqrt3 + M) / w_min` (`M` the largest Euclidean point, `w_min` the least weight).
+/// - **The piece moved** by `made`: the length of the computed piece is within
+///   `int |C~' - C'|` of the exact one's. With `C' = (P' - C w') / w`,
+///   `C~' - C' = (dP' - C~ dw' - dC w') / w~ - C' dw / w~`; on `[0, 1]`, `|dP'| <= 2 p sqrt3
+///   made` and `|dw'| <= 2 p made` (the derivative's control points are `p` times the
+///   points' differences), `|dC| <= made (sqrt3 + M) / w_min`, `|w'| <= p max |w_i+1 - w_i|`
+///   and `|C'| <= p (w_max / w_min)^2 max |E_i+1 - E_i|` (the rational derivative's bound),
+///   each widened by `made` where it is taken from the computed points.
+#[derive(Debug, Clone, Copy)]
+struct PieceBounds {
+    /// The degree.
+    p: f64,
+    /// The Euclidean error of a leaf's point from its cut.
+    cut: f64,
+    /// The bound on the length's move from the piece's rounding.
+    moved: f64,
+}
+
+impl PieceBounds {
+    /// `None` when a weight is not proved positive or a bound is not finite.
+    fn of(piece: &[[f64; 4]], made: f64) -> Option<Self> {
+        let n = piece.len().checked_sub(1)?;
+        #[allow(clippy::cast_precision_loss)]
+        let p = n as f64;
+        let (mut mh, mut m, mut wmin, mut wmax) = (0.0_f64, 0.0_f64, f64::INFINITY, 0.0_f64);
+        for h in piece {
+            mh = h.iter().fold(mh, |x, c| x.max(c.abs()));
+            m = m.max(euclid(*h).length());
+            wmin = wmin.min(h[3]);
+            wmax = wmax.max(h[3]);
+        }
+        let (mut leg, mut dw) = (0.0_f64, 0.0_f64);
+        for (a, b) in piece.iter().zip(piece.iter().skip(1)) {
+            leg = leg.max(euclid(*a).distance(euclid(*b)));
+            dw = dw.max((b[3] - a[3]).abs());
+        }
+        // a few ulps on each bound computed here
+        let slack = 1.0 + gamma(16);
+        let sqrt3 = 3f64.sqrt() * slack;
+        let cut_h = 4.0 * p * gamma(4) * mh;
+        let low = wmin - made - cut_h;
+        if low.is_nan() || low <= 0.0 {
+            return None;
+        }
+        let cut = cut_h * (sqrt3 + m) / low * slack;
+        let point = made * (sqrt3 + m) / low * slack;
+        let w1 = p * (dw + 2.0 * made);
+        let ratio = (wmax + made) / low;
+        let d1 = p * ratio * ratio * (leg + 2.0 * point);
+        let moved =
+            (2.0 * p * sqrt3 * made + (m + point) * 2.0 * p * made + point * w1 + d1 * made) / low
+                * slack;
+        (cut.is_finite() && moved.is_finite()).then_some(Self { p, cut, moved })
+    }
 }
 
 /// The piece `[lo, hi]` of `[0, 1]` of a Bezier piece (de Casteljau at `hi`, then the left
@@ -269,7 +361,9 @@ fn iso_pieces(
     };
     // within the form's knots, exactly: the iso extraction clamps a parameter outside them
     // (by up to 1e-6) and the pieces would be cut to them, neither said
-    let nurb = form.gw_nurb().ok_or_else(|| SolidError::sm_err(OP_LENGTH))?;
+    let nurb = form
+        .gw_nurb()
+        .ok_or_else(|| SolidError::sm_err(OP_LENGTH))?;
     let (held, along) = if along_u {
         (nurb.v_knots(), nurb.u_knots())
     } else {
@@ -414,15 +508,15 @@ impl Surface {
     /// halving a leaf divides it by about 4: a quarter circle needs about `0.6 / sqrt(rel)`
     /// leaves. More than [`MAX_LEAVES`] is refused.
     ///
-    /// **Rounding.** Each leaf's points are within `d` of the exact curve's
-    /// ([`Rounding`]: the iso extraction, the decomposition, the piece's cut and the
-    /// leaf's cut), so its chord is within `2 d` and its polygon within `2 p d` of the
-    /// exact leaf's, and each distance rounds by `gamma_6`. Over `N` leaves: lower
-    /// `sum c (1 - gamma_(N + 6)) - 2 N d`, upper `sum q (1 + gamma_(N + 6)) + 2 p N d`.
-    /// The width is then `rel` times the length plus that rounding term, which grows with
-    /// the leaves: with coordinates of size 3, a quarter circle's enclosure is about
-    /// `3e-8` wide at `rel = 1e-8` (6e3 leaves) and no narrower at a smaller `rel`, so
-    /// `rel` below about `1e-8` buys nothing at part scale.
+    /// **Rounding**, in two parts. The leaves enclose the length of the pieces as computed:
+    /// each leaf's points are within its cut's rounding of that piece's (`2 p` de Casteljau
+    /// levels, sized on the piece's own points), so its chord is within twice that and its
+    /// polygon within `2 p` times it, and each distance rounds by `gamma_6`; over the leaves,
+    /// `gamma_(N + 6 + p)` of the sums. The pieces' points are within the iso extraction's and
+    /// decomposition's rounding of the exact curve's ([`Rounding`]), and the length moves by
+    /// at most the integral of the derivative's change, bounded per piece in closed form
+    /// ([`PieceBounds`]): a cost per piece, not per leaf, so a finer `rel` costs only the
+    /// leaves' cuts.
     ///
     /// # Errors
     ///
@@ -436,7 +530,7 @@ impl Surface {
         dom: &Extent2d,
         side: BoxSide,
         rel: f64,
-    ) -> Result<Bracket> {
+    ) -> Result<Across> {
         if !(rel > 0.0 && rel < 1.0) {
             return Err(SolidError::invalid_input(OP_LENGTH, "rel is not in (0, 1)"));
         }
@@ -461,16 +555,37 @@ impl Surface {
             BoxSide::VMax => natural.max().y,
         };
         if from == to {
-            return Ok(Bracket {
-                lower: 0.0,
-                upper: 0.0,
+            return Ok(Across {
+                enclosure: Bracket {
+                    lower: 0.0,
+                    upper: 0.0,
+                },
+                truncation: 0.0,
+                rounding: 0.0,
+                converged: true,
             });
         }
         let rounding = Rounding::of(&form, &[fixed, from, to], OP_LENGTH)?;
         let (pieces, levels) = iso_pieces(k, &form, side.is_u(), fixed, from, to)?;
-        let (mut chords, mut polygons, mut leaves, mut degree) = (0.0_f64, 0.0_f64, 0_usize, 0);
+        // the pieces' homogeneous points as computed, within this of the exact ones
+        let made = rounding.homogeneous(levels);
+        let (mut chords, mut polygons, mut leaves) = (0.0_f64, 0.0_f64, 0_usize);
+        let (mut chord_cuts, mut polygon_cuts, mut moved) = (0.0_f64, 0.0_f64, 0.0_f64);
+        let mut converged = true;
         for piece in &pieces {
-            degree = degree.max(piece.len().saturating_sub(1));
+            // a weight not proved positive past the rounding: no measurement
+            let Some(bounds) = PieceBounds::of(piece, made) else {
+                return Ok(Across {
+                    enclosure: Bracket {
+                        lower: 0.0,
+                        upper: f64::INFINITY,
+                    },
+                    truncation: f64::INFINITY,
+                    rounding: f64::INFINITY,
+                    converged: false,
+                });
+            };
+            let mut n = 0_usize;
             let mut work = vec![(0.0_f64, 1.0_f64)];
             while let Some((a, b)) = work.pop() {
                 let leaf = cut(piece, a, b);
@@ -484,13 +599,18 @@ impl Surface {
                     .zip(pts.iter().skip(1))
                     .map(|(a, b)| a.distance(*b))
                     .sum();
-                if q - c > rel * c && b - a > f64::EPSILON {
-                    let m = 0.5 * (a + b);
-                    work.push((m, b));
-                    work.push((a, m));
-                    continue;
+                if q - c > rel * c {
+                    if b - a > f64::EPSILON {
+                        let m = 0.5 * (a + b);
+                        work.push((m, b));
+                        work.push((a, m));
+                        continue;
+                    }
+                    // a leaf too short to cut again before it met `rel`
+                    converged = false;
                 }
                 leaves += 1;
+                n += 1;
                 if leaves > MAX_LEAVES {
                     return Err(SolidError::NotConverged {
                         operation: OP_LENGTH,
@@ -500,17 +620,25 @@ impl Surface {
                 chords += c;
                 polygons += q;
             }
+            #[allow(clippy::cast_precision_loss)]
+            let n = n as f64;
+            // each leaf's chord within 2 of its cut's point error, its polygon within 2 p
+            chord_cuts += n * 2.0 * bounds.cut;
+            polygon_cuts += n * 2.0 * bounds.p * bounds.cut;
+            moved += bounds.moved;
         }
-        // the leaves' own cuts add 2 p levels
-        let d = rounding.point(levels + 2 * degree);
-        #[allow(clippy::cast_precision_loss)]
-        let n = leaves as f64;
-        let g = gamma(leaves + 6 + degree);
-        #[allow(clippy::cast_precision_loss)]
-        let p = degree as f64;
-        Ok(Bracket {
-            lower: (chords * (1.0 - g) - 2.0 * n * d).max(0.0),
-            upper: polygons * (1.0 + g) + 2.0 * p * n * d,
+        let g = gamma(leaves + 6 + pieces.iter().map(Vec::len).max().unwrap_or(0));
+        // the leaves enclose the length of the pieces as computed; the exact curve's is within
+        // `moved` of it (the pieces' points' rounding, through their derivatives)
+        let rounding = g * (chords + polygons) + chord_cuts + polygon_cuts + 2.0 * moved;
+        Ok(Across {
+            enclosure: Bracket {
+                lower: (chords * (1.0 - g) - chord_cuts - moved).max(0.0),
+                upper: polygons * (1.0 + g) + polygon_cuts + moved,
+            },
+            truncation: polygons - chords,
+            rounding,
+            converged,
         })
     }
 }
@@ -633,18 +761,27 @@ mod tests {
         let s = Surface::from(c.clone());
         // round: from angle 90 to 180, a quarter of radius 2
         let side = side_at(&c, &dom, false, 90.0);
-        let b = s.length_across_side(&k(), &dom, side, 1e-8).unwrap();
+        let b = s
+            .length_across_side(&k(), &dom, side, 1e-8)
+            .unwrap()
+            .enclosure;
         holds(b, PI);
         // the leaves' share and the rounding's at part scale (coordinates about 3)
         assert!(b.upper - b.lower < 1e-6, "{b:?}");
         // along: from height 3 to 5
         let side = side_at(&c, &dom, true, 3.0);
-        let b = s.length_across_side(&k(), &dom, side, 1e-10).unwrap();
+        let b = s
+            .length_across_side(&k(), &dom, side, 1e-10)
+            .unwrap()
+            .enclosure;
         holds(b, 2.0);
         assert!(b.upper - b.lower < 1e-10, "{b:?}");
         // the low height side is the domain's own end: nothing across
         let side = side_at(&c, &dom, true, 0.0);
-        let b = s.length_across_side(&k(), &dom, side, 1e-10).unwrap();
+        let b = s
+            .length_across_side(&k(), &dom, side, 1e-10)
+            .unwrap()
+            .enclosure;
         assert_eq!((b.lower, b.upper), (0.0, 0.0));
     }
 
@@ -654,8 +791,14 @@ mod tests {
         let dom = nurbs_box(&c, [0.0, 90.0], [0.0, 1.0]);
         let s = Surface::from(c.clone());
         let side = side_at(&c, &dom, false, 90.0);
-        let fine = s.length_across_side(&k(), &dom, side, 1e-8).unwrap();
-        let coarse = s.length_across_side(&k(), &dom, side, 1e-4).unwrap();
+        let fine = s
+            .length_across_side(&k(), &dom, side, 1e-8)
+            .unwrap()
+            .enclosure;
+        let coarse = s
+            .length_across_side(&k(), &dom, side, 1e-4)
+            .unwrap()
+            .enclosure;
         holds(fine, PI);
         holds(coarse, PI);
         assert!(coarse.upper - coarse.lower > fine.upper - fine.lower);
@@ -671,7 +814,9 @@ mod tests {
         let past = Extent2d::from_bounds(lo.x, lo.y, hi.x + 1e-7, hi.y);
         assert!(s.side_diameter(&k(), &past, BoxSide::UMax).is_err());
         assert!(s.side_diameter(&k(), &past, BoxSide::VMin).is_err());
-        assert!(s.length_across_side(&k(), &past, BoxSide::UMax, 1e-8).is_err());
+        assert!(s
+            .length_across_side(&k(), &past, BoxSide::UMax, 1e-8)
+            .is_err());
         assert!(s.side_diameter(&k(), &dom, BoxSide::UMax).is_ok());
     }
 

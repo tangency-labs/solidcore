@@ -11,8 +11,8 @@
 
 use crate::geom::extent3d::Extent3d;
 use crate::geom::vector3d::{Point3, Vec3};
-use crate::surface::plane::Plane;
 use crate::nurbs::math::gamma;
+use crate::surface::plane::Plane;
 use crate::surface::side::Bracket;
 
 impl Plane {
@@ -152,7 +152,10 @@ mod tests {
             [1e6 + 1.0, 1e6 + 1.0, 0.0],
         ));
         assert!(m.lower <= 9.0 && 9.0 <= m.upper);
-        assert!(m.upper - m.lower > 1e-12 && m.upper - m.lower < 1e-7, "{m:?}");
+        assert!(
+            m.upper - m.lower > 1e-12 && m.upper - m.lower < 1e-7,
+            "{m:?}"
+        );
     }
 
     /// Axes only nearly square (REVIEW2's finding 6 case): the kernel keeps Y = (1e-13, 1, 0),
