@@ -25,12 +25,15 @@ use solidcore::blend::fillet_executive::api::fillet_edges;
 use solidcore::boolean::api_brep::boolean_union;
 use solidcore::geom::attribute::{AttributeStore, ObjectKey};
 use solidcore::geom::axis2_placement::Axis2Placement;
+use solidcore::geom::extent2d::Extent2d;
 use solidcore::geom::vector2d::Point2;
 use solidcore::mass::integrator::properties::{brep_volume, PropertyAttributes};
 use solidcore::math::{Point3, Vec3, PI};
+use solidcore::nurbs::b_spline_surface::SurfParamType;
 use solidcore::primitive::api_primitives::{create_box, create_cone, create_cylinder};
 use solidcore::surface::procedural_blend::convert::{exact_rebuild, exact_to_record};
 use solidcore::surface::procedural_blend::exact::ExactClass;
+use solidcore::surface::procedural_blend::record::SupportRecord;
 use solidcore::surface::procedural_blend::BlendNet;
 use solidcore::surface::surface::{Surface, SurfaceKind};
 use solidcore::topology::face::p2 as face;
@@ -505,14 +508,43 @@ fn the_conic_rounds_are_their_definitions() {
     assert!((after - before - added).abs() < VOLUME_TOL);
     let (k0, b0, _, _) = plate_and_peg_kept(true, false);
     assert_eq!(body_bits(&k, &b), body_bits(&k0, &b0));
+    // the round reversed, swapped and reparametrised is still its definition, through its
+    // record too; a moved support is refused
+    for f in b.faces().ids() {
+        let s = face::surface(&b, f).unwrap().unwrap();
+        if s.procedural_blend().and_then(|p| p.exact()).is_none() {
+            continue;
+        }
+        let mut e = s.copy(&k).unwrap();
+        e.reverse(&k, SurfParamType::U).unwrap();
+        e.swap_uv(&k).unwrap();
+        e.reparameterize(&k, &Extent2d::from_bounds(-1.0, 2.0, 3.0, 7.0))
+            .unwrap();
+        e.reverse(&k, SurfParamType::V).unwrap();
+        assert_eq!(e.procedural_blend().unwrap().recertify(&k).unwrap(), 0.0);
+        let rec = exact_to_record(&k, &e).unwrap();
+        exact_rebuild(&k, &rec).unwrap();
+        let mut off = rec.clone();
+        if let SupportRecord::Nurbs { form, .. } = &mut off.supports[0] {
+            for p in &mut form.points {
+                for x in p.iter_mut() {
+                    *x += 1e-3;
+                }
+            }
+        }
+        assert!(exact_rebuild(&k, &off).is_err());
+    }
 }
 
 #[test]
-fn the_conic_pair_rounds_keep_no_definition() {
-    // their spine, the plane conic of one offset, is on the other only within the body's
-    // tolerance (the plane from the ball both touch): no bound of 0, so no definition
+fn the_conic_pair_rounds_are_their_definitions() {
     let (k, b, _, _) = pole_and_cone_kept(true, true);
-    assert!(exact_round_checks(&k, &b).is_empty());
+    let checked = exact_round_checks(&k, &b);
+    assert_eq!(checked.len(), 2);
+    assert!(
+        checked.iter().all(|(c, _)| *c == ExactClass::ConicPair),
+        "{checked:?}"
+    );
     let (k0, b0, _, _) = pole_and_cone_kept(true, false);
     assert_eq!(body_bits(&k, &b), body_bits(&k0, &b0));
 }

@@ -359,8 +359,8 @@ fn body_bits(k: &Kernel, b: &Brep) -> Vec<Vec<[u64; 3]>> {
 
 #[test]
 fn the_nodal_quartic_round_keeps_no_definition() {
-    // its spine, the quartic's power-form parametrisation in Bernstein pieces, is on the
-    // offsets only beyond the rounding a bound of 0 needs: no definition
+    // its spine is on the offsets only to 2e-9 of the radius (9.6e-10 and 9.8e-10 at
+    // r = 0.5), beyond the rounding a bound of 0 needs: no definition
     let (k, b, res, _) = pipes_kept(true, true);
     res.unwrap();
     assert!(exact_round_checks(&k, &b).is_empty());
