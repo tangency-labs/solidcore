@@ -1568,6 +1568,43 @@ fn a_free_edge_that_cannot_be_sampled_is_named_and_the_body_meshed() {
     assert!(p.edges[..ei].iter().all(|n| n.len() >= 2));
 }
 
+/// An edge whose uses list no face but which the faces' loops still run (an unvalidated
+/// record), and which cannot be sampled (a spline without points): both faces that run it are
+/// refused, each naming it,
+/// and the other four are meshed. It was taken for a free edge, and each face's loop closed
+/// with a chord across the gap.
+#[test]
+fn an_edge_left_out_of_its_uses_but_in_its_faces_loops_refuses_them() {
+    let mut b = fixture("box_10x6x4");
+    let ei = 3;
+    let mut faces: Vec<usize> = b.edges[ei].uses.iter().map(|u| u.face as usize).collect();
+    faces.sort_unstable();
+    faces.dedup();
+    b.edges[ei].uses.clear();
+    // A spline with no control points: its pcurves and interval are still the line's, so only
+    // its sampling fails.
+    b.edges[ei].curve = brep::Curve::Spline {
+        knots: vec![0.0, 0.0, 1.0, 1.0],
+        points: Vec::new(),
+    };
+    b.edges[ei].nurbs = None;
+    let (p, stats) = ok(plan(&b, &MeshTolerance::chord(0.01), size_of("box_10x6x4")));
+    let refused: Vec<usize> = stats.unmeshed.iter().map(|r| r.face).collect();
+    assert_eq!(refused, faces, "{stats:?}");
+    for r in &stats.unmeshed {
+        assert!(r.reason.contains(&format!("edge {ei}")), "{}", r.reason);
+    }
+    assert!(stats.unsampled_edges.is_empty(), "{stats:?}");
+    let meshed: Vec<u32> = (0..6u32)
+        .filter(|f| !faces.contains(&(*f as usize)))
+        .collect();
+    assert_eq!(meshed_faces(&p), meshed);
+    assert_eq!(
+        p.edge_faces[ei],
+        faces.iter().map(|&f| f as u32).collect::<Vec<u32>>()
+    );
+}
+
 /// A body every face of which is refused (a sphere of one face, its pcurve off its edge) is the
 /// first face's error, not an empty plan.
 #[test]

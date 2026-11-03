@@ -252,8 +252,10 @@ fn plan_at(b: &brep::Brep, tol: f64, turn: Option<size::Turn>) -> Result<(TessPl
         )));
     }
     let forward = forward_faces(b);
-    // The faces each edge bounds, each once, in the order of the edge's uses.
-    let edge_faces: Vec<Vec<usize>> = b
+    // The faces each edge bounds, each once, in the order of the edge's uses, then any face whose
+    // loops run the edge although its uses do not list it (an unvalidated record): an edge that
+    // cannot be sampled refuses every face that runs it.
+    let mut edge_faces: Vec<Vec<usize>> = b
         .edges
         .iter()
         .map(|e| {
@@ -267,6 +269,15 @@ fn plan_at(b: &brep::Brep, tol: f64, turn: Option<size::Turn>) -> Result<(TessPl
             fs
         })
         .collect();
+    for (fi, f) in faces.iter().enumerate() {
+        for oe in face_edges(f) {
+            if let Some(fs) = edge_faces.get_mut(oe.edge as usize)
+                && !fs.contains(&fi)
+            {
+                fs.push(fi);
+            }
+        }
+    }
     let rules = size::Rules::new(
         tol,
         size::extent(
@@ -353,9 +364,7 @@ fn plan_at(b: &brep::Brep, tol: f64, turn: Option<size::Turn>) -> Result<(TessPl
             }
         });
     }
-    for (ei, e) in relax_crowded_faces(b, &jobs, &rules, &mut nodes, &refused.flags()) {
-        refused.edge(&edge_faces, ei, &e);
-    }
+    relax_crowded_faces(b, &jobs, &rules, &mut nodes, &refused.flags());
     for (ei, e) in split_thin_loops(b, &mut nodes, &refused.flags()) {
         refused.edge(&edge_faces, ei, &e);
     }
@@ -414,8 +423,10 @@ fn plan_at(b: &brep::Brep, tol: f64, turn: Option<size::Turn>) -> Result<(TessPl
                 .iter()
                 .find(|(f, _)| *f == fi)
                 .map(|(_, why)| why.as_str());
+            // The plan indexes faces as u32, checked for the body above.
+            let index = u32::try_from(fi).map_err(|_| unsupported("too many faces"))?;
             let (fp, stats) = plan_or_fill(
-                fi,
+                index,
                 kind(face.parameters()),
                 eval,
                 &fb.loops,
@@ -689,6 +700,14 @@ fn boundary(
             let n = nodes
                 .get(oe.edge as usize)
                 .ok_or_else(|| fail(oe.edge, "no nodes".into()))?;
+            // An edge without nodes (it could not be sampled) leaves a gap in the loop that a
+            // chord would close: the face is refused, never meshed across it.
+            if n.points.len() < 2 || n.params.len() != n.points.len() {
+                return Err(fail(
+                    oe.edge,
+                    format!("{} nodes: it was not sampled", n.points.len()),
+                ));
+            }
             let edge = b
                 .edges
                 .get(oe.edge as usize)
@@ -1329,10 +1348,11 @@ fn relax_crowded_faces(
     rules: &size::Rules,
     nodes: &mut [edges::Nodes],
     skip: &[bool],
-) -> Vec<(usize, TessError)> {
-    let mut failed: Vec<(usize, TessError)> = Vec::new();
+) {
+    // Edges whose relaxed sampling failed: they keep their nodes at the rules' own level.
+    let mut strict: Vec<usize> = Vec::new();
     let Some(turn) = rules.turn else {
-        return failed;
+        return;
     };
     let boundaries: Vec<Vec<usize>> = b
         .faces
@@ -1371,22 +1391,25 @@ fn relax_crowded_faces(
         };
         for e in crowded {
             let Some(&(_, h)) = jobs.get(e) else { continue };
-            // An edge that fails is not sampled again: its faces are refused.
             if let Some(slot) = level.get_mut(e) {
                 *slot = l;
             }
-            if failed.iter().any(|(x, _)| *x == e) {
+            if strict.contains(&e) {
                 continue;
             }
+            // The relaxed nodes are a coarser bisection of the same curve, so the edge's nodes
+            // at the rules' own level are valid whatever the relaxed sampling meets: an edge whose
+            // relaxed sampling fails keeps them (its faces are only more finely bounded), and is
+            // not relaxed again. (Its relaxed parameters are a subset of the strict ones, which
+            // all evaluated, so this does not happen; nothing is refused if it does.)
             if let Some(slot) = nodes.get_mut(e) {
                 match edges::sample_edge(b, e, &relaxed, h) {
                     Ok(n) => *slot = n,
-                    Err(err) => failed.push((e, err)),
+                    Err(_) => strict.push(e),
                 }
             }
         }
     }
-    failed
 }
 
 /// Twice the signed area of a parameter polygon.
@@ -1659,7 +1682,7 @@ fn holes_beside_outer(dom: &solidcore::eval::uv::Domain, loops: &mut [seam::Loop
 /// whose chords cross however often they are halved), filled leniently straight away with that
 /// reason.
 fn plan_or_fill(
-    fi: usize,
+    fi: u32,
     kind: &str,
     s: &EvalSurface,
     loops: &[seam::Loop],
@@ -1702,7 +1725,7 @@ fn plan_or_fill(
             ) {
                 Ok(fp) => {
                     stats.lenient.push(RefusedFace {
-                        face: fi,
+                        face: fi as usize,
                         reason: first.to_string(),
                     });
                     Ok((fp, stats))
@@ -1722,7 +1745,7 @@ fn plan_or_fill(
 /// for a face no method could plan (see [`Lenient`]).
 #[allow(clippy::too_many_arguments)]
 fn plan_face(
-    fi: usize,
+    fi: u32,
     kind: &str,
     s: &EvalSurface,
     loops: &[seam::Loop],
@@ -2038,7 +2061,7 @@ fn plan_face(
         *q = s.wrap(*q);
     }
     Ok(FacePlan {
-        face: u32::try_from(fi).unwrap_or(u32::MAX),
+        face: fi,
         surface: None,
         uv: all,
         fixed,
@@ -2101,9 +2124,10 @@ fn within_loops(
     };
     let us = copies(bbox[0], period[0], q[0])?;
     let vs = copies(bbox[1], period[1], q[1])?;
-    if (us.len() * vs.len()) > MAX_PERIODS {
-        // Proven: each is at most MAX_PERIODS long, so the product does not overflow.
-        return Err(TooManyCopies((us.len() * vs.len()) as f64));
+    // Proven: each is at most MAX_PERIODS long, so the product does not overflow.
+    let count = us.len() * vs.len();
+    if count > MAX_PERIODS {
+        return Err(TooManyCopies(count as f64));
     }
     Ok(vs
         .into_iter()
@@ -2492,8 +2516,7 @@ fn closed_boundary(
     }
     // By value: −0.0 and 0.0 are one point.
     let key = |q: &[f64; 2]| [(q[0] + 0.0).to_bits(), (q[1] + 0.0).to_bits()];
-    // Proven: capacity of the allocated `uvs`' length, its entries (12 bytes) no larger.
-    let mut first: HashMap<[u64; 2], u32> = HashMap::with_capacity(uvs.len());
+    let mut first: HashMap<[u64; 2], u32> = HashMap::new();
     for (i, q) in uvs.iter().enumerate().take(fixed.len()) {
         // Proven: below MAX_FACE_NODES, as above.
         let i = i as u32;

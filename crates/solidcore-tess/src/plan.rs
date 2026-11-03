@@ -79,10 +79,13 @@ pub struct TessPlan {
     /// Each face's share, in the body's face order.
     pub faces: Vec<FacePlan>,
     /// B-rep edges as polylines (the shared edge nodes), in the body's edge order; empty for an
-    /// edge that could not be sampled (every face it bounds is refused, or, bounding none, it is
-    /// named in [`crate::PlanStats::unsampled_edges`]).
+    /// edge that could not be sampled. Every face it bounds is then refused, each named in
+    /// [`crate::PlanStats::unmeshed`] with its first reason, which is another one where the face
+    /// was refused before its edges were sampled (its surface): the edge's own error then shows
+    /// nowhere. An edge bounding no face is named in [`crate::PlanStats::unsampled_edges`].
     pub edges: Vec<Vec<Vec3>>,
-    /// Per edge: the faces it bounds.
+    /// Per edge: the faces it bounds, in the order of its uses, then any face whose loops run it
+    /// although its uses do not list it.
     pub edge_faces: Vec<Vec<u32>>,
 }
 

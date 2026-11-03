@@ -262,8 +262,7 @@ pub(crate) fn cut(
     // Inside the face along each line: from a crossing with the face above to the next one
     // up (which must have it below).
     let mut links: Vec<Link> = Vec::new();
-    // Proven: the chunk size is the constant 2, not zero.
-    // Proven: the chunk size is the constant 2, not zero.
+    // Proven: both chunk sizes are the constant 2, not zero.
     for pair in left.chunks(2).zip(right.chunks(2)) {
         let (lp, rp) = pair;
         let (Some(la), Some(lb), Some(ra), Some(rb)) =
