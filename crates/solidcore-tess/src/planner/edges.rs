@@ -34,20 +34,56 @@ pub(crate) struct Nodes {
     /// the other's point of the face, a pinch, not a crossing.
     pub snapped: Vec<f64>,
     /// Where [`sample_edge`] stopped at a bound with a segment still wanting a split: which
-    /// bound, and the farthest such a segment's chord lies from the curve (mm).
+    /// bound, and the farthest any of its chords lies from the curve (mm).
     pub capped: Option<(crate::EdgeCap, f64)>,
 }
 
-/// A segment of [`sample_edge`]'s depth-first bisection: its parameters, end points, middle
-/// (once evaluated) and depth. Each segment carries its end points and middle, so every
-/// parameter is evaluated once (an intersection curve's point is a Newton solve).
+/// A segment of [`sample_edge`]'s bisection, measured: its parameters, end points, quarter
+/// points and middle, depth, whether it is fine, its chord's sag, and by how much it exceeds the
+/// rules it fails (0 when fine). Each segment carries its points, so every parameter is
+/// evaluated once (an intersection curve's point is a Newton solve).
 struct Seg {
     a: f64,
     b: f64,
     pa: Vec3,
     pb: Vec3,
-    mid: Option<Vec3>,
+    q1: Vec3,
+    pm: Vec3,
+    q3: Vec3,
     depth: u32,
+    ok: bool,
+    sag: f64,
+    excess: f64,
+}
+
+impl Seg {
+    /// Which of two segments is halved first: the one exceeding its rules more, then the one
+    /// earlier along the curve.
+    fn order(&self, other: &Seg) -> Ordering {
+        self.excess
+            .total_cmp(&other.excess)
+            .then_with(|| other.a.total_cmp(&self.a))
+    }
+}
+
+impl PartialEq for Seg {
+    fn eq(&self, other: &Self) -> bool {
+        self.order(other) == Ordering::Equal
+    }
+}
+
+impl Eq for Seg {}
+
+impl PartialOrd for Seg {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl Ord for Seg {
+    fn cmp(&self, other: &Self) -> Ordering {
+        self.order(other)
+    }
 }
 
 /// Nodes of edge `ei` of `b` from its start to its end: every chord within the tolerance of
@@ -127,86 +163,98 @@ pub(crate) fn sample_edge(b: &brep::Brep, ei: usize, rules: &Rules, h: f64) -> R
     };
     let t_at = |i: u32| t0 + (t1 - t0) * f64::from(i) / f64::from(initial);
     let ends: Vec<Vec3> = (0..=initial).map(|i| at(t_at(i))).collect::<Result<_>>()?;
-    // Depth-first bisection, segment by segment, keeping the output ordered (see [`Seg`]).
-    let mut out: Vec<(f64, Vec3)> = vec![(t0, front)];
-    let mut capped: Option<(crate::EdgeCap, f64)> = None;
-    // Proven: the capacity is the constant 64.
-    let mut stack: Vec<Seg> = Vec::with_capacity(64);
+    // The segment from `a` to `b` (points `pa`, `pb`, its middle `pm` where known), measured.
+    let measure = |a: f64, b: f64, pa: Vec3, pb: Vec3, pm: Option<Vec3>, depth: u32| {
+        let pm = match pm {
+            Some(p) => p,
+            None => at(0.5 * (a + b))?,
+        };
+        let (q1, q3) = (at(a + 0.25 * (b - a))?, at(a + 0.75 * (b - a))?);
+        let sag = [q1, pm, q3]
+            .iter()
+            .map(|q| q.dist_to_segment(pa, pb))
+            .fold(0.0, f64::max);
+        let len = pa.dist(pb);
+        let short = len.partial_cmp(&(h * (1.0 + 1e-9))) != Some(Ordering::Greater);
+        // The two half chords of an arc turning θ differ by θ/2.
+        let bend = 2.0 * turn(pm - pa, pb - pm);
+        let straight = rules.turn.is_none_or(|t| !t.exceeds(bend, sag));
+        // Whatever the tolerance, no segment spans more than a quarter turn of its curve: a
+        // small circle split into two half arcs would otherwise be two chords on one line, a
+        // hole of no area (the 1 mm hole of a 990 mm plate at its 2 mm chord).
+        let quarter = bend <= QUARTER_TURN;
+        let ok = short && straight && quarter && sag <= tol;
+        // How far past its rules a segment that fails them is: the most of each rule's ratio.
+        let excess = if ok {
+            0.0
+        } else {
+            let mut x = (sag / tol).max(bend / QUARTER_TURN);
+            if h > 0.0 {
+                x = x.max(len / h);
+            }
+            if let Some(t) = rules.turn.filter(|t| t.exceeds(bend, sag)) {
+                x = x.max(bend / t.angle);
+            }
+            x
+        };
+        Ok::<Seg, TessError>(Seg {
+            a,
+            b,
+            pa,
+            pb,
+            q1,
+            pm,
+            q3,
+            depth,
+            ok,
+            sag,
+            excess,
+        })
+    };
+    // Bisection, the segment exceeding its rules most first (then the earliest): a segment is
+    // halved where it fails the rules, whatever the order, so the nodes are the same as any
+    // order's; where a bound stops it (MAX_EDGE_NODES, MAX_DEPTH) the segments kept whole are
+    // those that exceed their rules least, and the error is spread along the edge.
+    let mut heap: std::collections::BinaryHeap<Seg> = std::collections::BinaryHeap::new();
     // Proven: the window size is the constant 2, not zero.
-    for (i, w) in ends.windows(2).enumerate().rev() {
+    for (i, w) in ends.windows(2).enumerate() {
         let (Some(&pa), Some(&pb)) = (w.first(), w.get(1)) else {
             continue;
         };
         // Proven: i < initial (at most 4).
         let i = i as u32;
-        stack.push(Seg {
-            a: t_at(i),
-            b: t_at(i + 1),
-            pa,
-            pb,
-            mid: None,
-            depth: 0,
-        });
+        heap.push(measure(t_at(i), t_at(i + 1), pa, pb, None, 0)?);
     }
-    while let Some(sg) = stack.pop() {
-        let (a, b, pa, pb) = (sg.a, sg.b, sg.pa, sg.pb);
-        let m = 0.5 * (a + b);
-        let pm = match sg.mid {
-            Some(p) => p,
-            None => at(m)?,
-        };
-        let (q1, q3) = (at(a + 0.25 * (b - a))?, at(a + 0.75 * (b - a))?);
+    // The segments kept: their end parameter and point, and their chord's sag.
+    let mut kept: Vec<(f64, Vec3, f64)> = Vec::new();
+    let mut capped: Option<crate::EdgeCap> = None;
+    while let Some(sg) = heap.pop() {
         let deep = sg.depth >= MAX_DEPTH;
-        let full = out.len() + stack.len() >= MAX_EDGE_NODES;
-        // Whether the segment is fine, and its chord's sag.
-        let fine = || {
-            let sag = [q1, pm, q3]
-                .iter()
-                .map(|q| q.dist_to_segment(pa, pb))
-                .fold(0.0, f64::max);
-            let short = pa.dist(pb).partial_cmp(&(h * (1.0 + 1e-9))) != Some(Ordering::Greater);
-            // The two half chords of an arc turning θ differ by θ/2.
-            let bend = 2.0 * turn(pm - pa, pb - pm);
-            let straight = rules.turn.is_none_or(|t| !t.exceeds(bend, sag));
-            // Whatever the tolerance, no segment spans more than a quarter turn of its curve: a
-            // small circle split into two half arcs would otherwise be two chords on one line,
-            // a hole of no area (the 1 mm hole of a 990 mm plate at its 2 mm chord).
-            let quarter = bend <= QUARTER_TURN;
-            (short && straight && quarter && sag <= tol, sag)
-        };
-        let (ok, sag) = fine();
-        if !deep && !full && !ok {
-            stack.push(Seg {
-                a: m,
-                b,
-                pa: pm,
-                pb,
-                mid: Some(q3),
-                depth: sg.depth + 1,
-            });
-            stack.push(Seg {
-                a,
-                b: m,
-                pa,
-                pb: pm,
-                mid: Some(q1),
-                depth: sg.depth + 1,
-            });
+        // The edge's nodes: its start, the ends of the segments kept and of those pending.
+        let full = 1 + kept.len() + heap.len() >= MAX_EDGE_NODES;
+        if !deep && !full && !sg.ok {
+            let m = 0.5 * (sg.a + sg.b);
+            heap.push(measure(sg.a, m, sg.pa, sg.pm, Some(sg.q1), sg.depth + 1)?);
+            heap.push(measure(m, sg.b, sg.pm, sg.pb, Some(sg.q3), sg.depth + 1)?);
         } else {
             // A segment a bound keeps whole although it wants a split: the edge is named
-            // ([`crate::PlanStats::edges_capped`]), with the farthest its chords lie off.
-            if !ok {
-                let cap = if full {
+            // ([`crate::PlanStats::edges_capped`]).
+            if !sg.ok && capped != Some(crate::EdgeCap::Nodes) {
+                capped = Some(if full {
                     crate::EdgeCap::Nodes
                 } else {
                     crate::EdgeCap::Depth
-                };
-                let worst = capped.map_or(sag, |(_, w): (crate::EdgeCap, f64)| w.max(sag));
-                capped = Some((cap, worst));
+                });
             }
-            out.push((b, pb));
+            kept.push((sg.b, sg.pb, sg.sag));
         }
     }
+    kept.sort_by(|x, y| x.0.total_cmp(&y.0));
+    // A capped edge's sag: the farthest any of its chords lies from the curve.
+    let capped = capped.map(|cap| (cap, kept.iter().map(|k| k.2).fold(0.0, f64::max)));
+    let mut out: Vec<(f64, Vec3)> = std::iter::once((t0, front))
+        .chain(kept.into_iter().map(|(t, p, _)| (t, p)))
+        .collect();
     if let Some(p) = out.last_mut() {
         *p = (t1, back);
     }
@@ -395,8 +443,13 @@ mod tests {
     }
 
     /// A circle of radius 10 sampled to sides of at most 1 µm wants about 63 000 segments, more
-    /// than an edge may have: it stops at `MAX_EDGE_NODES` and says so, with how far its chords
-    /// lie off. That was silent.
+    /// than an edge may have: it stops at `MAX_EDGE_NODES` and says so. The longest segments are
+    /// halved first, so when the bound stops it every side kept is at least half the longest
+    /// (each was halved from one at least as long as any kept whole): its N = 19 999 sides are at
+    /// most twice the even split's 2πr/N, and as a chord's sag goes with its square, none sags
+    /// more than 4 r (1 − cos(π/N)), about 4.9e-7 mm (the even split's own: 1.2e-7). The sag
+    /// recorded is the polyline's own largest. Halving depth first, the bound filled along the
+    /// start of the circle and kept the rest whole: a quarter turn, 2.9 mm off.
     #[test]
     fn an_edge_that_stops_at_its_node_bound_says_so() {
         let cyl = fixture("cylinder_r10_h5");
@@ -413,13 +466,27 @@ mod tests {
             turn: None,
         };
         let n = sample(&cyl, ei, &rules, 1e-3);
-        assert!(n.points.len() >= MAX_EDGE_NODES / 2, "{}", n.points.len());
+        assert!(n.points.len() >= MAX_EDGE_NODES - 1, "{}", n.points.len());
         let Some((crate::EdgeCap::Nodes, sag)) = n.capped else {
             panic!("{:?}", n.capped)
         };
-        // The depth-first halving fills the bound along the start of the curve: the segments
-        // still stacked are kept whole, the last up to a quarter turn (10 (1 - cos 45°)).
-        assert!(sag > 0.01 && sag < 3.0, "{sag}");
+        // Each chord's sag on the circle of radius 10, from its length.
+        let r = 10.0;
+        let most = n
+            .points
+            .windows(2)
+            .map(|w| {
+                let c = w[0].dist(w[1]);
+                r - (r * r - 0.25 * c * c).sqrt()
+            })
+            .fold(0.0, f64::max);
+        let sides = (MAX_EDGE_NODES - 1) as f64;
+        let bound = 4.0 * r * (1.0 - (std::f64::consts::PI / sides).cos());
+        assert!(most <= bound * (1.0 + 1e-6), "{most} against {bound}");
+        assert!(
+            (sag - most).abs() <= 1e-6 * bound,
+            "recorded {sag}, the polyline's {most}"
+        );
         // A line asked for more sides than that too, its chords on it.
         let Some(line) = cyl
             .edges

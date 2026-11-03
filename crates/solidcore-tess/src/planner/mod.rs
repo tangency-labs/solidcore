@@ -112,8 +112,8 @@ pub struct CappedEdge {
     pub edge: usize,
     /// The bound.
     pub cap: EdgeCap,
-    /// The farthest the chords the bound kept whole lie from the edge's curve (mm), at their
-    /// quarter points and middles.
+    /// The farthest any of the edge's chords lies from its curve (mm), at their quarter points
+    /// and middles: the segments exceeding their rules most are halved first, so it is spread.
     pub sag: f64,
     /// The chord tolerance the edge was sampled to (mm).
     pub tol: f64,
