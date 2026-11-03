@@ -22,9 +22,9 @@ Updates: WR-697
   - Against closed forms, at r 0.25 and r 1 respectively:
     - the rolled rail lies on the circle of radius 21 + r at z = 10 within 8.1e-13 and 2.6e-10;
     - the cap's edge on the top face lies on its line within 3.6e-15 and 1.5e-14;
-    - the end rib lies on the ball's circle in P within 1.1e-14 and 1.6e-14;
-    - the rollover seam lies on the ball's circle at Q within 1.2e-14 and 1.3e-14.
-  - The two definitions' sections at Q both lie on the ball's circle there, within 1.5e-14 and 2.6e-14. Their normals agree within 4.3e-14 and 8.2e-15 rad, so the seam is G1 by construction. The rolled definition's section in P lies on the ball's circle within 1.1e-14 and 1.3e-14.
+    - the end rib lies on the ball's circle in P within 1.2e-14 and 1.6e-14;
+    - the rollover seam lies on the ball's circle at Q within 1.1e-14 and 1.3e-14.
+  - The two definitions' sections at Q both lie on the ball's circle there, within 1.5e-14 and 2.6e-14. Their normals agree within 4.3e-14 and 8.2e-15 rad, so the seam is G1 by construction. The rolled definition's section in P lies on the ball's circle within 1.3e-14 both times.
   - On the R2 round, the definition's feet lie on it within 4.4e-15 and 4.7e-15. Their balls touch the wall within 3.2e-14 and 2.8e-14, and the definition's normal matches the R2 round's within 1.3e-13 and 2.4e-14 rad. The rail edge lies within 1.8e-6 and 3.5e-7 of those feet, inside the definition's certified bound (1.6e-5 and 1.5e-5).
   - At r 1.75, 42/23 - 0.001 and 1.96 every one of these is within 1.1e-13, with two exceptions. The rollover seam is within 1.1e-11 at 1.96. The rolled rail's fitted curve is 1.8e-9, 1.9e-9 and 4.2e-9 off its circle (pinned at 1e-8; the rolled stretch is 0.168 long at 1.75). The R2 rail lies within 3.4e-7, 1.2e-8 and 2.5e-10 of the definition's feet, inside its certified bound of 1.6e-5.
   - These replace the re-trace's figures: a seam crease of 8.2e-5 rad, the end rib 3.7e-6 off its circle and the R2 rail 1.46e-4 off the round (r 1).
