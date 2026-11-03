@@ -3531,6 +3531,32 @@ impl Surface {
         dist: f64,
         extension_continuity: ContinuityType,
     ) -> Result<Self> {
+        let made = self.create_extended_surface_of_kind(k, dist, extension_continuity)?;
+        Ok(self.carry_exact_round_on_extension(made, extension_continuity))
+    }
+
+    /// An exact round's definition carried onto `extension`, this surface extended by the
+    /// same NURBS pieces continued (`CInfinity`, #2487): the analytic class continued, still
+    /// on S. Another continuity (a ruled `G1R` extension) leaves S, so it carries none.
+    fn carry_exact_round_on_extension(
+        &self,
+        extension: Self,
+        extension_continuity: ContinuityType,
+    ) -> Self {
+        if extension_continuity == ContinuityType::CInfinity {
+            self.carry_exact_round(extension)
+        } else {
+            extension
+        }
+    }
+
+    /// [`Surface::create_extended_surface`] of the kind alone.
+    fn create_extended_surface_of_kind(
+        &self,
+        k: &Kernel,
+        dist: f64,
+        extension_continuity: ContinuityType,
+    ) -> Result<Self> {
         match self.kind_with_nurb(k)? {
             SurfaceKind::BSpline(s) => Ok(Self::from(s.create_extended_surface(
                 k,
@@ -3623,6 +3649,19 @@ impl Surface {
     ///
     /// Those of the kind's override (the base default is `SM_ERR`).
     pub fn create_extended_surface_dir(
+        &self,
+        k: &Kernel,
+        ext_direction: SurfParamType,
+        dist: f64,
+        extension_continuity: ContinuityType,
+    ) -> Result<Self> {
+        let made =
+            self.create_extended_surface_dir_of_kind(k, ext_direction, dist, extension_continuity)?;
+        Ok(self.carry_exact_round_on_extension(made, extension_continuity))
+    }
+
+    /// [`Surface::create_extended_surface_dir`] of the kind alone.
+    fn create_extended_surface_dir_of_kind(
         &self,
         k: &Kernel,
         ext_direction: SurfParamType,
