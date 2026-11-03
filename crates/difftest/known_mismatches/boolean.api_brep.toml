@@ -23,3 +23,461 @@ case = "rotational_sweep_region_swept_whole"
 libc = "glibc"
 cpp_defect = "ND-491"
 why = "C++ heap-layout dependent (ND-491): SM_ERR in some runs, success equal to the Rust result in others; --heap-pads flags it unstable (in-process)"
+
+# #2502: these cases move with the difftest's C++ reference, the SMLib fork
+# v1.1.0-alpha.1 (8eac63c); plan/findings/general--2502-fork-pin-boolean-known-mismatches.md.
+
+[[mismatch]]
+unit = "boolean.api_brep"
+case = "attributed_box_cylinder_hole_union"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.attributes[37] C++ 1.2566372586545729e1, Rust 1.2566075189122623e1 (+1 more) (plan/findings/general--2502-fork-pin-boolean-known-mismatches.md)"
+
+[[mismatch]]
+unit = "boolean.api_brep"
+case = "attributed_box_cylinder_hole_difference"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.attributes[37] C++ 1.256637258654644e2, Rust 1.2566075189015972e2 (plan/findings/general--2502-fork-pin-boolean-known-mismatches.md)"
+
+[[mismatch]]
+unit = "boolean.api_brep"
+case = "attributed_box_cylinder_hole_intersection"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.attributes[13] C++ 1.256637258654644e2, Rust 1.2566075189015972e2 (plan/findings/general--2502-fork-pin-boolean-known-mismatches.md)"
+
+[[mismatch]]
+unit = "boolean.api_brep"
+case = "attributed_box_cylinder_corner_union"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.attributes[37] C++ 1.6493364019841718e2, Rust 1.649291792370703e2 (plan/findings/general--2502-fork-pin-boolean-known-mismatches.md)"
+
+[[mismatch]]
+unit = "boolean.api_brep"
+case = "attributed_cylinder_cylinder_tee_union"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.attributes[1] C++ 2.43608828860288e2, Rust 2.4360288741663078e2 (+1 more) (plan/findings/general--2502-fork-pin-boolean-known-mismatches.md)"
+
+[[mismatch]]
+unit = "boolean.api_brep"
+case = "attributed_cylinder_cylinder_tee_difference"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.attributes[1] C++ 2.43608828860288e2, Rust 2.4360288741663078e2 (+1 more) (plan/findings/general--2502-fork-pin-boolean-known-mismatches.md)"
+
+[[mismatch]]
+unit = "boolean.api_brep"
+case = "attributed_cylinder_cylinder_tee_intersection"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.attributes[1] C++ 7.7186228701815995e0, Rust 7.718622906465086e0 (+1 more) (plan/findings/general--2502-fork-pin-boolean-known-mismatches.md)"
+
+[[mismatch]]
+unit = "boolean.api_brep"
+case = "attributed_sphere_box_union"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.attributes[1] C++ 9.424804196754828e1, Rust 9.424581148049778e1 (plan/findings/general--2502-fork-pin-boolean-known-mismatches.md)"
+
+[[mismatch]]
+unit = "boolean.api_brep"
+case = "attributed_sphere_box_difference"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.attributes[1] C++ 9.424804196754828e1, Rust 9.424581148049778e1 (plan/findings/general--2502-fork-pin-boolean-known-mismatches.md)"
+
+[[mismatch]]
+unit = "boolean.api_brep"
+case = "attributed_sphere_box_intersection"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.attributes[1] C++ 2.1991158176191223e2, Rust 2.1994721343592298e2 (plan/findings/general--2502-fork-pin-boolean-known-mismatches.md)"
+
+[[mismatch]]
+unit = "boolean.api_brep"
+case = "attributed_box_cylinder_hole_union_reference"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.attributes[37] C++ 1.2566372586545729e1, Rust 1.2566075189122623e1 (+1 more) (plan/findings/general--2502-fork-pin-boolean-known-mismatches.md)"
+
+[[mismatch]]
+unit = "boolean.api_brep"
+case = "attributed_box_cylinder_hole_difference_reference"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.attributes[37] C++ 1.256637258654644e2, Rust 1.2566075189015972e2 (plan/findings/general--2502-fork-pin-boolean-known-mismatches.md)"
+
+[[mismatch]]
+unit = "boolean.api_brep"
+case = "attributed_box_cylinder_hole_union_standalone_copy"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.attributes[37] C++ 1.2566372586545729e1, Rust 1.2566075189122623e1 (+1 more) (plan/findings/general--2502-fork-pin-boolean-known-mismatches.md)"
+
+[[mismatch]]
+unit = "boolean.api_brep"
+case = "attributed_box_cylinder_hole_difference_standalone_copy"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.attributes[37] C++ 1.256637258654644e2, Rust 1.2566075189015972e2 (plan/findings/general--2502-fork-pin-boolean-known-mismatches.md)"
+
+[[mismatch]]
+unit = "boolean.api_brep"
+case = "attributed_box_cylinder_hole_union_standalone_reference"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.attributes[37] C++ 1.2566372586545729e1, Rust 1.2566075189122623e1 (+1 more) (plan/findings/general--2502-fork-pin-boolean-known-mismatches.md)"
+
+[[mismatch]]
+unit = "boolean.api_brep"
+case = "attributed_box_cylinder_hole_difference_standalone_reference"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.attributes[37] C++ 1.256637258654644e2, Rust 1.2566075189015972e2 (plan/findings/general--2502-fork-pin-boolean-known-mismatches.md)"
+
+[[mismatch]]
+unit = "boolean.api_brep"
+case = "attributed_box_cylinder_hole_union_temp"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.attributes[1] C++ 1.2566372586545729e1, Rust 1.2566075189122623e1 (+1 more) (plan/findings/general--2502-fork-pin-boolean-known-mismatches.md)"
+
+[[mismatch]]
+unit = "boolean.api_brep"
+case = "attributed_box_cylinder_hole_difference_temp"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.attributes[1] C++ 1.256637258654644e2, Rust 1.2566075189015972e2 (plan/findings/general--2502-fork-pin-boolean-known-mismatches.md)"
+
+[[mismatch]]
+unit = "boolean.api_brep"
+case = "attributed_split_cylinder_imprint_keep_other"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.attributes[127] C++ 1.2566372586545729e1, Rust 1.2566075189122623e1 (+2 more) (plan/findings/general--2502-fork-pin-boolean-known-mismatches.md)"
+
+[[mismatch]]
+unit = "boolean.api_brep"
+case = "attributed_split_cylinder_imprint_keep_other_copy"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.attributes[127] C++ 1.2566372586545729e1, Rust 1.2566075189122623e1 (+2 more) (plan/findings/general--2502-fork-pin-boolean-known-mismatches.md)"
+
+[[mismatch]]
+unit = "boolean.api_brep"
+case = "attributed_split_cylinder_imprint_classify_default"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.attributes[135] C++ 1.2566372586545729e1, Rust 1.2566075189122623e1 (+2 more) (plan/findings/general--2502-fork-pin-boolean-known-mismatches.md)"
+
+[[mismatch]]
+unit = "boolean.api_brep"
+case = "attributed_split_cylinder_imprint_classify_default_copy"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.attributes[135] C++ 1.2566372586545729e1, Rust 1.2566075189122623e1 (+2 more) (plan/findings/general--2502-fork-pin-boolean-known-mismatches.md)"
+
+[[mismatch]]
+unit = "boolean.api_brep"
+case = "attributed_split_sphere_imprint_keep_other"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.attributes[159] C++ 1.7592949166338366e2, Rust 1.7596210478648308e2 (plan/findings/general--2502-fork-pin-boolean-known-mismatches.md)"
+
+[[mismatch]]
+unit = "boolean.api_brep"
+case = "attributed_split_sphere_imprint_keep_other_copy"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.attributes[159] C++ 1.7592949166338366e2, Rust 1.7596210478648308e2 (plan/findings/general--2502-fork-pin-boolean-known-mismatches.md)"
+
+[[mismatch]]
+unit = "boolean.api_brep"
+case = "attributed_split_sphere_imprint_classify_default"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.attributes[171] C++ 1.7592949166338366e2, Rust 1.7596210478648308e2 (plan/findings/general--2502-fork-pin-boolean-known-mismatches.md)"
+
+[[mismatch]]
+unit = "boolean.api_brep"
+case = "attributed_split_sphere_imprint_classify_default_copy"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.attributes[171] C++ 1.7592949166338366e2, Rust 1.7596210478648308e2 (plan/findings/general--2502-fork-pin-boolean-known-mismatches.md)"
+
+[[mismatch]]
+unit = "boolean.api_brep"
+case = "crossing_creases_union_d1e-05"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.measures.len C++ 16, Rust 15 (+1 more) (plan/findings/general--2502-fork-pin-boolean-known-mismatches.md)"
+
+[[mismatch]]
+unit = "boolean.api_brep"
+case = "issue1036_coincident_skins_difference"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: ints.record.len C++ 13, Rust 11 (plan/findings/general--2502-fork-pin-boolean-known-mismatches.md)"
+
+[[mismatch]]
+unit = "boolean.api_brep"
+case = "issue1036_coincident_skins_difference_measured"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.measures.len C++ 4, Rust 3 (+1 more) (plan/findings/general--2502-fork-pin-boolean-known-mismatches.md)"
+
+[[mismatch]]
+unit = "boolean.api_brep"
+case = "issue1036_coincident_skins_intersection"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: ints.record.len C++ 13, Rust 18 (plan/findings/general--2502-fork-pin-boolean-known-mismatches.md)"
+
+[[mismatch]]
+unit = "boolean.api_brep"
+case = "issue1036_coincident_skins_intersection_measured"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.measures[1] C++ 0e0, Rust 2.6136268142920293e4 (+2 more) (plan/findings/general--2502-fork-pin-boolean-known-mismatches.md)"
+
+[[mismatch]]
+unit = "boolean.api_brep"
+case = "issue1517_tube_ends_union_checked"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: ints.check C++ present, Rust missing (+2 more) (plan/findings/general--2502-fork-pin-boolean-known-mismatches.md)"
+
+[[mismatch]]
+unit = "boolean.api_brep"
+case = "issue1517_tube_ends_union_measured"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.measures C++ present, Rust missing (+2 more) (plan/findings/general--2502-fork-pin-boolean-known-mismatches.md)"
+
+[[mismatch]]
+unit = "boolean.api_brep"
+case = "issue1519_bench_tubes_union_checked"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: ints.check.len C++ 4, Rust 12 (+4 more) (plan/findings/general--2502-fork-pin-boolean-known-mismatches.md)"
+
+[[mismatch]]
+unit = "boolean.api_brep"
+case = "issue1519_bench_tubes_union_measured"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.measures.len C++ 9, Rust 11 (+4 more) (plan/findings/general--2502-fork-pin-boolean-known-mismatches.md)"
+
+[[mismatch]]
+unit = "boolean.api_brep"
+case = "issue2110_tangent_cylinders_union_a135_b225"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: ints.record[3] C++ 7, Rust 5 (+4 more) (plan/findings/general--2502-fork-pin-boolean-known-mismatches.md)"
+
+[[mismatch]]
+unit = "boolean.api_brep"
+case = "issue2110_tangent_cylinders_union_checked_a0_b90"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: ints.record[3] C++ 7, Rust 3 (+4 more) (plan/findings/general--2502-fork-pin-boolean-known-mismatches.md)"
+
+[[mismatch]]
+unit = "boolean.api_brep"
+case = "issue2110_tangent_cylinders_union_checked_a0_b0"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: ints.check C++ present, Rust missing (+2 more) (plan/findings/general--2502-fork-pin-boolean-known-mismatches.md)"
+
+[[mismatch]]
+unit = "boolean.api_brep"
+case = "issue2177_crescent_on_top_of_rim_checked"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: ints.check.len C++ 4, Rust 12 (+1 more) (plan/findings/general--2502-fork-pin-boolean-known-mismatches.md)"
+
+[[mismatch]]
+unit = "boolean.api_brep"
+case = "issue2177_crescent_on_top_of_rim_measured"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.measures[0] C++ 0e0, Rust 1.001e3 (+8 more) (plan/findings/general--2502-fork-pin-boolean-known-mismatches.md)"
+
+[[mismatch]]
+unit = "boolean.api_brep"
+case = "issue2177_crescent_on_top_of_rim_booleaned_measured"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.measures[5] C++ 5.6264676789265074e1, Rust 5.625765964275136e1 (+2 more) (plan/findings/general--2502-fork-pin-boolean-known-mismatches.md)"
+
+[[mismatch]]
+unit = "boolean.api_brep"
+case = "sweep_disk_no_stitch"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.areas[3] C++ 6.283186293272864e1, Rust 6.28303759455795e1 (plan/findings/general--2502-fork-pin-boolean-known-mismatches.md)"
+
+[[mismatch]]
+unit = "boolean.api_brep"
+case = "rotational_sweep_sheet_face_merge"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.areas C++ missing, Rust present (+2 more) (plan/findings/general--2502-fork-pin-boolean-known-mismatches.md)"
+
+[[mismatch]]
+unit = "boolean.api_brep"
+case = "rotational_sweep_disk_no_stitch"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.areas[3] C++ 5.3315536681179196e1, Rust 5.331386230860236e1 (plan/findings/general--2502-fork-pin-boolean-known-mismatches.md)"
+
+[[mismatch]]
+unit = "boolean.api_brep"
+case = "issue383_seed4_box_intersection_tangent_torus"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.measures[1] C++ 1.6511739846067266e2, Rust 1.651174359553111e2 (+1 more) (plan/findings/general--2502-fork-pin-boolean-known-mismatches.md)"
+
+[[mismatch]]
+unit = "boolean.api_brep"
+case = "issue383_seed4_box_intersection_tangent_torus_no_post_process"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.measures[1] C++ 1.6511739921316638e2, Rust 1.6511739100509547e2 (+1 more) (plan/findings/general--2502-fork-pin-boolean-known-mismatches.md)"
+
+[[mismatch]]
+unit = "boolean.api_brep"
+case = "issue383_seed4_box_difference_tangent_torus"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.measures[1] C++ 1.3817575946149407e3, Rust 1.381757749837983e3 (+1 more) (plan/findings/general--2502-fork-pin-boolean-known-mismatches.md)"
+
+[[mismatch]]
+unit = "boolean.api_brep"
+case = "issue383_seed4_box_difference_tangent_torus_no_post_process"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.measures[1] C++ 1.3817575946149402e3, Rust 1.381757749837983e3 (+1 more) (plan/findings/general--2502-fork-pin-boolean-known-mismatches.md)"
+
+[[mismatch]]
+unit = "boolean.api_brep"
+case = "issue383_seed86_box_intersection_tangent_torus"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.measures[1] C++ 1.0483841858993281e2, Rust 1.0483845404732125e2 (+2 more) (plan/findings/general--2502-fork-pin-boolean-known-mismatches.md)"
+
+[[mismatch]]
+unit = "boolean.api_brep"
+case = "issue383_seed86_box_intersection_tangent_torus_no_post_process"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.measures[1] C++ 1.0483841859011117e2, Rust 1.0483842988136938e2 (+2 more) (plan/findings/general--2502-fork-pin-boolean-known-mismatches.md)"
+
+[[mismatch]]
+unit = "boolean.api_brep"
+case = "issue383_seed86_box_difference_tangent_torus"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.measures[1] C++ 7.701615809524972e2, Rust 7.701616505489588e2 (+2 more) (plan/findings/general--2502-fork-pin-boolean-known-mismatches.md)"
+
+[[mismatch]]
+unit = "boolean.api_brep"
+case = "issue383_seed86_box_difference_tangent_torus_no_post_process"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.measures[1] C++ 7.701615809524972e2, Rust 7.701616505489588e2 (+2 more) (plan/findings/general--2502-fork-pin-boolean-known-mismatches.md)"
+
+[[mismatch]]
+unit = "boolean.api_brep"
+case = "torus_guard_minor_2x_eff_zero"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: ints.status[0] C++ 1007, Rust 1001 (plan/findings/general--2502-fork-pin-boolean-known-mismatches.md)"
+
+[[mismatch]]
+unit = "boolean.api_brep"
+case = "torus_guard_huge_scale_box_intersection"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.measures[1] C++ 2.9748321862683104e17, Rust 2.9748331345741536e17 (+2 more) (plan/findings/general--2502-fork-pin-boolean-known-mismatches.md)"
+
+[[mismatch]]
+unit = "boolean.api_brep"
+case = "torus_guard_huge_scale_box_difference"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.measures[1] C++ 1.7025167820179896e18, Rust 1.7025167049217362e18 (+2 more) (plan/findings/general--2502-fork-pin-boolean-known-mismatches.md)"
+
+[[mismatch]]
+unit = "boolean.api_brep"
+case = "ub175_after_editing_imprint_failure"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: ints.status[0] C++ 1006, Rust 1001 (plan/findings/general--2502-fork-pin-boolean-known-mismatches.md)"
+
+[[mismatch]]
+unit = "boolean.api_brep"
+case = "wr254_slice_box_by_its_top_face"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: ints.record.len C++ 11, Rust 13 (plan/findings/general--2502-fork-pin-boolean-known-mismatches.md)"
+
+[[mismatch]]
+unit = "boolean.api_brep"
+case = "wr254_slice_slab_tower_in_slab_face"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: ints.record[3] C++ 6, Rust 7 (+5 more) (plan/findings/general--2502-fork-pin-boolean-known-mismatches.md)"
+
+[[mismatch]]
+unit = "boolean.api_brep"
+case = "wr265_cup_lid_cup_first"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: ints.record[22] C++ 0, Rust 1 (+1 more) (plan/findings/general--2502-fork-pin-boolean-known-mismatches.md)"
+
+[[mismatch]]
+unit = "boolean.api_brep"
+case = "wr265_cup_lid_lid_first"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: ints.record[22] C++ 0, Rust 1 (+1 more) (plan/findings/general--2502-fork-pin-boolean-known-mismatches.md)"
+
+[[mismatch]]
+unit = "boolean.api_brep"
+case = "wr265_void_then_union"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: ints.record[21] C++ 16, Rust 10 (+3 more) (plan/findings/general--2502-fork-pin-boolean-known-mismatches.md)"
+
+[[mismatch]]
+unit = "boolean.api_brep"
+case = "attributed_sweep_disk_no_stitch"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.areas[3] C++ 6.283186293272864e1, Rust 6.28303759455795e1 (+1 more) (plan/findings/general--2502-fork-pin-boolean-known-mismatches.md)"
+
+[[mismatch]]
+unit = "boolean.api_brep"
+case = "attributed_rotational_sweep_sheet_face_merge"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.areas C++ missing, Rust present (+3 more) (plan/findings/general--2502-fork-pin-boolean-known-mismatches.md)"
+
+[[mismatch]]
+unit = "boolean.api_brep"
+case = "attributed_sweep_disk_no_stitch_reference"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.areas[3] C++ 6.283186293272864e1, Rust 6.28303759455795e1 (+1 more) (plan/findings/general--2502-fork-pin-boolean-known-mismatches.md)"
+
+[[mismatch]]
+unit = "boolean.api_brep"
+case = "wr614_strip_union_d1e-05"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: ints.record.len C++ 13, Rust 0 (+1 more) (plan/findings/general--2502-fork-pin-boolean-known-mismatches.md)"
+
+[[mismatch]]
+unit = "boolean.api_brep"
+case = "wr614_strip_measured_union_d1e-05"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.measures C++ present, Rust missing (+2 more) (plan/findings/general--2502-fork-pin-boolean-known-mismatches.md)"
+
+[[mismatch]]
+unit = "boolean.api_brep"
+case = "wr614_strip_measured_difference_d1e-05"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.measures[5] C++ 1.5999995000249996e1, Rust 1.5999999999999998e1 (+1 more) (plan/findings/general--2502-fork-pin-boolean-known-mismatches.md)"
+
+[[mismatch]]
+unit = "boolean.api_brep"
+case = "wr614_strip_intersection_d5e-06"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: ints.record.len C++ 11, Rust 15 (plan/findings/general--2502-fork-pin-boolean-known-mismatches.md)"
+
+[[mismatch]]
+unit = "boolean.api_brep"
+case = "wr614_strip_difference_d5e-06"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: ints.record[3] C++ 9, Rust 8 (+2 more) (plan/findings/general--2502-fork-pin-boolean-known-mismatches.md)"
+
+[[mismatch]]
+unit = "boolean.api_brep"
+case = "wr614_strip_measured_union_d5e-06"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.measures[5] C++ 1.5999597999999999e1, Rust 1.5999599995049532e1 (+3 more) (plan/findings/general--2502-fork-pin-boolean-known-mismatches.md)"
+
+[[mismatch]]
+unit = "boolean.api_brep"
+case = "wr614_strip_measured_intersection_d5e-06"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.measures.len C++ 3, Rust 5 (+1 more) (plan/findings/general--2502-fork-pin-boolean-known-mismatches.md)"
+
+[[mismatch]]
+unit = "boolean.api_brep"
+case = "wr614_strip_measured_difference_d5e-06"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.measures.len C++ 12, Rust 11 (+3 more) (plan/findings/general--2502-fork-pin-boolean-known-mismatches.md)"
+
+[[mismatch]]
+unit = "boolean.api_brep"
+case = "wr614_strip_measured_union_d2e-06"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.measures[1] C++ 1.2800000792051475e2, Rust 1.280000071244854e2 (+5 more) (plan/findings/general--2502-fork-pin-boolean-known-mismatches.md)"
+
+[[mismatch]]
+unit = "boolean.api_brep"
+case = "wr614_strip_union_d1.5e-05"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: ints.record[3] C++ 12, Rust 13 (+3 more) (plan/findings/general--2502-fork-pin-boolean-known-mismatches.md)"
+
+[[mismatch]]
+unit = "boolean.api_brep"
+case = "wr614_strip_measured_union_d1.5e-05"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.measures.len C++ 15, Rust 16 (+4 more) (plan/findings/general--2502-fork-pin-boolean-known-mismatches.md)"
+
+[[mismatch]]
+unit = "boolean.api_brep"
+case = "more0021"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.areas[3] C++ 2.8941109652197156e1, Rust 2.893981122787231e1 (plan/findings/general--2502-fork-pin-boolean-known-mismatches.md)"
+
+[[mismatch]]
+unit = "boolean.api_brep"
+case = "more0033"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.areas[1] C++ 4.773346719049839e-5, Rust 3.523639512726349e-5 (+3 more) (plan/findings/general--2502-fork-pin-boolean-known-mismatches.md)"
+
+[[mismatch]]
+unit = "boolean.api_brep"
+case = "more0049"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.areas C++ missing, Rust present (+2 more) (plan/findings/general--2502-fork-pin-boolean-known-mismatches.md)"
+
+[[mismatch]]
+unit = "boolean.api_brep"
+case = "more0052"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.areas[3] C++ 7.111997813010135e-5, Rust 7.111802589689894e-5 (plan/findings/general--2502-fork-pin-boolean-known-mismatches.md)"
+
+[[mismatch]]
+unit = "boolean.api_brep"
+case = "more0069"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.areas[3] C++ 4.5303269252698016e2, Rust 4.531148450215144e2 (plan/findings/general--2502-fork-pin-boolean-known-mismatches.md)"
+
+[[mismatch]]
+unit = "boolean.api_brep"
+case = "more0083"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.areas[3] C++ 3.170528701842248e4, Rust 3.1707235330672625e4 (plan/findings/general--2502-fork-pin-boolean-known-mismatches.md)"
+
+[[mismatch]]
+unit = "boolean.api_brep"
+case = "more0086"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.areas C++ missing, Rust present (+2 more) (plan/findings/general--2502-fork-pin-boolean-known-mismatches.md)"
+
+[[mismatch]]
+unit = "boolean.api_brep"
+case = "more0090"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.areas C++ missing, Rust present (+2 more) (plan/findings/general--2502-fork-pin-boolean-known-mismatches.md)"
+
+[[mismatch]]
+unit = "boolean.api_brep"
+case = "more0106"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.areas C++ missing, Rust present (+2 more) (plan/findings/general--2502-fork-pin-boolean-known-mismatches.md)"
+
+[[mismatch]]
+unit = "boolean.api_brep"
+case = "more0116"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.areas C++ missing, Rust present (+2 more) (plan/findings/general--2502-fork-pin-boolean-known-mismatches.md)"
+
+[[mismatch]]
+unit = "boolean.api_brep"
+case = "more0126"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.areas[3] C++ 1.8889829022158406e3, Rust 1.8893092201561942e3 (plan/findings/general--2502-fork-pin-boolean-known-mismatches.md)"
+
+[[mismatch]]
+unit = "boolean.api_brep"
+case = "more0132"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.areas C++ missing, Rust present (+2 more) (plan/findings/general--2502-fork-pin-boolean-known-mismatches.md)"
+
+[[mismatch]]
+unit = "boolean.api_brep"
+case = "more0138"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.areas C++ missing, Rust present (+2 more) (plan/findings/general--2502-fork-pin-boolean-known-mismatches.md)"
+
+[[mismatch]]
+unit = "boolean.api_brep"
+case = "more0149"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.areas C++ missing, Rust present (+2 more) (plan/findings/general--2502-fork-pin-boolean-known-mismatches.md)"
+
+[[mismatch]]
+unit = "boolean.api_brep"
+case = "tess0033"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.points C++ missing, Rust present (+2 more) (plan/findings/general--2502-fork-pin-boolean-known-mismatches.md)"
+
+[[mismatch]]
+unit = "boolean.api_brep"
+case = "tess0095"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.points.len C++ 66, Rust 165 (+1 more) (plan/findings/general--2502-fork-pin-boolean-known-mismatches.md)"

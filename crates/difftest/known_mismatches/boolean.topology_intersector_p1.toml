@@ -1,0 +1,32 @@
+# #2502: these cases move with the difftest's C++ reference, the SMLib fork
+# v1.1.0-alpha.1 (8eac63c); plan/findings/general--2502-fork-pin-boolean-known-mismatches.md.
+
+[[mismatch]]
+unit = "boolean.topology_intersector_p1"
+case = "rectangle_face_vertex_face_intersect"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.state.len C++ 3, Rust 17 (plan/findings/general--2502-fork-pin-boolean-known-mismatches.md)"
+
+[[mismatch]]
+unit = "boolean.topology_intersector_p1"
+case = "gen0029"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.state[4] C++ 4.357506663299384e-3, Rust 4.360565399748202e-3 (plan/findings/general--2502-fork-pin-boolean-known-mismatches.md)"
+
+[[mismatch]]
+unit = "boolean.topology_intersector_p1"
+case = "merged_plane_square.smb_sphere.smb"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.state.len C++ 13, Rust 37 (plan/findings/general--2502-fork-pin-boolean-known-mismatches.md)"
+
+[[mismatch]]
+unit = "boolean.topology_intersector_p1"
+case = "merged_plane_square.smb_cone.smb"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.state.len C++ 13, Rust 25 (plan/findings/general--2502-fork-pin-boolean-known-mismatches.md)"
+
+[[mismatch]]
+unit = "boolean.topology_intersector_p1"
+case = "merged_plane_square.smb_torus.smb"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.state.len C++ 13, Rust 37 (plan/findings/general--2502-fork-pin-boolean-known-mismatches.md)"
+
+[[mismatch]]
+unit = "boolean.topology_intersector_p1"
+case = "merged_disk.smb_cone.smb"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.state.len C++ 13, Rust 25 (plan/findings/general--2502-fork-pin-boolean-known-mismatches.md)"

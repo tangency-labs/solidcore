@@ -1,0 +1,57 @@
+# #2502: these cases move with the difftest's C++ reference, the SMLib fork
+# v1.1.0-alpha.1 (8eac63c); plan/findings/general--2502-fork-pin-boolean-known-mismatches.md.
+
+[[mismatch]]
+unit = "boolean.merge_p3"
+case = "plane_list_vs_plane_list"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: error C++ Some(\"status=1007\"), Rust Some(\"status=1001\") (plan/findings/general--2502-fork-pin-boolean-known-mismatches.md)"
+
+[[mismatch]]
+unit = "boolean.merge_p3"
+case = "sphere_list_vs_sphere_list"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: error C++ Some(\"status=1007\"), Rust Some(\"status=1001\") (plan/findings/general--2502-fork-pin-boolean-known-mismatches.md)"
+
+[[mismatch]]
+unit = "boolean.merge_p3"
+case = "two_planes_vs_box"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: error C++ Some(\"status=1007\"), Rust Some(\"status=1001\") (plan/findings/general--2502-fork-pin-boolean-known-mismatches.md)"
+
+[[mismatch]]
+unit = "boolean.merge_p3"
+case = "box_vs_plane"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: error C++ Some(\"status=1007\"), Rust Some(\"status=1001\") (plan/findings/general--2502-fork-pin-boolean-known-mismatches.md)"
+
+[[mismatch]]
+unit = "boolean.merge_p3"
+case = "box_vs_sphere"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: error C++ Some(\"status=1007\"), Rust Some(\"status=1001\") (plan/findings/general--2502-fork-pin-boolean-known-mismatches.md)"
+
+[[mismatch]]
+unit = "boolean.merge_p3"
+case = "shell_vertex_vs_plane"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: error C++ Some(\"status=1007\"), Rust Some(\"status=1001\") (plan/findings/general--2502-fork-pin-boolean-known-mismatches.md)"
+
+[[mismatch]]
+unit = "boolean.merge_p3"
+case = "plane_vs_nothing"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: error C++ Some(\"status=1007\"), Rust Some(\"status=1001\") (plan/findings/general--2502-fork-pin-boolean-known-mismatches.md)"
+
+[[mismatch]]
+unit = "boolean.merge_p3"
+case = "planes_invalid_operation"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: error C++ Some(\"status=1007\"), Rust Some(\"status=1001\") (plan/findings/general--2502-fork-pin-boolean-known-mismatches.md)"
+
+[[mismatch]]
+unit = "boolean.merge_p3"
+case = "planes_with_options"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: error C++ Some(\"status=1007\"), Rust Some(\"status=1001\") (plan/findings/general--2502-fork-pin-boolean-known-mismatches.md)"
+
+[[mismatch]]
+unit = "boolean.merge_p3"
+case = "planes_scale_1e-9"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: error C++ Some(\"status=1007\"), Rust Some(\"status=1001\") (plan/findings/general--2502-fork-pin-boolean-known-mismatches.md)"
+
+[[mismatch]]
+unit = "boolean.merge_p3"
+case = "spheres_scale_1e12"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: error C++ Some(\"status=1007\"), Rust Some(\"status=1001\") (plan/findings/general--2502-fork-pin-boolean-known-mismatches.md)"

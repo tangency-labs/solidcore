@@ -1270,15 +1270,22 @@ mod tests {
                 assert!(result.deferred.is_none(), "{name}: {:?}", result.deferred);
                 assert!(result.rejected.is_none(), "{name}: {:?}", result.rejected);
             }
+            // a known mismatch disagrees with the reference by record (#2502): only the
+            // Rust side's expectation is checked
+            let known = crate::known::listed("boolean.merge_p3", name.as_str().unwrap());
             if expected == 0 {
                 assert_eq!(rust.ints["status"], [0], "{name}: {:?}", rust.error);
-                assert_eq!(native.ints["status"], [0], "{name}: {:?}", native.error);
-                assert_eq!(rust.ints["topology_counts"], native.ints["topology_counts"], "{name}");
                 assert!(!rust.values["record"].is_empty(), "{name}");
+                if !known {
+                    assert_eq!(native.ints["status"], [0], "{name}: {:?}", native.error);
+                    assert_eq!(rust.ints["topology_counts"], native.ints["topology_counts"], "{name}");
+                }
             } else {
                 let status = format!("status={expected}");
                 assert_eq!(rust.error.as_deref(), Some(status.as_str()), "{name}");
-                assert_eq!(native.error, rust.error, "{name}");
+                if !known {
+                    assert_eq!(native.error, rust.error, "{name}");
+                }
             }
         }
     }

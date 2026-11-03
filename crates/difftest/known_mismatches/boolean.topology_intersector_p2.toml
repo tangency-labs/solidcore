@@ -1,0 +1,67 @@
+# #2502: these cases move with the difftest's C++ reference, the SMLib fork
+# v1.1.0-alpha.1 (8eac63c); plan/findings/general--2502-fork-pin-boolean-known-mismatches.md.
+
+[[mismatch]]
+unit = "boolean.topology_intersector_p2"
+case = "close_loop_far_drop_quarter_arc_common_ends"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.state[11] C++ 0e0, Rust 1e0 (+3 more) (plan/findings/general--2502-fork-pin-boolean-known-mismatches.md)"
+
+[[mismatch]]
+unit = "boolean.topology_intersector_p2"
+case = "close_loop_far_drop_quarter_arc_shifted_ends"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.state[11] C++ 0e0, Rust 1e0 (+3 more) (plan/findings/general--2502-fork-pin-boolean-known-mismatches.md)"
+
+[[mismatch]]
+unit = "boolean.topology_intersector_p2"
+case = "gen0078"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.state[6] C++ 1.001e3, Rust 0e0 (plan/findings/general--2502-fork-pin-boolean-known-mismatches.md)"
+
+[[mismatch]]
+unit = "boolean.topology_intersector_p2"
+case = "gen0105"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.state[14] C++ 1.001e3, Rust 0e0 (plan/findings/general--2502-fork-pin-boolean-known-mismatches.md)"
+
+[[mismatch]]
+unit = "boolean.topology_intersector_p2"
+case = "gen0224"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.state[15] C++ 1.001e3, Rust 0e0 (plan/findings/general--2502-fork-pin-boolean-known-mismatches.md)"
+
+[[mismatch]]
+unit = "boolean.topology_intersector_p2"
+case = "gen0282"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.state[15] C++ 1.001e3, Rust 0e0 (plan/findings/general--2502-fork-pin-boolean-known-mismatches.md)"
+
+[[mismatch]]
+unit = "boolean.topology_intersector_p2"
+case = "gen0289"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.state[3] C++ 4.357506663299384e-3, Rust 4.360565399748202e-3 (+1 more) (plan/findings/general--2502-fork-pin-boolean-known-mismatches.md)"
+
+[[mismatch]]
+unit = "boolean.topology_intersector_p2"
+case = "gen0333"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.state[3] C++ 4.357506663299384e-3, Rust 4.360565399748202e-3 (+1 more) (plan/findings/general--2502-fork-pin-boolean-known-mismatches.md)"
+
+[[mismatch]]
+unit = "boolean.topology_intersector_p2"
+case = "gen0389"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.state[15] C++ 1.001e3, Rust 0e0 (plan/findings/general--2502-fork-pin-boolean-known-mismatches.md)"
+
+[[mismatch]]
+unit = "boolean.topology_intersector_p2"
+case = "gen0433"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.state[16] C++ 4e0, Rust 8e0 (+1 more) (plan/findings/general--2502-fork-pin-boolean-known-mismatches.md)"
+
+[[mismatch]]
+unit = "boolean.topology_intersector_p2"
+case = "gen0441"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.state[18] C++ 1.001e3, Rust 0e0 (plan/findings/general--2502-fork-pin-boolean-known-mismatches.md)"
+
+[[mismatch]]
+unit = "boolean.topology_intersector_p2"
+case = "gen0588"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.state[10] C++ 1.001e3, Rust 0e0 (plan/findings/general--2502-fork-pin-boolean-known-mismatches.md)"
+
+[[mismatch]]
+unit = "boolean.topology_intersector_p2"
+case = "gen0640"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.state[14] C++ 1.001e3, Rust 0e0 (plan/findings/general--2502-fork-pin-boolean-known-mismatches.md)"

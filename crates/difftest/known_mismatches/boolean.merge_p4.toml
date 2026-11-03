@@ -1,0 +1,122 @@
+# #2502: these cases move with the difftest's C++ reference, the SMLib fork
+# v1.1.0-alpha.1 (8eac63c); plan/findings/general--2502-fork-pin-boolean-known-mismatches.md.
+
+[[mismatch]]
+unit = "boolean.merge_p4"
+case = "op1-touch-wire"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: ints.status_and_state[6] C++ 0, Rust 1 (plan/findings/general--2502-fork-pin-boolean-known-mismatches.md)"
+
+[[mismatch]]
+unit = "boolean.merge_p4"
+case = "op1-overlap-sheets"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: ints.status_and_state[5] C++ 0, Rust 4 (+1 more) (plan/findings/general--2502-fork-pin-boolean-known-mismatches.md)"
+
+[[mismatch]]
+unit = "boolean.merge_p4"
+case = "op1-far-translation"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: ints.status_and_state[6] C++ 0, Rust 1 (plan/findings/general--2502-fork-pin-boolean-known-mismatches.md)"
+
+[[mismatch]]
+unit = "boolean.merge_p4"
+case = "op1-option0"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: ints.status_and_state[5] C++ 0, Rust 4 (+1 more) (plan/findings/general--2502-fork-pin-boolean-known-mismatches.md)"
+
+[[mismatch]]
+unit = "boolean.merge_p4"
+case = "op1-option2"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.primary.dbls.len C++ 661, Rust 559 (+2 more) (plan/findings/general--2502-fork-pin-boolean-known-mismatches.md)"
+
+[[mismatch]]
+unit = "boolean.merge_p4"
+case = "op1-option4"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: ints.status_and_state[5] C++ 0, Rust 4 (+1 more) (plan/findings/general--2502-fork-pin-boolean-known-mismatches.md)"
+
+[[mismatch]]
+unit = "boolean.merge_p4"
+case = "op3-cross-wire"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: ints.status_and_state[6] C++ 0, Rust 1 (plan/findings/general--2502-fork-pin-boolean-known-mismatches.md)"
+
+[[mismatch]]
+unit = "boolean.merge_p4"
+case = "op3-far-translation"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: ints.status_and_state[6] C++ 0, Rust 1 (plan/findings/general--2502-fork-pin-boolean-known-mismatches.md)"
+
+[[mismatch]]
+unit = "boolean.merge_p4"
+case = "op4-touch-wire"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: ints.status_and_state[6] C++ 0, Rust 1 (plan/findings/general--2502-fork-pin-boolean-known-mismatches.md)"
+
+[[mismatch]]
+unit = "boolean.merge_p4"
+case = "op4-overlap-sheets"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.primary.dbls.len C++ 523, Rust 455 (+2 more) (plan/findings/general--2502-fork-pin-boolean-known-mismatches.md)"
+
+[[mismatch]]
+unit = "boolean.merge_p4"
+case = "op4-far-translation"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: ints.status_and_state[6] C++ 0, Rust 1 (plan/findings/general--2502-fork-pin-boolean-known-mismatches.md)"
+
+[[mismatch]]
+unit = "boolean.merge_p4"
+case = "op4-option2"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.primary.dbls.len C++ 523, Rust 455 (+2 more) (plan/findings/general--2502-fork-pin-boolean-known-mismatches.md)"
+
+[[mismatch]]
+unit = "boolean.merge_p4"
+case = "op4-option4"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.primary.dbls.len C++ 523, Rust 455 (+2 more) (plan/findings/general--2502-fork-pin-boolean-known-mismatches.md)"
+
+[[mismatch]]
+unit = "boolean.merge_p4"
+case = "op5-overlap-sheets"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.primary.dbls.len C++ 661, Rust 559 (+2 more) (plan/findings/general--2502-fork-pin-boolean-known-mismatches.md)"
+
+[[mismatch]]
+unit = "boolean.merge_p4"
+case = "op5-option2"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.primary.dbls.len C++ 661, Rust 559 (+2 more) (plan/findings/general--2502-fork-pin-boolean-known-mismatches.md)"
+
+[[mismatch]]
+unit = "boolean.merge_p4"
+case = "op5-option4"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.primary.dbls.len C++ 661, Rust 559 (+2 more) (plan/findings/general--2502-fork-pin-boolean-known-mismatches.md)"
+
+[[mismatch]]
+unit = "boolean.merge_p4"
+case = "op6-overlap-sheets"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.primary.dbls.len C++ 661, Rust 559 (+2 more) (plan/findings/general--2502-fork-pin-boolean-known-mismatches.md)"
+
+[[mismatch]]
+unit = "boolean.merge_p4"
+case = "op6-option2"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.primary.dbls.len C++ 661, Rust 559 (+2 more) (plan/findings/general--2502-fork-pin-boolean-known-mismatches.md)"
+
+[[mismatch]]
+unit = "boolean.merge_p4"
+case = "op6-option4"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.primary.dbls.len C++ 661, Rust 559 (+2 more) (plan/findings/general--2502-fork-pin-boolean-known-mismatches.md)"
+
+[[mismatch]]
+unit = "boolean.merge_p4"
+case = "op9-overlap-sheets"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.component.0.dbls.len C++ 201, Rust 133 (+8 more) (plan/findings/general--2502-fork-pin-boolean-known-mismatches.md)"
+
+[[mismatch]]
+unit = "boolean.merge_p4"
+case = "op9-equal-sheets"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.component.0.dbls.len C++ 150, Rust 133 (+2 more) (plan/findings/general--2502-fork-pin-boolean-known-mismatches.md)"
+
+[[mismatch]]
+unit = "boolean.merge_p4"
+case = "op9-option0"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.component.0.dbls.len C++ 201, Rust 133 (+8 more) (plan/findings/general--2502-fork-pin-boolean-known-mismatches.md)"
+
+[[mismatch]]
+unit = "boolean.merge_p4"
+case = "op9-option2"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.component.0.dbls.len C++ 201, Rust 133 (+8 more) (plan/findings/general--2502-fork-pin-boolean-known-mismatches.md)"
+
+[[mismatch]]
+unit = "boolean.merge_p4"
+case = "op9-option4"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.component.0.dbls.len C++ 201, Rust 133 (+8 more) (plan/findings/general--2502-fork-pin-boolean-known-mismatches.md)"
