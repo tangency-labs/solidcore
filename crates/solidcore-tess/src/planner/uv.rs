@@ -5,14 +5,17 @@
 use crate::vec::VecExt as _;
 use solidcore::eval::EvalSurface;
 use solidcore_convert as kernel;
+use solidcore_record::Vec3;
 
+use super::NoValue;
 use super::edges::{QUARTER_TURN, turn};
 use super::size::Rules;
 
 /// Division of `range` along direction `d` so that between neighbouring lines the surface sags
 /// at most the tolerance from its chord, the chord is at most `h` long and the normal turns
 /// within the rules' facet angle, checked along iso-lines across `across`; at most `max_lines`
-/// lines, ends included.
+/// lines, ends included. A point the surface does not evaluate at, where the check needs one, is
+/// the error: the surface refuses the face there.
 pub(crate) fn divide(
     s: &EvalSurface,
     d: usize,
@@ -21,10 +24,10 @@ pub(crate) fn divide(
     rules: &Rules,
     h: f64,
     max_lines: usize,
-) -> Vec<f64> {
+) -> Result<Vec<f64>, NoValue> {
     let (a0, a1) = range;
     if !(a1 > a0) {
-        return vec![a0, a1];
+        return Ok(vec![a0, a1]);
     }
     // The whole range first: the limits split it, and no interval spans more than a quarter
     // turn of its iso-lines, so a closed iso-line is never taken for a flat one. Both ends
@@ -34,7 +37,8 @@ pub(crate) fn divide(
 
 /// `lines` (increasing, ends included) with every interval that fails the same limits as
 /// [`divide`] split until it passes: lines taken from a face's edge nodes meet the edges node for
-/// node, but nothing else checks how far the surface turns between them inside the face.
+/// node, but nothing else checks how far the surface turns between them inside the face. The
+/// error as in [`divide`].
 pub(crate) fn refine(
     s: &EvalSurface,
     d: usize,
@@ -43,21 +47,26 @@ pub(crate) fn refine(
     rules: &Rules,
     h: f64,
     max_lines: usize,
-) -> Vec<f64> {
+) -> Result<Vec<f64>, NoValue> {
     let flat = limits(s, d, across, rules, h);
     split(lines, &flat, max_lines)
 }
 
-/// Depth-first bisection of the intervals between `starts` until `flat` holds for each.
-fn split(starts: &[f64], flat: &dyn Fn(f64, f64) -> bool, max_lines: usize) -> Vec<f64> {
+/// Depth-first bisection of the intervals between `starts` until `flat` holds for each; `flat`'s
+/// error ends it.
+fn split(
+    starts: &[f64],
+    flat: &dyn Fn(f64, f64) -> Result<bool, NoValue>,
+    max_lines: usize,
+) -> Result<Vec<f64>, NoValue> {
     let Some(&first) = starts.first() else {
-        return Vec::new();
+        return Ok(Vec::new());
     };
     let mut out = vec![first];
     let mut stack: Vec<(f64, f64, u32)> =
         starts.windows(2).rev().map(|w| (w[0], w[1], 0)).collect();
     while let Some((a, b, depth)) = stack.pop() {
-        if depth >= 20 || out.len() + stack.len() >= max_lines.max(2) || flat(a, b) {
+        if depth >= 20 || out.len() + stack.len() >= max_lines.max(2) || flat(a, b)? {
             out.push(b);
         } else {
             let m = 0.5 * (a + b);
@@ -65,44 +74,49 @@ fn split(starts: &[f64], flat: &dyn Fn(f64, f64) -> bool, max_lines: usize) -> V
             stack.push((a, m, depth + 1));
         }
     }
-    out
+    Ok(out)
 }
 
 /// Whether the surface between the parameter points `a` and `b` is within the tolerance (at
-/// their middle), the side length `h` and the facet angle: no point is needed between them.
+/// their middle), the side length `h` and the facet angle: no point is needed between them. The
+/// parameters of a point the check needs and the surface does not evaluate at are the error.
 pub(crate) fn fine_between(
     s: &EvalSurface,
     rules: &Rules,
     h: f64,
     a: [f64; 2],
     b: [f64; 2],
-) -> bool {
-    let at = |q: [f64; 2]| s.derivs(q[0], q[1]).map(kernel::record_triple);
-    let (Some((pa, _, _)), Some((pb, _, _))) = (at(a), at(b)) else {
-        return true;
+) -> Result<bool, NoValue> {
+    let at = |q: [f64; 2]| {
+        s.derivs(q[0], q[1])
+            .map(kernel::record_triple)
+            .ok_or(NoValue(q))
     };
+    let ((pa, _, _), (pb, _, _)) = (at(a)?, at(b)?);
     if pa.dist(pb) > h * (1.0 + 1e-9) {
-        return false;
+        return Ok(false);
     }
     let mid = [0.5 * (a[0] + b[0]), 0.5 * (a[1] + b[1])];
-    let sag = at(mid).map_or(0.0, |(m, _, _)| m.dist((pa + pb) * 0.5));
+    let sag = at(mid)?.0.dist((pa + pb) * 0.5);
     if sag > rules.tol {
-        return false;
+        return Ok(false);
     }
+    let Some(t) = rules.turn else { return Ok(true) };
     // At a pole the normal is undefined: take it from just inside the segment.
-    let normal = |q: [f64; 2], toward: [f64; 2]| {
-        let n = |q: [f64; 2]| at(q).and_then(|(_, su, sv)| su.cross(sv).normalized());
-        n(q).or_else(|| {
-            n([
+    let normal = |q: [f64; 2], toward: [f64; 2]| -> Result<Option<Vec3>, NoValue> {
+        let n = |q: [f64; 2]| at(q).map(|(_, su, sv)| su.cross(sv).normalized());
+        match n(q)? {
+            Some(n) => Ok(Some(n)),
+            None => n([
                 q[0] + 1e-4 * (toward[0] - q[0]),
                 q[1] + 1e-4 * (toward[1] - q[1]),
-            ])
-        })
+            ]),
+        }
     };
-    match (rules.turn, normal(a, b), normal(b, a)) {
-        (Some(t), Some(na), Some(nb)) => !t.exceeds(na.dot(nb).clamp(-1.0, 1.0).acos(), sag),
+    Ok(match (normal(a, b)?, normal(b, a)?) {
+        (Some(na), Some(nb)) => !t.exceeds(na.dot(nb).clamp(-1.0, 1.0).acos(), sag),
         _ => true,
-    }
+    })
 }
 
 /// An iso-line's extent below which it is a point, as a fraction of the chord tolerance (which
@@ -119,58 +133,61 @@ fn limits<'a>(
     across: (f64, f64),
     rules: &'a Rules,
     h: f64,
-) -> impl Fn(f64, f64) -> bool + 'a {
+) -> impl Fn(f64, f64) -> Result<bool, NoValue> + 'a {
     let tol = rules.tol;
-    let uv = move |x: f64, y: f64| if d == 0 { (x, y) } else { (y, x) };
-    let at = move |x: f64, y: f64| {
-        let (u, v) = uv(x, y);
-        s.derivs(u, v).map(kernel::record_triple).map(|(p, _, _)| p)
-    };
-    let normal = move |x: f64, y: f64| {
-        let (u, v) = uv(x, y);
-        s.derivs(u, v)
+    let uv = move |x: f64, y: f64| if d == 0 { [x, y] } else { [y, x] };
+    let derivs = move |x: f64, y: f64| {
+        let q = uv(x, y);
+        s.derivs(q[0], q[1])
             .map(kernel::record_triple)
-            .and_then(|(_, su, sv)| su.cross(sv).normalized())
+            .ok_or(NoValue(q))
     };
+    let at = move |x: f64, y: f64| derivs(x, y).map(|(p, _, _)| p);
+    // `None` at a pole, where the normal is undefined.
+    let normal = move |x: f64, y: f64| derivs(x, y).map(|(_, su, sv)| su.cross(sv).normalized());
     const ACROSS: usize = 5;
     let ys: Vec<f64> = (0..ACROSS)
         .map(|k| across.0 + (across.1 - across.0) * k as f64 / (ACROSS - 1) as f64)
         .collect();
     move |a: f64, b: f64| {
-        ys.iter().all(|&y| {
-            let (Some(pa), Some(pb)) = (at(a, y), at(b, y)) else {
-                return true;
-            };
+        for &y in &ys {
+            let (pa, pb) = (at(a, y)?, at(b, y)?);
             if pa.dist(pb) > h * (1.0 + 1e-9) {
-                return false;
+                return Ok(false);
             }
-            let sag = [0.25, 0.5, 0.75]
-                .iter()
-                .filter_map(|f| at(a + (b - a) * f, y))
-                .map(|q| q.dist_to_segment(pa, pb))
-                .fold(0.0, f64::max);
+            let mut sag: f64 = 0.0;
+            for f in [0.25, 0.5, 0.75] {
+                sag = sag.max(at(a + (b - a) * f, y)?.dist_to_segment(pa, pb));
+            }
             if sag > tol {
-                return false;
+                return Ok(false);
             }
             // The two half chords of an arc turning θ differ by θ/2; a closed iso-line's by π.
             // An iso-line within a millionth of the tolerance of one point (a pole) turns no
             // amount: its directions are rounding.
-            if let Some(pm) = at(0.5 * (a + b), y)
-                && pa.dist(pm).max(pm.dist(pb)) > POINT * tol
+            let pm = at(0.5 * (a + b), y)?;
+            if pa.dist(pm).max(pm.dist(pb)) > POINT * tol
                 && 2.0 * turn(pm - pa, pb - pm) > QUARTER_TURN
             {
-                return false;
+                return Ok(false);
             }
+            let Some(t) = rules.turn else { continue };
             // At a pole the normal is undefined: take it from just inside the segment.
-            let na = normal(a, y).or_else(|| normal(a + 1e-4 * (b - a), y));
-            let nb = normal(b, y).or_else(|| normal(b - 1e-4 * (b - a), y));
-            match (rules.turn, na, nb) {
-                (Some(t), Some(na), Some(nb)) => {
-                    !t.exceeds(na.dot(nb).clamp(-1.0, 1.0).acos(), sag)
-                }
-                _ => true,
+            let na = match normal(a, y)? {
+                Some(n) => Some(n),
+                None => normal(a + 1e-4 * (b - a), y)?,
+            };
+            let nb = match normal(b, y)? {
+                Some(n) => Some(n),
+                None => normal(b - 1e-4 * (b - a), y)?,
+            };
+            if let (Some(na), Some(nb)) = (na, nb)
+                && t.exceeds(na.dot(nb).clamp(-1.0, 1.0).acos(), sag)
+            {
+                return Ok(false);
             }
-        })
+        }
+        Ok(true)
     }
 }
 
@@ -212,7 +229,8 @@ mod tests {
             },
             f64::INFINITY,
             10_000,
-        );
+        )
+        .unwrap();
         let along = divide(
             &s,
             0,
@@ -225,7 +243,8 @@ mod tests {
             },
             f64::INFINITY,
             10_000,
-        );
+        )
+        .unwrap();
         assert_eq!(along, vec![0.0, 1.0]);
         // Chord sag r(1 − cos(θ/2)) ≤ 0.01 with r = 3 needs θ ≤ 0.163: at least 39 segments.
         assert!(turn.len() >= 40 && turn.len() < 80, "{}", turn.len());
@@ -242,7 +261,8 @@ mod tests {
             },
             0.5,
             10_000,
-        );
+        )
+        .unwrap();
         assert_eq!(along.len(), 9);
     }
 
@@ -281,7 +301,8 @@ mod tests {
                 &coarse,
                 f64::INFINITY,
                 10_000
-            ),
+            )
+            .unwrap(),
             vec![-6.7e-13, q]
         );
         let whole = divide(
@@ -295,7 +316,8 @@ mod tests {
             },
             f64::INFINITY,
             10_000,
-        );
+        )
+        .unwrap();
         assert_eq!(whole.len(), 5, "{whole:?}");
     }
 
@@ -317,7 +339,8 @@ mod tests {
             },
             f64::INFINITY,
             10_000,
-        );
+        )
+        .unwrap();
         assert_eq!(lines.first().copied(), Some(a0));
         assert_eq!(lines.last().copied(), Some(a1));
     }

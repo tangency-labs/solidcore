@@ -84,7 +84,8 @@ pub(crate) fn coons_best(
             for d in b + 1..k {
                 for e in d + 1..k {
                     let pick = [*c.get(a)?, *c.get(b)?, *c.get(d)?, *c.get(e)?];
-                    let Some(r) = coons_at(uv, fixed, pick, max_points, h, None) else {
+                    let Some(r) = super::infallible(coons_at(uv, fixed, pick, max_points, h, None))
+                    else {
                         continue;
                     };
                     let q = min_angle(uv, &r, scale);
@@ -211,26 +212,43 @@ fn lines(a: &Side, b: &Side, h: f64) -> Vec<f64> {
 /// Given for a whole face, whose sides are its edges' nodes: where its grid converges (towards a
 /// pole) the interior can need more lines than the sides carry, and the lines are split there.
 /// A motorcycle patch passes `None`: its sides are cuts seeded at the face's global seed.
-pub(crate) fn coons(
+/// `fine`'s error (a point the surface does not evaluate at) is the error; `Ok(None)` when the
+/// loop takes no Coons patch.
+pub(crate) fn coons<E>(
     uv: &[[f64; 2]],
     fixed: &[Vec3],
     scale: [f64; 2],
     max_points: usize,
     h: f64,
-    fine: Option<&dyn Fn([f64; 2], [f64; 2]) -> bool>,
-) -> Option<(Vec<[f64; 2]>, Vec<[u32; 3]>)> {
-    let pick = corners(uv, scale)?;
+    fine: Option<&dyn Fn([f64; 2], [f64; 2]) -> Result<bool, E>>,
+) -> Result<Option<(Vec<[f64; 2]>, Vec<[u32; 3]>)>, E> {
+    let Some(pick) = corners(uv, scale) else {
+        return Ok(None);
+    };
     coons_at(uv, fixed, pick, max_points, h, fine)
 }
 
 /// [`coons`] with the four corners given (loop indices, in loop order).
-pub(crate) fn coons_at(
+pub(crate) fn coons_at<E>(
     uv: &[[f64; 2]],
     fixed: &[Vec3],
     pick: [usize; 4],
     max_points: usize,
     h: f64,
-    fine: Option<&dyn Fn([f64; 2], [f64; 2]) -> bool>,
+    fine: Option<&dyn Fn([f64; 2], [f64; 2]) -> Result<bool, E>>,
+) -> Result<Option<(Vec<[f64; 2]>, Vec<[u32; 3]>)>, E> {
+    super::layout(|stopped| coons_in(uv, fixed, pick, max_points, h, fine, stopped))
+}
+
+/// [`coons_at`]'s body: `fine`'s error goes to `stopped`.
+fn coons_in<E>(
+    uv: &[[f64; 2]],
+    fixed: &[Vec3],
+    pick: [usize; 4],
+    max_points: usize,
+    h: f64,
+    fine: Option<&dyn Fn([f64; 2], [f64; 2]) -> Result<bool, E>>,
+    stopped: &mut Option<E>,
 ) -> Option<(Vec<[f64; 2]>, Vec<[u32; 3]>)> {
     let n = uv.len();
     let [c0, c1, c2, c3] = pick;
@@ -264,10 +282,19 @@ pub(crate) fn coons_at(
     // spacing than its sides.
     let (ss, ts) = (lines(&bottom, &top, h), lines(&left, &right, h));
     let (ss, ts) = match fine {
-        Some(fine) => (
-            refine(ss, max_points, &|a, b, x| Some(fine(at(a, x)?, at(b, x)?))),
-            refine(ts, max_points, &|a, b, x| Some(fine(at(x, a)?, at(x, b)?))),
-        ),
+        Some(fine) => {
+            // `at` is `None` only for a malformed side (an index past its nodes), whose patch
+            // `coons_in` refuses below; it is not the surface, so it checks nothing here.
+            let ss = refine(ss, max_points, &|a, b, x| match (at(a, x), at(b, x)) {
+                (Some(p), Some(q)) => fine(p, q),
+                _ => Ok(true),
+            });
+            let ts = refine(ts, max_points, &|a, b, x| match (at(x, a), at(x, b)) {
+                (Some(p), Some(q)) => fine(p, q),
+                _ => Ok(true),
+            });
+            (super::stop(stopped, ss)?, super::stop(stopped, ts)?)
+        }
         None => (ss, ts),
     };
     if ss.len().checked_mul(ts.len())? > max_points {
@@ -416,8 +443,13 @@ pub(crate) fn coons_at(
 }
 
 /// Interior lines (strictly between 0 and 1) with every interval, ends included, split while
-/// `fine(a, b, x)` fails at some position `x` across (or the lines reach `max`).
-fn refine(lines: Vec<f64>, max: usize, fine: &dyn Fn(f64, f64, f64) -> Option<bool>) -> Vec<f64> {
+/// `fine(a, b, x)` fails at some position `x` across (or the lines reach `max`); `fine`'s error
+/// ends it.
+fn refine<E>(
+    lines: Vec<f64>,
+    max: usize,
+    fine: &dyn Fn(f64, f64, f64) -> Result<bool, E>,
+) -> Result<Vec<f64>, E> {
     const ACROSS: [f64; 5] = [0.0, 0.25, 0.5, 0.75, 1.0];
     let all: Vec<f64> = std::iter::once(0.0)
         .chain(lines)
@@ -426,9 +458,16 @@ fn refine(lines: Vec<f64>, max: usize, fine: &dyn Fn(f64, f64, f64) -> Option<bo
     let mut out = vec![0.0];
     let mut stack: Vec<(f64, f64, u32)> = all.windows(2).rev().map(|w| (w[0], w[1], 0)).collect();
     while let Some((a, b, depth)) = stack.pop() {
-        let ok = depth >= 16
-            || out.len() + stack.len() >= max
-            || ACROSS.iter().all(|x| fine(a, b, *x).unwrap_or(true));
+        let mut ok = depth >= 16 || out.len() + stack.len() >= max;
+        if !ok {
+            ok = true;
+            for x in ACROSS {
+                if !fine(a, b, x)? {
+                    ok = false;
+                    break;
+                }
+            }
+        }
         if ok {
             out.push(b);
         } else {
@@ -437,7 +476,7 @@ fn refine(lines: Vec<f64>, max: usize, fine: &dyn Fn(f64, f64, f64) -> Option<bo
             stack.push((a, m, depth + 1));
         }
     }
-    out.into_iter().filter(|x| *x > 0.0 && *x < 1.0).collect()
+    Ok(out.into_iter().filter(|x| *x > 0.0 && *x < 1.0).collect())
 }
 
 fn reversed(s: Side) -> Side {
@@ -514,7 +553,9 @@ mod tests {
                     b.reverse();
                 }
                 let fixed: Vec<Vec3> = b.iter().map(|p| Vec3::new(p[0], p[1], 0.0)).collect();
-                let Some((extra, tris)) = coons(&b, &fixed, [1.0, 1.0], 10_000, 1.0, None) else {
+                let Some((extra, tris)) =
+                    super::super::infallible(coons(&b, &fixed, [1.0, 1.0], 10_000, 1.0, None))
+                else {
                     panic!("meshes (k {k})")
                 };
                 let mut uv = b.clone();
@@ -540,7 +581,9 @@ mod tests {
         b.extend((0..4).map(|k| [4.0 - k as f64, 4.0]));
         b.extend((0..4).map(|k| [0.0, 4.0 - k as f64]));
         let fixed: Vec<Vec3> = b.iter().map(|p| Vec3::new(p[0], p[1], 0.0)).collect();
-        let Some((extra, tris)) = coons(&b, &fixed, [1.0, 1.0], 10_000, 1.0, None) else {
+        let Some((extra, tris)) =
+            super::super::infallible(coons(&b, &fixed, [1.0, 1.0], 10_000, 1.0, None))
+        else {
             panic!("meshes")
         };
         let mut uv = b.clone();
@@ -573,7 +616,7 @@ mod tests {
     fn five_corners_is_not_a_coons_patch() {
         let b = [[0.0, 0.0], [1.0, 0.0], [1.0, 0.5], [0.5, 1.0], [0.0, 1.0]];
         let fixed: Vec<Vec3> = b.iter().map(|p| Vec3::new(p[0], p[1], 0.0)).collect();
-        assert!(coons(&b, &fixed, [1.0, 1.0], 100, 1.0, None).is_none());
+        assert!(super::super::infallible(coons(&b, &fixed, [1.0, 1.0], 100, 1.0, None)).is_none());
     }
 
     /// A planar strip with a fillet at one end and a chamfer at the other, in mm (a face of
@@ -665,7 +708,9 @@ mod tests {
             .map(|k| 0.5 * (b[k][0] * b[(k + 1) % n][1] - b[(k + 1) % n][0] * b[k][1]))
             .sum();
         for h in [0.25, 0.5, 0.75, 1.0, 1.5, 2.0, 3.0, 4.0, 6.0, 8.0] {
-            let Some((extra, tris)) = coons(&b, &fixed, [1.0, 1.0], 100_000, h, None) else {
+            let Some((extra, tris)) =
+                super::super::infallible(coons(&b, &fixed, [1.0, 1.0], 100_000, h, None))
+            else {
                 continue;
             };
             let mut uv = b.clone();

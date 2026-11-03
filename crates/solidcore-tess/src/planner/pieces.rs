@@ -44,13 +44,27 @@ pub(crate) struct Piece {
 /// (u, v)), as fractions strictly between 0 and 1, given the spacing wanted at each (in the
 /// metric): the boundary's own spacing at a boundary node, unbounded inside the face (the seed
 /// rule then sets it). Returns the cut nodes (numbered after the boundary) and the patches;
-/// `None` when the cuts do not make a planar subdivision (the face is then meshed whole).
-pub(crate) fn cut(
+/// `Ok(None)` when the cuts do not make a planar subdivision (the face is then meshed whole);
+/// `seeds`' error (a point the surface does not evaluate at) is the error.
+#[allow(clippy::type_complexity)] // the cut nodes and the patches, as Option, in a Result
+pub(crate) fn cut<E>(
     boundary: &[[f64; 2]],
     loops: &[std::ops::Range<usize>],
     segments: &[Segment],
     scale: [f64; 2],
-    seeds: &dyn Fn([f64; 2], [f64; 2], f64, f64) -> Vec<f64>,
+    seeds: &dyn Fn([f64; 2], [f64; 2], f64, f64) -> Result<Vec<f64>, E>,
+) -> Result<Option<(Vec<[f64; 2]>, Vec<Piece>)>, E> {
+    super::layout(|stopped| cut_in(boundary, loops, segments, scale, seeds, stopped))
+}
+
+/// [`cut`]'s body: `seeds`' error goes to `stopped`.
+fn cut_in<E>(
+    boundary: &[[f64; 2]],
+    loops: &[std::ops::Range<usize>],
+    segments: &[Segment],
+    scale: [f64; 2],
+    seeds: &dyn Fn([f64; 2], [f64; 2], f64, f64) -> Result<Vec<f64>, E>,
+    stopped: &mut Option<E>,
 ) -> Option<(Vec<[f64; 2]>, Vec<Piece>)> {
     let n = boundary.len();
     let metric = |q: [f64; 2]| [q[0] * scale[0], q[1] * scale[1]];
@@ -157,7 +171,7 @@ pub(crate) fn cut(
                     let k = ((k as f64 * share).round() as usize).clamp(1, 4096);
                     (1..k).map(|j| j as f64 / k as f64).collect()
                 }
-                _ => seeds(pa, pb, spacing(a), spacing(b)),
+                _ => super::stop(stopped, seeds(pa, pb, spacing(a), spacing(b)))?,
             };
             let mut prev = a;
             for f in fractions.into_iter().take(4096) {
@@ -388,8 +402,9 @@ mod tests {
                 count: None,
             },
         ];
-        let Some((cut_uv, pieces)) = cut(&b, &loops, &segs, [1.0, 1.0], &|_, _, _, _| vec![0.5])
-        else {
+        let Ok(Some((cut_uv, pieces))) = cut(&b, &loops, &segs, [1.0, 1.0], &|_, _, _, _| {
+            Ok::<_, ()>(vec![0.5])
+        }) else {
             panic!("cuts")
         };
         assert_eq!(pieces.len(), 4);
@@ -424,8 +439,9 @@ mod tests {
                 count: None,
             },
         ];
-        let Some((cut_uv, pieces)) = cut(&b, &loops, &segs, [1.0, 1.0], &|_, _, _, _| Vec::new())
-        else {
+        let Ok(Some((cut_uv, pieces))) = cut(&b, &loops, &segs, [1.0, 1.0], &|_, _, _, _| {
+            Ok::<_, ()>(Vec::new())
+        }) else {
             panic!("cuts")
         };
         assert_eq!(pieces.len(), 3, "{pieces:?}");
@@ -444,9 +460,8 @@ mod tests {
                 &[std::ops::Range { start: 0, end: 4 }],
                 &[],
                 [1.0, 1.0],
-                &|_, _, _, _| Vec::new()
-            )
-            .is_none()
+                &|_, _, _, _| Ok::<_, ()>(Vec::new())
+            ) == Ok(None)
         );
     }
 }
