@@ -249,10 +249,14 @@ fn revolution_ok(net: &[[f64; 3]; 9]) -> bool {
         net[2][2] - net[0][2],
     ];
     if length_squared(x).sqrt() < EFF_ZERO || parallel_within(x, axis, 1.0) {
+        // CreateCanonical calls SmLine::EvaluateSTEP, which evaluates the line as
+        // start + t * unit_direction * scale. Keep that order at the frame bound.
+        let scale = length_squared(step).sqrt();
+        let unit = unitize_or_z(step);
         x = [
-            net[2][0] + 0.45 * step[0] - net[0][0],
-            net[2][1] + 0.45 * step[1] - net[0][1],
-            net[2][2] + 0.45 * step[2] - net[0][2],
+            net[2][0] + 0.45 * unit[0] * scale - net[0][0],
+            net[2][1] + 0.45 * unit[1] * scale - net[0][1],
+            net[2][2] + 0.45 * unit[2] * scale - net[0][2],
         ];
     }
     length_squared(cross(axis, x)) >= EFF_ZERO_SQ
