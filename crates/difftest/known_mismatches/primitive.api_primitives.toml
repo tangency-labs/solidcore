@@ -1,0 +1,992 @@
+# #2502: these cases move with the difftest's C++ reference, the SMLib fork
+# v1.1.0-alpha.1 (8eac63c); plan/findings/general--2502-fork-pin-primitive-known-mismatches.md.
+
+[[mismatch]]
+unit = "primitive.api_primitives"
+case = "blend_success_without_face"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.rec.len C++ 2, Rust 361 (plan/findings/general--2502-fork-pin-primitive-known-mismatches.md)"
+
+[[mismatch]]
+unit = "primitive.api_primitives"
+case = "blend_corner_same_dir"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.rec.len C++ 2, Rust 669 (plan/findings/general--2502-fork-pin-primitive-known-mismatches.md)"
+
+[[mismatch]]
+unit = "primitive.api_primitives"
+case = "blend_corner_opposite_dir"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.rec.len C++ 2, Rust 669 (plan/findings/general--2502-fork-pin-primitive-known-mismatches.md)"
+
+[[mismatch]]
+unit = "primitive.api_primitives"
+case = "blend_cross_face_same_dir"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.rec.len C++ 2, Rust 669 (plan/findings/general--2502-fork-pin-primitive-known-mismatches.md)"
+
+[[mismatch]]
+unit = "primitive.api_primitives"
+case = "blend_cross_face_opposite_dir"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.rec.len C++ 2, Rust 669 (plan/findings/general--2502-fork-pin-primitive-known-mismatches.md)"
+
+[[mismatch]]
+unit = "primitive.api_primitives"
+case = "blend_small_scale"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.rec.len C++ 2, Rust 361 (plan/findings/general--2502-fork-pin-primitive-known-mismatches.md)"
+
+[[mismatch]]
+unit = "primitive.api_primitives"
+case = "blend_large_scale"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.rec.len C++ 2, Rust 361 (plan/findings/general--2502-fork-pin-primitive-known-mismatches.md)"
+
+[[mismatch]]
+unit = "primitive.api_primitives"
+case = "box_1e6_size_1e_6_refused"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.rec.len C++ 1, Rust 5 (plan/findings/general--2502-fork-pin-primitive-known-mismatches.md)"
+
+[[mismatch]]
+unit = "primitive.api_primitives"
+case = "box_at_1e6_size_1e_3_refused"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.rec.len C++ 1, Rust 5 (plan/findings/general--2502-fork-pin-primitive-known-mismatches.md)"
+
+[[mismatch]]
+unit = "primitive.api_primitives"
+case = "plane_surface_len_inf"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.rec.len C++ 1, Rust 53 (plan/findings/general--2502-fork-pin-primitive-known-mismatches.md)"
+
+[[mismatch]]
+unit = "primitive.api_primitives"
+case = "plane_surface_wid_inf"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.rec.len C++ 1, Rust 53 (plan/findings/general--2502-fork-pin-primitive-known-mismatches.md)"
+
+[[mismatch]]
+unit = "primitive.api_primitives"
+case = "plane_surface_len_ninf"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.rec[0] C++ 1.007e3, Rust 1.001e3 (plan/findings/general--2502-fork-pin-primitive-known-mismatches.md)"
+
+[[mismatch]]
+unit = "primitive.api_primitives"
+case = "plane_surface_wid_ninf"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.rec[0] C++ 1.007e3, Rust 1.001e3 (plan/findings/general--2502-fork-pin-primitive-known-mismatches.md)"
+
+[[mismatch]]
+unit = "primitive.api_primitives"
+case = "box_l_above_effzero"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.rec.len C++ 1, Rust 305 (plan/findings/general--2502-fork-pin-primitive-known-mismatches.md)"
+
+[[mismatch]]
+unit = "primitive.api_primitives"
+case = "sphere_r_above_effzero"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.rec[0] C++ 1.007e3, Rust 1.001e3 (plan/findings/general--2502-fork-pin-primitive-known-mismatches.md)"
+
+[[mismatch]]
+unit = "primitive.api_primitives"
+case = "cyl_box_len_above_effzero"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.rec.len C++ 1, Rust 217 (plan/findings/general--2502-fork-pin-primitive-known-mismatches.md)"
+
+[[mismatch]]
+unit = "primitive.api_primitives"
+case = "box_l_huge"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.rec.len C++ 1, Rust 343 (plan/findings/general--2502-fork-pin-primitive-known-mismatches.md)"
+
+[[mismatch]]
+unit = "primitive.api_primitives"
+case = "cylinder_h_huge"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.rec[0] C++ 1.007e3, Rust 1.001e3 (plan/findings/general--2502-fork-pin-primitive-known-mismatches.md)"
+
+[[mismatch]]
+unit = "primitive.api_primitives"
+case = "cyl_box_len_huge"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.rec.len C++ 1, Rust 111 (plan/findings/general--2502-fork-pin-primitive-known-mismatches.md)"
+
+[[mismatch]]
+unit = "primitive.api_primitives"
+case = "cyl_box_outside_huge"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.rec.len C++ 1, Rust 271 (plan/findings/general--2502-fork-pin-primitive-known-mismatches.md)"
+
+[[mismatch]]
+unit = "primitive.api_primitives"
+case = "plane_surface_negative"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.rec[0] C++ 1.007e3, Rust 1.001e3 (plan/findings/general--2502-fork-pin-primitive-known-mismatches.md)"
+
+[[mismatch]]
+unit = "primitive.api_primitives"
+case = "cyl_box_almost_full_turn"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.rec.len C++ 1, Rust 345 (plan/findings/general--2502-fork-pin-primitive-known-mismatches.md)"
+
+[[mismatch]]
+unit = "primitive.api_primitives"
+case = "box_origin_1e95_size_0p5"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.rec.len C++ 1, Rust 5 (plan/findings/general--2502-fork-pin-primitive-known-mismatches.md)"
+
+[[mismatch]]
+unit = "primitive.api_primitives"
+case = "box_origin_x_1e95_size_0p5"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.rec.len C++ 1, Rust 5 (plan/findings/general--2502-fork-pin-primitive-known-mismatches.md)"
+
+[[mismatch]]
+unit = "primitive.api_primitives"
+case = "box_origin_1e200_size_0p5"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.rec.len C++ 1, Rust 5 (plan/findings/general--2502-fork-pin-primitive-known-mismatches.md)"
+
+[[mismatch]]
+unit = "primitive.api_primitives"
+case = "box_origin_1e294_size_1em3"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.rec.len C++ 1, Rust 5 (plan/findings/general--2502-fork-pin-primitive-known-mismatches.md)"
+
+[[mismatch]]
+unit = "primitive.api_primitives"
+case = "box_origin_x_1e294_size_0p5"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.rec.len C++ 1, Rust 5 (plan/findings/general--2502-fork-pin-primitive-known-mismatches.md)"
+
+[[mismatch]]
+unit = "primitive.api_primitives"
+case = "box_origin_1e12_size_0p5_control"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.rec.len C++ 1, Rust 5 (plan/findings/general--2502-fork-pin-primitive-known-mismatches.md)"
+
+[[mismatch]]
+unit = "primitive.api_primitives"
+case = "rv_plane_l_neg"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.rec[0] C++ 1.007e3, Rust 1.001e3 (plan/findings/general--2502-fork-pin-primitive-known-mismatches.md)"
+
+[[mismatch]]
+unit = "primitive.api_primitives"
+case = "rv_plane_w_neg"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.rec[0] C++ 1.007e3, Rust 1.001e3 (plan/findings/general--2502-fork-pin-primitive-known-mismatches.md)"
+
+[[mismatch]]
+unit = "primitive.api_primitives"
+case = "rv_plane_l_inf"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.rec.len C++ 1, Rust 53 (plan/findings/general--2502-fork-pin-primitive-known-mismatches.md)"
+
+[[mismatch]]
+unit = "primitive.api_primitives"
+case = "rv_plane_w_inf"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.rec.len C++ 1, Rust 53 (plan/findings/general--2502-fork-pin-primitive-known-mismatches.md)"
+
+[[mismatch]]
+unit = "primitive.api_primitives"
+case = "rv_plane_l_ninf"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.rec[0] C++ 1.007e3, Rust 1.001e3 (plan/findings/general--2502-fork-pin-primitive-known-mismatches.md)"
+
+[[mismatch]]
+unit = "primitive.api_primitives"
+case = "rv_plane_w_ninf"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.rec[0] C++ 1.007e3, Rust 1.001e3 (plan/findings/general--2502-fork-pin-primitive-known-mismatches.md)"
+
+[[mismatch]]
+unit = "primitive.api_primitives"
+case = "rv_plane_l_max"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.rec.len C++ 1, Rust 153 (plan/findings/general--2502-fork-pin-primitive-known-mismatches.md)"
+
+[[mismatch]]
+unit = "primitive.api_primitives"
+case = "rv_plane_w_max"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.rec.len C++ 1, Rust 153 (plan/findings/general--2502-fork-pin-primitive-known-mismatches.md)"
+
+[[mismatch]]
+unit = "primitive.api_primitives"
+case = "rv_plane_both_neg"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.rec[0] C++ 1.007e3, Rust 1.001e3 (plan/findings/general--2502-fork-pin-primitive-known-mismatches.md)"
+
+[[mismatch]]
+unit = "primitive.api_primitives"
+case = "wr596_box_smaller_than_tolerance"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.rec.len C++ 1, Rust 181 (plan/findings/general--2502-fork-pin-primitive-known-mismatches.md)"
+
+[[mismatch]]
+unit = "primitive.api_primitives"
+case = "gen0012"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.rec[12] C++ 1.0000000010204395e-5, Rust 1e-5 (+24 more) (plan/findings/general--2502-fork-pin-primitive-known-mismatches.md)"
+
+[[mismatch]]
+unit = "primitive.api_primitives"
+case = "gen0013"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.rec.len C++ 1, Rust 121 (plan/findings/general--2502-fork-pin-primitive-known-mismatches.md)"
+
+[[mismatch]]
+unit = "primitive.api_primitives"
+case = "gen0015"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.rec[12] C++ 1e-5, Rust 1.0000000010658142e-5 (+3 more) (plan/findings/general--2502-fork-pin-primitive-known-mismatches.md)"
+
+[[mismatch]]
+unit = "primitive.api_primitives"
+case = "gen0016"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.rec[0] C++ 1.007e3, Rust 1.001e3 (plan/findings/general--2502-fork-pin-primitive-known-mismatches.md)"
+
+[[mismatch]]
+unit = "primitive.api_primitives"
+case = "gen0021"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.rec[0] C++ 1.007e3, Rust 1.001e3 (plan/findings/general--2502-fork-pin-primitive-known-mismatches.md)"
+
+[[mismatch]]
+unit = "primitive.api_primitives"
+case = "gen0025"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.rec.len C++ 1, Rust 305 (plan/findings/general--2502-fork-pin-primitive-known-mismatches.md)"
+
+[[mismatch]]
+unit = "primitive.api_primitives"
+case = "gen0049"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.rec[74] C++ 5.0717872096643454e1, Rust 5.061781965070216e1 (+23 more) (plan/findings/general--2502-fork-pin-primitive-known-mismatches.md)"
+
+[[mismatch]]
+unit = "primitive.api_primitives"
+case = "gen0052"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.rec[24] C++ 1.0000000005304323e-5, Rust 1.0000000044719644e-5 (+2 more) (plan/findings/general--2502-fork-pin-primitive-known-mismatches.md)"
+
+[[mismatch]]
+unit = "primitive.api_primitives"
+case = "gen0068"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.rec[12] C++ 1e-5, Rust 1.0000000385596297e-5 (+5 more) (plan/findings/general--2502-fork-pin-primitive-known-mismatches.md)"
+
+[[mismatch]]
+unit = "primitive.api_primitives"
+case = "gen0070"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.rec[12] C++ 1e-5, Rust 1.0000000069980345e-5 (+3 more) (plan/findings/general--2502-fork-pin-primitive-known-mismatches.md)"
+
+[[mismatch]]
+unit = "primitive.api_primitives"
+case = "gen0080"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.rec[74] C++ 2.1770333412265188e1, Rust 2.3999344839565033e1 (+23 more) (plan/findings/general--2502-fork-pin-primitive-known-mismatches.md)"
+
+[[mismatch]]
+unit = "primitive.api_primitives"
+case = "gen0097"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.rec.len C++ 1, Rust 53 (plan/findings/general--2502-fork-pin-primitive-known-mismatches.md)"
+
+[[mismatch]]
+unit = "primitive.api_primitives"
+case = "gen0105"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.rec[0] C++ 1.007e3, Rust 1.001e3 (plan/findings/general--2502-fork-pin-primitive-known-mismatches.md)"
+
+[[mismatch]]
+unit = "primitive.api_primitives"
+case = "gen0107"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.rec[175] C++ 7.534462614437751e1, Rust 1e0 (+2 more) (plan/findings/general--2502-fork-pin-primitive-known-mismatches.md)"
+
+[[mismatch]]
+unit = "primitive.api_primitives"
+case = "gen0115"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.rec[12] C++ 1e-5, Rust 1.000000003256116e-5 (+3 more) (plan/findings/general--2502-fork-pin-primitive-known-mismatches.md)"
+
+[[mismatch]]
+unit = "primitive.api_primitives"
+case = "gen0118"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.rec[0] C++ 1.007e3, Rust 1.001e3 (plan/findings/general--2502-fork-pin-primitive-known-mismatches.md)"
+
+[[mismatch]]
+unit = "primitive.api_primitives"
+case = "gen0129"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.rec[12] C++ 1.1364705035042751e-5, Rust 1.1364705159700173e-5 (+4 more) (plan/findings/general--2502-fork-pin-primitive-known-mismatches.md)"
+
+[[mismatch]]
+unit = "primitive.api_primitives"
+case = "gen0144"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.rec[0] C++ 1.007e3, Rust 1.001e3 (plan/findings/general--2502-fork-pin-primitive-known-mismatches.md)"
+
+[[mismatch]]
+unit = "primitive.api_primitives"
+case = "gen0153"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.rec[12] C++ 1.0000000001776358e-5, Rust 1.0000000136572415e-5 (+3 more) (plan/findings/general--2502-fork-pin-primitive-known-mismatches.md)"
+
+[[mismatch]]
+unit = "primitive.api_primitives"
+case = "gen0165"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.rec.len C++ 1, Rust 305 (plan/findings/general--2502-fork-pin-primitive-known-mismatches.md)"
+
+[[mismatch]]
+unit = "primitive.api_primitives"
+case = "gen0173"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.rec[0] C++ 1.007e3, Rust 1.001e3 (plan/findings/general--2502-fork-pin-primitive-known-mismatches.md)"
+
+[[mismatch]]
+unit = "primitive.api_primitives"
+case = "gen0175"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.rec[0] C++ 1.007e3, Rust 1.001e3 (plan/findings/general--2502-fork-pin-primitive-known-mismatches.md)"
+
+[[mismatch]]
+unit = "primitive.api_primitives"
+case = "gen0179"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.rec.len C++ 1, Rust 129 (plan/findings/general--2502-fork-pin-primitive-known-mismatches.md)"
+
+[[mismatch]]
+unit = "primitive.api_primitives"
+case = "gen0194"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.rec[12] C++ 1e-5, Rust 1.0000000049737992e-5 (+4 more) (plan/findings/general--2502-fork-pin-primitive-known-mismatches.md)"
+
+[[mismatch]]
+unit = "primitive.api_primitives"
+case = "gen0201"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.rec.len C++ 2, Rust 361 (plan/findings/general--2502-fork-pin-primitive-known-mismatches.md)"
+
+[[mismatch]]
+unit = "primitive.api_primitives"
+case = "gen0203"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.rec[12] C++ 1.000000000088818e-5, Rust 1.0000000113200072e-5 (+4 more) (plan/findings/general--2502-fork-pin-primitive-known-mismatches.md)"
+
+[[mismatch]]
+unit = "primitive.api_primitives"
+case = "gen0212"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.rec[0] C++ 1.007e3, Rust 1.001e3 (plan/findings/general--2502-fork-pin-primitive-known-mismatches.md)"
+
+[[mismatch]]
+unit = "primitive.api_primitives"
+case = "gen0219"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.rec.len C++ 2, Rust 748 (plan/findings/general--2502-fork-pin-primitive-known-mismatches.md)"
+
+[[mismatch]]
+unit = "primitive.api_primitives"
+case = "gen0220"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.rec[8] C++ 1.0000000010048593e-5, Rust 1e-5 (+3 more) (plan/findings/general--2502-fork-pin-primitive-known-mismatches.md)"
+
+[[mismatch]]
+unit = "primitive.api_primitives"
+case = "gen0238"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.rec[12] C++ 1e-5, Rust 1.0000000010048593e-5 (+5 more) (plan/findings/general--2502-fork-pin-primitive-known-mismatches.md)"
+
+[[mismatch]]
+unit = "primitive.api_primitives"
+case = "gen0242"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.rec[0] C++ 1.007e3, Rust 1.001e3 (plan/findings/general--2502-fork-pin-primitive-known-mismatches.md)"
+
+[[mismatch]]
+unit = "primitive.api_primitives"
+case = "gen0246"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.rec[24] C++ 1.0000000001776358e-5, Rust 1.000000001588822e-5 (+1 more) (plan/findings/general--2502-fork-pin-primitive-known-mismatches.md)"
+
+[[mismatch]]
+unit = "primitive.api_primitives"
+case = "gen0251"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.rec[74] C++ -4.886432789246212e0, Rust -4.2411218342991415e0 (+23 more) (plan/findings/general--2502-fork-pin-primitive-known-mismatches.md)"
+
+[[mismatch]]
+unit = "primitive.api_primitives"
+case = "gen0253"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.rec[74] C++ -5.382410889459203e0, Rust -5.939547324142748e0 (+23 more) (plan/findings/general--2502-fork-pin-primitive-known-mismatches.md)"
+
+[[mismatch]]
+unit = "primitive.api_primitives"
+case = "gen0260"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.rec.len C++ 1, Rust 129 (plan/findings/general--2502-fork-pin-primitive-known-mismatches.md)"
+
+[[mismatch]]
+unit = "primitive.api_primitives"
+case = "gen0261"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.rec[74] C++ -1.990155690529302e1, Rust -2.0024424992577952e1 (+23 more) (plan/findings/general--2502-fork-pin-primitive-known-mismatches.md)"
+
+[[mismatch]]
+unit = "primitive.api_primitives"
+case = "gen0278"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.rec.len C++ 1, Rust 153 (plan/findings/general--2502-fork-pin-primitive-known-mismatches.md)"
+
+[[mismatch]]
+unit = "primitive.api_primitives"
+case = "gen0285"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.rec[175] C++ 7.381296709182028e1, Rust 1e0 (+3 more) (plan/findings/general--2502-fork-pin-primitive-known-mismatches.md)"
+
+[[mismatch]]
+unit = "primitive.api_primitives"
+case = "gen0288"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.rec.len C++ 2, Rust 361 (plan/findings/general--2502-fork-pin-primitive-known-mismatches.md)"
+
+[[mismatch]]
+unit = "primitive.api_primitives"
+case = "gen0290"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.rec[175] C++ 1.2293118986836518e0, Rust 1e0 (+2 more) (plan/findings/general--2502-fork-pin-primitive-known-mismatches.md)"
+
+[[mismatch]]
+unit = "primitive.api_primitives"
+case = "gen0307"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.rec[175] C++ 1.7461561207531094e1, Rust 1e0 (+2 more) (plan/findings/general--2502-fork-pin-primitive-known-mismatches.md)"
+
+[[mismatch]]
+unit = "primitive.api_primitives"
+case = "gen0309"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.rec[0] C++ 1.007e3, Rust 1.001e3 (plan/findings/general--2502-fork-pin-primitive-known-mismatches.md)"
+
+[[mismatch]]
+unit = "primitive.api_primitives"
+case = "gen0313"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.rec[12] C++ 1.0000000003552714e-5, Rust 1.0000000025618983e-5 (+1 more) (plan/findings/general--2502-fork-pin-primitive-known-mismatches.md)"
+
+[[mismatch]]
+unit = "primitive.api_primitives"
+case = "gen0319"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.rec[0] C++ 1.007e3, Rust 1.001e3 (plan/findings/general--2502-fork-pin-primitive-known-mismatches.md)"
+
+[[mismatch]]
+unit = "primitive.api_primitives"
+case = "gen0327"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.rec[12] C++ 1.0000000003552714e-5, Rust 1.000000002309264e-5 (+24 more) (plan/findings/general--2502-fork-pin-primitive-known-mismatches.md)"
+
+[[mismatch]]
+unit = "primitive.api_primitives"
+case = "gen0329"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.rec[175] C++ 5.536649926881633e0, Rust 1e0 (+2 more) (plan/findings/general--2502-fork-pin-primitive-known-mismatches.md)"
+
+[[mismatch]]
+unit = "primitive.api_primitives"
+case = "gen0337"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.rec[12] C++ 1.0000000001776358e-5, Rust 1.0000000023313627e-5 (+24 more) (plan/findings/general--2502-fork-pin-primitive-known-mismatches.md)"
+
+[[mismatch]]
+unit = "primitive.api_primitives"
+case = "gen0347"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.rec[0] C++ 1.007e3, Rust 1.001e3 (plan/findings/general--2502-fork-pin-primitive-known-mismatches.md)"
+
+[[mismatch]]
+unit = "primitive.api_primitives"
+case = "gen0356"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.rec.len C++ 1, Rust 129 (plan/findings/general--2502-fork-pin-primitive-known-mismatches.md)"
+
+[[mismatch]]
+unit = "primitive.api_primitives"
+case = "gen0412"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.rec[0] C++ 1.007e3, Rust 1.001e3 (plan/findings/general--2502-fork-pin-primitive-known-mismatches.md)"
+
+[[mismatch]]
+unit = "primitive.api_primitives"
+case = "gen0423"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.rec[8] C++ 1e-5, Rust 1.0000000010048593e-5 (+4 more) (plan/findings/general--2502-fork-pin-primitive-known-mismatches.md)"
+
+[[mismatch]]
+unit = "primitive.api_primitives"
+case = "gen0431"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.rec[0] C++ 1.007e3, Rust 1.001e3 (plan/findings/general--2502-fork-pin-primitive-known-mismatches.md)"
+
+[[mismatch]]
+unit = "primitive.api_primitives"
+case = "gen0436"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.rec[0] C++ 1.007e3, Rust 1.001e3 (plan/findings/general--2502-fork-pin-primitive-known-mismatches.md)"
+
+[[mismatch]]
+unit = "primitive.api_primitives"
+case = "gen0438"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.rec[24] C++ 1.0000000007105428e-5, Rust 1.0000000023018453e-5 (+4 more) (plan/findings/general--2502-fork-pin-primitive-known-mismatches.md)"
+
+[[mismatch]]
+unit = "primitive.api_primitives"
+case = "gen0454"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.rec[12] C++ 1e-5, Rust 1.0000000036963592e-5 (+3 more) (plan/findings/general--2502-fork-pin-primitive-known-mismatches.md)"
+
+[[mismatch]]
+unit = "primitive.api_primitives"
+case = "gen0460"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.rec[12] C++ 1.0000000014210856e-5, Rust 1.0000000071408663e-5 (+3 more) (plan/findings/general--2502-fork-pin-primitive-known-mismatches.md)"
+
+[[mismatch]]
+unit = "primitive.api_primitives"
+case = "gen0463"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.rec[0] C++ 1.007e3, Rust 1.001e3 (plan/findings/general--2502-fork-pin-primitive-known-mismatches.md)"
+
+[[mismatch]]
+unit = "primitive.api_primitives"
+case = "gen0466"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.rec[74] C++ 5.7151313007027e1, Rust 5.764518711198471e1 (+23 more) (plan/findings/general--2502-fork-pin-primitive-known-mismatches.md)"
+
+[[mismatch]]
+unit = "primitive.api_primitives"
+case = "gen0471"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.rec[12] C++ 1.000000000088818e-5, Rust 1.0000000089947637e-5 (+5 more) (plan/findings/general--2502-fork-pin-primitive-known-mismatches.md)"
+
+[[mismatch]]
+unit = "primitive.api_primitives"
+case = "gen0475"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.rec[12] C++ 1.0000000010658142e-5, Rust 1.0000000043944643e-5 (+3 more) (plan/findings/general--2502-fork-pin-primitive-known-mismatches.md)"
+
+[[mismatch]]
+unit = "primitive.api_primitives"
+case = "gen0479"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.rec[249] C++ 1.3387945963290882e1, Rust 1e0 (plan/findings/general--2502-fork-pin-primitive-known-mismatches.md)"
+
+[[mismatch]]
+unit = "primitive.api_primitives"
+case = "gen0521"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.rec.len C++ 1, Rust 5 (plan/findings/general--2502-fork-pin-primitive-known-mismatches.md)"
+
+[[mismatch]]
+unit = "primitive.api_primitives"
+case = "gen0525"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.rec.len C++ 1, Rust 53 (plan/findings/general--2502-fork-pin-primitive-known-mismatches.md)"
+
+[[mismatch]]
+unit = "primitive.api_primitives"
+case = "gen0526"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.rec[74] C++ -1.6179087420741823e1, Rust -1.5249174750838037e1 (+23 more) (plan/findings/general--2502-fork-pin-primitive-known-mismatches.md)"
+
+[[mismatch]]
+unit = "primitive.api_primitives"
+case = "gen0527"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.rec[0] C++ 1.007e3, Rust 1.001e3 (plan/findings/general--2502-fork-pin-primitive-known-mismatches.md)"
+
+[[mismatch]]
+unit = "primitive.api_primitives"
+case = "gen0529"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.rec[12] C++ 1.0000000007324108e-5, Rust 1.0000000954774865e-5 (+3 more) (plan/findings/general--2502-fork-pin-primitive-known-mismatches.md)"
+
+[[mismatch]]
+unit = "primitive.api_primitives"
+case = "gen0533"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.rec[175] C++ 5.265724214931416e1, Rust 1e0 (+2 more) (plan/findings/general--2502-fork-pin-primitive-known-mismatches.md)"
+
+[[mismatch]]
+unit = "primitive.api_primitives"
+case = "gen0534"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.rec[12] C++ 1e-5, Rust 1.000000001776357e-5 (+3 more) (plan/findings/general--2502-fork-pin-primitive-known-mismatches.md)"
+
+[[mismatch]]
+unit = "primitive.api_primitives"
+case = "gen0542"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.rec[74] C++ 1.6383918500683347e1, Rust 1.6012443496587043e1 (+23 more) (plan/findings/general--2502-fork-pin-primitive-known-mismatches.md)"
+
+[[mismatch]]
+unit = "primitive.api_primitives"
+case = "gen0555"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.rec.len C++ 1, Rust 121 (plan/findings/general--2502-fork-pin-primitive-known-mismatches.md)"
+
+[[mismatch]]
+unit = "primitive.api_primitives"
+case = "gen0562"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.rec[24] C++ 1.0000000003552714e-5, Rust 1.0000000022748468e-5 (+1 more) (plan/findings/general--2502-fork-pin-primitive-known-mismatches.md)"
+
+[[mismatch]]
+unit = "primitive.api_primitives"
+case = "gen0573"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.rec[0] C++ 1.007e3, Rust 1.001e3 (plan/findings/general--2502-fork-pin-primitive-known-mismatches.md)"
+
+[[mismatch]]
+unit = "primitive.api_primitives"
+case = "gen0589"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.rec[24] C++ 1.0000000012809492e-5, Rust 1.0000000041895292e-5 (+2 more) (plan/findings/general--2502-fork-pin-primitive-known-mismatches.md)"
+
+[[mismatch]]
+unit = "primitive.api_primitives"
+case = "gen0590"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.rec[12] C++ 1e-5, Rust 1.000000039841114e-5 (+6 more) (plan/findings/general--2502-fork-pin-primitive-known-mismatches.md)"
+
+[[mismatch]]
+unit = "primitive.api_primitives"
+case = "gen0594"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.rec[0] C++ 1.007e3, Rust 1.001e3 (plan/findings/general--2502-fork-pin-primitive-known-mismatches.md)"
+
+[[mismatch]]
+unit = "primitive.api_primitives"
+case = "gen0600"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.rec[175] C++ 5.178385493791771e1, Rust 1e0 (+3 more) (plan/findings/general--2502-fork-pin-primitive-known-mismatches.md)"
+
+[[mismatch]]
+unit = "primitive.api_primitives"
+case = "gen0607"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.rec[24] C++ 1.0000000007160724e-5, Rust 1.0000000026353381e-5 (+4 more) (plan/findings/general--2502-fork-pin-primitive-known-mismatches.md)"
+
+[[mismatch]]
+unit = "primitive.api_primitives"
+case = "gen0609"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.rec[0] C++ 1.007e3, Rust 1.001e3 (plan/findings/general--2502-fork-pin-primitive-known-mismatches.md)"
+
+[[mismatch]]
+unit = "primitive.api_primitives"
+case = "gen0610"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.rec.len C++ 1, Rust 53 (plan/findings/general--2502-fork-pin-primitive-known-mismatches.md)"
+
+[[mismatch]]
+unit = "primitive.api_primitives"
+case = "gen0627"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.rec.len C++ 1, Rust 305 (plan/findings/general--2502-fork-pin-primitive-known-mismatches.md)"
+
+[[mismatch]]
+unit = "primitive.api_primitives"
+case = "gen0637"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.rec[8] C++ 1.0000000001776358e-5, Rust 1.0000000014210856e-5 (+1 more) (plan/findings/general--2502-fork-pin-primitive-known-mismatches.md)"
+
+[[mismatch]]
+unit = "primitive.api_primitives"
+case = "gen0642"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.rec[74] C++ 1.4127490993116936e1, Rust 1.3582096974342289e1 (+23 more) (plan/findings/general--2502-fork-pin-primitive-known-mismatches.md)"
+
+[[mismatch]]
+unit = "primitive.api_primitives"
+case = "gen0643"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.rec[74] C++ 4.2167014021247006e1, Rust 4.134174022711173e1 (+23 more) (plan/findings/general--2502-fork-pin-primitive-known-mismatches.md)"
+
+[[mismatch]]
+unit = "primitive.api_primitives"
+case = "gen0650"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.rec[0] C++ 1.007e3, Rust 1.001e3 (plan/findings/general--2502-fork-pin-primitive-known-mismatches.md)"
+
+[[mismatch]]
+unit = "primitive.api_primitives"
+case = "gen0660"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.rec[12] C++ 1.0000000010048593e-5, Rust 1.0000000047664657e-5 (+3 more) (plan/findings/general--2502-fork-pin-primitive-known-mismatches.md)"
+
+[[mismatch]]
+unit = "primitive.api_primitives"
+case = "gen0685"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.rec[0] C++ 1.007e3, Rust 1.001e3 (plan/findings/general--2502-fork-pin-primitive-known-mismatches.md)"
+
+[[mismatch]]
+unit = "primitive.api_primitives"
+case = "gen0700"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.rec[175] C++ 4.02588133120147e1, Rust 1e0 (+3 more) (plan/findings/general--2502-fork-pin-primitive-known-mismatches.md)"
+
+[[mismatch]]
+unit = "primitive.api_primitives"
+case = "gen0711"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.rec.len C++ 1, Rust 5 (plan/findings/general--2502-fork-pin-primitive-known-mismatches.md)"
+
+[[mismatch]]
+unit = "primitive.api_primitives"
+case = "gen0714"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.rec[12] C++ 1.0000000003552714e-5, Rust 1.0000000020097186e-5 (+1 more) (plan/findings/general--2502-fork-pin-primitive-known-mismatches.md)"
+
+[[mismatch]]
+unit = "primitive.api_primitives"
+case = "gen0716"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.rec[74] C++ -2.0761597474011957e1, Rust -2.188243479387816e1 (+23 more) (plan/findings/general--2502-fork-pin-primitive-known-mismatches.md)"
+
+[[mismatch]]
+unit = "primitive.api_primitives"
+case = "gen0724"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.rec[24] C++ 1.0000000003662055e-5, Rust 1.0000000014658343e-5 (+1 more) (plan/findings/general--2502-fork-pin-primitive-known-mismatches.md)"
+
+[[mismatch]]
+unit = "primitive.api_primitives"
+case = "gen0749"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.rec[249] C++ 6.214839465746543e0, Rust 1e0 (plan/findings/general--2502-fork-pin-primitive-known-mismatches.md)"
+
+[[mismatch]]
+unit = "primitive.api_primitives"
+case = "gen0756"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.rec.len C++ 1, Rust 129 (plan/findings/general--2502-fork-pin-primitive-known-mismatches.md)"
+
+[[mismatch]]
+unit = "primitive.api_primitives"
+case = "gen0851"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.rec.len C++ 1, Rust 53 (plan/findings/general--2502-fork-pin-primitive-known-mismatches.md)"
+
+[[mismatch]]
+unit = "primitive.api_primitives"
+case = "gen0875"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.rec.len C++ 1, Rust 53 (plan/findings/general--2502-fork-pin-primitive-known-mismatches.md)"
+
+[[mismatch]]
+unit = "primitive.api_primitives"
+case = "gen0880"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.rec[12] C++ 1.619115403553157e-5, Rust 1.619115405622455e-5 (+3 more) (plan/findings/general--2502-fork-pin-primitive-known-mismatches.md)"
+
+[[mismatch]]
+unit = "primitive.api_primitives"
+case = "gen0885"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.rec[12] C++ 1.2467315520520741e-5, Rust 1.2467315577806528e-5 (+3 more) (plan/findings/general--2502-fork-pin-primitive-known-mismatches.md)"
+
+[[mismatch]]
+unit = "primitive.api_primitives"
+case = "gen0895"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.rec[74] C++ -4.105013533555737e1, Rust -4.101863978010737e1 (+23 more) (plan/findings/general--2502-fork-pin-primitive-known-mismatches.md)"
+
+[[mismatch]]
+unit = "primitive.api_primitives"
+case = "gen0899"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.rec[0] C++ 1.007e3, Rust 1.001e3 (plan/findings/general--2502-fork-pin-primitive-known-mismatches.md)"
+
+[[mismatch]]
+unit = "primitive.api_primitives"
+case = "gen0905"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.rec[249] C++ 3.400928022514506e0, Rust 1e0 (plan/findings/general--2502-fork-pin-primitive-known-mismatches.md)"
+
+[[mismatch]]
+unit = "primitive.api_primitives"
+case = "gen0908"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.rec[0] C++ 1.007e3, Rust 1.001e3 (plan/findings/general--2502-fork-pin-primitive-known-mismatches.md)"
+
+[[mismatch]]
+unit = "primitive.api_primitives"
+case = "gen0909"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.rec[12] C++ 1e-5, Rust 1.0000000010658142e-5 (+24 more) (plan/findings/general--2502-fork-pin-primitive-known-mismatches.md)"
+
+[[mismatch]]
+unit = "primitive.api_primitives"
+case = "gen0919"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.rec[74] C++ 2.66329247076432e1, Rust 2.544177407307997e1 (+23 more) (plan/findings/general--2502-fork-pin-primitive-known-mismatches.md)"
+
+[[mismatch]]
+unit = "primitive.api_primitives"
+case = "gen0929"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.rec[12] C++ 1.0000000003552714e-5, Rust 1.000000001588822e-5 (+3 more) (plan/findings/general--2502-fork-pin-primitive-known-mismatches.md)"
+
+[[mismatch]]
+unit = "primitive.api_primitives"
+case = "gen0939"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.rec.len C++ 1, Rust 111 (plan/findings/general--2502-fork-pin-primitive-known-mismatches.md)"
+
+[[mismatch]]
+unit = "primitive.api_primitives"
+case = "gen0940"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.rec[74] C++ 4.8418874685230335e1, Rust 4.717724902379618e1 (+23 more) (plan/findings/general--2502-fork-pin-primitive-known-mismatches.md)"
+
+[[mismatch]]
+unit = "primitive.api_primitives"
+case = "gen0959"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.rec[12] C++ 1e-5, Rust 1.0000000046082683e-5 (+4 more) (plan/findings/general--2502-fork-pin-primitive-known-mismatches.md)"
+
+[[mismatch]]
+unit = "primitive.api_primitives"
+case = "gen0976"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.rec[0] C++ 1.007e3, Rust 1.001e3 (plan/findings/general--2502-fork-pin-primitive-known-mismatches.md)"
+
+[[mismatch]]
+unit = "primitive.api_primitives"
+case = "gen0977"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.rec[74] C++ -2.4622314903740865e1, Rust -2.4864999923701518e1 (+23 more) (plan/findings/general--2502-fork-pin-primitive-known-mismatches.md)"
+
+[[mismatch]]
+unit = "primitive.api_primitives"
+case = "gen0981"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.rec[0] C++ 1.007e3, Rust 1.001e3 (plan/findings/general--2502-fork-pin-primitive-known-mismatches.md)"
+
+[[mismatch]]
+unit = "primitive.api_primitives"
+case = "gen0988"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.rec[24] C++ 1.000000000794411e-5, Rust 1.0000000054837376e-5 (+2 more) (plan/findings/general--2502-fork-pin-primitive-known-mismatches.md)"
+
+[[mismatch]]
+unit = "primitive.api_primitives"
+case = "gen0989"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.rec[12] C++ 1.0000000003972055e-5, Rust 1.0000000023898437e-5 (+3 more) (plan/findings/general--2502-fork-pin-primitive-known-mismatches.md)"
+
+[[mismatch]]
+unit = "primitive.api_primitives"
+case = "gen1003"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.rec[0] C++ 1.007e3, Rust 1.001e3 (plan/findings/general--2502-fork-pin-primitive-known-mismatches.md)"
+
+[[mismatch]]
+unit = "primitive.api_primitives"
+case = "gen1007"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.rec.len C++ 1, Rust 121 (plan/findings/general--2502-fork-pin-primitive-known-mismatches.md)"
+
+[[mismatch]]
+unit = "primitive.api_primitives"
+case = "gen1010"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.rec.len C++ 2, Rust 3123 (plan/findings/general--2502-fork-pin-primitive-known-mismatches.md)"
+
+[[mismatch]]
+unit = "primitive.api_primitives"
+case = "gen1012"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.rec[0] C++ 1.007e3, Rust 1.001e3 (plan/findings/general--2502-fork-pin-primitive-known-mismatches.md)"
+
+[[mismatch]]
+unit = "primitive.api_primitives"
+case = "gen1013"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.rec[12] C++ 1.0000000010204395e-5, Rust 1.0000000025618983e-5 (+24 more) (plan/findings/general--2502-fork-pin-primitive-known-mismatches.md)"
+
+[[mismatch]]
+unit = "primitive.api_primitives"
+case = "gen1014"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.rec.len C++ 1, Rust 5 (plan/findings/general--2502-fork-pin-primitive-known-mismatches.md)"
+
+[[mismatch]]
+unit = "primitive.api_primitives"
+case = "gen1028"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.rec[0] C++ 1.007e3, Rust 1.001e3 (plan/findings/general--2502-fork-pin-primitive-known-mismatches.md)"
+
+[[mismatch]]
+unit = "primitive.api_primitives"
+case = "gen1036"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.rec[12] C++ 1.0000000003972055e-5, Rust 1.0000000013987049e-5 (+3 more) (plan/findings/general--2502-fork-pin-primitive-known-mismatches.md)"
+
+[[mismatch]]
+unit = "primitive.api_primitives"
+case = "gen1042"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.rec[74] C++ -3.329700981728927e1, Rust -3.481162725760459e1 (+23 more) (plan/findings/general--2502-fork-pin-primitive-known-mismatches.md)"
+
+[[mismatch]]
+unit = "primitive.api_primitives"
+case = "gen1085"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.rec[175] C++ 4.579831383207816e0, Rust 1e0 (+2 more) (plan/findings/general--2502-fork-pin-primitive-known-mismatches.md)"
+
+[[mismatch]]
+unit = "primitive.api_primitives"
+case = "gen1087"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.rec[0] C++ 1.007e3, Rust 1.001e3 (plan/findings/general--2502-fork-pin-primitive-known-mismatches.md)"
+
+[[mismatch]]
+unit = "primitive.api_primitives"
+case = "gen1099"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.rec.len C++ 2, Rust 669 (plan/findings/general--2502-fork-pin-primitive-known-mismatches.md)"
+
+[[mismatch]]
+unit = "primitive.api_primitives"
+case = "gen1120"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.rec[8] C++ 1e-5, Rust 1.0000000020097186e-5 (+4 more) (plan/findings/general--2502-fork-pin-primitive-known-mismatches.md)"
+
+[[mismatch]]
+unit = "primitive.api_primitives"
+case = "gen1122"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.rec[74] C++ 5.146626296124285e1, Rust 4.927839981905144e1 (+23 more) (plan/findings/general--2502-fork-pin-primitive-known-mismatches.md)"
+
+[[mismatch]]
+unit = "primitive.api_primitives"
+case = "gen1126"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.rec[24] C++ 1e-5, Rust 1.0000000014210856e-5 (+5 more) (plan/findings/general--2502-fork-pin-primitive-known-mismatches.md)"
+
+[[mismatch]]
+unit = "primitive.api_primitives"
+case = "gen1133"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.rec[12] C++ 1.9142342283791744e-5, Rust 1.9142342306067146e-5 (+3 more) (plan/findings/general--2502-fork-pin-primitive-known-mismatches.md)"
+
+[[mismatch]]
+unit = "primitive.api_primitives"
+case = "gen1159"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.rec[12] C++ 1e-5, Rust 1.0000000049737992e-5 (+4 more) (plan/findings/general--2502-fork-pin-primitive-known-mismatches.md)"
+
+[[mismatch]]
+unit = "primitive.api_primitives"
+case = "gen1163"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.rec[12] C++ 1.0000000007105428e-5, Rust 1.0000000018460442e-5 (+1 more) (plan/findings/general--2502-fork-pin-primitive-known-mismatches.md)"
+
+[[mismatch]]
+unit = "primitive.api_primitives"
+case = "gen1165"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.rec[12] C++ 1e-5, Rust 1.0000000022469335e-5 (+3 more) (plan/findings/general--2502-fork-pin-primitive-known-mismatches.md)"
+
+[[mismatch]]
+unit = "primitive.api_primitives"
+case = "gen1168"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.rec[0] C++ 1.007e3, Rust 1.001e3 (plan/findings/general--2502-fork-pin-primitive-known-mismatches.md)"
+
+[[mismatch]]
+unit = "primitive.api_primitives"
+case = "gen1183"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.rec[175] C++ 3.063705477369039e1, Rust 1e0 (+2 more) (plan/findings/general--2502-fork-pin-primitive-known-mismatches.md)"
+
+[[mismatch]]
+unit = "primitive.api_primitives"
+case = "gen1189"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.rec[175] C++ 6.472394425606235e1, Rust 1e0 (+2 more) (plan/findings/general--2502-fork-pin-primitive-known-mismatches.md)"
+
+[[mismatch]]
+unit = "primitive.api_primitives"
+case = "gen1210"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.rec[74] C++ 2.018020080672306e1, Rust 2.090071623914238e1 (+23 more) (plan/findings/general--2502-fork-pin-primitive-known-mismatches.md)"
+
+[[mismatch]]
+unit = "primitive.api_primitives"
+case = "gen1212"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.rec.len C++ 1, Rust 153 (plan/findings/general--2502-fork-pin-primitive-known-mismatches.md)"
+
+[[mismatch]]
+unit = "primitive.api_primitives"
+case = "gen1242"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.rec[12] C++ 1.0000000003552714e-5, Rust 1.0000000033516234e-5 (+2 more) (plan/findings/general--2502-fork-pin-primitive-known-mismatches.md)"
+
+[[mismatch]]
+unit = "primitive.api_primitives"
+case = "gen1246"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.rec[74] C++ -4.2687900282451416e1, Rust -4.257346550509757e1 (+23 more) (plan/findings/general--2502-fork-pin-primitive-known-mismatches.md)"
+
+[[mismatch]]
+unit = "primitive.api_primitives"
+case = "gen1250"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.rec[0] C++ 1.007e3, Rust 1.001e3 (plan/findings/general--2502-fork-pin-primitive-known-mismatches.md)"
+
+[[mismatch]]
+unit = "primitive.api_primitives"
+case = "gen1268"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.rec[0] C++ 1.007e3, Rust 1.001e3 (plan/findings/general--2502-fork-pin-primitive-known-mismatches.md)"
+
+[[mismatch]]
+unit = "primitive.api_primitives"
+case = "gen1293"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.rec[0] C++ 1.007e3, Rust 1.001e3 (plan/findings/general--2502-fork-pin-primitive-known-mismatches.md)"
+
+[[mismatch]]
+unit = "primitive.api_primitives"
+case = "gen1300"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.rec[175] C++ 7.7608749260472045e0, Rust 1e0 (+2 more) (plan/findings/general--2502-fork-pin-primitive-known-mismatches.md)"
+
+[[mismatch]]
+unit = "primitive.api_primitives"
+case = "gen1323"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.rec[249] C++ 9.50324282591676e0, Rust 1e0 (plan/findings/general--2502-fork-pin-primitive-known-mismatches.md)"
+
+[[mismatch]]
+unit = "primitive.api_primitives"
+case = "gen1329"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.rec[0] C++ 1.007e3, Rust 1.001e3 (plan/findings/general--2502-fork-pin-primitive-known-mismatches.md)"
+
+[[mismatch]]
+unit = "primitive.api_primitives"
+case = "gen1337"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.rec[74] C++ 3.031037172757781e1, Rust 3.0297638169664033e1 (+23 more) (plan/findings/general--2502-fork-pin-primitive-known-mismatches.md)"
+
+[[mismatch]]
+unit = "primitive.api_primitives"
+case = "gen1349"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.rec[12] C++ 1.0000000023935544e-5, Rust 1.0000000050274352e-5 (+24 more) (plan/findings/general--2502-fork-pin-primitive-known-mismatches.md)"
+
+[[mismatch]]
+unit = "primitive.api_primitives"
+case = "gen1375"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.rec[175] C++ 3.975699629651846e1, Rust 1e0 (+3 more) (plan/findings/general--2502-fork-pin-primitive-known-mismatches.md)"
+
+[[mismatch]]
+unit = "primitive.api_primitives"
+case = "gen1377"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.rec[175] C++ 5.725446027068365e1, Rust 1e0 (+3 more) (plan/findings/general--2502-fork-pin-primitive-known-mismatches.md)"
+
+[[mismatch]]
+unit = "primitive.api_primitives"
+case = "gen1391"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.rec[249] C++ 5.6520793523522315e0, Rust 1e0 (plan/findings/general--2502-fork-pin-primitive-known-mismatches.md)"
+
+[[mismatch]]
+unit = "primitive.api_primitives"
+case = "gen1398"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.rec[175] C++ 2.218261096646147e1, Rust 1e0 (+2 more) (plan/findings/general--2502-fork-pin-primitive-known-mismatches.md)"
+
+[[mismatch]]
+unit = "primitive.api_primitives"
+case = "gen1404"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.rec[12] C++ 1e-5, Rust 1.0000000015072888e-5 (+3 more) (plan/findings/general--2502-fork-pin-primitive-known-mismatches.md)"
+
+[[mismatch]]
+unit = "primitive.api_primitives"
+case = "gen1405"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.rec[24] C++ 1.000000001588822e-5, Rust 1.0000000026191606e-5 (+5 more) (plan/findings/general--2502-fork-pin-primitive-known-mismatches.md)"
+
+[[mismatch]]
+unit = "primitive.api_primitives"
+case = "gen1418"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.rec[74] C++ 2.4966037599087404e1, Rust 2.5317856497680722e1 (+23 more) (plan/findings/general--2502-fork-pin-primitive-known-mismatches.md)"
+
+[[mismatch]]
+unit = "primitive.api_primitives"
+case = "gen1439"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.rec[74] C++ 2.082421430047384e1, Rust 2.1269697792790296e1 (+23 more) (plan/findings/general--2502-fork-pin-primitive-known-mismatches.md)"
+
+[[mismatch]]
+unit = "primitive.api_primitives"
+case = "gen1450"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.rec[12] C++ 1.0000000003662055e-5, Rust 1.0000002957237232e-5 (+3 more) (plan/findings/general--2502-fork-pin-primitive-known-mismatches.md)"
+
+[[mismatch]]
+unit = "primitive.api_primitives"
+case = "gen1463"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.rec[24] C++ 1.0000000001776358e-5, Rust 1.0000000031776438e-5 (+1 more) (plan/findings/general--2502-fork-pin-primitive-known-mismatches.md)"
+
+[[mismatch]]
+unit = "primitive.api_primitives"
+case = "gen1464"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.rec[175] C++ 2.8761464317243842e1, Rust 1e0 (+2 more) (plan/findings/general--2502-fork-pin-primitive-known-mismatches.md)"
+
+[[mismatch]]
+unit = "primitive.api_primitives"
+case = "gen1476"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.rec.len C++ 1, Rust 153 (plan/findings/general--2502-fork-pin-primitive-known-mismatches.md)"
+
+[[mismatch]]
+unit = "primitive.api_primitives"
+case = "gen1484"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.rec[175] C++ 3.674143257806774e1, Rust 1e0 (+2 more) (plan/findings/general--2502-fork-pin-primitive-known-mismatches.md)"
+
+[[mismatch]]
+unit = "primitive.api_primitives"
+case = "offset0143"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.rec[10] C++ 0e0, Rust 1.5386693955155646e-11 (plan/findings/general--2502-fork-pin-primitive-known-mismatches.md)"

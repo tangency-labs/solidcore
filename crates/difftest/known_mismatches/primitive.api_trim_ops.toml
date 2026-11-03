@@ -1,0 +1,52 @@
+# #2502: these cases move with the difftest's C++ reference, the SMLib fork
+# v1.1.0-alpha.1 (8eac63c); plan/findings/general--2502-fork-pin-primitive-known-mismatches.md.
+
+[[mismatch]]
+unit = "primitive.api_trim_ops"
+case = "pp_degenerate_surface"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.rec[0] C++ 1.007e3, Rust 1.001e3 (plan/findings/general--2502-fork-pin-primitive-known-mismatches.md)"
+
+[[mismatch]]
+unit = "primitive.api_trim_ops"
+case = "pat_upstream_filleted_box"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.rec[5] C++ 9.5e0, Rust 0e0 (+250 more) (plan/findings/general--2502-fork-pin-primitive-known-mismatches.md)"
+
+[[mismatch]]
+unit = "primitive.api_trim_ops"
+case = "pat_long_direction"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.rec[5] C++ 9.5e0, Rust 0e0 (+250 more) (plan/findings/general--2502-fork-pin-primitive-known-mismatches.md)"
+
+[[mismatch]]
+unit = "primitive.api_trim_ops"
+case = "gen0018"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.rec[5] C++ 1.2041349858786546e1, Rust 1.1566500740742075e1 (+523 more) (plan/findings/general--2502-fork-pin-primitive-known-mismatches.md)"
+
+[[mismatch]]
+unit = "primitive.api_trim_ops"
+case = "gen0043"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.rec[9] C++ 5.677317069287752e0, Rust 1.9951027815431197e0 (+491 more) (plan/findings/general--2502-fork-pin-primitive-known-mismatches.md)"
+
+[[mismatch]]
+unit = "primitive.api_trim_ops"
+case = "gen0072"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.rec[5] C++ 3.476188803216984e-3, Rust 2.511523290570555e0 (+273 more) (plan/findings/general--2502-fork-pin-primitive-known-mismatches.md)"
+
+[[mismatch]]
+unit = "primitive.api_trim_ops"
+case = "gen0073"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.rec[5] C++ -9.68963188411752e-1, Rust 3.516038448762102e0 (+528 more) (plan/findings/general--2502-fork-pin-primitive-known-mismatches.md)"
+
+[[mismatch]]
+unit = "primitive.api_trim_ops"
+case = "gen0075"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.rec[5] C++ 1.2884130732142471e0, Rust 8.297921017037123e-1 (+324 more) (plan/findings/general--2502-fork-pin-primitive-known-mismatches.md)"
+
+[[mismatch]]
+unit = "primitive.api_trim_ops"
+case = "gen0112"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.rec[5] C++ 7.347046551623312e0, Rust 6.962519980387759e0 (+502 more) (plan/findings/general--2502-fork-pin-primitive-known-mismatches.md)"
+
+[[mismatch]]
+unit = "primitive.api_trim_ops"
+case = "gen0126"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.rec[5] C++ 2.818685040338975e-2, Rust 9.703821739618014e0 (+514 more) (plan/findings/general--2502-fork-pin-primitive-known-mismatches.md)"

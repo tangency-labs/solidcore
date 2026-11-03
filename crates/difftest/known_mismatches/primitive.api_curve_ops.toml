@@ -1,0 +1,132 @@
+# #2502: these cases move with the difftest's C++ reference, the SMLib fork
+# v1.1.0-alpha.1 (8eac63c); plan/findings/general--2502-fork-pin-primitive-known-mismatches.md.
+
+[[mismatch]]
+unit = "primitive.api_curve_ops"
+case = "gen0039"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.rec.len C++ 500, Rust 455 (plan/findings/general--2502-fork-pin-primitive-known-mismatches.md)"
+
+[[mismatch]]
+unit = "primitive.api_curve_ops"
+case = "gen0043"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.rec.len C++ 755, Rust 770 (plan/findings/general--2502-fork-pin-primitive-known-mismatches.md)"
+
+[[mismatch]]
+unit = "primitive.api_curve_ops"
+case = "gen0050"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.rec.len C++ 920, Rust 890 (plan/findings/general--2502-fork-pin-primitive-known-mismatches.md)"
+
+[[mismatch]]
+unit = "primitive.api_curve_ops"
+case = "gen0099"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.rec.len C++ 590, Rust 350 (plan/findings/general--2502-fork-pin-primitive-known-mismatches.md)"
+
+[[mismatch]]
+unit = "primitive.api_curve_ops"
+case = "gen0154"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.rec.len C++ 710, Rust 620 (plan/findings/general--2502-fork-pin-primitive-known-mismatches.md)"
+
+[[mismatch]]
+unit = "primitive.api_curve_ops"
+case = "gen0258"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.rec.len C++ 905, Rust 785 (plan/findings/general--2502-fork-pin-primitive-known-mismatches.md)"
+
+[[mismatch]]
+unit = "primitive.api_curve_ops"
+case = "gen0304"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.rec.len C++ 425, Rust 380 (plan/findings/general--2502-fork-pin-primitive-known-mismatches.md)"
+
+[[mismatch]]
+unit = "primitive.api_curve_ops"
+case = "gen0325"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.rec[9] C++ -2.046896780743562e1, Rust -2.046896771850407e1 (+192 more) (plan/findings/general--2502-fork-pin-primitive-known-mismatches.md)"
+
+[[mismatch]]
+unit = "primitive.api_curve_ops"
+case = "gen0328"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.rec[9] C++ -1.0885857915297632e0, Rust -1.0885858781915059e0 (+22 more) (plan/findings/general--2502-fork-pin-primitive-known-mismatches.md)"
+
+[[mismatch]]
+unit = "primitive.api_curve_ops"
+case = "gen0346"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.rec.len C++ 785, Rust 695 (plan/findings/general--2502-fork-pin-primitive-known-mismatches.md)"
+
+[[mismatch]]
+unit = "primitive.api_curve_ops"
+case = "gen0358"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.rec[9] C++ -4.823882871279401e0, Rust -4.812686411879132e0 (+134 more) (plan/findings/general--2502-fork-pin-primitive-known-mismatches.md)"
+
+[[mismatch]]
+unit = "primitive.api_curve_ops"
+case = "gen0359"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.rec.len C++ 635, Rust 665 (plan/findings/general--2502-fork-pin-primitive-known-mismatches.md)"
+
+[[mismatch]]
+unit = "primitive.api_curve_ops"
+case = "gen0378"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.rec.len C++ 1115, Rust 1100 (plan/findings/general--2502-fork-pin-primitive-known-mismatches.md)"
+
+[[mismatch]]
+unit = "primitive.api_curve_ops"
+case = "gen0383"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.rec.len C++ 1250, Rust 1280 (plan/findings/general--2502-fork-pin-primitive-known-mismatches.md)"
+
+[[mismatch]]
+unit = "primitive.api_curve_ops"
+case = "gen0391"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.rec[9] C++ 1.5000971327252712e1, Rust 1.5001079404392952e1 (+353 more) (plan/findings/general--2502-fork-pin-primitive-known-mismatches.md)"
+
+[[mismatch]]
+unit = "primitive.api_curve_ops"
+case = "gen0404"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.rec.len C++ 890, Rust 1055 (plan/findings/general--2502-fork-pin-primitive-known-mismatches.md)"
+
+[[mismatch]]
+unit = "primitive.api_curve_ops"
+case = "gen0425"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.rec.len C++ 800, Rust 815 (plan/findings/general--2502-fork-pin-primitive-known-mismatches.md)"
+
+[[mismatch]]
+unit = "primitive.api_curve_ops"
+case = "gen0442"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.rec.len C++ 1085, Rust 1055 (plan/findings/general--2502-fork-pin-primitive-known-mismatches.md)"
+
+[[mismatch]]
+unit = "primitive.api_curve_ops"
+case = "gen0457"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.rec.len C++ 1175, Rust 1190 (plan/findings/general--2502-fork-pin-primitive-known-mismatches.md)"
+
+[[mismatch]]
+unit = "primitive.api_curve_ops"
+case = "gen0474"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.rec.len C++ 995, Rust 1010 (plan/findings/general--2502-fork-pin-primitive-known-mismatches.md)"
+
+[[mismatch]]
+unit = "primitive.api_curve_ops"
+case = "gen0487"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.rec.len C++ 890, Rust 920 (plan/findings/general--2502-fork-pin-primitive-known-mismatches.md)"
+
+[[mismatch]]
+unit = "primitive.api_curve_ops"
+case = "gen0518"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.rec.len C++ 845, Rust 770 (plan/findings/general--2502-fork-pin-primitive-known-mismatches.md)"
+
+[[mismatch]]
+unit = "primitive.api_curve_ops"
+case = "gen0539"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.rec[11] C++ 8.92533950018301e-13, Rust 9.948807365666585e-13 (+9 more) (plan/findings/general--2502-fork-pin-primitive-known-mismatches.md)"
+
+[[mismatch]]
+unit = "primitive.api_curve_ops"
+case = "gen0545"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.rec.len C++ 740, Rust 605 (plan/findings/general--2502-fork-pin-primitive-known-mismatches.md)"
+
+[[mismatch]]
+unit = "primitive.api_curve_ops"
+case = "gen0565"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.rec[9] C++ 3.369022061345136e0, Rust 8.133588150759577e0 (+794 more) (plan/findings/general--2502-fork-pin-primitive-known-mismatches.md)"
+
+[[mismatch]]
+unit = "primitive.api_curve_ops"
+case = "gen0573"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.rec[10] C++ -8.902752501998992e-2, Rust -8.902752673724026e-2 (+1 more) (plan/findings/general--2502-fork-pin-primitive-known-mismatches.md)"

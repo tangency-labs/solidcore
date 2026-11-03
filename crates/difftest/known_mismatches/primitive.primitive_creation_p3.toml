@@ -1,0 +1,82 @@
+# #2502: these cases move with the difftest's C++ reference, the SMLib fork
+# v1.1.0-alpha.1 (8eac63c); plan/findings/general--2502-fork-pin-primitive-known-mismatches.md.
+
+[[mismatch]]
+unit = "primitive.primitive_creation_p3"
+case = "capped_rot_square_axis_y_outside_90"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.record[227] C++ 3.1415926535897927e0, Rust 1e0 (+41 more) (plan/findings/general--2502-fork-pin-primitive-known-mismatches.md)"
+
+[[mismatch]]
+unit = "primitive.primitive_creation_p3"
+case = "capped_rot_square_axis_y_outside_270"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.record[227] C++ 9.42477796076938e0, Rust 1e0 (+48 more) (plan/findings/general--2502-fork-pin-primitive-known-mismatches.md)"
+
+[[mismatch]]
+unit = "primitive.primitive_creation_p3"
+case = "capped_rot_square_axis_y_on_edge_90"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.record[219] C++ 3.1415926535897927e0, Rust 1e0 (+6 more) (plan/findings/general--2502-fork-pin-primitive-known-mismatches.md)"
+
+[[mismatch]]
+unit = "primitive.primitive_creation_p3"
+case = "capped_rot_square_axis_y_on_edge_270"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.record[219] C++ 9.42477796076938e0, Rust 1e0 (+10 more) (plan/findings/general--2502-fork-pin-primitive-known-mismatches.md)"
+
+[[mismatch]]
+unit = "primitive.primitive_creation_p3"
+case = "capped_rot_square_axis_diag_vertex_touch_90"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.record[227] C++ 0e0, Rust -4.930380657631324e-32 (+56 more) (plan/findings/general--2502-fork-pin-primitive-known-mismatches.md)"
+
+[[mismatch]]
+unit = "primitive.primitive_creation_p3"
+case = "capped_rot_square_axis_diag_vertex_touch_270"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.record[227] C++ 0e0, Rust -2.465190328815662e-32 (+61 more) (plan/findings/general--2502-fork-pin-primitive-known-mismatches.md)"
+
+[[mismatch]]
+unit = "primitive.primitive_creation_p3"
+case = "capped_rot_square_axis_tilted_through_face_90"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.record.len C++ 9, Rust 563 (plan/findings/general--2502-fork-pin-primitive-known-mismatches.md)"
+
+[[mismatch]]
+unit = "primitive.primitive_creation_p3"
+case = "capped_rot_square_axis_tilted_through_face_270"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.record[6] C++ 3e0, Rust 6e0 (+2 more) (plan/findings/general--2502-fork-pin-primitive-known-mismatches.md)"
+
+[[mismatch]]
+unit = "primitive.primitive_creation_p3"
+case = "capped_rot_disc_axis_y_outside_90"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.record[68] C++ 6.661338147750939e-16, Rust 0e0 (+17 more) (plan/findings/general--2502-fork-pin-primitive-known-mismatches.md)"
+
+[[mismatch]]
+unit = "primitive.primitive_creation_p3"
+case = "capped_rot_disc_axis_y_outside_270"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.record[68] C++ 6.661338147750939e-16, Rust 0e0 (+17 more) (plan/findings/general--2502-fork-pin-primitive-known-mismatches.md)"
+
+[[mismatch]]
+unit = "primitive.primitive_creation_p3"
+case = "capped_rot_half_disc_axis_on_chord_90"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.record[96] C++ 7.298373876248845e-1, Rust -5e-1 (+45 more) (plan/findings/general--2502-fork-pin-primitive-known-mismatches.md)"
+
+[[mismatch]]
+unit = "primitive.primitive_creation_p3"
+case = "capped_rot_half_disc_axis_on_chord_270"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.record[96] C++ 7.298373876248845e-1, Rust -5e-1 (+45 more) (plan/findings/general--2502-fork-pin-primitive-known-mismatches.md)"
+
+[[mismatch]]
+unit = "primitive.primitive_creation_p3"
+case = "capped_rot_half_disc_axis_y_outside_90"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.record[121] C++ -4.440892098500626e-16, Rust 0e0 (+24 more) (plan/findings/general--2502-fork-pin-primitive-known-mismatches.md)"
+
+[[mismatch]]
+unit = "primitive.primitive_creation_p3"
+case = "capped_rot_half_disc_axis_y_outside_270"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.record[121] C++ -4.440892098500626e-16, Rust 0e0 (+25 more) (plan/findings/general--2502-fork-pin-primitive-known-mismatches.md)"
+
+[[mismatch]]
+unit = "primitive.primitive_creation_p3"
+case = "full_rotation_line"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.record[1] C++ 0e0, Rust 1e0 (plan/findings/general--2502-fork-pin-primitive-known-mismatches.md)"
+
+[[mismatch]]
+unit = "primitive.primitive_creation_p3"
+case = "partial_rotation_line"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.record[18] C++ 6.123233995736766e-17, Rust 5.7211887261101415e-18 (+16 more) (plan/findings/general--2502-fork-pin-primitive-known-mismatches.md)"

@@ -1,0 +1,1162 @@
+# #2502: these cases move with the difftest's C++ reference, the SMLib fork
+# v1.1.0-alpha.1 (8eac63c); plan/findings/general--2502-fork-pin-primitive-known-mismatches.md.
+
+[[mismatch]]
+unit = "primitive.primitive_creation_p1"
+case = "pivot_start"
+why = "op 1 or 5, whose C++ the SMLib fork changed (sm_FindPivotPoint takes the corner's curve, tangency-labs/smlib 69d8857) or removed (sm_CreateAnalyticRotationalSweep, 9853e54): the shim returns cpp_unlinked (plan/findings/general--2502-smlib-fork-removed-cpp-not-linked.md)"
+
+[[mismatch]]
+unit = "primitive.primitive_creation_p1"
+case = "pivot_end"
+why = "op 1 or 5, whose C++ the SMLib fork changed (sm_FindPivotPoint takes the corner's curve, tangency-labs/smlib 69d8857) or removed (sm_CreateAnalyticRotationalSweep, 9853e54): the shim returns cpp_unlinked (plan/findings/general--2502-smlib-fork-removed-cpp-not-linked.md)"
+
+[[mismatch]]
+unit = "primitive.primitive_creation_p1"
+case = "pivot_fallback"
+why = "op 1 or 5, whose C++ the SMLib fork changed (sm_FindPivotPoint takes the corner's curve, tangency-labs/smlib 69d8857) or removed (sm_CreateAnalyticRotationalSweep, 9853e54): the shim returns cpp_unlinked (plan/findings/general--2502-smlib-fork-removed-cpp-not-linked.md)"
+
+[[mismatch]]
+unit = "primitive.primitive_creation_p1"
+case = "pivot_squared_below"
+why = "op 1 or 5, whose C++ the SMLib fork changed (sm_FindPivotPoint takes the corner's curve, tangency-labs/smlib 69d8857) or removed (sm_CreateAnalyticRotationalSweep, 9853e54): the shim returns cpp_unlinked (plan/findings/general--2502-smlib-fork-removed-cpp-not-linked.md)"
+
+[[mismatch]]
+unit = "primitive.primitive_creation_p1"
+case = "pivot_squared_above"
+why = "op 1 or 5, whose C++ the SMLib fork changed (sm_FindPivotPoint takes the corner's curve, tangency-labs/smlib 69d8857) or removed (sm_CreateAnalyticRotationalSweep, 9853e54): the shim returns cpp_unlinked (plan/findings/general--2502-smlib-fork-removed-cpp-not-linked.md)"
+
+[[mismatch]]
+unit = "primitive.primitive_creation_p1"
+case = "pivot_negative"
+why = "op 1 or 5, whose C++ the SMLib fork changed (sm_FindPivotPoint takes the corner's curve, tangency-labs/smlib 69d8857) or removed (sm_CreateAnalyticRotationalSweep, 9853e54): the shim returns cpp_unlinked (plan/findings/general--2502-smlib-fork-removed-cpp-not-linked.md)"
+
+[[mismatch]]
+unit = "primitive.primitive_creation_p1"
+case = "position_empty_with_existing"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.curves[2] C++ 1e0, Rust 1.9999999999999998e0 (+14 more) (plan/findings/general--2502-fork-pin-primitive-known-mismatches.md)"
+
+[[mismatch]]
+unit = "primitive.primitive_creation_p1"
+case = "position_single_line"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.curves[2] C++ -2e0, Rust 1e0 (+23 more) (plan/findings/general--2502-fork-pin-primitive-known-mismatches.md)"
+
+[[mismatch]]
+unit = "primitive.primitive_creation_p1"
+case = "overflow_regression_053"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.curves[2] C++ 8.310606853649244e-17, Rust -1e300 (+27 more) (plan/findings/general--2502-fork-pin-primitive-known-mismatches.md)"
+
+[[mismatch]]
+unit = "primitive.primitive_creation_p1"
+case = "overflow_regression_299"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.curves[2] C++ 1.9909610047083834e-16, Rust -6.203024100909631e-1 (+25 more) (plan/findings/general--2502-fork-pin-primitive-known-mismatches.md)"
+
+[[mismatch]]
+unit = "primitive.primitive_creation_p1"
+case = "overflow_regression_736"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.curves[2] C++ 1.1525149441497232e-16, Rust -2.0698421066238818e284 (+29 more) (plan/findings/general--2502-fork-pin-primitive-known-mismatches.md)"
+
+[[mismatch]]
+unit = "primitive.primitive_creation_p1"
+case = "overflow_regression_987"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.curves[2] C++ 1.784512651637945e-16, Rust 3.0603479423721573e0 (+24 more) (plan/findings/general--2502-fork-pin-primitive-known-mismatches.md)"
+
+[[mismatch]]
+unit = "primitive.primitive_creation_p1"
+case = "primitive_9"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: ints.maps[0] C++ 1001, Rust 0 (plan/findings/general--2502-fork-pin-primitive-known-mismatches.md)"
+
+[[mismatch]]
+unit = "primitive.primitive_creation_p1"
+case = "boolean_multiple_coplanar"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.geometry C++ missing, Rust present (+1 more) (plan/findings/general--2502-fork-pin-primitive-known-mismatches.md)"
+
+[[mismatch]]
+unit = "primitive.primitive_creation_p1"
+case = "linear_line_cap0_distance0"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: ints.maps[0] C++ 1007, Rust 0 (plan/findings/general--2502-fork-pin-primitive-known-mismatches.md)"
+
+[[mismatch]]
+unit = "primitive.primitive_creation_p1"
+case = "linear_line_cap1_distance0"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: ints.maps[0] C++ 1007, Rust 0 (plan/findings/general--2502-fork-pin-primitive-known-mismatches.md)"
+
+[[mismatch]]
+unit = "primitive.primitive_creation_p1"
+case = "linear_line_cap1_distance2"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.geometry.len C++ 0, Rust 106 (+1 more) (plan/findings/general--2502-fork-pin-primitive-known-mismatches.md)"
+
+[[mismatch]]
+unit = "primitive.primitive_creation_p1"
+case = "linear_line_cap1_distance-1"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.geometry.len C++ 0, Rust 106 (+1 more) (plan/findings/general--2502-fork-pin-primitive-known-mismatches.md)"
+
+[[mismatch]]
+unit = "primitive.primitive_creation_p1"
+case = "linear_circle_cap0_distance0"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: ints.maps[0] C++ 1001, Rust 0 (plan/findings/general--2502-fork-pin-primitive-known-mismatches.md)"
+
+[[mismatch]]
+unit = "primitive.primitive_creation_p1"
+case = "linear_circle_cap0_distance-1"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.geometry[1] C++ -3.6739403974420604e-16, Rust -1.2246467991473532e-16 (+4 more) (plan/findings/general--2502-fork-pin-primitive-known-mismatches.md)"
+
+[[mismatch]]
+unit = "primitive.primitive_creation_p1"
+case = "linear_circle_cap1_distance0"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.geometry.len C++ 0, Rust 58 (+4 more) (plan/findings/general--2502-fork-pin-primitive-known-mismatches.md)"
+
+[[mismatch]]
+unit = "primitive.primitive_creation_p1"
+case = "linear_circle_cap1_distance-1"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.geometry[1] C++ -3.6739403974420604e-16, Rust -1.2246467991473532e-16 (+4 more) (plan/findings/general--2502-fork-pin-primitive-known-mismatches.md)"
+
+[[mismatch]]
+unit = "primitive.primitive_creation_p1"
+case = "linear_arc_cap0_distance0"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.geometry.len C++ 0, Rust 106 (+4 more) (plan/findings/general--2502-fork-pin-primitive-known-mismatches.md)"
+
+[[mismatch]]
+unit = "primitive.primitive_creation_p1"
+case = "linear_arc_cap0_distance2"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.geometry[8] C++ 5.7211887261101415e-18, Rust 6.123233995736766e-17 (+7 more) (plan/findings/general--2502-fork-pin-primitive-known-mismatches.md)"
+
+[[mismatch]]
+unit = "primitive.primitive_creation_p1"
+case = "linear_arc_cap0_distance-1"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.geometry[0] C++ 1.2818586864084559e-16, Rust 1e0 (+44 more) (plan/findings/general--2502-fork-pin-primitive-known-mismatches.md)"
+
+[[mismatch]]
+unit = "primitive.primitive_creation_p1"
+case = "linear_arc_cap1_distance0"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.geometry.len C++ 0, Rust 106 (+4 more) (plan/findings/general--2502-fork-pin-primitive-known-mismatches.md)"
+
+[[mismatch]]
+unit = "primitive.primitive_creation_p1"
+case = "linear_arc_cap1_distance2"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.geometry.len C++ 0, Rust 106 (+1 more) (plan/findings/general--2502-fork-pin-primitive-known-mismatches.md)"
+
+[[mismatch]]
+unit = "primitive.primitive_creation_p1"
+case = "linear_arc_cap1_distance-1"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.geometry.len C++ 0, Rust 106 (+1 more) (plan/findings/general--2502-fork-pin-primitive-known-mismatches.md)"
+
+[[mismatch]]
+unit = "primitive.primitive_creation_p1"
+case = "linear_skew_line_cap0_distance0"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.geometry.len C++ 0, Rust 106 (+4 more) (plan/findings/general--2502-fork-pin-primitive-known-mismatches.md)"
+
+[[mismatch]]
+unit = "primitive.primitive_creation_p1"
+case = "linear_skew_line_cap1_distance0"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.geometry.len C++ 0, Rust 106 (+4 more) (plan/findings/general--2502-fork-pin-primitive-known-mismatches.md)"
+
+[[mismatch]]
+unit = "primitive.primitive_creation_p1"
+case = "linear_skew_line_cap1_distance2"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.geometry.len C++ 0, Rust 106 (+1 more) (plan/findings/general--2502-fork-pin-primitive-known-mismatches.md)"
+
+[[mismatch]]
+unit = "primitive.primitive_creation_p1"
+case = "linear_skew_line_cap1_distance-1"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.geometry.len C++ 0, Rust 106 (+1 more) (plan/findings/general--2502-fork-pin-primitive-known-mismatches.md)"
+
+[[mismatch]]
+unit = "primitive.primitive_creation_p1"
+case = "linear_analytic_line_cap0_distance0"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: ints.maps[0] C++ 1007, Rust 0 (plan/findings/general--2502-fork-pin-primitive-known-mismatches.md)"
+
+[[mismatch]]
+unit = "primitive.primitive_creation_p1"
+case = "linear_analytic_line_cap1_distance0"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: ints.maps[0] C++ 1007, Rust 0 (plan/findings/general--2502-fork-pin-primitive-known-mismatches.md)"
+
+[[mismatch]]
+unit = "primitive.primitive_creation_p1"
+case = "linear_analytic_line_cap1_distance2"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.geometry.len C++ 0, Rust 106 (+1 more) (plan/findings/general--2502-fork-pin-primitive-known-mismatches.md)"
+
+[[mismatch]]
+unit = "primitive.primitive_creation_p1"
+case = "linear_analytic_line_cap1_distance-1"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.geometry.len C++ 0, Rust 106 (+1 more) (plan/findings/general--2502-fork-pin-primitive-known-mismatches.md)"
+
+[[mismatch]]
+unit = "primitive.primitive_creation_p1"
+case = "linear_analytic_circle_cap0_distance0"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: ints.maps[0] C++ 1001, Rust 0 (plan/findings/general--2502-fork-pin-primitive-known-mismatches.md)"
+
+[[mismatch]]
+unit = "primitive.primitive_creation_p1"
+case = "linear_analytic_circle_cap0_distance-1"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.geometry[1] C++ -3.6739403974420594e-16, Rust -1.2246467991473532e-16 (+4 more) (plan/findings/general--2502-fork-pin-primitive-known-mismatches.md)"
+
+[[mismatch]]
+unit = "primitive.primitive_creation_p1"
+case = "linear_analytic_circle_cap1_distance0"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.geometry.len C++ 0, Rust 58 (+4 more) (plan/findings/general--2502-fork-pin-primitive-known-mismatches.md)"
+
+[[mismatch]]
+unit = "primitive.primitive_creation_p1"
+case = "linear_analytic_circle_cap1_distance-1"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.geometry[1] C++ -3.6739403974420594e-16, Rust -1.2246467991473532e-16 (+4 more) (plan/findings/general--2502-fork-pin-primitive-known-mismatches.md)"
+
+[[mismatch]]
+unit = "primitive.primitive_creation_p1"
+case = "linear_analytic_arc_cap0_distance0"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.geometry.len C++ 0, Rust 106 (+4 more) (plan/findings/general--2502-fork-pin-primitive-known-mismatches.md)"
+
+[[mismatch]]
+unit = "primitive.primitive_creation_p1"
+case = "linear_analytic_arc_cap0_distance2"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.geometry[36] C++ 1.5707963267948963e0, Rust 1e0 (+2 more) (plan/findings/general--2502-fork-pin-primitive-known-mismatches.md)"
+
+[[mismatch]]
+unit = "primitive.primitive_creation_p1"
+case = "linear_analytic_arc_cap0_distance-1"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.geometry[0] C++ 1.8369701987210297e-16, Rust 1e0 (+44 more) (plan/findings/general--2502-fork-pin-primitive-known-mismatches.md)"
+
+[[mismatch]]
+unit = "primitive.primitive_creation_p1"
+case = "linear_analytic_arc_cap1_distance0"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.geometry.len C++ 0, Rust 106 (+4 more) (plan/findings/general--2502-fork-pin-primitive-known-mismatches.md)"
+
+[[mismatch]]
+unit = "primitive.primitive_creation_p1"
+case = "linear_analytic_arc_cap1_distance2"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.geometry.len C++ 0, Rust 106 (+1 more) (plan/findings/general--2502-fork-pin-primitive-known-mismatches.md)"
+
+[[mismatch]]
+unit = "primitive.primitive_creation_p1"
+case = "linear_analytic_arc_cap1_distance-1"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.geometry.len C++ 0, Rust 106 (+1 more) (plan/findings/general--2502-fork-pin-primitive-known-mismatches.md)"
+
+[[mismatch]]
+unit = "primitive.primitive_creation_p1"
+case = "linear_analytic_skew_line_cap0_distance0"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.geometry.len C++ 0, Rust 106 (+4 more) (plan/findings/general--2502-fork-pin-primitive-known-mismatches.md)"
+
+[[mismatch]]
+unit = "primitive.primitive_creation_p1"
+case = "linear_analytic_skew_line_cap1_distance0"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.geometry.len C++ 0, Rust 106 (+4 more) (plan/findings/general--2502-fork-pin-primitive-known-mismatches.md)"
+
+[[mismatch]]
+unit = "primitive.primitive_creation_p1"
+case = "linear_analytic_skew_line_cap1_distance2"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.geometry.len C++ 0, Rust 106 (+1 more) (plan/findings/general--2502-fork-pin-primitive-known-mismatches.md)"
+
+[[mismatch]]
+unit = "primitive.primitive_creation_p1"
+case = "linear_analytic_skew_line_cap1_distance-1"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.geometry.len C++ 0, Rust 106 (+1 more) (plan/findings/general--2502-fork-pin-primitive-known-mismatches.md)"
+
+[[mismatch]]
+unit = "primitive.primitive_creation_p1"
+case = "rotate_on_axis"
+why = "op 1 or 5, whose C++ the SMLib fork changed (sm_FindPivotPoint takes the corner's curve, tangency-labs/smlib 69d8857) or removed (sm_CreateAnalyticRotationalSweep, 9853e54): the shim returns cpp_unlinked (plan/findings/general--2502-smlib-fork-removed-cpp-not-linked.md)"
+
+[[mismatch]]
+unit = "primitive.primitive_creation_p1"
+case = "rotate_parallel"
+why = "op 1 or 5, whose C++ the SMLib fork changed (sm_FindPivotPoint takes the corner's curve, tangency-labs/smlib 69d8857) or removed (sm_CreateAnalyticRotationalSweep, 9853e54): the shim returns cpp_unlinked (plan/findings/general--2502-smlib-fork-removed-cpp-not-linked.md)"
+
+[[mismatch]]
+unit = "primitive.primitive_creation_p1"
+case = "rotate_perpendicular"
+why = "op 1 or 5, whose C++ the SMLib fork changed (sm_FindPivotPoint takes the corner's curve, tangency-labs/smlib 69d8857) or removed (sm_CreateAnalyticRotationalSweep, 9853e54): the shim returns cpp_unlinked (plan/findings/general--2502-smlib-fork-removed-cpp-not-linked.md)"
+
+[[mismatch]]
+unit = "primitive.primitive_creation_p1"
+case = "rotate_short"
+why = "op 1 or 5, whose C++ the SMLib fork changed (sm_FindPivotPoint takes the corner's curve, tangency-labs/smlib 69d8857) or removed (sm_CreateAnalyticRotationalSweep, 9853e54): the shim returns cpp_unlinked (plan/findings/general--2502-smlib-fork-removed-cpp-not-linked.md)"
+
+[[mismatch]]
+unit = "primitive.primitive_creation_p1"
+case = "rotate_crossing"
+why = "op 1 or 5, whose C++ the SMLib fork changed (sm_FindPivotPoint takes the corner's curve, tangency-labs/smlib 69d8857) or removed (sm_CreateAnalyticRotationalSweep, 9853e54): the shim returns cpp_unlinked (plan/findings/general--2502-smlib-fork-removed-cpp-not-linked.md)"
+
+[[mismatch]]
+unit = "primitive.primitive_creation_p1"
+case = "rotate_quarter_arc"
+why = "op 1 or 5, whose C++ the SMLib fork changed (sm_FindPivotPoint takes the corner's curve, tangency-labs/smlib 69d8857) or removed (sm_CreateAnalyticRotationalSweep, 9853e54): the shim returns cpp_unlinked (plan/findings/general--2502-smlib-fork-removed-cpp-not-linked.md)"
+
+[[mismatch]]
+unit = "primitive.primitive_creation_p1"
+case = "rotate_half_wrong_axis"
+why = "op 1 or 5, whose C++ the SMLib fork changed (sm_FindPivotPoint takes the corner's curve, tangency-labs/smlib 69d8857) or removed (sm_CreateAnalyticRotationalSweep, 9853e54): the shim returns cpp_unlinked (plan/findings/general--2502-smlib-fork-removed-cpp-not-linked.md)"
+
+[[mismatch]]
+unit = "primitive.primitive_creation_p1"
+case = "rotate_half_sphere"
+why = "op 1 or 5, whose C++ the SMLib fork changed (sm_FindPivotPoint takes the corner's curve, tangency-labs/smlib 69d8857) or removed (sm_CreateAnalyticRotationalSweep, 9853e54): the shim returns cpp_unlinked (plan/findings/general--2502-smlib-fork-removed-cpp-not-linked.md)"
+
+[[mismatch]]
+unit = "primitive.primitive_creation_p1"
+case = "rotate_full_torus"
+why = "op 1 or 5, whose C++ the SMLib fork changed (sm_FindPivotPoint takes the corner's curve, tangency-labs/smlib 69d8857) or removed (sm_CreateAnalyticRotationalSweep, 9853e54): the shim returns cpp_unlinked (plan/findings/general--2502-smlib-fork-removed-cpp-not-linked.md)"
+
+[[mismatch]]
+unit = "primitive.primitive_creation_p1"
+case = "gen0000"
+why = "op 1 or 5, whose C++ the SMLib fork changed (sm_FindPivotPoint takes the corner's curve, tangency-labs/smlib 69d8857) or removed (sm_CreateAnalyticRotationalSweep, 9853e54): the shim returns cpp_unlinked (plan/findings/general--2502-smlib-fork-removed-cpp-not-linked.md)"
+
+[[mismatch]]
+unit = "primitive.primitive_creation_p1"
+case = "gen0004"
+why = "op 1 or 5, whose C++ the SMLib fork changed (sm_FindPivotPoint takes the corner's curve, tangency-labs/smlib 69d8857) or removed (sm_CreateAnalyticRotationalSweep, 9853e54): the shim returns cpp_unlinked (plan/findings/general--2502-smlib-fork-removed-cpp-not-linked.md)"
+
+[[mismatch]]
+unit = "primitive.primitive_creation_p1"
+case = "gen0006"
+why = "op 1 or 5, whose C++ the SMLib fork changed (sm_FindPivotPoint takes the corner's curve, tangency-labs/smlib 69d8857) or removed (sm_CreateAnalyticRotationalSweep, 9853e54): the shim returns cpp_unlinked (plan/findings/general--2502-smlib-fork-removed-cpp-not-linked.md)"
+
+[[mismatch]]
+unit = "primitive.primitive_creation_p1"
+case = "gen0014"
+why = "op 1 or 5, whose C++ the SMLib fork changed (sm_FindPivotPoint takes the corner's curve, tangency-labs/smlib 69d8857) or removed (sm_CreateAnalyticRotationalSweep, 9853e54): the shim returns cpp_unlinked (plan/findings/general--2502-smlib-fork-removed-cpp-not-linked.md)"
+
+[[mismatch]]
+unit = "primitive.primitive_creation_p1"
+case = "gen0015"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.curves[31] C++ 0e0, Rust 3.552713678800501e-15 (plan/findings/general--2502-fork-pin-primitive-known-mismatches.md)"
+
+[[mismatch]]
+unit = "primitive.primitive_creation_p1"
+case = "gen0021"
+why = "op 1 or 5, whose C++ the SMLib fork changed (sm_FindPivotPoint takes the corner's curve, tangency-labs/smlib 69d8857) or removed (sm_CreateAnalyticRotationalSweep, 9853e54): the shim returns cpp_unlinked (plan/findings/general--2502-smlib-fork-removed-cpp-not-linked.md)"
+
+[[mismatch]]
+unit = "primitive.primitive_creation_p1"
+case = "gen0023"
+why = "op 1 or 5, whose C++ the SMLib fork changed (sm_FindPivotPoint takes the corner's curve, tangency-labs/smlib 69d8857) or removed (sm_CreateAnalyticRotationalSweep, 9853e54): the shim returns cpp_unlinked (plan/findings/general--2502-smlib-fork-removed-cpp-not-linked.md)"
+
+[[mismatch]]
+unit = "primitive.primitive_creation_p1"
+case = "gen0025"
+why = "op 1 or 5, whose C++ the SMLib fork changed (sm_FindPivotPoint takes the corner's curve, tangency-labs/smlib 69d8857) or removed (sm_CreateAnalyticRotationalSweep, 9853e54): the shim returns cpp_unlinked (plan/findings/general--2502-smlib-fork-removed-cpp-not-linked.md)"
+
+[[mismatch]]
+unit = "primitive.primitive_creation_p1"
+case = "gen0026"
+why = "op 1 or 5, whose C++ the SMLib fork changed (sm_FindPivotPoint takes the corner's curve, tangency-labs/smlib 69d8857) or removed (sm_CreateAnalyticRotationalSweep, 9853e54): the shim returns cpp_unlinked (plan/findings/general--2502-smlib-fork-removed-cpp-not-linked.md)"
+
+[[mismatch]]
+unit = "primitive.primitive_creation_p1"
+case = "gen0027"
+why = "op 1 or 5, whose C++ the SMLib fork changed (sm_FindPivotPoint takes the corner's curve, tangency-labs/smlib 69d8857) or removed (sm_CreateAnalyticRotationalSweep, 9853e54): the shim returns cpp_unlinked (plan/findings/general--2502-smlib-fork-removed-cpp-not-linked.md)"
+
+[[mismatch]]
+unit = "primitive.primitive_creation_p1"
+case = "gen0028"
+why = "op 1 or 5, whose C++ the SMLib fork changed (sm_FindPivotPoint takes the corner's curve, tangency-labs/smlib 69d8857) or removed (sm_CreateAnalyticRotationalSweep, 9853e54): the shim returns cpp_unlinked (plan/findings/general--2502-smlib-fork-removed-cpp-not-linked.md)"
+
+[[mismatch]]
+unit = "primitive.primitive_creation_p1"
+case = "gen0031"
+why = "op 1 or 5, whose C++ the SMLib fork changed (sm_FindPivotPoint takes the corner's curve, tangency-labs/smlib 69d8857) or removed (sm_CreateAnalyticRotationalSweep, 9853e54): the shim returns cpp_unlinked (plan/findings/general--2502-smlib-fork-removed-cpp-not-linked.md)"
+
+[[mismatch]]
+unit = "primitive.primitive_creation_p1"
+case = "gen0032"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.curves[31] C++ -3.552713678800501e-15, Rust -5.329070518200751e-15 (plan/findings/general--2502-fork-pin-primitive-known-mismatches.md)"
+
+[[mismatch]]
+unit = "primitive.primitive_creation_p1"
+case = "gen0033"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.curves[31] C++ -3.552713678800501e-15, Rust -1.7763568394002505e-15 (plan/findings/general--2502-fork-pin-primitive-known-mismatches.md)"
+
+[[mismatch]]
+unit = "primitive.primitive_creation_p1"
+case = "gen0034"
+why = "op 1 or 5, whose C++ the SMLib fork changed (sm_FindPivotPoint takes the corner's curve, tangency-labs/smlib 69d8857) or removed (sm_CreateAnalyticRotationalSweep, 9853e54): the shim returns cpp_unlinked (plan/findings/general--2502-smlib-fork-removed-cpp-not-linked.md)"
+
+[[mismatch]]
+unit = "primitive.primitive_creation_p1"
+case = "gen0041"
+why = "op 1 or 5, whose C++ the SMLib fork changed (sm_FindPivotPoint takes the corner's curve, tangency-labs/smlib 69d8857) or removed (sm_CreateAnalyticRotationalSweep, 9853e54): the shim returns cpp_unlinked (plan/findings/general--2502-smlib-fork-removed-cpp-not-linked.md)"
+
+[[mismatch]]
+unit = "primitive.primitive_creation_p1"
+case = "gen0044"
+why = "op 1 or 5, whose C++ the SMLib fork changed (sm_FindPivotPoint takes the corner's curve, tangency-labs/smlib 69d8857) or removed (sm_CreateAnalyticRotationalSweep, 9853e54): the shim returns cpp_unlinked (plan/findings/general--2502-smlib-fork-removed-cpp-not-linked.md)"
+
+[[mismatch]]
+unit = "primitive.primitive_creation_p1"
+case = "gen0047"
+why = "op 1 or 5, whose C++ the SMLib fork changed (sm_FindPivotPoint takes the corner's curve, tangency-labs/smlib 69d8857) or removed (sm_CreateAnalyticRotationalSweep, 9853e54): the shim returns cpp_unlinked (plan/findings/general--2502-smlib-fork-removed-cpp-not-linked.md)"
+
+[[mismatch]]
+unit = "primitive.primitive_creation_p1"
+case = "gen0049"
+why = "op 1 or 5, whose C++ the SMLib fork changed (sm_FindPivotPoint takes the corner's curve, tangency-labs/smlib 69d8857) or removed (sm_CreateAnalyticRotationalSweep, 9853e54): the shim returns cpp_unlinked (plan/findings/general--2502-smlib-fork-removed-cpp-not-linked.md)"
+
+[[mismatch]]
+unit = "primitive.primitive_creation_p1"
+case = "gen0057"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.curves[19] C++ 0e0, Rust -3.552713678800501e-15 (+1 more) (plan/findings/general--2502-fork-pin-primitive-known-mismatches.md)"
+
+[[mismatch]]
+unit = "primitive.primitive_creation_p1"
+case = "gen0058"
+why = "op 1 or 5, whose C++ the SMLib fork changed (sm_FindPivotPoint takes the corner's curve, tangency-labs/smlib 69d8857) or removed (sm_CreateAnalyticRotationalSweep, 9853e54): the shim returns cpp_unlinked (plan/findings/general--2502-smlib-fork-removed-cpp-not-linked.md)"
+
+[[mismatch]]
+unit = "primitive.primitive_creation_p1"
+case = "gen0061"
+why = "op 1 or 5, whose C++ the SMLib fork changed (sm_FindPivotPoint takes the corner's curve, tangency-labs/smlib 69d8857) or removed (sm_CreateAnalyticRotationalSweep, 9853e54): the shim returns cpp_unlinked (plan/findings/general--2502-smlib-fork-removed-cpp-not-linked.md)"
+
+[[mismatch]]
+unit = "primitive.primitive_creation_p1"
+case = "gen0064"
+why = "op 1 or 5, whose C++ the SMLib fork changed (sm_FindPivotPoint takes the corner's curve, tangency-labs/smlib 69d8857) or removed (sm_CreateAnalyticRotationalSweep, 9853e54): the shim returns cpp_unlinked (plan/findings/general--2502-smlib-fork-removed-cpp-not-linked.md)"
+
+[[mismatch]]
+unit = "primitive.primitive_creation_p1"
+case = "gen0066"
+why = "op 1 or 5, whose C++ the SMLib fork changed (sm_FindPivotPoint takes the corner's curve, tangency-labs/smlib 69d8857) or removed (sm_CreateAnalyticRotationalSweep, 9853e54): the shim returns cpp_unlinked (plan/findings/general--2502-smlib-fork-removed-cpp-not-linked.md)"
+
+[[mismatch]]
+unit = "primitive.primitive_creation_p1"
+case = "gen0070"
+why = "op 1 or 5, whose C++ the SMLib fork changed (sm_FindPivotPoint takes the corner's curve, tangency-labs/smlib 69d8857) or removed (sm_CreateAnalyticRotationalSweep, 9853e54): the shim returns cpp_unlinked (plan/findings/general--2502-smlib-fork-removed-cpp-not-linked.md)"
+
+[[mismatch]]
+unit = "primitive.primitive_creation_p1"
+case = "gen0074"
+why = "op 1 or 5, whose C++ the SMLib fork changed (sm_FindPivotPoint takes the corner's curve, tangency-labs/smlib 69d8857) or removed (sm_CreateAnalyticRotationalSweep, 9853e54): the shim returns cpp_unlinked (plan/findings/general--2502-smlib-fork-removed-cpp-not-linked.md)"
+
+[[mismatch]]
+unit = "primitive.primitive_creation_p1"
+case = "gen0085"
+why = "op 1 or 5, whose C++ the SMLib fork changed (sm_FindPivotPoint takes the corner's curve, tangency-labs/smlib 69d8857) or removed (sm_CreateAnalyticRotationalSweep, 9853e54): the shim returns cpp_unlinked (plan/findings/general--2502-smlib-fork-removed-cpp-not-linked.md)"
+
+[[mismatch]]
+unit = "primitive.primitive_creation_p1"
+case = "gen0101"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.curves[7] C++ -1.7763568394002505e-15, Rust -3.552713678800501e-15 (plan/findings/general--2502-fork-pin-primitive-known-mismatches.md)"
+
+[[mismatch]]
+unit = "primitive.primitive_creation_p1"
+case = "gen0104"
+why = "op 1 or 5, whose C++ the SMLib fork changed (sm_FindPivotPoint takes the corner's curve, tangency-labs/smlib 69d8857) or removed (sm_CreateAnalyticRotationalSweep, 9853e54): the shim returns cpp_unlinked (plan/findings/general--2502-smlib-fork-removed-cpp-not-linked.md)"
+
+[[mismatch]]
+unit = "primitive.primitive_creation_p1"
+case = "gen0108"
+why = "op 1 or 5, whose C++ the SMLib fork changed (sm_FindPivotPoint takes the corner's curve, tangency-labs/smlib 69d8857) or removed (sm_CreateAnalyticRotationalSweep, 9853e54): the shim returns cpp_unlinked (plan/findings/general--2502-smlib-fork-removed-cpp-not-linked.md)"
+
+[[mismatch]]
+unit = "primitive.primitive_creation_p1"
+case = "gen0111"
+why = "op 1 or 5, whose C++ the SMLib fork changed (sm_FindPivotPoint takes the corner's curve, tangency-labs/smlib 69d8857) or removed (sm_CreateAnalyticRotationalSweep, 9853e54): the shim returns cpp_unlinked (plan/findings/general--2502-smlib-fork-removed-cpp-not-linked.md)"
+
+[[mismatch]]
+unit = "primitive.primitive_creation_p1"
+case = "gen0113"
+why = "op 1 or 5, whose C++ the SMLib fork changed (sm_FindPivotPoint takes the corner's curve, tangency-labs/smlib 69d8857) or removed (sm_CreateAnalyticRotationalSweep, 9853e54): the shim returns cpp_unlinked (plan/findings/general--2502-smlib-fork-removed-cpp-not-linked.md)"
+
+[[mismatch]]
+unit = "primitive.primitive_creation_p1"
+case = "gen0115"
+why = "op 1 or 5, whose C++ the SMLib fork changed (sm_FindPivotPoint takes the corner's curve, tangency-labs/smlib 69d8857) or removed (sm_CreateAnalyticRotationalSweep, 9853e54): the shim returns cpp_unlinked (plan/findings/general--2502-smlib-fork-removed-cpp-not-linked.md)"
+
+[[mismatch]]
+unit = "primitive.primitive_creation_p1"
+case = "gen0116"
+why = "op 1 or 5, whose C++ the SMLib fork changed (sm_FindPivotPoint takes the corner's curve, tangency-labs/smlib 69d8857) or removed (sm_CreateAnalyticRotationalSweep, 9853e54): the shim returns cpp_unlinked (plan/findings/general--2502-smlib-fork-removed-cpp-not-linked.md)"
+
+[[mismatch]]
+unit = "primitive.primitive_creation_p1"
+case = "gen0119"
+why = "op 1 or 5, whose C++ the SMLib fork changed (sm_FindPivotPoint takes the corner's curve, tangency-labs/smlib 69d8857) or removed (sm_CreateAnalyticRotationalSweep, 9853e54): the shim returns cpp_unlinked (plan/findings/general--2502-smlib-fork-removed-cpp-not-linked.md)"
+
+[[mismatch]]
+unit = "primitive.primitive_creation_p1"
+case = "gen0124"
+why = "op 1 or 5, whose C++ the SMLib fork changed (sm_FindPivotPoint takes the corner's curve, tangency-labs/smlib 69d8857) or removed (sm_CreateAnalyticRotationalSweep, 9853e54): the shim returns cpp_unlinked (plan/findings/general--2502-smlib-fork-removed-cpp-not-linked.md)"
+
+[[mismatch]]
+unit = "primitive.primitive_creation_p1"
+case = "gen0127"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.curves[7] C++ 5.329070518200751e-15, Rust 1.7763568394002505e-15 (plan/findings/general--2502-fork-pin-primitive-known-mismatches.md)"
+
+[[mismatch]]
+unit = "primitive.primitive_creation_p1"
+case = "gen0131"
+why = "op 1 or 5, whose C++ the SMLib fork changed (sm_FindPivotPoint takes the corner's curve, tangency-labs/smlib 69d8857) or removed (sm_CreateAnalyticRotationalSweep, 9853e54): the shim returns cpp_unlinked (plan/findings/general--2502-smlib-fork-removed-cpp-not-linked.md)"
+
+[[mismatch]]
+unit = "primitive.primitive_creation_p1"
+case = "gen0140"
+why = "op 1 or 5, whose C++ the SMLib fork changed (sm_FindPivotPoint takes the corner's curve, tangency-labs/smlib 69d8857) or removed (sm_CreateAnalyticRotationalSweep, 9853e54): the shim returns cpp_unlinked (plan/findings/general--2502-smlib-fork-removed-cpp-not-linked.md)"
+
+[[mismatch]]
+unit = "primitive.primitive_creation_p1"
+case = "gen0147"
+why = "op 1 or 5, whose C++ the SMLib fork changed (sm_FindPivotPoint takes the corner's curve, tangency-labs/smlib 69d8857) or removed (sm_CreateAnalyticRotationalSweep, 9853e54): the shim returns cpp_unlinked (plan/findings/general--2502-smlib-fork-removed-cpp-not-linked.md)"
+
+[[mismatch]]
+unit = "primitive.primitive_creation_p1"
+case = "gen0154"
+why = "op 1 or 5, whose C++ the SMLib fork changed (sm_FindPivotPoint takes the corner's curve, tangency-labs/smlib 69d8857) or removed (sm_CreateAnalyticRotationalSweep, 9853e54): the shim returns cpp_unlinked (plan/findings/general--2502-smlib-fork-removed-cpp-not-linked.md)"
+
+[[mismatch]]
+unit = "primitive.primitive_creation_p1"
+case = "gen0156"
+why = "op 1 or 5, whose C++ the SMLib fork changed (sm_FindPivotPoint takes the corner's curve, tangency-labs/smlib 69d8857) or removed (sm_CreateAnalyticRotationalSweep, 9853e54): the shim returns cpp_unlinked (plan/findings/general--2502-smlib-fork-removed-cpp-not-linked.md)"
+
+[[mismatch]]
+unit = "primitive.primitive_creation_p1"
+case = "gen0158"
+why = "op 1 or 5, whose C++ the SMLib fork changed (sm_FindPivotPoint takes the corner's curve, tangency-labs/smlib 69d8857) or removed (sm_CreateAnalyticRotationalSweep, 9853e54): the shim returns cpp_unlinked (plan/findings/general--2502-smlib-fork-removed-cpp-not-linked.md)"
+
+[[mismatch]]
+unit = "primitive.primitive_creation_p1"
+case = "gen0163"
+why = "op 1 or 5, whose C++ the SMLib fork changed (sm_FindPivotPoint takes the corner's curve, tangency-labs/smlib 69d8857) or removed (sm_CreateAnalyticRotationalSweep, 9853e54): the shim returns cpp_unlinked (plan/findings/general--2502-smlib-fork-removed-cpp-not-linked.md)"
+
+[[mismatch]]
+unit = "primitive.primitive_creation_p1"
+case = "gen0171"
+why = "op 1 or 5, whose C++ the SMLib fork changed (sm_FindPivotPoint takes the corner's curve, tangency-labs/smlib 69d8857) or removed (sm_CreateAnalyticRotationalSweep, 9853e54): the shim returns cpp_unlinked (plan/findings/general--2502-smlib-fork-removed-cpp-not-linked.md)"
+
+[[mismatch]]
+unit = "primitive.primitive_creation_p1"
+case = "gen0174"
+why = "op 1 or 5, whose C++ the SMLib fork changed (sm_FindPivotPoint takes the corner's curve, tangency-labs/smlib 69d8857) or removed (sm_CreateAnalyticRotationalSweep, 9853e54): the shim returns cpp_unlinked (plan/findings/general--2502-smlib-fork-removed-cpp-not-linked.md)"
+
+[[mismatch]]
+unit = "primitive.primitive_creation_p1"
+case = "gen0179"
+why = "op 1 or 5, whose C++ the SMLib fork changed (sm_FindPivotPoint takes the corner's curve, tangency-labs/smlib 69d8857) or removed (sm_CreateAnalyticRotationalSweep, 9853e54): the shim returns cpp_unlinked (plan/findings/general--2502-smlib-fork-removed-cpp-not-linked.md)"
+
+[[mismatch]]
+unit = "primitive.primitive_creation_p1"
+case = "gen0180"
+why = "op 1 or 5, whose C++ the SMLib fork changed (sm_FindPivotPoint takes the corner's curve, tangency-labs/smlib 69d8857) or removed (sm_CreateAnalyticRotationalSweep, 9853e54): the shim returns cpp_unlinked (plan/findings/general--2502-smlib-fork-removed-cpp-not-linked.md)"
+
+[[mismatch]]
+unit = "primitive.primitive_creation_p1"
+case = "gen0186"
+why = "op 1 or 5, whose C++ the SMLib fork changed (sm_FindPivotPoint takes the corner's curve, tangency-labs/smlib 69d8857) or removed (sm_CreateAnalyticRotationalSweep, 9853e54): the shim returns cpp_unlinked (plan/findings/general--2502-smlib-fork-removed-cpp-not-linked.md)"
+
+[[mismatch]]
+unit = "primitive.primitive_creation_p1"
+case = "gen0188"
+why = "op 1 or 5, whose C++ the SMLib fork changed (sm_FindPivotPoint takes the corner's curve, tangency-labs/smlib 69d8857) or removed (sm_CreateAnalyticRotationalSweep, 9853e54): the shim returns cpp_unlinked (plan/findings/general--2502-smlib-fork-removed-cpp-not-linked.md)"
+
+[[mismatch]]
+unit = "primitive.primitive_creation_p1"
+case = "gen0189"
+why = "op 1 or 5, whose C++ the SMLib fork changed (sm_FindPivotPoint takes the corner's curve, tangency-labs/smlib 69d8857) or removed (sm_CreateAnalyticRotationalSweep, 9853e54): the shim returns cpp_unlinked (plan/findings/general--2502-smlib-fork-removed-cpp-not-linked.md)"
+
+[[mismatch]]
+unit = "primitive.primitive_creation_p1"
+case = "gen0193"
+why = "op 1 or 5, whose C++ the SMLib fork changed (sm_FindPivotPoint takes the corner's curve, tangency-labs/smlib 69d8857) or removed (sm_CreateAnalyticRotationalSweep, 9853e54): the shim returns cpp_unlinked (plan/findings/general--2502-smlib-fork-removed-cpp-not-linked.md)"
+
+[[mismatch]]
+unit = "primitive.primitive_creation_p1"
+case = "gen0200"
+why = "op 1 or 5, whose C++ the SMLib fork changed (sm_FindPivotPoint takes the corner's curve, tangency-labs/smlib 69d8857) or removed (sm_CreateAnalyticRotationalSweep, 9853e54): the shim returns cpp_unlinked (plan/findings/general--2502-smlib-fork-removed-cpp-not-linked.md)"
+
+[[mismatch]]
+unit = "primitive.primitive_creation_p1"
+case = "gen0201"
+why = "op 1 or 5, whose C++ the SMLib fork changed (sm_FindPivotPoint takes the corner's curve, tangency-labs/smlib 69d8857) or removed (sm_CreateAnalyticRotationalSweep, 9853e54): the shim returns cpp_unlinked (plan/findings/general--2502-smlib-fork-removed-cpp-not-linked.md)"
+
+[[mismatch]]
+unit = "primitive.primitive_creation_p1"
+case = "gen0204"
+why = "op 1 or 5, whose C++ the SMLib fork changed (sm_FindPivotPoint takes the corner's curve, tangency-labs/smlib 69d8857) or removed (sm_CreateAnalyticRotationalSweep, 9853e54): the shim returns cpp_unlinked (plan/findings/general--2502-smlib-fork-removed-cpp-not-linked.md)"
+
+[[mismatch]]
+unit = "primitive.primitive_creation_p1"
+case = "gen0207"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.curves[7] C++ -1.3322676295501878e-15, Rust -2.6645352591003757e-15 (plan/findings/general--2502-fork-pin-primitive-known-mismatches.md)"
+
+[[mismatch]]
+unit = "primitive.primitive_creation_p1"
+case = "gen0212"
+why = "op 1 or 5, whose C++ the SMLib fork changed (sm_FindPivotPoint takes the corner's curve, tangency-labs/smlib 69d8857) or removed (sm_CreateAnalyticRotationalSweep, 9853e54): the shim returns cpp_unlinked (plan/findings/general--2502-smlib-fork-removed-cpp-not-linked.md)"
+
+[[mismatch]]
+unit = "primitive.primitive_creation_p1"
+case = "gen0214"
+why = "op 1 or 5, whose C++ the SMLib fork changed (sm_FindPivotPoint takes the corner's curve, tangency-labs/smlib 69d8857) or removed (sm_CreateAnalyticRotationalSweep, 9853e54): the shim returns cpp_unlinked (plan/findings/general--2502-smlib-fork-removed-cpp-not-linked.md)"
+
+[[mismatch]]
+unit = "primitive.primitive_creation_p1"
+case = "gen0215"
+why = "op 1 or 5, whose C++ the SMLib fork changed (sm_FindPivotPoint takes the corner's curve, tangency-labs/smlib 69d8857) or removed (sm_CreateAnalyticRotationalSweep, 9853e54): the shim returns cpp_unlinked (plan/findings/general--2502-smlib-fork-removed-cpp-not-linked.md)"
+
+[[mismatch]]
+unit = "primitive.primitive_creation_p1"
+case = "gen0216"
+why = "op 1 or 5, whose C++ the SMLib fork changed (sm_FindPivotPoint takes the corner's curve, tangency-labs/smlib 69d8857) or removed (sm_CreateAnalyticRotationalSweep, 9853e54): the shim returns cpp_unlinked (plan/findings/general--2502-smlib-fork-removed-cpp-not-linked.md)"
+
+[[mismatch]]
+unit = "primitive.primitive_creation_p1"
+case = "gen0218"
+why = "op 1 or 5, whose C++ the SMLib fork changed (sm_FindPivotPoint takes the corner's curve, tangency-labs/smlib 69d8857) or removed (sm_CreateAnalyticRotationalSweep, 9853e54): the shim returns cpp_unlinked (plan/findings/general--2502-smlib-fork-removed-cpp-not-linked.md)"
+
+[[mismatch]]
+unit = "primitive.primitive_creation_p1"
+case = "gen0220"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.curves[7] C++ 0e0, Rust 2.220446049250313e-15 (+1 more) (plan/findings/general--2502-fork-pin-primitive-known-mismatches.md)"
+
+[[mismatch]]
+unit = "primitive.primitive_creation_p1"
+case = "gen0221"
+why = "op 1 or 5, whose C++ the SMLib fork changed (sm_FindPivotPoint takes the corner's curve, tangency-labs/smlib 69d8857) or removed (sm_CreateAnalyticRotationalSweep, 9853e54): the shim returns cpp_unlinked (plan/findings/general--2502-smlib-fork-removed-cpp-not-linked.md)"
+
+[[mismatch]]
+unit = "primitive.primitive_creation_p1"
+case = "gen0230"
+why = "op 1 or 5, whose C++ the SMLib fork changed (sm_FindPivotPoint takes the corner's curve, tangency-labs/smlib 69d8857) or removed (sm_CreateAnalyticRotationalSweep, 9853e54): the shim returns cpp_unlinked (plan/findings/general--2502-smlib-fork-removed-cpp-not-linked.md)"
+
+[[mismatch]]
+unit = "primitive.primitive_creation_p1"
+case = "gen0231"
+why = "op 1 or 5, whose C++ the SMLib fork changed (sm_FindPivotPoint takes the corner's curve, tangency-labs/smlib 69d8857) or removed (sm_CreateAnalyticRotationalSweep, 9853e54): the shim returns cpp_unlinked (plan/findings/general--2502-smlib-fork-removed-cpp-not-linked.md)"
+
+[[mismatch]]
+unit = "primitive.primitive_creation_p1"
+case = "gen0234"
+why = "op 1 or 5, whose C++ the SMLib fork changed (sm_FindPivotPoint takes the corner's curve, tangency-labs/smlib 69d8857) or removed (sm_CreateAnalyticRotationalSweep, 9853e54): the shim returns cpp_unlinked (plan/findings/general--2502-smlib-fork-removed-cpp-not-linked.md)"
+
+[[mismatch]]
+unit = "primitive.primitive_creation_p1"
+case = "gen0236"
+why = "op 1 or 5, whose C++ the SMLib fork changed (sm_FindPivotPoint takes the corner's curve, tangency-labs/smlib 69d8857) or removed (sm_CreateAnalyticRotationalSweep, 9853e54): the shim returns cpp_unlinked (plan/findings/general--2502-smlib-fork-removed-cpp-not-linked.md)"
+
+[[mismatch]]
+unit = "primitive.primitive_creation_p1"
+case = "gen0237"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.curves[7] C++ 0e0, Rust 3.552713678800501e-15 (+2 more) (plan/findings/general--2502-fork-pin-primitive-known-mismatches.md)"
+
+[[mismatch]]
+unit = "primitive.primitive_creation_p1"
+case = "gen0238"
+why = "op 1 or 5, whose C++ the SMLib fork changed (sm_FindPivotPoint takes the corner's curve, tangency-labs/smlib 69d8857) or removed (sm_CreateAnalyticRotationalSweep, 9853e54): the shim returns cpp_unlinked (plan/findings/general--2502-smlib-fork-removed-cpp-not-linked.md)"
+
+[[mismatch]]
+unit = "primitive.primitive_creation_p1"
+case = "gen0241"
+why = "op 1 or 5, whose C++ the SMLib fork changed (sm_FindPivotPoint takes the corner's curve, tangency-labs/smlib 69d8857) or removed (sm_CreateAnalyticRotationalSweep, 9853e54): the shim returns cpp_unlinked (plan/findings/general--2502-smlib-fork-removed-cpp-not-linked.md)"
+
+[[mismatch]]
+unit = "primitive.primitive_creation_p1"
+case = "gen0242"
+why = "op 1 or 5, whose C++ the SMLib fork changed (sm_FindPivotPoint takes the corner's curve, tangency-labs/smlib 69d8857) or removed (sm_CreateAnalyticRotationalSweep, 9853e54): the shim returns cpp_unlinked (plan/findings/general--2502-smlib-fork-removed-cpp-not-linked.md)"
+
+[[mismatch]]
+unit = "primitive.primitive_creation_p1"
+case = "gen0244"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.curves[19] C++ 0e0, Rust -3.552713678800501e-15 (plan/findings/general--2502-fork-pin-primitive-known-mismatches.md)"
+
+[[mismatch]]
+unit = "primitive.primitive_creation_p1"
+case = "gen0251"
+why = "op 1 or 5, whose C++ the SMLib fork changed (sm_FindPivotPoint takes the corner's curve, tangency-labs/smlib 69d8857) or removed (sm_CreateAnalyticRotationalSweep, 9853e54): the shim returns cpp_unlinked (plan/findings/general--2502-smlib-fork-removed-cpp-not-linked.md)"
+
+[[mismatch]]
+unit = "primitive.primitive_creation_p1"
+case = "gen0252"
+why = "op 1 or 5, whose C++ the SMLib fork changed (sm_FindPivotPoint takes the corner's curve, tangency-labs/smlib 69d8857) or removed (sm_CreateAnalyticRotationalSweep, 9853e54): the shim returns cpp_unlinked (plan/findings/general--2502-smlib-fork-removed-cpp-not-linked.md)"
+
+[[mismatch]]
+unit = "primitive.primitive_creation_p1"
+case = "gen0253"
+why = "op 1 or 5, whose C++ the SMLib fork changed (sm_FindPivotPoint takes the corner's curve, tangency-labs/smlib 69d8857) or removed (sm_CreateAnalyticRotationalSweep, 9853e54): the shim returns cpp_unlinked (plan/findings/general--2502-smlib-fork-removed-cpp-not-linked.md)"
+
+[[mismatch]]
+unit = "primitive.primitive_creation_p1"
+case = "gen0255"
+why = "op 1 or 5, whose C++ the SMLib fork changed (sm_FindPivotPoint takes the corner's curve, tangency-labs/smlib 69d8857) or removed (sm_CreateAnalyticRotationalSweep, 9853e54): the shim returns cpp_unlinked (plan/findings/general--2502-smlib-fork-removed-cpp-not-linked.md)"
+
+[[mismatch]]
+unit = "primitive.primitive_creation_p1"
+case = "gen0256"
+why = "op 1 or 5, whose C++ the SMLib fork changed (sm_FindPivotPoint takes the corner's curve, tangency-labs/smlib 69d8857) or removed (sm_CreateAnalyticRotationalSweep, 9853e54): the shim returns cpp_unlinked (plan/findings/general--2502-smlib-fork-removed-cpp-not-linked.md)"
+
+[[mismatch]]
+unit = "primitive.primitive_creation_p1"
+case = "gen0260"
+why = "op 1 or 5, whose C++ the SMLib fork changed (sm_FindPivotPoint takes the corner's curve, tangency-labs/smlib 69d8857) or removed (sm_CreateAnalyticRotationalSweep, 9853e54): the shim returns cpp_unlinked (plan/findings/general--2502-smlib-fork-removed-cpp-not-linked.md)"
+
+[[mismatch]]
+unit = "primitive.primitive_creation_p1"
+case = "gen0263"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.curves[12] C++ -9.992007221626409e-15, Rust -7.549516567451064e-15 (plan/findings/general--2502-fork-pin-primitive-known-mismatches.md)"
+
+[[mismatch]]
+unit = "primitive.primitive_creation_p1"
+case = "gen0266"
+why = "op 1 or 5, whose C++ the SMLib fork changed (sm_FindPivotPoint takes the corner's curve, tangency-labs/smlib 69d8857) or removed (sm_CreateAnalyticRotationalSweep, 9853e54): the shim returns cpp_unlinked (plan/findings/general--2502-smlib-fork-removed-cpp-not-linked.md)"
+
+[[mismatch]]
+unit = "primitive.primitive_creation_p1"
+case = "gen0268"
+why = "op 1 or 5, whose C++ the SMLib fork changed (sm_FindPivotPoint takes the corner's curve, tangency-labs/smlib 69d8857) or removed (sm_CreateAnalyticRotationalSweep, 9853e54): the shim returns cpp_unlinked (plan/findings/general--2502-smlib-fork-removed-cpp-not-linked.md)"
+
+[[mismatch]]
+unit = "primitive.primitive_creation_p1"
+case = "gen0277"
+why = "op 1 or 5, whose C++ the SMLib fork changed (sm_FindPivotPoint takes the corner's curve, tangency-labs/smlib 69d8857) or removed (sm_CreateAnalyticRotationalSweep, 9853e54): the shim returns cpp_unlinked (plan/findings/general--2502-smlib-fork-removed-cpp-not-linked.md)"
+
+[[mismatch]]
+unit = "primitive.primitive_creation_p1"
+case = "gen0281"
+why = "op 1 or 5, whose C++ the SMLib fork changed (sm_FindPivotPoint takes the corner's curve, tangency-labs/smlib 69d8857) or removed (sm_CreateAnalyticRotationalSweep, 9853e54): the shim returns cpp_unlinked (plan/findings/general--2502-smlib-fork-removed-cpp-not-linked.md)"
+
+[[mismatch]]
+unit = "primitive.primitive_creation_p1"
+case = "gen0284"
+why = "op 1 or 5, whose C++ the SMLib fork changed (sm_FindPivotPoint takes the corner's curve, tangency-labs/smlib 69d8857) or removed (sm_CreateAnalyticRotationalSweep, 9853e54): the shim returns cpp_unlinked (plan/findings/general--2502-smlib-fork-removed-cpp-not-linked.md)"
+
+[[mismatch]]
+unit = "primitive.primitive_creation_p1"
+case = "gen0287"
+why = "op 1 or 5, whose C++ the SMLib fork changed (sm_FindPivotPoint takes the corner's curve, tangency-labs/smlib 69d8857) or removed (sm_CreateAnalyticRotationalSweep, 9853e54): the shim returns cpp_unlinked (plan/findings/general--2502-smlib-fork-removed-cpp-not-linked.md)"
+
+[[mismatch]]
+unit = "primitive.primitive_creation_p1"
+case = "gen0288"
+why = "op 1 or 5, whose C++ the SMLib fork changed (sm_FindPivotPoint takes the corner's curve, tangency-labs/smlib 69d8857) or removed (sm_CreateAnalyticRotationalSweep, 9853e54): the shim returns cpp_unlinked (plan/findings/general--2502-smlib-fork-removed-cpp-not-linked.md)"
+
+[[mismatch]]
+unit = "primitive.primitive_creation_p1"
+case = "gen0291"
+why = "op 1 or 5, whose C++ the SMLib fork changed (sm_FindPivotPoint takes the corner's curve, tangency-labs/smlib 69d8857) or removed (sm_CreateAnalyticRotationalSweep, 9853e54): the shim returns cpp_unlinked (plan/findings/general--2502-smlib-fork-removed-cpp-not-linked.md)"
+
+[[mismatch]]
+unit = "primitive.primitive_creation_p1"
+case = "gen0293"
+why = "op 1 or 5, whose C++ the SMLib fork changed (sm_FindPivotPoint takes the corner's curve, tangency-labs/smlib 69d8857) or removed (sm_CreateAnalyticRotationalSweep, 9853e54): the shim returns cpp_unlinked (plan/findings/general--2502-smlib-fork-removed-cpp-not-linked.md)"
+
+[[mismatch]]
+unit = "primitive.primitive_creation_p1"
+case = "gen0294"
+why = "op 1 or 5, whose C++ the SMLib fork changed (sm_FindPivotPoint takes the corner's curve, tangency-labs/smlib 69d8857) or removed (sm_CreateAnalyticRotationalSweep, 9853e54): the shim returns cpp_unlinked (plan/findings/general--2502-smlib-fork-removed-cpp-not-linked.md)"
+
+[[mismatch]]
+unit = "primitive.primitive_creation_p1"
+case = "gen0296"
+why = "op 1 or 5, whose C++ the SMLib fork changed (sm_FindPivotPoint takes the corner's curve, tangency-labs/smlib 69d8857) or removed (sm_CreateAnalyticRotationalSweep, 9853e54): the shim returns cpp_unlinked (plan/findings/general--2502-smlib-fork-removed-cpp-not-linked.md)"
+
+[[mismatch]]
+unit = "primitive.primitive_creation_p1"
+case = "gen0297"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.curves[7] C++ 0e0, Rust -1.7763568394002505e-15 (+1 more) (plan/findings/general--2502-fork-pin-primitive-known-mismatches.md)"
+
+[[mismatch]]
+unit = "primitive.primitive_creation_p1"
+case = "gen0310"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.curves[7] C++ 0e0, Rust -4.440892098500626e-16 (+2 more) (plan/findings/general--2502-fork-pin-primitive-known-mismatches.md)"
+
+[[mismatch]]
+unit = "primitive.primitive_creation_p1"
+case = "gen0312"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.curves[7] C++ -5.329070518200751e-15, Rust -2.6645352591003757e-15 (+2 more) (plan/findings/general--2502-fork-pin-primitive-known-mismatches.md)"
+
+[[mismatch]]
+unit = "primitive.primitive_creation_p1"
+case = "gen0316"
+why = "op 1 or 5, whose C++ the SMLib fork changed (sm_FindPivotPoint takes the corner's curve, tangency-labs/smlib 69d8857) or removed (sm_CreateAnalyticRotationalSweep, 9853e54): the shim returns cpp_unlinked (plan/findings/general--2502-smlib-fork-removed-cpp-not-linked.md)"
+
+[[mismatch]]
+unit = "primitive.primitive_creation_p1"
+case = "gen0317"
+why = "op 1 or 5, whose C++ the SMLib fork changed (sm_FindPivotPoint takes the corner's curve, tangency-labs/smlib 69d8857) or removed (sm_CreateAnalyticRotationalSweep, 9853e54): the shim returns cpp_unlinked (plan/findings/general--2502-smlib-fork-removed-cpp-not-linked.md)"
+
+[[mismatch]]
+unit = "primitive.primitive_creation_p1"
+case = "gen0320"
+why = "op 1 or 5, whose C++ the SMLib fork changed (sm_FindPivotPoint takes the corner's curve, tangency-labs/smlib 69d8857) or removed (sm_CreateAnalyticRotationalSweep, 9853e54): the shim returns cpp_unlinked (plan/findings/general--2502-smlib-fork-removed-cpp-not-linked.md)"
+
+[[mismatch]]
+unit = "primitive.primitive_creation_p1"
+case = "gen0328"
+why = "op 1 or 5, whose C++ the SMLib fork changed (sm_FindPivotPoint takes the corner's curve, tangency-labs/smlib 69d8857) or removed (sm_CreateAnalyticRotationalSweep, 9853e54): the shim returns cpp_unlinked (plan/findings/general--2502-smlib-fork-removed-cpp-not-linked.md)"
+
+[[mismatch]]
+unit = "primitive.primitive_creation_p1"
+case = "gen0329"
+why = "op 1 or 5, whose C++ the SMLib fork changed (sm_FindPivotPoint takes the corner's curve, tangency-labs/smlib 69d8857) or removed (sm_CreateAnalyticRotationalSweep, 9853e54): the shim returns cpp_unlinked (plan/findings/general--2502-smlib-fork-removed-cpp-not-linked.md)"
+
+[[mismatch]]
+unit = "primitive.primitive_creation_p1"
+case = "gen0332"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.curves[12] C++ -3.552713678800501e-15, Rust 0e0 (+1 more) (plan/findings/general--2502-fork-pin-primitive-known-mismatches.md)"
+
+[[mismatch]]
+unit = "primitive.primitive_creation_p1"
+case = "gen0336"
+why = "op 1 or 5, whose C++ the SMLib fork changed (sm_FindPivotPoint takes the corner's curve, tangency-labs/smlib 69d8857) or removed (sm_CreateAnalyticRotationalSweep, 9853e54): the shim returns cpp_unlinked (plan/findings/general--2502-smlib-fork-removed-cpp-not-linked.md)"
+
+[[mismatch]]
+unit = "primitive.primitive_creation_p1"
+case = "gen0339"
+why = "op 1 or 5, whose C++ the SMLib fork changed (sm_FindPivotPoint takes the corner's curve, tangency-labs/smlib 69d8857) or removed (sm_CreateAnalyticRotationalSweep, 9853e54): the shim returns cpp_unlinked (plan/findings/general--2502-smlib-fork-removed-cpp-not-linked.md)"
+
+[[mismatch]]
+unit = "primitive.primitive_creation_p1"
+case = "gen0341"
+why = "op 1 or 5, whose C++ the SMLib fork changed (sm_FindPivotPoint takes the corner's curve, tangency-labs/smlib 69d8857) or removed (sm_CreateAnalyticRotationalSweep, 9853e54): the shim returns cpp_unlinked (plan/findings/general--2502-smlib-fork-removed-cpp-not-linked.md)"
+
+[[mismatch]]
+unit = "primitive.primitive_creation_p1"
+case = "gen0344"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.curves[19] C++ 4.440892098500626e-16, Rust 0e0 (plan/findings/general--2502-fork-pin-primitive-known-mismatches.md)"
+
+[[mismatch]]
+unit = "primitive.primitive_creation_p1"
+case = "gen0345"
+why = "op 1 or 5, whose C++ the SMLib fork changed (sm_FindPivotPoint takes the corner's curve, tangency-labs/smlib 69d8857) or removed (sm_CreateAnalyticRotationalSweep, 9853e54): the shim returns cpp_unlinked (plan/findings/general--2502-smlib-fork-removed-cpp-not-linked.md)"
+
+[[mismatch]]
+unit = "primitive.primitive_creation_p1"
+case = "gen0346"
+why = "op 1 or 5, whose C++ the SMLib fork changed (sm_FindPivotPoint takes the corner's curve, tangency-labs/smlib 69d8857) or removed (sm_CreateAnalyticRotationalSweep, 9853e54): the shim returns cpp_unlinked (plan/findings/general--2502-smlib-fork-removed-cpp-not-linked.md)"
+
+[[mismatch]]
+unit = "primitive.primitive_creation_p1"
+case = "gen0352"
+why = "op 1 or 5, whose C++ the SMLib fork changed (sm_FindPivotPoint takes the corner's curve, tangency-labs/smlib 69d8857) or removed (sm_CreateAnalyticRotationalSweep, 9853e54): the shim returns cpp_unlinked (plan/findings/general--2502-smlib-fork-removed-cpp-not-linked.md)"
+
+[[mismatch]]
+unit = "primitive.primitive_creation_p1"
+case = "gen0353"
+why = "op 1 or 5, whose C++ the SMLib fork changed (sm_FindPivotPoint takes the corner's curve, tangency-labs/smlib 69d8857) or removed (sm_CreateAnalyticRotationalSweep, 9853e54): the shim returns cpp_unlinked (plan/findings/general--2502-smlib-fork-removed-cpp-not-linked.md)"
+
+[[mismatch]]
+unit = "primitive.primitive_creation_p1"
+case = "gen0355"
+why = "op 1 or 5, whose C++ the SMLib fork changed (sm_FindPivotPoint takes the corner's curve, tangency-labs/smlib 69d8857) or removed (sm_CreateAnalyticRotationalSweep, 9853e54): the shim returns cpp_unlinked (plan/findings/general--2502-smlib-fork-removed-cpp-not-linked.md)"
+
+[[mismatch]]
+unit = "primitive.primitive_creation_p1"
+case = "gen0361"
+why = "op 1 or 5, whose C++ the SMLib fork changed (sm_FindPivotPoint takes the corner's curve, tangency-labs/smlib 69d8857) or removed (sm_CreateAnalyticRotationalSweep, 9853e54): the shim returns cpp_unlinked (plan/findings/general--2502-smlib-fork-removed-cpp-not-linked.md)"
+
+[[mismatch]]
+unit = "primitive.primitive_creation_p1"
+case = "gen0363"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.curves[7] C++ 7.993605777301127e-15, Rust 5.329070518200751e-15 (plan/findings/general--2502-fork-pin-primitive-known-mismatches.md)"
+
+[[mismatch]]
+unit = "primitive.primitive_creation_p1"
+case = "gen0364"
+why = "op 1 or 5, whose C++ the SMLib fork changed (sm_FindPivotPoint takes the corner's curve, tangency-labs/smlib 69d8857) or removed (sm_CreateAnalyticRotationalSweep, 9853e54): the shim returns cpp_unlinked (plan/findings/general--2502-smlib-fork-removed-cpp-not-linked.md)"
+
+[[mismatch]]
+unit = "primitive.primitive_creation_p1"
+case = "gen0367"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.curves[31] C++ -1.0658141036401503e-14, Rust -1.7763568394002505e-14 (plan/findings/general--2502-fork-pin-primitive-known-mismatches.md)"
+
+[[mismatch]]
+unit = "primitive.primitive_creation_p1"
+case = "gen0370"
+why = "op 1 or 5, whose C++ the SMLib fork changed (sm_FindPivotPoint takes the corner's curve, tangency-labs/smlib 69d8857) or removed (sm_CreateAnalyticRotationalSweep, 9853e54): the shim returns cpp_unlinked (plan/findings/general--2502-smlib-fork-removed-cpp-not-linked.md)"
+
+[[mismatch]]
+unit = "primitive.primitive_creation_p1"
+case = "gen0374"
+why = "op 1 or 5, whose C++ the SMLib fork changed (sm_FindPivotPoint takes the corner's curve, tangency-labs/smlib 69d8857) or removed (sm_CreateAnalyticRotationalSweep, 9853e54): the shim returns cpp_unlinked (plan/findings/general--2502-smlib-fork-removed-cpp-not-linked.md)"
+
+[[mismatch]]
+unit = "primitive.primitive_creation_p1"
+case = "gen0377"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.curves[31] C++ 0e0, Rust 1.1102230246251565e-16 (plan/findings/general--2502-fork-pin-primitive-known-mismatches.md)"
+
+[[mismatch]]
+unit = "primitive.primitive_creation_p1"
+case = "gen0384"
+why = "op 1 or 5, whose C++ the SMLib fork changed (sm_FindPivotPoint takes the corner's curve, tangency-labs/smlib 69d8857) or removed (sm_CreateAnalyticRotationalSweep, 9853e54): the shim returns cpp_unlinked (plan/findings/general--2502-smlib-fork-removed-cpp-not-linked.md)"
+
+[[mismatch]]
+unit = "primitive.primitive_creation_p1"
+case = "gen0392"
+why = "op 1 or 5, whose C++ the SMLib fork changed (sm_FindPivotPoint takes the corner's curve, tangency-labs/smlib 69d8857) or removed (sm_CreateAnalyticRotationalSweep, 9853e54): the shim returns cpp_unlinked (plan/findings/general--2502-smlib-fork-removed-cpp-not-linked.md)"
+
+[[mismatch]]
+unit = "primitive.primitive_creation_p1"
+case = "gen0395"
+why = "op 1 or 5, whose C++ the SMLib fork changed (sm_FindPivotPoint takes the corner's curve, tangency-labs/smlib 69d8857) or removed (sm_CreateAnalyticRotationalSweep, 9853e54): the shim returns cpp_unlinked (plan/findings/general--2502-smlib-fork-removed-cpp-not-linked.md)"
+
+[[mismatch]]
+unit = "primitive.primitive_creation_p1"
+case = "gen0396"
+why = "op 1 or 5, whose C++ the SMLib fork changed (sm_FindPivotPoint takes the corner's curve, tangency-labs/smlib 69d8857) or removed (sm_CreateAnalyticRotationalSweep, 9853e54): the shim returns cpp_unlinked (plan/findings/general--2502-smlib-fork-removed-cpp-not-linked.md)"
+
+[[mismatch]]
+unit = "primitive.primitive_creation_p1"
+case = "gen0398"
+why = "op 1 or 5, whose C++ the SMLib fork changed (sm_FindPivotPoint takes the corner's curve, tangency-labs/smlib 69d8857) or removed (sm_CreateAnalyticRotationalSweep, 9853e54): the shim returns cpp_unlinked (plan/findings/general--2502-smlib-fork-removed-cpp-not-linked.md)"
+
+[[mismatch]]
+unit = "primitive.primitive_creation_p1"
+case = "gen0401"
+why = "op 1 or 5, whose C++ the SMLib fork changed (sm_FindPivotPoint takes the corner's curve, tangency-labs/smlib 69d8857) or removed (sm_CreateAnalyticRotationalSweep, 9853e54): the shim returns cpp_unlinked (plan/findings/general--2502-smlib-fork-removed-cpp-not-linked.md)"
+
+[[mismatch]]
+unit = "primitive.primitive_creation_p1"
+case = "gen0410"
+why = "op 1 or 5, whose C++ the SMLib fork changed (sm_FindPivotPoint takes the corner's curve, tangency-labs/smlib 69d8857) or removed (sm_CreateAnalyticRotationalSweep, 9853e54): the shim returns cpp_unlinked (plan/findings/general--2502-smlib-fork-removed-cpp-not-linked.md)"
+
+[[mismatch]]
+unit = "primitive.primitive_creation_p1"
+case = "gen0412"
+why = "op 1 or 5, whose C++ the SMLib fork changed (sm_FindPivotPoint takes the corner's curve, tangency-labs/smlib 69d8857) or removed (sm_CreateAnalyticRotationalSweep, 9853e54): the shim returns cpp_unlinked (plan/findings/general--2502-smlib-fork-removed-cpp-not-linked.md)"
+
+[[mismatch]]
+unit = "primitive.primitive_creation_p1"
+case = "gen0419"
+why = "op 1 or 5, whose C++ the SMLib fork changed (sm_FindPivotPoint takes the corner's curve, tangency-labs/smlib 69d8857) or removed (sm_CreateAnalyticRotationalSweep, 9853e54): the shim returns cpp_unlinked (plan/findings/general--2502-smlib-fork-removed-cpp-not-linked.md)"
+
+[[mismatch]]
+unit = "primitive.primitive_creation_p1"
+case = "gen0422"
+why = "op 1 or 5, whose C++ the SMLib fork changed (sm_FindPivotPoint takes the corner's curve, tangency-labs/smlib 69d8857) or removed (sm_CreateAnalyticRotationalSweep, 9853e54): the shim returns cpp_unlinked (plan/findings/general--2502-smlib-fork-removed-cpp-not-linked.md)"
+
+[[mismatch]]
+unit = "primitive.primitive_creation_p1"
+case = "gen0423"
+why = "op 1 or 5, whose C++ the SMLib fork changed (sm_FindPivotPoint takes the corner's curve, tangency-labs/smlib 69d8857) or removed (sm_CreateAnalyticRotationalSweep, 9853e54): the shim returns cpp_unlinked (plan/findings/general--2502-smlib-fork-removed-cpp-not-linked.md)"
+
+[[mismatch]]
+unit = "primitive.primitive_creation_p1"
+case = "gen0429"
+why = "op 1 or 5, whose C++ the SMLib fork changed (sm_FindPivotPoint takes the corner's curve, tangency-labs/smlib 69d8857) or removed (sm_CreateAnalyticRotationalSweep, 9853e54): the shim returns cpp_unlinked (plan/findings/general--2502-smlib-fork-removed-cpp-not-linked.md)"
+
+[[mismatch]]
+unit = "primitive.primitive_creation_p1"
+case = "gen0430"
+why = "op 1 or 5, whose C++ the SMLib fork changed (sm_FindPivotPoint takes the corner's curve, tangency-labs/smlib 69d8857) or removed (sm_CreateAnalyticRotationalSweep, 9853e54): the shim returns cpp_unlinked (plan/findings/general--2502-smlib-fork-removed-cpp-not-linked.md)"
+
+[[mismatch]]
+unit = "primitive.primitive_creation_p1"
+case = "gen0444"
+why = "op 1 or 5, whose C++ the SMLib fork changed (sm_FindPivotPoint takes the corner's curve, tangency-labs/smlib 69d8857) or removed (sm_CreateAnalyticRotationalSweep, 9853e54): the shim returns cpp_unlinked (plan/findings/general--2502-smlib-fork-removed-cpp-not-linked.md)"
+
+[[mismatch]]
+unit = "primitive.primitive_creation_p1"
+case = "gen0449"
+why = "op 1 or 5, whose C++ the SMLib fork changed (sm_FindPivotPoint takes the corner's curve, tangency-labs/smlib 69d8857) or removed (sm_CreateAnalyticRotationalSweep, 9853e54): the shim returns cpp_unlinked (plan/findings/general--2502-smlib-fork-removed-cpp-not-linked.md)"
+
+[[mismatch]]
+unit = "primitive.primitive_creation_p1"
+case = "gen0455"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.curves[7] C++ -1.7763568394002505e-15, Rust 0e0 (+2 more) (plan/findings/general--2502-fork-pin-primitive-known-mismatches.md)"
+
+[[mismatch]]
+unit = "primitive.primitive_creation_p1"
+case = "gen0459"
+why = "op 1 or 5, whose C++ the SMLib fork changed (sm_FindPivotPoint takes the corner's curve, tangency-labs/smlib 69d8857) or removed (sm_CreateAnalyticRotationalSweep, 9853e54): the shim returns cpp_unlinked (plan/findings/general--2502-smlib-fork-removed-cpp-not-linked.md)"
+
+[[mismatch]]
+unit = "primitive.primitive_creation_p1"
+case = "gen0463"
+why = "op 1 or 5, whose C++ the SMLib fork changed (sm_FindPivotPoint takes the corner's curve, tangency-labs/smlib 69d8857) or removed (sm_CreateAnalyticRotationalSweep, 9853e54): the shim returns cpp_unlinked (plan/findings/general--2502-smlib-fork-removed-cpp-not-linked.md)"
+
+[[mismatch]]
+unit = "primitive.primitive_creation_p1"
+case = "gen0465"
+why = "op 1 or 5, whose C++ the SMLib fork changed (sm_FindPivotPoint takes the corner's curve, tangency-labs/smlib 69d8857) or removed (sm_CreateAnalyticRotationalSweep, 9853e54): the shim returns cpp_unlinked (plan/findings/general--2502-smlib-fork-removed-cpp-not-linked.md)"
+
+[[mismatch]]
+unit = "primitive.primitive_creation_p1"
+case = "gen0466"
+why = "op 1 or 5, whose C++ the SMLib fork changed (sm_FindPivotPoint takes the corner's curve, tangency-labs/smlib 69d8857) or removed (sm_CreateAnalyticRotationalSweep, 9853e54): the shim returns cpp_unlinked (plan/findings/general--2502-smlib-fork-removed-cpp-not-linked.md)"
+
+[[mismatch]]
+unit = "primitive.primitive_creation_p1"
+case = "gen0468"
+why = "op 1 or 5, whose C++ the SMLib fork changed (sm_FindPivotPoint takes the corner's curve, tangency-labs/smlib 69d8857) or removed (sm_CreateAnalyticRotationalSweep, 9853e54): the shim returns cpp_unlinked (plan/findings/general--2502-smlib-fork-removed-cpp-not-linked.md)"
+
+[[mismatch]]
+unit = "primitive.primitive_creation_p1"
+case = "gen0471"
+why = "op 1 or 5, whose C++ the SMLib fork changed (sm_FindPivotPoint takes the corner's curve, tangency-labs/smlib 69d8857) or removed (sm_CreateAnalyticRotationalSweep, 9853e54): the shim returns cpp_unlinked (plan/findings/general--2502-smlib-fork-removed-cpp-not-linked.md)"
+
+[[mismatch]]
+unit = "primitive.primitive_creation_p1"
+case = "gen0472"
+why = "op 1 or 5, whose C++ the SMLib fork changed (sm_FindPivotPoint takes the corner's curve, tangency-labs/smlib 69d8857) or removed (sm_CreateAnalyticRotationalSweep, 9853e54): the shim returns cpp_unlinked (plan/findings/general--2502-smlib-fork-removed-cpp-not-linked.md)"
+
+[[mismatch]]
+unit = "primitive.primitive_creation_p1"
+case = "gen0474"
+why = "op 1 or 5, whose C++ the SMLib fork changed (sm_FindPivotPoint takes the corner's curve, tangency-labs/smlib 69d8857) or removed (sm_CreateAnalyticRotationalSweep, 9853e54): the shim returns cpp_unlinked (plan/findings/general--2502-smlib-fork-removed-cpp-not-linked.md)"
+
+[[mismatch]]
+unit = "primitive.primitive_creation_p1"
+case = "gen0487"
+why = "op 1 or 5, whose C++ the SMLib fork changed (sm_FindPivotPoint takes the corner's curve, tangency-labs/smlib 69d8857) or removed (sm_CreateAnalyticRotationalSweep, 9853e54): the shim returns cpp_unlinked (plan/findings/general--2502-smlib-fork-removed-cpp-not-linked.md)"
+
+[[mismatch]]
+unit = "primitive.primitive_creation_p1"
+case = "gen0488"
+why = "op 1 or 5, whose C++ the SMLib fork changed (sm_FindPivotPoint takes the corner's curve, tangency-labs/smlib 69d8857) or removed (sm_CreateAnalyticRotationalSweep, 9853e54): the shim returns cpp_unlinked (plan/findings/general--2502-smlib-fork-removed-cpp-not-linked.md)"
+
+[[mismatch]]
+unit = "primitive.primitive_creation_p1"
+case = "gen0491"
+why = "op 1 or 5, whose C++ the SMLib fork changed (sm_FindPivotPoint takes the corner's curve, tangency-labs/smlib 69d8857) or removed (sm_CreateAnalyticRotationalSweep, 9853e54): the shim returns cpp_unlinked (plan/findings/general--2502-smlib-fork-removed-cpp-not-linked.md)"
+
+[[mismatch]]
+unit = "primitive.primitive_creation_p1"
+case = "gen0492"
+why = "op 1 or 5, whose C++ the SMLib fork changed (sm_FindPivotPoint takes the corner's curve, tangency-labs/smlib 69d8857) or removed (sm_CreateAnalyticRotationalSweep, 9853e54): the shim returns cpp_unlinked (plan/findings/general--2502-smlib-fork-removed-cpp-not-linked.md)"
+
+[[mismatch]]
+unit = "primitive.primitive_creation_p1"
+case = "gen0493"
+why = "op 1 or 5, whose C++ the SMLib fork changed (sm_FindPivotPoint takes the corner's curve, tangency-labs/smlib 69d8857) or removed (sm_CreateAnalyticRotationalSweep, 9853e54): the shim returns cpp_unlinked (plan/findings/general--2502-smlib-fork-removed-cpp-not-linked.md)"
+
+[[mismatch]]
+unit = "primitive.primitive_creation_p1"
+case = "gen0494"
+why = "op 1 or 5, whose C++ the SMLib fork changed (sm_FindPivotPoint takes the corner's curve, tangency-labs/smlib 69d8857) or removed (sm_CreateAnalyticRotationalSweep, 9853e54): the shim returns cpp_unlinked (plan/findings/general--2502-smlib-fork-removed-cpp-not-linked.md)"
+
+[[mismatch]]
+unit = "primitive.primitive_creation_p1"
+case = "gen0499"
+why = "op 1 or 5, whose C++ the SMLib fork changed (sm_FindPivotPoint takes the corner's curve, tangency-labs/smlib 69d8857) or removed (sm_CreateAnalyticRotationalSweep, 9853e54): the shim returns cpp_unlinked (plan/findings/general--2502-smlib-fork-removed-cpp-not-linked.md)"
+
+[[mismatch]]
+unit = "primitive.primitive_creation_p1"
+case = "gen0500"
+why = "op 1 or 5, whose C++ the SMLib fork changed (sm_FindPivotPoint takes the corner's curve, tangency-labs/smlib 69d8857) or removed (sm_CreateAnalyticRotationalSweep, 9853e54): the shim returns cpp_unlinked (plan/findings/general--2502-smlib-fork-removed-cpp-not-linked.md)"
+
+[[mismatch]]
+unit = "primitive.primitive_creation_p1"
+case = "gen0507"
+why = "op 1 or 5, whose C++ the SMLib fork changed (sm_FindPivotPoint takes the corner's curve, tangency-labs/smlib 69d8857) or removed (sm_CreateAnalyticRotationalSweep, 9853e54): the shim returns cpp_unlinked (plan/findings/general--2502-smlib-fork-removed-cpp-not-linked.md)"
+
+[[mismatch]]
+unit = "primitive.primitive_creation_p1"
+case = "gen0508"
+why = "op 1 or 5, whose C++ the SMLib fork changed (sm_FindPivotPoint takes the corner's curve, tangency-labs/smlib 69d8857) or removed (sm_CreateAnalyticRotationalSweep, 9853e54): the shim returns cpp_unlinked (plan/findings/general--2502-smlib-fork-removed-cpp-not-linked.md)"
+
+[[mismatch]]
+unit = "primitive.primitive_creation_p1"
+case = "gen0512"
+why = "op 1 or 5, whose C++ the SMLib fork changed (sm_FindPivotPoint takes the corner's curve, tangency-labs/smlib 69d8857) or removed (sm_CreateAnalyticRotationalSweep, 9853e54): the shim returns cpp_unlinked (plan/findings/general--2502-smlib-fork-removed-cpp-not-linked.md)"
+
+[[mismatch]]
+unit = "primitive.primitive_creation_p1"
+case = "gen0513"
+why = "op 1 or 5, whose C++ the SMLib fork changed (sm_FindPivotPoint takes the corner's curve, tangency-labs/smlib 69d8857) or removed (sm_CreateAnalyticRotationalSweep, 9853e54): the shim returns cpp_unlinked (plan/findings/general--2502-smlib-fork-removed-cpp-not-linked.md)"
+
+[[mismatch]]
+unit = "primitive.primitive_creation_p1"
+case = "gen0514"
+why = "op 1 or 5, whose C++ the SMLib fork changed (sm_FindPivotPoint takes the corner's curve, tangency-labs/smlib 69d8857) or removed (sm_CreateAnalyticRotationalSweep, 9853e54): the shim returns cpp_unlinked (plan/findings/general--2502-smlib-fork-removed-cpp-not-linked.md)"
+
+[[mismatch]]
+unit = "primitive.primitive_creation_p1"
+case = "gen0516"
+why = "op 1 or 5, whose C++ the SMLib fork changed (sm_FindPivotPoint takes the corner's curve, tangency-labs/smlib 69d8857) or removed (sm_CreateAnalyticRotationalSweep, 9853e54): the shim returns cpp_unlinked (plan/findings/general--2502-smlib-fork-removed-cpp-not-linked.md)"
+
+[[mismatch]]
+unit = "primitive.primitive_creation_p1"
+case = "gen0519"
+why = "op 1 or 5, whose C++ the SMLib fork changed (sm_FindPivotPoint takes the corner's curve, tangency-labs/smlib 69d8857) or removed (sm_CreateAnalyticRotationalSweep, 9853e54): the shim returns cpp_unlinked (plan/findings/general--2502-smlib-fork-removed-cpp-not-linked.md)"
+
+[[mismatch]]
+unit = "primitive.primitive_creation_p1"
+case = "gen0523"
+why = "op 1 or 5, whose C++ the SMLib fork changed (sm_FindPivotPoint takes the corner's curve, tangency-labs/smlib 69d8857) or removed (sm_CreateAnalyticRotationalSweep, 9853e54): the shim returns cpp_unlinked (plan/findings/general--2502-smlib-fork-removed-cpp-not-linked.md)"
+
+[[mismatch]]
+unit = "primitive.primitive_creation_p1"
+case = "gen0528"
+why = "op 1 or 5, whose C++ the SMLib fork changed (sm_FindPivotPoint takes the corner's curve, tangency-labs/smlib 69d8857) or removed (sm_CreateAnalyticRotationalSweep, 9853e54): the shim returns cpp_unlinked (plan/findings/general--2502-smlib-fork-removed-cpp-not-linked.md)"
+
+[[mismatch]]
+unit = "primitive.primitive_creation_p1"
+case = "gen0533"
+why = "op 1 or 5, whose C++ the SMLib fork changed (sm_FindPivotPoint takes the corner's curve, tangency-labs/smlib 69d8857) or removed (sm_CreateAnalyticRotationalSweep, 9853e54): the shim returns cpp_unlinked (plan/findings/general--2502-smlib-fork-removed-cpp-not-linked.md)"
+
+[[mismatch]]
+unit = "primitive.primitive_creation_p1"
+case = "gen0535"
+why = "op 1 or 5, whose C++ the SMLib fork changed (sm_FindPivotPoint takes the corner's curve, tangency-labs/smlib 69d8857) or removed (sm_CreateAnalyticRotationalSweep, 9853e54): the shim returns cpp_unlinked (plan/findings/general--2502-smlib-fork-removed-cpp-not-linked.md)"
+
+[[mismatch]]
+unit = "primitive.primitive_creation_p1"
+case = "gen0547"
+why = "op 1 or 5, whose C++ the SMLib fork changed (sm_FindPivotPoint takes the corner's curve, tangency-labs/smlib 69d8857) or removed (sm_CreateAnalyticRotationalSweep, 9853e54): the shim returns cpp_unlinked (plan/findings/general--2502-smlib-fork-removed-cpp-not-linked.md)"
+
+[[mismatch]]
+unit = "primitive.primitive_creation_p1"
+case = "gen0549"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.curves[12] C++ -3.552713678800501e-15, Rust 0e0 (+1 more) (plan/findings/general--2502-fork-pin-primitive-known-mismatches.md)"
+
+[[mismatch]]
+unit = "primitive.primitive_creation_p1"
+case = "gen0551"
+why = "op 1 or 5, whose C++ the SMLib fork changed (sm_FindPivotPoint takes the corner's curve, tangency-labs/smlib 69d8857) or removed (sm_CreateAnalyticRotationalSweep, 9853e54): the shim returns cpp_unlinked (plan/findings/general--2502-smlib-fork-removed-cpp-not-linked.md)"
+
+[[mismatch]]
+unit = "primitive.primitive_creation_p1"
+case = "gen0562"
+why = "op 1 or 5, whose C++ the SMLib fork changed (sm_FindPivotPoint takes the corner's curve, tangency-labs/smlib 69d8857) or removed (sm_CreateAnalyticRotationalSweep, 9853e54): the shim returns cpp_unlinked (plan/findings/general--2502-smlib-fork-removed-cpp-not-linked.md)"
+
+[[mismatch]]
+unit = "primitive.primitive_creation_p1"
+case = "gen0564"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.curves[24] C++ 4.440892098500626e-15, Rust 1.7763568394002505e-15 (plan/findings/general--2502-fork-pin-primitive-known-mismatches.md)"
+
+[[mismatch]]
+unit = "primitive.primitive_creation_p1"
+case = "gen0568"
+why = "op 1 or 5, whose C++ the SMLib fork changed (sm_FindPivotPoint takes the corner's curve, tangency-labs/smlib 69d8857) or removed (sm_CreateAnalyticRotationalSweep, 9853e54): the shim returns cpp_unlinked (plan/findings/general--2502-smlib-fork-removed-cpp-not-linked.md)"
+
+[[mismatch]]
+unit = "primitive.primitive_creation_p1"
+case = "gen0569"
+why = "op 1 or 5, whose C++ the SMLib fork changed (sm_FindPivotPoint takes the corner's curve, tangency-labs/smlib 69d8857) or removed (sm_CreateAnalyticRotationalSweep, 9853e54): the shim returns cpp_unlinked (plan/findings/general--2502-smlib-fork-removed-cpp-not-linked.md)"
+
+[[mismatch]]
+unit = "primitive.primitive_creation_p1"
+case = "gen0570"
+why = "op 1 or 5, whose C++ the SMLib fork changed (sm_FindPivotPoint takes the corner's curve, tangency-labs/smlib 69d8857) or removed (sm_CreateAnalyticRotationalSweep, 9853e54): the shim returns cpp_unlinked (plan/findings/general--2502-smlib-fork-removed-cpp-not-linked.md)"
+
+[[mismatch]]
+unit = "primitive.primitive_creation_p1"
+case = "gen0571"
+why = "op 1 or 5, whose C++ the SMLib fork changed (sm_FindPivotPoint takes the corner's curve, tangency-labs/smlib 69d8857) or removed (sm_CreateAnalyticRotationalSweep, 9853e54): the shim returns cpp_unlinked (plan/findings/general--2502-smlib-fork-removed-cpp-not-linked.md)"
+
+[[mismatch]]
+unit = "primitive.primitive_creation_p1"
+case = "gen0576"
+why = "op 1 or 5, whose C++ the SMLib fork changed (sm_FindPivotPoint takes the corner's curve, tangency-labs/smlib 69d8857) or removed (sm_CreateAnalyticRotationalSweep, 9853e54): the shim returns cpp_unlinked (plan/findings/general--2502-smlib-fork-removed-cpp-not-linked.md)"
+
+[[mismatch]]
+unit = "primitive.primitive_creation_p1"
+case = "gen0579"
+why = "op 1 or 5, whose C++ the SMLib fork changed (sm_FindPivotPoint takes the corner's curve, tangency-labs/smlib 69d8857) or removed (sm_CreateAnalyticRotationalSweep, 9853e54): the shim returns cpp_unlinked (plan/findings/general--2502-smlib-fork-removed-cpp-not-linked.md)"
+
+[[mismatch]]
+unit = "primitive.primitive_creation_p1"
+case = "gen0592"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.curves[31] C++ 4.884981308350689e-15, Rust 0e0 (plan/findings/general--2502-fork-pin-primitive-known-mismatches.md)"
+
+[[mismatch]]
+unit = "primitive.primitive_creation_p1"
+case = "gen0593"
+why = "op 1 or 5, whose C++ the SMLib fork changed (sm_FindPivotPoint takes the corner's curve, tangency-labs/smlib 69d8857) or removed (sm_CreateAnalyticRotationalSweep, 9853e54): the shim returns cpp_unlinked (plan/findings/general--2502-smlib-fork-removed-cpp-not-linked.md)"
+
+[[mismatch]]
+unit = "primitive.primitive_creation_p1"
+case = "gen0596"
+why = "op 1 or 5, whose C++ the SMLib fork changed (sm_FindPivotPoint takes the corner's curve, tangency-labs/smlib 69d8857) or removed (sm_CreateAnalyticRotationalSweep, 9853e54): the shim returns cpp_unlinked (plan/findings/general--2502-smlib-fork-removed-cpp-not-linked.md)"
+
+[[mismatch]]
+unit = "primitive.primitive_creation_p1"
+case = "gen0598"
+why = "op 1 or 5, whose C++ the SMLib fork changed (sm_FindPivotPoint takes the corner's curve, tangency-labs/smlib 69d8857) or removed (sm_CreateAnalyticRotationalSweep, 9853e54): the shim returns cpp_unlinked (plan/findings/general--2502-smlib-fork-removed-cpp-not-linked.md)"
