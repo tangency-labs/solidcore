@@ -204,18 +204,15 @@ pub struct BareBlendFace {
     pub surface: &'static str,
 }
 
-/// Whether `surface` is a blend's definition: a procedural blend (its definition and a
-/// certified net), or a corner ball's patch kept with its sphere.
+/// Whether `surface` is a blend's definition: the definition accessor's answer
+/// ([`Surface::procedural_blend`]), whatever the surface's kind: a procedural blend, or a
+/// round of an exact class (a chamfer between planes among them) keeping its definition
+/// behind its analytic kind (#2485).
 ///
-/// The one place the check decides it. Once the exact classes keep their definition
-/// behind their analytic kind (#2485), this is the definition accessor's answer, not the
-/// surface's kind.
+/// The one place the check decides it.
 #[must_use]
 pub fn is_definition(surface: &Surface) -> bool {
-    matches!(
-        surface.kind(),
-        SurfaceKind::ProceduralBlend(_) | SurfaceKind::BallPatch(_)
-    )
+    surface.procedural_blend().is_some()
 }
 
 /// The name of `surface`'s kind, as [`BareBlendFace::surface`] gives it.
