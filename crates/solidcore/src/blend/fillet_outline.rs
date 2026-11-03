@@ -10,7 +10,7 @@
 //! a top edge loses the plate under the rim back to x = 48.77). With this construction the
 //! ball touches the rim instead: it stays tangent to the face it keeps and its section passes
 //! through the rim, so the round ends on the body's outline and only the material above that
-//! arc is taken (86 577.030 mm³ on that plate, the volume SolidWorks measures, #2541).
+//! arc is taken (86 577.030 mm³ on that plate, the volume `SolidWorks` measures, #2541).
 //!
 //! The ball touching a rim is the ball rolling on the surface tangent to it along the rim (a
 //! pipe of no radius about the rim, `docs/generic-blend.md` §3.4's "keeping the edge"): a
@@ -56,6 +56,11 @@ const CURVE_TOL: f64 = 1.0e-8;
 
 /// The samples a circle is recognised by (`IsArc`'s, as the fillet solver's torus takes).
 const ARC_SAMPLES: u64 = 11;
+
+/// Whether `a` lies within `tol` of `b` (`false` for a NaN).
+fn near(a: f64, b: f64, tol: f64) -> bool {
+    (a - b).abs() <= tol
+}
 
 /// The component of `v` square to the unit `dir`.
 fn across(v: Vec3, dir: Vec3) -> Vec3 {
@@ -149,7 +154,7 @@ impl Section {
                 let n = P2::new(q.dir.dot(x), q.dir.dot(y));
                 let len = n.length();
                 // the plane runs along the spine: its normal lies in the section
-                if !((len - 1.0).abs() <= tol) {
+                if !near(len, 1.0, tol) {
                     return None;
                 }
                 let n = n.scale(1.0 / len);
@@ -159,7 +164,7 @@ impl Section {
                 })
             }
             (Self::Turned { axis, .. }, QuadricKind::Plane) => {
-                if !((q.dir.dot(axis).abs() - 1.0).abs() <= tol) {
+                if !near(q.dir.dot(axis).abs(), 1.0, tol) {
                     return None;
                 }
                 Some(Line2 {
@@ -213,7 +218,7 @@ struct Side {
 fn cuts_face(side: &Side, e: P2, centre: P2, radius: f64, touch: P2, tol: f64) -> bool {
     let h = side.line.signed(centre);
     let w2 = radius * radius - h * h;
-    if !(w2 > 0.0) {
+    if w2.is_nan() || w2 <= 0.0 {
         return false;
     }
     let w = w2.sqrt();
@@ -252,7 +257,7 @@ fn tangent_through_rim(
     let foot = offset.foot(rim);
     let h = foot.distance(rim);
     let w2 = radius * radius - h * h;
-    if !(w2 >= 0.0) {
+    if w2.is_nan() || w2 < 0.0 {
         return None;
     }
     let w = w2.sqrt();
@@ -261,12 +266,12 @@ fn tangent_through_rim(
     for centre in [foot.add(t.scale(w)), foot.sub(t.scale(w))] {
         let touch = keep.line.foot(centre);
         let s = touch.sub(e).dot(keep.along);
-        let on_face = s > tol && keep.rim.map_or(true, |(_, limit)| s <= limit + tol);
+        let on_face = s > tol && keep.rim.is_none_or(|(_, limit)| s <= limit + tol);
         // (tangent to the kept face's line, it meets that line only at its foot)
         if !on_face || cuts_face(leave, e, centre, radius, rim, tol) {
             continue;
         }
-        if best.map_or(true, |b| centre.distance(toward) < b.distance(toward)) {
+        if best.is_none_or(|b| centre.distance(toward) < b.distance(toward)) {
             best = Some(centre);
         }
     }
@@ -286,7 +291,7 @@ fn through_both_rims(
     let [a, b] = rims;
     let half = a.distance(b) / 2.0;
     let w2 = radius * radius - half * half;
-    if !(half > tol) || !(w2 >= 0.0) {
+    if half.is_nan() || half <= tol || w2.is_nan() || w2 < 0.0 {
         return None;
     }
     let mid = a.add(b).scale(0.5);
@@ -298,7 +303,7 @@ fn through_both_rims(
         if cuts_face(s0, e, centre, radius, a, tol) || cuts_face(s1, e, centre, radius, b, tol) {
             continue;
         }
-        if best.map_or(true, |c| centre.distance(toward) < c.distance(toward)) {
+        if best.is_none_or(|c| centre.distance(toward) < c.distance(toward)) {
             best = Some(centre);
         }
     }
@@ -327,7 +332,7 @@ fn decide(lines: [Line2; 2], c2: P2, radius: f64, rims: [&[P2]; 2], tol: f64) ->
     let [l0, l1] = lines;
     // the filleted edge: where the faces' lines meet
     let det = l0.n.x * l1.n.y - l0.n.y * l1.n.x;
-    if !(det.abs() > tol) {
+    if det.is_nan() || det.abs() <= tol {
         return None;
     }
     let e = P2::new(
@@ -339,17 +344,17 @@ fn decide(lines: [Line2; 2], c2: P2, radius: f64, rims: [&[P2]; 2], tol: f64) ->
     for (line, face_rims) in lines.into_iter().zip(rims) {
         let rail = line.foot(c2);
         let reach = rail.distance(e);
-        if !(reach > tol) {
+        if reach.is_nan() || reach <= tol {
             return None;
         }
         let along = rail.sub(e).scale(1.0 / reach);
         let mut rim: Option<(P2, f64)> = None;
         for &p in face_rims {
             let s = p.sub(e).dot(along);
-            if !(line.signed(p).abs() <= tol) || !(s > tol) {
+            if !near(line.signed(p), 0.0, tol) || s.is_nan() || s <= tol {
                 continue;
             }
-            if rim.map_or(true, |(_, best)| s < best) {
+            if rim.is_none_or(|(_, best)| s < best) {
                 rim = Some((p, s));
             }
         }
@@ -449,7 +454,7 @@ pub fn rims_of_face(
             let Ok(rd) = rim_vector.unitize() else {
                 continue;
             };
-            if !(d.cross(rd).length() <= CURVE_TOL) {
+            if !near(d.cross(rd).length(), 0.0, CURVE_TOL) {
                 continue;
             }
             // its span along the filleted edge covers the filleted edge's
@@ -462,7 +467,8 @@ pub fn rims_of_face(
             let lo = a0.min(a1);
             let hi = a0.max(a1);
             let [r0, r1] = rim_ends;
-            if !(r0.min(r1) <= lo + tol && r0.max(r1) >= hi - tol) {
+            let covers = r0.min(r1) <= lo + tol && r0.max(r1) >= hi - tol;
+            if !covers {
                 continue;
             }
             BlendQuadric {
@@ -641,7 +647,7 @@ pub fn outline_supports(
     };
     let (o0, o1) = (shifted(l0, n0, d0), shifted(l1, n1, d1));
     let det = o0.n.x * o1.n.y - o0.n.y * o1.n.x;
-    if !(det.abs() > tol) {
+    if det.is_nan() || det.abs() <= tol {
         return Ok(None);
     }
     let c2 = P2::new(
@@ -649,7 +655,7 @@ pub fn outline_supports(
         (o0.n.x * o1.c - o0.c * o1.n.x) / det,
     );
     let radius = d0.abs();
-    if !((d1.abs() - radius).abs() <= tol) {
+    if !near(d1.abs(), radius, tol) {
         return Ok(None);
     }
     let mut rims = [Vec::new(), Vec::new()];
@@ -665,7 +671,8 @@ pub fn outline_supports(
         return Ok(None);
     };
     // a turned ball clear of the axis (its round a ring torus)
-    if matches!(section, Section::Turned { .. }) && !(outline.centre.x - radius > tol) {
+    let clear = outline.centre.x - radius;
+    if matches!(section, Section::Turned { .. }) && (clear.is_nan() || clear <= tol) {
         return Ok(None);
     }
     let mut supports = [None, None];
@@ -685,7 +692,8 @@ pub fn outline_supports(
             return Ok(None);
         };
         // the support turns the face's normal by less than a right angle
-        if !(normal.dot(tangent_normal(&section, to)) > 0.0) {
+        let turn = normal.dot(tangent_normal(&section, to));
+        if turn.is_nan() || turn <= 0.0 {
             return Ok(None);
         }
         *support = Some(tangent);
@@ -728,7 +736,7 @@ fn tangent_along_rim(
             let frame = &cylinder.canonical().origin;
             let cone_axis = frame.x_axis().cross(frame.y_axis()).unitize()?;
             let along = to.perp();
-            if !cylinder.is_cylinder() || !(along.y.abs() > EFF_ZERO) {
+            if !cylinder.is_cylinder() || along.y.is_nan() || along.y.abs() <= EFF_ZERO {
                 return Ok(None);
             }
             // the radius's change per unit of height along the cone's own axis

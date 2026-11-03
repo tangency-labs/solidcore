@@ -6,8 +6,8 @@
 //! The plate is 100 x 100 x 10, its top edge at x = 0 rounded r (L = 100, t = 10). Every
 //! expected value is closed form, from the section:
 //! - up to r = (L² + t²) / 2t = 505 the ball touches the top face at
-//!   x_c = sqrt(r² - (r - t)²) and passes through the bottom edge (0, 0): the material above
-//!   that arc goes (SolidWorks measures 86 577.03 mm³ at r 90, #2541);
+//!   xc = sqrt(r² - (r - t)²) and passes through the bottom edge (0, 0): the material above
+//!   that arc goes (`SolidWorks` measures 86 577.03 mm³ at r 90, #2541);
 //! - past it the ball touches the far top edge (L, t) and the bottom edge: the material
 //!   above the arc through them goes;
 //! - without the flag, the ball touches the top face at x = r and the wall continued below
@@ -100,9 +100,9 @@ fn bound() -> f64 {
     (L * L + T * T) / (2.0 * T)
 }
 
-/// The plate up to the bound: the ball of centre (x_c, t - r), x_c = sqrt(r² - (r - t)²),
-/// touches the top face at x_c and passes through (0, 0); the section loses the region above
-/// its arc, x_c t - (x_c (t - r) + ∫ from -x_c to 0 of sqrt(r² - u²) du).
+/// The plate up to the bound: the ball of centre (xc, t - r), xc = sqrt(r² - (r - t)²),
+/// touches the top face at xc and passes through (0, 0); the section loses the region above
+/// its arc, xc t - (xc (t - r) + ∫ from -xc to 0 of sqrt(r² - u²) du).
 fn tangent_to_top(r: f64) -> f64 {
     let xc = (r * r - (r - T) * (r - T)).sqrt();
     let lost = xc * T - (xc * (T - r) + quarter(xc, r));
@@ -119,8 +119,8 @@ fn through_both_edges(r: f64) -> f64 {
 }
 
 /// The plate without the flag: the ball of centre (r, t - r) on the wall continued below
-/// the plate, crossing the bottom at x_m = r - sqrt(r² - (r - t)²): the section loses the
-/// whole thickness up to x_m and the region above the arc from there to x = r.
+/// the plate, crossing the bottom at xm = r - sqrt(r² - (r - t)²): the section loses the
+/// whole thickness up to xm and the region above the arc from there to x = r.
 fn on_continued_wall(r: f64) -> f64 {
     let xm = r - (r * r - (r - T) * (r - T)).sqrt();
     let lost = T * xm + r * (r - xm) - quarter(r - xm, r);
@@ -183,7 +183,7 @@ fn on_round(k: &Kernel, b: &Brep, p: Point3) -> (f64, Vec3) {
 }
 
 /// The plate up to the bound: the closed form to 1e-9, six faces (the wall is gone), the
-/// round tangent to the top face along x = x_c (normals within 1e-9 rad) and through the
+/// round tangent to the top face along x = xc (normals within 1e-9 rad) and through the
 /// bottom edge.
 #[test]
 fn a_round_up_to_the_bound_is_tangent_to_the_top_and_ends_on_the_bottom_edge() {
@@ -249,7 +249,7 @@ fn without_the_flag_the_round_is_on_the_continued_wall() {
 /// the plate's section turned about the axis. With the flag the ball touches the top at
 /// sqrt(2rt - t²) = sqrt 6 inside the rim and passes through the bottom rim; the solid loses
 /// 2π ∫ ρ dA over the region above that arc (`w` from the tangent point):
-/// (R - x_c)(r x_c - ∫₀^x_c sqrt(r² - w²) dw) + r x_c²/2 + ((r - t)³ - r³)/3.
+/// (R - xc)(r xc - ∫₀^xc sqrt(r² - w²) dw) + r xc²/2 + ((r - t)³ - r³)/3.
 /// Without it, 957.692239 (`wr707_rounds_running_off_their_faces.rs`).
 #[test]
 fn the_disc_wall_ends_on_its_bottom_rim() {
@@ -339,9 +339,9 @@ fn a_round_breaking_into_a_hollow_is_still_refused() {
 
 /// A 40 x 40 x 10 plate with a hole of radius 5 through it, its top rim rounded R12 (rig
 /// `every-hole-top-rim-r12-past-plate-bottom`): the disc's section turned the other way, the
-/// material outside the hole. The ball touches the top at rho_c = 5 + x_c,
-/// x_c = sqrt(2 r t - t²) = sqrt 140, and passes through the bottom rim; the solid loses
-/// 2π (rho_c (r x_c - ∫₀^x_c sqrt(r² - w²) dw) - r x_c²/2 - ((r - t)³ - r³)/3). Without the
+/// material outside the hole. The ball touches the top at ρc = 5 + xc,
+/// xc = sqrt(2 r t - t²) = sqrt 140, and passes through the bottom rim; the solid loses
+/// 2π (ρc (r xc - ∫₀^xc sqrt(r² - w²) dw) - r xc²/2 - ((r - t)³ - r³)/3). Without the
 /// flag, 13726.857967 (`wr707_rounds_running_off_their_faces.rs`).
 #[test]
 fn a_hole_rim_ends_on_the_hole_s_bottom_rim() {
@@ -388,9 +388,9 @@ fn corner_area(t: f64, r: f64) -> f64 {
 
 /// The bridged block of `wr696_band_cuts.rs`: 20 x 4 x 10, a slot 4 wide (x 8 to 12) cut
 /// from below to 1 under its top, the top front edge (y = 0, z = 10) rounded r past the 4 mm
-/// top. The ball stays tangent to the front face, at z_T = 10 - sqrt(r² - (r - 4)²), and
+/// top. The ball stays tangent to the front face, at zt = 10 - sqrt(r² - (r - 4)²), and
 /// passes through the top's back edge (4, 10). The full section loses
-/// `corner_area(10 - z_T)`, the bridge (z 9 to 10) that less `corner_area(9 - z_T)`: over 16
+/// `corner_area(10 - zt)`, the bridge (z 9 to 10) that less `corner_area(9 - zt)`: over 16
 /// and 4 of the length. The bridge keeps a strip, so the part stays whole and nothing is
 /// refused, at r 6 and at r 9 (which the round on the continued top cuts through).
 #[test]
