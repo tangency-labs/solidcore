@@ -14,6 +14,7 @@
 //! | [`FilletBrep::calc_edge_fillet_int_fillet`] | `SmFilletEdge::CalcFilletIntFillet` |
 //! | [`FilletBrep::re_calc_fillet_geom`]      | `SmFilletGeom::ReCalcFilletGeom`      |
 //! | [`FilletBrep::re_calc_fillet_geom_through`] | none (#2406: `ReCalcFilletGeom` through an End's sections) |
+//! | [`FilletBrep::calc_cross_sections`]      | the tail of `SmFilletGeom::ReCalcFilletGeom` |
 //! | [`FilletBrep::topology_split`]           | `SmFilletGeom::TopologySplit`         |
 //! | [`new_solver_fillet_geom`]               | `SmFilletGeom(pFilletSolver, eType)` with a base `SmFilletSolver` (CO-PORTED from `blend.fillet_geom_p5`) |
 //!
@@ -1445,6 +1446,28 @@ impl FilletBrep {
             }
         } // end if Not bFilletCreated
 
+        self.calc_cross_sections(k, g, solver.solver(), target)?;
+        self.geom_mut(g)?.status = FilStatus::Processed;
+        Ok(())
+    }
+
+    /// The tail of `SmFilletGeom::ReCalcFilletGeom`: each cross-section edge of geometry
+    /// `g` (`CalcCrossSection(crContext)`, no corner) on its surface, `solver` its
+    /// geometry's solver. Also run (#2406) for a piece of a rollover that keeps its round
+    /// and is not traced again.
+    ///
+    /// # Errors
+    ///
+    /// Those of [`FilletBrep::calc_cross_section_with_lookup`]; `SM_ERR_NULL_POINTER` for
+    /// a geometry without solver.
+    pub fn calc_cross_sections(
+        &mut self,
+        k: &Kernel,
+        g: FilletGeomId,
+        solver: &FilletSolver,
+        target: &Brep,
+    ) -> Result<()> {
+        let nul = || SolidError::null_pointer(OP_RECALC);
         let mut edges = Vec::new();
         self.geom(g)?.fillet_edges(&mut edges);
         for e in edges {
@@ -1452,7 +1475,7 @@ impl FilletBrep {
                 // CalcCrossSection(crContext): no corner. It reads the solvers of the
                 // edge's geometries: this geometry's is `solver`.
                 let own = self.geom(g)?.fillet_solver().ok_or_else(nul)?;
-                let own_solver: &FilletSolver = solver.solver();
+                let own_solver: &FilletSolver = solver;
                 let resolve = |id: FilletSolverId| -> Result<&FilletSolver> {
                     if id == own {
                         return Ok(own_solver);
@@ -1478,7 +1501,6 @@ impl FilletBrep {
                 )?;
             }
         }
-        self.geom_mut(g)?.status = FilStatus::Processed;
         Ok(())
     }
 

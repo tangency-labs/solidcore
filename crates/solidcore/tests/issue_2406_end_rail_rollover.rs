@@ -402,10 +402,7 @@ fn check_top_end(k: &Kernel, b: &Brep, r: f64) {
             .abs()
             .max((p0 - t.centre_q).dot(nq).abs())
             .max(p0.distance(p1));
-        worst = (
-            worst.0.max(off),
-            worst.1.max(n0.dot(n1).abs().min(1.0).acos()),
-        );
+        worst = (worst.0.max(off), worst.1.max(angle(n0, n1)));
     }
     eprintln!(
         "r {r}: the definitions at Q off the ball's circle by {:e}, their normals by {:e}",
@@ -449,7 +446,7 @@ fn check_top_end(k: &Kernel, b: &Brep, r: f64) {
         worst = [
             worst[0].max(on_round(foot)),
             worst[1].max((rho(centre) - (WALL + r)).abs()),
-            worst[2].max(n.dot(radial).abs().min(1.0).acos()),
+            worst[2].max(angle(n, radial)),
             worst[3].max(p.distance(foot)),
         ];
     }
@@ -483,6 +480,11 @@ fn check_top_end(k: &Kernel, b: &Brep, r: f64) {
         worst[3],
         before.bound()
     );
+}
+
+/// The angle between two lines along `a` and `b` (radians), to rounding near 0.
+fn angle(a: Vec3, b: Vec3) -> f64 {
+    a.cross(b).length().atan2(a.dot(b).abs())
 }
 
 /// The face of edge `e` other than the one whose surface's type `is` takes.
@@ -545,27 +547,39 @@ fn point_normal(k: &Kernel, pb: &ProceduralBlend, s: f64, t: f64) -> (Point3, Ve
 }
 
 /// The s of the definition's section whose middle lies in the plane through `o` square to
-/// `n`: bracketed among its leader's parameters, then bisected to rounding.
+/// `n`, nearest `o` (the plane crosses the leader more than once where it turns about the
+/// wall's axis): each crossing bracketed among its leader's parameters (a hundredth past
+/// each end, for a section at an end), then bisected to rounding.
 fn section_in(k: &Kernel, pb: &ProceduralBlend, o: Point3, n: Vec3) -> f64 {
     let ivl = pb.leader().natural_interval();
-    let f = |s: f64| (point_normal(k, pb, s, 0.5).0 - o).dot(n);
-    let at = |i: usize| ivl.min() + (ivl.max() - ivl.min()) * (i as f64) / 256.0;
-    let i = (0..256)
-        .find(|&i| f(at(i)) * f(at(i + 1)) <= 0.0)
-        .expect("the definition's sections cross the plane");
-    let (mut a, mut z) = (at(i), at(i + 1));
-    for _ in 0..200 {
-        let m = 0.5 * (a + z);
-        if m <= a || m >= z {
-            break;
+    let mid = |s: f64| point_normal(k, pb, s, 0.5).0;
+    let f = |s: f64| (mid(s) - o).dot(n);
+    let (lo, len) = (ivl.min() - 0.01 * ivl.length(), 1.02 * ivl.length());
+    let at = |i: usize| lo + len * (i as f64) / 256.0;
+    let mut best: Option<(f64, f64)> = None;
+    for i in 0..256 {
+        let (mut a, mut z) = (at(i), at(i + 1));
+        if f(a) * f(z) > 0.0 {
+            continue;
         }
-        if f(a) * f(m) <= 0.0 {
-            z = m;
-        } else {
-            a = m;
+        for _ in 0..200 {
+            let m = 0.5 * (a + z);
+            if m <= a || m >= z {
+                break;
+            }
+            if f(a) * f(m) <= 0.0 {
+                z = m;
+            } else {
+                a = m;
+            }
+        }
+        let s = 0.5 * (a + z);
+        let d = mid(s).distance(o);
+        if best.is_none_or(|(_, bd)| d < bd) {
+            best = Some((s, d));
         }
     }
-    0.5 * (a + z)
+    best.expect("the definition's sections cross the plane").0
 }
 
 /// The rail on the R2 round ending at Q, and the round's face beside it.
