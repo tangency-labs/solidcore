@@ -144,3 +144,33 @@ fn the_flag_approximates_the_offset_face() {
         }
     }
 }
+
+/// #2507 (WR-726): a pass whose earlier rows of patches miss the tolerance is not accepted.
+/// With `approximate_surface_checks_every_row` the approximation either returns a surface
+/// within the requested tolerance or refuses; without it the pass above is accepted at
+/// 2.25 times the tolerance.
+#[test]
+fn with_every_row_checked_the_fit_is_within_the_tolerance_2507() {
+    let mut k = Kernel::default();
+    k.fixes.approximate_surface_bezier_starter = true;
+    k.fixes.approximate_surface_checks_every_row = true;
+    let moved = offset_wave(&mut k);
+    let face = moved.face(moved.face_list()[0]).unwrap();
+    let surface = face.surface.as_ref().unwrap();
+    let tol = brep_approx_tol_3d(&k, &moved, SmallTopoType::NormalSize);
+    for (subdivisions, copy) in CALLS {
+        let r = surface
+            .approximate_surface_ignoring_status(&k, tol, subdivisions, copy)
+            .unwrap();
+        if r.surface.is_some() {
+            assert!(r.failure.is_none(), "({subdivisions}, {copy})");
+            assert!(
+                (0.0..=tol).contains(&r.achieved_tol),
+                "({subdivisions}, {copy}): achieved {} > requested {tol}",
+                r.achieved_tol
+            );
+        } else {
+            assert!(r.failure.is_some(), "({subdivisions}, {copy}): no surface, no failure");
+        }
+    }
+}

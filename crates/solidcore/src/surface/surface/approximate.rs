@@ -994,6 +994,31 @@ mod tests {
     }
 
     #[test]
+    fn wr726_every_row_checked_keeps_the_fit_within_the_tolerance() {
+        // #2507: the pass above is accepted at 1.62e-3 for 1e-3 because only its last
+        // row is within `tol`; with every row checked it is subdivided further
+        let mut k = kernel();
+        k.fixes.approximate_surface_bezier_starter = true;
+        k.fixes.approximate_surface_checks_every_row = true;
+        let off = offset_wave();
+        let tol = 1e-3;
+        let r = off.approximate_surface(&k, tol, 3, false).unwrap();
+        let s = r.surface.unwrap();
+        assert!(
+            r.achieved_tol >= 0.0 && r.achieved_tol <= tol,
+            "{}",
+            r.achieved_tol
+        );
+        let dom = off.natural_uv_domain_with_nurb(&k).unwrap();
+        for (fu, fv) in [(0.1, 0.2), (0.5, 0.5), (0.83, 0.9)] {
+            let uv = dom.evaluate(fu, fv);
+            let p = s.evaluate_point(&k, uv).unwrap();
+            let q = off.evaluate_point(&k, uv).unwrap();
+            assert!(p.distance(q) <= 2.0 * tol, "{fu} {fv}: {}", p.distance(q));
+        }
+    }
+
+    #[test]
     fn degree_elevate_and_insert_keep_the_shape() {
         let mut s = bilinear();
         let before = s.evaluate_point(Point2::new(0.3, 0.7)).unwrap();
