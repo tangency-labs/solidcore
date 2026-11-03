@@ -1,0 +1,22 @@
+# #2502: these cases move with the difftest's C++ reference, the SMLib fork
+# v1.1.0-alpha.1 (8eac63c); plan/findings/general--2502-fork-pin-heal-known-mismatches.md.
+
+[[mismatch]]
+unit = "heal.stitch_p1"
+case = "attributed_cov_tjunc5_advanced"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[111] C++ 1e1, Rust 4e0 (+12 more) (plan/findings/general--2502-fork-pin-heal-known-mismatches.md)"
+
+[[mismatch]]
+unit = "heal.stitch_p1"
+case = "attributed_cov_tjunc5_advanced_plain"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[27] C++ 2.0132786483990486e-4, Rust 1.1066393241995163e-4 (+29 more) (plan/findings/general--2502-fork-pin-heal-known-mismatches.md)"
+
+[[mismatch]]
+unit = "heal.stitch_p1"
+case = "cov_tjunc5_advanced"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[111] C++ 1e1, Rust 4e0 (+8 more) (plan/findings/general--2502-fork-pin-heal-known-mismatches.md)"
+
+[[mismatch]]
+unit = "heal.stitch_p1"
+case = "cov_tjunc5_advanced_plain"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[27] C++ 2.0132786483990486e-4, Rust 1.1066393241995163e-4 (+18 more) (plan/findings/general--2502-fork-pin-heal-known-mismatches.md)"

@@ -1,0 +1,67 @@
+# #2502: these cases move with the difftest's C++ reference, the SMLib fork
+# v1.1.0-alpha.1 (8eac63c); plan/findings/general--2502-fork-pin-heal-known-mismatches.md.
+
+[[mismatch]]
+unit = "heal.stitch_p2"
+case = "cov_tjunc0_split_editing"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 1, Rust 198 (plan/findings/general--2502-fork-pin-heal-known-mismatches.md)"
+
+[[mismatch]]
+unit = "heal.stitch_p2"
+case = "cov_tjunc0_split_editing_nonmanifold"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 1, Rust 198 (plan/findings/general--2502-fork-pin-heal-known-mismatches.md)"
+
+[[mismatch]]
+unit = "heal.stitch_p2"
+case = "cov_tjunc5_do_sf"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[111] C++ 1e1, Rust 4e0 (+8 more) (plan/findings/general--2502-fork-pin-heal-known-mismatches.md)"
+
+[[mismatch]]
+unit = "heal.stitch_p2"
+case = "cov_tjunc5_do_nonmanifold_gaps"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[29] C++ 2.0132786483990486e-4, Rust 1.1066393241995163e-4 (+13 more) (plan/findings/general--2502-fork-pin-heal-known-mismatches.md)"
+
+[[mismatch]]
+unit = "heal.stitch_p2"
+case = "cov_tjunc5_do_cand_v"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[27] C++ 2.0132786483990486e-4, Rust 1.1066393241995163e-4 (+13 more) (plan/findings/general--2502-fork-pin-heal-known-mismatches.md)"
+
+[[mismatch]]
+unit = "heal.stitch_p2"
+case = "cov_tjunc5_split_editing"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 1, Rust 384 (plan/findings/general--2502-fork-pin-heal-known-mismatches.md)"
+
+[[mismatch]]
+unit = "heal.stitch_p2"
+case = "cov_tjunc5_split_editing_nonmanifold"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 1, Rust 384 (plan/findings/general--2502-fork-pin-heal-known-mismatches.md)"
+
+[[mismatch]]
+unit = "heal.stitch_p2"
+case = "cov_tjunc10_split_editing"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 1, Rust 268 (plan/findings/general--2502-fork-pin-heal-known-mismatches.md)"
+
+[[mismatch]]
+unit = "heal.stitch_p2"
+case = "cov_tjunc10_split_editing_nonmanifold"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 1, Rust 268 (plan/findings/general--2502-fork-pin-heal-known-mismatches.md)"
+
+[[mismatch]]
+unit = "heal.stitch_p2"
+case = "cov_tjunc11_do_nonmanifold_gaps"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 1, Rust 281 (plan/findings/general--2502-fork-pin-heal-known-mismatches.md)"
+
+[[mismatch]]
+unit = "heal.stitch_p2"
+case = "cov_cube3_split_editing"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 1, Rust 442 (plan/findings/general--2502-fork-pin-heal-known-mismatches.md)"
+
+[[mismatch]]
+unit = "heal.stitch_p2"
+case = "cov_cube3_split_editing_nonmanifold"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 1, Rust 442 (plan/findings/general--2502-fork-pin-heal-known-mismatches.md)"
+
+[[mismatch]]
+unit = "heal.stitch_p2"
+case = "wr569_cube_with_cavity_solid"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[339] C++ 1e0, Rust 0e0 (plan/findings/general--2502-fork-pin-heal-known-mismatches.md)"

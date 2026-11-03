@@ -1,0 +1,47 @@
+# #2502: these cases move with the difftest's C++ reference, the SMLib fork
+# v1.1.0-alpha.1 (8eac63c); plan/findings/general--2502-fork-pin-heal-known-mismatches.md.
+
+[[mismatch]]
+unit = "heal.gap"
+case = "gen0018"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.state[16] C++ 1.006e3, Rust 0e0 (plan/findings/general--2502-fork-pin-heal-known-mismatches.md)"
+
+[[mismatch]]
+unit = "heal.gap"
+case = "gen0056"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.state[10] C++ 2.797215849926395e-1, Rust 2.797215597701079e-1 (+9 more) (plan/findings/general--2502-fork-pin-heal-known-mismatches.md)"
+
+[[mismatch]]
+unit = "heal.gap"
+case = "gen0073"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.state[16] C++ 1.006e3, Rust 0e0 (plan/findings/general--2502-fork-pin-heal-known-mismatches.md)"
+
+[[mismatch]]
+unit = "heal.gap"
+case = "gen0118"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.state[16] C++ 1.006e3, Rust 0e0 (plan/findings/general--2502-fork-pin-heal-known-mismatches.md)"
+
+[[mismatch]]
+unit = "heal.gap"
+case = "gen0232"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.state[16] C++ 1.006e3, Rust 0e0 (plan/findings/general--2502-fork-pin-heal-known-mismatches.md)"
+
+[[mismatch]]
+unit = "heal.gap"
+case = "gen0234"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.state[6] C++ 3.608654231605481e-30, Rust 0e0 (plan/findings/general--2502-fork-pin-heal-known-mismatches.md)"
+
+[[mismatch]]
+unit = "heal.gap"
+case = "gen0247"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.state[23] C++ 1.5987211554602254e-14, Rust 8.1111651133134e-14 (plan/findings/general--2502-fork-pin-heal-known-mismatches.md)"
+
+[[mismatch]]
+unit = "heal.gap"
+case = "gen0284"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.state[16] C++ 1.006e3, Rust 0e0 (plan/findings/general--2502-fork-pin-heal-known-mismatches.md)"
+
+[[mismatch]]
+unit = "heal.gap"
+case = "gen0332"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.state[16] C++ 1.006e3, Rust 0e0 (plan/findings/general--2502-fork-pin-heal-known-mismatches.md)"

@@ -1,0 +1,192 @@
+# #2502: these cases move with the difftest's C++ reference, the SMLib fork
+# v1.1.0-alpha.1 (8eac63c); plan/findings/general--2502-fork-pin-heal-known-mismatches.md.
+
+[[mismatch]]
+unit = "heal.heal_data_p2"
+case = "closed_sphere_swap1"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[112] C++ 1.0934428697813141e-15, Rust 3.155846784686366e-15 (plan/findings/general--2502-fork-pin-heal-known-mismatches.md)"
+
+[[mismatch]]
+unit = "heal.heal_data_p2"
+case = "closed_sphere_swap1_through_fix_tol"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[118] C++ 1.0934428697813141e-15, Rust 3.155846784686366e-15 (plan/findings/general--2502-fork-pin-heal-known-mismatches.md)"
+
+[[mismatch]]
+unit = "heal.heal_data_p2"
+case = "file_box_with_large_fillet"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[288] C++ 3.5e1, Rust 2.9e1 (+6 more) (plan/findings/general--2502-fork-pin-heal-known-mismatches.md)"
+
+[[mismatch]]
+unit = "heal.heal_data_p2"
+case = "file_box_with_large_fillet_rebuild_reverse"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[220] C++ 4.357506663226973e-3, Rust 4.360565399610972e-3 (+21 more) (plan/findings/general--2502-fork-pin-heal-known-mismatches.md)"
+
+[[mismatch]]
+unit = "heal.heal_data_p2"
+case = "file_box_with_large_fillet_edges_faces"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[299] C++ 5.347542221830668e-15, Rust 2.893063117941766e-14 (+1 more) (plan/findings/general--2502-fork-pin-heal-known-mismatches.md)"
+
+[[mismatch]]
+unit = "heal.heal_data_p2"
+case = "file_surf_sphere150"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[116] C++ 3.688882027804963e-15, Rust 4.782987168225453e-15 (plan/findings/general--2502-fork-pin-heal-known-mismatches.md)"
+
+[[mismatch]]
+unit = "heal.heal_data_p2"
+case = "file_surf_sphere150_rebuild_reverse"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[142] C++ 3.688882027804963e-15, Rust 4.782987168225453e-15 (plan/findings/general--2502-fork-pin-heal-known-mismatches.md)"
+
+[[mismatch]]
+unit = "heal.heal_data_p2"
+case = "file_surf_sphere150_edges_faces"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[89] C++ 3.688882027804963e-15, Rust 4.782987168225453e-15 (plan/findings/general--2502-fork-pin-heal-known-mismatches.md)"
+
+[[mismatch]]
+unit = "heal.heal_data_p2"
+case = "file_box_with_large_fillet_cached_gaps"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[295] C++ 3.5e1, Rust 2.9e1 (+6 more) (plan/findings/general--2502-fork-pin-heal-known-mismatches.md)"
+
+[[mismatch]]
+unit = "heal.heal_data_p2"
+case = "file_surf_sphere150_cached_gaps"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[122] C++ 3.688882027804963e-15, Rust 4.782987168225453e-15 (plan/findings/general--2502-fork-pin-heal-known-mismatches.md)"
+
+[[mismatch]]
+unit = "heal.heal_data_p2"
+case = "closed_sphere_swap1_cached_gaps"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[112] C++ 1.0934428697813141e-15, Rust 3.155846784686366e-15 (plan/findings/general--2502-fork-pin-heal-known-mismatches.md)"
+
+[[mismatch]]
+unit = "heal.heal_data_p2"
+case = "gen0005"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[187] C++ 1.734723475976807e-17, Rust 3.878959614448864e-17 (plan/findings/general--2502-fork-pin-heal-known-mismatches.md)"
+
+[[mismatch]]
+unit = "heal.heal_data_p2"
+case = "gen0029"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[252] C++ 3.5e1, Rust 2.9e1 (+6 more) (plan/findings/general--2502-fork-pin-heal-known-mismatches.md)"
+
+[[mismatch]]
+unit = "heal.heal_data_p2"
+case = "gen0030"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[101] C++ 3.688882027804963e-15, Rust 4.782987168225453e-15 (+1 more) (plan/findings/general--2502-fork-pin-heal-known-mismatches.md)"
+
+[[mismatch]]
+unit = "heal.heal_data_p2"
+case = "gen0032"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[170] C++ 8.962217842032441e-13, Rust 7.064593721351148e-10 (+5 more) (plan/findings/general--2502-fork-pin-heal-known-mismatches.md)"
+
+[[mismatch]]
+unit = "heal.heal_data_p2"
+case = "gen0101"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[128] C++ 5.389157964038493e-16, Rust 1.4432899320127035e-15 (plan/findings/general--2502-fork-pin-heal-known-mismatches.md)"
+
+[[mismatch]]
+unit = "heal.heal_data_p2"
+case = "gen0107"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[151] C++ 3.688882027804963e-15, Rust 4.782987168225453e-15 (plan/findings/general--2502-fork-pin-heal-known-mismatches.md)"
+
+[[mismatch]]
+unit = "heal.heal_data_p2"
+case = "gen0108"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[307] C++ 5.347542221830668e-15, Rust 2.893063117941766e-14 (+5 more) (plan/findings/general--2502-fork-pin-heal-known-mismatches.md)"
+
+[[mismatch]]
+unit = "heal.heal_data_p2"
+case = "gen0113"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[288] C++ 3.5e1, Rust 2.9e1 (+6 more) (plan/findings/general--2502-fork-pin-heal-known-mismatches.md)"
+
+[[mismatch]]
+unit = "heal.heal_data_p2"
+case = "gen0145"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[170] C++ 6.116470867822804e-11, Rust 2.0312113560183692e-10 (+5 more) (plan/findings/general--2502-fork-pin-heal-known-mismatches.md)"
+
+[[mismatch]]
+unit = "heal.heal_data_p2"
+case = "gen0149"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[143] C++ 3.688882027804963e-15, Rust 4.782987168225453e-15 (plan/findings/general--2502-fork-pin-heal-known-mismatches.md)"
+
+[[mismatch]]
+unit = "heal.heal_data_p2"
+case = "gen0176"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[97] C++ 3.191891195797325e-16, Rust 5.003707553108401e-16 (+6 more) (plan/findings/general--2502-fork-pin-heal-known-mismatches.md)"
+
+[[mismatch]]
+unit = "heal.heal_data_p2"
+case = "gen0197"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[125] C++ 3.688882027804963e-15, Rust 4.782987168225453e-15 (plan/findings/general--2502-fork-pin-heal-known-mismatches.md)"
+
+[[mismatch]]
+unit = "heal.heal_data_p2"
+case = "gen0221"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[76] C++ 2.3603665272841412e-15, Rust 2.220446049250313e-15 (plan/findings/general--2502-fork-pin-heal-known-mismatches.md)"
+
+[[mismatch]]
+unit = "heal.heal_data_p2"
+case = "gen0248"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[108] C++ 1.1234667099445444e-14, Rust 8.747542958250513e-15 (+9 more) (plan/findings/general--2502-fork-pin-heal-known-mismatches.md)"
+
+[[mismatch]]
+unit = "heal.heal_data_p2"
+case = "gen0249"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[317] C++ 5.347542221830668e-15, Rust 2.893063117941766e-14 (+1 more) (plan/findings/general--2502-fork-pin-heal-known-mismatches.md)"
+
+[[mismatch]]
+unit = "heal.heal_data_p2"
+case = "gen0315"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[94] C++ 1.8735013540549517e-16, Rust 2.1677797545656835e-16 (plan/findings/general--2502-fork-pin-heal-known-mismatches.md)"
+
+[[mismatch]]
+unit = "heal.heal_data_p2"
+case = "gen0331"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[461] C++ 3.5e1, Rust 2.9e1 (+6 more) (plan/findings/general--2502-fork-pin-heal-known-mismatches.md)"
+
+[[mismatch]]
+unit = "heal.heal_data_p2"
+case = "gen0351"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[209] C++ 8.764789528951374e-13, Rust 2.0767317355928055e-10 (+4 more) (plan/findings/general--2502-fork-pin-heal-known-mismatches.md)"
+
+[[mismatch]]
+unit = "heal.heal_data_p2"
+case = "gen0400"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[119] C++ 4.2132799719446477e-13, Rust 3.5228160701017763e-10 (+7 more) (plan/findings/general--2502-fork-pin-heal-known-mismatches.md)"
+
+[[mismatch]]
+unit = "heal.heal_data_p2"
+case = "gen0414"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[108] C++ 1.0971354589302191e-17, Rust 1.5993360207877823e-17 (+3 more) (plan/findings/general--2502-fork-pin-heal-known-mismatches.md)"
+
+[[mismatch]]
+unit = "heal.heal_data_p2"
+case = "gen0482"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[300] C++ 3.5e1, Rust 2.9e1 (+6 more) (plan/findings/general--2502-fork-pin-heal-known-mismatches.md)"
+
+[[mismatch]]
+unit = "heal.heal_data_p2"
+case = "gen0491"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[114] C++ 9.813077866773594e-17, Rust 1.6184142622847344e-16 (+7 more) (plan/findings/general--2502-fork-pin-heal-known-mismatches.md)"
+
+[[mismatch]]
+unit = "heal.heal_data_p2"
+case = "gen0498"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[104] C++ 7.757919228897728e-18, Rust 1.2212564154686428e-17 (+9 more) (plan/findings/general--2502-fork-pin-heal-known-mismatches.md)"
+
+[[mismatch]]
+unit = "heal.heal_data_p2"
+case = "gen0500"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[132] C++ 8.420559318810146e-18, Rust 1.5515838457795457e-17 (plan/findings/general--2502-fork-pin-heal-known-mismatches.md)"
+
+[[mismatch]]
+unit = "heal.heal_data_p2"
+case = "gen0504"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[98] C++ 1.3985787785349405e-17, Rust 2.281672496420498e-17 (plan/findings/general--2502-fork-pin-heal-known-mismatches.md)"
+
+[[mismatch]]
+unit = "heal.heal_data_p2"
+case = "gen0515"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[100] C++ 1.431146867680866e-17, Rust 1.1107649934270853e-17 (plan/findings/general--2502-fork-pin-heal-known-mismatches.md)"
+
+[[mismatch]]
+unit = "heal.heal_data_p2"
+case = "gen0583"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[126] C++ 3.688882027804963e-15, Rust 4.782987168225453e-15 (plan/findings/general--2502-fork-pin-heal-known-mismatches.md)"

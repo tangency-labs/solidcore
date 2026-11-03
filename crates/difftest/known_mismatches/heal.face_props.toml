@@ -1,0 +1,482 @@
+# #2502: these cases move with the difftest's C++ reference, the SMLib fork
+# v1.1.0-alpha.1 (8eac63c); plan/findings/general--2502-fork-pin-heal-known-mismatches.md.
+
+[[mismatch]]
+unit = "heal.face_props"
+case = "stage3_cyl_arc"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.v[0] C++ 1.04e3, Rust 1e3 (+19 more) (plan/findings/general--2502-fork-pin-heal-known-mismatches.md)"
+
+[[mismatch]]
+unit = "heal.face_props"
+case = "stage3_sph_one_tol1"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.v[25] C++ 0e0, Rust 1e0 (+9 more) (plan/findings/general--2502-fork-pin-heal-known-mismatches.md)"
+
+[[mismatch]]
+unit = "heal.face_props"
+case = "stage3_sph_one_tol10"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.v[27] C++ 0e0, Rust 1e0 (+1 more) (plan/findings/general--2502-fork-pin-heal-known-mismatches.md)"
+
+[[mismatch]]
+unit = "heal.face_props"
+case = "stage3_sph_one_tol1000"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.v[27] C++ 0e0, Rust 1e0 (+1 more) (plan/findings/general--2502-fork-pin-heal-known-mismatches.md)"
+
+[[mismatch]]
+unit = "heal.face_props"
+case = "stage3_sph_two_tol1"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.v[0] C++ 1.04e3, Rust 1e3 (+28 more) (plan/findings/general--2502-fork-pin-heal-known-mismatches.md)"
+
+[[mismatch]]
+unit = "heal.face_props"
+case = "stage3_sph_two_tol10"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.v[27] C++ 0e0, Rust 1e0 (+1 more) (plan/findings/general--2502-fork-pin-heal-known-mismatches.md)"
+
+[[mismatch]]
+unit = "heal.face_props"
+case = "stage3_sph_two_tol1000"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.v[27] C++ 0e0, Rust 1e0 (+1 more) (plan/findings/general--2502-fork-pin-heal-known-mismatches.md)"
+
+[[mismatch]]
+unit = "heal.face_props"
+case = "stage3_sph_swap_one_tol1"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.v[25] C++ 0e0, Rust 1e0 (+6 more) (plan/findings/general--2502-fork-pin-heal-known-mismatches.md)"
+
+[[mismatch]]
+unit = "heal.face_props"
+case = "stage3_cyl_one_tol10"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.v[27] C++ 0e0, Rust 1e0 (+3 more) (plan/findings/general--2502-fork-pin-heal-known-mismatches.md)"
+
+[[mismatch]]
+unit = "heal.face_props"
+case = "stage3_cyl_one_tol1000"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.v[27] C++ 0e0, Rust 1e0 (+3 more) (plan/findings/general--2502-fork-pin-heal-known-mismatches.md)"
+
+[[mismatch]]
+unit = "heal.face_props"
+case = "stage3_cyl_band_tol1"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.v[29] C++ 1e0, Rust 0e0 (+16 more) (plan/findings/general--2502-fork-pin-heal-known-mismatches.md)"
+
+[[mismatch]]
+unit = "heal.face_props"
+case = "stage3_cyl_band_tol10"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.v[27] C++ 0e0, Rust 1e0 (+3 more) (plan/findings/general--2502-fork-pin-heal-known-mismatches.md)"
+
+[[mismatch]]
+unit = "heal.face_props"
+case = "stage3_cyl_band_tol1000"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.v[27] C++ 0e0, Rust 1e0 (+3 more) (plan/findings/general--2502-fork-pin-heal-known-mismatches.md)"
+
+[[mismatch]]
+unit = "heal.face_props"
+case = "stage3_rerun_keeps_uv_trims_cylinder"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.v[334] C++ 3e0, Rust 1e0 (plan/findings/general--2502-fork-pin-heal-known-mismatches.md)"
+
+[[mismatch]]
+unit = "heal.face_props"
+case = "gen0009"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.v[25] C++ 0e0, Rust 1e0 (+12 more) (plan/findings/general--2502-fork-pin-heal-known-mismatches.md)"
+
+[[mismatch]]
+unit = "heal.face_props"
+case = "gen0010"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.v[27] C++ 0e0, Rust 1e0 (+19 more) (plan/findings/general--2502-fork-pin-heal-known-mismatches.md)"
+
+[[mismatch]]
+unit = "heal.face_props"
+case = "gen0023"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.v[27] C++ 0e0, Rust 1e0 (+27 more) (plan/findings/general--2502-fork-pin-heal-known-mismatches.md)"
+
+[[mismatch]]
+unit = "heal.face_props"
+case = "gen0121"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.v[27] C++ 0e0, Rust 1e0 (+7 more) (plan/findings/general--2502-fork-pin-heal-known-mismatches.md)"
+
+[[mismatch]]
+unit = "heal.face_props"
+case = "gen0123"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.v[27] C++ 0e0, Rust 1e0 (+15 more) (plan/findings/general--2502-fork-pin-heal-known-mismatches.md)"
+
+[[mismatch]]
+unit = "heal.face_props"
+case = "gen0133"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.v[27] C++ 0e0, Rust 1e0 (+7 more) (plan/findings/general--2502-fork-pin-heal-known-mismatches.md)"
+
+[[mismatch]]
+unit = "heal.face_props"
+case = "gen0151"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.v[27] C++ 0e0, Rust 1e0 (+27 more) (plan/findings/general--2502-fork-pin-heal-known-mismatches.md)"
+
+[[mismatch]]
+unit = "heal.face_props"
+case = "gen0169"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.v[257] C++ 1e0, Rust 2e0 (+5 more) (plan/findings/general--2502-fork-pin-heal-known-mismatches.md)"
+
+[[mismatch]]
+unit = "heal.face_props"
+case = "gen0212"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.v[27] C++ 0e0, Rust 1e0 (+15 more) (plan/findings/general--2502-fork-pin-heal-known-mismatches.md)"
+
+[[mismatch]]
+unit = "heal.face_props"
+case = "gen0282"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.v[426] C++ 0e0, Rust 1e0 (+3 more) (plan/findings/general--2502-fork-pin-heal-known-mismatches.md)"
+
+[[mismatch]]
+unit = "heal.face_props"
+case = "gen0292"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.v[257] C++ 1e0, Rust 2e0 (+2 more) (plan/findings/general--2502-fork-pin-heal-known-mismatches.md)"
+
+[[mismatch]]
+unit = "heal.face_props"
+case = "gen0321"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.v[442] C++ 0e0, Rust 1e0 (+3 more) (plan/findings/general--2502-fork-pin-heal-known-mismatches.md)"
+
+[[mismatch]]
+unit = "heal.face_props"
+case = "gen0329"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.v[27] C++ 0e0, Rust 1e0 (+11 more) (plan/findings/general--2502-fork-pin-heal-known-mismatches.md)"
+
+[[mismatch]]
+unit = "heal.face_props"
+case = "gen0348"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.v[25] C++ 0e0, Rust 1e0 (+14 more) (plan/findings/general--2502-fork-pin-heal-known-mismatches.md)"
+
+[[mismatch]]
+unit = "heal.face_props"
+case = "gen0371"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.v[29] C++ 0e0, Rust 1e0 (+9 more) (plan/findings/general--2502-fork-pin-heal-known-mismatches.md)"
+
+[[mismatch]]
+unit = "heal.face_props"
+case = "gen0374"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.v[27] C++ 0e0, Rust 1e0 (+19 more) (plan/findings/general--2502-fork-pin-heal-known-mismatches.md)"
+
+[[mismatch]]
+unit = "heal.face_props"
+case = "gen0401"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.v[359] C++ 0e0, Rust 1e0 (+3 more) (plan/findings/general--2502-fork-pin-heal-known-mismatches.md)"
+
+[[mismatch]]
+unit = "heal.face_props"
+case = "gen0427"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.v[27] C++ 0e0, Rust 1e0 (+3 more) (plan/findings/general--2502-fork-pin-heal-known-mismatches.md)"
+
+[[mismatch]]
+unit = "heal.face_props"
+case = "gen0432"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.v[193] C++ 0e0, Rust 1e0 (+11 more) (plan/findings/general--2502-fork-pin-heal-known-mismatches.md)"
+
+[[mismatch]]
+unit = "heal.face_props"
+case = "gen0434"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.v[25] C++ 0e0, Rust 1e0 (+13 more) (plan/findings/general--2502-fork-pin-heal-known-mismatches.md)"
+
+[[mismatch]]
+unit = "heal.face_props"
+case = "gen0435"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.v[27] C++ 0e0, Rust 1e0 (+35 more) (plan/findings/general--2502-fork-pin-heal-known-mismatches.md)"
+
+[[mismatch]]
+unit = "heal.face_props"
+case = "gen0476"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.v[27] C++ 0e0, Rust 1e0 (+7 more) (plan/findings/general--2502-fork-pin-heal-known-mismatches.md)"
+
+[[mismatch]]
+unit = "heal.face_props"
+case = "gen0480"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.v[27] C++ 0e0, Rust 1e0 (+7 more) (plan/findings/general--2502-fork-pin-heal-known-mismatches.md)"
+
+[[mismatch]]
+unit = "heal.face_props"
+case = "gen0482"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.v[27] C++ 0e0, Rust 1e0 (+9 more) (plan/findings/general--2502-fork-pin-heal-known-mismatches.md)"
+
+[[mismatch]]
+unit = "heal.face_props"
+case = "gen0507"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.v[27] C++ 0e0, Rust 1e0 (+19 more) (plan/findings/general--2502-fork-pin-heal-known-mismatches.md)"
+
+[[mismatch]]
+unit = "heal.face_props"
+case = "gen0616"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.v[0] C++ 1.005e3, Rust 1e3 (+23 more) (plan/findings/general--2502-fork-pin-heal-known-mismatches.md)"
+
+[[mismatch]]
+unit = "heal.face_props"
+case = "gen0617"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.v[359] C++ 0e0, Rust 1e0 (+7 more) (plan/findings/general--2502-fork-pin-heal-known-mismatches.md)"
+
+[[mismatch]]
+unit = "heal.face_props"
+case = "gen0638"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.v[27] C++ 0e0, Rust 1e0 (+15 more) (plan/findings/general--2502-fork-pin-heal-known-mismatches.md)"
+
+[[mismatch]]
+unit = "heal.face_props"
+case = "gen0646"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.v[27] C++ 0e0, Rust 1e0 (+16 more) (plan/findings/general--2502-fork-pin-heal-known-mismatches.md)"
+
+[[mismatch]]
+unit = "heal.face_props"
+case = "gen0703"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.v[192] C++ 0e0, Rust 3e0 (+5 more) (plan/findings/general--2502-fork-pin-heal-known-mismatches.md)"
+
+[[mismatch]]
+unit = "heal.face_props"
+case = "gen0719"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.v[27] C++ 0e0, Rust 1e0 (+7 more) (plan/findings/general--2502-fork-pin-heal-known-mismatches.md)"
+
+[[mismatch]]
+unit = "heal.face_props"
+case = "gen0769"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.v[27] C++ 0e0, Rust 1e0 (+22 more) (plan/findings/general--2502-fork-pin-heal-known-mismatches.md)"
+
+[[mismatch]]
+unit = "heal.face_props"
+case = "gen0790"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.v[27] C++ 0e0, Rust 1e0 (+11 more) (plan/findings/general--2502-fork-pin-heal-known-mismatches.md)"
+
+[[mismatch]]
+unit = "heal.face_props"
+case = "gen0796"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.v[25] C++ 0e0, Rust 1e0 (+7 more) (plan/findings/general--2502-fork-pin-heal-known-mismatches.md)"
+
+[[mismatch]]
+unit = "heal.face_props"
+case = "gen0807"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.v[27] C++ 0e0, Rust 1e0 (+31 more) (plan/findings/general--2502-fork-pin-heal-known-mismatches.md)"
+
+[[mismatch]]
+unit = "heal.face_props"
+case = "gen0853"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.v[110] C++ 0e0, Rust 1e0 (+27 more) (plan/findings/general--2502-fork-pin-heal-known-mismatches.md)"
+
+[[mismatch]]
+unit = "heal.face_props"
+case = "gen0894"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.v[193] C++ 0e0, Rust 1e0 (+3 more) (plan/findings/general--2502-fork-pin-heal-known-mismatches.md)"
+
+[[mismatch]]
+unit = "heal.face_props"
+case = "gen0902"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.v[260] C++ 1e0, Rust 3e0 (+3 more) (plan/findings/general--2502-fork-pin-heal-known-mismatches.md)"
+
+[[mismatch]]
+unit = "heal.face_props"
+case = "gen0916"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.v[27] C++ 0e0, Rust 1e0 (+3 more) (plan/findings/general--2502-fork-pin-heal-known-mismatches.md)"
+
+[[mismatch]]
+unit = "heal.face_props"
+case = "gen0973"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.v[27] C++ 0e0, Rust 1e0 (+15 more) (plan/findings/general--2502-fork-pin-heal-known-mismatches.md)"
+
+[[mismatch]]
+unit = "heal.face_props"
+case = "gen0991"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.v[27] C++ 0e0, Rust 1e0 (+15 more) (plan/findings/general--2502-fork-pin-heal-known-mismatches.md)"
+
+[[mismatch]]
+unit = "heal.face_props"
+case = "gen0999"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.v[27] C++ 0e0, Rust 1e0 (+7 more) (plan/findings/general--2502-fork-pin-heal-known-mismatches.md)"
+
+[[mismatch]]
+unit = "heal.face_props"
+case = "gen1014"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.v[27] C++ 0e0, Rust 1e0 (+7 more) (plan/findings/general--2502-fork-pin-heal-known-mismatches.md)"
+
+[[mismatch]]
+unit = "heal.face_props"
+case = "gen1020"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.v[27] C++ 0e0, Rust 1e0 (+23 more) (plan/findings/general--2502-fork-pin-heal-known-mismatches.md)"
+
+[[mismatch]]
+unit = "heal.face_props"
+case = "gen1047"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.v[27] C++ 0e0, Rust 1e0 (+11 more) (plan/findings/general--2502-fork-pin-heal-known-mismatches.md)"
+
+[[mismatch]]
+unit = "heal.face_props"
+case = "gen1065"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.v[193] C++ 0e0, Rust 1e0 (+7 more) (plan/findings/general--2502-fork-pin-heal-known-mismatches.md)"
+
+[[mismatch]]
+unit = "heal.face_props"
+case = "gen1097"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.v[27] C++ 0e0, Rust 1e0 (+11 more) (plan/findings/general--2502-fork-pin-heal-known-mismatches.md)"
+
+[[mismatch]]
+unit = "heal.face_props"
+case = "gen1109"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.v[27] C++ 0e0, Rust 1e0 (+39 more) (plan/findings/general--2502-fork-pin-heal-known-mismatches.md)"
+
+[[mismatch]]
+unit = "heal.face_props"
+case = "gen1140"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.v[27] C++ 0e0, Rust 1e0 (+19 more) (plan/findings/general--2502-fork-pin-heal-known-mismatches.md)"
+
+[[mismatch]]
+unit = "heal.face_props"
+case = "gen1143"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.v[27] C++ 0e0, Rust 1e0 (+23 more) (plan/findings/general--2502-fork-pin-heal-known-mismatches.md)"
+
+[[mismatch]]
+unit = "heal.face_props"
+case = "gen1183"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.v[27] C++ 0e0, Rust 1e0 (+7 more) (plan/findings/general--2502-fork-pin-heal-known-mismatches.md)"
+
+[[mismatch]]
+unit = "heal.face_props"
+case = "gen1227"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.v[27] C++ 0e0, Rust 1e0 (+3 more) (plan/findings/general--2502-fork-pin-heal-known-mismatches.md)"
+
+[[mismatch]]
+unit = "heal.face_props"
+case = "gen1240"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.v[27] C++ 0e0, Rust 1e0 (+32 more) (plan/findings/general--2502-fork-pin-heal-known-mismatches.md)"
+
+[[mismatch]]
+unit = "heal.face_props"
+case = "gen1312"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.v[27] C++ 0e0, Rust 1e0 (+7 more) (plan/findings/general--2502-fork-pin-heal-known-mismatches.md)"
+
+[[mismatch]]
+unit = "heal.face_props"
+case = "gen1323"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.v[357] C++ 0e0, Rust 1e0 (+11 more) (plan/findings/general--2502-fork-pin-heal-known-mismatches.md)"
+
+[[mismatch]]
+unit = "heal.face_props"
+case = "gen1354"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.v[27] C++ 0e0, Rust 1e0 (+11 more) (plan/findings/general--2502-fork-pin-heal-known-mismatches.md)"
+
+[[mismatch]]
+unit = "heal.face_props"
+case = "gen1377"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.v[27] C++ 0e0, Rust 1e0 (+15 more) (plan/findings/general--2502-fork-pin-heal-known-mismatches.md)"
+
+[[mismatch]]
+unit = "heal.face_props"
+case = "gen1420"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.v[27] C++ 0e0, Rust 1e0 (+27 more) (plan/findings/general--2502-fork-pin-heal-known-mismatches.md)"
+
+[[mismatch]]
+unit = "heal.face_props"
+case = "gen1425"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.v[27] C++ 0e0, Rust 1e0 (+3 more) (plan/findings/general--2502-fork-pin-heal-known-mismatches.md)"
+
+[[mismatch]]
+unit = "heal.face_props"
+case = "gen1431"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.v[27] C++ 0e0, Rust 1e0 (+11 more) (plan/findings/general--2502-fork-pin-heal-known-mismatches.md)"
+
+[[mismatch]]
+unit = "heal.face_props"
+case = "gen1464"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.v[27] C++ 0e0, Rust 1e0 (+15 more) (plan/findings/general--2502-fork-pin-heal-known-mismatches.md)"
+
+[[mismatch]]
+unit = "heal.face_props"
+case = "gen1473"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.v[27] C++ 0e0, Rust 1e0 (+19 more) (plan/findings/general--2502-fork-pin-heal-known-mismatches.md)"
+
+[[mismatch]]
+unit = "heal.face_props"
+case = "gen1482"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.v[27] C++ 0e0, Rust 1e0 (+15 more) (plan/findings/general--2502-fork-pin-heal-known-mismatches.md)"
+
+[[mismatch]]
+unit = "heal.face_props"
+case = "gen1483"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.v[25] C++ 0e0, Rust 1e0 (+1 more) (plan/findings/general--2502-fork-pin-heal-known-mismatches.md)"
+
+[[mismatch]]
+unit = "heal.face_props"
+case = "s3gen0002"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.v[29] C++ 1e0, Rust 0e0 (+28 more) (plan/findings/general--2502-fork-pin-heal-known-mismatches.md)"
+
+[[mismatch]]
+unit = "heal.face_props"
+case = "s3gen0017"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.v[0] C++ 1e3, Rust 1.04e3 (+45 more) (plan/findings/general--2502-fork-pin-heal-known-mismatches.md)"
+
+[[mismatch]]
+unit = "heal.face_props"
+case = "s3gen0027"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.v[85] C++ 3e0, Rust 1e0 (+1 more) (plan/findings/general--2502-fork-pin-heal-known-mismatches.md)"
+
+[[mismatch]]
+unit = "heal.face_props"
+case = "s3gen0033"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.v[83] C++ 1e3, Rust 1.04e3 (+28 more) (plan/findings/general--2502-fork-pin-heal-known-mismatches.md)"
+
+[[mismatch]]
+unit = "heal.face_props"
+case = "s3gen0044"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.v[29] C++ 1e0, Rust 0e0 (+43 more) (plan/findings/general--2502-fork-pin-heal-known-mismatches.md)"
+
+[[mismatch]]
+unit = "heal.face_props"
+case = "s3gen0051"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.v[334] C++ 3e0, Rust 1e0 (plan/findings/general--2502-fork-pin-heal-known-mismatches.md)"
+
+[[mismatch]]
+unit = "heal.face_props"
+case = "s3gen0063"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.v[25] C++ 0e0, Rust 1e0 (+23 more) (plan/findings/general--2502-fork-pin-heal-known-mismatches.md)"
+
+[[mismatch]]
+unit = "heal.face_props"
+case = "s3gen0073"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.v[0] C++ 1e3, Rust 1.04e3 (+36 more) (plan/findings/general--2502-fork-pin-heal-known-mismatches.md)"
+
+[[mismatch]]
+unit = "heal.face_props"
+case = "s3gen0089"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.v[27] C++ 0e0, Rust 1e0 (+1 more) (plan/findings/general--2502-fork-pin-heal-known-mismatches.md)"
+
+[[mismatch]]
+unit = "heal.face_props"
+case = "s3gen0097"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.v[29] C++ 1e0, Rust 0e0 (+21 more) (plan/findings/general--2502-fork-pin-heal-known-mismatches.md)"
+
+[[mismatch]]
+unit = "heal.face_props"
+case = "s3gen0143"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.v[29] C++ 1e0, Rust 0e0 (+3 more) (plan/findings/general--2502-fork-pin-heal-known-mismatches.md)"
+
+[[mismatch]]
+unit = "heal.face_props"
+case = "s3gen0155"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.v[2] C++ 3e0, Rust 2e0 (plan/findings/general--2502-fork-pin-heal-known-mismatches.md)"
+
+[[mismatch]]
+unit = "heal.face_props"
+case = "s3gen0192"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.v[29] C++ 1e0, Rust 0e0 (+3 more) (plan/findings/general--2502-fork-pin-heal-known-mismatches.md)"
+
+[[mismatch]]
+unit = "heal.face_props"
+case = "s3gen0216"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.v[2] C++ 3e0, Rust 1e0 (plan/findings/general--2502-fork-pin-heal-known-mismatches.md)"
+
+[[mismatch]]
+unit = "heal.face_props"
+case = "s3gen0235"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.v[0] C++ 1e3, Rust 1.04e3 (+23 more) (plan/findings/general--2502-fork-pin-heal-known-mismatches.md)"
+
+[[mismatch]]
+unit = "heal.face_props"
+case = "s3gen0238"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.v[30] C++ 3e0, Rust 1e0 (plan/findings/general--2502-fork-pin-heal-known-mismatches.md)"
+
+[[mismatch]]
+unit = "heal.face_props"
+case = "s3gen0247"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.v[85] C++ 3e0, Rust 2e0 (plan/findings/general--2502-fork-pin-heal-known-mismatches.md)"
+
+[[mismatch]]
+unit = "heal.face_props"
+case = "s3gen0294"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.v[25] C++ 0e0, Rust 1e0 (+9 more) (plan/findings/general--2502-fork-pin-heal-known-mismatches.md)"

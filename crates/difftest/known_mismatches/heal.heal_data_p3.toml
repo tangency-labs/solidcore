@@ -1,0 +1,42 @@
+# #2502: these cases move with the difftest's C++ reference, the SMLib fork
+# v1.1.0-alpha.1 (8eac63c); plan/findings/general--2502-fork-pin-heal-known-mismatches.md.
+
+[[mismatch]]
+unit = "heal.heal_data_p3"
+case = "degen_props_sliver_w2e-05_s1_a0"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 3058, Rust 3062 (plan/findings/general--2502-fork-pin-heal-known-mismatches.md)"
+
+[[mismatch]]
+unit = "heal.heal_data_p3"
+case = "degen_props_sliver_w2e-05_s1_a0.7"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 3058, Rust 3060 (plan/findings/general--2502-fork-pin-heal-known-mismatches.md)"
+
+[[mismatch]]
+unit = "heal.heal_data_p3"
+case = "degen_props_sliver_w2e-05_s10_a0"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 3058, Rust 3062 (plan/findings/general--2502-fork-pin-heal-known-mismatches.md)"
+
+[[mismatch]]
+unit = "heal.heal_data_p3"
+case = "degen_props_sliver_w2e-05_s10_a0.7"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[128] C++ 2.395770963567772e-21, Rust 9.999999999999999e-6 (+4 more) (plan/findings/general--2502-fork-pin-heal-known-mismatches.md)"
+
+[[mismatch]]
+unit = "heal.heal_data_p3"
+case = "gen0049"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[97] C++ 8.886119947416683e-17, Rust 1.9279638981753172e-16 (plan/findings/general--2502-fork-pin-heal-known-mismatches.md)"
+
+[[mismatch]]
+unit = "heal.heal_data_p3"
+case = "gen0114"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[70] C++ 7.160723346098895e-15, Rust 1.06048094183993e-14 (plan/findings/general--2502-fork-pin-heal-known-mismatches.md)"
+
+[[mismatch]]
+unit = "heal.heal_data_p3"
+case = "gen0303"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[70] C++ 8.08254562088053e-16, Rust 1.0235750533041806e-15 (plan/findings/general--2502-fork-pin-heal-known-mismatches.md)"
+
+[[mismatch]]
+unit = "heal.heal_data_p3"
+case = "gen0307"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[97] C++ 1.0805156823142815e-14, Rust 1.3873790429220374e-14 (plan/findings/general--2502-fork-pin-heal-known-mismatches.md)"
