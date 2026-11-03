@@ -1326,26 +1326,74 @@ fn a_mitre_of_four_chamfers_is_refused() {
 // (-5/2, -1/2, 15/2), X(-y) = (0, -2, 8). The plane through X(-y), X(+y), X(+x) has
 // normal (1, 4, 0) x (3/2, 5/2, 1/2) = (2, -1/2, -7/2), and X(-x) - X(-y) =
 // (-5/2, 3/2, -1/2) is off it by 4 / sqrt(33/2), about 0.98: no plane holds the four
-// crossings, so no facet; refused, naming why.
+// crossings, so no facet. The corner is a patch (#2345 section 6, the owner's answer 3),
+// whichever corner type was asked: the chamfers stop at their crossings, and an order-0
+// fill closes the skew quadrilateral of their end sections, G0 to each chamfer.
+//
+// At four sides the fill is the bilinear map of the crossings. It is the interior map of
+// least bending energy that is each end section along its edge of the domain (a square),
+// and the least degree that meets those conditions is 2, where they hold for one map only:
+// a quadratic linear along all four sides of a square is the bilinear one. So the corner
+// face is the hyperbolic paraboloid through the crossings, its centre (the domain's
+// centre) at their mean (-1/4, 0, 8), its edges the exact end sections.
+//
+// The volume, by the divergence theorem, is (1/3) the sum over the faces of the integral
+// of x . n. For a bilinear patch that integral is the mean of its two triangulations', so
+// the body's volume is the mean of the volumes of the two polyhedra whose corner faces are
+// the patch's two triangulations, the other faces kept. Their faces, from the cuts (in a
+// horizontal section, a square of half side a = 10 - z, each cut takes l from both sides
+// at its corner): the base octagon (9, 10), (-7, 10), (-10, 7), (-10, -8), (-8, -10),
+// (8, -10), (10, -8), (10, 9) at z = 0; each side face the triangle from its base edge to
+// its crossing; each chamfer the quadrilateral from its base cut to its two crossings.
+// Summed as cones from (0, 0, 2), which sees every face from inside, in exact arithmetic:
+// 3754/3 with the corner split along X(+x)-X(-x), 3752/3 along X(+y)-X(-y). They differ
+// by the crossings' tetrahedron, |det(X(+y) - X(+x), X(-x) - X(+x), X(-y) - X(+x))| / 6
+// = 2/3, as they must. The mean: 1251.
 #[test]
-fn an_irregular_apex_of_four_chamfers_is_refused() {
-    let (mut k, mut b, edges) = pyramid();
-    let s2 = std::f64::consts::SQRT_2;
-    let refused = chamfer(
-        &mut k,
-        &mut b,
-        &edges,
-        &[s2, 3.0 * s2, 2.0 * s2, 2.0 * s2],
-        BlendChamferCorner::Facet,
-    )
-    .unwrap_err();
-    eprintln!("{refused:?}");
-    assert_eq!(refused.code, 9, "CornerUnsupported");
-    assert!(
-        refused.comment.contains("not in one plane"),
-        "{}",
-        refused.comment
-    );
+fn an_irregular_apex_of_four_chamfers_is_a_corner_patch() {
+    let xp = Point3::new(1.5, 0.5, 8.5); // X(+x)
+    let yp = Point3::new(1.0, 2.0, 8.0); // X(+y)
+    let xm = Point3::new(-2.5, -0.5, 7.5); // X(-x)
+    let ym = Point3::new(0.0, -2.0, 8.0); // X(-y)
+    let want = 1251.0;
+    let centre = (xp + yp + xm + ym) * 0.25;
+    for corner in [BlendChamferCorner::Facet, BlendChamferCorner::Mitre] {
+        let (mut k, mut b, edges) = pyramid();
+        let s2 = std::f64::consts::SQRT_2;
+        chamfer(
+            &mut k,
+            &mut b,
+            &edges,
+            &[s2, 3.0 * s2, 2.0 * s2, 2.0 * s2],
+            corner,
+        )
+        .unwrap();
+        let (n, lines, v) = report(&mut k, &mut b);
+        let xs = [xp, yp, xm, ym];
+        let patches = faces_on(&b, &xs);
+        assert_eq!(patches.len(), 1, "one corner face on the crossings");
+        let s = face2::surface(&b, patches[0]).unwrap().unwrap();
+        assert!(
+            matches!(s.kind(), SurfaceKind::BSpline(_)),
+            "the patch is the fill, got {:?}",
+            s.kind()
+        );
+        let mut off = s
+            .evaluate_point(&k, Point2::new(0.0, 0.0))
+            .unwrap()
+            .distance(centre);
+        for i in 0..4 {
+            let (a, c) = (xs[i], xs[(i + 1) % 4]);
+            let es = edges_between(&b, a, c);
+            assert_eq!(es.len(), 1, "one corner edge from {a:?} to {c:?}");
+            off = off.max(off_exact_segment(&k, &b, es[0], a, c));
+        }
+        eprintln!("{corner:?}, irregular apex: volume {v:.12} want {want:.12}; {n:?}; off {off:.3e}; {lines:?}");
+        assert!(lines.is_empty(), "{lines:?}");
+        assert_eq!(n, (10, 20, 12));
+        assert!(off <= EXACT * 20.0, "{off}");
+        assert!((v - want).abs() <= 1e-12 * want, "{v}");
+    }
 }
 
 // The corner keeps its definition, the plain data tangency-labs/solidcore#2488's
