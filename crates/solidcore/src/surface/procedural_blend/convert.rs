@@ -242,7 +242,7 @@ fn from_record_at(k: &Kernel, rec: &ProceduralBlendRecord, depth: u32) -> Result
                 match kind_of(*kind) {
                     None => Surface::from(form),
                     // the analytic surface derived from the form, the form checked on it
-                    Some(kind) => AnalyticSupport::derive(kind, &form)
+                    Some(kind) => AnalyticSupport::derive(k, kind, &form)
                         .and_then(|a| a.build(k, form))
                         .map_err(|e| match e {
                             SolidError::InvalidInput { .. } => SolidError::invalid_input(

@@ -892,8 +892,8 @@ fn evaluating_on_two_threads_equals_one_bit_for_bit() {
 /// evaluates as the original, to the rounding of the part, whatever frame, angles and
 /// swap the original was made on (the primitives' faces, partial ones turned from 30
 /// degrees, and a box edge's round of the exact line class, whose frame is its start
-/// rail's). A form on the surface whose own (u, v) is not the analytic's (a cylinder whose
-/// height runs unevenly along its rows) is refused.
+/// rail's). A form on the surface whose own (u, v) is not the analytic's (a quarter cylinder
+/// whose arc is reparametrised) is refused.
 #[test]
 fn a_revolved_label_needs_the_form_s_parametrisation() {
     use solidcore::blend::fillet_executive::api::fillet_edges;
@@ -932,7 +932,7 @@ fn a_revolved_label_needs_the_form_s_parametrisation() {
                 continue;
             }
             let form = as_b_spline(&k, s).unwrap().unwrap().into_owned();
-            let back = AnalyticSupport::derive(a.kind(), &form)
+            let back = AnalyticSupport::derive(&k, a.kind(), &form)
                 .and_then(|d| d.build(&k, form.copy()))
                 .unwrap();
             assert_eq!(back.type_code(), s.type_code());
@@ -956,41 +956,49 @@ fn a_revolved_label_needs_the_form_s_parametrisation() {
             checked += 1;
         }
     }
-    assert!(checked >= 9, "{checked}");
+    // (the partial torus is a surface of revolution, no support label)
+    assert_eq!(checked, 8);
 
-    // a quarter cylinder of radius 2 about z, heights 0, m, 5 along its quadratic rows
-    let quarter = |m: f64| {
-        let w = std::f64::consts::FRAC_1_SQRT_2;
-        let arc = [(2.0, 0.0, 1.0), (2.0, 2.0, w), (0.0, 2.0, 1.0)];
-        let mut cps = Vec::new();
-        for z in [0.0, m, 5.0] {
-            for &(x, y, wt) in &arc {
-                cps.push(solidcore::nurbs::math::CPoint::new(x * wt, y * wt, z * wt, wt));
-            }
-        }
-        let rows: Vec<Vec<_>> = cps.chunks(3).map(<[_]>::to_vec).collect();
+    // a quarter cylinder of radius 2 about z from height 0 to 5, its quarter circle the
+    // rational quadratic arc with end weights 1 and c^2 (c = 1 the circle's own
+    // parametrisation; another c the same arc reparametrised, by a Moebius map)
+    let quarter = |c: f64| {
+        let w = std::f64::consts::FRAC_1_SQRT_2 * c;
+        let arc = [(2.0, 0.0, 1.0), (2.0, 2.0, w), (0.0, 2.0, c * c)];
+        let rows: Vec<Vec<_>> = [0.0, 5.0]
+            .iter()
+            .map(|&z| {
+                arc.iter()
+                    .map(|&(x, y, wt)| {
+                        solidcore::nurbs::math::CPoint::new(x * wt, y * wt, z * wt, wt)
+                    })
+                    .collect()
+            })
+            .collect();
         let nurb = solidcore::nurbs::srf_basic::Surface::new(
             rows,
+            1,
             2,
-            2,
-            vec![0.0, 0.0, 0.0, 1.0, 1.0, 1.0],
+            vec![0.0, 0.0, 1.0, 1.0],
             vec![0.0, 0.0, 0.0, 1.0, 1.0, 1.0],
         )
         .unwrap();
         BSplineSurface::from_nurb(nurb, true)
     };
-    let even = quarter(2.5);
-    let built = AnalyticSupport::derive(SupportKind::Cylinder, &even)
-        .and_then(|d| d.build(&k, even.copy()))
+    let own = quarter(1.0);
+    let built = AnalyticSupport::derive(&k, SupportKind::Cylinder, &own)
+        .and_then(|d| d.build(&k, own.copy()))
         .unwrap();
-    let uv = Point2::new(0.3, 0.7);
-    let off = (built.evaluate_point(&k, uv).unwrap() - even.evaluate_point(uv).unwrap()).length();
-    assert!(off <= 64.0 * f64::EPSILON * 5.0, "{off:e}");
-    let uneven = quarter(1.0);
+    for uv in [Point2::new(0.3, 0.7), Point2::new(0.9, 0.1)] {
+        let off =
+            (built.evaluate_point(&k, uv).unwrap() - own.evaluate_point(uv).unwrap()).length();
+        assert!(off <= 64.0 * f64::EPSILON * 5.0, "{off:e}");
+    }
+    let moved = quarter(2.0);
     assert!(
-        AnalyticSupport::derive(SupportKind::Cylinder, &uneven)
-            .and_then(|d| d.build(&k, uneven.copy()))
+        AnalyticSupport::derive(&k, SupportKind::Cylinder, &moved)
+            .and_then(|d| d.build(&k, moved.copy()))
             .is_err(),
-        "a cylinder form whose height is not affine in u was taken"
+        "a cylinder form whose angle is not the circle's own parameter was taken"
     );
 }

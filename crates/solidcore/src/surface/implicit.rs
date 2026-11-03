@@ -20,7 +20,7 @@ use crate::surface::cone::Cone;
 use crate::surface::plane::Plane;
 use crate::surface::sphere::Sphere;
 use crate::surface::surface::{Surface, SurfaceKind};
-use crate::surface::torus::{Torus, TorusOptions};
+use crate::surface::torus::Torus;
 
 const OP: &str = "surface::implicit::lies_on";
 
@@ -357,13 +357,16 @@ impl AnalyticSupport {
     }
 
     /// The analytic surface on the NURB `form`: refused unless `form` lies on it
-    /// ([`lies_on`]) or its placement's axes are not orthonormal. The surface keeps its placement as given and takes `form` as its NURB,
-    /// so it evaluates as `form` wherever its NURB is read.
+    /// ([`lies_on`]) and its placement's axes are orthonormal. A plane keeps its placement
+    /// as given; a cylinder, cone, sphere or torus is the one the kernel recognises in
+    /// `form` ([`recognise`]), which must be this one, and must evaluate as `form` at the
+    /// form's own parameters: it is the form's parametrisation, its frame, sweep, generator
+    /// range and swap the form's. The surface takes `form` as its NURB.
     ///
     /// # Errors
     ///
-    /// `InvalidInput` where `form` is off the analytic surface; those of the canonical
-    /// constructors and of [`lies_on`].
+    /// `InvalidInput` where `form` is off the analytic surface or is not its
+    /// parametrisation; those of the recognisers, the evaluations and [`lies_on`].
     pub fn build(&self, k: &Kernel, form: BSplineSurface) -> Result<Surface> {
         // the placement's axes as stored: unit and square to rounding (8 ulps)
         let p = match self {
@@ -388,65 +391,104 @@ impl AnalyticSupport {
                 "a support's analytic kind disagrees with its NURBS form",
             ));
         }
-        Ok(match *self {
-            Self::Plane {
-                placement,
-                uv_scale,
-                domain,
-            } => Surface::from(Plane::from_stored(placement, uv_scale, domain, form)),
-            Self::Cylinder { placement, radius } => {
-                let mut c = Cone::create_canonical_cylinder(k, &placement, radius)?;
-                c.rev.position = placement;
-                c.rev.base = form;
-                Surface::from(c)
-            }
-            Self::Cone {
-                placement,
-                base_radius,
-                semi_angle_deg,
-            } => {
-                let mut c = Cone::create_canonical_with_semi_angle(
-                    k,
-                    &placement,
-                    base_radius,
-                    semi_angle_deg,
-                    None,
-                    false,
-                    false,
-                )?;
-                c.rev.position = placement;
-                c.rev.base = form;
-                Surface::from(c)
-            }
-            Self::Sphere { placement, radius } => {
-                let mut sp = Sphere::create_canonical(k, &placement, radius)?;
-                sp.base.position = placement;
-                sp.base.base = form;
-                Surface::from(sp)
-            }
-            Self::Torus {
-                placement,
-                major_radius,
-                minor_radius,
-            } => {
-                let mut t = Torus::create_canonical(
-                    k,
-                    &placement,
-                    major_radius,
-                    minor_radius,
-                    TorusOptions {
-                        swap_uv: false,
-                        inside_out: false,
-                        circle_nurb: None,
-                    },
-                    None,
-                )?;
-                t.base.position = placement;
-                t.base.base = form;
-                Surface::from(t)
-            }
-        })
+        if let Self::Plane {
+            placement,
+            uv_scale,
+            domain,
+        } = *self
+        {
+            return Ok(Surface::from(Plane::from_stored(
+                placement, uv_scale, domain, form,
+            )));
+        }
+        // a surface of revolution: the one the kernel recognises in the form, which must be
+        // this one, take the form as its NURB and evaluate as the form at the form's own
+        // parameters
+        let not_form = || {
+            SolidError::invalid_input(
+                OP_BUILD,
+                "a support's analytic surface is not its NURBS form's parametrisation",
+            )
+        };
+        let mut surface = recognise(k, self.kind(), &form)?.ok_or_else(not_form)?;
+        if Self::of(&surface) != Some(*self) {
+            return Err(not_form());
+        }
+        match surface.kind_mut() {
+            SurfaceKind::Cone(c) => c.rev.base = form.copy(),
+            SurfaceKind::Sphere(sp) => sp.base.base = form.copy(),
+            SurfaceKind::Torus(t) => t.base.base = form.copy(),
+            _ => return Err(not_form()),
+        }
+        if !evaluates_as(k, &surface, &form)? {
+            return Err(not_form());
+        }
+        Ok(surface)
     }
+}
+
+/// The cylinder, cone, sphere or torus of kind `kind` the kernel recognises in `form`
+/// (`Cone::IsNurbSurfaceCone`, `SmSphere::IsNurbSurfaceSphere`,
+/// `SmTorus::IsNurbSurfaceTorus`, as `CopyAndAddAnalytics` and the blends' quadrics read
+/// them): on the form's frame, sweep and generator ranges and swap. A cone of no angle is
+/// a cylinder for the cylinder kind. `None` for none (the recognisers' statuses that find
+/// none included).
+///
+/// # Errors
+///
+/// [`SolidError::Unported`] and cancellation from the recognisers.
+fn recognise(k: &Kernel, kind: SupportKind, form: &BSplineSurface) -> Result<Option<Surface>> {
+    let none_on_status = |r: Result<Option<Surface>>| match r {
+        Err(e @ (SolidError::Unported { .. } | SolidError::Cancelled { .. })) => Err(e),
+        Err(_) => Ok(None),
+        Ok(s) => Ok(s),
+    };
+    match kind {
+        SupportKind::Plane => Ok(None),
+        SupportKind::Cylinder | SupportKind::Cone => {
+            none_on_status(Cone::is_nurb_surface_cone(k, form, 1.0).map(|c| {
+                c.map(|mut c| {
+                    if kind == SupportKind::Cylinder && c.semi_angle_deg == 0.0 {
+                        c.cylinder = true;
+                    }
+                    Surface::from(c)
+                })
+            }))
+        }
+        SupportKind::Sphere => none_on_status(
+            Sphere::is_nurb_surface_sphere(k, form, 1.0).map(|s| s.map(Surface::from)),
+        ),
+        SupportKind::Torus => {
+            none_on_status(Torus::is_nurb_surface_torus(k, form, 1.0).map(|t| t.map(Surface::from)))
+        }
+    }
+}
+
+/// Whether `surface` evaluates as `form` at the form's Greville parameters (each control
+/// point's), within the rounding of the two evaluations: `gamma_K` times the form's size,
+/// `K = 16 (p + q + 2)` for the rational evaluation of degrees `(p, q)` and the analytic
+/// one's conversion of the parameters and its trigonometry, a few ulps per operation.
+///
+/// # Errors
+///
+/// Those of the evaluations and of the form's knots.
+fn evaluates_as(k: &Kernel, surface: &Surface, form: &BSplineSurface) -> Result<bool> {
+    let (net, p, q) = euclidean_net(form)?;
+    let size = net.iter().flatten().fold(0.0_f64, |a, x| a.max(x.length()));
+    let tol = gamma(16 * (p + q + 2)) * size;
+    for u in greville(form, true)? {
+        for v in greville(form, false)? {
+            let uv = Vec2::new(u, v);
+            let off = (surface.evaluate_point(k, uv)? - form.evaluate_point(uv)?).length();
+            if !matches!(
+                off.partial_cmp(&tol),
+                Some(core::cmp::Ordering::Less | core::cmp::Ordering::Equal)
+            ) {
+                return Ok(false);
+            }
+        }
+    }
+    Ok(true)
 }
 
 const OP_DERIVE: &str = "surface::implicit::AnalyticSupport::derive";
@@ -489,37 +531,6 @@ fn euclidean_net(form: &BSplineSurface) -> Result<(Vec<Vec<Vec3>>, usize, usize)
     ))
 }
 
-/// The circle of a rational quadratic arc `p0, p1, p2` (tangent to `p0 p1` at `p0` and
-/// to `p1 p2` at `p2`): its centre, radius and unit normal; the centre solves the two
-/// tangency conditions in the arc's plane. `None` for a degenerate arc.
-fn arc_circle(p0: Vec3, p1: Vec3, p2: Vec3) -> Option<(Vec3, f64, Vec3)> {
-    let (a, b) = (p1 - p0, p1 - p2);
-    let n = a.cross(p2 - p1);
-    // rows a, b, n; right-hand side a.p0, b.p2, n.p0 (Cramer)
-    let det = a.dot(b.cross(n));
-    let scale = a.length() * b.length() * n.length();
-    // (a pick of the arcs that span a plane, not a tolerance on the result)
-    if det.abs().partial_cmp(&(1e-12 * scale)) != Some(core::cmp::Ordering::Greater) {
-        return None;
-    }
-    let (ra, rb, rn) = (a.dot(p0), b.dot(p2), n.dot(p0));
-    let centre = (b.cross(n) * ra + n.cross(a) * rb + a.cross(b) * rn) * (1.0 / det);
-    Some((centre, (p0 - centre).length(), n * (1.0 / n.length())))
-}
-
-/// The first non-degenerate arc's circle of the row `k` of the net along `u` (`along_u`)
-/// or `v`.
-fn row_circle(net: &[Vec<Vec3>], along_u: bool, k: usize) -> Option<(Vec3, f64, Vec3)> {
-    let at = |i: usize| -> Option<Vec3> {
-        if along_u {
-            net.get(i)?.get(k).copied()
-        } else {
-            net.get(k)?.get(i).copied()
-        }
-    };
-    arc_circle(at(0)?, at(1)?, at(2)?)
-}
-
 /// The Greville abscissae of a NURBS surface along u (`along_u`) or v: each control
 /// point's average of its `degree` inner knots.
 fn greville(form: &BSplineSurface, along_u: bool) -> Result<Vec<f64>> {
@@ -543,28 +554,20 @@ fn greville(form: &BSplineSurface, along_u: bool) -> Result<Vec<f64>> {
         .collect())
 }
 
-/// A unit vector square to `a`.
-fn square_to(a: Vec3) -> Vec3 {
-    let t = if a.x.abs() < 0.9 { Vec3::X } else { Vec3::Y };
-    let x = t - a * t.dot(a);
-    x * (1.0 / x.length())
-}
-
 impl AnalyticSupport {
     /// The analytic surface of kind `kind` a NURBS form is, derived from the form: a
-    /// plane from its corners (its scales and domain from the knots); a surface of
-    /// revolution from its circles, the rational quadratic arcs of its rows. Two rows of
-    /// the revolving direction are circles about one axis (parallel normals, centres on
-    /// the axis); a cylinder's radius is theirs, a cone's grows between them, a sphere's
-    /// and a torus' centre and radii come from a generating arc. Exact to rounding: a
-    /// rational NURBS represents these surfaces exactly. [`AnalyticSupport::build`] then
-    /// checks the form against the derived surface.
+    /// plane from its corners (its scales and domain from the knots); a cylinder, cone,
+    /// sphere or torus as the kernel recognises it in the form ([`recognise`]: the
+    /// recognisers `CopyAndAddAnalytics` runs), on the form's own frame, sweep, generator
+    /// range and swap, so that it is the form's parametrisation, not only its point set.
+    /// Exact to rounding: a rational NURBS represents these surfaces exactly.
+    /// [`AnalyticSupport::build`] then checks the form against the derived surface.
     ///
     /// # Errors
     ///
-    /// `InvalidInput` where the form is not of that kind (no circles about one axis, a
-    /// degenerate corner); those of the control net.
-    pub fn derive(kind: SupportKind, form: &BSplineSurface) -> Result<Self> {
+    /// `InvalidInput` where the form is not of that kind (a degenerate corner, no surface
+    /// of the kind recognised in it); those of the control net and the recognisers.
+    pub fn derive(k: &Kernel, kind: SupportKind, form: &BSplineSurface) -> Result<Self> {
         let not_kind =
             || SolidError::invalid_input(OP_DERIVE, "a support's NURBS form is not of its kind");
         let (net, p, q) = euclidean_net(form)?;
@@ -631,80 +634,14 @@ impl AnalyticSupport {
                 domain: d,
             });
         }
-        // the revolving direction: rows of quadratic arcs about one axis
-        let mut found = None;
-        for along_u in [true, false] {
-            let (deg, rows) = if along_u { (p, nv) } else { (q, nu) };
-            if deg != 2 {
-                continue;
-            }
-            let circles: Vec<_> = (0..rows)
-                .filter_map(|k| row_circle(&net, along_u, k))
-                .collect();
-            let (Some(&(ca, ra, na)), Some(&(cb, rb, nb))) = (circles.first(), circles.last())
-            else {
-                continue;
-            };
-            let size = ra.max(rb).max((cb - ca).length());
-            // (these pick the revolving direction; the form is checked against the
-            // derived surface by `build`)
-            let parallel = na.cross(nb).length() <= 1e-9;
-            let on_axis = (cb - ca).cross(na).length() <= 1e-9 * size.max(1.0);
-            if parallel && on_axis {
-                found = Some((along_u, ca, ra, cb, rb, na));
-                break;
-            }
-        }
-        let Some((along_u, ca, ra, cb, rb, axis)) = found else {
-            return Err(not_kind());
-        };
-        let placement =
-            |o: Vec3| Axis2Placement::from_stored(o, square_to(axis), axis.cross(square_to(axis)));
-        // a generating arc: the first column across the revolving direction
-        let generator = if along_u {
-            row_circle(&net, false, 0)
-        } else {
-            row_circle(&net, true, 0)
-        };
-        Ok(match kind {
-            SupportKind::Plane => return Err(not_kind()),
-            SupportKind::Cylinder => Self::Cylinder {
-                placement: placement(ca),
-                radius: ra,
-            },
-            SupportKind::Cone => {
-                let h = (cb - ca).dot(axis);
-                if h.abs().partial_cmp(&0.0) != Some(core::cmp::Ordering::Greater) {
-                    return Err(not_kind());
-                }
-                Self::Cone {
-                    placement: placement(ca),
-                    base_radius: ra,
-                    semi_angle_deg: ((rb - ra) / h).atan() * 180.0 / PI,
-                }
-            }
-            SupportKind::Sphere => {
-                let Some((c, r, _)) = generator else {
-                    return Err(not_kind());
-                };
-                Self::Sphere {
-                    placement: placement(c),
-                    radius: r,
-                }
-            }
-            SupportKind::Torus => {
-                let Some((g, minor, _)) = generator else {
-                    return Err(not_kind());
-                };
-                let t = (g - ca).dot(axis);
-                let centre = ca + axis * t;
-                Self::Torus {
-                    placement: placement(centre),
-                    major_radius: (g - centre).length(),
-                    minor_radius: minor,
-                }
-            }
-        })
+        // a surface of revolution: the analytic surface the kernel recognises in the form
+        // (on the form's own frame, sweep and generator ranges and swap), of the label's
+        // kind; `build` checks it evaluates as the form
+        recognise(k, kind, form)?
+            .as_ref()
+            .and_then(Self::of)
+            .filter(|a| a.kind() == kind)
+            .ok_or_else(not_kind)
     }
 
     /// Its kind, without its parameters.
