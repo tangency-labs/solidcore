@@ -1629,7 +1629,21 @@ fn do_point_intersection_body<'s, V: IntersectorVirtuals<'s> + ?Sized>(
         {
             v.intersector_mut().reverse_curve_direction()?;
             v.intersector_mut().curve_trace_direction *= -1.0;
-            trace_curve_with(v, k, tsp_id, &out.curves_3d)?;
+            // Not upstream (#2500): a stop distance bounds the extension before the
+            // start as clipping bounds the one after the end (the start is now the
+            // reversed curve's last point)
+            let distance = v.intersector().extension_distance;
+            if v.intersector().clips_extension_before_start && distance > 0.0 {
+                let last = v.intersector().curve_points.last().copied();
+                let start_param = match last {
+                    Some(id) => v.intersector().point(id)?.curve_parameter,
+                    None => 0.0,
+                };
+                v.intersector_mut().backward_extension_limit = Some(start_param + distance);
+            }
+            let backward = trace_curve_with(v, k, tsp_id, &out.curves_3d);
+            v.intersector_mut().backward_extension_limit = None;
+            backward?;
             v.intersector_mut().reverse_curve_direction()?;
             v.intersector_mut().curve_trace_direction *= -1.0;
         }

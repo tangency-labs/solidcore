@@ -1421,6 +1421,14 @@ pub fn test_point_with<'s, V: super::p4::IntersectorVirtuals<'s> + ?Sized>(
         return Ok(Some(true));
     }
 
+    // Not upstream (#2500): the extension traced back from the start stops past its
+    // stop distance
+    if let Some(limit) = v.intersector().backward_extension_limit {
+        if v.intersector().point(next)?.curve_parameter > limit {
+            return Ok(Some(true));
+        }
+    }
+
     // Check whether the point is inside of the domain of the surfaces.
     let next_tsp = v.intersector().point(next)?.clone();
     let mut on_boundary = false;
