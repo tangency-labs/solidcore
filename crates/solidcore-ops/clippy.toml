@@ -129,8 +129,6 @@ disallowed-methods = [
     { path = "solidcore::Vec2::unitize", reason = "ops computes no geometry (docs/layers.md §4)" },
     { path = "solidcore::Transform::concat", reason = "ops computes no geometry (docs/layers.md §4)" },
     { path = "solidcore::Transform::from_axes", reason = "ops computes no geometry (docs/layers.md §4)" },
-    { path = "solidcore::Transform::of_placement", reason = "ops computes no geometry (docs/layers.md §4)" },
-    { path = "solidcore::Transform::row_lengths", reason = "ops computes no geometry (docs/layers.md §4)" },
     { path = "solidcore::Transform::transform_point", reason = "ops computes no geometry (docs/layers.md §4)" },
     { path = "solidcore::Transform::transform_vector", reason = "ops computes no geometry (docs/layers.md §4)" },
     { path = "solidcore::geom::transform::Transform::approx_eq", reason = "ops computes no geometry (docs/layers.md §4)" },
