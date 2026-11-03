@@ -1308,14 +1308,10 @@ fn new_component_brep(
     Brep::new_with_infinite_region()
 }
 
-/// `m_vTI.m_pBrep->DeleteStaleCaches()` (`topology.brep_p2`): the faces' trimmed-surface
-/// caches are held by their Rust callers, not by the B-rep, and the merge holds none, so
-/// none is stale.
+/// `m_vTI.m_pBrep->DeleteStaleCaches()` (`topology.brep_p2`): drops the trimmed-surface
+/// cache kept on each face surface that the merge's edits marked modified.
 fn delete_stale_caches(primary: &mut Brep) -> Result<()> {
-    crate::topology::brep::p2::delete_stale_caches::<()>(
-        primary,
-        &mut std::collections::BTreeMap::new(),
-    )
+    crate::topology::brep::p2::delete_stale_caches(primary)
 }
 
 // true means imprint-only or imprint/classify: preserve normal topology and exit.

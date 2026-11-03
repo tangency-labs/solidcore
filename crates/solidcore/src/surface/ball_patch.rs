@@ -24,12 +24,15 @@
 //! | [`BallPatch::read_from_db`]           | `ReadFromDB` (the writer: `topology::geometry_write`) |
 //! | [`BallPatch::is_kind_of`]             | `IsKindOf`                                   |
 //! | [`BallPatch::is_on_sphere`], `binomial` (private) | `IsOnSphere`, `sm_Binomial` (efb8007; no SMLib caller) |
+//! | [`BallPatch::create_certified`]       | the capi import's ball patch (`smlib_flat.cpp` `FlatToBrepData`, bc814a5, smlib#102) |
+//! | [`ON_SPHERE_REL_TOL`]                 | `kBallPatchRelTol` (`smlib_flat.cpp`, bc814a5) |
 //! | [`BALL_PATCH_TYPE`]                   | `SmBallPatch_TYPE`                           |
 //!
 //! Deviations: out-params are return values. `SmDatabaseIO::IsValidType` is a debug-build
 //! assertion only (not ported for any type). The fork's b439d73 notes that the shell's
 //! exact offset of a Ball patch is later put on a tangent-extended B-spline
-//! (`GetCreateExtendedSurface`), which no longer carries the sphere: so here too. No
+//! (`GetCreateExtendedSurface`), which no longer carries the sphere: so here too, unless
+//! `offset_extends_ball_patches_as_themselves` extends it as a ball patch (WR-728). No
 //! recursion: the reader reads its net as a plain B-spline record, inside the surface
 //! dispatcher's nesting count.
 
@@ -41,6 +44,7 @@ use crate::kernel::Kernel;
 use crate::math::EFF_ZERO;
 use crate::nurbs::b_spline_curve::p2::ControlPointForm;
 use crate::nurbs::b_spline_curve::BSplineCurve;
+use crate::nurbs::b_spline_surface::p2::EditNotify;
 use crate::nurbs::b_spline_surface::{BSplineSurface, SurfParamType};
 use crate::nurbs::knots::Side;
 use crate::surface::surface::Surface;
@@ -50,6 +54,7 @@ const OP_CREATE: &str = "surface::ball_patch::BallPatch::create";
 const OP_OFFSET: &str = "surface::ball_patch::BallPatch::create_offset_surface";
 const OP_TRANSFORM: &str = "surface::ball_patch::BallPatch::transform";
 const OP_ON_SPHERE: &str = "surface::ball_patch::BallPatch::is_on_sphere";
+const OP_CERTIFIED: &str = "surface::ball_patch::BallPatch::create_certified";
 const OP_READ: &str = "surface::ball_patch::BallPatch::read_from_db";
 
 /// `SURF_BASE_TYPE` (`SmTypes.h`).
@@ -57,6 +62,11 @@ const SURF_BASE_TYPE: i64 = 15000;
 
 /// `SmBallPatch_TYPE` (`SURF_BASE_TYPE + 42`, the fork's `SmSurfTypes.h`).
 pub const BALL_PATCH_TYPE: i64 = SURF_BASE_TYPE + 42;
+
+/// `kBallPatchRelTol` (the fork's capi `smlib_flat.cpp`, bc814a5): a net is on its
+/// definition's sphere when `|X - C W|^2 - R^2 W^2` is zero to this much of the patch's size
+/// squared ([`BallPatch::is_on_sphere`]), rounding at the part's scale.
+pub const ON_SPHERE_REL_TOL: f64 = 1e-12;
 
 /// `SmBallPatch`: a rational B-spline patch every point of which is on the sphere of
 /// centre `C` and radius `R` (its net is exact, not an approximation); `(C, R)` is its
@@ -130,13 +140,40 @@ impl BallPatch {
         })
     }
 
+    /// A patch from data that carries a net and its definition (the fork's capi import of
+    /// an `SMLIB_FLAT_SURFACE_BALL_PATCH` face, `FlatToBrepData`, bc814a5): `net` is taken
+    /// as the patch on the sphere of centre `centre` and radius `radius` only when
+    /// [`Self::is_on_sphere`] certifies it at [`ON_SPHERE_REL_TOL`]; then [`Self::create`].
+    /// An importer calls this, never [`Self::create`], for a definition it did not make.
+    ///
+    /// # Errors
+    ///
+    /// [`SolidError::InvalidInput`] (`SM_ERR_INVALID_INPUT`, as the import sets it for every
+    /// failure) for a net not certified on the sphere, and for any error of the certificate
+    /// or of [`Self::create`].
+    pub fn create_certified(net: &BSplineSurface, centre: Point3, radius: f64) -> Result<Self> {
+        let refused = |reason: &'static str| SolidError::invalid_input(OP_CERTIFIED, reason);
+        match Self::is_on_sphere(net, centre, radius, ON_SPHERE_REL_TOL) {
+            Ok(true) => {}
+            Ok(false) => {
+                return Err(refused(
+                    "SmBallPatch: the net is not on its definition's sphere",
+                ))
+            }
+            Err(_) => return Err(refused("SmBallPatch: the net's sphere certificate failed")),
+        }
+        Self::create(net, centre, radius)
+            .map_err(|_| refused("SmBallPatch: the definition is not a ball patch's"))
+    }
+
     /// `IsOnSphere` (the fork's efb8007): whether every point of `net` is on the sphere of
     /// centre `centre` and radius `radius`, decided on the net, not at sample points. The
     /// net is cut into Bezier pieces (every interior knot raised to the degree); over each,
     /// the Bernstein coefficients (degrees `2p`, `2q`) of the homogeneous identity
     /// `|X - C W|^2 - R^2 W^2` must all be zero within `rel_tol` of
     /// `((R + |C|) max W)^2`. `false` for a net that is not rational or a radius that is
-    /// not positive. The fork's SMLib has no caller (only its capi's import does).
+    /// not positive. The fork's SMLib has no caller (only its capi's import does; here
+    /// [`Self::create_certified`]).
     ///
     /// # Errors
     ///
@@ -399,6 +436,21 @@ impl BallPatch {
     /// `SM_ERR` for a scale that is not uniform and positive; those of the point curve's
     /// and the net's transforms.
     pub fn transform(&mut self, rotate_n_move: &Axis2Placement, scale: Option<Vec3>) -> Result<()> {
+        self.transform_notifying(rotate_n_move, scale, &mut |_| Ok(()))
+    }
+
+    /// [`BallPatch::transform`] with the edit notifications of the net's transform
+    /// ([`BSplineSurface::transform_notifying`]) sent through `notify`.
+    ///
+    /// # Errors
+    ///
+    /// Those of [`BallPatch::transform`] and of `notify`.
+    pub(crate) fn transform_notifying(
+        &mut self,
+        rotate_n_move: &Axis2Placement,
+        scale: Option<Vec3>,
+        notify: &mut EditNotify<'_>,
+    ) -> Result<()> {
         let mut factor = 1.0;
         if let Some(sc) = scale {
             #[allow(clippy::neg_cmp_op_on_partial_ord)] // the fork's NaN-refusing test
@@ -412,7 +464,7 @@ impl BallPatch {
         centre.transform(rotate_n_move, scale)?;
         self.centre = centre.evaluate_point(centre.natural_interval().min())?;
         self.radius *= factor;
-        self.net.transform(rotate_n_move, scale)
+        self.net.transform_notifying(rotate_n_move, scale, notify)
     }
 
     /// `ReadFromDB`: the definition (the centre and the radius), then the net's

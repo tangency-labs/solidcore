@@ -499,7 +499,7 @@ impl ti::IntersectorBrep<FilletObject> for InsertionGeometry<'_> {
             brep: self.body_mut(role),
             face: id,
             surface,
-            handles: Box::new(move |e| Ok(InsertionGeometry::handle(role, e))),
+            handles: Box::new(move |e| Ok(InsertionGeometry::cache_handle(role, e))),
             entities: Box::new(move |h| match InsertionGeometry::topology(h) {
                 Some((r, e)) if r == role => Ok(e),
                 _ => Err(invalid("handle outside the face's body")),

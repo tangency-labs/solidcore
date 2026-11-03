@@ -21,6 +21,7 @@ use crate::nurbs::b_spline_surface::BSplineSurface;
 use crate::nurbs::b_spline_surface_n_lib::p2::EvaluateFlags;
 use crate::nurbs::knots::Side;
 use crate::nurbs::math::NOW;
+use crate::surface::procedural_blend::NetScope;
 use crate::surface::surface::{Surface, SurfaceKind};
 
 const OP: &str = "blend::fillet_section::station";
@@ -452,10 +453,17 @@ pub fn as_b_spline<'a>(k: &Kernel, s: &'a Surface) -> Result<Option<Cow<'a, BSpl
     })
 }
 
+/// The station solve's stopping step: Newton stops once its last step in every foot
+/// parameter x is at most `STATION_STEP (1 + |x|)` (with the residual within the
+/// tolerance). Converging quadratically, the root is then within that step of the
+/// computed feet, which bounds the stations' error ([`super::recertify::precision_floor`]).
+pub const STATION_STEP: f64 = 1.0e-12;
+
 /// `sm_SurfacePartials`: the partials of a face's surface at `uv` up to total order `lk`:
 /// a NURBS (every analytic surface is one, evaluated in its net's parameters) by its net,
 /// continued past its knots; any other surface, and a blend by its definition (whose net
-/// is only its approximation, 014f66f), by its own evaluator.
+/// is only its approximation, 014f66f), by its own evaluator, a definition as S whatever
+/// [`NetScope`] the caller is in (#2510).
 ///
 /// # Errors
 ///
@@ -497,7 +505,12 @@ pub fn surface_partials_sided(
         only_upper_half: true,
         non_zero_tangents: false,
     };
-    let d = s.evaluate(k, uv, lk, lk, flags)?;
+    // a station is its definition's, exact to rounding inside any caller's scope: a face
+    // that is a definition is solved on S, never its net (#2510)
+    let d = {
+        let _exact = NetScope::exact(k);
+        s.evaluate(k, uv, lk, lk, flags)?
+    };
     let mut out = Partials::default();
     for a in 0..=lk {
         for b in 0..=(lk - a) {
@@ -1085,7 +1098,7 @@ fn solve_station_body(
             step = smax(step, dq.abs() / (1.0 + xq.abs()));
         }
         // converged: the residual within the tolerance and the step at rounding
-        if res <= tol && step <= 1.0e-12 {
+        if res <= tol && step <= STATION_STEP {
             converged = true;
         }
         it += 1;

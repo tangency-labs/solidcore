@@ -47,6 +47,8 @@
 //!
 //! [`FilletCorner::setback`]: crate::blend::fillet_corner::p3::FilletCorner::setback
 
+use std::sync::Arc;
+
 use crate::blend::blend_corner::ball::{solver_of_edgeuse_or_mate, BallSolvers};
 use crate::blend::blend_corner::swept::fmt_g;
 use crate::blend::blend_corner::{BlendCorner, BlendCornerEvent};
@@ -76,6 +78,7 @@ use crate::nurbs::b_spline_curve::BSplineCurve;
 use crate::nurbs::b_spline_surface::p2::IsoCurveOptions;
 use crate::nurbs::b_spline_surface::SurfParamType;
 use crate::nurbs::b_spline_surface_n_lib::p2::OrientType;
+use crate::surface::procedural_blend::corner::{CornerDefinition, SetbackFill};
 use crate::surface::surface::Surface;
 use crate::topology::brep::p7::{make_face_with_curves, FaceCurvesInput};
 use crate::topology::edgeuse::p1 as eu1;
@@ -104,6 +107,9 @@ pub struct SetbackCorner {
     /// `m_bSetBackOpen` (the fork's ef57570, smlib#125): an open G1 corner, its spring
     /// curves made in closed form ([`build_setback_fill`]), no fill and no patches.
     pub open: bool,
+    /// Not the fork (#2488, with `fillet_round_as_definition`): the fill's definition, which
+    /// its patches keep.
+    pub definition: Option<Arc<SetbackFill>>,
 }
 
 impl Default for SetbackCorner {
@@ -117,6 +123,7 @@ impl Default for SetbackCorner {
             overflows: false,
             fill: None,
             open: false,
+            definition: None,
         }
     }
 }
@@ -1048,7 +1055,10 @@ pub fn build_setback_fill(
     if fill.patches.len() != 2 * n || fill.face.len() != n {
         return Err(err());
     }
-    if !open {
+    // (an open corner keeps no fill: no containment, and no definition of its patches)
+    let worst = if open {
+        None
+    } else {
         let worst = containment(&fill, &planes.planes, convex)?;
         if worst > tol {
             return Ok(Err(SetbackRefusal::not_built(format!(
@@ -1056,7 +1066,8 @@ pub fn build_setback_fill(
                 fmt_g(worst)
             ))));
         }
-    }
+        Some(worst)
+    };
 
     // the base points: interior part q's corner (1, 1) on its face
     for q in 0..n {
@@ -1134,8 +1145,22 @@ pub fn build_setback_fill(
             set_edge_curve(pseudo.brep_mut(), e, Some(Curve::from(best)))?;
         }
     }
+    let definition = match worst {
+        Some(worst) if k.fixes.fillet_round_as_definition => Some(keep_definition(
+            k,
+            &planes.planes,
+            &rounds,
+            order,
+            tol,
+            convex,
+            worst,
+            &fill,
+        )?),
+        _ => None,
+    };
     if let Some(sb) = corner.setback.as_mut() {
         sb.fill = Some(fill);
+        sb.definition = definition;
     }
     Ok(Ok(()))
 }
@@ -1267,6 +1292,34 @@ fn one_weight_polynomial(curve: &mut BSplineCurve) -> Result<()> {
     curve.make_non_rational()
 }
 
+/// Not the fork (#2488, with `fillet_round_as_definition`): the fill's definition
+/// ([`SetbackFill`]: the faces' planes, the rounds at their end sections, the rule's order
+/// and tolerance, the corner's convexity and its containment), certified at once: the rule
+/// run again from the definition makes this fill, number for number, with its
+/// certificates ([`SetbackFill::refill`]).
+///
+/// # Errors
+///
+/// `SM_ERR` where the rule run again does not make this fill; those of the definition and
+/// of the rule.
+#[allow(clippy::too_many_arguments)]
+fn keep_definition(
+    k: &Kernel,
+    faces: &[Face],
+    rounds: &[Round<'_>],
+    order: usize,
+    tol: f64,
+    convex: bool,
+    worst: f64,
+    fill: &Fill,
+) -> Result<Arc<SetbackFill>> {
+    let definition = SetbackFill::create(k, faces, rounds, order, tol, convex, worst)?;
+    if !definition.is_fill(&definition.refill(k)?, &fill.patches) {
+        return Err(SolidError::sm_err(OP_FILL));
+    }
+    Ok(Arc::new(definition))
+}
+
 /// `SmBlendCorner::CreateSetBackPatches` (the fork's 61547af): the fill's patches as faces
 /// of the fillet B-rep, each bounded by its iso-curves: a setback patch by its end section
 /// (`u = 0`), its sides on the faces (`v = 0, 1`) and the two halves of its inner curve
@@ -1295,6 +1348,7 @@ pub fn create_setback_patches(
     if fill.patches.len() != 2 * n {
         return Err(SolidError::sm_err(OP_PATCHES));
     }
+    let definition = corner.setback.as_ref().and_then(|sb| sb.definition.clone());
     let fillet = env.fillet.as_mut().ok_or_else(nul)?;
     for (p, patch) in fill.patches.into_iter().enumerate() {
         let dom = patch.natural_uv_domain();
@@ -1356,7 +1410,10 @@ pub fn create_setback_patches(
             orientations: orients,
             loop_points: Vec::new(),
         };
-        let surface = Surface::from(patch);
+        let mut surface = Surface::from(patch);
+        if let Some(d) = &definition {
+            surface.set_corner_definition(CornerDefinition::setback(Arc::clone(d), p)?);
+        }
         let region = fillet.brep.infinite_region();
         let key_of = fillet.notify.key_of;
         let face_ref = |f| key_of(EntityRef::Face(f));

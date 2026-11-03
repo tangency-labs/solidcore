@@ -289,7 +289,11 @@ use crate::surface::cone::Cone;
 use crate::surface::curve_bounded_surface::CurveBoundedSurface;
 use crate::surface::offset_surface::OffsetSurface;
 use crate::surface::plane::Plane;
-use crate::surface::procedural_blend::{NetScope, ProceduralBlend, PROCEDURAL_BLEND_TYPE};
+use crate::surface::procedural_blend::corner::CornerDefinition;
+use crate::surface::procedural_blend::exact::ExactRound;
+use crate::surface::procedural_blend::{
+    BlendRef, KeptDefinition, NetScope, ProceduralBlend, PROCEDURAL_BLEND_TYPE,
+};
 use crate::surface::sphere::Sphere;
 use crate::surface::srf_in_volume::SrfInVolume;
 use crate::surface::surf_of_extrusion::SurfOfExtrusion;
@@ -430,6 +434,12 @@ pub struct Surface {
     /// Not upstream: the memo of the natural boundary curves `CoincidenceCheck` makes
     /// (`BoundaryMemo`); a copy starts an empty one, an edit replaces it.
     boundary_memo: BoundaryMemo,
+    /// Not upstream (#2485, #2488): a round of an exact class or a blend corner's face,
+    /// this surface its net, keeps its definition here ([`Surface::procedural_blend`]). A
+    /// copy, a piece, an extension and an edit of the parametrization carry it (the
+    /// definition is a set the net is on, or within its bound of); a motion moves it; an
+    /// evaluation copy, which only evaluates, has none.
+    definition: Option<Box<KeptDefinition>>,
 }
 
 /// What a surface's cache slot (`SmAObject::m_pCacheObj`) holds, as far as a reader of
@@ -465,6 +475,29 @@ pub enum TrimCacheSlot {
     /// it back when done. Upstream's lookups in the meantime find that same object
     /// (it is in the queue before its tree is built).
     CheckedOut,
+}
+
+/// The name a kept trimmed surface cache ([`TrimCacheSlot::Stored`]) gives its `n`-th
+/// subdivision surface: the halves `SmSurfaceCache::SubdivideNode` splits off a node's
+/// surface when a tree built without the face's trims is built again with them (upstream
+/// keeps them in `m_sSubdivisionSurfaces`, `bCleanUpBuildData` being `FALSE` for an
+/// existing tree). A kept cache names its objects by the face's B-rep entities, none of
+/// which is a B-rep, so `EntityRef::Brep(n)` is free there for these cache-local
+/// surfaces; it survives the renaming of a B-rep's arenas, and a solve's copy of the
+/// cache maps it like any other handle.
+#[must_use]
+pub fn subdivision_surface_name(n: u64) -> EntityRef {
+    EntityRef::Brep(crate::topology::BrepId::from_index(
+        u32::try_from(n).unwrap_or(u32::MAX),
+    ))
+}
+
+/// Lets `cache`, a face surface's kept trimmed cache, name the subdivision surfaces a
+/// later build of its tree splits off ([`subdivision_surface_name`]).
+pub fn name_subdivision_surfaces(cache: &mut TrimSrfCache<EntityRef>) {
+    cache
+        .base_mut()
+        .set_subdivision_handles(Some(subdivision_surface_name));
 }
 
 /// What a [`CacheSlot`] holds.
@@ -615,6 +648,7 @@ impl Clone for Surface {
             notify_identity: IdentitySlot::new(),
             made_kind: MadeKindSlot::default(),
             boundary_memo: BoundaryMemo::new(),
+            definition: self.definition.clone(),
         };
         s.update_owned_bases();
         s
@@ -908,6 +942,7 @@ impl Surface {
             notify_identity: IdentitySlot::new(),
             made_kind: self.made_kind.shared(),
             boundary_memo: BoundaryMemo::new(),
+            definition: None,
         })
     }
 
@@ -986,6 +1021,7 @@ impl Surface {
             notify_identity: IdentitySlot::new(),
             made_kind: self.made_kind.shared(),
             boundary_memo: BoundaryMemo::new(),
+            definition: self.definition.clone(),
         }
     }
 }
@@ -1150,7 +1186,56 @@ impl Surface {
             notify_identity: IdentitySlot::new(),
             made_kind: MadeKindSlot::default(),
             boundary_memo: BoundaryMemo::new(),
+            definition: None,
         }
+    }
+
+    /// The blend this surface is by its definition (#2485, #2488): a procedural blend, a
+    /// round of an exact class or a blend corner's face whose definition this surface (its
+    /// net) carries. Every blend face is reached here, whatever its kind; `None` for a
+    /// surface that is no blend's.
+    #[must_use]
+    pub fn procedural_blend(&self) -> Option<BlendRef<'_>> {
+        match self.definition.as_deref() {
+            Some(KeptDefinition::Round(round)) => {
+                return Some(BlendRef::Exact { round, net: self })
+            }
+            Some(KeptDefinition::Corner(corner)) => {
+                return Some(BlendRef::Corner { corner, net: self })
+            }
+            None => {}
+        }
+        match self.kind() {
+            SurfaceKind::ProceduralBlend(p) => Some(BlendRef::Procedural(p)),
+            _ => None,
+        }
+    }
+
+    /// Keeps `round` as the definition of this surface, its exact net (#2485); `None`
+    /// drops any definition kept.
+    pub(crate) fn set_exact_round(&mut self, round: Option<ExactRound>) {
+        self.definition = round.map(|r| Box::new(KeptDefinition::Round(r)));
+    }
+
+    /// The exact round this surface keeps as its definition (#2485), to carry an edit of
+    /// the net's parametrisation into its leader map; `None` for any other surface.
+    fn exact_round_mut(&mut self) -> Option<&mut ExactRound> {
+        match self.definition.as_deref_mut() {
+            Some(KeptDefinition::Round(round)) => Some(round),
+            _ => None,
+        }
+    }
+
+    /// Keeps `corner` as the definition of this surface, a blend corner's face (#2488).
+    pub(crate) fn set_corner_definition(&mut self, corner: CornerDefinition) {
+        self.definition = Some(Box::new(KeptDefinition::Corner(corner)));
+    }
+
+    /// This surface's definition carried onto `piece`, a piece, extension or copy of it
+    /// (#2485, #2488).
+    fn carry_definition(&self, mut piece: Self) -> Self {
+        piece.definition.clone_from(&self.definition);
+        piece
     }
 
     /// The state of this surface's cache slot (see [`CacheTreeState`]), shared with its
@@ -1196,6 +1281,7 @@ impl Surface {
     /// is applied to it. The cache's own surface copy then gets a slot of its own, so
     /// that the slot does not own itself.
     pub fn store_trim_cache(mut cache: TrimSrfCache<EntityRef>) {
+        name_subdivision_surfaces(&mut cache);
         let slot = cache.base().surface().cache_slot.share();
         cache.base_mut().surface_mut().cache_slot = CacheSlot::default();
         let tree = if cache.base().tree().is_some() {
@@ -1241,6 +1327,38 @@ impl Surface {
             TrimCacheSlot::CheckedOut => s.face_modified_while_out = true,
             TrimCacheSlot::Empty => {}
         });
+    }
+
+    /// `SmBrep::DeleteStaleCaches` on this face surface: deletes its stored trimmed
+    /// surface cache (`SmCacheMgr::DeleteObjectsCache(SM_OC_TRIMSRF, ..)`) when the
+    /// cache is marked `m_bFaceWasModified`; a cache in use stays with its caller (as
+    /// the surface's own pre-edit drop leaves it). The tree state is left as it is, as
+    /// [`Surface::delete_trim_cache`] leaves it.
+    pub fn delete_stale_trim_cache(&self) {
+        self.cache_slot.with(|s| {
+            if matches!(&s.trim, TrimCacheSlot::Stored(cache) if cache.base().face_was_modified) {
+                s.trim = TrimCacheSlot::Empty;
+                s.face_modified_while_out = false;
+            }
+        });
+    }
+
+    /// Takes the owner and the out-of-bounds flag of `other` (the same surface object
+    /// as it is now): the surface a kept trimmed cache caches is that surface upstream
+    /// (`m_cpSurface`), so its copy evaluates with the owner the surface has now and the
+    /// `m_bOutOfBoundsEnabled` its users set on it for a while (`SmTemporaryChangeValue`
+    /// of `GetOutOfBoundsEnabled()`).
+    pub(crate) fn adopt_evaluation_state_of(&mut self, other: &Self) {
+        self.adopt_owner_of(other);
+        let flags = (
+            crate::surface::surface::p3::out_of_bounds_enabled(other),
+            crate::surface::surface::p3::out_of_bounds_enabled(self),
+        );
+        if let (Some(enabled), Some(own)) = flags {
+            if enabled != own {
+                crate::surface::surface::p3::set_out_of_bounds_enabled(self, enabled);
+            }
+        }
     }
 
     /// Takes the owner of `other` (the same surface object as it is now): a cache's
@@ -1319,7 +1437,11 @@ impl Surface {
         });
         if let Some(f) = face {
             if cache.base().surface().shares_cache_slot_with(self) {
-                Self::store_trim_cache(cache.map_handles(|_| Ok(EntityRef::Face(f)))?);
+                // the kept cache names its surface (a cache made without the solve's
+                // surface handle, a tracer's, is the surface's own all the same)
+                let mut kept = cache.map_handles(|_| Ok(EntityRef::Face(f)))?;
+                kept.base_mut().name_unnamed_surface(EntityRef::Face(f))?;
+                Self::store_trim_cache(kept);
             }
         }
         Ok(())
@@ -1742,6 +1864,11 @@ impl Surface {
     /// [`MAX_GEOMETRY_NESTING`]; none
     /// for the other ported kinds (the base default is `SM_ERR`).
     pub fn copy(&self, k: &Kernel) -> Result<Self> {
+        self.copy_of_kind(k).map(|c| self.carry_definition(c))
+    }
+
+    /// [`Surface::copy`] of the kind alone.
+    fn copy_of_kind(&self, k: &Kernel) -> Result<Self> {
         self.check_evaluation_copy_depth(0)?;
         self.make_revolution_nurb_for_copy(k)?;
         match self.kind() {
@@ -1784,6 +1911,12 @@ impl Surface {
     ///
     /// Those of the kind's override (the base default is [`Surface::copy`]).
     pub fn copy_and_add_analytics(&self, k: &Kernel) -> Result<Self> {
+        self.copy_and_add_analytics_of_kind(k)
+            .map(|c| self.carry_definition(c))
+    }
+
+    /// [`Surface::copy_and_add_analytics`] of the kind alone.
+    fn copy_and_add_analytics_of_kind(&self, k: &Kernel) -> Result<Self> {
         self.check_evaluation_copy_depth(0)?;
         self.make_revolution_nurb_for_copy(k)?;
         match self.kind() {
@@ -3000,6 +3133,30 @@ impl Surface {
     ///
     /// Those of the kind's override (the base default is `SM_ERR`).
     pub fn reverse(&mut self, k: &Kernel, param: SurfParamType) -> Result<()> {
+        // (#2485) an exact round's leader map follows the net's reversal, w = lo + hi - w'
+        let before = self.exact_map_domain(k)?;
+        self.reverse_kind(k, param)?;
+        if let (Some(round), Some(d)) = (self.exact_round_mut(), before) {
+            for (u, ivl) in [(true, d.u_interval()), (false, d.v_interval())] {
+                if (param == SurfParamType::U) == u || param == SurfParamType::Both {
+                    round.reparametrize_map(u, ivl.min() + ivl.max(), -1.0);
+                }
+            }
+        }
+        Ok(())
+    }
+
+    /// The natural domain an exact round's leader map is read against, before an edit of
+    /// the parametrisation (`None` for a surface that is no exact round).
+    fn exact_map_domain(&self, k: &Kernel) -> Result<Option<Extent2d>> {
+        if !matches!(self.definition.as_deref(), Some(KeptDefinition::Round(_))) {
+            return Ok(None);
+        }
+        self.natural_uv_domain_with_nurb(k).map(Some)
+    }
+
+    /// [`Surface::reverse`] of the kind alone.
+    fn reverse_kind(&mut self, k: &Kernel, param: SurfParamType) -> Result<()> {
         self.take_made_kind_for_edit();
         self.boundary_memo = BoundaryMemo::new();
         match &mut self.kind {
@@ -3066,6 +3223,23 @@ impl Surface {
     ///
     /// Those of the kind's override (the base default is `SM_ERR`).
     pub fn reparameterize(&mut self, k: &Kernel, new_domain: &Extent2d) -> Result<()> {
+        // (#2485) an exact round's leader map follows the net's affine reparametrisation
+        let before = self.exact_map_domain(k)?;
+        self.reparameterize_kind(k, new_domain)?;
+        if let (Some(round), Some(d)) = (self.exact_round_mut(), before) {
+            for (u, old, new) in [
+                (true, d.u_interval(), new_domain.u_interval()),
+                (false, d.v_interval(), new_domain.v_interval()),
+            ] {
+                let beta = (old.max() - old.min()) / (new.max() - new.min());
+                round.reparametrize_map(u, old.min() - new.min() * beta, beta);
+            }
+        }
+        Ok(())
+    }
+
+    /// [`Surface::reparameterize`] of the kind alone.
+    fn reparameterize_kind(&mut self, k: &Kernel, new_domain: &Extent2d) -> Result<()> {
         self.take_made_kind_for_edit();
         self.boundary_memo = BoundaryMemo::new();
         match &mut self.kind {
@@ -3112,6 +3286,20 @@ impl Surface {
     ///
     /// Those of [`Surface::swap_uv`] and of `notify`.
     pub(crate) fn swap_uv_notifying(
+        &mut self,
+        k: &Kernel,
+        notify: &mut SurfaceEditNotify<'_>,
+    ) -> Result<()> {
+        self.swap_uv_kind_notifying(k, notify)?;
+        // (#2485) an exact round's leader map follows the swap
+        if let Some(round) = self.exact_round_mut() {
+            round.swap_map();
+        }
+        Ok(())
+    }
+
+    /// [`Surface::swap_uv_notifying`] of the kind alone.
+    fn swap_uv_kind_notifying(
         &mut self,
         k: &Kernel,
         notify: &mut SurfaceEditNotify<'_>,
@@ -3275,22 +3463,66 @@ impl Surface {
     ) -> Result<()> {
         self.take_made_kind_for_edit();
         self.boundary_memo = BoundaryMemo::new();
-        match &mut self.kind {
-            SurfaceKind::Cone(s) => s.transform(k, rotate_n_move, scale),
-            SurfaceKind::Sphere(s) => s.transform(k, rotate_n_move, scale),
-            SurfaceKind::Torus(s) => s.transform(k, rotate_n_move, scale),
-            SurfaceKind::SurfOfRevolution(s) => {
-                s.transform_at_depth(k, rotate_n_move, scale, depth)
+        // (#2485, #2488) a definition moves with its net; one that cannot move so (a scale
+        // that is not uniform) refuses before the net moves
+        let moved = match self.definition.as_deref() {
+            Some(kept) => {
+                let mut moved = kept.clone();
+                moved.transform(k, rotate_n_move, scale, depth)?;
+                Some(Box::new(moved))
             }
-            SurfaceKind::SurfOfExtrusion(s) => s.transform_at_depth(k, rotate_n_move, scale, depth),
-            SurfaceKind::BSpline(s) => s.transform(rotate_n_move, scale),
-            SurfaceKind::ProceduralBlend(s) => s.transform_at_depth(k, rotate_n_move, scale, depth),
+            None => None,
+        };
+        self.transform_kind_at_depth(k, rotate_n_move, scale, depth)?;
+        if moved.is_some() {
+            self.definition = moved;
+        }
+        Ok(())
+    }
+
+    /// [`Surface::transform_at_depth`] of the kind alone. The kind's own
+    /// `SM_NO_PRE_EDIT` (`SmBSplineSurface::Transform`'s, or `SmSrfInVolume::Transform`'s)
+    /// goes through `SmSurface::Notify`, which deletes this surface's stored trimmed
+    /// surface cache; a surface of revolution without NURB sends none, and an offset
+    /// surface's base and extended surfaces notify for themselves.
+    fn transform_kind_at_depth(
+        &mut self,
+        k: &Kernel,
+        rotate_n_move: &Axis2Placement,
+        scale: Option<Vec3>,
+        depth: usize,
+    ) -> Result<()> {
+        let Self {
+            kind, cache_slot, ..
+        } = self;
+        let mut own = |op| {
+            if op == NotifyOperation::PreEdit {
+                delete_stored_trim_cache(cache_slot);
+            }
+            Ok(())
+        };
+        match kind {
+            SurfaceKind::Cone(s) => s.transform_notifying(k, rotate_n_move, scale, &mut own),
+            SurfaceKind::Sphere(s) => s.transform_notifying(k, rotate_n_move, scale, &mut own),
+            SurfaceKind::Torus(s) => s.transform_notifying(k, rotate_n_move, scale, &mut own),
+            SurfaceKind::SurfOfRevolution(s) => {
+                s.transform_at_depth(k, rotate_n_move, scale, depth, &mut own)
+            }
+            SurfaceKind::SurfOfExtrusion(s) => {
+                s.transform_at_depth(k, rotate_n_move, scale, depth, &mut own)
+            }
+            SurfaceKind::BSpline(s) => s.transform_notifying(rotate_n_move, scale, &mut own),
+            SurfaceKind::ProceduralBlend(s) => {
+                s.transform_notifying_at_depth(k, rotate_n_move, scale, depth, &mut own)
+            }
             // the fork's SmBallPatch::Transform (f8e6709): rigid or uniform scale only
-            SurfaceKind::BallPatch(s) => s.transform(rotate_n_move, scale),
+            SurfaceKind::BallPatch(s) => s.transform_notifying(rotate_n_move, scale, &mut own),
             SurfaceKind::CurveBounded(_) | SurfaceKind::Step(_) => base_edit(),
             SurfaceKind::OffsetSurface(s) => s.transform_at_depth(k, rotate_n_move, scale, depth),
-            SurfaceKind::SrfInVolume(s) => s.transform_at_depth(rotate_n_move, scale, depth),
-            SurfaceKind::Plane(s) => s.transform(k, rotate_n_move, scale),
+            SurfaceKind::SrfInVolume(s) => {
+                s.transform_at_depth(rotate_n_move, scale, depth, &mut own)
+            }
+            SurfaceKind::Plane(s) => s.transform_notifying(k, rotate_n_move, scale, &mut own),
         }
     }
 
@@ -3388,6 +3620,18 @@ impl Surface {
         param: f64,
         surf_param: SurfParamType,
     ) -> Result<(Self, Self)> {
+        // (#2485) each piece of an exact round is on its definition's S
+        let (l, r) = self.split_kind_at(k, param, surf_param)?;
+        Ok((self.carry_definition(l), self.carry_definition(r)))
+    }
+
+    /// [`Surface::split_at`] of the kind alone.
+    fn split_kind_at(
+        &self,
+        k: &Kernel,
+        param: f64,
+        surf_param: SurfParamType,
+    ) -> Result<(Self, Self)> {
         match self.kind() {
             SurfaceKind::BSpline(s) => {
                 let (l, r) = s.split_at(param, surf_param)?;
@@ -3440,6 +3684,34 @@ impl Surface {
     ///
     /// Those of the kind's override (the base default is `SM_ERR`).
     pub fn create_extended_surface(
+        &self,
+        k: &Kernel,
+        dist: f64,
+        extension_continuity: ContinuityType,
+    ) -> Result<Self> {
+        let made = self.create_extended_surface_of_kind(k, dist, extension_continuity)?;
+        Ok(self.carry_exact_round_on_extension(made, extension_continuity))
+    }
+
+    /// An exact round's definition carried onto `extension`, this surface extended by the
+    /// same NURBS pieces continued (`CInfinity`, #2487): the analytic class continued, still
+    /// on S. Another continuity (a ruled `G1R` extension) leaves S, so it carries none, and
+    /// so does a corner's face (#2488), whose net continued leaves its patch's definition.
+    fn carry_exact_round_on_extension(
+        &self,
+        extension: Self,
+        extension_continuity: ContinuityType,
+    ) -> Self {
+        let round = matches!(self.definition.as_deref(), Some(KeptDefinition::Round(_)));
+        if round && extension_continuity == ContinuityType::CInfinity {
+            self.carry_definition(extension)
+        } else {
+            extension
+        }
+    }
+
+    /// [`Surface::create_extended_surface`] of the kind alone.
+    fn create_extended_surface_of_kind(
         &self,
         k: &Kernel,
         dist: f64,
@@ -3537,6 +3809,19 @@ impl Surface {
     ///
     /// Those of the kind's override (the base default is `SM_ERR`).
     pub fn create_extended_surface_dir(
+        &self,
+        k: &Kernel,
+        ext_direction: SurfParamType,
+        dist: f64,
+        extension_continuity: ContinuityType,
+    ) -> Result<Self> {
+        let made =
+            self.create_extended_surface_dir_of_kind(k, ext_direction, dist, extension_continuity)?;
+        Ok(self.carry_exact_round_on_extension(made, extension_continuity))
+    }
+
+    /// [`Surface::create_extended_surface_dir`] of the kind alone.
+    fn create_extended_surface_dir_of_kind(
         &self,
         k: &Kernel,
         ext_direction: SurfParamType,
@@ -4979,14 +5264,21 @@ fn edit_notify(
     operation: NotifyOperation,
 ) -> Result<()> {
     if operation == NotifyOperation::PreEdit {
-        cache_slot.with(|s| {
-            if matches!(s.trim, TrimCacheSlot::Stored(_)) {
-                s.trim = TrimCacheSlot::Empty;
-                s.face_modified_while_out = false;
-            }
-        });
+        delete_stored_trim_cache(cache_slot);
     }
     notify(slot, type_code, operation)
+}
+
+/// `SmCacheMgr::DeleteObjectsCache(SM_OC_TRIMSRF, this)` of `SmSurface::Notify`'s
+/// `SM_NO_PRE_EDIT`: the stored trimmed surface cache goes (a cache in use stays with
+/// its caller).
+fn delete_stored_trim_cache(cache_slot: &CacheSlot) {
+    cache_slot.with(|s| {
+        if matches!(s.trim, TrimCacheSlot::Stored(_)) {
+            s.trim = TrimCacheSlot::Empty;
+            s.face_modified_while_out = false;
+        }
+    });
 }
 
 /// `SmSurface::Notify`: drops the surface's trimmed-surface cache before an edit and
