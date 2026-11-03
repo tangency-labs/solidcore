@@ -14,10 +14,15 @@ use crate::vec::VecExt as _;
 use solidcore::eval::EvalSurface;
 use solidcore_record::Vec3;
 
+use super::NoValue;
+
 /// Split the triangles `tris` of a face (indices into `uv`; the first `fixed.len()` points sit
 /// at `fixed`, the rest on the surface at their parameters) until none of them lies farther
 /// than `tol` from the surface `s`, adding at most `max_points` points to `uv`. `reach`: how near
 /// a pole a point is taken as one (see [`solidcore::eval::uv::degenerate_within`]).
+///
+/// A point the surface does not evaluate at (a node, or a middle the check needs) is the
+/// evaluator refusing the face: the error names it, and the caller leaves the face out whole.
 pub(crate) fn refine(
     s: &EvalSurface,
     tol: f64,
@@ -26,34 +31,36 @@ pub(crate) fn refine(
     uv: &mut Vec<[f64; 2]>,
     tris: &mut Vec<[u32; 3]>,
     max_points: usize,
-) {
+) -> Result<(), NoValue> {
     if !(tol.is_finite() && tol > 0.0) || tris.is_empty() {
-        return;
+        return Ok(());
     }
-    let at = |q: [f64; 2]| s.derivs(q[0], q[1]).map(|d| kernel::record_vec3(d.0));
+    let at = |q: [f64; 2]| {
+        s.derivs(q[0], q[1])
+            .map(|d| kernel::record_vec3(d.0))
+            .ok_or(NoValue(q))
+    };
     let dom = solidcore::eval::uv::domain(s);
     let mean = |qs: &[[f64; 2]]| mean(s, &dom, reach, qs);
     // How far the flat point `c` lies from the surface, measured along the normal at the surface
     // point of the same parameters: those parameters need not be the nearest (a straight line in
     // the parameters is no geodesic near a pole), and only the departure across the surface
     // counts. Where the normal is undefined (a pole), the whole distance.
-    let off = |q: [f64; 2], c: Vec3| match s.derivs(q[0], q[1]).map(kernel::record_triple) {
-        Some((p, su, sv)) => su
+    let off = |q: [f64; 2], c: Vec3| -> Result<f64, NoValue> {
+        let (p, su, sv) = s
+            .derivs(q[0], q[1])
+            .map(kernel::record_triple)
+            .ok_or(NoValue(q))?;
+        Ok(su
             .cross(sv)
             .normalized()
-            .map_or_else(|| p.dist(c), |n| (p - c).dot(n).abs()),
-        // Where the surface does not evaluate there is nothing to measure against.
-        None => 0.0,
+            .map_or_else(|| p.dist(c), |n| (p - c).dot(n).abs()))
     };
-    // A face whose nodes do not all evaluate is not refined.
-    let Some(mut pos) = uv
+    let mut pos = uv
         .iter()
         .enumerate()
-        .map(|(i, q)| fixed.get(i).copied().or_else(|| at(*q)))
-        .collect::<Option<Vec<Vec3>>>()
-    else {
-        return;
-    };
+        .map(|(i, q)| fixed.get(i).copied().map_or_else(|| at(*q), Ok))
+        .collect::<Result<Vec<Vec3>, NoValue>>()?;
     // No side is split below this length: a surface whose parameters bend sharply (at a pole) is
     // not chased to the last bit.
     let shortest = tol * 1e-3;
@@ -98,9 +105,14 @@ pub(crate) fn refine(
             if len <= shortest {
                 continue;
             }
-            let sag = *sag_of
-                .entry(e)
-                .or_insert_with(|| off(mean(&[ua, ub]), (xa + xb) * 0.5));
+            let sag = match sag_of.get(&e) {
+                Some(&sag) => sag,
+                None => {
+                    let sag = off(mean(&[ua, ub]), (xa + xb) * 0.5)?;
+                    sag_of.insert(e, sag);
+                    sag
+                }
+            };
             inner.push((sag, len, e));
         }
         // The surface's departure from a flat triangle is about quadratic over it: at the
@@ -113,7 +125,7 @@ pub(crate) fn refine(
         let split = match worst {
             Some((sag, _, e)) if sag > tol => e,
             Some((sag, _, e))
-                if sag > 0.25 * tol && off(centroid, (pa + pb + pc) * (1.0 / 3.0)) > tol =>
+                if sag > 0.25 * tol && off(centroid, (pa + pb + pc) * (1.0 / 3.0))? > tol =>
             {
                 e
             }
@@ -148,14 +160,14 @@ pub(crate) fn refine(
             continue;
         };
         let m = mean(&[ua, ub]);
-        // A middle that does not evaluate is not split at.
-        let Some(pm) = at(m) else { continue };
+        let pm = at(m)?;
         let mi = uv.len() as u32;
         uv.push(m);
         pos.push(pm);
         sag_of.remove(&split);
         queue.extend(split_side(tris, &mut sides, split, mi));
     }
+    Ok(())
 }
 
 /// The mean of parameter points, as the surface point between them: at a pole the parameter
@@ -264,7 +276,8 @@ const MIN_FLIP_ANGLE: f64 = 1e-3;
 /// them down. A side is flipped only when both new triangles keep the orientation of the old ones
 /// in (u, v) and against the surface normal (nothing folds), and the new side and the new
 /// triangles' middles stay within `tol` of the surface, or no farther than the old side's middle.
-/// Sides with one triangle (the face's boundary) are never flipped.
+/// Sides with one triangle (the face's boundary) are never flipped. A point the surface does not
+/// evaluate at is the evaluator refusing the face, as in [`refine`].
 pub(crate) fn flip(
     s: &EvalSurface,
     tol: f64,
@@ -272,35 +285,35 @@ pub(crate) fn flip(
     fixed: &[Vec3],
     uv: &[[f64; 2]],
     tris: &mut [[u32; 3]],
-) {
+) -> Result<(), NoValue> {
     if !(tol.is_finite() && tol > 0.0) || tris.len() < 2 {
-        return;
+        return Ok(());
     }
     let dom = solidcore::eval::uv::domain(s);
     let mean = |qs: &[[f64; 2]]| mean(s, &dom, reach, qs);
-    // A face whose nodes do not all evaluate is left as it is.
-    let Some(pos) = uv
+    let derivs = |q: [f64; 2]| {
+        s.derivs(q[0], q[1])
+            .map(kernel::record_triple)
+            .ok_or(NoValue(q))
+    };
+    let pos = uv
         .iter()
         .enumerate()
         .map(|(i, q)| {
             fixed
                 .get(i)
                 .copied()
-                .or_else(|| s.derivs(q[0], q[1]).map(|d| kernel::record_vec3(d.0)))
+                .map_or_else(|| derivs(*q).map(|d| d.0), Ok)
         })
-        .collect::<Option<Vec<Vec3>>>()
-    else {
-        return;
-    };
+        .collect::<Result<Vec<Vec3>, NoValue>>()?;
     let p = |i: u32| pos.get(i as usize).copied();
     let q = |i: u32| uv.get(i as usize).copied();
-    let off = |m: [f64; 2], c: Vec3| match s.derivs(m[0], m[1]).map(kernel::record_triple) {
-        Some((x, su, sv)) => su
+    let off = |m: [f64; 2], c: Vec3| -> Result<f64, NoValue> {
+        let (x, su, sv) = derivs(m)?;
+        Ok(su
             .cross(sv)
             .normalized()
-            .map_or_else(|| x.dist(c), |n| (x - c).dot(n).abs()),
-        // Where the surface does not evaluate there is nothing to measure against.
-        None => 0.0,
+            .map_or_else(|| x.dist(c), |n| (x - c).dot(n).abs()))
     };
     // Twice the signed area in (u, v).
     let area_uv = |t: [u32; 3]| match (q(t[0]), q(t[1]), q(t[2])) {
@@ -321,43 +334,36 @@ pub(crate) fn flip(
         angle(a, b, c).min(angle(b, c, a)).min(angle(c, a, b))
     };
     // How far a facet's normal turns from the surface normal at its middle (radians, 0 to pi/2).
-    let deviation = |t: [u32; 3]| -> f64 {
+    let deviation = |t: [u32; 3]| -> Result<f64, NoValue> {
         let (Some(a), Some(b), Some(c), Some(qa), Some(qb), Some(qc)) =
             (p(t[0]), p(t[1]), p(t[2]), q(t[0]), q(t[1]), q(t[2]))
         else {
-            return 0.0;
+            return Ok(0.0);
         };
         let m = mean(&[qa, qb, qc]);
         let facet = (b - a).cross(c - a).normalized();
-        match (
-            facet,
-            s.derivs(m[0], m[1])
-                .map(kernel::record_triple)
-                .and_then(|(_, su, sv)| su.cross(sv).normalized()),
-        ) {
+        let (_, su, sv) = derivs(m)?;
+        Ok(match (facet, su.cross(sv).normalized()) {
             (Some(f), Some(n)) => f.dot(n).abs().clamp(0.0, 1.0).acos(),
             _ => 0.0,
-        }
+        })
     };
     // Whether the facet's normal lies on the side of the surface normal that its (u, v)
     // orientation `sign` says.
-    let upright = |t: [u32; 3], sign: f64| -> bool {
+    let upright = |t: [u32; 3], sign: f64| -> Result<bool, NoValue> {
         let (Some(a), Some(b), Some(c), Some(qa), Some(qb), Some(qc)) =
             (p(t[0]), p(t[1]), p(t[2]), q(t[0]), q(t[1]), q(t[2]))
         else {
-            return false;
+            return Ok(false);
         };
-        let m = mean(&[qa, qb, qc]);
-        match s.derivs(m[0], m[1]).map(kernel::record_triple) {
-            Some((_, su, sv)) => (b - a).cross(c - a).dot(su.cross(sv)) * sign > 0.0,
-            None => true,
-        }
+        let (_, su, sv) = derivs(mean(&[qa, qb, qc]))?;
+        Ok((b - a).cross(c - a).dot(su.cross(sv)) * sign > 0.0)
     };
     let centroid_off = |t: [u32; 3]| match (p(t[0]), p(t[1]), p(t[2]), q(t[0]), q(t[1]), q(t[2])) {
         (Some(a), Some(b), Some(c), Some(qa), Some(qb), Some(qc)) => {
             off(mean(&[qa, qb, qc]), (a + b + c) * (1.0 / 3.0))
         }
-        _ => f64::INFINITY,
+        _ => Ok(f64::INFINITY),
     };
     let mut sides: HashMap<(u32, u32), Vec<u32>> = HashMap::with_capacity(tris.len() * 2);
     for (ti, t) in tris.iter().enumerate() {
@@ -410,19 +416,21 @@ pub(crate) fn flip(
         // The pair the other way must lie closer along the surface (its facets turn less from
         // the surface normal), by more than a degree: a pair within a degree of the surface is
         // left as the layout made it.
-        let mut cached = |ti: u32, t: [u32; 3]| match dev_of.get(ti as usize).copied().flatten() {
-            Some(d) => d,
-            None => {
-                let d = deviation(t);
-                if let Some(slot) = dev_of.get_mut(ti as usize) {
-                    *slot = Some(d);
+        let mut cached = |ti: u32, t: [u32; 3]| -> Result<f64, NoValue> {
+            match dev_of.get(ti as usize).copied().flatten() {
+                Some(d) => Ok(d),
+                None => {
+                    let d = deviation(t)?;
+                    if let Some(slot) = dev_of.get_mut(ti as usize) {
+                        *slot = Some(d);
+                    }
+                    Ok(d)
                 }
-                d
             }
         };
-        let worse = cached(t1, ta).max(cached(t2, tb));
+        let worse = cached(t1, ta)?.max(cached(t2, tb)?);
         let degree = 1f64.to_radians();
-        if worse < degree || deviation(n1).max(deviation(n2)) >= worse - degree {
+        if worse < degree || deviation(n1)?.max(deviation(n2)?) >= worse - degree {
             continue;
         }
         // ... and have area in 3D (three corners on one line of a cone have none, however they
@@ -430,7 +438,7 @@ pub(crate) fn flip(
         if min_angle(n1).min(min_angle(n2)) < MIN_FLIP_ANGLE {
             continue;
         }
-        if !(upright(n1, sign) && upright(n2, sign)) {
+        if !(upright(n1, sign)? && upright(n2, sign)?) {
             continue;
         }
         let (Some(pa), Some(pb), Some(pc), Some(pd), Some(qa), Some(qb), Some(qc), Some(qd)) =
@@ -439,12 +447,12 @@ pub(crate) fn flip(
             continue;
         };
         let allowed = tol
-            .max(off(mean(&[qa, qb]), (pa + pb) * 0.5))
-            .max(centroid_off(ta))
-            .max(centroid_off(tb));
-        if off(mean(&[qc, qd]), (pc + pd) * 0.5) > allowed
-            || centroid_off(n1) > allowed
-            || centroid_off(n2) > allowed
+            .max(off(mean(&[qa, qb]), (pa + pb) * 0.5)?)
+            .max(centroid_off(ta)?)
+            .max(centroid_off(tb)?);
+        if off(mean(&[qc, qd]), (pc + pd) * 0.5)? > allowed
+            || centroid_off(n1)? > allowed
+            || centroid_off(n2)? > allowed
         {
             continue;
         }
@@ -470,5 +478,138 @@ pub(crate) fn flip(
                 .into_iter()
                 .filter(|s| sides.get(s).is_some_and(|ts| ts.len() == 2)),
         );
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+pub(crate) mod tests {
+    use super::*;
+    use solidcore::eval::EvalCurve;
+
+    /// A cylinder of radius 3 along z, 40 long, whose profile is a rational quadratic with weights
+    /// (1, -1, 1): its weight vanishes at the profile's middle, so the surface has no point on the
+    /// circle u = 0.5 and one everywhere else.
+    pub(crate) fn cylinder_without_its_middle() -> EvalSurface {
+        let s = EvalSurface::Revolved {
+            profile: EvalCurve::new(
+                2,
+                vec![0.0, 0.0, 0.0, 1.0, 1.0, 1.0],
+                vec![
+                    [3.0, 0.0, 0.0, 1.0],
+                    [-3.0, 0.0, -20.0, -1.0],
+                    [3.0, 0.0, 40.0, 1.0],
+                ],
+            ),
+            origin: solidcore::Vec3::ZERO,
+            axis: solidcore::Vec3::Z,
+            transform: [
+                [1.0, 0.0, 0.0, 0.0],
+                [0.0, 1.0, 0.0, 0.0],
+                [0.0, 0.0, 1.0, 0.0],
+            ],
+            swap: false,
+        };
+        assert!(
+            s.derivs(0.5, 0.3).is_none(),
+            "the weight vanishes at the middle"
+        );
+        assert!(
+            s.derivs(0.25, 0.3).is_some() && s.derivs(0.75, 0.3).is_some(),
+            "and nowhere else"
+        );
+        s
+    }
+
+    /// Two triangles of the strip u in [0, 1], v in [0, 1] whose inner side, the diagonal, has its
+    /// middle on the circle the surface has no point on: refinement stops there and names it,
+    /// leaving the triangles as they were.
+    #[test]
+    fn refine_names_the_middle_the_surface_does_not_evaluate_at() {
+        let s = cylinder_without_its_middle();
+        let mut uv = vec![[0.0, 0.0], [1.0, 0.0], [1.0, 1.0], [0.0, 1.0]];
+        let fixed: Vec<Vec3> = uv
+            .iter()
+            .map(|q| s.derivs(q[0], q[1]).map(|d| kernel::record_vec3(d.0)))
+            .collect::<Option<_>>()
+            .unwrap_or_default();
+        assert_eq!(fixed.len(), 4);
+        let mut tris = vec![[0, 1, 2], [0, 2, 3]];
+        assert_eq!(
+            refine(&s, 0.01, 1e-9, &fixed, &mut uv, &mut tris, 1000),
+            Err(NoValue([0.5, 0.5]))
+        );
+        assert_eq!(tris, vec![[0, 1, 2], [0, 2, 3]]);
+    }
+
+    /// A node of the triangulation (not one of the boundary's) the surface does not evaluate at is
+    /// named, not left out of the check.
+    #[test]
+    fn refine_names_a_node_the_surface_does_not_evaluate_at() {
+        let s = cylinder_without_its_middle();
+        let mut uv = vec![[0.0, 0.0], [1.0, 0.0], [1.0, 1.0], [0.0, 1.0], [0.5, 0.5]];
+        let fixed: Vec<Vec3> = uv
+            .iter()
+            .take(4)
+            .map(|q| s.derivs(q[0], q[1]).map(|d| kernel::record_vec3(d.0)))
+            .collect::<Option<_>>()
+            .unwrap_or_default();
+        assert_eq!(fixed.len(), 4);
+        let mut tris = vec![[0, 1, 4], [1, 2, 4], [2, 3, 4], [3, 0, 4]];
+        assert_eq!(
+            refine(&s, 0.01, 1e-9, &fixed, &mut uv, &mut tris, 1000),
+            Err(NoValue([0.5, 0.5]))
+        );
+        assert_eq!(
+            flip(&s, 0.01, 1e-9, &fixed, &uv, &mut tris),
+            Err(NoValue([0.5, 0.5]))
+        );
+    }
+
+    /// A face on that surface, its boundary the circles u = 0 and u = 1 joined along v = 0 and
+    /// v = 1 (a quarter of a turn, its nodes from the edges): whatever layout meshes it puts nodes
+    /// or middles inside, where the surface stops at u = 0.5. The face is refused with the point,
+    /// not meshed around it, and not filled leniently: no layout can mesh a surface that is not
+    /// there.
+    #[test]
+    fn a_face_whose_surface_refuses_an_inner_point_is_refused_whole() {
+        let s = cylinder_without_its_middle();
+        let quarter = std::f64::consts::FRAC_PI_2;
+        let mut uv: Vec<[f64; 2]> = Vec::new();
+        uv.extend((0..8).map(|k| [0.0, quarter * f64::from(k) / 8.0]));
+        uv.extend([0.0, 0.25, 0.75].map(|u| [u, quarter]));
+        uv.extend((0..8).map(|k| [1.0, quarter * (1.0 - f64::from(k) / 8.0)]));
+        uv.extend([1.0, 0.75, 0.25].map(|u| [u, 0.0]));
+        // Counter-clockwise in (u, v): up u = 0 is clockwise, so reverse.
+        uv.reverse();
+        let pts: Vec<Vec3> = uv
+            .iter()
+            .map(|q| s.derivs(q[0], q[1]).map(|d| kernel::record_vec3(d.0)))
+            .collect::<Option<_>>()
+            .unwrap_or_default();
+        assert_eq!(pts.len(), uv.len());
+        let loops = [super::super::seam::Loop { uv, pts }];
+        let rules = super::super::size::Rules::new(0.01, 40.0, None);
+        let r = super::super::plan_or_fill(
+            0,
+            "revolution",
+            &s,
+            &loops,
+            &rules,
+            (1.0, [40.0, 3.0]),
+            0.0,
+            None,
+        );
+        match r {
+            Err(e) => assert!(
+                e.to_string().contains("the surface does not evaluate at"),
+                "{e}"
+            ),
+            Ok((fp, stats)) => panic!(
+                "meshed with {} triangles, lenient {:?}",
+                fp.triangles.len(),
+                stats.lenient
+            ),
+        }
     }
 }
