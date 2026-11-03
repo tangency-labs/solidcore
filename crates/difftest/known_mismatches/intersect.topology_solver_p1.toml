@@ -1,0 +1,77 @@
+# #2502: these cases move with the difftest's C++ reference, the SMLib fork
+# v1.1.0-alpha.1 (8eac63c); plan/findings/general--2502-fork-pin-intersect-known-mismatches.md.
+
+[[mismatch]]
+unit = "intersect.topology_solver_p1"
+case = "gen0346"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[9] C++ 3.6e2, Rust 0e0 (plan/findings/general--2502-fork-pin-intersect-known-mismatches.md)"
+
+[[mismatch]]
+unit = "intersect.topology_solver_p1"
+case = "gen0418"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[0] C++ 1e0, Rust 2e0 (+1 more) (plan/findings/general--2502-fork-pin-intersect-known-mismatches.md)"
+
+[[mismatch]]
+unit = "intersect.topology_solver_p1"
+case = "gen0764"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[9] C++ 3.6e2, Rust 0e0 (plan/findings/general--2502-fork-pin-intersect-known-mismatches.md)"
+
+[[mismatch]]
+unit = "intersect.topology_solver_p1"
+case = "gen0941"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[0] C++ 1e0, Rust 3e0 (+1 more) (plan/findings/general--2502-fork-pin-intersect-known-mismatches.md)"
+
+[[mismatch]]
+unit = "intersect.topology_solver_p1"
+case = "gen1174"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[9] C++ -9e1, Rust 0e0 (plan/findings/general--2502-fork-pin-intersect-known-mismatches.md)"
+
+[[mismatch]]
+unit = "intersect.topology_solver_p1"
+case = "gen1385"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[0] C++ 1e0, Rust 2e0 (+1 more) (plan/findings/general--2502-fork-pin-intersect-known-mismatches.md)"
+
+[[mismatch]]
+unit = "intersect.topology_solver_p1"
+case = "gen1554"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[10] C++ 3.6e2, Rust 0e0 (plan/findings/general--2502-fork-pin-intersect-known-mismatches.md)"
+
+[[mismatch]]
+unit = "intersect.topology_solver_p1"
+case = "gen1648"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[0] C++ 1e0, Rust 3e0 (+1 more) (plan/findings/general--2502-fork-pin-intersect-known-mismatches.md)"
+
+[[mismatch]]
+unit = "intersect.topology_solver_p1"
+case = "gen1727"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[0] C++ 1e0, Rust 3e0 (+1 more) (plan/findings/general--2502-fork-pin-intersect-known-mismatches.md)"
+
+[[mismatch]]
+unit = "intersect.topology_solver_p1"
+case = "gen1737"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: ints.status[0] C++ 1007, Rust 0 (plan/findings/general--2502-fork-pin-intersect-known-mismatches.md)"
+
+[[mismatch]]
+unit = "intersect.topology_solver_p1"
+case = "gen1875"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[0] C++ 1e0, Rust 3e0 (+1 more) (plan/findings/general--2502-fork-pin-intersect-known-mismatches.md)"
+
+[[mismatch]]
+unit = "intersect.topology_solver_p1"
+case = "gen1937"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[9] C++ 2.236898739429002e2, Rust 1e0 (plan/findings/general--2502-fork-pin-intersect-known-mismatches.md)"
+
+[[mismatch]]
+unit = "intersect.topology_solver_p1"
+case = "gen2004"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[10] C++ -9e1, Rust 0e0 (plan/findings/general--2502-fork-pin-intersect-known-mismatches.md)"
+
+[[mismatch]]
+unit = "intersect.topology_solver_p1"
+case = "gen2563"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[0] C++ 1e0, Rust 2e0 (+1 more) (plan/findings/general--2502-fork-pin-intersect-known-mismatches.md)"
+
+[[mismatch]]
+unit = "intersect.topology_solver_p1"
+case = "gen2806"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[0] C++ 1e0, Rust 2e0 (+1 more) (plan/findings/general--2502-fork-pin-intersect-known-mismatches.md)"

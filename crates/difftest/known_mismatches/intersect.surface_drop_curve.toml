@@ -1,0 +1,27 @@
+# #2502: these cases move with the difftest's C++ reference, the SMLib fork
+# v1.1.0-alpha.1 (8eac63c); plan/findings/general--2502-fork-pin-intersect-known-mismatches.md.
+
+[[mismatch]]
+unit = "intersect.surface_drop_curve"
+case = "gen0057"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.rec.len C++ 27, Rust 31 (plan/findings/general--2502-fork-pin-intersect-known-mismatches.md)"
+
+[[mismatch]]
+unit = "intersect.surface_drop_curve"
+case = "gen0096"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.rec.len C++ 45, Rust 82 (plan/findings/general--2502-fork-pin-intersect-known-mismatches.md)"
+
+[[mismatch]]
+unit = "intersect.surface_drop_curve"
+case = "gen0303"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.rec.len C++ 235, Rust 263 (plan/findings/general--2502-fork-pin-intersect-known-mismatches.md)"
+
+[[mismatch]]
+unit = "intersect.surface_drop_curve"
+case = "gen0321"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.rec.len C++ 128, Rust 166 (plan/findings/general--2502-fork-pin-intersect-known-mismatches.md)"
+
+[[mismatch]]
+unit = "intersect.surface_drop_curve"
+case = "gen0330"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.rec.len C++ 35, Rust 69 (plan/findings/general--2502-fork-pin-intersect-known-mismatches.md)"

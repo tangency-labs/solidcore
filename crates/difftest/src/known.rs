@@ -207,6 +207,17 @@ pub fn for_unit(root: &Path, unit: &str) -> Result<Vec<KnownMismatch>, HarnessEr
     Ok(entries)
 }
 
+/// Whether this checkout's list of `unit` names `case` (and the entry applies here). A
+/// runner test that asserts a case's parity skips that assertion for a listed case, which
+/// disagrees with the reference by record (#2502).
+#[cfg(all(test, feature = "cpp"))]
+pub fn listed(unit: &str, case: &str) -> bool {
+    for_unit(&crate::case::repo_root(), unit)
+        .unwrap()
+        .iter()
+        .any(|m| m.case == case && m.applies())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

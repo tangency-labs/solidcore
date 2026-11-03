@@ -1,0 +1,7 @@
+# #2502: these cases move with the difftest's C++ reference, the SMLib fork
+# v1.1.0-alpha.1 (8eac63c); plan/findings/general--2502-fork-pin-intersect-known-mismatches.md.
+
+[[mismatch]]
+unit = "intersect.topology_solver_p2"
+case = "analytic_face_torus_half_x_8_3"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.static[15] C++ 7.656939934217568e-17, Rust 3.729217612165185e-17 (plan/findings/general--2502-fork-pin-intersect-known-mismatches.md)"

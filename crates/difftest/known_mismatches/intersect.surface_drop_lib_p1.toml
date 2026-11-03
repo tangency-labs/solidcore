@@ -1,0 +1,22 @@
+# #2502: these cases move with the difftest's C++ reference, the SMLib fork
+# v1.1.0-alpha.1 (8eac63c); plan/findings/general--2502-fork-pin-intersect-known-mismatches.md.
+
+[[mismatch]]
+unit = "intersect.surface_drop_lib_p1"
+case = "prog_drop_trim_ps10_3_small_cylinder_end_on_boundary"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.rec[1] C++ 2.0063486965669453e-5, Rust 2.006348693751915e-5 (+1 more) (plan/findings/general--2502-fork-pin-intersect-known-mismatches.md)"
+
+[[mismatch]]
+unit = "intersect.surface_drop_lib_p1"
+case = "trim0041"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.rec.len C++ 136, Rust 154 (plan/findings/general--2502-fork-pin-intersect-known-mismatches.md)"
+
+[[mismatch]]
+unit = "intersect.surface_drop_lib_p1"
+case = "trim0079"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.rec[2] C++ 7.292613336350145e-7, Rust 7.2926134026834e-7 (plan/findings/general--2502-fork-pin-intersect-known-mismatches.md)"
+
+[[mismatch]]
+unit = "intersect.surface_drop_lib_p1"
+case = "trim0248"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.rec.len C++ 80, Rust 116 (plan/findings/general--2502-fork-pin-intersect-known-mismatches.md)"

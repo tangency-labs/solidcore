@@ -1,0 +1,62 @@
+# #2502: these cases move with the difftest's C++ reference, the SMLib fork
+# v1.1.0-alpha.1 (8eac63c); plan/findings/general--2502-fork-pin-intersect-known-mismatches.md.
+
+[[mismatch]]
+unit = "intersect.surface_intersector_p4"
+case = "gen0019"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.rec.len C++ 1325, Rust 1361 (plan/findings/general--2502-fork-pin-intersect-known-mismatches.md)"
+
+[[mismatch]]
+unit = "intersect.surface_intersector_p4"
+case = "gen0087"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.rec.len C++ 775, Rust 924 (plan/findings/general--2502-fork-pin-intersect-known-mismatches.md)"
+
+[[mismatch]]
+unit = "intersect.surface_intersector_p4"
+case = "gen0153"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.rec.len C++ 1410, Rust 1455 (plan/findings/general--2502-fork-pin-intersect-known-mismatches.md)"
+
+[[mismatch]]
+unit = "intersect.surface_intersector_p4"
+case = "gen0183"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.rec.len C++ 599, Rust 635 (plan/findings/general--2502-fork-pin-intersect-known-mismatches.md)"
+
+[[mismatch]]
+unit = "intersect.surface_intersector_p4"
+case = "gen0500"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.rec.len C++ 843, Rust 879 (plan/findings/general--2502-fork-pin-intersect-known-mismatches.md)"
+
+[[mismatch]]
+unit = "intersect.surface_intersector_p4"
+case = "gen0578"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.rec.len C++ 989, Rust 899 (plan/findings/general--2502-fork-pin-intersect-known-mismatches.md)"
+
+[[mismatch]]
+unit = "intersect.surface_intersector_p4"
+case = "gen0672"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.rec.len C++ 1327, Rust 1363 (plan/findings/general--2502-fork-pin-intersect-known-mismatches.md)"
+
+[[mismatch]]
+unit = "intersect.surface_intersector_p4"
+case = "gen0771"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.rec.len C++ 601, Rust 637 (plan/findings/general--2502-fork-pin-intersect-known-mismatches.md)"
+
+[[mismatch]]
+unit = "intersect.surface_intersector_p4"
+case = "gen1081"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.rec.len C++ 1085, Rust 1121 (plan/findings/general--2502-fork-pin-intersect-known-mismatches.md)"
+
+[[mismatch]]
+unit = "intersect.surface_intersector_p4"
+case = "gen1135"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.rec.len C++ 601, Rust 637 (plan/findings/general--2502-fork-pin-intersect-known-mismatches.md)"
+
+[[mismatch]]
+unit = "intersect.surface_intersector_p4"
+case = "gen1405"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.rec.len C++ 839, Rust 875 (plan/findings/general--2502-fork-pin-intersect-known-mismatches.md)"
+
+[[mismatch]]
+unit = "intersect.surface_intersector_p4"
+case = "gen1428"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.rec.len C++ 841, Rust 877 (plan/findings/general--2502-fork-pin-intersect-known-mismatches.md)"

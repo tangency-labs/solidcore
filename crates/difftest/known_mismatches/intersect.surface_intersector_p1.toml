@@ -1,0 +1,17 @@
+# #2502: these cases move with the difftest's C++ reference, the SMLib fork
+# v1.1.0-alpha.1 (8eac63c); plan/findings/general--2502-fork-pin-intersect-known-mismatches.md.
+
+[[mismatch]]
+unit = "intersect.surface_intersector_p1"
+case = "gen1039"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.rec[18] C++ 1.3125175909988646e-1, Rust 0e0 (plan/findings/general--2502-fork-pin-intersect-known-mismatches.md)"
+
+[[mismatch]]
+unit = "intersect.surface_intersector_p1"
+case = "gen1226"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.rec.len C++ 702, Rust 701 (plan/findings/general--2502-fork-pin-intersect-known-mismatches.md)"
+
+[[mismatch]]
+unit = "intersect.surface_intersector_p1"
+case = "gen1299"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.rec[13] C++ 2.906544062190732e0, Rust 2.9173428217492368e0 (+3 more) (plan/findings/general--2502-fork-pin-intersect-known-mismatches.md)"

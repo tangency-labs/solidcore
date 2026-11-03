@@ -1,0 +1,22 @@
+# #2502: these cases move with the difftest's C++ reference, the SMLib fork
+# v1.1.0-alpha.1 (8eac63c); plan/findings/general--2502-fork-pin-intersect-known-mismatches.md.
+
+[[mismatch]]
+unit = "intersect.curve_class_p7"
+case = "gen0646"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[217] C++ 0e0, Rust 1e0 (+1 more) (plan/findings/general--2502-fork-pin-intersect-known-mismatches.md)"
+
+[[mismatch]]
+unit = "intersect.curve_class_p7"
+case = "gen0036_real_vertex"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[1] C++ 1.007e3, Rust 0e0 (plan/findings/general--2502-fork-pin-intersect-known-mismatches.md)"
+
+[[mismatch]]
+unit = "intersect.curve_class_p7"
+case = "gen0046_real_vertex"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[1] C++ 1.007e3, Rust 0e0 (plan/findings/general--2502-fork-pin-intersect-known-mismatches.md)"
+
+[[mismatch]]
+unit = "intersect.curve_class_p7"
+case = "gen0181_real_vertex"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[1] C++ 1.007e3, Rust 0e0 (plan/findings/general--2502-fork-pin-intersect-known-mismatches.md)"

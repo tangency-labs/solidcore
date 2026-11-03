@@ -1,0 +1,97 @@
+# #2502: these cases move with the difftest's C++ reference, the SMLib fork
+# v1.1.0-alpha.1 (8eac63c); plan/findings/general--2502-fork-pin-intersect-known-mismatches.md.
+
+[[mismatch]]
+unit = "intersect.curve_class_p5"
+case = "circle_full_domain_common_extraction_4"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 435, Rust 507 (plan/findings/general--2502-fork-pin-intersect-known-mismatches.md)"
+
+[[mismatch]]
+unit = "intersect.curve_class_p5"
+case = "topo0006"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 203, Rust 259 (plan/findings/general--2502-fork-pin-intersect-known-mismatches.md)"
+
+[[mismatch]]
+unit = "intersect.curve_class_p5"
+case = "topo0018"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 203, Rust 259 (plan/findings/general--2502-fork-pin-intersect-known-mismatches.md)"
+
+[[mismatch]]
+unit = "intersect.curve_class_p5"
+case = "topo0030"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 147, Rust 203 (plan/findings/general--2502-fork-pin-intersect-known-mismatches.md)"
+
+[[mismatch]]
+unit = "intersect.curve_class_p5"
+case = "topo0044"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 147, Rust 203 (plan/findings/general--2502-fork-pin-intersect-known-mismatches.md)"
+
+[[mismatch]]
+unit = "intersect.curve_class_p5"
+case = "topo0113"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 147, Rust 203 (plan/findings/general--2502-fork-pin-intersect-known-mismatches.md)"
+
+[[mismatch]]
+unit = "intersect.curve_class_p5"
+case = "topo0118"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 203, Rust 259 (plan/findings/general--2502-fork-pin-intersect-known-mismatches.md)"
+
+[[mismatch]]
+unit = "intersect.curve_class_p5"
+case = "topo0134"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 147, Rust 203 (plan/findings/general--2502-fork-pin-intersect-known-mismatches.md)"
+
+[[mismatch]]
+unit = "intersect.curve_class_p5"
+case = "topo0135"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 147, Rust 203 (plan/findings/general--2502-fork-pin-intersect-known-mismatches.md)"
+
+[[mismatch]]
+unit = "intersect.curve_class_p5"
+case = "topo0138"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 147, Rust 203 (plan/findings/general--2502-fork-pin-intersect-known-mismatches.md)"
+
+[[mismatch]]
+unit = "intersect.curve_class_p5"
+case = "topo0148"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 203, Rust 259 (plan/findings/general--2502-fork-pin-intersect-known-mismatches.md)"
+
+[[mismatch]]
+unit = "intersect.curve_class_p5"
+case = "topo0169"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 203, Rust 259 (plan/findings/general--2502-fork-pin-intersect-known-mismatches.md)"
+
+[[mismatch]]
+unit = "intersect.curve_class_p5"
+case = "topo0179"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 147, Rust 203 (plan/findings/general--2502-fork-pin-intersect-known-mismatches.md)"
+
+[[mismatch]]
+unit = "intersect.curve_class_p5"
+case = "topo0182"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 203, Rust 259 (plan/findings/general--2502-fork-pin-intersect-known-mismatches.md)"
+
+[[mismatch]]
+unit = "intersect.curve_class_p5"
+case = "topo0215"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 203, Rust 259 (plan/findings/general--2502-fork-pin-intersect-known-mismatches.md)"
+
+[[mismatch]]
+unit = "intersect.curve_class_p5"
+case = "topo0248"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 147, Rust 203 (plan/findings/general--2502-fork-pin-intersect-known-mismatches.md)"
+
+[[mismatch]]
+unit = "intersect.curve_class_p5"
+case = "topo0271"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 203, Rust 259 (plan/findings/general--2502-fork-pin-intersect-known-mismatches.md)"
+
+[[mismatch]]
+unit = "intersect.curve_class_p5"
+case = "topo0275"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 203, Rust 259 (plan/findings/general--2502-fork-pin-intersect-known-mismatches.md)"
+
+[[mismatch]]
+unit = "intersect.curve_class_p5"
+case = "topo0278"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 203, Rust 259 (plan/findings/general--2502-fork-pin-intersect-known-mismatches.md)"

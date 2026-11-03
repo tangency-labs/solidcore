@@ -1,0 +1,137 @@
+# #2502: these cases move with the difftest's C++ reference, the SMLib fork
+# v1.1.0-alpha.1 (8eac63c); plan/findings/general--2502-fork-pin-intersect-known-mismatches.md.
+
+[[mismatch]]
+unit = "intersect.curve_class_p2"
+case = "adv_stale_both_degenerate"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[1] C++ 1.001e3, Rust 0e0 (plan/findings/general--2502-fork-pin-intersect-known-mismatches.md)"
+
+[[mismatch]]
+unit = "intersect.curve_class_p2"
+case = "adv_inverted_min_lo"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 390, Rust 231 (plan/findings/general--2502-fork-pin-intersect-known-mismatches.md)"
+
+[[mismatch]]
+unit = "intersect.curve_class_p2"
+case = "rev_editmin_last_s1e-06_o0.0_e0.0"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[1] C++ 1.001e3, Rust 0e0 (plan/findings/general--2502-fork-pin-intersect-known-mismatches.md)"
+
+[[mismatch]]
+unit = "intersect.curve_class_p2"
+case = "rev_editmin_last_s1e-06_o0.0_e9.999999999999999e-19"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[1] C++ 1.001e3, Rust 0e0 (plan/findings/general--2502-fork-pin-intersect-known-mismatches.md)"
+
+[[mismatch]]
+unit = "intersect.curve_class_p2"
+case = "rev_editmin_last_s1e-06_o0.0_e1e-12"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[1] C++ 1.001e3, Rust 0e0 (plan/findings/general--2502-fork-pin-intersect-known-mismatches.md)"
+
+[[mismatch]]
+unit = "intersect.curve_class_p2"
+case = "gen0033"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[367] C++ 1.001e3, Rust 0e0 (plan/findings/general--2502-fork-pin-intersect-known-mismatches.md)"
+
+[[mismatch]]
+unit = "intersect.curve_class_p2"
+case = "gen0107"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[1] C++ 1.001e3, Rust 0e0 (plan/findings/general--2502-fork-pin-intersect-known-mismatches.md)"
+
+[[mismatch]]
+unit = "intersect.curve_class_p2"
+case = "gen0165"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[342] C++ 1.001e3, Rust 0e0 (plan/findings/general--2502-fork-pin-intersect-known-mismatches.md)"
+
+[[mismatch]]
+unit = "intersect.curve_class_p2"
+case = "gen0274"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[1] C++ 1.001e3, Rust 0e0 (plan/findings/general--2502-fork-pin-intersect-known-mismatches.md)"
+
+[[mismatch]]
+unit = "intersect.curve_class_p2"
+case = "gen0286"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[1] C++ 1.001e3, Rust 0e0 (+1 more) (plan/findings/general--2502-fork-pin-intersect-known-mismatches.md)"
+
+[[mismatch]]
+unit = "intersect.curve_class_p2"
+case = "gen0416"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[78] C++ 1.001e3, Rust 0e0 (plan/findings/general--2502-fork-pin-intersect-known-mismatches.md)"
+
+[[mismatch]]
+unit = "intersect.curve_class_p2"
+case = "gen0433"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[158] C++ 1.001e3, Rust 0e0 (plan/findings/general--2502-fork-pin-intersect-known-mismatches.md)"
+
+[[mismatch]]
+unit = "intersect.curve_class_p2"
+case = "gen0501"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[25] C++ 1.001e3, Rust 0e0 (plan/findings/general--2502-fork-pin-intersect-known-mismatches.md)"
+
+[[mismatch]]
+unit = "intersect.curve_class_p2"
+case = "gen0587"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[1] C++ 1.001e3, Rust 0e0 (plan/findings/general--2502-fork-pin-intersect-known-mismatches.md)"
+
+[[mismatch]]
+unit = "intersect.curve_class_p2"
+case = "gen0606"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[209] C++ 1.001e3, Rust 0e0 (plan/findings/general--2502-fork-pin-intersect-known-mismatches.md)"
+
+[[mismatch]]
+unit = "intersect.curve_class_p2"
+case = "gen0613"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[1] C++ 1.001e3, Rust 0e0 (plan/findings/general--2502-fork-pin-intersect-known-mismatches.md)"
+
+[[mismatch]]
+unit = "intersect.curve_class_p2"
+case = "gen0735"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[1] C++ 1.001e3, Rust 0e0 (plan/findings/general--2502-fork-pin-intersect-known-mismatches.md)"
+
+[[mismatch]]
+unit = "intersect.curve_class_p2"
+case = "gen0746"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[78] C++ 1.001e3, Rust 0e0 (plan/findings/general--2502-fork-pin-intersect-known-mismatches.md)"
+
+[[mismatch]]
+unit = "intersect.curve_class_p2"
+case = "gen0760"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[432] C++ 1.001e3, Rust 0e0 (plan/findings/general--2502-fork-pin-intersect-known-mismatches.md)"
+
+[[mismatch]]
+unit = "intersect.curve_class_p2"
+case = "gen0796"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[90] C++ 1.001e3, Rust 0e0 (plan/findings/general--2502-fork-pin-intersect-known-mismatches.md)"
+
+[[mismatch]]
+unit = "intersect.curve_class_p2"
+case = "gen1089"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[1] C++ 1.001e3, Rust 0e0 (plan/findings/general--2502-fork-pin-intersect-known-mismatches.md)"
+
+[[mismatch]]
+unit = "intersect.curve_class_p2"
+case = "gen1160"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[155] C++ 1.001e3, Rust 0e0 (plan/findings/general--2502-fork-pin-intersect-known-mismatches.md)"
+
+[[mismatch]]
+unit = "intersect.curve_class_p2"
+case = "gen1188"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[249] C++ 1.001e3, Rust 0e0 (plan/findings/general--2502-fork-pin-intersect-known-mismatches.md)"
+
+[[mismatch]]
+unit = "intersect.curve_class_p2"
+case = "gen1268"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[314] C++ 1.001e3, Rust 0e0 (plan/findings/general--2502-fork-pin-intersect-known-mismatches.md)"
+
+[[mismatch]]
+unit = "intersect.curve_class_p2"
+case = "gen1305"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[632] C++ 1.001e3, Rust 0e0 (plan/findings/general--2502-fork-pin-intersect-known-mismatches.md)"
+
+[[mismatch]]
+unit = "intersect.curve_class_p2"
+case = "gen1330"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[1] C++ 1.001e3, Rust 0e0 (plan/findings/general--2502-fork-pin-intersect-known-mismatches.md)"
+
+[[mismatch]]
+unit = "intersect.curve_class_p2"
+case = "gen1489"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[304] C++ 1.001e3, Rust 0e0 (plan/findings/general--2502-fork-pin-intersect-known-mismatches.md)"

@@ -1,0 +1,102 @@
+# #2502: these cases move with the difftest's C++ reference, the SMLib fork
+# v1.1.0-alpha.1 (8eac63c); plan/findings/general--2502-fork-pin-intersect-known-mismatches.md.
+
+[[mismatch]]
+unit = "intersect.api_intersectors"
+case = "ssi-sphere-plane-near-tangent-in"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.record[1] C++ 1.4021e4, Rust 1.4033e4 (+8 more) (plan/findings/general--2502-fork-pin-intersect-known-mismatches.md)"
+
+[[mismatch]]
+unit = "intersect.api_intersectors"
+case = "ssi-sphere-plane-near-tangent-in-swapped"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.record[1] C++ 1.4021e4, Rust 1.4033e4 (+8 more) (plan/findings/general--2502-fork-pin-intersect-known-mismatches.md)"
+
+[[mismatch]]
+unit = "intersect.api_intersectors"
+case = "ssi-sphere-sphere-near-tangent"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.record[1] C++ 1.4021e4, Rust 1.4033e4 (+13 more) (plan/findings/general--2502-fork-pin-intersect-known-mismatches.md)"
+
+[[mismatch]]
+unit = "intersect.api_intersectors"
+case = "ssi-sphere-cone-near-pole-rt0-h0"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.record[28] C++ 7.8125e-3, Rust 1.3531646934131853e-2 (+7 more) (plan/findings/general--2502-fork-pin-intersect-known-mismatches.md)"
+
+[[mismatch]]
+unit = "intersect.api_intersectors"
+case = "ssi-sphere-cone-near-pole-rt0-h0-swapped"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.record[28] C++ 7.8125e-3, Rust 1.3531646934131853e-2 (+7 more) (plan/findings/general--2502-fork-pin-intersect-known-mismatches.md)"
+
+[[mismatch]]
+unit = "intersect.api_intersectors"
+case = "ssi-sphere-cone-near-pole-rt2-h1"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.record[24] C++ 1.4033e4, Rust 1.4021e4 (+8 more) (plan/findings/general--2502-fork-pin-intersect-known-mismatches.md)"
+
+[[mismatch]]
+unit = "intersect.api_intersectors"
+case = "ssi-sphere-cone-near-pole-rt2-h1-swapped"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.record[24] C++ 1.4033e4, Rust 1.4021e4 (+8 more) (plan/findings/general--2502-fork-pin-intersect-known-mismatches.md)"
+
+[[mismatch]]
+unit = "intersect.api_intersectors"
+case = "ssi-sphere-cone-near-pole-rt3-h1"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.record[28] C++ 2.9749113694780893e-2, Rust 2.7621358640099514e-2 (+7 more) (plan/findings/general--2502-fork-pin-intersect-known-mismatches.md)"
+
+[[mismatch]]
+unit = "intersect.api_intersectors"
+case = "ssi-sphere-cone-near-pole-rt3-h1-swapped"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.record[28] C++ 2.9749113694780893e-2, Rust 2.7621358640099514e-2 (+7 more) (plan/findings/general--2502-fork-pin-intersect-known-mismatches.md)"
+
+[[mismatch]]
+unit = "intersect.api_intersectors"
+case = "ssi-sphere-cone-near-pole-rt4-h1"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.record[28] C++ 1.015625e-1, Rust 1.0004881620988826e-1 (+7 more) (plan/findings/general--2502-fork-pin-intersect-known-mismatches.md)"
+
+[[mismatch]]
+unit = "intersect.api_intersectors"
+case = "ssi-sphere-cone-near-pole-rt4-h1-swapped"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.record[28] C++ 1.015625e-1, Rust 1.0004881620988826e-1 (+7 more) (plan/findings/general--2502-fork-pin-intersect-known-mismatches.md)"
+
+[[mismatch]]
+unit = "intersect.api_intersectors"
+case = "ssi-sphere-cone-near-pole-rt5-h1"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.record[28] C++ 3.0106013856246394e-1, Rust 3.012628044477944e-1 (+7 more) (plan/findings/general--2502-fork-pin-intersect-known-mismatches.md)"
+
+[[mismatch]]
+unit = "intersect.api_intersectors"
+case = "ssi-sphere-cone-near-pole-rt5-h1-swapped"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.record[28] C++ 3.0106013856246394e-1, Rust 3.012628044477944e-1 (+7 more) (plan/findings/general--2502-fork-pin-intersect-known-mismatches.md)"
+
+[[mismatch]]
+unit = "intersect.api_intersectors"
+case = "ssi-sphere-cylinder-coaxial-tangent"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.record[3] C++ 1.2565723788098028e1, Rust 1.2524879664842274e1 (+13 more) (plan/findings/general--2502-fork-pin-intersect-known-mismatches.md)"
+
+[[mismatch]]
+unit = "intersect.api_intersectors"
+case = "ssi-revolution-revolution-offset-axis"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.record[51] C++ 9.937351400301009e-1, Rust 9.938154532986857e-1 (+19 more) (plan/findings/general--2502-fork-pin-intersect-known-mismatches.md)"
+
+[[mismatch]]
+unit = "intersect.api_intersectors"
+case = "gen0021"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.record[49] C++ 5.3900915488226245e-2, Rust 5.3914832670788684e-2 (+9 more) (plan/findings/general--2502-fork-pin-intersect-known-mismatches.md)"
+
+[[mismatch]]
+unit = "intersect.api_intersectors"
+case = "ssi0013"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.record[3] C++ 1e0, Rust 4.3430164304841234e-1 (+43 more) (plan/findings/general--2502-fork-pin-intersect-known-mismatches.md)"
+
+[[mismatch]]
+unit = "intersect.api_intersectors"
+case = "ssi0038"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.record[5] C++ -3.332338092094117e-2, Rust -4.3861424743619856e-2 (+9 more) (plan/findings/general--2502-fork-pin-intersect-known-mismatches.md)"
+
+[[mismatch]]
+unit = "intersect.api_intersectors"
+case = "ssi0048"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.record[5] C++ 5.986210385389636e-1, Rust 6.152070107392865e-1 (+14 more) (plan/findings/general--2502-fork-pin-intersect-known-mismatches.md)"
+
+[[mismatch]]
+unit = "intersect.api_intersectors"
+case = "ssi0058"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.record[5] C++ -1.306477960672192e-1, Rust -1.4737881606048692e-16 (+13 more) (plan/findings/general--2502-fork-pin-intersect-known-mismatches.md)"
