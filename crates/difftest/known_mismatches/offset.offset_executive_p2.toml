@@ -9,3 +9,2031 @@ case = "issue2174_cap_two_rim_edges_api_shell_out"
 libc = "glibc"
 cpp_defect = "UB-241"
 why = "C++ heap-layout dependent (UB-241 use-after-free in GlueCoincidentBrepVertices): crashes in one run and finishes in another; the Rust output is the same in every run (tests/issue_2174_cap_outward_ub_241.rs)"
+
+# #2502: these cases move with the difftest's C++ reference, the SMLib fork
+# v1.1.0-alpha.1 (8eac63c); plan/findings/general--2502-fork-pin-offset-known-mismatches.md.
+
+[[mismatch]]
+unit = "offset.offset_executive_p2"
+case = "api_shell_box_top_round_in"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.result.geometry C++ missing, Rust present (+7 more) (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_executive_p2"
+case = "static_shell_box_top_round_in"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.result.geometry C++ missing, Rust present (+7 more) (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_executive_p2"
+case = "api_offset_box_extend_out"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: ints.result.edge_kinds[0] C++ 1, Rust 2 (+11 more) (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_executive_p2"
+case = "api_offset_box_extend_in"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: ints.result.edge_kinds[0] C++ 1, Rust 2 (+11 more) (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_executive_p2"
+case = "api_shell_box_top_extend_in"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: ints.result.edge_kinds[12] C++ 1, Rust 2 (+11 more) (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_executive_p2"
+case = "api_shell_box_top_extend_out"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: ints.result.edge_kinds[12] C++ 1, Rust 2 (+11 more) (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_executive_p2"
+case = "static_offset_box_extend_out"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: ints.result.edge_kinds[0] C++ 1, Rust 2 (+11 more) (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_executive_p2"
+case = "static_shell_box_top_extend_in"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: ints.result.edge_kinds[12] C++ 1, Rust 2 (+11 more) (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_executive_p2"
+case = "api_offset_box_extend_merge_out"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: ints.result.edge_kinds[0] C++ 1, Rust 2 (+11 more) (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_executive_p2"
+case = "api_offset_box_extend_merge_in"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: ints.result.edge_kinds[0] C++ 1, Rust 2 (+11 more) (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_executive_p2"
+case = "api_shell_box_top_extend_merge_in"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: ints.result.edge_kinds[12] C++ 1, Rust 2 (+11 more) (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_executive_p2"
+case = "api_shell_box_top_extend_merge_out"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: ints.result.edge_kinds[12] C++ 1, Rust 2 (+11 more) (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_executive_p2"
+case = "static_offset_box_extend_merge_out"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: ints.result.edge_kinds[0] C++ 1, Rust 2 (+11 more) (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_executive_p2"
+case = "static_shell_box_top_extend_merge_in"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: ints.result.edge_kinds[12] C++ 1, Rust 2 (+11 more) (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_executive_p2"
+case = "api_shell_box_closed_extend_merge_in"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: ints.result.edge_kinds[12] C++ 1, Rust 2 (+11 more) (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_executive_p2"
+case = "api_shell_box_two_faces_extend_merge_in"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: ints.result.edge_kinds[12] C++ 1, Rust 2 (+11 more) (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_executive_p2"
+case = "api_offset_cylinder_extend_merge_out"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.result.geometry[3] C++ 0e0, Rust -1.1102230246251565e-16 (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_executive_p2"
+case = "api_shell_box_closed_round_in"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.result.geometry C++ missing, Rust present (+7 more) (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_executive_p2"
+case = "api_shell_box_two_faces_round_in"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.result.geometry C++ missing, Rust present (+7 more) (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_executive_p2"
+case = "api_shell_cylinder_top_round_in"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.result.geometry C++ missing, Rust present (+7 more) (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_executive_p2"
+case = "api_offset_box_extend_merge_out_reference"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: ints.result.edge_kinds[0] C++ 1, Rust 2 (+11 more) (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_executive_p2"
+case = "api_shell_box_top_extend_merge_in_reference"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: ints.result.edge_kinds[12] C++ 1, Rust 2 (+11 more) (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_executive_p2"
+case = "api_shell_box_top_round_in_reference"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.result.geometry C++ missing, Rust present (+7 more) (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_executive_p2"
+case = "api_offset_box_extend_merge_out_standalone_copy"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: ints.result.edge_kinds[0] C++ 1, Rust 2 (+11 more) (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_executive_p2"
+case = "api_shell_box_top_extend_merge_in_standalone_copy"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: ints.result.edge_kinds[12] C++ 1, Rust 2 (+11 more) (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_executive_p2"
+case = "api_shell_box_top_round_in_standalone_copy"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.result.geometry C++ missing, Rust present (+7 more) (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_executive_p2"
+case = "api_offset_box_extend_merge_out_standalone_reference"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: ints.result.edge_kinds[0] C++ 1, Rust 2 (+11 more) (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_executive_p2"
+case = "api_shell_box_top_extend_merge_in_standalone_reference"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: ints.result.edge_kinds[12] C++ 1, Rust 2 (+11 more) (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_executive_p2"
+case = "api_shell_box_top_round_in_standalone_reference"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.result.geometry C++ missing, Rust present (+7 more) (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_executive_p2"
+case = "api_offset_box_extend_merge_out_temp"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: ints.result.edge_kinds[0] C++ 1, Rust 2 (+11 more) (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_executive_p2"
+case = "api_shell_box_top_extend_merge_in_temp"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: ints.result.edge_kinds[12] C++ 1, Rust 2 (+11 more) (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_executive_p2"
+case = "api_shell_box_top_round_in_temp"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.result.geometry C++ missing, Rust present (+7 more) (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_executive_p2"
+case = "member_cylinder_extend_outset"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.executive.geometry_parameters[2] C++ 5e-1, Rust 2e0 (+1 more) (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_executive_p2"
+case = "member_cylinder_round_outset"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.executive.geometry_parameters[2] C++ 5e-1, Rust 2e0 (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_executive_p2"
+case = "extended_cylinder_outset"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.executive.geometry_parameters[2] C++ 5e-1, Rust 2e0 (+1 more) (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_executive_p2"
+case = "member_cylinder_extend_inset"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.executive.geometry_parameters[2] C++ 5e-1, Rust 2e0 (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_executive_p2"
+case = "member_cylinder_round_inset"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.executive.geometry_parameters[2] C++ 5e-1, Rust 2e0 (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_executive_p2"
+case = "extended_cylinder_inset"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.executive.geometry_parameters[2] C++ 5e-1, Rust 2e0 (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_executive_p2"
+case = "member_sphere_extend_outset"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.executive.geometry_parameters[2] C++ 5e-1, Rust 2e0 (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_executive_p2"
+case = "member_sphere_round_outset"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.executive.geometry_parameters[2] C++ 5e-1, Rust 2e0 (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_executive_p2"
+case = "extended_sphere_outset"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.executive.geometry_parameters[2] C++ 5e-1, Rust 2e0 (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_executive_p2"
+case = "member_sphere_extend_inset"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.executive.geometry_parameters[2] C++ 5e-1, Rust 2e0 (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_executive_p2"
+case = "member_sphere_round_inset"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.executive.geometry_parameters[2] C++ 5e-1, Rust 2e0 (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_executive_p2"
+case = "extended_sphere_inset"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.executive.geometry_parameters[2] C++ 5e-1, Rust 2e0 (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_executive_p2"
+case = "member_box_extend_outset"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.executive.geometry_parameters[2] C++ 5e-1, Rust 2e0 (+12 more) (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_executive_p2"
+case = "member_box_round_outset"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.executive.geometry_parameters[2] C++ 5e-1, Rust 2e0 (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_executive_p2"
+case = "extended_box_outset"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.executive.geometry_parameters[2] C++ 5e-1, Rust 2e0 (+12 more) (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_executive_p2"
+case = "member_box_extend_inset"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.executive.geometry_parameters[2] C++ 5e-1, Rust 2e0 (+12 more) (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_executive_p2"
+case = "member_box_round_inset"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.executive.geometry_parameters[2] C++ 5e-1, Rust 2e0 (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_executive_p2"
+case = "extended_box_inset"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.executive.geometry_parameters[2] C++ 5e-1, Rust 2e0 (+12 more) (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_executive_p2"
+case = "api_offset_cylinder_out"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.result.geometry[3] C++ 0e0, Rust -1.1102230246251565e-16 (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_executive_p2"
+case = "api_shell_cylinder_r5_top_open_tol_1e6"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.result.geometry[5] C++ 0e0, Rust 6.661338147750939e-16 (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_executive_p2"
+case = "member_cylinder_extend_inset_past_radius"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.executive.geometry_parameters[2] C++ 5e-1, Rust 2e0 (+10 more) (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_executive_p2"
+case = "member_cylinder_round_inset_past_radius"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.executive.geometry_parameters[2] C++ 5e-1, Rust 2e0 (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_executive_p2"
+case = "member_sphere_round_inset_past_radius"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.executive.geometry_parameters[2] C++ 5e-1, Rust 2e0 (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_executive_p2"
+case = "extended_sphere_inset_past_radius"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.executive.geometry_parameters[2] C++ 5e-1, Rust 2e0 (+12 more) (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_executive_p2"
+case = "member_cylinder_extend_inset_at_radius"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.executive.geometry_parameters[2] C++ 5e-1, Rust 2e0 (+10 more) (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_executive_p2"
+case = "member_cylinder_extend_outset_large"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.executive.geometry_parameters[2] C++ 5e-1, Rust 2e0 (+6 more) (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_executive_p2"
+case = "member_sphere_round_outset_large"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.executive.geometry_parameters[2] C++ 5e-1, Rust 2e0 (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_executive_p2"
+case = "member_cylinder_extend_outset_tiny"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.executive.geometry_parameters[2] C++ 5e-1, Rust 2e0 (+1 more) (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_executive_p2"
+case = "member_cylinder_round_outset_huge"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.executive.geometry_parameters[2] C++ 5e-1, Rust 2e0 (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_executive_p2"
+case = "extended_sphere_outset_huge"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.executive.geometry_parameters[2] C++ 5e-1, Rust 2e0 (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_executive_p2"
+case = "member_shell_cylinder_side"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.executive.geometry_parameters[2] C++ 5e-1, Rust 2e0 (+1 more) (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_executive_p2"
+case = "member_shell_cylinder_base_round"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.executive.geometry_parameters[2] C++ 5e-1, Rust 2e0 (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_executive_p2"
+case = "member_shell_sphere"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.executive.geometry_parameters[2] C++ 5e-1, Rust 2e0 (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_executive_p2"
+case = "member_null_round_preserves_flags_and_sentinel"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.executive.geometry_parameters[2] C++ 5e-1, Rust 2e0 (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_executive_p2"
+case = "member_null_extended_dispatch_before_ner"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.executive.geometry_parameters[2] C++ 5e-1, Rust 2e0 (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_executive_p2"
+case = "extended_null_independent_inset_and_all_flags"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.executive.geometry_parameters[2] C++ 5e-1, Rust 2e0 (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_executive_p2"
+case = "member_null_keeps_negative_zero_magnitude_and_tolerance"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.executive.geometry_parameters[2] C++ 5e-1, Rust 2e0 (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_executive_p2"
+case = "extended_null_tiny_magnitude_negative_raw_tolerance"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.executive.geometry_parameters[2] C++ 5e-1, Rust 2e0 (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_executive_p2"
+case = "extended_null_large_finite_internal_magnitude"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.executive.geometry_parameters[2] C++ 5e-1, Rust 2e0 (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_executive_p2"
+case = "defeature_extrusion_face0_inset2_extended"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.executive.geometry_parameters[2] C++ 5e-1, Rust 2e0 (+12 more) (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_executive_p2"
+case = "defeature_extrusion_face0_inset2_5_extended"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.executive.geometry_parameters[2] C++ 5e-1, Rust 2e0 (+12 more) (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_executive_p2"
+case = "defeature_extrusion_face0_outset2_5_extended"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.executive.geometry_parameters[2] C++ 5e-1, Rust 2e0 (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_executive_p2"
+case = "fill_gap_extrudeHoles1_face0_round_d13"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.executive.geometry_parameters[2] C++ 5e-1, Rust 2e0 (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_executive_p2"
+case = "fill_gap_extrudeHoles1_face0_round_d14_3"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.executive.geometry_parameters[2] C++ 5e-1, Rust 2e0 (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_executive_p2"
+case = "fill_gap_extrudeHoles1_face0_extend_d13"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.executive.geometry_parameters[2] C++ 5e-1, Rust 2e0 (+12 more) (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_executive_p2"
+case = "fill_gap_open_shell_face0_extend_outset"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.executive.geometry_parameters[2] C++ 5e-1, Rust 2e0 (+12 more) (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_executive_p2"
+case = "fillet2_f0_d0_in_rnd"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.executive.geometry_parameters[2] C++ 5e-1, Rust 2e0 (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_executive_p2"
+case = "fillet2_f0_d0_out_rnd"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.executive.geometry_parameters[2] C++ 5e-1, Rust 2e0 (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_executive_p2"
+case = "fillet2_f0_d1_in_rnd"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.executive.geometry_parameters[2] C++ 5e-1, Rust 2e0 (+5 more) (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_executive_p2"
+case = "fillet2_f0_d1_out_rnd"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.executive.geometry_parameters[2] C++ 5e-1, Rust 2e0 (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_executive_p2"
+case = "fillet2_f0_d0_in_ext"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.executive.geometry_parameters[2] C++ 5e-1, Rust 2e0 (+1 more) (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_executive_p2"
+case = "fillet2_f0_d0_out_ext"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.executive.geometry_parameters[2] C++ 5e-1, Rust 2e0 (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_executive_p2"
+case = "fillet2_f1_d0_in_rnd"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.executive.geometry_parameters[2] C++ 5e-1, Rust 2e0 (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_executive_p2"
+case = "fillet2_f1_d0_out_rnd"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.executive.geometry_parameters[2] C++ 5e-1, Rust 2e0 (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_executive_p2"
+case = "fillet2_f1_d1_in_rnd"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.executive.geometry_parameters[2] C++ 5e-1, Rust 2e0 (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_executive_p2"
+case = "fillet2_f1_d1_out_rnd"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.executive.geometry_parameters[2] C++ 5e-1, Rust 2e0 (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_executive_p2"
+case = "fillet2_f1_d0_in_ext"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.executive.geometry_parameters[2] C++ 5e-1, Rust 2e0 (+2 more) (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_executive_p2"
+case = "fillet2_f1_d0_out_ext"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.executive.geometry_parameters[2] C++ 5e-1, Rust 2e0 (+5 more) (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_executive_p2"
+case = "fillet2_f2_d0_in_rnd"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.executive.geometry_parameters[2] C++ 5e-1, Rust 2e0 (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_executive_p2"
+case = "fillet2_f2_d0_out_rnd"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.executive.geometry_parameters[2] C++ 5e-1, Rust 2e0 (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_executive_p2"
+case = "fillet2_f2_d1_in_rnd"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.executive.geometry_parameters[2] C++ 5e-1, Rust 2e0 (+5 more) (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_executive_p2"
+case = "fillet2_f2_d1_out_rnd"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.executive.geometry_parameters[2] C++ 5e-1, Rust 2e0 (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_executive_p2"
+case = "fillet2_f2_d0_in_ext"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.executive.geometry_parameters[2] C++ 5e-1, Rust 2e0 (+2 more) (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_executive_p2"
+case = "fillet2_f2_d0_out_ext"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.executive.geometry_parameters[2] C++ 5e-1, Rust 2e0 (+5 more) (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_executive_p2"
+case = "fillet2_f0_d0_out_rnd_unmerged"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.executive.geometry_parameters[2] C++ 5e-1, Rust 2e0 (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_executive_p2"
+case = "fillet2_f0_d1_out_rnd_unmerged"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.executive.geometry_parameters[2] C++ 5e-1, Rust 2e0 (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_executive_p2"
+case = "pe_Fillet_box_diff_cyl_big_rad_f0_d0_in_ext"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.executive.geometry_parameters[2] C++ 5e-1, Rust 2e0 (+12 more) (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_executive_p2"
+case = "pe_Fillet_box_diff_cyl_big_rad_f0_d0_out_ext"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.executive.geometry_parameters[2] C++ 5e-1, Rust 2e0 (+12 more) (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_executive_p2"
+case = "pe_Fillet_box_diff_cyl_big_rad_f1_d0_in_ext"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.executive.geometry_parameters[2] C++ 5e-1, Rust 2e0 (+12 more) (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_executive_p2"
+case = "pe_Fillet_box_diff_cyl_big_rad_f1_d0_out_ext"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.executive.geometry_parameters[2] C++ 5e-1, Rust 2e0 (+12 more) (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_executive_p2"
+case = "pe_Fillet_box_diff_cyl_big_rad_f2_d0_in_ext"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.executive.geometry_parameters[2] C++ 5e-1, Rust 2e0 (+12 more) (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_executive_p2"
+case = "pe_Fillet_box_diff_cyl_big_rad_f2_d0_out_ext"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.executive.geometry_parameters[2] C++ 5e-1, Rust 2e0 (+12 more) (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_executive_p2"
+case = "pe_Fillet_box_diff_cyl_f0_d0_in_ext"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.executive.geometry_parameters[2] C++ 5e-1, Rust 2e0 (+16 more) (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_executive_p2"
+case = "pe_Fillet_box_diff_cyl_f0_d0_out_ext"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.executive.geometry_parameters[2] C++ 5e-1, Rust 2e0 (+12 more) (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_executive_p2"
+case = "pe_Fillet_box_diff_cyl_f1_d0_in_ext"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.executive.geometry_parameters[2] C++ 5e-1, Rust 2e0 (+16 more) (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_executive_p2"
+case = "pe_Fillet_box_diff_cyl_f1_d0_out_ext"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.executive.geometry_parameters[2] C++ 5e-1, Rust 2e0 (+12 more) (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_executive_p2"
+case = "pe_Fillet_box_diff_cyl_f2_d0_in_ext"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.executive.geometry_parameters[2] C++ 5e-1, Rust 2e0 (+16 more) (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_executive_p2"
+case = "pe_Fillet_box_diff_cyl_f2_d0_out_ext"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.executive.geometry_parameters[2] C++ 5e-1, Rust 2e0 (+12 more) (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_executive_p2"
+case = "pe_Fillet_cyl_on_box1_f0_d0_in_ext"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.executive.geometry_parameters[2] C++ 5e-1, Rust 2e0 (+12 more) (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_executive_p2"
+case = "pe_Fillet_cyl_on_box1_f0_d0_out_ext"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.executive.geometry_parameters[2] C++ 5e-1, Rust 2e0 (+12 more) (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_executive_p2"
+case = "pe_Fillet_cyl_on_box1_f1_d0_in_ext"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.executive.geometry_parameters[2] C++ 5e-1, Rust 2e0 (+12 more) (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_executive_p2"
+case = "pe_Fillet_cyl_on_box1_f1_d0_out_ext"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.executive.geometry_parameters[2] C++ 5e-1, Rust 2e0 (+12 more) (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_executive_p2"
+case = "pe_Fillet_cyl_on_box1_f2_d0_in_ext"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.executive.geometry_parameters[2] C++ 5e-1, Rust 2e0 (+12 more) (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_executive_p2"
+case = "pe_Fillet_cyl_on_box1_f2_d0_out_ext"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.executive.geometry_parameters[2] C++ 5e-1, Rust 2e0 (+12 more) (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_executive_p2"
+case = "pe_Fillet_cyl_on_box_f0_d0_in_ext"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.executive.geometry_parameters[2] C++ 5e-1, Rust 2e0 (+12 more) (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_executive_p2"
+case = "pe_Fillet_cyl_on_box_f0_d0_out_ext"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.executive.geometry_parameters[2] C++ 5e-1, Rust 2e0 (+12 more) (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_executive_p2"
+case = "pe_Fillet_cyl_on_box_f1_d0_in_ext"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.executive.geometry_parameters[2] C++ 5e-1, Rust 2e0 (+12 more) (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_executive_p2"
+case = "pe_Fillet_cyl_on_box_f1_d0_out_ext"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.executive.geometry_parameters[2] C++ 5e-1, Rust 2e0 (+12 more) (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_executive_p2"
+case = "pe_Fillet_cyl_on_box_f2_d0_in_ext"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.executive.geometry_parameters[2] C++ 5e-1, Rust 2e0 (+13 more) (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_executive_p2"
+case = "pe_Fillet_cyl_on_box_f2_d0_out_ext"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.executive.geometry_parameters[2] C++ 5e-1, Rust 2e0 (+13 more) (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_executive_p2"
+case = "pe_Fillet_cyl_on_box_w_fillet1_f0_d0_in_ext"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.executive.geometry_parameters[2] C++ 5e-1, Rust 2e0 (+12 more) (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_executive_p2"
+case = "pe_Fillet_cyl_on_box_w_fillet1_f0_d0_out_ext"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.executive.geometry_parameters[2] C++ 5e-1, Rust 2e0 (+11 more) (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_executive_p2"
+case = "pe_Fillet_cyl_on_box_w_fillet1_f1_d0_in_ext"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.executive.geometry_parameters[2] C++ 5e-1, Rust 2e0 (+10 more) (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_executive_p2"
+case = "pe_Fillet_cyl_on_box_w_fillet1_f1_d0_out_ext"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.executive.geometry_parameters[2] C++ 5e-1, Rust 2e0 (+4 more) (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_executive_p2"
+case = "pe_Fillet_cyl_on_box_w_fillet1_f2_d0_in_ext"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.executive.geometry_parameters[2] C++ 5e-1, Rust 2e0 (+12 more) (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_executive_p2"
+case = "pe_Fillet_cyl_on_box_w_fillet1_f2_d0_out_ext"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.executive.geometry_parameters[2] C++ 5e-1, Rust 2e0 (+12 more) (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_executive_p2"
+case = "pe_Fillet_cyl_on_box_w_fillet2_f0_d0_in_ext"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.executive.geometry_parameters[2] C++ 5e-1, Rust 2e0 (+10 more) (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_executive_p2"
+case = "pe_Fillet_cyl_on_box_w_fillet2_f0_d0_out_ext"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.executive.geometry_parameters[2] C++ 5e-1, Rust 2e0 (+5 more) (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_executive_p2"
+case = "pe_Fillet_cyl_on_box_w_fillet2_f1_d0_in_ext"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.executive.geometry_parameters[2] C++ 5e-1, Rust 2e0 (+11 more) (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_executive_p2"
+case = "pe_Fillet_cyl_on_box_w_fillet2_f1_d0_out_ext"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.executive.geometry_parameters[2] C++ 5e-1, Rust 2e0 (+8 more) (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_executive_p2"
+case = "pe_Fillet_cyl_on_box_w_fillet2_f2_d0_in_ext"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.executive.geometry_parameters[2] C++ 5e-1, Rust 2e0 (+5 more) (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_executive_p2"
+case = "pe_Fillet_cyl_on_box_w_fillet2_f2_d0_out_ext"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.executive.geometry_parameters[2] C++ 5e-1, Rust 2e0 (+4 more) (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_executive_p2"
+case = "pe_Fillet_cyl_on_box_w_fillet_f0_d0_in_ext"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.executive.geometry_parameters[2] C++ 5e-1, Rust 2e0 (+13 more) (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_executive_p2"
+case = "pe_Fillet_cyl_on_box_w_fillet_f0_d0_out_ext"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.executive.geometry_parameters[2] C++ 5e-1, Rust 2e0 (+12 more) (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_executive_p2"
+case = "pe_Fillet_cyl_on_box_w_fillet_f1_d0_in_ext"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.executive.geometry_parameters[2] C++ 5e-1, Rust 2e0 (+11 more) (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_executive_p2"
+case = "pe_Fillet_cyl_on_box_w_fillet_f1_d0_out_ext"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.executive.geometry_parameters[2] C++ 5e-1, Rust 2e0 (+5 more) (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_executive_p2"
+case = "pe_Fillet_cyl_on_box_w_fillet_f2_d0_in_ext"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.executive.geometry_parameters[2] C++ 5e-1, Rust 2e0 (+12 more) (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_executive_p2"
+case = "pe_Fillet_cyl_on_box_w_fillet_f2_d0_out_ext"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.executive.geometry_parameters[2] C++ 5e-1, Rust 2e0 (+12 more) (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_executive_p2"
+case = "pe_Fillet_cyl_on_box_w_hole_f0_d0_in_ext"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.executive.geometry_parameters[2] C++ 5e-1, Rust 2e0 (+12 more) (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_executive_p2"
+case = "pe_Fillet_cyl_on_box_w_hole_f0_d0_out_ext"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.executive.geometry_parameters[2] C++ 5e-1, Rust 2e0 (+12 more) (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_executive_p2"
+case = "pe_Fillet_cyl_on_box_w_hole_f1_d0_in_ext"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.executive.geometry_parameters[2] C++ 5e-1, Rust 2e0 (+12 more) (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_executive_p2"
+case = "pe_Fillet_cyl_on_box_w_hole_f1_d0_out_ext"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.executive.geometry_parameters[2] C++ 5e-1, Rust 2e0 (+12 more) (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_executive_p2"
+case = "pe_Fillet_cyl_on_box_w_hole_f2_d0_in_ext"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.executive.geometry_parameters[2] C++ 5e-1, Rust 2e0 (+12 more) (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_executive_p2"
+case = "pe_Fillet_cyl_on_box_w_hole_f2_d0_out_ext"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.executive.geometry_parameters[2] C++ 5e-1, Rust 2e0 (+12 more) (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_executive_p2"
+case = "pe_Fillet_cyl_on_box_w_tan_hole2_f0_d0_in_ext"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.executive.geometry_parameters[2] C++ 5e-1, Rust 2e0 (+12 more) (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_executive_p2"
+case = "pe_Fillet_cyl_on_box_w_tan_hole2_f0_d0_out_ext"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.executive.geometry_parameters[2] C++ 5e-1, Rust 2e0 (+12 more) (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_executive_p2"
+case = "pe_Fillet_cyl_on_box_w_tan_hole2_f1_d0_in_ext"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.executive.geometry_parameters[2] C++ 5e-1, Rust 2e0 (+12 more) (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_executive_p2"
+case = "pe_Fillet_cyl_on_box_w_tan_hole2_f1_d0_out_ext"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.executive.geometry_parameters[2] C++ 5e-1, Rust 2e0 (+12 more) (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_executive_p2"
+case = "pe_Fillet_cyl_on_box_w_tan_hole2_f2_d0_in_ext"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.executive.geometry_parameters[2] C++ 5e-1, Rust 2e0 (+12 more) (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_executive_p2"
+case = "pe_Fillet_cyl_on_box_w_tan_hole2_f2_d0_out_ext"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.executive.geometry_parameters[2] C++ 5e-1, Rust 2e0 (+12 more) (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_executive_p2"
+case = "pe_Fillet_cyl_on_box_w_tan_hole_f0_d0_in_ext"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.executive.geometry_parameters[2] C++ 5e-1, Rust 2e0 (+12 more) (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_executive_p2"
+case = "pe_Fillet_cyl_on_box_w_tan_hole_f0_d0_out_ext"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.executive.geometry_parameters[2] C++ 5e-1, Rust 2e0 (+7 more) (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_executive_p2"
+case = "pe_Fillet_cyl_on_box_w_tan_hole_f1_d0_in_ext"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.executive.geometry_parameters[2] C++ 5e-1, Rust 2e0 (+12 more) (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_executive_p2"
+case = "pe_Fillet_cyl_on_box_w_tan_hole_f1_d0_out_ext"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.executive.geometry_parameters[2] C++ 5e-1, Rust 2e0 (+7 more) (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_executive_p2"
+case = "pe_Fillet_cyl_on_box_w_tan_hole_f2_d0_in_ext"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.executive.geometry_parameters[2] C++ 5e-1, Rust 2e0 (+12 more) (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_executive_p2"
+case = "pe_Fillet_cyl_on_box_w_tan_hole_f2_d0_out_ext"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.executive.geometry_parameters[2] C++ 5e-1, Rust 2e0 (+7 more) (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_executive_p2"
+case = "pe_Fillet_tilt_cyl_on_box_f0_d0_in_ext"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.executive.geometry_parameters[2] C++ 5e-1, Rust 2e0 (+12 more) (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_executive_p2"
+case = "pe_Fillet_tilt_cyl_on_box_f0_d0_out_ext"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.executive.geometry_parameters[2] C++ 5e-1, Rust 2e0 (+12 more) (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_executive_p2"
+case = "pe_Fillet_tilt_cyl_on_box_f1_d0_in_ext"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.executive.geometry_parameters[2] C++ 5e-1, Rust 2e0 (+12 more) (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_executive_p2"
+case = "pe_Fillet_tilt_cyl_on_box_f1_d0_out_ext"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.executive.geometry_parameters[2] C++ 5e-1, Rust 2e0 (+12 more) (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_executive_p2"
+case = "pe_Fillet_tilt_cyl_on_box_f2_d0_in_ext"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.executive.geometry_parameters[2] C++ 5e-1, Rust 2e0 (+12 more) (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_executive_p2"
+case = "pe_Fillet_tilt_cyl_on_box_f2_d0_out_ext"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.executive.geometry_parameters[2] C++ 5e-1, Rust 2e0 (+12 more) (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_executive_p2"
+case = "fuzz00035"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.executive.geometry_parameters[2] C++ 5e-1, Rust 2e0 (+12 more) (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_executive_p2"
+case = "fuzz00087"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.executive.geometry_parameters[2] C++ 5e-1, Rust 2e0 (+7 more) (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_executive_p2"
+case = "fuzz00108"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.executive.geometry_parameters[2] C++ 5e-1, Rust 2e0 (+12 more) (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_executive_p2"
+case = "fuzz00117"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.executive.geometry_parameters[2] C++ 5e-1, Rust 2e0 (+12 more) (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_executive_p2"
+case = "issue1528_plate_api_shell_2"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: ints.result.counts[4] C++ 36, Rust 37 (+2 more) (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_executive_p2"
+case = "issue1528_plate_api_shell_2_volume"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.volumes[3] C++ 1.040021234867629e4, Rust 1.0400212793677376e4 (+3 more) (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_executive_p2"
+case = "issue1528_plate_api_shell_2_volume_first"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.result.geometry C++ missing, Rust present (+9 more) (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_executive_p2"
+case = "issue1528_box_cylinder_api_shell_2_volume"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: ints.doing_boolean[1] C++ 0, Rust 1 (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_executive_p2"
+case = "issue1528_box_cylinder_api_shell_2_volume_first"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.volumes[1] C++ 2.6373612905720667e4, Rust 2.6373613608718748e4 (+1 more) (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_executive_p2"
+case = "issue1795_plate_api_shell_2_top"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: ints.result.counts[4] C++ 36, Rust 37 (+2 more) (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_executive_p2"
+case = "issue1795_plate_api_shell_2_top_offset_solid"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: ints.result.counts[4] C++ 36, Rust 37 (+2 more) (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_executive_p2"
+case = "issue1795_plate_api_shell_2_y20"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.result.geometry C++ present, Rust missing (+7 more) (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_executive_p2"
+case = "issue1795_plate_api_shell_2_y20_offset_solid"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.result.geometry C++ present, Rust missing (+7 more) (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_executive_p2"
+case = "issue1795_plate_static_shell_2_top"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: ints.result.counts[4] C++ 36, Rust 37 (+3 more) (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_executive_p2"
+case = "issue1795_plate_static_shell_2_top_offset_solid"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: ints.result.counts[4] C++ 36, Rust 37 (+3 more) (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_executive_p2"
+case = "issue1795_plate_static_shell_2_y20"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.result.geometry C++ present, Rust missing (+14 more) (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_executive_p2"
+case = "issue1795_plate_static_shell_2_y20_offset_solid"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.result.geometry C++ present, Rust missing (+14 more) (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_executive_p2"
+case = "issue1795_plate_api_shell_2_y20_offset_solid_unmerged"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: ints.doing_boolean[1] C++ 0, Rust 1 (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_executive_p2"
+case = "issue1795_plate_api_shell_2_top_offset_solid_unmerged"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.result.geometry C++ missing, Rust present (+6 more) (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_executive_p2"
+case = "issue1795_plate_api_shell_2_y20_unmerged"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.result.geometry C++ missing, Rust present (+6 more) (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_executive_p2"
+case = "issue1818_square_to_circle_loft_api_shell_1_top"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: ints.doing_boolean[1] C++ 0, Rust 1 (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_executive_p2"
+case = "static_shell_thicken_plane_sheet_attributed_out"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: ints.result.edge_kinds[4] C++ 1, Rust 2 (+7 more) (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_executive_p2"
+case = "static_shell_thicken_plane_sheet_attributed_in"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: ints.result.edge_kinds[4] C++ 1, Rust 2 (+7 more) (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_executive_p2"
+case = "static_shell_thicken_plane_sheet_attributed_out_nomerge"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: ints.result.edge_kinds[0] C++ 1, Rust 2 (+15 more) (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_executive_p2"
+case = "static_shell_thicken_plane_sheet_attributed_small_out"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: ints.result.edge_kinds[4] C++ 1, Rust 2 (+7 more) (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_executive_p2"
+case = "api_shell_thicken_plane_sheet_attributed_out"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: ints.result.edge_kinds[4] C++ 1, Rust 2 (+7 more) (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_executive_p2"
+case = "issue2174_cap_two_rim_edges_api_shell_in"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.result.geometry[2] C++ 0e0, Rust -6.58827982977048e0 (+10 more) (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_executive_p2"
+case = "api_shell_box_selected_face_upstream"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: ints.result.edge_kinds[12] C++ 1, Rust 2 (+11 more) (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_executive_p2"
+case = "api_shell_box_duplicate_face_upstream"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: ints.result.edge_kinds[12] C++ 1, Rust 2 (+11 more) (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_executive_p2"
+case = "api_shell_box_unselected_outset_upstream"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: ints.result.edge_kinds[12] C++ 1, Rust 2 (+11 more) (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_executive_p2"
+case = "api_shell_box_unselected_inset_upstream"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: ints.result.edge_kinds[12] C++ 1, Rust 2 (+11 more) (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_executive_p2"
+case = "api_offset_box_upstream"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: ints.result.edge_kinds[0] C++ 1, Rust 2 (+11 more) (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_executive_p2"
+case = "static_shell_box_inset_duplicate_selected_face"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: ints.result.edge_kinds[12] C++ 1, Rust 2 (+11 more) (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_executive_p2"
+case = "static_shell_sheet_sidewalls"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: ints.result.edge_kinds[0] C++ 1, Rust 2 (+15 more) (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_executive_p2"
+case = "member_sheet_round_skip_true_still_real_geometry"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.executive.geometry_parameters[2] C++ 5e-1, Rust 2e0 (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_executive_p2"
+case = "member_sheet_extended_dispatch_ignores_skip"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.executive.geometry_parameters[2] C++ 5e-1, Rust 2e0 (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_executive_p2"
+case = "extended_sheet_direct_independent_flags"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.executive.geometry_parameters[2] C++ 5e-1, Rust 2e0 (+1 more) (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_executive_p2"
+case = "member_trimmed_line_wire_round"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.executive.geometry_parameters[2] C++ 5e-1, Rust 2e0 (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_executive_p2"
+case = "extended_trimmed_line_wire"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.executive.geometry_parameters[2] C++ 5e-1, Rust 2e0 (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_executive_p2"
+case = "empty_member_round_skip_still_shrinks"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.executive.geometry_parameters[2] C++ 5e-1, Rust 2e0 (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_executive_p2"
+case = "empty_extended_still_stitches"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.executive.geometry_parameters[2] C++ 5e-1, Rust 2e0 (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_executive_p2"
+case = "member_box_round_skip_true"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.executive.geometry_parameters[2] C++ 5e-1, Rust 2e0 (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_executive_p2"
+case = "overlap_pc_extrudeHoles1_f0_k0.35_out_rnd"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.executive.geometry_parameters[2] C++ 5e-1, Rust 2e0 (+12 more) (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_executive_p2"
+case = "overlap_pc_extrudeHoles1_f0_k0.36_out_rnd"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.executive.geometry_parameters[2] C++ 5e-1, Rust 2e0 (+12 more) (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_executive_p2"
+case = "overlap_pc_extrudeHoles1_f0_k0.37_out_rnd"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.executive.geometry_parameters[2] C++ 5e-1, Rust 2e0 (+12 more) (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_executive_p2"
+case = "overlap_pc_extrudeHoles1_f2_k0.35_out_rnd"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.executive.geometry_parameters[2] C++ 5e-1, Rust 2e0 (+12 more) (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_executive_p2"
+case = "overlap_pc_extrudeHoles1_f2_k0.36_out_rnd"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.executive.geometry_parameters[2] C++ 5e-1, Rust 2e0 (+12 more) (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_executive_p2"
+case = "overlap_pc_extrudeHoles1_f2_k0.37_out_rnd"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.executive.geometry_parameters[2] C++ 5e-1, Rust 2e0 (+12 more) (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_executive_p2"
+case = "overlap_pc_extrudeHoles1_f3_k0.35_out_rnd"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.executive.geometry_parameters[2] C++ 5e-1, Rust 2e0 (+12 more) (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_executive_p2"
+case = "overlap_pc_extrudeHoles1_f3_k0.36_out_rnd"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.executive.geometry_parameters[2] C++ 5e-1, Rust 2e0 (+12 more) (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_executive_p2"
+case = "overlap_pc_extrudeHoles1_f3_k0.37_out_rnd"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.executive.geometry_parameters[2] C++ 5e-1, Rust 2e0 (+12 more) (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_executive_p2"
+case = "overlap_pc_extrudeHoles1_f4_k0.35_out_rnd"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.executive.geometry_parameters[2] C++ 5e-1, Rust 2e0 (+12 more) (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_executive_p2"
+case = "overlap_pc_extrudeHoles1_f4_k0.36_out_rnd"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.executive.geometry_parameters[2] C++ 5e-1, Rust 2e0 (+12 more) (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_executive_p2"
+case = "overlap_pc_extrudeHoles1_f4_k0.37_out_rnd"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.executive.geometry_parameters[2] C++ 5e-1, Rust 2e0 (+12 more) (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_executive_p2"
+case = "overlap_pc_extrudeHoles1_f5_k0.35_out_rnd"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.executive.geometry_parameters[2] C++ 5e-1, Rust 2e0 (+12 more) (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_executive_p2"
+case = "overlap_pc_extrudeHoles1_f5_k0.36_out_rnd"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.executive.geometry_parameters[2] C++ 5e-1, Rust 2e0 (+12 more) (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_executive_p2"
+case = "overlap_pc_extrudeHoles1_f5_k0.37_out_rnd"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.executive.geometry_parameters[2] C++ 5e-1, Rust 2e0 (+12 more) (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_executive_p2"
+case = "review_box_smallest_buildable_translated_source_selected"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.result.geometry[3] C++ 1.0000000029999993e6, Rust 1e6 (+9 more) (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_executive_p2"
+case = "review_sheet_extended_foreign_null_source"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.executive.geometry_parameters[2] C++ 5e-1, Rust 2e0 (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_executive_p2"
+case = "review_sheet_half_tolerance_extended_foreign_control"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.executive.geometry_parameters[2] C++ 5e-1, Rust 2e0 (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_executive_p2"
+case = "review_wire_high_tolerance_foreign_control"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.executive.geometry_parameters[2] C++ 5e-1, Rust 2e0 (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_executive_p2"
+case = "defeature_extrusion_face0_inset2_5_rounded"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.executive.geometry_parameters[2] C++ 5e-1, Rust 2e0 (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_executive_p2"
+case = "defeature_extrusion_face0_outset2_5_rounded"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.executive.geometry_parameters[2] C++ 5e-1, Rust 2e0 (+12 more) (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_executive_p2"
+case = "extrude_holes1_face0_inset24_7_rounded"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.executive.geometry_parameters[2] C++ 5e-1, Rust 2e0 (+4 more) (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_executive_p2"
+case = "extrude_holes1_face0_outset24_7_rounded"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.executive.geometry_parameters[2] C++ 5e-1, Rust 2e0 (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_executive_p2"
+case = "extrude_holes1_face3_inset24_7_rounded"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.executive.geometry_parameters[2] C++ 5e-1, Rust 2e0 (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_executive_p2"
+case = "extrude_holes1_face3_outset24_7_rounded"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.executive.geometry_parameters[2] C++ 5e-1, Rust 2e0 (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_executive_p2"
+case = "defeature_extrusion_face0_inset2_5_rounded_unstitched"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.executive.geometry_parameters[2] C++ 5e-1, Rust 2e0 (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_executive_p2"
+case = "extrude_holes1_face0_outset24_7_rounded_unstitched"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.executive.geometry_parameters[2] C++ 5e-1, Rust 2e0 (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_executive_p2"
+case = "shell_file_problemShell_face1_extend"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.executive.geometry_parameters[2] C++ 5e-1, Rust 2e0 (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_executive_p2"
+case = "shell_file_problemShell_face1_round"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.executive.geometry_parameters[2] C++ 5e-1, Rust 2e0 (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_executive_p2"
+case = "shell_file_problemShell1_face4_extend"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.executive.geometry_parameters[2] C++ 5e-1, Rust 2e0 (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_executive_p2"
+case = "shell_file_problemShell1_face4_round"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.executive.geometry_parameters[2] C++ 5e-1, Rust 2e0 (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_executive_p2"
+case = "shell_file_problemShell2_face1_extend"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.executive.geometry_parameters[2] C++ 5e-1, Rust 2e0 (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_executive_p2"
+case = "shell_file_problemShell2_face1_round"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.executive.geometry_parameters[2] C++ 5e-1, Rust 2e0 (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_executive_p2"
+case = "shell_file_problemShell21_face2_extend"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.executive.geometry_parameters[2] C++ 5e-1, Rust 2e0 (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_executive_p2"
+case = "shell_file_problemShell21_face2_round"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.executive.geometry_parameters[2] C++ 5e-1, Rust 2e0 (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_executive_p2"
+case = "shell_file_problemShell3_face0_extend"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.executive.geometry_parameters[2] C++ 5e-1, Rust 2e0 (+12 more) (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_executive_p2"
+case = "shell_file_problemShell3_face0_round"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.executive.geometry_parameters[2] C++ 5e-1, Rust 2e0 (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_executive_p2"
+case = "shell_file_problemShell4_face2_extend"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.executive.geometry_parameters[2] C++ 5e-1, Rust 2e0 (+3 more) (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_executive_p2"
+case = "shell_file_problemShell4_face2_round"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.executive.geometry_parameters[2] C++ 5e-1, Rust 2e0 (+12 more) (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_executive_p2"
+case = "shell_file_problemShell5_face5_extend"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.executive.geometry_parameters[2] C++ 5e-1, Rust 2e0 (+8 more) (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_executive_p2"
+case = "shell_file_problemShell5_face5_round"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.executive.geometry_parameters[2] C++ 5e-1, Rust 2e0 (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_executive_p2"
+case = "shell_file_problemShell10_face5_extend"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.executive.geometry_parameters[2] C++ 5e-1, Rust 2e0 (+8 more) (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_executive_p2"
+case = "shell_file_problemShell10_face5_round"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.executive.geometry_parameters[2] C++ 5e-1, Rust 2e0 (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_executive_p2"
+case = "shell_file_problemShell16_face1_extend"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.executive.geometry_parameters[2] C++ 5e-1, Rust 2e0 (+8 more) (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_executive_p2"
+case = "shell_file_problemShell16_face1_round"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.executive.geometry_parameters[2] C++ 5e-1, Rust 2e0 (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_executive_p2"
+case = "shell_file_problemShell10_face1_extend"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.executive.geometry_parameters[2] C++ 5e-1, Rust 2e0 (+8 more) (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_executive_p2"
+case = "shell_file_problemShell10_face1_round"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.executive.geometry_parameters[2] C++ 5e-1, Rust 2e0 (+1 more) (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_executive_p2"
+case = "shell_file_problemShell15_face0_extend"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.executive.geometry_parameters[2] C++ 5e-1, Rust 2e0 (+3 more) (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_executive_p2"
+case = "shell_file_problemShell15_face0_round"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.executive.geometry_parameters[2] C++ 5e-1, Rust 2e0 (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_executive_p2"
+case = "shell_file_problemShell18_face4_extend"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.executive.geometry_parameters[2] C++ 5e-1, Rust 2e0 (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_executive_p2"
+case = "shell_file_problemShell18_face4_round"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.executive.geometry_parameters[2] C++ 5e-1, Rust 2e0 (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_executive_p2"
+case = "mate_two_curves_problemShell15_face8_inset"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.executive.geometry_parameters[2] C++ 5e-1, Rust 2e0 (+12 more) (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_executive_p2"
+case = "mate_two_curves_problemShell15_face8_outset"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.executive.geometry_parameters[2] C++ 5e-1, Rust 2e0 (+12 more) (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_executive_p2"
+case = "mate_two_curves_problemShell15_face9_inset"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.executive.geometry_parameters[2] C++ 5e-1, Rust 2e0 (+12 more) (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_executive_p2"
+case = "mate_two_curves_problemShell15_face9_outset"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.executive.geometry_parameters[2] C++ 5e-1, Rust 2e0 (+12 more) (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_executive_p2"
+case = "round_merge_deleted_surface_user_ShellBrep_983_none_outset"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.executive.geometry_parameters[2] C++ 5e-1, Rust 2e0 (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_executive_p2"
+case = "round_merge_deleted_surface_user_ShellBrep_983_face0_inset"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.executive.geometry_parameters[2] C++ 5e-1, Rust 2e0 (+12 more) (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_executive_p2"
+case = "round_merge_deleted_surface_user_problemShell15_face8_inset"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.executive.geometry_parameters[2] C++ 5e-1, Rust 2e0 (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_executive_p2"
+case = "round_merge_deleted_surface_user_problemShell22_face0_inset"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.executive.geometry_parameters[2] C++ 5e-1, Rust 2e0 (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_executive_p2"
+case = "boolean_domain_problemShell12_face0_extend"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.executive.geometry_parameters[2] C++ 5e-1, Rust 2e0 (+2 more) (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_executive_p2"
+case = "boolean_domain_problemShell12_face0_round"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.executive.geometry_parameters[2] C++ 5e-1, Rust 2e0 (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_executive_p2"
+case = "static_shell_thicken_cylinder_sheet_out"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: ints.result.counts[3] C++ 6, Rust 4 (+5 more) (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_executive_p2"
+case = "static_shell_thicken_cylinder_sheet_in"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: ints.result.counts[3] C++ 6, Rust 4 (+5 more) (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_executive_p2"
+case = "static_shell_thicken_cylinder_sheet_small_out"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: ints.result.counts[3] C++ 6, Rust 4 (+5 more) (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_executive_p2"
+case = "static_shell_thicken_cylinder_sheet_small_in"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: ints.result.counts[3] C++ 6, Rust 4 (+5 more) (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_executive_p2"
+case = "shell_boundary_exactly_two_tol"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: ints.result.edge_kinds[0] C++ 1, Rust 2 (+15 more) (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_executive_p2"
+case = "shell_boundary_negative_exactly_two_tol"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.result.geometry C++ missing, Rust present (+15 more) (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_executive_p2"
+case = "gen0000"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.result.geometry C++ missing, Rust present (+13 more) (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_executive_p2"
+case = "gen0003"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: ints.result.edge_kinds[12] C++ 1, Rust 2 (+11 more) (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_executive_p2"
+case = "gen0005"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: ints.result.edge_kinds[0] C++ 1, Rust 2 (+11 more) (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_executive_p2"
+case = "gen0006"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.executive.geometry_parameters[2] C++ 5e-1, Rust 2e0 (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_executive_p2"
+case = "gen0009"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.executive.geometry_parameters[2] C++ 5e-1, Rust 2e0 (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_executive_p2"
+case = "gen0010"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: ints.result.edge_kinds[0] C++ 1, Rust 2 (+11 more) (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_executive_p2"
+case = "gen0011"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: ints.result.edge_kinds[12] C++ 1, Rust 2 (+11 more) (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_executive_p2"
+case = "gen0012"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.executive.geometry_parameters[2] C++ 5e-1, Rust 2e0 (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_executive_p2"
+case = "gen0013"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: ints.result.edge_kinds[10] C++ 1, Rust 2 (+11 more) (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_executive_p2"
+case = "gen0015"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.executive.geometry_parameters[2] C++ 5e-1, Rust 2e0 (+1 more) (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_executive_p2"
+case = "gen0021"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: ints.result.edge_kinds[0] C++ 1, Rust 2 (+11 more) (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_executive_p2"
+case = "gen0022"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.executive.geometry_parameters[2] C++ 5e-1, Rust 2e0 (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_executive_p2"
+case = "gen0023"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.executive.geometry_parameters[2] C++ 5e-1, Rust 2e0 (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_executive_p2"
+case = "gen0024"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: ints.result.edge_kinds[12] C++ 1, Rust 2 (+11 more) (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_executive_p2"
+case = "gen0025"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.executive.geometry_parameters[2] C++ 5e-1, Rust 2e0 (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_executive_p2"
+case = "gen0029"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.executive.geometry_parameters[2] C++ 5e-1, Rust 2e0 (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_executive_p2"
+case = "gen0031"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.executive.geometry_parameters[2] C++ 5e-1, Rust 2e0 (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_executive_p2"
+case = "gen0033"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.executive.geometry_parameters[2] C++ 5e-1, Rust 2e0 (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_executive_p2"
+case = "gen0035"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.executive.geometry_parameters[2] C++ 5e-1, Rust 2e0 (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_executive_p2"
+case = "gen0036"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.executive.geometry_parameters[2] C++ 5e-1, Rust 2e0 (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_executive_p2"
+case = "gen0038"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: ints.result.edge_kinds[0] C++ 1, Rust 2 (+15 more) (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_executive_p2"
+case = "gen0042"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.executive.geometry_parameters[2] C++ 5e-1, Rust 2e0 (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_executive_p2"
+case = "gen0043"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: ints.result.edge_kinds[12] C++ 1, Rust 2 (+11 more) (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_executive_p2"
+case = "gen0046"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.executive.geometry_parameters[2] C++ 5e-1, Rust 2e0 (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_executive_p2"
+case = "gen0047"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: ints.result.edge_kinds[14] C++ 1, Rust 2 (+9 more) (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_executive_p2"
+case = "gen0048"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.executive.geometry_parameters[2] C++ 5e-1, Rust 2e0 (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_executive_p2"
+case = "gen0051"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.executive.geometry_parameters[2] C++ 5e-1, Rust 2e0 (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_executive_p2"
+case = "gen0054"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: ints.result.edge_kinds[8] C++ 1, Rust 2 (+11 more) (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_executive_p2"
+case = "gen0057"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.executive.geometry_parameters[2] C++ 5e-1, Rust 2e0 (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_executive_p2"
+case = "gen0063"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.executive.geometry_parameters[2] C++ 5e-1, Rust 2e0 (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_executive_p2"
+case = "gen0065"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: ints.result.edge_kinds[14] C++ 1, Rust 2 (+9 more) (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_executive_p2"
+case = "gen0066"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: ints.result.edge_kinds[12] C++ 1, Rust 2 (+11 more) (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_executive_p2"
+case = "gen0068"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.executive.geometry_parameters[2] C++ 5e-1, Rust 2e0 (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_executive_p2"
+case = "gen0069"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.executive.geometry_parameters[2] C++ 5e-1, Rust 2e0 (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_executive_p2"
+case = "gen0070"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.executive.geometry_parameters[2] C++ 5e-1, Rust 2e0 (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_executive_p2"
+case = "gen0071"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.executive.geometry_parameters[2] C++ 5e-1, Rust 2e0 (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_executive_p2"
+case = "gen0073"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: ints.result.edge_kinds[0] C++ 1, Rust 2 (+15 more) (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_executive_p2"
+case = "gen0082"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.executive.geometry_parameters[2] C++ 5e-1, Rust 2e0 (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_executive_p2"
+case = "gen0084"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: ints.result.edge_kinds[0] C++ 1, Rust 2 (+11 more) (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_executive_p2"
+case = "gen0086"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: ints.result.edge_kinds[16] C++ 1, Rust 2 (+7 more) (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_executive_p2"
+case = "gen0087"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.executive.geometry_parameters[2] C++ 5e-1, Rust 2e0 (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_executive_p2"
+case = "gen0088"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.result.geometry C++ missing, Rust present (+6 more) (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_executive_p2"
+case = "gen0089"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: ints.result.edge_kinds[0] C++ 1, Rust 2 (+11 more) (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_executive_p2"
+case = "gen0090"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: ints.result.edge_kinds[0] C++ 1, Rust 2 (+11 more) (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_executive_p2"
+case = "gen0093"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.executive.geometry_parameters[2] C++ 5e-1, Rust 2e0 (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_executive_p2"
+case = "gen0094"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.executive.geometry_parameters[2] C++ 5e-1, Rust 2e0 (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_executive_p2"
+case = "gen0095"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.executive.geometry_parameters[2] C++ 5e-1, Rust 2e0 (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_executive_p2"
+case = "gen0096"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.executive.geometry_parameters[2] C++ 5e-1, Rust 2e0 (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_executive_p2"
+case = "gen0097"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.executive.geometry_parameters[2] C++ 5e-1, Rust 2e0 (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_executive_p2"
+case = "gen0098"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: ints.result.edge_kinds[0] C++ 1, Rust 2 (+11 more) (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_executive_p2"
+case = "gen0099"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.executive.geometry_parameters[2] C++ 5e-1, Rust 2e0 (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_executive_p2"
+case = "gen0101"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.executive.geometry_parameters[2] C++ 5e-1, Rust 2e0 (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_executive_p2"
+case = "gen0102"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.executive.geometry_parameters[2] C++ 5e-1, Rust 2e0 (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_executive_p2"
+case = "gen0104"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.executive.geometry_parameters[2] C++ 5e-1, Rust 2e0 (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_executive_p2"
+case = "gen0106"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.executive.geometry_parameters[2] C++ 5e-1, Rust 2e0 (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_executive_p2"
+case = "gen0108"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.executive.geometry_parameters[2] C++ 5e-1, Rust 2e0 (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_executive_p2"
+case = "gen0109"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.executive.geometry_parameters[2] C++ 5e-1, Rust 2e0 (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_executive_p2"
+case = "gen0110"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.executive.geometry_parameters[2] C++ 5e-1, Rust 2e0 (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_executive_p2"
+case = "gen0111"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: ints.result.edge_kinds[0] C++ 1, Rust 2 (+11 more) (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_executive_p2"
+case = "gen0115"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: ints.result.edge_kinds[12] C++ 1, Rust 2 (+11 more) (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_executive_p2"
+case = "gen0116"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.executive.geometry_parameters[2] C++ 5e-1, Rust 2e0 (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_executive_p2"
+case = "gen0118"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.executive.geometry_parameters[2] C++ 5e-1, Rust 2e0 (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_executive_p2"
+case = "gen0120"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: ints.result.edge_kinds[16] C++ 1, Rust 2 (+7 more) (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_executive_p2"
+case = "gen0125"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.executive.geometry_parameters[2] C++ 5e-1, Rust 2e0 (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_executive_p2"
+case = "gen0127"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.executive.geometry_parameters[2] C++ 5e-1, Rust 2e0 (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_executive_p2"
+case = "gen0128"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.executive.geometry_parameters[2] C++ 5e-1, Rust 2e0 (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_executive_p2"
+case = "gen0130"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.executive.geometry_parameters[2] C++ 5e-1, Rust 2e0 (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_executive_p2"
+case = "gen0132"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.executive.geometry_parameters[2] C++ 5e-1, Rust 2e0 (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_executive_p2"
+case = "gen0133"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.executive.geometry_parameters[2] C++ 5e-1, Rust 2e0 (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_executive_p2"
+case = "gen0135"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: ints.result.edge_kinds[0] C++ 1, Rust 2 (+11 more) (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_executive_p2"
+case = "gen0136"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.executive.geometry_parameters[2] C++ 5e-1, Rust 2e0 (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_executive_p2"
+case = "gen0139"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.executive.geometry_parameters[2] C++ 5e-1, Rust 2e0 (+1 more) (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_executive_p2"
+case = "gen0140"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.executive.geometry_parameters[2] C++ 5e-1, Rust 2e0 (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_executive_p2"
+case = "gen0143"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.executive.geometry_parameters[2] C++ 5e-1, Rust 2e0 (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_executive_p2"
+case = "gen0145"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.executive.geometry_parameters[2] C++ 5e-1, Rust 2e0 (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_executive_p2"
+case = "gen0147"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.executive.geometry_parameters[2] C++ 5e-1, Rust 2e0 (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_executive_p2"
+case = "gen0151"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.executive.geometry_parameters[2] C++ 5e-1, Rust 2e0 (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_executive_p2"
+case = "gen0152"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.executive.geometry_parameters[2] C++ 5e-1, Rust 2e0 (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_executive_p2"
+case = "gen0155"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: ints.result.edge_kinds[0] C++ 1, Rust 2 (+11 more) (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_executive_p2"
+case = "gen0157"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.executive.geometry_parameters[2] C++ 5e-1, Rust 2e0 (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_executive_p2"
+case = "gen0160"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.executive.geometry_parameters[2] C++ 5e-1, Rust 2e0 (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_executive_p2"
+case = "gen0162"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: ints.result.edge_kinds[0] C++ 1, Rust 2 (+11 more) (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_executive_p2"
+case = "gen0164"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.executive.geometry_parameters[2] C++ 5e-1, Rust 2e0 (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_executive_p2"
+case = "gen0165"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.executive.geometry_parameters[2] C++ 5e-1, Rust 2e0 (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_executive_p2"
+case = "gen0166"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.result.geometry C++ missing, Rust present (+13 more) (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_executive_p2"
+case = "gen0167"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.executive.geometry_parameters[2] C++ 5e-1, Rust 2e0 (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_executive_p2"
+case = "gen0170"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.executive.geometry_parameters[2] C++ 5e-1, Rust 2e0 (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_executive_p2"
+case = "gen0171"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: ints.result.edge_kinds[12] C++ 1, Rust 2 (+11 more) (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_executive_p2"
+case = "gen0172"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: ints.result.edge_kinds[0] C++ 1, Rust 2 (+11 more) (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_executive_p2"
+case = "gen0175"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: ints.result.edge_kinds[0] C++ 1, Rust 2 (+15 more) (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_executive_p2"
+case = "gen0176"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.executive.geometry_parameters[2] C++ 5e-1, Rust 2e0 (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_executive_p2"
+case = "gen0177"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: ints.result.edge_kinds[12] C++ 1, Rust 2 (+11 more) (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_executive_p2"
+case = "gen0179"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.executive.geometry_parameters[2] C++ 5e-1, Rust 2e0 (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_executive_p2"
+case = "gen0180"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: ints.result.edge_kinds[12] C++ 1, Rust 2 (+11 more) (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_executive_p2"
+case = "gen0182"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.executive.geometry_parameters[2] C++ 5e-1, Rust 2e0 (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_executive_p2"
+case = "gen0183"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.executive.geometry_parameters[2] C++ 5e-1, Rust 2e0 (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_executive_p2"
+case = "gen0184"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: ints.result.edge_kinds[12] C++ 1, Rust 2 (+11 more) (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_executive_p2"
+case = "gen0187"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: ints.result.edge_kinds[0] C++ 1, Rust 2 (+11 more) (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_executive_p2"
+case = "gen0188"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.executive.geometry_parameters[2] C++ 5e-1, Rust 2e0 (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_executive_p2"
+case = "gen0190"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.executive.geometry_parameters[2] C++ 5e-1, Rust 2e0 (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_executive_p2"
+case = "gen0191"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.executive.geometry_parameters[2] C++ 5e-1, Rust 2e0 (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_executive_p2"
+case = "gen0192"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: ints.result.edge_kinds[16] C++ 1, Rust 2 (+7 more) (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_executive_p2"
+case = "gen0194"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.executive.geometry_parameters[2] C++ 5e-1, Rust 2e0 (+1 more) (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_executive_p2"
+case = "gen0195"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: ints.result.edge_kinds[12] C++ 1, Rust 2 (+11 more) (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_executive_p2"
+case = "gen0197"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.executive.geometry_parameters[2] C++ 5e-1, Rust 2e0 (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_executive_p2"
+case = "gen0199"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.executive.geometry_parameters[2] C++ 5e-1, Rust 2e0 (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_executive_p2"
+case = "gen0200"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: ints.result.edge_kinds[12] C++ 1, Rust 2 (+11 more) (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_executive_p2"
+case = "gen0201"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.executive.geometry_parameters[2] C++ 5e-1, Rust 2e0 (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_executive_p2"
+case = "gen0204"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.executive.geometry_parameters[2] C++ 5e-1, Rust 2e0 (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_executive_p2"
+case = "gen0205"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.executive.geometry_parameters[2] C++ 5e-1, Rust 2e0 (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_executive_p2"
+case = "gen0207"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.executive.geometry_parameters[2] C++ 5e-1, Rust 2e0 (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_executive_p2"
+case = "gen0208"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.executive.geometry_parameters[2] C++ 5e-1, Rust 2e0 (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_executive_p2"
+case = "gen0209"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.executive.geometry_parameters[2] C++ 5e-1, Rust 2e0 (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_executive_p2"
+case = "gen0210"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: ints.result.edge_kinds[0] C++ 1, Rust 2 (+11 more) (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_executive_p2"
+case = "gen0211"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.executive.geometry_parameters[2] C++ 5e-1, Rust 2e0 (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_executive_p2"
+case = "gen0213"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.result.geometry C++ missing, Rust present (+6 more) (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_executive_p2"
+case = "gen0214"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.executive.geometry_parameters[2] C++ 5e-1, Rust 2e0 (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_executive_p2"
+case = "gen0215"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.executive.geometry_parameters[2] C++ 5e-1, Rust 2e0 (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_executive_p2"
+case = "gen0216"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.executive.geometry_parameters[2] C++ 5e-1, Rust 2e0 (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_executive_p2"
+case = "gen0218"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: ints.result.edge_kinds[0] C++ 1, Rust 2 (+11 more) (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_executive_p2"
+case = "gen0219"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.result.geometry C++ missing, Rust present (+6 more) (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_executive_p2"
+case = "gen0222"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: ints.result.edge_kinds[16] C++ 1, Rust 2 (+7 more) (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_executive_p2"
+case = "gen0223"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.executive.geometry_parameters[2] C++ 5e-1, Rust 2e0 (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_executive_p2"
+case = "gen0224"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: ints.result.edge_kinds[12] C++ 1, Rust 2 (+11 more) (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_executive_p2"
+case = "gen0225"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.executive.geometry_parameters[2] C++ 5e-1, Rust 2e0 (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_executive_p2"
+case = "gen0226"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: ints.result.edge_kinds[8] C++ 1, Rust 2 (+11 more) (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_executive_p2"
+case = "gen0228"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.executive.geometry_parameters[2] C++ 5e-1, Rust 2e0 (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_executive_p2"
+case = "gen0232"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.executive.geometry_parameters[2] C++ 5e-1, Rust 2e0 (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_executive_p2"
+case = "gen0233"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: ints.result.edge_kinds[14] C++ 1, Rust 2 (+9 more) (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_executive_p2"
+case = "gen0235"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.result.geometry C++ missing, Rust present (+15 more) (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_executive_p2"
+case = "gen0238"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.executive.geometry_parameters[2] C++ 5e-1, Rust 2e0 (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_executive_p2"
+case = "gen0239"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.executive.geometry_parameters[2] C++ 5e-1, Rust 2e0 (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"

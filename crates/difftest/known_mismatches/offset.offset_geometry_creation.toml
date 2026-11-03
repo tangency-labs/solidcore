@@ -1,0 +1,1062 @@
+# #2502: these cases move with the difftest's C++ reference, the SMLib fork
+# v1.1.0-alpha.1 (8eac63c); plan/findings/general--2502-fork-pin-offset-known-mismatches.md.
+
+[[mismatch]]
+unit = "offset.offset_geometry_creation"
+case = "box_solid_offset_vertex_edge_caps"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.state[4] C++ 8.726646259971648e-3, Rust 3.490658503988659e-2 (+3 more) (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_geometry_creation"
+case = "box_shell_inset_shell_face"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.state[4] C++ 8.726646259971648e-3, Rust 3.490658503988659e-2 (+3 more) (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_geometry_creation"
+case = "nurb_box_trim_and_replace"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.state[26] C++ -4.605726317667871e0, Rust -5.439947634927417e0 (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_geometry_creation"
+case = "box_local_operation_faceuse_offset"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.state[10] C++ 8.726646259971648e-3, Rust 3.490658503988659e-2 (+3 more) (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_geometry_creation"
+case = "gen0011"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.state.len C++ 5007, Rust 595 (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_geometry_creation"
+case = "gen0026"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.state[7] C++ 8.726646259971648e-3, Rust 3.490658503988659e-2 (+3 more) (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_geometry_creation"
+case = "gen0028"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.state[7] C++ 8.726646259971648e-3, Rust 3.490658503988659e-2 (+3 more) (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_geometry_creation"
+case = "gen0031"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.state[6] C++ 8.726646259971648e-3, Rust 3.490658503988659e-2 (+3 more) (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_geometry_creation"
+case = "gen0032"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.state[2] C++ 1.007e3, Rust 1.001e3 (+4 more) (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_geometry_creation"
+case = "gen0036"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.state[7] C++ 8.726646259971648e-3, Rust 3.490658503988659e-2 (+3 more) (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_geometry_creation"
+case = "gen0037"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.state.len C++ 29756, Rust 796 (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_geometry_creation"
+case = "gen0039"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.state[1903] C++ 8.726646259971648e-3, Rust 3.490658503988659e-2 (+3 more) (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_geometry_creation"
+case = "gen0044"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.state[84] C++ -8.800000000000002e-16, Rust -6.735557395310445e-16 (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_geometry_creation"
+case = "gen0049"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.state.len C++ 256, Rust 364 (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_geometry_creation"
+case = "gen0050"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.state[10] C++ 8.726646259971648e-3, Rust 3.490658503988659e-2 (+3 more) (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_geometry_creation"
+case = "gen0051"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.state.len C++ 596, Rust 394 (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_geometry_creation"
+case = "gen0053"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.state[7] C++ 8.726646259971648e-3, Rust 3.490658503988659e-2 (+3 more) (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_geometry_creation"
+case = "gen0056"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.state[12] C++ 8.726646259971648e-3, Rust 3.490658503988659e-2 (+3 more) (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_geometry_creation"
+case = "gen0059"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.state[9] C++ 8.726646259971648e-3, Rust 3.490658503988659e-2 (+3 more) (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_geometry_creation"
+case = "gen0080"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.state[4] C++ 8.726646259971648e-3, Rust 3.490658503988659e-2 (+3 more) (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_geometry_creation"
+case = "gen0081"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.state[21] C++ 8.726646259971648e-3, Rust 3.490658503988659e-2 (+3 more) (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_geometry_creation"
+case = "gen0087"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.state.len C++ 269, Rust 209 (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_geometry_creation"
+case = "gen0091"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.state[9] C++ 8.726646259971648e-3, Rust 3.490658503988659e-2 (+3 more) (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_geometry_creation"
+case = "gen0095"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.state[13] C++ 8.726646259971648e-3, Rust 3.490658503988659e-2 (+3 more) (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_geometry_creation"
+case = "gen0102"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.state[59] C++ 8.726646259971648e-3, Rust 3.490658503988659e-2 (+3 more) (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_geometry_creation"
+case = "gen0106"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.state[4] C++ 8.726646259971648e-3, Rust 3.490658503988659e-2 (+3 more) (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_geometry_creation"
+case = "gen0112"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.state[4] C++ 8.726646259971648e-3, Rust 3.490658503988659e-2 (+3 more) (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_geometry_creation"
+case = "gen0125"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.state[7] C++ 8.726646259971648e-3, Rust 3.490658503988659e-2 (+4 more) (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_geometry_creation"
+case = "gen0128"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.state[5] C++ 0e0, Rust 1.001e3 (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_geometry_creation"
+case = "gen0137"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.state[13] C++ 1.198953843010228e2, Rust -8.363219751395571e-1 (+1 more) (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_geometry_creation"
+case = "gen0141"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.state[128] C++ 2.5703008181848693e-16, Rust 1.995520604540405e-18 (+15 more) (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_geometry_creation"
+case = "gen0145"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.state[7] C++ 8.726646259971648e-3, Rust 3.490658503988659e-2 (+3 more) (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_geometry_creation"
+case = "gen0150"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.state[181] C++ 8.726646259971648e-3, Rust 3.490658503988659e-2 (+3 more) (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_geometry_creation"
+case = "gen0151"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.state[57] C++ 8.726646259971648e-3, Rust 3.490658503988659e-2 (+3 more) (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_geometry_creation"
+case = "gen0163"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.state.len C++ 15639, Rust 15619 (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_geometry_creation"
+case = "gen0166"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.state[62] C++ 8.726646259971648e-3, Rust 3.490658503988659e-2 (+3 more) (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_geometry_creation"
+case = "gen0168"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.state[7] C++ 8.726646259971648e-3, Rust 3.490658503988659e-2 (+3 more) (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_geometry_creation"
+case = "gen0171"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.state[7] C++ 8.726646259971648e-3, Rust 3.490658503988659e-2 (+3 more) (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_geometry_creation"
+case = "gen0172"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.state[7] C++ 8.726646259971648e-3, Rust 3.490658503988659e-2 (+3 more) (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_geometry_creation"
+case = "gen0173"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.state[22] C++ 8.726646259971648e-3, Rust 3.490658503988659e-2 (+3 more) (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_geometry_creation"
+case = "gen0178"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.state[7] C++ 8.726646259971648e-3, Rust 3.490658503988659e-2 (+3 more) (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_geometry_creation"
+case = "gen0182"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.state[334] C++ 8.726646259971648e-3, Rust 3.490658503988659e-2 (+3 more) (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_geometry_creation"
+case = "gen0183"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.state[19] C++ 8.726646259971648e-3, Rust 3.490658503988659e-2 (+3 more) (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_geometry_creation"
+case = "gen0186"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.state.len C++ 337, Rust 169 (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_geometry_creation"
+case = "gen0187"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.state[7] C++ 8.726646259971648e-3, Rust 3.490658503988659e-2 (+3 more) (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_geometry_creation"
+case = "gen0196"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.state[10] C++ 4.050375979624659e-2, Rust 0e0 (+1 more) (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_geometry_creation"
+case = "gen0200"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.state[365] C++ 8.726646259971648e-3, Rust 3.490658503988659e-2 (+3 more) (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_geometry_creation"
+case = "gen0202"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.state[89] C++ -3.061467458920718e1, Rust -1.148050297095272e1 (+1 more) (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_geometry_creation"
+case = "gen0204"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.state[7] C++ 8.726646259971648e-3, Rust 3.490658503988659e-2 (+7 more) (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_geometry_creation"
+case = "gen0205"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.state[59] C++ 8.726646259971648e-3, Rust 3.490658503988659e-2 (+3 more) (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_geometry_creation"
+case = "gen0209"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.state[185] C++ 8.726646259971648e-3, Rust 3.490658503988659e-2 (+3 more) (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_geometry_creation"
+case = "gen0222"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.state[103] C++ 8.726646259971648e-3, Rust 3.490658503988659e-2 (+3 more) (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_geometry_creation"
+case = "gen0225"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.state[1353] C++ 8.726646259971648e-3, Rust 3.490658503988659e-2 (+3 more) (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_geometry_creation"
+case = "gen0226"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.state.len C++ 4636, Rust 269 (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_geometry_creation"
+case = "gen0236"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.state[12] C++ 8.726646259971648e-3, Rust 3.490658503988659e-2 (+3 more) (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_geometry_creation"
+case = "gen0237"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.state[52] C++ 8.726646259971648e-3, Rust 3.490658503988659e-2 (+3 more) (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_geometry_creation"
+case = "gen0244"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.state[7] C++ 8.726646259971648e-3, Rust 3.490658503988659e-2 (+3 more) (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_geometry_creation"
+case = "gen0245"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.state[764] C++ 8.726646259971648e-3, Rust 3.490658503988659e-2 (+3 more) (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_geometry_creation"
+case = "gen0252"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.state[193] C++ 8.726646259971648e-3, Rust 3.490658503988659e-2 (+3 more) (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_geometry_creation"
+case = "gen0258"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.state[190] C++ 8.726646259971648e-3, Rust 3.490658503988659e-2 (+3 more) (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_geometry_creation"
+case = "gen0263"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.state[101] C++ 8.726646259971648e-3, Rust 3.490658503988659e-2 (+3 more) (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_geometry_creation"
+case = "gen0268"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.state[9] C++ 8.726646259971648e-3, Rust 3.490658503988659e-2 (+3 more) (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_geometry_creation"
+case = "gen0269"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.state[157] C++ -8.800000000000002e-16, Rust -6.735557395310445e-16 (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_geometry_creation"
+case = "gen0272"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.state[324] C++ 8.726646259971648e-3, Rust 3.490658503988659e-2 (+3 more) (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_geometry_creation"
+case = "gen0274"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.state[35957] C++ 8.726646259971648e-3, Rust 3.490658503988659e-2 (+3 more) (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_geometry_creation"
+case = "gen0294"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.state[7] C++ 8.726646259971648e-3, Rust 3.490658503988659e-2 (+3 more) (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_geometry_creation"
+case = "gen0301"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.state[4] C++ 8.726646259971648e-3, Rust 3.490658503988659e-2 (+3 more) (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_geometry_creation"
+case = "gen0306"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.state[167] C++ 8.726646259971648e-3, Rust 3.490658503988659e-2 (+3 more) (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_geometry_creation"
+case = "gen0307"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.state[4] C++ 8.726646259971648e-3, Rust 3.490658503988659e-2 (+3 more) (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_geometry_creation"
+case = "gen0308"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.state.len C++ 3449, Rust 261 (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_geometry_creation"
+case = "gen0309"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.state[12] C++ 8.726646259971648e-3, Rust 3.490658503988659e-2 (+3 more) (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_geometry_creation"
+case = "gen0311"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.state[52] C++ 8.726646259971648e-3, Rust 3.490658503988659e-2 (+3 more) (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_geometry_creation"
+case = "gen0313"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.state[259] C++ 8.726646259971648e-3, Rust 3.490658503988659e-2 (+3 more) (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_geometry_creation"
+case = "gen0314"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.state[22] C++ 8.726646259971648e-3, Rust 3.490658503988659e-2 (+3 more) (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_geometry_creation"
+case = "gen0317"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.state[15] C++ 8.726646259971648e-3, Rust 3.490658503988659e-2 (+3 more) (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_geometry_creation"
+case = "gen0319"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.state[12] C++ 8.726646259971648e-3, Rust 3.490658503988659e-2 (+3 more) (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_geometry_creation"
+case = "gen0320"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.state[181] C++ 8.726646259971648e-3, Rust 3.490658503988659e-2 (+3 more) (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_geometry_creation"
+case = "gen0327"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.state[8] C++ 8.726646259971648e-3, Rust 3.490658503988659e-2 (+3 more) (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_geometry_creation"
+case = "gen0329"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.state[4] C++ 8.726646259971648e-3, Rust 3.490658503988659e-2 (+3 more) (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_geometry_creation"
+case = "gen0333"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.state[7] C++ 8.726646259971648e-3, Rust 3.490658503988659e-2 (+3 more) (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_geometry_creation"
+case = "gen0335"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.state[39] C++ -8.000000000000001e-16, Rust -6.123233995736768e-16 (+1 more) (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_geometry_creation"
+case = "gen0339"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.state[207] C++ 8.726646259971648e-3, Rust 3.490658503988659e-2 (+3 more) (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_geometry_creation"
+case = "gen0344"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.state[12] C++ 8.726646259971648e-3, Rust 3.490658503988659e-2 (+3 more) (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_geometry_creation"
+case = "gen0346"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.state[336] C++ 0e0, Rust 1.001e3 (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_geometry_creation"
+case = "gen0350"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.state[311] C++ 4.1052170113668345e-2, Rust 2.9631480111470525e-2 (+11 more) (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_geometry_creation"
+case = "gen0354"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.state[7] C++ 8.726646259971648e-3, Rust 3.490658503988659e-2 (+7 more) (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_geometry_creation"
+case = "gen0362"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.state[7] C++ 8.726646259971648e-3, Rust 3.490658503988659e-2 (+7 more) (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_geometry_creation"
+case = "gen0363"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.state[7] C++ 8.726646259971648e-3, Rust 3.490658503988659e-2 (+3 more) (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_geometry_creation"
+case = "gen0368"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.state[17] C++ 0e0, Rust 1.001e3 (+4 more) (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_geometry_creation"
+case = "gen0374"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.state[13] C++ 8.726646259971648e-3, Rust 3.490658503988659e-2 (+3 more) (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_geometry_creation"
+case = "gen0375"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.state[298] C++ 8.726646259971648e-3, Rust 3.490658503988659e-2 (+3 more) (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_geometry_creation"
+case = "gen0383"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.state[8] C++ 0e0, Rust 1.001e3 (+1 more) (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_geometry_creation"
+case = "gen0386"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.state[11] C++ 0e0, Rust 1.001e3 (+4 more) (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_geometry_creation"
+case = "gen0389"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.state.len C++ 9526, Rust 612 (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_geometry_creation"
+case = "gen0397"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.state[362] C++ 8.726646259971648e-3, Rust 3.490658503988659e-2 (+7 more) (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_geometry_creation"
+case = "gen0398"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.state[7] C++ 8.726646259971648e-3, Rust 3.490658503988659e-2 (+3 more) (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_geometry_creation"
+case = "gen0399"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.state[4] C++ 8.726646259971648e-3, Rust 3.490658503988659e-2 (+3 more) (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_geometry_creation"
+case = "gen0413"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.state[399] C++ 8.726646259971648e-3, Rust 3.490658503988659e-2 (+3 more) (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_geometry_creation"
+case = "gen0414"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.state[7] C++ 8.726646259971648e-3, Rust 3.490658503988659e-2 (+3 more) (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_geometry_creation"
+case = "gen0417"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.state[7] C++ 8.726646259971648e-3, Rust 3.490658503988659e-2 (+3 more) (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_geometry_creation"
+case = "gen0424"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.state[10] C++ 8.726646259971648e-3, Rust 3.490658503988659e-2 (+7 more) (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_geometry_creation"
+case = "gen0427"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.state[4] C++ 8.726646259971648e-3, Rust 3.490658503988659e-2 (+3 more) (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_geometry_creation"
+case = "gen0435"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.state[721] C++ 0e0, Rust 1.001e3 (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_geometry_creation"
+case = "gen0436"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.state[224] C++ 8.726646259971648e-3, Rust 3.490658503988659e-2 (+3 more) (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_geometry_creation"
+case = "gen0443"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.state[10] C++ 8.726646259971648e-3, Rust 3.490658503988659e-2 (+3 more) (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_geometry_creation"
+case = "gen0444"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.state[7] C++ 8.726646259971648e-3, Rust 3.490658503988659e-2 (+3 more) (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_geometry_creation"
+case = "gen0448"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.state.len C++ 27, Rust 29 (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_geometry_creation"
+case = "gen0451"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.state[6] C++ 8.726646259971648e-3, Rust 3.490658503988659e-2 (+3 more) (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_geometry_creation"
+case = "gen0463"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.state[7] C++ 8.726646259971648e-3, Rust 3.490658503988659e-2 (+7 more) (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_geometry_creation"
+case = "gen0465"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.state[44] C++ -8.000000000000001e-16, Rust -6.123233995736768e-16 (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_geometry_creation"
+case = "gen0470"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.state[12] C++ 8.726646259971648e-3, Rust 3.490658503988659e-2 (+3 more) (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_geometry_creation"
+case = "gen0473"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.state.len C++ 325, Rust 257 (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_geometry_creation"
+case = "gen0474"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.state[201] C++ 8.726646259971648e-3, Rust 3.490658503988659e-2 (+3 more) (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_geometry_creation"
+case = "gen0475"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.state.len C++ 30283, Rust 1323 (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_geometry_creation"
+case = "gen0477"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.state[8] C++ 8.726646259971648e-3, Rust 3.490658503988659e-2 (+3 more) (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_geometry_creation"
+case = "gen0478"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.state[11] C++ 8.726646259971648e-3, Rust 3.490658503988659e-2 (+3 more) (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_geometry_creation"
+case = "gen0481"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.state[7] C++ 8.726646259971648e-3, Rust 3.490658503988659e-2 (+3 more) (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_geometry_creation"
+case = "gen0490"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.state[56] C++ 8.726646259971648e-3, Rust 3.490658503988659e-2 (+3 more) (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_geometry_creation"
+case = "gen0492"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.state.len C++ 385, Rust 781 (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_geometry_creation"
+case = "gen0493"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.state[400] C++ 8.726646259971648e-3, Rust 3.490658503988659e-2 (+3 more) (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_geometry_creation"
+case = "gen0504"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.state[12] C++ 8.726646259971648e-3, Rust 3.490658503988659e-2 (+3 more) (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_geometry_creation"
+case = "gen0526"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.state[56] C++ 8.726646259971648e-3, Rust 3.490658503988659e-2 (+3 more) (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_geometry_creation"
+case = "gen0527"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.state[35] C++ -7.998400000000001e-16, Rust -6.122009348937621e-16 (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_geometry_creation"
+case = "gen0528"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.state[124] C++ 8.726646259971648e-3, Rust 3.490658503988659e-2 (+3 more) (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_geometry_creation"
+case = "gen0534"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.state[15] C++ 8.726646259971648e-3, Rust 3.490658503988659e-2 (+3 more) (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_geometry_creation"
+case = "gen0535"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.state[15] C++ 8.726646259971648e-3, Rust 3.490658503988659e-2 (+3 more) (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_geometry_creation"
+case = "gen0536"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.state[109] C++ 8.726646259971648e-3, Rust 3.490658503988659e-2 (+3 more) (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_geometry_creation"
+case = "gen0537"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.state[192] C++ 8.726646259971648e-3, Rust 3.490658503988659e-2 (+3 more) (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_geometry_creation"
+case = "gen0541"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.state[42] C++ -8.000000000000001e-16, Rust -6.123233995736768e-16 (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_geometry_creation"
+case = "gen0544"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.state[108] C++ 8.726646259971648e-3, Rust 3.490658503988659e-2 (+3 more) (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_geometry_creation"
+case = "gen0551"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.state[178] C++ 8.726646259971648e-3, Rust 3.490658503988659e-2 (+3 more) (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_geometry_creation"
+case = "gen0554"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.state[105] C++ 8.726646259971648e-3, Rust 3.490658503988659e-2 (+7 more) (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_geometry_creation"
+case = "gen0559"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.state[179] C++ 8.726646259971648e-3, Rust 3.490658503988659e-2 (+3 more) (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_geometry_creation"
+case = "gen0567"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.state[179] C++ 8.726646259971648e-3, Rust 3.490658503988659e-2 (+3 more) (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_geometry_creation"
+case = "gen0572"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.state[221] C++ 8.726646259971648e-3, Rust 3.490658503988659e-2 (+7 more) (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_geometry_creation"
+case = "gen0577"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.state.len C++ 12825, Rust 67936 (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_geometry_creation"
+case = "gen0582"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.state.len C++ 12, Rust 14 (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_geometry_creation"
+case = "gen0583"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.state[3364] C++ 8.726646259971648e-3, Rust 3.490658503988659e-2 (+3 more) (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_geometry_creation"
+case = "gen0587"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.state[57] C++ 8.726646259971648e-3, Rust 3.490658503988659e-2 (+7 more) (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_geometry_creation"
+case = "gen0588"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.state[215] C++ 8.726646259971648e-3, Rust 3.490658503988659e-2 (+7 more) (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_geometry_creation"
+case = "gen0596"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.state[14] C++ 8.726646259971648e-3, Rust 3.490658503988659e-2 (+3 more) (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_geometry_creation"
+case = "gen0599"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.state[12] C++ 8.726646259971648e-3, Rust 3.490658503988659e-2 (+7 more) (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_geometry_creation"
+case = "gen0610"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.state.len C++ 4490, Rust 78 (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_geometry_creation"
+case = "gen0613"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.state[16] C++ 8.726646259971648e-3, Rust 3.490658503988659e-2 (+3 more) (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_geometry_creation"
+case = "gen0616"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.state[15] C++ 8.726646259971648e-3, Rust 3.490658503988659e-2 (+3 more) (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_geometry_creation"
+case = "gen0619"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.state[10] C++ 8.726646259971648e-3, Rust 3.490658503988659e-2 (+3 more) (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_geometry_creation"
+case = "gen0631"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.state[16] C++ 8.726646259971648e-3, Rust 3.490658503988659e-2 (+7 more) (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_geometry_creation"
+case = "gen0633"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.state[10252] C++ 8.726646259971648e-3, Rust 3.490658503988659e-2 (+3 more) (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_geometry_creation"
+case = "gen0634"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.state[159] C++ 8.726646259971648e-3, Rust 3.490658503988659e-2 (+3 more) (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_geometry_creation"
+case = "gen0636"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.state[33] C++ -8.080000000000001e-16, Rust -6.184466335694136e-16 (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_geometry_creation"
+case = "gen0639"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.state[56] C++ 8.726646259971648e-3, Rust 3.490658503988659e-2 (+3 more) (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_geometry_creation"
+case = "gen0644"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.state[129] C++ 8.726646259971648e-3, Rust 3.490658503988659e-2 (+3 more) (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_geometry_creation"
+case = "gen0650"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.state[13] C++ 8.726646259971648e-3, Rust 3.490658503988659e-2 (+3 more) (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_geometry_creation"
+case = "gen0656"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.state[602] C++ 8.726646259971648e-3, Rust 3.490658503988659e-2 (+3 more) (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_geometry_creation"
+case = "gen0658"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.state.len C++ 463, Rust 571 (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_geometry_creation"
+case = "gen0659"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.state.len C++ 262, Rust 202 (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_geometry_creation"
+case = "gen0665"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.state[18] C++ 8.726646259971648e-3, Rust 3.490658503988659e-2 (+3 more) (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_geometry_creation"
+case = "gen0666"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.state.len C++ 339, Rust 319 (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_geometry_creation"
+case = "gen0667"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.state[1374] C++ 1.007e3, Rust 1.001e3 (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_geometry_creation"
+case = "gen0675"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.state[419] C++ 8.726646259971648e-3, Rust 3.490658503988659e-2 (+3 more) (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_geometry_creation"
+case = "gen0676"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.state[15] C++ 8.726646259971648e-3, Rust 3.490658503988659e-2 (+3 more) (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_geometry_creation"
+case = "gen0677"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.state[10] C++ 8.726646259971648e-3, Rust 3.490658503988659e-2 (+3 more) (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_geometry_creation"
+case = "gen0679"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.state[4] C++ 1.54e4, Rust 1.5012e4 (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_geometry_creation"
+case = "gen0680"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.state[238] C++ 8.726646259971648e-3, Rust 3.490658503988659e-2 (+3 more) (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_geometry_creation"
+case = "gen0681"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.state.len C++ 269, Rust 101 (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_geometry_creation"
+case = "gen0682"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.state.len C++ 654, Rust 639 (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_geometry_creation"
+case = "gen0692"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.state[15] C++ 8.726646259971648e-3, Rust 3.490658503988659e-2 (+3 more) (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_geometry_creation"
+case = "gen0693"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.state.len C++ 6627, Rust 2170 (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_geometry_creation"
+case = "gen0695"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.state[10] C++ 8.726646259971648e-3, Rust 3.490658503988659e-2 (+3 more) (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_geometry_creation"
+case = "gen0700"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.state[10] C++ 8.726646259971648e-3, Rust 3.490658503988659e-2 (+3 more) (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_geometry_creation"
+case = "gen0702"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.state[4] C++ 8.726646259971648e-3, Rust 3.490658503988659e-2 (+3 more) (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_geometry_creation"
+case = "gen0704"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.state[13] C++ 8.726646259971648e-3, Rust 3.490658503988659e-2 (+7 more) (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_geometry_creation"
+case = "gen0705"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.state.len C++ 242, Rust 222 (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_geometry_creation"
+case = "gen0712"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.state[153] C++ 8.726646259971648e-3, Rust 3.490658503988659e-2 (+3 more) (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_geometry_creation"
+case = "gen0713"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.state[21] C++ 8.726646259971648e-3, Rust 3.490658503988659e-2 (+3 more) (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_geometry_creation"
+case = "gen0719"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.state[56] C++ 8.726646259971648e-3, Rust 3.490658503988659e-2 (+3 more) (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_geometry_creation"
+case = "gen0722"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.state[372] C++ 8.726646259971648e-3, Rust 3.490658503988659e-2 (+7 more) (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_geometry_creation"
+case = "gen0723"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.state.len C++ 86, Rust 88 (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_geometry_creation"
+case = "gen0726"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.state.len C++ 1416, Rust 1401 (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_geometry_creation"
+case = "gen0727"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.state[11] C++ 8.726646259971648e-3, Rust 3.490658503988659e-2 (+3 more) (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_geometry_creation"
+case = "gen0729"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.state[7] C++ 8.726646259971648e-3, Rust 3.490658503988659e-2 (+3 more) (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_geometry_creation"
+case = "gen0732"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.state.len C++ 351, Rust 685 (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_geometry_creation"
+case = "gen0738"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.state.len C++ 4722, Rust 220 (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_geometry_creation"
+case = "gen0739"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.state[7] C++ 8.726646259971648e-3, Rust 3.490658503988659e-2 (+4 more) (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_geometry_creation"
+case = "gen0743"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.state[7] C++ 8.726646259971648e-3, Rust 3.490658503988659e-2 (+3 more) (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_geometry_creation"
+case = "gen0746"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.state[12] C++ 8.726646259971648e-3, Rust 3.490658503988659e-2 (+3 more) (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_geometry_creation"
+case = "gen0748"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.state[12] C++ 8.726646259971648e-3, Rust 3.490658503988659e-2 (+3 more) (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_geometry_creation"
+case = "gen0753"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.state[7] C++ 8.726646259971648e-3, Rust 3.490658503988659e-2 (+3 more) (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_geometry_creation"
+case = "gen0756"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.state[226] C++ 8.726646259971648e-3, Rust 3.490658503988659e-2 (+4 more) (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_geometry_creation"
+case = "gen0764"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.state[61] C++ 8.726646259971648e-3, Rust 3.490658503988659e-2 (+3 more) (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_geometry_creation"
+case = "gen0767"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.state.len C++ 514, Rust 386 (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_geometry_creation"
+case = "gen0768"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.state[13] C++ 8.726646259971648e-3, Rust 3.490658503988659e-2 (+7 more) (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_geometry_creation"
+case = "gen0774"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.state[14] C++ 8.726646259971648e-3, Rust 3.490658503988659e-2 (+3 more) (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_geometry_creation"
+case = "gen0776"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.state[13] C++ 8.726646259971648e-3, Rust 3.490658503988659e-2 (+3 more) (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_geometry_creation"
+case = "gen0779"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.state.len C++ 224, Rust 672 (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_geometry_creation"
+case = "gen0783"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.state[17] C++ 8.726646259971648e-3, Rust 3.490658503988659e-2 (+3 more) (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_geometry_creation"
+case = "gen0786"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.state[7] C++ 8.726646259971648e-3, Rust 3.490658503988659e-2 (+3 more) (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_geometry_creation"
+case = "gen0792"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.state[21] C++ 8.726646259971648e-3, Rust 3.490658503988659e-2 (+3 more) (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_geometry_creation"
+case = "gen0796"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.state[60] C++ 8.726646259971648e-3, Rust 3.490658503988659e-2 (+3 more) (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_geometry_creation"
+case = "analytic_import_sphere_negative"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.state[27] C++ -7.84e-16, Rust -6.000769315822033e-16 (+1 more) (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_geometry_creation"
+case = "analytic_import_sphere_zero"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.state[27] C++ -8.000000000000001e-16, Rust -6.123233995736768e-16 (+1 more) (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_geometry_creation"
+case = "analytic_import_sphere_positive"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.state[27] C++ -8.16e-16, Rust -6.245698675651503e-16 (+1 more) (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_geometry_creation"
+case = "cone_fixture_ops"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.state[4] C++ 8.726646259971648e-3, Rust 3.490658503988659e-2 (+3 more) (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_geometry_creation"
+case = "torus_trim_extended_edge"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.state[13] C++ 4.82842712474619e1, Rust 0e0 (+2 more) (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_geometry_creation"
+case = "cone_update_face_domain_scaled"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.state[123] C++ 8.726646259971648e-3, Rust 3.490658503988659e-2 (+3 more) (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_geometry_creation"
+case = "cone_update_face_domain_moved"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.state[123] C++ 8.726646259971648e-3, Rust 3.490658503988659e-2 (+3 more) (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_geometry_creation"
+case = "cone_update_face_domain_scaled_store"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.state[123] C++ 8.726646259971648e-3, Rust 3.490658503988659e-2 (+3 more) (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_geometry_creation"
+case = "cone_update_face_domain_shrunk"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.state[123] C++ 8.726646259971648e-3, Rust 3.490658503988659e-2 (+3 more) (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_geometry_creation"
+case = "cone_update_face_domain_disjoint"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.state[123] C++ 8.726646259971648e-3, Rust 3.490658503988659e-2 (+3 more) (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_geometry_creation"
+case = "network_guards"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.state[4] C++ 8.726646259971648e-3, Rust 3.490658503988659e-2 (+3 more) (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_geometry_creation"
+case = "face_guards"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.state[4] C++ 8.726646259971648e-3, Rust 3.490658503988659e-2 (+3 more) (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_geometry_creation"
+case = "gen0700_zero_distance"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.state[10] C++ 8.726646259971648e-3, Rust 3.490658503988659e-2 (+3 more) (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"

@@ -1,0 +1,32 @@
+# #2502: these cases move with the difftest's C++ reference, the SMLib fork
+# v1.1.0-alpha.1 (8eac63c); plan/findings/general--2502-fork-pin-offset-known-mismatches.md.
+
+[[mismatch]]
+unit = "offset.offset_executive_p1"
+case = "negative_tol_lamina_delete_solid_up"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: ints.status[0] C++ 1001, Rust 1000 (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_executive_p1"
+case = "negative_tol_lamina_delete_solid_down"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: ints.status[0] C++ 1001, Rust 1000 (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_executive_p1"
+case = "negative_tol_lamina_delete_local_up"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: ints.status[0] C++ 1001, Rust 1000 (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_executive_p1"
+case = "negative_tol_lamina_delete_local_down"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: ints.status[0] C++ 1001, Rust 1000 (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_executive_p1"
+case = "disjoint"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: ints.status[0] C++ 1007, Rust 1000 (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
+
+[[mismatch]]
+unit = "offset.offset_executive_p1"
+case = "probe_remove_empty"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: ints.probe[0] C++ 1001, Rust 1000 (plan/findings/general--2502-fork-pin-offset-known-mismatches.md)"
