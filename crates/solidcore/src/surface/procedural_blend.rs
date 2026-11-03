@@ -1149,10 +1149,16 @@ pub fn recertify_faces(k: &Kernel, b: &crate::topology::Brep) -> Result<()> {
             continue;
         };
         if let SurfaceKind::ProceduralBlend(pb) = surface.kind() {
-            pb.recertify(k).map_err(|_| SolidError::Upstream {
-                operation: OP_RECERTIFY,
-                code: crate::error::SM_ERR,
-                entity: Some(crate::error::EntityRef::Face(f)),
+            pb.recertify(k).map_err(|e| {
+                // (a cancel ends the operation; it is no refusal of the face)
+                if e.is_cancelled() {
+                    return e;
+                }
+                SolidError::Upstream {
+                    operation: OP_RECERTIFY,
+                    code: crate::error::SM_ERR,
+                    entity: Some(crate::error::EntityRef::Face(f)),
+                }
             })?;
         }
     }

@@ -203,7 +203,7 @@ pub fn rebuild(k: &Kernel, rec: &ProceduralBlendRecord) -> Result<ProceduralBlen
 
 /// [`rebuild`] for the face `face` of a body: a refusal names the face
 /// (`SM_ERR_INVALID_INPUT` with [`EntityRef::Face`]), as a body read back from its record
-/// reports it.
+/// reports it; a cancel passes through as it is.
 ///
 /// # Errors
 ///
@@ -213,10 +213,16 @@ pub fn rebuild_for_face(
     face: FaceId,
     rec: &ProceduralBlendRecord,
 ) -> Result<ProceduralBlend> {
-    rebuild(k, rec).map_err(|_| SolidError::Upstream {
-        operation: OP_FACE,
-        code: SM_ERR_INVALID_INPUT,
-        entity: Some(EntityRef::Face(face)),
+    rebuild(k, rec).map_err(|e| {
+        // (a cancel ends the operation; it is no refusal of the face)
+        if e.is_cancelled() {
+            return e;
+        }
+        SolidError::Upstream {
+            operation: OP_FACE,
+            code: SM_ERR_INVALID_INPUT,
+            entity: Some(EntityRef::Face(face)),
+        }
     })
 }
 

@@ -565,6 +565,7 @@ fn recertify_in_frame(k: &Kernel, pb: &ProceduralBlend, bound: f64, shift: f64) 
         if !needed {
             continue;
         }
+        k.check_cancelled(OP)?;
         let mut seed = [0.0_f64; 4];
         let mut after = [0_i32; 4];
         let mut before = [0_i32; 4];
@@ -610,6 +611,7 @@ fn recertify_in_frame(k: &Kernel, pb: &ProceduralBlend, bound: f64, shift: f64) 
         s
     };
     for span in spans {
+        k.check_cancelled(OP)?;
         let (Some(Some(a)), Some(Some(b))) = (stations.get(span), stations.get(span + 1)) else {
             return Err(SolidError::sm_err(OP));
         };
