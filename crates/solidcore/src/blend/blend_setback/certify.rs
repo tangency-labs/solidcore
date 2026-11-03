@@ -496,3 +496,185 @@ pub(super) fn certified_convex(
     }
     Ok(Ok(()))
 }
+
+/// Whether every coefficient of `a` is `c` (a constant polynomial).
+fn t_is_constant(a: &Tensor, c: f64) -> bool {
+    a.c.iter().all(|&x| x == c)
+}
+
+/// The owner's one certificate on each patch of a fill (smlib#85's lifted normal-field
+/// bound; solidcore #2361): `II >= k G`, with II taken about the normal into the material
+/// and `k = ks[patch] <= 0` the most negative normal curvature of what the patch is G1 to
+/// (0 beside planes and convex rounds, `-1 / r` beside a concave round of radius r).
+/// `tau`: `1` where e points into the material, `-1` where it points out of it.
+///
+/// With `N = Pu x Pv` and `o = det(H, Hu, Hv, (e, 0)) = -w^3 N . e` certified of one sign s
+/// (else the patch folds: not certified), `|N| >= s o / w^3` for a unit e, and since
+/// `-k >= 0` and G is positive semidefinite, `II - k G >= 0` follows from
+/// `M = tau s w^3 [[l, m], [m, n]] + (-k) s o Gh >= 0`, `Gh = w^4 G` (its entries
+/// `(H_i w - H w_i) . (H_j w - H w_j)` over x, y, z): polynomial, certified from Bernstein
+/// coefficients (`M11`, `M22`, `M11 M22 - M12^2 >= 0`, each to `1e-12` of its coefficients'
+/// scale) halving up to `depth` times. At `k = 0` it is [`certified_convex`]'s condition with
+/// the side fixed by `tau`. `Err(patch)`: the first patch not certified.
+///
+/// # Errors
+///
+/// `SM_ERR` for a `k` above 0, a `ks` shorter than `nets` or a `tau` other than `1` or `-1`.
+pub(super) fn certified_curvature_bound(
+    nets: &[Net],
+    e: Vec3,
+    tau: f64,
+    ks: &[f64],
+    depth: usize,
+) -> Result<core::result::Result<(), usize>> {
+    if tau != 1.0 && tau != -1.0 {
+        return Err(sm_err());
+    }
+    for (p, net) in nets.iter().enumerate() {
+        let k = el(ks, p)?;
+        if !(k <= 0.0) {
+            return Err(sm_err());
+        }
+        let [fl, fm, fn_, fo] = fundamentals(net, e)?;
+        let d_o = t_scale(&fo);
+        let mut neg_o = fo.clone();
+        for x in &mut neg_o.c {
+            *x = -*x;
+        }
+        let s = if t_nonneg(&fo, 1.0e-12 * d_o, depth)? == 1 {
+            1.0
+        } else if t_nonneg(&neg_o, 1.0e-12 * d_o, depth)? == 1 {
+            -1.0
+        } else {
+            return Ok(Err(p));
+        };
+        let rows = rows_of(net, e)?;
+        let w = &rows.h[3];
+        // tau s w^3 [[l, m], [m, n]]
+        let lead = |f: &Tensor| -> Result<Tensor> {
+            let mut t = if t_is_constant(w, 1.0) {
+                f.clone()
+            } else {
+                t_mul_fast(&t_mul_fast(&t_mul_fast(w, w)?, w)?, f)?
+            };
+            for x in &mut t.c {
+                *x *= tau * s;
+            }
+            Ok(t)
+        };
+        let (mut m11, mut m12, mut m22) = (lead(&fl)?, lead(&fm)?, lead(&fn_)?);
+        if k < 0.0 {
+            // a_u, a_v: (H_u w - H w_u), (H_v w - H w_v) over x, y, z
+            let mut au: Vec<Tensor> = Vec::with_capacity(3);
+            let mut av: Vec<Tensor> = Vec::with_capacity(3);
+            for c in 0..3 {
+                let hc = el_ref(&rows.h, c)?;
+                au.push(t_axpy(
+                    &t_mul_fast(el_ref(&rows.hu, c)?, w)?,
+                    -1.0,
+                    &t_mul_fast(hc, el_ref(&rows.hu, 3)?)?,
+                )?);
+                av.push(t_axpy(
+                    &t_mul_fast(el_ref(&rows.hv, c)?, w)?,
+                    -1.0,
+                    &t_mul_fast(hc, el_ref(&rows.hv, 3)?)?,
+                )?);
+            }
+            let dot = |a: &[Tensor], b: &[Tensor]| -> Result<Tensor> {
+                let mut d = t_make(0, 0);
+                for c in 0..3 {
+                    d = t_axpy(&d, 1.0, &t_mul_fast(el_ref(a, c)?, el_ref(b, c)?)?)?;
+                }
+                Ok(d)
+            };
+            // (-k) s o: the lifted lower bound of |N| w^3, times -k
+            let mut so = fo.clone();
+            for x in &mut so.c {
+                *x *= -k * s;
+            }
+            m11 = t_axpy(&m11, 1.0, &t_mul_fast(&so, &dot(&au, &au)?)?)?;
+            m12 = t_axpy(&m12, 1.0, &t_mul_fast(&so, &dot(&au, &av)?)?)?;
+            m22 = t_axpy(&m22, 1.0, &t_mul_fast(&so, &dot(&av, &av)?)?)?;
+        }
+        let det = t_axpy(&t_mul_fast(&m11, &m22)?, -1.0, &t_mul_fast(&m12, &m12)?)?;
+        for check in [&m11, &m22, &det] {
+            if t_nonneg(check, 1.0e-12 * t_scale(check), depth)? != 1 {
+                return Ok(Err(p));
+            }
+        }
+    }
+    Ok(Ok(()))
+}
+
+#[cfg(test)]
+mod tests {
+    #![allow(clippy::unwrap_used)] // test helpers
+
+    use super::*;
+
+    /// The degree (2, 2) net of the graph `z = (a x^2 + b y^2) / 2` over the unit square
+    /// (`x^2`'s Bernstein coefficients are `0, 0, 1`).
+    fn quadric(a: f64, b: f64) -> Net {
+        let sq = [0.0, 0.0, 1.0];
+        let mut pts = Vec::new();
+        for (i, si) in sq.iter().enumerate() {
+            for (j, sj) in sq.iter().enumerate() {
+                let (x, y) = (i as f64 / 2.0, j as f64 / 2.0);
+                pts.push([x, y, (a * si + b * sj) / 2.0, 1.0]);
+            }
+        }
+        Net { p: 2, q: 2, pts }
+    }
+
+    const E: Vec3 = Vec3 {
+        x: 0.0,
+        y: 0.0,
+        z: 1.0,
+    };
+
+    fn certifies(net: &Net, tau: f64, k: f64) -> bool {
+        certified_curvature_bound(std::slice::from_ref(net), E, tau, &[k], 6)
+            .unwrap()
+            .is_ok()
+    }
+
+    /// A bowl `z = (x^2 + y^2) / 2` (normal curvature 1 at its lowest point, less further
+    /// up): with the material above it (e into it) it is convex, `II >= 0`; with the material
+    /// below it is concave, `II >= -G` at the lowest point, so it certifies for `k <= -1`
+    /// only (with room below), not for `k = -0.5` nor `k = 0`.
+    #[test]
+    fn bowl_is_convex_one_side_and_bounded_concave_the_other() {
+        let bowl = quadric(1.0, 1.0);
+        assert!(certifies(&bowl, 1.0, 0.0));
+        assert!(certifies(&bowl, 1.0, -0.5));
+        assert!(!certifies(&bowl, -1.0, 0.0));
+        assert!(!certifies(&bowl, -1.0, -0.5));
+        assert!(certifies(&bowl, -1.0, -1.5));
+    }
+
+    /// A saddle `z = (x^2 - y^2) / 2` (normal curvatures between -1 and 1): not convex on
+    /// either side; `II >= k G` for `k <= -1` (with room) on both.
+    #[test]
+    fn saddle_certifies_only_down_to_its_least_curvature() {
+        let saddle = quadric(1.0, -1.0);
+        assert!(!certifies(&saddle, 1.0, 0.0));
+        assert!(!certifies(&saddle, -1.0, 0.0));
+        assert!(!certifies(&saddle, 1.0, -0.5));
+        assert!(certifies(&saddle, 1.0, -1.5));
+        assert!(certifies(&saddle, -1.0, -1.5));
+    }
+
+    /// A plane certifies at `k = 0` on both sides; a positive k is an error.
+    #[test]
+    fn plane_and_bad_input() {
+        let plane = quadric(0.0, 0.0);
+        assert!(certifies(&plane, 1.0, 0.0));
+        assert!(certifies(&plane, -1.0, 0.0));
+        assert!(
+            certified_curvature_bound(std::slice::from_ref(&plane), E, 1.0, &[0.5], 6).is_err()
+        );
+        assert!(
+            certified_curvature_bound(std::slice::from_ref(&plane), E, 0.0, &[0.0], 6).is_err()
+        );
+    }
+}

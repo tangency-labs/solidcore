@@ -21,8 +21,8 @@
 //! margin answers feasibility with an empty fill, as the fork's leaves `rFill` empty.
 
 use super::certify::{
-    affine_fundamentals, affine_net, certified_convex, net_surface, t_make, t_nonneg, t_pieces,
-    t_scale, AffinePatch,
+    affine_fundamentals, affine_net, certified_convex, certified_curvature_bound, net_surface,
+    t_make, t_nonneg, t_pieces, t_scale, AffinePatch,
 };
 use super::qp::{dual_qp_rows, QpOutcome};
 use super::{
@@ -48,6 +48,28 @@ const NC: usize = 3;
 struct P2 {
     x: f64,
     y: f64,
+}
+
+/// The radius of the circle the rational quadratic arc with homogeneous control points `h`
+/// lies on: `|P2 - P0| / (2 sin a)`, `cos a = w1 / sqrt(w0 w2)` its half angle; 0 for a flat
+/// arc (no bound on the curvature beside it).
+///
+/// # Errors
+///
+/// `SM_ERR` for other than three control points.
+fn arc_radius(h: &[Hom]) -> Result<f64> {
+    if h.len() != 3 {
+        return Err(sm_err());
+    }
+    let (h0, h1, h2) = (el(h, 0)?, el(h, 1)?, el(h, 2)?);
+    let p0 = Point3::new(h0[0] / h0[3], h0[1] / h0[3], h0[2] / h0[3]);
+    let p2 = Point3::new(h2[0] / h2[3], h2[1] / h2[3], h2[2] / h2[3]);
+    let c = h1[3] / sqrt(h0[3] * h2[3]);
+    let s2 = 1.0 - c * c;
+    if !(s2 > 0.0) {
+        return Ok(0.0);
+    }
+    Ok(p0.distance(p2) / (2.0 * sqrt(s2)))
 }
 
 /// `sm_SbFillFrom`: the fill's surfaces from its nets.
@@ -317,6 +339,24 @@ pub(super) fn graph_g1(
         convex = side;
     }
     let e = (sum * if convex > 0 { -1.0 } else { 1.0 }).unitize()?;
+    // each patch's least normal curvature (the owner's one certificate, #2361): 0 beside
+    // convex rounds, -1 / r beside a concave round of radius r; the interior parts the
+    // least of the rounds'
+    let mut ks = vec![0.0; 2 * n];
+    if convex < 0 {
+        let mut least = 0.0;
+        for m in 0..n {
+            let r = arc_radius(el_ref(&h0s, m)?)?;
+            let k = if r > 0.0 { -1.0 / r } else { 0.0 };
+            *el_mut(&mut ks, m)? = k;
+            if k < least {
+                least = k;
+            }
+        }
+        for k in ks.iter_mut().skip(n) {
+            *k = least;
+        }
+    }
     let mut a1 = Vec3::new(1.0, 0.0, 0.0);
     if e.y.abs() < e.x.abs() && e.y.abs() <= e.z.abs() {
         a1 = Vec3::new(0.0, 1.0, 0.0);
@@ -945,6 +985,13 @@ pub(super) fn graph_g1(
             return Err(sm_err().into());
         };
         if certified_convex(&nets, e, GRAPH_DEPTH)?.is_err() {
+            continue;
+        }
+        // no more concave than what each patch joins (at a convex corner every k is 0 and
+        // the convexity just certified is the whole condition)
+        if ks.iter().any(|&k| k < 0.0)
+            && certified_curvature_bound(&nets, e, f64::from(convex), &ks, GRAPH_DEPTH)?.is_err()
+        {
             continue;
         }
         if d == 9 && probe.is_none() {
