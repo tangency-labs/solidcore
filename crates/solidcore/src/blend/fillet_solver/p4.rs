@@ -1442,6 +1442,13 @@ fn c2_offset_point_ignored(
 /// short of that end (a corner whose rails cross before the edge's vertex, the Mixed
 /// one), the edge's section there is a through point (made as the G1 knots' are, solved
 /// over the trace's extended domains), and the extension runs on past it.
+///
+/// Not the fork's (#2500): a rail end on an End's plane (an extended-edge-use end) gives
+/// the trace no point, as upstream, since it is found on the surface once that is made.
+/// A blend both of whose ends are such Ends, with no G1 knot between (a chamfer of a rim
+/// running from one smooth vertex to another), so has no point at all: its trace starts
+/// from the edge's sections at those ends, each solved as above, an end past a tangent
+/// edge skipped as above.
 fn c2_trace_to_edge_ends(
     ops: &mut dyn FilletSolverOps,
     cx: &mut Cx<'_>,
@@ -1449,7 +1456,6 @@ fn c2_trace_to_edge_ends(
 ) -> Result<()> {
     use crate::geom::global_solver::{SolutionRequested, SolverOperation};
     use crate::intersect::surface_intersector::p1::SrfIndex;
-    use crate::math::BIG_DOUBLE;
     use crate::topology::edge as topo_edge;
 
     let eu0 = ops
@@ -1458,21 +1464,22 @@ fn c2_trace_to_edge_ends(
         .ok_or_else(|| invalid("no edge use 0"))?;
     let edge = eu::edge(cx.target, eu0)?.ok_or_else(|| SolidError::null_pointer(OP))?;
     if !st.do_sorting
-        || st.tsect_pnts.is_empty()
         || topo_edge::start_vertex(cx.target, edge)? == topo_edge::end_vertex(cx.target, edge)?
     {
         return Ok(());
     }
-    let tol = ops.solver().this_approx_tol_3d();
-    for end in 0..2 {
-        let extended = if end == 0 {
-            ops.solver().extend_before
-        } else {
-            ops.solver().extend_after
-        };
-        if !extended {
-            continue;
+    let extended = [ops.solver().extend_before, ops.solver().extend_after];
+    if st.tsect_pnts.is_empty() {
+        // no point to run on from: the trace starts from the edge's end sections
+        for (end, _) in extended.iter().enumerate().filter(|(_, &e)| e) {
+            if let Some(r) = c2_edge_end_section(ops, cx, st, end)? {
+                st.tsect_pnts.push(r);
+            }
         }
+        return Ok(());
+    }
+    let tol = ops.solver().this_approx_tol_3d();
+    for (end, _) in extended.iter().enumerate().filter(|(_, &e)| e) {
         // the trace's point nearest that end: its ball's centre dropped to the edge
         let near = if end == 0 {
             st.tsect_pnts.first()
@@ -1500,52 +1507,72 @@ fn c2_trace_to_edge_ends(
         if at.distance(end_pnt) <= tol {
             continue;
         }
-        // the edge's section at its end, as the G1 knots' through points are made
-        let base0 = st.base_surfaces[0].clone();
-        let (pnt, tangent) = binormal_guess_point(ops, cx, &base0, end_param, true)?;
-        // solved where the trace itself runs: its base surfaces' extended domains
-        let mut domain1 = st.base_surfaces[0].natural_uv_domain_if_built();
-        let mut domain2 = st.base_surfaces[1].natural_uv_domain_if_built();
-        ops.solver()
-            .setup_offset_extension(cx.k, &st.base_surfaces[0], &mut domain1)?;
-        ops.solver()
-            .setup_offset_extension(cx.k, &st.base_surfaces[1], &mut domain2)?;
-        let mut end_tsect = TsectPnt::new();
-        match super::p3::find_fillet_tsect_pnt_in(
-            ops,
-            cx.k,
-            Some(&mut *cx.target),
-            &st.base_surfaces[0],
-            &st.base_surfaces[1],
-            pnt,
-            tangent,
-            &mut end_tsect,
-            Some(&domain1),
-            Some(&domain2),
-        ) {
-            Ok(()) => {}
-            // Not the fork's (#2406): at an End at a smooth vertex past a tangent edge of
-            // a face of the edge the ball may have left that face before the edge's end,
-            // its section there not on these faces: the trace goes on without it, out to
-            // its extended domains, and the rails' rollover traces it again on the face
-            // beyond (the End's rail ends then found on its plane)
-            Err(e)
-                if !e.is_unported_or_cancelled()
-                    && c2_end_past_tangent_edge(ops, cx, st, end == 1)? =>
-            {
-                continue;
+        if let Some(r) = c2_edge_end_section(ops, cx, st, end)? {
+            if end == 0 {
+                st.tsect_pnts.insert(0, r);
+            } else {
+                st.tsect_pnts.push(r);
             }
-            Err(e) => return Err(e),
-        }
-        end_tsect.curve_parameter = -BIG_DOUBLE;
-        let r = st.store.alloc(end_tsect);
-        if end == 0 {
-            st.tsect_pnts.insert(0, r);
-        } else {
-            st.tsect_pnts.push(r);
         }
     }
     Ok(())
+}
+
+/// The edge's section at its start (`end` 0) or end (1), as the G1 knots' through points
+/// are made, solved over the trace's extended domains ([`c2_trace_to_edge_ends`]); `None`
+/// where it is not found at an End at a smooth vertex past a tangent edge of a face of the
+/// edge ([`c2_end_past_tangent_edge`]).
+///
+/// # Errors
+///
+/// Those of the guess, the domains and the section's solve elsewhere.
+fn c2_edge_end_section(
+    ops: &mut dyn FilletSolverOps,
+    cx: &mut Cx<'_>,
+    st: &mut CalcState,
+    end: usize,
+) -> Result<Option<TsRef>> {
+    use crate::math::BIG_DOUBLE;
+
+    let end_param = if end == 0 { st.ivl.min() } else { st.ivl.max() };
+    let base0 = st.base_surfaces[0].clone();
+    let (pnt, tangent) = binormal_guess_point(ops, cx, &base0, end_param, true)?;
+    // solved where the trace itself runs: its base surfaces' extended domains
+    let mut domain1 = st.base_surfaces[0].natural_uv_domain_if_built();
+    let mut domain2 = st.base_surfaces[1].natural_uv_domain_if_built();
+    ops.solver()
+        .setup_offset_extension(cx.k, &st.base_surfaces[0], &mut domain1)?;
+    ops.solver()
+        .setup_offset_extension(cx.k, &st.base_surfaces[1], &mut domain2)?;
+    let mut end_tsect = TsectPnt::new();
+    match super::p3::find_fillet_tsect_pnt_in(
+        ops,
+        cx.k,
+        Some(&mut *cx.target),
+        &st.base_surfaces[0],
+        &st.base_surfaces[1],
+        pnt,
+        tangent,
+        &mut end_tsect,
+        Some(&domain1),
+        Some(&domain2),
+    ) {
+        Ok(()) => {}
+        // Not the fork's (#2406): at an End at a smooth vertex past a tangent edge of
+        // a face of the edge the ball may have left that face before the edge's end,
+        // its section there not on these faces: the trace goes on without it, out to
+        // its extended domains, and the rails' rollover traces it again on the face
+        // beyond (the End's rail ends then found on its plane)
+        Err(e)
+            if !e.is_unported_or_cancelled()
+                && c2_end_past_tangent_edge(ops, cx, st, end == 1)? =>
+        {
+            return Ok(None);
+        }
+        Err(e) => return Err(e),
+    }
+    end_tsect.curve_parameter = -BIG_DOUBLE;
+    Ok(Some(st.store.alloc(end_tsect)))
 }
 
 /// Not the fork's (#2406): whether the corner at the edge's end (`at_end`, else its start)
