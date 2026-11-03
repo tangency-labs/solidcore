@@ -1139,6 +1139,21 @@ pub struct UpstreamFixes {
     pub found_torus_sphere_keep_tested_nurb: bool,
     /// `SmBSplineSurface::HasInternalPole` tests the row through each interior knot (`knots - 1 - degree`), not one row further for each repeated copy of the knot, so a horn torus's corner rows on its axis are not taken for an internal pole (WR-505, #1515; tangency-labs/smlib#41).
     pub internal_pole_row_through_knot: bool,
+    /// `SmPointGrid::SetUpMonotonic` (`SmBSplineSurface::AssertValid` test #5,
+    /// [`crate::surface::surface::assert_valid::grid_has_non_monotonic_points_with_tol`])
+    /// takes two neighbouring control points for coincident when their difference is
+    /// shorter than the tolerance the check recognises coincident points by in its tests
+    /// #2 and #3 (`SM_ZONE_TOL_3D / 10`), not shorter than an absolute `SM_EFF_ZERO`.
+    /// `SmPointGrid` is given the distance its points are distinct at (upstream passes
+    /// `dTol * 1000` there) and the monotonicity pass ignores it, so past about 8192 mm
+    /// from the origin, where one ulp of a coordinate is above 1e-12, a collapsed or
+    /// repeated row carrying one-ulp noise reads as a zigzag that reverses at every
+    /// point: a sphere moved by 1e5 through its
+    /// homogeneous control points (`[x w + w t, w]`, as a rigid move of a record does)
+    /// divides by `w` again, its collapsed pole rows alternate by one ulp, and the check
+    /// refuses the sphere. A step of real length is unaffected (WR-732, #2560). Off by
+    /// default for pinned C++ parity.
+    pub grid_monotonic_skips_coincident_to_tolerance: bool,
     /// `SmSurfOfExtrusion::AssertValid` test 8 point-solves the origin on the generating curve with an unscaled `SM_EFF_ZERO`, so an origin evaluated on the curve at coordinates of about 10 (a text outline's quadratic Bezier) resolves to a few 1e-12 and is reported missing; with this fix that solve uses the issue's coordinate-aware zero `SM_EFF_ZERO * (1.0 + origin.max_dimension())`, its own factor rather than the factor 100 of the neighbouring point tests (WR-511, #1508; tangency-labs/smlib#31).
     pub extrusion_origin_scaled_zero: bool,
     /// `SmSurfaceIntersector::IsPointOnCurve` (`SmSurfaceIntersector.cpp:7376`, `:7391`,

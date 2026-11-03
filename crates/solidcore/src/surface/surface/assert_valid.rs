@@ -803,8 +803,21 @@ fn b_spline_surface_assert_valid(k: &Kernel, s: &Surface, r: &mut Reporter<'_>) 
 
         // (bClosedRow is passed as the grid's bClosedCol and bClosedCol as its
         // bClosedRow, as upstream)
-        let non_monotonic =
-            grid_has_non_monotonic_points(&net.points, net.v_count, closed_row, closed_col)?;
+        // the same tolerance tests 2 and 3 recognise coincident points by; upstream's
+        // monotonicity pass skips a step only below an absolute SM_EFF_ZERO, although it
+        // is given dTol * 1000 as the distance its points are distinct at (WR-732, #2560)
+        let grid_tol = if k.fixes.grid_monotonic_skips_coincident_to_tolerance {
+            tol
+        } else {
+            EFF_ZERO
+        };
+        let non_monotonic = grid_has_non_monotonic_points_with_tol(
+            &net.points,
+            net.v_count,
+            closed_row,
+            closed_col,
+            grid_tol,
+        )?;
         rtn &= r.report(B_SPLINE_SURFACE_TYPE, 5, 0, !non_monotonic, UNDEF, UNDEF)?;
     }
 
@@ -1085,6 +1098,9 @@ pub fn has_degenerate_control_point_row(b: &BSplineSurface, tol: f64) -> Result<
 /// neighbouring differences (coincident pairs skipped). As upstream, a failing column
 /// clears the row flag.
 ///
+/// A pair counts as coincident below an absolute `SM_EFF_ZERO`, as upstream;
+/// [`grid_has_non_monotonic_points_with_tol`] takes a tolerance instead.
+///
 /// # Errors
 ///
 /// [`SolidError::InvalidInput`] for a zero row size (upstream divides by zero) or
@@ -1095,6 +1111,31 @@ pub fn grid_has_non_monotonic_points(
     closed_col: bool,
     closed_row: bool,
 ) -> Result<bool> {
+    grid_has_non_monotonic_points_with_tol(points, row_size, closed_col, closed_row, EFF_ZERO)
+}
+
+/// [`grid_has_non_monotonic_points`] taking a pair of points for coincident when their
+/// difference is shorter than `tol` (`tol <= 0`: `SM_EFF_ZERO`), instead of upstream's
+/// absolute `SM_EFF_ZERO`.
+///
+/// `SmPointGrid` is given the distance its points are distinct at (`dTol3d`) and the
+/// monotonicity pass ignores it, testing an absolute `SM_EFF_ZERO` instead. One ulp of a
+/// coordinate is above 1e-12 past about 8192 mm from the origin, so a collapsed or
+/// repeated row that carries one-ulp noise there reads as a zigzag reversing at every
+/// point, where the whole row is one point to any tolerance the check uses (WR-732,
+/// #2560).
+///
+/// # Errors
+///
+/// Those of [`grid_has_non_monotonic_points`].
+pub fn grid_has_non_monotonic_points_with_tol(
+    points: &[Point3],
+    row_size: usize,
+    closed_col: bool,
+    closed_row: bool,
+    tol: f64,
+) -> Result<bool> {
+    let zero_sq = if tol > 0.0 { tol * tol } else { EFF_ZERO_SQ };
     if row_size == 0 {
         return Err(invalid("point grid row size is zero"));
     }
@@ -1142,7 +1183,7 @@ pub fn grid_has_non_monotonic_points(
             let len_sq1 = vec1.length_squared();
 
             // skip coincident control points
-            if len_sq0 < EFF_ZERO_SQ || len_sq1 < EFF_ZERO_SQ {
+            if len_sq0 < zero_sq || len_sq1 < zero_sq {
                 vec0 = vec1;
                 len_sq0 = len_sq1;
                 j1 += 1;
@@ -1189,7 +1230,7 @@ pub fn grid_has_non_monotonic_points(
             let len_sq1 = vec1.length_squared();
 
             // skip coincident control points
-            if len_sq0 < EFF_ZERO_SQ || len_sq1 < EFF_ZERO_SQ {
+            if len_sq0 < zero_sq || len_sq1 < zero_sq {
                 vec0 = vec1;
                 len_sq0 = len_sq1;
                 i1 += row_size;
@@ -2766,10 +2807,7 @@ mod tests {
             s
         };
         let at_origin = build(Point3::new(0.0, 0.0, 5.0));
-        let (nu, nv, cps) = b_spline_part(&at_origin)
-            .unwrap()
-            .control_points()
-            .unwrap();
+        let (nu, nv, cps) = b_spline_part(&at_origin).unwrap().control_points().unwrap();
         // the analytic sphere is built at the moved centre, so only the net carries the noise
         let mut moved = build(Point3::new(t[0], t[1], 5.0 + t[2]));
         let SurfaceKind::Sphere(sp) = moved.kind_mut() else {
@@ -2794,17 +2832,51 @@ mod tests {
     /// whose steps reverse at every point. Past about 8192 mm from the origin one ulp is
     /// above `EFF_ZERO`, so the skip no longer takes them for coincident and the check
     /// reads a 180-degree turn at every point of the pole column. The step is noise: the
-    /// row is collapsed to within one ulp, 1/2,750,000 of the tolerance the grid is
-    /// built with.
+    /// row is collapsed to within one ulp, 1/2,750,000 of `SM_ZONE_TOL_3D`.
     #[test]
     fn issue_2560_one_ulp_noise_along_a_pole_row_is_not_a_reversal() {
-        let k = Kernel::default();
-        let s = sphere_moved_homogeneously(&k, [1.0e5, -7.0e4, 3.0e4]);
+        const T: [f64; 3] = [1.0e5, -7.0e4, 3.0e4];
+        let mut k = Kernel::default();
+
+        let pinned = sphere_moved_homogeneously(&k, T);
+        let (ok, failed) = failed_tests(&k, &pinned);
+        assert!(!ok, "upstream refuses the moved sphere");
         assert_eq!(
-            failed_tests(&k, &s),
+            failed,
+            vec![(B_SPLINE_SURFACE_TYPE, 5)],
+            "upstream's absolute SM_EFF_ZERO takes the pole row's ulps for steps"
+        );
+
+        k.fixes.grid_monotonic_skips_coincident_to_tolerance = true;
+        let fixed = sphere_moved_homogeneously(&k, T);
+        assert_eq!(
+            failed_tests(&k, &fixed),
             (true, vec![]),
             "the moved sphere's net is the sphere to rounding"
         );
+
+        // at the origin the pole rows stay bit-identical, so upstream passes the sphere too
+        let pinned_k = Kernel::default();
+        let near = sphere_moved_homogeneously(&pinned_k, [0.0, 0.0, 0.0]);
+        assert_eq!(failed_tests(&pinned_k, &near), (true, vec![]));
+    }
+
+    /// A net that really doubles back is still refused with the opt-in: its steps are far
+    /// longer than the tolerance the check skips a step below, so none is skipped
+    /// (#2560; the planar G2 Setback patches of
+    /// `plan/findings/blend.blend_corner--planar-g2-setback-patch-net-doubles-back.md`
+    /// turn back between steps of 3.3e-2 and 5.3e-1).
+    #[test]
+    fn issue_2560_a_real_reversal_is_still_refused() {
+        let mut pts = bicubic_points();
+        pts[2 * 4 + 1] = [0.2, 1.0, 0.0];
+        pts[2 * 4 + 2] = [0.2, 2.0, 0.0];
+        let s = bspline(3, 3, &BEZ3, &BEZ3, &pts);
+        let mut k = Kernel::default();
+        k.fixes.grid_monotonic_skips_coincident_to_tolerance = true;
+        let (ok, failed) = failed_tests(&k, &s);
+        assert!(!ok);
+        assert_eq!(failed, vec![(B_SPLINE_SURFACE_TYPE, 5)], "{failed:?}");
     }
 
     #[test]
