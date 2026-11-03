@@ -19,13 +19,13 @@ use crate::surface::implicit::AnalyticSupport;
 use crate::surface::side::BoxSide;
 use crate::surface::surface::{Surface, SurfaceKind};
 
-const OP: &str = "surface::continued::Surface::continued";
+pub(super) const OP: &str = "surface::continued::Surface::continued";
 
 /// A full turn, degrees.
 const TURN: f64 = 360.0;
 
 /// Widens `row` at its end nearer `at` by `by`; whether that was its high end.
-fn widen(row: &mut [f64; 2], at: f64, by: f64) -> bool {
+pub(super) fn widen(row: &mut [f64; 2], at: f64, by: f64) -> bool {
     let high = (at - row[1]).abs() <= (at - row[0]).abs();
     if high {
         row[1] += by;
@@ -49,11 +49,16 @@ fn within(row: &mut [f64; 2], lo: f64, hi: f64, what: &'static str) -> Result<()
 
 /// Holds a sweep `row` grown at its `high` end (or low) to at most a turn: refused when proved
 /// over one, set to exactly one when within the rounding of the sum.
-fn at_most_a_turn(row: &mut [f64; 2], high: bool, what: &'static str) -> Result<()> {
+pub(super) fn at_most_a_turn(
+    row: &mut [f64; 2],
+    high: bool,
+    op: &'static str,
+    what: &'static str,
+) -> Result<()> {
     let span = row[1] - row[0];
     let rounding = 2.0 * f64::EPSILON * row[0].abs().max(row[1].abs()).max(TURN);
     if span - TURN > rounding {
-        return Err(SolidError::invalid_input(OP, what));
+        return Err(SolidError::invalid_input(op, what));
     }
     if span > TURN {
         if high {
@@ -108,17 +113,19 @@ impl Surface {
             other => other,
         })?;
         let grown = match self.kind() {
-            SurfaceKind::Cone(c) => Self::from(c.continued(k, dom, side, distance)?),
+            // proved by its own label and form check
+            SurfaceKind::Cone(c) => return Ok(Self::from(c.continued(k, dom, side, distance)?)),
             SurfaceKind::Plane(p) => {
                 let mut p = p.clone();
-                let (s, d) = (p.uv_scale(), p.step_uv_domain());
-                let mid = side.point(dom, 0.5);
-                let mut u = [d.min().x, d.max().x];
-                let mut v = [d.min().y, d.max().y];
+                let s = p.uv_scale();
+                // the face box in STEP (a plane's NURBS parameters are its STEP ones), grown
+                // at the side's own end
+                let rows = step_rows(&|uv| self.convert_uv_from_nurbs_to_step(k, uv), dom, side, false)?;
+                let (mut u, mut v) = (rows.sweep, rows.generator);
                 if side.is_u() {
-                    widen(&mut u, mid.x, distance / s.x);
+                    widen(&mut u, rows.at, distance / s.x);
                 } else {
-                    widen(&mut v, mid.y, distance / s.y);
+                    widen(&mut v, rows.at, distance / s.y);
                 }
                 p.adjust_step_uv_domain(&Extent2d::from_bounds(u[0], v[0], u[1], v[1]))?;
                 Self::from(p)
@@ -129,7 +136,7 @@ impl Surface {
                 let swap = sp.base.swap_uv;
                 let radius = sp.radius();
                 let step = |uv| sp.convert_uv_from_nurbs_to_step(k, uv);
-                let rows = revolution_rows(&step, dom, side, swap)?;
+                let rows = step_rows(&step, dom, side, swap)?;
                 let along = side.is_u() == swap;
                 let rho = if along {
                     radius
@@ -142,7 +149,7 @@ impl Surface {
                 if along {
                     within(&mut b, -90.0, 90.0, "the latitude is past a pole")?;
                 } else {
-                    at_most_a_turn(&mut a, high, "the sweep is over a turn")?;
+                    at_most_a_turn(&mut a, high, OP, "the sweep is over a turn")?;
                 }
                 sp.adjust_step_uv_domain(k, &Extent2d::from_bounds(a[0], b[0], a[1], b[1]))?;
                 Self::from(sp)
@@ -153,7 +160,7 @@ impl Surface {
                 let swap = t.base.swap_uv;
                 let minor = t.minor_radius();
                 let step = |uv| t.convert_uv_from_nurbs_to_step(k, uv);
-                let rows = revolution_rows(&step, dom, side, swap)?;
+                let rows = step_rows(&step, dom, side, swap)?;
                 let along = side.is_u() == swap;
                 let rho = if along {
                     minor
@@ -164,9 +171,9 @@ impl Surface {
                 let row = if along { &mut b } else { &mut a };
                 let high = widen(row, rows.at, rate(rho, distance)?);
                 if along {
-                    at_most_a_turn(&mut b, high, "the tube angle is over a turn")?;
+                    at_most_a_turn(&mut b, high, OP, "the tube angle is over a turn")?;
                 } else {
-                    at_most_a_turn(&mut a, high, "the sweep is over a turn")?;
+                    at_most_a_turn(&mut a, high, OP, "the sweep is over a turn")?;
                 }
                 t.adjust_step_uv_domain(k, &Extent2d::from_bounds(a[0], b[0], a[1], b[1]))?;
                 Self::from(t)
@@ -206,16 +213,19 @@ impl Surface {
     }
 }
 
-/// A revolution's STEP box rows at a face box: the sweep (STEP u) and generator (STEP v)
-/// ranges, the side's middle in STEP, and the held coordinate's value there.
-struct Rows {
-    sweep: [f64; 2],
-    generator: [f64; 2],
-    mid: Point2,
-    at: f64,
+/// A face box's STEP rows: the STEP u (a revolution's sweep) and v (its generator) ranges,
+/// the side's middle in STEP, and the held coordinate's value there (the end of its row the
+/// side is at: the STEP image of the box's side is that row's end exactly).
+pub(super) struct Rows {
+    pub(super) sweep: [f64; 2],
+    pub(super) generator: [f64; 2],
+    pub(super) mid: Point2,
+    pub(super) at: f64,
 }
 
-fn revolution_rows(
+/// [`Rows`] of the box `dom` by the NURBS to STEP map `step`, for a surface whose NURBS u is
+/// its STEP v when `swap`.
+pub(super) fn step_rows(
     step: &dyn Fn(Point2) -> Result<Point2>,
     dom: &Extent2d,
     side: BoxSide,
@@ -396,6 +406,31 @@ mod tests {
         let g = p.continued(&k(), &dom, BoxSide::VMin, 1.0).unwrap();
         assert!(close(g.step_uv_domain().min().y, -2.0));
         assert!(matches!(g.kind(), SurfaceKind::Plane(_)));
+    }
+
+    #[test]
+    fn a_plane_grows_its_face_box_at_the_side_not_its_domain() {
+        // a face box inside a larger plane: the box grows, at its own side
+        let p = Surface::from(Plane::new(
+            Point3::ZERO,
+            Vec3::X,
+            Vec3::Y,
+            Vec2::new(1.0, 1.0),
+            &Extent2d::from_bounds(-5.0, -5.0, 8.0, 9.0),
+        ));
+        let dom = Extent2d::from_bounds(0.0, 0.0, 1.0, 4.0);
+        let g = p.continued(&k(), &dom, BoxSide::UMax, 2.0).unwrap();
+        let d = g.step_uv_domain();
+        assert_eq!(
+            (d.min().x, d.min().y, d.max().x, d.max().y),
+            (0.0, 0.0, 3.0, 4.0)
+        );
+        let g = p.continued(&k(), &dom, BoxSide::VMin, 1.5).unwrap();
+        let d = g.step_uv_domain();
+        assert_eq!(
+            (d.min().x, d.min().y, d.max().x, d.max().y),
+            (0.0, -1.5, 1.0, 4.0)
+        );
     }
 
     #[test]

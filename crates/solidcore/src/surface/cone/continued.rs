@@ -12,15 +12,14 @@
 use crate::error::{Result, SolidError};
 use crate::geom::extent2d::Extent2d;
 use crate::kernel::Kernel;
+use crate::nurbs::math::gamma;
 use crate::surface::cone::Cone;
+use crate::surface::continued::{at_most_a_turn, step_rows, widen};
 use crate::surface::implicit::AnalyticSupport;
 use crate::surface::side::BoxSide;
 use crate::surface::surface::Surface;
 
 const OP: &str = "surface::cone::Cone::continued";
-
-/// A full turn, degrees.
-const TURN: f64 = 360.0;
 
 impl Cone {
     /// The cone continued naturally `distance` past side `side` of the face box `dom` (in the
@@ -57,50 +56,39 @@ impl Cone {
         // the source an exact class first: a form moved off its label is refused, not remade
         AnalyticSupport::check(k, &Surface::from(self.clone()))?;
         let step = |uv| self.convert_uv_from_nurbs_to_step(k, uv);
-        let (lo, hi, mid) = (
-            step(dom.min())?,
-            step(dom.max())?,
-            step(side.point(dom, 0.5))?,
-        );
-        let mut angle = [lo.x.min(hi.x), lo.x.max(hi.x)];
-        let mut height = [lo.y.min(hi.y), lo.y.max(hi.y)];
+        let swap = self.canonical().swap_uv;
+        let rows = step_rows(&step, dom, side, swap)?;
+        let (mut angle, mut height) = (rows.sweep, rows.generator);
         // the side holds the NURBS u constant for a u side; that is the height when swapped
-        let in_height = side.is_u() == self.canonical().swap_uv;
-        let (row, at, by) = if in_height {
-            let by = distance * self.semi_angle_deg().to_radians().cos();
-            (&mut height, mid.y, by)
+        let in_height = side.is_u() == swap;
+        if in_height {
+            let theta = self.semi_angle_deg().to_radians();
+            widen(&mut height, rows.at, distance * theta.cos());
+            // not past the apex, proved: the radius at both ends above its rounding (`base +
+            // tan h`: the product and sum's, gamma_8, and the tangent's own error from the
+            // angle's rounding to radians, (1 + tan^2) |d theta| |h|, d theta a few ulps of it)
+            let tan = theta.tan();
+            for h in height {
+                let r = self.radius(h);
+                let rounding = gamma(8) * (self.radius(0.0).abs() + (tan * h).abs())
+                    + (1.0 + tan * tan) * gamma(4) * theta.abs() * h.abs();
+                if r.is_nan() || r <= rounding {
+                    return Err(SolidError::invalid_input(
+                        OP,
+                        "the height reaches the apex",
+                    ));
+                }
+            }
         } else {
-            let r = self.radius(mid.y);
+            let r = self.radius(rows.mid.y);
             if r.is_nan() || r <= 0.0 {
                 return Err(SolidError::invalid_input(
                     OP,
                     "the side runs along the axis at a radius not positive",
                 ));
             }
-            (&mut angle, mid.x, (distance / r).to_degrees())
-        };
-        // the side is the row's end nearer its middle's coordinate
-        let high = (at - row[1]).abs() <= (at - row[0]).abs();
-        if high {
-            row[1] += by;
-        } else {
-            row[0] -= by;
-        }
-        if !in_height {
-            // the sweep's sum rounds by at most 2 ulps of its largest term
-            let span = angle[1] - angle[0];
-            let rounding = 2.0 * f64::EPSILON * angle[0].abs().max(angle[1].abs()).max(TURN);
-            if span - TURN > rounding {
-                return Err(SolidError::invalid_input(OP, "the sweep is over a turn"));
-            }
-            if span > TURN {
-                // a full turn, to rounding: the end grown is the one moved
-                if high {
-                    angle[1] = angle[0] + TURN;
-                } else {
-                    angle[0] = angle[1] - TURN;
-                }
-            }
+            let high = widen(&mut angle, rows.at, (distance / r).to_degrees());
+            at_most_a_turn(&mut angle, high, OP, "the sweep is over a turn")?;
         }
         let wider = Extent2d::from_bounds(angle[0], height[0], angle[1], height[1]);
         let mut cone = self.clone();
@@ -238,9 +226,20 @@ mod tests {
             .continued(&k(), &dom, s, std::f64::consts::FRAC_PI_2)
             .unwrap();
         let b = step_box(&d);
-        assert_eq!(b.max().x - b.min().x, TURN);
+        assert_eq!(b.max().x - b.min().x, 360.0);
         assert!(c.continued(&k(), &dom, s, 0.0).is_err());
         assert!(c.continued(&k(), &dom, s, f64::NAN).is_err());
+    }
+
+    #[test]
+    fn exactly_to_the_apex_is_refused_not_decided_at_a_tolerance() {
+        // radius 1 to 2 over height 3: the apex is a slant of sqrt10 below the bottom
+        let (c, dom) = cone(1.0, 2.0, 3.0, [0.0, 90.0], [0.0, 3.0], false);
+        let s = side_of(&c, &dom, true, false);
+        assert!(c.continued(&k(), &dom, s, 10f64.sqrt()).is_err());
+        // short of it by much more than the radius's rounding: built
+        let d = c.continued(&k(), &dom, s, 10f64.sqrt() * (1.0 - 1e-9)).unwrap();
+        assert!(d.radius(step_box(&d).min().y) > 0.0);
     }
 
     #[test]

@@ -12,7 +12,8 @@
 use crate::geom::extent3d::Extent3d;
 use crate::geom::vector3d::{Point3, Vec3};
 use crate::surface::plane::Plane;
-use crate::surface::side::{gamma, Bracket};
+use crate::nurbs::math::gamma;
+use crate::surface::side::Bracket;
 
 impl Plane {
     /// The least margin, in model units along the plane, by which the feet on the plane of

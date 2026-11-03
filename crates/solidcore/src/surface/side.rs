@@ -19,7 +19,7 @@ use crate::geom::vector2d::Point2;
 use crate::geom::vector3d::Vec3;
 use crate::kernel::Kernel;
 use crate::nurbs::b_spline_surface::{BSplineSurface, IsoCurveOptions, SurfParamType};
-use crate::nurbs::math::NOW;
+use crate::nurbs::math::{gamma, NOW};
 use crate::surface::implicit::AnalyticSupport;
 use crate::surface::surface::{Surface, SurfaceKind};
 
@@ -120,14 +120,6 @@ impl Bracket {
             upper: value + bound,
         }
     }
-}
-
-/// `gamma_n = n u / (1 - n u)`, the relative error bound of `n` rounded operations.
-#[must_use]
-pub(crate) fn gamma(n: usize) -> f64 {
-    #[allow(clippy::cast_precision_loss)]
-    let nu = n as f64 * f64::EPSILON / 2.0;
-    nu / (1.0 - nu)
 }
 
 /// A rational Bezier piece in homogeneous coordinates `(w x, w y, w z, w)`.
