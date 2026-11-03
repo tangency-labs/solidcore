@@ -128,6 +128,7 @@ pub(crate) fn quad(boundary: &[[f64; 2]]) -> Option<Quad> {
     let mut sides: [Vec<u32>; 4] = Default::default();
     let mut seen = 0u8;
     for (k, &c0) in corners.iter().enumerate() {
+        // Proven: the divisor is the constant 4, not zero.
         let c1 = *corners.get((k + 1) % 4)?;
         // Proven: n = boundary.len() >= 4, checked above.
         let len = (c1 + n - c0) % n;
@@ -142,8 +143,10 @@ pub(crate) fn quad(boundary: &[[f64; 2]]) -> Option<Quad> {
         }
         seen |= side.bit();
         let d = side.along();
+        // Proven: every index is below n = boundary.len(), a face's boundary nodes, at most
+        // MAX_FACE_NODES (checked by `plan_face`), so fits a u32.
         let mut chain: Vec<u32> = chain.into_iter().map(|i| i as u32).collect();
-        // In range: `d` is `side.along()`, 0 or 1, and a node is a `[f64; 2]`.
+        // Proven: `d` is `side.along()`, 0 or 1, and a node is a `[f64; 2]`.
         #[allow(clippy::indexing_slicing)]
         let coord = |i: &u32| boundary.get(*i as usize).map_or(0.0, |p| p[d]);
         if chain.first().map(coord) > chain.last().map(coord) {
@@ -253,6 +256,9 @@ pub(crate) fn structured(
         return None;
     }
     let n = u32::try_from(boundary.len()).ok()?;
+    u32::try_from(boundary.len().checked_add(nu * nv)?).ok()?;
+    // Proven: i < nu and j < nv, so n + j · nu + i < boundary.len() + nu · nv, which fits a u32
+    // (checked above; nu · nv <= MAX_FACE_GRID, checked before).
     let g = |i: usize, j: usize| n + (j * nu + i) as u32;
     let mut uv: Vec<[f64; 2]> = boundary.to_vec();
     for &v in vs {

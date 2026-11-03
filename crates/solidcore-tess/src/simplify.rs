@@ -351,6 +351,7 @@ impl Collapser {
             u32,
             std::hash::BuildHasherDefault<BitsHasher>,
         > = std::collections::HashMap::with_capacity_and_hasher(
+            // Proven: the divisor is the constant 2, not zero.
             positions.len() / 2,
             std::hash::BuildHasherDefault::default(),
         );
@@ -443,6 +444,7 @@ impl Collapser {
             alive: vec![true; n],
             stamp: vec![0; n],
             tri_alive: vec![true; tris.len()],
+            // Proven: the divisor is the constant 2, not zero.
             heap: BinaryHeap::with_capacity(sides.len() / 2 + 1),
             pos,
             quadric,

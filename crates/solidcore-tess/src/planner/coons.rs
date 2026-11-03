@@ -140,7 +140,8 @@ fn side(fixed: &[Vec3], n: usize, from: usize, to: usize) -> Option<Side> {
     if len == 0 {
         return None;
     }
-    // Proven: n > 0, or `checked_rem(n)` above returned None.
+    // Proven: n > 0, or `checked_rem(n)` above returned None; each index is below n, a count of
+    // a face's boundary nodes, at most MAX_FACE_NODES (checked by `plan_face`), so fits a u32.
     let nodes: Vec<u32> = (0..=len).map(|k| ((from + k) % n) as u32).collect();
     let mut at = vec![0.0];
     let mut total = 0.0;
@@ -177,6 +178,7 @@ fn along(side: &Side, uv: &[[f64; 2]], s: f64) -> Option<[f64; 2]> {
         uv.get(*side.nodes.get(k)? as usize)?,
     );
     let f = if a1 > a0 {
+        // Proven: the clamp bounds are the constants 0.0 <= 1.0, neither NaN.
         ((s - a0) / (a1 - a0)).clamp(0.0, 1.0)
     } else {
         0.0
@@ -315,12 +317,15 @@ fn coons_in<E>(
     }
     let mut out: Vec<[f64; 2]> = uv.to_vec();
     let base = u32::try_from(n).ok()?;
+    // Every node index below is under n + ns · nt, checked to fit a u32.
+    u32::try_from(n.checked_add(ss.len() * ts.len())?).ok()?;
     for &t in &ts {
         for &s in &ss {
             out.push(at(s, t)?);
         }
     }
     let (ns, nt) = (ss.len(), ts.len());
+    // Proven: i < ns and j < nt, so base + j · ns + i < n + ns · nt, which fits a u32 (checked).
     let g = |i: usize, j: usize| base + (j * ns + i) as u32;
     let mut tris = Vec::new();
     for j in 0..nt.saturating_sub(1) {

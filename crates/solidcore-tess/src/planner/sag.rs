@@ -64,14 +64,16 @@ pub(crate) fn refine(
     // No side is split below this length: a surface whose parameters bend sharply (at a pole) is
     // not chased to the last bit.
     let shortest = tol * 1e-3;
-    let mut sides: HashMap<(u32, u32), Vec<u32>> = HashMap::with_capacity(tris.len() * 2);
+    let mut sides: HashMap<(u32, u32), Vec<u32>> = crate::map_with_room(tris.len().checked_mul(2));
     for (ti, t) in tris.iter().enumerate() {
         for [a, b, _] in turns(*t) {
+            // Proven: fewer triangles than twice MAX_FACE_NODES, as above: the index fits a u32.
             sides.entry(key(a, b)).or_default().push(ti as u32);
         }
     }
     let mut sag_of: HashMap<(u32, u32), f64> = HashMap::new();
     let limit = uv.len().saturating_add(max_points);
+    // Proven: fewer triangles than twice MAX_FACE_NODES (2^28): the count fits a u32.
     let mut queue: Vec<u32> = (0..tris.len() as u32).rev().collect();
     while let Some(ti) = queue.pop() {
         if uv.len() >= limit {
@@ -88,6 +90,7 @@ pub(crate) fn refine(
             continue;
         };
         // Sides inside the face (two triangles on them), long enough to split, with their sag.
+        // Proven: the capacity is the constant 3.
         let mut inner: Vec<(f64, f64, (u32, u32))> = Vec::with_capacity(3);
         for [a, b, _] in turns(t) {
             let e = key(a, b);
@@ -156,6 +159,8 @@ pub(crate) fn refine(
         };
         let m = mean(&[ua, ub]);
         let pm = at(m)?;
+        // Proven: `plan_face` checks its nodes and the MAX_REFINE more it lets this add are at most
+        // MAX_FACE_NODES, so the index fits a u32.
         let mi = uv.len() as u32;
         uv.push(m);
         pos.push(pm);
@@ -175,7 +180,7 @@ fn mean(
     qs: &[[f64; 2]],
 ) -> [f64; 2] {
     let mut out = [0.0; 2];
-    // In range: `d` < 2 enumerates `out` and indexes the `[f64; 2]` parameters `qs`.
+    // Proven: `d` < 2 enumerates `out` and indexes the `[f64; 2]` parameters `qs`.
     #[allow(clippy::indexing_slicing)]
     for (d, slot) in out.iter_mut().enumerate() {
         let free: Vec<f64> = qs
@@ -246,6 +251,7 @@ fn split_side(
     m: u32,
 ) -> Vec<u32> {
     let on = sides.remove(&e).unwrap_or_default();
+    // Proven: the capacity is the constant 4.
     let mut touched = Vec::with_capacity(4);
     for ti in on {
         let Some(&t) = tris.get(ti as usize) else {
@@ -255,6 +261,8 @@ fn split_side(
         let Some([a, b, c]) = turns(t).into_iter().find(|&[a, b, _]| key(a, b) == e) else {
             continue;
         };
+        // Proven: a triangulation of at most MAX_FACE_NODES (2^28) nodes has fewer than twice as
+        // many triangles, so the index fits a u32.
         let new = tris.len() as u32;
         if let Some(slot) = tris.get_mut(ti as usize) {
             *slot = [a, m, c];
@@ -334,6 +342,7 @@ pub(crate) fn flip(
             return 0.0;
         };
         let angle = |o: Vec3, x: Vec3, y: Vec3| match ((x - o).normalized(), (y - o).normalized()) {
+            // Proven: the clamp bounds are the constants -1.0 <= 1.0, neither NaN.
             (Some(u), Some(v)) => u.dot(v).clamp(-1.0, 1.0).acos(),
             _ => 0.0,
         };
@@ -350,6 +359,7 @@ pub(crate) fn flip(
         let facet = (b - a).cross(c - a).normalized();
         let (_, su, sv) = derivs(m)?;
         Ok(match (facet, su.cross(sv).normalized()) {
+            // Proven: the clamp bounds are the constants 0.0 <= 1.0, neither NaN.
             (Some(f), Some(n)) => f.dot(n).abs().clamp(0.0, 1.0).acos(),
             _ => 0.0,
         })
@@ -371,9 +381,10 @@ pub(crate) fn flip(
         }
         _ => Ok(f64::INFINITY),
     };
-    let mut sides: HashMap<(u32, u32), Vec<u32>> = HashMap::with_capacity(tris.len() * 2);
+    let mut sides: HashMap<(u32, u32), Vec<u32>> = crate::map_with_room(tris.len().checked_mul(2));
     for (ti, t) in tris.iter().enumerate() {
         for [a, b, _] in turns(*t) {
+            // Proven: fewer triangles than twice MAX_FACE_NODES, as above: the index fits a u32.
             sides.entry(key(a, b)).or_default().push(ti as u32);
         }
     }

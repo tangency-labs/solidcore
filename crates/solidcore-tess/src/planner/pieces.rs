@@ -160,6 +160,7 @@ fn cut_in<E>(
         nodes.sort_by(|a, b| a.0.total_cmp(&b.0));
         nodes.dedup_by_key(|x| x.1);
         let count = segments.get(i).and_then(|s| s.count);
+        // Proven: the window size is the constant 2, not zero.
         for w in nodes.windows(2) {
             let (Some(&(_, a)), Some(&(_, b))) = (w.first(), w.get(1)) else {
                 continue;
@@ -176,6 +177,7 @@ fn cut_in<E>(
             let fractions: Vec<f64> = match count {
                 Some(k) if total > 0.0 => {
                     let share = dist(pa, pb) / total;
+                    // Proven: the clamp bounds are the constants 1 <= 4096.
                     let k = ((k as f64 * share).round() as usize).clamp(1, 4096);
                     (1..k).map(|j| j as f64 / k as f64).collect()
                 }

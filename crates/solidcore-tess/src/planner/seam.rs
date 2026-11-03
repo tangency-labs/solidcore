@@ -45,7 +45,7 @@ fn copies(a: f64, b: f64) -> Option<(i64, i64)> {
     let fits = |x: f64| x.abs() <= LIMIT;
     // Proven: both are whole numbers of magnitude at most 2^53 (checked, NaN failing every
     // comparison), so the casts are exact.
-    (fits(a) && fits(b) && a <= b && b - a <= MAX_COPIES as f64).then(|| (a as i64, b as i64))
+    (fits(a) && fits(b) && a <= b && b - a <= MAX_COPIES as f64).then_some((a as i64, b as i64))
 }
 
 /// A run along a cut line joining two pieces: the piece it leaves, its nodes' parameters and
@@ -170,7 +170,7 @@ pub(crate) fn cut(
             }
             // Compared in f64, before any cast: a NaN or a reach past the bound is unclean.
             let span = ((hi - lo) / per).ceil() + 2.0;
-            if !(span <= MAX_COPIES as f64) {
+            if span.is_nan() || span > MAX_COPIES as f64 {
                 return Err(Cut::Unclean);
             }
             // Copies j with lo + j·w ≤ x1 and hi + j·w ≥ x0, plus one each side.
@@ -262,6 +262,8 @@ pub(crate) fn cut(
     // Inside the face along each line: from a crossing with the face above to the next one
     // up (which must have it below).
     let mut links: Vec<Link> = Vec::new();
+    // Proven: the chunk size is the constant 2, not zero.
+    // Proven: the chunk size is the constant 2, not zero.
     for pair in left.chunks(2).zip(right.chunks(2)) {
         let (lp, rp) = pair;
         let (Some(la), Some(lb), Some(ra), Some(rb)) =
@@ -397,6 +399,7 @@ fn clip(path: &[[f64; 2]], pts: &[Vec3], x0: f64, x1: f64, out: &mut Vec<Piece>)
         .zip(pts.iter().zip(pts.iter().skip(1)))
     {
         let at = |x: f64| {
+            // Proven: the clamp bounds are the constants 0.0 <= 1.0, neither NaN.
             let t = ((x - a[0]) / (b[0] - a[0])).clamp(0.0, 1.0);
             ([x, a[1] + (b[1] - a[1]) * t], *pa + (*pb - *pa) * t)
         };

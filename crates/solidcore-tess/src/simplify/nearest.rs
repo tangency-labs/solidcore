@@ -80,6 +80,7 @@ impl Bvh {
     pub(super) fn new(boxes: &[Aabb3]) -> Bvh {
         let mut order: Vec<u32> = (0..boxes.len().min(u32::MAX as usize))
             .filter(|&i| boxes.get(i).is_some_and(|b| !b.is_empty() && finite(b)))
+            // Proven: i < u32::MAX, the range being cut there.
             .map(|i| i as u32)
             .collect();
         if order.is_empty() {
@@ -116,6 +117,8 @@ impl Bvh {
             let extent = axis(size);
             if span.len() <= LEAF || extent.partial_cmp(&0.0) != Some(Ordering::Greater) {
                 if let Some(node) = nodes.get_mut(n) {
+                    // Proven: start and the span's length are at most order.len(), which is at
+                    // most u32::MAX (its range is cut there).
                     *node = Node {
                         bounds,
                         first: start as u32,
@@ -125,6 +128,7 @@ impl Bvh {
                 continue;
             }
             let key = |i: &u32| axis(centre(*i));
+            // Proven: the divisor is the constant 2, not zero.
             let mid = span.len() / 2;
             span.select_nth_unstable_by(mid, |a, b| key(a).total_cmp(&key(b)));
             let left = nodes.len();
@@ -139,6 +143,8 @@ impl Bvh {
                 count: 0,
             });
             if let Some(node) = nodes.get_mut(n) {
+                // Proven: nodes split spans longer than LEAF (4) in two, so there are fewer
+                // than order.len() of them, at most u32::MAX.
                 *node = Node {
                     bounds,
                     first: left as u32,

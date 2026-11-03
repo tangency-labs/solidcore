@@ -167,6 +167,9 @@ const PARALLEL_EDGES: usize = 256;
 /// turns a coil's or a thread's wall winds (the grid as a whole stays within
 /// [`grid::MAX_FACE_GRID`]).
 const MAX_LINES: usize = 8192;
+/// Most nodes of one face, its boundary's and those its layout and refinement add: every index
+/// of them, and of its triangles (fewer than twice as many), fits a u32.
+pub(crate) const MAX_FACE_NODES: usize = 1 << 28;
 /// Most points Ruppert refinement may add to one face, beyond its seeds.
 const MAX_REFINE: usize = 20_000;
 /// Most rounds of splitting the edge segments where a face's sampled boundary crosses itself:
@@ -728,7 +731,7 @@ fn boundary(
                 es.reverse();
             }
             if let (Some(e), Some(&start)) = (end, eq.first()) {
-                // In range: `d` < 2 indexes the `[_; 2]` shift, periods and parameters.
+                // Proven: `d` < 2 indexes the `[_; 2]` shift, periods and parameters.
                 #[allow(clippy::indexing_slicing)]
                 for d in 0..2 {
                     let Some(per) = dom.period[d] else { continue };
@@ -786,6 +789,7 @@ fn boundary(
             eq.pop();
             es.pop();
             // The segment from each node on: the edge's own, counted from its start.
+            // Proven: an edge has at most MAX_EDGE_NODES (20 000) nodes: the count fits a u32.
             let m = ep.len() as u32;
             segs.extend((0..m).map(|j| (oe.edge, if oe.forward { j } else { m - 1 - j })));
             pts.extend(ep);
@@ -1204,6 +1208,7 @@ fn inside_out(lp: &seam::Loop, at: usize, k: usize, tol: f64) -> bool {
             if i == to % m || out.len() > m {
                 break;
             }
+            // Proven: m >= 3, checked above.
             i = (i + 1) % m;
         }
         out
@@ -1420,7 +1425,7 @@ fn open_pole_to_pole(
             let mut moved = l.uv.clone();
             for &k in &second {
                 if let Some(q) = moved.get_mut(k) {
-                    // In range: `d` < 2 enumerates the periods; parameters are `[f64; 2]`.
+                    // Proven: `d` < 2 enumerates the periods; parameters are `[f64; 2]`.
                     #[allow(clippy::indexing_slicing)]
                     {
                         q[d] += sign * per;
@@ -1442,7 +1447,7 @@ fn open_pole_to_pole(
                 };
                 if k == *p0 || k == *p1 {
                     let (mut qa, mut qb) = (*q, *q);
-                    // In range: `d` < 2 enumerates the periods; parameters are `[f64; 2]`.
+                    // Proven: `d` < 2 enumerates the periods; parameters are `[f64; 2]`.
                     #[allow(clippy::indexing_slicing)]
                     {
                         qa[d] = a[d];
@@ -1453,7 +1458,7 @@ fn open_pole_to_pole(
                     ring.push(*q);
                 }
             }
-            // In range: `d` < 2 enumerates the periods; parameters are `[f64; 2]`.
+            // Proven: `d` < 2 enumerates the periods; parameters are `[f64; 2]`.
             #[allow(clippy::indexing_slicing)]
             let (lo, hi) = ring
                 .iter()
@@ -1540,13 +1545,13 @@ fn open_at_pole(
             uv.len().checked_sub(2).and_then(|i| uv.get(i)).copied(),
             uv.last_mut(),
         ) {
-            // In range: `d` < 2 enumerates the periods; parameters are `[f64; 2]`.
+            // Proven: `d` < 2 enumerates the periods; parameters are `[f64; 2]`.
             #[allow(clippy::indexing_slicing)]
             {
                 q[d] = prev[d];
             }
         }
-        // In range: `d` < 2 enumerates the periods; parameters are `[f64; 2]`.
+        // Proven: `d` < 2 enumerates the periods; parameters are `[f64; 2]`.
         #[allow(clippy::indexing_slicing)]
         let (lo, hi) = uv
             .iter()
@@ -1595,7 +1600,7 @@ fn holes_beside_outer(dom: &solidcore::eval::uv::Domain, loops: &mut [seam::Loop
     for (d, per) in dom.period.into_iter().enumerate() {
         let Some(per) = per else { continue };
         // The middle of a loop's range along `d`.
-        // In range: `d` < 2 enumerates the periods; parameters are `[f64; 2]`.
+        // Proven: `d` < 2 enumerates the periods; parameters are `[f64; 2]`.
         #[allow(clippy::indexing_slicing)]
         let middle = |l: &seam::Loop| {
             let (lo, hi) =
@@ -1614,7 +1619,7 @@ fn holes_beside_outer(dom: &solidcore::eval::uv::Domain, loops: &mut [seam::Loop
                 continue;
             }
             for q in &mut l.uv {
-                // In range: `d` < 2 enumerates the periods; parameters are `[f64; 2]`.
+                // Proven: `d` < 2 enumerates the periods; parameters are `[f64; 2]`.
                 #[allow(clippy::indexing_slicing)]
                 {
                     q[d] -= k * per;
@@ -1797,6 +1802,14 @@ fn plan_face(
     }
     if uvs.len() < 3 {
         return Err(fail("degenerate boundary").into());
+    }
+    // Every index of the face's nodes is a u32: its boundary, and what the layouts and the sag
+    // refinement add, stay within MAX_FACE_NODES (2^28), far below u32::MAX.
+    if uvs.len() > MAX_FACE_NODES {
+        return Err(FaceError::Refused(fail(&format!(
+            "its {} boundary nodes are more than the {MAX_FACE_NODES} a face may have",
+            uvs.len()
+        ))));
     }
     let mut bbox = [(f64::MAX, f64::MIN); 2];
     for p in &uvs {
@@ -1986,6 +1999,12 @@ fn plan_face(
     }
     let mut all = uvs;
     all.extend(extra);
+    if all.len().saturating_add(MAX_REFINE) > MAX_FACE_NODES {
+        return Err(FaceError::Refused(fail(&format!(
+            "its {} nodes, with the {MAX_REFINE} refinement may add, are more than the {MAX_FACE_NODES} a face may have",
+            all.len()
+        ))));
+    }
     // Whatever the layout, no triangle leaves the surface by more than the tolerance.
     if !planar {
         sag::refine(s, tol, reach, &fixed, &mut all, &mut triangles, MAX_REFINE)
@@ -2026,6 +2045,8 @@ fn within_loops(
     period: [Option<f64>; 2],
     q: [f64; 2],
 ) -> std::result::Result<bool, TooManyCopies> {
+    // Whole numbers up to 2^53 are exact in f64, and well inside i64.
+    const LIMIT: f64 = 9_007_199_254_740_992.0;
     // The copies of the coordinate `x` of `q` along a direction (range `(lo, hi)` in the box,
     // period `period`) inside the box.
     let copies = |(lo, hi): (f64, f64),
@@ -2038,7 +2059,7 @@ fn within_loops(
                 let last = ((hi - x) / per).floor();
                 let count = last - first + 1.0;
                 // Compared in f64 before the casts: NaN fails it.
-                if !(count <= MAX_PERIODS as f64) {
+                if count.is_nan() || count > MAX_PERIODS as f64 {
                     return Err(TooManyCopies(count));
                 }
                 if count < 1.0 {
@@ -2046,7 +2067,6 @@ fn within_loops(
                 }
                 // Proven: whole numbers of magnitude at most 2^53 (checked here, NaN failing
                 // it), so both casts are exact.
-                const LIMIT: f64 = 9_007_199_254_740_992.0;
                 if !(first.abs() <= LIMIT && last.abs() <= LIMIT) {
                     return Err(TooManyCopies(count));
                 }
@@ -2108,11 +2128,13 @@ fn plan_pieces_in(f: &Region, stopped: &mut Option<NoValue>) -> Option<UvMesh> {
     // cylinder that is the spacing round it, which the cuts along its axis then get too.
     let median_gap = |lines: &[f64], speed: f64| -> f64 {
         let mut gaps: Vec<f64> = lines
+            // Proven: the window size is the constant 2, not zero.
             .windows(2)
             .filter_map(|w| Some((w.get(1)? - w.first()?) * speed))
             .filter(|g| *g > 0.0)
             .collect();
         gaps.sort_by(f64::total_cmp);
+        // Proven: the divisor is the constant 2, not zero.
         gaps.get(gaps.len() / 2).copied().unwrap_or(f64::INFINITY)
     };
     let seed = median_gap(f.us, f.speed[0])
@@ -2355,9 +2377,11 @@ fn graded(
             || !q.is_finite()
         {
             // Even spacing at the mean of the two.
+            // Proven: the clamp bounds are the constants 1.0 <= 4096.0, neither NaN.
             let k = (len / (0.5 * (sa + sb))).round().clamp(1.0, 4096.0) as usize;
             vec![len / k as f64; k]
         } else {
+            // Proven: the clamp bounds are the constants 1.0 <= 4096.0, neither NaN.
             let k = (1.0 + (sb / sa).ln() / q.ln()).round().clamp(1.0, 4096.0) as usize;
             let raw: Vec<f64> = (0..k).map(|j| sa * q.powi(j as i32)).collect();
             let total: f64 = raw.iter().sum();
@@ -2413,6 +2437,8 @@ fn closed_boundary(
     uvs: &[[f64; 2]],
     triangles: &[[u32; 3]],
 ) -> bool {
+    // Proven (the u32 casts here): `fixed` and the loops' ranges are a face's boundary nodes, at
+    // most MAX_FACE_NODES (checked by `plan_face`), so every index fits a u32.
     let mut one: Vec<u32> = (0..fixed.len() as u32).collect();
     let root = |one: &[u32], mut i: u32| {
         while let Some(&j) = one.get(i as usize).filter(|j| **j != i) {
@@ -2444,8 +2470,10 @@ fn closed_boundary(
     }
     // By value: −0.0 and 0.0 are one point.
     let key = |q: &[f64; 2]| [(q[0] + 0.0).to_bits(), (q[1] + 0.0).to_bits()];
+    // Proven: capacity of the allocated `uvs`' length, its entries (12 bytes) no larger.
     let mut first: HashMap<[u64; 2], u32> = HashMap::with_capacity(uvs.len());
     for (i, q) in uvs.iter().enumerate().take(fixed.len()) {
+        // Proven: below MAX_FACE_NODES, as above.
         let i = i as u32;
         let f = *first.entry(key(q)).or_insert(i);
         if f != i {
@@ -2456,7 +2484,7 @@ fn closed_boundary(
         let (a, b) = (root(&one, a), root(&one, b));
         (a != b).then_some((a.min(b), a.max(b)))
     };
-    let mut sides: HashMap<(u32, u32), u32> = HashMap::with_capacity(triangles.len() * 3);
+    let mut sides: HashMap<(u32, u32), u32> = crate::map_with_room(triangles.len().checked_mul(3));
     for t in triangles {
         // Each corner with the next one round the triangle.
         for (&a, &b) in t.iter().zip(t.iter().cycle().skip(1)) {

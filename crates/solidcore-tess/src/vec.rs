@@ -58,6 +58,7 @@ impl VecExt for Vec3 {
         let ab = b - a;
         let l2 = ab.len2();
         let t = if l2 > 0.0 {
+            // Proven: the clamp bounds are the constants 0.0 <= 1.0, neither NaN.
             ((self - a).dot(ab) / l2).clamp(0.0, 1.0)
         } else {
             0.0
