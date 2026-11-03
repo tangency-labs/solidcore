@@ -815,6 +815,8 @@ fn run_rust_op(k: &mut Kernel, b: &mut Brep, op: Op, a: &[f64]) -> Result<Vec<f6
         Op::Stale => {
             let (create, modified) = (arg(0)? as u32, arg(1)? as u32);
             let faces = must(bp1::faces(b, None))?;
+            // drop the caches reading or validating the B-rep built, as the shim does
+            super::query_face_p1::drop_trim_caches(b).map_err(Fail::Harness)?;
             for (i, &f) in faces.iter().enumerate() {
                 let bit = (i % 8) as u32;
                 let Some(surface) = must(b.face(f))?.surface.as_ref() else {

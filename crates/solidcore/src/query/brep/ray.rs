@@ -401,6 +401,14 @@ mod tests {
             .get_mut(&face)
             .unwrap()
             .face_was_modified = true;
+        // (the prepared cache is a copy of the surface's kept cache, one object upstream:
+        // `m_bFaceWasModified` is set on both)
+        b.face(face)
+            .unwrap()
+            .surface
+            .as_ref()
+            .unwrap()
+            .mark_trim_cache_face_modified();
         let query = RaySurfaceContext {
             brep: &b,
             preparation: &preparation,
