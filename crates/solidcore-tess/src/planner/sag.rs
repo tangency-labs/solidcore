@@ -23,6 +23,8 @@ use super::NoValue;
 ///
 /// A point the surface does not evaluate at (a node, or a middle the check needs) is the
 /// evaluator refusing the face: the error names it, and the caller leaves the face out whole.
+/// `Ok(true)` when the refinement stopped at `max_points` with a triangle still to split: the
+/// caller names the face ([`super::Cap::Refine`]).
 pub(crate) fn refine(
     s: &EvalSurface,
     tol: f64,
@@ -31,9 +33,9 @@ pub(crate) fn refine(
     uv: &mut Vec<[f64; 2]>,
     tris: &mut Vec<[u32; 3]>,
     max_points: usize,
-) -> Result<(), NoValue> {
+) -> Result<bool, NoValue> {
     if !(tol.is_finite() && tol > 0.0) || tris.is_empty() {
-        return Ok(());
+        return Ok(false);
     }
     let at = |q: [f64; 2]| {
         s.derivs(q[0], q[1])
@@ -76,9 +78,6 @@ pub(crate) fn refine(
     // Proven: fewer triangles than twice MAX_FACE_NODES (2^28): the count fits a u32.
     let mut queue: Vec<u32> = (0..tris.len() as u32).rev().collect();
     while let Some(ti) = queue.pop() {
-        if uv.len() >= limit {
-            break;
-        }
         let Some(&t) = tris.get(ti as usize) else {
             continue;
         };
@@ -157,6 +156,10 @@ pub(crate) fn refine(
         let (Some(ua), Some(ub)) = (q(split.0), q(split.1)) else {
             continue;
         };
+        // A split is wanted and there is no room for its point.
+        if uv.len() >= limit {
+            return Ok(true);
+        }
         let m = mean(&[ua, ub]);
         let pm = at(m)?;
         // Proven: `plan_face` checks its nodes and the MAX_REFINE more it lets this add are at most
@@ -167,7 +170,7 @@ pub(crate) fn refine(
         sag_of.remove(&split);
         queue.extend(split_side(tris, &mut sides, split, mi));
     }
-    Ok(())
+    Ok(false)
 }
 
 /// The mean of parameter points, as the surface point between them: at a pole the parameter
@@ -196,6 +199,50 @@ fn mean(
         *slot = pick.iter().sum::<f64>() / pick.len().max(1) as f64;
     }
     out
+}
+
+/// The farthest the triangles `tris` (as for [`refine`]) lie from the surface, measured as
+/// [`refine`] measures them: at each triangle's middle, along the normal there (the whole
+/// distance where it is undefined). The parameters of a point the surface does not evaluate at
+/// are the error.
+pub(crate) fn worst(
+    s: &EvalSurface,
+    reach: f64,
+    fixed: &[Vec3],
+    uv: &[[f64; 2]],
+    tris: &[[u32; 3]],
+) -> Result<f64, NoValue> {
+    let dom = solidcore::eval::uv::domain(s);
+    let derivs = |q: [f64; 2]| {
+        s.derivs(q[0], q[1])
+            .map(kernel::record_triple)
+            .ok_or(NoValue(q))
+    };
+    let point = |i: u32| -> Result<Option<(Vec3, [f64; 2])>, NoValue> {
+        let Some(&q) = uv.get(i as usize) else {
+            return Ok(None);
+        };
+        Ok(Some(match fixed.get(i as usize) {
+            Some(&p) => (p, q),
+            None => (derivs(q)?.0, q),
+        }))
+    };
+    let mut worst: f64 = 0.0;
+    for t in tris {
+        let (Some((a, qa)), Some((b, qb)), Some((c, qc))) =
+            (point(t[0])?, point(t[1])?, point(t[2])?)
+        else {
+            continue;
+        };
+        let flat = (a + b + c) * (1.0 / 3.0);
+        let (x, su, sv) = derivs(mean(s, &dom, reach, &[qa, qb, qc]))?;
+        let off = su
+            .cross(sv)
+            .normalized()
+            .map_or_else(|| x.dist(flat), |n| (x - flat).dot(n).abs());
+        worst = worst.max(off);
+    }
+    Ok(worst)
 }
 
 /// The longest side of triangle `t` when the angle opposite it is past `degrees` and the side lies

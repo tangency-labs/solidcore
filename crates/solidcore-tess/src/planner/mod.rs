@@ -69,7 +69,7 @@ enum Lenient {
 }
 
 /// How the faces of a plan were meshed.
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Debug, Default, PartialEq)]
 pub struct PlanStats {
     /// Planar faces meshed whole as a box or four-cornered layout, or by Delaunay.
     pub planar: usize,
@@ -90,6 +90,40 @@ pub struct PlanStats {
     /// Edges that bound no face and could not be sampled: left out of the plan (an empty
     /// polyline), so the rest of the body is still meshed, each with why.
     pub unsampled_edges: Vec<RefusedEdge>,
+    /// Faces a memory bound of the planner limited: their grid thinned below the lines their
+    /// tolerance asked for, or their sag refinement stopped at the points it may add. Each is
+    /// still meshed, named here with the sag its triangles reach and the bounds that limited it,
+    /// so a mesh that leaves the tolerance is never so unreported.
+    pub over_tolerance: Vec<OverTolerance>,
+}
+
+/// A face a memory bound limited (see [`PlanStats::over_tolerance`]).
+#[derive(Clone, Debug, PartialEq)]
+pub struct OverTolerance {
+    /// The face's index in the record.
+    pub face: usize,
+    /// The farthest its triangles lie from its surface (mm), measured as the sag refinement
+    /// measures them: at each triangle's middle, along the surface's normal there. Over the
+    /// tolerance unless the refinement made up all the thinning took.
+    pub sag: f64,
+    /// The bounds that limited it, one or both.
+    pub caps: Vec<Cap>,
+}
+
+/// A memory bound of the planner.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Cap {
+    /// The face's grid was thinned to fit [`MAX_FACE_GRID`](grid::MAX_FACE_GRID) points: the
+    /// lines along u and v its tolerance asked for, and those kept.
+    GridThinned {
+        /// The lines along u and v asked for.
+        asked: [usize; 2],
+        /// The lines kept.
+        kept: [usize; 2],
+    },
+    /// The sag refinement added all the points it may ([`MAX_REFINE`]) with triangles still off
+    /// the surface by more than the tolerance.
+    Refine,
 }
 
 /// An edge the planner could not sample: its index in the record and why.
@@ -498,6 +532,7 @@ fn plan_at(b: &brep::Brep, tol: f64, turn: Option<size::Turn>) -> Result<(TessPl
         stats.structured += s.structured;
         stats.delaunay += s.delaunay;
         stats.lenient.extend(s.lenient);
+        stats.over_tolerance.extend(s.over_tolerance);
     }
     if let Some(e) = first_error
         && stats.unmeshed.len() == faces.len()
@@ -1757,6 +1792,8 @@ fn plan_face(
 ) -> std::result::Result<FacePlan, FaceError> {
     let tol = rules.tol;
     let (h, speed) = (size.h, size.speed);
+    // The memory bounds that limit the face, if any (see [`PlanStats::over_tolerance`]).
+    let mut caps: Vec<Cap> = Vec::new();
     let dom = solidcore::eval::uv::domain(s);
     let fail = |why: &str| unsupported(format!("face {fi} ({kind}): {why}"));
     let no_value = |NoValue(q): NoValue| {
@@ -1919,7 +1956,13 @@ fn plan_face(
             uv::divide(s, 0, bbox[0], bbox[1], rules, h, MAX_LINES, &mine).map_err(unmeasured)?;
         let mut vs =
             uv::divide(s, 1, bbox[1], bbox[0], rules, h, MAX_LINES, &mine).map_err(unmeasured)?;
+        let asked = [us.len(), vs.len()];
         grid::thin(&mut us, &mut vs, grid::MAX_FACE_GRID);
+        let kept = [us.len(), vs.len()];
+        // A plane is flat however few lines it keeps.
+        if kept != asked && !planar {
+            caps.push(Cap::GridThinned { asked, kept });
+        }
         let structured = match (ranges.len(), if seamed { None } else { grid::quad(&uvs) }) {
             (1, Some(q)) => {
                 // Interior lines: the boundary's own where opposite sides agree (refined where the
@@ -2053,9 +2096,21 @@ fn plan_face(
     }
     // Whatever the layout, no triangle leaves the surface by more than the tolerance.
     if !planar {
-        sag::refine(s, tol, reach, &fixed, &mut all, &mut triangles, MAX_REFINE)
-            .map_err(no_value)?;
+        if sag::refine(s, tol, reach, &fixed, &mut all, &mut triangles, MAX_REFINE)
+            .map_err(no_value)?
+        {
+            caps.push(Cap::Refine);
+        }
         sag::flip(s, tol, reach, &fixed, &all, &mut triangles).map_err(no_value)?;
+        // A face a bound limited is named with the sag its triangles reach.
+        if !caps.is_empty() {
+            let sag = sag::worst(s, reach, &fixed, &all, &triangles).map_err(no_value)?;
+            stats.over_tolerance.push(OverTolerance {
+                face: fi as usize,
+                sag,
+                caps: std::mem::take(&mut caps),
+            });
+        }
     }
     // Both evaluators take a closed spline's parameters inside its active interval.
     for q in &mut all {

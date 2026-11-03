@@ -1742,6 +1742,21 @@ fn the_halves_of_a_split_smlib_coil_mesh_as_the_whole() {
             stats.unmeshed.is_empty() && stats.lenient.is_empty(),
             "{name}: {stats:?}"
         );
+        // The wall (face 0) asks for more grid lines than a grid may have, and its refinement
+        // cannot make up the rest within the points it may add: it is meshed, and named with
+        // both bounds and the sag its triangles reach, past the tolerance.
+        let [over] = stats.over_tolerance.as_slice() else {
+            panic!("{name}: {:?}", stats.over_tolerance)
+        };
+        let [Cap::GridThinned { asked, kept }, Cap::Refine] = over.caps.as_slice() else {
+            panic!("{name}: {over:?}")
+        };
+        assert_eq!(over.face, 0, "{name}: {over:?}");
+        assert!(
+            asked[0] * asked[1] > grid::MAX_FACE_GRID && kept[0] * kept[1] <= grid::MAX_FACE_GRID,
+            "{name}: {over:?}"
+        );
+        assert!(over.sag > 3e-4, "{name}: {over:?}");
         let m = evaluated(&p);
         assert_watertight(&m, name);
         halves += volume(&m);
@@ -1777,7 +1792,7 @@ fn a_face_past_the_node_cap_is_refused() {
 
 /// A cylinder face without its NURBS form (a label alone, an unvalidated record): the kernel's
 /// evaluator keeps it in its closed form, which tess does not mesh, and the face is refused,
-/// naming it, through plan(); its two end discs are meshed.
+/// naming it, through `plan()`; its two end discs are meshed.
 #[test]
 fn a_face_whose_surface_does_not_evaluate_is_refused_through_plan() {
     let mut b = fixture("cylinder_r10_h5");
@@ -1852,9 +1867,9 @@ fn a_face_with_a_loop_of_one_node_is_refused_naming_the_loop() {
     }
 }
 
-/// A loop's edge that cannot be split where split_thin_loops halves it (a spline with no point at
+/// A loop's edge that cannot be split where `split_thin_loops` halves it (a spline with no point at
 /// its middle, its nodes only its ends): the edge is returned with its error, for every face of
-/// it to be refused. Through plan() the sampling meets the middle first.
+/// it to be refused. Through `plan()` the sampling meets the middle first.
 #[test]
 fn a_thin_loops_edge_that_cannot_be_split_is_returned_with_why() {
     let mut b = fixture("box_10x6x4");
@@ -1904,7 +1919,7 @@ fn a_thin_loops_edge_that_cannot_be_split_is_returned_with_why() {
 }
 
 /// A face's crossing chords are halved on their edge; an edge that cannot take the new nodes
-/// (here past MAX_EDGE_NODES) refuses every face of it, each naming the edge, and untangle
+/// (here past `MAX_EDGE_NODES`) refuses every face of it, each naming the edge, and untangle
 /// passes them over. (A box face's boundary made to cross itself by moving one of its nodes.)
 #[test]
 fn an_edge_untangling_cannot_split_refuses_its_faces() {
@@ -1980,4 +1995,26 @@ fn an_edge_untangling_cannot_split_refuses_its_faces() {
         );
         assert!(tangled.iter().all(|(t, _)| *t != f), "{tangled:?}");
     }
+}
+
+/// A torus (radii 6 and 1.5) at a chord of 2e-4 mm, no facet angle: its grid fits, but its sag
+/// refinement adds all the points it may ([`MAX_REFINE`]) with triangles still off the surface,
+/// and the face is still meshed and named in [`PlanStats::over_tolerance`] with that bound and
+/// the sag its triangles reach, past the tolerance. The refinement stopped there silently.
+#[test]
+fn a_face_whose_refinement_reaches_its_bound_is_named_with_its_sag() {
+    let tol = 2e-4;
+    let b = fixture("torus_6_1_5");
+    let (p, stats) = ok(plan(&b, &MeshTolerance::chord(tol), size_of("torus_6_1_5")));
+    assert!(stats.unmeshed.is_empty(), "{stats:?}");
+    let [o] = stats.over_tolerance.as_slice() else {
+        panic!("{:?}", stats.over_tolerance)
+    };
+    assert_eq!(
+        (o.face, o.caps.as_slice()),
+        (0, [Cap::Refine].as_slice()),
+        "{o:?}"
+    );
+    assert!(o.sag > tol && o.sag < 10.0 * tol, "{o:?}");
+    assert!(!p.faces[0].triangles.is_empty());
 }
