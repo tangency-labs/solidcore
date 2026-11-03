@@ -58,7 +58,7 @@ use super::intersect_surface_drop_lib_p2::{
     add3, ffi_curve, gen_knots, gen_scale, pick, rust_curve, scale3, unit_dir, CurveIn,
 };
 use super::query_brep::{gen_box_solid, gen_points_brep};
-use super::query_face_p1::own_model;
+use super::query_face_p1::{drop_trim_caches, own_model};
 use super::topology_edgeuse_p1::fixture_input;
 use crate::case::CaseContext;
 use crate::runner::default_cases;
@@ -364,6 +364,8 @@ fn rust_brep(i: &Inputs) -> Result<Output, HarnessError> {
         Err(o) => return Ok(o),
     };
     let mut b = m.brep;
+    // the shim deletes the trimmed surface caches the file read left
+    drop_trim_caches(&b)?;
     let mut k = kernel(i.model, i.ratio);
     let small = SmallTopoType::from_code(i.small)
         .ok_or_else(|| HarnessError::new(format!("small {}", i.small)))?;

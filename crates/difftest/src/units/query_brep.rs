@@ -56,7 +56,7 @@ use solidcore_ffi::units::query_brep::{
 
 use super::surface_surface_cache_p1::harness;
 use super::surface_surface_cache_p3::{gen_surf, push_surf, surf_domain, surface_in, SurfIn};
-use super::query_face_p1::{gen_face_brep, model, own_model, Model, NoGeometry};
+use super::query_face_p1::{drop_trim_caches, gen_face_brep, model, own_model, Model, NoGeometry};
 use super::surface_surface_p7::{st, Fail};
 use super::topology_edgeuse_p1::{fixture_input, gen_brep, BrepIn};
 use crate::case::CaseContext;
@@ -576,6 +576,8 @@ fn rust_box(i: &BoxIn) -> Result<Output, Fail> {
         Ok(m) => m,
         Err(o) => return Ok(o),
     };
+    // the shim deletes the trimmed surface caches the file read left
+    drop_trim_caches(&m.brep)?;
     let k = Kernel::default();
     let flat = run_steps(&k, &mut m.brep, &i.steps)?;
     Ok(Output::new().values("steps", flat))
@@ -622,6 +624,8 @@ fn rust_classify(i: &ClassifyIn) -> Result<Output, Fail> {
     };
     let k = Kernel::default();
     let mut b = m.brep;
+    // the shim deletes the trimmed surface caches the file read left
+    drop_trim_caches(&b)?;
     let query = qb::BrepQuery::new(qb::BrepIdentity::arena(BrepId::from_index(0)));
     let tol = zone_tol3d(&k, i.tol);
     let r = query.point_3d_classify(&k, &mut b, Vec3::new(p[0], p[1], p[2]), tol, i.do_bnd);
