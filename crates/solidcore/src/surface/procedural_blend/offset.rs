@@ -201,6 +201,8 @@ pub fn procedural_offset(
         leader: &def.leader,
         seeds: [seed0, seed1],
         bound: def.bound,
+        // an order-1 round: a chamfer's sizes belong to order 0 only (#2486)
+        chamfer: None,
     };
     let valid = |n: u32, w: f64| GnSectionFsg::is_valid(n as usize, w);
     // the definition on the old net (its net is built from the definition alone), then on
