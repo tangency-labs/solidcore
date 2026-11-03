@@ -37,7 +37,7 @@ use solidcore::surface::plane::Plane;
 use solidcore::topology::brep::p2::ArenaNotifyState;
 use solidcore::topology::brep::p3;
 use solidcore::topology::face::p2 as face2;
-use solidcore::topology::{edge, vertex, Brep, EdgeId, FaceId};
+use solidcore::topology::{edge, vertex, Brep, EdgeId, FaceId, NamingScheme};
 use solidcore::Kernel;
 
 /// The volume at the integration tolerance 1e-9.
@@ -212,7 +212,9 @@ fn caller_named_copy(k: &mut Kernel, b: &Brep, domain: u64) -> Brep {
     let mut state = ArenaNotifyState::new(&Brep::new());
     let mut env = state.env(None);
     env.key_of = &target_key;
-    p3::api_brep_copy(k, &mut env, Some(b), &|entity| key(entity, 0)).unwrap()
+    let copy = p3::api_brep_copy(k, &mut env, Some(b), &|entity| key(entity, 0)).unwrap();
+    assert_eq!(copy.naming(), NamingScheme::Caller);
+    copy
 }
 
 /// tangency-labs/solidcraft#3468's boxes (the `3468-offset-face-next-to-fillet` cases): a

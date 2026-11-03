@@ -32,7 +32,7 @@ use solidcore::topology::brep::p2::ArenaNotifyState;
 use solidcore::topology::brep::p3;
 use solidcore::topology::brep::validation::{check_brep, CheckLevel};
 use solidcore::topology::face::p2 as face2;
-use solidcore::topology::{edge, vertex, Brep, FaceId};
+use solidcore::topology::{edge, vertex, Brep, FaceId, NamingScheme};
 use solidcore::Kernel;
 
 /// 24000 + 1000 pi: the 60 x 40 x 10 plate and the boss r 10, 10 high.
@@ -70,7 +70,9 @@ fn caller_named_copy(k: &mut Kernel, b: &Brep, domain: u64) -> Brep {
     let mut state = ArenaNotifyState::new(&Brep::new());
     let mut env = state.env(None);
     env.key_of = &target_key;
-    p3::api_brep_copy(k, &mut env, Some(b), &|entity| key(entity, 0)).unwrap()
+    let copy = p3::api_brep_copy(k, &mut env, Some(b), &|entity| key(entity, 0)).unwrap();
+    assert_eq!(copy.naming(), NamingScheme::Caller);
+    copy
 }
 
 /// The round: the face that is neither a plane nor on the boss's wall's cylinder
