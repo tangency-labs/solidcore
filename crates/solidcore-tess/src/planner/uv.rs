@@ -9,9 +9,9 @@ use solidcore::eval::EvalSurface;
 use solidcore_convert as kernel;
 use solidcore_record::Vec3;
 
-use super::NoValue;
 use super::edges::{QUARTER_TURN, turn};
 use super::size::Rules;
+use super::{NoValue, TooManyCopies};
 
 /// Division of `range` along direction `d` so that between neighbouring lines the surface sags
 /// at most the tolerance from its chord, the chord is at most `h` long and the normal turns
@@ -30,7 +30,7 @@ pub(crate) fn divide(
     h: f64,
     max_lines: usize,
     mine: Mine,
-) -> Result<Vec<f64>, NoValue> {
+) -> Result<Vec<f64>, Unmeasured> {
     let (a0, a1) = range;
     if a1.partial_cmp(&a0) != Some(Ordering::Greater) {
         return Ok(vec![a0, a1]);
@@ -41,25 +41,49 @@ pub(crate) fn divide(
     split(&[a0, a1], &limits(s, d, across, rules, h, mine), max_lines)
 }
 
+/// Why a division stopped: a point of the face the surface does not evaluate at, or one it does
+/// not evaluate at that `Mine` cannot place inside the face or out (its loops span more periods
+/// than it looks through), with the point.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) enum Unmeasured {
+    NoValue(NoValue),
+    TooManyCopies(TooManyCopies, [f64; 2]),
+}
+
+impl From<NoValue> for Unmeasured {
+    fn from(e: NoValue) -> Self {
+        Unmeasured::NoValue(e)
+    }
+}
+
 /// `r`'s value; `None` where the surface does not evaluate at a point that is not the face's
-/// (`mine`), which measures nothing; the error where it is.
-fn kept<T>(mine: Mine, r: Result<T, NoValue>) -> Result<Option<T>, NoValue> {
+/// (`mine`), which measures nothing; the error where it is, or where `mine` cannot tell.
+fn kept<T>(mine: Mine, r: Result<T, NoValue>) -> Result<Option<T>, Unmeasured> {
     match r {
         Ok(v) => Ok(Some(v)),
-        Err(NoValue(q)) if !mine(q) => Ok(None),
-        Err(e) => Err(e),
+        Err(NoValue(q)) => match mine(q) {
+            Ok(false) => Ok(None),
+            Ok(true) => Err(Unmeasured::NoValue(NoValue(q))),
+            Err(c) => Err(Unmeasured::TooManyCopies(c, q)),
+        },
     }
 }
 
 /// Whether a parameter point is the face's (inside its loops): where the surface does not
-/// evaluate at a point that is not, the point measures nothing and is passed over.
-pub(crate) type Mine<'a> = &'a (dyn Fn([f64; 2]) -> bool + Sync);
+/// evaluate at a point that is not, the point measures nothing and is passed over. Its error:
+/// the face's loops span too many periods to tell.
+pub(crate) type Mine<'a> = &'a (dyn Fn([f64; 2]) -> Result<bool, TooManyCopies> + Sync);
 
 /// A point anywhere is the face's: every point the surface does not evaluate at refuses it.
 #[cfg(test)]
-pub(crate) fn everywhere(_: [f64; 2]) -> bool {
-    true
+#[allow(clippy::unnecessary_wraps)] // a `Mine`
+pub(crate) fn everywhere(_: [f64; 2]) -> Result<bool, TooManyCopies> {
+    Ok(true)
 }
+
+/// Steps from an excused end of an iso-line interval towards its other end, looking for the
+/// nearest point that is the face's and evaluates.
+const INWARD: u32 = 16;
 
 /// `lines` (increasing, ends included) with every interval that fails the same limits as
 /// [`divide`] split until it passes: lines taken from a face's edge nodes meet the edges node for
@@ -74,7 +98,7 @@ pub(crate) fn refine(
     h: f64,
     max_lines: usize,
     mine: Mine,
-) -> Result<Vec<f64>, NoValue> {
+) -> Result<Vec<f64>, Unmeasured> {
     let flat = limits(s, d, across, rules, h, mine);
     split(lines, &flat, max_lines)
 }
@@ -83,9 +107,9 @@ pub(crate) fn refine(
 /// error ends it.
 fn split(
     starts: &[f64],
-    flat: &dyn Fn(f64, f64) -> Result<bool, NoValue>,
+    flat: &dyn Fn(f64, f64) -> Result<bool, Unmeasured>,
     max_lines: usize,
-) -> Result<Vec<f64>, NoValue> {
+) -> Result<Vec<f64>, Unmeasured> {
     let Some(&first) = starts.first() else {
         return Ok(Vec::new());
     };
@@ -160,8 +184,10 @@ const POINT: f64 = 1e-6;
 /// and spans at most a quarter turn of each iso-line (as an edge segment does, see
 /// [`QUARTER_TURN`]): a turn read from the points, since a spline's parameter is no angle. A point
 /// the surface does not evaluate at is the error where it is the face's (`mine`), and else
-/// measures nothing: an iso-line without its two ends there is not measured, and a point between
-/// them not taken into its sag, turn or facet angle.
+/// measures nothing: an end of an iso-line's interval there is moved inwards, in [`INWARD`]
+/// steps, to the nearest point that is the face's and evaluates, and the interval is measured
+/// from there (an iso-line with no such point is not the face's at all); a point between the ends
+/// is not taken into its sag, turn or facet angle.
 fn limits<'a>(
     s: &'a EvalSurface,
     d: usize,
@@ -169,7 +195,7 @@ fn limits<'a>(
     rules: &'a Rules,
     h: f64,
     mine: Mine<'a>,
-) -> impl Fn(f64, f64) -> Result<bool, NoValue> + 'a {
+) -> impl Fn(f64, f64) -> Result<bool, Unmeasured> + 'a {
     const ACROSS: usize = 5;
     let tol = rules.tol;
     let uv = move |x: f64, y: f64| if d == 0 { [x, y] } else { [y, x] };
@@ -185,9 +211,28 @@ fn limits<'a>(
     let ys: Vec<f64> = (0..ACROSS)
         .map(|k| across.0 + (across.1 - across.0) * k as f64 / (ACROSS - 1) as f64)
         .collect();
-    move |a: f64, b: f64| {
+    // The end `from` of an interval towards `to` on the iso-line at `y`: itself where it
+    // evaluates, else the nearest step inwards that is the face's and evaluates.
+    let end = move |from: f64, to: f64, y: f64| -> Result<Option<(f64, Vec3)>, Unmeasured> {
+        if let Some(p) = kept(mine, at(from, y))? {
+            return Ok(Some((from, p)));
+        }
+        for k in 1..INWARD {
+            let x = from + (to - from) * f64::from(k) / f64::from(INWARD);
+            if let Ok(p) = at(x, y)
+                && mine(uv(x, y)).map_err(|c| Unmeasured::TooManyCopies(c, uv(x, y)))?
+            {
+                return Ok(Some((x, p)));
+            }
+        }
+        Ok(None)
+    };
+    move |a0: f64, b0: f64| {
         for &y in &ys {
-            let (Some(pa), Some(pb)) = (kept(mine, at(a, y))?, kept(mine, at(b, y))?) else {
+            let Some((a, pa)) = end(a0, b0, y)? else {
+                continue;
+            };
+            let Some((b, pb)) = end(b0, a, y)? else {
                 continue;
             };
             if pa.dist(pb) > h * (1.0 + 1e-9) {
@@ -213,7 +258,7 @@ fn limits<'a>(
             }
             let Some(t) = rules.turn else { continue };
             // At a pole the normal is undefined: take it from just inside the segment.
-            let normal_near = |x: f64, inward: f64| -> Result<Option<Vec3>, NoValue> {
+            let normal_near = |x: f64, inward: f64| -> Result<Option<Vec3>, Unmeasured> {
                 Ok(match kept(mine, normal(x, y))? {
                     Some(Some(n)) => Some(n),
                     Some(None) => kept(mine, normal(x + inward, y))?.flatten(),

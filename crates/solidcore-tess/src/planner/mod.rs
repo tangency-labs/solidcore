@@ -1764,6 +1764,17 @@ fn plan_face(
             "face {fi} ({kind}): the surface does not evaluate at {q:?}"
         )))
     };
+    // A point the surface does not evaluate at that the face's loops, spanning more than
+    // MAX_PERIODS periods, cannot place inside the face or out.
+    let too_many = |TooManyCopies(n): TooManyCopies, q: [f64; 2]| {
+        FaceError::Refused(fail(&format!(
+            "its loops span {n} periods, more than the {MAX_PERIODS} a point the surface does not evaluate at ({q:?}) is looked for in"
+        )))
+    };
+    let unmeasured = |e: uv::Unmeasured| match e {
+        uv::Unmeasured::NoValue(q) => no_value(q),
+        uv::Unmeasured::TooManyCopies(c, q) => too_many(c, q),
+    };
     let mut projected: Vec<seam::Loop> = loops.to_vec();
     // A loop that winds around a periodic direction does not close in (u, v): the face is cut
     // along a parameter line into one period (a seamless cylinder face, a helical trim).
@@ -1870,11 +1881,7 @@ fn plan_face(
         match within_loops(&polys, bbox, dom.period, *q) {
             Ok(false) => {}
             Ok(true) => return Err(no_value(NoValue(*q))),
-            Err(TooManyCopies(n)) => {
-                return Err(FaceError::Refused(fail(&format!(
-                    "its loops span {n} periods, more than the {MAX_PERIODS} a point the surface does not evaluate at ({q:?}) is looked for in"
-                ))));
-            }
+            Err(c) => return Err(too_many(c, *q)),
         }
     }
     // Constrained Delaunay in (u, v) scaled to millimetres: equilateral seeds of side `h`,
@@ -1909,12 +1916,12 @@ fn plan_face(
         delaunay()?
     } else {
         // A point of the box outside the face's loops is not the face's (as for the size
-        // samples above); one they cannot tell, past MAX_PERIODS, is taken as the face's.
-        let mine = |q: [f64; 2]| within_loops(&polys, bbox, dom.period, q).unwrap_or(true);
+        // samples above); one they cannot tell about, past MAX_PERIODS, refuses the face.
+        let mine = |q: [f64; 2]| within_loops(&polys, bbox, dom.period, q);
         let mut us =
-            uv::divide(s, 0, bbox[0], bbox[1], rules, h, MAX_LINES, &mine).map_err(no_value)?;
+            uv::divide(s, 0, bbox[0], bbox[1], rules, h, MAX_LINES, &mine).map_err(unmeasured)?;
         let mut vs =
-            uv::divide(s, 1, bbox[1], bbox[0], rules, h, MAX_LINES, &mine).map_err(no_value)?;
+            uv::divide(s, 1, bbox[1], bbox[0], rules, h, MAX_LINES, &mine).map_err(unmeasured)?;
         grid::thin(&mut us, &mut vs, grid::MAX_FACE_GRID);
         let structured = match (ranges.len(), if seamed { None } else { grid::quad(&uvs) }) {
             (1, Some(q)) => {
@@ -1939,8 +1946,8 @@ fn plan_face(
                     }
                 };
                 let (lu, lv) = (
-                    lines(0, bbox[0], bbox[1], &us).map_err(no_value)?,
-                    lines(1, bbox[1], bbox[0], &vs).map_err(no_value)?,
+                    lines(0, bbox[0], bbox[1], &us).map_err(unmeasured)?,
+                    lines(1, bbox[1], bbox[0], &vs).map_err(unmeasured)?,
                 );
                 let strip = match (lu.is_empty(), lv.is_empty()) {
                     (false, true) => grid::strip(&uvs, &q, 0),
@@ -2078,7 +2085,7 @@ const MAX_PERIODS: usize = 4096;
 
 /// The loops of a face span more periods (the count) than [`within_loops`] looks through.
 #[derive(Clone, Copy, Debug, PartialEq)]
-struct TooManyCopies(f64);
+pub(crate) struct TooManyCopies(pub f64);
 
 /// Whether the parameter point `q`, or a copy of it a whole number of `period`s along, lies
 /// inside the region the loops `polys` bound (even–odd, the rule [`cdt::lattice`] keeps its

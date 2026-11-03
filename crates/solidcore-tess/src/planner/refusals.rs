@@ -129,11 +129,11 @@ fn the_division_names_a_point_between_its_lines_the_surface_does_not_evaluate_at
     let quarter = (0.0, std::f64::consts::FRAC_PI_2);
     assert!(matches!(
         uv::divide(&s, 0, (0.0, 1.0), quarter, &rules, 50.0, 1000, &uv::everywhere),
-        Err(NoValue([u, _])) if u == 0.25
+        Err(uv::Unmeasured::NoValue(NoValue([u, _]))) if u == 0.25
     ));
     assert!(matches!(
         uv::divide(&s, 1, quarter, (0.0, 1.0), &rules, 50.0, 1000, &uv::everywhere),
-        Err(NoValue([u, _])) if u == 0.25
+        Err(uv::Unmeasured::NoValue(NoValue([u, _]))) if u == 0.25
     ));
     assert_eq!(
         uv::fine_between(&s, &rules, 50.0, [0.0, 0.1], [0.5, 0.1]),
@@ -382,5 +382,108 @@ fn the_flips_name_a_middle_the_surface_does_not_evaluate_at() {
     match super::sag::flip(&s, 0.01, 1e-9, &fixed, &uv, &mut tris) {
         Err(NoValue(q)) => assert_eq!(q[0], 0.5, "{q:?}"),
         Ok(()) => panic!("flipped to {tris:?}"),
+    }
+}
+
+/// The parabolic cylinder z = u² (x = u, y = v) over [0, 1]², as a rational bicubic-by-quartic
+/// whose weight (u − ½)² + (v − ½)² has its one root at (½, ½), where its numerators vanish too:
+/// no point there (0 / 0), the parabola's own everywhere else. Its homogeneous coordinates are
+/// 72 times the Bernstein coefficients, all whole numbers, so the root is exactly zero.
+fn parabola_without_its_middle() -> EvalSurface {
+    let ctrl: Vec<[f64; 4]> = [
+        [0, 0, 0, 36],
+        [9, 0, 0, 18],
+        [6, 0, 6, 12],
+        [9, 0, 0, 18],
+        [36, 0, 36, 36],
+        [0, 12, 0, 12],
+        [3, 6, 0, -6],
+        [-6, 4, 2, -12],
+        [-9, 6, -12, -6],
+        [12, 12, 12, 12],
+        [0, 0, 0, 12],
+        [3, -12, 0, -6],
+        [-6, -16, 2, -12],
+        [-9, -12, -12, -6],
+        [12, 0, 12, 12],
+        [0, 36, 0, 36],
+        [9, 18, 0, 18],
+        [6, 12, 6, 12],
+        [9, 18, 0, 18],
+        [36, 36, 36, 36],
+    ]
+    .iter()
+    .map(|c| c.map(f64::from))
+    .collect();
+    let s = EvalSurface::nurbs(
+        [4, 3],
+        [
+            vec![0.0, 0.0, 0.0, 0.0, 0.0, 1.0, 1.0, 1.0, 1.0, 1.0],
+            vec![0.0, 0.0, 0.0, 0.0, 1.0, 1.0, 1.0, 1.0],
+        ],
+        [5, 4],
+        ctrl,
+    );
+    assert!(s.derivs(0.5, 0.5).is_none(), "no point at the middle");
+    for q in [[0.3, 0.7], [0.5, 0.25], [0.9, 0.5], [0.0, 1.0], [0.53, 0.5]] {
+        let p = point(&s, q);
+        assert!(
+            p.dist(Vec3::new(q[0], q[1], q[0] * q[0])) < 1e-12,
+            "{q:?}: {p:?}"
+        );
+    }
+    s
+}
+
+/// A division whose iso-line runs through the middle (½, ½) of [`parabola_without_its_middle`],
+/// which is not the face's (`mine` leaves out a disc of radius 0.05 round it): each interval with
+/// an end there is measured from the nearest point inwards that is the face's, so the parabola
+/// is divided to the tolerance on either side. The interval was passed over, and the division
+/// stopped at [0, ½, 1], its halves sagging about 0.03 against a tolerance of 0.01.
+#[test]
+fn an_interval_ending_at_a_point_outside_the_face_is_measured_from_inside_it() {
+    let s = parabola_without_its_middle();
+    let rules = Rules::new(0.01, 1.0, None);
+    let outside = |q: [f64; 2]| (q[0] - 0.5).hypot(q[1] - 0.5) < 0.05;
+    let mine = |q: [f64; 2]| Ok(!outside(q));
+    let Ok(lines) = uv::divide(&s, 0, (0.0, 1.0), (0.5, 0.5), &rules, 10.0, 1000, &mine) else {
+        panic!("divides")
+    };
+    assert!(lines.len() >= 6, "{lines:?}");
+    // Every interval clear of the left-out disc sags at most the tolerance from its chord.
+    let on = |u: f64| Vec3::new(u, 0.5, u * u);
+    for w in lines.windows(2) {
+        let (a, b) = (w[0], w[1]);
+        if b <= 0.45 || a >= 0.55 {
+            let sag = (1..16)
+                .map(|k| on(a + (b - a) * f64::from(k) / 16.0).dist_to_segment(on(a), on(b)))
+                .fold(0.0, f64::max);
+            assert!(
+                sag <= 0.01 * (1.0 + 1e-9),
+                "[{a}, {b}] sags {sag}: {lines:?}"
+            );
+        }
+    }
+}
+
+/// A strip of [`cylinder_without`]`(0.5)` running 5000 turns round it (u in [0, 1]): the
+/// division meets the circle u = 0.5 the surface has no point on, and the strip's loops span
+/// more periods than a point is looked for in, so whether the point is the face's cannot be told.
+/// The face is refused for that, as a size sample is, not as though the point were inside it.
+#[test]
+fn a_division_point_too_many_periods_away_to_place_refuses_the_face_for_that() {
+    let s = cylinder_without(0.5);
+    let tau = std::f64::consts::TAU;
+    let (turns, steps) = (5000.0, 20_000u32);
+    let up = (0..steps).map(|k| [1.0, turns * tau * f64::from(k) / f64::from(steps)]);
+    let down = (0..steps).map(|k| [0.0, turns * tau * f64::from(steps - k) / f64::from(steps)]);
+    let uv: Vec<[f64; 2]> = std::iter::once([0.0, 0.0]).chain(up).chain(down).collect();
+    let pts = uv.iter().map(|q| point(&s, *q)).collect();
+    let loops = [seam::Loop { uv, pts }];
+    assert!(!seam::winds(&loops, 1, tau));
+    let rules = Rules::new(0.01, 40.0, None);
+    match plan_or_fill(0, "revolution", &s, &loops, &rules, &size(1.0), 0.0, None) {
+        Err(e) => assert!(e.to_string().contains("periods, more than the 4096"), "{e}"),
+        Ok((fp, _)) => panic!("meshed with {} triangles", fp.triangles.len()),
     }
 }
