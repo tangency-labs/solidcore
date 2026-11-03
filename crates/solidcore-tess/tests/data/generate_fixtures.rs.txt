@@ -202,6 +202,18 @@ fn bodies() -> Vec<(&'static str, Body)> {
     let threaded = smlib_cut(&shaft, &smlib_groove(iso_groove(1.5, 10.0, 5.0, false), -1.5, 1.5, 11.0));
     out.push(("smlib_thread_run_out", ok(crate::native::body_from_smlib(&threaded))));
 
+    // the_halves_of_a_split_smlib_coil_mesh_as_the_whole: a coil (a 1 mm wire at 20 mm, six turns
+    // of pitch 4) cut in two across its axis at z = 12.5.
+    {
+        let coil = smlib_screw(Loop2::circle(Vec2::new(20.0, 0.0), 1.0), 0.0, 4.0, 6.0);
+        let Ok(top) = S::make_box([-30.0, -30.0, 12.5], [60.0, 60.0, 30.0]) else { panic!("box") };
+        let (Ok(Some(upper)), Ok(Some(lower))) = (coil.boolean(&top, BooleanOp::Intersect), coil.boolean(&top, BooleanOp::Subtract)) else {
+            panic!("split")
+        };
+        out.push(("smlib_coil_upper_half", ok(crate::native::body_from_smlib(&upper))));
+        out.push(("smlib_coil_lower_half", ok(crate::native::body_from_smlib(&lower))));
+    }
+
     // a_hole_far_below_the_tolerance_keeps_its_area
     let plate = ok(crate::box_solid(Vec3::ZERO, Vec3::new(990.0, 990.0, 10.0)));
     let (axis, r) = (Vec3::new(495.0, 495.0, 0.0), 0.5);

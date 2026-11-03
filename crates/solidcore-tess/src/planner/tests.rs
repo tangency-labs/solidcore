@@ -1465,9 +1465,15 @@ fn move_pcurve(b: &mut brep::Brep, face: usize, du: f64) -> u32 {
     };
     let oe = &mut edges[0];
     match &mut oe.pcurve {
-        brep::Curve2::Spline { points, .. } => points.iter_mut().for_each(|p| p[0] += du),
+        brep::Curve2::Spline { points, .. } => {
+            for p in points.iter_mut() {
+                p[0] += du;
+            }
+        }
         brep::Curve2::RationalSpline { homogeneous, .. } => {
-            homogeneous.iter_mut().for_each(|p| p[0] += du * p[2]);
+            for p in homogeneous.iter_mut() {
+                p[0] += du * p[2];
+            }
         }
     }
     oe.edge
@@ -1653,4 +1659,31 @@ fn faces_and_edges_keep_the_record_order() {
         assert_eq!(m.edges, p.edges);
         assert_eq!(m.edge_faces, p.edge_faces);
     }
+}
+
+/// A coil from SMLib (a 1 mm wire at 20 mm, six turns of pitch 4) cut in two across its axis at
+/// z = 12.5, each half meshed at a measuring tolerance (3e-4 mm, 3e-4 of the wire's radius): a
+/// half's wall wants more cells than a grid may have, and its cut grid gave up for an
+/// under-refined Delaunay (the halves came out 1.5% short of the coil). The cut grid thins its
+/// lines to fit, and the halves' meshes add up to the coil's closed form, π r² · 2πR · turns,
+/// within 1e-3 (SMLib's wall is a spline within a ten-thousandth of the pitch).
+#[test]
+fn the_halves_of_a_split_smlib_coil_mesh_as_the_whole() {
+    let analytic = PI * 2.0 * PI * 20.0 * 6.0;
+    let mut halves = 0.0;
+    for name in ["smlib_coil_upper_half", "smlib_coil_lower_half"] {
+        let b = fixture(name);
+        let (p, stats) = ok(plan(&b, &MeshTolerance::chord(3e-4), size_of(name)));
+        assert!(
+            stats.unmeshed.is_empty() && stats.lenient.is_empty(),
+            "{name}: {stats:?}"
+        );
+        let m = evaluated(&p);
+        assert_watertight(&m, name);
+        halves += volume(&m);
+    }
+    assert!(
+        (halves - analytic).abs() < 1e-3 * analytic,
+        "halves {halves} vs {analytic}"
+    );
 }

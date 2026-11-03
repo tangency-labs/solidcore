@@ -17,6 +17,8 @@
   "pin_cylinder": 7.576613241029519,
   "plate_990_with_small_hole": 1400.1071387576023,
   "plate_with_holes_touching_at_points": 141.50971698084905,
+  "smlib_coil_lower_half": 57.114768780595725,
+  "smlib_coil_upper_half": 56.88734855968879,
   "smlib_half_sphere": 34.87887428562191,
   "smlib_thread_in_bore": 30.000000000000004,
   "smlib_thread_run_out": 33.166247903554,
