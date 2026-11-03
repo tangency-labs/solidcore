@@ -13,8 +13,7 @@
 //! - [`Error`]: why an operation failed, as data (the application words it);
 //! - [`Body`]: a kernel body, with primitives, copy and transform, counts and volume, `.smb`
 //!   bytes ([`file`]) and the validity check ([`check`]);
-//! - [`finish`]: the result contract;
-//! - [`Index`]: record indices and the kernel's entity ids;
+//! - `finish`: the result contract, from what the input was (crate-internal: the families use it);
 //! - [`provenance`]: the hook an application's construction history rides on.
 //!
 //! Operations change the body they are given, as the kernel does. An application that keeps
@@ -26,11 +25,12 @@ pub mod body;
 pub mod check;
 pub mod error;
 pub mod file;
-pub mod index;
 pub mod provenance;
 pub mod session;
 
-pub use body::{Body, Expect, finish, make_box, make_cone, make_cylinder, make_sphere, make_torus};
+pub use body::{make_box, make_cone, make_cylinder, make_sphere, make_torus, Body};
 pub use check::{CheckLevel, CheckReport};
 pub use error::{Error, FitKind, Result, RoomReason};
-pub use index::Index;
+
+#[cfg(test)]
+mod tests;
