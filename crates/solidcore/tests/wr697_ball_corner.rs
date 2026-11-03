@@ -1396,6 +1396,168 @@ fn an_irregular_apex_of_four_chamfers_is_a_corner_patch() {
     }
 }
 
+// Five and six chamfers at an apex: the pyramid over the regular n-gon of radius 10 at
+// z = 0 with its apex A = (0, 0, 10), its n apex edges e_i (to B_i) chamfered by balls of
+// unequal offsets r_i, so the crossings are not in one plane and the corner is the patch:
+// n bilinear quadrilaterals round the crossings' centroid C, quadrilateral i between C, the
+// middle M_(i-1) of the side X_(i-1)-X_i, X_i and M_i (#2345, the owner's answers). No
+// smooth patch carries the straight end sections past four sides, so they are n faces, G0
+// to each other along the spokes C-M_i and to each chamfer along the halves of its end
+// section.
+//
+// The closed forms, from the pyramid alone: face F_i (A, B_(i-1), B_i) has its outward unit
+// normal n_i. Across e_i (faces F_i and F_(i+1), interior angle phi, cos phi = -n_i .
+// n_(i+1)) a ball of offsets r touches each face s = r cot(phi / 2) from the edge, so each
+// rail is e_i moved by s along the face's unit direction w square to e_i into the face, and
+// the chamfer is the plane through the two rails. X_i = F_i ^ C_(i-1) ^ C_i (a 3x3 solve);
+// each chamfer meets the base z = 0 on F_i and on F_(i+1). The body's faces: the base
+// polygon of those 2n cuts, each F_i the triangle of its two cuts and X_i, each chamfer
+// the quadrilateral of its two cuts, X_(i+1) and X_i, and the patch's quadrilaterals. Its
+// volume by the divergence theorem, as cones from (0, 0, 2), which sees every planar face
+// from inside: a planar face's is its fan's; a bilinear quadrilateral's integral of x . n
+// is the mean of its two triangulations' (each signed round the quadrilateral's loop: one
+// along a diagonal can fold), so its cone is their mean. For n = 5 that is 771.1342754128,
+// for n = 6 850.3378387820.
+//
+// Topology: faces n + 1 + n chamfers + n quadrilaterals; edges n on the base, n x (2 rails
+// + 1 on the base), n spokes and 2n halves of the end sections; vertices 2n on the base, n
+// crossings, n middles and C.
+#[test]
+fn five_and_six_chamfers_at_an_apex_are_bilinear_quadrilaterals() {
+    for (n, r) in [
+        (5usize, vec![1.0, 2.0, 1.5, 2.5, 1.0]),
+        (6, vec![1.0, 2.0, 1.5, 2.5, 1.0, 2.0]),
+    ] {
+        let apex = Point3::new(0.0, 0.0, 10.0);
+        let base: Vec<Point3> = (0..n)
+            .map(|i| {
+                let a = 2.0 * PI * i as f64 / n as f64;
+                Point3::new(10.0 * a.cos(), 10.0 * a.sin(), 0.0)
+            })
+            .collect();
+        // F_i between e_(i-1) and e_i, its outward unit normal
+        let face_normal = |i: usize| {
+            let (b0, b1) = (base[(i + n - 1) % n], base[i % n]);
+            let m = unit((b0 - apex).cross(b1 - apex));
+            if m.dot((b0 + b1) * 0.5 - Point3::new(0.0, 0.0, 5.0)) > 0.0 {
+                m
+            } else {
+                -m
+            }
+        };
+        // chamfer i as (unit normal c, offset h): c . x = h
+        let chamfer_plane = |i: usize| {
+            let t = unit(base[i] - apex);
+            let (na, nb) = (face_normal(i), face_normal(i + 1));
+            let cos_phi = -na.dot(nb);
+            let s = r[i] * (1.0 + cos_phi) / (1.0 - cos_phi * cos_phi).sqrt();
+            let into = |m: Vec3, other: Point3| {
+                let w = unit(m.cross(t));
+                if w.dot(other - apex) > 0.0 {
+                    w
+                } else {
+                    -w
+                }
+            };
+            let pa = apex + into(na, base[(i + n - 1) % n]) * s;
+            let pb = apex + into(nb, base[(i + 1) % n]) * s;
+            let c = unit((pb - pa).cross(t));
+            (c, c.dot(pa))
+        };
+        let solve = |rows: [(Vec3, f64); 3]| {
+            let [(a, p), (b, q), (c, w)] = rows;
+            let d = a.dot(b.cross(c));
+            (b.cross(c) * p + c.cross(a) * q + a.cross(b) * w) * (1.0 / d)
+        };
+        let base_plane = (Vec3::Z, 0.0);
+        let face = |i: usize| (face_normal(i), face_normal(i).dot(apex));
+        let xs: Vec<Point3> = (0..n)
+            .map(|i| solve([face(i), chamfer_plane((i + n - 1) % n), chamfer_plane(i)]))
+            .collect();
+        let cut = |i: usize, on: usize| solve([base_plane, chamfer_plane(i), face(on)]);
+        let centre = xs.iter().fold(Point3::ZERO, |a, x| a + *x) * (1.0 / n as f64);
+        let mid = |i: usize| (xs[i % n] + xs[(i + 1) % n]) * 0.5;
+        let mut planar: Vec<Vec<Point3>> =
+            vec![(0..n).flat_map(|i| [cut(i, i), cut(i, i + 1)]).collect()];
+        for i in 0..n {
+            planar.push(vec![cut((i + n - 1) % n, i), cut(i, i), xs[i]]);
+            planar.push(vec![cut(i, i), cut(i, i + 1), xs[(i + 1) % n], xs[i]]);
+        }
+        // signed cones from o: a planar face's fan all one sign (o sees it from inside); a
+        // quadrilateral's two triangulations each taken round its own loop, signed by the
+        // first (a triangulation along its other diagonal can fold, one triangle seen from
+        // behind)
+        let o = Point3::new(0.0, 0.0, 2.0);
+        let tet = |a: Point3, b: Point3, c: Point3| (a - o).dot((b - o).cross(c - o)) / 6.0;
+        let mut want: f64 = planar
+            .iter()
+            .map(|f| {
+                (1..f.len() - 1)
+                    .map(|j| tet(f[0], f[j], f[j + 1]))
+                    .sum::<f64>()
+                    .abs()
+            })
+            .sum();
+        for i in 0..n {
+            let (m0, x, m1) = (mid(i + n - 1), xs[i], mid(i));
+            let one = tet(centre, m0, x) + tet(centre, x, m1);
+            let other = tet(centre, m0, m1) + tet(m0, x, m1);
+            want += one.signum() * 0.5 * (one + other);
+        }
+
+        for corner in [BlendChamferCorner::Facet, BlendChamferCorner::Mitre] {
+            let mut k = chamfer_fixes(true);
+            let mut faces: Vec<Vec<Point3>> = (0..n)
+                .map(|i| vec![base[i], base[(i + 1) % n], apex])
+                .collect();
+            faces.push(base.iter().rev().copied().collect());
+            let mut b = polyhedron(&mut k, &faces);
+            let edges: Vec<EdgeId> = base
+                .iter()
+                .map(|p| {
+                    let m = (*p + apex) * 0.5;
+                    pick(&k, &b, [m.x, m.y, m.z])
+                })
+                .collect();
+            chamfer(&mut k, &mut b, &edges, &r, corner).unwrap();
+            let (counts, lines, v) = report(&mut k, &mut b);
+            let mut off = 0.0_f64;
+            for i in 0..n {
+                for (p, q) in [(centre, mid(i)), (mid(i + n - 1), xs[i]), (xs[i], mid(i))] {
+                    let es = edges_between(&b, p, q);
+                    assert_eq!(es.len(), 1, "n {n}: one edge from {p:?} to {q:?}");
+                    off = off.max(off_exact_segment(&k, &b, es[0], p, q));
+                }
+            }
+            // the quadrilaterals: bilinear, their corners C, the middles and the crossings
+            let mut quads = 0;
+            for f in get_faces(&b).unwrap() {
+                let s = face2::surface(&b, f).unwrap().unwrap();
+                let SurfaceKind::BSpline(bs) = s.kind() else {
+                    continue;
+                };
+                quads += 1;
+                for p in &bs.control_point_net().unwrap().points {
+                    let near = std::iter::once(centre)
+                        .chain(xs.iter().copied())
+                        .chain((0..n).map(mid))
+                        .map(|q| q.distance(*p))
+                        .fold(f64::INFINITY, f64::min);
+                    off = off.max(near);
+                }
+            }
+            eprintln!(
+                "n {n} {corner:?}: volume {v:.12} want {want:.12}; {counts:?}; quads {quads}; off {off:.3e}; {lines:?}"
+            );
+            assert!(lines.is_empty(), "{lines:?}");
+            assert_eq!(counts, (3 * n + 1, 7 * n, 4 * n + 1));
+            assert_eq!(quads, n);
+            assert!(off <= EXACT * 20.0, "{off}");
+            assert!((v - want).abs() <= 1e-12 * want, "{v}");
+        }
+    }
+}
+
 // The corner keeps its definition, the plain data tangency-labs/solidcore#2488's
 // corner-definition type is to take: the ring's chamfers (edge, width, plane) and the
 // crossings, with M at the Mitre (no facet) and the facet's normal at the Facet. At the
