@@ -256,18 +256,13 @@ fn plan_at(b: &brep::Brep, tol: f64, turn: Option<size::Turn>) -> Result<(TessPl
         .iter()
         .filter(|e| !matches!(e, EvalSurface::Plane { .. }))
         .count();
-    // A face whose surface does not evaluate at a sample is refused when it is planned; it bounds
-    // no edge's size, since it is not meshed.
-    let sizes: Vec<std::result::Result<(f64, [f64; 2]), NoValue>> =
+    let sizes: Vec<size::FaceSize> =
         crate::par::map("face sizes", &evals, curved >= PARALLEL_SIZES, |s| {
             Ok(size::face_size(s, &solidcore::eval::uv::domain(s), &rules))
         })
         .into_iter()
         .collect::<Result<_>>()?;
-    let face_h = |f: usize| match sizes.get(f) {
-        Some(Ok((h, _))) => *h,
-        _ => rules.max_len,
-    };
+    let face_h = |f: usize| sizes.get(f).map_or(rules.max_len, |s| s.h);
     let edge_h: Vec<f64> = edge_faces
         .iter()
         .map(|fs| fs.iter().map(|&f| face_h(f)).fold(rules.max_len, f64::min))
@@ -326,12 +321,6 @@ fn plan_at(b: &brep::Brep, tol: f64, turn: Option<size::Turn>) -> Result<(TessPl
             ) else {
                 return Err(unsupported(format!("face {fi}: missing")));
             };
-            let size = size.map_err(|NoValue(q)| {
-                unsupported(format!(
-                    "face {fi} ({}): the surface does not evaluate at {q:?}",
-                    kind(face.parameters())
-                ))
-            })?;
             let refused = tangled
                 .iter()
                 .find(|(f, _)| *f == fi)
@@ -1356,7 +1345,7 @@ fn plan_or_fill(
     s: &EvalSurface,
     loops: &[seam::Loop],
     rules: &size::Rules,
-    size: (f64, [f64; 2]),
+    size: &size::FaceSize,
     reach: f64,
     refused: Option<&str>,
 ) -> Result<(FacePlan, PlanStats)> {
@@ -1419,13 +1408,13 @@ fn plan_face(
     s: &EvalSurface,
     loops: &[seam::Loop],
     rules: &size::Rules,
-    size: (f64, [f64; 2]),
+    size: &size::FaceSize,
     reach: f64,
     stats: &mut PlanStats,
     lenient: Lenient,
 ) -> std::result::Result<FacePlan, FaceError> {
     let tol = rules.tol;
-    let (h, speed) = size;
+    let (h, speed) = (size.h, size.speed);
     let dom = solidcore::eval::uv::domain(s);
     let fail = |why: &str| unsupported(format!("face {fi} ({kind}): {why}"));
     let no_value = |NoValue(q): NoValue| {
@@ -1513,10 +1502,20 @@ fn plan_face(
             bbox[d] = (bbox[d].0.min(p[d]), bbox[d].1.max(p[d]));
         }
     }
+    let polys: Vec<&[[f64; 2]]> = ranges.iter().filter_map(|r| uvs.get(r.clone())).collect();
+    // A size sample the surface does not evaluate at refuses the face where it lies inside the
+    // face's loops (as the planner meshes them, a whole number of periods along where the
+    // surface is closed); outside them it was never the face's.
+    if let Some(q) = size
+        .unevaluated
+        .iter()
+        .find(|q| within_loops(&polys, bbox, dom.period, **q))
+    {
+        return Err(no_value(NoValue(*q)));
+    }
     // Constrained Delaunay in (u, v) scaled to millimetres: equilateral seeds of side `h`,
     // refined where triangles leave the surface, are too long or bend too much, then shaped by
     // Ruppert refinement.
-    let polys: Vec<&[[f64; 2]]> = ranges.iter().filter_map(|r| uvs.get(r.clone())).collect();
     let step = [h / speed[0], h / speed[1]];
     let delaunay = || -> std::result::Result<_, FaceError> {
         let seeds = cdt::lattice(bbox, step, &polys, speed);
@@ -1700,6 +1699,41 @@ fn plan_face(
         flip: false,
         triangles,
     })
+}
+
+/// Whether the parameter point `q`, or a copy of it a whole number of `period`s along, lies
+/// inside the region the loops `polys` bound (even–odd, the rule [`cdt::lattice`] keeps its
+/// seeds by), within their box `bbox`.
+fn within_loops(
+    polys: &[&[[f64; 2]]],
+    bbox: [(f64, f64); 2],
+    period: [Option<f64>; 2],
+    q: [f64; 2],
+) -> bool {
+    // The copies of `q` along direction `d` inside the box.
+    let copies = |d: usize| -> Vec<f64> {
+        let (lo, hi) = bbox[d];
+        match period[d] {
+            Some(per) if per > 0.0 && per.is_finite() => {
+                let first = ((lo - q[d]) / per).ceil();
+                let last = ((hi - q[d]) / per).floor();
+                if !(first.is_finite() && last.is_finite()) || last - first > 64.0 {
+                    return Vec::new();
+                }
+                (first as i64..=last as i64)
+                    .map(|k| q[d] + per * k as f64)
+                    .collect()
+            }
+            _ => [q[d]]
+                .into_iter()
+                .filter(|x| *x >= lo && *x <= hi)
+                .collect(),
+        }
+    };
+    let us = copies(0);
+    copies(1)
+        .into_iter()
+        .any(|v| us.iter().any(|&u| cdt::inside(polys, [u, v])))
 }
 
 /// The point and unit normal (`None` at a pole) of `s` at (u, v), for the Delaunay sag check;

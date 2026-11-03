@@ -11,7 +11,6 @@ use solidcore::eval::EvalSurface;
 use solidcore_convert as kernel;
 use solidcore_record::Vec3;
 
-use super::NoValue;
 use solidcore::eval::uv::Domain;
 
 /// Longest side, as a fraction of the body's extent.
@@ -115,35 +114,47 @@ pub(crate) fn extent(points: impl Iterator<Item = Vec3>) -> f64 {
     2.0 * points.iter().map(|p| p.dist(c)).fold(0.0, f64::max)
 }
 
+/// A face's size, from samples over its surface's parameter box ([`face_size`]).
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) struct FaceSize {
+    /// The target side length (mm).
+    pub h: f64,
+    /// The surface's mean speed along u and v (mm per parameter unit).
+    pub speed: [f64; 2],
+    /// The samples the surface does not evaluate at, which measure nothing. The box reaches past
+    /// a trimmed face, so whether one refuses the face is decided against the face's own loops
+    /// when it is planned: one inside the face does.
+    pub unevaluated: Vec<[f64; 2]>,
+}
+
 /// A face's target side length and the surface's mean speed along u and v (mm per parameter
 /// unit), from samples over the surface's parameter box (the whole box of a trimmed surface,
-/// so the size is never larger than the face needs). A sample the surface does not evaluate at
-/// is the error: the surface refuses the face there.
-pub(crate) fn face_size(
-    s: &EvalSurface,
-    dom: &Domain,
-    rules: &Rules,
-) -> Result<(f64, [f64; 2]), NoValue> {
+/// so the size is never larger than the face needs), with the samples the surface does not
+/// evaluate at.
+pub(crate) fn face_size(s: &EvalSurface, dom: &Domain, rules: &Rules) -> FaceSize {
+    let plain = |h: f64, speed: [f64; 2]| FaceSize {
+        h,
+        speed,
+        unevaluated: Vec::new(),
+    };
     if let EvalSurface::Plane { du, dv, .. } = s {
-        return Ok((
+        return plain(
             rules.max_len,
             [
                 kernel::record_vec3(*du).len(),
                 kernel::record_vec3(*dv).len(),
             ],
-        ));
+        );
     }
     let (Some(ru), Some(rv)) = (dom.range[0], dom.range[1]) else {
-        return Ok((rules.max_len, [1.0, 1.0]));
+        return plain(rules.max_len, [1.0, 1.0]);
     };
+    let mut unevaluated: Vec<[f64; 2]> = Vec::new();
     // A flat spline (sheet-metal walls, chamfers): no curvature to look for, only the speeds.
     let samples = if planar(s) { 3 } else { SAMPLES };
     // The point, the unit normal (`None` at a pole, where it is undefined) and the speeds.
-    let normal = |u: f64, v: f64| -> Result<(Vec3, Option<Vec3>, [f64; 2]), NoValue> {
-        let (p, su, sv) = s
-            .derivs(u, v)
-            .map(kernel::record_triple)
-            .ok_or(NoValue([u, v]))?;
+    let normal = |u: f64, v: f64| -> Result<(Vec3, Option<Vec3>, [f64; 2]), [f64; 2]> {
+        let (p, su, sv) = s.derivs(u, v).map(kernel::record_triple).ok_or([u, v])?;
         Ok((p, su.cross(sv).normalized(), [su.len(), sv.len()]))
     };
     let step = [(ru.1 - ru.0) * 1e-3, (rv.1 - rv.0) * 1e-3];
@@ -154,7 +165,13 @@ pub(crate) fn face_size(
             // Cell centres, clear of the box edges (poles, seams).
             let u = ru.0 + (ru.1 - ru.0) * (i as f64 + 0.5) / samples as f64;
             let v = rv.0 + (rv.1 - rv.0) * (j as f64 + 0.5) / samples as f64;
-            let (p, n, sp) = normal(u, v)?;
+            let (p, n, sp) = match normal(u, v) {
+                Ok(at) => at,
+                Err(q) => {
+                    unevaluated.push(q);
+                    continue;
+                }
+            };
             let Some(n) = n else { continue };
             speed = [speed[0] + sp[0], speed[1] + sp[1]];
             count += 1;
@@ -163,7 +180,13 @@ pub(crate) fn face_size(
             }
             // How fast the normal turns per mm, along u and along v (twist included).
             for (du, dv) in [(step[0], 0.0), (0.0, step[1])] {
-                let (q, m, _) = normal(u + du, v + dv)?;
+                let (q, m, _) = match normal(u + du, v + dv) {
+                    Ok(at) => at,
+                    Err(q) => {
+                        unevaluated.push(q);
+                        continue;
+                    }
+                };
                 let Some(m) = m else { continue };
                 let ds = p.dist(q);
                 if ds > 0.0 {
@@ -177,10 +200,11 @@ pub(crate) fn face_size(
     } else {
         [1.0, 1.0]
     };
-    Ok((
-        rules.for_curvature(k_max),
-        speed.map(|x| if x.is_finite() && x > 0.0 { x } else { 1.0 }),
-    ))
+    FaceSize {
+        h: rules.for_curvature(k_max),
+        speed: speed.map(|x| if x.is_finite() && x > 0.0 { x } else { 1.0 }),
+        unevaluated,
+    }
 }
 
 /// A spline surface whose control points lie in one plane, with positive weights: the
@@ -243,7 +267,7 @@ mod tests {
         };
         // A 20 mm body: sides from 1 mm (the floor, a quarter of the longest) to 4 mm.
         let rules = Rules::new(0.01, 20.0, THIRTY);
-        let (h, speed) = face_size(&s, &solidcore::eval::uv::domain(&s), &rules).unwrap();
+        let FaceSize { h, speed, .. } = face_size(&s, &solidcore::eval::uv::domain(&s), &rules);
         // r = 3: 30° of turn is 1.57 mm; the 0.01 mm sag chord is √(8·3·0.01) = 0.49 mm, times the
         // aspect, unless that is under the floor.
         assert!(
@@ -258,12 +282,11 @@ mod tests {
             "{speed:?}"
         );
         // Coarser: the turn limit governs.
-        let (h, _) = face_size(
+        let FaceSize { h, .. } = face_size(
             &s,
             &solidcore::eval::uv::domain(&s),
             &Rules::new(0.5, 100.0, THIRTY),
-        )
-        .unwrap();
+        );
         assert!(
             (h - (ASPECT * 3.0 * std::f64::consts::PI / 6.0)
                 .max(100.0 * MAX_LEN_FRACTION * MIN_LEN_FRACTION))
@@ -272,12 +295,11 @@ mod tests {
             "{h}"
         );
         // Without a facet angle the sag alone: √(8·3·0.5) = 3.46 mm, four times along.
-        let (h, _) = face_size(
+        let FaceSize { h, .. } = face_size(
             &s,
             &solidcore::eval::uv::domain(&s),
             &Rules::new(0.5, 100.0, None),
-        )
-        .unwrap();
+        );
         assert!(
             (h - ASPECT * (8.0 * 3.0 * 0.5f64).sqrt()).abs() < 0.01,
             "{h}"
@@ -287,12 +309,11 @@ mod tests {
             angle: std::f64::consts::PI / 6.0,
             floor: 1.0,
         });
-        let (h, _) = face_size(
+        let FaceSize { h, .. } = face_size(
             &s,
             &solidcore::eval::uv::domain(&s),
             &Rules::new(0.5, 100.0, floored),
-        )
-        .unwrap();
+        );
         assert!(
             (h - ASPECT * (8.0 * 3.0 * 0.5f64).sqrt()).abs() < 0.01,
             "{h}"
@@ -317,12 +338,11 @@ mod tests {
         assert!(planar(&patch(0.0)));
         assert!(!planar(&patch(0.5)));
         let rules = Rules::new(0.01, 100.0, THIRTY);
-        let (h, speed) = face_size(
+        let FaceSize { h, speed, .. } = face_size(
             &patch(0.0),
             &solidcore::eval::uv::domain(&patch(0.0)),
             &rules,
-        )
-        .unwrap();
+        );
         assert_eq!(h, rules.max_len);
         assert!(
             (speed[0] - 4.0).abs() < 1e-9 && (speed[1] - 3.0).abs() < 1e-9,
@@ -335,8 +355,7 @@ mod tests {
                 &solidcore::eval::uv::domain(&patch(0.5)),
                 &rules
             )
-            .unwrap()
-            .0 < rules.max_len
+            .h < rules.max_len
         );
     }
 
@@ -358,7 +377,7 @@ mod tests {
             swap: false,
         };
         let rules = Rules::new(0.1, 100.0, THIRTY);
-        let (h, _) = face_size(&s, &solidcore::eval::uv::domain(&s), &rules).unwrap();
+        let FaceSize { h, .. } = face_size(&s, &solidcore::eval::uv::domain(&s), &rules);
         assert!((h - rules.max_len * MIN_LEN_FRACTION).abs() < 1e-9, "{h}");
     }
 
@@ -371,9 +390,7 @@ mod tests {
         };
         let rules = Rules::new(0.01, 100.0, THIRTY);
         assert_eq!(
-            face_size(&s, &solidcore::eval::uv::domain(&s), &rules)
-                .unwrap()
-                .0,
+            face_size(&s, &solidcore::eval::uv::domain(&s), &rules).h,
             20.0
         );
     }
