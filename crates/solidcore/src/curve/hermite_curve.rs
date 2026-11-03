@@ -533,6 +533,13 @@ impl HermiteCurve {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn hermite_trait_rejects_order_above_evaluation_bound() {
+        use crate::curve::curve::p2::CurveEvaluate;
+        let h = super::HermiteCurve::new(super::Vec3::ZERO, super::Vec3::X, super::Vec3::X, super::Vec3::X, 3);
+        let result = CurveEvaluate::evaluate(&h, &crate::kernel::Kernel::default(), 0.5, 65, false, false);
+        assert!(matches!(result, Err(crate::error::SolidError::InvalidInput { .. })));
+    }
     use super::*;
     use crate::curve::curve::Curve;
     use crate::kernel::Kernel;
