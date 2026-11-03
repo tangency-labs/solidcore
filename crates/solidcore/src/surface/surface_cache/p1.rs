@@ -1794,32 +1794,6 @@ impl<O: Copy + PartialEq> SurfaceCache<O> {
         }
     }
 
-    /// Names the cache's own surface `name` where a build without a surface handle left
-    /// it unnamed: the cache's surface handle, its tree's owner surface and each surface
-    /// node that holds the surface itself, as a build with surface handle `name` names
-    /// them (upstream's cache always knows its surface, `m_cpSurface`). A cache that
-    /// names its surface is left as it is.
-    ///
-    /// # Errors
-    ///
-    /// `InvalidInput` for a tree node missing from its tree.
-    pub fn name_unnamed_surface(&mut self, name: O) -> Result<()> {
-        if self.surface_handle.is_some() {
-            return Ok(());
-        }
-        self.set_surface_handle(Some(name));
-        if let Some(t) = self.tree.as_mut() {
-            for id in 0..t.nodes().len() {
-                if let NodeData::Surface(a) = &mut t.node_mut(NodeId(id))?.data {
-                    if a.surface.is_none() {
-                        a.surface = Some(name);
-                    }
-                }
-            }
-        }
-        Ok(())
-    }
-
     /// Synchronizes the evaluation copy with its owning face's final tolerance.
     pub fn set_owner_zone_tol_3d(&mut self, tolerance: f64) {
         self.surface.set_owner_zone_tol_3d(Some(tolerance));
@@ -1879,46 +1853,11 @@ impl<O: Copy + PartialEq> SurfaceCache<O> {
         &self,
         map: impl Fn(O) -> Result<P>,
     ) -> Result<SurfaceCache<P>> {
-        self.map_handles_by_role(&map, &|o| map(o).map(Some))
-    }
-
-    /// [`SurfaceCache::map_handles`] with the cache's own surface handle
-    /// ([`SurfaceCache::surface_handle`]) named `surface` wherever it names the surface
-    /// (the cache's surface handle, its tree's owner surface and each surface node's
-    /// surface) and every other handle translated by `map`. A cache kept in a handle
-    /// space where a face surface and its face are one handle (a face's
-    /// [`crate::topology::EntityRef::Face`]) is handed out this way to a space where
-    /// they are two objects, as upstream's `SmSurface*` and `SmFace*` are: the copy is
-    /// the cache a build with surface handle `surface` makes.
-    ///
-    /// # Errors
-    ///
-    /// As [`SurfaceCache::map_handles`].
-    pub fn map_handles_naming_surface<P: Copy + PartialEq>(
-        &self,
-        map: impl Fn(O) -> Result<P>,
-        surface: Option<P>,
-    ) -> Result<SurfaceCache<P>> {
-        let own = self.surface_handle;
-        self.map_handles_by_role(&map, &|o| {
-            if Some(o) == own {
-                Ok(surface)
-            } else {
-                map(o).map(Some)
-            }
-        })
-    }
-
-    fn map_handles_by_role<P: Copy + PartialEq>(
-        &self,
-        map: &dyn Fn(O) -> Result<P>,
-        surface_map: &dyn Fn(O) -> Result<Option<P>>,
-    ) -> Result<SurfaceCache<P>> {
         let map_aux = |a: &BezierAux2d<O>| -> Result<BezierAux2d<P>> {
             let mut vertex_list = Vec::new();
             for v in &a.vertex_list {
                 vertex_list.push(VertexListItem {
-                    vertexuse: v.vertexuse.map(map).transpose()?,
+                    vertexuse: v.vertexuse.map(&map).transpose()?,
                     uv_point: v.uv_point,
                     uv_tol: v.uv_tol,
                 });
@@ -1970,17 +1909,17 @@ impl<O: Copy + PartialEq> SurfaceCache<O> {
             trimmed_face: self
                 .trimmed_face
                 .filter(|_| binding_current)
-                .map(map)
+                .map(&map)
                 .transpose()?,
             trimmed_face_key: self.trimmed_face_key.filter(|_| binding_current),
             alt_caches: self.alt_caches.clone(),
             tree: self
                 .tree
                 .as_ref()
-                .map(|t| t.map_objects_by_role(map, surface_map))
+                .map(|t| t.map_objects(&map))
                 .transpose()?,
             surface,
-            surface_handle: self.surface_handle.map(surface_map).transpose()?.flatten(),
+            surface_handle: self.surface_handle.map(&map).transpose()?,
             uv_domain: self.uv_domain,
             u_continuities: self.u_continuities.clone(),
             v_continuities: self.v_continuities.clone(),

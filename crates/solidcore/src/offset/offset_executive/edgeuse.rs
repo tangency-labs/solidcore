@@ -645,9 +645,7 @@ impl EdgeBrep<'_> {
         handle: Option<Handle>,
         get_tree: bool,
     ) -> Result<SurfaceCache<Handle>> {
-        use crate::query::face::p2::{
-            solve_surface_cache_of_face, surface_cache_state_of_face_making_trims,
-        };
+        use crate::query::face::p2::{solve_surface_cache_of_face, surface_cache_state_of_face};
         use crate::surface::surface::p1::{get_surface_cache, make_surface_cache};
         // the solve's GetTree: a reused cache whose tree is not built builds it now
         let with_tree = |mut cache: SurfaceCache<Handle>| {
@@ -684,7 +682,7 @@ impl EdgeBrep<'_> {
         let cache = if get_tree {
             solve_surface_cache_of_face(k, b, face, owner, surface, handle, map)?
         } else {
-            surface_cache_state_of_face_making_trims(k, b, face, owner, surface, handle, map)?
+            surface_cache_state_of_face(k, b, face, owner, surface, handle, map)?
         };
         match cache {
             Some(cache) => Ok(cache),

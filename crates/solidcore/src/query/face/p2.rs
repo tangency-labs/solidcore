@@ -22,7 +22,7 @@
 //! | [`BrepCacheFace`] | `GetFace()` of a face surface's trimmed cache (`SmTrimSrfCache::BuildTree`, `PointClassify`) |
 //! | [`face_surface_cache`], [`FaceSurfaceCache`], [`note_face_surface_cache`] | `smsurf_GetSurfaceCache(GetSurface())` through `SmCacheMgrTSrf::CacheMakeOrValidate` |
 //! | [`owned_surface_cache`], [`solve_surface_cache_of_face`] | `smsurf_GetSurfaceCache(pSurface)` / `GetTree` of a face-owned surface (a solve's cache) |
-//! | [`surface_cache_state_of_face`], [`surface_cache_state_of_face_making_trims`] | `smsurf_GetSurfaceCache(pSurface)` of a face-owned surface without `GetTree` |
+//! | [`surface_cache_state_of_face`] | `smsurf_GetSurfaceCache(pSurface)` of a face-owned surface without `GetTree` |
 //! | [`face_cache_tree`] | `SmSurfaceCache::GetTree` of a face surface's trimmed cache |
 //!
 //! Deviations:
@@ -465,18 +465,16 @@ pub fn solve_surface_cache_of_face<O: Copy + PartialEq>(
     handle: Option<O>,
     map: impl Fn(EntityRef) -> Result<O>,
 ) -> Result<Option<SurfaceCache<O>>> {
-    surface_cache_copy_of_face(k, b, f, owner, surface, handle, map, CopyFor::Solve)
+    surface_cache_copy_of_face(k, b, f, owner, surface, handle, map, true)
 }
 
 /// [`solve_surface_cache_of_face`] without the solve's `GetTree`: the surface's
 /// trimmed cache as `smsurf_GetSurfaceCache` hands it to a reader of its state bits
-/// only (`GlobalPointSolve`'s fast-drop face test, `CreatePlanarSectionCurves`'
-/// continuity read). A kept cache is handed out as it is; a new one has its tree only
-/// when its factory builds it (not during a Boolean operation), unless the surface's
-/// cache slot says upstream's cache is built. The face's missing UV trim curves are
-/// left to the classification that first needs them, as upstream's makes them
-/// (`GetOrCreateUVTrimCurve`): a live classification makes them, a prepared one asks
-/// for them (`PreparationRequired`).
+/// only (`GlobalPointSolve`'s fast-drop face test). A kept cache is handed out as it
+/// is; a new one has its tree only when its factory builds it (not during a Boolean
+/// operation), unless the surface's cache slot says upstream's cache is built.
+/// Deviation: a cache left without tree gets the face's missing UV trim curves made
+/// now, which upstream's classification makes when it first needs them.
 ///
 /// # Errors
 ///
@@ -491,52 +489,8 @@ pub fn surface_cache_state_of_face<O: Copy + PartialEq>(
     map: impl Fn(EntityRef) -> Result<O>,
 ) -> Result<Option<SurfaceCache<O>>> {
     // upstream reuses a cache whose tree is built, with the built tree's state bits
-    let copy_for = if surface.cache_tree_state() == CacheTreeState::Built {
-        CopyFor::Solve
-    } else {
-        CopyFor::State
-    };
-    surface_cache_copy_of_face(k, b, f, owner, surface, handle, map, copy_for)
-}
-
-/// [`surface_cache_state_of_face`] for a reader whose fast-drop face classification is
-/// read-only and cannot ask for what it misses (the offset solve contexts).
-/// Deviation: a cache left without tree, whose state bits let the face test classify
-/// (a trimmed cache with point testing on and its face not modified), gets the face's
-/// missing UV trim curves made now, which
-/// upstream's classification makes when it first needs them.
-///
-/// # Errors
-///
-/// As [`solve_surface_cache_of_face`].
-pub fn surface_cache_state_of_face_making_trims<O: Copy + PartialEq>(
-    k: &Kernel,
-    b: &mut Brep,
-    f: FaceId,
-    owner: crate::geom::object::ObjectRef,
-    surface: &Surface,
-    handle: Option<O>,
-    map: impl Fn(EntityRef) -> Result<O>,
-) -> Result<Option<SurfaceCache<O>>> {
-    // upstream reuses a cache whose tree is built, with the built tree's state bits
-    let copy_for = if surface.cache_tree_state() == CacheTreeState::Built {
-        CopyFor::Solve
-    } else {
-        CopyFor::StateMakingTrims
-    };
-    surface_cache_copy_of_face(k, b, f, owner, surface, handle, map, copy_for)
-}
-
-/// What [`surface_cache_copy_of_face`] hands its copy out for.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum CopyFor {
-    /// A solve: its `GetTree` builds the tree with the face.
-    Solve,
-    /// A reader of the state bits.
-    State,
-    /// A reader of the state bits whose classification is read-only
-    /// ([`surface_cache_state_of_face_making_trims`]).
-    StateMakingTrims,
+    let get_tree = surface.cache_tree_state() == CacheTreeState::Built;
+    surface_cache_copy_of_face(k, b, f, owner, surface, handle, map, get_tree)
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -548,7 +502,7 @@ fn surface_cache_copy_of_face<O: Copy + PartialEq>(
     surface: &Surface,
     handle: Option<O>,
     map: impl Fn(EntityRef) -> Result<O>,
-    copy_for: CopyFor,
+    get_tree: bool,
 ) -> Result<Option<SurfaceCache<O>>> {
     let mut lease = owned_surface_cache(k, b, f, surface)?;
     if !lease.trimmed {
@@ -559,18 +513,13 @@ fn surface_cache_copy_of_face<O: Copy + PartialEq>(
         lease
             .cache
             .bind_face(owner, EntityRef::Face(f), tolerance)?;
-        if copy_for == CopyFor::Solve {
+        if get_tree {
             face_cache_tree(k, b, f, &mut lease.cache)?;
-        } else if copy_for == CopyFor::StateMakingTrims
-            && lease.cache.base().tree().is_none()
-            && classifies_face(lease.cache.base())
-        {
+        } else if lease.cache.base().tree().is_none() {
             // The state reader's face classifications are read-only
             // (`PreparedFaceQueries`), so the UV trim curves upstream's classification
             // makes on the face (`GetOrCreateUVTrimCurve`) are made here, as the tree
-            // build makes them; the tree and its state bits wait for `GetTree`. A cache
-            // whose state bits turn the face test off (a modified face, point testing
-            // off) gets no classification upstream, so no UV trim curves either.
+            // build makes them; the tree and its state bits wait for `GetTree`.
             let mut face = BrepCacheFace { b: &mut *b, f };
             let created = face.create_uv_trim_curves(k);
             // Creation may raise the owning face's tolerance even on an error.
@@ -580,22 +529,12 @@ fn surface_cache_copy_of_face<O: Copy + PartialEq>(
             created?;
             refreshed?;
         }
-        // the kept cache names the surface by its face's handle; the copy names it
-        // `handle` wherever the surface is meant, as a cache built with `handle` does
-        Ok(lease
-            .cache
-            .map_handles_naming_surface(&map, handle)?
-            .into_base())
+        let mut copy = lease.cache.map_handles(&map)?;
+        copy.base_mut().set_surface_handle(handle);
+        Ok(copy.into_base())
     })();
     lease.release();
     built.map(Some)
-}
-
-/// Whether a reader of `cache`'s state bits classifies points against its face: the
-/// gate of `GlobalPointSolve`'s fast-drop face test (`SmTrimSrfCache` with
-/// `m_bPointTestEnabled` and without `m_bFaceWasModified`).
-const fn classifies_face<O: Copy + PartialEq>(cache: &SurfaceCache<O>) -> bool {
-    cache.is_trimmed() && cache.point_test_enabled && !cache.face_was_modified
 }
 
 fn surface_cache_of_face(
@@ -612,12 +551,12 @@ fn surface_cache_of_face(
     let handle = Some(EntityRef::Face(f));
     match surface.take_trim_cache() {
         TrimCacheSlot::Stored(mut cache) => {
-            // the cache's surface is the face's surface: its owner and out-of-bounds
-            // flag as they are now
-            cache
-                .base_mut()
-                .surface_mut()
-                .adopt_evaluation_state_of(if cleared { &standalone } else { surface });
+            // the cache's surface is the face's surface: its owner as it is now
+            cache.base_mut().surface_mut().adopt_owner_of(if cleared {
+                &standalone
+            } else {
+                surface
+            });
             // If the face was modified and Brep editing is no longer enabled
             // then delete the old cache and create a new one.
             if !(cache.base().face_was_modified && !cleared && !b.editing_enabled()) {
@@ -657,14 +596,11 @@ fn surface_cache_of_face(
         make_trim_srf_cache_with_face(k, surface, handle, &mut BrepCacheFace { b, f })
     };
     match built {
-        Ok(mut cache) => {
-            crate::surface::surface::p2::name_subdivision_surfaces(&mut cache);
-            Ok(FaceSurfaceCache {
-                cache,
-                trimmed: true,
-                kept: true,
-            })
-        }
+        Ok(cache) => Ok(FaceSurfaceCache {
+            cache,
+            trimmed: true,
+            kept: true,
+        }),
         Err(e) => {
             // when construction failed - the cache is deleted
             surface.delete_trim_cache();
@@ -2794,112 +2730,6 @@ pub(crate) mod tests {
         let lease = face_surface_cache(&k, &mut b, f).unwrap();
         assert!(lease.cache.base().face_was_modified);
         lease.release();
-    }
-
-    /// #2503: a kept cache's surface is the surface upstream (`m_cpSurface`), so a reuse
-    /// evaluates with the out-of-bounds flag its user has set on the surface for a while
-    /// (the point solves' `SmTemporaryChangeValue` of `GetOutOfBoundsEnabled()`), and with
-    /// the flag back once the user is done.
-    #[test]
-    fn a_reused_cache_evaluates_with_the_surface_s_out_of_bounds_flag() {
-        use crate::surface::surface::p3::{out_of_bounds_enabled, set_out_of_bounds_enabled};
-        let k = Kernel::default();
-        let mut b = Brep::new();
-        let f = square(&mut b);
-        face_surface_cache(&k, &mut b, f).unwrap().release();
-        let surface = b.face(f).unwrap().surface.as_ref().unwrap();
-        let mut enabled = surface.clone_for_evaluation().unwrap();
-        let plain = surface.clone_for_evaluation().unwrap();
-        set_out_of_bounds_enabled(&mut enabled, true);
-        assert_eq!(out_of_bounds_enabled(&plain), Some(false));
-        for (user, flag) in [(&enabled, true), (&plain, false)] {
-            let lease = owned_surface_cache(&k, &mut b, f, user).unwrap();
-            assert!(lease.kept);
-            assert_eq!(
-                out_of_bounds_enabled(lease.cache.base().surface()),
-                Some(flag)
-            );
-            lease.release();
-        }
-    }
-
-    /// #2503: `smsurf_GetSurfaceCache` for a reader of the state bits only
-    /// (`CreatePlanarSectionCurves`' continuity read, the fast-drop face test) makes no
-    /// UV trim curves; upstream's classification makes them when it first needs them.
-    /// The rays and the planar section reached this read through the kept cache, and
-    /// the face trims it made there ahead of upstream changed the cuts of
-    /// `Solids/nurb_fillet.smb` (`topology.brep_cutting` gen0049, gen0050) and a fillet
-    /// of `Fillet/open_shell.smb`. Only the offset contexts' read-only classification
-    /// has them made at the read, and only when its face test classifies.
-    #[test]
-    fn a_state_read_leaves_the_missing_uv_trim_curves_to_the_classification() {
-        let mut k = Kernel::default();
-        // the factory defers the tree, as during the cut
-        *k.context.doing_boolean_mut() = true;
-        let mut b = crate::primitive::api_primitives::create_box(
-            &mut k,
-            Point3::new(0.0, 0.0, 0.0),
-            2.0,
-            3.0,
-            4.0,
-        )
-        .unwrap();
-        let f = b.faces().ids().next().unwrap();
-        let uses: Vec<EdgeuseId> = loopuse::edgeuses(
-            &b,
-            crate::topology::face::p4::upward_loopuses(&b, f, false, None)
-                .unwrap()
-                .into_iter()
-                .next()
-                .unwrap(),
-            None,
-            None,
-        )
-        .unwrap();
-        let strip = |b: &mut Brep| {
-            for &eu in &uses {
-                b.edgeuse_mut(eu).unwrap().uv_trim_curve = None;
-            }
-        };
-        let trims = |b: &Brep| {
-            uses.iter()
-                .filter(|&&eu| b.edgeuse(eu).unwrap().uv_trim_curve.is_some())
-                .count()
-        };
-        strip(&mut b);
-        let surface = b
-            .face(f)
-            .unwrap()
-            .surface
-            .as_ref()
-            .unwrap()
-            .clone_for_evaluation()
-            .unwrap();
-        let owner = surface.face().unwrap().unwrap();
-        let handle = Some(EntityRef::Face(f));
-        let state = surface_cache_state_of_face(&k, &mut b, f, owner, &surface, handle, Ok)
-            .unwrap()
-            .unwrap();
-        assert!(state.tree().is_none());
-        assert!(surface.has_trim_cache(), "the cache is kept on the surface");
-        assert_eq!(trims(&b), 0, "a state read makes no UV trim curves");
-
-        // the offset contexts' read-only face test: the kept cache classifies
-        surface_cache_state_of_face_making_trims(&k, &mut b, f, owner, &surface, handle, Ok)
-            .unwrap()
-            .unwrap();
-        assert!(trims(&b) > 0, "made at the state read");
-
-        // a modified face's cache (reused while editing) turns the face test off
-        strip(&mut b);
-        b.set_editing_enabled(true);
-        surface.mark_trim_cache_face_modified();
-        let modified =
-            surface_cache_state_of_face_making_trims(&k, &mut b, f, owner, &surface, handle, Ok)
-                .unwrap()
-                .unwrap();
-        assert!(modified.face_was_modified);
-        assert_eq!(trims(&b), 0, "no classification, no UV trim curves");
     }
 
     #[test]

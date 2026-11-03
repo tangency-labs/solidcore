@@ -14,11 +14,13 @@
 //! an op that needs an entity the B-rep lacks is skipped on both sides
 //! (`no target`). The B-rep cache does not exist on either side (fresh B-reps), so
 //! `Notify` is compared without it. `DeleteStaleCaches` first seeds trimmed-surface
-//! caches by face-index masks on both sides (C++: `SmCacheMgr`; Rust: the face surfaces'
-//! cache slots) and compares which survive. `SwapUV` runs under a topology change tracker on
+//! caches by face-index masks on both sides (C++: `SmCacheMgr`; Rust: the caller-held
+//! map) and compares which survive. `SwapUV` runs under a topology change tracker on
 //! both sides (`harness/cpp/shim/sc_tracked.h`, `topology_brep_p3::run_tracked`), and
 //! its lists and events are compared as `tracker`, so each face's and surface's
 //! `SwapUV` notifications are.
+
+use std::collections::BTreeMap;
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -40,6 +42,8 @@ use solidcore::nurbs::math::CPoint;
 use solidcore::nurbs::srf_basic::Surface as NlSurface;
 use solidcore::surface::plane::Plane;
 use solidcore::surface::surface::Surface;
+use solidcore::surface::surface_cache::p1::SurfaceCacheOptions;
+use solidcore::surface::trim_srf_cache::TrimSrfCache;
 use solidcore::topology::brep::p1 as bp1;
 use solidcore::topology::brep::p2 as bp2;
 use solidcore::topology::brep_cache::CacheObject;
@@ -815,28 +819,24 @@ fn run_rust_op(k: &mut Kernel, b: &mut Brep, op: Op, a: &[f64]) -> Result<Vec<f6
         Op::Stale => {
             let (create, modified) = (arg(0)? as u32, arg(1)? as u32);
             let faces = must(bp1::faces(b, None))?;
-            // drop the caches reading or validating the B-rep built, as the shim does
-            super::query_face_p1::drop_trim_caches(b).map_err(Fail::Harness)?;
+            let mut caches = BTreeMap::new();
             for (i, &f) in faces.iter().enumerate() {
                 let bit = (i % 8) as u32;
-                let Some(surface) = must(b.face(f))?.surface.as_ref() else {
+                let Some(surface) = must(b.face(f))?.surface.clone() else {
                     continue;
                 };
                 if (create >> bit) & 1 == 0 {
                     continue;
                 }
-                // the face surface's own cache (SM_OC_TRIMSRF), marked as the C++ marks it
-                let stale = (modified >> bit) & 1 == 1;
-                must(surface.attach_trim_cache(|c| c.base_mut().face_was_modified = stale))?;
+                let mut c =
+                    TrimSrfCache::<CacheObject>::new(surface, SurfaceCacheOptions::default());
+                c.base_mut().face_was_modified = (modified >> bit) & 1 == 1;
+                caches.insert(f, c);
             }
-            let (s, _) = status(bp2::delete_stale_caches(b))?;
+            let (s, _) = status(bp2::delete_stale_caches::<CacheObject>(b, &mut caches))?;
             out.push(s);
             for f in faces {
-                let kept = must(b.face(f))?
-                    .surface
-                    .as_ref()
-                    .is_some_and(Surface::has_trim_cache);
-                out.push(if kept { 1.0 } else { 0.0 });
+                out.push(if caches.contains_key(&f) { 1.0 } else { 0.0 });
             }
         }
         Op::Swap => {

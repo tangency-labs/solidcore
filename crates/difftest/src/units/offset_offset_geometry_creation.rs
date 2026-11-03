@@ -745,9 +745,7 @@ fn cache_topology_handle(b: i8, entity: EntityRef) -> H {
         EntityRef::Loop(id) => (K_LOOP, id.index()),
         EntityRef::Shell(id) => (K_SHELL, id.index()),
         EntityRef::Region(id) => (K_REGION, id.index()),
-        // (also a kept face cache's subdivision surfaces, one name each:
-        // `surface::surface::p2::subdivision_surface_name`)
-        EntityRef::Brep(id) => (K_BREP, id.index()),
+        EntityRef::Brep(_) => (K_BREP, 0),
     };
     hd(b, kind, index)
 }
