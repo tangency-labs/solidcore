@@ -2029,11 +2029,23 @@ impl<'target> FilletSession<'target> {
                         _ => Err(invalid("corner edge use is not in the target")),
                     })
                     .collect::<Result<Vec<_>>>()?;
+                // the faces an earlier pass of this blend made (the fork's 9822462)
+                let earlier_pass_faces: Vec<FaceId> = executive
+                    .earlier_pass_faces
+                    .iter()
+                    .filter_map(|face| match face {
+                        FilletObject::Topology(FilletBody::Target, EntityRef::Face(face)) => {
+                            Some(*face)
+                        }
+                        _ => None,
+                    })
+                    .collect();
                 let made = FilletCorner::create_with_solver_lookup(
                     k,
                     target,
                     vertex,
                     &edgeuses,
+                    &earlier_pass_faces,
                     |edgeuse| {
                         let object =
                             FilletObject::Topology(FilletBody::Target, EntityRef::Edgeuse(edgeuse));

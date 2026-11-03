@@ -674,6 +674,12 @@ pub struct FilletExecutive<O> {
     /// was split into one vertex per fan (`SplitBlendedVertexFans`, with
     /// `fixes.fillet_corner_per_vertex_fan`), for `JoinBlendedVertexFans`.
     pub fan_split_points: Vec<Point3>,
+    /// `m_vEarlierPassFaces` (the fork's, tangency-labs/smlib@9822462, smlib#130; empty
+    /// from the constructor, kept by `SetFilletParameters`): the faces an earlier pass of
+    /// the same blend made (the rounds that overflow go first), added by
+    /// `AddEarlierPassFace`. An edge of theirs that a later round runs on into is no
+    /// partial tangent chain's end (`EndAtSmoothVertex`).
+    pub earlier_pass_faces: Vec<O>,
     /// `m_dFitRadius` (the fork's, tangency-labs/smlib a3d6d81; `-1` from the
     /// constructor): with a refusal as too large ([`FilletErrorType::NoRoom`]), the largest
     /// size that builds, of kind [`Self::fit_kind`]: `> 0`, `0` when none does, `< 0` when
