@@ -820,7 +820,10 @@ fn live_corner_vert_geom(
 
 /// `SmFilletCorner::CalcCornerVertGeom` of the ordinary Nx1, closed Nx1, Nx2 and `NxN`
 /// corner `id` over the live session's objects (the corner sits in its slot of
-/// `corners`).
+/// `corners`). Not upstream (#2406, `fixes.fillet_blend_corner`): at an End that can wait
+/// for its rails' rollover (`rolled_end`), a rail end its rail does not reach on the End's
+/// plane takes the rail's traced end for now
+/// ([`crate::blend::blend_corner::end::place_rolled_rail_end`]).
 #[allow(clippy::too_many_arguments)] // the session's borrowed object stores
 fn live_corner_vertices_geom(
     k: &Kernel,
@@ -830,6 +833,7 @@ fn live_corner_vertices_geom(
     corners: &[FilletCorner],
     extended_surfaces: &BTreeMap<FaceId, Surface>,
     id: FilletCornerId,
+    rolled_end: bool,
 ) -> Result<()> {
     let corner = corners
         .get(id.0 as usize)
@@ -845,17 +849,26 @@ fn live_corner_vertices_geom(
     corner.calc_corner_vert_geom_with(
         &mut context,
         |(_, _, pseudo, _, _, _), fv| Ok(pseudo.fillet_vertex(fv)?.is_processed()),
-        |(k, target, pseudo, solvers, corners, extended_surfaces), fv| {
-            live_corner_vert_geom(
-                k,
-                target,
-                pseudo,
-                solvers,
-                corners,
-                extended_surfaces,
-                fv,
-                0,
-            )
+        |(k, target, pseudo, solvers, corners, extended_surfaces), fv| match live_corner_vert_geom(
+            k,
+            target,
+            pseudo,
+            solvers,
+            corners,
+            extended_surfaces,
+            fv,
+            0,
+        ) {
+            Err(e) if rolled_end && !e.is_unported_or_cancelled() => {
+                if crate::blend::blend_corner::end::place_rolled_rail_end(
+                    k, target, pseudo, corner, fv,
+                )? {
+                    Ok(())
+                } else {
+                    Err(e)
+                }
+            }
+            result => result,
         },
         |(_, target, pseudo, solvers, _, _), corner, processed| {
             corner.adjust_vertex_law_intervals(pseudo, target, &mut **solvers, processed)
@@ -1024,6 +1037,7 @@ impl TangentSplitOps for SessionTangentSplit<'_> {
             self.corners,
             self.extended_surfaces,
             self.id,
+            false,
         );
         if let Some(slot) = self.corners.get_mut(index) {
             std::mem::swap(slot, corner);
@@ -2096,11 +2110,23 @@ impl<'target> FilletSession<'target> {
                         _ => Err(invalid("corner edge use is not in the target")),
                     })
                     .collect::<Result<Vec<_>>>()?;
+                // the faces an earlier pass of this blend made (the fork's 9822462)
+                let earlier_pass_faces: Vec<FaceId> = executive
+                    .earlier_pass_faces
+                    .iter()
+                    .filter_map(|face| match face {
+                        FilletObject::Topology(FilletBody::Target, EntityRef::Face(face)) => {
+                            Some(*face)
+                        }
+                        _ => None,
+                    })
+                    .collect();
                 let made = FilletCorner::create_with_solver_lookup(
                     k,
                     target,
                     vertex,
                     &edgeuses,
+                    &earlier_pass_faces,
                     |edgeuse| {
                         let object =
                             FilletObject::Topology(FilletBody::Target, EntityRef::Edgeuse(edgeuse));
@@ -2949,6 +2975,8 @@ impl CornerEdgeAccess<FilletObject> for SessionObjects<'_> {
         // WR-303: the Nx1 corner's end rib hands the round to the global merge; in a
         // cliff overflow (WR-631) the end is left open, noted for the subtraction.
         let cliff_overflow = executive.cliff_overflow;
+        // the rails' rollover follows the corners' edges, not in a cliff overflow (#2406)
+        let rolls_over = executive.options.classification && !cliff_overflow;
         let mut open_ends = Vec::new();
         let mut note_open_end = |eu, vertex, end_face, section| -> Result<()> {
             // GetFilletSolverOfEdgeuse(pFilEdgeuse), then NoteOpenEnd
@@ -2966,19 +2994,65 @@ impl CornerEdgeAccess<FilletObject> for SessionObjects<'_> {
             });
             Ok(())
         };
-        // WR-674: a round's end where its edge runs on tangentially is left open too.
-        let tangent_ends = k.fixes.fillet_round_ends_at_tangent_continuation;
-        let dropped = corner.drop_end_rib(
-            k,
-            target,
-            pseudo,
-            cliff_overflow,
-            tangent_ends,
-            &mut note_open_end,
-        )?;
-        executive.open_ends.append(&mut open_ends);
-        if dropped == EndRibDrop::GlobalMerge {
-            executive.options.global_merge = true;
+        if k.fixes.fillet_blend_corner
+            && corner
+                .blend
+                .is_some_and(crate::blend::blend_corner::BlendCorner::is_end)
+        {
+            // The fork's SmBlendCorner::CalcEndEdgeGeom (53c47b8, 41a39ec): an End's edges,
+            // its rail past its side edge refused naming the radius that reaches it
+            let lookup = SweptSessionSolvers {
+                solvers: solvers.as_slice(),
+                executive: Some(&*executive),
+            };
+            // Not the fork's (#2406): an End at a smooth vertex whose rail rolls over its
+            // side face's tangent edge before the End's plane builds its edges once the
+            // rails' rollover has traced the rail on the face beyond (the adjusted
+            // corner's pass)
+            if crate::blend::blend_corner::end::end_awaits_rollover(
+                k, target, pseudo, corner, &lookup, rolls_over,
+            )? {
+                return Ok(());
+            }
+            let refusal = crate::blend::blend_corner::end::calc_end_edge_geom(
+                k,
+                target,
+                pseudo,
+                corner,
+                &lookup,
+                cliff_overflow,
+                &mut note_open_end,
+            )?;
+            executive.open_ends.append(&mut open_ends);
+            if let Some(refusal) = refusal {
+                executive.error.note_error(
+                    crate::blend::fillet_geom::p1::FilletErrorType::NoRoom,
+                    Some(&refusal.comment),
+                );
+                executive.note_fit_radius(
+                    refusal.fit,
+                    refusal
+                        .edge
+                        .map(|e| FilletObject::Topology(FilletBody::Target, EntityRef::Edge(e))),
+                    crate::blend::fillet_executive::p3::FitKind::Radius,
+                );
+                return Err(SolidError::sm_err("SmBlendCorner::CalcEndEdgeGeom"));
+            }
+        } else {
+            // WR-674: a round's end where its edge runs on tangentially is left open too.
+            let tangent_ends = k.fixes.fillet_round_ends_at_tangent_continuation;
+            let dropped = corner.drop_end_rib(
+                k,
+                target,
+                pseudo,
+                cliff_overflow,
+                tangent_ends,
+                &mut note_open_end,
+            )?;
+            executive.open_ends.append(&mut open_ends);
+            if dropped == EndRibDrop::GlobalMerge {
+                executive.options.global_merge = true;
+            }
         }
         let mut context = SessionCornerEdgeContext {
             k,
@@ -3402,6 +3476,58 @@ impl BrepCreationAccess<FilletObject> for SessionObjects<'_> {
         let const_radius = current.solver_type()? == FilletSolverType::ConstRadius;
         let station = ball_regular::ball_is_regular(k, self.target, current)?;
         Ok((station, const_radius))
+    }
+
+    fn creation_end_fit_past_side_edges(
+        &mut self,
+        k: &Kernel,
+        corner: FilletObject,
+        executive: &FilletExecutive<FilletObject>,
+    ) -> Result<Option<(f64, FilletObject)>> {
+        let FilletObject::Corner(id) = corner else {
+            return Err(invalid("object is not a corner"));
+        };
+        let SessionObjects {
+            target,
+            solvers,
+            corners,
+            ..
+        } = self;
+        let corner = corners
+            .get(id.0 as usize)
+            .ok_or_else(|| invalid("corner is not live"))?;
+        if corner.blend.is_none() {
+            return Ok(None);
+        }
+        let lookup = SweptSessionSolvers {
+            solvers: solvers.as_slice(),
+            executive: Some(executive),
+        };
+        let const_radius = || -> Result<bool> {
+            let eu = corner
+                .solver_eus
+                .as_deref()
+                .and_then(|eus| eus.first().copied())
+                .ok_or_else(|| invalid("corner without blended edge use"))?;
+            let kind = lookup.live(eu)?.solver_type()?;
+            Ok(matches!(
+                kind,
+                FilletSolverType::ConstRadius | FilletSolverType::ConstRadiusAssisted
+            ))
+        };
+        Ok(crate::blend::blend_corner::end::fit_of_end_past_side_edges(
+            k,
+            target,
+            corner,
+            &lookup,
+            const_radius,
+        )?
+        .map(|(fit, edge)| {
+            (
+                fit,
+                FilletObject::Topology(FilletBody::Target, EntityRef::Edge(edge)),
+            )
+        }))
     }
 
     fn creation_solver_fit(
@@ -4243,6 +4369,40 @@ impl FaceConstructionAccess<FilletObject> for SessionObjects<'_> {
                     .blend
                     .is_some_and(crate::blend::blend_corner::BlendCorner::is_join)
                 {
+                    return Ok(());
+                }
+                // The fork's (smlib 41a39ec): an End at a smooth vertex's patch is its cap
+                // (SmBlendCorner::CreateEndPatchOfEnd)
+                if corner.blend.is_some_and(|blend| {
+                    blend.is_end() && blend.end == crate::blend::blend_corner::BlendEnd::AtSmooth
+                }) {
+                    let mut no_note = |_: &FilletCorner| {};
+                    let built = {
+                        let mut env = CornerPatchEnv {
+                            k,
+                            target,
+                            pseudo,
+                            solvers: &store,
+                            fillet: Some(&mut fillet),
+                            note_face_error: &mut no_note,
+                        };
+                        crate::blend::blend_corner::end::create_end_cap_patch(corner, &mut env)?
+                    };
+                    if !built {
+                        executive.error.note_corner_error(
+                            crate::blend::fillet_geom::p1::FilletErrorType::VertexProblem,
+                            corner.corner_type(),
+                            crate::blend::fillet_geom::p1::FilStatus::Failure,
+                            Some(corner.kind.name()),
+                            corner.filleted_vertex().map(|v| {
+                                FilletObject::Topology(FilletBody::Target, EntityRef::Vertex(v))
+                            }),
+                            [None, None],
+                            [None, None],
+                            Some(crate::blend::blend_corner::end::SMOOTH_END_CAP_FAILED),
+                        );
+                        return Err(SolidError::sm_err("SmBlendCorner::CreateEndPatchOfEnd"));
+                    }
                     return Ok(());
                 }
                 let comment = if end_patch {
@@ -5668,6 +5828,18 @@ impl SessionObjects<'_> {
         {
             return self.make_join_corner_topology(k, id, executive);
         }
+        // The fork's (smlib 41a39ec): SmBlendCorner::MakeCornerTopology builds an End at a
+        // smooth vertex on the plane square to its edge (MakeEndAtSmoothVertex)
+        if self
+            .corners
+            .get(id.0 as usize)
+            .and_then(|corner| corner.blend)
+            .is_some_and(|blend| {
+                blend.is_end() && blend.end == crate::blend::blend_corner::BlendEnd::AtSmooth
+            })
+        {
+            return self.make_end_at_smooth_corner_topology(k, id, executive);
+        }
         let edgeuses = self
             .corners
             .get(id.0 as usize)
@@ -5777,7 +5949,8 @@ impl SessionObjects<'_> {
     }
     /// The fork's `SmBlendCorner::MakeJoinTopology` (WR-697, 543d25a) with the solvers of
     /// the corner's blended edge uses (`GetFilletSolverOfEdgeuse`) resolved first; its
-    /// refusal noted at the vertex (`SM_FIL_FAILURE`, `SM_FILERR_CORNER_UNSUPPORTED`).
+    /// refusal noted at the vertex (`SM_FIL_FAILURE`, `SM_FILERR_NO_ROOM` with the fit 0,
+    /// 41a39ec).
     fn make_join_corner_topology(
         &mut self,
         k: &Kernel,
@@ -5824,16 +5997,73 @@ impl SessionObjects<'_> {
                 Some(v) => crate::topology::vertex::point(target, v).ok(),
                 None => None,
             };
+            // No size builds it: the edges between the blends do not change with it.
+            // Refused as too large with no size that builds (41a39ec).
             executive.error.note_vertex_error(
                 vertex.map(|v| FilletObject::Topology(FilletBody::Target, EntityRef::Vertex(v))),
                 location,
                 crate::blend::fillet_geom::p1::FilStatus::Failure,
-                crate::blend::fillet_geom::p1::FilletErrorType::CornerUnsupported,
+                crate::blend::fillet_geom::p1::FilletErrorType::NoRoom,
                 Some(JOIN_ACROSS_EDGES),
+            );
+            let first = corners
+                .get(id.0 as usize)
+                .and_then(|c| c.solver_eus.as_deref())
+                .and_then(|eus| eus.first().copied())
+                .ok_or_else(|| SolidError::null_pointer("SmBlendCorner::MakeJoinTopology"))?;
+            let edge = crate::topology::edgeuse::p1::edge(target, first)?;
+            executive.note_fit_radius(
+                0.0,
+                edge.map(|e| FilletObject::Topology(FilletBody::Target, EntityRef::Edge(e))),
+                crate::blend::fillet_executive::p3::FitKind::Radius,
             );
             return Err(SolidError::sm_err("SmBlendCorner::MakeJoinTopology"));
         }
         Ok(())
+    }
+
+    /// The fork's `SmBlendCorner::MakeEndAtSmoothVertex` (41a39ec) with the solver of the
+    /// blended edge use (`GetFilletSolverOfEdgeuse`) resolved first.
+    fn make_end_at_smooth_corner_topology(
+        &mut self,
+        k: &Kernel,
+        id: FilletCornerId,
+        executive: &mut FilletExecutive<FilletObject>,
+    ) -> Result<()> {
+        use crate::blend::fillet_corner::topology::end_smooth::EndAtSmoothTopologyEnv;
+        let corner = self
+            .corners
+            .get(id.0 as usize)
+            .ok_or_else(|| invalid("corner is not live"))?;
+        let solver_eu_solver = match corner.solver_eus.as_deref().and_then(|eus| eus.first()) {
+            Some(&eu) => {
+                let object = FilletObject::Topology(FilletBody::Target, EntityRef::Edgeuse(eu));
+                match executive.fillet_solver_of_edgeuse(object) {
+                    Some(FilletObject::Solver(solver)) => Some(solver),
+                    None => None,
+                    Some(_) => return Err(invalid("edge use does not name an actual solver")),
+                }
+            }
+            None => None,
+        };
+        let SessionObjects {
+            target,
+            pseudo,
+            solvers,
+            corners,
+            ..
+        } = self;
+        let corner = corners
+            .get_mut(id.0 as usize)
+            .ok_or_else(|| invalid("corner is not live"))?;
+        corner.make_end_at_smooth_vertex(EndAtSmoothTopologyEnv {
+            k,
+            target,
+            pseudo,
+            corner: id,
+            solvers,
+            solver_eu_solver,
+        })
     }
 
     /// The fork's `SmBlendCorner::MakeSetBackTopology` (61547af, smlib#104) with the solver
@@ -6057,6 +6287,16 @@ impl SessionObjects<'_> {
         )
     }
     fn calc_nx1_corner_vert_geom(&mut self, k: &Kernel, id: FilletCornerId) -> Result<()> {
+        self.calc_nx1_corner_vert_geom_rolling(k, id, false)
+    }
+
+    /// [`Self::calc_nx1_corner_vert_geom`]; `rolled_end` as [`live_corner_vertices_geom`]'s.
+    fn calc_nx1_corner_vert_geom_rolling(
+        &mut self,
+        k: &Kernel,
+        id: FilletCornerId,
+        rolled_end: bool,
+    ) -> Result<()> {
         let SessionObjects {
             target,
             pseudo,
@@ -6065,7 +6305,16 @@ impl SessionObjects<'_> {
             extended_surfaces,
             ..
         } = self;
-        live_corner_vertices_geom(k, target, pseudo, solvers, corners, extended_surfaces, id)
+        live_corner_vertices_geom(
+            k,
+            target,
+            pseudo,
+            solvers,
+            corners,
+            extended_surfaces,
+            id,
+            rolled_end,
+        )
     }
 
     fn corner_object(&self, object: FilletObject) -> Result<&FilletCorner> {
@@ -6210,12 +6459,41 @@ impl CornerVertexAccess<FilletObject> for SessionObjects<'_> {
         &mut self,
         k: &mut Kernel,
         corner: FilletObject,
-        _executive: &mut FilletExecutive<FilletObject>,
+        executive: &mut FilletExecutive<FilletObject>,
     ) -> Result<()> {
         let FilletObject::Corner(id) = corner else {
             return Err(invalid("object is not a corner"));
         };
-        self.calc_nx1_corner_vert_geom(k, id)
+        // Not the fork's (#2406): an End at a smooth vertex that can wait for its rails'
+        // rollover (the rollover follows the corners' edges, not in a cliff overflow)
+        let rolled_end = k.fixes.fillet_blend_corner && {
+            let rolls_over = executive.options.classification && !executive.cliff_overflow;
+            let SessionObjects {
+                target,
+                pseudo,
+                solvers,
+                corners,
+                ..
+            } = self;
+            let corner = corners
+                .get(id.0 as usize)
+                .ok_or_else(|| invalid("corner is not live"))?;
+            corner
+                .blend
+                .is_some_and(crate::blend::blend_corner::BlendCorner::is_end)
+                && crate::blend::blend_corner::end::end_can_await_rollover(
+                    k,
+                    target,
+                    pseudo,
+                    corner,
+                    &SweptSessionSolvers {
+                        solvers: solvers.as_slice(),
+                        executive: Some(&*executive),
+                    },
+                    rolls_over,
+                )?
+        };
+        self.calc_nx1_corner_vert_geom_rolling(k, id, rolled_end)
     }
 }
 
