@@ -886,3 +886,111 @@ fn evaluating_on_two_threads_equals_one_bit_for_bit() {
         assert_eq!(got, &serial, "thread {thread} differs from one kernel");
     }
 }
+
+/// #2388: a support labelled a cylinder, cone, sphere or torus is rebuilt as the analytic
+/// surface its form parametrises: at every (u, v) of the form the rebuilt support
+/// evaluates as the original, to the rounding of the part, whatever frame, angles and
+/// swap the original was made on (the primitives' faces, partial ones turned from 30
+/// degrees, and a box edge's round of the exact line class, whose frame is its start
+/// rail's). A form on the surface whose own (u, v) is not the analytic's (a cylinder whose
+/// height runs unevenly along its rows) is refused.
+#[test]
+fn a_revolved_label_needs_the_form_s_parametrisation() {
+    use solidcore::blend::fillet_executive::api::fillet_edges;
+    use solidcore::blend::fillet_section::station::as_b_spline;
+    use solidcore::primitive::api_primitives::{
+        create_box, create_cone, create_cylinder, create_partial_cone, create_partial_cylinder,
+        create_partial_sphere, create_partial_torus, create_sphere, create_torus,
+    };
+    use solidcore::surface::implicit::{AnalyticSupport, SupportKind};
+    use solidcore::topology::face::p2 as face;
+    let mut k = kernel();
+    k.fixes.fillet_exact_round_classes = true;
+    let o = Point3::new(1.0, -2.0, 3.0);
+    let mut rounded = create_box(&mut k, Point3::new(0.0, 0.0, 0.0), 10.0, 8.0, 6.0).unwrap();
+    let edge = rounded.edges().ids().next().unwrap();
+    fillet_edges(&mut k, &mut rounded, &[edge], 1.5, 1, 1, 1.0).unwrap();
+    let bodies = [
+        create_cylinder(&mut k, o, 2.0, 5.0).unwrap(),
+        create_cone(&mut k, o, 3.0, 1.0, 4.0).unwrap(),
+        create_sphere(&mut k, o, 2.5).unwrap(),
+        create_torus(&mut k, o, 5.0, 1.5).unwrap(),
+        create_partial_cylinder(&mut k, o, 2.0, 5.0, 30.0, 140.0).unwrap(),
+        create_partial_cone(&mut k, o, 3.0, 1.0, 4.0, 30.0, 140.0).unwrap(),
+        create_partial_sphere(&mut k, o, 2.5, 30.0, 140.0).unwrap(),
+        create_partial_torus(&mut k, o, 5.0, 1.5, 30.0, 140.0).unwrap(),
+        rounded,
+    ];
+    let mut checked = 0;
+    for b in &bodies {
+        for f in b.faces().ids() {
+            let s = face::surface(b, f).unwrap().unwrap();
+            let Some(a) = AnalyticSupport::of(s) else {
+                continue;
+            };
+            if a.kind() == SupportKind::Plane {
+                continue;
+            }
+            let form = as_b_spline(&k, s).unwrap().unwrap().into_owned();
+            let back = AnalyticSupport::derive(a.kind(), &form)
+                .and_then(|d| d.build(&k, form.copy()))
+                .unwrap();
+            assert_eq!(back.type_code(), s.type_code());
+            let d = s.natural_uv_domain_with_nurb(&k).unwrap();
+            for i in 0..=8 {
+                for j in 0..=8 {
+                    let uv = Point2::new(
+                        d.min().x + (d.max().x - d.min().x) * f64::from(i) / 8.0,
+                        d.min().y + (d.max().y - d.min().y) * f64::from(j) / 8.0,
+                    );
+                    let off = (s.evaluate_point(&k, uv).unwrap()
+                        - back.evaluate_point(&k, uv).unwrap())
+                    .length();
+                    assert!(
+                        off <= 64.0 * f64::EPSILON * 20.0,
+                        "a {:?} support rebuilt is {off:e} off at {uv:?}",
+                        a.kind()
+                    );
+                }
+            }
+            checked += 1;
+        }
+    }
+    assert!(checked >= 9, "{checked}");
+
+    // a quarter cylinder of radius 2 about z, heights 0, m, 5 along its quadratic rows
+    let quarter = |m: f64| {
+        let w = std::f64::consts::FRAC_1_SQRT_2;
+        let arc = [(2.0, 0.0, 1.0), (2.0, 2.0, w), (0.0, 2.0, 1.0)];
+        let mut cps = Vec::new();
+        for z in [0.0, m, 5.0] {
+            for &(x, y, wt) in &arc {
+                cps.push(solidcore::nurbs::math::CPoint::new(x * wt, y * wt, z * wt, wt));
+            }
+        }
+        let rows: Vec<Vec<_>> = cps.chunks(3).map(<[_]>::to_vec).collect();
+        let nurb = solidcore::nurbs::srf_basic::Surface::new(
+            rows,
+            2,
+            2,
+            vec![0.0, 0.0, 0.0, 1.0, 1.0, 1.0],
+            vec![0.0, 0.0, 0.0, 1.0, 1.0, 1.0],
+        )
+        .unwrap();
+        BSplineSurface::from_nurb(nurb, true)
+    };
+    let even = quarter(2.5);
+    let built = AnalyticSupport::derive(SupportKind::Cylinder, &even)
+        .and_then(|d| d.build(&k, even.copy()))
+        .unwrap();
+    let uv = Point2::new(0.3, 0.7);
+    let off = (built.evaluate_point(&k, uv).unwrap() - even.evaluate_point(uv).unwrap()).length();
+    assert!(off <= 64.0 * f64::EPSILON * 5.0, "{off:e}");
+    let uneven = quarter(1.0);
+    assert!(
+        AnalyticSupport::derive(SupportKind::Cylinder, &uneven)
+            .and_then(|d| d.build(&k, uneven.copy()))
+            .is_err(),
+        "a cylinder form whose height is not affine in u was taken"
+    );
+}
