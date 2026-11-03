@@ -26,7 +26,7 @@
 //!
 //! **Both.** The rim's round ends on the tab's flat sides at y = sqrt(609) = 24.68, the corner
 //! arc's round starts at y = 280/9 = 31.11, so the two removed regions are disjoint and the
-//! fillet removes the rim's 7.958672964786274 (the rim alone, as #2176's test pins it, its end rib WR-697's End's) plus
+//! fillet removes the rim's 7.958672926831696 (the rim alone, as #2176's test pins it, its end rib WR-697's End's) plus
 //! the wedge: 8.11780880450819.
 //!
 //! With `fillet_blend_corner` (WR-697, in this test's set of fixes) the fork's End at a
@@ -61,8 +61,9 @@ const RADIUS: f64 = 0.5;
 const RIM: [f64; 3] = [0.0, -25.0, 2.0];
 /// A point on the R2 corner arc at x > 0.
 const CORNER: [f64; 3] = [3.414_213_56, 32.525_324_7, 2.0];
-/// What the rim's round removes alone (#2176's `the_neighbours_keep_their_rounds`).
-const RIM_REMOVED: f64 = 7.958_672_964_786_274;
+/// What the rim's round removes alone (#2176's `the_neighbours_keep_their_rounds`, which
+/// pins the fork's 7.958672926831696: 18e96f1 and 63c7962, `SmApiFilletEdges` r 0.5).
+const RIM_REMOVED: f64 = 7.958_672_926_831_696;
 
 /// Every opt-in fix on (as in the issue), with WR-706 and the blend corner (WR-697) as given.
 fn kernel_with(wr706: bool, blend_corner: bool) -> Kernel {
@@ -77,13 +78,14 @@ fn kernel_with(wr706: bool, blend_corner: bool) -> Kernel {
     k
 }
 
+/// The volume to the fork's comparison accuracy (1e-10, as #2176's `fine_volume`).
 fn volume(k: &Kernel, b: &mut Brep) -> f64 {
     let store = AttributeStore::default();
     let attrs = PropertyAttributes {
         store: &store,
         key_of: &|_| ObjectKey(0),
     };
-    brep_volume(k, b, 1e-8, &attrs).unwrap()
+    brep_volume(k, b, 1e-10, &attrs).unwrap()
 }
 
 /// The edge nearest `p`.
@@ -213,13 +215,19 @@ fn each_edge_alone_is_unchanged() {
 }
 
 /// Without WR-706, the blend corner's End at a smooth vertex (the fork's 41a39ec) builds
-/// both: the fork at 18e96f1 removes 8.117808766409325 (its rim 7.958672926831696 plus the
+/// both: the fork at 18e96f1 and 63c7962 removes 8.117808766409325 (its rim 7.958672926831696 plus the
 /// wedge, each to the fork's volume accuracy).
 #[test]
 fn without_the_fix_the_blend_corner_builds_both() {
     let (both, faces) = removed(false, &[RIM, CORNER]).unwrap();
     assert!(
         (both - RIM_REMOVED - pappus()).abs() <= 1e-7,
+        "removed {both}"
+    );
+    // the fork's figure, to #2176's 1e-10: here 8.117808766496637, 8.7e-11 more, of which
+    // the rim's round alone is 4.5e-11 (#2176's `the_neighbours_keep_their_rounds`)
+    assert!(
+        (both - 8.117_808_766_409_325).abs() <= 1e-10,
         "removed {both}"
     );
     assert_eq!(faces, 12);
