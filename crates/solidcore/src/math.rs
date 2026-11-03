@@ -253,6 +253,58 @@ impl Transform {
         )
     }
 
+    /// The rigid placement `p` as a transform: its axes' images and its origin (the
+    /// z axis as the placement derives it).
+    #[must_use]
+    pub fn of_placement(p: &crate::geom::axis2_placement::Axis2Placement) -> Self {
+        Self::from_axes(p.x_axis(), p.y_axis(), p.z_axis(), p.origin())
+    }
+
+    /// The lengths of the linear part's rows (the images of the axes), each within
+    /// `gamma_4` of exact, relatively.
+    #[must_use]
+    pub fn row_lengths(&self) -> [f64; 3] {
+        let len = |c: &[f64; 4]| (c[0] * c[0] + c[1] * c[1] + c[2] * c[2]).sqrt();
+        [len(&self.m[0]), len(&self.m[1]), len(&self.m[2])]
+    }
+
+    /// Whether the transform is a regular affine map, proved: every entry finite, the
+    /// last column `(0, 0, 0, 1)`, and the determinant of its linear part above
+    /// `ratio` times the product of its rows' lengths (the images of the axes): its
+    /// volume scale against the most the rows' lengths allow, `ratio` of 0 asking only
+    /// for a non-zero determinant. The determinant's six products round within
+    /// `gamma_5` of the sum of their sizes, the rows' lengths within `gamma_4` each.
+    ///
+    /// Not upstream (SolidCraft's station-map check, `maps_ok`).
+    #[must_use]
+    pub fn is_regular(&self, ratio: f64) -> crate::geom::certified::Verdict {
+        use crate::geom::certified::{gamma, Bounded, Verdict};
+        let finite = self.m.iter().flatten().all(|x| x.is_finite());
+        let affine = self.m[0][3] == 0.0
+            && self.m[1][3] == 0.0
+            && self.m[2][3] == 0.0
+            && self.m[3][3] == 1.0;
+        if !finite || !affine || ratio.is_nan() || ratio < 0.0 {
+            return Verdict::No;
+        }
+        let m = &self.m;
+        let len = |c: &[f64; 4]| (c[0] * c[0] + c[1] * c[1] + c[2] * c[2]).sqrt();
+        let (c0, c1, c2) = (len(&m[0]), len(&m[1]), len(&m[2]));
+        let det = m[0][0] * (m[1][1] * m[2][2] - m[2][1] * m[1][2])
+            - m[1][0] * (m[0][1] * m[2][2] - m[2][1] * m[0][2])
+            + m[2][0] * (m[0][1] * m[1][2] - m[1][1] * m[0][2]);
+        let size = m[0][0].abs() * ((m[1][1] * m[2][2]).abs() + (m[2][1] * m[1][2]).abs())
+            + m[1][0].abs() * ((m[0][1] * m[2][2]).abs() + (m[2][1] * m[0][2]).abs())
+            + m[2][0].abs() * ((m[0][1] * m[1][2]).abs() + (m[1][1] * m[0][2]).abs());
+        let floor = ratio * c0 * c1 * c2;
+        let value = det.abs() - floor;
+        Bounded {
+            value,
+            bound: gamma(5) * size * (1.0 + gamma(1)) + gamma(15) * floor + gamma(1) * value.abs(),
+        }
+        .above(0.0)
+    }
+
     /// Maps a vector, ignoring translation (`SmTransform::TransformVector`).
     #[must_use]
     pub fn transform_vector(&self, v: Vec3) -> Vec3 {
@@ -268,6 +320,41 @@ impl Transform {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_rigid_motion_is_regular_and_a_flattening_is_not() {
+        use crate::geom::certified::Verdict;
+        let turn = Transform::from_axes(
+            Vec3::new(0.6, 0.8, 0.0),
+            Vec3::new(-0.8, 0.6, 0.0),
+            Vec3::Z,
+            Vec3::new(1.0, 2.0, 3.0),
+        );
+        assert_eq!(turn.is_regular(1e-9), Verdict::Yes);
+        // Scaled by 2, 3, 4: det 24, the rows' lengths' product 24.
+        let stretch = Transform::from_axes(
+            Vec3::new(2.0, 0.0, 0.0),
+            Vec3::new(0.0, 3.0, 0.0),
+            Vec3::new(0.0, 0.0, 4.0),
+            Vec3::ZERO,
+        );
+        assert_eq!(stretch.is_regular(0.999), Verdict::Yes);
+        assert_eq!(stretch.is_regular(1.001), Verdict::No);
+        assert_eq!(stretch.is_regular(1.0), Verdict::Undecided);
+        // Every product of its determinant is exactly 0: proved singular.
+        let flat = Transform::from_axes(Vec3::X, Vec3::Y, Vec3::new(1.0, 1.0, 0.0), Vec3::ZERO);
+        assert_eq!(flat.is_regular(0.0), Verdict::No);
+        // Nearly flat: a determinant of 1e-300 rounds relatively, so it is proved non-zero.
+        let thin = Transform::from_axes(Vec3::X, Vec3::Y, Vec3::new(0.3, 0.7, 1e-300), Vec3::ZERO);
+        assert_eq!(thin.is_regular(0.0), Verdict::Yes);
+        assert_eq!(flat.is_regular(1e-9), Verdict::No);
+        let mut nan = Transform::IDENTITY;
+        nan.m[3][0] = f64::NAN;
+        assert_eq!(nan.is_regular(0.0), Verdict::No);
+        let mut projective = Transform::IDENTITY;
+        projective.m[0][3] = 1.0;
+        assert_eq!(projective.is_regular(0.0), Verdict::No);
+    }
 
     #[test]
     #[allow(clippy::approx_constant)]
