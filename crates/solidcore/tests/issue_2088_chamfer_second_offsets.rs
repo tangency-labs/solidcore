@@ -216,7 +216,7 @@ fn chamfered_box(size: ChamferSize) -> (Kernel, Brep, [f64; 2]) {
     {
         let mut s = FilletSession::new(&mut k, &mut b).unwrap();
         s.prepare_chamfers(&k, &[e], &[size]).unwrap();
-        s.create_corners(&mut k, None).unwrap();
+        s.create_corners(&k, None).unwrap();
         for id in s.fillet_corners().unwrap() {
             s.set_corner_bevel(id, true).unwrap();
         }
