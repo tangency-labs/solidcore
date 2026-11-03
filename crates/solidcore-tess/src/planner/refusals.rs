@@ -517,3 +517,32 @@ fn a_size_sample_too_many_periods_away_to_place_refuses_the_face_for_that() {
         Ok((fp, _)) => panic!("meshed with {} triangles", fp.triangles.len()),
     }
 }
+
+/// The division along v of [`cylinder_without`]`(0.5)` (iso-lines across u, one at u = 0.5,
+/// where the surface has no point), at a tolerance that leaves v in [0, 1] one interval, for a
+/// face that leaves out v <= 0.05 and v >= 0.95: both ends of the interval at u = 0.5 are not
+/// the face's, and the end at v = 0 steps inwards to v = 1/16, which is the face's and does not
+/// evaluate. That is the face's refusal, naming the point; the steps were passed over, the
+/// iso-line skipped, and the division never met the circle.
+#[test]
+fn a_step_inwards_the_surface_has_no_point_at_refuses_the_face() {
+    let s = cylinder_without(0.5);
+    let rules = Rules::new(1.0, 40.0, None);
+    let mine = |q: [f64; 2]| Ok(q[1] > 0.05 && q[1] < 0.95);
+    match uv::divide(&s, 1, (0.0, 1.0), (0.0, 1.0), &rules, 50.0, 1000, &mine) {
+        Err(uv::Unmeasured::NoValue(NoValue(q))) => assert_eq!(q, [0.5, 0.0625]),
+        other => panic!("{other:?}"),
+    }
+}
+
+/// The sag a capped face reaches is measured where the surface evaluates: a triangle on
+/// [`cylinder_without`]`(0.5)` whose middle lies on the circle the surface has no point on is
+/// measured at its sides' middles only, and the face is not refused for a measure it never
+/// needed. It was refused there.
+#[test]
+fn the_worst_sag_is_measured_where_the_surface_evaluates() {
+    let s = cylinder_without(0.5);
+    let uv = [[0.0, 0.0], [0.75, -0.5], [0.75, 0.5]];
+    let got = super::sag::worst(&s, 1e-9, &[], &uv, &[[0, 1, 2]]);
+    assert!(got.is_ok_and(|w| w.is_finite() && w > 0.0), "{got:?}");
+}
