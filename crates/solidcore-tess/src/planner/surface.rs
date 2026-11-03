@@ -271,11 +271,14 @@ mod tests {
             for i in 0..=6 {
                 for j in 0..=6 {
                     let uv = [
-                        u0 + (u1 - u0) * i as f64 / 6.0,
-                        v0 + (v1 - v0) * j as f64 / 6.0,
+                        u0 + (u1 - u0) * f64::from(i) / 6.0,
+                        v0 + (v1 - v0) * f64::from(j) / 6.0,
                     ];
                     let q = map.to_eval(uv);
-                    let (p, n) = kernel::record_pair(eval.eval(q[0], q[1]));
+                    let (p, n) = match eval.eval(q[0], q[1]) {
+                        Ok(pn) => kernel::record_pair(pn),
+                        Err(e) => panic!("no point at {uv:?}: {e:?} ({:?})", face.surface),
+                    };
                     let Some((want, su, sv)) =
                         reference.derivs(uv[0], uv[1]).map(kernel::record_triple)
                     else {
@@ -303,24 +306,17 @@ mod tests {
         kinds
     }
 
-    fn record(b: crate::Result<crate::Body>) -> brep::Brep {
-        match b.and_then(|b| crate::brep_record(&b)) {
-            Ok(r) => r,
-            Err(e) => panic!("{e}"),
-        }
-    }
+    use crate::planner::tests::fixture;
 
     #[test]
     fn primitives_evaluate_like_the_record() {
-        let bodies = [
-            crate::box_solid(Vec3::new(-1.0, -2.0, 0.0), Vec3::new(3.0, 4.0, 5.0)),
-            crate::cylinder(Vec3::new(1.0, 2.0, 3.0), Vec3::new(0.0, 1.0, 1.0), 2.5, 7.0),
-            crate::sphere(Vec3::new(0.0, 0.0, 1.0), 4.0),
-            crate::torus(Vec3::ZERO, 6.0, 1.5),
-        ];
+        // A box from (-1, -2, 0) to (3, 4, 5); a cylinder of radius 2.5 and length 7 from
+        // (1, 2, 3) along (0, 1, 1); a sphere of radius 4 about (0, 0, 1); a torus of radii 6
+        // and 1.5 about the origin.
+        let bodies = ["box_offset", "cylinder_tilted", "sphere_r4", "torus_6_1_5"];
         let mut kinds = [0; 3];
         for b in bodies {
-            for (k, n) in kinds.iter_mut().zip(assert_matches_the_record(&record(b))) {
+            for (k, n) in kinds.iter_mut().zip(assert_matches_the_record(&fixture(b))) {
                 *k += n;
             }
         }
@@ -330,18 +326,11 @@ mod tests {
 
     #[test]
     fn transformed_and_mirrored_bodies_evaluate_like_the_record() {
-        let Ok(cyl) = crate::cylinder(Vec3::ZERO, Vec3::Z, 2.0, 5.0) else {
-            panic!("cylinder")
-        };
-        // Column-major: x → 3 − x, z → z + 1.
-        let mirror = [
-            [-1.0, 0.0, 0.0, 0.0],
-            [0.0, 1.0, 0.0, 0.0],
-            [0.0, 0.0, 1.0, 0.0],
-            [3.0, 0.0, 1.0, 1.0],
-        ];
+        // A cylinder of radius 2 and length 5 up z from the origin, mirrored and moved by the
+        // column-major matrix [[-1, 0, 0, 0], [0, 1, 0, 0], [0, 0, 1, 0], [3, 0, 1, 1]]:
+        // x → 3 − x, z → z + 1.
         assert!(
-            assert_matches_the_record(&record(crate::transform_matrix(&cyl, mirror)))
+            assert_matches_the_record(&fixture("cylinder_r2_h5_mirrored"))
                 .iter()
                 .sum::<usize>()
                 > 0
