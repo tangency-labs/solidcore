@@ -1,10 +1,13 @@
-//! Regression test for tangency-labs/solidcore#1945: with `fillet_blend_corner` and
-//! `fillet_trace_reaches_rails` on, the round of a bar's top front edge after a round of the
-//! bar/boss arc got a UV trim with coincident control points. Root cause (traced by tdamsma on
-//! #1945): `SmLocalSolveNd::SolveIt` kept the unscaled point's Jacobian for a clamped-and-scaled
-//! step, so a near-tangent SSI's end landed 1.6e-8 off and the rail trim kept a 3.1e-8 span. The
-//! fork's tangency-labs/smlib@d2757e1 fixes it; the port carries it under WR-253's
-//! `fixes.oscillating_skips_failed_guesses`, with the commit's 1-D part.
+//! Regression test for tangency-labs/solidcore#1945: the round of a bar's top front edge after
+//! a round of the bar/boss arc got a UV trim with coincident control points. Root cause (traced
+//! by tdamsma on #1945): `SmLocalSolveNd::SolveIt` kept the unscaled point's Jacobian for a
+//! clamped-and-scaled step, so a near-tangent SSI's end landed 1.6e-8 off and the rail trim kept
+//! a 3.1e-8 span. The fork's tangency-labs/smlib@d2757e1 fixes it; the port carries it under
+//! WR-253's `fixes.oscillating_skips_failed_guesses`, with the commit's 1-D part.
+//!
+//! The case reached that trim only with WR-641's `fillet_through_extended_rail_end`, removed
+//! in #2500; it now runs under SolidCraft's fixes, the blend corner building both rounds,
+//! where the upstream solve's short span does not arise.
 #![allow(
     clippy::all,
     clippy::unwrap_used,
@@ -19,12 +22,18 @@ use solidcore::boolean::api_brep as sm;
 use solidcore::geom::a_object::BooleanOperation;
 use solidcore::geom::attribute::{AttributeStore, ObjectKey};
 use solidcore::geom::object::ObjectRef;
+use solidcore::geom::vector2d::Point2;
+use solidcore::kernel::UpstreamFixes;
 use solidcore::mass::integrator::properties::{brep_volume, PropertyAttributes};
 use solidcore::math::Point3;
+use solidcore::nurbs::knots::Side;
+use solidcore::topology::brep::p1;
+use solidcore::topology::brep::p1::regions;
 use solidcore::topology::brep::p2;
 use solidcore::topology::brep::p3;
 use solidcore::topology::brep::p5::{stitch_and_orient, StitchAndOrientOptions};
 use solidcore::topology::brep::validation::{check_brep, CheckLevel};
+use solidcore::topology::face::p2 as fp2;
 use solidcore::topology::{edge, EdgeId};
 use solidcore::{Brep, EntityRef, Kernel};
 
@@ -156,17 +165,107 @@ const TOP: [Point3; 2] = [
     Point3::new(14.25957, -15.0, 10.48333),
 ];
 
-fn run(reach: bool, nd_fix: bool) -> (f64, f64, Vec<String>) {
+/// SolidCraft's fixes: every `UpstreamFixes` field on except `geometric_g2_continuity`, so
+/// both rounds are built by the blend corner (`fillet_blend_corner`), the construction kept
+/// since WR-641's `fillet_through_extended_rail_end` was removed (#2500).
+fn solidcraft_kernel() -> Kernel {
     let mut k = Kernel::default();
-    k.fixes.fillet_blend_corner = true;
-    k.fixes.fillet_trace_reaches_rails = reach;
-    k.fixes.oscillating_skips_failed_guesses = nd_fix;
+    for &name in UpstreamFixes::NAMES {
+        if name != "geometric_g2_continuity" {
+            *k.fixes.flag_mut(name).unwrap() = true;
+        }
+    }
+    k
+}
+
+fn lumps(b: &Brep) -> usize {
+    let infinite = b.infinite_region();
+    regions(b, None)
+        .unwrap()
+        .into_iter()
+        .filter(|r| Some(*r) != infinite)
+        .count()
+}
+
+/// The first round's torus: the ball r 2 rolling on the bar's top z = 10 and the boss
+/// rho = 20 has its centre on the circle rho = 22, z = 12.
+fn torus_distance(p: Point3) -> f64 {
+    let rho = (p.x * p.x + p.y * p.y).sqrt();
+    ((rho - 22.0).powi(2) + (p.z - 12.0).powi(2)).sqrt()
+}
+
+/// Whether `p` lies on a face the second round does not make: the bar's planes, the boss's
+/// cylinder or the first round's torus.
+fn on_given_face(p: Point3) -> bool {
+    let rho = (p.x * p.x + p.y * p.y).sqrt();
+    [
+        p.x,
+        p.x - 100.0,
+        p.y - 15.0,
+        p.y + 15.0,
+        p.z,
+        p.z - 10.0,
+        p.z - 20.0,
+        rho - 20.0,
+        torus_distance(p) - 2.0,
+    ]
+    .iter()
+    .any(|d| d.abs() < 1e-7)
+}
+
+/// The round r 2 of the bar's top front edge on its definition: every point `p` of a face the
+/// round makes (sampled 9 x 9 over its surface's domain) has the centre `c = p -+ 2 n` of a
+/// ball r 2 that touches the front face y = -15 (`c.y = -13`) and either the bar's top
+/// (`c.z = 8`) or the first round's torus (`c` 2 + 2 from its centre circle). The largest
+/// miss over the faces that are their definition (`Surface::procedural_blend`), and over the
+/// others (B-splines traced within the round's tolerance), with the count of each.
+fn off_definition(k: &Kernel, b: &Brep) -> [(f64, usize); 2] {
+    let mut out = [(0.0f64, 0usize); 2];
+    for f in p1::faces(b, None).unwrap() {
+        let s = fp2::surface(b, f).unwrap().unwrap();
+        let d = s.natural_uv_domain_with_nurb(k).unwrap();
+        let at = |i: i32, j: i32| {
+            Point2::new(
+                d.min().x + (d.max().x - d.min().x) * f64::from(i) / 8.0,
+                d.min().y + (d.max().y - d.min().y) * f64::from(j) / 8.0,
+            )
+        };
+        if on_given_face(s.evaluate_point(k, at(4, 4)).unwrap()) {
+            continue;
+        }
+        let slot = &mut out[usize::from(s.procedural_blend().is_none())];
+        slot.1 += 1;
+        for i in 0..=8 {
+            for j in 0..=8 {
+                let uv = at(i, j);
+                let p = s.evaluate_point(k, uv).unwrap();
+                let n = s.evaluate_normal(k, uv, Side::Left, Side::Left).unwrap();
+                let miss = [p - n * 2.0, p + n * 2.0]
+                    .into_iter()
+                    .map(|c| {
+                        let front = (c.y + 13.0).abs();
+                        let other = (c.z - 8.0).abs().min((torus_distance(c) - 4.0).abs());
+                        front.max(other)
+                    })
+                    .fold(f64::INFINITY, f64::min);
+                slot.0 = slot.0.max(miss);
+            }
+        }
+    }
+    out
+}
+
+/// Both rounds under SolidCraft's fixes: the volumes after the first and the second, and
+/// the second body's `check_brep` failures, lump count and round on its definition.
+fn run() -> (f64, f64, Vec<String>, usize, [(f64, usize); 2]) {
+    let mut k = solidcraft_kernel();
     let b = base(&mut k);
     let mut b1 = round(&mut k, &b, &ARC, 2.0).unwrap();
     let mut b2 = round(&mut k, &b1, &TOP, 2.0).unwrap();
     let (v1, v2) = (volume(&k, &mut b1), volume(&k, &mut b2));
     let f = failures(&mut k, &mut b2);
-    (v1, v2, f)
+    let definition = off_definition(&k, &b2);
+    (v1, v2, f, lumps(&b2), definition)
 }
 
 /// Analytic bracket for what the r2 round of the bar's top front edge removes: a straight convex
@@ -181,31 +280,29 @@ fn bracket() -> (f64, f64) {
     )
 }
 
-/// With the N-D solve fix the round is valid. The fork's C++ builds it clean at V 49712.42808748
-/// under SolidCraft's whole flag set; with only these flags the port gives 49712.4280860.
+/// The second round, the bar's top front edge and its run over the first round up to the
+/// boss, ends at an End on the boss where the first round's torus touches the boss: one
+/// lump, `check_brep` clean, the volume it removes within the closed-form bracket, and its
+/// faces on the rolling ball's definition.
+///
+/// Without WR-641's flag this failed under the blend corner with 1001 "Corner Edge
+/// Computation Failure" (#2500): the trace's extension before the End's section, on the
+/// torus's offset extended round its tube (`offset_extension_as_itself`), ran round the
+/// offsets' closed oval past its own span, the fillet surface covered that span twice, and
+/// the End's rail ends dropped onto the second sheet.
 #[test]
 fn top_edge_round_is_valid() {
-    let (v1, v2, f) = run(true, true);
+    let (v1, v2, f, lumps, [(exact_miss, exact), (traced_miss, traced)]) = run();
     let (lo, hi) = bracket();
-    println!(
-        "on: V={v2} removed={} (bracket {lo} .. {hi}) failures={}",
-        v1 - v2,
-        f.len()
-    );
-    for x in &f {
-        println!("   {}", &x[..x.len().min(180)]);
-    }
-    assert!((lo..=hi).contains(&(v1 - v2)));
-    assert!((v2 - 49712.42808748).abs() < 1e-5, "{v2}");
+    assert_eq!(lumps, 1);
     assert!(f.is_empty(), "{f:#?}");
-}
-
-/// Without it (upstream's `SolveIt`) the trim keeps the short span: check tests #15, #3, #11.
-#[test]
-fn top_edge_round_upstream_solve_keeps_short_trim_span() {
-    let (_, _, f) = run(true, false);
-    assert!(
-        f.iter().any(|x| x.contains("#15 Bad Repeated CPts")),
-        "{f:#?}"
-    );
+    assert!((lo..=hi).contains(&(v1 - v2)), "removed {}", v1 - v2);
+    // the straight run is its definition, exactly
+    assert_eq!(exact, 1);
+    assert!(exact_miss < 1e-9, "{exact_miss}");
+    // the run over the first round's torus, between a plane and a torus (not NURBS faces,
+    // so not built as its definition), is the trace's B-spline, within the round's
+    // tolerance (1.6e-4 here) of its definition
+    assert_eq!(traced, 1);
+    assert!(traced_miss < 1.6e-4, "{traced_miss}");
 }

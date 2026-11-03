@@ -34,21 +34,23 @@ use solidcore::geom::a_object::BooleanOperation;
 use solidcore::geom::attribute::{AttributeStore, ObjectKey};
 use solidcore::geom::axis2_placement::Axis2Placement;
 use solidcore::geom::extent1d::Extent1d;
+use solidcore::geom::vector2d::Point2;
 use solidcore::geom::vector3d::{Point3, Vec3};
+use solidcore::kernel::UpstreamFixes;
 use solidcore::mass::integrator::properties::{brep_volume, PropertyAttributes};
+use solidcore::nurbs::knots::Side;
 use solidcore::query::api_queries::edge_closest_point;
 use solidcore::sweep::api_brep::create_linear_sweep;
 use solidcore::topology::api_files::turn_to_nurbs;
 use solidcore::topology::brep::p1;
+use solidcore::topology::brep::p1::regions;
 use solidcore::topology::brep::p3::brep_copy;
 use solidcore::topology::brep::p5::{stitch_and_orient, StitchAndOrientOptions};
+use solidcore::topology::brep::validation::{check_brep, CheckLevel};
 use solidcore::topology::face::p1 as fp1;
 use solidcore::topology::face::p2 as fp2;
 use solidcore::topology::EdgeId;
 use solidcore::{Brep, EntityRef, Kernel};
-
-/// SMLib (tangency-labs/smlib 26cc451) on SolidCraft's run of the issue's case.
-const SMLIB_VOLUME: f64 = 13_992.239_421_88;
 
 /// What happens to the r 2 round before the r 1 round.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -118,13 +120,114 @@ fn volume(k: &Kernel, b: &mut Brep) -> f64 {
     brep_volume(k, b, 1e-9, &attrs).unwrap()
 }
 
-/// The crease round's error code and, when it builds, the body's volume.
-fn crease_round(form: Form, tracer: bool) -> (i32, Option<f64>) {
+fn lumps(b: &Brep) -> usize {
+    let infinite = b.infinite_region();
+    regions(b, None)
+        .unwrap()
+        .into_iter()
+        .filter(|r| Some(*r) != infinite)
+        .count()
+}
+
+fn check_failures(k: &mut Kernel, b: &mut Brep) -> Vec<String> {
+    let c = check_brep(k, b, CheckLevel::Level2).unwrap();
+    c.reports
+        .reports()
+        .iter()
+        .chain(c.pointer_reports.reports().iter())
+        .filter(|r| !r.ok)
+        .map(|r| format!("{} #{} {}", r.reporting_type, r.test_index, r.name))
+        .collect()
+}
+
+/// The r 2 round's torus: the ball rolling on the block's top z = 15 and the cylinder
+/// rho = 10 has its centre on the circle rho = 12, z = 17.
+fn torus_distance(p: Point3) -> f64 {
+    let rho = (p.x * p.x + p.y * p.y).sqrt();
+    ((rho - 12.0).powi(2) + (p.z - 17.0).powi(2)).sqrt()
+}
+
+/// Whether `p` lies on a face the r 1 round does not make: the block's planes, the
+/// cylinder or the r 2 round's torus.
+fn on_given_face(p: Point3) -> bool {
+    let rho = (p.x * p.x + p.y * p.y).sqrt();
+    [
+        p.x,
+        p.x - 40.0,
+        p.y - 5.0,
+        p.y + 5.0,
+        p.z,
+        p.z - 15.0,
+        p.z - 30.0,
+        rho - 10.0,
+        torus_distance(p) - 2.0,
+    ]
+    .iter()
+    .any(|d| d.abs() < 1e-7)
+}
+
+/// The r 1 round on its definition: every point `p` of a face the round makes (sampled
+/// 9 x 9 over its surface's domain) has the centre `c = p -+ n` of a ball r 1 touching the
+/// side face y = 5 (`c.y = 4`) and either the block's top (`c.z = 14`) or the r 2 round's
+/// torus (`c` 2 + 1 from its centre circle). The largest miss over the faces that are their
+/// definition (`Surface::procedural_blend`) and over the others (B-splines traced within
+/// the round's tolerance), with the count of each.
+fn off_definition(k: &Kernel, b: &Brep) -> [(f64, usize); 2] {
+    let mut out = [(0.0f64, 0usize); 2];
+    for f in p1::faces(b, None).unwrap() {
+        let s = fp2::surface(b, f).unwrap().unwrap();
+        let d = s.natural_uv_domain_with_nurb(k).unwrap();
+        let at = |i: i32, j: i32| {
+            Point2::new(
+                d.min().x + (d.max().x - d.min().x) * f64::from(i) / 8.0,
+                d.min().y + (d.max().y - d.min().y) * f64::from(j) / 8.0,
+            )
+        };
+        if on_given_face(s.evaluate_point(k, at(4, 4)).unwrap()) {
+            continue;
+        }
+        let slot = &mut out[usize::from(s.procedural_blend().is_none())];
+        slot.1 += 1;
+        for i in 0..=8 {
+            for j in 0..=8 {
+                let uv = at(i, j);
+                let p = s.evaluate_point(k, uv).unwrap();
+                let n = s.evaluate_normal(k, uv, Side::Left, Side::Left).unwrap();
+                let miss = [p - n, p + n]
+                    .into_iter()
+                    .map(|c| {
+                        let side = (c.y - 4.0).abs();
+                        let other = (c.z - 14.0).abs().min((torus_distance(c) - 3.0).abs());
+                        side.max(other)
+                    })
+                    .fold(f64::INFINITY, f64::min);
+                slot.0 = slot.0.max(miss);
+            }
+        }
+    }
+    out
+}
+
+/// What a built crease round gives: the body's volume, its lump count, its `check_brep`
+/// failures and the round on its definition ([`off_definition`]).
+struct Built {
+    volume: f64,
+    lumps: usize,
+    failures: Vec<String>,
+    definition: [(f64, usize); 2],
+}
+
+/// The crease round's error code and, when it builds, what it gives. SolidCraft's fixes
+/// (every `UpstreamFixes` field but `geometric_g2_continuity`), so both rounds are built
+/// by the blend corner, the construction kept since WR-641's
+/// `fillet_through_extended_rail_end` was removed (#2500); the tangent tracer as `tracer`.
+fn crease_round(form: Form, tracer: bool) -> (i32, Option<Built>) {
     let mut k = Kernel::default();
-    // the fillet fixes the issue's preset needs to reach the crease round, with the
-    // blend corner's End at the round's ends
-    k.fixes.fillet_blend_corner = true;
-    k.fixes.fillet_torus_span_from_start_section = true;
+    for &name in UpstreamFixes::NAMES {
+        if name != "geometric_g2_continuity" {
+            *k.fixes.flag_mut(name).unwrap() = true;
+        }
+    }
     k.fixes.ssi_tangent_curve_tracer = tracer;
     let v = Vec3::new;
     let sides = [
@@ -190,28 +293,41 @@ fn crease_round(form: Form, tracer: bool) -> (i32, Option<f64>) {
         ],
         1.0,
     );
-    let vol = (code == 0).then(|| volume(&k, &mut b));
-    (code, vol)
+    let built = (code == 0).then(|| Built {
+        volume: volume(&k, &mut b),
+        lumps: lumps(&b),
+        failures: check_failures(&mut k, &mut b),
+        definition: off_definition(&k, &b),
+    });
+    (code, built)
 }
 
-fn assert_near(v: f64, expected: f64, rel: f64) {
-    assert!(
-        (v - expected).abs() <= rel * expected,
-        "{v} != {expected} (rel {rel})"
-    );
+/// One lump, `check_brep` clean, and the round on its definition: exactly where it is its
+/// definition, within its tolerance (2.7e-4 here) where it is the trace's B-spline.
+fn assert_valid(form: Form, built: &Built) {
+    assert_eq!(built.lumps, 1, "{form:?}");
+    assert!(built.failures.is_empty(), "{form:?}: {:#?}", built.failures);
+    let [(exact_miss, exact), (traced_miss, traced)] = built.definition;
+    assert!(exact + traced >= 1, "{form:?}: no round face");
+    assert!(exact_miss < 1e-9, "{form:?}: {exact_miss}");
+    assert!(traced_miss < 2.7e-4, "{form:?}: {traced_miss}");
 }
 
 #[test]
 fn nurbs_round_crease_builds_with_the_tracer() {
-    for (form, rel) in [(Form::RoundFaceNurbs, 1e-9), (Form::AllNurbs, 1e-6)] {
+    for form in [Form::RoundFaceNurbs, Form::AllNurbs] {
         let (code, on) = crease_round(form, true);
         assert_eq!(code, 0, "{form:?}");
         let on = on.unwrap();
-        assert_near(on, SMLIB_VOLUME, rel);
+        assert_valid(form, &on);
         // here the tracer finds nothing the marcher has not: the same body
         let (code_off, off) = crease_round(form, false);
         assert_eq!(code_off, 0, "{form:?}");
-        assert_eq!(on.to_bits(), off.unwrap().to_bits(), "{form:?}");
+        assert_eq!(
+            on.volume.to_bits(),
+            off.unwrap().volume.to_bits(),
+            "{form:?}"
+        );
     }
 }
 
@@ -219,9 +335,9 @@ fn nurbs_round_crease_builds_with_the_tracer() {
 fn revolution_round_crease_is_unchanged() {
     let (code, on) = crease_round(Form::AsBuilt, true);
     assert_eq!(code, 0);
+    let on = on.unwrap();
+    assert_valid(Form::AsBuilt, &on);
     let (code_off, off) = crease_round(Form::AsBuilt, false);
     assert_eq!(code_off, 0);
-    let on = on.unwrap();
-    assert_eq!(on.to_bits(), off.unwrap().to_bits());
-    assert_near(on, SMLIB_VOLUME, 1e-9);
+    assert_eq!(on.volume.to_bits(), off.unwrap().volume.to_bits());
 }
