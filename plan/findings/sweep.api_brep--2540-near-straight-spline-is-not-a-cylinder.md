@@ -40,3 +40,4 @@
   `~/dev/solidcore/wt/2026-11-03-2540-sweep-cyl`. The closed form was recomputed
   independently in exact rationals and cross-checked by Gauss-Legendre quadrature of the
   Bezier (2.8e-15 relative, the quadrature's own f64 noise).
+- **PR:** tangency-labs/solidcore#2608.
