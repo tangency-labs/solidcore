@@ -66,8 +66,15 @@ impl TessPlan {
         let mut refused = Vec::new();
         for f in &self.faces {
             let surface = f.surface.and_then(|i| self.surfaces.get(i as usize));
-            let mut positions = Vec::with_capacity(f.uv.len());
-            let mut normals = Vec::with_capacity(f.uv.len());
+            let (Some(mut positions), Some(mut normals)) =
+                (crate::with_room(f.uv.len()), crate::with_room(f.uv.len()))
+            else {
+                refused.push(RefusedFace {
+                    face: f.face as usize,
+                    reason: format!("its {} vertices cannot be held", f.uv.len()),
+                });
+                continue;
+            };
             let mut why = None;
             for (k, uv) in f.uv.iter().enumerate() {
                 let (p, n) = match surface {

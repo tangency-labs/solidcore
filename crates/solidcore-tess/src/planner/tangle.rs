@@ -57,6 +57,7 @@ pub(crate) fn crossing(s: &EvalSurface, reach: f64, loops: &[seam::Loop]) -> Vec
             continue;
         }
         for k in 0..n {
+            // Proven: n = l.uv.len() >= 3, checked above
             let (Some(&a), Some(&b)) = (l.uv.get(k), l.uv.get((k + 1) % n)) else {
                 continue;
             };
@@ -92,6 +93,7 @@ pub(crate) fn crossing(s: &EvalSurface, reach: f64, loops: &[seam::Loop]) -> Vec
     }
     let adjacent = |p: (usize, usize), q: (usize, usize)| {
         let n = loops.get(p.0).map_or(0, |l| l.uv.len());
+        // Proven: p and q are chords' places, whose loops have n >= 3 nodes (no others make chords)
         p == q || (p.0 == q.0 && ((p.1 + 1) % n == q.1 || (q.1 + 1) % n == p.1))
     };
     // Sweep along u: only chords whose u ranges overlap can cross.

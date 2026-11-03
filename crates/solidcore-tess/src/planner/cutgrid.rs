@@ -32,6 +32,7 @@ struct Lines {
 fn lines(grid: &[f64], traces: &[f64]) -> Option<(Lines, Vec<usize>)> {
     let mut at: Vec<f64> = grid.to_vec();
     let mut full = vec![true; at.len()];
+    // Proven: capacity of allocated `traces`' length, elements of the same size
     let mut place = Vec::with_capacity(traces.len());
     for &c in traces {
         // The full-grid cell around c, and every line inside it.
@@ -170,6 +171,7 @@ pub(crate) fn cut_grid(
             (0..n).filter_map(move |k| {
                 Some((
                     *boundary.get(r.start + k)?,
+                    // Proven: n = r.len() > 0: `k` ranges over `0..n`
                     *boundary.get(r.start + (k + 1) % n)?,
                 ))
             })
@@ -247,7 +249,9 @@ pub(crate) fn cut_grid(
             .iter()
             .filter(|((i, j), _)| used.get(j * nu + i).copied().unwrap_or(false))
             .count();
+        // Proven: corners <= ring.len(), allocated with larger elements
         let mut poly: Vec<u32> = Vec::with_capacity(corners);
+        // Proven: corners <= ring.len(), allocated with larger elements
         let mut across: Vec<(isize, isize)> = Vec::with_capacity(corners);
         for &((i, j), c) in &ring {
             if used.get(j * nu + i).copied().unwrap_or(false) {
@@ -580,12 +584,12 @@ mod tests {
     #[test]
     fn a_curved_triangle_in_a_stretched_metric() {
         // A three-cornered patch (as a vertex blend in its parameters), u twice as long as v.
-        let mut b: Vec<[f64; 2]> = (0..=8).map(|k| [k as f64 / 8.0, 0.0]).collect();
+        let mut b: Vec<[f64; 2]> = (0..=8).map(|k| [f64::from(k) / 8.0, 0.0]).collect();
         b.extend((1..8).map(|k| {
-            let a = std::f64::consts::FRAC_PI_2 * k as f64 / 8.0;
+            let a = std::f64::consts::FRAC_PI_2 * f64::from(k) / 8.0;
             [a.cos(), a.sin()]
         }));
-        b.extend((1..8).rev().map(|k| [0.0, k as f64 / 8.0]));
+        b.extend((1..8).rev().map(|k| [0.0, f64::from(k) / 8.0]));
         let n = b.len();
         let loops = one(n);
         let area: f64 = (0..n)

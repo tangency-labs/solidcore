@@ -35,6 +35,7 @@ pub(crate) fn thin(us: &mut Vec<f64>, vs: &mut Vec<f64>, cap: usize) {
         if d.len() > n && n >= 2 {
             let len = d.len();
             *d = (0..n)
+                // Proven: n >= 2 checked above, so the divisor n - 1 > 0.
                 .filter_map(|i| d.get(i * (len - 1) / (n - 1)).copied())
                 .collect();
         }
@@ -128,7 +129,9 @@ pub(crate) fn quad(boundary: &[[f64; 2]]) -> Option<Quad> {
     let mut seen = 0u8;
     for (k, &c0) in corners.iter().enumerate() {
         let c1 = *corners.get((k + 1) % 4)?;
+        // Proven: n = boundary.len() >= 4, checked above.
         let len = (c1 + n - c0) % n;
+        // Proven: n = boundary.len() >= 4, checked above.
         let chain: Vec<usize> = (0..=len).map(|i| (c0 + i) % n).collect();
         let common = chain
             .iter()
@@ -175,7 +178,7 @@ pub(crate) fn aligned_lines(boundary: &[[f64; 2]], q: &Quad, d: usize) -> Option
     }
     let (lo, hi) = q.bbox.get(d).copied()?;
     let eps = (hi - lo) * 1e-9;
-    let mut lines = Vec::with_capacity(a.len());
+    let mut lines = crate::with_room(a.len())?;
     for (i, j) in a.iter().zip(b) {
         let (x, y) = (
             *boundary.get(*i as usize)?.get(d)?,
@@ -257,7 +260,7 @@ pub(crate) fn structured(
             uv.push([u, v]);
         }
     }
-    let mut tris: Vec<[u32; 3]> = Vec::with_capacity(2 * (nu + 1) * (nv + 1) + 2 * boundary.len());
+    let mut tris: Vec<[u32; 3]> = crate::with_room(2 * (nu + 1) * (nv + 1) + 2 * boundary.len())?;
     for j in 0..nv.saturating_sub(1) {
         for i in 0..nu.saturating_sub(1) {
             let (a, b, c, d) = (g(i, j), g(i + 1, j), g(i + 1, j + 1), g(i, j + 1));
@@ -284,6 +287,7 @@ pub(crate) fn structured(
             return None;
         }
     }
+    // Proven: `uv` starts as `boundary.to_vec()` and only grows.
     let extra = uv.split_off(boundary.len());
     Some((extra, tris))
 }

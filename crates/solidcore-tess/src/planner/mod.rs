@@ -230,6 +230,7 @@ fn plan_at(b: &brep::Brep, tol: f64, turn: Option<size::Turn>) -> Result<(TessPl
         .edges
         .iter()
         .map(|e| {
+            // Proven: capacity of allocated `e.uses`' length, its elements (16 bytes) larger.
             let mut fs: Vec<usize> = Vec::with_capacity(e.uses.len());
             for u in &e.uses {
                 if !fs.contains(&(u.face as usize)) {
@@ -478,9 +479,16 @@ fn boundary(
     }
     let pole_along =
         |q: [f64; 2], d: usize| solidcore::eval::uv::degenerate_within(s, &dom, q, d, reach);
+    let too_many = || {
+        unsupported(format!(
+            "face {fi} ({}): its {} loops cannot be held",
+            kind(&face.surface),
+            face.loops.len()
+        ))
+    };
     let mut out = Boundary {
-        loops: Vec::with_capacity(face.loops.len()),
-        segments: Vec::with_capacity(face.loops.len()),
+        loops: crate::with_room(face.loops.len()).ok_or_else(too_many)?,
+        segments: crate::with_room(face.loops.len()).ok_or_else(too_many)?,
         reach,
     };
     // Each vertex's parameters, from the first edge use of the face to start there.
@@ -504,6 +512,7 @@ fn boundary(
         })
     };
     // Each loop's nodes that are another edge's node (see [`edges::snap`]).
+    // Proven: capacity of allocated `face.loops`' length; each loop holds a Vec, as large.
     let mut snapped: Vec<Vec<bool>> = Vec::with_capacity(face.loops.len());
     for l in &face.loops {
         let Loop::Edges { edges } = l else { continue };
@@ -532,13 +541,21 @@ fn boundary(
                     format!("its pcurve spans [{p0}, {p1}], the edge [{t0}, {t1}]"),
                 ));
             }
+            if !matches!(p0.partial_cmp(&p1), Some(Ordering::Less | Ordering::Equal)) {
+                return Err(fail(
+                    oe.edge,
+                    format!("its pcurve's interval [{p0}, {p1}] is reversed or not a number"),
+                ));
+            }
             // The edge's own tolerance: how far its curve may stand off the face.
             let accept = (rules.tol * 10.0).max(1e-6) + edge.tolerance.max(0.0);
             let mut ep: Vec<Vec3> = n.points.clone();
             let mut es: Vec<bool> = n.params.iter().map(|t| n.snapped.contains(t)).collect();
+            // Proven: capacity of allocated `ep`'s length, its elements (24 bytes) larger.
             let mut eq: Vec<[f64; 2]> = Vec::with_capacity(ep.len());
             let pcurve = kernel::curve2(&oe.pcurve);
             for (k, (t, p)) in n.params.iter().zip(&n.points).enumerate() {
+                // Proven: p0 <= p1, neither NaN, checked above.
                 let q = pcurve.eval(t.clamp(p0, p1)).ok_or_else(|| {
                     fail(oe.edge, format!("its pcurve does not evaluate at t = {t}"))
                 })?;
@@ -645,14 +662,19 @@ fn boundary(
         // edge, so the step into it is the edge's own and the step into that pole, from the
         // edge before, is in the loop where it is unwrapped like any other.
         let same_edge = |k: usize| {
-            segs.get((k + n - 1) % n)
+            (k + n - 1)
+                .checked_rem(n)
+                .and_then(|i| segs.get(i))
                 .zip(segs.get(k))
                 .is_some_and(|(a, b)| a.0 == b.0)
         };
         let start = (0..n)
+            // Proven: n > 0 inside `0..n`.
             .find(|&k| off(k) && off((k + n - 1) % n))
             .or_else(|| (0..n).find(|&k| off(k) && same_edge(k)));
         if let Some(k) = start {
+            // Proven: k < n = uvs.len(), and each edge adds at least as many points, segments
+            // and snap flags as parameters (`eq` follows `ep`'s nodes, one each, and all pop one).
             uvs.rotate_left(k);
             pts.rotate_left(k);
             segs.rotate_left(k);
@@ -948,6 +970,7 @@ fn touch(
             // The node's edges: the segment starting at it and the one ending there.
             let edges_at = [
                 segs.get(k).map(|s| s.0),
+                // Proven: m = lp.pts.len() > 0 while enumerating `lp.pts`.
                 segs.get((k + m - 1) % m).map(|s| s.0),
             ];
             if edges_at.contains(&Some(e)) || n.points.contains(&p) {
@@ -980,6 +1003,7 @@ fn inside_out(lp: &seam::Loop, at: usize, k: usize, tol: f64) -> bool {
     // chord's start.
     let part = |from: usize, to: usize| -> Vec<usize> {
         let mut out = Vec::new();
+        // Proven (the three `% m` here): m = lp.uv.len() >= 3, checked above.
         let mut i = from % m;
         loop {
             out.push(i);
@@ -1123,6 +1147,7 @@ fn area2(uv: &[[f64; 2]]) -> f64 {
     let n = uv.len();
     (0..n)
         .map(|k| {
+            // Proven: n > 0 inside `0..n`.
             uv.get(k)
                 .zip(uv.get((k + 1) % n))
                 .map_or(0.0, |(a, b)| a[0] * b[1] - b[0] * a[1])
@@ -1157,6 +1182,7 @@ fn open_pole_to_pole(
             a.zip(b)
                 .is_some_and(|(a, b)| (a[0] - b[0]).abs().max((a[1] - b[1]).abs()) <= 1e-9 * per)
         };
+        // Proven: n > 0, the poles p0 and p1 having been found in `0..n`.
         let turns_back = [*p0, *p1]
             .iter()
             .any(|&p| near(l.uv.get((p + n - 1) % n), l.uv.get((p + 1) % n)));
@@ -1182,9 +1208,12 @@ fn open_pole_to_pole(
                 }
             }
             // The poles as the planner splits them: one copy at each neighbour's parameter.
-            let mut ring = Vec::with_capacity(n + 2);
+            // Proven: capacity n = l.uv.len(), allocated with the same element type (the two
+            // pole copies grow it if need be).
+            let mut ring = Vec::with_capacity(n);
             for k in 0..n {
                 let (Some(q), Some(a), Some(b)) = (
+                    // Proven (both `% n` here): n > 0 inside `for k in 0..n`.
                     moved.get(k),
                     moved.get((k + n - 1) % n),
                     moved.get((k + 1) % n),
@@ -1239,6 +1268,7 @@ fn turning_poles(
                 (0..2).any(|d| solidcore::eval::uv::degenerate_within(s, dom, *q, d, reach))
             })
         })
+        // Proven: n > 0 inside `0..n`.
         .filter(|&k| near(uv.get((k + n - 1) % n), uv.get((k + 1) % n)))
         .collect()
 }
@@ -1270,7 +1300,9 @@ fn open_at_pole(
             continue;
         };
         // From the node after the pole round to the pole, unwrapped along the way.
+        // Proven: n = l.uv.len() >= 4, checked above.
         let order: Vec<usize> = (1..=n).map(|i| (pole + i) % n).collect();
+        // Proven: n = l.uv.len(), allocated with the same element type.
         let mut uv: Vec<[f64; 2]> = Vec::with_capacity(n);
         for &k in &order {
             let Some(mut q) = l.uv.get(k).copied() else {
@@ -1309,6 +1341,8 @@ fn open_at_pole(
                 .filter_map(|&k| l.pts.get(k).copied())
                 .collect(),
         };
+        // Proven: both hold n >= 4 nodes: every `order` node was in `l.uv` (or this returned),
+        // and `l.pts.len() == n` was checked above.
         opened.uv.rotate_right(2);
         opened.pts.rotate_right(2);
         if opened.pts.len() == n
@@ -1510,6 +1544,7 @@ fn plan_face(
             // At a pole the parameter along the degenerate direction is free: one copy with
             // the previous node's value, one with the next node's.
             let (prev, next) = (
+                // Proven: n = luv.len() > 0 while enumerating `luv`.
                 luv.get((k + n - 1) % n).copied(),
                 luv.get((k + 1) % n).copied(),
             );
@@ -1940,6 +1975,7 @@ fn plan_pieces_in(f: &Region, stopped: &mut Option<NoValue>) -> Option<UvMesh> {
             }
             // Four distinct corners in the loop's (counter-clockwise) order.
             let start = pick[0];
+            // Proven: m > 0, as `pick` came from `(0..m).max_by(..)?`.
             let rel = pick.map(|k| (k + m - start) % m);
             (rel[0] < rel[1] && rel[1] < rel[2] && rel[2] < rel[3]).then_some(pick)
         };
@@ -2082,6 +2118,7 @@ fn graded(
         .chain(std::iter::once(1.0))
         .collect();
     for _ in 0..12 {
+        // Proven: all.len() <= 4097 here (at most 4095 cuts, and the loop stops past 4096).
         let mut next = Vec::with_capacity(all.len() * 2);
         let mut split = false;
         for w in all.windows(2) {
@@ -2125,6 +2162,7 @@ fn closed_boundary(
         }
         i
     };
+    // Proven: only called inside `for k in 0..r.len()`, so r.len() > 0.
     let segment = |r: &std::ops::Range<usize>, k: usize| {
         ((r.start + k) as u32, (r.start + (k + 1) % r.len()) as u32)
     };

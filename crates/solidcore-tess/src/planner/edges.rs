@@ -76,6 +76,7 @@ pub(crate) fn sample_edge(b: &brep::Brep, ei: usize, rules: &Rules, h: f64) -> R
         let n = if h > 0.0 {
             (front.dist(back) / h)
                 .ceil()
+                // Proven: clamp bounds are constants 1.0 <= 19 999.0, neither NaN
                 .clamp(1.0, (MAX_EDGE_NODES - 1) as f64) as usize
         } else {
             1
@@ -213,6 +214,7 @@ pub(crate) fn split_segments(
                 .map_err(|e| fail(crate::eval_message(e)))?,
         ),
     };
+    // Proven: n + segs.len() <= MAX_EDGE_NODES = 20 000, checked above
     let (mut points, mut params) = (
         Vec::with_capacity(n + segs.len()),
         Vec::with_capacity(n + segs.len()),
@@ -270,6 +272,7 @@ pub(crate) fn snap(ei: usize, nodes: &mut Nodes, add: &[(f64, Vec3)]) -> Result<
     }
     let n = nodes.points.len().min(nodes.params.len());
     let (mut points, mut params) = (
+        // Proven: n + add.len() <= MAX_EDGE_NODES = 20 000, checked above
         Vec::with_capacity(n + add.len()),
         Vec::with_capacity(n + add.len()),
     );

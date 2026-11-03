@@ -354,6 +354,7 @@ impl Collapser {
             positions.len() / 2,
             std::hash::BuildHasherDefault::default(),
         );
+        // Proven: capacity of allocated `positions`' length, its elements (24 bytes) larger.
         let mut remap: Vec<Option<u32>> = Vec::with_capacity(positions.len());
         let mut pos: Vec<[f64; 3]> = Vec::new();
         for p in positions {
@@ -373,6 +374,7 @@ impl Collapser {
             })));
         }
         drop(index);
+        // Proven: capacity of allocated `triangles`' length, with the same element type.
         let mut tris: Vec<[u32; 3]> = Vec::with_capacity(triangles.len());
         for t in triangles {
             let r = |i: u32| remap.get(i as usize).copied().flatten();
@@ -389,7 +391,7 @@ impl Collapser {
         let n = pos.len();
         let mut quadric = vec![Quadric::default(); n];
         let mut around: Vec<Vec<u32>> = vec![Vec::new(); n];
-        let mut sides: Vec<(u32, u32, u32)> = Vec::with_capacity(tris.len() * 3);
+        let mut sides: Vec<(u32, u32, u32)> = crate::with_room(tris.len().checked_mul(3)?)?;
         for (ti, t) in tris.iter().enumerate() {
             let ti = u32::try_from(ti).ok()?;
             let [a, b, c] = t.map(|i| pos.get(i as usize).copied().unwrap_or_default());

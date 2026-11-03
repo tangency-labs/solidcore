@@ -101,6 +101,7 @@ fn triangulate_in(
     let from = |p: Point2<f64>| [p.x / scale[0], p.y / scale[1]];
     let mut cdt = Cdt::new();
     let mut index: HashMap<FixedVertexHandle, u32> = HashMap::new();
+    // Proven: capacity of allocated `boundary`'s length, its elements larger than a handle
     let mut handles: Vec<FixedVertexHandle> = Vec::with_capacity(boundary.len());
     for (i, p) in boundary.iter().enumerate() {
         let h = cdt.insert(to(p)).ok()?;
@@ -115,6 +116,7 @@ fn triangulate_in(
         for k in 0..n {
             sides.push((
                 *handles.get(r.start + k)?,
+                // Proven: n = r.len() > 0 inside `for k in 0..n`
                 *handles.get(r.start + (k + 1) % n)?,
             ));
         }
@@ -125,6 +127,7 @@ fn triangulate_in(
         for k in 0..n {
             let (a, b) = (
                 *handles.get(r.start + k)?,
+                // Proven: n = r.len() > 0 inside `for k in 0..n`
                 *handles.get(r.start + (k + 1) % n)?,
             );
             if a == b || cdt.exists_constraint(a, b) {
@@ -197,6 +200,7 @@ fn triangulate_in(
         }
         tris.push(t);
     }
+    // Proven: `uv` starts as `boundary.to_vec()` and only grows
     let extra = uv.split_off(boundary.len());
     Some((extra, tris))
 }
@@ -239,6 +243,7 @@ pub(crate) fn band(
         for k in 0..len {
             let (a, b) = (
                 u32::try_from(r.start + k).ok()?,
+                // Proven: len = r.len() > 0 inside `for k in 0..len`
                 u32::try_from(r.start + (k + 1) % len).ok()?,
             );
             if (a as usize) >= n || (b as usize) >= n {
@@ -530,6 +535,7 @@ fn scan(
         for poly in polys {
             let n = poly.len();
             for k in 0..n {
+                // Proven: n = poly.len() > 0 inside `for k in 0..n`
                 let (Some(a), Some(b)) = (poly.get(k), poly.get((k + 1) % n)) else {
                     continue;
                 };
@@ -563,6 +569,7 @@ pub(crate) fn inside(polys: &[&[[f64; 2]]], q: [f64; 2]) -> bool {
     for poly in polys {
         let n = poly.len();
         for k in 0..n {
+            // Proven: n = poly.len() > 0 inside `for k in 0..n`
             let (Some(a), Some(b)) = (poly.get(k), poly.get((k + 1) % n)) else {
                 continue;
             };
@@ -601,6 +608,7 @@ impl Clearance {
         for poly in polys {
             let n = poly.len();
             for k in 0..n {
+                // Proven: n = poly.len() > 0 inside `for k in 0..n`
                 let (Some(a), Some(b)) = (poly.get(k), poly.get((k + 1) % n)) else {
                     continue;
                 };
@@ -733,7 +741,7 @@ mod tests {
     fn crossing_loops_are_refused_unless_lenient() {
         let b = [[0.0, 0.0], [1.0, 1.0], [1.0, 0.0], [0.0, 1.0]];
         let whole = std::slice::from_ref(&(0..4));
-        assert!(
+        assert_eq!(
             triangulate(
                 &b,
                 whole,
@@ -743,7 +751,8 @@ mod tests {
                     shape: false,
                     lenient: false
                 }
-            ) == Ok(None)
+            ),
+            Ok(None)
         );
         // Lenient, the crossing side is left out and what the rest encloses is filled.
         let Ok(Some((_, tris))) = triangulate(

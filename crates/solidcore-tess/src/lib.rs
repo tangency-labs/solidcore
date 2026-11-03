@@ -62,3 +62,11 @@ pub(crate) fn eval_message(e: solidcore::eval::EvalError) -> String {
         | solidcore::eval::EvalError::Degenerate(what) => what,
     }
 }
+
+/// An empty `Vec` with room for `n` items, or `None` where that much cannot be reserved (where
+/// `Vec::with_capacity` would panic).
+pub(crate) fn with_room<T>(n: usize) -> Option<Vec<T>> {
+    let mut v = Vec::new();
+    v.try_reserve(n).ok()?;
+    Some(v)
+}

@@ -143,6 +143,7 @@ pub(crate) fn cut(
                         .iter()
                         .position(|q| !(q[0] > x0 && q[0] < x1))
                         .ok_or(Cut::Unclean)?;
+                    // Proven: n = l.uv.len() >= 2, checked above
                     let idx: Vec<usize> = (0..=n).map(|i| (start + i) % n).collect();
                     let path: Vec<[f64; 2]> =
                         idx.iter().filter_map(|&i| uv.get(i).copied()).collect();
@@ -451,6 +452,7 @@ fn seam_nodes(
             && !super::uv::fine_between(s, rules, h, uv(a), uv(b))?
             && b - a > 1e-12 * (1.0 + a.abs())
         {
+            // Proven: i + 1 < ys.len(), as `ys.get(i + 1)` is Some
             ys.insert(i + 1, 0.5 * (a + b));
         } else {
             i += 1;
