@@ -318,7 +318,6 @@ impl EvalSurface {
     /// the second derivatives, oriented by NLib's rule. [`EvalError::Unevaluable`] where the
     /// surface cannot be evaluated, [`EvalError::Degenerate`] where it has no normal (the limit
     /// vanishes too).
-    #[must_use]
     pub fn eval(&self, u: f64, v: f64) -> Result<(Vec3, Vec3), EvalError> {
         let unevaluable = || EvalError::Unevaluable(format!("the surface at ({u}, {v})"));
         let (p, du, dv) = self.derivs(u, v).ok_or_else(unevaluable)?;
@@ -431,7 +430,7 @@ impl EvalSurface {
         match self {
             EvalSurface::Plane { .. } => Some((Vec3::ZERO, Vec3::ZERO, Vec3::ZERO)),
             EvalSurface::Nurbs(n) => {
-                let [u, v] = self.wrap([u, v]);
+                let [u, v] = n.onto_knots(self.wrap([u, v]))?;
                 let d = n.nl.as_ref()?.0.derivs(u, v, Side::Left, Side::Left, true, 2, 2).ok()?;
                 let at = |i: usize, j: usize| d.get(i).and_then(|r| r.get(j)).copied().filter(|x| x.is_finite());
                 Some((at(2, 0)?, at(1, 1)?, at(0, 2)?))
@@ -461,7 +460,7 @@ impl EvalSurface {
                 })
             }),
             EvalSurface::Nurbs(n) => {
-                let [u, v] = self.wrap([u, v]);
+                let [u, v] = n.onto_knots(self.wrap([u, v]))?;
                 let d = n.nl.as_ref()?.0.derivs(u, v, Side::Left, Side::Left, true, MAX_PARTIAL_ORDER, MAX_PARTIAL_ORDER).ok()?;
                 tabulate(|i, j| d.get(i)?.get(j).copied())
             }
