@@ -6,6 +6,7 @@
 //! boundary node, at a point inside the face (a square's corner, or where two traces met
 //! head-on), or on another cut (a T-node, which that cut then passes through).
 
+use std::cmp::Ordering;
 use std::collections::HashMap;
 
 use crate::ring::Ring;
@@ -39,6 +40,10 @@ pub(crate) struct Piece {
     pub holes: Vec<Ring<u32>>,
 }
 
+/// Where to put nodes between two nodes of a cut, given the spacing wanted at each (see
+/// [`cut`]); the error is a point the surface does not evaluate at.
+pub(crate) type Seeds<'a, E> = dyn Fn([f64; 2], [f64; 2], f64, f64) -> Result<Vec<f64>, E> + 'a;
+
 /// Cut the face bounded by `loops` (ranges of `boundary`) along `segments`, measured in the
 /// metric `scale`. `seeds(a, b, sa, sb)`: where to put nodes between two nodes of a cut (in
 /// (u, v)), as fractions strictly between 0 and 1, given the spacing wanted at each (in the
@@ -52,7 +57,7 @@ pub(crate) fn cut<E>(
     loops: &[std::ops::Range<usize>],
     segments: &[Segment],
     scale: [f64; 2],
-    seeds: &dyn Fn([f64; 2], [f64; 2], f64, f64) -> Result<Vec<f64>, E>,
+    seeds: &Seeds<'_, E>,
 ) -> Result<Option<(Vec<[f64; 2]>, Vec<Piece>)>, E> {
     super::layout(|stopped| cut_in(boundary, loops, segments, scale, seeds, stopped))
 }
@@ -63,7 +68,7 @@ fn cut_in<E>(
     loops: &[std::ops::Range<usize>],
     segments: &[Segment],
     scale: [f64; 2],
-    seeds: &dyn Fn([f64; 2], [f64; 2], f64, f64) -> Result<Vec<f64>, E>,
+    seeds: &Seeds<'_, E>,
     stopped: &mut Option<E>,
 ) -> Option<(Vec<[f64; 2]>, Vec<Piece>)> {
     let n = boundary.len();
@@ -230,7 +235,7 @@ fn cut_in<E>(
         let (a, b) = side(longest)?;
         let (pa, pb) = (pos(a)?, pos(b)?);
         let len = (pb[0] - pa[0]).hypot(pb[1] - pa[1]);
-        if !(len > 0.0) {
+        if len.partial_cmp(&0.0) != Some(Ordering::Greater) {
             return None;
         }
         let left = [

@@ -6,6 +6,8 @@
 //! sags the tolerance; an edge takes the smaller size of its two faces, so a curved face and
 //! its flat neighbour meet at the same spacing.
 
+use std::cmp::Ordering;
+
 use crate::vec::VecExt as _;
 use solidcore::eval::EvalSurface;
 use solidcore_convert as kernel;
@@ -214,7 +216,10 @@ fn planar(s: &EvalSurface) -> bool {
         return false;
     };
     let ctrl = n.ctrl();
-    if ctrl.iter().any(|h| !(h[3] > 0.0)) {
+    if ctrl
+        .iter()
+        .any(|h| h[3].partial_cmp(&0.0) != Some(Ordering::Greater))
+    {
         return false;
     }
     let pts: Vec<Vec3> = ctrl

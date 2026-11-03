@@ -5,10 +5,12 @@
 //! added. The boundary stays exactly the shared edge nodes, so the face meets its neighbours
 //! exactly, and only the band next to the boundary is irregular (cut-cell meshing).
 
+use std::cmp::Ordering;
+
 use crate::ring::Ring;
 
-use super::cdt;
 use super::motorcycle::Trace;
+use super::{UvMesh, cdt};
 
 /// A cell is kept when the boundary stays at least this fraction of its smaller side away from
 /// it (in the metric): closer, the band triangle between them would be a sliver.
@@ -48,7 +50,7 @@ fn lines(grid: &[f64], traces: &[f64]) -> Option<(Lines, Vec<usize>)> {
         match near {
             // An earlier trace, or a box edge: join it.
             Some((i, _)) if !full.get(i).copied().unwrap_or(false) || i == 0 || i == last => {
-                place.push(i)
+                place.push(i);
             }
             // An inner grid line: it moves onto the trace.
             Some((i, _)) => {
@@ -98,7 +100,7 @@ pub(crate) fn cut_grid(
     vs: &[f64],
     traces: &[Trace],
     scale: [f64; 2],
-) -> Option<(Vec<[f64; 2]>, Vec<[u32; 3]>)> {
+) -> Option<UvMesh> {
     if us.len() < 2 || vs.len() < 2 || !scale.iter().all(|s| s.is_finite() && *s > 0.0) {
         return None;
     }
@@ -154,8 +156,8 @@ pub(crate) fn cut_grid(
     // rectangles; anything else (a trace ending in the open after snapping) falls back to
     // every line running the whole face.
     let rects = rectangles(cu, cv, &vert, &horiz).or_else(|| {
-        vert.iter_mut().for_each(|s| *s = true);
-        horiz.iter_mut().for_each(|s| *s = true);
+        vert.fill(true);
+        horiz.fill(true);
         rectangles(cu, cv, &vert, &horiz)
     })?;
     // In the metric, so clearances are lengths on the surface.
@@ -288,7 +290,7 @@ pub(crate) fn cut_grid(
             all.get(t[2] as usize)?,
         );
         let area = (b[0] - a[0]) * (c[1] - a[1]) - (c[0] - a[0]) * (b[1] - a[1]);
-        if !(area > 0.0) {
+        if area.partial_cmp(&0.0) != Some(Ordering::Greater) {
             return None;
         }
     }
@@ -442,9 +444,9 @@ fn clear_cells(
 /// Whether the segment `a`–`b` meets the closed box `lo`–`hi` (Liang–Barsky clipping).
 fn segment_meets_box(a: [f64; 2], b: [f64; 2], lo: [f64; 2], hi: [f64; 2]) -> bool {
     let (mut t0, mut t1) = (0.0f64, 1.0f64);
-    for d in 0..2 {
-        let delta = b[d] - a[d];
-        for (p, q) in [(-delta, a[d] - lo[d]), (delta, hi[d] - a[d])] {
+    for (((a, b), lo), hi) in a.into_iter().zip(b).zip(lo).zip(hi) {
+        let delta = b - a;
+        for (p, q) in [(-delta, a - lo), (delta, hi - a)] {
             if p == 0.0 {
                 if q < 0.0 {
                     return false;

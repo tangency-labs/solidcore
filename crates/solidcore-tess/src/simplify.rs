@@ -34,7 +34,9 @@ const MIN_TURN_COS: f64 = 0.2;
 /// A simplified copy of a mesh.
 #[derive(Clone, Debug, Default)]
 pub struct Level {
+    /// The vertices that remain.
     pub positions: Vec<Vec3>,
+    /// The triangles that remain, as indices into `positions`.
     pub triangles: Vec<[u32; 3]>,
     /// How far (mm) its vertices and triangle centres lie from the original surface, at most.
     pub error: f64,
@@ -96,7 +98,9 @@ impl Surface {
             .iter()
             .map(|t| {
                 let mut b = Aabb3::EMPTY;
-                t.iter().for_each(|p| b.add(*p));
+                for p in t {
+                    b.add(*p);
+                }
                 b
             })
             .collect();
@@ -214,7 +218,7 @@ impl Quadric {
         let [aa, ab, ac, ad, bb, bc, bd, cc, cd, _] = self.0;
         let det = aa * (bb * cc - bc * bc) - ab * (ab * cc - bc * ac) + ac * (ab * bc - bb * ac);
         let scale = (aa.abs() + bb.abs() + cc.abs()).powi(3);
-        if !(det.abs() > 1e-12 * scale) {
+        if det.abs().partial_cmp(&(1e-12 * scale)) != Some(Ordering::Greater) {
             return None;
         }
         let (r0, r1, r2) = (-ad, -bd, -cd);
@@ -348,7 +352,7 @@ impl Collapser {
             std::hash::BuildHasherDefault<BitsHasher>,
         > = std::collections::HashMap::with_capacity_and_hasher(
             positions.len() / 2,
-            Default::default(),
+            std::hash::BuildHasherDefault::default(),
         );
         let mut remap: Vec<Option<u32>> = Vec::with_capacity(positions.len());
         let mut pos: Vec<[f64; 3]> = Vec::new();
@@ -397,25 +401,19 @@ impl Collapser {
                     }
                 }
             }
-            for (k, &i) in t.iter().enumerate() {
+            // Each corner with the next one round the triangle.
+            for (&i, &j) in t.iter().zip(t.iter().cycle().skip(1)) {
                 if let Some(list) = around.get_mut(i as usize) {
                     list.push(ti);
                 }
-                let j = t[(k + 1) % 3];
                 sides.push((i.min(j), i.max(j), ti));
             }
         }
         // Open boundaries (sides of one triangle only): a plane across each, weighted, so the
         // boundary keeps its place.
         sides.sort_unstable();
-        let mut k = 0;
-        while k < sides.len() {
-            let (a, b, t) = sides[k];
-            let mut e = k + 1;
-            while e < sides.len() && sides[e].0 == a && sides[e].1 == b {
-                e += 1;
-            }
-            if e - k == 1
+        for run in sides.chunk_by(|x, y| x.0 == y.0 && x.1 == y.1) {
+            if let &[(a, b, t)] = run
                 && let (Some(pa), Some(pb), Some(tri)) = (
                     pos.get(a as usize),
                     pos.get(b as usize),
@@ -433,7 +431,6 @@ impl Collapser {
                     }
                 }
             }
-            k = e;
         }
         let live_triangles = tris.len();
         let seed: Vec<u32> = around
@@ -597,7 +594,9 @@ impl Collapser {
             let before = cross(sub(corners[1], corners[0]), sub(corners[2], corners[0]));
             let after = cross(sub(moved[1], moved[0]), sub(moved[2], moved[0]));
             let (lb, la) = (dot(before, before).sqrt(), dot(after, after).sqrt());
-            if !(la > 0.0) || (lb > 0.0 && dot(before, after) < MIN_TURN_COS * lb * la) {
+            if la.partial_cmp(&0.0) != Some(Ordering::Greater)
+                || (lb > 0.0 && dot(before, after) < MIN_TURN_COS * lb * la)
+            {
                 return false;
             }
         }
@@ -669,11 +668,11 @@ impl Collapser {
                 continue;
             }
             let mut tri = [0u32; 3];
-            for (k, &i) in t.iter().enumerate() {
+            for (corner, &i) in tri.iter_mut().zip(t) {
                 let Some(slot) = index.get_mut(i as usize) else {
                     continue;
                 };
-                tri[k] = *slot.get_or_insert_with(|| {
+                *corner = *slot.get_or_insert_with(|| {
                     let p = self.pos.get(i as usize).copied().unwrap_or_default();
                     out.positions.push(Vec3::new(p[0], p[1], p[2]));
                     seeds.push(self.seed.get(i as usize).copied().unwrap_or(0));

@@ -2,6 +2,8 @@
 //! the plan stores are the ones the evaluators use), and the tolerance-driven divisions of a
 //! face's parameter box.
 
+use std::cmp::Ordering;
+
 use crate::vec::VecExt as _;
 use solidcore::eval::EvalSurface;
 use solidcore_convert as kernel;
@@ -26,7 +28,7 @@ pub(crate) fn divide(
     max_lines: usize,
 ) -> Result<Vec<f64>, NoValue> {
     let (a0, a1) = range;
-    if !(a1 > a0) {
+    if a1.partial_cmp(&a0) != Some(Ordering::Greater) {
         return Ok(vec![a0, a1]);
     }
     // The whole range first: the limits split it, and no interval spans more than a quarter
@@ -63,8 +65,12 @@ fn split(
         return Ok(Vec::new());
     };
     let mut out = vec![first];
-    let mut stack: Vec<(f64, f64, u32)> =
-        starts.windows(2).rev().map(|w| (w[0], w[1], 0)).collect();
+    let mut stack: Vec<(f64, f64, u32)> = starts
+        .iter()
+        .zip(starts.iter().skip(1))
+        .rev()
+        .map(|(&a, &b)| (a, b, 0))
+        .collect();
     while let Some((a, b, depth)) = stack.pop() {
         if depth >= 20 || out.len() + stack.len() >= max_lines.max(2) || flat(a, b)? {
             out.push(b);
@@ -134,6 +140,7 @@ fn limits<'a>(
     rules: &'a Rules,
     h: f64,
 ) -> impl Fn(f64, f64) -> Result<bool, NoValue> + 'a {
+    const ACROSS: usize = 5;
     let tol = rules.tol;
     let uv = move |x: f64, y: f64| if d == 0 { [x, y] } else { [y, x] };
     let derivs = move |x: f64, y: f64| {
@@ -145,7 +152,6 @@ fn limits<'a>(
     let at = move |x: f64, y: f64| derivs(x, y).map(|(p, _, _)| p);
     // `None` at a pole, where the normal is undefined.
     let normal = move |x: f64, y: f64| derivs(x, y).map(|(_, su, sv)| su.cross(sv).normalized());
-    const ACROSS: usize = 5;
     let ys: Vec<f64> = (0..ACROSS)
         .map(|k| across.0 + (across.1 - across.0) * k as f64 / (ACROSS - 1) as f64)
         .collect();

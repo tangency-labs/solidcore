@@ -1,6 +1,8 @@
 //! Edge nodes: every edge of a body sampled once, so the faces on either side share the very
 //! same boundary points (watertight by construction).
 
+use std::cmp::Ordering;
+
 use crate::vec::VecExt as _;
 use solidcore::eval::CurveEval;
 use solidcore_convert as kernel;
@@ -29,6 +31,18 @@ pub(crate) struct Nodes {
     /// within the chord tolerance (see [`snap`]): in a face that runs both edges such a node is
     /// the other's point of the face, a pinch, not a crossing.
     pub snapped: Vec<f64>,
+}
+
+/// A segment of [`sample_edge`]'s depth-first bisection: its parameters, end points, middle
+/// (once evaluated) and depth. Each segment carries its end points and middle, so every
+/// parameter is evaluated once (an intersection curve's point is a Newton solve).
+struct Seg {
+    a: f64,
+    b: f64,
+    pa: Vec3,
+    pb: Vec3,
+    mid: Option<Vec3>,
+    depth: u32,
 }
 
 /// Nodes of edge `ei` of `b` from its start to its end: every chord within the tolerance of
@@ -100,17 +114,7 @@ pub(crate) fn sample_edge(b: &brep::Brep, ei: usize, rules: &Rules, h: f64) -> R
     };
     let t_at = |i: u32| t0 + (t1 - t0) * f64::from(i) / f64::from(initial);
     let ends: Vec<Vec3> = (0..=initial).map(|i| at(t_at(i))).collect::<Result<_>>()?;
-    // Depth-first bisection, segment by segment, keeping the output ordered. Each segment
-    // carries its end points and middle, so every parameter is evaluated once (an
-    // intersection curve's point is a Newton solve).
-    struct Seg {
-        a: f64,
-        b: f64,
-        pa: Vec3,
-        pb: Vec3,
-        mid: Option<Vec3>,
-        depth: u32,
-    }
+    // Depth-first bisection, segment by segment, keeping the output ordered (see [`Seg`]).
     let mut out: Vec<(f64, Vec3)> = vec![(t0, front)];
     let mut stack: Vec<Seg> = Vec::with_capacity(64);
     for (i, w) in ends.windows(2).enumerate().rev() {
@@ -141,7 +145,7 @@ pub(crate) fn sample_edge(b: &brep::Brep, ei: usize, rules: &Rules, h: f64) -> R
                 .iter()
                 .map(|q| q.dist_to_segment(pa, pb))
                 .fold(0.0, f64::max);
-            let short = !(pa.dist(pb) > h * (1.0 + 1e-9));
+            let short = pa.dist(pb).partial_cmp(&(h * (1.0 + 1e-9))) != Some(Ordering::Greater);
             // The two half chords of an arc turning θ differ by θ/2.
             let bend = 2.0 * turn(pm - pa, pb - pm);
             let straight = rules.turn.is_none_or(|t| !t.exceeds(bend, sag));

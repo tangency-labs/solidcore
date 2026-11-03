@@ -5,13 +5,14 @@
 //! the facet angle, then Ruppert refinement for shape. Constraint edges are never split, so the
 //! boundary stays exactly the shared edge nodes.
 
+use std::cmp::Ordering;
 use std::collections::HashMap;
 
 use crate::vec::VecExt as _;
 use solidcore_record::Vec3;
 
-use super::NoValue;
 use super::size::Turn;
+use super::{NoValue, UvMesh};
 use spade::handles::FixedVertexHandle;
 use spade::{
     AngleLimit, ConstrainedDelaunayTriangulation, Point2, PositionInTriangulation,
@@ -42,7 +43,7 @@ pub(crate) struct Sag<'a> {
     pub h: f64,
     /// The facet angle, if any: corner normals turning more get a point in the middle.
     pub turn: Option<Turn>,
-    /// Scale of u and v in the triangulation (the surface's mean |S_u|, |S_v|).
+    /// Scale of u and v in the triangulation (the surface's mean `|S_u|`, `|S_v|`).
     pub scale: [f64; 2],
 }
 
@@ -70,7 +71,7 @@ pub(crate) fn triangulate(
     boundary: &[[f64; 2]],
     loops: &[std::ops::Range<usize>],
     fill: Fill,
-) -> Result<Option<(Vec<[f64; 2]>, Vec<[u32; 3]>)>, NoValue> {
+) -> Result<Option<UvMesh>, NoValue> {
     super::layout(|stopped| triangulate_in(boundary, loops, fill, stopped))
 }
 
@@ -78,13 +79,18 @@ pub(crate) fn triangulate(
 fn triangulate_in(
     boundary: &[[f64; 2]],
     loops: &[std::ops::Range<usize>],
-    fill: Fill,
+    Fill {
+        seeds,
+        refine,
+        shape,
+        lenient,
+    }: Fill,
     stopped: &mut Option<NoValue>,
-) -> Option<(Vec<[f64; 2]>, Vec<[u32; 3]>)> {
+) -> Option<UvMesh> {
     if boundary.iter().flatten().any(|x| !x.is_finite()) {
         return None;
     }
-    let scale = match &fill.refine {
+    let scale = match &refine {
         Some((sag, _)) if sag.scale.iter().all(|k| k.is_finite() && *k > 0.0) => sag.scale,
         _ => [1.0, 1.0],
     };
@@ -125,7 +131,7 @@ fn triangulate_in(
                 continue;
             }
             if !cdt.can_add_constraint(a, b) {
-                if fill.lenient {
+                if lenient {
                     continue;
                 }
                 return None;
@@ -133,15 +139,15 @@ fn triangulate_in(
             cdt.add_constraint(a, b);
         }
     }
-    for s in fill.seeds {
+    for s in seeds {
         if s.iter().all(|x| x.is_finite()) {
             let _ = cdt.insert(to(s));
         }
     }
-    if let Some((sag, budget)) = &fill.refine {
+    if let Some((sag, budget)) = &refine {
         let constraints = cdt.num_constraints();
         let added = super::stop(stopped, refine_sag(&mut cdt, sag, *budget, &from, &slits))?;
-        if fill.shape {
+        if shape {
             let params = RefinementParameters::<f64>::new()
                 .keep_constraint_edges()
                 .exclude_outer_faces(true)
@@ -180,14 +186,13 @@ fn triangulate_in(
         let vs = face.vertices();
         let mut t = [0u32; 3];
         for (slot, v) in t.iter_mut().zip(vs) {
-            *slot = match index.get(&v.fix()) {
-                Some(&i) => i,
-                None => {
-                    let i = u32::try_from(uv.len()).ok()?;
-                    uv.push(from(v.position()));
-                    index.insert(v.fix(), i);
-                    i
-                }
+            *slot = if let Some(&i) = index.get(&v.fix()) {
+                i
+            } else {
+                let i = u32::try_from(uv.len()).ok()?;
+                uv.push(from(v.position()));
+                index.insert(v.fix(), i);
+                i
             };
         }
         tris.push(t);
@@ -511,7 +516,10 @@ fn scan(
         ((bbox[1].1 - bbox[1].0) / row).ceil(),
         ((bbox[0].1 - bbox[0].0) / step[0]).ceil(),
     );
-    if !(rows * cols <= MAX_SEEDS as f64) {
+    if !matches!(
+        (rows * cols).partial_cmp(&(MAX_SEEDS as f64)),
+        Some(Ordering::Less | Ordering::Equal)
+    ) {
         return false;
     }
     let near = Clearance::new(polys, scale, CLEARANCE * step[0] * scale[0]);
@@ -569,17 +577,20 @@ pub(crate) fn inside(polys: &[&[[f64; 2]]], q: [f64; 2]) -> bool {
 /// Most lattice seeds of one face.
 const MAX_SEEDS: usize = 200_000;
 
+/// A boundary segment's two ends, in the scaled parameters.
+type ScaledSide = ([f64; 2], [f64; 2]);
+
 /// Boundary segments bucketed on a square grid (cell = the clearance), for "is this point
 /// within the clearance of the boundary" in constant time per point.
 struct Clearance {
-    cells: HashMap<(i64, i64), Vec<([f64; 2], [f64; 2])>>,
+    cells: HashMap<(i64, i64), Vec<ScaledSide>>,
     scale: [f64; 2],
     r: f64,
 }
 
 impl Clearance {
     fn new(polys: &[&[[f64; 2]]], scale: [f64; 2], r: f64) -> Clearance {
-        let mut cells: HashMap<(i64, i64), Vec<([f64; 2], [f64; 2])>> = HashMap::new();
+        let mut cells: HashMap<(i64, i64), Vec<ScaledSide>> = HashMap::new();
         if !(r.is_finite() && r > 0.0) {
             return Clearance {
                 cells,

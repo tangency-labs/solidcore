@@ -2,6 +2,8 @@
 //! parameters, that cross another chord of the face although the curves they stand for do not
 //! (two curves running closer together than their chords sag).
 
+use std::cmp::Ordering;
+
 use solidcore::eval::EvalSurface;
 
 use super::seam;
@@ -20,11 +22,22 @@ struct Chord {
 }
 
 impl Chord {
-    fn lo(&self, d: usize) -> f64 {
-        self.a[d].min(self.b[d])
+    /// The low corner of the chord's parameter box.
+    fn lo(&self) -> [f64; 2] {
+        [self.a[0].min(self.b[0]), self.a[1].min(self.b[1])]
     }
-    fn hi(&self, d: usize) -> f64 {
-        self.a[d].max(self.b[d])
+    /// The high corner of the chord's parameter box.
+    fn hi(&self) -> [f64; 2] {
+        [self.a[0].max(self.b[0]), self.a[1].max(self.b[1])]
+    }
+}
+
+/// `q` moved by `by` along parameter direction `d` (0: u, otherwise v).
+fn shifted(q: [f64; 2], d: usize, by: f64) -> [f64; 2] {
+    if d == 0 {
+        [q[0] + by, q[1]]
+    } else {
+        [q[0], q[1] + by]
     }
 }
 
@@ -53,27 +66,26 @@ pub(crate) fn crossing(s: &EvalSurface, reach: f64, loops: &[seam::Loop]) -> Vec
             // The loop's closing chord of a loop that winds round the surface ends at the copy of
             // its first node nearest its last; every chord then starts in one period.
             let (mut a, mut b) = (a, b);
-            for d in 0..2 {
-                let Some(per) = dom.period[d] else { continue };
-                b[d] = solidcore::eval::uv::unwrap(b[d], a[d], Some(per));
-                let back = (a[d].min(b[d]) / per).floor() * per;
-                a[d] -= back;
-                b[d] -= back;
+            for ((x, y), per) in a.iter_mut().zip(&mut b).zip(dom.period) {
+                let Some(per) = per else { continue };
+                *y = solidcore::eval::uv::unwrap(*y, *x, Some(per));
+                let back = (x.min(*y) / per).floor() * per;
+                *x -= back;
+                *y -= back;
             }
             chords.push(Chord { at: (li, k), a, b });
         }
     }
     // With every chord starting in one period, two chords' copies can only cross where one of
     // them is moved a period along at most: each chord also as its copies a period along.
-    for d in 0..2 {
-        let Some(per) = dom.period[d] else { continue };
+    for (d, per) in dom.period.into_iter().enumerate() {
+        let Some(per) = per else { continue };
         let along: Vec<Chord> = chords
             .iter()
-            .map(|c| {
-                let (mut a, mut b) = (c.a, c.b);
-                a[d] += per;
-                b[d] += per;
-                Chord { at: c.at, a, b }
+            .map(|c| Chord {
+                at: c.at,
+                a: shifted(c.a, d, per),
+                b: shifted(c.b, d, per),
             })
             .collect();
         chords.extend(along);
@@ -83,14 +95,14 @@ pub(crate) fn crossing(s: &EvalSurface, reach: f64, loops: &[seam::Loop]) -> Vec
         p == q || (p.0 == q.0 && ((p.1 + 1) % n == q.1 || (q.1 + 1) % n == p.1))
     };
     // Sweep along u: only chords whose u ranges overlap can cross.
-    chords.sort_by(|x, y| x.lo(0).total_cmp(&y.lo(0)));
+    chords.sort_by(|x, y| x.lo()[0].total_cmp(&y.lo()[0]));
     let mut out: Vec<(usize, usize)> = Vec::new();
     for (i, x) in chords.iter().enumerate() {
         for y in chords.iter().skip(i + 1) {
-            if y.lo(0) > x.hi(0) {
+            if y.lo()[0] > x.hi()[0] {
                 break;
             }
-            if y.lo(1) > x.hi(1) || x.lo(1) > y.hi(1) || adjacent(x.at, y.at) {
+            if y.lo()[1] > x.hi()[1] || x.lo()[1] > y.hi()[1] || adjacent(x.at, y.at) {
                 continue;
             }
             if cross(x.a, x.b, y.a, y.b) {
@@ -122,7 +134,7 @@ pub(crate) fn crossing(s: &EvalSurface, reach: f64, loops: &[seam::Loop]) -> Vec
 fn on(a: [f64; 2], b: [f64; 2], q: [f64; 2]) -> bool {
     let (dx, dy) = (b[0] - a[0], b[1] - a[1]);
     let len2 = dx * dx + dy * dy;
-    if !(len2 > 0.0) {
+    if len2.partial_cmp(&0.0) != Some(Ordering::Greater) {
         return false;
     }
     let (qx, qy) = (q[0] - a[0], q[1] - a[1]);

@@ -2,6 +2,8 @@
 //! the original triangles and the closest point of a triangle. Display only and private to
 //! [`super`]: a level's error says how coarse it is drawn, never anything a model depends on.
 
+use std::cmp::Ordering;
+
 use crate::vec::VecExt as _;
 use solidcore_record::Vec3;
 
@@ -103,15 +105,16 @@ impl Bvh {
                 centres.add(centre(i));
             }
             let size = centres.size();
-            let axis = if size.x >= size.y && size.x >= size.z {
-                0
+            // The coordinate along the longest side.
+            let axis: fn(Vec3) -> f64 = if size.x >= size.y && size.x >= size.z {
+                |v| v.x
             } else if size.y >= size.z {
-                1
+                |v| v.y
             } else {
-                2
+                |v| v.z
             };
-            let extent = [size.x, size.y, size.z][axis];
-            if span.len() <= LEAF || !(extent > 0.0) {
+            let extent = axis(size);
+            if span.len() <= LEAF || extent.partial_cmp(&0.0) != Some(Ordering::Greater) {
                 if let Some(node) = nodes.get_mut(n) {
                     *node = Node {
                         bounds,
@@ -121,10 +124,7 @@ impl Bvh {
                 }
                 continue;
             }
-            let key = |i: &u32| {
-                let c = centre(*i);
-                [c.x, c.y, c.z][axis]
-            };
+            let key = |i: &u32| axis(centre(*i));
             let mid = span.len() / 2;
             span.select_nth_unstable_by(mid, |a, b| key(a).total_cmp(&key(b)));
             let left = nodes.len();
