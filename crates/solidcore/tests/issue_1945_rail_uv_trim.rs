@@ -285,11 +285,10 @@ fn bracket() -> (f64, f64) {
 /// lump, `check_brep` clean, the volume it removes within the closed-form bracket, and its
 /// faces on the rolling ball's definition.
 ///
-/// Without WR-641's flag this failed under the blend corner with 1001 "Corner Edge
-/// Computation Failure" (#2500): the trace's extension before the End's section, on the
-/// torus's offset extended round its tube (`offset_extension_as_itself`), ran round the
-/// offsets' closed oval past its own span, the fillet surface covered that span twice, and
-/// the End's rail ends dropped onto the second sheet.
+/// Fails today (#2500), 1001 "CalcFilletIntSideFace" at the End on the boss: the trace's
+/// extension before the End's section, on the torus's offset extended round its tube
+/// (`offset_extension_as_itself`), runs round the offsets' closed oval past its own span, the
+/// fillet surface covers that span twice, and the End's rail ends drop onto the second sheet.
 #[test]
 fn top_edge_round_is_valid() {
     let (v1, v2, f, lumps, [(exact_miss, exact), (traced_miss, traced)]) = run();
