@@ -108,7 +108,11 @@ fn failed_surface_tests(k: &Kernel, surface: &Surface) -> Vec<(usize, &'static s
         .filter(|r| !r.ok)
         .map(|r| (r.test_index, r.name))
         .collect();
-    assert_eq!(ok, failed.is_empty(), "assert_valid agrees with its reports");
+    assert_eq!(
+        ok,
+        failed.is_empty(),
+        "assert_valid agrees with its reports"
+    );
     failed
 }
 
