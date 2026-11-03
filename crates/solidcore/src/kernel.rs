@@ -1483,7 +1483,8 @@ pub struct UpstreamFixes {
     ///
     /// With it (smlib#79 step 4d, the fork's 794946e, 3e26f76, 68e039c, 543d25a and 53c47b8) a vertex where one blended edge ends is the blend corner's End, of the kind the pinned degenerate, open or Nx1 corner's construction builds (moved unchanged), and every G1 continuation of blends (two edges among two to four, or one closed edge meeting itself) is its Join: one shared section, each blend's section solved on its own faces in the plane through the vertex square to the first blend's edge (`SM_FV_JOIN_SECTION`), or where one edge stands between the blends on a side, where the rails cross it; more than one edge there is refused (`CornerUnsupported`). Every blend corner is of type `SM_FCR_BLEND` (here [`crate::blend::fillet_geom::p1::FilletCornerType::NByTwo`]). A mixed-convexity End's rail ends at its crossing with the end face's surface (`CalcRailIntEndSurface`), and `TrimOriginalSurfaces` collects a round's faces from its rail edge's edge use on its own face, so a square bar rounded on its four long edges is the rod (80 pi, 6 faces) where upstream drops a round.
     ///
-    /// With it, since the fork's tangency-labs/smlib#104 (61547af to f1d81f4, merged at b5bb747): a vertex of three or more blends of one convexity on planes and straight edges that no Ball takes (rounds of unequal radii, of curvature sections, or a vertex the caller sets back with `FilletSession::set_set_back_fill`, the fork's `SetSetBackFill`) is the blend corner's Setback (`SmBlendCorner::ClassifySetBack`, [`crate::blend::blend_corner::setback`]): each blend ends at its setback along its edge (asked for, else the owner's rule, a default too long for its edge shrinking to its room less a quarter of its radius) and the hole is filled by the setback split (`SmBlendSetback::FillHole`). A G1 fill is a graph over the corner's axis whose heights are held convex by linear conditions on their Bernstein coefficients (a quadratic programme) and is taken only once certified convex; the rule's setbacks grow to the least scale that certifies (`SmBlendSetback::CertifiedScale`, to 1e-2), and an asked-for setback that does not fit, or is too short for a certified fill, is refused as `FilletErrorType::NoRoom` naming the setback that fits or builds (`FilletSession::fit_setback`, the fork's `GetFitSetBack`).
+    /// With it, since the fork's tangency-labs/smlib#104 (61547af to f1d81f4, merged at b5bb747): a vertex of three or more blends of one convexity on planes and straight edges that no Ball takes (rounds of unequal radii, of curvature sections, or a vertex the caller sets back with `FilletSession::set_set_back_fill`, the fork's `SetSetBackFill`) is the blend corner's Setback (`SmBlendCorner::ClassifySetBack`, [`crate::blend::blend_corner::setback`]): each blend ends at its setback along its edge (asked for, else the owner's rule, a default too long for its edge shrinking to its room less a quarter of its radius) and the hole is filled by the setback split (`SmBlendSetback::FillHole`). A G1 fill is a graph over the corner's axis whose heights are held convex by linear conditions on their Bernstein coefficients (a quadratic programme) and is taken only once certified convex; the rule's setbacks grow to the least scale that certifies (`SmBlendSetback::CertifiedScale`: the smallest certifying scale on the grid whose neighbour below fails; monotonicity checked, not proved), and an asked-for setback that does not fit, or is too short for a certified fill, is refused as `FilletErrorType::NoRoom` naming the setback that fits or builds (`FilletSession::fit_setback`, the fork's `GetFitSetBack`).
+
     pub fillet_blend_corner: bool,
     /// The executive's circular rounds (`SetFilletParameters` with `SM_FSG_CIRCULAR`, and
     /// the corners' constant rounds, `SmFilletCorner::MakeConstantRadiusFillet`) take the
@@ -1684,6 +1685,20 @@ pub struct Kernel {
         std::sync::Weak<()>,
         crate::topology::topology::NotifyRecords,
     ),
+    /// Not upstream: the fork's `thread_local` memo of equal area thumbweights
+    /// (`t_sWMemo`, b8ec238, smlib#109;
+    /// [`crate::blend::fillet_section::section::ThumbweightMemo`]). A [`RefCell`]: the
+    /// stations and the definition solve through `&Kernel`; it is never borrowed across a
+    /// solve, and a hit returns what a fresh solve of the same order and u gives.
+    pub blend_w_memo: RefCell<crate::blend::fillet_section::section::ThumbweightMemo>,
+    /// Not upstream: the fork's `thread_local` count of open blend operation scopes
+    /// (`t_lOperationScopes`; [`crate::blend::fillet_section::section::OperationScope`]).
+    /// Shared, so that a scope can outlive a borrow of the kernel (a fillet session holds
+    /// one while it takes `&mut Kernel`); an atomic keeps the kernel `Send`. Its updates are
+    /// `Relaxed`: a kernel runs on one thread at a time (it is `Send`, not shared), so the
+    /// count orders nothing between threads; a copy of the kernel (`cache_kernel`) takes its
+    /// own count, never this one.
+    pub blend_operation_scopes: Arc<core::sync::atomic::AtomicU32>,
     /// Not upstream (the SolidCraft fork's `SmWorkCounters`): counts of the work done by
     /// the steps of a boolean whose cost once grew with the square of the body's size, for
     /// tests and profiling. They change no result.
@@ -1721,6 +1736,8 @@ impl Kernel {
                 std::sync::Weak::new(),
                 crate::topology::topology::NotifyRecords::new(),
             ),
+            blend_w_memo: RefCell::default(),
+            blend_operation_scopes: Arc::default(),
             work_counters: WorkCounters::default(),
         }
     }
