@@ -39,10 +39,15 @@ const WALL: f64 = 2.0;
 
 /// Every fix but `geometric_g2_continuity`.
 fn all_fixes() -> Kernel {
+    all_fixes_but("geometric_g2_continuity")
+}
+
+/// Every fix but `geometric_g2_continuity` and `off`.
+fn all_fixes_but(off: &str) -> Kernel {
     let mut k = Kernel::default();
     let mut f = UpstreamFixes::default();
     for &name in UpstreamFixes::NAMES {
-        if name != "geometric_g2_continuity" {
+        if name != "geometric_g2_continuity" && name != off {
             *f.flag_mut(name).unwrap() = true;
         }
     }
@@ -117,7 +122,10 @@ fn corner_faces(k: &Kernel, b: &Brep, corner: usize, radius: f64) -> Vec<FaceId>
 /// (Steiner's formula).
 fn rounded_box_volume(r: f64) -> f64 {
     let (x, y, z) = (A - 2.0 * R, B - 2.0 * R, C - 2.0 * R);
-    x * y * z + 2.0 * r * (x * y + y * z + z * x) + PI * r * r * (x + y + z) + 4.0 / 3.0 * PI * r.powi(3)
+    x * y * z
+        + 2.0 * r * (x * y + y * z + z * x)
+        + PI * r * r * (x + y + z)
+        + 4.0 / 3.0 * PI * r.powi(3)
 }
 
 fn volume(k: &Kernel, b: &mut Brep) -> f64 {
@@ -193,7 +201,30 @@ fn the_shell_has_the_closed_form_volume_and_checks_clean() {
     let lines = check_brep(&mut k, &mut shell, CheckLevel::Level2)
         .unwrap()
         .lines();
-    eprintln!("volume {v:.12} want {want:.12} ({:.3e}); {lines:?}", (v - want).abs() / want);
+    eprintln!(
+        "volume {v:.12} want {want:.12} ({:.3e}); {lines:?}",
+        (v - want).abs() / want
+    );
     assert!((v - want).abs() <= 1e-12 * want, "{v} vs {want}");
     assert!(lines.is_empty(), "{lines:?}");
+}
+
+/// Without `offset_extends_ball_patches_as_themselves` the extended offset extends a ball
+/// patch tangentially, a plain B-spline: only the inner corner whose trims stay inside
+/// its patch's domain to `EFF_ZERO` (corner 1, at (27, 3, 3)) keeps its patch; the other
+/// seven reach 1.6e-12 to 2.4e-11 past it in their trims' rounding and keep the B-spline.
+#[test]
+fn without_the_fix_seven_inner_corners_lose_their_sphere() {
+    let mut k = all_fixes_but("offset_extends_ball_patches_as_themselves");
+    let shell = shelled_box(&mut k);
+    let mut kept = Vec::new();
+    for corner in 0..8 {
+        let faces = corner_faces(&k, &shell, corner, R - WALL);
+        assert_eq!(faces.len(), 1, "corner {corner}");
+        let s = face2::surface(&shell, faces[0]).unwrap().unwrap();
+        if matches!(s.kind(), SurfaceKind::BallPatch(_)) {
+            kept.push(corner);
+        }
+    }
+    assert_eq!(kept, [1]);
 }
