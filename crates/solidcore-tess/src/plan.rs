@@ -106,7 +106,6 @@ impl TessPlan {
                 });
                 continue;
             }
-            let surface = f.surface.and_then(|i| self.surfaces.get(i as usize));
             let (Some(mut positions), Some(mut normals)) =
                 (crate::with_room(f.uv.len()), crate::with_room(f.uv.len()))
             else {
@@ -116,39 +115,41 @@ impl TessPlan {
                 });
                 continue;
             };
-            let mut why = None;
-            for (k, uv) in f.uv.iter().enumerate() {
-                let (p, n) = match surface {
-                    Some(s) => match s.eval(uv[0], uv[1]) {
-                        Ok(pn) => {
-                            let (p, n) = solidcore_convert::record_pair(pn);
-                            (f.fixed.get(k).copied().unwrap_or(p), n)
-                        }
-                        Err(e) => {
-                            why = Some(format!("vertex {k} at {uv:?}: {}", crate::eval_message(e)));
-                            break;
-                        }
-                    },
-                    // No surface: every vertex's position and normal are the plan's own (checked
-                    // by `malformed` above).
-                    None => {
-                        if let (Some(p), Some(n)) = (f.fixed.get(k), f.normals.get(k)) {
-                            (*p, *n)
-                        } else {
-                            why = Some(format!("vertex {k} has no position or normal"));
-                            break;
+            match f.surface.and_then(|i| self.surfaces.get(i as usize)) {
+                Some(s) => {
+                    let mut why = None;
+                    for (k, uv) in f.uv.iter().enumerate() {
+                        match s.eval(uv[0], uv[1]) {
+                            Ok(pn) => {
+                                let (p, n) = solidcore_convert::record_pair(pn);
+                                positions.push(f.fixed.get(k).copied().unwrap_or(p));
+                                normals.push(if f.flip { -n } else { n });
+                            }
+                            Err(e) => {
+                                why = Some(format!(
+                                    "vertex {k} at {uv:?}: {}",
+                                    crate::eval_message(e)
+                                ));
+                                break;
+                            }
                         }
                     }
-                };
-                positions.push(p);
-                normals.push(if f.flip { -n } else { n });
-            }
-            if let Some(reason) = why {
-                refused.push(RefusedFace {
-                    face: f.face as usize,
-                    reason,
-                });
-                continue;
+                    if let Some(reason) = why {
+                        refused.push(RefusedFace {
+                            face: f.face as usize,
+                            reason,
+                        });
+                        continue;
+                    }
+                }
+                // No surface: every vertex's position and normal are the plan's own, as many as
+                // it has vertices (checked by `malformed` above).
+                None => {
+                    for (p, n) in f.fixed.iter().zip(&f.normals).take(f.uv.len()) {
+                        positions.push(*p);
+                        normals.push(if f.flip { -*n } else { *n });
+                    }
+                }
             }
             // The mesh's indices are u32: a face whose vertices would lie past them is refused.
             let base = out.positions.len();
@@ -362,7 +363,14 @@ mod tests {
             edges: vec![vec![Vec3::new(1.0, 1.0, 1.0)]],
             edge_faces: vec![vec![0, 1]],
         };
-        let (a, b) = (plan.evaluate().0, plan.transformed(&m).evaluate().0);
+        let ((a, refused_a), (b, refused_b)) = (plan.evaluate(), plan.transformed(&m).evaluate());
+        // Both faces evaluated, moved and not: three vertices each.
+        assert!(
+            refused_a.is_empty() && refused_b.is_empty(),
+            "{refused_a:?} {refused_b:?}"
+        );
+        assert_eq!((a.positions.len(), b.positions.len()), (6, 6));
+        assert_eq!(a.tri_face, vec![0, 1]);
         assert_eq!(a.triangles, b.triangles);
         for (p, q) in a.positions.iter().zip(&b.positions) {
             assert!(close(apply(*p), *q, 1e-12), "{p:?} -> {q:?}");
