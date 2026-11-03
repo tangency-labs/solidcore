@@ -173,8 +173,10 @@ fn new_blend_constructs_valid_shallow_crease_rounds() {
             (1.0, 20.0),
             (2.5, 2.0),
         ] {
-            let mut k = Kernel::default();
-            k.fixes = UpstreamFixes::all();
+            let mut k = Kernel {
+                fixes: UpstreamFixes::all(),
+                ..Kernel::default()
+            };
             k.fixes.geometric_g2_continuity = false;
             k.tolerances.zone_tol_3d *= scale;
             let mut b = block_scaled(&mut k, turn, scale);
@@ -239,8 +241,10 @@ fn new_blend_vertex_contact_boundary() {
     for turn in [0.6, 1.5, 2.5, 5.0, 10.0, 30.0] {
         for sagitta in [1.9e-5, 2.1e-5, 4.9e-5, 5.1e-5] {
             let radius = sagitta / (1.0 / (0.5 * turn * PI / 180.0).cos() - 1.0);
-            let mut k = Kernel::default();
-            k.fixes = UpstreamFixes::all();
+            let mut k = Kernel {
+                fixes: UpstreamFixes::all(),
+                ..Kernel::default()
+            };
             k.fixes.geometric_g2_continuity = false;
             let mut b = block(&mut k, turn);
             let e = crease(&k, &b, turn);
@@ -264,8 +268,10 @@ fn new_blend_contact_resolution_is_body_tolerance() {
     use solidcore::kernel::UpstreamFixes;
     use solidcore::topology::brep::validation::{check_brep, CheckLevel};
     for entity_tol in [4e-5, 1e-4] {
-        let mut k = Kernel::default();
-        k.fixes = UpstreamFixes::all();
+        let mut k = Kernel {
+            fixes: UpstreamFixes::all(),
+            ..Kernel::default()
+        };
         k.fixes.geometric_g2_continuity = false;
         let mut b = block(&mut k, 2.5);
         for f in b.face_list().to_vec() {
