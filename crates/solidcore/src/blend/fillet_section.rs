@@ -32,7 +32,7 @@
 //! | [`series::V3`], [`series::VSer`] and its methods | `sm_V3`, `sm_V3From`, `sm_VSer`, `sm_VSerConst`, `sm_VSerAdd`, `sm_VSerSub`, `sm_VSerTimes`, `sm_VSerDot`, `sm_VSerCross` |
 //! | [`form::bern_mul`], [`form::bern_pow`] | `sm_BernMul`, `sm_BernPow`                       |
 //! | [`form::GnSectionForm`], [`form::gn_form`] | `sm_GnSectionForm`, `sm_GnForm`              |
-//! | [`form::hermite_points`], [`form::hermite_knots`] | `sm_HermitePoints`, `sm_HermiteKnots` |
+//! | [`form::hermite_points_sided`], [`form::hermite_knots`] | `sm_HermitePoints`, `sm_HermiteKnots` |
 //! | [`station::Partials`], [`station::Nurbs`], [`station::Nurbs::of`] | `sm_Partials`, `sm_Nurbs`, `sm_NurbsOf` |
 //! | [`station::span`], [`station::ders_basis`], [`station::nurbs_partials`] | `sm_Span`, `sm_DersBasis`, `sm_NurbsPartials` |
 //! | [`station::as_b_spline`], [`station::surface_partials`] | `IsKindOf(SmBSplineSurface_TYPE)` and the cast, `sm_SurfacePartials` |
@@ -51,6 +51,10 @@
 //! | [`section::GnSectionFsg::contact_order_at`] | `ContactOrderAt` |
 //! | [`section::ArcSection`], [`section::GnSectionFsg::circle`], [`section::GnSectionFsg::build_with_radius`] | `SmArcSection`, `SmGnSectionFSG(const SmArcSection &)` (3aae1c4), `Build`'s `dRadius` and its order 1 (cc08236) |
 //! | [`certificate::arc_rows`], [`certificate::arc_row_terms_over`] | `sm_ArcRows`, `sm_ArcRowTermsOver` (cc08236) |
+//! | [`definition::T2Of`], [`definition::TvOf`], [`definition::T2Scalar`] | `sm_T2Of`, `sm_TVT`, `sm_PositiveFinite`, `sm_PowOf` (c5b6bb7: `sm_T2` and `sm_TV` over `double` or `sm_Ivl`) |
+//! | [`certificate::SpanAt`], [`certificate::gn_enclose_over`], [`certificate::face_partials_over`] | `sm_GnSpanAt`, `sm_GnEncloseOver`, `sm_FacePartialsOver` (c5b6bb7) |
+//! | [`definition_box`] | `sm_GnDefPiece`, `sm_GnDefFace`, `sm_GnDefs`, `sm_DefinitionEnclosable`, `sm_GnDefFaceOf`, `sm_DefPieceAt`, `sm_BernTaylorOver`, `sm_DefinitionPartialsNaive`, `sm_DefinitionPartialsOverBox` (c5b6bb7) |
+//! | [`station::feet_on_knots`] | `sm_FeetOnKnots` (c5b6bb7) |
 //!
 //! Deviations:
 //! - **The equal area thumbweight.** Resolved at every station (the fork's 7102bc5), so
@@ -92,6 +96,7 @@
 
 pub mod certificate;
 pub mod definition;
+pub mod definition_box;
 pub mod form;
 pub mod interval;
 pub mod section;
