@@ -197,27 +197,71 @@ fn swept_net() -> BSplineSurface {
     BSplineSurface::from_nurb(nurb, false)
 }
 
+/// SolidCraft's own fix profile at its `ws/pin-16`: every flag on but the two it holds
+/// back, `fillet_keep_features` and `fillet_refuse_rounds_breaking_through`, as
+/// `issue_2370_keep_features_band_clear_of_boss` names that profile. The issue measured
+/// through SolidCraft, so this is the set its refusal came from.
+fn solidcraft_fixes() -> UpstreamFixes {
+    let mut fixes = UpstreamFixes::all();
+    fixes.fillet_keep_features = false;
+    fixes.fillet_refuse_rounds_breaking_through = false;
+    fixes
+}
+
+/// The fix sets this test runs, each with the name it is reported under: the pinned C++
+/// behaviour, SolidCraft's profile, every flag on, and each flag alone on top of the
+/// default.
+///
+/// That is `3 + UpstreamFixes::NAMES.len()` of the `2 ^ NAMES.len()` sets the type can
+/// hold. The flags are independent fields, so a set that is not run here can still differ
+/// from all of these; the test pins the sets it names and makes no claim about the rest.
+fn measured_fix_sets() -> Vec<(&'static str, UpstreamFixes)> {
+    let mut sets = vec![
+        ("default", UpstreamFixes::default()),
+        ("solidcraft", solidcraft_fixes()),
+        ("all", UpstreamFixes::all()),
+    ];
+    for &name in UpstreamFixes::NAMES {
+        let mut fixes = UpstreamFixes::default();
+        *fixes
+            .flag_mut(name)
+            .expect("NAMES lists field names flag_mut finds") = true;
+        sets.push((name, fixes));
+    }
+    sets
+}
+
 #[test]
 fn the_swept_span_is_recognised_as_a_surface_of_extrusion_not_a_cylinder() {
-    // Both ends of the fix range: the pinned C++ behaviour and every flag on. A refusal
-    // from a recognised cylinder would need some setting in between to differ from both.
-    for fixes in [UpstreamFixes::default(), UpstreamFixes::all()] {
+    let net = swept_net();
+    // Every set is run before anything is asserted, so a failure names all the sets that
+    // differ rather than only the first.
+    let mut other_kind: Vec<String> = Vec::new();
+    let mut failed_tests: Vec<String> = Vec::new();
+    for (tag, fixes) in measured_fix_sets() {
         let k = Kernel {
             fixes,
             ..Kernel::default()
         };
-        let recognised = swept_net()
+        let recognised = net
             .copy_and_add_analytics(&k)
             .expect("the extrusion net goes through the recogniser");
-        assert_eq!(
-            kind_name(&recognised),
-            "SurfOfExtrusion",
-            "the near-straight span is no cylinder"
-        );
+        let kind = kind_name(&recognised);
+        if kind != "SurfOfExtrusion" {
+            other_kind.push(format!("{tag}: {kind}"));
+        }
         let failed = failed_surface_tests(&k, &recognised);
-        assert!(
-            failed.is_empty(),
-            "the recognised surface failed its own tests: {failed:?}"
-        );
+        if !failed.is_empty() {
+            failed_tests.push(format!("{tag}: {failed:?}"));
+        }
     }
+    assert!(
+        other_kind.is_empty(),
+        "the near-straight span is no cylinder under the sets measured here, but          {} of them recognised another surface: {other_kind:?}",
+        other_kind.len()
+    );
+    assert!(
+        failed_tests.is_empty(),
+        "the recognised surface failed its own tests: {failed_tests:?}"
+    );
 }
