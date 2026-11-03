@@ -5,7 +5,7 @@ name: Parked cases vs upstream latest
 #
 # Three jobs, so that upstream's unpinned HEAD never runs next to a write token or a cache
 # that main CI reads:
-# - `watch` (no token permissions) runs nightly and only asks upstream usd-brep for its
+# - `watch` (no token permissions) runs nightly and only asks upstream (UPSTREAM_REPO) for its
 #   tags and HEAD (`git ls-remote`): no checkout, no cargo, no C++. When that state is the
 #   one already seen it stops there.
 # - `run-parked` (contents: read, checkout without persisted credentials) runs only when
@@ -43,8 +43,9 @@ concurrency:
 env:
   CARGO_TERM_COLOR: always
   CARGO_INCREMENTAL: 0
-  # Must match ci.yml (the repository only; the commit is upstream's HEAD here).
-  UPSTREAM_REPO: https://github.com/NVIDIA-Omniverse/usd-brep
+  # Must match UPSTREAM_REPO in scripts/upstream-pin.env (the repository only; the commit
+  # is upstream's HEAD here): the SMLib fork, whose shims harness/cpp/shim follows.
+  UPSTREAM_REPO: https://github.com/tangency-labs/smlib
 
 jobs:
   watch:
