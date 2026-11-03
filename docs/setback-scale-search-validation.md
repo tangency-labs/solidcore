@@ -95,6 +95,26 @@ not the pinned reference used for default-behavior difftests.
 
 ### Resumed refresh
 
+The subsequent main refresh merges `d7319e27e` in `a2ce56e45`, also without
+conflicts or manual resolutions. It preserves #2373/#2375 cancellation polling
+and propagation in Gn sections, offsets, shells and sweeps. Those changes do
+not alter the uncancelled numerical formulas or row/tie order. The evidence
+below is attributed to the earlier library unless explicitly identified as
+post-cancellation-merge verification.
+
+Post-cancellation-merge verification on `a2ce56e45`: formatting and all seven
+integration tests in `issue_2371_gn_section_cancel` (4) and
+`issue_2372_offset_shell_sweep_cancel` (3) pass. These include fired-token
+propagation, in-operation cancellation and bit-for-bit no-token versus
+unfired-token results. This does not resolve the reference-boundary failures.
+The six legacy pinned C++ executive/corner caller units also pass on that
+merge: 3172 cases including 45 guard rejections, zero failures or deferrals.
+They remain default-path regression evidence, not opt-in fork acceptance.
+All 17 tests across the G2 (8), unequal-box (2) and direct-setback (7)
+integration suites pass on this merge as well.
+Workspace clippy (`--workspace --all-targets -- -D warnings`) and the wasm32
+check also pass on this merge.
+
 Authoritative main `ba69ec95d` is merged locally in `8690f4528` without
 conflicts or manual resolutions. Both #2369 and #2274 are now merged; their
 review/merge is no longer a dependency blocker. This preserves main's exact-spine
@@ -124,7 +144,10 @@ All six affected legacy pinned C++ caller units pass freshly on this merged
 library: executive p1-p3 and corner p1-p3, 3172 cases including 45 guard
 rejections, zero mismatches or deferrals, all reported maximum relative errors 0.
 This is a default-path regression gate, not acceptance against the fork for
-the opt-in construction.
+the opt-in construction. On this same merged library, all eight G2 regressions,
+both unequal-box regressions, all seven direct-setback tests and the focused
+exact-spine cylinder regression pass. Workspace clippy and wasm32 checks also
+exit successfully.
 The PR remains draft. CI run 41549430827
 at `ed7a76660` still has zero jobs and needs repository-admin approval.
 
@@ -133,8 +156,8 @@ at `ed7a76660` still has zero jobs and needs repository-admin approval.
 Merged authoritative main `ebe6722e09169cce29a20c455fc6ec606b57caa0`
 and #2369 `ee6e1b349e9ebae287246cc42a787a6620ab429e` into the
 published branch, without rebasing or changing dependency branches. #2274 is
-merged. #2369 is open, ready for review and has thirteen successful checks;
-its review and merge remain dependencies of this stacked contribution.
+merged. At that earlier refresh #2369 was open with thirteen successful checks;
+it has since merged, so its review/merge is no longer a dependency blocker.
 
 The main merge resolved two documentation conflicts: retain `JoinSection = 16`
 and `Precomputed = 14` with main's discriminant explanation; retain the new
@@ -149,7 +172,7 @@ Its native scale-search volume is `7927.724282512234`, replacing the dependency'
 old-search `7928.142563966`. Both states of the added Rust regression pass;
 the flag-off expected volume was preserved.
 
-### Fresh merged-code results
+### Results of that earlier refresh
 
 Workspace clippy (`--workspace --all-targets -- -D warnings`), wasm32 check
 and formatting pass under Ubuntu WSL with two Cargo jobs and low priority.
