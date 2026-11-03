@@ -73,7 +73,8 @@ use super::certify::{
     affine_fundamentals, affine_net, fundamentals, minor_without, t_axpy, t_det3, t_du, t_dv,
     t_make, t_mul_fast, t_nonneg, t_pieces, t_scale, AffinePatch,
 };
-use super::graph::{fill_from, GRAPH_DEPTH, GRAPH_DIRECTIONS, GRAPH_LEVELS, P2};
+use super::convexity::{GRAPH_DIRECTIONS, GRAPH_LEVELS};
+use super::graph::{fill_from, GRAPH_DEPTH, P2};
 use super::qp::{dual_qp_rows, QpOutcome};
 use super::spring::spring_curve;
 use super::{
