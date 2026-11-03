@@ -121,6 +121,7 @@ pub(crate) fn cut_grid(
         if cells(&us, &vs) <= super::grid::MAX_FACE_GRID || (us.len() <= 2 && vs.len() <= 2) {
             break;
         }
+        // Proven: the divisor is the constant 10, not zero.
         let cap = us.len().saturating_mul(vs.len()).saturating_mul(9) / 10;
         super::grid::thin(&mut us, &mut vs, cap);
     }
@@ -436,6 +437,7 @@ fn clear_cells(
                 return None;
             };
             let xm = 0.5 * (x0 + x1);
+            // Proven: the divisor is the constant 2, not zero.
             let inside = cross.partition_point(|c| *c < xm) % 2 == 1;
             if near.get(k).copied().unwrap_or(true) || !inside {
                 *keep.get_mut(*rects.of.get(k)?)? = false;
@@ -560,6 +562,34 @@ mod tests {
         check(&b, &loops, poly_area, &out);
         // Most of the disc is grid cells (two triangles each).
         assert!(out.1.len() > 100, "{}", out.1.len());
+    }
+
+    /// A square with a hole and lines wanting more cells than a grid may have (1000 × 1000,
+    /// past [`super::super::grid::MAX_FACE_GRID`]): the cut grid thins its lines until the cells
+    /// fit, and still meshes the face (it gave the face up, for an under-refined Delaunay: the
+    /// halves of a split coil measured 1.5% short of the whole).
+    #[test]
+    fn lines_past_the_grid_cap_are_thinned_to_fit() {
+        let mut b = vec![[0.0, 0.0], [4.0, 0.0], [4.0, 4.0], [0.0, 4.0]];
+        b.extend(circle([2.0, 2.0], 1.0, 32, false));
+        let loops = [0..4, 4..36];
+        let hole = 0.5 * 32.0 * (std::f64::consts::TAU / 32.0).sin();
+        let Some(out) = cut_grid(
+            &b,
+            &loops,
+            &lines(0.0, 4.0, 1000),
+            &lines(0.0, 4.0, 1000),
+            &[],
+            [1.0, 1.0],
+        ) else {
+            panic!("meshes")
+        };
+        check(&b, &loops, 16.0 - hole, &out);
+        assert!(
+            out.0.len() <= super::super::grid::MAX_FACE_GRID,
+            "{} points",
+            out.0.len()
+        );
     }
 
     #[test]
