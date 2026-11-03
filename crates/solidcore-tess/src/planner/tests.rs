@@ -486,39 +486,38 @@ fn analytic(b: &brep::Brep, face: usize) -> bool {
 }
 
 /// The farthest a triangle's centroid lies from its face's surface, over the faces whose record
-/// surface is a plane, cylinder, cone, sphere or torus: the distance to the surface point the
-/// kernel's projection ([`solidcore::eval::uv::project`]) finds from the triangle's mean
-/// parameters.
+/// surface is a plane, cylinder, cone, sphere or torus: the distance to the nearest point of the
+/// record's own exact surface (its kind's closed form, [`SurfaceEval`]), found in the record's
+/// (u, v) by the kernel's projection ([`SurfaceEval::project`]), not on the planner's form of it,
+/// so a wrong conversion of the record's surface would show here.
 fn max_chord(body: &brep::Brep, plan: &TessPlan) -> f64 {
+    use solidcore::eval::SurfaceEval;
     let mut worst: f64 = 0.0;
     for f in &plan.faces {
         if !analytic(body, f.face as usize) {
             continue;
         }
+        let record = &body.faces[f.face as usize];
+        let Ok(exact) = SurfaceEval::new(&kernel::surface(&record.surface)) else {
+            panic!("face {}: the record's evaluator", f.face)
+        };
         let s = &plan.surfaces[f.surface.unwrap() as usize];
-        let dom = solidcore::eval::uv::domain(s);
-        let at = |i: u32| -> (Vec3, [f64; 2]) {
+        let at = |i: u32| -> Vec3 {
             let q = f.uv[i as usize];
-            let p = f
-                .fixed
+            f.fixed
                 .get(i as usize)
                 .copied()
-                .unwrap_or_else(|| kernel::record_vec3(s.derivs(q[0], q[1]).unwrap().0));
-            (p, q)
+                .unwrap_or_else(|| kernel::record_vec3(s.derivs(q[0], q[1]).unwrap().0))
         };
         for t in &f.triangles {
-            let [(a, qa), (b, qb), (c, qc)] = t.map(at);
+            let [a, b, c] = t.map(at);
             let centroid = (a + b + c) * (1.0 / 3.0);
-            let hint = [(qa[0] + qb[0] + qc[0]) / 3.0, (qa[1] + qb[1] + qc[1]) / 3.0];
-            let on = solidcore::eval::uv::project(
-                s,
-                &dom,
-                kernel::vec3(centroid),
-                Some(hint),
-                f64::INFINITY,
-            )
-            .unwrap_or_else(|| panic!("face {}: no projection of {centroid:?}", f.face));
-            let q = kernel::record_vec3(s.derivs(on[0], on[1]).unwrap().0);
+            let on = exact
+                .project(kernel::vec3(centroid), None, f64::INFINITY)
+                .unwrap_or_else(|| panic!("face {}: no projection of {centroid:?}", f.face));
+            let Some((q, _, _)) = exact.derivs(on[0], on[1]).map(kernel::record_triple) else {
+                panic!("face {}: the record's surface at {on:?}", f.face)
+            };
             worst = worst.max(q.dist(centroid));
         }
     }
