@@ -596,7 +596,7 @@ fn beside_a_curved_face_the_fill_keeps_no_plane_definition() {
                 .unwrap()
                 .surface
                 .as_ref()
-                .and_then(|s| s.procedural_blend())
+                .and_then(Surface::procedural_blend)
                 .and_then(|d| d.corner())
                 .is_some_and(|c| c.kind() == CornerKind::Setback)
         })
