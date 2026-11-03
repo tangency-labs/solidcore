@@ -465,7 +465,7 @@ impl SolutionEnd {
         self.parameters
             .get(index)
             .copied()
-            .ok_or(bad_param("geom::solution_array::SolutionEnd::param"))
+            .ok_or_else(|| bad_param("geom::solution_array::SolutionEnd::param"))
     }
 
     /// Mutable parameter `index` (`operator[]`).
@@ -476,7 +476,7 @@ impl SolutionEnd {
     pub fn param_mut(&mut self, index: usize) -> Result<&mut f64> {
         self.parameters
             .get_mut(index)
-            .ok_or(bad_param("geom::solution_array::SolutionEnd::param_mut"))
+            .ok_or_else(|| bad_param("geom::solution_array::SolutionEnd::param_mut"))
     }
 }
 
@@ -786,7 +786,7 @@ impl<O: SolutionObject> Solution<O> {
             }
             // This is not the index we want, move down to the next start
             // parameter based on the type of the object.
-            let kind = object.ok_or(null_object(OP))?.kind();
+            let kind = object.ok_or_else(|| null_object(OP))?.kind();
             if kind.is_kind_of(ObjectKind::Curve) || kind.is_kind_of(ObjectKind::Edge) {
                 param_index += 1;
             } else if kind.is_kind_of(ObjectKind::Face) || kind.is_kind_of(ObjectKind::Surface) {
@@ -836,7 +836,7 @@ impl<O: SolutionObject> Solution<O> {
 
         // for every object in this solution
         for i in 0..=index {
-            let object = self.object(i, OP)?.ok_or(null_object(OP))?;
+            let object = self.object(i, OP)?.ok_or_else(|| null_object(OP))?;
             let kind = object.kind();
 
             // convert object index into parameter index
@@ -1033,7 +1033,9 @@ impl<O: SolutionObject> Solution<O> {
         else {
             return Ok(None);
         };
-        let object = self.object(object_index, OP)?.ok_or(null_object(OP))?;
+        let object = self
+            .object(object_index, OP)?
+            .ok_or_else(|| null_object(OP))?;
         let kind = object.kind();
 
         // Get the parameter interval from pObject
@@ -1264,12 +1266,33 @@ fn curve_natural_interval<O: SolutionObject>(
     if let Some(ivl) = domains.natural_interval(curve) {
         return Ok(ivl);
     }
-    // UNPORTED(curve.curve_p2): SmCurve::GetNaturalInterval (a handle that cannot
-    // reach its curve)
-    Err(SolidError::Unported {
-        upstream: "SmCurve::GetNaturalInterval",
-        unit: "curve.curve_p2",
-    })
+    // Upstream reads the SmCurve the handle points to; every library path resolves it
+    // (the 1.0.1 audit of every IdenticalSolutions and IsEqual reader):
+    // - the curve solvers' IdenticalSolutions resolve a curve handle to the curve its
+    //   tree decomposes (TreeCurves: CcGlobalSolver, CpGlobalSolver, CciGlobalSolver,
+    //   CurvePropertyGs), the curve/surface and surface solvers to their operands
+    //   (SolveOperands, LsiGlobalSolver, CsGlobalSolver, SpGlobalSolver, SsGlobalSolver,
+    //   CsiGlobalSolver, TopologySolver); trimming-tool loops read their curve store
+    //   (StoreDomains);
+    // - GlobalCoincidenceChecker's merge of its split parts resolves the two curves'
+    //   handles to their curves (curve::curve::p6 MergeSolver, CurvePair);
+    // - the solvers that keep GlobalSolver's default IdenticalSolutions
+    //   (InteriorSolver, AdvSurfaceIntersector, GlobalSolver itself) never reach it from
+    //   their own solves: their LocalSolve is GlobalSolver::local_solve (no SurfaceTrace
+    //   overrides it) or AdvSurfaceIntersector's SolveBranch, which store NodesOnly or
+    //   leaf solutions with SolutionArray::add; the GlobalSolver instances that call
+    //   AddSortedSolution name an interval-carrying CurveHandle (surface::plane::p2) or a
+    //   surface (SurfOfRevolution::drop_point_fast_using's OperandObject::Surface);
+    // - SolutionArray::add_sorted_solution over OwnDomains is called only by
+    //   SmSurfPtGlobalSolver's seam solutions (surface::surface_point_solve::p2), which
+    //   name the OperandObject::Surface stand-in of Surface::global_point_solve_in;
+    //   Solution::is_equal, Solution::parameter_interval and
+    //   GlobalSolver::identical_solutions over OwnDomains have test callers only.
+    // A handle reaching here names no curve the caller can resolve: invalid input.
+    Err(SolidError::invalid_input(
+        "geom::solution_array::Solution::parameter_interval",
+        "curve handle without a natural interval",
+    ))
 }
 
 /// `SmFace::GetSurface`: the handle's [`SolutionObject::face_surface`].
@@ -1298,6 +1321,13 @@ fn face_uv_domain<O: SolutionObject>(
     }
     // UNPORTED(topology.face_p2): SmFace::GetUVDomain (a handle that cannot reach its
     // face)
+    // Proof (unreachable): only the topology solver's solves name faces (SmTLS* with UV
+    // parameters), and its IdenticalSolutions reads them through TopologyDomains, which
+    // falls back to the required TopologyObjects::face_uv_domain of the faces it named;
+    // the other domains (OwnDomains, TreeCurves, CurvePair, SolveOperands, StoreDomains)
+    // serve solutions naming curves, surfaces, operand stand-ins or loop curves. 0 hits
+    // in the green difftest sweep (intersect.topology_solver_p2 2575/2575 since #1668,
+    // whose silhouette solves stopped naming the face for their temporary curves).
     Err(SolidError::Unported {
         upstream: "SmFace::GetUVDomain",
         unit: "topology.face_p2",
@@ -1508,7 +1538,7 @@ impl<O: SolutionObject> SolutionArray<O> {
         self.data
             .get(index)
             .copied()
-            .ok_or(bad_index("geom::solution_array::SolutionArray::get_at"))
+            .ok_or_else(|| bad_index("geom::solution_array::SolutionArray::get_at"))
     }
 
     /// Replaces solution `index` (`SetAt`).
@@ -1520,7 +1550,7 @@ impl<O: SolutionObject> SolutionArray<O> {
         let slot = self
             .data
             .get_mut(index)
-            .ok_or(bad_index("geom::solution_array::SolutionArray::set_at"))?;
+            .ok_or_else(|| bad_index("geom::solution_array::SolutionArray::set_at"))?;
         *slot = *solution;
         Ok(())
     }
@@ -2025,6 +2055,19 @@ mod tests {
     }
 
     #[test]
+    fn a_curve_handle_without_its_interval_is_invalid_input() {
+        // every library path resolves a curve handle's interval (see
+        // `curve_natural_interval`): one that cannot is a caller error, not a deferral
+        let mut s = single(0.0, &[0.5]);
+        s.num_objects = 1;
+        s.objects[0] = Some(Obj(1, ObjectKind::Curve));
+        assert!(matches!(
+            s.parameter_interval(0),
+            Err(SolidError::InvalidInput { .. })
+        ));
+    }
+
+    #[test]
     fn array_editing() {
         let mut a: SolutionArray<Obj> = SolutionArray::with_capacity(8);
         assert!(a.is_empty());
@@ -2150,7 +2193,8 @@ mod tests {
             Some(4)
         );
 
-        // curves as first objects need their parameter intervals: unported
+        // curves as first objects need their parameter intervals: a handle that reports
+        // none is invalid input (no library path names one, see `curve_natural_interval`)
         let mut d = single(0.0, &[0.5]);
         d.num_objects = 1;
         d.objects[0] = Some(Obj(1, ObjectKind::Curve));
@@ -2158,7 +2202,7 @@ mod tests {
         e.add_sorted_solution(&d, SortKey::BySolutionValue).unwrap();
         assert!(matches!(
             e.add_sorted_solution(&d, SortKey::BySolutionValue),
-            Err(SolidError::Unported { .. })
+            Err(SolidError::InvalidInput { .. })
         ));
     }
 

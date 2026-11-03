@@ -387,7 +387,7 @@ impl RecoveryOps for Script {
     ) -> Result<()> {
         assert!(!analytic);
         assert!(direction.is_some());
-        assert!(c.fillets.geom(g)?.fillet_surface()?.is_none());
+        assert!(c.fillets.geom(g)?.fillet_surface(None)?.is_none());
         self.call("recalc")?;
         c.fillets.geom_mut(g)?.set_fillet_surface(Some(plane()));
         Ok(())
@@ -502,7 +502,13 @@ fn failure_before_trim_keeps_partial_surface_removal_corner_and_changed_offsets(
     assert_eq!(script.calls.last().unwrap(), "recalc");
     assert!(!script.calls.iter().any(|s| s == "trim"));
     assert_eq!(adjusted, [FilletCornerId(41)]);
-    assert!(f.fb.geom(id).unwrap().fillet_surface().unwrap().is_none());
+    assert!(f
+        .fb
+        .geom(id)
+        .unwrap()
+        .fillet_surface(None)
+        .unwrap()
+        .is_none());
     assert_eq!(f.solver.orientations[0], -1.0);
     assert_ne!(f.solver.surfaces[0].as_ref().unwrap().key, 20);
 }
@@ -545,7 +551,10 @@ fn a_broken_corner_callee_cannot_spin_the_segment_walk_forever() {
         ..Script::default()
     };
     let result = f.context().process(id, &mut vec![], &mut script);
-    assert!(matches!(result, Err(SolidError::InvalidInput { .. })));
+    assert!(matches!(
+        result,
+        Err(SolidError::InvalidInput { .. } | SolidError::PortInvariant { .. })
+    ));
     assert_eq!(script.find_count, 44);
 }
 #[test]
@@ -1043,7 +1052,7 @@ fn rollover_trim_uses_the_live_solver_at_its_nonzero_id() {
             &f.solver,
             &f.target
         ),
-        Err(SolidError::InvalidInput { .. })
+        Err(SolidError::InvalidInput { .. } | SolidError::PortInvariant { .. })
     ));
 }
 

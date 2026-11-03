@@ -77,6 +77,16 @@ point), the HANG-43 family (corpus `fuzz01218` / `fuzz01458`, `cpp_skip`). Neith
 sweep.api_brep regime of this PR; both reproducers are in the nightly artifact format under
 the PR's scratch output and belong to the owners of those records.
 
+Merging `origin/main` (2026-11-03) brought the HANG-5 / HANG-43 path-extent guard
+(`check_path_extent`, nightly fuzz00293) and the repetition check (fuzz00132), which
+`main` applies on the runner's Rust side one check at a time; this branch applies the whole
+`ffi::validate` there instead (PR #502 / #1358's convention), which includes both, so the
+corpus outcomes of `fuzz00293` and `fuzz00132` are unchanged.
+
+After the merge the gate is `PASS sweep.api_brep cases=705 passed=705 failed=0 deferred=0
+max_rel_err=0e0` and a local `--fuzz 300` is `FUZZ-PASS cases=300 rejected=36 malformed=105
+ran=159 differs=0 crashes=0 panics=0 timeouts=0` (the larger case list picks other base cases).
+
 ## Follow-up (not taken here): a draft sweep of an open profile with a gap crashes upstream
 
 The local `--fuzz 300` of 2026-10-27 (case list of `main` at b76307823) also found

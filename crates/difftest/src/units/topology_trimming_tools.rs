@@ -17,8 +17,10 @@
 //! **B-rep ops** use the B-reps of unit `topology.vertexuse` (upstream `.smb` files and
 //! faces of B-spline surfaces or real `SmPlane`s): the C++ side builds a real `SmBrep`
 //! and preserves exactly exported analytic surfaces. Other surfaces and edge curves
-//! get the plain B-spline copies the Rust import rebuilds; the Rust side imports the
-//! graph that unit's shim exports. Loop,
+//! get the plain B-spline copies the Rust import rebuilds. The Rust side reads an `.smb`
+//! file itself (`crate::own_builder::read_with`: the Rust reader) and builds a wire, face
+//! or network the way the shim's `build` does (`crate::own_builder::build_as`), each
+//! renumbered into the shim's walk order: no C++ export reaches the Rust side. Loop,
 //! face and edge use selectors are taken modulo their counts. The mutating ops compare
 //! every edge use's UV trim curve afterwards.
 //!
@@ -1186,7 +1188,7 @@ fn find_outer(
             o.push(0.0);
             put_outer(o, &ordered, &counts, &orients, normal, &outer);
         }
-        Err(SolidError::InvalidInput { .. }) => o.extend([0.0, NULL_DEREF]),
+        Err(SolidError::InvalidInput { .. } | SolidError::PortInvariant { .. }) => o.extend([0.0, NULL_DEREF]),
         Err(e) => {
             o.push(status::<()>(&Err(e))?);
         }
@@ -1339,7 +1341,7 @@ fn run_rust_geom(k: &mut Kernel, op: &OpIn) -> Result<Vec<f64>, Fail> {
                 surface_orientation: OrientType::Same,
             };
             let mut b = Brep::new();
-            let mut records = std::collections::BTreeMap::new();
+            let mut records = solidcore::topology::topology::NotifyRecords::new();
             let mut attributes = solidcore::geom::attribute::AttributeStore::default();
             let key_of = |_| solidcore::geom::object::ObjectRef {
                 type_code: 0,
@@ -1382,14 +1384,14 @@ fn run_rust_geom(k: &mut Kernel, op: &OpIn) -> Result<Vec<f64>, Fail> {
 }
 
 /// The shim's `tt_sample_safe`.
-fn sample_safe(l: &CurveLoops, store: &[Curve], key: CurveKey, t: f64) -> Result<bool, Fail> {
+fn sample_safe(k: &Kernel, l: &CurveLoops, store: &[Curve], key: CurveKey, t: f64) -> Result<bool, Fail> {
     let c = store.get(key.0).ok_or_else(|| harness("key"))?;
     let d = c.natural_interval();
     let tol = d.length() / 1000.0;
     if d.contains_value(t, -tol) {
         return Ok(true);
     }
-    let adj = match l.find_adjacent_loop_curve(store, key, t) {
+    let adj = match l.find_adjacent_loop_curve(k, store, key, t) {
         Ok(a) => a,
         Err(e) if e.is_unported() => return Err(fail(&e)),
         Err(_) => 0,
@@ -1431,7 +1433,7 @@ fn run_rust_loops(
             }
             LoopOp::StartEnd { i } => {
                 o.push(2.0);
-                let r = l.loop_start_end(u(*i));
+                let r = l.loop_start_end(k, u(*i));
                 o.push(status(&r)?);
                 if let Ok((s, e)) = r {
                     o.extend([s as f64, e as f64]);
@@ -1439,7 +1441,7 @@ fn run_rust_loops(
             }
             LoopOp::Adjacent { key, t } => {
                 o.push(3.0);
-                let r = l.find_adjacent_loop_curve(&store, CurveKey(*key), *t);
+                let r = l.find_adjacent_loop_curve(k, &store, CurveKey(*key), *t);
                 o.push(status(&r)?);
                 if let Ok(a) = r {
                     o.push(a as f64);
@@ -1455,7 +1457,7 @@ fn run_rust_loops(
             }
             LoopOp::Sample { key, t } => {
                 o.push(5.0);
-                if !sample_safe(&l, &store, CurveKey(*key), *t)? {
+                if !sample_safe(k, &l, &store, CurveKey(*key), *t)? {
                     o.push(NULL_DEREF);
                     continue;
                 }
@@ -1479,7 +1481,7 @@ fn run_rust_loops(
                     o.push(NULL_DEREF);
                     continue;
                 };
-                if !sample_safe(&l, &store, CurveKey(*key), *t)? {
+                if !sample_safe(k, &l, &store, CurveKey(*key), *t)? {
                     o.push(NULL_DEREF);
                     continue;
                 }
@@ -1807,7 +1809,8 @@ fn put_reports(o: &mut Vec<f64>, a: &AssertArray) {
     o.push(flag(a.last_add()));
 }
 
-/// The shim's `tt_put_uv_curves`.
+/// The shim's `tt_put_uv_curves`: every edge use's UV trim curve, then each one's owner
+/// (the shim's `g.find(6, uv->GetOwner())`, [`crate::own_builder::uv_owner_index`]).
 fn put_uv_curves(o: &mut Vec<f64>, b: &Brep) {
     o.push(b.edgeuses().len() as f64);
     for (_, r) in b.edgeuses().iter() {
@@ -1818,6 +1821,9 @@ fn put_uv_curves(o: &mut Vec<f64>, b: &Brep) {
                 put_nurb(o, c);
             }
         }
+    }
+    for (eu, _) in b.edgeuses().iter() {
+        o.push(crate::own_builder::uv_owner_index(b, eu, None));
     }
 }
 
@@ -2123,15 +2129,44 @@ fn run_rust(i: &OpIn) -> Result<Output, HarnessError> {
         };
     }
     let r = match brep_of(i) {
-        Some(brep) => {
-            let ex = export_of(brep)?;
-            let Some(c) = fixture::counts(&ex) else {
-                return Ok(Output::new().values("out", ex.to_vec()));
+        Some(brep @ BrepIn::File { rebuild, .. }) => {
+            // an `.smb` file: read by the Rust reader and renumbered into the shim's
+            // walk order (no C++ export reaches the Rust side)
+            use crate::own_builder::{build_status, counts, read_with, Built, Conventions};
+            let path = shared::path_of(brep)?;
+            let conv = &Conventions::EDGEUSE_GRAPH;
+            let mut b = match read_with(&mut k, &path, *rebuild, false, false, conv)? {
+                Built::Brep(b) => *b,
+                Built::Failed(e) => {
+                    return Ok(Output::unported(&e).unwrap_or_else(|| {
+                        Output::new().values("out", vec![-1.0, build_status(&e)])
+                    }))
+                }
             };
-            let Some(op) = resolve_op(i, c) else {
+            let Some(op) = resolve_op(i, counts(&b)) else {
                 return Ok(Output::err("no_entity_of_that_kind"));
             };
-            let (mut b, _) = shared::import(&ex)?;
+            run_rust_brep(&mut k, &mut b, &op)
+        }
+        Some(brep) => {
+            // a wire, face or network: built by the Rust kernel as the shim's `build`
+            // builds it (`validate_only` and `init_gaps` off) and renumbered into the
+            // shim's walk order (no C++ export reaches the Rust side)
+            use crate::own_builder::{build_as, build_status, counts, Built, Conventions};
+            let conv = &Conventions::EDGEUSE_GRAPH;
+            let built = build_as(&mut k, brep, false, false, conv)?
+                .ok_or_else(|| harness("own builder: a non-file source was not built"))?;
+            let mut b = match built {
+                Built::Brep(b) => *b,
+                Built::Failed(e) => {
+                    return Ok(Output::unported(&e).unwrap_or_else(|| {
+                        Output::new().values("out", vec![-1.0, build_status(&e)])
+                    }))
+                }
+            };
+            let Some(op) = resolve_op(i, counts(&b)) else {
+                return Ok(Output::err("no_entity_of_that_kind"));
+            };
             run_rust_brep(&mut k, &mut b, &op)
         }
         None => run_rust_geom(&mut k, i),

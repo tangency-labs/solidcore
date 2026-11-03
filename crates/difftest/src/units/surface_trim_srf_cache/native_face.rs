@@ -1,9 +1,10 @@
-//! Real, exactly imported face topology with live native trim-cache operations.
+//! Real `.smb` face topology with live native trim-cache operations.
 //!
-//! The shared `topology.face_p2` export supplies INPUT geometry/topology only.
-//! Both engines independently build/classify; no native result is used on Rust's
-//! output path. Planes stay planes and inexact analytic-as-B-spline exports are
-//! never selected. The existing synthetic lane and all of its cases are unchanged.
+//! Each side reads the file itself: the C++ side with `SmBrep::ReadFromFile`, the
+//! Rust side with the Rust reader (`crate::own_builder::read_as`, renumbered into the
+//! shim's traversal order), so no C++ state reaches the Rust side. Both engines
+//! independently build/classify. Planes stay planes; faces are selected by surface
+//! type, loop count and occurrence on both sides. The existing synthetic lane and all of its cases are unchanged.
 
 use serde::Deserialize;
 use serde_json::Value;
@@ -23,7 +24,6 @@ use solidcore::topology::face::p4 as face_p4;
 use solidcore::topology::{Brep, FaceId};
 use solidcore::{Result as SolidResult, SolidError};
 use solidcore_ffi::units::surface_trim_srf_cache_faces as ffi;
-use solidcore_ffi::units::topology_face_p2 as input_graph;
 
 use crate::{HarnessError, Output};
 
@@ -41,6 +41,10 @@ struct Inputs {
     #[serde(default)]
     occurrence: u32,
     build: bool,
+    /// `GetTree` after the build step: 0 none, 1 with the editing flag as is, 2 with
+    /// editing disabled first.
+    #[serde(default)]
+    get_tree: u8,
     #[serde(default)]
     editing: bool,
     #[serde(default)]
@@ -61,12 +65,22 @@ fn flag(value: bool) -> f64 {
 }
 
 impl Inputs {
+    /// The shim's `build_mode` (see the FFI module).
+    fn build_mode(&self) -> f64 {
+        match (self.build, self.get_tree) {
+            (false, 0) => 0.0,
+            (true, 0) => 1.0,
+            (true, g) => 1.0 + f64::from(g),
+            (false, g) => 3.0 + f64::from(g),
+        }
+    }
+
     fn flat(&self) -> Vec<f64> {
         let mut out = vec![
             f64::from(self.surface_type),
             f64::from(self.loops),
             f64::from(self.occurrence),
-            flag(self.build),
+            self.build_mode(),
             flag(self.editing),
             flag(self.modified),
             flag(self.test_tol),
@@ -81,6 +95,9 @@ impl Inputs {
 fn parse(value: &Value) -> Result<Inputs, HarnessError> {
     let input: Inputs = serde_json::from_value(value.clone())
         .map_err(|e| harness(format!("native_face input: {e}")))?;
+    if input.get_tree > 2 {
+        return Err(harness("native_face get_tree must be 0, 1 or 2"));
+    }
     ffi::validate(&input.path, &input.flat()).map_err(|e| harness(e.to_string()))?;
     Ok(input)
 }
@@ -175,7 +192,8 @@ fn identity(entity: EntityRef) -> (i64, u32) {
     }
 }
 
-// topology_face_p2::import assigns owner key 1 + traversal-order face index.
+// The renumbered read (`Conventions::TOPOLOGY_FIXTURE`) owns each face's surface
+// under key 1 + traversal-order face index.
 // This mapping is explicit; kernel cache code never decodes an ObjectKey as an id.
 fn key_of(entity: EntityRef) -> ObjectRef {
     let (type_code, index) = identity(entity);
@@ -196,8 +214,7 @@ fn object(out: &mut Vec<f64>, value: Option<EntityRef>) {
 }
 
 /// An exact snapshot of the INPUT surface, retaining its real face owner/tolerance.
-/// The shared importer reconstructs planes from precisely these analytic members
-/// (without a NURB); do not invoke `Surface::clone`, which fixes B-spline knots again.
+/// Planes are rebuilt from precisely these analytic members (without a NURB); do not invoke `Surface::clone`, which fixes B-spline knots again.
 fn snapshot(surface: &Surface) -> SolidResult<Surface> {
     let mut copy = match surface.kind() {
         SurfaceKind::BSpline(s) => Surface::from(s.clone_exact()),
@@ -286,7 +303,7 @@ fn probes(k: &Kernel, brep: &Brep, face: FaceId, input: &Inputs) -> SolidResult<
 fn status(error: SolidError) -> SolidResult<f64> {
     match error {
         SolidError::Upstream { code, .. } => Ok(f64::from(code)),
-        SolidError::InvalidInput { .. } => Ok(1007.0),
+        SolidError::InvalidInput { .. } | SolidError::PortInvariant { .. } => Ok(1007.0),
         other => Err(other),
     }
 }
@@ -359,8 +376,20 @@ fn rust_record(input: &Inputs, brep: &mut Brep, face: FaceId) -> SolidResult<Vec
         EntityRef::Face(face),
         tolerance,
     )?;
-    if input.build {
-        let built = cache.build_tree_with_face(&k, &mut BrepCacheFace { b: brep, f: face });
+    if input.build || input.get_tree != 0 {
+        let mut built = if input.build {
+            cache.build_tree_with_face(&k, &mut BrepCacheFace { b: brep, f: face })
+        } else {
+            Ok(())
+        };
+        if built.is_ok() && input.get_tree != 0 {
+            if input.get_tree == 2 {
+                brep.set_editing_enabled(false);
+            }
+            built = cache
+                .get_tree_with_face(&k, &mut BrepCacheFace { b: brep, f: face })
+                .map(|_| ());
+        }
         let build_status = match built {
             Ok(()) => SUCCESS,
             Err(error) => status(error)?,
@@ -430,25 +459,30 @@ fn rust_record(input: &Inputs, brep: &mut Brep, face: FaceId) -> SolidResult<Vec
 
 pub(super) fn run_rust(value: &Value) -> Result<Output, HarnessError> {
     let input = parse(value)?;
-    // Only INPUT records are reused. Native BuildTree/PointTest/Classify results
-    // are never exported, memoized or consulted on this side.
-    let block = [0.0; 4];
-    let export = crate::export_memo::export("topology_face_p2", &[&input.path], &block, || {
-        input_graph::eval(input_graph::Op::Export, &input.path, &block)
-    })
-    .map_err(|e| harness(format!("native_face input graph: {e}")))?;
-    let (mut brep, exact) = super::super::topology_face_p2::import(&export)?;
+    // The input B-rep is the Rust reader's own read of the file (no C++ state),
+    // renumbered into the shim's `sc_topology_fixture.h` traversal order, its faces'
+    // surfaces owned under the `(SmFace_TYPE, 1 + index)` identities `key_of` uses.
+    let mut k = Kernel::default();
+    let built = crate::own_builder::read_as(
+        &mut k,
+        &input.path,
+        false,
+        false,
+        false,
+        &crate::own_builder::Conventions::TOPOLOGY_FIXTURE,
+    )?;
+    let mut brep = match built {
+        crate::own_builder::Built::Brep(b) => *b,
+        crate::own_builder::Built::Failed(e) => {
+            return Output::unported(&e).map_or_else(
+                || Err(harness(format!("native_face Rust read failed: {e}"))),
+                Ok,
+            )
+        }
+    };
     let mut occurrence = input.occurrence;
     let mut selected = None;
     for (face, record) in brep.faces().iter() {
-        if !exact
-            .faces
-            .get(face.index() as usize)
-            .copied()
-            .unwrap_or(false)
-        {
-            continue;
-        }
         let Some(surface) = record.surface.as_ref() else {
             continue;
         };
@@ -467,7 +501,7 @@ pub(super) fn run_rust(value: &Value) -> Result<Output, HarnessError> {
         occurrence -= 1;
     }
     let face = selected
-        .ok_or_else(|| harness("native_face selector did not match an exactly imported face"))?;
+        .ok_or_else(|| harness("native_face selector did not match a face"))?;
     match rust_record(&input, &mut brep, face) {
         Ok(flat) => output(&flat),
         Err(error) => Output::unported(&error).map_or_else(

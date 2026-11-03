@@ -489,7 +489,12 @@ pub trait SweepAccess {
             )
         })?;
         hcr.set_hcr_for_silhouettes(silhouettes);
-        crate::error::ignore_status(hcr.compute_global_visibility(self.kernel_mut(brep)?))?;
+        let k = self.kernel_mut(brep)?;
+        let p = k.fixes.sweep_statuses_pass_on; // fork c8f6a31 (WR-662)
+        crate::error::ignore_status(crate::error::passed_on(
+            hcr.compute_global_visibility(k),
+            p,
+        )?)?;
         Ok(SweepScene {
             brep: self.retain_hcr(brep, hcr)?,
         })
@@ -506,7 +511,8 @@ pub trait SweepAccess {
     fn shell_vertices(&mut self, brep: BrepId) -> Result<Vec<VertexId>> {
         crate::topology::brep::p2::shell_vertices(self.brep(brep)?, None)
     }
-    /// `SmBrep::CopyEdges`, using the destination's context.
+    /// `SmBrep::CopyEdges`, notifying through the lent environment (the plain
+    /// entry point would lend the context a second time).
     fn copy_edges(
         &mut self,
         source: BrepId,
@@ -516,8 +522,18 @@ pub trait SweepAccess {
         self.with_breps_mut(
             source,
             destination,
-            |kernel, source, destination, _, _, _, _| {
-                crate::topology::brep::p6::copy_edges(kernel, source, edges, destination)
+            |k, src, dst, source_key, _, source_context, env| {
+                crate::topology::brep::p6::copy_edges_with_context(
+                    k,
+                    src,
+                    edges,
+                    dst,
+                    env,
+                    crate::topology::brep::p3::CopySource {
+                        key_of: source_key,
+                        context: source_context,
+                    },
+                )
             },
         )
     }

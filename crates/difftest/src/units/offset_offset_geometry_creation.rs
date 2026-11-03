@@ -10,8 +10,13 @@
 //! original edge uses to (the pairs are given; `MapEdgeuses` is unit
 //! `offset.offset_executive_p1`). The script first shapes the fixture (curves and
 //! surfaces of a store, an edge's curve replaced by a store curve, an edge use's UV
-//! trim curve, marked edge uses), then runs the unit's functions. The Rust side imports
-//! the shim's exports of both B-reps (as the `topology.vertexuse` runner does) into two
+//! trim curve, marked edge uses), then runs the unit's functions. The Rust side makes
+//! every B-rep itself from the same source, renumbered into the shim's walk order: an
+//! `.smb` file read by the Rust reader (`crate::own_builder::read_with`), a wire, face
+//! or network built by the Rust kernel (`crate::own_builder::build_as`) and a cylinder
+//! or torus face from the concrete Rust surface (`native_face`); nothing of the shim's
+//! export reaches the Rust side. Only the C++ side's selector resolution imports the
+//! shim's exports. Its two B-reps go into two
 //! [`Brep`]s behind one adapter ([`Two`], which implements the port's [`OffsetBrep`]
 //! with the ported topology functions) and the ported executive
 //! (`offset.offset_executive_p1`, behind the port's [`OffsetExecutive`]) holding the same
@@ -24,7 +29,7 @@
 //! samples, B-rep edits as edge state blocks).
 //!
 //! **Selectors.** Generated handles are selectors taken modulo the entity count of
-//! their kind (both sides resolve them the same way from the exports); store-curve
+//! their kind (each side resolves them the same way from its own B-reps); store-curve
 //! selectors are taken modulo the store curves of the dimension the op needs (null
 //! when there is none). A `from` curve is computed at resolution from the imported
 //! B-rep (the B-spline part of an edge's curve or an edge use's UV trim curve, scaled
@@ -58,9 +63,10 @@
 //! (`harness:analytic-geometry-export`). The generator's distances (0.001 to 100) never
 //! reach the HANG-27 bound. HANG-26 remains guarded independently of exact imports.
 //!
-//! **Analytic faces.** The shared importer brings an `SmBSplineSurface` subclass in as its
-//! B-spline part; revolution, extrusion, cone, cylinder, sphere and torus face surfaces
-//! are then restored from the shim's binary `WriteToDB` records (`read_face_surfaces`)
+//! **Analytic faces.** The Rust side's own B-reps keep their concrete surfaces. On the
+//! C++ side's resolution, the shared importer brings an `SmBSplineSurface` subclass in
+//! as its B-spline part; revolution, extrusion, cone, cylinder, sphere and torus face
+//! surfaces are then restored from the shim's binary `WriteToDB` records (`read_face_surfaces`)
 //! through the existing polymorphic reader. Native type codes, complete record
 //! consumption, face alignment and existing owner identities are checked. Restored
 //! surfaces synchronize their cached tolerance from the actual owning face. No native
@@ -112,7 +118,7 @@ use solidcore::surface::surface::p2::{
     DropCurveFail, SurfaceKind, TsectCurveType, CONE_TYPE, CYLINDER_TYPE, SPHERE_TYPE,
     SURF_OF_EXTRUSION_TYPE, SURF_OF_REVOLUTION_TYPE, TORUS_TYPE,
 };
-use solidcore::surface::surface::{CacheTreeState, Surface};
+use solidcore::surface::surface::Surface;
 use solidcore::surface::volume::Volume;
 use solidcore::topology::database_io::{DatabaseReader, FileType, InputStream};
 use solidcore::topology::edge as ed;
@@ -649,14 +655,14 @@ fn triple_to_h(t: Hin) -> Option<H> {
 /// The topology records, identities and attribute store the notifications run with
 /// (the `topology.vertex` / `topology.edge` runners' environment).
 struct NotifyEnv {
-    records: BTreeMap<ObjectKey, Topology>,
+    records: solidcore::topology::topology::NotifyRecords,
     attributes: AttributeStore,
     this: ObjectRef,
 }
 
 impl NotifyEnv {
     fn new(b: Option<&Brep>) -> Self {
-        let mut records = BTreeMap::new();
+        let mut records = solidcore::topology::topology::NotifyRecords::new();
         records.insert(ObjectKey(1), Topology::new());
         if let Some(b) = b {
             for id in b.vertexuses().ids() {
@@ -1335,6 +1341,18 @@ impl OffsetBrep<H> for Two {
     }
     fn edge_is_lamina(&self, edge: H) -> solidcore::Result<bool> {
         ed::is_lamina(self.brep_r(edge)?, eid(edge))
+    }
+    fn edge_is_closed(&self, edge: H) -> solidcore::Result<bool> {
+        ed::is_closed(self.brep_r(edge)?, eid(edge))
+    }
+    fn vertex_edges(&self, vertex: H) -> solidcore::Result<Vec<H>> {
+        Ok(vx::edges(self.brep_r(vertex)?, vid(vertex), None)?
+            .into_iter()
+            .map(|e| hd(vertex.b, K_EDGE, e.index()))
+            .collect())
+    }
+    fn faceuse_shell(&self, fu: H) -> solidcore::Result<Option<H>> {
+        Ok(eu1::faceuse_shell(self.brep_r(fu)?, fuid(fu))?.map(|s| hd(fu.b, K_SHELL, s.index())))
     }
     fn edge_is_seam_of_face_surface(
         &mut self,
@@ -2348,28 +2366,6 @@ fn read_face_surfaces(
     Ok(())
 }
 
-/// Restores the state of every face surface's cache after the C++ build
-/// ([`ffi::split_cache_tree_states`]): reading a file builds the B-rep while doing a
-/// Boolean operation, so face surfaces can keep caches whose trees were never built,
-/// and `GetDomainWithContinuity` / `LiftCurve` read their (empty) continuity arrays.
-fn seed_cache_tree_states(b: &Brep, states: &[u8]) -> Result<(), HarnessError> {
-    if states.len() != b.faces().len() {
-        return Err(harness("cache states do not match the native face list"));
-    }
-    for (i, &s) in states.iter().enumerate() {
-        let f = FaceId::from_index(u32::try_from(i).map_err(|_| harness("face index"))?);
-        let state = match s {
-            0 => CacheTreeState::NoCache,
-            1 => CacheTreeState::Unbuilt,
-            _ => CacheTreeState::Built,
-        };
-        if let Some(surface) = b.face(f).map_err(|e| harness(e.to_string()))?.surface.as_ref() {
-            surface.set_cache_tree_state(state);
-        }
-    }
-    Ok(())
-}
-
 struct Prepared {
     two: Two,
     hdr: RHeader,
@@ -2379,39 +2375,170 @@ struct Prepared {
     refill: Option<SolidError>,
 }
 
-/// Exports and imports the B-reps and resolves the script; `Err(Ok(output))` is the
-/// output both sides report when the B-reps cannot be built or something cannot be
-/// resolved.
-fn prepare(i: &Inputs) -> Result<Prepared, Box<Result<Output, HarnessError>>> {
-    let ex = export(i).map_err(|e| Box::new(Err(e)))?;
-    let Some((a, b)) = ffi::split_exports(&ex) else {
-        return Err(Box::new(Ok(build_failure(&ex))));
+/// What ends [`prepare`] early: the output the side reports, or a harness error.
+type Early = Box<Result<Output, HarnessError>>;
+
+/// One B-rep of the case: on the Rust side the B-rep the Rust kernel makes from the
+/// source itself ([`side`], renumbered into the shim's walk order), on the C++ side the
+/// import of the shim's export.
+enum Side {
+    /// Made by the Rust side itself: the B-rep, or the Rust build's failure.
+    Own(Result<Box<Brep>, SolidError>),
+    /// Imported from the shim's export.
+    Import,
+}
+
+/// [`Side::Own`] when `own` (the Rust side), else [`Side::Import`]. An `.smb` file is
+/// read by the Rust reader ([`crate::own_builder::read_with`]), a wire, face or network
+/// built by [`crate::own_builder::build_as`] (the shim's `build`, `m_bValidateOnly`
+/// and the gap walk off, as [`brep_block`] encodes them) and a cylinder or torus face
+/// by [`native_face`], all under [`Conventions::EDGEUSE_GRAPH`].
+///
+/// [`Conventions::EDGEUSE_GRAPH`]: crate::own_builder::Conventions::EDGEUSE_GRAPH
+fn side(k: &mut Kernel, b: &BrepIn, own: bool) -> Result<Side, HarnessError> {
+    use crate::own_builder::{build_as, finish, read_with, Built, Conventions};
+    if !own {
+        return Ok(Side::Import);
+    }
+    let conv = &Conventions::EDGEUSE_GRAPH;
+    let built = match b {
+        BrepIn::File { rebuild, .. } => {
+            let path = path_of(Some(b))?;
+            read_with(k, &path, *rebuild, false, false, conv)?
+        }
+        BrepIn::Cylinder { .. } | BrepIn::Torus { .. } => {
+            let raw = native_face(k, b)?;
+            finish(k, raw, false, false, conv)?
+        }
+        BrepIn::Wire { .. } | BrepIn::Face { .. } | BrepIn::Network => {
+            build_as(k, b, false, false, conv)?
+                .ok_or_else(|| harness("own builder: a non-file source was not built"))?
+        }
     };
-    let [surfaces_a, surfaces_b] =
-        ffi::split_surface_records(&ex).ok_or_else(|| Box::new(Err(harness("surface records"))))?;
-    let (mut brep_a, mut exact_a, types_a) = import_raw_with_types(&a).map_err(|e| Box::new(Err(e)))?;
-    read_face_surfaces(&mut brep_a, &mut exact_a, &types_a, &surfaces_a)
-        .map_err(|e| Box::new(Err(e)))?;
-    // The export says which gaps are cached, not their values (the raw import leaves
-    // them at SM_UNDEF_DOUBLE): recompute them on the restored face surfaces, as the
-    // refilling importers do, before the cache tree states are seeded (the native gaps
-    // were computed before its export). This runs on both sides; only the Rust side
-    // reports a failure.
-    let mut refill = recalc_gaps(&mut brep_a).err();
-    let [states_a, states_b] = ffi::split_cache_tree_states(&ex)
-        .ok_or_else(|| Box::new(Err(harness("cache states"))))?;
-    seed_cache_tree_states(&brep_a, &states_a).map_err(|e| Box::new(Err(e)))?;
-    let (brep_b, exact_b) = match &b {
-        Some(b) => {
-            let (mut brep, mut exact, types) =
-                import_raw_with_types(b).map_err(|e| Box::new(Err(e)))?;
-            read_face_surfaces(&mut brep, &mut exact, &types, &surfaces_b)
-                .map_err(|e| Box::new(Err(e)))?;
-            if refill.is_none() {
-                refill = recalc_gaps(&mut brep).err();
-            }
-            seed_cache_tree_states(&brep, &states_b).map_err(|e| Box::new(Err(e)))?;
-            (Some(brep), exact)
+    Ok(Side::Own(match built {
+        Built::Brep(b) => Ok(b),
+        Built::Failed(e) => Err(e),
+    }))
+}
+
+/// The shim's block 6 (`build_input`): a concrete `SmCylinder` (radius, height; 0 to
+/// 360 degrees) or `SmTorus` (major, minor radius; `SmExtent2d(0, 0, 360, 360)`) at the
+/// origin with axes x and y, no swap, not inside out, `MakeNurb`, then
+/// `CreateFaceFromSurface(surface, GetNaturalUVDomain())` on a new B-rep.
+fn native_face(k: &mut Kernel, b: &BrepIn) -> Result<Result<Brep, SolidError>, HarnessError> {
+    use crate::own_builder::{create_face, in_new_brep};
+    use solidcore::surface::cone::Cone;
+    use solidcore::surface::torus::{Torus, TorusOptions};
+    let origin = Point3::new(0.0, 0.0, 0.0);
+    let (x, y) = (Vec3::new(1.0, 0.0, 0.0), Vec3::new(0.0, 1.0, 0.0));
+    let made = match *b {
+        BrepIn::Cylinder { radius, height } => {
+            let mut c = Cone::new_cylinder_bounded(
+                origin, x, y, radius, 0.0, 360.0, height, false, false, false,
+            );
+            c.make_nurb(k).map(|()| Surface::from(c))
+        }
+        BrepIn::Torus { major, minor } => {
+            let opts = TorusOptions {
+                swap_uv: false,
+                inside_out: false,
+                circle_nurb: None,
+            };
+            let d = Extent2d::from_bounds(0.0, 0.0, 360.0, 360.0);
+            Torus::new(k, origin, x, y, d, major, minor, opts)
+                .and_then(|mut t| t.make_nurb(k).map(|()| Surface::from(t)))
+        }
+        _ => return Err(harness("native face of a source other than block 6")),
+    };
+    let surface = match made {
+        Ok(s) => s,
+        Err(e) => return Ok(Err(e)),
+    };
+    let d = match surface.natural_uv_domain_with_nurb(k) {
+        Ok(d) => d,
+        Err(e) => return Ok(Err(e)),
+    };
+    let dom = [d.u_min(), d.v_min(), d.u_max(), d.v_max()];
+    in_new_brep(k, |k, b| create_face(k, b, surface, dom).map(|_| ()))
+}
+
+/// A failed Rust build of B-rep `which` (`a` / `b`) as the shim reports a failed build.
+fn own_failure(which: &str, e: &SolidError) -> Output {
+    Output::unported(e).unwrap_or_else(|| {
+        Output::err(format!(
+            "brep_build_{which}_status_{}",
+            crate::own_builder::build_status(e)
+        ))
+    })
+}
+
+/// Builds the B-reps and resolves the script; `Err(Ok(output))` is the output the side
+/// reports when the B-reps cannot be built or something cannot be resolved. With `own`
+/// (the Rust side) every source is made by the Rust kernel ([`side`]), so no C++ export
+/// reaches the Rust side; the C++ side imports the shim's export.
+fn prepare(i: &Inputs, own: bool) -> Result<Prepared, Box<Result<Output, HarnessError>>> {
+    let mut k = Kernel::default();
+    let side_a = side(&mut k, &i.brep_a, own).map_err(|e| Box::new(Err(e)))?;
+    let side_b = match &i.brep_b {
+        Some(b) => Some(side(&mut k, b, own).map_err(|e| Box::new(Err(e)))?),
+        None => None,
+    };
+    // the shim builds A, then B
+    if let Side::Own(Err(e)) = &side_a {
+        return Err(Box::new(Ok(own_failure("a", e))));
+    }
+    if let Some(Side::Own(Err(e))) = &side_b {
+        return Err(Box::new(Ok(own_failure("b", e))));
+    }
+    let needs_export = matches!(side_a, Side::Import) || matches!(side_b, Some(Side::Import));
+    let (ex_a, ex_b, surfaces) = if needs_export {
+        let ex = export(i).map_err(|e| Box::new(Err(e)))?;
+        let Some((a, b)) = ffi::split_exports(&ex) else {
+            return Err(Box::new(Ok(build_failure(&ex))));
+        };
+        let surfaces = ffi::split_surface_records(&ex)
+            .ok_or_else(|| Box::new(Err(harness("surface records"))))?;
+        (Some(a), b, Some(surfaces))
+    } else {
+        (None, None, None)
+    };
+    let [surfaces_a, surfaces_b] = surfaces.unwrap_or_default();
+    // An imported B-rep: the export says which gaps are cached, not their values (the
+    // raw import leaves them at SM_UNDEF_DOUBLE): recompute them on the restored face
+    // surfaces, as the refilling importers do. This runs on both sides; only the Rust
+    // side reports a failure. No C++ cache state is copied onto the Rust B-reps: the
+    // face surfaces keep the cache state the Rust side's own construction leaves.
+    let mut refill = None;
+    let mut import = |ex: Option<&Vec<f64>>,
+                      records: &[Option<Vec<u8>>]|
+     -> Result<(Brep, Vec<bool>), Early> {
+        let ex = ex.ok_or_else(|| Box::new(Err(harness("export of an imported B-rep"))))?;
+        let (mut brep, mut exact, types) =
+            import_raw_with_types(ex).map_err(|e| Box::new(Err(e)))?;
+        read_face_surfaces(&mut brep, &mut exact, &types, records)
+            .map_err(|e| Box::new(Err(e)))?;
+        if refill.is_none() {
+            refill = recalc_gaps(&mut brep).err();
+        }
+        Ok((brep, exact))
+    };
+    // a B-rep the Rust side made itself has its own geometry: every face is exact
+    let own_exact = |b: &Brep| vec![true; b.faces().len()];
+    let (brep_a, exact_a) = match side_a {
+        Side::Own(Ok(b)) => {
+            let e = own_exact(&b);
+            (*b, e)
+        }
+        Side::Own(Err(_)) | Side::Import => import(ex_a.as_ref(), &surfaces_a)?,
+    };
+    let (brep_b, exact_b) = match side_b {
+        Some(Side::Own(Ok(b))) => {
+            let e = own_exact(&b);
+            (Some(*b), e)
+        }
+        Some(Side::Own(Err(_)) | Side::Import) => {
+            let (b, e) = import(ex_b.as_ref(), &surfaces_b)?;
+            (Some(b), e)
         }
         None => (None, Vec::new()),
     };
@@ -2446,7 +2573,7 @@ fn run_cpp(i: &Inputs) -> Result<Output, HarnessError> {
     if let Some(reason) = hang_guard(i) {
         return Ok(Output::rejected(reason));
     }
-    let p = match prepare(i) {
+    let p = match prepare(i, false) {
         Ok(p) => p,
         Err(r) => return *r,
     };
@@ -2467,7 +2594,7 @@ fn run_cpp(i: &Inputs) -> Result<Output, HarnessError> {
 /// at that op stays as a safety net. A script the Rust side cannot follow that far (an
 /// unported callee first) runs in C++ as before, and the Rust side defers it.
 fn hang_guard(i: &Inputs) -> Option<&'static str> {
-    let p = prepare(i).ok()?;
+    let p = prepare(i, true).ok()?;
     if p.refill.is_some() {
         return None;
     }
@@ -2530,7 +2657,7 @@ fn status<T>(r: Result<T, SolidError>, o: &mut Vec<f64>) -> Result<Option<T>, Fa
             o.push(NULL_DEREF);
             Ok(None)
         }
-        Err(SolidError::InvalidInput { .. }) => {
+        Err(SolidError::InvalidInput { .. } | SolidError::PortInvariant { .. }) => {
             // upstream's SM_ERR_INVALID_INPUT status of a callee
             o.push(SM_ERR_INVALID_INPUT);
             Ok(None)
@@ -3292,7 +3419,7 @@ fn rust_surface(s: &SrfIn) -> Result<Surface, HarnessError> {
 }
 
 fn run_rust(i: &Inputs) -> Result<Output, HarnessError> {
-    let p = match prepare(i) {
+    let p = match prepare(i, true) {
         Ok(p) => p,
         Err(r) => return *r,
     };
@@ -5037,7 +5164,7 @@ mod tests {
         let mut input = import_input("cone.smb");
         input.brep_a = fixture.clone();
         input.brep_b = Some(fixture);
-        let mut prepared = prepare(&input).unwrap();
+        let mut prepared = prepare(&input, false).unwrap();
         let k = Kernel::default();
         for (arena, tolerance) in [(0, 0.003), (1, 0.007)] {
             let handle = hd(arena, K_FACE_SURFACE, 0);
@@ -5098,7 +5225,7 @@ mod tests {
         for name in ["vase_rev.smb", "toruswvy.smb"] {
             let mut input = import_input(name);
             input.brep_b = None;
-            let prepared = prepare(&input).unwrap();
+            let prepared = prepare(&input, false).unwrap();
             let brep = prepared.two.breps[0].as_ref().unwrap();
             let faceuse = brep
                 .faceuses()
@@ -5116,7 +5243,7 @@ mod tests {
             let cpp = run_cpp(&input).unwrap();
             assert!(cpp.rejected.unwrap().starts_with("HANG-26:"));
             // the shim's own stop at the op, should the runner's guard miss it
-            let p = prepare(&input).unwrap();
+            let p = prepare(&input, false).unwrap();
             let encoded = encode(&input, &p.hdr, &p.ops).unwrap();
             let pa = path_of(Some(&input.brep_a)).unwrap();
             let pb = path_of(None).unwrap();
@@ -5357,7 +5484,7 @@ mod tests {
             assert_eq!(input.ops.len(), 7);
             eprintln!("gen0730 seed={seed} original_input={generated}");
             eprintln!("READBACK includes build/import, appended-query cache/executive preparation, getters and serialization; it is not a mutation-writer trace");
-            let prepared = prepare(&input).expect("prepare gen0730 handles");
+            let prepared = prepare(&input, false).expect("prepare gen0730 handles");
             let OpIn::ExtendTrimEdges {
                 eu, off, other_off, ..
             } = prepared.ops[6].op

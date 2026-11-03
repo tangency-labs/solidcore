@@ -6,9 +6,9 @@
 //! Except for `Construct` and `ApiCopyNull`, every input is a B-rep block of
 //! [`super::topology_vertexuse`] (kinds `0..=3`), then `editing` (`-1` keep, `0` / `1`
 //! set `m_bEditingEnabled`), then the op's parameters: the head of
-//! [`super::topology_brep_p2`], whose shim builds (and normalises) the same B-rep, so
-//! its `Export` / `Extras` describe the B-rep these ops run on. Indices name entities
-//! in that export's order. Every output starts with `0`, or `-1 status` when the B-rep
+//! [`super::topology_brep_p2`], whose shim builds the same B-rep, so its `Export`
+//! gives the entity counts of the B-rep these ops run on (on its real geometry,
+//! analytic kinds included). Indices name entities in that export's order. Every output starts with `0`, or `-1 status` when the B-rep
 //! could not be built. `counts` is `faces edges vertices regions` of the B-rep after
 //! the op (a fresh walk), then per region (list order) `void infinite nshells` and per
 //! shell of it `type size has_head` (`m_tShellType`, `GetSize`, `m_pList != NULL`),
@@ -25,6 +25,8 @@
 //! | `Construct`     | `mse lsr` (no B-rep block) | `0 0 tol mse lsr editing infinite_void counts` (`SmBrep(mse, lsr)` in a context of its own) |
 //! | `Copy`          | `analytics api` | `status tol editing counts` of the copy (`api`: `SmApiBrepCopy`, else the copy constructor with `analytics`) |
 //! | `Merge`         | `analytics` | `status counts` (`MergeBrep` of the B-rep into a second build of it) |
+//! | `AttributedCopy` | `behavior` (`SmAttributeBehaviorType`, 0 to 4) | `status tol editing counts`, then the attribute rows of the copy and of the source (`SmApiBrepCopy` after every face, `GetFaces` order, and edge, `GetEdges` order, got a long attribute, id = value = `10007 + 500 kind + index`; per face then per edge, sorted: `n` and per attribute `id behavior value users`, users counted within that B-rep) |
+//! | `AttributedMerge` | `analytics behavior` | `status counts` of the second build, then its and the source's attribute rows (the B-rep tagged as for `AttributedCopy`, then `MergeBrep` into a second build of it) |
 //! | `CopyVertices`  | `n v*` | `status new counts`, then four `n xyz*` snapshots (source/destination before, source/existing destination after), then `n (destination_walk_index xyz)*` in returned order (`CopyVertices` into a second build) |
 //! | `DeleteFace`    | `face delete_ev nesting keep_region` (`-1` null) | `status deleted counts tracker` |
 //! | `Wire`          | `which region v1 v2 curve t0 t1 orient end(3)` (`0` `MakeWireEdge`, `1` `MakeWireEdgeVertex`; region `-1` null) | `status counts tracker` |
@@ -71,6 +73,8 @@ pub enum Op {
     TurnNurbs = 10,
     ApiCopyNull = 11,
     TurnNurbsOffset = 12,
+    AttributedCopy = 13,
+    AttributedMerge = 14,
 }
 
 mod sys {
@@ -141,6 +145,13 @@ fn args(op: Op, rd: &mut Reader<'_>, c: &[usize; 10], has_infinite: bool) -> Res
         }
         Op::Merge => {
             rd.flag()?;
+        }
+        Op::AttributedCopy => {
+            int(rd, 0, 4)?;
+        }
+        Op::AttributedMerge => {
+            rd.flag()?;
+            int(rd, 0, 4)?;
         }
         Op::CopyVertices => {
             let n = rd.index(MAX_LIST)?;
@@ -216,26 +227,27 @@ fn raw(op: Op, path: &str, input: &[f64]) -> Result<Vec<f64>, FfiError> {
     })
 }
 
-/// Runs `op` on `input` (see the module docs); `path` is the `.smb` file of a file
-/// B-rep block (ignored otherwise).
-///
-/// # Errors
-///
-/// [`FfiError::InvalidArgument`] for a malformed input; [`FfiError::Status`] for a shim
-/// failure.
-pub fn eval(op: Op, path: &str, input: &[f64]) -> Result<Vec<f64>, FfiError> {
+/// The checks of [`eval`] that need no B-rep: the standalone ops' whole input (then
+/// `None`: nothing is left to check), else the B-rep block, the editing flag and the
+/// HANG-16 magnitude bound, returning the reader at the op's arguments and the head
+/// (the B-rep block and flags) for the export.
+fn check_head<'a>(
+    op: Op,
+    path: &str,
+    input: &'a [f64],
+) -> Result<Option<(Reader<'a>, &'a [f64])>, FfiError> {
     let mut rd = Reader::new(input);
     match op {
         Op::Construct => {
             rd.finite()?;
             rd.finite()?;
             rd.done()?;
-            return raw(op, path, input);
+            return Ok(None);
         }
         Op::ApiCopyNull => {
             int(&mut rd, 0, 0)?;
             rd.done()?;
-            return raw(op, path, input);
+            return Ok(None);
         }
         _ => {}
     }
@@ -253,6 +265,59 @@ pub fn eval(op: Op, path: &str, input: &[f64]) -> Result<Vec<f64>, FfiError> {
     {
         return Err(bad("geometry value beyond 1e150 (HANG-16)"));
     }
+    Ok(Some((rd, head)))
+}
+
+/// The op's arguments after the head, checked against the B-rep's entity counts
+/// `counts` (`topology_vertexuse::counts` order) and whether it has an infinite region,
+/// then nothing may be left.
+fn check_args(
+    op: Op,
+    rd: &mut Reader<'_>,
+    counts: &[usize; 10],
+    has_infinite: bool,
+) -> Result<(), FfiError> {
+    args(op, rd, counts, has_infinite)?;
+    rd.done()
+}
+
+/// The checks [`eval`] makes before calling the shim, without running it or exporting
+/// the B-rep: `counts` and `has_infinite` describe the B-rep the caller built from the
+/// same input (the export's counts in `eval`; the runner's Rust side passes its own
+/// B-rep's). The runner applies them to the Rust side, so an input the FFI refuses is a
+/// harness error on both sides and the Rust port never runs the guarded hang regimes: a
+/// `TurnNurbsOffset` of `1e300` on `box_with_large_fillet.smb` (nightly fuzz case
+/// `fuzz00282`) is refused here for the C++ (HANG-16) while the port, faithful to
+/// upstream, spent 25 s rebuilding the face's UV trim curves on the approximated offset
+/// surface and exceeded the fuzz time limit.
+///
+/// # Errors
+///
+/// [`FfiError::InvalidArgument`] for a malformed input, as [`eval`].
+pub fn validate(
+    op: Op,
+    path: &str,
+    input: &[f64],
+    counts: &[usize; 10],
+    has_infinite: bool,
+) -> Result<(), FfiError> {
+    match check_head(op, path, input)? {
+        None => Ok(()),
+        Some((mut rd, _)) => check_args(op, &mut rd, counts, has_infinite),
+    }
+}
+
+/// Runs `op` on `input` (see the module docs); `path` is the `.smb` file of a file
+/// B-rep block (ignored otherwise).
+///
+/// # Errors
+///
+/// [`FfiError::InvalidArgument`] for a malformed input; [`FfiError::Status`] for a shim
+/// failure.
+pub fn eval(op: Op, path: &str, input: &[f64]) -> Result<Vec<f64>, FfiError> {
+    let Some((mut rd, head)) = check_head(op, path, input)? else {
+        return raw(op, path, input);
+    };
     let export = p2::eval(p2::Op::Export, path, head)?;
     let Some(c) = vu::counts(&export) else {
         // the B-rep could not be built: every op reports the same failure
@@ -260,7 +325,6 @@ pub fn eval(op: Op, path: &str, input: &[f64]) -> Result<Vec<f64>, FfiError> {
     };
     let extras = p2::eval(p2::Op::Extras, path, head)?;
     let has_infinite = extras.get(2).is_some_and(|&r| r >= 0.0);
-    args(op, &mut rd, &c, has_infinite)?;
-    rd.done()?;
+    check_args(op, &mut rd, &c, has_infinite)?;
     raw(op, path, input)
 }

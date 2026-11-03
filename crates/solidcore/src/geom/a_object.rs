@@ -1034,7 +1034,9 @@ pub fn get_or_create_object_cache(
         CacheMaker::AObject => Ok(cache_make_or_validate(cache_type, old)),
         CacheMaker::SagObject => match sag_cache_make_or_validate(cache_type, object_type, old) {
             // Like curve/surface factories, construction needs source geometry.
-            Err(e @ SolidError::InvalidInput { .. }) => return Err(e),
+            Err(e @ (SolidError::InvalidInput { .. } | SolidError::PortInvariant { .. })) => {
+                return Err(e)
+            }
             made => made,
         },
         CacheMaker::Curve => match crate::curve::curve::p5::validate_curve_cache(cache_type, old) {
@@ -1070,7 +1072,7 @@ pub fn get_or_create_object_cache(
     };
     match made {
         Ok(cache) => Ok(cache),
-        Err(e @ SolidError::Unported { .. }) => Err(e),
+        Err(e @ (SolidError::Unported { .. } | SolidError::Cancelled { .. })) => Err(e),
         // a failing CacheMakeOrValidate: no cache
         Err(_) => Ok(None),
     }

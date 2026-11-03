@@ -245,6 +245,90 @@ fn eval_impl(
     raw(op, path, input)
 }
 
+/// Largest `smp_count` of [`pole`].
+pub const MAX_POLE_SAMPLES: usize = 64;
+
+mod sys_topology_edgeuse_p2_pole {
+    extern "C" {
+        pub fn sc_topology_edgeuse_p2_pole(
+            path: *const std::ffi::c_char,
+            input: *const f64,
+            n_in: i64,
+            out: *mut f64,
+            cap: i64,
+            out_len: *mut i64,
+        ) -> i32;
+    }
+}
+
+/// The checks [`pole`] makes before calling the shim, without running it (no C++ call:
+/// the B-rep block's checks are the pure-Rust ones of
+/// [`super::topology_vertexuse::validate_block`]). The level-0 runner applies them to the
+/// Rust side too, so an input the FFI refuses is a harness error on both sides and the
+/// Rust side never runs what the C++ side is refused: an `smp_count` of `2^31` (nightly
+/// fuzz case `topology.edgeuse_p2/fuzz00237`) is refused here for the C++ (more than
+/// [`MAX_POLE_SAMPLES`]) while the port, faithful to upstream, sampled every edge use's
+/// trim curve `2^31` times and ran past the fuzz time limit.
+///
+/// # Errors
+///
+/// [`FfiError::InvalidArgument`] for a malformed argument or B-rep block, as [`pole`].
+pub fn validate_pole(
+    path: &str,
+    smp_count: usize,
+    periodic_u: f64,
+    periodic_v: f64,
+    block: &[f64],
+) -> Result<(), FfiError> {
+    if smp_count > MAX_POLE_SAMPLES {
+        return Err(FfiError::InvalidArgument("too many samples".into()));
+    }
+    for p in [periodic_u, periodic_v] {
+        if p != -1.0 && p != 0.0 && p != 1.0 {
+            return Err(FfiError::InvalidArgument("periodic flag must be -1, 0 or 1".into()));
+        }
+    }
+    super::topology_vertexuse::validate_block(path, block)?;
+    if super::topology_vertexuse::brep_block_at(block, path)? != block.len() {
+        return Err(FfiError::InvalidArgument("trailing values after the B-rep block".into()));
+    }
+    Ok(())
+}
+
+/// `SmEdgeuse::HasDogLegNearPole` and `IsEdgeuseSideInSurface(smp_count, periodic_u,
+/// periodic_v)` (`-1`: NULL) of every edge use of the B-rep built from `block` (shim
+/// `topology_edgeuse_p2_pole.cpp`): `0 n (dog_leg index side on_boundary)*n`.
+/// `smp_count` is at most [`MAX_POLE_SAMPLES`].
+///
+/// # Errors
+///
+/// [`FfiError::InvalidArgument`] for a malformed argument or B-rep block (the checks of
+/// [`super::topology_vertexuse::validate_block`], the whole input consumed);
+/// [`FfiError::Status`] for a shim failure.
+pub fn pole(path: &str, smp_count: usize, periodic_u: f64, periodic_v: f64, block: &[f64]) -> Result<Vec<f64>, FfiError> {
+    validate_pole(path, smp_count, periodic_u, periodic_v, block)?;
+    let mut input: Vec<f64> = vec![smp_count as f64, periodic_u, periodic_v];
+    input.extend_from_slice(block);
+    let cpath = std::ffi::CString::new(path)
+        .map_err(|_| FfiError::InvalidArgument("path has a NUL byte".into()))?;
+    call_with_buffer(4096, |buf, len| {
+        // SAFETY: cpath is a valid NUL-terminated string; input is valid for input.len()
+        // reads and holds the validated arguments then a validated B-rep block (exactly
+        // what the shim reads); buf is valid for buf.len() writes and the shim honours
+        // the capacity; len is valid.
+        unsafe {
+            sys_topology_edgeuse_p2_pole::sc_topology_edgeuse_p2_pole(
+                cpath.as_ptr(),
+                input.as_ptr(),
+                input.len() as i64,
+                buf.as_mut_ptr(),
+                buf.len() as i64,
+                &raw mut *len,
+            )
+        }
+    })
+}
+
 #[cfg(test)]
 mod prepared_guard_tests {
     use super::*;

@@ -1,5 +1,9 @@
-//! Differential topology traversal on real SMLib graphs. Fixture construction and
-//! raw arena import reuse topology.vertexuse; no traversal result is imported.
+//! Differential topology traversal on real SMLib graphs. Fixture construction reuses
+//! topology.vertexuse: the Rust side builds a wire edge, face or network source itself
+//! ([`crate::own_builder`]) and reads an `.smb` file with the Rust reader
+//! ([`crate::own_reader::file_in_order`]), both renumbered into the shim's traversal order;
+//! no C++ export (graph or vertex use lists) and no traversal result reaches the Rust
+//! side.
 use super::topology_vertexuse::{self as shared, BrepIn};
 use crate::{Case, HarnessError, Output, Rng, UnitDiff};
 use serde::{Deserialize, Serialize};
@@ -121,6 +125,43 @@ fn select_generated_op(i: &mut Inputs, counts: [usize; 10], rng: &mut Rng) {
     }
 }
 
+/// The Rust B-rep of a case and its entity counts, or the output of a failed build.
+/// Shim-built sources are built by the Rust kernel ([`crate::own_builder`]) and `.smb`
+/// file sources read by the Rust reader ([`crate::own_reader::file_in_order`]), both
+/// renumbered under `sc_topology_fixture.h`'s conventions, each vertex's vertex use list
+/// the Rust build's own (nothing of the shim's export reaches the Rust side).
+fn own_brep(
+    k: &mut Kernel,
+    i: &Inputs,
+) -> Result<Result<(solidcore::topology::Brep, [usize; 10]), Output>, HarnessError> {
+    use crate::own_builder::{build_as, counts, Built, Conventions};
+    let conv = &Conventions::TOPOLOGY_FIXTURE;
+    let built = if let Some(b) = build_as(k, &i.brep, false, false, conv)? {
+        b
+    } else {
+        let BrepIn::File { rebuild, .. } = &i.brep else {
+            return Err(HarnessError::new(
+                "own builder: a non-file source was not built",
+            ));
+        };
+        let path = shared::path_of(&i.brep)?;
+        crate::own_reader::file_in_order(k, &path, *rebuild, false, false, conv)?
+    };
+    match built {
+        Built::Brep(b) => {
+            let c = counts(&b);
+            Ok(Ok((*b, c)))
+        }
+        Built::Failed(e) => Ok(Err(match Output::unported(&e) {
+            Some(o) => o,
+            None => Output::new().values(
+                "build",
+                vec![-1.0, crate::own_builder::build_status(&e)],
+            ),
+        })),
+    }
+}
+
 impl UnitDiff for Runner {
     fn id(&self) -> &'static str {
         "topology.topology_traverser"
@@ -148,25 +189,15 @@ impl UnitDiff for Runner {
 
     fn run_rust(&self, case: &Case) -> Result<Output, HarnessError> {
         let i: Inputs = case.parse()?;
-        let ex = export(&i)?;
-        let Some(c) = fixture::counts(&ex.graph) else {
-            return Ok(Output::new().values("build", ex.graph));
+        let mut k = Kernel::default();
+        let (mut b, c) = match own_brep(&mut k, &i)? {
+            Ok(x) => x,
+            Err(o) => return Ok(o),
         };
         let r = request(&i, c);
         if !available(r) {
             return Ok(Output::err("no seed of requested kind"));
         }
-        let (mut b, _) = shared::import(&ex.graph)?;
-        for (index, list) in ex.vertexuses.iter().enumerate() {
-            b.vertex_mut(VertexId::from_index(index as u32))
-                .map_err(|e| HarnessError::new(e.to_string()))?
-                .vertexuses = list
-                .iter()
-                .copied()
-                .map(solidcore::topology::VertexuseId::from_index)
-                .collect();
-        }
-        let mut k = Kernel::default();
         let lock = MarkLock::new(std::slice::from_mut(&mut k.context), 0, r.mask)
             .map_err(|e| HarnessError::new(e.to_string()))?;
         let mt = lock.mark_type();

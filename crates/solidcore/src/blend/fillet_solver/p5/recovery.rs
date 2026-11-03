@@ -419,10 +419,15 @@ impl Recovery<'_> {
                 return Ok(());
             }
             let corner = required(self.fillets.fillet_vertex(self.start(r0)?)?.fillet_corner())?;
+            // the fork's `|| IsClosedJoin()` in place of the 1x1 corner (543d25a; WR-697)
+            let corner_type = self.corners.corner_type(corner)?;
+            let closed_join =
+                corner_type == FilletCornerType::NByTwo && self.corners.is_closed_join(corner)?;
             if !matches!(
-                self.corners.corner_type(corner)?,
+                corner_type,
                 FilletCornerType::NByOneClosed | FilletCornerType::OneByOne
-            ) {
+            ) && !closed_join
+            {
                 return Err(SolidError::sm_err(OP));
             }
             if unknown0 {
@@ -451,14 +456,15 @@ impl Recovery<'_> {
     ) -> Result<()> {
         let solver_eu = required(self.solver.solver().edgeuse(0)?)?;
         let convex = ops.convex(self, solver_eu, 10, false, 0.0)?;
-        let surface = required(self.fillets.geom(id)?.fillet_surface()?)?;
+        let surface = required(self.fillets.geom(id)?.fillet_surface(None)?)?;
         let analytic = if surface.is_kind_of(crate::surface::surface::p2::B_SPLINE_SURFACE_TYPE)? {
             SurfOfRevolution::is_nurb_surface_surf_of_revolution(self.k, surface, 1.0)?.is_some()
         } else {
             false
         };
         let mut rails = [self.rail_copy(id, 0)?, self.rail_copy(id, 1)?];
-        let original_surface = required(self.fillets.geom(id)?.fillet_surface()?)?.copy(self.k)?;
+        let original_surface =
+            required(self.fillets.geom(id)?.fillet_surface(None)?)?.copy(self.k)?;
         let mut processing_rollover = false;
         let mut corner_eu = None;
         let mut corner_vertex = None;
@@ -646,7 +652,11 @@ impl Recovery<'_> {
                         let orig = required(get(&saved.surfaces, which)?.as_ref())?;
                         // Bare Copy: upstream ignores its status but uses its output.
                         let (copy, status) = ops.copy_offset(self.k, &orig.surface);
-                        ignored(status)?;
+                        // fork 66b02de passes this on (SER)
+                        ignored(crate::error::passed_on(
+                            status,
+                            self.k.fixes.fillet_statuses_pass_on,
+                        )?)?;
                         if let Some(copy) = copy {
                             self.fillets
                                 .geom_mut(required(new_geom)?)?

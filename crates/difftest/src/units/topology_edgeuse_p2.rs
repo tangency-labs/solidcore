@@ -4,6 +4,7 @@
 //! The B-reps are those of unit `topology.edgeuse_p1` (upstream `.smb` files, wire edges,
 //! faces from B-spline surfaces and real `SmPlane`s, the wire network of `prog_test`
 //! `my_test_topology`): the C++ side builds a real `SmBrep` per call, the Rust side
+//! builds a non-file source itself ([`crate::own_builder`]) and for an `.smb` file
 //! imports the graph the shim exports ([`super::topology_edgeuse_p1::import`]), and the
 //! ported functions run on both. Edge use arguments are selectors taken modulo the edge
 //! use count.
@@ -41,6 +42,7 @@ use super::topology_edgeuse_p1::{
     brep_block_of, gen_brep, gen_curve, harness, import_with_types, path_of, push_curve, sel,
     BrepIn, CrvIn, ImportTypes, FILES,
 };
+use crate::util::trim_curve::put_trim_curve;
 use crate::{Case, HarnessError, Output, Rng, UnitDiff};
 
 /// The difftest runner.
@@ -145,9 +147,70 @@ pub(super) struct Setup {
 
 type CaseSetup = (Setup, Option<ffi::PreparedBrep>);
 
+/// The case's setup. `prepare` (the C++ side) also keeps the shim's prepared B-rep;
+/// without it (the Rust side) a shim-built source is built by the Rust kernel
+/// ([`crate::own_builder`]) and an `.smb` file is read by the Rust reader
+/// ([`crate::own_reader::brep_in_order`]); only the C++ side imports the graph export.
 fn setup(i: &Inputs, prepare: bool) -> Result<Result<CaseSetup, Output>, HarnessError> {
+    use crate::own_builder::{build, counts, failed_output, Built};
     let path = path_of(Some(&i.brep))?;
     let block = brep_block_of(Some(&i.brep), i.validate_only, i.init_gaps)?;
+    if !prepare {
+        let mut k = Kernel::default();
+        match build(&mut k, &i.brep, i.validate_only, i.init_gaps)? {
+            Some(Built::Brep(b)) => {
+                let brep = *b;
+                let s = sel(i.op.eu(), counts(&brep)[6]);
+                if s < 0 {
+                    return Ok(Err(Output::err("no_entity_of_that_kind")));
+                }
+                let eu = EdgeuseId::from_index(u32::try_from(s).map_err(|_| harness("index"))?);
+                return Ok(Ok((
+                    Setup {
+                        path,
+                        block,
+                        brep,
+                        eu,
+                        types: ImportTypes::default(),
+                    },
+                    None,
+                )));
+            }
+            Some(Built::Failed(e)) => return Ok(Err(failed_output(&e))),
+            None => {
+                // an `.smb` file: the Rust reader's B-rep in the shim's traversal order,
+                // its geometry owned as the Rust reader owns it (no C++ export reaches
+                // the Rust side)
+                let conv = &crate::own_builder::Conventions::EDGEUSE_GRAPH;
+                let built = crate::own_reader::brep_in_order(
+                    &mut k,
+                    &i.brep,
+                    i.validate_only,
+                    i.init_gaps,
+                    conv,
+                )?;
+                let brep = match built {
+                    Built::Brep(b) => *b,
+                    Built::Failed(e) => return Ok(Err(failed_output(&e))),
+                };
+                let s = sel(i.op.eu(), counts(&brep)[6]);
+                if s < 0 {
+                    return Ok(Err(Output::err("no_entity_of_that_kind")));
+                }
+                let eu = EdgeuseId::from_index(u32::try_from(s).map_err(|_| harness("index"))?);
+                return Ok(Ok((
+                    Setup {
+                        path,
+                        block,
+                        brep,
+                        eu,
+                        types: ImportTypes::default(),
+                    },
+                    None,
+                )));
+            }
+        }
+    }
     let prepared = prepare
         .then(|| ffi::PreparedBrep::new(&path, &block))
         .transpose()
@@ -433,26 +496,9 @@ pub(super) fn put_eu_state(k: &Kernel, o: &mut Vec<f64>, b: &Brep, eu: Option<Ed
     };
     o.push(1.0);
     let r = b.edgeuse(eu)?;
-    match r.uv_trim_curve.as_ref() {
-        None => o.push(-1.0),
-        Some(c) => {
-            o.push(1.0);
-            let ivl = c.natural_interval();
-            o.extend([ivl.min(), ivl.max()]);
-            for t in [ivl.min(), ivl.mid(), ivl.max()] {
-                let p = c
-                    .evaluate_point(k, t)
-                    .unwrap_or(solidcore::math::Vec3::UNDEF);
-                o.extend([p.x, p.y, p.z]);
-            }
-        }
-    }
-    // the curve's owner is the edge use holding it
-    o.push(if r.uv_trim_curve.is_some() {
-        f64::from(eu.index())
-    } else {
-        -1.0
-    });
+    put_trim_curve(k, o, r.uv_trim_curve.as_ref())?;
+    // the curve's owner, as the shim's `g.find(6, uv->GetOwner())`
+    o.push(crate::own_builder::uv_owner_index(b, eu, None));
     let fail = r.drop_curve_fail.as_deref();
     o.push(flag(fail.is_some()));
     o.push(fail.map_or(0.0, |f| f64::from(f.fail_status)));
@@ -583,7 +629,7 @@ fn run_rust_op(
             let mate = eu1::mate(b, eu);
             let r = eu2::check_and_set_uv_trim_curve(&k, b, eu, curve, *adjust, rec.as_mut());
             match (r, mate) {
-                (Err(e), _) if e.is_unported() || matches!(e, SolidError::InvalidInput { .. }) => {
+                (Err(e), _) if e.is_unported() || matches!(e, SolidError::InvalidInput { .. } | SolidError::PortInvariant { .. }) => {
                     Err(e)
                 }
                 (_, Err(e)) => Err(e),
@@ -672,7 +718,7 @@ fn run_rust(i: &Inputs) -> Result<Output, HarnessError> {
                 return Ok(o);
             }
             match e {
-                SolidError::InvalidInput { .. } => Ok(Output::err("null_deref")),
+                SolidError::InvalidInput { .. } | SolidError::PortInvariant { .. } => Ok(Output::err("null_deref")),
                 e => Err(harness(format!("rust: {e}"))),
             }
         }
@@ -765,11 +811,32 @@ impl UnitDiff for Runner {
     }
 
     fn run_cpp(&self, case: &Case) -> Result<Output, HarnessError> {
+        if super::topology_face_p4::level0::is_level0(case) {
+            return super::topology_face_p4::level0::run_cpp(case);
+        }
         run_cpp(&case.parse::<Inputs>()?)
     }
 
     fn run_rust(&self, case: &Case) -> Result<Output, HarnessError> {
+        if super::topology_face_p4::level0::is_level0(case) {
+            return super::topology_face_p4::level0::run_rust(case);
+        }
         run_rust(&case.parse::<Inputs>()?)
+    }
+
+    fn cases(&self, ctx: &crate::CaseContext) -> Result<Vec<Case>, HarnessError> {
+        let mut v = crate::runner::default_cases(self, ctx)?;
+        {
+            use super::topology_face_p4::level0::Level0Op;
+            let ops: Vec<Level0Op> = vec![
+            Level0Op::EdgeuseSide { smp_count: 6, periodic_u: -1, periodic_v: -1 },
+            Level0Op::EdgeuseSide { smp_count: 1, periodic_u: 1, periodic_v: 1 },
+            Level0Op::EdgeuseSide { smp_count: 0, periodic_u: 0, periodic_v: 0 },
+            Level0Op::EdgeuseSide { smp_count: 13, periodic_u: 1, periodic_v: -1 },
+        ];
+            v.extend(super::topology_face_p4::level0::cases(self.id(), &ops, 0x1419_0103, 48)?);
+        }
+        Ok(v)
     }
 
     fn generate(&self, rng: &mut Rng) -> Option<Value> {

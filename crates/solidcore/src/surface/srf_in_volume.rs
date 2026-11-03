@@ -65,12 +65,16 @@
 //!   flags only set the owner bits (the value moved in is already this object's
 //!   copy) and the owner flag is kept as data: it decides
 //!   [`SrfInVolume::owns_surface`], [`SrfInVolume::owns_volume`] and whether
-//!   `Reverse`, `SwapUV` and `TrimWithDomain` are allowed, as upstream. The copy
-//!   constructor clones both parts (upstream copies owned parts and shares the
-//!   rest; the result is the same geometry) and recomputes the owner flag as
-//!   upstream. The owner links of the contained objects (`SetOwner(this)`), the
-//!   notifications (`Notify`) and the `SmContext` arguments (they only choose where
-//!   upstream allocates) are not modelled.
+//!   `Reverse`, `SwapUV` and `TrimWithDomain` are allowed, as upstream. `Clone` is the
+//!   copy constructor: an owned base surface gets the ordinary copy constructor, which
+//!   fixes near-coincident knots up, a borrowed one an exact copy (upstream shares it,
+//!   so no copy fix-up ever reaches it), the volume is copied in either case (upstream
+//!   also copies it for owner flag 1, whose result does not own it) and the owner flag
+//!   is recomputed as upstream. The exact copy is infallible and does not re-check the
+//!   nesting: the constructors, the setters and the database reader keep the graph
+//!   within the bound it relies on. The owner links of the contained objects
+//!   (`SetOwner(this)`), the notifications (`Notify`) and the `SmContext` arguments
+//!   (they only choose where upstream allocates) are not modelled.
 //! - **`Evaluate`.** Out-params become the matrix `D[u][v]` of the requested size.
 //!   Upstream's flat arrays are reproduced index for index, including the stride
 //!   quirks of the special cases (`bOnlyUpperHalf == FALSE`, unequal orders). The
@@ -81,8 +85,10 @@
 //!   branch and writes `Duv` one slot past the single entry requested (the caller's
 //!   array must be at least that long); the port skips that write and returns
 //!   success with `D`, as upstream does.
-//! - **Not in this unit.** `GetMemoryUsed`, `Draw`, `DrawUV`, `Dump`, `WriteToDB`
-//!   and `AssertValid` are out of scope (no counterpart, as for `SmCrvInVolume`).
+//! - **Not in this unit.** `GetMemoryUsed`, `Draw`, `DrawUV`, `Dump` and `WriteToDB`
+//!   are out of scope (no counterpart, as for `SmCrvInVolume`); `AssertValid` is ported
+//!   with the other surface checks (`surface::surface::assert_valid`), with the volume
+//!   checks it nests into ([`Volume::assert_valid`]).
 //! - **`ReadFromDB`** always builds a new object (the "fill the surface passed in"
 //!   branch and its `IsKindOf` check have no counterpart; `lType` and the context
 //!   are unused). The nested surface read is depth-limited
@@ -109,7 +115,7 @@ use crate::surface::surface::p2::{
     B_SPLINE_SURFACE_TYPE, MAX_GEOMETRY_NESTING, SRF_IN_VOLUME_TYPE,
 };
 use crate::surface::volume::p1::{
-    lift_first_derivative_srf, lift_second_derivative_srf, lift_third_derivative_srf,
+    lift_first_derivative_srf, lift_second_derivative_srf, lift_third_derivative_srf_opt_in,
 };
 use crate::surface::volume::{EvalOptions, Volume, VolumeKind};
 use crate::topology::database_io::{DatabaseReader, FileType};
@@ -299,7 +305,7 @@ fn copy_volume(volume: &Volume) -> Result<Volume> {
 /// A surface mapped through a volume (`SmSrfInVolume`): the base surface lives in
 /// the volume's parameter space or in-space and is mapped to the volume's final
 /// out-space.
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct SrfInVolume {
     /// `m_pSurface`: the base surface.
     surface: Box<Surface>,
@@ -311,6 +317,37 @@ pub struct SrfInVolume {
     /// `m_lOwnerFlag`: bit 1 owns the surface, bit 2 owns the volume (only the
     /// values 1 and 3, and 2 and 3, count as owning).
     owner_flag: u64,
+}
+
+/// The copy constructor: an owned base surface gets the ordinary copy constructor, a
+/// borrowed one is an exact copy (upstream shares it, so the knot fix-up of a copy never
+/// reaches it), the volume is always copied (upstream copies it whenever the original
+/// owns either part, also for owner flag 1, whose result does not own that copy), and
+/// the owner flag becomes 3, 1, 2 or 0 from what the original owns.
+impl Clone for SrfInVolume {
+    fn clone(&self) -> Self {
+        let owns_surface = self.owns_surface();
+        let owns_volume = self.owns_volume();
+        Self {
+            surface: Box::new(if owns_surface {
+                (*self.surface).clone()
+            } else {
+                // infallible: the constructors, setters and database reader bounded it
+                self.surface.clone_exact_bounded()
+            }),
+            in_param_space: self.in_param_space,
+            volume: self.volume.clone(),
+            owner_flag: if owns_surface && owns_volume {
+                3
+            } else if owns_surface {
+                1
+            } else if owns_volume {
+                2
+            } else {
+                0
+            },
+        }
+    }
 }
 
 impl From<SrfInVolume> for Surface {
@@ -328,6 +365,11 @@ impl SrfInVolume {
             volume: self.volume.clone(),
             owner_flag: self.owner_flag,
         }
+    }
+
+    /// The base surface, mutable, for [`Surface::detach_nurb_cells`].
+    pub(crate) fn nested_surfaces_mut(&mut self) -> Vec<&mut Surface> {
+        vec![self.surface.as_mut()]
     }
 
     /// An evaluation copy retaining exact basis data, with Surface's `MAX_GEOMETRY_NESTING` bound.
@@ -389,11 +431,15 @@ impl SrfInVolume {
     }
 
     /// The copy constructor (`Copy`): copies both parts and sets the owner flag to
-    /// 3, 1, 2 or 0 from what this object owns.
+    /// 3, 1, 2 or 0 from what this object owns. A surface this object does not own is
+    /// shared upstream, so here it is an exact copy that keeps its owner
+    /// (`Surface::clone` would fix its knots up).
     ///
     /// # Errors
     ///
-    /// [`SolidError::Unported`] from copying an unported volume kind.
+    /// [`SolidError::Unported`] from copying an unported volume kind; those of
+    /// [`Surface::clone_for_evaluation`] on a surface not owned (geometry nested too
+    /// deeply).
     pub fn copy(&self, k: &Kernel) -> Result<Self> {
         let owns_surface = self.owns_surface();
         let owns_volume = self.owns_volume();
@@ -416,7 +462,8 @@ impl SrfInVolume {
         let surface = if owns_surface {
             ignored(self.surface.copy(k))?.unwrap_or_else(|| (*self.surface).clone())
         } else {
-            (*self.surface).clone()
+            // shared upstream: the same surface
+            self.surface.clone_for_evaluation()?
         };
         Ok(Self {
             surface: Box::new(surface),
@@ -788,6 +835,7 @@ impl SrfInVolume {
         let tangent = at(&srf_derivs, n_eval + 1);
         let side = |c: f64| if c > 0.0 { u_from_left } else { !u_from_left };
         let opts = EvalOptions {
+            fixes: k.fixes,
             from_left: [side(tangent.x), side(tangent.y), side(tangent.z)],
             non_zero_tangents,
             ..EvalOptions::default()
@@ -882,13 +930,14 @@ impl SrfInVolume {
                 sv(0, 1, 2),
                 sv(0, 0, 3),
             ];
-            let [duuu, duuv, duvv, dvvv] = lift_third_derivative_srf(
+            let [duuu, duuv, duvv, dvvv] = lift_third_derivative_srf_opt_in(
                 [su(1, 0), su(0, 1)],
                 [su(2, 0), su(1, 1), su(0, 2)],
                 [su(3, 0), su(2, 1), su(1, 2), su(0, 3)],
                 vol1,
                 vol2,
                 vol3,
+                k.fixes.volume_lift_third_derivative_terms,
             );
             // when managing the special case of lHighestUDeriv != lHighestVDeriv is
             // when one or the other is 0.
@@ -1069,8 +1118,19 @@ impl SrfInVolume {
     /// surface's `SwapUV`.
     pub fn swap_uv(&mut self, k: &Kernel) -> Result<()> {
         // check input - Can not swap UV on an unowned surface
+        self.owned_surface_mut()?.swap_uv(k)
+    }
+
+    /// The base surface, for an edit of it this object makes (`SM_ERR` when this
+    /// object does not own it). `Surface::swap_uv_notifying` notifies this object
+    /// around the base surface's swap, as upstream `SwapUV` does.
+    ///
+    /// # Errors
+    ///
+    /// `SM_ERR` when this object does not own the surface.
+    pub(crate) fn owned_surface_mut(&mut self) -> Result<&mut Surface> {
         self.require_owned_surface()?;
-        self.surface.swap_uv(k)
+        Ok(&mut self.surface)
     }
 
     /// Trims the base surface to `trim_domain` when possible (`TrimWithDomain`).

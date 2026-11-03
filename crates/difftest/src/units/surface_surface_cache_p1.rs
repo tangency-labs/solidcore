@@ -711,7 +711,7 @@ fn obj(i: i64) -> Option<i64> {
 /// The `SmStatus` of a Rust error; `-1` for one upstream cannot return.
 pub(crate) fn status(e: &SolidError) -> f64 {
     match e {
-        SolidError::InvalidInput { .. } => 1007.0,
+        SolidError::InvalidInput { .. } | SolidError::PortInvariant { .. } => 1007.0,
         SolidError::Upstream { code, .. } => f64::from(*code),
         _ => -1.0,
     }
@@ -1166,6 +1166,8 @@ fn rust_op(i: &Inputs) -> Result<Run, HarnessError> {
                     ProgIn::FirstPatch { node } => {
                         let own = match cache.surface().kind() {
                             SurfaceKind::BSpline(b) => b.gw_nurb(),
+                            SurfaceKind::ProceduralBlend(pb) => pb.net().gw_nurb(),
+                            SurfaceKind::BallPatch(bp) => bp.net().gw_nurb(),
                             SurfaceKind::CurveBounded(_)
                             | SurfaceKind::Plane(_)
                             | SurfaceKind::Cone(_)

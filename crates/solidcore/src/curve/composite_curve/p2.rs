@@ -759,7 +759,7 @@ impl CompositeCurve {
         for _ in 0..n {
             match CompositeCurveSegment::read_from_db(k, db, version) {
                 Ok(s) => segments.push(s),
-                Err(e) if e.is_unported() => return Err(e),
+                Err(e) if e.is_unported_or_cancelled() => return Err(e),
                 Err(_) => {
                     return Err(SolidError::invalid_input(
                         OP_READ,
@@ -885,6 +885,16 @@ impl CompositeCurve {
         params: &OffsetParams,
     ) -> Result<TrimmedOffsets> {
         let mut p = *params;
+
+        // SolidCraft change (tangency-labs/smlib 54148db): corners that keep the curves'
+        // curvature are made by CreateTaperExtrude only so far; here they would get no
+        // corner curves at all.
+        if p.corner == OffsetCornerType::CurveExtension {
+            return Err(SolidError::invalid_input(
+                OP_OFFSETS,
+                "SM_OC_CURVE_EXTENSION is for CreateTaperExtrude only",
+            ));
+        }
 
         // Offset distance must be positive.
         let mut flip = false;

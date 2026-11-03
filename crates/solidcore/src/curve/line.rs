@@ -140,6 +140,7 @@ use crate::nurbs::b_spline_curve_n_lib::{InValueType, TrimMode};
 use crate::nurbs::b_spline_surface::p1::SurfParamType;
 use crate::nurbs::math::NOW;
 use crate::nurbs::nurbs_crv::allocate_nurb_curve;
+use crate::surface::surface::Surface;
 use crate::topology::database_io::{DatabaseReader, DatabaseWriter, FileType, InputStream};
 
 const OP_SEGMENT: &str = "curve::line::Line::create_line_segment";
@@ -1501,7 +1502,7 @@ impl Line {
     }
 
     /// `GetOrCreateGwNurbPointer`: makes the NURB when missing (status ignored).
-    fn ensure_nurb(&mut self, owner: Option<ObjectRef>) -> Result<()> {
+    pub(crate) fn ensure_nurb(&mut self, owner: Option<ObjectRef>) -> Result<()> {
         if self.base.nurb.is_none() {
             ignore_status(self.make_nurb_owned(owner))?;
         }
@@ -1910,10 +1911,10 @@ impl Line {
         if both_free {
             // init line parameters
             let mut ivl = Extent1d::from_min_max(0.0, 1.0);
-            let start =
-                tgt_start.unwrap_or(self.point + self.scale * self.anal_domain.min() * self.vector);
-            let end =
-                tgt_end.unwrap_or(self.point + self.scale * self.anal_domain.max() * self.vector);
+            let start = tgt_start
+                .unwrap_or_else(|| self.point + self.scale * self.anal_domain.min() * self.vector);
+            let end = tgt_end
+                .unwrap_or_else(|| self.point + self.scale * self.anal_domain.max() * self.vector);
             let mut vec = end - start;
             let mut scale = vec.length();
 
@@ -2020,6 +2021,25 @@ impl Line {
         level_given: bool,
         key: ObjectKey,
     ) -> Result<bool> {
+        self.assert_valid_on(k, list, level_given, key, None)
+    }
+
+    /// [`Line::assert_valid`] of a UV trim on `trim_surface`, its face's surface: the
+    /// `SmBSplineCurve` checks measure the trim on it with
+    /// `Kernel::fixes.uv_trim_checks_on_surface` (WR-560, see
+    /// [`BSplineCurve::assert_valid_on`]).
+    ///
+    /// # Errors
+    ///
+    /// As [`Line::assert_valid`].
+    pub fn assert_valid_on(
+        &mut self,
+        k: &Kernel,
+        list: Option<&mut AssertArray>,
+        level_given: bool,
+        key: ObjectKey,
+        trim_surface: Option<&Surface>,
+    ) -> Result<bool> {
         let mut list = list;
         let mut rtn = true;
 
@@ -2042,6 +2062,9 @@ impl Line {
                     analytic: this.is_analytic(),
                     bounded: this.is_bounded(),
                     is_degenerate: &is_degenerate,
+                    trim_surface,
+                    // (WR-668's zero-speed end needs three control points; a line has two)
+                    edge_ends: None,
                 },
             )?;
         }
@@ -2163,7 +2186,7 @@ impl Line {
                     line.convert_to_2d()?;
                 }
             }
-            Err(e @ SolidError::Unported { .. }) => return Err(e),
+            Err(e @ (SolidError::Unported { .. } | SolidError::Cancelled { .. })) => return Err(e),
             Err(_) => {}
         }
         Ok(line)

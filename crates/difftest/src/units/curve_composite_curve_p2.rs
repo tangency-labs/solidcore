@@ -636,7 +636,7 @@ fn pv(o: &mut Vec<f64>, v: Vec3) {
 /// cannot return.
 fn status(e: &SolidError) -> f64 {
     match e {
-        SolidError::InvalidInput { .. } => 1007.0,
+        SolidError::InvalidInput { .. } | SolidError::PortInvariant { .. } => 1007.0,
         SolidError::Upstream { code, .. } => f64::from(*code),
         _ => -1.0,
     }
@@ -675,7 +675,7 @@ fn put_curve(k: &Kernel, o: &mut Vec<f64>, c: &Curve) -> Result<(), Fail> {
         pv(o, p);
     }
     if let CurveKind::BSpline(bs) = c.kind() {
-        let nurb = bs.gw_nurb().ok_or(Fail::Status(-1.0))?;
+        let nurb = bs.gw_nurb().ok_or_else(|| Fail::Status(-1.0))?;
         o.push(nurb.cpts().len() as f64);
         for p in nurb.cpts() {
             o.extend([p.x, p.y, p.z, p.w]);

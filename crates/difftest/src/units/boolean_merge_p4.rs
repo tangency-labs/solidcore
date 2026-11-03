@@ -56,30 +56,65 @@ fn request(i: &Inputs) -> ffi::Request {
         caller_lock: i.caller_lock,
     }
 }
+/// The Rust operand B-rep, built by the Rust kernel as the shim's `make_operand` builds
+/// the native one (kind 1 `MakeShellVertex`, kind 2 `CreateWireEdgeFromCurve` over a
+/// `CreateLineSegment` line on its natural interval, kind 3 `CreateFaceFromSurface` of
+/// an `SmPlane` with normal `+z`, any other kind the empty B-rep), renumbered into the
+/// shim's traversal order ([`crate::own_builder`]); no C++ export is read.
 fn import(input: &Operand) -> Result<Option<Brep>, HarnessError> {
+    use crate::own_builder::{create_face, finish, in_new_brep, line, Built, Conventions};
+    use solidcore::geom::vector3d::Vec3;
     if input[0] == -1.0 {
         return Ok(None);
     }
-    let raw = ffi::export(input).map_err(|e| error(&e))?;
-    if raw == [-1.0] {
-        return Err(error("native input constructor rejected"));
+    let mut k = Kernel::default();
+    let p = Vec3::new(input[1], input[2], input[3]);
+    let raw = match input[0] as i32 {
+        1 => in_new_brep(&mut k, |_, b| {
+            let region = b.infinite_region();
+            let mut state = solidcore::topology::brep::p2::ArenaNotifyState::new(b);
+            let mut env = state.env(None);
+            solidcore::topology::brep::p9::make_shell_vertex(b, region, p, &mut env).map(|_| ())
+        })?,
+        2 => in_new_brep(&mut k, |k, b| {
+            let c = line(p, p + Vec3::new(input[4], input[5], input[6]))?;
+            let ivl = c.natural_interval();
+            solidcore::topology::brep::p5::create_wire_edge_from_curve(k, b, c, ivl).map(|_| ())
+        })?,
+        3 => in_new_brep(&mut k, |k, b| {
+            let plane = solidcore::surface::plane::Plane::from_normal(p, Vec3::new(0.0, 0.0, 1.0));
+            let dom = [0.0, 0.0, input[4], input[5]];
+            create_face(k, b, solidcore::surface::surface::Surface::from(plane), dom).map(|_| ())
+        })?,
+        _ => in_new_brep(&mut k, |_, _| Ok(()))?,
+    };
+    // the shim's `walk(brep, g, true)` (no gap walk); the geometry owned under the arena
+    // identities [`own_geometry`] gives it, so its face tolerances stay recorded
+    match finish(&mut k, raw, false, false, &Conventions::EDGEUSE_GRAPH)? {
+        Built::Brep(b) => {
+            let mut b = *b;
+            own_geometry(&mut b)?;
+            // record the arena naming `own_geometry` gives the owners (and each owner)
+            b.use_arena_naming().map_err(|x| error(&x.to_string()))?;
+            Ok(Some(b))
+        }
+        Built::Failed(e) => Err(error(&format!("native input constructor rejected: {e}"))),
     }
-    let (mut b, _) = super::topology_vertexuse::import(&raw)?;
-    own_geometry(&mut b)?;
-    Ok(Some(b))
 }
 
-/// Give the imported geometry the owners the library's arena adapter keys its B-rep
-/// cache by (`arena_identity`): each edge's curve is owned by its edge, as natively,
-/// and each surface the importer marked as owned by its face keeps that face. Without
-/// this the cache would leave every curve and owned surface out of its trees.
+/// Relabels the geometry the build owns under the identities the library's arena adapter
+/// keys its B-rep cache by (`arena_identity`): each owned curve by its edge and each
+/// owned surface by its face, as natively. Geometry the build left without owner stays
+/// unowned (no owner is taken from the holder).
 fn own_geometry(b: &mut Brep) -> Result<(), HarnessError> {
     use solidcore::topology::brep_cache::{arena_identity, CacheObject};
     let edges: Vec<_> = b.edges().ids().collect();
     for e in edges {
         let edge = b.edge_mut(e).map_err(|x| error(&x.to_string()))?;
         if let Some(curve) = edge.curve.as_mut() {
-            curve.set_owner(Some(arena_identity(CacheObject::Edge(e))), None);
+            if curve.owner().is_some() {
+                curve.set_owner(Some(arena_identity(CacheObject::Edge(e))), None);
+            }
         }
     }
     let faces: Vec<_> = b.faces().ids().collect();
@@ -396,6 +431,8 @@ impl UnitDiff for Runner {
         }
     }
     fn generate(&self, rng: &mut Rng) -> Option<Value> {
+        /// Redraws of a generated case whose operand cannot be built.
+        const REDRAWS: usize = 16;
         let scale = match rng.below(5) {
             0 => 1e-9,
             1 => 1e-3,
@@ -416,8 +453,18 @@ impl UnitDiff for Runner {
                 rng.uniform(0.5, 2.0) * scale,
             ]
         };
-        let a = operand();
-        let b = operand();
+        // Setup must succeed on both sides: a draw whose operand the Rust port of the shim's
+        // constructors refuses (a plane face over a domain too large at scale 1e6) is drawn
+        // again, up to REDRAWS times; the first draw is kept whenever it builds.
+        let mut a = operand();
+        let mut b = operand();
+        for _ in 0..REDRAWS {
+            if import(&a).is_ok() && import(&b).is_ok() {
+                break;
+            }
+            a = operand();
+            b = operand();
+        }
         Some(json!({"primary":a,"other":b,"operation":rng.below(11),
             "flags":[rng.chance(0.2),rng.chance(0.2),rng.chance(0.5),rng.chance(0.2),rng.chance(0.5)],
             "manifold":rng.chance(0.8),"distinct_contexts":rng.chance(0.5),"caller_lock":rng.chance(0.5)}))

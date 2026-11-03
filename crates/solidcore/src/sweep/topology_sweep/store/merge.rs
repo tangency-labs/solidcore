@@ -99,7 +99,7 @@ pub(super) struct Driver<'a, 'caller> {
     identities: Identities<'caller>,
     session: &'a mut Session,
     bodies: &'a mut BodySlots<'caller>,
-    records: &'a mut BTreeMap<ObjectKey, Topology>,
+    records: &'a mut crate::topology::topology::NotifyRecords,
     attributes: &'a mut AttributeStore,
     cleanup_errors: &'a mut Vec<SolidError>,
     other_kernel: Option<(ContextId, &'a mut Kernel)>,
@@ -429,7 +429,7 @@ fn curve_key(
 }
 
 fn clear_deleted(
-    records: &mut BTreeMap<ObjectKey, Topology>,
+    records: &mut crate::topology::topology::NotifyRecords,
     attributes: &mut AttributeStore,
     keys: &[ObjectKey],
 ) -> Result<()> {
@@ -455,7 +455,7 @@ struct BooleanBodies<'a, 'caller> {
     other_meta: (BrepId, ContextId, u32),
     primary_keys: Vec<ObjectKey>,
     other_keys: Vec<ObjectKey>,
-    records: &'a mut BTreeMap<ObjectKey, Topology>,
+    records: &'a mut crate::topology::topology::NotifyRecords,
     attributes: &'a mut AttributeStore,
     cleanup_errors: &'a mut Vec<SolidError>,
 }
@@ -794,8 +794,12 @@ impl PiecewiseAccess for Driver<'_, '_> {
         // of other bodies (the original other's own); upstream registers those pairs
         // too, but no surface of the next Merge's operands ever matches them, so they
         // are skipped here (face ids are per body). See [`next_merge_pair`].
-        let (a, af) = self.surface_face(skip)?;
-        let (b, bf) = self.surface_face(user)?;
+        // A user whose face no longer exists in any body (deleted by the
+        // PartialMerge) is no operand surface either: upstream registers its
+        // pointer, which never matches, so it is skipped too.
+        let (Ok((a, af)), Ok((b, bf))) = (self.surface_face(skip), self.surface_face(user)) else {
+            return Ok(());
+        };
         if next_merge_pair(self.session.destination, self.session.primary, a, b) {
             self.session.intersector.register_empty_ssi(af, bf);
         }

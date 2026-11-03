@@ -2,13 +2,15 @@
 //! Rust: `solidcore::topology::brep::p1`.
 //!
 //! As the `topology.edgeuse_p1` runner, the C++ side builds a real `SmBrep` per call
-//! (an upstream `.smb` file, a wire edge, a face, or the `prog_test` wire network) and
-//! the Rust side imports the graph the shim exports in traversal order into a [`Brep`]
-//! (the shared import of `topology.edgeuse_p1`, plus this unit's extras: the infinite
-//! region, the editing flag, the size estimates and each vertex's vertex use list in
-//! its native order). Every op's C++ output after the build status is compared with the
-//! Rust side's as one float array (`out`): statuses (`0`, an `SmStatus` code, `-2`
-//! where upstream dereferences null), traversal indices, flags and values.
+//! (an upstream `.smb` file, a wire edge, a face, or the `prog_test` wire network). The
+//! Rust side builds every non-file source itself with the Rust kernel
+//! ([`crate::own_builder`], renumbered into the shim's traversal order) and reads an
+//! `.smb` file with the Rust reader ([`crate::own_reader::brep_in_order`], renumbered
+//! the same way): the infinite region, the editing flag, the size estimates and each
+//! vertex's vertex use list are the Rust read's own, and no C++ export reaches the Rust
+//! side. Every op's C++ output after the build status is compared with the Rust side's
+//! as one float array (`out`): statuses (`0`, an `SmStatus` code, `-2` where upstream
+//! dereferences null), traversal indices, flags and values.
 //!
 //! Selectors are taken modulo the entity count (`-1` selecting null where allowed); an
 //! op needing an entity the B-rep lacks is rejected (nothing runs on either side).
@@ -22,7 +24,7 @@
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeSet;
 
 use solidcore::curve::curve::Curve;
 use solidcore::geom::attribute::{Attribute, AttributeStore, Behavior, ObjectKey};
@@ -51,6 +53,7 @@ use solidcore::topology::{
 use solidcore::{EntityRef, SolidError};
 use solidcore_ffi::units::topology_brep_p1::{self as ffi, Op, N_EXTRA_SCALARS, TARGET_TYPES};
 
+use crate::util::trim_curve::put_trim_curve;
 use super::topology_edgeuse_p1::{
     brep_block_of, bspline_of, flag, gen_brep, gen_curve, import_raw_with_types, path_of,
     push_curve, sel, surface_of, BrepIn, CrvIn, ImportTypes, FILES,
@@ -768,37 +771,10 @@ fn build_failure(export: &[f64]) -> Output {
     ))
 }
 
-/// The Rust B-rep of an upstream `.smb` file at `path`, imported through this unit's
-/// export (list orders, vertex use lists and face back-links applied), for the
-/// runners of other units whose Rust side needs the file's B-rep.
-pub(crate) fn import_file(path: &str, rebuild: bool) -> Result<Brep, HarnessError> {
-    // the file block: kind 0, rebuild, validate_only, init_gaps
-    let block = [0.0, flag(rebuild), 0.0, 0.0];
-    let ex = crate::export_memo::export("topology_brep_p1", &[path], &block, || {
-        ffi::eval(Op::Export, path, &block)
-    })
-    .map_err(|e| harness(format!("c++ export: {e}")))?;
-    let Some((_, graph_at)) = ffi::counts(&ex) else {
-        return Err(harness(format!(
-            "brep_build_status_{}",
-            ex.get(1).copied().unwrap_or(0.0)
-        )));
-    };
-    Ok(import(&ex, graph_at)?.0)
-}
-
-/// The Rust B-rep of an export with this unit's extras applied, and the geometry
-/// types of the import, with its cached gaps refilled on the finished B-rep
-/// ([`super::topology_vertexuse::refill_gaps`]).
-pub(crate) fn import(ex: &[f64], graph_at: usize) -> Result<(Brep, ImportTypes), HarnessError> {
-    let (mut b, types) = import_raw(ex, graph_at)?;
-    super::topology_vertexuse::refill_gaps(&mut b);
-    Ok((b, types))
-}
-
-/// [`import`] without refilling the cached gaps (they stay marked as set with
-/// `SM_UNDEF_DOUBLE` placeholder values), for the C++ side, which only resolves
-/// selectors on the import.
+/// The B-rep of an export with this unit's extras applied, and the geometry types of
+/// the import, its cached gaps not refilled (they stay marked as set with
+/// `SM_UNDEF_DOUBLE` placeholder values): for C++ sides that only resolve selectors on
+/// the import (the `heal.stitch_p1` / `heal.stitch_p2` runners).
 pub(crate) fn import_raw(ex: &[f64], graph_at: usize) -> Result<(Brep, ImportTypes), HarnessError> {
     let mut graph = vec![0.0];
     graph.extend_from_slice(ex.get(graph_at..).ok_or_else(|| harness("short export"))?);
@@ -903,6 +879,11 @@ pub(crate) fn import_raw(ex: &[f64], graph_at: usize) -> Result<(Brep, ImportTyp
             }
         }
     }
+    // the import names every geometry owner by arena identity (above); record that
+    // naming (and each owner) on the B-rep, so library queries that name geometry under
+    // another scheme's identities (a glue's notification identities, overridden by
+    // recorded owners) resolve the owners instead of failing internally
+    b.use_arena_naming().map_err(|e| harness(e.to_string()))?;
     Ok((b, types))
 }
 
@@ -1055,10 +1036,10 @@ const SM_ERR_INVALID_INPUT: f64 = 1007.0;
 fn status_of(e: &SolidError) -> f64 {
     match e {
         SolidError::Upstream { code, .. } => f64::from(*code),
-        SolidError::InvalidInput { operation, .. } if *operation == "topology::brep::p1" => {
+        SolidError::InvalidInput { operation, .. } | SolidError::PortInvariant { operation, .. } if *operation == "topology::brep::p1" => {
             NULL_DEREF
         }
-        SolidError::InvalidInput { .. } => SM_ERR_INVALID_INPUT,
+        SolidError::InvalidInput { .. } | SolidError::PortInvariant { .. } => SM_ERR_INVALID_INPUT,
         _ => -9.0,
     }
 }
@@ -1192,12 +1173,9 @@ fn curve_id(k: &Kernel, c: Option<&Curve>, out: &mut Vec<f64>) {
 fn eu_state(k: &Kernel, b: &Brep, eu: EdgeuseId, out: &mut Vec<f64>) -> Result<(), SolidError> {
     out.push(1.0);
     let r = b.edgeuse(eu)?;
-    curve_id(k, r.uv_trim_curve.as_ref(), out);
-    out.push(if r.uv_trim_curve.is_some() {
-        f64::from(eu.index())
-    } else {
-        -1.0
-    });
+    put_trim_curve(k, out, r.uv_trim_curve.as_ref())?;
+    // the curve's owner, as the shim's `g.find(6, uv->GetOwner())`
+    out.push(crate::own_builder::uv_owner_index(b, eu, None));
     match r.drop_curve_fail.as_deref() {
         Some(f) => out.extend([1.0, f64::from(f.fail_status), flag(f.brep.is_some())]),
         None => out.extend([0.0, 0.0, 0.0]),
@@ -1283,7 +1261,7 @@ fn idx<I: solidcore::topology::ArenaId>(id: Option<I>) -> f64 {
 /// shim's graph order, and the shim re-walks the healed B-rep, so the two agree while
 /// the heal leaves the topology lists as they are; a step that reorders or adds records
 /// shows up as a disagreement, never as a silent pass.
-fn put_healed(k: &Kernel, b: &Brep, types: &ImportTypes, o: &mut Vec<f64>) -> Result<(), Fail> {
+fn put_healed(k: &Kernel, b: &Brep, o: &mut Vec<f64>) -> Result<(), Fail> {
     o.push(idx(b.infinite_region()));
     o.push(flag(b.editing_enabled()));
     o.push(b.this_model_size_estimate(k, false));
@@ -1325,19 +1303,15 @@ fn put_healed(k: &Kernel, b: &Brep, types: &ImportTypes, o: &mut Vec<f64>) -> Re
         ]);
         o.extend(ids(&fu.loopuses));
     }
-    for (id, f) in b.faces().iter() {
+    for (_, f) in b.faces().iter() {
         match f.surface.as_ref() {
             Some(s) => put_surface(o, s)?,
             None => o.push(-1.0),
         }
         let d = &f.uv_domain;
         o.extend([d.min().x, d.min().y, d.max().x, d.max().y, f.tolerance]);
-        o.push(
-            types
-                .face_surface_types
-                .get(id.index() as usize)
-                .map_or(-1.0, |&t| t as f64),
-        );
+        // `GetSurface()->GetType()` of the Rust surface itself (the shim's value)
+        o.push(f.surface.as_ref().map_or(-1.0, |s| s.type_code() as f64));
     }
     for (_, lu) in b.loopuses().iter() {
         o.extend([idx(lu.faceuse), idx(lu.loop_), idx(lu.mate)]);
@@ -1374,15 +1348,11 @@ fn put_healed(k: &Kernel, b: &Brep, types: &ImportTypes, o: &mut Vec<f64>) -> Re
             flag(eu.edge_ccw_edge_gap.is_init()),
         ]);
     }
-    for (id, e) in b.edges().iter() {
+    for (_, e) in b.edges().iter() {
         o.extend([e.tolerance, e.interval.min(), e.interval.max()]);
         o.extend(ids(&e.edgeuses));
-        o.push(
-            types
-                .edge_curve_types
-                .get(id.index() as usize)
-                .map_or(-1.0, |&t| t as f64),
-        );
+        // `GetCurve()->GetType()` of the Rust curve itself (the shim's value)
+        o.push(e.curve.as_ref().map_or(-1.0, |c| c.type_code() as f64));
         curve_id(k, e.curve.as_ref(), o);
     }
     for (_, vu) in b.vertexuses().iter() {
@@ -1797,7 +1767,15 @@ fn run_rust_op(
                 marks.mark(k, Entity::Face(f), mark);
             }
             let swaps = !marks.is_marked(k, Entity::Face(f), mark);
-            match bp1::swap_face_uv(k, b, &mut marks, f, mark) {
+            let mut records = solidcore::topology::topology::NotifyRecords::new();
+            let mut attrs = AttributeStore::default();
+            let mut env = solidcore::topology::edge::NotifyEnv {
+                records: &mut records,
+                attributes: &mut attrs,
+                context: None,
+                key_of: &key_of,
+            };
+            match bp1::swap_face_uv(k, b, &mut marks, f, mark, &mut env) {
                 Err(e) if !e.is_unported() => return Ok(Ok(vec![status_of(&e)])),
                 r => r?,
             }
@@ -1813,7 +1791,7 @@ fn run_rust_op(
             let d = b.face(f)?.uv_domain;
             o.extend([d.min().x, d.min().y, d.max().x, d.max().y]);
             if swaps {
-                put_healed(k, b, types, &mut o)?;
+                put_healed(k, b, &mut o)?;
             }
         }
         OpIn::CheckUv { eu } => {
@@ -1884,7 +1862,7 @@ fn run_rust_op(
             if let Some(d) = inexact(types, Some(&[]), Some(&edges)) {
                 return Ok(Err(d));
             }
-            let mut records = BTreeMap::new();
+            let mut records = solidcore::topology::topology::NotifyRecords::new();
             let mut attrs = AttributeStore::default();
             let mut env = solidcore::topology::edge::NotifyEnv {
                 records: &mut records,
@@ -2068,13 +2046,29 @@ fn run_rust_op(
             eu2,
             dir,
         } => {
-            // the second B-rep in its own arena, imported from its own C++ export
-            let block2 = brep_block_of(Some(other), false, false)?;
-            let ex2 = ffi::eval(Op::Export, "", &block2)
-                .map_err(|e| harness(format!("c++ export of the second B-rep: {e}")))?;
-            let (_, graph_at2) =
-                ffi::counts(&ex2).ok_or_else(|| harness("the second B-rep does not build"))?;
-            let (mut b2, _) = import(&ex2, graph_at2)?;
+            // the second B-rep in its own arena, built by the Rust kernel
+            let mut b2 = match crate::own_builder::build(k, other, false, false)? {
+                Some(crate::own_builder::Built::Brep(b2)) => *b2,
+                Some(crate::own_builder::Built::Failed(e)) if e.is_unported() => {
+                    return Err(e.into());
+                }
+                Some(crate::own_builder::Built::Failed(_)) => {
+                    return Err(harness("the second B-rep does not build").into());
+                }
+                None => {
+                    // an `.smb` file: read by the Rust reader
+                    let conv = &crate::own_builder::Conventions::EDGEUSE_GRAPH;
+                    match crate::own_reader::brep_in_order(k, other, false, false, conv)? {
+                        crate::own_builder::Built::Brep(b2) => *b2,
+                        crate::own_builder::Built::Failed(e) if e.is_unported() => {
+                            return Err(e.into());
+                        }
+                        crate::own_builder::Built::Failed(_) => {
+                            return Err(harness("the second B-rep does not build").into());
+                        }
+                    }
+                }
+            };
             let id = |i: i64| (i >= 0).then(|| EdgeuseId::from_index(i as u32));
             match bp1::create_edge_edge_blend(
                 k,
@@ -2110,7 +2104,7 @@ fn run_rust_op(
             if let Some(d) = inexact(types, None, Some(&[])) {
                 return Ok(Err(d));
             }
-            let c = bspline_of(curve)?;
+            let c = Curve::from(bspline_of(curve)?);
             let opts = bp1::ParallelProjectionOptions {
                 projection_distance: *dist,
                 approx_tol_3d: *tol,
@@ -2165,7 +2159,7 @@ fn run_rust_op(
                 return Ok(Err(d));
             }
             o.push(0.0);
-            put_healed(k, b, types, &mut o)?;
+            put_healed(k, b, &mut o)?;
         }
     }
     Ok(Ok(o))
@@ -2181,18 +2175,17 @@ fn run_rust(i: &Inputs) -> Result<Output, HarnessError> {
     {
         return run_rust_intersection(i, other, *tol, *ang, *want_points);
     }
-    let ex = export(i)?;
-    let Some((c, graph_at)) = ffi::counts(&ex) else {
-        return Ok(build_failure(&ex));
+    let mut k = Kernel::default();
+    let (mut b, types, c) = match rust_brep(&mut k, i)? {
+        Ok(x) => x,
+        Err(o) => return Ok(o),
     };
-    let (mut b, types) = import(&ex, graph_at)?;
     let Some(op) = resolve(&i.op, c) else {
         return Ok(no_entity());
     };
     if let Some(refused) = refused_input(&op) {
         return Ok(refused);
     }
-    let mut k = Kernel::default();
     match run_rust_op(&mut k, &mut b, &types, &op) {
         Ok(Ok(o)) => Ok(guarded_output(o)),
         Ok(Err(o)) => Ok(o),
@@ -2201,6 +2194,57 @@ fn run_rust(i: &Inputs) -> Result<Output, HarnessError> {
             None => Err(harness(format!("rust: {e}"))),
         },
         Err(Fail::Harness(h)) => Err(h),
+    }
+}
+
+/// The Rust B-rep of the case, its geometry types and entity counts, or the output of
+/// a failed build: shim-built sources are built by the Rust kernel
+/// ([`crate::own_builder`]); `.smb` file sources are read by the Rust reader
+/// ([`crate::own_reader::brep_in_order`]).
+fn rust_brep(
+    k: &mut Kernel,
+    i: &Inputs,
+) -> Result<crate::own_builder::RustBrep<(Brep, ImportTypes, [usize; 10])>, HarnessError> {
+    use crate::own_builder::{build, build_status, counts, Built};
+    let src = i
+        .brep
+        .as_ref()
+        .ok_or_else(|| harness("B-rep op without brep"))?;
+    match build(k, src, i.validate_only, i.init_gaps)? {
+        Some(Built::Brep(b)) => {
+            let b = *b;
+            // geometry owners are arena identities with the naming left `Unknown`, as
+            // this unit's `.smb` import leaves it on main
+            let c = counts(&b);
+            Ok(Ok((b, ImportTypes::default(), c)))
+        }
+        Some(Built::Failed(e)) => match Output::unported(&e) {
+            Some(o) => Ok(Err(o)),
+            None => Ok(Err(Output::err(format!(
+                "brep_build_status_{}",
+                build_status(&e)
+            )))),
+        },
+        None => {
+            // an `.smb` file: the Rust reader's B-rep in the shim's traversal order, its
+            // geometry owned as the Rust reader owns it (no C++ export reaches the Rust
+            // side)
+            let conv = &crate::own_builder::Conventions::EDGEUSE_GRAPH;
+            match crate::own_reader::brep_in_order(k, src, i.validate_only, i.init_gaps, conv)? {
+                Built::Brep(b) => {
+                    let b = *b;
+                    let c = counts(&b);
+                    Ok(Ok((b, ImportTypes::default(), c)))
+                }
+                Built::Failed(e) => match Output::unported(&e) {
+                    Some(o) => Ok(Err(o)),
+                    None => Ok(Err(Output::err(format!(
+                        "brep_build_status_{}",
+                        build_status(&e)
+                    )))),
+                },
+            }
+        }
     }
 }
 

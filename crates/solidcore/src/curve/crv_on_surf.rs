@@ -53,17 +53,31 @@
 //!   for flag 2 and then discards the copy, as upstream. The copy constructor copies both
 //!   parts when it owns the curve. Unowned parts and temporary `this` copies use
 //!   exact snapshots, retaining their NURBS data and owner chains; native owned
-//!   branches still use virtual `Copy`. Notifications and contexts are not modelled.
+//!   branches still use virtual `Copy`. Whether upstream links each part back to the
+//!   curve (`SetOwner(this)`) is recorded ([`CrvOnSurf::owner_links`], read by
+//!   `AssertValid`): the UV-line constructor, `SetUVCurve` and `ReadFromDB` link
+//!   nothing. Notifications and contexts are not modelled.
 //! - **Caches.** Upstream's const knot queries update the break cache. Here that
 //!   value-only cache uses interior mutability; no cache borrow spans a geometry
 //!   call. `breaks()` returns an owned snapshot. Shared [`Curve`] knot dispatch
-//!   retains these writes. Approximation queries still use `&mut self`; their
-//!   `*_ref` variants run on an exact copy and do not retain approximation updates.
+//!   retains these writes. The approximation cache (`m_pBSApproxCurve`,
+//!   `m_dMaxGap3d`, `m_bParametrizationMatches`) is interior-mutable the same way:
+//!   approximation queries use `&mut self`, and their `*_ref` variants run on an
+//!   exact copy and then keep its break and approximation caches on this curve, as
+//!   upstream's const `DropPoint` and `CalculateBoundingBox` write them. The cached
+//!   approximation is handed out as an exact copy of the stored one (upstream hands
+//!   out the object itself).
 //! - **Base-class calls.** `SmCurve::ApproximateCurve`, `SmCurve::DropPoint` and
 //!   `SmCurve::CalculateBoundingBox` on `this` run on a [`Curve`] wrapping a copy of
 //!   this object ([`Curve::approximate_curve_base`], [`Curve::drop_point_base`],
 //!   [`calculate_bounding_box_base`]). The base drop's actual break-cache state is
-//!   copied back even on failure; local solves do not force a cache build. Where
+//!   copied back even on failure; local solves do not force a cache build. The base
+//!   drop's global solve reads the curve cache the caller keeps for this curve
+//!   (`Curve::drop_point_in` and `GlobalCoincidenceChecker`, as for every other kind;
+//!   upstream keeps it on the curve), not one built per drop on the copy; a caller
+//!   without one reads the cache kept on this object (built by its first global solve
+//!   under the same kernel state, dropped by every edit; a copy starts without it), as
+//!   upstream's one cache per curve object. Where
 //!   upstream falls back to the base class
 //!   after a failed approximation (`CalculateBoundingBox`, `DropPoint`), a
 //!   [`SolidError::Unported`] failure is propagated instead.
@@ -90,9 +104,14 @@
 //!   zero fill never runs upstream (`for (ii = 2; ii > lNumDers; ii++)` inside
 //!   `if (lNumDers > 1)`); the port returns the two derivatives it computes.
 //! - **`SurfaceCurveMaxDistanceBetween`** forces `bDoPrecise = FALSE` before its
-//!   precise refinement upstream, so that code (`SmSurface::LocalCurveSolve` and
-//!   `SmCurve::LocalCurveSolve`) is dead and not called.
-//!   Object identity (`&crOtherCurve == this`) is [`core::ptr::eq`].
+//!   precise refinement upstream (`SmCrvOnSurf.cpp:1909`, noting those two
+//!   `CurveSolve` calls do not work properly), so that refinement block
+//!   (`SmSurface::LocalCurveSolve` and `SmCurve::LocalCurveSolve`) remains dead and not
+//!   called (`num_samples == 0` still takes the `22 + this_knots + other_knots` dense
+//!   sample pass). With `Kernel::fixes.curve_max_distance_single_sample_midpoint`,
+//!   `num_samples == 1` samples the interval midpoints (`per = 0.5`) instead of dividing
+//!   `0 / 0 = NaN` (WR-36); off, it matches upstream. Object identity
+//!   (`&crOtherCurve == this`) is [`core::ptr::eq`].
 //! - **`ReadFromDB`** always builds a new object (the "fill the curve passed in"
 //!   branch and its `IsKindOf` check have no counterpart; `lType`, `lDim` and the
 //!   context are unused upstream). An ASCII value whose extraction fails keeps the
@@ -117,7 +136,9 @@ use crate::curve::curve::p2::{
     at, evaluate_continuity, is_kind_of as curve_is_kind_of, knots_ignoring_status, Curve,
     CurveEvaluate, CurveKind, KnotsWithStatus, CRV_ON_SURF_TYPE,
 };
-use crate::curve::curve::p6::{calculate_bounding_box_base, DroppedPoint};
+use crate::curve::curve::p5::CurveMemoKey;
+use crate::curve::curve::p6::{calculate_bounding_box_base, CurveHandle, DroppedPoint};
+use crate::curve::curve_cache::CurveCache;
 use crate::curve::line::Line;
 use crate::curve::tangent_field::{TangentFieldCurve, TangentFieldMembers};
 use crate::error::{ignored, Result, SolidError};
@@ -265,6 +286,30 @@ struct BreakCache {
     breaks: Vec<f64>,
 }
 
+/// The approximation fields written by upstream's const callers of
+/// `GetOrCreateBSApproxCurve` (`DropPoint`, `CalculateBoundingBox`). As for
+/// [`BreakCache`], no borrow of this value is held while calling geometry.
+#[derive(Debug)]
+struct ApproxCache {
+    /// `m_pBSApproxCurve`: cached B-spline approximation of the 3D curve.
+    bs_approx: Option<Box<BSplineCurve>>,
+    /// `m_dMaxGap3d`: the approximation's largest sampled deviation.
+    max_gap_3d: f64,
+    /// `m_bParametrizationMatches`: the approximation matches the parameterisation.
+    parametrization_matches: bool,
+}
+
+impl ApproxCache {
+    /// An exact copy (the approximation's NURBS data kept as is).
+    fn clone_exact(&self) -> Self {
+        Self {
+            bs_approx: self.bs_approx.as_deref().map(|c| Box::new(c.clone_exact())),
+            max_gap_3d: self.max_gap_3d,
+            parametrization_matches: self.parametrization_matches,
+        }
+    }
+}
+
 /// A curve on a surface (`SmCrvOnSurf`): `C(t) = S(uv(t))` for a 2D parameter-space
 /// curve `uv` and a surface `S`. Its "knots" are the UV curve's knots plus the
 /// parameters where it crosses the surface's knot lines (cached once computed); a
@@ -284,16 +329,48 @@ pub struct CrvOnSurf {
     /// `m_lOwnerFlag`: 0 shares both parts, 1 owns (a copy of) the curve, 2 owns copies
     /// of both, 3 owns both originals.
     owner_flag: u64,
-    /// `m_pBSApproxCurve`: cached B-spline approximation of the 3D curve.
-    bs_approx: Option<Box<BSplineCurve>>,
-    /// `m_dMaxGap3d`: the approximation's largest sampled deviation.
-    max_gap_3d: f64,
-    /// `m_bParametrizationMatches`: the approximation matches the parameterisation.
-    parametrization_matches: bool,
+    /// Whether upstream's UV curve and surface name this object as their owner
+    /// (`GetOwner() == this`): the constructor links what owner flags 1..3 / 2..3 own
+    /// and the copy constructor what it copies; the UV-line constructor, `SetUVCurve`
+    /// (for the new curve) and `ReadFromDB` link nothing.
+    owner_links: (bool, bool),
+    /// `m_pBSApproxCurve`, `m_dMaxGap3d`, `m_bParametrizationMatches`: mutable even
+    /// in upstream's const queries, as `break_cache`.
+    approx_cache: Mutex<ApproxCache>,
+    /// The curve cache of the base-class drop's global solve, kept on this object as
+    /// upstream's `SmCacheMgr` keeps one per curve (not a field upstream), with the
+    /// kernel state it was built under (`CurveMemoKey::of_kernel`). A copy starts
+    /// without one; every edit of the curve drops it.
+    curve_cache: Mutex<Option<(CurveMemoKey, CurveCache<CurveHandle>)>>,
 }
 
+/// An exact copy as a separate curve (the [`Curve`] copy constructor's): as upstream's
+/// copy constructor, which deep-copies the surface when the curve owns its UV curve or
+/// surface (owner flags 1 to 3), the copy's surface then gets its own NURB cells; with
+/// flag 0 both curves name the same surface upstream and the cells stay shared. The
+/// cached approximation is copied with the copy constructor's knot fix-up
+/// (`m_pBSApproxCurve->Copy()`).
 impl Clone for CrvOnSurf {
     fn clone(&self) -> Self {
+        let mut c = self.clone_exact_shared();
+        if matches!(self.owner_flag, 1..=3) {
+            c.surface.detach_nurb_cells();
+        }
+        // the copy constructor's SetOwner of what it copies
+        let owns_curve = matches!(self.owner_flag, 1..=3);
+        c.owner_links = (owns_curve, owns_curve);
+        let approx = c.approx_cache_mut();
+        if let Some(bs) = approx.bs_approx.take() {
+            approx.bs_approx = Some(Box::new(bs.copy()));
+        }
+        c
+    }
+}
+
+impl CrvOnSurf {
+    /// An exact copy that stands for this curve (an evaluation copy): the surface
+    /// shares its NURB cells with this curve's surface.
+    pub(crate) fn clone_exact_shared(&self) -> Self {
         // All factories and replacement paths validate the complete graph first.
         Self {
             uv_curve: Box::new(self.uv_curve.clone_exact_bounded()),
@@ -301,9 +378,9 @@ impl Clone for CrvOnSurf {
             uv_domain: self.uv_domain,
             break_cache: Mutex::new(self.lock_break_cache().clone()),
             owner_flag: self.owner_flag,
-            bs_approx: self.bs_approx.as_deref().map(|c| Box::new(c.clone_exact())),
-            max_gap_3d: self.max_gap_3d,
-            parametrization_matches: self.parametrization_matches,
+            owner_links: self.owner_links,
+            approx_cache: Mutex::new(self.lock_approx_cache().clone_exact()),
+            curve_cache: Mutex::new(None),
         }
     }
 }
@@ -319,9 +396,9 @@ impl CrvOnSurf {
             uv_domain: self.uv_domain,
             break_cache: Mutex::new(self.lock_break_cache().clone()),
             owner_flag: self.owner_flag,
-            bs_approx: self.bs_approx.as_deref().map(|c| Box::new(c.clone_exact())),
-            max_gap_3d: self.max_gap_3d,
-            parametrization_matches: self.parametrization_matches,
+            owner_links: self.owner_links,
+            approx_cache: Mutex::new(self.lock_approx_cache().clone_exact()),
+            curve_cache: Mutex::new(None),
         })
     }
 
@@ -331,6 +408,50 @@ impl CrvOnSurf {
         self.break_cache
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
+    }
+
+    /// The approximation cache, locked only for the access (as the break cache).
+    fn lock_approx_cache(&self) -> MutexGuard<'_, ApproxCache> {
+        self.approx_cache
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+    }
+
+    fn approx_cache_mut(&mut self) -> &mut ApproxCache {
+        self.approx_cache
+            .get_mut()
+            .unwrap_or_else(PoisonError::into_inner)
+    }
+
+    fn curve_cache_mut(&mut self) -> &mut Option<(CurveMemoKey, CurveCache<CurveHandle>)> {
+        self.curve_cache
+            .get_mut()
+            .unwrap_or_else(PoisonError::into_inner)
+    }
+
+    /// Takes the break and approximation caches of `copy`, an exact copy of this curve
+    /// that a const query ran on: upstream's const queries write them on the curve
+    /// itself. The curve cache lent to the copy ([`Self::drop_point_ref_as`]) comes back
+    /// with them.
+    fn keep_caches_of(&self, copy: Self) {
+        *self.lock_break_cache() = copy
+            .break_cache
+            .into_inner()
+            .unwrap_or_else(PoisonError::into_inner);
+        *self.lock_approx_cache() = copy
+            .approx_cache
+            .into_inner()
+            .unwrap_or_else(PoisonError::into_inner);
+        if let Some(kept) = copy
+            .curve_cache
+            .into_inner()
+            .unwrap_or_else(PoisonError::into_inner)
+        {
+            *self
+                .curve_cache
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner) = Some(kept);
+        }
     }
 
     /// `SmCrvOnSurf_TYPE` (`CURV_BASE_TYPE + 48`).
@@ -349,9 +470,13 @@ impl CrvOnSurf {
                 breaks: Vec::new(),
             }),
             owner_flag,
-            bs_approx: None,
-            max_gap_3d: BIG_DOUBLE,
-            parametrization_matches: false,
+            owner_links: (false, false),
+            approx_cache: Mutex::new(ApproxCache {
+                bs_approx: None,
+                max_gap_3d: BIG_DOUBLE,
+                parametrization_matches: false,
+            }),
+            curve_cache: Mutex::new(None),
         })
     }
 
@@ -389,6 +514,9 @@ impl CrvOnSurf {
         if owner_flag == 2 {
             *c.surface = c.surface.copy(k)?;
         }
+
+        // when Curve or Surface is owned (copied or not) - set the obj's owner to be this
+        c.owner_links = (matches!(owner_flag, 1..=3), matches!(owner_flag, 2 | 3));
         Ok(c)
     }
 
@@ -472,6 +600,9 @@ impl CrvOnSurf {
             .unwrap_or_else(PoisonError::into_inner)
             .need_breaks = self.need_breaks();
 
+        // the copies name this object as their owner
+        c.owner_links = (owns_curve, owns_curve || owns_surface);
+
         // set the owner flag
         c.owner_flag = if owns_curve && owns_surface {
             2
@@ -487,12 +618,31 @@ impl CrvOnSurf {
                 .breaks = self.breaks();
         }
 
-        if let Some(a) = &self.bs_approx {
-            c.bs_approx = Some(Box::new(a.copy()));
-            c.max_gap_3d = self.max_gap_3d;
-            c.parametrization_matches = self.parametrization_matches;
+        {
+            let a = self.lock_approx_cache();
+            if let Some(bs) = &a.bs_approx {
+                let ca = c.approx_cache_mut();
+                ca.bs_approx = Some(Box::new(bs.copy()));
+                ca.max_gap_3d = a.max_gap_3d;
+                ca.parametrization_matches = a.parametrization_matches;
+            }
         }
         Ok(c)
+    }
+
+    /// `CreateMirrorCurve`: the same parameter-space curve and domain on the mirrored
+    /// surface; the new curve owns both parts (owner flag 3).
+    ///
+    /// # Errors
+    ///
+    /// Those of the surface's [`Surface::create_mirror_surface`], the UV curve's `Copy`
+    /// and of [`CrvOnSurf::new`].
+    pub fn create_mirror_curve(&self, k: &Kernel, mirror_plane: &Axis2Placement) -> Result<Self> {
+        // Create the new geometry
+        let mirror_surface = self.surface.create_mirror_surface(k, mirror_plane)?;
+        let new_uv_curve = self.uv_curve.copy(k)?;
+        // Create the new curve on mirrored geometry. It owns the curve and surf
+        Self::new(k, new_uv_curve, mirror_surface, Some(self.uv_domain), 3)
     }
 
     // ---- simple access --------------------------------------------------------------
@@ -505,6 +655,7 @@ impl CrvOnSurf {
 
     /// Mutable parameter curve for faithful in-place B-spline base editing.
     pub(crate) fn uv_curve_mut(&mut self) -> &mut Curve {
+        *self.curve_cache_mut() = None;
         &mut self.uv_curve
     }
 
@@ -518,6 +669,13 @@ impl CrvOnSurf {
     #[must_use]
     pub const fn uv_domain(&self) -> &Extent2d {
         &self.uv_domain
+    }
+
+    /// Whether the UV curve and the surface name this object as their owner
+    /// (`GetOwner() == this`; see the `owner_links` field).
+    #[must_use]
+    pub const fn owner_links(&self) -> (bool, bool) {
+        self.owner_links
     }
 
     /// The owner flag (`m_lOwnerFlag`).
@@ -541,6 +699,13 @@ impl CrvOnSurf {
 
     /// Loads the break cache (`m_bNeedBreaks`, `m_vBreaks`), as `ReadFromDB` does.
     pub fn set_breaks_cache(&mut self, need_breaks: bool, breaks: Vec<f64>) {
+        // the knots the curve cache was built over may change
+        let cache = self.lock_break_cache();
+        let same = cache.need_breaks == need_breaks && cache.breaks == breaks;
+        drop(cache);
+        if !same {
+            *self.curve_cache_mut() = None;
+        }
         *self
             .break_cache
             .get_mut()
@@ -550,23 +715,26 @@ impl CrvOnSurf {
         };
     }
 
-    /// The cached B-spline approximation (`m_pBSApproxCurve`), if any.
+    /// An exact copy of the cached B-spline approximation (`m_pBSApproxCurve`), if any.
     #[must_use]
-    pub fn bs_approx(&self) -> Option<&BSplineCurve> {
-        self.bs_approx.as_deref()
+    pub fn bs_approx(&self) -> Option<BSplineCurve> {
+        self.lock_approx_cache()
+            .bs_approx
+            .as_deref()
+            .map(BSplineCurve::clone_exact)
     }
 
     /// The approximation's largest sampled deviation (`GetBSApproxMaxGap3d`).
     #[must_use]
-    pub const fn bs_approx_max_gap_3d(&self) -> f64 {
-        self.max_gap_3d
+    pub fn bs_approx_max_gap_3d(&self) -> f64 {
+        self.lock_approx_cache().max_gap_3d
     }
 
     /// Whether the approximation was made matching the parameterisation
     /// (`m_bParametrizationMatches`).
     #[must_use]
-    pub const fn parametrization_matches(&self) -> bool {
-        self.parametrization_matches
+    pub fn parametrization_matches(&self) -> bool {
+        self.lock_approx_cache().parametrization_matches
     }
 
     /// Replaces the UV curve (`SetUVCurve`); the caches are kept, as upstream.
@@ -579,6 +747,9 @@ impl CrvOnSurf {
     pub fn set_uv_curve(&mut self, uv_curve: Curve) -> Result<()> {
         Surface::check_curve_evaluation_copy_depth(&uv_curve, 1)?;
         *self.uv_curve = uv_curve;
+        *self.curve_cache_mut() = None;
+        // (no SetOwner of the new curve)
+        self.owner_links.0 = false;
         Ok(())
     }
 
@@ -700,7 +871,7 @@ impl CrvOnSurf {
 
         // If the surface can't handle this many derivatives (default bNonZeroTangents)
         while let Err(e) = &srf {
-            if e.is_unported() || n_eval == 0 {
+            if e.is_unported_or_cancelled() || n_eval == 0 {
                 break;
             }
             n_eval -= 1;
@@ -925,7 +1096,7 @@ impl CrvOnSurf {
             &self.surface,
         ) {
             Ok(classes) => classes,
-            Err(e @ SolidError::Unported { .. }) => return Err(e),
+            Err(e @ (SolidError::Unported { .. } | SolidError::Cancelled { .. })) => return Err(e),
             Err(e) => {
                 let status = Err(e);
                 return Ok(KnotsWithStatus {
@@ -1183,7 +1354,7 @@ impl CrvOnSurf {
         match_parameterization: Option<bool>,
         derived: Option<TangentFieldMembers>,
     ) -> Result<BSplineCurve> {
-        let max_gap_3d = self.max_gap_3d;
+        let max_gap_3d = self.approx_cache_mut().max_gap_3d;
         let match_param = match_parameterization.unwrap_or(true);
         let mut recompute = false;
 
@@ -1196,18 +1367,19 @@ impl CrvOnSurf {
             }
         }
 
-        if match_param != self.parametrization_matches {
+        if match_param != self.approx_cache_mut().parametrization_matches {
             recompute = true;
         }
 
         if recompute {
-            self.bs_approx = None;
+            self.approx_cache_mut().bs_approx = None;
         }
 
         // If we have an approximation and the tolerance is good enough, use it
-        if let Some(a) = &self.bs_approx {
+        // (upstream hands out the cached object itself: an exact copy)
+        if let Some(a) = &self.approx_cache_mut().bs_approx {
             if max_gap_3d <= approx_tol {
-                return Ok(a.as_ref().clone());
+                return Ok(a.clone_exact());
             }
         }
 
@@ -1216,8 +1388,11 @@ impl CrvOnSurf {
             let (knots, _) = knots_ignoring_status(self.knots_with_status(k, None))?;
             self.set_breaks_cache(false, knots);
         }
-        self.bs_approx = None;
-        self.parametrization_matches = match_param;
+        {
+            let a = self.approx_cache_mut();
+            a.bs_approx = None;
+            a.parametrization_matches = match_param;
+        }
 
         let opts = ApproximateCurveOptions {
             create_analytics: true,
@@ -1228,7 +1403,7 @@ impl CrvOnSurf {
             self.as_curve(derived)
                 .approximate_curve_base(k, &self.breaks(), approx_tol, &opts)?;
         if let Some(g) = approx.achieved_tol {
-            self.max_gap_3d = g;
+            self.approx_cache_mut().max_gap_3d = g;
         }
         let CurveKind::BSpline(bs) = approx.curve.into_kind() else {
             return Err(SolidError::invalid_input(
@@ -1236,7 +1411,8 @@ impl CrvOnSurf {
                 "the approximation is not an SmBSplineCurve",
             ));
         };
-        self.bs_approx = Some(Box::new(bs.clone()));
+        // (the cached object is the approximation itself, as upstream's)
+        self.approx_cache_mut().bs_approx = Some(Box::new(bs.clone_exact()));
         Ok(bs)
     }
 
@@ -1275,7 +1451,7 @@ impl CrvOnSurf {
             Some(match_parameterization),
             derived,
         )?;
-        Ok((bs.copy(), self.max_gap_3d))
+        Ok((bs.copy(), self.approx_cache_mut().max_gap_3d))
     }
 
     /// The boxes of the curve over `interval` (`CalculateBoundingBox`): those of the
@@ -1307,14 +1483,15 @@ impl CrvOnSurf {
     ) -> Result<BoundingBoxes> {
         match self.get_or_create_bs_approx_as(k, APPROX_TOL_3D, None, None, derived) {
             Ok(bs) => bs.calculate_bounding_box(interval, req),
-            Err(e) if e.is_unported() => Err(e),
+            Err(e) if e.is_unported_or_cancelled() => Err(e),
             Err(_) => {
                 calculate_bounding_box_base(k, &self.as_curve(derived), interval, req, expand)
             }
         }
     }
 
-    /// [`Self::calculate_bounding_box`] without storing the caches.
+    /// [`Self::calculate_bounding_box`] on `&self`: run on an exact copy whose break and
+    /// approximation caches are then kept on this curve.
     ///
     /// # Errors
     ///
@@ -1338,8 +1515,11 @@ impl CrvOnSurf {
         expand: bool,
         derived: Option<TangentFieldMembers>,
     ) -> Result<BoundingBoxes> {
-        self.clone()
-            .calculate_bounding_box_as(k, interval, req, expand, derived)
+        // (an exact stand-in for `this`, whose caches are kept below)
+        let mut copy = self.clone_exact_shared();
+        let result = copy.calculate_bounding_box_as(k, interval, req, expand, derived);
+        self.keep_caches_of(copy);
+        result
     }
 
     /// `DropPoint`: with a `guess` the base-class drop; else the base-class drop
@@ -1361,11 +1541,22 @@ impl CrvOnSurf {
         guess: Option<f64>,
         op: SolverOperation,
     ) -> Result<DroppedPoint> {
-        self.drop_point_as(k, interval, point, vec_to_inside, dist_tol, guess, op, None)
+        self.drop_point_as(
+            k,
+            interval,
+            point,
+            vec_to_inside,
+            dist_tol,
+            guess,
+            op,
+            None,
+            &mut None,
+        )
     }
 
     /// [`Self::drop_point`] as the base of a derived object
-    /// ([`Self::get_or_create_bs_approx_as`]; the base-class drop evaluates it).
+    /// ([`Self::get_or_create_bs_approx_as`]; the base-class drop evaluates it), the
+    /// base drop's global solve reading the caller's curve `cache` for this curve.
     pub(crate) fn drop_point_as(
         &mut self,
         k: &Kernel,
@@ -1376,6 +1567,7 @@ impl CrvOnSurf {
         guess: Option<f64>,
         op: SolverOperation,
         derived: Option<TangentFieldMembers>,
+        cache: &mut Option<CurveCache<CurveHandle>>,
     ) -> Result<DroppedPoint> {
         // check inputs (upstream warns and selects SM_SO_MINIMIZE)
         let op = if op != SolverOperation::Minimize
@@ -1397,12 +1589,13 @@ impl CrvOnSurf {
                 guess,
                 op,
                 derived,
+                cache,
             );
         }
 
         let bs = match self.get_or_create_bs_approx_as(k, APPROX_TOL_3D, None, None, derived) {
             Ok(bs) => bs,
-            Err(e) if e.is_unported() => return Err(e),
+            Err(e) if e.is_unported_or_cancelled() => return Err(e),
             Err(_) => {
                 return self.drop_point_base_preserving_breaks(
                     k,
@@ -1413,6 +1606,7 @@ impl CrvOnSurf {
                     guess,
                     op,
                     derived,
+                    cache,
                 )
             }
         };
@@ -1440,12 +1634,16 @@ impl CrvOnSurf {
             Some(min_param),
             op,
             derived,
+            cache,
         )
     }
 
     /// Run the base algorithm on an exact evaluation copy, then keep only the
     /// break-cache writes it actually made, including writes before an error.
     /// A successful local/fast solve may never request knots; do not force them.
+    /// The global solve reads (and on first use builds) the caller's curve `cache`;
+    /// when the caller holds none, this curve's own (see the `curve_cache` field),
+    /// which the solve's build then refills.
     fn drop_point_base_preserving_breaks(
         &mut self,
         k: &Kernel,
@@ -1456,9 +1654,37 @@ impl CrvOnSurf {
         guess: Option<f64>,
         op: SolverOperation,
         derived: Option<TangentFieldMembers>,
+        cache: &mut Option<CurveCache<CurveHandle>>,
     ) -> Result<DroppedPoint> {
+        // this curve's own cache, for a caller without one (not for a derived object,
+        // whose curve differs; not when the kernel memo is off)
+        let own_key = match (cache.is_none(), derived.is_none()) {
+            (true, true) => CurveMemoKey::of_kernel(k),
+            _ => None,
+        };
+        if let Some(key) = own_key {
+            if let Some((kept, c)) = self.curve_cache_mut().take() {
+                if kept == key {
+                    *cache = Some(c);
+                }
+            }
+        }
         let curve = self.as_curve(derived);
-        let result = curve.drop_point_base(k, interval, point, vec_to_inside, dist_tol, guess, op);
+        let result = curve.drop_point_base_cached(
+            k,
+            interval,
+            point,
+            vec_to_inside,
+            dist_tol,
+            guess,
+            op,
+            cache,
+        );
+        if let Some(key) = own_key {
+            if let Some(c) = cache.take() {
+                *self.curve_cache_mut() = Some((key, c));
+            }
+        }
         let base = match curve.into_kind() {
             CurveKind::CrvOnSurf(c) => Some(*c),
             CurveKind::TangentField(t) => Some(t.into_base()),
@@ -1476,7 +1702,8 @@ impl CrvOnSurf {
         result
     }
 
-    /// [`Self::drop_point`] without storing the caches.
+    /// [`Self::drop_point`] on `&self`: run on an exact copy whose break and
+    /// approximation caches are then kept on this curve.
     ///
     /// # Errors
     ///
@@ -1491,10 +1718,22 @@ impl CrvOnSurf {
         guess: Option<f64>,
         op: SolverOperation,
     ) -> Result<DroppedPoint> {
-        self.drop_point_ref_as(k, interval, point, vec_to_inside, dist_tol, guess, op, None)
+        self.drop_point_ref_as(
+            k,
+            interval,
+            point,
+            vec_to_inside,
+            dist_tol,
+            guess,
+            op,
+            None,
+            &mut None,
+        )
     }
 
-    /// [`Self::drop_point_ref`] as the base of a derived object.
+    /// [`Self::drop_point_ref`] as the base of a derived object, the base drop's global
+    /// solve reading the caller's curve `cache` for this curve (see
+    /// [`Self::drop_point_as`]).
     pub(crate) fn drop_point_ref_as(
         &self,
         k: &Kernel,
@@ -1505,8 +1744,17 @@ impl CrvOnSurf {
         guess: Option<f64>,
         op: SolverOperation,
         derived: Option<TangentFieldMembers>,
+        cache: &mut Option<CurveCache<CurveHandle>>,
     ) -> Result<DroppedPoint> {
-        self.clone().drop_point_as(
+        // (an exact stand-in for `this`, whose caches are kept below)
+        let mut copy = self.clone_exact_shared();
+        // the copy stands for this curve: it uses (and gives back) this curve's cache
+        *copy.curve_cache_mut() = self
+            .curve_cache
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .take();
+        let result = copy.drop_point_as(
             k,
             interval,
             point,
@@ -1515,7 +1763,10 @@ impl CrvOnSurf {
             guess,
             op,
             derived,
-        )
+            cache,
+        );
+        self.keep_caches_of(copy);
+        result
     }
 
     // ---- editing --------------------------------------------------------------------
@@ -1527,6 +1778,7 @@ impl CrvOnSurf {
     ///
     /// Those of the UV curve's edit (the breaks are rescaled already).
     pub fn edit_parameterization(&mut self, k: &Kernel, new_param: &Extent1d) -> Result<()> {
+        *self.curve_cache_mut() = None;
         // when appropriate scale breaks
         if !self.need_breaks() {
             let ivl = self.uv_curve.natural_interval();
@@ -1565,6 +1817,7 @@ impl CrvOnSurf {
         if self.owner_flag == 0 {
             return Err(SolidError::sm_err(OP));
         }
+        *self.curve_cache_mut() = None;
         self.uv_curve.reverse_parameterization(k, old_interval)
     }
 
@@ -1597,6 +1850,7 @@ impl CrvOnSurf {
         }
 
         // pass the call along to the UVCurve
+        *self.curve_cache_mut() = None;
         self.uv_curve
             .trim_with_zone_tol(k, trim_interval, mode, zone_tol_3d)?;
 
@@ -1640,8 +1894,10 @@ impl CrvOnSurf {
             return Ok(());
         }
 
+        *self.curve_cache_mut() = None;
+
         // Transform cached bspline approximation (status ignored)
-        if let Some(a) = &mut self.bs_approx {
+        if let Some(a) = &mut self.approx_cache_mut().bs_approx {
             ignored(a.transform(rotate_n_move, scale))?;
         }
 
@@ -1742,8 +1998,12 @@ impl CrvOnSurf {
     /// `interval`), sampled at `num_samples` points of this curve (`0`: 22 plus the
     /// knot counts of both curves): the largest distance along the surface normal and
     /// the largest deviation across it, with the parameters where they occur. With
-    /// `max_needed`, stops once either exceeds it. The same object over the same
-    /// interval (either direction) has no gap.
+    /// `num_samples == 1`, upstream divides `0 / 0 = NaN` (WR-36); enabling
+    /// `Kernel::fixes.curve_max_distance_single_sample_midpoint` samples the interval
+    /// midpoints (`per = 0.5`) instead (upstream's `bDoPrecise = FALSE` guard before its
+    /// disabled `LocalCurveSolve` refinement stays unchanged). With `max_needed`, stops
+    /// once either exceeds it. The same object over the same interval (either direction)
+    /// has no gap.
     ///
     /// # Errors
     ///
@@ -1817,7 +2077,11 @@ impl CrvOnSurf {
 
         // Uniformly sample this Curve from beginning to end.
         for ii in 0..num_samples {
-            let per = ii as f64 / (num_samples - 1) as f64;
+            let per = if k.fixes.curve_max_distance_single_sample_midpoint && num_samples == 1 {
+                0.5
+            } else {
+                ii as f64 / (num_samples - 1) as f64
+            };
             let mut t_guess_1 = interval.evaluate(per);
             let t_guess_2 = if orientation > 0.0 {
                 other_interval.evaluate(per)
@@ -2085,6 +2349,43 @@ mod tests {
     }
 
     #[test]
+    fn const_queries_keep_their_caches_on_the_curve() {
+        // DropPoint and CalculateBoundingBox on `&self` keep the approximation (and
+        // breaks) they make on the curve, as upstream's const queries; a later query
+        // reusing them answers as one on a fresh copy.
+        let k = Kernel::default();
+        let c = CrvOnSurf::new(&k, uv(), patch().into(), None, 0).unwrap();
+        let ivl = c.natural_interval();
+        assert!(c.bs_approx().is_none());
+        let point = c.evaluate_point(&k, 0.4).unwrap() + Vec3::new(0.0, 0.0, 0.25);
+        let drop = |c: &CrvOnSurf| {
+            c.drop_point_ref(&k, &ivl, point, None, 1e-6, None, SolverOperation::Minimize)
+                .unwrap()
+        };
+        let fresh = drop(&c.clone());
+        let first = drop(&c);
+        assert!(c.bs_approx().is_some());
+        assert!(!c.need_breaks());
+        let gap = c.bs_approx_max_gap_3d();
+        let kept = drop(&c);
+        for d in [first, kept] {
+            assert_eq!(d.success, fresh.success);
+            assert_eq!(d.parameter.to_bits(), fresh.parameter.to_bits());
+            assert_eq!(d.distance.to_bits(), fresh.distance.to_bits());
+        }
+        assert_eq!(c.bs_approx_max_gap_3d().to_bits(), gap.to_bits());
+
+        let b = CrvOnSurf::new(&k, uv(), patch().into(), None, 0).unwrap();
+        let req = BoundingBoxRequest::default();
+        let fresh_box = b.clone().calculate_bounding_box_ref(&k, &ivl, req, false);
+        let first_box = b.calculate_bounding_box_ref(&k, &ivl, req, false);
+        assert!(b.bs_approx().is_some());
+        let kept_box = b.calculate_bounding_box_ref(&k, &ivl, req, false);
+        assert_eq!(format!("{first_box:?}"), format!("{fresh_box:?}"));
+        assert_eq!(format!("{kept_box:?}"), format!("{fresh_box:?}"));
+    }
+
+    #[test]
     fn base_drop_keeps_only_the_cache_writes_of_the_taken_solver_path() {
         let k = Kernel::default();
         let mut c = CrvOnSurf::new(&k, uv(), patch().into(), None, 0).unwrap();
@@ -2116,10 +2417,94 @@ mod tests {
             None,
             SolverOperation::Normalize,
             None,
+            &mut None,
         )
         .unwrap();
         assert!(!c.need_breaks());
         assert_eq!(c.breaks(), vec![0.0, 1.0]);
+    }
+
+    #[test]
+    fn the_curve_keeps_its_drop_cache_until_edited() {
+        // A caller without a curve cache of its own drops through the curve's: built
+        // by the first global solve, then reused, with the drops of a fresh build; a
+        // copy starts without it and an edit of the curve drops it.
+        let k = Kernel::default();
+        let mut c = CrvOnSurf::new(&k, uv(), patch().into(), None, 0).unwrap();
+        let ivl = c.natural_interval();
+        let has_cache = |c: &CrvOnSurf| c.curve_cache.lock().unwrap().is_some();
+        for t in [0.25, 0.6, 0.9] {
+            let point = c.evaluate_point(&k, t).unwrap();
+            let drop = |c: &mut CrvOnSurf| {
+                c.drop_point_base_preserving_breaks(
+                    &k,
+                    &ivl,
+                    point,
+                    None,
+                    1e-6,
+                    None,
+                    SolverOperation::Normalize,
+                    None,
+                    &mut None,
+                )
+                .unwrap()
+            };
+            let fresh = drop(&mut c.clone());
+            let kept = drop(&mut c);
+            assert!(has_cache(&c));
+            assert_eq!(kept.success, fresh.success);
+            assert_eq!(kept.parameter.to_bits(), fresh.parameter.to_bits());
+            assert_eq!(kept.distance.to_bits(), fresh.distance.to_bits());
+        }
+        assert!(!has_cache(&c.clone()));
+        let mut edited = c.clone_exact_shared();
+        assert!(!has_cache(&edited));
+        edited.set_uv_curve(c.uv_curve().clone()).unwrap();
+        c.set_uv_curve(c.uv_curve().clone()).unwrap();
+        assert!(!has_cache(&c));
+    }
+
+    #[test]
+    fn a_kept_curve_cache_drops_as_a_fresh_one() {
+        // The curve cache built by the first global solve, kept on the curve for a
+        // caller without one and in the caller's slot for a caller with one, gives the
+        // drops of a cache built for each one.
+        let k = Kernel::default();
+        let mut c = CrvOnSurf::new(&k, uv(), patch().into(), None, 0).unwrap();
+        let ivl = c.natural_interval();
+        let mut held = None;
+        for t in [0.25, 0.6, 0.9] {
+            let point = c.evaluate_point(&k, t).unwrap();
+            let drop = |c: &mut CrvOnSurf, cache: &mut Option<CurveCache<CurveHandle>>| {
+                c.drop_point_base_preserving_breaks(
+                    &k,
+                    &ivl,
+                    point,
+                    None,
+                    1e-6,
+                    None,
+                    SolverOperation::Normalize,
+                    None,
+                    cache,
+                )
+                .unwrap()
+            };
+            let fresh = drop(&mut c.clone(), &mut None);
+            // the curve's own cache (built by the first drop, then reused)
+            let kept = drop(&mut c, &mut None);
+            assert!(c.curve_cache.lock().unwrap().is_some());
+            // a caller's slot takes precedence and stays the caller's
+            if held.is_none() {
+                held = c.curve_cache.lock().unwrap().take().map(|(_, cache)| cache);
+            }
+            let reused = drop(&mut c.clone(), &mut held);
+            assert!(held.is_some());
+            for d in [kept, reused] {
+                assert_eq!(d.success, fresh.success);
+                assert_eq!(d.parameter.to_bits(), fresh.parameter.to_bits());
+                assert_eq!(d.distance.to_bits(), fresh.distance.to_bits());
+            }
+        }
     }
 
     #[test]
@@ -2195,6 +2580,34 @@ mod tests {
                 panic!("copy lost the concrete offset surface");
             };
             assert_eq!(offset.base_surface().reached_face(), Some(face));
+        }
+    }
+
+    #[test]
+    fn copy_of_owning_curve_detaches_the_plane_nurb_cell() {
+        use crate::surface::plane::Plane;
+        use crate::surface::surface::SurfaceKind;
+        let k = Kernel::default();
+        let on = |c: &Curve| match c.kind() {
+            CurveKind::CrvOnSurf(c) => c.surface().clone_exact_bounded(),
+            _ => panic!("not a curve on a surface"),
+        };
+        let has_nurb = |c: &Curve| match on(c).kind() {
+            SurfaceKind::Plane(p) => p.base().gw_nurb().is_some(),
+            _ => panic!("not a curve on a plane"),
+        };
+        let domain = Extent2d::from_bounds(0.0, 0.0, 1.0, 1.0);
+        // flag 0 names the same surface upstream (shared cell); flag 1 deep-copies it
+        for (flag, shared) in [(0, true), (1, false)] {
+            let plane = Surface::from(Plane::from_normal(Vec3::ZERO, Vec3::Z));
+            let curve = Curve::from(CrvOnSurf::new(&k, uv(), plane, Some(domain), flag).unwrap());
+            assert!(!has_nurb(&curve));
+            let evaluation = curve.clone_exact_bounded();
+            let copy = curve.clone();
+            on(&curve).natural_uv_domain_with_nurb(&k).unwrap();
+            assert!(has_nurb(&curve));
+            assert!(has_nurb(&evaluation));
+            assert_eq!(has_nurb(&copy), shared);
         }
     }
 
@@ -2587,5 +3000,151 @@ mod tests {
         assert_eq!(reused.evaluate_point(0.4).unwrap(), point);
         assert_eq!(curve.bs_approx_max_gap_3d(), gap);
         assert_eq!(curve.breaks(), &breaks);
+    }
+
+    #[test]
+    fn wr36_surface_curve_max_distance_single_sample_default_vs_midpoint() {
+        use crate::curve::hermite_curve::HermiteCurve;
+        use crate::geom::vector2d::Vec2;
+        use crate::surface::plane::Plane;
+
+        let off = Kernel::default();
+        let mut on = Kernel::default();
+        on.fixes.curve_max_distance_single_sample_midpoint = true;
+
+        let domain = Extent2d::from_bounds(-10.0, -10.0, 10.0, 10.0);
+        let plane = Surface::from(Plane::new(
+            Point3::ZERO,
+            Vec3::X,
+            Vec3::Y,
+            Vec2::new(1.0, 1.0),
+            &domain,
+        ));
+        // `C(t) = (t, 0, 0)` on `z = 0` plane (`normal = +Z`) over `[0, 1]`.
+        let cos = CrvOnSurf::from_uv_line(
+            &off,
+            Point2::new(0.0, 0.0),
+            Point2::new(1.0, 0.0),
+            plane,
+            Some(domain),
+            0,
+        )
+        .unwrap();
+        let ivl = Extent1d::from_min_max(0.0, 1.0);
+
+        // `other(t) = (t, t(1 - t), 2t(1 - t))`: at `t = 0.5`, `other(0.5) = (0.5, 0.25, 0.5)`
+        // and `other'(0.5) = (1, 0, 0)`, so `(0.5, 0, 0)` drops orthogonally to `t = 0.5`
+        // with normal distance `0.5` and lateral deviation `0.25`.
+        let other = Curve::from(HermiteCurve::new(
+            Point3::new(0.0, 0.0, 0.0),
+            Vec3::new(1.0, 1.0, 2.0),
+            Point3::new(1.0, 0.0, 0.0),
+            Vec3::new(1.0, -1.0, -2.0),
+            3,
+        ));
+
+        // Default (`false`): `0 / 0 = NaN` fails the initial evaluation and falls back to
+        // the `ii == 0` near-start sample `t_guess_1 = 0.001` instead of the midpoint.
+        let g_off = cos
+            .surface_curve_max_distance_between(&off, &ivl, &other, 0.0, 1.0, 1, 1.0e-5, None)
+            .unwrap();
+        assert!((g_off.curve_t_dist - 0.001).abs() < 1.0e-12, "{g_off:?}");
+        assert!((g_off.curve_t_dev - 0.001).abs() < 1.0e-12, "{g_off:?}");
+        assert!(g_off.max_dist < 0.01 && g_off.max_dev < 0.01, "{g_off:?}");
+
+        // Opt-in (`true`): `per = 0.5` samples the midpoint for both orientations.
+        for (start, end) in [(0.0, 1.0), (1.0, 0.0)] {
+            let g_on = cos
+                .surface_curve_max_distance_between(&on, &ivl, &other, start, end, 1, 1.0e-5, None)
+                .unwrap();
+            assert!((g_on.max_dist - 0.5).abs() < 1.0e-12, "{g_on:?}");
+            assert!((g_on.max_dev - 0.25).abs() < 1.0e-12, "{g_on:?}");
+            assert!((g_on.curve_t_dist - 0.5).abs() < 1.0e-12, "{g_on:?}");
+            assert!((g_on.other_t_dist - 0.5).abs() < 1.0e-12, "{g_on:?}");
+            assert!((g_on.curve_t_dev - 0.5).abs() < 1.0e-12, "{g_on:?}");
+            assert!((g_on.other_t_dev - 0.5).abs() < 1.0e-12, "{g_on:?}");
+        }
+
+        // Sub-interval `[0.0, 0.5]` against a constant-offset curve `(t, 0.75, 2.0)`:
+        // midpoint is `0.25`, with normal distance `2.0` and lateral deviation `0.75`.
+        let shifted = Curve::from(HermiteCurve::new(
+            Point3::new(0.0, 0.75, 2.0),
+            Vec3::new(1.0, 0.0, 0.0),
+            Point3::new(1.0, 0.75, 2.0),
+            Vec3::new(1.0, 0.0, 0.0),
+            3,
+        ));
+        let sub = Extent1d::from_min_max(0.0, 0.5);
+        let sub_on = cos
+            .surface_curve_max_distance_between(&on, &sub, &shifted, 0.0, 0.5, 1, 1.0e-5, None)
+            .unwrap();
+        assert!((sub_on.max_dist - 2.0).abs() < 1.0e-12, "{sub_on:?}");
+        assert!((sub_on.max_dev - 0.75).abs() < 1.0e-12, "{sub_on:?}");
+        assert!((sub_on.curve_t_dist - 0.25).abs() < 1.0e-12, "{sub_on:?}");
+        assert!((sub_on.other_t_dist - 0.25).abs() < 1.0e-12, "{sub_on:?}");
+        assert!((sub_on.curve_t_dev - 0.25).abs() < 1.0e-12, "{sub_on:?}");
+        assert!((sub_on.other_t_dev - 0.25).abs() < 1.0e-12, "{sub_on:?}");
+    }
+
+    #[test]
+    fn wr36_surface_curve_max_distance_other_sample_counts_unchanged() {
+        use crate::curve::hermite_curve::HermiteCurve;
+        use crate::geom::vector2d::Vec2;
+        use crate::surface::plane::Plane;
+
+        let off = Kernel::default();
+        let mut on = Kernel::default();
+        on.fixes.curve_max_distance_single_sample_midpoint = true;
+
+        let domain = Extent2d::from_bounds(-10.0, -10.0, 10.0, 10.0);
+        let plane = Surface::from(Plane::new(
+            Point3::ZERO,
+            Vec3::X,
+            Vec3::Y,
+            Vec2::new(1.0, 1.0),
+            &domain,
+        ));
+        let cos = CrvOnSurf::from_uv_line(
+            &off,
+            Point2::new(0.0, 0.0),
+            Point2::new(1.0, 0.0),
+            plane,
+            Some(domain),
+            0,
+        )
+        .unwrap();
+        let other = Curve::from(HermiteCurve::new(
+            Point3::new(0.0, 0.0, 0.0),
+            Vec3::new(1.0, 1.0, 2.0),
+            Point3::new(1.0, 0.0, 0.0),
+            Vec3::new(1.0, -1.0, -2.0),
+            3,
+        ));
+        let ivl = Extent1d::from_min_max(0.0, 1.0);
+
+        for samples in [0, 2, 5, 11] {
+            let a = cos
+                .surface_curve_max_distance_between(
+                    &off, &ivl, &other, 0.0, 1.0, samples, 1.0e-5, None,
+                )
+                .unwrap();
+            let b = cos
+                .surface_curve_max_distance_between(
+                    &on, &ivl, &other, 0.0, 1.0, samples, 1.0e-5, None,
+                )
+                .unwrap();
+            assert_eq!(format!("{a:?}"), format!("{b:?}"), "samples {samples}");
+        }
+
+        // Same curve object over matching interval returns zero gap immediately.
+        let wrapped = Curve::from(cos);
+        let CurveKind::CrvOnSurf(inner) = wrapped.kind() else {
+            panic!("expected CrvOnSurf");
+        };
+        let same_on = inner
+            .surface_curve_max_distance_between(&on, &ivl, &wrapped, 0.0, 1.0, 1, 1.0e-5, None)
+            .unwrap();
+        assert_eq!(same_on.max_dist, 0.0);
+        assert_eq!(same_on.max_dev, 0.0);
     }
 }

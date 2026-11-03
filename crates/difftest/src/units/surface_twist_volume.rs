@@ -386,7 +386,7 @@ fn ext(d: &[[f64; 3]; 2]) -> Extent3d {
 /// cannot return.
 fn status(e: &SolidError) -> f64 {
     match e {
-        SolidError::InvalidInput { .. } => 1007.0,
+        SolidError::InvalidInput { .. } | SolidError::PortInvariant { .. } => 1007.0,
         SolidError::Upstream { code, .. } => f64::from(*code),
         _ => -1.0,
     }
@@ -528,7 +528,7 @@ fn rust(i: &Inputs) -> Result<Output, HarnessError> {
             let v = need()?;
             let line = Curve::from(Line::from_points(v3(*a), v3(*b), 3));
             let in_point = tri!(o, v.is_point_in_param_domain_simple(v3(*p)));
-            let in_line = tri!(o, v.is_line_in_param_domain_simple(v3(*a), v3(*b)));
+            let in_line = tri!(o, v.is_line_in_param_domain_simple(&Kernel::default(), v3(*a), v3(*b)));
             let in_curve = tri!(o, v.is_curve_in_param_domain_simple(&Kernel::default(), &line));
             let bounded = tri!(o, v.is_bounded_simple());
             o.push(0.0);

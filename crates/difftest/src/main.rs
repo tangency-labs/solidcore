@@ -10,6 +10,8 @@
 //! options: --seeds N (default 16)  --filter <substr>  --perturb  --report-dir <dir>  --no-report
 //!          --baseline <dir>   # regression ratchet against earlier reports (see `difftest::baseline`)
 //!          --run-parked       # only the parked cases (`cpp_defect` entries); nightly, never the gate
+//!          --heap-pads 1,3,8  # also rerun each case's C++ side with a padded heap; lists
+//!                             # address-dependent cases (flag only, no report)
 //!          --jobs N (-j; default 1, 0 = all cores)   # units in N child processes (`difftest::jobs`)
 //! cargo run -p difftest --features cpp -- --unit <id> --fuzz N [--fuzz-out <dir>]   # FFI guard probing
 //! cargo run -p difftest --features cpp -- --ssi-corpus [--tol 1e-6|default] [--jobs N] [glob]
@@ -32,10 +34,11 @@ use difftest::{fuzz, plan, registry, report, run_unit, CaseContext, RunOptions, 
 const USAGE: &str = "usage: difftest [--unit <id>]... [--green] [--all] [--list]
        [--status-of <id>] [--seeds N] [--filter <substr>] [--perturb] [--run-parked] [--report-dir <dir>] [--no-report] [--jobs N]
        [--baseline <dir>] [--compare-reports <dir>] [--digest-dir <dir> [--digest-debug]]
+       [--heap-pads N[,N...]]
        difftest --unit <id>... --fuzz N [--fuzz-out <dir>] [--seeds N] [--filter <substr>]
        difftest --ssi-corpus [--tol 1e-6|default] [--jobs N] [--report-dir <dir>] [--no-report] [case-glob]
        difftest --solidcraft-cases [--report-dir <dir>] [--no-report] [case-glob]
-       difftest --step-corpus [--jobs N] [--report-dir <dir>] [--no-report] [file-glob]";
+       difftest --step-corpus [--constructor] [--jobs N] [--report-dir <dir>] [--no-report] [file-glob]";
 
 /// Default child processes of `--ssi-corpus`.
 const DEFAULT_SSI_JOBS: usize = 2;
@@ -61,6 +64,8 @@ struct Args {
     seeds: Option<usize>,
     filter: Option<String>,
     perturb: bool,
+    /// `--heap-pads`: rerun each case's C++ side with these heap pads (flag only).
+    heap_pads: Vec<usize>,
     run_parked: bool,
     report_dir: Option<PathBuf>,
     no_report: bool,
@@ -69,6 +74,7 @@ struct Args {
     ssi_corpus: bool,
     solidcraft_cases: bool,
     step_corpus: bool,
+    constructor: bool,
     tol: Option<String>,
     jobs: Option<usize>,
     glob: Option<String>,
@@ -96,6 +102,7 @@ fn parse_args() -> Result<Args, String> {
             }
             "--filter" => a.filter = Some(val("--filter")?),
             "--perturb" => a.perturb = true,
+            "--heap-pads" => a.heap_pads = heap_pads(&val("--heap-pads")?)?,
             "--run-parked" => a.run_parked = true,
             "--report-dir" => a.report_dir = Some(PathBuf::from(val("--report-dir")?)),
             "--no-report" => a.no_report = true,
@@ -106,6 +113,7 @@ fn parse_args() -> Result<Args, String> {
             "--ssi-corpus" => a.ssi_corpus = true,
             "--solidcraft-cases" => a.solidcraft_cases = true,
             "--step-corpus" => a.step_corpus = true,
+            "--constructor" => a.constructor = true,
             "--tol" => a.tol = Some(val("--tol")?),
             "--jobs" | "-j" => {
                 let v = val("--jobs")?;
@@ -181,9 +189,25 @@ fn main() -> ExitCode {
         seeds: args.seeds.unwrap_or(DEFAULT_SEEDS),
     };
 
+    // (these modes run no case through `run_unit`, so they would ignore the pads)
+    if !args.heap_pads.is_empty()
+        && (args.list
+            || args.status_of.is_some()
+            || args.ssi_corpus
+            || args.solidcraft_cases
+            || args.step_corpus)
+    {
+        eprintln!(
+            "difftest: --heap-pads checks unit cases (not --list, --status-of, --ssi-corpus, \
+             --solidcraft-cases or --step-corpus)"
+        );
+        return ExitCode::from(2);
+    }
+
     // Rust only, so it runs without the C++ kernel.
     if args.baseline.is_some()
         && (args.perturb
+            || !args.heap_pads.is_empty()
             || args.list
             || args.status_of.is_some()
             || args.filter.is_some()
@@ -204,6 +228,7 @@ fn main() -> ExitCode {
             jobs: args.jobs.unwrap_or(DEFAULT_SSI_JOBS).max(1),
             report_dir: args.report_dir.clone(),
             no_report: args.no_report,
+            constructor: args.constructor,
         };
         return difftest::step::run_corpus(&root, &opts);
     }
@@ -297,6 +322,7 @@ fn main() -> ExitCode {
                     perturb: false,
                     case_timeout: args.case_timeout.map(std::time::Duration::from_secs),
                     run_parked: false,
+                    heap_pads: Vec::new(),
                 };
                 let res = run_unit(unit.as_ref(), &ctx, &opts);
                 // The value-share floor is part of the gate (`--green` enforces it too).
@@ -398,6 +424,7 @@ fn main() -> ExitCode {
         perturb: args.perturb,
         case_timeout: args.case_timeout.map(std::time::Duration::from_secs),
         run_parked: args.run_parked,
+        heap_pads: args.heap_pads.clone(),
     };
     let report_dir = args
         .report_dir
@@ -405,13 +432,18 @@ fn main() -> ExitCode {
         .unwrap_or_else(|| root.join("reports").join("difftest"));
 
     let jobs = difftest::jobs::resolve(args.jobs.unwrap_or(1)).min(wanted.len());
-    if jobs > 1 {
+    // Several units run one at a time still get a child process each: C++ state that one
+    // unit's in-process calls latch (ND-3's `sdStaticStep`) would otherwise reach a later
+    // unit's `fresh_process` children, which fork from this process.
+    if jobs > 1 || (wanted.len() > 1 && args.digest_dir.is_none()) {
         let fwd = difftest::jobs::forwarded_args(&raw);
         // Previous reports order the queue; a fresh --report-dir falls back to the default,
         // and a unit with no report anywhere to its fixture size (reports are not committed).
         let default_dir = root.join("reports").join("difftest");
         let dirs = [report_dir.as_path(), default_dir.as_path()];
-        let times = (!args.no_report).then(|| report_dir.join(difftest::jobs::TIMES_FILE));
+        // (`--heap-pads` writes no report, so it leaves no report directory to time into)
+        let times = (!args.no_report && args.heap_pads.is_empty())
+            .then(|| report_dir.join(difftest::jobs::TIMES_FILE));
         return difftest::jobs::run_parallel(
             &wanted,
             &fwd,
@@ -460,6 +492,9 @@ fn main() -> ExitCode {
             continue;
         }
         println!("{}", report::summary_line(&res));
+        if !opts.heap_pads.is_empty() {
+            print_heap_check(id, &opts.heap_pads, &res.heap_check);
+        }
         eprintln!("{}", res.timing.line(id, res.cases.len()));
         if let Some(dir) = std::env::var_os("DIFFTEST_RUST_DIGEST") {
             let path = Path::new(&dir).join(format!("{id}.digest"));
@@ -552,7 +587,7 @@ fn main() -> ExitCode {
         } else if res.status() == UnitStatus::SkippedPlatform {
             skipped += 1;
         }
-        if !args.no_report && !args.perturb {
+        if !args.no_report && !args.perturb && args.heap_pads.is_empty() {
             match report::write_unit_report(&report_dir, &res) {
                 Ok(p) => println!(
                     "  report: {}",
@@ -775,8 +810,9 @@ fn fuzz_main(args: &Args, ctx: &CaseContext, root: &Path) -> ExitCode {
         || args.list
         || args.perturb
         || args.status_of.is_some()
+        || !args.heap_pads.is_empty()
     {
-        eprintln!("difftest: --fuzz takes --unit <id> (not --green, --all, --list, --perturb or --status-of)");
+        eprintln!("difftest: --fuzz takes --unit <id> (not --green, --all, --list, --perturb, --status-of or --heap-pads)");
         return ExitCode::from(2);
     }
     let opts = fuzz::FuzzOptions {
@@ -848,6 +884,50 @@ fn fuzz_main(args: &Args, ctx: &CaseContext, root: &Path) -> ExitCode {
     }
 }
 
+/// Largest pad `--heap-pads` accepts (blocks of at most 264 bytes each).
+const MAX_HEAP_PAD: usize = 4096;
+
+/// Parses `--heap-pads`: a comma-separated list of block counts in `1..=`[`MAX_HEAP_PAD`].
+fn heap_pads(v: &str) -> Result<Vec<usize>, String> {
+    v.split(',')
+        .map(|p| match p.trim().parse::<usize>() {
+            Ok(n) if (1..=MAX_HEAP_PAD).contains(&n) => Ok(n),
+            _ => Err(format!(
+                "bad --heap-pads `{v}` (block counts 1..={MAX_HEAP_PAD}, comma-separated)"
+            )),
+        })
+        .collect()
+}
+
+/// The `--heap-pads` lines of one unit: a summary, then one line per flagged case.
+/// Informational: they change no outcome or exit status.
+fn print_heap_check(id: &str, pads: &[usize], check: &difftest::runner::HeapCheck) {
+    let pads: Vec<String> = pads.iter().map(ToString::to_string).collect();
+    let unpadded = if check.checked > 0 && check.padded == 0 {
+        " (C++ runs in-process here: reruns unpadded, no address check)"
+    } else {
+        ""
+    };
+    println!(
+        "HEAP {id} pads={} checked={} padded={} address_dependent={} unstable={} rerun_errors={}{unpadded}",
+        pads.join(","),
+        check.checked,
+        check.padded,
+        check.address_dependent.len(),
+        check.unstable.len(),
+        check.rerun_errors.len()
+    );
+    for (label, list) in [
+        ("address-dependent", &check.address_dependent),
+        ("unstable (in-process)", &check.unstable),
+        ("rerun-error", &check.rerun_errors),
+    ] {
+        for (case, note) in list {
+            println!("  {label} {case}: {note}");
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -863,5 +943,14 @@ mod tests {
         assert!(selection_gate(UnitStatus::Partial, Some("green"), false).is_some());
         assert!(selection_gate(UnitStatus::Partial, Some("green"), true).is_some());
         assert!(selection_gate(UnitStatus::Partial, Some("partial"), true).is_none());
+    }
+
+    #[test]
+    fn heap_pads_take_positive_bounded_block_counts() {
+        assert_eq!(heap_pads("1,3,8"), Ok(vec![1, 3, 8]));
+        assert_eq!(heap_pads(" 4096 "), Ok(vec![MAX_HEAP_PAD]));
+        for bad in ["", "0", "1,,2", "-1", "4097", "x", "1.5"] {
+            assert!(heap_pads(bad).is_err(), "{bad}");
+        }
     }
 }

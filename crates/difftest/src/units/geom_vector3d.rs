@@ -30,8 +30,7 @@ use crate::{Case, HarnessError, Output, Rng, UnitDiff};
 /// Generated cases per run, whatever `--seeds` says (it can only raise this).
 pub const MIN_GENERATED: usize = 6000;
 
-/// Upstream `SM_ERR_INVALID_INPUT`.
-const SM_ERR_INVALID_INPUT: i32 = 1007;
+use solidcore::error::SM_ERR_INVALID_INPUT;
 /// Upstream `SM_ERR`.
 const SM_ERR: f64 = 1001.0;
 
@@ -134,7 +133,7 @@ fn lookup(name: &str) -> Result<Op, HarnessError> {
 
 fn normalise(e: &SolidError) -> String {
     match e {
-        SolidError::InvalidInput { .. } => "invalid_input".into(),
+        SolidError::InvalidInput { .. } | SolidError::PortInvariant { .. } => "invalid_input".into(),
         SolidError::Upstream { code, .. } => format!("status_{code}"),
         other => format!("rust_error: {other}"),
     }

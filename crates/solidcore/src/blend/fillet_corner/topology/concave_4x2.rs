@@ -40,7 +40,7 @@ use crate::topology::{Brep, EdgeuseId, VertexId};
 fn status_angle(e: &SolidError) -> f64 {
     let code = match e {
         SolidError::Upstream { code, .. } => *code,
-        SolidError::InvalidInput { .. } => SM_ERR_INVALID_INPUT,
+        SolidError::InvalidInput { .. } | SolidError::PortInvariant { .. } => SM_ERR_INVALID_INPUT,
         _ => SM_ERR,
     };
     f64::from(code)
@@ -61,7 +61,7 @@ fn outward_tangent(
     let e = edge_of(target, eu)?;
     match edge::end_tangent(k, target, e, at_start) {
         Ok(t) => Ok(Ok(if at_start { t } else { -t })),
-        Err(err) if err.is_unported() => Err(err),
+        Err(err) if err.is_unported_or_cancelled() => Err(err),
         Err(err) => Ok(Err(status_angle(&err))),
     }
 }

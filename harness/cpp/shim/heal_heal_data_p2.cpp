@@ -10,21 +10,27 @@
 // validates every input. B-rep blocks are those of sc_topology_fixture.h (kinds 0..3)
 // plus kind 4 (SmPrimitiveCreation::CreateBox, as prog_test
 // my_test_squeeze_edge_tracks_removal) and kind 5 (a full SmSphere face, as prog_test
-// my_test_closed_sphere_properties). Surfaces and edge curves the shared exporters can
-// carry as their exact analytic kind (planes, circles and ellipses) are kept; any other
-// surface or edge curve is replaced by a plain B-spline copy (what the Rust import
-// rebuilds, as the heal.gap shim does). Then the graph is walked (with the vertex
-// lists) and exported, followed by each vertex's vertex use list.
+// my_test_closed_sphere_properties), kind 6 (an SmBrepConstructor face with one vertex
+// loop on a sphere, plane or torus, as smHealTest.cpp) and kind 7 (prog_test
+// my_test_move_seam_refreshes_face_props' cone patch with a seam inside the trim). The
+// B-rep keeps its native geometry (the difftest runner builds the same B-rep with the
+// Rust kernel); the graph is walked (with the vertex lists) and exported only for its
+// entity counts.
 #include "sc_topology_fixture.h"
 
 #include <SmHashTable.h>
 #include <SmHealData.h>
 #include <SmPrimitiveCreation.h>
+#include <SmPlane.h>
 #include <SmSphere.h>
+#include <SmTorus.h>
+#include <SmBSplineSurface.h>
+#include <cmath>
 #include <SmBrepData.h>
 #include <SmTrackTopologyChanges.h>
 
 #include <algorithm>
+#include <array>
 #include <set>
 
 namespace
@@ -34,76 +40,7 @@ enum P2Op : int32_t
     P2_EXPORT = 0,
     P2_PROB = 1,
     P2_HEAL = 2,
-    P2_VLISTS = 3,
 };
-
-struct EdgePeek : SmEdge
-{
-    static SmCurve* SmEdge::*curve() { return &EdgePeek::m_pCurve; }
-};
-
-// A plain SmBSplineCurve of `c`'s NURB, or nullptr when `c` already is one (or a line)
-// or has no NURB.
-SmBSplineCurve* plain_curve(SmCurve* c)
-{
-    if (c == nullptr || !c->IsKindOf(SmBSplineCurve_TYPE) || c->GetType() == SmBSplineCurve_TYPE ||
-        c->GetType() == SmLine_TYPE)
-        return nullptr;
-    SmBSplineCurve* b = (SmBSplineCurve*)c;
-    gw_CURVE* nurb = b->GetGwNurbPointer();
-    if (nurb == nullptr)
-        return nullptr;
-    return new (the_context()) SmBSplineCurve(sm_AllocateAndCopyNurbCurve(nurb), b->GetDim(), FALSE);
-}
-
-// Whether the shared graph exporter transports `c` as its exact analytic kind.
-// Probe that exporter instead of duplicating its eligibility and round-trip rules,
-// so normalise() keeps exactly the curves the Rust import rebuilds natively.
-bool exact_curve(const SmCurve* c)
-{
-    if (c == nullptr || (c->GetType() != SmEllipse_TYPE && c->GetType() != SmCircle_TYPE))
-        return false;
-    std::vector<double> head;
-    sc_exact_curve_export::put_export_curve(head, c, the_context(), put_curve);
-    return !head.empty() && head.front() == -3.0;
-}
-
-// Match the shared export/import: preserve exact analytic surfaces and edge curves,
-// and replace other surfaces and edge curves with plain B-splines, as the heal.gap
-// shim does. Replaced originals are left unowned and leaked.
-void normalise(Graph& g)
-{
-    for (SmFace* f : g.faces)
-    {
-        SmSurface* s = f->*FPeek::srf();
-        if (s == nullptr || !s->IsKindOf(SmBSplineSurface_TYPE) || s->GetType() == SmBSplineSurface_TYPE ||
-            s->GetType() == SmPlane_TYPE)
-            continue;
-        // Preserve every surface the shared export imports as its exact analytic kind.
-        std::vector<double> head;
-        if (sc_analytic_export::put_exact_head(head, s, the_context()))
-            continue;
-        SmBSplineSurface* b = (SmBSplineSurface*)s;
-        gw_SURFACE* nurb = b->GetGwNurbPointer();
-        if (nurb == nullptr)
-            continue;
-        SmBSplineSurface* nb = new (the_context()) SmBSplineSurface(sm_AllocateAndCopyNurbSurface(nurb), FALSE, NULL);
-        nb->GetOutOfBoundsEnabled() = b->GetOutOfBoundsEnabled();
-        nb->SetBSplineSurfaceForm(b->GetBSplineSurfaceForm());
-        f->*FPeek::srf() = nb;
-    }
-    for (SmEdge* e : g.edges)
-    {
-        SmCurve* c = e->*EdgePeek::curve();
-        // Keep circles/ellipses that the shared exporter can carry exactly; the
-        // healer then sees the same native kind as the imported Rust B-rep.
-        if (exact_curve(c))
-            continue;
-        SmBSplineCurve* nc = plain_curve(c);
-        if (nc != nullptr)
-            e->*EdgePeek::curve() = nc;
-    }
-}
 
 // Computes the cached vertex/face, vertex/edge, edge/face and edge/CCW-edge gaps, as
 // the fixture's `build` does for `init_gaps`, but over every vertex use (the walk
@@ -129,11 +66,12 @@ void init_cached_gaps(SmBrep* brep)
         }
 }
 
-// Builds the B-rep of a block (kinds 0..3 by the fixture, 4 box, 5 sphere face).
+// Builds the B-rep of a block (kinds 0..3 by the fixture, 4 box, 5 sphere face, 6 one
+// vertex loop face, 7 seam-crossing cone patch).
 SmBrep* build_any(Rd& rd, const char* path, SmStatus& status)
 {
     int64_t kind = (int64_t)rd.in[rd.at];
-    if (kind != 4 && kind != 5 && kind != 6)
+    if (kind != 4 && kind != 5 && kind != 6 && kind != 7)
         return build(rd, path, status);
     rd.idx();
     const SmContext& ctx = the_context();
@@ -145,16 +83,71 @@ SmBrep* build_any(Rd& rd, const char* path, SmStatus& status)
         SmPrimitiveCreation prim(brep->GetInfiniteRegion());
         status = prim.CreateBox(dx, dy, dz, SmAxis2Placement());
     }
+    else if (kind == 7)
+    {
+        // prog_test my_test_move_seam_refreshes_face_props: a cone/cylinder patch face
+        // whose surface is replaced by the full 0..360 patch with its seam rotated by
+        // `seam` degrees about the axis, so the seam lies inside the trim.
+        double r0 = rd.num(), r1 = rd.num(), height = rd.num(), a0 = rd.num(), a1 = rd.num(),
+               seam = rd.num();
+        bool quintic = rd.flag();
+        SmNurbCircleParam param = quintic ? SM_CO_QUINTIC : SM_CO_QUADRATIC;
+        SmBSplineSurface* patch = nullptr;
+        SmFace* face = nullptr;
+        status = SmBSplineSurface::CreateConePatch(ctx, SmAxis2Placement(), r0, r1, a0, a1, height, param, patch);
+        if (status == SM_SUCCESS)
+            status = brep->CreateFaceFromSurface(patch, patch->GetNaturalUVDomain(), face);
+        else
+            delete patch;
+        if (status == SM_SUCCESS && face)
+        {
+            double t = seam * M_PI / 180.0;
+            SmAxis2Placement frame;
+            frame.SetCanonical(SmPoint3d(0, 0, 0), SmVector3d(cos(t), sin(t), 0), SmVector3d(-sin(t), cos(t), 0));
+            SmBSplineSurface* full = nullptr;
+            status = SmBSplineSurface::CreateConePatch(ctx, frame, r0, r1, 0.0, 360.0, height, param, full);
+            if (status == SM_SUCCESS)
+                status = brep->ReplaceSurface(face, full, FALSE, NULL, FALSE);
+            else
+                delete full;
+            if (status == SM_SUCCESS)
+                face->SetIsRectangularTrim(FALSE);
+        }
+    }
     else
     {
         double r = rd.num();
         bool swap = rd.flag();
-        SmSphere* sphere = nullptr;
-        status = SmSphere::CreateCanonical(ctx, SmAxis2Placement(), r, sphere);
-        if (status == SM_SUCCESS && swap)
-            status = sphere->SwapUV();
+        // kind 6 only: 0 sphere, 1 plane (domain [-r, r]^2), 2 torus (major r, minor r/4)
+        int64_t surf = kind == 6 ? rd.idx() : 0;
+        SmSurface* surface = nullptr;
+        SmPoint3d vertex(0, 0, r);
+        if (surf == 1)
+        {
+            SmPlane* plane = nullptr;
+            status = SmPlane::CreateCanonical(ctx, SmAxis2Placement(), plane);
+            surface = plane;
+            vertex = SmPoint3d(0, 0, 0);
+        }
+        else if (surf == 2)
+        {
+            SmTorus* torus = nullptr;
+            status = SmTorus::CreateCanonical(ctx, SmAxis2Placement(), r, 0.25 * r, torus, swap ? TRUE : FALSE);
+            surface = torus;
+            vertex = SmPoint3d(1.25 * r, 0, 0);
+        }
+        else
+        {
+            SmSphere* sphere = nullptr;
+            status = SmSphere::CreateCanonical(ctx, SmAxis2Placement(), r, sphere);
+            if (status == SM_SUCCESS && swap)
+                status = sphere->SwapUV();
+            surface = sphere;
+        }
         if (status == SM_SUCCESS)
         {
+            SmExtent2d domain = surf == 1 ? SmExtent2d(SmPoint2d(-r, -r), SmPoint2d(r, r))
+                                          : surface->GetNaturalUVDomain();
             if (kind == 6)
             {
                 delete brep;
@@ -166,9 +159,9 @@ SmBrep* build_any(Rd& rd, const char* path, SmStatus& status)
                 {
                     SmShell *outer = NULL, *inner = NULL;
                     status = builder.StartShell(outer, inner);
-                    if (status == SM_SUCCESS && !builder.StartFace(swap ? SM_OT_OPPOSITE : SM_OT_SAME)) status = SM_ERR;
-                    if (status == SM_SUCCESS) status = builder.SetFaceSurface(sphere, sphere->GetNaturalUVDomain());
-                    if (status == SM_SUCCESS && !builder.StartAndEndSingleVertexLoop(SmPoint3d(0, 0, r))) status = SM_ERR;
+                    if (status == SM_SUCCESS && !builder.StartFace(surf == 0 && swap ? SM_OT_OPPOSITE : SM_OT_SAME)) status = SM_ERR;
+                    if (status == SM_SUCCESS) status = builder.SetFaceSurface(surface, domain);
+                    if (status == SM_SUCCESS && !builder.StartAndEndSingleVertexLoop(vertex)) status = SM_ERR;
                     if (status == SM_SUCCESS) status = builder.EndFace();
                     if (status == SM_SUCCESS) status = builder.EndShell(TRUE);
                     if (status == SM_SUCCESS) status = builder.EndRegion();
@@ -179,8 +172,8 @@ SmBrep* build_any(Rd& rd, const char* path, SmStatus& status)
             {
                 SmShell* shell = nullptr;
                 SmFace* face = nullptr;
-                status = brep->CreateFaceInRegionFromSurface(brep->GetInfiniteRegion(), sphere,
-                                                             sphere->GetNaturalUVDomain(), shell, face);
+                status = brep->CreateFaceInRegionFromSurface(brep->GetInfiniteRegion(), surface,
+                                                             domain, shell, face);
             }
         }
     }
@@ -195,7 +188,7 @@ SmBrep* build_any(Rd& rd, const char* path, SmStatus& status)
     return brep;
 }
 
-// Builds, normalises and walks; nullptr with the status written to `o` on failure.
+// Builds and walks; nullptr with the status written to `o` on failure.
 SmBrep* prepare(Rd& rd, const char* path, Graph& g, std::vector<double>& o)
 {
     SmStatus status = SM_SUCCESS;
@@ -206,11 +199,6 @@ SmBrep* prepare(Rd& rd, const char* path, Graph& g, std::vector<double>& o)
         o.push_back(st(status));
         return nullptr;
     }
-    {
-        Graph g0;
-        walk(brep, g0, true);
-        normalise(g0);
-    }
     // the block's last value is `init_gaps`
     if (rd.at > 0 && rd.in[rd.at - 1] != 0.0)
         init_cached_gaps(brep);
@@ -218,75 +206,14 @@ SmBrep* prepare(Rd& rd, const char* path, Graph& g, std::vector<double>& o)
     return brep;
 }
 
-void put_vertex_lists(Graph& g, std::vector<double>& o)
-{
-    for (SmVertex* v : g.vertices)
-    {
-        std::vector<int64_t> l;
-        for (SmTopology* t : list_of(v->GetList()))
-            l.push_back(g.find(8, t));
-        put_list(o, l);
-    }
-}
-
-// The cached gap records of every edge use and vertex use (the export only has their
-// IsInit flags): per edge use `init gap eu0 eu1 t0 t1` (end/CCW-start) and
-// `init gap eu t u v` (edge/face), per vertex use `init gap vu t` (vertex/edge) and
-// `init gap vu u v` (vertex/face).
-void put_cached_gaps(Graph& g, std::vector<double>& o)
-{
-    for (SmEdgeuse* eu : g.edgeuses)
-    {
-        const SmEdgeEdgeGap& c = eu->*EuPeek::ccw_gap();
-        o.push_back(flg(c.IsInit()));
-        o.push_back(c.m_dGap3d);
-        o.push_back((double)g.find(6, c.GetEdgeuse(0)));
-        o.push_back((double)g.find(6, c.GetEdgeuse(1)));
-        o.push_back(c.GetEdgeT(0));
-        o.push_back(c.GetEdgeT(1));
-        const SmEdgeFaceGap& f = eu->*EuPeek::face_gap();
-        o.push_back(flg(f.IsInit()));
-        o.push_back(f.m_dGap3d);
-        o.push_back((double)g.find(6, f.GetEdgeuse(0)));
-        o.push_back(f.GetEdgeT(0));
-        SmPoint2d uv = f.GetFaceUV();
-        o.push_back(uv.x);
-        o.push_back(uv.y);
-    }
-    for (SmVertexuse* vu : g.vertexuses)
-    {
-        const SmVertexEdgeGap& e = vu->*VuPeek::edge_gap();
-        o.push_back(flg(e.IsInit()));
-        o.push_back(e.m_dGap3d);
-        o.push_back((double)g.find(8, e.GetVertexuse()));
-        o.push_back(e.GetEdgeT(0));
-        const SmVertexFaceGap& f = vu->*VuPeek::face_gap();
-        o.push_back(flg(f.IsInit()));
-        o.push_back(f.m_dGap3d);
-        o.push_back((double)g.find(8, f.GetVertexuse()));
-        SmPoint2d uv = f.GetFaceUV();
-        o.push_back(uv.x);
-        o.push_back(uv.y);
-    }
-}
-
-void run_export(Rd& rd, const char* path, std::vector<double>& o, bool lists)
+void run_export(Rd& rd, const char* path, std::vector<double>& o)
 {
     Graph g;
     SmBrep* brep = prepare(rd, path, g, o);
     if (brep == nullptr)
         return;
     o.push_back(0.0);
-    if (lists)
-    {
-        put_vertex_lists(g, o);
-        put_cached_gaps(g, o);
-        // the infinite region (SmBrep::m_pInfiniteRegion), which the shared graph export
-        // does not carry; Fix_InfiniteRegion walks the region list from it
-        o.push_back((double)g.find(0, brep->GetInfiniteRegion()));
-    }
-    else
-        export_graph(brep, g, o);
+    export_graph(brep, g, o);
     delete brep;
 }
 
@@ -711,6 +638,130 @@ void put_ext1(std::vector<double>& o, const SmExtent1d& e)
     o.push_back(e.GetMax());
 }
 
+// After a successful repair step (which may have edited the fixture graph): a summary
+// that reads only the live B-rep and the healer, not the fixture graph. `-101`, the
+// target and new-object list sizes, the repair problem list sizes, the B-rep's face,
+// edge and vertex counts, per face (sorted) its loop and edge counts, and the vertex
+// points in lexicographic order.
+void put_repair_summary(SmBrep* brep, SmHealData& h, std::vector<double>& o)
+{
+    o.push_back(-101.0);
+    for (ULONG n : {h.m_sTgtVertices.GetSize(), h.m_sTgtEdges.GetSize(), h.m_sTgtFaces.GetSize(),
+                    h.m_sNewFaces_FromFixDegenFaces.GetSize(), h.m_sNewEdges_FromSplitEdgesAtSeams.GetSize(),
+                    h.m_sNewVertices_FromSplitEdgesAtSeams.GetSize(), h.m_sNewFaces_FromSplitFaceAtSeams.GetSize(),
+                    h.m_sNewEdgesOnSeams_FromSplitFaceAtSeams.GetSize(),
+                    h.m_sNewVertices_FromSplitFaceAtSeams.GetSize(), h.m_sBadFaceProps_DegenFaces.GetSize(),
+                    h.m_sBadFaceProps_CrossedSeam.GetSize(), h.m_sBadFaceProps_MissingSeam.GetSize(),
+                    h.m_sBadFaceProps_NearMissSeam.GetSize(), h.m_sRanFaceProps_MoveSeam.GetSize(),
+                    h.m_sRanFaceProps_SplitEdgesAtSeam.GetSize()})
+        o.push_back((double)n);
+    SmTArray<SmFace*> faces;
+    SmTArray<SmEdge*> edges;
+    SmTArray<SmVertex*> vertices;
+    brep->GetFaces(faces);
+    brep->GetEdges(edges);
+    brep->GetVertices(vertices);
+    o.push_back((double)faces.GetSize());
+    o.push_back((double)edges.GetSize());
+    o.push_back((double)vertices.GetSize());
+    std::vector<std::pair<ULONG, ULONG>> per_face;
+    for (ULONG i = 0; i < faces.GetSize(); ++i)
+    {
+        SmTArray<SmLoop*> loops;
+        SmTArray<SmEdge*> face_edges;
+        faces[i]->GetLoops(loops);
+        faces[i]->GetEdges(face_edges);
+        per_face.emplace_back(loops.GetSize(), face_edges.GetSize());
+    }
+    std::sort(per_face.begin(), per_face.end());
+    for (const auto& f : per_face)
+    {
+        o.push_back((double)f.first);
+        o.push_back((double)f.second);
+    }
+    std::vector<std::array<double, 3>> pts;
+    for (ULONG i = 0; i < vertices.GetSize(); ++i)
+    {
+        const SmPoint3d& p = vertices[i]->GetPoint();
+        pts.push_back({p.x, p.y, p.z});
+    }
+    std::sort(pts.begin(), pts.end());
+    for (const auto& p : pts)
+        o.insert(o.end(), p.begin(), p.end());
+}
+
+// The geometry owners of the live B-rep, after its build and after a successful repair
+// step. Order-free, as `put_repair_summary` (a repair may have edited the fixture graph):
+// `-102`, then the face count and per face (sorted) its surface's owner class and loop
+// count, the edge count and per edge (sorted) its curve's owner class and edge use count,
+// and the edge use count and the sorted owner classes of each edge use's own UV trim
+// curve. Owner classes: `1` the holding object itself, `2` another object of its kind in
+// the B-rep, `-1` no owner, `-2` no geometry, `-3` any other owner.
+double owner_class(const SmObject* owner, const SmObject* self, const std::set<const SmObject*>& kind)
+{
+    if (owner == nullptr)
+        return -1.0;
+    if (owner == self)
+        return 1.0;
+    return kind.count(owner) ? 2.0 : -3.0;
+}
+
+void put_owner_block(SmBrep* brep, std::vector<double>& o)
+{
+    o.push_back(-102.0);
+    SmTArray<SmFace*> faces;
+    SmTArray<SmEdge*> edges;
+    SmTArray<SmEdgeuse*> uses;
+    brep->GetFaces(faces);
+    brep->GetEdges(edges);
+    brep->GetEdgeuses(uses);
+    std::set<const SmObject*> fs, es, us;
+    for (ULONG i = 0; i < faces.GetSize(); ++i)
+        fs.insert((const SmObject*)faces[i]);
+    for (ULONG i = 0; i < edges.GetSize(); ++i)
+        es.insert((const SmObject*)edges[i]);
+    for (ULONG i = 0; i < uses.GetSize(); ++i)
+        us.insert((const SmObject*)uses[i]);
+    std::vector<std::pair<double, double>> per_face;
+    for (ULONG i = 0; i < faces.GetSize(); ++i)
+    {
+        SmSurface* s = faces[i]->GetSurface();
+        SmTArray<SmLoop*> loops;
+        faces[i]->GetLoops(loops);
+        double cls = s ? owner_class(s->GetOwner(), (const SmObject*)faces[i], fs) : -2.0;
+        per_face.emplace_back(cls, (double)loops.GetSize());
+    }
+    std::vector<std::pair<double, double>> per_edge;
+    for (ULONG i = 0; i < edges.GetSize(); ++i)
+    {
+        SmCurve* c = edges[i]->GetCurve();
+        SmTArray<SmEdgeuse*> eus;
+        edges[i]->GetEdgeuses(eus);
+        double cls = c ? owner_class(c->GetOwner(), (const SmObject*)edges[i], es) : -2.0;
+        per_edge.emplace_back(cls, (double)eus.GetSize());
+    }
+    std::vector<double> per_use;
+    for (ULONG i = 0; i < uses.GetSize(); ++i)
+    {
+        SmBSplineCurve* uv = uses[i]->*EuPeek::uv();
+        per_use.push_back(uv ? owner_class(uv->GetOwner(), (const SmObject*)uses[i], us) : -2.0);
+    }
+    std::sort(per_face.begin(), per_face.end());
+    std::sort(per_edge.begin(), per_edge.end());
+    std::sort(per_use.begin(), per_use.end());
+    for (const auto* list : {&per_face, &per_edge})
+    {
+        o.push_back((double)list->size());
+        for (const auto& x : *list)
+        {
+            o.push_back(x.first);
+            o.push_back(x.second);
+        }
+    }
+    o.push_back((double)per_use.size());
+    o.insert(o.end(), per_use.begin(), per_use.end());
+}
+
 void dump(SmHealData& h, Graph& g, Registry& r, std::vector<double>& o)
 {
     o.push_back(-100.0);
@@ -1125,6 +1176,7 @@ void run_heal(Rd& rd, const char* path, std::vector<double>& o)
     if (brep == nullptr)
         return;
     o.push_back(0.0);
+    put_owner_block(brep, o);
     SmTArray<SmVertex*> vs;
     SmTArray<SmEdge*> es;
     SmTArray<SmFace*> fs;
@@ -1626,6 +1678,11 @@ void run_heal(Rd& rd, const char* path, std::vector<double>& o)
                 o.push_back((double)p->m_eBeenThroughSplitEdgesAtSeam);
             }
         }
+        if (repair && stat == SM_SUCCESS)
+        {
+            put_repair_summary(brep, *h, o);
+            put_owner_block(brep, o);
+        }
         if (repair) { r.note(*h); stop = true; }
         o.push_back(st(stat));
         o.push_back(flg(bNew));
@@ -1669,8 +1726,7 @@ SC_EXPORT int32_t sc_heal_heal_data_p2_eval(int32_t op, const char* path, const 
     std::vector<double> o;
     switch (op)
     {
-    case P2_EXPORT: run_export(rd, path, o, false); break;
-    case P2_VLISTS: run_export(rd, path, o, true); break;
+    case P2_EXPORT: run_export(rd, path, o); break;
     case P2_PROB: run_prob(rd, o); break;
     case P2_HEAL: run_heal(rd, path, o); break;
     default: return SC_ERR_ARG;

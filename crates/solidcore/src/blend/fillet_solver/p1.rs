@@ -109,6 +109,12 @@
 //!   [`SolidError::InvalidInput`].
 //! - **Iteration.** No loop here depends on more than the caller's array sizes; there
 //!   is no recursion.
+//!
+//! With `Kernel::fixes.fillet_edge_curve_domain_statuses`, an edge-curve copy that
+//! cannot be trimmed is no trimmed curve, as the fork does (66b02de; #483, #2009). With
+//! `Kernel::fixes.fillet_statuses_pass_on` the statuses tangency-labs/smlib 66b02de
+//! passes on (`SER`) are returned (WR-661).
+//!
 
 use crate::blend::fillet_classification::{FilletClassObject, LegacyClassificationObjects};
 use crate::blend::fillet_corner::p3::FilletCorner;
@@ -119,6 +125,7 @@ use crate::blend::fillet_geom::p1::{
 };
 use crate::blend::fillet_geom::p3::SplitCorners;
 use crate::blend::fillet_intersector::HandlingAlgorithmType;
+use crate::blend::fillet_section::section::GnSectionFsg;
 use crate::blend::fillet_standard_solver::p1::{
     BlendCurveCrossSectionFsg, CircularCrossSectionFsg, LinearCrossSectionFsg,
 };
@@ -173,7 +180,10 @@ fn invalid(reason: &'static str) -> SolidError {
 /// upstream, not a status) pass through.
 fn as_sm_err(e: SolidError, op: &'static str) -> SolidError {
     match e {
-        SolidError::Unported { .. } | SolidError::InvalidInput { .. } => e,
+        SolidError::Unported { .. }
+        | SolidError::Cancelled { .. }
+        | SolidError::InvalidInput { .. }
+        | SolidError::PortInvariant { .. } => e,
         _ => SolidError::sm_err(op),
     }
 }
@@ -236,6 +246,10 @@ pub enum FilletSurfaceGenerator {
     /// `SmBlendCurveCrossSectionFSG` (its members and `CreateSurfaceFromCurves`:
     /// [`BlendCurveCrossSectionFsg`] of `blend.fillet_standard_solver_p1`).
     BlendCurve(BlendCurveCrossSectionFsg),
+    /// The fork's `SmGnSectionFSG` (tangency-labs/smlib@11ea2d9; [`GnSectionFsg`]), of
+    /// type `SM_FSG_BLEND_CURVE`: built in place of the blend curve with
+    /// `fixes.fillet_gn_section_generator` (WR-685).
+    GnSection(GnSectionFsg),
 }
 
 impl FilletSurfaceGenerator {
@@ -266,9 +280,19 @@ impl FilletSurfaceGenerator {
     /// `SmBlendCurveCrossSectionFSG(dBlendScale, lContinuity)`.
     #[must_use]
     pub const fn blend_curve(blend_scale: f64, continuity: u32) -> Self {
+        Self::blend_curve_at_thirds(blend_scale, continuity, false)
+    }
+
+    /// `SmBlendCurveCrossSectionFSG(dBlendScale, lContinuity, bAtThirds)` (the fork's,
+    /// tangency-labs/smlib `fd3b6a7`): with `at_thirds`, each section's inner control
+    /// points sit a third and two thirds of the way from each contact to where the
+    /// contacts' tangent lines meet.
+    #[must_use]
+    pub const fn blend_curve_at_thirds(blend_scale: f64, continuity: u32, at_thirds: bool) -> Self {
         Self::BlendCurve(BlendCurveCrossSectionFsg {
             continuity,
             blend_scale,
+            at_thirds,
         })
     }
 
@@ -288,7 +312,7 @@ impl FilletSurfaceGenerator {
     pub const fn meets_its_faces_tangentially(&self) -> bool {
         match self {
             Self::Circular(g) => !g.mirror,
-            Self::BlendCurve(_) => true,
+            Self::BlendCurve(_) | Self::GnSection(_) => true,
             Self::Base | Self::Linear | Self::EiffelTower => false,
         }
     }
@@ -300,7 +324,7 @@ impl FilletSurfaceGenerator {
             Self::Base | Self::EiffelTower => FilletSurfaceGeneratorType::Unknown,
             Self::Linear => FilletSurfaceGeneratorType::Linear,
             Self::Circular(_) => FilletSurfaceGeneratorType::Circular,
-            Self::BlendCurve(_) => FilletSurfaceGeneratorType::BlendCurve,
+            Self::BlendCurve(_) | Self::GnSection(_) => FilletSurfaceGeneratorType::BlendCurve,
         }
     }
 
@@ -313,11 +337,23 @@ impl FilletSurfaceGenerator {
         }
     }
 
-    /// `SmBlendCurveCrossSectionFSG::GetContinuity` (`None` for the other kinds).
+    /// `SmGnSectionFSG::GetThumbweight` (`None` for the other kinds).
+    #[must_use]
+    pub const fn thumbweight(&self) -> Option<f64> {
+        match self {
+            Self::GnSection(g) => Some(g.thumbweight),
+            _ => None,
+        }
+    }
+
+    /// `SmBlendCurveCrossSectionFSG::GetContinuity`, `SmGnSectionFSG::GetOrder` (`None`
+    /// for the other kinds).
     #[must_use]
     pub const fn continuity(&self) -> Option<u32> {
         match self {
             Self::BlendCurve(g) => Some(g.continuity),
+            #[allow(clippy::cast_possible_truncation)]
+            Self::GnSection(g) => Some(g.order as u32),
             _ => None,
         }
     }
@@ -348,9 +384,9 @@ impl FilletSurfaceGenerator {
         points: &[TsectPnt],
         side1: crate::blend::fillet_standard_solver::p1::RailSurface<'_>,
         side2: crate::blend::fillet_standard_solver::p1::RailSurface<'_>,
-    ) -> Result<crate::nurbs::b_spline_surface::BSplineSurface> {
+    ) -> Result<Surface> {
         let no_center = || SolidError::invalid_input(OP, "NULL centre line");
-        match self {
+        let surface = match self {
             Self::Base => Err(SolidError::sm_err(OP)),
             Self::EiffelTower => {
                 crate::blend::fillet_custom_solver::EiffelTowerCrossSectionFsg::new()
@@ -376,7 +412,106 @@ impl FilletSurfaceGenerator {
                 side1,
                 side2,
             ),
+            Self::GnSection(g) => {
+                // the uv curves rebuilt on the stations are dropped: a caller that owns
+                // them uses `create_surface_replacing_uv` (which also keeps the equal area
+                // thumbweight the build resolves; this copy does not)
+                let none = || SolidError::null_pointer(OP);
+                let s1 = side1.surface.ok_or_else(none)?;
+                let s2 = side2.surface.ok_or_else(none)?;
+                let mut uv1 = side1.uv_curve.ok_or_else(none)?.clone();
+                let mut uv2 = side2.uv_curve.ok_or_else(none)?.clone();
+                let mut g = *g;
+                // (a blend by its definition with `fillet_round_as_definition`, 4a10ed8)
+                return g.create_surface(
+                    k,
+                    approx_tol_3d,
+                    center_line.ok_or_else(no_center)?,
+                    [rail1, rail2],
+                    [s1, s2],
+                    [&mut uv1, &mut uv2],
+                );
+            }
+        };
+        surface.map(Surface::from)
+    }
+
+    /// [`FilletSurfaceGenerator::create_surface`] for a caller that owns the rails' uv
+    /// curves: the G^n section generator rebuilds them on its stations with the rails,
+    /// as the fork's `SmGnSectionFSG::CreateSurface` does through `pUV1`, `pUV2`; every
+    /// other generator reads them.
+    ///
+    /// # Errors
+    ///
+    /// Those of [`FilletSurfaceGenerator::create_surface`] and
+    /// [`GnSectionFsg::create_surface`].
+    ///
+    /// The G^n section generator keeps what its build resolves (the equal area
+    /// thumbweight, the certificate), as the fork's generator object does.
+    ///
+    /// `ball`: what the circular generator reads off the solver (`None` where the caller
+    /// has no such solver); with it and `fixes.fillet_round_as_definition` a constant
+    /// round between NURBS faces is its definition, the rails and uv curves rebuilt on its
+    /// stations ([`CircularCrossSectionFsg::definition_surface`], the fork's cc08236).
+    #[allow(clippy::too_many_arguments)]
+    pub fn create_surface_replacing_uv(
+        &mut self,
+        k: &Kernel,
+        approx_tol_3d: f64,
+        solver_type: FilletSolverType,
+        center_line: Option<&mut BSplineCurve>,
+        rail1: &mut BSplineCurve,
+        rail2: &mut BSplineCurve,
+        points: &[TsectPnt],
+        surfaces: [&Surface; 2],
+        uv: [&mut BSplineCurve; 2],
+        ball: Option<&crate::blend::fillet_standard_solver::p2::CircleBall>,
+    ) -> Result<Surface> {
+        use crate::blend::fillet_standard_solver::p1::RailSurface;
+        if let Self::GnSection(g) = self {
+            let center =
+                center_line.ok_or_else(|| SolidError::invalid_input(OP, "NULL centre line"))?;
+            return g.create_surface(k, approx_tol_3d, center, [rail1, rail2], surfaces, uv);
         }
+        let [uv1, uv2] = uv;
+        let mut center_line = center_line;
+        if let (Self::Circular(g), Some(ball), Some(center)) =
+            (&*self, ball, center_line.as_deref_mut())
+        {
+            if let Some(s) = g.definition_surface(
+                k,
+                approx_tol_3d,
+                solver_type,
+                center,
+                [&mut *rail1, &mut *rail2],
+                points,
+                surfaces,
+                [&mut *uv1, &mut *uv2],
+                ball,
+            )? {
+                return Ok(s);
+            }
+        }
+        let uv = [uv1, uv2];
+        let [s1, s2] = surfaces;
+        let [uv1, uv2] = uv;
+        self.create_surface(
+            k,
+            approx_tol_3d,
+            solver_type,
+            center_line,
+            rail1,
+            rail2,
+            points,
+            RailSurface {
+                surface: Some(s1),
+                uv_curve: Some(uv1),
+            },
+            RailSurface {
+                surface: Some(s2),
+                uv_curve: Some(uv2),
+            },
+        )
     }
 }
 
@@ -501,6 +636,13 @@ pub struct FilletSolver {
     pub saved_offsets: [f64; 2],
     /// `m_dSurfaceExtensionFactor` (`0.5`).
     pub surface_extension_factor: f64,
+    /// Fork `m_dTraceReach` (WR-609, `fixes.fillet_trace_reaches_rails`): how far (3D)
+    /// the trace's base surface domains reach past their own at least, across the edge
+    /// (`0` = by the extension factor alone; [`FilletSolver::domain_extension`]).
+    pub trace_reach: f64,
+    /// Fork `m_abTraceAcross` (WR-609): `[surface][u, v]`, whether that parameter
+    /// direction runs across the edge (gets [`FilletSolver::trace_reach`]).
+    pub trace_across: [[bool; 2]; 2],
     /// `m_dConversionTol` (`SM_EFF_ZERO / 10`).
     pub conversion_tol: f64,
     /// `m_bReverseTrim`.
@@ -556,6 +698,8 @@ impl FilletSolver {
             lent_rollover: None,
             saved_offsets: [0.0, 0.0],
             surface_extension_factor: 0.5,
+            trace_reach: 0.0,
+            trace_across: [[true, true], [true, true]],
             conversion_tol: EFF_ZERO / 10.0,
             reverse_trim: false,
             extend_before: false,
@@ -682,6 +826,12 @@ impl FilletSolver {
     #[must_use]
     pub const fn fillet_surface_generator(&self) -> Option<&FilletSurfaceGenerator> {
         self.fsg.as_ref()
+    }
+
+    /// `GetFilletSurfaceGenerator`, for a caller that changes it (the G^n section
+    /// generator resolving its equal area thumbweight).
+    pub fn fillet_surface_generator_mut(&mut self) -> Option<&mut FilletSurfaceGenerator> {
+        self.fsg.as_mut()
     }
 
     /// `SetFilletSurfaceGenerator`.
@@ -840,7 +990,7 @@ impl FilletSolver {
 
     /// `GetSurface(lRailIndex)`: with a geometry for the surfaces, that geometry's
     /// offset surface (`SmFilletGeom::GetOffsetSurface`, lent to the solver by
-    /// [`FilletSolver::lend_geometry_surfaces`]), else the solver's own.
+    /// `FilletSolver::lend_geometry_surfaces`), else the solver's own.
     ///
     /// # Errors
     ///
@@ -1162,12 +1312,9 @@ impl FilletSolver {
         surface: &Surface,
         domain: &mut Extent2d,
     ) -> Result<()> {
-        // get length of extensions
-        let domain_size = domain.size();
-        let mut size = Vec2::new(
-            self.surface_extension_factor * domain_size.x,
-            self.surface_extension_factor * domain_size.y,
-        );
+        // get length of extensions (fork WR-609: and the trace's reach, which stays 0
+        // without `fixes.fillet_trace_reaches_rails`)
+        let mut size = self.domain_extension(k, Some(surface), &*domain)?;
 
         // Extend by a smaller amount if periodic.
         let periodic_extension_factor = 0.2;
@@ -1366,11 +1513,13 @@ impl FilletSolver {
         // of old to new.
         // FG::SetOffsetSurface() deletes what's there; its status is not checked
         let off_surf = geom_offset_surface_copy(k, self, pseudo, fillet_geom, other_idx)?;
-        ignore_status(
+        // fork 66b02de passes this on (SER)
+        ignore_status(crate::error::passed_on(
             pseudo
                 .geom_mut(new_fillet_geom)?
                 .set_offset_surface(other_idx, off_surf),
-        )?;
+            k.fixes.fillet_statuses_pass_on,
+        )?)?;
 
         if which_end == 0 {
             let rail = pseudo
@@ -1382,16 +1531,20 @@ impl FilletSolver {
                 .set_original_face(Some(adj_face));
 
             let off_surf = geom_offset_surface_copy(k, self, pseudo, fillet_geom, rail_idx)?;
-            ignore_status(
+            // fork 66b02de passes this on (SER)
+            ignore_status(crate::error::passed_on(
                 pseudo
                     .geom_mut(new_fillet_geom)?
                     .set_offset_surface(rail_idx, off_surf),
-            )?;
-            ignore_status(
+                k.fixes.fillet_statuses_pass_on,
+            )?)?;
+            // fork 66b02de passes this on (SER)
+            ignore_status(crate::error::passed_on(
                 pseudo
                     .geom_mut(fillet_geom)?
                     .set_offset_surface(rail_idx, Some(adj_off_surf)),
-            )?;
+                k.fixes.fillet_statuses_pass_on,
+            )?)?;
         } else {
             // New FG becomes rollover, on adjacent face.
             pseudo
@@ -1405,11 +1558,13 @@ impl FilletSolver {
                 .fillet_edge_mut(rail)?
                 .set_original_face(Some(adj_face));
 
-            ignore_status(
+            // fork 66b02de passes this on (SER)
+            ignore_status(crate::error::passed_on(
                 pseudo
                     .geom_mut(new_fillet_geom)?
                     .set_offset_surface(rail_idx, Some(adj_off_surf)),
-            )?;
+                k.fixes.fillet_statuses_pass_on,
+            )?)?;
         }
         self.fillet_geoms.push(new_fillet_geom);
 
@@ -1735,7 +1890,7 @@ impl FilletSolver {
 fn bool_status(r: Result<bool>) -> Result<bool> {
     match r {
         Ok(v) => Ok(v),
-        Err(e @ SolidError::Unported { .. }) => Err(e),
+        Err(e @ (SolidError::Unported { .. } | SolidError::Cancelled { .. })) => Err(e),
         Err(_) => Ok(true),
     }
 }
@@ -1747,7 +1902,7 @@ fn singularity_status(
 ) -> Result<crate::surface::surface::p5::Singularity> {
     match r {
         Ok(v) => Ok(v),
-        Err(e @ SolidError::Unported { .. }) => Err(e),
+        Err(e @ (SolidError::Unported { .. } | SolidError::Cancelled { .. })) => Err(e),
         Err(_) => Ok(crate::surface::surface::p5::Singularity {
             singular: true,
             direction: SurfParamType::Neither,
@@ -1993,6 +2148,13 @@ pub trait FilletSolverOps: AsFilletSolverOps {
         Ok(FilletSolverType::Unknown)
     }
 
+    /// `static_cast<SmConstantRadiusFS *>(this)->GetFilletRadius(0)`, `(1)`: the radii of
+    /// a constant-radius solver, which the fork's circle generator reads for a solver whose
+    /// `GetSolverType()` is `SM_FS_CONST_RADIUS` (cc08236); `None` for another class.
+    fn constant_radii(&self) -> Option<[f64; 2]> {
+        None
+    }
+
     /// `SM_CAST_PTR(SmVariableRadiusFS, this)`: mutable borrow when the concrete solver
     /// is a [`VariableRadiusFs`](crate::blend::fillet_standard_solver::p1::VariableRadiusFs).
     fn variable_radius_mut(
@@ -2083,12 +2245,15 @@ fn copy_offset_surface(k: &Kernel, s: Option<&OffsetSurfaceSlot>) -> Result<Opti
     let Some(slot) = s else {
         return Ok(None);
     };
-    Ok(
-        ignored(slot.surface.surface.copy(k))?.map(|surface| OffsetSurface {
-            surface,
-            base_id: slot.surface.base_id,
-        }),
-    )
+    // fork 66b02de passes this on (SER)
+    Ok(ignored(crate::error::passed_on(
+        slot.surface.surface.copy(k),
+        k.fixes.fillet_statuses_pass_on,
+    )?)?
+    .map(|surface| OffsetSurface {
+        surface,
+        base_id: slot.surface.base_id,
+    }))
 }
 
 /// `pFG->GetOffsetSurface(rail)` copied with `Copy(m_crContext, pSurf)` (status
@@ -2107,7 +2272,12 @@ fn geom_offset_surface_copy(
     else {
         return Ok(None);
     };
-    Ok(ignored(orig.surface.copy(k))?.map(|surface| OffsetSurface {
+    // fork 66b02de passes this on (SER)
+    Ok(ignored(crate::error::passed_on(
+        orig.surface.copy(k),
+        k.fixes.fillet_statuses_pass_on,
+    )?)?
+    .map(|surface| OffsetSurface {
         surface,
         base_id: orig.base_id,
     }))
@@ -2691,7 +2861,7 @@ impl<'a> FindClippedRadiusEfo<'a> {
                 .surface
                 .clone(),
         );
-        let iso = IsoCurve::from_surface(surface, self.surf_param, self.iso_param, true, false)?;
+        let iso = IsoCurve::from_surface(k, surface, self.surf_param, self.iso_param, true, false)?;
         let curve = Curve::from(iso);
         let interval = curve.natural_interval();
         let found = other.local_curve_intersect(
@@ -2794,6 +2964,14 @@ fn evaluate_point_out_of_bounds(k: &Kernel, base: &Surface, uv: Point2) -> Resul
     let mut s = base.clone_for_evaluation()?;
     match s.kind_mut() {
         SurfaceKind::BSpline(b) => *b.out_of_bounds_enabled_mut() = true,
+        SurfaceKind::ProceduralBlend(pb) => {
+            let b = pb.net_mut();
+            *b.out_of_bounds_enabled_mut() = true;
+        }
+        SurfaceKind::BallPatch(bp) => {
+            let b = bp.net_mut();
+            *b.out_of_bounds_enabled_mut() = true;
+        }
         SurfaceKind::Plane(p) => *p.out_of_bounds_enabled_mut() = true,
         SurfaceKind::SurfOfRevolution(r) => *r.base_mut().out_of_bounds_enabled_mut() = true,
         SurfaceKind::SurfOfExtrusion(r) => *r.base_mut().out_of_bounds_enabled_mut() = true,
@@ -2916,8 +3094,10 @@ pub fn tol_ang_tol_rad(solver: Option<&FilletSolver>) -> f64 {
 /// # Errors
 ///
 /// [`SolidError::InvalidInput`] for an edge without curve (upstream dereferences
-/// `NULL`); the trim's status is ignored as upstream ([`SolidError::Unported`] still
-/// propagates).
+/// `NULL`). The copy's and the trim's statuses are ignored as upstream
+/// ([`SolidError::Unported`] still propagates); with `fillet_edge_curve_domain_statuses`,
+/// as the fork does (tangency-labs/smlib 66b02de), a copy that cannot be trimmed is no
+/// trimmed curve (`None`).
 pub fn check_edge_curve_domains(
     k: &Kernel,
     b: &Brep,
@@ -2940,10 +3120,15 @@ pub fn check_edge_curve_domains(
         t1 = edge_ivl.max();
     }
     if trim {
+        // a failed copy is NULL, checked next
         if let Some(mut copy) = ignored(curve.copy(k))? {
             let mut trim_ivl = Extent1d::from_min_max(t0, t1);
-            ignore_status(copy.trim(k, &mut trim_ivl, TrimMode::Notify))?;
-            return Ok(Some(copy));
+            let trimmed = ignored(copy.trim(k, &mut trim_ivl, TrimMode::Notify))?;
+            // with fillet_edge_curve_domain_statuses, as the fork's change (66b02de): a
+            // copy that could not be trimmed is no trimmed curve
+            if trimmed.is_some() || !k.fixes.fillet_edge_curve_domain_statuses {
+                return Ok(Some(copy));
+            }
         }
     }
     Ok(None)
@@ -3018,6 +3203,11 @@ pub fn test_analytic_surface(k: &Kernel, surface: AnalyticTestSurface<'_>) -> Re
             SurfaceKind::Cone(c) => c.rev().base(),
             SurfaceKind::Sphere(s) => s.base().base(),
             SurfaceKind::Torus(s) => s.base().base(),
+            // (the fork's SmProceduralBlend is an SmBSplineSurface: its net, its corner
+            // points the definition's, below)
+            SurfaceKind::ProceduralBlend(pb) => pb.net(),
+            // (the fork's SmBallPatch is an SmBSplineSurface too: its net)
+            SurfaceKind::BallPatch(pb) => pb.net(),
             // not an SmBSplineSurface: upstream's parameter type excludes these
             _ => {
                 return Err(SolidError::InvalidInput {
@@ -3030,7 +3220,13 @@ pub fn test_analytic_surface(k: &Kernel, surface: AnalyticTestSurface<'_>) -> Re
         AnalyticTestSurface::Sphere(s) => s.base().base(),
         AnalyticTestSurface::Torus(t) => t.base().base(),
     };
-    Ok(Cone::is_nurb_surface_cone(k, bss, 1.0)?.is_some())
+    let this = match surface {
+        AnalyticTestSurface::Surface(s) if matches!(s.kind(), SurfaceKind::ProceduralBlend(_)) => {
+            Some(s)
+        }
+        _ => None,
+    };
+    Ok(Cone::is_nurb_surface_cone_on(k, bss, 1.0, this)?.is_some())
 }
 
 /// `SE(pEU->EvaluateBinormal(dParameter, FALSE, rPnt, rBinVec, NULL, &rFaceuseNormal))`
@@ -3057,10 +3253,12 @@ fn binormal_status_ignored(
     match evaluate_binormal(k, b, edge_use, parameter, false, &options) {
         Ok(r) => Ok((r.point, r.binormal, r.face_normal)),
         Err(e)
-            if e.is_unported()
+            if e.is_unported_or_cancelled()
                 || matches!(
                     e,
-                    SolidError::NotFound { .. } | SolidError::InvalidInput { .. }
+                    SolidError::NotFound { .. }
+                        | SolidError::InvalidInput { .. }
+                        | SolidError::PortInvariant { .. }
                 ) =>
         {
             Err(e)
@@ -3212,7 +3410,9 @@ pub fn trim_rail(k: &Kernel, b: &mut Brep, rail: EdgeId, trim_interval: &Extent1
     // callbacks owned by boxed trait objects) cannot be cloned and nothing on the trim
     // path reads it
     tk.rng = k.rng.clone();
+    tk.cancel.clone_from(&k.cancel);
     tk.fixes.bspline_trim_preserves_uv_spans = k.fixes.bspline_trim_preserves_uv_spans;
+    tk.fixes.bspline_trim_keeps_rational_end_spans = k.fixes.bspline_trim_keeps_rational_end_spans;
     b.edge_mut(rail)?
         .curve
         .as_mut()
@@ -3238,6 +3438,41 @@ pub use rails::{compute_support_edge, split_rail, RailOwnership, RetainedRailOwn
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn audit_483_edge_domain_is_no_trimmed_curve_after_a_failed_trim() {
+        let mut k = Kernel::default();
+        let mut b = Brep::new();
+        let first = b.add_vertex(Vec3::ZERO).unwrap();
+        let last = b.add_vertex(Vec3::X).unwrap();
+        let edge = b.add_edge(first, last).unwrap();
+        let curve = Curve::from(BSplineCurve::create_line_segment(3, Vec3::ZERO, Vec3::X).unwrap());
+        b.edge_mut(edge).unwrap().curve = Some(curve.clone());
+        let ivl = Extent1d::from_min_max(0.5, 0.5);
+        b.edge_mut(edge).unwrap().interval = ivl;
+        let mut failing = curve.copy(&k).unwrap();
+        let mut trim_ivl = ivl;
+        assert!(failing.trim(&k, &mut trim_ivl, TrimMode::Notify).is_err());
+        // upstream: the untrimmed copy is returned as the trimmed curve
+        assert!(check_edge_curve_domains(&k, &b, edge, false, false)
+            .unwrap()
+            .is_some());
+        // fork 66b02de: a copy that could not be trimmed is no trimmed curve
+        k.fixes.fillet_edge_curve_domain_statuses = true;
+        assert!(check_edge_curve_domains(&k, &b, edge, false, false)
+            .unwrap()
+            .is_none());
+        assert_eq!(
+            edge::curve(&b, edge).unwrap().unwrap().natural_interval(),
+            curve.natural_interval()
+        );
+        b.edge_mut(edge).unwrap().interval = Extent1d::from_min_max(0.25, 0.75);
+        let copy = check_edge_curve_domains(&k, &b, edge, false, false)
+            .unwrap()
+            .unwrap();
+        assert_eq!(copy.natural_interval(), Extent1d::from_min_max(0.25, 0.75));
+    }
+
     use crate::surface::plane::Plane;
 
     #[test]

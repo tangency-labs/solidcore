@@ -750,7 +750,7 @@ fn state(o: &mut Vec<f64>, c: &Curve) {
 /// cannot return.
 fn status(e: &SolidError) -> f64 {
     match e {
-        SolidError::InvalidInput { .. } => 1007.0,
+        SolidError::InvalidInput { .. } | SolidError::PortInvariant { .. } => 1007.0,
         SolidError::Upstream { code, .. } => f64::from(*code),
         _ => -1.0,
     }
@@ -1206,7 +1206,7 @@ fn rust(i: &Inputs) -> Result<Output, HarnessError> {
         } => {
             let mut kn = knots.clone();
             let mut poly: Vec<Vec3> = pts.iter().map(|&p| v3(p)).collect();
-            match flush_crv(*tol, &mut poly, &mut kn, *analytics) {
+            match flush_crv(*tol, &mut poly, &mut kn, *analytics, false) {
                 Ok(r) => {
                     o.extend([0.0, b(r.is_some())]);
                     if let Some(c) = r {

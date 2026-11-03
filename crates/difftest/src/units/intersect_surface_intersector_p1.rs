@@ -397,7 +397,7 @@ impl From<HarnessError> for Fail {
 /// cannot return.
 fn status(e: &SolidError) -> f64 {
     match e {
-        SolidError::InvalidInput { .. } => 1007.0,
+        SolidError::InvalidInput { .. } | SolidError::PortInvariant { .. } => 1007.0,
         SolidError::Upstream { code, .. } => f64::from(*code),
         _ => -1.0,
     }
@@ -805,7 +805,7 @@ fn run_op(
                 1 => si.through_points().to_vec(),
                 _ => si.curve_points().to_vec(),
             };
-            if let Some(f) = st(o, si.is_point_on_start_point(&p, &l, *skip))? {
+            if let Some(f) = st(o, si.is_point_on_start_point(k, &p, &l, *skip))? {
                 o.push(b(f));
             }
         }

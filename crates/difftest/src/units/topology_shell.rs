@@ -2,10 +2,16 @@
 //! `TransferChildrenTo` (incl. face-use and wire shells in one B-rep), shell type members,
 //! `RayFire` (through the B-rep's own `query::brep::BrepQuery` world), degeneracy,
 //! region ordering and filtering.
-//! Native fixtures and raw graph imports reuse the edge-use fixture protocol.
+//! Native fixtures reuse the edge-use fixture protocol: the Rust side builds a
+//! shim-built source itself ([`crate::own_builder`]) and reads an `.smb` file with the
+//! Rust reader, both in the shim's traversal order ([`crate::own_reader::brep_in_order`]);
+//! no C++ export reaches the Rust side.
 //! Setup failures fail the harness; topology and native integer flags compare exactly.
 
-use super::topology_edgeuse_p1::{fixture_input, import};
+use super::topology_edgeuse_p1::{fixture_input, BrepIn};
+
+#[path = "topology_shell/inner.rs"]
+mod inner;
 use crate::{Case, HarnessError, Output, Rng, UnitDiff};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
@@ -204,7 +210,7 @@ fn ray_output(values: &[f64]) -> Result<Output, HarnessError> {
 }
 
 /// Upstream's file B-reps own their geometry (`SmSurface::GetFace`, `SmCurve::GetEdge`
-/// name the face and edge); the graph import leaves the owners unset. The ray's shape
+/// name the face and edge). The ray's shape
 /// solve maps a hit surface or curve back to its face or edge through that owner, so
 /// the copy gets the arena identities the ray world ([`BrepQuery::default`]) resolves.
 fn own_geometry(b: &mut solidcore::topology::Brep) -> Result<(), HarnessError> {
@@ -757,12 +763,33 @@ fn rust_transfer_records(
     Ok(Output::new().ints("records", out))
 }
 
+/// The Rust B-rep of the case's fixture: a shim-built source built by the Rust kernel
+/// ([`crate::own_builder`], as `topology.edgeuse_p1` builds it) or an `.smb` file read
+/// by the Rust reader, both in the shim's traversal order
+/// ([`crate::own_reader::brep_in_order`]); or the deferral of an unported callee of the
+/// build.
+fn own_brep(value: &Value) -> Result<Result<solidcore::topology::Brep, Output>, HarnessError> {
+    use crate::own_builder::{Built, Conventions};
+    let src: BrepIn = serde_json::from_value(value.clone()).map_err(failure)?;
+    let mut kernel = solidcore::kernel::Kernel::default();
+    let conv = &Conventions::EDGEUSE_GRAPH;
+    match crate::own_reader::brep_in_order(&mut kernel, &src, false, false, conv)? {
+        Built::Brep(b) => Ok(Ok(*b)),
+        Built::Failed(e) => Output::unported(&e)
+            .map(Err)
+            .ok_or_else(|| failure(format!("native fixture build failed: {e}"))),
+    }
+}
+
 impl UnitDiff for Runner {
     fn id(&self) -> &'static str {
         "topology.shell"
     }
 
     fn run_cpp(&self, case: &Case) -> Result<Output, HarnessError> {
+        if inner::is_inner(case) {
+            return inner::run_cpp(case);
+        }
         let inputs: Inputs = case.parse()?;
         let (path, block) = fixture_input(inputs.brep)?;
         if let Some(filter) = inputs.region_filter {
@@ -913,14 +940,31 @@ impl UnitDiff for Runner {
         ))
     }
 
+    fn cases(&self, ctx: &crate::CaseContext) -> Result<Vec<Case>, HarnessError> {
+        let mut v = crate::runner::default_cases(self, ctx)?;
+        v.extend(inner::cases(self.id()));
+        Ok(v)
+    }
+
     fn run_rust(&self, case: &Case) -> Result<Output, HarnessError> {
+        if inner::is_inner(case) {
+            return inner::run_rust(case);
+        }
         let inputs: Inputs = case.parse()?;
-        let (path, block) = fixture_input(inputs.brep)?;
-        let export = crate::export_memo::export("topology_edgeuse_p1", &[&path], &block, || {
-            graph::eval(graph::Op::Export, &path, &block)
-        })
-        .map_err(failure)?;
-        let mut brep = import(&export)?;
+        // an input the FFI refuses is a harness error on both sides (PR #502's
+        // convention): the shim never builds it, so the Rust side must not either. Fuzz
+        // case fuzz00180 (`--fuzz 300 --seeds 5`) mutated a mixed fixture's `networks` to
+        // 2^32: every FFI entry point exports the block first and refuses more than 3
+        // networks, while this side's builder wired networks for minutes. The check sees
+        // the same block as `run_cpp`.
+        let (path, block) = fixture_input(inputs.brep.clone())?;
+        graph::validate_export(&path, &block).map_err(failure)?;
+        let mut brep = match own_brep(&inputs.brep)? {
+            Ok(b) => b,
+            Err(o) => return Ok(o),
+        };
+        // the entity counts of the B-rep as built (the export header's)
+        let built_counts = crate::own_builder::counts(&brep);
         if let Some(filter) = inputs.region_filter {
             if filter.pattern > 2
                 || inputs.region_order.is_some()
@@ -1006,14 +1050,10 @@ impl UnitDiff for Runner {
                     "type probe cannot be combined with another operation",
                 ));
             }
-            let counts = graph::counts(&export)
-                .ok_or_else(|| failure("native type fixture build failed"))?;
-            return rust_type_members(&mut brep, &probe, type_probe_index(&probe, counts)?);
+            return rust_type_members(&mut brep, &probe, type_probe_index(&probe, built_counts)?);
         }
         if let Some(transfer) = inputs.transfer {
-            let counts = graph::counts(&export)
-                .ok_or_else(|| failure("native transfer fixture build failed"))?;
-            return rust_transfer_records(&mut brep, &resolve_transfer(&transfer, counts)?);
+            return rust_transfer_records(&mut brep, &resolve_transfer(&transfer, built_counts)?);
         }
         if inputs.wires {
             let mut out = vec![brep.shells().len() as i64];
@@ -1408,4 +1448,39 @@ fn rust_region_filter(
         list(&mut out, shells.into_iter().map(ShellId::index));
     }
     Ok(Output::new().ints("records", out))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn wires_case(networks: u64) -> Case {
+        Case {
+            unit: "topology.shell".into(),
+            name: "t".into(),
+            source: crate::CaseSource::Inline,
+            inputs: json!({"brep": {"kind": "mixed", "networks": networks}, "wires": true}),
+        }
+    }
+
+    /// Fuzz case `topology.shell/fuzz00180` (`--fuzz 300 --seeds 5`): a mixed fixture of
+    /// 2^32 wire networks. The FFI refuses more than 3 for the C++ side, and the Rust side
+    /// must be refused the same way instead of wiring networks for minutes.
+    #[test]
+    fn huge_network_count_is_refused_on_both_sides() {
+        let case = wires_case(4_294_967_296);
+        let cpp = Runner.run_cpp(&case).unwrap_err().to_string();
+        let rust = Runner.run_rust(&case).unwrap_err().to_string();
+        assert_eq!(cpp, "invalid argument: bad index/count 4294967296 (max 3)");
+        assert_eq!(rust, cpp);
+    }
+
+    /// The largest network count the FFI accepts still runs on both sides.
+    #[test]
+    fn max_network_count_runs_on_both_sides() {
+        let case = wires_case(3);
+        let cpp = Runner.run_cpp(&case).unwrap();
+        let rust = Runner.run_rust(&case).unwrap();
+        assert!(crate::compare(&cpp, &rust, &[]).mismatches.is_empty());
+    }
 }

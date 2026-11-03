@@ -119,7 +119,6 @@ use crate::intersect::surface_intersector::p4::{
 use crate::kernel::Kernel;
 use crate::math::{max2, max4, min2, EFF_ZERO, EFF_ZERO_SQ};
 use crate::nurbs::b_spline_curve::{BSplineCurve, BSplineCurveForm, CanonicalData, KnotType};
-use crate::nurbs::b_spline_surface::BSplineSurface;
 use crate::surface::surface::p2::{drop_vectors, TsectCurveType};
 use crate::surface::surface::Surface;
 use crate::topology::edgeuse::p1 as eu1;
@@ -287,6 +286,16 @@ pub trait FilletSolverOps {
     /// The solver's failure.
     fn reload_surface_offsets(&mut self) -> Result<()>;
 
+    /// `OffsetRadiiCanChange()`: whether the solver's offsets change along the trace
+    /// (a virtual: `TRUE` for the `SmFilletSolver` base and the variable radius solver,
+    /// `FALSE` for the constant radius solvers). Read only with
+    /// `fixes.fillet_variable_span_follows_fillet`.
+    ///
+    /// # Errors
+    ///
+    /// The solver's failure.
+    fn offset_radii_can_change(&self) -> Result<bool>;
+
     /// `GetSurface(rail)->Evaluate1stDerivatives(uv, TRUE, TRUE, ..)`: the point and
     /// first partials of the rail's offset surface.
     ///
@@ -365,7 +374,7 @@ pub trait FilletSolverOps {
         points: &[TsectPnt],
         uv1: &mut BSplineCurve,
         uv2: &mut BSplineCurve,
-    ) -> Result<Option<BSplineSurface>>;
+    ) -> Result<Option<Surface>>;
 
     /// `pFilletGeom->SetFilletSurface(pFilletSurface)` (after deleting the old one); the
     /// geometry is stored in `pseudo`.
@@ -377,7 +386,7 @@ pub trait FilletSolverOps {
         &mut self,
         pseudo: &mut FilletBrep,
         geom: &Self::FilletGeom,
-        surface: Option<BSplineSurface>,
+        surface: Option<Surface>,
     ) -> Result<()>;
 
     /// `pFilletGeom->m_pCenterLineCurve = pCenterLine` (after deleting the old one).
@@ -471,6 +480,11 @@ impl FilletSolverOps for ConstantRadiusAssistedFs {
 
     fn reload_surface_offsets(&mut self) -> Result<()> {
         self.solver.reload_surface_offsets()
+    }
+
+    fn offset_radii_can_change(&self) -> Result<bool> {
+        // SmConstantRadiusFS::OffsetRadiiCanChange
+        Ok(ConstantRadiusAssistedFs::offset_radii_can_change(self))
     }
 
     fn compute_uv_vectors(&mut self, _k: &Kernel, point: &mut TsectPnt) -> Result<()> {
@@ -577,23 +591,22 @@ impl FilletSolverOps for ConstantRadiusAssistedFs {
         points: &[TsectPnt],
         uv1: &mut BSplineCurve,
         uv2: &mut BSplineCurve,
-    ) -> Result<Option<BSplineSurface>> {
-        use crate::blend::fillet_standard_solver::p1::RailSurface;
+    ) -> Result<Option<Surface>> {
         // the virtual m_pFSG->CreateSurface(*this, pCenterLine, pCurve1, pCurve2,
         // sPnts, pSur[0], pUV1, pSur[1], pUV2, ..): the base's generator (SM_ERR for
         // the base class); it reads the solver's tolerance and GetSolverType()
         // (SM_FS_CONST_RADIUS_ASSISTED); pSur[i] = GetSurface(i), passed as copies
         let approx_tol_3d = self.solver.this_approx_tol_3d();
-        let generator = self
-            .solver
-            .fillet_surface_generator()
-            .ok_or(SolidError::null_pointer(
-                "blend::fillet_intersector::create_fillet_surface",
-            ))?;
         let sur0 = Surface::from(self.surface(0)?.surface.clone());
         let sur1 = Surface::from(self.surface(1)?.surface.clone());
+        let generator =
+            self.solver
+                .fillet_surface_generator_mut()
+                .ok_or(SolidError::null_pointer(
+                    "blend::fillet_intersector::create_fillet_surface",
+                ))?;
         generator
-            .create_surface(
+            .create_surface_replacing_uv(
                 k,
                 approx_tol_3d,
                 crate::blend::fillet_solver::p1::FilletSolverType::ConstRadiusAssisted,
@@ -601,14 +614,9 @@ impl FilletSolverOps for ConstantRadiusAssistedFs {
                 curve1,
                 curve2,
                 points,
-                RailSurface {
-                    surface: Some(&sur0),
-                    uv_curve: Some(uv1),
-                },
-                RailSurface {
-                    surface: Some(&sur1),
-                    uv_curve: Some(uv2),
-                },
+                [&sur0, &sur1],
+                [uv1, uv2],
+                None,
             )
             .map(Some)
     }
@@ -626,11 +634,9 @@ impl FilletSolverOps for ConstantRadiusAssistedFs {
         &mut self,
         pseudo: &mut FilletBrep,
         geom: &FilletGeomId,
-        surface: Option<BSplineSurface>,
+        surface: Option<Surface>,
     ) -> Result<()> {
-        pseudo
-            .geom_mut(*geom)?
-            .set_fillet_surface(surface.map(Surface::from));
+        pseudo.geom_mut(*geom)?.set_fillet_surface(surface);
         Ok(())
     }
 
@@ -739,7 +745,7 @@ fn geom_rail(pseudo: &FilletBrep, geom: FilletGeomId, rail: usize) -> Result<Edg
 fn keep_unported<T>(r: Result<T>) -> Result<Option<T>> {
     match r {
         Ok(v) => Ok(Some(v)),
-        Err(e) if e.is_unported() => Err(e),
+        Err(e) if e.is_unported_or_cancelled() => Err(e),
         Err(_) => Ok(None),
     }
 }
@@ -979,7 +985,7 @@ impl<'s, 't, O: SolutionObject + 't, G: Clone> FilletIntersector<'s, 't, O, G> {
             previous,
         ) {
             Ok(()) => Ok(()),
-            Err(e) if e.is_unported() => Err(e),
+            Err(e) if e.is_unported_or_cancelled() => Err(e),
             Err(_) => Err(SolidError::sm_err(OP_VALUES)),
         }
     }
@@ -1311,6 +1317,16 @@ impl<'s, 't, O: SolutionObject + 't, G: Clone> FilletIntersector<'s, 't, O, G> {
             return Ok(out);
         }
 
+        // (not upstream, `fixes.fillet_trace_rejects_short_step`, WR-503) a point far short of the
+        // step is another root of the equations, not the next point of this trace
+        if k.fixes.fillet_trace_rejects_short_step
+            && !step.clipped
+            && tsect.crv_pos().distance(next_tsp.crv_pos()) < 0.5 * step_size.abs()
+        {
+            demote_singularity(next_tsp);
+            return Ok(out);
+        }
+
         // get change in 3dCurve angle for this step
         let angle_found_rad = tsect.crv_deriv().angle_between(next_tsp.crv_deriv())?;
         out.angle_found_rad = Some(angle_found_rad);
@@ -1476,6 +1492,67 @@ impl<'s, 't, O: SolutionObject + 't, G: Clone> FilletIntersector<'s, 't, O, G> {
             // save the max deviation
             if dist_sq > max_dist_sq {
                 max_dist_sq = dist_sq;
+            }
+        }
+
+        // (not upstream, `fixes.fillet_variable_span_follows_fillet`, WR-646; the fork's
+        // tangency-labs/smlib@4438859) where the fillet's offsets change along the trace
+        // (a variable radius), the rails between two points must follow the fillet, not
+        // only lie on the faces: on a plane every uv curve does, so the test above holds
+        // for any span, the step grows to the angle tolerance, and the Hermite rails cut
+        // across the radius law between the points. The fillet is solved at the test
+        // points (a step of that share of the span from the start), and the span is
+        // rejected where a solution's contacts lie farther than the tolerance from the
+        // rails.
+        if k.fixes.fillet_variable_span_follows_fillet
+            && solver.offset_radii_can_change()?
+            && step_size > EFF_ZERO * 100.0
+        {
+            let rails = [&crv_3d0, &crv_3d1];
+            for &param in &PARAMS_TO_TEST {
+                let mut part_step = step_size * param;
+                let mut part_flags = StepSolve::default();
+                let mut part = TsectPnt::new();
+                solver.reload_surface_offsets()?;
+                solver.step_solve(
+                    k,
+                    tsect,
+                    &mut part_step,
+                    &si.uv_domains[0],
+                    &si.uv_domains[1],
+                    &mut part_flags,
+                    &mut part,
+                )?;
+                solver.set_surfaces_to_zero_offset()?;
+                if !part_flags.found_answer || part_flags.clipped {
+                    continue; // no solution inside the span there: the rails' own test stands
+                }
+                let contact0 = s0.evaluate_point(
+                    k,
+                    si.uv_domains[0].clamp_point(part.uv_pos(SrfIndex::First)),
+                )?;
+                let contact1 = s1.evaluate_point(
+                    k,
+                    si.uv_domains[1].clamp_point(part.uv_pos(SrfIndex::Second)),
+                )?;
+                for (rail, contact) in rails.into_iter().zip([contact0, contact1]) {
+                    let rail_curve = Curve::from(*rail);
+                    let (on, sol) = rail_curve.local_point_solve::<()>(
+                        k,
+                        &rail_curve.natural_interval(),
+                        SolverOperation::Minimize,
+                        contact,
+                        &PointSolveOptions::default(),
+                        param,
+                    )?;
+                    let t = if on { sol.start.param(0)? } else { param };
+                    let on_rail = rail.evaluate_point(t);
+                    if on_rail.distance_squared(contact) > tol_sq {
+                        solver.reload_surface_offsets()?;
+                        out.found_good_point = false;
+                        return Ok(out);
+                    }
+                }
             }
         }
 
@@ -2406,6 +2483,10 @@ mod tests {
             Ok(())
         }
 
+        fn offset_radii_can_change(&self) -> Result<bool> {
+            Ok(false)
+        }
+
         fn rail_surface_evaluate_1st_derivatives(
             &mut self,
             _k: &Kernel,
@@ -2452,7 +2533,7 @@ mod tests {
             _points: &[TsectPnt],
             _uv1: &mut BSplineCurve,
             _uv2: &mut BSplineCurve,
-        ) -> Result<Option<BSplineSurface>> {
+        ) -> Result<Option<Surface>> {
             Ok(None)
         }
 
@@ -2460,7 +2541,7 @@ mod tests {
             &mut self,
             _pseudo: &mut FilletBrep,
             _geom: &(),
-            _surface: Option<BSplineSurface>,
+            _surface: Option<Surface>,
         ) -> Result<()> {
             Ok(())
         }
@@ -2656,7 +2737,12 @@ mod tests {
             .unwrap();
         assert!(pseudo.geom(g).unwrap().center_line_curve().is_some());
         s.set_fillet_surface(&mut pseudo, &g, None).unwrap();
-        assert!(pseudo.geom(g).unwrap().fillet_surface().unwrap().is_none());
+        assert!(pseudo
+            .geom(g)
+            .unwrap()
+            .fillet_surface(None)
+            .unwrap()
+            .is_none());
         // a geometry without rails: upstream dereferences NULL
         assert!(matches!(
             s.set_rail_curve(&mut pseudo, &g, 0, line.clone())

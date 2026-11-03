@@ -1930,7 +1930,14 @@ fn vertex_faces<O: ClassObject>(g: &impl ClassGeometry<O>, v: O) -> Result<Vec<O
 fn face_point_classified(r: Result<()>) -> Result<bool> {
     match r {
         Ok(()) => Ok(true),
-        Err(e) if matches!(e, SolidError::InvalidInput { .. }) => Err(e),
+        Err(e)
+            if matches!(
+                e,
+                SolidError::InvalidInput { .. } | SolidError::PortInvariant { .. }
+            ) =>
+        {
+            Err(e)
+        }
         Err(e) => Ok(ignored(Err::<(), _>(e))?.is_some()),
     }
 }
@@ -2057,7 +2064,7 @@ fn homogenize_boundaries<O: ClassObject>(
                 // Ordinary projection failures turn the classification into UNKNOWN.
                 match access.compute(k, &mut new_pc, point) {
                     Ok(()) => {}
-                    Err(e) if e.is_unported() => return Err(e),
+                    Err(e) if e.is_unported_or_cancelled() => return Err(e),
                     Err(_) => new_pc.set_class_object(Pc::Unknown, None),
                 }
             }

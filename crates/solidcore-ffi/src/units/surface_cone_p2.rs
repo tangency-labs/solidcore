@@ -13,6 +13,7 @@
 //! * `Recognize`: `result has [state]`: the [`Edit`] is applied to the cone's NURB, the
 //!   `SmBSplineSurface` copy of it is given to `IsNurbSurfaceCone(ctx, .., scale)`
 //!   (`result` is its `SmBoolean`, or the error status it returns through `SER`);
+//! * `RecognizeCylinder`: as `Recognize`, with `SmCylinder::IsNurbSurfaceCylinder`;
 //! * `Rebuild`: `status state`: the [`Edit`] is applied to the cone's NURB, then
 //!   `RebuildSTEPFromNURBParameters`; the state is the cone's afterwards;
 //! * `Trim`: `1000 n [min max]*n`, the intervals of `sm_GetEllipseTrimIntervals`.
@@ -77,6 +78,13 @@ pub enum Edit {
     },
     /// `z = 0` on every control point.
     Flatten,
+    /// `(x, y) *= f` on the last row, leaving `z` and the weight unchanged.
+    /// For a cylinder about the world Z axis through the origin, this changes
+    /// one end radius while preserving its circular iso curve.
+    ScaleLastXy {
+        /// Factor applied to the homogeneous X and Y coordinates.
+        f: f64,
+    },
 }
 
 impl Edit {
@@ -89,6 +97,7 @@ impl Edit {
             Edit::ScaleLast { f } => (2.0, f, [0.0; 9], [0.0; 3]),
             Edit::MoveAll { r, t } => (3.0, 0.0, r, t),
             Edit::Flatten => (4.0, 0.0, [0.0; 9], [0.0; 3]),
+            Edit::ScaleLastXy { f } => (5.0, f, [0.0; 9], [0.0; 3]),
         };
         let mut it = o.iter_mut();
         for v in [kind, f].into_iter().chain(r).chain(t) {
@@ -112,6 +121,13 @@ pub enum Op {
     },
     /// `IsNurbSurfaceCone(ctx, copy of the edited NURB, .., scale)`.
     Recognize {
+        /// NURB edit.
+        edit: Edit,
+        /// Tolerance scale.
+        scale: f64,
+    },
+    /// `SmCylinder::IsNurbSurfaceCylinder(ctx, copy of the edited NURB, .., scale)`.
+    RecognizeCylinder {
         /// NURB edit.
         edit: Edit,
         /// Tolerance scale.
@@ -154,6 +170,7 @@ impl Op {
             Op::Recognize { .. } => 2,
             Op::Rebuild { .. } => 3,
             Op::Trim { .. } => 4,
+            Op::RecognizeCylinder { .. } => 5,
         }
     }
 }
@@ -212,7 +229,16 @@ fn push_build(o: &mut Vec<f64>, s: &Build) -> Result<(), FfiError> {
             finite(&[bot, semi, h.unwrap_or(0.0)], "canonical")?;
             (
                 0.0,
-                [bot, semi, b(h.is_some()), h.unwrap_or(0.0), b(swap), b(inside), 0.0, 0.0],
+                [
+                    bot,
+                    semi,
+                    b(h.is_some()),
+                    h.unwrap_or(0.0),
+                    b(swap),
+                    b(inside),
+                    0.0,
+                    0.0,
+                ],
             )
         }
         Mode::Canonical {
@@ -251,7 +277,16 @@ fn push_build(o: &mut Vec<f64>, s: &Build) -> Result<(), FfiError> {
             finite(&[bot, top, start, end, h], "cone")?;
             (
                 4.0,
-                [bot, top, start, end, h, b(swap), b(inside), b(make_nurb_gen)],
+                [
+                    bot,
+                    top,
+                    start,
+                    end,
+                    h,
+                    b(swap),
+                    b(inside),
+                    b(make_nurb_gen),
+                ],
             )
         }
         Mode::CylBounded {
@@ -266,7 +301,16 @@ fn push_build(o: &mut Vec<f64>, s: &Build) -> Result<(), FfiError> {
             finite(&[radius, start, end, h], "cylinder")?;
             (
                 5.0,
-                [radius, start, end, h, b(swap), b(inside), b(make_nurb_gen), 0.0],
+                [
+                    radius,
+                    start,
+                    end,
+                    h,
+                    b(swap),
+                    b(inside),
+                    b(make_nurb_gen),
+                    0.0,
+                ],
             )
         }
         Mode::CylUnbounded {
@@ -299,7 +343,7 @@ fn push_op(o: &mut Vec<f64>, op: &Op) -> Result<(), FfiError> {
             finite(&[*distance, *tol], "offset")?;
             o.extend([*distance, *tol]);
         }
-        Op::Recognize { edit, scale } => {
+        Op::Recognize { edit, scale } | Op::RecognizeCylinder { edit, scale } => {
             push_edit(o, edit)?;
             finite(&[*scale], "recognize scale")?;
             o.push(*scale);

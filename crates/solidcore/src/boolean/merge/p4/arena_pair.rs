@@ -62,7 +62,6 @@ use crate::topology::face::p3::{FaceIntersectOptions, IntersectObject};
 use crate::topology::loopuse as lu;
 use crate::topology::proto_topology::p1::ProtoTopology;
 use crate::topology::proto_topology::{ProtoBrep, ProtoGeometry};
-use crate::topology::topology::Topology;
 use crate::topology::vertex as vx;
 use crate::topology::{
     Brep, BrepId, EdgeId, EdgeuseId, FaceId, FaceuseId, LoopId, LoopuseId, RegionId, VertexId,
@@ -70,7 +69,6 @@ use crate::topology::{
 };
 use crate::{EntityRef, SolidError};
 use std::cell::Cell;
-use std::collections::BTreeMap;
 use std::rc::Rc;
 const K_VERTEX: u8 = 0;
 const K_EDGE: u8 = 1;
@@ -190,7 +188,7 @@ pub(super) struct ArenaPair<'a> {
     breps: [Option<&'a mut Brep>; 2],
     curves: &'a mut Vec<SmCurve>,
     extra: &'a mut Vec<SmCurve>,
-    records: &'a mut BTreeMap<ObjectKey, Topology>,
+    records: &'a mut crate::topology::topology::NotifyRecords,
     attributes: &'a mut AttributeStore,
     primary_context: &'a mut Context,
     other_context: Option<&'a mut Context>,
@@ -267,7 +265,7 @@ impl ArenaPair<'_> {
         other: Option<&'a mut Brep>,
         curves: &'a mut Vec<SmCurve>,
         extra: &'a mut Vec<SmCurve>,
-        records: &'a mut BTreeMap<ObjectKey, Topology>,
+        records: &'a mut crate::topology::topology::NotifyRecords,
         attributes: &'a mut AttributeStore,
         cache_kernels: [Kernel; 2],
         primary_context: &'a mut Context,
@@ -848,7 +846,7 @@ impl ProtoBrep<H> for ArenaPair<'_> {
             &mut output,
         );
         if let Err(error) = result {
-            if error.is_unported() {
+            if error.is_unported_or_cancelled() {
                 return Err(error);
             }
         }
@@ -882,7 +880,7 @@ impl ProtoBrep<H> for ArenaPair<'_> {
             },
         );
         if let Err(error) = result {
-            if error.is_unported() {
+            if error.is_unported_or_cancelled() {
                 return Err(error);
             }
         }
@@ -917,6 +915,41 @@ impl ProtoBrep<H> for ArenaPair<'_> {
             .into_iter()
             .map(|e| hd(v1.b, K_EDGE, e.index()))
             .collect())
+    }
+    fn face_coincident_edge(
+        &self,
+        k: &Kernel,
+        face: H,
+        start: H,
+        end: H,
+        curve: &SmCurve,
+        interval: Extent1d,
+        tolerance: f64,
+    ) -> crate::Result<Option<(H, f64)>> {
+        if face.kind != K_FACE
+            || start.kind != K_VERTEX
+            || end.kind != K_VERTEX
+            || start.b != face.b
+            || end.b != face.b
+        {
+            return Err(invalid("not a face and two of its B-rep's vertices"));
+        }
+        let b = self.brep_r(face)?;
+        let edges = crate::topology::face::p4::edges(b, fid(face), None, false, None)?;
+        let query = crate::geom::tools::CoincidentEdgeQuery {
+            start_vertex: vid(start),
+            end_vertex: vid(end),
+            curve,
+            curve_owner: None,
+            interval,
+            tolerance,
+        };
+        Ok(
+            crate::geom::tools::find_coincident_edge(k, b, &query, &edges, 0)?.and_then(|found| {
+                let e = edges.get(found.index)?;
+                Some((hd(face.b, K_EDGE, e.index()), found.max_deviation))
+            }),
+        )
     }
     fn brep_point_3d_classify(
         &mut self,
@@ -981,6 +1014,18 @@ impl ProtoBrep<H> for ArenaPair<'_> {
             false,
             true,
         )
+    }
+
+    /// `SetPointClassParameters` with the faces' B-reps lent mutably
+    /// ([`ClassGeometryMut::topology_entity_for_query`]): a face's point solve makes its
+    /// trimmed surface cache there, as upstream's `smsurf_GetSurfaceCache` does.
+    fn set_point_class_parameters_mut(
+        &mut self,
+        k: &Kernel,
+        cc: &mut CurveClassification<H>,
+        set_mids: bool,
+    ) -> crate::Result<()> {
+        cc.set_point_class_parameters_mut(k, self, set_mids)
     }
 
     /// `SmEdgeuse::EvaluateBinormal(t, FALSE, ..)` on the operand's B-rep
@@ -1833,13 +1878,10 @@ impl TopologyObjects<H> for ArenaPair<'_> {
                 CacheObject::Vertex(v) => hd(bi, K_VERTEX, v.index()),
                 CacheObject::Edge(e) => hd(bi, K_EDGE, e.index()),
                 CacheObject::Face(f) => hd(bi, K_FACE, f.index()),
-                CacheObject::Curve(e) => b
-                    .edge(e)
-                    .ok()
-                    .and_then(|x| x.curve.as_ref())
-                    .map_or(hd(bi, K_EDGE_CURVE, e.index()), |c| {
-                        curve_h(bi, K_EDGE_CURVE, e.index(), c)
-                    }),
+                CacheObject::Curve(e) => b.edge(e).ok().and_then(|x| x.curve.as_ref()).map_or_else(
+                    || hd(bi, K_EDGE_CURVE, e.index()),
+                    |c| curve_h(bi, K_EDGE_CURVE, e.index(), c),
+                ),
                 CacheObject::Surface(f) => hd(bi, K_FACE_SURFACE, f.index()),
                 CacheObject::Brep => brep_h(bi),
                 _ => hd(bi, K_NULL, 0),
@@ -2073,7 +2115,7 @@ impl MergeIntervalBrep<H> for ArenaPair<'_> {
             target,
             handle: Box::new(move |e| match e {
                 EntityRef::Vertexuse(vu) => hd(b, K_VERTEXUSE, vu.index()),
-                e => ArenaPair::entity_h(b, e).unwrap_or(hd(b, K_NULL, 0)),
+                e => ArenaPair::entity_h(b, e).unwrap_or_else(|| hd(b, K_NULL, 0)),
             }),
             notifications: ed::NotifyEnv {
                 records: self.records,
