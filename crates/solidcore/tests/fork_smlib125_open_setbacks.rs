@@ -50,7 +50,47 @@ fn all_fixes(blend: bool) -> Kernel {
         }
     }
     k.fixes = f;
+    // (the log changes no result: issue_2489_blend_faces_are_definitions)
+    k.blend_face_log = Some(solidcore::blend::definition_check::BlendFaceLog::default());
     k
+}
+
+/// jyviko's blend-definition rule (#2243, #2489): each face the blend made is a definition
+/// (`blend::definition_check::is_definition`) or of a kind the ledger lists
+/// (`data/blend_definition_ledger/`, one file per kind naming its follow-up issue).
+fn assert_definitions_or_listed(name: &str, k: &Kernel, b: &Brep) {
+    let dir = concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/tests/data/blend_definition_ledger"
+    );
+    let listed: Vec<String> = std::fs::read_dir(dir)
+        .unwrap()
+        .map(|e| {
+            e.unwrap()
+                .path()
+                .file_stem()
+                .unwrap()
+                .to_str()
+                .unwrap()
+                .to_owned()
+        })
+        .collect();
+    let made = k
+        .blend_face_log
+        .as_ref()
+        .expect("the blend face log")
+        .last()
+        .to_vec();
+    assert!(!made.is_empty(), "{name}: the blend made no face");
+    for f in solidcore::blend::definition_check::bare_blend_faces(b, &made).unwrap() {
+        let kind = f.kind.name().replace('/', "-");
+        assert!(
+            listed.contains(&kind),
+            "{name}: bare face {} of kind {kind} ({}) is not in the ledger",
+            f.face.index(),
+            f.surface
+        );
+    }
 }
 
 fn pick(k: &Kernel, b: &Brep, at: [f64; 3]) -> EdgeId {
@@ -442,6 +482,7 @@ fn bar_into_post_setback_filled_is_the_fork_s_solid() {
     stitch_and_orient(&mut k, &mut b, &StitchAndOrientOptions::default()).unwrap();
     assert_eq!(counts(&b), (16, 39, 25));
     assert!(is_manifold_solid(&b).unwrap());
+    assert_definitions_or_listed("the bar's corner filled", &k, &b);
     let store = AttributeStore::default();
     let attrs = PropertyAttributes {
         store: &store,
