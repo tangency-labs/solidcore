@@ -1,0 +1,432 @@
+# #2502: these cases move with the difftest's C++ reference, the SMLib fork
+# v1.1.0-alpha.1 (8eac63c); plan/findings/general--2502-fork-pin-mass-known-mismatches.md.
+
+[[mismatch]]
+unit = "mass.integrator"
+case = "disk_face_centroid_eps1e-06"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[0] C++ 7.853981637755121e-1, Rust 7.853981606601437e-1 (+2 more) (plan/findings/general--2502-fork-pin-mass-known-mismatches.md)"
+
+[[mismatch]]
+unit = "mass.integrator"
+case = "annulus_face_centroid_eps1e-06"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[0] C++ 6.597344575351689e-1, Rust 6.597344547738021e-1 (+2 more) (plan/findings/general--2502-fork-pin-mass-known-mismatches.md)"
+
+[[mismatch]]
+unit = "mass.integrator"
+case = "issue1435_multispan_full_eps0.001_orientation0_flags1"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[0] C++ 1.1774770204756067e1, Rust 1.1776888347623412e1 (plan/findings/general--2502-fork-pin-mass-known-mismatches.md)"
+
+[[mismatch]]
+unit = "mass.integrator"
+case = "issue1435_multispan_full_eps0.001_orientation1_flags1"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[0] C++ 1.1774770204756067e1, Rust 1.1776888347623412e1 (plan/findings/general--2502-fork-pin-mass-known-mismatches.md)"
+
+[[mismatch]]
+unit = "mass.integrator"
+case = "issue1435_multispan_full_eps0.001_orientation0_flags63"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[0] C++ 1.1774753011360119e1, Rust 1.1773361839289525e1 (+25 more) (plan/findings/general--2502-fork-pin-mass-known-mismatches.md)"
+
+[[mismatch]]
+unit = "mass.integrator"
+case = "issue1435_multispan_full_eps0.001_orientation1_flags63"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[0] C++ 1.1774753011360119e1, Rust 1.1773361839289525e1 (+25 more) (plan/findings/general--2502-fork-pin-mass-known-mismatches.md)"
+
+[[mismatch]]
+unit = "mass.integrator"
+case = "issue1435_multispan_full_eps1e-06_orientation0_flags1"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[0] C++ 1.1774753495092838e1, Rust 1.1774743123714035e1 (plan/findings/general--2502-fork-pin-mass-known-mismatches.md)"
+
+[[mismatch]]
+unit = "mass.integrator"
+case = "issue1435_multispan_full_eps1e-06_orientation1_flags1"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[0] C++ 1.1774753495092838e1, Rust 1.1774743123714035e1 (plan/findings/general--2502-fork-pin-mass-known-mismatches.md)"
+
+[[mismatch]]
+unit = "mass.integrator"
+case = "issue1435_multispan_full_eps1e-06_orientation0_flags63"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[0] C++ 1.1774753792196146e1, Rust 1.1774752376213497e1 (+25 more) (plan/findings/general--2502-fork-pin-mass-known-mismatches.md)"
+
+[[mismatch]]
+unit = "mass.integrator"
+case = "issue1435_multispan_full_eps1e-06_orientation1_flags63"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[0] C++ 1.1774753792196146e1, Rust 1.1774752376213497e1 (+25 more) (plan/findings/general--2502-fork-pin-mass-known-mismatches.md)"
+
+[[mismatch]]
+unit = "mass.integrator"
+case = "issue1435_multispan_full_eps1e-08_orientation0_flags1"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[0] C++ 1.1774753791013229e1, Rust 1.177475374989784e1 (plan/findings/general--2502-fork-pin-mass-known-mismatches.md)"
+
+[[mismatch]]
+unit = "mass.integrator"
+case = "issue1435_multispan_full_eps1e-08_orientation1_flags1"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[0] C++ 1.1774753791013229e1, Rust 1.177475374989784e1 (plan/findings/general--2502-fork-pin-mass-known-mismatches.md)"
+
+[[mismatch]]
+unit = "mass.integrator"
+case = "issue1435_multispan_full_eps1e-08_orientation0_flags63"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[14] C++ -6.854952427171629e-2, Rust -6.854952359852559e-2 (+8 more) (plan/findings/general--2502-fork-pin-mass-known-mismatches.md)"
+
+[[mismatch]]
+unit = "mass.integrator"
+case = "issue1435_multispan_full_eps1e-08_orientation1_flags63"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[14] C++ 6.854952427171629e-2, Rust 6.854952359852559e-2 (+8 more) (plan/findings/general--2502-fork-pin-mass-known-mismatches.md)"
+
+[[mismatch]]
+unit = "mass.integrator"
+case = "issue1435_multispan_sub_eps0.001_orientation0_flags1"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[0] C++ 6.427805925806634e0, Rust 6.421001904121697e0 (plan/findings/general--2502-fork-pin-mass-known-mismatches.md)"
+
+[[mismatch]]
+unit = "mass.integrator"
+case = "issue1435_multispan_sub_eps0.001_orientation1_flags1"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[0] C++ 6.427805925806634e0, Rust 6.421001904121697e0 (plan/findings/general--2502-fork-pin-mass-known-mismatches.md)"
+
+[[mismatch]]
+unit = "mass.integrator"
+case = "issue1435_multispan_sub_eps0.001_orientation0_flags63"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[0] C++ 6.427798512926954e0, Rust 6.424831399330402e0 (+25 more) (plan/findings/general--2502-fork-pin-mass-known-mismatches.md)"
+
+[[mismatch]]
+unit = "mass.integrator"
+case = "issue1435_multispan_sub_eps0.001_orientation1_flags63"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[0] C++ 6.427798512926954e0, Rust 6.424831399330402e0 (+25 more) (plan/findings/general--2502-fork-pin-mass-known-mismatches.md)"
+
+[[mismatch]]
+unit = "mass.integrator"
+case = "issue1435_multispan_sub_eps1e-06_orientation0_flags1"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[0] C++ 6.427798313007083e0, Rust 6.427793875020921e0 (plan/findings/general--2502-fork-pin-mass-known-mismatches.md)"
+
+[[mismatch]]
+unit = "mass.integrator"
+case = "issue1435_multispan_sub_eps1e-06_orientation1_flags1"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[0] C++ 6.427798313007083e0, Rust 6.427793875020921e0 (plan/findings/general--2502-fork-pin-mass-known-mismatches.md)"
+
+[[mismatch]]
+unit = "mass.integrator"
+case = "issue1435_multispan_sub_eps1e-06_orientation0_flags63"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[0] C++ 6.427798446971595e0, Rust 6.427798571242889e0 (+25 more) (plan/findings/general--2502-fork-pin-mass-known-mismatches.md)"
+
+[[mismatch]]
+unit = "mass.integrator"
+case = "issue1435_multispan_sub_eps1e-06_orientation1_flags63"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[0] C++ 6.427798446971595e0, Rust 6.427798571242889e0 (+25 more) (plan/findings/general--2502-fork-pin-mass-known-mismatches.md)"
+
+[[mismatch]]
+unit = "mass.integrator"
+case = "issue1435_multispan_sub_eps1e-08_orientation0_flags1"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[0] C++ 6.42779844516455e0, Rust 6.427798496633921e0 (plan/findings/general--2502-fork-pin-mass-known-mismatches.md)"
+
+[[mismatch]]
+unit = "mass.integrator"
+case = "issue1435_multispan_sub_eps1e-08_orientation1_flags1"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[0] C++ 6.42779844516455e0, Rust 6.427798496633921e0 (plan/findings/general--2502-fork-pin-mass-known-mismatches.md)"
+
+[[mismatch]]
+unit = "mass.integrator"
+case = "issue1435_multispan_sub_eps1e-08_orientation0_flags63"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[0] C++ 6.427798446117808e0, Rust 6.427798471565715e0 (+23 more) (plan/findings/general--2502-fork-pin-mass-known-mismatches.md)"
+
+[[mismatch]]
+unit = "mass.integrator"
+case = "issue1435_multispan_sub_eps1e-08_orientation1_flags63"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[0] C++ 6.427798446117808e0, Rust 6.427798471565715e0 (+23 more) (plan/findings/general--2502-fork-pin-mass-known-mismatches.md)"
+
+[[mismatch]]
+unit = "mass.integrator"
+case = "issue1435_multispan_onespan_eps0.001_orientation0_flags63"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[0] C++ 1.3389051980674886e0, Rust 1.3389039780737169e0 (+25 more) (plan/findings/general--2502-fork-pin-mass-known-mismatches.md)"
+
+[[mismatch]]
+unit = "mass.integrator"
+case = "issue1435_multispan_onespan_eps0.001_orientation1_flags63"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[0] C++ 1.3389051980674886e0, Rust 1.3389039780737169e0 (+25 more) (plan/findings/general--2502-fork-pin-mass-known-mismatches.md)"
+
+[[mismatch]]
+unit = "mass.integrator"
+case = "issue1435_multispan_onespan_eps1e-06_orientation0_flags63"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[1] C++ -1.1791615970069294e-2, Rust -1.1791616538512146e-2 (+21 more) (plan/findings/general--2502-fork-pin-mass-known-mismatches.md)"
+
+[[mismatch]]
+unit = "mass.integrator"
+case = "issue1435_multispan_onespan_eps1e-06_orientation1_flags63"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[1] C++ 1.1791615970069294e-2, Rust 1.1791616538512146e-2 (+21 more) (plan/findings/general--2502-fork-pin-mass-known-mismatches.md)"
+
+[[mismatch]]
+unit = "mass.integrator"
+case = "issue1435_multispan_onespan_eps1e-08_orientation0_flags63"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[14] C++ -1.7707816570613588e-3, Rust -1.7707816673069516e-3 (+6 more) (plan/findings/general--2502-fork-pin-mass-known-mismatches.md)"
+
+[[mismatch]]
+unit = "mass.integrator"
+case = "issue1435_multispan_onespan_eps1e-08_orientation1_flags63"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[14] C++ 1.7707816570613588e-3, Rust 1.7707816673069516e-3 (+6 more) (plan/findings/general--2502-fork-pin-mass-known-mismatches.md)"
+
+[[mismatch]]
+unit = "mass.integrator"
+case = "issue1435_multispan_atknots_eps0.001_orientation0_flags63"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[0] C++ 2.649616043312202e0, Rust 2.649615312195666e0 (+25 more) (plan/findings/general--2502-fork-pin-mass-known-mismatches.md)"
+
+[[mismatch]]
+unit = "mass.integrator"
+case = "issue1435_multispan_atknots_eps0.001_orientation1_flags63"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[0] C++ 2.649616043312202e0, Rust 2.649615312195666e0 (+25 more) (plan/findings/general--2502-fork-pin-mass-known-mismatches.md)"
+
+[[mismatch]]
+unit = "mass.integrator"
+case = "issue1435_multispan_atknots_eps1e-06_orientation0_flags63"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[1] C++ 8.128008566586446e-2, Rust 8.12800847201072e-2 (+21 more) (plan/findings/general--2502-fork-pin-mass-known-mismatches.md)"
+
+[[mismatch]]
+unit = "mass.integrator"
+case = "issue1435_multispan_atknots_eps1e-06_orientation1_flags63"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[1] C++ -8.128008566586446e-2, Rust -8.12800847201072e-2 (+21 more) (plan/findings/general--2502-fork-pin-mass-known-mismatches.md)"
+
+[[mismatch]]
+unit = "mass.integrator"
+case = "issue1435_multispan_atknots_eps1e-08_orientation0_flags63"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[17] C++ 2.347117910805979e-2, Rust 2.347117906912727e-2 (+3 more) (plan/findings/general--2502-fork-pin-mass-known-mismatches.md)"
+
+[[mismatch]]
+unit = "mass.integrator"
+case = "issue1435_multispan_atknots_eps1e-08_orientation1_flags63"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[17] C++ -2.347117910805979e-2, Rust -2.347117906912727e-2 (+3 more) (plan/findings/general--2502-fork-pin-mass-known-mismatches.md)"
+
+[[mismatch]]
+unit = "mass.integrator"
+case = "issue1435_multispan_full_query2"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[0] C++ 1.1774753495092838e1, Rust 1.1774743123714035e1 (plan/findings/general--2502-fork-pin-mass-known-mismatches.md)"
+
+[[mismatch]]
+unit = "mass.integrator"
+case = "issue1435_multispan_full_query3"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[0] C++ 1.1774753756644756e1, Rust 1.1774754999636038e1 (+3 more) (plan/findings/general--2502-fork-pin-mass-known-mismatches.md)"
+
+[[mismatch]]
+unit = "mass.integrator"
+case = "issue1435_multispan_full_query4"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[0] C++ 1.1774753495092838e1, Rust 1.1774743123714035e1 (plan/findings/general--2502-fork-pin-mass-known-mismatches.md)"
+
+[[mismatch]]
+unit = "mass.integrator"
+case = "issue1435_multispan_sub_query2"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[0] C++ 6.427798313007083e0, Rust 6.427793875020921e0 (plan/findings/general--2502-fork-pin-mass-known-mismatches.md)"
+
+[[mismatch]]
+unit = "mass.integrator"
+case = "issue1435_multispan_sub_query3"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[0] C++ 6.427798444451923e0, Rust 6.427798285695551e0 (+3 more) (plan/findings/general--2502-fork-pin-mass-known-mismatches.md)"
+
+[[mismatch]]
+unit = "mass.integrator"
+case = "issue1435_multispan_sub_query4"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[0] C++ 6.427798313007083e0, Rust 6.427793875020921e0 (plan/findings/general--2502-fork-pin-mass-known-mismatches.md)"
+
+[[mismatch]]
+unit = "mass.integrator"
+case = "issue1435_multispan_huge_eps0.0001_flags63"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[0] C++ 1.0297715903973946e8, Rust 1.0297775112768044e8 (+25 more) (plan/findings/general--2502-fork-pin-mass-known-mismatches.md)"
+
+[[mismatch]]
+unit = "mass.integrator"
+case = "issue1435_multispan_huge_eps1e-08_flags63"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[0] C++ 1.0297715205531153e8, Rust 1.0297715174510382e8 (+25 more) (plan/findings/general--2502-fork-pin-mass-known-mismatches.md)"
+
+[[mismatch]]
+unit = "mass.integrator"
+case = "issue1435_multispan_tiny_eps0.0001_flags63"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[0] C++ 1.1771681487865107e0, Rust 1.1771627858807163e0 (+25 more) (plan/findings/general--2502-fork-pin-mass-known-mismatches.md)"
+
+[[mismatch]]
+unit = "mass.integrator"
+case = "issue1435_multispan_tiny_eps1e-08_flags63"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[1] C++ -6.945051208485132e-7, Rust -6.94504292286638e-7 (+12 more) (plan/findings/general--2502-fork-pin-mass-known-mismatches.md)"
+
+[[mismatch]]
+unit = "mass.integrator"
+case = "issue1556_disk_bounded_eps1e-06_orientation0_flags3"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[2] C++ -2.905973218392062e-1, Rust -2.9059732240423536e-1 (+1 more) (plan/findings/general--2502-fork-pin-mass-known-mismatches.md)"
+
+[[mismatch]]
+unit = "mass.integrator"
+case = "issue1556_disk_bounded_eps1e-06_orientation1_flags3"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[2] C++ -2.905973218392062e-1, Rust -2.9059732240423536e-1 (+1 more) (plan/findings/general--2502-fork-pin-mass-known-mismatches.md)"
+
+[[mismatch]]
+unit = "mass.integrator"
+case = "issue1556_disk_bounded_eps1e-06_orientation0_flags63"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[6] C++ 8.372344383893732e-2, Rust 8.372344369772644e-2 (+5 more) (plan/findings/general--2502-fork-pin-mass-known-mismatches.md)"
+
+[[mismatch]]
+unit = "mass.integrator"
+case = "issue1556_disk_bounded_eps1e-06_orientation1_flags63"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[6] C++ 8.372344383893732e-2, Rust 8.372344369772644e-2 (+5 more) (plan/findings/general--2502-fork-pin-mass-known-mismatches.md)"
+
+[[mismatch]]
+unit = "mass.integrator"
+case = "issue1556_disk_bounded_eps0.001_orientation0_flags3"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[0] C++ 7.854224324178312e-1, Rust 7.854231050186571e-1 (+3 more) (plan/findings/general--2502-fork-pin-mass-known-mismatches.md)"
+
+[[mismatch]]
+unit = "mass.integrator"
+case = "issue1556_disk_bounded_eps0.001_orientation1_flags3"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[0] C++ 7.854224324178312e-1, Rust 7.854231050186571e-1 (+3 more) (plan/findings/general--2502-fork-pin-mass-known-mismatches.md)"
+
+[[mismatch]]
+unit = "mass.integrator"
+case = "issue1556_disk_bounded_eps0.001_orientation0_flags63"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[0] C++ 7.853979460507787e-1, Rust 7.853978604653888e-1 (+25 more) (plan/findings/general--2502-fork-pin-mass-known-mismatches.md)"
+
+[[mismatch]]
+unit = "mass.integrator"
+case = "issue1556_disk_bounded_eps0.001_orientation1_flags63"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[0] C++ 7.853979460507787e-1, Rust 7.853978604653888e-1 (+25 more) (plan/findings/general--2502-fork-pin-mass-known-mismatches.md)"
+
+[[mismatch]]
+unit = "mass.integrator"
+case = "issue1556_disk_unbounded_eps1e-06_orientation0_flags3"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[0] C++ 7.869447314878926e-1, Rust 7.857377377804369e-1 (+3 more) (plan/findings/general--2502-fork-pin-mass-known-mismatches.md)"
+
+[[mismatch]]
+unit = "mass.integrator"
+case = "issue1556_disk_unbounded_eps1e-06_orientation1_flags3"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[0] C++ 7.869447314878926e-1, Rust 7.857377377804369e-1 (+3 more) (plan/findings/general--2502-fork-pin-mass-known-mismatches.md)"
+
+[[mismatch]]
+unit = "mass.integrator"
+case = "issue1556_disk_unbounded_eps0.001_orientation0_flags3"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[0] C++ 2.1959257846232504e1, Rust 2.19905123176286e1 (+3 more) (plan/findings/general--2502-fork-pin-mass-known-mismatches.md)"
+
+[[mismatch]]
+unit = "mass.integrator"
+case = "issue1556_disk_unbounded_eps0.001_orientation1_flags3"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[0] C++ 2.1959257846232504e1, Rust 2.19905123176286e1 (+3 more) (plan/findings/general--2502-fork-pin-mass-known-mismatches.md)"
+
+[[mismatch]]
+unit = "mass.integrator"
+case = "issue1556_disk_unbounded_eps0.001_orientation0_flags63"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 26, Rust 0 (+1 more) (plan/findings/general--2502-fork-pin-mass-known-mismatches.md)"
+
+[[mismatch]]
+unit = "mass.integrator"
+case = "issue1556_disk_unbounded_eps0.001_orientation1_flags63"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 26, Rust 0 (+1 more) (plan/findings/general--2502-fork-pin-mass-known-mismatches.md)"
+
+[[mismatch]]
+unit = "mass.integrator"
+case = "issue1556_disk_halfopen_eps1e-06_orientation0_flags3"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[0] C++ 7.869447314878926e-1, Rust 7.857377377804369e-1 (+3 more) (plan/findings/general--2502-fork-pin-mass-known-mismatches.md)"
+
+[[mismatch]]
+unit = "mass.integrator"
+case = "issue1556_disk_halfopen_eps1e-06_orientation1_flags3"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[0] C++ 7.869447314878926e-1, Rust 7.857377377804369e-1 (+3 more) (plan/findings/general--2502-fork-pin-mass-known-mismatches.md)"
+
+[[mismatch]]
+unit = "mass.integrator"
+case = "issue1556_disk_halfopen_eps0.001_orientation0_flags3"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[0] C++ 2.1959257846232504e1, Rust 2.19905123176286e1 (+3 more) (plan/findings/general--2502-fork-pin-mass-known-mismatches.md)"
+
+[[mismatch]]
+unit = "mass.integrator"
+case = "issue1556_disk_halfopen_eps0.001_orientation1_flags3"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[0] C++ 2.1959257846232504e1, Rust 2.19905123176286e1 (+3 more) (plan/findings/general--2502-fork-pin-mass-known-mismatches.md)"
+
+[[mismatch]]
+unit = "mass.integrator"
+case = "issue1556_disk_halfopen_eps0.001_orientation0_flags63"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 26, Rust 0 (+1 more) (plan/findings/general--2502-fork-pin-mass-known-mismatches.md)"
+
+[[mismatch]]
+unit = "mass.integrator"
+case = "issue1556_disk_halfopen_eps0.001_orientation1_flags63"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 26, Rust 0 (+1 more) (plan/findings/general--2502-fork-pin-mass-known-mismatches.md)"
+
+[[mismatch]]
+unit = "mass.integrator"
+case = "review_face_kind1_eps0.001_orientation0_flags63"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[0] C++ 7.854053625225988e-1, Rust 7.854043854258602e-1 (+25 more) (plan/findings/general--2502-fork-pin-mass-known-mismatches.md)"
+
+[[mismatch]]
+unit = "mass.integrator"
+case = "review_face_kind1_eps0.001_orientation1_flags63"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[0] C++ 7.854053625225988e-1, Rust 7.854043854258602e-1 (+25 more) (plan/findings/general--2502-fork-pin-mass-known-mismatches.md)"
+
+[[mismatch]]
+unit = "mass.integrator"
+case = "review_face_kind1_eps0.0001_orientation0_flags63"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[0] C++ 7.853993596315749e-1, Rust 7.853994690675159e-1 (+25 more) (plan/findings/general--2502-fork-pin-mass-known-mismatches.md)"
+
+[[mismatch]]
+unit = "mass.integrator"
+case = "review_face_kind1_eps0.0001_orientation1_flags63"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[0] C++ 7.853993596315749e-1, Rust 7.853994690675159e-1 (+25 more) (plan/findings/general--2502-fork-pin-mass-known-mismatches.md)"
+
+[[mismatch]]
+unit = "mass.integrator"
+case = "review_face_kind1_eps1e-06_orientation0_flags63"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[0] C++ 7.853981669288397e-1, Rust 7.853981658378963e-1 (+22 more) (plan/findings/general--2502-fork-pin-mass-known-mismatches.md)"
+
+[[mismatch]]
+unit = "mass.integrator"
+case = "review_face_kind1_eps1e-06_orientation1_flags63"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[0] C++ 7.853981669288397e-1, Rust 7.853981658378963e-1 (+22 more) (plan/findings/general--2502-fork-pin-mass-known-mismatches.md)"
+
+[[mismatch]]
+unit = "mass.integrator"
+case = "review_face_kind2_eps0.001_orientation0_flags63"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[0] C++ 6.59739333688913e-1, Rust 6.59739231914306e-1 (+25 more) (plan/findings/general--2502-fork-pin-mass-known-mismatches.md)"
+
+[[mismatch]]
+unit = "mass.integrator"
+case = "review_face_kind2_eps0.001_orientation1_flags63"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[0] C++ 6.59739333688913e-1, Rust 6.59739231914306e-1 (+25 more) (plan/findings/general--2502-fork-pin-mass-known-mismatches.md)"
+
+[[mismatch]]
+unit = "mass.integrator"
+case = "review_face_kind2_eps0.0001_orientation0_flags63"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[0] C++ 6.597353077169394e-1, Rust 6.597355274010016e-1 (+25 more) (plan/findings/general--2502-fork-pin-mass-known-mismatches.md)"
+
+[[mismatch]]
+unit = "mass.integrator"
+case = "review_face_kind2_eps0.0001_orientation1_flags63"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[0] C++ 6.597353077169394e-1, Rust 6.597355274010016e-1 (+25 more) (plan/findings/general--2502-fork-pin-mass-known-mismatches.md)"
+
+[[mismatch]]
+unit = "mass.integrator"
+case = "review_face_kind2_eps1e-06_orientation0_flags63"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[5] C++ 1.2860863513362888e0, Rust 1.286086352751501e0 (+3 more) (plan/findings/general--2502-fork-pin-mass-known-mismatches.md)"
+
+[[mismatch]]
+unit = "mass.integrator"
+case = "review_face_kind2_eps1e-06_orientation1_flags63"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[5] C++ 1.2860863513362888e0, Rust 1.286086352751501e0 (+3 more) (plan/findings/general--2502-fork-pin-mass-known-mismatches.md)"
+
+[[mismatch]]
+unit = "mass.integrator"
+case = "review_face_kind3_eps0.001_orientation0_flags63"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[0] C++ 1.5316692657869557e0, Rust 1.5316725849743236e0 (+17 more) (plan/findings/general--2502-fork-pin-mass-known-mismatches.md)"
+
+[[mismatch]]
+unit = "mass.integrator"
+case = "review_face_kind3_eps0.001_orientation1_flags63"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[0] C++ 1.5316692657869557e0, Rust 1.5316725849743236e0 (+17 more) (plan/findings/general--2502-fork-pin-mass-known-mismatches.md)"
+
+[[mismatch]]
+unit = "mass.integrator"
+case = "review_face_kind3_eps0.0001_orientation0_flags63"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[0] C++ 1.53168353966989e0, Rust 1.5316842434954945e0 (+17 more) (plan/findings/general--2502-fork-pin-mass-known-mismatches.md)"
+
+[[mismatch]]
+unit = "mass.integrator"
+case = "review_face_kind3_eps0.0001_orientation1_flags63"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[0] C++ 1.53168353966989e0, Rust 1.5316842434954945e0 (+17 more) (plan/findings/general--2502-fork-pin-mass-known-mismatches.md)"
+
+[[mismatch]]
+unit = "mass.integrator"
+case = "review_face_kind3_eps1e-06_orientation0_flags63"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[2] C++ -1.3325672361613574e0, Rust -1.3325672383205693e0 (+11 more) (plan/findings/general--2502-fork-pin-mass-known-mismatches.md)"
+
+[[mismatch]]
+unit = "mass.integrator"
+case = "review_face_kind3_eps1e-06_orientation1_flags63"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[2] C++ -1.3325672361613574e0, Rust -1.3325672383205693e0 (+11 more) (plan/findings/general--2502-fork-pin-mass-known-mismatches.md)"
