@@ -1,0 +1,213 @@
+"""check_panic_sites.py: site keys, proofs, the list ratchet (clippy messages are synthetic)."""
+import json
+from pathlib import Path
+import tempfile
+import unittest
+
+import check_panic_sites as c
+
+LIB = "crates/solidcore/src/a.rs"
+PREFIXES = ("crates/solidcore/src/",)
+
+
+def message(lint, text, src, needle, file=LIB, nth=0):
+    """A clippy JSON message whose primary span is the nth `needle` in `src`."""
+    start = -1
+    for _ in range(nth + 1):
+        start = src.index(needle, start + 1)
+    line = src.count("\n", 0, start) + 1
+    col = start - (src.rfind("\n", 0, start) + 1) + 1
+    b = len(src[:start].encode())
+    span = {
+        "file_name": file, "byte_start": b, "byte_end": b + len(needle.encode()),
+        "line_start": line, "column_start": col, "is_primary": True, "expansion": None,
+    }
+    return {"reason": "compiler-message",
+            "message": {"code": {"code": lint}, "message": text, "spans": [span]}}
+
+
+def remove(src, nth=0):
+    return message("clippy::disallowed_methods",
+                   "use of a disallowed method `alloc::vec::Vec::remove`", src, "remove", nth=nth)
+
+
+def rows(src, msgs):
+    raw = c.raw_sites(msgs, PREFIXES, lambda f: src.encode())
+    return c.keyed_sites(raw, lambda f: src)
+
+
+SRC = """\
+impl<T: Copy> Holder<T> for Store<T> where T: Default {
+    fn take(&mut self, v: &mut Vec<u8>, i: usize) -> [u8; 2] {
+        let s = "fn fake() { v.remove(9) }"; // fn nope() {
+        let c = '{';
+        v.remove(i);
+        v.remove(0);
+        [0, 0]
+    }
+}
+
+fn outer(f: impl Fn(usize) -> usize) {
+    fn inner(v: &mut Vec<u8>) {
+        v.remove(1);
+    }
+}
+"""
+
+
+class Keys(unittest.TestCase):
+    def test_enclosing_function_paths(self):
+        msgs = [remove(SRC, 1), remove(SRC, 2), remove(SRC, 3)]
+        got = [(r["fn"], r["n"], r["code"]) for r in rows(SRC, msgs)]
+        self.assertEqual(got, [("Store::take", "1", "remove(i)"),
+                               ("Store::take", "2", "remove(0)"),
+                               ("outer::inner", "1", "remove(1)")])
+
+    def test_key_survives_an_edit_above(self):
+        before = rows(SRC, [remove(SRC, 1)])
+        edited = "// a new comment\nfn other() {}\n" + SRC
+        after = rows(edited, [remove(edited, 1)])
+        self.assertEqual([c.key(r) for r in before], [c.key(r) for r in after])
+
+    def test_trait_method_declaration_is_not_a_body(self):
+        src = "trait T {\n    fn decl(&self) -> [u8; 2];\n    fn body(v: &mut Vec<u8>) { v.remove(0); }\n}\n"
+        self.assertEqual(rows(src, [remove(src)])[0]["fn"], "T::body")
+
+    def test_other_files_and_lints_are_ignored(self):
+        msgs = [message("clippy::disallowed_methods", "use of a disallowed method "
+                        "`alloc::vec::Vec::remove`", SRC, "remove", file="crates/x/src/a.rs"),
+                message("clippy::needless_return", "unneeded return", SRC, "remove")]
+        self.assertEqual(rows(SRC, msgs), [])
+
+
+class Division(unittest.TestCase):
+    SRC = "fn f(a: usize, b: usize, mut v: usize) -> usize {\n    v %= b;\n    (a / b) + a % 7\n}\n"
+
+    def test_operators_and_compound_assignment(self):
+        msgs = [
+            message("clippy::integer_division_remainder_used",
+                    "use of `/` has been disallowed in this context", self.SRC, "a / b"),
+            message("clippy::integer_division_remainder_used",
+                    "use of `%` has been disallowed in this context", self.SRC, "a % 7"),
+            message("clippy::arithmetic_side_effects", "arithmetic operation that can "
+                    "potentially result in unexpected side-effects", self.SRC, "v %= b"),
+            message("clippy::arithmetic_side_effects", "arithmetic operation that can "
+                    "potentially result in unexpected side-effects", self.SRC, "(a / b) + a % 7"),
+        ]
+        got = sorted((r["pattern"], r["code"]) for r in rows(self.SRC, msgs))
+        self.assertEqual(got, [("int-div", "a / b"), ("int-rem", "a % 7"), ("int-rem", "v %= b")])
+
+
+class Proofs(unittest.TestCase):
+    def test_mechanical_rules(self):
+        yes = [("int-div", "n / 2"), ("int-rem", "(i + 1) % 3usize"), ("int-div", "x / (4 * 32)"),
+               ("int-div", "left / min_words.max(1)"), ("windows", "windows(2)"),
+               ("step_by", "step_by(3)"), ("with_capacity", "Vec::with_capacity(16)"),
+               ("f64::clamp", "clamp(-1.0, 1.0)"), ("Vec::insert", "insert(0, x)")]
+        no = [("int-div", "n / m"), ("int-div", "n / 0"), ("int-div", "n / 2 / m"),
+              ("windows", "windows(k)"), ("with_capacity", "Vec::with_capacity(n)"),
+              ("f64::clamp", "clamp(1.0, -1.0)"), ("f64::clamp", "clamp(lo, hi)"),
+              ("Vec::insert", "insert(i, x)"), ("Vec::remove", "remove(0)")]
+        for pattern, code in yes:
+            self.assertIsNotNone(c.auto_reason(pattern, code), code)
+        for pattern, code in no:
+            self.assertIsNone(c.auto_reason(pattern, code), code)
+
+    def test_named_constant_divisor(self):
+        src = "const BLOCK: usize = 64;\nconst ZERO: usize = 0;\n"
+        self.assertIsNotNone(c.auto_reason("int-div", "size / BLOCK", src))
+        self.assertIsNone(c.auto_reason("int-div", "size / ZERO", src))
+        self.assertIsNone(c.auto_reason("int-div", "size / BLOCK", ""))
+
+
+def row(fn="f", pattern="Vec::remove", n="1", status="open", code="remove(i)", reason="",
+        file=LIB):
+    return {"file": file, "fn": fn, "pattern": pattern, "n": n, "status": status,
+            "code": code, "reason": reason}
+
+
+class Ratchet(unittest.TestCase):
+    def test_matching_list_passes(self):
+        self.assertEqual(c.check([row()], [row()]), [])
+
+    def test_new_site_fails(self):
+        errors = c.check([row(), row(n="2")], [row()])
+        self.assertEqual(len(errors), 1)
+        self.assertIn("new panic-prone call", errors[0])
+
+    def test_gone_site_must_leave_the_list(self):
+        errors = c.check([], [row()])
+        self.assertEqual(len(errors), 1)
+        self.assertIn("--update", errors[0])
+
+    def test_proven_mark_cannot_slide_onto_other_code(self):
+        listed = [row(status="proven", code="remove(0)", reason="guarded")]
+        self.assertEqual(c.check([row(code="remove(0)")], listed), [])
+        errors = c.check([row(code="remove(j)")], listed)
+        self.assertIn("proven mark", errors[0])
+
+    def test_proven_needs_a_reason(self):
+        self.assertIn("no reason", c.check([row()], [row(status="proven")])[0])
+
+    def test_new_open_row_against_base_fails(self):
+        errors = c.check([row(), row(n="2")], [row(), row(n="2")], base=[row()])
+        self.assertEqual(len(errors), 1)
+        self.assertIn("gains an open row", errors[0])
+
+    def test_new_proven_row_against_base_passes(self):
+        listed = [row(), row(n="2", status="proven", reason="guarded")]
+        self.assertEqual(c.check([row(), row(n="2")], listed, base=[row()]), [])
+
+    def test_moved_open_row_matches_base_by_code(self):
+        moved = [row(file="crates/solidcore/src/b.rs", fn="g")]
+        self.assertEqual(c.check(moved, moved, base=[row()]), [])
+        self.assertEqual(len(c.check(moved + [row(file="crates/solidcore/src/b.rs", fn="g",
+                                                  n="2")],
+                                     moved + [row(file="crates/solidcore/src/b.rs", fn="g",
+                                                  n="2")], base=[row()])), 1)
+
+
+class Update(unittest.TestCase):
+    def test_keeps_marks_drops_gone_and_does_not_copy_marks(self):
+        listed = [row(n="1", status="proven", code="remove(0)", reason="guarded"),
+                  row(fn="g", code="remove(9)")]
+        current = [row(n="1", code="remove(0)"), row(fn="h", code="remove(0)"),
+                   row(fn="k", pattern="int-div", code="n / 2")]
+        out = {(r["fn"], r["pattern"]): (r["status"], r["reason"]) for r in c.update(current, listed)}
+        self.assertEqual(out[("f", "Vec::remove")], ("proven", "guarded"))
+        self.assertEqual(out[("h", "Vec::remove")], ("open", ""))
+        self.assertEqual(out[("k", "int-div")][0], "proven")
+        self.assertNotIn(("g", "Vec::remove"), out)
+
+    def test_mark_follows_a_renumbered_site_in_its_function(self):
+        listed = [row(n="1", code="remove(i)"),
+                  row(n="2", status="proven", code="remove(0)", reason="guarded")]
+        current = [row(n="1", code="remove(0)")]  # the first site was fixed
+        self.assertEqual(c.update(current, listed)[0]["reason"], "guarded")
+
+    def test_written_list_reads_back(self):
+        rs = [row(n="2"), row(status="proven", reason="guarded")]
+        self.assertEqual(c.read_list(c.write_list(rs)), sorted(rs, key=lambda r: r["n"]))
+
+
+class Main(unittest.TestCase):
+    def test_clippy_json_run_and_mutation(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "crates/solidcore/src").mkdir(parents=True)
+            (root / "plan").mkdir()
+            src = "fn f(v: &mut Vec<u8>, i: usize) {\n    v.remove(i);\n}\n"
+            (root / LIB).write_text(src)
+            js = root / "clippy.json"
+            js.write_text(json.dumps(remove(src)) + "\n")
+            argv = ["x", tmp, "--clippy-json", str(js)]
+            self.assertEqual(c.main(argv + ["--update"]), 0)
+            self.assertEqual(c.main(argv), 0)
+            src2 = src.replace("v.remove(i);", "v.remove(i);\n    v.remove(0);")
+            (root / LIB).write_text(src2)
+            js.write_text("\n".join(json.dumps(remove(src2, k)) for k in (0, 1)) + "\n")
+            self.assertEqual(c.main(argv), 1)
+
+
+if __name__ == "__main__":
+    unittest.main()
