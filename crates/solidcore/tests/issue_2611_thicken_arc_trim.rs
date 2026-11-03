@@ -345,3 +345,38 @@ fn issue_2611_without_the_fix_outward_r12_is_no_closed_solid() {
     assert!(!brep_is_manifold_solid(&b).unwrap());
     assert_eq!(b.face_list().len(), 11);
 }
+
+/// Writes the R20 and R12 sheets (`fixtures/offset.offset_executive_p2/data/`) for the
+/// `issue2611_*` cases of `offset.offset_executive_p2` (data flows Rust to C++ only).
+#[test]
+#[ignore = "generator: writes the #2611 fixture files"]
+fn write_issue_2611_operands() {
+    use solidcore::geom::attribute::{AttributeStore, ObjectKey};
+    use solidcore::geom::object::ObjectRef;
+    use solidcore::topology::api_files::write_brep_to_file;
+    use solidcore::topology::brep_data_write::FromBrepEnv;
+    use solidcore::topology::topology::NotifyRecords;
+    use solidcore::topology::{EdgeId, EdgeuseId};
+    for r in [20.0_f64, 12.0] {
+        let mut k = Kernel::default();
+        let b = sheet(&mut k, r, 45.0);
+        let store = AttributeStore::new();
+        let records = NotifyRecords::new();
+        let fresh = Brep::new();
+        let key_of = |e| -> ObjectRef { fresh.owner_identity(e) };
+        let env = FromBrepEnv {
+            attributes: &store,
+            key_of: &key_of,
+            records: &records,
+            curve_key: &|_: EdgeId| ObjectKey(0),
+            uv_curve_key: &|_: EdgeuseId| ObjectKey(0),
+            surface_key: &|_: FaceId| ObjectKey(0),
+        };
+        let bytes = write_brep_to_file(&k, Some(&b), &env, true).unwrap();
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+        let path = root.join(format!(
+            "fixtures/offset.offset_executive_p2/data/issue2611_half_pipe_arc_r{r}.smb"
+        ));
+        std::fs::write(&path, &bytes).unwrap();
+    }
+}
