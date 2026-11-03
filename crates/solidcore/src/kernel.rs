@@ -255,7 +255,7 @@ macro_rules! upstream_fixes {
 upstream_fixes! {
 /// Opt-in fixes of upstream SMLib defects (`plan/upstream-issues/`), all off by default
 /// (upstream behaviour). Set them on [`Kernel::fixes`] before running operations; each
-/// field names its record (`WR-â€¦`) and the `tangency-labs/solidcore` issue.
+/// field names its record (`WR-…`) and the `tangency-labs/solidcore` issue.
 ///
 /// [`UpstreamFixes::flags`] lists every field with its value and
 /// [`UpstreamFixes::NAMES`] every field name, both in declaration order;
@@ -307,7 +307,7 @@ pub struct UpstreamFixes {
     /// (negated when `alAxisMap[k] < 0`), circumscribes an axis-aligned projected
     /// `PseudoBox` into `pOptProjBox` by basis (`WR-5`), and falls back to the general
     /// corner/unbounded branch when the transform's linear part is singular, instead of
-    /// scaling by `1 / |axis|`, translating by `o Â· axis`, and indexing
+    /// scaling by `1 / |axis|`, translating by `o · axis`, and indexing
     /// `sIvls[|alAxisMap[k]| - 1]` (WR-8, #2148; see
     /// `plan/upstream-issues/WR-8--addendum-2026-10-31-aligned-bbox-image.md`). Off by
     /// default for pinned C++ parity.
@@ -327,7 +327,7 @@ pub struct UpstreamFixes {
     pub fillet_trim_status: bool,
     /// `SmBendVolume::EvaluateBoundingBoxSimple` builds the mid-angle `PseudoBox`
     /// (`proj_pseudo_box`) from the true radial/angular cosine and sine extrema over
-    /// `[u_min, u_max] Ã— [-half_angle, half_angle]` (propagating `Â±SM_INFINITE_PARAMETER`
+    /// `[u_min, u_max] × [-half_angle, half_angle]` (propagating `±SM_INFINITE_PARAMETER`
     /// along unbounded `u` rays) instead of `sin(theta_end) * u_min` / `sin(theta_end) * u_max`
     /// compared against `SM_PI`, and uses `max(sin(theta_min), sin(theta_max)) * u_min`
     /// instead of cosines for the axis-aligned box's `dYMax` when `u` reaches
@@ -336,10 +336,10 @@ pub struct UpstreamFixes {
     /// Off by default for pinned C++ parity.
     pub bend_volume_bbox_contains_wide_angle_and_inf_u: bool,
     /// `SmBendVolume::TrimParamBoundingBoxSimple` trims `v` periodically to the primary
-    /// period `[-pi * |d|, pi * |d|]` â€” shifting intervals of length `< 2 * pi * |d|`
-    /// into the primary period when they do not straddle the seam `Â±pi * |d|` (within
+    /// period `[-pi * |d|, pi * |d|]` — shifting intervals of length `< 2 * pi * |d|`
+    /// into the primary period when they do not straddle the seam `±pi * |d|` (within
     /// `SM_EFF_ZERO`) and expanding seam-crossing or full-period/unbounded intervals to
-    /// `[-pi * |d|, pi * |d|]` â€” instead of rejecting shifted-period boxes and clamping
+    /// `[-pi * |d|, pi * |d|]` — instead of rejecting shifted-period boxes and clamping
     /// `v_min` and `v_max` independently with `SM_CLAMP_TO_PERIOD`, which inverts
     /// seam-crossing intervals and leaves `trim_box` holding stale caller data while
     /// returning `SM_SUCCESS` (`WR-60`; see
@@ -489,7 +489,7 @@ pub struct UpstreamFixes {
     pub best_fit_line_largest_scatter_eigenvector: bool,
     /// `smgu_CircleFindSilhouettePoints` in perspective rotates the unit direction from the
     /// circle centre toward the projected eye point (`proj_eye - center`) as a pure vector
-    /// about the circle normal by `Â±acos(radius / dist)` and offsets the scaled radius
+    /// about the circle normal by `±acos(radius / dist)` and offsets the scaled radius
     /// vectors by `circle_center`, returning `None` when the circle normal is degenerate.
     /// Pinned v1.0.1 negates `to_eye` (`center - proj_eye`), rotates a frame at
     /// `circle_center` about the global origin, transforms `to_eye` as a point and scales
@@ -581,7 +581,7 @@ pub struct UpstreamFixes {
     /// `SmSurfacePointSolver::SmSurfacePointSolver` returns the failing status of
     /// `SmSurface::CalculateBoundingBox` when `eSolverOp == SM_SO_3D_SIGNED_DIRECTED_MAXIMIZE`
     /// instead of ignoring it and setting `m_sTestPt` from a corner of the uninitialised
-    /// inside-out `SmExtent3d` (`Â±1.4 * SM_BIG_DOUBLE`, on the wrong side of the surface)
+    /// inside-out `SmExtent3d` (`±1.4 * SM_BIG_DOUBLE`, on the wrong side of the surface)
     /// (WR-72, #2169;
     /// `plan/upstream-issues/WR-72--addendum-2026-11-01-propagate-bbox-failure.md`).
     /// Non-directed solver operations and [`crate::SolidError::Unported`] propagation are
@@ -616,7 +616,7 @@ pub struct UpstreamFixes {
     pub cylinder_plane_section_trims_exact: bool,
     /// `SmTorus::AssertValid` tests its V (minor) interval, not the U interval twice, and reports its U and V overlap tests as 3 and 4 (and `SmSurfOfRevolution`'s U test as 13), the ids their labels give them, where upstream reports them as 2 and 3 (and 2) (WR-538, #482; the fork's tangency-labs/smlib@0cd9d08).
     pub torus_check_reads_v_interval: bool,
-    /// `SmTorus::AssertValid` reports a spindle torus whose V interval runs through an apex (`V = Â±(90 + asin(R/r))`) as test 5, "Self Intersection", where upstream clears its result with no report and tests the U interval against `90 + acos(R/r)`, failing every spindle torus with a whole turn of U (WR-539; the fork's tangency-labs/smlib@daba678).
+    /// `SmTorus::AssertValid` reports a spindle torus whose V interval runs through an apex (`V = ±(90 + asin(R/r))`) as test 5, "Self Intersection", where upstream clears its result with no report and tests the U interval against `90 + acos(R/r)`, failing every spindle torus with a whole turn of U (WR-539; the fork's tangency-labs/smlib@daba678).
     pub torus_check_spindle_apex: bool,
     /// Volume line-domain checks using `SmExtent3d::ContainsLineSeg3d` require
     /// both endpoints inside the natural parameter box instead of either (WR-3).
@@ -660,7 +660,7 @@ pub struct UpstreamFixes {
     /// `SmTrackTopologyChanges::StopTracking` clears the context's system notify
     /// callback and records post-edit dependencies only when the context's currently
     /// installed callback is this tracker's own (`IsTracking`), instead of whenever
-    /// `m_pLastNotifyCallback == NULL` â€” which also fires when a tracker was
+    /// `m_pLastNotifyCallback == NULL` — which also fires when a tracker was
     /// constructed with `bStartNow = FALSE` and never started, or when another caller
     /// replaced this tracker's callback before `StopTracking` ran (WR-17, #2149; see
     /// `plan/upstream-issues/WR-17--addendum-2026-10-31-stop-tracking-own-callback.md`).
@@ -760,7 +760,7 @@ pub struct UpstreamFixes {
     /// `SmPolarBox::AddVector3d` (`PolarBoxState::Region`), when the x span collapses
     /// below `SM_EFF_ZERO_SQRT` and it rotates `(basis[1], basis[2])` to `(basis[2],
     /// -basis[1])` and relabels the box as `SM_PS_ARC`, rotates the polar domain to
-    /// `[lo.y, hi.y] Ã— [-hi.x, -lo.x]` so the arc's angular span lies on the x axis
+    /// `[lo.y, hi.y] × [-hi.x, -lo.x]` so the arc's angular span lies on the x axis
     /// that `SM_PS_ARC` operations read and every previously added vector's polar
     /// coordinates `(y, -x)` in the rotated basis stay inside the domain (WR-9, #2133;
     /// see `plan/upstream-issues/WR-9--addendum-2026-10-31-region-to-arc-domain.md`).
@@ -826,8 +826,8 @@ pub struct UpstreamFixes {
     /// `0.08 * m_vInterval.GetLength() + SM_EFF_ZERO` (scaled by `0.99`) only when
     /// `m_bUseInterval` is `true`, instead of evaluating `m_vInterval.GetLength()` on the
     /// uninitialised `[1e20, -1e20]` interval (`length = -2e20`, `step_limit = -1.6e19`)
-    /// when solving without an interval â€” which made `|delta_t| > step_limit` always true
-    /// and replaced every step with `Â±1.584e19` in the opposite direction of Newton
+    /// when solving without an interval — which made `|delta_t| > step_limit` always true
+    /// and replaced every step with `±1.584e19` in the opposite direction of Newton
     /// (WR-19, #2150; see
     /// `plan/upstream-issues/WR-19--addendum-2026-10-31-unbounded-newton-step.md`). Off by
     /// default for pinned C++ parity.
@@ -1143,7 +1143,7 @@ pub struct UpstreamFixes {
     /// [`crate::intersect::surface_intersector::p1::is_point_on_tsect_curve`]) propagate
     /// a failing `EvaluatePoint`, `DropPoint`, or Hermite `LocalPointSolve` error as
     /// `Err(...)` instead of reproducing upstream's `SER(...)` inside an `SmBoolean`
-    /// return â€” where a non-zero `SmStatus` converts to `TRUE` (`Ok(true)`) and makes
+    /// return — where a non-zero `SmStatus` converts to `TRUE` (`Ok(true)`) and makes
     /// the test point count as lying on the curve (`WR-52`; see
     /// `plan/upstream-issues/WR-52--addendum-2026-11-01-is-point-on-curve-eval-failure.md`).
     /// [`SolidError::Unported`](crate::error::SolidError::Unported) always propagates in
@@ -1167,7 +1167,7 @@ pub struct UpstreamFixes {
     /// continuity (`degree - mult`) and `reMinContinuity` over interior knots
     /// `1..knot_cnt - 1` only (leaving `reMinContinuity = SM_CT_CINFINITY` on a
     /// single-span volume), instead of filling `0..knot_cnt - 1` into a zero-cleared
-    /// (`SM_CT_UNDEFINED`) array â€” which left the last knot `SM_CT_UNDEFINED`, set
+    /// (`SM_CT_UNDEFINED`) array — which left the last knot `SM_CT_UNDEFINED`, set
     /// knot `0` to `SM_CT_C0` on every clamped volume, lowered `reMinContinuity` to
     /// `SM_CT_C0`, and made `HasDiscontinuitiesSimple(..., FALSE)` report
     /// discontinuities on smooth single-span and `C1`/`C2` volumes (WR-49, #2151; see
@@ -1226,7 +1226,7 @@ pub struct UpstreamFixes {
     pub precise_properties_split_at_surface_knots: bool,
     /// With `precise_properties_split_at_surface_knots`, each iso-u piece of `SmODEAreaIFEO` evaluates the surface at its end from the knot span below it (`bVFromLeft = FALSE`), not the span above (upstream's `TRUE`, kept by the fork's tangency-labs/smlib@08d9a14): where the piece stops at a v knot with a derivative jump (a G2-not-C2 loft merged into one face across its 19 spans, #2091), the integrand's last point came from the next span, the Runge-Kutta steps shrank toward every knot, and each piece took about 5x the evaluations it needs: the #2091 model's precise volume took 26.7 s, 5.8 s with this fix (WR-670, #2091). No effect without `precise_properties_split_at_surface_knots`.
     pub precise_properties_span_end_from_below: bool,
-    /// `SmFace::ComputePreciseProperties` starts each iso-u integral of `SmODEAreaIFEO` at the lowest v of the face's UV trim curves (the union of their bounding boxes, kept no lower than the face's UV domain), not at the UV domain's lowest v: on a face whose domain is the surface's unbounded one (`Â±INFINITE_PARAMETER` in v) the integrals ran about 1.2e6 parameter units below the face and the area came out as a small difference of large terms, off by up to 190% (WR-563, #1556).
+    /// `SmFace::ComputePreciseProperties` starts each iso-u integral of `SmODEAreaIFEO` at the lowest v of the face's UV trim curves (the union of their bounding boxes, kept no lower than the face's UV domain), not at the UV domain's lowest v: on a face whose domain is the surface's unbounded one (`±INFINITE_PARAMETER` in v) the integrals ran about 1.2e6 parameter units below the face and the area came out as a small difference of large terms, off by up to 190% (WR-563, #1556).
     pub precise_properties_trim_base_v: bool,
     /// `SmBrep::ComputePreciseProperties` adds a volume-separating faceuse's volume and mass only where it bounds a non void region and its area only where the area behaviour selects it, where upstream adds both whenever either behaviour selects the faceuse: a face between two solid regions (a merge of overlapping bodies) was counted in the area once per side (WR-535; the fork's tangency-labs/smlib@d2d9586).
     pub brep_area_between_solid_and_void: bool,
@@ -1236,7 +1236,7 @@ pub struct UpstreamFixes {
     /// and orients both edge tangents along traversal through the vertex (accounting for
     /// [`crate::topology::vertex::edge_start_vertex`] and [`crate::curve::line::Line::inside_out`])
     /// so only smooth `G1` continuations within `SM_CONTINUITY_ANGLE` (`|angle_rad| <=
-    /// ang_limit_rad`) count as topological, rejecting `180Â°` cusps (`|angle_rad Â± PI| <=
+    /// ang_limit_rad`) count as topological, rejecting `180°` cusps (`|angle_rad ± PI| <=
     /// ang_limit_rad`) as `Ok(false)` (WR-92, #2214; see
     /// `plan/upstream-issues/WR-92--addendum-2026-11-01-topological-vertex-cusps-and-errors.md`).
     /// Off by default for pinned C++ parity.
