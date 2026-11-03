@@ -161,6 +161,10 @@ struct Rounded {
     reason: String,
     /// The setback the corner names as building, where it refused one too short.
     fit: f64,
+    /// The corner's setbacks (empty where it found none).
+    setbacks: Vec<f64>,
+    /// The room on each of the corner's edges.
+    room: Vec<f64>,
 }
 
 /// The vertex of `b` at `v`.
@@ -206,10 +210,12 @@ fn round_asked(
         }
         s.create_corners(k, None).unwrap();
         let mut event = None;
+        let mut this = None;
         for c in s.fillet_corners().unwrap() {
             let fc = s.corner(c).unwrap();
             let at = fc.vertex.map(|vv| s.target().vertex(vv).unwrap().point);
             if at.is_some_and(|p| p.distance(v) < 1e-9) {
+                this = Some(c);
                 event = Some(
                     fc.blend
                         .as_ref()
@@ -223,10 +229,15 @@ fn round_asked(
             }
         }
         let result = s.do_filleting(k, None);
+        let (mut setbacks, mut room) = (Vec::new(), Vec::new());
         for c in s.fillet_corners().unwrap() {
             let fc = s.corner(c).unwrap();
             if let Some(sb) = fc.setback.as_ref() {
                 eprintln!("setbacks {:?}", sb.setbacks);
+                if this == Some(c) {
+                    setbacks.clone_from(&sb.setbacks);
+                    room.clone_from(&sb.room);
+                }
             }
         }
         let info = s.error_info();
@@ -235,6 +246,8 @@ fn round_asked(
             ok: result.is_ok(),
             reason: format!("{} {} ({result:?})", info.code, info.comment),
             fit: s.fit_setback(),
+            setbacks,
+            room,
         }
     };
     if rounded.ok {
@@ -645,6 +658,72 @@ fn beside_a_curved_face_the_fill_is_its_definition() {
             "moved: {proved:e} against {:e}",
             dm.bound()
         );
+    }
+}
+
+/// The D prism's corner holds its setbacks within each edge's room measured along the edge,
+/// as the setbacks are: the top chord 2 sqrt 84 and the upright 10 (straight), and the top
+/// arc its arc length `R (2 pi - 2 acos(a / R))`, 39.63, not its chord 18.33.
+#[test]
+fn d_prism_corner_room_is_measured_along_its_edges() {
+    let (mut k, mut b, edges, case) = d_prism_case(true);
+    let r = round_each(&mut k, &mut b, &edges, &[2.0, 2.5, 3.0], case.v);
+    assert_eq!(r.event, Some(BlendCornerEvent::Setback), "{}", r.reason);
+    assert!(r.ok, "{}", r.reason);
+    let (rr, a) = (10.0f64, 4.0f64);
+    let mut want = [
+        2.0 * (rr * rr - a * a).sqrt(),
+        10.0,
+        rr * (2.0 * PI - 2.0 * (a / rr).acos()),
+    ];
+    want.sort_by(f64::total_cmp);
+    let mut room = r.room.clone();
+    room.sort_by(f64::total_cmp);
+    assert_eq!(room.len(), 3, "{room:?}");
+    for (&got, &w) in room.iter().zip(&want) {
+        assert!((got - w).abs() <= 1e-6, "{room:?} against {want:?}");
+    }
+}
+
+/// The D prism built far from the origin (its axis at (o, o), its foot at z = o): its corner
+/// is the same Setback, its setbacks the origin's (3, 4.5 and 3.75). Where the rails cross on
+/// its faces (`curved_least`) is solved to the rounding of the corner's coordinates, not of
+/// its radii alone: before, from about 4e3 out, it was refused as "where the rails ... cross
+/// on its curved faces cannot be found". At 1e3 and 2e3 it builds. Farther out the fillet
+/// fails later, as it does without the curved Setback
+/// (`plan/findings/blend.fillet_executive--d-prism-rounds-fail-far-from-the-origin.md`).
+#[test]
+fn d_prism_corner_far_from_the_origin_is_a_setback() {
+    for o in [1.0e3, 2.0e3, 4.0e3, -4.0e3, 1.0e4] {
+        let mut k = all_fixes(true);
+        let (rr, a, hh) = (10.0f64, 4.0f64, 10.0f64);
+        let h = (rr * rr - a * a).sqrt();
+        let mut b = d_prism(&mut k, o, o, rr, a, o, hh);
+        let at = |x: f64, y: f64, z: f64| [o + x, o + y, o + z];
+        let edges: Vec<EdgeId> = [at(a, 0.0, hh), at(a, h, 5.0), at(-rr, 0.0, hh)]
+            .iter()
+            .map(|&p| pick(&k, &b, p))
+            .collect();
+        let v = Point3::new(o + a, o + h, o + hh);
+        let r = round_each(&mut k, &mut b, &edges, &[2.0, 2.5, 3.0], v);
+        assert_eq!(
+            r.event,
+            Some(BlendCornerEvent::Setback),
+            "at {o}: {}",
+            r.reason
+        );
+        assert!(
+            !r.reason.contains("cannot be found"),
+            "at {o}: {}",
+            r.reason
+        );
+        assert_eq!(r.setbacks.len(), 3, "at {o}: {}", r.reason);
+        for (&s, want) in r.setbacks.iter().zip([3.0, 4.5, 3.75]) {
+            assert!((s - want).abs() <= 1e-9 * want, "at {o}: {:?}", r.setbacks);
+        }
+        if o.abs() <= 2.0e3 {
+            assert!(r.ok, "at {o}: {}", r.reason);
+        }
     }
 }
 

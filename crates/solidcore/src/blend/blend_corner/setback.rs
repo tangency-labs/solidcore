@@ -113,7 +113,9 @@ pub struct SetbackCorner {
     /// if the corner is built).
     pub overflows: bool,
     /// `m_vSetBackRoom` (the fork's 37c9e1d): each blended edge's room, its length less the
-    /// far end's claim (what a setback grown beside a curved face is held within).
+    /// far end's claim (what a setback grown beside a curved face is held within). Beside a
+    /// curved face the length is the edge's arc length, as the setbacks are measured along
+    /// it; between planes (straight edges) the distance between its ends.
     pub room: Vec<f64>,
     /// `m_pFill`: the fill, from the edge geometry until the patches take it.
     pub fill: Option<Fill>,
@@ -556,7 +558,8 @@ fn det3(m: &[[f64; 3]; 3]) -> f64 {
 /// faces. On each face i, where the rails of the two rounds beside it cross: the point P of
 /// the face whose ball centres `P - s r n(P)` (s `+1` at a convex corner, `-1` at a concave
 /// one) lie at r from each round's other face (Newton on the faces' closed-form distances,
-/// their Jacobian by central differences, at most 60 steps, to `1e-13` of the radii);
+/// their Jacobian by central differences, at most 60 steps, to `1e-13` of the corner's size:
+/// its radii, and its distance from the origin, which the distances' rounding grows with);
 /// as far along each round's edge as the plane square to it through that ball's centre
 /// ([`along_edge`]). Each edge the farther of its two faces'. `None` where a crossing is not
 /// found (no convergence, a singular Jacobian, an edge with no Newton step).
@@ -596,10 +599,16 @@ fn curved_least(
         };
         let mut p = vpoint;
         let scale = smax(1.0, smax(ra, rb));
+        // the residuals are distances computed from world coordinates: their rounding grows
+        // with the corner's distance from the origin, not with its radii alone
+        let mut size = smax(scale, vpoint.length());
+        for f in [fi, fa, fb] {
+            size = smax(size, f.point.length());
+        }
         let mut done = None;
         for _ in 0..60 {
             let (f, ca, cb) = residual(p);
-            if f[0].abs() + f[1].abs() + f[2].abs() <= 1.0e-13 * scale {
+            if f[0].abs() + f[1].abs() + f[2].abs() <= 1.0e-13 * size {
                 done = Some((ca, cb));
                 break;
             }
@@ -695,7 +704,7 @@ struct SetBacks {
 }
 
 /// `sm_SbSetBacks`: the corner's setbacks (owner, 2026-11-01). Each edge's room: its
-/// length, less the far end's claim: an asked-for setback with its ease there, or, where the
+/// length (beside a curved face its arc length, as its setbacks are), less the far end's claim: an asked-for setback with its ease there, or, where the
 /// far end is itself a vertex whose three or more edges are all blended (a corner that may
 /// set back too), half the edge. Asked for: the asked setback on every edge, refused (`fits`
 /// false) unless it and its ease lie below every room, `largest` then the largest that fits
@@ -748,9 +757,16 @@ fn set_backs(
     let mut largest = BIG_DOUBLE;
     for (i, &eu) in all_eus.iter().enumerate() {
         let e = eu1::edge(b, eu)?.ok_or_else(nul)?;
-        let start = edge::start_vertex(b, e)?.ok_or_else(nul)?;
-        let end = edge::end_vertex(b, e)?.ok_or_else(nul)?;
-        let length = vertex::point(b, start)?.distance(vertex::point(b, end)?);
+        let length = if curved {
+            // beside a curved face the edges may be arcs: the setbacks are lengths along
+            // them (along_edge, CalcSetBackVert), and so is the room they are held within
+            let curve = edge::evaluation_curve(b, e)?.ok_or_else(nul)?;
+            curve.length(k, &edge::interval(b, e)?, 1.0e-3 * tol)?
+        } else {
+            let start = edge::start_vertex(b, e)?.ok_or_else(nul)?;
+            let end = edge::end_vertex(b, e)?.ok_or_else(nul)?;
+            vertex::point(b, start)?.distance(vertex::point(b, end)?)
+        };
         let far = edge::other_vertex(b, e, Some(vtx))?.filter(|&f| f != vtx);
         let mut claim = 0.0;
         if let Some(ff) = far.and_then(|f| set_back_fill_of(fills, f)) {
