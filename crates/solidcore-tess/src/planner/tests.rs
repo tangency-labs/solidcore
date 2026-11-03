@@ -1549,3 +1549,26 @@ fn a_body_none_of_whose_faces_plan_is_the_first_faces_error() {
         ),
     }
 }
+
+/// A face with a loop of edges too short to bound anything (here none): the face is refused,
+/// naming the loop, and the rest of the body is meshed. The loop was left out, and the face
+/// meshed without it.
+#[test]
+fn a_face_with_a_loop_of_fewer_than_two_nodes_is_refused_naming_the_loop() {
+    let mut b = fixture("box_10x6x4");
+    b.faces[4].loops.push(Loop::Edges { edges: Vec::new() });
+    let (p, stats) = ok(plan(&b, &MeshTolerance::chord(0.01), size_of("box_10x6x4")));
+    let reasons: Vec<(usize, &str)> = stats
+        .unmeshed
+        .iter()
+        .map(|r| (r.face, r.reason.as_str()))
+        .collect();
+    assert_eq!(
+        reasons,
+        vec![(
+            4,
+            "the operation failed: not supported yet: tessellation: face 4 (plane): loop 1 has 0 nodes (0 edge uses)"
+        )]
+    );
+    assert_eq!(meshed_faces(&p), vec![0, 1, 2, 3, 5]);
+}
