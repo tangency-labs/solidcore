@@ -1,7 +1,7 @@
 //! Structured meshing of a face whose boundary runs along its parameter box: a grid of
 //! interior lines (spaced by the surface's own curvature), joined to the shared edge nodes on
-//! each side by a zipped strip (after Cadium's structured and zipped grids: the larger side
-//! fans into the smaller one, so the edge nodes are used exactly as they are).
+//! each side by a zipped strip (the larger side fans into the smaller one, so the edge nodes are
+//! used exactly as they are).
 
 use std::cmp::Ordering;
 
