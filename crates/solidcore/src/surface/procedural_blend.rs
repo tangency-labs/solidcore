@@ -48,6 +48,7 @@
 pub mod chamfer;
 pub mod convert;
 pub mod exact;
+pub mod offset;
 pub mod record;
 
 use std::cell::Cell;
