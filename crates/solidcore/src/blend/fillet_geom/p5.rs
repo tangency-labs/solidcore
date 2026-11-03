@@ -879,7 +879,11 @@ impl FilletBrep {
                             at_start_of_geom2 = fs2.vertex(target.brep(), 0)? == filleted_vertex;
                             check_connectivity = true;
                         }
-                        FilletCornerType::NByOneClosed if the_corner.is_blending_corner() => {
+                        // never blending with `fillet_blend_corner`: its G1 case is the
+                        // Join's (WR-697; smlib#113 2ac7a17)
+                        FilletCornerType::NByOneClosed
+                            if !k.fixes.fillet_blend_corner && the_corner.is_blending_corner() =>
+                        {
                             check_connectivity = true;
                         }
                         _ => {}
@@ -951,8 +955,11 @@ impl FilletBrep {
         let closed_blending = match corner {
             Some(c) => {
                 let c = corners.corner(c)?;
-                // the fork's `|| IsClosedJoin()` (543d25a; WR-697)
-                (c.corner_type() == FilletCornerType::NByOneClosed || c.is_closed_join())
+                // the fork's `|| IsClosedJoin()` (543d25a), and with the flag the closed Join
+                // alone (smlib#113 2ac7a17; WR-697)
+                ((c.corner_type() == FilletCornerType::NByOneClosed
+                    && !k.fixes.fillet_blend_corner)
+                    || c.is_closed_join())
                     && g1 == g2
                     && c.is_blending_corner()
             }
@@ -1006,8 +1013,11 @@ impl FilletBrep {
         let closed = match corner {
             Some(c) => {
                 let c = corners.corner(c)?;
-                // the fork's `|| IsClosedJoin()` (543d25a; WR-697)
-                (c.corner_type() == FilletCornerType::NByOneClosed || c.is_closed_join())
+                // the fork's `|| IsClosedJoin()` (543d25a), and with the flag the closed Join
+                // alone (smlib#113 2ac7a17; WR-697)
+                ((c.corner_type() == FilletCornerType::NByOneClosed
+                    && !k.fixes.fillet_blend_corner)
+                    || c.is_closed_join())
                     && g1 == g2
             }
             None => false,
@@ -1182,7 +1192,14 @@ impl FilletBrep {
             // failure branch below
             let the_corner = corners.corner(corner)?;
             let (surface, surface2_id): (Option<Surface>, Option<ExecutiveErrorObject>) =
-                if the_corner.is_extended_surface_patch() {
+                if let Some(cap) = the_corner.end_cap.as_ref() {
+                    // SolidCraft change (the fork's 41a39ec): an End at a smooth vertex is
+                    // cut by its plane square to its edge there
+                    (
+                        Some(exact_surface(cap)?),
+                        Some(ExecutiveErrorObject::EndCap(e)),
+                    )
+                } else if the_corner.is_extended_surface_patch() {
                     let face = self
                         .fillet_edge(e)?
                         .original_face()
