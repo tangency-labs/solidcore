@@ -33,6 +33,9 @@ pub(crate) struct Nodes {
     /// within the chord tolerance (see [`snap`]): in a face that runs both edges such a node is
     /// the other's point of the face, a pinch, not a crossing.
     pub snapped: Vec<f64>,
+    /// Where [`sample_edge`] stopped at a bound with a segment still wanting a split: which
+    /// bound, and the farthest such a segment's chord lies from the curve (mm).
+    pub capped: Option<(crate::EdgeCap, f64)>,
 }
 
 /// A segment of [`sample_edge`]'s depth-first bisection: its parameters, end points, middle
@@ -83,14 +86,12 @@ pub(crate) fn sample_edge(b: &brep::Brep, ei: usize, rules: &Rules, h: f64) -> R
                 "its vertices {front:?} and {back:?} are {length} apart"
             )));
         }
-        let n = if h > 0.0 {
-            (length / h)
-                .ceil()
-                // Proven: clamp bounds are constants 1.0 <= 19 999.0, neither NaN
-                .clamp(1.0, (MAX_EDGE_NODES - 1) as f64) as usize
-        } else {
-            1
-        };
+        let wanted = if h > 0.0 { (length / h).ceil() } else { 1.0 };
+        // Proven: clamp bounds are constants 1.0 <= 19 999.0, neither NaN
+        let n = wanted.clamp(1.0, (MAX_EDGE_NODES - 1) as f64) as usize;
+        // More segments than an edge may have: its sides are longer than asked (a line's chords
+        // lie on it, so none sags).
+        let capped = (wanted > (MAX_EDGE_NODES - 1) as f64).then_some((crate::EdgeCap::Nodes, 0.0));
         let mut pts: Vec<Vec3> = (0..=n)
             .map(|i| front + (back - front) * (i as f64 / n as f64))
             .collect();
@@ -105,6 +106,7 @@ pub(crate) fn sample_edge(b: &brep::Brep, ei: usize, rules: &Rules, h: f64) -> R
             points: pts,
             params,
             snapped: Vec::new(),
+            capped,
         });
     }
     let curve = CurveEval::new(&kernel::curve(edge.parameters()))
@@ -127,6 +129,7 @@ pub(crate) fn sample_edge(b: &brep::Brep, ei: usize, rules: &Rules, h: f64) -> R
     let ends: Vec<Vec3> = (0..=initial).map(|i| at(t_at(i))).collect::<Result<_>>()?;
     // Depth-first bisection, segment by segment, keeping the output ordered (see [`Seg`]).
     let mut out: Vec<(f64, Vec3)> = vec![(t0, front)];
+    let mut capped: Option<(crate::EdgeCap, f64)> = None;
     // Proven: the capacity is the constant 64.
     let mut stack: Vec<Seg> = Vec::with_capacity(64);
     // Proven: the window size is the constant 2, not zero.
@@ -153,7 +156,9 @@ pub(crate) fn sample_edge(b: &brep::Brep, ei: usize, rules: &Rules, h: f64) -> R
             None => at(m)?,
         };
         let (q1, q3) = (at(a + 0.25 * (b - a))?, at(a + 0.75 * (b - a))?);
-        let done = sg.depth >= MAX_DEPTH || out.len() + stack.len() >= MAX_EDGE_NODES;
+        let deep = sg.depth >= MAX_DEPTH;
+        let full = out.len() + stack.len() >= MAX_EDGE_NODES;
+        // Whether the segment is fine, and its chord's sag.
         let fine = || {
             let sag = [q1, pm, q3]
                 .iter()
@@ -167,9 +172,10 @@ pub(crate) fn sample_edge(b: &brep::Brep, ei: usize, rules: &Rules, h: f64) -> R
             // small circle split into two half arcs would otherwise be two chords on one line,
             // a hole of no area (the 1 mm hole of a 990 mm plate at its 2 mm chord).
             let quarter = bend <= QUARTER_TURN;
-            short && straight && quarter && sag <= tol
+            (short && straight && quarter && sag <= tol, sag)
         };
-        if !done && !fine() {
+        let (ok, sag) = fine();
+        if !(deep || full) && !ok {
             stack.push(Seg {
                 a: m,
                 b,
@@ -187,6 +193,17 @@ pub(crate) fn sample_edge(b: &brep::Brep, ei: usize, rules: &Rules, h: f64) -> R
                 depth: sg.depth + 1,
             });
         } else {
+            // A segment a bound keeps whole although it wants a split: the edge is named
+            // ([`crate::PlanStats::edges_capped`]), with the farthest its chords lie off.
+            if !ok {
+                let cap = if full {
+                    crate::EdgeCap::Nodes
+                } else {
+                    crate::EdgeCap::Depth
+                };
+                let worst = capped.map_or(sag, |(_, w): (crate::EdgeCap, f64)| w.max(sag));
+                capped = Some((cap, worst));
+            }
             out.push((b, pb));
         }
     }
@@ -197,6 +214,7 @@ pub(crate) fn sample_edge(b: &brep::Brep, ei: usize, rules: &Rules, h: f64) -> R
         points: out.iter().map(|p| p.1).collect(),
         params: out.iter().map(|p| p.0).collect(),
         snapped: Vec::new(),
+        capped,
     })
 }
 
@@ -374,6 +392,74 @@ mod tests {
             ),
             Ok(n) => panic!("{} nodes", n.points.len()),
         }
+    }
+
+    /// A circle of radius 10 sampled to sides of at most 1 µm wants about 63 000 segments, more
+    /// than an edge may have: it stops at `MAX_EDGE_NODES` and says so, with how far its chords
+    /// lie off. That was silent.
+    #[test]
+    fn an_edge_that_stops_at_its_node_bound_says_so() {
+        let cyl = fixture("cylinder_r10_h5");
+        let Some(ei) = cyl
+            .edges
+            .iter()
+            .position(|e| !matches!(e.curve, Curve::Line { .. }))
+        else {
+            panic!("a circle")
+        };
+        let rules = Rules {
+            tol: 0.01,
+            max_len: f64::INFINITY,
+            turn: None,
+        };
+        let n = sample(&cyl, ei, &rules, 1e-3);
+        assert!(n.points.len() >= MAX_EDGE_NODES / 2, "{}", n.points.len());
+        let Some((crate::EdgeCap::Nodes, sag)) = n.capped else {
+            panic!("{:?}", n.capped)
+        };
+        // The depth-first halving fills the bound along the start of the curve: the segments
+        // still stacked are kept whole, the last up to a quarter turn (10 (1 - cos 45°)).
+        assert!(sag > 0.01 && sag < 3.0, "{sag}");
+        // A line asked for more sides than that too, its chords on it.
+        let Some(line) = cyl
+            .edges
+            .iter()
+            .position(|e| matches!(e.curve, Curve::Line { .. }))
+        else {
+            panic!("a line")
+        };
+        assert_eq!(
+            sample(&cyl, line, &rules, 1e-6).capped,
+            Some((crate::EdgeCap::Nodes, 0.0))
+        );
+        // At sides it can have, neither says so.
+        assert_eq!(sample(&cyl, ei, &rules, 1.0).capped, None);
+        assert_eq!(sample(&cyl, line, &rules, 1.0).capped, None);
+    }
+
+    /// A polyline with a corner at a third of its parameter (never a node of the halving): the
+    /// segment across the corner sags at every depth, so its halving stops at `MAX_DEPTH`, and the
+    /// edge says so, with the sag left there. That was silent.
+    #[test]
+    fn an_edge_that_stops_at_its_depth_bound_says_so() {
+        let mut b = fixture("box_10x6x4");
+        // Edge 2 runs (10, 0, 4) to (10, 6, 4): bent up to (10, 2, 6) at t = 1/3.
+        b.edges[2].curve = Curve::Spline {
+            knots: vec![0.0, 0.0, 1.0 / 3.0, 1.0, 1.0],
+            points: vec![[10.0, 0.0, 4.0], [10.0, 2.0, 6.0], [10.0, 6.0, 4.0]],
+        };
+        b.edges[2].nurbs = None;
+        let rules = Rules {
+            tol: 1e-12,
+            max_len: f64::INFINITY,
+            turn: None,
+        };
+        let n = sample(&b, 2, &rules, f64::INFINITY);
+        assert!(n.points.len() < 1000, "{}", n.points.len());
+        let Some((crate::EdgeCap::Depth, sag)) = n.capped else {
+            panic!("{:?}", n.capped)
+        };
+        assert!(sag > 1e-12, "{sag}");
     }
 
     #[test]

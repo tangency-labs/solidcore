@@ -95,6 +95,37 @@ pub struct PlanStats {
     /// still meshed, named here with the sag its triangles reach and the bounds that limited it,
     /// so a mesh that leaves the tolerance is never so unreported.
     pub over_tolerance: Vec<OverTolerance>,
+    /// Edges whose sampling at a coarser facet angle, for a face crowded with segments, failed:
+    /// each keeps its nodes at the rules' own level (valid, only finer), no face is refused, and
+    /// the edge is named here with the coarser sampling's error.
+    pub kept_strict: Vec<RefusedEdge>,
+    /// Edges whose sampling stopped at a bound ([`EdgeCap`]) with a segment still wanting a
+    /// split: their chords may lie off them by more than the tolerance (no refinement follows an
+    /// edge's sampling), each named with the bound and how far its chords lie off.
+    pub edges_capped: Vec<CappedEdge>,
+}
+
+/// An edge a bound of its sampling stopped (see [`PlanStats::edges_capped`]).
+#[derive(Clone, Debug, PartialEq)]
+pub struct CappedEdge {
+    /// The edge's index in the record.
+    pub edge: usize,
+    /// The bound.
+    pub cap: EdgeCap,
+    /// The farthest the chords the bound kept whole lie from the edge's curve (mm), at their
+    /// quarter points and middles.
+    pub sag: f64,
+    /// The chord tolerance the edge was sampled to (mm).
+    pub tol: f64,
+}
+
+/// A bound of an edge's sampling.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum EdgeCap {
+    /// The edge has the most nodes an edge may have (`MAX_EDGE_NODES`, 20 000).
+    Nodes,
+    /// A segment was halved as often as one may be (24 times).
+    Depth,
 }
 
 /// A face a memory bound limited (see [`PlanStats::over_tolerance`]).
@@ -406,7 +437,7 @@ fn plan_at(b: &brep::Brep, tol: f64, turn: Option<size::Turn>) -> Result<(TessPl
             }
         });
     }
-    relax_crowded_faces(b, &jobs, &rules, &mut nodes, &refused.flags());
+    let kept_strict = relax_crowded_faces(b, &jobs, &rules, &mut nodes, &refused.flags());
     for (ei, e) in split_thin_loops(b, &mut nodes, &refused.flags()) {
         refused.edge(&edge_faces, ei, &e);
     }
@@ -494,8 +525,22 @@ fn plan_at(b: &brep::Brep, tol: f64, turn: Option<size::Turn>) -> Result<(TessPl
         },
     );
     let mut plan = TessPlan::default();
+    let edges_capped: Vec<CappedEdge> = nodes
+        .iter()
+        .enumerate()
+        .filter_map(|(edge, n)| {
+            n.capped.map(|(cap, sag)| CappedEdge {
+                edge,
+                cap,
+                sag,
+                tol: rules.tol,
+            })
+        })
+        .collect();
     let mut stats = PlanStats {
         unsampled_edges,
+        kept_strict,
+        edges_capped,
         ..PlanStats::default()
     };
     // A face no method plans is left out, named in the stats, and the rest of the body is
@@ -1391,11 +1436,11 @@ fn relax_crowded_faces(
     rules: &size::Rules,
     nodes: &mut [edges::Nodes],
     skip: &[bool],
-) {
+) -> Vec<RefusedEdge> {
     // Edges whose relaxed sampling failed: they keep their nodes at the rules' own level.
-    let mut strict: Vec<usize> = Vec::new();
+    let mut strict: Vec<RefusedEdge> = Vec::new();
     let Some(turn) = rules.turn else {
-        return;
+        return strict;
     };
     let boundaries: Vec<Vec<usize>> = b
         .faces
@@ -1437,22 +1482,27 @@ fn relax_crowded_faces(
             if let Some(slot) = level.get_mut(e) {
                 *slot = l;
             }
-            if strict.contains(&e) {
+            if strict.iter().any(|k| k.edge == e) {
                 continue;
             }
-            // The relaxed nodes are a coarser bisection of the same curve, so the edge's nodes
-            // at the rules' own level are valid whatever the relaxed sampling meets: an edge whose
-            // relaxed sampling fails keeps them (its faces are only more finely bounded), and is
-            // not relaxed again. (Its relaxed parameters are a subset of the strict ones, which
-            // all evaluated, so this does not happen; nothing is refused if it does.)
+            // The edge's nodes at the rules' own level are valid whatever the relaxed sampling
+            // meets: an edge whose relaxed sampling fails keeps them (its faces are only more
+            // finely bounded), refuses nothing, is not relaxed again, and is named with the
+            // error. The relaxed parameters are a subset of the strict ones (all evaluated)
+            // unless the strict sampling stopped at MAX_EDGE_NODES: the relaxed one, with fewer
+            // nodes, then halves segments the strict one kept whole.
             if let Some(slot) = nodes.get_mut(e) {
                 match edges::sample_edge(b, e, &relaxed, h) {
                     Ok(n) => *slot = n,
-                    Err(_) => strict.push(e),
+                    Err(err) => strict.push(RefusedEdge {
+                        edge: e,
+                        reason: err.to_string(),
+                    }),
                 }
             }
         }
     }
+    strict
 }
 
 /// Twice the signed area of a parameter polygon.
