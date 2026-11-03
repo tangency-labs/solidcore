@@ -339,3 +339,48 @@ fn a_point_in_a_faces_notch_the_surface_does_not_evaluate_at_does_not_refuse_it(
         Ok((fp, _)) => panic!("meshed with {} triangles", fp.triangles.len()),
     }
 }
+
+/// A plan whose face has a vertex where the kernel's evaluator has no point (on
+/// [`cylinder_without`]`(0.5)`, at u = 0.5): the evaluation refuses that face whole, naming the
+/// vertex, and keeps the other face. Nothing stands in for the point.
+#[test]
+fn evaluating_a_vertex_the_surface_has_no_point_at_refuses_its_face() {
+    use crate::{FacePlan, RefusedFace, TessPlan};
+    let s = cylinder_without(0.5);
+    let face = |face: u32, middle: [f64; 2]| FacePlan {
+        face,
+        surface: Some(0),
+        uv: vec![[0.0, 0.0], [1.0, 0.0], middle],
+        triangles: vec![[0, 1, 2]],
+        ..FacePlan::default()
+    };
+    let plan = TessPlan {
+        surfaces: vec![s],
+        faces: vec![face(0, [0.25, 1.0]), face(1, [0.5, 1.0])],
+        ..TessPlan::default()
+    };
+    let (m, refused) = plan.evaluate();
+    assert_eq!(m.tri_face, vec![0]);
+    assert_eq!(m.positions.len(), 3);
+    assert_eq!(refused.len(), 1, "{refused:?}");
+    let RefusedFace { face, reason } = &refused[0];
+    assert_eq!(*face, 1);
+    assert!(reason.starts_with("vertex 2 at [0.5, 1.0]: "), "{reason}");
+}
+
+/// The flips' check of a side evaluates the surface at the middles of the triangles either side
+/// of it: one the surface has no point at (on [`cylinder_without`]`(0.5)`, a kite of four nodes
+/// off u = 0.5, one of whose triangles has its middle on it) stops the flips with that point,
+/// instead of taking the side as fine.
+#[test]
+fn the_flips_name_a_middle_the_surface_does_not_evaluate_at() {
+    let s = cylinder_without(0.5);
+    // The middle of the first triangle (its corners' mean) is at u = 0.5.
+    let uv = vec![[0.0, 0.0], [0.75, -0.5], [0.75, 0.5], [0.0, 1.0]];
+    let fixed: Vec<Vec3> = uv.iter().map(|q| point(&s, *q)).collect();
+    let mut tris = vec![[0, 1, 2], [0, 2, 3]];
+    match super::sag::flip(&s, 0.01, 1e-9, &fixed, &uv, &mut tris) {
+        Err(NoValue(q)) => assert_eq!(q[0], 0.5, "{q:?}"),
+        Ok(()) => panic!("flipped to {tris:?}"),
+    }
+}
