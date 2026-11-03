@@ -37,6 +37,8 @@
 #include <SmAttribute.h>
 #include <SmBSplineCurve.h>
 #include <SmBSplineSurface.h>
+// The SMLib fork's SmFilletGeom.cpp calls sm_SideEdgeuseAcrossSeamVertex, declared here.
+#include <SmBlendCorner.h>
 #include <SmBrep.h>
 #include <SmCircle.h>
 #include <SmCone.h>
@@ -1697,11 +1699,10 @@ SC_EXPORT int32_t sc_blend_fillet_geom_p1_eval(int32_t op, const double* in, int
 // translation unit; it needs this file's Model and the p4 shim's solvers and surfaces).
 #include "blend_fillet_geom_p2_static.inc"
 
-// The difftest shim of unit blend.fillet_corner_p3, corner operations (it needs this file's Model).
+// The difftest shims of unit blend.fillet_corner_p3, corner operations, and of unit
+// blend.fillet_corner_p1, the SmFilletCorner methods: not linked against the SMLib fork (its
+// corners have none of v1.0.1's derived corner classes), so neither uses this file any more.
 #include "blend_fillet_corner_p3_static.inc"
-
-// The difftest shim of unit blend.fillet_corner_p1, the SmFilletCorner methods (it needs this
-// file's Model and the p3 shim's corner builder).
 #include "blend_fillet_corner_p1_corner.inc"
 
 // The difftest shim of unit blend.fillet_geom_p5 (this file's Model, p4's base solvers).

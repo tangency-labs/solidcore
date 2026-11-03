@@ -69,8 +69,10 @@ pub const SC_ERR_WORKER_EXIT: i32 = -1124;
 pub const SC_ERR_WORKER_SIGNAL: i32 = -1125;
 /// Shim status: the isolated worker could not be reaped.
 pub const SC_ERR_WORKER_WAIT: i32 = -1126;
-/// Shim status on wasm32: the C++ kernel is not linked (returned by every stub of the
-/// module that `scripts/wasm_stub.py` generates for `difftest --digest-dir`).
+/// Shim status: the C++ under test is not linked. On wasm32 every stub of the module that
+/// `scripts/wasm_stub.py` generates for `difftest --digest-dir` returns it; natively, the
+/// shims of routines the SMLib fork the difftest is pinned to removed or changed
+/// (`SC_ERR_UNLINKED` in `harness/cpp/shim/sc_shim.h`).
 pub const SC_ERR_UNLINKED: i32 = -1009;
 
 /// Human readable, stable name of a shim status code (used in difftest outputs).

@@ -29,9 +29,7 @@
 #define SM_2D_DIFFERENCE sc_pc1_DIFFERENCE
 #define SM_2D_EXCLUSIVE_OR sc_pc1_XOR
 #define SM_2D_MERGE sc_pc1_MERGE
-#define sm_CreateAnalyticRotationalSweep sc_pc1_AnalyticRotationalSweep
 #include "../../../upstream/source/SMLib/src/SmPrimitiveCreation.cpp"
-#undef sm_CreateAnalyticRotationalSweep
 #undef SmPrimitiveCreation
 
 namespace {
@@ -132,7 +130,9 @@ void pc1_samples(std::vector<double>& out, SmCurve* curve) {
 }
 
 // op0 maps: tag analytics clear copy then four maps of four value indices (-1 absent).
-// op1 pivot: two seven-double curves, tolerance.
+// op1 pivot: two seven-double curves, tolerance. Not linked: the SMLib fork's
+// sm_FindPivotPoint takes the corner's offset curve in place of the tolerance
+// (tangency-labs/smlib 69d8857), which the Rust port (v1.0.1's signature) has no input for.
 // op2 extension: closed periodic distance count, curve blocks.
 // op3 profile: count output_count tol, path block, profile blocks, existing output blocks.
 SC_EXPORT int32_t sc_primitive_primitive_creation_p1_eval(int32_t op, const double* data,
@@ -178,11 +178,7 @@ SC_EXPORT int32_t sc_primitive_primitive_creation_p1_eval(int32_t op, const doub
         append(maps);
         append({sweep.GetMapToSame(),sweep.GetMapToHigher(),sweep.GetMapFromSame(),sweep.GetMapFromLower()});
     } else if(op==1) {
-        if(n!=15) return SC_ERR_ARG;
-        SmBSplineCurve* first=pc1_curve(data); SmBSplineCurve* second=pc1_curve(data+7);
-        SmObjDelete clean_first(first), clean_second(second);
-        if(!first || !second) return -1010;
-        SmPoint3d pivot; sm_FindPivotPoint(first,second,data[14],pivot); put_vec(values,pivot);
+        return SC_ERR_UNLINKED;
     } else if(op==2) {
         if(n<4 || data[3]<0 || data[3]>32 || n!=4+7*(int)data[3]) return SC_ERR_ARG;
         SmTArray<SmCurve*> paths, extended;
@@ -317,14 +313,9 @@ SC_EXPORT int32_t sc_primitive_primitive_creation_p1_eval(int32_t op, const doub
             primitive_record::append(values,&a);
         }
     } else {
-        if(n!=13) return SC_ERR_ARG;
-        SmBSplineCurve* curve=pc1_curve(data); SmObjDelete clean_curve(curve);
-        if(!curve) return -1010;
-        SmBrep brep(SM_USE_DEFAULT,SM_USE_DEFAULT,const_cast<SmContext*>(&the_context()));
-        SmCurve* input=curve;
-        auto status=sc_pc1_AnalyticRotationalSweep(input,SmVector3d(data[7],data[8],data[9]),SmVector3d(data[10],data[11],data[12]),&brep);
-        SmTArray<SmFace*> faces;brep.GetFaces(faces);
-        values.insert(values.end(),{st(status),(double)faces.GetSize(),flg(brep.m_bEditingEnabled)});
+        // op5, sm_CreateAnalyticRotationalSweep: not linked, the SMLib fork deleted it
+        // (tangency-labs/smlib 9853e54).
+        return SC_ERR_UNLINKED;
     }
     return sc_copy_out(values.data(),values.size(),out,cap,len);
     SC_CATCH

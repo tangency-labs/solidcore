@@ -3,7 +3,9 @@
 // source/SMLib/src/SmFilletCorner.cpp (sm_TestG1Continuity, sm_GetFaceByTwoEdgeuses,
 // sm_CheckTangentialEdgeuse, sm_CheckFaceComplimentaryCornerConcavity,
 // sm_CreateSrfOfRevolution, sm_CreatePlanarSurface, sm_GetFilletRadius, sm_CheckSeamOut,
-// sm_SetSurfaceClosure) and the static SmFilletNx1Corner::CheckNx1Degeneracy.
+// sm_SetSurfaceClosure) and the static SmFilletNx1Corner::CheckNx1Degeneracy. In the SMLib fork
+// the difftest is pinned to, SmFilletCorner.cpp has no sm_CheckSeamOut or sm_SetSurfaceClosure
+// and there is no SmFilletNx1Corner: those three ops return SC_ERR_UNLINKED.
 //
 // Static functions cannot be linked against, so this translation unit compiles
 // SmFilletCorner.cpp itself, at global scope (as blend_fillet_geom_p1.cpp does with
@@ -121,32 +123,6 @@ void run_fillet_radius(Rd& rd, std::vector<double>& o)
     o.push_back(span);
 }
 
-// `surface u v tol closure` -> `ret u v`.
-void run_seam_out(Rd& rd, std::vector<double>& o)
-{
-    const SmContext& ctx = the_context();
-    SmSurface* s = read_surface(rd, ctx);
-    SmPoint2d uv = rd.uv();
-    double tol = rd.num();
-    SmSurfParamType closure = (SmSurfParamType)rd.idx();
-    SmBoolean ret = sm_CheckSeamOut(s, uv, tol, closure);
-    o.push_back(flg(ret));
-    o.push_back(uv.x);
-    o.push_back(uv.y);
-    delete s;
-}
-
-// `surface u0 v0 u1 v1` -> `closure`.
-void run_closure(Rd& rd, std::vector<double>& o)
-{
-    const SmContext& ctx = the_context();
-    SmSurface* s = read_surface(rd, ctx);
-    SmPoint2d a = rd.uv(), b = rd.uv();
-    SmSurfParamType closure = sm_SetSurfaceClosure(s, SmExtent2d(a, b));
-    o.push_back((double)closure);
-    delete s;
-}
-
 // Graph entity `i` (`-1` = NULL); an index past the graph throws (SC_ERR_EXCEPTION), which
 // the FFI's range checks never let through.
 template <class T> T* at(const std::vector<T*>& v, int64_t i) { return i < 0 ? nullptr : v.at((size_t)i); }
@@ -247,29 +223,6 @@ void run_topology(int32_t op, Rd& rd, const char* path, std::vector<double>& o)
         o.push_back(flg(sm_CheckFaceComplimentaryCornerConcavity(v, eu1, eu2, ref, 0)));
         return;
     }
-    case OP_NX1_DEGENERACY:
-    {
-        // `v eu` -> `ret`: SmFilletNx1Corner::CheckNx1Degeneracy (its raw int return: the
-        // flag, or the status `SER` returns through it)
-        SmVertex* v = req(g.vertices, rd.idx());
-        SmEdgeuse* eu = req(g.edgeuses, rd.idx());
-        // every dereference before the evaluations: the clockwise neighbour, the radial's
-        // counter-clockwise neighbour (its mate when they coincide), their vertex uses and
-        // edges
-        SmEdgeuse* side1 = eu->GetCWEdgeuse();
-        SmEdgeuse* side2 = eu->GetRadial() ? eu->GetRadial()->GetCCWEdgeuse() : nullptr;
-        if (side1 != nullptr && side1 == side2)
-            side2 = side1->GetMate();
-        bool ok = side1 != nullptr && side2 != nullptr && side1->GetVertexuse() != nullptr &&
-                  side2->GetVertexuse() != nullptr && side1->GetEdge() != nullptr && side2->GetEdge() != nullptr;
-        if (!ok)
-        {
-            o.push_back(REFUSED);
-            return;
-        }
-        o.push_back((double)SmFilletNx1Corner::CheckNx1Degeneracy(v, eu));
-        return;
-    }
     default: o.push_back(REFUSED); return;
     }
 }
@@ -288,13 +241,16 @@ SC_EXPORT int32_t sc_blend_fillet_corner_p1_helper(int32_t op, const char* path,
     case OP_PLANAR: run_planar(rd, o); break;
     case OP_REVOLUTION: run_revolution(rd, o); break;
     case OP_FILLET_RADIUS: run_fillet_radius(rd, o); break;
-    case OP_SEAM_OUT: run_seam_out(rd, o); break;
-    case OP_CLOSURE: run_closure(rd, o); break;
     case OP_G1:
     case OP_FACE_BY_TWO:
     case OP_TANGENTIAL:
-    case OP_CONCAVITY:
-    case OP_NX1_DEGENERACY: run_topology(op, rd, path, o); break;
+    case OP_CONCAVITY: run_topology(op, rd, path, o); break;
+    // Not linked: the SMLib fork's SmFilletCorner.cpp has no sm_CheckSeamOut or
+    // sm_SetSurfaceClosure (tangency-labs/smlib caa67d0; SmFilletGeom.cpp's copies remain),
+    // and there is no SmFilletNx1Corner (53c47b8).
+    case OP_SEAM_OUT:
+    case OP_CLOSURE:
+    case OP_NX1_DEGENERACY: return SC_ERR_UNLINKED;
     default: return SC_ERR_ARG;
     }
     return sc_copy_out(o.data(), (int64_t)o.size(), out, cap, out_len);

@@ -5,6 +5,8 @@
 // SmRailRailIntersectENFO,
 // the SmFindClippedRadiusEFO constructor and Evaluate), plus the external sm_TestSideEdgeConvexity and the
 // solver's B-rep queries (GetVertex, FindIndexOfRailOnFace, FindIndexOfRailXSideEdgeuse).
+// sm_CheckEdgeCurveDomains and sm_TestAnalyticSurface are not linked: the SMLib fork the
+// difftest is pinned to has neither in SmFilletSolver.cpp.
 //
 // Static functions and .cpp-local classes cannot be linked against, so this translation unit
 // compiles SmFilletSolver.cpp itself, as surface_surface_point_solve_p3.cpp does: every class
@@ -30,6 +32,8 @@
 #define SmMakeSurfaceBlendSIH sc_fsp1s_SmMakeSurfaceBlendSIH
 #define sm_RefineRailCurveClassification sc_fsp1s_sm_RefineRailCurveClassification
 #define sm_TestSideEdgeConvexity sc_fsp1s_sm_TestSideEdgeConvexity
+// the SMLib fork's SmFilletSolver.cpp also defines SmLawCornerPieces' members
+#define SmLawCornerPieces sc_fsp1s_SmLawCornerPieces
 
 #include "sc_shim.h"
 
@@ -176,96 +180,6 @@ SmBrep* brep_of(Rd& rd, const char* path, Graph& g, std::vector<double>& o)
 template <class T> T* at(std::vector<T*>& v, int64_t i)
 {
     return (i >= 0 && i < (int64_t)v.size()) ? v[(size_t)i] : NULL;
-}
-
-// `block edge before after` -> `0 ret curve` (`-2` for an edge without curve).
-void run_check_domains(Rd& rd, const char* path, std::vector<double>& o)
-{
-    const SmContext& ctx = the_context();
-    Graph g;
-    SmBrep* b = brep_of(rd, path, g, o);
-    if (b == NULL)
-        return;
-    SmEdge* e = at(g.edges, rd.idx());
-    SmBoolean before = rd.bflag();
-    SmBoolean after = rd.bflag();
-    if (e == NULL || e->GetCurve() == NULL)
-        o.push_back(-2.0);
-    else
-    {
-        SmObjDelete del;
-        SmCurve* c = NULL;
-        SmBoolean r = sm_CheckEdgeCurveDomains(&ctx, e, c, before, after, del);
-        o.push_back(flg(r));
-        put_crv(o, c);
-    }
-    delete b;
-}
-
-// `surface` -> `ret`.
-void run_analytic(Rd& rd, std::vector<double>& o)
-{
-    const SmContext& ctx = the_context();
-    SmSurface* s = read_surface(rd, ctx);
-    o.push_back(flg(sm_TestAnalyticSurface((SmBSplineSurface*)s)));
-    delete s;
-}
-
-// `kind origin x y p[4]` -> `status ret` (`ret` only when the surface was built): kind 0
-// SmCone::CreateCanonical(bot, top, height), 1 SmCylinder(radius, start, end, height) +
-// MakeNurb, 2 SmSphere::CreateCanonical(radius), 3 SmTorus::CreateCanonical(major, minor).
-void run_analytic_rev(Rd& rd, std::vector<double>& o)
-{
-    const SmContext& ctx = the_context();
-    int64_t kind = rd.idx();
-    SmPoint3d org = rd.vec();
-    SmVector3d x = rd.vec();
-    SmVector3d y = rd.vec();
-    double p[4];
-    for (int i = 0; i < 4; i++)
-        p[i] = rd.num();
-    SmAxis2Placement a2p(org, x, y);
-    SmBSplineSurface* s = NULL;
-    SmStatus stt = SM_SUCCESS;
-    switch (kind)
-    {
-    case 0:
-    {
-        SmCone* c = NULL;
-        stt = SmCone::CreateCanonical(ctx, a2p, p[0], p[1], p[2], c, FALSE, FALSE);
-        s = c;
-        break;
-    }
-    case 1:
-    {
-        SmCylinder* c = new (ctx) SmCylinder(org, x, y, p[0], p[1], p[2], p[3], FALSE, FALSE, FALSE, &ctx);
-        stt = c->MakeNurb();
-        s = c;
-        break;
-    }
-    case 2:
-    {
-        SmSphere* c = NULL;
-        stt = SmSphere::CreateCanonical(ctx, a2p, p[0], c);
-        s = c;
-        break;
-    }
-    default:
-    {
-        SmTorus* c = NULL;
-        stt = SmTorus::CreateCanonical(ctx, a2p, p[0], p[1], c);
-        s = c;
-        break;
-    }
-    }
-    o.push_back(st(stt));
-    if (stt != SM_SUCCESS || s == NULL)
-    {
-        delete s;
-        return;
-    }
-    o.push_back(flg(sm_TestAnalyticSurface(s)));
-    delete s;
 }
 
 // `nx x[nx] nf f[nf] has_j rows cols` as in the main shim.
@@ -665,16 +579,18 @@ SC_EXPORT int32_t sc_blend_fillet_solver_p1_static_eval(int32_t op, const char* 
     switch (op)
     {
     case S_FIND_NEXT: run_find_next(rd, o); break;
-    case S_CHECK_DOMAINS: run_check_domains(rd, path, o); break;
-    case S_ANALYTIC: run_analytic(rd, o); break;
     case S_RAIL_RAIL: run_rail_rail(rd, o); break;
     case S_CLIPPED: run_clipped(rd, o); break;
     case S_CONVEXITY: run_convexity(rd, path, o); break;
     case S_TRIM_RAIL: run_trim_rail(rd, path, o); break;
     case S_QUERIES: run_queries(rd, path, o); break;
-    case S_ANALYTIC_REV: run_analytic_rev(rd, o); break;
     case S_ROLLOVER: run_rollover(rd, path, o); break;
     case S_SPLIT_RAIL: run_split_rail(o); break;
+    // Not linked: the SMLib fork's SmFilletSolver.cpp has neither sm_CheckEdgeCurveDomains (a
+    // static of its SmFilletExact.cpp) nor sm_TestAnalyticSurface (tangency-labs/smlib 7ac037e).
+    case S_CHECK_DOMAINS:
+    case S_ANALYTIC:
+    case S_ANALYTIC_REV: return SC_ERR_UNLINKED;
     default: return SC_ERR_ARG;
     }
     (void)n_in;

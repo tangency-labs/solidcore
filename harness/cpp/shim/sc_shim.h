@@ -7,7 +7,8 @@
 //    pointers to caller-owned flat arrays plus their lengths.
 //  * Return value is an int32_t status: 0 = ok, >0 = upstream error flag/code,
 //    SC_ERR_EXCEPTION = a C++ exception escaped, SC_ERR_BUFFER = output buffer too small,
-//    SC_ERR_ARG = argument rejected by the shim.
+//    SC_ERR_ARG = argument rejected by the shim, SC_ERR_UNLINKED = the C++ under test is
+//    not in the reference (the SMLib fork removed or changed it; the shim names the change).
 //  * Never let a C++ exception cross the boundary: wrap bodies in SC_TRY / SC_CATCH.
 //  * SC_TRY also serializes native calls across ALL translation units. Handwritten
 //    try/catch entrypoints must acquire SC_NATIVE_LOCK before touching native state
@@ -22,6 +23,8 @@
 #define SC_ERR_EXCEPTION (-1000)
 #define SC_ERR_BUFFER (-1001)
 #define SC_ERR_ARG (-1002)
+// The value scripts/wasm_stub.py's stubs return, so `cpp_unlinked` in both cases.
+#define SC_ERR_UNLINKED (-1009)
 
 #define SC_EXPORT extern "C"
 

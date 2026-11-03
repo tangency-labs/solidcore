@@ -2,7 +2,8 @@
 // difftest shim for unit `blend.fillet_solver_p2`.
 // Wraps source/SMLib/src/SmFilletSolver.cpp: PointOnPlaneSolve, RailEdgeuseIntersect,
 // RailRailIntersect, CalcCylinderFilletGeom, CalcConeFilletGeom, CalcTorusFilletGeom,
-// GetFilletCorner (index > 1) and RecordFilletError.
+// GetFilletCorner (index > 1) and RecordFilletError. The SMLib fork the difftest is pinned to
+// has none of the three Calc*FilletGeom: that op returns SC_ERR_UNLINKED.
 //
 // One entry point, sc_blend_fillet_solver_p2_eval(op, path, in, n_in, out, cap, out_len).
 // Layouts are documented in crates/solidcore-ffi/src/units/blend_fillet_solver_p2.rs, which
@@ -379,7 +380,9 @@ void run_rail_rail(Rd& rd, const SmContext& ctx, std::vector<double>& o)
     ULONG other = (ULONG)rd.idx();
     SmTsectPnt ta, tb;
     SmBoolean found = FALSE;
-    SmStatus s = fa->RailRailIntersect(uv, rail, fb, other, found, ta, tb);
+    // The SMLib fork's bHoldEndRadii (last): TRUE sets up SmTemporaryRadiusChange on both
+    // solvers, as v1.0.1's RailRailIntersect always did.
+    SmStatus s = fa->RailRailIntersect(uv, rail, fb, other, found, ta, tb, TRUE);
     o.push_back(st(s));
     put_offsets(o, *fa);
     put_offsets(o, *fb);
@@ -392,153 +395,6 @@ void run_rail_rail(Rd& rd, const SmContext& ctx, std::vector<double>& o)
     }
     delete fa;
     delete fb;
-}
-
-// `which cfg surfs fsg before after factor block eu0 eu1 n n x [uv0[2] uv1[2] cparam]` ->
-// `0 status` and, on success, `surface rail0 rail1 [ivl0 ivl1] center` (the rail edge
-// intervals for the cone and the torus only). `which`: 0 cylinder, 1 cone, 2 torus. `fsg`:
-// 0 SmLinearCrossSectionFSG, 1 SmCircularCrossSectionFSG. The fillet geometry is a fresh
-// SmFilletGeom of the solver with two rails made by MakeRailEdge (fillet vertices of
-// unknown type, unprocessed) in a fresh SmFilletBrep.
-void run_geom(Rd& rd, const char* path, const SmContext& ctx, std::vector<double>& o)
-{
-    int64_t which = rd.idx();
-    Bases bases;
-    P2FS* fs = read_solver(rd, ctx);
-    read_surfaces(rd, ctx, *fs, bases);
-    int64_t fsg_kind = rd.idx();
-    SmBoolean before = rd.bflag();
-    SmBoolean after = rd.bflag();
-    fs->SetExtensionFactor(rd.num());
-    fs->set_extend(before, after);
-    SmFilletSurfaceGenerator* fsg = NULL;
-    if (fsg_kind == 0)
-        fsg = new (ctx) SmLinearCrossSectionFSG();
-    else
-        fsg = new (ctx) SmCircularCrossSectionFSG();
-    fs->SetFilletSurfaceGenerator(fsg);
-    // rails: 0, or 1 and the four rail end points (typed RAIL_X_EDGEUSE, processed)
-    int64_t rail_mode = rd.idx();
-    SmPoint3d rail_pts[4];
-    if (rail_mode == 1)
-        for (int i = 0; i < 4; i++)
-            rail_pts[i] = rd.vec();
-    // the filleted edge: a B-rep block, an SmLine segment or an SmCircle arc
-    int64_t edge_kind = rd.idx();
-    SmStatus bst = SM_SUCCESS;
-    SmBrep* brep = NULL;
-    if (edge_kind == 0)
-        brep = build(rd, path, bst);
-    else
-    {
-        brep = new (ctx) SmBrep();
-        SmBSplineCurve* curve = NULL;
-        if (edge_kind == 1)
-        {
-            SmPoint3d a = rd.vec();
-            SmPoint3d b = rd.vec();
-            SmLine* line = NULL;
-            bst = SmLine::CreateLineSegment(ctx, 3, a, b, line);
-            curve = line;
-        }
-        else
-        {
-            double radius = rd.num();
-            double span = rd.num();
-            SmAxis2Placement frame;
-            SmExtent1d ivl(0.0, span);
-            SmCircle* circle = NULL;
-            bst = SmCircle::CreateCanonical(ctx, frame, radius, circle, &ivl);
-            curve = circle;
-        }
-        if (bst == SM_SUCCESS)
-        {
-            SmEdge* edge = NULL;
-            bst = brep->CreateWireEdgeFromCurve(curve, curve->GetNaturalInterval(), edge);
-        }
-        if (bst != SM_SUCCESS)
-        {
-            delete brep;
-            brep = NULL;
-        }
-    }
-    if (brep == NULL)
-    {
-        o.push_back(-1.0);
-        o.push_back((double)bst);
-        fs->SetFilletSurfaceGenerator(NULL);
-        delete fsg;
-        delete fs;
-        return;
-    }
-    Graph g;
-    walk(brep, g);
-    o.push_back(0.0);
-    SmEdgeuse* eu0 = at(g.edgeuses, rd.idx());
-    SmEdgeuse* eu1 = at(g.edgeuses, rd.idx());
-    fs->set_edgeuses(eu0, eu1);
-    int64_t n = rd.idx();
-    std::vector<SmTsectPnt*> pts;
-    SmTArray<SmTsectPnt*> arr;
-    for (int64_t i = 0; i < n; i++)
-    {
-        SmTsectPnt* t = new SmTsectPnt();
-        t->UVPos(0) = rd.uv();
-        t->UVPos(1) = rd.uv();
-        t->m_dCurveParameter = rd.num();
-        pts.push_back(t);
-        arr.Add(t);
-    }
-    SmFilletBrep* pb = new (ctx) SmFilletBrep();
-    SmFilletGeom* fg = new SmFilletGeom(fs, SM_FG_DEFAULT);
-    SmFilletEdge* rails[2] = {NULL, NULL};
-    fg->MakeRailEdge(pb, 0, rails[0]);
-    fg->MakeRailEdge(pb, 1, rails[1]);
-    if (rail_mode == 1)
-        for (int jj = 0; jj < 2; jj++)
-        {
-            SmFilletVertex* v0 = (SmFilletVertex*)rails[jj]->GetVertex();
-            SmFilletVertex* v1 = (SmFilletVertex*)rails[jj]->GetOtherVertex(v0);
-            SmFilletVertex* vs[2] = {v0, v1};
-            for (int e = 0; e < 2; e++)
-            {
-                vs[e]->SetFilletVertexType(SM_FV_RAIL_X_EDGEUSE);
-                vs[e]->SetStatus(SM_FIL_PROCESSED);
-                vs[e]->SetPoint(rail_pts[2 * jj + e]);
-            }
-        }
-    SmStatus s = SM_SUCCESS;
-    switch (which)
-    {
-    case 0: s = fs->CalcCylinderFilletGeom(arr, fg); break;
-    case 1: s = fs->CalcConeFilletGeom(arr, fg); break;
-    default: s = fs->CalcTorusFilletGeom(arr, fg); break;
-    }
-    o.push_back(st(s));
-    if (s == SM_SUCCESS)
-    {
-        put_srf(o, fg->GetFilletSurface());
-        put_crv(o, fg->GetRail(0)->GetCurve());
-        put_crv(o, fg->GetRail(1)->GetCurve());
-        if (which != 0)
-            for (ULONG i = 0; i < 2; i++)
-            {
-                SmExtent1d ivl = fg->GetRail(i)->GetInterval();
-                o.push_back(ivl.GetMin());
-                o.push_back(ivl.GetMax());
-            }
-        put_crv(o, fg->GetCenterLineCurve());
-    }
-    SmSurface* fillet_surface = fg->GetFilletSurface();
-    delete pb; // the rails (and their edge and vertex uses) before the vertices
-    delete fg;
-    delete fillet_surface;
-    for (SmTsectPnt* t : pts)
-        delete t;
-    fs->SetFilletSurfaceGenerator(NULL);
-    delete fsg;
-    delete fs;
-    delete brep;
 }
 
 // The private SmFilletErrorInfo::m_eFilletStatus (no getter), via explicit instantiation.
@@ -686,7 +542,10 @@ SC_EXPORT int32_t sc_blend_fillet_solver_p2_eval(int32_t op, const char* path, c
     case OP_PLANE: run_plane(rd, ctx, o); break;
     case OP_RAIL_EU: run_rail_eu(rd, path, ctx, o); break;
     case OP_RAIL_RAIL: run_rail_rail(rd, ctx, o); break;
-    case OP_GEOM: run_geom(rd, path, ctx, o); break;
+    // not linked: the SMLib fork has no CalcCylinderFilletGeom, CalcConeFilletGeom or
+    // CalcTorusFilletGeom (tangency-labs/smlib 7ac037e), nor the cross-section surface
+    // generators they take
+    case OP_GEOM: return SC_ERR_UNLINKED;
     case OP_MISC: run_misc(rd, path, ctx, o); break;
     default: return SC_ERR_ARG;
     }

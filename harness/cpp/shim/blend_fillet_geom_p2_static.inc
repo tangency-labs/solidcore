@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: Apache-2.0
 // Included at the end of blend_fillet_geom_p1.cpp, after blend_fillet_geom_p4_static.inc: the
 // difftest shim of unit `blend.fillet_geom_p2` (sm_SrfSrfIntersection,
-// SmFilletVertex::CalcRailIntRail / CalcRailIntEdgeuse / CalcVertOnCrossSection / CalcSetBackVert,
+// SmFilletVertex::CalcRailIntRail / CalcRailIntEdgeuse / CalcVertOnCrossSection / CalcSetBackVert
+// (CalcVertOnCrossSection not linked: the SMLib fork the difftest is pinned to has none),
 // SmFilletEdge::CalcRailRailInterpolation, SmFilletEdge::UpdateSplitFace). sm_SrfSrfIntersection
 // is defined in upstream SmFilletGeom.cpp, which only this translation unit compiles (see
 // blend_fillet_geom_p1.cpp), and the topology ops build their pseudo B-rep with that file's Model
@@ -230,13 +231,10 @@ int32_t p2_run(int32_t op, Rd& rd, std::vector<double>& o)
     {
     case P2_RAIL_INT_RAIL:
     case P2_RAIL_INT_EU:
-    case P2_CROSS_SECTION:
     case P2_SET_BACK:
     {
         SmFilletVertex* v = M.vertex(rd.idx());
         int64_t gi = op == P2_RAIL_INT_EU ? rd.idx() : -1;
-        bool has_param = op == P2_CROSS_SECTION ? rd.flag() : false;
-        double param = op == P2_CROSS_SECTION ? rd.num() : 0.0;
         if (rd.bad || v == NULL || (gi >= 0 && M.geom(gi) == NULL))
             return SC_ERR_ARG;
         // the corner is an opaque tag: every routine asks it for its filleted vertex
@@ -250,9 +248,6 @@ int32_t p2_run(int32_t op, Rd& rd, std::vector<double>& o)
             break;
         case P2_RAIL_INT_EU:
             r = v->CalcRailIntEdgeuse(gi < 0 ? NULL : M.geom(gi));
-            break;
-        case P2_CROSS_SECTION:
-            r = v->CalcVertOnCrossSection(has_param ? &param : NULL);
             break;
         default:
             r = v->CalcSetBackVert();
@@ -375,6 +370,10 @@ SC_EXPORT int32_t sc_blend_fillet_geom_p2_eval(int32_t op, const double* in, int
     // every op may build surface caches (UB-166 guard in read_surface)
     rd.cache_op = true;
     std::vector<double> o;
+    // not linked: the SMLib fork's SmFilletVertex has no CalcVertOnCrossSection
+    // (tangency-labs/smlib 543d25a)
+    if (op == P2_CROSS_SECTION)
+        return SC_ERR_UNLINKED;
     int32_t rc = op == P2_SRF_SRF ? p2_srf_srf(rd, o) : p2_run(op, rd, o);
     if (rc != SC_OK)
         return rc;
