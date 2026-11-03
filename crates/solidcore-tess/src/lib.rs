@@ -63,20 +63,6 @@ pub(crate) fn eval_message(e: solidcore::eval::EvalError) -> String {
     }
 }
 
-/// An empty map with room for `n` entries where that many can be reserved (`n` is `None` where
-/// the count overflowed); else an empty one, which grows as entries are added: a reservation
-/// changes no result, and never panics as `HashMap::with_capacity` would.
-pub(crate) fn map_with_room<K: Eq + std::hash::Hash, V>(
-    n: Option<usize>,
-) -> std::collections::HashMap<K, V> {
-    let mut m = std::collections::HashMap::new();
-    if let Some(n) = n {
-        // A reservation only: where it cannot be made, the map grows as it fills.
-        let _ = m.try_reserve(n);
-    }
-    m
-}
-
 /// An empty `Vec` with room for `n` items, or `None` where that much cannot be reserved (where
 /// `Vec::with_capacity` would panic).
 pub(crate) fn with_room<T>(n: usize) -> Option<Vec<T>> {
