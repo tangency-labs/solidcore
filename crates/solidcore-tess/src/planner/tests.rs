@@ -1610,3 +1610,47 @@ fn a_point_inside_a_face_winding_many_periods_is_found() {
         Err(TooManyCopies(n)) if n > 4096.0
     ));
 }
+
+/// A plan keeps the record's order: face `i` of the plan is the record's face `i`, and edge `e`'s
+/// polyline and faces are the record's edge `e`'s, the polyline from its start vertex to its end
+/// vertex and the faces in the order of the edge's uses.
+#[test]
+fn faces_and_edges_keep_the_record_order() {
+    for name in ["pin_cylinder", "box_with_hole", "cylinder_with_cross_hole"] {
+        let b = fixture(name);
+        let p = body_plan(name, &MeshTolerance::chord(0.01));
+        let faces: Vec<u32> = p.faces.iter().map(|f| f.face).collect();
+        assert_eq!(
+            faces,
+            (0..b.faces.len() as u32).collect::<Vec<_>>(),
+            "{name}"
+        );
+        assert_eq!(p.edges.len(), b.edges.len(), "{name}");
+        for (ei, e) in b.edges.iter().enumerate() {
+            let mut uses: Vec<u32> = Vec::new();
+            for u in &e.uses {
+                if !uses.contains(&u.face) {
+                    uses.push(u.face);
+                }
+            }
+            assert_eq!(p.edge_faces[ei], uses, "{name}: edge {ei}");
+            let vertex = |k: usize| {
+                let q = b.vertices[e.vertices[k] as usize].point;
+                Vec3::new(q[0], q[1], q[2])
+            };
+            assert_eq!(
+                p.edges[ei].first().copied(),
+                Some(vertex(0)),
+                "{name}: edge {ei}"
+            );
+            assert_eq!(
+                p.edges[ei].last().copied(),
+                Some(vertex(1)),
+                "{name}: edge {ei}"
+            );
+        }
+        let m = evaluated(&p);
+        assert_eq!(m.edges, p.edges);
+        assert_eq!(m.edge_faces, p.edge_faces);
+    }
+}
