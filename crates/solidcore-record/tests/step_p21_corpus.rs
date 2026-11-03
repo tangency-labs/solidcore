@@ -30,6 +30,10 @@
 //! It also lists the entities where a check the record no longer makes (a direction shorter than
 //! 1e-12, unit factors equal within 1e-12) would have decided otherwise. It fails when a file
 //! does not parse; refusals are counted, not failed.
+//!
+//! `corpus_write` (ignored too, same variable, `corpus_write` as the filter) writes every
+//! curve, surface and pcurve `corpus_geometry` reads with `step::write::GeomWriter`, parses the
+//! text again and reads each back; it must be the same record exactly (its doc comment says how).
 
 #![allow(
     clippy::unwrap_used,
@@ -543,6 +547,211 @@ fn corpus_geometry() {
     assert!(
         failures.is_empty(),
         "files that did not parse:\n{}",
+        failures.join("\n")
+    );
+}
+
+/// One entity read for the write test: its group, its kind and what the reader gave.
+enum Read {
+    Curve(std::sync::Arc<solidcore_record::step::geom::Curve>),
+    Surface(std::sync::Arc<solidcore_record::step::geom::Surface>),
+    Pcurve(solidcore_record::step::geom::Pcurve),
+}
+
+/// Refused by the reader (with reasons), read, written, refused by the writer (with reasons),
+/// read back equal, read back different.
+#[derive(Default)]
+struct WriteTally {
+    unread: BTreeMap<String, usize>,
+    read: usize,
+    written: usize,
+    refused: BTreeMap<String, usize>,
+    same: usize,
+    different: Vec<String>,
+}
+
+/// Every curve, surface and pcurve of `ex` that reads in `units`, written into one `Writer`,
+/// the text parsed again and each entity read back in millimetres and radians. Adds the counts
+/// to `tally` by group.
+fn write_back(
+    name: &str,
+    ex: &p21::Exchange,
+    units: units::Units,
+    tally: &mut BTreeMap<&'static str, WriteTally>,
+) -> Result<(), String> {
+    use solidcore_record::step::read::Reader;
+    use solidcore_record::step::write::{GeomWriter, Writer};
+    let flat = curves_2d(ex);
+    let mut reader = Reader::new(ex, units);
+    let mut writer = Writer::new();
+    let mut written: Vec<(&'static str, u64, Read, u64)> = Vec::new();
+    for (&id, e) in &ex.entities {
+        let (group, read) = if e.name() == "PCURVE" {
+            ("pcurve", reader.pcurve(id).map(Read::Pcurve))
+        } else {
+            match geometry_kind(e) {
+                Some((true, _)) if !flat.contains(&id) => {
+                    ("curve", reader.curve(id).map(Read::Curve))
+                }
+                Some((false, _)) => ("surface", reader.surface(id).map(Read::Surface)),
+                _ => continue,
+            }
+        };
+        let read = match read {
+            Ok(read) => read,
+            Err(e) => {
+                let t = tally.entry(group).or_default();
+                *t.unread.entry(reason(&e)).or_default() += 1;
+                continue;
+            }
+        };
+        let mut g = GeomWriter::new(&mut writer);
+        let w = match &read {
+            Read::Curve(c) => g.curve(c),
+            Read::Surface(s) => g.surface(s),
+            Read::Pcurve(p) => g.pcurve(p),
+        };
+        let t = tally.entry(group).or_default();
+        t.read += 1;
+        match w {
+            Ok(out) => {
+                t.written += 1;
+                written.push((group, id, read, out));
+            }
+            Err(e) => *t.refused.entry(reason(&e)).or_default() += 1,
+        }
+    }
+    let text = writer.file(name, "AP242_MANAGED_MODEL_BASED_3D_ENGINEERING_MIM_LF");
+    let back =
+        p21::parse(&text).map_err(|e| format!("{name}: written text does not parse: {e}"))?;
+    let mut again = Reader::new(&back, units::Units::default());
+    for (group, id, read, out) in written {
+        let t = tally.entry(group).or_default();
+        let same = match &read {
+            Read::Curve(c) => again
+                .curve(out)
+                .map(|b| *b == **c && format!("{b:?}") == format!("{c:?}")),
+            Read::Surface(s) => again
+                .surface(out)
+                .map(|b| *b == **s && format!("{b:?}") == format!("{s:?}")),
+            Read::Pcurve(p) => again
+                .pcurve(out)
+                .map(|b| b == *p && format!("{b:?}") == format!("{p:?}")),
+        };
+        match same {
+            Ok(true) => t.same += 1,
+            Ok(false) => t
+                .different
+                .push(format!("{name}: #{id} -> #{out} reads back different")),
+            Err(e) => t
+                .different
+                .push(format!("{name}: #{id} -> #{out} does not read back: {e}")),
+        }
+    }
+    Ok(())
+}
+
+fn print_write_tally(title: &str, tally: &BTreeMap<&'static str, WriteTally>) {
+    println!(
+        "{title} (group: refused by the reader, read, written, refused by the writer, read back equal, different):"
+    );
+    for (group, t) in tally {
+        println!(
+            "  {group}: {} not read, {} read, {} written, {} refused, {} equal, {} different",
+            t.unread.values().sum::<usize>(),
+            t.read,
+            t.written,
+            t.refused.values().sum::<usize>(),
+            t.same,
+            t.different.len()
+        );
+        for (why, n) in &t.unread {
+            println!("      not read {n} x {why}");
+        }
+        for (why, n) in &t.refused {
+            println!("      refused {n} x {why}");
+        }
+        for d in &t.different {
+            println!("      {d}");
+        }
+    }
+}
+
+/// `corpus_write` (ignored too, same variable, `corpus_write` as the filter): every curve,
+/// surface and pcurve `corpus_geometry` reads is written with `step::write::GeomWriter`, the
+/// written text parsed again and each entity read back in millimetres and radians; it must be
+/// the same record exactly (`==` and the `{:?}` text, so every `f64` bit for bit). Twice: in the
+/// units of the file's first geometric context, as `corpus_geometry` reads it (a `VECTOR` read in
+/// other units than millimetres keeps its unit factors, and the writer refuses to convert it),
+/// and with every unit factor 1, the file's numbers as written. It fails when an entity reads
+/// back different or not at all, when the second pass refuses anything, or when a file does not
+/// parse.
+#[test]
+#[ignore = "needs a STEP corpus in SOLIDCORE_STEP_CORPUS"]
+fn corpus_write() {
+    let Some(dir) = std::env::var_os("SOLIDCORE_STEP_CORPUS") else {
+        eprintln!("SOLIDCORE_STEP_CORPUS is not set");
+        return;
+    };
+    let root = Path::new(&dir);
+    let mut paths = Vec::new();
+    files(root, &mut paths);
+    assert!(!paths.is_empty(), "no STEP files under {dir:?}");
+    let mut failures = Vec::new();
+    let mut in_units: BTreeMap<&'static str, WriteTally> = BTreeMap::new();
+    let mut as_written: BTreeMap<&'static str, WriteTally> = BTreeMap::new();
+    for path in &paths {
+        let name = path
+            .strip_prefix(root)
+            .unwrap_or(path)
+            .display()
+            .to_string();
+        let ex = match std::fs::read(path)
+            .map_err(|e| e.to_string())
+            .and_then(|b| p21::parse(&String::from_utf8_lossy(&b)))
+        {
+            Ok(ex) => ex,
+            Err(e) => {
+                println!("{name}: ERROR {e}");
+                failures.push(format!("{name}: {e}"));
+                continue;
+            }
+        };
+        let u = ex
+            .entities
+            .iter()
+            .find(|(_, e)| {
+                e.has("GEOMETRIC_REPRESENTATION_CONTEXT") && e.has("GLOBAL_UNIT_ASSIGNED_CONTEXT")
+            })
+            .map(|(&id, _)| units::context(&ex, id).units)
+            .unwrap_or_default();
+        for (u, tally) in [
+            (u, &mut in_units),
+            (units::Units::default(), &mut as_written),
+        ] {
+            if let Err(e) = write_back(&name, &ex, u, tally) {
+                println!("{e}");
+                failures.push(e);
+            }
+        }
+        println!(
+            "{name}: written and read back ({}/{} mm, rad per unit)",
+            u.len, u.ang
+        );
+    }
+    print_write_tally("in the file's units", &in_units);
+    print_write_tally("as written (unit factors 1)", &as_written);
+    for t in in_units.values().chain(as_written.values()) {
+        failures.extend(t.different.iter().cloned());
+    }
+    for (group, t) in &as_written {
+        if !t.refused.is_empty() {
+            failures.push(format!("{group}: the writer refused {:?}", t.refused));
+        }
+    }
+    assert!(
+        failures.is_empty(),
+        "entities that did not come back:\n{}",
         failures.join("\n")
     );
 }
