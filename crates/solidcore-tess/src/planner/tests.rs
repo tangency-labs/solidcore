@@ -1572,3 +1572,39 @@ fn a_face_with_a_loop_of_fewer_than_two_nodes_is_refused_naming_the_loop() {
     );
     assert_eq!(meshed_faces(&p), vec![0, 1, 2, 3, 5]);
 }
+
+/// A point a whole number of periods along from inside a face's loops is inside them however
+/// many periods the loops span: a strip winding 100 turns has the point's 70th copy inside it.
+/// Past 64 periods the copies were not looked through, and the point was "not inside"; past
+/// [`MAX_PERIODS`] it is an error, never "not inside".
+#[test]
+fn a_point_inside_a_face_winding_many_periods_is_found() {
+    let per = std::f64::consts::TAU;
+    // A long strip u in [0, 100 periods], v in [0, 1], and a point at u = 0.5 (its copy 70
+    // periods along lies inside).
+    let strip = |turns: f64| {
+        vec![
+            [0.0, 0.0],
+            [turns * per, 0.0],
+            [turns * per, 1.0],
+            [0.0, 1.0],
+        ]
+    };
+    let long = strip(100.0);
+    let polys = [long.as_slice()];
+    let bbox = [(0.0, 100.0 * per), (0.0, 1.0)];
+    let q = [0.5 - 70.0 * per, 0.5];
+    assert_eq!(within_loops(&polys, bbox, [Some(per), None], q), Ok(true));
+    // Off the strip across it: not inside, at any copy.
+    assert_eq!(
+        within_loops(&polys, bbox, [Some(per), None], [0.5, 1.5]),
+        Ok(false)
+    );
+    let longer = strip(5000.0);
+    let polys = [longer.as_slice()];
+    let bbox = [(0.0, 5000.0 * per), (0.0, 1.0)];
+    assert!(matches!(
+        within_loops(&polys, bbox, [Some(per), None], q),
+        Err(TooManyCopies(n)) if n > 4096.0
+    ));
+}
