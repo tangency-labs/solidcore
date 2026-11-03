@@ -1,0 +1,107 @@
+# #2502: these cases move with the difftest's C++ reference, the SMLib fork
+# v1.1.0-alpha.1 (8eac63c); plan/findings/general--2502-fork-pin-nurbs-known-mismatches.md.
+
+[[mismatch]]
+unit = "nurbs.b_spline_surface_p2"
+case = "surf1_iso_v_uvline"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.curve_cpts C++ missing, Rust present (+7 more) (plan/findings/general--2502-fork-pin-nurbs-known-mismatches.md)"
+
+[[mismatch]]
+unit = "nurbs.b_spline_surface_p2"
+case = "surf1_sub_patch_disjoint"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.status[0] C++ 1.007e3, Rust 1.001e3 (plan/findings/general--2502-fork-pin-nurbs-known-mismatches.md)"
+
+[[mismatch]]
+unit = "nurbs.b_spline_surface_p2"
+case = "gen0010"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.curve_cpts.len C++ 8, Rust 24 (+4 more) (plan/findings/general--2502-fork-pin-nurbs-known-mismatches.md)"
+
+[[mismatch]]
+unit = "nurbs.b_spline_surface_p2"
+case = "gen0059"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.curve_cpts C++ missing, Rust present (+7 more) (plan/findings/general--2502-fork-pin-nurbs-known-mismatches.md)"
+
+[[mismatch]]
+unit = "nurbs.b_spline_surface_p2"
+case = "gen0082"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.curve_cpts C++ missing, Rust present (+7 more) (plan/findings/general--2502-fork-pin-nurbs-known-mismatches.md)"
+
+[[mismatch]]
+unit = "nurbs.b_spline_surface_p2"
+case = "gen0135"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.curve_cpts C++ missing, Rust present (+7 more) (plan/findings/general--2502-fork-pin-nurbs-known-mismatches.md)"
+
+[[mismatch]]
+unit = "nurbs.b_spline_surface_p2"
+case = "gen0187"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.curve_cpts.len C++ 8, Rust 20 (+4 more) (plan/findings/general--2502-fork-pin-nurbs-known-mismatches.md)"
+
+[[mismatch]]
+unit = "nurbs.b_spline_surface_p2"
+case = "gen0241"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.status[0] C++ 1.007e3, Rust 1.001e3 (plan/findings/general--2502-fork-pin-nurbs-known-mismatches.md)"
+
+[[mismatch]]
+unit = "nurbs.b_spline_surface_p2"
+case = "gen0293"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.curve_cpts.len C++ 8, Rust 16 (+3 more) (plan/findings/general--2502-fork-pin-nurbs-known-mismatches.md)"
+
+[[mismatch]]
+unit = "nurbs.b_spline_surface_p2"
+case = "gen0355"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.status[0] C++ 1.007e3, Rust 1.001e3 (plan/findings/general--2502-fork-pin-nurbs-known-mismatches.md)"
+
+[[mismatch]]
+unit = "nurbs.b_spline_surface_p2"
+case = "gen0381"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.curve_cpts C++ missing, Rust present (+7 more) (plan/findings/general--2502-fork-pin-nurbs-known-mismatches.md)"
+
+[[mismatch]]
+unit = "nurbs.b_spline_surface_p2"
+case = "gen0401"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.status[0] C++ 1.007e3, Rust 1.001e3 (plan/findings/general--2502-fork-pin-nurbs-known-mismatches.md)"
+
+[[mismatch]]
+unit = "nurbs.b_spline_surface_p2"
+case = "gen0436"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.curve_cpts C++ missing, Rust present (+7 more) (plan/findings/general--2502-fork-pin-nurbs-known-mismatches.md)"
+
+[[mismatch]]
+unit = "nurbs.b_spline_surface_p2"
+case = "gen0448"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.curve_cpts C++ missing, Rust present (+7 more) (plan/findings/general--2502-fork-pin-nurbs-known-mismatches.md)"
+
+[[mismatch]]
+unit = "nurbs.b_spline_surface_p2"
+case = "gen0452"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.curve_cpts C++ missing, Rust present (+7 more) (plan/findings/general--2502-fork-pin-nurbs-known-mismatches.md)"
+
+[[mismatch]]
+unit = "nurbs.b_spline_surface_p2"
+case = "gen0503"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.curve_cpts C++ missing, Rust present (+7 more) (plan/findings/general--2502-fork-pin-nurbs-known-mismatches.md)"
+
+[[mismatch]]
+unit = "nurbs.b_spline_surface_p2"
+case = "gen0540"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.curve_cpts C++ missing, Rust present (+7 more) (plan/findings/general--2502-fork-pin-nurbs-known-mismatches.md)"
+
+[[mismatch]]
+unit = "nurbs.b_spline_surface_p2"
+case = "gen0548"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.status[0] C++ 1.007e3, Rust 1.001e3 (plan/findings/general--2502-fork-pin-nurbs-known-mismatches.md)"
+
+[[mismatch]]
+unit = "nurbs.b_spline_surface_p2"
+case = "gen0570"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.status[0] C++ 1.007e3, Rust 1.001e3 (plan/findings/general--2502-fork-pin-nurbs-known-mismatches.md)"
+
+[[mismatch]]
+unit = "nurbs.b_spline_surface_p2"
+case = "gen0571"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.curve_cpts C++ missing, Rust present (+7 more) (plan/findings/general--2502-fork-pin-nurbs-known-mismatches.md)"
+
+[[mismatch]]
+unit = "nurbs.b_spline_surface_p2"
+case = "gen0688"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.curve_cpts C++ missing, Rust present (+7 more) (plan/findings/general--2502-fork-pin-nurbs-known-mismatches.md)"

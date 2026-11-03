@@ -1,0 +1,22 @@
+# #2502: these cases move with the difftest's C++ reference, the SMLib fork
+# v1.1.0-alpha.1 (8eac63c); plan/findings/general--2502-fork-pin-nurbs-known-mismatches.md.
+
+[[mismatch]]
+unit = "nurbs.b_spline_curve_n_lib"
+case = "issue1114_dim2_head_notify"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.this_cpts.len C++ 20, Rust 12 (+3 more) (plan/findings/general--2502-fork-pin-nurbs-known-mismatches.md)"
+
+[[mismatch]]
+unit = "nurbs.b_spline_curve_n_lib"
+case = "issue1114_dim2_head_silent"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.this_cpts.len C++ 20, Rust 12 (+3 more) (plan/findings/general--2502-fork-pin-nurbs-known-mismatches.md)"
+
+[[mismatch]]
+unit = "nurbs.b_spline_curve_n_lib"
+case = "issue1114_dim2_tail_notify"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.this_cpts.len C++ 20, Rust 12 (+3 more) (plan/findings/general--2502-fork-pin-nurbs-known-mismatches.md)"
+
+[[mismatch]]
+unit = "nurbs.b_spline_curve_n_lib"
+case = "issue1114_dim2_tail_silent"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.this_cpts.len C++ 20, Rust 12 (+3 more) (plan/findings/general--2502-fork-pin-nurbs-known-mismatches.md)"

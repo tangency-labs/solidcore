@@ -1,0 +1,67 @@
+# #2502: these cases move with the difftest's C++ reference, the SMLib fork
+# v1.1.0-alpha.1 (8eac63c); plan/findings/general--2502-fork-pin-nurbs-known-mismatches.md.
+
+[[mismatch]]
+unit = "nurbs.b_spline_surface_n_lib_p2"
+case = "analytic026"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.patch0_cpts.len C++ 17956, Rust 64 (+6 more) (plan/findings/general--2502-fork-pin-nurbs-known-mismatches.md)"
+
+[[mismatch]]
+unit = "nurbs.b_spline_surface_n_lib_p2"
+case = "analytic028"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.patch0_cpts.len C++ 1444, Rust 64 (+6 more) (plan/findings/general--2502-fork-pin-nurbs-known-mismatches.md)"
+
+[[mismatch]]
+unit = "nurbs.b_spline_surface_n_lib_p2"
+case = "analytic038"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.patch0_cpts.len C++ 484, Rust 64 (+6 more) (plan/findings/general--2502-fork-pin-nurbs-known-mismatches.md)"
+
+[[mismatch]]
+unit = "nurbs.b_spline_surface_n_lib_p2"
+case = "analytic056"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.patch0_cpts.len C++ 23460, Rust 868 (+6 more) (plan/findings/general--2502-fork-pin-nurbs-known-mismatches.md)"
+
+[[mismatch]]
+unit = "nurbs.b_spline_surface_n_lib_p2"
+case = "analytic071"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.patch0_cpts.len C++ 1092, Rust 532 (+6 more) (plan/findings/general--2502-fork-pin-nurbs-known-mismatches.md)"
+
+[[mismatch]]
+unit = "nurbs.b_spline_surface_n_lib_p2"
+case = "analytic072"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.patch0_cpts.len C++ 28900, Rust 3844 (+6 more) (plan/findings/general--2502-fork-pin-nurbs-known-mismatches.md)"
+
+[[mismatch]]
+unit = "nurbs.b_spline_surface_n_lib_p2"
+case = "analytic080"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.patch0_cpts.len C++ 28900, Rust 3844 (+6 more) (plan/findings/general--2502-fork-pin-nurbs-known-mismatches.md)"
+
+[[mismatch]]
+unit = "nurbs.b_spline_surface_n_lib_p2"
+case = "analytic095"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.patch0_cpts.len C++ 17956, Rust 64 (+6 more) (plan/findings/general--2502-fork-pin-nurbs-known-mismatches.md)"
+
+[[mismatch]]
+unit = "nurbs.b_spline_surface_n_lib_p2"
+case = "analytic100"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.patch0_cpts.len C++ 9604, Rust 2500 (+6 more) (plan/findings/general--2502-fork-pin-nurbs-known-mismatches.md)"
+
+[[mismatch]]
+unit = "nurbs.b_spline_surface_n_lib_p2"
+case = "analytic111"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.patch0_cpts.len C++ 4900, Rust 64 (+6 more) (plan/findings/general--2502-fork-pin-nurbs-known-mismatches.md)"
+
+[[mismatch]]
+unit = "nurbs.b_spline_surface_n_lib_p2"
+case = "analytic113"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.patch0_cpts.len C++ 17956, Rust 64 (+6 more) (plan/findings/general--2502-fork-pin-nurbs-known-mismatches.md)"
+
+[[mismatch]]
+unit = "nurbs.b_spline_surface_n_lib_p2"
+case = "analytic115"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.patch0_cpts.len C++ 484, Rust 64 (+6 more) (plan/findings/general--2502-fork-pin-nurbs-known-mismatches.md)"
+
+[[mismatch]]
+unit = "nurbs.b_spline_surface_n_lib_p2"
+case = "analytic118"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.patch0_cpts.len C++ 17956, Rust 64 (+6 more) (plan/findings/general--2502-fork-pin-nurbs-known-mismatches.md)"

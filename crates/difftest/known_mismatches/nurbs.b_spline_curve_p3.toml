@@ -1,0 +1,77 @@
+# #2502: these cases move with the difftest's C++ reference, the SMLib fork
+# v1.1.0-alpha.1 (8eac63c); plan/findings/general--2502-fork-pin-nurbs-known-mismatches.md.
+
+[[mismatch]]
+unit = "nurbs.b_spline_curve_p3"
+case = "curvature_radius_tiny_2d_given"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.flag[0] C++ 0e0, Rust 1e0 (+2 more) (plan/findings/general--2502-fork-pin-nurbs-known-mismatches.md)"
+
+[[mismatch]]
+unit = "nurbs.b_spline_curve_p3"
+case = "curvature_radius_tiny_2d_base"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.flag[0] C++ 0e0, Rust 1e0 (+2 more) (plan/findings/general--2502-fork-pin-nurbs-known-mismatches.md)"
+
+[[mismatch]]
+unit = "nurbs.b_spline_curve_p3"
+case = "curvature_radius_tiny_3d_given"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.flag[0] C++ 0e0, Rust 1e0 (+2 more) (plan/findings/general--2502-fork-pin-nurbs-known-mismatches.md)"
+
+[[mismatch]]
+unit = "nurbs.b_spline_curve_p3"
+case = "curvature_radius_tiny_3d_base"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.flag[0] C++ 0e0, Rust 1e0 (+2 more) (plan/findings/general--2502-fork-pin-nurbs-known-mismatches.md)"
+
+[[mismatch]]
+unit = "nurbs.b_spline_curve_p3"
+case = "zero_speed_start_3d_assert_given"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.report.len C++ 10, Rust 5 (+1 more) (plan/findings/general--2502-fork-pin-nurbs-known-mismatches.md)"
+
+[[mismatch]]
+unit = "nurbs.b_spline_curve_p3"
+case = "zero_speed_start_3d_assert_base"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.report.len C++ 10, Rust 5 (+1 more) (plan/findings/general--2502-fork-pin-nurbs-known-mismatches.md)"
+
+[[mismatch]]
+unit = "nurbs.b_spline_curve_p3"
+case = "zero_speed_start_2d_assert_given"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.report.len C++ 10, Rust 5 (+1 more) (plan/findings/general--2502-fork-pin-nurbs-known-mismatches.md)"
+
+[[mismatch]]
+unit = "nurbs.b_spline_curve_p3"
+case = "zero_speed_start_2d_assert_base"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.report.len C++ 10, Rust 5 (+1 more) (plan/findings/general--2502-fork-pin-nurbs-known-mismatches.md)"
+
+[[mismatch]]
+unit = "nurbs.b_spline_curve_p3"
+case = "zero_speed_end_3d_assert_given"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.flag[0] C++ 0e0, Rust 1e0 (+2 more) (plan/findings/general--2502-fork-pin-nurbs-known-mismatches.md)"
+
+[[mismatch]]
+unit = "nurbs.b_spline_curve_p3"
+case = "zero_speed_end_3d_assert_base"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.flag[0] C++ 0e0, Rust 1e0 (+2 more) (plan/findings/general--2502-fork-pin-nurbs-known-mismatches.md)"
+
+[[mismatch]]
+unit = "nurbs.b_spline_curve_p3"
+case = "zero_speed_end_2d_assert_given"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.flag[0] C++ 0e0, Rust 1e0 (+2 more) (plan/findings/general--2502-fork-pin-nurbs-known-mismatches.md)"
+
+[[mismatch]]
+unit = "nurbs.b_spline_curve_p3"
+case = "zero_speed_end_2d_assert_base"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.flag[0] C++ 0e0, Rust 1e0 (+2 more) (plan/findings/general--2502-fork-pin-nurbs-known-mismatches.md)"
+
+[[mismatch]]
+unit = "nurbs.b_spline_curve_p3"
+case = "gen0952"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.other_cpts[0] C++ 4.181994950946927e-2, Rust 5.0933090910557255e-2 (+3 more) (plan/findings/general--2502-fork-pin-nurbs-known-mismatches.md)"
+
+[[mismatch]]
+unit = "nurbs.b_spline_curve_p3"
+case = "gen1393"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.flag[0] C++ 0e0, Rust 1e0 (+2 more) (plan/findings/general--2502-fork-pin-nurbs-known-mismatches.md)"
+
+[[mismatch]]
+unit = "nurbs.b_spline_curve_p3"
+case = "gen1582"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.other_cpts[0] C++ -9.425729862855386e-1, Rust 1.332221945583271e0 (+5 more) (plan/findings/general--2502-fork-pin-nurbs-known-mismatches.md)"
