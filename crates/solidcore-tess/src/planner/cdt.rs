@@ -300,6 +300,7 @@ fn refine_sag(
     let spread = |n: [Option<Vec3>; 3]| match n {
         [Some(a), Some(b), Some(c)] => [(a, b), (b, c), (c, a)]
             .iter()
+            // Proven: the clamp bounds are the constants -1.0 <= 1.0, neither NaN.
             .map(|(x, y)| x.dot(*y).clamp(-1.0, 1.0).acos())
             .fold(0.0, f64::max),
         _ => 0.0,
@@ -417,6 +418,7 @@ fn slits(
         }
     }
     runs.into_iter()
+        // Proven: the divisor is the constant 2, not zero.
         .filter(|(_, n)| n % 2 == 0)
         .map(|(e, _)| e)
         .collect()
@@ -545,10 +547,12 @@ fn scan(
             }
         }
         xs.sort_by(f64::total_cmp);
+        // Proven: the divisor is the constant 2, not zero.
         let shift = if j % 2 == 1 { 0.5 * step[0] } else { 0.0 };
         for i in 0..=cols as usize {
             let u = bbox[0].0 + shift + step[0] * i as f64;
             if u < bbox[0].1
+                // Proven: the divisor is the constant 2, not zero.
                 && xs.partition_point(|x| *x < u) % 2 == 1
                 && !near.within([u, v])
                 && !visit([u, v])
@@ -578,6 +582,7 @@ pub(crate) fn inside(polys: &[&[[f64; 2]]], q: [f64; 2]) -> bool {
             }
         }
     }
+    // Proven: the divisor is the constant 2, not zero.
     before % 2 == 1
 }
 
@@ -664,6 +669,7 @@ fn dist_to_segment(p: [f64; 2], a: [f64; 2], b: [f64; 2]) -> f64 {
     let (dx, dy) = (b[0] - a[0], b[1] - a[1]);
     let l2 = dx * dx + dy * dy;
     let t = if l2 > 0.0 {
+        // Proven: the clamp bounds are the constants 0.0 <= 1.0, neither NaN.
         (((p[0] - a[0]) * dx + (p[1] - a[1]) * dy) / l2).clamp(0.0, 1.0)
     } else {
         0.0

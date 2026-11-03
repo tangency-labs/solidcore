@@ -127,11 +127,14 @@ pub(crate) fn sample_edge(b: &brep::Brep, ei: usize, rules: &Rules, h: f64) -> R
     let ends: Vec<Vec3> = (0..=initial).map(|i| at(t_at(i))).collect::<Result<_>>()?;
     // Depth-first bisection, segment by segment, keeping the output ordered (see [`Seg`]).
     let mut out: Vec<(f64, Vec3)> = vec![(t0, front)];
+    // Proven: the capacity is the constant 64.
     let mut stack: Vec<Seg> = Vec::with_capacity(64);
+    // Proven: the window size is the constant 2, not zero.
     for (i, w) in ends.windows(2).enumerate().rev() {
         let (Some(&pa), Some(&pb)) = (w.first(), w.get(1)) else {
             continue;
         };
+        // Proven: i < initial (at most 4).
         let i = i as u32;
         stack.push(Seg {
             a: t_at(i),
@@ -236,6 +239,7 @@ pub(crate) fn split_segments(
         };
         points.push(p);
         params.push(t);
+        // Proven: k < n <= MAX_EDGE_NODES (20 000): it fits a u32.
         if next.next_if_eq(&(k as u32)).is_none() {
             continue;
         }
@@ -319,6 +323,7 @@ pub(crate) fn turn(a: Vec3, b: Vec3) -> f64 {
     if !(la > 0.0 && lb > 0.0) {
         return 0.0;
     }
+    // Proven: the clamp bounds are the constants -1.0 <= 1.0, neither NaN.
     (a.dot(b) / (la * lb)).clamp(-1.0, 1.0).acos()
 }
 

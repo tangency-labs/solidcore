@@ -145,6 +145,7 @@ pub(crate) fn fine_between(
         }
     };
     Ok(match (normal(a, b)?, normal(b, a)?) {
+        // Proven: the clamp bounds are the constants -1.0 <= 1.0, neither NaN.
         (Some(na), Some(nb)) => !t.exceeds(na.dot(nb).clamp(-1.0, 1.0).acos(), sag),
         _ => true,
     })
@@ -222,6 +223,7 @@ fn limits<'a>(
             let na = normal_near(a, 1e-4 * (b - a))?;
             let nb = normal_near(b, -1e-4 * (b - a))?;
             if let (Some(na), Some(nb)) = (na, nb)
+                // Proven: the clamp bounds are the constants -1.0 <= 1.0, neither NaN.
                 && t.exceeds(na.dot(nb).clamp(-1.0, 1.0).acos(), sag)
             {
                 return Ok(false);

@@ -12,6 +12,7 @@ fn over() -> TessError {
 /// `detail` (1–8): a hundredth of the body over `detail`, at least 1 µm, at the display angle.
 #[must_use]
 pub fn tolerance(size: f64, detail: usize) -> MeshTolerance {
+    // Proven: the clamp bounds are the constants 1 <= 8.
     let detail = detail.clamp(1, 8) as f64;
     MeshTolerance::display((size * 0.01 / detail).max(1e-3))
 }
