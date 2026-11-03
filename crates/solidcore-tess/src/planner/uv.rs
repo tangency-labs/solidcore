@@ -17,7 +17,10 @@ use super::size::Rules;
 /// at most the tolerance from its chord, the chord is at most `h` long and the normal turns
 /// within the rules' facet angle, checked along iso-lines across `across`; at most `max_lines`
 /// lines, ends included. A point the surface does not evaluate at, where the check needs one, is
-/// the error: the surface refuses the face there.
+/// the error where it is the face's (`mine`: inside its loops): the surface refuses the face
+/// there. The iso-lines run across the face's whole parameter box, which reaches past a trimmed
+/// face; a point outside the face measures nothing, as a size sample there does
+/// ([`super::size::FaceSize::unevaluated`]), and is passed over.
 pub(crate) fn divide(
     s: &EvalSurface,
     d: usize,
@@ -26,6 +29,7 @@ pub(crate) fn divide(
     rules: &Rules,
     h: f64,
     max_lines: usize,
+    mine: Mine,
 ) -> Result<Vec<f64>, NoValue> {
     let (a0, a1) = range;
     if a1.partial_cmp(&a0) != Some(Ordering::Greater) {
@@ -34,7 +38,27 @@ pub(crate) fn divide(
     // The whole range first: the limits split it, and no interval spans more than a quarter
     // turn of its iso-lines, so a closed iso-line is never taken for a flat one. Both ends
     // exactly: the end lines are the face's own parameter box, which the boundary nodes sit on.
-    split(&[a0, a1], &limits(s, d, across, rules, h), max_lines)
+    split(&[a0, a1], &limits(s, d, across, rules, h, mine), max_lines)
+}
+
+/// `r`'s value; `None` where the surface does not evaluate at a point that is not the face's
+/// (`mine`), which measures nothing; the error where it is.
+fn kept<T>(mine: Mine, r: Result<T, NoValue>) -> Result<Option<T>, NoValue> {
+    match r {
+        Ok(v) => Ok(Some(v)),
+        Err(NoValue(q)) if !mine(q) => Ok(None),
+        Err(e) => Err(e),
+    }
+}
+
+/// Whether a parameter point is the face's (inside its loops): where the surface does not
+/// evaluate at a point that is not, the point measures nothing and is passed over.
+pub(crate) type Mine<'a> = &'a (dyn Fn([f64; 2]) -> bool + Sync);
+
+/// A point anywhere is the face's: every point the surface does not evaluate at refuses it.
+#[cfg(test)]
+pub(crate) fn everywhere(_: [f64; 2]) -> bool {
+    true
 }
 
 /// `lines` (increasing, ends included) with every interval that fails the same limits as
@@ -49,8 +73,9 @@ pub(crate) fn refine(
     rules: &Rules,
     h: f64,
     max_lines: usize,
+    mine: Mine,
 ) -> Result<Vec<f64>, NoValue> {
-    let flat = limits(s, d, across, rules, h);
+    let flat = limits(s, d, across, rules, h, mine);
     split(lines, &flat, max_lines)
 }
 
@@ -132,13 +157,17 @@ const POINT: f64 = 1e-6;
 /// Whether the surface between the iso-lines at `a` and `b` (direction `d`, sampled along
 /// iso-lines across `across`) is within the tolerance, the side length `h` and the facet angle,
 /// and spans at most a quarter turn of each iso-line (as an edge segment does, see
-/// [`QUARTER_TURN`]): a turn read from the points, since a spline's parameter is no angle.
+/// [`QUARTER_TURN`]): a turn read from the points, since a spline's parameter is no angle. A point
+/// the surface does not evaluate at is the error where it is the face's (`mine`), and else
+/// measures nothing: an iso-line without its two ends there is not measured, and a point between
+/// them not taken into its sag, turn or facet angle.
 fn limits<'a>(
     s: &'a EvalSurface,
     d: usize,
     across: (f64, f64),
     rules: &'a Rules,
     h: f64,
+    mine: Mine<'a>,
 ) -> impl Fn(f64, f64) -> Result<bool, NoValue> + 'a {
     const ACROSS: usize = 5;
     let tol = rules.tol;
@@ -157,13 +186,17 @@ fn limits<'a>(
         .collect();
     move |a: f64, b: f64| {
         for &y in &ys {
-            let (pa, pb) = (at(a, y)?, at(b, y)?);
+            let (Some(pa), Some(pb)) = (kept(mine, at(a, y))?, kept(mine, at(b, y))?) else {
+                continue;
+            };
             if pa.dist(pb) > h * (1.0 + 1e-9) {
                 return Ok(false);
             }
             let mut sag: f64 = 0.0;
             for f in [0.25, 0.5, 0.75] {
-                sag = sag.max(at(a + (b - a) * f, y)?.dist_to_segment(pa, pb));
+                if let Some(p) = kept(mine, at(a + (b - a) * f, y))? {
+                    sag = sag.max(p.dist_to_segment(pa, pb));
+                }
             }
             if sag > tol {
                 return Ok(false);
@@ -171,22 +204,23 @@ fn limits<'a>(
             // The two half chords of an arc turning θ differ by θ/2; a closed iso-line's by π.
             // An iso-line within a millionth of the tolerance of one point (a pole) turns no
             // amount: its directions are rounding.
-            let pm = at(0.5 * (a + b), y)?;
-            if pa.dist(pm).max(pm.dist(pb)) > POINT * tol
+            if let Some(pm) = kept(mine, at(0.5 * (a + b), y))?
+                && pa.dist(pm).max(pm.dist(pb)) > POINT * tol
                 && 2.0 * turn(pm - pa, pb - pm) > QUARTER_TURN
             {
                 return Ok(false);
             }
             let Some(t) = rules.turn else { continue };
             // At a pole the normal is undefined: take it from just inside the segment.
-            let na = match normal(a, y)? {
-                Some(n) => Some(n),
-                None => normal(a + 1e-4 * (b - a), y)?,
+            let normal_near = |x: f64, inward: f64| -> Result<Option<Vec3>, NoValue> {
+                Ok(match kept(mine, normal(x, y))? {
+                    Some(Some(n)) => Some(n),
+                    Some(None) => kept(mine, normal(x + inward, y))?.flatten(),
+                    None => None,
+                })
             };
-            let nb = match normal(b, y)? {
-                Some(n) => Some(n),
-                None => normal(b - 1e-4 * (b - a), y)?,
-            };
+            let na = normal_near(a, 1e-4 * (b - a))?;
+            let nb = normal_near(b, -1e-4 * (b - a))?;
             if let (Some(na), Some(nb)) = (na, nb)
                 && t.exceeds(na.dot(nb).clamp(-1.0, 1.0).acos(), sag)
             {
@@ -235,6 +269,7 @@ mod tests {
             },
             f64::INFINITY,
             10_000,
+            &everywhere,
         )
         .unwrap();
         let along = divide(
@@ -249,6 +284,7 @@ mod tests {
             },
             f64::INFINITY,
             10_000,
+            &everywhere,
         )
         .unwrap();
         assert_eq!(along, vec![0.0, 1.0]);
@@ -267,6 +303,7 @@ mod tests {
             },
             0.5,
             10_000,
+            &everywhere,
         )
         .unwrap();
         assert_eq!(along.len(), 9);
@@ -306,7 +343,8 @@ mod tests {
                 (0.0, 40.0),
                 &coarse,
                 f64::INFINITY,
-                10_000
+                10_000,
+                &everywhere
             )
             .unwrap(),
             vec![-6.7e-13, q]
@@ -322,6 +360,7 @@ mod tests {
             },
             f64::INFINITY,
             10_000,
+            &everywhere,
         )
         .unwrap();
         assert_eq!(whole.len(), 5, "{whole:?}");
@@ -345,6 +384,7 @@ mod tests {
             },
             f64::INFINITY,
             10_000,
+            &everywhere,
         )
         .unwrap();
         assert_eq!(lines.first().copied(), Some(a0));
