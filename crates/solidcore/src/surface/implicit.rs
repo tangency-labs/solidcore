@@ -767,10 +767,16 @@ impl AnalyticSupport {
 
     /// The analytic surface on the NURB `form`: refused unless `form` lies on it
     /// ([`lies_on`]) and its placement's axes are orthonormal. A plane keeps its placement
-    /// as given; a cylinder, cone, sphere or torus is the one the kernel recognises in
-    /// `form` ([`recognise`]), which must be this one, and must evaluate as `form` at the
-    /// form's own parameters: it is the form's parametrisation, its frame, sweep, generator
-    /// range and swap the form's. The surface takes `form` as its NURB.
+    /// as given; a cylinder, cone, sphere or torus is parametrised as the kernel recognises
+    /// it in `form` ([`recognise`]: the sweep angles, generator range, swap and inside-out
+    /// are the form's), must be of this support's kind, and carries this support's own
+    /// placement, radii and semi-angle on that parametrisation, so that
+    /// [`AnalyticSupport::of`] reads the support back unchanged. It must evaluate as `form`
+    /// at the form's own parameters ([`evaluates_as`]), which together with [`lies_on`] is
+    /// what proves the support and the form agree: [`lies_on`] proves the point set, and
+    /// the evaluation proves the parametrisation, including the frame the placement imposes
+    /// about the axis and, for a sphere, the whole orientation, none of which the implicit
+    /// equation constrains (#2588). The surface takes `form` as its NURB.
     ///
     /// # Errors
     ///
@@ -820,13 +826,52 @@ impl AnalyticSupport {
             )
         };
         let mut surface = recognise(k, self.kind(), &form)?.ok_or_else(not_form)?;
-        if Self::of(&surface) != Some(*self) {
+        // the recognised surface must be of this support's kind; the numbers recognition
+        // recomputed are not compared with the support's, because it recomputes them from
+        // the control points and so reproduces a support's own numbers only to rounding
+        // (#2554) -- `lies_on` above and `evaluates_as` below are what prove the two agree
+        if Self::of(&surface).map(|a| a.kind()) != Some(self.kind()) {
             return Err(not_form());
         }
-        match surface.kind_mut() {
-            SurfaceKind::Cone(c) => c.rev.base = form.copy(),
-            SurfaceKind::Sphere(sp) => sp.base.base = form.copy(),
-            SurfaceKind::Torus(t) => t.base.base = form.copy(),
+        // this support's own numbers on the recognised parametrisation, which the generator
+        // and the sweep converter carry, so that `of` reads the support back unchanged
+        match (surface.kind_mut(), *self) {
+            (SurfaceKind::Cone(c), Self::Cylinder { placement, radius }) => {
+                c.rev.position = placement;
+                c.base_radius = radius;
+                c.rev.base = form.copy();
+            }
+            (
+                SurfaceKind::Cone(c),
+                Self::Cone {
+                    placement,
+                    base_radius,
+                    semi_angle_deg,
+                },
+            ) => {
+                c.rev.position = placement;
+                c.base_radius = base_radius;
+                c.semi_angle_deg = semi_angle_deg;
+                c.rev.base = form.copy();
+            }
+            (SurfaceKind::Sphere(sp), Self::Sphere { placement, radius }) => {
+                sp.base.position = placement;
+                sp.radius = radius;
+                sp.base.base = form.copy();
+            }
+            (
+                SurfaceKind::Torus(t),
+                Self::Torus {
+                    placement,
+                    major_radius,
+                    minor_radius,
+                },
+            ) => {
+                t.base.position = placement;
+                t.major_radius = major_radius;
+                t.minor_radius = minor_radius;
+                t.base.base = form.copy();
+            }
             _ => return Err(not_form()),
         }
         if !evaluates_as(k, &surface, &form)? {
@@ -878,9 +923,18 @@ fn recognise(k: &Kernel, kind: SupportKind, form: &BSplineSurface) -> Result<Opt
 /// `K = 16 (p + q + 2)` for the rational evaluation of degrees `(p, q)` and the analytic
 /// one's conversion of the parameters and its trigonometry, a few ulps per operation.
 ///
+/// The analytic side is the **STEP** evaluation of the converted parameters
+/// ([`Surface::convert_uv_from_nurbs_to_step`] and [`Surface::evaluate_step_point`]),
+/// which a cone, sphere, torus and surface of revolution compute from their placement,
+/// radii, semi-angle and generator. [`Surface::evaluate_point`] would not do: a sphere, a
+/// torus and a surface of revolution take it from their NURBS base, and that base is the
+/// `form` the caller has just installed, so it would compare the form with itself and read
+/// nothing of what the caller imposed (#2588; the cone already converted and evaluated
+/// analytically, which is why only the other kinds went unchecked).
+///
 /// # Errors
 ///
-/// Those of the evaluations and of the form's knots.
+/// Those of the parameter conversion and the evaluations and of the form's knots.
 fn evaluates_as(k: &Kernel, surface: &Surface, form: &BSplineSurface) -> Result<bool> {
     let (net, p, q) = euclidean_net(form)?;
     let size = net.iter().flatten().fold(0.0_f64, |a, x| a.max(x.length()));
@@ -888,7 +942,9 @@ fn evaluates_as(k: &Kernel, surface: &Surface, form: &BSplineSurface) -> Result<
     for u in greville(form, true)? {
         for v in greville(form, false)? {
             let uv = Vec2::new(u, v);
-            let off = (surface.evaluate_point(k, uv)? - form.evaluate_point(uv)?).length();
+            let step_uv = surface.convert_uv_from_nurbs_to_step(k, uv)?;
+            let off =
+                (surface.evaluate_step_point(k, step_uv)? - form.evaluate_point(uv)?).length();
             if !matches!(
                 off.partial_cmp(&tol),
                 Some(core::cmp::Ordering::Less | core::cmp::Ordering::Equal)
