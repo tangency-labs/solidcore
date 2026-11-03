@@ -268,20 +268,18 @@ fn plan_at(b: &brep::Brep, tol: f64, turn: Option<size::Turn>) -> Result<(TessPl
     // curves) make up the work. A face refused at one step (its surface, an edge of it, its
     // boundary) is passed over by the steps after, and left out of the plan, named.
     let mut evals: Vec<Option<EvalSurface>> = Vec::new();
-    let mut params: Vec<Option<surface::Params>> = Vec::new();
     for (fi, f) in faces.iter().enumerate() {
-        let (s, p) = match surface::eval_surface(f.parameters(), f.domain) {
-            Ok((s, p)) => (Some(s), Some(p)),
+        let s = match surface::eval_surface(f.parameters()) {
+            Ok(s) => Some(s),
             Err(e) => {
                 refused.face(
                     fi,
                     unsupported(format!("face {fi} ({}): {e}", kind(&f.surface))),
                 );
-                (None, None)
+                None
             }
         };
         evals.push(s);
-        params.push(p);
     }
     let curved = evals
         .iter()
@@ -341,14 +339,11 @@ fn plan_at(b: &brep::Brep, tol: f64, turn: Option<size::Turn>) -> Result<(TessPl
     }
     let indexed: Vec<usize> = (0..faces.len()).collect();
     let face_boundary = |fi: usize, nodes: &[edges::Nodes]| {
-        let (Some(face), Some(eval), Some(map)) = (
-            faces.get(fi),
-            evals.get(fi).and_then(Option::as_ref),
-            params.get(fi).copied().flatten(),
-        ) else {
+        let (Some(face), Some(eval)) = (faces.get(fi), evals.get(fi).and_then(Option::as_ref))
+        else {
             return Err(unsupported(format!("face {fi}: missing")));
         };
-        boundary(b, fi, face, eval, &map, nodes, &rules)
+        boundary(b, fi, face, eval, nodes, &rules)
     };
     let skip = refused.flags();
     let mut boundaries: Vec<Boundary> = crate::par::map(
@@ -586,7 +581,6 @@ fn boundary(
     fi: usize,
     face: &brep::Face,
     s: &EvalSurface,
-    map: &surface::Params,
     nodes: &[edges::Nodes],
     rules: &size::Rules,
 ) -> Result<Boundary> {
@@ -612,10 +606,7 @@ fn boundary(
             .get(usize::from(!oe.forward))
             .and_then(|v| b.vertices.get(*v as usize))
             .map_or(0.0, |v| v.tolerance.min(rules.tol));
-        let Some(q) = kernel::curve2(&oe.pcurve)
-            .eval(if oe.forward { p0 } else { p1 })
-            .map(|q| map.to_eval(q))
-        else {
+        let Some(q) = kernel::curve2(&oe.pcurve).eval(if oe.forward { p0 } else { p1 }) else {
             continue;
         };
         if tol.is_finite()
@@ -707,7 +698,6 @@ fn boundary(
                 let q = pcurve.eval(t.clamp(p0, p1)).ok_or_else(|| {
                     fail(oe.edge, format!("its pcurve does not evaluate at t = {t}"))
                 })?;
-                let q = map.to_eval(q);
                 let on = s
                     .derivs(q[0], q[1])
                     .map(kernel::record_triple)
