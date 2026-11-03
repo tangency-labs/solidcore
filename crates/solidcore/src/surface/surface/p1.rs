@@ -2596,6 +2596,9 @@ impl Surface {
                         approx_tol_3d,
                     )?)
                 }
+                // a blend corner's face (#2488): no offset is built from a corner's
+                // definition, so the face offsets as its net does, keeping none
+                BlendRef::Corner { .. } => None,
             };
             match made {
                 Some(BlendOffset::Round(s)) => return Ok(Some(*s)),

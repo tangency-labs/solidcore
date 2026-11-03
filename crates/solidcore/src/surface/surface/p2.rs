@@ -3616,14 +3616,16 @@ impl Surface {
 
     /// An exact round's definition carried onto `extension`, this surface extended by the
     /// same NURBS pieces continued (`CInfinity`, #2487): the analytic class continued, still
-    /// on S. Another continuity (a ruled `G1R` extension) leaves S, so it carries none.
+    /// on S. Another continuity (a ruled `G1R` extension) leaves S, so it carries none, and
+    /// so does a corner's face (#2488), whose net continued leaves its patch's definition.
     fn carry_exact_round_on_extension(
         &self,
         extension: Self,
         extension_continuity: ContinuityType,
     ) -> Self {
-        if extension_continuity == ContinuityType::CInfinity {
-            self.carry_exact_round(extension)
+        let round = matches!(self.definition.as_deref(), Some(KeptDefinition::Round(_)));
+        if round && extension_continuity == ContinuityType::CInfinity {
+            self.carry_definition(extension)
         } else {
             extension
         }
