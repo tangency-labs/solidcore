@@ -30,3 +30,19 @@ nice -n 10 cargo test --profile difftest -p solidcore --test issue_1999_current_
 Result: the single matrix test intentionally fails its final assertion after executing all 36 cases; six invalid successes are listed (three cases in each new-construction profile). Build: 6m56s. Test execution: 2.20s. Full output, including every enabled flag and validation report, is saved locally at `reports/issue-1999/run.log` and on linuxbox at `/home/chris/solidcore-validation-notes/1999-current-main-e64c1dea8.log`.
 
 The physical gaps match the original issue, suggesting the retained split-vertex problem remains. This run does not establish the internal root cause or compare the new construction to C++; it is Rust-only regression evidence. Issue #1999 remains relevant even though the post-processing repair in PR #2003 was closed as superseded. No issue comment, commit, push or PR was created by this investigation.
+
+## Follow-up fix: PR #2530 (2026-11-03)
+
+The blend curve's approximation allowance admitted an existing crease vertex outside
+the body's vertex/face incidence bound. Under `fillet_blend_corner`, the classification
+now requires that strict body bound before inserting a vertex contact; see WR-723.
+It changes no entity tolerance and does not repair vertices after construction.
+
+On the fixed implementation, all four integration tests pass: the 36-case profile
+matrix, 18 scaled rounds, 24 cases around the contact boundaries, and two cases with
+entity tolerances larger than the body's. Every scaled round has eight faces, passes
+Level2 and manifold checks, retains its body tolerance, and has curve endpoints
+within `1e-9 * scale` of their actual vertices. The old default-path failures remain
+characterizations; multi-edge corner refusals are not counted as constructed rounds.
+This run used the `difftest` profile with `CARGO_PROFILE_DIFFTEST_OPT_LEVEL=1` on
+linuxbox. These are Rust regression results, not native parity claims.
