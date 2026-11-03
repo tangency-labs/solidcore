@@ -626,8 +626,8 @@ fn base_state(o: &mut Vec<f64>, c: &Curve) {
         }
         CurveKind::Hermite(h) => {
             o.extend([1.0, h.dim() as f64]);
-            let a = h.evaluate(0.0, 1, false);
-            let e = h.evaluate(1.0, 1, false);
+            let a = h.evaluate(0.0, 1, false).expect("order 1 is bounded");
+            let e = h.evaluate(1.0, 1, false).expect("order 1 is bounded");
             for v in a.iter().take(2).chain(e.iter().take(2)) {
                 pv(o, *v);
             }
