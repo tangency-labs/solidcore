@@ -50,7 +50,11 @@
 //!   [`SolidError::InvalidInput`].
 //! - **Curve owners.** A curve the removal installs is owned under its edge's
 //!   [`Brep::owner_identity`], the identity the B-rep check compares (`SetOwner(pEdge)`),
-//!   and `ValidateGeometry` checks it under the same identities.
+//!   and `ValidateGeometry` checks it under the same identities. As upstream, it is owned
+//!   once `SetCurve` has installed it: `SetCurve` records the edit's identity of the edge,
+//!   which a B-rep its caller names
+//!   ([`NamingScheme::Caller`](crate::topology::NamingScheme::Caller)) owns the edge's
+//!   geometry by from then on.
 //! - **Exact only (not upstream).** WR-606, the SolidCraft fork's tangency-labs/smlib
 //!   5b0534b: [`FilletRemoval::set_exact_only`] (off by default; [`delete_fillet_face`]
 //!   never sets it) makes the removal refuse what SMLib would only approximate. A side
@@ -1352,13 +1356,12 @@ impl FilletRemoval {
 
         // TRUE = delete the edge's curve (and its UV trim curves)
         with_kernel_callbacks(k, b, |_k, b, env| {
-            let owner = b.owner_identity(EntityRef::Edge(survive_edge));
-            let _ = new_curve.set_owner(Some(owner), Some(brep_p2::brep_ref(b)));
             let options = SetCurveOptions {
                 delete_old_curve: true,
                 ..SetCurveOptions::default()
             };
             edge::set_curve(b, survive_edge, Some(new_curve), options, env, [None, None])?;
+            own_edge_curve(b, survive_edge)?;
             edge::set_curve(b, delete_edge, None, options, env, [None, None])?;
             Ok(())
         })?;
