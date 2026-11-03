@@ -17,13 +17,14 @@
 
 use solidcore::blend::fillet_executive::api::fillet_edges;
 use solidcore::blend::fillet_executive::NoRoomReason;
-use solidcore::boolean::api_brep::boolean_difference;
+use solidcore::boolean::api_brep::{boolean_difference, boolean_union};
 use solidcore::geom::attribute::{AttributeStore, ObjectKey};
 use solidcore::kernel::UpstreamFixes;
 use solidcore::mass::integrator::properties::{brep_volume, PropertyAttributes};
 use solidcore::math::Point3;
 use solidcore::primitive::api_primitives::{create_box, create_cylinder};
 use solidcore::query::api_queries::edge_closest_point;
+use solidcore::topology::brep::mirror::transform_matrix;
 use solidcore::topology::brep::p1::regions;
 use solidcore::topology::brep::validation::{check_brep, CheckLevel};
 use solidcore::topology::EdgeId;
@@ -376,4 +377,78 @@ fn a_round_wider_than_both_its_faces_builds() {
         want,
         1e-9,
     );
+}
+
+/// `int sqrt(81 - u^2) du`, the area under the arc of radius 9.
+fn arc_area(u: f64) -> f64 {
+    0.5 * (u * (81.0 - u * u).sqrt() + 81.0 * (u / 9.0).asin())
+}
+
+/// The 20 x 4 x 10 block with the slot x 8..12 under a bridge 1 thick, and a rib 0.05
+/// thick across the slot along the chord of the r9 section arc (centre y 9, z 1) between
+/// 22.5 and 33.75 degrees, 1 longer each way (the fork's capi test
+/// `scenario_round_over_a_thin_rib_not_a_cut`, tangency-labs/smlib@02b6103). Its top
+/// front edge (y = 0, z = 10) rounded r9.
+fn thin_rib(k: &mut Kernel) -> (Brep, solidcore::Result<()>) {
+    let block = cuboid(k, [0.0, 0.0, 0.0], [20.0, 4.0, 10.0]);
+    let slot = cuboid(k, [8.0, -1.0, -1.0], [4.0, 6.0, 10.0]);
+    let bridged = boolean_difference(k, block, slot).unwrap();
+    let arc = |t: f64| (9.0 - 9.0 * t.cos(), 1.0 + 9.0 * t.sin());
+    let (y1, z1) = arc(22.5_f64.to_radians());
+    let (y2, z2) = arc(33.75_f64.to_radians());
+    let len = (y2 - y1).hypot(z2 - z1);
+    let (dy, dz) = ((y2 - y1) / len, (z2 - z1) / len);
+    let h = 0.05;
+    let mut rib = cuboid(k, [0.0, 0.0, 0.0], [4.0, len + 2.0, h]);
+    let m = [
+        [1.0, 0.0, 0.0, 0.0],
+        [0.0, dy, dz, 0.0],
+        [0.0, -dz, dy, 0.0],
+        [8.0, y1 - dy + 0.5 * h * dz, z1 - dz - 0.5 * h * dy, 1.0],
+    ];
+    transform_matrix(k, &mut rib, &m, true).unwrap();
+    let mut b = boolean_union(k, bridged, rib).unwrap();
+    let built = blend(k, &mut b, &[[2.0, 0.0, 10.0]], 9.0, 1);
+    (b, built)
+}
+
+/// #2328: over the slot the section runs void (its front rail in the slot), rib, void,
+/// rib, void (its top rail past the 4 deep top). The void between the rib's two crossings
+/// lies between islands of material, not behind a wall running to a rail: the round runs
+/// past the rib and is trimmed to its faces. Closed form: the bridged block 656, less the
+/// section past the pillars A = 40 - int_0^4 z(y) dy (z the arc) on 16, less the bridge
+/// (all of its 1 x 4 section) on 4, plus the rib's section inside the ball L, a slab 0.05
+/// about the chord at 9 cos 5.625 deg from the centre, on 4.
+#[test]
+fn a_round_past_a_thin_rib_across_its_slot_builds() {
+    let area = 40.0 - (4.0 + arc_area(9.0) - arc_area(5.0));
+    let d = 9.0 * 5.625_f64.to_radians().cos();
+    let lens = 2.0 * (arc_area(d + 0.025) - arc_area(d - 0.025));
+    let want = 656.0 - 16.0 * area - 16.0 + 4.0 * lens;
+    assert!((want - 401.198953621465).abs() < 1e-9, "closed form {want}");
+    builds(thin_rib, want, 1e-9);
+}
+
+/// The hollows of #2328 that the rule above keeps refused: each void piece lies behind a
+/// wall running from a rail, which the round would cut through. Without the flag the first
+/// two fail in `trim_at_creases` and the third builds 0.6 % short with its cavity closed.
+#[test]
+fn hollows_behind_a_wall_stay_refused() {
+    // a closed cavity and a pocket open from below behind the cliff (r9), and a closed
+    // cavity under the top face (r3)
+    for (o, s, r) in [
+        ([5.0, 1.0, 5.0], [10.0, 1.0, 3.0], 9.0),
+        ([5.0, 1.0, -1.0], [10.0, 1.0, 9.0], 9.0),
+        ([5.0, 0.3, 7.5], [10.0, 0.7, 2.0], 3.0),
+    ] {
+        let mut k = kernel(true);
+        let block = cuboid(&mut k, [0.0, 0.0, 0.0], [20.0, 4.0, 10.0]);
+        let hollow = cuboid(&mut k, o, s);
+        let mut b = boolean_difference(&mut k, block, hollow).unwrap();
+        let err = blend(&mut k, &mut b, &[[2.0, 0.0, 10.0]], r, 1).expect_err("refused");
+        let SolidError::FilletRefused { reason, .. } = err else {
+            panic!("{err:?}");
+        };
+        assert_eq!(reason, Some(NoRoomReason::BreaksThrough), "{o:?}");
+    }
 }
