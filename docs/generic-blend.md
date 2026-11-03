@@ -300,9 +300,10 @@ ball's sphere. Setback: the rounds stop short and a 2n-sided hole is filled.*
   rounding gate. A mitre point outside the corner is refused, naming the largest size of the
   too-wide chamfer that keeps it inside. Four or more chamfers build the facet where their
   crossings are coplanar (their mitre is refused, naming why); where they are not, the corner is a
-  patch whichever type was asked: the chamfers stop at their crossings and the setback fill at
-  order 0 closes the skew polygon of their end sections, one face, G0 to each chamfer (at four
-  sides the bilinear map of the crossings). Chamfer planes so nearly coplanar
+  patch whichever type was asked: the chamfers stop at their crossings and n bilinear
+  quadrilaterals round the crossings' centroid close the skew polygon of their end sections, G0
+  to each other and to each chamfer (at four sides, the one bilinear patch of the crossings).
+  Chamfer planes so nearly coplanar
   that the points where they meet are not determined to the part's rounding are refused, naming
   that. The corner keeps its definition: its chamfers and the points they meet in (opt-in, WR-716).
 - **Setback** [44, 43]. Each blend stops at a setback distance from the vertex. The hole has 2n

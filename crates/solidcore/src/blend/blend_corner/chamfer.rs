@@ -45,14 +45,23 @@
 //! side of the plane; the mitre of four or more is refused (not designed: the planes
 //! meet in one point only by coincidence). Where their crossings are not in one plane, the
 //! corner is a patch, whichever type was asked (tangency-labs/solidcore#2345, the owner's
-//! answer 3): the chamfers stop at their crossings, and the setback fill at order 0
-//! ([`fill_polygon`]) closes the skew polygon of their end sections, G0 to each chamfer,
-//! one face (the fill over the domain's square, trimmed by the domain's polygon). It is
-//! refused where a crossing is not on the kept side of a chamfer not through it, or where
-//! the fill stands past a face or into a chamfer of the corner (certified by its parts'
-//! control points). Its
-//! corners run round the polygon so that its normal points out of the material, chosen
-//! from the polygon's own normal before it is filled.
+//! answers): the chamfers stop at their crossings, and n bilinear quadrilaterals round the
+//! crossings' centroid C close the skew polygon of their end sections, quadrilateral m
+//! between C, the middle of the side before `X_m`, `X_m` and the middle of the side after
+//! it. A chamfer corner is G0, as its chamfers meet their faces: the quadrilaterals meet
+//! each other along the straight spokes from C and each chamfer along its end section,
+//! edge to edge. Where the crossings are in one plane they would be flat (the facet builds
+//! there). At four they are the quarters of the crossings' own bilinear patch (the
+//! hyperbolic paraboloid through them), and are that one face. No smooth patch can carry
+//! the straight end sections past four: one polynomial over a polygon is one value where
+//! two of its sides' lines meet, and past four sides non-adjacent sides' lines meet. Every
+//! corner of every quadrilateral (C, the sides' middles and the crossings) is in the
+//! crossings' convex hull, which is in the corner (each crossing on its face and its two
+//! chamfers, on the blend's side of the other faces and the kept side of the other
+//! chamfers), so the patch never stands past a face or into a chamfer: it is refused only
+//! where a crossing is not on the kept side of a chamfer not through it. The crossings run
+//! round so that the faces' normals point out of the material, chosen from the polygon's
+//! own normal.
 //!
 //! The chamfers' own surfaces are the solvers': [`chamfer_corner_edge_geom`] requires
 //! them to hold the exact lines to the corner's tolerance, as [`place_chamfer_vertices`]
@@ -68,14 +77,13 @@
 //! | [`classify_chamfer`]         | Classify: the event, a decline (why) or a refusal       |
 //! | [`place_chamfer_vertices`]   | the corner's vertices at their exact points             |
 //! | [`chamfer_corner_edge_geom`] | the corner's edges as exact lines; the facet's plane    |
-//! | [`create_chamfer_patch`]     | the facet's or the corner patch's face                  |
+//! | [`create_chamfer_patch`]     | the facet's face or the corner patch's faces            |
 //! | `MakeTopology`               | the 3x3 corner's (`make_convex_nxn_corner_topology`): the bevel's for the Mitre, the ring's for the Facet and the corner patch |
 //!
 //! Deviations: not a port. Opt-in: `Kernel::fixes.fillet_chamfer_corner` (WR-716). No
 //! recursion.
 
 use super::{foot_on_surface, swept::fmt_g, BlendChamferCorner};
-use crate::blend::blend_setback::{fill_polygon, PolygonFill};
 use crate::blend::fillet_corner::p1::face_by_two_edgeuses;
 use crate::blend::fillet_corner::p3::{CornerPatchEnv, FilletCorner};
 use crate::blend::fillet_executive::FitKind;
@@ -91,6 +99,7 @@ use crate::kernel::Kernel;
 use crate::math::{Point2, Point3, Vec2, Vec3, EFF_ZERO, EFF_ZERO_SQRT};
 use crate::nurbs::b_spline_curve::p1::{BSplineCurveForm, CanonicalData, KnotType};
 use crate::nurbs::b_spline_curve::BSplineCurve;
+use crate::nurbs::b_spline_surface::{BSplineSurface, BSplineSurfaceForm, CanonicalSurfaceData};
 use crate::nurbs::b_spline_surface_n_lib::p2::OrientType;
 use crate::surface::plane::Plane;
 use crate::surface::surface::Surface;
@@ -187,7 +196,7 @@ pub struct ChamferCornerDefinition {
     /// patch.
     pub facet_normal: Option<Vec3>,
     /// The corner patch of four or more chamfers whose crossings are not in one plane,
-    /// whichever type was asked: the order-0 fill of their end sections' polygon.
+    /// whichever type was asked: bilinear quadrilaterals round the crossings' centroid.
     pub patch: Option<ChamferPatch>,
 }
 
@@ -199,32 +208,35 @@ impl ChamferCornerDefinition {
     }
 }
 
-/// A chamfer corner's patch, as plain data: the setback fill at order 0 of the polygon of
-/// the chamfers' end sections, from its corners (the crossings) alone.
-#[derive(Debug, Clone, Copy, PartialEq)]
+/// A chamfer corner's patch, as plain data with the definition's crossings: its centre and
+/// the order its faces run in.
+#[derive(Debug, Clone, PartialEq)]
 pub struct ChamferPatch {
-    /// The interior map's degree.
-    pub degree: usize,
-    /// The most its parts' control points stand past a face (off the blend's side) or into
-    /// a chamfer (off its kept side) of the corner, at most the gate where it is built: its
-    /// certified containment.
-    pub containment: f64,
+    /// C, the crossings' centroid: every quadrilateral's first corner.
+    pub centre: Point3,
+    /// The crossings in turn (indices into the definition's), counterclockwise about the
+    /// patch's normal out of the material.
+    pub around: Vec<usize>,
 }
 
-/// The chamfer event on its corner: its definition, and the facet's or the corner patch's
-/// face from the edge geometry until the patch takes it.
+/// The chamfer event on its corner: its definition, and the facet's face or the corner
+/// patch's faces from the edge geometry until the patch takes them.
 #[derive(Debug, Clone)]
 pub struct ChamferCorner {
     /// What defines the corner.
     pub definition: ChamferCornerDefinition,
-    /// The corner patch's fill and the crossings at its domain's vertices in turn (indices
-    /// into the definition's), until the edge geometry takes it.
-    pub fill: Option<(PolygonFill, Vec<usize>)>,
-    /// The facet's plane.
-    pub surface: Option<Surface>,
-    /// Its loop: the lines X_i-X_(i+1).
+    /// The corner's faces: the facet's, or the corner patch's.
+    pub faces: Vec<CornerFace>,
+}
+
+/// One face of a chamfer corner, before it is made: its surface and its loop.
+#[derive(Debug, Clone)]
+pub struct CornerFace {
+    /// The facet's plane, or a bilinear patch of the corner patch.
+    pub surface: Surface,
+    /// Its loop's lines.
     pub curves_3d: Vec<Curve>,
-    /// Their UV lines on the plane.
+    /// Their UV lines on the surface.
     pub uv_curves: Vec<Curve>,
     /// Their orientations in the loop.
     pub orients: Vec<OrientType>,
@@ -804,9 +816,9 @@ pub fn classify_chamfer(
     } else if spread(&xs).is_none_or(|s| s > gate) {
         // four or more whose crossings are not in one plane: the corner patch
         let convex = concave0 != Some(true);
-        return corner_patch(
-            kind, v, &mu, &planes, xs, &edges, &widths, convex, gate, tol,
-        );
+        return Ok(corner_patch(
+            kind, v, &planes, xs, &edges, &widths, convex, gate,
+        ));
     } else if kind == BlendChamferCorner::Mitre {
         return Ok(unsupported(
             "Fillet Error: a mitre of four or more chamfers at a vertex is not built yet; their rails' crossings lie in one plane, which the facet closes"
@@ -852,11 +864,7 @@ pub fn classify_chamfer(
             facet_normal,
             patch: None,
         },
-        fill: None,
-        surface: None,
-        curves_3d: Vec::new(),
-        uv_curves: Vec::new(),
-        orients: Vec::new(),
+        faces: Vec::new(),
     })))
 }
 
@@ -910,24 +918,19 @@ fn spread(xs: &[Vec3]) -> Option<f64> {
 }
 
 /// The corner patch of four or more chamfers whose crossings `xs` (relative to V) are not
-/// in one plane (module docs): the event with the fill, or its refusal.
-///
-/// # Errors
-///
-/// Those of the fill that are not a refusal.
+/// in one plane (module docs): the event with the patch, or its refusal where a crossing is
+/// not on the kept side of a chamfer not through it.
 #[allow(clippy::too_many_arguments)]
 fn corner_patch(
     kind: BlendChamferCorner,
     v: Point3,
-    mu: &[Vec3],
     planes: &[ChamferPlane],
     xs: Vec<Vec3>,
     edges: &[EdgeId],
     widths: &[ChamferWidth],
     convex: bool,
     gate: f64,
-    tol: f64,
-) -> Result<ChamferClass> {
+) -> ChamferClass {
     let n = xs.len();
     // each crossing strictly on the kept side of the chamfers not through it (as the
     // facet's): else the chamfers' ends overlap, and no patch closes them
@@ -938,65 +941,24 @@ fn corner_patch(
             .enumerate()
             .any(|(j, c)| j != i && j != p && c.n.dot(*x) - c.h <= gate)
         {
-            return Ok(unsupported(
+            return unsupported(
                 "Fillet Error: a rail crossing of the chamfers at the vertex lies past another chamfer, so their ends overlap and no corner patch closes them"
                     .to_owned(),
-            ));
+            );
         }
     }
     // round the polygon so that its normal points out of the material: towards V at a
     // convex corner (the chamfers remove material), away from it at a concave one
-    let mut centre = Vec3::default();
+    let mut sum = Vec3::default();
     for x in &xs {
-        centre += *x;
+        sum += *x;
     }
-    let out = if convex { -centre } else { centre };
-    let mut order: Vec<usize> = (0..n).collect();
+    let out = if convex { -sum } else { sum };
+    let mut around: Vec<usize> = (0..n).collect();
     if newell(&xs).dot(out) < 0.0 {
-        order.reverse();
+        around.reverse();
     }
-    let corners = order
-        .iter()
-        .map(|&i| xs.get(i).map(|x| v + *x))
-        .collect::<Option<Vec<Point3>>>()
-        .ok_or_else(|| SolidError::sm_err(OP_CLASSIFY))?;
-    let fill = match fill_polygon(&corners, tol) {
-        Ok(fill) => fill,
-        Err(refusal) => match refusal.reason {
-            Some(reason) => {
-                return Ok(unsupported(format!(
-                    "Fillet Error: no corner patch closes the ends of the {n} chamfers at the vertex ({reason})"
-                )));
-            }
-            None => return Err(refusal.error),
-        },
-    };
-    // the fill within the corner: on the blend's side of every face and the kept side of
-    // every chamfer (as the facet is), certified by its parts' control points
-    let mut worst = f64::NEG_INFINITY;
-    for part in &fill.parts {
-        for p in &part.control_point_net()?.points {
-            let y = *p - v;
-            for m in mu {
-                worst = worst.max(-m.dot(y));
-            }
-            for c in planes {
-                worst = worst.max(c.h - c.n.dot(y));
-            }
-        }
-    }
-    if worst > gate {
-        return Ok(ChamferClass::Refused(ChamferRefusal {
-            error: FilletErrorType::NoRoom,
-            comment: format!(
-                "Fillet Error: the corner patch of the {n} chamfers at the vertex would stand {} past a face or a chamfer of the corner",
-                fmt_g(worst)
-            ),
-            fit_edge: None,
-            fit: None,
-        }));
-    }
-    Ok(ChamferClass::Event(Box::new(ChamferCorner {
+    ChamferClass::Event(Box::new(ChamferCorner {
         definition: ChamferCornerDefinition {
             kind,
             vertex: v,
@@ -1005,16 +967,12 @@ fn corner_patch(
             mitre: None,
             facet_normal: None,
             patch: Some(ChamferPatch {
-                degree: fill.degree,
-                containment: worst,
+                centre: v + sum * (1.0 / n as f64),
+                around,
             }),
         },
-        fill: Some((fill, order)),
-        surface: None,
-        curves_3d: Vec::new(),
-        uv_curves: Vec::new(),
-        orients: Vec::new(),
-    })))
+        faces: Vec::new(),
+    }))
 }
 
 // ---- the corner's geometry ---------------------------------------------------------------
@@ -1167,8 +1125,8 @@ pub fn chamfer_corner_edge_geom(
         return Ok(());
     }
     let event = corner.chamfer_corner.as_mut().ok_or_else(nul)?;
-    if let Some((fill, order)) = event.fill.take() {
-        return patch_face(event, fill, &order);
+    if let Some(patch) = event.definition.patch.clone() {
+        return patch_faces(event, &patch);
     }
 
     // the facet: its plane through the crossings, its normal out of the material, the
@@ -1231,113 +1189,177 @@ pub fn chamfer_corner_edge_geom(
         uv_curves.push(uv);
         orients.push(OrientType::Same);
     }
-    event.surface = Some(surface);
-    event.curves_3d = curves_3d;
-    event.uv_curves = uv_curves;
-    event.orients = orients;
+    event.faces = vec![CornerFace {
+        surface,
+        curves_3d,
+        uv_curves,
+        orients,
+    }];
     Ok(())
 }
 
-/// The corner patch's face: the fill over its domain's square, bounded by the polygon of
-/// the chamfers' end sections, each side the line between its crossings and, in the
-/// fill's parameters, the straight line between the domain's vertices it maps from
-/// (exact: along its edge the fill is the side). The domain's vertices run
-/// counterclockwise and the fill's normal out of the material ([`corner_patch`]), so the
-/// loop runs counterclockwise about the face's normal, as the facet's.
-///
-/// # Errors
-///
-/// `SM_ERR` where the order does not cover the crossings; those of the curve
-/// constructions.
-fn patch_face(event: &mut ChamferCorner, fill: PolygonFill, order: &[usize]) -> Result<()> {
-    let err = || SolidError::sm_err(OP_EDGES);
-    let xs = &event.definition.crossings;
-    let count = order.len();
-    if count != xs.len() || fill.domain.len() != count {
-        return Err(err());
-    }
-    let mut curves_3d = Vec::new();
-    let mut uv_curves = Vec::new();
-    let mut orients = Vec::new();
-    for m in 0..count {
-        let next = (m + 1) % count;
-        let p = *order.get(m).and_then(|&i| xs.get(i)).ok_or_else(err)?;
-        let q = *order.get(next).and_then(|&i| xs.get(i)).ok_or_else(err)?;
-        let (a, b) = (
-            *fill.domain.get(m).ok_or_else(err)?,
-            *fill.domain.get(next).ok_or_else(err)?,
-        );
-        let curve = Curve::from(Line::create_line_segment(3, p, q, None)?);
-        let ivl = curve.natural_interval();
-        let points = [Point3::new(a.x, a.y, 0.0), Point3::new(b.x, b.y, 0.0)];
-        let uv = BSplineCurve::create_canonical(&CanonicalData {
+/// A straight UV line from `a` to `b` over `ivl`.
+fn uv_segment(a: Point2, b: Point2, ivl: [f64; 2]) -> Result<Curve> {
+    let points = [Point3::new(a.x, a.y, 0.0), Point3::new(b.x, b.y, 0.0)];
+    Ok(Curve::from(BSplineCurve::create_canonical(
+        &CanonicalData {
             dim: 2,
             degree: 1,
             control_points: &points,
             form: BSplineCurveForm::Unspecified,
             knot_multiplicities: &[2, 2],
-            knots: &[ivl.min(), ivl.max()],
+            knots: &ivl,
             knot_type: KnotType::Unspecified,
             weights: None,
             trim: None,
-        })?;
-        curves_3d.push(curve);
-        uv_curves.push(Curve::from(uv));
-        orients.push(OrientType::Same);
-    }
-    event.surface = Some(Surface::from(fill.surface));
-    event.curves_3d = curves_3d;
-    event.uv_curves = uv_curves;
-    event.orients = orients;
-    Ok(())
+        },
+    )?))
 }
 
-/// The facet's face: its plane bounded by its loop (`MakeFaceWithCurves` in the fillet
-/// B-rep's infinite region, the plane's natural UV domain, `SM_OT_SAME`); the surface
-/// joins `corner.surfaces` and the face `corner.surface_faces` (the corner's patch face
-/// for the stitch).
+/// The bilinear patch over `span x span` with corners `p00` (`(lo, lo)`), `p10` (u at its
+/// top), `p11` and `p01` (v at its top), bounded by its four sides counterclockwise in its
+/// parameters from `p00`: each side the line between its corners and, in the parameters,
+/// the straight side of the square (exact: a bilinear patch is linear along its sides).
+fn bilinear_face(
+    p00: Point3,
+    p10: Point3,
+    p11: Point3,
+    p01: Point3,
+    span: [f64; 2],
+) -> Result<CornerFace> {
+    let (lo, hi) = (span[0], span[1]);
+    let net = BSplineSurface::create_canonical(&CanonicalSurfaceData {
+        u_degree: 1,
+        v_degree: 1,
+        control_points: &[p00, p01, p10, p11],
+        form: BSplineSurfaceForm::Unspecified,
+        u_multiplicities: &[2, 2],
+        v_multiplicities: &[2, 2],
+        u_knots: &span,
+        v_knots: &span,
+        knot_type: KnotType::Unspecified,
+        weights: None,
+        uv_domain: None,
+    })?;
+    let corners = [
+        (p00, Point2::new(lo, lo)),
+        (p10, Point2::new(hi, lo)),
+        (p11, Point2::new(hi, hi)),
+        (p01, Point2::new(lo, hi)),
+    ];
+    let mut curves_3d = Vec::new();
+    let mut uv_curves = Vec::new();
+    for (i, &(p, a)) in corners.iter().enumerate() {
+        let (q, b) = *corners
+            .get((i + 1) % 4)
+            .ok_or_else(|| SolidError::sm_err(OP_EDGES))?;
+        let curve = Curve::from(Line::create_line_segment(3, p, q, None)?);
+        let ivl = curve.natural_interval();
+        uv_curves.push(uv_segment(a, b, [ivl.min(), ivl.max()])?);
+        curves_3d.push(curve);
+    }
+    Ok(CornerFace {
+        surface: Surface::from(net),
+        curves_3d,
+        uv_curves,
+        orients: vec![OrientType::Same; 4],
+    })
+}
+
+/// The corner patch's faces (module docs): n bilinear quadrilaterals round the crossings'
+/// centroid C, quadrilateral m between C, the middle of the side before its crossing `X_m`,
+/// `X_m` and the middle of the side after it, the crossings in turn counterclockwise about
+/// the normal out of the material ([`ChamferPatch::around`]), so each face's normal points
+/// out of it. At four the quadrilaterals are the quarters of one bilinear patch, the
+/// crossings' own, and are that one face, over `[-1, 1]^2` with C at its centre.
 ///
 /// # Errors
 ///
-/// [`SolidError::null_pointer`] without the plane, the fillet B-rep or a new face; those
-/// of the face construction.
+/// `SM_ERR` where the order does not cover the crossings; those of the surface and curve
+/// constructions.
+fn patch_faces(event: &mut ChamferCorner, patch: &ChamferPatch) -> Result<()> {
+    let err = || SolidError::sm_err(OP_EDGES);
+    let xs = &event.definition.crossings;
+    let n = patch.around.len();
+    if n != xs.len() || n < 4 {
+        return Err(err());
+    }
+    let at = |m: usize| -> Result<Point3> {
+        patch
+            .around
+            .get(m % n)
+            .and_then(|&i| xs.get(i))
+            .copied()
+            .ok_or_else(err)
+    };
+    let mut faces = Vec::new();
+    if n == 4 {
+        faces.push(bilinear_face(at(0)?, at(1)?, at(2)?, at(3)?, [-1.0, 1.0])?);
+    } else {
+        for m in 0..n {
+            let (prev, x, next) = (at(m + n - 1)?, at(m)?, at(m + 1)?);
+            faces.push(bilinear_face(
+                patch.centre,
+                (prev + x) * 0.5,
+                x,
+                (x + next) * 0.5,
+                [0.0, 1.0],
+            )?);
+        }
+    }
+    event.faces = faces;
+    Ok(())
+}
+
+/// The corner's faces: the facet's plane, or the corner patch's bilinear faces, each bounded
+/// by its loop (`MakeFaceWithCurves` in the fillet B-rep's infinite region, its surface's
+/// natural UV domain, `SM_OT_SAME`); the surfaces join `corner.surfaces` and the faces
+/// `corner.surface_faces` (the corner's patch faces for the stitch, which glues them to
+/// each other and to the chamfers' end sections, split at the patch's vertices on them).
+///
+/// # Errors
+///
+/// [`SolidError::null_pointer`] without a face, the fillet B-rep or a new face; those of the
+/// face construction.
 pub fn create_chamfer_patch(
     corner: &mut FilletCorner,
     env: &mut CornerPatchEnv<'_, '_>,
 ) -> Result<()> {
     let nul = || SolidError::null_pointer(OP_PATCH);
     let event = corner.chamfer_corner.as_mut().ok_or_else(nul)?;
-    let surface = event.surface.take().ok_or_else(nul)?;
-    let curves_3d = std::mem::take(&mut event.curves_3d);
-    let uv_curves = std::mem::take(&mut event.uv_curves);
-    let orients = std::mem::take(&mut event.orients);
+    let faces = std::mem::take(&mut event.faces);
+    if faces.is_empty() {
+        return Err(nul());
+    }
     let fillet = env.fillet.as_mut().ok_or_else(nul)?;
-    let input = FaceCurvesInput {
-        loops: vec![curves_3d.len()],
-        curves_3d: Some(curves_3d.into_iter().map(Some).collect()),
-        uv_curves: Some(uv_curves),
-        orientations: orients,
-        loop_points: Vec::new(),
-    };
-    let uv_domain = surface.natural_uv_domain_with_nurb(env.k)?;
-    let region = fillet.brep.infinite_region();
-    let key_of = fillet.notify.key_of;
-    let face_ref = |f| key_of(EntityRef::Face(f));
-    let made = make_face_with_curves(
-        env.k,
-        fillet.brep,
-        region,
-        input,
-        surface.clone(),
-        &uv_domain,
-        OrientType::Same,
-        None,
-        &face_ref,
-        &mut fillet.notify,
-    )?;
-    let face = made.face.ok_or_else(nul)?;
-    corner.surfaces.push(surface);
-    corner.surface_faces.push(face);
+    for face in faces {
+        let input = FaceCurvesInput {
+            loops: vec![face.curves_3d.len()],
+            curves_3d: Some(face.curves_3d.into_iter().map(Some).collect()),
+            uv_curves: Some(face.uv_curves),
+            orientations: face.orients,
+            loop_points: Vec::new(),
+        };
+        let uv_domain = face.surface.natural_uv_domain_with_nurb(env.k)?;
+        let region = fillet.brep.infinite_region();
+        let key_of = fillet.notify.key_of;
+        let face_ref = |f| key_of(EntityRef::Face(f));
+        let made = make_face_with_curves(
+            env.k,
+            fillet.brep,
+            region,
+            input,
+            face.surface.clone(),
+            &uv_domain,
+            OrientType::Same,
+            None,
+            &face_ref,
+            &mut fillet.notify,
+        )?;
+        let made = made.face.ok_or_else(nul)?;
+        corner.surfaces.push(face.surface);
+        corner.surface_faces.push(made);
+    }
     Ok(())
 }
 

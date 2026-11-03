@@ -1572,9 +1572,10 @@ pub struct UpstreamFixes {
     /// chamfers. Four or more chamfers whose crossings lie in one plane build the facet
     /// (their mitre is refused, naming why); where their crossings are not in one plane the
     /// corner is a patch, whichever type was asked: the chamfers stop at their crossings and
-    /// the setback fill at order 0 (`blend_setback::fill_polygon`) closes the skew polygon of
-    /// their end sections, one face, G0 to each chamfer, refused where it would stand past a
-    /// face or into a chamfer. Chamfer planes so nearly coplanar that the points where they
+    /// n bilinear quadrilaterals round the crossings' centroid close the skew polygon of
+    /// their end sections, G0 to each other and to each chamfer (at four, the one bilinear
+    /// patch of the crossings), within the crossings' convex hull and so in the corner.
+    /// Chamfer planes so nearly coplanar that the points where they
     /// meet are not determined to the part's rounding are refused with
     /// `FilletErrorType::CornerUnsupported`, naming that. The pinned corner marches the
     /// mitre's edges as surface intersections, refuses a mitre of four or more chamfers with

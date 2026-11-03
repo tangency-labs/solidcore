@@ -113,7 +113,6 @@ mod certify;
 mod convexity;
 mod curved;
 mod graph;
-mod polygon;
 mod qp;
 mod scale;
 mod spring;
