@@ -397,10 +397,10 @@ fn provenance_goes_through_splits_and_merges() {
     );
 }
 
-/// The merge and coincidence rules, as the kernel's attribute store runs them: the survivor of
-/// two merged entities carries both's data, and an entity found lying on another hands its data
-/// on to that one. (The kernel's boolean merges coplanar faces and collinear edges without a
-/// merge event, so no body edit reaches them yet: the data of the one removed is dropped.)
+/// The merge and coincidence rules, as the kernel's attribute store runs them: a merge runs
+/// once per attribute id with the first source's value (`MergeInBrep`'s `Merge(a, b, a)`),
+/// and the survivor still carries both sources' data; an entity found lying on another hands
+/// its data on to that one.
 #[test]
 fn provenance_goes_through_merges_and_coincidences() {
     use crate::provenance::Carried;
@@ -427,12 +427,97 @@ fn provenance_goes_through_merges_and_coincidences() {
     };
     let ha = on(&mut store, a, Origin(vec![1]));
     on(&mut store, b, Origin(vec![2]));
-    store.merge(ha, a, b, b).unwrap();
-    assert_eq!(read(&store, b), Some(Origin(vec![1, 2])));
+    store.merge(ha, a, b, a).unwrap();
+    assert_eq!(read(&store, a), Some(Origin(vec![1, 2])));
     let hc = on(&mut store, c, Origin(vec![3]));
     on(&mut store, d, Origin(vec![4]));
     store.coincident(hc, c, d).unwrap();
     assert_eq!(read(&store, d), Some(Origin(vec![3, 4])));
+}
+
+/// The data of `b`'s entity `e`.
+fn origins(b: &Brep, e: EntityRef) -> Vec<usize> {
+    provenance::read::<Origin>(b, e).map_or_else(Vec::new, |o| o.0)
+}
+
+/// Two unit boxes side by side, united: the kernel merges their coplanar sides and their
+/// collinear edges (`MergeInBrep`), and the merged face and edge carry both boxes' data.
+#[test]
+fn a_union_keeps_both_boxes_provenance_on_what_it_merges() {
+    use solidcore::boolean::api_brep::boolean_union;
+    use solidcore::primitive::api_primitives::create_box;
+    use solidcore::query::api_queries::{edge_bounding_box, face_bounding_box};
+    all_fixes();
+    let u = run("union", |k| {
+        let mut a = create_box(k, solidcore::Vec3::new(0.0, 0.0, 0.0), 1.0, 1.0, 1.0)?;
+        tag(&mut a, 0);
+        let mut b = create_box(k, solidcore::Vec3::new(1.0, 0.0, 0.0), 1.0, 1.0, 1.0)?;
+        tag(&mut b, 1000);
+        boolean_union(k, a, b)
+    })
+    .unwrap();
+    assert_eq!((u.face_list().len(), u.edge_list().len()), (6, 12));
+    let k = solidcore::kernel::Kernel::default();
+    let from_both = |v: &[usize], lo: usize| {
+        v.len() == 2
+            && v.iter().any(|&x| (lo..lo + 100).contains(&x))
+            && v.iter().any(|&x| (1000 + lo..1100 + lo).contains(&x))
+    };
+    // the top, z = 1 over x in [0, 2]
+    let top = u
+        .face_list()
+        .iter()
+        .copied()
+        .find(|&f| {
+            let bx = face_bounding_box(&k, &u, f, true).unwrap();
+            (bx.min().z - 1.0).abs() < 1e-9 && (bx.max().z - 1.0).abs() < 1e-9
+        })
+        .unwrap();
+    let on_top = origins(&u, EntityRef::Face(top));
+    assert!(from_both(&on_top, 0), "{on_top:?}");
+    // the edge along x at y = 0, z = 0
+    let along = u
+        .edge_list()
+        .iter()
+        .copied()
+        .find(|&e| {
+            let bx = edge_bounding_box(&k, &u, e, true).unwrap();
+            bx.max().x - bx.min().x > 1.5 && bx.max().y.abs() < 1e-9 && bx.max().z.abs() < 1e-9
+        })
+        .unwrap();
+    let on_edge = origins(&u, EntityRef::Edge(along));
+    assert!(from_both(&on_edge, 100), "{on_edge:?}");
+}
+
+/// A box's edge deleted: the two faces it parted merge into one, which carries both's data.
+#[test]
+fn a_face_merge_by_delete_edge_keeps_both_faces_provenance() {
+    use solidcore::primitive::api_primitives::create_box;
+    use solidcore::topology::brep::p3::edit_brep;
+    use solidcore::topology::brep::p4::{delete_edge, DeleteEnv};
+    all_fixes();
+    let b = run("merged", |k| {
+        let mut b = create_box(k, solidcore::Vec3::new(0.0, 0.0, 0.0), 1.0, 1.0, 1.0)?;
+        tag(&mut b, 0);
+        let e = b.edge_list()[0];
+        edit_brep(k, &mut b, |k, b, scope| {
+            delete_edge(k, b, &mut DeleteEnv::from_notify(scope.env), e, None)
+        })?;
+        Ok(b)
+    })
+    .unwrap();
+    assert_eq!(b.face_list().len(), 5);
+    let merged: Vec<Vec<usize>> = b
+        .face_list()
+        .iter()
+        .map(|&f| origins(&b, EntityRef::Face(f)))
+        .filter(|o| o.len() == 2)
+        .collect();
+    assert_eq!(
+        merged.len(),
+        1,
+        "one face carries two faces' data: {merged:?}"
+    );
 }
 
 /// A solid input must give a solid: an empty result is `Empty`, a box turned inside out is
