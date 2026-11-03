@@ -313,12 +313,7 @@ pub(crate) fn turn(a: Vec3, b: Vec3) -> f64 {
 mod tests {
     use super::*;
 
-    fn record(b: crate::Result<crate::Body>) -> brep::Brep {
-        match b.and_then(|b| crate::brep_record(&b)) {
-            Ok(r) => r,
-            Err(e) => panic!("{e}"),
-        }
-    }
+    use crate::planner::tests::fixture;
 
     fn sample(b: &brep::Brep, ei: usize, rules: &Rules, h: f64) -> Nodes {
         match sample_edge(b, ei, rules, h) {
@@ -336,7 +331,8 @@ mod tests {
 
     #[test]
     fn circle_edges_are_within_tolerance_and_end_on_vertices() {
-        let cyl = record(crate::cylinder(Vec3::ZERO, Vec3::Z, 10.0, 5.0));
+        // A cylinder of radius 10 and length 5 up z from the origin.
+        let cyl = fixture("cylinder_r10_h5");
         for tol in [0.1, 0.01, 0.001] {
             for (ei, e) in cyl.edges.iter().enumerate() {
                 let pts = sample(
@@ -370,7 +366,8 @@ mod tests {
 
     #[test]
     fn edges_are_split_to_the_side_length_and_turn() {
-        let cyl = record(crate::cylinder(Vec3::ZERO, Vec3::Z, 10.0, 5.0));
+        // A cylinder of radius 10 and length 5 up z from the origin.
+        let cyl = fixture("cylinder_r10_h5");
         for (ei, e) in cyl.edges.iter().enumerate() {
             let pts = sample(
                 &cyl,
@@ -416,13 +413,9 @@ mod tests {
     /// face's pcurve of the edge puts each node on that face's surface, at the node.
     #[test]
     fn edge_nodes_carry_their_parameters_on_both_faces() {
-        let pin = crate::cylinder(Vec3::new(5.0, 5.0, -1.0), Vec3::Z, 2.0, 6.0);
-        let cross = crate::cylinder(Vec3::new(5.0, -1.0, 2.0), Vec3::Y, 1.0, 12.0);
-        let body = record(pin.and_then(|pin| {
-            let cross = cross?;
-            crate::boolean(&pin, &cross, crate::BoolOp::Cut)?
-                .ok_or_else(|| crate::TessError::Failed("cut: nothing left".into()))
-        }));
+        // A cylinder of radius 2 up z through (5, 5, -1), 6 long, less a cylinder of radius 1
+        // along y through (5, -1, 2), 12 long.
+        let body = fixture("cylinder_with_cross_hole");
         let rules = Rules {
             tol: 0.01,
             max_len: f64::INFINITY,
@@ -452,8 +445,9 @@ mod tests {
                 else {
                     panic!("evaluates")
                 };
+                let pcurve = kernel::curve2(&oe.pcurve);
                 for (t, p) in n.params.iter().zip(&n.points) {
-                    let Some(q) = oe.pcurve.eval(*t) else {
+                    let Some(q) = pcurve.eval(*t) else {
                         panic!("pcurve at {t}")
                     };
                     let q = map.to_eval(q);
