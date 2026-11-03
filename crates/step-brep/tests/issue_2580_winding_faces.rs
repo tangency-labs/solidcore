@@ -373,8 +373,20 @@ fn ftc_11_rb_volume_is_wrong_known_failing() {
          {deviation:.2e} relative"
     );
     assert!(
+        deviation.is_finite(),
+        "{name}: no measurable volume ({measured} mm³), so the known failure is not the one pinned"
+    );
+    assert!(
         deviation > CLOSED_FORM_TOLERANCE,
         "{name} now closes at its closed form ({measured} against {closed_form}); move it \
          to a closed-form volume test"
     );
+}
+
+/// A volume that is not finite never counts as close to its expected value.
+#[test]
+fn relative_deviation_of_a_non_finite_volume_is_infinite() {
+    assert_eq!(relative(f64::NAN, 1.0), f64::INFINITY);
+    assert_eq!(relative(1.0, f64::INFINITY), f64::INFINITY);
+    assert_eq!(relative(3.0, 4.0), 0.25);
 }

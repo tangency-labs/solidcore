@@ -329,7 +329,12 @@ fn str_at(record: &Record, index: usize) -> Option<&str> {
     }
 }
 
-/// `|a - b| / max(|a|, |b|)`.
+/// `|a - b| / max(|a|, |b|)`, and infinite when either value is not finite, so a NaN or
+/// infinite volume fails every `deviation <= tolerance` check instead of slipping past a
+/// `deviation > tolerance` one (`NaN > t` is false).
 pub fn relative(a: f64, b: f64) -> f64 {
+    if !a.is_finite() || !b.is_finite() {
+        return f64::INFINITY;
+    }
     (a - b).abs() / a.abs().max(b.abs()).max(f64::MIN_POSITIVE)
 }
