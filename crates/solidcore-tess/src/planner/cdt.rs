@@ -546,6 +546,26 @@ fn scan(
     true
 }
 
+/// Whether `q` lies inside the region the loops `polys` bound, by the even–odd rule [`scan`]
+/// keeps lattice seeds by: an odd number of loop sides cross the line through `q` along u
+/// before it.
+pub(crate) fn inside(polys: &[&[[f64; 2]]], q: [f64; 2]) -> bool {
+    let [u, v] = q;
+    let mut before = 0usize;
+    for poly in polys {
+        let n = poly.len();
+        for k in 0..n {
+            let (Some(a), Some(b)) = (poly.get(k), poly.get((k + 1) % n)) else {
+                continue;
+            };
+            if (a[1] > v) != (b[1] > v) && a[0] + (v - a[1]) * (b[0] - a[0]) / (b[1] - a[1]) < u {
+                before += 1;
+            }
+        }
+    }
+    before % 2 == 1
+}
+
 /// Most lattice seeds of one face.
 const MAX_SEEDS: usize = 200_000;
 
