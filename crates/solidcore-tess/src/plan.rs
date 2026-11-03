@@ -8,7 +8,7 @@
 //! and the GPU evaluator runs the same maths in a compute shader. Both evaluate the kernel's
 //! [`EvalSurface`] forms, so the two cannot drift apart.
 
-use crate::{Mesh, Result, TessError};
+use crate::{Mesh, RefusedFace};
 use solidcore::eval::EvalSurface;
 use solidcore_convert::{kvec3, vec3};
 use solidcore_record::Vec3;
@@ -55,30 +55,41 @@ pub struct TessPlan {
 
 impl TessPlan {
     /// Evaluate on the CPU into an indexed mesh (vertices are shared within a face, not
-    /// across faces, so creases keep their own normals).
+    /// across faces, so creases keep their own normals), with the faces left out of it.
     ///
-    /// WIP (stage 2): the rule for a vertex the kernel's evaluator refuses (no value, or a
-    /// pole with no normal) is being settled with the evaluator's switch; until then such a
-    /// vertex refuses the whole plan.
-    ///
-    /// # Errors
-    /// [`TessError::Failed`] naming the face and why its vertex does not evaluate.
-    pub fn evaluate(&self) -> Result<Mesh> {
+    /// A face a vertex of which the kernel's evaluator refuses (no value there, or a pole of
+    /// higher order with no limit normal) is left out whole, nothing substituted, and returned
+    /// with why: the caller reports it as unmeshed.
+    #[must_use]
+    pub fn evaluate(&self) -> (Mesh, Vec<RefusedFace>) {
         let mut out = Mesh::default();
+        let mut refused = Vec::new();
         for f in &self.faces {
-            let base = out.positions.len();
             let surface = f.surface.and_then(|i| self.surfaces.get(i as usize));
+            let mut positions = Vec::with_capacity(f.uv.len());
+            let mut normals = Vec::with_capacity(f.uv.len());
+            let mut why = None;
             for (k, uv) in f.uv.iter().enumerate() {
                 let (p, n) = match surface {
-                    Some(s) => solidcore_convert::pair(
-                        s.eval(uv[0], uv[1]).map_err(|e| TessError::Failed(format!("face {}: vertex {k}: {}", f.face, crate::eval_message(e))))?,
-                    ),
+                    Some(s) => match s.eval(uv[0], uv[1]) {
+                        Ok(pn) => solidcore_convert::record_pair(pn),
+                        Err(e) => {
+                            why = Some(format!("vertex {k} at {uv:?}: {}", crate::eval_message(e)));
+                            break;
+                        }
+                    },
                     None => (Vec3::ZERO, f.normals.get(k).copied().unwrap_or(Vec3::Z)),
                 };
-                let p = f.fixed.get(k).copied().unwrap_or(p);
-                out.positions.push(p);
-                out.normals.push(if f.flip { -n } else { n });
+                positions.push(f.fixed.get(k).copied().unwrap_or(p));
+                normals.push(if f.flip { -n } else { n });
             }
+            if let Some(reason) = why {
+                refused.push(RefusedFace { face: f.face as usize, reason });
+                continue;
+            }
+            let base = out.positions.len();
+            out.positions.extend(positions);
+            out.normals.extend(normals);
             for t in &f.triangles {
                 if f.has_nodes(t) {
                     let at = |i: u32| u32::try_from(base + i as usize).unwrap_or(u32::MAX);
@@ -89,7 +100,7 @@ impl TessPlan {
         }
         out.edges = self.edges.clone();
         out.edge_faces = self.edge_faces.clone();
-        Ok(out)
+        (out, refused)
     }
 
     /// Which of the body's `faces` faces have triangles in [`TessPlan::evaluate`]'s mesh,
@@ -226,7 +237,7 @@ mod tests {
             edges: vec![vec![Vec3::new(1.0, 1.0, 1.0)]],
             edge_faces: vec![vec![0, 1]],
         };
-        let (a, b) = (plan.evaluate().unwrap(), plan.transformed(&m).evaluate().unwrap());
+        let (a, b) = (plan.evaluate().0, plan.transformed(&m).evaluate().0);
         assert_eq!(a.triangles, b.triangles);
         for (p, q) in a.positions.iter().zip(&b.positions) {
             assert!(close(apply(*p), *q, 1e-12), "{p:?} -> {q:?}");
@@ -257,7 +268,7 @@ mod tests {
             edges: vec![],
             edge_faces: vec![],
         };
-        let m = plan.evaluate().unwrap();
+        let m = plan.evaluate().0;
         assert_eq!(m.positions.len(), 3);
         assert_eq!(m.positions.first().copied(), Some(Vec3::new(0.0, 0.0, 1e-9)));
         assert_eq!(m.triangles, vec![[0, 1, 2]]);
@@ -270,7 +281,7 @@ mod tests {
         plan.faces.extend([only(0, vec![[0, 1, 9]]), only(1, vec![]), only(2, vec![[2, 1, 0]]), only(7, vec![[0, 1, 2]])]);
         let has = plan.faces_with_triangles(5);
         let mut evaluated = vec![false; 5];
-        for f in plan.evaluate().unwrap().tri_face {
+        for f in plan.evaluate().0.tri_face {
             if let Some(h) = evaluated.get_mut(f as usize) {
                 *h = true;
             }
