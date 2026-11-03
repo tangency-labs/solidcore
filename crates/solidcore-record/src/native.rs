@@ -83,10 +83,6 @@ pub fn decode(bytes: &[u8]) -> Result<Saved> {
     check_value(&value)?;
     let saved: Saved = serde_json::from_value(value).map_err(invalid)?;
     check(&saved)?;
-    let size = saved.runtime.size;
-    if !(size.is_finite() && size >= 0.0) {
-        return Err(invalid("runtime values"));
-    }
     Ok(saved)
 }
 
@@ -102,10 +98,11 @@ pub fn write_value(value: &Value, out: &mut Vec<u8>) -> Result<()> {
     binary::write(value, out, 0)
 }
 
-/// The record's structure ([`Brep::validate`]) and the metadata's agreement with it.
+/// The record's structure ([`Brep::validate`]), metadata agreement and finite nonnegative runtime size.
 pub fn check(saved: &Saved) -> Result<()> {
     saved.solid.validate().map_err(invalid)?;
     let (faces, edges) = (saved.solid.faces.len(), saved.solid.edges.len());
+    let size = saved.runtime.size;
     let saved = &saved.metadata;
     if saved.version != envelope::VERSION {
         return Err(invalid("metadata version"));
@@ -148,6 +145,9 @@ pub fn check(saved: &Saved) -> Result<()> {
             }))
     {
         return Err(invalid("face paint"));
+    }
+    if !(size.is_finite() && size >= 0.0) {
+        return Err(invalid("runtime values"));
     }
     Ok(())
 }
@@ -259,7 +259,10 @@ mod tests {
                 saved.runtime.size = $size;
                 let expected = Some("native B-rep: runtime values".to_owned());
                 assert_eq!(
-                    (check(&saved).err().map(|e| e.to_string()), encode(&saved).err().map(|e| e.to_string())),
+                    (
+                        check(&saved).err().map(|e| e.to_string()),
+                        encode(&saved).err().map(|e| e.to_string())
+                    ),
                     (expected.clone(), expected)
                 );
             }
