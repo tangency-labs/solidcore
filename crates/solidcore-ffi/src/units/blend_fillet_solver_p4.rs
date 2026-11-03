@@ -32,6 +32,8 @@
 //! [`with_fresh_static_step`] runs a case in a fresh child process
 //! ([`crate::isolate::fresh_process`]) and reads the static there after the case, so
 //! the value is a compared output of that case alone; it is never seeded into Rust.
+//! The SMLib fork the difftest is pinned to has no such static (it picks the step for each
+//! point, tangency-labs/smlib 9e17f64): there the probe reads its crossing point's `1e-5`.
 //!
 //! # `calc_geom`
 //!
@@ -463,13 +465,18 @@ pub fn static_step_after_tangent() -> Result<f64, FfiError> {
 /// latch made in this process (by a C++ call outside [`crate::isolate::fresh_process`])
 /// makes both read the latched value.
 ///
+/// The SMLib fork the difftest is pinned to has no `sdStaticStep`: it picks the step for
+/// each point (tangency-labs/smlib 9e17f64), so nothing can latch and both read `1e-5`.
+/// That also reads as unlatched; against v1.0.1 it is a latch at `1e-5`, which this check
+/// cannot tell from the fork (a latch at `1e-3` it still finds).
+///
 /// # Errors
 ///
 /// As [`static_step`], or [`crate::SC_ERR_CHILD_CRASHED`] for a child that did not finish.
 pub fn parent_static_step_unlatched() -> Result<bool, FfiError> {
     let plain = crate::isolate::fresh_process(|| Ok(vec![static_step()?]))?;
     let tangent = crate::isolate::fresh_process(|| Ok(vec![static_step_after_tangent()?]))?;
-    Ok(plain == [1.0e-5] && tangent == [1.0e-3])
+    Ok(plain == [1.0e-5] && (tangent == [1.0e-3] || tangent == [1.0e-5]))
 }
 
 /// [`parent_static_step_unlatched`] as a check: `Ok` when this process's `sdStaticStep`
