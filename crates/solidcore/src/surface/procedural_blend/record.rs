@@ -578,6 +578,8 @@ pub enum CornerRecord {
     End(EndCornerRecord),
     /// A Setback's fill patch.
     Setback(SetbackCornerRecord),
+    /// A Mixed corner's face.
+    Mixed(Box<MixedCornerRecord>),
 }
 
 /// A Swept turn (#2488): the end section of its two rounds revolved about the side edge,
@@ -655,6 +657,89 @@ pub struct SetbackCornerRecord {
     pub patch: u32,
     /// The net, the patch.
     pub net: NurbsSurfaceRecord,
+}
+
+/// A piecewise Bezier curve in R^4 (homogeneous), segment s on `[brk[s], brk[s + 1]]`.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct BezierCurveRecord {
+    /// The breaks.
+    pub brk: Vec<f64>,
+    /// The segments' control points, all of one degree.
+    pub seg: Vec<Vec<[f64; 4]>>,
+}
+
+/// A side of a Mixed face and its ribbon, as the Coons rule reads it.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct MixedSideRecord {
+    /// The side.
+    pub c: BezierCurveRecord,
+    /// Its transversal direction field.
+    pub dir: BezierCurveRecord,
+    /// Whether the field is the one shared along X-V.
+    pub shared: bool,
+    /// alpha, beta, gamma at its ends.
+    pub val: [[f64; 3]; 2],
+    /// Their derivatives.
+    pub der: [[f64; 3]; 2],
+    /// The field at its ends.
+    pub dir_val: [[f64; 4]; 2],
+    /// The field's derivative at its ends.
+    pub dir_der: [[f64; 4]; 2],
+    /// The derivative's part per unit of the inflection's rate at its ends.
+    pub dir_k: [[f64; 4]; 2],
+    /// The cross field in the side's tangent's place.
+    pub t: BezierCurveRecord,
+    /// Whether it has one.
+    pub has_t: bool,
+}
+
+/// A Mixed corner's face (#2488): its rule (the Coons patch of its four sides, bilinear for
+/// chamfers, turned or not), its supports (the two trimmed blends and T), its trimline's
+/// blend, side and uv, its conic's side, the construction's tolerance and its net.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct MixedCornerRecord {
+    /// The two blends B1, B2.
+    pub blends: [SupportRecord; 2],
+    /// T.
+    pub common: SupportRecord,
+    /// The four sides c0, c1, d0, d1.
+    pub sides: Vec<MixedSideRecord>,
+    /// Whether the rule is the bilinear Coons patch.
+    pub bilinear: bool,
+    /// Whether the patch is turned.
+    pub transposed: bool,
+    /// The trimline's blend (0 or 1).
+    pub blend: u32,
+    /// The trimline's side.
+    pub trim_side: u32,
+    /// The trimline's uv on its blend.
+    pub trim_uv: BezierCurveRecord,
+    /// The conic's side.
+    pub conic_side: u32,
+    /// The construction's tolerance.
+    pub tol: f64,
+    /// The net.
+    pub net: NurbsSurfaceRecord,
+}
+
+impl BezierCurveRecord {
+    fn validate(&self, field: &'static str) -> Result<(), RecordError> {
+        // (an empty curve is a field the rule does not read)
+        if !(self.brk.is_empty() && self.seg.is_empty()) && self.brk.len() != self.seg.len() + 1 {
+            return Err(refuse(field, "a curve has one break more than segments"));
+        }
+        let degree = self.seg.first().map_or(0, Vec::len);
+        if self.seg.iter().any(|s| s.len() != degree)
+            || !all_finite(&self.brk)
+            || self.seg.iter().flatten().any(|q| !all_finite(q))
+        {
+            return Err(refuse(
+                field,
+                "a curve's segments are of one degree and finite",
+            ));
+        }
+        Ok(())
+    }
 }
 
 /// A support or net of a corner's: a NURBS form (corners' faces are not blends here).
@@ -747,6 +832,41 @@ impl CornerRecord {
                     return Err(refuse(
                         "patch",
                         "a setback's fill has two patches per round",
+                    ));
+                }
+                r.net.validate("net")
+            }
+            Self::Mixed(r) => {
+                for b in &r.blends {
+                    match b {
+                        SupportRecord::Nurbs { form, .. } => form.validate("blends")?,
+                        SupportRecord::Blend(b) => b.validate()?,
+                    }
+                }
+                corner_surface(&r.common, "common")?;
+                if r.sides.len() != 4 || r.blend > 1 || r.trim_side > 3 || r.conic_side > 3 {
+                    return Err(refuse("sides", "a mixed face has four sides on two blends"));
+                }
+                for side in &r.sides {
+                    side.c.validate("sides")?;
+                    side.dir.validate("sides")?;
+                    side.t.validate("sides")?;
+                    let numbers = side.val.iter().chain(&side.der).flatten();
+                    let fields = side
+                        .dir_val
+                        .iter()
+                        .chain(&side.dir_der)
+                        .chain(&side.dir_k)
+                        .flatten();
+                    if !numbers.chain(fields).all(|x| x.is_finite()) {
+                        return Err(refuse("sides", "a side's numbers are finite"));
+                    }
+                }
+                r.trim_uv.validate("trim_uv")?;
+                if !(r.tol.is_finite() && r.tol > 0.0) {
+                    return Err(refuse(
+                        "tol",
+                        "a mixed face's tolerance is finite and positive",
                     ));
                 }
                 r.net.validate("net")

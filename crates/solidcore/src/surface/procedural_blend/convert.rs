@@ -15,13 +15,14 @@ use super::chamfer::{ChamferDefinition, ChamferSize};
 use super::corner::{CornerDefinition, SetbackFill};
 use super::exact::{ExactClass, ExactRound};
 use super::record::{
-    BlendDefinitionRecord, ChamferRecord, ChamferSizeRecord, ClassInputsRecord, CornerRecord,
-    EndCornerRecord, ExactClassRecord, ExactNetKindRecord, ExactNetRecord, ExactRoundRecord,
-    LeaderMapRecord, NurbsCurveRecord, NurbsSurfaceRecord, ParameterMapRecord, PlaneRecord,
-    ProceduralBlendRecord, RadiusRecord, SetbackCornerRecord, SetbackRoundRecord,
-    SupportKindRecord, SupportRecord, SweptCornerRecord,
+    BezierCurveRecord, BlendDefinitionRecord, ChamferRecord, ChamferSizeRecord, ClassInputsRecord,
+    CornerRecord, EndCornerRecord, ExactClassRecord, ExactNetKindRecord, ExactNetRecord,
+    ExactRoundRecord, LeaderMapRecord, MixedCornerRecord, MixedSideRecord, NurbsCurveRecord,
+    NurbsSurfaceRecord, ParameterMapRecord, PlaneRecord, ProceduralBlendRecord, RadiusRecord,
+    SetbackCornerRecord, SetbackRoundRecord, SupportKindRecord, SupportRecord, SweptCornerRecord,
 };
 use super::{BlendDefinitionInput, BlendRef, ProceduralBlend, BLEND_MAX_DEPTH};
+use crate::blend::blend_corner::mixed::algebra::{Crv, Side};
 use crate::blend::blend_setback::{Face, Round};
 use crate::blend::fillet_exact::{classify_supports, BlendSpine, ClassInputs};
 use crate::blend::fillet_section::section::GnSectionFsg;
@@ -688,6 +689,25 @@ pub fn corner_to_record(k: &Kernel, surface: &Surface) -> Result<CornerRecord> {
                 net: surface_record(&form)?,
             })
         }
+        CornerDefinition::Mixed(d) => {
+            let Some(form) = as_b_spline(k, surface)? else {
+                return Err(SolidError::sm_err(OP_CORNER_TO));
+            };
+            let [b1, b2] = &d.blends;
+            CornerRecord::Mixed(Box::new(MixedCornerRecord {
+                blends: [support_record(k, b1, 1)?, support_record(k, b2, 1)?],
+                common: support_record(k, &d.common, 1)?,
+                sides: d.sides.iter().map(side_record).collect(),
+                bilinear: d.bilinear,
+                transposed: d.transposed,
+                blend: to_u32(d.blend)?,
+                trim_side: to_u32(d.trim_side)?,
+                trim_uv: bezier_record(&d.trim_uv),
+                conic_side: to_u32(d.conic_side)?,
+                tol: d.tol,
+                net: surface_record(&form)?,
+            }))
+        }
     })
 }
 
@@ -791,6 +811,36 @@ pub fn corner_from_record(k: &Kernel, rec: &CornerRecord) -> Result<Surface> {
             )?);
             return Ok(net);
         }
+        CornerRecord::Mixed(r) => {
+            let blend = |b: &SupportRecord| match b {
+                SupportRecord::Blend(b) => Ok(Surface::from(from_record_at(k, b, 1)?)),
+                other @ SupportRecord::Nurbs { .. } => corner_surface_of(k, other),
+            };
+            let blends = [blend(&r.blends[0])?, blend(&r.blends[1])?];
+            let sides: Vec<Side> = r.sides.iter().map(side_of).collect();
+            let Ok(sides) = <[Side; 4]>::try_from(sides) else {
+                return Err(SolidError::invalid_input(
+                    OP_CORNER_FROM,
+                    "a mixed face has four sides",
+                ));
+            };
+            let mut net = Surface::from(surface_of(&r.net)?);
+            net.set_corner_definition(CornerDefinition::mixed(
+                k,
+                [&blends[0], &blends[1]],
+                &corner_surface_of(k, &r.common)?,
+                sides,
+                (r.bilinear, r.transposed),
+                (
+                    r.blend as usize,
+                    r.trim_side as usize,
+                    bezier_of(&r.trim_uv),
+                ),
+                r.conic_side as usize,
+                r.tol,
+            )?);
+            return Ok(net);
+        }
     };
     let mut net = corner_surface_of(k, net)?;
     net.set_corner_definition(definition);
@@ -809,4 +859,52 @@ pub fn corner_rebuild(k: &Kernel, rec: &CornerRecord) -> Result<Surface> {
         blend.recertify(k)?;
     }
     Ok(net)
+}
+
+/// A piecewise Bezier curve's record.
+fn bezier_record(c: &Crv) -> BezierCurveRecord {
+    BezierCurveRecord {
+        brk: c.brk.clone(),
+        seg: c.seg.clone(),
+    }
+}
+
+/// The piecewise Bezier curve a record holds.
+fn bezier_of(r: &BezierCurveRecord) -> Crv {
+    Crv {
+        brk: r.brk.clone(),
+        seg: r.seg.clone(),
+    }
+}
+
+/// A Mixed side's record.
+fn side_record(s: &Side) -> MixedSideRecord {
+    MixedSideRecord {
+        c: bezier_record(&s.c),
+        dir: bezier_record(&s.dir),
+        shared: s.shared,
+        val: s.val,
+        der: s.der,
+        dir_val: s.dir_val,
+        dir_der: s.dir_der,
+        dir_k: s.dir_k,
+        t: bezier_record(&s.t),
+        has_t: s.has_t,
+    }
+}
+
+/// The Mixed side a record holds.
+fn side_of(r: &MixedSideRecord) -> Side {
+    Side {
+        c: bezier_of(&r.c),
+        dir: bezier_of(&r.dir),
+        shared: r.shared,
+        val: r.val,
+        der: r.der,
+        dir_val: r.dir_val,
+        dir_der: r.dir_der,
+        dir_k: r.dir_k,
+        t: bezier_of(&r.t),
+        has_t: r.has_t,
+    }
 }

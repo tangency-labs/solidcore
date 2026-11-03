@@ -1375,7 +1375,7 @@ impl<'a> BlendRef<'a> {
 
     /// The net's certified distance from the definition (0 for an exact round).
     #[must_use]
-    pub const fn bound(&self) -> f64 {
+    pub fn bound(&self) -> f64 {
         match *self {
             Self::Procedural(p) => p.def.bound,
             Self::Exact { round, .. } => round.bound(),
