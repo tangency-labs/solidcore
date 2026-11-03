@@ -25,12 +25,14 @@ pub mod body;
 pub mod check;
 pub mod error;
 pub mod file;
+pub mod offset;
 pub mod provenance;
 pub mod session;
 
 pub use body::{make_box, make_cone, make_cylinder, make_sphere, make_torus, Body};
 pub use check::{CheckLevel, CheckReport};
 pub use error::{Error, FitKind, Result, RoomReason};
+pub use offset::{offset_faces, offset_sheet, shell, thicken};
 
 #[cfg(test)]
 mod tests;

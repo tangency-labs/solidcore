@@ -151,6 +151,12 @@ impl Expect {
     #[allow(dead_code)]
     pub(crate) const FACES: Expect = Expect { solid: false };
 
+    /// Whether a result must be a solid: closed, manifold, valid and facing out.
+    #[must_use]
+    pub(crate) const fn solid(self) -> bool {
+        self.solid
+    }
+
     /// A result that must be a solid whatever its input, for an operation that makes one
     /// from a sheet (a thickened sheet): the operation states it, as its own contract.
     #[allow(dead_code)] // the families' operations that make a solid from a sheet
