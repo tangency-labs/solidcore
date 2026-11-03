@@ -637,6 +637,9 @@ impl crate::blend::blend_corner::setback::SetbackSolvers for SetbackSessionSolve
             live,
             target,
         )
+    }
+}
+
 impl crate::blend::blend_corner::chamfer::ChamferSolvers for SweptSessionSolvers<'_> {
     fn chamfer_solver(
         &self,
