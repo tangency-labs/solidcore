@@ -443,6 +443,8 @@ pub struct UpstreamFixes {
     pub offset_extended_edges_mated: bool,
     /// The extended offset (`SmOffsetExecutive::GetCreateExtendedSurface`) extends a cone or cylinder as itself, along its rulings and around its axis with `SM_CT_CINFINITY` (around by no more than half the turn it leaves open on each side), where upstream extends every surface by a tangent extension (`SM_CT_G1R`) that leaves a cylinder at once; a face that reaches a hair into that extension is later fitted back into a cylinder off its radius (WR-532; the fork's tangency-labs/smlib@b283ea2).
     pub offset_extends_cones_as_themselves: bool,
+    /// The extended offset (`SmOffsetExecutive::GetCreateExtendedSurface`) extends a ball patch (the blend corner's Ball, `fillet_blend_corner`) as itself, a ball patch on its sphere: its net carried on with `SM_CT_CINFINITY`, which stays on the sphere, around its pole by no more than a quarter of the turn its third side leaves open on each side and away from the pole by no more than half the arc left to the pole's antipode. Upstream extends every surface by a tangent extension (`SM_CT_G1R`), a plain B-spline off the sphere; a shell's face that reaches a hair into it (rounding in its trims) keeps that B-spline, so 7 of the 8 inner corners of a shelled rounded box lost their sphere (WR-728, #2484; the fork's b439d73 notes it).
+    pub offset_extends_ball_patches_as_themselves: bool,
     /// `SmOffsetSurface::SwapUV` negates the distance once for the extended surface and
     /// again for the base, so an owning offset that has a stored extension comes back
     /// with its distance unchanged and lies on the wrong side of its base; with this
@@ -1243,6 +1245,17 @@ pub struct UpstreamFixes {
     /// `plan/upstream-issues/WR-92--addendum-2026-11-01-topological-vertex-cusps-and-errors.md`).
     /// Off by default for pinned C++ parity.
     pub is_topological_vertex_rejects_cusps_and_tangent_errors: bool,
+    /// `SmVertex::IsTopologicalVertex` ([`crate::topology::vertex::is_topological_vertex`])
+    /// counts a vertex as removable only when every one of its uses is an edge use of its
+    /// two edges, the precondition of joining two edges at a vertex (Mäntylä's `KEV`).
+    /// Upstream counts only edges, so a vertex that also is a vertex loop in another face
+    /// (two solids touching at one point that lies inside an edge: a sphere touching a box
+    /// face on its seam meridian) passed. `SmMerge::BooleanPostProcess` then joined the
+    /// edge's two halves through `DeleteTopologicalVertex`, whose `SqueezeEdge` moved the
+    /// other face's vertex loop to the far end of the deleted half (the sphere's pole,
+    /// 7.5 off the face: `Bad Vertex Gap`) (WR-727, #2520). Off by default for pinned C++
+    /// parity.
+    pub topological_vertex_has_only_edge_uses: bool,
     /// An offset surface evaluated beyond its base's domain extends the base itself on every side that can grow at once, each by the domain size times the least power of two that reaches the point and never less than the extension it replaces, so two copies of one offset give the same points whatever was evaluated first (WR-458, #419; the fork's tangency-labs/smlib@9f54d05 (was 2d7c7ed)).
     pub offset_extension_from_base: bool,
     /// With `offset_extension_from_base` (which must be on too; this flag does nothing without it), an offset surface whose base is a cylinder, cone, sphere or torus extends that base past its domain as itself, where upstream's tangent ruled extension (G1R) leaves the surface at once: a cylinder R25 continued 0.44 past its face's end was 0.0036 off the circle, and a round traced there was built that far off all along (WR-633, #960; the SolidCraft fork's tangency-labs/smlib@de0a6b8, branch `replay/1.0.1`). The extension is built from the analytic surface (the fork's @93db777): the base's spans are kept and new ones joined at its ends with a knot of full multiplicity, every row round the axis continues in rational quadratic arc spans, a sphere's or torus's generator in quarter turns, and a cone's line straight. Round the axis it reaches no further than closing the turn, half the gap past either end, and once it reaches the closure that direction wraps like a periodic one (WR-650, #1986; the fork's @b298cc2): a 294 deg arc was extended to 882 deg and more. A surface of revolution whose generator is an arc of one circle (SMLib's concave round of a circular edge) continues it as its own circle, as a torus does (the fork's @43fd6b6).
@@ -1534,6 +1547,8 @@ pub struct UpstreamFixes {
     pub shell_one_construction: bool,
     /// A face's planar section with no approximation tolerance given (`SmBrep::CreatePlanarSectionCurves` and `SmSurface::CreatePlanarSectionCurves` through [`crate::topology::brep::planar_section::face_planar_section_curves`], `SmApiIntersectBrepWithPlane`) is traced to the face's tolerance, as the curves are to lie within it of the face, where upstream passes the null on and the surface intersector traces to its default, 1/1000 of the surface's size: a G^n round's section on a 40 x 30 x 20 box left the round by 5.2e-3 at a face tolerance of 1.6e-4 (WR-723, #2451; solidcore-native, no fork commit).
     pub planar_section_face_tolerance: bool,
+    /// `SmFace::SwapUV` transposes each UV trim by swapping its control points' `u` and `v` ([`crate::nurbs::b_spline_curve::BSplineCurve::create_transposed_curve`]), where upstream mirrors it about the plane through the origin with x axis `(1, 1, 0)` unitised: the rounded unit vector makes `N_CrvTransform`'s matrix `I - 2nn^T` `-2.2e-16` on the diagonal and `1 + 2.2e-16` off it, so every coordinate of a swapped face's trims moves by up to an ulp and a trim's end on a domain bound lands past it (a unit box's three faces `StitchAndOrient` swaps end at `v = -2.2e-16` and `1 - 1.1e-16` on `[0, 1]`). Every operation that orients or reverses faces passes its trims through it, so their ends then lie in the face's domain to rounding as they are made (WR-728, #2479; solidcore-native, no fork commit).
+    pub face_swap_uv_transposes_trims: bool,
     /// `N_SrfIsClosedSmooth` ([`crate::nurbs::srf_basic::Surface::is_closed_smooth_with_fixes`]) takes the G1 test across the seam at a station where the derivative across the seam vanishes (a collapsed row, a pole on the seam: shorter than `0.001 * NL_MTOL`, the pole test of `N_SrfEvalPtNormalAtPole`) by its limit, the mixed derivative `S_uv` (`S_uv` for the v seam), negated at the end of the domain, where upstream takes the angle of the two vanishing vectors: their rounding then decides between `NL_GEO_ERR` (two exact zeros), not smooth (two noise vectors at any angle) and smooth, so a sphere is not reported closed and smooth in u (WR-725, #2521; solidcore-native, no fork commit).
     pub closed_smooth_pole_tangent_limit: bool,
 }
