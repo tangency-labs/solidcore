@@ -48,8 +48,15 @@ mod tests {
             "sphere_r4",
             "torus_6_1_5",
             "cylinder_r2_h5_mirrored",
+            // A drilled hole's cylinder and cone (its drill point), and SMLib's bodies: a half
+            // sphere, a torus and the threads' cylinders and spline walls.
+            "box_with_drill_hole_r3_depth_10",
+            "smlib_half_sphere",
+            "smlib_torus_22_4",
+            "smlib_thread_in_bore",
+            "smlib_thread_run_out",
         ];
-        let mut labels = 0;
+        let (mut labels, mut cones) = (0, 0);
         for name in bodies {
             for face in &fixture(name).faces {
                 assert!(
@@ -65,6 +72,7 @@ mod tests {
                         | brep::Surface::Torus { .. }
                 ) {
                     labels += 1;
+                    cones += usize::from(matches!(face.surface, brep::Surface::Cone { .. }));
                     match eval_surface(&face.surface) {
                         Err(TessError::Invalid(why)) => {
                             assert!(why.contains("without its NURBS form"), "{name}: {why}");
@@ -74,6 +82,6 @@ mod tests {
                 }
             }
         }
-        assert!(labels > 0);
+        assert!(labels > 0 && cones > 0, "{labels} labels, {cones} cones");
     }
 }
