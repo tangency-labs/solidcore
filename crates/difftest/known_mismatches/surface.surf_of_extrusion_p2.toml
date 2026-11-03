@@ -1,0 +1,127 @@
+# #2502: these cases move with the difftest's C++ reference, the SMLib fork
+# v1.1.0-alpha.1 (8eac63c); plan/findings/general--2502-fork-pin-surface-known-mismatches.md.
+
+[[mismatch]]
+unit = "surface.surf_of_extrusion_p2"
+case = "global_cone_tilted"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[11] C++ 7.389588816609921e-1, Rust 7.458263421041436e-1 (+6 more) (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.surf_of_extrusion_p2"
+case = "gen0010"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 32, Rust 38 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.surf_of_extrusion_p2"
+case = "gen0026"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.build[0] C++ 1.007e3, Rust 0e0 (+1 more) (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.surf_of_extrusion_p2"
+case = "gen0035"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[7] C++ 1e0, Rust 6.245748452460664e-1 (+12 more) (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.surf_of_extrusion_p2"
+case = "gen0092"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.build[0] C++ 1.007e3, Rust 0e0 (+1 more) (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.surf_of_extrusion_p2"
+case = "gen0093"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.build[0] C++ 1.007e3, Rust 0e0 (+1 more) (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.surf_of_extrusion_p2"
+case = "gen0139"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[11] C++ -9.022007785299888e-1, Rust -1.995528761350472e0 (+6 more) (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.surf_of_extrusion_p2"
+case = "gen0141"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.build[0] C++ 1.007e3, Rust 0e0 (+1 more) (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.surf_of_extrusion_p2"
+case = "gen0156"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[11] C++ -2.613186871061771e0, Rust -2.6709392038465016e0 (+6 more) (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.surf_of_extrusion_p2"
+case = "gen0247"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 48, Rust 32 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.surf_of_extrusion_p2"
+case = "gen0299"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.build[0] C++ 1.007e3, Rust 0e0 (+1 more) (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.surf_of_extrusion_p2"
+case = "gen0393"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.build[0] C++ 1.007e3, Rust 0e0 (+1 more) (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.surf_of_extrusion_p2"
+case = "gen0467"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 32, Rust 2 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.surf_of_extrusion_p2"
+case = "gen0480"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.build[0] C++ 1.007e3, Rust 0e0 (+1 more) (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.surf_of_extrusion_p2"
+case = "gen0523"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.build[0] C++ 1.007e3, Rust 0e0 (+1 more) (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.surf_of_extrusion_p2"
+case = "gen0575"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.build[0] C++ 1.007e3, Rust 0e0 (+1 more) (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.surf_of_extrusion_p2"
+case = "gen0692"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.build[0] C++ 1.007e3, Rust 0e0 (+1 more) (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.surf_of_extrusion_p2"
+case = "gen0730"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 8, Rust 68 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.surf_of_extrusion_p2"
+case = "gen0783"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.build[0] C++ 1.007e3, Rust 0e0 (+1 more) (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.surf_of_extrusion_p2"
+case = "gen1006"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.build[0] C++ 1.007e3, Rust 0e0 (+1 more) (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.surf_of_extrusion_p2"
+case = "gen1096"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.build[0] C++ 1.007e3, Rust 0e0 (+1 more) (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.surf_of_extrusion_p2"
+case = "gen1107"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[11] C++ -5.232356535071778e3, Rust -3.9004071015389213e3 (+6 more) (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.surf_of_extrusion_p2"
+case = "gen1111"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.build[0] C++ 1.007e3, Rust 0e0 (+1 more) (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.surf_of_extrusion_p2"
+case = "gen1140"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 32, Rust 2 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.surf_of_extrusion_p2"
+case = "gen1145"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.build[0] C++ 1.007e3, Rust 0e0 (+1 more) (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"

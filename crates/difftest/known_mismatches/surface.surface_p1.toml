@@ -1,0 +1,22 @@
+# #2502: these cases move with the difftest's C++ reference, the SMLib fork
+# v1.1.0-alpha.1 (8eac63c); plan/findings/general--2502-fork-pin-surface-known-mismatches.md.
+
+[[mismatch]]
+unit = "surface.surface_p1"
+case = "sil_adv_20_torus_f0"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 5249, Rust 5174 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.surface_p1"
+case = "sil0048"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 33137, Rust 33062 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.surface_p1"
+case = "domhist0070"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[0] C++ 1e20, Rust 0e0 (+3 more) (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.surface_p1"
+case = "domhist0079"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[0] C++ 1e20, Rust 0e0 (+3 more) (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"

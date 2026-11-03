@@ -1,0 +1,452 @@
+# #2502: these cases move with the difftest's C++ reference, the SMLib fork
+# v1.1.0-alpha.1 (8eac63c); plan/findings/general--2502-fork-pin-surface-known-mismatches.md.
+
+[[mismatch]]
+unit = "surface.surface_p4"
+case = "near_flat_gps_eu16_p0"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[2] C++ 1.818360945611186e-15, Rust 1.8610729195778454e-15 (+2 more) (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.surface_p4"
+case = "near_flat_gps_eu16_p2"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[2] C++ 2.047902597024e-15, Rust 2.175583928816829e-15 (+1 more) (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.surface_p4"
+case = "near_flat_gps_eu16_p4"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[2] C++ 5.431735832338089e-15, Rust 1.8590150188895908e-15 (+1 more) (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.surface_p4"
+case = "near_flat_gps_eu16_p9"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[2] C++ 3.3306690738754696e-16, Rust 1.8610729195778454e-15 (+1 more) (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.surface_p4"
+case = "near_flat_gps_eu16_p11"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[2] C++ 1.897961898453677e-15, Rust 1.831026719408895e-15 (+1 more) (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.surface_p4"
+case = "near_flat_gps_eu16_p20"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[2] C++ 6.280369834735101e-16, Rust 2.1413206232596582e-15 (+1 more) (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.surface_p4"
+case = "near_flat_gps_eu16_p42"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[2] C++ 9.930136612989092e-16, Rust 3.953391794989626e-15 (+1 more) (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.surface_p4"
+case = "near_flat_gps_eu16_p45"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[2] C++ 4.033640560360252e-15, Rust 7.447602459741819e-15 (+1 more) (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.surface_p4"
+case = "near_flat_gps_eu16_p46"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[2] C++ 1.6011864169946884e-15, Rust 5.407139474782739e-15 (+1 more) (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.surface_p4"
+case = "near_flat_gps_eu16_p47"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[2] C++ 5.407139474782739e-15, Rust 2.0350724194510405e-15 (+1 more) (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.surface_p4"
+case = "near_flat_gps_eu16_p49"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[2] C++ 3.688882027804963e-15, Rust 3.66205343881779e-15 (+1 more) (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.surface_p4"
+case = "near_flat_gps_eu16_p50"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[2] C++ 1.1102230246251565e-15, Rust 3.6687789788066426e-15 (+1 more) (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.surface_p4"
+case = "near_flat_gps_eu16_p51"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[2] C++ 3.6418022968069345e-15, Rust 3.5596458096434965e-15 (+1 more) (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.surface_p4"
+case = "near_flat_gps_eu16_p52"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[2] C++ 0e0, Rust 2.0350724194510405e-15 (+1 more) (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.surface_p4"
+case = "near_flat_gps_eu16_p53"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[2] C++ 1.88411095042053e-15, Rust 1.897149936107019e-15 (+1 more) (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.surface_p4"
+case = "near_flat_gps_eu16_p54"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[2] C++ 3.722145839155691e-15, Rust 2.094764613337708e-15 (+1 more) (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.surface_p4"
+case = "near_flat_gps_eu16_p56"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[2] C++ 1.831026719408895e-15, Rust 1.9484335006297032e-15 (+1 more) (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.surface_p4"
+case = "near_flat_gps_eu16_p57"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[2] C++ 1.2560739669470201e-15, Rust 1.790180836524724e-15 (+1 more) (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.surface_p4"
+case = "near_flat_gps_eu16_p58"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[2] C++ 3.722145839155691e-15, Rust 2.0350724194510405e-15 (+1 more) (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.surface_p4"
+case = "near_flat_gps_eu16_p59"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[2] C++ 2.3914935841127266e-15, Rust 3.688882027804963e-15 (+1 more) (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.surface_p4"
+case = "near_flat_gps_eu16_p61"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[2] C++ 1.3506446028928519e-15, Rust 3.58724037616909e-15 (+1 more) (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.surface_p4"
+case = "near_flat_gps_eu16_p72"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[2] C++ 3.76822190084106e-15, Rust 3.748544367384395e-15 (+1 more) (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.surface_p4"
+case = "near_flat_gps_eu16_p75"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[2] C++ 1.9984014443252818e-15, Rust 3.6418022968069345e-15 (+1 more) (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.surface_p4"
+case = "near_flat_gps_eu16_p79"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[2] C++ 9.930136612989092e-16, Rust 1.9860273225978185e-15 (+1 more) (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.surface_p4"
+case = "near_flat_gps_eu16_p80"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[2] C++ 3.688882027804963e-15, Rust 2.0350724194510405e-15 (+1 more) (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.surface_p4"
+case = "near_flat_gps_eu16_p81"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[2] C++ 1.1102230246251565e-15, Rust 1.9860273225978185e-15 (+1 more) (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.surface_p4"
+case = "near_flat_gps_eu16_p82"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[2] C++ 1.8444410139024814e-15, Rust 2.1413206232596582e-15 (+1 more) (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.surface_p4"
+case = "near_flat_gps_eu16_p86"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[2] C++ 8.005932084973442e-16, Rust 3.748544367384395e-15 (+1 more) (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.surface_p4"
+case = "near_flat_gps_eu16_p87"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[2] C++ 2.094764613337708e-15, Rust 1.9484335006297032e-15 (+1 more) (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.surface_p4"
+case = "near_flat_gps_eu16_p91"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[2] C++ 8.881784197001252e-16, Rust 1.9484335006297032e-15 (+1 more) (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.surface_p4"
+case = "near_flat_gps_eu16_p92"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[2] C++ 3.820199830714189e-15, Rust 3.58724037616909e-15 (+1 more) (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.surface_p4"
+case = "near_flat_gps_eu16_p94"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[2] C++ 6.661338147750939e-16, Rust 1.9484335006297032e-15 (+1 more) (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.surface_p4"
+case = "near_flat_gps_eu16_p96"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[2] C++ 3.66205343881779e-15, Rust 3.800791407964896e-15 (+1 more) (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.surface_p4"
+case = "near_flat_gps_eu16_p99"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[2] C++ 2.2644195468014703e-15, Rust 3.820199830714189e-15 (+1 more) (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.surface_p4"
+case = "near_flat_gps_eu16_p100"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[2] C++ 1.9984014443252818e-15, Rust 1.831026719408895e-15 (+1 more) (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.surface_p4"
+case = "near_flat_gps_eu19_p0"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[2] C++ 1.831026719408895e-15, Rust 1.897149936107019e-15 (+1 more) (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.surface_p4"
+case = "near_flat_gps_eu19_p1"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[2] C++ 1.897149936107019e-15, Rust 2.132668787380004e-15 (+1 more) (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.surface_p4"
+case = "near_flat_gps_eu19_p2"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[2] C++ 2.094764613337708e-15, Rust 3.794299872214038e-15 (+1 more) (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.surface_p4"
+case = "near_flat_gps_eu19_p4"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[2] C++ 2.0621477437872914e-15, Rust 1.9891280697202825e-15 (+1 more) (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.surface_p4"
+case = "near_flat_gps_eu19_p5"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[2] C++ 1.8610729195778454e-15, Rust 2.2232198742534223e-15 (+1 more) (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.surface_p4"
+case = "near_flat_gps_eu19_p6"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[2] C++ 1.831026719408895e-15, Rust 2.094764613337708e-15 (+1 more) (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.surface_p4"
+case = "near_flat_gps_eu19_p9"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[2] C++ 3.8266474299528865e-15, Rust 3.8778423131653425e-15 (+1 more) (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.surface_p4"
+case = "near_flat_gps_eu19_p10"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[2] C++ 1.8610729195778454e-15, Rust 2.094764613337708e-15 (+1 more) (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.surface_p4"
+case = "near_flat_gps_eu19_p11"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[2] C++ 3.688882027804963e-15, Rust 1.9860273225978185e-15 (+1 more) (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.surface_p4"
+case = "near_flat_gps_eu19_p12"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[2] C++ 1.047382306668854e-15, Rust 2.0137621733714643e-15 (+1 more) (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.surface_p4"
+case = "near_flat_gps_eu19_p13"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[2] C++ 3.66205343881779e-15, Rust 3.794299872214038e-15 (+1 more) (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.surface_p4"
+case = "near_flat_gps_eu19_p14"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[2] C++ 1.831026719408895e-15, Rust 2.132668787380004e-15 (+1 more) (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.surface_p4"
+case = "near_flat_gps_eu19_p15"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[2] C++ 3.795923796907354e-15, Rust 3.76822190084106e-15 (+1 more) (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.surface_p4"
+case = "near_flat_gps_eu19_p16"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[2] C++ 3.688882027804963e-15, Rust 2.094764613337708e-15 (+1 more) (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.surface_p4"
+case = "near_flat_gps_eu19_p17"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[2] C++ 3.9968028886505635e-15, Rust 1.9389211565826713e-15 (+1 more) (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.surface_p4"
+case = "near_flat_gps_eu19_p19"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[2] C++ 5.725996103146448e-15, Rust 3.923660740106592e-15 (+1 more) (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.surface_p4"
+case = "near_flat_gps_eu19_p21"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[2] C++ 2.094764613337708e-15, Rust 3.756755865433588e-15 (+1 more) (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.surface_p4"
+case = "near_flat_gps_eu19_p23"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[2] C++ 5.6217203786222585e-15, Rust 5.538889206520646e-15 (+1 more) (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.surface_p4"
+case = "near_flat_gps_eu19_p27"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[2] C++ 1.8610729195778454e-15, Rust 1.9389211565826713e-15 (+1 more) (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.surface_p4"
+case = "near_flat_gps_eu19_p28"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[2] C++ 3.722145839155691e-15, Rust 3.936206449947263e-15 (+1 more) (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.surface_p4"
+case = "near_flat_gps_eu19_p29"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[2] C++ 3.595820250601821e-15, Rust 2.0380985511143445e-15 (+1 more) (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.surface_p4"
+case = "near_flat_gps_eu19_p30"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[2] C++ 2.0621477437872914e-15, Rust 2.175583928816829e-15 (+1 more) (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.surface_p4"
+case = "near_flat_gps_eu19_p34"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[2] C++ 1.8610729195778454e-15, Rust 1.9389211565826713e-15 (+1 more) (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.surface_p4"
+case = "near_flat_gps_eu19_p35"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[2] C++ 2.5341311739065124e-15, Rust 2.2232198742534223e-15 (+1 more) (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.surface_p4"
+case = "near_flat_gps_eu19_p39"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[2] C++ 3.8778423131653425e-15, Rust 5.577973058160524e-15 (+1 more) (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.surface_p4"
+case = "near_flat_gps_eu19_p40"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[2] C++ 3.6637359812630166e-15, Rust 1.1102230246251565e-15 (+1 more) (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.surface_p4"
+case = "near_flat_gps_eu19_p41"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[2] C++ 1.4655364458042814e-15, Rust 3.834691684006085e-15 (+1 more) (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.surface_p4"
+case = "near_flat_gps_eu19_p43"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[2] C++ 9.930136612989092e-16, Rust 2.1130726402723043e-15 (+1 more) (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.surface_p4"
+case = "near_flat_gps_eu19_p44"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[2] C++ 1.878377932716794e-15, Rust 2.047902597024e-15 (+1 more) (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.surface_p4"
+case = "near_flat_gps_eu19_p46"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[2] C++ 2.023684124003798e-15, Rust 2.2232198742534223e-15 (+1 more) (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.surface_p4"
+case = "near_flat_gps_eu19_p47"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[2] C++ 1.8452761694870047e-15, Rust 2.0380985511143445e-15 (+1 more) (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.surface_p4"
+case = "near_flat_gps_eu19_p51"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[2] C++ 2.0777787570717024e-15, Rust 2.175583928816829e-15 (+1 more) (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.surface_p4"
+case = "near_flat_gps_eu19_p54"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[2] C++ 5.551115123125783e-16, Rust 2.094764613337708e-15 (+1 more) (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.surface_p4"
+case = "near_flat_gps_eu19_p57"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[2] C++ 3.614624287906422e-15, Rust 2.094764613337708e-15 (+1 more) (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.surface_p4"
+case = "near_flat_gps_eu19_p61"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[2] C++ 2.094764613337708e-15, Rust 3.781690811666372e-15 (+1 more) (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.surface_p4"
+case = "near_flat_gps_eu19_p62"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[2] C++ 2.0621477437872914e-15, Rust 1.9860273225978185e-15 (+1 more) (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.surface_p4"
+case = "near_flat_gps_eu19_p63"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[2] C++ 2.0350724194510405e-15, Rust 1.807312143953211e-15 (+1 more) (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.surface_p4"
+case = "near_flat_gps_eu19_p64"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[2] C++ 3.703887711561888e-15, Rust 1.7798229048217483e-15 (+1 more) (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.surface_p4"
+case = "near_flat_gps_eu19_p65"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[2] C++ 1.8610729195778454e-15, Rust 1.9891280697202825e-15 (+1 more) (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.surface_p4"
+case = "near_flat_gps_eu19_p67"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[2] C++ 3.991016288122638e-15, Rust 2.1535178908206137e-15 (+1 more) (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.surface_p4"
+case = "near_flat_gps_eu19_p69"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[2] C++ 5.551115123125783e-16, Rust 1.8452761694870047e-15 (+1 more) (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.surface_p4"
+case = "near_flat_gps_eu19_p70"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[2] C++ 2.0380985511143445e-15, Rust 3.855927796350635e-15 (+1 more) (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.surface_p4"
+case = "near_flat_gps_eu19_p71"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[2] C++ 2.0621477437872914e-15, Rust 1.831026719408895e-15 (+1 more) (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.surface_p4"
+case = "near_flat_gps_eu19_p76"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[2] C++ 4.996003610813204e-16, Rust 1.9389211565826713e-15 (+1 more) (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.surface_p4"
+case = "near_flat_gps_eu19_p77"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[2] C++ 1.878377932716794e-15, Rust 2.0053283331865004e-15 (+1 more) (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.surface_p4"
+case = "near_flat_gps_eu19_p81"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[2] C++ 2.0697919142500695e-15, Rust 1.9502118998139442e-15 (+1 more) (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.surface_p4"
+case = "near_flat_gps_eu19_p83"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[2] C++ 1.9862212611093494e-15, Rust 1.0329400704738531e-15 (+1 more) (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.surface_p4"
+case = "near_flat_gps_eu19_p85"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[2] C++ 2.0350724194510405e-15, Rust 1.8452761694870047e-15 (+1 more) (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.surface_p4"
+case = "near_flat_gps_eu19_p89"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[2] C++ 1.1379786002407855e-15, Rust 3.926114224382383e-15 (+1 more) (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.surface_p4"
+case = "near_flat_gps_eu19_p93"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[2] C++ 1.0329400704738531e-15, Rust 1.8024035702895147e-15 (+1 more) (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.surface_p4"
+case = "near_flat_gps_eu19_p94"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[2] C++ 3.6826116135695276e-15, Rust 1.784146017590271e-15 (+1 more) (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.surface_p4"
+case = "near_flat_gps_eu19_p95"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[2] C++ 5.551115123125783e-16, Rust 1.9860273225978185e-15 (+1 more) (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.surface_p4"
+case = "near_flat_gps_eu19_p100"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[2] C++ 1.818360945611186e-15, Rust 1.8610729195778454e-15 (+2 more) (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.surface_p4"
+case = "thin0101"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[3] C++ 1.270766397494038e0, Rust 1.2707665540395199e0 (+1 more) (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.surface_p4"
+case = "thin0103"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[2] C++ 9.930136612989092e-16, Rust 2.175583928816829e-15 (+1 more) (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"

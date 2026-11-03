@@ -1,0 +1,82 @@
+# #2502: these cases move with the difftest's C++ reference, the SMLib fork
+# v1.1.0-alpha.1 (8eac63c); plan/findings/general--2502-fork-pin-surface-known-mismatches.md.
+
+[[mismatch]]
+unit = "surface.surf_of_extrusion_p1"
+case = "review6_ell_5e-324_canonical_build"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.build[0] C++ 1.001e3, Rust 0e0 (+1 more) (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.surf_of_extrusion_p1"
+case = "review6_ell_5e-324_canonical_eval_step"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.build[0] C++ 1.001e3, Rust 0e0 (+2 more) (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.surf_of_extrusion_p1"
+case = "review6_ell_5e-324_canonical_adjust"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.build[0] C++ 1.001e3, Rust 0e0 (+2 more) (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.surf_of_extrusion_p1"
+case = "review6_ell_5e-324_canonical_directrix"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.build[0] C++ 1.001e3, Rust 0e0 (+2 more) (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.surf_of_extrusion_p1"
+case = "review6_ell_5e-324_canonical_drop_fast"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.build[0] C++ 1.001e3, Rust 0e0 (+2 more) (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.surf_of_extrusion_p1"
+case = "review6_ell_5e-324_canonical_step_inv"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.build[0] C++ 1.001e3, Rust 0e0 (+2 more) (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.surf_of_extrusion_p1"
+case = "review6_ell_5e-324_canonical_update"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.build[0] C++ 1.001e3, Rust 0e0 (+2 more) (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.surf_of_extrusion_p1"
+case = "review6_ell_5e-324_canonical_to_step"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.build[0] C++ 1.001e3, Rust 0e0 (+2 more) (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.surf_of_extrusion_p1"
+case = "review6_ell_5e-324_infinite_build"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.build[0] C++ 1.001e3, Rust 0e0 (+1 more) (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.surf_of_extrusion_p1"
+case = "review6_ell_5e-324_infinite_eval_step"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.build[0] C++ 1.001e3, Rust 0e0 (+2 more) (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.surf_of_extrusion_p1"
+case = "review6_ell_5e-324_infinite_adjust"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.build[0] C++ 1.001e3, Rust 0e0 (+2 more) (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.surf_of_extrusion_p1"
+case = "review6_ell_5e-324_infinite_directrix"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.build[0] C++ 1.001e3, Rust 0e0 (+2 more) (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.surf_of_extrusion_p1"
+case = "review6_ell_5e-324_infinite_drop_fast"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.build[0] C++ 1.001e3, Rust 0e0 (+2 more) (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.surf_of_extrusion_p1"
+case = "review6_ell_5e-324_infinite_step_inv"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.build[0] C++ 1.001e3, Rust 0e0 (+2 more) (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.surf_of_extrusion_p1"
+case = "review6_ell_5e-324_infinite_update"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.build[0] C++ 1.001e3, Rust 0e0 (+2 more) (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.surf_of_extrusion_p1"
+case = "review6_ell_5e-324_infinite_to_step"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.build[0] C++ 1.001e3, Rust 0e0 (+2 more) (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"

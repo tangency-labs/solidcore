@@ -1,0 +1,1127 @@
+# #2502: these cases move with the difftest's C++ reference, the SMLib fork
+# v1.1.0-alpha.1 (8eac63c); plan/findings/general--2502-fork-pin-surface-known-mismatches.md.
+
+[[mismatch]]
+unit = "surface.offset_surface"
+case = "extension_sequence"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 418, Rust 416 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.offset_surface"
+case = "extension_sequence_negative"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 420, Rust 418 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.offset_surface"
+case = "extension_then_split"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[130] C++ -1e0, Rust 0e0 (+34 more) (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.offset_surface"
+case = "extension_set_allow_later"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[65] C++ -1e0, Rust 0e0 (+72 more) (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.offset_surface"
+case = "extension_singular_clamp"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 169, Rust 185 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.offset_surface"
+case = "extension_periodic_wrap"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[60] C++ -1e0, Rust 0e0 (+67 more) (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.offset_surface"
+case = "collapsed_bspline_d1"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[9] C++ 0e0, Rust 1e0 (+1 more) (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.offset_surface"
+case = "collapsed_bspline_d1_unknown_sing"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[9] C++ 0e0, Rust 1e0 (+1 more) (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.offset_surface"
+case = "step_allpt"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[9] C++ 0e0, Rust 1e0 (+1 more) (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.offset_surface"
+case = "step_allpt_unknown_sing"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[9] C++ 0e0, Rust 1e0 (+2 more) (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.offset_surface"
+case = "bounded_allpt"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[9] C++ 0e0, Rust 1e0 (+1 more) (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.offset_surface"
+case = "bounded_allpt_unknown_sing"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[9] C++ 0e0, Rust 1e0 (+1 more) (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.offset_surface"
+case = "nested_step_inversion_extends_inner"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[8] C++ -1e0, Rust 0e0 (+7 more) (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.offset_surface"
+case = "gen0017"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[6] C++ 1.021e3, Rust 1.001e3 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.offset_surface"
+case = "gen0066"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[14] C++ -1.8947580180714612e-16, Rust 1.0407596971869823e-16 (+8 more) (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.offset_surface"
+case = "gen0075"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[70] C++ 1.021e3, Rust 1.001e3 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.offset_surface"
+case = "gen0086"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[35] C++ 2.970210568696024e-1, Rust 7.428318648628254e-1 (+11 more) (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.offset_surface"
+case = "gen0140"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 57, Rust 78 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.offset_surface"
+case = "gen0155"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[13] C++ 1.7763568394002505e-15, Rust -4.440892098500626e-16 (+1 more) (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.offset_surface"
+case = "gen0157"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[64] C++ -4.523110375173761e0, Rust -2.356501208664688e0 (+34 more) (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.offset_surface"
+case = "gen0182"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[9] C++ 2.046972915817407e-16, Rust -2.0469729158174083e-16 (+1 more) (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.offset_surface"
+case = "gen0210"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[6] C++ -6.073598309929968e-1, Rust -5.937781029042493e-1 (+5 more) (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.offset_surface"
+case = "gen0223"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[18] C++ -8.872332587099987e-18, Rust 4.948513736828159e-18 (+5 more) (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.offset_surface"
+case = "gen0229"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[55] C++ 1.021e3, Rust 1.001e3 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.offset_surface"
+case = "gen0231"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[65] C++ -2e0, Rust -2.2016005779167553e0 (+34 more) (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.offset_surface"
+case = "gen0242"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[120] C++ -1e0, Rust -1.638909665045499e0 (+34 more) (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.offset_surface"
+case = "gen0247"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[27] C++ -1.9634814130315004e-1, Rust 1.8951594167343329e0 (+34 more) (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.offset_surface"
+case = "gen0261"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[56] C++ 1.021e3, Rust 1.001e3 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.offset_surface"
+case = "gen0267"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 4, Rust 13 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.offset_surface"
+case = "gen0277"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[101] C++ -9.992007221626409e-16, Rust -4.440892098500626e-16 (+37 more) (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.offset_surface"
+case = "gen0328"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[74] C++ -2.449897349425573e0, Rust -4.3111812347399736e-1 (+30 more) (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.offset_surface"
+case = "gen0347"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[152] C++ -4.552804578409573e0, Rust -6.574328720854332e-1 (+34 more) (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.offset_surface"
+case = "gen0354"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 125, Rust 139 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.offset_surface"
+case = "gen0366"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[32] C++ 1.021e3, Rust 1.001e3 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.offset_surface"
+case = "gen0370"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[56] C++ 4.345319999482659e0, Rust 4.343827313680471e0 (+62 more) (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.offset_surface"
+case = "gen0388"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[7] C++ -1e0, Rust 0e0 (+34 more) (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.offset_surface"
+case = "gen0403"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[55] C++ 1.021e3, Rust 1.001e3 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.offset_surface"
+case = "gen0413"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[117] C++ 1.021e3, Rust 1.001e3 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.offset_surface"
+case = "gen0429"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 32, Rust 44 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.offset_surface"
+case = "gen0436"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[2] C++ 2.346561728776931e0, Rust 2.5365983998229127e0 (+2 more) (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.offset_surface"
+case = "gen0449"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[85] C++ 3.853516290495357e-11, Rust -3.9402232878170846e-11 (+2 more) (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.offset_surface"
+case = "gen0510"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[62] C++ 1.480731397952093e-1, Rust -7.100671144953323e-1 (+61 more) (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.offset_surface"
+case = "gen0514"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[11] C++ 1.021e3, Rust 1.001e3 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.offset_surface"
+case = "gen0536"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[24] C++ -7.804879285336686e-1, Rust 2.4064279907212534e0 (+34 more) (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.offset_surface"
+case = "gen0539"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 124, Rust 129 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.offset_surface"
+case = "gen0550"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[78] C++ 1.021e3, Rust 1.001e3 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.offset_surface"
+case = "gen0555"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[12] C++ 3e0, Rust 3.071447585546134e0 (+1 more) (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.offset_surface"
+case = "gen0572"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[193] C++ 8.820026957671079e-1, Rust 8.814965436891423e-1 (+5 more) (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.offset_surface"
+case = "gen0596"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[60] C++ -1e0, Rust -1.1602067790578037e0 (+34 more) (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.offset_surface"
+case = "gen0598"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[56] C++ 9.998417019963178e0, Rust 9.519360350541437e0 (+14 more) (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.offset_surface"
+case = "gen0600"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[16] C++ 3.980005252318728e-7, Rust 3.9800052700823125e-7 (+4 more) (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.offset_surface"
+case = "gen0605"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[62] C++ -1.5993176318038832e-31, Rust -2.7445740234210615e-31 (+5 more) (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.offset_surface"
+case = "gen0606"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[70] C++ 1.021e3, Rust 1.001e3 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.offset_surface"
+case = "gen0617"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 56, Rust 91 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.offset_surface"
+case = "gen0627"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[105] C++ -2.130536243793731e-33, Rust -5.484390307109966e-33 (+5 more) (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.offset_surface"
+case = "gen0634"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[66] C++ -8.184952711102866e-16, Rust 5.042223381855096e-16 (+40 more) (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.offset_surface"
+case = "gen0641"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[153] C++ 1.021e3, Rust 1.001e3 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.offset_surface"
+case = "gen0655"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[58] C++ -6.66563340697273e-1, Rust 7.755303088908688e-1 (+1 more) (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.offset_surface"
+case = "gen0691"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 158, Rust 154 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.offset_surface"
+case = "gen0703"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[59] C++ 1.021e3, Rust 1.001e3 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.offset_surface"
+case = "gen0712"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[62] C++ -2e0, Rust -2.0753891644423286e0 (+30 more) (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.offset_surface"
+case = "gen0722"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[22] C++ -2.810521246437706e-35, Rust 2.220446049250313e-16 (+40 more) (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.offset_surface"
+case = "gen0731"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[76] C++ -1.1622647289044608e-16, Rust -1.231653667943533e-16 (+1 more) (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.offset_surface"
+case = "gen0734"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[112] C++ -2.919954784051681e0, Rust -2.322427682432103e0 (+34 more) (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.offset_surface"
+case = "gen0737"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[70] C++ 4.648277463060582e-11, Rust 4.648292728627182e-11 (+2 more) (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.offset_surface"
+case = "gen0745"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[116] C++ -2.832168350643827e0, Rust 7.260745001764879e-1 (+34 more) (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.offset_surface"
+case = "gen0810"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[33] C++ -3.7767690107732655e-17, Rust -3.131012504245973e-17 (+2 more) (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.offset_surface"
+case = "gen0825"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[56] C++ 1.074027141487942e0, Rust 1.061403814482811e0 (+45 more) (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.offset_surface"
+case = "gen0852"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[8] C++ -7.635129477526992e-16, Rust -2.6944808551063225e-15 (+37 more) (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.offset_surface"
+case = "gen0859"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[20] C++ 0e0, Rust 1e0 (+3 more) (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.offset_surface"
+case = "gen0888"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[27] C++ -2e0, Rust -2.189377945205721e0 (+34 more) (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.offset_surface"
+case = "gen0889"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[3] C++ -2.16106274059002e0, Rust -2.17301441906671e0 (+72 more) (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.offset_surface"
+case = "gen0894"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[30] C++ -2.4590767339860026e-1, Rust -1.148117716933746e-1 (+37 more) (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.offset_surface"
+case = "gen0898"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[104] C++ 9.947598300641403e-14, Rust -7.105427357601002e-14 (+5 more) (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.offset_surface"
+case = "gen0901"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[11] C++ -4.390809975687494e0, Rust -5.60047632647548e0 (+1 more) (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.offset_surface"
+case = "gen0911"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[10] C++ 0e0, Rust 1e0 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.offset_surface"
+case = "gen0921"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[59] C++ 1.021e3, Rust 1.001e3 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.offset_surface"
+case = "gen0923"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[1] C++ 1.021e3, Rust 1.001e3 (+1 more) (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.offset_surface"
+case = "gen0958"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[31] C++ -4.824217394972248e0, Rust -2.7042251413709e0 (+34 more) (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.offset_surface"
+case = "gen0964"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[6] C++ -1e0, Rust 0e0 (+7 more) (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.offset_surface"
+case = "gen0987"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[45] C++ -8.77446349611873e-32, Rust -1.1993945781592828e-32 (+8 more) (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.offset_surface"
+case = "gen0989"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[18] C++ -5.976519202536964e-2, Rust -6.441854538334729e-2 (+2 more) (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.offset_surface"
+case = "gen1043"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[6] C++ 5.233338553578621e-1, Rust 5.232036133282689e-1 (+2 more) (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.offset_surface"
+case = "gen1060"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[68] C++ -2.519784210823274e-16, Rust 6.326202994239963e-17 (+5 more) (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.offset_surface"
+case = "gen1063"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[15] C++ 1.021e3, Rust 1.001e3 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.offset_surface"
+case = "gen1065"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[43] C++ -1e0, Rust -1.9528898010456675e0 (+34 more) (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.offset_surface"
+case = "gen1066"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[67] C++ 6.890138838688142e-1, Rust 6.839106745489487e-1 (+17 more) (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.offset_surface"
+case = "gen1079"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[22] C++ 2.356742592449712e-15, Rust 3.495691429246374e-15 (+17 more) (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.offset_surface"
+case = "gen1086"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[2] C++ -9.820920852588664e0, Rust -7.767046401246412e0 (+40 more) (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.offset_surface"
+case = "gen1091"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[56] C++ -8.532805926395379e-1, Rust -7.59922298589341e-1 (+17 more) (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.offset_surface"
+case = "gen1109"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[111] C++ -4.591269662397199e0, Rust -2.5984105497484453e0 (+34 more) (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.offset_surface"
+case = "gen1121"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[102] C++ -1e0, Rust 0e0 (+34 more) (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.offset_surface"
+case = "gen1127"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[10] C++ 0e0, Rust 1.5e1 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.offset_surface"
+case = "gen1139"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 66, Rust 93 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.offset_surface"
+case = "gen1140"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[56] C++ 0e0, Rust -2.722466717704423e-1 (+2 more) (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.offset_surface"
+case = "gen1149"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[1] C++ 1.021e3, Rust 1.001e3 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.offset_surface"
+case = "gen1174"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[69] C++ 1.669942121915664e1, Rust 1.3144390412869623e1 (+64 more) (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.offset_surface"
+case = "gen1177"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[27] C++ -5.923004444756894e0, Rust -2.8180076412313646e0 (+34 more) (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.offset_surface"
+case = "gen1185"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[89] C++ -3.3306690738754696e-15, Rust 3.9968028886505635e-15 (+4 more) (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.offset_surface"
+case = "gen1197"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[62] C++ -6.213689438059957e0, Rust -6.675948750058238e0 (+30 more) (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.offset_surface"
+case = "gen1201"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[20] C++ 1.021e3, Rust 1.001e3 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.offset_surface"
+case = "gen1204"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[2] C++ 1.3601675220798845e-1, Rust 1.128596851120251e0 (+36 more) (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.offset_surface"
+case = "gen1215"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[119] C++ -2.9585594188303276e-31, Rust -2.2386999676139734e-31 (+37 more) (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.offset_surface"
+case = "gen1217"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[14] C++ 1.021e3, Rust 1.001e3 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.offset_surface"
+case = "gen1219"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[56] C++ -3.5275535344363287e0, Rust -3.5746797402074915e0 (+84 more) (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.offset_surface"
+case = "gen1228"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[37] C++ -3.2022253123317106e0, Rust -2.6679301056795897e0 (+34 more) (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.offset_surface"
+case = "gen1229"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[61] C++ 1.021e3, Rust 1.001e3 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.offset_surface"
+case = "gen1242"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[72] C++ 1.021e3, Rust 1.001e3 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.offset_surface"
+case = "gen1247"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 52, Rust 93 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.offset_surface"
+case = "gen1251"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 6, Rust 15 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.offset_surface"
+case = "gen1256"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 2, Rust 17 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.offset_surface"
+case = "gen1263"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[14] C++ -1e0, Rust 0e0 (+34 more) (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.offset_surface"
+case = "gen1274"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[8] C++ -7.09828934242614e-16, Rust -6.43397540235951e-16 (+5 more) (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.offset_surface"
+case = "gen1293"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[1] C++ 1.021e3, Rust 1.001e3 (+1 more) (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.offset_surface"
+case = "gen1305"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[60] C++ -1e0, Rust -1.010017558840145e0 (+30 more) (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.offset_surface"
+case = "gen1321"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[70] C++ -3.3581551400589344e-15, Rust 1.2970569249437777e-16 (+1 more) (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.offset_surface"
+case = "gen1323"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[104] C++ -1e0, Rust 0e0 (+34 more) (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.offset_surface"
+case = "gen1341"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[70] C++ -4.193845184355151e0, Rust -6.650352744296162e0 (+32 more) (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.offset_surface"
+case = "gen1342"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[75] C++ -3.9635693758137562e0, Rust -4.3573100455567415e-1 (+34 more) (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.offset_surface"
+case = "gen1345"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[80] C++ -2.6800490021806977e0, Rust -1.8906582098367863e-1 (+69 more) (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.offset_surface"
+case = "gen1346"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[95] C++ -3.977078526838839e0, Rust -8.707808741723326e-1 (+34 more) (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.offset_surface"
+case = "gen1364"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[8] C++ 1.021e3, Rust 1.001e3 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.offset_surface"
+case = "gen1367"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[2] C++ 1.4403525798526793e0, Rust 1.3877429761291924e0 (+2 more) (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.offset_surface"
+case = "gen1369"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[18] C++ -9.955708317041405e-16, Rust 1.991141663408281e-15 (+2 more) (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.offset_surface"
+case = "gen1387"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[56] C++ 3.9477215367105223e-1, Rust 3.828854659194834e-1 (+29 more) (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.offset_surface"
+case = "gen1424"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[55] C++ 1.021e3, Rust 1.001e3 (+1 more) (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.offset_surface"
+case = "gen1425"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[25] C++ -1.0442657734255647e0, Rust -3.655224054906592e-2 (+34 more) (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.offset_surface"
+case = "gen1448"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 56, Rust 68 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.offset_surface"
+case = "gen1453"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 13, Rust 31 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.offset_surface"
+case = "gen1472"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[59] C++ -3.643504020035038e0, Rust -3.4036661953388965e0 (+43 more) (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.offset_surface"
+case = "gen1496"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[58] C++ 1.021e3, Rust 1.001e3 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.offset_surface"
+case = "gen1521"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 110, Rust 118 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.offset_surface"
+case = "gen1548"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[60] C++ 1.5403861393065923e0, Rust 1.5154314316527953e0 (+2 more) (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.offset_surface"
+case = "gen1560"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[56] C++ -2.188030705319498e0, Rust -2.2033971141262323e0 (+37 more) (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.offset_surface"
+case = "gen1562"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[74] C++ 1.898818572088265e0, Rust 5.658034875329385e0 (+1 more) (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.offset_surface"
+case = "gen1567"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[63] C++ 2.220628433556151e-8, Rust 2.2206287102452727e-8 (+4 more) (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.offset_surface"
+case = "gen1582"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[179] C++ -1e0, Rust -1.3633202035092806e0 (+39 more) (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.offset_surface"
+case = "gen1593"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[2] C++ -2.156116680070297e0, Rust -2.156396611377594e0 (+46 more) (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.offset_surface"
+case = "gen1598"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[43] C++ -7.645984964207708e0, Rust -8.026423154443435e0 (+1 more) (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.offset_surface"
+case = "gen1603"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[55] C++ 1.021e3, Rust 1.001e3 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.offset_surface"
+case = "gen1609"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 10, Rust 28 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.offset_surface"
+case = "gen1626"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[76] C++ 8.762260482760312e-1, Rust 8.762353807060174e-1 (+29 more) (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.offset_surface"
+case = "gen1684"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 191, Rust 224 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.offset_surface"
+case = "gen1700"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[65] C++ -6.38378239159465e-16, Rust -3.0531133177191805e-16 (+2 more) (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.offset_surface"
+case = "gen1710"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 36, Rust 34 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.offset_surface"
+case = "gen1740"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[61] C++ 6.51584743113889e-1, Rust 0e0 (+28 more) (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.offset_surface"
+case = "gen1742"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[130] C++ 1.887379141862766e-15, Rust 2.7755575615628914e-16 (+5 more) (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.offset_surface"
+case = "gen1765"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[86] C++ 5.541228697189652e-30, Rust 1.2392904799043946e-29 (+41 more) (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.offset_surface"
+case = "gen1796"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[1] C++ 1.021e3, Rust 1.001e3 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.offset_surface"
+case = "gen1797"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[27] C++ 1.02e3, Rust 1.001e3 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.offset_surface"
+case = "gen1799"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[56] C++ -9.761122827886773e0, Rust -9.279980498705628e0 (+13 more) (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.offset_surface"
+case = "gen1802"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[55] C++ 1.02e3, Rust 1.001e3 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.offset_surface"
+case = "gen1813"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[97] C++ -6.198358486307725e-16, Rust 2.1294744019291463e-16 (+2 more) (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.offset_surface"
+case = "gen1829"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 73, Rust 76 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.offset_surface"
+case = "gen1852"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 64, Rust 72 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.offset_surface"
+case = "gen1866"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[22] C++ 1.669029356936874e-33, Rust 8.989375212916313e-34 (+25 more) (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.offset_surface"
+case = "gen1885"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[22] C++ 1.705596781618166e0, Rust 1.8266402468323861e0 (+19 more) (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.offset_surface"
+case = "gen1889"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[115] C++ 1.6422124968518108e0, Rust 1.6446681600467272e0 (+8 more) (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.offset_surface"
+case = "gen1890"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 40, Rust 36 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.offset_surface"
+case = "gen1903"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[8] C++ -2.5412511367055097e-36, Rust 1.385098113525555e-34 (+40 more) (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.offset_surface"
+case = "gen1904"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[2] C++ 5.47383141283512e-1, Rust 5.821098430981766e-1 (+52 more) (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.offset_surface"
+case = "gen1911"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[64] C++ -4.7763408444462974e-1, Rust -4.7762842600179717e-1 (+10 more) (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.offset_surface"
+case = "gen1912"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[10] C++ 0e0, Rust 1.5e1 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.offset_surface"
+case = "gen1979"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 77, Rust 85 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.offset_surface"
+case = "gen2014"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[66] C++ 3.906043587511166e9, Rust 3.9077675253747234e9 (+8 more) (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.offset_surface"
+case = "gen2049"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[12] C++ 1.021e3, Rust 1.001e3 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.offset_surface"
+case = "gen2052"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[55] C++ 1.021e3, Rust 1.001e3 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.offset_surface"
+case = "gen2071"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 125, Rust 128 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.offset_surface"
+case = "gen2080"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 63, Rust 71 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.offset_surface"
+case = "gen2082"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[79] C++ -2.557461863499241e0, Rust -1.0743761256944355e0 (+34 more) (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.offset_surface"
+case = "gen2096"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[56] C++ -3.82546839004828e-18, Rust 0e0 (+32 more) (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.offset_surface"
+case = "gen2115"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 82, Rust 91 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.offset_surface"
+case = "gen2137"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[54] C++ -1e0, Rust -1.40327836290326e0 (+34 more) (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.offset_surface"
+case = "gen2145"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 41, Rust 44 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.offset_surface"
+case = "gen2151"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 136, Rust 130 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.offset_surface"
+case = "gen2162"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 45, Rust 63 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.offset_surface"
+case = "gen2171"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[124] C++ 7.6210387321110336e0, Rust 7.621039294806383e0 (+43 more) (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.offset_surface"
+case = "gen2178"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[67] C++ -1.073714122906762e1, Rust -1.0547673529718429e1 (+2 more) (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.offset_surface"
+case = "gen2191"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[61] C++ -1e0, Rust 0e0 (+27 more) (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.offset_surface"
+case = "gen2237"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[61] C++ 4.913172813150866e0, Rust 4.9131678485026224e0 (+8 more) (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.offset_surface"
+case = "gen2258"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[11] C++ -3.9609046076298154e-16, Rust 3.867076200528435e-18 (+2 more) (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.offset_surface"
+case = "gen2259"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 16, Rust 19 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.offset_surface"
+case = "gen2260"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[45] C++ 8.685899299289497e-1, Rust 1.626436421954811e0 (+2 more) (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.offset_surface"
+case = "gen2263"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[76] C++ 1.021e3, Rust 1.001e3 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.offset_surface"
+case = "gen2270"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[2] C++ -2.999306882669015e0, Rust -3.587669804367715e0 (+37 more) (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.offset_surface"
+case = "gen2281"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[73] C++ -1e0, Rust -1.4952127063780387e0 (+34 more) (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.offset_surface"
+case = "gen2289"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[18] C++ -5.7712284798557185e0, Rust -6.607220225871916e0 (+23 more) (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.offset_surface"
+case = "gen2295"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[23] C++ -1e0, Rust 0e0 (+34 more) (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.offset_surface"
+case = "gen2307"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 167, Rust 171 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.offset_surface"
+case = "gen2312"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[2] C++ 1.5209511029562082e1, Rust 1.754132016721508e1 (+13 more) (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.offset_surface"
+case = "gen2316"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 167, Rust 159 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.offset_surface"
+case = "gen2390"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[14] C++ -2e0, Rust -2.2559590174560133e0 (+30 more) (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.offset_surface"
+case = "gen2403"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[2] C++ 1.021e3, Rust 1.001e3 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.offset_surface"
+case = "gen2414"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[56] C++ -5.312407141629079e-1, Rust -1.1025974428074459e0 (+29 more) (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.offset_surface"
+case = "gen2418"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[8] C++ 8.747089244860177e-17, Rust -1.360438698050161e-16 (+2 more) (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.offset_surface"
+case = "gen2488"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[110] C++ 1.021e3, Rust 1.001e3 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.offset_surface"
+case = "gen2529"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 76, Rust 103 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.offset_surface"
+case = "gen2563"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[55] C++ 1.021e3, Rust 1.001e3 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.offset_surface"
+case = "gen2576"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[8] C++ -2.6358371771287987e-33, Rust -8.82364814402654e-33 (+48 more) (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.offset_surface"
+case = "gen2582"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[78] C++ 1.021e3, Rust 1.001e3 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.offset_surface"
+case = "gen2597"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[1] C++ 1.021e3, Rust 1.001e3 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.offset_surface"
+case = "gen2625"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 183, Rust 197 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.offset_surface"
+case = "gen2628"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[3] C++ -2.8197073340821383e-16, Rust -4.382497490420811e-16 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.offset_surface"
+case = "gen2636"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[10] C++ 0e0, Rust 1.5e1 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.offset_surface"
+case = "gen2656"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[64] C++ -1e0, Rust 0e0 (+23 more) (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.offset_surface"
+case = "gen2716"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[14] C++ -1e0, Rust -1.041141120966274e0 (+32 more) (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.offset_surface"
+case = "gen2744"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[62] C++ 1.8396771574414928e-30, Rust 1.3414713583437196e-30 (+2 more) (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.offset_surface"
+case = "gen2755"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[3] C++ -2.0369172602222276e0, Rust -1.4191708455850627e0 (+9 more) (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.offset_surface"
+case = "gen2761"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[85] C++ 4.8938294448561584e-32, Rust 3.214617542030278e-32 (+2 more) (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.offset_surface"
+case = "gen2770"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[5] C++ 1.021e3, Rust 1.001e3 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.offset_surface"
+case = "gen2787"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[55] C++ 1.021e3, Rust 1.001e3 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.offset_surface"
+case = "gen2800"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[7] C++ -4.0909651310098845e0, Rust -4.5435581629424675e0 (+30 more) (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.offset_surface"
+case = "gen2823"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[56] C++ -4.92589252567346e0, Rust -4.946069264614957e0 (+48 more) (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.offset_surface"
+case = "gen2836"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[93] C++ -5.921756904134748e0, Rust -7.90062062725892e0 (+30 more) (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.offset_surface"
+case = "gen2844"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[46] C++ -1e0, Rust 0e0 (+34 more) (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.offset_surface"
+case = "gen2847"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[28] C++ -3.992072742993664e-21, Rust -1.6557461295525565e-20 (+14 more) (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.offset_surface"
+case = "gen2850"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[10] C++ 1.021e3, Rust 1.001e3 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.offset_surface"
+case = "gen2862"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[2] C++ -1.4023895296197049e0, Rust -1.398342492890752e0 (+11 more) (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.offset_surface"
+case = "gen2864"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[62] C++ 5.3886788471355215e-5, Rust -1.3310380403829887e-6 (+30 more) (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.offset_surface"
+case = "gen2915"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[68] C++ -1e0, Rust 0e0 (+34 more) (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.offset_surface"
+case = "gen2924"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[62] C++ -8.516840011390378e-18, Rust -4.527667974651732e-17 (+2 more) (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.offset_surface"
+case = "gen2939"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[10] C++ 0e0, Rust 1e0 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.offset_surface"
+case = "gen2952"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[9] C++ -1e0, Rust -1.05250937476668e0 (+32 more) (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.offset_surface"
+case = "gen2954"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[3] C++ -4.91998599338395e149, Rust -4.626176917387077e149 (+2 more) (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.offset_surface"
+case = "gen2968"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[12] C++ -8.224184512900529e-1, Rust -8.224758455040153e-1 (+2 more) (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"

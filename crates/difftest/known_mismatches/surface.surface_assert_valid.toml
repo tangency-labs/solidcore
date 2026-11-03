@@ -1,0 +1,327 @@
+# #2502: these cases move with the difftest's C++ reference, the SMLib fork
+# v1.1.0-alpha.1 (8eac63c); plan/findings/general--2502-fork-pin-surface-known-mismatches.md.
+
+[[mismatch]]
+unit = "surface.surface_assert_valid"
+case = "wr552_horn_torus_face_m0"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[0] C++ 1e0, Rust 0e0 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.surface_assert_valid"
+case = "gen0025"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 128, Rust 3 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.surface_assert_valid"
+case = "gen0070"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 124, Rust 3 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.surface_assert_valid"
+case = "gen0076"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 229, Rust 108 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.surface_assert_valid"
+case = "gen0094"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 108, Rust 233 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.surface_assert_valid"
+case = "gen0126"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 124, Rust 3 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.surface_assert_valid"
+case = "gen0168"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 124, Rust 3 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.surface_assert_valid"
+case = "gen0181"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 124, Rust 3 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.surface_assert_valid"
+case = "gen0191"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 124, Rust 3 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.surface_assert_valid"
+case = "gen0193"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 124, Rust 3 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.surface_assert_valid"
+case = "gen0236"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 124, Rust 3 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.surface_assert_valid"
+case = "gen0245"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 124, Rust 3 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.surface_assert_valid"
+case = "gen0270"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 124, Rust 3 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.surface_assert_valid"
+case = "gen0271"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[0] C++ 1e0, Rust 0e0 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.surface_assert_valid"
+case = "gen0326"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 124, Rust 3 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.surface_assert_valid"
+case = "gen0343"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[0] C++ 1e0, Rust 0e0 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.surface_assert_valid"
+case = "gen0345"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 124, Rust 3 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.surface_assert_valid"
+case = "gen0451"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 364, Rust 243 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.surface_assert_valid"
+case = "gen0459"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 124, Rust 3 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.surface_assert_valid"
+case = "gen0485"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[0] C++ 1e0, Rust 0e0 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.surface_assert_valid"
+case = "gen0492"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 124, Rust 3 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.surface_assert_valid"
+case = "gen0494"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 124, Rust 3 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.surface_assert_valid"
+case = "gen0531"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 229, Rust 108 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.surface_assert_valid"
+case = "gen0579"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 229, Rust 108 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.surface_assert_valid"
+case = "gen0629"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 590, Rust 469 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.surface_assert_valid"
+case = "gen0687"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 229, Rust 108 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.surface_assert_valid"
+case = "gen0699"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 3, Rust 128 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.surface_assert_valid"
+case = "gen0752"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 124, Rust 3 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.surface_assert_valid"
+case = "gen0786"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 229, Rust 108 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.surface_assert_valid"
+case = "gen0818"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 124, Rust 3 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.surface_assert_valid"
+case = "gen0819"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 124, Rust 3 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.surface_assert_valid"
+case = "gen0844"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 491, Rust 531 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.surface_assert_valid"
+case = "gen0899"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 124, Rust 3 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.surface_assert_valid"
+case = "gen0941"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 229, Rust 108 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.surface_assert_valid"
+case = "gen0963"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 124, Rust 3 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.surface_assert_valid"
+case = "gen1108"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 224, Rust 103 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.surface_assert_valid"
+case = "gen1118"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 124, Rust 3 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.surface_assert_valid"
+case = "gen1142"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 343, Rust 222 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.surface_assert_valid"
+case = "gen1159"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 124, Rust 3 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.surface_assert_valid"
+case = "gen1172"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[0] C++ 1e0, Rust 0e0 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.surface_assert_valid"
+case = "gen1214"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 124, Rust 3 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.surface_assert_valid"
+case = "gen1228"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 128, Rust 3 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.surface_assert_valid"
+case = "gen1234"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 124, Rust 3 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.surface_assert_valid"
+case = "gen1246"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 124, Rust 3 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.surface_assert_valid"
+case = "gen1265"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 229, Rust 108 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.surface_assert_valid"
+case = "gen1363"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 124, Rust 3 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.surface_assert_valid"
+case = "gen1382"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 124, Rust 3 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.surface_assert_valid"
+case = "gen1414"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[0] C++ 1e0, Rust 0e0 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.surface_assert_valid"
+case = "gen1427"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[0] C++ 1e0, Rust 0e0 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.surface_assert_valid"
+case = "gen1436"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 392, Rust 432 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.surface_assert_valid"
+case = "gen1456"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 233, Rust 108 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.surface_assert_valid"
+case = "gen1482"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 124, Rust 3 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.surface_assert_valid"
+case = "ext0001"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 92, Rust 172 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.surface_assert_valid"
+case = "ext0024"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 3, Rust 83 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.surface_assert_valid"
+case = "ext0025"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 3, Rust 83 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.surface_assert_valid"
+case = "ext0071"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 3, Rust 83 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.surface_assert_valid"
+case = "ext0111"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 92, Rust 172 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.surface_assert_valid"
+case = "ext0175"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 135, Rust 215 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.surface_assert_valid"
+case = "ext0274"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 92, Rust 172 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.surface_assert_valid"
+case = "ext0297"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 308, Rust 441 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.surface_assert_valid"
+case = "ext0302"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 407, Rust 540 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.surface_assert_valid"
+case = "ext0318"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 3, Rust 83 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.surface_assert_valid"
+case = "ext0323"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 3, Rust 83 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.surface_assert_valid"
+case = "ext0344"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 224, Rust 357 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.surface_assert_valid"
+case = "ext0392"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 3, Rust 83 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"

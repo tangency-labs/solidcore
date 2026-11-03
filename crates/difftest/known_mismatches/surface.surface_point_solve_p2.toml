@@ -1,0 +1,177 @@
+# #2502: these cases move with the difftest's C++ reference, the SMLib fork
+# v1.1.0-alpha.1 (8eac63c); plan/findings/general--2502-fork-pin-surface-known-mismatches.md.
+
+[[mismatch]]
+unit = "surface.surface_point_solve_p2"
+case = "surface_sms_pt03_op0"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[2] C++ 4e0, Rust 7e0 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.surface_point_solve_p2"
+case = "surface_sms_pt03_op1"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[0] C++ 3.444426278596874e-1, Rust 7.453275532215491e-1 (+2 more) (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.surface_point_solve_p2"
+case = "surface_sms_pt05_op0"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[2] C++ 5e0, Rust 6e0 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.surface_point_solve_p2"
+case = "surface_sms_pt05_op1"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[0] C++ 5.018674219622619e-1, Rust 6.083726445488472e-1 (+2 more) (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.surface_point_solve_p2"
+case = "surface_sms_pt06_op0"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[2] C++ 5e0, Rust 6e0 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.surface_point_solve_p2"
+case = "surface_sms_pt06_op1"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[0] C++ 5.337128126305121e-1, Rust 6.245632388039406e-1 (+2 more) (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.surface_point_solve_p2"
+case = "surface_sms_pt07_op1"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[0] C++ 6.499638949358496e-1, Rust 6.537371984116549e-1 (+1 more) (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.surface_point_solve_p2"
+case = "surface_sms_pt08_op1"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[0] C++ 6.535957802560227e-1, Rust 6.573689099812348e-1 (+1 more) (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.surface_point_solve_p2"
+case = "surface_sms_pt11_op0"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[2] C++ 5e0, Rust 6e0 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.surface_point_solve_p2"
+case = "surface_sms_pt11_op1"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[0] C++ 5.019179299777229e-1, Rust 6.084412157491031e-1 (+2 more) (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.surface_point_solve_p2"
+case = "surface_sms_pt12_op0"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[2] C++ 5e0, Rust 6e0 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.surface_point_solve_p2"
+case = "surface_sms_pt12_op1"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[0] C++ 5.337118568055438e-1, Rust 6.2456210146385e-1 (+2 more) (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.surface_point_solve_p2"
+case = "surface_sms_pt13_op1"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[0] C++ 6.499744752908323e-1, Rust 6.537477834372879e-1 (+1 more) (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.surface_point_solve_p2"
+case = "surface_sms_pt14_op1"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[0] C++ 6.536066624592234e-1, Rust 6.573797910648412e-1 (+1 more) (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.surface_point_solve_p2"
+case = "surface_sms_pt15_op1"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[0] C++ 6.575025703887343e-1, Rust 6.612750602755774e-1 (+1 more) (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.surface_point_solve_p2"
+case = "near_flat_p0_solve"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[1] C++ -7.719268526242007e-15, Rust -6.217248937900877e-15 (+2 more) (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.surface_point_solve_p2"
+case = "near_flat_p4_solve"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[2] C++ -4.4560457227506745e-5, Rust -2.6622142923926617e-5 (+1 more) (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.surface_point_solve_p2"
+case = "near_flat_p9_solve"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[2] C++ -2.8378688098421204e-5, Rust -2.6622142923926617e-5 (+1 more) (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.surface_point_solve_p2"
+case = "near_flat_p50_solve"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[2] C++ -1.4918899509149979e0, Rust -1.4918962281537258e0 (+1 more) (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.surface_point_solve_p2"
+case = "near_flat_p0_2_conv"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[0] C++ 0e0, Rust 1e0 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.surface_point_solve_p2"
+case = "gen0058"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[2] C++ 2e0, Rust 3e0 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.surface_point_solve_p2"
+case = "gen0164"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[0] C++ 0e0, Rust 6.25e-2 (+1 more) (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.surface_point_solve_p2"
+case = "gen0318"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[3] C++ 3e0, Rust 2e0 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.surface_point_solve_p2"
+case = "gen0349"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[2] C++ 4e0, Rust 5e0 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.surface_point_solve_p2"
+case = "gen0410"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[0] C++ 1.357792671267407e-1, Rust 1.3614750479128018e-1 (+1 more) (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.surface_point_solve_p2"
+case = "gen0413"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[2] C++ 0e0, Rust 1e0 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.surface_point_solve_p2"
+case = "gen0657"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[0] C++ 2.4937191249017165e-1, Rust 3.9882796606596704e-1 (+1 more) (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.surface_point_solve_p2"
+case = "gen0808"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[1] C++ 9.408578285757351e-1, Rust 7.04826804076108e-1 (+2 more) (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.surface_point_solve_p2"
+case = "rev_gen0021"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[0] C++ 7.851747772504076e-1, Rust 7.840783754567395e-1 (+2 more) (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.surface_point_solve_p2"
+case = "rev_gen0057"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 13, Rust 7 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.surface_point_solve_p2"
+case = "rev_gen0140"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[1] C++ 9.510509814247916e-1, Rust 9.56586333530898e-1 (+1 more) (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.surface_point_solve_p2"
+case = "rev_gen0164"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[0] C++ 4.018146450473767e-1, Rust 5e-1 (+2 more) (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.surface_point_solve_p2"
+case = "rev_gen0176"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[0] C++ 0e0, Rust 3.229906919557083e-3 (+1 more) (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.surface_point_solve_p2"
+case = "rev_gen0202"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[1] C++ 1e0, Rust 8.75e-1 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.surface_point_solve_p2"
+case = "rev_gen0217"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[2] C++ 5e0, Rust 4e0 (+1 more) (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"

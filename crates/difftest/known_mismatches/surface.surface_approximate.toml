@@ -1,0 +1,212 @@
+# #2502: these cases move with the difftest's C++ reference, the SMLib fork
+# v1.1.0-alpha.1 (8eac63c); plan/findings/general--2502-fork-pin-surface-known-mismatches.md.
+
+[[mismatch]]
+unit = "surface.surface_approximate"
+case = "simple_knot_cubic_patch_index"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 118, Rust 3 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.surface_approximate"
+case = "offset_simple_knot_cubic"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 150, Rust 3 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.surface_approximate"
+case = "issue1501_offset_wave_simple_knots"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 236, Rust 3 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.surface_approximate"
+case = "gen0008"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[0] C++ 1.001e3, Rust 0e0 (+1 more) (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.surface_approximate"
+case = "gen0017"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[0] C++ 1.001e3, Rust 0e0 (+1 more) (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.surface_approximate"
+case = "gen0028"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 184, Rust 3 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.surface_approximate"
+case = "gen0060"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 142, Rust 3 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.surface_approximate"
+case = "gen0065"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[0] C++ 1.001e3, Rust 0e0 (+1 more) (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.surface_approximate"
+case = "gen0073"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 218, Rust 3 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.surface_approximate"
+case = "gen0085"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 170, Rust 3 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.surface_approximate"
+case = "gen0097"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 150, Rust 3 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.surface_approximate"
+case = "gen0101"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 150, Rust 3 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.surface_approximate"
+case = "gen0131"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 166, Rust 3 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.surface_approximate"
+case = "gen0139"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 354, Rust 3 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.surface_approximate"
+case = "gen0140"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[0] C++ 1.001e3, Rust 0e0 (+1 more) (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.surface_approximate"
+case = "gen0142"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 662, Rust 3 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.surface_approximate"
+case = "gen0150"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 284, Rust 3 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.surface_approximate"
+case = "gen0152"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 82, Rust 3 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.surface_approximate"
+case = "gen0159"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[0] C++ 1.001e3, Rust 0e0 (+1 more) (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.surface_approximate"
+case = "gen0170"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 758, Rust 3 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.surface_approximate"
+case = "gen0198"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[0] C++ 1.001e3, Rust 0e0 (+1 more) (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.surface_approximate"
+case = "gen0204"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 150, Rust 3 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.surface_approximate"
+case = "gen0209"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 5272, Rust 3 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.surface_approximate"
+case = "gen0217"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[0] C++ 1.001e3, Rust 0e0 (+1 more) (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.surface_approximate"
+case = "gen0224"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 3522, Rust 3 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.surface_approximate"
+case = "gen0226"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 4068, Rust 3 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.surface_approximate"
+case = "gen0235"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 192, Rust 3 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.surface_approximate"
+case = "gen0250"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[0] C++ 1.001e3, Rust 0e0 (+1 more) (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.surface_approximate"
+case = "gen0267"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[0] C++ 1.001e3, Rust 0e0 (+1 more) (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.surface_approximate"
+case = "gen0272"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[0] C++ 1.001e3, Rust 0e0 (+1 more) (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.surface_approximate"
+case = "gen0276"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[0] C++ 1.001e3, Rust 0e0 (+1 more) (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.surface_approximate"
+case = "gen0282"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 122, Rust 3 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.surface_approximate"
+case = "gen0287"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 2786, Rust 3 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.surface_approximate"
+case = "gen0288"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 116, Rust 3 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.surface_approximate"
+case = "gen0294"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[0] C++ 1.001e3, Rust 0e0 (+1 more) (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.surface_approximate"
+case = "gen0297"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[0] C++ 1.001e3, Rust 0e0 (+1 more) (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.surface_approximate"
+case = "gen0317"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[0] C++ 1.001e3, Rust 0e0 (+1 more) (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.surface_approximate"
+case = "gen0344"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 82, Rust 3 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.surface_approximate"
+case = "gen0357"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 150, Rust 3 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.surface_approximate"
+case = "gen0373"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[0] C++ 1.001e3, Rust 0e0 (+1 more) (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.surface_approximate"
+case = "gen0374"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[0] C++ 1.001e3, Rust 0e0 (+1 more) (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.surface_approximate"
+case = "gen0389"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 2510, Rust 3 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"

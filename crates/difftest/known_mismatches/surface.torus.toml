@@ -1,0 +1,697 @@
+# #2502: these cases move with the difftest's C++ reference, the SMLib fork
+# v1.1.0-alpha.1 (8eac63c); plan/findings/general--2502-fork-pin-surface-known-mismatches.md.
+
+[[mismatch]]
+unit = "surface.torus"
+case = "edge_swap_inside_rebuild"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[20] C++ -9.000000000000006e1, Rust 1.200000000000001e2 (+5 more) (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.torus"
+case = "edge_swap_inside_offset"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[22] C++ -9.000000000000034e1, Rust 1.2000000000000014e2 (+5 more) (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.torus"
+case = "horn_half_minor_iso_from_axis_0.0"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[3] C++ 1.8e2, Rust 1e20 (+7 more) (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.torus"
+case = "horn_half_minor_iso_from_axis_0.5"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[3] C++ 1.8e2, Rust 1e20 (+7 more) (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.torus"
+case = "issue1433_torus_canonical_R10_r3_z"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[47] C++ 7.960204194457795e-16, Rust -4.6524625782726125e-15 (+19 more) (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.torus"
+case = "issue1433_torus_z_full_s0_i0"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[47] C++ 7.960204194457795e-16, Rust -4.6524625782726125e-15 (+19 more) (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.torus"
+case = "issue1433_torus_z_full_s0_i1"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[8] C++ 1e0, Rust 0e0 (+20 more) (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.torus"
+case = "issue1433_torus_z_full_s1_i0"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[47] C++ 7.960204194457795e-16, Rust -4.6524625782726125e-15 (+19 more) (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.torus"
+case = "issue1433_torus_z_full_s1_i1"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[8] C++ 1e0, Rust 0e0 (+20 more) (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.torus"
+case = "issue1433_torus_z_quarter_s0_i0"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[47] C++ 7.960204194457795e-16, Rust -5.284667874949686e-14 (+3 more) (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.torus"
+case = "issue1433_torus_z_quarter_s0_i1"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 165, Rust 71 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.torus"
+case = "issue1433_torus_z_quarter_s1_i0"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[47] C++ 7.960204194457795e-16, Rust -5.284667874949686e-14 (+3 more) (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.torus"
+case = "issue1433_torus_z_quarter_s1_i1"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 165, Rust 71 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.torus"
+case = "issue1433_torus_z_offseam_s0_i0"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 201, Rust 81 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.torus"
+case = "issue1433_torus_z_offseam_s0_i1"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 201, Rust 81 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.torus"
+case = "issue1433_torus_z_offseam_s1_i0"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 201, Rust 81 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.torus"
+case = "issue1433_torus_z_offseam_s1_i1"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 201, Rust 81 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.torus"
+case = "issue1433_torus_z_below_s0_i0"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 201, Rust 81 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.torus"
+case = "issue1433_torus_z_below_s0_i1"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 201, Rust 81 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.torus"
+case = "issue1433_torus_z_below_s1_i0"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 201, Rust 81 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.torus"
+case = "issue1433_torus_z_below_s1_i1"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 201, Rust 81 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.torus"
+case = "issue1433_torus_z_inner_s0_i0"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 357, Rust 81 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.torus"
+case = "issue1433_torus_z_inner_s0_i1"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 357, Rust 81 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.torus"
+case = "issue1433_torus_z_inner_s1_i0"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 357, Rust 81 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.torus"
+case = "issue1433_torus_z_inner_s1_i1"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 357, Rust 81 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.torus"
+case = "issue1433_torus_z_half_seam_s0_i0"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[48] C++ 0e0, Rust 5.448482997718393e-15 (+9 more) (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.torus"
+case = "issue1433_torus_z_half_seam_s0_i1"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[8] C++ 1e0, Rust 0e0 (+10 more) (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.torus"
+case = "issue1433_torus_z_half_seam_s1_i0"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[48] C++ 0e0, Rust 5.448482997718393e-15 (+9 more) (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.torus"
+case = "issue1433_torus_z_half_seam_s1_i1"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[8] C++ 1e0, Rust 0e0 (+10 more) (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.torus"
+case = "issue1433_torus_z_past180_s0_i0"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 441, Rust 91 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.torus"
+case = "issue1433_torus_z_past180_s0_i1"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 441, Rust 91 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.torus"
+case = "issue1433_torus_z_past180_s1_i0"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 441, Rust 91 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.torus"
+case = "issue1433_torus_z_past180_s1_i1"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 441, Rust 91 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.torus"
+case = "issue1433_torus_tilted_full_s0_i1"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[8] C++ 1e0, Rust 0e0 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.torus"
+case = "issue1433_torus_tilted_full_s1_i1"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[8] C++ 1e0, Rust 0e0 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.torus"
+case = "issue1433_torus_tilted_quarter_s0_i0"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[103] C++ 7.993605777301089e-16, Rust 5.8073204365008e-16 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.torus"
+case = "issue1433_torus_tilted_quarter_s0_i1"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 165, Rust 71 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.torus"
+case = "issue1433_torus_tilted_quarter_s1_i0"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[103] C++ 7.993605777301089e-16, Rust 5.8073204365008e-16 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.torus"
+case = "issue1433_torus_tilted_quarter_s1_i1"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 165, Rust 71 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.torus"
+case = "issue1433_torus_tilted_offseam_s0_i0"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 201, Rust 81 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.torus"
+case = "issue1433_torus_tilted_offseam_s0_i1"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 201, Rust 81 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.torus"
+case = "issue1433_torus_tilted_offseam_s1_i0"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 201, Rust 81 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.torus"
+case = "issue1433_torus_tilted_offseam_s1_i1"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 201, Rust 81 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.torus"
+case = "issue1433_torus_tilted_below_s0_i0"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 201, Rust 81 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.torus"
+case = "issue1433_torus_tilted_below_s0_i1"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 201, Rust 81 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.torus"
+case = "issue1433_torus_tilted_below_s1_i0"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 201, Rust 81 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.torus"
+case = "issue1433_torus_tilted_below_s1_i1"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 201, Rust 81 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.torus"
+case = "issue1433_torus_tilted_inner_s0_i0"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 357, Rust 81 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.torus"
+case = "issue1433_torus_tilted_inner_s0_i1"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 357, Rust 81 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.torus"
+case = "issue1433_torus_tilted_inner_s1_i0"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 357, Rust 81 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.torus"
+case = "issue1433_torus_tilted_inner_s1_i1"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 357, Rust 81 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.torus"
+case = "issue1433_torus_tilted_half_seam_s0_i0"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[141] C++ 6.661338147750938e-17, Rust 8.540177112501203e-17 (+1 more) (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.torus"
+case = "issue1433_torus_tilted_half_seam_s0_i1"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[8] C++ 1e0, Rust 0e0 (+2 more) (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.torus"
+case = "issue1433_torus_tilted_half_seam_s1_i0"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[141] C++ 6.661338147750938e-17, Rust 8.540177112501203e-17 (+1 more) (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.torus"
+case = "issue1433_torus_tilted_half_seam_s1_i1"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[8] C++ 1e0, Rust 0e0 (+2 more) (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.torus"
+case = "issue1433_torus_tilted_past180_s0_i0"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 441, Rust 91 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.torus"
+case = "issue1433_torus_tilted_past180_s0_i1"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 441, Rust 91 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.torus"
+case = "issue1433_torus_tilted_past180_s1_i0"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 441, Rust 91 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.torus"
+case = "issue1433_torus_tilted_past180_s1_i1"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 441, Rust 91 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.torus"
+case = "issue1433_torus_far_full_s0_i0"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 525, Rust 101 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.torus"
+case = "issue1433_torus_far_full_s0_i1"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 525, Rust 101 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.torus"
+case = "issue1433_torus_far_full_s1_i0"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 525, Rust 101 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.torus"
+case = "issue1433_torus_far_full_s1_i1"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 525, Rust 101 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.torus"
+case = "issue1433_torus_far_quarter_s0_i0"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[21] C++ 0e0, Rust 3.2568879938192813e-12 (+2 more) (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.torus"
+case = "issue1433_torus_far_quarter_s0_i1"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 165, Rust 71 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.torus"
+case = "issue1433_torus_far_quarter_s1_i0"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[21] C++ 0e0, Rust 3.2568879938192813e-12 (+2 more) (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.torus"
+case = "issue1433_torus_far_quarter_s1_i1"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 165, Rust 71 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.torus"
+case = "issue1433_torus_far_offseam_s0_i0"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 201, Rust 81 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.torus"
+case = "issue1433_torus_far_offseam_s0_i1"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 201, Rust 81 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.torus"
+case = "issue1433_torus_far_offseam_s1_i0"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 201, Rust 81 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.torus"
+case = "issue1433_torus_far_offseam_s1_i1"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 201, Rust 81 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.torus"
+case = "issue1433_torus_far_below_s0_i0"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 201, Rust 81 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.torus"
+case = "issue1433_torus_far_below_s0_i1"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 201, Rust 81 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.torus"
+case = "issue1433_torus_far_below_s1_i0"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 201, Rust 81 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.torus"
+case = "issue1433_torus_far_below_s1_i1"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 201, Rust 81 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.torus"
+case = "issue1433_torus_far_inner_s0_i0"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 357, Rust 81 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.torus"
+case = "issue1433_torus_far_inner_s0_i1"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 357, Rust 81 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.torus"
+case = "issue1433_torus_far_inner_s1_i0"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 357, Rust 81 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.torus"
+case = "issue1433_torus_far_inner_s1_i1"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 357, Rust 81 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.torus"
+case = "issue1433_torus_far_half_seam_s0_i0"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[21] C++ 0e0, Rust 3.256887993818718e-12 (+1 more) (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.torus"
+case = "issue1433_torus_far_half_seam_s0_i1"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[8] C++ 1e0, Rust 0e0 (+2 more) (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.torus"
+case = "issue1433_torus_far_half_seam_s1_i0"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[21] C++ 0e0, Rust 3.256887993818718e-12 (+1 more) (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.torus"
+case = "issue1433_torus_far_half_seam_s1_i1"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[8] C++ 1e0, Rust 0e0 (+2 more) (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.torus"
+case = "issue1433_torus_far_past180_s0_i0"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 441, Rust 91 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.torus"
+case = "issue1433_torus_far_past180_s0_i1"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 441, Rust 91 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.torus"
+case = "issue1433_torus_far_past180_s1_i0"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 441, Rust 91 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.torus"
+case = "issue1433_torus_far_past180_s1_i1"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 441, Rust 91 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.torus"
+case = "issue1433_torus_scaled_0.0001"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[47] C++ 7.960204194457795e-20, Rust 7.447000641270136e-19 (+11 more) (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.torus"
+case = "issue1433_torus_scaled_0.0001_swap"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 201, Rust 357 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.torus"
+case = "issue1433_torus_scaled_0.01"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[133] C++ 1.232595164407831e-31, Rust 0e0 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.torus"
+case = "issue1433_torus_scaled_0.01_swap"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 201, Rust 71 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.torus"
+case = "issue1433_torus_scaled_100"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[47] C++ 7.960204194457796e-14, Rust -3.663226200675035e-14 (+11 more) (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.torus"
+case = "issue1433_torus_scaled_100_swap"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 201, Rust 71 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.torus"
+case = "issue1433_torus_scaled_100000"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[47] C++ 7.960204194457796e-11, Rust 7.253318100855994e-10 (+18 more) (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.torus"
+case = "issue1433_torus_scaled_100000_swap"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 201, Rust 71 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.torus"
+case = "issue1433_torus_fillet_far"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[21] C++ 0e0, Rust 2.171359069243654e-10 (+1 more) (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.torus"
+case = "issue1433_torus_horn"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[47] C++ 3.6739403974420594e-16, Rust -5.406864598755432e-16 (+13 more) (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.torus"
+case = "issue1433_torus_spindle"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[47] C++ 3.061616997868383e-16, Rust 2.812840998873043e-16 (+11 more) (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.torus"
+case = "issue1433_torus_thin_tube"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 525, Rust 101 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.torus"
+case = "issue1433_torus_tolscale_1000"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 525, Rust 101 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.torus"
+case = "issue1433_torus_net_1_1_-1"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 165, Rust 71 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.torus"
+case = "issue1433_torus_perturb_1e-12"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[47] C++ 7.960204194457795e-16, Rust -2.8262555568387038e-14 (+3 more) (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.torus"
+case = "issue1433_torus_perturb_corner_1e-12"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 525, Rust 101 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.torus"
+case = "issue1433_torus_perturb_1e-09"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[47] C++ 7.960204194457795e-16, Rust -2.4630233570580405e-14 (+3 more) (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.torus"
+case = "issue1433_torus_perturb_out_of_net"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[47] C++ 7.960204194457795e-16, Rust -4.6524625782726125e-15 (+19 more) (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.torus"
+case = "issue1490_r20_4_s1_i1_sw0_is_nurb"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 305, Rust 81 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.torus"
+case = "issue1490_r20_4_s1_i1_sw1_is_nurb"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 305, Rust 81 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.torus"
+case = "issue1490_r20_4_s1_i0_sw0_is_nurb"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 305, Rust 81 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.torus"
+case = "issue1490_r20_4_s1_i0_sw1_is_nurb"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 305, Rust 81 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.torus"
+case = "issue1490_r20_4_s1em3_i1_sw0_is_nurb"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 305, Rust 101 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.torus"
+case = "issue1490_r20_4_s1em3_i1_sw1_is_nurb"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 305, Rust 101 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.torus"
+case = "issue1490_r20_4_s1em3_i0_sw0_is_nurb"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 305, Rust 441 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.torus"
+case = "issue1490_r20_4_s1em3_i0_sw1_is_nurb"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 305, Rust 441 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.torus"
+case = "issue1490_r20_4_s1e3_i1_sw0_is_nurb"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 305, Rust 81 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.torus"
+case = "issue1490_r20_4_s1e3_i1_sw1_is_nurb"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 305, Rust 81 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.torus"
+case = "issue1490_r20_4_s1e3_i0_sw0_is_nurb"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 305, Rust 81 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.torus"
+case = "issue1490_r20_4_s1e3_i0_sw1_is_nurb"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 305, Rust 81 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.torus"
+case = "issue1490_r5_1_full_s1_i1_sw0_is_nurb"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[8] C++ 1e0, Rust 0e0 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.torus"
+case = "issue1490_r5_1_full_s1_i1_sw1_is_nurb"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[8] C++ 1e0, Rust 0e0 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.torus"
+case = "v_neg_plain_rebuild"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[20] C++ -2.3700000000000102e1, Rust 2.3700000000000102e1 (+4 more) (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.torus"
+case = "v_neg_io_swap_rebuild"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[20] C++ -2.3699999999999925e1, Rust 1.5630000000000007e2 (+3 more) (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.torus"
+case = "v_zero_io_swap_rebuild"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[20] C++ 0e0, Rust 1.7999999999999974e2 (+1 more) (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.torus"
+case = "gen0001"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[162] C++ -2.904707741103669e-15, Rust -1.7277712092890423e-15 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.torus"
+case = "gen0025"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.build[0] C++ 1.001e3, Rust 0e0 (+2 more) (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.torus"
+case = "gen0047"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[22] C++ 3.233113631115518e2, Rust 3.966886368884482e2 (+1 more) (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.torus"
+case = "gen0139"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[162] C++ 9.140443269770489e-16, Rust 6.796169582148275e-16 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.torus"
+case = "gen0178"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[151] C++ 2.524469547611267e-1, Rust 2.5e-1 (+17 more) (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.torus"
+case = "gen0203"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[1] C++ 1.1614913195894717e2, Rust 1.1696745344504197e2 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.torus"
+case = "gen0219"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[161] C++ 4.8290695977012424e-17, Rust 0e0 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.torus"
+case = "gen0286"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[160] C++ -9.780708814033087e-17, Rust -6.266905339025343e-17 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.torus"
+case = "gen0289"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[164] C++ 0e0, Rust 1.210990595648366e-16 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.torus"
+case = "gen0352"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[147] C++ 2.507815949515635e-1, Rust 2.5e-1 (+17 more) (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.torus"
+case = "gen0355"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[22] C++ 1.9170770796789546e2, Rust 1.5790521061418522e2 (+1 more) (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.torus"
+case = "gen0358"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[22] C++ 1.7946080413527577e2, Rust 5.255312811611764e1 (+3 more) (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.torus"
+case = "gen0393"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[20] C++ 1.1121675856303476e2, Rust 1.407765241863418e2 (+2 more) (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.torus"
+case = "gen0424"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[147] C++ 2.530582425026331e-1, Rust 2.5e-1 (+17 more) (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.torus"
+case = "gen0470"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[24] C++ 2.3573179786942558e2, Rust 1.2426820213057444e2 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.torus"
+case = "gen0482"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[22] C++ 2.2962724286281084e1, Rust 5.789750115716972e1 (+1 more) (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.torus"
+case = "gen0489"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[20] C++ -1.020603639035832e2, Rust 1.744725352217056e2 (+3 more) (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"

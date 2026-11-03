@@ -1,0 +1,157 @@
+# #2502: these cases move with the difftest's C++ reference, the SMLib fork
+# v1.1.0-alpha.1 (8eac63c); plan/findings/general--2502-fork-pin-surface-known-mismatches.md.
+
+[[mismatch]]
+unit = "surface.surface_p11"
+case = "gen0031"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.deviation[0] C++ 1.4987381121984894e-2, Rust 1.4973400776178905e-2 (+3 more) (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.surface_p11"
+case = "gen0052"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.deviation[0] C++ 1.3388866256625045e-3, Rust 1.4762364834459538e-3 (+2 more) (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.surface_p11"
+case = "gen0089"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: error C++ Some(\"LocalSurfaceIntersect failed\"), Rust None (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.surface_p11"
+case = "gen0113"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: error C++ Some(\"LocalSurfaceIntersect failed\"), Rust None (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.surface_p11"
+case = "gen0169"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.deviation[0] C++ 1.4651999856159976e-14, Rust 1.2228591306686066e-14 (+4 more) (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.surface_p11"
+case = "gen0209"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.deviation[0] C++ 7.152448122690996e-17, Rust 1.7253305394310741e-16 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.surface_p11"
+case = "gen0224"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.deviation[0] C++ 5.254002708797019e-15, Rust 4.943275824729523e-15 (+4 more) (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.surface_p11"
+case = "gen0245"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.deviation[0] C++ 1.1188630228279524e-16, Rust 0e0 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.surface_p11"
+case = "gen0249"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: error C++ Some(\"LocalSurfaceIntersect failed\"), Rust None (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.surface_p11"
+case = "gen0258"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.data.len C++ 57, Rust 76 (+1 more) (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.surface_p11"
+case = "gen0261"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.deviation[0] C++ 5.1207351180927676e-15, Rust 9.933997851452441e-15 (+4 more) (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.surface_p11"
+case = "gen0288"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: error C++ Some(\"LocalSurfaceIntersect failed\"), Rust None (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.surface_p11"
+case = "gen0304"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.deviation[0] C++ 7.669950508429455e-3, Rust 7.634738873720386e-3 (+4 more) (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.surface_p11"
+case = "gen0322"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: error C++ Some(\"LocalSurfaceIntersect failed\"), Rust None (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.surface_p11"
+case = "gen0365"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: error C++ Some(\"LocalSurfaceIntersect failed\"), Rust None (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.surface_p11"
+case = "gen0389"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.deviation[0] C++ 2.6551494439952424e-3, Rust 2.636113443503917e-3 (+3 more) (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.surface_p11"
+case = "gen0396"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: error C++ Some(\"LocalSurfaceIntersect failed\"), Rust None (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.surface_p11"
+case = "gen0399"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.deviation[0] C++ 1.7557595556438868e-16, Rust 1.2456232622454378e-16 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.surface_p11"
+case = "gen0410"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: error C++ Some(\"LocalSurfaceIntersect failed\"), Rust None (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.surface_p11"
+case = "gen0417"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.deviation[0] C++ 1.0327955392624374e-4, Rust 1.0313702711117505e-4 (+3 more) (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.surface_p11"
+case = "gen0424"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.deviation[0] C++ 1.2412670766236366e-16, Rust 7.850291956165298e-13 (+4 more) (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.surface_p11"
+case = "gen0440"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.deviation[0] C++ 1.5018472246915162e-3, Rust 2.323097673822224e-3 (+4 more) (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.surface_p11"
+case = "gen0447"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.deviation[0] C++ 3.076518088615157e-3, Rust 1.0771711463922293e-3 (+4 more) (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.surface_p11"
+case = "gen0471"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: error C++ Some(\"LocalSurfaceIntersect failed\"), Rust None (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.surface_p11"
+case = "gen0483"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.deviation C++ missing, Rust present (+2 more) (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.surface_p11"
+case = "gen0503"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: error C++ Some(\"LocalSurfaceIntersect failed\"), Rust None (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.surface_p11"
+case = "gen0506"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.deviation[0] C++ 5.2385373112930926e-5, Rust 1.7482816195312976e-2 (+4 more) (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.surface_p11"
+case = "gen0511"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.deviation[0] C++ 7.301351988545593e-16, Rust 1.0839941478042151e-13 (+4 more) (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.surface_p11"
+case = "gen0551"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: error C++ Some(\"LocalSurfaceIntersect failed\"), Rust None (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.surface_p11"
+case = "gen0557"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: error C++ Some(\"LocalSurfaceIntersect failed\"), Rust None (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.surface_p11"
+case = "gen0565"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.deviation[0] C++ 2.7755575615628914e-17, Rust 6.211787775057362e-17 (+1 more) (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"

@@ -1,0 +1,827 @@
+# #2502: these cases move with the difftest's C++ reference, the SMLib fork
+# v1.1.0-alpha.1 (8eac63c); plan/findings/general--2502-fork-pin-surface-known-mismatches.md.
+
+[[mismatch]]
+unit = "surface.cone_p3"
+case = "fuzz_axis_overflow_zero_y"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: error C++ Some(\"status_1001\"), Rust None (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.cone_p3"
+case = "fuzz_axis_overflow_zero_y_trimmed"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: error C++ Some(\"status_1001\"), Rust None (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.cone_p3"
+case = "fuzz_axis_overflow_zero_y_swapped"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: error C++ Some(\"status_1001\"), Rust None (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.cone_p3"
+case = "fuzz_height_00226"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: error C++ Some(\"status_1001\"), Rust None (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.cone_p3"
+case = "fuzz_height_02052"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: error C++ Some(\"status_1001\"), Rust None (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.cone_p3"
+case = "fuzz_height_02407"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: error C++ Some(\"status_1001\"), Rust None (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.cone_p3"
+case = "fuzz_height_05279"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: error C++ Some(\"status_1001\"), Rust None (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.cone_p3"
+case = "fuzz_height_05558"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: error C++ Some(\"status_1001\"), Rust None (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.cone_p3"
+case = "fuzz_height_06289"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: error C++ Some(\"status_1001\"), Rust None (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.cone_p3"
+case = "fuzz_height_06674"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: error C++ Some(\"status_1001\"), Rust None (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.cone_p3"
+case = "fuzz_height_09442"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: error C++ Some(\"status_1001\"), Rust None (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.cone_p3"
+case = "fuzz_trim_domain_02497"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: error C++ Some(\"status_1001\"), Rust None (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.cone_p3"
+case = "issue711_overlapping_holes"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.geometry.len C++ 79, Rust 5 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.cone_p3"
+case = "issue711_overlapping_holes_reversed"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.geometry.len C++ 79, Rust 5 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.cone_p3"
+case = "issue711_both_trims_class1_flags0"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.geometry.len C++ 79, Rust 5 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.cone_p3"
+case = "issue711_both_trims_class1_flags1"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.geometry.len C++ 79, Rust 5 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.cone_p3"
+case = "issue711_both_trims_class1_flags2"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.geometry.len C++ 79, Rust 5 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.cone_p3"
+case = "issue711_both_trims_class1_flags3"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.geometry.len C++ 79, Rust 5 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.cone_p3"
+case = "issue711_both_trims_class1_flags4"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.geometry.len C++ 79, Rust 5 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.cone_p3"
+case = "issue711_both_trims_class1_flags5"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.geometry.len C++ 79, Rust 5 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.cone_p3"
+case = "issue711_both_trims_class1_flags6"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.geometry.len C++ 79, Rust 5 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.cone_p3"
+case = "issue711_both_trims_class1_flags7"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.geometry.len C++ 79, Rust 5 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.cone_p3"
+case = "issue711_both_trims_class1_flags8"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.geometry.len C++ 79, Rust 5 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.cone_p3"
+case = "issue711_both_trims_class1_flags9"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.geometry.len C++ 79, Rust 5 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.cone_p3"
+case = "issue711_both_trims_class1_flags10"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.geometry.len C++ 79, Rust 5 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.cone_p3"
+case = "issue711_both_trims_class1_flags11"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.geometry.len C++ 79, Rust 5 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.cone_p3"
+case = "issue711_both_trims_class1_flags12"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.geometry.len C++ 79, Rust 5 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.cone_p3"
+case = "issue711_both_trims_class1_flags13"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.geometry.len C++ 79, Rust 5 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.cone_p3"
+case = "issue711_both_trims_class1_flags14"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.geometry.len C++ 79, Rust 5 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.cone_p3"
+case = "issue711_both_trims_class1_flags15"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.geometry.len C++ 79, Rust 5 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.cone_p3"
+case = "issue711_both_trims_class0_flags0"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.geometry.len C++ 79, Rust 5 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.cone_p3"
+case = "issue711_both_trims_class0_flags1"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.geometry.len C++ 79, Rust 5 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.cone_p3"
+case = "issue711_both_trims_class0_flags2"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.geometry.len C++ 79, Rust 5 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.cone_p3"
+case = "issue711_both_trims_class0_flags3"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.geometry.len C++ 79, Rust 5 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.cone_p3"
+case = "issue711_both_trims_class0_flags4"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.geometry.len C++ 79, Rust 5 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.cone_p3"
+case = "issue711_both_trims_class0_flags5"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.geometry.len C++ 79, Rust 5 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.cone_p3"
+case = "issue711_both_trims_class0_flags6"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.geometry.len C++ 79, Rust 5 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.cone_p3"
+case = "issue711_both_trims_class0_flags7"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.geometry.len C++ 79, Rust 5 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.cone_p3"
+case = "issue711_both_trims_class0_flags8"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.geometry.len C++ 79, Rust 5 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.cone_p3"
+case = "issue711_both_trims_class0_flags9"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.geometry.len C++ 79, Rust 5 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.cone_p3"
+case = "issue711_both_trims_class0_flags10"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.geometry.len C++ 79, Rust 5 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.cone_p3"
+case = "issue711_both_trims_class0_flags11"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.geometry.len C++ 79, Rust 5 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.cone_p3"
+case = "issue711_both_trims_class0_flags12"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.geometry.len C++ 79, Rust 5 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.cone_p3"
+case = "issue711_both_trims_class0_flags13"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.geometry.len C++ 79, Rust 5 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.cone_p3"
+case = "issue711_both_trims_class0_flags14"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.geometry.len C++ 79, Rust 5 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.cone_p3"
+case = "issue711_both_trims_class0_flags15"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.geometry.len C++ 79, Rust 5 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.cone_p3"
+case = "issue711_opposite_axis_flags0"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.geometry.len C++ 79, Rust 5 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.cone_p3"
+case = "issue711_opposite_axis_flags1"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.geometry.len C++ 79, Rust 5 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.cone_p3"
+case = "issue711_opposite_axis_flags2"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.geometry.len C++ 79, Rust 5 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.cone_p3"
+case = "issue711_opposite_axis_flags3"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.geometry.len C++ 79, Rust 5 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.cone_p3"
+case = "issue711_upper_trim_crossing_1"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.geometry[11] C++ 4e0, Rust 1.2e1 (+9 more) (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.cone_p3"
+case = "issue711_upper_trim_crossing_0"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.geometry[11] C++ 4e0, Rust 1.2e1 (+9 more) (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.cone_p3"
+case = "issue711_upper_trim_tangent_1"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.geometry[11] C++ 4e0, Rust 1.2e1 (+4 more) (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.cone_p3"
+case = "issue711_upper_trim_tangent_0"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.geometry[11] C++ 4e0, Rust 1.2e1 (+4 more) (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.cone_p3"
+case = "issue711_touch_or_disjoint_4"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.geometry.len C++ 59, Rust 5 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.cone_p3"
+case = "issue711_scale_small"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.geometry.len C++ 79, Rust 5 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.cone_p3"
+case = "issue711_scale_large"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.geometry.len C++ 79, Rust 5 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.cone_p3"
+case = "issue711_global_equal_radius_cones"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.geometry.len C++ 79, Rust 5 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.cone_p3"
+case = "tiny_axis_neighbor_0_self"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: error C++ Some(\"status_1001\"), Rust None (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.cone_p3"
+case = "tiny_axis_neighbor_0_disjoint"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: error C++ Some(\"status_1001\"), Rust None (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.cone_p3"
+case = "tiny_axis_neighbor_3_self"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: error C++ Some(\"status_1001\"), Rust None (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.cone_p3"
+case = "tiny_axis_neighbor_3_disjoint"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: error C++ Some(\"status_1001\"), Rust None (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.cone_p3"
+case = "missing_polar_height_plane_1_z"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: error C++ Some(\"status_1001\"), Rust None (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.cone_p3"
+case = "missing_polar_height_plane_1_y"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: error C++ Some(\"status_1001\"), Rust None (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.cone_p3"
+case = "missing_polar_height_plane_2_z"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: error C++ Some(\"status_1001\"), Rust None (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.cone_p3"
+case = "missing_polar_height_plane_2_y"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: error C++ Some(\"status_1001\"), Rust None (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.cone_p3"
+case = "gen0015"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.geometry.len C++ 79, Rust 5 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.cone_p3"
+case = "gen0019"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.geometry.len C++ 79, Rust 5 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.cone_p3"
+case = "gen0020"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.geometry.len C++ 79, Rust 5 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.cone_p3"
+case = "gen0023"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.geometry.len C++ 79, Rust 5 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.cone_p3"
+case = "gen0025"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.geometry.len C++ 79, Rust 5 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.cone_p3"
+case = "gen0027"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.geometry.len C++ 79, Rust 5 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.cone_p3"
+case = "gen0028"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.geometry.len C++ 79, Rust 5 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.cone_p3"
+case = "gen0034"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.geometry.len C++ 42, Rust 5 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.cone_p3"
+case = "gen0043"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.geometry.len C++ 79, Rust 5 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.cone_p3"
+case = "gen0068"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.geometry.len C++ 79, Rust 5 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.cone_p3"
+case = "gen0073"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.geometry.len C++ 79, Rust 5 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.cone_p3"
+case = "gen0079"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.geometry.len C++ 79, Rust 5 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.cone_p3"
+case = "gen0131"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.geometry.len C++ 79, Rust 5 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.cone_p3"
+case = "gen0140"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.geometry.len C++ 79, Rust 5 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.cone_p3"
+case = "gen0146"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.geometry.len C++ 79, Rust 5 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.cone_p3"
+case = "gen0152"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.geometry.len C++ 42, Rust 5 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.cone_p3"
+case = "gen0186"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.geometry.len C++ 79, Rust 5 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.cone_p3"
+case = "gen0190"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.geometry.len C++ 79, Rust 5 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.cone_p3"
+case = "gen0193"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.geometry.len C++ 79, Rust 5 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.cone_p3"
+case = "gen0200"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.geometry.len C++ 79, Rust 5 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.cone_p3"
+case = "gen0201"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.geometry.len C++ 79, Rust 5 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.cone_p3"
+case = "gen0207"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.geometry.len C++ 79, Rust 5 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.cone_p3"
+case = "gen0226"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.geometry.len C++ 79, Rust 5 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.cone_p3"
+case = "gen0245"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.geometry.len C++ 79, Rust 5 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.cone_p3"
+case = "gen0252"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.geometry.len C++ 79, Rust 5 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.cone_p3"
+case = "gen0262"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.geometry.len C++ 79, Rust 5 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.cone_p3"
+case = "gen0273"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.geometry.len C++ 79, Rust 5 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.cone_p3"
+case = "gen0274"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.geometry.len C++ 79, Rust 5 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.cone_p3"
+case = "gen0284"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.geometry.len C++ 42, Rust 5 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.cone_p3"
+case = "gen0309"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.geometry.len C++ 79, Rust 5 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.cone_p3"
+case = "gen0313"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.geometry.len C++ 79, Rust 5 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.cone_p3"
+case = "gen0318"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.geometry.len C++ 79, Rust 5 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.cone_p3"
+case = "gen0319"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.geometry.len C++ 79, Rust 5 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.cone_p3"
+case = "gen0331"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.geometry.len C++ 79, Rust 5 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.cone_p3"
+case = "gen0348"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.geometry.len C++ 79, Rust 5 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.cone_p3"
+case = "gen0354"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.geometry.len C++ 79, Rust 5 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.cone_p3"
+case = "gen0356"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.geometry.len C++ 79, Rust 5 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.cone_p3"
+case = "gen0363"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.geometry.len C++ 79, Rust 5 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.cone_p3"
+case = "gen0364"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.geometry.len C++ 79, Rust 5 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.cone_p3"
+case = "gen0390"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.geometry.len C++ 79, Rust 5 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.cone_p3"
+case = "gen0413"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.geometry.len C++ 79, Rust 5 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.cone_p3"
+case = "gen0415"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.geometry.len C++ 79, Rust 5 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.cone_p3"
+case = "gen0418"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.geometry.len C++ 79, Rust 5 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.cone_p3"
+case = "gen0461"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.geometry.len C++ 79, Rust 5 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.cone_p3"
+case = "gen0468"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.geometry.len C++ 79, Rust 5 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.cone_p3"
+case = "gen0488"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.geometry.len C++ 79, Rust 5 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.cone_p3"
+case = "gen0505"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.geometry.len C++ 79, Rust 5 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.cone_p3"
+case = "gen0527"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.geometry.len C++ 79, Rust 5 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.cone_p3"
+case = "gen0543"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.geometry.len C++ 79, Rust 5 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.cone_p3"
+case = "gen0546"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.geometry.len C++ 42, Rust 5 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.cone_p3"
+case = "gen0585"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.geometry.len C++ 42, Rust 5 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.cone_p3"
+case = "gen0593"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.geometry.len C++ 79, Rust 5 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.cone_p3"
+case = "gen0601"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.geometry.len C++ 79, Rust 5 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.cone_p3"
+case = "gen0638"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.geometry.len C++ 79, Rust 5 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.cone_p3"
+case = "gen0639"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.geometry.len C++ 79, Rust 5 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.cone_p3"
+case = "gen0651"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.geometry.len C++ 79, Rust 5 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.cone_p3"
+case = "gen0719"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.geometry.len C++ 79, Rust 5 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.cone_p3"
+case = "gen0728"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.geometry.len C++ 79, Rust 5 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.cone_p3"
+case = "gen0751"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.geometry.len C++ 79, Rust 5 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.cone_p3"
+case = "gen0764"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.geometry.len C++ 79, Rust 5 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.cone_p3"
+case = "gen0792"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.geometry.len C++ 79, Rust 5 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.cone_p3"
+case = "gen0797"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.geometry.len C++ 79, Rust 5 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.cone_p3"
+case = "gen0812"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.geometry.len C++ 42, Rust 5 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.cone_p3"
+case = "gen0816"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.geometry.len C++ 79, Rust 5 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.cone_p3"
+case = "gen0824"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.geometry.len C++ 79, Rust 5 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.cone_p3"
+case = "gen0838"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.geometry.len C++ 79, Rust 5 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.cone_p3"
+case = "gen0839"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.geometry.len C++ 79, Rust 5 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.cone_p3"
+case = "gen0851"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.geometry.len C++ 42, Rust 5 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.cone_p3"
+case = "gen0880"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.geometry.len C++ 79, Rust 5 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.cone_p3"
+case = "gen0932"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.geometry.len C++ 79, Rust 5 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.cone_p3"
+case = "gen0938"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.geometry.len C++ 79, Rust 5 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.cone_p3"
+case = "gen0939"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.geometry.len C++ 79, Rust 5 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.cone_p3"
+case = "gen0940"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.geometry.len C++ 79, Rust 5 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.cone_p3"
+case = "gen0951"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.geometry.len C++ 79, Rust 5 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.cone_p3"
+case = "gen0955"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.geometry.len C++ 79, Rust 5 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.cone_p3"
+case = "gen0991"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.geometry.len C++ 79, Rust 5 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.cone_p3"
+case = "gen0999"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.geometry.len C++ 79, Rust 5 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.cone_p3"
+case = "gen1001"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.geometry.len C++ 79, Rust 5 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.cone_p3"
+case = "gen1009"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.geometry.len C++ 79, Rust 5 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.cone_p3"
+case = "gen1029"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.geometry.len C++ 79, Rust 5 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.cone_p3"
+case = "gen1038"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.geometry.len C++ 79, Rust 5 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.cone_p3"
+case = "gen1048"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.geometry.len C++ 79, Rust 5 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.cone_p3"
+case = "gen1051"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.geometry.len C++ 79, Rust 5 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.cone_p3"
+case = "gen1055"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.geometry.len C++ 79, Rust 5 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.cone_p3"
+case = "gen1105"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.geometry.len C++ 42, Rust 5 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.cone_p3"
+case = "gen1114"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.geometry.len C++ 79, Rust 5 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.cone_p3"
+case = "gen1127"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.geometry.len C++ 79, Rust 5 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.cone_p3"
+case = "gen1132"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.geometry.len C++ 79, Rust 5 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.cone_p3"
+case = "gen1148"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.geometry.len C++ 79, Rust 5 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.cone_p3"
+case = "gen1170"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.geometry.len C++ 79, Rust 5 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.cone_p3"
+case = "gen1180"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.geometry.len C++ 79, Rust 5 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.cone_p3"
+case = "gen1181"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.geometry.len C++ 79, Rust 5 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.cone_p3"
+case = "gen1190"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.geometry.len C++ 79, Rust 5 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.cone_p3"
+case = "gen1198"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.geometry.len C++ 79, Rust 5 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.cone_p3"
+case = "parallel_cyl_a_vtrim"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.geometry.len C++ 79, Rust 5 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.cone_p3"
+case = "parallel_cyl_b_vtrim"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.geometry.len C++ 79, Rust 5 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.cone_p3"
+case = "parallel_cyl_both_vtrim"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.geometry.len C++ 79, Rust 5 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.cone_p3"
+case = "parallel_cyl_a_vmin_only"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.geometry.len C++ 79, Rust 5 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.cone_p3"
+case = "parallel_cyl_a_vmax_only"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.geometry[11] C++ 1.05e1, Rust 1.1e1 (+9 more) (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"

@@ -1,0 +1,17 @@
+# #2502: these cases move with the difftest's C++ reference, the SMLib fork
+# v1.1.0-alpha.1 (8eac63c); plan/findings/general--2502-fork-pin-surface-known-mismatches.md.
+
+[[mismatch]]
+unit = "surface.surf_of_revolution_p1"
+case = "review_extend_circle_build"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[25] C++ -1.6666666666666666e-1, Rust 0e0 (+21 more) (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.surf_of_revolution_p1"
+case = "review_extend_circle_iso"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[8] C++ 2.6791339475322635e0, Rust 2.7543845337026744e0 (+26 more) (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.surf_of_revolution_p1"
+case = "review_extend_circle_swap_build"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[25] C++ -1.6666666666666666e-1, Rust 0e0 (+21 more) (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"

@@ -1,0 +1,812 @@
+# #2502: these cases move with the difftest's C++ reference, the SMLib fork
+# v1.1.0-alpha.1 (8eac63c); plan/findings/general--2502-fork-pin-surface-known-mismatches.md.
+
+[[mismatch]]
+unit = "surface.plane_p1"
+case = "curve_test_plane"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.rec.len C++ 346, Rust 380 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.plane_p1"
+case = "adv_0001_make_tiny_normal"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.rec.len C++ 377, Rust 411 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.plane_p1"
+case = "adv_0002_make_small_normal"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.rec.len C++ 365, Rust 399 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.plane_p1"
+case = "adv_0003_make_huge_normal"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.rec.len C++ 377, Rust 411 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.plane_p1"
+case = "adv_0004_make_xnormal"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.rec.len C++ 365, Rust 399 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.plane_p1"
+case = "adv_0005_make_ynormal"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.rec.len C++ 365, Rust 399 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.plane_p1"
+case = "adv_0006_make_neg_z"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.rec.len C++ 377, Rust 411 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.plane_p1"
+case = "adv_0007_make_x_par_y"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.rec.len C++ 377, Rust 411 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.plane_p1"
+case = "adv_0008_canon_x_par_y"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.rec.len C++ 377, Rust 411 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.plane_p1"
+case = "adv_0009_make_x_zero"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.rec.len C++ 365, Rust 399 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.plane_p1"
+case = "adv_0010_canon_x_zero"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.rec.len C++ 365, Rust 399 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.plane_p1"
+case = "adv_0011_make_y_zero"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.rec.len C++ 365, Rust 399 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.plane_p1"
+case = "adv_0012_canon_y_zero"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.rec.len C++ 365, Rust 399 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.plane_p1"
+case = "adv_0013_make_both_zero"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.rec.len C++ 298, Rust 332 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.plane_p1"
+case = "adv_0014_canon_both_zero"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.rec.len C++ 364, Rust 398 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.plane_p1"
+case = "adv_0015_make_x_antipar_y"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.rec.len C++ 377, Rust 411 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.plane_p1"
+case = "adv_0016_canon_x_antipar_y"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.rec.len C++ 377, Rust 411 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.plane_p1"
+case = "adv_0017_make_nonortho"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.rec.len C++ 377, Rust 411 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.plane_p1"
+case = "adv_0018_canon_nonortho"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.rec.len C++ 377, Rust 411 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.plane_p1"
+case = "adv_0019_make_tiny_axes"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.rec.len C++ 377, Rust 411 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.plane_p1"
+case = "adv_0020_canon_tiny_axes"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.rec.len C++ 377, Rust 411 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.plane_p1"
+case = "adv_0021_scale_zero_su"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.rec[247] C++ 1.007e3, Rust 0e0 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.plane_p1"
+case = "adv_0022_scale_neg_su"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.rec.len C++ 383, Rust 417 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.plane_p1"
+case = "adv_0023_scale_tiny"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.rec.len C++ 358, Rust 392 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.plane_p1"
+case = "adv_0024_scale_huge"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.rec.len C++ 383, Rust 417 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.plane_p1"
+case = "adv_0025_scale_aniso"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.rec.len C++ 359, Rust 393 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.plane_p1"
+case = "adv_0028_dom_far"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.rec.len C++ 357, Rust 391 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.plane_p1"
+case = "adv_0029_dom_huge"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.rec.len C++ 381, Rust 415 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.plane_p1"
+case = "adv_0030_far_origin"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.rec.len C++ 369, Rust 403 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.plane_p1"
+case = "adv_0365_iso_-1_n_1"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.rec.len C++ 113, Rust 147 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.plane_p1"
+case = "adv_0368_iso_-1_1_1_0_0_0"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.rec.len C++ 113, Rust 179 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.plane_p1"
+case = "adv_0369_iso_-1_1_1_0_0_1"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.rec.len C++ 113, Rust 147 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.plane_p1"
+case = "adv_0371_iso_-1_0.2_0.3_0.8_0.9_1"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.rec.len C++ 113, Rust 147 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.plane_p1"
+case = "adv_0372_iso_inf_-1"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.rec.len C++ 181, Rust 215 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.plane_p1"
+case = "adv_0374_iso_0_n_1"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.rec.len C++ 113, Rust 147 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.plane_p1"
+case = "adv_0377_iso_0_1_1_0_0_0"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.rec.len C++ 113, Rust 179 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.plane_p1"
+case = "adv_0378_iso_0_1_1_0_0_1"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.rec.len C++ 113, Rust 147 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.plane_p1"
+case = "adv_0380_iso_0_0.2_0.3_0.8_0.9_1"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.rec.len C++ 113, Rust 147 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.plane_p1"
+case = "adv_0381_iso_inf_0"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.rec.len C++ 181, Rust 215 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.plane_p1"
+case = "adv_0383_iso_0.5_n_1"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.rec.len C++ 113, Rust 147 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.plane_p1"
+case = "adv_0386_iso_0.5_1_1_0_0_0"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.rec.len C++ 113, Rust 179 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.plane_p1"
+case = "adv_0387_iso_0.5_1_1_0_0_1"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.rec.len C++ 113, Rust 147 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.plane_p1"
+case = "adv_0389_iso_0.5_0.2_0.3_0.8_0.9_1"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.rec.len C++ 113, Rust 147 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.plane_p1"
+case = "adv_0390_iso_inf_0.5"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.rec.len C++ 181, Rust 215 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.plane_p1"
+case = "adv_0392_iso_1_n_1"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.rec.len C++ 113, Rust 147 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.plane_p1"
+case = "adv_0395_iso_1_1_1_0_0_0"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.rec.len C++ 113, Rust 179 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.plane_p1"
+case = "adv_0396_iso_1_1_1_0_0_1"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.rec.len C++ 113, Rust 147 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.plane_p1"
+case = "adv_0398_iso_1_0.2_0.3_0.8_0.9_1"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.rec.len C++ 113, Rust 147 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.plane_p1"
+case = "adv_0399_iso_inf_1"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.rec.len C++ 181, Rust 215 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.plane_p1"
+case = "adv_0401_iso_2_n_1"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.rec.len C++ 113, Rust 147 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.plane_p1"
+case = "adv_0404_iso_2_1_1_0_0_0"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.rec.len C++ 113, Rust 179 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.plane_p1"
+case = "adv_0405_iso_2_1_1_0_0_1"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.rec.len C++ 113, Rust 147 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.plane_p1"
+case = "adv_0407_iso_2_0.2_0.3_0.8_0.9_1"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.rec.len C++ 113, Rust 147 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.plane_p1"
+case = "adv_0408_iso_inf_2"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.rec.len C++ 181, Rust 215 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.plane_p1"
+case = "adv_0844_dc_bs_out_in_tol_0_00_0.5_0.5"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.rec.len C++ 113, Rust 116 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.plane_p1"
+case = "adv_0848_dc_bs_out_in_tol_0_01_0.5_0.5"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.rec.len C++ 113, Rust 116 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.plane_p1"
+case = "adv_0852_dc_bs_out_in_tol_0_10_0.5_0.5"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.rec.len C++ 113, Rust 116 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.plane_p1"
+case = "adv_0856_dc_bs_out_in_tol_0_11_0.5_0.5"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.rec.len C++ 113, Rust 116 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.plane_p1"
+case = "adv_0860_dc_bs_out_in_tol_1e-06_00_0.5_0.5"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.rec.len C++ 113, Rust 144 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.plane_p1"
+case = "adv_0864_dc_bs_out_in_tol_1e-06_01_0.5_0.5"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.rec.len C++ 113, Rust 144 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.plane_p1"
+case = "adv_0868_dc_bs_out_in_tol_1e-06_10_0.5_0.5"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.rec.len C++ 113, Rust 144 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.plane_p1"
+case = "adv_0872_dc_bs_out_in_tol_1e-06_11_0.5_0.5"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.rec.len C++ 113, Rust 144 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.plane_p1"
+case = "adv_0876_dc_bs_out_in_tol_0.5_00_0.5_0.5"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.rec.len C++ 113, Rust 144 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.plane_p1"
+case = "adv_0880_dc_bs_out_in_tol_0.5_01_0.5_0.5"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.rec.len C++ 113, Rust 144 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.plane_p1"
+case = "adv_0884_dc_bs_out_in_tol_0.5_10_0.5_0.5"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.rec.len C++ 113, Rust 144 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.plane_p1"
+case = "adv_0888_dc_bs_out_in_tol_0.5_11_0.5_0.5"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.rec.len C++ 113, Rust 144 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.plane_p1"
+case = "adv_0892_dc_bs_up_0_00_0.5_0.5"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.rec.len C++ 113, Rust 116 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.plane_p1"
+case = "adv_0896_dc_bs_up_0_01_0.5_0.5"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.rec.len C++ 113, Rust 116 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.plane_p1"
+case = "adv_0900_dc_bs_up_0_10_0.5_0.5"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.rec.len C++ 113, Rust 144 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.plane_p1"
+case = "adv_0904_dc_bs_up_0_11_0.5_0.5"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.rec.len C++ 113, Rust 144 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.plane_p1"
+case = "adv_0908_dc_bs_up_1e-06_00_0.5_0.5"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.rec.len C++ 113, Rust 116 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.plane_p1"
+case = "adv_0912_dc_bs_up_1e-06_01_0.5_0.5"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.rec.len C++ 113, Rust 116 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.plane_p1"
+case = "adv_0916_dc_bs_up_1e-06_10_0.5_0.5"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.rec.len C++ 113, Rust 144 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.plane_p1"
+case = "adv_0920_dc_bs_up_1e-06_11_0.5_0.5"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.rec.len C++ 113, Rust 144 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.plane_p1"
+case = "adv_0924_dc_bs_up_0.5_00_0.5_0.5"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.rec.len C++ 113, Rust 144 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.plane_p1"
+case = "adv_0928_dc_bs_up_0.5_01_0.5_0.5"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.rec.len C++ 113, Rust 144 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.plane_p1"
+case = "adv_0932_dc_bs_up_0.5_10_0.5_0.5"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.rec.len C++ 113, Rust 144 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.plane_p1"
+case = "adv_0936_dc_bs_up_0.5_11_0.5_0.5"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.rec.len C++ 113, Rust 144 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.plane_p1"
+case = "adv_0940_dc_bs_rat_0_00_0.5_0.5"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.rec.len C++ 113, Rust 116 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.plane_p1"
+case = "adv_0944_dc_bs_rat_0_01_0.5_0.5"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.rec.len C++ 113, Rust 116 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.plane_p1"
+case = "adv_0948_dc_bs_rat_0_10_0.5_0.5"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.rec.len C++ 113, Rust 116 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.plane_p1"
+case = "adv_0952_dc_bs_rat_0_11_0.5_0.5"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.rec.len C++ 113, Rust 116 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.plane_p1"
+case = "adv_0956_dc_bs_rat_1e-06_00_0.5_0.5"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.rec.len C++ 113, Rust 116 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.plane_p1"
+case = "adv_0960_dc_bs_rat_1e-06_01_0.5_0.5"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.rec.len C++ 113, Rust 116 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.plane_p1"
+case = "adv_0964_dc_bs_rat_1e-06_10_0.5_0.5"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.rec.len C++ 113, Rust 116 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.plane_p1"
+case = "adv_0968_dc_bs_rat_1e-06_11_0.5_0.5"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.rec.len C++ 113, Rust 116 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.plane_p1"
+case = "adv_0972_dc_bs_rat_0.5_00_0.5_0.5"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.rec.len C++ 113, Rust 116 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.plane_p1"
+case = "adv_0976_dc_bs_rat_0.5_01_0.5_0.5"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.rec.len C++ 113, Rust 116 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.plane_p1"
+case = "adv_0980_dc_bs_rat_0.5_10_0.5_0.5"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.rec.len C++ 113, Rust 116 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.plane_p1"
+case = "adv_0984_dc_bs_rat_0.5_11_0.5_0.5"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.rec.len C++ 113, Rust 116 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.plane_p1"
+case = "adv_0988_dc_bs_cubic_0_00_0.5_0.5"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.rec.len C++ 113, Rust 116 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.plane_p1"
+case = "adv_0992_dc_bs_cubic_0_01_0.5_0.5"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.rec.len C++ 113, Rust 116 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.plane_p1"
+case = "adv_0996_dc_bs_cubic_0_10_0.5_0.5"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.rec.len C++ 113, Rust 150 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.plane_p1"
+case = "adv_1000_dc_bs_cubic_0_11_0.5_0.5"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.rec.len C++ 113, Rust 150 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.plane_p1"
+case = "adv_1004_dc_bs_cubic_1e-06_00_0.5_0.5"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.rec.len C++ 113, Rust 150 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.plane_p1"
+case = "adv_1008_dc_bs_cubic_1e-06_01_0.5_0.5"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.rec.len C++ 113, Rust 150 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.plane_p1"
+case = "adv_1012_dc_bs_cubic_1e-06_10_0.5_0.5"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.rec.len C++ 113, Rust 150 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.plane_p1"
+case = "adv_1016_dc_bs_cubic_1e-06_11_0.5_0.5"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.rec.len C++ 113, Rust 150 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.plane_p1"
+case = "adv_1020_dc_bs_cubic_0.5_00_0.5_0.5"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.rec.len C++ 113, Rust 150 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.plane_p1"
+case = "adv_1024_dc_bs_cubic_0.5_01_0.5_0.5"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.rec.len C++ 113, Rust 150 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.plane_p1"
+case = "adv_1028_dc_bs_cubic_0.5_10_0.5_0.5"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.rec.len C++ 113, Rust 150 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.plane_p1"
+case = "adv_1032_dc_bs_cubic_0.5_11_0.5_0.5"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.rec.len C++ 113, Rust 150 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.plane_p1"
+case = "adv_1162_reparam_0_0_0_1"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.rec[9] C++ 1.007e3, Rust 0e0 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.plane_p1"
+case = "adv_1170_reparam_inf_-1e+09_-1e+09_1e+09_1e+09"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.rec[10] C++ -1.0080197344261999e6, Rust -5.820766091346741e-11 (+5 more) (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.plane_p1"
+case = "adv_1173_reparam_inf_5_5_6_8"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.rec[10] C++ 8.318961827544141e6, Rust -1.7612355167178593e6 (+5 more) (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.plane_p1"
+case = "gen0009"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.rec.len C++ 94, Rust 128 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.plane_p1"
+case = "gen0010"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.rec[15] C++ 0e0, Rust -1.387778780781446e-17 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.plane_p1"
+case = "gen0026"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.rec.len C++ 65, Rust 99 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.plane_p1"
+case = "gen0063"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.rec.len C++ 57, Rust 91 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.plane_p1"
+case = "gen0074"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.rec.len C++ 62, Rust 96 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.plane_p1"
+case = "gen0146"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.rec.len C++ 65, Rust 99 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.plane_p1"
+case = "gen0163"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.rec.len C++ 61, Rust 95 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.plane_p1"
+case = "gen0173"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.rec.len C++ 103, Rust 137 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.plane_p1"
+case = "gen0209"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.rec[63] C++ 2.7755575615628907e-17, Rust -2.7755575615628914e-17 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.plane_p1"
+case = "gen0249"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.rec.len C++ 98, Rust 132 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.plane_p1"
+case = "gen0280"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.rec.len C++ 64, Rust 98 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.plane_p1"
+case = "gen0285"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.rec.len C++ 71, Rust 105 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.plane_p1"
+case = "gen0338"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.rec.len C++ 67, Rust 101 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.plane_p1"
+case = "gen0386"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.rec[11] C++ -1e0, Rust -2.263441099564064e0 (+14 more) (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.plane_p1"
+case = "gen0398"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.rec.len C++ 116, Rust 150 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.plane_p1"
+case = "gen0407"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.rec.len C++ 137, Rust 171 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.plane_p1"
+case = "gen0409"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.rec.len C++ 99, Rust 133 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.plane_p1"
+case = "gen0417"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.rec.len C++ 59, Rust 93 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.plane_p1"
+case = "gen0425"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.rec.len C++ 74, Rust 108 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.plane_p1"
+case = "gen0513"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.rec.len C++ 73, Rust 107 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.plane_p1"
+case = "gen0520"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.rec.len C++ 131, Rust 165 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.plane_p1"
+case = "gen0560"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.rec.len C++ 94, Rust 128 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.plane_p1"
+case = "gen0578"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.rec.len C++ 86, Rust 120 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.plane_p1"
+case = "gen0597"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.rec.len C++ 57, Rust 91 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.plane_p1"
+case = "gen0623"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.rec.len C++ 57, Rust 91 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.plane_p1"
+case = "gen0638"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.rec.len C++ 57, Rust 91 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.plane_p1"
+case = "gen0675"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.rec.len C++ 59, Rust 93 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.plane_p1"
+case = "gen0683"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.rec.len C++ 115, Rust 149 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.plane_p1"
+case = "gen0718"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.rec[13] C++ 0e0, Rust -5.551115123125784e-16 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.plane_p1"
+case = "gen0783"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.rec.len C++ 117, Rust 151 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.plane_p1"
+case = "gen0802"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.rec.len C++ 60, Rust 94 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.plane_p1"
+case = "gen0819"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.rec[5] C++ 0e0, Rust -2.220446049250313e-16 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.plane_p1"
+case = "gen0844"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.rec.len C++ 109, Rust 143 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.plane_p1"
+case = "gen0851"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.rec[111] C++ 6.938893903907228e-18, Rust -3.469446951953614e-16 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.plane_p1"
+case = "gen0867"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.rec.len C++ 127, Rust 161 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.plane_p1"
+case = "gen0876"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.rec.len C++ 88, Rust 122 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.plane_p1"
+case = "gen0886"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.rec.len C++ 69, Rust 103 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.plane_p1"
+case = "gen0890"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.rec.len C++ 81, Rust 115 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.plane_p1"
+case = "gen0897"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.rec[19] C++ -2e0, Rust -5.1466768987715685e0 (+3 more) (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.plane_p1"
+case = "gen0955"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.rec.len C++ 77, Rust 111 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.plane_p1"
+case = "gen0958"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.rec[60] C++ 0e0, Rust -4.440892098500627e-16 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.plane_p1"
+case = "gen0995"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.rec.len C++ 158, Rust 192 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.plane_p1"
+case = "gen0999"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.rec.len C++ 136, Rust 170 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.plane_p1"
+case = "gen1012"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.rec.len C++ 98, Rust 132 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.plane_p1"
+case = "gen1013"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.rec.len C++ 110, Rust 144 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.plane_p1"
+case = "gen1018"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.rec.len C++ 59, Rust 93 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.plane_p1"
+case = "gen1072"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.rec[62] C++ 0e0, Rust 1.1102230246251565e-16 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.plane_p1"
+case = "gen1100"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.rec.len C++ 61, Rust 95 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.plane_p1"
+case = "gen1159"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.rec.len C++ 60, Rust 94 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.plane_p1"
+case = "gen1164"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.rec.len C++ 95, Rust 129 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.plane_p1"
+case = "gen1333"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.rec.len C++ 161, Rust 195 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.plane_p1"
+case = "gen1338"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.rec.len C++ 68, Rust 102 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.plane_p1"
+case = "gen1341"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.rec.len C++ 85, Rust 119 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.plane_p1"
+case = "gen1357"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.rec.len C++ 162, Rust 196 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.plane_p1"
+case = "gen1381"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.rec.len C++ 62, Rust 96 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.plane_p1"
+case = "gen1400"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.rec.len C++ 165, Rust 199 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.plane_p1"
+case = "gen1417"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.rec.len C++ 57, Rust 91 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"

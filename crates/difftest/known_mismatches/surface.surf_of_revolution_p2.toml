@@ -1,0 +1,692 @@
+# #2502: these cases move with the difftest's C++ reference, the SMLib fork
+# v1.1.0-alpha.1 (8eac63c); plan/findings/general--2502-fork-pin-surface-known-mismatches.md.
+
+[[mismatch]]
+unit = "surface.surf_of_revolution_p2"
+case = "surfaces_line_step_inv_axis_point"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.status[0] C++ 1.021e3, Rust 1.001e3 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.surf_of_revolution_p2"
+case = "edge_start_on_axis_step_inv_axis_point"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.status[0] C++ 1.021e3, Rust 1.001e3 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.surf_of_revolution_p2"
+case = "edge_partial_step_inv_axis_point"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.status[0] C++ 1.021e3, Rust 1.001e3 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.surf_of_revolution_p2"
+case = "edge_negative_domain_step_inv_axis_point"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.status[0] C++ 1.021e3, Rust 1.001e3 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.surf_of_revolution_p2"
+case = "edge_circle_gen_step_inv_axis_point"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.status[0] C++ 1.021e3, Rust 1.001e3 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.surf_of_revolution_p2"
+case = "edge_rational_gen_step_inv_axis_point"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.status[0] C++ 1.021e3, Rust 1.001e3 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.surf_of_revolution_p2"
+case = "review_cyl_sw0_step_inv_axis_point"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.status[0] C++ 1.021e3, Rust 1.001e3 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.surf_of_revolution_p2"
+case = "review_cyl_sw0_partial_step_inv_axis_point"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.status[0] C++ 1.021e3, Rust 1.001e3 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.surf_of_revolution_p2"
+case = "review_cyl_sw1_step_inv_axis_point"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.status[0] C++ 1.021e3, Rust 1.001e3 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.surf_of_revolution_p2"
+case = "review_cyl_sw1_partial_step_inv_axis_point"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.status[0] C++ 1.021e3, Rust 1.001e3 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.surf_of_revolution_p2"
+case = "review_cyl_rev_sw0_step_inv_axis_point"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.status[0] C++ 1.021e3, Rust 1.001e3 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.surf_of_revolution_p2"
+case = "review_cyl_rev_sw0_partial_step_inv_axis_point"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.status[0] C++ 1.021e3, Rust 1.001e3 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.surf_of_revolution_p2"
+case = "review_cyl_rev_sw1_step_inv_axis_point"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.status[0] C++ 1.021e3, Rust 1.001e3 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.surf_of_revolution_p2"
+case = "review_cyl_rev_sw1_partial_step_inv_axis_point"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.status[0] C++ 1.021e3, Rust 1.001e3 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.surf_of_revolution_p2"
+case = "review_near_cyl_sw0_step_inv_axis_point"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.status[0] C++ 1.021e3, Rust 1.001e3 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.surf_of_revolution_p2"
+case = "review_near_cyl_sw0_partial_step_inv_axis_point"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.status[0] C++ 1.021e3, Rust 1.001e3 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.surf_of_revolution_p2"
+case = "review_near_cyl_sw1_step_inv_axis_point"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.status[0] C++ 1.021e3, Rust 1.001e3 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.surf_of_revolution_p2"
+case = "review_near_cyl_sw1_partial_step_inv_axis_point"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.status[0] C++ 1.021e3, Rust 1.001e3 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.surf_of_revolution_p2"
+case = "review_tilt_cyl_sw0_step_inv_axis_point"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.status[0] C++ 1.021e3, Rust 1.001e3 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.surf_of_revolution_p2"
+case = "review_tilt_cyl_sw0_partial_step_inv_axis_point"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.status[0] C++ 1.021e3, Rust 1.001e3 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.surf_of_revolution_p2"
+case = "review_tilt_cyl_sw1_step_inv_axis_point"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.status[0] C++ 1.021e3, Rust 1.001e3 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.surf_of_revolution_p2"
+case = "review_tilt_cyl_sw1_partial_step_inv_axis_point"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.status[0] C++ 1.021e3, Rust 1.001e3 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.surf_of_revolution_p2"
+case = "review_cyl_tilted_ctor_step_inv_axis_point"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.status[0] C++ 1.021e3, Rust 1.001e3 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.surf_of_revolution_p2"
+case = "review_cyl_tilted_canonical_step_inv_axis_point"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.status[0] C++ 1.021e3, Rust 1.001e3 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.surf_of_revolution_p2"
+case = "review_axis_0_cyl_step_inv_axis_point"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.status[0] C++ 1.021e3, Rust 1.001e3 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.surf_of_revolution_p2"
+case = "review_axis_1e-13_cyl_step_inv_axis_point"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.status[0] C++ 1.021e3, Rust 1.001e3 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.surf_of_revolution_p2"
+case = "review_axis_1e-9_cyl_step_inv_axis_point"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.status[0] C++ 1.021e3, Rust 1.001e3 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.surf_of_revolution_p2"
+case = "review_axis_1e-7_cyl_step_inv_axis_point"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.status[0] C++ 1.021e3, Rust 1.001e3 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.surf_of_revolution_p2"
+case = "review_axis_x_1e-13_cyl_step_inv_axis_point"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.status[0] C++ 1.021e3, Rust 1.001e3 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.surf_of_revolution_p2"
+case = "review_trim_bspline_step_inv_axis_point"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.status[0] C++ 1.021e3, Rust 1.001e3 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.surf_of_revolution_p2"
+case = "review_trim_bspline_swap_step_inv_axis_point"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.status[0] C++ 1.021e3, Rust 1.001e3 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.surf_of_revolution_p2"
+case = "review_extend_bspline_step_inv_axis_point"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.status[0] C++ 1.021e3, Rust 1.001e3 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.surf_of_revolution_p2"
+case = "review_extend_bspline_swap_step_inv_axis_point"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.status[0] C++ 1.021e3, Rust 1.001e3 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.surf_of_revolution_p2"
+case = "review_trim_line_step_inv_axis_point"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.status[0] C++ 1.021e3, Rust 1.001e3 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.surf_of_revolution_p2"
+case = "review_trim_line_swap_step_inv_axis_point"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.status[0] C++ 1.021e3, Rust 1.001e3 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.surf_of_revolution_p2"
+case = "review_extend_line_step_inv_axis_point"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.status[0] C++ 1.021e3, Rust 1.001e3 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.surf_of_revolution_p2"
+case = "review_extend_line_swap_step_inv_axis_point"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.status[0] C++ 1.021e3, Rust 1.001e3 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.surf_of_revolution_p2"
+case = "review_trim_cyl_step_inv_axis_point"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.status[0] C++ 1.021e3, Rust 1.001e3 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.surf_of_revolution_p2"
+case = "review_trim_cyl_swap_step_inv_axis_point"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.status[0] C++ 1.021e3, Rust 1.001e3 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.surf_of_revolution_p2"
+case = "review_extend_cyl_step_inv_axis_point"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.status[0] C++ 1.021e3, Rust 1.001e3 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.surf_of_revolution_p2"
+case = "review_extend_cyl_swap_step_inv_axis_point"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.status[0] C++ 1.021e3, Rust 1.001e3 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.surf_of_revolution_p2"
+case = "review_trim_circle_step_inv_axis_point"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.status[0] C++ 1.021e3, Rust 1.001e3 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.surf_of_revolution_p2"
+case = "review_trim_circle_swap_step_inv_axis_point"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.status[0] C++ 1.021e3, Rust 1.001e3 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.surf_of_revolution_p2"
+case = "review_extend_circle_trim_natural"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[25] C++ -1.6666666666666666e-1, Rust 0e0 (+21 more) (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.surf_of_revolution_p2"
+case = "review_extend_circle_is_nurb_revolution"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[25] C++ -1.6666666666666666e-1, Rust 0e0 (+21 more) (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.surf_of_revolution_p2"
+case = "review_extend_circle_step_inv_axis_point"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.status[0] C++ 1.021e3, Rust 1.001e3 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.surf_of_revolution_p2"
+case = "review_extend_circle_swap_trim_natural"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[25] C++ -1.6666666666666666e-1, Rust 0e0 (+21 more) (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.surf_of_revolution_p2"
+case = "review_extend_circle_swap_is_nurb_revolution"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[25] C++ -1.6666666666666666e-1, Rust 0e0 (+21 more) (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.surf_of_revolution_p2"
+case = "review_extend_circle_swap_step_inv_axis_point"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.status[0] C++ 1.021e3, Rust 1.001e3 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.surf_of_revolution_p2"
+case = "review_short_line_par_1e-05_step_inv_axis_point"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.status[0] C++ 1.021e3, Rust 1.001e3 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.surf_of_revolution_p2"
+case = "review_short_line_par_1e-05_ctor_step_inv_axis_point"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.status[0] C++ 1.021e3, Rust 1.001e3 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.surf_of_revolution_p2"
+case = "review_short_line_rad_1e-05_step_inv_axis_point"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.status[0] C++ 1.021e3, Rust 1.001e3 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.surf_of_revolution_p2"
+case = "review_short_line_rad_1e-05_ctor_step_inv_axis_point"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.status[0] C++ 1.021e3, Rust 1.001e3 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.surf_of_revolution_p2"
+case = "review_short_line_par_2e-06_step_inv_axis_point"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.status[0] C++ 1.021e3, Rust 1.001e3 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.surf_of_revolution_p2"
+case = "review_short_line_par_2e-06_ctor_step_inv_axis_point"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.status[0] C++ 1.021e3, Rust 1.001e3 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.surf_of_revolution_p2"
+case = "review_short_line_rad_2e-06_step_inv_axis_point"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.status[0] C++ 1.021e3, Rust 1.001e3 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.surf_of_revolution_p2"
+case = "review_short_line_rad_2e-06_ctor_step_inv_axis_point"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.status[0] C++ 1.021e3, Rust 1.001e3 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.surf_of_revolution_p2"
+case = "review_circle_touch_axis_offset"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 499, Rust 415 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.surf_of_revolution_p2"
+case = "review_circle_touch_axis_step_inv_axis_point"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.status[0] C++ 1.021e3, Rust 1.001e3 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.surf_of_revolution_p2"
+case = "review_offset_axis_crossing_merge"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 1173, Rust 1215 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.surf_of_revolution_p2"
+case = "review_offset_tiny_radius_sweep_scale"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 0, Rust 203 (+1 more) (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.surf_of_revolution_p2"
+case = "gen0002"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.status[0] C++ 1.021e3, Rust 1.001e3 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.surf_of_revolution_p2"
+case = "gen0010"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.status[0] C++ 1.021e3, Rust 1.001e3 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.surf_of_revolution_p2"
+case = "gen0024"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.status[0] C++ 1.021e3, Rust 1.001e3 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.surf_of_revolution_p2"
+case = "gen0042"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 291, Rust 333 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.surf_of_revolution_p2"
+case = "gen0054"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.status[0] C++ 1.021e3, Rust 1.001e3 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.surf_of_revolution_p2"
+case = "gen0065"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.status[0] C++ 1.021e3, Rust 1.001e3 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.surf_of_revolution_p2"
+case = "gen0082"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 7893, Rust 4701 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.surf_of_revolution_p2"
+case = "gen0088"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.status[0] C++ 1.021e3, Rust 1.001e3 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.surf_of_revolution_p2"
+case = "gen0094"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.status[0] C++ 1.021e3, Rust 1.001e3 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.surf_of_revolution_p2"
+case = "gen0097"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 372, Rust 30 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.surf_of_revolution_p2"
+case = "gen0101"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 753, Rust 2559 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.surf_of_revolution_p2"
+case = "gen0112"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.status[0] C++ 1.021e3, Rust 1.001e3 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.surf_of_revolution_p2"
+case = "gen0133"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.status[0] C++ 1.021e3, Rust 1.001e3 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.surf_of_revolution_p2"
+case = "gen0152"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.status[0] C++ 1.021e3, Rust 1.001e3 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.surf_of_revolution_p2"
+case = "gen0160"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.status[0] C++ 1.021e3, Rust 1.001e3 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.surf_of_revolution_p2"
+case = "gen0168"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 0, Rust 415 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.surf_of_revolution_p2"
+case = "gen0185"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 447, Rust 30 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.surf_of_revolution_p2"
+case = "gen0192"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.status[0] C++ 1.021e3, Rust 1.001e3 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.surf_of_revolution_p2"
+case = "gen0193"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 0, Rust 331 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.surf_of_revolution_p2"
+case = "gen0195"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[16] C++ 8.076934382553765e-1, Rust 0e0 (+87 more) (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.surf_of_revolution_p2"
+case = "gen0197"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.status[0] C++ 1.021e3, Rust 1.001e3 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.surf_of_revolution_p2"
+case = "gen0204"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 0, Rust 415 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.surf_of_revolution_p2"
+case = "gen0215"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.status[0] C++ 1.021e3, Rust 1.001e3 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.surf_of_revolution_p2"
+case = "gen0224"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 0, Rust 331 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.surf_of_revolution_p2"
+case = "gen0236"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[16] C++ -2.293924084230838e1, Rust 9.043204549798166e1 (+252 more) (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.surf_of_revolution_p2"
+case = "gen0255"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[16] C++ -1.2559412093622774e2, Rust -1.4805671055453948e2 (+130 more) (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.surf_of_revolution_p2"
+case = "gen0257"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.status[0] C++ 1.021e3, Rust 1.001e3 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.surf_of_revolution_p2"
+case = "gen0274"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.status[0] C++ 1.021e3, Rust 1.001e3 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.surf_of_revolution_p2"
+case = "gen0284"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 0, Rust 415 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.surf_of_revolution_p2"
+case = "gen0289"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.status[0] C++ 1.021e3, Rust 1.001e3 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.surf_of_revolution_p2"
+case = "gen0299"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.status[0] C++ 1.021e3, Rust 1.001e3 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.surf_of_revolution_p2"
+case = "gen0309"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 162, Rust 8 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.surf_of_revolution_p2"
+case = "gen0313"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.status[0] C++ 1.021e3, Rust 1.001e3 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.surf_of_revolution_p2"
+case = "gen0316"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.status[0] C++ 1.021e3, Rust 1.001e3 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.surf_of_revolution_p2"
+case = "gen0317"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 0, Rust 711 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.surf_of_revolution_p2"
+case = "gen0324"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.status[0] C++ 1.021e3, Rust 1.001e3 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.surf_of_revolution_p2"
+case = "gen0365"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.status[0] C++ 1.021e3, Rust 1.001e3 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.surf_of_revolution_p2"
+case = "gen0368"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 1131, Rust 1005 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.surf_of_revolution_p2"
+case = "gen0407"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.status[0] C++ 1.021e3, Rust 1.001e3 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.surf_of_revolution_p2"
+case = "gen0419"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.status[0] C++ 1.021e3, Rust 1.001e3 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.surf_of_revolution_p2"
+case = "gen0421"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.status[0] C++ 1.021e3, Rust 1.001e3 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.surf_of_revolution_p2"
+case = "gen0432"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 342, Rust 30 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.surf_of_revolution_p2"
+case = "gen0457"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.status[0] C++ 1.021e3, Rust 1.001e3 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.surf_of_revolution_p2"
+case = "gen0463"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 2562, Rust 8 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.surf_of_revolution_p2"
+case = "gen0476"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.status[0] C++ 1.021e3, Rust 1.001e3 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.surf_of_revolution_p2"
+case = "gen0478"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.status[0] C++ 1.021e3, Rust 1.001e3 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.surf_of_revolution_p2"
+case = "gen0492"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 0, Rust 331 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.surf_of_revolution_p2"
+case = "gen0494"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.status[0] C++ 1.021e3, Rust 1.001e3 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.surf_of_revolution_p2"
+case = "gen0495"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.status[0] C++ 1.021e3, Rust 1.001e3 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.surf_of_revolution_p2"
+case = "gen0522"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.status[0] C++ 1.021e3, Rust 1.001e3 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.surf_of_revolution_p2"
+case = "gen0534"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.status[0] C++ 1.021e3, Rust 1.001e3 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.surf_of_revolution_p2"
+case = "gen0540"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.status[0] C++ 1.021e3, Rust 1.001e3 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.surf_of_revolution_p2"
+case = "gen0553"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.status[0] C++ 1.021e3, Rust 1.001e3 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.surf_of_revolution_p2"
+case = "gen0591"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.status[0] C++ 1.021e3, Rust 1.001e3 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.surf_of_revolution_p2"
+case = "gen0593"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.status[0] C++ 1.021e3, Rust 1.001e3 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.surf_of_revolution_p2"
+case = "gen0601"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.status[0] C++ 1.021e3, Rust 1.001e3 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.surf_of_revolution_p2"
+case = "gen0603"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.status[0] C++ 1.021e3, Rust 1.001e3 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.surf_of_revolution_p2"
+case = "gen0644"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.status[0] C++ 1.021e3, Rust 1.001e3 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.surf_of_revolution_p2"
+case = "gen0667"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 1299, Rust 8 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.surf_of_revolution_p2"
+case = "gen0671"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 192, Rust 8 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.surf_of_revolution_p2"
+case = "gen0678"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.status[0] C++ 1.021e3, Rust 1.001e3 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.surf_of_revolution_p2"
+case = "gen0691"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.status[0] C++ 1.021e3, Rust 1.001e3 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.surf_of_revolution_p2"
+case = "gen0692"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.status[0] C++ 1.021e3, Rust 1.001e3 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.surf_of_revolution_p2"
+case = "gen0699"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.status[0] C++ 1.021e3, Rust 1.001e3 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.surf_of_revolution_p2"
+case = "gen0718"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 0, Rust 415 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.surf_of_revolution_p2"
+case = "gen0721"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.status[0] C++ 1.021e3, Rust 1.001e3 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.surf_of_revolution_p2"
+case = "gen0726"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.status[0] C++ 1.021e3, Rust 1.001e3 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.surf_of_revolution_p2"
+case = "gen0764"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.status[0] C++ 1.021e3, Rust 1.001e3 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.surf_of_revolution_p2"
+case = "gen0768"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 0, Rust 247 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.surf_of_revolution_p2"
+case = "gen0783"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.status[0] C++ 1.021e3, Rust 1.001e3 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.surf_of_revolution_p2"
+case = "gen0785"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.status[0] C++ 1.021e3, Rust 1.001e3 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.surf_of_revolution_p2"
+case = "gen0787"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.status[0] C++ 1.021e3, Rust 1.001e3 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.surf_of_revolution_p2"
+case = "gen0824"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.status[0] C++ 1.021e3, Rust 1.001e3 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.surf_of_revolution_p2"
+case = "gen0859"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[16] C++ 7.278534430105185e1, Rust 9.070789515973203e1 (+78 more) (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.surf_of_revolution_p2"
+case = "gen0883"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out.len C++ 0, Rust 331 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.surf_of_revolution_p2"
+case = "gen0889"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.status[0] C++ 1.021e3, Rust 1.001e3 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.surf_of_revolution_p2"
+case = "gen0892"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.status[0] C++ 1.021e3, Rust 1.001e3 (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"

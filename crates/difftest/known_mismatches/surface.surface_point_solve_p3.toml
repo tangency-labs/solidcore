@@ -1,0 +1,12 @@
+# #2502: these cases move with the difftest's C++ reference, the SMLib fork
+# v1.1.0-alpha.1 (8eac63c); plan/findings/general--2502-fork-pin-surface-known-mismatches.md.
+
+[[mismatch]]
+unit = "surface.surface_point_solve_p3"
+case = "matrix_0267"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[2] C++ 1.2121779515463871e-1, Rust -7.767981984343537e-1 (+2 more) (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
+
+[[mismatch]]
+unit = "surface.surface_point_solve_p3"
+case = "matrix_0337"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.out[2] C++ 1.4656977748535078e-2, Rust 1.506701312722271e-2 (+1 more) (plan/findings/general--2502-fork-pin-surface-known-mismatches.md)"
