@@ -22,7 +22,11 @@ pub fn tolerance(size: f64, detail: usize) -> MeshTolerance {
 /// # Errors
 /// [`TessError::Invalid`] when it may not.
 pub fn admit(faces: usize, remaining: usize) -> Result<()> {
-    if faces > remaining { Err(over()) } else { Ok(()) }
+    if faces > remaining {
+        Err(over())
+    } else {
+        Ok(())
+    }
 }
 
 /// Charge `mesh` to `remaining`: refused, and nothing charged, when it has more triangles than
@@ -44,7 +48,11 @@ mod tests {
     use solidcore_record::Vec3;
 
     fn mesh(triangles: usize, at: Vec3) -> Mesh {
-        Mesh { positions: vec![Vec3::ZERO, Vec3::X, at], triangles: vec![[0, 1, 2]; triangles], ..Mesh::default() }
+        Mesh {
+            positions: vec![Vec3::ZERO, Vec3::X, at],
+            triangles: vec![[0, 1, 2]; triangles],
+            ..Mesh::default()
+        }
     }
 
     #[test]
@@ -59,7 +67,10 @@ mod tests {
         assert!(charge(&mesh(4, Vec3::Y), &mut left).is_ok());
         assert_eq!(left, 6);
         assert_eq!(tolerance(100.0, 0), tolerance(100.0, 1));
-        assert_eq!(tolerance(100.0, 9), MeshTolerance::display(100.0 * 0.01 / 8.0));
+        assert_eq!(
+            tolerance(100.0, 9),
+            MeshTolerance::display(100.0 * 0.01 / 8.0)
+        );
         assert_eq!(tolerance(1e-3, 8).chord, 1e-3);
     }
 }

@@ -60,11 +60,19 @@ struct Moto {
 /// `snap` apart (in the metric) meet head-on: a polygon's extreme node is only near the curve's
 /// true extreme, so the two extremes facing each other across a gap (one hole above another)
 /// are rarely on exactly one line. Empty when there is no concave peak.
-pub(crate) fn traces(boundary: &[[f64; 2]], loops: &[std::ops::Range<usize>], scale: [f64; 2], snap: f64) -> Vec<Trace> {
+pub(crate) fn traces(
+    boundary: &[[f64; 2]],
+    loops: &[std::ops::Range<usize>],
+    scale: [f64; 2],
+    snap: f64,
+) -> Vec<Trace> {
     if !scale.iter().all(|s| s.is_finite() && *s > 0.0) {
         return Vec::new();
     }
-    let p: Vec<[f64; 2]> = boundary.iter().map(|q| [q[0] * scale[0], q[1] * scale[1]]).collect();
+    let p: Vec<[f64; 2]> = boundary
+        .iter()
+        .map(|q| [q[0] * scale[0], q[1] * scale[1]])
+        .collect();
     let mut lo = [f64::MAX; 2];
     let mut hi = [f64::MIN; 2];
     for q in &p {
@@ -89,8 +97,12 @@ pub(crate) fn traces(boundary: &[[f64; 2]], loops: &[std::ops::Range<usize>], sc
     let inside = |q: [f64; 2]| {
         let mut odd = false;
         for &(a, b) in &segs {
-            let (Some(a), Some(b)) = (p.get(a), p.get(b)) else { continue };
-            if (a[1] > q[1]) != (b[1] > q[1]) && q[0] < a[0] + (q[1] - a[1]) / (b[1] - a[1]) * (b[0] - a[0]) {
+            let (Some(a), Some(b)) = (p.get(a), p.get(b)) else {
+                continue;
+            };
+            if (a[1] > q[1]) != (b[1] > q[1])
+                && q[0] < a[0] + (q[1] - a[1]) / (b[1] - a[1]) * (b[0] - a[0])
+            {
                 odd = !odd;
             }
         }
@@ -104,15 +116,23 @@ pub(crate) fn traces(boundary: &[[f64; 2]], loops: &[std::ops::Range<usize>], sc
             continue;
         }
         for k in 0..n {
-            let (Some(&a), Some(&b), Some(&c)) = (p.get(r.start + (k + n - 1) % n), p.get(r.start + k), p.get(r.start + (k + 1) % n)) else {
+            let (Some(&a), Some(&b), Some(&c)) = (
+                p.get(r.start + (k + n - 1) % n),
+                p.get(r.start + k),
+                p.get(r.start + (k + 1) % n),
+            ) else {
                 continue;
             };
             for d in 0..2 {
                 let (before, after) = (a[d] - b[d], c[d] - b[d]);
                 let flat = |x: f64| x.abs() <= eps;
                 // A (non-strict) minimum higher on one side, or maximum lower on one side.
-                let min = (before > eps || flat(before)) && (after > eps || flat(after)) && !(flat(before) && flat(after));
-                let max = (before < -eps || flat(before)) && (after < -eps || flat(after)) && !(flat(before) && flat(after));
+                let min = (before > eps || flat(before))
+                    && (after > eps || flat(after))
+                    && !(flat(before) && flat(after));
+                let max = (before < -eps || flat(before))
+                    && (after < -eps || flat(after))
+                    && !(flat(before) && flat(after));
                 let sign = match (min, max) {
                     (true, false) => -1.0,
                     (false, true) => 1.0,
@@ -127,7 +147,14 @@ pub(crate) fn traces(boundary: &[[f64; 2]], loops: &[std::ops::Range<usize>], sc
                 if motos.len() >= MAX_MOTORCYCLES {
                     return Vec::new();
                 }
-                motos.push(Moto { o: b, d, sign, node: r.start + k, reach: f64::INFINITY, hit: (0, 0) });
+                motos.push(Moto {
+                    o: b,
+                    d,
+                    sign,
+                    node: r.start + k,
+                    reach: f64::INFINITY,
+                    hit: (0, 0),
+                });
             }
         }
     }
@@ -141,7 +168,9 @@ pub(crate) fn traces(boundary: &[[f64; 2]], loops: &[std::ops::Range<usize>], sc
             if ia == m.node || ib == m.node {
                 continue;
             }
-            let (Some(a), Some(b)) = (p.get(ia), p.get(ib)) else { continue };
+            let (Some(a), Some(b)) = (p.get(ia), p.get(ib)) else {
+                continue;
+            };
             // The segment crosses the line other = o[e] at parameter s along d.
             let (lo_e, hi_e) = (a[e].min(b[e]), a[e].max(b[e]));
             if m.o[e] < lo_e || m.o[e] > hi_e {
@@ -150,7 +179,10 @@ pub(crate) fn traces(boundary: &[[f64; 2]], loops: &[std::ops::Range<usize>], sc
             // A segment along the line itself is reached at its nearer end ahead.
             let ahead = |x: f64| (x - m.o[m.d]) * m.sign;
             let t = if (b[e] - a[e]).abs() <= eps {
-                [ahead(a[m.d]), ahead(b[m.d])].into_iter().filter(|t| *t > eps).fold(f64::INFINITY, f64::min)
+                [ahead(a[m.d]), ahead(b[m.d])]
+                    .into_iter()
+                    .filter(|t| *t > eps)
+                    .fold(f64::INFINITY, f64::min)
             } else {
                 ahead(a[m.d] + (m.o[e] - a[e]) / (b[e] - a[e]) * (b[m.d] - a[m.d]))
             };
@@ -172,7 +204,13 @@ pub(crate) fn traces(boundary: &[[f64; 2]], loops: &[std::ops::Range<usize>], sc
     let mut events: Vec<Event> = Vec::new();
     for (i, m) in motos.iter().enumerate() {
         if m.reach.is_finite() {
-            events.push(Event { t: m.reach, who: i, at: m.reach, cause: None, partner: None });
+            events.push(Event {
+                t: m.reach,
+                who: i,
+                at: m.reach,
+                cause: None,
+                partner: None,
+            });
         }
         for (j, n) in motos.iter().enumerate().skip(i + 1) {
             if m.d != n.d {
@@ -182,10 +220,22 @@ pub(crate) fn traces(boundary: &[[f64; 2]], loops: &[std::ops::Range<usize>], sc
                 if x_on_m > eps && x_on_m < m.reach && x_on_n > eps && x_on_n < n.reach {
                     // The later one stops on the earlier one's trace (a tie stops both).
                     if x_on_m >= x_on_n {
-                        events.push(Event { t: x_on_m, who: i, at: x_on_m, cause: Some((j, x_on_n)), partner: None });
+                        events.push(Event {
+                            t: x_on_m,
+                            who: i,
+                            at: x_on_m,
+                            cause: Some((j, x_on_n)),
+                            partner: None,
+                        });
                     }
                     if x_on_n >= x_on_m {
-                        events.push(Event { t: x_on_n, who: j, at: x_on_n, cause: Some((i, x_on_m)), partner: None });
+                        events.push(Event {
+                            t: x_on_n,
+                            who: j,
+                            at: x_on_n,
+                            cause: Some((i, x_on_m)),
+                            partner: None,
+                        });
                     }
                 }
             } else if m.sign != n.sign && (m.o[1 - m.d] - n.o[1 - n.d]).abs() <= eps.max(snap) {
@@ -193,7 +243,13 @@ pub(crate) fn traces(boundary: &[[f64; 2]], loops: &[std::ops::Range<usize>], sc
                 let gap = (n.o[m.d] - m.o[m.d]) * m.sign;
                 let half = 0.5 * gap;
                 if gap > eps && half < m.reach && half < n.reach {
-                    events.push(Event { t: half, who: i, at: half, cause: None, partner: Some(j) });
+                    events.push(Event {
+                        t: half,
+                        who: i,
+                        at: half,
+                        cause: None,
+                        partner: Some(j),
+                    });
                 }
             }
         }
@@ -206,7 +262,12 @@ pub(crate) fn traces(boundary: &[[f64; 2]], loops: &[std::ops::Range<usize>], sc
         }
         if let Some((c, passed)) = ev.cause {
             // The trace is there only if its motorcycle got that far.
-            if stop.get(c).copied().flatten().is_some_and(|(s, _)| s < passed) {
+            if stop
+                .get(c)
+                .copied()
+                .flatten()
+                .is_some_and(|(s, _)| s < passed)
+            {
                 continue;
             }
         }
@@ -255,7 +316,16 @@ pub(crate) fn traces(boundary: &[[f64; 2]], loops: &[std::ops::Range<usize>], sc
                 Stop::Trace(c) => End::Trace(*out_index.get(c)?),
                 Stop::HeadOn(j) => End::HeadOn(*out_index.get(j)?),
             };
-            Some(Trace { axis, at: m.o[axis] / scale[axis], from, to, start: m.node, a: uv(m.o), b: uv(endp), end })
+            Some(Trace {
+                axis,
+                at: m.o[axis] / scale[axis],
+                from,
+                to,
+                start: m.node,
+                a: uv(m.o),
+                b: uv(endp),
+                end,
+            })
         })
         .collect()
 }
@@ -283,9 +353,25 @@ mod tests {
     #[test]
     fn a_convex_face_has_no_traces() {
         let b = circle([0.0, 0.0], 1.0, 32, true);
-        assert!(traces(&b, &[std::ops::Range { start: 0, end: 32 }], [1.0, 1.0], 0.0).is_empty());
+        assert!(
+            traces(
+                &b,
+                &[std::ops::Range { start: 0, end: 32 }],
+                [1.0, 1.0],
+                0.0
+            )
+            .is_empty()
+        );
         let sq = [[0.0, 0.0], [1.0, 0.0], [1.0, 1.0], [0.0, 1.0]];
-        assert!(traces(&sq, &[std::ops::Range { start: 0, end: 4 }], [1.0, 1.0], 0.0).is_empty());
+        assert!(
+            traces(
+                &sq,
+                &[std::ops::Range { start: 0, end: 4 }],
+                [1.0, 1.0],
+                0.0
+            )
+            .is_empty()
+        );
     }
 
     /// A centred round hole: its four extremes are concave peaks, and each motorcycle runs
@@ -297,7 +383,12 @@ mod tests {
         let t = traces(&b, &[0..4, 4..36], [1.0, 1.0], 0.0);
         assert_eq!(t.len(), 4, "{t:?}");
         let on = |axis: usize, at: f64, from: f64, to: f64| {
-            t.iter().any(|x| x.axis == axis && (x.at - at).abs() < 1e-12 && (x.from - from).abs() < 1e-9 && (x.to - to).abs() < 1e-9)
+            t.iter().any(|x| {
+                x.axis == axis
+                    && (x.at - at).abs() < 1e-12
+                    && (x.from - from).abs() < 1e-9
+                    && (x.to - to).abs() < 1e-9
+            })
         };
         assert!(on(1, 2.0, 0.0, 1.0), "left: v = 2 from u = 0 to the hole");
         assert!(on(1, 2.0, 3.0, 4.0), "right");
@@ -309,11 +400,25 @@ mod tests {
     /// cut the L into three rectangles.
     #[test]
     fn an_l_is_cut_at_its_reflex_corner() {
-        let b = [[0.0, 0.0], [2.0, 0.0], [2.0, 1.0], [1.0, 1.0], [1.0, 2.0], [0.0, 2.0]];
+        let b = [
+            [0.0, 0.0],
+            [2.0, 0.0],
+            [2.0, 1.0],
+            [1.0, 1.0],
+            [1.0, 2.0],
+            [0.0, 2.0],
+        ];
         let t = traces(&b, &[std::ops::Range { start: 0, end: 6 }], [1.0, 1.0], 0.0);
         assert_eq!(t.len(), 2, "{t:?}");
         let has = |axis: usize| {
-            t.iter().any(|x| x.axis == axis && x.at == 1.0 && x.from == 0.0 && x.to == 1.0 && x.start == 3 && matches!(x.end, End::Boundary(..)))
+            t.iter().any(|x| {
+                x.axis == axis
+                    && x.at == 1.0
+                    && x.from == 0.0
+                    && x.to == 1.0
+                    && x.start == 3
+                    && matches!(x.end, End::Boundary(..))
+            })
         };
         assert!(has(0) && has(1), "{t:?}");
     }
@@ -333,7 +438,10 @@ mod tests {
                 if a.axis != c.axis {
                     // a on axis line a.at; c crosses it if c.at is strictly within a's span
                     // and a.at strictly within c's.
-                    let cross = c.at > a.from + 1e-9 && c.at < a.to - 1e-9 && a.at > c.from + 1e-9 && a.at < c.to - 1e-9;
+                    let cross = c.at > a.from + 1e-9
+                        && c.at < a.to - 1e-9
+                        && a.at > c.from + 1e-9
+                        && a.at < c.to - 1e-9;
                     assert!(!cross, "{a:?} crosses {c:?}");
                 }
             }
@@ -343,11 +451,29 @@ mod tests {
         b.extend(circle([2.0, 2.0], 1.0, 32, false));
         b.extend(circle([6.0, 2.0], 1.0, 32, false));
         let t = traces(&b, &[0..4, 4..36, 36..68], [1.0, 1.0], 0.0);
-        assert!(t.iter().any(|x| x.axis == 1 && (x.at - 2.0).abs() < 1e-12 && (x.from - 3.0).abs() < 1e-9 && (x.to - 4.0).abs() < 1e-9), "{t:?}");
-        assert!(t.iter().any(|x| x.axis == 1 && (x.at - 2.0).abs() < 1e-12 && (x.from - 4.0).abs() < 1e-9 && (x.to - 5.0).abs() < 1e-9), "{t:?}");
+        assert!(
+            t.iter().any(|x| x.axis == 1
+                && (x.at - 2.0).abs() < 1e-12
+                && (x.from - 3.0).abs() < 1e-9
+                && (x.to - 4.0).abs() < 1e-9),
+            "{t:?}"
+        );
+        assert!(
+            t.iter().any(|x| x.axis == 1
+                && (x.at - 2.0).abs() < 1e-12
+                && (x.from - 4.0).abs() < 1e-9
+                && (x.to - 5.0).abs() < 1e-9),
+            "{t:?}"
+        );
         // Those two ended head-on with each other.
-        let i = t.iter().position(|x| x.axis == 1 && (x.from - 3.0).abs() < 1e-9).unwrap_or(usize::MAX);
-        let j = t.iter().position(|x| x.axis == 1 && (x.from - 4.0).abs() < 1e-9).unwrap_or(usize::MAX);
+        let i = t
+            .iter()
+            .position(|x| x.axis == 1 && (x.from - 3.0).abs() < 1e-9)
+            .unwrap_or(usize::MAX);
+        let j = t
+            .iter()
+            .position(|x| x.axis == 1 && (x.from - 4.0).abs() < 1e-9)
+            .unwrap_or(usize::MAX);
         assert_eq!(t.get(i).map(|x| x.end), Some(End::HeadOn(j)), "{t:?}");
         assert_eq!(t.get(j).map(|x| x.end), Some(End::HeadOn(i)), "{t:?}");
     }

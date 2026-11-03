@@ -36,13 +36,24 @@ impl Aabb3 {
         if o.is_empty() {
             return *self;
         }
-        Aabb3 { min: self.min.min(o.min), max: self.max.max(o.max) }
+        Aabb3 {
+            min: self.min.min(o.min),
+            max: self.max.max(o.max),
+        }
     }
     fn center(&self) -> Vec3 {
-        if self.is_empty() { Vec3::ZERO } else { (self.min + self.max) * 0.5 }
+        if self.is_empty() {
+            Vec3::ZERO
+        } else {
+            (self.min + self.max) * 0.5
+        }
     }
     fn size(&self) -> Vec3 {
-        if self.is_empty() { Vec3::ZERO } else { self.max - self.min }
+        if self.is_empty() {
+            Vec3::ZERO
+        } else {
+            self.max - self.min
+        }
     }
 }
 
@@ -65,18 +76,26 @@ pub(super) struct Bvh {
 impl Bvh {
     /// The hierarchy over `boxes` (empty boxes are left out).
     pub(super) fn new(boxes: &[Aabb3]) -> Bvh {
-        let mut order: Vec<u32> =
-            (0..boxes.len().min(u32::MAX as usize)).filter(|&i| boxes.get(i).is_some_and(|b| !b.is_empty() && finite(b))).map(|i| i as u32).collect();
+        let mut order: Vec<u32> = (0..boxes.len().min(u32::MAX as usize))
+            .filter(|&i| boxes.get(i).is_some_and(|b| !b.is_empty() && finite(b)))
+            .map(|i| i as u32)
+            .collect();
         if order.is_empty() {
             return Bvh::default();
         }
         let item = |i: u32| boxes.get(i as usize).copied().unwrap_or(Aabb3::EMPTY);
         let centre = |i: u32| item(i).center();
-        let mut nodes = vec![Node { bounds: Aabb3::EMPTY, first: 0, count: 0 }];
+        let mut nodes = vec![Node {
+            bounds: Aabb3::EMPTY,
+            first: 0,
+            count: 0,
+        }];
         // (node, start, end) in `order` still to be filled in.
         let mut todo = vec![(0usize, 0usize, order.len())];
         while let Some((n, start, end)) = todo.pop() {
-            let Some(span) = order.get_mut(start..end) else { continue };
+            let Some(span) = order.get_mut(start..end) else {
+                continue;
+            };
             let mut bounds = Aabb3::EMPTY;
             let mut centres = Aabb3::EMPTY;
             for &i in span.iter() {
@@ -94,7 +113,11 @@ impl Bvh {
             let extent = [size.x, size.y, size.z][axis];
             if span.len() <= LEAF || !(extent > 0.0) {
                 if let Some(node) = nodes.get_mut(n) {
-                    *node = Node { bounds, first: start as u32, count: span.len() as u32 };
+                    *node = Node {
+                        bounds,
+                        first: start as u32,
+                        count: span.len() as u32,
+                    };
                 }
                 continue;
             }
@@ -105,10 +128,22 @@ impl Bvh {
             let mid = span.len() / 2;
             span.select_nth_unstable_by(mid, |a, b| key(a).total_cmp(&key(b)));
             let left = nodes.len();
-            nodes.push(Node { bounds: Aabb3::EMPTY, first: 0, count: 0 });
-            nodes.push(Node { bounds: Aabb3::EMPTY, first: 0, count: 0 });
+            nodes.push(Node {
+                bounds: Aabb3::EMPTY,
+                first: 0,
+                count: 0,
+            });
+            nodes.push(Node {
+                bounds: Aabb3::EMPTY,
+                first: 0,
+                count: 0,
+            });
             if let Some(node) = nodes.get_mut(n) {
-                *node = Node { bounds, first: left as u32, count: 0 };
+                *node = Node {
+                    bounds,
+                    first: left as u32,
+                    count: 0,
+                };
             }
             todo.push((left, start, start + mid));
             todo.push((left + 1, start + mid, end));
@@ -120,12 +155,17 @@ impl Bvh {
     pub(super) fn visit(&self, mut enter: impl FnMut(&Aabb3) -> bool, mut item: impl FnMut(u32)) {
         let mut stack = vec![0usize];
         while let Some(n) = stack.pop() {
-            let Some(node) = self.nodes.get(n) else { continue };
+            let Some(node) = self.nodes.get(n) else {
+                continue;
+            };
             if !enter(&node.bounds) {
                 continue;
             }
             if node.count > 0 {
-                let (a, b) = (node.first as usize, node.first as usize + node.count as usize);
+                let (a, b) = (
+                    node.first as usize,
+                    node.first as usize + node.count as usize,
+                );
                 for &i in self.order.get(a..b).unwrap_or(&[]) {
                     item(i);
                 }
@@ -138,7 +178,9 @@ impl Bvh {
 }
 
 fn finite(b: &Aabb3) -> bool {
-    [b.min.x, b.min.y, b.min.z, b.max.x, b.max.y, b.max.z].iter().all(|v| v.is_finite())
+    [b.min.x, b.min.y, b.min.z, b.max.x, b.max.y, b.max.z]
+        .iter()
+        .all(|v| v.is_finite())
 }
 
 /// The point of triangle `abc` nearest `p` (Ericson, Real-Time Collision Detection, 5.1.5).
@@ -171,7 +213,11 @@ pub(super) fn closest_on_triangle(p: Vec3, a: Vec3, b: Vec3, c: Vec3) -> Vec3 {
     let va = d3 * d6 - d5 * d4;
     if va <= 0.0 && (d4 - d3) >= 0.0 && (d5 - d6) >= 0.0 {
         let den = (d4 - d3) + (d5 - d6);
-        return if den > 0.0 { b + (c - b) * ((d4 - d3) / den) } else { b };
+        return if den > 0.0 {
+            b + (c - b) * ((d4 - d3) / den)
+        } else {
+            b
+        };
     }
     let den = va + vb + vc;
     if den.abs() < 1e-300 {

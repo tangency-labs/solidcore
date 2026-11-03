@@ -50,7 +50,9 @@ pub fn levels(positions: &[Vec3], triangles: &[[u32; 3]], targets: &[usize]) -> 
     if triangles.is_empty() || triangles.len() > MAX_TRIANGLES {
         return Vec::new();
     }
-    let Some(mut m) = Collapser::new(positions, triangles) else { return Vec::new() };
+    let Some(mut m) = Collapser::new(positions, triangles) else {
+        return Vec::new();
+    };
     let original = Surface::new(&m.pos, &m.tris);
     let mut out: Vec<Level> = Vec::new();
     let mut previous = m.live_triangles;
@@ -65,7 +67,9 @@ pub fn levels(positions: &[Vec3], triangles: &[[u32; 3]], targets: &[usize]) -> 
         previous = m.live_triangles;
         let (mut level, seeds) = m.level();
         // Never less than a coarser level's own error.
-        level.error = original.deviation(&level, &seeds).max(out.last().map_or(0.0, |l| l.error));
+        level.error = original
+            .deviation(&level, &seeds)
+            .max(out.last().map_or(0.0, |l| l.error));
         out.push(level);
     }
     out
@@ -79,7 +83,15 @@ struct Surface {
 
 impl Surface {
     fn new(pos: &[[f64; 3]], tris: &[[u32; 3]]) -> Surface {
-        let tris: Vec<[Vec3; 3]> = tris.iter().map(|t| t.map(|i| pos.get(i as usize).map_or(Vec3::ZERO, |p| Vec3::new(p[0], p[1], p[2])))).collect();
+        let tris: Vec<[Vec3; 3]> = tris
+            .iter()
+            .map(|t| {
+                t.map(|i| {
+                    pos.get(i as usize)
+                        .map_or(Vec3::ZERO, |p| Vec3::new(p[0], p[1], p[2]))
+                })
+            })
+            .collect();
         let boxes: Vec<Aabb3> = tris
             .iter()
             .map(|t| {
@@ -88,11 +100,18 @@ impl Surface {
                 b
             })
             .collect();
-        Surface { bvh: Bvh::new(&boxes), tris }
+        Surface {
+            bvh: Bvh::new(&boxes),
+            tris,
+        }
     }
 
     fn to_triangle(&self, p: Vec3, t: u32) -> f64 {
-        self.tris.get(t as usize).map_or(f64::INFINITY, |[a, b, c]| closest_on_triangle(p, *a, *b, *c).dist(p))
+        self.tris
+            .get(t as usize)
+            .map_or(f64::INFINITY, |[a, b, c]| {
+                closest_on_triangle(p, *a, *b, *c).dist(p)
+            })
     }
 
     /// How far `p` lies from the surface, when that is more than `beyond`; otherwise
@@ -102,23 +121,39 @@ impl Surface {
         let best = std::cell::Cell::new(self.to_triangle(p, near));
         let gap = |b: &Aabb3| {
             let d = |v: f64, lo: f64, hi: f64| (lo - v).max(v - hi).max(0.0);
-            Vec3::new(d(p.x, b.min.x, b.max.x), d(p.y, b.min.y, b.max.y), d(p.z, b.min.z, b.max.z)).len()
+            Vec3::new(
+                d(p.x, b.min.x, b.max.x),
+                d(p.y, b.min.y, b.max.y),
+                d(p.z, b.min.z, b.max.z),
+            )
+            .len()
         };
-        self.bvh.visit(|b| best.get() > beyond && gap(b) < best.get(), |t| best.set(best.get().min(self.to_triangle(p, t))));
+        self.bvh.visit(
+            |b| best.get() > beyond && gap(b) < best.get(),
+            |t| best.set(best.get().min(self.to_triangle(p, t))),
+        );
         best.get()
     }
 
     /// How far `level`'s vertices and triangle centres lie from the surface, at most (`seeds`:
     /// an original triangle each vertex came from).
     fn deviation(&self, level: &Level, seeds: &[u32]) -> f64 {
-        let at = |i: u32| level.positions.get(i as usize).copied().unwrap_or(Vec3::ZERO);
+        let at = |i: u32| {
+            level
+                .positions
+                .get(i as usize)
+                .copied()
+                .unwrap_or(Vec3::ZERO)
+        };
         let seed = |i: u32| seeds.get(i as usize).copied().unwrap_or(0);
         let vertices = level.positions.iter().copied().zip(seeds.iter().copied());
         let centres = level.triangles.iter().map(|t| {
             let [a, b, c] = t.map(at);
             ((a + b + c) * (1.0 / 3.0), seed(t[0]))
         });
-        let worst = vertices.chain(centres).fold(0.0, |worst: f64, (p, near)| worst.max(self.distance_beyond(p, worst, near)));
+        let worst = vertices.chain(centres).fold(0.0, |worst: f64, (p, near)| {
+            worst.max(self.distance_beyond(p, worst, near))
+        });
         if worst.is_finite() { worst } else { 0.0 }
     }
 }
@@ -131,7 +166,18 @@ impl Quadric {
     /// The squared distance to the plane n · p + d = 0 (`n` unit), times `w`.
     fn plane(n: [f64; 3], d: f64, w: f64) -> Quadric {
         let [a, b, c] = n;
-        Quadric([a * a * w, a * b * w, a * c * w, a * d * w, b * b * w, b * c * w, b * d * w, c * c * w, c * d * w, d * d * w])
+        Quadric([
+            a * a * w,
+            a * b * w,
+            a * c * w,
+            a * d * w,
+            b * b * w,
+            b * c * w,
+            b * d * w,
+            c * c * w,
+            c * d * w,
+            d * d * w,
+        ])
     }
 
     fn add(&mut self, o: &Quadric) {
@@ -172,9 +218,12 @@ impl Quadric {
             return None;
         }
         let (r0, r1, r2) = (-ad, -bd, -cd);
-        let x = (r0 * (bb * cc - bc * bc) - ab * (r1 * cc - bc * r2) + ac * (r1 * bc - bb * r2)) / det;
-        let y = (aa * (r1 * cc - bc * r2) - r0 * (ab * cc - bc * ac) + ac * (ab * r2 - r1 * ac)) / det;
-        let z = (aa * (bb * r2 - r1 * bc) - ab * (ab * r2 - r1 * ac) + r0 * (ab * bc - bb * ac)) / det;
+        let x =
+            (r0 * (bb * cc - bc * bc) - ab * (r1 * cc - bc * r2) + ac * (r1 * bc - bb * r2)) / det;
+        let y =
+            (aa * (r1 * cc - bc * r2) - r0 * (ab * cc - bc * ac) + ac * (ab * r2 - r1 * ac)) / det;
+        let z =
+            (aa * (bb * r2 - r1 * bc) - ab * (ab * r2 - r1 * ac) + r0 * (ab * bc - bb * ac)) / det;
         [x, y, z].iter().all(|v| v.is_finite()).then_some([x, y, z])
     }
 }
@@ -184,7 +233,11 @@ fn sub(a: [f64; 3], b: [f64; 3]) -> [f64; 3] {
 }
 
 fn cross(a: [f64; 3], b: [f64; 3]) -> [f64; 3] {
-    [a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]]
+    [
+        a[1] * b[2] - a[2] * b[1],
+        a[2] * b[0] - a[0] * b[2],
+        a[0] * b[1] - a[1] * b[0],
+    ]
 }
 
 fn dot(a: [f64; 3], b: [f64; 3]) -> f64 {
@@ -221,7 +274,9 @@ impl Ord for Candidate {
     /// The cheapest first (the heap pops the greatest), ties by the ends, so the result never
     /// depends on the heap's order.
     fn cmp(&self, o: &Self) -> Ordering {
-        o.cost.total_cmp(&self.cost).then_with(|| (o.u, o.v).cmp(&(self.u, self.v)))
+        o.cost
+            .total_cmp(&self.cost)
+            .then_with(|| (o.u, o.v).cmp(&(self.u, self.v)))
     }
 }
 
@@ -255,7 +310,13 @@ struct Scratch {
 
 impl Scratch {
     fn clear(&mut self) {
-        for l in [&mut self.at_u, &mut self.at_v, &mut self.shared, &mut self.nu, &mut self.nv] {
+        for l in [
+            &mut self.at_u,
+            &mut self.at_v,
+            &mut self.shared,
+            &mut self.nu,
+            &mut self.nv,
+        ] {
             l.clear();
         }
     }
@@ -281,8 +342,14 @@ struct Collapser {
 impl Collapser {
     fn new(positions: &[Vec3], triangles: &[[u32; 3]]) -> Option<Collapser> {
         // Weld corners at the same position.
-        let mut index: std::collections::HashMap<[u64; 3], u32, std::hash::BuildHasherDefault<BitsHasher>> =
-            std::collections::HashMap::with_capacity_and_hasher(positions.len() / 2, Default::default());
+        let mut index: std::collections::HashMap<
+            [u64; 3],
+            u32,
+            std::hash::BuildHasherDefault<BitsHasher>,
+        > = std::collections::HashMap::with_capacity_and_hasher(
+            positions.len() / 2,
+            Default::default(),
+        );
         let mut remap: Vec<Option<u32>> = Vec::with_capacity(positions.len());
         let mut pos: Vec<[f64; 3]> = Vec::new();
         for p in positions {
@@ -291,7 +358,11 @@ impl Collapser {
                 continue;
             }
             let next = u32::try_from(pos.len()).ok()?;
-            let key = [(p.x + 0.0).to_bits(), (p.y + 0.0).to_bits(), (p.z + 0.0).to_bits()];
+            let key = [
+                (p.x + 0.0).to_bits(),
+                (p.y + 0.0).to_bits(),
+                (p.z + 0.0).to_bits(),
+            ];
             remap.push(Some(*index.entry(key).or_insert_with(|| {
                 pos.push([p.x, p.y, p.z]);
                 next
@@ -301,7 +372,9 @@ impl Collapser {
         let mut tris: Vec<[u32; 3]> = Vec::with_capacity(triangles.len());
         for t in triangles {
             let r = |i: u32| remap.get(i as usize).copied().flatten();
-            let (Some(a), Some(b), Some(c)) = (r(t[0]), r(t[1]), r(t[2])) else { continue };
+            let (Some(a), Some(b), Some(c)) = (r(t[0]), r(t[1]), r(t[2])) else {
+                continue;
+            };
             if a != b && b != c && c != a {
                 tris.push([a, b, c]);
             }
@@ -343,7 +416,11 @@ impl Collapser {
                 e += 1;
             }
             if e - k == 1
-                && let (Some(pa), Some(pb), Some(tri)) = (pos.get(a as usize), pos.get(b as usize), tris.get(t as usize))
+                && let (Some(pa), Some(pb), Some(tri)) = (
+                    pos.get(a as usize),
+                    pos.get(b as usize),
+                    tris.get(t as usize),
+                )
             {
                 let [p0, p1, p2] = tri.map(|i| pos.get(i as usize).copied().unwrap_or_default());
                 let face = cross(sub(p1, p0), sub(p2, p0));
@@ -359,7 +436,10 @@ impl Collapser {
             k = e;
         }
         let live_triangles = tris.len();
-        let seed: Vec<u32> = around.iter().map(|list| list.first().copied().unwrap_or(0)).collect();
+        let seed: Vec<u32> = around
+            .iter()
+            .map(|list| list.first().copied().unwrap_or(0))
+            .collect();
         let mut m = Collapser {
             alive: vec![true; n],
             stamp: vec![0; n],
@@ -388,16 +468,30 @@ impl Collapser {
         let (qu, qv) = (self.quadric.get(u as usize)?, self.quadric.get(v as usize)?);
         let q = qu.sum(qv);
         let (pu, pv) = (*self.pos.get(u as usize)?, *self.pos.get(v as usize)?);
-        let mid = [(pu[0] + pv[0]) * 0.5, (pu[1] + pv[1]) * 0.5, (pu[2] + pv[2]) * 0.5];
+        let mid = [
+            (pu[0] + pv[0]) * 0.5,
+            (pu[1] + pv[1]) * 0.5,
+            (pu[2] + pv[2]) * 0.5,
+        ];
         // The best point when it lies near the edge; else the best of its ends and middle.
         let reach = dot(sub(pu, pv), sub(pu, pv)) * 4.0;
-        let best = q.best().filter(|p| dot(sub(*p, mid), sub(*p, mid)) <= reach);
-        best.into_iter().chain([pu, pv, mid]).map(|p| (p, q.at(p))).min_by(|a, b| a.1.total_cmp(&b.1))
+        let best = q
+            .best()
+            .filter(|p| dot(sub(*p, mid), sub(*p, mid)) <= reach);
+        best.into_iter()
+            .chain([pu, pv, mid])
+            .map(|p| (p, q.at(p)))
+            .min_by(|a, b| a.1.total_cmp(&b.1))
     }
 
     fn offer(&mut self, u: u32, v: u32) {
-        let Some((_, cost)) = self.target(u, v) else { return };
-        let stamps = (self.stamp.get(u as usize).copied().unwrap_or(0), self.stamp.get(v as usize).copied().unwrap_or(0));
+        let Some((_, cost)) = self.target(u, v) else {
+            return;
+        };
+        let stamps = (
+            self.stamp.get(u as usize).copied().unwrap_or(0),
+            self.stamp.get(v as usize).copied().unwrap_or(0),
+        );
         self.heap.push(Candidate { cost, u, v, stamps });
     }
 
@@ -433,13 +527,33 @@ impl Collapser {
     /// Merge `v` into `u` at their best point, unless that would fold a face over or join two
     /// sheets of the surface.
     fn collapse(&mut self, u: u32, v: u32) {
-        let Some((p, _)) = self.target(u, v) else { return };
+        let Some((p, _)) = self.target(u, v) else {
+            return;
+        };
         let live = |t: &u32| self.tri_alive.get(*t as usize).copied().unwrap_or(false);
         let mut s = std::mem::take(&mut self.scratch);
         s.clear();
-        s.at_v.extend(self.around.get(v as usize).into_iter().flatten().copied().filter(live));
-        s.at_u.extend(self.around.get(u as usize).into_iter().flatten().copied().filter(live));
-        s.shared.extend(s.at_v.iter().copied().filter(|t| self.tris.get(*t as usize).is_some_and(|tri| tri.contains(&u))));
+        s.at_v.extend(
+            self.around
+                .get(v as usize)
+                .into_iter()
+                .flatten()
+                .copied()
+                .filter(live),
+        );
+        s.at_u.extend(
+            self.around
+                .get(u as usize)
+                .into_iter()
+                .flatten()
+                .copied()
+                .filter(live),
+        );
+        s.shared.extend(s.at_v.iter().copied().filter(|t| {
+            self.tris
+                .get(*t as usize)
+                .is_some_and(|tri| tri.contains(&u))
+        }));
         let done = self.collapse_with(u, v, p, &mut s);
         self.scratch = s;
         if done {
@@ -455,15 +569,31 @@ impl Collapser {
         // Two sheets meeting only at these ends would be joined.
         self.neighbours(u, &mut s.nu);
         self.neighbours(v, &mut s.nv);
-        let common = s.nu.iter().filter(|x| s.nv.binary_search(x).is_ok()).count();
+        let common =
+            s.nu.iter()
+                .filter(|x| s.nv.binary_search(x).is_ok())
+                .count();
         if common > s.shared.len() {
             return false;
         }
         // No face folds over.
-        for &t in s.at_u.iter().chain(&s.at_v).filter(|t| !s.shared.contains(t)) {
-            let Some(tri) = self.tris.get(t as usize) else { continue };
+        for &t in s
+            .at_u
+            .iter()
+            .chain(&s.at_v)
+            .filter(|t| !s.shared.contains(t))
+        {
+            let Some(tri) = self.tris.get(t as usize) else {
+                continue;
+            };
             let corners = tri.map(|i| self.pos.get(i as usize).copied().unwrap_or_default());
-            let moved = tri.map(|i| if i == u || i == v { p } else { self.pos.get(i as usize).copied().unwrap_or_default() });
+            let moved = tri.map(|i| {
+                if i == u || i == v {
+                    p
+                } else {
+                    self.pos.get(i as usize).copied().unwrap_or_default()
+                }
+            });
             let before = cross(sub(corners[1], corners[0]), sub(corners[2], corners[0]));
             let after = cross(sub(moved[1], moved[0]), sub(moved[2], moved[0]));
             let (lb, la) = (dot(before, before).sqrt(), dot(after, after).sqrt());
@@ -477,7 +607,11 @@ impl Collapser {
             }
             self.live_triangles = self.live_triangles.saturating_sub(1);
         }
-        let mut list = self.around.get_mut(u as usize).map(std::mem::take).unwrap_or_default();
+        let mut list = self
+            .around
+            .get_mut(u as usize)
+            .map(std::mem::take)
+            .unwrap_or_default();
         let tri_alive = &self.tri_alive;
         list.retain(|t| tri_alive.get(*t as usize).copied().unwrap_or(false));
         for &t in s.at_v.iter().filter(|t| !s.shared.contains(t)) {
@@ -536,7 +670,9 @@ impl Collapser {
             }
             let mut tri = [0u32; 3];
             for (k, &i) in t.iter().enumerate() {
-                let Some(slot) = index.get_mut(i as usize) else { continue };
+                let Some(slot) = index.get_mut(i as usize) else {
+                    continue;
+                };
                 tri[k] = *slot.get_or_insert_with(|| {
                     let p = self.pos.get(i as usize).copied().unwrap_or_default();
                     out.positions.push(Vec3::new(p[0], p[1], p[2]));
@@ -551,5 +687,4 @@ impl Collapser {
 }
 
 #[cfg(test)]
-#[path = "simplify_tests.rs"]
 mod tests;

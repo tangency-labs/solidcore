@@ -29,7 +29,11 @@ impl VecExt for Vec3 {
         self.x * o.x + self.y * o.y + self.z * o.z
     }
     fn cross(self, o: Vec3) -> Vec3 {
-        Vec3::new(self.y * o.z - self.z * o.y, self.z * o.x - self.x * o.z, self.x * o.y - self.y * o.x)
+        Vec3::new(
+            self.y * o.z - self.z * o.y,
+            self.z * o.x - self.x * o.z,
+            self.x * o.y - self.y * o.x,
+        )
     }
     fn len2(self) -> f64 {
         self.dot(self)
@@ -53,7 +57,11 @@ impl VecExt for Vec3 {
     fn dist_to_segment(self, a: Vec3, b: Vec3) -> f64 {
         let ab = b - a;
         let l2 = ab.len2();
-        let t = if l2 > 0.0 { ((self - a).dot(ab) / l2).clamp(0.0, 1.0) } else { 0.0 };
+        let t = if l2 > 0.0 {
+            ((self - a).dot(ab) / l2).clamp(0.0, 1.0)
+        } else {
+            0.0
+        };
         self.dist(a + ab * t)
     }
 }

@@ -41,11 +41,11 @@ pub(crate) mod uv;
 use solidcore_convert as kernel;
 use std::collections::HashMap;
 
-use solidcore::eval::EvalSurface;
 use crate::vec::VecExt as _;
+use crate::{FacePlan, TessPlan};
+use solidcore::eval::EvalSurface;
 use solidcore_record::Vec3;
 use solidcore_record::brep::{self, Curve, Loop, Shell};
-use crate::{FacePlan, TessPlan};
 
 use crate::{Result, TessError};
 
@@ -173,7 +173,15 @@ fn plan_at(b: &brep::Brep, tol: f64, turn: Option<size::Turn>) -> Result<(TessPl
             fs
         })
         .collect();
-    let rules = size::Rules::new(tol, size::extent(b.vertices.iter().map(|v| Vec3::new(v.point[0], v.point[1], v.point[2]))), turn);
+    let rules = size::Rules::new(
+        tol,
+        size::extent(
+            b.vertices
+                .iter()
+                .map(|v| Vec3::new(v.point[0], v.point[1], v.point[2])),
+        ),
+        turn,
+    );
     // Each face's surface and target side length, then every edge once at the smaller size of
     // its faces; faces then read their nodes. A planar face costs microseconds and a curved
     // one about a hundred, so the pool is used only where curved faces (or intersection
@@ -181,63 +189,141 @@ fn plan_at(b: &brep::Brep, tol: f64, turn: Option<size::Turn>) -> Result<(TessPl
     let evals: Vec<(EvalSurface, surface::Params)> = faces
         .iter()
         .enumerate()
-        .map(|(fi, f)| surface::eval_surface(f.parameters(), f.domain).map_err(|e| unsupported(format!("face {fi} ({}): {e}", kind(&f.surface)))))
+        .map(|(fi, f)| {
+            surface::eval_surface(f.parameters(), f.domain)
+                .map_err(|e| unsupported(format!("face {fi} ({}): {e}", kind(&f.surface))))
+        })
         .collect::<Result<_>>()?;
     let (evals, params): (Vec<EvalSurface>, Vec<surface::Params>) = evals.into_iter().unzip();
-    let curved = evals.iter().filter(|e| !matches!(e, EvalSurface::Plane { .. })).count();
+    let curved = evals
+        .iter()
+        .filter(|e| !matches!(e, EvalSurface::Plane { .. }))
+        .count();
     let sizes: Vec<(f64, [f64; 2])> =
-        crate::par::map("face sizes", &evals, curved >= PARALLEL_SIZES, |s| Ok(size::face_size(s, &solidcore::eval::uv::domain(s), &rules)))
-            .into_iter()
-            .collect::<Result<_>>()?;
+        crate::par::map("face sizes", &evals, curved >= PARALLEL_SIZES, |s| {
+            Ok(size::face_size(s, &solidcore::eval::uv::domain(s), &rules))
+        })
+        .into_iter()
+        .collect::<Result<_>>()?;
     let face_h = |f: usize| sizes.get(f).map_or(rules.max_len, |(h, _)| *h);
-    let edge_h: Vec<f64> = edge_faces.iter().map(|fs| fs.iter().map(|&f| face_h(f)).fold(rules.max_len, f64::min)).collect();
+    let edge_h: Vec<f64> = edge_faces
+        .iter()
+        .map(|fs| fs.iter().map(|&f| face_h(f)).fold(rules.max_len, f64::min))
+        .collect();
     let jobs: Vec<(usize, f64)> = edge_h.into_iter().enumerate().collect();
-    let solved = b.edges.iter().filter(|e| matches!(e.curve, Curve::SurfaceIntersection { .. })).count();
-    let mut nodes: Vec<edges::Nodes> = crate::par::map("edge nodes", &jobs, solved >= PARALLEL_CURVES || jobs.len() >= PARALLEL_EDGES, |(e, h)| {
-        edges::sample_edge(b, *e, &rules, *h)
-    })
+    let solved = b
+        .edges
+        .iter()
+        .filter(|e| matches!(e.curve, Curve::SurfaceIntersection { .. }))
+        .count();
+    let mut nodes: Vec<edges::Nodes> = crate::par::map(
+        "edge nodes",
+        &jobs,
+        solved >= PARALLEL_CURVES || jobs.len() >= PARALLEL_EDGES,
+        |(e, h)| edges::sample_edge(b, *e, &rules, *h),
+    )
     .into_iter()
     .collect::<Result<_>>()?;
     relax_crowded_faces(b, &jobs, &rules, &mut nodes)?;
     split_thin_loops(b, &mut nodes)?;
     let indexed: Vec<usize> = (0..faces.len()).collect();
     let face_boundary = |fi: usize, nodes: &[edges::Nodes]| {
-        let (Some(face), Some(eval), Some(map)) = (faces.get(fi), evals.get(fi), params.get(fi)) else {
+        let (Some(face), Some(eval), Some(map)) = (faces.get(fi), evals.get(fi), params.get(fi))
+        else {
             return Err(unsupported(format!("face {fi}: missing")));
         };
         boundary(b, fi, face, eval, map, nodes, &rules)
     };
-    let mut boundaries: Vec<Boundary> =
-        crate::par::map("face boundaries", &indexed, curved >= PARALLEL_FACES, |&fi| face_boundary(fi, &nodes)).into_iter().collect::<Result<_>>()?;
-    let tangled = untangle(b, &evals, &edge_faces, rules.tol, &mut nodes, &mut boundaries, &face_boundary)?;
-    let planned = crate::par::map("face tessellation", &indexed, curved >= PARALLEL_FACES, |&fi| {
-        let (Some(face), Some(eval), Some(size), Some(fb)) = (faces.get(fi), evals.get(fi), sizes.get(fi), boundaries.get(fi)) else {
-            return Err(unsupported(format!("face {fi}: missing")));
-        };
-        let refused = tangled.iter().find(|(f, _)| *f == fi).map(|(_, why)| why.as_str());
-        let (fp, stats) = plan_or_fill(fi, kind(face.parameters()), eval, &fb.loops, &rules, *size, fb.reach, refused)?;
-        let fwd = forward.get(fi).copied().unwrap_or(true);
-        let fp =
-            FacePlan { flip: !fwd, triangles: if fwd { fp.triangles } else { fp.triangles.into_iter().map(|[a, b, c]| [a, c, b]).collect() }, ..fp };
-        Ok((fp, stats))
-    });
+    let mut boundaries: Vec<Boundary> = crate::par::map(
+        "face boundaries",
+        &indexed,
+        curved >= PARALLEL_FACES,
+        |&fi| face_boundary(fi, &nodes),
+    )
+    .into_iter()
+    .collect::<Result<_>>()?;
+    let tangled = untangle(
+        b,
+        &evals,
+        &edge_faces,
+        rules.tol,
+        &mut nodes,
+        &mut boundaries,
+        &face_boundary,
+    )?;
+    let planned = crate::par::map(
+        "face tessellation",
+        &indexed,
+        curved >= PARALLEL_FACES,
+        |&fi| {
+            let (Some(face), Some(eval), Some(size), Some(fb)) = (
+                faces.get(fi),
+                evals.get(fi),
+                sizes.get(fi),
+                boundaries.get(fi),
+            ) else {
+                return Err(unsupported(format!("face {fi}: missing")));
+            };
+            let refused = tangled
+                .iter()
+                .find(|(f, _)| *f == fi)
+                .map(|(_, why)| why.as_str());
+            let (fp, stats) = plan_or_fill(
+                fi,
+                kind(face.parameters()),
+                eval,
+                &fb.loops,
+                &rules,
+                *size,
+                fb.reach,
+                refused,
+            )?;
+            let fwd = forward.get(fi).copied().unwrap_or(true);
+            let fp = FacePlan {
+                flip: !fwd,
+                triangles: if fwd {
+                    fp.triangles
+                } else {
+                    fp.triangles
+                        .into_iter()
+                        .map(|[a, b, c]| [a, c, b])
+                        .collect()
+                },
+                ..fp
+            };
+            Ok((fp, stats))
+        },
+    );
     let mut plan = TessPlan::default();
     let mut stats = PlanStats::default();
     // A face no method plans is left out, named in the stats, and the rest of the body is
     // meshed; a body none of whose faces plan is the first face's error.
     let mut first_error: Option<TessError> = None;
     for (fi, (r, eval)) in planned.into_iter().zip(evals).enumerate() {
-        let surface = u32::try_from(plan.surfaces.len()).map_err(|_| unsupported("too many faces"))?;
+        let surface =
+            u32::try_from(plan.surfaces.len()).map_err(|_| unsupported("too many faces"))?;
         plan.surfaces.push(eval);
         let (fp, s) = match r {
             Ok(done) => done,
             Err(e) => {
-                stats.unmeshed.push(RefusedFace { face: fi, reason: e.to_string() });
+                stats.unmeshed.push(RefusedFace {
+                    face: fi,
+                    reason: e.to_string(),
+                });
                 first_error.get_or_insert(e);
-                (FacePlan { face: u32::try_from(fi).unwrap_or(u32::MAX), ..FacePlan::default() }, PlanStats::default())
+                (
+                    FacePlan {
+                        face: u32::try_from(fi).unwrap_or(u32::MAX),
+                        ..FacePlan::default()
+                    },
+                    PlanStats::default(),
+                )
             }
         };
-        plan.faces.push(FacePlan { surface: Some(surface), ..fp });
+        plan.faces.push(FacePlan {
+            surface: Some(surface),
+            ..fp
+        });
         stats.planar += s.planar;
         stats.structured += s.structured;
         stats.delaunay += s.delaunay;
@@ -249,7 +335,14 @@ fn plan_at(b: &brep::Brep, tol: f64, turn: Option<size::Turn>) -> Result<(TessPl
         return Err(e);
     }
     plan.edges = nodes.into_iter().map(|n| n.points).collect();
-    plan.edge_faces = edge_faces.into_iter().map(|fs| fs.into_iter().map(|f| u32::try_from(f).unwrap_or(u32::MAX)).collect()).collect();
+    plan.edge_faces = edge_faces
+        .into_iter()
+        .map(|fs| {
+            fs.into_iter()
+                .map(|f| u32::try_from(f).unwrap_or(u32::MAX))
+                .collect()
+        })
+        .collect();
     Ok((plan, stats))
 }
 
@@ -283,30 +376,67 @@ fn boundary(
     rules: &size::Rules,
 ) -> Result<Boundary> {
     let dom = solidcore::eval::uv::domain(s);
-    let fail = |e: u32, why: String| unsupported(format!("face {fi} ({}): edge {e}: {why}", kind(&face.surface)));
+    let fail = |e: u32, why: String| {
+        unsupported(format!(
+            "face {fi} ({}): edge {e}: {why}",
+            kind(&face.surface)
+        ))
+    };
     // How near a pole a node is one: the tolerance of a vertex of the face that lies on a patch
     // side collapsed to within it, not to a point, as the record check takes a loop's pole; at
     // most the chord tolerance, finer than which the mesh resolves nothing (a vertex tolerance
     // as large as the surface's features would make a pole of every node near one).
     let mut reach: f64 = 0.0;
     for oe in face_edges(face) {
-        let (Some(edge), Some([p0, p1])) = (b.edges.get(oe.edge as usize), oe.pcurve.interval()) else { continue };
-        let tol = edge.vertices.get(usize::from(!oe.forward)).and_then(|v| b.vertices.get(*v as usize)).map_or(0.0, |v| v.tolerance.min(rules.tol));
-        let Some(q) = kernel::curve2(&oe.pcurve).eval(if oe.forward { p0 } else { p1 }).map(|q| map.to_eval(q)) else { continue };
-        if tol.is_finite() && tol > reach && (0..2).any(|d| solidcore::eval::uv::degenerate_within(s, &dom, q, d, tol)) {
+        let (Some(edge), Some([p0, p1])) = (b.edges.get(oe.edge as usize), oe.pcurve.interval())
+        else {
+            continue;
+        };
+        let tol = edge
+            .vertices
+            .get(usize::from(!oe.forward))
+            .and_then(|v| b.vertices.get(*v as usize))
+            .map_or(0.0, |v| v.tolerance.min(rules.tol));
+        let Some(q) = kernel::curve2(&oe.pcurve)
+            .eval(if oe.forward { p0 } else { p1 })
+            .map(|q| map.to_eval(q))
+        else {
+            continue;
+        };
+        if tol.is_finite()
+            && tol > reach
+            && (0..2).any(|d| solidcore::eval::uv::degenerate_within(s, &dom, q, d, tol))
+        {
             reach = tol;
         }
     }
-    let pole_along = |q: [f64; 2], d: usize| solidcore::eval::uv::degenerate_within(s, &dom, q, d, reach);
-    let mut out = Boundary { loops: Vec::with_capacity(face.loops.len()), segments: Vec::with_capacity(face.loops.len()), reach };
+    let pole_along =
+        |q: [f64; 2], d: usize| solidcore::eval::uv::degenerate_within(s, &dom, q, d, reach);
+    let mut out = Boundary {
+        loops: Vec::with_capacity(face.loops.len()),
+        segments: Vec::with_capacity(face.loops.len()),
+        reach,
+    };
     // Each vertex's parameters, from the first edge use of the face to start there.
     let mut at_vertex: HashMap<u32, [f64; 2]> = HashMap::new();
     // The vertex pairs an edge of the face joins.
     let joined: std::collections::HashSet<(u32, u32)> = face_edges(face)
         .filter_map(|oe| b.edges.get(oe.edge as usize))
-        .map(|e| (e.vertices[0].min(e.vertices[1]), e.vertices[0].max(e.vertices[1])))
+        .map(|e| {
+            (
+                e.vertices[0].min(e.vertices[1]),
+                e.vertices[0].max(e.vertices[1]),
+            )
+        })
         .collect();
-    let vertex_point = |v: u32| b.vertices.get(v as usize).map(|x| (Vec3::new(x.point[0], x.point[1], x.point[2]), x.tolerance.max(0.0)));
+    let vertex_point = |v: u32| {
+        b.vertices.get(v as usize).map(|x| {
+            (
+                Vec3::new(x.point[0], x.point[1], x.point[2]),
+                x.tolerance.max(0.0),
+            )
+        })
+    };
     // Each loop's nodes that are another edge's node (see [`edges::snap`]).
     let mut snapped: Vec<Vec<bool>> = Vec::with_capacity(face.loops.len());
     for l in &face.loops {
@@ -317,13 +447,24 @@ fn boundary(
         // Where the previous edge ended, and the periods its pcurve was moved by.
         let (mut end, mut shift): (Option<[f64; 2]>, [f64; 2]) = (None, [0.0; 2]);
         for oe in edges {
-            let n = nodes.get(oe.edge as usize).ok_or_else(|| fail(oe.edge, "no nodes".into()))?;
-            let edge = b.edges.get(oe.edge as usize).ok_or_else(|| fail(oe.edge, "no such edge".into()))?;
+            let n = nodes
+                .get(oe.edge as usize)
+                .ok_or_else(|| fail(oe.edge, "no nodes".into()))?;
+            let edge = b
+                .edges
+                .get(oe.edge as usize)
+                .ok_or_else(|| fail(oe.edge, "no such edge".into()))?;
             let [t0, t1] = edge.interval;
-            let [p0, p1] = oe.pcurve.interval().ok_or_else(|| fail(oe.edge, "a malformed pcurve".into()))?;
+            let [p0, p1] = oe
+                .pcurve
+                .interval()
+                .ok_or_else(|| fail(oe.edge, "a malformed pcurve".into()))?;
             let slack = 1e-9 * (t1 - t0).abs().max(t0.abs()).max(t1.abs()).max(1.0);
             if (p0 - t0).abs() > slack || (p1 - t1).abs() > slack {
-                return Err(fail(oe.edge, format!("its pcurve spans [{p0}, {p1}], the edge [{t0}, {t1}]")));
+                return Err(fail(
+                    oe.edge,
+                    format!("its pcurve spans [{p0}, {p1}], the edge [{t0}, {t1}]"),
+                ));
             }
             // The edge's own tolerance: how far its curve may stand off the face.
             let accept = (rules.tol * 10.0).max(1e-6) + edge.tolerance.max(0.0);
@@ -332,15 +473,28 @@ fn boundary(
             let mut eq: Vec<[f64; 2]> = Vec::with_capacity(ep.len());
             let pcurve = kernel::curve2(&oe.pcurve);
             for (k, (t, p)) in n.params.iter().zip(&n.points).enumerate() {
-                let q = pcurve.eval(t.clamp(p0, p1)).ok_or_else(|| fail(oe.edge, format!("its pcurve does not evaluate at t = {t}")))?;
+                let q = pcurve.eval(t.clamp(p0, p1)).ok_or_else(|| {
+                    fail(oe.edge, format!("its pcurve does not evaluate at t = {t}"))
+                })?;
                 let q = map.to_eval(q);
                 let on = s
                     .derivs(q[0], q[1])
                     .map(kernel::record_triple)
                     .map(|d| d.0)
-                    .ok_or_else(|| fail(oe.edge, format!("node {k}: the surface does not evaluate at {q:?}")))?;
+                    .ok_or_else(|| {
+                        fail(
+                            oe.edge,
+                            format!("node {k}: the surface does not evaluate at {q:?}"),
+                        )
+                    })?;
                 if !(on.dist(*p) <= accept) {
-                    return Err(fail(oe.edge, format!("node {k}: its pcurve is {} mm off the edge at t = {t}", on.dist(*p))));
+                    return Err(fail(
+                        oe.edge,
+                        format!(
+                            "node {k}: its pcurve is {} mm off the edge at t = {t}",
+                            on.dist(*p)
+                        ),
+                    ));
                 }
                 eq.push(q);
             }
@@ -361,10 +515,15 @@ fn boundary(
                 q[0] += shift[0];
                 q[1] += shift[1];
             }
-            if let (Some(&v), Some(q)) = (edge.vertices.get(usize::from(!oe.forward)), eq.first_mut()) {
+            if let (Some(&v), Some(q)) =
+                (edge.vertices.get(usize::from(!oe.forward)), eq.first_mut())
+            {
                 match at_vertex.get(&v) {
                     Some(first) => {
-                        if (0..2).all(|d| (first[d] - q[d]).abs() <= 1e-9 * first[d].abs().max(q[d].abs()).max(1.0)) {
+                        if (0..2).all(|d| {
+                            (first[d] - q[d]).abs()
+                                <= 1e-9 * first[d].abs().max(q[d].abs()).max(1.0)
+                        }) {
                             *q = *first;
                         }
                     }
@@ -376,12 +535,19 @@ fn boundary(
                         // corner touches another loop's corner) are one point of the face, so its
                         // loops touch there instead of crossing.
                         let same = vertex_point(v).and_then(|(p, tv)| {
-                            at_vertex.iter().filter(|(w, _)| **w != v && !joined.contains(&(v.min(**w), v.max(**w)))).find_map(|(w, wq)| {
-                                let (pw, tw) = vertex_point(*w)?;
-                                (p.dist(pw) <= tv.max(tw).min(rules.tol)).then_some(*wq)
-                            })
+                            at_vertex
+                                .iter()
+                                .filter(|(w, _)| {
+                                    **w != v && !joined.contains(&(v.min(**w), v.max(**w)))
+                                })
+                                .find_map(|(w, wq)| {
+                                    let (pw, tw) = vertex_point(*w)?;
+                                    (p.dist(pw) <= tv.max(tw).min(rules.tol)).then_some(*wq)
+                                })
                         });
-                        if let Some(mut w) = same.filter(|w| !(0..2).any(|d| pole_along(*w, d) || pole_along(*q, d))) {
+                        if let Some(mut w) =
+                            same.filter(|w| !(0..2).any(|d| pole_along(*w, d) || pole_along(*q, d)))
+                        {
                             for d in 0..2 {
                                 w[d] = solidcore::eval::uv::unwrap(w[d], q[d], dom.period[d]);
                             }
@@ -409,8 +575,14 @@ fn boundary(
         // seam in two segments: pole, equator, pole), one whose predecessor is a pole on the same
         // edge, so the step into it is the edge's own and the step into that pole, from the
         // edge before, is in the loop where it is unwrapped like any other.
-        let same_edge = |k: usize| segs.get((k + n - 1) % n).zip(segs.get(k)).is_some_and(|(a, b)| a.0 == b.0);
-        let start = (0..n).find(|&k| off(k) && off((k + n - 1) % n)).or_else(|| (0..n).find(|&k| off(k) && same_edge(k)));
+        let same_edge = |k: usize| {
+            segs.get((k + n - 1) % n)
+                .zip(segs.get(k))
+                .is_some_and(|(a, b)| a.0 == b.0)
+        };
+        let start = (0..n)
+            .find(|&k| off(k) && off((k + n - 1) % n))
+            .or_else(|| (0..n).find(|&k| off(k) && same_edge(k)));
         if let Some(k) = start {
             uvs.rotate_left(k);
             pts.rotate_left(k);
@@ -429,7 +601,13 @@ fn boundary(
     // within the chord tolerance of that point, not on it.
     for (l, flags) in snapped.iter().enumerate() {
         for (k, _) in flags.iter().enumerate().filter(|(_, f)| **f) {
-            let Some((&p, &q)) = out.loops.get(l).and_then(|lp| lp.pts.get(k).zip(lp.uv.get(k))) else { continue };
+            let Some((&p, &q)) = out
+                .loops
+                .get(l)
+                .and_then(|lp| lp.pts.get(k).zip(lp.uv.get(k)))
+            else {
+                continue;
+            };
             let partner = out
                 .loops
                 .iter()
@@ -437,8 +615,15 @@ fn boundary(
                 .flat_map(|(lp, fs)| lp.pts.iter().zip(&lp.uv).zip(fs))
                 .filter(|((r, _), f)| !**f && **r == p)
                 .map(|((_, w), _)| *w)
-                .min_by(|a, b| (a[0] - q[0]).hypot(a[1] - q[1]).total_cmp(&(b[0] - q[0]).hypot(b[1] - q[1])));
-            if let (Some(mut w), Some(slot)) = (partner, out.loops.get_mut(l).and_then(|lp| lp.uv.get_mut(k))) {
+                .min_by(|a, b| {
+                    (a[0] - q[0])
+                        .hypot(a[1] - q[1])
+                        .total_cmp(&(b[0] - q[0]).hypot(b[1] - q[1]))
+                });
+            if let (Some(mut w), Some(slot)) = (
+                partner,
+                out.loops.get_mut(l).and_then(|lp| lp.uv.get_mut(k)),
+            ) {
                 for d in 0..2 {
                     if dom.period[d].is_some() {
                         w[d] = solidcore::eval::uv::unwrap(w[d], q[d], dom.period[d]);
@@ -480,17 +665,36 @@ fn untangle(
     face_boundary: &(dyn Fn(usize, &[edges::Nodes]) -> Result<Boundary> + Sync),
 ) -> Result<Vec<(usize, String)>> {
     let crossing = |fi: usize, fb: &Boundary| -> Vec<(u32, u32)> {
-        let Some(s) = evals.get(fi) else { return Vec::new() };
-        tangle::crossing(s, fb.reach, &fb.loops).into_iter().filter_map(|(l, k)| fb.segments.get(l)?.get(k).copied()).collect()
+        let Some(s) = evals.get(fi) else {
+            return Vec::new();
+        };
+        tangle::crossing(s, fb.reach, &fb.loops)
+            .into_iter()
+            .filter_map(|(l, k)| fb.segments.get(l)?.get(k).copied())
+            .collect()
     };
     let indexed: Vec<usize> = (0..boundaries.len()).collect();
-    let curved = evals.iter().filter(|e| !matches!(e, EvalSurface::Plane { .. })).count();
-    let found: Vec<Vec<(u32, u32)>> = crate::par::map("boundary crossings", &indexed, curved >= PARALLEL_FACES, |&fi| {
-        Ok(boundaries.get(fi).map_or_else(Vec::new, |fb| crossing(fi, fb)))
-    })
+    let curved = evals
+        .iter()
+        .filter(|e| !matches!(e, EvalSurface::Plane { .. }))
+        .count();
+    let found: Vec<Vec<(u32, u32)>> = crate::par::map(
+        "boundary crossings",
+        &indexed,
+        curved >= PARALLEL_FACES,
+        |&fi| {
+            Ok(boundaries
+                .get(fi)
+                .map_or_else(Vec::new, |fb| crossing(fi, fb)))
+        },
+    )
     .into_iter()
     .collect::<Result<_>>()?;
-    let mut tangled: Vec<(usize, Vec<(u32, u32)>)> = found.into_iter().enumerate().filter(|(_, c)| !c.is_empty()).collect();
+    let mut tangled: Vec<(usize, Vec<(u32, u32)>)> = found
+        .into_iter()
+        .enumerate()
+        .filter(|(_, c)| !c.is_empty())
+        .collect();
     for round in 0..=MAX_UNTANGLE {
         if tangled.is_empty() {
             return Ok(Vec::new());
@@ -499,7 +703,15 @@ fn untangle(
             // Halving cannot part two curves that touch or cross: where they come within the chord
             // tolerance of each other, they share nodes.
             let faces: Vec<usize> = tangled.iter().map(|(fi, _)| *fi).collect();
-            tangled = snap_touches(evals, edge_faces, tol, nodes, boundaries, face_boundary, &faces)?;
+            tangled = snap_touches(
+                evals,
+                edge_faces,
+                tol,
+                nodes,
+                boundaries,
+                face_boundary,
+                &faces,
+            )?;
             // Each face still crossing, with why: planned leniently, and named (`plan_or_fill`).
             return Ok(tangled
                 .iter()
@@ -512,14 +724,19 @@ fn untangle(
                 })
                 .collect());
         }
-        let mut split: Vec<(u32, u32)> = tangled.iter().flat_map(|(_, c)| c.iter().copied()).collect();
+        let mut split: Vec<(u32, u32)> = tangled
+            .iter()
+            .flat_map(|(_, c)| c.iter().copied())
+            .collect();
         split.sort_unstable();
         split.dedup();
         let mut redo: Vec<usize> = Vec::new();
         for run in split.chunk_by(|a, c| a.0 == c.0) {
             let Some(&(e, _)) = run.first() else { continue };
             let segs: Vec<u32> = run.iter().map(|(_, k)| *k).collect();
-            let Some(slot) = nodes.get_mut(e as usize) else { continue };
+            let Some(slot) = nodes.get_mut(e as usize) else {
+                continue;
+            };
             edges::split_segments(b, e as usize, slot, &segs)?;
             redo.extend(edge_faces.get(e as usize).into_iter().flatten().copied());
         }
@@ -566,16 +783,22 @@ fn snap_touches(
     faces: &[usize],
 ) -> Result<Vec<(usize, Vec<(u32, u32)>)>> {
     let crossing = |fi: usize, fb: &Boundary| -> Vec<(usize, usize)> {
-        let Some(s) = evals.get(fi) else { return Vec::new() };
+        let Some(s) = evals.get(fi) else {
+            return Vec::new();
+        };
         tangle::crossing(s, fb.reach, &fb.loops)
     };
     let mut tangled: Vec<usize> = faces.to_vec();
     for _ in 0..MAX_SNAP {
         let mut add: HashMap<u32, Vec<(f64, Vec3)>> = HashMap::new();
         for &fi in &tangled {
-            let Some(fb) = boundaries.get(fi) else { continue };
+            let Some(fb) = boundaries.get(fi) else {
+                continue;
+            };
             for (l, k) in crossing(fi, fb) {
-                let Some(&(e, j)) = fb.segments.get(l).and_then(|s| s.get(k)) else { continue };
+                let Some(&(e, j)) = fb.segments.get(l).and_then(|s| s.get(k)) else {
+                    continue;
+                };
                 if let Some((t, p)) = touch(fb, nodes, (l, k), (e, j), tol) {
                     add.entry(e).or_default().push((t, p));
                 }
@@ -586,7 +809,9 @@ fn snap_touches(
         }
         let mut redo: Vec<usize> = Vec::new();
         for (e, points) in &add {
-            let Some(slot) = nodes.get_mut(*e as usize) else { continue };
+            let Some(slot) = nodes.get_mut(*e as usize) else {
+                continue;
+            };
             edges::snap(*e as usize, slot, points)?;
             redo.extend(edge_faces.get(*e as usize).into_iter().flatten().copied());
         }
@@ -612,7 +837,10 @@ fn snap_touches(
         .into_iter()
         .filter_map(|fi| {
             let fb = boundaries.get(fi)?;
-            let c: Vec<(u32, u32)> = crossing(fi, fb).into_iter().filter_map(|(l, k)| fb.segments.get(l)?.get(k).copied()).collect();
+            let c: Vec<(u32, u32)> = crossing(fi, fb)
+                .into_iter()
+                .filter_map(|(l, k)| fb.segments.get(l)?.get(k).copied())
+                .collect();
             (!c.is_empty()).then_some((fi, c))
         })
         .collect())
@@ -623,7 +851,13 @@ fn snap_touches(
 /// between its ends, on another edge, and not yet on this one; with the parameter on the edge
 /// where it projects onto the chord. `None` when there is none, or snapping it would turn part
 /// of its loop inside out by more than the tolerance (see [`snap_touches`]).
-fn touch(fb: &Boundary, nodes: &[edges::Nodes], at: (usize, usize), seg: (u32, u32), tol: f64) -> Option<(f64, Vec3)> {
+fn touch(
+    fb: &Boundary,
+    nodes: &[edges::Nodes],
+    at: (usize, usize),
+    seg: (u32, u32),
+    tol: f64,
+) -> Option<(f64, Vec3)> {
     let (e, j) = seg;
     let n = nodes.get(e as usize)?;
     let j = j as usize;
@@ -640,7 +874,10 @@ fn touch(fb: &Boundary, nodes: &[edges::Nodes], at: (usize, usize), seg: (u32, u
         let m = lp.pts.len();
         for (k, &p) in lp.pts.iter().enumerate() {
             // The node's edges: the segment starting at it and the one ending there.
-            let edges_at = [segs.get(k).map(|s| s.0), segs.get((k + m - 1) % m).map(|s| s.0)];
+            let edges_at = [
+                segs.get(k).map(|s| s.0),
+                segs.get((k + m - 1) % m).map(|s| s.0),
+            ];
             if edges_at.contains(&Some(e)) || n.points.contains(&p) {
                 continue;
             }
@@ -689,8 +926,16 @@ fn inside_out(lp: &seam::Loop, at: usize, k: usize, tol: f64) -> bool {
             return false;
         }
         // Newell's vector: twice the area of the polygon in 3D.
-        let twice = pts.iter().zip(pts.iter().cycle().skip(1)).fold(Vec3::ZERO, |acc, (p, q)| acc + p.cross(*q)).len();
-        let length: f64 = pts.iter().zip(pts.iter().cycle().skip(1)).map(|(p, q)| p.dist(*q)).sum();
+        let twice = pts
+            .iter()
+            .zip(pts.iter().cycle().skip(1))
+            .fold(Vec3::ZERO, |acc, (p, q)| acc + p.cross(*q))
+            .len();
+        let length: f64 = pts
+            .iter()
+            .zip(pts.iter().cycle().skip(1))
+            .map(|(p, q)| p.dist(*q))
+            .sum();
         twice > tol * length
     })
 }
@@ -710,12 +955,20 @@ const MIN_LOOP_SEGMENTS: usize = 3;
 fn split_thin_loops(b: &brep::Brep, nodes: &mut [edges::Nodes]) -> Result<()> {
     for f in &b.faces {
         for l in &f.loops {
-            let Loop::Edges { edges: uses } = l else { continue };
+            let Loop::Edges { edges: uses } = l else {
+                continue;
+            };
             let mut es: Vec<usize> = uses.iter().map(|u| u.edge as usize).collect();
             es.sort_unstable();
             es.dedup();
             let count = |nodes: &[edges::Nodes]| -> usize {
-                uses.iter().map(|u| nodes.get(u.edge as usize).map_or(0, |n| n.points.len().saturating_sub(1))).sum()
+                uses.iter()
+                    .map(|u| {
+                        nodes
+                            .get(u.edge as usize)
+                            .map_or(0, |n| n.points.len().saturating_sub(1))
+                    })
+                    .sum()
             };
             // Each round at least doubles every edge's segments: a few rounds always do.
             for _ in 0..MIN_LOOP_SEGMENTS {
@@ -723,8 +976,12 @@ fn split_thin_loops(b: &brep::Brep, nodes: &mut [edges::Nodes]) -> Result<()> {
                     break;
                 }
                 for &e in &es {
-                    let Some(slot) = nodes.get_mut(e) else { continue };
-                    let segs: Vec<u32> = (0..slot.points.len().saturating_sub(1)).filter_map(|k| u32::try_from(k).ok()).collect();
+                    let Some(slot) = nodes.get_mut(e) else {
+                        continue;
+                    };
+                    let segs: Vec<u32> = (0..slot.points.len().saturating_sub(1))
+                        .filter_map(|k| u32::try_from(k).ok())
+                        .collect();
                     edges::split_segments(b, e, slot, &segs)?;
                 }
             }
@@ -734,13 +991,32 @@ fn split_thin_loops(b: &brep::Brep, nodes: &mut [edges::Nodes]) -> Result<()> {
 }
 
 /// same share whatever the order of the faces.
-fn relax_crowded_faces(b: &brep::Brep, jobs: &[(usize, f64)], rules: &size::Rules, nodes: &mut [edges::Nodes]) -> Result<()> {
-    let Some(turn) = rules.turn else { return Ok(()) };
-    let boundaries: Vec<Vec<usize>> = b.faces.iter().map(|f| face_edges(f).map(|oe| oe.edge as usize).collect()).collect();
-    let curved = |e: usize| b.edges.get(e).is_some_and(|e| !matches!(e.curve, Curve::Line { .. }));
+fn relax_crowded_faces(
+    b: &brep::Brep,
+    jobs: &[(usize, f64)],
+    rules: &size::Rules,
+    nodes: &mut [edges::Nodes],
+) -> Result<()> {
+    let Some(turn) = rules.turn else {
+        return Ok(());
+    };
+    let boundaries: Vec<Vec<usize>> = b
+        .faces
+        .iter()
+        .map(|f| face_edges(f).map(|oe| oe.edge as usize).collect())
+        .collect();
+    let curved = |e: usize| {
+        b.edges
+            .get(e)
+            .is_some_and(|e| !matches!(e.curve, Curve::Line { .. }))
+    };
     let mut level: Vec<u8> = vec![0; nodes.len()];
     for l in 1..=size::MAX_RELAX {
-        let segments = |e: &usize| nodes.get(*e).map_or(0, |n| n.points.len().saturating_sub(1));
+        let segments = |e: &usize| {
+            nodes
+                .get(*e)
+                .map_or(0, |n| n.points.len().saturating_sub(1))
+        };
         let mut crowded: Vec<usize> = boundaries
             .iter()
             .filter(|es| es.iter().map(segments).sum::<usize>() > MAX_ANGLE_BOUNDARY)
@@ -753,7 +1029,10 @@ fn relax_crowded_faces(b: &brep::Brep, jobs: &[(usize, f64)], rules: &size::Rule
         if crowded.is_empty() {
             break;
         }
-        let relaxed = size::Rules { turn: turn.relaxed(l), ..*rules };
+        let relaxed = size::Rules {
+            turn: turn.relaxed(l),
+            ..*rules
+        };
         for e in crowded {
             let Some(&(_, h)) = jobs.get(e) else { continue };
             if let Some(slot) = nodes.get_mut(e) {
@@ -770,7 +1049,13 @@ fn relax_crowded_faces(b: &brep::Brep, jobs: &[(usize, f64)], rules: &size::Rule
 /// Twice the signed area of a parameter polygon.
 fn area2(uv: &[[f64; 2]]) -> f64 {
     let n = uv.len();
-    (0..n).map(|k| uv.get(k).zip(uv.get((k + 1) % n)).map_or(0.0, |(a, b)| a[0] * b[1] - b[0] * a[1])).sum()
+    (0..n)
+        .map(|k| {
+            uv.get(k)
+                .zip(uv.get((k + 1) % n))
+                .map_or(0.0, |(a, b)| a[0] * b[1] - b[0] * a[1])
+        })
+        .sum()
 }
 
 /// A loop through both poles that turns straight back at one of them (it runs along a seam
@@ -779,21 +1064,37 @@ fn area2(uv: &[[f64; 2]]) -> f64 {
 /// unchanged across the pole. Across a pole it may jump by any amount, so the run from the
 /// second pole back to the first is moved one period along, whichever way keeps the loop
 /// within one period with a positive area: the seam's two uses then lie a period apart.
-fn open_pole_to_pole(s: &EvalSurface, dom: &solidcore::eval::uv::Domain, reach: f64, l: &mut seam::Loop) {
+fn open_pole_to_pole(
+    s: &EvalSurface,
+    dom: &solidcore::eval::uv::Domain,
+    reach: f64,
+    l: &mut seam::Loop,
+) {
     let n = l.uv.len();
-    let poles: Vec<usize> =
-        (0..n).filter(|&k| l.uv.get(k).is_some_and(|q| (0..2).any(|d| solidcore::eval::uv::degenerate_within(s, dom, *q, d, reach)))).collect();
+    let poles: Vec<usize> = (0..n)
+        .filter(|&k| {
+            l.uv.get(k).is_some_and(|q| {
+                (0..2).any(|d| solidcore::eval::uv::degenerate_within(s, dom, *q, d, reach))
+            })
+        })
+        .collect();
     let [p0, p1] = poles.as_slice() else { return };
     for d in 0..2 {
         let Some(per) = dom.period[d] else { continue };
-        let near =
-            |a: Option<&[f64; 2]>, b: Option<&[f64; 2]>| a.zip(b).is_some_and(|(a, b)| (a[0] - b[0]).abs().max((a[1] - b[1]).abs()) <= 1e-9 * per);
-        let turns_back = [*p0, *p1].iter().any(|&p| near(l.uv.get((p + n - 1) % n), l.uv.get((p + 1) % n)));
+        let near = |a: Option<&[f64; 2]>, b: Option<&[f64; 2]>| {
+            a.zip(b)
+                .is_some_and(|(a, b)| (a[0] - b[0]).abs().max((a[1] - b[1]).abs()) <= 1e-9 * per)
+        };
+        let turns_back = [*p0, *p1]
+            .iter()
+            .any(|&p| near(l.uv.get((p + n - 1) % n), l.uv.get((p + 1) % n)));
         if !turns_back {
             continue;
         }
         // Along the seam the periodic parameter is constant between the poles.
-        let second: Vec<usize> = (0..n).filter(|k| (k > p1 || k < p0) && *k != *p0 && *k != *p1).collect();
+        let second: Vec<usize> = (0..n)
+            .filter(|k| (k > p1 || k < p0) && *k != *p0 && *k != *p1)
+            .collect();
         if second.is_empty() {
             continue;
         }
@@ -807,7 +1108,13 @@ fn open_pole_to_pole(s: &EvalSurface, dom: &solidcore::eval::uv::Domain, reach: 
             // The poles as the planner splits them: one copy at each neighbour's parameter.
             let mut ring = Vec::with_capacity(n + 2);
             for k in 0..n {
-                let (Some(q), Some(a), Some(b)) = (moved.get(k), moved.get((k + n - 1) % n), moved.get((k + 1) % n)) else { continue };
+                let (Some(q), Some(a), Some(b)) = (
+                    moved.get(k),
+                    moved.get((k + n - 1) % n),
+                    moved.get((k + 1) % n),
+                ) else {
+                    continue;
+                };
                 if k == *p0 || k == *p1 {
                     let (mut qa, mut qb) = (*q, *q);
                     qa[d] = a[d];
@@ -817,7 +1124,11 @@ fn open_pole_to_pole(s: &EvalSurface, dom: &solidcore::eval::uv::Domain, reach: 
                     ring.push(*q);
                 }
             }
-            let (lo, hi) = ring.iter().fold((f64::INFINITY, f64::NEG_INFINITY), |(a, b), q| (a.min(q[d]), b.max(q[d])));
+            let (lo, hi) = ring
+                .iter()
+                .fold((f64::INFINITY, f64::NEG_INFINITY), |(a, b), q| {
+                    (a.min(q[d]), b.max(q[d]))
+                });
             if hi - lo <= per * (1.0 + 1e-9) && area2(&ring) > 0.0 {
                 l.uv = moved;
                 return;
@@ -828,11 +1139,24 @@ fn open_pole_to_pole(s: &EvalSurface, dom: &solidcore::eval::uv::Domain, reach: 
 
 /// The poles of a loop where it turns straight back along a seam: the nodes either side have
 /// the same parameters.
-fn turning_poles(s: &EvalSurface, dom: &solidcore::eval::uv::Domain, reach: f64, per: f64, uv: &[[f64; 2]]) -> Vec<usize> {
+fn turning_poles(
+    s: &EvalSurface,
+    dom: &solidcore::eval::uv::Domain,
+    reach: f64,
+    per: f64,
+    uv: &[[f64; 2]],
+) -> Vec<usize> {
     let n = uv.len();
-    let near = |a: Option<&[f64; 2]>, b: Option<&[f64; 2]>| a.zip(b).is_some_and(|(a, b)| (a[0] - b[0]).abs().max((a[1] - b[1]).abs()) <= 1e-9 * per);
+    let near = |a: Option<&[f64; 2]>, b: Option<&[f64; 2]>| {
+        a.zip(b)
+            .is_some_and(|(a, b)| (a[0] - b[0]).abs().max((a[1] - b[1]).abs()) <= 1e-9 * per)
+    };
     (0..n)
-        .filter(|&k| uv.get(k).is_some_and(|q| (0..2).any(|d| solidcore::eval::uv::degenerate_within(s, dom, *q, d, reach))))
+        .filter(|&k| {
+            uv.get(k).is_some_and(|q| {
+                (0..2).any(|d| solidcore::eval::uv::degenerate_within(s, dom, *q, d, reach))
+            })
+        })
         .filter(|&k| near(uv.get((k + n - 1) % n), uv.get((k + 1) % n)))
         .collect()
 }
@@ -845,7 +1169,12 @@ fn turning_poles(s: &EvalSurface, dom: &solidcore::eval::uv::Domain, reach: f64,
 /// to the pole, and starts at the node before it: the seam's uses then bound the face's parameter box on either side, and share
 /// their nodes as every other edge does. Kept as it was unless the opened loop spans at most a
 /// period with a positive area.
-fn open_at_pole(s: &EvalSurface, dom: &solidcore::eval::uv::Domain, reach: f64, l: &mut seam::Loop) {
+fn open_at_pole(
+    s: &EvalSurface,
+    dom: &solidcore::eval::uv::Domain,
+    reach: f64,
+    l: &mut seam::Loop,
+) {
     let n = l.uv.len();
     if n < 4 || l.pts.len() != n {
         return;
@@ -855,12 +1184,16 @@ fn open_at_pole(s: &EvalSurface, dom: &solidcore::eval::uv::Domain, reach: f64, 
         if (seam::drift(l, d, per).abs() - per).abs() > per * 1e-6 {
             continue;
         }
-        let [pole] = turning_poles(s, dom, reach, per, &l.uv)[..] else { continue };
+        let [pole] = turning_poles(s, dom, reach, per, &l.uv)[..] else {
+            continue;
+        };
         // From the node after the pole round to the pole, unwrapped along the way.
         let order: Vec<usize> = (1..=n).map(|i| (pole + i) % n).collect();
         let mut uv: Vec<[f64; 2]> = Vec::with_capacity(n);
         for &k in &order {
-            let Some(mut q) = l.uv.get(k).copied() else { return };
+            let Some(mut q) = l.uv.get(k).copied() else {
+                return;
+            };
             if let Some(pr) = uv.last() {
                 for e in 0..2 {
                     q[e] = solidcore::eval::uv::unwrap(q[e], pr[e], dom.period[e]);
@@ -869,15 +1202,32 @@ fn open_at_pole(s: &EvalSurface, dom: &solidcore::eval::uv::Domain, reach: f64, 
             uv.push(q);
         }
         // The pole's free parameter: its predecessor's (the poles are split from it later).
-        if let (Some(prev), Some(q)) = (uv.len().checked_sub(2).and_then(|i| uv.get(i)).copied(), uv.last_mut()) {
+        if let (Some(prev), Some(q)) = (
+            uv.len().checked_sub(2).and_then(|i| uv.get(i)).copied(),
+            uv.last_mut(),
+        ) {
             q[d] = prev[d];
         }
-        let (lo, hi) = uv.iter().fold((f64::INFINITY, f64::NEG_INFINITY), |(a, b), q| (a.min(q[d]), b.max(q[d])));
+        let (lo, hi) = uv
+            .iter()
+            .fold((f64::INFINITY, f64::NEG_INFINITY), |(a, b), q| {
+                (a.min(q[d]), b.max(q[d]))
+            });
         // Started at the node before the pole, so the loop closes without a jump.
-        let mut opened = seam::Loop { uv, pts: order.iter().filter_map(|&k| l.pts.get(k).copied()).collect() };
+        let mut opened = seam::Loop {
+            uv,
+            pts: order
+                .iter()
+                .filter_map(|&k| l.pts.get(k).copied())
+                .collect(),
+        };
         opened.uv.rotate_right(2);
         opened.pts.rotate_right(2);
-        if opened.pts.len() == n && hi - lo <= per * (1.0 + 1e-9) && area2(&opened.uv) > 0.0 && !seam::winds(std::slice::from_ref(&opened), d, per) {
+        if opened.pts.len() == n
+            && hi - lo <= per * (1.0 + 1e-9)
+            && area2(&opened.uv) > 0.0
+            && !seam::winds(std::slice::from_ref(&opened), d, per)
+        {
             *l = opened;
             return;
         }
@@ -891,14 +1241,28 @@ fn open_at_pole(s: &EvalSurface, dom: &solidcore::eval::uv::Domain, reach: f64, 
 /// loop of largest area); a face that does not wind lies within one period, so that is the
 /// copy inside it.
 fn holes_beside_outer(dom: &solidcore::eval::uv::Domain, loops: &mut [seam::Loop]) {
-    let Some(outer) = loops.iter().map(|l| area2(&l.uv).abs()).enumerate().max_by(|a, b| a.1.total_cmp(&b.1)).map(|(i, _)| i) else { return };
+    let Some(outer) = loops
+        .iter()
+        .map(|l| area2(&l.uv).abs())
+        .enumerate()
+        .max_by(|a, b| a.1.total_cmp(&b.1))
+        .map(|(i, _)| i)
+    else {
+        return;
+    };
     let middle = |l: &seam::Loop, d: usize| {
-        let (lo, hi) = l.uv.iter().fold((f64::INFINITY, f64::NEG_INFINITY), |(a, b), q| (a.min(q[d]), b.max(q[d])));
+        let (lo, hi) =
+            l.uv.iter()
+                .fold((f64::INFINITY, f64::NEG_INFINITY), |(a, b), q| {
+                    (a.min(q[d]), b.max(q[d]))
+                });
         0.5 * (lo + hi)
     };
     for d in 0..2 {
         let Some(per) = dom.period[d] else { continue };
-        let Some(centre) = loops.get(outer).map(|l| middle(l, d)) else { continue };
+        let Some(centre) = loops.get(outer).map(|l| middle(l, d)) else {
+            continue;
+        };
         for (i, l) in loops.iter_mut().enumerate() {
             let k = ((middle(l, d) - centre) / per).round();
             if i == outer || !k.is_finite() || k == 0.0 {
@@ -931,15 +1295,38 @@ fn plan_or_fill(
     let mut stats = PlanStats::default();
     let strict = match refused {
         Some(why) => Err(unsupported(why.to_string())),
-        None => plan_face(fi, kind, s, loops, rules, size, reach, &mut stats, Lenient::No),
+        None => plan_face(
+            fi,
+            kind,
+            s,
+            loops,
+            rules,
+            size,
+            reach,
+            &mut stats,
+            Lenient::No,
+        ),
     };
     match strict {
         Ok(fp) => Ok((fp, stats)),
         Err(first) => {
             let mut stats = PlanStats::default();
-            match plan_face(fi, kind, s, loops, rules, size, reach, &mut stats, Lenient::Yes) {
+            match plan_face(
+                fi,
+                kind,
+                s,
+                loops,
+                rules,
+                size,
+                reach,
+                &mut stats,
+                Lenient::Yes,
+            ) {
                 Ok(fp) => {
-                    stats.lenient.push(RefusedFace { face: fi, reason: first.to_string() });
+                    stats.lenient.push(RefusedFace {
+                        face: fi,
+                        reason: first.to_string(),
+                    });
                     Ok((fp, stats))
                 }
                 Err(_) => Err(first),
@@ -976,7 +1363,9 @@ fn plan_face(
     for l in projected.iter_mut() {
         open_at_pole(s, &dom, reach, l);
     }
-    let wound: Vec<usize> = (0..2).filter(|&d| dom.period[d].is_some_and(|per| seam::winds(&projected, d, per))).collect();
+    let wound: Vec<usize> = (0..2)
+        .filter(|&d| dom.period[d].is_some_and(|per| seam::winds(&projected, d, per)))
+        .collect();
     // A face cut along a seam is a long winding strip whose sides are the cut lines and the
     // boundary in turn: Delaunay with sag refinement meshes it (the patch layouts below assume
     // boundary all round, and leave fans across the strip's corners off the surface).
@@ -985,7 +1374,8 @@ fn plan_face(
         [] => {}
         [d] => {
             let per = dom.period[*d].unwrap_or(std::f64::consts::TAU);
-            projected = seam::cut(s, &projected, *d, per, rules, h).ok_or_else(|| fail("boundary winds around the surface"))?;
+            projected = seam::cut(s, &projected, *d, per, rules, h)
+                .ok_or_else(|| fail("boundary winds around the surface"))?;
         }
         _ => return Err(fail("boundary winds around the surface both ways")),
     }
@@ -1007,8 +1397,12 @@ fn plan_face(
         for (k, (q, p)) in luv.iter().zip(pts).enumerate() {
             // At a pole the parameter along the degenerate direction is free: one copy with
             // the previous node's value, one with the next node's.
-            let (prev, next) = (luv.get((k + n - 1) % n).copied(), luv.get((k + 1) % n).copied());
-            let pole = (0..2).find(|&d| solidcore::eval::uv::degenerate_within(s, &dom, *q, d, reach));
+            let (prev, next) = (
+                luv.get((k + n - 1) % n).copied(),
+                luv.get((k + 1) % n).copied(),
+            );
+            let pole =
+                (0..2).find(|&d| solidcore::eval::uv::degenerate_within(s, &dom, *q, d, reach));
             match (pole, prev, next) {
                 (Some(d), Some(a), Some(b)) => {
                     let mut qa = *q;
@@ -1046,8 +1440,18 @@ fn plan_face(
     let step = [h / speed[0], h / speed[1]];
     let delaunay = || {
         let seeds = cdt::lattice(bbox, step, &polys, speed);
-        let eval = |u: f64, v: f64| s.derivs(u, v).map(kernel::record_triple).map(|(p, su, sv)| (p, su.cross(sv).normalized()));
-        let sag = cdt::Sag { eval: &eval, tol, h, turn: rules.turn, scale: speed };
+        let eval = |u: f64, v: f64| {
+            s.derivs(u, v)
+                .map(kernel::record_triple)
+                .map(|(p, su, sv)| (p, su.cross(sv).normalized()))
+        };
+        let sag = cdt::Sag {
+            eval: &eval,
+            tol,
+            h,
+            turn: rules.turn,
+            scale: speed,
+        };
         let fill = cdt::Fill {
             seeds: &seeds,
             refine: Some((sag, MAX_REFINE)),
@@ -1071,10 +1475,17 @@ fn plan_face(
                 // Interior lines: the boundary's own where opposite sides agree (refined where the
                 // surface turns more between them inside the face), else the division.
                 let lines = |d: usize, div: &Vec<f64>| {
-                    let inner = |l: Vec<f64>| l.into_iter().filter(|x| *x > bbox[d].0 && *x < bbox[d].1).collect::<Vec<f64>>();
+                    let inner = |l: Vec<f64>| {
+                        l.into_iter()
+                            .filter(|x| *x > bbox[d].0 && *x < bbox[d].1)
+                            .collect::<Vec<f64>>()
+                    };
                     match grid::aligned_lines(&uvs, &q, d) {
                         Some(aligned) => {
-                            let ends: Vec<f64> = std::iter::once(bbox[d].0).chain(aligned).chain(std::iter::once(bbox[d].1)).collect();
+                            let ends: Vec<f64> = std::iter::once(bbox[d].0)
+                                .chain(aligned)
+                                .chain(std::iter::once(bbox[d].1))
+                                .collect();
                             inner(uv::refine(s, d, &ends, bbox[1 - d], rules, h, MAX_LINES))
                         }
                         None => inner(div.clone()),
@@ -1086,7 +1497,14 @@ fn plan_face(
                     (true, false) => grid::strip(&uvs, &q, 1),
                     _ => None,
                 };
-                strip.map(|t| (Vec::new(), t)).or_else(|| grid::structured(&uvs, &q, &grid::interior(lu, bbox[0]), &grid::interior(lv, bbox[1])))
+                strip.map(|t| (Vec::new(), t)).or_else(|| {
+                    grid::structured(
+                        &uvs,
+                        &q,
+                        &grid::interior(lu, bbox[0]),
+                        &grid::interior(lv, bbox[1]),
+                    )
+                })
             }
             _ => None,
         };
@@ -1118,12 +1536,28 @@ fn plan_face(
                 // across it would only crowd it (the butterfly's cuts run lengthwise through a
                 // long strip, seeded the whole way). A strip curved across (a fillet narrower
                 // than a side) keeps the layouts that follow its curvature.
-                let face = Region { s, uvs: &uvs, fixed: &fixed, ranges: &ranges, rules, h, speed, us: &us, vs: &vs };
-                let strip = !planar && (us.len() <= 2 || vs.len() <= 2) && !cdt::has_room(bbox, step, &polys, speed);
+                let face = Region {
+                    s,
+                    uvs: &uvs,
+                    fixed: &fixed,
+                    ranges: &ranges,
+                    rules,
+                    h,
+                    speed,
+                    us: &us,
+                    vs: &vs,
+                };
+                let strip = !planar
+                    && (us.len() <= 2 || vs.len() <= 2)
+                    && !cdt::has_room(bbox, step, &polys, speed);
                 let trimmed = if seamed || strip {
                     None
                 } else if planar {
-                    if ranges.len() == 1 { plan_pieces(&face) } else { None }
+                    if ranges.len() == 1 {
+                        plan_pieces(&face)
+                    } else {
+                        None
+                    }
                 } else {
                     plan_pieces(&face).or_else(|| {
                         let traces = motorcycle::traces(&uvs, &ranges, speed, 0.25 * h);
@@ -1149,9 +1583,16 @@ fn plan_face(
     };
     // At a pole the boundary has two copies of one node: a triangle on both copies has two
     // corners at one point and no area (its other two sides are one segment both ways).
-    let pole_pair = |i: u32, j: u32| i != j && fixed.get(i as usize).zip(fixed.get(j as usize)).is_some_and(|(p, q)| p == q);
+    let pole_pair = |i: u32, j: u32| {
+        i != j
+            && fixed
+                .get(i as usize)
+                .zip(fixed.get(j as usize))
+                .is_some_and(|(p, q)| p == q)
+    };
     let mut triangles = triangles;
-    triangles.retain(|t| !(pole_pair(t[0], t[1]) || pole_pair(t[1], t[2]) || pole_pair(t[2], t[0])));
+    triangles
+        .retain(|t| !(pole_pair(t[0], t[1]) || pole_pair(t[1], t[2]) || pole_pair(t[2], t[0])));
     // A lenient fill leaves out the sides that cross: the boundary is followed everywhere else.
     if lenient == Lenient::No && !closed_boundary(&ranges, &fixed, &uvs, &triangles) {
         return Err(fail("triangulation does not follow the boundary"));
@@ -1167,7 +1608,15 @@ fn plan_face(
     for q in &mut all {
         *q = s.wrap(*q);
     }
-    Ok(FacePlan { face: u32::try_from(fi).unwrap_or(u32::MAX), surface: None, uv: all, fixed, normals: Vec::new(), flip: false, triangles })
+    Ok(FacePlan {
+        face: u32::try_from(fi).unwrap_or(u32::MAX),
+        surface: None,
+        uv: all,
+        fixed,
+        normals: Vec::new(),
+        flip: false,
+        triangles,
+    })
 }
 
 /// A face's (u, v) region and what meshing it needs.
@@ -1193,18 +1642,32 @@ fn plan_pieces(f: &Region) -> Option<(Vec<[f64; 2]>, Vec<[u32; 3]>)> {
     // along either parameter (the median gap between the grid lines they give, in mm). On a
     // cylinder that is the spacing round it, which the cuts along its axis then get too.
     let median_gap = |lines: &[f64], speed: f64| -> f64 {
-        let mut gaps: Vec<f64> = lines.windows(2).filter_map(|w| Some((w.get(1)? - w.first()?) * speed)).filter(|g| *g > 0.0).collect();
+        let mut gaps: Vec<f64> = lines
+            .windows(2)
+            .filter_map(|w| Some((w.get(1)? - w.first()?) * speed))
+            .filter(|g| *g > 0.0)
+            .collect();
         gaps.sort_by(f64::total_cmp);
         gaps.get(gaps.len() / 2).copied().unwrap_or(f64::INFINITY)
     };
-    let seed = median_gap(f.us, f.speed[0]).min(median_gap(f.vs, f.speed[1])).min(f.h);
-    let segments = collar::segments(f.uvs, f.ranges, f.speed, seed, matches!(f.s, EvalSurface::Plane { .. }))?;
+    let seed = median_gap(f.us, f.speed[0])
+        .min(median_gap(f.vs, f.speed[1]))
+        .min(f.h);
+    let segments = collar::segments(
+        f.uvs,
+        f.ranges,
+        f.speed,
+        seed,
+        matches!(f.s, EvalSurface::Plane { .. }),
+    )?;
     let s = f.s;
     let fine = |a: [f64; 2], b: [f64; 2]| uv::fine_between(s, f.rules, f.h, a, b);
     // A cut's seeds: spaced from the boundary's own spacing at each end, growing geometrically
     // between them, never wider than the global seed, and split further wherever the surface
     // between two seeds fails the size rules.
-    let seeds = |a: [f64; 2], b: [f64; 2], sa: f64, sb: f64| -> Vec<f64> { graded(a, b, sa, sb, seed, f.speed, &fine) };
+    let seeds = |a: [f64; 2], b: [f64; 2], sa: f64, sb: f64| -> Vec<f64> {
+        graded(a, b, sa, sb, seed, f.speed, &fine)
+    };
     let (cut_uv, pieces) = pieces::cut(f.uvs, f.ranges, &segments, f.speed, &seeds)?;
     let n = f.uvs.len();
     let mut uv_all: Vec<[f64; 2]> = f.uvs.to_vec();
@@ -1218,13 +1681,22 @@ fn plan_pieces(f: &Region) -> Option<(Vec<[f64; 2]>, Vec<[u32; 3]>)> {
     for pc in &pieces {
         // The patch's own loops, numbered from zero.
         let mut ids: Vec<u32> = pc.ring.to_vec();
-        let mut ranges = vec![std::ops::Range { start: 0, end: pc.ring.len() }];
+        let mut ranges = vec![std::ops::Range {
+            start: 0,
+            end: pc.ring.len(),
+        }];
         for hole in &pc.holes {
             ranges.push(ids.len()..ids.len() + hole.len());
             ids.extend_from_slice(hole);
         }
-        let luv: Vec<[f64; 2]> = ids.iter().map(|&k| uv_all.get(k as usize).copied()).collect::<Option<_>>()?;
-        let lpos: Vec<Vec3> = ids.iter().map(|&k| pos.get(k as usize).copied()).collect::<Option<_>>()?;
+        let luv: Vec<[f64; 2]> = ids
+            .iter()
+            .map(|&k| uv_all.get(k as usize).copied())
+            .collect::<Option<_>>()?;
+        let lpos: Vec<Vec3> = ids
+            .iter()
+            .map(|&k| pos.get(k as usize).copied())
+            .collect::<Option<_>>()?;
         let mut bbox = [(f64::MAX, f64::MIN); 2];
         for p in &luv {
             for d in 0..2 {
@@ -1232,17 +1704,31 @@ fn plan_pieces(f: &Region) -> Option<(Vec<[f64; 2]>, Vec<[u32; 3]>)> {
             }
         }
         let clip = |lines: &[f64], (a, b): (f64, f64)| -> Vec<f64> {
-            std::iter::once(a).chain(lines.iter().copied().filter(|x| *x > a && *x < b)).chain(std::iter::once(b)).collect()
+            std::iter::once(a)
+                .chain(lines.iter().copied().filter(|x| *x > a && *x < b))
+                .chain(std::iter::once(b))
+                .collect()
         };
         // A patch whose outline changes between boundary and cut at exactly four nodes (a
         // quarter of a ring, a butterfly wing round a hole) takes those as its corners, so each
         // side is all boundary or all cut; any other patch takes the best four of its corners.
         let is_cut = |a: u32, b: u32| -> bool {
             let (a, b) = (a as usize, b as usize);
-            a >= n || b >= n || !f.ranges.iter().any(|r| r.contains(&a) && r.contains(&b) && (a.abs_diff(b) == 1 || a.abs_diff(b) == r.len() - 1))
+            a >= n
+                || b >= n
+                || !f.ranges.iter().any(|r| {
+                    r.contains(&a)
+                        && r.contains(&b)
+                        && (a.abs_diff(b) == 1 || a.abs_diff(b) == r.len() - 1)
+                })
         };
         let ring = &pc.ring;
-        let switches: Vec<usize> = ring.corners().enumerate().filter(|&(_, (&p, &c, &x))| is_cut(p, c) != is_cut(c, x)).map(|(k, _)| k).collect();
+        let switches: Vec<usize> = ring
+            .corners()
+            .enumerate()
+            .filter(|&(_, (&p, &c, &x))| is_cut(p, c) != is_cut(c, x))
+            .map(|(k, _)| k)
+            .collect();
         // The patch is a rectangle in (u, v) with corners cut by free boundary (Lyon et al. §4;
         // completed virtually in §4.2): its bounding box. A grid needs four real sides, so each
         // corner is the node furthest out towards the box's corner (in the box's own
@@ -1264,9 +1750,16 @@ fn plan_pieces(f: &Region) -> Option<(Vec<[f64; 2]>, Vec<[u32; 3]>)> {
                 return None;
             }
             let mut pick = [0usize; 4];
-            for (slot, dir) in pick.iter_mut().zip([[-1.0, -1.0], [1.0, -1.0], [1.0, 1.0], [-1.0, 1.0]]) {
+            for (slot, dir) in
+                pick.iter_mut()
+                    .zip([[-1.0, -1.0], [1.0, -1.0], [1.0, 1.0], [-1.0, 1.0]])
+            {
                 *slot = (0..m).max_by(|&x, &y| {
-                    let reach = |k: usize| at(k).map_or(f64::MIN, |q| dir[0] * (q[0] - lo[0]) / w + dir[1] * (q[1] - lo[1]) / h);
+                    let reach = |k: usize| {
+                        at(k).map_or(f64::MIN, |q| {
+                            dir[0] * (q[0] - lo[0]) / w + dir[1] * (q[1] - lo[1]) / h
+                        })
+                    };
                     reach(x).total_cmp(&reach(y))
                 })?;
             }
@@ -1279,23 +1772,65 @@ fn plan_pieces(f: &Region) -> Option<(Vec<[f64; 2]>, Vec<[u32; 3]>)> {
             // Every patch is four-sided by construction: its corners are where its outline turns.
             coons::coons(&luv, &lpos, f.speed, grid::MAX_FACE_GRID, f.h, None).or_else(|| {
                 match switches[..] {
-                    [a, b, c, d] => coons::coons_at(&luv, &lpos, [a, b, c, d], grid::MAX_FACE_GRID, f.h, None),
+                    [a, b, c, d] => {
+                        coons::coons_at(&luv, &lpos, [a, b, c, d], grid::MAX_FACE_GRID, f.h, None)
+                    }
                     _ => None,
                 }
-                .or_else(|| completed().and_then(|c| coons::coons_at(&luv, &lpos, c, grid::MAX_FACE_GRID, f.h, None)))
+                .or_else(|| {
+                    completed().and_then(|c| {
+                        coons::coons_at(&luv, &lpos, c, grid::MAX_FACE_GRID, f.h, None)
+                    })
+                })
             })
         } else {
             None
         };
         let local = quad
-            .or_else(|| if pc.holes.is_empty() { coons::coons_best(&luv, &lpos, f.speed, grid::MAX_FACE_GRID, f.h) } else { None })
-            .or_else(|| cutgrid::cut_grid(&luv, &ranges, &clip(f.us, bbox[0]), &clip(f.vs, bbox[1]), &[], f.speed))
             .or_else(|| {
-                let polys: Vec<&[[f64; 2]]> = ranges.iter().filter_map(|r| luv.get(r.clone())).collect();
-                let seeds = cdt::lattice(bbox, [f.h / f.speed[0], f.h / f.speed[1]], &polys, f.speed);
-                let eval = |u: f64, v: f64| s.derivs(u, v).map(kernel::record_triple).map(|(p, su, sv)| (p, su.cross(sv).normalized()));
-                let sag = cdt::Sag { eval: &eval, tol: f.rules.tol, h: f.h, turn: f.rules.turn, scale: f.speed };
-                cdt::triangulate(&luv, &ranges, cdt::Fill { seeds: &seeds, refine: Some((sag, MAX_REFINE)), shape: true, lenient: false })
+                if pc.holes.is_empty() {
+                    coons::coons_best(&luv, &lpos, f.speed, grid::MAX_FACE_GRID, f.h)
+                } else {
+                    None
+                }
+            })
+            .or_else(|| {
+                cutgrid::cut_grid(
+                    &luv,
+                    &ranges,
+                    &clip(f.us, bbox[0]),
+                    &clip(f.vs, bbox[1]),
+                    &[],
+                    f.speed,
+                )
+            })
+            .or_else(|| {
+                let polys: Vec<&[[f64; 2]]> =
+                    ranges.iter().filter_map(|r| luv.get(r.clone())).collect();
+                let seeds =
+                    cdt::lattice(bbox, [f.h / f.speed[0], f.h / f.speed[1]], &polys, f.speed);
+                let eval = |u: f64, v: f64| {
+                    s.derivs(u, v)
+                        .map(kernel::record_triple)
+                        .map(|(p, su, sv)| (p, su.cross(sv).normalized()))
+                };
+                let sag = cdt::Sag {
+                    eval: &eval,
+                    tol: f.rules.tol,
+                    h: f.h,
+                    turn: f.rules.turn,
+                    scale: f.speed,
+                };
+                cdt::triangulate(
+                    &luv,
+                    &ranges,
+                    cdt::Fill {
+                        seeds: &seeds,
+                        refine: Some((sag, MAX_REFINE)),
+                        shape: true,
+                        lenient: false,
+                    },
+                )
             })?;
         let (lextra, ltris) = local;
         let base = u32::try_from(n + extra.len()).ok()?;
@@ -1303,7 +1838,11 @@ fn plan_pieces(f: &Region) -> Option<(Vec<[f64; 2]>, Vec<[u32; 3]>)> {
         for t in ltris {
             let map = |i: u32| -> Option<u32> {
                 let i = i as usize;
-                if i < m { ids.get(i).copied() } else { base.checked_add(u32::try_from(i - m).ok()?) }
+                if i < m {
+                    ids.get(i).copied()
+                } else {
+                    base.checked_add(u32::try_from(i - m).ok()?)
+                }
             };
             tris.push([map(t[0])?, map(t[1])?, map(t[2])?]);
         }
@@ -1316,7 +1855,15 @@ fn plan_pieces(f: &Region) -> Option<(Vec<[f64; 2]>, Vec<[u32; 3]>)> {
 /// `sa` at `a` and `sb` at `b` (in the metric `speed`, each at most `h`), growing geometrically
 /// between them (sizes `sa · q^k` summing to the length), then each interval split in half while
 /// `fine` fails between its ends.
-fn graded(a: [f64; 2], b: [f64; 2], sa: f64, sb: f64, h: f64, speed: [f64; 2], fine: &dyn Fn([f64; 2], [f64; 2]) -> bool) -> Vec<f64> {
+fn graded(
+    a: [f64; 2],
+    b: [f64; 2],
+    sa: f64,
+    sb: f64,
+    h: f64,
+    speed: [f64; 2],
+    fine: &dyn Fn([f64; 2], [f64; 2]) -> bool,
+) -> Vec<f64> {
     let len = ((b[0] - a[0]) * speed[0]).hypot((b[1] - a[1]) * speed[1]);
     let cap = |x: f64| {
         if x.is_finite() && x > 0.0 {
@@ -1349,12 +1896,17 @@ fn graded(a: [f64; 2], b: [f64; 2], sa: f64, sb: f64, h: f64, speed: [f64; 2], f
     }
     // The size rules between seeds (sag, facet angle).
     let point = |t: f64| [a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t];
-    let mut all: Vec<f64> = std::iter::once(0.0).chain(cuts).chain(std::iter::once(1.0)).collect();
+    let mut all: Vec<f64> = std::iter::once(0.0)
+        .chain(cuts)
+        .chain(std::iter::once(1.0))
+        .collect();
     for _ in 0..12 {
         let mut next = Vec::with_capacity(all.len() * 2);
         let mut split = false;
         for w in all.windows(2) {
-            let (Some(&x), Some(&y)) = (w.first(), w.get(1)) else { continue };
+            let (Some(&x), Some(&y)) = (w.first(), w.get(1)) else {
+                continue;
+            };
             next.push(x);
             if !fine(point(x), point(y)) {
                 next.push(0.5 * (x + y));
@@ -1379,7 +1931,12 @@ fn graded(a: [f64; 2], b: [f64; 2], sa: f64, sb: f64, h: f64, speed: [f64; 2], f
 /// loops touching at a vertex they share (a ring standing on a perforated plate, tangent to the
 /// holes beside it). A seam's two uses are at one point in space but a period apart in (u, v),
 /// and stay two.
-fn closed_boundary(ranges: &[std::ops::Range<usize>], fixed: &[Vec3], uvs: &[[f64; 2]], triangles: &[[u32; 3]]) -> bool {
+fn closed_boundary(
+    ranges: &[std::ops::Range<usize>],
+    fixed: &[Vec3],
+    uvs: &[[f64; 2]],
+    triangles: &[[u32; 3]],
+) -> bool {
     let mut one: Vec<u32> = (0..fixed.len() as u32).collect();
     let root = |one: &[u32], mut i: u32| {
         while let Some(&j) = one.get(i as usize).filter(|j| **j != i) {
@@ -1387,7 +1944,9 @@ fn closed_boundary(ranges: &[std::ops::Range<usize>], fixed: &[Vec3], uvs: &[[f6
         }
         i
     };
-    let segment = |r: &std::ops::Range<usize>, k: usize| ((r.start + k) as u32, (r.start + (k + 1) % r.len()) as u32);
+    let segment = |r: &std::ops::Range<usize>, k: usize| {
+        ((r.start + k) as u32, (r.start + (k + 1) % r.len()) as u32)
+    };
     let join = |one: &mut [u32], a: u32, b: u32| {
         let (ra, rb) = (root(one, a), root(one, b));
         if let Some(x) = one.get_mut(rb.max(ra) as usize) {
@@ -1397,7 +1956,11 @@ fn closed_boundary(ranges: &[std::ops::Range<usize>], fixed: &[Vec3], uvs: &[[f6
     for r in ranges {
         for k in 0..r.len() {
             let (a, b) = segment(r, k);
-            if fixed.get(a as usize).zip(fixed.get(b as usize)).is_some_and(|(p, q)| p == q) {
+            if fixed
+                .get(a as usize)
+                .zip(fixed.get(b as usize))
+                .is_some_and(|(p, q)| p == q)
+            {
                 join(&mut one, a, b);
             }
         }

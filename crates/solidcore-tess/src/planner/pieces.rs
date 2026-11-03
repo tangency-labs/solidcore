@@ -90,12 +90,18 @@ pub(crate) fn cut(
     }
     let at_in = |cut_uv: &[[f64; 2]], k: u32| -> Option<[f64; 2]> {
         let k = k as usize;
-        if k < n { boundary.get(k).copied() } else { cut_uv.get(k - n).copied() }
+        if k < n {
+            boundary.get(k).copied()
+        } else {
+            cut_uv.get(k - n).copied()
+        }
     };
     // The spacing wanted at a node: at a boundary node the mean of its two boundary segments.
     let spacing = |k: u32| -> f64 {
         let k = k as usize;
-        let Some(r) = loops.iter().find(|r| r.contains(&k)) else { return f64::INFINITY };
+        let Some(r) = loops.iter().find(|r| r.contains(&k)) else {
+            return f64::INFINITY;
+        };
         let m = r.len();
         let i = k - r.start;
         let (prev, next) = (r.start + (i + m - 1) % m, r.start + (i + 1) % m);
@@ -109,7 +115,10 @@ pub(crate) fn cut(
     for r in loops {
         let m = r.len();
         for k in 0..m {
-            let (a, b) = (u32::try_from(r.start + k).ok()?, u32::try_from(r.start + (k + 1) % m).ok()?);
+            let (a, b) = (
+                u32::try_from(r.start + k).ok()?,
+                u32::try_from(r.start + (k + 1) % m).ok()?,
+            );
             sides.insert((a.min(b), a.max(b)));
         }
     }
@@ -130,7 +139,9 @@ pub(crate) fn cut(
         nodes.dedup_by_key(|x| x.1);
         let count = segments.get(i).and_then(|s| s.count);
         for w in nodes.windows(2) {
-            let (Some(&(_, a)), Some(&(_, b))) = (w.first(), w.get(1)) else { continue };
+            let (Some(&(_, a)), Some(&(_, b))) = (w.first(), w.get(1)) else {
+                continue;
+            };
             if a == b {
                 continue;
             }
@@ -169,11 +180,15 @@ pub(crate) fn cut(
         for r in loops {
             let m = r.len();
             for k in 0..m {
-                let (Some(a), Some(b)) = (boundary.get(r.start + k).map(|p| metric(*p)), boundary.get(r.start + (k + 1) % m).map(|p| metric(*p)))
-                else {
+                let (Some(a), Some(b)) = (
+                    boundary.get(r.start + k).map(|p| metric(*p)),
+                    boundary.get(r.start + (k + 1) % m).map(|p| metric(*p)),
+                ) else {
                     continue;
                 };
-                if (a[1] > q[1]) != (b[1] > q[1]) && q[0] < a[0] + (q[1] - a[1]) / (b[1] - a[1]) * (b[0] - a[0]) {
+                if (a[1] > q[1]) != (b[1] > q[1])
+                    && q[0] < a[0] + (q[1] - a[1]) / (b[1] - a[1]) * (b[0] - a[0])
+                {
                     odd = !odd;
                 }
             }
@@ -183,10 +198,19 @@ pub(crate) fn cut(
     let mut half: Vec<(u32, u32)> = Vec::new();
     for r in loops {
         let m = r.len();
-        let side = |k: usize| -> Option<(u32, u32)> { Some((u32::try_from(r.start + k).ok()?, u32::try_from(r.start + (k + 1) % m).ok()?)) };
+        let side = |k: usize| -> Option<(u32, u32)> {
+            Some((
+                u32::try_from(r.start + k).ok()?,
+                u32::try_from(r.start + (k + 1) % m).ok()?,
+            ))
+        };
         // Which way round the face lies to the left: test beside the loop's longest side.
         let longest = (0..m).max_by(|&x, &y| {
-            let l = |k: usize| side(k).and_then(|(a, b)| Some(dist(at(a)?, at(b)?))).unwrap_or(0.0);
+            let l = |k: usize| {
+                side(k)
+                    .and_then(|(a, b)| Some(dist(at(a)?, at(b)?)))
+                    .unwrap_or(0.0)
+            };
             l(x).total_cmp(&l(y))
         })?;
         let (a, b) = side(longest)?;
@@ -195,7 +219,10 @@ pub(crate) fn cut(
         if !(len > 0.0) {
             return None;
         }
-        let left = [0.5 * (pa[0] + pb[0]) - (pb[1] - pa[1]) * 1e-4, 0.5 * (pa[1] + pb[1]) + (pb[0] - pa[0]) * 1e-4];
+        let left = [
+            0.5 * (pa[0] + pb[0]) - (pb[1] - pa[1]) * 1e-4,
+            0.5 * (pa[1] + pb[1]) + (pb[0] - pa[0]) * 1e-4,
+        ];
         let forward = inside(left);
         for k in 0..m {
             let (a, b) = side(k)?;
@@ -231,8 +258,16 @@ pub(crate) fn cut(
             .iter()
             .rev()
             .find(|(a, e)| *a < back - 1e-12 && half.get(*e).is_some_and(|x| x.1 != u))
-            .or_else(|| list.iter().rev().find(|(_, e)| half.get(*e).is_some_and(|x| x.1 != u)));
-        before.map(|(_, e)| *e).or_else(|| list.iter().find(|(_, e)| half.get(*e).is_some_and(|x| x.1 == u)).map(|(_, e)| *e))
+            .or_else(|| {
+                list.iter()
+                    .rev()
+                    .find(|(_, e)| half.get(*e).is_some_and(|x| x.1 != u))
+            });
+        before.map(|(_, e)| *e).or_else(|| {
+            list.iter()
+                .find(|(_, e)| half.get(*e).is_some_and(|x| x.1 == u))
+                .map(|(_, e)| *e)
+        })
     };
     let mut seen = vec![false; half.len()];
     let mut rings: Vec<Ring<u32>> = Vec::new();
@@ -255,12 +290,22 @@ pub(crate) fn cut(
         }
         rings.push(Ring::new(ring));
     }
-    let area = |ring: &Ring<u32>| -> Option<f64> { Some(ring.iter().map(|&k| pos(k)).collect::<Option<Ring<_>>>()?.signed_area()) };
+    let area = |ring: &Ring<u32>| -> Option<f64> {
+        Some(
+            ring.iter()
+                .map(|&k| pos(k))
+                .collect::<Option<Ring<_>>>()?
+                .signed_area(),
+        )
+    };
     let mut pieces: Vec<Piece> = Vec::new();
     let mut holes: Vec<Ring<u32>> = Vec::new();
     for r in rings {
         if area(&r)? > 0.0 {
-            pieces.push(Piece { ring: r, holes: Vec::new() });
+            pieces.push(Piece {
+                ring: r,
+                holes: Vec::new(),
+            });
         } else {
             holes.push(r);
         }
@@ -271,17 +316,24 @@ pub(crate) fn cut(
         let contains = |ring: &Ring<u32>| {
             let mut odd = false;
             for (&a, &b) in ring.edges() {
-                let (Some(a), Some(b)) = (pos(a), pos(b)) else { continue };
-                if (a[1] > p[1]) != (b[1] > p[1]) && p[0] < a[0] + (p[1] - a[1]) / (b[1] - a[1]) * (b[0] - a[0]) {
+                let (Some(a), Some(b)) = (pos(a), pos(b)) else {
+                    continue;
+                };
+                if (a[1] > p[1]) != (b[1] > p[1])
+                    && p[0] < a[0] + (p[1] - a[1]) / (b[1] - a[1]) * (b[0] - a[0])
+                {
                     odd = !odd;
                 }
             }
             odd
         };
-        let host = pieces.iter_mut().filter(|pc| contains(&pc.ring)).min_by(|a, b| {
-            let s = |pc: &Piece| area(&pc.ring).unwrap_or(f64::MAX);
-            s(a).total_cmp(&s(b))
-        })?;
+        let host = pieces
+            .iter_mut()
+            .filter(|pc| contains(&pc.ring))
+            .min_by(|a, b| {
+                let s = |pc: &Piece| area(&pc.ring).unwrap_or(f64::MAX);
+                s(a).total_cmp(&s(b))
+            })?;
         host.holes.push(h);
     }
     Some((cut_uv, pieces))
@@ -292,23 +344,54 @@ mod tests {
     use super::*;
 
     fn area(all: &[[f64; 2]], ring: &Ring<u32>) -> f64 {
-        ring.iter().map(|&k| all[k as usize]).collect::<Ring<_>>().signed_area()
+        ring.iter()
+            .map(|&k| all[k as usize])
+            .collect::<Ring<_>>()
+            .signed_area()
     }
 
     /// A square cut by four segments meeting at its centre (one point inside the face, shared)
     /// gives four quarters covering it.
     #[test]
     fn a_cross_cuts_a_square_into_four() {
-        let b = vec![[0.0, 0.0], [1.0, 0.0], [2.0, 0.0], [2.0, 1.0], [2.0, 2.0], [1.0, 2.0], [0.0, 2.0], [0.0, 1.0]];
+        let b = vec![
+            [0.0, 0.0],
+            [1.0, 0.0],
+            [2.0, 0.0],
+            [2.0, 1.0],
+            [2.0, 2.0],
+            [1.0, 2.0],
+            [0.0, 2.0],
+            [0.0, 1.0],
+        ];
         let loops = [std::ops::Range { start: 0, end: 8 }];
         let c = End::Point([1.0, 1.0]);
         let segs = [
-            Segment { a: End::Node(1), b: c, count: None },
-            Segment { a: End::Node(3), b: c, count: None },
-            Segment { a: End::Node(5), b: c, count: None },
-            Segment { a: End::Node(7), b: c, count: None },
+            Segment {
+                a: End::Node(1),
+                b: c,
+                count: None,
+            },
+            Segment {
+                a: End::Node(3),
+                b: c,
+                count: None,
+            },
+            Segment {
+                a: End::Node(5),
+                b: c,
+                count: None,
+            },
+            Segment {
+                a: End::Node(7),
+                b: c,
+                count: None,
+            },
         ];
-        let Some((cut_uv, pieces)) = cut(&b, &loops, &segs, [1.0, 1.0], &|_, _, _, _| vec![0.5]) else { panic!("cuts") };
+        let Some((cut_uv, pieces)) = cut(&b, &loops, &segs, [1.0, 1.0], &|_, _, _, _| vec![0.5])
+        else {
+            panic!("cuts")
+        };
         assert_eq!(pieces.len(), 4);
         let mut all = b.clone();
         all.extend(cut_uv);
@@ -319,10 +402,32 @@ mod tests {
     /// A segment ending on another (a T-node) splits it there: three patches.
     #[test]
     fn a_t_node_splits_the_segment_it_lands_on() {
-        let b = vec![[0.0, 0.0], [1.0, 0.0], [2.0, 0.0], [2.0, 1.0], [2.0, 2.0], [0.0, 2.0], [0.0, 1.0]];
+        let b = vec![
+            [0.0, 0.0],
+            [1.0, 0.0],
+            [2.0, 0.0],
+            [2.0, 1.0],
+            [2.0, 2.0],
+            [0.0, 2.0],
+            [0.0, 1.0],
+        ];
         let loops = [std::ops::Range { start: 0, end: 7 }];
-        let segs = [Segment { a: End::Node(6), b: End::Node(3), count: None }, Segment { a: End::Node(1), b: End::On(0, [1.0, 1.0]), count: None }];
-        let Some((cut_uv, pieces)) = cut(&b, &loops, &segs, [1.0, 1.0], &|_, _, _, _| Vec::new()) else { panic!("cuts") };
+        let segs = [
+            Segment {
+                a: End::Node(6),
+                b: End::Node(3),
+                count: None,
+            },
+            Segment {
+                a: End::Node(1),
+                b: End::On(0, [1.0, 1.0]),
+                count: None,
+            },
+        ];
+        let Some((cut_uv, pieces)) = cut(&b, &loops, &segs, [1.0, 1.0], &|_, _, _, _| Vec::new())
+        else {
+            panic!("cuts")
+        };
         assert_eq!(pieces.len(), 3, "{pieces:?}");
         let mut all = b.clone();
         all.extend(cut_uv);
@@ -333,6 +438,15 @@ mod tests {
     #[test]
     fn no_segments_no_cut() {
         let b = [[0.0, 0.0], [1.0, 0.0], [1.0, 1.0], [0.0, 1.0]];
-        assert!(cut(&b, &[std::ops::Range { start: 0, end: 4 }], &[], [1.0, 1.0], &|_, _, _, _| Vec::new()).is_none());
+        assert!(
+            cut(
+                &b,
+                &[std::ops::Range { start: 0, end: 4 }],
+                &[],
+                [1.0, 1.0],
+                &|_, _, _, _| Vec::new()
+            )
+            .is_none()
+        );
     }
 }

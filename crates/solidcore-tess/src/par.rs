@@ -36,7 +36,11 @@ pub(crate) fn guard<T>(what: &str, f: impl FnOnce() -> Result<T>) -> Result<T> {
     match r {
         Ok(r) => r,
         Err(p) => {
-            let msg = p.downcast_ref::<&str>().map(|s| (*s).to_string()).or_else(|| p.downcast_ref::<String>().cloned()).unwrap_or_default();
+            let msg = p
+                .downcast_ref::<&str>()
+                .map(|s| (*s).to_string())
+                .or_else(|| p.downcast_ref::<String>().cloned())
+                .unwrap_or_default();
             Err(TessError::Internal(format!("{what}: {msg}")))
         }
     }
@@ -47,14 +51,26 @@ pub(crate) fn guard<T>(what: &str, f: impl FnOnce() -> Result<T>) -> Result<T> {
 #[cfg(not(target_arch = "wasm32"))]
 fn pool() -> Option<&'static rayon::ThreadPool> {
     static POOL: std::sync::OnceLock<Option<rayon::ThreadPool>> = std::sync::OnceLock::new();
-    POOL.get_or_init(|| rayon::ThreadPoolBuilder::new().thread_name(|i| format!("solidcore-tess-{i}")).stack_size(STACK).build().ok()).as_ref()
+    POOL.get_or_init(|| {
+        rayon::ThreadPoolBuilder::new()
+            .thread_name(|i| format!("solidcore-tess-{i}"))
+            .stack_size(STACK)
+            .build()
+            .ok()
+    })
+    .as_ref()
 }
 
 /// `f` over `items`, results in item order: on a pool when `parallel`, else on the calling
 /// thread. Called on a worker of a pool (the caller's own), that pool's threads, as many as it
 /// has; otherwise the mesher's pool. Waking workers costs tens of microseconds, so callers ask
 /// for it only when the items carry more work than that.
-pub(crate) fn map<T: Sync, R: Send>(what: &'static str, items: &[T], parallel: bool, f: impl Fn(&T) -> Result<R> + Sync) -> Vec<Result<R>> {
+pub(crate) fn map<T: Sync, R: Send>(
+    what: &'static str,
+    items: &[T],
+    parallel: bool,
+    f: impl Fn(&T) -> Result<R> + Sync,
+) -> Vec<Result<R>> {
     let one = |item: &T| guard(what, || f(item));
     #[cfg(target_arch = "wasm32")]
     let _ = parallel;
@@ -83,7 +99,13 @@ mod tests {
     #[test]
     fn keeps_order_and_errors() {
         let items: Vec<u32> = (0..1000).collect();
-        let out = map("test", &items, true, |x| if *x == 500 { Err(TessError::Invalid("five hundred".into())) } else { Ok(x * 2) });
+        let out = map("test", &items, true, |x| {
+            if *x == 500 {
+                Err(TessError::Invalid("five hundred".into()))
+            } else {
+                Ok(x * 2)
+            }
+        });
         assert_eq!(out.len(), 1000);
         for (i, r) in out.iter().enumerate() {
             match r {
