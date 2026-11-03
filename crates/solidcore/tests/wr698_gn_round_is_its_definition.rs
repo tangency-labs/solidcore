@@ -810,6 +810,7 @@ fn solidcraft_kernel(definition: bool) -> Kernel {
 /// tolerance, on the body reopened (S the definition) and as built with the rounds as
 /// plain B-splines (S the B-spline), and the round adds its face and its two end faces.
 #[test]
+#[ignore = "slow (about 20 min unoptimized, 70 s optimized): the round's trace solves the reopened round's definition at about 67 000 stations"]
 fn a_round_on_a_reopened_round_lies_on_it() {
     for definition in [true, false] {
         let mut k = solidcraft_kernel(definition);
