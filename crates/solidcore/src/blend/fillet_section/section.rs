@@ -43,6 +43,8 @@ use std::collections::BTreeMap;
 use std::sync::Arc;
 
 const OP: &str = "blend::fillet_section::GnSectionFsg";
+const OP_BUILD: &str = "blend::fillet_section::GnSectionFsg::build";
+const OP_CERTIFY: &str = "blend::fillet_section::GnSectionFsg::certify";
 
 /// `SM_GN_MAX_ORDER`: the highest order of a G^n section.
 pub const GN_MAX_ORDER: usize = 4;
@@ -802,6 +804,7 @@ impl GnSectionFsg {
         )?;
         let mut stations: Vec<GnStation> = Vec::new();
         for (j, &s) in ss.iter().enumerate() {
+            k.check_cancelled(OP_BUILD)?;
             let seed = if law_round.is_some() {
                 law_seeds
                     .get(j)
@@ -836,6 +839,8 @@ impl GnSectionFsg {
             );
             let st = match solved {
                 Ok(st) => st,
+                // a cancel (#2136) is not a refused ball: it ends the operation
+                Err(e @ SolidError::Cancelled { .. }) => return Err(e),
                 Err(_) if feet_check => return Ok(None),
                 Err(e) => return Err(e),
             };
@@ -883,6 +888,7 @@ impl GnSectionFsg {
         // Hermite span interpolates the values and s-derivatives of its own pieces, which
         // the certificate bounds (3bc54a4)
         for st in stations.iter_mut().skip(1) {
+            k.check_cancelled(OP_BUILD)?;
             let on = [0, 1, 2, 3].map(|q| param(st, q, 0, 0));
             let m = leader.evaluate_point(st.s)?;
             let law_r = law_series(gn_law, st.s, tr.s(), true)?;
@@ -948,6 +954,7 @@ impl GnSectionFsg {
             let mut wd_in: Vec<Vec<Vec3>> = vec![Vec::new(); ld];
             let o = [0.0_f64; 3];
             for st in &stations {
+                k.check_cancelled(OP_BUILD)?;
                 for l_in in [false, true] {
                     let mut rho = [[Tay::<f64>::zero(); 3]; 2];
                     let mut mc = [Tay::<f64>::zero(); 3];
@@ -1063,6 +1070,7 @@ impl GnSectionFsg {
             let mut hd_in: Vec<Vec<Vec3>> = vec![Vec::new(); ld];
             let mut wd_in: Vec<Vec<Vec3>> = vec![Vec::new(); ld];
             for st in &stations {
+                k.check_cancelled(OP_BUILD)?;
                 // the rows' s-derivatives as the span starting here takes them, then as the
                 // one ending here (3bc54a4)
                 for l_in in [false, true] {
@@ -1133,6 +1141,7 @@ impl GnSectionFsg {
             // carry them
             let form = gn_form(n, self.thumbweight);
             for i in 0..lnu {
+                k.check_cancelled(OP_BUILD)?;
                 for j in 0..ld {
                     let mut p = Vec3::new(0.0, 0.0, 0.0);
                     for (f, gf) in form.g.iter().enumerate() {
@@ -1373,6 +1382,7 @@ impl GnSectionFsg {
                 }
                 let mut next: Vec<GnStation> = Vec::new();
                 for pair in stations.windows(2) {
+                    k.check_cancelled(OP_CERTIFY)?;
                     let [a, b] = pair else { continue };
                     next.push(*a);
                     for &dk in &inner {
@@ -1390,6 +1400,7 @@ impl GnSectionFsg {
                         let (mut s0, mut s1, mut x0, mut x1) = (a.s, b.s, xa - dk, xb - dk);
                         let mut at: Option<GnStation> = None;
                         for _ in 0..60 {
+                            k.check_cancelled(OP_CERTIFY)?;
                             let mut ds = s0 - x0 * (s1 - s0) / (x1 - x0);
                             let inside = ds > s0 && ds < s1;
                             if !inside {
@@ -1499,6 +1510,7 @@ impl GnSectionFsg {
         loop {
             let mut all = true;
             for (j, bj) in bounds.iter_mut().enumerate() {
+                k.check_cancelled(OP_CERTIFY)?;
                 if *bj < 0.0 {
                     let (Some(a), Some(b)) = (stations.get(j), stations.get(j + 1)) else {
                         return Err(SolidError::sm_err(OP));
@@ -1535,6 +1547,7 @@ impl GnSectionFsg {
             let mut next: Vec<GnStation> = Vec::new();
             let mut next_bounds: Vec<f64> = Vec::new();
             for (pair, &bj) in stations.windows(2).zip(&bounds) {
+                k.check_cancelled(OP_CERTIFY)?;
                 let [a, b] = pair else { continue };
                 next.push(*a);
                 if bj <= target {
