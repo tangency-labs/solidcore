@@ -96,17 +96,18 @@ fn kind_name(surface: &Surface) -> &'static str {
     }
 }
 
-/// Every surface test the kernel runs on `surface` at level 0 that did not pass.
-fn failed_surface_tests(k: &Kernel, surface: &Surface) -> Vec<(usize, &'static str)> {
+/// Every surface test the kernel runs on `surface` at level 0 that did not pass, as
+/// `<index> <name>`, so a failure says which test went off.
+fn failed_surface_tests(k: &Kernel, surface: &Surface) -> Vec<String> {
     let mut list = AssertArray::new();
     let ok = surface
         .assert_valid(k, Some(&mut list), 0, ObjectKey(1))
         .unwrap();
-    let failed: Vec<_> = list
+    let failed: Vec<String> = list
         .reports()
         .iter()
         .filter(|r| !r.ok)
-        .map(|r| (r.test_index, r.name))
+        .map(|r| format!("{} {}", r.test_index, r.name))
         .collect();
     assert_eq!(
         ok,
@@ -139,10 +140,10 @@ fn near_straight_spline_extrudes_to_the_prism_its_profile_describes() {
         .map(|fid| {
             let face = body.face(*fid).unwrap();
             let surface = face.surface.as_ref().unwrap();
-            assert_eq!(
-                failed_surface_tests(&k, surface),
-                Vec::new(),
-                "every face passes its surface tests"
+            let failed = failed_surface_tests(&k, surface);
+            assert!(
+                failed.is_empty(),
+                "a face failed its surface tests: {failed:?}"
             );
             kind_name(surface)
         })
@@ -205,10 +206,10 @@ fn the_swept_span_is_recognised_as_a_surface_of_extrusion_not_a_cylinder() {
             "SurfOfExtrusion",
             "the near-straight span is no cylinder"
         );
-        assert_eq!(
-            failed_surface_tests(&k, &recognised),
-            Vec::new(),
-            "the recognised surface passes its own tests"
+        let failed = failed_surface_tests(&k, &recognised);
+        assert!(
+            failed.is_empty(),
+            "the recognised surface failed its own tests: {failed:?}"
         );
     }
 }
