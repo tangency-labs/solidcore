@@ -72,8 +72,7 @@ impl FilletSession<'_> {
             }
         }
         for geom in self.objects.pseudo.geoms() {
-            let Some(FilletSurfaceStorage::ManagedFace { body: owner, face }) =
-                geom.fillet_surface
+            let Some(FilletSurfaceStorage::ManagedFace { body: owner, face }) = geom.fillet_surface
             else {
                 continue;
             };

@@ -103,7 +103,12 @@ fn checked(name: &'static str, b: &Brep, made: &[MadeBlendFace]) -> Case {
         bare.len()
     );
     for f in &bare {
-        eprintln!("  bare face {} ({}, {})", f.face.index(), f.kind.name(), f.surface);
+        eprintln!(
+            "  bare face {} ({}, {})",
+            f.face.index(),
+            f.kind.name(),
+            f.surface
+        );
     }
     Case { name, bare }
 }
@@ -240,7 +245,13 @@ fn cases() -> Vec<Case> {
     let cut = create_box(&mut k, Point3::new(-20.0, -20.0, 4.0), 40.0, 40.0, 20.0).unwrap();
     let mut b = boolean_difference(&mut k, s, cut).unwrap();
     let q = 42.0_f64.sqrt();
-    round(&mut k, &mut b, &[[q, q, 4.0], [-q, -q, 4.0]], &[2.0; 2], false);
+    round(
+        &mut k,
+        &mut b,
+        &[[q, q, 4.0], [-q, -q, 4.0]],
+        &[2.0; 2],
+        false,
+    );
     out.push(checked("cut ball's rim r 2", &b, &made(&k)));
 
     let mut k = kernel();
@@ -280,7 +291,11 @@ fn cases() -> Vec<Case> {
     )
     .unwrap();
     let made = offsets_of_blends(&offset).unwrap();
-    out.push(checked("offset 0.5 of #2388's chamfered box", &offset, &made));
+    out.push(checked(
+        "offset 0.5 of #2388's chamfered box",
+        &offset,
+        &made,
+    ));
 
     out
 }
@@ -300,7 +315,11 @@ fn ledger() -> BTreeMap<String, u32> {
         let issue = text
             .split_whitespace()
             .find_map(|w| w.strip_prefix('#'))
-            .and_then(|n| n.trim_end_matches(|c: char| !c.is_ascii_digit()).parse().ok())
+            .and_then(|n| {
+                n.trim_end_matches(|c: char| !c.is_ascii_digit())
+                    .parse()
+                    .ok()
+            })
             .unwrap_or_else(|| panic!("{stem}: the ledger entry names no issue"));
         out.insert(stem, issue);
     }

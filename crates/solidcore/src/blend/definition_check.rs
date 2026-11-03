@@ -262,13 +262,8 @@ fn no_surface(face: FaceId) -> SolidError {
 pub fn bare_blend_faces(brep: &Brep, made: &[MadeBlendFace]) -> Result<Vec<BareBlendFace>> {
     let mut out = Vec::new();
     for m in made {
-        let face = brep
-            .face(m.face)
-            .map_err(|_| not_a_face(m.face))?;
-        let surface = face
-            .surface
-            .as_ref()
-            .ok_or_else(|| no_surface(m.face))?;
+        let face = brep.face(m.face).map_err(|_| not_a_face(m.face))?;
+        let surface = face.surface.as_ref().ok_or_else(|| no_surface(m.face))?;
         if !is_definition(surface) {
             out.push(BareBlendFace {
                 face: m.face,
@@ -311,12 +306,14 @@ pub fn mark_blend_faces(brep: &mut Brep, made: &[MadeBlendFace]) -> Result<()> {
 pub fn blend_face_marks(brep: &Brep) -> Result<Vec<MadeBlendFace>> {
     let mut out = Vec::new();
     for &face in brep.face_list() {
-        let Some(mark) = brep.find_attribute(EntityRef::Face(face), ids::FILLET_BLEND_FACE)
-        else {
+        let Some(mark) = brep.find_attribute(EntityRef::Face(face), ids::FILLET_BLEND_FACE) else {
             continue;
         };
         let AttributeValue::Tag(tag) = mark.value() else {
-            return Err(SolidError::invalid_input(OP, "a blend face mark is not a tag"));
+            return Err(SolidError::invalid_input(
+                OP,
+                "a blend face mark is not a tag",
+            ));
         };
         let kind = BlendFaceKind::from_code(tag.primary_id)
             .ok_or_else(|| SolidError::invalid_input(OP, "a blend face mark names no kind"))?;
