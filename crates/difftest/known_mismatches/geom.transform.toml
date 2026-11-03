@@ -1,0 +1,132 @@
+# #2502: these cases move with the difftest's C++ reference, the SMLib fork
+# v1.1.0-alpha.1 (8eac63c); plan/findings/general--2502-fork-pin-geom-known-mismatches.md.
+
+[[mismatch]]
+unit = "geom.transform"
+case = "gen0027"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.r[0] C++ 1.007e3, Rust 0e0 (+6 more) (plan/findings/general--2502-fork-pin-geom-known-mismatches.md)"
+
+[[mismatch]]
+unit = "geom.transform"
+case = "gen0044"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.r[0] C++ 1.007e3, Rust 0e0 (plan/findings/general--2502-fork-pin-geom-known-mismatches.md)"
+
+[[mismatch]]
+unit = "geom.transform"
+case = "gen0087"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.r[0] C++ 1.007e3, Rust 0e0 (+6 more) (plan/findings/general--2502-fork-pin-geom-known-mismatches.md)"
+
+[[mismatch]]
+unit = "geom.transform"
+case = "gen0209"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.r[0] C++ 1.007e3, Rust 0e0 (plan/findings/general--2502-fork-pin-geom-known-mismatches.md)"
+
+[[mismatch]]
+unit = "geom.transform"
+case = "gen0307"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.r[0] C++ 1.007e3, Rust 0e0 (plan/findings/general--2502-fork-pin-geom-known-mismatches.md)"
+
+[[mismatch]]
+unit = "geom.transform"
+case = "gen0392"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.r[0] C++ 1.007e3, Rust 0e0 (plan/findings/general--2502-fork-pin-geom-known-mismatches.md)"
+
+[[mismatch]]
+unit = "geom.transform"
+case = "gen0537"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.r[0] C++ 1.007e3, Rust 0e0 (plan/findings/general--2502-fork-pin-geom-known-mismatches.md)"
+
+[[mismatch]]
+unit = "geom.transform"
+case = "gen0604"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.r[0] C++ 1.007e3, Rust 0e0 (+6 more) (plan/findings/general--2502-fork-pin-geom-known-mismatches.md)"
+
+[[mismatch]]
+unit = "geom.transform"
+case = "gen0794"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.r[0] C++ 1.007e3, Rust 0e0 (+6 more) (plan/findings/general--2502-fork-pin-geom-known-mismatches.md)"
+
+[[mismatch]]
+unit = "geom.transform"
+case = "gen0836"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.r[0] C++ 1.007e3, Rust 0e0 (+6 more) (plan/findings/general--2502-fork-pin-geom-known-mismatches.md)"
+
+[[mismatch]]
+unit = "geom.transform"
+case = "gen0857"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.r[0] C++ 1.007e3, Rust 0e0 (+6 more) (plan/findings/general--2502-fork-pin-geom-known-mismatches.md)"
+
+[[mismatch]]
+unit = "geom.transform"
+case = "gen1367"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.r[0] C++ 1.007e3, Rust 0e0 (+6 more) (plan/findings/general--2502-fork-pin-geom-known-mismatches.md)"
+
+[[mismatch]]
+unit = "geom.transform"
+case = "gen1475"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.r[0] C++ 1.007e3, Rust 0e0 (+6 more) (plan/findings/general--2502-fork-pin-geom-known-mismatches.md)"
+
+[[mismatch]]
+unit = "geom.transform"
+case = "gen1824"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.r[0] C++ 1.007e3, Rust 0e0 (plan/findings/general--2502-fork-pin-geom-known-mismatches.md)"
+
+[[mismatch]]
+unit = "geom.transform"
+case = "gen1863"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.r[0] C++ 1.007e3, Rust 0e0 (plan/findings/general--2502-fork-pin-geom-known-mismatches.md)"
+
+[[mismatch]]
+unit = "geom.transform"
+case = "gen1983"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.r[0] C++ 1.007e3, Rust 0e0 (plan/findings/general--2502-fork-pin-geom-known-mismatches.md)"
+
+[[mismatch]]
+unit = "geom.transform"
+case = "gen2005"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.r[0] C++ 1.007e3, Rust 0e0 (+6 more) (plan/findings/general--2502-fork-pin-geom-known-mismatches.md)"
+
+[[mismatch]]
+unit = "geom.transform"
+case = "gen2019"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.r[0] C++ 1.007e3, Rust 0e0 (plan/findings/general--2502-fork-pin-geom-known-mismatches.md)"
+
+[[mismatch]]
+unit = "geom.transform"
+case = "gen2078"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.r[0] C++ 1.007e3, Rust 0e0 (+6 more) (plan/findings/general--2502-fork-pin-geom-known-mismatches.md)"
+
+[[mismatch]]
+unit = "geom.transform"
+case = "gen2090"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.r[0] C++ 1.007e3, Rust 0e0 (+6 more) (plan/findings/general--2502-fork-pin-geom-known-mismatches.md)"
+
+[[mismatch]]
+unit = "geom.transform"
+case = "gen2106"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.r[0] C++ 1.007e3, Rust 0e0 (plan/findings/general--2502-fork-pin-geom-known-mismatches.md)"
+
+[[mismatch]]
+unit = "geom.transform"
+case = "gen2111"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.r[0] C++ 1.007e3, Rust 0e0 (plan/findings/general--2502-fork-pin-geom-known-mismatches.md)"
+
+[[mismatch]]
+unit = "geom.transform"
+case = "gen2360"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.r[0] C++ 1.007e3, Rust 0e0 (plan/findings/general--2502-fork-pin-geom-known-mismatches.md)"
+
+[[mismatch]]
+unit = "geom.transform"
+case = "gen2698"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.r[0] C++ 1.007e3, Rust 0e0 (plan/findings/general--2502-fork-pin-geom-known-mismatches.md)"
+
+[[mismatch]]
+unit = "geom.transform"
+case = "gen2770"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.r[0] C++ 1.007e3, Rust 0e0 (plan/findings/general--2502-fork-pin-geom-known-mismatches.md)"
+
+[[mismatch]]
+unit = "geom.transform"
+case = "gen2775"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.r[0] C++ 1.007e3, Rust 0e0 (plan/findings/general--2502-fork-pin-geom-known-mismatches.md)"

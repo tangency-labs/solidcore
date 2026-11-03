@@ -1,0 +1,27 @@
+# #2502: these cases move with the difftest's C++ reference, the SMLib fork
+# v1.1.0-alpha.1 (8eac63c); plan/findings/general--2502-fork-pin-geom-known-mismatches.md.
+
+[[mismatch]]
+unit = "geom.extent1d"
+case = "edge_periodic_near_top"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.values[1] C++ -9.999999974752427e-6, Rust 0e0 (+4 more) (plan/findings/general--2502-fork-pin-geom-known-mismatches.md)"
+
+[[mismatch]]
+unit = "geom.extent1d"
+case = "gen0656"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.values[2] C++ -1.8189894035458565e-12, Rust 0e0 (+2 more) (plan/findings/general--2502-fork-pin-geom-known-mismatches.md)"
+
+[[mismatch]]
+unit = "geom.extent1d"
+case = "gen1503"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.values[2] C++ -3.9968028886505635e-15, Rust 0e0 (+1 more) (plan/findings/general--2502-fork-pin-geom-known-mismatches.md)"
+
+[[mismatch]]
+unit = "geom.extent1d"
+case = "gen2063"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.values[2] C++ 2.975050761300224e-16, Rust 0e0 (+1 more) (plan/findings/general--2502-fork-pin-geom-known-mismatches.md)"
+
+[[mismatch]]
+unit = "geom.extent1d"
+case = "gen2267"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.values[2] C++ -3.131175874138137e-16, Rust 0e0 (+2 more) (plan/findings/general--2502-fork-pin-geom-known-mismatches.md)"

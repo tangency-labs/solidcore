@@ -1,0 +1,7 @@
+# #2502: these cases move with the difftest's C++ reference, the SMLib fork
+# v1.1.0-alpha.1 (8eac63c); plan/findings/general--2502-fork-pin-geom-known-mismatches.md.
+
+[[mismatch]]
+unit = "geom.extent2d"
+case = "my_test_extent2d_contains_periodic_tol"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.periodic_point[0] C++ 9.000000000000004e-1, Rust 1e0 (plan/findings/general--2502-fork-pin-geom-known-mismatches.md)"

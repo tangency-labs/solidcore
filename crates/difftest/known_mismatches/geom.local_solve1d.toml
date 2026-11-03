@@ -1,0 +1,132 @@
+# #2502: these cases move with the difftest's C++ reference, the SMLib fork
+# v1.1.0-alpha.1 (8eac63c); plan/findings/general--2502-fork-pin-geom-known-mismatches.md.
+
+[[mismatch]]
+unit = "geom.local_solve1d"
+case = "bad_first_eval_no_interval"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.state_f[0] C++ 1.23456e-61, Rust 1.88492229492188e21 (+20 more) (plan/findings/general--2502-fork-pin-geom-known-mismatches.md)"
+
+[[mismatch]]
+unit = "geom.local_solve1d"
+case = "base_class_evaluator_no_interval"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.state_f[3] C++ 1e20, Rust 1.23456e-61 (+6 more) (plan/findings/general--2502-fork-pin-geom-known-mismatches.md)"
+
+[[mismatch]]
+unit = "geom.local_solve1d"
+case = "oscillation_failed_last_guess_zeroed_outputs"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.state_f[0] C++ 1.23456e-61, Rust 0e0 (+11 more) (plan/findings/general--2502-fork-pin-geom-known-mismatches.md)"
+
+[[mismatch]]
+unit = "geom.local_solve1d"
+case = "gen0142"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.state_f[3] C++ 1e20, Rust 1.23456e-61 (+6 more) (plan/findings/general--2502-fork-pin-geom-known-mismatches.md)"
+
+[[mismatch]]
+unit = "geom.local_solve1d"
+case = "gen0206"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.state_f[0] C++ 1.23456e-61, Rust -1.4673399510531036e0 (+22 more) (plan/findings/general--2502-fork-pin-geom-known-mismatches.md)"
+
+[[mismatch]]
+unit = "geom.local_solve1d"
+case = "gen0209"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.state_f[0] C++ 1.23456e-61, Rust 3.299892458907485e0 (+21 more) (plan/findings/general--2502-fork-pin-geom-known-mismatches.md)"
+
+[[mismatch]]
+unit = "geom.local_solve1d"
+case = "gen0253"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.state_f[0] C++ 1.23456e-61, Rust 1.9745104877610695e64 (+20 more) (plan/findings/general--2502-fork-pin-geom-known-mismatches.md)"
+
+[[mismatch]]
+unit = "geom.local_solve1d"
+case = "gen0284"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.state_f[3] C++ 1e20, Rust 1.23456e-61 (+6 more) (plan/findings/general--2502-fork-pin-geom-known-mismatches.md)"
+
+[[mismatch]]
+unit = "geom.local_solve1d"
+case = "gen0317"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.state_f[3] C++ 1e20, Rust 1.23456e-61 (+6 more) (plan/findings/general--2502-fork-pin-geom-known-mismatches.md)"
+
+[[mismatch]]
+unit = "geom.local_solve1d"
+case = "gen0405"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.state_f[0] C++ 1.23456e-61, Rust -4.691066678774453e-1 (+20 more) (plan/findings/general--2502-fork-pin-geom-known-mismatches.md)"
+
+[[mismatch]]
+unit = "geom.local_solve1d"
+case = "gen0431"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.state_f[3] C++ 1e20, Rust 1.23456e-61 (+6 more) (plan/findings/general--2502-fork-pin-geom-known-mismatches.md)"
+
+[[mismatch]]
+unit = "geom.local_solve1d"
+case = "gen0667"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.state_f[3] C++ 1e20, Rust 1.23456e-61 (+13 more) (plan/findings/general--2502-fork-pin-geom-known-mismatches.md)"
+
+[[mismatch]]
+unit = "geom.local_solve1d"
+case = "gen0820"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.state_f[3] C++ 1e20, Rust 3.300455560772656e-1 (+35 more) (plan/findings/general--2502-fork-pin-geom-known-mismatches.md)"
+
+[[mismatch]]
+unit = "geom.local_solve1d"
+case = "gen0917"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.state_f[3] C++ 1e20, Rust 1.23456e-61 (+6 more) (plan/findings/general--2502-fork-pin-geom-known-mismatches.md)"
+
+[[mismatch]]
+unit = "geom.local_solve1d"
+case = "gen1015"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.state_f[3] C++ 1e20, Rust 1.23456e-61 (+6 more) (plan/findings/general--2502-fork-pin-geom-known-mismatches.md)"
+
+[[mismatch]]
+unit = "geom.local_solve1d"
+case = "gen1062"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.state_f[3] C++ 1e20, Rust 1.23456e-61 (+6 more) (plan/findings/general--2502-fork-pin-geom-known-mismatches.md)"
+
+[[mismatch]]
+unit = "geom.local_solve1d"
+case = "gen1087"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.state_f[3] C++ 1e20, Rust 1.23456e-61 (+6 more) (plan/findings/general--2502-fork-pin-geom-known-mismatches.md)"
+
+[[mismatch]]
+unit = "geom.local_solve1d"
+case = "gen1196"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.state_f[3] C++ 1e20, Rust 1.23456e-61 (+6 more) (plan/findings/general--2502-fork-pin-geom-known-mismatches.md)"
+
+[[mismatch]]
+unit = "geom.local_solve1d"
+case = "gen1523"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.state_f[3] C++ 1e20, Rust 1.23456e-61 (+6 more) (plan/findings/general--2502-fork-pin-geom-known-mismatches.md)"
+
+[[mismatch]]
+unit = "geom.local_solve1d"
+case = "gen1635"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.state_f[3] C++ 1e20, Rust 1.23456e-61 (+6 more) (plan/findings/general--2502-fork-pin-geom-known-mismatches.md)"
+
+[[mismatch]]
+unit = "geom.local_solve1d"
+case = "gen2410"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.state_f[3] C++ 1e20, Rust 1.23456e-61 (+6 more) (plan/findings/general--2502-fork-pin-geom-known-mismatches.md)"
+
+[[mismatch]]
+unit = "geom.local_solve1d"
+case = "gen2715"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.state_f[0] C++ 1.23456e-61, Rust -6.473868273673362e-1 (+21 more) (plan/findings/general--2502-fork-pin-geom-known-mismatches.md)"
+
+[[mismatch]]
+unit = "geom.local_solve1d"
+case = "gen2759"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.state_f[3] C++ 1e20, Rust 1.23456e-61 (+6 more) (plan/findings/general--2502-fork-pin-geom-known-mismatches.md)"
+
+[[mismatch]]
+unit = "geom.local_solve1d"
+case = "gen2811"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.state_f[1] C++ -1e20, Rust -5.8095764715159275e0 (+36 more) (plan/findings/general--2502-fork-pin-geom-known-mismatches.md)"
+
+[[mismatch]]
+unit = "geom.local_solve1d"
+case = "gen2813"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.state_f[0] C++ 1.23456e-61, Rust -2.1064196320611206e-1 (+25 more) (plan/findings/general--2502-fork-pin-geom-known-mismatches.md)"
+
+[[mismatch]]
+unit = "geom.local_solve1d"
+case = "gen2923"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.state_f[3] C++ 1e20, Rust 1.23456e-61 (+6 more) (plan/findings/general--2502-fork-pin-geom-known-mismatches.md)"

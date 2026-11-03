@@ -1,0 +1,167 @@
+# #2502: these cases move with the difftest's C++ reference, the SMLib fork
+# v1.1.0-alpha.1 (8eac63c); plan/findings/general--2502-fork-pin-geom-known-mismatches.md.
+
+[[mismatch]]
+unit = "geom.pseudo_box"
+case = "gen0099"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.c016_intervals[0] C++ 1e20, Rust -3.9674582749686015e4 (+5 more) (plan/findings/general--2502-fork-pin-geom-known-mismatches.md)"
+
+[[mismatch]]
+unit = "geom.pseudo_box"
+case = "gen0108"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.c015_intervals[0] C++ -3.876436486733539e0, Rust -1.3495760800580069e1 (+3 more) (plan/findings/general--2502-fork-pin-geom-known-mismatches.md)"
+
+[[mismatch]]
+unit = "geom.pseudo_box"
+case = "gen0230"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.c022_intervals[0] C++ 1e20, Rust -1.3727324155393081e1 (+5 more) (plan/findings/general--2502-fork-pin-geom-known-mismatches.md)"
+
+[[mismatch]]
+unit = "geom.pseudo_box"
+case = "gen0299"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: ints.c011_contains[0] C++ 0, Rust 1 (plan/findings/general--2502-fork-pin-geom-known-mismatches.md)"
+
+[[mismatch]]
+unit = "geom.pseudo_box"
+case = "gen0353"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: ints.c006_contained_by[0] C++ 0, Rust 1 (+1 more) (plan/findings/general--2502-fork-pin-geom-known-mismatches.md)"
+
+[[mismatch]]
+unit = "geom.pseudo_box"
+case = "gen0381"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.c024_intervals[0] C++ -1.6101177606313817e0, Rust -1.8312368699452606e0 (+26 more) (plan/findings/general--2502-fork-pin-geom-known-mismatches.md)"
+
+[[mismatch]]
+unit = "geom.pseudo_box"
+case = "gen0414"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.c018_intervals[0] C++ 1e20, Rust -1e20 (+5 more) (plan/findings/general--2502-fork-pin-geom-known-mismatches.md)"
+
+[[mismatch]]
+unit = "geom.pseudo_box"
+case = "gen0574"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.c013_intervals[0] C++ 1e20, Rust -2.0776790525263485e-3 (+5 more) (plan/findings/general--2502-fork-pin-geom-known-mismatches.md)"
+
+[[mismatch]]
+unit = "geom.pseudo_box"
+case = "gen0689"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.c014_intervals[0] C++ -4.94028423154419e-4, Rust -1.4156519597266203e20 (+21 more) (plan/findings/general--2502-fork-pin-geom-known-mismatches.md)"
+
+[[mismatch]]
+unit = "geom.pseudo_box"
+case = "gen0718"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.c027_intervals[1] C++ -8.667201360605015e-1, Rust -3.718935314187323e-2 (+2 more) (plan/findings/general--2502-fork-pin-geom-known-mismatches.md)"
+
+[[mismatch]]
+unit = "geom.pseudo_box"
+case = "gen0731"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.c015_intervals[0] C++ 1e20, Rust -4.966019458350179e3 (+5 more) (plan/findings/general--2502-fork-pin-geom-known-mismatches.md)"
+
+[[mismatch]]
+unit = "geom.pseudo_box"
+case = "gen0763"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.c022_intervals[0] C++ 1e20, Rust 8.069428178142664e3 (+5 more) (plan/findings/general--2502-fork-pin-geom-known-mismatches.md)"
+
+[[mismatch]]
+unit = "geom.pseudo_box"
+case = "gen0799"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.c008_intervals[0] C++ 1e20, Rust 3.6472300438424867e-4 (+5 more) (plan/findings/general--2502-fork-pin-geom-known-mismatches.md)"
+
+[[mismatch]]
+unit = "geom.pseudo_box"
+case = "gen0840"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.c011_line_t[0] C++ 0e0, Rust -1e20 (+2 more) (plan/findings/general--2502-fork-pin-geom-known-mismatches.md)"
+
+[[mismatch]]
+unit = "geom.pseudo_box"
+case = "gen0861"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.c014_intervals[0] C++ -1.7961734953955618e3, Rust -1.0425190087004807e4 (+9 more) (plan/findings/general--2502-fork-pin-geom-known-mismatches.md)"
+
+[[mismatch]]
+unit = "geom.pseudo_box"
+case = "gen0879"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.c018_intervals[0] C++ 7.973035686126926e-4, Rust -1.953924456559665e-3 (+3 more) (plan/findings/general--2502-fork-pin-geom-known-mismatches.md)"
+
+[[mismatch]]
+unit = "geom.pseudo_box"
+case = "gen0945"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.c012_intervals[3] C++ 7.856647809963036e-4, Rust 1.0646774548246337e-3 (+1 more) (plan/findings/general--2502-fork-pin-geom-known-mismatches.md)"
+
+[[mismatch]]
+unit = "geom.pseudo_box"
+case = "gen1039"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.c016_intervals[0] C++ 1e20, Rust -2.282840475603836e6 (+5 more) (plan/findings/general--2502-fork-pin-geom-known-mismatches.md)"
+
+[[mismatch]]
+unit = "geom.pseudo_box"
+case = "gen1055"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.c012_line_t[0] C++ 0e0, Rust -1e20 (+2 more) (plan/findings/general--2502-fork-pin-geom-known-mismatches.md)"
+
+[[mismatch]]
+unit = "geom.pseudo_box"
+case = "gen1213"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.c014_intervals[1] C++ 1.6273938860171966e-1, Rust 8.820522089169184e-1 (+2 more) (plan/findings/general--2502-fork-pin-geom-known-mismatches.md)"
+
+[[mismatch]]
+unit = "geom.pseudo_box"
+case = "gen1228"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.c008_intervals[0] C++ 1e20, Rust -5.21514825939035e0 (+5 more) (plan/findings/general--2502-fork-pin-geom-known-mismatches.md)"
+
+[[mismatch]]
+unit = "geom.pseudo_box"
+case = "gen1253"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.c018_intervals[0] C++ 1e20, Rust -2.35851464312239e4 (+5 more) (plan/findings/general--2502-fork-pin-geom-known-mismatches.md)"
+
+[[mismatch]]
+unit = "geom.pseudo_box"
+case = "gen1279"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.c016_intervals[0] C++ -1.8767767519743034e-1, Rust -3.632596120578327e5 (+4 more) (plan/findings/general--2502-fork-pin-geom-known-mismatches.md)"
+
+[[mismatch]]
+unit = "geom.pseudo_box"
+case = "gen1498"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.c017_line_t[0] C++ 0e0, Rust -1e20 (+2 more) (plan/findings/general--2502-fork-pin-geom-known-mismatches.md)"
+
+[[mismatch]]
+unit = "geom.pseudo_box"
+case = "gen1523"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.c008_intervals[0] C++ 3.86114425181475e1, Rust -1.1103582434680315e0 (+48 more) (plan/findings/general--2502-fork-pin-geom-known-mismatches.md)"
+
+[[mismatch]]
+unit = "geom.pseudo_box"
+case = "gen1600"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.c010_intervals[0] C++ -7.581285972158285e-5, Rust -6.556062315621898e-4 (+19 more) (plan/findings/general--2502-fork-pin-geom-known-mismatches.md)"
+
+[[mismatch]]
+unit = "geom.pseudo_box"
+case = "gen1691"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.c016_line_t[0] C++ 0e0, Rust -1e20 (+3 more) (plan/findings/general--2502-fork-pin-geom-known-mismatches.md)"
+
+[[mismatch]]
+unit = "geom.pseudo_box"
+case = "gen1834"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.c010_intervals[0] C++ 1e20, Rust -1.0566265007232042e1 (+5 more) (plan/findings/general--2502-fork-pin-geom-known-mismatches.md)"
+
+[[mismatch]]
+unit = "geom.pseudo_box"
+case = "gen2088"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.c012_intervals[4] C++ 6.470005441730309e-4, Rust -1.5747859292188562e0 (+3 more) (plan/findings/general--2502-fork-pin-geom-known-mismatches.md)"
+
+[[mismatch]]
+unit = "geom.pseudo_box"
+case = "gen2434"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.c015_intervals[0] C++ 1e20, Rust -9.520709735269322e-1 (+5 more) (plan/findings/general--2502-fork-pin-geom-known-mismatches.md)"
+
+[[mismatch]]
+unit = "geom.pseudo_box"
+case = "gen2619"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.c017_intervals[0] C++ -1.0649652287016609e6, Rust -1e20 (+42 more) (plan/findings/general--2502-fork-pin-geom-known-mismatches.md)"
+
+[[mismatch]]
+unit = "geom.pseudo_box"
+case = "gen2730"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.c021_intervals[2] C++ 5.394739936580108e3, Rust -1.1210820334032358e3 (+17 more) (plan/findings/general--2502-fork-pin-geom-known-mismatches.md)"
+
+[[mismatch]]
+unit = "geom.pseudo_box"
+case = "gen2870"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.c023_line_t[0] C++ 0e0, Rust -1e20 (+2 more) (plan/findings/general--2502-fork-pin-geom-known-mismatches.md)"

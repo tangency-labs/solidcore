@@ -1,0 +1,12 @@
+# #2502: these cases move with the difftest's C++ reference, the SMLib fork
+# v1.1.0-alpha.1 (8eac63c); plan/findings/general--2502-fork-pin-geom-known-mismatches.md.
+
+[[mismatch]]
+unit = "geom.global_solver"
+case = "perspective_unequal_containing_swap_0"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.floats.len C++ 25, Rust 3 (+1 more) (plan/findings/general--2502-fork-pin-geom-known-mismatches.md)"
+
+[[mismatch]]
+unit = "geom.global_solver"
+case = "gen0207"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: values.floats.len C++ 1103, Rust 1147 (+1 more) (plan/findings/general--2502-fork-pin-geom-known-mismatches.md)"

@@ -1,0 +1,22 @@
+# #2502: these cases move with the difftest's C++ reference, the SMLib fork
+# v1.1.0-alpha.1 (8eac63c); plan/findings/general--2502-fork-pin-geom-known-mismatches.md.
+
+[[mismatch]]
+unit = "geom.assert_array"
+case = "gen0152"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: ints.message.len C++ 79, Rust 44 (plan/findings/general--2502-fork-pin-geom-known-mismatches.md)"
+
+[[mismatch]]
+unit = "geom.assert_array"
+case = "gen1871"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: ints.message.len C++ 79, Rust 44 (plan/findings/general--2502-fork-pin-geom-known-mismatches.md)"
+
+[[mismatch]]
+unit = "geom.assert_array"
+case = "gen2030"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: ints.message.len C++ 79, Rust 44 (plan/findings/general--2502-fork-pin-geom-known-mismatches.md)"
+
+[[mismatch]]
+unit = "geom.assert_array"
+case = "table_12225_3_0"
+why = "moves with the pin to the SMLib fork v1.1.0-alpha.1: ints.message.len C++ 79, Rust 44 (plan/findings/general--2502-fork-pin-geom-known-mismatches.md)"
