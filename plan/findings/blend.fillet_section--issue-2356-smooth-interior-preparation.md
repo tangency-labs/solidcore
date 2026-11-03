@@ -5,12 +5,18 @@ PR: <https://github.com/tangency-labs/solidcore/pull/2384>.
 
 ## Scope and reproduction
 
-This is preparatory work on the approved option-A construction, stacked on
-#2322 (`1beec5ccc`, sided definition evaluation) and #2274 (`941770b26`,
-procedural rounds). It does not implement a corrected production definition.
-The reference remains pinned v1.0.1 C++; no numerical tolerance or unit status
-is changed. The construction is fork-only, so the new measurements are Rust
-regressions rather than a comparison with a corrected C++ implementation.
+This is preparatory work on the approved option-A construction. Its original
+dependencies #2322 (sided definition evaluation) and #2274 (procedural rounds)
+are now merged. Current main ba69ec95d is merged into this branch, including
+#2390; useful grader controls from both branches are retained. This PR does
+not implement a corrected production definition. Its scoped planning and
+conditional-enclosure APIs are independently reviewable; the missing production
+proofs are explicit follow-ups described in the frozen-plan enclosure finding.
+The redesigned fork construction is the behavioral reference. The local harness
+still uses its configured v1.0.1 C++ pin for selected historical paths; those
+comparisons do not establish fork-construction parity. No numerical tolerance
+or unit status is changed. The new measurements are Rust regressions rather
+than a comparison with a corrected C++ implementation.
 
 Run from the worktree in Ubuntu WSL, with `CARGO_BUILD_JOBS=2`:
 

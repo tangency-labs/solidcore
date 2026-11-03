@@ -1,18 +1,27 @@
 # #2356 addendum: frozen station plans and uniform correction bounds
 
 Unit: blend.fillet_section (fork-only procedural construction).
-Dependency stack: #2384 and open #2322 at 1beec5ccc. #2274 subsequently
-merged into main at 4e30eb2fde303b859c48482c76cc2a1d8481a136.
-The initial main merge at 23ea17c1c was automatic. Merging 4e30eb2fd on
-this branch conflicted only in kernel.rs: main reintroduced the identical
-fillet_round_as_definition declaration earlier in UpstreamFixes. Removed
-that duplicate and retained the single existing field/documentation beside
-#2322's fillet_round_on_round_as_definition. The resulting kernel file,
-all library source, harness and FFI source are byte-identical to 75cf76102.
-The merge's effective delta is only the five-test fork_099cf96 exact-class
-regression file and the 4859 thin-ring JSON fixture. Dependency memo/counters,
-notify records, WorkCounters and all opt-in fields remain intact. No other
-author's branch was modified.
+Current scope: independently reviewable planning/kernel/enclosure infrastructure,
+not a production correction. #2274 and #2322 are both merged; #2390 landed
+the overlapping procedural exact-class grading correction. Main
+`ba69ec95db369587eaa8315b023eab11f81fd48b` is merged on this branch, including the landed #2369 dependency.
+
+The merge retains main's exact kernel field declarations/ordering and
+certificate implementation/comment (including the varying-row lower-bound
+fix). The grader uses main's Procedural kind and 1e-9 contact acceptance,
+plus this branch's net/bound checks, procedural-off profile and negative
+kind/volume controls. No tolerance changes. The inherited arena-notify field
+ordering in kernel_adapter is aligned with main, with identical initializers.
+There are no dependency-library differences from main: library additions are
+only the two new smooth-interior modules and their declarations.
+
+The remaining proof obligations below block production evaluator/net wiring,
+not review of this scoped infrastructure: those paths never call these APIs,
+and the conditional enclosure explicitly requires independently proved inputs.
+Numerical rail checks are build-time measurements, not algebraic zero proofs.
+No production acceptance, G2 whole-face certificate or case-gallery change is
+claimed. Once the refreshed gates pass, this PR can be ready for review while
+#2356 remains open for the independently available production follow-ups.
 
 ## Implemented scope
 
@@ -94,7 +103,7 @@ The next integration requirements are concrete:
    include t/mixed derivatives for corrected nested-definition box bounds.
 4. Combine the original analytic-piece certificate with all correction
    Hermite residuals, and update evaluator/net/station values and derivatives
-   together behind a new opt-in. Corrected station curves are rational in t
+   together under the project's temporary in-progress flag policy. Corrected station curves are rational in t
    with changed numerators/denominators: build a compatible section basis,
    rather than patching values into the old uncorrected control rows.
    Existing bounds must not be reused for a
@@ -199,3 +208,93 @@ nurbs.b_spline_surface_n_lib_p1 (702): 1,878 accepted value-bearing cases,
 zero failures/deferrals and max relative error 0. Shared C++ libraries
 reused; no reference rebuild. Full suite/full --green not run. The prior
 wasm check remains applicable to unchanged library code.
+## Refresh after dependencies landed
+
+Executable source validated: 5c8c0cd7babc9c7f8a5a46b16ffe729ab0b7c4ac,
+merging authoritative main ebe6722e0. WSL Ubuntu, CARGO_BUILD_JOBS=2,
+all cargo/C++ commands under nice -n 10.
+
+- 36 section unit tests passed.
+- 7 exact-class grader integration tests passed (combined #2390 controls).
+- 2 round-on-round dependency regressions passed, with and without WR-714.
+- 8 issue_2356 continuity/rail/planning regressions passed.
+- 8 WR-698 definition integration tests and 8 procedural-blend unit tests passed.
+- Total: 69 targeted tests passed, zero failures.
+- Workspace/all-target clippy with -D warnings, fmt --all --check, and
+  wasm32-unknown-unknown check passed.
+
+The missing rational-row/normal factors, regularity and mixed-derivative
+bounds, corrected rational section basis and combined net certificate remain
+production follow-ups. They do not block review of these standalone,
+explicitly conditional APIs; no production caller invokes them. No full
+suite/full --green, production correction or whole-face G2 claim is made.
+Fresh native comparisons on the same executable source also passed:
+
+```text
+PASS blend.fillet_solver_p4 cases=651 passed=651 failed=0 deferred=0 max_rel_err=0e0 with_values=651 no_values=0 vacuous=0
+PASS blend.fillet_standard_solver_p2 cases=525 passed=525 failed=0 deferred=0 max_rel_err=0e0 with_values=525 no_values=0 vacuous=0
+PASS nurbs.b_spline_surface_n_lib_p1 cases=702 passed=702 failed=0 deferred=0 max_rel_err=0e0 with_values=702 no_values=0 vacuous=0
+difftest: 3 unit(s), 3 passed, 0 partial, 0 failed
+```
+
+1,878 accepted value-bearing cases, zero failures/deferred, maximum relative
+error 0. Dev profile, --features cpp --jobs 2, clippy-driver workspace wrapper;
+shared pinned reference libraries reused without rebuilding them. These
+compare selected default paths, not a corrected smooth-interior C++ surface.
+The scoped infrastructure is ready for review; CI and maintainer review
+remain required. No production proof obligation has been waived.
+## Reference and policy alignment after #2392
+
+The redesigned tangency-labs/smlib construction is the behavioral reference.
+The selected local native checks use the historical C++ reference configured
+by scripts/upstream-pin.env. They check those default paths only; they do not
+establish parity with a corrected fork construction. No new unit promotion,
+parked mismatch, changed tolerance or whole-face certificate is justified.
+
+The new APIs add no fix flag, global state, concurrency, one-case branch or
+fallback construction. Existing dependency opt-ins are temporary port controls;
+when those constructions reach completed parity, their owners promote the
+construction and delete its old path and flag. This PR does not make that
+lifecycle permanent or claim that the correction is already at parity.
+
+The deterministic crease regressions preceded the frozen-plan/enclosure
+implementation. Initial polynomial primitives and their tests shared the first
+regression commit; that history has not been rewritten. The production crease
+remains a known-defect reproduction, and the conditional APIs never supply a
+production surface. No SolidCraft gallery case changes state, so no gallery
+row/image change is claimed.
+## Verification after the final main merge
+
+Executable source: 7571e71bd6b403625858c5e88439164a873c38cd, merging
+main ba69ec95db369587eaa8315b023eab11f81fd48b. Subsequent changes only
+refresh these findings. Ubuntu WSL, CARGO_BUILD_JOBS=2, nice -n 10.
+
+Formatting, workspace/all-target clippy with -D warnings and the wasm32 check
+passed. All 36 fillet-section unit tests passed, including the conditional
+bounds and numerical rail-refusal controls. The earlier stopped verification
+attempt did not supply evidence for this merge; these are fresh results.
+The remaining focused tests also passed: exact-class grader 7, round-on-round
+2, issue_2356_smooth_interior 8, WR-698 definition integration 8, and
+procedural-blend unit tests 8. Together with the 36 section tests, this is
+69 passing targeted tests, zero failures. No full-suite/full --green or
+whole-face-continuity claim is made.
+
+Fresh native comparisons on that same executable source passed:
+
+```text
+PASS blend.fillet_solver_p4 cases=651 passed=651 failed=0 deferred=0 max_rel_err=0e0 with_values=651 no_values=0 vacuous=0
+PASS blend.fillet_standard_solver_p2 cases=525 passed=525 failed=0 deferred=0 max_rel_err=0e0 with_values=525 no_values=0 vacuous=0
+PASS nurbs.b_spline_surface_n_lib_p1 cases=702 passed=702 failed=0 deferred=0 max_rel_err=0e0 with_values=702 no_values=0 vacuous=0
+PASS blend.fillet_corner_p3 cases=1013 passed=994 failed=0 deferred=0 max_rel_err=0e0 with_values=994 no_values=0 vacuous=0 rejected=19
+PASS blend.fillet_executive_p3 cases=788 passed=786 failed=0 deferred=0 max_rel_err=0e0 with_values=786 no_values=0 vacuous=0 rejected=2
+difftest: 5 unit(s), 5 passed, 0 partial, 0 failed
+```
+
+3,679 cases, including 21 existing guard rejections; 3,658 accepted
+value-bearing comparisons, zero mismatches/deferrals and maximum relative
+error 0. Dev profile, --features cpp --jobs 2, clippy-driver workspace
+wrapper, shared pinned libraries reused without rebuilding the reference.
+These selected historical paths do not establish fork-construction parity.
+
+The standalone infrastructure is ready for review. The production proof
+requirements above remain follow-ups, and CI/review remain merge gates.
