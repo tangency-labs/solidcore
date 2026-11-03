@@ -3,19 +3,9 @@
 # Code Owners"). Later lines take precedence over earlier ones.
 
 # The generic blend and the procedural-blend definitions it keeps.
-/crates/solidcore/src/blend/                    @jyviko
+/crates/solidcore/src/blend/                      @jyviko
 /crates/solidcore/src/surface/procedural_blend.rs @jyviko
-/crates/solidcore/src/surface/procedural_blend/ @jyviko
-
-# The layer split: the record and the crates built on it.
-/crates/solidcore-record/                       @jyviko
-/crates/solidcore-convert/                      @jyviko
-/crates/solidcore-tess/                         @jyviko
-/crates/solidcore-ops/                          @jyviko
-/crates/solidcore/tests/kernel_cases/           @jyviko
-
-# Upstream-issue records and their ids.
-/plan/upstream-issues/                          @jyviko
+/crates/solidcore/src/surface/procedural_blend/   @jyviko
 
 # This file.
-/.github/CODEOWNERS                             @jyviko
+/.github/CODEOWNERS                               @jyviko
