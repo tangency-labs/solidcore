@@ -150,15 +150,37 @@ impl<P: Provenance> AttributeHandlers for Carried<P> {
         Ok(out)
     }
 
+    /// The store runs one merge per attribute id over both sources (`MergeInBrep`'s
+    /// `Merge(data1, data2, data1)`, `geom::a_object`), so `self` is only the first source's
+    /// value: each source other than the survivor is read from the view and joined onto what
+    /// the survivor carries, by the application's rule (as SolidCraft's history `Tag`
+    /// unites both sources' origins).
     fn merge(
         &self,
         view: &AttributeView<'_>,
-        _a: ObjectKey,
-        _b: ObjectKey,
+        a: ObjectKey,
+        b: ObjectKey,
         result: ObjectKey,
     ) -> solidcore::Result<Vec<Placement>> {
-        let now = on::<P>(view, result).map(|(_, p)| p);
-        Ok(place(view, result, self.0.merge(now.as_ref())))
+        let mut now = on::<P>(view, result).map(|(_, p)| p);
+        let mut changed = false;
+        for x in [a, b] {
+            if x == result {
+                continue;
+            }
+            let Some((_, from)) = on::<P>(view, x) else {
+                continue;
+            };
+            if let Some(joined) = from.merge(now.as_ref()) {
+                now = Some(joined);
+                changed = true;
+            }
+        }
+        Ok(if changed {
+            place(view, result, now)
+        } else {
+            Vec::new()
+        })
     }
 
     fn coincident(
