@@ -153,7 +153,11 @@ impl BallPatch {
         let refused = |reason: &'static str| SolidError::invalid_input(OP_CERTIFIED, reason);
         match Self::is_on_sphere(net, centre, radius, ON_SPHERE_REL_TOL) {
             Ok(true) => {}
-            Ok(false) => return Err(refused("SmBallPatch: the net is not on its definition's sphere")),
+            Ok(false) => {
+                return Err(refused(
+                    "SmBallPatch: the net is not on its definition's sphere",
+                ))
+            }
             Err(_) => return Err(refused("SmBallPatch: the net's sphere certificate failed")),
         }
         Self::create(net, centre, radius)

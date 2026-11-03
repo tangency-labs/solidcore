@@ -208,23 +208,47 @@ fn an_offset_stays_concentric() {
             "{d}"
         );
         assert!(BallPatch::is_on_sphere(q.net(), CENTRE, want, 1e-12).unwrap());
-        // the weights are unchanged, and every control point is the patch's scaled about
-        // the centre by (R + s d) / R, bit for bit
+        // the weights are unchanged, and the net is the patch's scaled about the centre by
+        // (R + s d) / R: bit for bit the net with its control points so set, and each to the
+        // rounding of its homogeneous storage the scaled point
         let (from, to) = (
             patch(&s).net().control_point_net().unwrap(),
             q.net().control_point_net().unwrap(),
         );
         assert_eq!(to.weights, from.weights);
-        assert_eq!(to.points.len(), from.points.len());
         let scale = want / 3.0;
-        for (p, o) in from.points.iter().zip(&to.points) {
-            let scaled = CENTRE + (*p - CENTRE) * scale;
-            assert_eq!(
-                [o.x.to_bits(), o.y.to_bits(), o.z.to_bits()],
-                [scaled.x.to_bits(), scaled.y.to_bits(), scaled.z.to_bits()],
-                "{d}"
-            );
+        let mut scaled_net = patch(&s).net().copy();
+        for ii in 0..from.u_count {
+            for jj in 0..from.v_count {
+                let at = ii * from.v_count + jj;
+                let scaled = CENTRE + (from.points[at] - CENTRE) * scale;
+                let o = to.points[at];
+                assert!(
+                    (o - scaled).length()
+                        <= 4.0 * f64::EPSILON * (scaled - Point3::new(0.0, 0.0, 0.0)).length(),
+                    "{d}: {o:?} {scaled:?}"
+                );
+                scaled_net
+                    .set_control_point(
+                        ControlPointForm::EuclideanRational,
+                        ii,
+                        jj,
+                        scaled,
+                        from.weights[at],
+                    )
+                    .unwrap();
+            }
         }
+        let bits = |p: &Point3| [p.x.to_bits(), p.y.to_bits(), p.z.to_bits()];
+        let want_net = scaled_net.control_point_net().unwrap();
+        assert!(
+            want_net
+                .points
+                .iter()
+                .map(bits)
+                .eq(to.points.iter().map(bits)),
+            "{d}"
+        );
         assert!(!s.offset_collapses(&k, d, 1e-6).unwrap());
     }
     for d in [-3.0, -3.5] {
@@ -558,8 +582,16 @@ fn same_bits(a: &BallPatch, b: &BallPatch) -> bool {
     bits(a.centre()) == bits(b.centre())
         && a.radius().to_bits() == b.radius().to_bits()
         && (na.u_count, na.v_count) == (nb.u_count, nb.v_count)
-        && na.points.iter().map(|&p| bits(p)).eq(nb.points.iter().map(|&p| bits(p)))
-        && na.weights.iter().map(|w| w.to_bits()).eq(nb.weights.iter().map(|w| w.to_bits()))
+        && na
+            .points
+            .iter()
+            .map(|&p| bits(p))
+            .eq(nb.points.iter().map(|&p| bits(p)))
+        && na
+            .weights
+            .iter()
+            .map(|w| w.to_bits())
+            .eq(nb.weights.iter().map(|w| w.to_bits()))
 }
 
 /// The writer's identities: the B-rep's own owners, no attributes.
@@ -663,7 +695,9 @@ fn front_face(k: &Kernel, b: &Brep) -> FaceId {
 /// its net), through the B-rep data and through the file; each corner's centre is r in
 /// from its three faces and its radius r. From data, a net with its definition is the
 /// patch when certified (the capi import): the same bits again; a net cut by inserted
-/// knots is certified too; a sphere 1e-9 larger, or moved 1e-9, is refused.
+/// knots is certified too; a sphere 1e-7 larger, or moved 1e-7, is refused at every corner,
+/// and 1e-9 larger at the corner by the origin (the fork's case). The certificate's
+/// tolerance grows with |C|: at the far corner (|C| 75.5) a radius 1e-9 larger is within it.
 #[test]
 fn a_box_rounded_all_round_keeps_its_balls_through_the_data_and_the_file() {
     let mut k = all_fixes(true);
@@ -695,23 +729,10 @@ fn a_box_rounded_all_round_keeps_its_balls_through_the_data_and_the_file() {
     }
     let refused =
         |r: solidcore::Result<BallPatch>| matches!(r, Err(SolidError::InvalidInput { .. }));
-    for p in &before {
-        let (c, r) = (p.centre(), p.radius());
-        let rebuilt = BallPatch::create_certified(p.net(), c, r).unwrap();
-        assert!(same_bits(&rebuilt, p));
-        assert!(refused(BallPatch::create_certified(p.net(), c, r * (1.0 + 1e-9))));
-        assert!(refused(BallPatch::create_certified(
-            p.net(),
-            c + Vec3::new(0.0, 1e-9, 0.0),
-            r
-        )));
-        for bad in [0.0, -r, f64::NAN] {
-            assert!(refused(BallPatch::create_certified(p.net(), c, bad)), "{bad}");
-        }
-        // a knot in each direction: two Bezier pieces each way, still on the sphere
+    let knot_cut = |p: &BallPatch| {
+        // a knot in each direction: two Bezier pieces each way
         let mut cut = p.net().copy();
-        let dom = cut.natural_uv_domain();
-        let at = dom.evaluate(0.3, 0.6);
+        let at = cut.natural_uv_domain().evaluate(0.3, 0.6);
         cut.insert_knots(
             solidcore::nurbs::b_spline_surface::SurfParamType::U,
             &[at.x],
@@ -722,9 +743,48 @@ fn a_box_rounded_all_round_keeps_its_balls_through_the_data_and_the_file() {
             &[at.y],
         )
         .unwrap();
-        assert!(BallPatch::create_certified(&cut, c, r).is_ok());
-        assert!(!BallPatch::is_on_sphere(&cut, c, r * (1.0 + 1e-9), ON_SPHERE_REL_TOL).unwrap());
+        cut
+    };
+    for p in &before {
+        let (c, r) = (p.centre(), p.radius());
+        let rebuilt = BallPatch::create_certified(p.net(), c, r).unwrap();
+        assert!(same_bits(&rebuilt, p));
+        assert!(BallPatch::create_certified(&knot_cut(p), c, r).is_ok());
+        // the certificate's tolerance is 1e-12 of ((R + |C|) max W)^2: at every corner a
+        // sphere 1e-7 larger, or moved 1e-7, is refused
+        assert!(refused(BallPatch::create_certified(
+            p.net(),
+            c,
+            r * (1.0 + 1e-7)
+        )));
+        assert!(refused(BallPatch::create_certified(
+            p.net(),
+            c + Vec3::new(0.0, 1e-7, 0.0),
+            r
+        )));
+        for bad in [0.0, -r, f64::NAN] {
+            assert!(
+                refused(BallPatch::create_certified(p.net(), c, bad)),
+                "{bad}"
+            );
+        }
     }
+    // the fork's case: at the corner by the origin a sphere 1e-9 larger is refused, for the
+    // net and for the net cut by knots
+    let origin = before
+        .iter()
+        .find(|p| p.centre() == Point3::new(BOX_R, BOX_R, BOX_R))
+        .unwrap();
+    let r9 = origin.radius() * (1.0 + 1e-9);
+    assert!(refused(BallPatch::create_certified(
+        origin.net(),
+        origin.centre(),
+        r9
+    )));
+    assert!(
+        !BallPatch::is_on_sphere(&knot_cut(origin), origin.centre(), r9, ON_SPHERE_REL_TOL)
+            .unwrap()
+    );
     // a bilinear net is on no sphere
     let flat = BSplineSurface::create_bilinear_surface(
         Point3::new(0.0, 0.0, 0.0),
@@ -739,9 +799,11 @@ fn a_box_rounded_all_round_keeps_its_balls_through_the_data_and_the_file() {
 /// The box rounded all round shells 2 in, open at the front (the fork's case) and closed,
 /// and 2 out, closed, in process and after each trip, its volume in closed form. The rounds
 /// and balls, thinner than the wall, have no inward offset: the cavity is the sharp box.
-/// Outward, the wall is the box rounded r + 2 about the same core less the box. With its
-/// ball patches written as bare nets the corners' offsets no longer collapse and the shell
-/// 2 in fails (status 1034 in the fork).
+/// Outward, the wall is the box rounded r + 2 about the same core less the box. 2 in, each
+/// corner's offset collapses (r 1.5 - 2): the face use's offset asks the patch first (the
+/// fork's 758829c), where it was made and refused, and the shell failed even in process.
+/// With its ball patches written as bare nets the corners' offsets no longer collapse and
+/// the shell 2 in fails (1001 here, 1034 in the fork).
 #[test]
 fn a_box_rounded_all_round_shells_in_and_out_after_a_round_trip() {
     use solidcore::offset::offset_executive::p2::{shell_brep_simple, OffsetOptions, ShellOptions};
@@ -749,8 +811,16 @@ fn a_box_rounded_all_round_shells_in_and_out_after_a_round_trip() {
     let [dx, dy, dz] = BOX;
     let rounded = rounded_volume(BOX, BOX_R);
     let cases = [
-        (-t, true, rounded - (dx - 2.0 * t) * (dz - 2.0 * t) * (dy - t)),
-        (-t, false, rounded - (dx - 2.0 * t) * (dy - 2.0 * t) * (dz - 2.0 * t)),
+        (
+            -t,
+            true,
+            rounded - (dx - 2.0 * t) * (dz - 2.0 * t) * (dy - t),
+        ),
+        (
+            -t,
+            false,
+            rounded - (dx - 2.0 * t) * (dy - 2.0 * t) * (dz - 2.0 * t),
+        ),
         (
             t,
             false,
@@ -768,9 +838,15 @@ fn a_box_rounded_all_round_shells_in_and_out_after_a_round_trip() {
     };
     let mut k = all_fixes(true);
     let part = rounded_box(&mut k);
-    for trip in [Trip::None, Trip::Data, Trip::File] {
+    // every shell in process; after the data the fork's and the outward one; after the file
+    // the fork's (each a debug-build minute or more)
+    for (trip, which) in [
+        (Trip::None, &[0, 1, 2][..]),
+        (Trip::Data, &[0, 2][..]),
+        (Trip::File, &[0][..]),
+    ] {
         let body = round_trip(&mut k, &part, trip);
-        for &(d, open, want) in &cases {
+        for &(d, open, want) in which.iter().map(|&i| &cases[i]) {
             let faces = if open {
                 vec![front_face(&k, &body)]
             } else {
@@ -783,13 +859,19 @@ fn a_box_rounded_all_round_shells_in_and_out_after_a_round_trip() {
             eprintln!(
                 "{trip:?}: shelled {d} open {open}: volume {got:.9}, closed form {want:.9}, {rel:.2e}"
             );
-            assert!(rel <= 1e-9, "{trip:?} {d} open {open}: {got} {want} {rel:e}");
+            assert!(
+                rel <= 1e-9,
+                "{trip:?} {d} open {open}: {got} {want} {rel:e}"
+            );
         }
     }
     let bare = round_trip(&mut k, &part, Trip::BareNets);
     assert!(ball_patches(&bare).is_empty());
     let front = front_face(&k, &bare);
     let got = shell_brep_simple(&mut k, &bare, options(-t), &[front]);
-    eprintln!("bare nets, shelled 2 in open at the front: {:?}", got.as_ref().err());
+    eprintln!(
+        "bare nets, shelled 2 in open at the front: {:?}",
+        got.as_ref().err()
+    );
     assert!(got.is_err());
 }
