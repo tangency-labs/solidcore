@@ -1756,7 +1756,10 @@ fn the_halves_of_a_split_smlib_coil_mesh_as_the_whole() {
             asked[0] * asked[1] > grid::MAX_FACE_GRID && kept[0] * kept[1] <= grid::MAX_FACE_GRID,
             "{name}: {over:?}"
         );
-        assert!(over.sag > 3e-4, "{name}: {over:?}");
+        assert!(
+            over.sag > 3e-4 && over.tol == 3e-4 && !over.within,
+            "{name}: {over:?}"
+        );
         let m = evaluated(&p);
         assert_watertight(&m, name);
         halves += volume(&m);
@@ -2015,6 +2018,9 @@ fn a_face_whose_refinement_reaches_its_bound_is_named_with_its_sag() {
         (0, [Cap::Refine].as_slice()),
         "{o:?}"
     );
-    assert!(o.sag > tol && o.sag < 10.0 * tol, "{o:?}");
+    assert!(
+        o.sag > tol && o.sag < 10.0 * tol && o.tol == tol && !o.within,
+        "{o:?}"
+    );
     assert!(!p.faces[0].triangles.is_empty());
 }

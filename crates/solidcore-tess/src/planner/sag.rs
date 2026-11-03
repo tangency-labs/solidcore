@@ -202,45 +202,61 @@ fn mean(
 }
 
 /// The farthest the triangles `tris` (as for [`refine`]) lie from the surface, measured as
-/// [`refine`] measures them: at each triangle's middle, along the normal there (the whole
-/// distance where it is undefined). The parameters of a point the surface does not evaluate at
-/// are the error.
+/// [`refine`] measures them: at each triangle's middle and at the middles of its three sides
+/// (boundary sides too: they are the mesh's), each along the surface's normal at the mean of
+/// its parameters (the whole distance where the normal is undefined). Only where the surface
+/// evaluates: a middle it has no point at is not measured (the face's vertices and the middles
+/// [`refine`] needed all evaluated). The error: a triangle (by index) with a corner past `uv`.
 pub(crate) fn worst(
     s: &EvalSurface,
     reach: f64,
     fixed: &[Vec3],
     uv: &[[f64; 2]],
     tris: &[[u32; 3]],
-) -> Result<f64, NoValue> {
+) -> Result<f64, usize> {
     let dom = solidcore::eval::uv::domain(s);
-    let derivs = |q: [f64; 2]| {
-        s.derivs(q[0], q[1])
-            .map(kernel::record_triple)
-            .ok_or(NoValue(q))
-    };
-    let point = |i: u32| -> Result<Option<(Vec3, [f64; 2])>, NoValue> {
-        let Some(&q) = uv.get(i as usize) else {
-            return Ok(None);
-        };
-        Ok(Some(match fixed.get(i as usize) {
-            Some(&p) => (p, q),
-            None => (derivs(q)?.0, q),
-        }))
+    let pos: Vec<Option<Vec3>> = uv
+        .iter()
+        .enumerate()
+        .map(|(i, q)| {
+            fixed
+                .get(i)
+                .copied()
+                .or_else(|| s.derivs(q[0], q[1]).map(|d| kernel::record_vec3(d.0)))
+        })
+        .collect();
+    // How far the flat point `c` lies from the surface at the mean of `qs`, as `refine`'s `off`.
+    let off = |qs: &[[f64; 2]], c: Vec3| -> Option<f64> {
+        let m = mean(s, &dom, reach, qs);
+        let (x, su, sv) = s.derivs(m[0], m[1]).map(kernel::record_triple)?;
+        Some(
+            su.cross(sv)
+                .normalized()
+                .map_or_else(|| x.dist(c), |n| (x - c).dot(n).abs()),
+        )
     };
     let mut worst: f64 = 0.0;
-    for t in tris {
-        let (Some((a, qa)), Some((b, qb)), Some((c, qc))) =
-            (point(t[0])?, point(t[1])?, point(t[2])?)
+    for (k, t) in tris.iter().enumerate() {
+        let corner = |i: u32| Some((*uv.get(i as usize)?, *pos.get(i as usize)?));
+        let (Some((qa, pa)), Some((qb, pb)), Some((qc, pc))) =
+            (corner(t[0]), corner(t[1]), corner(t[2]))
         else {
-            continue;
+            return Err(k);
         };
-        let flat = (a + b + c) * (1.0 / 3.0);
-        let (x, su, sv) = derivs(mean(s, &dom, reach, &[qa, qb, qc]))?;
-        let off = su
-            .cross(sv)
-            .normalized()
-            .map_or_else(|| x.dist(flat), |n| (x - flat).dot(n).abs());
-        worst = worst.max(off);
+        let mut measured: Vec<Option<f64>> = Vec::new();
+        if let (Some(a), Some(b), Some(c)) = (pa, pb, pc) {
+            measured.push(off(&[qa, qb, qc], (a + b + c) * (1.0 / 3.0)));
+        }
+        for ((qx, px), (qy, py)) in [
+            ((qa, pa), (qb, pb)),
+            ((qb, pb), (qc, pc)),
+            ((qc, pc), (qa, pa)),
+        ] {
+            if let (Some(x), Some(y)) = (px, py) {
+                measured.push(off(&[qx, qy], (x + y) * 0.5));
+            }
+        }
+        worst = measured.into_iter().flatten().fold(worst, f64::max);
     }
     Ok(worst)
 }
@@ -588,5 +604,38 @@ mod tests {
             flip(&s, 0.01, 1e-9, &fixed, &uv, &mut tris),
             Err(NoValue([0.5, 0.5]))
         );
+    }
+
+    /// A triangle on a cylinder of radius 3 (its axis z, u along it, v the angle): corners at
+    /// the angles -0.1 and 0.1 on one circle and 0 a little up. The side along the circle sags
+    /// S = 3 (1 - cos 0.1) at its middle, the centroid only 2S/3: the measure is the side's.
+    /// It was the centroid's alone.
+    #[test]
+    fn the_worst_sag_is_the_sides_where_it_is_more_than_the_middles() {
+        use solidcore::eval::EvalCurve;
+        let s = EvalSurface::Revolved {
+            profile: EvalCurve::new(
+                1,
+                vec![0.0, 0.0, 1.0, 1.0],
+                vec![[3.0, 0.0, 0.0, 1.0], [3.0, 0.0, 4.0, 1.0]],
+            ),
+            origin: solidcore::Vec3::ZERO,
+            axis: solidcore::Vec3::Z,
+            transform: [
+                [1.0, 0.0, 0.0, 0.0],
+                [0.0, 1.0, 0.0, 0.0],
+                [0.0, 0.0, 1.0, 0.0],
+            ],
+            swap: false,
+        };
+        let uv = [[0.5, -0.1], [0.5, 0.1], [0.6, 0.0]];
+        let side = 3.0 * (1.0 - 0.1f64.cos());
+        let got = worst(&s, 0.0, &[], &uv, &[[0, 1, 2]]);
+        assert!(
+            got.is_ok_and(|w| (w - side).abs() < 1e-9 * side),
+            "{got:?} against {side}"
+        );
+        // A corner past the nodes is the triangle's index.
+        assert_eq!(worst(&s, 0.0, &[], &uv, &[[0, 1, 2], [0, 1, 3]]), Err(1));
     }
 }

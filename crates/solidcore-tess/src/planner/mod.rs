@@ -103,9 +103,14 @@ pub struct OverTolerance {
     /// The face's index in the record.
     pub face: usize,
     /// The farthest its triangles lie from its surface (mm), measured as the sag refinement
-    /// measures them: at each triangle's middle, along the surface's normal there. Over the
-    /// tolerance unless the refinement made up all the thinning took.
+    /// measures them: at each triangle's middle and its sides' middles, along the surface's
+    /// normal there, wherever the surface evaluates.
     pub sag: f64,
+    /// The chord tolerance the face was planned to (mm).
+    pub tol: f64,
+    /// Whether `sag` is within `tol` after all: the refinement made up what a thinned grid
+    /// left (never so for [`Cap::Refine`], which stops with a triangle still over).
+    pub within: bool,
     /// The bounds that limited it, one or both.
     pub caps: Vec<Cap>,
 }
@@ -114,9 +119,12 @@ pub struct OverTolerance {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Cap {
     /// The face's grid was thinned to fit [`MAX_FACE_GRID`](grid::MAX_FACE_GRID) points: the
-    /// lines along u and v its tolerance asked for, and those kept.
+    /// lines along u and v its division gave, and those kept. `asked` is the division's own
+    /// count, itself bounded (at most `MAX_LINES` lines, 20 halvings an interval); `kept` is before
+    /// any further thinning a cut grid makes for its traces. The sag refinement's measure of the
+    /// final triangles ([`OverTolerance::sag`]) covers both.
     GridThinned {
-        /// The lines along u and v asked for.
+        /// The lines along u and v the division gave.
         asked: [usize; 2],
         /// The lines kept.
         kept: [usize; 2],
@@ -2104,10 +2112,17 @@ fn plan_face(
         sag::flip(s, tol, reach, &fixed, &all, &mut triangles).map_err(no_value)?;
         // A face a bound limited is named with the sag its triangles reach.
         if !caps.is_empty() {
-            let sag = sag::worst(s, reach, &fixed, &all, &triangles).map_err(no_value)?;
+            let sag = sag::worst(s, reach, &fixed, &all, &triangles).map_err(|k| {
+                FaceError::Refused(fail(&format!(
+                    "triangle {k} has a corner past its {} nodes",
+                    all.len()
+                )))
+            })?;
             stats.over_tolerance.push(OverTolerance {
                 face: fi as usize,
                 sag,
+                tol,
+                within: sag <= tol,
                 caps: std::mem::take(&mut caps),
             });
         }

@@ -82,7 +82,7 @@ pub(crate) fn everywhere(_: [f64; 2]) -> Result<bool, TooManyCopies> {
 }
 
 /// Steps from an excused end of an iso-line interval towards its other end, looking for the
-/// nearest point that is the face's and evaluates.
+/// nearest step that is the face's.
 const INWARD: u32 = 16;
 
 /// `lines` (increasing, ends included) with every interval that fails the same limits as
@@ -185,9 +185,10 @@ const POINT: f64 = 1e-6;
 /// [`QUARTER_TURN`]): a turn read from the points, since a spline's parameter is no angle. A point
 /// the surface does not evaluate at is the error where it is the face's (`mine`), and else
 /// measures nothing: an end of an iso-line's interval there is moved inwards, in [`INWARD`]
-/// steps, to the nearest point that is the face's and evaluates, and the interval is measured
-/// from there (an iso-line with no such point is not the face's at all); a point between the ends
-/// is not taken into its sag, turn or facet angle.
+/// steps, to the nearest step that is the face's, and the interval is measured from there (the
+/// surface having no point there refuses the face); an iso-line with no step that is the face's
+/// is not measured (a part of the face narrower than a step is left to the sag refinement), and
+/// a point between the ends is not taken into its sag, turn or facet angle.
 fn limits<'a>(
     s: &'a EvalSurface,
     d: usize,
@@ -212,17 +213,19 @@ fn limits<'a>(
         .map(|k| across.0 + (across.1 - across.0) * k as f64 / (ACROSS - 1) as f64)
         .collect();
     // The end `from` of an interval towards `to` on the iso-line at `y`: itself where it
-    // evaluates, else the nearest step inwards that is the face's and evaluates.
+    // evaluates, else the nearest step inwards that is the face's; `None` where no step is.
     let end = move |from: f64, to: f64, y: f64| -> Result<Option<(f64, Vec3)>, Unmeasured> {
         if let Some(p) = kept(mine, at(from, y))? {
             return Ok(Some((from, p)));
         }
         for k in 1..INWARD {
             let x = from + (to - from) * f64::from(k) / f64::from(INWARD);
-            if let Ok(p) = at(x, y)
-                && mine(uv(x, y)).map_err(|c| Unmeasured::TooManyCopies(c, uv(x, y)))?
-            {
-                return Ok(Some((x, p)));
+            let q = uv(x, y);
+            // A step that is the face's is where the interval is measured from, or, the surface
+            // having no point there, the face's refusal (as `kept` makes it); one that is not the
+            // face's is passed over.
+            if mine(q).map_err(|c| Unmeasured::TooManyCopies(c, q))? {
+                return at(x, y).map(|p| Some((x, p))).map_err(Unmeasured::NoValue);
             }
         }
         Ok(None)
