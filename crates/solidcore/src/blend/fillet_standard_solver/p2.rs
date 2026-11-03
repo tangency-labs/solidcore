@@ -2937,6 +2937,20 @@ impl super::p1::LinearCrossSectionFsg {
             }
             _ => return Ok(None),
         };
+        // between planes the chord is the plane through the feet, exact (#2486)
+        if planes {
+            return chord_between_planes(
+                k,
+                approx_tol_3d,
+                center_line,
+                [rail1, rail2],
+                bases,
+                uv,
+                inward,
+                offsets,
+                chamfer,
+            );
+        }
         let mut gn = GnSectionFsg::chord();
         gn.build_chord(
             k,
@@ -2949,6 +2963,158 @@ impl super::p1::LinearCrossSectionFsg {
             chamfer,
         )
     }
+}
+
+/// A chamfer between planes by its definition (#2486), the chord's exact class: the line
+/// its offsets meet in (`X . n_i = P_i . n_i + r_i`, the faces' unit normals `n_i` towards
+/// it), the plane square to the centre line's ends cutting it there, the feet `L - r_i n_i`
+/// on the faces, and the plane through them, `F_1(u) + v (F_2(u) - F_1(u))` over the
+/// centre line's interval and `[0, 1]`, a `Plane` keeping the chord's definition
+/// ([`ExactRound::chord`], re-certified at once). The rails and uv curves become the
+/// feet's lines. `None` (built as before) where the solver's rails are not those feet.
+///
+/// [`ExactRound::chord`]: crate::surface::procedural_blend::exact::ExactRound::chord
+///
+/// # Errors
+///
+/// Those of the evaluations, the curves' rebuild, the definition and its
+/// re-certification.
+#[allow(clippy::too_many_arguments)]
+fn chord_between_planes(
+    k: &Kernel,
+    tol: f64,
+    center_line: &BSplineCurve,
+    rails: [&mut BSplineCurve; 2],
+    bases: [&Surface; 2],
+    uv: [&mut BSplineCurve; 2],
+    inward: [Vec3; 2],
+    offsets: [f64; 2],
+    chamfer: crate::surface::procedural_blend::chamfer::ChamferDefinition,
+) -> Result<Option<Surface>> {
+    use crate::blend::fillet_exact::ClassInputs;
+    use crate::geom::extent2d::Extent2d;
+    use crate::geom::vector2d::Vec2;
+    use crate::nurbs::b_spline_curve::{BSplineCurveForm, CanonicalData, KnotType};
+    use crate::surface::plane::Plane;
+    use crate::surface::procedural_blend::exact::ExactRound;
+    use crate::surface::surface::SurfaceKind;
+    let ivl = center_line.natural_interval();
+    let (s0, s1) = (ivl.min(), ivl.max());
+    let [n1, n2] = inward;
+    let [r1, r2] = offsets;
+    // a point of each face (the plane's origin), the faces' planes
+    let mut planes: Vec<&Plane> = Vec::new();
+    for b in bases {
+        let SurfaceKind::Plane(pl) = b.kind() else {
+            return Ok(None);
+        };
+        planes.push(pl);
+    }
+    let (Some(&p1), Some(&p2)) = (planes.first(), planes.get(1)) else {
+        return Ok(None);
+    };
+    let (q1, q2) = (p1.position().origin(), p2.position().origin());
+    // the line: about the centre line's start, c + x n1 + y n2 on both offset planes
+    let c = center_line.evaluate_point(s0)?;
+    let cos = n1.dot(n2);
+    let sin2 = 1.0 - cos * cos;
+    let Ok(d) = n1.cross(n2).unitize() else {
+        return Ok(None);
+    };
+    if sin2.partial_cmp(&0.0) != Some(core::cmp::Ordering::Greater) {
+        return Ok(None);
+    }
+    let h1 = n1.dot(q1 - c) + r1;
+    let h2 = n2.dot(q2 - c) + r2;
+    let p = c + n1 * ((h1 - cos * h2) / sin2) + n2 * ((h2 - cos * h1) / sin2);
+    let on_line = |x: Point3| p + d * (x - p).dot(d);
+    let (l0, l1) = (on_line(c), on_line(center_line.evaluate_point(s1)?));
+    let feet = [[l0 - n1 * r1, l1 - n1 * r1], [l0 - n2 * r2, l1 - n2 * r2]];
+    // the solver's rails are these feet, or the chamfer is not this class's
+    for (rail, f) in [&*rails[0], &*rails[1]].into_iter().zip(&feet) {
+        if rail.evaluate_point(s0)?.distance(f[0]) > tol
+            || rail.evaluate_point(s1)?.distance(f[1]) > tol
+        {
+            return Ok(None);
+        }
+    }
+    let [[a0, a1], [b0, _]] = feet;
+    let along = a1 - a0;
+    let across = b0 - a0;
+    let (Ok(x), Ok(y)) = (along.unitize(), across.unitize()) else {
+        return Ok(None);
+    };
+    let sx = along.length() / (s1 - s0);
+    let plane = Plane::new(
+        a0 - x * (sx * s0),
+        x,
+        y,
+        Vec2::new(sx, across.length()),
+        &Extent2d::from_bounds(s0, 0.0, s1, 1.0),
+    );
+    // the feet's lines and their uv lines on the faces
+    // the degree-1 line from a to b over [s0, s1]
+    let set_line = |c: &mut BSplineCurve, dim: u64, a: Point3, b: Point3| -> Result<()> {
+        let (pts, knots) = ([a, b], [s0, s1]);
+        c.set_canonical(&CanonicalData {
+            dim,
+            degree: 1,
+            control_points: &pts,
+            form: BSplineCurveForm::Unspecified,
+            knot_multiplicities: &[2, 2],
+            knots: &knots,
+            knot_type: KnotType::Unspecified,
+            weights: None,
+            trim: None,
+        })
+    };
+    let mut leader = center_line.clone();
+    set_line(&mut leader, 3, l0, l1)?;
+    leader.set_out_of_bounds_enabled(true);
+    let mut feet_uv = [Point2::new(0.0, 0.0); 2];
+    for (((rail, w), (f, pl)), fuv) in rails
+        .into_iter()
+        .zip(uv)
+        .zip(feet.iter().zip([p1, p2]))
+        .zip(feet_uv.iter_mut())
+    {
+        let w0 = pl.project_point_to_uv_domain(f[0]);
+        let w1 = pl.project_point_to_uv_domain(f[1]);
+        *fuv = w0;
+        set_line(rail, 3, f[0], f[1])?;
+        let dim = w.dim;
+        set_line(
+            w,
+            dim,
+            Point3::new(w0.x, w0.y, 0.0),
+            Point3::new(w1.x, w1.y, 0.0),
+        )?;
+    }
+    // what the class is read with: the faces at the feet, the centre's signed offsets
+    // along their own normals
+    let mut signed = [0.0; 2];
+    for (((o, b), w), (f, r)) in signed
+        .iter_mut()
+        .zip(bases)
+        .zip(feet_uv)
+        .zip(feet.iter().zip(offsets))
+    {
+        let normal = b.evaluate_normal(k, w, Side::Left, Side::Left)?.unitize()?;
+        *o = (l0 - f[0]).dot(normal).signum() * r;
+    }
+    let inputs = ClassInputs {
+        uv: feet_uv,
+        offsets: signed,
+        centre: l0,
+        tol,
+        ball_on_collapsed: false,
+        radii_can_change: false,
+    };
+    let round = ExactRound::chord(k, bases, chamfer, Some(&leader), inputs)?;
+    let mut surface = Surface::from(plane);
+    round.recertify(k, &surface)?;
+    surface.set_exact_round(Some(round));
+    Ok(Some(surface))
 }
 
 const OP_LINEAR_DEF: &str =

@@ -398,6 +398,8 @@ pub enum ExactClassRecord {
     Circle,
     /// One point: a piece of the ball.
     Point,
+    /// A chamfer between planes (#2486): the plane through the feet of its line spine.
+    Chord,
 }
 
 /// The analytic kind of an exact net, a label beside its NURBS form as a support's is
@@ -454,14 +456,17 @@ pub struct ExactRoundRecord {
     pub class: ExactClassRecord,
     /// The supports S1, S2, by value.
     pub supports: [SupportRecord; 2],
-    /// The ball's radius.
+    /// The ball's radius (0 for the chord).
     pub radius: f64,
-    /// The section's order: 1, the ball's circle.
+    /// The section's order: 1, the ball's circle; 0, the chord.
     pub order: u32,
     /// The leader (the centre line), where the class's construction makes one.
     pub leader: Option<NurbsCurveRecord>,
     /// What the class is read with beside the supports.
     pub inputs: ClassInputsRecord,
+    /// A chamfer's sizes (the chord, #2486).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub chamfer: Option<ChamferRecord>,
     /// The net, the exact surface.
     pub net: ExactNetRecord,
 }
@@ -500,14 +505,35 @@ impl ExactRoundRecord {
         if !all_finite(&numbers) {
             return Err(refuse("inputs", "an exact round's numbers are finite"));
         }
-        if self.radius <= 0.0 {
-            return Err(refuse("radius", "the ball's radius is positive"));
-        }
-        if self.order != 1 {
-            return Err(refuse(
-                "order",
-                "an exact round's section is the ball's circle",
-            ));
+        // the chord (#2486): order 0, no ball, its sizes; a round: the ball's circle
+        if self.class == ExactClassRecord::Chord {
+            let Some(c) = &self.chamfer else {
+                return Err(refuse("chamfer", "a chord keeps its chamfer's sizes"));
+            };
+            if self.order != 0 || self.radius != 0.0 {
+                return Err(refuse(
+                    "order",
+                    "a chord's section is of order 0, with no ball",
+                ));
+            }
+            let sizes = match c.size {
+                ChamferSizeRecord::Distances([a, b]) => [a, b, c.wedge],
+                ChamferSizeRecord::DistanceAngle { distance, angle } => [distance, angle, c.wedge],
+                ChamferSizeRecord::Chord(l) => [l, l, c.wedge],
+            };
+            if !all_finite(&sizes) {
+                return Err(refuse("chamfer", "an exact round's numbers are finite"));
+            }
+        } else {
+            if self.radius <= 0.0 {
+                return Err(refuse("radius", "the ball's radius is positive"));
+            }
+            if self.order != 1 || self.chamfer.is_some() {
+                return Err(refuse(
+                    "order",
+                    "an exact round's section is the ball's circle",
+                ));
+            }
         }
         if let Some(leader) = &self.leader {
             leader.validate("leader")?;

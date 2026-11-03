@@ -1486,6 +1486,24 @@ fn meridians_cross(a: Meridian, b: Meridian) -> Vec<Point2> {
     }
 }
 
+/// Not the fork (#2486): the plane a chamfer between two planes lies on, from its offsets
+/// alone: the plane through the feet, on the two faces, of the line the offsets meet in
+/// (its unit normal `d x (F_2 - F_1)`). `None` for a blend that is not a line spine
+/// between planes, or feet that coincide.
+#[must_use]
+pub fn chord_implicit(blend: &ExactBlend) -> Option<crate::surface::implicit::Implicit> {
+    let planes = blend.faces.iter().all(|f| f.kind == QuadricKind::Plane);
+    if blend.spine != BlendSpine::Line || !planes {
+        return None;
+    }
+    let (p, d) = (blend.point, blend.dir);
+    let [a, b] = &blend.faces;
+    let foot = |f: &BlendQuadric| p - f.dir * (p - f.point).dot(f.dir);
+    let (f1, f2) = (foot(a), foot(b));
+    let normal = d.cross(f2 - f1).unitize().ok()?;
+    Some(crate::surface::implicit::Implicit::Plane { origin: f1, normal })
+}
+
 /// Not the fork (#2485): the analytic surface a classified round of the line, circle or
 /// point class lies on, as its implicit equation, from its offsets alone: the cylinder of
 /// the ball's radius about the line the offsets meet in, the ball about the point, and the

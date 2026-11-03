@@ -111,7 +111,7 @@ use solidcore::blend::fillet_executive::session::FilletSession;
 use solidcore::blend::fillet_executive::{FitKind, NoRoomReason};
 use solidcore::surface::procedural_blend::chamfer::{ChamferDefinition, ChamferSize};
 use solidcore::surface::procedural_blend::convert::{rebuild, to_record};
-use solidcore::surface::procedural_blend::ProceduralBlend;
+use solidcore::surface::procedural_blend::{BlendRef, ProceduralBlend};
 use solidcore::surface::surface::SurfaceKind;
 use solidcore::topology::edgeuse::p1 as eu1;
 use solidcore::SolidError;
@@ -146,14 +146,17 @@ fn chamfered_rim(size: ChamferSize) -> (Kernel, Brep, bool, solidcore::Result<()
     (k, b, plane_first, r)
 }
 
-/// The faces of `b` on a blend by its definition.
+/// The faces of `b` that are blends by their definitions, as their procedural blends
+/// (none is exact here: a chamfer on a cylinder is certified).
 fn definitions(b: &Brep) -> Vec<ProceduralBlend> {
     b.face_list()
         .iter()
-        .filter_map(|&f| match b.face(f).unwrap().surface.as_ref()?.kind() {
-            SurfaceKind::ProceduralBlend(pb) => Some((**pb).clone()),
-            _ => None,
-        })
+        .filter_map(
+            |&f| match b.face(f).unwrap().surface.as_ref()?.procedural_blend()? {
+                BlendRef::Procedural(pb) => Some(pb.clone()),
+                BlendRef::Exact { .. } => panic!("a chamfer on a cylinder is certified"),
+            },
+        )
         .collect()
 }
 
