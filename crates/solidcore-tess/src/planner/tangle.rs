@@ -45,11 +45,16 @@ fn shifted(q: [f64; 2], d: usize, by: f64) -> [f64; 2] {
 /// another, each once and in order. On a closed surface the boundary crosses itself where any
 /// copies of two chords, whole periods apart, cross; chords ending on a pole, where the
 /// parameter along the pole is free, are left out. Adjacent chords of a loop share a node and
-/// never cross. `reach`: how near a pole a node is taken as one (see [`solidcore::eval::uv::degenerate_within`]).
-pub(crate) fn crossing(s: &EvalSurface, reach: f64, loops: &[seam::Loop]) -> Vec<(usize, usize)> {
+/// never cross. `reach`: how near a pole a node is taken as one (see
+/// [`solidcore::eval::uv::degenerate_within`]); a node whose poles the kernel's classifier
+/// cannot tell is the error.
+pub(crate) fn crossing(
+    s: &EvalSurface,
+    reach: f64,
+    loops: &[seam::Loop],
+) -> Result<Vec<(usize, usize)>, super::Unclassified> {
     let dom = solidcore::eval::uv::domain(s);
-    let pole =
-        |q: [f64; 2]| (0..2).any(|d| solidcore::eval::uv::degenerate_within(s, &dom, q, d, reach));
+    let pole = |q: [f64; 2]| super::pole_dir(s, q, reach).map(|d| d.is_some());
     let mut chords: Vec<Chord> = Vec::new();
     for (li, l) in loops.iter().enumerate() {
         let n = l.uv.len();
@@ -61,7 +66,7 @@ pub(crate) fn crossing(s: &EvalSurface, reach: f64, loops: &[seam::Loop]) -> Vec
             let (Some(&a), Some(&b)) = (l.uv.get(k), l.uv.get((k + 1) % n)) else {
                 continue;
             };
-            if !(a.iter().chain(&b).all(|x| x.is_finite())) || pole(a) || pole(b) {
+            if !(a.iter().chain(&b).all(|x| x.is_finite())) || pole(a)? || pole(b)? {
                 continue;
             }
             // The loop's closing chord of a loop that winds round the surface ends at the copy of
@@ -128,7 +133,7 @@ pub(crate) fn crossing(s: &EvalSurface, reach: f64, loops: &[seam::Loop]) -> Vec
     }
     out.sort_unstable();
     out.dedup();
-    out
+    Ok(out)
 }
 
 /// Whether `q` lies on the segment `ab` within [`STRADDLE`] (of the segment's squared length,

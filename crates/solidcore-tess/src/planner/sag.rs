@@ -14,7 +14,7 @@ use crate::vec::VecExt as _;
 use solidcore::eval::EvalSurface;
 use solidcore_record::Vec3;
 
-use super::NoValue;
+use super::{NoValue, Unclassified};
 
 /// Split the triangles `tris` of a face (indices into `uv`; the first `fixed.len()` points sit
 /// at `fixed`, the rest on the surface at their parameters) until none of them lies farther
@@ -25,6 +25,28 @@ use super::NoValue;
 /// evaluator refusing the face: the error names it, and the caller leaves the face out whole.
 /// `Ok(true)` when the refinement stopped at `max_points` with a triangle still to split: the
 /// caller names the face ([`super::Cap::Refine`]).
+/// Why [`refine`], [`flip`] or [`worst`] stopped: a point the surface does not evaluate at, a
+/// point whose poles the kernel's classifier cannot tell, or (for [`worst`]) a triangle, by
+/// index, with a corner past the nodes.
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) enum Stop {
+    NoValue(NoValue),
+    Unclassified(Unclassified),
+    Corner(usize),
+}
+
+impl From<NoValue> for Stop {
+    fn from(e: NoValue) -> Self {
+        Stop::NoValue(e)
+    }
+}
+
+impl From<Unclassified> for Stop {
+    fn from(e: Unclassified) -> Self {
+        Stop::Unclassified(e)
+    }
+}
+
 pub(crate) fn refine(
     s: &EvalSurface,
     tol: f64,
@@ -33,7 +55,7 @@ pub(crate) fn refine(
     uv: &mut Vec<[f64; 2]>,
     tris: &mut Vec<[u32; 3]>,
     max_points: usize,
-) -> Result<bool, NoValue> {
+) -> Result<bool, Stop> {
     if !(tol.is_finite() && tol > 0.0) || tris.is_empty() {
         return Ok(false);
     }
@@ -42,8 +64,7 @@ pub(crate) fn refine(
             .map(|d| kernel::record_vec3(d.0))
             .ok_or(NoValue(q))
     };
-    let dom = solidcore::eval::uv::domain(s);
-    let mean = |qs: &[[f64; 2]]| mean(s, &dom, reach, qs);
+    let mean = |qs: &[[f64; 2]]| mean(s, reach, qs);
     // How far the flat point `c` lies from the surface, measured along the normal at the surface
     // point of the same parameters: those parameters need not be the nearest (a straight line in
     // the parameters is no geodesic near a pole), and only the departure across the surface
@@ -106,7 +127,7 @@ pub(crate) fn refine(
             let sag = if let Some(&sag) = sag_of.get(&e) {
                 sag
             } else {
-                let sag = off(mean(&[ua, ub]), (xa + xb) * 0.5)?;
+                let sag = off(mean(&[ua, ub])?, (xa + xb) * 0.5)?;
                 sag_of.insert(e, sag);
                 sag
             };
@@ -117,7 +138,7 @@ pub(crate) fn refine(
         // inside the face divides by four. A triangle whose middle is off splits its side inside
         // the face that sags most, while that side still contributes; what is left comes from
         // its boundary sides, which the edges' own sampling keeps within the tolerance.
-        let centroid = mean(&[qa, qb, qc]);
+        let centroid = mean(&[qa, qb, qc])?;
         let worst = inner.iter().max_by(|x, y| x.0.total_cmp(&y.0)).copied();
         let split = match worst {
             Some((sag, _, e)) if sag > tol => e,
@@ -160,7 +181,7 @@ pub(crate) fn refine(
         if uv.len() >= limit {
             return Ok(true);
         }
-        let m = mean(&[ua, ub]);
+        let m = mean(&[ua, ub])?;
         let pm = at(m)?;
         // Proven: `plan_face` checks its nodes and the MAX_REFINE more it lets this add are at most
         // MAX_FACE_NODES, so the index fits a u32.
@@ -176,21 +197,18 @@ pub(crate) fn refine(
 /// The mean of parameter points, as the surface point between them: at a pole the parameter
 /// along the degenerate direction is free (the pole copy carries a neighbour's), so there the
 /// mean takes it from the other points alone.
-fn mean(
-    s: &EvalSurface,
-    dom: &solidcore::eval::uv::Domain,
-    reach: f64,
-    qs: &[[f64; 2]],
-) -> [f64; 2] {
+/// A point whose poles the kernel's classifier cannot tell is the error.
+fn mean(s: &EvalSurface, reach: f64, qs: &[[f64; 2]]) -> Result<[f64; 2], Unclassified> {
     let mut out = [0.0; 2];
     // Proven: `d` < 2 enumerates `out` and indexes the `[f64; 2]` parameters `qs`.
     #[allow(clippy::indexing_slicing)]
     for (d, slot) in out.iter_mut().enumerate() {
-        let free: Vec<f64> = qs
-            .iter()
-            .filter(|q| !solidcore::eval::uv::degenerate_within(s, dom, **q, d, reach))
-            .map(|q| q[d])
-            .collect();
+        let mut free: Vec<f64> = Vec::new();
+        for q in qs {
+            if !super::pole_at(s, *q, d, reach)? {
+                free.push(q[d]);
+            }
+        }
         let pick: Vec<f64> = if free.is_empty() {
             qs.iter().map(|q| q[d]).collect()
         } else {
@@ -198,7 +216,7 @@ fn mean(
         };
         *slot = pick.iter().sum::<f64>() / pick.len().max(1) as f64;
     }
-    out
+    Ok(out)
 }
 
 /// The farthest the triangles `tris` (as for [`refine`]) lie from the surface, measured as
@@ -207,15 +225,15 @@ fn mean(
 /// its parameters (the whole distance where the normal is undefined). Only where the surface
 /// evaluates: a middle it has no point at is not measured, and counted (the face's vertices and
 /// the middles [`refine`] needed all evaluated). The sag and that count; the error: a triangle
-/// (by index) with a corner past `uv`.
+/// (by index) with a corner past `uv` ([`Stop::Corner`]), or a point whose poles the kernel's
+/// classifier cannot tell.
 pub(crate) fn worst(
     s: &EvalSurface,
     reach: f64,
     fixed: &[Vec3],
     uv: &[[f64; 2]],
     tris: &[[u32; 3]],
-) -> Result<(f64, usize), usize> {
-    let dom = solidcore::eval::uv::domain(s);
+) -> Result<(f64, usize), Stop> {
     let pos: Vec<Option<Vec3>> = uv
         .iter()
         .enumerate()
@@ -227,14 +245,16 @@ pub(crate) fn worst(
         })
         .collect();
     // How far the flat point `c` lies from the surface at the mean of `qs`, as `refine`'s `off`.
-    let off = |qs: &[[f64; 2]], c: Vec3| -> Option<f64> {
-        let m = mean(s, &dom, reach, qs);
-        let (x, su, sv) = s.derivs(m[0], m[1]).map(kernel::record_triple)?;
-        Some(
+    let off = |qs: &[[f64; 2]], c: Vec3| -> Result<Option<f64>, Unclassified> {
+        let m = mean(s, reach, qs)?;
+        let Some((x, su, sv)) = s.derivs(m[0], m[1]).map(kernel::record_triple) else {
+            return Ok(None);
+        };
+        Ok(Some(
             su.cross(sv)
                 .normalized()
                 .map_or_else(|| x.dist(c), |n| (x - c).dot(n).abs()),
-        )
+        ))
     };
     let (mut worst, mut unmeasured) = (0.0f64, 0usize);
     for (k, t) in tris.iter().enumerate() {
@@ -242,13 +262,13 @@ pub(crate) fn worst(
         let (Some((qa, pa)), Some((qb, pb)), Some((qc, pc))) =
             (corner(t[0]), corner(t[1]), corner(t[2]))
         else {
-            return Err(k);
+            return Err(Stop::Corner(k));
         };
         // The middle, then each side's: `None` where the surface has no point there (or at a
         // corner they need).
         let mut measured: Vec<Option<f64>> = Vec::new();
         measured.push(match (pa, pb, pc) {
-            (Some(a), Some(b), Some(c)) => off(&[qa, qb, qc], (a + b + c) * (1.0 / 3.0)),
+            (Some(a), Some(b), Some(c)) => off(&[qa, qb, qc], (a + b + c) * (1.0 / 3.0))?,
             _ => None,
         });
         for ((qx, px), (qy, py)) in [
@@ -257,7 +277,7 @@ pub(crate) fn worst(
             ((qc, pc), (qa, pa)),
         ] {
             measured.push(match (px, py) {
-                (Some(x), Some(y)) => off(&[qx, qy], (x + y) * 0.5),
+                (Some(x), Some(y)) => off(&[qx, qy], (x + y) * 0.5)?,
                 _ => None,
             });
         }
@@ -372,12 +392,11 @@ pub(crate) fn flip(
     fixed: &[Vec3],
     uv: &[[f64; 2]],
     tris: &mut [[u32; 3]],
-) -> Result<(), NoValue> {
+) -> Result<(), Stop> {
     if !(tol.is_finite() && tol > 0.0) || tris.len() < 2 {
         return Ok(());
     }
-    let dom = solidcore::eval::uv::domain(s);
-    let mean = |qs: &[[f64; 2]]| mean(s, &dom, reach, qs);
+    let mean = |qs: &[[f64; 2]]| mean(s, reach, qs);
     let derivs = |q: [f64; 2]| {
         s.derivs(q[0], q[1])
             .map(kernel::record_triple)
@@ -422,13 +441,13 @@ pub(crate) fn flip(
         angle(a, b, c).min(angle(b, c, a)).min(angle(c, a, b))
     };
     // How far a facet's normal turns from the surface normal at its middle (radians, 0 to pi/2).
-    let deviation = |t: [u32; 3]| -> Result<f64, NoValue> {
+    let deviation = |t: [u32; 3]| -> Result<f64, Stop> {
         let (Some(a), Some(b), Some(c), Some(qa), Some(qb), Some(qc)) =
             (p(t[0]), p(t[1]), p(t[2]), q(t[0]), q(t[1]), q(t[2]))
         else {
             return Ok(0.0);
         };
-        let m = mean(&[qa, qb, qc]);
+        let m = mean(&[qa, qb, qc])?;
         let facet = (b - a).cross(c - a).normalized();
         let (_, su, sv) = derivs(m)?;
         Ok(match (facet, su.cross(sv).normalized()) {
@@ -439,20 +458,22 @@ pub(crate) fn flip(
     };
     // Whether the facet's normal lies on the side of the surface normal that its (u, v)
     // orientation `sign` says.
-    let upright = |t: [u32; 3], sign: f64| -> Result<bool, NoValue> {
+    let upright = |t: [u32; 3], sign: f64| -> Result<bool, Stop> {
         let (Some(a), Some(b), Some(c), Some(qa), Some(qb), Some(qc)) =
             (p(t[0]), p(t[1]), p(t[2]), q(t[0]), q(t[1]), q(t[2]))
         else {
             return Ok(false);
         };
-        let (_, su, sv) = derivs(mean(&[qa, qb, qc]))?;
+        let (_, su, sv) = derivs(mean(&[qa, qb, qc])?)?;
         Ok((b - a).cross(c - a).dot(su.cross(sv)) * sign > 0.0)
     };
-    let centroid_off = |t: [u32; 3]| match (p(t[0]), p(t[1]), p(t[2]), q(t[0]), q(t[1]), q(t[2])) {
-        (Some(a), Some(b), Some(c), Some(qa), Some(qb), Some(qc)) => {
-            off(mean(&[qa, qb, qc]), (a + b + c) * (1.0 / 3.0))
+    let centroid_off = |t: [u32; 3]| -> Result<f64, Stop> {
+        match (p(t[0]), p(t[1]), p(t[2]), q(t[0]), q(t[1]), q(t[2])) {
+            (Some(a), Some(b), Some(c), Some(qa), Some(qb), Some(qc)) => {
+                Ok(off(mean(&[qa, qb, qc])?, (a + b + c) * (1.0 / 3.0))?)
+            }
+            _ => Ok(f64::INFINITY),
         }
-        _ => Ok(f64::INFINITY),
     };
     let mut sides: HashMap<(u32, u32), Vec<u32>> = HashMap::new();
     for (ti, t) in tris.iter().enumerate() {
@@ -502,7 +523,7 @@ pub(crate) fn flip(
         // The pair the other way must lie closer along the surface (its facets turn less from
         // the surface normal), by more than a degree: a pair within a degree of the surface is
         // left as the layout made it.
-        let mut cached = |ti: u32, t: [u32; 3]| -> Result<f64, NoValue> {
+        let mut cached = |ti: u32, t: [u32; 3]| -> Result<f64, Stop> {
             if let Some(d) = dev_of.get(ti as usize).copied().flatten() {
                 Ok(d)
             } else {
@@ -532,10 +553,10 @@ pub(crate) fn flip(
             continue;
         };
         let allowed = tol
-            .max(off(mean(&[qa, qb]), (pa + pb) * 0.5)?)
+            .max(off(mean(&[qa, qb])?, (pa + pb) * 0.5)?)
             .max(centroid_off(ta)?)
             .max(centroid_off(tb)?);
-        if off(mean(&[qc, qd]), (pc + pd) * 0.5)? > allowed
+        if off(mean(&[qc, qd])?, (pc + pd) * 0.5)? > allowed
             || centroid_off(n1)? > allowed
             || centroid_off(n2)? > allowed
         {
@@ -587,7 +608,7 @@ mod tests {
         let mut tris = vec![[0, 1, 2], [0, 2, 3]];
         assert_eq!(
             refine(&s, 0.01, 1e-9, &fixed, &mut uv, &mut tris, 1000),
-            Err(NoValue([0.5, 0.5]))
+            Err(Stop::NoValue(NoValue([0.5, 0.5])))
         );
         assert_eq!(tris, vec![[0, 1, 2], [0, 2, 3]]);
     }
@@ -608,11 +629,11 @@ mod tests {
         let mut tris = vec![[0, 1, 4], [1, 2, 4], [2, 3, 4], [3, 0, 4]];
         assert_eq!(
             refine(&s, 0.01, 1e-9, &fixed, &mut uv, &mut tris, 1000),
-            Err(NoValue([0.5, 0.5]))
+            Err(Stop::NoValue(NoValue([0.5, 0.5])))
         );
         assert_eq!(
             flip(&s, 0.01, 1e-9, &fixed, &uv, &mut tris),
-            Err(NoValue([0.5, 0.5]))
+            Err(Stop::NoValue(NoValue([0.5, 0.5])))
         );
     }
 
@@ -642,10 +663,14 @@ mod tests {
         let side = 3.0 * (1.0 - 0.1f64.cos());
         let got = worst(&s, 0.0, &[], &uv, &[[0, 1, 2]]);
         assert!(
-            got.is_ok_and(|(w, unmeasured)| (w - side).abs() < 1e-9 * side && unmeasured == 0),
+            got.as_ref()
+                .is_ok_and(|(w, unmeasured)| (w - side).abs() < 1e-9 * side && *unmeasured == 0),
             "{got:?} against {side}"
         );
         // A corner past the nodes is the triangle's index.
-        assert_eq!(worst(&s, 0.0, &[], &uv, &[[0, 1, 2], [0, 1, 3]]), Err(1));
+        assert_eq!(
+            worst(&s, 0.0, &[], &uv, &[[0, 1, 2], [0, 1, 3]]),
+            Err(Stop::Corner(1))
+        );
     }
 }
