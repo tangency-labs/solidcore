@@ -36,13 +36,7 @@ fn entries(dir: &Path, out: &mut Vec<PathBuf>) {
     }
 }
 
-#[test]
-fn every_operand_is_a_valid_record_and_every_input_is_given() {
-    let mut files = Vec::new();
-    entries(&corpus(), &mut files);
-    let manifest: Value =
-        serde_json::from_str(&std::fs::read_to_string(corpus().join("manifest.json")).unwrap())
-            .unwrap();
+fn validate_counts(_root: &Path, files: &[PathBuf], manifest: &Value) {
     let listed: u64 = manifest["areas"]
         .as_object()
         .unwrap()
@@ -54,6 +48,36 @@ fn every_operand_is_a_valid_record_and_every_input_is_given() {
         listed,
         "the manifest counts every entry"
     );
+}
+
+fn validate_results(e: &Value, bodies: &serde_json::Map<String, Value>, made: &[&str], f: &Path) {
+    // Each final body is an operation's output or a given operand.
+    for r in e["result"].as_array().unwrap() {
+        if let Some(b) = r["made"].as_str() {
+        assert!(
+            made.contains(&b),
+            "{}: {b} is made by no operation",
+            f.display()
+        );
+        }
+        if let Some(b) = r["operand"].as_str() {
+        assert!(
+            bodies.contains_key(b),
+            "{}: operand {b} has no record",
+            f.display()
+        );
+        }
+    }
+}
+
+#[test]
+fn every_operand_is_a_valid_record_and_every_input_is_given() {
+    let mut files = Vec::new();
+    entries(&corpus(), &mut files);
+    let manifest: Value =
+        serde_json::from_str(&std::fs::read_to_string(corpus().join("manifest.json")).unwrap())
+            .unwrap();
+    validate_counts(&corpus(), &files, &manifest);
     let mut records = 0;
     for f in &files {
         let e: Value = serde_json::from_str(&std::fs::read_to_string(f).unwrap()).unwrap();
@@ -98,23 +122,7 @@ fn every_operand_is_a_valid_record_and_every_input_is_given() {
                     .filter_map(Value::as_str),
             );
         }
-        // Each final body is an operation's output or a given operand.
-        for r in e["result"].as_array().unwrap() {
-            if let Some(b) = r["made"].as_str() {
-                assert!(
-                    made.contains(&b),
-                    "{}: {b} is made by no operation",
-                    f.display()
-                );
-            }
-            if let Some(b) = r["operand"].as_str() {
-                assert!(
-                    bodies.contains_key(b),
-                    "{}: operand {b} has no record",
-                    f.display()
-                );
-            }
-        }
+        validate_results(&e, bodies, &made, f);
         if e.get("records").is_some_and(|r| !r.is_null()) {
             assert!(
                 !bodies.is_empty(),
@@ -145,4 +153,33 @@ fn every_operand_is_a_valid_record_and_every_input_is_given() {
         }
     }
     assert!(records > 0);
+}
+
+#[test]
+fn regression_area_counts() {
+    let root = Path::new("corpus");
+    let files: Vec<PathBuf> = ["a/one.json", "a/two.json", "ladder/tier/one.json"].iter().map(|p| root.join(p)).collect();
+    let valid = serde_json::json!({"areas": {"a": {"cases": 2}, "ladder/tier": {"cases": 1}}});
+    validate_counts(root, &files, &valid);
+    for invalid in [
+        serde_json::json!({"areas": {"a": {"cases": 1}, "ladder/tier": {"cases": 2}}}),
+        serde_json::json!({"areas": {"a": {"cases": 3}}}),
+        serde_json::json!({"areas": {"a": {"cases": 2}, "ladder/other": {"cases": 1}}}),
+    ] {
+        assert!(std::panic::catch_unwind(|| validate_counts(root, &files, &invalid)).is_err(), "accepted {invalid}");
+    }
+}
+
+#[test]
+fn regression_final_references() {
+    let bodies = serde_json::json!({"given": {}}).as_object().unwrap().clone();
+    let made = ["made"];
+    let path = Path::new("case.json");
+    for result in [serde_json::json!({"made":"made"}), serde_json::json!({"operand":"given"})] {
+        validate_results(&serde_json::json!({"result":[result]}), &bodies, &made, path);
+    }
+    for result in [serde_json::json!({"made": 2}), serde_json::json!({"operand": null}), serde_json::json!({}), serde_json::json!("made"), serde_json::json!({"made":"unknown"}), serde_json::json!({"operand":"unknown"})] {
+        let e = serde_json::json!({"result":[result]});
+        assert!(std::panic::catch_unwind(|| validate_results(&e, &bodies, &made, path)).is_err(), "accepted {e}");
+    }
 }
