@@ -127,7 +127,7 @@ use crate::blend::fillet_geom::p3::SplitCorners;
 use crate::blend::fillet_intersector::HandlingAlgorithmType;
 use crate::blend::fillet_section::section::GnSectionFsg;
 use crate::blend::fillet_standard_solver::p1::{
-    BlendCurveCrossSectionFsg, CircularCrossSectionFsg, LinearCrossSectionFsg,
+    BlendCurveCrossSectionFsg, CircularCrossSectionFsg, LinearCrossSectionFsg, VariableRadiusFs,
 };
 use crate::curve::curve::{Curve, CurveKind};
 use crate::curve::iso_curve::IsoCurve;
@@ -2176,11 +2176,38 @@ pub trait FilletSolverOps: AsFilletSolverOps {
     }
 
     /// `SM_CAST_PTR(SmVariableRadiusFS, this)`: mutable borrow when the concrete solver
-    /// is a [`VariableRadiusFs`](crate::blend::fillet_standard_solver::p1::VariableRadiusFs).
-    fn variable_radius_mut(
-        &mut self,
-    ) -> Option<&mut crate::blend::fillet_standard_solver::p1::VariableRadiusFs> {
+    /// is a [`VariableRadiusFs`].
+    fn variable_radius_mut(&mut self) -> Option<&mut VariableRadiusFs> {
         None
+    }
+
+    /// `GetRadiusCornerParameters` (virtual, the fork's 6eecf04): the parameters on the
+    /// filleted edge where the radius has a corner. None for the base; the variable radius
+    /// solver's [`VariableRadiusFs::radius_corner_parameters`].
+    ///
+    /// # Errors
+    ///
+    /// Those of the variable radius solver's law.
+    fn radius_corner_parameters(&mut self, k: &Kernel) -> Result<Vec<f64>> {
+        match self.variable_radius_mut() {
+            // (the inherent methods: a method call on `vr` would resolve to this trait's)
+            Some(vr) => VariableRadiusFs::radius_corner_parameters(vr, k),
+            None => Ok(Vec::new()),
+        }
+    }
+
+    /// `IsAtRadiusCorner` (virtual, the fork's 6eecf04): whether `point` lies where the
+    /// radius has a corner. `false` for the base.
+    fn is_at_radius_corner(&mut self, k: &Kernel, point: &TsectPnt) -> bool {
+        self.variable_radius_mut()
+            .is_some_and(|vr| VariableRadiusFs::is_at_radius_corner(vr, k, point))
+    }
+
+    /// `GetRadiusParameter` (virtual, the fork's 6eecf04): the edge parameter of `point`,
+    /// `None` where the solver has no radius corners (and for the base).
+    fn radius_parameter(&mut self, k: &Kernel, point: &TsectPnt) -> Option<f64> {
+        self.variable_radius_mut()
+            .and_then(|vr| VariableRadiusFs::radius_parameter(vr, k, point))
     }
 
     /// `((SmConstantDistanceFS*)this)->GetDistance()`: the rail distance of a

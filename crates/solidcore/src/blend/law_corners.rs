@@ -27,12 +27,17 @@
 //! joins the pieces (tangency-labs/smlib@6eecf04 and 5fbffc9), and the executive splits the
 //! round's faces at the corners (`NoteRadiusCornerSurfaces`,
 //! `SplitFilletFacesAtRadiusCorners`, 6eecf04, with `SmBrep::SubdivideFaceAtDiscontinuities`
-//! and `ReplaceCurve`, solidcore#1828), after the trace has made the corners through points
-//! (6eecf04, solidcore#1403). So nothing calls these yet, and nothing here changes a
-//! result: the pieces are not kept, `SmFilletExecutive::BuildLawCorners` (which puts them
+//! and `ReplaceCurve`, solidcore#1828). So nothing calls these yet: the pieces are not
+//! kept, and `SmFilletExecutive::BuildLawCorners` (which puts them
 //! back on the split faces, adds the zones and stitches the round again, with
 //! `sm_PieceOfFace`, `sm_EdgeBetween` and the 62fcc82 unstitch) and the
 //! `EaseSetBackSections` refusal of a law-cornered round (58d03ef) wait for that.
+//!
+//! The trace part of 6eecf04 is in, under the same flag: the law's corners
+//! ([`FilletLaw::corner_parameters`](crate::blend::fillet_standard_solver::p1::FilletLaw::corner_parameters))
+//! are through points, and the fillet intersector steps onto them and flushes each span
+//! with its own side's tangents, so the round's curves turn there. Until the skin is
+//! ported, the round is still skinned as one surface across the turn.
 //!
 //! Deviations: out-params are return values; `SmLawCornerPieces::Copy` is `Clone`, and the
 //! solver's list of kept pieces is a slice the caller owns, so

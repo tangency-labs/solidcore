@@ -499,11 +499,11 @@ fn law_round(
 
 /// The fork's 5e8c9c1 build, through its C API (a scratch driver running the capi cases):
 /// the volume removed at `smlib_brep_volume`'s 1e-7.
-const BLOCKED: &str = "the law's corners are not trace through points and the round is not \
-    skinned piece by piece or split there (tangency-labs/smlib@6eecf04, 5fbffc9; solidcore#1403, #1828)";
+const BLOCKED: &str = "the law's corners are traced through, but the round is not yet skinned \
+    piece by piece or split there (tangency-labs/smlib@6eecf04, 5fbffc9; solidcore#1828)";
 
 #[test]
-#[ignore = "blocked: law corners need the fork's 6eecf04 (solidcore#1403, #1828)"]
+#[ignore = "blocked: the piecewise skin and face split of the fork's 6eecf04 (solidcore#1828)"]
 fn law_peak() {
     // 2 -> w -> 2 on the 10 x 20 x 30 box's top edge x = 10, z = 30, from y = 0: the
     // block's six faces and the two sides' rounds, meeting where they cross
@@ -530,7 +530,7 @@ fn law_peak() {
 }
 
 #[test]
-#[ignore = "blocked: law corners need the fork's 6eecf04 (solidcore#1403, #1828)"]
+#[ignore = "blocked: the piecewise skin and face split of the fork's 6eecf04 (solidcore#1828)"]
 fn law_dip() {
     // 4 -> 2 -> 4 on the 20 cube's edge y = z = 20 from either end, and the same law as a
     // quadratic with a corner at 0.5: the cube's six faces, the two sides' rounds and the
@@ -568,7 +568,7 @@ fn law_dip() {
 }
 
 #[test]
-#[ignore = "blocked: law corners need the fork's 6eecf04 (solidcore#1403, #1828)"]
+#[ignore = "blocked: the piecewise skin and face split of the fork's 6eecf04 (solidcore#1828)"]
 fn law_dips() {
     // 4, 2, 4, 2 at 0, 0.25, 0.75, 1 on the 20 cube's edge y = z = 20: a dip, then a peak;
     // the cube's six faces, three rounds and the zone at the dip (the fork:
