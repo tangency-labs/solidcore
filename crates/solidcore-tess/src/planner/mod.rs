@@ -1860,8 +1860,13 @@ fn plan_face(
     let (extra, triangles) = if lenient == Lenient::Yes {
         delaunay()?
     } else {
-        let mut us = uv::divide(s, 0, bbox[0], bbox[1], rules, h, MAX_LINES).map_err(no_value)?;
-        let mut vs = uv::divide(s, 1, bbox[1], bbox[0], rules, h, MAX_LINES).map_err(no_value)?;
+        // A point of the box outside the face's loops is not the face's (as for the size
+        // samples above); one they cannot tell, past MAX_PERIODS, is taken as the face's.
+        let mine = |q: [f64; 2]| within_loops(&polys, bbox, dom.period, q).unwrap_or(true);
+        let mut us =
+            uv::divide(s, 0, bbox[0], bbox[1], rules, h, MAX_LINES, &mine).map_err(no_value)?;
+        let mut vs =
+            uv::divide(s, 1, bbox[1], bbox[0], rules, h, MAX_LINES, &mine).map_err(no_value)?;
         grid::thin(&mut us, &mut vs, grid::MAX_FACE_GRID);
         let structured = match (ranges.len(), if seamed { None } else { grid::quad(&uvs) }) {
             (1, Some(q)) => {
@@ -1880,7 +1885,7 @@ fn plan_face(
                                 .chain(aligned)
                                 .chain(std::iter::once(hi))
                                 .collect();
-                            uv::refine(s, d, &ends, across, rules, h, MAX_LINES).map(inner)
+                            uv::refine(s, d, &ends, across, rules, h, MAX_LINES, &mine).map(inner)
                         }
                         None => Ok(inner(div.clone())),
                     }

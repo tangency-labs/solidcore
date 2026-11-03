@@ -128,11 +128,11 @@ fn the_division_names_a_point_between_its_lines_the_surface_does_not_evaluate_at
     let rules = Rules::new(0.01, 40.0, None);
     let quarter = (0.0, std::f64::consts::FRAC_PI_2);
     assert!(matches!(
-        uv::divide(&s, 0, (0.0, 1.0), quarter, &rules, 50.0, 1000),
+        uv::divide(&s, 0, (0.0, 1.0), quarter, &rules, 50.0, 1000, &uv::everywhere),
         Err(NoValue([u, _])) if u == 0.25
     ));
     assert!(matches!(
-        uv::divide(&s, 1, quarter, (0.0, 1.0), &rules, 50.0, 1000),
+        uv::divide(&s, 1, quarter, (0.0, 1.0), &rules, 50.0, 1000, &uv::everywhere),
         Err(NoValue([u, _])) if u == 0.25
     ));
     assert_eq!(
@@ -245,6 +245,95 @@ fn a_size_sample_the_surface_refuses_refuses_only_a_face_it_lies_in() {
         Err(e) => assert!(
             e.to_string()
                 .contains(&format!("does not evaluate at {inside:?}")),
+            "{e}"
+        ),
+        Ok((fp, _)) => panic!("meshed with {} triangles", fp.triangles.len()),
+    }
+}
+
+/// The plane z = 0, x = u, y = v over [0, 1]², as a rational bicubic whose weight
+/// (u − ½)² + (v − ½)² has its one root at (½, ½), where its numerators vanish too: the
+/// evaluator has no point there (0 / 0) and the plane's own everywhere else. All its homogeneous
+/// coordinates are whole numbers (36 times the weight's and numerators' Bernstein
+/// coefficients), so the root is exactly zero.
+fn plane_without_its_middle() -> EvalSurface {
+    // 36 (t − ½)², 36 t (t − ½)², 3 t and 12 (t − ½)² in the cubic Bernstein basis.
+    let a36 = [9.0, -3.0, -3.0, 9.0];
+    let ta36 = [0.0, 3.0, -6.0, 9.0];
+    let t3 = [0.0, 1.0, 2.0, 3.0];
+    let a12 = [3.0, -1.0, -1.0, 3.0];
+    let mut ctrl = Vec::new();
+    for j in 0..4 {
+        for i in 0..4 {
+            // w u = u (u − ½)² + u (v − ½)², w v = (u − ½)² v + v (v − ½)².
+            let x = ta36[i] + t3[i] * a12[j];
+            let y = a12[i] * t3[j] + ta36[j];
+            ctrl.push([x, y, 0.0, a36[i] + a36[j]]);
+        }
+    }
+    let knots = vec![0.0, 0.0, 0.0, 0.0, 1.0, 1.0, 1.0, 1.0];
+    let s = EvalSurface::nurbs([3, 3], [knots.clone(), knots], [4, 4], ctrl);
+    assert!(s.derivs(0.5, 0.5).is_none(), "no point at the middle");
+    for q in [[0.3, 0.7], [0.5, 0.25], [0.9, 0.5], [0.0, 1.0]] {
+        let p = point(&s, q);
+        assert!(p.dist(Vec3::new(q[0], q[1], 0.0)) < 1e-12, "{q:?}: {p:?}");
+    }
+    s
+}
+
+/// A loop through the corners `corners` (counter-clockwise in (u, v)), each side in pieces of
+/// at most 0.1, on the surface `s`.
+fn polygon(s: &EvalSurface, corners: &[[f64; 2]]) -> seam::Loop {
+    let mut uv = Vec::new();
+    for (k, a) in corners.iter().enumerate() {
+        let b = corners[(k + 1) % corners.len()];
+        let n = ((b[0] - a[0]).hypot(b[1] - a[1]) / 0.1).ceil().max(1.0) as u32;
+        uv.extend((0..n).map(|i| {
+            let t = f64::from(i) / f64::from(n);
+            [a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t]
+        }));
+    }
+    let pts = uv.iter().map(|q| point(s, *q)).collect();
+    seam::Loop { uv, pts }
+}
+
+/// The face's divisions run iso-lines across its whole parameter box, which reaches past a
+/// trimmed face. On [`plane_without_its_middle`], a C-shaped face whose notch holds the middle
+/// (½, ½) has that point in its box but not in itself: the point measures nothing, and the face
+/// meshes (the division refused it there). A square face over the middle is refused at it.
+#[test]
+fn a_point_in_a_faces_notch_the_surface_does_not_evaluate_at_does_not_refuse_it() {
+    let s = plane_without_its_middle();
+    let rules = Rules::new(0.01, 1.0, None);
+    let size = face_size(&s, &solidcore::eval::uv::domain(&s), &rules);
+    let notched = [polygon(
+        &s,
+        &[
+            [0.0, 0.0],
+            [1.0, 0.0],
+            [1.0, 0.4],
+            [0.4, 0.4],
+            [0.4, 0.6],
+            [1.0, 0.6],
+            [1.0, 1.0],
+            [0.0, 1.0],
+        ],
+    )];
+    match plan_or_fill(0, "spline", &s, &notched, &rules, &size, 0.0, None) {
+        Ok((fp, stats)) => assert!(
+            !fp.triangles.is_empty() && stats.lenient.is_empty(),
+            "{stats:?}"
+        ),
+        Err(e) => panic!("{e}"),
+    }
+    let square = [polygon(
+        &s,
+        &[[0.0, 0.0], [1.0, 0.0], [1.0, 1.0], [0.0, 1.0]],
+    )];
+    match plan_or_fill(0, "spline", &s, &square, &rules, &size, 0.0, None) {
+        Err(e) => assert!(
+            e.to_string()
+                .contains("the surface does not evaluate at [0.5, 0.5]"),
             "{e}"
         ),
         Ok((fp, _)) => panic!("meshed with {} triangles", fp.triangles.len()),
