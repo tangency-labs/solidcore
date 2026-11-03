@@ -70,13 +70,18 @@ fn cache_kernel(k: &Kernel, context: &Context) -> Kernel {
         notify_records: crate::topology::topology::NotifyRecords::new(),
         blend_net_scope: core::cell::Cell::new(k.blend_net_scope.get()),
         blend_counts: core::cell::Cell::new(k.blend_counts.get()),
-        blend_last_serial: core::cell::Cell::new(k.blend_last_serial.get()),
         // (the memo is the kernel's own: a copy starts empty and solves afresh)
         blend_station_memo: core::cell::RefCell::default(),
         arena_notify_records: (
             std::sync::Weak::new(),
             crate::topology::topology::NotifyRecords::new(),
         ),
+        blend_w_memo: core::cell::RefCell::default(),
+        // (inside the caller's operation: a scope opened on the copy keeps its memo)
+        blend_operation_scopes: std::sync::Arc::new(core::sync::atomic::AtomicU32::new(
+            k.blend_operation_scopes
+                .load(core::sync::atomic::Ordering::Relaxed),
+        )),
         // (building cache trees does none of the counted work)
         work_counters: crate::kernel::WorkCounters::default(),
     }
