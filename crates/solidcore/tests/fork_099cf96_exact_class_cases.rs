@@ -34,9 +34,7 @@
 //! With `fillet_round_as_definition` enabled (#2274), a fitted round is instead a
 //! `ProceduralBlend`: check its definition's ball contact to 1e-9, and its stored net
 //! against the unchanged fitted tolerance. The historical 1.47e-3 mark describes the
-//! earlier fitted surface, not this definition. With SolidCraft's fixes, with or without
-//! definitions, the ball cut flat (`sphere_plane`) builds, as the fork's does since
-//! smlib#124.
+//! earlier fitted surface, not this definition.
 //!
 //! `sphere_plane` with every fix: the fork at b785227 (before smlib#124) still returns 1001;
 //! at 63c7962 and 18e96f1 (smlib#124) the same round (`SmApiFilletEdges`, r 2, section 1,
@@ -607,7 +605,7 @@ fn mark_after(name: &str) -> Mark {
 
 /// The current section construction fixes the fitted tee; the ball cut flat builds as the
 /// fork's does since smlib#124 (63c7962, 18e96f1), to the fork's volume, not the closed
-/// form (#2441); the other marks are unchanged.
+/// form (#2441). The other marks are unchanged.
 fn mark_with_section_fixes(name: &str) -> Mark {
     match name {
         "tee_is_fitted" => Mark::Passes,

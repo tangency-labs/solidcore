@@ -98,6 +98,12 @@ fn radial_face(target: &Brep, eu: EdgeuseId) -> Result<FaceId> {
 /// way meet in a cusp, a knife edge's tip, which nothing continues). `all_eus` are the
 /// edge uses round the vertex.
 ///
+/// An edge whose faces meet tangentially (a flat side running onto a round end) has no
+/// convexity and is no such edge: the End on the end face takes the vertex (the fork's
+/// a763ac1, smlib#130). Nor is an edge of a face in `earlier_pass_faces`, the faces an
+/// earlier pass of the same blend made (`cpExec->IsEarlierPassFace`, the fork's 9822462):
+/// the two rounds meet as one blend's corner, never with an End and its cap between them.
+///
 /// # Errors
 /// `SM_ERR_NULL_POINTER` for an edge use without face, radial or edge; those of the
 /// convexity test.
@@ -108,6 +114,7 @@ pub fn end_at_smooth_vertex(
     fil_eu: EdgeuseId,
     all_eus: &[EdgeuseId],
     tan_tol_deg: f64,
+    earlier_pass_faces: &[FaceId],
 ) -> Result<bool> {
     let fil_edge = eu1::edge(target, fil_eu)?.ok_or_else(nul)?;
     let fil_faces = [face_of(target, fil_eu)?, radial_face(target, fil_eu)?];
@@ -116,8 +123,21 @@ pub fn end_at_smooth_vertex(
         if other == fil_edge {
             continue;
         }
+        // an edge whose faces meet tangentially (a flat side running onto a round end) has
+        // no convexity: it is no edge of a tangent chain, and the End on the end face takes
+        // the vertex (the fork's a763ac1)
+        if check_tangential_edgeuse_at_vertex(k, target, eu, vertex, tan_tol_deg)? {
+            continue;
+        }
         // the edge running on along one of the blended edge's faces
         let faces = [face_of(target, eu)?, radial_face(target, eu)?];
+        // an edge of a round an earlier pass of this blend made (the rounds that overflow
+        // go first) is the other round of one blend: the two meet as the corner of both,
+        // as when they go together, never with an End and its cap between them (the
+        // fork's 9822462)
+        if faces.iter().any(|f| earlier_pass_faces.contains(f)) {
+            continue;
+        }
         let along_its_face = faces.iter().any(|f| fil_faces.contains(f));
         // the other edge leaves the vertex opposite to the blended edge (it runs on;
         // leaving the same way, the two edges meet in a cusp, a knife edge's tip, which

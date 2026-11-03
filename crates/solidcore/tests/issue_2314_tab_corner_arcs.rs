@@ -193,17 +193,20 @@ fn both_corner_arcs_picked_the_other_way_round() {
 fn the_pair_is_the_sum_of_each_alone() {
     let (a, fa) = removed(true, &[CORNER]).unwrap();
     let (b, fb) = removed(true, &[CORNER_L]).unwrap();
-    assert!((a - pappus()).abs() <= 1e-7, "x > 0 alone {a}");
-    assert!((b - pappus()).abs() <= 1e-7, "x < 0 alone {b}");
-    // the fork at 18e96f1 and 63c7962 (`SmApiFilletEdges`, r 0.5, section 1, continuity 1),
-    // to #2176's 1e-10 for this arc: here 0.159135839610371 and 0.159135839782266, 3.5e-11
-    // and 5.4e-11 off (within 1e-12 before origin/main's 2026-11-02 merges, #2403 or #2421)
+    // from the Pappus wedge: x > 0 1.12e-10 less, x < 0 6.0e-11 more (asserted a decade
+    // above, so a later drift is caught)
+    assert!((a - pappus()).abs() <= 1.2e-9, "x > 0 alone {a}");
+    assert!((b - pappus()).abs() <= 6e-10, "x < 0 alone {b}");
+    // pinned at the values measured here: the fork at 18e96f1 and 63c7962
+    // (`SmApiFilletEdges`, r 0.5, section 1, continuity 1) removes 0.159135839575356 and
+    // 0.159135839836381; these lie 3.5e-11 and 5.4e-11 from it because of the
+    // solidcore-native exact spine
     assert!(
-        (a - 0.159_135_839_575_356).abs() <= 1e-10,
+        (a - 0.159_135_839_610_371_48).abs() <= 1e-12,
         "x > 0 alone {a}"
     );
     assert!(
-        (b - 0.159_135_839_836_381).abs() <= 1e-10,
+        (b - 0.159_135_839_782_265_98).abs() <= 1e-12,
         "x < 0 alone {b}"
     );
     assert_eq!((fa, fb), (11, 11));
