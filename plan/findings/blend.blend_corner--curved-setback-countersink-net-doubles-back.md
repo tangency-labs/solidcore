@@ -1,6 +1,6 @@
 # blend.blend_corner: the countersink's curved Setback is certified but a patch's control net doubles back (2026-11-03)
 
-- **Unit:** `blend.blend_corner` (the Setback beside curved faces, #2343, PR #2366; `Kernel::fixes.fillet_blend_corner`).
+- **Unit:** `blend.blend_corner` (the Setback beside curved faces, #2343, PR #2366; `Kernel::fixes.fillet_setback_beside_curved_faces` with `fillet_blend_corner`).
 - **Inputs:** the fork's capi case `setback curved_countersink_corner` (37c9e1d), rebuilt from solidcore calls in `crates/solidcore/tests/issue_2343_curved_setback.rs`, `countersink_corner_is_a_setback_no_more_concave_than_its_cone`.
   - The part: the block x in [-20, 4], y in [-20, 20], z in [0, 20], less a cone's frustum about (4, 0) widening at 45 degrees from radius 2 at z = 14.
   - The corner is V = (4, 8, 20): the top, the side and the concave cone. The top-side edge, the rim and the generator are rounded 1.25, 1.5 and 1. That is a convex corner beside a concave cone, k = -cos 45 / 5.5.

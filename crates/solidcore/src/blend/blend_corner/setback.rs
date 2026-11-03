@@ -48,7 +48,8 @@
 //! (`m_vSetBackFills`) are the session's, passed in. Opt-in:
 //! `Kernel::fixes.fillet_blend_corner` (WR-697). No recursion. Beside curved faces
 //! (solidcore#2343, built in solidcore from the fork's work in progress at 37c9e1d, no fork
-//! commit): the curved faces are found apart from `corner_planes` (`corner_quadrics`); the
+//! commit; with `Kernel::fixes.fillet_setback_beside_curved_faces` too): the curved faces
+//! are found apart from `corner_planes` (`corner_quadrics`); the
 //! fork's `SBSCALE` environment override of the rule is not taken; the executive's
 //! `CalcSetBackVert` is reached through [`SetbackSolvers`]; a failing call within a growth
 //! trial is that call's error, where the fork's trial counts it as not certified.
@@ -475,7 +476,8 @@ fn corner_quadrics(
 }
 
 /// The corner's faces as the fill sees them: [`corner_planes`]'s where every face is a
-/// plane, else [`corner_quadrics`]'s (`true` with them: the corner is beside a curved face).
+/// plane, else, with `fillet_setback_beside_curved_faces`, [`corner_quadrics`]'s (`true` with
+/// them: the corner is beside a curved face).
 #[allow(clippy::too_many_arguments)]
 fn corner_faces(
     k: &Kernel,
@@ -488,6 +490,11 @@ fn corner_faces(
 ) -> Result<Option<(CornerPlanes, bool)>> {
     if let Some(planes) = corner_planes(k, b, vtx, all_eus, solvers, tol, convex)? {
         return Ok(Some((planes, false)));
+    }
+    // beside a curved face only with its own flag: without it such a corner is the corner it
+    // was before (#2343)
+    if !k.fixes.fillet_setback_beside_curved_faces {
+        return Ok(None);
     }
     Ok(corner_quadrics(k, b, vtx, all_eus, solvers, tol, convex)?.map(|q| (q, true)))
 }

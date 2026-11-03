@@ -1,6 +1,6 @@
 # blend.blend_corner: the setback a curved Setback's growth names as building is refused when asked for, under the 1e-2 search (2026-11-03)
 
-- **Unit:** `blend.blend_corner` (the Setback beside curved faces, #2343, PR #2366; `Kernel::fixes.fillet_blend_corner`).
+- **Unit:** `blend.blend_corner` (the Setback beside curved faces, #2343, PR #2366; `Kernel::fixes.fillet_setback_beside_curved_faces` with `fillet_blend_corner`).
 - **Inputs:** the D prism (R 10, flat a 4, H 10), its top corner (4, sqrt 84, 10), the chord, the upright and the arc rounded 2, 2.5 and 3 (`crates/solidcore/tests/issue_2343_curved_setback.rs`, `d_prism_case`).
 - **Search:** the growth as at 37c9e1d: twice first, then bisecting while the certifying end is more than 1.01 times the failing one. Since then the growth uses the planar search's thousandths (below).
   - **Asked 3.05:** the corner is refused: "a setback of 3.05 is too short for the setback corner's fill to stay no more concave than its faces: a setback of 3.24062 builds it". `fit_setback` is 3.2406249999999996 (3.05 x 1.0625).

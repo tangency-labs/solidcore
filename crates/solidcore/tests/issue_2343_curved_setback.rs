@@ -1,8 +1,9 @@
 //! tangency-labs/solidcore#2343 (smlib#85 part C, built in solidcore; the fork's work in
 //! progress at tangency-labs/smlib 37c9e1d is the reference, not the target): three unequal
-//! rounds at a vertex where a face is a cylinder or a sphere, convex or concave, end on a
-//! Setback (`Kernel::fixes.fillet_blend_corner`, WR-697), its fill certified no more concave
-//! than what each patch is G1 to (the owner's ruling (a) on #85, `II >= k G`).
+//! rounds at a vertex where a face is a cylinder, cone or sphere, convex or concave, end on a
+//! Setback (`Kernel::fixes.fillet_setback_beside_curved_faces` with `fillet_blend_corner`,
+//! WR-697), its fill certified no more concave than what each patch is G1 to (the owner's
+//! ruling (a) on #85, `II >= k G`).
 //!
 //! The cases are the fork's capi `setback` cases `curved_d_prism_corner`,
 //! `curved_knife_edge_corner`, `curved_d_pocket_corner` and `curved_sphere_corner`
@@ -16,7 +17,8 @@
 //! patch on the material's side of every face, by the face's closed-form distance, to 1e-12
 //! of the part's size; and every patch's control net never turning back (`check_brep`'s test
 //! #5, part of the certificate since #2243). Before this change each corner was the old N-sided corner's patch
-//! (`NByNConvex`), not a Setback.
+//! (`NByNConvex`), not a Setback, and built: without its own flag it still is, so a design
+//! made with `fillet_blend_corner` before rebuilds the same.
 #![allow(
     clippy::unwrap_used,
     clippy::expect_used,
@@ -651,6 +653,32 @@ fn without_the_flag_the_d_prism_corner_is_no_setback() {
     let (mut k, mut b, edges, case) = d_prism_case(false);
     let r = round_each(&mut k, &mut b, &edges, &[2.0, 2.5, 3.0], case.v);
     assert_ne!(r.event, Some(BlendCornerEvent::Setback));
+}
+
+/// Without `fillet_setback_beside_curved_faces`, `fillet_blend_corner` on (as a design made
+/// before it has them), a corner beside a curved face is the corner it was: not a Setback
+/// (the N-by-N convex corner), and built, asked for a setback or not. The D prism's corner
+/// (beside a cylinder) and the countersink's (beside a cone).
+#[test]
+fn without_its_flag_a_corner_beside_a_curved_face_builds_as_before() {
+    for asked in [None, Some(3.05)] {
+        let (mut k, mut b, edges, case) = d_prism_case(true);
+        k.fixes.fillet_setback_beside_curved_faces = false;
+        let r = round_asked(&mut k, &mut b, &edges, &[2.0, 2.5, 3.0], case.v, asked);
+        assert_eq!(
+            r.event,
+            Some(BlendCornerEvent::None),
+            "{asked:?}: {}",
+            r.reason
+        );
+        assert!(r.ok, "{asked:?}: {}", r.reason);
+    }
+    let mut k = all_fixes(true);
+    k.fixes.fillet_setback_beside_curved_faces = false;
+    let (mut b, edges, radii, case) = countersink_case(&mut k);
+    let r = round_each(&mut k, &mut b, &edges, &radii, case.v);
+    assert_eq!(r.event, Some(BlendCornerEvent::None), "{}", r.reason);
+    assert!(r.ok, "{}", r.reason);
 }
 
 /// A 40 x 40 x 20 block with a D-shaped pocket 10 deep (R 8 about (20, 20), flat x = 24,
