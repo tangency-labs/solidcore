@@ -9,7 +9,7 @@
 //!
 //! Deviations: none of upstream's; there is no recursion.
 
-use super::{invalid, FilletObject, FilletSession, SolverObject};
+use super::{FilletObject, FilletSession, SolverObject};
 use crate::blend::fillet_custom_solver::OffsetSurface;
 use crate::blend::fillet_outline::outline_supports;
 use crate::blend::fillet_solver::p1::{
@@ -46,7 +46,7 @@ impl FilletSession<'_> {
             return Ok(());
         }
         let Some(&FilletObject::Solver(id)) = self.executive.solvers.first() else {
-            return Err(invalid("object is not a solver"));
+            return Ok(());
         };
         // a constant round of circular section: its ball is one ball all along
         let object = self.objects.solver(id)?;
@@ -77,7 +77,8 @@ impl FilletSession<'_> {
         let Some(edge) = eu1::edge(target, u0)? else {
             return Ok(());
         };
-        // a convex round, which takes material (a concave one past its wall stays refused)
+        // a convex round of a solid, which takes material (a concave one past its wall
+        // stays refused)
         if !crate::topology::brep::p2::is_manifold_solid(target)?
             || is_concave_edge(k, target, edge)?
         {
@@ -104,22 +105,54 @@ impl FilletSession<'_> {
             let old = solver
                 .surface(rail)?
                 .ok_or_else(|| SolidError::null_pointer(OP))?;
-            let (key, distance) = (old.key, old.surface.offset_distance());
-            let base_id = old.surface.base_id;
-            let surface = OffsetSurface::new(k, distance, support, base_id, SS_UNKNOWN)?;
-            solver.set_surface(
-                rail,
-                Some(OffsetSurfaceSlot {
-                    key,
-                    surface: surface.clone(),
-                }),
+            // the same offset of the face (its distance, extension and face identity) on the
+            // support, a new object: a fresh key, so a saved offset restores the face's own
+            let (distance, base_id, extends) = (
+                old.surface.offset_distance(),
+                old.surface.base_id,
+                old.surface.surface.allow_extension(),
+            );
+            let key = solver
+                .surfaces
+                .iter()
+                .flatten()
+                .chain(solver.detached.iter())
+                .map(|s| s.key)
+                .max()
+                .unwrap_or(0)
+                .checked_add(1)
+                .ok_or_else(|| SolidError::invalid_input(OP, "offset identity exhausted"))?;
+            let mut surface = OffsetSurface::new(
+                k,
+                distance,
+                support.clone_for_evaluation()?,
+                base_id,
+                SS_UNKNOWN,
             )?;
+            surface.surface.set_allow_extension(extends);
+            solver.set_surface(rail, Some(OffsetSurfaceSlot { key, surface }))?;
+            // each geometry's copy: its own offset and extension, on the support
             for &g in &geoms {
-                if let Some(slot) = self.objects.pseudo.geom_mut(g)?.off_surfs.get_mut(rail) {
-                    if slot.is_some() {
-                        *slot = Some(surface.clone());
-                    }
-                }
+                let Some(slot) = self.objects.pseudo.geom_mut(g)?.off_surfs.get_mut(rail) else {
+                    continue;
+                };
+                let Some(own) = slot.as_ref() else {
+                    continue;
+                };
+                let (distance, base_id, extends) = (
+                    own.surface.offset_distance(),
+                    own.base_id,
+                    own.surface.allow_extension(),
+                );
+                let mut copy = OffsetSurface::new(
+                    k,
+                    distance,
+                    support.clone_for_evaluation()?,
+                    base_id,
+                    SS_UNKNOWN,
+                )?;
+                copy.surface.set_allow_extension(extends);
+                *slot = Some(copy);
             }
         }
         Ok(())

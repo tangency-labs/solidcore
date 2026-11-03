@@ -174,9 +174,6 @@ const TOP_EDGE: Point3 = Point3::new(10.0, 9.0, 30.0);
 fn an_overflow_past_a_cylindrical_end_names_where_it_stays_on_its_faces() {
     for r in [12.0, 10.01] {
         let mut k = kernel(true);
-        // the round on the continued wall; with `fillet_round_ends_on_outline` it ends on the
-        // body's outline (`wr729_round_ends_on_outline.rs`)
-        k.fixes.fillet_round_ends_on_outline = false;
         let mut b = arc_ended_box(&mut k);
         let m = margin(&k, &b, TOP_EDGE);
         let got = blend(&mut k, &mut b, &[TOP_EDGE], r, 1);

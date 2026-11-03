@@ -41,7 +41,7 @@ use crate::blend::fillet_solver::p5::is_concave_edge;
 use crate::error::{Result, SolidError};
 use crate::geom::axis2_placement::Axis2Placement;
 use crate::kernel::Kernel;
-use crate::math::{Point3, Vec3, EFF_ZERO};
+use crate::math::{Point2, Point3, Vec3, EFF_ZERO};
 use crate::nurbs::knots::Side as KnotSide;
 use crate::surface::surface::p4::NoObject;
 use crate::surface::surface::p5::DropPointOptions;
@@ -56,6 +56,15 @@ const CURVE_TOL: f64 = 1.0e-8;
 
 /// The samples a circle is recognised by (`IsArc`'s, as the fillet solver's torus takes).
 const ARC_SAMPLES: u64 = 11;
+
+/// The sine of the angle two directions may make and still count as the same direction
+/// (the section is the same along the round only where they are).
+const DIR_TOL: f64 = 1.0e-9;
+
+/// Whether the unit directions `a` and `b` are parallel, either way, within [`DIR_TOL`].
+fn parallel(a: Vec3, b: Vec3) -> bool {
+    near(a.cross(b).length(), 0.0, DIR_TOL)
+}
 
 /// Whether `a` lies within `tol` of `b` (`false` for a NaN).
 fn near(a: f64, b: f64, tol: f64) -> bool {
@@ -135,6 +144,26 @@ enum Section {
 }
 
 impl Section {
+    /// The section's point `p` in space (a turned section's in its half-plane).
+    fn to3(&self, p: P2) -> Point3 {
+        match *self {
+            Self::Straight { origin, x, y } => origin + x * p.x + y * p.y,
+            Self::Turned {
+                origin,
+                axis,
+                radial,
+            } => origin + radial * p.x + axis * p.y,
+        }
+    }
+
+    /// The section's direction `v` in space.
+    fn direction(&self, v: P2) -> Vec3 {
+        match *self {
+            Self::Straight { x, y, .. } => x * v.x + y * v.y,
+            Self::Turned { axis, radial, .. } => radial * v.x + axis * v.y,
+        }
+    }
+
     fn to2(&self, p: Point3) -> P2 {
         match *self {
             Self::Straight { origin, x, y } => P2::new((p - origin).dot(x), (p - origin).dot(y)),
@@ -153,8 +182,8 @@ impl Section {
             (Self::Straight { x, y, .. }, QuadricKind::Plane) => {
                 let n = P2::new(q.dir.dot(x), q.dir.dot(y));
                 let len = n.length();
-                // the plane runs along the spine: its normal lies in the section
-                if !near(len, 1.0, tol) {
+                // the plane runs along the spine: its normal is square to it
+                if !near(q.dir.dot(x.cross(y)), 0.0, DIR_TOL) {
                     return None;
                 }
                 let n = n.scale(1.0 / len);
@@ -164,7 +193,7 @@ impl Section {
                 })
             }
             (Self::Turned { axis, .. }, QuadricKind::Plane) => {
-                if !near(q.dir.dot(axis).abs(), 1.0, tol) {
+                if !parallel(q.dir, axis) {
                     return None;
                 }
                 Some(Line2 {
@@ -173,8 +202,8 @@ impl Section {
                 })
             }
             (Self::Turned { origin, axis, .. }, QuadricKind::Cylinder) => {
-                let coaxial = (q.dir.dot(axis).abs() - 1.0).abs() <= tol
-                    && across(q.point - origin, axis).length() <= tol;
+                let coaxial =
+                    parallel(q.dir, axis) && across(q.point - origin, axis).length() <= tol;
                 coaxial.then_some(Line2 {
                     n: P2::new(1.0, 0.0),
                     c: q.radius,
@@ -189,12 +218,11 @@ impl Section {
     fn rim_point(&self, q: &BlendQuadric, tol: f64) -> Option<P2> {
         match (*self, q.kind) {
             (Self::Straight { x, y, .. }, QuadricKind::Line) => {
-                let along = x.cross(y);
-                ((q.dir.dot(along).abs() - 1.0).abs() <= tol).then(|| self.to2(q.point))
+                parallel(q.dir, x.cross(y)).then(|| self.to2(q.point))
             }
             (Self::Turned { origin, axis, .. }, QuadricKind::Circle) => {
-                let coaxial = (q.dir.dot(axis).abs() - 1.0).abs() <= tol
-                    && across(q.point - origin, axis).length() <= tol;
+                let coaxial =
+                    parallel(q.dir, axis) && across(q.point - origin, axis).length() <= tol;
                 coaxial.then(|| P2::new(q.radius, (q.point - origin).dot(axis)))
             }
             _ => None,
@@ -332,7 +360,7 @@ fn decide(lines: [Line2; 2], c2: P2, radius: f64, rims: [&[P2]; 2], tol: f64) ->
     let [l0, l1] = lines;
     // the filleted edge: where the faces' lines meet
     let det = l0.n.x * l1.n.y - l0.n.y * l1.n.x;
-    if det.is_nan() || det.abs() <= tol {
+    if det.is_nan() || det.abs() <= DIR_TOL {
         return None;
     }
     let e = P2::new(
@@ -454,7 +482,7 @@ pub fn rims_of_face(
             let Ok(rd) = rim_vector.unitize() else {
                 continue;
             };
-            if !near(d.cross(rd).length(), 0.0, CURVE_TOL) {
+            if !parallel(d, rd) {
                 continue;
             }
             // its span along the filleted edge covers the filleted edge's
@@ -490,7 +518,7 @@ pub fn rims_of_face(
             let Ok(rim_axis) = rim_frame.z_axis().unitize() else {
                 continue;
             };
-            let coaxial = axis.cross(rim_axis).length() <= CURVE_TOL
+            let coaxial = parallel(axis, rim_axis)
                 && across(rim_frame.origin() - frame.origin(), axis).length() <= tol;
             // a whole circle
             if !coaxial || !rim_curve.is_closed(k, &rim_ivl, 0.0)? {
@@ -602,11 +630,16 @@ pub fn outline_supports(
         let surface = crate::topology::face::p2::surface(target, face)?
             .ok_or_else(|| SolidError::sm_err(OP))?
             .clone_for_evaluation()?;
+        // a plane or a cylinder, the only faces the section takes
+        if !matches!(surface.kind(), SurfaceKind::Cone(_)) && !surface.is_planar(k, tol)?.is_planar
+        {
+            return Ok(None);
+        }
         let domain = surface.natural_uv_domain_with_nurb(k)?;
         let dropped =
             surface.drop_point::<NoObject>(k, m, &domain, &DropPointOptions::default())?;
         if !dropped.success {
-            return Err(SolidError::sm_err(OP));
+            return Ok(None);
         }
         let uv = dropped.result_uv;
         let normal = surface.evaluate_normal(k, uv, KnotSide::Left, KnotSide::Left)?;
@@ -646,8 +679,9 @@ pub fn outline_supports(
         c: l.n.dot(section.to2(m + n * d)),
     };
     let (o0, o1) = (shifted(l0, n0, d0), shifted(l1, n1, d1));
+    // (the sine of the faces' angle)
     let det = o0.n.x * o1.n.y - o0.n.y * o1.n.x;
-    if det.is_nan() || det.abs() <= tol {
+    if det.is_nan() || det.abs() <= DIR_TOL {
         return Ok(None);
     }
     let c2 = P2::new(
@@ -691,9 +725,11 @@ pub fn outline_supports(
         let Some(tangent) = tangent_along_rim(k, &section, surface, normal, rim, to)? else {
             return Ok(None);
         };
-        // the support turns the face's normal by less than a right angle
-        let turn = normal.dot(tangent_normal(&section, to));
-        if turn.is_nan() || turn <= 0.0 {
+        // the support turns the face's normal by less than a right angle, and its own normal
+        // at the rim is `to`
+        let want = section.direction(to);
+        let turn = normal.dot(want);
+        if turn.is_nan() || turn <= 0.0 || !normal_at(k, &tangent, section.to3(rim), want)? {
             return Ok(None);
         }
         *support = Some(tangent);
@@ -715,15 +751,12 @@ fn tangent_along_rim(
     to: P2,
 ) -> Result<Option<Surface>> {
     match *section {
-        Section::Straight { origin, x, y } => {
+        Section::Straight { x, y, .. } => {
             let from = P2::new(normal.dot(x), normal.dot(y));
             let angle = (from.x * to.y - from.y * to.x).atan2(from.dot(to));
-            let at = origin + x * rim.x + y * rim.y;
             let mut turn = Axis2Placement::default();
             turn.init();
-            turn.translate(-at);
-            turn.rotate_about_axis(angle, x.cross(y));
-            turn.translate(at);
+            turn.rotate_about_axis_at_point(angle, section.to3(rim), x.cross(y));
             surface.transform(k, &turn, None)?;
             Ok(Some(surface))
         }
@@ -742,7 +775,18 @@ fn tangent_along_rim(
             // the radius's change per unit of height along the cone's own axis
             let slope = along.x / along.y * cone_axis.dot(axis);
             let rim_point = origin + axis * rim.y;
-            let neutral = (rim_point - frame.origin()).dot(cone_axis);
+            let height = |p: Point3| (p - frame.origin()).dot(cone_axis);
+            let neutral = height(rim_point);
+            // the cone keeps a radius over the whole wall (its rows run from one end of the
+            // wall's height to the other): one that reaches the axis is not this support
+            let domain = surface.natural_uv_domain_with_nurb(k)?;
+            for v in [domain.min.y, domain.max.y] {
+                let p = surface.evaluate_point(k, Point2::new(domain.min.x, v))?;
+                let leaned = cylinder.canonical().radius + slope * (height(p) - neutral);
+                if leaned.is_nan() || leaned <= EFF_ZERO {
+                    return Ok(None);
+                }
+            }
             Ok(Some(Surface::from(
                 cylinder.lean_cylinder(k, slope, neutral)?,
             )))
@@ -750,11 +794,16 @@ fn tangent_along_rim(
     }
 }
 
-/// The unit vector `to` of the section in space: in the plane of a straight section, or in
-/// the half-plane of a turned one.
-fn tangent_normal(section: &Section, to: P2) -> Vec3 {
-    match *section {
-        Section::Straight { x, y, .. } => x * to.x + y * to.y,
-        Section::Turned { axis, radial, .. } => radial * to.x + axis * to.y,
+/// Whether `surface`'s unit normal at its point nearest `at` is `want`, within [`DIR_TOL`].
+fn normal_at(k: &Kernel, surface: &Surface, at: Point3, want: Vec3) -> Result<bool> {
+    let domain = surface.natural_uv_domain_with_nurb(k)?;
+    let dropped = surface.drop_point::<NoObject>(k, at, &domain, &DropPointOptions::default())?;
+    if !dropped.success {
+        return Ok(false);
     }
+    let n = surface.evaluate_normal(k, dropped.result_uv, KnotSide::Left, KnotSide::Left)?;
+    let Ok(n) = n.unitize() else {
+        return Ok(false);
+    };
+    Ok(n.dot(want) > 0.0 && parallel(n, want))
 }
