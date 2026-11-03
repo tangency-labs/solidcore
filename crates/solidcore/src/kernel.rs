@@ -1569,13 +1569,19 @@ pub struct UpstreamFixes {
     /// chamfer much wider than the others) is refused with `FilletErrorType::NoRoom`,
     /// naming the largest size of that chamfer that keeps it inside, less the fit margin,
     /// as the refusal's fit; the facet is refused there too, its plane leaving the
-    /// chamfers. Four or more chamfers build the facet where their crossings lie in one
-    /// plane and are refused otherwise, and refused as a mitre, naming why; chamfer planes so
-    /// nearly coplanar that the points where they meet are not determined to the part's
-    /// rounding are refused with `FilletErrorType::CornerUnsupported`, naming that. The pinned
-    /// corner marches the mitre's edges as surface intersections, refuses a mitre of four
-    /// or more chamfers with no reason, and builds its corner face as a Coons patch where
-    /// the chamfers are unequal (WR-716, #2345; own design, smlib#89's brief).
+    /// chamfers. Four or more chamfers whose crossings lie in one plane build the facet
+    /// (their mitre is refused, naming why); where their crossings are not in one plane the
+    /// corner is a patch, whichever type was asked: the chamfers stop at their crossings and
+    /// the setback fill at order 0 (`blend_setback::fill_polygon`) closes the skew polygon of
+    /// their end sections, one face, G0 to each chamfer, refused where it would stand past a
+    /// face or into a chamfer. Chamfer planes so nearly coplanar that the points where they
+    /// meet are not determined to the part's rounding are refused with
+    /// `FilletErrorType::CornerUnsupported`, naming that. The pinned corner marches the
+    /// mitre's edges as surface intersections, refuses a mitre of four or more chamfers with
+    /// no reason, and builds its corner face as a Coons patch where the chamfers are unequal
+    /// (WR-716, #2345; own design, smlib#89's brief, the owner's answers on #2345). For the
+    /// port in progress only: at parity it becomes the default and the pinned corner's
+    /// chamfer branch is deleted (WR-716's retirement plan).
     pub fillet_chamfer_corner: bool,
     /// `SmPlane::GlobalSurfaceIntersect` with a torus as the other surface takes the torus's own plane section (`SmSurfOfRevolution::IntersectWithPlane` with the torus's iso circles: the circles of a plane square to the axis, the meridians of a plane through it), the orders and UV curves swapped as for a surface of revolution, where upstream has no torus case and marches it (circles 1.4e-6 off, meridians 3.5e-6 off); a meridian keeps its generator's circle kind (WR-721, #2405; solidcore-native, no fork commit).
     pub plane_first_torus_section_exact: bool,
