@@ -2484,7 +2484,7 @@ fn closed_boundary(
         let (a, b) = (root(&one, a), root(&one, b));
         (a != b).then_some((a.min(b), a.max(b)))
     };
-    let mut sides: HashMap<(u32, u32), u32> = crate::map_with_room(triangles.len().checked_mul(3));
+    let mut sides: HashMap<(u32, u32), u32> = HashMap::new();
     for t in triangles {
         // Each corner with the next one round the triangle.
         for (&a, &b) in t.iter().zip(t.iter().cycle().skip(1)) {

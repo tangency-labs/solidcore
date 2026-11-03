@@ -64,7 +64,7 @@ pub(crate) fn refine(
     // No side is split below this length: a surface whose parameters bend sharply (at a pole) is
     // not chased to the last bit.
     let shortest = tol * 1e-3;
-    let mut sides: HashMap<(u32, u32), Vec<u32>> = crate::map_with_room(tris.len().checked_mul(2));
+    let mut sides: HashMap<(u32, u32), Vec<u32>> = HashMap::new();
     for (ti, t) in tris.iter().enumerate() {
         for [a, b, _] in turns(*t) {
             // Proven: fewer triangles than twice MAX_FACE_NODES, as above: the index fits a u32.
@@ -381,7 +381,7 @@ pub(crate) fn flip(
         }
         _ => Ok(f64::INFINITY),
     };
-    let mut sides: HashMap<(u32, u32), Vec<u32>> = crate::map_with_room(tris.len().checked_mul(2));
+    let mut sides: HashMap<(u32, u32), Vec<u32>> = HashMap::new();
     for (ti, t) in tris.iter().enumerate() {
         for [a, b, _] in turns(*t) {
             // Proven: fewer triangles than twice MAX_FACE_NODES, as above: the index fits a u32.
