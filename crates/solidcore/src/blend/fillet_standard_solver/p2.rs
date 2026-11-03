@@ -2644,12 +2644,14 @@ pub fn law_in_parameter(lb: &LawBall) -> Result<Option<BSplineCurve>> {
 const OP_LAW: &str = "blend::fillet_standard_solver::p2::law_in_parameter";
 
 /// Not the fork's (#2500): the face a round's ball rolls on, for the round by its
-/// definition: the offset's base surface, or, where the offset extends it as itself (with
-/// `offset_extension_as_itself`, a cylinder, cone, sphere or torus, or a surface of
-/// revolution of a circle's arc) and holds that extension, the extension. It is the same surface at the same parameters over the base's
-/// domain, and the trace runs on it past the face (out to an End, or round a turn), so the
-/// ball's feet there are on it: on the base alone the station solve fails past the face, and
-/// the round is built as the trace's B-spline instead of its definition.
+/// definition: the offset's base surface, or, for a surface of revolution of a circle's arc
+/// that the offset extends as itself (`offset_extension_as_itself`, the fork's 43fd6b6) and
+/// whose extension it holds, that extension. Past its generator's interval a surface of
+/// revolution revolves the generator's extrapolation, not its circle, so a ball the trace
+/// rolls on past the face (out to an End, round the tube) has no foot on the base there: the
+/// station solve failed and the round was built as the trace's B-spline. A cylinder, cone,
+/// sphere or torus continues as itself on its own, and keeps its analytic kind in the
+/// definition.
 fn rolled_on<'a>(
     k: &Kernel,
     offset: &'a crate::surface::offset_surface::OffsetSurface,
@@ -2658,6 +2660,10 @@ fn rolled_on<'a>(
     match offset.extended_base_surface() {
         Some(extended)
             if k.fixes.offset_extension_as_itself
+                && matches!(
+                    base.kind(),
+                    crate::surface::surface::SurfaceKind::SurfOfRevolution(_)
+                )
                 && crate::surface::offset_surface::extends_as_itself(k, base) =>
         {
             extended
