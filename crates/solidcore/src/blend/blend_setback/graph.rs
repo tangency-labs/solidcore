@@ -21,8 +21,9 @@
 //! margin answers feasibility with an empty fill, as the fork's leaves `rFill` empty.
 
 use super::certify::{
-    affine_fundamentals, affine_net, certified_convex, certified_curvature_bound, net_surface,
-    t_make, t_nonneg, t_pieces, t_scale, AffinePatch,
+    affine_fundamentals, affine_net, certified_convex, certified_curvature_bound,
+    lifted_fixed_parts, net_surface, t_axpy, t_make, t_mul_fast, t_nonneg, t_pieces, t_scale,
+    AffinePatch,
 };
 use super::qp::{dual_qp_rows, QpOutcome};
 use super::{
@@ -319,43 +320,47 @@ pub(super) fn graph_g1(
         *el_mut(&mut h0s, m)? = h0;
         *el_mut(&mut h1s, m)? = h1;
     }
-    // convex (the rounds take material away) or concave (they add it), and the axis e into
-    // the convex side
+    // each round convex (it takes material away) or concave (it adds it): all convex, all
+    // concave (the axis e into the convex side), or mixed (#2361: e into the material)
     let mut sum = Vec3::ZERO;
-    let mut convex = 0;
+    let mut sides = vec![0; n];
     for m in 0..n {
         let face = el_ref(&faces, el(cycle_face, m)?)?;
         sum += face.normal;
-        let side = if (el(&mids, m)? - face.point).dot(face.normal) < 0.0 {
+        *el_mut(&mut sides, m)? = if (el(&mids, m)? - face.point).dot(face.normal) < 0.0 {
             1
         } else {
             -1
         };
-        if convex != 0 && side != convex {
-            return Err(Refusal::invalid(
-                "SmBlendSetback: a convex G1 fill needs rounds all convex or all concave",
-            ));
-        }
-        convex = side;
     }
-    let e = (sum * if convex > 0 { -1.0 } else { 1.0 }).unitize()?;
-    // each patch's least normal curvature (the owner's one certificate, #2361): 0 beside
-    // convex rounds, -1 / r beside a concave round of radius r; the interior parts the
+    let first_side = el(&sides, 0)?;
+    // 1 all convex, -1 all concave, 0 mixed
+    let convex = if sides.iter().all(|&s| s == first_side) {
+        first_side
+    } else {
+        0
+    };
+    let e = (sum * if convex < 0 { 1.0 } else { -1.0 }).unitize()?;
+    // where e points into the material (1) or out of it (-1)
+    let tau = if convex < 0 { -1.0 } else { 1.0 };
+    // each patch's least normal curvature (the owner's one certificate, #2361): 0 beside a
+    // convex round, -1 / r beside a concave round of radius r; the interior parts the
     // least of the rounds'
     let mut ks = vec![0.0; 2 * n];
-    if convex < 0 {
-        let mut least = 0.0;
-        for m in 0..n {
-            let r = arc_radius(el_ref(&h0s, m)?)?;
-            let k = if r > 0.0 { -1.0 / r } else { 0.0 };
-            *el_mut(&mut ks, m)? = k;
-            if k < least {
-                least = k;
-            }
+    let mut least = 0.0;
+    for m in 0..n {
+        if el(&sides, m)? > 0 {
+            continue;
         }
-        for k in ks.iter_mut().skip(n) {
-            *k = least;
+        let r = arc_radius(el_ref(&h0s, m)?)?;
+        let k = if r > 0.0 { -1.0 / r } else { 0.0 };
+        *el_mut(&mut ks, m)? = k;
+        if k < least {
+            least = k;
         }
+    }
+    for k in ks.iter_mut().skip(n) {
+        *k = least;
     }
     let mut a1 = Vec3::new(1.0, 0.0, 0.0);
     if e.y.abs() < e.x.abs() && e.y.abs() <= e.z.abs() {
@@ -398,6 +403,16 @@ pub(super) fn graph_g1(
         let t = (a11 * b2 - a12 * b1) / det;
         let x = (pa + ta * s + pb + tb * t) * 0.5;
         let mid_c = (pa + pb) * 0.5;
+        // between rounds of opposite convexity the rounds end at their rails' crossing (#2361):
+        // no spring curve, the base point there, no cross field (both setback patches' face
+        // sides collapse to it)
+        if el(&sides, m)? != el(&sides, mp)? && pa.distance(pb) <= tol {
+            *el_mut(&mut xi, m)? = in_plane(mid_c);
+            *el_mut(&mut sigma, m)? = P2::default();
+            *el_mut(&mut to_x0, m)? = 0.0;
+            *el_mut(&mut to_x1, mp)? = 0.0;
+            continue;
+        }
         if !(s > 0.0) || !(t > 0.0) {
             return Err(Refusal::invalid(
                 "SmBlendSetback: two rounds' rails on a face cross behind their ends (no corner region between them)",
@@ -778,8 +793,44 @@ pub(super) fn graph_g1(
                     "SmBlendSetback: the fill folds (a patch's normal turns across the corner's axis)",
                 ));
             }
-            q0s.push(af.q0);
-            qjs.push(af.qj);
+            if convex != 0 {
+                q0s.push(af.q0);
+                qjs.push(af.qj);
+                continue;
+            }
+            // mixed (#2361): each patch held to its own II >= k G, linearly in the heights:
+            // tau s w^3 [[l, m], [m, n]] + (-k) s o Gh, with Gh's part square to e (fixed)
+            // for Gh (certified_curvature_bound then decides the fill)
+            let (w3, gh) = lifted_fixed_parts(&patch.base, e)?;
+            let kp = el(&ks, p)?;
+            let mut so = af.o.clone();
+            for x in &mut so.c {
+                *x *= -kp * s;
+            }
+            let lift = |f: &Tensor| -> Result<Tensor> {
+                let mut g = t_mul_fast(&w3, f)?;
+                for x in &mut g.c {
+                    *x *= tau * s;
+                }
+                Ok(g)
+            };
+            let mut q0: [Tensor; 3] = Default::default();
+            for (k, slot) in q0.iter_mut().enumerate() {
+                *slot = t_axpy(
+                    &lift(el_ref(&af.q0, k)?)?,
+                    1.0,
+                    &t_mul_fast(&so, el_ref(&gh, k)?)?,
+                )?;
+            }
+            let mut qj: [Vec<Tensor>; 3] = Default::default();
+            for (k, slot) in qj.iter_mut().enumerate() {
+                for tj in el_ref(&af.qj, k)? {
+                    slot.push(lift(tj)?);
+                }
+            }
+            *el_mut(&mut signs, p)? = 1.0;
+            q0s.push(q0);
+            qjs.push(qj);
         }
         // the energy as a quadratic programme: G = 2 B'B (a least nudge where it leaves a
         // direction free: the energy only chooses), g = 2 B'c
@@ -825,6 +876,9 @@ pub(super) fn graph_g1(
                 return Err(sm_err().into());
             }
             let sq = el(&sigma, q)?;
+            if sq.x == 0.0 && sq.y == 0.0 {
+                continue; // a collapsed spring: no direction forced
+            }
             let a = (sq.x * dt.y - sq.y * dt.x) / det;
             let b = (ds.x * sq.y - ds.y * sq.x) / det;
             let mut th = b.atan2(a);
@@ -984,13 +1038,14 @@ pub(super) fn graph_g1(
             // SER(netsAt): SM_ERR
             return Err(sm_err().into());
         };
-        if certified_convex(&nets, e, GRAPH_DEPTH)?.is_err() {
+        // one convexity: the fill convex to its side; mixed, each patch to its own k
+        if convex != 0 && certified_convex(&nets, e, GRAPH_DEPTH)?.is_err() {
             continue;
         }
         // no more concave than what each patch joins (at a convex corner every k is 0 and
         // the convexity just certified is the whole condition)
         if ks.iter().any(|&k| k < 0.0)
-            && certified_curvature_bound(&nets, e, f64::from(convex), &ks, GRAPH_DEPTH)?.is_err()
+            && certified_curvature_bound(&nets, e, tau, &ks, GRAPH_DEPTH)?.is_err()
         {
             continue;
         }

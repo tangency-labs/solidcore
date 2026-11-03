@@ -564,22 +564,7 @@ pub(super) fn certified_curvature_bound(
         };
         let (mut m11, mut m12, mut m22) = (lead(&fl)?, lead(&fm)?, lead(&fn_)?);
         if k < 0.0 {
-            // a_u, a_v: (H_u w - H w_u), (H_v w - H w_v) over x, y, z
-            let mut au: Vec<Tensor> = Vec::with_capacity(3);
-            let mut av: Vec<Tensor> = Vec::with_capacity(3);
-            for c in 0..3 {
-                let hc = el_ref(&rows.h, c)?;
-                au.push(t_axpy(
-                    &t_mul_fast(el_ref(&rows.hu, c)?, w)?,
-                    -1.0,
-                    &t_mul_fast(hc, el_ref(&rows.hu, 3)?)?,
-                )?);
-                av.push(t_axpy(
-                    &t_mul_fast(el_ref(&rows.hv, c)?, w)?,
-                    -1.0,
-                    &t_mul_fast(hc, el_ref(&rows.hv, 3)?)?,
-                )?);
-            }
+            let [au, av] = lifted_tangents(&rows)?;
             let dot = |a: &[Tensor], b: &[Tensor]| -> Result<Tensor> {
                 let mut d = t_make(0, 0);
                 for c in 0..3 {
@@ -604,6 +589,54 @@ pub(super) fn certified_curvature_bound(
         }
     }
     Ok(Ok(()))
+}
+
+/// `a_u`, `a_v`: `(H_u w - H w_u)`, `(H_v w - H w_v)` over x, y, z (`w^2 P_u`, `w^2 P_v`).
+fn lifted_tangents(rows: &Rows) -> Result<[[Tensor; 3]; 2]> {
+    let w = &rows.h[3];
+    let mut out: [[Tensor; 3]; 2] = Default::default();
+    for (d, side) in out.iter_mut().enumerate() {
+        let hd = if d == 0 { &rows.hu } else { &rows.hv };
+        for (c, slot) in side.iter_mut().enumerate() {
+            *slot = t_axpy(
+                &t_mul_fast(el_ref(hd, c)?, w)?,
+                -1.0,
+                &t_mul_fast(el_ref(&rows.h, c)?, el_ref(hd, 3)?)?,
+            )?;
+        }
+    }
+    Ok(out)
+}
+
+/// The fixed parts of [`certified_curvature_bound`]'s condition on a patch whose control
+/// points move only along e (the graph fill's heights): `w^3`, and `Gh` taken square to e,
+/// `(a_i - (a_i . e) e) . (a_j - (a_j . e) e)` for `uu`, `uv`, `vv`, which no height changes
+/// and which bounds `Gh` from below (`Gh` adds the square of the parts along e).
+pub(super) fn lifted_fixed_parts(net: &Net, e: Vec3) -> Result<(Tensor, [Tensor; 3])> {
+    let rows = rows_of(net, e)?;
+    let w = &rows.h[3];
+    let w3 = t_mul_fast(&t_mul_fast(w, w)?, w)?;
+    let [au, av] = lifted_tangents(&rows)?;
+    let square_to_e = |a: &[Tensor; 3]| -> Result<[Tensor; 3]> {
+        let mut along = t_make(0, 0);
+        for c in 0..3 {
+            along = t_axpy(&along, e.component(c), el_ref(a, c)?)?;
+        }
+        let mut out: [Tensor; 3] = Default::default();
+        for (c, slot) in out.iter_mut().enumerate() {
+            *slot = t_axpy(el_ref(a, c)?, -e.component(c), &along)?;
+        }
+        Ok(out)
+    };
+    let (pu, pv) = (square_to_e(&au)?, square_to_e(&av)?);
+    let dot = |a: &[Tensor; 3], b: &[Tensor; 3]| -> Result<Tensor> {
+        let mut d = t_make(0, 0);
+        for c in 0..3 {
+            d = t_axpy(&d, 1.0, &t_mul_fast(el_ref(a, c)?, el_ref(b, c)?)?)?;
+        }
+        Ok(d)
+    };
+    Ok((w3, [dot(&pu, &pu)?, dot(&pu, &pv)?, dot(&pv, &pv)?]))
 }
 
 #[cfg(test)]
