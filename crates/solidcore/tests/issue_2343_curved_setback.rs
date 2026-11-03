@@ -14,7 +14,8 @@
 //! 1e-12 of the part's size; every patch's least principal curvature at least k (0 beside
 //! convex faces and rounds, -1/21 beside the knife part's concave wall) less 1e-9; and every
 //! patch on the material's side of every face, by the face's closed-form distance, to 1e-12
-//! of the part's size. Before this change each corner was the old N-sided corner's patch
+//! of the part's size; and every patch's control net never turning back (`check_brep`'s test
+//! #5, part of the certificate since #2243). Before this change each corner was the old N-sided corner's patch
 //! (`NByNConvex`), not a Setback.
 #![allow(
     clippy::unwrap_used,
@@ -38,7 +39,10 @@ use solidcore::nurbs::knots::Side;
 use solidcore::primitive::api_curves::create_line_segment;
 use solidcore::primitive::api_primitives::{create_box, create_cylinder, create_sphere};
 use solidcore::query::api_queries::{brep_bounding_box, get_edges, get_faces};
+use solidcore::surface::procedural_blend::convert::{corner_rebuild, corner_to_record};
 use solidcore::surface::procedural_blend::corner::CornerKind;
+use solidcore::surface::procedural_blend::record::{CornerRecord, QuadricKindRecord};
+use solidcore::surface::surface::assert_valid::grid_has_non_monotonic_points;
 use solidcore::surface::surface::p2::SurfaceKind;
 use solidcore::surface::surface::p4::NoObject;
 use solidcore::surface::surface::Surface;
@@ -433,6 +437,14 @@ fn graded(k: &mut Kernel, b: &mut Brep, case: &Case, n: usize) {
             _ => false,
         };
         assert!(single, "{name}: a patch not one Bezier span");
+        // its net never turns back (check_brep's test #5, the owner's ruling on #2243)
+        if let SurfaceKind::BSpline(bs) = s.kind() {
+            let net = bs.control_point_net().unwrap();
+            assert!(
+                !grid_has_non_monotonic_points(&net.points, net.v_count, false, false).unwrap(),
+                "{name}: a patch's control net turns back"
+            );
+        }
         for e in face4::edges(b, p, None, false, None).unwrap() {
             let curve = edge::curve(b, e).unwrap().unwrap().clone();
             let ivl = edge::interval(b, e).unwrap();
@@ -578,30 +590,60 @@ fn d_prism_unequal_corner_is_a_setback_beside_the_cylinder() {
 }
 
 /// With `fillet_round_as_definition` on (as here), a Setback's fill patches keep the fill's
-/// definition (#2488). That definition's faces are planes: its transform moves a face's point
-/// and normal, and its record keeps only those. So beside a curved face the patches keep none,
-/// and the body is still built.
+/// definition (#2488). Beside a curved face its faces are the quadrics they are: each patch is
+/// its definition, with its bound, re-certified from it; its record keeps the cylinder as a
+/// cylinder and rebuilds the same patch; and moved, the definition's cylinder moves with it.
 #[test]
-fn beside_a_curved_face_the_fill_keeps_no_plane_definition() {
+fn beside_a_curved_face_the_fill_is_its_definition() {
     let (mut k, mut b, edges, case) = d_prism_case(true);
     assert!(k.fixes.fillet_round_as_definition);
     let r = round_each(&mut k, &mut b, &edges, &[2.0, 2.5, 3.0], case.v);
     assert_eq!(r.event, Some(BlendCornerEvent::Setback), "{}", r.reason);
     assert!(r.ok, "{}", r.reason);
-    let kept = get_faces(&b)
+    let patches: Vec<Surface> = get_faces(&b)
         .unwrap()
         .into_iter()
-        .filter(|&f| {
-            b.face(f)
-                .unwrap()
-                .surface
-                .as_ref()
-                .and_then(Surface::procedural_blend)
+        .filter_map(|f| b.face(f).unwrap().surface.clone())
+        .filter(|s| {
+            s.procedural_blend()
                 .and_then(|d| d.corner())
                 .is_some_and(|c| c.kind() == CornerKind::Setback)
         })
-        .count();
-    assert_eq!(kept, 0, "patches keeping a Setback definition");
+        .collect();
+    assert_eq!(patches.len(), 6, "patches keeping a Setback definition");
+    for s in &patches {
+        let d = s.procedural_blend().unwrap();
+        assert!(d.bound() > 0.0 && d.bound() < 1e-3, "{}", d.bound());
+        assert_eq!(d.recertify(&k).unwrap(), 0.0);
+        // its record: the D prism's cylinder (R 10 about the z axis, the material inside)
+        let rec = corner_to_record(&k, s).unwrap();
+        let CornerRecord::Setback(sr) = &rec else {
+            panic!("not a setback's record");
+        };
+        let cylinders: Vec<_> = sr.faces.iter().filter_map(|f| f.quadric).collect();
+        assert_eq!(cylinders.len(), 1);
+        let q = cylinders[0];
+        assert_eq!(q.kind, QuadricKindRecord::Cylinder);
+        assert!((q.radius - 10.0).abs() <= 1e-9 && q.slope == 0.0 && q.side == 1.0);
+        assert!((q.axis[2].abs() - 1.0).abs() <= 1e-12);
+        let json = serde_json::to_string(&rec).unwrap();
+        let back = corner_rebuild(&k, &serde_json::from_str(&json).unwrap()).unwrap();
+        assert_eq!(corner_to_record(&k, &back).unwrap(), rec);
+        assert_eq!(back.procedural_blend().unwrap().recertify(&k).unwrap(), 0.0);
+        // moved: the cylinder's axis turns with the patch
+        let mut moved = s.copy(&k).unwrap();
+        let mut place = Axis2Placement::default();
+        place.rotate_about_axis(0.3, Vec3::new(1.0, 2.0, 3.0).unitize().unwrap());
+        place.translate(Vec3::new(1e2, -2e2, 5e1));
+        moved.transform(&k, &place, None).unwrap();
+        let dm = moved.procedural_blend().unwrap();
+        let proved = dm.recertify(&k).unwrap();
+        assert!(
+            proved <= dm.bound(),
+            "moved: {proved:e} against {:e}",
+            dm.bound()
+        );
+    }
 }
 
 #[test]
@@ -892,34 +934,26 @@ fn cone_frustum_corner_is_a_setback_beside_the_cone() {
     graded(&mut k, &mut b, &case, 3);
 }
 
-/// The fork's `curved_countersink_corner`: the block x in [-20, 4], y in [-20, 20], z in [0, 20]
-/// less a cone's frustum about (4, 0) widening at 45 degrees from radius 2 at z = 14, its
-/// corner V = (4, 8, 20) where the top, the side and the concave cone meet: the top-side edge,
-/// the rim and the generator rounded 1.25, 1.5 and 1: a convex corner beside a concave cone, no
-/// more concave than the cone (k = -cos 45 / 5.5). Faces: 8, 3 rounds, 6 patches (17).
-#[test]
-#[ignore = "known failing, and slow (its setbacks grow to 1.414 x the rule's): a patch's control \
-            net doubles back (check_brep's SmBSplineSurface test #5), as the fork's open item (b) \
-            (plan/findings/blend.blend_corner--curved-setback-countersink-net-doubles-back.md)"]
-fn countersink_corner_is_a_setback_no_more_concave_than_its_cone() {
-    let mut k = all_fixes(true);
+/// The fork's `curved_countersink_corner` (below): the part, its three edges at the corner,
+/// their radii and the case.
+fn countersink_case(k: &mut Kernel) -> (Brep, Vec<EdgeId>, Vec<f64>, Case) {
     let c45 = 0.5f64.sqrt();
     let sink = solidcore::primitive::api_primitives::create_cone(
-        &mut k,
+        k,
         Point3::new(4.0, 0.0, 14.0),
         2.0,
         9.0,
         7.0,
     )
     .unwrap();
-    let block = create_box(&mut k, Point3::new(-20.0, -20.0, 0.0), 24.0, 40.0, 20.0).unwrap();
-    let mut b = boolean_difference(&mut k, block, sink).unwrap();
+    let block = create_box(k, Point3::new(-20.0, -20.0, 0.0), 24.0, 40.0, 20.0).unwrap();
+    let b = boolean_difference(k, block, sink).unwrap();
     let mut edges = vec![
-        pick(&k, &b, [4.0, 14.0, 20.0]),
-        pick(&k, &b, [4.0, 5.0, 17.0]),
+        pick(k, &b, [4.0, 14.0, 20.0]),
+        pick(k, &b, [4.0, 5.0, 17.0]),
     ];
     let mut radii = vec![1.25, 1.0];
-    for e in edges_on(&k, &b, |p| {
+    for e in edges_on(k, &b, |p| {
         (p.z - 20.0).abs() <= 1e-7 && ((p.x - 4.0).hypot(p.y) - 8.0).abs() <= 1e-7
     }) {
         edges.push(e);
@@ -964,7 +998,37 @@ fn countersink_corner_is_a_setback_no_more_concave_than_its_cone() {
         k: -c45 / 5.5,
         faces_want: 17,
     };
+    (b, edges, radii, case)
+}
+
+/// The fork's `curved_countersink_corner`: the block x in [-20, 4], y in [-20, 20], z in [0, 20]
+/// less a cone's frustum about (4, 0) widening at 45 degrees from radius 2 at z = 14, its
+/// corner V = (4, 8, 20) where the top, the side and the concave cone meet: the top-side edge,
+/// the rim and the generator rounded 1.25, 1.5 and 1: a convex corner beside a concave cone, no
+/// more concave than the cone (k = -cos 45 / 5.5). Faces: 8, 3 rounds, 6 patches (17). Its
+/// rule's setbacks grow to 1.416 x (2.655, 2.124, 3.186); the fork's open item (b), a net
+/// that doubled back there, is gone with the net's fairness and certificate (#2243).
+#[test]
+#[ignore = "slow: its setbacks grow to 1.416 x the rule's (twelve curved fills), about 8 minutes \
+            in release; countersink_asked_corner_is_certified_with_its_nets builds the corner \
+            without the growth"]
+fn countersink_corner_is_a_setback_no_more_concave_than_its_cone() {
+    let mut k = all_fixes(true);
+    let (mut b, edges, radii, case) = countersink_case(&mut k);
     let r = round_each(&mut k, &mut b, &edges, &radii, case.v);
+    assert_eq!(r.event, Some(BlendCornerEvent::Setback), "{}", r.reason);
+    assert!(r.ok, "{}", r.reason);
+    graded(&mut k, &mut b, &case, 3);
+}
+
+/// The countersink's corner asked to be set back 3.2 along each edge (past its grown rule's
+/// setbacks, 2.655, 2.124 and 3.186): certified there as it is, with every patch's net
+/// never turning back (net test #5) and contained.
+#[test]
+fn countersink_asked_corner_is_certified_with_its_nets() {
+    let mut k = all_fixes(true);
+    let (mut b, edges, radii, case) = countersink_case(&mut k);
+    let r = round_asked(&mut k, &mut b, &edges, &radii, case.v, Some(3.2));
     assert_eq!(r.event, Some(BlendCornerEvent::Setback), "{}", r.reason);
     assert!(r.ok, "{}", r.reason);
     graded(&mut k, &mut b, &case, 3);
@@ -973,36 +1037,32 @@ fn countersink_corner_is_a_setback_no_more_concave_than_its_cone() {
 /// The D prism's corner asked to be set back 3.05 along each edge: at or past every least
 /// setback (3 the most), but its fill is not certified there. The setbacks grow with the
 /// real rounds (twice first, then the planar search's bisection on the grid of thousandths),
-/// and the corner is refused naming the setback that builds, 3.05 x 1.061 = 3.23605. Slow
-/// (the growth's twelve fills, each from degree 3 up to 9 where none certifies).
+/// and the corner is refused naming the setback that builds, 3.05 x 1.06 = 3.233 (each trial
+/// certified by more than its rounding bound, #2243). Slow (the growth's twelve fills, each
+/// from degree 3 up to 9 where none certifies).
 #[test]
-#[ignore = "slow: about 3 minutes in release, most of an hour in a debug build (twelve curved fills)"]
+#[ignore = "slow: about 8 minutes in release, more than 20 in the test profile (twelve curved fills); \
+            the_named_setback_builds builds the setback it names"]
 fn d_prism_asked_too_short_names_the_setback_that_builds() {
     let (mut k, mut b, edges, case) = d_prism_case(true);
     let r = round_asked(&mut k, &mut b, &edges, &[2.0, 2.5, 3.0], case.v, Some(3.05));
     assert_eq!(r.event, Some(BlendCornerEvent::Setback), "{}", r.reason);
     assert!(!r.ok);
     assert!(
-        r.reason.contains("a setback of 3.05 is too short")
-            && r.reason.contains("3.23605 builds it"),
+        r.reason.contains("a setback of 3.05 is too short") && r.reason.contains("3.233 builds it"),
         "{}",
         r.reason
     );
-    assert!((r.fit - 3.05 * 1.061).abs() <= 1e-12, "{}", r.fit);
+    assert!((r.fit - 3.05 * 1.06).abs() <= 1e-12, "{}", r.fit);
 }
 
-/// The setback the growth names for 3.05, asked for, builds (`fit_setback`'s contract, as the
-/// planar `asked_setback_too_short_names_what_builds` checks).
+/// The setback the growth names for 3.05 (3.05 x 1.06, above), asked for, builds
+/// (`fit_setback`'s contract, as the planar `asked_setback_too_short_names_what_builds`
+/// checks): certified at it as it is, its nets never turning back.
 #[test]
-#[ignore = "known failing: asked, the named 3.23605 certifies and builds, but two patches' \
-            control nets fail check_brep test #5, as the countersink's \
-            (plan/findings/blend.blend_corner--curved-setback-countersink-net-doubles-back.md)"]
 fn the_named_setback_builds() {
     let (mut k, mut b, edges, case) = d_prism_case(true);
-    let r = round_asked(&mut k, &mut b, &edges, &[2.0, 2.5, 3.0], case.v, Some(3.05));
-    assert!(!r.ok && r.fit > 3.05, "{} (fit {})", r.reason, r.fit);
-    let named = r.fit;
-    let (mut k, mut b, edges, case) = d_prism_case(true);
+    let named = 3.05 * 1.06;
     let r = round_asked(
         &mut k,
         &mut b,
@@ -1011,6 +1071,7 @@ fn the_named_setback_builds() {
         case.v,
         Some(named),
     );
+    assert_eq!(r.event, Some(BlendCornerEvent::Setback), "{}", r.reason);
     assert!(r.ok, "asked {named}: {}", r.reason);
     graded(&mut k, &mut b, &case, 3);
 }
