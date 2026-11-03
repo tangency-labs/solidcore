@@ -53,9 +53,9 @@ pub(crate) fn segments(
         let (mut lo, mut hi) = ([f64::MAX; 2], [f64::MIN; 2]);
         for k in r.clone() {
             let q = metric(*uvs.get(k)?);
-            for d in 0..2 {
-                lo[d] = lo[d].min(q[d]);
-                hi[d] = hi[d].max(q[d]);
+            for ((l, h), x) in lo.iter_mut().zip(&mut hi).zip(q) {
+                *l = l.min(x);
+                *h = h.max(x);
             }
         }
         Some((lo, hi))

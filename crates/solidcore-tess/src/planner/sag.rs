@@ -66,11 +66,8 @@ pub(crate) fn refine(
     let shortest = tol * 1e-3;
     let mut sides: HashMap<(u32, u32), Vec<u32>> = HashMap::with_capacity(tris.len() * 2);
     for (ti, t) in tris.iter().enumerate() {
-        for k in 0..3 {
-            sides
-                .entry(key(t[k], t[(k + 1) % 3]))
-                .or_default()
-                .push(ti as u32);
+        for [a, b, _] in turns(*t) {
+            sides.entry(key(a, b)).or_default().push(ti as u32);
         }
     }
     let mut sag_of: HashMap<(u32, u32), f64> = HashMap::new();
@@ -92,8 +89,7 @@ pub(crate) fn refine(
         };
         // Sides inside the face (two triangles on them), long enough to split, with their sag.
         let mut inner: Vec<(f64, f64, (u32, u32))> = Vec::with_capacity(3);
-        for k in 0..3 {
-            let (a, b) = (t[k], t[(k + 1) % 3]);
+        for [a, b, _] in turns(t) {
             let e = key(a, b);
             if sides.get(&e).is_none_or(|ts| ts.len() != 2) {
                 continue;
@@ -105,13 +101,12 @@ pub(crate) fn refine(
             if len <= shortest {
                 continue;
             }
-            let sag = match sag_of.get(&e) {
-                Some(&sag) => sag,
-                None => {
-                    let sag = off(mean(&[ua, ub]), (xa + xb) * 0.5)?;
-                    sag_of.insert(e, sag);
-                    sag
-                }
+            let sag = if let Some(&sag) = sag_of.get(&e) {
+                sag
+            } else {
+                let sag = off(mean(&[ua, ub]), (xa + xb) * 0.5)?;
+                sag_of.insert(e, sag);
+                sag
             };
             inner.push((sag, len, e));
         }
@@ -180,6 +175,8 @@ fn mean(
     qs: &[[f64; 2]],
 ) -> [f64; 2] {
     let mut out = [0.0; 2];
+    // In range: `d` < 2 enumerates `out` and indexes the `[f64; 2]` parameters `qs`.
+    #[allow(clippy::indexing_slicing)]
     for (d, slot) in out.iter_mut().enumerate() {
         let free: Vec<f64> = qs
             .iter()
@@ -206,15 +203,25 @@ fn flat_long_side(
     degrees: f64,
 ) -> Option<(u32, u32)> {
     let p = |i: u32| pos.get(i as usize).copied();
-    let len = |k: usize| p(t[k]).zip(p(t[(k + 1) % 3])).map(|(a, b)| a.dist(b));
-    let lengths = [len(0)?, len(1)?, len(2)?];
-    let k = (0..3).max_by(|&i, &j| lengths[i].total_cmp(&lengths[j]))?;
-    let (l, a, b) = (lengths[k], lengths[(k + 1) % 3], lengths[(k + 2) % 3]);
-    let side = key(t[k], t[(k + 1) % 3]);
+    let len = |[a, b, _]: [u32; 3]| p(a).zip(p(b)).map(|(a, b)| a.dist(b));
+    let [t0, t1, t2] = turns(*t);
+    let lengths = [len(t0)?, len(t1)?, len(t2)?];
+    // The side from each corner to the next, with the two after it; the last longest one.
+    let ([l, a, b], [ta, tb, _]) = turns(lengths)
+        .into_iter()
+        .zip(turns(*t))
+        .max_by(|x, y| x.0[0].total_cmp(&y.0[0]))?;
+    let side = key(ta, tb);
     let inside = sides.get(&side).is_some_and(|ts| ts.len() == 2) && l > shortest;
     let flat =
         a > 0.0 && b > 0.0 && (a * a + b * b - l * l) / (2.0 * a * b) < degrees.to_radians().cos();
     (inside && flat).then_some(side)
+}
+
+/// The corners of a triangle turned so each comes first in turn, keeping its winding:
+/// `[a, b, c]`, `[b, c, a]`, `[c, a, b]`.
+fn turns<T: Copy>([a, b, c]: [T; 3]) -> [[T; 3]; 3] {
+    [[a, b, c], [b, c, a], [c, a, b]]
 }
 
 fn key(a: u32, b: u32) -> (u32, u32) {
@@ -245,10 +252,9 @@ fn split_side(
             continue;
         };
         // Turn the triangle so the side comes first, as it winds: [a, b, c].
-        let Some(k) = (0..3).find(|&k| key(t[k], t[(k + 1) % 3]) == e) else {
+        let Some([a, b, c]) = turns(t).into_iter().find(|&[a, b, _]| key(a, b) == e) else {
             continue;
         };
-        let (a, b, c) = (t[k], t[(k + 1) % 3], t[(k + 2) % 3]);
         let new = tris.len() as u32;
         if let Some(slot) = tris.get_mut(ti as usize) {
             *slot = [a, m, c];
@@ -367,11 +373,8 @@ pub(crate) fn flip(
     };
     let mut sides: HashMap<(u32, u32), Vec<u32>> = HashMap::with_capacity(tris.len() * 2);
     for (ti, t) in tris.iter().enumerate() {
-        for k in 0..3 {
-            sides
-                .entry(key(t[k], t[(k + 1) % 3]))
-                .or_default()
-                .push(ti as u32);
+        for [a, b, _] in turns(*t) {
+            sides.entry(key(a, b)).or_default().push(ti as u32);
         }
     }
     let mut queue: Vec<(u32, u32)> = sides
@@ -387,17 +390,16 @@ pub(crate) fn flip(
         if budget == 0 {
             break;
         }
-        let Some(&[t1, t2]) = sides.get(&e).map(|v| v.as_slice()) else {
+        let Some(&[t1, t2]) = sides.get(&e).map(Vec::as_slice) else {
             continue;
         };
         let (Some(&ta), Some(&tb)) = (tris.get(t1 as usize), tris.get(t2 as usize)) else {
             continue;
         };
         // [a, b, c] on one side of a -> b, [b, a, d] on the other.
-        let Some(k) = (0..3).find(|&k| key(ta[k], ta[(k + 1) % 3]) == e) else {
+        let Some([a, b, c]) = turns(ta).into_iter().find(|&[a, b, _]| key(a, b) == e) else {
             continue;
         };
-        let (a, b, c) = (ta[k], ta[(k + 1) % 3], ta[(k + 2) % 3]);
         let Some(d) = tb.iter().copied().find(|&v| v != a && v != b) else {
             continue;
         };
@@ -417,15 +419,14 @@ pub(crate) fn flip(
         // the surface normal), by more than a degree: a pair within a degree of the surface is
         // left as the layout made it.
         let mut cached = |ti: u32, t: [u32; 3]| -> Result<f64, NoValue> {
-            match dev_of.get(ti as usize).copied().flatten() {
-                Some(d) => Ok(d),
-                None => {
-                    let d = deviation(t)?;
-                    if let Some(slot) = dev_of.get_mut(ti as usize) {
-                        *slot = Some(d);
-                    }
-                    Ok(d)
+            if let Some(d) = dev_of.get(ti as usize).copied().flatten() {
+                Ok(d)
+            } else {
+                let d = deviation(t)?;
+                if let Some(slot) = dev_of.get_mut(ti as usize) {
+                    *slot = Some(d);
                 }
+                Ok(d)
             }
         };
         let worse = cached(t1, ta)?.max(cached(t2, tb)?);

@@ -4,8 +4,16 @@
 //! A blend that folds (a strongly non-convex boundary) is refused, and the face goes to the
 //! constrained Delaunay path.
 
+use std::cmp::Ordering;
+
 use crate::vec::VecExt as _;
 use solidcore_record::Vec3;
+
+use super::UvMesh;
+
+/// Whether the surface between two (u, v) points is fine enough as it is; the error is a point
+/// the surface does not evaluate at.
+pub(crate) type Fine<'a, E> = dyn Fn([f64; 2], [f64; 2]) -> Result<bool, E> + 'a;
 
 /// Smallest turn (radians) of the boundary at a corner, in the tolerance metric.
 const CORNER_TURN: f64 = 0.6;
@@ -72,12 +80,12 @@ pub(crate) fn coons_best(
     scale: [f64; 2],
     max_points: usize,
     h: f64,
-) -> Option<(Vec<[f64; 2]>, Vec<[u32; 3]>)> {
+) -> Option<UvMesh> {
     let c = candidates(uv, scale)?;
     if c.len() < 4 || c.len() > MAX_CANDIDATES {
         return None;
     }
-    let mut best: Option<(f64, (Vec<[f64; 2]>, Vec<[u32; 3]>))> = None;
+    let mut best: Option<(f64, UvMesh)> = None;
     let k = c.len();
     for a in 0..k {
         for b in a + 1..k {
@@ -100,7 +108,7 @@ pub(crate) fn coons_best(
 }
 
 /// Smallest corner angle (radians) of the triangles, in the metric.
-fn min_angle(uv: &[[f64; 2]], r: &(Vec<[f64; 2]>, Vec<[u32; 3]>), scale: [f64; 2]) -> f64 {
+fn min_angle(uv: &[[f64; 2]], r: &UvMesh, scale: [f64; 2]) -> f64 {
     let at = |i: u32| {
         let i = i as usize;
         let q = if i < uv.len() {
@@ -134,11 +142,11 @@ fn side(fixed: &[Vec3], n: usize, from: usize, to: usize) -> Option<Side> {
     let nodes: Vec<u32> = (0..=len).map(|k| ((from + k) % n) as u32).collect();
     let mut at = vec![0.0];
     let mut total = 0.0;
-    for w in nodes.windows(2) {
-        total += fixed.get(w[0] as usize)?.dist(*fixed.get(w[1] as usize)?);
+    for (a, b) in nodes.iter().zip(nodes.iter().skip(1)) {
+        total += fixed.get(*a as usize)?.dist(*fixed.get(*b as usize)?);
         at.push(total);
     }
-    if !(total > 0.0) {
+    if total.partial_cmp(&0.0) != Some(Ordering::Greater) {
         // A pole side: evenly along it.
         let m = (nodes.len() - 1).max(1) as f64;
         return Some(Side {
@@ -220,8 +228,8 @@ pub(crate) fn coons<E>(
     scale: [f64; 2],
     max_points: usize,
     h: f64,
-    fine: Option<&dyn Fn([f64; 2], [f64; 2]) -> Result<bool, E>>,
-) -> Result<Option<(Vec<[f64; 2]>, Vec<[u32; 3]>)>, E> {
+    fine: Option<&Fine<'_, E>>,
+) -> Result<Option<UvMesh>, E> {
     let Some(pick) = corners(uv, scale) else {
         return Ok(None);
     };
@@ -235,8 +243,8 @@ pub(crate) fn coons_at<E>(
     pick: [usize; 4],
     max_points: usize,
     h: f64,
-    fine: Option<&dyn Fn([f64; 2], [f64; 2]) -> Result<bool, E>>,
-) -> Result<Option<(Vec<[f64; 2]>, Vec<[u32; 3]>)>, E> {
+    fine: Option<&Fine<'_, E>>,
+) -> Result<Option<UvMesh>, E> {
     super::layout(|stopped| coons_in(uv, fixed, pick, max_points, h, fine, stopped))
 }
 
@@ -247,9 +255,9 @@ fn coons_in<E>(
     pick: [usize; 4],
     max_points: usize,
     h: f64,
-    fine: Option<&dyn Fn([f64; 2], [f64; 2]) -> Result<bool, E>>,
+    fine: Option<&Fine<'_, E>>,
     stopped: &mut Option<E>,
-) -> Option<(Vec<[f64; 2]>, Vec<[u32; 3]>)> {
+) -> Option<UvMesh> {
     let n = uv.len();
     let [c0, c1, c2, c3] = pick;
     // Sides in loop order; the bottom (0) and right (1) run with the loop, the top (2) and
@@ -268,14 +276,15 @@ fn coons_in<E>(
             along(&left, uv, t)?,
             along(&right, uv, t)?,
         );
-        let blend = |d: usize| {
-            (1.0 - t) * b[d] + t * tp[d] + (1.0 - s) * l[d] + s * r[d]
-                - ((1.0 - s) * (1.0 - t) * p00[d]
-                    + s * (1.0 - t) * p10[d]
-                    + (1.0 - s) * t * p01[d]
-                    + s * t * p11[d])
+        // `c` picks the coordinate (u or v).
+        let blend = |c: fn([f64; 2]) -> f64| {
+            (1.0 - t) * c(b) + t * c(tp) + (1.0 - s) * c(l) + s * c(r)
+                - ((1.0 - s) * (1.0 - t) * c(p00)
+                    + s * (1.0 - t) * c(p10)
+                    + (1.0 - s) * t * c(p01)
+                    + s * t * c(p11))
         };
-        Some([blend(0), blend(1)])
+        Some([blend(|p| p[0]), blend(|p| p[1])])
     };
     // The lines come from the sides' seeds (see [`lines`]): every side is seeded at the face's
     // global seed, which the size rules set for the whole surface, so the interior needs no finer
@@ -429,7 +438,7 @@ fn coons_in<E>(
     let first = area(tris.first()?)?;
     let sign = if first > 0.0 { 1.0 } else { -1.0 };
     for t in &tris {
-        if !(area(t)? * sign > 0.0) {
+        if (area(t)? * sign).partial_cmp(&0.0) != Some(Ordering::Greater) {
             return None;
         }
     }
@@ -456,7 +465,12 @@ fn refine<E>(
         .chain(std::iter::once(1.0))
         .collect();
     let mut out = vec![0.0];
-    let mut stack: Vec<(f64, f64, u32)> = all.windows(2).rev().map(|w| (w[0], w[1], 0)).collect();
+    let mut stack: Vec<(f64, f64, u32)> = all
+        .iter()
+        .zip(all.iter().skip(1))
+        .rev()
+        .map(|(&a, &b)| (a, b, 0))
+        .collect();
     while let Some((a, b, depth)) = stack.pop() {
         let mut ok = depth >= 16 || out.len() + stack.len() >= max;
         if !ok {

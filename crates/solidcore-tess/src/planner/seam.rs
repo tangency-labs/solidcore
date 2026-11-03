@@ -36,14 +36,21 @@ const MAX_COPIES: i64 = 2048;
 /// Most nodes a cut line may get between two crossings.
 const MAX_SEAM_NODES: usize = 4096;
 
+/// A run along a cut line joining two pieces: the piece it leaves, its nodes' parameters and
+/// points, and the piece it enters.
+type Link = (usize, Vec<[f64; 2]>, Vec<Vec3>, usize);
+
 /// How far `l` drifts along `d` going once around it (a whole number of periods for a closed
 /// loop: zero unless it winds around the surface).
 pub(crate) fn drift(l: &Loop, d: usize, per: f64) -> f64 {
-    let (Some(first), Some(last)) = (l.uv.first(), l.uv.last()) else {
+    let (Some(&first), Some(&last)) = (
+        l.uv.first().and_then(|q| q.get(d)),
+        l.uv.last().and_then(|q| q.get(d)),
+    ) else {
         return 0.0;
     };
-    let close = solidcore::eval::uv::unwrap(first[d], last[d], Some(per)) - last[d];
-    last[d] - first[d] + close
+    let close = solidcore::eval::uv::unwrap(first, last, Some(per)) - last;
+    last - first + close
 }
 
 /// Whether any loop winds around the closed direction `d`.
@@ -209,14 +216,14 @@ pub(crate) fn cut(
             above: b[0] == x1,
         };
         if a[0] == x0 {
-            left.push((enter, i, true))
+            left.push((enter, i, true));
         } else {
-            right.push((enter, i, true))
+            right.push((enter, i, true));
         }
         if b[0] == x0 {
-            left.push((leave, i, false))
+            left.push((leave, i, false));
         } else {
-            right.push((leave, i, false))
+            right.push((leave, i, false));
         }
     }
     left.sort_by(|a, b| a.0.y.total_cmp(&b.0.y));
@@ -252,7 +259,7 @@ pub(crate) fn cut(
     }
     // Inside the face along each line: from a crossing with the face above to the next one
     // up (which must have it below).
-    let mut links: Vec<(usize, Vec<[f64; 2]>, Vec<Vec3>, usize)> = Vec::new();
+    let mut links: Vec<Link> = Vec::new();
     for pair in left.chunks(2).zip(right.chunks(2)) {
         let (lp, rp) = pair;
         let (Some(la), Some(lb), Some(ra), Some(rb)) =
@@ -260,7 +267,7 @@ pub(crate) fn cut(
         else {
             return Err(Cut::Unclean);
         };
-        if !(la.0.above && !lb.0.above) {
+        if !la.0.above || lb.0.above {
             return Err(Cut::Unclean);
         }
         // Nodes strictly between, made once for both lines.
@@ -336,12 +343,10 @@ pub(crate) fn cut(
     let area: f64 = out
         .iter()
         .map(|l| {
-            let n = l.uv.len();
-            (0..n)
-                .map(|i| {
-                    let (a, b) = (l.uv[i], l.uv[(i + 1) % n]);
-                    a[0] * b[1] - b[0] * a[1]
-                })
+            // Each node with the next one round the loop.
+            l.uv.iter()
+                .zip(l.uv.iter().cycle().skip(1))
+                .map(|(a, b)| a[0] * b[1] - b[0] * a[1])
                 .sum::<f64>()
         })
         .sum();
@@ -359,13 +364,11 @@ fn cut_position(loops: &[Loop], per: f64) -> Option<f64> {
         .iter()
         .flat_map(|l| l.uv.iter().map(|q| q[0].rem_euclid(per)))
         .collect();
-    if xs.is_empty() {
-        return None;
-    }
     xs.sort_by(f64::total_cmp);
+    let &first = xs.first()?;
     let mut best = (0.0, f64::NEG_INFINITY);
     for (i, x) in xs.iter().enumerate() {
-        let next = xs.get(i + 1).copied().unwrap_or(xs[0] + per);
+        let next = xs.get(i + 1).copied().unwrap_or(first + per);
         if next - x > best.1 {
             best = (0.5 * (x + next), next - x);
         }
@@ -375,8 +378,9 @@ fn cut_position(loops: &[Loop], per: f64) -> Option<f64> {
 
 /// Whether a path jumps over the strip in one segment.
 fn crosses(uv: &[[f64; 2]], x0: f64, x1: f64) -> bool {
-    uv.windows(2)
-        .any(|w| (w[0][0] <= x0 && w[1][0] >= x1) || (w[1][0] <= x0 && w[0][0] >= x1))
+    uv.iter()
+        .zip(uv.iter().skip(1))
+        .any(|(a, b)| (a[0] <= x0 && b[0] >= x1) || (b[0] <= x0 && a[0] >= x1))
 }
 
 /// The runs of an open path (starting and ending outside the strip) inside the strip, each
@@ -414,7 +418,7 @@ fn clip(path: &[[f64; 2]], pts: &[Vec3], x0: f64, x1: f64, out: &mut Vec<Piece>)
                     cur = Some(Piece {
                         uv: vec![q],
                         pts: vec![p],
-                    })
+                    });
                 }
             }
         }
@@ -442,8 +446,7 @@ fn seam_nodes(
     let uv = |y: f64| if swap { [y, x] } else { [x, y] };
     let mut ys = vec![y0, y1];
     let mut i = 0;
-    while i + 1 < ys.len() {
-        let (a, b) = (ys[i], ys[i + 1]);
+    while let (Some(&a), Some(&b)) = (ys.get(i), ys.get(i + 1)) {
         if ys.len() < MAX_SEAM_NODES
             && !super::uv::fine_between(s, rules, h, uv(a), uv(b))?
             && b - a > 1e-12 * (1.0 + a.abs())
@@ -459,7 +462,7 @@ fn seam_nodes(
         .map(|&y| {
             s.derivs(uv(y)[0], uv(y)[1])
                 .map(|d| (y, kernel::record_vec3(d.0)))
-                .ok_or(NoValue(uv(y)))
+                .ok_or_else(|| NoValue(uv(y)))
         })
         .collect()
 }

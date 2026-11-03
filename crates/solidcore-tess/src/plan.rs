@@ -101,8 +101,8 @@ impl TessPlan {
                 }
             }
         }
-        out.edges = self.edges.clone();
-        out.edge_faces = self.edge_faces.clone();
+        out.edges.clone_from(&self.edges);
+        out.edge_faces.clone_from(&self.edge_faces);
         (out, refused)
     }
 
@@ -129,6 +129,7 @@ impl TessPlan {
     /// translation in `m[3]`): the same parameters and triangles on the moved surfaces, so a
     /// part placed many times is planned once. Only for proper rigid motions (a reflection
     /// would turn the triangles inside out; the caller checks).
+    #[must_use]
     pub fn transformed(&self, m: &[[f64; 4]; 4]) -> TessPlan {
         let vector = |v: Vec3| {
             Vec3::new(
@@ -171,13 +172,22 @@ impl TessPlan {
                     swap,
                 } => {
                     // `m` (as rows) after the surface's own affine map.
-                    let r = |i: usize| [m[0][i], m[1][i], m[2][i], m[3][i]];
-                    let rows = [r(0), r(1), r(2)];
+                    let rows = [
+                        [m[0][0], m[1][0], m[2][0], m[3][0]],
+                        [m[0][1], m[1][1], m[2][1], m[3][1]],
+                        [m[0][2], m[1][2], m[2][2], m[3][2]],
+                    ];
                     let t = transform;
+                    let columns = [
+                        [t[0][0], t[1][0], t[2][0]],
+                        [t[0][1], t[1][1], t[2][1]],
+                        [t[0][2], t[1][2], t[2][2]],
+                        [t[0][3], t[1][3], t[2][3]],
+                    ];
                     let composed = rows.map(|row| {
                         let mut out = [0.0; 4];
-                        for (j, slot) in out.iter_mut().enumerate() {
-                            *slot = (0..3).map(|k| row[k] * t[k][j]).sum::<f64>()
+                        for ((j, slot), column) in out.iter_mut().enumerate().zip(columns) {
+                            *slot = row.iter().zip(column).map(|(r, c)| r * c).sum::<f64>()
                                 + if j == 3 { row[3] } else { 0.0 };
                         }
                         out
