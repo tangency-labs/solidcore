@@ -36,10 +36,11 @@ use solidcore::geom::axis2_placement::Axis2Placement;
 use solidcore::geom::extent1d::Extent1d;
 use solidcore::geom::vector2d::Point2;
 use solidcore::geom::vector3d::{Point3, Vec3};
+use solidcore::intersect::point_class::{PointClassType, PointClassification};
 use solidcore::kernel::UpstreamFixes;
 use solidcore::mass::integrator::properties::{brep_volume, PropertyAttributes};
-use solidcore::nurbs::knots::Side;
 use solidcore::query::api_queries::edge_closest_point;
+use solidcore::query::face::p1 as fq;
 use solidcore::sweep::api_brep::create_linear_sweep;
 use solidcore::topology::api_files::turn_to_nurbs;
 use solidcore::topology::brep::p1;
@@ -140,6 +141,43 @@ fn check_failures(k: &mut Kernel, b: &mut Brep) -> Vec<String> {
         .collect()
 }
 
+/// The distance from `p` to the envelope of the round's balls (r 1.0), less nothing: the
+/// balls' centres lie on the side plane's offset `y = 4.0` and either on the top's offset
+/// `z = 14.0` (a line) or at 2.0 + 1.0 from the first round's centre circle `rho = 12.0`,
+/// `z = 17.0` (the offset torus's section by that plane, a closed curve, sampled over its
+/// angle and refined by golden section); `p` is on the envelope where its nearest centre is
+/// at `r`.
+fn off_envelope(p: Point3) -> f64 {
+    let r = 1.0_f64;
+    let line = ((p.y - (4.0_f64)).powi(2) + (p.z - (14.0_f64)).powi(2)).sqrt();
+    // the centre at angle t round the offset torus's section in the plane y = 4.0
+    let centre = |t: f64| {
+        let rho = 12.0_f64 + (2.0_f64 + r) * t.cos();
+        let z = 17.0_f64 + (2.0_f64 + r) * t.sin();
+        let x2 = rho * rho - (4.0_f64) * (4.0_f64);
+        (x2 >= 0.0).then(|| Point3::new(x2.sqrt(), 4.0_f64, z))
+    };
+    let dist = |t: f64| centre(t).map_or(f64::INFINITY, |c| c.distance(p));
+    let n = 2000;
+    let step = 2.0 * std::f64::consts::PI / f64::from(n);
+    let best = (0..n)
+        .map(|i| f64::from(i) * step)
+        .min_by(|&a, &b| dist(a).total_cmp(&dist(b)))
+        .unwrap();
+    let (mut lo, mut hi) = (best - step, best + step);
+    let g = (5f64.sqrt() - 1.0) / 2.0;
+    for _ in 0..200 {
+        let (m1, m2) = (hi - g * (hi - lo), lo + g * (hi - lo));
+        if dist(m1) < dist(m2) {
+            hi = m2;
+        } else {
+            lo = m1;
+        }
+    }
+    let torus = dist(0.5 * (lo + hi));
+    (line - r).abs().min((torus - r).abs())
+}
+
 /// The r 2 round's torus: the ball rolling on the block's top z = 15 and the cylinder
 /// rho = 10 has its centre on the circle rho = 12, z = 17.
 fn torus_distance(p: Point3) -> f64 {
@@ -166,16 +204,15 @@ fn on_given_face(p: Point3) -> bool {
     .any(|d| d.abs() < 1e-7)
 }
 
-/// The r 1 round on its definition: every point `p` of a face the round makes (sampled
-/// 9 x 9 over its surface's domain) has the centre `c = p -+ n` of a ball r 1 touching the
-/// side face y = 5 (`c.y = 4`) and either the block's top (`c.z = 14`) or the r 2 round's
-/// torus (`c` 2 + 1 from its centre circle). The largest miss over the faces that are their
-/// definition (`Surface::procedural_blend`) and over the others (B-splines traced within
-/// the round's tolerance), with the count of each.
-fn off_definition(k: &Kernel, b: &Brep) -> [(f64, usize); 2] {
+/// The r 1 round on its definition: every point of a face the round makes (sampled 9 x 9
+/// over its surface's domain, the samples on the face) lies on the envelope of its balls
+/// ([`off_envelope`]). The largest miss over the faces that are their definition
+/// (`Surface::procedural_blend`) and over the others (B-splines traced within the round's
+/// tolerance), with the count of each.
+fn off_definition(k: &Kernel, b: &mut Brep) -> [(f64, usize); 2] {
     let mut out = [(0.0f64, 0usize); 2];
     for f in p1::faces(b, None).unwrap() {
-        let s = fp2::surface(b, f).unwrap().unwrap();
+        let s = fp2::surface(b, f).unwrap().unwrap().clone();
         let d = s.natural_uv_domain_with_nurb(k).unwrap();
         let at = |i: i32, j: i32| {
             Point2::new(
@@ -192,15 +229,24 @@ fn off_definition(k: &Kernel, b: &Brep) -> [(f64, usize); 2] {
             for j in 0..=8 {
                 let uv = at(i, j);
                 let p = s.evaluate_point(k, uv).unwrap();
-                let n = s.evaluate_normal(k, uv, Side::Left, Side::Left).unwrap();
-                let miss = [p - n, p + n]
-                    .into_iter()
-                    .map(|c| {
-                        let side = (c.y - 4.0).abs();
-                        let other = (c.z - 14.0).abs().min((torus_distance(c) - 3.0).abs());
-                        side.max(other)
-                    })
-                    .fold(f64::INFINITY, f64::min);
+                // only the face's own points: past its trims the surface may be the
+                // trace's extension, on extended faces
+                let mut pc = PointClassification::new(1e-6);
+                fq::point_3d_classify(
+                    k,
+                    b,
+                    f,
+                    p,
+                    1e-6,
+                    true,
+                    &mut pc,
+                    fq::Point3dClassifyOptions::default(),
+                )
+                .unwrap();
+                if pc.point_class() == PointClassType::Unknown {
+                    continue;
+                }
+                let miss = off_envelope(p);
                 slot.0 = slot.0.max(miss);
             }
         }
@@ -302,7 +348,7 @@ fn crease_round_with(mut k: Kernel, form: Form) -> (i32, Option<Built>) {
         volume: volume(&k, &mut b),
         lumps: lumps(&b),
         failures: check_failures(&mut k, &mut b),
-        definition: off_definition(&k, &b),
+        definition: off_definition(&k, &mut b),
     });
     (code, built)
 }
